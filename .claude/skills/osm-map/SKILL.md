@@ -1365,7 +1365,10 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
   the mouth instead of running on into the arm.
   - **Union first** (`i_overlay`, NonZero, outer rings oriented CCW and holes CW — OSM's
     order is arbitrary and NonZero only merges consistent windings): the shared border is
-    gone before anything is laid.
+    gone before anything is laid. **The bands of the water gaps go into that same union**
+    (`split_channels`, under **Waterways** below) — two polygons of one river that do
+    *not* touch, because OSM cut the `riverbank` at a bridge, are joined by the channel
+    between them, and their service edges across the river stop being banks the same way.
   - **Then nested inward offsets** (`OutlineOffset::outline`, negative offset, `Round`
     joins, `SHOAL_STEP` 0.5 m, twelve levels), each always taken from level 0 rather than
     from the previous one, so errors do not accumulate. The band between depth `d` and
@@ -1426,6 +1429,27 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     (the reaches would overlap into a seam mid-channel), and an uncut ribbon still goes
     through `RibbonBreaks::At(&[])`, never `Ends` — `Ends` measures to the ribbon's own
     ends and would fade the shore at every channel end on dry land too.
+  - **The gap.** A stretch cut at **both** ends is not a channel on land at all: it is a
+    **discontinuity of the area water**, and the fade above is wrong for it in both
+    halves. OSM cuts `riverbank` at a bridge — Tula, the Упа at (6157, 3397):
+    `relation 19409693` ends before the bridge, `relation 19409692` starts after it,
+    fifteen metres of nobody's land between them with the centreline `way 25857971`
+    running through. Reported from a screenshot as «странно выглядящая вода», and it was
+    two defects at one place: the ribbon's reach laid a rectangle of **deep** water over
+    the pale shoal of a polygon only eleven metres wide (the reach fades to `WATER_COLOR`,
+    which agrees with the water beside it only where that water is deep), and each polygon
+    laid **its own shoal along the service edge** it is closed with across the river — a
+    light band where there is no bank, the very artifact the union fixed for polygons that
+    *touch*. So `split_channels` hands such a stretch over: its band (the axis spread by
+    `miter_offsets` to the channel width, reaches included, so the overlap with both
+    polygons is real and the union cannot leave a hairline) goes into
+    `mesh_water_areas`'s union, and the ribbon does not draw it. The service edges are
+    then interior, the shoal runs along the real banks and wraps into the channel, and the
+    river visibly narrows to the channel's width under the deck — which is honest, and
+    mostly hidden by the deck. The two doors share one cut for that reason: «где кончается
+    полигон» must have one answer, not two. Tula: **one** gap, in the `surface meshing:`
+    line as `N gaps`. An **island** in a river answers the same way, and rightly — there
+    is water on both sides of it.
   - **Render-only.** The navmesh blocks the polygon and the whole channel band as before;
     the caps rule it shares with the drawing (`water_line_caps`) is untouched.
   - Cost: one pass per open channel at load — the `waterways` field of `SurfaceReport`,

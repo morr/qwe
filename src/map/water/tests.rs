@@ -1,5 +1,5 @@
 use super::*;
-use crate::map::osm::fixture::{rect, square, water_area};
+use crate::map::osm::fixture::{rect, square, stream, water_area};
 use crate::map::osm::model::polyline_length;
 
 /// Вершины меша воды с долей глубины: 0 — цвет берега, 1 — полная глубина.
@@ -21,7 +21,7 @@ fn depths(builder: &MeshBuilder) -> Vec<(Vec2, f32)> {
 
 #[test]
 fn the_shoal_runs_from_the_bank_to_full_depth() {
-    let found = depths(&mesh_water_areas(&[pond(0.0)]));
+    let found = depths(&mesh_water_areas(&[pond(0.0)], &[]));
     let on_bank =
         |point: Vec2| (point.x.abs() - 50.0).abs() < 1e-2 || (point.y.abs() - 50.0).abs() < 1e-2;
     assert!(found.iter().any(|&(point, _)| on_bank(point)));
@@ -38,7 +38,7 @@ fn the_shoal_runs_from_the_bank_to_full_depth() {
 fn two_ponds_sharing_a_border_have_no_shoal_across_it() {
     // рукав упирается в реку общей границей x = 50: вдоль неё берега нет
     let arm = water_area(square(on_x(100.0), 50.0), Vec::new());
-    let found = depths(&mesh_water_areas(&[pond(0.0), arm]));
+    let found = depths(&mesh_water_areas(&[pond(0.0), arm], &[]));
     for &(point, depth) in &found {
         if (point.x - 50.0).abs() < 1e-2 && point.y.abs() < 40.0 {
             assert!(depth > 0.5, "the seam at {point} is only {depth} deep");
@@ -53,7 +53,7 @@ fn a_narrow_arm_never_reaches_full_depth() {
         rect(Vec2::new(-4.0, -60.0), Vec2::new(4.0, 60.0)),
         Vec::new(),
     );
-    let found = depths(&mesh_water_areas(&[strip]));
+    let found = depths(&mesh_water_areas(&[strip], &[]));
     assert!(!found.is_empty());
     let deepest = found.iter().map(|&(_, depth)| depth).fold(0.0, f32::max);
     assert!(deepest < 4.0 / WATER_SHORE_WIDTH + 0.1, "{deepest}");
@@ -144,8 +144,10 @@ fn a_strip_of_water_narrower_than_two_shores_does_not_cut() {
 }
 
 #[test]
-fn an_island_keeps_its_stretch_of_channel() {
-    // русло целиком в пруду, но пересекает остров 40 × 40 м посередине
+fn an_island_cuts_the_channel_on_both_of_its_shores() {
+    // русло целиком в пруду, но пересекает остров 40 × 40 м посередине. Кусок
+    // отрезан с обеих сторон, и рисует его — как и разрыв реки у моста —
+    // площадная вода: по обе стороны от острова вода есть
     let lake = water_area(square(on_x(0.0), 100.0), vec![square(on_x(0.0), 20.0)]);
     let path = [on_x(-80.0), on_x(80.0)];
     let found = runs(&path, &[lake]);
@@ -175,4 +177,67 @@ fn overlapping_water_polygons_cut_along_their_union() {
     let found = runs(&path, &[pond(0.0), pond(30.0)]);
     assert_eq!(found.len(), 1);
     assert!(close(*found[0].points.last().unwrap(), on_x(-50.0 + REACH)));
+}
+
+const CHANNEL_WIDTH: f32 = 8.0;
+
+/// Упа под мостом: `riverbank` оборван с обеих сторон, и между полигонами сто
+/// метров ничьей земли, по которой идёт одна осевая реки.
+fn river_through_a_cut_riverbank() -> (Vec<WaterLine>, Vec<PolyArea>) {
+    (
+        vec![stream(vec![on_x(-200.0), on_x(200.0)], CHANNEL_WIDTH)],
+        vec![pond(-100.0), pond(100.0)],
+    )
+}
+
+#[test]
+fn a_gap_between_two_river_polygons_becomes_water() {
+    let (lines, water) = river_through_a_cut_riverbank();
+    let channels = split_channels(&lines, &water);
+    // два конца на суше рисует лента, кусок между полигонами — площадная вода
+    assert_eq!(channels.drawn.len(), 2);
+    assert_eq!(channels.gaps.len(), 1);
+    let gap = &channels.gaps[0];
+    let (min, max) = ring_bounds(gap);
+    // полоса во всю ширину русла и с заходом в оба полигона: вплотную к
+    // обрезанному ребру союз мог бы оставить щель
+    assert!(
+        close(min, Vec2::new(-50.0 - REACH, -CHANNEL_WIDTH / 2.0)),
+        "{min}"
+    );
+    assert!(
+        close(max, Vec2::new(50.0 + REACH, CHANNEL_WIDTH / 2.0)),
+        "{max}"
+    );
+}
+
+#[test]
+fn the_ribbon_does_not_draw_the_gap_it_handed_over() {
+    let (lines, water) = river_through_a_cut_riverbank();
+    let channels = split_channels(&lines, &water);
+    let drawn = mesh_water_lines(&channels);
+    for point in drawn.positions_for_test() {
+        assert!(point[0].abs() > 50.0, "лента в разрыве, на {point:?}");
+    }
+}
+
+#[test]
+fn the_bank_of_a_cut_polygon_turns_into_the_channel() {
+    let (lines, water) = river_through_a_cut_riverbank();
+    let gaps = split_channels(&lines, &water).gaps;
+    // берег на обрезанном ребре: вершины на самом берегу (глубина 0) там, где
+    // ребро x = ±50 пересекает русло
+    let across_the_river = |gaps: &[Vec<Vec2>]| {
+        depths(&mesh_water_areas(&water, gaps))
+            .into_iter()
+            .filter(|&(point, depth)| {
+                (point.x.abs() - 50.0).abs() < 1e-2 && point.y.abs() < 5.0 && depth < 1e-3
+            })
+            .count()
+    };
+    // без разрыва ребро идёт поперёк реки целиком, и вершин на нём нет вовсе:
+    // кольцо союза сворачивает только по углам пруда
+    assert_eq!(across_the_river(&[]), 0);
+    // с ним берег сворачивает у кромки русла — там, где река и правда сужается
+    assert!(across_the_river(&gaps) >= 4, "{}", across_the_river(&gaps));
 }

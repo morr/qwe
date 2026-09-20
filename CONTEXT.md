@@ -218,8 +218,14 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     watercourse kind that does **not** block the navmesh. Drawn (`map/water.rs`) only
     **outside area water**: the axis is cut at every water outline, and a cut end — a
     **mouth** — reaches `WATER_SHORE_WIDTH` (6 m) past the bank so the channel's own shore
-    fades out exactly as the polygon's does. Render-only; the navmesh still blocks the
-    whole channel band.
+    fades out exactly as the polygon's does. A stretch cut at **both** ends is not a
+    channel on land but a **water gap** — OSM cuts `riverbank` at a bridge, and the river
+    runs on between the two polygons: its band goes into the area water's union
+    (`split_channels` → `mesh_water_areas`) and the ribbon layer does not draw it at all,
+    so neither does the ribbon repaint the polygons it reaches into nor does the polygon's
+    artificial edge across the river lay a shoal along itself. Tula: one, the Упа under
+    the bridge at (6157, 3397). Render-only; the navmesh still blocks the whole channel
+    band.
   - **TreeRow** / **TreeNode** — `natural=tree_row` avenues and single surveyed
     `natural=tree` trees, with optional `spacing`/`radius` from tags.
   - **trees** (`TreeSet`) — what the renderer reads; `compose_trees` merges forest +
@@ -1327,7 +1333,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   shore is a **distance field to the nearest bank**, `WATER_SHORE_COLOR` on the bank to
   `WATER_COLOR` at `WATER_SHORE_WIDTH` (6 m), over all water polygons **unioned** first.
   A narrow arm stays shallow across its whole width, and two polygons of one river meeting
-  at a border get no shoal along it. A **waterway ribbon** carries the same field on its
+  at a border get no shoal along it. Two polygons that **do not** meet — a `riverbank` cut
+  at a bridge — are joined by the band of the channel between them (**water gap**, above),
+  which enters the same union. A **waterway ribbon** carries the same field on its
   edges from the shader (`surface.wgsl`, by the ribbon's `across`), so the shoal turns
   from a pond into its channel without a seam.
 - **Sidewalks & markings** (`map/roads.rs`) — a **carriageway** (`Street`, ≥ 8 m, not a

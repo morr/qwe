@@ -18,6 +18,11 @@
 //! расстояний до берега по всем полигонам сразу, а не кайма каждого по
 //! отдельности.
 //!
+//! Резка — одна на оба слоя ([`split_channels`]), и она же решает, кто из них
+//! что рисует: кусок русла, отрезанный берегом с **обеих** сторон, — это не
+//! русло по суше, а разрыв площадной воды (OSM обрывает `riverbank` у моста), и
+//! его полоса уходит в площадную воду, а лентой не рисуется вовсе.
+//!
 //! Сетку это не трогает: навмеш глушит и полигон, и полосу русла целиком
 //! (`Navmesh::fill_from_mapdata`), и то, что лента внутри полигона больше не
 //! рисуется, проходимости не меняет.
@@ -25,7 +30,7 @@
 use bevy::prelude::*;
 
 use crate::map::grid::Grid;
-use crate::map::meshing::{Break, MeshBuilder, RibbonBreaks, RibbonCap, RibbonJoin};
+use crate::map::meshing::{Break, MeshBuilder, RibbonBreaks, RibbonCap, RibbonJoin, miter_offsets};
 use crate::map::osm::model::{point_in_area, point_in_polygon, ring_bounds, signed_ring_area};
 use crate::map::osm::{PolyArea, WaterLine, water_line_caps};
 use crate::map::smooth::{Smoothing, smooth_path};
@@ -77,7 +82,11 @@ type Rings = (Vec<Vec2>, Vec<Vec<Vec2>>);
 /// которого внешнее кольцо цвета глубины `d`, а дырки — цвета `d + шаг`.
 /// Офсет узкого места сходит на нет сам, и середина рукава получает цвет своей
 /// настоящей глубины, а на устье изолинии плавно заворачивают из реки в рукав.
-pub fn mesh_water_areas(areas: &[PolyArea]) -> MeshBuilder {
+///
+/// Вместе с полигонами в союз идут `gaps` — полосы русел, которыми река
+/// продолжается там, где полигон оборван (`split_channels`): их служебные
+/// рёбра «поперёк реки» тоже перестают быть берегом.
+pub fn mesh_water_areas(areas: &[PolyArea], gaps: &[Vec<Vec2>]) -> MeshBuilder {
     use i_overlay::core::fill_rule::FillRule;
     use i_overlay::float::simplify::SimplifyShape;
     use i_overlay::mesh::outline::offset::OutlineOffset;
@@ -92,6 +101,7 @@ pub fn mesh_water_areas(areas: &[PolyArea]) -> MeshBuilder {
             std::iter::once(oriented(&area.outer, true))
                 .chain(area.holes.iter().map(|hole| oriented(hole, false)))
         })
+        .chain(gaps.iter().map(|gap| oriented(gap, true)))
         .collect();
     if contours.is_empty() {
         return builder;
@@ -218,15 +228,54 @@ const CELL: f32 = 32.0;
 /// контура даёт два попадания в одну точку.
 const SAME_CROSSING: f32 = 1e-4;
 
-/// Лента открытых русел одним мешем. **Трубы не рисуются вовсе**: под землёй
-/// воды не видно, а пунктир вдоль улицы читался как ручей поверх неё. Тем, что
-/// человек проходит там, где на карте «ручей», управляет не эта отрисовка, а
-/// её отсутствие: русло обрывается на портале культверта и продолжается за ним
-/// (`water_line_caps`), и между порталами воды на карте просто нет.
-pub fn mesh_water_lines(lines: &[WaterLine], water: &[PolyArea]) -> MeshBuilder {
-    let color = WATER_COLOR.to_linear();
+/// Открытые русла, нарезанные по берегам площадной воды: что из них рисует
+/// лента ([`mesh_water_lines`]), а что — сама площадная вода
+/// ([`mesh_water_areas`]).
+///
+/// Резка одна на оба слоя не ради экономии: [`OpenChannels::gaps`] — те куски,
+/// которые площадная вода обязана взять себе, а лента обязана не рисовать, и
+/// считать их дважды значило бы завести два ответа на вопрос «где кончается
+/// полигон».
+pub struct OpenChannels {
+    /// Контуры лент, закрывающих разрывы площадной воды: полосы шириной русла
+    /// по его оси, с заходом в оба полигона. Идут в союз площадной воды, и
+    /// лентой не рисуются.
+    pub gaps: Vec<Vec<Vec2>>,
+    drawn: Vec<DrawnRun>,
+}
+
+/// Кусок русла, который рисует лента: ось, ширина, торцы и то, какой из концов
+/// отрезан берегом (на нём лента заходит в воду, и там гаснет её отмель).
+struct DrawnRun {
+    points: Vec<Vec2>,
+    clipped: [bool; 2],
+    width: f32,
+    caps: [RibbonCap; 2],
+}
+
+/// Нарезать русла по берегам площадной воды.
+///
+/// **Кусок, отрезанный с обеих сторон, — не русло по суше, а разрыв площадной
+/// воды.** OSM режет `riverbank` у моста (Тула, Упа под мостом на 6157, 3397:
+/// `relation 19409693` обрывается перед мостом, `relation 19409692` начинается
+/// за ним, между ними пятнадцать метров ничьей земли, по которой идёт осевая
+/// `way 25857971`). Река там та же, и рисовать её лентой поверх полигонов
+/// нельзя дважды: заход за берег клал прямоугольник глубокой воды на отмель
+/// полигона, а сам полигон клал отмель вдоль служебного ребра «поперёк реки» —
+/// светлую полосу там, где берега нет. Поэтому полоса такого куска уходит в
+/// союз площадной воды: служебные рёбра оказываются внутри союза, отмель идёт
+/// по настоящим берегам и заворачивает в русло, а лента этот кусок не рисует
+/// вовсе. Заход за берег полоса сохраняет — им она и перекрывается с
+/// полигонами, вплотную к ребру союз мог бы оставить щель.
+///
+/// Тула: один такой кусок на весь город. Остров посреди реки даёт тот же
+/// ответ, и это верно — вода по обе стороны от него есть.
+pub fn split_channels(lines: &[WaterLine], water: &[PolyArea]) -> OpenChannels {
     let index = WaterIndex::new(water);
-    let mut open = MeshBuilder::with_surface_coords();
+    let mut channels = OpenChannels {
+        gaps: Vec::new(),
+        drawn: Vec::new(),
+    };
 
     for line in lines.iter().filter(|line| !line.tunnel) {
         // сглаживание как у дорог: русло в OSM — ломаная по точкам съёмки, и на
@@ -245,31 +294,66 @@ pub fn mesh_water_lines(lines: &[WaterLine], water: &[PolyArea]) -> MeshBuilder 
             }
         });
         for run in index.open_runs(&path, WATER_SHORE_WIDTH) {
-            // отрезанный конец лежит в воде на ширину отмели глубже берега:
-            // полудиск там ни к чему, а «до разрыва» от берега до торца идёт от
-            // нуля к минус ширине отмели — по нему шейдер гасит кромки ленты
-            let mut breaks = Vec::with_capacity(2);
-            let mut run_caps = caps;
-            for (end, point) in [(0, run.points[0]), (1, run.points[run.points.len() - 1])] {
-                if run.clipped[end] {
-                    run_caps[end] = RibbonCap::Butt;
-                    breaks.push(Break {
-                        at: point,
-                        reach: WATER_SHORE_WIDTH,
-                    });
-                }
+            if run.clipped == [true, true] {
+                channels.gaps.push(band(&run.points, line.width));
+            } else {
+                channels.drawn.push(DrawnRun {
+                    points: run.points,
+                    clipped: run.clipped,
+                    width: line.width,
+                    caps,
+                });
             }
-            // `At` даже без разрывов: у `Ends` «до разрыва» считается до торца, и
-            // отмель гасла бы у каждого конца русла, в том числе на суше
-            open.push_ribbon_broken(
-                &run.points,
-                line.width,
-                color,
-                RibbonJoin::Round,
-                run_caps,
-                RibbonBreaks::At(&breaks),
-            );
         }
+    }
+
+    channels
+}
+
+/// Контур ленты: осевая, разведённая на полширины в обе стороны теми же
+/// `miter_offsets`, по которым лента и рисуется. Торцы прямые — оба конца
+/// такого куска лежат в глубине полигона.
+fn band(path: &[Vec2], width: f32) -> Vec<Vec2> {
+    let offsets = miter_offsets(path, false, width / 2.0);
+    let left = path.iter().zip(&offsets).map(|(&at, &out)| at + out);
+    let right = path.iter().zip(&offsets).rev().map(|(&at, &out)| at - out);
+    left.chain(right).collect()
+}
+
+/// Лента открытых русел одним мешем. **Трубы не рисуются вовсе**: под землёй
+/// воды не видно, а пунктир вдоль улицы читался как ручей поверх неё. Тем, что
+/// человек проходит там, где на карте «ручей», управляет не эта отрисовка, а
+/// её отсутствие: русло обрывается на портале культверта и продолжается за ним
+/// (`water_line_caps`), и между порталами воды на карте просто нет.
+pub fn mesh_water_lines(channels: &OpenChannels) -> MeshBuilder {
+    let color = WATER_COLOR.to_linear();
+    let mut open = MeshBuilder::with_surface_coords();
+
+    for run in &channels.drawn {
+        // отрезанный конец лежит в воде на ширину отмели глубже берега:
+        // полудиск там ни к чему, а «до разрыва» от берега до торца идёт от
+        // нуля к минус ширине отмели — по нему шейдер гасит кромки ленты
+        let mut breaks = Vec::with_capacity(2);
+        let mut run_caps = run.caps;
+        for (end, point) in [(0, run.points[0]), (1, run.points[run.points.len() - 1])] {
+            if run.clipped[end] {
+                run_caps[end] = RibbonCap::Butt;
+                breaks.push(Break {
+                    at: point,
+                    reach: WATER_SHORE_WIDTH,
+                });
+            }
+        }
+        // `At` даже без разрывов: у `Ends` «до разрыва» считается до торца, и
+        // отмель гасла бы у каждого конца русла, в том числе на суше
+        open.push_ribbon_broken(
+            &run.points,
+            run.width,
+            color,
+            RibbonJoin::Round,
+            run_caps,
+            RibbonBreaks::At(&breaks),
+        );
     }
 
     open

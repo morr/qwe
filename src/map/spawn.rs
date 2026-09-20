@@ -19,7 +19,7 @@ use crate::map::surface::{
     self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec, SurfaceKind, spawn_layers,
 };
 use crate::map::trees::TreeRowStyle;
-use crate::map::water::{mesh_water_areas, mesh_water_lines};
+use crate::map::water::{mesh_water_areas, mesh_water_lines, split_channels};
 use crate::settings::{
     MAP_SIZE, Z_GRASS, Z_GROUND, Z_LANDUSE, Z_LANDUSE_YARD, Z_PARK, Z_PARKING, Z_PARKING_LINES,
     Z_PITCH, Z_PITCH_LINES, Z_POND, Z_SAND, Z_TREE_ROW_BAND, Z_TREE_ROW_BAND_CASING, Z_WATERWAY,
@@ -189,6 +189,9 @@ pub fn spawn_map(
 pub struct SurfaceReport {
     pub water_areas: usize,
     pub water_lines: usize,
+    /// Разрывы площадной воды, закрытые руслом: их полосы рисует не лента, а
+    /// сама площадная вода (`water::split_channels`). Тула: один.
+    pub water_gaps: usize,
     pub vertices: usize,
     /// Вырожденные контуры, которые билдеры пропустили: ненулевое значение —
     /// повод посмотреть в парс, а не в сборку.
@@ -205,6 +208,7 @@ impl std::fmt::Display for SurfaceReport {
         let Self {
             water_areas,
             water_lines,
+            water_gaps,
             vertices,
             water,
             waterways,
@@ -215,7 +219,7 @@ impl std::fmt::Display for SurfaceReport {
             f,
             "surface meshing: {vertices} verts in {elapsed:.1?} \
              (water {water_areas} areas in {water:.1?}, \
-             waterways {water_lines} ways in {waterways:.1?})"
+             waterways {water_lines} ways, {water_gaps} gaps in {waterways:.1?})"
         )
     }
 }
@@ -274,10 +278,17 @@ pub fn mesh_surfaces(
         push_area(&mut sand, area, SAND_COLOR, &SAND_RIM);
     }
 
+    // русла режутся по берегам раньше обоих водных слоёв: резка решает не
+    // только, где лента невидима, но и какие её куски — сама площадная вода
+    // (`water::split_channels`)
+    let waterways_started = std::time::Instant::now();
+    let channels = split_channels(&map.water_lines, &map.water);
+    let mut waterways_took = waterways_started.elapsed();
+
     // вода — не каймой по контуру, как зелень: отмель у неё — расстояние до
     // ближайшего берега по всем полигонам сразу (`water::mesh_water_areas`)
     let water_started = std::time::Instant::now();
-    let water = mesh_water_areas(&map.water);
+    let water = mesh_water_areas(&map.water, &channels.gaps);
     let water_took = water_started.elapsed();
 
     // стоянка — асфальт своим слоем, того же тона, что проезжая часть; по
@@ -308,9 +319,9 @@ pub fn mesh_surfaces(
         pitch::push_markings(&mut pitch_lines, area);
     }
 
-    let waterways_started = std::time::Instant::now();
-    let waterways = mesh_water_lines(&map.water_lines, &map.water);
-    let waterways_took = waterways_started.elapsed();
+    let ribbons_started = std::time::Instant::now();
+    let waterways = mesh_water_lines(&channels);
+    waterways_took += ribbons_started.elapsed();
 
     let skipped: usize = [
         &yards, &works, &parks, &woods, &grass, &sand, &pitches, &parking, &water,
@@ -349,6 +360,7 @@ pub fn mesh_surfaces(
     let report = SurfaceReport {
         water_areas: map.water.len(),
         water_lines: map.water_lines.len(),
+        water_gaps: channels.gaps.len(),
         vertices: layers
             .iter()
             .map(|layer| layer.builder.vertex_count())
