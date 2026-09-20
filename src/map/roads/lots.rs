@@ -40,22 +40,21 @@ use i_overlay::core::fill_rule::FillRule;
 use i_overlay::core::overlay_rule::OverlayRule;
 use i_overlay::float::single::SingleFloatOverlay;
 use i_overlay::mesh::outline::offset::OutlineOffset;
-use i_overlay::mesh::stroke::offset::StrokeOffset;
-use i_overlay::mesh::style::{LineCap, LineJoin, OutlineStyle, StrokeStyle};
+use i_overlay::mesh::style::{LineCap, LineJoin, OutlineStyle};
 
 use super::gores::Gores;
-use super::{RoadStyle, SIDEWALK_COLOR};
+use super::{LOT_LINE_COLOR, RoadStyle, SIDEWALK_COLOR};
 use crate::map::meshing::{MeshBuilder, RibbonJoin};
-use crate::map::osm::model::{
-    MapData, PolyArea, RoadLine, distance_to_segment, point_in_area, ring_bounds, signed_ring_area,
-};
+use crate::map::osm::model::{MapData, PolyArea, RoadLine, point_in_area, ring_bounds};
 use crate::map::parking::{is_ground, is_through, kerb_width};
+use crate::map::shapes::{
+    ARC, Contour, RING_EPSILON, Shape, area_contours, contour_area, is_ring, oriented, push_shape,
+    stroke,
+};
 
 /// Шаг, которым ось дороги ощупывается на «внутри ли площадки» и на соседа
 /// через разделительную, м.
 const PROBE_STEP: f32 = 2.0;
-/// Скругление офсетов: длина хорды в долях радиуса (`LineJoin::Round`).
-pub(super) const ARC: f32 = 0.3;
 /// Размыкание бордюра, м: обрезок у́же двух таких снимается, углы скругляются.
 /// Бордюр сам 1.2 м и больше — ему это ничего не стоит.
 const KERB_OPENING: f32 = 0.3;
@@ -72,7 +71,10 @@ const MEDIAN_REACH_STEP: f32 = 0.25;
 /// Зазор между торцом двойной линии и остриём штриховки, м.
 const MEDIAN_GORE_GAP: f32 = 0.6;
 /// Осевую пары полотен считает то из них, от которого сосед лежит в эту
-/// сторону, — ровно одно из двух ([`medians`]).
+/// сторону, — ровно одно из двух ([`medians`]). Направление намеренно не вдоль
+/// оси: на ничьей (`apart.dot(MEDIAN_SIDE) == 0`) осевую не считает **ни
+/// одно** полотно пары, а ничья с ортом случилась бы на каждом бульваре,
+/// идущем точно по широте или по меридиану.
 const MEDIAN_SIDE: Vec2 = Vec2::new(1.0, 0.618);
 /// Сколько асфальта между кромками двух полотен ещё считается разделительной,
 /// м: шире — уже остров с бордюром.
@@ -90,10 +92,6 @@ const MEDIAN_SKEW: f32 = 0.35;
 /// настоящей (0.15 и 0.3) — иначе на отдалении обе сливаются в волосок.
 const DOUBLE_LINE_WIDTH: f32 = 0.2;
 const DOUBLE_LINE_GAUGE: f32 = 0.5;
-const DOUBLE_LINE_COLOR: Color = Color::srgb(0.88, 0.88, 0.86);
-
-pub(super) type Contour = Vec<[f32; 2]>;
-pub(super) type Shape = Vec<Contour>;
 
 /// Улица у большой стоянки — так, как она нарисована (сглаженная ось).
 struct Street {
@@ -155,7 +153,7 @@ impl<'a> Grounds<'a> {
         if let (true, Some(first)) = (is_ring(&road.points), closed.first().copied())
             && closed
                 .last()
-                .is_some_and(|last| last.distance(first) > 0.01)
+                .is_some_and(|last| last.distance(first) > RING_EPSILON)
         {
             closed.push(first);
         }
@@ -197,7 +195,7 @@ impl<'a> Grounds<'a> {
                         midline,
                         DOUBLE_LINE_GAUGE,
                         DOUBLE_LINE_WIDTH,
-                        DOUBLE_LINE_COLOR.to_linear(),
+                        LOT_LINE_COLOR.to_linear(),
                         RibbonJoin::Round,
                     );
                 }
@@ -212,20 +210,6 @@ impl<'a> Grounds<'a> {
     }
 }
 
-pub(super) fn push_shape(builder: &mut MeshBuilder, shape: Shape, color: LinearRgba) {
-    let mut rings = shape.into_iter().map(|contour| {
-        contour
-            .into_iter()
-            .map(Vec2::from_array)
-            .collect::<Vec<Vec2>>()
-    });
-    let Some(outer) = rings.next() else {
-        return;
-    };
-    let holes: Vec<Vec<Vec2>> = rings.collect();
-    builder.push_polygon(&outer, &holes, color);
-}
-
 /// Бордюры площадки — полосы сквозных дорог и острова колец, минус асфальт
 /// всех улиц, разделительные и **направляющие островки** у колец
 /// (`roads/gores.rs`: там асфальт со штриховкой, бордюра между полотнами нет),
@@ -235,26 +219,26 @@ fn kerbs(ground: &Ground, medians: &[(Vec<Vec2>, f32)], gores: &Gores) -> Vec<Sh
     let mut asphalt: Vec<Contour> = Vec::new();
     let mut islands: Vec<Contour> = Vec::new();
     for street in &ground.streets {
-        let band = stroke(&street.path, street.width, LineCap::Round(ARC));
+        let ring = is_ring(&street.path);
+        let band = stroke(&street.path, street.width, LineCap::Round(ARC), ring);
         if let Some(kerb) = street.kerb {
             bands.extend(stroke(
                 &street.path,
                 street.width + 2.0 * kerb,
                 LineCap::Round(ARC),
+                ring,
             ));
             // остров кольца — весь, а не ободком вдоль полотна
-            if is_ring(&street.path) {
+            if ring {
                 islands.push(oriented(&street.path[1..], true));
             }
         }
         asphalt.extend(band);
     }
     for (midline, width) in medians {
-        asphalt.extend(stroke(midline, *width, LineCap::Butt));
+        asphalt.extend(stroke(midline, *width, LineCap::Butt, is_ring(midline)));
     }
-    let lot: Vec<Contour> = std::iter::once(oriented(&ground.lot.outer, true))
-        .chain(ground.lot.holes.iter().map(|hole| oriented(hole, false)))
-        .collect();
+    let lot: Vec<Contour> = area_contours(ground.lot);
     let round = LineJoin::Round(ARC);
     // бордюр выпущен за контур на [`KERB_OVERHANG`]: обрезанный ровно по
     // нему, он вставал к тротуару улицы, с которой дорога заходит на
@@ -330,11 +314,6 @@ fn reach_gore(midline: &mut Vec<Vec2>, gores: &Gores) {
             (false, false) => midline[0] = point,
         }
     }
-}
-
-pub(super) fn contour_area(contour: &Contour) -> f32 {
-    let ring: Vec<Vec2> = contour.iter().copied().map(Vec2::from_array).collect();
-    signed_ring_area(&ring).abs()
 }
 
 /// Разделительные площадки: осевая между двумя встречными полотнами и ширина
@@ -440,35 +419,4 @@ fn nearest(path: &[Vec2], at: Vec2) -> Option<(Vec2, Vec2)> {
 /// Заходит ли ось на площадку — пробами через [`PROBE_STEP`].
 fn enters(path: &[Vec2], lot: &PolyArea) -> bool {
     samples(path).iter().any(|(at, _)| point_in_area(*at, lot))
-}
-
-/// Замкнута ли ломаная — кольцо развязки.
-pub(super) fn is_ring(path: &[Vec2]) -> bool {
-    path.len() >= 4
-        && path
-            .first()
-            .zip(path.last())
-            .is_some_and(|(first, last)| distance_to_segment(*first, *last, *last) < 0.01)
-}
-
-/// Полоса вокруг ломаной; кольцо обводится замкнутым, без торцов.
-pub(super) fn stroke(path: &[Vec2], width: f32, cap: LineCap<[f32; 2]>) -> Vec<Contour> {
-    let ring = is_ring(path);
-    let points = if ring { &path[1..] } else { path };
-    let contour: Contour = points.iter().map(Vec2::to_array).collect();
-    let style = StrokeStyle::new(width)
-        .line_join(LineJoin::Round(ARC))
-        .start_cap(cap.clone())
-        .end_cap(cap);
-    contour.stroke(style, ring).into_iter().flatten().collect()
-}
-
-/// Кольцо в закрутке, которой ждёт `i_overlay`: внешнее против часовой, дырка
-/// по ней.
-pub(super) fn oriented(ring: &[Vec2], counterclockwise: bool) -> Contour {
-    let mut points: Contour = ring.iter().map(Vec2::to_array).collect();
-    if (signed_ring_area(ring) > 0.0) != counterclockwise {
-        points.reverse();
-    }
-    points
 }

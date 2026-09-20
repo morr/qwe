@@ -19,9 +19,13 @@ use i_overlay::float::single::SingleFloatOverlay;
 use i_overlay::mesh::outline::offset::OutlineOffset;
 use i_overlay::mesh::style::{LineCap, LineJoin, OutlineStyle};
 
-use super::lots::{ARC, Contour, Shape, contour_area, is_ring, oriented, push_shape, stroke};
+use super::LOT_LINE_COLOR;
 use crate::map::meshing::{MeshBuilder, min_area_rect};
-use crate::map::osm::model::{RoadLine, distance_to_segment, point_in_polygon, ring_bounds};
+use crate::map::osm::model::{RoadLine, distance_to_segment, ring_bounds};
+use crate::map::shapes::{
+    ARC, Contour, RING_EPSILON, Shape, contour_area, contour_bounds, is_ring, oriented,
+    point_in_shape, push_shape, ring_of, stroke,
+};
 
 /// Радиус замыкания, м: клин между двумя полотнами ближе двух радиусов друг к
 /// другу — островок.
@@ -47,7 +51,6 @@ const ARM_TOUCH: f32 = 0.5;
 const LINE_WIDTH: f32 = 0.2;
 const HATCH_WIDTH: f32 = 0.35;
 const HATCH_STEP: f32 = 1.6;
-const LINE_COLOR: Color = Color::srgb(0.88, 0.88, 0.86);
 
 /// Улица так, как она нарисована, — что нужно островкам.
 pub(super) struct GoreRoad {
@@ -68,7 +71,9 @@ impl GoreRoad {
         let closed = is_ring(&road.points);
         let mut path = drawn.to_vec();
         if let (true, Some(first)) = (closed, path.first().copied())
-            && path.last().is_some_and(|last| last.distance(first) > 0.01)
+            && path
+                .last()
+                .is_some_and(|last| last.distance(first) > RING_EPSILON)
         {
             path.push(first);
         }
@@ -139,15 +144,16 @@ impl Gores {
         // нет — ни искать его там, ни вычитать из него нечего.
         let mut reach: Vec<(Vec2, Vec2)> = Vec::new();
         for (path, width) in &arms {
-            network.extend(stroke(path, *width, LineCap::Round(ARC)));
+            network.extend(stroke(path, *width, LineCap::Round(ARC), is_ring(path)));
             reach.push(closing_span(path, *width));
         }
         let mut solid: Vec<Contour> = Vec::new();
         for road in roads.iter().filter(|road| road.is_roundabout()) {
-            network.extend(stroke(&road.path, road.width, LineCap::Round(ARC)));
+            let ring = is_ring(&road.path);
+            network.extend(stroke(&road.path, road.width, LineCap::Round(ARC), ring));
             reach.push(closing_span(&road.path, road.width));
             // остров маленького кольца замыкание затянуло бы тоже
-            if is_ring(&road.path) {
+            if ring {
                 solid.push(oriented(&road.path[1..], true));
             }
         }
@@ -160,7 +166,12 @@ impl Gores {
                 .iter()
                 .any(|(from, to)| (low - pad).cmple(*to).all() && (high + pad).cmpge(*from).all());
             if near {
-                solid.extend(stroke(&road.path, road.width, LineCap::Round(ARC)));
+                solid.extend(stroke(
+                    &road.path,
+                    road.width,
+                    LineCap::Round(ARC),
+                    is_ring(&road.path),
+                ));
             }
         }
 
@@ -187,8 +198,8 @@ impl Gores {
                 .iter()
                 .filter(|(path, width)| {
                     let (from, to) = ring_bounds(path);
-                    let reach = width / 2.0 + ARM_TOUCH;
-                    low.cmple(to + reach).all() && high.cmpge(from - reach).all()
+                    let touch = width / 2.0 + ARM_TOUCH;
+                    low.cmple(to + touch).all() && high.cmpge(from - touch).all()
                 })
                 .count();
             if between < 2 {
@@ -214,11 +225,11 @@ impl Gores {
                     && arms
                         .iter()
                         .filter(|(path, width)| {
-                            let reach = width / 2.0 + ARM_TOUCH;
+                            let touch = width / 2.0 + ARM_TOUCH;
                             outer.iter().any(|point| {
                                 let point = Vec2::from_array(*point);
                                 path.windows(2).any(|link| {
-                                    distance_to_segment(point, link[0], link[1]) <= reach
+                                    distance_to_segment(point, link[0], link[1]) <= touch
                                 })
                             })
                         })
@@ -256,19 +267,9 @@ impl Gores {
 
     /// Лежит ли точка на штриховке островка.
     pub fn contains(&self, point: Vec2) -> bool {
-        self.hatched.iter().any(|shape| {
-            let mut rings = shape.iter().map(|contour| {
-                contour
-                    .iter()
-                    .copied()
-                    .map(Vec2::from_array)
-                    .collect::<Vec<Vec2>>()
-            });
-            rings
-                .next()
-                .is_some_and(|outer| point_in_polygon(point, &outer))
-                && !rings.any(|hole| point_in_polygon(point, &hole))
-        })
+        self.hatched
+            .iter()
+            .any(|shape| point_in_shape(point, shape))
     }
 
     /// Асфальт островков — в слой улиц: он выше тротуаров и кроет их треугольник.
@@ -283,17 +284,16 @@ impl Gores {
     /// Полосы идут под 45° к длинной оси островка шагом [`HATCH_STEP`];
     /// обрезка по контурам — одна булева операция на все островки города.
     pub fn push_markings(&self, builder: &mut MeshBuilder) {
-        let color = LINE_COLOR.to_linear();
+        let color = LOT_LINE_COLOR.to_linear();
         let mut stripes: Vec<Contour> = Vec::new();
         for gore in &self.hatched {
-            for ring in gore {
-                let ring: Vec<Vec2> = ring.iter().copied().map(Vec2::from_array).collect();
-                builder.push_stroke(&ring, true, LINE_WIDTH, color);
+            for contour in gore {
+                builder.push_stroke(&ring_of(contour), true, LINE_WIDTH, color);
             }
             let Some(outer) = gore.first() else {
                 continue;
             };
-            let ring: Vec<Vec2> = outer.iter().copied().map(Vec2::from_array).collect();
+            let ring = ring_of(outer);
             let Some(corners) = min_area_rect(&ring) else {
                 continue;
             };
@@ -340,17 +340,6 @@ fn closing_span(path: &[Vec2], width: f32) -> (Vec2, Vec2) {
     let (low, high) = ring_bounds(path);
     let pad = width / 2.0 + GORE_CLOSING;
     (low - pad, high + pad)
-}
-
-/// Габарит контура — то же, что `ring_bounds`, но по точкам `i_overlay`.
-fn contour_bounds(contour: &Contour) -> (Vec2, Vec2) {
-    contour.iter().fold(
-        (Vec2::INFINITY, Vec2::NEG_INFINITY),
-        |(low, high), point| {
-            let point = Vec2::from_array(*point);
-            (low.min(point), high.max(point))
-        },
-    )
 }
 
 /// Начало ломаной — первые [`ARM_REACH`] метров.
