@@ -536,8 +536,7 @@ fn aisle_rows(outline: &Outline, aisles: &[&RoadLine], through: &Surroundings) -
             // глубину места задаёт карман: сперва проезд, остальное ряду
             let depth = ((gap - AISLE) / 2.0).clamp(STALL_DEPTH_MIN, STALL_DEPTH);
             if gap >= 2.0 * depth + PAIR_AISLE {
-                frame.push_row(&mut placed, centre - depth / 2.0, -1.0, depth);
-                frame.push_row(&mut placed, centre + depth / 2.0, 1.0, depth);
+                frame.push_pair(&mut placed, centre, depth);
             } else if gap >= STALL_DEPTH + MIN_AISLE {
                 // на пару не хватило — ряд по середине кармана, проезд по обе
                 // стороны от него
@@ -595,6 +594,10 @@ fn fields_of(mut segments: Vec<(Vec2, Vec2)>, through: &Surroundings) -> Vec<Fie
     }
     fields
 }
+
+/// Сколько мест один ряд пары может выступать за другой, прежде чем выступ
+/// считается отдельным рядом у кромки, а не обрезком ([`Frame::push_pair`]).
+const PAIR_OVERHANG: usize = 2;
 
 /// Соседние полосы одного квартала стоят не дальше этого поперёк, м: два шага
 /// сетки с запасом — через карман, где вместо проезда идёт дорожка.
@@ -785,13 +788,95 @@ impl Frame<'_> {
     /// (±1 вдоль `across`), местами глубиной `depth`, во всю длину площадки
     /// ([`Frame::span`]).
     fn push_row(&self, placed: &mut Placed, band: f32, nose: f32, depth: f32) {
-        let along = self.across * nose;
-        let mut row = Vec::new();
-        // кусок ряда — места подряд по сетке; обрыв считается здесь, потому
-        // что **обрывок короче [`MIN_ROW_RUN`] не размечается вовсе**: у
-        // скошенной кромки в ряду остаётся одно место, и на картинке это
-        // полоска на пустом асфальте, куда никто не встанет
+        self.lay(placed, self.cells(band, nose, depth, band), nose);
+    }
+
+    /// Пара рядов спинами друг к другу — **прямоугольником**: место остаётся,
+    /// только если за его спиной стоит место второго ряда.
+    ///
+    /// Ряды пары проверяются порознь, и в косом квартале (между двумя
+    /// дорогами, идущими к проездам под углом) каждый обрезало по-своему:
+    /// слева четыре места, справа пять и со сдвигом. Читалось это не как пара,
+    /// а как ряд и огрызок второго рядом с ним (отчёт автора). Если второго
+    /// ряда нет вовсе — у кромки, — первый остаётся как есть: одиночный ряд с
+    /// краю законен.
+    fn push_pair(&self, placed: &mut Placed, centre: f32, depth: f32) {
+        let mut rows = [
+            self.cells(centre - depth / 2.0, -1.0, depth, centre),
+            self.cells(centre + depth / 2.0, 1.0, depth, centre),
+        ];
+        let paired: Vec<bool> = rows[0]
+            .iter()
+            .zip(&rows[1])
+            .map(|(left, right)| left.is_some() && right.is_some())
+            .collect();
+        if paired.iter().any(|paired| *paired) {
+            for row in &mut rows {
+                // выступ — места подряд без соседа за спиной. Короткий
+                // срезается; длинный — ряд вдоль косой кромки, где второму
+                // встать негде, и он остаётся
+                let mut start = 0;
+                while start < row.len() {
+                    if row[start].is_none() || paired[start] {
+                        start += 1;
+                        continue;
+                    }
+                    let mut end = start;
+                    while end < row.len() && row[end].is_some() && !paired[end] {
+                        end += 1;
+                    }
+                    if end - start <= PAIR_OVERHANG {
+                        row[start..end].fill(None);
+                    }
+                    start = end;
+                }
+            }
+        }
+        let [left, right] = rows;
+        self.lay(placed, left, -1.0);
+        self.lay(placed, right, 1.0);
+    }
+
+    /// Уложить ряд из клеток сетки: обрывок короче [`MIN_ROW_RUN`] не
+    /// размечается вовсе — у скошенной кромки в ряду остаётся одно место, и на
+    /// картинке это полоска на пустом асфальте, куда никто не встанет.
+    fn lay(&self, placed: &mut Placed, cells: Vec<Option<Stall>>, nose: f32) {
+        let mut row: Vec<Stall> = Vec::new();
         let mut run: Vec<Stall> = Vec::new();
+        for cell in cells {
+            match cell {
+                Some(stall) => run.push(stall),
+                None => {
+                    if run.len() >= MIN_ROW_RUN {
+                        row.append(&mut run);
+                    }
+                    run.clear();
+                }
+            }
+        }
+        if run.len() >= MIN_ROW_RUN {
+            row.append(&mut run);
+        }
+        // порядок мест в списке — тот, в котором их ждёт разметка
+        // (`push_markings`): вдоль `-perp(Stall::along)`
+        if nose < 0.0 {
+            row.reverse();
+        }
+        for stall in row {
+            placed.push(stall);
+        }
+    }
+
+    /// Клетки продольной сетки ряда: место там, где оно прошло все проверки.
+    ///
+    /// `anchor` — полоса, по которой решается, **чья это земля**
+    /// ([`Frame::territory`]): у одиночного ряда своя, у пары — середина между
+    /// рядами. По месту её решали сперва, и на стыке двух кварталов левый ряд
+    /// пары доставался одному, правый другому — три места против пяти, каждый
+    /// от своей сетки (отчёт автора: «ряд и рядом неполный второй»).
+    fn cells(&self, band: f32, nose: f32, depth: f32, anchor: f32) -> Vec<Option<Stall>> {
+        let along = self.across * nose;
+        let mut cells = Vec::new();
         let mut index = 0.0;
         loop {
             let place = self.span.0 + index * STALL_WIDTH + STALL_WIDTH / 2.0;
@@ -806,32 +891,15 @@ impl Frame<'_> {
                 .iter()
                 .any(|drive| (place - drive).abs() < (AISLE + STALL_WIDTH) / 2.0);
             // `owns` перебирает все ходы площадки — спрашивается после контура
-            if clear
+            let stands = clear
                 && fits_with(self.area, at, self.main, self.across, depth, EDGE_MARGIN)
-                && self.owns(at)
+                && self.owns(self.main * place + self.across * anchor)
                 && !self.through.cover(at, along, depth)
-                && reachable(self.area, self.through, at, along, depth)
-            {
-                run.push(Stall { at, along, depth });
-            } else {
-                if run.len() >= MIN_ROW_RUN {
-                    row.append(&mut run);
-                }
-                run.clear();
-            }
+                && reachable(self.area, self.through, at, along, depth);
+            cells.push(stands.then_some(Stall { at, along, depth }));
             index += 1.0;
         }
-        if run.len() >= MIN_ROW_RUN {
-            row.append(&mut run);
-        }
-        // порядок мест в списке — тот, в котором их ждёт разметка
-        // (`push_markings`): вдоль `-perp(Stall::along)`
-        if nose < 0.0 {
-            row.reverse();
-        }
-        for stall in row {
-            placed.push(stall);
-        }
+        cells
     }
 }
 
@@ -2057,6 +2125,37 @@ mod tests {
             let to_lane = offset.min(step - offset);
             assert!((to_lane - 5.9).abs() < 0.2, "{to_lane}: {stall:?}");
         }
+    }
+
+    /// Дорога наискось режет два ряда пары по-разному — пара всё равно
+    /// прямоугольник: у каждого места есть сосед за спиной.
+    #[test]
+    fn a_pair_of_rows_cut_askew_is_trimmed_to_a_rectangle() {
+        let lot = lot(rect(100.0, 120.0));
+        let through = RoadLine {
+            oneway: true,
+            ..fixture::street(vec![Vec2::new(-10.0, 45.0), Vec2::new(130.0, 105.0)], 5.0)
+        };
+        let aisles: Vec<RoadLine> = [43.0, 60.0, 77.0]
+            .into_iter()
+            .map(|x| fixture::parking_aisle(vec![Vec2::new(x, 4.0), Vec2::new(x, 60.0)]))
+            .collect();
+        let aisles: Vec<&RoadLine> = aisles.iter().collect();
+        let stalls = stalls_beside(&lot, &aisles, &[&through], &[]);
+        // пара в кармане между первыми двумя проездами, под дорогой
+        let row = |nose: f32| -> Vec<i32> {
+            let mut places: Vec<i32> = stalls
+                .iter()
+                .filter(|stall| (43.0..60.0).contains(&stall.at.x) && stall.at.y < 60.0)
+                .filter(|stall| stall.along.x * nose > 0.5)
+                .map(|stall| (stall.at.y * 10.0).round() as i32)
+                .collect();
+            places.sort_unstable();
+            places
+        };
+        let (left, right) = (row(-1.0), row(1.0));
+        assert!(left.len() >= MIN_ROW_RUN, "{left:?}");
+        assert_eq!(left, right);
     }
 
     /// Парковочный карман — полоса в один ряд: с отступами место в неё не
