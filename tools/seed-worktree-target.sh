@@ -21,8 +21,9 @@
 #
 # Measured on a 51 GB / 91 667-file target: the clone took 20.7 s and cost zero
 # disk; the build that followed compiled polyanya and qwe only, finished in
-# 1m30s, and the two copies diverged by 4 GB. Without the seed that same
-# worktree builds bevy from scratch — measured at 7m29s for 406 crates.
+# 1m30s, and the two copies diverged by 4 GB. On an 88 GB target the clone took
+# 50 s, still at zero disk. Without the seed that same worktree builds bevy from
+# scratch — measured at 7m29s for 406 crates.
 #
 # On APFS `cp -c` is a copy-on-write clone. On any other volume it would be a
 # real 51 GB copy, so the flag is clonefile-only and the failure path below
