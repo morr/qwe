@@ -705,6 +705,59 @@ impl MeshBuilder {
         }
     }
 
+    /// **Клин** — разомкнутая лента, ширина которой вдоль ломаной меняется
+    /// линейно по длине дуги от `widths[0]` до `widths[1]`: переход между
+    /// сечениями улицы (`roads::network::sections`), где до этого ширина
+    /// менялась ступенькой.
+    ///
+    /// Торцы срезаны ровно по крайним точкам, изломы — общими вершинами по
+    /// биссектрисе ([`miter_offsets`]), как у ленты без веера: клин короток, а
+    /// круглый торец выпирал бы из-под более узкой соседней ленты. Координаты
+    /// фактуры: поперёк — в пределах своей полуширины, так что линии полос
+    /// расходятся клином вместе с краями; «до разрыва» — линейно от
+    /// `to_break[0]` до `to_break[1]`, продолжением срезанной ленты
+    /// ([`to_break_beyond`]), чтобы штрихи шли через стык без сдвига.
+    pub fn push_taper(
+        &mut self,
+        points: &[Vec2],
+        widths: [f32; 2],
+        to_break: [f32; 2],
+        color: LinearRgba,
+    ) {
+        let path = merge_close_points(points, false, widths[0].min(widths[1]) / 4.0);
+        if path.len() < 2 {
+            return;
+        }
+        let (along, total) = arclengths(&path, false);
+        if total <= 0.0 {
+            return;
+        }
+        let miters = miter_offsets(&path, false, 1.0);
+        let rgba = color.to_f32_array();
+        let base = self.positions.len() as u32;
+        for ((&point, &at), miter) in path.iter().zip(&along).zip(&miters) {
+            let share = at / total;
+            let half_width = (widths[0] + (widths[1] - widths[0]) * share) / 2.0;
+            let to_break = to_break[0] + (to_break[1] - to_break[0]) * share;
+            self.push_vertex(
+                point + *miter * half_width,
+                rgba,
+                self.coords(half_width, to_break, half_width),
+            );
+            self.push_vertex(
+                point - *miter * half_width,
+                rgba,
+                self.coords(-half_width, to_break, half_width),
+            );
+        }
+        for index in 0..path.len() as u32 - 1 {
+            let (left, right) = (base + 2 * index, base + 2 * index + 1);
+            let (next_left, next_right) = (left + 2, right + 2);
+            self.indices
+                .extend([left, right, next_right, left, next_right, next_left]);
+        }
+    }
+
     /// Лента постоянной ширины вдоль ломаной со стыками по биссектрисе
     /// (miter с ограничением `MITER_LIMIT`) и торцами по последней точке.
     /// Для тонких контуров `push_polyline` не годится — там каждый сегмент
@@ -1572,6 +1625,27 @@ fn arclengths(path: &[Vec2], closed: bool) -> (Vec<f32>, f32) {
         total += path[path.len() - 1].distance(path[0]);
     }
     (along, total)
+}
+
+/// «До разрыва» разомкнутой ленты [`MeshBuilder::push_ribbon_shaped`] с
+/// разрывами `breaks` на её **продолжении** — `beyond` метров за началом
+/// (`end = false`) или концом пути. Нужна клину (`MeshBuilder::push_taper`),
+/// который продолжает срезанную ленту: с тем же значением на стыке штрихи
+/// разметки идут через стык без сдвига фазы.
+pub fn to_break_beyond(
+    points: &[Vec2],
+    width: f32,
+    breaks: &[Break],
+    end: bool,
+    beyond: f32,
+) -> f32 {
+    let path = merge_close_points(points, false, width / 4.0);
+    if path.len() < 2 {
+        return FAR_FROM_BREAKS;
+    }
+    let (along, total) = arclengths(&path, false);
+    let gaps = GapProfile::new(&path, &along, total, RibbonBreaks::At(breaks), None);
+    gaps.distance(if end { total + beyond } else { -beyond })
 }
 
 /// Расстояние до ближайшего торца разомкнутого пути.

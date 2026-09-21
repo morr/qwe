@@ -199,9 +199,14 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   below. `entrances: Vec<Vec2>` — the OSM
   doors on this building's outline, empty for most buildings; see
   `references/entrances.md`.
-- **RoadLine** — centerline polyline + width by highway class (primary 16 → footway
-  3.5). `RoadClass: Street | Alley` (alleys = footways, park paths; different color and
-  z). `bridge` and `passage` flags — the navmesh carves (see the navigation-deep
+- **RoadLine** — centerline polyline + width **from its section**: lanes × 3.3 m (3.0 on a
+  service drive) + 0.5 m of edge each side, set by the first parse pass
+  (`map/roads/network/sections.rs`; footways keep 3.5 by class) — streets, sections and
+  the tapers between them are in `references/roads.md`, **Streets, sections, tapers**.
+  `highway: Highway` is the `highway` value (the five `*_link` are classes of their own);
+  `Highway::is_street` — not a service drive, not a path — is what `roads::is_carriageway`
+  asks, **not the width**. `RoadClass: Street | Alley` (alleys = footways, park paths;
+  different color and z). `bridge` and `passage` flags — the navmesh carves (see the navigation-deep
   skill); `bridge` also moves the road into the bridge deck layers (see **Bridge
   layers** below). Three more fields feed the **markings** and the parked cars: `oneway`
   (`oneway=yes|1|true|-1`; `reversible`/`alternating` are not one-way), `roundabout`
@@ -211,8 +216,10 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   them closed, against 7 closed one-way ways, the mall's big ring among them — so a
   consumer reading the bare field is a consumer that misses every untagged ring) and
   `lanes: Option<u8>` (the `lanes`
-  tag through `parse_measure`, floored, 1–8; `2;3` reads as 2, `0` and `12` as no tag).
-  Coverage per city is in `references/osm-coverage.md` — Tula has `lanes` on 97 % of its
+  tag through `parse_measure`, floored, 1–8; `2;3` reads as 2, `0` and `12` as no tag;
+  without `lanes`, `lanes:forward` + `lanes:backward` — then **overwritten** by the
+  section pass with the inferred count on every street and drive, so after the parse it
+  is `None` on paths only). Coverage per city is in `references/osm-coverage.md` — Tula has `lanes` on 97 % of its
   streets ≥ 8 m, the European cities on about half.
   **The direction of a one-way way is load-bearing now**, and it did not use to be: the
   cars park on one side of it, the right-hand kerb, so `oneway=-1` — "the traffic runs

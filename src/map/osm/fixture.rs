@@ -30,8 +30,8 @@ use bevy::prelude::*;
 use serde_json::{Value, json};
 
 use super::model::{
-    AreaKind, BuildingUse, FenceKind, FenceLine, MapData, PolyArea, RailKind, RailLine, RoadClass,
-    RoadLine, WallLine, WaterKind, WaterLine,
+    AreaKind, BuildingUse, FenceKind, FenceLine, Highway, MapData, PolyArea, RailKind, RailLine,
+    RoadClass, RoadLine, WallLine, WaterKind, WaterLine,
 };
 use super::overpass::GeoBounds;
 use crate::city::City;
@@ -213,11 +213,19 @@ pub fn rail(points: Vec<Vec2>, width: f32) -> RailLine {
     }
 }
 
+/// Улица заданной ширины. Класс — по ширине: у́же 7 м — дворовый проезд без
+/// тротуара и разметки (тесты зовут так проезды в 5–6 м), шире — жилая улица
+/// (двухполосная из сечения — 7.6 м).
 pub fn street(points: Vec<Vec2>, width: f32) -> RoadLine {
     RoadLine {
         points,
         width,
         class: RoadClass::Street,
+        highway: if width < 7.0 {
+            Highway::Service
+        } else {
+            Highway::Residential
+        },
         bridge: false,
         passage: false,
         oneway: false,
@@ -282,6 +290,7 @@ pub fn fence(points: Vec<Vec2>) -> FenceLine {
 pub fn footway(points: Vec<Vec2>) -> RoadLine {
     RoadLine {
         class: RoadClass::Alley,
+        highway: Highway::Path,
         ..street(points, 3.5)
     }
 }

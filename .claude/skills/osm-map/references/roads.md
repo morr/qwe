@@ -16,9 +16,13 @@ shows the road through it** in `parking.md`; the parse passes that read a road's
 - **Sidewalks** (`map/roads.rs`, `sidewalks` layer at `Z_SIDEWALK` 1.6, `SurfaceKind::
   Sidewalk`, light concrete `SIDEWALK_COLOR` over the asphalt-grey `ROAD_COLOR` — the
   brightness step between them is what reads as the kerb) — a **carriageway**
-  (`is_carriageway`: `RoadClass::Street`, width ≥ `STREET_MIN_WIDTH` 8 m, so `service`
-  drives get none, and never a `passage`) gets a band `width + 2 · sidewalk_width` (22 % of
-  the width, 1.2–3 m per side). It sits under the **street** ribbons (1.9 / 2.0) for the
+  (`is_carriageway`: `RoadClass::Street` whose `Highway::is_street` — so `service`
+  drives get none however wide, and never a `passage`) gets a band `width + 2 ·
+  sidewalk_width` (`sidewalk_band`: 22 % of the width, 1.2–3 m per side). **The class
+  decides, not the width**: the test used to be `width ≥ STREET_MIN_WIDTH` 8 m, which was
+  the class in other words while the width came from the class; with the width derived
+  from the lanes (**Sections** below) a two-lane street is 7.6 m and a one-lane one-way
+  4.3 m, and the old threshold would have taken their pavements away. It sits under the **street** ribbons (1.9 / 2.0) for the
   casing reason: a crossing street's fill covers it and the sidewalk ends at the junction
   the way a real one does. It sits **over the alley** ones (1.4 / 1.5), and that is the
   author's call from a screenshot of a yard footway running out onto улица: the path used
@@ -38,14 +42,60 @@ shows the road through it** in `parking.md`; the parse passes that read a road's
   markings: a white line on white is invisible, and on grey the street grid also stops
   merging with the courtyards. At a junction the band turns the corner on the kerb's own
   arc — **The drawn network → Kerb returns → The sidewalk turns with the kerb** below.
+- **Streets, sections, tapers** (`map/roads/network/streets.rs`, `sections.rs`,
+  `map/roads/tapers.rs`) — the first stage of the roads rework: the width of a street
+  stops being a property of its class and becomes the consequence of its lanes.
+  - **Streets** (`RoadNetwork`, kept in `MapData::network`). OSM cuts one street at every
+    tag change, so the ways are glued back through their seams: at a node the ends of
+    different ways pair up by **the most collinear pair of one `Highway` class** — pairs
+    sorted by the bend, greedy, nothing sharper than `MAX_BEND` 50° — and a one-way pair
+    only if the flow runs through the node (one way in, one out) and both are one-way. Only
+    **ends** pair: a way passing a node is continuous there already. Rings (tag or shape)
+    and closed ways are streets of one way — glued to an approach they would lead the
+    street round the circle; paths (`Highway::Path`) are in no street. The direction of an
+    end is a 10 m chord (`ARM_REACH`), since OSM's first link can be half a metre long.
+    Nodes are walked in key order, so the gluing does not depend on the map's order.
+  - **Sections** (`sections::apply`, **step 0 of `finish_parse`**). A way's lanes: the tag
+    (`lanes`, else `lanes:forward` + `lanes:backward` — one direction alone is not a sum),
+    else the **nearest tagged way of its street** by the distance between their middles
+    along it, else `default_lanes` by class (four on primary/secondary two-way, two on the
+    rest, half of that one-way, one on a service drive). Then a **lone jump** — a run shorter
+    than `SPIKE_MAX_LENGTH` 60 m with the same count on both sides and another of its own —
+    is cut to its neighbours. `RoadLine::lanes` is **overwritten** with the result on every
+    street and drive, and `width = lanes × lane width + 2 × EDGE_WIDTH` — 3.3 m a lane on a
+    street (`STREET_LANE_WIDTH`), 3.0 on a service drive, 0.5 m of edge each side: a
+    two-lane street is 7.6 m, a six-lane avenue 20.8, a one-lane one-way half 4.3 — where
+    the class gave 8, 16 and 16. **It is the one roads stage that moves the model**: the
+    width is read by the passes after it (houses off the sidewalks, blocks and lots pulled
+    to the roads), and then by bridge curbs, the navmesh's bridge corridors and the cars.
+    Paths keep their class width (3.5). The gallery parses each cut window on its own, so
+    a street there is inferred from the window's ways only.
+  - **Tapers** (`tapers::Tapers`, in `mesh_roads`) — where two ways of one street meet at a
+    **pure seam** (`RoadNodes::roads_at` = exactly those two; at a junction the step sinks
+    into the junction's asphalt, and the kerb returns are built on the full width) and
+    their widths differ by 0.1 m or more, the wider way's drawn path is **cut** at that end
+    by `TAPER_PER_METER` 10 × the difference (at most `TAPER_MAX_SHARE` 45 % of its drawn
+    length, since both ends may taper; under 1 m no taper). The cut end gets a **butt** cap
+    (`push_ribbon_trimmed`, `push_street_fill`'s `trimmed`) — a round cap of the full width
+    would bulge out of the taper — and the piece is laid by `MeshBuilder::push_taper`: a
+    strip whose width runs linearly from the narrow way's to its own, joined by bisector
+    vertices, with ribbon coords scaled to the local half width, so the lane lines fan out
+    with the edges (proper lane geometry through a change of count is the paint stage's).
+    The same taper is laid in the **sidewalk** band (from the narrow way's band) and, with
+    casing on, in the casing. No taper on bridges, passages or under `RoadJoin::Square`.
+    Drawing only: navmesh, cars and parse see each way's width as is.
+  - **The network overlay** — the gallery's `Network` row (or `ROADS_NETWORK=1`,
+    `examples/demos/roads/overlay.rs`): every street in its own colour, the line thicker by
+    the way's lanes, a white dot on every seam of a street.
 - **Markings** — the lane lines of a street are **not geometry**: `push_dashes` would
   alias and crawl at `Msaa::Off` (a 0.15 m line is under a pixel at the start zoom). The
   street (and bridge deck) fill is built with surface coords and
   `set_markings(Some(Markings { lanes, oneway }))` for every carriageway with two or more
   lanes — the code `lanes·2 + oneway` travels in the fourth `Ribbon` component. **Lane
-  count** (`roads::lane_count`): the `lanes` tag, else the width default (two-way: a lane
-  pair per 7 m → 8/10 m two, 12/16 m four; one-way: a lane per 4.5 m → 8 m one, 16 m
-  three), never more than the width allows at `MIN_LANE_WIDTH` 2.5 m, and **always one on
+  count** (`roads::lane_count`): `RoadLine::lanes`, which after the parse every street
+  and drive carries (**Sections** below); only a road built by hand in a test falls back
+  to the width default (two-way: a lane pair per 7 m; one-way: a lane per 4.5 m), never
+  more than the width allows at `MIN_LANE_WIDTH` 2.5 m, and **always one on
   a roundabout** (a one-lane ring has no lines, and cutting a two-lane ring's line at every
   entry looks worse than none). **A roundabout here is `RoadLine::is_roundabout` — tag or
   shape**, and the difference is the whole rule: the tagged rings of Tula are cut into
@@ -510,8 +560,9 @@ shows the road through it** in `parking.md`; the parse passes that read a road's
 
 ## The junction gallery — `examples/demos/roads`
 
-`cargo run --example roads` shows a city's typical road junctions in a column — fifteen
-for Tula: crossings of avenues (square and skew), of an avenue and a street, of a divided
+`cargo run --example roads` shows a city's typical road junctions in a column — sixteen
+for Tula (the sixteenth, `16_lanes_taper`, is a one-way primary going from four lanes to
+two at a pure seam — the taper of **Streets, sections, tapers**): crossings of avenues (square and skew), of an avenue and a street, of a divided
 avenue and a street, of private-sector streets and of yard drives, T's into an avenue and
 into one half of a divided one, a fork round a triangular island, a roundabout, five
 arms, a drive into a street, a street that narrows, a sharp bend, a dead end — each with

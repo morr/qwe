@@ -1,6 +1,6 @@
 use super::*;
 use crate::map::meshing::distance_to_path;
-use crate::map::osm::fixture;
+use crate::map::osm::{Highway, fixture};
 use crate::map::shadow_dir;
 
 fn road(points: Vec<Vec2>, width: f32, passage: bool) -> RoadLine {
@@ -425,11 +425,16 @@ fn a_fork_is_one_bridge_and_stays_up() {
 
 #[test]
 fn sidewalks_belong_to_streets_not_service_roads() {
-    // проезд (`service`, 5 м) — без тротуара; жилая улица и магистраль — с ним,
-    // в пределах диапазона
-    assert_eq!(sidewalk_width(5.0), None);
-    let residential = sidewalk_width(8.0).unwrap();
-    let primary = sidewalk_width(16.0).unwrap();
+    // проезд — без тротуара, как бы широк он ни был: решает класс, не ширина;
+    // жилая улица и магистраль — с ним, в пределах диапазона
+    let line = vec![Vec2::ZERO, Vec2::new(100.0, 0.0)];
+    let mut service = fixture::street(line.clone(), 8.0);
+    service.highway = Highway::Service;
+    assert_eq!(sidewalk_width(&service), None);
+    let residential = sidewalk_width(&fixture::street(line.clone(), 8.0)).unwrap();
+    let mut primary = fixture::street(line, 16.0);
+    primary.highway = Highway::Primary;
+    let primary = sidewalk_width(&primary).unwrap();
     assert!(residential < primary);
     assert!(SIDEWALK_WIDTH_RANGE.contains(&residential));
     assert!(SIDEWALK_WIDTH_RANGE.contains(&primary));

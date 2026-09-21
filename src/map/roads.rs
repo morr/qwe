@@ -54,7 +54,7 @@ use self::network::RoadNodes;
 use crate::map::footprint::{JOIN_EPSILON, casing_width};
 use crate::map::meshing::{
     Break, Markings, MeshBuilder, RibbonBreaks, RibbonCap, RibbonJoin, RibbonShape,
-    merge_close_points, miter_offsets,
+    merge_close_points, miter_offsets, to_break_beyond,
 };
 use crate::map::osm::model::{
     distance_to_segment, point_in_area, point_in_polygon, polyline_length, ring_bounds,
@@ -518,12 +518,11 @@ const SIDEWALK_COLOR: Color = Color::srgb(0.82, 0.815, 0.80);
 /// магистрали в 16 м тротуар в 3 м, у жилой улицы в 8 м — 1.8 м.
 const SIDEWALK_SHARE: f32 = 0.22;
 const SIDEWALK_WIDTH_RANGE: std::ops::RangeInclusive<f32> = 1.2..=3.0;
-/// Улицы у́же этого — проезды (`service`, 5 м): ни тротуара, ни разметки, ни
-/// разрыва в разметке улицы, к которой проезд примыкает.
-const STREET_MIN_WIDTH: f32 = 8.0;
 
-/// Полоса не у́же этого, м: `lanes=6` на десятиметровой ленте — данные о
-/// настоящей улице, а лента у нас по классу, и лишние полосы отбрасываются.
+/// Полоса не у́же этого, м. У разобранной улицы ширина выведена из самих
+/// полос (`network::sections`), и зажим ничего не режет; он остался для
+/// дорог, собранных руками, где `lanes=6` может прийти на десятиметровую
+/// ленту.
 const MIN_LANE_WIDTH: f32 = 2.5;
 /// Полос по умолчанию, когда тега `lanes` нет: двусторонней улице — по паре
 /// на каждые 7 м ширины (8 и 10 м — две полосы, 12 и 16 — четыре),
@@ -613,35 +612,45 @@ impl Default for RoadStyle {
     }
 }
 
-/// Ширина тротуара с одной стороны улицы, м; проезд тротуара не получает.
-pub fn sidewalk_width(road_width: f32) -> Option<f32> {
-    (road_width >= STREET_MIN_WIDTH).then(|| {
-        (road_width * SIDEWALK_SHARE)
-            .clamp(*SIDEWALK_WIDTH_RANGE.start(), *SIDEWALK_WIDTH_RANGE.end())
-    })
+/// Ширина тротуара с одной стороны проезжей части шириной `road_width`, м —
+/// без вопроса, есть ли у дороги тротуар вообще (это [`sidewalk_width`]).
+pub fn sidewalk_band(road_width: f32) -> f32 {
+    (road_width * SIDEWALK_SHARE).clamp(*SIDEWALK_WIDTH_RANGE.start(), *SIDEWALK_WIDTH_RANGE.end())
+}
+
+/// Ширина тротуара у дороги с одной стороны, м; у проезда и дорожки
+/// тротуара нет ([`is_carriageway`]).
+pub fn sidewalk_width(road: &RoadLine) -> Option<f32> {
+    is_carriageway(road).then(|| sidewalk_band(road.width))
 }
 
 /// Ширина тротуара, который у дороги **рисуется** при этом стиле: один ответ
 /// и для ленты тротуара, и для зажима радиуса скругления (`roads/corners.rs`).
 fn drawn_sidewalk(style: &RoadStyle, road: &RoadLine) -> Option<f32> {
-    (style.sidewalks && is_carriageway(road))
-        .then(|| sidewalk_width(road.width))
-        .flatten()
+    style.sidewalks.then(|| sidewalk_width(road)).flatten()
 }
 
 /// Проезжая часть улицы — то, что несёт тротуар и разметку и участвует в
-/// перекрёстках: класс `Street`, не арка (`passage` идёт сквозь дом), не у́же
-/// [`STREET_MIN_WIDTH`]. Мост — тоже: улица через реку не теряет полос.
+/// перекрёстках: улица по классу ([`Highway::is_street`] — не дворовый
+/// проезд), не арка (`passage` идёт сквозь дом). Мост — тоже: улица через
+/// реку не теряет полос.
+///
+/// Решает **класс, а не ширина**: пока ширина шла по классу, порог в 8 м
+/// был тем же классом другими словами, но ширина из сечения
+/// (`network::sections`) у двухполосной улицы — 7.6 м, у однополосной
+/// односторонней — 4.3, и порог по ширине отнял бы у них тротуар.
 ///
 /// Открыт наружу для [`map::cars`](crate::map::cars): «улица, вдоль которой
 /// паркуются» — то же самое понятие, что «улица, у которой есть тротуар и
 /// разметка», и второй копии предиката у слоя машин быть не должно.
 pub fn is_carriageway(road: &RoadLine) -> bool {
-    road.class == RoadClass::Street && !road.passage && road.width >= STREET_MIN_WIDTH
+    road.class == RoadClass::Street && !road.passage && road.highway.is_street()
 }
 
-/// Число полос проезжей части: тег `lanes`, иначе дефолт по ширине, и не
-/// больше, чем влезает по [`MIN_LANE_WIDTH`]. Кольцо ([`RoadLine::is_roundabout`]
+/// Число полос проезжей части: из сечения ([`RoadLine::lanes`] — после
+/// разбора оно есть у каждой улицы, `network::sections`), у дороги без него
+/// (собранной тестом руками) — дефолт по ширине, и не больше, чем влезает по
+/// [`MIN_LANE_WIDTH`]. Кольцо ([`RoadLine::is_roundabout`]
 /// — тег **или форма**) — всегда одна полоса: на однополосном кольце линий нет,
 /// а рвать линию двухполосного на каждом въезде хуже, чем не рисовать её вовсе.
 pub fn lane_count(road: &RoadLine) -> u8 {
@@ -783,6 +792,8 @@ pub struct RoadReport {
     pub crossings: usize,
     /// Направляющие островки у колец (`roads/gores.rs`).
     pub gores: usize,
+    /// Клинья между сечениями улиц (`roads/tapers.rs`).
+    pub tapers: usize,
     pub vertices: usize,
     pub network: std::time::Duration,
     pub elapsed: std::time::Duration,
@@ -798,6 +809,7 @@ impl std::fmt::Display for RoadReport {
             stitches,
             crossings,
             gores,
+            tapers,
             vertices,
             network,
             elapsed,
@@ -807,7 +819,7 @@ impl std::fmt::Display for RoadReport {
             "road meshing: {vertices} verts in {elapsed:?} ({:?}, smoothing {:?}, casing {}, \
              sidewalks {}, markings {}, junctions {junctions}, kerb returns {kerb_returns} + \
              {sidewalk_returns} on sidewalks, stitches {stitches}, driveway crossings \
-             {crossings}, gores {gores}; {network:?} of it before the ribbons)",
+             {crossings}, gores {gores}, tapers {tapers}; {network:?} of it before the ribbons)",
             style.join, style.smoothing, style.casing, style.sidewalks, style.markings,
         )
     }
@@ -869,6 +881,13 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
         drawn[*index] = crossing;
     }
     let stitches = network::stitches(&drawn, map, &nodes, |road| drawn_sidewalk(&style, road));
+    // клинья между сечениями улиц; `Square` оставлен ради сравнения с прежней
+    // картинкой — у него нет и клиньев, как нет скруглений
+    let tapers = if style.join == RoadJoin::Square {
+        tapers::Tapers::default()
+    } else {
+        tapers::Tapers::new(&drawn, &map.network, &nodes)
+    };
     let paths: Vec<Cow<[Vec2]>> = drawn
         .iter()
         .map(|road| centerline(road, style.smoothing, &nodes))
@@ -953,6 +972,7 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
                 color.to_linear(),
                 style.join,
                 breaks,
+                [false; 2],
             );
             continue;
         }
@@ -960,28 +980,83 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
             RoadClass::Street => (&mut street_casings, &mut streets),
             RoadClass::Alley => (&mut alley_casings, &mut alleys),
         };
+        // клинья у швов со сменой сечения: торцы, срезанные под них, и сами
+        // клинья от ширины узкого соседа (`roads/tapers.rs`)
+        let ends = tapers.at(index);
+        let [head, body, tail] = if ends == [None; 2] {
+            [None, None, None]
+        } else {
+            tapers::split(&points, ends.map(|end| end.map(|taper| taper.length)))
+        };
+        let body: &[Vec2] = body.as_deref().unwrap_or(&points);
+        let trimmed = [head.is_some(), tail.is_some()];
+        let wedges: Vec<(&[Vec2], &RoadLine, bool)> =
+            [(&head, ends[0], false), (&tail, ends[1], true)]
+                .into_iter()
+                .filter_map(|(path, taper, end)| {
+                    Some((path.as_deref()?, drawn[taper?.narrow], end))
+                })
+                .collect();
+        // «до разрыва» клина — продолжение срезанной ленты за её торцом: от
+        // узла шва до стыка с лентой, чтобы штрихи шли через стык без сдвига
+        let continued = |path: &[Vec2], width: f32, breaks: &[Break], end: bool| {
+            let length = polyline_length(path);
+            [
+                to_break_beyond(body, width, breaks, end, length),
+                to_break_beyond(body, width, breaks, end, 0.0),
+            ]
+        };
+
         if let Some(sidewalk) = drawn_sidewalk(&style, road) {
-            push_ribbon(
+            let band = |road: &RoadLine, sidewalk: f32| road.width + 2.0 * sidewalk;
+            push_ribbon_trimmed(
                 &mut sidewalks,
-                &points,
-                road.width + 2.0 * sidewalk,
+                body,
+                band(road, sidewalk),
                 SIDEWALK_COLOR.to_linear(),
                 style.join,
+                trimmed,
             );
+            for &(path, narrow, end) in &wedges {
+                let from =
+                    drawn_sidewalk(&style, narrow).map_or(narrow.width, |own| band(narrow, own));
+                let to = band(road, sidewalk);
+                sidewalks.push_taper(
+                    path,
+                    [from, to],
+                    continued(path, to, &[], end),
+                    SIDEWALK_COLOR.to_linear(),
+                );
+            }
         }
         if style.casing {
-            let width = road.width + 2.0 * casing_width(road.width);
-            push_ribbon(casing, &points, width, casing_color.to_linear(), style.join);
+            let band = |road: &RoadLine| road.width + 2.0 * casing_width(road.width);
+            let color = casing_color.to_linear();
+            push_ribbon_trimmed(casing, body, band(road), color, style.join, trimmed);
+            for &(path, narrow, end) in &wedges {
+                let to_break = continued(path, band(road), &[], end);
+                casing.push_taper(path, [band(narrow), band(road)], to_break, color);
+            }
         }
         fill.set_markings(markings);
         push_street_fill(
             fill,
-            &points,
+            body,
             road.width,
             color.to_linear(),
             style.join,
             breaks,
+            trimmed,
         );
+        for &(path, narrow, end) in &wedges {
+            let to_break = continued(path, road.width, breaks, end);
+            fill.push_taper(
+                path,
+                [narrow.width, road.width],
+                to_break,
+                color.to_linear(),
+            );
+        }
         if road.class == RoadClass::Street && !road.passage {
             grounds.push(road, &points);
             gore_roads.push(gores::GoreRoad::new(road, &points));
@@ -1089,6 +1164,7 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
         stitches: stitches.count,
         crossings: crossings.len(),
         gores: gores.count(),
+        tapers: tapers.count,
         vertices: layers.iter().map(|l| l.builder.vertex_count()).sum(),
         network: network_time,
         elapsed: started.elapsed(),
@@ -1417,15 +1493,32 @@ pub fn push_ribbon(
     color: LinearRgba,
     join: RoadJoin,
 ) {
+    push_ribbon_trimmed(builder, points, width, color, join, [false; 2]);
+}
+
+/// Лента дороги, у которой торец `[начало, конец]` может быть **срезан под
+/// клин** (`roads/tapers.rs`): такой торец кончается ровно на своей точке.
+/// Круглый торец полной ширины выпер бы из-под клина, который в этом месте
+/// начинается с той же ширины и дальше только сужается.
+fn push_ribbon_trimmed(
+    builder: &mut MeshBuilder,
+    points: &[Vec2],
+    width: f32,
+    color: LinearRgba,
+    join: RoadJoin,
+    trimmed: [bool; 2],
+) {
     let Some((join, cap)) = join.ribbon_shape() else {
         return builder.push_polyline(points, width, color);
     };
-    builder.push_ribbon(points, is_ring(points), width, color, join, cap);
+    let caps = trimmed.map(|trimmed| if trimmed { RibbonCap::Butt } else { cap });
+    builder.push_ribbon_capped(points, is_ring(points), width, color, join, caps);
 }
 
 /// Заливка проезжей части — лента с разрывами разметки по перекрёсткам. При
 /// `Square` разрывы деть некуда: `push_polyline` знает только торцы, а режим
-/// оставлен ради сравнения картинок, не ради разметки.
+/// оставлен ради сравнения картинок, не ради разметки. Срезанный под клин
+/// торец — как у [`push_ribbon_trimmed`].
 fn push_street_fill(
     builder: &mut MeshBuilder,
     points: &[Vec2],
@@ -1433,6 +1526,7 @@ fn push_street_fill(
     color: LinearRgba,
     join: RoadJoin,
     breaks: &[Break],
+    trimmed: [bool; 2],
 ) {
     let Some((join, cap)) = join.ribbon_shape() else {
         return builder.push_polyline(points, width, color);
@@ -1444,7 +1538,7 @@ fn push_street_fill(
         RibbonShape {
             closed: is_ring(points),
             join,
-            caps: [cap; 2],
+            caps: trimmed.map(|trimmed| if trimmed { RibbonCap::Butt } else { cap }),
             breaks: RibbonBreaks::At(breaks),
         },
     );
@@ -1485,8 +1579,13 @@ mod gores;
 mod lots;
 /// Открыт наружу для [`map::footprint`](crate::map::footprint): проём в ограде
 /// у брошенного торца — тот же вопрос «висячий ли он», что у стежка, и второго
-/// ответа на него быть не должно.
-pub(super) mod network;
+/// ответа на него быть не должно. И для разбора: улицы и сечения
+/// (`network::sections`) собираются там, потому что ширину дороги читают
+/// следующие проходы разбора, — а сеть потом лежит в `MapData::network`.
+pub mod network;
+/// Открыт наружу для [`map::cars`](crate::map::cars): ряд машин прерывается
+/// на клине, где бордюр ближе к оси, чем полуширина участка.
+pub(super) mod tapers;
 
 #[cfg(test)]
 mod tests;

@@ -230,12 +230,61 @@ pub enum RoadClass {
     Alley,
 }
 
-/// Дорога: осевая полилиния и ширина по классу highway.
+/// Значение `highway` дороги — то, из чего выводится её сечение
+/// (`map::roads::network::sections`) и по чему ways склеиваются в улицы: у
+/// продолжения тот же класс. Съезды (`*_link`) — свой класс, а не класс
+/// дороги, к которой они ведут: съезд уходит вбок, и продолжением главной
+/// его считать нельзя.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Highway {
+    Motorway,
+    Trunk,
+    Primary,
+    Secondary,
+    Tertiary,
+    MotorwayLink,
+    TrunkLink,
+    PrimaryLink,
+    SecondaryLink,
+    TertiaryLink,
+    Residential,
+    Unclassified,
+    LivingStreet,
+    /// Дворовый проезд, въезд, проезд стоянки.
+    Service,
+    /// Всё аллейное (`footway|path|pedestrian|cycleway|steps|track`) — одним
+    /// классом: сечения у дорожки нет, а склейка в улицы ей не нужна.
+    Path,
+}
+
+impl Highway {
+    /// Проезжая часть улицы: несёт тротуар, разметку и машины. Дворовый
+    /// проезд — нет, как бы широк он ни был; дорожка — тем более.
+    pub fn is_street(self) -> bool {
+        !matches!(self, Self::Service | Self::Path)
+    }
+
+    pub fn is_link(self) -> bool {
+        matches!(
+            self,
+            Self::MotorwayLink
+                | Self::TrunkLink
+                | Self::PrimaryLink
+                | Self::SecondaryLink
+                | Self::TertiaryLink
+        )
+    }
+}
+
+/// Дорога: осевая полилиния и ширина, выведенная из сечения
+/// (`map::roads::network::sections`), у дорожек — по классу.
 #[derive(Debug, Clone)]
 pub struct RoadLine {
     pub points: Vec<Vec2>,
     pub width: f32,
     pub class: RoadClass,
+    /// Значение `highway` — см. [`Highway`].
+    pub highway: Highway,
     /// `bridge=yes` — по такой дороге прорезается проходимый коридор через воду.
     pub bridge: bool,
     /// Арка: проезд/проход сквозь здание (`tunnel=building_passage`,
@@ -250,8 +299,12 @@ pub struct RoadLine {
     /// Тег `junction=roundabout|circular`. Спрашивают не его, а
     /// [`RoadLine::is_roundabout`]: кольцо бывает и без тега.
     pub roundabout: bool,
-    /// `lanes` — число полос в обе стороны, если тег есть и правдоподобен.
-    /// `None` — обычное дело; дефолт по ширине — у потребителя (`map::roads`).
+    /// Число полос в обе стороны. Из разбора выходит тег (`lanes`, иначе
+    /// `lanes:forward` + `lanes:backward`), а проход сечений
+    /// (`map::roads::network::sections`) проставляет его каждой проезжей
+    /// дороге и проезду: без тега — от соседей по улице, иначе по классу.
+    /// `None` остаётся у дорожек и у дорог, собранных тестом руками; дефолт
+    /// по ширине для них — у потребителя (`map::roads::lane_count`).
     pub lanes: Option<u8>,
     /// Проезд стоянки (`service=parking_aisle`) — полоса, по которой машина
     /// подъезжает к месту, и **единственная дорога, которую читает раскладка
@@ -835,6 +888,11 @@ pub struct MapData {
     pub road_nodes: Vec<RoadNode>,
     /// Площади дорог, нарисованные контуром, — см. [`RoadArea`].
     pub road_areas: Vec<RoadArea>,
+    /// Дороги, склеенные в улицы, — собирается проходом сечений при разборе
+    /// (`map::roads::network::sections`) по окончательному [`MapData::roads`].
+    /// Пуста у карты, собранной тестом руками: тогда клиньев между сечениями
+    /// нет, а всё остальное рисуется как прежде.
+    pub network: crate::map::roads::network::RoadNetwork,
     /// Ж/д пути — только для отрисовки, в навмеш не попадают.
     pub rails: Vec<RailLine>,
     pub walls: Vec<WallLine>,

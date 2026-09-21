@@ -1035,3 +1035,26 @@ fn a_template_keeps_its_ribbon_coords_scaled() {
         builder.vertex_count()
     );
 }
+
+/// Клин расходится от ширины узкого соседа до своей, линейно по длине, и
+/// несёт «до разрыва», продолжающее срезанную ленту.
+#[test]
+fn a_taper_runs_from_one_width_to_the_other() {
+    let mut builder = MeshBuilder::with_surface_coords();
+    let path = [Vec2::ZERO, Vec2::new(5.0, 0.0), Vec2::new(10.0, 0.0)];
+    builder.push_taper(&path, [2.0, 4.0], [50.0, 40.0], LinearRgba::WHITE);
+    let half_at = |x: f32| {
+        builder
+            .positions_for_test()
+            .iter()
+            .filter(|position| (position[0] - x).abs() < 1e-4)
+            .map(|position| position[1].abs())
+            .fold(0.0_f32, f32::max)
+    };
+    assert!((half_at(0.0) - 1.0).abs() < 1e-4);
+    assert!((half_at(5.0) - 1.5).abs() < 1e-4);
+    assert!((half_at(10.0) - 2.0).abs() < 1e-4);
+    let coords = builder.ribbon_coords_for_test().unwrap();
+    assert!((coords[0][1] - 50.0).abs() < 1e-4);
+    assert!((coords[coords.len() - 1][1] - 40.0).abs() < 1e-4);
+}

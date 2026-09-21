@@ -17,6 +17,7 @@ use crate::map::osm::model::{
     ring_area, ring_bounds, ring_vertex_mean, signed_ring_area,
 };
 use crate::map::osm::overpass::{Element, GeoBounds, LatLon, Member, OverpassResponse};
+use crate::map::roads::network::sections::{self, SectionReport};
 use crate::map::roads::{is_carriageway, sidewalk_width};
 use crate::map::seed::seed_from_point;
 
@@ -161,6 +162,7 @@ struct PlantedReport {
 /// этого единственным способом узнать, сколько домов отодвинулось от
 /// тротуаров, было прочесть строку на stderr.
 struct PassReport {
+    sections: SectionReport,
     drowned: usize,
     faiths_guessed: usize,
     entrances_found: usize,
@@ -182,6 +184,7 @@ impl std::fmt::Display for PassReport {
         // разбор по полям, а не `self.…`: в строке посадки шесть подстановок, и
         // по именам они читаются, а по позициям — только счётом
         let Self {
+            sections,
             drowned,
             faiths_guessed,
             entrances_found,
@@ -197,6 +200,7 @@ impl std::fmt::Display for PassReport {
             planted,
             planting,
         } = self;
+        writeln!(f, "{sections}")?;
         if *drowned > 0 {
             writeln!(
                 f,
@@ -273,12 +277,16 @@ impl std::fmt::Display for PassReport {
     }
 }
 
-/// Доводочные проходы по сырой карте — восемь, плюс сборка деревьев в конце, —
+/// Доводочные проходы по сырой карте — девять, плюс сборка деревьев в конце, —
 /// **и этот порядок и есть их интерфейс**. До этой функции он жил заметками в
 /// трёх doc-комментариях из восьми и не был записан целиком нигде.
 ///
 /// Почему именно так, сверху вниз:
 ///
+/// 0. **Улицы и сечения** (`map::roads::network::sections`) — самыми первыми:
+///    ширина дороги выводится из числа полос, а её читают шаги 5 и 6 (тротуар
+///    отодвигает дома, край дороги притягивает кварталы и стоянки). Домов этот
+///    шаг не касается, так что ставить его раньше утопленников ничему не мешает.
 /// 1. **Утопленники** уходят первыми: дом, целиком стоящий в воде, не должен
 ///    получить ни веры, ни двери, ни выпрямленного контура — всё это работа
 ///    по дому, которого не будет.
@@ -317,6 +325,7 @@ impl std::fmt::Display for PassReport {
 /// выпрямленный дом уносит свои вершины на новые места, и счёт, снятый до
 /// него, отвечал бы про старую карту.
 fn finish_parse(map: &mut MapData, entrances: &[Vec2]) -> PassReport {
+    let sections = sections::apply(map);
     let drowned = drop_buildings_in_water(map);
     let faiths_guessed = resolve_faiths(&mut map.buildings);
     let entrances_orphaned = attach_entrances(map, entrances);
@@ -357,6 +366,7 @@ fn finish_parse(map: &mut MapData, entrances: &[Vec2]) -> PassReport {
     map.compose_trees(TreeCompose::default());
 
     PassReport {
+        sections,
         drowned,
         faiths_guessed,
         entrances_found: entrances.len(),
@@ -997,7 +1007,7 @@ fn pull_houses_off_sidewalks(map: &mut MapData) -> PulledHouses {
         if road.bridge || !is_carriageway(road) {
             continue;
         }
-        let Some(sidewalk) = sidewalk_width(road.width) else {
+        let Some(sidewalk) = sidewalk_width(road) else {
             continue;
         };
         let reach = road.width / 2.0 + sidewalk + SIDEWALK_CLEARANCE;
@@ -1219,7 +1229,7 @@ fn pull_areas_to_roads(map: &mut MapData) -> StretchedAreas {
             continue;
         }
         let sidewalk = if is_carriageway(road) {
-            sidewalk_width(road.width).unwrap_or_default()
+            sidewalk_width(road).unwrap_or_default()
         } else {
             0.0
         };
@@ -1852,7 +1862,7 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
     // `highway=footway|steps` метрополитена. Что тег `tunnel` на этом way
     // может описывать вовсе не дорогу — вопрос [`is_road_underground`]
     if let Some(highway) = element.tags.get("highway") {
-        let Some((width, class)) = road_class(highway) else {
+        let Some((width, class, highway)) = road_class(highway) else {
             return;
         };
         if is_road_underground(&element.tags) {
@@ -1874,6 +1884,7 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
             points,
             width,
             class,
+            highway,
             bridge,
             passage: is_building_passage(&element.tags),
             oneway: is_oneway(&element.tags),

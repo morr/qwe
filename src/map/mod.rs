@@ -69,6 +69,9 @@ pub use self::osm::{TREE_DENSITY_MAX, TreeRowPlacement};
 // `ROAD_COLOR` наружу по той же причине: ряд машин витрины обязан стоять на
 // том же асфальте, что в городе
 pub use self::roads::{ROAD_COLOR, RoadJoin, RoadStyle};
+// сеть улиц — тип поля `MapData::network`; наружу его читает оверлей сети
+// витрины `roads`
+pub use self::roads::network::{RoadNetwork, Street, StreetWay};
 // а `smooth_path` со `Smoothing` — потому, что асфальт под ним лежит на той же
 // сглаженной осевой
 pub use self::smooth::{Smoothing, smooth_path};

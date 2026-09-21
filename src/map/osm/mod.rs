@@ -12,9 +12,9 @@ mod planting;
 
 pub use self::download::{JobState, MapLoadJob, OVERPASS_MIRRORS, start_load_thread};
 pub use self::model::{
-    AreaKind, BuildingUse, Colours, Faith, FenceKind, FenceLine, MapData, PipeLine, PitchKind,
-    PolyArea, RailKind, RailLine, Rgb, RoadArea, RoadAreaKind, RoadClass, RoadLine, RoadNode,
-    RoadNodeKind, RowTrees, Sacred, SacredForm, ServiceTrack, Structure, StructureKind,
+    AreaKind, BuildingUse, Colours, Faith, FenceKind, FenceLine, Highway, MapData, PipeLine,
+    PitchKind, PolyArea, RailKind, RailLine, Rgb, RoadArea, RoadAreaKind, RoadClass, RoadLine,
+    RoadNode, RoadNodeKind, RowTrees, Sacred, SacredForm, ServiceTrack, Structure, StructureKind,
     TrafficSide, TreeCompose, TreeRow, TreeRowLayout, TreeRowPlacement, WallLine, WaterKind,
     WaterLine, srgba_of, water_line_caps,
 };

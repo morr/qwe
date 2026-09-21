@@ -12,7 +12,7 @@ use bevy::prelude::*;
 
 use crate::map::osm::model::{
     AreaKind, BIG_BOX_MAX_HEIGHT, BIG_BOX_MAX_LEVELS, BuildingUse, Colours, Faith, FenceKind,
-    PitchKind, RailKind, Rgb, RoadAreaKind, RoadClass, RoadNodeKind, Sacred, SacredForm,
+    Highway, PitchKind, RailKind, Rgb, RoadAreaKind, RoadClass, RoadNodeKind, Sacred, SacredForm,
     ServiceTrack, StructureKind, WaterKind, is_big_box_shape, polyline_length,
 };
 use crate::map::osm::overpass::Element;
@@ -486,16 +486,33 @@ fn tagged_height(tags: &HashMap<String, String>) -> Option<f32> {
     building_height(tags, BuildingUse::Other, &[])
 }
 
-/// Ширина и класс по значению highway; `None` — дорогу не рисуем.
-pub(super) fn road_class(highway: &str) -> Option<(f32, RoadClass)> {
+/// Ширина по классу, род ленты и класс по значению highway; `None` — дорогу
+/// не рисуем.
+///
+/// Ширина здесь — **номинальная**, до сечений: у всего, кроме дорожек, её
+/// пересчитывает из числа полос проход сечений
+/// (`map::roads::network::sections`), первый в доводке разбора. Съезды
+/// (`*_link`) долго выбрасывались целиком — словарь их не знал, и въезд на
+/// мост в Туле (22 way `primary_link`) обрывался пустым местом.
+pub(super) fn road_class(highway: &str) -> Option<(f32, RoadClass, Highway)> {
+    let street = |width: f32, highway: Highway| (width, RoadClass::Street, highway);
     Some(match highway {
-        "motorway" | "trunk" | "primary" => (16.0, RoadClass::Street),
-        "secondary" => (12.0, RoadClass::Street),
-        "tertiary" => (10.0, RoadClass::Street),
-        "residential" | "unclassified" | "living_street" => (8.0, RoadClass::Street),
-        "service" => (5.0, RoadClass::Street),
+        "motorway" => street(16.0, Highway::Motorway),
+        "trunk" => street(16.0, Highway::Trunk),
+        "primary" => street(16.0, Highway::Primary),
+        "secondary" => street(12.0, Highway::Secondary),
+        "tertiary" => street(10.0, Highway::Tertiary),
+        "motorway_link" => street(8.0, Highway::MotorwayLink),
+        "trunk_link" => street(8.0, Highway::TrunkLink),
+        "primary_link" => street(8.0, Highway::PrimaryLink),
+        "secondary_link" => street(8.0, Highway::SecondaryLink),
+        "tertiary_link" => street(8.0, Highway::TertiaryLink),
+        "residential" => street(8.0, Highway::Residential),
+        "unclassified" => street(8.0, Highway::Unclassified),
+        "living_street" => street(8.0, Highway::LivingStreet),
+        "service" => street(5.0, Highway::Service),
         "footway" | "path" | "pedestrian" | "cycleway" | "steps" | "track" => {
-            (3.5, RoadClass::Alley)
+            (3.5, RoadClass::Alley, Highway::Path)
         }
         _ => return None,
     })
@@ -542,7 +559,7 @@ pub(super) fn road_area_kind(tags: &HashMap<String, String>) -> Option<RoadAreaK
         (None, Some(value), Some("yes")) => value,
         _ => return None,
     };
-    road_class(class).map(|(_, class)| match class {
+    road_class(class).map(|(_, class, _)| match class {
         RoadClass::Street => RoadAreaKind::Carriageway,
         RoadClass::Alley => RoadAreaKind::Walkway,
     })
@@ -718,10 +735,21 @@ pub(super) fn is_parking_aisle(tags: &HashMap<String, String>) -> bool {
 /// направлениям; `2;3` и `2.5` попадаются и читаются как `2`. Только тег:
 /// дефолт по ширине и правило кольца — у рендера (`roads::lane_count`).
 pub(super) fn tagged_lanes(tags: &HashMap<String, String>) -> Option<u8> {
-    let lanes = tags
-        .get("lanes")
-        .and_then(|value| parse_measure(value))?
-        .floor();
+    let count = |key: &str| {
+        tags.get(key)
+            .and_then(|value| parse_measure(value))
+            .map(f32::floor)
+    };
+    // без общего `lanes` — сумма по направлениям: в Туле так размечено 26 way,
+    // и все они с `lanes` заодно, но в Европе бывает и одно без другого. Одно
+    // направление без второго — не сумма: вторая сторона не нулевая, а неизвестная
+    let lanes = count("lanes").or_else(|| {
+        Some(
+            count("lanes:forward")?
+                + count("lanes:backward")?
+                + count("lanes:both_ways").unwrap_or(0.0),
+        )
+    })?;
     LANES_RANGE.contains(&lanes).then_some(lanes as u8)
 }
 

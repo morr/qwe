@@ -195,14 +195,28 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     `MapData::road_areas` (closed carriageway / walkway / island outlines from
     `area:highway`, `highway` + `area=yes`, `traffic_calming=island`). Parsed and kept;
     nothing draws them yet — the junction and paint stages will.
-  - **RoadLine** — centerline + width by highway class (primary 16 → footway 3.5);
-    `RoadClass: Street | Alley`; `bridge` / `passage` flags (the navmesh carves by them);
+  - **RoadLine** — centerline + width **from its section** (footways keep 3.5 by class);
+    `RoadClass: Street | Alley`; `highway: Highway` (the `highway` value; `*_link` is a
+    class of its own; `Highway::is_street` — not a service drive, not a path — is what
+    makes a **carriageway**, not the width); `bridge` / `passage` flags (the navmesh carves by them);
     `oneway`, `roundabout` (the `junction=roundabout|circular` tag — but the notion is
     `RoadLine::is_roundabout`, **tag or shape**: a closed one-way way is a ring too, and
     the mall's big ring carries no tag) and
-    `lanes: Option<u8>` (the tag, 1–8; the width default lives in `map/roads.rs`) — read
-    by the markings only; `parking_aisle` (`service=parking_aisle`) — read by the stall
-    layout only, see **Parking lots** below.
+    `lanes: Option<u8>` (the section's lane count, below); `parking_aisle`
+    (`service=parking_aisle`) — read by the stall layout only, see **Parking lots** below.
+  - **Street** (**RoadNetwork**, `MapData::network`, `map/roads/network/streets.rs`) — ways
+    glued end to end through their seams: at a node the **most collinear pair of ends of
+    one `Highway` class** (bend under 50°, one-way flow running through) continues one
+    street. Rings and closed ways are streets of one way; paths are in none.
+  - **Section** (`map/roads/network/sections.rs`, first pass of `finish_parse`) — how many
+    lanes a way has: `lanes` (or `lanes:forward` + `lanes:backward`), else the nearest
+    tagged way of its street, else a default by class; a lone jump shorter than 60 m
+    (2→4→2) is cut to its neighbours. The width follows: lanes × 3.3 m (3.0 on a service
+    drive) + a 0.5 m edge each side. **The only roads stage that moves the model** — the
+    parse passes after it read the width.
+  - **Taper** (`map/roads/tapers.rs`) — where two ways of one street meet at a pure seam
+    (no third road) with different widths, the wider one starts at the narrower's width
+    and widens over 10 m per metre of difference. Drawing only.
     Underground road is dropped (`is_road_underground`) — a **separate** predicate from
     `is_underground`, because the risk is asymmetric: an extra ribbon is cosmetic, an extra
     deletion is a hole in the navmesh.

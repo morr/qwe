@@ -37,7 +37,7 @@ use crate::map::osm::model::{distance_to_segment, ring_vertex_mean};
 use crate::map::osm::{MapData, PolyArea, RoadLine, TrafficSide};
 use crate::map::parking::{ParkingLayout, Stall};
 use crate::map::roads::junctions::{self, MarkingBreaks};
-use crate::map::roads::{RoadStyle, is_carriageway};
+use crate::map::roads::{RoadStyle, is_carriageway, tapers};
 use crate::map::seed::{Lcg, seed_from_point};
 use crate::map::shadow;
 use crate::map::smooth::{Smoothing, smooth_path};
@@ -392,7 +392,11 @@ pub fn mesh_cars(
     // надо было прежде, чем его заводить. Доли, а не миллисекунды: абсолютное
     // время зависит от App Nap, перемеряет его `measure_cars` из
     // `examples/bench/map_meshing` (он печатает обе строки — `breaks` и `cars`)
-    let junctions = junctions::marking_breaks(&map.roads, is_carriageway);
+    let mut junctions = junctions::marking_breaks(&map.roads, is_carriageway);
+    // и на клиньях между сечениями улицы: бордюр там ближе к оси
+    for (road, clearing) in tapers::car_clearings(&map.roads, &map.network) {
+        junctions.breaks[road].push(clearing);
+    }
     let breaks_took = started.elapsed();
     // застройка вокруг — тем же проходом и с тем же сроком жизни, что и
     // разрывы: индекс на 7.6 тысячи домов дешевле, чем повод его кешировать

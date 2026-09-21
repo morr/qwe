@@ -18,9 +18,13 @@
 //! Только картинка: навмеш, двери, деревья и машины по-прежнему видят данные
 //! OSM как есть (`RoadLine::points` не трогается, как и при сглаживании).
 
+pub mod sections;
+mod streets;
+
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
+pub use self::streets::{RoadNetwork, Street, StreetWay};
 use super::junctions::node_key;
 use crate::map::grid::Grid;
 use crate::map::osm::model::{closest_on_segment, point_in_area, polyline_length, ring_bounds};
