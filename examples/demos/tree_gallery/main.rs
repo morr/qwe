@@ -205,6 +205,7 @@ fn main() {
         // квадратиками, а feathers несёт в себе Fira Sans, на котором написаны
         // панели игры
         .add_plugins(qwe::ui::PanelWidgetsPlugin)
+        .add_plugins(qwe::ui::QuitOnEscPlugin)
         .init_resource::<Ground>()
         .init_resource::<Show>()
         .init_resource::<Tuning>()

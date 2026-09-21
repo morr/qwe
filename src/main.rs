@@ -1,5 +1,4 @@
-use bevy::app::{AppExit, TaskPoolOptions, TaskPoolPlugin, TaskPoolThreadAssignmentPolicy};
-use bevy::input::common_conditions::input_just_pressed;
+use bevy::app::{TaskPoolOptions, TaskPoolPlugin, TaskPoolThreadAssignmentPolicy};
 use bevy::prelude::*;
 use bevy::remote::{RemotePlugin, http::RemoteHttpPlugin};
 
@@ -124,13 +123,7 @@ fn main() {
         // последним: на своей сборке читает реестр типов, а типы групп
         // настроек регистрируют плагины выше (см. src/prefs.rs)
         .add_plugins(prefs::PrefsPlugin)
-        .add_systems(
-            Update,
-            close_on_esc
-                .run_if(input_just_pressed(KeyCode::Escape))
-                // Esc в поле ввода — «снять фокус», а не «выйти из игры»
-                .run_if(not(ui::typing_in_text_input)),
-        );
+        .add_plugins(ui::QuitOnEscPlugin);
 
     // Без свободного порта HTTP-сервер не поднимается вовсе: пусть отсутствие
     // BRP будет явным, а не сервером, который молча слушает не там
@@ -145,12 +138,4 @@ fn main() {
     }
 
     app.run();
-}
-
-/// Gated by `input_just_pressed(Escape)` in the schedule — the window-focus
-/// check stays here so Esc in another app's window doesn't quit this one.
-fn close_on_esc(focused_windows: Query<&Window>, mut event_writer: MessageWriter<AppExit>) {
-    if focused_windows.iter().any(|window| window.focused) {
-        event_writer.write(AppExit::Success);
-    }
 }

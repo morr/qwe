@@ -182,6 +182,7 @@ fn main() {
         // киты панели игры — кнопки, ползунки, тема. Заодно и шрифт: во
         // встроенном `default_font` кириллицы нет
         .add_plugins(qwe::ui::PanelWidgetsPlugin)
+        .add_plugins(qwe::ui::QuitOnEscPlugin)
         .init_resource::<View>()
         .init_resource::<Tuning>()
         // подписи и бегунки ручек ведёт кит — по разу на ресурс, как в игре

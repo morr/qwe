@@ -27,6 +27,7 @@ mod hotkeys;
 pub mod knob;
 mod navigation;
 mod noise;
+mod quit;
 mod roads;
 mod rows;
 mod shell;
@@ -57,6 +58,8 @@ pub use self::debug::{DebugConiferNoise, DebugDoors, DebugGrid, DebugNavmesh};
 // `pub` по той же причине, что и `slider`: демо расталкивания зовёт киты
 // панелей и потому обязано поднять их виджеты само
 pub use self::theme::PanelWidgetsPlugin;
+// игре и витринам поровну: Esc закрывает любое окно с панелью
+pub use self::quit::QuitOnEscPlugin;
 use crate::loading::{AppState, PlayPhase};
 use crate::map::osm::MapData;
 use crate::map::{TreeRowStyle, TreeStyle};

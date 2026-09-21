@@ -376,6 +376,9 @@ did not fit 1080 px and ran off the top of the screen.
   `row_value`, and its plaques hang in a `Pickable::IGNORE` column anchored to both screen
   edges — the shell's own shape. No colour of its own anywhere: a scene painted past the
   theme stops being a preview of the game's panel, which is the only reason to look at it.
+  And every scene adds **`qwe::ui::QuitOnEscPlugin`** next to `PanelWidgetsPlugin` — the
+  game's own Esc-quit (`ui/quit.rs`: focused window only, not while typing in a text
+  field), which `main.rs` raises too; a demo does not write its own copy.
 - **Cycle rows** — the button half of the knob kit, for the values `bevy_ui` has no input
   field for: `spawn_cycle_row(.., CycleBinding { cycle, text })` where `cycle` advances the
   field by itself. Deliberately not "next item of `ALL`": what cycles is enums, plain

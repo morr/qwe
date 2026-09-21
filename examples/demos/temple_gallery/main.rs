@@ -133,6 +133,7 @@ fn main() {
         // тому приходит весь `LayerMaterials` разом
         .add_plugins(Material2dPlugin::<SurfaceMaterial>::default())
         .add_plugins(qwe::ui::PanelWidgetsPlugin)
+        .add_plugins(qwe::ui::QuitOnEscPlugin)
         .init_resource::<RoofStyle>()
         .init_resource::<SurfaceStyle>()
         .init_resource::<SunOnMap>()
