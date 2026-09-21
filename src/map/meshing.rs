@@ -1387,6 +1387,90 @@ impl MeshBuilder {
             .extend([base, base + 1, base + 2, base, base + 2, base + 3]);
     }
 
+    /// Обрезать уже собранную геометрию прямоугольником `min..max`: каждый
+    /// треугольник режется по четырём сторонам, вершины на линии реза получают
+    /// цвет и координаты фактуры **линейной интерполяцией** — той же, какой их
+    /// по треугольнику ведёт GPU, так что внутри окна картинка не меняется ни
+    /// на пиксель.
+    ///
+    /// Нужна витрине пересечений (`examples/demos/roads`): та ставит окна
+    /// разных мест города встык, и всё, что слой рисует за своим окном — хвост
+    /// дороги, целый дом на краю вырезки, квад земли во всю карту, — иначе
+    /// ложится в окно соседа. Игре она не нужна: у неё карта одна.
+    pub fn clip_to_rect(&mut self, min: Vec2, max: Vec2) {
+        /// Вершина со всем, что на ней едет: позиция (с z), цвет и две
+        /// необязательные четвёрки фактуры.
+        type Vertex = ([f32; 3], [f32; 4], [f32; 4], [f32; 4]);
+        fn mix<const N: usize>(a: [f32; N], b: [f32; N], t: f32) -> [f32; N] {
+            std::array::from_fn(|i| a[i] + (b[i] - a[i]) * t)
+        }
+
+        let vertex = |index: u32| -> Vertex {
+            let i = index as usize;
+            (
+                self.positions[i],
+                self.colors[i],
+                self.ribbon.as_ref().map_or([0.0; 4], |ribbon| ribbon[i]),
+                self.roof.as_ref().map_or([0.0; 4], |roof| roof[i]),
+            )
+        };
+        // сторона окна: ось, граница и с какой её стороны — «внутри»
+        let sides = [
+            (0, min.x, 1.0),
+            (0, max.x, -1.0),
+            (1, min.y, 1.0),
+            (1, max.y, -1.0),
+        ];
+
+        let mut kept: Vec<Vertex> = Vec::new();
+        let mut indices = Vec::new();
+        for triangle in self.indices.chunks_exact(3) {
+            let mut polygon: Vec<Vertex> = triangle.iter().map(|index| vertex(*index)).collect();
+            for (axis, bound, sign) in sides {
+                let inside = |v: &Vertex| (v.0[axis] - bound) * sign >= 0.0;
+                let mut clipped = Vec::with_capacity(polygon.len() + 1);
+                for (i, a) in polygon.iter().enumerate() {
+                    let b = &polygon[(i + 1) % polygon.len()];
+                    if inside(a) {
+                        clipped.push(*a);
+                    }
+                    if inside(a) != inside(b) {
+                        let t = (bound - a.0[axis]) / (b.0[axis] - a.0[axis]);
+                        clipped.push((
+                            mix(a.0, b.0, t),
+                            mix(a.1, b.1, t),
+                            mix(a.2, b.2, t),
+                            mix(a.3, b.3, t),
+                        ));
+                    }
+                }
+                polygon = clipped;
+                if polygon.is_empty() {
+                    break;
+                }
+            }
+            if polygon.len() < 3 {
+                continue;
+            }
+            // треугольник, обрезанный выпуклым окном, выпукл — веер от первой
+            let base = kept.len() as u32;
+            kept.extend(&polygon);
+            for i in 1..polygon.len() as u32 - 1 {
+                indices.extend([base, base + i, base + i + 1]);
+            }
+        }
+
+        self.positions = kept.iter().map(|vertex| vertex.0).collect();
+        self.colors = kept.iter().map(|vertex| vertex.1).collect();
+        if let Some(ribbon) = &mut self.ribbon {
+            *ribbon = kept.iter().map(|vertex| vertex.2).collect();
+        }
+        if let Some(roof) = &mut self.roof {
+            *roof = kept.iter().map(|vertex| vertex.3).collect();
+        }
+        self.indices = indices;
+    }
+
     pub fn build(self) -> Mesh {
         let mut mesh = Mesh::new(
             PrimitiveTopology::TriangleList,

@@ -25,6 +25,49 @@ fn polygon_with_hole_triangulates() {
     assert_eq!(builder.indices.len(), 24);
 }
 
+/// Площадь собранной геометрии — суммой треугольников.
+fn meshed_area(builder: &MeshBuilder) -> f32 {
+    builder
+        .indices
+        .chunks_exact(3)
+        .map(|triangle| {
+            let [a, b, c] = [0, 1, 2].map(|i| {
+                let position = builder.positions[triangle[i] as usize];
+                Vec2::new(position[0], position[1])
+            });
+            (b - a).perp_dot(c - a).abs() / 2.0
+        })
+        .sum()
+}
+
+/// Обрезка окном оставляет ровно пересечение: квад 10 × 10, окно захватывает
+/// его четверть, — и ни одна вершина не остаётся за окном. Цвет на линии реза
+/// — интерполяция: у одноцветного квада он обязан остаться тем же.
+#[test]
+fn clipping_keeps_exactly_what_lies_inside_the_window() {
+    let mut builder = MeshBuilder::with_surface_coords();
+    builder.push_rect(Vec2::ZERO, Vec2::splat(10.0), LinearRgba::WHITE);
+    // второй квад целиком за окном — от него не остаётся ничего
+    builder.push_rect(Vec2::splat(50.0), Vec2::splat(60.0), LinearRgba::WHITE);
+    let (min, max) = (Vec2::splat(5.0), Vec2::splat(20.0));
+    builder.clip_to_rect(min, max);
+
+    assert!((meshed_area(&builder) - 25.0).abs() < 1e-3);
+    for position in &builder.positions {
+        let point = Vec2::new(position[0], position[1]);
+        assert!(
+            point.cmpge(min).all() && point.cmple(max).all(),
+            "{point:?}"
+        );
+    }
+    assert!(builder.colors.iter().all(|color| *color == [1.0; 4]));
+    // атрибут фактуры идёт вершина в вершину с позициями
+    assert_eq!(
+        builder.ribbon.as_ref().map(Vec::len),
+        Some(builder.positions.len())
+    );
+}
+
 #[test]
 fn degenerate_polygon_is_skipped() {
     let mut builder = MeshBuilder::default();
