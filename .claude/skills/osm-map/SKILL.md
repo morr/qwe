@@ -870,13 +870,20 @@ and the choice is what is under test:
 
 ## The junction gallery — `examples/demos/roads`
 
-`cargo run --example roads` shows a city's typical road junctions in a column — thirty of
-them for Tula: crossings of avenues and of streets, T and Y forks, an acute X, a staggered
-pair of T's, roundabouts, a slip lane, a U-turn across a median, an arch, a dead end, a
-wide road running into a narrow one, a driveway, a bridge approach (**no level crossings
-and no multi-level interchanges, by the author's call** — the column is about flat road
-junctions) — each with its full address and **game coordinates** in a
-caption to the left of its window.
+`cargo run --example roads` shows a city's typical road junctions in a column — fifteen
+for Tula: crossings of avenues (square and skew), of an avenue and a street, of a divided
+avenue and a street, of private-sector streets and of yard drives, T's into an avenue and
+into one half of a divided one, a fork round a triangular island, a roundabout, five
+arms, a drive into a street, a street that narrows, a sharp bend, a dead end — each with
+its full address and **game coordinates** in a caption to the left of its window.
+**The column is a list of junction *types*, one sample per type, with no target count**;
+the rules for adding one — one type once, readable in the window at a glance, flat road
+junctions only (no level crossings, no multi-level interchanges, no arch through a house:
+from above the roof covers the road and it reads as a house drawn on it), checked by eye
+and against the game — are written out in `examples/demos/roads/samples.rs`. They were
+learnt the hard way: thirty nodes picked from the cache by their arm count came down to
+fifteen once looked at, because a "T" or a "five-arm" node is routinely a plain crossing
+in the frame.
 It is the one gallery whose input is **OSM data, not hand-written geometry**, so it is the
 place to look at a road-network defect end to end:
 
