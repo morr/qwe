@@ -70,10 +70,11 @@ in `main.rs`.
   city.
 - **Z-layers** — constants in `settings.rs`, bottom to top: ground → landuse works →
   landuse yards → parks → woods → tree-row band casing → tree-row band → grass → sand →
-  sidewalks → alley casings → alleys → road casings → roads → parking (2.001) → lot
+  sidewalks → alley casings → alleys → road casings → roads → road paint (2.0005) →
+  parking (2.001) → lot
   sidewalks (2.002) → lot lines (2.003) → parking markings (2.004) → pitches (2.005) →
   pitch markings → water (2.01) → waterways (2.02) → bridge shadows →
-  bridge casings → bridges → rail ballast
+  bridge casings → bridges → bridge paint (2.25) → rail ballast
   → rail ties → rail steel → tram → wagons → cars → fences (2.75) → pipe shadows (2.76) →
   pipes (2.77) → portal stain → corpses → portal → industry shadows (4.55) → buildings (5) →
   roof shadows (5.05) → industry walls (5.06) → industry tops (5.07) → units → souls (18)
@@ -224,6 +225,22 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     place, and the street passes it along a straight stretch on the bisector. Bridges,
     arches and paths keep the per-way Chaikin `centerline`. The ribbon, the sidewalk band
     and the parked cars all stand on it. Drawing only.
+  - **Lane frame** (`meshing::LaneFrame`, `roads/paint.rs::lane_frame`) — where a
+    carriageway's lanes lie across its axis: a grid node `origin` (on the axis for an even
+    lane count, half a lane off it for an odd one) and the carriageway bounds `low..high`;
+    lane boundaries sit at `origin + k · STREET_LANE_WIDTH`. **One frame for the ruts and
+    the lines** — the asphalt shader reads it from `ATTRIBUTE_RIBBON`, the paint layer
+    builds its lines on it. On a taper it drifts from the narrow section's to the wide
+    one's: the outer lane is born from the wedge, and when the parity changes the grid
+    slides by half a lane over the taper, the new lane on the right of the taper's run.
+  - **Paint layer** (`map/roads/paint.rs`, shader `paint.wgsl`) — the lane lines as
+    **geometry** off the street axis, not a pattern of the asphalt shader: one strip wider
+    than the line per line, the shader draws the line (1.3 px floor), its dashes **by the
+    street's arclength** (the phase does not restart at a seam), solid for the last 25 m
+    before a junction break, and the axis of a two-way street of 4+ lanes as a double
+    solid. Two meshes per level (lane lines, axes), streets at `Z_ROAD_PAINT` and bridges
+    at `Z_BRIDGE_PAINT`; `PaintLods` hides the lane lines past 0.4 m/px and the axes past
+    0.9 without a rebuild. `RoadPaintStyle` (panel knobs Paint and Wear) is uniforms only.
     Underground road is dropped (`is_road_underground`) — a **separate** predicate from
     `is_underground`, because the risk is asymmetric: an extra ribbon is cosmetic, an extra
     deletion is a hole in the navmesh.
@@ -1043,9 +1060,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   vertices on its fillets.
   Render-only. Tula, cache v14: 349 lots parsed, 355 once the apron has cut some of them in parts.
 - **Asphalt wear** (`surface.wgsl`, `SurfaceParams::wear`) — an asphalt road on a photo is
-  never one tone. **Wheel ruts** in the **ribbon frame**, so they follow the lane and not
+  never one tone. **Wheel ruts** in the **lane frame**, so they follow the lane and not
   the compass (a polished band 0.85 m either side of each lane's middle — the track of a
-  car — measured with `fract` of the lane index, so every lane gets its own pair),
+  car — measured with `fract` of the lane index on the grid the paint lines stand on, so
+  every lane gets its own pair and a taper's ruts stay between its lines),
   **zero-mean** so a marked street is on average the same tone as an unmarked drive
   running into it. **Kerb dirt was removed**: a drive joins a street with no junction
   gap, and the street's dark kerb band ran across every drive mouth.
@@ -1060,12 +1078,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   The ruts **fade out in a junction gap** by the same `to_break` the lane dashes use,
   over 5 m: a crossing has no lane to polish a rut down, and without the gate the two
   streets drew their ruts straight through each other.
-  Wear rides the **markings code**: the lane count comes from the very
-  `ATTRIBUTE_RIBBON.w` the lane lines read, which `roads::road_markings` fills only for a
-  carriageway of two lanes or more, and only while `RoadStyle.markings` is on. So wear
-  shows up exactly where the lines do — a one-lane street, a markings-off style, and any
-  areal fill of the same `SurfaceKind::Street` material (the parking lot among them,
-  which carries no ribbon at all) all stay flat.
+  Wear rides the **lane frame** (`roads::road_lanes`): every carriageway gets one, a
+  one-lane street included, whatever `RoadStyle.markings` says — the amplitude is its own
+  knob (**Wear**, `RoadPaintStyle::wear`). A drive, a path and any areal fill of the same
+  `SurfaceKind::Street` material (the parking lot among them, which carries no ribbon at
+  all) have no frame and stay flat.
 - **Industry** (`map/industry.rs`) — what gives an industrial belt away from the air is
   not the sheds (those are the same boxes as everywhere) but **round spots and their
   shadows**, and the overhead heating main. `MapData::structures` holds the cylinders
@@ -1378,9 +1395,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   **`SurfaceStyle::texture`** (panel *Surfaces*, persisted) scales all amplitudes,
   0 = the old flat fills, and retunes uniforms without rebuilding a mesh. A mesh for it is
   built with **`MeshBuilder::with_surface_coords`** — the **`Ribbon` attribute**
-  `[across, to-break, half width, markings code]` in metres (*to-break* = signed distance
-  to the nearest **marking break**, negative inside a gap; code = `lanes·2 + oneway`, 0 =
-  none), zeros on polygons. This shader grain is what the map has instead of a **ground
+  in metres: `[across, to-break, half width, 0]` on a ribbon without lanes (the water's
+  shoal reads it), `[across, to-break, low, high]` measured from the lane grid node on a
+  carriageway with a **lane frame** (*to-break* = signed distance to the nearest
+  **marking break**, negative inside a gap), zeros on polygons. The paint layer rides the
+  same attribute with its own meaning. This shader grain is what the map has instead of a **ground
   grain sprite** — a map-sized tiled noise sprite, proposed and then dropped in the merge
   that brought the building look; there is no `map/grain.rs`, and none is wanted.
 - **Rims** (`map/spawn.rs::push_area`, `MeshBuilder::push_inset_band`) — every area

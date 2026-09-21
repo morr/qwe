@@ -670,7 +670,7 @@ arches.
     **`Roof` attribute** (`meshing::ATTRIBUTE_ROOF`, `[axis x, y, material code,
     seed]`). All four numbers are constant over a **face** — the roof's axis is the
     building's long axis, a wall's is its own direction — so the attribute is a
-    *builder state* (`MeshBuilder::set_roof`), like the markings code, not an argument of
+    *builder state* (`MeshBuilder::set_roof`), like the lane frame of a street, not an argument of
     every `push_*`; the fragment reads it `@interpolate(flat)`. Code `0` means **no
     texture** — roof clutter rides in the same mesh (2.5D is one
     painter's-order layer) and comes out with its vertex colour untouched. Walls rode

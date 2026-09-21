@@ -483,7 +483,7 @@ fn a_closed_oneway_way_is_a_roundabout_without_the_tag() {
     road.oneway = true;
     assert!(road.is_roundabout());
     assert_eq!(lane_count(&road), 1);
-    assert_eq!(road_markings(&road), None);
+    assert_eq!(road_lanes(&road), Some(paint::lane_frame(1)));
 
     road.oneway = false;
     assert!(
@@ -501,31 +501,23 @@ fn a_closed_oneway_way_is_a_roundabout_without_the_tag() {
 }
 
 #[test]
-fn markings_need_a_carriageway_with_two_lanes() {
+fn lanes_come_with_the_carriageway() {
     let line = vec![Vec2::ZERO, Vec2::new(100.0, 0.0)];
     let mut street = fixture::street(line.clone(), 8.0);
-    assert_eq!(
-        road_markings(&street),
-        Some(Markings {
-            lanes: 2,
-            oneway: false
-        })
-    );
+    assert_eq!(road_lanes(&street), Some(paint::lane_frame(2)));
     street.oneway = true;
-    assert_eq!(road_markings(&street), None, "одна полоса — делить нечего");
-    street.width = 12.0;
     assert_eq!(
-        road_markings(&street),
-        Some(Markings {
-            lanes: 2,
-            oneway: true
-        })
+        road_lanes(&street),
+        Some(paint::lane_frame(1)),
+        "одна полоса: линий нет, а колея есть"
     );
-    assert_eq!(road_markings(&fixture::street(line.clone(), 5.0)), None);
-    assert_eq!(road_markings(&fixture::passage(line.clone(), 8.0)), None);
+    assert_eq!(road_lanes(&fixture::passage(line.clone(), 8.0)), None);
+    let mut drive = fixture::street(line.clone(), 8.0);
+    drive.highway = Highway::Service;
+    assert_eq!(road_lanes(&drive), None, "у проезда полос нет");
     assert!(
-        road_markings(&fixture::bridge(line, 8.0)).is_some(),
-        "мост несёт разметку своей улицы"
+        road_lanes(&fixture::bridge(line, 8.0)).is_some(),
+        "мост несёт полосы своей улицы"
     );
 }
 
@@ -643,19 +635,23 @@ fn the_city_wall_ribbon_stays_off_fortress_buildings() {
 // телеметрия области жили внутри `spawn_roads` — 275 строк, взять которые из
 // теста было нечем: проверять можно было только хелперы под ними.
 
-/// Одиннадцать дорожных слоёв снизу вверх, ровно в том порядке, в каком они
-/// уходят в мир.
-const LAYERS: [&str; 11] = [
+/// Пятнадцать дорожных слоёв снизу вверх, ровно в том порядке, в каком они
+/// уходят в мир: одиннадцать лент и четыре слоя краски над своим асфальтом.
+const LAYERS: [&str; 15] = [
     "alley_casings",
     "alleys",
     "sidewalks",
     "road_casings",
     "roads",
+    paint::PAINT_LANES,
+    paint::PAINT_AXES,
     "lot_sidewalks",
     "lot_lines",
     "bridge_shadows",
     "bridge_casings",
     "bridges",
+    paint::BRIDGE_PAINT_LANES,
+    paint::BRIDGE_PAINT_AXES,
     "walls",
 ];
 
@@ -676,14 +672,19 @@ fn layer<'a>(layers: &'a [LayerMesh], name: &str) -> &'a LayerMesh {
 }
 
 #[test]
-fn a_street_builds_eleven_layers_bottom_up() {
+fn a_street_builds_fifteen_layers_bottom_up() {
     let (layers, report) = mesh_roads(&one_street(), RoadStyle::default());
 
     let names: Vec<&str> = layers.iter().map(|layer| layer.name).collect();
     assert_eq!(names, LAYERS);
     for pair in layers.windows(2) {
+        // линии полос и осевые лежат на одной высоте: их полосы не
+        // перекрываются, а прячет их ступень зума, не порядок
+        let paint_pair = [pair[0].name, pair[1].name]
+            .iter()
+            .all(|name| paint::PaintTag::of(name).is_some());
         assert!(
-            pair[0].z < pair[1].z,
+            pair[0].z < pair[1].z || paint_pair && pair[0].z == pair[1].z,
             "{} лежит не ниже {}",
             pair[0].name,
             pair[1].name
@@ -704,6 +705,7 @@ fn only_the_bridge_shadow_is_blended() {
             "sidewalks" | "lot_sidewalks" => MaterialSpec::Surface(SurfaceKind::Sidewalk),
             "alleys" => MaterialSpec::Surface(SurfaceKind::Alley),
             "roads" | "bridges" => MaterialSpec::Surface(SurfaceKind::Street),
+            name if paint::PaintTag::of(name).is_some() => MaterialSpec::Paint,
             _ => MaterialSpec::Flat,
         };
         assert_eq!(layer.material, expected, "{}", layer.name);
@@ -772,9 +774,9 @@ fn junctions_with(map: &MapData, markings: bool) -> usize {
 }
 
 #[test]
-fn markings_off_means_no_junctions_counted() {
-    // перекрёстки считаются только ради разметки: без неё и рвать нечего
-    assert_eq!(junctions_with(&a_tee(), false), 0);
+fn junctions_are_counted_with_markings_off_too() {
+    // перекрёсток гасит и колею асфальта, а она есть без разметки
+    assert_eq!(junctions_with(&a_tee(), false), 1);
     assert_eq!(junctions_with(&a_tee(), true), 1);
 }
 

@@ -779,14 +779,10 @@ fn surface_coords_cover_every_vertex() {
 }
 
 /// Поперёк — ±полуширина на краях ленты, «до разрыва» растёт от обоих торцов
-/// к середине, полуширина — та, что просили; код разметки — тот, что выставлен.
+/// к середине, полуширина — та, что просили; раскладки полос нет — ноль.
 #[test]
 fn ribbon_coords_follow_the_ribbon_frame() {
     let mut builder = MeshBuilder::with_surface_coords();
-    builder.set_markings(Some(Markings {
-        lanes: 2,
-        oneway: false,
-    }));
     builder.push_ribbon(
         &[Vec2::ZERO, Vec2::new(30.0, 0.0)],
         false,
@@ -811,7 +807,7 @@ fn ribbon_coords_follow_the_ribbon_frame() {
             position[0]
         );
         assert_eq!(half_width, 2.0);
-        assert_eq!(mode, 4.0, "two lanes, two-way");
+        assert_eq!(mode, 0.0, "no lanes");
     }
     let middle = builder
         .positions
@@ -819,6 +815,70 @@ fn ribbon_coords_follow_the_ribbon_frame() {
         .filter(|position| (position[0] - 15.0).abs() < 1e-4)
         .count();
     assert_eq!(middle, 4, "the midpoint vertex pair is missing");
+}
+
+/// С раскладкой полос координаты ленты — от узла сетки полос: поперёк и обе
+/// границы проезжей части сдвинуты на него.
+#[test]
+fn lane_coords_are_measured_from_the_lane_grid() {
+    let mut builder = MeshBuilder::with_surface_coords();
+    let frame = LaneFrame {
+        origin: 1.65,
+        low: -4.95,
+        high: 4.95,
+    };
+    builder.set_lanes(Some(frame));
+    builder.push_ribbon(
+        &[Vec2::ZERO, Vec2::new(30.0, 0.0)],
+        false,
+        10.9,
+        LinearRgba::WHITE,
+        RibbonJoin::Round,
+        RibbonCap::Butt,
+    );
+    let coords = builder.ribbon_coords_for_test().unwrap();
+    for (position, ribbon) in builder.positions.iter().zip(coords) {
+        assert!(
+            (ribbon[0] - (position[1] - 1.65)).abs() < 1e-4,
+            "{ribbon:?}"
+        );
+        assert!((ribbon[2] + 6.6).abs() < 1e-4);
+        assert!((ribbon[3] - 3.3).abs() < 1e-4);
+    }
+}
+
+/// Клин ведёт раскладку от одной к другой по доле пути: на середине — ровно
+/// посередине.
+#[test]
+fn a_taper_carries_the_lane_frame_across() {
+    let mut builder = MeshBuilder::with_surface_coords();
+    let from = LaneFrame {
+        origin: 0.0,
+        low: -3.3,
+        high: 3.3,
+    };
+    let to = LaneFrame {
+        origin: 1.65,
+        low: -4.95,
+        high: 4.95,
+    };
+    builder.set_lane_taper(Some(from), Some(to));
+    builder.push_taper(
+        &[Vec2::ZERO, Vec2::new(10.0, 0.0), Vec2::new(20.0, 0.0)],
+        [7.6, 10.9],
+        [100.0, 100.0],
+        LinearRgba::WHITE,
+    );
+    let coords = builder.ribbon_coords_for_test().unwrap();
+    let middle = from.lerp(to, 0.5);
+    for (position, ribbon) in builder.positions.iter().zip(coords) {
+        if (position[0] - 10.0).abs() > 1e-4 {
+            continue;
+        }
+        assert!((ribbon[0] - (position[1] - middle.origin)).abs() < 1e-4);
+        assert!((ribbon[2] - (middle.low - middle.origin)).abs() < 1e-4);
+        assert!((ribbon[3] - (middle.high - middle.origin)).abs() < 1e-4);
+    }
 }
 
 /// За торцом «до торца» отрицательно — по нему шейдер гасит разметку на
@@ -846,7 +906,7 @@ fn cap_coords_go_negative_past_the_end() {
     assert!(beyond.iter().all(|&to_break| to_break < 0.0), "{beyond:?}");
     assert!(
         coords.iter().all(|ribbon| ribbon[3] == 0.0),
-        "markings were never asked for"
+        "lanes were never asked for"
     );
 }
 

@@ -876,9 +876,11 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
   field → sparse dark dots, grass tufts and undergrowth on Park/Grass/Wood), **drift** (the
   mottle slides with `globals.time` — only Water), **shore** (`shore_color` /
   `shore_width` — only Water: the channel ribbon's shoal by its `across`, see
-  **Waterways**), and the **markings** block (Street —
-  a bridge deck is the same kind and carries its street's lines; a footbridge in the same
-  mesh has no markings code and stays bare). The zoom rule is one function,
+  **Waterways**), and the **wear** block (Street — wheel ruts on the lane frame; a bridge
+  deck is the same kind and carries its street's ruts, a footbridge in the same mesh has
+  no lane frame and stays bare). The lane **lines** are not this shader's any more: they
+  are the paint layer (`roads/paint.rs`, `paint.wgsl`, `references/roads.md`). The zoom
+  rule is one function,
   `visible(wavelength, px)` with `px = fwidth(world position)`: an octave shorter than 1.5 px
   contributes nothing and one longer than 4 px contributes fully — the noise is centred, so
   a faded octave shifts no brightness, and zooming out makes a surface smoother, never
@@ -889,7 +891,7 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
   fbm4}` here — the hash reaches it inside `value_noise`; `roof.wgsl` takes its own
   subset, `crown.wgsl` only `fbm3`), so a rule that must not drift is kept in one place.
   **Only what more than one shader calls moves there**: `dash_distance` (lane dashes)
-  stays in `surface.wgsl` and `band` (the drive between garage rows) in `roof.wgsl`,
+  lives in `paint.wgsl` and `band` (the drive between garage rows) in `roof.wgsl`,
   each with a single consumer — a helper calling the library is not itself a reason to
   move it into the library.
   Materials are built once (`SurfaceMaterials`, `Startup`) and
@@ -902,10 +904,12 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
   noise fields over the same fills read as dirt, and the shader one already fades by
   pixel size.
   The material demands the **`Ribbon` vertex attribute** (`meshing::ATTRIBUTE_RIBBON`,
-  `[across, to-break, half width, markings code]` in metres: *to-break* is the signed
-  distance to the nearest break — a marking break on a street, a mouth on a channel —
-  the code is `Markings::encode`, `lanes·2 + oneway`, 0 for none) and a mesh gets it only from `MeshBuilder::with_surface_coords()`;
-  `push_ribbon` / `push_ribbon_broken` fill it from the ribbon frame (quads: ±half width;
+  in metres: `[across, to-break, half width, 0]` on a ribbon without lanes, `[across,
+  to-break, low, high]` from the lane grid node on a carriageway with a **lane frame**
+  (`MeshBuilder::set_lanes` / `set_lane_taper`, `meshing::LaneFrame`); *to-break* is the
+  signed distance to the nearest break — a marking break on a street, a mouth on a
+  channel) and a mesh gets it only from `MeshBuilder::with_surface_coords()`;
+  `push_ribbon` / `push_ribbon_shaped` fill it from the ribbon frame (quads: ±half width;
   join fans: the outer side; round caps: the projection onto the normal, with *to-break*
   extrapolated past the node along the last quad's slope), polygons get zeros. It costs
   16 bytes per vertex, which is why building, crown and overlay meshes are built without

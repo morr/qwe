@@ -87,12 +87,60 @@ shows the road through it** in `parking.md`; the parse passes that read a road's
   - **The network overlay** — the gallery's `Network` row (or `ROADS_NETWORK=1`,
     `examples/demos/roads/overlay.rs`): every street in its own colour, the line thicker by
     the way's lanes, a white dot on every seam of a street.
-- **Markings** — the lane lines of a street are **not geometry**: `push_dashes` would
-  alias and crawl at `Msaa::Off` (a 0.15 m line is under a pixel at the start zoom). The
-  street (and bridge deck) fill is built with surface coords and
-  `set_markings(Some(Markings { lanes, oneway }))` for every carriageway with two or more
-  lanes — the code `lanes·2 + oneway` travels in the fourth `Ribbon` component. **Lane
-  count** (`roads::lane_count`): `RoadLine::lanes`, which after the parse every street
+- **Markings — the paint layer** (`map/roads/paint.rs`, shader `assets/shaders/paint.wgsl`).
+  The lane lines are **geometry off the street axis**, not a pattern of the asphalt
+  shader any more. Until stage 3 of the roads plan the asphalt shader drew them from the
+  ribbon's own width — `round((across + half width) / lane width)`, lanes split evenly
+  from the ribbon's centre — so on a taper every line drifted with the width, and the dash
+  phase restarted at every seam of two ways. Now:
+  - **One lane frame** (`meshing::LaneFrame`, built by `paint::lane_frame(lanes)`): the
+    grid node `origin` (on the axis for an even lane count, `STREET_LANE_WIDTH / 2` off it
+    for an odd one) and the carriageway bounds `±lanes · 3.3 / 2`. Lane boundaries are
+    `origin + k · 3.3` strictly inside the bounds. The **asphalt fill gets the same frame**
+    (`MeshBuilder::set_lanes`, `roads::road_lanes` — every carriageway, one lane included)
+    and lays its ruts on it (**Asphalt wear**), so the ruts sit exactly between the lines.
+  - **Taper**: the frame drifts from the narrow section's to the wide one's over the
+    wedge (`MeshBuilder::set_lane_taper` for the asphalt, `paint::narrow_frame(...).lerp`
+    for the lines). The grid node is picked so that on the path **from the seam to the
+    body** it moves by `[0, lane)` to the left — so lines both sections share stay put
+    (2 → 4), and a parity change (2 → 3) slides the grid by half a lane over the taper, the
+    new lane born on the right of the taper's run. A line that the narrow section lacks
+    grows in from the kerb: its alpha is the distance to the nearer bound over
+    `BIRTH_FADE` (half a lane). The asphalt wedge runs seam → body, so for the tail wedge
+    its frame is the mirror (`paint::wedge_frames`); `the_wedge_asphalt_and_the_wedge_paint_share_one_grid`
+    pins that both land on one grid.
+  - **Dashes by the street's arclength** (`paint::street_stations` over the network's
+    ordered ways and the axis paths): 3 m / 3 m, and the phase runs through a seam.
+  - **Solid near a junction**: the last `APPROACH` 25 m before a junction break. The axis
+    of a two-way street with 4+ lanes is a **double solid** (0.5 m gap, merging into one
+    line once the gap is under ~2 px); a two-lane two-way street has a dashed axis; an odd
+    two-way street and a one-way street have none.
+  - **Geometry**: one strip per line (`MeshBuilder::push_paint_strip`, miter joins),
+    `LANE_STRIP` 0.6 m / `AXIS_STRIP` 1.4 m half-width — wider than the 0.15 m line so the
+    1.3 px floor and the ±0.7 px antialiasing still fit at the farthest zoom where the line
+    is drawn. `ATTRIBUTE_RIBBON` here is `[across from the line, street arclength,
+    to-break, kind]`, the birth alpha rides the vertex colour. `to-break` comes from
+    `meshing::break_profile` — the same `GapProfile` the asphalt ribbon uses, so the
+    lines stop at the same junction gaps.
+  - **Layers**: `road_paint_lanes` + `road_paint_axes` at `Z_ROAD_PAINT` (above every
+    street fill, **under** a parking lot — a lot laid over the carriageway hides its lines
+    as it did when the asphalt shader drew them), `bridge_paint_lanes` +
+    `bridge_paint_axes` at `Z_BRIDGE_PAINT` (a street's paint under an overpass must not
+    lie over the deck). Material `PaintMaterial` (blend), its handle in
+    `SurfaceMaterials` next to the surface ones, `MaterialSpec::Paint`.
+  - **LOD**: the shader fades lane lines from 0.32 to `LANE_ZOOM_MAX` 0.4 m/px and axes
+    to `AXIS_ZOOM_MAX` 0.9; `PaintLods` (the same thresholds) hides the two meshes by
+    `Visibility` (`paint::show_paint`, `PaintTag` on the entity, set by
+    `spawn_road_meshes` by the layer's name) — **no rebuild** at a threshold. The gallery
+    does not run the ladder and relies on the shader fade.
+  - **`RoadPaintStyle`** (group `road_paint`): `paint` 0–1 (0.85) — the line opacity,
+    `wear` 0–0.15 (0.075) — the rut amplitude. Both uniforms
+    (`surface::retune_surface_materials`), a knob drag rebuilds nothing; the Markings
+    toggle of `RoadStyle` still decides whether the paint layer is built at all.
+  - The report counts `paint N lines / M verts`. Tula at stage 3: see the roads plan's
+    stage log.
+
+  **Lane count** (`roads::lane_count`): `RoadLine::lanes`, which after the parse every street
   and drive carries (**Sections** below); only a road built by hand in a test falls back
   to the width default (two-way: a lane pair per 7 m; one-way: a lane per 4.5 m), never
   more than the width allows at `MIN_LANE_WIDTH` 2.5 m, and **always one on
@@ -102,18 +150,12 @@ shows the road through it** in `parking.md`; the parse passes that read a road's
   open arcs and got their single lane all along, while the one ring that is a *closed*
   way — ТРЦ «Макси», way 397005605, `oneway=yes` with no `junction` tag — carried
   `lanes=2`, so it was drawn with dashed lane lines and asphalt wear all the way round,
-  which is also what made its seam visible (**Ribbon** below). The shader puts a line on every interior lane boundary
-  (`round((across + half width) / lane width)`), dashed 3 m / 3 m, except the **axis** of a
-  two-way road with 4+ lanes, which is solid; a one-way road has no axis, and an odd
-  `lanes` on a two-way road (three: two one way, one the other) has none either — all its
-  boundaries are dashed. Line width `MARKING_WIDTH` 0.15 m but never under 1.3 px,
-  anti-aliased over ±0.7 px; faded out when a lane is under ~10 px on screen (`lane width
-  / px`). `MARKING_COLOR` is white at 0.85 alpha over the asphalt grey.
-  **Breaks** — the second `Ribbon` component is the signed distance to the nearest
-  **marking break** (`meshing::Break { at, reach }`, passed as `RibbonBreaks::At` to
-  `push_ribbon_broken`): negative inside a gap, so the line fades at the gap edge
-  (`smoothstep(0, 1)`) and the dash phase is anchored there *with a gap first*, so no dash
-  ever pokes into a junction. The mesher projects each break's world point onto its own
+  which is also what made its seam visible (**Ribbon** below).
+  **Breaks** — «to-break» is the signed distance to the nearest **marking break**
+  (`meshing::Break { at, reach }`, passed as `RibbonBreaks::At`): negative inside a gap,
+  so a paint line fades at the gap edge (`smoothstep(0, 1)`) and the ruts fade over 5 m.
+  Junctions (`junctions::marking_breaks`) are computed **always** now, markings on or
+  off — the ruts need them too. The mesher projects each break's world point onto its own
   (smoothed, merged) path — that is why a break is a point, not an arclength: the smoothed
   centreline and the OSM node may disagree — merges overlapping gaps, and inserts a vertex
   at every kink of the distance function (each gap centre and the crossover between
@@ -531,11 +573,15 @@ shows the road through it** in `parking.md`; the parse passes that read a road's
   rail bridges are out of scope. The curb is not just paint: the navmesh blocks the
   same bands (see **Bridge curbs are impassable** in the navigation-deep skill).
 - **Asphalt wear** (`surface.wgsl`, `SurfaceParams::wear`, on `SurfaceKind::Street` only)
-  — what keeps a road from being one flat tone, in the **ribbon frame** so it follows the
+  — what keeps a road from being one flat tone, in the **lane frame** so it follows the
   lane rather than the compass: **wheel ruts** — a polished band `RUT_OFFSET` 0.85 m
   either side of each lane's middle (a car's track is 1.5 m), `RUT_SIGMA` 0.32 m wide,
-  +7.5 %. The lane is found from `fract` of `(across + half_width) / lane_width`, so
-  **every** lane gets its own pair without knowing how many there are.
+  amplitude `SurfaceParams::wear` — the **Wear** knob (`RoadPaintStyle::wear`, 7.5 % by
+  default, was the shader constant `RUT_AMP`). The lane is `fract` of
+  `across_from_grid_node / LANE_WIDTH` (3.3, the city's one lane width), inside the
+  carriageway bounds `low..high` with a 0.3 m fade at each — the attribute layout of
+  **Markings — the paint layer** above. So the ruts stand on the very grid the paint
+  lines do, a taper included.
   - **The ruts are zero-mean**: the band's share of the lane (`2·σ·√(2π) / lane width`)
     is subtracted from it, so between the ruts the asphalt is a touch darker and the lane
     on average is exactly `ROAD_COLOR`. Added as a plain brightening, a marked street was
@@ -576,15 +622,14 @@ shows the road through it** in `parking.md`; the parse passes that read a road's
   is a thing that happens: traffic fans out over a crossing and polishes nothing. The gate
   costs one `smoothstep` on the wear amplitude `w`, so anything added to the block later
   fades with the ruts. The block is
-  gated on `lanes >= 2`, and `lanes` is decoded from the same `ATTRIBUTE_RIBBON.w` the
-  markings ride on: `roads::road_markings` fills it only for a carriageway of two lanes or
-  more, and only while `RoadStyle.markings` is on. So **wear reaches exactly the roads the
-  lane lines reach** — a one-lane street gets none, turning Markings off turns wear off
-  with it, and an areal fill of the same `Street` material carries no ribbon and stays
-  flat — the **parking lot** among them, which shares the material and would otherwise
-  have grown ruts across its stalls. The gate is `>= 2` rather than `>= 1` because
-  `Markings::encode` never carries a single lane: `>= 1` read as a wider rule than the
-  code could ever deliver.
+  gated on `high > low`: only a ribbon with a lane frame has that (`roads::road_lanes` —
+  every carriageway, a one-lane street included, whatever the Markings toggle says; the
+  wear has its own knob now). Water's ribbon carries `half width, 0` there and polygons
+  zeros, so neither passes; an areal fill of the same `Street` material carries no
+  ribbon and stays flat — the **parking lot** among them, which shares the material and
+  would otherwise have grown ruts across its stalls. Before the paint layer the gate was
+  `lanes >= 2` off the markings code, so wear reached exactly the roads the lane lines
+  reached and switched off with Markings.
 
 ## The junction gallery — `examples/demos/roads`
 

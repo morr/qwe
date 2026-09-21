@@ -77,16 +77,17 @@ use qwe::map::buildings::{
 };
 use qwe::map::osm::parse::parse_response;
 use qwe::map::surface::{
-    LayerMesh, SurfaceMaterial, init_flat_materials, init_surface_materials, spawn_layers,
+    LayerMesh, SurfaceMaterial, init_flat_materials, init_surface_materials,
+    retune_surface_materials, retunes_on, spawn_layers,
 };
 use qwe::map::trees::{
     ConiferField, ConiferNoiseStyle, CrownMaterial, CrownParams, TreeMaterials, TreeRowStyle,
     TreeStyle, mesh_trees, spawn_tree_meshes,
 };
 use qwe::map::{
-    BuildingHeightMode, FenceZoomBucket, GROUND_COLOR, MeshBuilder, ParkingLayout, RailZoomBucket,
-    RoadStyle, RoofStyle, SunOnMap, SurfaceStyle, apply_sun, mesh_fences, mesh_rails, mesh_roads,
-    mesh_surfaces, mesh_tree_row_band, spawn_road_meshes,
+    BuildingHeightMode, FenceZoomBucket, GROUND_COLOR, MeshBuilder, PaintMaterial, ParkingLayout,
+    RailZoomBucket, RoadPaintStyle, RoadStyle, RoofStyle, SunOnMap, SurfaceStyle, apply_sun,
+    mesh_fences, mesh_rails, mesh_roads, mesh_surfaces, mesh_tree_row_band, spawn_road_meshes,
 };
 use qwe::ui::knob::AddKnobsExt;
 use qwe::ui::{PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET};
@@ -176,6 +177,7 @@ fn main() {
         )
         .add_plugins(PanCameraPlugin)
         .add_plugins(Material2dPlugin::<SurfaceMaterial>::default())
+        .add_plugins(Material2dPlugin::<PaintMaterial>::default())
         .add_plugins(Material2dPlugin::<RoofMaterial>::default())
         .add_plugins(Material2dPlugin::<CrownMaterial>::default())
         .add_plugins(qwe::ui::PanelWidgetsPlugin)
@@ -183,6 +185,7 @@ fn main() {
         .add_plugins(qwe::ui::AgentBadgePlugin)
         .init_resource::<City>()
         .init_resource::<RoadStyle>()
+        .init_resource::<RoadPaintStyle>()
         .init_resource::<RoofStyle>()
         .init_resource::<SurfaceStyle>()
         .init_resource::<SunOnMap>()
@@ -190,6 +193,7 @@ fn main() {
         .init_resource::<NetworkOverlay>()
         // подписи строк стиля ведёт кит — по разу на ресурс, как в игре
         .add_knobs::<RoadStyle>()
+        .add_knobs::<RoadPaintStyle>()
         .add_knobs::<NetworkOverlay>()
         .insert_resource(ClearColor(GROUND_COLOR))
         .add_systems(
@@ -215,6 +219,8 @@ fn main() {
                 (drag_pan, key_pan),
                 step_to_neighbour,
                 sync_city_buttons.run_if(resource_changed::<City>),
+                // краска и колея — юниформы, как в игре: слои не пересобираются
+                retune_surface_materials.run_if(retunes_on()),
                 // на первом кадре оба ресурса числятся изменёнными — первая
                 // сборка идёт той же дорогой, что и всякая следующая
                 reload.run_if(

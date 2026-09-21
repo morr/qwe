@@ -69,6 +69,11 @@ pub use self::osm::{TREE_DENSITY_MAX, TreeRowPlacement};
 // `ROAD_COLOR` наружу по той же причине: ряд машин витрины обязан стоять на
 // том же асфальте, что в городе
 pub use self::roads::{ROAD_COLOR, RoadJoin, RoadStyle};
+// краска и колея: ресурс ручек Paint/Wear (панель игры и витрины `roads`), а
+// материал краски — витринам, которые поднимают материалы поверхностей сами
+pub use self::roads::paint::{
+    PAINT_MAX, PAINT_MIN, PAINT_STEP, PaintMaterial, RoadPaintStyle, WEAR_MAX, WEAR_MIN, WEAR_STEP,
+};
 // сеть улиц — тип поля `MapData::network`; наружу его читает оверлей сети
 // витрины `roads`
 pub use self::roads::network::{RoadNetwork, Street, StreetWay};
@@ -102,7 +107,7 @@ use bevy::prelude::*;
 use bevy::sprite_render::Material2dPlugin;
 
 use crate::loading::{AppState, WorldInitSet};
-use crate::prefs::{TrackPrefExt, retuned};
+use crate::prefs::TrackPrefExt;
 
 /// Цвет тени — альфа-эквивалент watabou-шного multiply `#9699AE`. Общий и для
 /// домов, и для крон по той же причине, что и само солнце ([`sun`]).
@@ -115,6 +120,7 @@ impl Plugin for MapPlugin {
         app.add_plugins(Material2dPlugin::<surface::SurfaceMaterial>::default())
             .add_plugins(Material2dPlugin::<buildings::material::RoofMaterial>::default())
             .add_plugins(Material2dPlugin::<trees::CrownMaterial>::default())
+            .add_plugins(Material2dPlugin::<roads::paint::PaintMaterial>::default())
             .init_resource::<SunStyle>()
             .init_resource::<SunOnMap>()
             .init_resource::<TreeStyle>()
@@ -130,6 +136,8 @@ impl Plugin for MapPlugin {
             .init_resource::<fences::FenceZoomBucket>()
             .init_resource::<RoofStyle>()
             .init_resource::<RoadStyle>()
+            .init_resource::<RoadPaintStyle>()
+            .init_resource::<roads::paint::PaintZoomBucket>()
             .init_resource::<SurfaceStyle>()
             .init_resource::<rail::RailZoomBucket>()
             .init_resource::<tram::TramZoomBucket>()
@@ -145,6 +153,7 @@ impl Plugin for MapPlugin {
             .register_type::<BuildingHeightMode>()
             .register_type::<RoofStyle>()
             .register_type::<RoadStyle>()
+            .register_type::<RoadPaintStyle>()
             .register_type::<SurfaceStyle>()
             .register_type::<TramStyle>()
             .register_type::<IndustryStyle>()
@@ -156,6 +165,7 @@ impl Plugin for MapPlugin {
             .track_pref::<BuildingHeightMode>()
             .track_pref::<RoofStyle>()
             .track_pref::<RoadStyle>()
+            .track_pref::<RoadPaintStyle>()
             .track_pref::<SurfaceStyle>()
             .track_pref::<TramStyle>()
             .track_pref::<IndustryStyle>()
@@ -271,7 +281,15 @@ impl Plugin for MapPlugin {
                         .run_if(industry::rebuilds_on()),
                     // сила фактуры — юниформ материалов, а не меши: без
                     // привязки к состоянию, материалы живут вне мира
-                    surface::retune_surface_materials.run_if(retuned::<SurfaceStyle>),
+                    surface::retune_surface_materials.run_if(surface::retunes_on()),
+                    // краска не пересобирается со ступенью: ступень только
+                    // прячет меши линий, которых на этом зуме не видно
+                    (
+                        zoom::update_zoom_bucket::<roads::paint::PaintLods>,
+                        roads::paint::show_paint,
+                    )
+                        .chain()
+                        .run_if(in_state(AppState::Playing)),
                     buildings::material::retune_roof_material
                         .run_if(buildings::material::retunes_on()),
                     // ступень зума считается каждый кадр (одно чтение камеры и

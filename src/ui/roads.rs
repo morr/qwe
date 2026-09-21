@@ -3,6 +3,10 @@
 //! кнопка, листающая значение по кругу (как у панели деревьев); правка
 //! `RoadStyle` пересобирает дорожные слои (`map::roads::rebuild_roads`).
 //!
+//! Под разметкой — два ползунка `RoadPaintStyle`: свежесть краски (Paint) и
+//! колея асфальта (Wear). Оба — юниформы материалов, протяжка не пересобирает
+//! ничего, поэтому ресурс свой, а не поля `RoadStyle`.
+//!
 //! Последние строки секции — трамвай (`TramStyle`) и машины (`CarStyle`,
 //! тумблер плюс ползунок занятости): у каждого свой ресурс со своей
 //! пересборкой (`map::tram::rebuild_tram`, `map::cars::rebuild_cars`). И путь,
@@ -17,7 +21,10 @@
 use bevy::prelude::*;
 
 use crate::map::cars::{CAR_OCCUPANCY_MAX, CAR_OCCUPANCY_MIN, CAR_OCCUPANCY_STEP};
-use crate::map::{CarStyle, RoadJoin, RoadStyle, Smoothing, TramStyle};
+use crate::map::{
+    CarStyle, PAINT_MAX, PAINT_MIN, PAINT_STEP, RoadJoin, RoadPaintStyle, RoadStyle, Smoothing,
+    TramStyle, WEAR_MAX, WEAR_MIN, WEAR_STEP,
+};
 use crate::ui::knob::{AddKnobsExt, CycleBinding, SliderBinding, spawn_cycle_row, spawn_knob};
 use crate::ui::rows::{ROW_LEFT_PX, next_in, on_off};
 use crate::ui::shell::{SectionSlot, SettingsPanes, SettingsTab, spawn_section};
@@ -33,6 +40,7 @@ impl Plugin for UiRoadStylePlugin {
     fn build(&self, app: &mut App) {
         // подписи вслед за ресурсом — и на клик по кнопке, и на правку по BRP
         app.add_knobs::<RoadStyle>()
+            .add_knobs::<RoadPaintStyle>()
             .add_knobs::<TramStyle>()
             .add_knobs::<CarStyle>()
             .add_systems(Startup, build_roads_section.in_set(UiBuildSet::Sections))
@@ -49,6 +57,7 @@ fn build_roads_section(
     mut commands: Commands,
     panes: Res<SettingsPanes>,
     style: Res<RoadStyle>,
+    paint: Res<RoadPaintStyle>,
     tram: Res<TramStyle>,
     cars: Res<CarStyle>,
 ) {
@@ -113,6 +122,31 @@ fn build_roads_section(
         CycleBinding {
             cycle: |style| style.markings = !style.markings,
             text: |style| on_off(style.markings).to_string(),
+        },
+    );
+    // краска и колея — юниформы, протяжка ничего не пересобирает
+    spawn_knob(
+        &mut commands,
+        panel,
+        "Paint",
+        &*paint,
+        SliderBinding {
+            get: |paint| paint.paint,
+            set: |paint, value| paint.paint = value,
+            range: (PAINT_MIN, PAINT_MAX, PAINT_STEP),
+            text: |value| format!("{:.0}%", value * 100.),
+        },
+    );
+    spawn_knob(
+        &mut commands,
+        panel,
+        "Wear",
+        &*paint,
+        SliderBinding {
+            get: |paint| paint.wear,
+            set: |paint, value| paint.wear = value,
+            range: (WEAR_MIN, WEAR_MAX, WEAR_STEP),
+            text: |value| format!("{:.1}%", value * 100.),
         },
     );
     spawn_cycle_row(

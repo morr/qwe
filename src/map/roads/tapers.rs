@@ -138,12 +138,7 @@ fn takes_taper(road: &RoadLine) -> bool {
 /// [`TAPER_MIN_LENGTH`] не кладётся, и его конец остаётся в середине.
 pub fn split(path: &[Vec2], lengths: [Option<f32>; 2]) -> [Option<Vec<Vec2>>; 3] {
     let total = polyline_length(path);
-    let fit = |length: Option<f32>| {
-        length
-            .map(|length| length.min(total * TAPER_MAX_SHARE))
-            .filter(|&length| length >= TAPER_MIN_LENGTH)
-    };
-    let (head, tail) = (fit(lengths[0]), fit(lengths[1]));
+    let [head, tail] = fit(total, lengths);
     let from = head.unwrap_or(0.0);
     let to = total - tail.unwrap_or(0.0);
     let head_path = head.map(|length| {
@@ -158,6 +153,18 @@ pub fn split(path: &[Vec2], lengths: [Option<f32>; 2]) -> [Option<Vec<Vec2>>; 3]
         piece
     });
     [head_path, Some(cut(path, from, to)), tail_path]
+}
+
+/// Длины клиньев `[у начала, у конца]` на пути длиной `total` — так, как их
+/// нарежет [`split`]: не больше [`TAPER_MAX_SHARE`] пути, короче
+/// [`TAPER_MIN_LENGTH`] — клина нет. Слой краски (`roads/paint.rs`) плывёт по
+/// тем же длинам.
+pub fn fit(total: f32, lengths: [Option<f32>; 2]) -> [Option<f32>; 2] {
+    lengths.map(|length| {
+        length
+            .map(|length| length.min(total * TAPER_MAX_SHARE))
+            .filter(|&length| length >= TAPER_MIN_LENGTH)
+    })
 }
 
 /// Кусок ломаной между длинами дуги `from..to`.

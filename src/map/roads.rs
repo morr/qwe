@@ -34,16 +34,14 @@
 //! кант: заливка поперечной улицы кроет его на перекрёстке, и тротуар
 //! обрывается там, где обрывается в жизни, — но **поверх ленты аллеи**: дорожка,
 //! выходящая на улицу, упирается в тротуар, как упирается в бордюр на
-//! фотографии, вместо того чтобы перечеркнуть полосу песочной лентой. **Разметку** — линии по границам
-//! полос ([`lane_count`]: тег `lanes`, иначе дефолт по ширине) — рисует не
-//! геометрия, а шейдер поверхностей (`map/surface.rs`) по локальным
-//! координатам ленты (`meshing::ATTRIBUTE_RIBBON`): линия сглажена, гаснет при
-//! отдалении и **рвётся на перекрёстках** — по общим узлам ways
-//! (`roads/junctions.rs`), а не по торцам, так что way, разрезанный посреди
+//! фотографии, вместо того чтобы перечеркнуть полосу песочной лентой. **Разметка** — линии по границам
+//! полос ([`lane_count`]) — отдельный **слой краски** (`roads/paint.rs`):
+//! геометрия от оси улицы на той же раскладке полос, по которой шейдер
+//! асфальта кладёт колею. Линия **рвётся на перекрёстках** — по общим узлам
+//! ways (`roads/junctions.rs`), а не по торцам, так что way, разрезанный посреди
 //! квартала, несёт линию сквозь стык, а сквозная улица теряет её ровно на
-//! ширину поперечной. Широкие улицы кладутся поверх узких: заливка
-//! магистрали кроет торец жилой улицы, и в перекрёстке остаётся разметка
-//! магистрали с разрывом под въезд, а не обрубок линии въезда поверх неё.
+//! ширину поперечной. Широкие улицы кладутся поверх узких: заливка магистрали
+//! кроет торец жилой улицы, и колея въезда гаснет под ней.
 
 use std::borrow::Cow;
 
@@ -53,7 +51,7 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use self::network::RoadNodes;
 use crate::map::footprint::{JOIN_EPSILON, casing_width};
 use crate::map::meshing::{
-    Break, Markings, MeshBuilder, RibbonBreaks, RibbonCap, RibbonJoin, RibbonShape,
+    Break, LaneFrame, MeshBuilder, RibbonBreaks, RibbonCap, RibbonJoin, RibbonShape,
     merge_close_points, miter_offsets, to_break_beyond,
 };
 use crate::map::osm::model::{
@@ -596,7 +594,8 @@ pub struct RoadStyle {
     /// всеми лентами.
     pub sidewalks: bool,
     /// Разметка полос на проезжей части улиц — линия на каждой границе полос,
-    /// с разрывами на перекрёстках; рисует шейдер поверхностей.
+    /// с разрывами на перекрёстках; слой краски (`roads/paint.rs`). Колея
+    /// асфальта от неё не зависит — у неё своя ручка (`RoadPaintStyle`).
     pub markings: bool,
 }
 
@@ -666,17 +665,11 @@ pub fn lane_count(road: &RoadLine) -> u8 {
     lanes.clamp(1, most)
 }
 
-/// Разметка проезжей части: линии лежат на границах полос, так что
-/// однополосной рисовать нечего.
-fn road_markings(road: &RoadLine) -> Option<Markings> {
-    if !is_carriageway(road) {
-        return None;
-    }
-    let lanes = lane_count(road);
-    (lanes >= 2).then_some(Markings {
-        lanes,
-        oneway: road.oneway,
-    })
+/// Раскладка полос проезжей части ([`paint::lane_frame`]) — одна на колею
+/// асфальта и на линии слоя краски. У проезда и дорожки полос нет, и колеи
+/// тоже; однополосная улица колею получает, а линий у неё нет.
+fn road_lanes(road: &RoadLine) -> Option<LaneFrame> {
+    is_carriageway(road).then(|| paint::lane_frame(lane_count(road)))
 }
 
 /// Шаг, с которым осевая крепостной стены проверяется на «стоит ли тут
@@ -786,6 +779,10 @@ pub struct RoadReport {
     /// Стиль, которым всё это нарисовано: пять ручек из лог-строки — это он.
     pub style: RoadStyle,
     pub junctions: usize,
+    /// Куски линий слоя краски (`roads/paint.rs`) и их вершины — отдельно от
+    /// общего счёта: краска строится своими мешами и прячется с зумом.
+    pub paint_lines: usize,
+    pub paint_vertices: usize,
     pub kerb_returns: usize,
     pub sidewalk_returns: usize,
     pub stitches: usize,
@@ -808,6 +805,8 @@ impl std::fmt::Display for RoadReport {
         let Self {
             style,
             junctions,
+            paint_lines,
+            paint_vertices,
             kerb_returns,
             sidewalk_returns,
             stitches,
@@ -823,7 +822,8 @@ impl std::fmt::Display for RoadReport {
         write!(
             f,
             "road meshing: {vertices} verts in {elapsed:?} ({:?}, smoothing {:?}, casing {}, \
-             sidewalks {}, markings {}, junctions {junctions}, kerb returns {kerb_returns} + \
+             sidewalks {}, markings {}, paint {paint_lines} lines / {paint_vertices} verts, \
+             junctions {junctions}, kerb returns {kerb_returns} + \
              {sidewalk_returns} on sidewalks, stitches {stitches}, driveway crossings \
              {crossings}, gores {gores}, tapers {tapers}, smooth seams {seams}, tight corners \
              {tight}; {network:?} of it before the ribbons)",
@@ -842,10 +842,10 @@ impl std::fmt::Display for RoadReport {
 pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadReport) {
     let started = std::time::Instant::now();
     let (roads, walls): (&[RoadLine], &[WallLine]) = (&map.roads, &map.walls);
-    // перекрёстки нужны только разметке: без неё и рвать нечего
-    let junctions = style
-        .markings
-        .then(|| junctions::marking_breaks(roads, is_carriageway));
+    // перекрёстки: по ним рвётся краска и гаснет колея асфальта — колея есть
+    // и с выключенной разметкой, так что считаются они всегда
+    let junctions = junctions::marking_breaks(roads, is_carriageway);
+    let mut painter = paint::Painter::default();
 
     let mut sidewalks = MeshBuilder::with_surface_coords();
     let mut alley_casings = MeshBuilder::default();
@@ -899,6 +899,8 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
     // ось, что у его дороги, — он отличается шириной и классом
     let axes = axis::street_axes(roads, &map.network, &nodes, style.smoothing);
     let paths = &axes.paths;
+    // длина улицы у начала каждого way — по ней идут штрихи краски
+    let stations = paint::street_stations(&map.network, paths);
     // широкие улицы поверх узких — см. доку модуля
     let mut order: Vec<usize> = (0..roads.len()).collect();
     order.sort_by(|&a, &b| drawn[a].width.total_cmp(&drawn[b].width));
@@ -948,11 +950,17 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
         } else {
             Cow::Borrowed(paths[index].as_ref())
         };
-        // разметка и её разрывы — только пока она включена
-        let (markings, breaks) = match &junctions {
-            Some(found) => (road_markings(road), found.breaks[index].as_slice()),
-            None => (None, &[][..]),
-        };
+        let breaks = junctions.breaks[index].as_slice();
+        let lanes = road_lanes(road);
+        // линии краски — по той же оси, разрывам и клиньям, что и асфальт
+        if style.markings {
+            let wedges = if road.bridge {
+                [None; 2]
+            } else {
+                paint::wedge_ends(&points, &tapers, &drawn, index)
+            };
+            painter.paint(road, &points, breaks, wedges, stations[index]);
+        }
         if road.bridge {
             // бордюр — всегда, независимо от style.casing: он и есть мост
             push_bridge_curb(
@@ -971,7 +979,7 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
                     penumbra: bridge_penumbra(deck.span),
                 });
             }
-            bridge_fills.set_markings(markings);
+            bridge_fills.set_lanes(lanes);
             push_street_fill(
                 &mut bridge_fills,
                 &points,
@@ -1045,7 +1053,7 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
                 casing.push_taper(path, [band(narrow), band(road)], to_break, color);
             }
         }
-        fill.set_markings(markings);
+        fill.set_lanes(lanes);
         push_street_fill(
             fill,
             body,
@@ -1057,6 +1065,15 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
         );
         for &(path, narrow, end) in &wedges {
             let to_break = continued(path, road.width, breaks, end);
+            // раскладка плывёт от сечения соседа к своему — та же, что у
+            // линий краски на этом клине
+            match lanes {
+                Some(_) => {
+                    let [from, to] = paint::wedge_frames(lane_count(road), lane_count(narrow), end);
+                    fill.set_lane_taper(Some(from), Some(to));
+                }
+                None => fill.set_lanes(None),
+            }
             fill.push_taper(
                 path,
                 [narrow.width, road.width],
@@ -1096,7 +1113,7 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
     // тень моста полупрозрачна, поэтому у неё `Blend`: непрозрачный материал
     // съел бы альфу вершинного цвета. Асфальт, тротуар и дорожка — фактурные,
     // канты и лента стены — плоские
-    let layers: Vec<LayerMesh> = [
+    let mut layers: Vec<LayerMesh> = [
         (
             alley_casings,
             Z_ALLEY_CASING,
@@ -1162,10 +1179,22 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
     .into_iter()
     .map(|(builder, z, name, material)| LayerMesh::new(builder, z, name, material))
     .collect();
+    let paint_lines = painter.lines;
+    let paint_layers = painter.layers();
+    let paint_vertices = paint_layers
+        .iter()
+        .map(|layer| layer.builder.vertex_count())
+        .sum();
+    // краска — сразу над своим асфальтом: улиц над улицами, мостов над
+    // настилом; сортировка устойчива, прочие слои порядка не меняют
+    layers.extend(paint_layers);
+    layers.sort_by(|a, b| a.z.total_cmp(&b.z));
 
     let report = RoadReport {
         style,
-        junctions: junctions.as_ref().map_or(0, |found| found.junctions),
+        junctions: junctions.junctions,
+        paint_lines,
+        paint_vertices,
         kerb_returns: kerb_returns.roads.len(),
         sidewalk_returns: kerb_returns.sidewalks.len(),
         stitches: stitches.count,
@@ -1245,7 +1274,18 @@ pub fn spawn_road_meshes(
     materials: &LayerMaterials,
     (layers, report): (Vec<LayerMesh>, RoadReport),
 ) {
-    spawn_layers(commands, meshes, materials, layers, RoadLayerTag);
+    // меши краски несут ещё и свой вид — по нему их прячет ступень зума
+    // (`paint::show_paint`)
+    let (paint, rest): (Vec<LayerMesh>, Vec<LayerMesh>) = layers
+        .into_iter()
+        .partition(|layer| paint::PaintTag::of(layer.name).is_some());
+    spawn_layers(commands, meshes, materials, rest, RoadLayerTag);
+    for layer in paint {
+        let Some(tag) = paint::PaintTag::of(layer.name) else {
+            continue;
+        };
+        spawn_layers(commands, meshes, materials, [layer], (RoadLayerTag, tag));
+    }
     info!("{report}");
 }
 
@@ -1596,6 +1636,7 @@ mod lots;
 /// (`network::sections`) собираются там, потому что ширину дороги читают
 /// следующие проходы разбора, — а сеть потом лежит в `MapData::network`.
 pub mod network;
+pub mod paint;
 /// Открыт наружу для [`map::cars`](crate::map::cars): ряд машин прерывается
 /// на клине, где бордюр ближе к оси, чем полуширина участка.
 pub(super) mod tapers;

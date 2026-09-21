@@ -3,7 +3,8 @@
 //! Виджеты — игровые киты (`qwe::ui`), а ручки стиля — те же пять строк, что в
 //! секции Roads панели игры, привязанные к тому же `RoadStyle`: правка
 //! пересобирает все примеры, так что стык, сглаживание, кант, тротуары и
-//! разметку можно сравнивать на одном и том же узле.
+//! разметку можно сравнивать на одном и том же узле. Ползунки Paint и Wear —
+//! `RoadPaintStyle`, юниформы материалов: протяжка ничего не пересобирает.
 //!
 //! **Шрифт панель ставит себе сама** — `apply_panel_font` живёт в `UiPlugin`,
 //! которого здесь нет, а во встроенном шрифте bevy нет кириллицы.
@@ -12,8 +13,11 @@ use bevy::feathers::controls::ButtonVariant;
 use bevy::prelude::*;
 use bevy::ui_widgets::Activate;
 use qwe::city::City;
-use qwe::map::{RoadJoin, RoadStyle, Smoothing};
-use qwe::ui::knob::{CycleBinding, spawn_cycle_row};
+use qwe::map::{
+    PAINT_MAX, PAINT_MIN, PAINT_STEP, RoadJoin, RoadPaintStyle, RoadStyle, Smoothing, WEAR_MAX,
+    WEAR_MIN, WEAR_STEP,
+};
+use qwe::ui::knob::{CycleBinding, SliderBinding, spawn_cycle_row, spawn_knob};
 
 use crate::overlay::NetworkOverlay;
 use qwe::ui::{
@@ -51,6 +55,7 @@ pub(crate) fn spawn_panel(
     assets: Res<AssetServer>,
     city: Res<City>,
     style: Res<RoadStyle>,
+    paint: Res<RoadPaintStyle>,
     overlay: Res<NetworkOverlay>,
 ) {
     let panel = commands
@@ -161,6 +166,31 @@ pub(crate) fn spawn_panel(
         CycleBinding {
             cycle: |style: &mut RoadStyle| style.markings = !style.markings,
             text: |style| on_off(style.markings),
+        },
+    );
+    // краска и колея — те же ползунки, что в игре, и тоже без пересборки
+    spawn_knob(
+        &mut commands,
+        panel,
+        "Paint",
+        &*paint,
+        SliderBinding {
+            get: |paint: &RoadPaintStyle| paint.paint,
+            set: |paint, value| paint.paint = value,
+            range: (PAINT_MIN, PAINT_MAX, PAINT_STEP),
+            text: |value| format!("{:.0}%", value * 100.),
+        },
+    );
+    spawn_knob(
+        &mut commands,
+        panel,
+        "Wear",
+        &*paint,
+        SliderBinding {
+            get: |paint: &RoadPaintStyle| paint.wear,
+            set: |paint, value| paint.wear = value,
+            range: (WEAR_MIN, WEAR_MAX, WEAR_STEP),
+            text: |value| format!("{:.1}%", value * 100.),
         },
     );
     // не ручка стиля, а взгляд на данные: улицы сети и их сечения
