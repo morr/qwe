@@ -7,8 +7,8 @@ use crate::map::osm::fixture::{
     Overpass, building, closed, fence, rect, square, street, water_area,
 };
 use crate::map::osm::model::{
-    BuildingUse, Colours, FenceKind, PitchKind, RailKind, Sacred, SacredForm, ServiceTrack,
-    StructureKind, WaterKind, distance_to_segment, is_big_box,
+    BuildingUse, Colours, FenceKind, PitchKind, RailKind, RoadAreaKind, RoadNodeKind, Sacred,
+    SacredForm, ServiceTrack, StructureKind, WaterKind, distance_to_segment, is_big_box,
 };
 use crate::map::osm::planting::{
     TREE_CROWN_REACH, TREE_MIN_SPACING, TREE_SHORE_CLEARANCE, TREE_WALL_CLEARANCE, near_area_edge,
@@ -663,6 +663,91 @@ fn a_barrier_becomes_a_fence_but_the_city_wall_stays_a_wall() {
         ]
     );
     assert_eq!(map.walls.len(), 1);
+}
+
+/// Дорожные узлы доезжают до `MapData::road_nodes` со своим видом; переход
+/// несёт регулируемость, островок и разметку. Нода с чужим `highway`
+/// (остановка) узлом не становится.
+#[test]
+fn road_nodes_carry_their_kind() {
+    let at = |dx: f32| CENTER + Vec2::new(dx, 0.0);
+    let map = Overpass::new(CITY)
+        .node(
+            &[("highway", "crossing"), ("crossing", "traffic_signals")],
+            at(0.0),
+        )
+        .node(
+            &[
+                ("highway", "crossing"),
+                ("crossing", "unmarked"),
+                ("crossing:island", "yes"),
+            ],
+            at(1.0),
+        )
+        .node(&[("highway", "crossing")], at(2.0))
+        .node(&[("highway", "traffic_signals")], at(3.0))
+        .node(&[("highway", "stop")], at(4.0))
+        .node(&[("highway", "give_way")], at(5.0))
+        .node(&[("highway", "mini_roundabout")], at(6.0))
+        .node(&[("highway", "turning_loop")], at(7.0))
+        .node(&[("traffic_calming", "island")], at(8.0))
+        .node(&[("highway", "bus_stop")], at(9.0))
+        .parse();
+
+    let kinds: Vec<RoadNodeKind> = map.road_nodes.iter().map(|node| node.kind).collect();
+    let crossing = |signals, island, marked| RoadNodeKind::Crossing {
+        signals,
+        island,
+        marked,
+    };
+    assert_eq!(
+        kinds,
+        [
+            crossing(true, false, true),
+            crossing(false, true, false),
+            crossing(false, false, true),
+            RoadNodeKind::TrafficSignals,
+            RoadNodeKind::Stop,
+            RoadNodeKind::GiveWay,
+            RoadNodeKind::MiniRoundabout,
+            RoadNodeKind::TurningCircle,
+            RoadNodeKind::Island,
+        ]
+    );
+    assert!((map.road_nodes[4].pos - at(4.0)).length() < 0.01);
+}
+
+/// Площади дорог: покрытие `area:highway` по классу своей дороги, площадь
+/// `highway` + `area=yes` — так же и **вдобавок** к линии в `roads`, как было до
+/// v15; островок контуром. Незамкнутый way и значение вне словаря дорог
+/// площадью не становятся.
+#[test]
+fn road_areas_are_read_by_the_class_of_their_road() {
+    let (sw, se, ..) = corners(HALF);
+    let map = Overpass::new(CITY)
+        .area(&[("area:highway", "service")], square(CENTER, 5.0))
+        .area(&[("area:highway", "footway")], square(CENTER, 4.0))
+        .area(
+            &[("highway", "pedestrian"), ("area", "yes")],
+            square(CENTER, 3.0),
+        )
+        .area(&[("traffic_calming", "island")], square(CENTER, 2.0))
+        .area(&[("area:highway", "emergency")], square(CENTER, 1.0))
+        .way(&[("area:highway", "residential")], vec![sw, se])
+        .parse();
+
+    let kinds: Vec<RoadAreaKind> = map.road_areas.iter().map(|area| area.kind).collect();
+    assert_eq!(
+        kinds,
+        [
+            RoadAreaKind::Carriageway,
+            RoadAreaKind::Walkway,
+            RoadAreaKind::Walkway,
+            RoadAreaKind::Island,
+        ]
+    );
+    assert_eq!(map.road_areas[0].outline.len(), 4, "open ring");
+    assert_eq!(map.roads.len(), 1, "the square is still a line as well");
 }
 
 /// Ветка ограды не прерывает разбор way: обнесённый забором квартал обязан

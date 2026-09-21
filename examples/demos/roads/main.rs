@@ -575,12 +575,14 @@ fn build_next(
         sample,
         slot,
         &format!(
-            "OSM: {} way, {} node, {} relation  →  MapData: {} дорог, {} домов, {} стоянок, {} деревьев\n\
+            "OSM: {} way, {} node, {} relation  →  MapData: {} дорог, {} дорожных узлов, {} площадей дорог, {} домов, {} стоянок, {} деревьев\n\
              разбор {:.0?}, сборка слоёв {:.0?}\n{road_line}",
             sample.elements[1],
             sample.elements[0],
             sample.elements[2],
             map.roads.len(),
+            map.road_nodes.len(),
+            map.road_areas.len(),
             map.buildings.len(),
             map.parking.len(),
             map.trees.len(),

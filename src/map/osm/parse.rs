@@ -11,10 +11,10 @@ use crate::city::City;
 use crate::map::grid::Grid;
 use crate::map::osm::entrances::generate_entrances;
 use crate::map::osm::model::{
-    AreaKind, BuildingUse, Faith, FenceLine, MapData, PipeLine, PolyArea, RailLine, RoadLine,
-    Sacred, SacredForm, Structure, TrafficSide, TreeCompose, TreeNode, TreeRow, TreeRowLayout,
-    WallLine, WaterLine, closest_on_segment, point_in_area, point_in_polygon, ring_area,
-    ring_bounds, ring_vertex_mean, signed_ring_area,
+    AreaKind, BuildingUse, Faith, FenceLine, MapData, PipeLine, PolyArea, RailLine, RoadArea,
+    RoadLine, RoadNode, Sacred, SacredForm, Structure, TrafficSide, TreeCompose, TreeNode, TreeRow,
+    TreeRowLayout, WallLine, WaterLine, closest_on_segment, point_in_area, point_in_polygon,
+    ring_area, ring_bounds, ring_vertex_mean, signed_ring_area,
 };
 use crate::map::osm::overpass::{Element, GeoBounds, LatLon, Member, OverpassResponse};
 use crate::map::roads::{is_carriageway, sidewalk_width};
@@ -124,6 +124,9 @@ fn read_elements(
                 }
                 if let Some(structure) = parse_structure_node(element, bounds) {
                     map.structures.push(structure);
+                }
+                if let Some(node) = parse_road_node(element, bounds) {
+                    map.road_nodes.push(node);
                 }
             }
             "way" => parse_way(element, bounds, &mut map),
@@ -705,6 +708,13 @@ fn parse_structure_way(element: &Element, points: &[Vec2]) -> Option<Structure> 
 
 /// Нода `natural=tree` → одиночное дерево. Сажает его (и отсеивает
 /// продублированные процедурной посадкой) `planting::plant_standalone`.
+fn parse_road_node(element: &Element, bounds: &GeoBounds) -> Option<RoadNode> {
+    Some(RoadNode {
+        kind: road_node_kind(&element.tags)?,
+        pos: bounds.project(element.lat?, element.lon?),
+    })
+}
+
 fn parse_tree_node(element: &Element, bounds: &GeoBounds) -> Option<TreeNode> {
     if element.tags.get("natural").map(String::as_str) != Some("tree") {
         return None;
@@ -1760,6 +1770,14 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
         return;
     }
 
+    // Площадь дороги — первой и без `return`: `highway=*` + `area=yes` обязан
+    // дойти и до дорожной ветки, где он был линией и до v15
+    if let Some(kind) = road_area_kind(&element.tags)
+        && let Some(outline) = as_ring(&points)
+    {
+        map.road_areas.push(RoadArea { outline, kind });
+    }
+
     // Рельсы проверяются до дорог и **не** прерывают разбор: трамвайный путь в
     // OSM сплошь и рядом висит на том же way, что и `highway=*`, и такой way
     // обязан стать и улицей, и путём.
@@ -2047,7 +2065,7 @@ mod tests;
 use self::tags::{
     NON_WALKABLE_ENTRANCES, area_colours, area_height, area_kind, area_storeys, area_use,
     crown_radius, fence_kind, is_building_passage, is_oneway, is_oneway_backward, is_parking_aisle,
-    is_road_underground, is_roundabout, is_underground, pipe_width, rail_class, road_class,
-    row_spacing, service_track, structure_height, structure_kind, structure_radius, structure_size,
-    tagged_lanes, water_class, water_width,
+    is_road_underground, is_roundabout, is_underground, pipe_width, rail_class, road_area_kind,
+    road_class, road_node_kind, row_spacing, service_track, structure_height, structure_kind,
+    structure_radius, structure_size, tagged_lanes, water_class, water_width,
 };

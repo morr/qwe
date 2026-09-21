@@ -81,11 +81,15 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   `barrier=city_wall`, `barrier=fence|wall|retaining_wall|hedge` (way — the plot
   **fences**),
   `man_made=storage_tank|silo|chimney|water_tower|gasometer` (way+node),
-  `man_made=pipeline` (way only). The bbox is `MAP_SIZE` around the selected
-  `City`'s geo center. `QUERY_VERSION` is **14** (v3 added `entrance` nodes, v4 `railway`,
+  `man_made=pipeline` (way only),
+  `highway=crossing|traffic_signals|stop|give_way|mini_roundabout|turning_circle|turning_loop`
+  (node — the **road nodes**), `traffic_calming=island` (node+way), `area:highway` (way).
+  The bbox is `MAP_SIZE` around the selected
+  `City`'s geo center. `QUERY_VERSION` is **15** (v3 added `entrance` nodes, v4 `railway`,
   v5 `natural=tree_row`, v6 `natural=tree` nodes, v7 linear `waterway`, v8 `landuse`
   blocks, v9 `amenity=parking`, v10 the `leisure` pitches and playgrounds, v11 the
-  industrial `man_made` cylinders and pipelines, v13 `driving_side`, v14 the fences;
+  industrial `man_made` cylinders and pipelines, v13 `driving_side`, v14 the fences, v15
+  the road nodes, islands and `area:highway`;
   **v12 is skipped** — the fence branch held that number while it waited its turn and
   `driving_side` reached master first, and the number may only ever **grow**: a v13
   cache is already on disk without `barrier`, and reusing the gap would have served the
@@ -234,6 +238,26 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   pipe walls off the navmesh). All three exclusions are pinned by tests; the blunt
   version cost Tokyo 331 arches and 17 bridges, London 177 arches. Verified live on
   Tula: `navmesh: pruned 9898` before and after — the navmesh did not move.
+- **RoadNode** / **RoadArea** (v15) — what the data says about a junction beyond its
+  lines, **read and kept, drawn by nothing yet**: the junction and paint stages of the
+  roads plan consume them. `MapData::road_nodes` — a point on a way's axis with
+  `RoadNodeKind`: `Crossing { signals, island, marked }` (`crossing=traffic_signals` /
+  `crossing:signals=yes`; `crossing:island=yes` / `crossing=island`; `marked` is cleared
+  only by an explicit `crossing=unmarked` or `crossing:markings=no` — Tula has 111 of 801
+  crossings with no kind at all, and plausibility wants a zebra there), `TrafficSignals`,
+  `Stop`, `GiveWay`, `MiniRoundabout`, `TurningCircle` (both `turning_circle` and
+  `turning_loop`), `Island` (`traffic_calming=island` as a node). `parse/tags.rs::
+  road_node_kind` is a whitelist, the `rail_class` reason: `highway=bus_stop|street_lamp`
+  sit on nodes too. `MapData::road_areas` — a closed outline with `RoadAreaKind`:
+  `Carriageway` / `Walkway` by the **road class** its tag names, read by the same
+  `road_class` as a line (`area:highway=<class>`, or `highway=<class>` + `area=yes`),
+  `Island` for `traffic_calming=island` / `area:highway=traffic_island`; a value outside
+  the road vocabulary (`emergency`, `platform`) is skipped. The branch is the **first** in
+  `parse_way` and falls through: `highway` + `area=yes` still arrives as a `RoadLine` as
+  it did before v15, and whether the square should stop being a line is the consuming
+  stage's call, not the parse's. Tula v15: 801 crossings, 206 signals, 80 give-way, 28
+  stop, 1 mini-roundabout, 34 road areas (15 carriageway, 19 walkway); six-city counts in
+  `references/osm-coverage.md`, «v15».
 - **RailLine** — `railway=*` centerline + width by value (`rail` 5 → `light_rail` /
   `narrow_gauge` / `subway` 4 → the disused values 3.5 → `tram` 1.2).
   `RailKind: Active | Tram | Disused` — the

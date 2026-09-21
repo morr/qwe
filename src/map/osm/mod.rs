@@ -13,9 +13,10 @@ mod planting;
 pub use self::download::{JobState, MapLoadJob, OVERPASS_MIRRORS, start_load_thread};
 pub use self::model::{
     AreaKind, BuildingUse, Colours, Faith, FenceKind, FenceLine, MapData, PipeLine, PitchKind,
-    PolyArea, RailKind, RailLine, Rgb, RoadClass, RoadLine, RowTrees, Sacred, SacredForm,
-    ServiceTrack, Structure, StructureKind, TrafficSide, TreeCompose, TreeRow, TreeRowLayout,
-    TreeRowPlacement, WallLine, WaterKind, WaterLine, srgba_of, water_line_caps,
+    PolyArea, RailKind, RailLine, Rgb, RoadArea, RoadAreaKind, RoadClass, RoadLine, RoadNode,
+    RoadNodeKind, RowTrees, Sacred, SacredForm, ServiceTrack, Structure, StructureKind,
+    TrafficSide, TreeCompose, TreeRow, TreeRowLayout, TreeRowPlacement, WallLine, WaterKind,
+    WaterLine, srgba_of, water_line_caps,
 };
 // потолок плотности считается от минимального зазора посадки, поэтому живёт
 // рядом с ним, а не в `settings.rs`

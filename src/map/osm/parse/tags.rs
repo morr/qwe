@@ -12,8 +12,8 @@ use bevy::prelude::*;
 
 use crate::map::osm::model::{
     AreaKind, BIG_BOX_MAX_HEIGHT, BIG_BOX_MAX_LEVELS, BuildingUse, Colours, Faith, FenceKind,
-    PitchKind, RailKind, Rgb, RoadClass, Sacred, SacredForm, ServiceTrack, StructureKind,
-    WaterKind, is_big_box_shape, polyline_length,
+    PitchKind, RailKind, Rgb, RoadAreaKind, RoadClass, RoadNodeKind, Sacred, SacredForm,
+    ServiceTrack, StructureKind, WaterKind, is_big_box_shape, polyline_length,
 };
 use crate::map::osm::overpass::Element;
 use crate::settings::STOREY_HEIGHT;
@@ -498,6 +498,53 @@ pub(super) fn road_class(highway: &str) -> Option<(f32, RoadClass)> {
             (3.5, RoadClass::Alley)
         }
         _ => return None,
+    })
+}
+
+/// Вид дорожного узла; `None` — нода не дорожный узел (вход, дерево, труба).
+///
+/// Белый список по той же причине, что [`rail_class`]: под `highway=*` на
+/// нодах лежат ещё `bus_stop`, `street_lamp`, `speed_camera`, `milestone`, а
+/// запрос их не просит — но нода с двумя тегами сразу прийти может.
+pub(super) fn road_node_kind(tags: &HashMap<String, String>) -> Option<RoadNodeKind> {
+    let tag = |key: &str| tags.get(key).map(String::as_str);
+    Some(match tag("highway") {
+        Some("crossing") => RoadNodeKind::Crossing {
+            signals: tag("crossing") == Some("traffic_signals")
+                || tag("crossing:signals") == Some("yes"),
+            island: tag("crossing:island") == Some("yes") || tag("crossing") == Some("island"),
+            marked: tag("crossing") != Some("unmarked") && tag("crossing:markings") != Some("no"),
+        },
+        Some("traffic_signals") => RoadNodeKind::TrafficSignals,
+        Some("stop") => RoadNodeKind::Stop,
+        Some("give_way") => RoadNodeKind::GiveWay,
+        Some("mini_roundabout") => RoadNodeKind::MiniRoundabout,
+        Some("turning_circle" | "turning_loop") => RoadNodeKind::TurningCircle,
+        _ if tag("traffic_calming") == Some("island") => RoadNodeKind::Island,
+        _ => return None,
+    })
+}
+
+/// Вид площади дороги у контура; `None` — контур не площадь дороги.
+///
+/// `area:highway` несёт класс той дороги, чьё покрытие нарисовано, и он
+/// читается тем же [`road_class`], что класс линии: проезжий класс —
+/// проезжая часть, аллейный — пешеходное. `highway` + `area=yes` — то же
+/// самое, только тег класса другой. Значения вне словаря дорог
+/// (`emergency`, `yes`) пропускаются: что это за покрытие, не сказано.
+pub(super) fn road_area_kind(tags: &HashMap<String, String>) -> Option<RoadAreaKind> {
+    let tag = |key: &str| tags.get(key).map(String::as_str);
+    if tag("traffic_calming") == Some("island") || tag("area:highway") == Some("traffic_island") {
+        return Some(RoadAreaKind::Island);
+    }
+    let class = match (tag("area:highway"), tag("highway"), tag("area")) {
+        (Some(value), _, _) => value,
+        (None, Some(value), Some("yes")) => value,
+        _ => return None,
+    };
+    road_class(class).map(|(_, class)| match class {
+        RoadClass::Street => RoadAreaKind::Carriageway,
+        RoadClass::Alley => RoadAreaKind::Walkway,
     })
 }
 

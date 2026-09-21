@@ -74,13 +74,16 @@ impl GeoBounds {
 /// v10 — спортивные и детские площадки `leisure=*`, v11 — промзона: цилиндры
 /// `man_made=storage_tank|silo|chimney|water_tower|gasometer` и надземные
 /// трубопроводы `man_made=pipeline`. v13 — `driving_side` границы страны.
-/// v14 — ограды участков `barrier=fence|wall|retaining_wall|hedge`.
+/// v14 — ограды участков `barrier=fence|wall|retaining_wall|hedge`. v15 —
+/// дорожные узлы `highway=crossing|traffic_signals|stop|give_way|
+/// mini_roundabout|turning_circle|turning_loop`, островки
+/// `traffic_calming=island` (node и way) и покрытия `area:highway`.
 ///
 /// v12 не использована: номер был занят этой же веткой оград, пока она ждала
 /// очереди, а в master первым уехал `driving_side`. Номер обязан **расти**, а
 /// не занимать оставленную дыру: выгрузка v13 уже лежит на дисках без
 /// `barrier`, и ограды на ней молча вышли бы пустыми.
-const QUERY_VERSION: u32 = 14;
+const QUERY_VERSION: u32 = 15;
 
 /// QL-запрос: здания, дороги, ж/д пути, вода площадная и линейная, парки/зелень,
 /// луга, песок, кварталы (`landuse=residential|industrial|garages`), стоянки
@@ -88,7 +91,8 @@ const QUERY_VERSION: u32 = 14;
 /// промышленные цилиндры и надземные трубопроводы
 /// (`man_made=storage_tank|silo|chimney|water_tower|gasometer|pipeline`),
 /// ограды участков (`barrier=*`), аллеи, одиночные деревья, стены Кремля,
-/// входы в здания — и отдельным `out tags` границы с `driving_side`, внутри
+/// входы в здания, дорожные узлы (переходы, светофоры, знаки приоритета,
+/// разворотные площадки), островки и покрытия `area:highway` — и отдельным `out tags` границы с `driving_side`, внутри
 /// которых лежит центр карты.
 ///
 /// Границы идут вторым выводом, а не в общий `out geom`: геометрия границы
@@ -140,6 +144,10 @@ pub fn overpass_query(city: City) -> String {
   way["man_made"~"^(storage_tank|silo|chimney|water_tower|gasometer|pipeline)$"]({bbox});
   node["man_made"~"^(storage_tank|silo|chimney|water_tower|gasometer)$"]({bbox});
   node["entrance"]({bbox});
+  node["highway"~"^(crossing|traffic_signals|stop|give_way|mini_roundabout|turning_circle|turning_loop)$"]({bbox});
+  node["traffic_calming"="island"]({bbox});
+  way["traffic_calming"="island"]({bbox});
+  way["area:highway"]({bbox});
 );
 out geom;
 is_in({lat},{lon})->.here;

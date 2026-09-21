@@ -147,7 +147,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
 - **Overpass** — the Overpass API, queried once per city with `[out:json]` + `out geom`;
   bbox is `MAP_SIZE` around the `City` geo center. Mirrors in `OVERPASS_URLS` are tried in
   order. **Bump `QUERY_VERSION` in `overpass.rs` whenever the query gains tags**
-  (currently 13), or existing caches keep serving extracts that lack them.
+  (currently 15), or existing caches keep serving extracts that lack them.
 - **Driving side** (`TrafficSide: Right | Left`, `MapData::traffic_side`) — the
   `driving_side` tag of the country boundary the map's centre lies in, asked by `is_in` as a
   second `out tags` output (the tag is not on roads). No answer means `Right`. Read only by
@@ -155,7 +155,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
 - **Cache** — `assets/osm/{slug}_{lat}_{lon}_{w}x{h}_v{QUERY_VERSION}.json` (gitignored);
   the parameters live in the file name, so changing them invalidates it. Written only after
   a successful parse; the second launch never touches the network. `prune_stale_caches()`
-  keeps exactly one current file per city.
+  keeps exactly one current file per city. The junction gallery reads the same file
+  (`download::city_extract`) and cuts its samples out of it (**crop**, `map/osm/crop.rs`),
+  so a query bump reaches the gallery by itself.
 - **Overpass fixture** (`map/osm/fixture.rs::Overpass`) — a scene given in **map metres**,
   turned into an Overpass response and fed through the real `parse`, so a test states its
   scene in the same numbers it later asserts on. **Add a tag case here, not another
@@ -187,6 +189,12 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     `height: Option<f32>`, `storeys: Option<f32>` (`building:levels` as the tag says —
     what tells a four-storey mall from a two-level retail box of the same height),
     `entrances: Vec<Vec2>` and `building_use: BuildingUse`.
+  - **RoadNode** / **RoadArea** — what OSM says about a junction beyond its lines:
+    `MapData::road_nodes` (crossings with `signals` / `island` / `marked`, traffic
+    signals, stop, give-way, mini-roundabouts, turning circles, island points) and
+    `MapData::road_areas` (closed carriageway / walkway / island outlines from
+    `area:highway`, `highway` + `area=yes`, `traffic_calming=island`). Parsed and kept;
+    nothing draws them yet — the junction and paint stages will.
   - **RoadLine** — centerline + width by highway class (primary 16 → footway 3.5);
     `RoadClass: Street | Alley`; `bridge` / `passage` flags (the navmesh carves by them);
     `oneway`, `roundabout` (the `junction=roundabout|circular` tag — but the notion is

@@ -492,6 +492,71 @@ pub struct TreeNode {
     pub radius: Option<f32>,
 }
 
+/// Дорожный узел из OSM — точка на оси улицы, про которую данные знают больше,
+/// чем про соседние: где зебра, где светофор, кто уступает, где тупик
+/// расширен в площадку. Сырьё для узлов и краски (этапы 5 и 7 плана дорог);
+/// разбор его только читает, ничего по нему не рисуется.
+///
+/// Позиция — там, где узел лежит в данных, то есть на оси way: переход — точка
+/// пересечения оси тротуара с осью улицы, стоп-линию OSM ставит на ось перед
+/// перекрёстком, площадку — на конец тупика.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RoadNode {
+    pub pos: Vec2,
+    pub kind: RoadNodeKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RoadNodeKind {
+    /// `highway=crossing`. `signals` — `crossing=traffic_signals` или
+    /// `crossing:signals=yes` (регулируемый переход); `island` —
+    /// `crossing:island=yes` или `crossing=island` (островок посреди перехода);
+    /// `marked` — снято только явным `crossing=unmarked` или
+    /// `crossing:markings=no`: переход без тега вида (в Туле 111 из 801)
+    /// считается размеченным, так правдоподобнее.
+    Crossing {
+        signals: bool,
+        island: bool,
+        marked: bool,
+    },
+    /// `highway=traffic_signals` — светофор узла, а не перехода.
+    TrafficSignals,
+    /// `highway=stop`.
+    Stop,
+    /// `highway=give_way`.
+    GiveWay,
+    /// `highway=mini_roundabout` — кольцо, нарисованное точкой.
+    MiniRoundabout,
+    /// `highway=turning_circle|turning_loop` — площадка разворота в тупике.
+    TurningCircle,
+    /// `traffic_calming=island` точкой — островок безопасности без контура.
+    Island,
+}
+
+/// Площадь дороги, нарисованная маппером контуром: `area:highway=*` (покрытие
+/// проезжей части или тротуара), `highway=*` + `area=yes` (площадь) и
+/// `traffic_calming=island` контуром. Как и [`RoadNode`] — сырьё для этапов
+/// узла, разбором не рисуется: `highway` + `area=yes` при этом по-прежнему
+/// приходит и линией в [`MapData::roads`], как приходил до v15.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RoadArea {
+    /// Открытое кольцо (без повтора первой точки).
+    pub outline: Vec<Vec2>,
+    pub kind: RoadAreaKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RoadAreaKind {
+    /// Проезжая часть: `area:highway` с классом улицы (`primary`, `service`,
+    /// …) или `highway` такого класса с `area=yes`.
+    Carriageway,
+    /// Пешеходное: `footway`, `pedestrian`, `path`, `cycleway`, `steps` и
+    /// прочее, что не проезжая часть.
+    Walkway,
+    /// Островок: `traffic_calming=island`, `area:highway=traffic_island`.
+    Island,
+}
+
 /// Посаженное дерево: центр, радиус кроны и плотность, на которой оно
 /// появляется (см. [`TreeSet`]).
 pub type PlantedTree = (Vec2, f32, f32);
@@ -766,6 +831,10 @@ pub struct MapData {
     /// разметка (`map::pitch`). Навмеш не трогают: по площадке ходят.
     pub pitches: Vec<PolyArea>,
     pub roads: Vec<RoadLine>,
+    /// Дорожные узлы (`highway=crossing|traffic_signals|…`) — см. [`RoadNode`].
+    pub road_nodes: Vec<RoadNode>,
+    /// Площади дорог, нарисованные контуром, — см. [`RoadArea`].
+    pub road_areas: Vec<RoadArea>,
     /// Ж/д пути — только для отрисовки, в навмеш не попадают.
     pub rails: Vec<RailLine>,
     pub walls: Vec<WallLine>,
