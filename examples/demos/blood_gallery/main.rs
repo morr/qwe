@@ -188,6 +188,7 @@ fn main() {
         // нет кириллицы, а feathers несёт Fira Sans, которым написаны панели
         .add_plugins(qwe::ui::PanelWidgetsPlugin)
         .add_plugins(qwe::ui::QuitOnEscPlugin)
+        .add_plugins(qwe::ui::AgentBadgePlugin)
         .init_resource::<Ground>()
         .init_resource::<Show>()
         .init_resource::<Roll>()

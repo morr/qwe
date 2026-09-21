@@ -311,7 +311,8 @@ impl Plugin for UiShellPlugin {
 fn spawn_shell(mut commands: Commands, state: Res<UiShellState>) {
     let column = commands
         .spawn((
-            super::TopLeftColumn,
+            // колонка стоит в углу метки агентского запуска и уступает ей место
+            super::BelowBrpBadge,
             ui_node(Node {
                 position_type: PositionType::Absolute,
                 top: px(UI_SCREEN_EDGE_PX_OFFSET),

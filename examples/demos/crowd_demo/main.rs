@@ -235,6 +235,7 @@ fn main() {
         // feathers: без их плагина и темы кнопки демо остались бы без фона
         qwe::ui::PanelWidgetsPlugin,
         qwe::ui::QuitOnEscPlugin,
+        qwe::ui::AgentBadgePlugin,
     ))
     .init_state::<AppState>()
     .add_sub_state::<PlayPhase>()

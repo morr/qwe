@@ -98,9 +98,13 @@ did not fit 1080 px and ran off the top of the screen.
   would mean watching the simulation through a keyhole. The counters use `iter().len()`,
   not `count()`: with a purely archetypal filter `QueryIter` is an `ExactSizeIterator`, so
   the length is a sum over archetypes rather than a walk over 20 000 entities every frame.
-  In agent runs the red **BRP badge** owns that corner, and `offset_below_brp_badge`
-  measures it and pushes the whole column below — `ComputedNode::size` is in *physical* px,
-  so multiply by `inverse_scale_factor` or the offset doubles on a retina screen.
+  In agent runs the red **BRP badge** (`ui/brp.rs`) owns that corner, and
+  `offset_below_brp_badge` measures it and pushes every `BelowBrpBadge` node below — the
+  game's left column, a demo's top-left plaque — `ComputedNode::size` is in *physical* px,
+  so multiply by `inverse_scale_factor` or the offset doubles on a retina screen. The game
+  marks an agent run by `BRP_PORT` (`main.rs`); a demo has no port, so its
+  `AgentBadgePlugin` also takes `CLAUDECODE`, which Claude Code sets on every process of
+  its session.
 - **Telemetry panel** (`ui/speed.rs`) — top-right: sim clock, pathfinding in-flight /
   avg ms, entity count, camera. Fixed width + right-padded digits (no jitter) — which only
   works in a monospace face, so this root brings its **own** `InheritableFont` (FiraMono).
@@ -378,7 +382,10 @@ did not fit 1080 px and ran off the top of the screen.
   theme stops being a preview of the game's panel, which is the only reason to look at it.
   And every scene adds **`qwe::ui::QuitOnEscPlugin`** next to `PanelWidgetsPlugin` — the
   game's own Esc-quit (`ui/quit.rs`: focused window only, not while typing in a text
-  field), which `main.rs` raises too; a demo does not write its own copy.
+  field), which `main.rs` raises too; a demo does not write its own copy. Beside it goes
+  **`qwe::ui::AgentBadgePlugin`** — the game's red BRP badge, shown when Claude Code
+  launched the window — and the scene's top-left plaque carries `qwe::ui::BelowBrpBadge`
+  so the badge does not cover it.
 - **Cycle rows** — the button half of the knob kit, for the values `bevy_ui` has no input
   field for: `spawn_cycle_row(.., CycleBinding { cycle, text })` where `cycle` advances the
   field by itself. Deliberately not "next item of `ALL`": what cycles is enums, plain

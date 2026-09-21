@@ -479,6 +479,8 @@ pub(crate) fn spawn_left_column(
                 align_items: AlignItems::FlexStart,
                 ..default()
             }),
+            // угол делится с меткой агентского запуска — колонка съезжает под неё
+            qwe::ui::BelowBrpBadge,
             Name::new("demo_left_column"),
         ))
         .id();

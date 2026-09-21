@@ -53,7 +53,9 @@ use bevy::prelude::*;
 use bevy::text::FontWeight;
 use bevy::ui_widgets::Activate;
 
-pub use self::brp::AgentBrpSession;
+// метка агентского запуска — игре и витринам: `AgentBadgePlugin` витрина
+// поднимает рядом с `QuitOnEscPlugin`, `BelowBrpBadge` вешает на плашку в углу
+pub use self::brp::{AgentBadgePlugin, AgentBrpSession, BelowBrpBadge};
 pub use self::debug::{DebugConiferNoise, DebugDoors, DebugGrid, DebugNavmesh};
 // `pub` по той же причине, что и `slider`: демо расталкивания зовёт киты
 // панелей и потому обязано поднять их виджеты само
@@ -445,13 +447,6 @@ pub fn typing_in_text_input(
 /// скрыты (спавнятся с `Visibility::Hidden`).
 #[derive(Component)]
 pub struct GameUiRoot;
-
-/// Колонка левого края: HUD-счётчики, под ними панель настроек. По ней метка
-/// BRP (`ui/brp.rs`) двигает вниз всё разом — маркер поэтому здесь, а не в
-/// файле того, кто колонку спавнит (`ui/shell.rs`) или того, кто её двигает
-/// (`ui/stats.rs`).
-#[derive(Component)]
-pub(super) struct TopLeftColumn;
 
 /// Порядок сборки UI в `Startup`: сначала оболочка со вкладками, потом секции
 /// панелей в них.

@@ -134,6 +134,7 @@ fn main() {
         .add_plugins(Material2dPlugin::<SurfaceMaterial>::default())
         .add_plugins(qwe::ui::PanelWidgetsPlugin)
         .add_plugins(qwe::ui::QuitOnEscPlugin)
+        .add_plugins(qwe::ui::AgentBadgePlugin)
         .init_resource::<RoofStyle>()
         .init_resource::<SurfaceStyle>()
         .init_resource::<SunOnMap>()

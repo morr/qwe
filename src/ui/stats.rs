@@ -19,13 +19,11 @@ use bevy::text::{EditableText, TextCursorStyle, TextEdit};
 use bevy::ui_widgets::Activate;
 use rand::Rng;
 
-use super::brp::{AgentBrpSession, BrpBadge};
 use super::knob::{AddKnobsExt, CycleBinding, SliderBinding, spawn_cycle_row, spawn_knob};
 use super::rows::{ROW_LEFT_PX, on_off};
 use super::shell::{SectionSlot, SettingsPanes, SettingsTab, spawn_section};
 use super::{
-    TopLeftColumn, UI_SCREEN_EDGE_PX_OFFSET, UiBuildSet, panel_background, panel_block_background,
-    panel_title, row_label, row_value,
+    UiBuildSet, panel_background, panel_block_background, panel_title, row_label, row_value,
 };
 use crate::demon::{
     DEMON_CAP_MAX, DEMON_CAP_MIN, DEMON_CAP_STEP, DEMON_LUNGE_BOOST_MAX, DEMON_LUNGE_BOOST_MIN,
@@ -72,9 +70,6 @@ impl Plugin for UiStatsPlugin {
                     sync_world_counts,
                     apply_seed_on_enter,
                     sync_seed_field.run_if(resource_changed::<WorldSeed>),
-                    // метка BRP стоит только в агентских запусках, и только
-                    // тогда панели есть что обходить
-                    offset_below_brp_badge.run_if(resource_exists::<AgentBrpSession>),
                 ),
             );
     }
@@ -432,25 +427,5 @@ fn sync_seed_field(
             continue;
         }
         set_field_text(&mut field, seed.0);
-    }
-}
-
-/// Метка BRP занимает тот же угол, но только в агентских запусках — колонка
-/// уступает ей место и съезжает под неё.
-///
-/// Высота читается из `ComputedNode`, то есть с прошлого кадра, и она в
-/// **физических** пикселях, тогда как `Node::top` — в логических: без
-/// `inverse_scale_factor` на retina зазор удваивается. `top` пишется только
-/// когда реально изменился —
-/// `Node` не `set_if_neq`-компонент, и безусловная запись метила бы его
-/// изменённым каждый кадр, заставляя `bevy_ui` пересчитывать раскладку зря.
-fn offset_below_brp_badge(
-    badge: Single<&ComputedNode, With<BrpBadge>>,
-    panel: Single<&mut Node, With<TopLeftColumn>>,
-) {
-    let top = px(UI_SCREEN_EDGE_PX_OFFSET * 2.0 + badge.size.y * badge.inverse_scale_factor);
-    let mut panel = panel.into_inner();
-    if panel.top != top {
-        panel.top = top;
     }
 }

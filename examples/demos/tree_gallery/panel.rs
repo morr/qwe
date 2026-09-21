@@ -27,6 +27,8 @@ use crate::params::{Tuning, specs};
 pub(crate) fn spawn_panel(mut commands: Commands, assets: Res<AssetServer>, tuning: Res<Tuning>) {
     let panel = commands
         .spawn((
+            // угол делится с меткой агентского запуска — плашка съезжает под неё
+            qwe::ui::BelowBrpBadge,
             ui_node(Node {
                 position_type: PositionType::Absolute,
                 top: px(UI_SCREEN_EDGE_PX_OFFSET),
