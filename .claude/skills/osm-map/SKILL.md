@@ -929,6 +929,15 @@ place to look at a road-network defect end to end:
   which is why samples are built one per frame and why the game's spawn doors are called
   as they are. The address is read from the sample itself (`name` of the highways through
   the centre, the country off the boundary relation).
+- **The reference beside each window is a Yandex Maps screenshot of the same extent** —
+  `NN_*.yandex.png` next to the sample, drawn to the right of the render at the same size
+  (a missing file just leaves the place empty). It is cut by arithmetic, not by eye: `z=19`
+  is 0.1747 m per CSS pixel at Tula's latitude, so the window is a square of
+  `2·half / 0.1747` px round the map centre — and where that centre sits in the frame is
+  **measured with a `&pt=lon,lat` marker**, because Yandex centres `ll` on the visible part
+  of the map beside its side panel, not on the viewport. The rest of the recipe (capture
+  twice, the map paints its tiles lazily; a live browser through Claude in Chrome, headless
+  Chrome gets a `limited` stub) is in the docs of `examples/demos/roads/samples.rs`.
 - The panel carries the city switch and the five `RoadStyle` rows; a change rebuilds every
   sample. `ROADS_SHOT=path.png` takes a frame and exits, `ROADS_SAMPLE=N` frames sample N.
 

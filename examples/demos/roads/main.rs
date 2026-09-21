@@ -55,8 +55,10 @@ mod samples;
 #[path = "../gallery_shot.rs"]
 mod shot;
 
+use bevy::asset::RenderAssetUsages;
 use bevy::camera_controller::pan_camera::{PanCamera, PanCameraPlugin};
 use bevy::feathers::constants::fonts;
+use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
 use bevy::input::common_conditions::input_just_pressed;
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
@@ -262,7 +264,8 @@ fn frame_sample(
     } else {
         // подписи стоят слева от окон
         let left = -GAP - CAPTION_WIDTH;
-        let right = 2.0 * gallery.max_half();
+        // справа от окна — эталонный снимок того же размера
+        let right = 4.0 * gallery.max_half() + GAP;
         let zoom = (right - left) * VIEW_MARGIN / viewport_width;
         // верх окна — у верха экрана: колонка читается сверху вниз
         let top = slot.y + gallery.samples[index].half + GAP;
@@ -317,6 +320,7 @@ fn reload(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
+    mut images: ResMut<Assets<Image>>,
     assets: Res<AssetServer>,
     city: Res<City>,
     mut gallery: ResMut<Gallery>,
@@ -371,6 +375,23 @@ fn reload(
         Name::new("roads_frames"),
     ));
 
+    // эталон — снимок того же окна с Яндекс Карт, справа от рендера
+    for (sample, slot) in gallery.samples.iter().zip(&gallery.slots) {
+        let Some(image) = sample.reference.as_deref().and_then(load_reference) else {
+            continue;
+        };
+        commands.spawn((
+            Placed,
+            Sprite {
+                image: images.add(image),
+                custom_size: Some(Vec2::splat(2.0 * sample.half)),
+                ..default()
+            },
+            Transform::from_translation(reference_centre(sample, *slot).extend(Z_FRAME - 1.0)),
+            Name::new("roads_reference"),
+        ));
+    }
+
     // стиль дорог камеру не трогает: сравнивать стыки надо на том же месте
     if city.is_changed() {
         let requested = std::env::var("ROADS_SAMPLE")
@@ -393,15 +414,43 @@ fn reload(
 fn frames(gallery: &Gallery) -> MeshBuilder {
     let mut builder = MeshBuilder::default();
     let ink = INK_DIM.to_linear();
-    for (sample, slot) in gallery.samples.iter().zip(&gallery.slots) {
-        let (min, max) = (*slot - sample.half, *slot + sample.half);
+    let mut frame = |centre: Vec2, half: f32| {
+        let (min, max) = (centre - half, centre + half);
         let w = FRAME_WIDTH;
         builder.push_rect(min - w, Vec2::new(max.x + w, min.y), ink);
         builder.push_rect(Vec2::new(min.x - w, max.y), max + w, ink);
         builder.push_rect(min - w, Vec2::new(min.x, max.y + w), ink);
         builder.push_rect(Vec2::new(max.x, min.y - w), max + w, ink);
+    };
+    for (sample, slot) in gallery.samples.iter().zip(&gallery.slots) {
+        frame(*slot, sample.half);
+        if sample.reference.is_some() {
+            frame(reference_centre(sample, *slot), sample.half);
+        }
     }
     builder
+}
+
+/// Центр эталонного снимка: справа от окна примера, того же размера — охват у
+/// них один, так что узел стоит в обоих квадратах на одном месте.
+fn reference_centre(sample: &Sample, slot: Vec2) -> Vec2 {
+    slot + Vec2::new(2.0 * sample.half + GAP, 0.0)
+}
+
+/// Снимок Яндекс Карт с диска — спрайтом в метрах окна. Мимо `AssetServer`:
+/// файл лежит рядом с вырезкой, вне `assets/`, куда сервер не ходит.
+fn load_reference(path: &std::path::Path) -> Option<Image> {
+    let bytes = std::fs::read(path).ok()?;
+    Image::from_buffer(
+        &bytes,
+        ImageType::Extension("png"),
+        CompressedImageFormats::NONE,
+        true,
+        ImageSampler::linear(),
+        RenderAssetUsages::RENDER_WORLD,
+    )
+    .inspect_err(|error| warn!("{}: {error}", path.display()))
+    .ok()
 }
 
 /// Следующий пример очереди: вырезка OSM → игровой `parse` → игровые `mesh_*`
