@@ -251,36 +251,48 @@ fn spawn_camera(
         // `Single<…, With<Camera2d>>` без этого фильтра на эти кадры молча
         // пропускается — вместе с диспетчером путей и расталкиванием. Всё, что
         // спрашивает камеру, фильтрует по нему
-        PanCamera {
-            zoom_factor: view.zoom,
-            min_zoom: MIN_ZOOM,
-            max_zoom: MAX_ZOOM,
-            // колесо обрабатывает `zoom_to_cursor`, а не PanCamera
-            zoom_speed: 0.0,
-            // `=`/`-` отданы скорости симуляции (sim_time)
-            key_zoom_in: None,
-            key_zoom_out: None,
-            // WASD ведёт `key_pan`: шаг PanCamera задан в мировых метрах и
-            // потому зависит от масштаба
-            pan_speed: 0.0,
-            key_up: None,
-            key_down: None,
-            key_left: None,
-            key_right: None,
-            // без поворота камеры
-            rotation_speed: 0.0,
-            key_rotate_ccw: None,
-            key_rotate_cw: None,
-            // drag ведёт `drag_pan`: якорит мир к курсору (1:1, как
-            // bevy_pancam в zxc) и не зависит от масштаба ретины
-            mouse_pan_settings: MousePanSettings {
-                enabled: false,
-                button: MouseButton::Left,
-            },
-            ..default()
-        },
+        pan_controller(view.zoom),
         Name::new("main_camera"),
     ));
+}
+
+/// Контроллер камеры игры: от `PanCamera` оставлены пределы зума и сам
+/// `zoom_factor`, а всё движение у него выключено — его ведут [`zoom_to_cursor`],
+/// [`key_pan`] и [`drag_pan`].
+///
+/// `pub` вместе с этими тремя системами — ради витрины пересечений
+/// (`examples/demos/roads`): своя настройка пана у неё вышла вязкой (шаг
+/// `PanCamera` задан в мировых метрах), а одна функция на обе камеры не даёт
+/// им разойтись на следующей же правке.
+pub fn pan_controller(zoom_factor: f32) -> PanCamera {
+    PanCamera {
+        zoom_factor,
+        min_zoom: MIN_ZOOM,
+        max_zoom: MAX_ZOOM,
+        // колесо обрабатывает `zoom_to_cursor`, а не PanCamera
+        zoom_speed: 0.0,
+        // `=`/`-` отданы скорости симуляции (sim_time)
+        key_zoom_in: None,
+        key_zoom_out: None,
+        // WASD ведёт `key_pan`: шаг PanCamera задан в мировых метрах и
+        // потому зависит от масштаба
+        pan_speed: 0.0,
+        key_up: None,
+        key_down: None,
+        key_left: None,
+        key_right: None,
+        // без поворота камеры
+        rotation_speed: 0.0,
+        key_rotate_ccw: None,
+        key_rotate_cw: None,
+        // drag ведёт `drag_pan`: якорит мир к курсору (1:1, как
+        // bevy_pancam в zxc) и не зависит от масштаба ретины
+        mouse_pan_settings: MousePanSettings {
+            enabled: false,
+            button: MouseButton::Left,
+        },
+        ..default()
+    }
 }
 
 /// Вид, с которого начинается мир: в режиме `Save` — сохранённый при выходе,
@@ -592,7 +604,7 @@ pub fn zoom_to_cursor(
 /// экране карта в обоих случаях едет с одной скоростью.
 ///
 /// Время реальное: пан не должен замирать вместе с паузой симуляции.
-fn key_pan(
+pub fn key_pan(
     time: Res<Time<Real>>,
     keys: Res<ButtonInput<KeyCode>>,
     mut query: Query<(&mut Transform, &PanCamera), With<Camera>>,
@@ -625,8 +637,10 @@ fn key_pan(
 /// раз, в кадре нажатия, и держится до отпускания: протяжка ползунка плотности
 /// уводит курсор с панели, и покадровая проверка «курсор над UI» отдала бы
 /// остаток протяжки камере.
+///
+/// `pub` вслед за [`drag_pan`]: тип стоит в её подписи (`Local`).
 #[derive(Default, Clone, Copy)]
-enum DragPan {
+pub enum DragPan {
     #[default]
     Idle,
     /// Зажатие началось над панелью — камера в нём не участвует.
@@ -658,7 +672,7 @@ fn pointer_over_ui(hover_map: &HoverMap, ui_nodes: &Query<(), With<Node>>) -> bo
 /// Пан зажатой левой кнопкой: точка мира «схвачена» курсором и движется с
 /// ним один в один (по логическим px, поэтому ретина-масштаб не удваивает
 /// скорость, как это делал экранный `delta` у PanCamera).
-fn drag_pan(
+pub fn drag_pan(
     window: Single<&Window, With<PrimaryWindow>>,
     buttons: Res<ButtonInput<MouseButton>>,
     hover_map: Res<HoverMap>,
