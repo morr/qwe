@@ -83,6 +83,16 @@ pub use self::sun::{
 pub(crate) use self::sun::{default_sun, sun_at};
 pub use self::surface::{LayerCost, SurfaceStyle};
 pub use self::tram::TramStyle;
+// Двери слоёв наружу — витрине `examples/demos/roads`: она ведёт вырезку OSM
+// через тот же `parse` и те же `mesh_*`/`spawn_*`, что и игра, а собирает их в
+// своей системе, потому что у неё карт не одна на мир, а по одной на пример.
+// Ступени зума идут следом: `mesh_fences` и `mesh_rails` берут ступень, а не
+// развёрнутую из таблицы ширину
+pub use self::fences::{FenceZoomBucket, mesh_fences};
+pub use self::parking::ParkingLayout;
+pub use self::rail::{RailZoomBucket, mesh_rails};
+pub use self::roads::{mesh_roads, spawn_road_meshes};
+pub use self::spawn::{mesh_surfaces, mesh_tree_row_band};
 pub use self::trees::{ConiferField, ConiferNoiseStyle, TreeRowStyle, TreeShape, TreeStyle};
 
 use bevy::prelude::*;

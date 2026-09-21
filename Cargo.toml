@@ -22,6 +22,10 @@ name = "car_gallery"
 path = "examples/demos/car_gallery/main.rs"
 
 [[example]]
+name = "roads"
+path = "examples/demos/roads/main.rs"
+
+[[example]]
 name = "roof_gallery"
 path = "examples/demos/roof_gallery/main.rs"
 
