@@ -868,6 +868,56 @@ and the choice is what is under test:
   `a_fitted_ell_squares_its_corners_and_refuses_what_is_not_an_ell`,
   `the_closest_pair_of_two_segments_is_none_only_when_they_cross`).
 
+## The junction gallery — `examples/demos/roads`
+
+`cargo run --example roads` shows a city's typical road junctions in a column — crossings
+of avenues and of streets, T and Y forks, roundabouts, a wide road running into a narrow
+one, a driveway, a bridge approach — each with its full address and **game coordinates**.
+It is the one gallery whose input is **OSM data, not hand-written geometry**, so it is the
+place to look at a road-network defect end to end:
+
+- **A sample is a window of the real Overpass extract** —
+  `examples/demos/roads/data/<city>/NN_*.json`, the very format the game downloads
+  (`out geom`, every tag kept), cut by **`tools/osm_crop`**. It goes through the game's
+  `parse` with all eight finishing passes, then the game's `mesh_*` and `spawn_*` doors
+  (surfaces with the parking layout, roads, buildings, fences, rails, cars, tree rows,
+  trees; near zoom buckets). The gallery owns no geometry at all. Edit a file, press `F5`.
+- **The manifest** `data/<city>.json` lists the samples: file, title, what to look at,
+  window centre as **lat/lon** (map metres move with `MAP_SIZE`) and the visible `half`.
+  Adding one: find the node (`tools/osm_near`), put `"at": [x, y]` in the manifest, run
+  `tools/osm_crop --manifest …` — it cuts every sample and rewrites `at` into `geo`.
+  Only Tula has a manifest; another city shows "no samples yet".
+- **What the cut does — and a way is never clipped.** Every way touching the window is
+  kept **whole**, because the pipeline keys on a way's own points: a street's first point
+  seeds its row of cars, a lot's outline decides its stall layout, a shared vertex decides
+  whether a house is squared. The first version clipped ways to the window and the sample
+  visibly stopped matching the game (other stalls in the lot, other cars in it). Roads
+  that share a node with a kept road are added too (`joining_roads`, one level) so the
+  kept streets have their junctions. Only non-building multipolygons (a river runs for
+  kilometres) are polygon-clipped; the tag-only `is_in` boundary (the `driving_side`
+  carrier) is kept with its `name:*` tags dropped. `--margin` is 120 m beyond the visible
+  half — the reach the parked cars read their quarter by (`cars::district`).
+- **The layers are clipped to the window as meshes** — `MeshBuilder::clip_to_rect`, per
+  triangle, colour and the `Ribbon`/`Roof` attributes interpolated linearly, i.e. exactly as
+  the GPU would, so nothing inside the window moves. A ground-coloured mask over the rest
+  was the first attempt and **cannot work**: the windows stand 30 m apart, a sample's rim
+  lands *inside the neighbour's window*, and a mask only covers what is outside all of
+  them — reported by the author as houses standing across the avenue. Crowns are entities,
+  not a layer: they are kept by their centre.
+- **Checked against the game** (offscreen shots of the same spots, samples 2, 7, 9): roads,
+  markings, kerb returns, sidewalks, buildings, shadows, lots with their stalls *and their
+  cars* come out identical. **The kerb rows of cars do not, and cannot**: an accepted car
+  spends several RNG rolls, and how many are accepted upstream depends on the buildings
+  along the *whole* street — which a window does not hold. Same rule, another draw. A
+  difference in anything else means the gallery has drifted from the game's pipeline.
+- **Game coordinates are real**: a sample is projected with its city's `GeoBounds`, and is
+  moved into the column by shifting the spawned entities (`place_new`, by `Added<Mesh2d>`),
+  which is why samples are built one per frame and why the game's spawn doors are called
+  as they are. The address is read from the sample itself (`name` of the highways through
+  the centre, the country off the boundary relation).
+- The panel carries the city switch and the five `RoadStyle` rows; a change rebuilds every
+  sample. `ROADS_SHOT=path.png` takes a frame and exits, `ROADS_SAMPLE=N` frames sample N.
+
 ## The shadow rules — `map/shadow.rs`
 
 Seven layers cast a shadow — buildings, fences, cars, wagons, industry, bridges, roof

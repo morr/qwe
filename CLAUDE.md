@@ -43,7 +43,7 @@ Skills hold the detail; this file holds the map. Load them — don't reconstruct
 | `loading.rs`, `restart.rs`, `city.rs`, `map/osm/download.rs` | `world-lifecycle` |
 | `sim_time.rs` (incl. the regulator's own constants, which live there now) | `sim-speed` |
 | `ui/*`, `camera.rs`, `post.rs`, `prefs.rs`, `dev.rs` | `ui-panels` |
-| `examples/demos/*` — a gallery also takes the skill of what it draws (`*_gallery` → `osm-map`, `blood_gallery` → `species-behavior`, `crowd_demo` → `navigation-deep`) | `ui-panels` |
+| `examples/demos/*` — a gallery also takes the skill of what it draws (`*_gallery` and `roads` → `osm-map`, `blood_gallery` → `species-behavior`, `crowd_demo` → `navigation-deep`) | `ui-panels` |
 | `examples/{audit,bench}/*` — by subject: `polymesh_*`, `navmesh_probe`, `pathfinding_bench`, `polymesh_bench` → `navigation-deep`; `map_meshing` → `osm-map` | — |
 
 - **`CONTEXT.md` names the terms; the domain skills carry the mechanism behind them** — that is why they are in this table rather than in the glossary.
