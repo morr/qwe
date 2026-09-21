@@ -527,19 +527,36 @@ in the frame.
 It is the one gallery whose input is **OSM data, not hand-written geometry**, so it is the
 place to look at a road-network defect end to end:
 
-- **A sample is a window of the real Overpass extract** —
-  `examples/demos/roads/data/<city>/NN_*.json`, the very format the game downloads
-  (`out geom`, every tag kept), cut by **`tools/osm_crop`**. It goes through the game's
-  `parse` with all eight finishing passes, then the game's `mesh_*` and `spawn_*` doors
-  (surfaces with the parking layout, roads, buildings, fences, rails, tree rows, trees;
-  near zoom buckets). **No parked cars, by the author's call**: the gallery is about the
-  carriageway and the junction, and a kerb row covers exactly those — the edge, the kerb
-  return, the markings by the crossing. The gallery owns no geometry at all. Edit a file, press `F5`.
-- **The manifest** `data/<city>.json` lists the samples: file, title, what to look at,
-  window centre as **lat/lon** (map metres move with `MAP_SIZE`) and the visible `half`.
-  Adding one: find the node (`tools/osm_near`), put `"at": [x, y]` in the manifest, run
-  `tools/osm_crop --manifest …` — it cuts every sample and rewrites `at` into `geo`.
-  Only Tula has a manifest; another city shows "no samples yet".
+- **A sample is a window of the game's own Overpass cache, cut at start-up** — the
+  gallery reads `assets/osm/<city>_…_vN.json` once (`download::city_extract`: the cache,
+  or the game's loader when there is none — same path, same file), deserializes it and
+  cuts every window out of the elements with **`map::osm::crop`** (`Cropper`, indexes
+  built once; `GeoRect::around`), with no JSON in between. So **a sample always equals the
+  game**: raise `QUERY_VERSION` and the new tags and nodes are in the samples from the next
+  start. It used to be fifteen frozen files cut by a Python `tools/osm_crop` from the v14
+  cache; every query bump would have left them silently behind the game — exactly what the
+  gallery exists to catch. The price is that a sample is no longer immutable: a
+  re-downloaded cache may bring a mapper's edit into the junction.
+  Each sample goes through the game's `parse_response` with all eight finishing passes, then
+  the game's `mesh_*` and `spawn_*` doors (surfaces with the parking layout, roads,
+  buildings, fences, rails, tree rows, trees; near zoom buckets). **No parked cars, by the
+  author's call**: the gallery is about the carriageway and the junction, and a kerb row
+  covers exactly those — the edge, the kerb return, the markings by the crossing. The
+  gallery owns no geometry at all. `F5` re-reads the cache and cuts again.
+- **A frozen sample is the exception, not the rule** — `data/<city>/<name>.json` beside
+  the manifest wins over the cache. That is how a bug repro is pinned and how "edit a tag
+  in the file, press `F5`" still works. The file is made by `ROADS_DUMP=<dir>`, which
+  writes every sample as the gallery cut it (one element per line, tags sorted —
+  `crop::to_json`). The cache is not even read when every sample is frozen.
+- **The manifest** `data/<city>.json` lists the samples: `name` (the stem of the Yandex
+  shot and of a frozen file), title, what to look at, window centre as **lat/lon** (map
+  metres move with `MAP_SIZE`) and the visible `half`. Adding one: find the node
+  (`tools/osm_near`), put `"at": [x, y]` in the manifest instead of `geo`, start the
+  gallery — it logs the `geo` to write in its place. Only Tula has a manifest; another
+  city shows "no samples yet".
+- **Cost**: reading and deserializing Tula's 18 MB cache and cutting fifteen windows —
+  see the `roads: extract … read in …` log line; the cut itself is milliseconds behind a
+  per-element bounding-box prefilter and a node → roads index for `joining_roads`.
 - **What the cut does — and a way is never clipped.** Every way touching the window is
   kept **whole**, because the pipeline keys on a way's own points: a street's first point
   seeds its row of cars, a lot's outline decides its stall layout, a shared vertex decides
@@ -548,8 +565,10 @@ place to look at a road-network defect end to end:
   that share a node with a kept road are added too (`joining_roads`, one level) so the
   kept streets have their junctions. Only non-building multipolygons (a river runs for
   kilometres) are polygon-clipped; the tag-only `is_in` boundary (the `driving_side`
-  carrier) is kept with its `name:*` tags dropped. `--margin` is 120 m beyond the visible
-  half — the reach the parked cars read their quarter by (`cars::district`).
+  carrier) is kept with its `name:*` tags dropped; nodes inside the window are kept (doors,
+  trees today; crossings and signals once the query asks for them). `CROP_MARGIN` is 120 m
+  beyond the visible half — the reach the parked cars read their quarter by
+  (`cars::district`).
 - **The layers are clipped to the window as meshes** — `MeshBuilder::clip_to_rect`, per
   triangle, colour and the `Ribbon`/`Roof` attributes interpolated linearly, i.e. exactly as
   the GPU would, so nothing inside the window moves. A ground-coloured mask over the rest
@@ -570,7 +589,7 @@ place to look at a road-network defect end to end:
   as they are. The address is read from the sample itself (`name` of the highways through
   the centre, the country off the boundary relation).
 - **The reference beside each window is a Yandex Maps screenshot of the same extent** —
-  `NN_*.yandex.png` next to the sample, drawn to the right of the render at the same size
+  `data/<city>/<name>.yandex.png`, drawn to the right of the render at the same size
   (a missing file just leaves the place empty). It is cut by arithmetic, not by eye: `z=19`
   is 0.1747 m per CSS pixel at Tula's latitude, so the window is a square of
   `2·half / 0.1747` px round the map centre — and where that centre sits in the frame is

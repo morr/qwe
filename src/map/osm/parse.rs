@@ -44,13 +44,21 @@ const ENTRANCE_SNAP_SCALE: f32 = 100.0;
 pub fn parse(json: &str, city: City) -> Result<MapData, String> {
     let response: OverpassResponse =
         serde_json::from_str(json).map_err(|error| format!("overpass json: {error}"))?;
+    Ok(parse_response(&response, city))
+}
+
+/// [`parse`] уже десериализованного ответа. Отдельной дверью — ради витрины
+/// дорог: она читает выгрузку города один раз и режет из неё окна
+/// ([`super::crop`]), и гонять каждое окно обратно через JSON было бы
+/// круговой поездкой ни за чем.
+pub fn parse_response(response: &OverpassResponse, city: City) -> MapData {
     let bounds = GeoBounds::for_city(city);
 
-    let (mut map, entrances, read) = read_elements(&response, &bounds);
+    let (mut map, entrances, read) = read_elements(response, &bounds);
     eprint!("{read}");
     let passes = finish_parse(&mut map, &entrances);
     eprint!("{passes}");
-    Ok(map)
+    map
 }
 
 /// Что сказал элементный цикл — значением, а не двумя `eprintln!`.

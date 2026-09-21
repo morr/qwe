@@ -1,14 +1,15 @@
 //! Витрина пересечений дорог: типовые узлы города — крестовины, Т и Y,
 //! кольца, переход широкой в узкую, въезд во двор — колонкой, один под другим.
 //!
-//! **Пример здесь — данные OSM, а не геометрия.** Каждый узел лежит на диске
-//! вырезкой настоящей выгрузки Overpass (`data/<город>/*.json`, режет
-//! `tools/osm_crop`) и проходит тот же путь, что карта в игре: игровой `parse`
+//! **Пример здесь — данные OSM, а не геометрия.** Каждый узел — срез
+//! настоящей выгрузки Overpass, нарезанный при запуске из кеша города
+//! (`map::osm::crop`), и проходит тот же путь, что карта в игре: игровой `parse`
 //! со всеми его проходами (дома с тротуаров, кварталы к дорогам, стоянки до
 //! проездов) → `MapData` → игровые `mesh_*` → игровые `spawn_*`. Своей геометрии
 //! у витрины нет вовсе, так что на одном перекрёстке виден весь процесс «данные
-//! OSM → рендер», и любую его стадию можно потрогать: поправить файл и нажать
-//! `F5`. Что такое пример и откуда берётся его адрес — в [`samples`].
+//! OSM → рендер», и любую его стадию можно потрогать: выгрузить срез файлом
+//! (`ROADS_DUMP`), положить замороженным, поправить и нажать `F5`. Что такое
+//! пример и откуда берётся его адрес — в [`samples`].
 //!
 //! **Координаты под примером — игровые.** Вырезка проецируется проекцией своего
 //! города, поэтому разобранный узел стоит в тех же метрах карты, что и в игре
@@ -45,8 +46,10 @@
 //! | колесо | зум к точке под курсором |
 //! | ЛКМ-перетаскивание, `WASD` | панорама |
 //! | `↑` `↓` | к соседнему примеру |
-//! | `F5` | перечитать вырезки с диска |
+//! | `F5` | перечитать кеш города и нарезать срезы заново |
 //!
+//! `ROADS_DUMP=папка` — выгрузить туда каждый срез файлом (замороженный срез
+//! для `data/<город>/`);
 //! `ROADS_SHOT=путь.png` — поднять окно, снять витрину и выйти;
 //! `ROADS_SAMPLE=N` ставит камеру на пример N (с единицы) крупным планом.
 
@@ -71,7 +74,7 @@ use qwe::map::buildings::material::{RoofMaterial, init_roof_material};
 use qwe::map::buildings::{
     BuildingPlan, BuildingZoomBucket, mesh_buildings, spawn_building_meshes,
 };
-use qwe::map::osm::parse::parse;
+use qwe::map::osm::parse::parse_response;
 use qwe::map::surface::{
     LayerMesh, SurfaceMaterial, init_flat_materials, init_surface_materials, spawn_layers,
 };
@@ -162,8 +165,10 @@ fn main() {
                     ..default()
                 })
                 .set(bevy::log::LogPlugin {
-                    level: bevy::log::Level::WARN,
-                    filter: "warn,qwe=warn".to_string(),
+                    // `roads=info` — свои строки витрины: цена чтения кеша и
+                    // `geo` примера, добавленного по `at`
+                    level: bevy::log::Level::INFO,
+                    filter: "warn,qwe=warn,roads=info".to_string(),
                     ..default()
                 }),
         )
@@ -474,14 +479,7 @@ fn build_next(
     let slot = gallery.slots[index];
     let started = std::time::Instant::now();
 
-    let map = match parse(&sample.osm, *city) {
-        Ok(map) => map,
-        Err(error) => {
-            warn!("{}: {error}", sample.file);
-            gallery.built += 1;
-            return;
-        }
-    };
+    let map = parse_response(&sample.osm, *city);
     let parsed = started.elapsed();
 
     // Всякий слой режется окном примера (в игровых координатах — до сдвига):
@@ -660,7 +658,7 @@ fn spawn_caption(
         14.0,
     );
     line(
-        format!("data/{}\n{stages}", sample.file),
+        format!("{}\n{stages}", sample.source),
         BODY_FONT * 0.8,
         INK_DIM,
         78.0,

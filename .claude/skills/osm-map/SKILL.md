@@ -110,6 +110,12 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   cache keeps serving an extract that lacks them. Written **only after successful
   parse**; a broken cache self-heals (deleted, re-downloaded). Second launch never
   touches the network.
+- **The cache has a second reader** — the junction gallery (`examples/demos/roads`)
+  reads it through `download::city_extract` (the cache, or the loader when there is none)
+  and cuts its windows out of it with `map/osm/crop.rs`, which then go through
+  `parse::parse_response` — the `parse` door for an already deserialized answer. So a
+  query bump reaches the gallery with no step of its own; details in
+  `references/roads.md`, **The junction gallery**.
 - **One file per city** — every load first runs `prune_stale_caches()`: anything under a
   known city slug that is not that city's current `cache_path` is deleted. That is what
   retires extracts left by an old geo center, `MAP_SIZE` or `QUERY_VERSION` — tens of MB
