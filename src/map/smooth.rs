@@ -62,25 +62,33 @@ impl Smoothing {
 /// аллеей (`map::spawn`). Длина среза зажата шириной ленты, поэтому ширина
 /// здесь параметр, а не константа.
 pub fn smooth_path(points: &[Vec2], width: f32, smoothing: Smoothing) -> Cow<'_, [Vec2]> {
-    smooth_pinned(points, width, smoothing, |_| false)
+    smooth_pinned(points, width, smoothing, false, |_| false)
 }
 
-/// [`smooth_path`], не трогающее вершины, для которых `pinned` — да. Зовёт его
-/// `roads::centerline`: у дороги закреплены концы арки и узлы, общие с другими
-/// дорогами.
+/// [`smooth_path`], не трогающее вершины, для которых `pinned` — да, и знающее
+/// про кольцо. Зовёт его `roads::centerline`: у дороги закреплены концы арки и
+/// узлы, общие с другими дорогами.
+///
+/// `closed` — замкнутый way (последняя точка повторяет первую). Такой путь
+/// сглаживается **по циклу**: шов для Chaikin — обычный излом, а не пара
+/// закреплённых концов. Иначе на шве оставался единственный несрезанный угол
+/// кольца, а лента получала там два торцевых полудиска поверх собственного
+/// асфальта.
 pub(super) fn smooth_pinned(
     points: &[Vec2],
     width: f32,
     smoothing: Smoothing,
+    closed: bool,
     pinned: impl Fn(Vec2) -> bool + Copy,
 ) -> Cow<'_, [Vec2]> {
     let iterations = smoothing.iterations();
-    if iterations == 0 || points.len() < 3 {
+    let least = if closed { 4 } else { 3 };
+    if iterations == 0 || points.len() < least {
         return Cow::Borrowed(points);
     }
     let mut path = points.to_vec();
     for _ in 0..iterations {
-        path = chaikin(&path, width, pinned);
+        path = chaikin(&path, width, closed, pinned);
     }
     Cow::Owned(path)
 }
@@ -89,12 +97,25 @@ pub(super) fn smooth_pinned(
 /// сегментах. Срезаются только изломы круче [`MIN_SMOOTH_ANGLE`], а длина
 /// среза зажата шириной дороги — иначе на длинных сегментах осевая уезжает от
 /// данных OSM на десятки метров и дорога перестаёт совпадать с домами.
-/// Концы пути и вершины, для которых `pinned` — да, закреплены.
-fn chaikin(points: &[Vec2], width: f32, pinned: impl Fn(Vec2) -> bool) -> Vec<Vec2> {
-    let mut path = Vec::with_capacity(points.len() * 2);
-    path.push(points[0]);
-    for index in 1..points.len() - 1 {
-        let (previous, corner, next) = (points[index - 1], points[index], points[index + 1]);
+/// Концы пути и вершины, для которых `pinned` — да, закреплены; у кольца
+/// (`closed`) концов нет — срезается каждый излом, шов в том числе.
+fn chaikin(points: &[Vec2], width: f32, closed: bool, pinned: impl Fn(Vec2) -> bool) -> Vec<Vec2> {
+    // у кольца последняя точка повторяет первую: идём по циклу без неё, а в
+    // конце замыкаем обратно
+    let ring = if closed {
+        &points[..points.len() - 1]
+    } else {
+        points
+    };
+    let count = ring.len();
+    let mut path = Vec::with_capacity(count * 2 + 1);
+    if !closed {
+        path.push(ring[0]);
+    }
+    let corners = if closed { 0..count } else { 1..count - 1 };
+    for index in corners {
+        let previous = ring[(index + count - 1) % count];
+        let (corner, next) = (ring[index], ring[(index + 1) % count]);
         if pinned(corner) {
             path.push(corner);
             continue;
@@ -115,7 +136,10 @@ fn chaikin(points: &[Vec2], width: f32, pinned: impl Fn(Vec2) -> bool) -> Vec<Ve
         path.push(corner - incoming * back);
         path.push(corner + outgoing * forward);
     }
-    path.push(points[points.len() - 1]);
+    match (closed, path.first().copied()) {
+        (true, Some(first)) => path.push(first),
+        _ => path.push(ring[count - 1]),
+    }
     path
 }
 

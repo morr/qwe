@@ -447,6 +447,150 @@ fn capped_ribbon_rounds_only_the_asked_end() {
     );
 }
 
+/// Разомкнутая лента с разрывами разметки — то, чем рисуется проезжая часть.
+fn open_ribbon(
+    join: RibbonJoin,
+    caps: [RibbonCap; 2],
+    breaks: RibbonBreaks<'_>,
+) -> RibbonShape<'_> {
+    RibbonShape {
+        closed: false,
+        join,
+        caps,
+        breaks,
+    }
+}
+
+/// Квадратное кольцо стороной 20 м — путь с повторённой первой точкой, как его
+/// отдаёт OSM.
+fn square_ring() -> [Vec2; 5] {
+    [
+        Vec2::new(-10.0, -10.0),
+        Vec2::new(10.0, -10.0),
+        Vec2::new(10.0, 10.0),
+        Vec2::new(-10.0, 10.0),
+        Vec2::new(-10.0, -10.0),
+    ]
+}
+
+/// У замкнутой ленты торцов нет вовсе, а шов получает веер, как всякий излом.
+///
+/// Разомкнутой лентой кольцо рисовалось с двумя полудисками на шве — поверх
+/// собственного асфальта и со своей, замороженной рамой: круглое пятно со
+/// смещёнными штрихами разметки и колеями (отчёт автора по кольцу ТРЦ «Макси»).
+#[test]
+fn a_closed_ribbon_has_no_caps_and_joins_its_seam() {
+    let vertices = |closed, cap| {
+        let mut builder = MeshBuilder::default();
+        builder.push_ribbon(
+            &square_ring(),
+            closed,
+            4.0,
+            LinearRgba::WHITE,
+            RibbonJoin::Round,
+            cap,
+        );
+        builder.vertex_count()
+    };
+    assert_eq!(
+        vertices(true, RibbonCap::Round),
+        vertices(true, RibbonCap::Butt),
+        "торцов у кольца нет, их стиль ничего не меняет"
+    );
+    assert!(
+        vertices(false, RibbonCap::Round) > vertices(false, RibbonCap::Butt),
+        "у разомкнутой торцы есть — иначе тест ни о чём"
+    );
+    assert!(
+        vertices(true, RibbonCap::Butt) > vertices(false, RibbonCap::Butt),
+        "шов замкнутой получает четвёртый веер"
+    );
+}
+
+/// «До разрыва» у кольца считается **по кругу**: на шве она такая же, как в
+/// любой другой точке на том же удалении от разрыва, а расти перестаёт в
+/// противоположной разрыву точке — и туда вставляется вершина, иначе квад,
+/// накрывший её, увёл бы разметку за разрыв, которого там нет.
+#[test]
+fn a_closed_ribbon_measures_the_break_around_the_circle() {
+    let mut builder = MeshBuilder::with_surface_coords();
+    builder.push_ribbon_shaped(
+        &square_ring(),
+        4.0,
+        LinearRgba::WHITE,
+        RibbonShape {
+            closed: true,
+            join: RibbonJoin::Round,
+            caps: [RibbonCap::Butt; 2],
+            breaks: RibbonBreaks::At(&[Break {
+                at: Vec2::new(0.0, -10.0),
+                reach: 2.0,
+            }]),
+        },
+    );
+    let coords = builder.ribbon_coords_for_test().unwrap();
+    // все вершины поперечника осевой точки — углы квадов и веер — несут одну
+    // «до разрыва»; сама осевая точка вершиной не становится
+    let across = |point: Vec2| -> Vec<f32> {
+        builder
+            .positions
+            .iter()
+            .zip(coords)
+            .filter(|(position, _)| Vec2::new(position[0], position[1]).distance(point) <= 3.0)
+            .map(|(_, ribbon)| ribbon[1])
+            .collect()
+    };
+    let all_at = |point: Vec2, expected: f32| {
+        let values = across(point);
+        assert!(!values.is_empty(), "нет вершин у {point:?}");
+        for value in values {
+            assert!(
+                (value - expected).abs() < 1e-3,
+                "у {point:?} «до разрыва» {value}, ожидалось {expected}"
+            );
+        }
+    };
+    // шов — в 10 м от центра разрыва по кругу, полудлина разрыва 2 м
+    all_at(Vec2::new(-10.0, -10.0), 8.0);
+    // противоположная разрыву точка кольца периметром 80 м — в 40 м по любой
+    // стороне; вершина там есть, иначе квад увёл бы разметку дальше
+    all_at(Vec2::new(0.0, 10.0), 38.0);
+}
+
+/// Разрыв, спроецировавшийся на **замыкающее** звено кольца, находится там же,
+/// где всякий другой, и вершина под него дописывается в хвост: соседей, между
+/// которых её вставить, у этого звена нет.
+#[test]
+fn a_break_on_the_closing_link_is_found() {
+    let mut builder = MeshBuilder::with_surface_coords();
+    builder.push_ribbon_shaped(
+        &square_ring(),
+        4.0,
+        LinearRgba::WHITE,
+        RibbonShape {
+            closed: true,
+            join: RibbonJoin::Round,
+            caps: [RibbonCap::Butt; 2],
+            breaks: RibbonBreaks::At(&[Break {
+                at: Vec2::new(-10.0, 0.0),
+                reach: 2.0,
+            }]),
+        },
+    );
+    let coords = builder.ribbon_coords_for_test().unwrap();
+    let inside = builder
+        .positions
+        .iter()
+        .zip(coords)
+        .filter(|(position, _)| position[0] < -9.0 && position[1].abs() < 1.0)
+        .map(|(_, ribbon)| ribbon[1])
+        .fold(f32::INFINITY, f32::min);
+    assert!(
+        inside < 0.0,
+        "внутри разрыва «до разрыва» отрицательна, а вышло {inside}"
+    );
+}
+
 #[test]
 fn arc_steps_scale_with_radius() {
     // допуск на стрелку хорды один, поэтому широкой дороге нужно больше хорд
@@ -673,13 +817,15 @@ fn breaks_carve_a_gap_into_the_ribbon_coords() {
         at: Vec2::new(30.0, 0.0),
         reach: 5.0,
     }];
-    builder.push_ribbon_broken(
+    builder.push_ribbon_shaped(
         &[Vec2::ZERO, Vec2::new(60.0, 0.0)],
         4.0,
         LinearRgba::WHITE,
-        RibbonJoin::Round,
-        [RibbonCap::Round; 2],
-        RibbonBreaks::At(&breaks),
+        open_ribbon(
+            RibbonJoin::Round,
+            [RibbonCap::Round; 2],
+            RibbonBreaks::At(&breaks),
+        ),
     );
     let coords = builder.ribbon_coords_for_test().unwrap();
     for (position, ribbon) in builder.positions.iter().zip(coords) {
@@ -711,13 +857,15 @@ fn a_listed_end_stops_the_marking_and_an_unlisted_one_carries_it_on() {
     let path = [Vec2::ZERO, Vec2::new(10.0, 0.0)];
     let beyond_end = |breaks: &[Break]| -> Vec<f32> {
         let mut builder = MeshBuilder::with_surface_coords();
-        builder.push_ribbon_broken(
+        builder.push_ribbon_shaped(
             &path,
             2.0,
             LinearRgba::WHITE,
-            RibbonJoin::Round,
-            [RibbonCap::Butt, RibbonCap::Round],
-            RibbonBreaks::At(breaks),
+            open_ribbon(
+                RibbonJoin::Round,
+                [RibbonCap::Butt, RibbonCap::Round],
+                RibbonBreaks::At(breaks),
+            ),
         );
         let coords = builder.ribbon_coords_for_test().unwrap();
         builder
@@ -771,13 +919,15 @@ fn overlapping_gaps_merge_into_one() {
         },
     ];
     let mut builder = MeshBuilder::with_surface_coords();
-    builder.push_ribbon_broken(
+    builder.push_ribbon_shaped(
         &[Vec2::ZERO, Vec2::new(60.0, 0.0)],
         4.0,
         LinearRgba::WHITE,
-        RibbonJoin::Miter,
-        [RibbonCap::Butt; 2],
-        RibbonBreaks::At(&breaks),
+        open_ribbon(
+            RibbonJoin::Miter,
+            [RibbonCap::Butt; 2],
+            RibbonBreaks::At(&breaks),
+        ),
     );
     let deepest = builder
         .ribbon_coords_for_test()
@@ -796,13 +946,15 @@ fn overlapping_gaps_merge_into_one() {
 #[test]
 fn a_ribbon_without_breaks_keeps_the_marking_coordinate_growing() {
     let mut builder = MeshBuilder::with_surface_coords();
-    builder.push_ribbon_broken(
+    builder.push_ribbon_shaped(
         &[Vec2::ZERO, Vec2::new(10.0, 0.0)],
         2.0,
         LinearRgba::WHITE,
-        RibbonJoin::Miter,
-        [RibbonCap::Butt; 2],
-        RibbonBreaks::At(&[]),
+        open_ribbon(
+            RibbonJoin::Miter,
+            [RibbonCap::Butt; 2],
+            RibbonBreaks::At(&[]),
+        ),
     );
     let coords = builder.ribbon_coords_for_test().unwrap();
     for (position, ribbon) in builder.positions.iter().zip(coords) {

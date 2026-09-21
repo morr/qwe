@@ -147,8 +147,10 @@ impl<'a> Grounds<'a> {
         }
         let kerb = is_through(road).then(|| kerb_width(road));
         let reach = road.width / 2.0 + kerb.unwrap_or_default();
-        // замкнутость — по сырым точкам OSM: сглаживание срезает угол на шве
-        // замкнутого way, и концы нарисованного кольца расходятся
+        // замкнутость — по сырым точкам OSM, а не по нарисованной оси: свойство
+        // way, а не стиля рисования. Сглаживание кольцо замыкает
+        // (`smooth_pinned` идёт по циклу), так что дозамыкание ниже —
+        // страховка на случай оси, пришедшей другим путём
         let mut closed = path.to_vec();
         if let (true, Some(first)) = (is_ring(&road.points), closed.first().copied())
             && closed
@@ -170,7 +172,7 @@ impl<'a> Grounds<'a> {
                 path: path.to_vec(),
                 width: road.width,
                 kerb: kerb.filter(|_| inside),
-                carriageway: inside && road.oneway && !road.roundabout && !is_ring(path),
+                carriageway: inside && road.oneway && !road.is_roundabout(),
             });
         }
     }

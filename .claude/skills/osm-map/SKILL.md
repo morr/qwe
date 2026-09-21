@@ -181,7 +181,12 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   skill); `bridge` also moves the road into the bridge deck layers (see **Bridge
   layers** below). Three more fields feed the **markings** and the parked cars: `oneway`
   (`oneway=yes|1|true|-1`; `reversible`/`alternating` are not one-way), `roundabout`
-  (`junction=roundabout|circular`, implies `oneway`) and `lanes: Option<u8>` (the `lanes`
+  (the `junction=roundabout|circular` tag, implies `oneway` — but **nothing asks the field
+  directly**, they ask `RoadLine::is_roundabout`: tag **or** shape, a closed one-way way
+  being a ring too. In the Tula cache the two never coincide — 12 tagged ways, none of
+  them closed, against 7 closed one-way ways, the mall's big ring among them — so a
+  consumer reading the bare field is a consumer that misses every untagged ring) and
+  `lanes: Option<u8>` (the `lanes`
   tag through `parse_measure`, floored, 1–8; `2;3` reads as 2, `0` and `12` as no tag).
   Coverage per city is in `references/osm-coverage.md` — Tula has `lanes` on 97 % of its
   streets ≥ 8 m, the European cities on about half.
@@ -1537,7 +1542,12 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
   pair per 7 m → 8/10 m two, 12/16 m four; one-way: a lane per 4.5 m → 8 m one, 16 m
   three), never more than the width allows at `MIN_LANE_WIDTH` 2.5 m, and **always one on
   a roundabout** (a one-lane ring has no lines, and cutting a two-lane ring's line at every
-  entry looks worse than none). The shader puts a line on every interior lane boundary
+  entry looks worse than none). **A roundabout here is `RoadLine::is_roundabout` — tag or
+  shape**, and the difference is the whole rule: the tagged rings of Tula are cut into
+  open arcs and got their single lane all along, while the one ring that is a *closed*
+  way — ТРЦ «Макси», way 397005605, `oneway=yes` with no `junction` tag — carried
+  `lanes=2`, so it was drawn with dashed lane lines and asphalt wear all the way round,
+  which is also what made its seam visible (**Ribbon** below). The shader puts a line on every interior lane boundary
   (`round((across + half width) / lane width)`), dashed 3 m / 3 m, except the **axis** of a
   two-way road with 4+ lanes, which is solid; a one-way road has no axis, and an odd
   `lanes` on a two-way road (three: two one way, one the other) has none either — all its
@@ -1563,6 +1573,33 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
   whose join is a constant — fences, rails, the tram — call `MeshBuilder::push_ribbon`
   themselves with `RibbonJoin::Round` / `RibbonCap::Round` and `closed: false`; going
   through the wrapper made the road's style read as theirs.
+  - **A closed way is drawn as a closed ribbon**, and both road doors — the wrapper and
+    `push_street_fill` — take the flag from the path itself (`is_ring`), not as an
+    argument: a ring has no ends, and there is nothing but its own shape to decide that
+    by. A closed ribbon gets **no caps at all** (the cap style then changes nothing, which
+    is what `a_closed_ribbon_has_no_caps_and_joins_its_seam` pins) and its seam gets an
+    ordinary join fan; `merge_close_points(closed)` drops the repeated last point, and
+    `arclengths` closes the loop. The street fill goes through
+    `MeshBuilder::push_ribbon_shaped` with a `RibbonShape` for this — `push_ribbon_broken`
+    is gone, an eighth argument would have tripped clippy's `too_many_arguments`, and the
+    shape was already the type the builder used inside.
+  - **Why it matters, from the author's screenshot of the mall's ring**: drawn open, a
+    ring laid **two round caps on its own asphalt** at the seam — an 8 m disc for an 8 m
+    road, centred exactly on the way's first vertex — and inside a cap the ribbon frame is
+    **frozen** at the end's direction (`FanCoords::Cap`), while outside it curves with the
+    ring. So the lane dashes stepped sideways and the wear ruts changed direction along a
+    crisp circle. Nothing was wrong with the caps: they are right at a loose end and
+    harmless at a junction (the break blanks the markings and the wear there anyway) —
+    the ring is the one place a cap lands on live asphalt of the same road.
+  - **«До разрыва» on a closed ribbon is measured around the circle** (`GapProfile`'s
+    `period`): the short way of the two, so the seam is no different from any other point
+    at that distance. Three consequences worth knowing before touching it — a break that
+    projects onto the **closing link** is found there too (`project_onto_path` takes the
+    wrap segment), the kink where the nearest break changes wraps across the seam and, on
+    a ring with a single break, sits at the **antipode**, and the vertex for a kink on the
+    closing link is *appended* rather than inserted (`append_vertex_at`) because that link
+    has no pair of neighbours to insert between. `RibbonBreaks::Ends` on a closed ribbon
+    means **no breaks**, not two at the seam: a ring has no ends to fade at.
   Two knobs, both named after their SVG /
   Mapnik counterparts: **join** (`Miter` — bisector offsets capped by `MITER_LIMIT`;
   `Round` — an arc of radius half-width on the **outer** side of the bend, the side where
@@ -1609,7 +1646,12 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     shared node in place. Before, a bend of the through road at a junction was cut by a
     chord up to a road width long, and the side street's end — which sits on the OSM node
     — hung beside the drawn asphalt or stuck out past its far edge. `smooth_path` (rails,
-    tram, tree-row band, waterways, cars) pins nothing, as before. **The cars do not pin**, so near a
+    tram, tree-row band, waterways, cars) pins nothing, as before.
+    **A closed way is smoothed round the cycle** (`smooth_pinned`'s `closed`, from
+    `is_ring(&road.points)`): the seam is an ordinary bend, not a pair of pinned ends, so
+    the drawn ring comes out closed and its seam corner is cut like every other. Before,
+    the seam was the ring's one uncut corner **and** the reason the ribbon laid two round
+    caps there — see **Ribbon** below. **The cars do not pin**, so near a
     bent junction a row walks a chord the ribbon no longer draws; the junction clearance
     (`reach + 5 m`) covers most of it, and making the cars read `RoadNodes` is the way to
     close the rest.
@@ -2291,12 +2333,15 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
       enters the lot from: cut exactly on the outline it met that sidewalk with a jog —
       the outline is rounded there by the paving's closing and the sidewalk is not.
     - **Closedness comes from the raw OSM points, never from the drawn path**
-      (`Grounds::push`, `GoreRoad::new`). `centerline` smooths a closed way as an open
-      one and cuts the corner at its **seam**, so the two ends of a drawn ring stand
-      metres apart (8.6 m on a 12 m test ring) and `is_ring` on it is false — unless the
-      seam node happens to be shared and therefore pinned. Both modules close the drawn
-      path back when `road.points` is a ring. This was found the hard way: the unit test
-      passed on a tagged ring, the city showed nothing.
+      (`Grounds::push`, `GoreRoad::new`): whether a way is a ring is a property of the
+      way, not of a style knob. It used to be load-bearing for a second reason —
+      `centerline` smoothed a closed way as an open one and cut the corner at its
+      **seam**, so the two ends of a drawn ring stood metres apart (8.6 m on a 12 m test
+      ring) and `is_ring` on it was false unless the seam node happened to be shared and
+      therefore pinned. That is fixed at the source (**Pinned nodes** above), so the
+      re-closing both modules do is now a belt: a drawn ring already comes back closed.
+      The original was found the hard way — the unit test passed on a tagged ring, the
+      city showed nothing.
     - **Ribbons were here first and were removed** (a `lot_roads` layer of every
       street's asphalt over the kerb layer, runs clipped to the outline by bisection).
       Each road's asphalt lay over every *other* road's kerb, so where slip lanes fan
@@ -2333,10 +2378,12 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
       triangle — outlined, then filled, with a crescent of asphalt left in it. It is a
       property of the **network at a ring, not of a lot**, so it is computed for every
       roundabout in the city and the lot only subtracts it from its kerb.
-      - **A roundabout is the tag or the shape**: `junction=roundabout|circular`, or a
-        closed one-way way. The big ring at ТРЦ «Макси» (way 397005605) is plain
-        `oneway=yes` closed on itself; by the tag alone none of its three islands was
-        found.
+      - **A roundabout is the tag or the shape** — `RoadLine::is_roundabout`, the one
+        notion, on the model: `junction=roundabout|circular`, or a closed one-way way.
+        The big ring at ТРЦ «Макси» (way 397005605) is plain `oneway=yes` closed on
+        itself; by the tag alone none of its three islands was found. The shape test
+        started here and was lifted to the model when `lane_count` and the parked cars
+        turned out to need the same answer — see **Markings → lane_count**.
       - **An arm** is a one-way, non-ring street with an end within `ARM_SNAP` 1 m of a
         ring vertex, taken for `ARM_REACH` 40 m from the ring — an avenue's carriageway
         runs for hundreds of metres and would hatch the whole median with its opposite.
@@ -2812,7 +2859,9 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
   the very predicate that decides where a sidewalk and lane markings go, opened up for this
   — minus a bridge (nobody parks on one) and a roundabout (you drive it, you don't park on
   it), both excluded by `parkable` rather than by the predicate, which markings still need
-  them in. The threshold that stood here before was `road.width >= 9 m`, and it was reading
+  them in. The ring is `RoadLine::is_roundabout`, **tag or shape**: by the bare tag a
+  column of parked cars stood right round the mall's big ring, which is a closed one-way
+  way with no `junction` tag. The threshold that stood here before was `road.width >= 9 m`, and it was reading
   the wrong thing: `RoadLine::width` is a **drawing constant of the class**
   (`primary` 16, `tertiary` 10, `residential` 8, `service` 5), never a measured street
   width, so 9 m meant "not an arterial" and put every car on the avenues — while an aerial

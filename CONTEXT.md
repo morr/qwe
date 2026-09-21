@@ -189,7 +189,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     `entrances: Vec<Vec2>` and `building_use: BuildingUse`.
   - **RoadLine** — centerline + width by highway class (primary 16 → footway 3.5);
     `RoadClass: Street | Alley`; `bridge` / `passage` flags (the navmesh carves by them);
-    `oneway`, `roundabout` (`junction=roundabout|circular`, implies one-way) and
+    `oneway`, `roundabout` (the `junction=roundabout|circular` tag — but the notion is
+    `RoadLine::is_roundabout`, **tag or shape**: a closed one-way way is a ring too, and
+    the mall's big ring carries no tag) and
     `lanes: Option<u8>` (the tag, 1–8; the width default lives in `map/roads.rs`) — read
     by the markings only; `parking_aisle` (`service=parking_aisle`) — read by the stall
     layout only, see **Parking lots** below.
@@ -986,12 +988,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   `MEDIAN_GORE_GAP` 0.6 m short of the hatching. **Gore** (`roads/gores.rs`) — the
   splitter island at a roundabout: the wedge between the entry arm, the exit arm and the
   ring is **asphalt with diagonal hatching**, not a triangle of sidewalk or kerb. A
-  property of the network at a ring, not of a lot: computed for every roundabout (by the
-  tag **or by shape** — a closed one-way way; the mall's big ring carries no
-  `junction` tag), a wedge counting only if it touches **two arms**. The whole wedge is
-  asphalt, the wedge without its thin tips is what gets hatched. **Closedness of a way is
-  read off the raw OSM points, never off the drawn path** — smoothing cuts the corner at
-  a closed way's seam and the drawn ring's ends stand metres apart. No stall stands under
+  property of the network at a ring, not of a lot: computed for every roundabout
+  (`RoadLine::is_roundabout`), a wedge counting only if it touches **two arms**. The whole
+  wedge is asphalt, the wedge without its thin tips is what gets hatched. **Closedness of
+  a way is read off the raw OSM points, never off the drawn path** — a style knob must not
+  decide whether a way is a ring. No stall stands under
   a through road or its kerb (`Surroundings::cover`). A small lot hides its roads as
   before.
   Six more rules of the layout: **a pair of rows is a rectangle** (`Frame::push_pair`) —
@@ -1288,9 +1289,14 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   tree-row band — which lives in `spawn.rs` and is not `trees` — is the one `rebuild_*`
   with no `rebuilds_on()` of its own, and its doc comment says where the condition is.
   **Ribbon**
-  (`push_ribbon`) — constant-width band along a polyline with join/cap knobs. **Junction
-  geometry is not computed as a union** — overlapping `Round` caps in one opaque layer are
-  what makes them look joined; **keep the road layer opaque, and its colour a function of
+  (`push_ribbon`) — constant-width band along a polyline with join/cap knobs. A **closed
+  way is drawn as a closed ribbon** (`RibbonShape::closed`, taken from the path itself):
+  a ring has no ends, so it gets no caps and its seam gets an ordinary join fan, while
+  «до разрыва» is measured **around the circle**. Drawn open, a ring laid two `Round` caps
+  on its own asphalt, each with the ribbon frame **frozen** at the end's direction — a
+  disc of shifted lane dashes and ruts at the seam. **Junction
+  geometry is still not computed as a union** — overlapping `Round` caps in one opaque
+  layer are what makes junctions look joined; **keep the road layer opaque, and its colour a function of
   world position only** (a flat colour or the surface shader, never a per-way tint). What
   *is* computed are **junction nodes** (`map/roads/junctions.rs`): a node shared by two or
   more carriageways, found by coordinate match on a 5 cm grid — Overpass gives no node ids,
@@ -1377,7 +1383,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   A carriageway also gets white **lane markings drawn by the surface shader** from the
   `Ribbon` coordinates (a bridge keeps those): a line on every lane boundary
   (`lane_count`: the `lanes` tag, else by width — two-way 8/10 m → 2, 12/16 m →
-  4; one-way 8 m → 1, i.e. none; a roundabout always 1), dashed, the axis of a two-way road
+  4; one-way 8 m → 1, i.e. none; a roundabout — tag or shape — always 1), dashed, the axis
+  of a two-way road
   with 4+ lanes solid; anti-aliased, never thinner than ~1.3 px, gone when a lane is under
   ~10 px on screen. **Marking breaks**: at every junction node each carriageway's lines
   stop `half the widest other road + 1 m` short of the node — the through road gets a gap,

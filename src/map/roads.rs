@@ -53,14 +53,15 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use self::network::RoadNodes;
 use crate::map::footprint::{JOIN_EPSILON, casing_width};
 use crate::map::meshing::{
-    Break, Markings, MeshBuilder, RibbonBreaks, RibbonCap, RibbonJoin, merge_close_points,
-    miter_offsets,
+    Break, Markings, MeshBuilder, RibbonBreaks, RibbonCap, RibbonJoin, RibbonShape,
+    merge_close_points, miter_offsets,
 };
 use crate::map::osm::model::{
     distance_to_segment, point_in_area, point_in_polygon, polyline_length, ring_bounds,
 };
 use crate::map::osm::{AreaKind, MapData, PolyArea, RoadClass, RoadLine, WallLine};
 use crate::map::shadow;
+use crate::map::shapes::is_ring;
 use crate::map::smooth::{Smoothing, smooth_pinned};
 use crate::map::surface::{
     self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec, SurfaceKind, spawn_layers,
@@ -640,11 +641,11 @@ pub fn is_carriageway(road: &RoadLine) -> bool {
 }
 
 /// Число полос проезжей части: тег `lanes`, иначе дефолт по ширине, и не
-/// больше, чем влезает по [`MIN_LANE_WIDTH`]. Кольцо — всегда одна полоса:
-/// на однополосном кольце линий нет, а рвать линию двухполосного на каждом
-/// въезде хуже, чем не рисовать её вовсе.
+/// больше, чем влезает по [`MIN_LANE_WIDTH`]. Кольцо ([`RoadLine::is_roundabout`]
+/// — тег **или форма**) — всегда одна полоса: на однополосном кольце линий нет,
+/// а рвать линию двухполосного на каждом въезде хуже, чем не рисовать её вовсе.
 pub fn lane_count(road: &RoadLine) -> u8 {
-    if road.roundabout {
+    if road.is_roundabout() {
         return 1;
     }
     let most = ((road.width / MIN_LANE_WIDTH).floor() as u8).max(1);
@@ -1402,6 +1403,13 @@ fn push_bridge_curb(builder: &mut MeshBuilder, points: &[Vec2], width: f32, join
 /// `MeshBuilder::push_ribbon` напрямую: обёртка им говорила бы только «переведи
 /// `RoadJoin::Round` в `RibbonJoin::Round`», то есть выдавала бы стиль дорог за
 /// их собственный.
+///
+/// **Замкнутый путь рисуется замкнутой лентой** — признак берётся из самого
+/// пути ([`is_ring`]), а не аргументом: у кольца торцов нет, и решать это за
+/// ленту нечем, кроме её же формы. Иначе на шве ложились два торцевых
+/// полудиска поверх собственного асфальта кольца, и внутри такого диска
+/// разметка с износом считались в **замороженной** раме торца — круглое пятно
+/// со смещёнными штрихами (отчёт автора по кольцу ТРЦ «Макси»).
 pub fn push_ribbon(
     builder: &mut MeshBuilder,
     points: &[Vec2],
@@ -1412,7 +1420,7 @@ pub fn push_ribbon(
     let Some((join, cap)) = join.ribbon_shape() else {
         return builder.push_polyline(points, width, color);
     };
-    builder.push_ribbon(points, false, width, color, join, cap);
+    builder.push_ribbon(points, is_ring(points), width, color, join, cap);
 }
 
 /// Заливка проезжей части — лента с разрывами разметки по перекрёсткам. При
@@ -1429,13 +1437,16 @@ fn push_street_fill(
     let Some((join, cap)) = join.ribbon_shape() else {
         return builder.push_polyline(points, width, color);
     };
-    builder.push_ribbon_broken(
+    builder.push_ribbon_shaped(
         points,
         width,
         color,
-        join,
-        [cap; 2],
-        RibbonBreaks::At(breaks),
+        RibbonShape {
+            closed: is_ring(points),
+            join,
+            caps: [cap; 2],
+            breaks: RibbonBreaks::At(breaks),
+        },
     );
 }
 
@@ -1447,13 +1458,21 @@ fn push_street_fill(
 /// узле кончается поперечная улица и сходятся лучи скругления бордюра
 /// (`roads/corners.rs`). Сдвинь хорда сквозную дорогу с узла — торец
 /// поперечной повис бы в метре от её асфальта или вылез за дальний край.
+///
+/// **Замкнутый way сглаживается по циклу**, так что нарисованная ось кольца
+/// остаётся кольцом: её потом и рисуют замкнутой лентой ([`push_ribbon`],
+/// [`push_street_fill`]).
 fn centerline<'a>(road: &'a RoadLine, smoothing: Smoothing, nodes: &RoadNodes) -> Cow<'a, [Vec2]> {
     if road.passage {
         return Cow::Borrowed(&road.points);
     }
-    smooth_pinned(&road.points, road.width, smoothing, |point| {
-        nodes.is_shared(point)
-    })
+    smooth_pinned(
+        &road.points,
+        road.width,
+        smoothing,
+        is_ring(&road.points),
+        |point| nodes.is_shared(point),
+    )
 }
 
 /// Открыт наружу для [`map::cars`](crate::map::cars): ряд машин обязан

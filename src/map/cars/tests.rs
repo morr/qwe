@@ -408,6 +408,26 @@ fn a_roundabout_stays_empty() {
     assert!(park(std::slice::from_ref(&ring)).is_empty());
 }
 
+/// И кольцо **без тега** — тоже: замкнутое одностороннее полотно узнаётся по
+/// форме ([`RoadLine::is_roundabout`]). Большое кольцо у ТРЦ «Макси» в OSM
+/// просто `oneway=yes`, и по кругу вдоль него стоял ряд припаркованных машин.
+#[test]
+fn a_closed_oneway_way_stays_empty_without_the_tag() {
+    let corner = Vec2::new(0.0, 0.0);
+    let mut ring = street(
+        vec![
+            corner,
+            Vec2::new(60.0, 0.0),
+            Vec2::new(60.0, 60.0),
+            Vec2::new(0.0, 60.0),
+            corner,
+        ],
+        12.0,
+    );
+    ring.oneway = true;
+    assert!(park(std::slice::from_ref(&ring)).is_empty());
+}
+
 #[test]
 fn the_row_is_ragged_and_stable() {
     let road = street(vec![Vec2::new(0.0, 0.0), Vec2::new(400.0, 0.0)], 12.0);

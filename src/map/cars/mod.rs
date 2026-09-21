@@ -576,7 +576,7 @@ fn lot_seed(lot: &PolyArea) -> u32 {
 /// паркуются). Разметке мост и кольцо нужны, машинам нет, поэтому оба
 /// условия здесь, а не внутри предиката.
 fn parkable(road: &RoadLine) -> bool {
-    is_carriageway(road) && !road.bridge && !road.roundabout
+    is_carriageway(road) && !road.bridge && !road.is_roundabout()
 }
 
 /// Полотно моста, от которого ряд держится на [`JUNCTION_CLEARANCE`] — улица

@@ -57,20 +57,21 @@ pub(super) struct GoreRoad {
     pub path: Vec<Vec2>,
     pub width: f32,
     pub oneway: bool,
+    /// [`RoadLine::is_roundabout`] — тег **или форма**: большое кольцо у ТРЦ
+    /// «Макси» (way 397005605) в OSM просто `oneway=yes`, замкнутый сам на
+    /// себя, без `junction=roundabout`, и по одному тегу ни один его островок
+    /// не находился.
     pub roundabout: bool,
-    /// Замкнут ли way **в OSM**. По нарисованному пути этого не узнать:
-    /// сглаживание обращается с замкнутым way как с открытым и срезает угол на
-    /// его шве, так что концы нарисованного кольца расходятся на метры.
-    pub closed: bool,
 }
 
 impl GoreRoad {
-    /// Собрать из дороги и её нарисованной оси; у замкнутого way ось
-    /// замыкается обратно — иначе в полосе кольца на шве дыра.
+    /// Собрать из дороги и её нарисованной оси. Замкнутость — по **сырым**
+    /// точкам OSM: это свойство way, а не стиля рисования. Сглаживание кольцо
+    /// замыкает (`smooth_pinned` идёт по циклу), так что дозамыкание —
+    /// страховка на случай оси, пришедшей другим путём.
     pub fn new(road: &RoadLine, drawn: &[Vec2]) -> Self {
-        let closed = is_ring(&road.points);
         let mut path = drawn.to_vec();
-        if let (true, Some(first)) = (closed, path.first().copied())
+        if let (true, Some(first)) = (is_ring(&road.points), path.first().copied())
             && path
                 .last()
                 .is_some_and(|last| last.distance(first) > RING_EPSILON)
@@ -81,17 +82,8 @@ impl GoreRoad {
             path,
             width: road.width,
             oneway: road.oneway,
-            roundabout: road.roundabout,
-            closed,
+            roundabout: road.is_roundabout(),
         }
-    }
-
-    /// Кольцо — по тегу **или по форме**: замкнутое одностороннее полотно.
-    /// Большое кольцо у ТРЦ «Макси» (way 397005605) в OSM — просто
-    /// `oneway=yes`, замкнутый сам на себя, без `junction=roundabout`, и по
-    /// одному тегу ни один его островок не находился.
-    fn is_roundabout(&self) -> bool {
-        self.roundabout || (self.oneway && self.closed)
     }
 }
 
@@ -112,14 +104,14 @@ impl Gores {
     pub fn of(roads: &[GoreRoad]) -> Self {
         let knots: Vec<Vec2> = roads
             .iter()
-            .filter(|road| road.is_roundabout())
+            .filter(|road| road.roundabout)
             .flat_map(|road| road.path.iter().copied())
             .collect();
         let at_ring = |point: Vec2| knots.iter().any(|knot| knot.distance(point) <= ARM_SNAP);
         // подход — кусок одностороннего полотна от кольца на [`ARM_REACH`]
         let arms: Vec<(Vec<Vec2>, f32)> = roads
             .iter()
-            .filter(|road| road.oneway && !road.is_roundabout())
+            .filter(|road| road.oneway && !road.roundabout)
             .flat_map(|road| {
                 let mut arms = Vec::new();
                 if road.path.first().is_some_and(|point| at_ring(*point)) {
@@ -148,7 +140,7 @@ impl Gores {
             reach.push(closing_span(path, *width));
         }
         let mut solid: Vec<Contour> = Vec::new();
-        for road in roads.iter().filter(|road| road.is_roundabout()) {
+        for road in roads.iter().filter(|road| road.roundabout) {
             let ring = is_ring(&road.path);
             network.extend(stroke(&road.path, road.width, LineCap::Round(ARC), ring));
             reach.push(closing_span(&road.path, road.width));

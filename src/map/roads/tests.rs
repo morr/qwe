@@ -460,6 +460,41 @@ fn lanes_come_from_the_tag_and_fall_back_to_the_width() {
     assert_eq!(lane_count(&street), 1, "на кольце линий нет");
 }
 
+/// Кольцо узнаётся и **без тега** — по форме: замкнутое одностороннее полотно.
+/// Большое кольцо у ТРЦ «Макси» (way 397005605) в OSM просто `oneway=yes`,
+/// замкнутый сам на себя, и по одному тегу получало две полосы разметки с
+/// износом — то, чего на кольце не рисуют.
+#[test]
+fn a_closed_oneway_way_is_a_roundabout_without_the_tag() {
+    let corner = Vec2::new(-10.0, -10.0);
+    let ring = vec![
+        corner,
+        Vec2::new(10.0, -10.0),
+        Vec2::new(10.0, 10.0),
+        Vec2::new(-10.0, 10.0),
+        corner,
+    ];
+    let mut road = fixture::street(ring.clone(), 12.0);
+    road.oneway = true;
+    assert!(road.is_roundabout());
+    assert_eq!(lane_count(&road), 1);
+    assert_eq!(road_markings(&road), None);
+
+    road.oneway = false;
+    assert!(
+        !road.is_roundabout(),
+        "двусторонняя петля — не кольцевая развязка"
+    );
+    assert_eq!(lane_count(&road), 4);
+
+    let mut open = fixture::street(ring[..4].to_vec(), 12.0);
+    open.oneway = true;
+    assert!(
+        !open.is_roundabout(),
+        "дуга кольца без тега — обычная улица"
+    );
+}
+
 #[test]
 fn markings_need_a_carriageway_with_two_lanes() {
     let line = vec![Vec2::ZERO, Vec2::new(100.0, 0.0)];

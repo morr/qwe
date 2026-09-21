@@ -4,7 +4,7 @@ use crate::map::meshing::distance_to_path;
 #[test]
 fn chaikin_keeps_endpoints() {
     let original = vec![Vec2::ZERO, Vec2::new(20.0, 0.0), Vec2::new(20.0, 20.0)];
-    let smoothed = chaikin(&original, 3.5, |_| false);
+    let smoothed = chaikin(&original, 3.5, false, |_| false);
     assert_eq!(smoothed[0], original[0]);
     assert_eq!(smoothed[smoothed.len() - 1], original[original.len() - 1]);
 }
@@ -14,7 +14,7 @@ fn chaikin_deviation_is_bounded_by_width() {
     // длинные сегменты: без ограничения шириной срез ушёл бы на 5 м от угла
     let width = 3.5;
     let original = vec![Vec2::ZERO, Vec2::new(20.0, 0.0), Vec2::new(20.0, 20.0)];
-    let smoothed = chaikin(&original, width, |_| false);
+    let smoothed = chaikin(&original, width, false, |_| false);
     // сами точки среза лежат на исходных сегментах
     for point in &smoothed {
         assert!(distance_to_path(*point, &original) < 1e-4);
@@ -37,7 +37,46 @@ fn chaikin_leaves_straight_runs_alone() {
         Vec2::new(20.0, step),
         Vec2::new(30.0, step * 2.0),
     ];
-    assert_eq!(chaikin(&original, 3.5, |_| false), original);
+    assert_eq!(chaikin(&original, 3.5, false, |_| false), original);
+}
+
+/// Замкнутый way сглаживается **по циклу**: шов для Chaikin — обычный излом, и
+/// путь остаётся кольцом. Пока шов был парой закреплённых концов, на кольце
+/// оставался единственный несрезанный угол, а лента получала там два торцевых
+/// полудиска поверх собственного асфальта.
+#[test]
+fn chaikin_cuts_the_seam_of_a_ring() {
+    let corner = Vec2::new(-10.0, -10.0);
+    let ring = vec![
+        corner,
+        Vec2::new(10.0, -10.0),
+        Vec2::new(10.0, 10.0),
+        Vec2::new(-10.0, 10.0),
+        corner,
+    ];
+    let smoothed = chaikin(&ring, 3.5, true, |_| false);
+    assert_eq!(
+        smoothed.first(),
+        smoothed.last(),
+        "кольцо обязано остаться кольцом"
+    );
+    assert!(
+        !smoothed.contains(&corner),
+        "угол на шве срезан, как всякий другой"
+    );
+    // четыре угла по две точки среза, плюс замыкающая копия первой
+    assert_eq!(smoothed.len(), 9);
+}
+
+/// Кольца короче четырёх точек (три вершины плюс повтор первой) не бывает —
+/// такой путь возвращается как есть, без паники на срезе.
+#[test]
+fn a_degenerate_ring_is_left_alone() {
+    let points = vec![Vec2::ZERO, Vec2::new(10.0, 0.0), Vec2::ZERO];
+    assert!(matches!(
+        smooth_pinned(&points, 3.5, Smoothing::Light, true, |_| false),
+        Cow::Borrowed(_)
+    ));
 }
 
 #[test]

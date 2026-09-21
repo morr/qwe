@@ -30,7 +30,9 @@
 use bevy::prelude::*;
 
 use crate::map::grid::Grid;
-use crate::map::meshing::{Break, MeshBuilder, RibbonBreaks, RibbonCap, RibbonJoin, miter_offsets};
+use crate::map::meshing::{
+    Break, MeshBuilder, RibbonBreaks, RibbonCap, RibbonJoin, RibbonShape, miter_offsets,
+};
 use crate::map::osm::model::{point_in_area, point_in_polygon, ring_bounds, signed_ring_area};
 use crate::map::osm::{PolyArea, WaterLine, water_line_caps};
 use crate::map::smooth::{Smoothing, smooth_path};
@@ -346,13 +348,18 @@ pub fn mesh_water_lines(channels: &OpenChannels) -> MeshBuilder {
         }
         // `At` даже без разрывов: у `Ends` «до разрыва» считается до торца, и
         // отмель гасла бы у каждого конца русла, в том числе на суше
-        open.push_ribbon_broken(
+        open.push_ribbon_shaped(
             &run.points,
             run.width,
             color,
-            RibbonJoin::Round,
-            run_caps,
-            RibbonBreaks::At(&breaks),
+            RibbonShape {
+                // русло рисуется куском между берегами — разомкнутым, даже
+                // когда OSM провёл его замкнутым way
+                closed: false,
+                join: RibbonJoin::Round,
+                caps: run_caps,
+                breaks: RibbonBreaks::At(&breaks),
+            },
         );
     }
 

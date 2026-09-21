@@ -924,33 +924,12 @@ impl MeshBuilder {
         );
     }
 
-    /// Разомкнутая лента с разрывами разметки ([`RibbonBreaks`]) — проезжая
-    /// часть улицы: «до разрыва» в [`ATTRIBUTE_RIBBON`] считается до края
-    /// ближайшего разрыва, а не до торца. Замкнутой ленте разрывы ни к чему —
-    /// у неё в этой координате длина дуги.
-    pub fn push_ribbon_broken(
-        &mut self,
-        points: &[Vec2],
-        width: f32,
-        color: LinearRgba,
-        join: RibbonJoin,
-        caps: [RibbonCap; 2],
-        breaks: RibbonBreaks,
-    ) {
-        self.push_ribbon_shaped(
-            points,
-            width,
-            color,
-            RibbonShape {
-                closed: false,
-                join,
-                caps,
-                breaks,
-            },
-        );
-    }
-
-    fn push_ribbon_shaped(
+    /// Лента заданной [`RibbonShape`] — вход для тех, кому мало `join`+`cap`:
+    /// проезжей части улицы с её разрывами разметки ([`RibbonBreaks`]) и
+    /// кольца, которое рисуется замкнутым. «До разрыва» в [`ATTRIBUTE_RIBBON`]
+    /// считается до края ближайшего разрыва, а не до торца, и у замкнутой
+    /// ленты — **по кругу**.
+    pub fn push_ribbon_shaped(
         &mut self,
         points: &[Vec2],
         width: f32,
@@ -972,15 +951,11 @@ impl MeshBuilder {
         let (mut along, total) = arclengths(&path, closed);
         // «до разрыва» — по ней шейдер гасит разметку у перекрёстка и
         // фазирует штрихи; у замкнутой ленты разрывов нет, остаётся длина дуги
-        let ends: Vec<f32> = if closed {
-            along.clone()
-        } else {
-            let gaps = GapProfile::new(&path, &along, total, breaks);
-            if self.ribbon.is_some() {
-                gaps.split_path(&mut path, &mut along, width / 4.0);
-            }
-            along.iter().map(|&at| gaps.distance(at)).collect()
-        };
+        let gaps = GapProfile::new(&path, &along, total, breaks, closed.then_some(total));
+        if self.ribbon.is_some() {
+            gaps.split_path(&mut path, &mut along, width / 4.0);
+        }
+        let ends: Vec<f32> = along.iter().map(|&at| gaps.distance(at)).collect();
 
         let count = path.len();
         let segments = if closed { count } else { count - 1 };
@@ -1532,11 +1507,15 @@ fn slope_between(at_end: f32, at_neighbour: f32, distance: f32) -> f32 {
 }
 
 /// Форма ленты: замкнута ли, чем закрыты изломы и торцы, где разрывы разметки.
-struct RibbonShape<'a> {
-    closed: bool,
-    join: RibbonJoin,
-    caps: [RibbonCap; 2],
-    breaks: RibbonBreaks<'a>,
+///
+/// У замкнутой (`closed`) торцов нет вовсе — ни полудисков, ни продлений:
+/// последняя точка пути повторяет первую, [`merge_close_points`] её снимает, а
+/// шов получает такой же веер излома, как всякая другая вершина.
+pub struct RibbonShape<'a> {
+    pub closed: bool,
+    pub join: RibbonJoin,
+    pub caps: [RibbonCap; 2],
+    pub breaks: RibbonBreaks<'a>,
 }
 
 /// Разрывы разметки одной ленты в координатах длины дуги — отсортированы и не
@@ -1545,15 +1524,32 @@ struct RibbonShape<'a> {
 struct GapProfile {
     /// `(центр, полудлина)` каждого разрыва.
     gaps: Vec<(f32, f32)>,
+    /// Длина замкнутой ленты: по ней «до разрыва» меряется **по кругу**, в обе
+    /// стороны от точки. `None` у разомкнутой.
+    period: Option<f32>,
 }
 
 impl GapProfile {
-    fn new(path: &[Vec2], along: &[f32], total: f32, breaks: RibbonBreaks) -> Self {
+    fn new(
+        path: &[Vec2],
+        along: &[f32],
+        total: f32,
+        breaks: RibbonBreaks,
+        period: Option<f32>,
+    ) -> Self {
         let mut gaps: Vec<(f32, f32)> = match breaks {
+            // у кольца торцов нет: шов — не разрыв, и гасить у него разметку
+            // значило бы провести поперёк кольца черту на пустом месте
+            RibbonBreaks::Ends if period.is_some() => Vec::new(),
             RibbonBreaks::Ends => vec![(0.0, 0.0), (total, 0.0)],
             RibbonBreaks::At(list) => list
                 .iter()
-                .map(|gap| (project_onto_path(path, along, gap.at), gap.reach))
+                .map(|gap| {
+                    (
+                        project_onto_path(path, along, gap.at, period.is_some()),
+                        gap.reach,
+                    )
+                })
                 .collect(),
         };
         gaps.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -1570,23 +1566,44 @@ impl GapProfile {
                 _ => merged.push((center, reach)),
             }
         }
-        Self { gaps: merged }
+        Self {
+            gaps: merged,
+            period,
+        }
+    }
+
+    /// Дуга от точки до центра разрыва — у замкнутой ленты **короткая из
+    /// двух**: по кольцу к разрыву идут в обе стороны.
+    fn span(&self, at: f32, center: f32) -> f32 {
+        let gap = (at - center).abs();
+        match self.period {
+            Some(period) => gap.min(period - gap),
+            None => gap,
+        }
     }
 
     /// Знаковое расстояние до края ближайшего разрыва: внутри разрыва
-    /// отрицательно. Без разрывов — длина дуги за [`FAR_FROM_BREAKS`].
+    /// отрицательно. Без разрывов — длина дуги за [`FAR_FROM_BREAKS`]: штрихам
+    /// нужна растущая координата. У замкнутой ленты без разрывов она на шве
+    /// прыгает на всю длину кольца, то есть один штрих там не совпадёт фазой,
+    /// — но размеченного кольца не бывает: `roads::lane_count` даёт кольцу
+    /// одну полосу, а однополосной разметки нет.
     fn distance(&self, at: f32) -> f32 {
         if self.gaps.is_empty() {
             return at + FAR_FROM_BREAKS;
         }
         self.gaps
             .iter()
-            .map(|&(center, reach)| (at - center).abs() - reach)
+            .map(|&(center, reach)| self.span(at, center) - reach)
             .fold(f32::INFINITY, f32::min)
     }
 
     /// Изломы функции «до разрыва»: центр каждого разрыва и точка между
-    /// соседними, где ближайший из них меняется.
+    /// соседними, где ближайший из них меняется. У замкнутой ленты соседи
+    /// считаются по кругу, так что последний разрыв граничит с первым **через
+    /// шов**; единственный разрыв кольца граничит сам с собой в противоположной
+    /// точке, где расстояние перестаёт расти, — квад, накрывший её без вершины,
+    /// увёл бы разметку за разрыв, которого там нет.
     fn kinks(&self) -> Vec<f32> {
         let mut kinks = Vec::with_capacity(self.gaps.len() * 2);
         for (index, &(center, reach)) in self.gaps.iter().enumerate() {
@@ -1594,6 +1611,12 @@ impl GapProfile {
             if let Some(&(next_center, next_reach)) = self.gaps.get(index + 1) {
                 kinks.push((center + next_center + reach - next_reach) / 2.0);
             }
+        }
+        if let (Some(period), Some(&(first, first_reach)), Some(&(last, last_reach))) =
+            (self.period, self.gaps.first(), self.gaps.last())
+        {
+            let crossover = (last + first + period + last_reach - first_reach) / 2.0;
+            kinks.push(crossover.rem_euclid(period));
         }
         kinks
     }
@@ -1605,41 +1628,89 @@ impl GapProfile {
     /// коротышки его не видно, а вырожденный квад — да.
     fn split_path(&self, path: &mut Vec<Vec2>, along: &mut Vec<f32>, merge_distance: f32) {
         for kink in self.kinks() {
-            insert_vertex_at(path, along, kink, merge_distance);
+            if insert_vertex_at(path, along, kink, merge_distance) {
+                continue;
+            }
+            // излом на замыкающем звене: вершин по обе стороны от него нет,
+            // оно идёт от последней точки к первой — такая вершина
+            // дописывается в хвост
+            if let Some(period) = self.period {
+                append_vertex_at(path, along, kink, merge_distance, period);
+            }
         }
     }
 }
 
 /// Вершина на длине дуги `at`, если та внутри какого-то сегмента и не ближе
-/// `merge_distance` к его концам.
-fn insert_vertex_at(path: &mut Vec<Vec2>, along: &mut Vec<f32>, at: f32, merge_distance: f32) {
+/// `merge_distance` к его концам. Отвечает, нашёлся ли такой сегмент, — чтобы
+/// звонящий знал, что остаётся замыкающее звено кольца ([`append_vertex_at`]).
+fn insert_vertex_at(
+    path: &mut Vec<Vec2>,
+    along: &mut Vec<f32>,
+    at: f32,
+    merge_distance: f32,
+) -> bool {
     let Some(index) = along
         .windows(2)
         .position(|pair| pair[0] < at && at < pair[1])
     else {
-        return;
+        return false;
     };
     if at - along[index] <= merge_distance || along[index + 1] - at <= merge_distance {
-        return;
+        return true;
     }
     let t = (at - along[index]) / (along[index + 1] - along[index]);
     let point = path[index].lerp(path[index + 1], t);
     path.insert(index + 1, point);
     along.insert(index + 1, at);
+    true
+}
+
+/// То же на **замыкающем** звене кольца — от последней точки к первой: вершина
+/// там не вставляется между соседями, а дописывается в хвост.
+fn append_vertex_at(
+    path: &mut Vec<Vec2>,
+    along: &mut Vec<f32>,
+    at: f32,
+    merge_distance: f32,
+    period: f32,
+) {
+    let (Some(&last), Some(&first)) = (along.last(), path.first()) else {
+        return;
+    };
+    if at <= last || at >= period {
+        return;
+    }
+    if at - last <= merge_distance || period - at <= merge_distance {
+        return;
+    }
+    let t = (at - last) / (period - last);
+    let tail = path[path.len() - 1];
+    path.push(tail.lerp(first, t));
+    along.push(at);
 }
 
 /// Длина дуги в ближайшей к `point` точке ломаной.
-fn project_onto_path(path: &[Vec2], along: &[f32], point: Vec2) -> f32 {
+fn project_onto_path(path: &[Vec2], along: &[f32], point: Vec2, closed: bool) -> f32 {
     let mut best = (f32::INFINITY, 0.0);
-    for (index, segment) in path.windows(2).enumerate() {
-        let span = segment[1] - segment[0];
+    // у замкнутого пути сегментов столько же, сколько точек: последний идёт
+    // от хвоста к голове
+    let count = path.len();
+    let segments = if closed && count > 1 {
+        count
+    } else {
+        count.saturating_sub(1)
+    };
+    for index in 0..segments {
+        let (from, to) = (path[index], path[(index + 1) % count]);
+        let span = to - from;
         let length_sq = span.length_squared();
         let t = if length_sq > 0.0 {
-            ((point - segment[0]).dot(span) / length_sq).clamp(0.0, 1.0)
+            ((point - from).dot(span) / length_sq).clamp(0.0, 1.0)
         } else {
             0.0
         };
-        let distance = point.distance_squared(segment[0] + span * t);
+        let distance = point.distance_squared(from + span * t);
         if distance < best.0 {
             best = (distance, along[index] + t * length_sq.sqrt());
         }
