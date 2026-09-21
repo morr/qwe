@@ -870,9 +870,13 @@ and the choice is what is under test:
 
 ## The junction gallery — `examples/demos/roads`
 
-`cargo run --example roads` shows a city's typical road junctions in a column — crossings
-of avenues and of streets, T and Y forks, roundabouts, a wide road running into a narrow
-one, a driveway, a bridge approach — each with its full address and **game coordinates**.
+`cargo run --example roads` shows a city's typical road junctions in a column — thirty of
+them for Tula: crossings of avenues and of streets, T and Y forks, an acute X, a staggered
+pair of T's, roundabouts, a slip lane, a U-turn across a median, an arch, a dead end, a
+wide road running into a narrow one, a driveway, a bridge approach (**no level crossings
+and no multi-level interchanges, by the author's call** — the column is about flat road
+junctions) — each with its full address and **game coordinates** in a
+caption to the left of its window.
 It is the one gallery whose input is **OSM data, not hand-written geometry**, so it is the
 place to look at a road-network defect end to end:
 
@@ -880,8 +884,10 @@ place to look at a road-network defect end to end:
   `examples/demos/roads/data/<city>/NN_*.json`, the very format the game downloads
   (`out geom`, every tag kept), cut by **`tools/osm_crop`**. It goes through the game's
   `parse` with all eight finishing passes, then the game's `mesh_*` and `spawn_*` doors
-  (surfaces with the parking layout, roads, buildings, fences, rails, cars, tree rows,
-  trees; near zoom buckets). The gallery owns no geometry at all. Edit a file, press `F5`.
+  (surfaces with the parking layout, roads, buildings, fences, rails, tree rows, trees;
+  near zoom buckets). **No parked cars, by the author's call**: the gallery is about the
+  carriageway and the junction, and a kerb row covers exactly those — the edge, the kerb
+  return, the markings by the crossing. The gallery owns no geometry at all. Edit a file, press `F5`.
 - **The manifest** `data/<city>.json` lists the samples: file, title, what to look at,
   window centre as **lat/lon** (map metres move with `MAP_SIZE`) and the visible `half`.
   Adding one: find the node (`tools/osm_near`), put `"at": [x, y]` in the manifest, run
@@ -905,11 +911,12 @@ place to look at a road-network defect end to end:
   them — reported by the author as houses standing across the avenue. Crowns are entities,
   not a layer: they are kept by their centre.
 - **Checked against the game** (offscreen shots of the same spots, samples 2, 7, 9): roads,
-  markings, kerb returns, sidewalks, buildings, shadows, lots with their stalls *and their
-  cars* come out identical. **The kerb rows of cars do not, and cannot**: an accepted car
-  spends several RNG rolls, and how many are accepted upstream depends on the buildings
-  along the *whole* street — which a window does not hold. Same rule, another draw. A
-  difference in anything else means the gallery has drifted from the game's pipeline.
+  markings, kerb returns, sidewalks, buildings, shadows and lots with their stalls come out
+  identical; a difference means the gallery has drifted from the game's pipeline. Worth
+  knowing if the cars ever come back (they were drawn while this was checked): a lot's cars
+  matched the game to the car, **the kerb rows did not and cannot** — an accepted car spends
+  several RNG rolls, and how many are accepted upstream depends on the buildings along the
+  *whole* street, which a window does not hold. Same rule, another draw.
 - **Game coordinates are real**: a sample is projected with its city's `GeoBounds`, and is
   moved into the column by shifting the spawned entities (`place_new`, by `Added<Mesh2d>`),
   which is why samples are built one per frame and why the game's spawn doors are called

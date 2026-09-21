@@ -26,10 +26,12 @@
 //! окна стоят встык, и поле одного примера иначе ложится в окно соседа.
 //!
 //! Слои — те, что видны на перекрёстке: поверхности (со стоянками и их
-//! разметкой), дороги, дома, ограды, рельсы, машины, деревья. Трамвай и
-//! промзона в игре по умолчанию выключены, вагоны стоят только на станционных
-//! путях — их здесь нет. Ступени зума взяты ближние: пятнадцать окон по двести
-//! метров — не город, экономить тут нечего.
+//! разметкой), дороги, дома, ограды, рельсы, деревья. Трамвай и промзона в игре
+//! по умолчанию выключены, вагоны стоят только на станционных путях — их здесь
+//! нет. **Машин нет нарочно**: витрина про полотно и узел, а ряд у бордюра
+//! закрывает ровно их — кромку, радиус примыкания, разметку у перекрёстка.
+//! Ступени зума взяты ближние: три десятка окон по сотне метров — не город,
+//! экономить тут нечего.
 //!
 //! Пример не трогает конфиг игры: ни `PrefsPlugin`, ни `MapPlugin` — `City` и
 //! `RoadStyle` здесь обычные ресурсы с игровыми дефолтами.
@@ -67,7 +69,6 @@ use qwe::map::buildings::material::{RoofMaterial, init_roof_material};
 use qwe::map::buildings::{
     BuildingPlan, BuildingZoomBucket, mesh_buildings, spawn_building_meshes,
 };
-use qwe::map::cars::{CarZoomBucket, mesh_cars};
 use qwe::map::osm::parse::parse;
 use qwe::map::surface::{
     LayerMesh, SurfaceMaterial, init_flat_materials, init_surface_materials, spawn_layers,
@@ -77,9 +78,9 @@ use qwe::map::trees::{
     TreeStyle, mesh_trees, spawn_tree_meshes,
 };
 use qwe::map::{
-    BuildingHeightMode, CarStyle, FenceZoomBucket, GROUND_COLOR, MeshBuilder, ParkingLayout,
-    RailZoomBucket, RoadStyle, RoofStyle, SunOnMap, SurfaceStyle, apply_sun, mesh_fences,
-    mesh_rails, mesh_roads, mesh_surfaces, mesh_tree_row_band, spawn_road_meshes,
+    BuildingHeightMode, FenceZoomBucket, GROUND_COLOR, MeshBuilder, ParkingLayout, RailZoomBucket,
+    RoadStyle, RoofStyle, SunOnMap, SurfaceStyle, apply_sun, mesh_fences, mesh_rails, mesh_roads,
+    mesh_surfaces, mesh_tree_row_band, spawn_road_meshes,
 };
 use qwe::ui::knob::AddKnobsExt;
 use qwe::ui::{PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET};
@@ -98,8 +99,11 @@ const TITLE_FONT: f32 = 34.0;
 const BODY_FONT: f32 = 22.0;
 /// Зазор между окнами соседних примеров и между окном и его подписью, м.
 const GAP: f32 = 30.0;
-/// Ширина колонки подписей справа от окон, м.
-const CAPTION_WIDTH: f32 = 260.0;
+/// Высота, которую занимает подпись примера (заголовок, адрес, заметка и три
+/// строки стадий), м — с запасом на перенос длинной заметки.
+const CAPTION_HEIGHT: f32 = 110.0;
+/// Ширина колонки подписей слева от окон, м.
+const CAPTION_WIDTH: f32 = 220.0;
 /// Поля вокруг кадра при стартовом зуме, доля его размера.
 const VIEW_MARGIN: f32 = 1.05;
 
@@ -117,7 +121,7 @@ const INK_DIM: Color = Color::srgb(0.34, 0.36, 0.40);
 struct Placed;
 
 /// Метка слоёв, которые витрина кладёт общим `spawn_layers` сама (поверхности,
-/// ограды, рельсы, машины, полоса аллей): своей игровой метки пересборки им
+/// ограды, рельсы, полоса аллей): своей игровой метки пересборки им
 /// здесь не нужно — пересобирается витрина целиком.
 #[derive(Component, Clone, Copy)]
 struct SampleLayer;
@@ -256,8 +260,9 @@ fn frame_sample(
             2.0 * half * VIEW_MARGIN / window.height().min(viewport_width),
         )
     } else {
-        let left = -gallery.max_half();
-        let right = gallery.max_half() + GAP + CAPTION_WIDTH;
+        // подписи стоят слева от окон
+        let left = -GAP - CAPTION_WIDTH;
+        let right = 2.0 * gallery.max_half();
         let zoom = (right - left) * VIEW_MARGIN / viewport_width;
         // верх окна — у верха экрана: колонка читается сверху вниз
         let top = slot.y + gallery.samples[index].half + GAP;
@@ -350,8 +355,10 @@ fn reload(
         .samples
         .iter()
         .map(|sample| {
-            let slot = Vec2::new(0.0, top - sample.half);
-            top -= 2.0 * sample.half + GAP;
+            // левый край у всех окон общий, x = 0: подпись стоит вплотную к окну
+            let slot = Vec2::new(sample.half, top - sample.half);
+            // строка не ниже своей подписи: у малого окна текст длиннее окна
+            top -= (2.0 * sample.half).max(CAPTION_HEIGHT) + GAP;
             slot
         })
         .collect();
@@ -440,7 +447,7 @@ fn build_next(
         layers
     };
 
-    // раскладка стоянок — вход и поверхностям (разметка мест), и машинам
+    // раскладка стоянок — вход поверхностям: по ней рисуется разметка мест
     let layout = ParkingLayout::new(&map.parking, &map.roads);
     let (surfaces, _) = mesh_surfaces(&map, &layout);
     spawn_layers(
@@ -478,15 +485,8 @@ fn build_next(
 
     let (fences, _) = mesh_fences(FenceZoomBucket::at(0), &map.fences, &map.roads);
     let (rails, _) = mesh_rails(RailZoomBucket::at(0), &map.rails);
-    let (cars, _) = mesh_cars(
-        CarZoomBucket::at(0),
-        CarStyle::default(),
-        road_style.smoothing,
-        &map,
-        &layout,
-    );
     let tree_rows = mesh_tree_row_band(&map.tree_rows, &TreeRowStyle::default());
-    for layers in [fences, rails, cars, tree_rows] {
+    for layers in [fences, rails, tree_rows] {
         spawn_layers(
             &mut commands,
             &mut meshes,
@@ -527,7 +527,6 @@ fn build_next(
         index,
         sample,
         slot,
-        gallery.max_half(),
         &format!(
             "OSM: {} way, {} node, {} relation  →  MapData: {} дорог, {} домов, {} стоянок, {} деревьев\n\
              разбор {:.0?}, сборка слоёв {:.0?}\n{road_line}",
@@ -566,7 +565,7 @@ fn place_new(
     }
 }
 
-/// Подпись справа от окна: вид пересечения, полный адрес, игровые координаты,
+/// Подпись слева от окна: вид пересечения, полный адрес, игровые координаты,
 /// на что смотреть — и три строки о том, что вышло из каждой стадии.
 fn spawn_caption(
     commands: &mut Commands,
@@ -574,10 +573,9 @@ fn spawn_caption(
     index: usize,
     sample: &Sample,
     slot: Vec2,
-    max_half: f32,
     stages: &str,
 ) {
-    let left = max_half + GAP;
+    let left = -GAP - CAPTION_WIDTH;
     let top = slot.y + sample.half;
     let bounds = TextBounds::new_horizontal(CAPTION_WIDTH / TEXT_SCALE);
     let mut line = |text: String, size: f32, color: Color, drop: f32| {
