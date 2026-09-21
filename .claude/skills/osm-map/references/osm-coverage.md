@@ -72,11 +72,11 @@ bbox 5600 × 3700. Контур этих 349 стоянок — **54.4 км**, �
 |---|---|---|---|---|---|---|
 | `highway=crossing` | 799 | 14695 | 5294 | 11388 | 6288 | 9996 |
 | `highway=traffic_signals` | 173 | 2316 | 1599 | 2829 | 1771 | 2157 |
-| `highway=stop\|give_way` | 108 | — | 683 | — | 834 | 1053 |
-| `highway=mini_roundabout` | 1 | — | 2 | — | 0 | 0 |
-| `highway=turning_circle\|turning_loop` | 0 | — | 80 | — | 9 | 17 |
-| `traffic_calming=island` | 0 | — | 3 | — | — | 59 |
-| `crossing:island=yes` | 1 | — | 231 | — | — | 256 |
+| `highway=stop\|give_way` | 108 | — | 683 | 1606 | 834 | 1053 |
+| `highway=mini_roundabout` | 1 | — | 2 | 17 | 0 | 0 |
+| `highway=turning_circle\|turning_loop` | 0 | — | 80 | 33 | 9 | 17 |
+| `traffic_calming=island` | 0 | 29 | 3 | — | — | 59 |
+| `crossing:island=yes` | 1 | 540 | 231 | — | — | 256 |
 
 Тула по кешу v15 (`cache_audit.py`, зеркало `maps.mail.ru`): **801** переход,
 **206** светофоров, 80 `give_way`, 28 `stop`, 1 мини-кольцо; площадей дорог
