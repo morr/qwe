@@ -14,6 +14,8 @@ use bevy::ui_widgets::Activate;
 use qwe::city::City;
 use qwe::map::{RoadJoin, RoadStyle, Smoothing};
 use qwe::ui::knob::{CycleBinding, spawn_cycle_row};
+
+use crate::overlay::NetworkOverlay;
 use qwe::ui::{
     GROUP_HEADER_PAD_PX, PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET, button_variant,
     panel_background, panel_block_background, panel_font, panel_title, row_label,
@@ -49,6 +51,7 @@ pub(crate) fn spawn_panel(
     assets: Res<AssetServer>,
     city: Res<City>,
     style: Res<RoadStyle>,
+    overlay: Res<NetworkOverlay>,
 ) {
     let panel = commands
         .spawn((
@@ -158,6 +161,18 @@ pub(crate) fn spawn_panel(
         CycleBinding {
             cycle: |style: &mut RoadStyle| style.markings = !style.markings,
             text: |style| on_off(style.markings),
+        },
+    );
+    // не ручка стиля, а взгляд на данные: улицы сети и их сечения
+    spawn_cycle_row(
+        &mut commands,
+        panel,
+        "Network",
+        ROW_LEFT_PX,
+        &*overlay,
+        CycleBinding {
+            cycle: |overlay: &mut NetworkOverlay| overlay.visible = !overlay.visible,
+            text: |overlay| on_off(overlay.visible),
         },
     );
 

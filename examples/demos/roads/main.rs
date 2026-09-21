@@ -53,6 +53,7 @@
 //! `ROADS_SHOT=путь.png` — поднять окно, снять витрину и выйти;
 //! `ROADS_SAMPLE=N` ставит камеру на пример N (с единицы) крупным планом.
 
+mod overlay;
 mod panel;
 mod samples;
 #[path = "../gallery_shot.rs"]
@@ -90,6 +91,7 @@ use qwe::map::{
 use qwe::ui::knob::AddKnobsExt;
 use qwe::ui::{PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET};
 
+use crate::overlay::{NetworkOverlay, mesh_network};
 use crate::panel::{StatusLine, spawn_panel, sync_city_buttons};
 use crate::samples::Sample;
 use crate::shot::{ShotRequest, auto_shot, request_shot};
@@ -185,8 +187,10 @@ fn main() {
         .init_resource::<SurfaceStyle>()
         .init_resource::<SunOnMap>()
         .init_resource::<Gallery>()
+        .init_resource::<NetworkOverlay>()
         // подписи строк стиля ведёт кит — по разу на ресурс, как в игре
         .add_knobs::<RoadStyle>()
+        .add_knobs::<NetworkOverlay>()
         .insert_resource(ClearColor(GROUND_COLOR))
         .add_systems(
             Startup,
@@ -216,6 +220,7 @@ fn main() {
                 reload.run_if(
                     resource_changed::<City>
                         .or_else(resource_changed::<RoadStyle>)
+                        .or_else(resource_changed::<NetworkOverlay>)
                         .or_else(input_just_pressed(KeyCode::F5)),
                 ),
                 build_next,
@@ -469,6 +474,7 @@ fn build_next(
     assets: Res<AssetServer>,
     city: Res<City>,
     road_style: Res<RoadStyle>,
+    overlay: Res<NetworkOverlay>,
     mut gallery: ResMut<Gallery>,
     mut status: Single<&mut Text, With<StatusLine>>,
 ) {
@@ -514,6 +520,16 @@ fn build_next(
         &materials.layers,
         (road_layers, road_report),
     );
+
+    if overlay.visible {
+        spawn_layers(
+            &mut commands,
+            &mut meshes,
+            &materials.layers,
+            clip(vec![mesh_network(&map)]),
+            SampleLayer,
+        );
+    }
 
     let plan = BuildingPlan {
         mode: BuildingHeightMode::default(),
