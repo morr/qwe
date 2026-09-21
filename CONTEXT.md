@@ -217,6 +217,13 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   - **Taper** (`map/roads/tapers.rs`) — where two ways of one street meet at a pure seam
     (no third road) with different widths, the wider one starts at the narrower's width
     and widens over 10 m per metre of difference. Drawing only.
+  - **Street axis** (`map/roads/axis.rs`) — the drawn centerline of a whole street, not of
+    a way: the street is simplified (1 m), each bend becomes an arc (radius from the
+    smoothing step, at most 2 m off OSM, at least half the width), and the curve is cut
+    back into its ways at the seams. A node shared with a third road stays exactly in
+    place, and the street passes it along a straight stretch on the bisector. Bridges,
+    arches and paths keep the per-way Chaikin `centerline`. The ribbon, the sidewalk band
+    and the parked cars all stand on it. Drawing only.
     Underground road is dropped (`is_road_underground`) — a **separate** predicate from
     `is_underground`, because the risk is asymmetric: an extra ribbon is cosmetic, an extra
     deletion is a hole in the navmesh.

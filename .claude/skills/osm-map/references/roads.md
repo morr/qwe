@@ -197,19 +197,47 @@ shows the road through it** in `parking.md`; the parse passes that read a road's
   5 cm key as the junctions, `junctions::node_key`). None of them moves `RoadLine::points`:
   the navmesh, doors, trees, arches and the parked cars still read OSM as it is. All four
   are counted in the `road meshing:` line, with the time spent before the first ribbon.
-  - **Pinned nodes.** `centerline` smooths with `smooth_pinned`, and Chaikin leaves every
-    shared node in place. Before, a bend of the through road at a junction was cut by a
-    chord up to a road width long, and the side street's end — which sits on the OSM node
-    — hung beside the drawn asphalt or stuck out past its far edge. `smooth_path` (rails,
-    tram, tree-row band, waterways, cars) pins nothing, as before.
-    **A closed way is smoothed round the cycle** (`smooth_pinned`'s `closed`, from
-    `is_ring(&road.points)`): the seam is an ordinary bend, not a pair of pinned ends, so
-    the drawn ring comes out closed and its seam corner is cut like every other. Before,
-    the seam was the ring's one uncut corner **and** the reason the ribbon laid two round
-    caps there — see **Ribbon** below. **The cars do not pin**, so near a
-    bent junction a row walks a chord the ribbon no longer draws; the junction clearance
-    (`reach + 5 m`) covers most of it, and making the cars read `RoadNodes` is the way to
-    close the rest.
+  - **The street axis** (`roads/axis.rs::street_axes`, stage 2 of the roads rework). The
+    ribbon of every way that lies in a street ([`RoadNetwork`]) is drawn along **one curve
+    per street**, not per way — per-way Chaikin pinned both ends of each way, so every
+    OSM seam was a corner, and a shared node was never cut, so a through street kinked at
+    every junction on a bend. Per run of a street (bridges and arches split it — their
+    points are the navmesh's, and they keep the old `centerline`):
+    - the ways are stitched into one polyline and **simplified** (Douglas–Peucker,
+      `SIMPLIFY_TOLERANCE` 1 m), keeping the run ends, the seams and the pinned nodes;
+    - every free vertex becomes an **arc tangent to both links**: the step's radius
+      (`Light` 30 m, `Strong` 60 m), capped by `MAX_DEVIATION` 2 m from the vertex,
+      floored by half the width (a smaller radius folds the inner edge — where the links
+      are too short for it the corner counts as `tight corners` in the log line). An arc
+      takes at most half of each link — and next to a pinned node at most what leaves the
+      node `KERB_STRAIGHT` 12 m of straight edge (never less than ¾ of a short link):
+      **a kerb return is laid only on a straight edge**, and an arc eating into it cost
+      ~1000 kerb returns across Tula in the first cut;
+    - a **pinned node** — one a third road touches — stays exactly in place: the kerb
+      returns, the marking breaks, the stitches and the tapers all find each other by it.
+      The street passes it along a **straight stretch on the bisector**
+      (`through_pad`, up to `THROUGH_RUN` 24 m each way, at most 2 m off the links, at
+      most half of each), and the bend goes to two arcs at the stretch's ends. A bend
+      under `THROUGH_MIN_BEND` 4° stays a corner (the junction's asphalt covers it, and a
+      stretch would only shorten the straight edge); one over `THROUGH_MAX_BEND` 50° is a
+      turn, not a through street, and stays a corner as well. A Hermite curve through the
+      node was tried first and rejected: it bends hardest at the node itself, exactly where
+      the kerb return needs the edge straight;
+    - the curve is **cut back into its ways at the seams**, at the arc point nearest the
+      seam node, and each piece takes its own way's point order. A seam is therefore no
+      longer an OSM node on the drawn path, and a seam bent over 25° no longer gets a
+      "kerb return" between two pieces of one street (~230 of them in Tula).
+    Paths are in no street and go through `centerline` — Chaikin with every shared node
+    pinned, a closed way **round the cycle** (`smooth_pinned`'s `closed`), as before. The
+    **parked cars stand on the same axes** (`cars::park_cars` takes them; the game passes
+    `MapData::network`, the bench and the gallery glue the streets themselves), which
+    closed the old "the row walks a chord the ribbon no longer draws". Tula, release:
+    285 seams passed as one curve, road meshing 78 → 87 ms (the part before the ribbons,
+    axes included, 22 → 26 ms; the rest is the ~11 % more vertices of the arcs); kerb
+    returns 15269 → 14982 (the seam returns above plus ~50 at junctions), sidewalk
+    returns 1550 → 1423, gores 12 → 10 (two thin slivers where an approach merges almost
+    parallel into the ring; the mall ring keeps all three), `navmesh: pruned` untouched —
+    the axis moves no `RoadLine::points`.
   - **Driveway crossings** (`driveway_crossings`) — an `Alley` way under
     `CROSSING_MAX_LENGTH` 20 m whose **both** ends are ends of (non-bridge) streets is drawn
     as a `Street` at the narrower street's width. Found from a screenshot on проспект Ленина
@@ -309,13 +337,13 @@ shows the road through it** in `parking.md`; the parse passes that read a road's
   - **join** — `Square` (the historical `push_polyline`: an independent quad per segment
     with *both ends* extended by half a width; no joins at all, which is what produced
     the notches on bends and the wedges at junctions), `Miter`, `Round` (default).
-  - **smoothing** — Chaikin corner-cutting on the centerline (`map/smooth.rs::Smoothing`),
-    `Off` / `Light` (default,
-    1 iteration) / `Strong` (2). Only bends over `MIN_SMOOTH_ANGLE` (10°) are cut and the
-    cut length is clamped to the road width, so the drawn line never leaves the OSM data by
-    more than a road width. `passage` roads are never smoothed — their endpoints are pinned
-    to building outline vertices that `arch_openings` looks the arch up by — and a node
-    shared with another road is never cut (see **The drawn network** above).
+  - **smoothing** — `Off` / `Light` (default) / `Strong` (`map/smooth.rs::Smoothing`).
+    On a street it picks the arc radius of **the street axis** (30 / 60 m, see **The drawn
+    network** above); on a bridge and a path it is Chaikin corner-cutting, 1 or 2
+    iterations: only bends over `MIN_SMOOTH_ANGLE` (10°) are cut and the cut length is
+    clamped to the road width. `passage` roads are never smoothed — their endpoints are
+    pinned to building outline vertices that `arch_openings` looks the arch up by — and a
+    node shared with another road is never moved.
   - **casing** — a darker outline, its own merged layer at `Z_ALLEY_CASING` (1.4) /
     `Z_ROAD_CASING` (1.9), width `+2·casing_width` (8% of the road, 0.3–1 m). Both fills
     (1.5 / 2.0) sit above both casings on purpose: otherwise a casing would cut every
@@ -560,9 +588,11 @@ shows the road through it** in `parking.md`; the parse passes that read a road's
 
 ## The junction gallery — `examples/demos/roads`
 
-`cargo run --example roads` shows a city's typical road junctions in a column — sixteen
+`cargo run --example roads` shows a city's typical road junctions in a column — seventeen
 for Tula (the sixteenth, `16_lanes_taper`, is a one-way primary going from four lanes to
-two at a pure seam — the taper of **Streets, sections, tapers**): crossings of avenues (square and skew), of an avenue and a street, of a divided
+two at a pure seam — the taper of **Streets, sections, tapers**; the seventeenth,
+`17_ring_gores`, is the mall ring the plan's acceptance names — three hatched gores and
+the boulevard's double solid line must survive every stage): crossings of avenues (square and skew), of an avenue and a street, of a divided
 avenue and a street, of private-sector streets and of yard drives, T's into an avenue and
 into one half of a divided one, a fork round a triangular island, a roundabout, five
 arms, a drive into a street, a street that narrows, a sharp bend, a dead end — each with

@@ -40,7 +40,7 @@ fn park_driving(roads: &[RoadLine], style: CarStyle, traffic: TrafficSide) -> Ve
         roads,
         &junctions::marking_breaks(roads, is_carriageway),
         style,
-        Smoothing::Off,
+        &drawn_axes(roads, Smoothing::Off),
         traffic,
         &Districts::new(&[]),
     )
@@ -153,7 +153,7 @@ fn the_same_street_parks_thinner_in_a_private_sector() {
             roads,
             &breaks,
             CarStyle::default(),
-            Smoothing::Off,
+            &drawn_axes(roads, Smoothing::Off),
             TrafficSide::Right,
             &Districts::new(buildings),
         )
@@ -459,8 +459,8 @@ fn distance_to_path(points: &[Vec2], at: Vec2) -> f32 {
 
 #[test]
 fn the_row_stays_on_the_drawn_asphalt_through_a_bend() {
-    // излом 30° на звеньях по 40 м: Chaikin срезает вершину на два метра,
-    // и ряд по сырым точкам вставал бы за кромкой
+    // излом 30° на звеньях по 40 м: дуга оси уводит её от вершины на метр с
+    // лишним, и ряд по сырым точкам вставал бы за кромкой
     let points = vec![
         Vec2::new(0.0, 0.0),
         Vec2::new(40.0, 0.0),
@@ -475,12 +475,12 @@ fn the_row_stays_on_the_drawn_asphalt_through_a_bend() {
         std::slice::from_ref(&road),
         &junctions::marking_breaks(std::slice::from_ref(&road), is_carriageway),
         style,
-        Smoothing::Light,
+        &drawn_axes(std::slice::from_ref(&road), Smoothing::Light),
         TrafficSide::Right,
         &Districts::new(&[]),
     );
     assert!(!cars.is_empty());
-    let drawn = smooth_path(&road.points, road.width, Smoothing::Light);
+    let drawn = drawn_axes(std::slice::from_ref(&road), Smoothing::Light).remove(0);
     for car in &cars {
         let off = distance_to_path(&drawn, car.at);
         assert!(

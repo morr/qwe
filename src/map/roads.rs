@@ -794,6 +794,10 @@ pub struct RoadReport {
     pub gores: usize,
     /// Клинья между сечениями улиц (`roads/tapers.rs`).
     pub tapers: usize,
+    /// Швы ways, пройденные осью улицы одной кривой (`roads/axis.rs`).
+    pub seams: usize,
+    /// Изломы, на которые звеньев не хватило для радиуса в полуширину.
+    pub tight: usize,
     pub vertices: usize,
     pub network: std::time::Duration,
     pub elapsed: std::time::Duration,
@@ -810,6 +814,8 @@ impl std::fmt::Display for RoadReport {
             crossings,
             gores,
             tapers,
+            seams,
+            tight,
             vertices,
             network,
             elapsed,
@@ -819,7 +825,8 @@ impl std::fmt::Display for RoadReport {
             "road meshing: {vertices} verts in {elapsed:?} ({:?}, smoothing {:?}, casing {}, \
              sidewalks {}, markings {}, junctions {junctions}, kerb returns {kerb_returns} + \
              {sidewalk_returns} on sidewalks, stitches {stitches}, driveway crossings \
-             {crossings}, gores {gores}, tapers {tapers}; {network:?} of it before the ribbons)",
+             {crossings}, gores {gores}, tapers {tapers}, smooth seams {seams}, tight corners \
+             {tight}; {network:?} of it before the ribbons)",
             style.join, style.smoothing, style.casing, style.sidewalks, style.markings,
         )
     }
@@ -888,10 +895,10 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
     } else {
         tapers::Tapers::new(&drawn, &map.network, &nodes)
     };
-    let paths: Vec<Cow<[Vec2]>> = drawn
-        .iter()
-        .map(|road| centerline(road, style.smoothing, &nodes))
-        .collect();
+    // ось по улице целиком, не по way (`roads/axis.rs`); у переезда та же
+    // ось, что у его дороги, — он отличается шириной и классом
+    let axes = axis::street_axes(roads, &map.network, &nodes, style.smoothing);
+    let paths = &axes.paths;
     // широкие улицы поверх узких — см. доку модуля
     let mut order: Vec<usize> = (0..roads.len()).collect();
     order.sort_by(|&a, &b| drawn[a].width.total_cmp(&drawn[b].width));
@@ -903,7 +910,7 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
     } else {
         let rounded: Vec<Option<&[Vec2]>> = drawn
             .iter()
-            .zip(&paths)
+            .zip(paths)
             .map(|(road, path)| (!road.bridge && !road.passage).then_some(path.as_ref()))
             .collect();
         corners::kerb_returns(&drawn, &rounded, &nodes, |road| {
@@ -1165,6 +1172,8 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
         crossings: crossings.len(),
         gores: gores.count(),
         tapers: tapers.count,
+        seams: axes.seams,
+        tight: axes.tight,
         vertices: layers.iter().map(|l| l.builder.vertex_count()).sum(),
         network: network_time,
         elapsed: started.elapsed(),
@@ -1544,7 +1553,8 @@ fn push_street_fill(
     );
 }
 
-/// Осевая, по которой строится лента. Без сглаживания — прямо точки OSM, без
+/// Осевая дороги вне улицы: моста, арки, дорожки (улицы идут по
+/// [`axis::street_axes`]). Без сглаживания — прямо точки OSM, без
 /// копирования. Арки (`passage`) не сглаживаются никогда: их концы приколоты к
 /// вершинам контура здания, по ним `arches::arch_openings` ищет проём в стене.
 ///
@@ -1574,6 +1584,9 @@ fn centerline<'a>(road: &'a RoadLine, smoothing: Smoothing, nodes: &RoadNodes) -
 /// восстановления узлов по общим нодам заводить незачем.
 pub(super) mod junctions;
 
+/// Открыт наружу для [`map::cars`](crate::map::cars): ряд машин стоит на той
+/// же оси, что и лента.
+pub(super) mod axis;
 mod corners;
 mod gores;
 mod lots;

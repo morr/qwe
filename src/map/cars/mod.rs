@@ -27,6 +27,8 @@
 //! [`CarZoomBucket`] снимает слой целиком, когда машина становится мельче
 //! шести пикселей.
 
+use std::borrow::Cow;
+
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
@@ -37,10 +39,11 @@ use crate::map::osm::model::{distance_to_segment, ring_vertex_mean};
 use crate::map::osm::{MapData, PolyArea, RoadLine, TrafficSide};
 use crate::map::parking::{ParkingLayout, Stall};
 use crate::map::roads::junctions::{self, MarkingBreaks};
-use crate::map::roads::{RoadStyle, is_carriageway, tapers};
+use crate::map::roads::network::{RoadNetwork, RoadNodes};
+use crate::map::roads::{RoadStyle, axis, is_carriageway, tapers};
 use crate::map::seed::{Lcg, seed_from_point};
 use crate::map::shadow;
-use crate::map::smooth::{Smoothing, smooth_path};
+use crate::map::smooth::Smoothing;
 use crate::map::surface::{LayerCost, LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::prefs::retuned;
@@ -230,7 +233,7 @@ pub fn measure_cars(
         roads,
         &junctions,
         CarStyle::default(),
-        RoadStyle::default().smoothing,
+        &drawn_axes(roads, RoadStyle::default().smoothing),
         traffic,
         &districts,
     );
@@ -401,11 +404,13 @@ pub fn mesh_cars(
     // застройка вокруг — тем же проходом и с тем же сроком жизни, что и
     // разрывы: индекс на 7.6 тысячи домов дешевле, чем повод его кешировать
     let districts = Districts::new(&map.buildings);
+    let nodes = RoadNodes::new(&map.roads);
+    let axes = axis::street_axes(&map.roads, &map.network, &nodes, smoothing);
     let mut cars = park_cars(
         &map.roads,
         &junctions,
         style,
-        smoothing,
+        &axes.paths,
         map.traffic_side,
         &districts,
     );
@@ -452,21 +457,35 @@ pub fn cars_mesh(
     let junctions = junctions::marking_breaks(roads, is_carriageway);
     let districts = Districts::new(&[]);
     mesh_bodies(
-        &park_cars(roads, &junctions, style, smoothing, traffic, &districts),
+        &park_cars(
+            roads,
+            &junctions,
+            style,
+            &drawn_axes(roads, smoothing),
+            traffic,
+            &districts,
+        ),
         detail,
     )
+}
+
+/// Оси дорог так, как их рисует `map::roads`, — для среза без собранной сети
+/// (замер, витрина, тесты): улицы склеиваются здесь же.
+fn drawn_axes(roads: &[RoadLine], smoothing: Smoothing) -> Vec<Cow<'_, [Vec2]>> {
+    let nodes = RoadNodes::new(roads);
+    axis::street_axes(roads, &RoadNetwork::default(), &nodes, smoothing).paths
 }
 
 /// Ряды вдоль всех улиц, годных под парковку.
 ///
 /// `junctions.breaks` индексирован по номеру дороги **во входном срезе**,
 /// поэтому `roads` — весь срез карты, а не отфильтрованный список
-/// парковочных.
+/// парковочных; `axes` — по тому же индексу, нарисованные оси дорог.
 fn park_cars(
     roads: &[RoadLine],
     junctions: &MarkingBreaks,
     style: CarStyle,
-    smoothing: Smoothing,
+    axes: &[Cow<[Vec2]>],
     traffic: TrafficSide,
     districts: &Districts,
 ) -> Vec<Car> {
@@ -488,11 +507,10 @@ fn park_cars(
                 .iter()
                 .filter(|deck| deck.near(&road.points, road.width)),
         );
-        // осевая та же, по которой `map::roads` строит ленту: по сырым точкам
-        // OSM ряд на изломе съезжает с асфальта на тротуар, потому что Chaikin
-        // срезает вершину на метры. Арок здесь не бывает — `is_carriageway` их
-        // отсеял, — поэтому `smooth_path`, а не `centerline`
-        let centre = smooth_path(&road.points, road.width, smoothing);
+        // осевая та же, по которой `map::roads` строит ленту (`roads/axis.rs`):
+        // по сырым точкам OSM ряд на изломе съезжает с асфальта на тротуар,
+        // потому что дуга уводит ось от вершины на метры
+        let centre = &axes[index];
         let mut rng = Lcg::new(seed_from_point(
             road.points.first().copied().unwrap_or(Vec2::ZERO),
         ));
@@ -512,7 +530,7 @@ fn park_cars(
         for &side in sides {
             park_along(
                 &mut cars,
-                &centre,
+                centre,
                 road.width / 2.0,
                 Kerb {
                     side,
