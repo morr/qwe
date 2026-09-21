@@ -1972,8 +1972,9 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   to the projection rather than to a city.
   Detail — **species-behavior** and **navigation-deep** skills.
 - OSM pipeline: `src/map/osm/{overpass,download,parse,model}.rs`; rendering:
-  `src/map/{meshing,spawn}.rs`. Detail — **osm-map skill** (its `references/` also carry
-  the tag coverage audit and the crown-algorithm write-up).
+  `src/map/{meshing,spawn}.rs`. Detail — **osm-map skill** (`SKILL.md` is the map; its
+  `references/` carry the parse passes, roads, parking and cars, the other layers,
+  buildings, trees, doors, the tag coverage audit and the crown-algorithm write-up).
 - Navigation: `src/navigation/{navmesh,astar,northstar,polymesh}`; movement/interpolation:
   `src/movement/`. Detail — **navigation-deep skill** (crowd and slots in
   `references/crowd.md`).
