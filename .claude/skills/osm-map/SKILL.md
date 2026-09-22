@@ -219,7 +219,7 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   consumer reading the bare field is a consumer that misses every untagged ring) and
   `lanes: Option<u8>` (the `lanes`
   tag through `parse_measure`, floored, 1–8; `2;3` reads as 2, `0` and `12` as no tag;
-  without `lanes`, `lanes:forward` + `lanes:backward` — then **overwritten** by the
+  without `lanes`, `lanes:forward` + `lanes:backward` (+ `lanes:both_ways` when tagged) — then **overwritten** by the
   section pass with the inferred count on every street and drive, so after the parse it
   is `None` on paths only). Coverage per city is in `references/osm-coverage.md` — Tula has `lanes` on 97 % of its
   streets ≥ 8 m, the European cities on about half. `turns: [Vec<LaneTurn>; 2]` — the
@@ -778,9 +778,12 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     the tree-row band, its **second** door), `buildings` and `trees`.
     `surface::spawn_layer` (one layer, a
     ready `LayerMaterial`) survives only as the primitive `spawn_layers` is built on.
-    The two counts are different numbers and both are worth having: `grep 'pub fn mesh_'
-    src/map/` gives eleven doors, the module list gives ten — `spawn.rs` carries two
-    (`mesh_surfaces`, `mesh_tree_row_band`). **Count the modules when asking "is anything
+    The two counts are different numbers and both are worth having: the converted modules
+    give eleven doors against ten modules — `spawn.rs` carries two (`mesh_surfaces`,
+    `mesh_tree_row_band`); `grep 'pub fn mesh_' src/map/` gives fourteen, the three
+    extra being no layer doors of their own — `water.rs`'s `mesh_water_areas` /
+    `mesh_water_lines`, called from `mesh_surfaces`, and the Debug tab's
+    `mesh_network_overlay` (`roads/network/overlay.rs`). **Count the modules when asking "is anything
     left".** The tree-row band lives in `spawn.rs` and is not
     `trees` — that mistake is what once made the list read "all ten" with `trees.rs`
     still spawning by hand.
@@ -957,10 +960,12 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
   - `references/buildings.md` and `references/trees.md` — **Buildings** (below) and the
     trees.
 - **Zoom buckets** (`map/zoom.rs`) — the one mechanism behind every zoom LOD. Each
-  layer keeps its own table (`RAIL_LODS`, `TRAM_LODS`, `FENCE_LODS`; the cars' and the
-  roof clutter's are a single threshold each) and names it with a marker type
-  implementing `ZoomLods` (`RailLods`, `TramLods`, `FenceLods`, `CarLods`,
-  `BuildingLods` — empty enums handing over the `max_zoom`s). `ZoomBucket<T>` is the
+  layer keeps its own table (`RAIL_LODS`, `TRAM_LODS`, `FENCE_LODS`; the cars', the
+  wagons' and the roof clutter's are a single threshold each, the paint's are its three
+  zoom maxima) and names it with a marker type
+  implementing `ZoomLods` (`RailLods`, `TramLods`, `FenceLods`, `CarLods`, `WagonLods`,
+  `BuildingLods`, `PaintLods` — empty enums handing over the `max_zoom`s; the paint's
+  bucket only flips `Visibility`, nothing is rebuilt — **Markings** in `roads.md`). `ZoomBucket<T>` is the
   resource with the current index for that table;
   `for_zoom` is the single selection rule (first bucket whose bound is above the zoom,
   a zoom on the bound goes up — `zoom/tests.rs`). Two generic systems:

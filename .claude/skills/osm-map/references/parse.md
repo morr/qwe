@@ -17,14 +17,16 @@ pass reachable:
   without a faith, skewed outlines, no doors, no trees. The `Vec<Vec2>` is the entrances
   that have nowhere to go yet — Overpass hands out nodes before ways, so at that moment the
   buildings do not exist.
-- **`finish_parse(&mut MapData, &[Vec2]) -> PassReport`** — the **eight** finishing passes
-  in their one correct order, closed by a ninth step, `compose_trees` for the default
+- **`finish_parse(&mut MapData, &[Vec2]) -> PassReport`** — the **nine** finishing passes
+  (step 0 is the street sections, `map::roads::network::sections`, since the width they
+  set is read by the passes after them) in their one correct order, closed by a tenth
+  step, `compose_trees` for the default
   layout (the parser knows nothing about the panels, but it must not hand out a `MapData`
   whose `trees` is empty, or every reader has to remember a separate compose step; the
   player's own layout is reported by `map::trees::recompose_row_trees`, and only when it
   differs). **That order is their interface**. It used to live as notes in three doc
   comments out of eight and was written down whole nowhere; now it is one numbered list of
-  nine steps on that function, each step with its "why here", and a pass's own doc comment
+  ten steps (0–9) on that function, each step with its "why here", and a pass's own doc comment
   only points at its step number.
 - **The reports are values**, not the ten `eprintln!` that used to make up forty-five of
   `parse`'s hundred and twenty-five lines. `parse` prints both of them at the end of the

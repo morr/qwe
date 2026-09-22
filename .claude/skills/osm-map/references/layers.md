@@ -309,7 +309,8 @@ The layers that are neither roads, parking, buildings nor trees. Each bullet is 
 ## Industry, standing stock, fences
 
 - **Industry** (`map/industry.rs`) — the industrial belt, added in `QUERY_VERSION` **11**.
-  Five layers from two sources ([`Structure`] and [`PipeLine`] above), rebuilt on
+  Five layers from two sources (`Structure` and `PipeLine`, see **MapData — the parsed
+  model** in `SKILL.md`), rebuilt on
   `industry::rebuilds_on()` — `retuned::<SunOnMap>.or_else(retuned::<BuildingHeightMode>)
   .or_else(retuned::<IndustryStyle>)`
   and on nothing else — the settled sun, never `SunStyle`, like every other rebuild — and
@@ -530,7 +531,8 @@ The layers that are neither roads, parking, buildings nor trees. Each bullet is 
     opposite case and sits lower, where its own `return` is what is wanted.
   - **The shadow is cast by the map's own sun**, so `rebuild_fences` is gated on
     `retuned::<FenceZoomBucket>.or_else(retuned::<SunOnMap>)` — the general Sun rule
-    below, not an exception to it. Heights are constants of the kind (`FENCE_HEIGHT` 2 m,
+    (**The slider is not the map's sun**, under **Height modes** in `buildings.md`), not an
+    exception to it. Heights are constants of the kind (`FENCE_HEIGHT` 2 m,
     `HEDGE_HEIGHT` 1.4 m) run through the same `shadow_dir()` / `shadow_length_scale()`
     the buildings and the cars use.
   - **The shadow is a sweep, not a shifted copy** (`fences::push_shadows`). The copy that

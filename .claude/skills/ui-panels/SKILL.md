@@ -170,7 +170,8 @@ did not fit 1080 px and ran off the top of the screen.
   tram sits here because its track runs on the carriageway, and it is deliberately not a
   `RoadStyle` field: that would remesh every road layer on a toggle whose only effect is one
   merged mesh (`map::tram::rebuild_tram`). Under it, the second foreign resource in the
-  section — so `add_knobs` is registered three times over: **Cars** and **Occupancy** on
+  section — so `add_knobs` is registered four times over (`RoadShape`, `RoadStyle`,
+  `TramStyle`, `CarStyle`): **Cars** and **Occupancy** on
   `CarStyle` — a toggle (on by default) and a
   slider (0–100 %, step 5, printed as a percent), for the same reason and with the
   same shape, rebuilding only `map::cars::rebuild_cars`. Its drag needs no debounce, and

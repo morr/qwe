@@ -46,8 +46,9 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   **A half of a divided street has no band on its paired side** (`roads::push_sidewalk`,
   **Paired halves** below): along a pair run the band is the width plus one sidewalk,
   shifted half a sidewalk away from the partner, and the full band resumes past the run
-  with a butt joint. On a half with a taper the runs are not re-cut and the band stays
-  full.
+  with a butt joint; a piece under `SIDEWALK_PIECE_MIN` 0.5 m between two runs is
+  skipped (centimetre offcuts). On a half with a taper the runs are not re-cut and the
+  band stays full.
   **`sidewalk=*` picks the sides** (stage 7): `RoadLine::sidewalks` `[left, right]` along
   the points (`parse/tags.rs::tagged_sidewalks` — `both|left|right|no|none|separate`,
   refined by `sidewalk:both|left|right`; `no` and `separate` mean no band, a separate
@@ -153,7 +154,8 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   - **Lawn** (wider) — the contour between the inner kerbs, opened by `NOSE_SHARE` 0.45 of
     the gap for a **rounded nose**, goes into the `sidewalks` layer (it shows as a
     `MEDIAN_KERB` 0.5 m kerb along each half), and shrunk by the kerb it is grass in
-    `road_medians` (`Z_ROAD_MEDIAN` 1.7, `SurfaceKind::Grass`, the meadow colour). Drawn
+    `road_medians` (`Z_ROAD_MEDIAN` 1.7, `SurfaceKind::Grass`, the meadow colour); a lawn
+    or kerb piece under `MIN_LAWN_AREA` 4 m² is not drawn. Drawn
     whatever `RoadStyle::sidewalks` says: a lawn is still a lawn.
   - **Where it opens** — `crossing_breaks`: only a junction break of one half **facing** a
     break of the other (within the axes' distance plus both reaches) — a crossing
@@ -184,10 +186,12 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     end is a 10 m chord (`ARM_REACH`), since OSM's first link can be half a metre long.
     Nodes are walked in key order, so the gluing does not depend on the map's order.
   - **Sections** (`sections::apply`, **step 0 of `finish_parse`**). A way's lanes: the tag
-    (`lanes`, else `lanes:forward` + `lanes:backward` — one direction alone is not a sum),
+    (`lanes`, else `lanes:forward` + `lanes:backward` + `lanes:both_ways`, the last one
+    optional — one direction alone is not a sum),
     else the **nearest tagged way of its street** by the distance between their middles
-    along it, else `default_lanes` by class (four on primary/secondary two-way, two on the
-    rest, half of that one-way, one on a service drive). Then a **lone jump** — a run shorter
+    along it, else `default_lanes` by class (four on motorway/trunk/primary/secondary
+    two-way, two on the rest — every `*_link` included, half of that one-way, one on a
+    service drive). Then a **lone jump** — a run shorter
     than `SPIKE_MAX_LENGTH` 60 m with the same count on both sides and another of its own —
     is cut to its neighbours. `RoadLine::lanes` is **overwritten** with the result on every
     street and drive, and `width = lanes × lane width + 2 × EDGE_WIDTH` — a lane on a
@@ -294,7 +298,10 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     below), then `road_paint_zebras` + `road_paint_lanes` +
     `road_paint_axes` at `Z_ROAD_PAINT` (above every
     street fill, **under** a parking lot — a lot laid over the carriageway hides its lines
-    as it did when the asphalt shader drew them), `bridge_paint_lanes` +
+    as it did when the asphalt shader drew them), `road_paint_islands` at
+    `Z_ROAD_ISLANDS` 2.0035 (the hatched gores and splitter islands — above a lot's
+    asphalt and its double line; hidden with the zebras, `PaintTag::Zebras`; **Parking**
+    in `parking.md`), and `bridge_paint_lanes` +
     `bridge_paint_axes` at `Z_BRIDGE_PAINT` (a street's paint under an overpass must not
     lie over the deck). Material `PaintMaterial` (blend), its handle in
     `SurfaceMaterials` next to the surface ones, `MaterialSpec::Paint`.
@@ -394,8 +401,9 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   points.
   - **What a ring is.** Candidates are `RoadLine::is_roundabout` streets (tag or a closed
     one-way), not bridges, not arches. A closed way is a ring by itself; open arcs are
-    chained end to start by node until they come back to the first (`chains`) — a chain
-    that breaks off is left alone. Tula: 12 tagged arcs make its two big rings (primary,
+    chained end to start by node until they come back to the first (`chains`, at most
+    `MAX_ARCS` 32 of them) — a chain that breaks off is left alone; a ring whose fitted
+    semi-axis is under `MIN_RADIUS` 4 m keeps its OSM points. Tula: 12 tagged arcs make its two big rings (primary,
     six arcs, r ≈ 40 m; secondary, six arcs, a 150 × 115 m "egg"), plus seven closed
     one-ways (the «Макси» ring and the service rings).
   - **The figure** (`fit`): the loop sampled every metre, centre and axes by its moments,
@@ -414,7 +422,10 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     starting) at a ring node gets its last `0.5 × radius` metres (6–20 m, at most 60 % of
     the way, never past another shared node) replaced by the turn paths' Bézier
     (`turns::curve`), tangent to the arm and arriving at `ENTRY_ANGLE` 25° to the ring's
-    travel — inward for an entry, outward for an exit. An arm already within 5° is left.
+    travel — inward for an entry, outward for an exit. An arm already within 5° is left
+    (its heading is taken over its last `HEADING_BASE` 3 m); the arc stops `PIN_MARGIN`
+    1 m short of a node the arm shares with someone else, and an arc left shorter than
+    `BEND_MIN_LENGTH` 4 m is not built.
   - **Webs** (`Rings::webs`, `webs_along`): wherever a street — an arm, its continuation,
     or a slip road that bypasses the ring without entering it (Tula, gallery 04,
     south-east) — runs **along** the ring outside it (within `WEB_ALONG` cos 0.7 of the
@@ -524,7 +535,13 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     on a one-way arm leaving it. A `give_way` sign without signals makes it dashed. The
     two halves of a divided street cross on **one line**: `align_pair` moves the second
     zebra onto the first's line across the street (to the OSM one if there is one, else to
-    the farther one). An arm whose way ends less than `ARM_TAIL` 8 m past the paint is a
+    the farther one). Zebras that land on one another — the two branches of a fork at
+    one node, an OSM crossing beside a rule one — are reduced to one (`without_overlaps`,
+    the last step of `NodePaint::new`, after the mid-block crossings): the OSM zebra
+    stays, of two generated the first; a plank counts as inside another when a 9-point
+    probe of its line falls within the other's box less `OVERLAP_SLACK` 0.2 m, so the
+    halves of a divided street standing side by side keep both. The report's `zebras N`
+    is the count after it. An arm whose way ends less than `ARM_TAIL` 8 m past the paint is a
     link inside a complex junction and gets nothing. The paint break covers the edge to
     the outermost stroke plus `PAINT_CLEAR` 1 m (it was 0.5 with the metre-long fade, which
     ended the visible line about a metre out anyway; the cut is sharp now).
@@ -665,7 +682,8 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
       `centerline` with `Smoothing::Light` when t > 0, `Off` at 0 (`Curve::smoothing`);
     - the ways are stitched into one polyline and **simplified** (Douglas–Peucker,
       `simplify`), keeping the run ends, the seams and the pinned nodes;
-    - every free vertex becomes an **arc tangent to both links**: `radius`, capped by
+    - every free vertex with a bend of at least `MIN_BEND` 0.5° (below it the arc would be
+      a centimetre) becomes an **arc tangent to both links**: `radius`, capped by
       `deviation` from the vertex,
       floored by half the width (a smaller radius folds the inner edge — where the links
       are too short for it the corner counts as `tight corners` in the log line). An arc
@@ -827,7 +845,8 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
       - **A radius under the sidewalk width leaves the corner square**, and that is the
         geometry, not a fallback: a drive with a sidewalk into an avenue (2.5 m against a
         3 m sidewalk) has no arc for the outer edge to follow on the ground either. Same
-        for a run too short for the tangent.
+        for a run too short for the tangent, and for a fillet the run clamp brings under
+        `MIN_RADIUS` 0.5 m — it would not show.
       - **The asphalt wedge lands on pavement at any radius**: the two arcs are concentric
         and share their tangent lines (the foot of the perpendicular from the centre to an
         edge is the same point for the road edge and the band edge), so the wedge between
@@ -1190,7 +1209,7 @@ place to look at a road-network defect end to end:
   cache; every query bump would have left them silently behind the game — exactly what the
   gallery exists to catch. The price is that a sample is no longer immutable: a
   re-downloaded cache may bring a mapper's edit into the junction.
-  Each sample goes through the game's `parse_response` with all eight finishing passes, then
+  Each sample goes through the game's `parse_response` with all nine finishing passes, then
   the game's `mesh_*` and `spawn_*` doors (surfaces with the parking layout, roads,
   buildings, fences, rails, tree rows, trees; near zoom buckets). **No parked cars, by the
   author's call**: the gallery is about the carriageway and the junction, and a kerb row

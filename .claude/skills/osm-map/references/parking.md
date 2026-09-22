@@ -602,8 +602,9 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
     The side order of a two-way street (`[-1, 1]`) does **not** depend on the driving side,
     because it decides the RNG stream: the traffic side turns a row, it never moves one
     (`the_traffic_side_turns_the_row_without_moving_it`).
-  - **Not cached, and that is measured, not assumed**: on Tula `marking_breaks` is the
-    `breaks` row's 1 ms against the 7 ms the layer costs at its far detail step and the 18 at
+  - **Not cached, and that is measured, not assumed**: on Tula the `breaks` row
+    (`pockets::row_breaks` since the bench took the game's breaks; the 1 ms was measured
+    on the bare `marking_breaks`, see the rows below) is 1 ms against the 7 ms the layer costs at its far detail step and the 18 at
     its near one, and the layer itself is well under the building layer's 79 — a resource
     cached per world load would not pay for itself. The rows come from `measure_cars` in
     `examples/bench/map_meshing`; the 0.76 ms of 5.4 ms that stood here came off the `cars:`
