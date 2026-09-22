@@ -824,7 +824,12 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     `measure_cars` times `breaks` / `districts` / `parking` as separate rows and meshes
     all three detail steps, which one call cannot report — the same reason
     `buildings::measure_layers` repeats the steps `mesh_buildings` takes; `cars_mesh` is
-    the gallery's one door and builds with neither lots nor districts on purpose.
+    the gallery's one door and builds with neither lots nor districts on purpose. The
+    steps they repeat are the game's calls, not look-alikes: both break the row with
+    `pockets::row_breaks` (the bench over the map's network and road nodes, the gallery
+    over an empty network and no nodes, as its axes are), never the bare
+    `marking_breaks(is_carriageway)`, which let a service drive leave a gallery row
+    unbroken and made the bench time a cheaper function than the game runs.
   - **Buildings was last, and not for being big.** Two things are peculiar to it and
     worth knowing before touching it:
     - it is the only module needing **`MaterialSpec::Roof`**, and the variant was added

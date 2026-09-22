@@ -10,7 +10,7 @@
 //! вдоль каждой улицы съел бы тротуары, по которым идёт вся толпа.
 //!
 //! Паркуются вдоль **всякой** проезжей части, а не только вдоль магистралей:
-//! отбор идёт тем же [`is_carriageway`], которым `map::roads` решает, где
+//! отбор идёт тем же [`is_carriageway`](crate::map::roads::is_carriageway), которым `map::roads` решает, где
 //! рисовать тротуар и разметку. Ширина в `RoadLine` — рисовальная константа
 //! класса, а не измеренная ширина улицы, так что порог по ней читается не как
 //! «узкая улица», а как «не магистраль»; на снимке города плотнее всего
@@ -38,11 +38,11 @@ use crate::map::meshing::{Break, MeshBuilder};
 use crate::map::osm::model::{distance_to_segment, ring_vertex_mean};
 use crate::map::osm::{MapData, PolyArea, RoadLine, TrafficSide};
 use crate::map::parking::{ParkingLayout, Stall};
-use crate::map::roads::junctions::{self, MarkingBreaks};
+use crate::map::roads::axis;
+use crate::map::roads::junctions::MarkingBreaks;
 use crate::map::roads::network::{RoadNetwork, RoadNodes};
 use crate::map::roads::pockets::{self, Kerbside, POCKET_WIDTH};
 use crate::map::roads::shape::{RoadShape, RoadShapeOnMap};
-use crate::map::roads::{axis, is_carriageway};
 use crate::map::seed::{Lcg, seed_from_point};
 use crate::map::shadow;
 use crate::map::surface::{LayerCost, LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
@@ -221,24 +221,25 @@ pub fn detail_for(bucket: usize) -> Option<CarDetail> {
 /// Кузов меряется на **каждой** ступени подробности, своей строкой: разница
 /// между ними и есть то, ради чего заведён [`CarLods`], и она должна быть
 /// видна в тех же числах, что и цена зданиевых слоёв.
-pub fn measure_cars(
-    buildings: &[PolyArea],
-    roads: &[RoadLine],
-    traffic: TrafficSide,
-) -> (usize, Vec<LayerCost>) {
+pub fn measure_cars(map: &MapData) -> (usize, Vec<LayerCost>) {
+    // разрывы и оси — те же вызовы, что в `mesh_cars`, по собранной сети
+    // карты: иначе строки `breaks` и `cars` мерили бы не игровой ряд
+    let shape = RoadShape::default();
     let started = std::time::Instant::now();
-    let junctions = junctions::marking_breaks(roads, is_carriageway, &[]);
+    let junctions = pockets::row_breaks(&map.roads, &map.network, &map.road_nodes, shape.taper());
     let breaks_took = started.elapsed();
     let started = std::time::Instant::now();
-    let districts = Districts::new(buildings);
+    let districts = Districts::new(&map.buildings);
     let districts_took = started.elapsed();
     let started = std::time::Instant::now();
+    let nodes = RoadNodes::new(&map.roads);
+    let axes = axis::street_axes(&map.roads, &map.network, &nodes, &shape);
     let cars = park_cars(
-        roads,
+        &map.roads,
         &junctions,
         CarStyle::default(),
-        &drawn_axes(roads, &RoadShape::default()),
-        traffic,
+        &axes.paths,
+        map.traffic_side,
         &districts,
     );
     let parking_took = started.elapsed();
@@ -394,7 +395,9 @@ pub fn mesh_cars(
     };
     let started = std::time::Instant::now();
     // разрывы — по **всем** настоящим улицам, а не только по парковочным: ряд
-    // обязан прерваться и там, где к жилой улице примыкает другая жилая.
+    // обязан прерваться и там, где к жилой улице примыкает другая жилая, — и
+    // на клиньях между сечениями улицы: бордюр там ближе к оси; те же
+    // разрывы режут карманы ленты (`roads::pockets`).
     //
     // Считаются заново на каждую пересборку слоя, а не один раз на загрузку
     // мира: по Туле это около четверти сборки слоя машин, а весь слой —
@@ -402,8 +405,6 @@ pub fn mesh_cars(
     // надо было прежде, чем его заводить. Доли, а не миллисекунды: абсолютное
     // время зависит от App Nap, перемеряет его `measure_cars` из
     // `examples/bench/map_meshing` (он печатает обе строки — `breaks` и `cars`)
-    // и на клиньях между сечениями улицы: бордюр там ближе к оси; те же
-    // разрывы режут карманы ленты (`roads::pockets`)
     let junctions = pockets::row_breaks(&map.roads, &map.network, &map.road_nodes, shape.taper());
     let breaks_took = started.elapsed();
     // застройка вокруг — тем же проходом и с тем же сроком жизни, что и
@@ -459,7 +460,9 @@ pub fn cars_mesh(
     traffic: TrafficSide,
     detail: CarDetail,
 ) -> MeshBuilder {
-    let junctions = junctions::marking_breaks(roads, is_carriageway, &[]);
+    // разрывы — игровые (`row_breaks`: проезды тоже рвут ряд); сети и точек
+    // дорог у витрины нет, как нет их и у её осей (`drawn_axes`)
+    let junctions = pockets::row_breaks(roads, &RoadNetwork::default(), &[], shape.taper());
     let districts = Districts::new(&[]);
     mesh_bodies(
         &park_cars(

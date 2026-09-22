@@ -70,7 +70,7 @@ fn main() {
 
     // машины — тем же форматом и с теми же миллисекундами: слой сравнивается
     // со зданиевыми (он на порядок дешевле, и это надо видеть, а не помнить)
-    let (cars, costs) = measure_cars(&map.buildings, &map.roads, map.traffic_side);
+    let (cars, costs) = measure_cars(&map);
     row("parked cars", &format!("{cars:>8} cars"), &costs);
 
     // Остальные слои карты. Своей сборки у этих замеров нет — каждый зовёт тот

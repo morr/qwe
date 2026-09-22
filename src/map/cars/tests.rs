@@ -10,7 +10,8 @@
 use super::*;
 use crate::map::osm::fixture::{self, street};
 use crate::map::osm::model::{Highway, KerbParking};
-use crate::map::roads::junctions::JUNCTION_MARGIN;
+use crate::map::roads::is_carriageway;
+use crate::map::roads::junctions::{self, JUNCTION_MARGIN};
 
 /// Форма дорог с осью по точкам OSM: ряд меряется по той ломаной, что в
 /// тесте нарисована.
