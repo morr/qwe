@@ -126,13 +126,15 @@ impl KerbReturns {
 /// ширина тротуара дороги (по индексу), если он рисуется; `paired(дорога,
 /// длина по оси)` — лежит ли там рядом вторая половина разделённой улицы и
 /// слева ли (`roads/network/pairs.rs`): с её стороны тротуара нет, и угол по
-/// нему не скругляется.
+/// нему не скругляется. `scale` — множитель радиусов по классам (ручка
+/// `Corner radius`).
 pub fn kerb_returns(
     roads: &[&RoadLine],
     paths: &[Option<&[Vec2]>],
     nodes: &RoadNodes,
     sidewalk: impl Fn(usize) -> Option<f32>,
     paired: impl Fn(usize, f32) -> Option<bool>,
+    scale: f32,
 ) -> KerbReturns {
     let mut arms: HashMap<(i32, i32), (Vec2, Vec<Arm>)> = HashMap::new();
     for (index, (&road, path)) in roads.iter().zip(paths).enumerate() {
@@ -255,7 +257,7 @@ pub fn kerb_returns(
                 }
             }
             for (first, second) in pairs(&group) {
-                let radius = kerb_radius(first, second);
+                let radius = kerb_radius(first, second) * scale;
                 let halves = (first.half, second.half);
                 if let Some(outline) = fillet(node, first, second, halves, radius) {
                     returns.roads.push((class, outline));
@@ -284,7 +286,7 @@ pub fn kerb_returns(
             // полоса шире на него же. Берётся больший из двух тротуаров — при
             // разной их ширине одной дугой обе полосы не обойти, а меньший
             // радиус оставляет асфальтовый клин внутри тротуарного
-            let radius = kerb_radius(first, second) - a.max(b);
+            let radius = kerb_radius(first, second) * scale - a.max(b);
             let halves = (first.half + a, second.half + b);
             if let Some(outline) = fillet(node, first, second, halves, radius) {
                 returns.sidewalks.push(outline);
@@ -478,6 +480,7 @@ mod tests {
             &nodes,
             |index| sidewalk(&roads[index]),
             |_, _| None,
+            1.0,
         )
     }
 
@@ -703,6 +706,7 @@ mod tests {
             &nodes,
             |_| Some(SIDEWALK),
             |road, _| (road == 0).then_some(true),
+            1.0,
         );
         assert_eq!(found.roads.len(), 4, "асфальт скругляется, как был");
         assert_eq!(found.sidewalks.len(), 2);

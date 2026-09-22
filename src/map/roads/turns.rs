@@ -29,9 +29,9 @@ use std::f32::consts::FRAC_PI_2;
 use bevy::prelude::*;
 
 use super::lane_count;
-use super::network::sections::STREET_LANE_WIDTH;
 use super::node_paint::{Junction, JunctionArm};
 use super::paint::lane_frame;
+use super::shape::lane_width;
 use crate::map::along::{arclengths, place_on_path};
 use crate::map::osm::{LaneTurn, RoadLine, TrafficSide};
 
@@ -270,7 +270,7 @@ fn arm_lanes(
         TrafficSide::Left => travel_sign,
     };
     let mut offsets: Vec<f32> = (0..count)
-        .map(|index| frame.low + (f32::from(index) + 0.5) * STREET_LANE_WIDTH)
+        .map(|index| frame.low + (f32::from(index) + 0.5) * lane_width())
         // средняя полоса нечётной двусторонней — ничья, кроме единственной:
         // по однополосной едут в обе стороны
         .filter(|offset| road.oneway || count == 1 || offset * kerb > 1e-3)

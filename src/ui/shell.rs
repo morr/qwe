@@ -163,6 +163,7 @@ pub(super) enum SectionSlot {
     TreeRows,
     Buildings,
     Roads,
+    RoadPaint,
     Surfaces,
     Sun,
     Noise,

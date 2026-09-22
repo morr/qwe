@@ -5,8 +5,9 @@
 //! полосы — по тегу, и полоса выходила то 2.5 м, то 5: однополосная
 //! односторонняя половина проспекта рисовалась те же 16 м, что и
 //! четырёхполосный двусторонний участок, и пара половин читалась дорогой в
-//! 32 м. Теперь полоса одна по городу — [`STREET_LANE_WIDTH`] на улице,
-//! [`SERVICE_LANE_WIDTH`] в проезде, — и шире дорога становится только
+//! 32 м. Теперь полоса одна по городу — [`shape::lane_width`] на улице (ручка
+//! `Lane width`, 3.3 м по умолчанию), на [`SERVICE_LANE_NARROWING`] уже в
+//! проезде, — и шире дорога становится только
 //! числом полос.
 //!
 //! Полосы участка: тег `lanes` (`lanes:forward` + `lanes:backward`, если
@@ -27,11 +28,12 @@ use std::time::Duration;
 use super::streets::RoadNetwork;
 use crate::map::osm::model::polyline_length;
 use crate::map::osm::{Highway, MapData, RoadLine};
+use crate::map::roads::shape;
 
-/// Ширина полосы улицы, м — одна на весь город.
-pub const STREET_LANE_WIDTH: f32 = 3.3;
-/// Ширина полосы дворового проезда, м.
-pub const SERVICE_LANE_WIDTH: f32 = 3.0;
+/// Насколько полоса дворового проезда уже полосы улицы, м: 3.0 против 3.3.
+/// Ширина полосы улицы — одна на весь город, ручка `Lane width`
+/// ([`shape::lane_width`]).
+const SERVICE_LANE_NARROWING: f32 = 0.3;
 /// Кромка проезжей части с каждой стороны, м: лоток у бордюра, по которому
 /// не едут.
 pub const EDGE_WIDTH: f32 = 0.5;
@@ -43,8 +45,8 @@ pub const SPIKE_MAX_LENGTH: f32 = 60.0;
 pub fn lane_width(highway: Highway) -> Option<f32> {
     match highway {
         Highway::Path => None,
-        Highway::Service => Some(SERVICE_LANE_WIDTH),
-        _ => Some(STREET_LANE_WIDTH),
+        Highway::Service => Some(shape::lane_width() - SERVICE_LANE_NARROWING),
+        _ => Some(shape::lane_width()),
     }
 }
 

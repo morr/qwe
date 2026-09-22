@@ -41,10 +41,10 @@ use crate::map::parking::{ParkingLayout, Stall};
 use crate::map::roads::junctions::{self, MarkingBreaks};
 use crate::map::roads::network::{RoadNetwork, RoadNodes};
 use crate::map::roads::pockets::{self, Kerbside, POCKET_WIDTH};
-use crate::map::roads::{RoadStyle, axis, is_carriageway};
+use crate::map::roads::shape::{RoadShape, RoadShapeOnMap};
+use crate::map::roads::{axis, is_carriageway};
 use crate::map::seed::{Lcg, seed_from_point};
 use crate::map::shadow;
-use crate::map::smooth::Smoothing;
 use crate::map::surface::{LayerCost, LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::prefs::retuned;
@@ -234,7 +234,7 @@ pub fn measure_cars(
         roads,
         &junctions,
         CarStyle::default(),
-        &drawn_axes(roads, RoadStyle::default().smoothing),
+        &drawn_axes(roads, &RoadShape::default()),
         traffic,
         &districts,
     );
@@ -273,16 +273,19 @@ pub fn measure_cars(
 }
 
 /// Когда пересобирать слой припаркованных машин: своя ступень зума, тумблер и
-/// ручка занятости, стиль дорог и осевшее солнце.
+/// ручка занятости, форма дорог и осевшее солнце.
 ///
-/// `RoadStyle` здесь потому, что ряд стоит по **сглаженной** осевой, той же,
-/// по которой рисуется асфальт: смена Smoothing двигает машины вместе с ним.
+/// Форма дорог (`RoadShapeOnMap`) здесь потому, что ряд стоит по **той же**
+/// осевой, по которой рисуется асфальт, и рвётся на тех же клиньях: допуск
+/// оси и длина клина двигают машины вместе с лентой. `RoadStyle` — нет: его
+/// тумблеры кладут или снимают слои ленты, а карман решает тег `sidewalk=*`
+/// на самой дороге (`pockets::kerb_parking`), не тумблер тротуаров.
 ///
 /// **Условие одно, регистрация одна** (см. `crate::map::roads::rebuilds_on`).
 pub fn rebuilds_on() -> impl SystemCondition<()> {
     retuned::<CarZoomBucket>
         .or_else(retuned::<CarStyle>)
-        .or_else(retuned::<RoadStyle>)
+        .or_else(retuned::<RoadShapeOnMap>)
         .or_else(retuned::<SunOnMap>)
 }
 
@@ -294,9 +297,9 @@ pub fn rebuild_cars(
     materials: LayerMaterials,
     bucket: Res<CarZoomBucket>,
     style: Res<CarStyle>,
-    // сглаживание осевой: ряд стоит по той же ломаной, по которой `map::roads`
+    // форма дорог: ряд стоит по той же ломаной, по которой `map::roads`
     // кладёт ленту асфальта
-    road_style: Res<RoadStyle>,
+    road_shape: Res<RoadShapeOnMap>,
     map: Res<MapData>,
     layout: Res<ParkingLayout>,
     existing: Query<Entity, With<CarLayerTag>>,
@@ -304,7 +307,7 @@ pub fn rebuild_cars(
     for entity in &existing {
         commands.entity(entity).despawn();
     }
-    let (layers, report) = mesh_cars(*bucket, *style, road_style.smoothing, &map, &layout);
+    let (layers, report) = mesh_cars(*bucket, *style, road_shape.0, &map, &layout);
     spawn_layers(&mut commands, &mut meshes, &materials, layers, CarLayerTag);
     info!("{report}");
 }
@@ -364,12 +367,12 @@ impl std::fmt::Display for CarReport {
 /// можно его забыть, нет. Сборка при этом не идёт вовсе — ни разрывов, ни
 /// расстановки: снятый слой не должен стоить дороже, чем стоил ранний возврат.
 ///
-/// `smoothing` — сглаживание осевой: ряд стоит по той же ломаной, по которой
-/// `map::roads` кладёт ленту асфальта.
+/// `shape` — форма дорог: ряд стоит по той же ломаной, по которой
+/// `map::roads` кладёт ленту асфальта, и рвётся на тех же клиньях.
 pub fn mesh_cars(
     bucket: CarZoomBucket,
     style: CarStyle,
-    smoothing: Smoothing,
+    shape: RoadShape,
     map: &MapData,
     layout: &ParkingLayout,
 ) -> (Vec<LayerMesh>, CarReport) {
@@ -398,13 +401,13 @@ pub fn mesh_cars(
     // `examples/bench/map_meshing` (он печатает обе строки — `breaks` и `cars`)
     // и на клиньях между сечениями улицы: бордюр там ближе к оси; те же
     // разрывы режут карманы ленты (`roads::pockets`)
-    let junctions = pockets::row_breaks(&map.roads, &map.network);
+    let junctions = pockets::row_breaks(&map.roads, &map.network, shape.taper());
     let breaks_took = started.elapsed();
     // застройка вокруг — тем же проходом и с тем же сроком жизни, что и
     // разрывы: индекс на 7.6 тысячи домов дешевле, чем повод его кешировать
     let districts = Districts::new(&map.buildings);
     let nodes = RoadNodes::new(&map.roads);
-    let axes = axis::street_axes(&map.roads, &map.network, &nodes, smoothing);
+    let axes = axis::street_axes(&map.roads, &map.network, &nodes, &shape);
     let mut cars = park_cars(
         &map.roads,
         &junctions,
@@ -439,8 +442,8 @@ pub fn mesh_cars(
 /// витрина не знает ничего и знать не должна — иначе она показывает свою
 /// геометрию, а не игровую.
 ///
-/// `smoothing` — то же, с чем витрина кладёт под ряд асфальт: осевая у ленты и
-/// у ряда обязана быть одна; `detail` — ступень подробности, которую в игре
+/// `shape` — форма дорог, с которой витрина кладёт под ряд асфальт: осевая у
+/// ленты и у ряда обязана быть одна; `detail` — ступень подробности, которую в игре
 /// выдаёт зум, а витрина показывает все три рядом.
 ///
 /// Домов у витрины нет вовсе, и пустой [`Districts`] здесь не заглушка, а
@@ -449,7 +452,7 @@ pub fn mesh_cars(
 pub fn cars_mesh(
     roads: &[RoadLine],
     style: CarStyle,
-    smoothing: Smoothing,
+    shape: RoadShape,
     traffic: TrafficSide,
     detail: CarDetail,
 ) -> MeshBuilder {
@@ -460,7 +463,7 @@ pub fn cars_mesh(
             roads,
             &junctions,
             style,
-            &drawn_axes(roads, smoothing),
+            &drawn_axes(roads, &shape),
             traffic,
             &districts,
         ),
@@ -470,9 +473,9 @@ pub fn cars_mesh(
 
 /// Оси дорог так, как их рисует `map::roads`, — для среза без собранной сети
 /// (замер, витрина, тесты): улицы склеиваются здесь же.
-fn drawn_axes(roads: &[RoadLine], smoothing: Smoothing) -> Vec<Cow<'_, [Vec2]>> {
+fn drawn_axes<'a>(roads: &'a [RoadLine], shape: &RoadShape) -> Vec<Cow<'a, [Vec2]>> {
     let nodes = RoadNodes::new(roads);
-    axis::street_axes(roads, &RoadNetwork::default(), &nodes, smoothing).paths
+    axis::street_axes(roads, &RoadNetwork::default(), &nodes, shape).paths
 }
 
 /// Ряды вдоль всех улиц, годных под парковку.

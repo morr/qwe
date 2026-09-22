@@ -96,6 +96,10 @@ pub struct SurfaceParams {
     pub shore_width: f32,
     /// Общий множитель амплитуд — ползунок панели.
     pub intensity: f32,
+    /// Шаг полосы для колеи, м — ширина полосы, с которой разобран мир
+    /// (`roads::shape::lane_width`): колея ложится по той же сетке, что линии
+    /// краски.
+    pub lane_width: f32,
 }
 
 impl SurfaceParams {
@@ -113,6 +117,7 @@ impl SurfaceParams {
         wear: 0.0,
         shore_width: 0.0,
         intensity: SURFACE_TEXTURE_DEFAULT,
+        lane_width: crate::map::roads::shape::LANE_WIDTH_DEFAULT,
     };
 }
 
@@ -263,6 +268,7 @@ impl SurfaceKind {
         };
         SurfaceParams {
             intensity: texture,
+            lane_width: crate::map::roads::shape::lane_width(),
             ..params
         }
     }

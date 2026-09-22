@@ -138,10 +138,11 @@ pub fn kerbsides(
 
 /// Разрывы ряда у бордюра по дорогам: перекрёстки проезжих частей (без
 /// стежков — ряд их не видит) и клинья между сечениями, где бордюр ближе к
-/// оси. Один расчёт на ряд машин и на ленту с карманами.
-pub fn row_breaks(roads: &[RoadLine], network: &RoadNetwork) -> MarkingBreaks {
+/// оси. Один расчёт на ряд машин и на ленту с карманами; `taper` — длина
+/// клина на метр разницы ширин (ручка `Taper`).
+pub fn row_breaks(roads: &[RoadLine], network: &RoadNetwork, taper: f32) -> MarkingBreaks {
     let mut found = junctions::marking_breaks(roads, is_carriageway, &[]);
-    for (road, clearing) in tapers::car_clearings(roads, network) {
+    for (road, clearing) in tapers::car_clearings(roads, network, taper) {
         found.breaks[road].push(clearing);
     }
     found

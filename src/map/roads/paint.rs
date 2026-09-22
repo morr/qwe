@@ -8,7 +8,7 @@
 //!
 //! - **раскладка полос одна** ([`LaneFrame`]): узел сетки полос и границы
 //!   проезжей части поперёк оси. Границы полос — `origin + k ·`
-//!   [`STREET_LANE_WIDTH`]. По этой же раскладке кладёт колею шейдер асфальта
+//!   [`lane_width`]. По этой же раскладке кладёт колею шейдер асфальта
 //!   (`surface.wgsl`, атрибут `meshing::ATTRIBUTE_RIBBON`), так что колея идёт
 //!   ровно между линиями и на клине;
 //! - **на клине крайняя полоса рождается**, остальные линии идут без сдвига:
@@ -42,8 +42,8 @@ use bevy::shader::ShaderRef;
 use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey};
 
 use super::network::RoadNetwork;
-use super::network::sections::STREET_LANE_WIDTH;
 use super::node_paint::{Pocket, STOP_WIDTH, StopLine, ZEBRA_LENGTH, Zebra};
+use super::shape::lane_width;
 use super::tapers::{self, Tapers};
 use super::turns::{JunctionWear, LaneArrow};
 use super::{is_carriageway, lane_count};
@@ -97,10 +97,10 @@ const FADE_FROM: f32 = 0.8;
 const LANE_STRIP: f32 = 0.6;
 const AXIS_STRIP: f32 = 1.4;
 
-/// На каком удалении от кромки проезжей части линия, рождающаяся из клина,
-/// набирает полную видимость, м: у самой кромки линии нет — новой полосы ещё
-/// нет.
-const BIRTH_FADE: f32 = STREET_LANE_WIDTH / 2.0;
+/// На какой доле ширины полосы от кромки проезжей части линия, рождающаяся из
+/// клина, набирает полную видимость: у самой кромки линии нет — новой полосы
+/// ещё нет.
+const BIRTH_FADE: f32 = 0.5;
 
 /// Свежесть краски, 0–1: прозрачность линий. Ручка «Paint» секции Roads.
 pub const PAINT_MIN: f32 = 0.0;
@@ -279,12 +279,12 @@ const WEAR_STRIP: f32 = RUT_OFFSET + 3.0 * RUT_SIGMA;
 /// полполосы от неё при нечётном. Раскладка симметрична: у зеркального way
 /// сетка та же.
 pub fn lane_frame(lanes: u8) -> LaneFrame {
-    let half = f32::from(lanes) * STREET_LANE_WIDTH / 2.0;
+    let half = f32::from(lanes) * lane_width() / 2.0;
     LaneFrame {
         origin: if lanes.is_multiple_of(2) {
             0.0
         } else {
-            STREET_LANE_WIDTH / 2.0
+            lane_width() / 2.0
         },
         low: -half,
         high: half,
@@ -298,7 +298,7 @@ pub fn lane_frame(lanes: u8) -> LaneFrame {
 /// клин идёт против хода way, отсюда знак.
 fn narrow_frame(body: LaneFrame, narrow_lanes: u8, end: bool) -> LaneFrame {
     let narrow = lane_frame(narrow_lanes);
-    let shift = (body.origin - narrow.origin).rem_euclid(STREET_LANE_WIDTH);
+    let shift = (body.origin - narrow.origin).rem_euclid(lane_width());
     LaneFrame {
         origin: if end {
             body.origin + shift
@@ -522,14 +522,14 @@ impl Painter {
 
         let lowest = frames
             .iter()
-            .map(|frame| (frame.low - frame.origin) / STREET_LANE_WIDTH)
+            .map(|frame| (frame.low - frame.origin) / lane_width())
             .fold(f32::INFINITY, f32::min);
         let highest = frames
             .iter()
-            .map(|frame| (frame.high - frame.origin) / STREET_LANE_WIDTH)
+            .map(|frame| (frame.high - frame.origin) / lane_width())
             .fold(f32::NEG_INFINITY, f32::max);
         for k in lowest.floor() as i32..=highest.ceil() as i32 {
-            let step = k as f32 * STREET_LANE_WIDTH;
+            let step = k as f32 * lane_width();
             let axis = !road.oneway && lanes.is_multiple_of(2) && (body.origin + step).abs() < 1e-3;
             let kind = match (axis, lanes >= 4) {
                 (true, true) => LineKind::Double,
@@ -541,7 +541,8 @@ impl Painter {
                 .iter()
                 .zip(&offsets)
                 .map(|(frame, &at)| {
-                    ((at - frame.low).min(frame.high - at) / BIRTH_FADE).clamp(0.0, 1.0)
+                    ((at - frame.low).min(frame.high - at) / (BIRTH_FADE * lane_width()))
+                        .clamp(0.0, 1.0)
                 })
                 .collect();
             let line: Vec<Vec2> = path
@@ -981,7 +982,7 @@ impl PaintParams {
             turn_wear: style.turn_wear(),
             rut_offset: RUT_OFFSET,
             rut_sigma: RUT_SIGMA,
-            lane_width: STREET_LANE_WIDTH,
+            lane_width: lane_width(),
             hatch_period: HATCH_PERIOD,
             hatch_width: HATCH_WIDTH,
             edge_width: EDGE_WIDTH,

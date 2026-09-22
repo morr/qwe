@@ -3,10 +3,15 @@ use crate::map::meshing::distance_to_path;
 use crate::map::osm::fixture::street;
 use crate::map::shapes::is_ring;
 
-fn axes(roads: &[RoadLine], smoothing: Smoothing) -> Vec<Vec<Vec2>> {
+/// Оси при допуске `tolerance`, м: 3 — дефолт ручки, 0 — ось по OSM.
+fn axes(roads: &[RoadLine], tolerance: f32) -> Vec<Vec<Vec2>> {
     let network = RoadNetwork::new(roads);
     let nodes = RoadNodes::new(roads);
-    street_axes(roads, &network, &nodes, smoothing)
+    let shape = RoadShape {
+        curve_tolerance: tolerance,
+        ..default()
+    };
+    street_axes(roads, &network, &nodes, &shape)
         .paths
         .into_iter()
         .map(Cow::into_owned)
@@ -45,16 +50,16 @@ fn a_seam_between_ways_is_one_curve() {
         street(vec![Vec2::ZERO, seam], 8.0),
         street(vec![seam, seam + turn], 8.0),
     ];
-    let paths = axes(&roads, Smoothing::Light);
+    let paths = axes(&roads, 3.0);
     let (a, b) = (&paths[0], &paths[1]);
     assert_eq!(a[a.len() - 1], b[0], "the pieces meet");
     assert!(kink(a, b) < SAMPLE_TURN, "{}", kink(a, b).to_degrees());
     assert!(sharpest(a).max(sharpest(b)) < SAMPLE_TURN);
-    // и не уходит от OSM дальше допуска
+    // и не уходит от OSM дальше допуска дуги: два метра из трёх
     for &point in a.iter().chain(b) {
         let off = distance_to_path(point, &roads[0].points)
             .min(distance_to_path(point, &roads[1].points));
-        assert!(off <= MAX_DEVIATION + 0.01, "{point} is {off} m off");
+        assert!(off <= 2.0 + 0.01, "{point} is {off} m off");
     }
 }
 
@@ -66,7 +71,7 @@ fn a_reversed_way_keeps_its_own_order() {
         street(vec![Vec2::ZERO, seam], 8.0),
         street(vec![far, seam], 8.0),
     ];
-    let paths = axes(&roads, Smoothing::Light);
+    let paths = axes(&roads, 3.0);
     assert_eq!(paths[1][0], far);
     assert_eq!(paths[0][0], Vec2::ZERO);
     assert_eq!(paths[0][paths[0].len() - 1], paths[1][paths[1].len() - 1]);
@@ -83,7 +88,7 @@ fn a_junction_node_stays_and_the_through_pair_passes_it_smoothly() {
         street(vec![node, node + turn], 8.0),
         street(vec![node, Vec2::new(100.0, -80.0)], 8.0),
     ];
-    let paths = axes(&roads, Smoothing::Light);
+    let paths = axes(&roads, 3.0);
     let through = if paths[0][paths[0].len() - 1] == node {
         (&paths[0], &paths[1])
     } else {
@@ -112,7 +117,7 @@ fn a_footway_crossing_pins_nothing() {
         ..street(vec![node, Vec2::new(100.0, -80.0)], 3.5)
     };
     let roads = vec![street(vec![Vec2::ZERO, node, node + turn], 8.0), footway];
-    let path = &axes(&roads, Smoothing::Light)[0];
+    let path = &axes(&roads, 3.0)[0];
     assert!(
         !path.contains(&node),
         "the crossing stayed pinned: {path:?}"
@@ -129,7 +134,7 @@ fn a_corner_is_no_tighter_than_the_half_width() {
         vec![Vec2::ZERO, Vec2::new(100.0, 0.0), Vec2::new(100.0, 100.0)],
         width,
     )];
-    let path = &axes(&roads, Smoothing::Light)[0];
+    let path = &axes(&roads, 3.0)[0];
     for w in path.windows(3) {
         let (a, b) = (w[1] - w[0], w[2] - w[1]);
         let turn = a.angle_to(b).abs();
@@ -146,7 +151,7 @@ fn jitter_is_simplified_away() {
         .map(|i| Vec2::new(i as f32 * 10.0, if i % 2 == 0 { 0.0 } else { 0.4 }))
         .collect();
     let roads = vec![street(points, 8.0)];
-    let path = &axes(&roads, Smoothing::Light)[0];
+    let path = &axes(&roads, 3.0)[0];
     assert_eq!(path.as_slice(), &[Vec2::ZERO, Vec2::new(200.0, 0.0)]);
 }
 
@@ -160,7 +165,7 @@ fn a_closed_way_stays_a_ring() {
         Vec2::ZERO,
     ];
     let roads = vec![street(points, 8.0)];
-    let path = &axes(&roads, Smoothing::Light)[0];
+    let path = &axes(&roads, 3.0)[0];
     assert!(is_ring(path), "{path:?}");
     assert!(path.len() > 8);
 }
@@ -177,7 +182,7 @@ fn bridges_and_arches_keep_the_old_centerline() {
     ];
     roads[1].bridge = true;
     let nodes = RoadNodes::new(&roads);
-    let paths = axes(&roads, Smoothing::Light);
+    let paths = axes(&roads, 3.0);
     assert_eq!(
         paths[1],
         centerline(&roads[1], Smoothing::Light, &nodes).into_owned()
@@ -195,5 +200,5 @@ fn smoothing_off_is_the_osm_centerline() {
         vec![Vec2::ZERO, Vec2::new(100.0, 0.0), Vec2::new(100.0, 100.0)],
         8.0,
     )];
-    assert_eq!(axes(&roads, Smoothing::Off)[0], roads[0].points);
+    assert_eq!(axes(&roads, 0.0)[0], roads[0].points);
 }

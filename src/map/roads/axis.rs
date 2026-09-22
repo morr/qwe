@@ -7,10 +7,10 @@
 //! ([`RoadNetwork`]):
 //!
 //! 1. ways улицы сшиваются в одну ломаную, и она **упрощается** до допуска
-//!    [`SIMPLIFY_TOLERANCE`] — дрожание вершин OSM уходит;
+//!    [`Curve::simplify`] — дрожание вершин OSM уходит;
 //! 2. каждая оставшаяся вершина заменяется **дугой**, касательной к обоим
-//!    звеньям. Радиус — [`target_radius`] ступени сглаживания, но не больше,
-//!    чем уводит ось от OSM на [`MAX_DEVIATION`], и не меньше полуширины: у
+//!    звеньям. Радиус — [`Curve::radius`], но не больше, чем уводит ось от
+//!    OSM на [`Curve::deviation`], и не меньше полуширины: у
 //!    дуги меньшего радиуса внутренний край ленты складывается;
 //! 3. **узел, где сходятся три дороги и больше, остаётся на месте**: по нему
 //!    находят друг друга скругления бордюров, разрывы разметки, стежки и
@@ -36,15 +36,17 @@ use super::centerline;
 use super::network::pairs::Pairs;
 use super::network::{RoadNetwork, RoadNodes, StreetWay};
 use super::rings::{self, Rings};
+use super::shape::RoadShape;
 use crate::map::meshing::arc_steps;
 use crate::map::osm::{RoadClass, RoadLine};
 use crate::map::smooth::Smoothing;
 
-/// Допуск упрощения, м: вершина ближе к хорде соседей — дрожание OSM.
-const SIMPLIFY_TOLERANCE: f32 = 1.0;
-/// Насколько дуга может увести ось от вершины OSM, м. Вместе с допуском
-/// упрощения — не больше трёх метров.
-const MAX_DEVIATION: f32 = 2.0;
+/// Доля допуска оси, которую берёт упрощение, — остальное берёт дуга: из
+/// трёх метров по умолчанию метр уходит на дрожание вершин OSM, два — на
+/// скругление.
+const SIMPLIFY_SHARE: f32 = 1.0 / 3.0;
+/// Радиус дуги на изломе на метр допуска, м: 30 м при трёх метрах.
+const RADIUS_PER_METER: f32 = 10.0;
 /// Излом в общем узле, до которого сквозная пара проходит его плавно, рад.
 /// Тот же предел, что у склейки улиц.
 const THROUGH_MAX_BEND: f32 = 50.0 * PI / 180.0;
@@ -61,12 +63,37 @@ const KERB_STRAIGHT: f32 = 12.0;
 /// Излом мельче этого не скругляется, рад: дуга была бы в сантиметр.
 const MIN_BEND: f32 = 0.5 * PI / 180.0;
 
-/// Радиус дуги на изломе ступени сглаживания, м; `None` — ось по точкам OSM.
-fn target_radius(smoothing: Smoothing) -> Option<f32> {
-    match smoothing {
-        Smoothing::Off => None,
-        Smoothing::Light => Some(30.0),
-        Smoothing::Strong => Some(60.0),
+/// Сглаживание оси при допуске `tolerance` — насколько ось может уйти от
+/// точек OSM, м (ручка `Curve tolerance`, [`RoadShape::curve_tolerance`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Curve {
+    /// Допуск упрощения, м: вершина ближе к хорде соседей — дрожание OSM.
+    pub simplify: f32,
+    /// Насколько дуга может увести ось от вершины OSM, м. Вместе с допуском
+    /// упрощения — весь допуск.
+    pub deviation: f32,
+    /// Радиус дуги на изломе, м, — пока его не ограничит `deviation`.
+    pub radius: f32,
+}
+
+impl Curve {
+    /// `None` — нулевой допуск: ось идёт по точкам OSM.
+    pub fn of(tolerance: f32) -> Option<Self> {
+        (tolerance > 0.0).then_some(Self {
+            simplify: tolerance * SIMPLIFY_SHARE,
+            deviation: tolerance * (1.0 - SIMPLIFY_SHARE),
+            radius: tolerance * RADIUS_PER_METER,
+        })
+    }
+
+    /// Ступень сглаживания Chaikin'а для того, что по улице не идёт
+    /// (дорожки, мосты): есть допуск — лёгкое, нет — никакого.
+    pub fn smoothing(curve: Option<Self>) -> Smoothing {
+        if curve.is_some() {
+            Smoothing::Light
+        } else {
+            Smoothing::Off
+        }
     }
 }
 
@@ -93,8 +120,9 @@ pub fn street_axes<'a>(
     roads: &'a [RoadLine],
     network: &RoadNetwork,
     nodes: &RoadNodes,
-    smoothing: Smoothing,
+    shape: &RoadShape,
 ) -> Axes<'a> {
+    let curve = Curve::of(shape.curve_tolerance());
     let mut smoothed: Vec<Option<Vec<Vec2>>> = vec![None; roads.len()];
     let (mut seams, mut tight) = (0, 0);
     let local;
@@ -104,7 +132,7 @@ pub fn street_axes<'a>(
         local = RoadNetwork::new(roads);
         &local
     };
-    if let Some(radius) = target_radius(smoothing) {
+    if let Some(curve) = curve {
         for street in &network.streets {
             let excluded = |way: &StreetWay| {
                 let road = &roads[way.road];
@@ -115,7 +143,7 @@ pub fn street_axes<'a>(
                 if run.is_empty() {
                     continue;
                 }
-                let found = smooth_run(roads, run, whole, nodes, radius, &mut smoothed);
+                let found = smooth_run(roads, run, whole, nodes, curve, &mut smoothed);
                 seams += found.0;
                 tight += found.1;
             }
@@ -126,15 +154,15 @@ pub fn street_axes<'a>(
         .zip(smoothed)
         .map(|(road, path)| match path {
             Some(path) => Cow::Owned(path),
-            None => centerline(road, smoothing, nodes),
+            None => centerline(road, Curve::smoothing(curve), nodes),
         })
         .collect();
     // половины разделённых улиц — на постоянный зазор, по уже гладким осям
-    let mut pairs = Pairs::new(roads, &paths);
+    let mut pairs = Pairs::new(roads, &paths, shape.median_gap());
     pairs.align(&mut paths, roads, network, nodes);
     // кольца — эллипсом, подходы к ним — по касательной; после разводки пар:
     // половины подхода гнутся у самого кольца, где пара уже разошлась
-    let rings = if target_radius(smoothing).is_some() {
+    let rings = if curve.is_some() {
         rings::reshape(roads, nodes, &mut paths)
     } else {
         Rings::default()
@@ -230,7 +258,7 @@ fn smooth_run(
     run: &[StreetWay],
     closed: bool,
     nodes: &RoadNodes,
-    radius: f32,
+    curve: Curve,
     smoothed: &mut [Option<Vec<Vec2>>],
 ) -> (usize, usize) {
     if run.iter().any(|way| roads[way.road].points.len() < 2) {
@@ -246,7 +274,7 @@ fn smooth_run(
         keep[start] = true;
     }
     keep[0] = true;
-    let kept = simplify(&stitched.points, &keep, closed);
+    let kept = simplify(&stitched.points, &keep, closed, curve.simplify);
     let kept: Vec<Vertex> = kept
         .iter()
         .map(|&index| Vertex {
@@ -263,7 +291,9 @@ fn smooth_run(
     for (q, vertex) in kept.iter().enumerate() {
         let pad = neighbours(q, kept.len(), closed)
             .filter(|_| vertex.pinned)
-            .and_then(|(before, after)| through_pad(kept[before].at, vertex.at, kept[after].at));
+            .and_then(|(before, after)| {
+                through_pad(kept[before].at, vertex.at, kept[after].at, curve.deviation)
+            });
         match pad {
             Some([start, end]) => {
                 let free = |at| Vertex {
@@ -292,7 +322,7 @@ fn smooth_run(
                     after: vertices[after].at,
                     pinned: [vertices[before].pinned, vertices[after].pinned],
                     half: vertex.half,
-                    radius,
+                    curve,
                 };
                 if corner.fillet(&mut out) {
                     tight += 1;
@@ -369,7 +399,7 @@ struct Corner {
     /// Закреплён ли сосед до и после.
     pinned: [bool; 2],
     half: f32,
-    radius: f32,
+    curve: Curve,
 }
 
 impl Corner {
@@ -393,8 +423,8 @@ impl Corner {
     /// Радиус дуги: ступень сглаживания, зажатая отклонением от вершины и
     /// снизу полушириной.
     fn radius(&self, bend: f32) -> f32 {
-        let deviation = MAX_DEVIATION / (1.0 / (bend / 2.0).cos() - 1.0).max(f32::EPSILON);
-        self.radius.min(deviation).max(self.half)
+        let deviation = self.curve.deviation / (1.0 / (bend / 2.0).cos() - 1.0).max(f32::EPSILON);
+        self.curve.radius.min(deviation).max(self.half)
     }
 
     /// Дуга, касательная к обоим звеньям. Да — звеньев не хватило, и радиус
@@ -444,10 +474,10 @@ fn neighbours(q: usize, count: usize, closed: bool) -> Option<(usize, usize)> {
 /// узел `at`: бордюр перекрёстка ([`corners`](super::corners)) скругляется
 /// только по прямому краю, и изогнутая у самого узла ось оставила бы его без
 /// скругления. Отрезок уводит ось от звеньев OSM не дальше
-/// [`MAX_DEVIATION`] и берёт не больше половины каждого звена. `None` — излом
+/// `deviation` и берёт не больше половины каждого звена. `None` — излом
 /// мельче [`THROUGH_MIN_BEND`] (его кроет перекрёсток) или круче
 /// [`THROUGH_MAX_BEND`] (это поворот): тогда узел остаётся углом.
-fn through_pad(before: Vec2, at: Vec2, after: Vec2) -> Option<[Vec2; 2]> {
+fn through_pad(before: Vec2, at: Vec2, after: Vec2, deviation: f32) -> Option<[Vec2; 2]> {
     let incoming = (at - before).try_normalize()?;
     let outgoing = (after - at).try_normalize()?;
     let bend = incoming.angle_to(outgoing).abs();
@@ -455,7 +485,7 @@ fn through_pad(before: Vec2, at: Vec2, after: Vec2) -> Option<[Vec2; 2]> {
         return None;
     }
     let middle = (incoming + outgoing).normalize();
-    let reach = (MAX_DEVIATION / (bend / 2.0).sin())
+    let reach = (deviation / (bend / 2.0).sin())
         .min(THROUGH_RUN)
         .min(at.distance(before) / 2.0)
         .min(at.distance(after) / 2.0);
@@ -466,7 +496,7 @@ fn through_pad(before: Vec2, at: Vec2, after: Vec2) -> Option<[Vec2; 2]> {
 /// `keep` — вершины, которые остаются в любом случае (первая — всегда); у
 /// кольца (`closed`) последний пролёт идёт от последней оставленной вершины к
 /// первой.
-fn simplify(points: &[Vec2], keep: &[bool], closed: bool) -> Vec<usize> {
+fn simplify(points: &[Vec2], keep: &[bool], closed: bool, tolerance: f32) -> Vec<usize> {
     let count = points.len();
     let anchors: Vec<usize> = (0..count).filter(|&index| keep[index]).collect();
     let mut kept = vec![false; count];
@@ -488,7 +518,7 @@ fn simplify(points: &[Vec2], keep: &[bool], closed: bool) -> Vec<usize> {
             .map(|index| (index, distance_to_chord(points[index % count], a, b)))
             .max_by(|x, y| x.1.total_cmp(&y.1))
             .expect("the span holds a vertex");
-        if distance > SIMPLIFY_TOLERANCE {
+        if distance > tolerance {
             kept[far % count] = true;
             spans.push((from, far));
             spans.push((far, to));

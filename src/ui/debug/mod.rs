@@ -78,9 +78,19 @@ pub struct DebugDoors(pub bool);
 #[settings_group(group = "debug", key = "conifer_noise")]
 pub struct DebugConiferNoise(pub bool);
 
+/// Показывать ли оверлей сети улиц — строка `Road network` вкладки Debug:
+/// склейка ways в улицы, сечения и швы (`map::mesh_network_overlay`).
+#[derive(Resource, Reflect, SettingsGroup, Default)]
+#[reflect(Resource, SettingsGroup, Default)]
+#[settings_group(group = "debug", key = "road_network")]
+pub struct DebugRoadNetwork(pub bool);
+
 mod overlays;
 
-use self::overlays::{render_doors, render_grid, sync_conifer_noise_overlay, sync_navmesh_overlay};
+use self::overlays::{
+    render_doors, render_grid, sync_conifer_noise_overlay, sync_navmesh_overlay,
+    sync_road_network_overlay,
+};
 
 pub struct UiDebugTogglesPlugin;
 
@@ -90,20 +100,24 @@ impl Plugin for UiDebugTogglesPlugin {
             .add_knobs::<DebugDoors>()
             .add_knobs::<DrawMovePaths>()
             .add_knobs::<DebugConiferNoise>()
+            .add_knobs::<DebugRoadNetwork>()
             .add_knobs::<CameraPositionMode>()
             .add_knobs::<NavtileBase>()
             .init_resource::<DebugGrid>()
             .init_resource::<DebugNavmesh>()
             .init_resource::<DebugDoors>()
             .init_resource::<DebugConiferNoise>()
+            .init_resource::<DebugRoadNetwork>()
             .register_type::<DebugGrid>()
             .register_type::<DebugNavmesh>()
             .register_type::<DebugDoors>()
             .register_type::<DebugConiferNoise>()
+            .register_type::<DebugRoadNetwork>()
             .track_pref::<DebugGrid>()
             .track_pref::<DebugNavmesh>()
             .track_pref::<DebugDoors>()
             .track_pref::<DebugConiferNoise>()
+            .track_pref::<DebugRoadNetwork>()
             .add_systems(Startup, build_debug_tab.in_set(UiBuildSet::Sections))
             // тумблер, восстановленный из настроек, менялся до того, как
             // navmesh был заполнен и поле хвои посчитано, — красим слои ещё
@@ -114,6 +128,7 @@ impl Plugin for UiDebugTogglesPlugin {
                     sync_navmesh_overlay,
                     // порог красит хвойную область, а считает его посадка
                     sync_conifer_noise_overlay.after(crate::map::trees::build_conifer_field),
+                    sync_road_network_overlay,
                 )
                     .in_set(WorldInitSet::Spawn),
             )
@@ -154,6 +169,9 @@ impl Plugin for UiDebugTogglesPlugin {
                                 .or_else(resource_changed::<ConiferNoiseStyle>),
                         )
                         .after(crate::map::trees::rebuild_trees),
+                    sync_road_network_overlay
+                        .run_if(in_state(AppState::Playing))
+                        .run_if(resource_changed::<DebugRoadNetwork>),
                     toggle_navmesh
                         .run_if(input_just_pressed(KeyCode::KeyN))
                         .run_if(not(super::typing_in_text_input)),
@@ -176,6 +194,7 @@ struct DebugValues<'w> {
     doors: Res<'w, DebugDoors>,
     movepaths: Res<'w, DrawMovePaths>,
     conifer_noise: Res<'w, DebugConiferNoise>,
+    road_network: Res<'w, DebugRoadNetwork>,
 }
 
 fn build_debug_tab(mut commands: Commands, panes: Res<SettingsPanes>, values: DebugValues) {
@@ -230,6 +249,17 @@ fn build_debug_tab(mut commands: Commands, panes: Res<SettingsPanes>, values: De
         CycleBinding {
             cycle: |noise: &mut DebugConiferNoise| noise.0 = !noise.0,
             text: |noise| on_off(noise.0).to_string(),
+        },
+    );
+    spawn_cycle_row(
+        &mut commands,
+        overlays,
+        "Road network",
+        ROW_LEFT_PX,
+        &*values.road_network,
+        CycleBinding {
+            cycle: |network: &mut DebugRoadNetwork| network.0 = !network.0,
+            text: |network| on_off(network.0).to_string(),
         },
     );
 

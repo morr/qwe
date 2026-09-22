@@ -1,6 +1,7 @@
 use super::*;
 use crate::map::osm::MapData;
 use crate::map::osm::fixture::street;
+use crate::map::roads::shape::RoadShape;
 use crate::map::roads::{CrossingMode, RoadStyle, mesh_roads};
 
 /// Меш слоя краски по имени.
@@ -50,7 +51,7 @@ fn a_two_lane_street_gets_one_axis_and_no_lane_lines() {
         2,
         false,
     )]);
-    let (layers, report) = mesh_roads(&map, RoadStyle::default());
+    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
     assert!(paint_layer(&layers, PAINT_LANES).is_empty());
     assert_eq!(line_offsets(&layers, PAINT_AXES, 0.0), vec![0.0]);
     assert_eq!(report.paint_lines, 1);
@@ -71,7 +72,7 @@ fn four_lanes_get_a_double_axis_and_a_lane_line_each_way() {
         4,
         false,
     )]);
-    let (layers, _) = mesh_roads(&map, RoadStyle::default());
+    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
     assert_eq!(line_offsets(&layers, PAINT_AXES, 0.0), vec![0.0]);
     let axes = paint_layer(&layers, PAINT_AXES)
         .ribbon_coords_for_test()
@@ -82,8 +83,8 @@ fn four_lanes_get_a_double_axis_and_a_lane_line_each_way() {
     );
     let lanes = line_offsets(&layers, PAINT_LANES, 0.0);
     assert_eq!(lanes.len(), 2);
-    assert!((lanes[0] + STREET_LANE_WIDTH).abs() < 1e-3, "{lanes:?}");
-    assert!((lanes[1] - STREET_LANE_WIDTH).abs() < 1e-3, "{lanes:?}");
+    assert!((lanes[0] + lane_width()).abs() < 1e-3, "{lanes:?}");
+    assert!((lanes[1] - lane_width()).abs() < 1e-3, "{lanes:?}");
 }
 
 #[test]
@@ -93,19 +94,13 @@ fn a_one_way_street_has_no_axis() {
         3,
         true,
     )]);
-    let (layers, _) = mesh_roads(&map, RoadStyle::default());
+    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
     assert!(paint_layer(&layers, PAINT_AXES).is_empty());
     // три полосы — две линии, по сетке от полполосы
     let lanes = line_offsets(&layers, PAINT_LANES, 0.0);
     assert_eq!(lanes.len(), 2, "{lanes:?}");
-    assert!(
-        (lanes[0] + STREET_LANE_WIDTH / 2.0).abs() < 1e-3,
-        "{lanes:?}"
-    );
-    assert!(
-        (lanes[1] - STREET_LANE_WIDTH / 2.0).abs() < 1e-3,
-        "{lanes:?}"
-    );
+    assert!((lanes[0] + lane_width() / 2.0).abs() < 1e-3, "{lanes:?}");
+    assert!((lanes[1] - lane_width() / 2.0).abs() < 1e-3, "{lanes:?}");
 }
 
 #[test]
@@ -115,7 +110,7 @@ fn markings_off_paint_nothing() {
         markings: false,
         ..RoadStyle::default()
     };
-    let (layers, report) = mesh_roads(&map, style);
+    let (layers, report) = mesh_roads(&map, style, RoadShape::default());
     for name in [
         PAINT_LANES,
         PAINT_AXES,
@@ -131,7 +126,11 @@ fn markings_off_paint_nothing() {
 fn a_bridge_paints_into_its_own_layer() {
     let mut road = street(vec![Vec2::ZERO, Vec2::new(200.0, 0.0)], 7.6);
     road.bridge = true;
-    let (layers, _) = mesh_roads(&map_of(vec![road]), RoadStyle::default());
+    let (layers, _) = mesh_roads(
+        &map_of(vec![road]),
+        RoadStyle::default(),
+        RoadShape::default(),
+    );
     assert!(paint_layer(&layers, PAINT_AXES).is_empty());
     assert!(!paint_layer(&layers, BRIDGE_PAINT_AXES).is_empty());
 }
@@ -139,10 +138,10 @@ fn a_bridge_paints_into_its_own_layer() {
 /// Сетка полос раскладки — где на ней лежат границы полос внутри проезжей
 /// части, поперёк пути.
 fn grid(frame: LaneFrame) -> Vec<f32> {
-    let from = ((frame.low - frame.origin) / STREET_LANE_WIDTH).ceil() as i32;
-    let to = ((frame.high - frame.origin) / STREET_LANE_WIDTH).floor() as i32;
+    let from = ((frame.low - frame.origin) / lane_width()).ceil() as i32;
+    let to = ((frame.high - frame.origin) / lane_width()).floor() as i32;
     let mut lines: Vec<f32> = (from..=to)
-        .map(|k| frame.origin + k as f32 * STREET_LANE_WIDTH)
+        .map(|k| frame.origin + k as f32 * lane_width())
         .filter(|&at| at > frame.low + 1e-3 && at < frame.high - 1e-3)
         .collect();
     lines.sort_by(f32::total_cmp);
@@ -189,7 +188,7 @@ fn a_wedge_starts_on_the_narrow_grid() {
     assert_eq!(grid(seam), grid(lane_frame(2)));
     assert_eq!(seam.origin, 0.0, "две полосы в четыре: линии не двигаются");
     let odd = narrow_frame(lane_frame(3), 2, false);
-    assert!((lane_frame(3).origin - odd.origin - STREET_LANE_WIDTH / 2.0).abs() < 1e-4);
+    assert!((lane_frame(3).origin - odd.origin - lane_width() / 2.0).abs() < 1e-4);
 }
 
 /// Все линии краски в станции `x` — обоих видов.
@@ -203,7 +202,7 @@ fn all_lines(layers: &[LayerMesh], x: f32) -> Vec<f32> {
 /// Шов двух ways одной улицы у x = 200: узкий в `lanes[0]` полос, широкий в
 /// `lanes[1]`. Клин лежит на широком от шва.
 fn seam_of(lanes: [u8; 2]) -> (Vec<LayerMesh>, f32) {
-    let width = |lanes: u8| f32::from(lanes) * STREET_LANE_WIDTH + 1.0;
+    let width = |lanes: u8| f32::from(lanes) * lane_width() + 1.0;
     let roads = vec![
         with_lanes(
             street(vec![Vec2::ZERO, Vec2::new(200.0, 0.0)], width(lanes[0])),
@@ -219,7 +218,7 @@ fn seam_of(lanes: [u8; 2]) -> (Vec<LayerMesh>, f32) {
             false,
         ),
     ];
-    let (layers, report) = mesh_roads(&map_of(roads), RoadStyle::default());
+    let (layers, report) = mesh_roads(&map_of(roads), RoadStyle::default(), RoadShape::default());
     assert_eq!(report.tapers, 1);
     let taper = (width(lanes[1]) - width(lanes[0])) * tapers::TAPER_PER_METER;
     (layers, 200.0 + taper)
@@ -236,10 +235,7 @@ fn a_wedge_adds_lanes_without_moving_the_axis() {
     assert_eq!(lines.len(), 3, "{lines:?}");
     assert!(lines[1].abs() < 1e-3, "{lines:?}");
     for pair in lines.windows(2) {
-        assert!(
-            (pair[1] - pair[0] - STREET_LANE_WIDTH).abs() < 1e-3,
-            "{lines:?}"
-        );
+        assert!((pair[1] - pair[0] - lane_width()).abs() < 1e-3, "{lines:?}");
     }
 }
 
@@ -252,14 +248,8 @@ fn a_wedge_with_odd_lanes_drifts_the_line_over_its_length() {
     assert!(at_seam.iter().any(|x| x.abs() < 1e-3), "{at_seam:?}");
     let lines = all_lines(&layers, wide);
     assert_eq!(lines.len(), 2, "{lines:?}");
-    assert!(
-        (lines[0] + STREET_LANE_WIDTH / 2.0).abs() < 1e-3,
-        "{lines:?}"
-    );
-    assert!(
-        (lines[1] - STREET_LANE_WIDTH / 2.0).abs() < 1e-3,
-        "{lines:?}"
-    );
+    assert!((lines[0] + lane_width() / 2.0).abs() < 1e-3, "{lines:?}");
+    assert!((lines[1] - lane_width() / 2.0).abs() < 1e-3, "{lines:?}");
 }
 
 #[test]
@@ -331,7 +321,7 @@ fn a_crossing_paints_a_zebra_and_stop_lines_across_the_arms() {
             false,
         ),
     ]);
-    let (layers, report) = mesh_roads(&map, RoadStyle::default());
+    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
     assert_eq!(report.zebras, [4, 0]);
     assert_eq!(report.stop_lines, 4);
     let zebras = paint_layer(&layers, PAINT_ZEBRAS);
@@ -354,6 +344,7 @@ fn a_crossing_paints_a_zebra_and_stop_lines_across_the_arms() {
             stop_lines: false,
             ..RoadStyle::default()
         },
+        RoadShape::default(),
     );
     assert_eq!(report.zebras, [0, 0]);
     assert_eq!(report.stop_lines, 0);
@@ -370,7 +361,11 @@ fn a_pocket_line_ends_at_the_junction_and_the_rest_run_through() {
     let mut narrow = with_lanes(street(vec![node, Vec2::new(200.0, 0.0)], 7.6), 2, false);
     narrow.highway = crate::map::osm::Highway::Tertiary;
     let side = with_lanes(street(vec![Vec2::new(100.0, -80.0), node], 7.6), 2, false);
-    let (layers, report) = mesh_roads(&map_of(vec![wide, narrow, side]), RoadStyle::default());
+    let (layers, report) = mesh_roads(
+        &map_of(vec![wide, narrow, side]),
+        RoadStyle::default(),
+        RoadShape::default(),
+    );
     assert_eq!(report.pockets, 1);
     // у самого узла: линия полос в кармане уже погашена, осевая — нет
     let near = |name: &str| -> Vec<f32> {

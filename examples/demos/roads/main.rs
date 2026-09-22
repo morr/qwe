@@ -34,8 +34,11 @@
 //! Ступени зума взяты ближние: три десятка окон по сотне метров — не город,
 //! экономить тут нечего.
 //!
-//! Пример не трогает конфиг игры: ни `PrefsPlugin`, ни `MapPlugin` — `City` и
-//! `RoadStyle` здесь обычные ресурсы с игровыми дефолтами.
+//! Пример не трогает конфиг игры: ни `PrefsPlugin`, ни `MapPlugin` — `City`,
+//! `RoadStyle` и `RoadShape` здесь обычные ресурсы с игровыми дефолтами.
+//! Ползунки формы доезжают до примеров после паузы (`settle_road_shape`), как
+//! в игре; ширина полосы уходит в глобаль разбора перед нарезкой, так что
+//! пример с другой шириной разобран заново, а не растянут.
 //!
 //! ```text
 //! cargo run --example roads
@@ -86,13 +89,14 @@ use qwe::map::trees::{
 };
 use qwe::map::{
     BuildingHeightMode, FenceZoomBucket, GROUND_COLOR, MeshBuilder, PaintMaterial, ParkingLayout,
-    RailZoomBucket, RoadPaintStyle, RoadStyle, RoofStyle, SunOnMap, SurfaceStyle, apply_sun,
-    mesh_fences, mesh_rails, mesh_roads, mesh_surfaces, mesh_tree_row_band, spawn_road_meshes,
+    RailZoomBucket, RoadPaintStyle, RoadShape, RoadShapeOnMap, RoadStyle, RoofStyle, SunOnMap,
+    SurfaceStyle, apply_sun, mesh_fences, mesh_rails, mesh_roads, mesh_surfaces,
+    mesh_tree_row_band, set_lane_width, settle_road_shape, spawn_road_meshes,
 };
 use qwe::ui::knob::AddKnobsExt;
 use qwe::ui::{PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET};
 
-use crate::overlay::{NetworkOverlay, mesh_network};
+use crate::overlay::NetworkOverlay;
 use crate::panel::{StatusLine, spawn_panel, sync_city_buttons};
 use crate::samples::Sample;
 use crate::shot::{ShotRequest, auto_shot, request_shot};
@@ -185,6 +189,8 @@ fn main() {
         .add_plugins(qwe::ui::AgentBadgePlugin)
         .init_resource::<City>()
         .init_resource::<RoadStyle>()
+        .init_resource::<RoadShape>()
+        .init_resource::<RoadShapeOnMap>()
         .init_resource::<RoadPaintStyle>()
         .init_resource::<RoofStyle>()
         .init_resource::<SurfaceStyle>()
@@ -193,6 +199,7 @@ fn main() {
         .init_resource::<NetworkOverlay>()
         // подписи строк стиля ведёт кит — по разу на ресурс, как в игре
         .add_knobs::<RoadStyle>()
+        .add_knobs::<RoadShape>()
         .add_knobs::<RoadPaintStyle>()
         .add_knobs::<NetworkOverlay>()
         .insert_resource(ClearColor(GROUND_COLOR))
@@ -219,13 +226,19 @@ fn main() {
                 (drag_pan, key_pan),
                 step_to_neighbour,
                 sync_city_buttons.run_if(resource_changed::<City>),
+                // форма — после паузы, как в игре; ширина полосы — в глобаль
+                // разбора, краски и колеи раньше, чем её прочтут материалы
+                settle_road_shape,
+                apply_lane_width.run_if(resource_changed::<RoadShapeOnMap>),
                 // краска и колея — юниформы, как в игре: слои не пересобираются
-                retune_surface_materials.run_if(retunes_on()),
+                retune_surface_materials
+                    .run_if(retunes_on().or_else(resource_changed::<RoadShapeOnMap>)),
                 // на первом кадре оба ресурса числятся изменёнными — первая
                 // сборка идёт той же дорогой, что и всякая следующая
                 reload.run_if(
                     resource_changed::<City>
                         .or_else(resource_changed::<RoadStyle>)
+                        .or_else(resource_changed::<RoadShapeOnMap>)
                         .or_else(resource_changed::<NetworkOverlay>)
                         .or_else(input_just_pressed(KeyCode::F5)),
                 ),
@@ -473,6 +486,14 @@ fn load_reference(path: &std::path::Path) -> Option<Image> {
 /// → игровые `spawn_*`. Порядок слоёв и их входы — те же, что у
 /// `map::spawn::spawn_map` и цепочки `rebuild_*` за ним.
 #[allow(clippy::too_many_arguments)]
+/// Ширина полосы — в глобаль, которую читают разбор, краска и колея
+/// асфальта: игра пишет её перед потоком загрузки, витрина — перед разбором
+/// примеров, которые `reload` по этой же правке соберёт заново.
+fn apply_lane_width(shape: Res<RoadShapeOnMap>) {
+    set_lane_width(shape.0.lane_width());
+}
+
+#[allow(clippy::too_many_arguments)]
 fn build_next(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -480,6 +501,7 @@ fn build_next(
     assets: Res<AssetServer>,
     city: Res<City>,
     road_style: Res<RoadStyle>,
+    road_shape: Res<RoadShapeOnMap>,
     overlay: Res<NetworkOverlay>,
     mut gallery: ResMut<Gallery>,
     mut status: Single<&mut Text, With<StatusLine>>,
@@ -517,7 +539,7 @@ fn build_next(
         SampleLayer,
     );
 
-    let (road_layers, road_report) = mesh_roads(&map, *road_style);
+    let (road_layers, road_report) = mesh_roads(&map, *road_style, road_shape.0);
     let road_layers = clip(road_layers);
     let road_line = road_report.to_string();
     spawn_road_meshes(
@@ -532,7 +554,7 @@ fn build_next(
             &mut commands,
             &mut meshes,
             &materials.layers,
-            clip(vec![mesh_network(&map)]),
+            clip(vec![qwe::map::mesh_network_overlay(&map)]),
             SampleLayer,
         );
     }

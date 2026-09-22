@@ -1,4 +1,5 @@
 use super::*;
+use crate::map::footprint::casing_width;
 use crate::map::meshing::distance_to_path;
 use crate::map::osm::model::RoadNode;
 use crate::map::osm::{Highway, fixture};
@@ -634,16 +635,14 @@ fn the_city_wall_ribbon_stays_off_fortress_buildings() {
 // телеметрия области жили внутри `spawn_roads` — 275 строк, взять которые из
 // теста было нечем: проверять можно было только хелперы под ними.
 
-/// Двадцать дорожных слоёв снизу вверх, ровно в том порядке, в каком они
-/// уходят в мир: двенадцать лент и восемь слоёв краски над своим асфальтом —
+/// Восемнадцать дорожных слоёв снизу вверх, ровно в том порядке, в каком они
+/// уходят в мир: десять лент и восемь слоёв краски над своим асфальтом —
 /// колея траекторий узла (маска, потом наложение) ниже линий, островки колец
 /// над асфальтом стоянок.
-const LAYERS: [&str; 20] = [
-    "alley_casings",
+const LAYERS: [&str; 18] = [
     "alleys",
     "sidewalks",
     "road_medians",
-    "road_casings",
     "roads",
     paint::PAINT_WEAR_MASK,
     paint::PAINT_WEAR,
@@ -678,8 +677,8 @@ fn layer<'a>(layers: &'a [LayerMesh], name: &str) -> &'a LayerMesh {
 }
 
 #[test]
-fn a_street_builds_seventeen_layers_bottom_up() {
-    let (layers, report) = mesh_roads(&one_street(), RoadStyle::default());
+fn a_street_builds_eighteen_layers_bottom_up() {
+    let (layers, report) = mesh_roads(&one_street(), RoadStyle::default(), RoadShape::default());
 
     let names: Vec<&str> = layers.iter().map(|layer| layer.name).collect();
     assert_eq!(names, LAYERS);
@@ -701,7 +700,7 @@ fn a_street_builds_seventeen_layers_bottom_up() {
 
 #[test]
 fn only_the_bridge_shadow_is_blended() {
-    let (layers, _) = mesh_roads(&one_street(), RoadStyle::default());
+    let (layers, _) = mesh_roads(&one_street(), RoadStyle::default(), RoadShape::default());
 
     // фактурный материал — у всего, что асфальт, тротуар или дорожка;
     // блендинг — ровно у полупрозрачной тени настила
@@ -723,21 +722,26 @@ fn only_the_bridge_shadow_is_blended() {
     }
 }
 
+/// Ручки формы доходят до геометрии: радиус угла растягивает скругления
+/// бордюра, нулевой допуск оставляет ось по точкам OSM.
 #[test]
-fn the_casing_knob_fills_the_casing_layers() {
-    let map = one_street();
-    let casing_verts = |casing| {
-        let style = RoadStyle {
-            casing,
-            ..RoadStyle::default()
-        };
-        let (layers, _) = mesh_roads(&map, style);
-        layer(&layers, "road_casings").builder.vertex_count()
+fn the_shape_knobs_move_the_geometry() {
+    let map = a_tee();
+    let verts = |shape: RoadShape| {
+        let (layers, report) = mesh_roads(&map, RoadStyle::default(), shape);
+        (layer(&layers, "roads").builder.vertex_count(), report)
     };
-
-    // кант — отдельный слой, и выключенный он пуст, а не отсутствует
-    assert_eq!(casing_verts(false), 0);
-    assert!(casing_verts(true) > 0);
+    let (_, base) = verts(RoadShape::default());
+    assert!(base.kerb_returns > 0, "{base}");
+    let (tight, _) = verts(RoadShape {
+        corner_radius: 0.5,
+        ..default()
+    });
+    let (wide, _) = verts(RoadShape {
+        corner_radius: 2.0,
+        ..default()
+    });
+    assert_ne!(tight, wide, "радиус угла меняет дуги скруглений");
 }
 
 #[test]
@@ -748,7 +752,7 @@ fn the_sidewalk_knob_fills_the_sidewalk_layer() {
             sidewalks,
             ..RoadStyle::default()
         };
-        let (layers, _) = mesh_roads(&map, style);
+        let (layers, _) = mesh_roads(&map, style, RoadShape::default());
         layer(&layers, "sidewalks").builder.vertex_count()
     };
 
@@ -781,7 +785,7 @@ fn junctions_with(map: &MapData, markings: bool) -> usize {
         markings,
         ..RoadStyle::default()
     };
-    mesh_roads(map, style).1.junctions
+    mesh_roads(map, style, RoadShape::default()).1.junctions
 }
 
 #[test]
@@ -815,7 +819,7 @@ fn a_bridge_leaves_the_street_layers_for_the_deck_ones() {
         vec![Vec2::new(100.0, 100.0), Vec2::new(600.0, 100.0)],
         12.0,
     ));
-    let (layers, _) = mesh_roads(&map, RoadStyle::default());
+    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
 
     // настил уходит из уличных слоёв в мостовые целиком, и тротуара у него нет
     // никогда: полоса свисала бы с настила над водой
@@ -828,7 +832,11 @@ fn a_bridge_leaves_the_street_layers_for_the_deck_ones() {
 
 #[test]
 fn an_empty_map_still_describes_every_layer() {
-    let (layers, report) = mesh_roads(&MapData::default(), RoadStyle::default());
+    let (layers, report) = mesh_roads(
+        &MapData::default(),
+        RoadStyle::default(),
+        RoadShape::default(),
+    );
 
     assert_eq!(layers.len(), LAYERS.len());
     assert!(layers.iter().all(|layer| layer.builder.is_empty()));
@@ -874,7 +882,11 @@ fn extent_x(builder: &MeshBuilder) -> (f32, f32) {
 
 #[test]
 fn a_road_through_a_big_lot_is_drawn_over_it_with_a_kerb() {
-    let (layers, _) = mesh_roads(&ground_with_roads(100.0), RoadStyle::default());
+    let (layers, _) = mesh_roads(
+        &ground_with_roads(100.0),
+        RoadStyle::default(),
+        RoadShape::default(),
+    );
 
     // бордюр — только у сквозной дороги и только у площадки: за её контур он
     // выпущен на два метра, до тротуара улицы, и не дальше
@@ -903,7 +915,11 @@ fn a_road_through_a_big_lot_is_drawn_over_it_with_a_kerb() {
 #[test]
 fn a_small_lot_still_hides_every_road_on_it() {
     // 60 × 60 — двор: его асфальт и есть проезд, поверх него ничего не кладётся
-    let (layers, _) = mesh_roads(&ground_with_roads(60.0), RoadStyle::default());
+    let (layers, _) = mesh_roads(
+        &ground_with_roads(60.0),
+        RoadStyle::default(),
+        RoadShape::default(),
+    );
     assert!(layer(&layers, "lot_sidewalks").builder.is_empty());
     assert!(layer(&layers, "lot_lines").builder.is_empty());
 }
@@ -944,7 +960,7 @@ fn the_wedge_between_the_two_arms_of_a_roundabout_is_hatched() {
     // находились вовсе
     for tagged in [true, false] {
         let map = roundabout_with_an_approach(tagged, true);
-        let (layers, _) = mesh_roads(&map, RoadStyle::default());
+        let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
         // клин — правее кольца, между подходами, у оси x
         let wedged = |at: &&[f32; 3]| (17.0..40.0).contains(&at[0]) && at[1].abs() < 2.5;
         let lines = layer(&layers, paint::PAINT_ISLANDS)
@@ -967,7 +983,7 @@ fn the_wedge_between_the_two_arms_of_a_roundabout_is_hatched() {
 #[test]
 fn the_gore_is_paved_under_the_edges_of_both_arms() {
     let map = roundabout_with_an_approach(true, true);
-    let (layers, report) = mesh_roads(&map, RoadStyle::default());
+    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
     assert_eq!(report.gores, 1, "островок у кольца один");
 
     // клин целиком: от кромки кольца (радиус 16 м) до острия, где полотна
@@ -1027,7 +1043,7 @@ fn a_two_way_approach_gets_a_splitter_island() {
     });
     map.roads
         .push(fixture::street(vec![circle[0], Vec2::new(90.0, 0.0)], 7.6));
-    let (layers, report) = mesh_roads(&map, RoadStyle::default());
+    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
     assert_eq!(report.rings[0], 1);
     assert_eq!(report.gores, 1, "островок на подходе один");
     // капля — на оси подхода за кромкой кольца (25 + 4 м), не дальше острия
@@ -1056,7 +1072,7 @@ fn a_two_way_approach_gets_a_splitter_island() {
 #[test]
 fn a_two_way_loop_without_the_tag_is_not_a_roundabout() {
     let map = roundabout_with_an_approach(false, false);
-    let (layers, _) = mesh_roads(&map, RoadStyle::default());
+    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
     assert!(layer(&layers, paint::PAINT_ISLANDS).builder.is_empty());
 }
 
@@ -1066,7 +1082,11 @@ fn the_markings_knob_takes_the_hatching_off() {
         markings: false,
         ..RoadStyle::default()
     };
-    let (layers, _) = mesh_roads(&roundabout_with_an_approach(true, true), style);
+    let (layers, _) = mesh_roads(
+        &roundabout_with_an_approach(true, true),
+        style,
+        RoadShape::default(),
+    );
     assert!(layer(&layers, paint::PAINT_ISLANDS).builder.is_empty());
 }
 
@@ -1084,7 +1104,7 @@ fn two_carriageways_side_by_side_get_a_double_line_and_no_kerb_between() {
             5.0,
         )
     });
-    let (layers, report) = mesh_roads(&map, RoadStyle::default());
+    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
     assert_eq!(report.medians, [1, 0]);
 
     let lines = &layer(&layers, "lot_lines").builder;
@@ -1117,7 +1137,7 @@ fn the_sidewalk_knob_takes_the_kerb_off_the_lot_road_too() {
         sidewalks: false,
         ..RoadStyle::default()
     };
-    let (layers, _) = mesh_roads(&ground_with_roads(100.0), style);
+    let (layers, _) = mesh_roads(&ground_with_roads(100.0), style, RoadShape::default());
     assert!(layer(&layers, "lot_sidewalks").builder.is_empty());
 }
 
@@ -1145,7 +1165,7 @@ fn divided_avenue(gap: f32) -> (MapData, f32) {
 #[test]
 fn paired_halves_share_a_paved_median_and_keep_sidewalks_outside() {
     let (map, apart) = divided_avenue(0.6);
-    let (layers, report) = mesh_roads(&map, RoadStyle::default());
+    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
     assert_eq!(report.medians, [1, 0]);
     let middle = 100.0 + apart / 2.0;
     // двойная сплошная — по середине между половинами
@@ -1187,7 +1207,7 @@ fn the_sidewalk_tag_picks_the_side() {
     let sidewalks_with = |sides: [bool; 2]| {
         let mut map = one_street();
         map.roads[0].sidewalks = sides;
-        let (layers, _) = mesh_roads(&map, RoadStyle::default());
+        let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
         layer(&layers, "sidewalks")
             .builder
             .positions_for_test()
@@ -1210,7 +1230,7 @@ fn the_sidewalk_tag_picks_the_side() {
 fn a_primary_gets_pockets_in_its_sidewalks() {
     let mut map = one_street();
     map.roads[0].highway = Highway::Primary;
-    let (layers, report) = mesh_roads(&map, RoadStyle::default());
+    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
     assert_eq!(report.kerb_pockets, 2);
     let edge = 100.0 + 6.0 + pockets::POCKET_WIDTH;
     let roads = layer(&layers, "roads").builder.positions_for_test();
@@ -1227,7 +1247,7 @@ fn a_turning_circle_widens_the_dead_end() {
         pos: Vec2::new(600.0, 100.0),
         kind: RoadNodeKind::TurningCircle,
     });
-    let (layers, report) = mesh_roads(&map, RoadStyle::default());
+    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
     assert_eq!(report.turning_circles, 1);
     let radius = turning_radius(12.0);
     assert!(radius > 6.0);
@@ -1257,7 +1277,7 @@ fn the_double_line_reaches_the_junction_like_the_lane_lines() {
         ],
         12.0,
     ));
-    let (layers, _) = mesh_roads(&map, RoadStyle::default());
+    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
     let nearest_before = |name: &str| {
         layer(&layers, name)
             .builder
@@ -1290,7 +1310,7 @@ fn a_street_into_one_half_does_not_open_the_median() {
         vec![Vec2::new(300.0, 40.0), Vec2::new(300.0, 100.0)],
         7.6,
     ));
-    let (layers, report) = mesh_roads(&map, RoadStyle::default());
+    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
     assert!(report.junctions > 0, "узел у ближней половины есть");
     let axes = &layer(&layers, paint::PAINT_AXES).builder;
     let positions = axes.positions_for_test();
@@ -1311,7 +1331,7 @@ fn a_street_into_one_half_does_not_open_the_median() {
 #[test]
 fn a_wide_gap_between_halves_is_a_lawn_with_a_kerb() {
     let (map, apart) = divided_avenue(8.0);
-    let (layers, report) = mesh_roads(&map, RoadStyle::default());
+    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
     assert_eq!(report.medians, [0, 1]);
     let inner = (3.0 * 3.3 + 1.0) / 2.0;
     let grass = layer(&layers, "road_medians").builder.positions_for_test();

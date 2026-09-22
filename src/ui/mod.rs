@@ -28,6 +28,7 @@ pub mod knob;
 mod navigation;
 mod noise;
 mod quit;
+mod road_paint;
 mod roads;
 mod rows;
 mod shell;
@@ -62,6 +63,8 @@ pub use self::debug::{DebugConiferNoise, DebugDoors, DebugGrid, DebugNavmesh};
 pub use self::theme::PanelWidgetsPlugin;
 // игре и витринам поровну: Esc закрывает любое окно с панелью
 pub use self::quit::QuitOnEscPlugin;
+// ползунки формы дорог — панели витрины `roads`: шкалы те же, что в игре
+pub use self::roads::shape_knobs;
 use crate::loading::{AppState, PlayPhase};
 use crate::map::osm::MapData;
 use crate::map::{TreeRowStyle, TreeStyle};
@@ -488,7 +491,11 @@ impl Plugin for UiPlugin {
             roads::UiRoadStylePlugin,
             // кортеж `Plugins` кончается на пятнадцати: секции облика карты
             // едут вложенным кортежем
-            (surfaces::UiSurfaceStylePlugin, sun::UiSunStylePlugin),
+            (
+                road_paint::UiRoadPaintPlugin,
+                surfaces::UiSurfaceStylePlugin,
+                sun::UiSunStylePlugin,
+            ),
             city::UiCityPlugin,
             hotkeys::UiHotkeysPlugin,
             brp::UiBrpBadgePlugin,

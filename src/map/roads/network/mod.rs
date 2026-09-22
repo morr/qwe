@@ -18,6 +18,7 @@
 //! Только картинка: навмеш, двери, деревья и машины по-прежнему видят данные
 //! OSM как есть (`RoadLine::points` не трогается, как и при сглаживании).
 
+pub mod overlay;
 pub mod pairs;
 pub mod sections;
 mod streets;

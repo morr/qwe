@@ -63,7 +63,8 @@ use qwe::camera::{hovering_ui, zoom_to_cursor};
 use qwe::map::cars::cars_mesh;
 use qwe::map::osm::{RoadLine, TrafficSide};
 use qwe::map::{
-    CarStyle, GROUND_COLOR, MeshBuilder, ROAD_COLOR, RibbonCap, RibbonJoin, Smoothing, smooth_path,
+    CarStyle, GROUND_COLOR, MeshBuilder, ROAD_COLOR, RibbonCap, RibbonJoin, RoadShape, Smoothing,
+    smooth_path,
 };
 use qwe::ui::knob::AddKnobsExt;
 use qwe::ui::{PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET};
@@ -437,7 +438,9 @@ fn rebuild_gallery(
             visible: true,
             occupancy: tuning.occupancy,
         },
-        smoothing,
+        // ось ряда — та же, что у асфальта под ним: форма дорог по умолчанию
+        // сглаживает её тем же лёгким шагом, что `smooth_path` выше
+        RoadShape::default(),
         // клетки витрины нарисованы под правостороннее движение (разделённый
         // проспект — встречными половинами справа)
         TrafficSide::Right,

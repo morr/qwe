@@ -34,7 +34,7 @@ fn aligned(roads: &[RoadLine]) -> (Pairs, Vec<Vec<Vec2>>) {
         .iter()
         .map(|road| Cow::Borrowed(road.points.as_slice()))
         .collect();
-    let mut pairs = Pairs::new(roads, &paths);
+    let mut pairs = Pairs::new(roads, &paths, MEDIAN_GAP);
     pairs.align(
         &mut paths,
         roads,

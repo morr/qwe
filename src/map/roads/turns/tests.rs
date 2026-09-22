@@ -12,7 +12,7 @@ fn road(points: Vec<Vec2>, highway: Highway, lanes: u8) -> RoadLine {
     RoadLine {
         highway,
         lanes: Some(lanes),
-        ..street(points, f32::from(lanes) * STREET_LANE_WIDTH + 1.0)
+        ..street(points, f32::from(lanes) * lane_width() + 1.0)
     }
 }
 

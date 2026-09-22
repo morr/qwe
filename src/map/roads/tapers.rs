@@ -1,7 +1,8 @@
 //! **Клинья** — переход между сечениями одной улицы
 //! (`network::sections`): там, где у соседних по улице ways разное число
 //! полос, более широкий начинается не с полной ширины, а с ширины соседа, и
-//! расходится до своей на длине [`TAPER_PER_METER`] × разница ширин. До этого
+//! расходится до своей на длине «ручка `Taper` × разница ширин» (10 м на
+//! метр по умолчанию). До этого
 //! ширина менялась ступенькой прямо в узле шва.
 //!
 //! Клин кладётся только в **чистом шве** — узле, где сходятся ровно два way
@@ -20,8 +21,10 @@ use crate::map::meshing::Break;
 use crate::map::osm::RoadLine;
 use crate::map::osm::model::polyline_length;
 
-/// Длина клина на метр разницы ширин, м: полоса в 3.3 м появляется за
-/// 33 м — как отгон уширения на городской улице.
+/// Длина клина на метр разницы ширин по умолчанию, м: полоса в 3.3 м
+/// появляется за 33 м — как отгон уширения на городской улице. В игре — ручка
+/// `Taper` ([`RoadShape::taper`](super::shape::RoadShape)); здесь — для тестов.
+#[cfg(test)]
 pub const TAPER_PER_METER: f32 = 10.0;
 /// Разница ширин, которую клин ещё не выравнивает, м: сантиметры не видны.
 const TAPER_MIN_STEP: f32 = 0.1;
@@ -48,8 +51,14 @@ pub struct Tapers {
 
 impl Tapers {
     /// Клинья по стыкам улиц сети. `drawn` — дороги так, как они рисуются
-    /// (переезд через тротуар уже асфальтом), по тем же индексам, что у сети.
-    pub fn new(drawn: &[&RoadLine], network: &RoadNetwork, nodes: &RoadNodes) -> Self {
+    /// (переезд через тротуар уже асфальтом), по тем же индексам, что у сети;
+    /// `per_meter` — длина клина на метр разницы ширин.
+    pub fn new(
+        drawn: &[&RoadLine],
+        network: &RoadNetwork,
+        nodes: &RoadNodes,
+        per_meter: f32,
+    ) -> Self {
         let mut tapers = Self {
             ends: vec![[None; 2]; drawn.len()],
             count: 0,
@@ -81,7 +90,7 @@ impl Tapers {
                 (b.road, b.reversed, a.road)
             };
             tapers.ends[wide][usize::from(end)] = Some(Taper {
-                length: step * TAPER_PER_METER,
+                length: step * per_meter,
                 narrow,
             });
             tapers.count += 1;
@@ -99,10 +108,14 @@ impl Tapers {
 /// полуширине участка, а в клине бордюр ближе к оси — машина встала бы на
 /// тротуар. Разрыв — в узле шва, длиной в клин, по дороге, на которой клин
 /// лежит, — `(дорога, разрыв)`.
-pub fn car_clearings(roads: &[RoadLine], network: &RoadNetwork) -> Vec<(usize, Break)> {
+pub fn car_clearings(
+    roads: &[RoadLine],
+    network: &RoadNetwork,
+    per_meter: f32,
+) -> Vec<(usize, Break)> {
     let nodes = RoadNodes::new(roads);
     let drawn: Vec<&RoadLine> = roads.iter().collect();
-    let tapers = Tapers::new(&drawn, network, &nodes);
+    let tapers = Tapers::new(&drawn, network, &nodes, per_meter);
     let mut clearings = Vec::with_capacity(tapers.count);
     for (road, ends) in tapers.ends.iter().enumerate() {
         let points = &roads[road].points;
@@ -208,7 +221,7 @@ mod tests {
         let network = RoadNetwork::new(&roads);
         let nodes = RoadNodes::new(&roads);
         let drawn: Vec<&RoadLine> = roads.iter().collect();
-        let tapers = Tapers::new(&drawn, &network, &nodes);
+        let tapers = Tapers::new(&drawn, &network, &nodes, TAPER_PER_METER);
         (roads, tapers)
     }
 
@@ -243,7 +256,10 @@ mod tests {
         let network = RoadNetwork::new(&roads);
         let nodes = RoadNodes::new(&roads);
         let drawn: Vec<&RoadLine> = roads.iter().collect();
-        assert_eq!(Tapers::new(&drawn, &network, &nodes).count, 0);
+        assert_eq!(
+            Tapers::new(&drawn, &network, &nodes, TAPER_PER_METER).count,
+            0
+        );
     }
 
     #[test]

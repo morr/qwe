@@ -42,6 +42,9 @@ struct SurfaceParams {
     wear: f32,
     shore_width: f32,
     intensity: f32,
+    // шаг полосы, м — `roads::shape::lane_width`: полоса одна по городу, и по
+    // той же сетке кладёт линии слой краски (`paint.wgsl`)
+    lane_width: f32,
 }
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: SurfaceParams;
@@ -84,9 +87,6 @@ fn vertex(vertex: Vertex) -> VertexOutput {
 // а не тонкая линия по ширине покрышки. Амплитуда — `params.wear` (ручка Wear).
 const RUT_OFFSET: f32 = 0.85;
 const RUT_SIGMA: f32 = 0.32;
-// Шаг полосы — `roads::network::sections::STREET_LANE_WIDTH`: полоса одна по
-// городу, и по той же сетке кладёт линии слой краски (`paint.wgsl`)
-const LANE_WIDTH: f32 = 3.3;
 // Край проезжей части, на котором колея гаснет, м
 const RUT_EDGE: f32 = 0.3;
 // √(2π): площадь гауссианы с σ = 1, из неё доля колеи в полосе
@@ -144,7 +144,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // убраны: клетка мировой сетки, залитая ровным тоном, — это шахматка по
     // сторонам света, а не заплата; см. `CONTEXT.md`.
     // Считается **в раскладке полос** (`meshing::LaneFrame`): полоса — клетка
-    // сетки `LANE_WIDTH` от её узла, внутри границ проезжей части. Та же
+    // сетки `params.lane_width` от её узла, внутри границ проезжей части. Та же
     // сетка у линий слоя краски, поэтому колея идёт ровно между линиями — и на
     // клине, где раскладка плывёт от узкого сечения к широкому. Раскладку
     // несёт только проезжая часть улицы; у воды на этом месте полуширина и
@@ -159,8 +159,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         let w = k * params.wear * smoothstep(0.0, WEAR_FADE, in.ribbon.y);
         // две колеи на полосу: колёса идут в 85 см от её середины, и полоса
         // под ними отполирована до светлого
-        let in_lane = across / LANE_WIDTH;
-        let from_middle = abs(in_lane - floor(in_lane) - 0.5) * LANE_WIDTH;
+        let in_lane = across / params.lane_width;
+        let from_middle = abs(in_lane - floor(in_lane) - 0.5) * params.lane_width;
         let offset = from_middle - RUT_OFFSET;
         let rut = exp(-offset * offset / (2.0 * RUT_SIGMA * RUT_SIGMA));
         // колея **без сдвига среднего**: из тона вычтена её доля по полосе
@@ -168,14 +168,14 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         // износом в среднем светлее ровной улицы того же цвета, и там, где
         // проезд без полос входит в размеченную улицу — или колеи гаснут в
         // перекрёстке, — асфальт менял тон пятном
-        let rut_mean = min(2.0 * RUT_SIGMA * SQRT_TAU / LANE_WIDTH, 1.0);
+        let rut_mean = min(2.0 * RUT_SIGMA * SQRT_TAU / params.lane_width, 1.0);
         // только внутри проезжей части: у кромки колеи нет
         let inside = smoothstep(low, low + RUT_EDGE, across)
             * (1.0 - smoothstep(high - RUT_EDGE, high, across));
         // гасится по **шагу полосы**, а не по ширине колеи: рисунок повторяется
         // с полосой, и на спутниковом плане отполированные колеи ещё видны —
         // это широкая разница тона, а не тонкая линия
-        rgb = rgb * (1.0 + w * (rut - rut_mean) * inside * visible(LANE_WIDTH, px));
+        rgb = rgb * (1.0 + w * (rut - rut_mean) * inside * visible(params.lane_width, px));
         // Грязи у бордюра (тёмной каймы по краю полотна) тут больше нет: разрыв
         // приходит только от перекрёстка двух проезжих частей, а проезд или
         // дворовая улица вливаются в улицу без него, и кайма широкой улицы,

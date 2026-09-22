@@ -13,6 +13,7 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use crate::grid::NavtileBase;
 use crate::loading::AppState;
+use crate::map::RoadShapeOnMap;
 use crate::prefs::{TrackPrefExt, retuned};
 use crate::settings::MAP_SIZE;
 
@@ -143,13 +144,27 @@ impl Plugin for CityPlugin {
                     .run_if(in_state(AppState::Playing))
                     // `retuned` по каждому: ресурс числится изменённым и в
                     // кадре, где его вставили настройки
-                    .run_if(retuned::<City>.or_else(retuned::<NavtileBase>)),
+                    .run_if(
+                        retuned::<City>
+                            .or_else(retuned::<NavtileBase>)
+                            .or_else(lane_width_moved),
+                    ),
             );
     }
 }
 
-/// Возврат в `Loading` под новый город или размер навтайла. Гейт
-/// `in_state(Playing)` тут не только про UI: перезапускать загрузку поверх
+/// Осевшая ручка `Lane width` разошлась с шириной, с которой разобран мир:
+/// ширину читает разбор (дома отодвигаются от тротуаров, стоянки
+/// подтягиваются к дорогам), так что её смена — тот же возврат в загрузку,
+/// что смена города. Простое сравнение, без окна `is_changed`: расхождение
+/// держится, пока мир не перезагружен, и пропустить его нельзя. Без ресурса
+/// (сцена без `MapPlugin`) не срабатывает.
+fn lane_width_moved(shape: Option<Res<RoadShapeOnMap>>) -> bool {
+    shape.is_some_and(|shape| shape.0.lane_width() != crate::map::lane_width())
+}
+
+/// Возврат в `Loading` под новый город, размер навтайла или ширину полосы.
+/// Гейт `in_state(Playing)` тут не только про UI: перезапускать загрузку поверх
 /// уже идущей — значит пустить два потока в один и тот же navmesh. Смена
 /// navtile по BRP во время `Loading` по той же причине не подхватывается на
 /// лету: мир доедет консистентным на старом размере, атомик и ресурс

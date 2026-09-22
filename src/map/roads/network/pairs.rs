@@ -43,7 +43,10 @@ use crate::map::osm::{RoadClass, RoadLine};
 /// Шаг, которым ось ощупывается на соседа, м.
 pub const PROBE_STEP: f32 = 2.0;
 /// Сколько асфальта между кромками половин — ещё **разделительная полоса**:
-/// сплошной асфальт и двойная сплошная. Шире — газон с бордюром.
+/// сплошной асфальт и двойная сплошная; шире — газон с бордюром. Ручка
+/// `Median gap` ([`RoadShape::median_gap`](crate::map::roads::shape::RoadShape)),
+/// это — её дефолт, которым пары меряют тесты.
+#[cfg(test)]
 pub const MEDIAN_GAP: f32 = 3.0;
 /// Самая узкая асфальтовая разделительная после разводки, м: двойная
 /// сплошная шириной 0.65 м ложится на неё, не заходя на полосы. Половины,
@@ -111,6 +114,8 @@ pub struct Median {
     pub to: f32,
     /// Асфальта или газона между кромками после разводки, м.
     pub gap: f32,
+    /// Асфальт между половинами, а не газон: зазор не шире ручки `Median gap`.
+    paved: bool,
     /// Середина между осями — по ходу первой половины. До [`Pairs::align`]
     /// пуста.
     pub midline: Vec<Vec2>,
@@ -121,7 +126,7 @@ pub struct Median {
 impl Median {
     /// Асфальт между половинами, а не газон.
     pub fn is_paved(&self) -> bool {
-        self.gap <= MEDIAN_GAP
+        self.paved
     }
 
     /// Наибольшее расстояние между осями, м: ширина полосы вдоль середины,
@@ -161,9 +166,10 @@ pub fn pairable(road: &RoadLine) -> bool {
         && road.points.len() >= 2
 }
 
-/// Зазор, до которого разводится кусок с медианным зазором `gap`.
-fn target_gap(gap: f32) -> f32 {
-    if gap <= MEDIAN_GAP {
+/// Зазор, до которого разводится кусок с медианным зазором `gap`;
+/// `median_gap` — самая широкая асфальтовая разделительная.
+fn target_gap(gap: f32, median_gap: f32) -> f32 {
+    if gap <= median_gap {
         gap.max(PAVED_MIN_GAP)
     } else {
         gap
@@ -181,7 +187,7 @@ struct Probe {
 impl Pairs {
     /// Пары среди `roads`, нарисованных по `paths`. Середины разделительных
     /// ещё пусты — их кладёт [`Pairs::align`].
-    pub fn new(roads: &[RoadLine], paths: &[impl AsRef<[Vec2]>]) -> Self {
+    pub fn new(roads: &[RoadLine], paths: &[impl AsRef<[Vec2]>], median_gap: f32) -> Self {
         let mut pairs = Self {
             runs: vec![Vec::new(); roads.len()],
             medians: Vec::new(),
@@ -223,14 +229,21 @@ impl Pairs {
                     .iter()
                     .position(|probe| probe.beside.map(|beside| beside.0) != Some(partner))
                     .map_or(probes.len(), |offset| start + offset);
-                pairs.push_run(index, partner, &probes[start..end], roads);
+                pairs.push_run(index, partner, &probes[start..end], roads, median_gap);
                 start = end;
             }
         }
         pairs
     }
 
-    fn push_run(&mut self, index: usize, partner: usize, probes: &[Probe], roads: &[RoadLine]) {
+    fn push_run(
+        &mut self,
+        index: usize,
+        partner: usize,
+        probes: &[Probe],
+        roads: &[RoadLine],
+        median_gap: f32,
+    ) {
         let (first, last) = (&probes[0], &probes[probes.len() - 1]);
         if last.along - first.along < PAIR_MIN {
             return;
@@ -241,7 +254,7 @@ impl Pairs {
             .filter_map(|probe| probe.beside.map(|(_, _, apart)| apart - asphalt))
             .collect();
         gaps.sort_by(f32::total_cmp);
-        let gap = target_gap(gaps[gaps.len() / 2]);
+        let gap = target_gap(gaps[gaps.len() / 2], median_gap);
         let (_, near, _) = first.beside.expect("кусок пары — из точек с соседом");
         let heading = probes[1].at - first.at;
         self.runs[index].push(PairRun {
@@ -257,6 +270,7 @@ impl Pairs {
                 from: first.along,
                 to: last.along,
                 gap,
+                paved: gap <= median_gap,
                 midline: Vec::new(),
                 inner: [Vec::new(), Vec::new()],
             });

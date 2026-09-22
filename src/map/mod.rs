@@ -69,6 +69,14 @@ pub use self::osm::{TREE_DENSITY_MAX, TreeRowPlacement};
 // `ROAD_COLOR` наружу по той же причине: ряд машин витрины обязан стоять на
 // том же асфальте, что в городе
 pub use self::roads::{CrossingMode, ROAD_COLOR, RoadJoin, RoadStyle};
+// форма дорог: ресурс ручек формы (панель игры и витрины `roads`) и
+// глобаль ширины полосы, которую витрина ставит перед разбором сама
+pub use self::roads::shape::{
+    CORNER_RADIUS_MAX, CORNER_RADIUS_MIN, CORNER_RADIUS_STEP, CURVE_TOLERANCE_MAX,
+    CURVE_TOLERANCE_MIN, CURVE_TOLERANCE_STEP, LANE_WIDTH_MAX, LANE_WIDTH_MIN, LANE_WIDTH_STEP,
+    MEDIAN_GAP_MAX, MEDIAN_GAP_MIN, MEDIAN_GAP_STEP, RoadShape, RoadShapeOnMap, TAPER_MAX,
+    TAPER_MIN, TAPER_STEP, lane_width, set_lane_width, settle_road_shape,
+};
 // краска и колея: ресурс ручек Paint/Wear (панель игры и витрины `roads`), а
 // материал краски — витринам, которые поднимают материалы поверхностей сами
 pub use self::roads::paint::{
@@ -78,6 +86,8 @@ pub use self::roads::paint::{
 // сеть улиц — тип поля `MapData::network`; наружу его читает оверлей сети
 // витрины `roads`
 pub use self::roads::network::{RoadNetwork, Street, StreetWay};
+// оверлей сети — строке Debug игры и строке `Network` витрины `roads`
+pub use self::roads::network::overlay::mesh_network_overlay;
 // а `smooth_path` со `Smoothing` — потому, что асфальт под ним лежит на той же
 // сглаженной осевой
 pub use self::smooth::{Smoothing, smooth_path};
@@ -137,6 +147,8 @@ impl Plugin for MapPlugin {
             .init_resource::<fences::FenceZoomBucket>()
             .init_resource::<RoofStyle>()
             .init_resource::<RoadStyle>()
+            .init_resource::<RoadShape>()
+            .init_resource::<RoadShapeOnMap>()
             .init_resource::<RoadPaintStyle>()
             .init_resource::<roads::paint::PaintZoomBucket>()
             .init_resource::<SurfaceStyle>()
@@ -154,6 +166,8 @@ impl Plugin for MapPlugin {
             .register_type::<BuildingHeightMode>()
             .register_type::<RoofStyle>()
             .register_type::<RoadStyle>()
+            .register_type::<RoadShape>()
+            .register_type::<RoadShapeOnMap>()
             .register_type::<RoadPaintStyle>()
             .register_type::<SurfaceStyle>()
             .register_type::<TramStyle>()
@@ -166,6 +180,7 @@ impl Plugin for MapPlugin {
             .track_pref::<BuildingHeightMode>()
             .track_pref::<RoofStyle>()
             .track_pref::<RoadStyle>()
+            .track_pref::<RoadShapeOnMap>()
             .track_pref::<RoadPaintStyle>()
             .track_pref::<SurfaceStyle>()
             .track_pref::<TramStyle>()
@@ -185,6 +200,7 @@ impl Plugin for MapPlugin {
                 Startup,
                 (
                     (sun::seed_sun, sun::apply_sun).chain(),
+                    roads::shape::seed_road_shape,
                     (
                         surface::init_surface_materials,
                         surface::init_flat_materials,
@@ -199,7 +215,20 @@ impl Plugin for MapPlugin {
             // всякая сборка кадра видит уже новое солнце. Перед записью —
             // оседание ползунка: пересобирать карту на каждое пройденное
             // деление слишком дорого
-            .add_systems(PreUpdate, (sun::settle_sun, sun::apply_sun).chain())
+            .add_systems(
+                PreUpdate,
+                (
+                    (sun::settle_sun, sun::apply_sun).chain(),
+                    roads::shape::settle_road_shape,
+                ),
+            )
+            // колея асфальта ложится по ширине полосы, с которой разобран
+            // мир (`roads::shape::lane_width`); материалы живут вне мира, так
+            // что после перезагрузки с другой шириной их надо перенастроить
+            .add_systems(
+                OnEnter(AppState::Playing),
+                surface::retune_surface_materials,
+            )
             .add_systems(
                 OnEnter(AppState::Playing),
                 // набор деревьев собирается первым (лес плюс аллеи выбранной

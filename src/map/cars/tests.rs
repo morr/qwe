@@ -12,6 +12,15 @@ use crate::map::osm::fixture::{self, street};
 use crate::map::osm::model::{Highway, KerbParking};
 use crate::map::roads::junctions::JUNCTION_MARGIN;
 
+/// Форма дорог с осью по точкам OSM: ряд меряется по той ломаной, что в
+/// тесте нарисована.
+fn straight() -> RoadShape {
+    RoadShape {
+        curve_tolerance: 0.0,
+        ..default()
+    }
+}
+
 /// Большая стоянка пустее малой, и доля не выходит за свои края.
 #[test]
 fn a_bigger_lot_is_emptier() {
@@ -41,7 +50,7 @@ fn park_driving(roads: &[RoadLine], style: CarStyle, traffic: TrafficSide) -> Ve
         roads,
         &junctions::marking_breaks(roads, is_carriageway, &[]),
         style,
-        &drawn_axes(roads, Smoothing::Off),
+        &drawn_axes(roads, &straight()),
         traffic,
         &Districts::new(&[]),
     )
@@ -189,7 +198,7 @@ fn the_same_street_parks_thinner_in_a_private_sector() {
             roads,
             &breaks,
             CarStyle::default(),
-            &drawn_axes(roads, Smoothing::Off),
+            &drawn_axes(roads, &straight()),
             TrafficSide::Right,
             &Districts::new(buildings),
         )
@@ -511,12 +520,12 @@ fn the_row_stays_on_the_drawn_asphalt_through_a_bend() {
         std::slice::from_ref(&road),
         &junctions::marking_breaks(std::slice::from_ref(&road), is_carriageway, &[]),
         style,
-        &drawn_axes(std::slice::from_ref(&road), Smoothing::Light),
+        &drawn_axes(std::slice::from_ref(&road), &RoadShape::default()),
         TrafficSide::Right,
         &Districts::new(&[]),
     );
     assert!(!cars.is_empty());
-    let drawn = drawn_axes(std::slice::from_ref(&road), Smoothing::Light).remove(0);
+    let drawn = drawn_axes(std::slice::from_ref(&road), &RoadShape::default()).remove(0);
     for car in &cars {
         let off = distance_to_path(&drawn, car.at);
         assert!(
@@ -555,7 +564,7 @@ fn a_street_builds_one_blended_layer() {
     let (layers, report) = mesh_cars(
         near_bucket(),
         CarStyle::default(),
-        Smoothing::Off,
+        straight(),
         &city(),
         &ParkingLayout::default(),
     );
@@ -579,7 +588,7 @@ fn the_toggle_off_draws_nothing() {
     let (layers, report) = mesh_cars(
         near_bucket(),
         style,
-        Smoothing::Off,
+        straight(),
         &city(),
         &ParkingLayout::default(),
     );
@@ -600,7 +609,7 @@ fn the_far_bucket_draws_nothing() {
     let (layers, report) = mesh_cars(
         far,
         CarStyle::default(),
-        Smoothing::Off,
+        straight(),
         &city(),
         &ParkingLayout::default(),
     );
