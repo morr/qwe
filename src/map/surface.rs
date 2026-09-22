@@ -100,6 +100,10 @@ pub struct SurfaceParams {
     /// (`roads::shape::lane_width`): колея ложится по той же сетке, что линии
     /// краски.
     pub lane_width: f32,
+    /// Профиль колеи, м — `roads::paint::RUT_OFFSET` / `RUT_SIGMA`: тот же, что
+    /// у колеи траекторий слоя краски, из одного места.
+    pub rut_offset: f32,
+    pub rut_sigma: f32,
 }
 
 impl SurfaceParams {
@@ -118,6 +122,8 @@ impl SurfaceParams {
         shore_width: 0.0,
         intensity: SURFACE_TEXTURE_DEFAULT,
         lane_width: crate::map::roads::shape::LANE_WIDTH_DEFAULT,
+        rut_offset: crate::map::roads::paint::RUT_OFFSET,
+        rut_sigma: crate::map::roads::paint::RUT_SIGMA,
     };
 }
 
@@ -343,7 +349,7 @@ impl Default for SurfaceStyle {
 pub struct SurfaceMaterials {
     handles: [Handle<SurfaceMaterial>; SurfaceKind::ALL.len()],
     /// По материалу краски на проход (`PaintPass`, в порядке `PAINT_PASSES`).
-    paints: [Handle<PaintMaterial>; 3],
+    paints: [Handle<PaintMaterial>; PAINT_PASSES.len()],
 }
 
 /// Проходы материала краски — порядок хэндлов [`SurfaceMaterials::paints`].

@@ -278,10 +278,11 @@ const YIELD_GAP: f32 = 0.6;
 /// Дальше этого зума зебры нет: до него полосы гаснут в ровную плашку
 /// (`visible()` по периоду), дальше и плашка — мелочь.
 pub const ZEBRA_ZOOM_MAX: f32 = 0.6;
-/// Колея траектории: смещение колеса от середины полосы и ширина колеи (σ),
-/// м, — как у колеи полос в `surface.wgsl`.
-const RUT_OFFSET: f32 = 0.85;
-const RUT_SIGMA: f32 = 0.32;
+/// Профиль колеи, м: смещение колеса от середины полосы и ширина колеи (σ).
+/// Один на колею полос (`surface.wgsl`, через `surface::SurfaceParams`) и
+/// колею траекторий (`paint.wgsl`, через [`PaintParams`]).
+pub(crate) const RUT_OFFSET: f32 = 0.85;
+pub(crate) const RUT_SIGMA: f32 = 0.32;
 /// Полуширина полосы под колею траектории, м: обе колеи с краями в 3σ.
 const WEAR_STRIP: f32 = RUT_OFFSET + 3.0 * RUT_SIGMA;
 
@@ -401,8 +402,8 @@ pub(super) fn along_back(line: &[Vec2], distance: f32) -> Option<Vec2> {
 }
 
 /// Меши слоя краски: линии полос и осевые, по улицам и по мостам отдельно,
-/// и зебры. Стоп-линии и направляющий пунктир — в меше линий полос: и видны
-/// они до того же зума. Под всеми — колея траекторий узла: одни и те же
+/// и зебры. Стоп-линии и стрелки — в меше линий полос: и видны они до того
+/// же зума. Под всеми — колея траекторий узла: одни и те же
 /// полосы двумя мешами, маской и наложением ([`PaintPass`]).
 pub struct Painter {
     wear_mask: MeshBuilder,
@@ -835,8 +836,8 @@ impl Painter {
 
     /// Стрелка на полосе подхода: стебель вдоль хода, наконечник, если прямо
     /// можно, и отвод с наконечником в каждую разрешённую сторону. Кончик —
-    /// за [`ARROW_SETBACK`] до кромки узла, чтобы стрелка не легла на
-    /// стоп-линию и переход.
+    /// в `setback` от кромки узла по оси полосы ([`Self::arrow_setback`]),
+    /// чтобы стрелка не легла на стоп-линию и переход.
     pub(super) fn paint_arrow(&mut self, arrow: &LaneArrow, setback: f32) {
         // кончик и хвост — на оси полосы, по её длине от кромки: на изогнутом
         // подходе прямая от кромки уводила стрелку с полосы. Короткая ось (way
@@ -905,7 +906,7 @@ impl Painter {
         self.lines += 1;
     }
 
-    /// Восемь слоёв краски:маска и наложение колеи узлов, краска улиц над
+    /// Восемь слоёв краски: маска и наложение колеи узлов, краска улиц над
     /// асфальтом улиц, островки колец над асфальтом стоянок, мосты над
     /// настилом.
     pub fn layers(self) -> [LayerMesh; 8] {
@@ -953,15 +954,22 @@ fn transverse_stations(width: f32) -> [PaintStation; 2] {
     })
 }
 
+/// Звено, внутри которого (строго) лежит длина дуги `at`, и доля `at` на нём.
+fn link_at(along: &[f32], at: f32) -> Option<(usize, f32)> {
+    let index = along
+        .windows(2)
+        .position(|pair| pair[0] < at && at < pair[1])?;
+    Some((
+        index,
+        (at - along[index]) / (along[index + 1] - along[index]),
+    ))
+}
+
 /// Вершина на длине дуги `at` — вместе с интерполированным «до разрыва».
 fn insert_at(path: &mut Vec<Vec2>, along: &mut Vec<f32>, to_break: &mut Vec<f32>, at: f32) {
-    let Some(index) = along
-        .windows(2)
-        .position(|pair| pair[0] < at && at < pair[1])
-    else {
+    let Some((index, t)) = link_at(along, at) else {
         return;
     };
-    let t = (at - along[index]) / (along[index + 1] - along[index]);
     path.insert(index + 1, path[index].lerp(path[index + 1], t));
     to_break.insert(
         index + 1,
@@ -1018,13 +1026,9 @@ fn split_at_spans(
 ) -> (Vec<Vec2>, Vec<PaintStation>, Vec<bool>) {
     let mut along = along.to_vec();
     for &at in spans.iter().flat_map(|(from, to)| [from, to]) {
-        let Some(index) = along
-            .windows(2)
-            .position(|pair| pair[0] < at && at < pair[1])
-        else {
+        let Some((index, t)) = link_at(&along, at) else {
             continue;
         };
-        let t = (at - along[index]) / (along[index + 1] - along[index]);
         let (a, b) = (stations[index], stations[index + 1]);
         line.insert(index + 1, line[index].lerp(line[index + 1], t));
         stations.insert(

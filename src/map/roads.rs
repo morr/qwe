@@ -510,9 +510,9 @@ const ALLEY_COLOR: Color = Color::srgb(0.914, 0.875, 0.769);
 const WALL_COLOR: Color = Color::srgb(0.639, 0.286, 0.235);
 
 /// Белая разметка на асфальте стоянки: двойная сплошная между встречными
-/// полотнами (`roads/lots.rs`) и обводка со штриховкой направляющего островка
-/// (`roads/gores.rs`) — одна краска, один слой `lot_lines`. Ширины у них свои:
-/// нитка сплошной и обводка клина — разные вещи и вправе разойтись.
+/// полотнами (`roads/lots.rs`), слой `lot_lines`. Обводка со штриховкой
+/// направляющего островка (`roads/gores.rs`) — не здесь: она в слое краски
+/// `road_paint_islands`.
 const LOT_LINE_COLOR: Color = Color::srgb(0.88, 0.88, 0.86);
 
 /// Тротуар — светлый бетон между асфальтом и тёплой землёй: светлее проезжей
@@ -521,11 +521,17 @@ const SIDEWALK_COLOR: Color = Color::srgb(0.82, 0.815, 0.80);
 /// Доля ширины улицы на тротуар с каждой стороны и её пределы, м: у
 /// магистрали в 16 м тротуар в 3 м, у жилой улицы в 8 м — 1.8 м.
 const SIDEWALK_SHARE: f32 = 0.22;
+const SIDEWALK_WIDTH_RANGE: std::ops::RangeInclusive<f32> = 1.2..=3.0;
+/// Кусок тротуара короче этого, м, не кладётся ([`push_sidewalk`]): между
+/// кусками пары остаются обрезки в сантиметры.
+const SIDEWALK_PIECE_MIN: f32 = 0.5;
 /// Самый длинный кусок поперечной улицы между половинами одной пары, м: две
 /// половины и самый широкий газон между ними. Такой кусок лежит в проёме
 /// разделительной, и тротуара у него нет.
 const MEDIAN_CROSSING_MAX: f32 = 40.0;
-const SIDEWALK_WIDTH_RANGE: std::ops::RangeInclusive<f32> = 1.2..=3.0;
+/// На сколько асфальт кармана стоянки заходит под кромку ленты, м: встык
+/// между ними светилась бы щель.
+const POCKET_OVERLAP: f32 = 0.05;
 
 /// Полоса не у́же этого, м. У разобранной улицы ширина выведена из самих
 /// полос (`network::sections`), и зажим ничего не режет; он остался для
@@ -1197,7 +1203,12 @@ pub fn mesh_roads(
             let sidewalk = sidewalk.filter(|_| road.sidewalks[usize::from(kerbside.side < 0.0)]);
             for pocket in &kerbside.pockets {
                 let outline = |outer: f32| {
-                    pockets::outline(&paths[index], pocket, kerbside.side, [half - 0.05, outer])
+                    pockets::outline(
+                        &paths[index],
+                        pocket,
+                        kerbside.side,
+                        [half - POCKET_OVERLAP, outer],
+                    )
                 };
                 let edge = half + pockets::POCKET_WIDTH;
                 streets.push_polygon(&outline(edge), &[], ROAD_COLOR.to_linear());
@@ -2085,7 +2096,7 @@ fn push_sidewalk(
     let mut cursor = 0.0;
     // кусок `from..to` с тротуаром по сторонам `[слева, справа]`
     let mut piece = |from: f32, to: f32, [left, right]: [bool; 2]| {
-        if to - from < 0.5 {
+        if to - from < SIDEWALK_PIECE_MIN {
             return;
         }
         let points = tapers::cut(body, from, to);

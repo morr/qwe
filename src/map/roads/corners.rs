@@ -52,6 +52,7 @@ use bevy::prelude::*;
 use super::junctions::node_key;
 use super::network::RoadNodes;
 use crate::map::meshing::arc_steps;
+use crate::map::osm::model::ring_area;
 use crate::map::osm::{Highway, RoadClass, RoadLine};
 
 /// Радиус бордюра по классу дороги, м; у пары берётся меньший. Между
@@ -541,13 +542,7 @@ pub fn small_islands(
                     .zip(outline.iter().cycle().skip(1))
                     .map(|(p, q)| p.distance(*q))
                     .sum();
-                let area = outline
-                    .iter()
-                    .zip(outline.iter().cycle().skip(1))
-                    .map(|(p, q)| p.perp_dot(*q))
-                    .sum::<f32>()
-                    .abs()
-                    / 2.0;
+                let area = ring_area(&outline);
                 let half = [first, second, third]
                     .map(|edge| edges[edge].half)
                     .into_iter()

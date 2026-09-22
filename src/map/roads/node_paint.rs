@@ -181,8 +181,8 @@ pub struct NodePaintStyle {
     pub stop_lines: bool,
 }
 
-/// Ранг дороги в узле: класс `highway`, вдвое — чтобы знак мог понизить его
-/// на полступени.
+/// Ранг класса `highway` в узле. Ранг дороги — он вдвое плюс единица без
+/// знака на плече (`paint_cluster`): так знак понижает его на полступени.
 fn class_rank(highway: Highway) -> u8 {
     match highway {
         Highway::Motorway | Highway::Trunk => 5,
@@ -623,15 +623,11 @@ impl NodePaint {
             if lanes >= lane_count(drawn[road]) {
                 continue;
             }
-            let widest = others(road)
-                .iter()
-                .map(|&other| drawn[other].width / 2.0)
-                .fold(0.0_f32, f32::max);
             self.pockets[road][end] = Some(Pocket {
                 lanes,
                 gap: Break {
                     at: arm.at,
-                    reach: widest + JUNCTION_MARGIN,
+                    reach: reaches[&road],
                 },
             });
         }

@@ -28,6 +28,7 @@ use bevy::prelude::*;
 use super::junctions::node_key;
 use super::network::RoadNodes;
 use super::turns::{LaneEnd, curve};
+use crate::map::osm::model::closest_on_segment;
 use crate::map::osm::{RoadClass, RoadLine};
 use crate::map::shapes::is_ring;
 
@@ -429,9 +430,7 @@ fn webs_along(path: &[Vec2], half: f32, ring: &Ring, ring_width: f32) -> Vec<Vec
 fn nearest_on(path: &[Vec2], point: Vec2) -> (Vec2, f32) {
     path.windows(2)
         .map(|link| {
-            let span = link[1] - link[0];
-            let t = ((point - link[0]).dot(span) / span.length_squared().max(1e-9)).clamp(0.0, 1.0);
-            let onto = link[0] + span * t;
+            let onto = closest_on_segment(point, link[0], link[1]);
             (onto, onto.distance(point))
         })
         .min_by(|a, b| a.1.total_cmp(&b.1))
@@ -605,8 +604,8 @@ fn bend_approach(path: &[Vec2], arrival: Vec2, reach: f32, nodes: &RoadNodes) ->
         back[index] = back[index + 1] + path[index].distance(path[index + 1]);
     }
     let length = back[0];
-    let heading_at = |distance: f32| point_back(path, &back, distance);
-    let heading = (end - heading_at(HEADING_BASE.min(length))).try_normalize()?;
+    let point_at = |distance: f32| point_back(path, &back, distance);
+    let heading = (end - point_at(HEADING_BASE.min(length))).try_normalize()?;
     if heading.angle_to(arrival).abs() < BEND_MIN_ANGLE {
         return None;
     }
@@ -618,8 +617,8 @@ fn bend_approach(path: &[Vec2], arrival: Vec2, reach: f32, nodes: &RoadNodes) ->
     if reach < BEND_MIN_LENGTH {
         return None;
     }
-    let from = heading_at(reach);
-    let travel = (heading_at((reach - 0.5).max(0.0)) - from).try_normalize()?;
+    let from = point_at(reach);
+    let travel = (point_at((reach - 0.5).max(0.0)) - from).try_normalize()?;
     let mut bent: Vec<Vec2> = path
         .iter()
         .zip(&back)

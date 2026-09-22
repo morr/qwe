@@ -45,6 +45,10 @@ struct SurfaceParams {
     // шаг полосы, м — `roads::shape::lane_width`: полоса одна по городу, и по
     // той же сетке кладёт линии слой краски (`paint.wgsl`)
     lane_width: f32,
+    // профиль колеи, м — `roads::paint::RUT_OFFSET` / `RUT_SIGMA`, один с колеёй
+    // траекторий слоя краски
+    rut_offset: f32,
+    rut_sigma: f32,
 }
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: SurfaceParams;
@@ -84,9 +88,8 @@ fn vertex(vertex: Vertex) -> VertexOutput {
 
 // Износ асфальта. Колея — в 85 см от середины полосы (колея легковой машины
 // 1.5 м); это широкая разница тона (σ 32 см, то есть около 75 см в полувысоте),
-// а не тонкая линия по ширине покрышки. Амплитуда — `params.wear` (ручка Wear).
-const RUT_OFFSET: f32 = 0.85;
-const RUT_SIGMA: f32 = 0.32;
+// а не тонкая линия по ширине покрышки. Амплитуда — `params.wear` (ручка Wear),
+// профиль — `params.rut_offset` / `params.rut_sigma`.
 // Край проезжей части, на котором колея гаснет, м
 const RUT_EDGE: f32 = 0.3;
 // √(2π): площадь гауссианы с σ = 1, из неё доля колеи в полосе
@@ -161,14 +164,14 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         // под ними отполирована до светлого
         let in_lane = across / params.lane_width;
         let from_middle = abs(in_lane - floor(in_lane) - 0.5) * params.lane_width;
-        let offset = from_middle - RUT_OFFSET;
-        let rut = exp(-offset * offset / (2.0 * RUT_SIGMA * RUT_SIGMA));
+        let offset = from_middle - params.rut_offset;
+        let rut = exp(-offset * offset / (2.0 * params.rut_sigma * params.rut_sigma));
         // колея **без сдвига среднего**: из тона вычтена её доля по полосе
         // (два гауссиана площадью σ·√(2π) на ширину полосы). Иначе полотно с
         // износом в среднем светлее ровной улицы того же цвета, и там, где
         // проезд без полос входит в размеченную улицу — или колеи гаснут в
         // перекрёстке, — асфальт менял тон пятном
-        let rut_mean = min(2.0 * RUT_SIGMA * SQRT_TAU / params.lane_width, 1.0);
+        let rut_mean = min(2.0 * params.rut_sigma * SQRT_TAU / params.lane_width, 1.0);
         // только внутри проезжей части: у кромки колеи нет
         let inside = smoothstep(low, low + RUT_EDGE, across)
             * (1.0 - smoothstep(high - RUT_EDGE, high, across));

@@ -22,6 +22,7 @@ use i_overlay::mesh::style::{LineCap, LineJoin, OutlineStyle};
 use bevy::platform::collections::HashMap;
 
 use super::junctions::node_key;
+use super::medians::tip_of;
 use super::rings::{Ring, Rings};
 use super::{is_carriageway, lane_count};
 use crate::map::along::{arclengths, place_on_path};
@@ -308,12 +309,7 @@ impl Gores {
             if count < 2 {
                 return;
             }
-            let (tip, before) = if end {
-                (midline[count - 1], midline[count - 2])
-            } else {
-                (midline[0], midline[1])
-            };
-            let Some(heading) = (tip - before).try_normalize() else {
+            let Some((tip, heading)) = tip_of(midline, end) else {
                 continue;
             };
             let steps = (MEDIAN_REACH / MEDIAN_REACH_STEP) as usize;

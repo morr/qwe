@@ -2,7 +2,7 @@
 //! (`roads/network/pairs.rs` находит пару и разводит оси).
 //!
 //! - **Асфальт** ([`push_paved`]) — у разделительной до
-//!   [`MEDIAN_GAP`](super::network::pairs::MEDIAN_GAP): полоса вдоль середины
+//!   [`RoadShape::median_gap`](super::shape::RoadShape::median_gap): полоса вдоль середины
 //!   на всё расстояние между осями, **под** лентами половин. Под зазором в
 //!   полметра иначе светился тротуар — нитка во всю длину проспекта. Колеи у
 //!   этой полосы нет (раскладки полос у неё нет), а поверх неё колею кладут
@@ -108,7 +108,7 @@ pub fn reach_breaks(median: &mut Median, breaks: &[Break]) {
 }
 
 /// Торец ломаной и направление её последнего звена наружу.
-fn tip_of(line: &[Vec2], end: bool) -> Option<(Vec2, Vec2)> {
+pub(super) fn tip_of(line: &[Vec2], end: bool) -> Option<(Vec2, Vec2)> {
     let count = line.len();
     if count < 2 {
         return None;

@@ -288,7 +288,7 @@ fn at_the_stem_of_a_t_the_middle_lanes_turn_both_ways() {
         turns: None,
     };
     let from = |maneuver, dead_end| {
-        let mut lanes: Vec<usize> = pairs(&arm, 3, maneuver, (TrafficSide::Right, dead_end))
+        let mut lanes: Vec<usize> = lane_pairs(&arm, 3, maneuver, TrafficSide::Right, dead_end)
             .into_iter()
             .map(|(from, _)| from)
             .collect();

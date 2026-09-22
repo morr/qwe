@@ -20,7 +20,7 @@ use super::node_paint::ZEBRA_LENGTH;
 use super::{is_carriageway, tapers};
 use crate::map::along::arclengths;
 use crate::map::meshing::Break;
-use crate::map::osm::model::{Highway, KerbParking};
+use crate::map::osm::model::{Highway, KerbParking, closest_on_segment, polyline_length};
 use crate::map::osm::{RoadLine, RoadNode, RoadNodeKind, TrafficSide};
 use crate::map::seed::{Lcg, seed_from_point};
 
@@ -299,7 +299,7 @@ fn crossing_breaks(roads: &[RoadLine], nodes: &[RoadNode]) -> Vec<(usize, Break)
 
 /// Карманы вдоль осевой: вся её длина, кроме окрестностей перекрёстков.
 fn pockets_along(path: &[Vec2], breaks: &[Break]) -> Vec<Pocket> {
-    let total: f32 = path.windows(2).map(|link| link[0].distance(link[1])).sum();
+    let total = polyline_length(path);
     let mut closed: Vec<(f32, f32)> = breaks
         .iter()
         .map(|found| {
@@ -339,14 +339,12 @@ fn station(path: &[Vec2], point: Vec2) -> f32 {
     let mut best = (f32::INFINITY, 0.0);
     let mut run = 0.0;
     for link in path.windows(2) {
-        let span = link[1] - link[0];
-        let length = span.length();
-        let t = ((point - link[0]).dot(span) / span.length_squared().max(1e-9)).clamp(0.0, 1.0);
-        let distance = (link[0] + span * t).distance(point);
+        let onto = closest_on_segment(point, link[0], link[1]);
+        let distance = onto.distance(point);
         if distance < best.0 {
-            best = (distance, run + t * length);
+            best = (distance, run + link[0].distance(onto));
         }
-        run += length;
+        run += link[0].distance(link[1]);
     }
     best.1
 }

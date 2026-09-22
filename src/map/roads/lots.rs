@@ -45,7 +45,7 @@ use i_overlay::mesh::outline::offset::OutlineOffset;
 use i_overlay::mesh::style::{LineCap, LineJoin, OutlineStyle};
 
 use super::gores::Gores;
-use super::network::pairs::{Median, PAIR_MIN};
+use super::network::pairs::{Median, PAIR_MIN, samples};
 use super::{LOT_LINE_COLOR, RoadStyle, SIDEWALK_COLOR};
 use crate::map::meshing::{MeshBuilder, RibbonJoin};
 use crate::map::osm::model::{
@@ -57,8 +57,6 @@ use crate::map::shapes::{
     stroke,
 };
 
-/// Шаг, которым ось дороги ощупывается на «внутри ли площадки», м.
-const PROBE_STEP: f32 = 2.0;
 /// Размыкание бордюра, м: обрезок у́же двух таких снимается, углы скругляются.
 /// Бордюр сам 1.2 м и больше — ему это ничего не стоит.
 const KERB_OPENING: f32 = 0.3;
@@ -259,7 +257,7 @@ fn on_lot(medians: &[Median], ground: &Ground) -> Vec<(Vec<Vec2>, f32)> {
         // бывают за площадкой
         let probes: Vec<Vec2> = samples(&median.midline)
             .into_iter()
-            .map(|(at, _)| at)
+            .map(|(_, at, _)| at)
             .collect();
         for run in
             probes.chunk_by(|a, b| point_in_area(*a, ground.lot) == point_in_area(*b, ground.lot))
@@ -272,23 +270,10 @@ fn on_lot(medians: &[Median], ground: &Ground) -> Vec<(Vec<Vec2>, f32)> {
     found
 }
 
-/// Точки оси с шагом [`PROBE_STEP`] и направление оси в каждой.
-fn samples(path: &[Vec2]) -> Vec<(Vec2, Vec2)> {
-    let mut points = Vec::new();
-    for pair in path.windows(2) {
-        let Some(heading) = (pair[1] - pair[0]).try_normalize() else {
-            continue;
-        };
-        let steps = (pair[0].distance(pair[1]) / PROBE_STEP).ceil().max(1.0) as usize;
-        let from = usize::from(!points.is_empty());
-        for step in from..=steps {
-            points.push((pair[0].lerp(pair[1], step as f32 / steps as f32), heading));
-        }
-    }
-    points
-}
-
-/// Заходит ли ось на площадку — пробами через [`PROBE_STEP`].
+/// Заходит ли ось на площадку — пробами через
+/// [`PROBE_STEP`](super::network::pairs::PROBE_STEP).
 fn enters(path: &[Vec2], lot: &PolyArea) -> bool {
-    samples(path).iter().any(|(at, _)| point_in_area(*at, lot))
+    samples(path)
+        .iter()
+        .any(|(_, at, _)| point_in_area(*at, lot))
 }

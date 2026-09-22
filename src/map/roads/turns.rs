@@ -201,7 +201,7 @@ impl Turns {
                 let Some(maneuver) = maneuver_to(b) else {
                     continue;
                 };
-                let lanes = pairs(&ins[a], outs[b].lanes.len(), maneuver, (side, dead_end));
+                let lanes = lane_pairs(&ins[a], outs[b].lanes.len(), maneuver, side, dead_end);
                 for &(start, _) in &lanes {
                     let turn = &mut granted[start];
                     match maneuver {
@@ -372,11 +372,12 @@ fn arm_lanes(
 /// крайняя к повороту полоса поворачивает (и едет прямо), прочие — только
 /// прямо; на подходе в торец Т (`dead_end`) прямо нет, и поворачивают все,
 /// кроме крайней с другой стороны.
-fn pairs(
+fn lane_pairs(
     from: &ArmLanes,
     out: usize,
     maneuver: Maneuver,
-    (side, dead_end): (TrafficSide, bool),
+    side: TrafficSide,
+    dead_end: bool,
 ) -> Vec<(usize, usize)> {
     let count = from.lanes.len();
     if count == 0 || out == 0 {

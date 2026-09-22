@@ -34,7 +34,7 @@ use bevy::prelude::*;
 
 use super::centerline;
 use super::network::pairs::Pairs;
-use super::network::{RoadNetwork, RoadNodes, StreetWay};
+use super::network::{self, RoadNetwork, RoadNodes, StreetWay};
 use super::rings::{self, Rings};
 use super::shape::RoadShape;
 use crate::map::meshing::arc_steps;
@@ -48,8 +48,8 @@ const SIMPLIFY_SHARE: f32 = 1.0 / 3.0;
 /// Радиус дуги на изломе на метр допуска, м: 30 м при трёх метрах.
 const RADIUS_PER_METER: f32 = 10.0;
 /// Излом в общем узле, до которого сквозная пара проходит его плавно, рад.
-/// Тот же предел, что у склейки улиц.
-const THROUGH_MAX_BEND: f32 = 50.0 * PI / 180.0;
+/// Тот же предел, что у склейки улиц ([`network::MAX_BEND`]).
+const THROUGH_MAX_BEND: f32 = network::MAX_BEND;
 /// Полудлина прямого отрезка, которым улица проходит закреплённый узел, м:
 /// дуга на его конце оставляет узлу [`KERB_STRAIGHT`] прямого края.
 const THROUGH_RUN: f32 = 24.0;

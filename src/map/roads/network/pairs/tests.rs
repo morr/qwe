@@ -2,10 +2,16 @@ use std::borrow::Cow;
 
 use bevy::prelude::*;
 
-use super::{ALIGN_TRANSITION, MEDIAN_GAP, PAIR_MIN, PAVED_MIN_GAP, Pairs};
+use super::{ALIGN_TRANSITION, PAIR_MIN, PAVED_MIN_GAP, Pairs};
 use crate::map::osm::fixture::street;
 use crate::map::osm::{Highway, RoadLine};
 use crate::map::roads::network::{RoadNetwork, RoadNodes};
+use crate::map::roads::shape::RoadShape;
+
+/// Разделительная уже, чем столько, — асфальт: дефолт ручки `Median gap`.
+fn median_gap() -> f32 {
+    RoadShape::default().median_gap()
+}
 
 /// Половина проспекта: одностороннее полотно в `lanes` полос по `points`.
 fn half(points: Vec<Vec2>, lanes: u8) -> RoadLine {
@@ -34,7 +40,7 @@ fn aligned(roads: &[RoadLine]) -> (Pairs, Vec<Vec<Vec2>>) {
         .iter()
         .map(|road| Cow::Borrowed(road.points.as_slice()))
         .collect();
-    let mut pairs = Pairs::new(roads, &paths, MEDIAN_GAP);
+    let mut pairs = Pairs::new(roads, &paths, median_gap());
     pairs.align(
         &mut paths,
         roads,
@@ -76,7 +82,7 @@ fn two_opposite_halves_side_by_side_are_one_pair() {
 fn a_wide_lawn_is_a_median_too_but_not_a_paved_one() {
     let pairs = pairs_of(&avenue(2, 8.0, 200.0));
     assert_eq!(pairs.count(), [0, 1]);
-    assert!(pairs.medians[0].gap > MEDIAN_GAP);
+    assert!(pairs.medians[0].gap > median_gap());
 }
 
 #[test]
