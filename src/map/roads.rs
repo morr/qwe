@@ -1119,9 +1119,12 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
         }
         let half = road.width / 2.0;
         let sidewalk = sidewalks_of(index);
-        for kerbside in
-            pockets::kerbsides(road, &paths[index], &row_breaks.breaks[index], map.traffic_side)
-        {
+        for kerbside in pockets::kerbsides(
+            road,
+            &paths[index],
+            &row_breaks.breaks[index],
+            map.traffic_side,
+        ) {
             let sidewalk = sidewalk.filter(|_| road.sidewalks[usize::from(kerbside.side < 0.0)]);
             for pocket in &kerbside.pockets {
                 let outline = |outer: f32| {
@@ -1227,7 +1230,13 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
         },
     );
     // траектории манёвров (`roads/turns.rs`) — колея в узле
-    let turns = turns::Turns::new(&drawn, &stitched, &node_paint.junctions, map.traffic_side);
+    let turns = turns::Turns::new(
+        &drawn,
+        &stitched,
+        &node_paint.junctions,
+        map.traffic_side,
+        |road| axes.rings.of(road).is_some(),
+    );
     // Широкие улицы поверх узких — см. доку модуля; ведущая узла — поверх
     // всех: её колея идёт через узел, и примыкание шире неё не должно её
     // закрыть.
@@ -1508,8 +1517,10 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
     painter.paint_turn_wear(&turns.wear);
     // стрелки на полосах подходов — краска, с разметкой
     if style.markings {
+        let marks = paint::ArrowMarks::new(&node_paint.zebras, &node_paint.stop_lines);
         for arrow in &turns.arrows {
-            painter.paint_arrow(arrow);
+            let setback = paint::Painter::arrow_setback(arrow, &marks);
+            painter.paint_arrow(arrow, setback);
         }
     }
     // направляющие островки у колец: асфальт — в слой улиц, поверх тротуаров,
@@ -1640,7 +1651,11 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
         turning_circles,
         through: node_paint.through,
         turns: turns.maneuvers,
-        arrows: if style.markings { turns.arrows.len() } else { 0 },
+        arrows: if style.markings {
+            turns.arrows.len()
+        } else {
+            0
+        },
         leading: leading.iter().filter(|&&lead| lead).count(),
         kerb_returns: kerb_returns.roads.len() - kerb_returns.outer[0],
         sidewalk_returns: kerb_returns.sidewalks.len() - kerb_returns.outer[1],

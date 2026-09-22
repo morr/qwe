@@ -360,7 +360,17 @@ way (план считал 74 — это теги, а не way): 38 общих `
 почти все `through|through;right`, `left|through|through;right` и подобные, две
 с опечаткой `throught` (читается как «прямо»). Общий тег у двусторонней улицы
 не читается — чьё это направление, не сказано. Запрос не менялся: `highway`
-приходит со всеми тегами.
+приходит со всеми тегами. С этапа 7 они же дают **стрелки** на полосах подходов.
+
+**`sidewalk=*`** и **`parking:*`** (этап 7 плана дорог, кеш v15) —
+`RoadLine::sidewalks` и `RoadLine::parking`, по сторонам хода точек. В Туле
+`sidewalk`: 44 `no`, 42 `separate`, 30 `right`, 12 `both`, 10 `left` (и по
+одному-два `sidewalk:both|left|right`); `parking:*` по схеме 2022 г.:
+`street_side` (карман) — 25 `right`, 9 `both`, 6 `left`; `lane` — 20 `both`,
+17 `right`, 14 `left`; запреты `parking:<side>:restriction=no_stopping` — 51
+`both`, 42 `right`, 35 `left`. Ориентация (`parallel|diagonal|perpendicular`)
+не читается — карман всегда под параллельную стоянку. Старая схема
+`parking:lane:*` в Туле не встречается и не читается. Запрос не менялся.
 
 ## 2. Не запрашиваем вообще
 

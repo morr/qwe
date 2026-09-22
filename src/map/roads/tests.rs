@@ -1188,7 +1188,10 @@ fn the_sidewalk_tag_picks_the_side() {
         let mut map = one_street();
         map.roads[0].sidewalks = sides;
         let (layers, _) = mesh_roads(&map, RoadStyle::default());
-        layer(&layers, "sidewalks").builder.positions_for_test().to_vec()
+        layer(&layers, "sidewalks")
+            .builder
+            .positions_for_test()
+            .to_vec()
     };
     let half = 12.0 / 2.0;
     let right = sidewalks_with([false, true]);

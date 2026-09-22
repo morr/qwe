@@ -225,7 +225,11 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   the plain tag or its flow's `:forward`/`:backward`, a two-way one only the directional
   ones; each lane left to right as `LaneTurn { left, through, right }`, `slight_`/`sharp_`
   folded into the turn, an unknown word — Tula has `throught` — into through). Only the
-  turn paths read it (`references/roads.md`, **Turn paths**); Tula 62 ways.
+  turn paths and their lane arrows read it (`references/roads.md`, **Turn paths**);
+  Tula 62 ways. `sidewalks: [bool; 2]` and `parking: [KerbParking; 2]` — `[left, right]`
+  along the points, from `sidewalk=*` and `parking:*` (swapped with the points on
+  `oneway=-1`); the sidewalk band and the kerb pockets read them (`references/roads.md`,
+  **Sidewalks**, **Kerb pockets**).
   **The direction of a one-way way is load-bearing now**, and it did not use to be: the
   cars park on one side of it, the right-hand kerb, so `oneway=-1` — "the traffic runs
   against the order of the points" — is **normalized at parse by reversing the way**
@@ -253,8 +257,9 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
 - **RoadNode** / **RoadArea** (v15) — what the data says about a junction beyond its
   lines. The **junction paint** (`roads/node_paint.rs`, `references/roads.md`) reads the
   crossings (zebras), signals and the stop / give-way signs (who breaks, stop lines);
-  mini-roundabouts, turning circles, islands and the `RoadArea` outlines are still drawn
-  by nothing — later stages of the roads plan consume them. `MapData::road_nodes` — a point on a way's axis with
+  a turning circle on a dead end is a disc of asphalt (`references/roads.md`, **Turning
+  circles**); mini-roundabouts, islands and the `RoadArea` outlines are still drawn by
+  nothing — later stages of the roads plan consume them. `MapData::road_nodes` — a point on a way's axis with
   `RoadNodeKind`: `Crossing { signals, island, marked }` (`crossing=traffic_signals` /
   `crossing:signals=yes`; `crossing:island=yes` / `crossing=island`; `marked` is cleared
   only by an explicit `crossing=unmarked` or `crossing:markings=no` — Tula has 111 of 801

@@ -48,6 +48,7 @@ use super::tapers::{self, Tapers};
 use super::turns::{JunctionWear, LaneArrow};
 use super::{is_carriageway, lane_count};
 use crate::map::along::arclengths;
+use crate::map::grid::Grid;
 use crate::map::meshing::{
     ATTRIBUTE_RIBBON, Break, LaneFrame, MeshBuilder, PaintStation, break_distances, break_profile,
     miter_offsets,
@@ -212,15 +213,44 @@ pub(super) const EDGE_STRIP: f32 = 0.6;
 
 /// Стрелка на полосе: длина, доля длины до отвода поворота, наконечник
 /// (длина и ширина основания), толщина стебля, вынос отвода вбок и вперёд, м;
-/// кончик стоит за `ARROW_SETBACK` до кромки узла. Городская стрелка по
-/// ГОСТу — пять метров.
+/// кончик стоит за `ARROW_SETBACK` до самой дальней зебры или стоп-линии на
+/// полосе (`Painter::arrow_setback`), что ищутся не дальше `ARROW_MARK_REACH`
+/// от кромки узла. Городская стрелка по ГОСТу — пять метров.
 const ARROW_LENGTH: f32 = 5.0;
 const ARROW_BRANCH: f32 = 0.45;
-const ARROW_HEAD: f32 = 1.2;
-const ARROW_HEAD_WIDTH: f32 = 0.7;
-const ARROW_STEM: f32 = 0.18;
+const ARROW_HEAD: f32 = 1.3;
+const ARROW_HEAD_WIDTH: f32 = 0.9;
+const ARROW_STEM: f32 = 0.22;
 const ARROW_BRANCH_REACH: f32 = 0.8;
 const ARROW_SETBACK: f32 = 4.0;
+const ARROW_MARK_REACH: f32 = 30.0;
+
+/// Поперечная краска узлов — зебры и стоп-линии отрезком и полутолщиной, — с
+/// сеткой для [`Painter::arrow_setback`]: перебор всех на каждую стрелку стоил
+/// Туле 4 мс сборки.
+pub(super) struct ArrowMarks {
+    marks: Vec<(Vec2, Vec2, f32)>,
+    grid: Grid<usize>,
+}
+
+impl ArrowMarks {
+    pub(super) fn new(zebras: &[Zebra], stops: &[StopLine]) -> Self {
+        let marks: Vec<(Vec2, Vec2, f32)> = zebras
+            .iter()
+            .map(|zebra| (zebra.from, zebra.to, ZEBRA_LENGTH / 2.0))
+            .chain(
+                stops
+                    .iter()
+                    .map(|line| (line.from, line.to, STOP_WIDTH / 2.0)),
+            )
+            .collect();
+        let mut grid = Grid::new(ARROW_MARK_REACH);
+        for (index, &(from, to, _)) in marks.iter().enumerate() {
+            grid.insert_segment(from, to, 0.0, index);
+        }
+        Self { marks, grid }
+    }
+}
 
 /// «До разрыва» у поперечной краски: разрывов у неё нет, шейдер её не гасит.
 const NO_BREAK: f32 = 1.0e4;
@@ -718,17 +748,41 @@ impl Painter {
         self.lines += 1;
     }
 
+    /// Где встанет кончик стрелки: на [`ARROW_SETBACK`] за самой дальней от
+    /// узла поперечной краской на её полосе — зеброй или стоп-линией, — а без
+    /// них за [`ARROW_SETBACK`] от кромки узла. Зебра отступает от кромки по
+    /// месту перехода, и отступ от одной кромки клал стрелку на зебру.
+    pub(super) fn arrow_setback(arrow: &LaneArrow, marks: &ArrowMarks) -> f32 {
+        let forward = arrow.travel.normalize_or_zero();
+        let reach = Vec2::splat(ARROW_MARK_REACH);
+        let mut farthest: f32 = 0.0;
+        for index in marks.grid.near(arrow.at - reach, arrow.at + reach) {
+            let (from, to, half) = marks.marks[index];
+            // где отрезок разметки пересекает ось полосы
+            let [a, b] = [from, to].map(|point| forward.perp_dot(point - arrow.at));
+            if a * b > 0.0 || a == b {
+                continue;
+            }
+            let crossing = from.lerp(to, a / (a - b));
+            let behind = (arrow.at - crossing).dot(forward);
+            if (-ARROW_LENGTH..=ARROW_MARK_REACH).contains(&behind) {
+                farthest = farthest.max(behind + half);
+            }
+        }
+        farthest + ARROW_SETBACK
+    }
+
     /// Стрелка на полосе подхода: стебель вдоль хода, наконечник, если прямо
     /// можно, и отвод с наконечником в каждую разрешённую сторону. Кончик —
     /// за [`ARROW_SETBACK`] до кромки узла, чтобы стрелка не легла на
     /// стоп-линию и переход.
-    pub(super) fn paint_arrow(&mut self, arrow: &LaneArrow) {
+    pub(super) fn paint_arrow(&mut self, arrow: &LaneArrow, setback: f32) {
         let forward = arrow.travel.normalize_or_zero();
         if forward == Vec2::ZERO {
             return;
         }
         let left = forward.perp();
-        let tail = arrow.at - forward * (ARROW_SETBACK + ARROW_LENGTH);
+        let tail = arrow.at - forward * (setback + ARROW_LENGTH);
         // точка стрелки в её раме: `x` — вдоль хода от хвоста, `y` — влево
         let to_world = |x: f32, y: f32| tail + forward * x + left * y;
         let turn = arrow.turn;

@@ -269,7 +269,14 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     faint ruts under the lines (knob Turn wear), **like a shadow**: where ruts overlap
     the pixel takes the strongest of them, not their sum — a mask pass keeps the maximum
     in the frame's alpha, an apply pass brightens by it once (`roads::paint::PaintPass`).
-    Straight along the leading road is left to its asphalt ruts.
+    Straight along the leading road is left to its asphalt ruts. The same maneuvers give
+    the **lane arrows** — paint on each approach lane, by `turn:lanes` or, without the
+    tag, by the rule on a 2+ lane approach; near zoom only.
+  - **Kerb pocket** (`map/roads/pockets.rs`) — a parking bay cut into the sidewalk beside
+    the carriageway, where the parked cars stand: by `parking:<side>=street_side`, or by
+    rule on trunk/primary/secondary (cars do not stand on an arterial's lane). One answer
+    (`pockets::kerbsides`) for the ribbon and for `map::cars`. `sidewalk=*` likewise
+    decides which sides carry a sidewalk band.
   - **Paired halves** (`map/roads/network/pairs.rs`, `Pairs`) — a divided street as OSM
     draws it: two opposite one-way ways of one class side by side (a street or a
     `service` drive, never a parking aisle), up to `PAIR_MAX_GAP` 15 m between the kerbs.

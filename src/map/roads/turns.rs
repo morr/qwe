@@ -110,18 +110,21 @@ struct ArmLanes {
 
 impl Turns {
     /// Траектории по узлам `junctions` дорог `drawn`, нарисованных по `paths`.
+    /// `on_ring(дорога)` — дуга ли она кольца (`roads/rings.rs`): у такого
+    /// узла стрелок по правилу нет.
     pub fn new(
         drawn: &[&RoadLine],
         paths: &[impl AsRef<[Vec2]>],
         junctions: &[Junction],
         side: TrafficSide,
+        on_ring: impl Fn(usize) -> bool,
     ) -> Self {
         let mut turns = Self::default();
         if drawn.len() != paths.len() {
             return turns;
         }
         for junction in junctions {
-            turns.junction(drawn, paths, junction, side);
+            turns.junction(drawn, paths, junction, side, &on_ring);
         }
         turns
     }
@@ -132,6 +135,7 @@ impl Turns {
         paths: &[impl AsRef<[Vec2]>],
         junction: &Junction,
         side: TrafficSide,
+        on_ring: &impl Fn(usize) -> bool,
     ) {
         let lanes = |arm: &JunctionArm, incoming: bool| {
             arm_lanes(
@@ -208,9 +212,12 @@ impl Turns {
             }
             // стрелки: по тегу, иначе по правилу на многополосном подходе;
             // на мосту своя краска, стрелок там нет
+            // у кольца манёвр — «въехать в кольцо», и стрелки по правилу там
+            // врут: только по тегу
+            let ring = junction.arms.iter().any(|arm| on_ring(arm.road));
             let turns = match &ins[a].turns {
                 Some(tagged) => tagged.clone(),
-                None if ins[a].lanes.len() >= ARROW_MIN_LANES => granted,
+                None if !ring && ins[a].lanes.len() >= ARROW_MIN_LANES => granted,
                 None => continue,
             };
             if drawn[from.road].bridge {

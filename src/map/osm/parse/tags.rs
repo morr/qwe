@@ -12,8 +12,9 @@ use bevy::prelude::*;
 
 use crate::map::osm::model::{
     AreaKind, BIG_BOX_MAX_HEIGHT, BIG_BOX_MAX_LEVELS, BuildingUse, Colours, Faith, FenceKind,
-    Highway, KerbParking, LaneTurn, PitchKind, RailKind, Rgb, RoadAreaKind, RoadClass, RoadNodeKind, Sacred,
-    SacredForm, ServiceTrack, StructureKind, WaterKind, is_big_box_shape, polyline_length,
+    Highway, KerbParking, LaneTurn, PitchKind, RailKind, Rgb, RoadAreaKind, RoadClass,
+    RoadNodeKind, Sacred, SacredForm, ServiceTrack, StructureKind, WaterKind, is_big_box_shape,
+    polyline_length,
 };
 use crate::map::osm::overpass::Element;
 use crate::settings::STOREY_HEIGHT;

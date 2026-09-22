@@ -732,15 +732,14 @@ fn park_along(
         // в кармане бордюр отодвинут на его ширину; мимо кармана, где у
         // бордюра не стоят, места нет
         let pocket = kerb.stand.pocket_at(at).is_some();
-        let offset = half_road + if pocket { POCKET_WIDTH } else { 0.0 }
-            - CURB_GAP
-            - shape.width() / 2.0;
+        let offset =
+            half_road + if pocket { POCKET_WIDTH } else { 0.0 } - CURB_GAP - shape.width() / 2.0;
         let place = point + across * offset;
         if !(pocket || kerb.stand.lane)
             || clearings
-            .junctions
-            .iter()
-            .any(|junction| place.distance(junction.at) < junction.reach + JUNCTION_CLEARANCE)
+                .junctions
+                .iter()
+                .any(|junction| place.distance(junction.at) < junction.reach + JUNCTION_CLEARANCE)
             || clearings.decks.iter().any(|deck| deck.covers(place))
         {
             continue;

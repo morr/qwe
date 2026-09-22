@@ -499,7 +499,11 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
   the very predicate that decides where a sidewalk and lane markings go, opened up for this
   — minus a bridge (nobody parks on one) and a roundabout (you drive it, you don't park on
   it), both excluded by `parkable` rather than by the predicate, which markings still need
-  them in. The ring is `RoadLine::is_roundabout`, **tag or shape**: by the bare tag a
+  them in. **Which sides, and where on them, is `roads::pockets`** (stage 7,
+  `references/roads.md`, **Kerb pockets**; `parkable` moved there too): `parking:*=no` or
+  a no-stopping restriction empties a side, a pocket side stands its cars `POCKET_WIDTH`
+  further out inside the pocket's full-width part and nowhere else, and an untagged
+  trunk/primary/secondary parks in pockets only — its lane stays clear. The ring is `RoadLine::is_roundabout`, **tag or shape**: by the bare tag a
   column of parked cars stood right round the mall's big ring, which is a closed one-way
   way with no `junction` tag. The threshold that stood here before was `road.width >= 9 m`, and it was reading
   the wrong thing: `RoadLine::width` is a **drawing constant of the class**

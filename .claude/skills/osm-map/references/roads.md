@@ -48,6 +48,44 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   shifted half a sidewalk away from the partner, and the full band resumes past the run
   with a butt joint. On a half with a taper the runs are not re-cut and the band stays
   full.
+  **`sidewalk=*` picks the sides** (stage 7): `RoadLine::sidewalks` `[left, right]` along
+  the points (`parse/tags.rs::tagged_sidewalks` — `both|left|right|no|none|separate`,
+  refined by `sidewalk:both|left|right`; `no` and `separate` mean no band, a separate
+  footway draws itself; untagged means both; `oneway=-1` swaps them with the points).
+  `drawn_sidewalk` is `None` when neither side has one; `push_sidewalk` lays a one-sided
+  band the paired-half way (width plus one sidewalk, shifted half a sidewalk to its side)
+  and ANDs the tag with the pair runs; the kerb returns drop the arc on a missing side;
+  a taper's sidewalk wedge is symmetric and skipped on a one-sided street. Tula: 44 `no`,
+  42 `separate`, 30 `right`, 10 `left`. The parse's house pull still keeps its clearance
+  on a side the tag took the sidewalk from — a verge instead of a sidewalk there.
+- **Kerb pockets** (`map/roads/pockets.rs`, stage 7) — where parked cars stand along a
+  street, one answer for the ribbon and for `map::cars` (a second answer would put a car
+  beside its pocket, on the sidewalk). `RoadLine::parking` `[left, right]` is
+  `parse/tags.rs::tagged_parking` over `parking:<side>|both` (2022 scheme):
+  `street_side` → `KerbParking::Pocket`, `lane|on_kerb|half_on_kerb|shoulder|yes` →
+  `Lane`, `no|separate` → `No`, and `parking:<side>:restriction=no_stopping|no_parking|
+  no_standing` → `No` over anything. `Untagged` is resolved by `pockets::kerb_parking`:
+  trunk/primary/secondary → a pocket where that side has a sidewalk to cut it into, else
+  none; motorway and links → none; the rest → the lane (the old behaviour). `kerbsides`
+  lists the sides in the cars' order (one-way: the kerb of its traffic; two-way: right,
+  then left — the RNG stream depends on it); a pocket side's pockets are the axis minus
+  `reach + POCKET_CLEARANCE` 4 m around every **row break** (`pockets::row_breaks`: the
+  junction breaks without stitches plus the taper clearings — the same list the cars
+  use), `POCKET_TAPER` 6 m slanted ends where a pocket stops inside the way (none where
+  it runs into the way's end, so it continues on the next way), at least `POCKET_MIN`
+  10 m at full width. Drawn by `mesh_roads` as three polygons per pocket from
+  `pockets::outline` (inner edge 5 cm under the carriageway edge, outer edge between the
+  tapers): asphalt `POCKET_WIDTH` 2.5 m wide in `roads`, its casing when the casing is
+  on, and the **sidewalk pushed out behind it** in `sidewalks` (the band is at most 3 m, a
+  2.5 m pocket would eat it). A car on a pocket side stands at `half + POCKET_WIDTH` from
+  the axis where its arclength falls in a pocket's full part, nowhere else unless the
+  side also parks on the lane. Tula: 610 pockets; `kerb pockets N` in the report.
+- **Turning circles** — a `RoadNodeKind::TurningCircle` on the free end of a street
+  (not shared, not a bridge or an arch) gets a disc of `turning_radius` — half the width
+  × 2.2, 6–10 m — in `roads`, a casing ring and a sidewalk ring of the road's own
+  sidewalk. An untagged dead end ends in the round cap of the ribbon anyway
+  (`RoadJoin::Round`). Tula's cache has none; `turning circles N` in the report, pinned
+  by `a_turning_circle_widens_the_dead_end`.
 - **Paired halves** (`map/roads/network/pairs.rs`, drawing in `map/roads/medians.rs`) — a
   divided street is two opposite one-way ways side by side, and each used to be drawn as
   a street of its own: its own sidewalk on both sides, a hairline of sidewalk under a
@@ -488,7 +526,25 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     the leading road's lane rut still adds to it.
   - **No guide dashes**: the 1.7 marking of a far turn was built from the same curves and
     dropped at the author's call — dashed arcs across the junction read as clutter.
-  The report counts `turn paths W, leading roads L`.
+  - **Lane arrows** (stage 7, `Turns::arrows`, `LaneArrow`) — per incoming lane its
+    maneuvers: `turn:lanes` when the tag matched the arm, otherwise — only on an approach
+    with `ARROW_MIN_LANES` 2+ lanes of its direction — the maneuvers the rule grants it
+    above (collected before the leading-road skip, so a straight along the leader still
+    counts); none on a bridge, none for a lane with no maneuver, and **no rule arrows at a
+    node with a ring arm** (`on_ring`, from `Axes::rings` — «straight» there means
+    «into the ring», gallery 17 showed arrows on the ring itself); tagged ones stay. `Painter::paint_arrow`
+    lays them as filled polygons in the **lanes** mesh, `LineKind::Arrow` (kind 9, cover
+    1, fades with the lane lines at `LANE_ZOOM_MAX` — the near zoom only): a stem along
+    the travel, a head if straight is allowed, a 45° branch with its own head per allowed
+    turn; 5 m long, tip `ARROW_SETBACK` 4 m behind the farthest zebra or stop line crossing
+    that lane's axis within `ARROW_MARK_REACH` 30 m of the edge (`Painter::
+    arrow_setback`), or 4 m from the edge with none — a zebra stands off the edge by its
+    crossing's position, and a fixed setback from the edge put arrows on it (gallery 1,
+    21). The marks sit in a `Grid` (`paint::ArrowMarks`): a scan over all 3600 per arrow
+    cost Tula 4 ms of the road build. Stage 7 on Tula: 120.9 ms (118.5 before), 920 k
+    vertices (900 k), 1089 arrows, 610 kerb pockets. Drawn with markings on
+    only.
+  The report counts `turn paths W, arrows A, leading roads L`.
 - **The drawn network** (`map/roads/network.rs`, `map/roads/corners.rs`) — what the ribbons
   are laid *from* is not quite `MapData::roads`, and the difference is four render-only
   corrections, all built on **`RoadNodes`** (every node two roads of any class share, same
@@ -939,8 +995,13 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
 
 ## The junction gallery — `examples/demos/roads`
 
-`cargo run --example roads` shows a city's typical road junctions in a column — twenty
-for Tula (the twentieth, `20_roundabout_arcs`, is the secondary ring of six arcs — the
+`cargo run --example roads` shows a city's typical road junctions in a column —
+twenty-three for Tula (stage 7 added three: `21_turn_pocket`, проспект Ленина's one-way
+half widening from two lanes to three before a node, `turn:lanes` `left|left|right` —
+the **lane arrows** and a pocket's line ending in the gap; `22_lane_change`, two-way
+secondary улица Болдина going from two lanes to four at a seam — the two-way twin of
+`16_lanes_taper`; `23_s_curve`, Путейская улица's 200 m right-then-left bend in one
+way — the smoothed axis carrying the ribbon, sidewalk and dashes; the twentieth, `20_roundabout_arcs`, is the secondary ring of six arcs — the
 "egg" of **Roundabouts**; `04_roundabout_large` is the primary one; the nineteenth,
 `19_offset_joins`, is Tsiolkovsky street with two side streets
 joining from opposite sides 17 m apart — one cluster of **Junction paint**; the sixteenth, `16_lanes_taper`, is a one-way primary going from four lanes to

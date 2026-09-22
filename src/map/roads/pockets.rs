@@ -55,7 +55,10 @@ impl Pocket {
     /// Часть кармана полной ширины — где в нём помещается машина.
     pub fn full(&self) -> (f32, f32) {
         let taper = |on: bool| if on { POCKET_TAPER } else { 0.0 };
-        (self.from + taper(self.tapers[0]), self.to - taper(self.tapers[1]))
+        (
+            self.from + taper(self.tapers[0]),
+            self.to - taper(self.tapers[1]),
+        )
     }
 }
 
