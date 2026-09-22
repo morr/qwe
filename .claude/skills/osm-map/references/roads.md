@@ -741,7 +741,12 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
       one half width to the other, what the round caps used to give for free. Pushed like a
       return, before the ribbons; its centre sits `OVERLAP` behind the node and its sides
       reach `OVERLAP` into the butt ends. The same fan in the sidewalk layer on `half +
-      sidewalk`. Counted apart in the log line (`outer corners`).
+      sidewalk`. Counted apart in the log line (`outer corners`). "More than 180°" means
+      past `MIN_OUTER` 0.05° — rounding noise, no more: a street split into two ways at a
+      junction with a slight kink (Ложевая at Пролетарская, Tula, gallery 08, 0.7°) leaves
+      a wedge between the two butt ends on the side away from the crossing road, and at the
+      old 1° threshold it showed as a light hairline. Tula: outer corners 960 → 1632,
+      117 → 202 on sidewalks; the road build did not move (125.6 ms).
     - **The junction is not unioned into one polygon.** The plan's stage 5 asked for the
       asphalt of a node as an `i_overlay` union of its ribbons; the pieces above give the
       same picture lying under the ribbons of their layer (a ribbon covers every seam
