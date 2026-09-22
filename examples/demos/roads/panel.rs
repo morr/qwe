@@ -5,7 +5,8 @@
 //! формы (`RoadShape`, таблица `qwe::ui::shape_knobs`) и тумблеры слоёв
 //! (`RoadStyle`) пересобирают все примеры, так что форму и краску можно
 //! сравнивать на одном и том же узле. Ползунки Paint, Wear и Turn wear —
-//! `RoadPaintStyle`, юниформы материалов: протяжка ничего не пересобирает.
+//! `RoadPaintStyle` (таблица `qwe::ui::paint_knobs`), юниформы материалов:
+//! протяжка ничего не пересобирает.
 //!
 //! **Шрифт панель ставит себе сама** — `apply_panel_font` живёт в `UiPlugin`,
 //! которого здесь нет, а во встроенном шрифте bevy нет кириллицы.
@@ -14,18 +15,15 @@ use bevy::feathers::controls::ButtonVariant;
 use bevy::prelude::*;
 use bevy::ui_widgets::Activate;
 use qwe::city::City;
-use qwe::map::{
-    CrossingMode, PAINT_MAX, PAINT_MIN, PAINT_STEP, RoadPaintStyle, RoadShape, RoadStyle,
-    TURN_WEAR_MAX, TURN_WEAR_MIN, TURN_WEAR_STEP, WEAR_MAX, WEAR_MIN, WEAR_STEP,
-};
-use qwe::ui::knob::{CycleBinding, SliderBinding, spawn_cycle_row, spawn_knob};
-
-use crate::overlay::NetworkOverlay;
+use qwe::map::{CrossingMode, RoadPaintStyle, RoadShape, RoadStyle};
+use qwe::ui::knob::{CycleBinding, spawn_cycle_row, spawn_knob};
 use qwe::ui::{
-    GROUP_HEADER_PAD_PX, PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET, button_variant,
+    GROUP_HEADER_PAD_PX, PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET, button_variant, paint_knobs,
     panel_background, panel_block_background, panel_font, panel_title, row_label, shape_knobs,
     spawn_panel_button, ui_node,
 };
+
+use crate::overlay::NetworkOverlay;
 
 /// Отступ строки-значения слева — как у строк панели игры.
 const ROW_LEFT_PX: f32 = 8.0;
@@ -142,19 +140,9 @@ pub(crate) fn spawn_panel(
             text: |style| on_off(style.markings),
         },
     );
-    // краска и колея — те же ползунки, что в игре, и тоже без пересборки
-    spawn_knob(
-        &mut commands,
-        panel,
-        "Paint",
-        &*paint,
-        SliderBinding {
-            get: |paint: &RoadPaintStyle| paint.paint,
-            set: |paint, value| paint.paint = value,
-            range: (PAINT_MIN, PAINT_MAX, PAINT_STEP),
-            text: |value| format!("{:.0}%", value * 100.),
-        },
-    );
+    // краска и колея — таблица игры (`paint_knobs`), и тоже без пересборки
+    let [paint_knob, wear_knob, turn_wear_knob] = paint_knobs();
+    spawn_knob(&mut commands, panel, paint_knob.0, &*paint, paint_knob.1);
     spawn_cycle_row(
         &mut commands,
         panel,
@@ -190,29 +178,13 @@ pub(crate) fn spawn_panel(
             text: |style| on_off(style.arrows),
         },
     );
+    spawn_knob(&mut commands, panel, wear_knob.0, &*paint, wear_knob.1);
     spawn_knob(
         &mut commands,
         panel,
-        "Wear",
+        turn_wear_knob.0,
         &*paint,
-        SliderBinding {
-            get: |paint: &RoadPaintStyle| paint.wear,
-            set: |paint, value| paint.wear = value,
-            range: (WEAR_MIN, WEAR_MAX, WEAR_STEP),
-            text: |value| format!("{:.1}%", value * 100.),
-        },
-    );
-    spawn_knob(
-        &mut commands,
-        panel,
-        "Turn wear",
-        &*paint,
-        SliderBinding {
-            get: |paint: &RoadPaintStyle| paint.turn_wear,
-            set: |paint, value| paint.turn_wear = value,
-            range: (TURN_WEAR_MIN, TURN_WEAR_MAX, TURN_WEAR_STEP),
-            text: |value| format!("{:.1}%", value * 100.),
-        },
+        turn_wear_knob.1,
     );
     // не ручка стиля, а взгляд на данные: улицы сети и их сечения
     spawn_cycle_row(

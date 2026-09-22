@@ -44,6 +44,7 @@ fn build_road_paint_section(
     style: Res<RoadStyle>,
     paint: Res<RoadPaintStyle>,
 ) {
+    let [paint_knob, wear_knob, turn_wear_knob] = paint_knobs();
     let panel = spawn_section(
         &mut commands,
         panes.pane(SettingsTab::Map),
@@ -63,18 +64,7 @@ fn build_road_paint_section(
             text: |style| on_off(style.markings).to_string(),
         },
     );
-    spawn_knob(
-        &mut commands,
-        panel,
-        "Paint",
-        &*paint,
-        SliderBinding {
-            get: |paint| paint.paint,
-            set: |paint, value| paint.paint = value,
-            range: (PAINT_MIN, PAINT_MAX, PAINT_STEP),
-            text: |value| format!("{:.0}%", value * 100.),
-        },
-    );
+    spawn_knob(&mut commands, panel, paint_knob.0, &*paint, paint_knob.1);
     // краска узла (`map::roads::node_paint`): зебры и стоп-линии на плечах
     spawn_cycle_row(
         &mut commands,
@@ -111,29 +101,50 @@ fn build_road_paint_section(
         },
     );
     // колея — юниформы, протяжка ничего не пересобирает
-    spawn_knob(
-        &mut commands,
-        panel,
-        "Wear",
-        &*paint,
-        SliderBinding {
-            get: |paint| paint.wear,
-            set: |paint, value| paint.wear = value,
-            range: (WEAR_MIN, WEAR_MAX, WEAR_STEP),
-            text: |value| format!("{:.1}%", value * 100.),
-        },
-    );
+    spawn_knob(&mut commands, panel, wear_knob.0, &*paint, wear_knob.1);
     // колея траекторий узла (`map::roads::turns`) — тоже юниформ
     spawn_knob(
         &mut commands,
         panel,
-        "Turn wear",
+        turn_wear_knob.0,
         &*paint,
-        SliderBinding {
-            get: |paint| paint.turn_wear,
-            set: |paint, value| paint.turn_wear = value,
-            range: (TURN_WEAR_MIN, TURN_WEAR_MAX, TURN_WEAR_STEP),
-            text: |value| format!("{:.1}%", value * 100.),
-        },
+        turn_wear_knob.1,
     );
+}
+
+/// Ползунки краски — подпись и привязка к полю `RoadPaintStyle`: Paint, Wear,
+/// Turn wear. Одна таблица на панель игры и панель витрины `roads`, как
+/// `shape_knobs`: шкалы у двух панелей не должны разойтись. Порядок — порядок
+/// строк; между ними стоят тумблеры `RoadStyle`, поэтому вызывающий
+/// разбирает массив, а не обходит его циклом.
+pub fn paint_knobs() -> [(&'static str, SliderBinding<RoadPaintStyle>); 3] {
+    [
+        (
+            "Paint",
+            SliderBinding {
+                get: |paint| paint.paint,
+                set: |paint, value| paint.paint = value,
+                range: (PAINT_MIN, PAINT_MAX, PAINT_STEP),
+                text: |value| format!("{:.0}%", value * 100.),
+            },
+        ),
+        (
+            "Wear",
+            SliderBinding {
+                get: |paint| paint.wear,
+                set: |paint, value| paint.wear = value,
+                range: (WEAR_MIN, WEAR_MAX, WEAR_STEP),
+                text: |value| format!("{:.1}%", value * 100.),
+            },
+        ),
+        (
+            "Turn wear",
+            SliderBinding {
+                get: |paint| paint.turn_wear,
+                set: |paint, value| paint.turn_wear = value,
+                range: (TURN_WEAR_MIN, TURN_WEAR_MAX, TURN_WEAR_STEP),
+                text: |value| format!("{:.1}%", value * 100.),
+            },
+        ),
+    ]
 }

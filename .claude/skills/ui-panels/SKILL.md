@@ -156,7 +156,10 @@ did not fit 1080 px and ran off the top of the screen.
   rebuilding the road layers; interleaved with three `RoadPaintStyle` sliders: **Paint**
   (the paint layer's opacity, 0–100 %, step 5), **Wear** (the asphalt rut amplitude,
   0–15 %, step 0.5, printed with one decimal) and **Turn wear** (the junction turn paths'
-  rut amplitude, `map/roads/turns.rs`, 0–8 %, step 0.5, same print). Their own resource
+  rut amplitude, `map/roads/turns.rs`, 0–8 %, step 0.5, same print). The three are one
+  table, `pub fn paint_knobs()`, re-exported as `qwe::ui::paint_knobs` and shared with the
+  roads gallery like `shape_knobs` — an array the caller destructures, not loops over,
+  because the `RoadStyle` toggles stand between its rows. Their own resource
   because all three are material uniforms (`surface::retune_surface_materials`) and a
   drag rebuilds nothing. A section of its own rather than the tail of Roads: with the
   shape sliders Roads would have grown to fifteen rows, and paint and shape are tuned

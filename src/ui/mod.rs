@@ -63,7 +63,8 @@ pub use self::debug::{DebugConiferNoise, DebugDoors, DebugGrid, DebugNavmesh};
 pub use self::theme::PanelWidgetsPlugin;
 // игре и витринам поровну: Esc закрывает любое окно с панелью
 pub use self::quit::QuitOnEscPlugin;
-// ползунки формы дорог — панели витрины `roads`: шкалы те же, что в игре
+// ползунки формы и краски дорог — панели витрины `roads`: шкалы те же, что в игре
+pub use self::road_paint::paint_knobs;
 pub use self::roads::shape_knobs;
 use crate::loading::{AppState, PlayPhase};
 use crate::map::osm::MapData;
