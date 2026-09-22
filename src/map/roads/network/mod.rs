@@ -93,10 +93,22 @@ impl RoadNodes {
 }
 
 /// Стежки по дорогам: `ends[i]` — точка, которую надо добавить перед началом и
-/// после конца нарисованной осевой `roads[i]`.
+/// после конца нарисованной осевой `roads[i]`, `targets[i]` — на чью ось он
+/// пришит: дорога, отрезок её точек и ближайшая к стежку точка оси. По ним
+/// стежок становится узлом краски (`roads/junctions.rs`).
 pub struct Stitches {
     pub ends: Vec<[Option<Vec2>; 2]>,
+    pub targets: Vec<[Option<StitchTarget>; 2]>,
     pub count: usize,
+}
+
+/// Куда пришит торец: дорога `road`, её отрезок `segment` (от точки
+/// `segment` к следующей) и точка `at` на нём.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct StitchTarget {
+    pub road: usize,
+    pub segment: usize,
+    pub at: Vec2,
 }
 
 impl Stitches {
@@ -192,6 +204,7 @@ pub fn stitches(
     sidewalk: impl Fn(&RoadLine) -> Option<f32>,
 ) -> Stitches {
     let mut ends = vec![[None; 2]; roads.len()];
+    let mut targets = vec![[None; 2]; roads.len()];
     let mut segments: Grid<(usize, usize)> = Grid::new(CELL);
     let mut widest = 0.0_f32;
     let drawn = Drawn::new(roads, sidewalk);
@@ -239,13 +252,18 @@ pub fn stitches(
             let heading = (end - *from).normalize();
             let reach = road.width / 2.0 + STITCH_MAX_GAP + widest;
             let stitch = stitch_end(&drawn, index, end, heading, reach, &segments, &obstacles);
-            if let Some(point) = stitch {
+            if let Some((point, target)) = stitch {
                 ends[index][side] = Some(point);
+                targets[index][side] = Some(target);
                 count += 1;
             }
         }
     }
-    Stitches { ends, count }
+    Stitches {
+        ends,
+        targets,
+        count,
+    }
 }
 
 /// Дороги как они рисуются и внешний край нарисованной полосы у каждой —
@@ -279,8 +297,8 @@ fn stitch_end(
     reach: f32,
     segments: &Grid<(usize, usize)>,
     obstacles: &Obstacles,
-) -> Option<Vec2> {
-    let mut best: Option<(f32, Vec2, f32)> = None;
+) -> Option<(Vec2, StitchTarget)> {
+    let mut best: Option<(f32, Vec2, f32, StitchTarget)> = None;
     // `near_each`, а не `near`: отрезок, попавший в две ячейки, и раньше
     // проверялся дважды, а победителя выбирает строгое сравнение — порядок
     // обхода тот же самый (ячейки по возрастанию, внутри ячейки — порядок
@@ -302,7 +320,12 @@ fn stitch_end(
         let edge = drawn.edges[road];
         let mut consider = |gap: f32, point: Vec2| {
             if gap <= STITCH_MAX_GAP && best.is_none_or(|(known, ..)| gap < known) {
-                best = Some((gap, point, half));
+                let target = StitchTarget {
+                    road,
+                    segment,
+                    at: closest_on_segment(point, a, b),
+                };
+                best = Some((gap, point, half, target));
             }
         };
         if (nearest - end).dot(heading) >= STITCH_MIN_COS * distance {
@@ -320,7 +343,7 @@ fn stitch_end(
             }
         }
     }
-    let (_, point, target_half) = best?;
+    let (_, point, target_half, target) = best?;
     let direction = (point - end).normalize_or_zero();
     // Своя лента шире цели — торец отступает, чтобы полудиск не вылез за
     // дальний край цели.
@@ -333,7 +356,7 @@ fn stitch_end(
     let steps = (length / STITCH_PROBE_STEP).ceil() as usize;
     let blocked = (1..=steps)
         .any(|step| obstacles.covers(end + direction * (length * step as f32 / steps as f32)));
-    (!blocked).then_some(stitched)
+    (!blocked).then_some((stitched, target))
 }
 
 /// Здания и вода — через них стежок не идёт: проезд, упёртый в стену гаража,

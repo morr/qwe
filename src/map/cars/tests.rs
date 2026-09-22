@@ -38,7 +38,7 @@ fn park_with(roads: &[RoadLine], style: CarStyle) -> Vec<Car> {
 fn park_driving(roads: &[RoadLine], style: CarStyle, traffic: TrafficSide) -> Vec<Car> {
     park_cars(
         roads,
-        &junctions::marking_breaks(roads, is_carriageway),
+        &junctions::marking_breaks(roads, is_carriageway, &[]),
         style,
         &drawn_axes(roads, Smoothing::Off),
         traffic,
@@ -147,7 +147,7 @@ fn a_residential_street_gets_a_row() {
 fn the_same_street_parks_thinner_in_a_private_sector() {
     let road = street(vec![Vec2::new(0.0, 0.0), Vec2::new(600.0, 0.0)], 8.0);
     let roads = std::slice::from_ref(&road);
-    let breaks = junctions::marking_breaks(roads, is_carriageway);
+    let breaks = junctions::marking_breaks(roads, is_carriageway, &[]);
     let rows = |buildings: &[PolyArea]| {
         park_cars(
             roads,
@@ -473,7 +473,7 @@ fn the_row_stays_on_the_drawn_asphalt_through_a_bend() {
     };
     let cars = park_cars(
         std::slice::from_ref(&road),
-        &junctions::marking_breaks(std::slice::from_ref(&road), is_carriageway),
+        &junctions::marking_breaks(std::slice::from_ref(&road), is_carriageway, &[]),
         style,
         &drawn_axes(std::slice::from_ref(&road), Smoothing::Light),
         TrafficSide::Right,

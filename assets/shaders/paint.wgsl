@@ -41,6 +41,10 @@ struct PaintParams {
     zebra_period: f32,
     zebra_fill: f32,
     zebra_zoom: f32,
+    turn_wear: f32,
+    rut_offset: f32,
+    rut_sigma: f32,
+    lane_width: f32,
 }
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: PaintParams;
@@ -52,8 +56,10 @@ struct Vertex {
     // `meshing::ATTRIBUTE_RIBBON` полосы краски: поперёк от линии (м), длина
     // улицы (м), до разрыва перекрёстка (м), вид линии (0 — линия полос,
     // 1 — осевая, 2 — двойная сплошная, 3 — стоп-линия, 4 — она же
-    // прерывистой, 5 — зебра). У поперечной краски (3–5) «длина» идёт поперёк
-    // дороги от кромки, а «поперёк» — вдоль неё
+    // прерывистой, 5 — зебра, 6 — колея траектории узла). У поперечной
+    // краски (3–5) «длина» идёт поперёк дороги от кромки, а «поперёк» — вдоль
+    // неё. Колея траектории рисуется своими проходами (`WEAR_MASK`,
+    // `WEAR_APPLY`), её сила — в альфе вершины
     @location(2) ribbon: vec4<f32>,
 }
 
@@ -99,6 +105,12 @@ fn line_cover(d: f32, width: f32, px: f32) -> f32 {
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
+#ifdef WEAR_APPLY
+    // наложение колеи (`roads::paint::PaintPass::Wear`): смешивание берёт
+    // цвет кадра × (единица + (1 − альфа маски)) и возвращает альфу в
+    // единицу — от шейдера нужна только единица
+    return vec4<f32>(1.0);
+#else
     let p = in.world_position;
     let px = max(max(fwidth(p.x), fwidth(p.y)), 1e-4);
     let across = in.ribbon.x;
@@ -106,6 +118,18 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let to_break = in.ribbon.z;
     let kind = u32(round(in.ribbon.w));
 
+#ifdef WEAR_MASK
+    // маска колеи (`PaintPass::WearMask`): две колеи по сторонам кривой,
+    // профиль колеи полос (`surface.wgsl`), сила в альфе вершины (хвост сходит
+    // в ноль). Пишется `1 − колея` в альфу кадра операцией `min` — остаётся
+    // наибольшая колея из всех полос. Гаснет по шагу полосы, как колея
+    // асфальта, и к порогу осевых, где меш прячется
+    let offset = abs(across) - params.rut_offset;
+    let rut = exp(-offset * offset / (2.0 * params.rut_sigma * params.rut_sigma));
+    let far = 1.0 - smoothstep(params.axis_zoom * params.fade_from, params.axis_zoom, px);
+    let wear = params.turn_wear * in.color.a * rut * visible(params.lane_width, px) * far;
+    return vec4<f32>(0.0, 0.0, 0.0, 1.0 - wear);
+#else
     var cover = 0.0;
     if kind == 5u {
         // зебра: плашка вдоль дороги, полосы поперёк неё; где период мельче
@@ -176,4 +200,6 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     output_color = vec4(linear_rgb_to_oklab(output_color.rgb), output_color.a);
 #endif
     return output_color;
+#endif
+#endif
 }

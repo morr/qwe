@@ -34,7 +34,8 @@ use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::prelude::*;
 use bevy::reflect::TypePath;
 use bevy::render::render_resource::{
-    AsBindGroup, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
+    AsBindGroup, BlendComponent, BlendFactor, BlendOperation, BlendState, ColorWrites,
+    RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
 };
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use bevy::shader::ShaderRef;
@@ -44,7 +45,9 @@ use super::network::RoadNetwork;
 use super::network::sections::STREET_LANE_WIDTH;
 use super::node_paint::{Pocket, STOP_WIDTH, StopLine, ZEBRA_LENGTH, Zebra};
 use super::tapers::{self, Tapers};
+use super::turns::JunctionWear;
 use super::{is_carriageway, lane_count};
+use crate::map::along::arclengths;
 use crate::map::meshing::{
     ATTRIBUTE_RIBBON, Break, LaneFrame, MeshBuilder, PaintStation, break_distances, break_profile,
     miter_offsets,
@@ -54,7 +57,7 @@ use crate::map::osm::model::polyline_length;
 use crate::map::shapes::is_ring;
 use crate::map::surface::{LayerMesh, MaterialSpec};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
-use crate::settings::{Z_BRIDGE_PAINT, Z_ROAD_PAINT};
+use crate::settings::{Z_BRIDGE_PAINT, Z_ROAD_PAINT, Z_ROAD_WEAR, Z_ROAD_WEAR_MASK};
 
 const SHADER_PATH: &str = "shaders/paint.wgsl";
 
@@ -104,6 +107,11 @@ pub const PAINT_STEP: f32 = 0.05;
 pub const WEAR_MIN: f32 = 0.0;
 pub const WEAR_MAX: f32 = 0.15;
 pub const WEAR_STEP: f32 = 0.005;
+/// Сила колеи поворотов в узле (`roads/turns.rs`) — ручка «Turn wear». Меньше
+/// колеи полос: кривые узла ложатся одна на другую и складываются.
+pub const TURN_WEAR_MIN: f32 = 0.0;
+pub const TURN_WEAR_MAX: f32 = 0.08;
+pub const TURN_WEAR_STEP: f32 = 0.005;
 
 /// Краска и износ дорог: одни юниформы, ничего не пересобирается. Отдельно от
 /// `RoadStyle`, правка которого пересобирает все дорожные слои, — та же
@@ -116,6 +124,8 @@ pub struct RoadPaintStyle {
     pub paint: f32,
     /// Амплитуда колеи (`surface.wgsl`).
     pub wear: f32,
+    /// Амплитуда колеи траекторий узла — слой износа (`paint.wgsl`).
+    pub turn_wear: f32,
 }
 
 impl Default for RoadPaintStyle {
@@ -123,6 +133,7 @@ impl Default for RoadPaintStyle {
         Self {
             paint: 0.85,
             wear: 0.075,
+            turn_wear: 0.035,
         }
     }
 }
@@ -136,6 +147,10 @@ impl RoadPaintStyle {
 
     pub fn wear(self) -> f32 {
         self.wear.clamp(WEAR_MIN, WEAR_MAX)
+    }
+
+    pub fn turn_wear(self) -> f32 {
+        self.turn_wear.clamp(TURN_WEAR_MIN, TURN_WEAR_MAX)
     }
 }
 
@@ -155,6 +170,9 @@ enum LineKind {
     Yield,
     /// Зебра: плашка поперёк проезжей части, полосы рисует шейдер.
     Zebra,
+    /// Колея траектории узла (`roads/turns.rs`): не краска, а светлый износ
+    /// асфальта в своих мешах, две колеи по сторонам кривой.
+    Wear,
 }
 
 impl LineKind {
@@ -166,6 +184,7 @@ impl LineKind {
             Self::Stop => 3.0,
             Self::Yield => 4.0,
             Self::Zebra => 5.0,
+            Self::Wear => 6.0,
         }
     }
 }
@@ -185,6 +204,12 @@ const YIELD_GAP: f32 = 0.6;
 /// Дальше этого зума зебры нет: до него полосы гаснут в ровную плашку
 /// (`visible()` по периоду), дальше и плашка — мелочь.
 pub const ZEBRA_ZOOM_MAX: f32 = 0.6;
+/// Колея траектории: смещение колеса от середины полосы и ширина колеи (σ),
+/// м, — как у колеи полос в `surface.wgsl`.
+const RUT_OFFSET: f32 = 0.85;
+const RUT_SIGMA: f32 = 0.32;
+/// Полуширина полосы под колею траектории, м: обе колеи с краями в 3σ.
+const WEAR_STRIP: f32 = RUT_OFFSET + 3.0 * RUT_SIGMA;
 
 /// Раскладка полос тела way с `lanes` полосами: границы проезжей части на
 /// `± lanes · шаг / 2`, узел сетки — на оси при чётном числе полос и в
@@ -288,8 +313,12 @@ pub fn wedge_ends(
 }
 
 /// Меши слоя краски: линии полос и осевые, по улицам и по мостам отдельно,
-/// и зебры. Стоп-линии — в меше линий полос: и видны они до того же зума.
+/// и зебры. Стоп-линии и направляющий пунктир — в меше линий полос: и видны
+/// они до того же зума. Под всеми — колея траекторий узла: одни и те же
+/// полосы двумя мешами, маской и наложением ([`PaintPass`]).
 pub struct Painter {
+    wear_mask: MeshBuilder,
+    wear: MeshBuilder,
     lanes: MeshBuilder,
     axes: MeshBuilder,
     zebras: MeshBuilder,
@@ -301,6 +330,8 @@ pub struct Painter {
 impl Default for Painter {
     fn default() -> Self {
         Self {
+            wear_mask: MeshBuilder::with_surface_coords(),
+            wear: MeshBuilder::with_surface_coords(),
             lanes: MeshBuilder::with_surface_coords(),
             axes: MeshBuilder::with_surface_coords(),
             zebras: MeshBuilder::with_surface_coords(),
@@ -312,6 +343,8 @@ impl Default for Painter {
 }
 
 /// Имена слоёв краски — по ним [`PaintTag`] находит свой меш, а BRP — сущность.
+pub const PAINT_WEAR_MASK: &str = "road_paint_wear_mask";
+pub const PAINT_WEAR: &str = "road_paint_wear";
 pub const PAINT_LANES: &str = "road_paint_lanes";
 pub const PAINT_AXES: &str = "road_paint_axes";
 pub const PAINT_ZEBRAS: &str = "road_paint_zebras";
@@ -324,6 +357,7 @@ pub enum PaintTag {
     Lanes,
     Zebras,
     Axes,
+    Wear,
 }
 
 impl PaintTag {
@@ -333,6 +367,7 @@ impl PaintTag {
             PAINT_LANES | BRIDGE_PAINT_LANES => Some(Self::Lanes),
             PAINT_ZEBRAS => Some(Self::Zebras),
             PAINT_AXES | BRIDGE_PAINT_AXES => Some(Self::Axes),
+            PAINT_WEAR_MASK | PAINT_WEAR => Some(Self::Wear),
             _ => None,
         }
     }
@@ -565,16 +600,76 @@ impl Painter {
         self.lines += 1;
     }
 
-    /// Пять слоёв краски: улицы над асфальтом улиц, мосты над настилом.
-    pub fn layers(self) -> [LayerMesh; 5] {
+    /// Колея траекторий узлов (`roads/turns.rs`) — **как тень**: колея
+    /// поверх колеи светлее не делается. Полоса вдоль каждой кривой и каждого
+    /// хвоста, по две колеи в [`RUT_OFFSET`] по сторонам; сила — в альфе
+    /// вершины: у кривой целая, у хвоста сходит в ноль вглубь полосы, где её
+    /// сменяет колея асфальта. Полосы кладутся дважды, в маску и в наложение
+    /// ([`PaintPass`]): маска оставляет в каждом пикселе **наибольшую** колею
+    /// из всех, наложение светлит асфальт на неё один раз, сколько бы полос
+    /// там ни легло.
+    pub(super) fn paint_turn_wear(&mut self, junctions: &[JunctionWear]) {
+        for junction in junctions {
+            for curve in &junction.curves {
+                self.push_wear(curve, |_| 1.0);
+            }
+            for tail in &junction.tails {
+                self.push_wear(tail, |share| 1.0 - share);
+            }
+        }
+    }
+
+    /// Полоса колеи вдоль `line` с силой `strength(доля длины)` — в оба меша.
+    fn push_wear(&mut self, line: &[Vec2], strength: impl Fn(f32) -> f32) {
+        let (along, total) = arclengths(line);
+        let stations: Vec<PaintStation> = along
+            .iter()
+            .map(|&at| PaintStation {
+                along: at,
+                to_break: NO_BREAK,
+                alpha: strength(at / total.max(1e-3)),
+            })
+            .collect();
+        for builder in [&mut self.wear_mask, &mut self.wear] {
+            builder.push_paint_strip(
+                line,
+                false,
+                WEAR_STRIP,
+                &stations,
+                LineKind::Wear.code(),
+                PAINT_COLOR.to_linear(),
+            );
+        }
+    }
+
+    /// Семь слоёв краски: маска и наложение колеи узлов, краска улиц над
+    /// асфальтом улиц, мосты над настилом.
+    pub fn layers(self) -> [LayerMesh; 7] {
         [
-            (self.zebras, Z_ROAD_PAINT, PAINT_ZEBRAS),
-            (self.lanes, Z_ROAD_PAINT, PAINT_LANES),
-            (self.axes, Z_ROAD_PAINT, PAINT_AXES),
-            (self.bridge_lanes, Z_BRIDGE_PAINT, BRIDGE_PAINT_LANES),
-            (self.bridge_axes, Z_BRIDGE_PAINT, BRIDGE_PAINT_AXES),
+            (
+                self.wear_mask,
+                Z_ROAD_WEAR_MASK,
+                PAINT_WEAR_MASK,
+                PaintPass::WearMask,
+            ),
+            (self.wear, Z_ROAD_WEAR, PAINT_WEAR, PaintPass::Wear),
+            (self.zebras, Z_ROAD_PAINT, PAINT_ZEBRAS, PaintPass::Lines),
+            (self.lanes, Z_ROAD_PAINT, PAINT_LANES, PaintPass::Lines),
+            (self.axes, Z_ROAD_PAINT, PAINT_AXES, PaintPass::Lines),
+            (
+                self.bridge_lanes,
+                Z_BRIDGE_PAINT,
+                BRIDGE_PAINT_LANES,
+                PaintPass::Lines,
+            ),
+            (
+                self.bridge_axes,
+                Z_BRIDGE_PAINT,
+                BRIDGE_PAINT_AXES,
+                PaintPass::Lines,
+            ),
         ]
-        .map(|(builder, z, name)| LayerMesh::new(builder, z, name, MaterialSpec::Paint))
+        .map(|(builder, z, name, pass)| LayerMesh::new(builder, z, name, MaterialSpec::Paint(pass)))
     }
 }
 
@@ -625,7 +720,9 @@ pub fn show_paint(bucket: Res<PaintZoomBucket>, mut layers: Query<(&PaintTag, &m
         let shown = match tag {
             PaintTag::Lanes => bucket.index < 1,
             PaintTag::Zebras => bucket.index < 2,
-            PaintTag::Axes => bucket.index < 3,
+            // колея траекторий гаснет вместе с осевыми: к порогу шейдер её
+            // уже погасил
+            PaintTag::Axes | PaintTag::Wear => bucket.index < 3,
         };
         visibility.set_if_neq(if shown {
             Visibility::Inherited
@@ -656,6 +753,11 @@ pub struct PaintParams {
     pub zebra_period: f32,
     pub zebra_fill: f32,
     pub zebra_zoom: f32,
+    /// Колея траекторий узла — [`RoadPaintStyle::turn_wear`].
+    pub turn_wear: f32,
+    pub rut_offset: f32,
+    pub rut_sigma: f32,
+    pub lane_width: f32,
 }
 
 impl PaintParams {
@@ -677,17 +779,61 @@ impl PaintParams {
             zebra_period: ZEBRA_PERIOD,
             zebra_fill: ZEBRA_FILL,
             zebra_zoom: ZEBRA_ZOOM_MAX,
+            turn_wear: style.turn_wear(),
+            rut_offset: RUT_OFFSET,
+            rut_sigma: RUT_SIGMA,
+            lane_width: STREET_LANE_WIDTH,
         }
     }
 }
 
+/// Проход материала краски. Колея траекторий узла ложится **как тень** —
+/// перекрытие двух колей не светлее одной, — а обычный блендинг перекрытия
+/// складывает. Поэтому она рисуется в два прохода, и кадр между ними хранит
+/// её в своей альфе (асфальт под ней непрозрачен, альфа там единица):
+///
+/// - [`Self::WearMask`] пишет только альфу, операцией `Min`, значение
+///   `1 − колея`: в пикселе остаётся **наибольшая** колея из всех полос;
+/// - [`Self::Wear`] умножает цвет на `2 − альфа`, то есть на `1 + колея` —
+///   ту же колею, что множитель `surface.wgsl`, — и возвращает альфу в
+///   единицу. Повторное наложение там, где полосы перекрылись, видит
+///   единицу и цвета не меняет.
+///
+/// Меш маски лежит ниже меша наложения (`Z_ROAD_WEAR_MASK` < `Z_ROAD_WEAR`),
+/// и прозрачная фаза рисует их по порядку целиком.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+pub enum PaintPass {
+    #[default]
+    Lines,
+    WearMask,
+    Wear,
+}
+
 /// Материал слоя краски: вершинный цвет с альфой рождения линии × линия,
-/// которую шейдер рисует по координатам полосы. Один на приложение, хэндл —
-/// в `surface::SurfaceMaterials` рядом с материалами поверхностей.
+/// которую шейдер рисует по координатам полосы. По одному на проход
+/// ([`PaintPass`]) на приложение, хэндлы — в `surface::SurfaceMaterials`
+/// рядом с материалами поверхностей.
 #[derive(Asset, TypePath, AsBindGroup, Clone, Debug)]
+#[bind_group_data(PaintKey)]
 pub struct PaintMaterial {
     #[uniform(0)]
     pub params: PaintParams,
+    pub pass: PaintPass,
+}
+
+/// Ключ конвейера материала краски — проход.
+#[repr(C)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PaintKey {
+    pass: PaintPass,
+}
+
+impl From<&PaintMaterial> for PaintKey {
+    fn from(material: &PaintMaterial) -> Self {
+        Self {
+            pass: material.pass,
+        }
+    }
 }
 
 impl Material2d for PaintMaterial {
@@ -704,11 +850,12 @@ impl Material2d for PaintMaterial {
     }
 
     /// Та же раскладка вершин, что у материала поверхностей: позиция, цвет и
-    /// `ATTRIBUTE_RIBBON`.
+    /// `ATTRIBUTE_RIBBON`. Проходы колеи — свой шейдерный вариант и своё
+    /// смешивание ([`PaintPass`]).
     fn specialize(
         descriptor: &mut RenderPipelineDescriptor,
         layout: &MeshVertexBufferLayoutRef,
-        _key: Material2dKey<Self>,
+        key: Material2dKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
         let vertex_layout = layout.0.get_layout(&[
             Mesh::ATTRIBUTE_POSITION.at_shader_location(0),
@@ -716,6 +863,43 @@ impl Material2d for PaintMaterial {
             ATTRIBUTE_RIBBON.at_shader_location(2),
         ])?;
         descriptor.vertex.buffers = vec![vertex_layout];
+        let (define, blend, write_mask) = match key.bind_group_data.pass {
+            PaintPass::Lines => return Ok(()),
+            PaintPass::WearMask => (
+                "WEAR_MASK",
+                BlendState {
+                    color: BlendComponent::REPLACE,
+                    alpha: BlendComponent {
+                        src_factor: BlendFactor::One,
+                        dst_factor: BlendFactor::One,
+                        operation: BlendOperation::Min,
+                    },
+                },
+                ColorWrites::ALPHA,
+            ),
+            PaintPass::Wear => (
+                "WEAR_APPLY",
+                BlendState {
+                    // цвет × (1 + колея): src — единица, умноженная на dst,
+                    // плюс dst × (1 − альфа маски)
+                    color: BlendComponent {
+                        src_factor: BlendFactor::Dst,
+                        dst_factor: BlendFactor::OneMinusDstAlpha,
+                        operation: BlendOperation::Add,
+                    },
+                    // альфа — снова единица
+                    alpha: BlendComponent::REPLACE,
+                },
+                ColorWrites::ALL,
+            ),
+        };
+        if let Some(fragment) = descriptor.fragment.as_mut() {
+            fragment.shader_defs.push(define.into());
+            for target in fragment.targets.iter_mut().flatten() {
+                target.blend = Some(blend);
+                target.write_mask = write_mask;
+            }
+        }
         Ok(())
     }
 }

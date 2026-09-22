@@ -223,7 +223,7 @@ pub fn measure_cars(
     traffic: TrafficSide,
 ) -> (usize, Vec<LayerCost>) {
     let started = std::time::Instant::now();
-    let junctions = junctions::marking_breaks(roads, is_carriageway);
+    let junctions = junctions::marking_breaks(roads, is_carriageway, &[]);
     let breaks_took = started.elapsed();
     let started = std::time::Instant::now();
     let districts = Districts::new(buildings);
@@ -395,7 +395,7 @@ pub fn mesh_cars(
     // надо было прежде, чем его заводить. Доли, а не миллисекунды: абсолютное
     // время зависит от App Nap, перемеряет его `measure_cars` из
     // `examples/bench/map_meshing` (он печатает обе строки — `breaks` и `cars`)
-    let mut junctions = junctions::marking_breaks(&map.roads, is_carriageway);
+    let mut junctions = junctions::marking_breaks(&map.roads, is_carriageway, &[]);
     // и на клиньях между сечениями улицы: бордюр там ближе к оси
     for (road, clearing) in tapers::car_clearings(&map.roads, &map.network) {
         junctions.breaks[road].push(clearing);
@@ -454,7 +454,7 @@ pub fn cars_mesh(
     traffic: TrafficSide,
     detail: CarDetail,
 ) -> MeshBuilder {
-    let junctions = junctions::marking_breaks(roads, is_carriageway);
+    let junctions = junctions::marking_breaks(roads, is_carriageway, &[]);
     let districts = Districts::new(&[]);
     mesh_bodies(
         &park_cars(

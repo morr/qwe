@@ -72,7 +72,8 @@ pub use self::roads::{CrossingMode, ROAD_COLOR, RoadJoin, RoadStyle};
 // краска и колея: ресурс ручек Paint/Wear (панель игры и витрины `roads`), а
 // материал краски — витринам, которые поднимают материалы поверхностей сами
 pub use self::roads::paint::{
-    PAINT_MAX, PAINT_MIN, PAINT_STEP, PaintMaterial, RoadPaintStyle, WEAR_MAX, WEAR_MIN, WEAR_STEP,
+    PAINT_MAX, PAINT_MIN, PAINT_STEP, PaintMaterial, RoadPaintStyle, TURN_WEAR_MAX, TURN_WEAR_MIN,
+    TURN_WEAR_STEP, WEAR_MAX, WEAR_MIN, WEAR_STEP,
 };
 // сеть улиц — тип поля `MapData::network`; наружу его читает оверлей сети
 // витрины `roads`

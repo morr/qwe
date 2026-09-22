@@ -386,3 +386,58 @@ fn a_pocket_line_ends_at_the_junction_and_the_rest_run_through() {
     assert!(near(PAINT_LANES).iter().all(|&to_break| to_break < 0.0));
     assert!(near(PAINT_AXES).iter().any(|&to_break| to_break > 5.0));
 }
+
+/// Колея траекторий — одни и те же полосы в маске и в наложении (иначе
+/// наложение светлило бы по маске чужой колеи), сила кривой целая, у хвоста
+/// сходит в ноль вглубь полосы.
+#[test]
+fn turn_wear_lies_in_both_passes_and_its_tails_fade() {
+    let junction = JunctionWear {
+        curves: vec![
+            vec![Vec2::new(-15.0, 0.0), Vec2::new(15.0, 0.0)],
+            vec![Vec2::new(0.0, -15.0), Vec2::new(0.0, 15.0)],
+        ],
+        tails: vec![[Vec2::new(15.0, 0.0), Vec2::new(20.0, 0.0)]],
+    };
+    let mut painter = Painter::default();
+    painter.paint_turn_wear(&[junction]);
+    let (mask, wear) = (&painter.wear_mask, &painter.wear);
+    assert!(!wear.is_empty());
+    assert_eq!(mask.positions_for_test(), wear.positions_for_test());
+    let ribbon = wear.ribbon_coords_for_test().expect("координаты ленты");
+    assert!(
+        ribbon
+            .iter()
+            .all(|coords| coords[3] == LineKind::Wear.code())
+    );
+    let alphas: Vec<f32> = wear
+        .colors_for_test()
+        .iter()
+        .map(|color| color[3])
+        .collect();
+    // две кривые по четыре вершины и хвост: целая у кромки, ноль в глубине
+    assert!(alphas[..8].iter().all(|&alpha| alpha == 1.0));
+    assert_eq!(&alphas[8..], &[1.0, 1.0, 0.0, 0.0]);
+}
+
+#[test]
+fn the_wear_passes_have_their_own_materials_under_the_lines() {
+    let layers = Painter::default().layers();
+    let at = |name: &str| {
+        layers
+            .iter()
+            .find(|layer| layer.name == name)
+            .map(|layer| (layer.z, layer.material))
+            .expect(name)
+    };
+    let (mask_z, mask) = at(PAINT_WEAR_MASK);
+    let (wear_z, wear) = at(PAINT_WEAR);
+    let (lines_z, lines) = at(PAINT_LANES);
+    assert_eq!(mask, MaterialSpec::Paint(PaintPass::WearMask));
+    assert_eq!(wear, MaterialSpec::Paint(PaintPass::Wear));
+    assert_eq!(lines, MaterialSpec::Paint(PaintPass::Lines));
+    assert!(
+        mask_z < wear_z && wear_z < lines_z,
+        "маска, наложение, линии"
+    );
+}

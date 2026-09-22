@@ -311,6 +311,20 @@ pub struct RoadLine {
     /// мест** (`map::parking`): ряды ложатся по обе стороны от неё. Рисуется
     /// как любой `service`, да и то под асфальтом самой стоянки.
     pub parking_aisle: bool,
+    /// Манёвры полос по `turn:lanes`: `[по ходу точек, против]`, полосы слева
+    /// направо по ходу движения. Пусто — тега нет. У односторонней — только
+    /// первое (порядок точек и есть поток); у двусторонней общий `turn:lanes`
+    /// без направления не читается — чьи это полосы, не сказано.
+    pub turns: [Vec<LaneTurn>; 2],
+}
+
+/// Куда можно из полосы (`turn:lanes`): `slight_*` и `sharp_*` — те же
+/// поворот, `merge_to_*` и пустое значение — прямо, `reverse` — никуда.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct LaneTurn {
+    pub left: bool,
+    pub through: bool,
+    pub right: bool,
 }
 
 impl RoadLine {

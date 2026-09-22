@@ -201,7 +201,10 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     plain light plank — so a far zebra is a mean tone, not a flicker. For all three the
     ribbon's arclength runs across the road and «across» runs along it; to-break is a
     constant `NO_BREAK`.
-  - **Layers**: `road_paint_zebras` + `road_paint_lanes` + `road_paint_axes` at `Z_ROAD_PAINT` (above every
+  - **Layers**: `road_paint_wear_mask` + `road_paint_wear` at `Z_ROAD_WEAR_MASK` /
+    `Z_ROAD_WEAR` (the turn paths' wear in two passes, under every line — **Turn paths**
+    below), then `road_paint_zebras` + `road_paint_lanes` +
+    `road_paint_axes` at `Z_ROAD_PAINT` (above every
     street fill, **under** a parking lot — a lot laid over the carriageway hides its lines
     as it did when the asphalt shader drew them), `bridge_paint_lanes` +
     `bridge_paint_axes` at `Z_BRIDGE_PAINT` (a street's paint under an overpass must not
@@ -209,12 +212,13 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     `SurfaceMaterials` next to the surface ones, `MaterialSpec::Paint`.
   - **LOD**: the shader fades lane lines and stop lines from 0.32 to `LANE_ZOOM_MAX`
     0.4 m/px, zebras to `ZEBRA_ZOOM_MAX` 0.6 (their bars are gone into the plank by
-    ~0.25) and axes to `AXIS_ZOOM_MAX` 0.9; `PaintLods` (the same thresholds, four steps) hides the three meshes by
+    ~0.25) and axes and the turn wear to `AXIS_ZOOM_MAX` 0.9; `PaintLods` (the same thresholds, four steps) hides the meshes by
     `Visibility` (`paint::show_paint`, `PaintTag` on the entity, set by
     `spawn_road_meshes` by the layer's name) — **no rebuild** at a threshold. The gallery
     does not run the ladder and relies on the shader fade.
   - **`RoadPaintStyle`** (group `road_paint`): `paint` 0–1 (0.85) — the line opacity,
-    `wear` 0–0.15 (0.075) — the rut amplitude. Both uniforms
+    `wear` 0–0.15 (0.075) — the rut amplitude, `turn_wear` 0–0.08 (0.035) — the turn
+    paths' rut amplitude. All three uniforms
     (`surface::retune_surface_materials`), a knob drag rebuilds nothing; the Markings
     toggle of `RoadStyle` still decides whether the paint layer is built at all.
   - The report counts `paint N lines / M verts`. Tula at stage 3: see the roads plan's
@@ -305,8 +309,16 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   either line, which the node rule cannot do wrong. A service drive or a footway joining a
   street is not a participant and leaves the street's line whole. Count and time are in
   the `road meshing:` log line (`junctions N`).
+  **A stitch is a node too** (`junctions::with_stitches`, over `Stitches::targets`): the
+  loose end the network pulled onto another road's axis (**Stitches** below) meets it at
+  the target point, the target passes that node *inside a segment* (`Visit::inner`), and
+  the end's own OSM node stops being a dead end. Without it the 89 stitched ends of Tula
+  joined with no break, no zebra and ruts fading at their OSM end, short of the street.
   These are the **asphalt breaks** — the ruts fade and the medians open on them. The paint
-  layer breaks on its own set (**Junction paint** below), where a main road keeps its lines.
+  layer breaks on its own set (**Junction paint** below), where a main road keeps its lines,
+  and the street fill takes `NodePaint::asphalt` — these minus the ones on a junction's
+  **leading** road, whose ruts run through (**Turn paths** below). The medians keep the
+  unrewritten set: a median opens at a crossing whoever leads it.
   **Junction geometry is not computed as a union**: roads are independent polylines
   drawn overlapping in one opaque layer. Until stage 5 the `Round` caps were what made a
   junction *look* joined — the caps of the ways meeting at a node overlapped into a
@@ -314,14 +326,19 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   Now an arm ending in a junction ends **square** on the node, and the junction's own
   pieces — the kerb returns and the outer corners — fill the rest (**Kerb returns**
   below). The fill order is **narrow first, wide last** (`mesh_roads` sorts by width), so
-  the main road's fill and its gapped line lie over the side street's end. This is why the
+  the main road's fill and its gapped line lie over the side street's end — and a road that
+  **leads** some junction goes after all the others whatever its width: its ruts run
+  through the node, and a wider side street laid over them would cut them. This is why the
   road layer must stay opaque with a world-position colour: transparency or a per-way tint
   would expose every crossing.
 - **Junction paint** (`map/roads/node_paint.rs`, `NodePaint::new`, called by `mesh_roads`
-  when markings are on, on the stitched axes) — what the paint layer does at a junction.
-  It starts from the asphalt breaks and rewrites them per road:
-  - **Clusters**: junction nodes (`junctions::shared_nodes`, `SharedNode::is_junction` —
-    the same rule as the asphalt breaks) whose **zones** overlap are one junction. A zone
+  on the stitched axes — **always**, markings on or off: with markings off it paints
+  nothing, but the leading roads and the junction arms it finds are the asphalt's, not the
+  paint's) — what the paint layer does at a junction. It starts from the asphalt breaks
+  and rewrites them per road:
+  - **Clusters**: junction nodes (`junctions::with_stitches`, `SharedNode::is_junction` —
+    the same rule as the asphalt breaks, stitches included) whose **zones** overlap are one
+    junction. A zone
     is the half width of the node's widest road plus `CLUSTER_ZONE` 6 m (the street kerb
     radius); union-find over `Grid::pairs`. One set of arms, one break per road: two nodes
     of a cluster on one road get a bridging break between them, so no orphan dash is left
@@ -338,7 +355,10 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     half a step off. The other half of a divided street (`Pairs::runs` partner) is no
     rival. So a side street **joining** a through street — even of the same class — does
     not break its lines: the dashes run through the junction on the same axis, and the
-    report counts it as `main through`.
+    report counts it as `main through`. Signals aside, such a road **leads** the junction
+    (`Junction::leading`), and so does a roundabout that passes it whatever the approaches'
+    class — a ring has priority. The leading road loses its asphalt breaks there
+    (`NodePaint::asphalt`): the ruts run through, signals or not.
   - **Zebras and stop lines on the arms that break**: an OSM crossing on the arm (a
     `Crossing { marked: true }` node on the road, between the node and
     `ARM_CROSSING_REACH` 35 m past the junction edge — measured from the edge, since a
@@ -372,6 +392,66 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     what Tula maps); islands and `RoadArea` outlines are left to later stages.
   The report counts `junctions N (C clusters, main through T), zebras Z (O from OSM),
   stop lines S, pockets P`.
+- **Turn paths** (`map/roads/turns.rs`, `Turns::new` over `NodePaint::junctions`) — the
+  wear a junction gets from traffic crossing it. The lane ruts fade in a junction gap (a
+  car crossing a junction is not in a lane), so without these the middle of every node was
+  bare asphalt, and a real one is polished lighter than its approaches.
+  - **Arms** (`JunctionArm`): every arm of the cluster, rings included (a closed ring gets
+    two, one each way from the node, which the zebras never see), with its **edge** — the
+    arclength on its drawn axis where the junction gap ends (half the widest other road
+    plus 1 m, the asphalt break's reach), on a ring taken around the seam.
+  - **Lanes on an arm**: the body lane frame (`paint::lane_frame`), lane centres between
+    the lines; a one-way road carries traffic along its points only, a two-way road along
+    them on the traffic side's half (`MapData::traffic_side`), the middle lane of an odd
+    two-way road belonging to neither — except a one-lane road, driven both ways. Lanes
+    are counted **from the kerb**.
+  - **Maneuvers** by the turn angle between the in-lane's travel and the out-lane's:
+    under 35° straight, over 150° a U-turn (not drawn), else a **near** turn (toward the
+    kerb — right under right-hand traffic) or a **far** one. Which lanes into which:
+    `RoadLine::turns` (`turn:lanes`, parsed per direction of flow, left to right) when the
+    tag's lane count matches the arm's; otherwise the rule — straight from each lane into
+    its own (kerb-first, as many as both sides have), near only from the kerb lane into the
+    kerb lane, far only from the inner lane into the inner lane. Tagged far turns pair from
+    the axis side, the rest from the kerb.
+  - **Straight along a leading road is skipped**: its ruts are the asphalt's. On a
+    junction with no leader (a crossing of equals) both straights are curves, and their
+    weaker wear laid crosswise is the «both go through at half strength» the plan asked
+    for — a light cross, not a light square.
+  - **Curve**: a cubic Bézier from lane centre at one edge to lane centre at the other,
+    tangent to both (control arm a third of the chord, 0.39 of it at a quarter turn), cut
+    into links by **sagitta** — a link's chord at most `SAGITTA` 3 cm off the arc, no finer
+    than 3° (one link for a plain straight, four for a lane shift; 15° per link read as
+    facets on the turn — the author's report). Plus a **tail** of `TURN_TAIL` 5 m straight
+    into the lane, **one per lane end** (`JunctionWear::tails`), however many maneuvers
+    start or end there: over the tail the rut fades to nothing while the lane rut, faded
+    to nothing at the gap edge over the same 5 m (`WEAR_FADE`), fades in.
+  - **Drawn like a shadow**: a rut over a rut is no lighter, as a shadow over a shadow is
+    no darker — the author's rule, after the first version (a strip per curve,
+    alpha-blended) lit every crossing of two ruts and the whole middle of a crossing of
+    equals. A strip per curve and per tail (`Painter::paint_turn_wear`, kind 6), the two
+    gaussian ruts ±0.85 m (σ 0.32, the lane ruts' profile) drawn by the shader, the
+    strength in the vertex alpha (1 on a curve, 1 → 0 along a tail) — laid **twice**, in
+    two meshes and two passes of the paint material (`PaintPass`, a `bind_group_data` key
+    that picks a shader def and the blend state):
+    - `road_paint_wear_mask` at `Z_ROAD_WEAR_MASK` writes **only the frame's alpha**, with
+      the `Min` blend op, the value `1 − rut`: the asphalt under it is opaque (alpha 1), so
+      what is left in a pixel is `1 −` the **largest** rut of all the strips there;
+    - `road_paint_wear` at `Z_ROAD_WEAR` returns 1 and blends `colour × Dst +
+      dst × (1 − Dst alpha)` — the pixel times `1 + rut`, the multiplicative rut of
+      `surface.wgsl`, so **Turn wear** (`RoadPaintStyle::turn_wear`, 0–8 %, 3.5) reads in
+      the same percent as Wear — and writes alpha 1 back. A second strip over the same
+      pixel then reads alpha 1 and changes nothing.
+    The mask mesh sits below the apply mesh, and the transparent phase draws them whole in
+    z order, so every mask strip lands before any apply. Both fade by `visible(lane)` and
+    the axis zoom like the lines (`PaintTag::Wear`), and both are built with markings off
+    too, like the ruts. **The union was tried and dropped**: `i_overlay` over the ruts of
+    Tula — the `shadow::push_union` construction — took the road build from 112 to 841 ms
+    (428 per junction with shared tails) and 1.1 M vertices; the two passes cost what the
+    strips cost — 121 ms against 112 before stage 5в, 108 k vertices per mesh. What the mask cannot see is the asphalt's own ruts: a turn rut crossing
+    the leading road's lane rut still adds to it.
+  - **No guide dashes**: the 1.7 marking of a far turn was built from the same curves and
+    dropped at the author's call — dashed arcs across the junction read as clutter.
+  The report counts `turn paths W, leading roads L`.
 - **The drawn network** (`map/roads/network.rs`, `map/roads/corners.rs`) — what the ribbons
   are laid *from* is not quite `MapData::roads`, and the difference is four render-only
   corrections, all built on **`RoadNodes`** (every node two roads of any class share, same
@@ -448,7 +528,10 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     `own half − target half` when the own ribbon is wider, so its round cap does not poke
     past the far edge; the segment is probed every metre against buildings and water (a grid
     of their AABBs, 32 m), and a drive that ends at a garage wall stays ended. The point is
-    appended to the drawn path (`Stitches::apply`), so the sidewalk band follows too. The
+    appended to the drawn path (`Stitches::apply`), so the sidewalk band follows too; where
+    it landed — the target road, its segment and the nearest point on it — is kept in
+    `Stitches::targets`, and that point is a junction node for the breaks, the paint and
+    the turn paths (**Junctions** above). The
     markings see nothing of it: the end's dead-end break stands and the extension is
     past it. Tula: 39.
   - **Kerb returns** (`kerb_returns`) — the rounded corner of a junction. At every shared
@@ -801,7 +884,11 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   above) was then the louder half — a dark band along a street's edge carried straight
   over the crossing street's asphalt, where there is no kerb — and the ruts the subtler,
   two lanes' polished bands meeting at right angles in the middle of the junction. Neither
-  is a thing that happens: traffic fans out over a crossing and polishes nothing. The gate
+  is a thing that happens: traffic fans out over a crossing and polishes nothing. Since
+  stage 5в that is only half the story: a junction's **leading** road keeps its ruts through
+  the node (its asphalt breaks are dropped, `NodePaint::asphalt`), and what the rest of the
+  traffic polishes — each maneuver's own pair of ruts — is laid by the **Turn paths** above
+  in a layer of its own, not by this shader. The gate
   costs one `smoothstep` on the wear amplitude `w`, so anything added to the block later
   fades with the ruts. The block is
   gated on `high > low`: only a ribbon with a lane frame has that (`roads::road_lanes` —

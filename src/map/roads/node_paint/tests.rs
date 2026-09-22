@@ -48,8 +48,16 @@ fn paint_of(roads: Vec<RoadLine>, marks: Vec<RoadNode>, style: NodePaintStyle) -
     map.network = RoadNetwork::new(&map.roads);
     let drawn: Vec<&RoadLine> = map.roads.iter().collect();
     let paths: Vec<Vec<Vec2>> = map.roads.iter().map(|road| road.points.clone()).collect();
-    let base = marking_breaks(&map.roads, is_carriageway).breaks;
-    NodePaint::new(&drawn, &paths, &base, &map, style, |_| true, |_| Vec::new())
+    let base = marking_breaks(&map.roads, is_carriageway, &[]).breaks;
+    NodePaint::new(
+        &drawn,
+        &paths,
+        (&base, &[]),
+        &map,
+        style,
+        |_| true,
+        |_| Vec::new(),
+    )
 }
 
 /// Разрывы дороги, что не тупики.
@@ -113,6 +121,81 @@ fn an_equal_crossing_breaks_both_and_paints_every_arm() {
     assert!(!gaps(&paint, 1).is_empty());
     assert_eq!(paint.zebras.len(), 4);
     assert_eq!(paint.stop_lines.len(), 4);
+}
+
+#[test]
+fn an_equal_crossing_keeps_the_asphalt_breaks_of_both() {
+    let across = road(
+        vec![Vec2::new(100.0, -100.0), NODE, Vec2::new(100.0, 100.0)],
+        8.0,
+        Highway::Residential,
+        2,
+    );
+    let paint = paint_of(
+        vec![through(Highway::Residential), across],
+        Vec::new(),
+        EVERYTHING,
+    );
+    assert!(paint.junctions[0].leading.is_empty());
+    for road in 0..2 {
+        assert!(
+            paint.asphalt[road]
+                .iter()
+                .any(|found| found.at == NODE && found.reach > 0.0)
+        );
+    }
+    assert_eq!(paint.junctions[0].arms.len(), 4);
+}
+
+/// Примыкание, которое OSM не довёл до улицы, а сеть дотянула стежком, —
+/// такой же узел: зебра и разрыв на нём, улица цела.
+#[test]
+fn a_stitched_side_street_is_an_arm_of_the_junction() {
+    let mut map = MapData {
+        roads: vec![
+            through(Highway::Tertiary),
+            road(
+                vec![Vec2::new(90.0, -80.0), Vec2::new(90.0, -6.0)],
+                8.0,
+                Highway::Residential,
+                2,
+            ),
+        ],
+        ..default()
+    };
+    map.network = RoadNetwork::new(&map.roads);
+    let at = Vec2::new(90.0, 0.0);
+    let targets = [
+        [None, None],
+        [
+            None,
+            Some(StitchTarget {
+                road: 0,
+                segment: 0,
+                at,
+            }),
+        ],
+    ];
+    let drawn: Vec<&RoadLine> = map.roads.iter().collect();
+    let mut paths: Vec<Vec<Vec2>> = map.roads.iter().map(|road| road.points.clone()).collect();
+    // стежок — до оси улицы
+    paths[1].push(at);
+    let base = marking_breaks(&map.roads, is_carriageway, &targets).breaks;
+    let paint = NodePaint::new(
+        &drawn,
+        &paths,
+        (&base, &targets),
+        &map,
+        EVERYTHING,
+        |_| true,
+        |_| Vec::new(),
+    );
+    assert_eq!(paint.junctions.len(), 1);
+    assert_eq!(paint.junctions[0].leading, vec![0]);
+    assert!(gaps(&paint, 0).is_empty(), "{:?}", paint.breaks[0]);
+    assert!(!gaps(&paint, 1).is_empty());
+    assert_eq!(paint.zebras.len(), 1, "зебра поперёк примыкания");
+    assert_eq!(paint.stop_lines.len(), 1);
 }
 
 #[test]

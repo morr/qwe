@@ -12,8 +12,8 @@ use bevy::prelude::*;
 
 use crate::map::osm::model::{
     AreaKind, BIG_BOX_MAX_HEIGHT, BIG_BOX_MAX_LEVELS, BuildingUse, Colours, Faith, FenceKind,
-    Highway, PitchKind, RailKind, Rgb, RoadAreaKind, RoadClass, RoadNodeKind, Sacred, SacredForm,
-    ServiceTrack, StructureKind, WaterKind, is_big_box_shape, polyline_length,
+    Highway, LaneTurn, PitchKind, RailKind, Rgb, RoadAreaKind, RoadClass, RoadNodeKind, Sacred,
+    SacredForm, ServiceTrack, StructureKind, WaterKind, is_big_box_shape, polyline_length,
 };
 use crate::map::osm::overpass::Element;
 use crate::settings::STOREY_HEIGHT;
@@ -751,6 +751,52 @@ pub(super) fn tagged_lanes(tags: &HashMap<String, String>) -> Option<u8> {
         )
     })?;
     LANES_RANGE.contains(&lanes).then_some(lanes as u8)
+}
+
+/// Манёвры полос `[по ходу точек, против]` из `turn:lanes`. Односторонней
+/// годится и общий тег, и тег направления её потока (`oneway=-1` развёрнут
+/// ниже, так что поток после разбора всегда по ходу точек); двусторонней —
+/// только `turn:lanes:forward` / `:backward`. Полоса — значение между `|`,
+/// её манёвры — через `;`.
+pub(super) fn tagged_turns(tags: &HashMap<String, String>) -> [Vec<LaneTurn>; 2] {
+    let read = |key: &str| tags.get(key).map(|value| lane_turns(value));
+    if is_oneway(tags) {
+        let flow = if is_oneway_backward(tags) {
+            "turn:lanes:backward"
+        } else {
+            "turn:lanes:forward"
+        };
+        return [
+            read("turn:lanes")
+                .or_else(|| read(flow))
+                .unwrap_or_default(),
+            Vec::new(),
+        ];
+    }
+    [
+        read("turn:lanes:forward").unwrap_or_default(),
+        read("turn:lanes:backward").unwrap_or_default(),
+    ]
+}
+
+/// Одна строка `turn:lanes`: `left|through;right`. Неизвестное слово (в Туле
+/// есть `throught`) — прямо: полоса есть, и прямо из неё едут чаще всего.
+fn lane_turns(value: &str) -> Vec<LaneTurn> {
+    value
+        .split('|')
+        .map(|lane| {
+            let mut turn = LaneTurn::default();
+            for word in lane.split(';').map(str::trim) {
+                match word {
+                    "left" | "slight_left" | "sharp_left" => turn.left = true,
+                    "right" | "slight_right" | "sharp_right" => turn.right = true,
+                    "reverse" => {}
+                    _ => turn.through = true,
+                }
+            }
+            turn
+        })
+        .collect()
 }
 
 /// Шаг посадки аллеи из тегов, м. `spacing` как есть, иначе `count` /

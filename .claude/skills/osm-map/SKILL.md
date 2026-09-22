@@ -220,7 +220,12 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   without `lanes`, `lanes:forward` + `lanes:backward` — then **overwritten** by the
   section pass with the inferred count on every street and drive, so after the parse it
   is `None` on paths only). Coverage per city is in `references/osm-coverage.md` — Tula has `lanes` on 97 % of its
-  streets ≥ 8 m, the European cities on about half.
+  streets ≥ 8 m, the European cities on about half. `turns: [Vec<LaneTurn>; 2]` — the
+  `turn:lanes` per direction of flow (`parse/tags.rs::tagged_turns`: a one-way road reads
+  the plain tag or its flow's `:forward`/`:backward`, a two-way one only the directional
+  ones; each lane left to right as `LaneTurn { left, through, right }`, `slight_`/`sharp_`
+  folded into the turn, an unknown word — Tula has `throught` — into through). Only the
+  turn paths read it (`references/roads.md`, **Turn paths**); Tula 62 ways.
   **The direction of a one-way way is load-bearing now**, and it did not use to be: the
   cars park on one side of it, the right-hand kerb, so `oneway=-1` — "the traffic runs
   against the order of the points" — is **normalized at parse by reversing the way**
@@ -754,8 +759,9 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     `fences/tests.rs::the_far_bucket_draws_nothing`, each asserting the log line itself.
   - **Converted — ten modules, eleven layer doors.** `fences`, `rail`, `tram`, `wagons`,
     `industry`, `cars`,
-    `roads` (17 layers, `mesh_roads` — ten of its own with the median lawn
-    `road_medians`, the five paint layers of `roads/paint.rs` and the two over a big lot,
+    `roads` (19 layers, `mesh_roads` — ten of its own with the median lawn
+    `road_medians`, the seven paint layers of `roads/paint.rs` (the turn paths' wear mask
+    and apply among them) and the two over a big lot,
     `roads/lots.rs`), all of `spawn.rs` (the 13 surface and paint layers
     as `mesh_surfaces(map, parking_layout) -> (Vec<LayerMesh>, SurfaceReport)` — the
     parking layout arrives ready, because the car rows are drawn off the same one — plus

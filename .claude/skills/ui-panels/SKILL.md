@@ -141,12 +141,13 @@ did not fit 1080 px and ran off the top of the screen.
   **sidewalks**, **markings**, **Crossings** (`CrossingMode`: `Off` / `OSM` / `OSM + gen`)
   and **Stop lines** — the last two are the junction paint's (`map/roads/node_paint.rs`)
   and, being `RoadStyle` fields, rebuild the road layers like the rest; the roads gallery
-  carries the same two rows. Then two sliders on `RoadPaintStyle` under them:
-  **Paint** (the paint layer's opacity, 0–100 %, step 5) and **Wear** (the asphalt rut
-  amplitude, 0–15 %, step 0.5, printed with one decimal). Their own resource because both
-  are material uniforms (`surface::retune_surface_materials`) and a drag rebuilds nothing,
-  while a `RoadStyle` edit rebuilds every road layer; the roads gallery carries the same
-  two sliders. Then **Tram**, a cycle row of another resource again
+  carries the same two rows. Then three sliders on `RoadPaintStyle` under them:
+  **Paint** (the paint layer's opacity, 0–100 %, step 5), **Wear** (the asphalt rut
+  amplitude, 0–15 %, step 0.5, printed with one decimal) and **Turn wear** (the junction
+  turn paths' rut amplitude, `map/roads/turns.rs`, 0–8 %, step 0.5, same print). Their own
+  resource because all three are material uniforms (`surface::retune_surface_materials`)
+  and a drag rebuilds nothing, while a `RoadStyle` edit rebuilds every road layer; the
+  roads gallery carries the same three sliders. Then **Tram**, a cycle row of another resource again
   (`TramStyle::visible`, off by default). The
   tram sits here because its track runs on the carriageway, and it is deliberately not a
   `RoadStyle` field: that would remesh every road layer on a toggle whose only effect is one

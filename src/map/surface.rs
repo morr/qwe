@@ -31,7 +31,7 @@ use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey};
 use crate::loading::AppState;
 use crate::map::buildings::material::{RoofMaterial, RoofMaterialHandle};
 use crate::map::meshing::{ATTRIBUTE_RIBBON, MeshBuilder};
-use crate::map::roads::paint::{PaintMaterial, PaintParams, RoadPaintStyle};
+use crate::map::roads::paint::{PaintMaterial, PaintParams, PaintPass, RoadPaintStyle};
 use crate::map::water::{WATER_SHORE_COLOR, WATER_SHORE_WIDTH};
 use crate::prefs::retuned;
 
@@ -336,8 +336,12 @@ impl Default for SurfaceStyle {
 #[derive(Resource)]
 pub struct SurfaceMaterials {
     handles: [Handle<SurfaceMaterial>; SurfaceKind::ALL.len()],
-    paint: Handle<PaintMaterial>,
+    /// По материалу краски на проход (`PaintPass`, в порядке `PAINT_PASSES`).
+    paints: [Handle<PaintMaterial>; 3],
 }
+
+/// Проходы материала краски — порядок хэндлов [`SurfaceMaterials::paints`].
+const PAINT_PASSES: [PaintPass; 3] = [PaintPass::Lines, PaintPass::WearMask, PaintPass::Wear];
 
 impl SurfaceMaterials {
     pub fn handle(&self, kind: SurfaceKind) -> Handle<SurfaceMaterial> {
@@ -361,10 +365,13 @@ pub fn init_surface_materials(
             params: kind.params(style.texture, paint.wear()),
         })
     });
-    let paint = paints.add(PaintMaterial {
-        params: PaintParams::new(paint),
+    let paints = PAINT_PASSES.map(|pass| {
+        paints.add(PaintMaterial {
+            params: PaintParams::new(paint),
+            pass,
+        })
     });
-    commands.insert_resource(SurfaceMaterials { handles, paint });
+    commands.insert_resource(SurfaceMaterials { handles, paints });
 }
 
 /// Чем красить слой карты: плоским `ColorMaterial` (кант, рельсы, стены —
@@ -401,9 +408,10 @@ pub enum MaterialSpec {
     /// через [`MeshBuilder::with_roof_coords`]. Один на всё приложение, как и
     /// фактурные, — вариант появился вместе со зданиевыми слоями.
     Roof,
-    /// Материал слоя краски (`roads/paint.rs`). Меш — полосы
+    /// Материал слоя краски (`roads/paint.rs`) на проходе `PaintPass`: линии
+    /// или маска и наложение колеи узлов. Меш — полосы
     /// `MeshBuilder::push_paint_strip` в сборщике с координатами поверхности.
-    Paint,
+    Paint(PaintPass),
 }
 
 /// Собранный слой карты: меш плюс всё, что нужно знать, чтобы положить его в
@@ -512,7 +520,10 @@ impl LayerMaterials<'_> {
             MaterialSpec::Blend => LayerMaterial::Flat(self.flats.blend.clone()),
             MaterialSpec::Surface(kind) => LayerMaterial::Surface(self.surfaces.handle(kind)),
             MaterialSpec::Roof => LayerMaterial::Roof(self.roof.handle()),
-            MaterialSpec::Paint => LayerMaterial::Paint(self.surfaces.paint.clone()),
+            MaterialSpec::Paint(pass) => {
+                let slot = PAINT_PASSES.iter().position(|&known| known == pass);
+                LayerMaterial::Paint(self.surfaces.paints[slot.unwrap_or(0)].clone())
+            }
         }
     }
 }
@@ -597,8 +608,10 @@ pub fn retune_surface_materials(
             material.params = kind.params(style.texture, paint.wear());
         }
     }
-    if let Some(mut material) = paints.get_mut(&surfaces.paint) {
-        material.params = PaintParams::new(*paint);
+    for handle in &surfaces.paints {
+        if let Some(mut material) = paints.get_mut(handle) {
+            material.params = PaintParams::new(*paint);
+        }
     }
 }
 

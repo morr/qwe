@@ -13,6 +13,7 @@
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
+use super::network::StitchTarget;
 use crate::map::meshing::Break;
 use crate::map::osm::RoadLine;
 
@@ -34,11 +35,14 @@ pub(super) fn node_key(point: Vec2) -> (i32, i32) {
 pub const JUNCTION_MARGIN: f32 = 1.0;
 
 /// Чья дорога прошла через узел, какой её вершиной и торец ли это её.
+/// `inner` — узел не на вершине, а внутри отрезка `vertex..vertex + 1`: так
+/// в чужую ось упирается стежок ([`with_stitches`]).
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Visit {
     pub road: usize,
     pub vertex: usize,
     pub end: bool,
+    pub inner: bool,
 }
 
 /// Общий узел участвующих дорог и все их проходы через него.
@@ -88,12 +92,100 @@ pub(super) fn shared_nodes(
                     road: index,
                     vertex,
                     end,
+                    inner: false,
                 });
         }
     }
     let mut nodes: Vec<((i32, i32), SharedNode)> = nodes.into_iter().collect();
     nodes.sort_unstable_by_key(|(key, _)| *key);
     nodes.into_iter().map(|(_, node)| node).collect()
+}
+
+/// Узлы участвующих дорог вместе со **стежками** (`network::stitches`):
+/// торец, дотянутый до чужой оси, — такое же примыкание, как общая нода, только
+/// OSM её не провёл. Узел стежка стоит на оси цели, в точке `targets[i][side]`;
+/// цель проходит его внутри отрезка (`Visit::inner`), а своей ноды у торца
+/// больше нет — он не тупик. `targets` короче дорог — у остальных стежков нет.
+pub(super) fn with_stitches(
+    roads: &[impl std::borrow::Borrow<RoadLine>],
+    participates: impl Fn(&RoadLine) -> bool,
+    targets: &[[Option<StitchTarget>; 2]],
+) -> Vec<SharedNode> {
+    let mut nodes = shared_nodes(roads, &participates);
+    let takes = |index: usize| {
+        let road = roads[index].borrow();
+        participates(road) && road.points.len() >= 2
+    };
+    let mut keys: HashMap<(i32, i32), usize> = nodes
+        .iter()
+        .enumerate()
+        .map(|(index, node)| (node_key(node.at), index))
+        .collect();
+    // (дорога, вершина торца, точка торца)
+    let mut stitched_ends: Vec<(usize, usize, Vec2)> = Vec::new();
+    for (index, ends) in targets.iter().enumerate().take(roads.len()) {
+        for (side, target) in ends.iter().enumerate() {
+            let Some(target) = target else { continue };
+            if !takes(index) || target.road >= roads.len() || !takes(target.road) {
+                continue;
+            }
+            let own = &roads[index].borrow().points;
+            let last = own.len() - 1;
+            let vertex = if side == 0 { 0 } else { last };
+            stitched_ends.push((index, vertex, own[vertex]));
+            let points = &roads[target.road].borrow().points;
+            let (a, b) = (target.segment, target.segment + 1);
+            let tail = points.len() - 1;
+            let closed = points[0] == points[tail];
+            // точка стежка на вершине цели — обычный проход вершиной
+            let onto = if node_key(target.at) == node_key(points[a]) {
+                (a, false)
+            } else if b < points.len() && node_key(target.at) == node_key(points[b]) {
+                (b, false)
+            } else {
+                (a, true)
+            };
+            let slot = *keys.entry(node_key(target.at)).or_insert_with(|| {
+                nodes.push(SharedNode {
+                    at: target.at,
+                    visits: Vec::new(),
+                });
+                nodes.len() - 1
+            });
+            let visits = &mut nodes[slot].visits;
+            visits.push(Visit {
+                road: index,
+                vertex,
+                end: true,
+                inner: false,
+            });
+            let visit = Visit {
+                road: target.road,
+                vertex: onto.0,
+                end: !closed && !onto.1 && (onto.0 == 0 || onto.0 == tail),
+                inner: onto.1,
+            };
+            let known = visits.iter().any(|found| {
+                found.road == visit.road
+                    && found.vertex == visit.vertex
+                    && found.inner == visit.inner
+            });
+            if !known {
+                visits.push(visit);
+            }
+        }
+    }
+    // торец со стежком — не тупик: его проход своей нодой уходит
+    for node in &mut nodes {
+        node.visits.retain(|visit| {
+            !stitched_ends.iter().any(|&(road, vertex, at)| {
+                visit.road == road && visit.vertex == vertex && !visit.inner && node.at == at
+            })
+        });
+    }
+    nodes.retain(|node| !node.visits.is_empty());
+    nodes.sort_by_key(|node| node_key(node.at));
+    nodes
 }
 
 /// Разрывы разметки по дорогам: `breaks[i]` — у `roads[i]`, у дорог вне
@@ -109,16 +201,20 @@ pub struct MarkingBreaks {
 /// торцов (way разрезан по смене тега) — не разрыв вовсе. Замкнутый way
 /// (кольцо одним way) торцов не имеет.
 ///
-/// Это разрывы **асфальта** — по ним гаснет колея и рвутся разделительные.
-/// Краска рвётся по своим (`roads/node_paint.rs`): главная проходит узел, не
-/// теряя линий.
+/// Стежки (`targets`, [`with_stitches`]) — такие же узлы: торец, дотянутый до
+/// чужой оси, рвётся у её кромки, а не у своей последней ноды.
+///
+/// Это разрывы **асфальта** — по ним гаснут колея и разделительные. Краска
+/// рвётся по своим (`roads/node_paint.rs`): главная проходит узел, не теряя
+/// линий, и она же снимает с главной эти разрывы, чтобы колея шла сквозь.
 pub fn marking_breaks(
     roads: &[RoadLine],
     participates: impl Fn(&RoadLine) -> bool,
+    targets: &[[Option<StitchTarget>; 2]],
 ) -> MarkingBreaks {
     let mut breaks = vec![Vec::new(); roads.len()];
     let mut junctions = 0;
-    for node in shared_nodes(roads, participates) {
+    for node in with_stitches(roads, participates, targets) {
         let SharedNode { at, visits } = &node;
         let at = *at;
         if !node.is_junction() {
@@ -155,7 +251,7 @@ mod tests {
     const NODE: Vec2 = Vec2::new(50.0, 50.0);
 
     fn breaks_of(roads: &[RoadLine]) -> MarkingBreaks {
-        marking_breaks(roads, |road| road.width >= 8.0)
+        marking_breaks(roads, |road| road.width >= 8.0, &[])
     }
 
     fn at_node(breaks: &[Break], node: Vec2) -> Break {
@@ -239,6 +335,37 @@ mod tests {
             at_node(&found.breaks[0], Vec2::new(50.0, 0.0)).reach,
             5.0 + JUNCTION_MARGIN,
             "рвёт самая широкая из остальных"
+        );
+    }
+
+    #[test]
+    fn a_stitched_end_joins_the_street_it_was_stitched_to() {
+        let through = across(50.0, 12.0);
+        let side = street(vec![Vec2::new(40.0, 0.0), Vec2::new(40.0, 40.0)], 8.0);
+        let at = Vec2::new(40.0, 50.0);
+        let targets = [
+            [None, None],
+            [
+                None,
+                Some(StitchTarget {
+                    road: 0,
+                    segment: 0,
+                    at,
+                }),
+            ],
+        ];
+        let found = marking_breaks(&[through, side], |road| road.width >= 8.0, &targets);
+        assert_eq!(found.junctions, 1);
+        assert_eq!(at_node(&found.breaks[0], at).reach, 4.0 + JUNCTION_MARGIN);
+        assert_eq!(at_node(&found.breaks[1], at).reach, 6.0 + JUNCTION_MARGIN);
+        assert_eq!(
+            found.breaks[1]
+                .iter()
+                .filter(|found| found.reach == 0.0)
+                .count(),
+            1,
+            "торец со стежком — не тупик: {:?}",
+            found.breaks[1]
         );
     }
 

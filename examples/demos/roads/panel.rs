@@ -3,8 +3,8 @@
 //! Виджеты — игровые киты (`qwe::ui`), а ручки стиля — те же семь строк, что в
 //! секции Roads панели игры, привязанные к тому же `RoadStyle`: правка
 //! пересобирает все примеры, так что стык, сглаживание, кант, тротуары,
-//! разметку, зебры и стоп-линии можно сравнивать на одном и том же узле. Ползунки Paint и Wear —
-//! `RoadPaintStyle`, юниформы материалов: протяжка ничего не пересобирает.
+//! разметку, зебры и стоп-линии можно сравнивать на одном и том же узле. Ползунки Paint, Wear и
+//! Turn wear — `RoadPaintStyle`, юниформы материалов: протяжка ничего не пересобирает.
 //!
 //! **Шрифт панель ставит себе сама** — `apply_panel_font` живёт в `UiPlugin`,
 //! которого здесь нет, а во встроенном шрифте bevy нет кириллицы.
@@ -15,7 +15,7 @@ use bevy::ui_widgets::Activate;
 use qwe::city::City;
 use qwe::map::{
     CrossingMode, PAINT_MAX, PAINT_MIN, PAINT_STEP, RoadJoin, RoadPaintStyle, RoadStyle, Smoothing,
-    WEAR_MAX, WEAR_MIN, WEAR_STEP,
+    TURN_WEAR_MAX, TURN_WEAR_MIN, TURN_WEAR_STEP, WEAR_MAX, WEAR_MIN, WEAR_STEP,
 };
 use qwe::ui::knob::{CycleBinding, SliderBinding, spawn_cycle_row, spawn_knob};
 
@@ -214,6 +214,18 @@ pub(crate) fn spawn_panel(
             get: |paint: &RoadPaintStyle| paint.wear,
             set: |paint, value| paint.wear = value,
             range: (WEAR_MIN, WEAR_MAX, WEAR_STEP),
+            text: |value| format!("{:.1}%", value * 100.),
+        },
+    );
+    spawn_knob(
+        &mut commands,
+        panel,
+        "Turn wear",
+        &*paint,
+        SliderBinding {
+            get: |paint: &RoadPaintStyle| paint.turn_wear,
+            set: |paint, value| paint.turn_wear = value,
+            range: (TURN_WEAR_MIN, TURN_WEAR_MAX, TURN_WEAR_STEP),
             text: |value| format!("{:.1}%", value * 100.),
         },
     );

@@ -38,7 +38,8 @@ use std::collections::BTreeMap;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
-use super::junctions::{JUNCTION_MARGIN, SharedNode, Visit, node_key, shared_nodes};
+use super::junctions::{JUNCTION_MARGIN, SharedNode, Visit, node_key, with_stitches};
+use super::network::StitchTarget;
 use super::{is_carriageway, lane_count};
 use crate::map::along::{arclengths, place_on_path};
 use crate::map::grid::Grid;
@@ -122,11 +123,34 @@ pub struct Pocket {
     pub gap: Break,
 }
 
+/// Плечо узла так, как его видят траектории манёвров (`roads/turns.rs`):
+/// дорога уходит от кромки узла — длины `edge` на её нарисованной оси — в
+/// сторону `dir` (+1 — к концу).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct JunctionArm {
+    pub road: usize,
+    pub edge: f32,
+    pub dir: f32,
+}
+
+/// Узел (кластер) для траекторий: его плечи и дороги, что его **ведут** —
+/// проходят насквозь, и уступать им некому. Колея ведущей идёт через узел
+/// асфальтом ([`NodePaint::asphalt`]), и прямо по ней траектория не нужна.
+#[derive(Clone, PartialEq, Debug, Default)]
+pub struct Junction {
+    pub arms: Vec<JunctionArm>,
+    pub leading: Vec<usize>,
+}
+
 /// Краска узлов карты.
 #[derive(Default)]
 pub struct NodePaint {
     /// Разрывы краски по дорогам — вместо разрывов асфальта.
     pub breaks: Vec<Vec<Break>>,
+    /// Разрывы асфальта — колеи и разделительных: базовые без тех, что лежали
+    /// на ведущей дороге узла. Её колея идёт сквозь.
+    pub asphalt: Vec<Vec<Break>>,
+    pub junctions: Vec<Junction>,
     /// Карманы у торцов дорог `[начало, конец]`.
     pub pockets: Vec<[Option<Pocket>; 2]>,
     pub zebras: Vec<Zebra>,
@@ -244,12 +268,13 @@ struct Crossing {
 
 impl NodePaint {
     /// Краска узлов по дорогам `drawn`, нарисованным по `paths`. `base` —
-    /// разрывы асфальта (`junctions::marking_breaks`), `sidewalk` — есть ли у
-    /// дороги тротуар, `partners` — вторые половины разделённой улицы.
+    /// разрывы асфальта (`junctions::marking_breaks`), `targets` — стежки,
+    /// которые тоже узлы, `sidewalk` — есть ли у дороги тротуар, `partners` —
+    /// вторые половины разделённой улицы.
     pub fn new(
         drawn: &[&RoadLine],
         paths: &[impl AsRef<[Vec2]>],
-        base: &[Vec<Break>],
+        (base, targets): (&[Vec<Break>], &[[Option<StitchTarget>; 2]]),
         map: &MapData,
         style: NodePaintStyle,
         sidewalk: impl Fn(usize) -> bool,
@@ -257,13 +282,14 @@ impl NodePaint {
     ) -> Self {
         let mut paint = Self {
             breaks: base.to_vec(),
+            asphalt: base.to_vec(),
             pockets: vec![[None; 2]; drawn.len()],
             ..Self::default()
         };
         if drawn.len() != paths.len() || base.len() != drawn.len() {
             return paint;
         }
-        let nodes = shared_nodes(drawn, is_carriageway);
+        let nodes = with_stitches(drawn, is_carriageway, targets);
         let junctions: Vec<&SharedNode> = nodes.iter().filter(|node| node.is_junction()).collect();
         let marks: HashMap<(i32, i32), RoadNodeKind> = map
             .road_nodes
@@ -374,7 +400,7 @@ impl NodePaint {
             }
         }
         for list in visits.values_mut() {
-            list.sort_by_key(|(visit, _)| visit.vertex);
+            list.sort_by_key(|(visit, _)| (visit.vertex, visit.inner));
         }
         let near = |point: Vec2, reach: f32| {
             near_marks
@@ -393,6 +419,9 @@ impl NodePaint {
         // плечи: куда дорога уходит из кластера. Кусок между двумя узлами
         // одного кластера — не плечо, он внутри узла
         let mut arms: Vec<Arm> = Vec::new();
+        // плечи замкнутых колец: зебр и стоп-линий поперёк кольца нет, а
+        // траектории по нему есть — въезд, дуга, съезд
+        let mut ring_arms: Vec<Arm> = Vec::new();
         let mut continues: BTreeMap<usize, usize> = BTreeMap::new();
         for (&road, list) in &visits {
             let points = &drawn[road].points;
@@ -400,16 +429,23 @@ impl NodePaint {
             if points[0] == points[last] {
                 // кольцо узел проходит, плеч поперёк него нет
                 *continues.entry(street(road)).or_default() += 2;
+                let (_, at) = list[0];
+                ring_arms.extend([-1.0, 1.0].map(|dir| Arm {
+                    road,
+                    at,
+                    dir,
+                    end: None,
+                }));
                 continue;
             }
             let (first, at_first) = list[0];
             let (final_visit, at_final) = list[list.len() - 1];
-            if first.vertex > 0 {
+            if first.vertex > 0 || first.inner {
                 arms.push(Arm {
                     road,
                     at: at_first,
                     dir: -1.0,
-                    end: (first.vertex == last).then_some(1),
+                    end: (first.vertex == last && !first.inner).then_some(1),
                 });
             }
             if final_visit.vertex < last {
@@ -463,21 +499,32 @@ impl NodePaint {
         };
 
         let mut broken: BTreeMap<usize, f32> = BTreeMap::new();
+        let mut reaches: BTreeMap<usize, f32> = BTreeMap::new();
+        let mut leading: Vec<usize> = Vec::new();
         for (&road, list) in &visits {
             let others = others(road);
             let own = rank(road);
-            let yields = signalized
-                || !passes(road)
-                || others.iter().any(|&other| {
-                    let theirs = rank(other);
-                    theirs > own || (theirs == own && passes(other))
-                });
+            // ведёт узел: проходит насквозь, и уступать некому — ни дороге
+            // выше рангом, ни такой же проходящей. Кольцо ведёт всегда: у него
+            // приоритет, въезды ему уступают
+            let leads = passes(road)
+                && (drawn[road].is_roundabout()
+                    || !others.iter().any(|&other| {
+                        let theirs = rank(other);
+                        theirs > own || (theirs == own && passes(other))
+                    }));
+            let yields = signalized || !leads;
             let widest = others
                 .iter()
                 .map(|&other| drawn[other].width / 2.0)
                 .fold(0.0_f32, f32::max);
             let reach = widest + JUNCTION_MARGIN;
+            reaches.insert(road, reach);
             let here: Vec<Vec2> = list.iter().map(|(_, at)| *at).collect();
+            if leads {
+                leading.push(road);
+                self.asphalt[road].retain(|found| !here.contains(&found.at) || found.reach == 0.0);
+            }
             let breaks = &mut self.breaks[road];
             breaks.retain(|found| !here.contains(&found.at) || found.reach == 0.0);
             if !yields {
@@ -525,6 +572,34 @@ impl NodePaint {
                 },
             });
         }
+
+        // узел для траекторий: кромка каждого плеча на оси его дороги
+        let junction_arms = arms
+            .iter()
+            .chain(&ring_arms)
+            .filter(|arm| !drawn[arm.road].bridge)
+            .map(|arm| {
+                let walk = Walk::new(paths[arm.road].as_ref());
+                let reach = reaches.get(&arm.road).copied().unwrap_or(JUNCTION_MARGIN);
+                let edge = walk.project(arm.at) + arm.dir * reach;
+                let path = walk.path;
+                // у кольца длина идёт по кругу через шов
+                let closed = path.len() > 2 && path[0] == path[path.len() - 1];
+                JunctionArm {
+                    road: arm.road,
+                    edge: if closed {
+                        edge.rem_euclid(walk.total)
+                    } else {
+                        edge.clamp(0.0, walk.total)
+                    },
+                    dir: arm.dir,
+                }
+            })
+            .collect();
+        self.junctions.push(Junction {
+            arms: junction_arms,
+            leading,
+        });
 
         // зебры и стоп-линии на плечах, что рвутся: сперва где встать зебре
         let first = ZEBRA_SETBACK + ZEBRA_LENGTH / 2.0;

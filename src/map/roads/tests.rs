@@ -635,15 +635,18 @@ fn the_city_wall_ribbon_stays_off_fortress_buildings() {
 // телеметрия области жили внутри `spawn_roads` — 275 строк, взять которые из
 // теста было нечем: проверять можно было только хелперы под ними.
 
-/// Пятнадцать дорожных слоёв снизу вверх, ровно в том порядке, в каком они
-/// уходят в мир: одиннадцать лент и четыре слоя краски над своим асфальтом.
-const LAYERS: [&str; 17] = [
+/// Девятнадцать дорожных слоёв снизу вверх, ровно в том порядке, в каком они
+/// уходят в мир: двенадцать лент и семь слоёв краски над своим асфальтом —
+/// колея траекторий узла (маска, потом наложение) ниже линий.
+const LAYERS: [&str; 19] = [
     "alley_casings",
     "alleys",
     "sidewalks",
     "road_medians",
     "road_casings",
     "roads",
+    paint::PAINT_WEAR_MASK,
+    paint::PAINT_WEAR,
     paint::PAINT_ZEBRAS,
     paint::PAINT_LANES,
     paint::PAINT_AXES,
@@ -708,7 +711,11 @@ fn only_the_bridge_shadow_is_blended() {
             "alleys" => MaterialSpec::Surface(SurfaceKind::Alley),
             "road_medians" => MaterialSpec::Surface(SurfaceKind::Grass),
             "roads" | "bridges" => MaterialSpec::Surface(SurfaceKind::Street),
-            name if paint::PaintTag::of(name).is_some() => MaterialSpec::Paint,
+            paint::PAINT_WEAR_MASK => MaterialSpec::Paint(paint::PaintPass::WearMask),
+            paint::PAINT_WEAR => MaterialSpec::Paint(paint::PaintPass::Wear),
+            name if paint::PaintTag::of(name).is_some() => {
+                MaterialSpec::Paint(paint::PaintPass::Lines)
+            }
             _ => MaterialSpec::Flat,
         };
         assert_eq!(layer.material, expected, "{}", layer.name);

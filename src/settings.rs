@@ -413,6 +413,11 @@ pub const Z_SIDEWALK: f32 = 1.6;
 pub const Z_ROAD_MEDIAN: f32 = 1.7;
 pub const Z_ROAD_CASING: f32 = 1.9;
 pub const Z_ROAD: f32 = 2.0;
+/// Колея траекторий узла (`map/roads/turns.rs`) — износ асфальта над ним и под
+/// краской: линии и зебры лежат поверх накатанного. Два меша — маска, потом
+/// наложение (`roads::paint::PaintPass`), и маска обязана лечь целиком раньше.
+pub const Z_ROAD_WEAR_MASK: f32 = 2.0002;
+pub const Z_ROAD_WEAR: f32 = 2.0003;
 /// Слой краски улиц (`map/roads/paint.rs`) — линии полос поверх асфальта всех
 /// улиц, но **под** стоянкой: стоянка, заходящая на проезжую часть, прячет её
 /// вместе с разметкой, как прятала, пока линии рисовал шейдер асфальта.
@@ -571,7 +576,9 @@ const _: () = {
     assert!(Z_ROAD_MEDIAN < Z_ROAD_CASING);
     // стоянка — над дорогами (её край обрезает проезды), под площадкой;
     // разметка — поверх своего покрытия
-    assert!(Z_ROAD < Z_ROAD_PAINT);
+    assert!(Z_ROAD < Z_ROAD_WEAR_MASK);
+    assert!(Z_ROAD_WEAR_MASK < Z_ROAD_WEAR);
+    assert!(Z_ROAD_WEAR < Z_ROAD_PAINT);
     assert!(Z_ROAD_PAINT < Z_PARKING);
     assert!(Z_PARKING < Z_PARKING_LINES);
     assert!(Z_PARKING_LINES < Z_PITCH);

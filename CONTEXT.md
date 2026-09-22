@@ -243,7 +243,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     solid. Two meshes per level (lane lines, axes) plus the zebras, streets at
     `Z_ROAD_PAINT` and bridges at `Z_BRIDGE_PAINT`; `PaintLods` hides the lane lines and
     stop lines past 0.4 m/px, the zebras past 0.6 and the axes past 0.9 without a rebuild.
-    `RoadPaintStyle` (panel knobs Paint and Wear) is uniforms only.
+    `RoadPaintStyle` (panel knobs Paint, Wear and Turn wear) is uniforms only.
   - **Junction paint** (`map/roads/node_paint.rs`) — where the paint layer breaks at a
     junction and what it draws there, on its own breaks rather than the asphalt ones
     (those stay for the ruts and the medians). **Junction cluster**: junction nodes whose
@@ -257,6 +257,17 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     `RoadStyle::stop_lines`); the halves of a divided street share one zebra line. A
     marked crossing elsewhere is a zebra with a gap in the lines. A **pocket**: a wide
     arm's lines with no room on the narrower arm across the junction end at its edge.
+    A **stitch** (the network's pulled loose end) is a junction node like a shared one.
+    The **leading road** of a junction — passing, and yielding by rank to nobody (a ring
+    always leads) — keeps its asphalt ruts through it.
+  - **Turn paths** (`map/roads/turns.rs`) — a lane-to-lane Bézier curve for every allowed
+    maneuver through a junction (`turn:lanes` — `RoadLine::turns` — when it matches the
+    lanes, else the rule: straight lane to lane, the near turn from the kerb lane, the far
+    one from the inner lane), with 5 m tails into both lanes. Drawn as **turn wear**, two
+    faint ruts under the lines (knob Turn wear), **like a shadow**: where ruts overlap
+    the pixel takes the strongest of them, not their sum — a mask pass keeps the maximum
+    in the frame's alpha, an apply pass brightens by it once (`roads::paint::PaintPass`).
+    Straight along the leading road is left to its asphalt ruts.
   - **Paired halves** (`map/roads/network/pairs.rs`, `Pairs`) — a divided street as OSM
     draws it: two opposite one-way ways of one class side by side (a street or a
     `service` drive, never a parking aisle), up to `PAIR_MAX_GAP` 15 m between the kerbs.

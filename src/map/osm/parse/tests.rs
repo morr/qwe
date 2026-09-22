@@ -7,8 +7,9 @@ use crate::map::osm::fixture::{
     Overpass, building, closed, fence, rect, square, street, water_area,
 };
 use crate::map::osm::model::{
-    BuildingUse, Colours, FenceKind, Highway, PitchKind, RailKind, RoadAreaKind, RoadNodeKind,
-    Sacred, SacredForm, ServiceTrack, StructureKind, WaterKind, distance_to_segment, is_big_box,
+    BuildingUse, Colours, FenceKind, Highway, LaneTurn, PitchKind, RailKind, RoadAreaKind,
+    RoadNodeKind, Sacred, SacredForm, ServiceTrack, StructureKind, WaterKind, distance_to_segment,
+    is_big_box,
 };
 use crate::map::osm::planting::{
     TREE_CROWN_REACH, TREE_MIN_SPACING, TREE_SHORE_CLEARANCE, TREE_WALL_CLEARANCE, near_area_edge,
@@ -1040,6 +1041,50 @@ fn oneway_roundabout_and_lanes_reach_the_road() {
         "одно направление без второго — не сумма"
     );
     assert_eq!(road(&[("lanes", "0")]).lanes, Some(2));
+}
+
+/// `turn:lanes` — по направлению потока: у односторонней `oneway=-1` тег
+/// `:backward` становится первым, у двусторонней общий тег не читается.
+#[test]
+fn turn_lanes_follow_the_flow() {
+    let turns = |pairs: &[(&str, &str)]| {
+        let tags: HashMap<String, String> = pairs
+            .iter()
+            .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+            .collect();
+        tagged_turns(&tags)
+    };
+    let lane = |left, through, right| LaneTurn {
+        left,
+        through,
+        right,
+    };
+    let (left, through, right) = (
+        lane(true, false, false),
+        lane(false, true, false),
+        lane(false, true, true),
+    );
+    assert_eq!(
+        turns(&[
+            ("oneway", "yes"),
+            ("turn:lanes", "left|through|through;right")
+        ]),
+        [vec![left, through, right], Vec::new()]
+    );
+    assert_eq!(
+        turns(&[("oneway", "-1"), ("turn:lanes:backward", "left|throught")]),
+        [vec![left, through], Vec::new()],
+        "опечатка — прямо"
+    );
+    assert_eq!(
+        turns(&[("turn:lanes", "left|through")]),
+        [Vec::new(), Vec::new()],
+        "у двусторонней чьи это полосы, не сказано"
+    );
+    assert_eq!(
+        turns(&[("turn:lanes:backward", "|right")]),
+        [Vec::new(), vec![through, lane(false, false, true)]]
+    );
 }
 
 /// Съезды развязок (`*_link`) — дороги своего класса, а не мусор словаря.

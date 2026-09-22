@@ -4,9 +4,10 @@
 //! деревьев); правка `RoadStyle` пересобирает дорожные слои
 //! (`map::roads::rebuild_roads`).
 //!
-//! Под разметкой — два ползунка `RoadPaintStyle`: свежесть краски (Paint) и
-//! колея асфальта (Wear). Оба — юниформы материалов, протяжка не пересобирает
-//! ничего, поэтому ресурс свой, а не поля `RoadStyle`.
+//! Под разметкой — три ползунка `RoadPaintStyle`: свежесть краски (Paint),
+//! колея асфальта (Wear) и колея траекторий узла (Turn wear). Все —
+//! юниформы материалов, протяжка не пересобирает ничего, поэтому ресурс свой,
+//! а не поля `RoadStyle`.
 //!
 //! Последние строки секции — трамвай (`TramStyle`) и машины (`CarStyle`,
 //! тумблер плюс ползунок занятости): у каждого свой ресурс со своей
@@ -24,7 +25,8 @@ use bevy::prelude::*;
 use crate::map::cars::{CAR_OCCUPANCY_MAX, CAR_OCCUPANCY_MIN, CAR_OCCUPANCY_STEP};
 use crate::map::{
     CarStyle, CrossingMode, PAINT_MAX, PAINT_MIN, PAINT_STEP, RoadJoin, RoadPaintStyle, RoadStyle,
-    Smoothing, TramStyle, WEAR_MAX, WEAR_MIN, WEAR_STEP,
+    Smoothing, TURN_WEAR_MAX, TURN_WEAR_MIN, TURN_WEAR_STEP, TramStyle, WEAR_MAX, WEAR_MIN,
+    WEAR_STEP,
 };
 use crate::ui::knob::{AddKnobsExt, CycleBinding, SliderBinding, spawn_cycle_row, spawn_knob};
 use crate::ui::rows::{ROW_LEFT_PX, next_in, on_off};
@@ -170,6 +172,19 @@ fn build_roads_section(
             get: |paint| paint.wear,
             set: |paint, value| paint.wear = value,
             range: (WEAR_MIN, WEAR_MAX, WEAR_STEP),
+            text: |value| format!("{:.1}%", value * 100.),
+        },
+    );
+    // колея траекторий узла (`map::roads::turns`) — тоже юниформ
+    spawn_knob(
+        &mut commands,
+        panel,
+        "Turn wear",
+        &*paint,
+        SliderBinding {
+            get: |paint| paint.turn_wear,
+            set: |paint, value| paint.turn_wear = value,
+            range: (TURN_WEAR_MIN, TURN_WEAR_MAX, TURN_WEAR_STEP),
             text: |value| format!("{:.1}%", value * 100.),
         },
     );
