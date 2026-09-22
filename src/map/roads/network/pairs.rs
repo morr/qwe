@@ -37,8 +37,9 @@ use std::borrow::Cow;
 use bevy::prelude::*;
 
 use super::{RoadNetwork, RoadNodes};
+use crate::map::along::{nearest_on_path, simplify};
 use crate::map::grid::Grid;
-use crate::map::osm::model::{closest_on_segment, polyline_length};
+use crate::map::osm::model::polyline_length;
 use crate::map::osm::{RoadClass, RoadLine};
 
 /// Шаг, которым ось ощупывается на соседа, м.
@@ -365,7 +366,7 @@ impl Pairs {
                 let partner = original[run.partner]
                     .as_deref()
                     .expect("ось пары сохранена до разводки");
-                let Some(near) = nearest(partner, *point) else {
+                let Some((near, _)) = nearest_on_path(partner, *point) else {
                     continue;
                 };
                 let Some(outward) = (*point - near).try_normalize() else {
@@ -376,7 +377,7 @@ impl Pairs {
                 *point += (wanted - *point) * weight;
             }
             // узлы остаются вершинами: по их точному месту их находят соседи
-            let kept = simplified(&dense, SIMPLIFY_TOLERANCE, |index| {
+            let kept = simplify(&dense, false, SIMPLIFY_TOLERANCE, |index| {
                 nodes.is_shared(dense[index])
             });
             aligned.push((road, kept.into_iter().map(|index| dense[index]).collect()));
@@ -394,7 +395,7 @@ impl Pairs {
                 .into_iter()
                 .filter(|(along, ..)| median.from <= *along && *along <= median.to)
             {
-                let Some(near) = nearest(partner, at) else {
+                let Some((near, _)) = nearest_on_path(partner, at) else {
                     continue;
                 };
                 let across = (near - at).normalize_or_zero();
@@ -405,7 +406,7 @@ impl Pairs {
             // вершина остаётся, если она нужна хоть одной из трёх линий
             let mut kept = vec![false; median.midline.len()];
             for line in [&median.midline, &median.inner[0], &median.inner[1]] {
-                for index in simplified(line, SIMPLIFY_TOLERANCE, |_| false) {
+                for index in simplify(line, false, SIMPLIFY_TOLERANCE, |_| false) {
                     kept[index] = true;
                 }
             }
@@ -562,13 +563,6 @@ fn beside(
     best
 }
 
-/// Ближайшая к `at` точка ломаной.
-fn nearest(path: &[Vec2], at: Vec2) -> Option<Vec2> {
-    path.windows(2)
-        .map(|pair| closest_on_segment(at, pair[0], pair[1]))
-        .min_by(|a, b| a.distance_squared(at).total_cmp(&b.distance_squared(at)))
-}
-
 /// Точки оси с шагом [`PROBE_STEP`]: длина от начала, точка, направление.
 pub(in crate::map::roads) fn samples(path: &[Vec2]) -> Vec<(f32, Vec2, Vec2)> {
     let mut points = Vec::new();
@@ -587,43 +581,6 @@ pub(in crate::map::roads) fn samples(path: &[Vec2]) -> Vec<(f32, Vec2, Vec2)> {
         start += length;
     }
     points
-}
-
-/// Вершины ломаной, которые оставляет упрощение Дугласа — Пекера с допуском
-/// `tolerance`, по возрастанию; концы и вершины `keep` остаются всегда.
-fn simplified(points: &[Vec2], tolerance: f32, keep: impl Fn(usize) -> bool) -> Vec<usize> {
-    let count = points.len();
-    if count <= 2 {
-        return (0..count).collect();
-    }
-    let mut kept = vec![false; count];
-    kept[0] = true;
-    kept[count - 1] = true;
-    for (index, kept) in kept.iter_mut().enumerate() {
-        *kept |= keep(index);
-    }
-    let anchors: Vec<usize> = (0..count).filter(|&index| kept[index]).collect();
-    let mut stack: Vec<(usize, usize)> =
-        anchors.windows(2).map(|pair| (pair[0], pair[1])).collect();
-    while let Some((from, to)) = stack.pop() {
-        let (a, b) = (points[from], points[to]);
-        let farthest = (from + 1..to)
-            .map(|index| {
-                (
-                    index,
-                    closest_on_segment(points[index], a, b).distance(points[index]),
-                )
-            })
-            .max_by(|x, y| x.1.total_cmp(&y.1));
-        if let Some((index, distance)) = farthest
-            && distance > tolerance
-        {
-            kept[index] = true;
-            stack.push((from, index));
-            stack.push((index, to));
-        }
-    }
-    (0..count).filter(|&index| kept[index]).collect()
 }
 
 /// Ломаная с вершинами не реже `step` и длина дуги в каждой вершине.

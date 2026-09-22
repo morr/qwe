@@ -122,3 +122,46 @@ fn a_path_without_length_has_no_place() {
     assert!(place_on_path(&[point, point, point], &along, 0.0).is_none());
     assert!(place_on_path(&[point], &[0.0], 0.0).is_none());
 }
+
+/// Ближайшая точка приходит со своей дуговой координатой — по звеньям до неё
+/// плюс кусок своего звена; без звеньев искать негде.
+#[test]
+fn the_nearest_point_carries_its_arclength() {
+    let (onto, along) = nearest_on_path(&straight(), Vec2::new(12.0, 3.0)).unwrap();
+    assert_close(onto, Vec2::new(10.0, 3.0), "nearest");
+    assert!((along - 13.0).abs() < EPSILON, "{along}");
+    assert!(nearest_on_path(&[Vec2::ZERO], Vec2::X).is_none());
+    assert!(nearest_on_path(&[], Vec2::X).is_none());
+}
+
+/// Дрожание тоньше допуска уходит, концы и вершины `keep` остаются.
+#[test]
+fn simplify_keeps_the_ends_and_the_anchors() {
+    let points: Vec<Vec2> = (0..=10)
+        .map(|x| Vec2::new(x as f32, if x % 2 == 0 { 0.0 } else { 0.01 }))
+        .collect();
+    assert_eq!(simplify(&points, false, 0.1, |_| false), vec![0, 10]);
+    assert_eq!(
+        simplify(&points, false, 0.1, |index| index == 4),
+        vec![0, 4, 10]
+    );
+    assert_eq!(simplify(&points, false, 0.001, |_| false).len(), 11);
+}
+
+/// У кольца последний пролёт замыкается на первую вершину, так что вершина
+/// на нём — не конец и уходит, как любая другая.
+#[test]
+fn simplify_closes_the_ring_through_the_first_vertex() {
+    let square = [
+        Vec2::new(0.0, 0.0),
+        Vec2::new(10.0, 0.0),
+        Vec2::new(10.0, 10.0),
+        Vec2::new(0.0, 10.0),
+        Vec2::new(0.01, 5.0),
+    ];
+    assert_eq!(simplify(&square, true, 0.1, |_| false), vec![0, 1, 2, 3]);
+    assert_eq!(
+        simplify(&square, false, 0.1, |_| false),
+        vec![0, 1, 2, 3, 4]
+    );
+}

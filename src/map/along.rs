@@ -11,8 +11,14 @@
 //! Кривизну обход не лечит: у кузова жёсткая база, и на изломе соседние места
 //! наезжают друг на друга. Проверять это положено вызывающему — по **мировому**
 //! расстоянию до предыдущего поставленного объекта, а не по дуговой координате.
+//!
+//! Сюда же — то, что смотрит на ломаную целиком, а не на звено: ближайшая
+//! точка с её дуговой координатой ([`nearest_on_path`]) и упрощение Дугласа —
+//! Пекера ([`simplify`]). У каждого было по две-три копии в `roads/*`.
 
 use bevy::prelude::*;
+
+use crate::map::osm::model::{closest_on_segment, distance_to_segment};
 
 /// Накопленные длины по точкам ломаной и её полная длина.
 pub(super) fn arclengths(points: &[Vec2]) -> (Vec<f32>, f32) {
@@ -59,6 +65,63 @@ fn direction_at(points: &[Vec2], index: usize) -> Option<Vec2> {
     (index..points.len() - 1)
         .chain((0..index).rev())
         .find_map(|link| (points[link + 1] - points[link]).try_normalize())
+}
+
+/// Ближайшая к `point` точка ломаной и её дуговая координата; при равных
+/// расстояниях — на первом из звеньев. `None` — у ломаной нет ни одного звена.
+pub(super) fn nearest_on_path(points: &[Vec2], point: Vec2) -> Option<(Vec2, f32)> {
+    let mut best: Option<(f32, Vec2, f32)> = None;
+    let mut run = 0.0;
+    for link in points.windows(2) {
+        let onto = closest_on_segment(point, link[0], link[1]);
+        let distance = onto.distance(point);
+        if best.is_none_or(|(closest, ..)| distance < closest) {
+            best = Some((distance, onto, run + link[0].distance(onto)));
+        }
+        run += link[0].distance(link[1]);
+    }
+    best.map(|(_, onto, along)| (onto, along))
+}
+
+/// Упрощение Дугласа — Пекера с допуском `tolerance`: индексы оставшихся
+/// вершин по возрастанию. Концы разомкнутой ломаной и вершины `keep`
+/// остаются всегда; у кольца (`closed`) всегда остаётся первая, и последний
+/// пролёт идёт от последней оставленной вершины к ней.
+pub(super) fn simplify(
+    points: &[Vec2],
+    closed: bool,
+    tolerance: f32,
+    keep: impl Fn(usize) -> bool,
+) -> Vec<usize> {
+    let count = points.len();
+    if count <= 2 {
+        return (0..count).collect();
+    }
+    let mut kept: Vec<bool> = (0..count).map(keep).collect();
+    kept[0] = true;
+    if !closed {
+        kept[count - 1] = true;
+    }
+    let anchors: Vec<usize> = (0..count).filter(|&index| kept[index]).collect();
+    let mut spans: Vec<(usize, usize)> =
+        anchors.windows(2).map(|pair| (pair[0], pair[1])).collect();
+    if closed {
+        spans.push((anchors[anchors.len() - 1], count));
+    }
+    while let Some((from, to)) = spans.pop() {
+        let (a, b) = (points[from % count], points[to % count]);
+        let farthest = (from + 1..to)
+            .map(|index| (index, distance_to_segment(points[index % count], a, b)))
+            .max_by(|x, y| x.1.total_cmp(&y.1));
+        if let Some((far, distance)) = farthest
+            && distance > tolerance
+        {
+            kept[far % count] = true;
+            spans.push((from, far));
+            spans.push((far, to));
+        }
+    }
+    (0..count).filter(|&index| kept[index]).collect()
 }
 
 #[cfg(test)]

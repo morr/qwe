@@ -108,6 +108,7 @@ use bevy::prelude::*;
 use qwe::city::City;
 use qwe::map::osm::crop::{self, Cropper, GeoRect};
 use qwe::map::osm::download::city_extract;
+use qwe::map::osm::model::distance_to_segment;
 use qwe::map::osm::overpass::{Element, GeoBounds, LatLon, OverpassResponse, cache_path};
 use serde::Deserialize;
 
@@ -371,14 +372,4 @@ fn address(city: City, osm: &OverpassResponse, bounds: &GeoBounds, at: Vec2) -> 
         streets.join(" × ")
     };
     format!("{}, {crossing}", parts.join(", "))
-}
-
-fn distance_to_segment(point: Vec2, from: Vec2, to: Vec2) -> f32 {
-    let link = to - from;
-    let t = if link.length_squared() > 0.0 {
-        ((point - from).dot(link) / link.length_squared()).clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
-    point.distance(from + link * t)
 }

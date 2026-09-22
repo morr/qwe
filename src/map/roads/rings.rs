@@ -28,7 +28,7 @@ use bevy::prelude::*;
 use super::junctions::node_key;
 use super::network::RoadNodes;
 use super::turns::{LaneEnd, curve};
-use crate::map::osm::model::closest_on_segment;
+use crate::map::along::nearest_on_path;
 use crate::map::osm::{RoadClass, RoadLine};
 use crate::map::shapes::is_ring;
 
@@ -407,7 +407,10 @@ fn webs_along(path: &[Vec2], half: f32, ring: &Ring, ring_width: f32) -> Vec<Vec
         let steps = (span.length() / SAMPLE_STEP).ceil().max(1.0) as usize;
         for step in 0..=steps {
             let point = from + span * (step as f32 / steps as f32);
-            let (onto, distance) = nearest_on(&ring.path, point);
+            let (onto, distance) = nearest_on_path(&ring.path, point)
+                .map_or((point, f32::INFINITY), |(onto, _)| {
+                    (onto, onto.distance(point))
+                });
             let along = direction.dot(ring.tangent(ring.param(onto).0)).abs() >= WEB_ALONG;
             let outside = point.distance_squared(ring.center) >= onto.distance_squared(ring.center);
             if !along || distance > reach || (distance > touch && !outside) {
@@ -424,17 +427,6 @@ fn webs_along(path: &[Vec2], half: f32, ring: &Ring, ring_width: f32) -> Vec<Vec
     }
     flush(&mut near, &mut far, &mut open);
     webs
-}
-
-/// Ближайшая к `point` точка ломаной и расстояние до неё.
-fn nearest_on(path: &[Vec2], point: Vec2) -> (Vec2, f32) {
-    path.windows(2)
-        .map(|link| {
-            let onto = closest_on_segment(point, link[0], link[1]);
-            (onto, onto.distance(point))
-        })
-        .min_by(|a, b| a.1.total_cmp(&b.1))
-        .unwrap_or((point, f32::INFINITY))
 }
 
 /// Петли из дуг колец: замкнутый way — петля сам по себе, открытые дуги

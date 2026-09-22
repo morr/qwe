@@ -227,8 +227,12 @@ fn an_arrow_follows_its_lane_on_a_curved_approach() {
     assert_eq!(turns.arrows.len(), 2);
     for arrow in &turns.arrows {
         let offset = crate::map::meshing::distance_to_path(arrow.at, &path);
-        let far = crate::map::roads::paint::along_back(&arrow.back, 25.0)
-            .expect("ось полосы длиннее двадцати пяти метров");
+        let (along, total) = crate::map::along::arclengths(&arrow.back);
+        assert!(
+            total >= 25.0,
+            "ось полосы короче двадцати пяти метров: {total}"
+        );
+        let (far, _) = crate::map::along::place_on_path(&arrow.back, &along, 25.0).unwrap();
         let drift = crate::map::meshing::distance_to_path(far, &path) - offset;
         assert!(drift.abs() < 0.2, "стрелка ушла с полосы на {drift} м");
         // прямая от кромки в тех же 25 м ушла бы на метры

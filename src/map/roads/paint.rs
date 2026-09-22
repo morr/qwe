@@ -49,7 +49,7 @@ use super::shape::lane_width;
 use super::tapers::{self, Tapers};
 use super::turns::{JunctionWear, LaneArrow};
 use super::{is_carriageway, lane_count};
-use crate::map::along::arclengths;
+use crate::map::along::{arclengths, place_on_path};
 use crate::map::grid::Grid;
 use crate::map::meshing::{
     ATTRIBUTE_RIBBON, Break, LaneFrame, MeshBuilder, PaintStation, break_distances, break_profile,
@@ -384,20 +384,6 @@ pub fn wedge_ends(
             lanes: lane_count(drawn[ends[side]?.narrow]),
         })
     })
-}
-
-/// Точка ломаной `line` на длине `distance` от её начала; `None` — ломаная
-/// короче.
-pub(super) fn along_back(line: &[Vec2], distance: f32) -> Option<Vec2> {
-    let mut run = 0.0;
-    for link in line.windows(2) {
-        let length = link[0].distance(link[1]);
-        if run + length >= distance && length > 0.0 {
-            return Some(link[0].lerp(link[1], (distance - run) / length));
-        }
-        run += length;
-    }
-    None
 }
 
 /// Меши слоя краски: линии полос и осевые, по улицам и по мостам отдельно,
@@ -841,10 +827,15 @@ impl Painter {
         // кончик и хвост — на оси полосы, по её длине от кромки: на изогнутом
         // подходе прямая от кромки уводила стрелку с полосы. Короткая ось (way
         // кончается раньше) — по прямой, как раньше
-        let (tip, tail) = match (
-            along_back(&arrow.back, setback),
-            along_back(&arrow.back, setback + ARROW_LENGTH),
-        ) {
+        let (along, total) = arclengths(&arrow.back);
+        let on_back = |distance: f32| {
+            (0.0..=total)
+                .contains(&distance)
+                .then(|| place_on_path(&arrow.back, &along, distance))
+                .flatten()
+                .map(|(point, _)| point)
+        };
+        let (tip, tail) = match (on_back(setback), on_back(setback + ARROW_LENGTH)) {
             (Some(tip), Some(tail)) => (tip, tail),
             _ => {
                 let forward = arrow.travel.normalize_or_zero();

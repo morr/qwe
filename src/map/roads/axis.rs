@@ -37,6 +37,7 @@ use super::network::pairs::Pairs;
 use super::network::{self, RoadNetwork, RoadNodes, StreetWay};
 use super::rings::{self, Rings};
 use super::shape::RoadShape;
+use crate::map::along::simplify;
 use crate::map::meshing::arc_steps;
 use crate::map::osm::{RoadClass, RoadLine};
 use crate::map::smooth::Smoothing;
@@ -274,7 +275,9 @@ fn smooth_run(
         keep[start] = true;
     }
     keep[0] = true;
-    let kept = simplify(&stitched.points, &keep, closed, curve.simplify);
+    let kept = simplify(&stitched.points, closed, curve.simplify, |index| {
+        keep[index]
+    });
     let kept: Vec<Vertex> = kept
         .iter()
         .map(|&index| Vertex {
@@ -490,51 +493,6 @@ fn through_pad(before: Vec2, at: Vec2, after: Vec2, deviation: f32) -> Option<[V
         .min(at.distance(before) / 2.0)
         .min(at.distance(after) / 2.0);
     Some([at - middle * reach, at + middle * reach])
-}
-
-/// Упрощение Дугласа — Пекера: индексы оставшихся вершин по возрастанию.
-/// `keep` — вершины, которые остаются в любом случае (первая — всегда); у
-/// кольца (`closed`) последний пролёт идёт от последней оставленной вершины к
-/// первой.
-fn simplify(points: &[Vec2], keep: &[bool], closed: bool, tolerance: f32) -> Vec<usize> {
-    let count = points.len();
-    let anchors: Vec<usize> = (0..count).filter(|&index| keep[index]).collect();
-    let mut kept = vec![false; count];
-    for &anchor in &anchors {
-        kept[anchor] = true;
-    }
-    let mut spans: Vec<(usize, usize)> =
-        anchors.windows(2).map(|pair| (pair[0], pair[1])).collect();
-    if closed {
-        let last = *anchors.last().expect("the first vertex is always kept");
-        spans.push((last, anchors[0] + count));
-    }
-    while let Some((from, to)) = spans.pop() {
-        if to <= from + 1 {
-            continue;
-        }
-        let (a, b) = (points[from % count], points[to % count]);
-        let (far, distance) = (from + 1..to)
-            .map(|index| (index, distance_to_chord(points[index % count], a, b)))
-            .max_by(|x, y| x.1.total_cmp(&y.1))
-            .expect("the span holds a vertex");
-        if distance > tolerance {
-            kept[far % count] = true;
-            spans.push((from, far));
-            spans.push((far, to));
-        }
-    }
-    (0..count).filter(|&index| kept[index]).collect()
-}
-
-fn distance_to_chord(point: Vec2, a: Vec2, b: Vec2) -> f32 {
-    let chord = b - a;
-    let length = chord.length_squared();
-    if length <= f32::EPSILON {
-        return point.distance(a);
-    }
-    let t = ((point - a).dot(chord) / length).clamp(0.0, 1.0);
-    point.distance(a + chord * t)
 }
 
 #[cfg(test)]

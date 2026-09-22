@@ -43,7 +43,7 @@ use bevy::prelude::*;
 use super::junctions::{JUNCTION_MARGIN, SharedNode, Visit, node_key, with_stitches};
 use super::network::StitchTarget;
 use super::{is_carriageway, lane_count};
-use crate::map::along::{arclengths, place_on_path};
+use crate::map::along::{arclengths, nearest_on_path, place_on_path};
 use crate::map::grid::Grid;
 use crate::map::meshing::Break;
 use crate::map::osm::{Highway, MapData, RoadLine, RoadNodeKind, TrafficSide};
@@ -234,22 +234,7 @@ impl<'a> Walk<'a> {
 
     /// Длина до ближайшей к `point` точки пути.
     fn project(&self, point: Vec2) -> f32 {
-        let mut best = (f32::INFINITY, 0.0);
-        for (index, link) in self.path.windows(2).enumerate() {
-            let step = link[1] - link[0];
-            let length = step.length_squared();
-            let t = if length > 0.0 {
-                ((point - link[0]).dot(step) / length).clamp(0.0, 1.0)
-            } else {
-                0.0
-            };
-            let distance = (link[0] + step * t).distance_squared(point);
-            if distance < best.0 {
-                let along = self.along[index] + t * (self.along[index + 1] - self.along[index]);
-                best = (distance, along);
-            }
-        }
-        best.1
+        nearest_on_path(self.path, point).map_or(0.0, |(_, along)| along)
     }
 
     /// Точка и направление пути на длине `at`, если она на пути.

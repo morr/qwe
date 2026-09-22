@@ -18,9 +18,9 @@ use super::junctions::{self, MarkingBreaks, node_key};
 use super::network::RoadNetwork;
 use super::node_paint::ZEBRA_LENGTH;
 use super::{is_carriageway, tapers};
-use crate::map::along::arclengths;
-use crate::map::meshing::Break;
-use crate::map::osm::model::{Highway, KerbParking, closest_on_segment, polyline_length};
+use crate::map::along::{arclengths, nearest_on_path};
+use crate::map::meshing::{Break, miter_offsets};
+use crate::map::osm::model::{Highway, KerbParking, polyline_length};
 use crate::map::osm::{RoadLine, RoadNode, RoadNodeKind, TrafficSide};
 use crate::map::seed::{Lcg, seed_from_point};
 
@@ -303,7 +303,7 @@ fn pockets_along(path: &[Vec2], breaks: &[Break]) -> Vec<Pocket> {
     let mut closed: Vec<(f32, f32)> = breaks
         .iter()
         .map(|found| {
-            let at = station(path, found.at);
+            let at = nearest_on_path(path, found.at).map_or(0.0, |(_, along)| along);
             let reach = found.reach + POCKET_CLEARANCE;
             (at - reach, at + reach)
         })
@@ -334,21 +334,6 @@ fn pockets_along(path: &[Vec2], breaks: &[Break]) -> Vec<Pocket> {
     pockets
 }
 
-/// Длина осевой до ближайшей к `point` её точки.
-fn station(path: &[Vec2], point: Vec2) -> f32 {
-    let mut best = (f32::INFINITY, 0.0);
-    let mut run = 0.0;
-    for link in path.windows(2) {
-        let onto = closest_on_segment(point, link[0], link[1]);
-        let distance = onto.distance(point);
-        if distance < best.0 {
-            best = (distance, run + link[0].distance(onto));
-        }
-        run += link[0].distance(link[1]);
-    }
-    best.1
-}
-
 /// Контур кармана со стороны `side`: внутренний край на `inner` от оси по
 /// всей длине, наружный на `outer` — между скосами. Годится и для асфальта,
 /// и для тротуара, отодвинутого за карман.
@@ -356,7 +341,7 @@ pub fn outline(path: &[Vec2], pocket: &Pocket, side: f32, [inner, outer]: [f32; 
     let (full_from, full_to) = pocket.full();
     let edge = |from: f32, to: f32, shift: f32| -> Vec<Vec2> {
         let piece = tapers::cut(path, from, to);
-        let offsets = crate::map::meshing::miter_offsets(&piece, false, side * shift);
+        let offsets = miter_offsets(&piece, false, side * shift);
         piece
             .iter()
             .zip(offsets)
