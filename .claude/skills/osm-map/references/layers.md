@@ -187,8 +187,12 @@ The layers that are neither roads, parking, buildings nor trees. Each bullet is 
 - **Rail layers** (`map/rail.rs`, its own module with its own zoom LOD, like the tram's;
   it left `map/roads.rs` when it stopped being a line style) — the **track**, not a map
   symbol: a ballast prism, ties across it and two steel rails on the gauge. Three merged
-  meshes, `RailLayerTag`, all above `Z_ROAD` (2) so a track lies on its street: ballast
-  `Z_RAIL` (2.4), ties `Z_RAIL_TIE` (2.5), steel `Z_RAIL_STEEL` (2.55) — the far-bucket
+  meshes, `RailLayerTag`, all above `Z_ROAD` (2) so a track lies on its street at a level
+  crossing, and all **below `Z_BRIDGE_SHADOW` (2.05)** so a road bridge over the tracks
+  covers them (Tula, 5896 4324: the track used to run over the deck — it sat at 2.4–2.55,
+  above every bridge, for the tram's sake, and the tram has its own layer above the deck
+  since): ballast `Z_RAIL` (2.03), ties `Z_RAIL_TIE` (2.035), steel `Z_RAIL_STEEL` (2.04)
+  — the far-bucket
   dash rides in the tie mesh, it never coexists with ties. Three rather
   than one, for the casing reason inverted — coplanar geometry z-fights, and a tie must
   sit above *every* ballast, or a junction of several ways delaminates. Inside the
@@ -440,8 +444,8 @@ The layers that are neither roads, parking, buildings nor trees. Each bullet is 
     are already dropped — 2.5× further out than `CAR_MAX_ZOOM` 0.8, so sharing
     `CarZoomBucket` would have hidden the yards early. By the cars' own 5.5 px criterion
     the wagon threshold would sit at 13.9/5.5 = 2.53 m/px; 2.0 is the conservative side
-    of it. `Z_WAGON` 2.65 — above the rail steel (a wagon stands *on* the rail),
-    below the cars.
+    of it. `Z_WAGON` 2.045 — above the rail steel (a wagon stands *on* the rail),
+    below the bridges, like the track under it.
   - **No style resource, unlike the cars.** The layer is decoration and still has no
     `visible`: it comes off by `WagonZoomBucket` alone. That is a difference from
     `map/cars/` the summary used to deny.

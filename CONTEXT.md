@@ -1183,8 +1183,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   style knobs of its own: the layer comes off by zoom alone. They have a zoom bucket of
   their own (`WAGON_MAX_ZOOM` 2.0 — a wagon is three times a car's length, and
   2.0 m/px leaves it the same ~7 screen pixels at which a car is already dropped, so the
-  yards survive 2.5× further out than the rows) at `Z_WAGON` 2.65, above the steel and
-  below the cars. **No
+  yards survive 2.5× further out than the rows) at `Z_WAGON` 2.045, above the steel and,
+  like the track, below the bridges. **No
   `QUERY_VERSION` bump was needed**: `out geom` already carries every tag of the element,
   so `service` was in the cache all along.
 - **Fences** (`map/fences.rs`) — `barrier=fence|wall|retaining_wall|hedge` as a line and,
