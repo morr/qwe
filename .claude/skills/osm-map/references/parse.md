@@ -416,7 +416,13 @@ be called alone:
       band is within two closing radii of the lot, so a long street does not drag asphalt
       along its whole way; pieces of one road are glued across links into one stroke;
       `RoadClass::Street` only — a footpath is not what a lot is entered from; the band
-      of a carriageway includes its sidewalks). `closed` = `base` offset **out by the
+      of a carriageway includes its sidewalks — only those it draws, never a
+      `sidewalk=separate|no` one). **A kerbside lot** (`parking=street_side`, its index
+      in `MapData::street_side_lots`) takes the carriageway band **without** the
+      sidewalk: the closing then fills the sidewalk strip between it and the kerb, and the
+      pocket is cut into the sidewalk instead of standing behind it — on Tula's Советская
+      a lay-by was separated from the lanes by a strip of drawn sidewalk, with nothing to
+      drive in from (Tula: 55 such outlines, Berlin 3275). `closed` = `base` offset **out by the
       radius and back in** (`i_overlay` `outline`, round joins, `ARC` 0.3). `closed − base`
       is what the closing added, and a piece of it is kept only if it lies **between the
       lot and a road** (`between`: a vertex within `TOUCH` 0.25 m of the lot's rings — or
