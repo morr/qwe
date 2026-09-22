@@ -239,24 +239,36 @@ const ARROW_MARK_REACH: f32 = 30.0;
 /// сеткой для [`Painter::arrow_setback`]: перебор всех на каждую стрелку стоил
 /// Туле 4 мс сборки.
 pub(super) struct ArrowMarks {
-    marks: Vec<(Vec2, Vec2, f32)>,
+    marks: Vec<Mark>,
     grid: Grid<usize>,
+}
+
+/// Отрезок поперечной краски и её полутолщина вдоль дороги, м.
+#[derive(Clone, Copy, Debug)]
+struct Mark {
+    from: Vec2,
+    to: Vec2,
+    half: f32,
 }
 
 impl ArrowMarks {
     pub(super) fn new(zebras: &[Zebra], stops: &[StopLine]) -> Self {
-        let marks: Vec<(Vec2, Vec2, f32)> = zebras
+        let marks: Vec<Mark> = zebras
             .iter()
-            .map(|zebra| (zebra.from, zebra.to, ZEBRA_LENGTH / 2.0))
-            .chain(
-                stops
-                    .iter()
-                    .map(|line| (line.from, line.to, STOP_WIDTH / 2.0)),
-            )
+            .map(|zebra| Mark {
+                from: zebra.from,
+                to: zebra.to,
+                half: ZEBRA_LENGTH / 2.0,
+            })
+            .chain(stops.iter().map(|line| Mark {
+                from: line.from,
+                to: line.to,
+                half: STOP_WIDTH / 2.0,
+            }))
             .collect();
         let mut grid = Grid::new(ARROW_MARK_REACH);
-        for (index, &(from, to, _)) in marks.iter().enumerate() {
-            grid.insert_segment(from, to, 0.0, index);
+        for (index, mark) in marks.iter().enumerate() {
+            grid.insert_segment(mark.from, mark.to, 0.0, index);
         }
         Self { marks, grid }
     }
@@ -342,11 +354,18 @@ pub fn wedge_frames(body_lanes: u8, narrow_lanes: u8, end: bool) -> [LaneFrame; 
     }
 }
 
-/// Длина улицы у первой точки каждого way и идёт ли way навстречу улице (тогда
-/// вдоль way она убывает). Штрихи идут по длине улицы, поэтому фаза на шве не
-/// рвётся.
-pub fn street_stations(network: &RoadNetwork, paths: &[impl AsRef<[Vec2]>]) -> Vec<(f32, bool)> {
-    let mut stations = vec![(0.0, false); paths.len()];
+/// Где way стоит на своей улице: длина улицы у его первой точки и идёт ли он
+/// улице навстречу (тогда вдоль way она убывает). Штрихи идут по длине улицы,
+/// поэтому фаза на шве не рвётся.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Station {
+    pub start: f32,
+    pub reversed: bool,
+}
+
+/// [`Station`] каждого way по его пути; way вне улицы стоит на нуле.
+pub fn street_stations(network: &RoadNetwork, paths: &[impl AsRef<[Vec2]>]) -> Vec<Station> {
+    let mut stations = vec![Station::default(); paths.len()];
     if !network.covers(paths.len()) {
         return stations;
     }
@@ -354,7 +373,10 @@ pub fn street_stations(network: &RoadNetwork, paths: &[impl AsRef<[Vec2]>]) -> V
         let mut run = 0.0;
         for way in &street.ways {
             let length = polyline_length(paths[way.road].as_ref());
-            stations[way.road] = (if way.reversed { run + length } else { run }, way.reversed);
+            stations[way.road] = Station {
+                start: if way.reversed { run + length } else { run },
+                reversed: way.reversed,
+            };
             run += length;
         }
     }
@@ -471,8 +493,9 @@ impl Painter {
         road: &RoadLine,
         points: &[Vec2],
         breaks: &[Break],
-        (wedges, pockets): ([Option<WedgeEnd>; 2], [Option<Pocket>; 2]),
-        station: (f32, bool),
+        wedges: [Option<WedgeEnd>; 2],
+        pockets: [Option<Pocket>; 2],
+        station: Station,
     ) {
         if !is_carriageway(road) {
             return;
@@ -515,7 +538,7 @@ impl Painter {
                 _ => body,
             })
             .collect();
-        let (start, reversed) = station;
+        let Station { start, reversed } = station;
         let street_along: Vec<f32> = along
             .iter()
             .map(|&at| if reversed { start - at } else { start + at })
@@ -789,7 +812,8 @@ impl Painter {
             &outer,
             &holes,
             across,
-            [NO_BREAK, LineKind::Hatch.code()],
+            NO_BREAK,
+            LineKind::Hatch.code(),
             color,
         );
         self.lines += 1;
@@ -804,7 +828,7 @@ impl Painter {
         let reach = Vec2::splat(ARROW_MARK_REACH);
         let mut farthest: f32 = 0.0;
         for index in marks.grid.near(arrow.at - reach, arrow.at + reach) {
-            let (from, to, half) = marks.marks[index];
+            let Mark { from, to, half } = marks.marks[index];
             // где отрезок разметки пересекает ось полосы
             let [a, b] = [from, to].map(|point| forward.perp_dot(point - arrow.at));
             if a * b > 0.0 || a == b {
@@ -889,7 +913,8 @@ impl Painter {
                 shape,
                 &[],
                 forward,
-                [NO_BREAK, LineKind::Arrow.code()],
+                NO_BREAK,
+                LineKind::Arrow.code(),
                 color,
             );
         }

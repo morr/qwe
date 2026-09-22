@@ -265,7 +265,7 @@ fn the_dash_phase_runs_along_the_street() {
     let stations = street_stations(&network, &paths);
     let (first, second) = (stations[0], stations[1]);
     // улица может идти в любую сторону — важно, что длина на шве одна
-    let at_seam = |(start, reversed): (f32, bool), length: f32| {
+    let at_seam = |Station { start, reversed }: Station, length: f32| {
         if reversed {
             start - length
         } else {

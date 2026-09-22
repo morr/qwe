@@ -578,9 +578,9 @@ impl RoadJoin {
 
     /// Излом и торец ленты `MeshBuilder`. `None` — `Square`: ленты у него нет
     /// вовсе, это `push_polyline` с продлёнными торцами. Одна таблица на всех,
-    /// кто кладёт ленту дороги ([`push_ribbon`], [`push_street_fill`]) —
+    /// кто кладёт ленту дороги ([`push_ribbon`], [`ROAD_RIBBON`]) —
     /// разойдясь, они дали бы двум слоям одной улицы разные торцы.
-    fn ribbon_shape(self) -> Option<(RibbonJoin, RibbonCap)> {
+    const fn ribbon_shape(self) -> Option<(RibbonJoin, RibbonCap)> {
         match self {
             Self::Square => None,
             Self::Miter => Some((RibbonJoin::Miter, RibbonCap::Butt)),
@@ -594,6 +594,14 @@ impl RoadJoin {
 /// со старой картинкой. Сам [`RoadJoin`] остаётся ручкой полосы посадки
 /// аллей (`TreeRowStyle`).
 pub const ROAD_JOIN: RoadJoin = RoadJoin::Round;
+
+/// [`ROAD_JOIN`] как излом и торец ленты `MeshBuilder`, развёрнутый на
+/// компиляции: у дорожной ленты стык всегда лента, и ветки «`Square` — это
+/// `push_polyline`» у заливки проезжей части нет.
+const ROAD_RIBBON: (RibbonJoin, RibbonCap) = match ROAD_JOIN.ribbon_shape() {
+    Some(shape) => shape,
+    None => panic!("ROAD_JOIN is not a ribbon join"),
+};
 
 /// Тумблеры дорожных слоёв; переключаются панелью (секции Roads и Road paint)
 /// и BRP, сохраняются в настройках между запусками. Правка пересобирает
@@ -1277,7 +1285,8 @@ pub fn mesh_roads(
     let mut node_paint = node_paint::NodePaint::new(
         &drawn,
         &stitched,
-        (&junctions.breaks, &stitches.targets),
+        &junctions.breaks,
+        &stitches.targets,
         map,
         node_paint::NodePaintStyle {
             crossings: if style.markings {
@@ -1419,7 +1428,8 @@ pub fn mesh_roads(
                 road,
                 points,
                 &node_paint.breaks[index],
-                (wedges, node_paint.pockets[index]),
+                wedges,
+                node_paint.pockets[index],
                 stations[index],
             );
         }
@@ -1447,7 +1457,6 @@ pub fn mesh_roads(
                 points,
                 road.width,
                 color.to_linear(),
-                ROAD_JOIN,
                 breaks,
                 [false; 2],
             );
@@ -1509,9 +1518,10 @@ pub fn mesh_roads(
                 &mut sidewalks,
                 body,
                 [road.width, sidewalk],
-                (runs, stitch, road.sidewalks),
+                runs,
+                stitch,
+                road.sidewalks,
                 SIDEWALK_COLOR.to_linear(),
-                ROAD_JOIN,
                 trimmed,
             );
             // клин тротуара симметричен; у одностороннего тротуара его нет
@@ -1533,15 +1543,7 @@ pub fn mesh_roads(
             }
         }
         fill.set_lanes(lanes);
-        push_street_fill(
-            fill,
-            body,
-            road.width,
-            color.to_linear(),
-            ROAD_JOIN,
-            breaks,
-            trimmed,
-        );
+        push_street_fill(fill, body, road.width, color.to_linear(), breaks, trimmed);
         for &(path, narrow, end) in &wedges {
             let to_break = continued(path, road.width, breaks, end);
             // раскладка плывёт от сечения соседа к своему — та же, что у
@@ -2075,21 +2077,30 @@ fn push_ribbon_trimmed(
 }
 
 /// Тротуар дороги шириной `widths[0]` с полосой `widths[1]` — с тех сторон
-/// `[слева, справа]`, где он есть по тегу (`runs.2`, [`RoadLine::sidewalks`]),
-/// и кроме кусков `runs.0`, где рядом идёт вторая половина разделённой улицы
+/// `[слева, справа]`, где он есть по тегу (`sides`, [`RoadLine::sidewalks`]),
+/// и кроме кусков `runs`, где рядом идёт вторая половина разделённой улицы
 /// (`roads/network/pairs.rs`): со стороны пары его нет. Длины кусков меряны
-/// по оси без стежка; `runs.1` — длина стежка перед её началом.
+/// по оси без стежка; `stitch` — длина стежка перед её началом.
+#[allow(clippy::too_many_arguments)]
 fn push_sidewalk(
     builder: &mut MeshBuilder,
     body: &[Vec2],
     [width, sidewalk]: [f32; 2],
-    (runs, stitch, sides): (&[network::pairs::PairRun], f32, [bool; 2]),
+    runs: &[network::pairs::PairRun],
+    stitch: f32,
+    sides: [bool; 2],
     color: LinearRgba,
-    join: RoadJoin,
     trimmed: [bool; 2],
 ) {
     if runs.is_empty() && sides == [true; 2] {
-        return push_ribbon_trimmed(builder, body, width + 2.0 * sidewalk, color, join, trimmed);
+        return push_ribbon_trimmed(
+            builder,
+            body,
+            width + 2.0 * sidewalk,
+            color,
+            ROAD_JOIN,
+            trimmed,
+        );
     }
     let total = polyline_length(body);
     let mut cursor = 0.0;
@@ -2109,7 +2120,7 @@ fn push_sidewalk(
                     &points,
                     width + 2.0 * sidewalk,
                     color,
-                    join,
+                    ROAD_JOIN,
                     trims,
                 );
             }
@@ -2122,7 +2133,7 @@ fn push_sidewalk(
             .zip(miter_offsets(&points, false, shift))
             .map(|(point, offset)| *point + offset)
             .collect();
-        push_ribbon_trimmed(builder, &shifted, width + sidewalk, color, join, trims);
+        push_ribbon_trimmed(builder, &shifted, width + sidewalk, color, ROAD_JOIN, trims);
     };
     for run in runs {
         let from = (run.from + stitch).clamp(cursor, total);
@@ -2137,22 +2148,17 @@ fn push_sidewalk(
     piece(cursor, total, sides);
 }
 
-/// Заливка проезжей части — лента с разрывами разметки по перекрёсткам. При
-/// `Square` разрывы деть некуда: `push_polyline` знает только торцы, а режим
-/// оставлен ради сравнения картинок, не ради разметки. Срезанный под клин
-/// торец — как у [`push_ribbon_trimmed`].
+/// Заливка проезжей части — лента [`ROAD_RIBBON`] с разрывами разметки по
+/// перекрёсткам. Срезанный под клин торец — как у [`push_ribbon_trimmed`].
 fn push_street_fill(
     builder: &mut MeshBuilder,
     points: &[Vec2],
     width: f32,
     color: LinearRgba,
-    join: RoadJoin,
     breaks: &[Break],
     trimmed: [bool; 2],
 ) {
-    let Some((join, cap)) = join.ribbon_shape() else {
-        return builder.push_polyline(points, width, color);
-    };
+    let (join, cap) = ROAD_RIBBON;
     builder.push_ribbon_shaped(
         points,
         width,

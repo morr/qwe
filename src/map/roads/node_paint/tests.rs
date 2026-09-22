@@ -52,7 +52,8 @@ fn paint_of(roads: Vec<RoadLine>, marks: Vec<RoadNode>, style: NodePaintStyle) -
     NodePaint::new(
         &drawn,
         &paths,
-        (&base, &[]),
+        &base,
+        &[],
         &map,
         style,
         |_| true,
@@ -219,7 +220,8 @@ fn a_stitched_side_street_is_an_arm_of_the_junction() {
     let paint = NodePaint::new(
         &drawn,
         &paths,
-        (&base, &targets),
+        &base,
+        &targets,
         &map,
         EVERYTHING,
         |_| true,

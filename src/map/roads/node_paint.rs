@@ -384,14 +384,15 @@ impl NodePaint {
                     paths[road].as_ref(),
                     road,
                     crossing,
-                    (style, map.traffic_side),
+                    style,
+                    map.traffic_side,
                 );
             }
         }
         let junction_keys: Vec<(i32, i32)> =
             junctions.iter().map(|node| node_key(node.at)).collect();
         let spills = std::mem::take(&mut paint.spills);
-        spill_over_ends(drawn, paths, (&junction_keys, &spills), &mut paint.breaks);
+        spill_over_ends(drawn, paths, &junction_keys, &spills, &mut paint.breaks);
         for (road, breaks) in paint.breaks.iter_mut().enumerate() {
             bridge_short_runs(paths[road].as_ref(), breaks);
         }
@@ -772,7 +773,8 @@ impl NodePaint {
         path: &[Vec2],
         index: usize,
         crossing: &Crossing,
-        (style, side): (NodePaintStyle, TrafficSide),
+        style: NodePaintStyle,
+        side: TrafficSide,
     ) {
         let walk = Walk::new(path);
         let center = crossing.along;
@@ -1040,7 +1042,8 @@ fn overlaps(a: &Zebra, b: &Zebra) -> bool {
 fn spill_over_ends(
     drawn: &[&RoadLine],
     paths: &[impl AsRef<[Vec2]>],
-    (junctions, spills): (&[(i32, i32)], &[(Vec2, f32)]),
+    junctions: &[(i32, i32)],
+    spills: &[(Vec2, f32)],
     breaks: &mut [Vec<Break>],
 ) {
     if spills.is_empty() {
