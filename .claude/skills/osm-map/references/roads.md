@@ -1205,3 +1205,8 @@ place to look at a road-network defect end to end:
   samples. `ROADS_SHOT=path.png` takes a frame and exits, `ROADS_SAMPLE=N` frames sample N,
   `ROADS_CITY=<slug>` opens the gallery on that city (the automatic shot of a city other
   than Tula).
+- **A caption under the panel is hidden** (`hide_captions_under_panel`, every frame): the
+  panel is translucent as in the game, and in a close-up (`ROADS_SAMPLE`) the caption
+  thirty metres left of the window showed through it in broken lines. A caption line whose
+  screen span reaches into `panel_span()` gets `Visibility::Hidden`; in the overview the
+  captions stand right of the panel and stay.
