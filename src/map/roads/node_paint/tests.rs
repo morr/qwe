@@ -251,6 +251,51 @@ fn signals_break_the_main_street_too() {
     );
 }
 
+/// Т со светофором, где у главной тротуаров нет по тегу (Ложевая, Тула,
+/// витрина 08): улиц с тротуарами в узле одна, и по правилу «двух улиц» зебр
+/// не было вовсе. На регулируемом узле зебра встаёт поперёк плеча с
+/// тротуарами по обе стороны; без светофора — по-прежнему нет.
+#[test]
+fn a_signalled_t_crosses_the_walked_arm_even_without_a_second_walked_street() {
+    let paint = |marks: Vec<RoadNode>| {
+        let mut map = MapData {
+            roads: vec![
+                RoadLine {
+                    sidewalks: [false; 2],
+                    ..through(Highway::Tertiary)
+                },
+                side(),
+            ],
+            road_nodes: marks,
+            ..default()
+        };
+        map.network = RoadNetwork::new(&map.roads);
+        let drawn: Vec<&RoadLine> = map.roads.iter().collect();
+        let paths: Vec<Vec<Vec2>> = map.roads.iter().map(|road| road.points.clone()).collect();
+        let base = marking_breaks(&map.roads, is_carriageway, &[]).breaks;
+        NodePaint::new(
+            &drawn,
+            &paths,
+            (&base, &[]),
+            &map,
+            EVERYTHING,
+            |index| drawn[index].sidewalks.contains(&true),
+            |_| Vec::new(),
+        )
+    };
+    let signalled = paint(vec![RoadNode {
+        pos: NODE,
+        kind: RoadNodeKind::TrafficSignals,
+    }]);
+    assert_eq!(signalled.zebras.len(), 1, "{:?}", signalled.zebras);
+    let zebra = signalled.zebras[0];
+    assert!(
+        (zebra.from.y - zebra.to.y).abs() < 1e-3 && zebra.from.y < 0.0,
+        "поперёк примыкания: {zebra:?}"
+    );
+    assert!(paint(Vec::new()).zebras.is_empty());
+}
+
 #[test]
 fn close_side_streets_from_both_sides_are_one_junction() {
     // улица Циолковского: два примыкания с разных сторон в 17 м
