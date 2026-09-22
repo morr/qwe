@@ -646,7 +646,10 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     wide junction's edge is itself tens of metres from the node) becomes the zebra; without
     one, `CrossingMode::Generated` puts a zebra `ZEBRA_SETBACK` 1 m past the edge — if the cluster joins two streets
     with sidewalks (by the `sidewalk=*` tag — `RoadLine::sidewalks`, like `kerb_parking`;
-    the Sidewalks toggle only hides the band, `crossings` is the zebra's own knob), one of
+    the Sidewalks toggle only hides the band, `crossings` is the zebra's own knob) — or
+    the cluster is **signalized** and the arm itself has a sidewalk on both sides by its
+    tags (Tula, gallery 08: Ложевая is `sidewalk=no`, so the T with signals had one
+    walked street and not a single zebra) — one of
     the cluster's streets is at least `tertiary` (`RULE_ZEBRA_RANK`) or the cluster is
     signalized, no road of the cluster is a ring arc (`on_ring`, the check the lane
     arrows use — and no closed ring passes it), the
