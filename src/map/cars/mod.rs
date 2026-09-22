@@ -96,6 +96,11 @@ const PARK_SLOP: f32 = 0.12;
 /// машина, отмеренная центром в пяти метрах, вставала на неё носом. Тупик
 /// приходит разрывом нулевого `reach`, и клиренс даёт в нём те же метры.
 const JUNCTION_CLEARANCE: f32 = 6.0;
+/// Запас по прямой, в полуширинах дороги, за которым разрыв заведомо не
+/// мешает месту, как бы ни легла проекция на звено: на изломе узел за
+/// поворотом проецируется на текущее звено коротко, и без этого запаса он
+/// вычёркивал бы места на всей длине прямой до него.
+const BREAK_BEND_SLACK_HALF_WIDTHS: f32 = 4.0;
 /// Через сколько метров улицы застройка вокруг перечитывается заново, м.
 /// Квартал не меняется от места к месту, а запрос к [`Districts`] на каждое из
 /// двадцати двух тысяч мест стоил бы больше, чем весь слой; полсотни метров —
@@ -751,7 +756,7 @@ fn park_along(
             (place - junction.at).dot(direction).abs() - shape.length() / 2.0
                 >= junction.reach + JUNCTION_CLEARANCE
                 || place.distance(junction.at)
-                    > junction.reach + JUNCTION_CLEARANCE + half_road * 4.0
+                    > junction.reach + JUNCTION_CLEARANCE + half_road * BREAK_BEND_SLACK_HALF_WIDTHS
         };
         if !(pocket || kerb.stand.lane)
             || !clearings.junctions.iter().all(clear)
