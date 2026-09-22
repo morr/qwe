@@ -66,6 +66,12 @@ const STOP_GAP: f32 = 1.0;
 const PAINT_CLEAR: f32 = 0.5;
 /// Сколько дороги должно остаться за краской плеча, м.
 const ARM_TAIL: f32 = 8.0;
+/// Сколько дороги нужно зебре по правилу от кромки узла до следующего узла
+/// той же дороги, м. Короче — перемычка между двумя узлами (ветки
+/// треугольника развилки в 22 и 31 м, Тула, витрина 06): зебры с обоих её
+/// концов и стоп-линия между ними теснятся на пятнадцати метрах, и пешеход
+/// переходит на внешних плечах.
+const RULE_ZEBRA_ROOM: f32 = 30.0;
 /// Кусок линий между двумя разрывами короче этого — не рисуется: одинокий
 /// штрих между узлом и зеброй читается мусором.
 const MIN_RUN: f32 = 6.0;
@@ -335,6 +341,14 @@ impl NodePaint {
             }
         }
 
+        let mut nodes_along: Vec<Vec<(f32, Vec2)>> = vec![Vec::new(); drawn.len()];
+        for node in &junctions {
+            for visit in &node.visits {
+                let walk = Walk::new(paths[visit.road].as_ref());
+                nodes_along[visit.road].push((walk.project(node.at), node.at));
+            }
+        }
+
         for cluster in clusters(drawn, &junctions) {
             paint.paint_cluster(
                 &cluster,
@@ -348,6 +362,7 @@ impl NodePaint {
                     street: &street,
                     sidewalk: &sidewalk,
                     partners: &partners,
+                    nodes_along: &nodes_along,
                 },
                 &mut crossings,
             );
@@ -388,6 +403,7 @@ impl NodePaint {
             street,
             sidewalk,
             partners,
+            nodes_along,
         } = *context;
         if cluster.len() > 1 {
             self.clusters += 1;
@@ -628,6 +644,13 @@ impl NodePaint {
                     ((a.along - from) * dir).total_cmp(&((b.along - from) * dir))
                 })
                 .map(|(index, crossing)| (index, crossing.along));
+            // до следующего узла той же дороги, не из этого кластера
+            let room = nodes_along[arm.road]
+                .iter()
+                .filter(|(_, at)| cluster.iter().all(|node| node.at != *at))
+                .map(|(along, _)| (along - edge) * dir)
+                .filter(|ahead| *ahead > 0.0)
+                .fold(f32::INFINITY, f32::min);
             let zebra = match osm {
                 Some((_, along)) => {
                     let ahead = ((along - edge) * dir).max(first);
@@ -637,6 +660,7 @@ impl NodePaint {
                 None => (style.crossings == CrossingMode::Generated
                     && sidewalk(arm.road)
                     && sidewalk_streets >= 2
+                    && room >= RULE_ZEBRA_ROOM
                     && !drawn[arm.road].highway.is_link())
                 .then_some((edge + dir * first, false)),
             };
@@ -830,6 +854,8 @@ struct Context<'a, P> {
     street: &'a dyn Fn(usize) -> usize,
     sidewalk: &'a dyn Fn(usize) -> bool,
     partners: &'a dyn Fn(usize) -> Vec<usize>,
+    /// Узлы на каждой дороге: длина на её пути и сама точка.
+    nodes_along: &'a [Vec<(f32, Vec2)>],
 }
 
 impl<P> Clone for Context<'_, P> {

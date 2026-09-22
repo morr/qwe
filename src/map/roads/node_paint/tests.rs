@@ -93,6 +93,41 @@ fn a_minor_street_does_not_break_the_main_one() {
     );
 }
 
+/// Перемычка между двумя узлами короче [`RULE_ZEBRA_ROOM`] за кромкой (ветка
+/// развилки, Тула, витрина 06) зебр по правилу не получает ни с одного
+/// конца: они теснились с обоих концов на двадцати метрах. Та же улица
+/// длиннее — получает обе.
+#[test]
+fn a_short_link_between_two_nodes_gets_no_rule_zebras() {
+    let link = |length: f32| {
+        let far = road(
+            vec![
+                Vec2::new(0.0, length),
+                NODE + Vec2::new(0.0, length),
+                Vec2::new(200.0, length),
+            ],
+            8.0,
+            Highway::Tertiary,
+            2,
+        );
+        let between = road(
+            vec![NODE, NODE + Vec2::new(0.0, length)],
+            8.0,
+            Highway::Residential,
+            2,
+        );
+        paint_of(
+            vec![through(Highway::Tertiary), far, between],
+            Vec::new(),
+            EVERYTHING,
+        )
+    };
+    let short = link(26.0);
+    assert!(short.zebras.is_empty(), "{:?}", short.zebras);
+    assert_eq!(short.stop_lines.len(), 2, "стоп-линии остаются");
+    assert_eq!(link(60.0).zebras.len(), 2);
+}
+
 #[test]
 fn an_equal_side_street_does_not_break_the_through_one_either() {
     let paint = paint_of(

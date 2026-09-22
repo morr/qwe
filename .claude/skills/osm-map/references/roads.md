@@ -482,7 +482,11 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     wide junction's edge is itself tens of metres from the node) becomes the zebra; without
     one, `CrossingMode::Generated` puts a zebra `ZEBRA_SETBACK` 1 m past the edge (edge =
     the break reach: half the widest other road + 1 m) — if the cluster joins two streets
-    with sidewalks and the arm is not a `*_link`. A zebra is `ZEBRA_LENGTH` 4 m along the
+    with sidewalks, the arm is not a `*_link` and the next junction node on the same road
+    lies at least `RULE_ZEBRA_ROOM` 30 m past the edge (`nodes_along`). A shorter arm is
+    a link between two nodes — the branches of a fork's triangle (Tula, gallery 06, 22 and
+    31 m) had a rule zebra at both ends and a stop line between them within fifteen metres;
+    the crossing is left to the outer arms. An OSM crossing ignores the room. A zebra is `ZEBRA_LENGTH` 4 m along the
     road, across the carriageway less 0.3 m at each kerb. The stop line (0.4 m) stands
     `STOP_GAP` 1 m behind the zebra (or 1 m past the edge without one), across the lanes
     **coming to the node** — axis to kerb on the traffic side (`MapData::traffic_side`)
