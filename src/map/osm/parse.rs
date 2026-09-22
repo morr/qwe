@@ -716,8 +716,8 @@ fn parse_structure_way(element: &Element, points: &[Vec2]) -> Option<Structure> 
     })
 }
 
-/// Нода `natural=tree` → одиночное дерево. Сажает его (и отсеивает
-/// продублированные процедурной посадкой) `planting::plant_standalone`.
+/// Нода `highway=crossing|traffic_signals|…` → дорожный узел ([`RoadNode`]);
+/// вид — по белому списку `road_node_kind`.
 fn parse_road_node(element: &Element, bounds: &GeoBounds) -> Option<RoadNode> {
     Some(RoadNode {
         kind: road_node_kind(&element.tags)?,
@@ -725,6 +725,8 @@ fn parse_road_node(element: &Element, bounds: &GeoBounds) -> Option<RoadNode> {
     })
 }
 
+/// Нода `natural=tree` → одиночное дерево. Сажает его (и отсеивает
+/// продублированные процедурной посадкой) `planting::plant_standalone`.
 fn parse_tree_node(element: &Element, bounds: &GeoBounds) -> Option<TreeNode> {
     if element.tags.get("natural").map(String::as_str) != Some("tree") {
         return None;

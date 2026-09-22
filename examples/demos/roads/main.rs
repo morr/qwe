@@ -508,7 +508,7 @@ fn reference_centre(sample: &Sample, slot: Vec2) -> Vec2 {
 }
 
 /// Снимок Яндекс Карт с диска — спрайтом в метрах окна. Мимо `AssetServer`:
-/// файл лежит рядом с вырезкой, вне `assets/`, куда сервер не ходит.
+/// файл лежит в `data/<город>/` витрины, вне `assets/`, куда сервер не ходит.
 fn load_reference(path: &std::path::Path) -> Option<Image> {
     let bytes = std::fs::read(path).ok()?;
     Image::from_buffer(
@@ -523,10 +523,6 @@ fn load_reference(path: &std::path::Path) -> Option<Image> {
     .ok()
 }
 
-/// Следующий пример очереди: вырезка OSM → игровой `parse` → игровые `mesh_*`
-/// → игровые `spawn_*`. Порядок слоёв и их входы — те же, что у
-/// `map::spawn::spawn_map` и цепочки `rebuild_*` за ним.
-#[allow(clippy::too_many_arguments)]
 /// Ширина полосы — в глобаль, которую читают разбор, краска и колея
 /// асфальта: игра пишет её перед потоком загрузки, витрина — перед разбором
 /// примеров, которые `reload` по этой же правке соберёт заново.
@@ -534,6 +530,9 @@ fn apply_lane_width(shape: Res<RoadShapeOnMap>) {
     set_lane_width(shape.0.lane_width());
 }
 
+/// Следующий пример очереди: срез OSM → игровой `parse` → игровые `mesh_*`
+/// → игровые `spawn_*`. Порядок слоёв и их входы — те же, что у
+/// `map::spawn::spawn_map` и цепочки `rebuild_*` за ним.
 #[allow(clippy::too_many_arguments)]
 fn build_next(
     mut commands: Commands,
@@ -559,7 +558,7 @@ fn build_next(
 
     // Всякий слой режется окном примера (в игровых координатах — до сдвига):
     // окна стоят в колонке встык, а слой рисует и за окном — хвост дороги, дом
-    // на краю вырезки целиком, квад земли во всю карту. Необрезанное ложилось
+    // на краю среза целиком, квад земли во всю карту. Необрезанное ложилось
     // в окно соседа: дом чужого перекрёстка посреди проспекта.
     let (window_min, window_max) = (sample.at - sample.half, sample.at + sample.half);
     let clip = |mut layers: Vec<LayerMesh>| {

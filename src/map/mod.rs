@@ -88,8 +88,8 @@ pub use self::roads::paint::{
 pub use self::roads::network::{RoadNetwork, Street, StreetWay};
 // оверлей сети — строке Debug игры и строке `Network` витрины `roads`
 pub use self::roads::network::overlay::mesh_network_overlay;
-// а `smooth_path` со `Smoothing` — потому, что асфальт под ним лежит на той же
-// сглаженной осевой
+// `smooth_path` со `Smoothing` — витрине машин (`car_gallery` кладёт асфальт
+// под ряд по сглаженной осевой) и панели аллей (`TreeRowStyle::smoothing`)
 pub use self::smooth::{Smoothing, smooth_path};
 pub use self::spawn::{GROUND_COLOR, PARK_COLOR, WOOD_COLOR};
 // `apply_sun_style` наружу — тому же офлайн-бенчу: тени он собирает игровым
