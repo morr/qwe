@@ -77,8 +77,13 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     partner's original axis: target gap = the run's median, paved ones no narrower than
     `PAVED_MIN_GAP` 0.5. The weight fades (smoothstep) over `ALIGN_TRANSITION` 20 m to a
     run's end — unless the end is a seam whose continuation carries a run at the same
-    node — and to a node shared with **another** street, which stays exactly in place (kerb
-    returns, breaks and stitches find each other by it). Then the path is thinned back by
+    node — and to a node shared with **another** carriageway (a street or a drive — a
+    footway crossing pins nothing, as on **The street axis**), which stays exactly in
+    place (kerb returns, breaks and stitches find each other by it). Next to such a node
+    the axis is not moved at all for `PIN_STRAIGHT` 16 m and the fade begins beyond it: a
+    kerb return is laid only on a straight edge, and a 10 m return to a crossing avenue
+    needs its half width plus the tangent (stage 5 — before it the fade bent the edge from
+    the node on, and the corners of sample 2 came out a metre or two). Then the path is thinned back by
     Douglas–Peucker at `SIMPLIFY_TOLERANCE` 3 cm keeping every shared node, and the
     median's midline and the two inner kerbs are sampled off the aligned axes and thinned
     the same way; the thinning is what took the stage from +130 k vertices and +50 ms
@@ -292,12 +297,14 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   either line, which the node rule cannot do wrong. A service drive or a footway joining a
   street is not a participant and leaves the street's line whole. Count and time are in
   the `road meshing:` log line (`junctions N`).
-  **Junction geometry is still not computed as a union**: roads are independent polylines
-  drawn overlapping in one opaque layer, and `Round` caps are what makes a junction *look*
-  joined — the caps of the ways meeting at a node overlap into a rounded blob, exactly
-  how osm-carto gets its smooth junctions (`stroke-linejoin: round` + `stroke-linecap:
-  round`). The fill order is **narrow first, wide last** (`mesh_roads` sorts by width), so
-  the main road's fill and its gapped line lie over the side street's cap. This is why the
+  **Junction geometry is not computed as a union**: roads are independent polylines
+  drawn overlapping in one opaque layer. Until stage 5 the `Round` caps were what made a
+  junction *look* joined — the caps of the ways meeting at a node overlapped into a
+  rounded blob, the osm-carto way (`stroke-linejoin: round` + `stroke-linecap: round`).
+  Now an arm ending in a junction ends **square** on the node, and the junction's own
+  pieces — the kerb returns and the outer corners — fill the rest (**Kerb returns**
+  below). The fill order is **narrow first, wide last** (`mesh_roads` sorts by width), so
+  the main road's fill and its gapped line lie over the side street's end. This is why the
   road layer must stay opaque with a world-position colour: transparency or a per-way tint
   would expose every crossing.
 - **The drawn network** (`map/roads/network.rs`, `map/roads/corners.rs`) — what the ribbons
@@ -322,8 +329,14 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
       node `KERB_STRAIGHT` 12 m of straight edge (never less than ¾ of a short link):
       **a kerb return is laid only on a straight edge**, and an arc eating into it cost
       ~1000 kerb returns across Tula in the first cut;
-    - a **pinned node** — one a third road touches — stays exactly in place: the kerb
+    - a **pinned node** — one a third **carriageway** touches (a street or a drive,
+      `axis::pins`) — stays exactly in place: the kerb
       returns, the marking breaks, the stitches and the tapers all find each other by it.
+      A node shared only with a footway pins nothing (stage 5): the footway ends under the
+      street's asphalt and none of those four reads it, while a pinned crosswalk 15 m from
+      a junction bent the axis there and left the kerb return no straight edge (sample 2,
+      the 20.8 m street across the divided avenue: 7 m of straight edge, a 2 m corner). Tula:
+      smooth seams 285 → 367, tight corners 274 → 145.
       The street passes it along a **straight stretch on the bisector**
       (`through_pad`, up to `THROUGH_RUN` 24 m each way, at most 2 m off the links, at
       most half of each), and the bend goes to two arcs at the stretch's ends. A bend
@@ -381,21 +394,25 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     where the pavement footway crosses it, 2 m off the street), and a run cut at the
     first of them clipped the tangent to nothing: the drive met the street with square
     corners (reported from a screenshot; 8220 → 8710 returns on Tula). Arms of one class are sorted by angle, and between neighbours 25°–155° apart the
-    corner of the two facing edges is found, a circle is fitted tangent to both — of
-    radius `0.6 × (half + half)` clamped 1.5–9 m between roads of one width, but only
-    `MINOR_RADIUS_SHARE` 0.4 × the narrower half width when the half widths differ by
-    more than `MINOR_WIDTH_STEP` 0.5 m (1 m for a 5 m drive into a street, 1.6 m for a
-    residential street into an avenue). The author's call from a screenshot: at the
-    shared-sum radius every drive entered its street as a wide funnel, which is not how
-    a minor road meets a main one — and the wedge `[corner, tangent, arc…,
+    corner of the two facing edges is found, a circle is fitted tangent to both — its
+    radius **by the minor class of the pair** (`kerb_radius`, stage 5 of the roads
+    rework): `MAJOR_RADIUS` 10 m between avenues (`trunk`…`secondary` and their links),
+    `STREET_RADIUS` 6 m with a street (`tertiary`, residential, `unclassified`),
+    `DRIVE_RADIUS` 2.5 m with a drive, a living street or a driveway crossing,
+    `PATH_RADIUS` 2 m between footways. It used to follow the widths — `0.6 × (half +
+    half)`, and only 0.4 × the narrower half width for a minor entry — and on a divided
+    avenue, where halves of different lane counts meet in one node, every corner came out
+    a metre or two (sample 2). The wedge `[corner, tangent, arc…,
     tangent]` goes into that class's fill builder **before any ribbon** — ribbons and their
     markings then lie over it, and since it is pushed with no ribbon coords it carries no
-    wear or markings of its own. Two clamps: the tangent never runs past an arm's straight
-    run (past the next vertex the edge has turned), and when **both** roads carry a
-    sidewalk, `r ≤ 3.4 × the narrower sidewalk` — the arc's nearest point to the corner is
-    `r·(1 − 1/√2)` inside it, and beyond `s·√2/(√2 − 1)` the wedge would show past both
-    sidewalks on the ground. With one sidewalk or none, a flare over the ground is exactly
-    what a drive's kerb return looks like and is left alone. It is pushed as a **fan from
+    wear or markings of its own. One clamp: the tangent never runs past an arm's straight
+    run (past the next vertex the edge has turned) — which is why the street axis keeps
+    `KERB_STRAIGHT` next to a pinned node and pins only on carriageway nodes, and the
+    paired halves keep `PIN_STRAIGHT` 16 m unshifted there (**The street axis** above,
+    **Paired halves**). The old `r ≤ 3.4 × the narrower sidewalk` cap is gone: the sidewalk
+    fillet below is concentric and shares the kerb's tangent lines, so the asphalt wedge
+    lies inside it at any radius over the sidewalk width. With one sidewalk or none, a
+    flare over the ground is exactly what a drive's kerb return looks like. It is pushed as a **fan from
     the corner** (`push_convex`), which is correct although the wedge is concave: the arc
     between the tangent points is precisely the part of the circle visible from the corner.
     Its straight sides reach `OVERLAP` 5 cm under both ribbons: a side lying exactly on a
@@ -404,7 +421,32 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     Mixed-class arms get nothing: a grey wedge over a sand
     footway would read as asphalt spilled onto the path. Bridges and passages give no arms
     (their paths go in as `None`), and under `RoadJoin::Square` no returns are built at
-    all — that join is kept for comparison with the old picture. Tula: 8710.
+    all — that join is kept for comparison with the old picture.
+    - **An arm that ends in a junction ends square** (`KerbReturns::butt`, stage 5). A
+      junction here is a class group of three arms or more, or of two meeting at an angle
+      (25°–155° either side); two nearly collinear ends are one road continued and keep
+      their round caps. Every arm of a junction that is an **end** of its drawn path gets a
+      `Butt` cap in the fill, the casing and the sidewalk band (`trimmed` in `mesh_roads`,
+      the same flag the taper ends use; a stitched end is not in a node and stays round).
+      A round cap of a wide road ending on a narrow one stuck out past the narrow one's far
+      edge as a half-disc — the blob at the bottom of sample 6 is what that looked like.
+      The butt end lies on the node, inside the crossing road.
+    - **The outer corner of a junction is a fan** (`outer_corner`): between two neighbour
+      arms more than 180° apart — two streets meeting at a corner with nothing running
+      through, a fork seen from outside — a fan from the node with the radius sliding from
+      one half width to the other, what the round caps used to give for free. Pushed like a
+      return, before the ribbons; its centre sits `OVERLAP` behind the node and its sides
+      reach `OVERLAP` into the butt ends. The same fan in the sidewalk layer on `half +
+      sidewalk`. Counted apart in the log line (`outer corners`).
+    - **The junction is not unioned into one polygon.** The plan's stage 5 asked for the
+      asphalt of a node as an `i_overlay` union of its ribbons; the pieces above give the
+      same picture lying under the ribbons of their layer (a ribbon covers every seam
+      between them), and a union per node — about nine thousand of them on Tula — would
+      have cost hundreds of milliseconds of loading. The junction's paint (stop lines,
+      zebras) is placed along its arms and needs no outline.
+    Tula, release (stage 5): 15101 returns + 2268 on the sidewalks, 964 + 120 outer
+    corners; the road layers went from 788 k to 665 k vertices (the round caps at junction
+    ends were the costly part) and `road meshing` 112 → 107 ms.
     - **The sidewalk turns with the kerb** (`KerbReturns::sidewalks`), and it is an
       *addition*, not the subtraction this doc used to call impossible: the corner between
       two sidewalk bands is a **concave** notch exactly like the asphalt one, so the same
@@ -422,22 +464,29 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
         out of (the street runs straight past it), while two streets with a drive between
         them still get their corner — the drive's asphalt is drawn over it.
       - **A radius under the sidewalk width leaves the corner square**, and that is the
-        geometry, not a fallback: a minor entry (a residential street into an avenue,
-        radius 1.6 m against a 3 m sidewalk) has no arc for the outer edge to follow on the
-        ground either. Same for a run too short for the tangent.
-      - **The asphalt wedge still lands on pavement.** `SIDEWALK_COVER` keeps the kerb
-        radius under 3.4 sidewalk widths, and under that bound the sidewalk fillet's disk
-        is nested in the kerb's, so the asphalt wedge lies inside the sidewalk bands and
-        their fillet whatever the angle. On Tula's streets the bound never binds (1.76 m
-        sidewalk → 5.98 m ceiling against a 4.8 m radius); it is load-bearing for the
-        nesting, not for the radius.
+        geometry, not a fallback: a drive with a sidewalk into an avenue (2.5 m against a
+        3 m sidewalk) has no arc for the outer edge to follow on the ground either. Same
+        for a run too short for the tangent.
+      - **The asphalt wedge lands on pavement at any radius**: the two arcs are concentric
+        and share their tangent lines (the foot of the perpendicular from the centre to an
+        edge is the same point for the road edge and the band edge), so the wedge between
+        the road edges and the kerb arc lies inside the one between the band edges and the
+        sidewalk arc. The cap `r ≤ 3.4 × sidewalk` that used to guard this is gone.
       - Arms with **different** sidewalk widths cannot share one concentric arc; the
         radius then takes the wider of the two (the conservative side — a smaller radius
-        keeps the asphalt wedge inside), and the two differ by at most ~0.2 m, since a
-        wider gap between the half widths sends the pair to the minor branch anyway.
-      - Tula: **903** of them against the asphalt's 8710 (the pairs need two sidewalks and
-        a radius over the sidewalk width), ~8 k of the road layers' 387 k vertices, in the
-        `road meshing:` line. Load-time only, like the rest of this module.
+        keeps the asphalt wedge inside).
+      - **The side of a paired half has no sidewalk corner**: an arm carries a sidewalk
+        per side (`Arm::sidewalk`, left and right of its heading), and where the arm lies in
+        a pair run (`paired`, the runs of **Paired halves** with two probes of slack) the
+        partner's side is `None`. The corner is taken from the first arm's left to the
+        second's right, so a corner facing the median gets none — it put light arcs into
+        the median opening of a divided avenue.
+      - **A crossing street's piece between two halves carries no sidewalk at all**
+        (`across_median` in `mesh_roads`, under `MEDIAN_CROSSING_MAX` 40 m, one end in a
+        node with a half and the other in a node with its partner): it lies in the median
+        opening, and its band showed as a light disc in the middle of the junction
+        (sample 15).
+      - Load-time only, like the rest of this module.
 - **RoadStyle** (resource, BRP-writable, persisted; section `ui/roads.rs` below Buildings)
   — how road ribbons are drawn; any change reruns `rebuild_roads` (despawn
   `RoadLayerTag` layers, respawn from the unchanged `MapData`). Five independent knobs —

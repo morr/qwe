@@ -516,6 +516,10 @@ const SIDEWALK_COLOR: Color = Color::srgb(0.82, 0.815, 0.80);
 /// Доля ширины улицы на тротуар с каждой стороны и её пределы, м: у
 /// магистрали в 16 м тротуар в 3 м, у жилой улицы в 8 м — 1.8 м.
 const SIDEWALK_SHARE: f32 = 0.22;
+/// Самый длинный кусок поперечной улицы между половинами одной пары, м: две
+/// половины и самый широкий газон между ними. Такой кусок лежит в проёме
+/// разделительной, и тротуара у него нет.
+const MEDIAN_CROSSING_MAX: f32 = 40.0;
 const SIDEWALK_WIDTH_RANGE: std::ops::RangeInclusive<f32> = 1.2..=3.0;
 
 /// Полоса не у́же этого, м. У разобранной улицы ширина выведена из самих
@@ -625,7 +629,7 @@ pub fn sidewalk_width(road: &RoadLine) -> Option<f32> {
 }
 
 /// Ширина тротуара, который у дороги **рисуется** при этом стиле: один ответ
-/// и для ленты тротуара, и для зажима радиуса скругления (`roads/corners.rs`).
+/// и для ленты тротуара, и для его скругления в узле (`roads/corners.rs`).
 fn drawn_sidewalk(style: &RoadStyle, road: &RoadLine) -> Option<f32> {
     style.sidewalks.then(|| sidewalk_width(road)).flatten()
 }
@@ -786,6 +790,8 @@ pub struct RoadReport {
     pub paint_vertices: usize,
     pub kerb_returns: usize,
     pub sidewalk_returns: usize,
+    /// Наружные углы узлов (`roads/corners.rs`): асфальт и тротуар.
+    pub outer_corners: [usize; 2],
     pub stitches: usize,
     pub crossings: usize,
     /// Направляющие островки у колец (`roads/gores.rs`).
@@ -813,6 +819,7 @@ impl std::fmt::Display for RoadReport {
             paint_vertices,
             kerb_returns,
             sidewalk_returns,
+            outer_corners: [outer, outer_sidewalks],
             stitches,
             crossings,
             gores,
@@ -829,7 +836,8 @@ impl std::fmt::Display for RoadReport {
             "road meshing: {vertices} verts in {elapsed:?} ({:?}, smoothing {:?}, casing {}, \
              sidewalks {}, markings {}, paint {paint_lines} lines / {paint_vertices} verts, \
              junctions {junctions}, kerb returns {kerb_returns} + \
-             {sidewalk_returns} on sidewalks, stitches {stitches}, driveway crossings \
+             {sidewalk_returns} on sidewalks, outer corners {outer} + {outer_sidewalks} on \
+             sidewalks, stitches {stitches}, driveway crossings \
              {crossings}, gores {gores}, tapers {tapers}, medians {paved} paved + {lawns} \
              lawn, smooth seams {seams}, tight corners {tight}; {network:?} of it before the \
              ribbons)",
@@ -904,6 +912,27 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
     // ось, что у его дороги, — он отличается шириной и классом
     let axes = axis::street_axes(roads, &map.network, &nodes, style.smoothing);
     let paths = &axes.paths;
+    // Кусок поперечной улицы в проёме разделительной — между половинами одной
+    // пары — тротуара не несёт: его полоса светлым пятном лежала посреди
+    // перекрёстка. Торцы узлов — точки OSM, и ось их не двигает.
+    let across_median: Vec<bool> = paths
+        .iter()
+        .enumerate()
+        .map(|(index, path)| {
+            let (Some(&start), Some(&end)) = (path.first(), path.last()) else {
+                return false;
+            };
+            polyline_length(path) < MEDIAN_CROSSING_MAX
+                && nodes.roads_at(start).iter().any(|&half| {
+                    half != index
+                        && axes.pairs.runs[half].iter().any(|run| {
+                            run.partner != index && nodes.roads_at(end).contains(&run.partner)
+                        })
+                })
+        })
+        .collect();
+    let sidewalks_of =
+        |index: usize| drawn_sidewalk(&style, drawn[index]).filter(|_| !across_median[index]);
     // длина улицы у начала каждого way — по ней идут штрихи краски
     let stations = paint::street_stations(&map.network, paths);
     // широкие улицы поверх узких — см. доку модуля
@@ -920,9 +949,16 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
             .zip(paths)
             .map(|(road, path)| (!road.bridge && !road.passage).then_some(path.as_ref()))
             .collect();
-        corners::kerb_returns(&drawn, &rounded, &nodes, |road| {
-            drawn_sidewalk(&style, road)
-        })
+        // со стороны второй половины тротуара нет — угла по нему тоже; кусок
+        // пары может кончиться на пробу раньше узла
+        let slack = 2.0 * network::pairs::PROBE_STEP;
+        let paired = |road: usize, at: f32| {
+            axes.pairs.runs[road]
+                .iter()
+                .find(|run| run.from - slack <= at && at <= run.to + slack)
+                .map(|run| run.left)
+        };
+        corners::kerb_returns(&drawn, &rounded, &nodes, sidewalks_of, paired)
     };
     for (class, outline) in &kerb_returns.roads {
         let (builder, color) = match class {
@@ -1059,7 +1095,15 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
             tapers::split(points, ends.map(|end| end.map(|taper| taper.length)))
         };
         let body: &[Vec2] = body.as_deref().unwrap_or(points);
-        let trimmed = [head.is_some(), tail.is_some()];
+        // торец под клин и торец плеча, кончающегося в узле, — прямые: узел
+        // закрывают скругления и наружные углы (`roads/corners.rs`); торец
+        // со стежком уже не в узле
+        let butt = kerb_returns.butt(index);
+        let stitched_end = stitches.ends[index].map(|end| end.is_some());
+        let trimmed = [
+            head.is_some() || (butt[0] && !stitched_end[0]),
+            tail.is_some() || (butt[1] && !stitched_end[1]),
+        ];
         let wedges: Vec<(&[Vec2], &RoadLine, bool)> =
             [(&head, ends[0], false), (&tail, ends[1], true)]
                 .into_iter()
@@ -1077,7 +1121,7 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
             ]
         };
 
-        if let Some(sidewalk) = drawn_sidewalk(&style, road) {
+        if let Some(sidewalk) = sidewalks_of(index) {
             let band = |road: &RoadLine, sidewalk: f32| road.width + 2.0 * sidewalk;
             // у половины разделённой улицы тротуара со стороны пары нет; на
             // клине куски пары не пересчитываются — там тротуар как был
@@ -1264,8 +1308,9 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
         junctions: junctions.junctions,
         paint_lines,
         paint_vertices,
-        kerb_returns: kerb_returns.roads.len(),
-        sidewalk_returns: kerb_returns.sidewalks.len(),
+        kerb_returns: kerb_returns.roads.len() - kerb_returns.outer[0],
+        sidewalk_returns: kerb_returns.sidewalks.len() - kerb_returns.outer[1],
+        outer_corners: kerb_returns.outer,
         stitches: stitches.count,
         crossings: crossings.len(),
         gores: gores.count(),

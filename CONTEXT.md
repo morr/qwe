@@ -248,7 +248,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     Found once, by `axis::street_axes`, on the drawn axes, and **aligned** there: the
     halves are set at the run's median gap (paved no narrower than `PAVED_MIN_GAP`
     0.5 m) from the midpoint between them, fading out over `ALIGN_TRANSITION` 20 m at a
-    run's end and at a node shared with another street, so the ribbons and the parked
+    run's end and at a node shared with another carriageway (untouched for 16 m next to
+    it, where a kerb return needs a straight edge), so the ribbons and the parked
     cars stand on the aligned axis. **Median** (`Median`, drawn by `roads/medians.rs`) —
     what lies between the halves: up to `MEDIAN_GAP` 3 m asphalt under both ribbons with
     a double solid down the middle (the paint layer), wider a lawn with a kerb and a
@@ -1357,8 +1358,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   «до разрыва» is measured **around the circle**. Drawn open, a ring laid two `Round` caps
   on its own asphalt, each with the ribbon frame **frozen** at the end's direction — a
   disc of shifted lane dashes and ruts at the seam. **Junction
-  geometry is still not computed as a union** — overlapping `Round` caps in one opaque
-  layer are what makes junctions look joined; **keep the road layer opaque, and its colour a function of
+  geometry is not computed as a union** — ribbons overlap in one opaque layer, an arm
+  ending in a junction ends **square** on the node, and the kerb returns and outer
+  corners (below) fill the rest; **keep the road layer opaque, and its colour a function of
   world position only** (a flat colour or the surface shader, never a per-way tint). What
   *is* computed are **junction nodes** (`map/roads/junctions.rs`): a node shared by two or
   more carriageways, found by coordinate match on a 5 cm grid — Overpass gives no node ids,
@@ -1367,23 +1369,30 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   `RoadNodes` — every node shared by two roads of any class), and none of them touches
   `RoadLine::points`, the navmesh, doors or cars:
   - **Pinned nodes** — Chaikin smoothing never cuts a shared node, so a side street
-    still ends exactly on the through road's drawn centreline.
+    still ends exactly on the through road's drawn centreline. The street axis pins only
+    nodes shared with another **carriageway** (street or drive): a footway crossing
+    ends under the asphalt and pins nothing.
   - **Kerb return** (`map/roads/corners.rs`) — the rounded corner between two
     neighbouring arms of a shared node of **one class** (street–street, alley–alley):
     the concave wedge between the two facing ribbon edges and an arc tangent to both,
     pushed into that class's fill layer *before* any ribbon, so every ribbon (and its
-    markings) lies over it. A **minor road entering a wider one** (half widths more than
-    0.5 m apart — a drive into a street, a street into an avenue) gets only 0.4 × its own
-    half width (1 m for a 5 m drive); between equals the radius is 0.6 × the sum of half
-    widths (1.5–9 m), capped at
-    3.4 sidewalk widths when both roads carry one (past that the wedge would show on the
-    lawn beyond both sidewalks), and by the straight run of each arm — which carries on
-    through vertices lying on the same line; arms 25°–155° apart only. None under
-    `RoadJoin::Square`. **The sidewalk turns with it**: the same wedge, laid in the
-    sidewalk layer between the arms that carry one, on the band edges (half width +
-    sidewalk) and on an arc of the **same centre** — the radius smaller by exactly the
-    sidewalk width, so a constant band follows the kerb round the corner. A radius under
-    the sidewalk width (a minor entry) leaves that corner square, as it is on the ground.
+    markings) lies over it. The radius goes by the **minor class of the pair**: 10 m
+    between avenues (`trunk`…`secondary` and links), 6 m with a street, 2.5 m with a
+    drive, 2 m between footways — capped only by the straight run of each arm, which
+    carries on through vertices lying on the same line; arms 25°–155° apart only. None
+    under `RoadJoin::Square`. **The sidewalk turns with it**: the same wedge, laid in the
+    sidewalk layer between the arms that carry one on the facing sides (a paired half has
+    none on its partner's side), on the band edges (half width + sidewalk) and on an arc
+    of the **same centre** — the radius smaller by exactly the sidewalk width, so a
+    constant band follows the kerb round the corner. A radius under the sidewalk width
+    leaves that corner square, as it is on the ground.
+  - **Junction** (for the drawn asphalt, `map/roads/corners.rs`) — a node's class group
+    of three arms or more, or two meeting at an angle. An arm that **ends** there ends
+    **square** on the node (`KerbReturns::butt`) instead of with a round cap, which stuck
+    out past a narrower road's far edge; between two neighbour arms more than 180° apart
+    the **outer corner** is a fan from the node, what the round caps used to give. A
+    crossing street's piece between the two halves of a divided street lies in the
+    median opening and carries no sidewalk.
   - **Stitch** — a straight render-only segment appended to a **loose end** (a way end
     with no other road at its node that could carry it) up to the centreline of the
     nearest road **ahead** of it (within 60° of its heading), when that road's drawn edge —
@@ -1395,8 +1404,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     streets**: how OSM maps a drive crossing the pavement (drive, `footway` across the
     pavement, drive again). It is drawn as asphalt at the narrower drive's width. A
     crosswalk is not one: its ends lie on pavement footways.
-  Tula: 8710 kerb returns plus 903 on the sidewalks, 39 stitches, 8 driveway crossings, in
-  the `road meshing:` line.
+  Tula: 15101 kerb returns plus 2268 on the sidewalks, 964 + 120 outer corners, 89
+  stitches, 9 driveway crossings, in the `road meshing:` line.
 - **Surface material** (`map/surface.rs`, `assets/shaders/surface.wgsl`) — the ground,
   the area layers, water and the road fills are drawn by **`SurfaceMaterial`** instead of
   `ColorMaterial`: the vertex colour stays the base, the shader multiplies in procedural

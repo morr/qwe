@@ -101,6 +101,26 @@ fn a_junction_node_stays_and_the_through_pair_passes_it_smoothly() {
 }
 
 #[test]
+fn a_footway_crossing_pins_nothing() {
+    // тот же излом, но в узле только пешеходная дорожка: она кончается под
+    // асфальтом, и улица срезает излом дугой, как любой свободный
+    let node = Vec2::new(100.0, 0.0);
+    let turn = Vec2::from_angle(20f32.to_radians()) * 100.0;
+    let footway = RoadLine {
+        class: RoadClass::Alley,
+        highway: crate::map::osm::Highway::Path,
+        ..street(vec![node, Vec2::new(100.0, -80.0)], 3.5)
+    };
+    let roads = vec![street(vec![Vec2::ZERO, node, node + turn], 8.0), footway];
+    let path = &axes(&roads, Smoothing::Light)[0];
+    assert!(
+        !path.contains(&node),
+        "the crossing stayed pinned: {path:?}"
+    );
+    assert!(sharpest(path) < SAMPLE_TURN);
+}
+
+#[test]
 fn a_corner_is_no_tighter_than_the_half_width() {
     // поворот на 90° внутри way на длинных звеньях: радиус не меньше
     // полуширины, иначе внутренний край ленты складывается

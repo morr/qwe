@@ -36,7 +36,7 @@ use super::centerline;
 use super::network::pairs::Pairs;
 use super::network::{RoadNetwork, RoadNodes, StreetWay};
 use crate::map::meshing::arc_steps;
-use crate::map::osm::RoadLine;
+use crate::map::osm::{RoadClass, RoadLine};
 use crate::map::smooth::Smoothing;
 
 /// Допуск упрощения, м: вершина ближе к хорде соседей — дрожание OSM.
@@ -168,15 +168,12 @@ impl Run {
                 // шов: закреплён, если в нём сходится кто-то кроме соседей
                 let joint = this.points.len() - 1;
                 let previous = run[k - 1].road;
-                this.pinned[joint] = nodes
-                    .roads_at(this.points[joint])
-                    .iter()
-                    .any(|&other| other != way.road && other != previous);
+                this.pinned[joint] = pins(roads, nodes, this.points[joint], &[way.road, previous]);
                 this.halves[joint] = this.halves[joint].max(half);
                 this.starts.push(joint);
             }
             for &point in &own[1..own.len() - 1] {
-                this.push(point, half, nodes.is_shared(point));
+                this.push(point, half, pins(roads, nodes, point, &[way.road]));
             }
             this.push(own[own.len() - 1], half, false);
         }
@@ -187,10 +184,7 @@ impl Run {
             this.halves.pop();
             this.pinned.pop();
             let (first, previous) = (run[0].road, run[run.len() - 1].road);
-            this.pinned[0] = nodes
-                .roads_at(this.points[0])
-                .iter()
-                .any(|&other| other != first && other != previous);
+            this.pinned[0] = pins(roads, nodes, this.points[0], &[first, previous]);
         } else {
             this.pinned[0] = true;
             this.pinned[last] = true;
@@ -203,6 +197,18 @@ impl Run {
         self.halves.push(half);
         self.pinned.push(pinned);
     }
+}
+
+/// Закреплён ли узел `point` улицы: в нём сходится проезжая дорога (улица
+/// или проезд) не из `own`. Узел с пешеходной дорожкой — нет: дорожка
+/// кончается под асфальтом улицы, скругления бордюра и разрывы разметки её не
+/// касаются, а закреплённый переход в 15 м от перекрёстка гнул ось так, что
+/// скруглению там не хватало прямого края.
+fn pins(roads: &[RoadLine], nodes: &RoadNodes, point: Vec2, own: &[usize]) -> bool {
+    nodes
+        .roads_at(point)
+        .iter()
+        .any(|&other| !own.contains(&other) && roads[other].class == RoadClass::Street)
 }
 
 /// Сглаживает пробег улицы и раскладывает его по ways. Возвращает число
