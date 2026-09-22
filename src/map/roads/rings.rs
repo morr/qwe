@@ -622,10 +622,12 @@ fn bend_approach(path: &[Vec2], arrival: Vec2, reach: f32, nodes: &RoadNodes) ->
         LaneEnd {
             point: from,
             travel,
+            offset: 0.0,
         },
         LaneEnd {
             point: end,
             travel: arrival,
+            offset: 0.0,
         },
     ));
     Some(bent)

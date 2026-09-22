@@ -32,7 +32,9 @@ use super::lane_count;
 use super::node_paint::{Junction, JunctionArm};
 use super::paint::lane_frame;
 use super::shape::lane_width;
+use super::tapers;
 use crate::map::along::{arclengths, place_on_path};
+use crate::map::meshing::miter_offsets;
 use crate::map::osm::{LaneTurn, RoadLine, TrafficSide};
 
 /// Хвост траектории за кромкой узла, м — столько же, на скольких колея
@@ -72,12 +74,23 @@ pub struct Turns {
 /// Стрелка на полосе подхода к узлу: середина полосы на кромке узла, куда по
 /// ней едут и какие манёвры из неё разрешены. `left` / `right` — как в
 /// `turn:lanes`, по сторонам хода.
-#[derive(Clone, Copy, Debug)]
+///
+/// `back` — ось полосы от кромки назад, против хода, на [`ARROW_BACK`]: по ней
+/// стрелка встаёт на свой отступ. Прямая от кромки по ходу на самой кромке
+/// годится только у прямого подхода — на изогнутом стрелка за двадцать метров
+/// съезжала с полосы на газон (Лейпцигер-штрассе, витрина Берлина).
+#[derive(Clone, Debug)]
 pub struct LaneArrow {
     pub at: Vec2,
     pub travel: Vec2,
     pub turn: LaneTurn,
+    pub back: Vec<Vec2>,
 }
+
+/// Сколько оси полосы за кромкой узла несёт стрелка, м: дальше всякой зебры и
+/// стоп-линии, за которыми она встаёт (`paint::ARROW_MARK_REACH` 30 м), плюс
+/// её отступ и длина.
+const ARROW_BACK: f32 = 45.0;
 
 /// Без `turn:lanes` стрелки рисуются только на подходе с этим числом полос
 /// своего направления и больше — у крупного узла; у двухполосной улицы на
@@ -99,6 +112,8 @@ pub struct JunctionWear {
 pub(super) struct LaneEnd {
     pub point: Vec2,
     pub travel: Vec2,
+    /// Сдвиг середины полосы от оси пути, м (плюс — влево по ходу точек).
+    pub offset: f32,
 }
 
 /// Полосы плеча в одном направлении, от бордюра к оси, и манёвры из них по
@@ -223,12 +238,14 @@ impl Turns {
             if drawn[from.road].bridge {
                 continue;
             }
+            let path = paths[from.road].as_ref();
             for (lane, turn) in ins[a].lanes.iter().zip(turns) {
                 if turn != LaneTurn::default() {
                     self.arrows.push(LaneArrow {
                         at: lane.point,
                         travel: lane.travel,
                         turn,
+                        back: lane_back(path, from, lane.offset),
                     });
                 }
             }
@@ -237,6 +254,33 @@ impl Turns {
             self.wear.push(wear);
         }
     }
+}
+
+/// Ось входящей полосы со сдвигом `offset` от кромки плеча `arm` назад, против
+/// хода, на [`ARROW_BACK`]: первая точка — на кромке.
+fn lane_back(path: &[Vec2], arm: &JunctionArm, offset: f32) -> Vec<Vec2> {
+    let (along, _) = arclengths(path);
+    let total = along.last().copied().unwrap_or(0.0);
+    // входящая едет к узлу: по ходу точек, если узел у конца пути
+    let toward_end = -arm.dir > 0.0;
+    let piece = if toward_end {
+        tapers::cut(path, (arm.edge - ARROW_BACK).max(0.0), arm.edge)
+    } else {
+        tapers::cut(path, arm.edge, (arm.edge + ARROW_BACK).min(total))
+    };
+    if piece.len() < 2 {
+        return Vec::new();
+    }
+    let offsets = miter_offsets(&piece, false, offset);
+    let mut lane: Vec<Vec2> = piece
+        .iter()
+        .zip(offsets)
+        .map(|(point, shift)| *point + shift)
+        .collect();
+    if toward_end {
+        lane.reverse();
+    }
+    lane
 }
 
 /// Полосы плеча `arm` на его кромке: входящие в узел (`incoming`) или
@@ -283,6 +327,7 @@ fn arm_lanes(
         .map(|&offset| LaneEnd {
             point: point + normal * offset,
             travel,
+            offset,
         })
         .collect();
     // `turn:lanes` — слева направо по ходу движения; от бордюра — это справа

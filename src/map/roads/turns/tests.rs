@@ -187,6 +187,40 @@ fn arrows_follow_the_tag_or_the_rule_on_a_wide_approach() {
     assert!(tagged.arrows[0].turn.left);
 }
 
+/// На изогнутом подходе стрелка идёт по своей полосе, а не по прямой от
+/// кромки: ось стрелки держит сдвиг полосы от оси дороги на всей длине, в том
+/// числе за двадцать метров от узла, где прямая уже ушла бы с полосы.
+#[test]
+fn an_arrow_follows_its_lane_on_a_curved_approach() {
+    // подход дугой радиусом 40 м, входит в узел с запада
+    let arc: Vec<Vec2> = (0..=12)
+        .map(|step| {
+            let angle = std::f32::consts::FRAC_PI_2 * (1.0 - step as f32 / 12.0);
+            NODE + Vec2::new(-40.0 * angle.sin(), 40.0 - 40.0 * angle.cos())
+        })
+        .collect();
+    let mut main = road(
+        arc.into_iter().chain([Vec2::new(200.0, 0.0)]).collect(),
+        Highway::Tertiary,
+        2,
+    );
+    main.oneway = true;
+    let path = main.points.clone();
+    let (turns, _) = turns_of(vec![main, side(Highway::Residential)], TrafficSide::Right);
+    assert_eq!(turns.arrows.len(), 2);
+    for arrow in &turns.arrows {
+        let offset = crate::map::meshing::distance_to_path(arrow.at, &path);
+        let far = crate::map::roads::paint::along_back(&arrow.back, 25.0)
+            .expect("ось полосы длиннее двадцати пяти метров");
+        let drift = crate::map::meshing::distance_to_path(far, &path) - offset;
+        assert!(drift.abs() < 0.2, "стрелка ушла с полосы на {drift} м");
+        // прямая от кромки в тех же 25 м ушла бы на метры
+        let straight = arrow.at - arrow.travel.normalize() * 25.0;
+        let off = crate::map::meshing::distance_to_path(straight, &path) - offset;
+        assert!(off.abs() > 2.0, "{off}");
+    }
+}
+
 #[test]
 fn tagged_lanes_decide_which_lanes_turn() {
     let mut main = road(
@@ -227,7 +261,11 @@ fn tagged_lanes_decide_which_lanes_turn() {
 
 #[test]
 fn a_straight_curve_is_one_link_and_a_turn_is_many() {
-    let lane = |point: Vec2, travel: Vec2| LaneEnd { point, travel };
+    let lane = |point: Vec2, travel: Vec2| LaneEnd {
+        point,
+        travel,
+        offset: 0.0,
+    };
     let straight = curve(
         lane(Vec2::ZERO, Vec2::X),
         lane(Vec2::new(50.0, 0.0), Vec2::X),

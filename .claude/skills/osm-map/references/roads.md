@@ -553,7 +553,13 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     that lane's axis within `ARROW_MARK_REACH` 30 m of the edge (`Painter::
     arrow_setback`), or 4 m from the edge with none — a zebra stands off the edge by its
     crossing's position, and a fixed setback from the edge put arrows on it (gallery 1,
-    21). The marks sit in a `Grid` (`paint::ArrowMarks`): a scan over all 3600 per arrow
+    21). The setback is measured **along the lane**: each arrow carries `LaneArrow::back`,
+    its lane's centreline from the edge back against the travel for `ARROW_BACK` 45 m (the
+    drawn axis offset by the lane, `turns::lane_back`), and `paint_arrow` puts tip and tail
+    on it by arc length (`paint::along_back`); a straight line back from the edge left the
+    lane on a curved approach — 20 m out it sat on the lawn (Leipziger Straße, Berlin).
+    A lane shorter than that falls back to the straight line. The marks sit in a `Grid`
+    (`paint::ArrowMarks`): a scan over all 3600 per arrow
     cost Tula 4 ms of the road build. Stage 7 on Tula: 120.9 ms (118.5 before), 920 k
     vertices (900 k), 1089 arrows, 610 kerb pockets. Drawn under their own
     `RoadStyle::arrows` toggle (stage 8), independent of `markings`.

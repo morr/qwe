@@ -375,6 +375,20 @@ pub fn wedge_ends(
     })
 }
 
+/// Точка ломаной `line` на длине `distance` от её начала; `None` — ломаная
+/// короче.
+pub(super) fn along_back(line: &[Vec2], distance: f32) -> Option<Vec2> {
+    let mut run = 0.0;
+    for link in line.windows(2) {
+        let length = link[0].distance(link[1]);
+        if run + length >= distance && length > 0.0 {
+            return Some(link[0].lerp(link[1], (distance - run) / length));
+        }
+        run += length;
+    }
+    None
+}
+
 /// Меши слоя краски: линии полос и осевые, по улицам и по мостам отдельно,
 /// и зебры. Стоп-линии и направляющий пунктир — в меше линий полос: и видны
 /// они до того же зума. Под всеми — колея траекторий узла: одни и те же
@@ -778,12 +792,27 @@ impl Painter {
     /// за [`ARROW_SETBACK`] до кромки узла, чтобы стрелка не легла на
     /// стоп-линию и переход.
     pub(super) fn paint_arrow(&mut self, arrow: &LaneArrow, setback: f32) {
-        let forward = arrow.travel.normalize_or_zero();
+        // кончик и хвост — на оси полосы, по её длине от кромки: на изогнутом
+        // подходе прямая от кромки уводила стрелку с полосы. Короткая ось (way
+        // кончается раньше) — по прямой, как раньше
+        let (tip, tail) = match (
+            along_back(&arrow.back, setback),
+            along_back(&arrow.back, setback + ARROW_LENGTH),
+        ) {
+            (Some(tip), Some(tail)) => (tip, tail),
+            _ => {
+                let forward = arrow.travel.normalize_or_zero();
+                (
+                    arrow.at - forward * setback,
+                    arrow.at - forward * (setback + ARROW_LENGTH),
+                )
+            }
+        };
+        let forward = (tip - tail).normalize_or_zero();
         if forward == Vec2::ZERO {
             return;
         }
         let left = forward.perp();
-        let tail = arrow.at - forward * (setback + ARROW_LENGTH);
         // точка стрелки в её раме: `x` — вдоль хода от хвоста, `y` — влево
         let to_world = |x: f32, y: f32| tail + forward * x + left * y;
         let turn = arrow.turn;
