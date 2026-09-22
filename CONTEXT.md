@@ -263,8 +263,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     higher rank, or the
     cluster has signals; rank is the `highway` class, a stop / give-way sign on the arm
     lowers it. On every arm that breaks: a **zebra** (the OSM crossing on the arm, or one
-    generated past the junction edge where two streets with sidewalks meet — `RoadStyle::
-    crossings`) and a **stop line** across the lanes coming in (dashed for give-way —
+    generated past the junction edge where two streets with sidewalks (by tag, not the
+    Sidewalks toggle) meet — `RoadStyle::crossings`) and a **stop line** across the lanes
+    coming in (dashed for give-way —
     `RoadStyle::stop_lines`); the halves of a divided street share one zebra line. A
     marked crossing elsewhere is a zebra with a gap in the lines. A **pocket**: a wide
     arm's lines with no room on the narrower arm across the junction end at its edge.

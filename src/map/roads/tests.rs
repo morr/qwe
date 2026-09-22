@@ -1141,6 +1141,28 @@ fn the_sidewalk_knob_takes_the_kerb_off_the_lot_road_too() {
     assert!(layer(&layers, "lot_sidewalks").builder.is_empty());
 }
 
+/// Зебра по правилу — на плече узла двух улиц с тротуарами **по тегу**
+/// (`RoadLine::sidewalks`, как карман у `pockets::kerb_parking`), а не по
+/// ручке «Sidewalks»: та лишь прячет ленту, у зебры своя ручка `crossings`.
+#[test]
+fn rule_zebras_do_not_follow_the_sidewalk_knob() {
+    let map = a_tee();
+    let zebras = |sidewalks| {
+        let style = RoadStyle {
+            sidewalks,
+            ..RoadStyle::default()
+        };
+        mesh_roads(&map, style, RoadShape::default()).1.zebras[0]
+    };
+
+    assert!(zebras(true) > 0, "у тройника есть зебра по правилу");
+    assert_eq!(
+        zebras(false),
+        zebras(true),
+        "ручка тротуаров зебру не трогает"
+    );
+}
+
 /// Разделённый проспект вдоль x: две встречные половины в три полосы с
 /// `gap` метров между кромками. Возвращает карту и расстояние между осями.
 fn divided_avenue(gap: f32) -> (MapData, f32) {

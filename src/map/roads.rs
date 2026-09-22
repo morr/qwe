@@ -1296,7 +1296,14 @@ pub fn mesh_roads(
             },
             stop_lines: style.markings && style.stop_lines,
         },
-        |index| sidewalks_of(index).is_some(),
+        // тротуар по тегу (`sidewalk=*`), а не по ручке «Sidewalks»: ручка
+        // прячет ленту, а зебра по правилу — вопрос модели, как карман у
+        // `pockets::kerb_parking`; кусок поперечной в проёме пары — нет
+        |index| {
+            sidewalk_width(drawn[index]).is_some()
+                && drawn[index].sidewalks.contains(&true)
+                && !across_median[index]
+        },
         |index| {
             axes.pairs.runs[index]
                 .iter()

@@ -283,12 +283,16 @@ struct Crossing {
 impl NodePaint {
     /// Краска узлов по дорогам `drawn`, нарисованным по `paths`. `base` —
     /// разрывы асфальта (`junctions::marking_breaks`), `targets` — стежки,
-    /// которые тоже узлы, `sidewalk` — есть ли у дороги тротуар, `partners` —
-    /// вторые половины разделённой улицы.
+    /// которые тоже узлы, `sidewalk` — есть ли у дороги тротуар по тегу
+    /// (`sidewalk=*`, независимо от `RoadStyle::sidewalks`: ручка прячет
+    /// ленту, а зебра по правилу — вопрос модели), `partners` — вторые
+    /// половины разделённой улицы.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         drawn: &[&RoadLine],
         paths: &[impl AsRef<[Vec2]>],
-        (base, targets): (&[Vec<Break>], &[[Option<StitchTarget>; 2]]),
+        base: &[Vec<Break>],
+        targets: &[[Option<StitchTarget>; 2]],
         map: &MapData,
         style: NodePaintStyle,
         sidewalk: impl Fn(usize) -> bool,
