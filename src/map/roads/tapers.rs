@@ -167,8 +167,9 @@ pub fn fit(total: f32, lengths: [Option<f32>; 2]) -> [Option<f32>; 2] {
     })
 }
 
-/// Кусок ломаной между длинами дуги `from..to`.
-fn cut(path: &[Vec2], from: f32, to: f32) -> Vec<Vec2> {
+/// Кусок ломаной между длинами дуги `from..to`. Им же режется тротуар у
+/// разделённой улицы (`roads::push_sidewalk`).
+pub(super) fn cut(path: &[Vec2], from: f32, to: f32) -> Vec<Vec2> {
     let mut piece = Vec::new();
     let mut run = 0.0;
     for segment in path.windows(2) {

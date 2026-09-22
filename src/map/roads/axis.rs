@@ -33,6 +33,7 @@ use std::f32::consts::PI;
 use bevy::prelude::*;
 
 use super::centerline;
+use super::network::pairs::Pairs;
 use super::network::{RoadNetwork, RoadNodes, StreetWay};
 use crate::map::meshing::arc_steps;
 use crate::map::osm::RoadLine;
@@ -75,6 +76,9 @@ pub struct Axes<'a> {
     pub seams: usize,
     /// Изломы, на которые не хватило звеньев для радиуса в полуширину.
     pub tight: usize,
+    /// Парные половины разделённых улиц — уже разведённые по этим осям
+    /// (`roads/network/pairs.rs`).
+    pub pairs: Pairs,
 }
 
 /// Осевые, по которым строятся ленты, ряды машин и полоса тротуара.
@@ -89,14 +93,14 @@ pub fn street_axes<'a>(
 ) -> Axes<'a> {
     let mut smoothed: Vec<Option<Vec<Vec2>>> = vec![None; roads.len()];
     let (mut seams, mut tight) = (0, 0);
+    let local;
+    let network = if network.covers(roads.len()) {
+        network
+    } else {
+        local = RoadNetwork::new(roads);
+        &local
+    };
     if let Some(radius) = target_radius(smoothing) {
-        let local;
-        let network = if network.covers(roads.len()) {
-            network
-        } else {
-            local = RoadNetwork::new(roads);
-            &local
-        };
         for street in &network.streets {
             let excluded = |way: &StreetWay| {
                 let road = &roads[way.road];
@@ -113,7 +117,7 @@ pub fn street_axes<'a>(
             }
         }
     }
-    let paths = roads
+    let mut paths: Vec<Cow<[Vec2]>> = roads
         .iter()
         .zip(smoothed)
         .map(|(road, path)| match path {
@@ -121,10 +125,14 @@ pub fn street_axes<'a>(
             None => centerline(road, smoothing, nodes),
         })
         .collect();
+    // половины разделённых улиц — на постоянный зазор, по уже гладким осям
+    let mut pairs = Pairs::new(roads, &paths);
+    pairs.align(&mut paths, roads, network, nodes);
     Axes {
         paths,
         seams,
         tight,
+        pairs,
     }
 }
 

@@ -6,9 +6,10 @@ Detail behind `map/roads.rs`, `map/roads/*` and the street half of `surface.wgsl
 carries how a street is drawn: the sidewalk band, lane markings and their breaks, the
 ribbon primitive, junctions and the drawn network (pinned nodes, driveway crossings,
 stitches, kerb returns), `RoadStyle`, the bridge layers, asphalt wear, and the junction
-gallery `examples/demos/roads`. The big lot's kerb, the boulevard's double line
-(`medians`) and the gores at a roundabout are written up under **Parking → A big lot
-shows the road through it** in `parking.md`; the parse passes that read a road's width
+gallery `examples/demos/roads`, and **Paired halves** — a divided street and its median.
+The big lot's kerb, the stretch of the boulevard's double line over the lot and the gores
+at a roundabout are written up under **Parking → A big lot shows the road through it** in
+`parking.md`; the parse passes that read a road's width
 (houses pulled off the sidewalks, blocks pulled to the roads) are in `parse.md`.
 
 ## Rendering
@@ -42,6 +43,72 @@ shows the road through it** in `parking.md`; the parse passes that read a road's
   markings: a white line on white is invisible, and on grey the street grid also stops
   merging with the courtyards. At a junction the band turns the corner on the kerb's own
   arc — **The drawn network → Kerb returns → The sidewalk turns with the kerb** below.
+  **A half of a divided street has no band on its paired side** (`roads::push_sidewalk`,
+  **Paired halves** below): along a pair run the band is the width plus one sidewalk,
+  shifted half a sidewalk away from the partner, and the full band resumes past the run
+  with a butt joint. On a half with a taper the runs are not re-cut and the band stays
+  full.
+- **Paired halves** (`map/roads/network/pairs.rs`, drawing in `map/roads/medians.rs`) — a
+  divided street is two opposite one-way ways side by side, and each used to be drawn as
+  a street of its own: its own sidewalk on both sides, a hairline of sidewalk under a
+  half-metre gap, two pavements down the middle of a lawn, and where the mapper drew the
+  halves closer than their width, one ribbon over the other with its lane lines through
+  the neighbour's (Красноармейский проспект: 3 + 3 lanes with the axes 9.5 m apart, not
+  11). Measured on Tula before this: 101 medians, 45 of them up to 3 m (22 overlapping),
+  and the gap wandering within a pair by 1–2 m (up to 8 on a few).
+  - **Finding** (`Pairs::new`, on the drawn axes of `axis::street_axes`, so once for the
+    roads and once for the cars) — from every `PROBE_STEP` 2 m of a `pairable` road (a
+    one-way `Street`-class way: a street **or a `service` drive** — the «Макси» boulevard
+    is two service drives — never a parking aisle, a ring, a bridge or an arch) the
+    nearest other one of the **same `Highway`** running **against** it (`PAIR_PARALLEL`
+    0.9) and beside it (`PAIR_SKEW` 0.35) with `-PAIR_OVERLAP` 3.3 … `PAIR_MAX_GAP` 15 m
+    between the kerbs. The overlap is a lane, not the lot's old 1 m: opposite halves never
+    merge like lanes do, so an overlap is sloppy mapping and the alignment fixes it. The
+    distance is to the **foot on the neighbour segment's line**, allowed `END_OVERHANG`
+    3 m past its end: to the clamped closest point, a probe near the neighbour's end saw
+    that end shifted along the axis, lost the pair metres before every node and seam, and
+    the double solid stopped short of the junction (the author's report, sample 2).
+    Consecutive probes with one partner are a **run** (`PairRun`, `PAIR_MIN` 8 m), and a
+    run's gap is its median. One `Median` per pair of runs, from the half with the lower
+    index — the old lot code computed it from both sides first and got two double lines
+    a few centimetres apart.
+  - **Alignment** (`Pairs::align`) — each half is densified to `ALIGN_STEP` 4 m and moved
+    so that it stands at half the target distance from the midpoint between it and the
+    partner's original axis: target gap = the run's median, paved ones no narrower than
+    `PAVED_MIN_GAP` 0.5. The weight fades (smoothstep) over `ALIGN_TRANSITION` 20 m to a
+    run's end — unless the end is a seam whose continuation carries a run at the same
+    node — and to a node shared with **another** street, which stays exactly in place (kerb
+    returns, breaks and stitches find each other by it). Then the path is thinned back by
+    Douglas–Peucker at `SIMPLIFY_TOLERANCE` 3 cm keeping every shared node, and the
+    median's midline and the two inner kerbs are sampled off the aligned axes and thinned
+    the same way; the thinning is what took the stage from +130 k vertices and +50 ms
+    down to +24 k and +18 ms. Ends of two medians closer than `JOIN_GAP` 5 m are drawn
+    together (`join_ends`): a half of two ways is two runs, and the gap at the seam was a
+    hole in the double line and a kerb island on the «Макси» boulevard.
+  - **Paved median** (gap ≤ `MEDIAN_GAP` 3 m) — `push_paved` lays a ribbon down the
+    midline as wide as the axes are apart into the `roads` layer **before** the halves
+    (no lane frame, so no ruts; the halves lay theirs over it), and the paint layer draws
+    a **double solid** down the midline (`Painter::paint_median`, the axes mesh).
+  - **Lawn** (wider) — the contour between the inner kerbs, opened by `NOSE_SHARE` 0.45 of
+    the gap for a **rounded nose**, goes into the `sidewalks` layer (it shows as a
+    `MEDIAN_KERB` 0.5 m kerb along each half), and shrunk by the kerb it is grass in
+    `road_medians` (`Z_ROAD_MEDIAN` 1.7, `SurfaceKind::Grass`, the meadow colour). Drawn
+    whatever `RoadStyle::sidewalks` says: a lawn is still a lawn.
+  - **Where it opens** — `crossing_breaks`: only a junction break of one half **facing** a
+    break of the other (within the axes' distance plus both reaches) — a crossing
+    street, a U-turn link, a zebra's footway. A street into one half does not open the
+    median: the far half runs past, and the double solid runs past with it (sample 12's
+    note). At such a break the lawn stops `NOSE_CLEARANCE` 1 m short of it, and
+    `reach_breaks` carries the midline and the kerbs on to the break centre (at most
+    `MEDIAN_EXTEND` 12 m) so that the double solid dies at the break edge like the lane
+    lines do, whatever the probes did. Toward a gore at a ring the line is trimmed and
+    reached by `Gores::reach` (`MEDIAN_GORE_GAP` 0.6 m short of the hatching).
+  - **Cars** need nothing: a one-way half parks one row on its driving-side kerb, i.e.
+    away from the partner, and the row stands on the aligned axis. **Navmesh** does not
+    see any of it — `RoadLine::points` never move.
+  - Tula after this: 79 paved + 61 lawn medians; road meshing 90 → ~110 ms (pairs 5.5 ms,
+    align 2.3 ms — both paid by the car layer's axes too — the medians 10 ms, mostly the
+    lawn outlines); 753 k → 788 k vertices, paint 27 k → 34 k.
 - **Streets, sections, tapers** (`map/roads/network/streets.rs`, `sections.rs`,
   `map/roads/tapers.rs`) — the first stage of the roads rework: the width of a street
   stops being a property of its class and becomes the consequence of its lanes.
@@ -633,11 +700,13 @@ shows the road through it** in `parking.md`; the parse passes that read a road's
 
 ## The junction gallery — `examples/demos/roads`
 
-`cargo run --example roads` shows a city's typical road junctions in a column — seventeen
+`cargo run --example roads` shows a city's typical road junctions in a column — eighteen
 for Tula (the sixteenth, `16_lanes_taper`, is a one-way primary going from four lanes to
 two at a pure seam — the taper of **Streets, sections, tapers**; the seventeenth,
 `17_ring_gores`, is the mall ring the plan's acceptance names — three hatched gores and
-the boulevard's double solid line must survive every stage): crossings of avenues (square and skew), of an avenue and a street, of a divided
+the boulevard's double solid line must survive every stage; the eighteenth,
+`18_lawn_median`, is Советская улица with a 5 m lawn between the halves and a lane into
+one of them — **Paired halves**): crossings of avenues (square and skew), of an avenue and a street, of a divided
 avenue and a street, of private-sector streets and of yard drives, T's into an avenue and
 into one half of a divided one, a fork round a triangular island, a roundabout, five
 arms, a drive into a street, a street that narrows, a sharp bend, a dead end — each with

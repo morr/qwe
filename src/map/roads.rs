@@ -61,6 +61,7 @@ use crate::map::osm::{AreaKind, MapData, PolyArea, RoadClass, RoadLine, WallLine
 use crate::map::shadow;
 use crate::map::shapes::is_ring;
 use crate::map::smooth::{Smoothing, smooth_pinned};
+use crate::map::spawn::GRASS_COLOR;
 use crate::map::surface::{
     self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec, SurfaceKind, spawn_layers,
 };
@@ -68,7 +69,7 @@ use crate::map::{SHADOW_COLOR, SunOnMap};
 use crate::prefs::retuned;
 use crate::settings::{
     Z_ALLEY, Z_ALLEY_CASING, Z_BRIDGE, Z_BRIDGE_CASING, Z_BRIDGE_SHADOW, Z_BUILDING, Z_LOT_LINES,
-    Z_LOT_SIDEWALK, Z_ROAD, Z_ROAD_CASING, Z_SIDEWALK,
+    Z_LOT_SIDEWALK, Z_ROAD, Z_ROAD_CASING, Z_ROAD_MEDIAN, Z_SIDEWALK,
 };
 
 /// Путь тени настила: та же осевая, сдвинутая по свету на высоту моста,
@@ -791,6 +792,9 @@ pub struct RoadReport {
     pub gores: usize,
     /// Клинья между сечениями улиц (`roads/tapers.rs`).
     pub tapers: usize,
+    /// Разделительные парных половин (`roads/network/pairs.rs`): асфальтом и
+    /// газоном.
+    pub medians: [usize; 2],
     /// Швы ways, пройденные осью улицы одной кривой (`roads/axis.rs`).
     pub seams: usize,
     /// Изломы, на которые звеньев не хватило для радиуса в полуширину.
@@ -813,6 +817,7 @@ impl std::fmt::Display for RoadReport {
             crossings,
             gores,
             tapers,
+            medians: [paved, lawns],
             seams,
             tight,
             vertices,
@@ -825,8 +830,9 @@ impl std::fmt::Display for RoadReport {
              sidewalks {}, markings {}, paint {paint_lines} lines / {paint_vertices} verts, \
              junctions {junctions}, kerb returns {kerb_returns} + \
              {sidewalk_returns} on sidewalks, stitches {stitches}, driveway crossings \
-             {crossings}, gores {gores}, tapers {tapers}, smooth seams {seams}, tight corners \
-             {tight}; {network:?} of it before the ribbons)",
+             {crossings}, gores {gores}, tapers {tapers}, medians {paved} paved + {lawns} \
+             lawn, smooth seams {seams}, tight corners {tight}; {network:?} of it before the \
+             ribbons)",
             style.join, style.smoothing, style.casing, style.sidewalks, style.markings,
         )
     }
@@ -867,7 +873,6 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
     // улицы на больших стоянках — бордюром и разметкой поверх их асфальта
     // (`roads/lots.rs`)
     let mut grounds = lots::Grounds::of(map);
-    let mut gore_roads: Vec<gores::GoreRoad> = Vec::new();
 
     let nodes = RoadNodes::new(roads);
     // Дороги так, как они рисуются: переезд через тротуар — асфальтом
@@ -934,6 +939,63 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
     for outline in &kerb_returns.sidewalks {
         sidewalks.push_convex(outline, SIDEWALK_COLOR.to_linear());
     }
+    // стежок до дороги, до которой OSM торец не довёл (`roads/network.rs`)
+    let stitched: Vec<Cow<[Vec2]>> = paths
+        .iter()
+        .enumerate()
+        .map(|(index, path)| {
+            if stitches.touches(index) {
+                let mut points = path.to_vec();
+                stitches.apply(index, &mut points);
+                Cow::Owned(points)
+            } else {
+                Cow::Borrowed(path.as_ref())
+            }
+        })
+        .collect();
+    // направляющие островки у колец (`roads/gores.rs`) — до лент: к ним
+    // дотягиваются двойные сплошные разделительных
+    let gore_roads: Vec<gores::GoreRoad> = order
+        .iter()
+        .filter(|&&index| {
+            let road = drawn[index];
+            road.class == RoadClass::Street && !road.passage && !road.bridge
+        })
+        .map(|&index| gores::GoreRoad::new(drawn[index], &stitched[index]))
+        .collect();
+    let gores = gores::Gores::of(&gore_roads);
+    // разделительные парных половин (`roads/medians.rs`): асфальт — до лент
+    // половин, под ними; газон с бордюром — в свой слой над тротуарами
+    let mut median_grass = MeshBuilder::with_surface_coords();
+    let mut paved: Vec<network::pairs::Median> = Vec::new();
+    for median in &axes.pairs.medians {
+        let [first, second] = median.roads;
+        let breaks = medians::crossing_breaks(
+            median,
+            [&junctions.breaks[first], &junctions.breaks[second]],
+        );
+        // до перекрёстка — как линии полос, а не там, где кончились пробы
+        let mut median = median.clone();
+        medians::reach_breaks(&mut median, &breaks);
+        if median.is_paved() {
+            medians::push_paved(&mut streets, &median, ROAD_COLOR.to_linear(), style.join);
+            if style.markings {
+                let mut midline = median.midline.clone();
+                gores.reach(&mut midline);
+                painter.paint_median(&midline, &breaks);
+            }
+            paved.push(median);
+        } else {
+            medians::push_lawn(
+                &mut sidewalks,
+                &mut median_grass,
+                &median,
+                &breaks,
+                SIDEWALK_COLOR.to_linear(),
+                GRASS_COLOR.to_linear(),
+            );
+        }
+    }
     let network_time = started.elapsed();
 
     for index in order {
@@ -942,14 +1004,7 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
             RoadClass::Street => (ROAD_CASING_COLOR, ROAD_COLOR),
             RoadClass::Alley => (ALLEY_CASING_COLOR, ALLEY_COLOR),
         };
-        // стежок до дороги, до которой OSM торец не довёл (`roads/network.rs`)
-        let points: Cow<[Vec2]> = if stitches.touches(index) {
-            let mut stitched = paths[index].to_vec();
-            stitches.apply(index, &mut stitched);
-            Cow::Owned(stitched)
-        } else {
-            Cow::Borrowed(paths[index].as_ref())
-        };
+        let points: &[Vec2] = &stitched[index];
         let breaks = junctions.breaks[index].as_slice();
         let lanes = road_lanes(road);
         // линии краски — по той же оси, разрывам и клиньям, что и асфальт
@@ -957,15 +1012,15 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
             let wedges = if road.bridge {
                 [None; 2]
             } else {
-                paint::wedge_ends(&points, &tapers, &drawn, index)
+                paint::wedge_ends(points, &tapers, &drawn, index)
             };
-            painter.paint(road, &points, breaks, wedges, stations[index]);
+            painter.paint(road, points, breaks, wedges, stations[index]);
         }
         if road.bridge {
             // бордюр — всегда, независимо от style.casing: он и есть мост
             push_bridge_curb(
                 &mut bridge_casings,
-                &points,
+                points,
                 2.0 * road.curb_reach(),
                 style.join,
             );
@@ -974,7 +1029,7 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
             // только дома, а мост через Упу — самая заметная вещь на воде.
             if let Some(deck) = bridges.span(index).filter(|deck| deck.casts) {
                 shadow_bands.push(ShadowBand {
-                    path: bridge_shadow_path(&points, deck),
+                    path: bridge_shadow_path(points, deck),
                     reach: road.curb_reach(),
                     penumbra: bridge_penumbra(deck.span),
                 });
@@ -982,7 +1037,7 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
             bridge_fills.set_lanes(lanes);
             push_street_fill(
                 &mut bridge_fills,
-                &points,
+                points,
                 road.width,
                 color.to_linear(),
                 style.join,
@@ -1001,9 +1056,9 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
         let [head, body, tail] = if ends == [None; 2] {
             [None, None, None]
         } else {
-            tapers::split(&points, ends.map(|end| end.map(|taper| taper.length)))
+            tapers::split(points, ends.map(|end| end.map(|taper| taper.length)))
         };
-        let body: &[Vec2] = body.as_deref().unwrap_or(&points);
+        let body: &[Vec2] = body.as_deref().unwrap_or(points);
         let trimmed = [head.is_some(), tail.is_some()];
         let wedges: Vec<(&[Vec2], &RoadLine, bool)> =
             [(&head, ends[0], false), (&tail, ends[1], true)]
@@ -1024,10 +1079,20 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
 
         if let Some(sidewalk) = drawn_sidewalk(&style, road) {
             let band = |road: &RoadLine, sidewalk: f32| road.width + 2.0 * sidewalk;
-            push_ribbon_trimmed(
+            // у половины разделённой улицы тротуара со стороны пары нет; на
+            // клине куски пары не пересчитываются — там тротуар как был
+            let runs = if wedges.is_empty() {
+                axes.pairs.runs[index].as_slice()
+            } else {
+                &[]
+            };
+            let stitch =
+                stitches.ends[index][0].map_or(0.0, |start| start.distance(paths[index][0]));
+            push_sidewalk(
                 &mut sidewalks,
                 body,
-                band(road, sidewalk),
+                [road.width, sidewalk],
+                (runs, stitch),
                 SIDEWALK_COLOR.to_linear(),
                 style.join,
                 trimmed,
@@ -1082,15 +1147,13 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
             );
         }
         if road.class == RoadClass::Street && !road.passage {
-            grounds.push(road, &points);
-            gore_roads.push(gores::GoreRoad::new(road, &points));
+            grounds.push(road, points);
         }
     }
     // направляющие островки у колец: асфальт — в слой улиц, поверх тротуаров,
     // разметка — выше асфальта стоянок (`roads/gores.rs`)
-    let gores = gores::Gores::of(&gore_roads);
     gores.push_asphalt(&mut streets, ROAD_COLOR.to_linear());
-    let mut lot_layers = grounds.layers(&style, &gores);
+    let mut lot_layers = grounds.layers(&style, &gores, &paved);
     if style.markings {
         gores.push_markings(&mut lot_layers.lines);
     }
@@ -1131,6 +1194,12 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
             Z_SIDEWALK,
             "sidewalks",
             MaterialSpec::Surface(SurfaceKind::Sidewalk),
+        ),
+        (
+            median_grass,
+            Z_ROAD_MEDIAN,
+            "road_medians",
+            MaterialSpec::Surface(SurfaceKind::Grass),
         ),
         (
             street_casings,
@@ -1201,6 +1270,7 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
         crossings: crossings.len(),
         gores: gores.count(),
         tapers: tapers.count,
+        medians: axes.pairs.count(),
         seams: axes.seams,
         tight: axes.tight,
         vertices: layers.iter().map(|l| l.builder.vertex_count()).sum(),
@@ -1564,6 +1634,57 @@ fn push_ribbon_trimmed(
     builder.push_ribbon_capped(points, is_ring(points), width, color, join, caps);
 }
 
+/// Тротуар дороги шириной `widths[0]` с полосой `widths[1]` с каждой стороны
+/// — кроме кусков `runs`, где рядом идёт вторая половина разделённой улицы
+/// (`roads/network/pairs.rs`): там он только с внешней стороны. Длины кусков
+/// меряны по оси без стежка; `runs.1` — длина стежка перед её началом.
+fn push_sidewalk(
+    builder: &mut MeshBuilder,
+    body: &[Vec2],
+    [width, sidewalk]: [f32; 2],
+    (runs, stitch): (&[network::pairs::PairRun], f32),
+    color: LinearRgba,
+    join: RoadJoin,
+    trimmed: [bool; 2],
+) {
+    if runs.is_empty() {
+        return push_ribbon_trimmed(builder, body, width + 2.0 * sidewalk, color, join, trimmed);
+    }
+    let total = polyline_length(body);
+    let mut cursor = 0.0;
+    // кусок `from..to`: `side` — сдвиг полосы от оси, `None` — с обеих сторон
+    let mut piece = |from: f32, to: f32, side: Option<f32>| {
+        if to - from < 0.5 {
+            return;
+        }
+        let points = tapers::cut(body, from, to);
+        let trims = [from > 0.0 || trimmed[0], to < total || trimmed[1]];
+        match side {
+            None => {
+                push_ribbon_trimmed(builder, &points, width + 2.0 * sidewalk, color, join, trims)
+            }
+            Some(shift) => {
+                let shifted: Vec<Vec2> = points
+                    .iter()
+                    .zip(miter_offsets(&points, false, shift))
+                    .map(|(point, offset)| *point + offset)
+                    .collect();
+                push_ribbon_trimmed(builder, &shifted, width + sidewalk, color, join, trims);
+            }
+        }
+    };
+    for run in runs {
+        let from = (run.from + stitch).clamp(cursor, total);
+        let to = (run.to + stitch).clamp(from, total);
+        piece(cursor, from, None);
+        // пара слева — полоса уходит вправо на полтротуара, и наоборот
+        let shift = if run.left { -sidewalk } else { sidewalk } / 2.0;
+        piece(from, to, Some(shift));
+        cursor = to;
+    }
+    piece(cursor, total, None);
+}
+
 /// Заливка проезжей части — лента с разрывами разметки по перекрёсткам. При
 /// `Square` разрывы деть некуда: `push_polyline` знает только торцы, а режим
 /// оставлен ради сравнения картинок, не ради разметки. Срезанный под клин
@@ -1630,6 +1751,7 @@ pub(super) mod axis;
 mod corners;
 mod gores;
 mod lots;
+mod medians;
 /// Открыт наружу для [`map::footprint`](crate::map::footprint): проём в ограде
 /// у брошенного торца — тот же вопрос «висячий ли он», что у стежка, и второго
 /// ответа на него быть не должно. И для разбора: улицы и сечения

@@ -436,6 +436,34 @@ impl Painter {
         }
     }
 
+    /// Двойная сплошная по середине асфальтовой разделительной парных половин
+    /// (`roads/medians.rs`), с разрывами перекрёстков обеих половин `breaks`.
+    /// У каждой половины своей осевой нет — она односторонняя.
+    pub fn paint_median(&mut self, midline: &[Vec2], breaks: &[Break]) {
+        let (path, along, to_break) = break_profile(midline, false, breaks, 0.5);
+        if path.len() < 2 {
+            return;
+        }
+        let stations: Vec<PaintStation> = along
+            .iter()
+            .zip(&to_break)
+            .map(|(&along, &to_break)| PaintStation {
+                along,
+                to_break,
+                alpha: 1.0,
+            })
+            .collect();
+        self.axes.push_paint_strip(
+            &path,
+            false,
+            AXIS_STRIP,
+            &stations,
+            LineKind::Double.code(),
+            PAINT_COLOR.to_linear(),
+        );
+        self.lines += 1;
+    }
+
     /// Четыре слоя краски: улицы над асфальтом улиц, мосты над настилом.
     pub fn layers(self) -> [LayerMesh; 4] {
         [

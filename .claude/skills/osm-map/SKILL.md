@@ -16,8 +16,8 @@ one your change is about, not all of them**:
 - `references/parse.md` — the parse seam and every reading and finishing pass (heights,
   building use, retail box, churches, squaring, houses pulled off the sidewalks, blocks
   and lots pulled to the roads), and how the parse is tested.
-- `references/roads.md` — how a street is drawn: sidewalks, lane markings and their
-  breaks, the ribbon, junctions and the drawn network (stitches, kerb returns),
+- `references/roads.md` — how a street is drawn: sidewalks, divided streets and their
+  medians, lane markings and their breaks, the ribbon, junctions and the drawn network (stitches, kerb returns),
   `RoadStyle`, bridge layers, asphalt wear; the junction gallery `examples/demos/roads`.
 - `references/parking.md` — the parking layout and the big lot (its kerb, the medians,
   the gores at a roundabout), and the parked cars.
@@ -752,7 +752,8 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     `fences/tests.rs::the_far_bucket_draws_nothing`, each asserting the log line itself.
   - **Converted — ten modules, eleven layer doors.** `fences`, `rail`, `tram`, `wagons`,
     `industry`, `cars`,
-    `roads` (11 layers, `mesh_roads` — nine of its own plus the two over a big lot,
+    `roads` (16 layers, `mesh_roads` — ten of its own with the median lawn
+    `road_medians`, the four paint layers of `roads/paint.rs` and the two over a big lot,
     `roads/lots.rs`), all of `spawn.rs` (the 13 surface and paint layers
     as `mesh_surfaces(map, parking_layout) -> (Vec<LayerMesh>, SurfaceReport)` — the
     parking layout arrives ready, because the car rows are drawn off the same one — plus
@@ -918,7 +919,8 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
 - **The layers themselves are in the references**, one file per subject, so a session
   reads only its own. A cross-reference «**X** below/above» inside any of them names a
   bullet by its bold title; this list says which file holds it.
-  - `references/roads.md` — **Sidewalks**, **Markings** (with **Breaks** and
+  - `references/roads.md` — **Sidewalks**, **Paired halves** (the median: asphalt and
+    double solid, or a lawn with a kerb), **Markings** (with **Breaks** and
     `lane_count`), **Ribbon**, **Junctions**, **The drawn network** (pinned nodes,
     driveway crossings, stitches, **Kerb returns**), **RoadStyle**, **Bridge layers**,
     **Asphalt wear**, and **The junction gallery** (`examples/demos/roads`).

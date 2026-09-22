@@ -408,6 +408,9 @@ pub const Z_ALLEY: f32 = 1.5;
 /// перечёркивает полосу песочной лентой. Ниже канта улицы, так что проезжая
 /// часть по-прежнему кроет тротуар на перекрёстке.
 pub const Z_SIDEWALK: f32 = 1.6;
+/// Газон разделительной парных половин (`map/roads/medians.rs`) — поверх её
+/// бордюра, лежащего в слое тротуаров, и под кантом и асфальтом половин.
+pub const Z_ROAD_MEDIAN: f32 = 1.7;
 pub const Z_ROAD_CASING: f32 = 1.9;
 pub const Z_ROAD: f32 = 2.0;
 /// Слой краски улиц (`map/roads/paint.rs`) — линии полос поверх асфальта всех
@@ -564,7 +567,8 @@ const _: () = {
     // но под лентами улицы: на перекрёстке полосу кроет проезжая часть
     assert!(Z_SAND < Z_ALLEY_CASING);
     assert!(Z_ALLEY < Z_SIDEWALK);
-    assert!(Z_SIDEWALK < Z_ROAD_CASING);
+    assert!(Z_SIDEWALK < Z_ROAD_MEDIAN);
+    assert!(Z_ROAD_MEDIAN < Z_ROAD_CASING);
     // стоянка — над дорогами (её край обрезает проезды), под площадкой;
     // разметка — поверх своего покрытия
     assert!(Z_ROAD < Z_ROAD_PAINT);

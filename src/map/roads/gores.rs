@@ -51,6 +51,12 @@ const ARM_TOUCH: f32 = 0.5;
 const LINE_WIDTH: f32 = 0.2;
 const HATCH_WIDTH: f32 = 0.35;
 const HATCH_STEP: f32 = 1.6;
+/// На сколько осевая разделительной дотягивается до острия островка, м, и
+/// шаг, которым оно ищется ([`Gores::reach`]).
+const MEDIAN_REACH: f32 = 8.0;
+const MEDIAN_REACH_STEP: f32 = 0.25;
+/// Зазор между торцом двойной линии и остриём штриховки, м.
+const MEDIAN_GORE_GAP: f32 = 0.6;
 
 /// Улица так, как она нарисована, — что нужно островкам.
 pub(super) struct GoreRoad {
@@ -262,6 +268,65 @@ impl Gores {
         self.hatched
             .iter()
             .any(|shape| point_in_shape(point, shape))
+    }
+
+    /// Дотянуть осевую разделительной до островка, если он в пределах
+    /// [`MEDIAN_REACH`] по её ходу.
+    ///
+    /// Осевая кончается там, где половины перестают идти бок о бок, а клин
+    /// штриховки — там, где зазор между ними сходит на нет, и между остриём
+    /// клина и двойной линией оставалось метра три голого асфальта (отчёт
+    /// автора). На земле края островка **сходятся в** двойную сплошную.
+    pub fn reach(&self, midline: &mut Vec<Vec2>) {
+        if self.hatched.is_empty() {
+            return;
+        }
+        // осевая есть, пока между половинами до трёх метров асфальта, клин —
+        // пока их от 0.6 м: в промежутке обе есть разом, и двойная линия
+        // уезжала внутрь штриховки (отчёт автора). Концы, попавшие в клин,
+        // срезаются, и дотягивается осевая уже от чистого места
+        while midline.last().is_some_and(|point| self.contains(*point)) {
+            midline.pop();
+        }
+        let inside = midline
+            .iter()
+            .take_while(|point| self.contains(**point))
+            .count();
+        midline.drain(..inside);
+        for end in [false, true] {
+            let count = midline.len();
+            if count < 2 {
+                return;
+            }
+            let (tip, before) = if end {
+                (midline[count - 1], midline[count - 2])
+            } else {
+                (midline[0], midline[1])
+            };
+            let Some(heading) = (tip - before).try_normalize() else {
+                continue;
+            };
+            let steps = (MEDIAN_REACH / MEDIAN_REACH_STEP) as usize;
+            // сколько по ходу до штриховки; вплотную линия не подводится —
+            // между её торцом и остриём клина остаётся [`MEDIAN_GORE_GAP`]
+            // (просьба автора: встык торец двойной линии сливался с обводкой
+            // островка)
+            let Some(to_gore) = (1..=steps)
+                .map(|step| step as f32 * MEDIAN_REACH_STEP)
+                .find(|reach| self.contains(tip + heading * *reach))
+            else {
+                continue;
+            };
+            let point = tip + heading * (to_gore - MEDIAN_GORE_GAP);
+            match (to_gore > MEDIAN_GORE_GAP, end) {
+                // до клина дальше зазора — линия дотягивается, не доходя на зазор
+                (true, true) => midline.push(point),
+                (true, false) => midline.insert(0, point),
+                // клин ближе зазора — торец отодвигается назад
+                (false, true) => midline[count - 1] = point,
+                (false, false) => midline[0] = point,
+            }
+        }
     }
 
     /// Асфальт островков — в слой улиц: он выше тротуаров и кроет их треугольник.

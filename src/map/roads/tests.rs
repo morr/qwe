@@ -637,10 +637,11 @@ fn the_city_wall_ribbon_stays_off_fortress_buildings() {
 
 /// Пятнадцать дорожных слоёв снизу вверх, ровно в том порядке, в каком они
 /// уходят в мир: одиннадцать лент и четыре слоя краски над своим асфальтом.
-const LAYERS: [&str; 15] = [
+const LAYERS: [&str; 16] = [
     "alley_casings",
     "alleys",
     "sidewalks",
+    "road_medians",
     "road_casings",
     "roads",
     paint::PAINT_LANES,
@@ -672,7 +673,7 @@ fn layer<'a>(layers: &'a [LayerMesh], name: &str) -> &'a LayerMesh {
 }
 
 #[test]
-fn a_street_builds_fifteen_layers_bottom_up() {
+fn a_street_builds_sixteen_layers_bottom_up() {
     let (layers, report) = mesh_roads(&one_street(), RoadStyle::default());
 
     let names: Vec<&str> = layers.iter().map(|layer| layer.name).collect();
@@ -704,6 +705,7 @@ fn only_the_bridge_shadow_is_blended() {
             "bridge_shadows" => MaterialSpec::Blend,
             "sidewalks" | "lot_sidewalks" => MaterialSpec::Surface(SurfaceKind::Sidewalk),
             "alleys" => MaterialSpec::Surface(SurfaceKind::Alley),
+            "road_medians" => MaterialSpec::Surface(SurfaceKind::Grass),
             "roads" | "bridges" => MaterialSpec::Surface(SurfaceKind::Street),
             name if paint::PaintTag::of(name).is_some() => MaterialSpec::Paint,
             _ => MaterialSpec::Flat,
@@ -1015,7 +1017,8 @@ fn the_markings_knob_takes_the_hatching_off() {
 }
 
 /// Два встречных полотна бок о бок — бульвар: между ними не бордюр, а двойная
-/// сплошная.
+/// сплошная. Пару находит сеть (`roads/network/pairs.rs`); бульвар у ТРЦ
+/// «Макси» — два встречных проезда, как и здесь.
 #[test]
 fn two_carriageways_side_by_side_get_a_double_line_and_no_kerb_between() {
     let mut map = ground_with_roads(100.0);
@@ -1027,7 +1030,8 @@ fn two_carriageways_side_by_side_get_a_double_line_and_no_kerb_between() {
             5.0,
         )
     });
-    let (layers, _) = mesh_roads(&map, RoadStyle::default());
+    let (layers, report) = mesh_roads(&map, RoadStyle::default());
+    assert_eq!(report.medians, [1, 0]);
 
     let lines = &layer(&layers, "lot_lines").builder;
     assert!(!lines.is_empty());
@@ -1061,4 +1065,151 @@ fn the_sidewalk_knob_takes_the_kerb_off_the_lot_road_too() {
     };
     let (layers, _) = mesh_roads(&ground_with_roads(100.0), style);
     assert!(layer(&layers, "lot_sidewalks").builder.is_empty());
+}
+
+/// Разделённый проспект вдоль x: две встречные половины в три полосы с
+/// `gap` метров между кромками. Возвращает карту и расстояние между осями.
+fn divided_avenue(gap: f32) -> (MapData, f32) {
+    let width = 3.0 * 3.3 + 1.0;
+    let apart = width + gap;
+    let half = |points: Vec<Vec2>| RoadLine {
+        highway: Highway::Primary,
+        oneway: true,
+        lanes: Some(3),
+        ..fixture::street(points, width)
+    };
+    let mut map = MapData::default();
+    map.roads
+        .push(half(vec![Vec2::new(100.0, 100.0), Vec2::new(500.0, 100.0)]));
+    map.roads.push(half(vec![
+        Vec2::new(500.0, 100.0 + apart),
+        Vec2::new(100.0, 100.0 + apart),
+    ]));
+    (map, apart)
+}
+
+#[test]
+fn paired_halves_share_a_paved_median_and_keep_sidewalks_outside() {
+    let (map, apart) = divided_avenue(0.6);
+    let (layers, report) = mesh_roads(&map, RoadStyle::default());
+    assert_eq!(report.medians, [1, 0]);
+    let middle = 100.0 + apart / 2.0;
+    // двойная сплошная — по середине между половинами
+    let axes = layer(&layers, paint::PAINT_AXES)
+        .builder
+        .positions_for_test();
+    assert!(!axes.is_empty(), "двойная сплошная есть");
+    assert!(
+        axes.iter().all(|at| (at[1] - middle).abs() < 1.5),
+        "осевые только по середине"
+    );
+    // под зазором — асфальт, а не тротуар
+    let sidewalks = layer(&layers, "sidewalks").builder.positions_for_test();
+    let half = (3.0 * 3.3 + 1.0) / 2.0;
+    let (low, high) = (100.0 + half, 100.0 + apart - half);
+    assert!(
+        sidewalks
+            .iter()
+            .all(|at| at[1] <= low + 0.01 || at[1] >= high - 0.01),
+        "тротуар со стороны пары"
+    );
+    assert!(
+        sidewalks.iter().any(|at| at[1] < 100.0 - half - 1.0),
+        "а с внешней стороны он есть"
+    );
+    let roads = layer(&layers, "roads").builder.positions_for_test();
+    assert!(
+        roads
+            .iter()
+            .any(|at| (at[1] - middle).abs() < 0.01 && at[0] > 150.0)
+    );
+    assert!(layer(&layers, "road_medians").builder.is_empty());
+}
+
+/// Двойная сплошная доходит до перекрёстка так же, как линии полос: пробы пары
+/// теряют соседа за несколько метров до узла, и середина кончалась там (отчёт
+/// автора, пример 2 витрины).
+#[test]
+fn the_double_line_reaches_the_junction_like_the_lane_lines() {
+    let (mut map, apart) = divided_avenue(0.6);
+    for road in &mut map.roads {
+        road.points.insert(1, Vec2::new(300.0, road.points[0].y));
+    }
+    map.roads.push(fixture::street(
+        vec![
+            Vec2::new(300.0, 40.0),
+            Vec2::new(300.0, 100.0),
+            Vec2::new(300.0, 100.0 + apart),
+            Vec2::new(300.0, 170.0),
+        ],
+        12.0,
+    ));
+    let (layers, _) = mesh_roads(&map, RoadStyle::default());
+    let nearest_before = |name: &str| {
+        layer(&layers, name)
+            .builder
+            .positions_for_test()
+            .iter()
+            .filter(|at| at[0] < 300.0 && (at[1] - 100.0 - apart / 2.0).abs() < apart)
+            .map(|at| at[0])
+            .fold(f32::NEG_INFINITY, f32::max)
+    };
+    let (axis, lanes) = (
+        nearest_before(paint::PAINT_AXES),
+        nearest_before(paint::PAINT_LANES),
+    );
+    assert!(axis.is_finite() && lanes.is_finite());
+    // полоса краски выходит за видимый конец линии — гасит её шейдер по
+    // «до разрыва», — так что двойная обязана доходить не меньше линий полос
+    assert!(
+        axis > lanes - 0.5,
+        "двойная кончается у x = {axis}, линии полос — у x = {lanes}"
+    );
+}
+
+/// Улица, примыкающая только к ближней половине, разделительную не открывает:
+/// двойная сплошная идёт мимо узла без разрыва (пример 12 витрины).
+#[test]
+fn a_street_into_one_half_does_not_open_the_median() {
+    let (mut map, _) = divided_avenue(0.6);
+    map.roads[0].points.insert(1, Vec2::new(300.0, 100.0));
+    map.roads.push(fixture::street(
+        vec![Vec2::new(300.0, 40.0), Vec2::new(300.0, 100.0)],
+        7.6,
+    ));
+    let (layers, report) = mesh_roads(&map, RoadStyle::default());
+    assert!(report.junctions > 0, "узел у ближней половины есть");
+    let axes = &layer(&layers, paint::PAINT_AXES).builder;
+    let positions = axes.positions_for_test();
+    assert!(positions.iter().any(|at| at[0] < 200.0) && positions.iter().any(|at| at[0] > 400.0));
+    // разрыв — в «до разрыва» полосы краски: внутри него оно отрицательно
+    // осевая самой примыкающей улицы лежит ниже половин — её не считаем
+    assert!(
+        axes.ribbon_coords_for_test()
+            .expect("у краски атрибут есть")
+            .iter()
+            .zip(positions)
+            .filter(|(_, at)| at[1] > 100.0)
+            .all(|(coords, _)| coords[2] > 0.0),
+        "двойная сплошная рвётся у узла одной половины"
+    );
+}
+
+#[test]
+fn a_wide_gap_between_halves_is_a_lawn_with_a_kerb() {
+    let (map, apart) = divided_avenue(8.0);
+    let (layers, report) = mesh_roads(&map, RoadStyle::default());
+    assert_eq!(report.medians, [0, 1]);
+    let inner = (3.0 * 3.3 + 1.0) / 2.0;
+    let grass = layer(&layers, "road_medians").builder.positions_for_test();
+    assert!(!grass.is_empty(), "газон есть");
+    for at in grass {
+        assert!(
+            at[1] >= 100.0 + inner + medians::MEDIAN_KERB - 0.05
+                && at[1] <= 100.0 + apart - inner - medians::MEDIAN_KERB + 0.05,
+            "газон заходит на бордюр или полотно: {at:?}"
+        );
+    }
+    // осевой краски у газона нет
+    assert!(layer(&layers, paint::PAINT_AXES).builder.is_empty());
 }

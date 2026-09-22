@@ -269,28 +269,28 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
       out at a roundabout the kerbs were chopped into ragged scraps, the island stayed a
       ring, and the two kerbs of the boulevard's halves fused into a light thread
       between them — the author's report. Do not bring the ribbons back.
-    - **The median is a double solid line, not a kerb** (`medians`, layer `lot_lines`,
+    - **The median is a double solid line, not a kerb** (layer `lot_lines`,
       `Z_LOT_LINES` 2.003, flat paint, gated on `RoadStyle::markings`). A boulevard in
-      OSM is two one-way ways side by side with half a metre of asphalt between them.
-      From every `PROBE_STEP` 2 m of a one-way, non-ring through road the nearest other
-      such road is looked up: it counts when it runs **beside** (`MEDIAN_PARALLEL` 0.9
-      of heading, and shifted along the axis by under `MEDIAN_SKEW` 0.35 of the distance
-      — the same road continuing end to end is not a neighbour) with `-MEDIAN_OVERLAP`
-      1 m … `MEDIAN_GAP` 3 m of asphalt between the edges; wider is a real island and
-      keeps its kerb. Runs under `MEDIAN_MIN` 8 m are two slip lanes meeting, not a
-      median. The midline gets `push_rails` (`DOUBLE_LINE_WIDTH` 0.2 m at
-      `DOUBLE_LINE_GAUGE` 0.5 m — wider than the real 0.15 / 0.3, which fuse into a hair
-      at lot zoom), and a strip as wide as the axes are apart is subtracted from the
-      kerb. Computed by **one** carriageway of a pair — the one its neighbour lies
-      toward `MEDIAN_SIDE` from. From both sides at once (tried first) two double lines
-      lay on each other a few centimetres off: a fat double line that thinned where one
-      carriageway ended sooner — the author's report. The side is a direction in the
-      world, not a way index, so the midline does not break where one side is split into
-      two ways. **At a gore** (`reach_gore`) the ends of the midline lying inside the
-      hatching are trimmed — the median exists while the gap is under 3 m, the gore from
-      0.6 m up, so they overlap — and the line is then carried on along its heading up to
-      `MEDIAN_REACH` 8 m, stopping `MEDIAN_GORE_GAP` 0.6 m short of the hatching: flush,
-      its end fused with the island's outline.
+      OSM is two one-way ways side by side with half a metre of asphalt between them —
+      **paired halves**, found and aligned for the whole city by the network
+      (`roads/network/pairs.rs`, `roads.md` → **Paired halves**; the lot looked for them
+      itself until then, on its own streets only). The lot takes each **paved** median's
+      midline, cuts out the stretch over the lot by probes every `PROBE_STEP` 2 m
+      (`on_lot` — a straight midline is two points, both often outside the lot) no
+      shorter than `MEDIAN_MIN` (= `PAIR_MIN` 8 m), lays it with `push_rails`
+      (`DOUBLE_LINE_WIDTH` 0.2 m at `DOUBLE_LINE_GAUGE` 0.5 m — wider than the real
+      0.15 / 0.3, which fuse into a hair at lot zoom) and subtracts a strip as wide as
+      the axes are apart from the kerb. Its own line is needed because the street paint
+      layer (which draws the same double solid everywhere else) lies under the lot's
+      asphalt. The median is computed **once per pair**: from both sides at once (the
+      lot's first try) two double lines lay on each other a few centimetres off — the
+      author's report. The «Макси» boulevard is two `service` drives, which is why a
+      `service` one-way is `pairable`. **At a gore** (`Gores::reach`, shared with the
+      paint layer) the ends of the midline lying inside the hatching are trimmed — the
+      median exists while the gap is under 3 m, the gore from 0.6 m up, so they overlap
+      — and the line is then carried on along its heading up to `MEDIAN_REACH` 8 m,
+      stopping `MEDIAN_GORE_GAP` 0.6 m short of the hatching: flush, its end fused with
+      the island's outline.
     - **Gores — the splitter islands at a roundabout** (`roads/gores.rs`, the author's
       ask: «как у Яндекса»). An approach in OSM is two one-way ways, entry and exit,
       fanning out to two nodes of the ring; the wedge between them and the ring is flat
@@ -345,7 +345,8 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
       cut, and splitting *them* per cluster made them slower, the offset having a fixed
       cost per call), the kerb polygon 17 (the mall lot alone is ~90 round-joined
       strokes through the booleans and an opening), the medians 2 (every sample against every other carriageway;
-      bounds-filtered), the `enters` probes and `GoreRoad::new` together 2.4, the gores'
+      bounds-filtered — measured before the search moved into the network, see
+      `roads.md` → **Paired halves** for its cost now), the `enters` probes and `GoreRoad::new` together 2.4, the gores'
       asphalt and hatching 0.7. The other ~40 are older work the lots did not add —
       the ribbons 16, `network::stitches` 10 (of which the *search* is 1: the rest is
       building the two grids it asks, and both got cheaper with the hasher — see **The

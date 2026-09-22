@@ -70,7 +70,8 @@ in `main.rs`.
   city.
 - **Z-layers** — constants in `settings.rs`, bottom to top: ground → landuse works →
   landuse yards → parks → woods → tree-row band casing → tree-row band → grass → sand →
-  sidewalks → alley casings → alleys → road casings → roads → road paint (2.0005) →
+  sidewalks → alley casings → alleys → road medians (1.7) → road casings → roads → road
+  paint (2.0005) →
   parking (2.001) → lot
   sidewalks (2.002) → lot lines (2.003) → parking markings (2.004) → pitches (2.005) →
   pitch markings → water (2.01) → waterways (2.02) → bridge shadows →
@@ -241,6 +242,20 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     solid. Two meshes per level (lane lines, axes), streets at `Z_ROAD_PAINT` and bridges
     at `Z_BRIDGE_PAINT`; `PaintLods` hides the lane lines past 0.4 m/px and the axes past
     0.9 without a rebuild. `RoadPaintStyle` (panel knobs Paint and Wear) is uniforms only.
+  - **Paired halves** (`map/roads/network/pairs.rs`, `Pairs`) — a divided street as OSM
+    draws it: two opposite one-way ways of one class side by side (a street or a
+    `service` drive, never a parking aisle), up to `PAIR_MAX_GAP` 15 m between the kerbs.
+    Found once, by `axis::street_axes`, on the drawn axes, and **aligned** there: the
+    halves are set at the run's median gap (paved no narrower than `PAVED_MIN_GAP`
+    0.5 m) from the midpoint between them, fading out over `ALIGN_TRANSITION` 20 m at a
+    run's end and at a node shared with another street, so the ribbons and the parked
+    cars stand on the aligned axis. **Median** (`Median`, drawn by `roads/medians.rs`) —
+    what lies between the halves: up to `MEDIAN_GAP` 3 m asphalt under both ribbons with
+    a double solid down the middle (the paint layer), wider a lawn with a kerb and a
+    rounded nose (`road_medians`, `Z_ROAD_MEDIAN`). A half has **no sidewalk on its
+    paired side**. The median opens only at a break of **both** halves facing each
+    other (a crossing street, a U-turn, a zebra); a street into one half does not open
+    it. Drawing only: `RoadLine::points` do not move.
     Underground road is dropped (`is_road_underground`) — a **separate** predicate from
     `is_underground`, because the risk is asymmetric: an extra ribbon is cosmetic, an extra
     deletion is a hole in the navmesh.
@@ -1027,11 +1042,12 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   the **gores**, within the outline grown by `KERB_OVERHANG` 2 m (so it meets the
   sidewalk of the street it is entered from without a jog), opened by `KERB_OPENING`.
   As ribbons, each road's asphalt lay over every other road's kerb and chopped it to
-  ragged scraps at the roundabouts. **Median** — two one-way carriageways side by side
-  (within `MEDIAN_GAP` 3 m of asphalt) get no kerb between them but a **double solid
-  line** (`lot_lines`, `Z_LOT_LINES` 2.003, flat paint), as Yandex and 2GIS draw a
-  boulevard; it is computed by one carriageway of the pair, and at a gore it stops
-  `MEDIAN_GORE_GAP` 0.6 m short of the hatching. **Gore** (`roads/gores.rs`) — the
+  ragged scraps at the roundabouts. A paved **median** of paired halves (above) gets no
+  kerb on the lot but its **double solid line** again in `lot_lines` (`Z_LOT_LINES`
+  2.003, flat paint) — the street paint layer lies under the lot's asphalt; the lot takes
+  the stretch of the network's median over it and does not look for pairs itself. At a
+  gore the line stops `MEDIAN_GORE_GAP` 0.6 m short of the hatching (`Gores::reach`,
+  shared with the paint layer). **Gore** (`roads/gores.rs`) — the
   splitter island at a roundabout: the wedge between the entry arm, the exit arm and the
   ring is **asphalt with diagonal hatching**, not a triangle of sidewalk or kerb. A
   property of the network at a ring, not of a lot: computed for every roundabout
