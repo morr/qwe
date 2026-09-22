@@ -1100,8 +1100,12 @@ place to look at a road-network defect end to end:
   shot and of a frozen file), title, what to look at, window centre as **lat/lon** (map
   metres move with `MAP_SIZE`) and the visible `half`. Adding one: find the node
   (`tools/osm_near`), put `"at": [x, y]` in the manifest instead of `geo`, start the
-  gallery — it logs the `geo` to write in its place. Only Tula has a manifest; another
-  city shows "no samples yet".
+  gallery — it logs the `geo` to write in its place. Tula and **Berlin** have manifests;
+  another city shows "no samples yet". Berlin is there for the sections: `lanes` is on
+  about half of its streets (Tula: 97 %), so its five samples — Moritzplatz ring, an
+  untagged residential cross, an untagged tertiary × tagged street, Unter den Linden ×
+  Friedrichstraße, Rosenthaler Platz — show the lane count inferred by class next to the
+  tagged one. Its extract is 109 MB; the first run downloads it through the game loader.
 - **Cost**: reading and deserializing Tula's 18 MB cache and cutting fifteen windows —
   see the `roads: extract … read in …` log line; the cut itself is milliseconds behind a
   per-element bounding-box prefilter and a node → roads index for `joining_roads`.
@@ -1150,4 +1154,6 @@ place to look at a road-network defect end to end:
   a **Road paint** header (Markings, Paint, Crossings, Stop lines, Arrows, Wear, Turn wear)
   and the Network row; a change rebuilds every sample. The gallery settles `RoadShape`
   like the game and sets the lane-width global (`apply_lane_width`) before re-parsing its
-  samples. `ROADS_SHOT=path.png` takes a frame and exits, `ROADS_SAMPLE=N` frames sample N.
+  samples. `ROADS_SHOT=path.png` takes a frame and exits, `ROADS_SAMPLE=N` frames sample N,
+  `ROADS_CITY=<slug>` opens the gallery on that city (the automatic shot of a city other
+  than Tula).

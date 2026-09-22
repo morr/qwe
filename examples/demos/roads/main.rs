@@ -54,7 +54,9 @@
 //! `ROADS_DUMP=папка` — выгрузить туда каждый срез файлом (замороженный срез
 //! для `data/<город>/`);
 //! `ROADS_SHOT=путь.png` — поднять окно, снять витрину и выйти;
-//! `ROADS_SAMPLE=N` ставит камеру на пример N (с единицы) крупным планом.
+//! `ROADS_SAMPLE=N` ставит камеру на пример N (с единицы) крупным планом;
+//! `ROADS_CITY=<slug>` (`berlin`, `paris`…) открывает витрину на этом городе —
+//! для автоснимка не Тулы.
 
 mod overlay;
 mod panel;
@@ -187,7 +189,7 @@ fn main() {
         .add_plugins(qwe::ui::PanelWidgetsPlugin)
         .add_plugins(qwe::ui::QuitOnEscPlugin)
         .add_plugins(qwe::ui::AgentBadgePlugin)
-        .init_resource::<City>()
+        .insert_resource(start_city())
         .init_resource::<RoadStyle>()
         .init_resource::<RoadShape>()
         .init_resource::<RoadShapeOnMap>()
@@ -252,6 +254,16 @@ fn main() {
 }
 
 /// Полоса окна, занятая панелью: отступ от края, сама панель и такой же зазор.
+/// Город, с которого открывается витрина: `ROADS_CITY`, иначе игровой
+/// дефолт.
+fn start_city() -> City {
+    let requested = std::env::var("ROADS_CITY").ok();
+    City::ALL
+        .into_iter()
+        .find(|city| requested.as_deref() == Some(city.slug()))
+        .unwrap_or_default()
+}
+
 fn panel_span() -> f32 {
     PANEL_WIDTH_PX + 2.0 * UI_SCREEN_EDGE_PX_OFFSET
 }
