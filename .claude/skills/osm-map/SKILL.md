@@ -759,9 +759,10 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     `fences/tests.rs::the_far_bucket_draws_nothing`, each asserting the log line itself.
   - **Converted — ten modules, eleven layer doors.** `fences`, `rail`, `tram`, `wagons`,
     `industry`, `cars`,
-    `roads` (19 layers, `mesh_roads` — ten of its own with the median lawn
-    `road_medians`, the seven paint layers of `roads/paint.rs` (the turn paths' wear mask
-    and apply among them) and the two over a big lot,
+    `roads` (20 layers, `mesh_roads` — ten of its own with the median lawn
+    `road_medians`, the eight paint layers of `roads/paint.rs` (the turn paths' wear mask
+    and apply among them, and the roundabout islands' hatching above a lot's asphalt) and
+    the two over a big lot,
     `roads/lots.rs`), all of `spawn.rs` (the 13 surface and paint layers
     as `mesh_surfaces(map, parking_layout) -> (Vec<LayerMesh>, SurfaceReport)` — the
     parking layout arrives ready, because the car rows are drawn off the same one — plus

@@ -204,7 +204,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     makes a **carriageway**, not the width); `bridge` / `passage` flags (the navmesh carves by them);
     `oneway`, `roundabout` (the `junction=roundabout|circular` tag — but the notion is
     `RoadLine::is_roundabout`, **tag or shape**: a closed one-way way is a ring too, and
-    the mall's big ring carries no tag) and
+    the mall's big ring carries no tag; a **Ring** (`roads/rings.rs`) is such ways chained
+    into a loop and drawn as one smooth ellipse through its nodes, one section for all
+    arcs, a kerb round its island, approaches entering by a tangent arc) and
     `lanes: Option<u8>` (the section's lane count, below); `parking_aisle`
     (`service=parking_aisle`) — read by the stall layout only, see **Parking lots** below.
   - **Street** (**RoadNetwork**, `MapData::network`, `map/roads/network/streets.rs`) — ways
@@ -1079,7 +1081,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   ring is **asphalt with diagonal hatching**, not a triangle of sidewalk or kerb. A
   property of the network at a ring, not of a lot: computed for every roundabout
   (`RoadLine::is_roundabout`), a wedge counting only if it touches **two arms**. The whole
-  wedge is asphalt, the wedge without its thin tips is what gets hatched. **Closedness of
+  wedge is asphalt, the wedge without its thin tips is what gets hatched — by the road
+  paint layer's shader (`road_paint_islands`), which fades it with zoom. A **splitter**
+  (`gores::splitters`) is the same island set **by rule** on an approach mapped as one
+  two-way way, where there is no fan and so no wedge. **Closedness of
   a way is read off the raw OSM points, never off the drawn path** — a style knob must not
   decide whether a way is a ring. No stall stands under
   a through road or its kerb (`Surroundings::cover`). A small lot hides its roads as

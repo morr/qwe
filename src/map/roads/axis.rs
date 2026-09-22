@@ -35,6 +35,7 @@ use bevy::prelude::*;
 use super::centerline;
 use super::network::pairs::Pairs;
 use super::network::{RoadNetwork, RoadNodes, StreetWay};
+use super::rings::{self, Rings};
 use crate::map::meshing::arc_steps;
 use crate::map::osm::{RoadClass, RoadLine};
 use crate::map::smooth::Smoothing;
@@ -79,6 +80,9 @@ pub struct Axes<'a> {
     /// Парные половины разделённых улиц — уже разведённые по этим осям
     /// (`roads/network/pairs.rs`).
     pub pairs: Pairs,
+    /// Кольца, нарисованные гладкой фигурой (`roads/rings.rs`); без
+    /// сглаживания — ни одного.
+    pub rings: Rings,
 }
 
 /// Осевые, по которым строятся ленты, ряды машин и полоса тротуара.
@@ -128,11 +132,19 @@ pub fn street_axes<'a>(
     // половины разделённых улиц — на постоянный зазор, по уже гладким осям
     let mut pairs = Pairs::new(roads, &paths);
     pairs.align(&mut paths, roads, network, nodes);
+    // кольца — эллипсом, подходы к ним — по касательной; после разводки пар:
+    // половины подхода гнутся у самого кольца, где пара уже разошлась
+    let rings = if target_radius(smoothing).is_some() {
+        rings::reshape(roads, nodes, &mut paths)
+    } else {
+        Rings::default()
+    };
     Axes {
         paths,
         seams,
         tight,
         pairs,
+        rings,
     }
 }
 

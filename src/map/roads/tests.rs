@@ -462,13 +462,13 @@ fn lanes_come_from_the_tag_and_fall_back_to_the_width() {
     assert_eq!(lane_count(&street), 3);
     street.roundabout = true;
     street.lanes = Some(2);
-    assert_eq!(lane_count(&street), 1, "на кольце линий нет");
+    assert_eq!(lane_count(&street), 2, "кольцо — как любая улица");
 }
 
 /// Кольцо узнаётся и **без тега** — по форме: замкнутое одностороннее полотно.
 /// Большое кольцо у ТРЦ «Макси» (way 397005605) в OSM просто `oneway=yes`,
-/// замкнутый сам на себя, и по одному тегу получало две полосы разметки с
-/// износом — то, чего на кольце не рисуют.
+/// замкнутый сам на себя, и по одному тегу ни гладкой фигуры, ни островков
+/// на подходах не получало бы.
 #[test]
 fn a_closed_oneway_way_is_a_roundabout_without_the_tag() {
     let corner = Vec2::new(-10.0, -10.0);
@@ -482,8 +482,6 @@ fn a_closed_oneway_way_is_a_roundabout_without_the_tag() {
     let mut road = fixture::street(ring.clone(), 12.0);
     road.oneway = true;
     assert!(road.is_roundabout());
-    assert_eq!(lane_count(&road), 1);
-    assert_eq!(road_lanes(&road), Some(paint::lane_frame(1)));
 
     road.oneway = false;
     assert!(
@@ -635,10 +633,11 @@ fn the_city_wall_ribbon_stays_off_fortress_buildings() {
 // телеметрия области жили внутри `spawn_roads` — 275 строк, взять которые из
 // теста было нечем: проверять можно было только хелперы под ними.
 
-/// Девятнадцать дорожных слоёв снизу вверх, ровно в том порядке, в каком они
-/// уходят в мир: двенадцать лент и семь слоёв краски над своим асфальтом —
-/// колея траекторий узла (маска, потом наложение) ниже линий.
-const LAYERS: [&str; 19] = [
+/// Двадцать дорожных слоёв снизу вверх, ровно в том порядке, в каком они
+/// уходят в мир: двенадцать лент и восемь слоёв краски над своим асфальтом —
+/// колея траекторий узла (маска, потом наложение) ниже линий, островки колец
+/// над асфальтом стоянок.
+const LAYERS: [&str; 20] = [
     "alley_casings",
     "alleys",
     "sidewalks",
@@ -652,6 +651,7 @@ const LAYERS: [&str; 19] = [
     paint::PAINT_AXES,
     "lot_sidewalks",
     "lot_lines",
+    paint::PAINT_ISLANDS,
     "bridge_shadows",
     "bridge_casings",
     "bridges",
@@ -946,7 +946,9 @@ fn the_wedge_between_the_two_arms_of_a_roundabout_is_hatched() {
         let (layers, _) = mesh_roads(&map, RoadStyle::default());
         // клин — правее кольца, между подходами, у оси x
         let wedged = |at: &&[f32; 3]| (17.0..40.0).contains(&at[0]) && at[1].abs() < 2.5;
-        let lines = layer(&layers, "lot_lines").builder.positions_for_test();
+        let lines = layer(&layers, paint::PAINT_ISLANDS)
+            .builder
+            .positions_for_test();
         assert!(
             lines.iter().any(|at| wedged(&at)),
             "клин не заштрихован ({tagged})"
@@ -977,8 +979,8 @@ fn the_gore_is_paved_under_the_edges_of_both_arms() {
     ];
     let wedged = |at: &[f32; 3]| (14.0..50.0).contains(&at[0]) && at[1].abs() < 5.0;
     // кромка полотна — в 2.5 м от его оси, так что ближе неё лежит только то,
-    // что зашло **под** ленту; обводка штриховки вылезает из клина лишь на свою
-    // полуширину, 0.1 м
+    // что зашло **под** ленту; полоса под обводку штриховки вылезает из клина
+    // на `EDGE_STRIP` — место шейдеру, сама линия в ней тоньше
     let depth = |at: &[f32; 3]| {
         let at = Vec2::new(at[0], at[1]);
         arms.iter()
@@ -995,15 +997,58 @@ fn the_gore_is_paved_under_the_edges_of_both_arms() {
             .fold(f32::INFINITY, f32::min)
     };
     const UNDER: f32 = 2.3;
-    let (asphalt, hatching) = (deepest("roads"), deepest("lot_lines"));
+    let (asphalt, hatching) = (deepest("roads"), deepest(paint::PAINT_ISLANDS));
     assert!(
         asphalt < UNDER,
         "асфальт островка не зашёл под кромки полотен: {asphalt}"
     );
     // ...а штриховка у́же его ровно на этот заход и на полотно не лезет
+    let hatching = hatching + paint::EDGE_STRIP;
     assert!(
         hatching.is_finite() && hatching > UNDER,
         "штриховка островка вылезла на полотно: {hatching}"
+    );
+}
+
+/// Двусторонний подход одним way — веера из въезда и съезда нет, и клин
+/// [`gores::Gores::of`] не находит. Островок ставится по правилу: капля на оси
+/// подхода от кромки кольца, подход вокруг неё раздвинут асфальтом.
+#[test]
+fn a_two_way_approach_gets_a_splitter_island() {
+    let circle: Vec<Vec2> = (0..=24)
+        .map(|step| Vec2::from_angle(step as f32 * std::f32::consts::TAU / 24.0) * 25.0)
+        .collect();
+    let mut map = MapData::default();
+    map.roads.push(RoadLine {
+        oneway: true,
+        roundabout: true,
+        ..fixture::street(circle.clone(), 8.0)
+    });
+    map.roads
+        .push(fixture::street(vec![circle[0], Vec2::new(90.0, 0.0)], 7.6));
+    let (layers, report) = mesh_roads(&map, RoadStyle::default());
+    assert_eq!(report.rings[0], 1);
+    assert_eq!(report.gores, 1, "островок на подходе один");
+    // капля — на оси подхода за кромкой кольца (25 + 4 м), не дальше острия
+    let island: Vec<&[f32; 3]> = layer(&layers, paint::PAINT_ISLANDS)
+        .builder
+        .positions_for_test()
+        .iter()
+        .collect();
+    assert!(!island.is_empty());
+    assert!(
+        island
+            .iter()
+            .all(|at| (28.0..50.0).contains(&at[0]) && at[1].abs() < 3.0),
+        "островок не на подходе"
+    );
+    // и подход раздвинут: асфальт шире полотна по сторонам островка
+    let roads = layer(&layers, "roads").builder.positions_for_test();
+    assert!(
+        roads
+            .iter()
+            .any(|at| (30.0..35.0).contains(&at[0]) && at[1].abs() > 7.6 / 2.0 + 0.5),
+        "подход у островка не расширен"
     );
 }
 
@@ -1011,7 +1056,7 @@ fn the_gore_is_paved_under_the_edges_of_both_arms() {
 fn a_two_way_loop_without_the_tag_is_not_a_roundabout() {
     let map = roundabout_with_an_approach(false, false);
     let (layers, _) = mesh_roads(&map, RoadStyle::default());
-    assert!(layer(&layers, "lot_lines").builder.is_empty());
+    assert!(layer(&layers, paint::PAINT_ISLANDS).builder.is_empty());
 }
 
 #[test]
@@ -1021,7 +1066,7 @@ fn the_markings_knob_takes_the_hatching_off() {
         ..RoadStyle::default()
     };
     let (layers, _) = mesh_roads(&roundabout_with_an_approach(true, true), style);
-    assert!(layer(&layers, "lot_lines").builder.is_empty());
+    assert!(layer(&layers, paint::PAINT_ISLANDS).builder.is_empty());
 }
 
 /// Два встречных полотна бок о бок — бульвар: между ними не бордюр, а двойная

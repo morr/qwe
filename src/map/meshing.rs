@@ -864,6 +864,30 @@ impl MeshBuilder {
         }
     }
 
+    /// Площадь слоя краски — многоугольник с дырками, у каждой вершины в
+    /// [`ATTRIBUTE_RIBBON`] — `[0, координата поперёк полос, до разрыва,
+    /// kind]`, где координата — проекция вершины на `across`. Так штриховку
+    /// рисует шейдер краски: полосы идут по мировой координате и не зависят
+    /// от того, как лёг треугольник.
+    pub fn push_paint_area(
+        &mut self,
+        outer: &[Vec2],
+        holes: &[Vec<Vec2>],
+        across: Vec2,
+        [to_break, kind]: [f32; 2],
+        color: LinearRgba,
+    ) {
+        let base = self.positions.len() as u32;
+        self.push_polygon(outer, holes, color);
+        let pushed = self.positions.len() as u32;
+        if let Some(coords) = &mut self.ribbon {
+            for index in base..pushed {
+                let [x, y, _] = self.positions[index as usize];
+                coords[index as usize] = [0.0, Vec2::new(x, y).dot(across), to_break, kind];
+            }
+        }
+    }
+
     /// Лента постоянной ширины вдоль ломаной со стыками по биссектрисе
     /// (miter с ограничением `MITER_LIMIT`) и торцами по последней точке.
     /// Для тонких контуров `push_polyline` не годится — там каждый сегмент

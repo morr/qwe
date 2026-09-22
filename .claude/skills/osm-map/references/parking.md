@@ -329,13 +329,31 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
         road edges, is **asphalt** (pushed into the `roads` layer — above the sidewalks,
         so it covers their triangle); the wedge **opened** by `GORE_OPENING` 0.3 m —
         without tips and necks too thin for a stripe — is what gets the outline
-        (`LINE_WIDTH` 0.2 m) and the hatching (`HATCH_WIDTH` 0.35 m every `HATCH_STEP`
-        1.6 m, at 45° to the wedge's long axis, clipped by one boolean for the city).
+        (0.2 m) and the hatching (0.35 m every 1.6 m, at 45° to the wedge's long axis).
         One shape for both (tried first) showed ground wherever the opening had cut.
-      - The paint rides in `lot_lines` (it must lie above a lot's asphalt), gated on
-        `RoadStyle::markings`; the count is `gores N` in the `road meshing:` line, which
-        `measure_roads` now prints too. Tula: **7** — three at the mall's big ring, three
-        at the boulevard's mini-roundabouts, one elsewhere.
+      - **The paint is the road paint layer's** (roads plan, stage 6): `Gores::islands`
+        hands each hatched shape and the direction across its stripes to
+        `Painter::paint_island`, which lays the outline as a closed paint strip
+        (`LineKind::Edge`) and the shape itself as a paint area (`LineKind::Hatch`,
+        `MeshBuilder::push_paint_area` — the ribbon attribute carries the world
+        coordinate across the stripes), and `paint.wgsl` draws the stripes and fades them
+        into their mean share when they get finer than a few pixels, with the zebras'
+        zoom (`PaintTag::Zebras`). Its own mesh, `road_paint_islands` at
+        `Z_ROAD_ISLANDS` 2.0035: above a lot's asphalt and its double line, where the
+        rest of the road paint would be covered. Before, the stripes were real quads
+        clipped by one boolean for the city, in `lot_lines`, with no LOD at all. Gated on
+        `RoadStyle::markings`; the count is `gores N` in the `road meshing:` line. Tula:
+        **11** after stage 6 (10 before it) — three at the mall's big ring, three at the
+        boulevard's mini-roundabouts, the rest at the two big rings.
+      - **Splitters by rule** (`gores::splitters`): an approach mapped as **one two-way
+        way** has no fan, so the closing finds no wedge. A carriageway of two lanes or
+        more ending at a node of a drawn ring (`roads/rings.rs`) of radius ≥ 10 m gets a
+        teardrop on its axis — from 1 m past the ring's kerb, `0.6 × radius` long (6–20 m),
+        `0.06 × radius` half wide at the base (0.6–1.5 m) — hatched like a gore; the
+        approach is widened around it by an asphalt flare so each lane keeps its width,
+        and its paint and ruts break over the island's length. Tula has none (its big
+        rings are fed by one-way fans, its two-way approaches are service drives);
+        `roads/tests.rs::a_two_way_approach_gets_a_splitter_island` holds it.
     - `Z_PARKING_LINES` lies **above** both layers, so a stall bar is never covered.
     - **Cost — real, and per road rebuild, not per frame.** `mesh_roads` on Tula is
       **76 ms** (`map_meshing`, **release**, one machine; the bench swings by ±10 %), of

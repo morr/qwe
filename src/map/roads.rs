@@ -661,13 +661,9 @@ pub fn is_carriageway(road: &RoadLine) -> bool {
 /// Число полос проезжей части: из сечения ([`RoadLine::lanes`] — после
 /// разбора оно есть у каждой улицы, `network::sections`), у дороги без него
 /// (собранной тестом руками) — дефолт по ширине, и не больше, чем влезает по
-/// [`MIN_LANE_WIDTH`]. Кольцо ([`RoadLine::is_roundabout`]
-/// — тег **или форма**) — всегда одна полоса: на однополосном кольце линий нет,
-/// а рвать линию двухполосного на каждом въезде хуже, чем не рисовать её вовсе.
+/// [`MIN_LANE_WIDTH`]. Кольцо — как любая улица: разрывы на въездах даёт
+/// краска узла, и линия двухполосного кольца идёт между ними.
 pub fn lane_count(road: &RoadLine) -> u8 {
-    if road.is_roundabout() {
-        return 1;
-    }
     let most = ((road.width / MIN_LANE_WIDTH).floor() as u8).max(1);
     let lanes = match road.lanes {
         Some(lanes) => lanes,
@@ -675,6 +671,82 @@ pub fn lane_count(road: &RoadLine) -> u8 {
         None => 2 * (road.width / TWOWAY_METERS_PER_LANE_PAIR).round() as u8,
     };
     lanes.clamp(1, most)
+}
+
+/// Дуги колец ([`rings`]) сечением всего кольца: ширина и полосы —
+/// наибольшие по его дугам. У дуг одного кольца в OSM бывает разное `lanes`
+/// (3 и 2 на кольце primary в Туле), и лента шла бы ступенями.
+fn ring_arcs(roads: &[RoadLine], rings: &rings::Rings) -> Vec<(usize, RoadLine)> {
+    rings
+        .list
+        .iter()
+        .flat_map(|ring| {
+            let width = ring
+                .roads
+                .iter()
+                .map(|&road| roads[road].width)
+                .fold(0.0, f32::max);
+            let lanes = ring
+                .roads
+                .iter()
+                .filter_map(|&road| roads[road].lanes)
+                .max();
+            ring.roads
+                .iter()
+                .filter(move |&&road| roads[road].width != width || roads[road].lanes != lanes)
+                .map(move |&road| {
+                    let arc = RoadLine {
+                        width,
+                        lanes,
+                        ..roads[road].clone()
+                    };
+                    (road, arc)
+                })
+        })
+        .collect()
+}
+
+/// Тротуар кольца и бордюр его острова. Тротуар — только снаружи, лентой по
+/// всему кольцу сразу, без швов между дугами; внутри вместо тротуарного
+/// кольца — бордюр [`medians::MEDIAN_KERB`] по кромке острова, как у газона
+/// разделительной.
+fn push_ring_edges(
+    builder: &mut MeshBuilder,
+    ring: &rings::Ring,
+    [width, sidewalk]: [f32; 2],
+    color: LinearRgba,
+) {
+    let path = &ring.path[..ring.path.len() - 1];
+    if path.len() < 3 {
+        return;
+    }
+    // сдвиг от оси: плюс — наружу
+    let shifted = |shift: f32| -> Vec<Vec2> {
+        let outward = if ring.ccw { -shift } else { shift };
+        path.iter()
+            .zip(miter_offsets(path, true, outward))
+            .map(|(point, offset)| *point + offset)
+            .collect()
+    };
+    if sidewalk > 0.0 {
+        builder.push_ribbon(
+            &shifted(sidewalk / 2.0),
+            true,
+            width + sidewalk,
+            color,
+            RibbonJoin::Miter,
+            RibbonCap::Butt,
+        );
+    }
+    let kerb = medians::MEDIAN_KERB;
+    builder.push_ribbon(
+        &shifted(-(width + kerb) / 2.0),
+        true,
+        kerb,
+        color,
+        RibbonJoin::Miter,
+        RibbonCap::Butt,
+    );
 }
 
 /// Раскладка полос проезжей части ([`paint::lane_frame`]) — одна на колею
@@ -813,6 +885,9 @@ pub struct RoadReport {
     pub outer_corners: [usize; 2],
     pub stitches: usize,
     pub crossings: usize,
+    /// Кольца, нарисованные гладкой фигурой (`roads/rings.rs`), и щели
+    /// между подходом и кольцом, залитые асфальтом.
+    pub rings: [usize; 2],
     /// Направляющие островки у колец (`roads/gores.rs`).
     pub gores: usize,
     /// Клинья между сечениями улиц (`roads/tapers.rs`).
@@ -848,6 +923,7 @@ impl std::fmt::Display for RoadReport {
             outer_corners: [outer, outer_sidewalks],
             stitches,
             crossings,
+            rings: [rings, webs],
             gores,
             tapers,
             medians: [paved, lawns],
@@ -866,7 +942,7 @@ impl std::fmt::Display for RoadReport {
              turn paths {turns}, leading roads {leading}, kerb returns {kerb_returns} + \
              {sidewalk_returns} on sidewalks, outer corners {outer} + {outer_sidewalks} on \
              sidewalks, stitches {stitches}, driveway crossings \
-             {crossings}, gores {gores}, tapers {tapers}, medians {paved} paved + {lawns} \
+             {crossings}, rings {rings} ({webs} webs), gores {gores}, tapers {tapers}, medians {paved} paved + {lawns} \
              lawn, smooth seams {seams}, tight corners {tight}; {network:?} of it before the \
              ribbons)",
             style.join, style.smoothing, style.casing, style.sidewalks, style.markings,
@@ -908,8 +984,13 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
     let mut grounds = lots::Grounds::of(map);
 
     let nodes = RoadNodes::new(roads);
+    // ось по улице целиком, не по way (`roads/axis.rs`); у переезда та же
+    // ось, что у его дороги, — он отличается шириной и классом
+    let axes = axis::street_axes(roads, &map.network, &nodes, style.smoothing);
+    let paths = &axes.paths;
     // Дороги так, как они рисуются: переезд через тротуар — асфальтом
-    // проезда, а не песочной дорожкой (`network::driveway_crossings`).
+    // проезда, а не песочной дорожкой (`network::driveway_crossings`), дуга
+    // кольца — сечением всего кольца (`ring_arcs`).
     let crossings: Vec<(usize, RoadLine)> = network::driveway_crossings(roads, &nodes)
         .into_iter()
         .map(|(index, width)| {
@@ -920,6 +1001,7 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
             };
             (index, crossing)
         })
+        .chain(ring_arcs(roads, &axes.rings))
         .collect();
     let mut drawn: Vec<&RoadLine> = roads.iter().collect();
     for (index, crossing) in &crossings {
@@ -937,10 +1019,6 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
     } else {
         tapers::Tapers::new(&drawn, &map.network, &nodes)
     };
-    // ось по улице целиком, не по way (`roads/axis.rs`); у переезда та же
-    // ось, что у его дороги, — он отличается шириной и классом
-    let axes = axis::street_axes(roads, &map.network, &nodes, style.smoothing);
-    let paths = &axes.paths;
     // Кусок поперечной улицы в проёме разделительной — между половинами одной
     // пары — тротуара не несёт: его полоса светлым пятном лежала посреди
     // перекрёстка. Торцы узлов — точки OSM, и ось их не двигает.
@@ -1019,7 +1097,7 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
     // проходит узел, зебры, стоп-линии, карманы — по той же оси, что и линии.
     // Строится и без разметки: ведущая дорога узла и плечи для траекторий —
     // это колея асфальта, а не краска
-    let node_paint = node_paint::NodePaint::new(
+    let mut node_paint = node_paint::NodePaint::new(
         &drawn,
         &stitched,
         (&junctions.breaks, &stitches.targets),
@@ -1067,7 +1145,15 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
         })
         .map(|&index| gores::GoreRoad::new(drawn[index], &stitched[index]))
         .collect();
-    let gores = gores::Gores::of(&gore_roads);
+    let mut gores = gores::Gores::of(&gore_roads);
+    // островки по правилу — на двусторонних подходах, где веера из въезда и
+    // съезда в OSM нет: краска и колея подхода рвутся на их длину
+    let splitters = gores::splitters(&drawn, &stitched, &axes.rings);
+    for splitter in &splitters {
+        node_paint.breaks[splitter.road].push(splitter.gap);
+        node_paint.asphalt[splitter.road].push(splitter.gap);
+    }
+    gores.add_splitters(&splitters);
     // разделительные парных половин (`roads/medians.rs`): асфальт — до лент
     // половин, под ними; газон с бордюром — в свой слой над тротуарами
     let mut median_grass = MeshBuilder::with_surface_coords();
@@ -1109,6 +1195,26 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
     }
     let network_time = started.elapsed();
 
+    // щель между подходом и кольцом — асфальтом, под лентами
+    for web in &axes.rings.webs {
+        streets.push_polygon(web, &[], ROAD_COLOR.to_linear());
+    }
+    if style.sidewalks {
+        for ring in &axes.rings.list {
+            let width = drawn[ring.roads[0]].width;
+            let sidewalk = ring
+                .roads
+                .iter()
+                .filter_map(|&road| sidewalks_of(road))
+                .fold(0.0, f32::max);
+            push_ring_edges(
+                &mut sidewalks,
+                ring,
+                [width, sidewalk],
+                SIDEWALK_COLOR.to_linear(),
+            );
+        }
+    }
     for index in order {
         let road = drawn[index];
         let (casing_color, color) = match road.class {
@@ -1203,7 +1309,9 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
             ]
         };
 
-        if let Some(sidewalk) = sidewalks_of(index) {
+        // тротуар кольца — одной лентой на всё кольцо (`push_ring_edges`)
+        let ring = axes.rings.of(index);
+        if let Some(sidewalk) = sidewalks_of(index).filter(|_| ring.is_none()) {
             let band = |road: &RoadLine, sidewalk: f32| road.width + 2.0 * sidewalk;
             // у половины разделённой улицы тротуара со стороны пары нет; на
             // клине куски пары не пересчитываются — там тротуар как был
@@ -1285,11 +1393,14 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
     // колея траекторий — всегда, как колея полос
     painter.paint_turn_wear(&turns.wear);
     // направляющие островки у колец: асфальт — в слой улиц, поверх тротуаров,
-    // разметка — выше асфальта стоянок (`roads/gores.rs`)
+    // разметка — в слой краски, своим мешем выше асфальта стоянок
+    // (`roads/gores.rs`)
     gores.push_asphalt(&mut streets, ROAD_COLOR.to_linear());
-    let mut lot_layers = grounds.layers(&style, &gores, &paved);
+    let lot_layers = grounds.layers(&style, &gores, &paved);
     if style.markings {
-        gores.push_markings(&mut lot_layers.lines);
+        for (island, across) in gores.islands() {
+            painter.paint_island(island, across);
+        }
     }
 
     push_bridge_shadows(&mut bridge_shadows, &shadow_bands);
@@ -1415,6 +1526,7 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
         crossings: crossings.len(),
         gores: gores.count(),
         tapers: tapers.count,
+        rings: [axes.rings.list.len(), axes.rings.webs.len()],
         medians: axes.pairs.count(),
         seams: axes.seams,
         tight: axes.tight,
@@ -1905,6 +2017,7 @@ mod medians;
 pub mod network;
 pub mod node_paint;
 pub mod paint;
+mod rings;
 /// Открыт наружу для [`map::cars`](crate::map::cars): ряд машин прерывается
 /// на клине, где бордюр ближе к оси, чем полуширина участка.
 pub(super) mod tapers;

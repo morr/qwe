@@ -45,6 +45,9 @@ struct PaintParams {
     rut_offset: f32,
     rut_sigma: f32,
     lane_width: f32,
+    hatch_period: f32,
+    hatch_width: f32,
+    edge_width: f32,
 }
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: PaintParams;
@@ -56,10 +59,11 @@ struct Vertex {
     // `meshing::ATTRIBUTE_RIBBON` полосы краски: поперёк от линии (м), длина
     // улицы (м), до разрыва перекрёстка (м), вид линии (0 — линия полос,
     // 1 — осевая, 2 — двойная сплошная, 3 — стоп-линия, 4 — она же
-    // прерывистой, 5 — зебра, 6 — колея траектории узла). У поперечной
-    // краски (3–5) «длина» идёт поперёк дороги от кромки, а «поперёк» — вдоль
-    // неё. Колея траектории рисуется своими проходами (`WEAR_MASK`,
-    // `WEAR_APPLY`), её сила — в альфе вершины
+    // прерывистой, 5 — зебра, 6 — колея траектории узла, 7 — штриховка
+    // островка, 8 — его обводка). У поперечной краски (3–5) «длина» идёт
+    // поперёк дороги от кромки, а «поперёк» — вдоль неё; у штриховки
+    // «длина» — координата поперёк её косых полос. Колея траектории рисуется
+    // своими проходами (`WEAR_MASK`, `WEAR_APPLY`), её сила — в альфе вершины
     @location(2) ribbon: vec4<f32>,
 }
 
@@ -131,7 +135,16 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(0.0, 0.0, 0.0, 1.0 - wear);
 #else
     var cover = 0.0;
-    if kind == 5u {
+    if kind == 7u {
+        // штриховка островка: заливка контура, полосы — по координате поперёк
+        // них; мельче пары пикселей гаснут в свою среднюю долю, как зебра
+        let fill = params.hatch_width / params.hatch_period;
+        let bars = stripes(along, params.hatch_period, params.hatch_width, px);
+        let seen = visible(params.hatch_period, px);
+        cover = bars + fill * (1.0 - seen);
+    } else if kind == 8u {
+        cover = line_cover(abs(across), params.edge_width, px);
+    } else if kind == 5u {
         // зебра: плашка вдоль дороги, полосы поперёк неё; где период мельче
         // пары пикселей, полосы гаснут в свою среднюю долю — светлую плашку
         let edge = 0.7 * px;
@@ -183,7 +196,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     var zoom_max = params.axis_zoom;
     if kind == 0u || kind == 3u || kind == 4u {
         zoom_max = params.lane_zoom;
-    } else if kind == 5u {
+    } else if kind == 5u || kind == 7u || kind == 8u {
         zoom_max = params.zebra_zoom;
     }
     cover = cover * (1.0 - smoothstep(zoom_max * params.fade_from, zoom_max, px));

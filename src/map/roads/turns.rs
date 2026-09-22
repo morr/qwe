@@ -78,9 +78,9 @@ pub struct JunctionWear {
 
 /// Полоса на кромке плеча: середина и направление движения по ней.
 #[derive(Clone, Copy, Debug)]
-struct LaneEnd {
-    point: Vec2,
-    travel: Vec2,
+pub(super) struct LaneEnd {
+    pub point: Vec2,
+    pub travel: Vec2,
 }
 
 /// Полосы плеча в одном направлении, от бордюра к оси, и манёвры из них по
@@ -287,8 +287,9 @@ fn pairs(
     }
 }
 
-/// Кривая из полосы `from` в полосу `to`: Безье, касательная к обеим.
-fn curve(from: LaneEnd, to: LaneEnd) -> Vec<Vec2> {
+/// Кривая из полосы `from` в полосу `to`: Безье, касательная к обеим. Ей же
+/// подход входит в кольцо (`roads/rings.rs`).
+pub(super) fn curve(from: LaneEnd, to: LaneEnd) -> Vec<Vec2> {
     let chord = from.point.distance(to.point);
     let angle = from.travel.angle_to(to.travel).abs();
     // плечо контрольных точек: треть хорды у прямой, к четверти окружности —

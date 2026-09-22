@@ -227,14 +227,12 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   **Lane count** (`roads::lane_count`): `RoadLine::lanes`, which after the parse every street
   and drive carries (**Sections** below); only a road built by hand in a test falls back
   to the width default (two-way: a lane pair per 7 m; one-way: a lane per 4.5 m), never
-  more than the width allows at `MIN_LANE_WIDTH` 2.5 m, and **always one on
-  a roundabout** (a one-lane ring has no lines, and cutting a two-lane ring's line at every
-  entry looks worse than none). **A roundabout here is `RoadLine::is_roundabout` — tag or
-  shape**, and the difference is the whole rule: the tagged rings of Tula are cut into
-  open arcs and got their single lane all along, while the one ring that is a *closed*
-  way — ТРЦ «Макси», way 397005605, `oneway=yes` with no `junction` tag — carried
-  `lanes=2`, so it was drawn with dashed lane lines and asphalt wear all the way round,
-  which is also what made its seam visible (**Ribbon** below).
+  more than the width allows at `MIN_LANE_WIDTH` 2.5 m. **A roundabout is no exception
+  any more** (roads plan, stage 6): the "always one lane on a ring" rule went once the
+  junction paint could break a line at each entry and the closed ribbon stopped showing its
+  seam (**Ribbon** below). A drawn ring takes one section for all its arcs — the widest
+  arc's width and lane count (`roads::ring_arcs`; Tula's primary ring has arcs of 3 and
+  2 lanes, and the ribbon would step) — see **Roundabouts** below.
   **Breaks** — «to-break» is the signed distance to the nearest **marking break**
   (`meshing::Break { at, reach }`, passed as `RibbonBreaks::At`): negative inside a gap,
   so a paint line fades at the gap edge (`smoothstep(0, 1)`) and the ruts fade over 5 m.
@@ -297,6 +295,45 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   almost collinear points by a parking lot, `cam 5300 3282`) showed two pale lines of the
   sidewalk under it, and the darker asphalt made them loud. The same holds for the
   vertices `GapProfile::split_path` inserts, which are collinear by construction.
+- **Roundabouts** (`map/roads/rings.rs`, roads plan stage 6) — a ring is drawn as one
+  smooth figure instead of its faceted OSM polyline, inside `axis::street_axes` (after the
+  pairs are aligned), so the cars, the gallery and every layer see the same axis. Only with
+  smoothing on; `Off` keeps the OSM points.
+  - **What a ring is.** Candidates are `RoadLine::is_roundabout` streets (tag or a closed
+    one-way), not bridges, not arches. A closed way is a ring by itself; open arcs are
+    chained end to start by node until they come back to the first (`chains`) — a chain
+    that breaks off is left alone. Tula: 12 tagged arcs make its two big rings (primary,
+    six arcs, r ≈ 40 m; secondary, six arcs, a 150 × 115 m "egg"), plus seven closed
+    one-ways (the «Макси» ring and the service rings).
+  - **The figure** (`fit`): the loop sampled every metre, centre and axes by its moments,
+    semi-axes by least squares in those axes; a circle when they differ by under 8 %. A
+    loop is rejected (drawn as before) when an OSM vertex is further from the figure than
+    `max(4 m, 35 % of the minor semi-axis)` — a long loop round a square is not a ring. The
+    secondary egg is 14 m off its ellipse and still passes: the nodes hold its shape.
+  - **Nodes stay put.** Every shared vertex of the ring (and every arc end) is a *pin*:
+    the ellipse is scaled along the ray from the centre by a factor that is exactly one
+    at each pin and a periodic Hermite spline between them (`Ring::scale`), so everything
+    that finds a road by its node — kerb returns, breaks, junction paint, stitches — still
+    finds it. The seam of a closed way nobody joins is not a pin: the axis runs on the
+    figure there (pinning it swelled the whole circle to that one vertex). Each arc is
+    sampled at 5 cm chord sagitta with its interior pins as exact vertices.
+  - **Approaches enter by a tangent arc** (`bend_approach`): a one-way arm ending (or
+    starting) at a ring node gets its last `0.5 × radius` metres (6–20 m, at most 60 % of
+    the way, never past another shared node) replaced by the turn paths' Bézier
+    (`turns::curve`), tangent to the arm and arriving at `ENTRY_ANGLE` 25° to the ring's
+    travel — inward for an entry, outward for an exit. An arm already within 5° is left.
+  - **Webs** (`Rings::webs`): where an arm (followed out through up to three ways) runs
+    along the ring with a gap under `WEB_GAP` 2.5 m between the kerbs, the strip between
+    the two axes is asphalt, pushed under the ribbons — the arm's sidewalk used to show
+    through as a crescent. A crescent between the ring and a slip road that bypasses it is
+    not an arm's and stays (Tula, gallery 04, south-east).
+  - **One section, one kerb.** All arcs are drawn at the widest arc's width and lanes
+    (`roads::ring_arcs`); the sidewalk is drawn once per ring as a closed ribbon, **outside
+    only**, and the central island gets a `MEDIAN_KERB` 0.5 m kerb along the inner edge
+    instead of a sidewalk ring (`push_ring_edges`). The island's fill is whatever the map
+    has there (a park, a lawn, the ground).
+  - The report counts `rings N (M webs)`. Tula (release): 8 rings, 11 webs; the road
+    build did not move (118.5 ms against 120.7).
 - **Junctions** (`map/roads/junctions.rs`) — computed for the markings only, and from
   **shared nodes**, not segment intersections: Overpass `out geom` gives no node ids, but
   a node shared by two ways projects to the same `Vec2` on both (quantised to 5 cm to be
@@ -902,8 +939,10 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
 
 ## The junction gallery — `examples/demos/roads`
 
-`cargo run --example roads` shows a city's typical road junctions in a column — nineteen
-for Tula (the nineteenth, `19_offset_joins`, is Tsiolkovsky street with two side streets
+`cargo run --example roads` shows a city's typical road junctions in a column — twenty
+for Tula (the twentieth, `20_roundabout_arcs`, is the secondary ring of six arcs — the
+"egg" of **Roundabouts**; `04_roundabout_large` is the primary one; the nineteenth,
+`19_offset_joins`, is Tsiolkovsky street with two side streets
 joining from opposite sides 17 m apart — one cluster of **Junction paint**; the sixteenth, `16_lanes_taper`, is a one-way primary going from four lanes to
 two at a pure seam — the taper of **Streets, sections, tapers**; the seventeenth,
 `17_ring_gores`, is the mall ring the plan's acceptance names — three hatched gores and

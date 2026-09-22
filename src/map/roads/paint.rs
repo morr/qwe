@@ -55,9 +55,12 @@ use crate::map::meshing::{
 use crate::map::osm::RoadLine;
 use crate::map::osm::model::polyline_length;
 use crate::map::shapes::is_ring;
+use crate::map::shapes::{Shape, ring_of};
 use crate::map::surface::{LayerMesh, MaterialSpec};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
-use crate::settings::{Z_BRIDGE_PAINT, Z_ROAD_PAINT, Z_ROAD_WEAR, Z_ROAD_WEAR_MASK};
+use crate::settings::{
+    Z_BRIDGE_PAINT, Z_ROAD_ISLANDS, Z_ROAD_PAINT, Z_ROAD_WEAR, Z_ROAD_WEAR_MASK,
+};
 
 const SHADER_PATH: &str = "shaders/paint.wgsl";
 
@@ -173,6 +176,11 @@ enum LineKind {
     /// Колея траектории узла (`roads/turns.rs`): не краска, а светлый износ
     /// асфальта в своих мешах, две колеи по сторонам кривой.
     Wear,
+    /// Штриховка островка у кольца (`roads/gores.rs`): заливка его контура,
+    /// косые полосы рисует шейдер по координате поперёк них.
+    Hatch,
+    /// Обводка островка — сплошная линия.
+    Edge,
 }
 
 impl LineKind {
@@ -185,9 +193,18 @@ impl LineKind {
             Self::Yield => 4.0,
             Self::Zebra => 5.0,
             Self::Wear => 6.0,
+            Self::Hatch => 7.0,
+            Self::Edge => 8.0,
         }
     }
 }
+
+/// Островок у кольца: шаг косых полос, их ширина и ширина обводки, м.
+const HATCH_PERIOD: f32 = 1.6;
+const HATCH_WIDTH: f32 = 0.35;
+const EDGE_WIDTH: f32 = 0.2;
+/// Полуширина полосы под обводку островка, м.
+pub(super) const EDGE_STRIP: f32 = 0.6;
 
 /// «До разрыва» у поперечной краски: разрывов у неё нет, шейдер её не гасит.
 const NO_BREAK: f32 = 1.0e4;
@@ -322,6 +339,7 @@ pub struct Painter {
     lanes: MeshBuilder,
     axes: MeshBuilder,
     zebras: MeshBuilder,
+    islands: MeshBuilder,
     bridge_lanes: MeshBuilder,
     bridge_axes: MeshBuilder,
     pub lines: usize,
@@ -335,6 +353,7 @@ impl Default for Painter {
             lanes: MeshBuilder::with_surface_coords(),
             axes: MeshBuilder::with_surface_coords(),
             zebras: MeshBuilder::with_surface_coords(),
+            islands: MeshBuilder::with_surface_coords(),
             bridge_lanes: MeshBuilder::with_surface_coords(),
             bridge_axes: MeshBuilder::with_surface_coords(),
             lines: 0,
@@ -348,6 +367,7 @@ pub const PAINT_WEAR: &str = "road_paint_wear";
 pub const PAINT_LANES: &str = "road_paint_lanes";
 pub const PAINT_AXES: &str = "road_paint_axes";
 pub const PAINT_ZEBRAS: &str = "road_paint_zebras";
+pub const PAINT_ISLANDS: &str = "road_paint_islands";
 pub const BRIDGE_PAINT_LANES: &str = "bridge_paint_lanes";
 pub const BRIDGE_PAINT_AXES: &str = "bridge_paint_axes";
 
@@ -365,7 +385,7 @@ impl PaintTag {
     pub fn of(name: &str) -> Option<Self> {
         match name {
             PAINT_LANES | BRIDGE_PAINT_LANES => Some(Self::Lanes),
-            PAINT_ZEBRAS => Some(Self::Zebras),
+            PAINT_ZEBRAS | PAINT_ISLANDS => Some(Self::Zebras),
             PAINT_AXES | BRIDGE_PAINT_AXES => Some(Self::Axes),
             PAINT_WEAR_MASK | PAINT_WEAR => Some(Self::Wear),
             _ => None,
@@ -642,9 +662,50 @@ impl Painter {
         }
     }
 
-    /// Семь слоёв краски: маска и наложение колеи узлов, краска улиц над
-    /// асфальтом улиц, мосты над настилом.
-    pub fn layers(self) -> [LayerMesh; 7] {
+    /// Островок у кольца (`roads/gores.rs`): обводка каждого контура и
+    /// штриховка заливкой — полосы идут поперёк `across`.
+    pub(super) fn paint_island(&mut self, shape: &Shape, across: Vec2) {
+        let color = PAINT_COLOR.to_linear();
+        let mut rings = shape.iter().map(ring_of);
+        let Some(outer) = rings.next() else {
+            return;
+        };
+        let holes: Vec<Vec<Vec2>> = rings.collect();
+        for contour in std::iter::once(&outer).chain(&holes) {
+            let mut closed = contour.clone();
+            closed.push(contour[0]);
+            let (along, _) = arclengths(&closed);
+            let stations: Vec<PaintStation> = along[..contour.len()]
+                .iter()
+                .map(|&along| PaintStation {
+                    along,
+                    to_break: NO_BREAK,
+                    alpha: 1.0,
+                })
+                .collect();
+            self.islands.push_paint_strip(
+                contour,
+                true,
+                EDGE_STRIP,
+                &stations,
+                LineKind::Edge.code(),
+                color,
+            );
+        }
+        self.islands.push_paint_area(
+            &outer,
+            &holes,
+            across,
+            [NO_BREAK, LineKind::Hatch.code()],
+            color,
+        );
+        self.lines += 1;
+    }
+
+    /// Восемь слоёв краски: маска и наложение колеи узлов, краска улиц над
+    /// асфальтом улиц, островки колец над асфальтом стоянок, мосты над
+    /// настилом.
+    pub fn layers(self) -> [LayerMesh; 8] {
         [
             (
                 self.wear_mask,
@@ -654,6 +715,12 @@ impl Painter {
             ),
             (self.wear, Z_ROAD_WEAR, PAINT_WEAR, PaintPass::Wear),
             (self.zebras, Z_ROAD_PAINT, PAINT_ZEBRAS, PaintPass::Lines),
+            (
+                self.islands,
+                Z_ROAD_ISLANDS,
+                PAINT_ISLANDS,
+                PaintPass::Lines,
+            ),
             (self.lanes, Z_ROAD_PAINT, PAINT_LANES, PaintPass::Lines),
             (self.axes, Z_ROAD_PAINT, PAINT_AXES, PaintPass::Lines),
             (
@@ -758,6 +825,11 @@ pub struct PaintParams {
     pub rut_offset: f32,
     pub rut_sigma: f32,
     pub lane_width: f32,
+    /// Островки у колец (`roads/gores.rs`): шаг и ширина косой полосы,
+    /// ширина обводки.
+    pub hatch_period: f32,
+    pub hatch_width: f32,
+    pub edge_width: f32,
 }
 
 impl PaintParams {
@@ -783,6 +855,9 @@ impl PaintParams {
             rut_offset: RUT_OFFSET,
             rut_sigma: RUT_SIGMA,
             lane_width: STREET_LANE_WIDTH,
+            hatch_period: HATCH_PERIOD,
+            hatch_width: HATCH_WIDTH,
+            edge_width: EDGE_WIDTH,
         }
     }
 }
