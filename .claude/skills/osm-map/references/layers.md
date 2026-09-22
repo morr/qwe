@@ -254,7 +254,7 @@ The layers that are neither roads, parking, buildings nor trees. Each bullet is 
     vsync-capped at 60 there. The 23 ms is what a denser tie step would multiply, so
     treat bucket 0's 65 cm as the floor.
   - **`RailZoomBucket`** is `ZoomBucket<RailLods>` — the same machinery as the tram's
-    (see **Zoom buckets** below), a separate resource because the tables' thresholds
+    (see **Zoom buckets** in `SKILL.md`), a separate resource because the tables' thresholds
     have nothing in common: `RailLods` is the marker that hands `RAIL_LODS`'s
     `max_zoom`s to `map/zoom.rs`.
   - **`MeshBuilder::push_rails`** is the new primitive: two ribbons offset from the
@@ -300,7 +300,7 @@ The layers that are neither roads, parking, buildings nor trees. Each bullet is 
   width (targeting ~1.8 screen px, so the line neither fattens close up nor vanishes far
   out) and tie length/thickness/spacing (on-screen tie spacing never drops below ~10 px);
   the farthest bucket drops ties entirely, as 2GIS does at city scale. `TramZoomBucket`
-  is `ZoomBucket<TramLods>` (see **Zoom buckets** below), so `rebuild_tram` fires only
+  is `ZoomBucket<TramLods>` (see **Zoom buckets** in `SKILL.md`), so `rebuild_tram` fires only
   on an actual threshold crossing, never per frame. The tram centerline is smoothed with a
   fixed `TRAM_SMOOTH_WIDTH` (1.2 m) clamp rather than the bucket's line width, so the
   path itself is identical across buckets and LOD switches don't wiggle the track.
@@ -421,7 +421,7 @@ The layers that are neither roads, parking, buildings nor trees. Each bullet is 
     fence. The rake length is a **count**, so `RAKE_MIN`/`RAKE_MAX` are `u32` and the roll
     is `range(MIN, MAX + 1)`: as `f32` bounds they described a half-open interval and the
     truncating cast ate the 16-car rake the docs promised. That is half the answer: `range`
-    is not strictly half-open either (see **One RNG and one point seed** above), and over
+    is not strictly half-open either (see **One RNG and one point seed** in `SKILL.md`), and over
     3..17 it rounds up to `17.0` on another 127 generator states, which the cast then turned
     into a rake of `RAKE_MAX + 1`. So the roll carries a `.min(RAKE_MAX)` of its own.
   - **Walked along the whole track's arclength**, the same `along::{arclengths,

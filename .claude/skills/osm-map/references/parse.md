@@ -473,7 +473,7 @@ be called alone:
       to the *farthest* road, so a pocket or a strip lying against a street was stretched
       **over the street** and striped there — 96 stalls on the carriageway beside way
       702257069 alone. Lots shrank to their honest area (that one 5661 → 2036 m²); what
-      puts stalls back on such a strip is the layout's pocket rule (**Parking** below).
+      puts stalls back on such a strip is the layout's pocket rule (**Parking** in `parking.md`).
       City total 20 245 → 19 440 stalls.
     - **Cost, and why it is threaded.** A lot costs half a dozen `i_overlay` calls, and
       the price of a call is the call, not the geometry — ≈ 0.3 ms even on a four-vertex

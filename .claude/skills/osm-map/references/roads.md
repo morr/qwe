@@ -146,7 +146,7 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     hole in the double line and a kerb island on the «Макси» boulevard.
   - **Paved median** (gap ≤ `RoadShape::median_gap`, 1–6 m, default 3; the flag is
     stored on `Median` at construction — `Pairs::new(roads, paths, median_gap)` — and
-    `Median::is_paved` reads it; `MEDIAN_GAP` survives only `#[cfg(test)]`) — `push_paved` lays a ribbon down the
+    `Median::is_paved` reads it; the pair tests take the knob's default) — `push_paved` lays a ribbon down the
     midline as wide as the axes are apart into the `roads` layer **before** the halves
     (no lane frame, so no ruts; the halves lay theirs over it), and the paint layer draws
     a **double solid** down the midline (`Painter::paint_median`, the axes mesh).
@@ -641,11 +641,12 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     vertices (900 k), 1089 arrows, 610 kerb pockets. Drawn under their own
     `RoadStyle::arrows` toggle (stage 8), independent of `markings`.
   The report counts `turn paths W, arrows A, leading roads L`.
-- **The drawn network** (`map/roads/network.rs`, `map/roads/corners.rs`) — what the ribbons
+- **The drawn network** (`map/roads/network/mod.rs`, `map/roads/corners.rs`) — what the ribbons
   are laid *from* is not quite `MapData::roads`, and the difference is four render-only
   corrections, all built on **`RoadNodes`** (every node two roads of any class share, same
   5 cm key as the junctions, `junctions::node_key`). None of them moves `RoadLine::points`:
-  the navmesh, doors, trees, arches and the parked cars still read OSM as it is. All four
+  the navmesh, doors, trees and arches still read OSM as it is (the parked cars stand on
+  the drawn street axis — **The street axis** below). All four
   are counted in the `road meshing:` line, with the time spent before the first ribbon.
   - **The street axis** (`roads/axis.rs::street_axes`, stage 2 of the roads rework). The
     ribbon of every way that lies in a street ([`RoadNetwork`]) is drawn along **one curve
@@ -1070,7 +1071,9 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   Curb caps are always `Butt` (`push_bridge_curb`) — the deck ends
   in a square cut; a `Round` half-disc would poke a curb
   tongue past the bridge end. The deck sits above `Z_ROAD` so an overpass covers the
-  street it crosses, and below `Z_RAIL` so a track on the bridge stays visible; curbs
+  street it crosses and above `Z_RAIL` so a road bridge over the railway covers the
+  track (**Rail layers** in `layers.md`), and below `Z_TRAM` so a tram on the bridge
+  stays visible; curbs
   sit below the fills so a junction of two bridge ways is never cut by a
   curb band. Street and footbridge fills share one mesh — bridge-over-bridge overlap
   is push order, rare enough not to warrant four layers. Rails carry no bridge flag —
@@ -1079,7 +1082,10 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
 - **Asphalt wear** (`surface.wgsl`, `SurfaceParams::wear`, on `SurfaceKind::Street` only)
   — what keeps a road from being one flat tone, in the **lane frame** so it follows the
   lane rather than the compass: **wheel ruts** — a polished band `RUT_OFFSET` 0.85 m
-  either side of each lane's middle (a car's track is 1.5 m), `RUT_SIGMA` 0.32 m wide,
+  either side of each lane's middle (a car's track is 1.5 m), `RUT_SIGMA` 0.32 m wide
+  (both in `roads/paint.rs`, the one owner: the shader reads them as
+  `SurfaceParams::rut_offset` / `rut_sigma`, the turn paths as the same fields of
+  `PaintParams`, so the two rut profiles cannot drift apart),
   amplitude `SurfaceParams::wear` — the **Wear** knob (`RoadPaintStyle::wear`, 7.5 % by
   default, was the shader constant `RUT_AMP`). The lane is `fract` of
   `across_from_grid_node / SurfaceParams::lane_width` (the **lane width** knob, 3.3 by

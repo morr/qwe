@@ -74,9 +74,9 @@ in `main.rs`.
   paint (2.0005) →
   parking (2.001) → lot
   sidewalks (2.002) → lot lines (2.003) → parking markings (2.004) → pitches (2.005) →
-  pitch markings → water (2.01) → waterways (2.02) → bridge shadows →
-  bridge casings → bridges → bridge paint (2.25) → rail ballast
-  → rail ties → rail steel → tram → wagons → cars → fences (2.75) → pipe shadows (2.76) →
+  pitch markings → water (2.01) → waterways (2.02) → rail ballast (2.03) → rail ties →
+  rail steel → wagons (2.045) → bridge shadows (2.05) → bridge casings → bridges →
+  bridge paint (2.25) → tram (2.6) → cars → fences (2.75) → pipe shadows (2.76) →
   pipes (2.77) → portal stain → corpses → portal → industry shadows (4.55) → buildings (5) →
   roof shadows (5.05) → industry walls (5.06) → industry tops (5.07) → units → souls (18)
   → tree shadows → trees (20). Four live in their
@@ -246,8 +246,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   - **Paint layer** (`map/roads/paint.rs`, shader `paint.wgsl`) — the lane lines as
     **geometry** off the street axis, not a pattern of the asphalt shader: one strip wider
     than the line per line, the shader draws the line (1.3 px floor), its dashes **by the
-    street's arclength** (the phase does not restart at a seam), solid for the last 25 m
-    before a junction break, and the axis of a two-way street of 4+ lanes as a double
+    street's arclength** (the phase does not restart at a seam), a lane line solid for the
+    last 25 m of its **approach** to a junction break (dashed at once on the exit; an axis
+    is solid both ways), and the axis of a two-way street of 4+ lanes as a double
     solid. Two meshes per level (lane lines, axes) plus the zebras, streets at
     `Z_ROAD_PAINT` and bridges at `Z_BRIDGE_PAINT`; `PaintLods` hides the lane lines and
     stop lines past 0.4 m/px, the zebras past 0.6 and the axes past 0.9 without a rebuild.
@@ -257,7 +258,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     (those stay for the ruts and the medians). **Junction cluster**: junction nodes whose
     zones (widest half width + 6 m) overlap are one junction — one set of arms, one break
     per road. **Main through**: a road keeps its lines through a cluster unless it ends
-    there, is crossed by a road of its rank that also passes, meets a higher rank, or the
+    there, is crossed by a road of its rank that also passes (or at a **crossroads** —
+    other streets bringing two arms to one node, however OSM splits them), meets a
+    higher rank, or the
     cluster has signals; rank is the `highway` class, a stop / give-way sign on the arm
     lowers it. On every arm that breaks: a **zebra** (the OSM crossing on the arm, or one
     generated past the junction edge where two streets with sidewalks meet — `RoadStyle::
@@ -280,7 +283,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     tag, by the rule on a 2+ lane approach; near zoom only; toggle `RoadStyle::arrows`.
   - **Kerb pocket** (`map/roads/pockets.rs`) — a parking bay cut into the sidewalk beside
     the carriageway, where the parked cars stand: by `parking:<side>=street_side`, or by
-    rule on trunk/primary/secondary (cars do not stand on an arterial's lane). One answer
+    rule on trunk/primary/secondary (cars do not stand on an arterial's lane) — there as
+    rare short bays, seeded by the street, not a block-long run. One answer
     (`pockets::kerbsides`) for the ribbon and for `map::cars`. `sidewalk=*` likewise
     decides which sides carry a sidewalk band.
   - **Paired halves** (`map/roads/network/pairs.rs`, `Pairs`) — a divided street as OSM
@@ -1215,8 +1219,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
 - **Bridge shadow** (`map/roads.rs`, `Z_BRIDGE_SHADOW` 2.05) — a bridge deck throws the
   same shadow every other object does: its own band, offset through
   `shadow_length_scale()` by the deck height, drawn under the bridge and over whatever it
-  crosses — except what the z ladder draws above bridges (rails, tram, wagons, cars,
-  fences). The invariants, all in `map/roads.rs` (mechanism and Tula measurements — the
+  crosses — except what the z ladder draws above bridges (tram, cars, fences); rails and
+  wagons sit below the shadow, so a deck shades the track it spans. The invariants, all in `map/roads.rs` (mechanism and Tula measurements — the
   `osm-map` skill):
   **a bridge is a chain of ways, not one way** (`Bridges`, `BridgeSpan`) — ways glued
   **end to end** at `JOIN_EPSILON` (never `ways_joined`, which would fuse bridges that
@@ -1410,9 +1414,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   *is* computed are **junction nodes** (`map/roads/junctions.rs`): a node shared by two or
   more carriageways, found by coordinate match on a 5 cm grid — Overpass gives no node ids,
   but a shared node projects to the same point on every way. They feed the markings.
-  Four render-only fixes sit on the same node match (`map/roads/network.rs`,
+  Four render-only fixes sit on the same node match (`map/roads/network/mod.rs`,
   `RoadNodes` — every node shared by two roads of any class), and none of them touches
-  `RoadLine::points`, the navmesh, doors or cars:
+  `RoadLine::points`, the navmesh or doors (the parked cars stand on the drawn street
+  axis, like the ribbon):
   - **Pinned nodes** — Chaikin smoothing never cuts a shared node, so a side street
     still ends exactly on the through road's drawn centreline. The street axis pins only
     nodes shared with another **carriageway** (street or drive): a footway crossing

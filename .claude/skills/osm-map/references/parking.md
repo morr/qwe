@@ -259,7 +259,8 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
       `centerline` smoothed a closed way as an open one and cut the corner at its
       **seam**, so the two ends of a drawn ring stood metres apart (8.6 m on a 12 m test
       ring) and `is_ring` on it was false unless the seam node happened to be shared and
-      therefore pinned. That is fixed at the source (**Pinned nodes** above), so the
+      therefore pinned. That is fixed at the source (a closed way is smoothed round the cycle —
+      **The street axis** in `roads.md`), so the
       re-closing both modules do is now a belt: a drawn ring already comes back closed.
       The original was found the hard way — the unit test passed on a tagged ring, the
       city showed nothing.
@@ -507,16 +508,18 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
   further out inside the pocket's full-width part and nowhere else, and an untagged
   trunk/primary/secondary parks in pockets only — its lane stays clear. The ring is `RoadLine::is_roundabout`, **tag or shape**: by the bare tag a
   column of parked cars stood right round the mall's big ring, which is a closed one-way
-  way with no `junction` tag. The threshold that stood here before was `road.width >= 9 m`, and it was reading
-  the wrong thing: `RoadLine::width` is a **drawing constant of the class**
-  (`primary` 16, `tertiary` 10, `residential` 8, `service` 5), never a measured street
-  width, so 9 m meant "not an arterial" and put every car on the avenues — while an aerial
-  photo shows the housing blocks parked solid. `STREET_MIN_WIDTH` (8 m) lets
-  `residential`/`unclassified`/`living_street` in and keeps `service` out, which is exactly
-  the line wanted. On an 8 m street a sedan's row sits `8/2 − CURB_GAP − 1.8/2 = 2.6 m` off
-  the axis (a van's own 1.95 m width narrows that to 2.53 m — the offset is per-body, not a
-  constant, same as the length below), leaving 3.4 m of carriageway between the two rows for
-  a sedan — a yard, and it is pinned by
+  way with no `junction` tag. The threshold that stood here first was `road.width >= 9 m`,
+  and it put every car on the avenues — while an aerial photo shows the housing blocks
+  parked solid. The gate is **the class, not a width**: `is_carriageway` asks
+  `Highway::is_street`, which lets `residential`/`unclassified`/`living_street` (and
+  everything above them) in and keeps `service` and paths out, whatever their width —
+  exactly the line wanted. `RoadLine::width` comes from the lane section
+  (`network::sections`: lanes × lane width + two edges), so a width threshold would have
+  cut two-lane streets (7.6 m) and one-lane one-ways (4.3 m) off. On a two-lane residential
+  (7.6 m at the default `LANE_WIDTH_DEFAULT` 3.3) a sedan's row sits
+  `7.6/2 − CURB_GAP − 1.8/2 = 2.4 m` off the axis (a van's own 1.95 m width narrows that to
+  2.33 m — the offset is per-body, not a constant, same as the length below), leaving 3 m of
+  carriageway between the two rows for a sedan — a yard, and it is pinned by
   `a_residential_street_gets_a_row`. Bodies of the size their **type** says (`CarShape`,
   4.4 × 1.8 m for a sedan up to 5.3 × 1.95 for a van)
   at `CAR_PITCH` 6 m, offset `CURB_GAP` + half of **that** body in from the kerb — the
@@ -586,13 +589,13 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
     by their AABB (grown by the street's width), so a place tests only the decks near it.
     Past the gap the RNG stream differs, exactly as past a junction.
   - **A one-way carriageway gets one row, on the kerb of the driving side**
-    (`MapData::traffic_side`, see **Driving side** above; `TrafficSide::kerb`). With
+    (`MapData::traffic_side`, see **Driving side** in `SKILL.md`; `TrafficSide::kerb`). With
     right-hand traffic, each half of a divided avenue has the kerb on the right and the
     median on the left; two rows would put a column of cars down the median, and in Tula
     145 of 218 `primary` ways are exactly such halves. London and Tokyo mirror it. The same
     rule is right for an ordinary one-way lane. `across` points left, so the right-hand
     side is `-1`; the direction it is right of is the way's own point order, which parse
-    has already normalized (see **RoadLine** above).
+    has already normalized (see **RoadLine** in `SKILL.md`).
   - **A car faces the traffic of its own kerb.** The row on the driving-side kerb points
     along the way, the opposite row against it — before this every car on the map faced
     the way's point order, so half of every two-way street was parked nose to the traffic.
@@ -681,7 +684,7 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
     effect is one merged mesh — and `rebuild_cars` is gated on `cars::rebuilds_on()`,
     `retuned::<CarZoomBucket>.or_else(retuned::<CarStyle>).or_else(retuned::<RoadShapeOnMap>)
     .or_else(retuned::<SunOnMap>)`,
-    one registration by the rule under **When a layer rebuilds** above; the settled
+    one registration by the rule under **When a layer rebuilds** in `SKILL.md`; the settled
     `RoadShapeOnMap` is in there because the row is walked along the **same street axis**
     the ribbon is drawn from (`axis::street_axes(.., &shape)`, never the raw OSM points)
     and breaks at the same taper clearings (`pockets::row_breaks(.., shape.taper())`), so
@@ -736,7 +739,9 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
     **968 k verts / 18 ms** (Full), **322 k / 7 ms** (Silhouette), **146 k / 3 ms**
     (Block). **Those are the mesh rows
     alone**; the three steps in front of them do not depend on the detail and are measured
-    once each — `breaks` 1 ms (`marking_breaks`), `districts` 3 ms (the index) and
+    once each — `breaks` 1 ms (measured on the bare `marking_breaks`, before the bench
+    took the game's `pockets::row_breaks` with its tapers and crossings — re-measure
+    before quoting it), `districts` 3 ms (the index) and
     `parking` 4 ms (`park_cars`) — so a rebuild is 26 ms at the near step and 11 at the far
     one.
     **The district multiplier paid for itself and then some**, measured before and after on
