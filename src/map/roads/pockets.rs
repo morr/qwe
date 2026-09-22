@@ -8,6 +8,8 @@
 //! Тег — `parking:<side>` ([`KerbParking`]); без тега — правило
 //! ([`kerb_parking`]): на магистрали (trunk, primary, secondary) на полосе не
 //! стоят, и машины уходят в карманы, на остальных улицах стоят у бордюра.
+//! Карман по тегу идёт вдоль всей стороны way между перекрёстками, по правилу
+//! — редкий и короткий ([`sparse_pockets`]).
 
 use bevy::prelude::*;
 
@@ -17,6 +19,7 @@ use super::{is_carriageway, tapers};
 use crate::map::meshing::Break;
 use crate::map::osm::model::{Highway, KerbParking};
 use crate::map::osm::{RoadLine, TrafficSide};
+use crate::map::seed::{Lcg, seed_from_point};
 
 /// Ширина кармана за кромкой проезжей части, м: машина при параллельной
 /// стоянке и полметра до бордюра.
@@ -29,6 +32,14 @@ const POCKET_CLEARANCE: f32 = 4.0;
 /// Самый короткий карман по полной ширине, м — две машины. Короче — не
 /// карман, а зазубрина.
 const POCKET_MIN: f32 = 10.0;
+/// Доля кварталов (кусков стороны между перекрёстками), где правило ставит
+/// карманы: в городе карман — у магазина, у остановки, у подъезда, а не вдоль
+/// каждого квартала.
+const RULE_BLOCK_SHARE: f32 = 0.4;
+/// Длина кармана по правилу со скосами, м: три-пять машин.
+const RULE_POCKET_LENGTH: (f32, f32) = (24.0, 42.0);
+/// Просвет тротуара между карманами по правилу, м.
+const RULE_POCKET_GAP: (f32, f32) = (30.0, 90.0);
 
 /// Одна сторона улицы, вдоль которой может стоять ряд.
 #[derive(Clone, Debug)]
@@ -122,18 +133,59 @@ pub fn kerbsides(
     sides
         .iter()
         .map(|&side| {
-            let parking = kerb_parking(road, usize::from(side < 0.0));
+            let index = usize::from(side < 0.0);
+            let parking = kerb_parking(road, index);
+            let pockets = if parking != KerbParking::Pocket {
+                Vec::new()
+            } else if road.parking[index] == KerbParking::Untagged {
+                sparse_pockets(pockets_along(path, breaks), road, index)
+            } else {
+                pockets_along(path, breaks)
+            };
             Kerbside {
                 side,
                 lane: parking == KerbParking::Lane,
-                pockets: if parking == KerbParking::Pocket {
-                    pockets_along(path, breaks)
-                } else {
-                    Vec::new()
-                },
+                pockets,
             }
         })
         .collect()
+}
+
+/// Карманы по правилу — редкие и короткие: на [`RULE_BLOCK_SHARE`] кварталов,
+/// по [`RULE_POCKET_LENGTH`] через [`RULE_POCKET_GAP`] внутри куска `runs`,
+/// который оставили перекрёстки. Тег `parking=street_side` говорит о всей
+/// стороне way, а правило ничего не знает и не выдумывает больше, чем бывает
+/// на самом деле: карман во весь квартал без машин читался как лишняя полоса.
+///
+/// Посев — от первой точки улицы и стороны ([`seed_from_point`]): лента и ряд
+/// машин спрашивают одно и то же и получают одно и то же, и пересборка ничего
+/// не сдвигает.
+fn sparse_pockets(runs: Vec<Pocket>, road: &RoadLine, side: usize) -> Vec<Pocket> {
+    let Some(&start) = road.points.first() else {
+        return Vec::new();
+    };
+    let side_salt = if side == 0 { 0 } else { 0x9e37_79b9 };
+    let mut rng = Lcg::new(seed_from_point(start) ^ side_salt);
+    let mut pockets = Vec::new();
+    for run in runs {
+        if rng.next_f32() >= RULE_BLOCK_SHARE {
+            continue;
+        }
+        let mut cursor = run.from + rng.range(0.0, RULE_POCKET_GAP.0);
+        loop {
+            let length = rng.range(RULE_POCKET_LENGTH.0, RULE_POCKET_LENGTH.1);
+            if cursor + length > run.to {
+                break;
+            }
+            pockets.push(Pocket {
+                from: cursor,
+                to: cursor + length,
+                tapers: [true, true],
+            });
+            cursor += length + rng.range(RULE_POCKET_GAP.0, RULE_POCKET_GAP.1);
+        }
+    }
+    pockets
 }
 
 /// Разрывы ряда у бордюра по дорогам: перекрёстки проезжих частей (без
@@ -253,8 +305,11 @@ mod tests {
     }
 
     #[test]
-    fn a_pocket_stops_short_of_a_junction_and_runs_through_a_way_end() {
-        let road = primary();
+    fn a_tagged_pocket_stops_short_of_a_junction_and_runs_through_a_way_end() {
+        let road = RoadLine {
+            parking: [KerbParking::Pocket; 2],
+            ..primary()
+        };
         let junction = Break {
             at: Vec2::new(120.0, 0.0),
             reach: 8.0,
@@ -271,6 +326,48 @@ mod tests {
         assert!(sides[0].pocket_at(60.0).is_some());
         assert!(sides[0].pocket_at(120.0).is_none());
         assert!(!sides[0].lane, "мимо кармана на магистрали не стоят");
+    }
+
+    /// Без тега карманы редкие и короткие: каждый со скосами и в пределах
+    /// длины по правилу, между соседними — тротуар, на улице в два километра
+    /// карманами занята малая часть бордюра, но не ноль; и тот же ответ на
+    /// второй вызов — лента и машины его не разойдутся.
+    #[test]
+    fn rule_pockets_are_rare_short_and_repeatable() {
+        let road = RoadLine {
+            highway: Highway::Primary,
+            ..street(vec![Vec2::new(3.7, 1.2), Vec2::new(2003.7, 1.2)], 14.0)
+        };
+        // перекрёсток каждые 150 м — кварталы
+        let breaks: Vec<Break> = (1..13)
+            .map(|block| Break {
+                at: Vec2::new(3.7 + 150.0 * block as f32, 1.2),
+                reach: 8.0,
+            })
+            .collect();
+        let sides = kerbsides(&road, &road.points, &breaks, TrafficSide::Right);
+        let again = kerbsides(&road, &road.points, &breaks, TrafficSide::Right);
+        let mut covered = 0.0;
+        for (side, repeat) in sides.iter().zip(&again) {
+            assert_eq!(side.pockets, repeat.pockets, "посев от улицы");
+            for pocket in &side.pockets {
+                let length = pocket.to - pocket.from;
+                assert!(
+                    (RULE_POCKET_LENGTH.0..=RULE_POCKET_LENGTH.1).contains(&length),
+                    "{pocket:?}"
+                );
+                assert_eq!(pocket.tapers, [true, true]);
+                covered += length;
+            }
+            for pair in side.pockets.windows(2) {
+                assert!(pair[1].from - pair[0].to >= RULE_POCKET_GAP.0 - 1e-3);
+            }
+        }
+        let share = covered / (2.0 * 2000.0);
+        assert!(
+            share > 0.02 && share < 0.3,
+            "доля бордюра в карманах {share}"
+        );
     }
 
     #[test]

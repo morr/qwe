@@ -73,7 +73,18 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   junction breaks without stitches plus the taper clearings — the same list the cars
   use), `POCKET_TAPER` 6 m slanted ends where a pocket stops inside the way (none where
   it runs into the way's end, so it continues on the next way), at least `POCKET_MIN`
-  10 m at full width. Drawn by `mesh_roads` as three polygons per pocket from
+  10 m at full width. That full run is what a **tagged** side (`street_side`) gets. A
+  side that is a pocket **by the rule** gets rare short bays out of it
+  (`pockets::sparse_pockets`): a block run carries bays at all with
+  `RULE_BLOCK_SHARE` 0.4, each bay `RULE_POCKET_LENGTH` 24–42 m with both tapers, bays
+  `RULE_POCKET_GAP` 30–90 m apart, the first up to 30 m in. The RNG is `seed::Lcg`
+  seeded by `seed_from_point` of the street's first point, salted by the side, so the
+  ribbon and the cars get the same bays and a rebuild moves nothing. The full-block rule
+  pocket read as an extra lane wherever no cars stood in it (the gallery has none),
+  and real bays are a few cars long; OSM's own bays arrive as tags or as separate
+  `amenity=parking` + `parking=street_side` outlines (Berlin 3275, Tula 56), which
+  reach the parking layer (`references/parking.md`).
+  Drawn by `mesh_roads` as three polygons per pocket from
   `pockets::outline` (inner edge 5 cm under the carriageway edge, outer edge between the
   tapers): asphalt `POCKET_WIDTH` 2.5 m wide in `roads` (no casing — the road casing
   layers are gone, stage 8) and the **sidewalk pushed out behind it** in `sidewalks` (the band is at most 3 m, a

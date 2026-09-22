@@ -1,7 +1,7 @@
 use super::*;
 use crate::map::footprint::casing_width;
 use crate::map::meshing::distance_to_path;
-use crate::map::osm::model::RoadNode;
+use crate::map::osm::model::{KerbParking, RoadNode};
 use crate::map::osm::{Highway, fixture};
 use crate::map::shadow_dir;
 
@@ -1224,12 +1224,14 @@ fn the_sidewalk_tag_picks_the_side() {
     assert!(sidewalks_with([false, false]).is_empty());
 }
 
-/// Магистраль получает карманы с обеих сторон: асфальт за кромкой, тротуар
-/// отодвинут за карман.
+/// Карманы по тегу `street_side` с обеих сторон: асфальт за кромкой, тротуар
+/// отодвинут за карман. Правило без тега ставит их редко
+/// (`pockets::sparse_pockets`), а тут нужен карман наверняка.
 #[test]
 fn a_primary_gets_pockets_in_its_sidewalks() {
     let mut map = one_street();
     map.roads[0].highway = Highway::Primary;
+    map.roads[0].parking = [KerbParking::Pocket; 2];
     let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
     assert_eq!(report.kerb_pockets, 2);
     let edge = 100.0 + 6.0 + pockets::POCKET_WIDTH;
