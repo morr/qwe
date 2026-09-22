@@ -327,7 +327,7 @@ step when adding one):
 | entity | file |
 |---|---|
 | ground mesh, merged area layer meshes (landuse/parks/woods/grass/sand/parking + its markings/water), waterway ribbons, tree-row band | `map/spawn.rs` (through `map/surface.rs::spawn_layers`) |
-| road layers (sidewalks/alleys/roads/bridge shadows/bridges/walls + casings) | `map/roads.rs::spawn_road_meshes` (same helper, from `rebuild_roads` and `spawn_map`) |
+| road layers — ten ribbons (alleys/sidewalks/road medians/roads/lot sidewalks + lot lines/bridge shadows/bridge curbs (`bridge_casings`)/bridges/walls) and the eight paint layers of `roads/paint.rs` (wear mask + wear, zebras, islands, lanes + axes, bridge lanes + axes), the latter tagged `(RoadLayerTag, PaintTag)` | `map/roads.rs::spawn_road_meshes` (same helper, from `rebuild_roads` and `spawn_map`) |
 | rail layers (ballast/ties/steel) | `map/rail.rs::rebuild_rails` (same helper) |
 | parked cars | `map/cars/mod.rs::rebuild_cars` (through `surface::spawn_layers`; geometry — `cars/body.rs`) |
 | standing wagons | `map/wagons.rs::rebuild_wagons` (same helper) |

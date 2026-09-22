@@ -244,8 +244,11 @@ corpse, a child entity), `Silhouette`, `SoulMote`
 Resources — `City`, `SimSpeed`, `Telemetry`, `PortalPos`, `PathfindingAlgorithm`,
 `DemonStyle`, `DemonSpawner`, `HumanStyle`, `SeparationStyle`,
 `BuildingHeightMode`, `TreeStyle` / `TreeShape`, `TreeRowStyle`, `ConiferNoiseStyle`,
-`RoadStyle`, `CarStyle`, `TramStyle`, `IndustryStyle`, `SurfaceStyle`,
-`DrawMovePaths`, `DebugGrid`, `DebugNavmesh`, `DebugDoors`, `PolymeshDebug`,
+`RoadStyle`, `RoadShape` / `RoadShapeOnMap` (a write to `RoadShape` reaches the map
+through `RoadShapeOnMap` after 0.35 s of quiet — `settle_road_shape`; `.lane_width`
+reloads the world), `RoadPaintStyle` (uniforms — nothing rebuilds), `CarStyle`,
+`TramStyle`, `IndustryStyle`, `SurfaceStyle`,
+`DrawMovePaths`, `DebugGrid`, `DebugNavmesh`, `DebugDoors`, `DebugRoadNetwork`, `PolymeshDebug`,
 `NavtileBase`, `CameraPositionMode`, `SavedCameraView`,
 `WorldSeed`, `Determinism`, `SimTick`, `RestartPending`.
 
@@ -287,6 +290,7 @@ requests plus the average search time, already computed by the app.
 ```bash
 $b res set DebugDoors .0 true         # tuple structs: field .0
 $b res set DebugGrid .0 true
+$b res set DebugRoadNetwork .0 true   # оверлей сети улиц: строка `Road network` вкладки Debug
 $b res set DebugNavmesh .0 true       # grid overlay: the `Show` row under Algo: Navmesh
 $b res set PolymeshDebug .enabled true            # Algo: Navmesh (false) ⇄ Polymesh (true)
 $b res set PolymeshDebug .show false              # polymesh overlay off, routing untouched
@@ -299,6 +303,8 @@ $b res set TreeRowStyle .enabled false            # …аллеи (панель 
 $b res set PathfindingAlgorithm . '"Hpa"'
 $b res set RoadStyle .sidewalks false             # тротуары / разметка улиц
 $b res set RoadStyle .markings false
+$b res set RoadShape .taper 20                    # форма дорог (5..20): до карты доезжает через RoadShapeOnMap
+$b res set RoadPaintStyle .paint 0.5              # краска 0..1 — юниформ, без пересборки
 $b res set CarStyle .visible false                # слой припаркованных машин
 $b res set CarStyle .occupancy 1.0                # …и доля занятых мест, 0..1
 $b res set IndustryStyle .visible true            # промзона: цилиндры и теплотрассы (по умолчанию off)
