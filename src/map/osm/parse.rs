@@ -1196,15 +1196,44 @@ const LANDUSE_STEP: f32 = 8.0;
 /// своя полоса: газон между тротуаром и проезжей частью.
 const SIDEWALK_TUCK_MAX: f32 = 3.0;
 
-/// Звенья дорог для [`pull_ring`]: полотна с сеткой и что за дорога у звена.
+/// Полотна дорог для [`pull_ring`]: звенья с тем, что за дорога у каждого,
+/// и их сетка.
 struct Edges<'a> {
-    segments: &'a [Link],
+    edges: &'a [Edge],
     lines: &'a Grid<usize>,
+}
+
+/// Звено полотна и что за дорога у него — одним значением, а не двумя
+/// массивами рядом, так что «та же длина, тот же порядок» ломаться нечему.
+#[derive(Clone, Copy)]
+struct Edge {
+    link: Link,
+    kind: EdgeKind,
+}
+
+/// Что за дорога у звена [`Edge`]. Варианты не пересекаются: проезжая часть
+/// бывает только у улицы ([`RoadClass::Street`]), дорожка — сама класс.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EdgeKind {
     /// Проезжая часть ([`is_carriageway`]).
-    carriageway: &'a [bool],
+    Carriageway,
     /// Дорожка ([`RoadClass::Alley`]): тротуар, замапленный отдельно, и
     /// прочие пешеходные пути.
-    walkway: &'a [bool],
+    Walkway,
+    /// Улица без проезжей части — проезд.
+    Drive,
+}
+
+impl EdgeKind {
+    fn of(road: &RoadLine) -> Self {
+        if is_carriageway(road) {
+            Self::Carriageway
+        } else if road.class == RoadClass::Alley {
+            Self::Walkway
+        } else {
+            Self::Drive
+        }
+    }
 }
 
 /// Квартал (`landuse`), край которого не доходит до дороги считаные метры,
@@ -1240,10 +1269,7 @@ struct Edges<'a> {
 /// и край выходил зубцами и иглами.
 fn pull_areas_to_roads(map: &mut MapData) -> StretchedAreas {
     // `reach` — внешний край нарисованного полотна от оси
-    let mut segments: Vec<Link> = Vec::new();
-    // звено — проезжей части; дорожки
-    let mut carriageway: Vec<bool> = Vec::new();
-    let mut walkway: Vec<bool> = Vec::new();
+    let mut edges: Vec<Edge> = Vec::new();
     for road in &map.roads {
         if road.bridge || road.passage {
             continue;
@@ -1253,30 +1279,30 @@ fn pull_areas_to_roads(map: &mut MapData) -> StretchedAreas {
         let sidewalk = sidewalk_width(road)
             .filter(|_| road.sidewalks.contains(&true))
             .unwrap_or_default();
-        let edge = road.width / 2.0 + sidewalk;
+        let reach = road.width / 2.0 + sidewalk;
+        let kind = EdgeKind::of(road);
         for link in road.points.windows(2) {
-            segments.push(Link {
-                from: link[0],
-                to: link[1],
-                reach: edge,
+            edges.push(Edge {
+                link: Link {
+                    from: link[0],
+                    to: link[1],
+                    reach,
+                },
+                kind,
             });
-            carriageway.push(is_carriageway(road));
-            walkway.push(road.class == RoadClass::Alley);
         }
     }
     // звено кладётся в ячейки с запасом на своё полотно и наибольший из
     // пределов, так что спрашивающему хватает ячейки самой вершины; запас
     // больше нужного лишь добавляет кандидатов, которые отсеет сам предел
     let mut lines: Grid<usize> = Grid::new(SIDEWALK_CELL);
-    for (index, link) in segments.iter().enumerate() {
-        let pad = link.reach + LANDUSE_GAP_MAX;
-        lines.insert_segment(link.from, link.to, pad, index);
+    for (index, edge) in edges.iter().enumerate() {
+        let Link { from, to, reach } = edge.link;
+        lines.insert_segment(from, to, reach + LANDUSE_GAP_MAX, index);
     }
     let roads = Edges {
-        segments: &segments,
+        edges: &edges,
         lines: &lines,
-        carriageway: &carriageway,
-        walkway: &walkway,
     };
 
     let mut stretched = StretchedAreas::default();
@@ -1373,7 +1399,7 @@ fn pull_vertex(point: Vec2, outward: Vec2, roads: &Edges) -> Option<Vec2> {
     // другая дорога его не отменяет
     let gaps = || {
         roads.lines.near(point, point).into_iter().map(|index| {
-            let Link { from, to, reach } = roads.segments[index];
+            let Link { from, to, reach } = roads.edges[index].link;
             let axis = closest_on_segment(point, from, to);
             (point.distance(axis) - reach, axis, index)
         })
@@ -1395,12 +1421,12 @@ fn pull_vertex(point: Vec2, outward: Vec2, roads: &Edges) -> Option<Vec2> {
     // скругления угла. Полоса между тротуаром и бордюром — мощение, не двор:
     // край уходит под дорожку
     let street_beyond = gaps().any(|(gap, axis, index)| {
-        roads.carriageway[index]
+        roads.edges[index].kind == EdgeKind::Carriageway
             && gap > 0.0
             && gap <= LANDUSE_GAP_MAX
             && (axis - point).dot(outward) > 0.0
     });
-    (roads.walkway[index] && gap <= SIDEWALK_TUCK_MAX && street_beyond)
+    (roads.edges[index].kind == EdgeKind::Walkway && gap <= SIDEWALK_TUCK_MAX && street_beyond)
         .then(|| point + direction * (gap + LANDUSE_OVERLAP))
 }
 
