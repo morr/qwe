@@ -1783,6 +1783,22 @@ pub fn break_profile(
     (path, along, to_break)
 }
 
+/// «До разрыва» в вершинах уже нарезанного пути `path` — по другому набору
+/// разрывов, чем тот, по которому его резал [`break_profile`]. Изломы новых
+/// разрывов должны быть среди вершин пути: набор — подмножество того, по
+/// которому путь резался.
+pub fn break_distances(path: &[Vec2], closed: bool, breaks: &[Break]) -> Vec<f32> {
+    let (along, total) = arclengths(path, closed);
+    let gaps = GapProfile::new(
+        path,
+        &along,
+        total,
+        RibbonBreaks::At(breaks),
+        closed.then_some(total),
+    );
+    along.iter().map(|&at| gaps.distance(at)).collect()
+}
+
 /// Расстояние до ближайшего торца разомкнутого пути.
 fn to_nearest_end(along: f32, total: f32) -> f32 {
     along.min(total - along)

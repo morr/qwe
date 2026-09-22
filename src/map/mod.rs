@@ -68,7 +68,7 @@ pub use self::meshing::{
 pub use self::osm::{TREE_DENSITY_MAX, TreeRowPlacement};
 // `ROAD_COLOR` наружу по той же причине: ряд машин витрины обязан стоять на
 // том же асфальте, что в городе
-pub use self::roads::{ROAD_COLOR, RoadJoin, RoadStyle};
+pub use self::roads::{CrossingMode, ROAD_COLOR, RoadJoin, RoadStyle};
 // краска и колея: ресурс ручек Paint/Wear (панель игры и витрины `roads`), а
 // материал краски — витринам, которые поднимают материалы поверхностей сами
 pub use self::roads::paint::{

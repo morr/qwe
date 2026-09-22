@@ -11,7 +11,7 @@
     mesh2d_functions as mesh_functions,
     mesh2d_view_bindings::view,
 }
-#import "shaders/noise.wgsl"::visible
+#import "shaders/noise.wgsl"::{visible, stripes}
 
 #ifdef TONEMAP_IN_SHADER
 #import bevy_core_pipeline::tonemapping
@@ -34,6 +34,13 @@ struct PaintParams {
     lane_zoom: f32,
     axis_zoom: f32,
     fade_from: f32,
+    stop_width: f32,
+    yield_dash: f32,
+    yield_gap: f32,
+    zebra_half: f32,
+    zebra_period: f32,
+    zebra_fill: f32,
+    zebra_zoom: f32,
 }
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: PaintParams;
@@ -44,7 +51,9 @@ struct Vertex {
     @location(1) color: vec4<f32>,
     // `meshing::ATTRIBUTE_RIBBON` полосы краски: поперёк от линии (м), длина
     // улицы (м), до разрыва перекрёстка (м), вид линии (0 — линия полос,
-    // 1 — осевая, 2 — двойная сплошная)
+    // 1 — осевая, 2 — двойная сплошная, 3 — стоп-линия, 4 — она же
+    // прерывистой, 5 — зебра). У поперечной краски (3–5) «длина» идёт поперёк
+    // дороги от кромки, а «поперёк» — вдоль неё
     @location(2) ribbon: vec4<f32>,
 }
 
@@ -98,7 +107,30 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let kind = u32(round(in.ribbon.w));
 
     var cover = 0.0;
-    if kind == 2u {
+    if kind == 5u {
+        // зебра: плашка вдоль дороги, полосы поперёк неё; где период мельче
+        // пары пикселей, полосы гаснут в свою среднюю долю — светлую плашку
+        let edge = 0.7 * px;
+        let body = 1.0 - smoothstep(params.zebra_half - edge, params.zebra_half + edge, abs(across));
+        let bars = stripes(
+            along - params.zebra_period * 0.5,
+            params.zebra_period,
+            params.zebra_period * params.zebra_fill,
+            px,
+        );
+        let seen = visible(params.zebra_period, px);
+        cover = body * (bars + params.zebra_fill * (1.0 - seen));
+    } else if kind == 3u || kind == 4u {
+        // стоп-линия; у «уступи дорогу» — штрихами поперёк дороги
+        cover = line_cover(abs(across), params.stop_width, px);
+        if kind == 4u {
+            let edge = 0.7 * px;
+            let dash = dash_distance(along, params.yield_dash, params.yield_gap);
+            let dashed = 1.0 - smoothstep(-edge, edge, dash);
+            let mean = params.yield_dash / (params.yield_dash + params.yield_gap);
+            cover = cover * mix(mean, dashed, visible(params.yield_dash + params.yield_gap, px));
+        }
+    } else if kind == 2u {
         // двойная сплошная: две линии по сторонам оси; когда зазор меньше пары
         // пикселей, они сливаются в одну осевую той же доли краски
         let pair = max(
@@ -124,7 +156,12 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     cover = cover * smoothstep(0.0, 1.0, to_break);
     // с зумом: линии полос уходят раньше осевых; к порогу, где меш прячется
     // (`roads::paint::PaintLods`), линия уже прозрачна
-    let zoom_max = select(params.axis_zoom, params.lane_zoom, kind == 0u);
+    var zoom_max = params.axis_zoom;
+    if kind == 0u || kind == 3u || kind == 4u {
+        zoom_max = params.lane_zoom;
+    } else if kind == 5u {
+        zoom_max = params.zebra_zoom;
+    }
     cover = cover * (1.0 - smoothstep(zoom_max * params.fade_from, zoom_max, px));
 
     let alpha = cover * in.color.a * params.paint;

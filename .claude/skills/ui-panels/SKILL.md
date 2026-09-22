@@ -137,8 +137,11 @@ did not fit 1080 px and ran off the top of the screen.
   `BuildingHeightMode` case would remesh every building layer on a toggle whose only
   effect is one merged mesh (`map::industry::rebuild_industry`). It is read with the
   buildings because a cylinder stands on the ground and leans by the houses' own lift.
-  **Roads** (`ui/roads.rs`): five cycle rows on `RoadStyle` — joins, smoothing, casing,
-  **sidewalks**, **markings** — then two sliders on `RoadPaintStyle` under Markings:
+  **Roads** (`ui/roads.rs`): seven cycle rows on `RoadStyle` — joins, smoothing, casing,
+  **sidewalks**, **markings**, **Crossings** (`CrossingMode`: `Off` / `OSM` / `OSM + gen`)
+  and **Stop lines** — the last two are the junction paint's (`map/roads/node_paint.rs`)
+  and, being `RoadStyle` fields, rebuild the road layers like the rest; the roads gallery
+  carries the same two rows. Then two sliders on `RoadPaintStyle` under them:
   **Paint** (the paint layer's opacity, 0–100 %, step 5) and **Wear** (the asphalt rut
   amplitude, 0–15 %, step 0.5, printed with one decimal). Their own resource because both
   are material uniforms (`surface::retune_surface_materials`) and a drag rebuilds nothing,

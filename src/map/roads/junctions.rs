@@ -33,10 +33,67 @@ pub(super) fn node_key(point: Vec2) -> (i32, i32) {
 /// чем начинается перекрёсток, как стоп-линия перед ним.
 pub const JUNCTION_MARGIN: f32 = 1.0;
 
-/// Чья дорога прошла через узел и торец ли это её.
-struct Visit {
-    road: usize,
-    end: bool,
+/// Чья дорога прошла через узел, какой её вершиной и торец ли это её.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Visit {
+    pub road: usize,
+    pub vertex: usize,
+    pub end: bool,
+}
+
+/// Общий узел участвующих дорог и все их проходы через него.
+pub(super) struct SharedNode {
+    pub at: Vec2,
+    pub visits: Vec<Visit>,
+}
+
+impl SharedNode {
+    /// Перекрёсток: сошлись две дороги и больше, и это не шов — не два way
+    /// торцами друг к другу (way разрезан по смене тега).
+    pub fn is_junction(&self) -> bool {
+        let mut distinct: Vec<usize> = self.visits.iter().map(|visit| visit.road).collect();
+        distinct.sort_unstable();
+        distinct.dedup();
+        distinct.len() >= 2
+            && !(distinct.len() == 2
+                && self.visits.len() == 2
+                && self.visits.iter().all(|visit| visit.end))
+    }
+}
+
+/// Узлы участвующих дорог по совпадению координат, в порядке ключа — от
+/// порядка обхода `HashMap` не зависит ничего, что из них строится.
+pub(super) fn shared_nodes(
+    roads: &[impl std::borrow::Borrow<RoadLine>],
+    participates: impl Fn(&RoadLine) -> bool,
+) -> Vec<SharedNode> {
+    let mut nodes: HashMap<(i32, i32), SharedNode> = HashMap::new();
+    for (index, road) in roads.iter().enumerate() {
+        let road = road.borrow();
+        if !participates(road) || road.points.len() < 2 {
+            continue;
+        }
+        let last = road.points.len() - 1;
+        let closed = road.points[0] == road.points[last];
+        for (vertex, &point) in road.points.iter().enumerate() {
+            let end = !closed && (vertex == 0 || vertex == last);
+            nodes
+                .entry(node_key(point))
+                .or_insert_with(|| SharedNode {
+                    at: point,
+                    visits: Vec::new(),
+                })
+                .visits
+                .push(Visit {
+                    road: index,
+                    vertex,
+                    end,
+                });
+        }
+    }
+    let mut nodes: Vec<((i32, i32), SharedNode)> = nodes.into_iter().collect();
+    nodes.sort_unstable_by_key(|(key, _)| *key);
+    nodes.into_iter().map(|(_, node)| node).collect()
 }
 
 /// Разрывы разметки по дорогам: `breaks[i]` — у `roads[i]`, у дорог вне
@@ -51,46 +108,31 @@ pub struct MarkingBreaks {
 /// [`JUNCTION_MARGIN`]; тупик — разрыв нулевой длины на торце; стык двух
 /// торцов (way разрезан по смене тега) — не разрыв вовсе. Замкнутый way
 /// (кольцо одним way) торцов не имеет.
+///
+/// Это разрывы **асфальта** — по ним гаснет колея и рвутся разделительные.
+/// Краска рвётся по своим (`roads/node_paint.rs`): главная проходит узел, не
+/// теряя линий.
 pub fn marking_breaks(
     roads: &[RoadLine],
     participates: impl Fn(&RoadLine) -> bool,
 ) -> MarkingBreaks {
-    let mut nodes: HashMap<(i32, i32), (Vec2, Vec<Visit>)> = HashMap::new();
-    for (index, road) in roads.iter().enumerate() {
-        if !participates(road) || road.points.len() < 2 {
-            continue;
-        }
-        let last = road.points.len() - 1;
-        let closed = road.points[0] == road.points[last];
-        for (vertex, &point) in road.points.iter().enumerate() {
-            let end = !closed && (vertex == 0 || vertex == last);
-            nodes
-                .entry(node_key(point))
-                .or_insert_with(|| (point, Vec::new()))
-                .1
-                .push(Visit { road: index, end });
-        }
-    }
-
     let mut breaks = vec![Vec::new(); roads.len()];
     let mut junctions = 0;
-    for (at, visits) in nodes.into_values() {
-        let mut distinct: Vec<usize> = visits.iter().map(|visit| visit.road).collect();
-        distinct.sort_unstable();
-        distinct.dedup();
-        if distinct.len() < 2 {
-            // одна дорога: её торец — тупик, прочие вершины — просто изломы
-            for visit in visits.iter().filter(|visit| visit.end) {
-                breaks[visit.road].push(Break { at, reach: 0.0 });
+    for node in shared_nodes(roads, participates) {
+        let SharedNode { at, visits } = &node;
+        let at = *at;
+        if !node.is_junction() {
+            // одна дорога: её торец — тупик, прочие вершины — просто изломы;
+            // у шва двух way торцов нет вовсе
+            if visits.iter().all(|visit| visit.road == visits[0].road) {
+                for visit in visits.iter().filter(|visit| visit.end) {
+                    breaks[visit.road].push(Break { at, reach: 0.0 });
+                }
             }
             continue;
         }
-        // два way торцами друг к другу — одна дорога, разрезанная надвое
-        if distinct.len() == 2 && visits.len() == 2 && visits.iter().all(|visit| visit.end) {
-            continue;
-        }
         junctions += 1;
-        for visit in &visits {
+        for visit in visits {
             let widest_other = visits
                 .iter()
                 .filter(|other| other.road != visit.road)

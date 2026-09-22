@@ -42,10 +42,12 @@ use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey};
 
 use super::network::RoadNetwork;
 use super::network::sections::STREET_LANE_WIDTH;
+use super::node_paint::{Pocket, STOP_WIDTH, StopLine, ZEBRA_LENGTH, Zebra};
 use super::tapers::{self, Tapers};
 use super::{is_carriageway, lane_count};
 use crate::map::meshing::{
-    ATTRIBUTE_RIBBON, Break, LaneFrame, MeshBuilder, PaintStation, break_profile, miter_offsets,
+    ATTRIBUTE_RIBBON, Break, LaneFrame, MeshBuilder, PaintStation, break_distances, break_profile,
+    miter_offsets,
 };
 use crate::map::osm::RoadLine;
 use crate::map::osm::model::polyline_length;
@@ -147,6 +149,12 @@ enum LineKind {
     Axis,
     /// Осевая двусторонней улицы от четырёх полос — двойная сплошная.
     Double,
+    /// Стоп-линия поперёк полос (`roads/node_paint.rs`).
+    Stop,
+    /// Она же прерывистой — «уступи дорогу».
+    Yield,
+    /// Зебра: плашка поперёк проезжей части, полосы рисует шейдер.
+    Zebra,
 }
 
 impl LineKind {
@@ -155,9 +163,28 @@ impl LineKind {
             Self::Lane => 0.0,
             Self::Axis => 1.0,
             Self::Double => 2.0,
+            Self::Stop => 3.0,
+            Self::Yield => 4.0,
+            Self::Zebra => 5.0,
         }
     }
 }
+
+/// «До разрыва» у поперечной краски: разрывов у неё нет, шейдер её не гасит.
+const NO_BREAK: f32 = 1.0e4;
+/// Полуширина полосы под стоп-линию и под зебру, м: краска плюс сглаживание
+/// на дальнем зуме, где она ещё видна.
+const STOP_STRIP: f32 = 0.6;
+const ZEBRA_STRIP: f32 = ZEBRA_LENGTH / 2.0 + 0.6;
+/// Период полос зебры поперёк дороги и доля полосы в нём.
+const ZEBRA_PERIOD: f32 = 1.0;
+const ZEBRA_FILL: f32 = 0.5;
+/// Штрих и пропуск прерывистой стоп-линии, м.
+const YIELD_DASH: f32 = 0.6;
+const YIELD_GAP: f32 = 0.6;
+/// Дальше этого зума зебры нет: до него полосы гаснут в ровную плашку
+/// (`visible()` по периоду), дальше и плашка — мелочь.
+pub const ZEBRA_ZOOM_MAX: f32 = 0.6;
 
 /// Раскладка полос тела way с `lanes` полосами: границы проезжей части на
 /// `± lanes · шаг / 2`, узел сетки — на оси при чётном числе полос и в
@@ -260,10 +287,12 @@ pub fn wedge_ends(
     })
 }
 
-/// Меши слоя краски: линии полос и осевые, по улицам и по мостам отдельно.
+/// Меши слоя краски: линии полос и осевые, по улицам и по мостам отдельно,
+/// и зебры. Стоп-линии — в меше линий полос: и видны они до того же зума.
 pub struct Painter {
     lanes: MeshBuilder,
     axes: MeshBuilder,
+    zebras: MeshBuilder,
     bridge_lanes: MeshBuilder,
     bridge_axes: MeshBuilder,
     pub lines: usize,
@@ -274,6 +303,7 @@ impl Default for Painter {
         Self {
             lanes: MeshBuilder::with_surface_coords(),
             axes: MeshBuilder::with_surface_coords(),
+            zebras: MeshBuilder::with_surface_coords(),
             bridge_lanes: MeshBuilder::with_surface_coords(),
             bridge_axes: MeshBuilder::with_surface_coords(),
             lines: 0,
@@ -284,6 +314,7 @@ impl Default for Painter {
 /// Имена слоёв краски — по ним [`PaintTag`] находит свой меш, а BRP — сущность.
 pub const PAINT_LANES: &str = "road_paint_lanes";
 pub const PAINT_AXES: &str = "road_paint_axes";
+pub const PAINT_ZEBRAS: &str = "road_paint_zebras";
 pub const BRIDGE_PAINT_LANES: &str = "bridge_paint_lanes";
 pub const BRIDGE_PAINT_AXES: &str = "bridge_paint_axes";
 
@@ -291,6 +322,7 @@ pub const BRIDGE_PAINT_AXES: &str = "bridge_paint_axes";
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PaintTag {
     Lanes,
+    Zebras,
     Axes,
 }
 
@@ -299,6 +331,7 @@ impl PaintTag {
     pub fn of(name: &str) -> Option<Self> {
         match name {
             PAINT_LANES | BRIDGE_PAINT_LANES => Some(Self::Lanes),
+            PAINT_ZEBRAS => Some(Self::Zebras),
             PAINT_AXES | BRIDGE_PAINT_AXES => Some(Self::Axes),
             _ => None,
         }
@@ -307,14 +340,15 @@ impl PaintTag {
 
 impl Painter {
     /// Линии проезжей части `road`, нарисованной по `points` (ось улицы со
-    /// стежками), с разрывами перекрёстков `breaks`, клиньями `wedges` и
-    /// началом длины улицы `station`.
+    /// стежками), с разрывами краски `breaks` (`roads/node_paint.rs`),
+    /// клиньями `wedges`, карманами у торцов `pockets` и началом длины улицы
+    /// `station`.
     pub fn paint(
         &mut self,
         road: &RoadLine,
         points: &[Vec2],
         breaks: &[Break],
-        wedges: [Option<WedgeEnd>; 2],
+        (wedges, pockets): ([Option<WedgeEnd>; 2], [Option<Pocket>; 2]),
         station: (f32, bool),
     ) {
         if !is_carriageway(road) {
@@ -325,7 +359,11 @@ impl Painter {
             return;
         }
         let closed = is_ring(points);
-        let (mut path, mut along, to_break) = break_profile(points, closed, breaks, 0.5);
+        // путь режется по всем разрывам сразу, с карманами: вершины на
+        // изломах «до разрыва» нужны и линиям кармана, и прочим
+        let mut all = breaks.to_vec();
+        all.extend(pockets.iter().flatten().map(|pocket| pocket.gap));
+        let (mut path, mut along, to_break) = break_profile(points, closed, &all, 0.5);
         if path.len() < 2 {
             return;
         }
@@ -360,6 +398,26 @@ impl Painter {
             .map(|&at| if reversed { start - at } else { start + at })
             .collect();
         let miters = miter_offsets(&path, closed, 1.0);
+        // «до разрыва» по набору разрывов линии: разрыв кармана у торца —
+        // только у линий, которым за узлом нет места (вне раскладки узкого
+        // продолжения). Ключ — маска торцов, где линия в кармане
+        let in_pocket = |offset: f32| -> usize {
+            (0..2)
+                .filter(|&end| {
+                    pockets[end].is_some_and(|pocket| {
+                        let narrow = lane_frame(pocket.lanes);
+                        offset < narrow.low + 0.05 || offset > narrow.high - 0.05
+                    })
+                })
+                .map(|end| 1 << end)
+                .sum()
+        };
+        let every = (0..2)
+            .filter(|&end| pockets[end].is_some())
+            .map(|end| 1 << end)
+            .sum::<usize>();
+        let mut profiles: [Option<Vec<f32>>; 4] = Default::default();
+        profiles[every] = Some(to_break);
 
         let lowest = frames
             .iter()
@@ -391,6 +449,16 @@ impl Painter {
                 .zip(&offsets)
                 .map(|((&point, &miter), &offset)| point + miter * offset)
                 .collect();
+            let mask = in_pocket(body.origin + step);
+            let to_break = profiles[mask].get_or_insert_with(|| {
+                let mut chosen = breaks.to_vec();
+                chosen.extend(
+                    (0..2)
+                        .filter(|&end| mask & (1 << end) != 0)
+                        .filter_map(|end| pockets[end].map(|pocket| pocket.gap)),
+                );
+                break_distances(&path, closed, &chosen)
+            });
             let stations: Vec<PaintStation> = (0..path.len())
                 .map(|index| PaintStation {
                     along: street_along[index],
@@ -464,9 +532,43 @@ impl Painter {
         self.lines += 1;
     }
 
-    /// Четыре слоя краски: улицы над асфальтом улиц, мосты над настилом.
-    pub fn layers(self) -> [LayerMesh; 4] {
+    /// Зебра: плашка поперёк проезжей части, полосы по координате поперёк
+    /// дороги рисует шейдер — вдаль они гаснут в ровный светлый тон.
+    pub fn paint_zebra(&mut self, zebra: &Zebra) {
+        let width = zebra.from.distance(zebra.to);
+        self.zebras.push_paint_strip(
+            &[zebra.from, zebra.to],
+            false,
+            ZEBRA_STRIP,
+            &transverse_stations(width),
+            LineKind::Zebra.code(),
+            PAINT_COLOR.to_linear(),
+        );
+        self.lines += 1;
+    }
+
+    /// Стоп-линия поперёк полос, у «уступи дорогу» — прерывистая.
+    pub fn paint_stop_line(&mut self, line: &StopLine) {
+        let kind = if line.yields {
+            LineKind::Yield
+        } else {
+            LineKind::Stop
+        };
+        self.lanes.push_paint_strip(
+            &[line.from, line.to],
+            false,
+            STOP_STRIP,
+            &transverse_stations(line.from.distance(line.to)),
+            kind.code(),
+            PAINT_COLOR.to_linear(),
+        );
+        self.lines += 1;
+    }
+
+    /// Пять слоёв краски: улицы над асфальтом улиц, мосты над настилом.
+    pub fn layers(self) -> [LayerMesh; 5] {
         [
+            (self.zebras, Z_ROAD_PAINT, PAINT_ZEBRAS),
             (self.lanes, Z_ROAD_PAINT, PAINT_LANES),
             (self.axes, Z_ROAD_PAINT, PAINT_AXES),
             (self.bridge_lanes, Z_BRIDGE_PAINT, BRIDGE_PAINT_LANES),
@@ -474,6 +576,16 @@ impl Painter {
         ]
         .map(|(builder, z, name)| LayerMesh::new(builder, z, name, MaterialSpec::Paint))
     }
+}
+
+/// Станции поперечной краски длиной `width`: длина идёт поперёк дороги, от
+/// одной кромки к другой, разрывов нет.
+fn transverse_stations(width: f32) -> [PaintStation; 2] {
+    [0.0, width].map(|along| PaintStation {
+        along,
+        to_break: NO_BREAK,
+        alpha: 1.0,
+    })
 }
 
 /// Вершина на длине дуги `at` — вместе с интерполированным «до разрыва».
@@ -493,13 +605,13 @@ fn insert_at(path: &mut Vec<Vec2>, along: &mut Vec<f32>, to_break: &mut Vec<f32>
     along.insert(index + 1, at);
 }
 
-/// Ступени слоя краски: до [`LANE_ZOOM_MAX`] — всё, до [`AXIS_ZOOM_MAX`] —
-/// осевые, дальше — ничего.
+/// Ступени слоя краски: до [`LANE_ZOOM_MAX`] — всё, до [`ZEBRA_ZOOM_MAX`] —
+/// осевые и зебры, до [`AXIS_ZOOM_MAX`] — осевые, дальше — ничего.
 pub enum PaintLods {}
 
 impl ZoomLods for PaintLods {
     fn max_zooms() -> impl Iterator<Item = f32> {
-        [LANE_ZOOM_MAX, AXIS_ZOOM_MAX, f32::INFINITY].into_iter()
+        [LANE_ZOOM_MAX, ZEBRA_ZOOM_MAX, AXIS_ZOOM_MAX, f32::INFINITY].into_iter()
     }
 }
 
@@ -512,7 +624,8 @@ pub fn show_paint(bucket: Res<PaintZoomBucket>, mut layers: Query<(&PaintTag, &m
     for (tag, mut visibility) in &mut layers {
         let shown = match tag {
             PaintTag::Lanes => bucket.index < 1,
-            PaintTag::Axes => bucket.index < 2,
+            PaintTag::Zebras => bucket.index < 2,
+            PaintTag::Axes => bucket.index < 3,
         };
         visibility.set_if_neq(if shown {
             Visibility::Inherited
@@ -536,6 +649,13 @@ pub struct PaintParams {
     pub lane_zoom: f32,
     pub axis_zoom: f32,
     pub fade_from: f32,
+    pub stop_width: f32,
+    pub yield_dash: f32,
+    pub yield_gap: f32,
+    pub zebra_half: f32,
+    pub zebra_period: f32,
+    pub zebra_fill: f32,
+    pub zebra_zoom: f32,
 }
 
 impl PaintParams {
@@ -550,6 +670,13 @@ impl PaintParams {
             lane_zoom: LANE_ZOOM_MAX,
             axis_zoom: AXIS_ZOOM_MAX,
             fade_from: FADE_FROM,
+            stop_width: STOP_WIDTH,
+            yield_dash: YIELD_DASH,
+            yield_gap: YIELD_GAP,
+            zebra_half: ZEBRA_LENGTH / 2.0,
+            zebra_period: ZEBRA_PERIOD,
+            zebra_fill: ZEBRA_FILL,
+            zebra_zoom: ZEBRA_ZOOM_MAX,
         }
     }
 }

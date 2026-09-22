@@ -246,8 +246,10 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   version cost Tokyo 331 arches and 17 bridges, London 177 arches. Verified live on
   Tula: `navmesh: pruned 9898` before and after — the navmesh did not move.
 - **RoadNode** / **RoadArea** (v15) — what the data says about a junction beyond its
-  lines, **read and kept, drawn by nothing yet**: the junction and paint stages of the
-  roads plan consume them. `MapData::road_nodes` — a point on a way's axis with
+  lines. The **junction paint** (`roads/node_paint.rs`, `references/roads.md`) reads the
+  crossings (zebras), signals and the stop / give-way signs (who breaks, stop lines);
+  mini-roundabouts, turning circles, islands and the `RoadArea` outlines are still drawn
+  by nothing — later stages of the roads plan consume them. `MapData::road_nodes` — a point on a way's axis with
   `RoadNodeKind`: `Crossing { signals, island, marked }` (`crossing=traffic_signals` /
   `crossing:signals=yes`; `crossing:island=yes` / `crossing=island`; `marked` is cleared
   only by an explicit `crossing=unmarked` or `crossing:markings=no` — Tula has 111 of 801
@@ -752,8 +754,8 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     `fences/tests.rs::the_far_bucket_draws_nothing`, each asserting the log line itself.
   - **Converted — ten modules, eleven layer doors.** `fences`, `rail`, `tram`, `wagons`,
     `industry`, `cars`,
-    `roads` (16 layers, `mesh_roads` — ten of its own with the median lawn
-    `road_medians`, the four paint layers of `roads/paint.rs` and the two over a big lot,
+    `roads` (17 layers, `mesh_roads` — ten of its own with the median lawn
+    `road_medians`, the five paint layers of `roads/paint.rs` and the two over a big lot,
     `roads/lots.rs`), all of `spawn.rs` (the 13 surface and paint layers
     as `mesh_surfaces(map, parking_layout) -> (Vec<LayerMesh>, SurfaceReport)` — the
     parking layout arrives ready, because the car rows are drawn off the same one — plus

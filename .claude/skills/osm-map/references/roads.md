@@ -194,14 +194,22 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     to-break, kind]`, the birth alpha rides the vertex colour. `to-break` comes from
     `meshing::break_profile` — the same `GapProfile` the asphalt ribbon uses, so the
     lines stop at the same junction gaps.
-  - **Layers**: `road_paint_lanes` + `road_paint_axes` at `Z_ROAD_PAINT` (above every
+  - **Transverse paint** (**Junction paint** below): a stop line is a strip across the
+    lanes in the lane-line mesh (kind 3, dashed 0.6 / 0.6 m for give-way — kind 4); a
+    zebra is **one quad** in its own mesh (kind 5) whose bars (1 m period, half filled)
+    the shader draws by the coordinate across the road and fades by `visible()` into a
+    plain light plank — so a far zebra is a mean tone, not a flicker. For all three the
+    ribbon's arclength runs across the road and «across» runs along it; to-break is a
+    constant `NO_BREAK`.
+  - **Layers**: `road_paint_zebras` + `road_paint_lanes` + `road_paint_axes` at `Z_ROAD_PAINT` (above every
     street fill, **under** a parking lot — a lot laid over the carriageway hides its lines
     as it did when the asphalt shader drew them), `bridge_paint_lanes` +
     `bridge_paint_axes` at `Z_BRIDGE_PAINT` (a street's paint under an overpass must not
     lie over the deck). Material `PaintMaterial` (blend), its handle in
     `SurfaceMaterials` next to the surface ones, `MaterialSpec::Paint`.
-  - **LOD**: the shader fades lane lines from 0.32 to `LANE_ZOOM_MAX` 0.4 m/px and axes
-    to `AXIS_ZOOM_MAX` 0.9; `PaintLods` (the same thresholds) hides the two meshes by
+  - **LOD**: the shader fades lane lines and stop lines from 0.32 to `LANE_ZOOM_MAX`
+    0.4 m/px, zebras to `ZEBRA_ZOOM_MAX` 0.6 (their bars are gone into the plank by
+    ~0.25) and axes to `AXIS_ZOOM_MAX` 0.9; `PaintLods` (the same thresholds, four steps) hides the three meshes by
     `Visibility` (`paint::show_paint`, `PaintTag` on the entity, set by
     `spawn_road_meshes` by the layer's name) — **no rebuild** at a threshold. The gallery
     does not run the ladder and relies on the shader fade.
@@ -297,6 +305,8 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   either line, which the node rule cannot do wrong. A service drive or a footway joining a
   street is not a participant and leaves the street's line whole. Count and time are in
   the `road meshing:` log line (`junctions N`).
+  These are the **asphalt breaks** — the ruts fade and the medians open on them. The paint
+  layer breaks on its own set (**Junction paint** below), where a main road keeps its lines.
   **Junction geometry is not computed as a union**: roads are independent polylines
   drawn overlapping in one opaque layer. Until stage 5 the `Round` caps were what made a
   junction *look* joined — the caps of the ways meeting at a node overlapped into a
@@ -307,6 +317,61 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   the main road's fill and its gapped line lie over the side street's end. This is why the
   road layer must stay opaque with a world-position colour: transparency or a per-way tint
   would expose every crossing.
+- **Junction paint** (`map/roads/node_paint.rs`, `NodePaint::new`, called by `mesh_roads`
+  when markings are on, on the stitched axes) — what the paint layer does at a junction.
+  It starts from the asphalt breaks and rewrites them per road:
+  - **Clusters**: junction nodes (`junctions::shared_nodes`, `SharedNode::is_junction` —
+    the same rule as the asphalt breaks) whose **zones** overlap are one junction. A zone
+    is the half width of the node's widest road plus `CLUSTER_ZONE` 6 m (the street kerb
+    radius); union-find over `Grid::pairs`. One set of arms, one break per road: two nodes
+    of a cluster on one road get a bridging break between them, so no orphan dash is left
+    between. The case it was written for is Tsiolkovsky street (Tula, 4703, 332), gallery
+    sample 19: Shchorsa street and Tsiolkovsky lane join from opposite sides 17 m apart.
+  - **Who breaks**: an **arm** is where a road leaves the cluster (a piece between two
+    nodes of one cluster is inside it); a street **passes** a cluster when it has two arms
+    there (a ring always passes). A road breaks its paint when the cluster is signalized
+    (`TrafficSignals` inside a node's zone or a signalized crossing within 30 m), when its
+    street does not pass, or when another road outranks it — a higher rank, or an equal
+    rank that also passes (a crossing). Rank is the `highway` class (trunk 5, primary 4,
+    secondary 3, tertiary 2, residential / unclassified / living street / links 1),
+    doubled, and a `stop` / `give_way` node on the road within 30 m of the cluster takes
+    half a step off. The other half of a divided street (`Pairs::runs` partner) is no
+    rival. So a side street **joining** a through street — even of the same class — does
+    not break its lines: the dashes run through the junction on the same axis, and the
+    report counts it as `main through`.
+  - **Zebras and stop lines on the arms that break**: an OSM crossing on the arm (a
+    `Crossing { marked: true }` node on the road, between the node and
+    `ARM_CROSSING_REACH` 35 m past the junction edge — measured from the edge, since a
+    wide junction's edge is itself tens of metres from the node) becomes the zebra; without
+    one, `CrossingMode::Generated` puts a zebra `ZEBRA_SETBACK` 1 m past the edge (edge =
+    the break reach: half the widest other road + 1 m) — if the cluster joins two streets
+    with sidewalks and the arm is not a `*_link`. A zebra is `ZEBRA_LENGTH` 4 m along the
+    road, across the carriageway less 0.3 m at each kerb. The stop line (0.4 m) stands
+    `STOP_GAP` 1 m behind the zebra (or 1 m past the edge without one), across the lanes
+    **coming to the node** — axis to kerb on the traffic side (`MapData::traffic_side`)
+    for a two-way road, the full width for a one-way one that flows toward the node, none
+    on a one-way arm leaving it. A `give_way` sign without signals makes it dashed. The
+    two halves of a divided street cross on **one line**: `align_pair` moves the second
+    zebra onto the first's line across the street (to the OSM one if there is one, else to
+    the farther one). An arm whose way ends less than `ARM_TAIL` 8 m past the paint is a
+    link inside a complex junction and gets nothing. The paint break covers the edge to
+    the outermost stroke plus `PAINT_CLEAR` 0.5 m.
+  - **Mid-block crossings**: every marked OSM crossing on a carriageway not taken by an
+    arm is a zebra with a gap in the lines around it, and stop lines on both approaches
+    if it is signalized. A crossing inside a break already there is skipped.
+  - **Pocket**: when a street passes without breaking and its arm on the far side has
+    fewer lanes, the lines of the wide arm that lie outside the narrow one's lane frame
+    end at the junction edge (`Pocket`, one extra break for those lines only —
+    `meshing::break_distances` re-measures to-break on the already cut path) — solid for
+    the approach, as a turn pocket reads — instead of running into the junction.
+  - **Short runs**: a run of lines under `MIN_RUN` 6 m between two breaks is closed.
+  - **The median's double solid** breaks on the paint breaks as well (both halves'
+    zebras and stop lines, `medians::crossing_breaks` over them), not only on the asphalt
+    ones.
+  - Not drawn from data: `footway=crossing` ways are not parsed (the crossing node is
+    what Tula maps); islands and `RoadArea` outlines are left to later stages.
+  The report counts `junctions N (C clusters, main through T), zebras Z (O from OSM),
+  stop lines S, pockets P`.
 - **The drawn network** (`map/roads/network.rs`, `map/roads/corners.rs`) — what the ribbons
   are laid *from* is not quite `MapData::roads`, and the difference is four render-only
   corrections, all built on **`RoadNodes`** (every node two roads of any class share, same
@@ -489,9 +554,10 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
       - Load-time only, like the rest of this module.
 - **RoadStyle** (resource, BRP-writable, persisted; section `ui/roads.rs` below Buildings)
   — how road ribbons are drawn; any change reruns `rebuild_roads` (despawn
-  `RoadLayerTag` layers, respawn from the unchanged `MapData`). Five independent knobs —
-  **sidewalks** and **markings** (both on by default) are described above, the three
-  older ones:
+  `RoadLayerTag` layers, respawn from the unchanged `MapData`). Seven independent knobs —
+  **sidewalks** and **markings** (both on by default) are described above, **crossings**
+  (`CrossingMode`: `Off` / `Osm` / `Generated`, the default) and **stop_lines** (on) in
+  **Junction paint**, the three older ones:
   - **join** — `Square` (the historical `push_polyline`: an independent quad per segment
     with *both ends* extended by half a width; no joins at all, which is what produced
     the notches on bends and the wedges at junctions), `Miter`, `Round` (default).
@@ -749,8 +815,9 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
 
 ## The junction gallery — `examples/demos/roads`
 
-`cargo run --example roads` shows a city's typical road junctions in a column — eighteen
-for Tula (the sixteenth, `16_lanes_taper`, is a one-way primary going from four lanes to
+`cargo run --example roads` shows a city's typical road junctions in a column — nineteen
+for Tula (the nineteenth, `19_offset_joins`, is Tsiolkovsky street with two side streets
+joining from opposite sides 17 m apart — one cluster of **Junction paint**; the sixteenth, `16_lanes_taper`, is a one-way primary going from four lanes to
 two at a pure seam — the taper of **Streets, sections, tapers**; the seventeenth,
 `17_ring_gores`, is the mall ring the plan's acceptance names — three hatched gores and
 the boulevard's double solid line must survive every stage; the eighteenth,

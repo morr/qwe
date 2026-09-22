@@ -1,9 +1,9 @@
 //! Панель витрины: переключатель города, ручки стиля дорог и подсказка.
 //!
-//! Виджеты — игровые киты (`qwe::ui`), а ручки стиля — те же пять строк, что в
+//! Виджеты — игровые киты (`qwe::ui`), а ручки стиля — те же семь строк, что в
 //! секции Roads панели игры, привязанные к тому же `RoadStyle`: правка
-//! пересобирает все примеры, так что стык, сглаживание, кант, тротуары и
-//! разметку можно сравнивать на одном и том же узле. Ползунки Paint и Wear —
+//! пересобирает все примеры, так что стык, сглаживание, кант, тротуары,
+//! разметку, зебры и стоп-линии можно сравнивать на одном и том же узле. Ползунки Paint и Wear —
 //! `RoadPaintStyle`, юниформы материалов: протяжка ничего не пересобирает.
 //!
 //! **Шрифт панель ставит себе сама** — `apply_panel_font` живёт в `UiPlugin`,
@@ -14,8 +14,8 @@ use bevy::prelude::*;
 use bevy::ui_widgets::Activate;
 use qwe::city::City;
 use qwe::map::{
-    PAINT_MAX, PAINT_MIN, PAINT_STEP, RoadJoin, RoadPaintStyle, RoadStyle, Smoothing, WEAR_MAX,
-    WEAR_MIN, WEAR_STEP,
+    CrossingMode, PAINT_MAX, PAINT_MIN, PAINT_STEP, RoadJoin, RoadPaintStyle, RoadStyle, Smoothing,
+    WEAR_MAX, WEAR_MIN, WEAR_STEP,
 };
 use qwe::ui::knob::{CycleBinding, SliderBinding, spawn_cycle_row, spawn_knob};
 
@@ -166,6 +166,30 @@ pub(crate) fn spawn_panel(
         CycleBinding {
             cycle: |style: &mut RoadStyle| style.markings = !style.markings,
             text: |style| on_off(style.markings),
+        },
+    );
+    spawn_cycle_row(
+        &mut commands,
+        panel,
+        "Crossings",
+        ROW_LEFT_PX,
+        &*style,
+        CycleBinding {
+            cycle: |style: &mut RoadStyle| {
+                style.crossings = next_in(&CrossingMode::ALL, style.crossings);
+            },
+            text: |style| style.crossings.label().to_string(),
+        },
+    );
+    spawn_cycle_row(
+        &mut commands,
+        panel,
+        "Stop lines",
+        ROW_LEFT_PX,
+        &*style,
+        CycleBinding {
+            cycle: |style: &mut RoadStyle| style.stop_lines = !style.stop_lines,
+            text: |style| on_off(style.stop_lines),
         },
     );
     // краска и колея — те же ползунки, что в игре, и тоже без пересборки

@@ -637,13 +637,14 @@ fn the_city_wall_ribbon_stays_off_fortress_buildings() {
 
 /// Пятнадцать дорожных слоёв снизу вверх, ровно в том порядке, в каком они
 /// уходят в мир: одиннадцать лент и четыре слоя краски над своим асфальтом.
-const LAYERS: [&str; 16] = [
+const LAYERS: [&str; 17] = [
     "alley_casings",
     "alleys",
     "sidewalks",
     "road_medians",
     "road_casings",
     "roads",
+    paint::PAINT_ZEBRAS,
     paint::PAINT_LANES,
     paint::PAINT_AXES,
     "lot_sidewalks",
@@ -673,7 +674,7 @@ fn layer<'a>(layers: &'a [LayerMesh], name: &str) -> &'a LayerMesh {
 }
 
 #[test]
-fn a_street_builds_sixteen_layers_bottom_up() {
+fn a_street_builds_seventeen_layers_bottom_up() {
     let (layers, report) = mesh_roads(&one_street(), RoadStyle::default());
 
     let names: Vec<&str> = layers.iter().map(|layer| layer.name).collect();

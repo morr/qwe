@@ -49,6 +49,7 @@ use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use self::network::RoadNodes;
+pub use self::node_paint::CrossingMode;
 use crate::map::footprint::{JOIN_EPSILON, casing_width};
 use crate::map::meshing::{
     Break, LaneFrame, MeshBuilder, RibbonBreaks, RibbonCap, RibbonJoin, RibbonShape,
@@ -602,6 +603,10 @@ pub struct RoadStyle {
     /// с разрывами на перекрёстках; слой краски (`roads/paint.rs`). Колея
     /// асфальта от неё не зависит — у неё своя ручка (`RoadPaintStyle`).
     pub markings: bool,
+    /// Зебры на плечах узлов и на переходах (`roads/node_paint.rs`).
+    pub crossings: CrossingMode,
+    /// Стоп-линии на плечах, что уступают, и у регулируемых переходов.
+    pub stop_lines: bool,
 }
 
 impl Default for RoadStyle {
@@ -612,6 +617,8 @@ impl Default for RoadStyle {
             casing: false,
             sidewalks: true,
             markings: true,
+            crossings: CrossingMode::default(),
+            stop_lines: true,
         }
     }
 }
@@ -788,6 +795,14 @@ pub struct RoadReport {
     /// общего счёта: краска строится своими мешами и прячется с зумом.
     pub paint_lines: usize,
     pub paint_vertices: usize,
+    /// Краска узлов (`roads/node_paint.rs`): зебры (из них по OSM),
+    /// стоп-линии, карманы, кластеры сближенных узлов и проходы главной
+    /// сквозь узел.
+    pub zebras: [usize; 2],
+    pub stop_lines: usize,
+    pub pockets: usize,
+    pub clusters: usize,
+    pub through: usize,
     pub kerb_returns: usize,
     pub sidewalk_returns: usize,
     /// Наружные углы узлов (`roads/corners.rs`): асфальт и тротуар.
@@ -817,6 +832,11 @@ impl std::fmt::Display for RoadReport {
             junctions,
             paint_lines,
             paint_vertices,
+            zebras: [zebras, osm_zebras],
+            stop_lines,
+            pockets,
+            clusters,
+            through,
             kerb_returns,
             sidewalk_returns,
             outer_corners: [outer, outer_sidewalks],
@@ -835,7 +855,9 @@ impl std::fmt::Display for RoadReport {
             f,
             "road meshing: {vertices} verts in {elapsed:?} ({:?}, smoothing {:?}, casing {}, \
              sidewalks {}, markings {}, paint {paint_lines} lines / {paint_vertices} verts, \
-             junctions {junctions}, kerb returns {kerb_returns} + \
+             junctions {junctions} ({clusters} clusters, main through {through}), zebras \
+             {zebras} ({osm_zebras} from OSM), stop lines {stop_lines}, pockets {pockets}, \
+             kerb returns {kerb_returns} + \
              {sidewalk_returns} on sidewalks, outer corners {outer} + {outer_sidewalks} on \
              sidewalks, stitches {stitches}, driveway crossings \
              {crossings}, gores {gores}, tapers {tapers}, medians {paved} paved + {lawns} \
@@ -989,6 +1011,29 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
             }
         })
         .collect();
+    // краска узлов (`roads/node_paint.rs`): где линии рвутся, а где главная
+    // проходит узел, зебры, стоп-линии, карманы — по той же оси, что и линии
+    let node_paint = if style.markings {
+        node_paint::NodePaint::new(
+            &drawn,
+            &stitched,
+            &junctions.breaks,
+            map,
+            node_paint::NodePaintStyle {
+                crossings: style.crossings,
+                stop_lines: style.stop_lines,
+            },
+            |index| sidewalks_of(index).is_some(),
+            |index| {
+                axes.pairs.runs[index]
+                    .iter()
+                    .map(|run| run.partner)
+                    .collect()
+            },
+        )
+    } else {
+        node_paint::NodePaint::default()
+    };
     // направляющие островки у колец (`roads/gores.rs`) — до лент: к ним
     // дотягиваются двойные сплошные разделительных
     let gore_roads: Vec<gores::GoreRoad> = order
@@ -1018,7 +1063,14 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
             if style.markings {
                 let mut midline = median.midline.clone();
                 gores.reach(&mut midline);
-                painter.paint_median(&midline, &breaks);
+                // и там, где обе половины рвёт краска узла — зебра поперёк
+                // обеих, стоп-линии
+                let mut painted = breaks.clone();
+                painted.extend(medians::crossing_breaks(
+                    &median,
+                    [&node_paint.breaks[first], &node_paint.breaks[second]],
+                ));
+                painter.paint_median(&midline, &painted);
             }
             paved.push(median);
         } else {
@@ -1050,7 +1102,13 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
             } else {
                 paint::wedge_ends(points, &tapers, &drawn, index)
             };
-            painter.paint(road, points, breaks, wedges, stations[index]);
+            painter.paint(
+                road,
+                points,
+                &node_paint.breaks[index],
+                (wedges, node_paint.pockets[index]),
+                stations[index],
+            );
         }
         if road.bridge {
             // бордюр — всегда, независимо от style.casing: он и есть мост
@@ -1194,6 +1252,12 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
             grounds.push(road, points);
         }
     }
+    for zebra in &node_paint.zebras {
+        painter.paint_zebra(zebra);
+    }
+    for line in &node_paint.stop_lines {
+        painter.paint_stop_line(line);
+    }
     // направляющие островки у колец: асфальт — в слой улиц, поверх тротуаров,
     // разметка — выше асфальта стоянок (`roads/gores.rs`)
     gores.push_asphalt(&mut streets, ROAD_COLOR.to_linear());
@@ -1308,6 +1372,14 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
         junctions: junctions.junctions,
         paint_lines,
         paint_vertices,
+        zebras: [
+            node_paint.zebras.len(),
+            node_paint.zebras.iter().filter(|zebra| zebra.osm).count(),
+        ],
+        stop_lines: node_paint.stop_lines.len(),
+        pockets: node_paint.pockets.iter().flatten().flatten().count(),
+        clusters: node_paint.clusters,
+        through: node_paint.through,
         kerb_returns: kerb_returns.roads.len() - kerb_returns.outer[0],
         sidewalk_returns: kerb_returns.sidewalks.len() - kerb_returns.outer[1],
         outer_corners: kerb_returns.outer,
@@ -1803,6 +1875,7 @@ mod medians;
 /// (`network::sections`) собираются там, потому что ширину дороги читают
 /// следующие проходы разбора, — а сеть потом лежит в `MapData::network`.
 pub mod network;
+pub mod node_paint;
 pub mod paint;
 /// Открыт наружу для [`map::cars`](crate::map::cars): ряд машин прерывается
 /// на клине, где бордюр ближе к оси, чем полуширина участка.

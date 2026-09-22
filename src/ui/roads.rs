@@ -1,7 +1,8 @@
 //! Панель стиля дорожных лент: стык на изломе, сглаживание осевой, кант,
-//! тротуары, разметка. Полей ввода в `bevy_ui` нет, поэтому каждая строка —
-//! кнопка, листающая значение по кругу (как у панели деревьев); правка
-//! `RoadStyle` пересобирает дорожные слои (`map::roads::rebuild_roads`).
+//! тротуары, разметка, зебры и стоп-линии узлов. Полей ввода в `bevy_ui` нет,
+//! поэтому каждая строка — кнопка, листающая значение по кругу (как у панели
+//! деревьев); правка `RoadStyle` пересобирает дорожные слои
+//! (`map::roads::rebuild_roads`).
 //!
 //! Под разметкой — два ползунка `RoadPaintStyle`: свежесть краски (Paint) и
 //! колея асфальта (Wear). Оба — юниформы материалов, протяжка не пересобирает
@@ -22,8 +23,8 @@ use bevy::prelude::*;
 
 use crate::map::cars::{CAR_OCCUPANCY_MAX, CAR_OCCUPANCY_MIN, CAR_OCCUPANCY_STEP};
 use crate::map::{
-    CarStyle, PAINT_MAX, PAINT_MIN, PAINT_STEP, RoadJoin, RoadPaintStyle, RoadStyle, Smoothing,
-    TramStyle, WEAR_MAX, WEAR_MIN, WEAR_STEP,
+    CarStyle, CrossingMode, PAINT_MAX, PAINT_MIN, PAINT_STEP, RoadJoin, RoadPaintStyle, RoadStyle,
+    Smoothing, TramStyle, WEAR_MAX, WEAR_MIN, WEAR_STEP,
 };
 use crate::ui::knob::{AddKnobsExt, CycleBinding, SliderBinding, spawn_cycle_row, spawn_knob};
 use crate::ui::rows::{ROW_LEFT_PX, next_in, on_off};
@@ -122,6 +123,29 @@ fn build_roads_section(
         CycleBinding {
             cycle: |style| style.markings = !style.markings,
             text: |style| on_off(style.markings).to_string(),
+        },
+    );
+    // краска узла (`map::roads::node_paint`): зебры и стоп-линии на плечах
+    spawn_cycle_row(
+        &mut commands,
+        panel,
+        "Crossings",
+        ROW_LEFT_PX,
+        &*style,
+        CycleBinding {
+            cycle: |style| style.crossings = next_in(&CrossingMode::ALL, style.crossings),
+            text: |style| style.crossings.label().to_string(),
+        },
+    );
+    spawn_cycle_row(
+        &mut commands,
+        panel,
+        "Stop lines",
+        ROW_LEFT_PX,
+        &*style,
+        CycleBinding {
+            cycle: |style| style.stop_lines = !style.stop_lines,
+            text: |style| on_off(style.stop_lines).to_string(),
         },
     );
     // краска и колея — юниформы, протяжка ничего не пересобирает

@@ -1,7 +1,7 @@
 use super::*;
 use crate::map::osm::MapData;
 use crate::map::osm::fixture::street;
-use crate::map::roads::{RoadStyle, mesh_roads};
+use crate::map::roads::{CrossingMode, RoadStyle, mesh_roads};
 
 /// Меш слоя краски по имени.
 fn paint_layer<'a>(layers: &'a [LayerMesh], name: &str) -> &'a MeshBuilder {
@@ -294,6 +294,7 @@ fn the_dash_phase_runs_along_the_street() {
 fn paint_tags_name_their_layers() {
     assert_eq!(PaintTag::of(PAINT_LANES), Some(PaintTag::Lanes));
     assert_eq!(PaintTag::of(BRIDGE_PAINT_AXES), Some(PaintTag::Axes));
+    assert_eq!(PaintTag::of(PAINT_ZEBRAS), Some(PaintTag::Zebras));
     assert_eq!(PaintTag::of("roads"), None);
 }
 
@@ -301,5 +302,87 @@ fn paint_tags_name_their_layers() {
 fn the_paint_ladder_hides_lane_lines_first() {
     assert_eq!(PaintZoomBucket::for_zoom(0.2).index, 0);
     assert_eq!(PaintZoomBucket::for_zoom(0.5).index, 1);
-    assert_eq!(PaintZoomBucket::for_zoom(2.0).index, 2);
+    assert_eq!(PaintZoomBucket::for_zoom(0.7).index, 2);
+    assert_eq!(PaintZoomBucket::for_zoom(2.0).index, 3);
+}
+
+#[test]
+fn a_crossing_paints_a_zebra_and_stop_lines_across_the_arms() {
+    // жилая крестовина: четыре плеча, на каждом зебра и стоп-линия
+    let map = map_of(vec![
+        with_lanes(
+            street(
+                vec![Vec2::ZERO, Vec2::new(100.0, 0.0), Vec2::new(200.0, 0.0)],
+                7.6,
+            ),
+            2,
+            false,
+        ),
+        with_lanes(
+            street(
+                vec![
+                    Vec2::new(100.0, -100.0),
+                    Vec2::new(100.0, 0.0),
+                    Vec2::new(100.0, 100.0),
+                ],
+                7.6,
+            ),
+            2,
+            false,
+        ),
+    ]);
+    let (layers, report) = mesh_roads(&map, RoadStyle::default());
+    assert_eq!(report.zebras, [4, 0]);
+    assert_eq!(report.stop_lines, 4);
+    let zebras = paint_layer(&layers, PAINT_ZEBRAS);
+    assert_eq!(zebras.vertex_count(), 4 * 4);
+    let kinds = zebras.ribbon_coords_for_test().unwrap();
+    assert!(kinds.iter().all(|coords| coords[3] == 5.0));
+    // стоп-линии — в меше линий полос: их видно до того же зума
+    let stops = paint_layer(&layers, PAINT_LANES)
+        .ribbon_coords_for_test()
+        .unwrap();
+    assert_eq!(
+        stops.iter().filter(|coords| coords[3] == 3.0).count(),
+        4 * 4
+    );
+
+    let (layers, report) = mesh_roads(
+        &map,
+        RoadStyle {
+            crossings: CrossingMode::Off,
+            stop_lines: false,
+            ..RoadStyle::default()
+        },
+    );
+    assert_eq!(report.zebras, [0, 0]);
+    assert_eq!(report.stop_lines, 0);
+    assert!(paint_layer(&layers, PAINT_ZEBRAS).is_empty());
+}
+
+#[test]
+fn a_pocket_line_ends_at_the_junction_and_the_rest_run_through() {
+    // четыре полосы переходят в две на примыкании жилой: крайние линии широкой
+    // — в карман, осевая идёт сквозь узел
+    let node = Vec2::new(100.0, 0.0);
+    let mut wide = with_lanes(street(vec![Vec2::ZERO, node], 14.2), 4, false);
+    wide.highway = crate::map::osm::Highway::Tertiary;
+    let mut narrow = with_lanes(street(vec![node, Vec2::new(200.0, 0.0)], 7.6), 2, false);
+    narrow.highway = crate::map::osm::Highway::Tertiary;
+    let side = with_lanes(street(vec![Vec2::new(100.0, -80.0), node], 7.6), 2, false);
+    let (layers, report) = mesh_roads(&map_of(vec![wide, narrow, side]), RoadStyle::default());
+    assert_eq!(report.pockets, 1);
+    // у самого узла: линия полос в кармане уже погашена, осевая — нет
+    let near = |name: &str| -> Vec<f32> {
+        paint_layer(&layers, name)
+            .ribbon_coords_for_test()
+            .unwrap()
+            .iter()
+            .zip(paint_layer(&layers, name).positions_for_test())
+            .filter(|(_, position)| (position[0] - 99.0).abs() < 1.5 && position[1].abs() < 8.0)
+            .map(|(coords, _)| coords[2])
+            .collect()
+    };
+    assert!(near(PAINT_LANES).iter().all(|&to_break| to_break < 0.0));
+    assert!(near(PAINT_AXES).iter().any(|&to_break| to_break > 5.0));
 }

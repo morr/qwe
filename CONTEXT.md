@@ -195,8 +195,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     `MapData::road_nodes` (crossings with `signals` / `island` / `marked`, traffic
     signals, stop, give-way, mini-roundabouts, turning circles, island points) and
     `MapData::road_areas` (closed carriageway / walkway / island outlines from
-    `area:highway`, `highway` + `area=yes`, `traffic_calming=island`). Parsed and kept;
-    nothing draws them yet — the junction and paint stages will.
+    `area:highway`, `highway` + `area=yes`, `traffic_calming=island`). The junction
+    paint reads the crossings, signals and stop / give-way signs; the rest is parsed and
+    kept for later stages.
   - **RoadLine** — centerline + width **from its section** (footways keep 3.5 by class);
     `RoadClass: Street | Alley`; `highway: Highway` (the `highway` value; `*_link` is a
     class of its own; `Highway::is_street` — not a service drive, not a path — is what
@@ -239,9 +240,23 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     than the line per line, the shader draws the line (1.3 px floor), its dashes **by the
     street's arclength** (the phase does not restart at a seam), solid for the last 25 m
     before a junction break, and the axis of a two-way street of 4+ lanes as a double
-    solid. Two meshes per level (lane lines, axes), streets at `Z_ROAD_PAINT` and bridges
-    at `Z_BRIDGE_PAINT`; `PaintLods` hides the lane lines past 0.4 m/px and the axes past
-    0.9 without a rebuild. `RoadPaintStyle` (panel knobs Paint and Wear) is uniforms only.
+    solid. Two meshes per level (lane lines, axes) plus the zebras, streets at
+    `Z_ROAD_PAINT` and bridges at `Z_BRIDGE_PAINT`; `PaintLods` hides the lane lines and
+    stop lines past 0.4 m/px, the zebras past 0.6 and the axes past 0.9 without a rebuild.
+    `RoadPaintStyle` (panel knobs Paint and Wear) is uniforms only.
+  - **Junction paint** (`map/roads/node_paint.rs`) — where the paint layer breaks at a
+    junction and what it draws there, on its own breaks rather than the asphalt ones
+    (those stay for the ruts and the medians). **Junction cluster**: junction nodes whose
+    zones (widest half width + 6 m) overlap are one junction — one set of arms, one break
+    per road. **Main through**: a road keeps its lines through a cluster unless it ends
+    there, is crossed by a road of its rank that also passes, meets a higher rank, or the
+    cluster has signals; rank is the `highway` class, a stop / give-way sign on the arm
+    lowers it. On every arm that breaks: a **zebra** (the OSM crossing on the arm, or one
+    generated past the junction edge where two streets with sidewalks meet — `RoadStyle::
+    crossings`) and a **stop line** across the lanes coming in (dashed for give-way —
+    `RoadStyle::stop_lines`); the halves of a divided street share one zebra line. A
+    marked crossing elsewhere is a zebra with a gap in the lines. A **pocket**: a wide
+    arm's lines with no room on the narrower arm across the junction end at its edge.
   - **Paired halves** (`map/roads/network/pairs.rs`, `Pairs`) — a divided street as OSM
     draws it: two opposite one-way ways of one class side by side (a street or a
     `service` drive, never a parking aisle), up to `PAIR_MAX_GAP` 15 m between the kerbs.
