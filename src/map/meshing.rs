@@ -765,7 +765,9 @@ impl MeshBuilder {
     /// сечениями улицы (`roads::network::sections`), где до этого ширина
     /// менялась ступенькой.
     ///
-    /// Торцы срезаны ровно по крайним точкам, изломы — общими вершинами по
+    /// Торцы срезаны ровно по крайним точкам и поперёк исходных крайних звеньев
+    /// ([`merge_ribbon_points`], `butt_normal`) — так же, как прямой торец тела
+    /// улицы за швом, и щели между ними нет; изломы — общими вершинами по
     /// биссектрисе ([`miter_offsets`]), как у ленты без веера: клин короток, а
     /// круглый торец выпирал бы из-под более узкой соседней ленты. Координаты
     /// фактуры: раскладка полос — по доле пути между двумя из
@@ -779,7 +781,7 @@ impl MeshBuilder {
         to_break: [f32; 2],
         color: LinearRgba,
     ) {
-        let path = merge_close_points(points, false, widths[0].min(widths[1]) / 4.0);
+        let path = merge_ribbon_points(points, false, widths[0].min(widths[1]) / 4.0);
         if path.len() < 2 {
             return;
         }
@@ -787,7 +789,12 @@ impl MeshBuilder {
         if total <= 0.0 {
             return;
         }
-        let miters = miter_offsets(&path, false, 1.0);
+        let mut miters = miter_offsets(&path, false, 1.0);
+        for (end, index) in [(false, 0), (true, path.len() - 1)] {
+            if let Some(normal) = butt_normal(points, end) {
+                miters[index] = normal;
+            }
+        }
         let rgba = color.to_f32_array();
         let base = self.positions.len() as u32;
         for ((&point, &at), miter) in path.iter().zip(&along).zip(&miters) {
@@ -1125,12 +1132,19 @@ impl MeshBuilder {
             caps,
             breaks,
         } = shape;
-        let mut path = merge_close_points(points, closed, width / 4.0);
+        let mut path = merge_ribbon_points(points, closed, width / 4.0);
         if path.len() < 2 {
             return;
         }
 
         let half_width = width / 2.0;
+        // прямой торец — поперёк исходного крайнего звена (`butt_normal`)
+        let butts = [false, true].map(|end| {
+            (!closed && caps[usize::from(end)] == RibbonCap::Butt)
+                .then(|| butt_normal(points, end))
+                .flatten()
+                .map(|normal| normal * half_width)
+        });
         let (mut along, total) = arclengths(&path, closed);
         // «до разрыва» — по ней шейдер гасит разметку у перекрёстка и
         // фазирует штрихи; у замкнутой ленты разрывов нет, остаётся длина дуги
@@ -1145,7 +1159,12 @@ impl MeshBuilder {
 
         match join {
             RibbonJoin::Miter => {
-                let offsets = miter_offsets(&path, closed, half_width);
+                let mut offsets = miter_offsets(&path, closed, half_width);
+                for (butt, index) in butts.into_iter().zip([0, count - 1]) {
+                    if let Some(butt) = butt {
+                        offsets[index] = butt;
+                    }
+                }
 
                 for index in 0..segments {
                     let next = (index + 1) % count;
@@ -1199,8 +1218,16 @@ impl MeshBuilder {
                         continue;
                     };
                     let normal = direction.perp() * half_width;
-                    let at_start = if shared[index] { miters[index] } else { normal };
-                    let at_end = if shared[next] { miters[next] } else { normal };
+                    let at_start = match (index, butts[0]) {
+                        (0, Some(butt)) => butt,
+                        _ if shared[index] => miters[index],
+                        _ => normal,
+                    };
+                    let at_end = match butts[1] {
+                        Some(butt) if next == count - 1 => butt,
+                        _ if shared[next] => miters[next],
+                        _ => normal,
+                    };
                     self.push_quad_full(
                         [
                             path[index] + at_start,
@@ -1769,7 +1796,7 @@ pub fn to_break_beyond(
     end: bool,
     beyond: f32,
 ) -> f32 {
-    let path = merge_close_points(points, false, width / 4.0);
+    let path = merge_ribbon_points(points, false, width / 4.0);
     if path.len() < 2 {
         return FAR_FROM_BREAKS;
     }
@@ -1790,7 +1817,7 @@ pub fn break_profile(
     breaks: &[Break],
     merge_distance: f32,
 ) -> (Vec<Vec2>, Vec<f32>, Vec<f32>) {
-    let mut path = merge_close_points(points, closed, merge_distance);
+    let mut path = merge_ribbon_points(points, closed, merge_distance);
     if path.len() < 2 {
         return (Vec::new(), Vec::new(), Vec::new());
     }
@@ -2140,6 +2167,41 @@ pub fn merge_close_points(points: &[Vec2], closed: bool, merge_distance: f32) ->
         }
     }
     path
+}
+
+/// [`merge_close_points`] для ленты: у разомкнутой ломаной конец остаётся на
+/// месте, а сливается с ним предпоследняя точка. Иначе лента, срезанная в
+/// сантиметрах за вершиной, кончалась бы на вершине и не доходила до шва с
+/// соседним куском (клин смены сечения и тело улицы, `roads/tapers.rs`) — щель
+/// поперёк проезжей части.
+pub fn merge_ribbon_points(points: &[Vec2], closed: bool, merge_distance: f32) -> Vec<Vec2> {
+    let mut path = merge_close_points(points, closed, merge_distance);
+    // путь, схлопнутый в точку, так и остаётся точкой
+    if !closed
+        && path.len() > 1
+        && let Some(&end) = points.last()
+        && path.last() != Some(&end)
+    {
+        path.pop();
+        path.push(end);
+    }
+    path
+}
+
+/// Нормаль прямого торца: поперёк **исходного** крайнего звена `points`, а не
+/// звена после слияния точек. Два куска, разрезанных на одном звене, так
+/// встают торцами друг к другу без клиновидной щели, даже если у каждого
+/// слияние выпрямило конец по-своему. Звено короче сантиметра не в счёт.
+fn butt_normal(points: &[Vec2], end: bool) -> Option<Vec2> {
+    let away = |tip: Vec2, point: &&Vec2| point.distance(tip) > 0.01;
+    let direction = if end {
+        let tip = *points.last()?;
+        tip - *points.iter().rev().find(|point| away(tip, point))?
+    } else {
+        let tip = *points.first()?;
+        *points.iter().find(|point| away(tip, point))? - tip
+    };
+    direction.try_normalize().map(Vec2::perp)
 }
 
 /// Сколько хорд нужно дуге радиуса `radius` на `sweep` радиан, чтобы стрелка

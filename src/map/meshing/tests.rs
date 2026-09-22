@@ -1096,6 +1096,50 @@ fn a_template_keeps_its_ribbon_coords_scaled() {
     );
 }
 
+/// Клин и тело улицы, разрезанные в сантиметрах за вершиной, сходятся торцами
+/// вершина в вершину. Точки — с Лейпцигер-штрассе в Берлине: хвост клина в
+/// 0.34 м от вершины и первое звено тела короче четверти ширины сливались
+/// каждый по-своему, клин кончался на вершине, а тело начиналось под другим
+/// углом — щель от нуля у одной кромки до полуметра у другой, светлым клином
+/// тротуара поперёк четырёх полос.
+#[test]
+fn a_taper_meets_the_body_cut_just_past_a_vertex() {
+    let after = Vec2::new(-3.365, -1.664);
+    // разрез — на звене за вершиной, как его кладёт `tapers::split`
+    let cut = after.normalize() * 0.34;
+    let head = [Vec2::new(23.0, 10.5), Vec2::new(6.7, 3.5), Vec2::ZERO, cut];
+    let body = [
+        cut,
+        after,
+        Vec2::new(-6.051, -2.829),
+        Vec2::new(-11.7, -4.7),
+    ];
+    let width = 14.2;
+    let mut taper = MeshBuilder::default();
+    taper.push_taper(&head, [10.9, width], [50.0, 50.0], LinearRgba::WHITE);
+    let mut street = MeshBuilder::default();
+    street.push_ribbon_shaped(
+        &body,
+        width,
+        LinearRgba::WHITE,
+        open_ribbon(
+            RibbonJoin::Round,
+            [RibbonCap::Butt, RibbonCap::Round],
+            RibbonBreaks::Ends,
+        ),
+    );
+    let taper_end = &taper.positions_for_test()[taper.vertex_count() - 2..];
+    let street_start = &street.positions_for_test()[..2];
+    for corner in taper_end {
+        assert!(
+            street_start
+                .iter()
+                .any(|start| Vec2::from_slice(start).distance(Vec2::from_slice(corner)) < 1e-3),
+            "угол клина {corner:?} не лёг на торец тела {street_start:?}"
+        );
+    }
+}
+
 /// Клин расходится от ширины узкого соседа до своей, линейно по длине, и
 /// несёт «до разрыва», продолжающее срезанную ленту.
 #[test]

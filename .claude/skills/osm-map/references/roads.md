@@ -197,6 +197,19 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     strip whose width runs linearly from the narrow way's to its own, joined by bisector
     vertices, with ribbon coords scaled to the local half width, so the lane lines fan out
     with the edges (proper lane geometry through a change of count is the paint stage's).
+    **The two butt ends at the cut must meet exactly**, and two things used to break it,
+    both in the merge of close points (`merge_close_points`, a quarter of the width): it
+    kept the *first* of two close points, so a taper cut 0.34 m past a vertex ended on the
+    vertex, short of the seam; and each piece merged its own short end link, so the taper
+    ended square to one direction and the body started square to another. On a bend that
+    left a wedge of pavement across the carriageway — Leipziger Straße in Berlin, 0 at one
+    kerb to 0.6 m at the other (gallery sample `06_taper_on_a_bend`). Now a ribbon and a
+    taper merge through `merge_ribbon_points` (an open path keeps its end point; the one
+    before it goes instead), and a butt end is square to the **original** end link
+    (`meshing::butt_normal`), which the cut puts on the same segment for both pieces;
+    `break_profile` and `to_break_beyond` merge the same way, so the paint follows the
+    ribbon's path. The polymesh still calls `merge_close_points` — its footprint must not
+    move (`meshing/tests.rs::a_taper_meets_the_body_cut_just_past_a_vertex`).
     The same taper is laid in the **sidewalk** band (from the narrow way's band). No taper
     on bridges or passages.
     Drawing only: navmesh, cars and parse see each way's width as is.
