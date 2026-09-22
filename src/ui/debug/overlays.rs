@@ -7,17 +7,49 @@ use bevy::image::{Image, ImageSampler};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
-use super::{DebugConiferNoise, DebugNavmesh};
+use super::{DebugConiferNoise, DebugNavmesh, DebugRoadNetwork};
 use crate::camera::Viewport;
 use crate::grid::{grid_size, navtile_size};
 use crate::loading::AppState;
-use crate::map::ConiferField;
 use crate::map::osm::MapData;
+use crate::map::surface::{LayerMaterials, spawn_layers};
+use crate::map::{ConiferField, mesh_network_overlay};
 use crate::navigation::{ArcNavmesh, PolymeshDebug};
 use crate::settings::{MAP_SIZE, Z_CONIFER_NOISE_OVERLAY};
 
 #[derive(Component)]
 pub(super) struct NavmeshOverlayMarker;
+
+/// Слой оверлея сети улиц (`map::mesh_network_overlay`).
+#[derive(Component, Clone, Copy)]
+pub(super) struct RoadNetworkOverlayMarker;
+
+/// Спавн/despawn оверлея сети улиц: улица каждая своим цветом, толщина по
+/// числу полос, точка на каждом шве ways. Сеть — ресурс загрузки мира
+/// (`MapData::network`), ручки формы её не двигают, так что слой строится
+/// заново только по тумблеру и на входе в мир. `DespawnOnExit` слою ставит
+/// `spawn_layers`.
+pub(super) fn sync_road_network_overlay(
+    mut commands: Commands,
+    show: Res<DebugRoadNetwork>,
+    map: Res<MapData>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    materials: LayerMaterials,
+    overlay: Query<Entity, With<RoadNetworkOverlayMarker>>,
+) {
+    for entity in &overlay {
+        commands.entity(entity).despawn();
+    }
+    if show.0 {
+        spawn_layers(
+            &mut commands,
+            &mut meshes,
+            &materials,
+            [mesh_network_overlay(&map)],
+            RoadNetworkOverlayMarker,
+        );
+    }
+}
 
 /// Слой поля хвои и то, под что он нарисован: порог и поколение поля.
 /// Пересобирать текстуру, пока оба те же, незачем — правка любого другого поля

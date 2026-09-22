@@ -1,12 +1,12 @@
 //! Overpass API: границы выгрузки, проекция, QL-запрос и DTO ответа
 //! (формат `[out:json]` + `out geom` — геометрия инлайн в way/relation).
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
 use bevy::log::{info, warn};
 use bevy::math::{DVec2, Vec2};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize, Serializer};
 
 use crate::city::City;
 use crate::settings::{MAP_SIZE, METERS_PER_DEG_LAT};
@@ -46,6 +46,13 @@ impl GeoBounds {
         )
     }
 
+    /// Метров в градусе долготы — масштаб проекции по x. Нужен тому, кто
+    /// строит окно в метрах прямо в гео-координатах (`super::crop::GeoRect`),
+    /// не проходя через `f32` метров карты.
+    pub fn meters_per_deg_lon(&self) -> f64 {
+        self.lon_scale
+    }
+
     /// Обратная к [`project`](Self::project): метры карты — в гео-координаты.
     /// Настоящей выгрузке она не нужна (Overpass отдаёт гео, мы их только
     /// проецируем), а фикстурам разбора — да: сцену задают в тех же метрах, в
@@ -67,13 +74,16 @@ impl GeoBounds {
 /// v10 — спортивные и детские площадки `leisure=*`, v11 — промзона: цилиндры
 /// `man_made=storage_tank|silo|chimney|water_tower|gasometer` и надземные
 /// трубопроводы `man_made=pipeline`. v13 — `driving_side` границы страны.
-/// v14 — ограды участков `barrier=fence|wall|retaining_wall|hedge`.
+/// v14 — ограды участков `barrier=fence|wall|retaining_wall|hedge`. v15 —
+/// дорожные узлы `highway=crossing|traffic_signals|stop|give_way|
+/// mini_roundabout|turning_circle|turning_loop`, островки
+/// `traffic_calming=island` (node и way) и покрытия `area:highway`.
 ///
 /// v12 не использована: номер был занят этой же веткой оград, пока она ждала
 /// очереди, а в master первым уехал `driving_side`. Номер обязан **расти**, а
 /// не занимать оставленную дыру: выгрузка v13 уже лежит на дисках без
 /// `barrier`, и ограды на ней молча вышли бы пустыми.
-const QUERY_VERSION: u32 = 14;
+const QUERY_VERSION: u32 = 15;
 
 /// QL-запрос: здания, дороги, ж/д пути, вода площадная и линейная, парки/зелень,
 /// луга, песок, кварталы (`landuse=residential|industrial|garages`), стоянки
@@ -81,8 +91,9 @@ const QUERY_VERSION: u32 = 14;
 /// промышленные цилиндры и надземные трубопроводы
 /// (`man_made=storage_tank|silo|chimney|water_tower|gasometer|pipeline`),
 /// ограды участков (`barrier=*`), аллеи, одиночные деревья, стены Кремля,
-/// входы в здания — и отдельным `out tags` границы с `driving_side`, внутри
-/// которых лежит центр карты.
+/// входы в здания, дорожные узлы (переходы, светофоры, знаки приоритета,
+/// разворотные площадки), островки и покрытия `area:highway` — и отдельным
+/// `out tags` границы с `driving_side`, внутри которых лежит центр карты.
 ///
 /// Границы идут вторым выводом, а не в общий `out geom`: геометрия границы
 /// страны весит мегабайты, а нужен от неё один тег. `is_in` работает по
@@ -133,6 +144,10 @@ pub fn overpass_query(city: City) -> String {
   way["man_made"~"^(storage_tank|silo|chimney|water_tower|gasometer|pipeline)$"]({bbox});
   node["man_made"~"^(storage_tank|silo|chimney|water_tower|gasometer)$"]({bbox});
   node["entrance"]({bbox});
+  node["highway"~"^(crossing|traffic_signals|stop|give_way|mini_roundabout|turning_circle|turning_loop)$"]({bbox});
+  node["traffic_calming"="island"]({bbox});
+  way["traffic_calming"="island"]({bbox});
+  way["area:highway"]({bbox});
 );
 out geom;
 is_in({lat},{lon})->.here;
@@ -198,46 +213,64 @@ pub fn prune_stale_caches() {
     }
 }
 
-#[derive(Deserialize)]
+/// Ответ Overpass. `Serialize` — ради одного читателя: срез выгрузки
+/// ([`super::crop`]) выгружается файлом того же формата, который потом
+/// читается как ответ.
+#[derive(Deserialize, Serialize, Clone, Default)]
 pub struct OverpassResponse {
     pub elements: Vec<Element>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize, Clone)]
 pub struct Element {
     #[serde(rename = "type")]
     pub kind: String,
     #[serde(default)]
     pub id: u64,
-    #[serde(default)]
+    #[serde(
+        default,
+        skip_serializing_if = "HashMap::is_empty",
+        serialize_with = "sorted_tags"
+    )]
     pub tags: HashMap<String, String>,
     /// Координаты ноды: у node они лежат прямо в элементе, а не в `geometry`,
     /// как у way.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lat: Option<f64>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lon: Option<f64>,
     /// Геометрия way (с `out geom`).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub geometry: Option<Vec<LatLon>>,
     /// Члены relation.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub members: Option<Vec<Member>>,
 }
 
-#[derive(Deserialize, Clone, Copy)]
+/// Теги по алфавиту: порядок `HashMap` у std свой на каждый запуск, и файл
+/// среза без сортировки менялся бы от прогона к прогону целиком.
+fn sorted_tags<S: Serializer>(
+    tags: &HashMap<String, String>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    tags.iter()
+        .collect::<BTreeMap<_, _>>()
+        .serialize(serializer)
+}
+
+#[derive(Deserialize, Serialize, Clone, Copy, PartialEq, Debug)]
 pub struct LatLon {
     pub lat: f64,
     pub lon: f64,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize, Clone)]
 pub struct Member {
     #[serde(rename = "type")]
     pub kind: String,
     #[serde(default)]
     pub role: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub geometry: Option<Vec<LatLon>>,
 }
 

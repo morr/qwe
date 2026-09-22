@@ -1,14 +1,15 @@
 //! Витрина пересечений дорог: типовые узлы города — крестовины, Т и Y,
 //! кольца, переход широкой в узкую, въезд во двор — колонкой, один под другим.
 //!
-//! **Пример здесь — данные OSM, а не геометрия.** Каждый узел лежит на диске
-//! вырезкой настоящей выгрузки Overpass (`data/<город>/*.json`, режет
-//! `tools/osm_crop`) и проходит тот же путь, что карта в игре: игровой `parse`
+//! **Пример здесь — данные OSM, а не геометрия.** Каждый узел — срез
+//! настоящей выгрузки Overpass, нарезанный при запуске из кеша города
+//! (`map::osm::crop`), и проходит тот же путь, что карта в игре: игровой `parse`
 //! со всеми его проходами (дома с тротуаров, кварталы к дорогам, стоянки до
 //! проездов) → `MapData` → игровые `mesh_*` → игровые `spawn_*`. Своей геометрии
 //! у витрины нет вовсе, так что на одном перекрёстке виден весь процесс «данные
-//! OSM → рендер», и любую его стадию можно потрогать: поправить файл и нажать
-//! `F5`. Что такое пример и откуда берётся его адрес — в [`samples`].
+//! OSM → рендер», и любую его стадию можно потрогать: выгрузить срез файлом
+//! (`ROADS_DUMP`), положить замороженным, поправить и нажать `F5`. Что такое
+//! пример и откуда берётся его адрес — в [`samples`].
 //!
 //! **Координаты под примером — игровые.** Вырезка проецируется проекцией своего
 //! города, поэтому разобранный узел стоит в тех же метрах карты, что и в игре
@@ -19,7 +20,7 @@
 //! без варианта «со смещением» у каждой. Отсюда же сборка по примеру на кадр —
 //! между спавном и сдвигом должно быть ясно, чей это меш.
 //!
-//! Вырезка шире видимого окна (`--margin`), а собранные слои режутся по окну
+//! Срез шире видимого окна (`samples::CROP_MARGIN`), а собранные слои режутся по окну
 //! (`MeshBuilder::clip_to_rect`): обрезанные концы дорог, тупиковые разрывы
 //! разметки на них и половины теней остаются за кадром, а в окне узел выглядит
 //! так же, как посреди города. Резать обязательно, маской поверх не обойтись:
@@ -33,8 +34,11 @@
 //! Ступени зума взяты ближние: три десятка окон по сотне метров — не город,
 //! экономить тут нечего.
 //!
-//! Пример не трогает конфиг игры: ни `PrefsPlugin`, ни `MapPlugin` — `City` и
-//! `RoadStyle` здесь обычные ресурсы с игровыми дефолтами.
+//! Пример не трогает конфиг игры: ни `PrefsPlugin`, ни `MapPlugin` — `City`,
+//! `RoadStyle` и `RoadShape` здесь обычные ресурсы с игровыми дефолтами.
+//! Ползунки формы доезжают до примеров после паузы (`settle_road_shape`), как
+//! в игре; ширина полосы уходит в глобаль разбора перед нарезкой, так что
+//! пример с другой шириной разобран заново, а не растянут.
 //!
 //! ```text
 //! cargo run --example roads
@@ -45,11 +49,17 @@
 //! | колесо | зум к точке под курсором |
 //! | ЛКМ-перетаскивание, `WASD` | панорама |
 //! | `↑` `↓` | к соседнему примеру |
-//! | `F5` | перечитать вырезки с диска |
+//! | `F5` | перечитать кеш города и нарезать срезы заново |
 //!
+//! `ROADS_DUMP=папка` — выгрузить туда каждый срез файлом (замороженный срез
+//! для `data/<город>/`);
 //! `ROADS_SHOT=путь.png` — поднять окно, снять витрину и выйти;
-//! `ROADS_SAMPLE=N` ставит камеру на пример N (с единицы) крупным планом.
+//! `ROADS_SAMPLE=N` ставит камеру на пример N (с единицы) крупным планом;
+//! `ROADS_CITY=<slug>` (`berlin`, `paris`…) открывает витрину на этом городе —
+//! для автоснимка не Тулы;
+//! `ROADS_NETWORK=1` открывает витрину с оверлеем сети (строка `Network` панели).
 
+mod overlay;
 mod panel;
 mod samples;
 #[path = "../gallery_shot.rs"]
@@ -71,22 +81,25 @@ use qwe::map::buildings::material::{RoofMaterial, init_roof_material};
 use qwe::map::buildings::{
     BuildingPlan, BuildingZoomBucket, mesh_buildings, spawn_building_meshes,
 };
-use qwe::map::osm::parse::parse;
+use qwe::map::osm::parse::parse_response;
 use qwe::map::surface::{
-    LayerMesh, SurfaceMaterial, init_flat_materials, init_surface_materials, spawn_layers,
+    LayerMesh, SurfaceMaterial, init_flat_materials, init_surface_materials,
+    retune_surface_materials, retunes_on, spawn_layers,
 };
 use qwe::map::trees::{
     ConiferField, ConiferNoiseStyle, CrownMaterial, CrownParams, TreeMaterials, TreeRowStyle,
     TreeStyle, mesh_trees, spawn_tree_meshes,
 };
 use qwe::map::{
-    BuildingHeightMode, FenceZoomBucket, GROUND_COLOR, MeshBuilder, ParkingLayout, RailZoomBucket,
-    RoadStyle, RoofStyle, SunOnMap, SurfaceStyle, apply_sun, mesh_fences, mesh_rails, mesh_roads,
-    mesh_surfaces, mesh_tree_row_band, spawn_road_meshes,
+    BuildingHeightMode, FenceZoomBucket, GROUND_COLOR, MeshBuilder, PaintMaterial, ParkingLayout,
+    RailZoomBucket, RoadPaintStyle, RoadShape, RoadShapeOnMap, RoadStyle, RoofStyle, SunOnMap,
+    SurfaceStyle, apply_sun, mesh_fences, mesh_rails, mesh_roads, mesh_surfaces,
+    mesh_tree_row_band, set_lane_width, settle_road_shape, spawn_road_meshes,
 };
 use qwe::ui::knob::AddKnobsExt;
 use qwe::ui::{PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET};
 
+use crate::overlay::NetworkOverlay;
 use crate::panel::{StatusLine, spawn_panel, sync_city_buttons};
 use crate::samples::Sample;
 use crate::shot::{ShotRequest, auto_shot, request_shot};
@@ -162,26 +175,36 @@ fn main() {
                     ..default()
                 })
                 .set(bevy::log::LogPlugin {
-                    level: bevy::log::Level::WARN,
-                    filter: "warn,qwe=warn".to_string(),
+                    // `roads=info` — свои строки витрины: цена чтения кеша и
+                    // `geo` примера, добавленного по `at`
+                    level: bevy::log::Level::INFO,
+                    filter: "warn,qwe=warn,roads=info".to_string(),
                     ..default()
                 }),
         )
         .add_plugins(PanCameraPlugin)
         .add_plugins(Material2dPlugin::<SurfaceMaterial>::default())
+        .add_plugins(Material2dPlugin::<PaintMaterial>::default())
         .add_plugins(Material2dPlugin::<RoofMaterial>::default())
         .add_plugins(Material2dPlugin::<CrownMaterial>::default())
         .add_plugins(qwe::ui::PanelWidgetsPlugin)
         .add_plugins(qwe::ui::QuitOnEscPlugin)
         .add_plugins(qwe::ui::AgentBadgePlugin)
-        .init_resource::<City>()
+        .insert_resource(start_city())
         .init_resource::<RoadStyle>()
+        .init_resource::<RoadShape>()
+        .init_resource::<RoadShapeOnMap>()
+        .init_resource::<RoadPaintStyle>()
         .init_resource::<RoofStyle>()
         .init_resource::<SurfaceStyle>()
         .init_resource::<SunOnMap>()
         .init_resource::<Gallery>()
+        .init_resource::<NetworkOverlay>()
         // подписи строк стиля ведёт кит — по разу на ресурс, как в игре
         .add_knobs::<RoadStyle>()
+        .add_knobs::<RoadShape>()
+        .add_knobs::<RoadPaintStyle>()
+        .add_knobs::<NetworkOverlay>()
         .insert_resource(ClearColor(GROUND_COLOR))
         .add_systems(
             Startup,
@@ -206,15 +229,25 @@ fn main() {
                 (drag_pan, key_pan),
                 step_to_neighbour,
                 sync_city_buttons.run_if(resource_changed::<City>),
+                // форма — после паузы, как в игре; ширина полосы — в глобаль
+                // разбора, краски и колеи раньше, чем её прочтут материалы
+                settle_road_shape,
+                apply_lane_width.run_if(resource_changed::<RoadShapeOnMap>),
+                // краска и колея — юниформы, как в игре: слои не пересобираются
+                retune_surface_materials
+                    .run_if(retunes_on().or_else(resource_changed::<RoadShapeOnMap>)),
                 // на первом кадре оба ресурса числятся изменёнными — первая
                 // сборка идёт той же дорогой, что и всякая следующая
                 reload.run_if(
                     resource_changed::<City>
                         .or_else(resource_changed::<RoadStyle>)
+                        .or_else(resource_changed::<RoadShapeOnMap>)
+                        .or_else(resource_changed::<NetworkOverlay>)
                         .or_else(input_just_pressed(KeyCode::F5)),
                 ),
                 build_next,
                 place_new,
+                hide_captions_under_panel,
                 auto_shot.run_if(resource_exists::<ShotRequest>),
             )
                 .chain(),
@@ -222,9 +255,47 @@ fn main() {
         .run();
 }
 
+/// Город, с которого открывается витрина: `ROADS_CITY`, иначе игровой
+/// дефолт.
+fn start_city() -> City {
+    let requested = std::env::var("ROADS_CITY").ok();
+    City::ALL
+        .into_iter()
+        .find(|city| requested.as_deref() == Some(city.slug()))
+        .unwrap_or_default()
+}
+
 /// Полоса окна, занятая панелью: отступ от края, сама панель и такой же зазор.
 fn panel_span() -> f32 {
     PANEL_WIDTH_PX + 2.0 * UI_SCREEN_EDGE_PX_OFFSET
+}
+
+/// Строка подписи примера и её полоса по x в мире витрины.
+#[derive(Component)]
+struct Caption {
+    from: f32,
+    to: f32,
+}
+
+/// Подпись, зашедшая под панель, прячется целиком. Панель полупрозрачная, как в
+/// игре, и в крупном плане (`ROADS_SAMPLE`) подпись в тридцати метрах левее
+/// окна просвечивала сквозь неё обрывками строк. В обзоре подписи стоят правее
+/// панели и видны как были.
+fn hide_captions_under_panel(
+    window: Single<&Window, With<PrimaryWindow>>,
+    camera: Single<&Transform, With<PanCamera>>,
+    mut captions: Query<(&Caption, &mut Visibility)>,
+) {
+    let zoom = camera.scale.x;
+    let to_screen = |x: f32| (x - camera.translation.x) / zoom + window.width() / 2.0;
+    for (caption, mut visibility) in &mut captions {
+        let under = to_screen(caption.from) < panel_span() && to_screen(caption.to) > 0.0;
+        visibility.set_if_neq(if under {
+            Visibility::Hidden
+        } else {
+            Visibility::Inherited
+        });
+    }
 }
 
 fn spawn_camera(mut commands: Commands) {
@@ -438,7 +509,7 @@ fn reference_centre(sample: &Sample, slot: Vec2) -> Vec2 {
 }
 
 /// Снимок Яндекс Карт с диска — спрайтом в метрах окна. Мимо `AssetServer`:
-/// файл лежит рядом с вырезкой, вне `assets/`, куда сервер не ходит.
+/// файл лежит в `data/<город>/` витрины, вне `assets/`, куда сервер не ходит.
 fn load_reference(path: &std::path::Path) -> Option<Image> {
     let bytes = std::fs::read(path).ok()?;
     Image::from_buffer(
@@ -453,7 +524,14 @@ fn load_reference(path: &std::path::Path) -> Option<Image> {
     .ok()
 }
 
-/// Следующий пример очереди: вырезка OSM → игровой `parse` → игровые `mesh_*`
+/// Ширина полосы — в глобаль, которую читают разбор, краска и колея
+/// асфальта: игра пишет её перед потоком загрузки, витрина — перед разбором
+/// примеров, которые `reload` по этой же правке соберёт заново.
+fn apply_lane_width(shape: Res<RoadShapeOnMap>) {
+    set_lane_width(shape.0.lane_width());
+}
+
+/// Следующий пример очереди: срез OSM → игровой `parse` → игровые `mesh_*`
 /// → игровые `spawn_*`. Порядок слоёв и их входы — те же, что у
 /// `map::spawn::spawn_map` и цепочки `rebuild_*` за ним.
 #[allow(clippy::too_many_arguments)]
@@ -464,6 +542,8 @@ fn build_next(
     assets: Res<AssetServer>,
     city: Res<City>,
     road_style: Res<RoadStyle>,
+    road_shape: Res<RoadShapeOnMap>,
+    overlay: Res<NetworkOverlay>,
     mut gallery: ResMut<Gallery>,
     mut status: Single<&mut Text, With<StatusLine>>,
 ) {
@@ -474,19 +554,12 @@ fn build_next(
     let slot = gallery.slots[index];
     let started = std::time::Instant::now();
 
-    let map = match parse(&sample.osm, *city) {
-        Ok(map) => map,
-        Err(error) => {
-            warn!("{}: {error}", sample.file);
-            gallery.built += 1;
-            return;
-        }
-    };
+    let map = parse_response(&sample.osm, *city);
     let parsed = started.elapsed();
 
     // Всякий слой режется окном примера (в игровых координатах — до сдвига):
     // окна стоят в колонке встык, а слой рисует и за окном — хвост дороги, дом
-    // на краю вырезки целиком, квад земли во всю карту. Необрезанное ложилось
+    // на краю среза целиком, квад земли во всю карту. Необрезанное ложилось
     // в окно соседа: дом чужого перекрёстка посреди проспекта.
     let (window_min, window_max) = (sample.at - sample.half, sample.at + sample.half);
     let clip = |mut layers: Vec<LayerMesh>| {
@@ -507,7 +580,7 @@ fn build_next(
         SampleLayer,
     );
 
-    let (road_layers, road_report) = mesh_roads(&map, *road_style);
+    let (road_layers, road_report) = mesh_roads(&map, *road_style, road_shape.0);
     let road_layers = clip(road_layers);
     let road_line = road_report.to_string();
     spawn_road_meshes(
@@ -516,6 +589,16 @@ fn build_next(
         &materials.layers,
         (road_layers, road_report),
     );
+
+    if overlay.visible {
+        spawn_layers(
+            &mut commands,
+            &mut meshes,
+            &materials.layers,
+            clip(vec![qwe::map::mesh_network_overlay(&map)]),
+            SampleLayer,
+        );
+    }
 
     let plan = BuildingPlan {
         mode: BuildingHeightMode::default(),
@@ -577,12 +660,14 @@ fn build_next(
         sample,
         slot,
         &format!(
-            "OSM: {} way, {} node, {} relation  →  MapData: {} дорог, {} домов, {} стоянок, {} деревьев\n\
+            "OSM: {} way, {} node, {} relation  →  MapData: {} дорог, {} дорожных узлов, {} площадей дорог, {} домов, {} стоянок, {} деревьев\n\
              разбор {:.0?}, сборка слоёв {:.0?}\n{road_line}",
             sample.elements[1],
             sample.elements[0],
             sample.elements[2],
             map.roads.len(),
+            map.road_nodes.len(),
+            map.road_areas.len(),
             map.buildings.len(),
             map.parking.len(),
             map.trees.len(),
@@ -630,6 +715,10 @@ fn spawn_caption(
     let mut line = |text: String, size: f32, color: Color, drop: f32| {
         commands.spawn((
             Placed,
+            Caption {
+                from: left,
+                to: left + CAPTION_WIDTH,
+            },
             Text2d::new(text),
             caption_font(assets, size),
             TextColor(color),
@@ -660,7 +749,7 @@ fn spawn_caption(
         14.0,
     );
     line(
-        format!("data/{}\n{stages}", sample.file),
+        format!("{}\n{stages}", sample.source),
         BODY_FONT * 0.8,
         INK_DIM,
         78.0,

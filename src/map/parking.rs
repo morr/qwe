@@ -162,7 +162,7 @@ pub fn is_ground(area: &PolyArea) -> bool {
 /// `oneway=yes` и тремя кольцами, а у остальных больших площадок города
 /// `service` внутри контура — это те же проезды рядов, только без
 /// `service=parking_aisle`, и ни один не односторонний. Улица классом выше
-/// проезда (`width` ≥ `STREET_MIN_WIDTH`) — дорога при любых тегах.
+/// проезда (`roads::is_carriageway`) — дорога при любых тегах.
 pub fn is_through(road: &RoadLine) -> bool {
     road.class == RoadClass::Street
         && !road.parking_aisle
@@ -361,7 +361,7 @@ impl<'a> Outline<'a> {
 }
 
 /// Бордюр дороги, идущей сквозь стоянку, с одной стороны, м, — когда у неё нет
-/// своего тротуара (проезд у́же `STREET_MIN_WIDTH`).
+/// своего тротуара (проезд, `roads::is_carriageway`).
 const LOT_KERB: f32 = 1.2;
 /// Сколько асфальта остаётся между бордюром сквозной дороги и местом, м.
 const THROUGH_CLEARANCE: f32 = 0.5;
@@ -369,7 +369,7 @@ const THROUGH_CLEARANCE: f32 = 0.5;
 /// Ширина бордюра, которым дорога сквозь стоянку отделена от её асфальта:
 /// тротуар улицы, а у проезда — [`LOT_KERB`].
 pub fn kerb_width(road: &RoadLine) -> f32 {
-    sidewalk_width(road.width).unwrap_or(LOT_KERB)
+    sidewalk_width(road).unwrap_or(LOT_KERB)
 }
 
 /// Дороги вокруг площадки — звеньями `(от, до, расстояние от оси)`.

@@ -9,7 +9,18 @@
 
 use super::*;
 use crate::map::osm::fixture::{self, street};
-use crate::map::roads::junctions::JUNCTION_MARGIN;
+use crate::map::osm::model::{Highway, KerbParking};
+use crate::map::roads::is_carriageway;
+use crate::map::roads::junctions::{self, JUNCTION_MARGIN};
+
+/// Форма дорог с осью по точкам OSM: ряд меряется по той ломаной, что в
+/// тесте нарисована.
+fn straight() -> RoadShape {
+    RoadShape {
+        curve_tolerance: 0.0,
+        ..default()
+    }
+}
 
 /// Большая стоянка пустее малой, и доля не выходит за свои края.
 #[test]
@@ -38,9 +49,9 @@ fn park_with(roads: &[RoadLine], style: CarStyle) -> Vec<Car> {
 fn park_driving(roads: &[RoadLine], style: CarStyle, traffic: TrafficSide) -> Vec<Car> {
     park_cars(
         roads,
-        &junctions::marking_breaks(roads, is_carriageway),
+        &junctions::marking_breaks(roads, is_carriageway, &[]),
         style,
-        Smoothing::Off,
+        &drawn_axes(roads, &straight()),
         traffic,
         &Districts::new(&[]),
     )
@@ -140,6 +151,41 @@ fn a_residential_street_gets_a_row() {
     assert!(park(std::slice::from_ref(&service)).is_empty());
 }
 
+/// Магистраль без тега стоянки паркуется в карманах: ряд за кромкой
+/// проезжей части, на ширину кармана дальше от оси. `parking:*=no` снимает
+/// ряд совсем, `lane` возвращает его к бордюру.
+#[test]
+fn a_primary_parks_in_its_pockets() {
+    let primary = RoadLine {
+        highway: Highway::Primary,
+        ..street(vec![Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)], 14.0)
+    };
+    let style = CarStyle {
+        occupancy: 1.0,
+        ..default()
+    };
+    let cars = park_with(std::slice::from_ref(&primary), style);
+    assert!(!cars.is_empty());
+    for car in &cars {
+        assert!(
+            car.at.y.abs() > 7.0,
+            "машина за кромкой, в кармане: {}",
+            car.at.y
+        );
+    }
+    let banned = RoadLine {
+        parking: [KerbParking::No; 2],
+        ..primary.clone()
+    };
+    assert!(park_with(std::slice::from_ref(&banned), style).is_empty());
+    let lane = RoadLine {
+        parking: [KerbParking::Lane; 2],
+        ..primary
+    };
+    let cars = park_with(std::slice::from_ref(&lane), style);
+    assert!(!cars.is_empty() && cars.iter().all(|car| car.at.y.abs() < 7.0));
+}
+
 /// Та же улица в частном секторе запаркована много реже, чем в
 /// микрорайоне, и ползунок занятости остаётся за обоими: он задаёт базу, а
 /// квартал — множитель к ней.
@@ -147,13 +193,13 @@ fn a_residential_street_gets_a_row() {
 fn the_same_street_parks_thinner_in_a_private_sector() {
     let road = street(vec![Vec2::new(0.0, 0.0), Vec2::new(600.0, 0.0)], 8.0);
     let roads = std::slice::from_ref(&road);
-    let breaks = junctions::marking_breaks(roads, is_carriageway);
+    let breaks = junctions::marking_breaks(roads, is_carriageway, &[]);
     let rows = |buildings: &[PolyArea]| {
         park_cars(
             roads,
             &breaks,
             CarStyle::default(),
-            Smoothing::Off,
+            &drawn_axes(roads, &straight()),
             TrafficSide::Right,
             &Districts::new(buildings),
         )
@@ -459,8 +505,8 @@ fn distance_to_path(points: &[Vec2], at: Vec2) -> f32 {
 
 #[test]
 fn the_row_stays_on_the_drawn_asphalt_through_a_bend() {
-    // излом 30° на звеньях по 40 м: Chaikin срезает вершину на два метра,
-    // и ряд по сырым точкам вставал бы за кромкой
+    // излом 30° на звеньях по 40 м: дуга оси уводит её от вершины на метр с
+    // лишним, и ряд по сырым точкам вставал бы за кромкой
     let points = vec![
         Vec2::new(0.0, 0.0),
         Vec2::new(40.0, 0.0),
@@ -473,14 +519,14 @@ fn the_row_stays_on_the_drawn_asphalt_through_a_bend() {
     };
     let cars = park_cars(
         std::slice::from_ref(&road),
-        &junctions::marking_breaks(std::slice::from_ref(&road), is_carriageway),
+        &junctions::marking_breaks(std::slice::from_ref(&road), is_carriageway, &[]),
         style,
-        Smoothing::Light,
+        &drawn_axes(std::slice::from_ref(&road), &RoadShape::default()),
         TrafficSide::Right,
         &Districts::new(&[]),
     );
     assert!(!cars.is_empty());
-    let drawn = smooth_path(&road.points, road.width, Smoothing::Light);
+    let drawn = drawn_axes(std::slice::from_ref(&road), &RoadShape::default()).remove(0);
     for car in &cars {
         let off = distance_to_path(&drawn, car.at);
         assert!(
@@ -519,7 +565,7 @@ fn a_street_builds_one_blended_layer() {
     let (layers, report) = mesh_cars(
         near_bucket(),
         CarStyle::default(),
-        Smoothing::Off,
+        straight(),
         &city(),
         &ParkingLayout::default(),
     );
@@ -543,7 +589,7 @@ fn the_toggle_off_draws_nothing() {
     let (layers, report) = mesh_cars(
         near_bucket(),
         style,
-        Smoothing::Off,
+        straight(),
         &city(),
         &ParkingLayout::default(),
     );
@@ -564,7 +610,7 @@ fn the_far_bucket_draws_nothing() {
     let (layers, report) = mesh_cars(
         far,
         CarStyle::default(),
-        Smoothing::Off,
+        straight(),
         &city(),
         &ParkingLayout::default(),
     );

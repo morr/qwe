@@ -22,9 +22,10 @@
 //! тесты разбора, так что клетка и тест говорят об одном и том же объекте.
 //!
 //! Своей у витрины остаётся только подложка — сама проезжая часть под рядами.
-//! Она нарисована игровой лентой (`MeshBuilder::push_ribbon`) в игровом
-//! `ROAD_COLOR`: ступень яркости между кузовом и асфальтом — половина того, как
-//! ряд читается, и на своём сером она была бы не та.
+//! Она нарисована игровой лентой (`MeshBuilder::push_ribbon`) по игровым же
+//! осям ([`drawn_axes`]) в игровом `ROAD_COLOR`: ступень яркости между кузовом
+//! и асфальтом — половина того, как ряд читается, и на своём сером она была бы
+//! не та.
 //!
 //! Пример не трогает конфиг игры: ни `PrefsPlugin`, ни `MapPlugin`, ни
 //! `CameraPlugin` — читать и писать `settings.toml` тут нечему. Колесо крутит
@@ -60,11 +61,9 @@ use bevy::sprite::Anchor;
 use bevy::sprite_render::AlphaMode2d;
 use bevy::window::PrimaryWindow;
 use qwe::camera::{hovering_ui, zoom_to_cursor};
-use qwe::map::cars::cars_mesh;
+use qwe::map::cars::{cars_mesh, drawn_axes};
 use qwe::map::osm::{RoadLine, TrafficSide};
-use qwe::map::{
-    CarStyle, GROUND_COLOR, MeshBuilder, ROAD_COLOR, RibbonCap, RibbonJoin, Smoothing, smooth_path,
-};
+use qwe::map::{CarStyle, GROUND_COLOR, MeshBuilder, ROAD_COLOR, RibbonCap, RibbonJoin, RoadShape};
 use qwe::ui::knob::AddKnobsExt;
 use qwe::ui::{PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET};
 
@@ -417,12 +416,14 @@ fn rebuild_gallery(
 
     let mut asphalt = MeshBuilder::default();
     let road_color = ROAD_COLOR.to_linear();
-    // город кладёт ленту по сглаженной осевой; витрина обязана класть её так
-    // же, иначе показывает не игровую геометрию, а свою
-    let smoothing = Smoothing::default();
-    for road in &roads {
+    // город кладёт ленту по осевой, которую рисует `map::roads` (дуги по
+    // допуску кривизны, не Chaikin по way); витрина обязана класть её так же,
+    // иначе показывает не игровую геометрию, а свою — и ряд стоял бы не на
+    // своём асфальте
+    let shape = RoadShape::default();
+    for (road, axis) in roads.iter().zip(drawn_axes(&roads, &shape)) {
         asphalt.push_ribbon(
-            &smooth_path(&road.points, road.width, smoothing),
+            &axis,
             false,
             road.width,
             road_color,
@@ -437,7 +438,9 @@ fn rebuild_gallery(
             visible: true,
             occupancy: tuning.occupancy,
         },
-        smoothing,
+        // та же форма дорог, что у асфальта выше: ось ряда `cars_mesh` строит
+        // тем же `drawn_axes`, так что ряд и лента лежат на одной кривой
+        shape,
         // клетки витрины нарисованы под правостороннее движение (разделённый
         // проспект — встречными половинами справа)
         TrafficSide::Right,

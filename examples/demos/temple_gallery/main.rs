@@ -42,7 +42,7 @@ use qwe::map::osm::{AreaKind, BuildingUse, Colours, Faith, PolyArea, Sacred, Sac
 use qwe::map::surface::{
     LayerMaterials, SurfaceMaterial, SurfaceStyle, init_flat_materials, init_surface_materials,
 };
-use qwe::map::{GROUND_COLOR, RoofStyle, SunOnMap, apply_sun};
+use qwe::map::{GROUND_COLOR, PaintMaterial, RoofStyle, SunOnMap, apply_sun};
 
 use crate::shot::{ShotRequest, auto_shot, request_shot};
 
@@ -132,6 +132,8 @@ fn main() {
         // кровельным и плоским, — но слои она кладёт игровым `spawn_layers`, а
         // тому приходит весь `LayerMaterials` разом
         .add_plugins(Material2dPlugin::<SurfaceMaterial>::default())
+        // и материал краски улиц — он живёт в том же комплекте поверхностей
+        .add_plugins(Material2dPlugin::<PaintMaterial>::default())
         .add_plugins(qwe::ui::PanelWidgetsPlugin)
         .add_plugins(qwe::ui::QuitOnEscPlugin)
         .add_plugins(qwe::ui::AgentBadgePlugin)

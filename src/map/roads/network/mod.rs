@@ -17,10 +17,23 @@
 //!
 //! Только картинка: навмеш, двери, деревья и машины по-прежнему видят данные
 //! OSM как есть (`RoadLine::points` не трогается, как и при сглаживании).
+//!
+//! Остальная сеть — в подмодулях: `streets` склеивает ways в улицы
+//! ([`RoadNetwork`]), [`sections`] выводит по улице число полос и ширину —
+//! единственный проход, который двигает модель, — [`pairs`] находит и
+//! разводит половины разделённых улиц, [`overlay`] рисует всё это поверх
+//! карты.
+
+pub mod overlay;
+pub mod pairs;
+pub mod sections;
+mod streets;
 
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
+pub(in crate::map::roads) use self::streets::MAX_BEND;
+pub use self::streets::{RoadNetwork, Street, StreetWay};
 use super::junctions::node_key;
 use crate::map::grid::Grid;
 use crate::map::osm::model::{closest_on_segment, point_in_area, polyline_length, ring_bounds};
@@ -88,10 +101,22 @@ impl RoadNodes {
 }
 
 /// Стежки по дорогам: `ends[i]` — точка, которую надо добавить перед началом и
-/// после конца нарисованной осевой `roads[i]`.
+/// после конца нарисованной осевой `roads[i]`, `targets[i]` — на чью ось он
+/// пришит: дорога, отрезок её точек и ближайшая к стежку точка оси. По ним
+/// стежок становится узлом краски (`roads/junctions.rs`).
 pub struct Stitches {
     pub ends: Vec<[Option<Vec2>; 2]>,
+    pub targets: Vec<[Option<StitchTarget>; 2]>,
     pub count: usize,
+}
+
+/// Куда пришит торец: дорога `road`, её отрезок `segment` (от точки
+/// `segment` к следующей) и точка `at` на нём.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct StitchTarget {
+    pub road: usize,
+    pub segment: usize,
+    pub at: Vec2,
 }
 
 impl Stitches {
@@ -114,7 +139,7 @@ impl Stitches {
 /// Может ли дорога участвовать в стежке — с любой стороны. Мост кончается
 /// ровным срезом бордюра, арка приколота к стенам дома: их торцы на месте.
 pub(in crate::map) fn stitchable(road: &RoadLine) -> bool {
-    !road.bridge && !road.passage && road.points.len() >= 2
+    !road.carves_navmesh() && road.points.len() >= 2
 }
 
 /// Продолжает ли `target` полотно дороги `own`. Улица — только улица: торец
@@ -187,6 +212,7 @@ pub fn stitches(
     sidewalk: impl Fn(&RoadLine) -> Option<f32>,
 ) -> Stitches {
     let mut ends = vec![[None; 2]; roads.len()];
+    let mut targets = vec![[None; 2]; roads.len()];
     let mut segments: Grid<(usize, usize)> = Grid::new(CELL);
     let mut widest = 0.0_f32;
     let drawn = Drawn::new(roads, sidewalk);
@@ -234,13 +260,18 @@ pub fn stitches(
             let heading = (end - *from).normalize();
             let reach = road.width / 2.0 + STITCH_MAX_GAP + widest;
             let stitch = stitch_end(&drawn, index, end, heading, reach, &segments, &obstacles);
-            if let Some(point) = stitch {
+            if let Some((point, target)) = stitch {
                 ends[index][side] = Some(point);
+                targets[index][side] = Some(target);
                 count += 1;
             }
         }
     }
-    Stitches { ends, count }
+    Stitches {
+        ends,
+        targets,
+        count,
+    }
 }
 
 /// Дороги как они рисуются и внешний край нарисованной полосы у каждой —
@@ -274,8 +305,8 @@ fn stitch_end(
     reach: f32,
     segments: &Grid<(usize, usize)>,
     obstacles: &Obstacles,
-) -> Option<Vec2> {
-    let mut best: Option<(f32, Vec2, f32)> = None;
+) -> Option<(Vec2, StitchTarget)> {
+    let mut best: Option<(f32, Vec2, f32, StitchTarget)> = None;
     // `near_each`, а не `near`: отрезок, попавший в две ячейки, и раньше
     // проверялся дважды, а победителя выбирает строгое сравнение — порядок
     // обхода тот же самый (ячейки по возрастанию, внутри ячейки — порядок
@@ -297,7 +328,12 @@ fn stitch_end(
         let edge = drawn.edges[road];
         let mut consider = |gap: f32, point: Vec2| {
             if gap <= STITCH_MAX_GAP && best.is_none_or(|(known, ..)| gap < known) {
-                best = Some((gap, point, half));
+                let target = StitchTarget {
+                    road,
+                    segment,
+                    at: closest_on_segment(point, a, b),
+                };
+                best = Some((gap, point, half, target));
             }
         };
         if (nearest - end).dot(heading) >= STITCH_MIN_COS * distance {
@@ -315,7 +351,7 @@ fn stitch_end(
             }
         }
     }
-    let (_, point, target_half) = best?;
+    let (_, point, target_half, target) = best?;
     let direction = (point - end).normalize_or_zero();
     // Своя лента шире цели — торец отступает, чтобы полудиск не вылез за
     // дальний край цели.
@@ -328,7 +364,7 @@ fn stitch_end(
     let steps = (length / STITCH_PROBE_STEP).ceil() as usize;
     let blocked = (1..=steps)
         .any(|step| obstacles.covers(end + direction * (length * step as f32 / steps as f32)));
-    (!blocked).then_some(stitched)
+    (!blocked).then_some((stitched, target))
 }
 
 /// Здания и вода — через них стежок не идёт: проезд, упёртый в стену гаража,

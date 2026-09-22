@@ -5,7 +5,7 @@
 //! Базовый цвет по-прежнему вершинный — слитые меши слоёв собираются как и
 //! раньше; шейдер кладёт поверх него процедурный шум по **мировым**
 //! координатам: крупную «облачность» тона, мелкое зерно, крапинки травы, дрейф
-//! ряби на воде и линии разметки на проезжей части. Ни текстур, ни
+//! ряби на воде и колею на проезжей части. Ни текстур, ни
 //! художника: вся фактура — функция координаты пикселя, и потому две
 //! перекрывающиеся ленты одного слоя красятся одинаково (стык дорог в узле
 //! остаётся невидимым), а на любом зуме шум либо виден, либо погашен, но
@@ -31,7 +31,9 @@ use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey};
 use crate::loading::AppState;
 use crate::map::buildings::material::{RoofMaterial, RoofMaterialHandle};
 use crate::map::meshing::{ATTRIBUTE_RIBBON, MeshBuilder};
+use crate::map::roads::paint::{PaintMaterial, PaintParams, PaintPass, RoadPaintStyle};
 use crate::map::water::{WATER_SHORE_COLOR, WATER_SHORE_WIDTH};
+use crate::prefs::retuned;
 
 const SHADER_PATH: &str = "shaders/surface.wgsl";
 
@@ -52,17 +54,6 @@ const _: () = {
     );
 };
 
-/// Ширина линии разметки, м — как у настоящей (10–15 см). На экране линия
-/// всё равно не тоньше ~1.3 px (шейдер расширяет её), так что число задаёт
-/// вид вблизи.
-const MARKING_WIDTH: f32 = 0.15;
-/// Штрих и пропуск штриховой линии, м.
-const MARKING_DASH: f32 = 3.0;
-const MARKING_GAP: f32 = 3.0;
-/// Цвет разметки — белый, чуть прозрачный: на сером асфальте белая линия
-/// читается, а прозрачность оставляет под ней зерно покрытия.
-const MARKING_COLOR: LinearRgba = LinearRgba::new(0.88, 0.88, 0.86, 0.85);
-
 /// Параметры фактуры — юниформ шейдера. Зеркало `SurfaceParams` в
 /// `surface.wgsl`: порядок полей обязан совпадать.
 #[derive(ShaderType, Clone, Copy, Debug, PartialEq)]
@@ -71,7 +62,6 @@ pub struct SurfaceParams {
     /// тянет цвет в `1 + tint`, отрицательный — в `1 - tint`. Так луг
     /// переливается жёлто-зелёным и сине-зелёным, а не только светлее/темнее.
     pub tint: Vec4,
-    pub marking_color: Vec4,
     /// Цвет отмели на кромке ленты (линейный; `a` не читается). Только у воды:
     /// площадной воде отмель кладёт геометрия (`water::mesh_water_areas`),
     /// а ленте русла — шейдер по её координате поперёк, см. `shore_width`.
@@ -88,16 +78,12 @@ pub struct SurfaceParams {
     pub speckle_threshold: f32,
     /// Скорость дрейфа облачности, м/с — рябь на воде.
     pub drift: f32,
-    /// Разметка: ширина линии (ноль — без разметки), штрих и пропуск, м. Где
-    /// линии лежат и где рвутся — в координатах ленты
-    /// (`meshing::ATTRIBUTE_RIBBON`), не здесь.
-    pub marking_width: f32,
-    pub marking_dash: f32,
-    pub marking_gap: f32,
-    /// Износ покрытия: колеи. Ноль — ровный
-    /// асфальт; считается только на лентах с полосами, а полосы приходят
-    /// лишь с размеченной проезжей части от двух полос — площадная заливка
-    /// того же материала ленты не несёт и износа не получает.
+    /// Износ покрытия: амплитуда колеи (ручка «Wear», `roads::paint::
+    /// RoadPaintStyle`). Ноль — ровный асфальт; считается только на лентах с
+    /// раскладкой полос (`meshing::LaneFrame`) — у проезжей части улицы.
+    /// Площадная заливка того же материала ленты не несёт и износа не
+    /// получает. Линии полос тут больше не рисуются: они — слой краски
+    /// (`roads/paint.rs`).
     pub wear: f32,
     /// Отмель на кромках ленты, м (ноль — без отмели): от цвета
     /// `shore_color` на краю к вершинному цвету ленты на этой глубине — то же
@@ -110,12 +96,19 @@ pub struct SurfaceParams {
     pub shore_width: f32,
     /// Общий множитель амплитуд — ползунок панели.
     pub intensity: f32,
+    /// Шаг полосы для колеи, м — ширина полосы, с которой разобран мир
+    /// (`roads::shape::lane_width`): колея ложится по той же сетке, что линии
+    /// краски.
+    pub lane_width: f32,
+    /// Профиль колеи, м — `roads::paint::RUT_OFFSET` / `RUT_SIGMA`: тот же, что
+    /// у колеи траекторий слоя краски, из одного места.
+    pub rut_offset: f32,
+    pub rut_sigma: f32,
 }
 
 impl SurfaceParams {
     const FLAT: Self = Self {
         tint: Vec4::ZERO,
-        marking_color: Vec4::ZERO,
         shore_color: Vec4::ZERO,
         mottle_amp: 0.0,
         mottle_scale: 1.0,
@@ -125,12 +118,12 @@ impl SurfaceParams {
         speckle_scale: 1.0,
         speckle_threshold: 1.0,
         drift: 0.0,
-        marking_width: 0.0,
-        marking_dash: MARKING_DASH,
-        marking_gap: MARKING_GAP,
         wear: 0.0,
         shore_width: 0.0,
         intensity: SURFACE_TEXTURE_DEFAULT,
+        lane_width: crate::map::roads::shape::LANE_WIDTH_DEFAULT,
+        rut_offset: crate::map::roads::paint::RUT_OFFSET,
+        rut_sigma: crate::map::roads::paint::RUT_SIGMA,
     };
 }
 
@@ -148,9 +141,9 @@ pub enum SurfaceKind {
     Sand,
     /// Площадная вода и русла.
     Water,
-    /// Проезжая часть улицы и настил моста — асфальт с разметкой. Настил
+    /// Проезжая часть улицы и настил моста — асфальт с колеёй. Настил
     /// отдельного вида не получает: покрытие то же, а пешеходный мостик в
-    /// том же меше без кода разметки и так остаётся без линий.
+    /// том же меше без раскладки полос и так остаётся без колеи.
     Street,
     /// Дорожка, тропа.
     Alley,
@@ -171,8 +164,8 @@ impl SurfaceKind {
         Self::Sidewalk,
     ];
 
-    /// Фактура вида при силе `texture`.
-    pub fn params(self, texture: f32) -> SurfaceParams {
+    /// Фактура вида при силе `texture` и колее асфальта `wear`.
+    pub fn params(self, texture: f32, wear: f32) -> SurfaceParams {
         let flat = SurfaceParams::FLAT;
         let params = match self {
             // земля: пятна от 80 до 10 м и зерно от 2.4 м до 60 см —
@@ -255,13 +248,11 @@ impl SurfaceKind {
             },
             // асфальт: заплаты в десятки метров и мелкое зерно покрытия
             Self::Street => SurfaceParams {
-                marking_color: Vec4::from_array(MARKING_COLOR.to_f32_array()),
                 mottle_amp: 0.03,
                 mottle_scale: 60.0,
                 grain_amp: 0.04,
                 grain_scale: 1.2,
-                marking_width: MARKING_WIDTH,
-                wear: 1.0,
+                wear,
                 ..flat
             },
             Self::Alley => SurfaceParams {
@@ -283,6 +274,7 @@ impl SurfaceKind {
         };
         SurfaceParams {
             intensity: texture,
+            lane_width: crate::map::roads::shape::lane_width(),
             ..params
         }
     }
@@ -349,10 +341,28 @@ impl Default for SurfaceStyle {
 /// Хэндл материала на каждый [`SurfaceKind`], один на всё приложение: слои
 /// пересобираются на каждый город и на каждую правку стиля дорог, а материалы
 /// живут и переиспользуются.
+///
+/// Рядом лежит и материал слоя краски (`roads/paint.rs`): краска — то, что
+/// нанесено на асфальт, и её юниформ правит та же ручка, что колею асфальта
+/// (`RoadPaintStyle`).
 #[derive(Resource)]
 pub struct SurfaceMaterials {
     handles: [Handle<SurfaceMaterial>; SurfaceKind::ALL.len()],
+    /// По материалу краски на проход (`PaintPass`, в порядке `PAINT_PASSES`).
+    paints: [Handle<PaintMaterial>; PAINT_PASSES.len()],
 }
+
+/// Проходы материала краски — порядок хэндлов [`SurfaceMaterials::paints`]:
+/// хэндл прохода лежит под его номером (`pass as usize`), как хэндл вида под
+/// номером вида.
+const PAINT_PASSES: [PaintPass; 3] = [PaintPass::Lines, PaintPass::WearMask, PaintPass::Wear];
+const _: () = {
+    let mut slot = 0;
+    while slot < PAINT_PASSES.len() {
+        assert!(PAINT_PASSES[slot] as usize == slot);
+        slot += 1;
+    }
+};
 
 impl SurfaceMaterials {
     pub fn handle(&self, kind: SurfaceKind) -> Handle<SurfaceMaterial> {
@@ -360,19 +370,29 @@ impl SurfaceMaterials {
     }
 }
 
-/// Материалы по одному на вид — на старте приложения, с силой фактуры из
-/// сохранённых настроек.
+/// Материалы по одному на вид и материал краски — на старте приложения, с
+/// силой фактуры и краской из сохранённых настроек. Стиля краски может не
+/// быть (витрина без дорог) — тогда умолчание.
 pub fn init_surface_materials(
     mut commands: Commands,
     mut materials: ResMut<Assets<SurfaceMaterial>>,
+    mut paints: ResMut<Assets<PaintMaterial>>,
     style: Res<SurfaceStyle>,
+    paint: Option<Res<RoadPaintStyle>>,
 ) {
+    let paint = paint.map_or_else(RoadPaintStyle::default, |paint| *paint);
     let handles = SurfaceKind::ALL.map(|kind| {
         materials.add(SurfaceMaterial {
-            params: kind.params(style.texture),
+            params: kind.params(style.texture, paint.wear()),
         })
     });
-    commands.insert_resource(SurfaceMaterials { handles });
+    let paints = PAINT_PASSES.map(|pass| {
+        paints.add(PaintMaterial {
+            params: PaintParams::new(paint),
+            pass,
+        })
+    });
+    commands.insert_resource(SurfaceMaterials { handles, paints });
 }
 
 /// Чем красить слой карты: плоским `ColorMaterial` (кант, рельсы, стены —
@@ -385,6 +405,7 @@ enum LayerMaterial {
     Flat(Handle<ColorMaterial>),
     Surface(Handle<SurfaceMaterial>),
     Roof(Handle<RoofMaterial>),
+    Paint(Handle<PaintMaterial>),
 }
 
 /// Чем красить слой — **описанием, а не хэндлом**.
@@ -406,15 +427,19 @@ pub enum MaterialSpec {
     Surface(SurfaceKind),
     /// Материал кровель (`map::buildings::material`). Меш обязан быть собран
     /// через [`MeshBuilder::with_roof_coords`]. Один на всё приложение, как и
-    /// фактурные, — вариант появился последним, вместе со зданиевыми слоями.
+    /// фактурные, — вариант появился вместе со зданиевыми слоями.
     Roof,
+    /// Материал слоя краски (`roads/paint.rs`) на проходе `PaintPass`: линии
+    /// или маска и наложение колеи узлов. Меш — полосы
+    /// `MeshBuilder::push_paint_strip` в сборщике с координатами поверхности.
+    Paint(PaintPass),
 }
 
 /// Собранный слой карты: меш плюс всё, что нужно знать, чтобы положить его в
 /// мир, — рунга z, имя и вид материала.
 ///
 /// **Один тип на все слои карты**, а не свой на каждый модуль: дороги отдают
-/// девять таких, промзона пять, рельсы три, забор один. Модуль, собранный как
+/// восемнадцать таких, промзона пять, рельсы три, забор один. Модуль, собранный как
 /// `-> Vec<LayerMesh>`, читается тем же способом, что и любой соседний, и его
 /// адаптер — один вызов [`spawn_layers`], а не переписанный цикл.
 ///
@@ -491,6 +516,7 @@ fn spawn_layer(
         LayerMaterial::Flat(handle) => layer.insert(MeshMaterial2d(handle)),
         LayerMaterial::Surface(handle) => layer.insert(MeshMaterial2d(handle)),
         LayerMaterial::Roof(handle) => layer.insert(MeshMaterial2d(handle)),
+        LayerMaterial::Paint(handle) => layer.insert(MeshMaterial2d(handle)),
     };
 }
 
@@ -515,6 +541,9 @@ impl LayerMaterials<'_> {
             MaterialSpec::Blend => LayerMaterial::Flat(self.flats.blend.clone()),
             MaterialSpec::Surface(kind) => LayerMaterial::Surface(self.surfaces.handle(kind)),
             MaterialSpec::Roof => LayerMaterial::Roof(self.roof.handle()),
+            MaterialSpec::Paint(pass) => {
+                LayerMaterial::Paint(self.surfaces.paints[pass as usize].clone())
+            }
         }
     }
 }
@@ -585,18 +614,30 @@ pub fn layer_costs(layers: &[LayerMesh], elapsed: Duration) -> Vec<LayerCost> {
     .collect()
 }
 
-/// Правка ползунка Texture — новые параметры в каждый материал; меши не
-/// трогаются.
+/// Правка ползунка Texture, Paint или Wear — новые параметры в каждый
+/// материал; меши не трогаются.
 pub fn retune_surface_materials(
     style: Res<SurfaceStyle>,
+    paint: Res<RoadPaintStyle>,
     surfaces: Res<SurfaceMaterials>,
     mut materials: ResMut<Assets<SurfaceMaterial>>,
+    mut paints: ResMut<Assets<PaintMaterial>>,
 ) {
     for kind in SurfaceKind::ALL {
         if let Some(mut material) = materials.get_mut(&surfaces.handle(kind)) {
-            material.params = kind.params(style.texture);
+            material.params = kind.params(style.texture, paint.wear());
         }
     }
+    for handle in &surfaces.paints {
+        if let Some(mut material) = paints.get_mut(handle) {
+            material.params = PaintParams::new(*paint);
+        }
+    }
+}
+
+/// Когда перенастраивать материалы — обе ручки, одной регистрацией.
+pub fn retunes_on() -> impl SystemCondition<()> {
+    retuned::<SurfaceStyle>.or_else(retuned::<RoadPaintStyle>)
 }
 
 #[cfg(test)]
@@ -611,18 +652,18 @@ mod tests {
     }
 
     #[test]
-    fn only_carriageways_carry_markings() {
+    fn only_carriageways_wear() {
         for kind in SurfaceKind::ALL {
-            let marked = kind.params(1.0).marking_width > 0.0;
+            let worn = kind.params(1.0, 0.075).wear > 0.0;
             let carriageway = matches!(kind, SurfaceKind::Street);
-            assert_eq!(marked, carriageway, "{kind:?}");
+            assert_eq!(worn, carriageway, "{kind:?}");
         }
     }
 
     #[test]
     fn texture_zero_flattens_every_surface() {
         for kind in SurfaceKind::ALL {
-            assert_eq!(kind.params(0.0).intensity, 0.0, "{kind:?}");
+            assert_eq!(kind.params(0.0, 0.075).intensity, 0.0, "{kind:?}");
         }
     }
 }

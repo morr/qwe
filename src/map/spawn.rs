@@ -13,6 +13,7 @@ use crate::map::meshing::MeshBuilder;
 use crate::map::osm::{AreaKind, MapData, PolyArea, TreeRow};
 use crate::map::parking;
 use crate::map::pitch;
+use crate::map::roads::shape::RoadShapeOnMap;
 use crate::map::roads::{self, RoadStyle};
 use crate::map::smooth::smooth_path;
 use crate::map::surface::{
@@ -54,8 +55,9 @@ const TREE_ROW_BAND_WIDTH: f32 = 10.0;
 /// цвет берётся из семейства леса, а не серый, как у улицы.
 const TREE_ROW_CASING_COLOR: Color = Color::srgb(0.565, 0.729, 0.510);
 /// Луг — заметно светлее парка (`#DDEFBE`): поле без деревьев обязано читаться
-/// поверх парковой заливки, иначе газон сливается с лесом.
-const GRASS_COLOR: Color = Color::srgb(0.867, 0.937, 0.745);
+/// поверх парковой заливки, иначе газон сливается с лесом. Им же засеяна
+/// разделительная парных половин (`roads/medians.rs`).
+pub(crate) const GRASS_COLOR: Color = Color::srgb(0.867, 0.937, 0.745);
 /// Песок/пляж (osm-carto `#F5E9C6`).
 const SAND_COLOR: Color = Color::srgb(0.961, 0.914, 0.776);
 /// Стоянка — тот же асфальт, что и проезжая часть: стоянка лежит поверх дорог
@@ -130,6 +132,7 @@ pub fn spawn_map(
     map: Res<MapData>,
     height_mode: Res<BuildingHeightMode>,
     road_style: Res<RoadStyle>,
+    road_shape: Res<RoadShapeOnMap>,
     mut parking_layout: ResMut<parking::ParkingLayout>,
 ) {
     // Раскладка стоянок — вход сборки, а не её выход: по ней рисуется и
@@ -165,7 +168,7 @@ pub fn spawn_map(
         &mut commands,
         &mut meshes,
         &materials,
-        roads::mesh_roads(&map, *road_style),
+        roads::mesh_roads(&map, *road_style, road_shape.0),
     );
 
     let plan = buildings::BuildingPlan {

@@ -64,7 +64,7 @@ The links are absolute on purpose. A relative `../../../zxc` resolves only from 
 
 **Domain skills** — this project's own (not symlinked), the detail layer behind `CONTEXT.md`'s summaries. Each carries the measurements and design rationale its `CONTEXT.md` section only concludes:
 
-- **`osm-map` — before changing the OSM pipeline or map rendering** (all of `map/*`, whatever the module is called): parse/model detail, entrance generation statistics, tree planting, merged-mesh rendering, style resources. Its `references/osm-coverage.md` is the **tag coverage audit** (which OSM tags reach the map, with per-city counts, and the `tools/osm_audit/` scripts that regenerate them) — read it before widening the Overpass query, and widening the query or adding a `parse_way` branch means updating it in the same change. `references/tree-algo.md` is the watabou crown-algorithm write-up, and `references/buildings.md` carries the buildings layer — height modes, temples and the fortress, inferred storeys, roof material and clutter, arches — which `SKILL.md` only summarises.
+- **`osm-map` — before changing the OSM pipeline or map rendering** (all of `map/*`, whatever the module is called): parse/model detail, entrance generation statistics, tree planting, merged-mesh rendering, style resources. Its `references/osm-coverage.md` is the **tag coverage audit** (which OSM tags reach the map, with per-city counts, and the `tools/osm_audit/` scripts that regenerate them) — read it before widening the Overpass query, and widening the query or adding a `parse_way` branch means updating it in the same change. `references/tree-algo.md` is the watabou crown-algorithm write-up, and `references/buildings.md` carries the buildings layer — height modes, temples and the fortress, inferred storeys, roof material and clutter, arches — which `SKILL.md` only summarises. `SKILL.md` itself is the map and the shared invariants; the mechanisms are split by subject so a session reads only its own: `references/parse.md` (the parse passes and their tests), `references/roads.md` (sidewalks, markings, junctions, kerb returns, bridges, the `roads` gallery), `references/parking.md` (the lot layout, the big lot's kerb and gores, parked cars), `references/layers.md` (water, rails, tram, fences, industry, wagons, pitches).
 - **`navigation-deep` — before changing navigation or movement internals** (`navigation/*`, `movement/*`): navmesh fill mechanics (bridge curbs, waterways, passages), backends and the dispatch pipeline, polymesh, rescue, separation, destination slots.
 - **`determinism` — before changing anything a replay depends on** (`rng.rs`, `determinism/*`): seed derivation, the per-decision RNG stream, `PawnId`/`Species` identity, `SimTick`, the `SimPipeline` sets, the deterministic dispatcher (retire tick, dispatch rate, FIFO key), the frozen backend, the replay yards and what they pin.
 - **`species-behavior` — before changing pawn behaviour or how a pawn is drawn** (`human/*`, `demon/*`, `silhouette/*`, `portal.rs`, `movement/wander.rs`, `spatial.rs`): the two decision ladders, wander/flee/chase/devour, the flee fan, `PanicRecoil`, `Pace`, chase claims and the lunge, the demon spawner, corpses, the spatial grids, plus the look layer — the silhouette atlas and its mips, the screen-size floor and the two LOD systems, the portal vortex and its stain.
@@ -327,7 +327,7 @@ step when adding one):
 | entity | file |
 |---|---|
 | ground mesh, merged area layer meshes (landuse/parks/woods/grass/sand/parking + its markings/water), waterway ribbons, tree-row band | `map/spawn.rs` (through `map/surface.rs::spawn_layers`) |
-| road layers (sidewalks/alleys/roads/bridge shadows/bridges/walls + casings) | `map/roads.rs::spawn_road_meshes` (same helper, from `rebuild_roads` and `spawn_map`) |
+| road layers — ten ribbons (alleys/sidewalks/road medians/roads/lot sidewalks + lot lines/bridge shadows/bridge curbs (`bridge_casings`)/bridges/walls) and the eight paint layers of `roads/paint.rs` (wear mask + wear, zebras, islands, lanes + axes, bridge lanes + axes), the latter tagged `(RoadLayerTag, PaintTag)` | `map/roads.rs::spawn_road_meshes` (same helper, from `rebuild_roads` and `spawn_map`) |
 | rail layers (ballast/ties/steel) | `map/rail.rs::rebuild_rails` (same helper) |
 | parked cars | `map/cars/mod.rs::rebuild_cars` (through `surface::spawn_layers`; geometry — `cars/body.rs`) |
 | standing wagons | `map/wagons.rs::rebuild_wagons` (same helper) |
@@ -344,6 +344,7 @@ step when adding one):
 | souls (kill sparks, despawn themselves in `FixedUpdate`) | `human/soul.rs::release_soul` |
 | navmesh overlay | `ui/debug/overlays.rs::sync_navmesh_overlay` |
 | conifer noise overlay | `ui/debug/overlays.rs::sync_conifer_noise_overlay` |
+| road network overlay | `ui/debug/overlays.rs::sync_road_network_overlay` (through `surface::spawn_layers`; geometry — `map/roads/network/overlay.rs`) |
 | polymesh overlay | `ui/navigation/overlay.rs::sync_polymesh_overlay` |
 | test walker | `dev.rs::on_spawn_test_walker` |
 

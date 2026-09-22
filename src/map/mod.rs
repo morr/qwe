@@ -68,9 +68,28 @@ pub use self::meshing::{
 pub use self::osm::{TREE_DENSITY_MAX, TreeRowPlacement};
 // `ROAD_COLOR` наружу по той же причине: ряд машин витрины обязан стоять на
 // том же асфальте, что в городе
-pub use self::roads::{ROAD_COLOR, RoadJoin, RoadStyle};
-// а `smooth_path` со `Smoothing` — потому, что асфальт под ним лежит на той же
-// сглаженной осевой
+pub use self::roads::{CrossingMode, ROAD_COLOR, RoadJoin, RoadStyle};
+// форма дорог: ресурс ручек формы (панель игры и витрины `roads`) и
+// глобаль ширины полосы, которую витрина ставит перед разбором сама
+pub use self::roads::shape::{
+    CORNER_RADIUS_MAX, CORNER_RADIUS_MIN, CORNER_RADIUS_STEP, CURVE_TOLERANCE_MAX,
+    CURVE_TOLERANCE_MIN, CURVE_TOLERANCE_STEP, LANE_WIDTH_MAX, LANE_WIDTH_MIN, LANE_WIDTH_STEP,
+    MEDIAN_GAP_MAX, MEDIAN_GAP_MIN, MEDIAN_GAP_STEP, RoadShape, RoadShapeOnMap, TAPER_MAX,
+    TAPER_MIN, TAPER_STEP, lane_width, set_lane_width, settle_road_shape,
+};
+// краска и колея: ресурс ручек Paint/Wear (панель игры и витрины `roads`), а
+// материал краски — витринам, которые поднимают материалы поверхностей сами
+pub use self::roads::paint::{
+    PAINT_MAX, PAINT_MIN, PAINT_STEP, PaintMaterial, RoadPaintStyle, TURN_WEAR_MAX, TURN_WEAR_MIN,
+    TURN_WEAR_STEP, WEAR_MAX, WEAR_MIN, WEAR_STEP,
+};
+// сеть улиц — тип поля `MapData::network`; наружу его читает оверлей сети
+// витрины `roads`
+pub use self::roads::network::{RoadNetwork, Street, StreetWay};
+// оверлей сети — строке Debug игры и строке `Network` витрины `roads`
+pub use self::roads::network::overlay::mesh_network_overlay;
+// `smooth_path` со `Smoothing` — витрине машин (`car_gallery` кладёт асфальт
+// под ряд по сглаженной осевой) и панели аллей (`TreeRowStyle::smoothing`)
 pub use self::smooth::{Smoothing, smooth_path};
 pub use self::spawn::{GROUND_COLOR, PARK_COLOR, WOOD_COLOR};
 // `apply_sun_style` наружу — тому же офлайн-бенчу: тени он собирает игровым
@@ -99,7 +118,7 @@ use bevy::prelude::*;
 use bevy::sprite_render::Material2dPlugin;
 
 use crate::loading::{AppState, WorldInitSet};
-use crate::prefs::{TrackPrefExt, retuned};
+use crate::prefs::TrackPrefExt;
 
 /// Цвет тени — альфа-эквивалент watabou-шного multiply `#9699AE`. Общий и для
 /// домов, и для крон по той же причине, что и само солнце ([`sun`]).
@@ -112,6 +131,7 @@ impl Plugin for MapPlugin {
         app.add_plugins(Material2dPlugin::<surface::SurfaceMaterial>::default())
             .add_plugins(Material2dPlugin::<buildings::material::RoofMaterial>::default())
             .add_plugins(Material2dPlugin::<trees::CrownMaterial>::default())
+            .add_plugins(Material2dPlugin::<roads::paint::PaintMaterial>::default())
             .init_resource::<SunStyle>()
             .init_resource::<SunOnMap>()
             .init_resource::<TreeStyle>()
@@ -127,6 +147,10 @@ impl Plugin for MapPlugin {
             .init_resource::<fences::FenceZoomBucket>()
             .init_resource::<RoofStyle>()
             .init_resource::<RoadStyle>()
+            .init_resource::<RoadShape>()
+            .init_resource::<RoadShapeOnMap>()
+            .init_resource::<RoadPaintStyle>()
+            .init_resource::<roads::paint::PaintZoomBucket>()
             .init_resource::<SurfaceStyle>()
             .init_resource::<rail::RailZoomBucket>()
             .init_resource::<tram::TramZoomBucket>()
@@ -142,6 +166,9 @@ impl Plugin for MapPlugin {
             .register_type::<BuildingHeightMode>()
             .register_type::<RoofStyle>()
             .register_type::<RoadStyle>()
+            .register_type::<RoadShape>()
+            .register_type::<RoadShapeOnMap>()
+            .register_type::<RoadPaintStyle>()
             .register_type::<SurfaceStyle>()
             .register_type::<TramStyle>()
             .register_type::<IndustryStyle>()
@@ -153,6 +180,8 @@ impl Plugin for MapPlugin {
             .track_pref::<BuildingHeightMode>()
             .track_pref::<RoofStyle>()
             .track_pref::<RoadStyle>()
+            .track_pref::<RoadShapeOnMap>()
+            .track_pref::<RoadPaintStyle>()
             .track_pref::<SurfaceStyle>()
             .track_pref::<TramStyle>()
             .track_pref::<IndustryStyle>()
@@ -171,6 +200,7 @@ impl Plugin for MapPlugin {
                 Startup,
                 (
                     (sun::seed_sun, sun::apply_sun).chain(),
+                    roads::shape::seed_road_shape,
                     (
                         surface::init_surface_materials,
                         surface::init_flat_materials,
@@ -185,7 +215,20 @@ impl Plugin for MapPlugin {
             // всякая сборка кадра видит уже новое солнце. Перед записью —
             // оседание ползунка: пересобирать карту на каждое пройденное
             // деление слишком дорого
-            .add_systems(PreUpdate, (sun::settle_sun, sun::apply_sun).chain())
+            .add_systems(
+                PreUpdate,
+                (
+                    (sun::settle_sun, sun::apply_sun).chain(),
+                    roads::shape::settle_road_shape,
+                ),
+            )
+            // колея асфальта ложится по ширине полосы, с которой разобран
+            // мир (`roads::shape::lane_width`); материалы живут вне мира, так
+            // что после перезагрузки с другой шириной их надо перенастроить
+            .add_systems(
+                OnEnter(AppState::Playing),
+                surface::retune_surface_materials,
+            )
             .add_systems(
                 OnEnter(AppState::Playing),
                 // набор деревьев собирается первым (лес плюс аллеи выбранной
@@ -268,7 +311,15 @@ impl Plugin for MapPlugin {
                         .run_if(industry::rebuilds_on()),
                     // сила фактуры — юниформ материалов, а не меши: без
                     // привязки к состоянию, материалы живут вне мира
-                    surface::retune_surface_materials.run_if(retuned::<SurfaceStyle>),
+                    surface::retune_surface_materials.run_if(surface::retunes_on()),
+                    // краска не пересобирается со ступенью: ступень только
+                    // прячет меши линий, которых на этом зуме не видно
+                    (
+                        zoom::update_zoom_bucket::<roads::paint::PaintLods>,
+                        roads::paint::show_paint,
+                    )
+                        .chain()
+                        .run_if(in_state(AppState::Playing)),
                     buildings::material::retune_roof_material
                         .run_if(buildings::material::retunes_on()),
                     // ступень зума считается каждый кадр (одно чтение камеры и

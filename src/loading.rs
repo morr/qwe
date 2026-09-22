@@ -175,7 +175,7 @@ impl Plugin for LoadingPlugin {
                 OnEnter(AppState::Loading),
                 (
                     spawn_loader_ui,
-                    (sync_navtile_size, start_job).chain(),
+                    (sync_navtile_size, sync_lane_width, start_job).chain(),
                     reset_warmup,
                     warn_leftover_world_entities,
                 ),
@@ -208,6 +208,18 @@ fn start_job(mut commands: Commands, navmesh: Res<ArcNavmesh>, city: Res<City>) 
 /// и каждую перезагрузку мира.
 fn sync_navtile_size(base: Res<crate::grid::NavtileBase>) {
     crate::grid::set_navtile_size(base.size());
+}
+
+/// Ширина полосы — в глобаль, из которой её читают разбор и краска
+/// (`map::roads::shape`), по той же причине и в тот же момент, что размер
+/// навтайла. Читается сама ручка, а не осевшая `RoadShapeOnMap`: первый вход
+/// в `Loading` идёт раньше `Startup`, где та засевается, а ручку настройки
+/// кладут ещё при сборке `App`; к перезагрузке по ширине обе уже совпадают.
+/// Без ресурса (сцена без `MapPlugin`) глобаль остаётся дефолтом.
+fn sync_lane_width(shape: Option<Res<crate::map::RoadShape>>) {
+    if let Some(shape) = shape {
+        crate::map::set_lane_width(shape.lane_width());
+    }
 }
 
 fn spawn_loader_ui(mut commands: Commands) {

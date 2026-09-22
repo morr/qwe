@@ -230,12 +230,61 @@ pub enum RoadClass {
     Alley,
 }
 
-/// Дорога: осевая полилиния и ширина по классу highway.
+/// Значение `highway` дороги — то, из чего выводится её сечение
+/// (`map::roads::network::sections`) и по чему ways склеиваются в улицы: у
+/// продолжения тот же класс. Съезды (`*_link`) — свой класс, а не класс
+/// дороги, к которой они ведут: съезд уходит вбок, и продолжением главной
+/// его считать нельзя.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Highway {
+    Motorway,
+    Trunk,
+    Primary,
+    Secondary,
+    Tertiary,
+    MotorwayLink,
+    TrunkLink,
+    PrimaryLink,
+    SecondaryLink,
+    TertiaryLink,
+    Residential,
+    Unclassified,
+    LivingStreet,
+    /// Дворовый проезд, въезд, проезд стоянки.
+    Service,
+    /// Всё аллейное (`footway|path|pedestrian|cycleway|steps|track`) — одним
+    /// классом: сечения у дорожки нет, а склейка в улицы ей не нужна.
+    Path,
+}
+
+impl Highway {
+    /// Проезжая часть улицы: несёт тротуар, разметку и машины. Дворовый
+    /// проезд — нет, как бы широк он ни был; дорожка — тем более.
+    pub fn is_street(self) -> bool {
+        !matches!(self, Self::Service | Self::Path)
+    }
+
+    pub fn is_link(self) -> bool {
+        matches!(
+            self,
+            Self::MotorwayLink
+                | Self::TrunkLink
+                | Self::PrimaryLink
+                | Self::SecondaryLink
+                | Self::TertiaryLink
+        )
+    }
+}
+
+/// Дорога: осевая полилиния и ширина, выведенная из сечения
+/// (`map::roads::network::sections`), у дорожек — по классу.
 #[derive(Debug, Clone)]
 pub struct RoadLine {
     pub points: Vec<Vec2>,
     pub width: f32,
     pub class: RoadClass,
+    /// Значение `highway` — см. [`Highway`].
+    pub highway: Highway,
     /// `bridge=yes` — по такой дороге прорезается проходимый коридор через воду.
     pub bridge: bool,
     /// Арка: проезд/проход сквозь здание (`tunnel=building_passage`,
@@ -250,14 +299,58 @@ pub struct RoadLine {
     /// Тег `junction=roundabout|circular`. Спрашивают не его, а
     /// [`RoadLine::is_roundabout`]: кольцо бывает и без тега.
     pub roundabout: bool,
-    /// `lanes` — число полос в обе стороны, если тег есть и правдоподобен.
-    /// `None` — обычное дело; дефолт по ширине — у потребителя (`map::roads`).
+    /// Число полос в обе стороны. Из разбора выходит тег (`lanes`, иначе
+    /// `lanes:forward` + `lanes:backward`), а проход сечений
+    /// (`map::roads::network::sections`) проставляет его каждой проезжей
+    /// дороге и проезду: без тега — от соседей по улице, иначе по классу.
+    /// `None` остаётся у дорожек и у дорог, собранных тестом руками; дефолт
+    /// по ширине для них — у потребителя (`map::roads::lane_count`).
     pub lanes: Option<u8>,
     /// Проезд стоянки (`service=parking_aisle`) — полоса, по которой машина
     /// подъезжает к месту, и **единственная дорога, которую читает раскладка
     /// мест** (`map::parking`): ряды ложатся по обе стороны от неё. Рисуется
     /// как любой `service`, да и то под асфальтом самой стоянки.
     pub parking_aisle: bool,
+    /// Манёвры полос по `turn:lanes`: `[по ходу точек, против]`, полосы слева
+    /// направо по ходу движения. Пусто — тега нет. У односторонней — только
+    /// первое (порядок точек и есть поток); у двусторонней общий `turn:lanes`
+    /// без направления не читается — чьи это полосы, не сказано.
+    pub turns: [Vec<LaneTurn>; 2],
+    /// Есть ли у улицы тротуар `[слева, справа]` по ходу точек — по
+    /// `sidewalk=*` (`no` и `separate` — нет: тротуар замаплен отдельным
+    /// footway или его нет вовсе). Без тега — с обеих сторон: правдоподобие
+    /// важнее молчания данных. Проезду и дорожке тротуар не положен и так
+    /// (`map::roads::is_carriageway`), это поле его не добавляет.
+    pub sidewalks: [bool; 2],
+    /// Стоянка у бордюра `[слева, справа]` по ходу точек — по `parking:*`.
+    /// Что делать с [`KerbParking::Untagged`], решает правило
+    /// (`map::roads::pockets`), не разбор.
+    pub parking: [KerbParking; 2],
+}
+
+/// Стоянка вдоль одной стороны улицы по `parking:<side>` (схема 2022 г.).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum KerbParking {
+    /// Тега нет.
+    #[default]
+    Untagged,
+    /// `lane`, `on_kerb`, `half_on_kerb`, `shoulder`, `yes` — машины у бордюра на
+    /// проезжей части.
+    Lane,
+    /// `street_side` — карман: асфальт вне проезжей части, в тротуаре.
+    Pocket,
+    /// `no`, `separate`, или запрет остановки / стоянки
+    /// (`parking:<side>:restriction=no_stopping|no_parking|no_standing`).
+    No,
+}
+
+/// Куда можно из полосы (`turn:lanes`): `slight_*` и `sharp_*` — те же
+/// поворот, `merge_to_*` и пустое значение — прямо, `reverse` — никуда.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct LaneTurn {
+    pub left: bool,
+    pub through: bool,
+    pub right: bool,
 }
 
 impl RoadLine {
@@ -276,6 +369,15 @@ impl RoadLine {
     /// свойство дороги не должно.
     pub fn is_roundabout(&self) -> bool {
         self.roundabout || (self.oneway && crate::map::shapes::is_ring(&self.points))
+    }
+
+    /// Прорезает ли дорога навмеш: мост (`bridge`) — коридор через воду, арка
+    /// (`passage`) — сквозь дом. Точки такой дороги — навмеша, и рисовальщик
+    /// её ось не трогает: не сглаживает, не стягивает в пару, не вписывает в
+    /// кольцо, не режет под клин и не стежёт — мост кончается ровным срезом
+    /// бордюра, арка приколота к стенам дома.
+    pub fn carves_navmesh(&self) -> bool {
+        self.bridge || self.passage
     }
 }
 
@@ -490,6 +592,74 @@ pub struct TreeRow {
 pub struct TreeNode {
     pub pos: Vec2,
     pub radius: Option<f32>,
+}
+
+/// Дорожный узел из OSM — точка на оси улицы, про которую данные знают больше,
+/// чем про соседние: где зебра, где светофор, кто уступает, где тупик
+/// расширен в площадку. Разбор его только читает; рисует по нему дорога:
+/// краска узла — зебры, светофоры, стоп-линии (`map::roads::node_paint`),
+/// разрывы ряда машин и карманов у перехода (`map::roads::pockets`),
+/// разворотная площадка в тупике (`map::roads`). Мини-кольца и островки не
+/// читает пока никто.
+///
+/// Позиция — там, где узел лежит в данных, то есть на оси way: переход — точка
+/// пересечения оси тротуара с осью улицы, стоп-линию OSM ставит на ось перед
+/// перекрёстком, площадку — на конец тупика.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RoadNode {
+    pub pos: Vec2,
+    pub kind: RoadNodeKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RoadNodeKind {
+    /// `highway=crossing`. `signals` — `crossing=traffic_signals` или
+    /// `crossing:signals=yes` (регулируемый переход); `island` —
+    /// `crossing:island=yes` или `crossing=island` (островок посреди перехода);
+    /// `marked` — снято только явным `crossing=unmarked` или
+    /// `crossing:markings=no`: переход без тега вида (в Туле 111 из 801)
+    /// считается размеченным, так правдоподобнее.
+    Crossing {
+        signals: bool,
+        island: bool,
+        marked: bool,
+    },
+    /// `highway=traffic_signals` — светофор узла, а не перехода.
+    TrafficSignals,
+    /// `highway=stop`.
+    Stop,
+    /// `highway=give_way`.
+    GiveWay,
+    /// `highway=mini_roundabout` — кольцо, нарисованное точкой.
+    MiniRoundabout,
+    /// `highway=turning_circle|turning_loop` — площадка разворота в тупике.
+    TurningCircle,
+    /// `traffic_calming=island` точкой — островок безопасности без контура.
+    Island,
+}
+
+/// Площадь дороги, нарисованная маппером контуром: `area:highway=*` (покрытие
+/// проезжей части или тротуара), `highway=*` + `area=yes` (площадь) и
+/// `traffic_calming=island` контуром. Как и [`RoadNode`] — сырьё для этапов
+/// узла, разбором не рисуется: `highway` + `area=yes` при этом по-прежнему
+/// приходит и линией в [`MapData::roads`], как приходил до v15.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RoadArea {
+    /// Открытое кольцо (без повтора первой точки).
+    pub outline: Vec<Vec2>,
+    pub kind: RoadAreaKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RoadAreaKind {
+    /// Проезжая часть: `area:highway` с классом улицы (`primary`, `service`,
+    /// …) или `highway` такого класса с `area=yes`.
+    Carriageway,
+    /// Пешеходное: `footway`, `pedestrian`, `path`, `cycleway`, `steps` и
+    /// прочее, что не проезжая часть.
+    Walkway,
+    /// Островок: `traffic_calming=island`, `area:highway=traffic_island`.
+    Island,
 }
 
 /// Посаженное дерево: центр, радиус кроны и плотность, на которой оно
@@ -766,6 +936,15 @@ pub struct MapData {
     /// разметка (`map::pitch`). Навмеш не трогают: по площадке ходят.
     pub pitches: Vec<PolyArea>,
     pub roads: Vec<RoadLine>,
+    /// Дорожные узлы (`highway=crossing|traffic_signals|…`) — см. [`RoadNode`].
+    pub road_nodes: Vec<RoadNode>,
+    /// Площади дорог, нарисованные контуром, — см. [`RoadArea`].
+    pub road_areas: Vec<RoadArea>,
+    /// Дороги, склеенные в улицы, — собирается проходом сечений при разборе
+    /// (`map::roads::network::sections`) по окончательному [`MapData::roads`].
+    /// Пуста у карты, собранной тестом руками: тогда клиньев между сечениями
+    /// нет, а всё остальное рисуется как прежде.
+    pub network: crate::map::roads::network::RoadNetwork,
     /// Ж/д пути — только для отрисовки, в навмеш не попадают.
     pub rails: Vec<RailLine>,
     pub walls: Vec<WallLine>,
@@ -1234,5 +1413,17 @@ mod tests {
     fn point_at_arc_length_skips_a_zero_length_link() {
         let path = [Vec2::ZERO, Vec2::ZERO, Vec2::new(4.0, 0.0)];
         assert!(point_at_arc_length(&path, 2.0).distance(Vec2::new(2.0, 0.0)) < 1e-4);
+    }
+
+    /// Навмеш прорезают ровно мост и арка — по любому из двух флагов.
+    #[test]
+    fn a_bridge_or_an_arch_carves_the_navmesh() {
+        let mut road = crate::map::osm::fixture::street(vec![Vec2::ZERO, Vec2::X], 7.0);
+        assert!(!road.carves_navmesh());
+        road.bridge = true;
+        assert!(road.carves_navmesh());
+        road.bridge = false;
+        road.passage = true;
+        assert!(road.carves_navmesh());
     }
 }

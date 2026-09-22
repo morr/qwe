@@ -152,10 +152,7 @@ fn run(job: &MapLoadJob, city: City) -> Result<MapData, String> {
     // попадании в кеш, иначе они переживут все следующие запуски
     prune_stale_caches();
 
-    if path.exists() {
-        info!("osm: cache hit at {}", path.display());
-        let json =
-            std::fs::read_to_string(&path).map_err(|error| format!("cache read: {error}"))?;
+    if let Some(json) = read_cache(city)? {
         job.set(JobState::Parsing);
         match parse(&json, city) {
             Ok(map) => return Ok(map),
@@ -167,11 +164,41 @@ fn run(job: &MapLoadJob, city: City) -> Result<MapData, String> {
         }
     }
 
+    download_and_cache(job, city).map(|(_, map)| map)
+}
+
+/// Выгрузка города как её видит игра — JSON ответа Overpass: из кеша, а нет
+/// кеша — с зеркал, и тогда кеш пишется тем же путём, что при загрузке мира.
+///
+/// Дверь витрины дорог (`examples/demos/roads`): она режет свои окна из того
+/// же файла, что читает игра, поэтому срез не может разойтись с игрой после
+/// подъёма `QUERY_VERSION`. Кеш она не разбирает — только читает: битый файл
+/// вернётся ошибкой десериализации у неё, а самоизлечение остаётся за игрой.
+pub fn city_extract(city: City) -> Result<String, String> {
+    if let Some(json) = read_cache(city)? {
+        return Ok(json);
+    }
+    download_and_cache(&MapLoadJob::default(), city).map(|(json, _)| json)
+}
+
+fn read_cache(city: City) -> Result<Option<String>, String> {
+    let path = cache_path(city);
+    if !path.exists() {
+        return Ok(None);
+    }
+    info!("osm: cache hit at {}", path.display());
+    std::fs::read_to_string(&path)
+        .map(Some)
+        .map_err(|error| format!("cache read: {error}"))
+}
+
+/// Скачать, разобрать и только после успешного разбора записать кеш.
+fn download_and_cache(job: &MapLoadJob, city: City) -> Result<(String, MapData), String> {
+    let path = cache_path(city);
     let json = download(job, city)?;
     job.set(JobState::Parsing);
     let map = parse(&json, city)?;
 
-    // кеш пишется только после успешного парсинга
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -179,7 +206,7 @@ fn run(job: &MapLoadJob, city: City) -> Result<MapData, String> {
         Ok(()) => info!("osm: cached {} bytes at {}", json.len(), path.display()),
         Err(error) => warn!("osm: cache write failed: {error}"),
     }
-    Ok(map)
+    Ok((json, map))
 }
 
 /// Обход зеркал: первое, ответившее JSON'ом, выигрывает; иначе — ошибка

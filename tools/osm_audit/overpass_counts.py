@@ -12,7 +12,7 @@
 * **Мимо прокси.** `HTTP(S)_PROXY` из окружения ведёт на общий адрес, которому
   Overpass отвечает 429/504, поэтому запросы идут через опенер с пустым
   `ProxyHandler`.
-* **Мелкими пачками.** Один запрос на все 39 счётчиков сервер отбивает по
+* **Мелкими пачками.** Один запрос на все 47 счётчиков `GROUPS` сервер отбивает по
   таймауту; по три статистики за раз проходит. Города считаются независимо —
   запускать их можно параллельно, каждый со своим `STORE`.
 """
@@ -79,6 +79,16 @@ GROUPS = [
     ("amenity-полигоны без building", 'way["amenity"]["building"!~"."]["amenity"!="parking"]({bbox});'),
     ("остановки и платформы (ноды)", 'node["highway"="bus_stop"]({bbox});node["public_transport"="platform"]({bbox});'),
     ("переходы и светофоры (ноды)", 'node["highway"~"^(crossing|traffic_signals)$"]({bbox});'),
+    # кандидаты этапа 0 плана дорог: дорожные узлы по отдельности — что из них брать
+    ("узлы: highway=crossing", 'node["highway"="crossing"]({bbox});'),
+    # дороги — в свой набор `.r`, а не в `_`: иначе `out count` сложил бы их с узлами
+    ("узлы: crossing на проезжей", 'way["highway"~"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|service)(_link)?$"]({bbox})->.r;node(w.r)["highway"="crossing"];'),
+    ("узлы: highway=traffic_signals", 'node["highway"="traffic_signals"]({bbox});'),
+    ("узлы: highway=stop|give_way", 'node["highway"~"^(stop|give_way)$"]({bbox});'),
+    ("узлы: highway=mini_roundabout", 'node["highway"="mini_roundabout"]({bbox});'),
+    ("узлы: highway=turning_circle|turning_loop", 'node["highway"~"^(turning_circle|turning_loop)$"]({bbox});'),
+    ("узлы: traffic_calming=island", 'node["traffic_calming"="island"]({bbox});way["traffic_calming"="island"]({bbox});'),
+    ("узлы: crossing:island=yes", 'node["crossing:island"="yes"]({bbox});'),
     ("фонари, скамейки, фонтаны (ноды)", 'node["highway"="street_lamp"]({bbox});node["amenity"~"^(bench|fountain|waste_basket|drinking_water)$"]({bbox});'),
     ("power", 'way["power"]({bbox});node["power"]({bbox});'),
     ("tourism", 'node["tourism"]({bbox});way["tourism"]({bbox});'),
@@ -96,6 +106,8 @@ ENDPOINTS = [
 ]
 BATCH = 3
 STORE = os.environ.get("STORE", "osm_counts.json")
+# только группы, в метке которых есть эта подстрока: `ONLY=узлы:` — одни дорожные узлы
+ONLY = os.environ.get("ONLY", "")
 
 
 def bbox(lat, lon):
@@ -134,7 +146,7 @@ def main(cities):
     for city in cities:
         area = ",".join(str(value) for value in bbox(*CITIES[city]))
         done = store.setdefault(city, {})
-        todo = [group for group in GROUPS if group[0] not in done]
+        todo = [group for group in GROUPS if group[0] not in done and ONLY in group[0]]
         print(f"===== {city}: {len(done)} готово, {len(todo)} осталось")
         sys.stdout.flush()
 

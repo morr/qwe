@@ -203,7 +203,7 @@ impl<'a> Around<'a> {
             .filter(|road| road.class == RoadClass::Street && !road.bridge && !road.passage)
             .flat_map(|road| {
                 let sidewalk = if is_carriageway(road) {
-                    sidewalk_width(road.width).unwrap_or_default()
+                    sidewalk_width(road).unwrap_or_default()
                 } else {
                     0.0
                 };

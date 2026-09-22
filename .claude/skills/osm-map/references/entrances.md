@@ -102,7 +102,7 @@ whole algorithm:
   absorbs so a long facade cannot hoard them.
 - **The pitch is a property of the building, not of the module** (`mod.rs::DoorPitch`).
   A dwelling is measured in *подъезды* every 25 m; a **retail box**
-  (`model::is_big_box` — see **Retail box** in `SKILL.md`) has no подъезды at all, it
+  (`model::is_big_box` — see **Retail box** in `parse.md`) has no подъезды at all, it
   has **entrance groups**, and between the lobbies of a «Магнит» or a «Лента» there are
   fifty-odd metres. So a big box carries `BIG_BOX_ENTRANCE_SPACING` 55 m and
   `BIG_BOX_MIN_SPACING` 45 m, its own cohort (`mean` 2, `max` 25 — a backstop the pitch

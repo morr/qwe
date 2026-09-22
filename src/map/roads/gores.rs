@@ -11,6 +11,7 @@
 //! Островок — свойство **сети у кольца**, а не стоянки, поэтому считается здесь
 //! для любого кольца города, а стоянка только вычитает его из своего бордюра.
 
+use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use i_overlay::core::fill_rule::FillRule;
 use i_overlay::core::overlay_rule::OverlayRule;
@@ -19,8 +20,12 @@ use i_overlay::float::single::SingleFloatOverlay;
 use i_overlay::mesh::outline::offset::OutlineOffset;
 use i_overlay::mesh::style::{LineCap, LineJoin, OutlineStyle};
 
-use super::LOT_LINE_COLOR;
-use crate::map::meshing::{MeshBuilder, min_area_rect};
+use super::junctions::node_key;
+use super::medians::tip_of;
+use super::rings::{Ring, Rings};
+use super::{is_carriageway, lane_count};
+use crate::map::along::{arclengths, place_on_path};
+use crate::map::meshing::{Break, MeshBuilder, min_area_rect};
 use crate::map::osm::model::{RoadLine, distance_to_segment, ring_bounds};
 use crate::map::shapes::{
     ARC, Contour, RING_EPSILON, Shape, contour_area, contour_bounds, is_ring, oriented,
@@ -47,10 +52,12 @@ const ARM_SNAP: f32 = 1.0;
 const ARM_REACH: f32 = 40.0;
 /// Насколько вершина клина близко к кромке полотна, чтобы клин его касался, м.
 const ARM_TOUCH: f32 = 0.5;
-/// Разметка островка: обводка, ширина косой полосы и шаг между полосами, м.
-const LINE_WIDTH: f32 = 0.2;
-const HATCH_WIDTH: f32 = 0.35;
-const HATCH_STEP: f32 = 1.6;
+/// На сколько осевая разделительной дотягивается до острия островка, м, и
+/// шаг, которым оно ищется ([`Gores::reach`]).
+const MEDIAN_REACH: f32 = 8.0;
+const MEDIAN_REACH_STEP: f32 = 0.25;
+/// Зазор между торцом двойной линии и остриём штриховки, м.
+const MEDIAN_GORE_GAP: f32 = 0.6;
 
 /// Улица так, как она нарисована, — что нужно островкам.
 pub(super) struct GoreRoad {
@@ -252,6 +259,15 @@ impl Gores {
         self.hatched.len()
     }
 
+    /// Добавить островки, поставленные по правилу ([`splitters`]): контур
+    /// штрихуется, расширение подхода — асфальт.
+    pub fn add_splitters(&mut self, splitters: &[Splitter]) {
+        for splitter in splitters {
+            self.hatched.push(splitter.island.clone());
+            self.asphalt.push(splitter.flare.clone());
+        }
+    }
+
     /// Контуры островков — тому, кто вычитает их из своего (бордюр стоянки).
     pub fn contours(&self) -> impl Iterator<Item = &Contour> {
         self.asphalt.iter().flatten()
@@ -264,6 +280,60 @@ impl Gores {
             .any(|shape| point_in_shape(point, shape))
     }
 
+    /// Дотянуть осевую разделительной до островка, если он в пределах
+    /// [`MEDIAN_REACH`] по её ходу.
+    ///
+    /// Осевая кончается там, где половины перестают идти бок о бок, а клин
+    /// штриховки — там, где зазор между ними сходит на нет, и между остриём
+    /// клина и двойной линией оставалось метра три голого асфальта (отчёт
+    /// автора). На земле края островка **сходятся в** двойную сплошную.
+    pub fn reach(&self, midline: &mut Vec<Vec2>) {
+        if self.hatched.is_empty() {
+            return;
+        }
+        // осевая есть, пока между половинами до трёх метров асфальта, клин —
+        // пока их от 0.6 м: в промежутке обе есть разом, и двойная линия
+        // уезжала внутрь штриховки (отчёт автора). Концы, попавшие в клин,
+        // срезаются, и дотягивается осевая уже от чистого места
+        while midline.last().is_some_and(|point| self.contains(*point)) {
+            midline.pop();
+        }
+        let inside = midline
+            .iter()
+            .take_while(|point| self.contains(**point))
+            .count();
+        midline.drain(..inside);
+        for end in [false, true] {
+            let count = midline.len();
+            if count < 2 {
+                return;
+            }
+            let Some((tip, heading)) = tip_of(midline, end) else {
+                continue;
+            };
+            let steps = (MEDIAN_REACH / MEDIAN_REACH_STEP) as usize;
+            // сколько по ходу до штриховки; вплотную линия не подводится —
+            // между её торцом и остриём клина остаётся [`MEDIAN_GORE_GAP`]
+            // (просьба автора: встык торец двойной линии сливался с обводкой
+            // островка)
+            let Some(to_gore) = (1..=steps)
+                .map(|step| step as f32 * MEDIAN_REACH_STEP)
+                .find(|reach| self.contains(tip + heading * *reach))
+            else {
+                continue;
+            };
+            let point = tip + heading * (to_gore - MEDIAN_GORE_GAP);
+            match (to_gore > MEDIAN_GORE_GAP, end) {
+                // до клина дальше зазора — линия дотягивается, не доходя на зазор
+                (true, true) => midline.push(point),
+                (true, false) => midline.insert(0, point),
+                // клин ближе зазора — торец отодвигается назад
+                (false, true) => midline[count - 1] = point,
+                (false, false) => midline[0] = point,
+            }
+        }
+    }
+
     /// Асфальт островков — в слой улиц: он выше тротуаров и кроет их треугольник.
     pub fn push_asphalt(&self, builder: &mut MeshBuilder, color: LinearRgba) {
         for shape in &self.asphalt {
@@ -271,59 +341,170 @@ impl Gores {
         }
     }
 
-    /// Обводка и косая штриховка.
+    /// Штрихуемые островки и направление поперёк их косых полос — слою
+    /// краски (`roads/paint.rs`): обводку и полосы рисует его шейдер, и с
+    /// зумом они гаснут вместе с зебрами. Штрихуется только разомкнутая
+    /// часть клина, не асфальт: тот шире на заход под полотна, и полосы
+    /// вылезли бы на дорогу.
     ///
-    /// Полосы идут под 45° к длинной оси островка шагом [`HATCH_STEP`];
-    /// обрезка по контурам — одна булева операция на все островки города.
-    pub fn push_markings(&self, builder: &mut MeshBuilder) {
-        let color = LOT_LINE_COLOR.to_linear();
-        let mut stripes: Vec<Contour> = Vec::new();
-        for gore in &self.hatched {
-            for contour in gore {
-                builder.push_stroke(&ring_of(contour), true, LINE_WIDTH, color);
-            }
-            let Some(outer) = gore.first() else {
-                continue;
-            };
-            let ring = ring_of(outer);
-            let Some(corners) = min_area_rect(&ring) else {
-                continue;
-            };
+    /// Полосы идут под 45° к длинной оси островка.
+    pub fn islands(&self) -> impl Iterator<Item = (&Shape, Vec2)> {
+        self.hatched.iter().filter_map(|gore| {
+            let ring = ring_of(gore.first()?);
+            let corners = min_area_rect(&ring)?;
             let (side, next) = (corners[1] - corners[0], corners[2] - corners[1]);
             let long = if side.length() >= next.length() {
                 side
             } else {
                 next
             };
-            let Some(axis) = long.try_normalize() else {
-                continue;
-            };
-            let along = Vec2::from_angle(std::f32::consts::FRAC_PI_4).rotate(axis);
-            let across = along.perp();
-            let centre = corners.iter().sum::<Vec2>() / 4.0;
-            let radius = corners[0].distance(centre) + HATCH_STEP;
-            let count = (radius / HATCH_STEP).ceil() as i32;
-            for index in -count..=count {
-                let middle = centre + across * (index as f32 * HATCH_STEP);
-                let (half, length) = (across * (HATCH_WIDTH / 2.0), along * radius);
-                stripes.push(vec![
-                    (middle - length - half).to_array(),
-                    (middle + length - half).to_array(),
-                    (middle + length + half).to_array(),
-                    (middle - length + half).to_array(),
-                ]);
+            let along = Vec2::from_angle(std::f32::consts::FRAC_PI_4).rotate(long.try_normalize()?);
+            Some((gore, along.perp()))
+        })
+    }
+}
+
+/// Кольцо меньше этого радиуса, м, островков на подходах не получает: на
+/// дворовом кольце им негде встать.
+const SPLITTER_MIN_RADIUS: f32 = 10.0;
+/// Между кромкой кольца и основанием островка, м.
+const SPLITTER_GAP: f32 = 1.0;
+/// Длина островка — доля радиуса кольца, в пределах, м.
+const SPLITTER_SHARE: f32 = 0.6;
+const SPLITTER_LENGTH: std::ops::RangeInclusive<f32> = 6.0..=20.0;
+/// Полуширина основания — доля радиуса, в пределах, м.
+const SPLITTER_WIDTH_SHARE: f32 = 0.06;
+const SPLITTER_HALF_WIDTH: std::ops::RangeInclusive<f32> = 0.6..=1.5;
+/// Звенья контура островка вдоль подхода.
+const SPLITTER_STEPS: usize = 8;
+
+/// Островок, поставленный по правилу на двусторонний подход к кольцу: в
+/// OSM такой подход — один way, веера из въезда и съезда, между которыми
+/// [`Gores::of`] нашёл бы клин, нет. Подход у кольца расширяется на
+/// островок: каждая полоса сохраняет ширину, между ними — штриховка.
+pub(super) struct Splitter {
+    /// Подход.
+    pub road: usize,
+    /// Штрихуемый контур — капля от основания у кольца к острию.
+    pub island: Shape,
+    /// Асфальт расширения подхода.
+    pub flare: Shape,
+    /// Разрыв краски и колеи подхода на длину островка.
+    pub gap: Break,
+}
+
+/// Островки на двусторонних подходах к кольцам `rings`: подход — проезжая
+/// часть в две полосы и больше, приходящая концом в узел кольца.
+pub(super) fn splitters(
+    drawn: &[&RoadLine],
+    paths: &[impl AsRef<[Vec2]>],
+    rings: &Rings,
+) -> Vec<Splitter> {
+    let mut nodes: HashMap<(i32, i32), usize> = HashMap::new();
+    for (index, ring) in rings.list.iter().enumerate() {
+        if ring.mean_radius() < SPLITTER_MIN_RADIUS {
+            continue;
+        }
+        for &road in &ring.roads {
+            for &point in &drawn[road].points {
+                nodes.insert(node_key(point), index);
             }
         }
-        if stripes.is_empty() {
-            return;
+    }
+    let mut found = Vec::new();
+    for (road, line) in drawn.iter().enumerate() {
+        if line.oneway
+            || line.bridge
+            || !is_carriageway(line)
+            || lane_count(line) < 2
+            || rings.of(road).is_some()
+        {
+            continue;
         }
-        // обрезка — по штрихуемой части, а не по асфальту: тот шире на заход
-        // под полотна, и полосы вылезли бы на дорогу
-        let gores: Vec<Contour> = self.hatched.iter().flatten().cloned().collect();
-        for shape in stripes.overlay(&gores, OverlayRule::Intersect, FillRule::NonZero) {
-            push_shape(builder, shape, color);
+        let path = paths[road].as_ref();
+        for end in [false, true] {
+            let Some(&tip) = (if end { path.last() } else { path.first() }) else {
+                continue;
+            };
+            let Some(&ring) = nodes.get(&node_key(tip)) else {
+                continue;
+            };
+            let ring = &rings.list[ring];
+            let mut from_ring = path.to_vec();
+            if end {
+                from_ring.reverse();
+            }
+            let ring_width = drawn[ring.roads[0]].width;
+            if let Some(splitter) = splitter(road, line.width, &from_ring, ring, ring_width) {
+                found.push(splitter);
+            }
         }
     }
+    found
+}
+
+/// Островок на подходе `path`, идущем **от** узла кольца.
+fn splitter(
+    road: usize,
+    width: f32,
+    path: &[Vec2],
+    ring: &Ring,
+    ring_width: f32,
+) -> Option<Splitter> {
+    let radius = ring.mean_radius();
+    let base = ring_width / 2.0 + SPLITTER_GAP;
+    let (along, total) = arclengths(path);
+    let length = (SPLITTER_SHARE * radius)
+        .clamp(*SPLITTER_LENGTH.start(), *SPLITTER_LENGTH.end())
+        .min(total - base - width);
+    if length < *SPLITTER_LENGTH.start() {
+        return None;
+    }
+    let half = (SPLITTER_WIDTH_SHARE * radius)
+        .clamp(*SPLITTER_HALF_WIDTH.start(), *SPLITTER_HALF_WIDTH.end());
+    // полуширина островка: капля — полная у основания, в ноль к острию
+    let spread = |at: f32| {
+        let share = ((at - base) / length).clamp(0.0, 1.0);
+        half * (1.0 - share).powf(0.8)
+    };
+    let sample = |at: f32| {
+        let (point, direction) = place_on_path(path, &along, at)?;
+        Some((point, direction.perp()))
+    };
+    let mut left = Vec::new();
+    let mut right = Vec::new();
+    for step in 0..=SPLITTER_STEPS {
+        let at = base + length * step as f32 / SPLITTER_STEPS as f32;
+        let (point, normal) = sample(at)?;
+        left.push(point + normal * spread(at));
+        right.push(point - normal * spread(at));
+    }
+    right.pop();
+    right.reverse();
+    let island: Vec<Vec2> = left.into_iter().chain(right).collect();
+    // расширение — от кромки кольца до острия, полотно раздвинуто на островок
+    let edge = (ring_width / 2.0 - ASPHALT_PAD).max(0.0);
+    let mut sides = [Vec::new(), Vec::new()];
+    let steps = SPLITTER_STEPS * 2;
+    for step in 0..=steps {
+        let at = edge + (base + length - edge) * step as f32 / steps as f32;
+        let (point, normal) = sample(at)?;
+        let reach = width / 2.0 + if at < base { half } else { spread(at) };
+        sides[0].push(point + normal * reach);
+        sides[1].push(point - normal * reach);
+    }
+    sides[1].reverse();
+    let flare: Vec<Vec2> = sides.concat();
+    let middle = sample(base + length / 2.0)?.0;
+    Some(Splitter {
+        road,
+        island: vec![oriented(&island, true)],
+        flare: vec![oriented(&flare, true)],
+        gap: Break {
+            at: middle,
+            reach: length / 2.0 + SPLITTER_GAP,
+        },
+    })
 }
 
 /// Куда дотягивается замыкание ленты: её габарит, выпущенный на полуширину

@@ -9,14 +9,20 @@ use bevy::mesh::{Indices, MeshVertexAttribute, VertexFormat};
 use bevy::prelude::*;
 use bevy::render::render_resource::PrimitiveTopology;
 
-/// Локальные координаты ленты для шейдера поверхностей (`map::surface`):
-/// `[поперёк, до разрыва, полуширина, код разметки]` — метры и код
-/// [`Markings`]. «До разрыва» — знаковое расстояние до края ближайшего
-/// разрыва разметки ([`RibbonBreaks`]): по нему шейдер улиц гасит линии на
-/// перекрёстке и фазирует штрихи. У полигонов и прочей не-ленточной геометрии
-/// — нули. Атрибут есть только у мешей, собранных через
-/// [`MeshBuilder::with_surface_coords`]: зданиям, кронам и оверлеям он ни к
-/// чему, а это 16 байт на вершину.
+/// Локальные координаты ленты для шейдера поверхностей (`map::surface`), в
+/// метрах. У ленты без полос — `[поперёк, до разрыва, полуширина, 0]`: по ним
+/// вода кладёт отмель. У проезжей части с раскладкой полос ([`LaneFrame`]) —
+/// `[поперёк от узла сетки полос, до разрыва, нижняя граница, верхняя
+/// граница]`, всё от того же узла: колея шейдера лежит на той же сетке, что и
+/// линии слоя краски (`roads/paint.rs`). «До разрыва» — знаковое расстояние до
+/// края ближайшего разрыва разметки ([`RibbonBreaks`]): по нему гаснет колея у
+/// перекрёстка. У полигонов и прочей не-ленточной геометрии — нули. Атрибут
+/// есть только у мешей, собранных через [`MeshBuilder::with_surface_coords`]:
+/// зданиям, кронам и оверлеям он ни к чему, а это 16 байт на вершину.
+///
+/// Слой краски несёт тот же атрибут со своим смыслом —
+/// `[поперёк от линии, по длине улицы, до разрыва, вид линии]`
+/// ([`MeshBuilder::push_paint_strip`]).
 ///
 /// Идентификатор — «высокий случайный», как велит документация
 /// `MeshVertexAttribute`: он задаёт порядок атрибутов и не должен совпасть со
@@ -379,20 +385,49 @@ const MIN_RIM_WIDTH: f32 = 0.2;
 /// негде — way продолжается с обоих концов.
 const FAR_FROM_BREAKS: f32 = 1000.0;
 
-/// Разметка проезжей части для шейдера улиц: число полос и односторонность.
-/// В [`ATTRIBUTE_RIBBON`] едет кодом `полосы · 2 + односторонняя`; ноль —
-/// без разметки. Шейдер кладёт линию на каждую границу полос: штриховую, а
-/// осевую многополосной двусторонней — сплошную.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Markings {
-    pub lanes: u8,
-    pub oneway: bool,
+/// Раскладка полос проезжей части поперёк ленты, м от её осевой (плюс —
+/// влево по ходу пути): узел сетки полос `origin` и границы проезжей части
+/// `low..high`. Границы полос лежат в `origin + k · шаг полосы`; шаг один на
+/// город, его знает шейдер. Одна раскладка на колею шейдера поверхностей и на
+/// линии слоя краски (`roads/paint.rs`), поэтому на клине, где раскладка
+/// плывёт от узкого сечения к широкому, колея идёт ровно между линиями.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct LaneFrame {
+    pub origin: f32,
+    pub low: f32,
+    pub high: f32,
 }
 
-impl Markings {
-    fn encode(self) -> f32 {
-        f32::from(self.lanes) * 2.0 + if self.oneway { 1.0 } else { 0.0 }
+impl LaneFrame {
+    /// Раскладка на доле `t` пути от `self` к `to` — по ней клин переходит от
+    /// узкого сечения к широкому.
+    pub fn lerp(self, to: Self, t: f32) -> Self {
+        Self {
+            origin: self.origin + (to.origin - self.origin) * t,
+            low: self.low + (to.low - self.low) * t,
+            high: self.high + (to.high - self.high) * t,
+        }
     }
+
+    /// Координаты вершины ленты в этой раскладке ([`ATTRIBUTE_RIBBON`]).
+    fn coords(self, across: f32, to_break: f32) -> [f32; 4] {
+        [
+            across - self.origin,
+            to_break,
+            self.low - self.origin,
+            self.high - self.origin,
+        ]
+    }
+}
+
+/// Вершина линии слоя краски ([`MeshBuilder::push_paint_strip`]): длина улицы
+/// в этой точке (по ней идут штрихи, и фаза не рвётся на шве ways), «до
+/// разрыва» и видимость — ноль там, где линия рождается из клина.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct PaintStation {
+    pub along: f32,
+    pub to_break: f32,
+    pub alpha: f32,
 }
 
 /// Разрыв разметки: точка на дороге (перекрёсток, тупик) и полудлина разрыва
@@ -463,9 +498,11 @@ pub struct MeshBuilder {
     /// `Some` — меш собирается для `SurfaceMaterial` и несёт
     /// [`ATTRIBUTE_RIBBON`] на каждой вершине.
     ribbon: Option<Vec<[f32; 4]>>,
-    /// Код разметки ([`Markings::encode`]) для лент, которые лягут дальше
-    /// ([`Self::set_markings`]); ноль — без разметки.
-    markings: f32,
+    /// Раскладка полос для лент, которые лягут дальше — `[у начала, у конца]`
+    /// ([`Self::set_lanes`], [`Self::set_lane_taper`]); у ленты постоянной
+    /// ширины обе одинаковы, у клина ([`Self::push_taper`]) плывут. `None` —
+    /// лента без полос.
+    lanes: [Option<LaneFrame>; 2],
     /// `Some` — меш собирается для `buildings::material::RoofMaterial` и несёт
     /// [`ATTRIBUTE_ROOF`] на каждой вершине.
     roof: Option<Vec<[f32; 4]>>,
@@ -495,11 +532,17 @@ impl MeshBuilder {
         }
     }
 
-    /// Разметка лент, положенных после этого вызова: шейдер улиц кладёт линии
-    /// только по ней, и узкий проезд её не получает. Без координат поверхности
-    /// код некуда записать.
-    pub fn set_markings(&mut self, markings: Option<Markings>) {
-        self.markings = markings.map_or(0.0, Markings::encode);
+    /// Раскладка полос лент, положенных после этого вызова: колея шейдера
+    /// улиц лежит только по ней, и проезд без полос её не получает. Без
+    /// координат поверхности раскладку некуда записать.
+    pub fn set_lanes(&mut self, lanes: Option<LaneFrame>) {
+        self.lanes = [lanes; 2];
+    }
+
+    /// Раскладка клина ([`Self::push_taper`]), плывущая от `from` у его
+    /// начала к `to` у конца.
+    pub fn set_lane_taper(&mut self, from: Option<LaneFrame>, to: Option<LaneFrame>) {
+        self.lanes = [from, to];
     }
 
     /// Кровля, которой принадлежит геометрия после этого вызова; `None` —
@@ -547,9 +590,21 @@ impl MeshBuilder {
         }
     }
 
-    /// Координаты вершины ленты с текущим кодом разметки.
+    /// Координаты вершины ленты в текущей раскладке полос.
     fn coords(&self, across: f32, to_break: f32, half_width: f32) -> [f32; 4] {
-        [across, to_break, half_width, self.markings]
+        Self::coords_in(self.lanes[0], across, to_break, half_width)
+    }
+
+    fn coords_in(
+        lanes: Option<LaneFrame>,
+        across: f32,
+        to_break: f32,
+        half_width: f32,
+    ) -> [f32; 4] {
+        match lanes {
+            Some(frame) => frame.coords(across, to_break),
+            None => [across, to_break, half_width, 0.0],
+        }
     }
 
     pub fn skipped_polygons(&self) -> usize {
@@ -702,6 +757,143 @@ impl MeshBuilder {
                     self.coords(half_width, at_to, half_width),
                 ],
             );
+        }
+    }
+
+    /// **Клин** — разомкнутая лента, ширина которой вдоль ломаной меняется
+    /// линейно по длине дуги от `widths[0]` до `widths[1]`: переход между
+    /// сечениями улицы (`roads::network::sections`), где до этого ширина
+    /// менялась ступенькой.
+    ///
+    /// Торцы срезаны ровно по крайним точкам и поперёк исходных крайних звеньев
+    /// ([`merge_ribbon_points`], `butt_normal`) — так же, как прямой торец тела
+    /// улицы за швом, и щели между ними нет; изломы — общими вершинами по
+    /// биссектрисе ([`miter_offsets`]), как у ленты без веера: клин короток, а
+    /// круглый торец выпирал бы из-под более узкой соседней ленты. Координаты
+    /// фактуры: раскладка полос — по доле пути между двумя из
+    /// [`Self::set_lane_taper`], так что колея плывёт вместе с краями;
+    /// «до разрыва» — линейно от `to_break[0]` до `to_break[1]`, продолжением
+    /// срезанной ленты ([`to_break_beyond`]), чтобы колея гасла у того же узла.
+    pub fn push_taper(
+        &mut self,
+        points: &[Vec2],
+        widths: [f32; 2],
+        to_break: [f32; 2],
+        color: LinearRgba,
+    ) {
+        let path = merge_ribbon_points(points, false, widths[0].min(widths[1]) / 4.0);
+        if path.len() < 2 {
+            return;
+        }
+        let (along, total) = arclengths(&path, false);
+        if total <= 0.0 {
+            return;
+        }
+        let mut miters = miter_offsets(&path, false, 1.0);
+        for (end, index) in [(false, 0), (true, path.len() - 1)] {
+            if let Some(normal) = butt_normal(points, end) {
+                miters[index] = normal;
+            }
+        }
+        let rgba = color.to_f32_array();
+        let base = self.positions.len() as u32;
+        for ((&point, &at), miter) in path.iter().zip(&along).zip(&miters) {
+            let share = at / total;
+            let half_width = (widths[0] + (widths[1] - widths[0]) * share) / 2.0;
+            let to_break = to_break[0] + (to_break[1] - to_break[0]) * share;
+            // раскладка полос плывёт вместе с краями: крайняя полоса
+            // рождается из клина, а колея остаётся между линиями краски
+            let lanes = match self.lanes {
+                [Some(from), Some(to)] => Some(from.lerp(to, share)),
+                [from, _] => from,
+            };
+            self.push_vertex(
+                point + *miter * half_width,
+                rgba,
+                Self::coords_in(lanes, half_width, to_break, half_width),
+            );
+            self.push_vertex(
+                point - *miter * half_width,
+                rgba,
+                Self::coords_in(lanes, -half_width, to_break, half_width),
+            );
+        }
+        for index in 0..path.len() as u32 - 1 {
+            let (left, right) = (base + 2 * index, base + 2 * index + 1);
+            let (next_left, next_right) = (left + 2, right + 2);
+            self.indices
+                .extend([left, right, next_right, left, next_right, next_left]);
+        }
+    }
+
+    /// Полоса под одну линию слоя краски (`roads/paint.rs`): лента полуширины
+    /// `half_width` вдоль `points`, стыки — общими вершинами по биссектрисе,
+    /// торцы — по крайним точкам. Полоса **шире самой линии**: линию с полом
+    /// в пиксели, штрихами и сглаженным краем рисует шейдер краски по
+    /// координатам полосы, а полоса лишь оставляет ему место на самом дальнем
+    /// зуме, где линия ещё видна.
+    ///
+    /// В [`ATTRIBUTE_RIBBON`] — `[поперёк от линии, длина улицы, до разрыва,
+    /// kind]` из `stations` (по одной на точку), в альфу цвета — видимость
+    /// станции.
+    pub fn push_paint_strip(
+        &mut self,
+        points: &[Vec2],
+        closed: bool,
+        half_width: f32,
+        stations: &[PaintStation],
+        kind: f32,
+        color: LinearRgba,
+    ) {
+        let count = points.len();
+        if count < 2 || stations.len() != count {
+            return;
+        }
+        let miters = miter_offsets(points, closed, half_width);
+        let base = self.positions.len() as u32;
+        for ((&point, miter), station) in points.iter().zip(&miters).zip(stations) {
+            let rgba = color.with_alpha(color.alpha * station.alpha).to_f32_array();
+            for side in [1.0, -1.0] {
+                self.push_vertex(
+                    point + *miter * side,
+                    rgba,
+                    [side * half_width, station.along, station.to_break, kind],
+                );
+            }
+        }
+        let segments = if closed { count } else { count - 1 };
+        for index in 0..segments as u32 {
+            let next = (index + 1) % count as u32;
+            let (left, right) = (base + 2 * index, base + 2 * index + 1);
+            let (next_left, next_right) = (base + 2 * next, base + 2 * next + 1);
+            self.indices
+                .extend([left, right, next_right, left, next_right, next_left]);
+        }
+    }
+
+    /// Площадь слоя краски — многоугольник с дырками, у каждой вершины в
+    /// [`ATTRIBUTE_RIBBON`] — `[0, координата поперёк полос, to_break,
+    /// kind]`, где координата — проекция вершины на `across`, а `to_break` и
+    /// `kind` те же, что у [`Self::push_paint_strip`]. Так штриховку рисует
+    /// шейдер краски: полосы идут по мировой координате и не зависят от того,
+    /// как лёг треугольник.
+    pub fn push_paint_area(
+        &mut self,
+        outer: &[Vec2],
+        holes: &[Vec<Vec2>],
+        across: Vec2,
+        to_break: f32,
+        kind: f32,
+        color: LinearRgba,
+    ) {
+        let base = self.positions.len() as u32;
+        self.push_polygon(outer, holes, color);
+        let pushed = self.positions.len() as u32;
+        if let Some(coords) = &mut self.ribbon {
+            for index in base..pushed {
+                let [x, y, _] = self.positions[index as usize];
+                coords[index as usize] = [0.0, Vec2::new(x, y).dot(across), to_break, kind];
+            }
         }
     }
 
@@ -942,12 +1134,19 @@ impl MeshBuilder {
             caps,
             breaks,
         } = shape;
-        let mut path = merge_close_points(points, closed, width / 4.0);
+        let mut path = merge_ribbon_points(points, closed, width / 4.0);
         if path.len() < 2 {
             return;
         }
 
         let half_width = width / 2.0;
+        // прямой торец — поперёк исходного крайнего звена (`butt_normal`)
+        let butts = [false, true].map(|end| {
+            (!closed && caps[usize::from(end)] == RibbonCap::Butt)
+                .then(|| butt_normal(points, end))
+                .flatten()
+                .map(|normal| normal * half_width)
+        });
         let (mut along, total) = arclengths(&path, closed);
         // «до разрыва» — по ней шейдер гасит разметку у перекрёстка и
         // фазирует штрихи; у замкнутой ленты разрывов нет, остаётся длина дуги
@@ -962,7 +1161,12 @@ impl MeshBuilder {
 
         match join {
             RibbonJoin::Miter => {
-                let offsets = miter_offsets(&path, closed, half_width);
+                let mut offsets = miter_offsets(&path, closed, half_width);
+                for (butt, index) in butts.into_iter().zip([0, count - 1]) {
+                    if let Some(butt) = butt {
+                        offsets[index] = butt;
+                    }
+                }
 
                 for index in 0..segments {
                     let next = (index + 1) % count;
@@ -1016,8 +1220,16 @@ impl MeshBuilder {
                         continue;
                     };
                     let normal = direction.perp() * half_width;
-                    let at_start = if shared[index] { miters[index] } else { normal };
-                    let at_end = if shared[next] { miters[next] } else { normal };
+                    let at_start = match (index, butts[0]) {
+                        (0, Some(butt)) => butt,
+                        _ if shared[index] => miters[index],
+                        _ => normal,
+                    };
+                    let at_end = match butts[1] {
+                        Some(butt) if next == count - 1 => butt,
+                        _ if shared[next] => miters[next],
+                        _ => normal,
+                    };
                     self.push_quad_full(
                         [
                             path[index] + at_start,
@@ -1574,6 +1786,72 @@ fn arclengths(path: &[Vec2], closed: bool) -> (Vec<f32>, f32) {
     (along, total)
 }
 
+/// «До разрыва» разомкнутой ленты [`MeshBuilder::push_ribbon_shaped`] с
+/// разрывами `breaks` на её **продолжении** — `beyond` метров за началом
+/// (`end = false`) или концом пути. Нужна клину (`MeshBuilder::push_taper`),
+/// который продолжает срезанную ленту: с тем же значением на стыке штрихи
+/// разметки идут через стык без сдвига фазы.
+pub fn to_break_beyond(
+    points: &[Vec2],
+    width: f32,
+    breaks: &[Break],
+    end: bool,
+    beyond: f32,
+) -> f32 {
+    let path = merge_ribbon_points(points, false, width / 4.0);
+    if path.len() < 2 {
+        return FAR_FROM_BREAKS;
+    }
+    let (along, total) = arclengths(&path, false);
+    let gaps = GapProfile::new(&path, &along, total, RibbonBreaks::At(breaks), None);
+    gaps.distance(if end { total + beyond } else { -beyond })
+}
+
+/// Путь ленты с вершинами на изломах «до разрыва», длина дуги и «до разрыва»
+/// в каждой его вершине — то, что [`MeshBuilder::push_ribbon_shaped`] кладёт в
+/// атрибут проезжей части, для слоя краски (`roads/paint.rs`): тот строит линии
+/// поверх ленты сам и обязан гаснуть у тех же узлов. Точки ближе
+/// `merge_distance` сливаются, как у ленты. Путь короче двух точек — пустые
+/// списки.
+pub fn break_profile(
+    points: &[Vec2],
+    closed: bool,
+    breaks: &[Break],
+    merge_distance: f32,
+) -> (Vec<Vec2>, Vec<f32>, Vec<f32>) {
+    let mut path = merge_ribbon_points(points, closed, merge_distance);
+    if path.len() < 2 {
+        return (Vec::new(), Vec::new(), Vec::new());
+    }
+    let (mut along, total) = arclengths(&path, closed);
+    let gaps = GapProfile::new(
+        &path,
+        &along,
+        total,
+        RibbonBreaks::At(breaks),
+        closed.then_some(total),
+    );
+    gaps.split_path(&mut path, &mut along, merge_distance);
+    let to_break = along.iter().map(|&at| gaps.distance(at)).collect();
+    (path, along, to_break)
+}
+
+/// «До разрыва» в вершинах уже нарезанного пути `path` — по другому набору
+/// разрывов, чем тот, по которому его резал [`break_profile`]. Изломы новых
+/// разрывов должны быть среди вершин пути: набор — подмножество того, по
+/// которому путь резался.
+pub fn break_distances(path: &[Vec2], closed: bool, breaks: &[Break]) -> Vec<f32> {
+    let (along, total) = arclengths(path, closed);
+    let gaps = GapProfile::new(
+        path,
+        &along,
+        total,
+        RibbonBreaks::At(breaks),
+        closed.then_some(total),
+    );
+    along.iter().map(|&at| gaps.distance(at)).collect()
+}
+
 /// Расстояние до ближайшего торца разомкнутого пути.
 fn to_nearest_end(along: f32, total: f32) -> f32 {
     along.min(total - along)
@@ -1891,6 +2169,41 @@ pub fn merge_close_points(points: &[Vec2], closed: bool, merge_distance: f32) ->
         }
     }
     path
+}
+
+/// [`merge_close_points`] для ленты: у разомкнутой ломаной конец остаётся на
+/// месте, а сливается с ним предпоследняя точка. Иначе лента, срезанная в
+/// сантиметрах за вершиной, кончалась бы на вершине и не доходила до шва с
+/// соседним куском (клин смены сечения и тело улицы, `roads/tapers.rs`) — щель
+/// поперёк проезжей части.
+pub fn merge_ribbon_points(points: &[Vec2], closed: bool, merge_distance: f32) -> Vec<Vec2> {
+    let mut path = merge_close_points(points, closed, merge_distance);
+    // путь, схлопнутый в точку, так и остаётся точкой
+    if !closed
+        && path.len() > 1
+        && let Some(&end) = points.last()
+        && path.last() != Some(&end)
+    {
+        path.pop();
+        path.push(end);
+    }
+    path
+}
+
+/// Нормаль прямого торца: поперёк **исходного** крайнего звена `points`, а не
+/// звена после слияния точек. Два куска, разрезанных на одном звене, так
+/// встают торцами друг к другу без клиновидной щели, даже если у каждого
+/// слияние выпрямило конец по-своему. Звено короче сантиметра не в счёт.
+fn butt_normal(points: &[Vec2], end: bool) -> Option<Vec2> {
+    let away = |tip: Vec2, point: &&Vec2| point.distance(tip) > 0.01;
+    let direction = if end {
+        let tip = *points.last()?;
+        tip - *points.iter().rev().find(|point| away(tip, point))?
+    } else {
+        let tip = *points.first()?;
+        *points.iter().find(|point| away(tip, point))? - tip
+    };
+    direction.try_normalize().map(Vec2::perp)
 }
 
 /// Сколько хорд нужно дуге радиуса `radius` на `sweep` радиан, чтобы стрелка

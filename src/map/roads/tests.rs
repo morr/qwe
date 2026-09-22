@@ -1,6 +1,8 @@
 use super::*;
+use crate::map::footprint::casing_width;
 use crate::map::meshing::distance_to_path;
-use crate::map::osm::fixture;
+use crate::map::osm::model::{KerbParking, RoadNode};
+use crate::map::osm::{Highway, fixture};
 use crate::map::shadow_dir;
 
 fn road(points: Vec<Vec2>, width: f32, passage: bool) -> RoadLine {
@@ -425,11 +427,16 @@ fn a_fork_is_one_bridge_and_stays_up() {
 
 #[test]
 fn sidewalks_belong_to_streets_not_service_roads() {
-    // проезд (`service`, 5 м) — без тротуара; жилая улица и магистраль — с ним,
-    // в пределах диапазона
-    assert_eq!(sidewalk_width(5.0), None);
-    let residential = sidewalk_width(8.0).unwrap();
-    let primary = sidewalk_width(16.0).unwrap();
+    // проезд — без тротуара, как бы широк он ни был: решает класс, не ширина;
+    // жилая улица и магистраль — с ним, в пределах диапазона
+    let line = vec![Vec2::ZERO, Vec2::new(100.0, 0.0)];
+    let mut service = fixture::street(line.clone(), 8.0);
+    service.highway = Highway::Service;
+    assert_eq!(sidewalk_width(&service), None);
+    let residential = sidewalk_width(&fixture::street(line.clone(), 8.0)).unwrap();
+    let mut primary = fixture::street(line, 16.0);
+    primary.highway = Highway::Primary;
+    let primary = sidewalk_width(&primary).unwrap();
     assert!(residential < primary);
     assert!(SIDEWALK_WIDTH_RANGE.contains(&residential));
     assert!(SIDEWALK_WIDTH_RANGE.contains(&primary));
@@ -457,13 +464,13 @@ fn lanes_come_from_the_tag_and_fall_back_to_the_width() {
     assert_eq!(lane_count(&street), 3);
     street.roundabout = true;
     street.lanes = Some(2);
-    assert_eq!(lane_count(&street), 1, "на кольце линий нет");
+    assert_eq!(lane_count(&street), 2, "кольцо — как любая улица");
 }
 
 /// Кольцо узнаётся и **без тега** — по форме: замкнутое одностороннее полотно.
 /// Большое кольцо у ТРЦ «Макси» (way 397005605) в OSM просто `oneway=yes`,
-/// замкнутый сам на себя, и по одному тегу получало две полосы разметки с
-/// износом — то, чего на кольце не рисуют.
+/// замкнутый сам на себя, и по одному тегу ни гладкой фигуры, ни островков
+/// на подходах не получало бы.
 #[test]
 fn a_closed_oneway_way_is_a_roundabout_without_the_tag() {
     let corner = Vec2::new(-10.0, -10.0);
@@ -477,8 +484,6 @@ fn a_closed_oneway_way_is_a_roundabout_without_the_tag() {
     let mut road = fixture::street(ring.clone(), 12.0);
     road.oneway = true;
     assert!(road.is_roundabout());
-    assert_eq!(lane_count(&road), 1);
-    assert_eq!(road_markings(&road), None);
 
     road.oneway = false;
     assert!(
@@ -496,31 +501,23 @@ fn a_closed_oneway_way_is_a_roundabout_without_the_tag() {
 }
 
 #[test]
-fn markings_need_a_carriageway_with_two_lanes() {
+fn lanes_come_with_the_carriageway() {
     let line = vec![Vec2::ZERO, Vec2::new(100.0, 0.0)];
     let mut street = fixture::street(line.clone(), 8.0);
-    assert_eq!(
-        road_markings(&street),
-        Some(Markings {
-            lanes: 2,
-            oneway: false
-        })
-    );
+    assert_eq!(road_lanes(&street), Some(paint::lane_frame(2)));
     street.oneway = true;
-    assert_eq!(road_markings(&street), None, "одна полоса — делить нечего");
-    street.width = 12.0;
     assert_eq!(
-        road_markings(&street),
-        Some(Markings {
-            lanes: 2,
-            oneway: true
-        })
+        road_lanes(&street),
+        Some(paint::lane_frame(1)),
+        "одна полоса: линий нет, а колея есть"
     );
-    assert_eq!(road_markings(&fixture::street(line.clone(), 5.0)), None);
-    assert_eq!(road_markings(&fixture::passage(line.clone(), 8.0)), None);
+    assert_eq!(road_lanes(&fixture::passage(line.clone(), 8.0)), None);
+    let mut drive = fixture::street(line.clone(), 8.0);
+    drive.highway = Highway::Service;
+    assert_eq!(road_lanes(&drive), None, "у проезда полос нет");
     assert!(
-        road_markings(&fixture::bridge(line, 8.0)).is_some(),
-        "мост несёт разметку своей улицы"
+        road_lanes(&fixture::bridge(line, 8.0)).is_some(),
+        "мост несёт полосы своей улицы"
     );
 }
 
@@ -638,19 +635,28 @@ fn the_city_wall_ribbon_stays_off_fortress_buildings() {
 // телеметрия области жили внутри `spawn_roads` — 275 строк, взять которые из
 // теста было нечем: проверять можно было только хелперы под ними.
 
-/// Одиннадцать дорожных слоёв снизу вверх, ровно в том порядке, в каком они
-/// уходят в мир.
-const LAYERS: [&str; 11] = [
-    "alley_casings",
+/// Восемнадцать дорожных слоёв снизу вверх, ровно в том порядке, в каком они
+/// уходят в мир: десять лент и восемь слоёв краски над своим асфальтом —
+/// колея траекторий узла (маска, потом наложение) ниже линий, островки колец
+/// над асфальтом стоянок.
+const LAYERS: [&str; 18] = [
     "alleys",
     "sidewalks",
-    "road_casings",
+    "road_medians",
     "roads",
+    paint::PAINT_WEAR_MASK,
+    paint::PAINT_WEAR,
+    paint::PAINT_ZEBRAS,
+    paint::PAINT_LANES,
+    paint::PAINT_AXES,
     "lot_sidewalks",
     "lot_lines",
+    paint::PAINT_ISLANDS,
     "bridge_shadows",
     "bridge_casings",
     "bridges",
+    paint::BRIDGE_PAINT_LANES,
+    paint::BRIDGE_PAINT_AXES,
     "walls",
 ];
 
@@ -671,14 +677,19 @@ fn layer<'a>(layers: &'a [LayerMesh], name: &str) -> &'a LayerMesh {
 }
 
 #[test]
-fn a_street_builds_eleven_layers_bottom_up() {
-    let (layers, report) = mesh_roads(&one_street(), RoadStyle::default());
+fn a_street_builds_eighteen_layers_bottom_up() {
+    let (layers, report) = mesh_roads(&one_street(), RoadStyle::default(), RoadShape::default());
 
     let names: Vec<&str> = layers.iter().map(|layer| layer.name).collect();
     assert_eq!(names, LAYERS);
     for pair in layers.windows(2) {
+        // линии полос и осевые лежат на одной высоте: их полосы не
+        // перекрываются, а прячет их ступень зума, не порядок
+        let paint_pair = [pair[0].name, pair[1].name]
+            .iter()
+            .all(|name| paint::PaintTag::of(name).is_some());
         assert!(
-            pair[0].z < pair[1].z,
+            pair[0].z < pair[1].z || paint_pair && pair[0].z == pair[1].z,
             "{} лежит не ниже {}",
             pair[0].name,
             pair[1].name
@@ -689,7 +700,7 @@ fn a_street_builds_eleven_layers_bottom_up() {
 
 #[test]
 fn only_the_bridge_shadow_is_blended() {
-    let (layers, _) = mesh_roads(&one_street(), RoadStyle::default());
+    let (layers, _) = mesh_roads(&one_street(), RoadStyle::default(), RoadShape::default());
 
     // фактурный материал — у всего, что асфальт, тротуар или дорожка;
     // блендинг — ровно у полупрозрачной тени настила
@@ -698,28 +709,39 @@ fn only_the_bridge_shadow_is_blended() {
             "bridge_shadows" => MaterialSpec::Blend,
             "sidewalks" | "lot_sidewalks" => MaterialSpec::Surface(SurfaceKind::Sidewalk),
             "alleys" => MaterialSpec::Surface(SurfaceKind::Alley),
+            "road_medians" => MaterialSpec::Surface(SurfaceKind::Grass),
             "roads" | "bridges" => MaterialSpec::Surface(SurfaceKind::Street),
+            paint::PAINT_WEAR_MASK => MaterialSpec::Paint(paint::PaintPass::WearMask),
+            paint::PAINT_WEAR => MaterialSpec::Paint(paint::PaintPass::Wear),
+            name if paint::PaintTag::of(name).is_some() => {
+                MaterialSpec::Paint(paint::PaintPass::Lines)
+            }
             _ => MaterialSpec::Flat,
         };
         assert_eq!(layer.material, expected, "{}", layer.name);
     }
 }
 
+/// Ручки формы доходят до геометрии: радиус угла растягивает скругления
+/// бордюра, нулевой допуск оставляет ось по точкам OSM.
 #[test]
-fn the_casing_knob_fills_the_casing_layers() {
-    let map = one_street();
-    let casing_verts = |casing| {
-        let style = RoadStyle {
-            casing,
-            ..RoadStyle::default()
-        };
-        let (layers, _) = mesh_roads(&map, style);
-        layer(&layers, "road_casings").builder.vertex_count()
+fn the_shape_knobs_move_the_geometry() {
+    let map = a_tee();
+    let verts = |shape: RoadShape| {
+        let (layers, report) = mesh_roads(&map, RoadStyle::default(), shape);
+        (layer(&layers, "roads").builder.vertex_count(), report)
     };
-
-    // кант — отдельный слой, и выключенный он пуст, а не отсутствует
-    assert_eq!(casing_verts(false), 0);
-    assert!(casing_verts(true) > 0);
+    let (_, base) = verts(RoadShape::default());
+    assert!(base.kerb_returns > 0, "{base}");
+    let (tight, _) = verts(RoadShape {
+        corner_radius: 0.5,
+        ..default()
+    });
+    let (wide, _) = verts(RoadShape {
+        corner_radius: 2.0,
+        ..default()
+    });
+    assert_ne!(tight, wide, "радиус угла меняет дуги скруглений");
 }
 
 #[test]
@@ -730,7 +752,7 @@ fn the_sidewalk_knob_fills_the_sidewalk_layer() {
             sidewalks,
             ..RoadStyle::default()
         };
-        let (layers, _) = mesh_roads(&map, style);
+        let (layers, _) = mesh_roads(&map, style, RoadShape::default());
         layer(&layers, "sidewalks").builder.vertex_count()
     };
 
@@ -763,13 +785,13 @@ fn junctions_with(map: &MapData, markings: bool) -> usize {
         markings,
         ..RoadStyle::default()
     };
-    mesh_roads(map, style).1.junctions
+    mesh_roads(map, style, RoadShape::default()).1.junctions
 }
 
 #[test]
-fn markings_off_means_no_junctions_counted() {
-    // перекрёстки считаются только ради разметки: без неё и рвать нечего
-    assert_eq!(junctions_with(&a_tee(), false), 0);
+fn junctions_are_counted_with_markings_off_too() {
+    // перекрёсток гасит и колею асфальта, а она есть без разметки
+    assert_eq!(junctions_with(&a_tee(), false), 1);
     assert_eq!(junctions_with(&a_tee(), true), 1);
 }
 
@@ -797,7 +819,7 @@ fn a_bridge_leaves_the_street_layers_for_the_deck_ones() {
         vec![Vec2::new(100.0, 100.0), Vec2::new(600.0, 100.0)],
         12.0,
     ));
-    let (layers, _) = mesh_roads(&map, RoadStyle::default());
+    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
 
     // настил уходит из уличных слоёв в мостовые целиком, и тротуара у него нет
     // никогда: полоса свисала бы с настила над водой
@@ -810,7 +832,11 @@ fn a_bridge_leaves_the_street_layers_for_the_deck_ones() {
 
 #[test]
 fn an_empty_map_still_describes_every_layer() {
-    let (layers, report) = mesh_roads(&MapData::default(), RoadStyle::default());
+    let (layers, report) = mesh_roads(
+        &MapData::default(),
+        RoadStyle::default(),
+        RoadShape::default(),
+    );
 
     assert_eq!(layers.len(), LAYERS.len());
     assert!(layers.iter().all(|layer| layer.builder.is_empty()));
@@ -856,7 +882,11 @@ fn extent_x(builder: &MeshBuilder) -> (f32, f32) {
 
 #[test]
 fn a_road_through_a_big_lot_is_drawn_over_it_with_a_kerb() {
-    let (layers, _) = mesh_roads(&ground_with_roads(100.0), RoadStyle::default());
+    let (layers, _) = mesh_roads(
+        &ground_with_roads(100.0),
+        RoadStyle::default(),
+        RoadShape::default(),
+    );
 
     // бордюр — только у сквозной дороги и только у площадки: за её контур он
     // выпущен на два метра, до тротуара улицы, и не дальше
@@ -885,7 +915,11 @@ fn a_road_through_a_big_lot_is_drawn_over_it_with_a_kerb() {
 #[test]
 fn a_small_lot_still_hides_every_road_on_it() {
     // 60 × 60 — двор: его асфальт и есть проезд, поверх него ничего не кладётся
-    let (layers, _) = mesh_roads(&ground_with_roads(60.0), RoadStyle::default());
+    let (layers, _) = mesh_roads(
+        &ground_with_roads(60.0),
+        RoadStyle::default(),
+        RoadShape::default(),
+    );
     assert!(layer(&layers, "lot_sidewalks").builder.is_empty());
     assert!(layer(&layers, "lot_lines").builder.is_empty());
 }
@@ -926,10 +960,12 @@ fn the_wedge_between_the_two_arms_of_a_roundabout_is_hatched() {
     // находились вовсе
     for tagged in [true, false] {
         let map = roundabout_with_an_approach(tagged, true);
-        let (layers, _) = mesh_roads(&map, RoadStyle::default());
+        let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
         // клин — правее кольца, между подходами, у оси x
         let wedged = |at: &&[f32; 3]| (17.0..40.0).contains(&at[0]) && at[1].abs() < 2.5;
-        let lines = layer(&layers, "lot_lines").builder.positions_for_test();
+        let lines = layer(&layers, paint::PAINT_ISLANDS)
+            .builder
+            .positions_for_test();
         assert!(
             lines.iter().any(|at| wedged(&at)),
             "клин не заштрихован ({tagged})"
@@ -947,7 +983,7 @@ fn the_wedge_between_the_two_arms_of_a_roundabout_is_hatched() {
 #[test]
 fn the_gore_is_paved_under_the_edges_of_both_arms() {
     let map = roundabout_with_an_approach(true, true);
-    let (layers, report) = mesh_roads(&map, RoadStyle::default());
+    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
     assert_eq!(report.gores, 1, "островок у кольца один");
 
     // клин целиком: от кромки кольца (радиус 16 м) до острия, где полотна
@@ -960,8 +996,8 @@ fn the_gore_is_paved_under_the_edges_of_both_arms() {
     ];
     let wedged = |at: &[f32; 3]| (14.0..50.0).contains(&at[0]) && at[1].abs() < 5.0;
     // кромка полотна — в 2.5 м от его оси, так что ближе неё лежит только то,
-    // что зашло **под** ленту; обводка штриховки вылезает из клина лишь на свою
-    // полуширину, 0.1 м
+    // что зашло **под** ленту; полоса под обводку штриховки вылезает из клина
+    // на `EDGE_STRIP` — место шейдеру, сама линия в ней тоньше
     let depth = |at: &[f32; 3]| {
         let at = Vec2::new(at[0], at[1]);
         arms.iter()
@@ -978,23 +1014,66 @@ fn the_gore_is_paved_under_the_edges_of_both_arms() {
             .fold(f32::INFINITY, f32::min)
     };
     const UNDER: f32 = 2.3;
-    let (asphalt, hatching) = (deepest("roads"), deepest("lot_lines"));
+    let (asphalt, hatching) = (deepest("roads"), deepest(paint::PAINT_ISLANDS));
     assert!(
         asphalt < UNDER,
         "асфальт островка не зашёл под кромки полотен: {asphalt}"
     );
     // ...а штриховка у́же его ровно на этот заход и на полотно не лезет
+    let hatching = hatching + paint::EDGE_STRIP;
     assert!(
         hatching.is_finite() && hatching > UNDER,
         "штриховка островка вылезла на полотно: {hatching}"
     );
 }
 
+/// Двусторонний подход одним way — веера из въезда и съезда нет, и клин
+/// [`gores::Gores::of`] не находит. Островок ставится по правилу: капля на оси
+/// подхода от кромки кольца, подход вокруг неё раздвинут асфальтом.
+#[test]
+fn a_two_way_approach_gets_a_splitter_island() {
+    let circle: Vec<Vec2> = (0..=24)
+        .map(|step| Vec2::from_angle(step as f32 * std::f32::consts::TAU / 24.0) * 25.0)
+        .collect();
+    let mut map = MapData::default();
+    map.roads.push(RoadLine {
+        oneway: true,
+        roundabout: true,
+        ..fixture::street(circle.clone(), 8.0)
+    });
+    map.roads
+        .push(fixture::street(vec![circle[0], Vec2::new(90.0, 0.0)], 7.6));
+    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    assert_eq!(report.rings[0], 1);
+    assert_eq!(report.gores, 1, "островок на подходе один");
+    // капля — на оси подхода за кромкой кольца (25 + 4 м), не дальше острия
+    let island: Vec<&[f32; 3]> = layer(&layers, paint::PAINT_ISLANDS)
+        .builder
+        .positions_for_test()
+        .iter()
+        .collect();
+    assert!(!island.is_empty());
+    assert!(
+        island
+            .iter()
+            .all(|at| (28.0..50.0).contains(&at[0]) && at[1].abs() < 3.0),
+        "островок не на подходе"
+    );
+    // и подход раздвинут: асфальт шире полотна по сторонам островка
+    let roads = layer(&layers, "roads").builder.positions_for_test();
+    assert!(
+        roads
+            .iter()
+            .any(|at| (30.0..35.0).contains(&at[0]) && at[1].abs() > 7.6 / 2.0 + 0.5),
+        "подход у островка не расширен"
+    );
+}
+
 #[test]
 fn a_two_way_loop_without_the_tag_is_not_a_roundabout() {
     let map = roundabout_with_an_approach(false, false);
-    let (layers, _) = mesh_roads(&map, RoadStyle::default());
-    assert!(layer(&layers, "lot_lines").builder.is_empty());
+    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    assert!(layer(&layers, paint::PAINT_ISLANDS).builder.is_empty());
 }
 
 #[test]
@@ -1003,12 +1082,17 @@ fn the_markings_knob_takes_the_hatching_off() {
         markings: false,
         ..RoadStyle::default()
     };
-    let (layers, _) = mesh_roads(&roundabout_with_an_approach(true, true), style);
-    assert!(layer(&layers, "lot_lines").builder.is_empty());
+    let (layers, _) = mesh_roads(
+        &roundabout_with_an_approach(true, true),
+        style,
+        RoadShape::default(),
+    );
+    assert!(layer(&layers, paint::PAINT_ISLANDS).builder.is_empty());
 }
 
 /// Два встречных полотна бок о бок — бульвар: между ними не бордюр, а двойная
-/// сплошная.
+/// сплошная. Пару находит сеть (`roads/network/pairs.rs`); бульвар у ТРЦ
+/// «Макси» — два встречных проезда, как и здесь.
 #[test]
 fn two_carriageways_side_by_side_get_a_double_line_and_no_kerb_between() {
     let mut map = ground_with_roads(100.0);
@@ -1020,7 +1104,8 @@ fn two_carriageways_side_by_side_get_a_double_line_and_no_kerb_between() {
             5.0,
         )
     });
-    let (layers, _) = mesh_roads(&map, RoadStyle::default());
+    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    assert_eq!(report.medians, [1, 0]);
 
     let lines = &layer(&layers, "lot_lines").builder;
     assert!(!lines.is_empty());
@@ -1052,6 +1137,258 @@ fn the_sidewalk_knob_takes_the_kerb_off_the_lot_road_too() {
         sidewalks: false,
         ..RoadStyle::default()
     };
-    let (layers, _) = mesh_roads(&ground_with_roads(100.0), style);
+    let (layers, _) = mesh_roads(&ground_with_roads(100.0), style, RoadShape::default());
     assert!(layer(&layers, "lot_sidewalks").builder.is_empty());
+}
+
+/// Зебра по правилу — на плече узла двух улиц с тротуарами **по тегу**
+/// (`RoadLine::sidewalks`, как карман у `pockets::kerb_parking`), а не по
+/// ручке «Sidewalks»: та лишь прячет ленту, у зебры своя ручка `crossings`.
+#[test]
+fn rule_zebras_do_not_follow_the_sidewalk_knob() {
+    let map = a_tee();
+    let zebras = |sidewalks| {
+        let style = RoadStyle {
+            sidewalks,
+            ..RoadStyle::default()
+        };
+        mesh_roads(&map, style, RoadShape::default()).1.zebras[0]
+    };
+
+    assert!(zebras(true) > 0, "у тройника есть зебра по правилу");
+    assert_eq!(
+        zebras(false),
+        zebras(true),
+        "ручка тротуаров зебру не трогает"
+    );
+}
+
+/// Разделённый проспект вдоль x: две встречные половины в три полосы с
+/// `gap` метров между кромками. Возвращает карту и расстояние между осями.
+fn divided_avenue(gap: f32) -> (MapData, f32) {
+    let width = 3.0 * 3.3 + 1.0;
+    let apart = width + gap;
+    let half = |points: Vec<Vec2>| RoadLine {
+        highway: Highway::Primary,
+        oneway: true,
+        lanes: Some(3),
+        ..fixture::street(points, width)
+    };
+    let mut map = MapData::default();
+    map.roads
+        .push(half(vec![Vec2::new(100.0, 100.0), Vec2::new(500.0, 100.0)]));
+    map.roads.push(half(vec![
+        Vec2::new(500.0, 100.0 + apart),
+        Vec2::new(100.0, 100.0 + apart),
+    ]));
+    (map, apart)
+}
+
+#[test]
+fn paired_halves_share_a_paved_median_and_keep_sidewalks_outside() {
+    let (map, apart) = divided_avenue(0.6);
+    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    assert_eq!(report.medians, [1, 0]);
+    let middle = 100.0 + apart / 2.0;
+    // двойная сплошная — по середине между половинами
+    let axes = layer(&layers, paint::PAINT_AXES)
+        .builder
+        .positions_for_test();
+    assert!(!axes.is_empty(), "двойная сплошная есть");
+    assert!(
+        axes.iter().all(|at| (at[1] - middle).abs() < 1.5),
+        "осевые только по середине"
+    );
+    // под зазором — асфальт, а не тротуар
+    let sidewalks = layer(&layers, "sidewalks").builder.positions_for_test();
+    let half = (3.0 * 3.3 + 1.0) / 2.0;
+    let (low, high) = (100.0 + half, 100.0 + apart - half);
+    assert!(
+        sidewalks
+            .iter()
+            .all(|at| at[1] <= low + 0.01 || at[1] >= high - 0.01),
+        "тротуар со стороны пары"
+    );
+    assert!(
+        sidewalks.iter().any(|at| at[1] < 100.0 - half - 1.0),
+        "а с внешней стороны он есть"
+    );
+    let roads = layer(&layers, "roads").builder.positions_for_test();
+    assert!(
+        roads
+            .iter()
+            .any(|at| (at[1] - middle).abs() < 0.01 && at[0] > 150.0)
+    );
+    assert!(layer(&layers, "road_medians").builder.is_empty());
+}
+
+/// `sidewalk=right` — полоса только справа по ходу (к югу у улицы на восток),
+/// `separate` с обеих сторон — никакой.
+#[test]
+fn the_sidewalk_tag_picks_the_side() {
+    let sidewalks_with = |sides: [bool; 2]| {
+        let mut map = one_street();
+        map.roads[0].sidewalks = sides;
+        let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+        layer(&layers, "sidewalks")
+            .builder
+            .positions_for_test()
+            .to_vec()
+    };
+    let half = 12.0 / 2.0;
+    let right = sidewalks_with([false, true]);
+    assert!(!right.is_empty());
+    assert!(
+        right.iter().all(|at| at[1] <= 100.0 + half + 0.01),
+        "слева по ходу тротуара нет"
+    );
+    assert!(right.iter().any(|at| at[1] < 100.0 - half - 1.0));
+    assert!(sidewalks_with([false, false]).is_empty());
+}
+
+/// Карманы по тегу `street_side` с обеих сторон: асфальт за кромкой, тротуар
+/// отодвинут за карман. Правило без тега ставит их редко
+/// (`pockets::sparse_pockets`), а тут нужен карман наверняка.
+#[test]
+fn a_primary_gets_pockets_in_its_sidewalks() {
+    let mut map = one_street();
+    map.roads[0].highway = Highway::Primary;
+    map.roads[0].parking = [KerbParking::Pocket; 2];
+    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    assert_eq!(report.kerb_pockets, 2);
+    let edge = 100.0 + 6.0 + pockets::POCKET_WIDTH;
+    let roads = layer(&layers, "roads").builder.positions_for_test();
+    assert!(roads.iter().any(|at| (at[1] - edge).abs() < 0.01));
+    let sidewalks = layer(&layers, "sidewalks").builder.positions_for_test();
+    assert!(sidewalks.iter().any(|at| at[1] > edge + 1.0));
+}
+
+/// `highway=turning_circle` на торце тупика — круг асфальта шире дороги.
+#[test]
+fn a_turning_circle_widens_the_dead_end() {
+    let mut map = one_street();
+    map.road_nodes.push(RoadNode {
+        pos: Vec2::new(600.0, 100.0),
+        kind: RoadNodeKind::TurningCircle,
+    });
+    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    assert_eq!(report.turning_circles, 1);
+    let radius = turning_radius(12.0);
+    assert!(radius > 6.0);
+    let roads = layer(&layers, "roads").builder.positions_for_test();
+    assert!(
+        roads
+            .iter()
+            .any(|at| (at[1] - (100.0 + radius)).abs() < 0.01 && (at[0] - 600.0).abs() < 1.0)
+    );
+}
+
+/// Двойная сплошная доходит до перекрёстка так же, как линии полос: пробы пары
+/// теряют соседа за несколько метров до узла, и середина кончалась там (отчёт
+/// автора, пример 2 витрины).
+#[test]
+fn the_double_line_reaches_the_junction_like_the_lane_lines() {
+    let (mut map, apart) = divided_avenue(0.6);
+    for road in &mut map.roads {
+        road.points.insert(1, Vec2::new(300.0, road.points[0].y));
+    }
+    map.roads.push(fixture::street(
+        vec![
+            Vec2::new(300.0, 40.0),
+            Vec2::new(300.0, 100.0),
+            Vec2::new(300.0, 100.0 + apart),
+            Vec2::new(300.0, 170.0),
+        ],
+        12.0,
+    ));
+    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let nearest_before = |name: &str| {
+        layer(&layers, name)
+            .builder
+            .positions_for_test()
+            .iter()
+            .filter(|at| at[0] < 300.0 && (at[1] - 100.0 - apart / 2.0).abs() < apart)
+            .map(|at| at[0])
+            .fold(f32::NEG_INFINITY, f32::max)
+    };
+    let (axis, lanes) = (
+        nearest_before(paint::PAINT_AXES),
+        nearest_before(paint::PAINT_LANES),
+    );
+    assert!(axis.is_finite() && lanes.is_finite());
+    // полоса краски выходит за видимый конец линии — гасит её шейдер по
+    // «до разрыва», — так что двойная обязана доходить не меньше линий полос
+    assert!(
+        axis > lanes - 0.5,
+        "двойная кончается у x = {axis}, линии полос — у x = {lanes}"
+    );
+}
+
+/// Улица, примыкающая только к ближней половине, разделительную не открывает:
+/// двойная сплошная идёт мимо узла без разрыва (пример 12 витрины).
+#[test]
+fn a_street_into_one_half_does_not_open_the_median() {
+    let (mut map, _) = divided_avenue(0.6);
+    map.roads[0].points.insert(1, Vec2::new(300.0, 100.0));
+    map.roads.push(fixture::street(
+        vec![Vec2::new(300.0, 40.0), Vec2::new(300.0, 100.0)],
+        7.6,
+    ));
+    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    assert!(report.junctions > 0, "узел у ближней половины есть");
+    let axes = &layer(&layers, paint::PAINT_AXES).builder;
+    let positions = axes.positions_for_test();
+    assert!(positions.iter().any(|at| at[0] < 200.0) && positions.iter().any(|at| at[0] > 400.0));
+    // разрыв — в «до разрыва» полосы краски: внутри него оно отрицательно
+    // осевая самой примыкающей улицы лежит ниже половин — её не считаем
+    assert!(
+        axes.ribbon_coords_for_test()
+            .expect("у краски атрибут есть")
+            .iter()
+            .zip(positions)
+            .filter(|(_, at)| at[1] > 100.0)
+            .all(|(coords, _)| coords[2] > 0.0),
+        "двойная сплошная рвётся у узла одной половины"
+    );
+}
+
+#[test]
+fn a_wide_gap_between_halves_is_a_lawn_with_a_kerb() {
+    let (map, apart) = divided_avenue(8.0);
+    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    assert_eq!(report.medians, [0, 1]);
+    let inner = (3.0 * 3.3 + 1.0) / 2.0;
+    let grass = layer(&layers, "road_medians").builder.positions_for_test();
+    assert!(!grass.is_empty(), "газон есть");
+    for at in grass {
+        assert!(
+            at[1] >= 100.0 + inner + medians::MEDIAN_KERB - 0.05
+                && at[1] <= 100.0 + apart - inner - medians::MEDIAN_KERB + 0.05,
+            "газон заходит на бордюр или полотно: {at:?}"
+        );
+    }
+    // осевой краски у газона нет
+    assert!(layer(&layers, paint::PAINT_AXES).builder.is_empty());
+}
+
+#[test]
+fn an_arm_is_filled_before_its_leader_even_when_it_leads_elsewhere() {
+    use node_paint::{Junction, JunctionArm};
+    // 0 — главная, ведёт узел; 1 — примыкание шире неё, что само ведёт
+    // другой узел дальше: по одному ключу «ведущие последними, узкие раньше»
+    // оно ложилось бы на главную
+    let widths = [5.0, 10.0, 8.0];
+    let leading = [true, true, false];
+    let arm = |road| JunctionArm {
+        road,
+        edge: 0.0,
+        dir: 1.0,
+    };
+    let junctions = [Junction {
+        arms: vec![arm(0), arm(0), arm(1)],
+        leading: vec![0],
+    }];
+    assert_eq!(fill_order(&widths, &leading, &junctions), vec![2, 1, 0]);
+    // без узла — прежний ключ
+    assert_eq!(fill_order(&widths, &leading, &[]), vec![2, 0, 1]);
 }

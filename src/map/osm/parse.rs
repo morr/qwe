@@ -11,12 +11,13 @@ use crate::city::City;
 use crate::map::grid::Grid;
 use crate::map::osm::entrances::generate_entrances;
 use crate::map::osm::model::{
-    AreaKind, BuildingUse, Faith, FenceLine, MapData, PipeLine, PolyArea, RailLine, RoadLine,
-    Sacred, SacredForm, Structure, TrafficSide, TreeCompose, TreeNode, TreeRow, TreeRowLayout,
-    WallLine, WaterLine, closest_on_segment, point_in_area, point_in_polygon, ring_area,
-    ring_bounds, ring_vertex_mean, signed_ring_area,
+    AreaKind, BuildingUse, Faith, FenceLine, MapData, PipeLine, PolyArea, RailLine, RoadArea,
+    RoadClass, RoadLine, RoadNode, Sacred, SacredForm, Structure, TrafficSide, TreeCompose,
+    TreeNode, TreeRow, TreeRowLayout, WallLine, WaterLine, closest_on_segment, point_in_area,
+    point_in_polygon, ring_area, ring_bounds, ring_vertex_mean, signed_ring_area,
 };
 use crate::map::osm::overpass::{Element, GeoBounds, LatLon, Member, OverpassResponse};
+use crate::map::roads::network::sections::{self, SectionReport};
 use crate::map::roads::{is_carriageway, sidewalk_width};
 use crate::map::seed::seed_from_point;
 
@@ -44,13 +45,21 @@ const ENTRANCE_SNAP_SCALE: f32 = 100.0;
 pub fn parse(json: &str, city: City) -> Result<MapData, String> {
     let response: OverpassResponse =
         serde_json::from_str(json).map_err(|error| format!("overpass json: {error}"))?;
+    Ok(parse_response(&response, city))
+}
+
+/// [`parse`] уже десериализованного ответа. Отдельной дверью — ради витрины
+/// дорог: она читает выгрузку города один раз и режет из неё окна
+/// ([`super::crop`]), и гонять каждое окно обратно через JSON было бы
+/// круговой поездкой ни за чем.
+pub fn parse_response(response: &OverpassResponse, city: City) -> MapData {
     let bounds = GeoBounds::for_city(city);
 
-    let (mut map, entrances, read) = read_elements(&response, &bounds);
+    let (mut map, entrances, read) = read_elements(response, &bounds);
     eprint!("{read}");
     let passes = finish_parse(&mut map, &entrances);
     eprint!("{passes}");
-    Ok(map)
+    map
 }
 
 /// Что сказал элементный цикл — значением, а не двумя `eprintln!`.
@@ -117,6 +126,9 @@ fn read_elements(
                 if let Some(structure) = parse_structure_node(element, bounds) {
                     map.structures.push(structure);
                 }
+                if let Some(node) = parse_road_node(element, bounds) {
+                    map.road_nodes.push(node);
+                }
             }
             "way" => parse_way(element, bounds, &mut map),
             "relation" => parse_relation(element, bounds, &mut map, &mut unclosed_rings),
@@ -150,6 +162,7 @@ struct PlantedReport {
 /// этого единственным способом узнать, сколько домов отодвинулось от
 /// тротуаров, было прочесть строку на stderr.
 struct PassReport {
+    sections: SectionReport,
     drowned: usize,
     faiths_guessed: usize,
     entrances_found: usize,
@@ -171,6 +184,7 @@ impl std::fmt::Display for PassReport {
         // разбор по полям, а не `self.…`: в строке посадки шесть подстановок, и
         // по именам они читаются, а по позициям — только счётом
         let Self {
+            sections,
             drowned,
             faiths_guessed,
             entrances_found,
@@ -186,6 +200,7 @@ impl std::fmt::Display for PassReport {
             planted,
             planting,
         } = self;
+        writeln!(f, "{sections}")?;
         if *drowned > 0 {
             writeln!(
                 f,
@@ -262,12 +277,16 @@ impl std::fmt::Display for PassReport {
     }
 }
 
-/// Доводочные проходы по сырой карте — восемь, плюс сборка деревьев в конце, —
+/// Доводочные проходы по сырой карте — девять, плюс сборка деревьев в конце, —
 /// **и этот порядок и есть их интерфейс**. До этой функции он жил заметками в
 /// трёх doc-комментариях из восьми и не был записан целиком нигде.
 ///
 /// Почему именно так, сверху вниз:
 ///
+/// 0. **Улицы и сечения** (`map::roads::network::sections`) — самыми первыми:
+///    ширина дороги выводится из числа полос, а её читают шаги 5 и 6 (тротуар
+///    отодвигает дома, край дороги притягивает кварталы и стоянки). Домов этот
+///    шаг не касается, так что ставить его раньше утопленников ничему не мешает.
 /// 1. **Утопленники** уходят первыми: дом, целиком стоящий в воде, не должен
 ///    получить ни веры, ни двери, ни выпрямленного контура — всё это работа
 ///    по дому, которого не будет.
@@ -306,6 +325,7 @@ impl std::fmt::Display for PassReport {
 /// выпрямленный дом уносит свои вершины на новые места, и счёт, снятый до
 /// него, отвечал бы про старую карту.
 fn finish_parse(map: &mut MapData, entrances: &[Vec2]) -> PassReport {
+    let sections = sections::apply(map);
     let drowned = drop_buildings_in_water(map);
     let faiths_guessed = resolve_faiths(&mut map.buildings);
     let entrances_orphaned = attach_entrances(map, entrances);
@@ -346,6 +366,7 @@ fn finish_parse(map: &mut MapData, entrances: &[Vec2]) -> PassReport {
     map.compose_trees(TreeCompose::default());
 
     PassReport {
+        sections,
         drowned,
         faiths_guessed,
         entrances_found: entrances.len(),
@@ -695,6 +716,15 @@ fn parse_structure_way(element: &Element, points: &[Vec2]) -> Option<Structure> 
     })
 }
 
+/// Нода `highway=crossing|traffic_signals|…` → дорожный узел ([`RoadNode`]);
+/// вид — по белому списку `road_node_kind`.
+fn parse_road_node(element: &Element, bounds: &GeoBounds) -> Option<RoadNode> {
+    Some(RoadNode {
+        kind: road_node_kind(&element.tags)?,
+        pos: bounds.project(element.lat?, element.lon?),
+    })
+}
+
 /// Нода `natural=tree` → одиночное дерево. Сажает его (и отсеивает
 /// продублированные процедурной посадкой) `planting::plant_standalone`.
 fn parse_tree_node(element: &Element, bounds: &GeoBounds) -> Option<TreeNode> {
@@ -979,7 +1009,7 @@ fn pull_houses_off_sidewalks(map: &mut MapData) -> PulledHouses {
         if road.bridge || !is_carriageway(road) {
             continue;
         }
-        let Some(sidewalk) = sidewalk_width(road.width) else {
+        let Some(sidewalk) = sidewalk_width(road) else {
             continue;
         };
         let reach = road.width / 2.0 + sidewalk + SIDEWALK_CLEARANCE;
@@ -1161,6 +1191,50 @@ const LANDUSE_OVERLAP: f32 = 0.5;
 /// Между своими вершинами ребро прямое, а дорога гнётся, и на выпуклости
 /// поворота щель осталась бы посреди ребра, где двигать нечего.
 const LANDUSE_STEP: f32 = 8.0;
+/// Насколько далеко от тротуара-дорожки, м, край квартала между ней и улицей
+/// ещё уводится под неё ([`pull_vertex`]). Дальше — уже не обрезок мощения, а
+/// своя полоса: газон между тротуаром и проезжей частью.
+const SIDEWALK_TUCK_MAX: f32 = 3.0;
+
+/// Полотна дорог для [`pull_ring`]: звенья с тем, что за дорога у каждого,
+/// и их сетка.
+struct Edges<'a> {
+    edges: &'a [Edge],
+    lines: &'a Grid<usize>,
+}
+
+/// Звено полотна и что за дорога у него — одним значением, а не двумя
+/// массивами рядом, так что «та же длина, тот же порядок» ломаться нечему.
+#[derive(Clone, Copy)]
+struct Edge {
+    link: Link,
+    kind: EdgeKind,
+}
+
+/// Что за дорога у звена [`Edge`]. Варианты не пересекаются: проезжая часть
+/// бывает только у улицы ([`RoadClass::Street`]), дорожка — сама класс.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EdgeKind {
+    /// Проезжая часть ([`is_carriageway`]).
+    Carriageway,
+    /// Дорожка ([`RoadClass::Alley`]): тротуар, замапленный отдельно, и
+    /// прочие пешеходные пути.
+    Walkway,
+    /// Улица без проезжей части — проезд.
+    Drive,
+}
+
+impl EdgeKind {
+    fn of(road: &RoadLine) -> Self {
+        if is_carriageway(road) {
+            Self::Carriageway
+        } else if road.class == RoadClass::Alley {
+            Self::Walkway
+        } else {
+            Self::Drive
+        }
+    }
+}
 
 /// Квартал (`landuse`), край которого не доходит до дороги считаные метры,
 /// **дотягивается под полотно**. Возвращает [`StretchedAreas`] — сдвинутые
@@ -1195,22 +1269,26 @@ const LANDUSE_STEP: f32 = 8.0;
 /// и край выходил зубцами и иглами.
 fn pull_areas_to_roads(map: &mut MapData) -> StretchedAreas {
     // `reach` — внешний край нарисованного полотна от оси
-    let mut segments: Vec<Link> = Vec::new();
+    let mut edges: Vec<Edge> = Vec::new();
     for road in &map.roads {
         if road.bridge || road.passage {
             continue;
         }
-        let sidewalk = if is_carriageway(road) {
-            sidewalk_width(road.width).unwrap_or_default()
-        } else {
-            0.0
-        };
-        let edge = road.width / 2.0 + sidewalk;
+        // тротуар — только тот, что рисуется: у `sidewalk=separate|no` его нет,
+        // и квартал, дотянутый под несуществующую полосу, вставал за бордюром
+        let sidewalk = sidewalk_width(road)
+            .filter(|_| road.sidewalks.contains(&true))
+            .unwrap_or_default();
+        let reach = road.width / 2.0 + sidewalk;
+        let kind = EdgeKind::of(road);
         for link in road.points.windows(2) {
-            segments.push(Link {
-                from: link[0],
-                to: link[1],
-                reach: edge,
+            edges.push(Edge {
+                link: Link {
+                    from: link[0],
+                    to: link[1],
+                    reach,
+                },
+                kind,
             });
         }
     }
@@ -1218,18 +1296,22 @@ fn pull_areas_to_roads(map: &mut MapData) -> StretchedAreas {
     // пределов, так что спрашивающему хватает ячейки самой вершины; запас
     // больше нужного лишь добавляет кандидатов, которые отсеет сам предел
     let mut lines: Grid<usize> = Grid::new(SIDEWALK_CELL);
-    for (index, link) in segments.iter().enumerate() {
-        let pad = link.reach + LANDUSE_GAP_MAX;
-        lines.insert_segment(link.from, link.to, pad, index);
+    for (index, edge) in edges.iter().enumerate() {
+        let Link { from, to, reach } = edge.link;
+        lines.insert_segment(from, to, reach + LANDUSE_GAP_MAX, index);
     }
+    let roads = Edges {
+        edges: &edges,
+        lines: &lines,
+    };
 
     let mut stretched = StretchedAreas::default();
     for area in &mut map.landuse {
-        area.outer = pull_ring(&area.outer, false, &segments, &lines, &mut stretched.blocks);
+        area.outer = pull_ring(&area.outer, false, &roads, &mut stretched.blocks);
         area.holes = area
             .holes
             .iter()
-            .map(|hole| pull_ring(hole, true, &segments, &lines, &mut stretched.blocks))
+            .map(|hole| pull_ring(hole, true, &roads, &mut stretched.blocks))
             .collect();
     }
     stretched.lots = lots::pave_lots(map);
@@ -1261,13 +1343,7 @@ struct StretchedAreas {
 /// полосы газона между двумя улицами ближайшая улица бывает **за
 /// противоположным** краем, и такой ответ сжал бы полосу вместо того, чтобы её
 /// растянуть.
-fn pull_ring(
-    ring: &[Vec2],
-    hole: bool,
-    segments: &[Link],
-    lines: &Grid<usize>,
-    pulled: &mut usize,
-) -> Vec<Vec2> {
+fn pull_ring(ring: &[Vec2], hole: bool, roads: &Edges, pulled: &mut usize) -> Vec<Vec2> {
     // ориентация колец в OSM произвольная, так что сторону задаёт знак площади
     let sign = if (signed_ring_area(ring) > 0.0) == hole {
         1.0
@@ -1277,16 +1353,15 @@ fn pull_ring(
     let normal = |from: Vec2, to: Vec2| ((to - from).perp() * sign).normalize_or_zero();
     let mut out: Vec<Vec2> = Vec::with_capacity(ring.len());
     for (index, &point) in ring.iter().enumerate() {
-        let mut push = |point: Vec2, outward: Vec2, inserted: bool| match pull_vertex(
-            point, outward, segments, lines,
-        ) {
-            Some(shifted) => {
-                out.push(shifted);
-                *pulled += 1;
-            }
-            None if inserted => {}
-            None => out.push(point),
-        };
+        let mut push =
+            |point: Vec2, outward: Vec2, inserted: bool| match pull_vertex(point, outward, roads) {
+                Some(shifted) => {
+                    out.push(shifted);
+                    *pulled += 1;
+                }
+                None if inserted => {}
+                None => out.push(point),
+            };
         let previous = ring[(index + ring.len() - 1) % ring.len()];
         let next = ring[(index + 1) % ring.len()];
         // у вершины — биссектриса её рёбер, у вставленной точки — нормаль
@@ -1298,7 +1373,12 @@ fn pull_ring(
             false,
         );
         let length = point.distance(next);
-        if length <= LANDUSE_STEP || lines.near(point.min(next), point.max(next)).is_empty() {
+        if length <= LANDUSE_STEP
+            || roads
+                .lines
+                .near(point.min(next), point.max(next))
+                .is_empty()
+        {
             continue;
         }
         let steps = (length / LANDUSE_STEP).ceil() as usize;
@@ -1312,28 +1392,42 @@ fn pull_ring(
 /// Куда встаёт вершина квартала, которой до полотна дороги остался зазор не
 /// больше [`LANDUSE_GAP_MAX`]; `None` — двигать нечего или некуда. `outward` —
 /// куда от этой вершины прибывает заливка (см. [`pull_ring`]).
-fn pull_vertex(point: Vec2, outward: Vec2, segments: &[Link], lines: &Grid<usize>) -> Option<Vec2> {
+fn pull_vertex(point: Vec2, outward: Vec2, roads: &Edges) -> Option<Vec2> {
     // зазор мерится **до края полотна**, а не до оси: узкий проезд рядом ближе
     // широкой улицы, а щель оставляет улица. Берётся ближайшая дорога вообще;
     // лежит вершина под её полотном — это ответ «тянуть некуда», и никакая
     // другая дорога его не отменяет
-    let mut best: Option<(f32, Vec2)> = None;
-    for index in lines.near(point, point) {
-        let Link { from, to, reach } = segments[index];
-        let axis = closest_on_segment(point, from, to);
-        let gap = point.distance(axis) - reach;
-        if best.is_none_or(|(best_gap, _)| gap < best_gap) {
-            best = Some((gap, axis));
-        }
-    }
-    let (gap, axis) = best?;
+    let gaps = || {
+        roads.lines.near(point, point).into_iter().map(|index| {
+            let Link { from, to, reach } = roads.edges[index].link;
+            let axis = closest_on_segment(point, from, to);
+            (point.distance(axis) - reach, axis, index)
+        })
+    };
+    let (gap, axis, index) = gaps().min_by(|a, b| a.0.total_cmp(&b.0))?;
     if gap <= 0.0 || gap > LANDUSE_GAP_MAX {
         return None;
     }
     // зелень только прибывает: сдвиг к дороге, уводящий край внутрь заливки,
     // не делается вовсе — так улица, идущая внутри квартала, его не сжимает
     let direction = (axis - point).try_normalize()?;
-    (direction.dot(outward) > 0.0).then(|| point + direction * (gap + LANDUSE_OVERLAP))
+    if direction.dot(outward) > 0.0 {
+        return Some(point + direction * (gap + LANDUSE_OVERLAP));
+    }
+    // кроме одного случая: вершина между тротуаром, замапленным дорожкой, и
+    // улицей за ним. Квартал в OSM нарисован до бордюра, а наша проезжая
+    // часть уже (Берлин, витрина 03: край квартала в 6–7 м от оси при
+    // полуширине 3.8), и двор торчал из-под тротуара серпом у каждого
+    // скругления угла. Полоса между тротуаром и бордюром — мощение, не двор:
+    // край уходит под дорожку
+    let street_beyond = gaps().any(|(gap, axis, index)| {
+        roads.edges[index].kind == EdgeKind::Carriageway
+            && gap > 0.0
+            && gap <= LANDUSE_GAP_MAX
+            && (axis - point).dot(outward) > 0.0
+    });
+    (roads.edges[index].kind == EdgeKind::Walkway && gap <= SIDEWALK_TUCK_MAX && street_beyond)
+        .then(|| point + direction * (gap + LANDUSE_OVERLAP))
 }
 
 /// Во что сдвигаемый дом не должен упереться: другие здания и отрезки всего
@@ -1752,6 +1846,14 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
         return;
     }
 
+    // Площадь дороги — первой и без `return`: `highway=*` + `area=yes` обязан
+    // дойти и до дорожной ветки, где он был линией и до v15
+    if let Some(kind) = road_area_kind(&element.tags)
+        && let Some(outline) = as_ring(&points)
+    {
+        map.road_areas.push(RoadArea { outline, kind });
+    }
+
     // Рельсы проверяются до дорог и **не** прерывают разбор: трамвайный путь в
     // OSM сплошь и рядом висит на том же way, что и `highway=*`, и такой way
     // обязан стать и улицей, и путём.
@@ -1826,7 +1928,7 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
     // `highway=footway|steps` метрополитена. Что тег `tunnel` на этом way
     // может описывать вовсе не дорогу — вопрос [`is_road_underground`]
     if let Some(highway) = element.tags.get("highway") {
-        let Some((width, class)) = road_class(highway) else {
+        let Some((width, class, highway)) = road_class(highway) else {
             return;
         };
         if is_road_underground(&element.tags) {
@@ -1848,12 +1950,16 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
             points,
             width,
             class,
+            highway,
             bridge,
             passage: is_building_passage(&element.tags),
             oneway: is_oneway(&element.tags),
             roundabout: is_roundabout(&element.tags),
             lanes: tagged_lanes(&element.tags),
             parking_aisle: is_parking_aisle(&element.tags),
+            turns: tagged_turns(&element.tags),
+            sidewalks: tagged_sidewalks(&element.tags),
+            parking: tagged_parking(&element.tags),
         });
         return;
     }
@@ -2039,7 +2145,8 @@ mod tests;
 use self::tags::{
     NON_WALKABLE_ENTRANCES, area_colours, area_height, area_kind, area_storeys, area_use,
     crown_radius, fence_kind, is_building_passage, is_oneway, is_oneway_backward, is_parking_aisle,
-    is_road_underground, is_roundabout, is_underground, pipe_width, rail_class, road_class,
-    row_spacing, service_track, structure_height, structure_kind, structure_radius, structure_size,
-    tagged_lanes, water_class, water_width,
+    is_road_underground, is_roundabout, is_underground, pipe_width, rail_class, road_area_kind,
+    road_class, road_node_kind, row_spacing, service_track, structure_height, structure_kind,
+    structure_radius, structure_size, tagged_lanes, tagged_parking, tagged_sidewalks, tagged_turns,
+    water_class, water_width,
 };

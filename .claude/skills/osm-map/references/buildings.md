@@ -615,7 +615,7 @@ arches.
     are deliberately the same ones `parse::building_height` assembles out of
     `building:levels` — half of Tula's crowd-format carries no level tag at all («Верный»,
     ТЦ «Перспектива»), and a box next to an identical box must not come out half as tall
-    for want of a tag. The class and the threshold are in `SKILL.md`, **Retail box**.
+    for want of a tag. The class and the threshold are in `parse.md`, **Retail box**.
   - **A public building is measured by its use, not its shape** — school, clinic, office
     (`BuildingUse::Public`) at 2–5 storeys, the same table as «everything else large»
     but reached before the footprint is consulted: a 900 m² school with a squarish plan
@@ -670,7 +670,7 @@ arches.
     **`Roof` attribute** (`meshing::ATTRIBUTE_ROOF`, `[axis x, y, material code,
     seed]`). All four numbers are constant over a **face** — the roof's axis is the
     building's long axis, a wall's is its own direction — so the attribute is a
-    *builder state* (`MeshBuilder::set_roof`), like the markings code, not an argument of
+    *builder state* (`MeshBuilder::set_roof`), like the lane frame of a street, not an argument of
     every `push_*`; the fragment reads it `@interpolate(flat)`. Code `0` means **no
     texture** — roof clutter rides in the same mesh (2.5D is one
     painter's-order layer) and comes out with its vertex colour untouched. Walls rode
@@ -978,7 +978,7 @@ arches.
     blue, orange, i.e. Магнит / Лента / Леруа / Глобус / Макси; a sixth, magenta, was
     dropped on the first look at the frame, since no chain here is that colour. **This is
     the first place outside the temples that reads `building:colour`**, which is why the
-    note under **Tagged colours** in `SKILL.md` now names two readers and not one; the
+    note under **Tagged colours** in `parse.md` now names two readers and not one; the
     private sector still does not read them.
     Pushed **after** its own wall and **before** the door, so the frieze lies on the facade
     and the entrance lies on the frieze.
@@ -1178,7 +1178,7 @@ arches.
     the edge is hard, the grid is aligned to the walls (`uv` is the building frame), and
     ±4 % of brightness on a big dark roof is plainly visible at the working zoom. The
     rule the fix follows — and the one the **asphalt patches** broke a second time, which
-    is why they are gone (**Asphalt wear** in `SKILL.md`): only a minority
+    is why they are gone (**Asphalt wear** in `roads.md`): only a minority
     of cells carry the feature (the `share` argument), and
     inside its cell the feature is smaller than the cell and jittered, so two neighbours
     never meet at a cell boundary. (The **wall balconies** above keep only the second half of
@@ -1344,7 +1344,7 @@ arches.
     chimney (the ridge used to be read back out of the first slope, which stopped being
     `[eave, eave, ridge, ridge]` once half-hips and gambrels existed).
   - **A big box's roof is a different roof** (`model::is_big_box` — the footprint, the
-    storey count **and** the height ceiling, **Retail box** in `SKILL.md`), and this is the one place the size distinction is worth
+    storey count **and** the height ceiling, **Retail box** in `parse.md`), and this is the one place the size distinction is worth
     the most: from directly above, the roof *is* the hypermarket. Three additions, none of
     which a corner shop gets:
     - **The skylight grid** (`push_skylight_grid`) — `GRID_SKYLIGHT_SIDE` 2.8 m squares on

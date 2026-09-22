@@ -12,8 +12,9 @@ use bevy::prelude::*;
 
 use crate::map::osm::model::{
     AreaKind, BIG_BOX_MAX_HEIGHT, BIG_BOX_MAX_LEVELS, BuildingUse, Colours, Faith, FenceKind,
-    PitchKind, RailKind, Rgb, RoadClass, Sacred, SacredForm, ServiceTrack, StructureKind,
-    WaterKind, is_big_box_shape, polyline_length,
+    Highway, KerbParking, LaneTurn, PitchKind, RailKind, Rgb, RoadAreaKind, RoadClass,
+    RoadNodeKind, Sacred, SacredForm, ServiceTrack, StructureKind, WaterKind, is_big_box_shape,
+    polyline_length,
 };
 use crate::map::osm::overpass::Element;
 use crate::settings::STOREY_HEIGHT;
@@ -486,18 +487,82 @@ fn tagged_height(tags: &HashMap<String, String>) -> Option<f32> {
     building_height(tags, BuildingUse::Other, &[])
 }
 
-/// Ширина и класс по значению highway; `None` — дорогу не рисуем.
-pub(super) fn road_class(highway: &str) -> Option<(f32, RoadClass)> {
+/// Ширина по классу, род ленты и класс по значению highway; `None` — дорогу
+/// не рисуем.
+///
+/// Ширина здесь — **номинальная**, до сечений: у всего, кроме дорожек, её
+/// пересчитывает из числа полос проход сечений
+/// (`map::roads::network::sections`), первый в доводке разбора. Съезды
+/// (`*_link`) долго выбрасывались целиком — словарь их не знал, и въезд на
+/// мост в Туле (22 way `primary_link`) обрывался пустым местом.
+pub(super) fn road_class(highway: &str) -> Option<(f32, RoadClass, Highway)> {
+    let street = |width: f32, highway: Highway| (width, RoadClass::Street, highway);
     Some(match highway {
-        "motorway" | "trunk" | "primary" => (16.0, RoadClass::Street),
-        "secondary" => (12.0, RoadClass::Street),
-        "tertiary" => (10.0, RoadClass::Street),
-        "residential" | "unclassified" | "living_street" => (8.0, RoadClass::Street),
-        "service" => (5.0, RoadClass::Street),
+        "motorway" => street(16.0, Highway::Motorway),
+        "trunk" => street(16.0, Highway::Trunk),
+        "primary" => street(16.0, Highway::Primary),
+        "secondary" => street(12.0, Highway::Secondary),
+        "tertiary" => street(10.0, Highway::Tertiary),
+        "motorway_link" => street(8.0, Highway::MotorwayLink),
+        "trunk_link" => street(8.0, Highway::TrunkLink),
+        "primary_link" => street(8.0, Highway::PrimaryLink),
+        "secondary_link" => street(8.0, Highway::SecondaryLink),
+        "tertiary_link" => street(8.0, Highway::TertiaryLink),
+        "residential" => street(8.0, Highway::Residential),
+        "unclassified" => street(8.0, Highway::Unclassified),
+        "living_street" => street(8.0, Highway::LivingStreet),
+        "service" => street(5.0, Highway::Service),
         "footway" | "path" | "pedestrian" | "cycleway" | "steps" | "track" => {
-            (3.5, RoadClass::Alley)
+            (3.5, RoadClass::Alley, Highway::Path)
         }
         _ => return None,
+    })
+}
+
+/// Вид дорожного узла; `None` — нода не дорожный узел (вход, дерево, труба).
+///
+/// Белый список по той же причине, что [`rail_class`]: под `highway=*` на
+/// нодах лежат ещё `bus_stop`, `street_lamp`, `speed_camera`, `milestone`, а
+/// запрос их не просит — но нода с двумя тегами сразу прийти может.
+pub(super) fn road_node_kind(tags: &HashMap<String, String>) -> Option<RoadNodeKind> {
+    let tag = |key: &str| tags.get(key).map(String::as_str);
+    Some(match tag("highway") {
+        Some("crossing") => RoadNodeKind::Crossing {
+            signals: tag("crossing") == Some("traffic_signals")
+                || tag("crossing:signals") == Some("yes"),
+            island: tag("crossing:island") == Some("yes") || tag("crossing") == Some("island"),
+            marked: tag("crossing") != Some("unmarked") && tag("crossing:markings") != Some("no"),
+        },
+        Some("traffic_signals") => RoadNodeKind::TrafficSignals,
+        Some("stop") => RoadNodeKind::Stop,
+        Some("give_way") => RoadNodeKind::GiveWay,
+        Some("mini_roundabout") => RoadNodeKind::MiniRoundabout,
+        Some("turning_circle" | "turning_loop") => RoadNodeKind::TurningCircle,
+        _ if tag("traffic_calming") == Some("island") => RoadNodeKind::Island,
+        _ => return None,
+    })
+}
+
+/// Вид площади дороги у контура; `None` — контур не площадь дороги.
+///
+/// `area:highway` несёт класс той дороги, чьё покрытие нарисовано, и он
+/// читается тем же [`road_class`], что класс линии: проезжий класс —
+/// проезжая часть, аллейный — пешеходное. `highway` + `area=yes` — то же
+/// самое, только тег класса другой. Значения вне словаря дорог
+/// (`emergency`, `yes`) пропускаются: что это за покрытие, не сказано.
+pub(super) fn road_area_kind(tags: &HashMap<String, String>) -> Option<RoadAreaKind> {
+    let tag = |key: &str| tags.get(key).map(String::as_str);
+    if tag("traffic_calming") == Some("island") || tag("area:highway") == Some("traffic_island") {
+        return Some(RoadAreaKind::Island);
+    }
+    let class = match (tag("area:highway"), tag("highway"), tag("area")) {
+        (Some(value), _, _) => value,
+        (None, Some(value), Some("yes")) => value,
+        _ => return None,
+    };
+    road_class(class).map(|(_, class, _)| match class {
+        RoadClass::Street => RoadAreaKind::Carriageway,
+        RoadClass::Alley => RoadAreaKind::Walkway,
     })
 }
 
@@ -671,11 +736,126 @@ pub(super) fn is_parking_aisle(tags: &HashMap<String, String>) -> bool {
 /// направлениям; `2;3` и `2.5` попадаются и читаются как `2`. Только тег:
 /// дефолт по ширине и правило кольца — у рендера (`roads::lane_count`).
 pub(super) fn tagged_lanes(tags: &HashMap<String, String>) -> Option<u8> {
-    let lanes = tags
-        .get("lanes")
-        .and_then(|value| parse_measure(value))?
-        .floor();
+    let count = |key: &str| {
+        tags.get(key)
+            .and_then(|value| parse_measure(value))
+            .map(f32::floor)
+    };
+    // без общего `lanes` — сумма по направлениям: в Туле так размечено 26 way,
+    // и все они с `lanes` заодно, но в Европе бывает и одно без другого. Одно
+    // направление без второго — не сумма: вторая сторона не нулевая, а неизвестная
+    let lanes = count("lanes").or_else(|| {
+        Some(
+            count("lanes:forward")?
+                + count("lanes:backward")?
+                + count("lanes:both_ways").unwrap_or(0.0),
+        )
+    })?;
     LANES_RANGE.contains(&lanes).then_some(lanes as u8)
+}
+
+/// Манёвры полос `[по ходу точек, против]` из `turn:lanes`. Односторонней
+/// годится и общий тег, и тег направления её потока (`oneway=-1` развёрнут
+/// ниже, так что поток после разбора всегда по ходу точек); двусторонней —
+/// только `turn:lanes:forward` / `:backward`. Полоса — значение между `|`,
+/// её манёвры — через `;`.
+pub(super) fn tagged_turns(tags: &HashMap<String, String>) -> [Vec<LaneTurn>; 2] {
+    let read = |key: &str| tags.get(key).map(|value| lane_turns(value));
+    if is_oneway(tags) {
+        let flow = if is_oneway_backward(tags) {
+            "turn:lanes:backward"
+        } else {
+            "turn:lanes:forward"
+        };
+        return [
+            read("turn:lanes")
+                .or_else(|| read(flow))
+                .unwrap_or_default(),
+            Vec::new(),
+        ];
+    }
+    [
+        read("turn:lanes:forward").unwrap_or_default(),
+        read("turn:lanes:backward").unwrap_or_default(),
+    ]
+}
+
+/// Тротуар `[слева, справа]` по ходу точек **после разбора**: `sidewalk=both|
+/// left|right|no|separate`, уточнённый `sidewalk:both|left|right`. `no`,
+/// `none` и `separate` — нет тротуара у ленты (отдельный footway рисуется сам);
+/// без тега — с обеих сторон. У `oneway=-1` точки разворачиваются, и стороны
+/// меняются местами вместе с ними.
+pub(super) fn tagged_sidewalks(tags: &HashMap<String, String>) -> [bool; 2] {
+    let present = |value: &str| !matches!(value, "no" | "none" | "separate");
+    let mut sides = match tags.get("sidewalk").map(String::as_str) {
+        Some("left") => [true, false],
+        Some("right") => [false, true],
+        Some(value) => [present(value); 2],
+        None => [true; 2],
+    };
+    if let Some(value) = tags.get("sidewalk:both") {
+        sides = [present(value); 2];
+    }
+    for (side, key) in ["sidewalk:left", "sidewalk:right"].into_iter().enumerate() {
+        if let Some(value) = tags.get(key) {
+            sides[side] = present(value);
+        }
+    }
+    if is_oneway_backward(tags) {
+        sides.reverse();
+    }
+    sides
+}
+
+/// Стоянка у бордюра `[слева, справа]` по ходу точек после разбора:
+/// `parking:<side>` (или `parking:both`) и запрет из
+/// `parking:<side>:restriction`, который сильнее самого места — полоса под
+/// знаком «остановка запрещена» пуста. Развёрнутый `oneway=-1` меняет стороны,
+/// как у тротуара.
+pub(super) fn tagged_parking(tags: &HashMap<String, String>) -> [KerbParking; 2] {
+    let tag = |side: &str, key: &str| {
+        tags.get(&format!("parking:{side}{key}"))
+            .or_else(|| tags.get(&format!("parking:both{key}")))
+            .map(String::as_str)
+    };
+    let mut sides = ["left", "right"].map(|side| {
+        if matches!(
+            tag(side, ":restriction"),
+            Some("no_stopping" | "no_parking" | "no_standing")
+        ) {
+            return KerbParking::No;
+        }
+        match tag(side, "") {
+            Some("street_side") => KerbParking::Pocket,
+            Some("lane" | "on_kerb" | "half_on_kerb" | "shoulder" | "yes") => KerbParking::Lane,
+            Some("no" | "separate") => KerbParking::No,
+            _ => KerbParking::Untagged,
+        }
+    });
+    if is_oneway_backward(tags) {
+        sides.reverse();
+    }
+    sides
+}
+
+/// Одна строка `turn:lanes`: `left|through;right`. Неизвестное слово (в Туле
+/// есть `throught`) — прямо: полоса есть, и прямо из неё едут чаще всего.
+fn lane_turns(value: &str) -> Vec<LaneTurn> {
+    value
+        .split('|')
+        .map(|lane| {
+            let mut turn = LaneTurn::default();
+            for word in lane.split(';').map(str::trim) {
+                match word {
+                    "left" | "slight_left" | "sharp_left" => turn.left = true,
+                    "right" | "slight_right" | "sharp_right" => turn.right = true,
+                    "reverse" => {}
+                    _ => turn.through = true,
+                }
+            }
+            turn
+        })
+        .collect()
 }
 
 /// Шаг посадки аллеи из тегов, м. `spacing` как есть, иначе `count` /

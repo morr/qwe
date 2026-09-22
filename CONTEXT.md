@@ -70,11 +70,14 @@ in `main.rs`.
   city.
 - **Z-layers** — constants in `settings.rs`, bottom to top: ground → landuse works →
   landuse yards → parks → woods → tree-row band casing → tree-row band → grass → sand →
-  sidewalks → alley casings → alleys → road casings → roads → parking (2.001) → lot
-  sidewalks (2.002) → lot lines (2.003) → parking markings (2.004) → pitches (2.005) →
-  pitch markings → water (2.01) → waterways (2.02) → bridge shadows →
-  bridge casings → bridges → rail ballast
-  → rail ties → rail steel → tram → wagons → cars → fences (2.75) → pipe shadows (2.76) →
+  alleys (1.5) → sidewalks (1.6) → road medians (1.7) → roads (2.0) → road wear mask
+  (2.0002) → road wear (2.0003) → road paint (2.0005) →
+  parking (2.001) → lot
+  sidewalks (2.002) → lot lines (2.003) → road islands (2.0035) → parking markings
+  (2.004) → pitches (2.005) →
+  pitch markings → water (2.01) → waterways (2.02) → rail ballast (2.03) → rail ties →
+  rail steel → wagons (2.045) → bridge shadows (2.05) → bridge casings → bridges →
+  bridge paint (2.25) → tram (2.6) → cars → fences (2.75) → pipe shadows (2.76) →
   pipes (2.77) → portal stain → corpses → portal → industry shadows (4.55) → buildings (5) →
   roof shadows (5.05) → industry walls (5.06) → industry tops (5.07) → units → souls (18)
   → tree shadows → trees (20). Four live in their
@@ -132,7 +135,8 @@ Summary; the mechanism — **world-lifecycle skill** (states and the warmup hold
 - **City switch = full world reload** — writing `City` sends the app back to
   `AppState::Loading`; the scene is torn down, the new extract downloaded and parsed, the
   same navmesh refilled, the camera reset. Gated on `in_state(Playing)`: restarting a load
-  on top of a running one would put two threads into one navmesh.
+  on top of a running one would put two threads into one navmesh. A settled new navtile
+  size or **lane width** (`RoadShape`) reloads the same way, same city, camera kept.
 - **`DespawnOnExit(AppState::Playing)`** — the *only* thing that clears the old city. Every
   world entity must carry it; the rule and the list of spawn sites live in **CLAUDE.md**
   ("World entities"), and `loading.rs::warn_leftover_world_entities` warns when something
@@ -147,7 +151,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
 - **Overpass** — the Overpass API, queried once per city with `[out:json]` + `out geom`;
   bbox is `MAP_SIZE` around the `City` geo center. Mirrors in `OVERPASS_URLS` are tried in
   order. **Bump `QUERY_VERSION` in `overpass.rs` whenever the query gains tags**
-  (currently 13), or existing caches keep serving extracts that lack them.
+  (currently 15), or existing caches keep serving extracts that lack them.
 - **Driving side** (`TrafficSide: Right | Left`, `MapData::traffic_side`) — the
   `driving_side` tag of the country boundary the map's centre lies in, asked by `is_in` as a
   second `out tags` output (the tag is not on roads). No answer means `Right`. Read only by
@@ -155,7 +159,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
 - **Cache** — `assets/osm/{slug}_{lat}_{lon}_{w}x{h}_v{QUERY_VERSION}.json` (gitignored);
   the parameters live in the file name, so changing them invalidates it. Written only after
   a successful parse; the second launch never touches the network. `prune_stale_caches()`
-  keeps exactly one current file per city.
+  keeps exactly one current file per city. The junction gallery reads the same file
+  (`download::city_extract`) and cuts its samples out of it (**crop**, `map/osm/crop.rs`),
+  so a query bump reaches the gallery by itself.
 - **Overpass fixture** (`map/osm/fixture.rs::Overpass`) — a scene given in **map metres**,
   turned into an Overpass response and fed through the real `parse`, so a test states its
   scene in the same numbers it later asserts on. **Add a tag case here, not another
@@ -187,14 +193,125 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     `height: Option<f32>`, `storeys: Option<f32>` (`building:levels` as the tag says —
     what tells a four-storey mall from a two-level retail box of the same height),
     `entrances: Vec<Vec2>` and `building_use: BuildingUse`.
-  - **RoadLine** — centerline + width by highway class (primary 16 → footway 3.5);
-    `RoadClass: Street | Alley`; `bridge` / `passage` flags (the navmesh carves by them);
+  - **RoadNode** / **RoadArea** — what OSM says about a junction beyond its lines:
+    `MapData::road_nodes` (crossings with `signals` / `island` / `marked`, traffic
+    signals, stop, give-way, mini-roundabouts, turning circles, island points) and
+    `MapData::road_areas` (closed carriageway / walkway / island outlines from
+    `area:highway`, `highway` + `area=yes`, `traffic_calming=island`). The junction
+    paint reads the crossings, signals and stop / give-way signs, the kerb pockets and
+    the parked cars break at the marked crossings, a turning circle on a dead end is a
+    disc of asphalt; mini-roundabouts, island points and the road areas are parsed and
+    kept for later stages.
+  - **RoadLine** — centerline + width **from its section** (footways keep 3.5 by class);
+    `RoadClass: Street | Alley`; `highway: Highway` (the `highway` value; `*_link` is a
+    class of its own; `Highway::is_street` — not a service drive, not a path — is what
+    makes a **carriageway**, not the width); `bridge` / `passage` flags (the navmesh carves by them —
+    `RoadLine::carves_navmesh` is the one predicate the drawers ask: a carve keeps its OSM
+    centerline, so it is neither smoothed, paired, ringed, tapered nor stitched);
     `oneway`, `roundabout` (the `junction=roundabout|circular` tag — but the notion is
     `RoadLine::is_roundabout`, **tag or shape**: a closed one-way way is a ring too, and
-    the mall's big ring carries no tag) and
-    `lanes: Option<u8>` (the tag, 1–8; the width default lives in `map/roads.rs`) — read
-    by the markings only; `parking_aisle` (`service=parking_aisle`) — read by the stall
-    layout only, see **Parking lots** below.
+    the mall's big ring carries no tag; a **Ring** (`roads/rings.rs`) is such ways chained
+    into a loop and drawn as one smooth ellipse through its nodes, one section for all
+    arcs, a kerb round its island, approaches entering by a tangent arc, and a **web**
+    (`Rings::webs`) — asphalt filling the slit between the ring and a street running
+    along it outside, where their kerbs have only just parted) and
+    `lanes: Option<u8>` (the section's lane count, below); `parking_aisle`
+    (`service=parking_aisle`) — read by the stall layout only, see **Parking lots** below.
+  - **Street** (**RoadNetwork**, `MapData::network`, `map/roads/network/streets.rs`) — ways
+    glued end to end through their seams: at a node the **most collinear pair of ends of
+    one `Highway` class** (bend under 50°, one-way flow running through) continues one
+    street. Rings and closed ways are streets of one way; paths are in none.
+  - **Section** (`map/roads/network/sections.rs`, first pass of `finish_parse`) — how many
+    lanes a way has: `lanes` (or `lanes:forward` + `lanes:backward`, plus
+    `lanes:both_ways` when tagged), else the nearest
+    tagged way of its street, else a default by class; a lone jump shorter than 60 m
+    (2→4→2) is cut to its neighbours. The width follows: lanes × the **lane width** (a
+    `RoadShape` knob, 3.3 m by default; 0.3 m less on a service drive) + a 0.5 m edge each
+    side. **The only roads stage that moves the model** — the
+    parse passes after it read the width.
+  - **Taper** (`map/roads/tapers.rs`) — where two ways of one street meet at a pure seam
+    (no third road) with different widths, the wider one starts at the narrower's width
+    and widens over `RoadShape::taper` (10 by default) metres per metre of difference.
+    Drawing only.
+  - **Street axis** (`map/roads/axis.rs`) — the drawn centerline of a whole street, not of
+    a way: within the **curve tolerance** (`RoadShape::curve_tolerance`) the street is
+    simplified and each bend becomes an arc (`Curve::of` — the three numbers off the one
+    knob; the radius at least half the width); at 0 the axis stays on the OSM points.
+    The curve is cut
+    back into its ways at the seams. A node shared with a third road stays exactly in
+    place, and the street passes it along a straight stretch on the bisector. Bridges,
+    arches and paths keep the per-way Chaikin `centerline`. The ribbon, the sidewalk band
+    and the parked cars all stand on it. Drawing only.
+  - **Lane frame** (`meshing::LaneFrame`, `roads/paint.rs::lane_frame`) — where a
+    carriageway's lanes lie across its axis: a grid node `origin` (on the axis for an even
+    lane count, half a lane off it for an odd one) and the carriageway bounds `low..high`;
+    lane boundaries sit at `origin + k · lane width` (the one lane width of the city,
+    `shape::lane_width()`). **One frame for the ruts and
+    the lines** — the asphalt shader reads it from `ATTRIBUTE_RIBBON`, the paint layer
+    builds its lines on it. On a taper it drifts from the narrow section's to the wide
+    one's: the outer lane is born from the wedge, and when the parity changes the grid
+    slides by half a lane over the taper, the new lane on the right of the taper's run.
+  - **Paint layer** (`map/roads/paint.rs`, shader `paint.wgsl`) — the lane lines as
+    **geometry** off the street axis, not a pattern of the asphalt shader: one strip wider
+    than the line per line, the shader draws the line (1.3 px floor), its dashes **by the
+    street's arclength** (the phase does not restart at a seam), a lane line solid for the
+    last 25 m of its **approach** to a junction break (dashed at once on the exit; an axis
+    is solid both ways), and the axis of a two-way street of 4+ lanes as a double
+    solid. Two meshes per level (lane lines, axes) plus the zebras, streets at
+    `Z_ROAD_PAINT` and bridges at `Z_BRIDGE_PAINT`; `PaintLods` hides the lane lines and
+    stop lines past 0.4 m/px, the zebras past 0.6 and the axes past 0.9 without a rebuild.
+    `RoadPaintStyle` (panel knobs Paint, Wear and Turn wear) is uniforms only.
+  - **Junction paint** (`map/roads/node_paint.rs`) — where the paint layer breaks at a
+    junction and what it draws there, on its own breaks rather than the asphalt ones
+    (those stay for the ruts and the medians). **Junction cluster**: junction nodes whose
+    zones (widest half width + 6 m) overlap are one junction — one set of arms, one break
+    per road. **Main through**: a road keeps its lines through a cluster unless it ends
+    there, is crossed by a road of its rank that also passes (or at a **crossroads** —
+    other streets bringing two arms to one node, however OSM splits them), meets a
+    higher rank, or the
+    cluster has signals; rank is the `highway` class, a stop / give-way sign on the arm
+    lowers it. On every arm that breaks: a **zebra** (the OSM crossing on the arm, or one
+    generated past the junction edge where two streets with sidewalks (by tag, not the
+    Sidewalks toggle) meet — `RoadStyle::crossings`) and a **stop line** across the lanes
+    coming in (dashed for give-way —
+    `RoadStyle::stop_lines`); the halves of a divided street share one zebra line. A
+    marked crossing elsewhere is a zebra with a gap in the lines. A **pocket**: a wide
+    arm's lines with no room on the narrower arm across the junction end at its edge.
+    A **stitch** (the network's pulled loose end) is a junction node like a shared one.
+    The **leading road** of a junction — passing, and yielding by rank to nobody (a ring
+    always leads) — keeps its asphalt ruts through it.
+  - **Turn paths** (`map/roads/turns.rs`) — a lane-to-lane Bézier curve for every allowed
+    maneuver through a junction (`turn:lanes` — `RoadLine::turns` — when it matches the
+    lanes, else the rule: straight lane to lane, the near turn from the kerb lane, the far
+    one from the inner lane), with 5 m tails into both lanes. Drawn as **turn wear**, two
+    faint ruts under the lines (knob Turn wear), **like a shadow**: where ruts overlap
+    the pixel takes the strongest of them, not their sum — a mask pass keeps the maximum
+    in the frame's alpha, an apply pass brightens by it once (`roads::paint::PaintPass`).
+    Straight along the leading road is left to its asphalt ruts. The same maneuvers give
+    the **lane arrows** — paint on each approach lane, by `turn:lanes` or, without the
+    tag, by the rule on a 2+ lane approach; near zoom only; toggle `RoadStyle::arrows`.
+  - **Kerb pocket** (`map/roads/pockets.rs`) — a parking bay cut into the sidewalk beside
+    the carriageway, where the parked cars stand: by `parking:<side>=street_side`, or by
+    rule on trunk/primary/secondary (cars do not stand on an arterial's lane) — there as
+    rare short bays, seeded by the street, not a block-long run. One answer
+    (`pockets::kerbsides`) for the ribbon and for `map::cars`. `sidewalk=*` likewise
+    decides which sides carry a sidewalk band.
+  - **Paired halves** (`map/roads/network/pairs.rs`, `Pairs`) — a divided street as OSM
+    draws it: two opposite one-way ways of one class side by side (a street or a
+    `service` drive, never a parking aisle), up to `PAIR_MAX_GAP` 15 m between the kerbs.
+    Found once, by `axis::street_axes`, on the drawn axes, and **aligned** there: the
+    halves are set at the run's median gap (paved no narrower than `PAVED_MIN_GAP`
+    0.5 m) from the midpoint between them, fading out over `ALIGN_TRANSITION` 20 m at a
+    run's end and at a node shared with another carriageway (untouched for 16 m next to
+    it, where a kerb return needs a straight edge), so the ribbons and the parked
+    cars stand on the aligned axis. **Median** (`Median`, drawn by `roads/medians.rs`) —
+    what lies between the halves: up to the **median gap** (`RoadShape::median_gap`, 3 m by
+    default) asphalt under both ribbons with
+    a double solid down the middle (the paint layer), wider a lawn with a kerb and a
+    rounded nose (`road_medians`, `Z_ROAD_MEDIAN`). A half has **no sidewalk on its
+    paired side**. The median opens only at a break of **both** halves facing each
+    other (a crossing street, a U-turn, a zebra); a street into one half does not open
+    it. Drawing only: `RoadLine::points` do not move.
     Underground road is dropped (`is_road_underground`) — a **separate** predicate from
     `is_underground`, because the risk is asymmetric: an extra ribbon is cosmetic, an extra
     deletion is a hole in the navmesh.
@@ -241,8 +358,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   two things, and either half is callable alone. **`read_elements`** runs the Overpass
   element loop and stops: what comes out is raw, with houses still in the water, churches
   without a faith, skewed outlines, no doors and no trees. **`finish_parse`** runs the
-  eight finishing passes and closes by composing the trees for the default layout, **and
-  that order is their interface** — all nine steps written down whole, with each step's
+  nine finishing passes (the street sections first) and closes by composing the trees
+  for the default layout, **and
+  that order is their interface** — all ten steps written down whole, with each step's
   reason, on that function. Both halves report as values (`ReadReport` /
   `PassReport`); `parse` prints them. Two order invariants: the mapped doors are attached
   **before** the skewed houses are squared, and `vertex_uses` is deliberately computed
@@ -981,16 +1099,20 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   the **gores**, within the outline grown by `KERB_OVERHANG` 2 m (so it meets the
   sidewalk of the street it is entered from without a jog), opened by `KERB_OPENING`.
   As ribbons, each road's asphalt lay over every other road's kerb and chopped it to
-  ragged scraps at the roundabouts. **Median** — two one-way carriageways side by side
-  (within `MEDIAN_GAP` 3 m of asphalt) get no kerb between them but a **double solid
-  line** (`lot_lines`, `Z_LOT_LINES` 2.003, flat paint), as Yandex and 2GIS draw a
-  boulevard; it is computed by one carriageway of the pair, and at a gore it stops
-  `MEDIAN_GORE_GAP` 0.6 m short of the hatching. **Gore** (`roads/gores.rs`) — the
+  ragged scraps at the roundabouts. A paved **median** of paired halves (above) gets no
+  kerb on the lot but its **double solid line** again in `lot_lines` (`Z_LOT_LINES`
+  2.003, flat paint) — the street paint layer lies under the lot's asphalt; the lot takes
+  the stretch of the network's median over it and does not look for pairs itself. At a
+  gore the line stops `MEDIAN_GORE_GAP` 0.6 m short of the hatching (`Gores::reach`,
+  shared with the paint layer). **Gore** (`roads/gores.rs`) — the
   splitter island at a roundabout: the wedge between the entry arm, the exit arm and the
   ring is **asphalt with diagonal hatching**, not a triangle of sidewalk or kerb. A
   property of the network at a ring, not of a lot: computed for every roundabout
   (`RoadLine::is_roundabout`), a wedge counting only if it touches **two arms**. The whole
-  wedge is asphalt, the wedge without its thin tips is what gets hatched. **Closedness of
+  wedge is asphalt, the wedge without its thin tips is what gets hatched — by the road
+  paint layer's shader (`road_paint_islands`), which fades it with zoom. A **splitter**
+  (`gores::splitters`) is the same island set **by rule** on an approach mapped as one
+  two-way way, where there is no fan and so no wedge. **Closedness of
   a way is read off the raw OSM points, never off the drawn path** — a style knob must not
   decide whether a way is a ring. No stall stands under
   a through road or its kerb (`Surroundings::cover`). A small lot hides its roads as
@@ -1014,9 +1136,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   vertices on its fillets.
   Render-only. Tula, cache v14: 349 lots parsed, 355 once the apron has cut some of them in parts.
 - **Asphalt wear** (`surface.wgsl`, `SurfaceParams::wear`) — an asphalt road on a photo is
-  never one tone. **Wheel ruts** in the **ribbon frame**, so they follow the lane and not
+  never one tone. **Wheel ruts** in the **lane frame**, so they follow the lane and not
   the compass (a polished band 0.85 m either side of each lane's middle — the track of a
-  car — measured with `fract` of the lane index, so every lane gets its own pair),
+  car — measured with `fract` of the lane index on the grid the paint lines stand on, so
+  every lane gets its own pair and a taper's ruts stay between its lines),
   **zero-mean** so a marked street is on average the same tone as an unmarked drive
   running into it. **Kerb dirt was removed**: a drive joins a street with no junction
   gap, and the street's dark kerb band ran across every drive mouth.
@@ -1031,12 +1154,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   The ruts **fade out in a junction gap** by the same `to_break` the lane dashes use,
   over 5 m: a crossing has no lane to polish a rut down, and without the gate the two
   streets drew their ruts straight through each other.
-  Wear rides the **markings code**: the lane count comes from the very
-  `ATTRIBUTE_RIBBON.w` the lane lines read, which `roads::road_markings` fills only for a
-  carriageway of two lanes or more, and only while `RoadStyle.markings` is on. So wear
-  shows up exactly where the lines do — a one-lane street, a markings-off style, and any
-  areal fill of the same `SurfaceKind::Street` material (the parking lot among them,
-  which carries no ribbon at all) all stay flat.
+  Wear rides the **lane frame** (`roads::road_lanes`): every carriageway gets one, a
+  one-lane street included, whatever `RoadStyle.markings` says — the amplitude is its own
+  knob (**Wear**, `RoadPaintStyle::wear`). A drive, a path and any areal fill of the same
+  `SurfaceKind::Street` material (the parking lot among them, which carries no ribbon at
+  all) have no frame and stay flat.
 - **Industry** (`map/industry.rs`) — what gives an industrial belt away from the air is
   not the sheds (those are the same boxes as everywhere) but **round spots and their
   shadows**, and the overhead heating main. `MapData::structures` holds the cylinders
@@ -1075,8 +1197,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   style knobs of its own: the layer comes off by zoom alone. They have a zoom bucket of
   their own (`WAGON_MAX_ZOOM` 2.0 — a wagon is three times a car's length, and
   2.0 m/px leaves it the same ~7 screen pixels at which a car is already dropped, so the
-  yards survive 2.5× further out than the rows) at `Z_WAGON` 2.65, above the steel and
-  below the cars. **No
+  yards survive 2.5× further out than the rows) at `Z_WAGON` 2.045, above the steel and,
+  like the track, below the bridges. **No
   `QUERY_VERSION` bump was needed**: `out geom` already carries every tag of the element,
   so `service` was in the cache all along.
 - **Fences** (`map/fences.rs`) — `barrier=fence|wall|retaining_wall|hedge` as a line and,
@@ -1107,8 +1229,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
 - **Bridge shadow** (`map/roads.rs`, `Z_BRIDGE_SHADOW` 2.05) — a bridge deck throws the
   same shadow every other object does: its own band, offset through
   `shadow_length_scale()` by the deck height, drawn under the bridge and over whatever it
-  crosses — except what the z ladder draws above bridges (rails, tram, wagons, cars,
-  fences). The invariants, all in `map/roads.rs` (mechanism and Tula measurements — the
+  crosses — except what the z ladder draws above bridges (tram, cars, fences); rails and
+  wagons sit below the shadow, so a deck shades the track it spans. The invariants, all in `map/roads.rs` (mechanism and Tula measurements — the
   `osm-map` skill):
   **a bridge is a chain of ways, not one way** (`Bridges`, `BridgeSpan`) — ways glued
   **end to end** at `JOIN_EPSILON` (never `ways_joined`, which would fuse bridges that
@@ -1136,8 +1258,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   `residential` street at 8 m parks and a `service` drive at 5 m does not), minus bridges
   and roundabouts. The pitch is walked along the **whole street's arclength** (**Arclength
   walk** above), not segment
-  by segment, and the row **breaks at the junctions the lane markings already know**
-  (`junctions::marking_breaks`, plus a 5 m clearance) rather than at the ends of an OSM way,
+  by segment, and the row **breaks where the kerb pockets do** (`pockets::row_breaks` —
+  junctions, service drives, marked OSM crossings and section tapers — plus
+  `JUNCTION_CLEARANCE` 6 m measured from the car's body) rather than at the ends of an OSM way,
   and wherever it passes under or butts into a **bridge deck** (`BridgeDeck` — no shared
   node, so no junction, and `Z_CAR` would draw the car on the deck).
   A **one-way** carriageway gets a single row, on the kerb of the **driving side** — which is
@@ -1239,7 +1362,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
 - **Merged meshes** (`map/meshing.rs`, `map/spawn.rs`, `map/roads.rs`, `map/rail.rs`,
   `map/tram.rs`, `map/buildings/`) —
   one merged `Mesh2d` per layer: earcut triangulation, per-vertex colors over one white
-  `ColorMaterial` (facades, shadows, casings, rails, walls), the **surface material** below
+  `ColorMaterial` (facades, shadows, bridge curbs, rails, walls), the **surface material** below
   (everything that is ground) or the **roof material** above (every layer that carries a
   roof — in 2.5D that is the walls' layer too); ~7000 buildings cost a handful of entities. Trees stay
   individual entities; tree and building **shadows** are each one merged mesh.
@@ -1295,33 +1418,43 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   «до разрыва» is measured **around the circle**. Drawn open, a ring laid two `Round` caps
   on its own asphalt, each with the ribbon frame **frozen** at the end's direction — a
   disc of shifted lane dashes and ruts at the seam. **Junction
-  geometry is still not computed as a union** — overlapping `Round` caps in one opaque
-  layer are what makes junctions look joined; **keep the road layer opaque, and its colour a function of
+  geometry is not computed as a union** — ribbons overlap in one opaque layer, an arm
+  ending in a junction ends **square** on the node, and the kerb returns and outer
+  corners (below) fill the rest; **keep the road layer opaque, and its colour a function of
   world position only** (a flat colour or the surface shader, never a per-way tint). What
   *is* computed are **junction nodes** (`map/roads/junctions.rs`): a node shared by two or
   more carriageways, found by coordinate match on a 5 cm grid — Overpass gives no node ids,
   but a shared node projects to the same point on every way. They feed the markings.
-  Four render-only fixes sit on the same node match (`map/roads/network.rs`,
+  Four render-only fixes sit on the same node match (`map/roads/network/mod.rs`,
   `RoadNodes` — every node shared by two roads of any class), and none of them touches
-  `RoadLine::points`, the navmesh, doors or cars:
+  `RoadLine::points`, the navmesh or doors (the parked cars stand on the drawn street
+  axis, like the ribbon):
   - **Pinned nodes** — Chaikin smoothing never cuts a shared node, so a side street
-    still ends exactly on the through road's drawn centreline.
+    still ends exactly on the through road's drawn centreline. The street axis pins only
+    nodes shared with another **carriageway** (street or drive): a footway crossing
+    ends under the asphalt and pins nothing.
   - **Kerb return** (`map/roads/corners.rs`) — the rounded corner between two
     neighbouring arms of a shared node of **one class** (street–street, alley–alley):
     the concave wedge between the two facing ribbon edges and an arc tangent to both,
     pushed into that class's fill layer *before* any ribbon, so every ribbon (and its
-    markings) lies over it. A **minor road entering a wider one** (half widths more than
-    0.5 m apart — a drive into a street, a street into an avenue) gets only 0.4 × its own
-    half width (1 m for a 5 m drive); between equals the radius is 0.6 × the sum of half
-    widths (1.5–9 m), capped at
-    3.4 sidewalk widths when both roads carry one (past that the wedge would show on the
-    lawn beyond both sidewalks), and by the straight run of each arm — which carries on
-    through vertices lying on the same line; arms 25°–155° apart only. None under
-    `RoadJoin::Square`. **The sidewalk turns with it**: the same wedge, laid in the
-    sidewalk layer between the arms that carry one, on the band edges (half width +
-    sidewalk) and on an arc of the **same centre** — the radius smaller by exactly the
-    sidewalk width, so a constant band follows the kerb round the corner. A radius under
-    the sidewalk width (a minor entry) leaves that corner square, as it is on the ground.
+    markings) lies over it. The radius goes by the **minor class of the pair**
+    (`kerb_radius`: avenue, street, drive, footway — the table is **Kerb returns** in
+    `roads.md`) — capped only by the straight run of each arm, which carries on through
+    vertices lying on the same line; neighbouring arms 25°–155° apart only. The
+    whole table is scaled by `RoadShape::corner_radius` (1.0 by default). **The sidewalk
+    turns with it**: the same wedge, laid in the
+    sidewalk layer between the arms that carry one on the facing sides (a paired half has
+    none on its partner's side), on the band edges (half width + sidewalk) and on an arc
+    of the **same centre** — the radius smaller by exactly the sidewalk width, so a
+    constant band follows the kerb round the corner. A radius under the sidewalk width
+    leaves that corner square, as it is on the ground.
+  - **Junction** (for the drawn asphalt, `map/roads/corners.rs`) — a node's class group
+    of three arms or more, or two meeting at an angle. An arm that **ends** there ends
+    **square** on the node (`KerbReturns::butt`) instead of with a round cap, which stuck
+    out past a narrower road's far edge; between two neighbour arms more than 180° apart
+    the **outer corner** is a fan from the node, what the round caps used to give. A
+    crossing street's piece between the two halves of a divided street lies in the
+    median opening and carries no sidewalk.
   - **Stitch** — a straight render-only segment appended to a **loose end** (a way end
     with no other road at its node that could carry it) up to the centreline of the
     nearest road **ahead** of it (within 60° of its heading), when that road's drawn edge —
@@ -1333,8 +1466,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     streets**: how OSM maps a drive crossing the pavement (drive, `footway` across the
     pavement, drive again). It is drawn as asphalt at the narrower drive's width. A
     crosswalk is not one: its ends lie on pavement footways.
-  Tula: 8710 kerb returns plus 903 on the sidewalks, 39 stitches, 8 driveway crossings, in
-  the `road meshing:` line.
+  Tula: 15101 kerb returns plus 2268 on the sidewalks, 1632 + 202 outer corners, 89
+  stitches, 9 driveway crossings, in the `road meshing:` line.
 - **Surface material** (`map/surface.rs`, `assets/shaders/surface.wgsl`) — the ground,
   the area layers, water and the road fills are drawn by **`SurfaceMaterial`** instead of
   `ColorMaterial`: the vertex colour stays the base, the shader multiplies in procedural
@@ -1349,9 +1482,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   **`SurfaceStyle::texture`** (panel *Surfaces*, persisted) scales all amplitudes,
   0 = the old flat fills, and retunes uniforms without rebuilding a mesh. A mesh for it is
   built with **`MeshBuilder::with_surface_coords`** — the **`Ribbon` attribute**
-  `[across, to-break, half width, markings code]` in metres (*to-break* = signed distance
-  to the nearest **marking break**, negative inside a gap; code = `lanes·2 + oneway`, 0 =
-  none), zeros on polygons. This shader grain is what the map has instead of a **ground
+  in metres: `[across, to-break, half width, 0]` on a ribbon without lanes (the water's
+  shoal reads it), `[across, to-break, low, high]` measured from the lane grid node on a
+  carriageway with a **lane frame** (*to-break* = signed distance to the nearest
+  **marking break**, negative inside a gap), zeros on polygons. The paint layer rides the
+  same attribute with its own meaning. This shader grain is what the map has instead of a **ground
   grain sprite** — a map-sized tiled noise sprite, proposed and then dropped in the merge
   that brought the building look; there is no `map/grain.rs`, and none is wanted.
 - **Rims** (`map/spawn.rs::push_area`, `MeshBuilder::push_inset_band`) — every area
@@ -1369,34 +1504,42 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   which enters the same union. A **waterway ribbon** carries the same field on its
   edges from the shader (`surface.wgsl`, by the ribbon's `across`), so the shoal turns
   from a pond into its channel without a seam.
-- **Sidewalks & markings** (`map/roads.rs`) — a **carriageway** (`Street`, ≥ 8 m, not a
-  passage; bridges included) is asphalt grey (`ROAD_COLOR`, a neutral mid grey — the
+- **Sidewalks & markings** (`map/roads.rs`) — a **carriageway** (`is_carriageway`: a
+  `Street` whose `Highway::is_street`, not a passage — by class, never by width; bridges
+  included) is asphalt grey (`ROAD_COLOR`, a neutral mid grey — the
   weathered asphalt of an aerial photo, not the pale blue-grey of a 2GIS map) and gets a
   light **sidewalk band** at
-  `Z_SIDEWALK` 1.6 — under the street ribbons (a crossing street's fill covers it, like a
-  casing) and **over the alley one**, so a footway running into the street stops at the
+  `Z_SIDEWALK` 1.6 — under the street ribbon (a crossing street's fill covers it) and
+  **over the alley one**, so a footway running into the street stops at the
   band instead of drawing a sand ribbon across it — width `sidewalk_width` (22 %,
   1.2–3 m per side) — **never a bridge deck**,
   which leaves for its own layers before the band is pushed and has its curb instead.
   At a junction the band **turns the corner on the kerb's own arc** — the sidewalk half
   of the **kerb return** above.
-  A carriageway also gets white **lane markings drawn by the surface shader** from the
-  `Ribbon` coordinates (a bridge keeps those): a line on every lane boundary
-  (`lane_count`: the `lanes` tag, else by width — two-way 8/10 m → 2, 12/16 m →
-  4; one-way 8 m → 1, i.e. none; a roundabout — tag or shape — always 1), dashed, the axis
-  of a two-way road
-  with 4+ lanes solid; anti-aliased, never thinner than ~1.3 px, gone when a lane is under
-  ~10 px on screen. **Marking breaks**: at every junction node each carriageway's lines
-  stop `half the widest other road + 1 m` short of the node — the through road gets a gap,
-  the side street ends before the carriageway edge; a way end shared with exactly one
-  other way end is a **continuation** (the line runs through the seam), any other way end
-  a dead end. Wider fills are pushed after narrower ones, so a junction shows the main
-  road's gap rather than the side street's stub. Both are `RoadStyle` knobs, on by default.
+  A carriageway also gets white lane lines — the **Paint layer** above: geometry off the
+  street axis, not the asphalt shader (a bridge's at `Z_BRIDGE_PAINT`), one line per
+  boundary of the **Lane frame**, the count from the way's **Section** (a ring takes one
+  section for all its arcs). Where the lines stop at a junction and what is painted
+  there is **Junction paint** above, on its own breaks; the asphalt keeps its
+  **marking breaks** (`junctions::marking_breaks`: each carriageway's ruts stop half the
+  widest other road + `JUNCTION_MARGIN` 1 m short of a junction node, a dead end is a
+  break of reach 0) for the ruts and the medians. Wider fills are pushed after narrower
+  ones, and a junction's **leading road** after all of its arms, so a junction shows the
+  main road's ruts rather than the side street's stub. Sidewalks and markings are
+  `RoadStyle` knobs, on by default.
 - **Style resources** — each is BRP-writable, persisted, and a change rebuilds only its own
-  layers from the unchanged `MapData`: **RoadStyle** (join / smoothing / casing /
-  sidewalks / markings — smoothing works on a *copy*, since `RoadLine::points`/`width` are
-  load-bearing for navmesh, arches, planting and entrances; the rule itself is
-  **`Smoothing`** in `map/smooth.rs`, shared by six layers, not a road's own),
+  layers from the unchanged `MapData`: **RoadStyle** (the sidewalks / markings / stop
+  lines / arrows toggles and the three-way `crossings` — `CrossingMode`; the ribbon join is the constant `ROAD_JOIN` =
+  `Round`, and the dark road casings are gone — the bridge curb is the one road casing left),
+  **RoadShape** (`map/roads/shape.rs`, the road's *geometry* knobs — lane width, taper,
+  curve tolerance, median gap, corner radius; ranges beside it, clamped on read). The map
+  follows **RoadShapeOnMap**, the copy that settles 0.35 s after the last slider step
+  (the `SunOnMap` idea); the lane width is read by the parse, so a settled new lane width
+  is a **world reload** (same city, camera kept) and reaches the load thread as a process
+  global (`shape::lane_width()`), like the navtile size. Any smoothing works on a *copy*,
+  since `RoadLine::points`/`width` are load-bearing for navmesh, arches, planting and
+  entrances; the Chaikin rule is **`Smoothing`** in `map/smooth.rs`, shared by six layers,
+  not a road's own. `RoadPaintStyle` (Paint, Wear, Turn wear) is uniforms only. Then
   **BuildingHeightMode**,
   **TreeStyle**, **TreeRowStyle**, **ConiferNoiseStyle**, **SurfaceStyle** and
   **RoofStyle** (the last two: uniforms only, no rebuild). **`CrownParams` is deliberately not one of them** — a plain struct, no BRP,
@@ -1887,7 +2030,8 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
 - **Shared kits** — `ui/slider.rs` (the layer under the knob kit) and `ui/rows.rs`
   (`spawn_value_row`; a row whose click does nothing gets `bevy::ui::InteractionDisabled`).
   **Use these, don't hand-roll a panel row.**
-- **Debug tab** (`ui/debug/`) — the grid / doors / movepath / noise overlay rows, the
+- **Debug tab** (`ui/debug/`) — the grid / doors / movepath / noise / **road network**
+  (`DebugRoadNetwork`: every street its own colour, a dot on each seam) overlay rows, the
   `Camera start` and `Navtile` cyclers (global settings, deliberately not under a backend
   section) and **`reset`** (`prefs::ResetSettings`). The navmesh overlay is **one merged
   mesh** (per-tile entities once cost 330 k); the noise overlay is one CPU-built texture
@@ -1972,8 +2116,9 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   to the projection rather than to a city.
   Detail — **species-behavior** and **navigation-deep** skills.
 - OSM pipeline: `src/map/osm/{overpass,download,parse,model}.rs`; rendering:
-  `src/map/{meshing,spawn}.rs`. Detail — **osm-map skill** (its `references/` also carry
-  the tag coverage audit and the crown-algorithm write-up).
+  `src/map/{meshing,spawn}.rs`. Detail — **osm-map skill** (`SKILL.md` is the map; its
+  `references/` carry the parse passes, roads, parking and cars, the other layers,
+  buildings, trees, doors, the tag coverage audit and the crown-algorithm write-up).
 - Navigation: `src/navigation/{navmesh,astar,northstar,polymesh}`; movement/interpolation:
   `src/movement/`. Detail — **navigation-deep skill** (crowd and slots in
   `references/crowd.md`).

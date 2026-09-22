@@ -10,7 +10,7 @@
 //! вдоль каждой улицы съел бы тротуары, по которым идёт вся толпа.
 //!
 //! Паркуются вдоль **всякой** проезжей части, а не только вдоль магистралей:
-//! отбор идёт тем же [`is_carriageway`], которым `map::roads` решает, где
+//! отбор идёт тем же [`is_carriageway`](crate::map::roads::is_carriageway), которым `map::roads` решает, где
 //! рисовать тротуар и разметку. Ширина в `RoadLine` — рисовальная константа
 //! класса, а не измеренная ширина улицы, так что порог по ней читается не как
 //! «узкая улица», а как «не магистраль»; на снимке города плотнее всего
@@ -27,6 +27,8 @@
 //! [`CarZoomBucket`] снимает слой целиком, когда машина становится мельче
 //! шести пикселей.
 
+use std::borrow::Cow;
+
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
@@ -36,11 +38,13 @@ use crate::map::meshing::{Break, MeshBuilder};
 use crate::map::osm::model::{distance_to_segment, ring_vertex_mean};
 use crate::map::osm::{MapData, PolyArea, RoadLine, TrafficSide};
 use crate::map::parking::{ParkingLayout, Stall};
-use crate::map::roads::junctions::{self, MarkingBreaks};
-use crate::map::roads::{RoadStyle, is_carriageway};
+use crate::map::roads::axis;
+use crate::map::roads::junctions::MarkingBreaks;
+use crate::map::roads::network::{RoadNetwork, RoadNodes};
+use crate::map::roads::pockets::{self, Kerbside, POCKET_WIDTH};
+use crate::map::roads::shape::{RoadShape, RoadShapeOnMap};
 use crate::map::seed::{Lcg, seed_from_point};
 use crate::map::shadow;
-use crate::map::smooth::{Smoothing, smooth_path};
 use crate::map::surface::{LayerCost, LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::prefs::retuned;
@@ -84,11 +88,19 @@ const END_MARGIN: f32 = 2.0;
 /// тротуар (полметра `CURB_GAP` держит и перекос).
 const PARK_SKEW_DEGREES: f32 = 2.5;
 const PARK_SLOP: f32 = 0.12;
-/// Насколько ряд не доходит до перекрёстка, м, сверх полуширины самой широкой
-/// из сошедшихся дорог (`Break::reach`): ближе пяти метров к перекрёстку не
-/// паркуются. Тупик приходит разрывом нулевого `reach`, и клиренс даёт в нём
-/// те же пять пустых метров, что и на настоящем узле.
-const JUNCTION_CLEARANCE: f32 = 5.0;
+/// Насколько **кузов** не доходит до разрыва ряда, м, сверх его `Break::reach`
+/// (у перекрёстка — полуширина самой широкой из сошедшихся дорог, у перехода
+/// — полдлины зебры, `roads::pockets::row_breaks`): ближе пяти метров к
+/// перекрёстку и переходу не паркуются, и ещё метр — зебра по правилу стоит
+/// за кромкой узла на метр и тянется на четыре (`roads::node_paint`), а
+/// машина, отмеренная центром в пяти метрах, вставала на неё носом. Тупик
+/// приходит разрывом нулевого `reach`, и клиренс даёт в нём те же метры.
+const JUNCTION_CLEARANCE: f32 = 6.0;
+/// Запас по прямой, в полуширинах дороги, за которым разрыв заведомо не
+/// мешает месту, как бы ни легла проекция на звено: на изломе узел за
+/// поворотом проецируется на текущее звено коротко, и без этого запаса он
+/// вычёркивал бы места на всей длине прямой до него.
+const BREAK_BEND_SLACK_HALF_WIDTHS: f32 = 4.0;
 /// Через сколько метров улицы застройка вокруг перечитывается заново, м.
 /// Квартал не меняется от места к месту, а запрос к [`Districts`] на каждое из
 /// двадцати двух тысяч мест стоил бы больше, чем весь слой; полсотни метров —
@@ -214,24 +226,25 @@ pub fn detail_for(bucket: usize) -> Option<CarDetail> {
 /// Кузов меряется на **каждой** ступени подробности, своей строкой: разница
 /// между ними и есть то, ради чего заведён [`CarLods`], и она должна быть
 /// видна в тех же числах, что и цена зданиевых слоёв.
-pub fn measure_cars(
-    buildings: &[PolyArea],
-    roads: &[RoadLine],
-    traffic: TrafficSide,
-) -> (usize, Vec<LayerCost>) {
+pub fn measure_cars(map: &MapData) -> (usize, Vec<LayerCost>) {
+    // разрывы и оси — те же вызовы, что в `mesh_cars`, по собранной сети
+    // карты: иначе строки `breaks` и `cars` мерили бы не игровой ряд
+    let shape = RoadShape::default();
     let started = std::time::Instant::now();
-    let junctions = junctions::marking_breaks(roads, is_carriageway);
+    let junctions = pockets::row_breaks(&map.roads, &map.network, &map.road_nodes, shape.taper());
     let breaks_took = started.elapsed();
     let started = std::time::Instant::now();
-    let districts = Districts::new(buildings);
+    let districts = Districts::new(&map.buildings);
     let districts_took = started.elapsed();
     let started = std::time::Instant::now();
+    let nodes = RoadNodes::new(&map.roads);
+    let axes = axis::street_axes(&map.roads, &map.network, &nodes, &shape);
     let cars = park_cars(
-        roads,
+        &map.roads,
         &junctions,
         CarStyle::default(),
-        RoadStyle::default().smoothing,
-        traffic,
+        &axes.paths,
+        map.traffic_side,
         &districts,
     );
     let parking_took = started.elapsed();
@@ -269,16 +282,19 @@ pub fn measure_cars(
 }
 
 /// Когда пересобирать слой припаркованных машин: своя ступень зума, тумблер и
-/// ручка занятости, стиль дорог и осевшее солнце.
+/// ручка занятости, форма дорог и осевшее солнце.
 ///
-/// `RoadStyle` здесь потому, что ряд стоит по **сглаженной** осевой, той же,
-/// по которой рисуется асфальт: смена Smoothing двигает машины вместе с ним.
+/// Форма дорог (`RoadShapeOnMap`) здесь потому, что ряд стоит по **той же**
+/// осевой, по которой рисуется асфальт, и рвётся на тех же клиньях: допуск
+/// оси и длина клина двигают машины вместе с лентой. `RoadStyle` — нет: его
+/// тумблеры кладут или снимают слои ленты, а карман решает тег `sidewalk=*`
+/// на самой дороге (`pockets::kerb_parking`), не тумблер тротуаров.
 ///
 /// **Условие одно, регистрация одна** (см. `crate::map::roads::rebuilds_on`).
 pub fn rebuilds_on() -> impl SystemCondition<()> {
     retuned::<CarZoomBucket>
         .or_else(retuned::<CarStyle>)
-        .or_else(retuned::<RoadStyle>)
+        .or_else(retuned::<RoadShapeOnMap>)
         .or_else(retuned::<SunOnMap>)
 }
 
@@ -290,9 +306,9 @@ pub fn rebuild_cars(
     materials: LayerMaterials,
     bucket: Res<CarZoomBucket>,
     style: Res<CarStyle>,
-    // сглаживание осевой: ряд стоит по той же ломаной, по которой `map::roads`
+    // форма дорог: ряд стоит по той же ломаной, по которой `map::roads`
     // кладёт ленту асфальта
-    road_style: Res<RoadStyle>,
+    road_shape: Res<RoadShapeOnMap>,
     map: Res<MapData>,
     layout: Res<ParkingLayout>,
     existing: Query<Entity, With<CarLayerTag>>,
@@ -300,7 +316,7 @@ pub fn rebuild_cars(
     for entity in &existing {
         commands.entity(entity).despawn();
     }
-    let (layers, report) = mesh_cars(*bucket, *style, road_style.smoothing, &map, &layout);
+    let (layers, report) = mesh_cars(*bucket, *style, road_shape.0, &map, &layout);
     spawn_layers(&mut commands, &mut meshes, &materials, layers, CarLayerTag);
     info!("{report}");
 }
@@ -360,12 +376,12 @@ impl std::fmt::Display for CarReport {
 /// можно его забыть, нет. Сборка при этом не идёт вовсе — ни разрывов, ни
 /// расстановки: снятый слой не должен стоить дороже, чем стоил ранний возврат.
 ///
-/// `smoothing` — сглаживание осевой: ряд стоит по той же ломаной, по которой
-/// `map::roads` кладёт ленту асфальта.
+/// `shape` — форма дорог: ряд стоит по той же ломаной, по которой
+/// `map::roads` кладёт ленту асфальта, и рвётся на тех же клиньях.
 pub fn mesh_cars(
     bucket: CarZoomBucket,
     style: CarStyle,
-    smoothing: Smoothing,
+    shape: RoadShape,
     map: &MapData,
     layout: &ParkingLayout,
 ) -> (Vec<LayerMesh>, CarReport) {
@@ -384,7 +400,9 @@ pub fn mesh_cars(
     };
     let started = std::time::Instant::now();
     // разрывы — по **всем** настоящим улицам, а не только по парковочным: ряд
-    // обязан прерваться и там, где к жилой улице примыкает другая жилая.
+    // обязан прерваться и там, где к жилой улице примыкает другая жилая, — и
+    // на клиньях между сечениями улицы: бордюр там ближе к оси; те же
+    // разрывы режут карманы ленты (`roads::pockets`).
     //
     // Считаются заново на каждую пересборку слоя, а не один раз на загрузку
     // мира: по Туле это около четверти сборки слоя машин, а весь слой —
@@ -392,16 +410,18 @@ pub fn mesh_cars(
     // надо было прежде, чем его заводить. Доли, а не миллисекунды: абсолютное
     // время зависит от App Nap, перемеряет его `measure_cars` из
     // `examples/bench/map_meshing` (он печатает обе строки — `breaks` и `cars`)
-    let junctions = junctions::marking_breaks(&map.roads, is_carriageway);
+    let junctions = pockets::row_breaks(&map.roads, &map.network, &map.road_nodes, shape.taper());
     let breaks_took = started.elapsed();
     // застройка вокруг — тем же проходом и с тем же сроком жизни, что и
     // разрывы: индекс на 7.6 тысячи домов дешевле, чем повод его кешировать
     let districts = Districts::new(&map.buildings);
+    let nodes = RoadNodes::new(&map.roads);
+    let axes = axis::street_axes(&map.roads, &map.network, &nodes, &shape);
     let mut cars = park_cars(
         &map.roads,
         &junctions,
         style,
-        smoothing,
+        &axes.paths,
         map.traffic_side,
         &districts,
     );
@@ -423,17 +443,18 @@ pub fn mesh_cars(
 }
 
 /// Меш припаркованных рядов по готовому срезу улиц — дверь наружу для витрины
-/// `examples/demos/car_gallery` (геометрию наружу отдаёт только она; второй
-/// выход, [`measure_cars`], отдаёт не меш, а его цену).
+/// `examples/demos/car_gallery` (геометрию наружу отдают она и [`drawn_axes`] —
+/// оси, по которым витрина кладёт асфальт под ряд; второй выход,
+/// [`measure_cars`], отдаёт не меш, а его цену).
 ///
 /// Открыта затем, что клетки витрины обязаны строиться **теми же вызовами**,
 /// что и город: про шаг, палитру, разрывы на перекрёстках и правило излома
 /// витрина не знает ничего и знать не должна — иначе она показывает свою
 /// геометрию, а не игровую.
 ///
-/// `smoothing` — то же, с чем витрина кладёт под ряд асфальт: осевая у ленты и
-/// у ряда обязана быть одна; `detail` — ступень подробности, которую в игре
-/// выдаёт зум, а витрина показывает все три рядом.
+/// `shape` — форма дорог, та же, с которой витрина берёт [`drawn_axes`] под
+/// асфальт: осевая у ленты и у ряда обязана быть одна; `detail` — ступень
+/// подробности, которую в игре выдаёт зум, а витрина показывает все три рядом.
 ///
 /// Домов у витрины нет вовсе, и пустой [`Districts`] здесь не заглушка, а
 /// честное «квартала вокруг не прочесть»: множитель тогда ровно 1, и клетки
@@ -441,28 +462,46 @@ pub fn mesh_cars(
 pub fn cars_mesh(
     roads: &[RoadLine],
     style: CarStyle,
-    smoothing: Smoothing,
+    shape: RoadShape,
     traffic: TrafficSide,
     detail: CarDetail,
 ) -> MeshBuilder {
-    let junctions = junctions::marking_breaks(roads, is_carriageway);
+    // разрывы — игровые (`row_breaks`: проезды тоже рвут ряд); сети и точек
+    // дорог у витрины нет, как нет их и у её осей (`drawn_axes`)
+    let junctions = pockets::row_breaks(roads, &RoadNetwork::default(), &[], shape.taper());
     let districts = Districts::new(&[]);
     mesh_bodies(
-        &park_cars(roads, &junctions, style, smoothing, traffic, &districts),
+        &park_cars(
+            roads,
+            &junctions,
+            style,
+            &drawn_axes(roads, &shape),
+            traffic,
+            &districts,
+        ),
         detail,
     )
+}
+
+/// Оси дорог так, как их рисует `map::roads`, — для среза без собранной сети
+/// (замер, витрина, тесты): улицы склеиваются здесь же. Открыта ради витрины:
+/// её асфальт лежит по этим же осям, а не по своему сглаживанию, — иначе ряд
+/// стоял бы не на своей ленте.
+pub fn drawn_axes<'a>(roads: &'a [RoadLine], shape: &RoadShape) -> Vec<Cow<'a, [Vec2]>> {
+    let nodes = RoadNodes::new(roads);
+    axis::street_axes(roads, &RoadNetwork::default(), &nodes, shape).paths
 }
 
 /// Ряды вдоль всех улиц, годных под парковку.
 ///
 /// `junctions.breaks` индексирован по номеру дороги **во входном срезе**,
 /// поэтому `roads` — весь срез карты, а не отфильтрованный список
-/// парковочных.
+/// парковочных; `axes` — по тому же индексу, нарисованные оси дорог.
 fn park_cars(
     roads: &[RoadLine],
     junctions: &MarkingBreaks,
     style: CarStyle,
-    smoothing: Smoothing,
+    axes: &[Cow<[Vec2]>],
     traffic: TrafficSide,
     districts: &Districts,
 ) -> Vec<Car> {
@@ -475,7 +514,7 @@ fn park_cars(
     let decks: Vec<BridgeDeck> = roads.iter().filter_map(BridgeDeck::of).collect();
     let mut near = Vec::new();
     for (index, road) in roads.iter().enumerate() {
-        if !parkable(road) {
+        if !pockets::parkable(road) {
             continue;
         }
         near.clear();
@@ -484,11 +523,10 @@ fn park_cars(
                 .iter()
                 .filter(|deck| deck.near(&road.points, road.width)),
         );
-        // осевая та же, по которой `map::roads` строит ленту: по сырым точкам
-        // OSM ряд на изломе съезжает с асфальта на тротуар, потому что Chaikin
-        // срезает вершину на метры. Арок здесь не бывает — `is_carriageway` их
-        // отсеял, — поэтому `smooth_path`, а не `centerline`
-        let centre = smooth_path(&road.points, road.width, smoothing);
+        // осевая та же, по которой `map::roads` строит ленту (`roads/axis.rs`):
+        // по сырым точкам OSM ряд на изломе съезжает с асфальта на тротуар,
+        // потому что дуга уводит ось от вершины на метры
+        let centre = &axes[index];
         let mut rng = Lcg::new(seed_from_point(
             road.points.first().copied().unwrap_or(Vec2::ZERO),
         ));
@@ -504,15 +542,22 @@ fn park_cars(
         // двусторонней улицы не зависит от `traffic`: он решает поток ГПСЧ, и
         // от стороны движения ряд не должен переставляться, только
         // разворачиваться
-        let sides: &[f32] = if road.oneway { &[kerb] } else { &[-1.0, 1.0] };
-        for &side in sides {
+        //
+        // Стороны и карманы на них — от `roads::pockets`, того же ответа, по
+        // которому лента кладёт асфальт кармана
+        for kerbside in pockets::kerbsides(road, centre, &junctions.breaks[index], traffic) {
+            if !kerbside.lane && kerbside.pockets.is_empty() {
+                continue;
+            }
+            let side = kerbside.side;
             park_along(
                 &mut cars,
-                &centre,
+                centre,
                 road.width / 2.0,
                 Kerb {
                     side,
                     heading: if side == kerb { 1.0 } else { -1.0 },
+                    stand: &kerbside,
                 },
                 &Clearings {
                     junctions: &junctions.breaks[index],
@@ -568,15 +613,6 @@ fn lot_occupancy(stalls: usize) -> f32 {
 /// улиц, домов и крон.
 fn lot_seed(lot: &PolyArea) -> u32 {
     seed_from_point(lot.outer.first().copied().unwrap_or(Vec2::ZERO))
-}
-
-/// Улица, вдоль которой паркуются: настоящая проезжая часть — то же
-/// [`is_carriageway`], которым отбирает тротуары и разметку `map::roads`, —
-/// но не мост (на мосту не стоят) и не кольцо (по кольцу едут, а не
-/// паркуются). Разметке мост и кольцо нужны, машинам нет, поэтому оба
-/// условия здесь, а не внутри предиката.
-fn parkable(road: &RoadLine) -> bool {
-    is_carriageway(road) && !road.bridge && !road.is_roundabout()
 }
 
 /// Полотно моста, от которого ряд держится на [`JUNCTION_CLEARANCE`] — улица
@@ -649,11 +685,14 @@ struct Clearings<'a> {
 
 /// Бордюр, вдоль которого стоит ряд.
 #[derive(Clone, Copy)]
-struct Kerb {
+struct Kerb<'a> {
     /// Знак поперечной `direction.perp()`: `-1` — правая сторона по ходу way.
     side: f32,
     /// Куда смотрит нос: `1` — по ходу way, `-1` — против.
     heading: f32,
+    /// Где на этой стороне стоят: у бордюра на полосе и в карманах
+    /// (`roads::pockets`).
+    stand: &'a Kerbside,
 }
 
 /// Ряд вдоль одной стороны: шагом [`CAR_PITCH`] по **всей** ломаной улицы, со
@@ -707,12 +746,23 @@ fn park_along(
         // габарита именно этой машины, и у фургона он свой
         let shape = CarShape::from_share(rng.next_f32());
         let across = direction.perp() * kerb.side;
-        let offset = half_road - CURB_GAP - shape.width() / 2.0;
+        // в кармане бордюр отодвинут на его ширину; мимо кармана, где у
+        // бордюра не стоят, места нет
+        let pocket = kerb.stand.pocket_at(at).is_some();
+        let offset =
+            half_road + if pocket { POCKET_WIDTH } else { 0.0 } - CURB_GAP - shape.width() / 2.0;
         let place = point + across * offset;
-        if clearings
-            .junctions
-            .iter()
-            .any(|junction| place.distance(junction.at) < junction.reach + JUNCTION_CLEARANCE)
+        // до разрыва — вдоль улицы и от кузова, а не от центра машины: поперёк
+        // место отнесено к бордюру, и по прямой до узла выходило больше, чем
+        // вдоль
+        let clear = |junction: &Break| {
+            (place - junction.at).dot(direction).abs() - shape.length() / 2.0
+                >= junction.reach + JUNCTION_CLEARANCE
+                || place.distance(junction.at)
+                    > junction.reach + JUNCTION_CLEARANCE + half_road * BREAK_BEND_SLACK_HALF_WIDTHS
+        };
+        if !(pocket || kerb.stand.lane)
+            || !clearings.junctions.iter().all(clear)
             || clearings.decks.iter().any(|deck| deck.covers(place))
         {
             continue;

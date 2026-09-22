@@ -13,25 +13,47 @@ import json
 import os
 import sys
 
-# parse.rs::road_class
-ROAD_OK = {
+# parse/tags.rs::road_class — проезжие классы (`Highway::is_street`) и пешие
+STREET_CLASSES = {
     "motorway", "trunk", "primary", "secondary", "tertiary",
+    "motorway_link", "trunk_link", "primary_link", "secondary_link", "tertiary_link",
     "residential", "unclassified", "living_street", "service",
-    "footway", "path", "pedestrian", "cycleway", "steps", "track",
 }
-# parse.rs::rail_class
+WALK_CLASSES = {"footway", "path", "pedestrian", "cycleway", "steps", "track"}
+ROAD_OK = STREET_CLASSES | WALK_CLASSES
+# parse/tags.rs::rail_class
 RAIL_OK = {
     "rail", "light_rail", "narrow_gauge", "subway", "tram",
     "abandoned", "disused", "razed", "dismantled",
 }
-# parse/tags.rs::is_service_track — станционный путь, на нём стоят вагоны.
+# parse/tags.rs::service_track — станционный путь, на нём стоят вагоны.
 # Белый список, а не «тег есть»: `service=crossover` — съезд между главными путями.
 SERVICE_OK = {"siding", "yard", "spur"}
-# parse.rs::water_class — линейные водотоки; `riverbank` тут не значится,
+# parse/tags.rs::water_class — линейные водотоки; `riverbank` тут не значится,
 # это площадь и её забирает area_kind
 WATER_OK = {"river", "canal", "weir", "stream", "brook", "ditch", "drain"}
-# parse.rs::NON_WALKABLE_ENTRANCES
+# parse/tags.rs::NON_WALKABLE_ENTRANCES
 NON_WALKABLE = {"no", "garage", "emergency"}
+# parse/tags.rs::road_node_kind
+ROAD_NODES = {
+    "crossing", "traffic_signals", "stop", "give_way", "mini_roundabout",
+    "turning_circle", "turning_loop",
+}
+
+
+def road_area_kind(tags):
+    """parse/tags.rs::road_area_kind — площадь дороги контуром, или None."""
+    if tags.get("traffic_calming") == "island" or tags.get("area:highway") == "traffic_island":
+        return "island"
+    if "area:highway" in tags:
+        value = tags["area:highway"]
+    elif "highway" in tags and tags.get("area") == "yes":
+        value = tags["highway"]
+    else:
+        return None
+    if value not in ROAD_OK:
+        return None
+    return "carriageway" if value in STREET_CLASSES else "walkway"
 
 
 def area_kind(tags):
@@ -109,6 +131,12 @@ def analyse(path):
         kind = element["type"]
 
         if kind == "node":
+            if tags.get("highway") in ROAD_NODES:
+                kept[f"road node {tags['highway']}"] += 1
+                continue
+            if tags.get("traffic_calming") == "island":
+                kept["road node island"] += 1
+                continue
             if tags.get("natural") == "tree":
                 kept["tree node"] += 1
                 continue
@@ -125,6 +153,13 @@ def analyse(path):
             # рельсы и аллеи разбираются до дорог и проваливаются дальше:
             # way бывает одновременно `railway=tram` и `highway=*`
             claimed = False
+            # площадь дороги — первой и тоже проваливается дальше: `highway` +
+            # `area=yes` остаётся ещё и линией
+            road_area = road_area_kind(tags)
+            geometry = element.get("geometry") or []
+            if road_area is not None and len(geometry) >= 4 and geometry[0] == geometry[-1]:
+                kept[f"road area {road_area}"] += 1
+                claimed = True
             railway = tags.get("railway")
             if railway is not None:
                 claimed = True
