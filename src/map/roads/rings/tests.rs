@@ -151,3 +151,43 @@ fn a_long_loop_is_not_a_ring() {
     assert!(rings.list.is_empty(), "прямоугольник — не кольцо");
     assert_eq!(paths[0], points);
 }
+
+/// Обходной съезд идёт вдоль кольца снаружи, в узлы его не заходя, и кромки
+/// их разошлись на метр (Тула, витрина 04, юго-восток): щель закрыта
+/// асфальтом, иначе в ней серпом проступает тротуар. Улица, упёршаяся в
+/// кольцо поперёк, перепонки не получает — там угол бордюра.
+#[test]
+fn a_slip_road_along_the_ring_is_webbed_to_it() {
+    // кромка кольца — в 30 + 4 м от центра, кромка съезда — на метр дальше
+    let slip = RoadLine {
+        oneway: true,
+        ..street(
+            (0..=15)
+                .map(|step| on_circle(0.05 + 0.01 * step as f32, RADIUS + 4.0 + 1.0 + 3.5))
+                .collect(),
+            7.0,
+        )
+    };
+    let across = street(
+        vec![on_circle(0.6, RADIUS + 40.0), on_circle(0.6, RADIUS)],
+        7.0,
+    );
+    let (_, rings) = reshaped(&[faceted_ring(12), slip, across]);
+    assert_eq!(rings.webs.len(), 1, "{:?}", rings.webs);
+    let web = &rings.webs[0];
+    assert!(
+        web.iter()
+            .all(|point| point.distance(CENTER) > RADIUS - 1.0),
+        "перепонка снаружи кольца"
+    );
+    let (low, high) = web
+        .iter()
+        .map(|point| (*point - CENTER).to_angle().rem_euclid(TAU) / TAU)
+        .fold((1.0_f32, 0.0_f32), |(low, high), turn| {
+            (low.min(turn), high.max(turn))
+        });
+    assert!(
+        low < 0.07 && high > 0.18,
+        "перепонка на всю длину съезда: {low}..{high}"
+    );
+}

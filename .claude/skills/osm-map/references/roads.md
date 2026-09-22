@@ -397,18 +397,23 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     the way, never past another shared node) replaced by the turn paths' Bézier
     (`turns::curve`), tangent to the arm and arriving at `ENTRY_ANGLE` 25° to the ring's
     travel — inward for an entry, outward for an exit. An arm already within 5° is left.
-  - **Webs** (`Rings::webs`): where an arm (followed out through up to three ways) runs
-    along the ring with a gap under `WEB_GAP` 2.5 m between the kerbs, the strip between
-    the two axes is asphalt, pushed under the ribbons — the arm's sidewalk used to show
-    through as a crescent. A crescent between the ring and a slip road that bypasses it is
-    not an arm's and stays (Tula, gallery 04, south-east).
+  - **Webs** (`Rings::webs`, `webs_along`): wherever a street — an arm, its continuation,
+    or a slip road that bypasses the ring without entering it (Tula, gallery 04,
+    south-east) — runs **along** the ring outside it (within `WEB_ALONG` cos 0.7 of the
+    ring's tangent) with a gap under `WEB_GAP` 2.5 m between the kerbs, the strip between
+    the two axes is asphalt, pushed under the ribbons — the sidewalk used to show through
+    as a crescent. Every street way near a ring is walked at 1 m steps and each such
+    stretch becomes one web, so a gap spanning two ways is two webs meeting at the shared
+    node. A street meeting the ring across (a two-way arm into a node) is not along it and
+    gets none: that corner is a kerb return's.
   - **One section, one kerb.** All arcs are drawn at the widest arc's width and lanes
     (`roads::ring_arcs`); the sidewalk is drawn once per ring as a closed ribbon, **outside
     only**, and the central island gets a `MEDIAN_KERB` 0.5 m kerb along the inner edge
     instead of a sidewalk ring (`push_ring_edges`). The island's fill is whatever the map
     has there (a park, a lawn, the ground).
-  - The report counts `rings N (M webs)`. Tula (release): 8 rings, 11 webs; the road
-    build did not move (118.5 ms against 120.7).
+  - The report counts `rings N (M webs)`. Tula (release): 8 rings, 19 webs (11 while
+    only the arms were walked); the road build did not move (118.5 ms against 120.7 when
+    the rings came, 125.4 → 125.6 when the webs spread to every street along a ring).
 - **Junctions** (`map/roads/junctions.rs`) — computed for the markings only, and from
   **shared nodes**, not segment intersections: Overpass `out geom` gives no node ids, but
   a node shared by two ways projects to the same `Vec2` on both (quantised to 5 cm to be

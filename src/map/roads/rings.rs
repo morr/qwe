@@ -224,8 +224,8 @@ impl Ring {
 pub struct Rings {
     pub list: Vec<Ring>,
     of_road: Vec<Option<usize>>,
-    /// Асфальт между подходом и кольцом, где их кромки только разошлись
-    /// ([`web`]): без него в щели серпом проступал тротуар подхода.
+    /// Асфальт между кольцом и улицей вдоль него, где их кромки только
+    /// разошлись ([`webs_along`]): без него в щели серпом проступал тротуар.
     pub webs: Vec<Vec<Vec2>>,
 }
 
@@ -286,8 +286,7 @@ pub fn reshape<'a>(
             }
         }
     }
-    // подходы: дорога, въезд ли, кольцо
-    let mut approaches: Vec<(usize, bool, usize)> = Vec::new();
+    // подходы
     for (index, road) in roads.iter().enumerate() {
         if rings.of_road[index].is_some()
             || !road.oneway
@@ -305,7 +304,6 @@ pub fn reshape<'a>(
             let Some(&(ring, t)) = pins.get(&node_key(end)) else {
                 continue;
             };
-            approaches.push((index, entry, ring));
             let ring = &rings.list[ring];
             let (travel, outward) = (ring.travel(t), ring.outward(t));
             let (sin, cos) = ENTRY_ANGLE.sin_cos();
@@ -332,89 +330,99 @@ pub fn reshape<'a>(
             paths[index] = Cow::Owned(path);
         }
     }
-    rings.webs = approaches
-        .into_iter()
-        .filter_map(|(road, entry, ring)| {
-            let ring = &rings.list[ring];
-            let ring_width = ring
-                .roads
+    let widths: Vec<f32> = rings
+        .list
+        .iter()
+        .map(|ring| {
+            ring.roads
                 .iter()
                 .map(|&arc| roads[arc].width)
-                .fold(0.0, f32::max);
-            web(&approach_run(roads, paths, road, entry), ring, ring_width)
+                .fold(0.0, f32::max)
         })
         .collect();
+    for (index, road) in roads.iter().enumerate() {
+        if rings.of_road[index].is_some()
+            || road.class != RoadClass::Street
+            || road.bridge
+            || road.passage
+        {
+            continue;
+        }
+        for (ring, &width) in rings.list.iter().zip(&widths) {
+            rings
+                .webs
+                .extend(webs_along(&paths[index], road.width / 2.0, ring, width));
+        }
+    }
     rings
 }
 
-/// Сколько way подхода, считая от кольца, идёт в поиск щели ([`web`]):
-/// подход у кольца часто — короткий way, а щель тянется вдоль следующего.
-const WEB_WAYS: usize = 3;
+/// Насколько улица должна идти вдоль кольца, чтобы щель между ними была
+/// перепонкой: косинус угла между ними. Улица, упёршаяся в кольцо поперёк,
+/// щели вдоль него не оставляет — там угол бордюра.
+const WEB_ALONG: f32 = 0.7;
 
-/// Подход `road`, развёрнутый **к** узлу кольца, со своими продолжениями
-/// дальше от кольца — точки с полушириной дороги, от дальнего конца к узлу.
-fn approach_run(
-    roads: &[RoadLine],
-    paths: &[Cow<[Vec2]>],
-    road: usize,
-    entry: bool,
-) -> Vec<(Vec2, f32)> {
-    let oriented = |road: usize, toward_end: bool| -> Vec<(Vec2, f32)> {
-        let half = roads[road].width / 2.0;
-        let mut points: Vec<(Vec2, f32)> = paths[road].iter().map(|&point| (point, half)).collect();
-        if !toward_end {
-            points.reverse();
-        }
-        points
-    };
-    let mut run = oriented(road, entry);
-    let mut previous = road;
-    for _ in 1..WEB_WAYS {
-        let far = run[0].0;
-        // продолжение — единственная другая улица с концом в этой точке
-        let mut next = (0..roads.len()).filter(|&other| {
-            other != previous
-                && roads[other].class == RoadClass::Street
-                && !roads[other].is_roundabout()
-                && paths[other].len() >= 2
-                && (paths[other][0] == far || paths[other][paths[other].len() - 1] == far)
-        });
-        let (Some(other), None) = (next.next(), next.next()) else {
-            break;
-        };
-        let mut more = oriented(other, paths[other][paths[other].len() - 1] == far);
-        more.pop();
-        more.extend(run);
-        run = more;
-        previous = other;
-    }
-    run
-}
-
-/// Асфальт между подходом `run` (точки с полушириной, **к** узлу кольца) и
-/// осью кольца — от узла назад, пока кромки подхода и кольца разошлись не
-/// больше чем на [`WEB_GAP`]. Дальше между ними настоящий островок. `None` —
-/// кромки не расходятся вовсе, щели нет.
-fn web(run: &[(Vec2, f32)], ring: &Ring, ring_width: f32) -> Option<Vec<Vec2>> {
+/// Асфальт между улицей `path` (полуширина `half`) и осью кольца — на каждом
+/// отрезке, где улица идёт вдоль кольца снаружи, а кромки их разошлись не
+/// больше чем на [`WEB_GAP`]. Дальше между ними настоящий островок. Отрезок,
+/// где кромки не расходятся вовсе, перепонки не даёт: щели нет. Так
+/// закрывается и щель у подхода, и щель у обходного съезда, который идёт
+/// вдоль кольца, не заходя в него (Тула, витрина 04, юго-восток), — без
+/// перепонки в щели серпом проступал тротуар.
+fn webs_along(path: &[Vec2], half: f32, ring: &Ring, ring_width: f32) -> Vec<Vec<Vec2>> {
+    let touch = half + ring_width / 2.0;
+    let reach = touch + WEB_GAP;
+    let (low, high) = ring.path.iter().fold(
+        (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY)),
+        |(low, high), &point| (low.min(point), high.max(point)),
+    );
+    let (low, high) = (low - reach, high + reach);
+    let mut webs = Vec::new();
     let mut near: Vec<Vec2> = Vec::new();
     let mut far: Vec<Vec2> = Vec::new();
     let mut open = false;
-    for &(point, half) in run.iter().rev() {
-        let touch = half + ring_width / 2.0;
-        let (onto, distance) = nearest_on(&ring.path, point);
-        if distance > touch + WEB_GAP {
-            break;
+    let mut flush = |near: &mut Vec<Vec2>, far: &mut Vec<Vec2>, open: &mut bool| {
+        if near.len() >= 3 && *open {
+            let mut web = std::mem::take(near);
+            web.extend(far.drain(..).rev());
+            webs.push(web);
         }
-        open |= distance > touch;
-        near.push(point);
-        far.push(onto);
+        near.clear();
+        far.clear();
+        *open = false;
+    };
+    for link in path.windows(2) {
+        let (from, to) = (link[0], link[1]);
+        let span = to - from;
+        // звено целиком мимо рамки кольца
+        if span.length_squared() < 1e-6
+            || from.max(to).cmplt(low).any()
+            || from.min(to).cmpgt(high).any()
+        {
+            flush(&mut near, &mut far, &mut open);
+            continue;
+        }
+        let direction = span.normalize();
+        let steps = (span.length() / SAMPLE_STEP).ceil().max(1.0) as usize;
+        for step in 0..=steps {
+            let point = from + span * (step as f32 / steps as f32);
+            let (onto, distance) = nearest_on(&ring.path, point);
+            let along = direction.dot(ring.tangent(ring.param(onto).0)).abs() >= WEB_ALONG;
+            let outside = point.distance_squared(ring.center) >= onto.distance_squared(ring.center);
+            if !along || distance > reach || (distance > touch && !outside) {
+                flush(&mut near, &mut far, &mut open);
+                continue;
+            }
+            if near.last() == Some(&point) {
+                continue;
+            }
+            open |= distance > touch;
+            near.push(point);
+            far.push(onto);
+        }
     }
-    if near.len() < 3 || !open {
-        return None;
-    }
-    far.reverse();
-    near.extend(far);
-    Some(near)
+    flush(&mut near, &mut far, &mut open);
+    webs
 }
 
 /// Ближайшая к `point` точка ломаной и расстояние до неё.
