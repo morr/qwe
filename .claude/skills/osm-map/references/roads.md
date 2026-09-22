@@ -747,6 +747,15 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
       a wedge between the two butt ends on the side away from the crossing road, and at the
       old 1° threshold it showed as a light hairline. Tula: outer corners 960 → 1632,
       117 → 202 on sidewalks; the road build did not move (125.6 ms).
+    - **A small island of three nodes is paved** (`small_islands`): three shared nodes
+      pairwise joined by pieces of streets (a fork's triangle, Tula, gallery 06: sides
+      17–31 m) whose inradius, less the widest half width of the three, is under
+      `ISLAND_FILL` 2 m, with a perimeter under `ISLAND_PERIMETER_MAX` 120 m. Of such an
+      island only a lens between the ribbons is left, and the ground showed in it as a
+      light crescent; the whole triangle is pushed as asphalt under the ribbons, like a
+      ring's web. A larger triangle is a real island and keeps its fill. Counted in the log
+      line (`small islands`); Tula 23 — in gallery 04, 05 and 17 they lay wholly under the
+      ribbons already, in 15 the same lens closed at a median nose.
     - **The junction is not unioned into one polygon.** The plan's stage 5 asked for the
       asphalt of a node as an `i_overlay` union of its ribbons; the pieces above give the
       same picture lying under the ribbons of their layer (a ribbon covers every seam

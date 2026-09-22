@@ -457,6 +457,110 @@ fn fillet(
     Some(outline)
 }
 
+/// Остров внутри треугольника узлов заливается, когда от него за вычетом
+/// полотен остаётся полоса уже этого, м: вписанный радиус треугольника минус
+/// наибольшая полуширина его улиц. Развилка в Туле (витрина 06) — треугольник
+/// в 17–31 м со сторон, вписанный радиус 5.2 м при полуширине 3.8: от острова
+/// оставалась линза в метр с небольшим, и в ней серпом светлела земля.
+const ISLAND_FILL: f32 = 2.0;
+/// Периметр треугольника, выше которого остров не трогается, м: большой
+/// треугольник развилки — настоящий остров, со своим газоном или домом.
+const ISLAND_PERIMETER_MAX: f32 = 120.0;
+
+/// Острова-крошки: треугольник из трёх общих узлов, попарно соединённых
+/// кусками улиц, от которого за полотнами почти ничего не остаётся
+/// ([`ISLAND_FILL`]). Контур — по нарисованным осям `paths` (`None` — дорога
+/// не участвует); кладётся асфальтом под ленты, как перепонки колец.
+pub fn small_islands(
+    roads: &[&RoadLine],
+    paths: &[Option<&[Vec2]>],
+    nodes: &RoadNodes,
+) -> Vec<Vec<Vec2>> {
+    // рёбра: куски улиц между соседними общими узлами
+    struct Edge<'a> {
+        ends: [(i32, i32); 2],
+        path: &'a [Vec2],
+        half: f32,
+    }
+    let mut edges: Vec<Edge> = Vec::new();
+    for (road, path) in roads.iter().zip(paths) {
+        let Some(path) = *path else { continue };
+        if road.class != RoadClass::Street || path.len() < 2 {
+            continue;
+        }
+        let shared: Vec<usize> = (0..path.len())
+            .filter(|&index| nodes.is_shared(path[index]))
+            .collect();
+        for pair in shared.windows(2) {
+            edges.push(Edge {
+                ends: [node_key(path[pair[0]]), node_key(path[pair[1]])],
+                path: &path[pair[0]..=pair[1]],
+                half: road.width / 2.0,
+            });
+        }
+    }
+    let mut at: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+    for (index, edge) in edges.iter().enumerate() {
+        if edge.ends[0] != edge.ends[1] {
+            at.entry(edge.ends[0]).or_default().push(index);
+            at.entry(edge.ends[1]).or_default().push(index);
+        }
+    }
+    let other = |edge: usize, end: (i32, i32)| {
+        let [a, b] = edges[edge].ends;
+        if a == end { b } else { a }
+    };
+    // ребро, пройденное от узла `from`
+    let walk = |edge: usize, from: (i32, i32)| -> Vec<Vec2> {
+        let mut points = edges[edge].path.to_vec();
+        if edges[edge].ends[0] != from {
+            points.reverse();
+        }
+        points
+    };
+    let mut islands = Vec::new();
+    for (first, edge) in edges.iter().enumerate() {
+        let [a, b] = edge.ends;
+        for &second in at.get(&b).into_iter().flatten() {
+            let c = other(second, b);
+            if second <= first || c == a {
+                continue;
+            }
+            for &third in at.get(&c).into_iter().flatten() {
+                if third <= first || third == second || other(third, c) != a {
+                    continue;
+                }
+                let mut outline = walk(first, a);
+                for (edge, from) in [(second, b), (third, c)] {
+                    outline.pop();
+                    outline.extend(walk(edge, from));
+                }
+                outline.pop();
+                let perimeter: f32 = outline
+                    .iter()
+                    .zip(outline.iter().cycle().skip(1))
+                    .map(|(p, q)| p.distance(*q))
+                    .sum();
+                let area = outline
+                    .iter()
+                    .zip(outline.iter().cycle().skip(1))
+                    .map(|(p, q)| p.perp_dot(*q))
+                    .sum::<f32>()
+                    .abs()
+                    / 2.0;
+                let half = [first, second, third]
+                    .map(|edge| edges[edge].half)
+                    .into_iter()
+                    .fold(0.0, f32::max);
+                if perimeter < ISLAND_PERIMETER_MAX && 2.0 * area / perimeter - half < ISLAND_FILL {
+                    islands.push(outline);
+                }
+            }
+        }
+    }
+    islands
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -776,6 +880,34 @@ mod tests {
             assert!((point.length() - 4.0).abs() < 1e-3, "{point:?}");
         }
         assert!(point_in_polygon(Vec2::new(-2.0, -2.0), outer));
+    }
+
+    #[test]
+    fn a_small_triangle_of_streets_is_paved_and_a_large_one_is_not() {
+        // развилка с островом (Тула, витрина 06): три улицы по 7.6 м между
+        // тремя узлами; вписанный радиус 5.2 м — острова за полотнами почти нет
+        let triangle = |scale: f32| {
+            let [a, b, c] = [Vec2::ZERO, Vec2::new(30.0, 0.0), Vec2::new(10.0, 12.0)]
+                .map(|point| point * scale);
+            [(a, b), (b, c), (c, a)].map(|(from, to)| street(vec![from, to], 7.6))
+        };
+        let islands = |roads: &[RoadLine]| {
+            let nodes = RoadNodes::new(roads);
+            let paths: Vec<Option<&[Vec2]>> = roads
+                .iter()
+                .map(|road| Some(road.points.as_slice()))
+                .collect();
+            let drawn: Vec<&RoadLine> = roads.iter().collect();
+            small_islands(&drawn, &paths, &nodes)
+        };
+        let small = islands(&triangle(1.0));
+        assert_eq!(small.len(), 1);
+        assert_eq!(small[0].len(), 3, "контур — три узла: {:?}", small[0]);
+        assert!(point_in_polygon(Vec2::new(13.0, 4.0), &small[0]));
+        assert!(
+            islands(&triangle(2.0)).is_empty(),
+            "большой остров — настоящий"
+        );
     }
 
     #[test]

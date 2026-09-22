@@ -920,6 +920,9 @@ pub struct RoadReport {
     /// Кольца, нарисованные гладкой фигурой (`roads/rings.rs`), и щели
     /// между подходом и кольцом, залитые асфальтом.
     pub rings: [usize; 2],
+    /// Острова-крошки в треугольниках узлов, залитые асфальтом
+    /// (`corners::small_islands`).
+    pub islands: usize,
     /// Направляющие островки у колец (`roads/gores.rs`).
     pub gores: usize,
     /// Клинья между сечениями улиц (`roads/tapers.rs`).
@@ -959,6 +962,7 @@ impl std::fmt::Display for RoadReport {
             stitches,
             crossings,
             rings: [rings, webs],
+            islands,
             gores,
             tapers,
             medians: [paved, lawns],
@@ -976,7 +980,7 @@ impl std::fmt::Display for RoadReport {
              turn paths {turns}, arrows {arrows}, leading roads {leading}, kerb returns {kerb_returns} + \
              {sidewalk_returns} on sidewalks, outer corners {outer} + {outer_sidewalks} on \
              sidewalks, stitches {stitches}, kerb pockets {kerb_pockets}, turning circles {turning_circles}, driveway crossings \
-             {crossings}, rings {rings} ({webs} webs), gores {gores}, tapers {tapers}, medians {paved} paved + {lawns} \
+             {crossings}, rings {rings} ({webs} webs), small islands {islands}, gores {gores}, tapers {tapers}, medians {paved} paved + {lawns} \
              lawn, smooth seams {seams}, tight corners {tight}; {network:?} of it before the \
              ribbons)",
             style.sidewalks, style.markings,
@@ -1075,7 +1079,7 @@ pub fn mesh_roads(
     let stations = paint::street_stations(&map.network, paths);
     // Скругления кладутся раньше всех лент своего слоя: лента поверх кроет
     // скругление, а не наоборот, и разметка остаётся целой.
-    let kerb_returns = {
+    let (kerb_returns, islands) = {
         let rounded: Vec<Option<&[Vec2]>> = drawn
             .iter()
             .zip(paths)
@@ -1090,13 +1094,16 @@ pub fn mesh_roads(
                 .find(|run| run.from - slack <= at && at <= run.to + slack)
                 .map(|run| run.left)
         };
-        corners::kerb_returns(
-            &drawn,
-            &rounded,
-            &nodes,
-            sidewalks_of,
-            paired,
-            shape.corner_radius(),
+        (
+            corners::kerb_returns(
+                &drawn,
+                &rounded,
+                &nodes,
+                sidewalks_of,
+                paired,
+                shape.corner_radius(),
+            ),
+            corners::small_islands(&drawn, &rounded, &nodes),
         )
     };
     for (class, outline) in &kerb_returns.roads {
@@ -1307,6 +1314,10 @@ pub fn mesh_roads(
     // щель между подходом и кольцом — асфальтом, под лентами
     for web in &axes.rings.webs {
         streets.push_polygon(web, &[], ROAD_COLOR.to_linear());
+    }
+    // остров-крошка в треугольнике узлов — тоже
+    for island in &islands {
+        streets.push_polygon(island, &[], ROAD_COLOR.to_linear());
     }
     if style.sidewalks {
         for ring in &axes.rings.list {
@@ -1632,6 +1643,7 @@ pub fn mesh_roads(
         gores: gores.count(),
         tapers: tapers.count,
         rings: [axes.rings.list.len(), axes.rings.webs.len()],
+        islands: islands.len(),
         medians: axes.pairs.count(),
         seams: axes.seams,
         tight: axes.tight,
