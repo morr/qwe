@@ -11,14 +11,17 @@
 //! Карман по тегу идёт вдоль всей стороны way между перекрёстками, по правилу
 //! — редкий и короткий ([`sparse_pockets`]).
 
+use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
-use super::junctions::{self, MarkingBreaks};
+use super::junctions::{self, MarkingBreaks, node_key};
 use super::network::RoadNetwork;
+use super::node_paint::ZEBRA_LENGTH;
 use super::{is_carriageway, tapers};
+use crate::map::along::arclengths;
 use crate::map::meshing::Break;
 use crate::map::osm::model::{Highway, KerbParking};
-use crate::map::osm::{RoadLine, TrafficSide};
+use crate::map::osm::{RoadLine, RoadNode, RoadNodeKind, TrafficSide};
 use crate::map::seed::{Lcg, seed_from_point};
 
 /// Ширина кармана за кромкой проезжей части, м: машина при параллельной
@@ -27,8 +30,9 @@ pub const POCKET_WIDTH: f32 = 2.5;
 /// Длина скоса на торце кармана, м.
 pub const POCKET_TAPER: f32 = 6.0;
 /// Отступ кармана от перекрёстка сверх его разрыва, м: у перехода и угла
-/// кармана не делают.
-const POCKET_CLEARANCE: f32 = 4.0;
+/// кармана не делают. Шесть — скос начинается за зеброй по правилу, что
+/// стоит от кромки узла на метр и тянется на четыре (`roads::node_paint`).
+const POCKET_CLEARANCE: f32 = 6.0;
 /// Самый короткий карман по полной ширине, м — две машины. Короче — не
 /// карман, а зазубрина.
 const POCKET_MIN: f32 = 10.0;
@@ -188,14 +192,107 @@ fn sparse_pockets(runs: Vec<Pocket>, road: &RoadLine, side: usize) -> Vec<Pocket
     pockets
 }
 
-/// Разрывы ряда у бордюра по дорогам: перекрёстки проезжих частей (без
-/// стежков — ряд их не видит) и клинья между сечениями, где бордюр ближе к
-/// оси. Один расчёт на ряд машин и на ленту с карманами; `taper` — длина
-/// клина на метр разницы ширин (ручка `Taper`).
-pub fn row_breaks(roads: &[RoadLine], network: &RoadNetwork, taper: f32) -> MarkingBreaks {
-    let mut found = junctions::marking_breaks(roads, is_carriageway, &[]);
+/// Разрывы ряда у бордюра по дорогам: перекрёстки (без стежков — ряд их не
+/// видит), переходы и клинья между сечениями, где бордюр ближе к оси. Один
+/// расчёт на ряд машин и на ленту с карманами; `taper` — длина клина на метр
+/// разницы ширин (ручка `Taper`), `nodes` — точки дорог карты, из которых
+/// берутся переходы.
+///
+/// В перекрёстках участвуют и проезды, не только улицы разметки: во двор, к
+/// стоянке съезжают через ряд, и машина на съезде его перегораживала (Тула,
+/// Ф. Энгельса у 3976, 1236).
+pub fn row_breaks(
+    roads: &[RoadLine],
+    network: &RoadNetwork,
+    nodes: &[RoadNode],
+    taper: f32,
+) -> MarkingBreaks {
+    let mut found = junctions::marking_breaks(roads, is_row_participant, &[]);
     for (road, clearing) in tapers::car_clearings(roads, network, taper) {
         found.breaks[road].push(clearing);
+    }
+    for (road, crossing) in crossing_breaks(roads, nodes) {
+        found.breaks[road].push(crossing);
+    }
+    found
+}
+
+/// Дорога, что рвёт ряд у бордюра, встретившись с улицей: проезжая часть или
+/// проезд — всё, по чему ездят, кроме дорожек.
+fn is_row_participant(road: &RoadLine) -> bool {
+    road.highway != Highway::Path
+}
+
+/// До торца way ближе этого, м, — переход рвёт ряд и на продолжении улицы за
+/// торцом: OSM режет улицу у перехода, и зебра у самого торца короткого way
+/// (Первомайская в Туле, 3279, 2799) без этого стояла вплотную к карману
+/// соседнего, а тот обрывался без скоса.
+const CROSSING_SPILL: f32 = 10.0;
+
+/// Разрывы на размеченных переходах OSM: полдлины зебры вокруг узла на его
+/// дороге, а если до торца её way ближе [`CROSSING_SPILL`] — и на дороге,
+/// что продолжает улицу за этим торцом, от торца на остаток.
+fn crossing_breaks(roads: &[RoadLine], nodes: &[RoadNode]) -> Vec<(usize, Break)> {
+    let reach = ZEBRA_LENGTH / 2.0;
+    let crossings: HashMap<(i32, i32), Vec2> = nodes
+        .iter()
+        .filter(|node| matches!(node.kind, RoadNodeKind::Crossing { marked: true, .. }))
+        .map(|node| (node_key(node.pos), node.pos))
+        .collect();
+    if crossings.is_empty() {
+        return Vec::new();
+    }
+    let mut ends: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+    for (index, road) in roads.iter().enumerate() {
+        if !is_carriageway(road) || road.points.len() < 2 {
+            continue;
+        }
+        for end in [road.points[0], road.points[road.points.len() - 1]] {
+            ends.entry(node_key(end)).or_default().push(index);
+        }
+    }
+    let mut found = Vec::new();
+    for (index, road) in roads.iter().enumerate() {
+        if !is_carriageway(road) {
+            continue;
+        }
+        for &point in &road.points {
+            let Some(&at) = crossings.get(&node_key(point)) else {
+                continue;
+            };
+            found.push((index, Break { at, reach }));
+            let (along, total) = arclengths(&road.points);
+            let Some(station) = road
+                .points
+                .iter()
+                .position(|&vertex| vertex == point)
+                .map(|vertex| along[vertex])
+            else {
+                continue;
+            };
+            for (end, left) in [
+                (road.points[0], station),
+                (road.points[road.points.len() - 1], total - station),
+            ] {
+                if left <= 0.0 || left >= CROSSING_SPILL {
+                    continue;
+                }
+                let key = node_key(end);
+                for &next in ends.get(&key).into_iter().flatten() {
+                    if next != index {
+                        found.push((
+                            next,
+                            // клиренс ряда отмеряется от разрыва, и торцу
+                            // хватает остатка полузебры за ним
+                            Break {
+                                at: end,
+                                reach: (reach - left).max(0.0),
+                            },
+                        ));
+                    }
+                }
+            }
+        }
     }
     found
 }

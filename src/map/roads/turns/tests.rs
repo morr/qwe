@@ -277,6 +277,34 @@ fn tagged_lanes_decide_which_lanes_turn() {
 }
 
 #[test]
+fn at_the_stem_of_a_t_the_middle_lanes_turn_both_ways() {
+    let lane = LaneEnd {
+        point: Vec2::ZERO,
+        travel: Vec2::X,
+        offset: 0.0,
+    };
+    let arm = ArmLanes {
+        lanes: vec![lane; 3],
+        turns: None,
+    };
+    let from = |maneuver, dead_end| {
+        let mut lanes: Vec<usize> = pairs(&arm, 3, maneuver, (TrafficSide::Right, dead_end))
+            .into_iter()
+            .map(|(from, _)| from)
+            .collect();
+        lanes.sort_unstable();
+        lanes
+    };
+    // есть «прямо»: поворачивает только крайняя к повороту полоса
+    assert_eq!(from(Maneuver::Near, false), vec![0]);
+    assert_eq!(from(Maneuver::Far, false), vec![2]);
+    assert_eq!(from(Maneuver::Straight, false), vec![0, 1, 2]);
+    // торец Т: средняя — в обе стороны, крайние — каждая только в свою
+    assert_eq!(from(Maneuver::Near, true), vec![0, 1]);
+    assert_eq!(from(Maneuver::Far, true), vec![1, 2]);
+}
+
+#[test]
 fn a_straight_curve_is_one_link_and_a_turn_is_many() {
     let lane = |point: Vec2, travel: Vec2| LaneEnd {
         point,

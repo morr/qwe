@@ -1348,3 +1348,25 @@ fn a_wide_gap_between_halves_is_a_lawn_with_a_kerb() {
     // осевой краски у газона нет
     assert!(layer(&layers, paint::PAINT_AXES).builder.is_empty());
 }
+
+#[test]
+fn an_arm_is_filled_before_its_leader_even_when_it_leads_elsewhere() {
+    use node_paint::{Junction, JunctionArm};
+    // 0 — главная, ведёт узел; 1 — примыкание шире неё, что само ведёт
+    // другой узел дальше: по одному ключу «ведущие последними, узкие раньше»
+    // оно ложилось бы на главную
+    let widths = [5.0, 10.0, 8.0];
+    let leading = [true, true, false];
+    let arm = |road| JunctionArm {
+        road,
+        edge: 0.0,
+        dir: 1.0,
+    };
+    let junctions = [Junction {
+        arms: vec![arm(0), arm(0), arm(1)],
+        leading: vec![0],
+    }];
+    assert_eq!(fill_order(&widths, &leading, &junctions), vec![2, 1, 0]);
+    // без узла — прежний ключ
+    assert_eq!(fill_order(&widths, &leading, &[]), vec![2, 0, 1]);
+}

@@ -8,7 +8,9 @@
 //! - **разрешения** — `turn:lanes` (`RoadLine::turns`), если число полос в
 //!   теге совпало с раскладкой; иначе правило: прямо — из каждой полосы в
 //!   свою, в ближний поворот (направо при правостороннем движении) — только
-//!   из крайней у бордюра, в дальний — только из крайней у оси. Односторонняя
+//!   из крайней у бордюра, в дальний — только из крайней у оси; на подходе в
+//!   торец Т, где прямо некуда, средние полосы поворачивают в обе стороны, а
+//!   крайние — каждая только в свою. Односторонняя
 //!   везёт только по ходу точек, `MapData::traffic_side` решает, где бордюр;
 //! - **кривая** — кубическая Безье от середины полосы на кромке узла
 //!   ([`JunctionArm::edge`]) до середины полосы на кромке плеча-цели,
@@ -173,25 +175,33 @@ impl Turns {
             };
             // манёвры полос плеча по правилу — для стрелок, если тега нет
             let mut granted = vec![LaneTurn::default(); ins[a].lanes.len()];
-            for (b, to) in junction.arms.iter().enumerate() {
-                let Some(target) = outs[b].lanes.first() else {
-                    continue;
-                };
+            let maneuver_to = |b: usize| -> Option<Maneuver> {
+                let to = &junction.arms[b];
+                let target = outs[b].lanes.first()?;
                 if a == b || (from.road == to.road && from.dir == to.dir) {
-                    continue;
+                    return None;
                 }
                 let angle = first.travel.angle_to(target.travel);
                 if angle.abs() > U_TURN {
-                    continue;
+                    return None;
                 }
-                let maneuver = if angle.abs() < STRAIGHT {
+                Some(if angle.abs() < STRAIGHT {
                     Maneuver::Straight
                 } else if (angle > 0.0) == near_is_left {
                     Maneuver::Near
                 } else {
                     Maneuver::Far
+                })
+            };
+            // подход в торец Т: прямо некуда, и средние полосы поворачивают
+            // в обе стороны — крайние только в свою
+            let dead_end =
+                !(0..junction.arms.len()).any(|b| maneuver_to(b) == Some(Maneuver::Straight));
+            for (b, to) in junction.arms.iter().enumerate() {
+                let Some(maneuver) = maneuver_to(b) else {
+                    continue;
                 };
-                let lanes = pairs(&ins[a], outs[b].lanes.len(), maneuver, side);
+                let lanes = pairs(&ins[a], outs[b].lanes.len(), maneuver, (side, dead_end));
                 for &(start, _) in &lanes {
                     let turn = &mut granted[start];
                     match maneuver {
@@ -358,12 +368,15 @@ fn arm_lanes(
     ArmLanes { lanes, turns }
 }
 
-/// Какие полосы в какие: `(входящая, выходящая)`, обе от бордюра.
+/// Какие полосы в какие: `(входящая, выходящая)`, обе от бордюра. По правилу
+/// крайняя к повороту полоса поворачивает (и едет прямо), прочие — только
+/// прямо; на подходе в торец Т (`dead_end`) прямо нет, и поворачивают все,
+/// кроме крайней с другой стороны.
 fn pairs(
     from: &ArmLanes,
     out: usize,
     maneuver: Maneuver,
-    side: TrafficSide,
+    (side, dead_end): (TrafficSide, bool),
 ) -> Vec<(usize, usize)> {
     let count = from.lanes.len();
     if count == 0 || out == 0 {
@@ -387,6 +400,8 @@ fn pairs(
             .collect(),
         None => match maneuver {
             Maneuver::Straight => (0..count.min(out)).collect(),
+            Maneuver::Near if dead_end && count > 1 => (0..count - 1).collect(),
+            Maneuver::Far if dead_end && count > 1 => (1..count).collect(),
             Maneuver::Near => vec![0],
             Maneuver::Far => vec![count - 1],
         },

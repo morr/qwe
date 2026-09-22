@@ -566,9 +566,17 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
     `is_carriageway` over the **whole** `map.roads` slice (its `breaks` are indexed by the
     road's position in the input, and the participants must be every real street, not only
     the parkable ones: a residential street joining another has to break the row too). A
-    place within `Break::reach + JUNCTION_CLEARANCE` (5 m) of a break is dropped. A dead
-    end arrives as a break of reach 0, so the clearance empties the same 5 m there; two way
+    place whose **body** comes within `Break::reach + JUNCTION_CLEARANCE` (6 m) of a break,
+    measured **along** the street (the place sits at the kerb, and the straight line to the
+    node overstated the distance), is dropped. Six metres, not five: a rule zebra stands
+    1–5 m past the junction edge, and a car measured by its centre five metres out stood
+    on it nose first (the author's report, Чапаева at Кирова, 7375 3707). A dead end
+    arrives as a break of reach 0, so the clearance empties the same metres there; two way
     ends meeting are not a break at all, which is the half of the defect that tore the row.
+    The breaks are `roads::pockets::row_breaks`, not the bare `marking_breaks`: they add the
+    **service drives** as participants (a car used to stand across a driveway, Ф. Энгельса
+    at 3976 1236) and the **marked OSM crossings** (half a zebra, spilled onto the next way
+    when the crossing is near its way's end) — see `references/roads.md`, **Kerb pockets**.
   - **Nor does a row stand where a street crosses a bridge** (`BridgeDeck`, pinned by
     `a_street_crossing_a_bridge_clears_the_row_under_the_deck`). A street under a bridge,
     or one butting into its side, shares no node with it, so `marking_breaks` sees no

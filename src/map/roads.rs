@@ -782,6 +782,63 @@ fn road_lanes(road: &RoadLine) -> Option<LaneFrame> {
     is_carriageway(road).then(|| paint::lane_frame(lane_count(road)))
 }
 
+/// Порядок заливки лент: узкие под широкими, ведущие узлов — поверх всех
+/// (см. доку модуля), и **в каждом узле его плечи — до его ведущей**. Одного
+/// «ведущие последними» мало: примыкание, что само ведёт другой узел дальше,
+/// попадало в хвост вместе с главной и, если было шире, ложилось на неё
+/// торцом — квадрат без колеи посреди перекрёстка (Тула, 5968, 1582).
+/// Топологическая сортировка с приоритетом по прежнему ключу; на цикле
+/// (две дороги ведут узлы друг друга) берётся первая по ключу.
+fn fill_order(widths: &[f32], leading: &[bool], junctions: &[node_paint::Junction]) -> Vec<usize> {
+    use std::collections::BTreeSet;
+    let mut by_key: Vec<usize> = (0..widths.len()).collect();
+    by_key.sort_by(|&a, &b| {
+        leading[a]
+            .cmp(&leading[b])
+            .then(widths[a].total_cmp(&widths[b]))
+    });
+    let mut rank = vec![0; widths.len()];
+    for (place, &road) in by_key.iter().enumerate() {
+        rank[road] = place;
+    }
+    // ребро «плечо → ведущая»: плечо ложится раньше
+    let mut after: Vec<Vec<usize>> = vec![Vec::new(); widths.len()];
+    let mut before = vec![0usize; widths.len()];
+    for junction in junctions {
+        let mut arms: Vec<usize> = junction.arms.iter().map(|arm| arm.road).collect();
+        arms.sort_unstable();
+        arms.dedup();
+        for &lead in &junction.leading {
+            for &arm in arms.iter().filter(|&&arm| !junction.leading.contains(&arm)) {
+                if !after[arm].contains(&lead) {
+                    after[arm].push(lead);
+                    before[lead] += 1;
+                }
+            }
+        }
+    }
+    let mut ready: BTreeSet<usize> = (0..widths.len())
+        .filter(|&road| before[road] == 0)
+        .map(|road| rank[road])
+        .collect();
+    let mut left: BTreeSet<usize> = (0..widths.len()).map(|road| rank[road]).collect();
+    let mut order = Vec::with_capacity(widths.len());
+    while let Some(&first) = left.first() {
+        let place = ready.pop_first().unwrap_or(first);
+        ready.remove(&place);
+        left.remove(&place);
+        let road = by_key[place];
+        order.push(road);
+        for &next in &after[road] {
+            before[next] = before[next].saturating_sub(1);
+            if before[next] == 0 && left.contains(&rank[next]) {
+                ready.insert(rank[next]);
+            }
+        }
+    }
+    order
+}
+
 /// Шаг, с которым осевая крепостной стены проверяется на «стоит ли тут
 /// здание стены», м.
 const WALL_PROBE_STEP: f32 = 2.0;
@@ -1002,7 +1059,7 @@ pub fn mesh_roads(
 ) -> (Vec<LayerMesh>, RoadReport) {
     let started = std::time::Instant::now();
     let (roads, walls): (&[RoadLine], &[WallLine]) = (&map.roads, &map.walls);
-    let mut painter = paint::Painter::default();
+    let mut painter = paint::Painter::new(map.traffic_side);
 
     let mut sidewalks = MeshBuilder::with_surface_coords();
     let mut alleys = MeshBuilder::with_surface_coords();
@@ -1123,7 +1180,7 @@ pub fn mesh_roads(
     }
     // карманы — по тому же ответу и тем же разрывам, что ряд машин
     // (`map::cars`): асфальт за кромкой и тротуар, отодвинутый за него
-    let row_breaks = pockets::row_breaks(roads, &map.network, shape.taper());
+    let row_breaks = pockets::row_breaks(roads, &map.network, &map.road_nodes, shape.taper());
     let mut kerb_pockets = 0;
     for (index, road) in roads.iter().enumerate() {
         if !pockets::parkable(road) {
@@ -1245,12 +1302,8 @@ pub fn mesh_roads(
             leading[road] = true;
         }
     }
-    let mut order: Vec<usize> = (0..roads.len()).collect();
-    order.sort_by(|&a, &b| {
-        leading[a]
-            .cmp(&leading[b])
-            .then(drawn[a].width.total_cmp(&drawn[b].width))
-    });
+    let widths: Vec<f32> = drawn.iter().map(|road| road.width).collect();
+    let order = fill_order(&widths, &leading, &node_paint.junctions);
     // направляющие островки у колец (`roads/gores.rs`) — до лент: к ним
     // дотягиваются двойные сплошные разделительных
     let gore_roads: Vec<gores::GoreRoad> = order

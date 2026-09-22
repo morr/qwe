@@ -16,8 +16,10 @@
 //!   она в нём кончается или её пересекает (проходит насквозь) дорога не ниже
 //!   рангом, либо примыкает дорога выше рангом. Ранг — класс `highway`, знак
 //!   `stop`/`give_way` на плече понижает его на полступени. Примыкание
-//!   второстепенной улицы линий главной не рвёт; половина разделённой улицы
-//!   своей второй половине не соперник. Светофор в кластере рвёт всех;
+//!   второстепенной улицы линий главной не рвёт; крестовина — два плеча чужих
+//!   улиц в одном узле — рвёт, как и проходящая насквозь; половина
+//!   разделённой улицы своей второй половине не соперник. Светофор в кластере
+//!   рвёт всех;
 //! - **зебра и стоп-линия на плече**, которое рвётся: зебра — по узлу
 //!   `highway=crossing` на плече (до [`ARM_CROSSING_REACH`]), иначе
 //!   ([`CrossingMode::Generated`]) — в [`ZEBRA_SETBACK`] от кромки узла, если
@@ -45,6 +47,7 @@ use crate::map::along::{arclengths, place_on_path};
 use crate::map::grid::Grid;
 use crate::map::meshing::Break;
 use crate::map::osm::{Highway, MapData, RoadLine, RoadNodeKind, TrafficSide};
+use crate::map::shapes::is_ring;
 
 /// Запас зоны узла за полушириной самой широкой его дороги, м — радиус
 /// скругления улицы (`roads/corners.rs`): до конца дуги бордюра узел ещё
@@ -62,8 +65,9 @@ const EDGE_INSET: f32 = 0.3;
 pub const STOP_WIDTH: f32 = 0.4;
 const STOP_GAP: f32 = 1.0;
 /// Сколько чистого асфальта линии полос оставляют вокруг зебры и
-/// стоп-линии, м.
-const PAINT_CLEAR: f32 = 0.5;
+/// стоп-линии, м. Метр — столько же, сколько было видно, пока линия гасла у
+/// разрыва за метр; теперь она обрывается резко на самом краю разрыва.
+const PAINT_CLEAR: f32 = 1.0;
 /// Сколько дороги должно остаться за краской плеча, м.
 const ARM_TAIL: f32 = 8.0;
 /// Сколько дороги нужно зебре по правилу от кромки узла до следующего узла
@@ -165,6 +169,9 @@ pub struct NodePaint {
     pub clusters: usize,
     /// Узлы, где главная прошла насквозь.
     pub through: usize,
+    /// Разрывы краски, обрезанные концом пути: конец и остаток — его
+    /// получает продолжение улицы за ним ([`spill_over_ends`]).
+    spills: Vec<(Vec2, f32)>,
 }
 
 /// Что рисовать на узлах.
@@ -251,6 +258,22 @@ impl<'a> Walk<'a> {
             .contains(&at)
             .then(|| place_on_path(self.path, &self.along, at))
             .flatten()
+    }
+
+    /// Что от отрезка длин `[a, b]` выходит за концы пути: конец и на
+    /// сколько. [`Self::gap`] это обрезает — продолжение улицы за концом
+    /// получает остаток ([`spill_over_ends`]).
+    fn spills(&self, a: f32, b: f32) -> impl Iterator<Item = (Vec2, f32)> + use<> {
+        let (low, high) = (a.min(b), a.max(b));
+        let first = self.path.first().copied();
+        let last = self.path.last().copied();
+        [
+            first.filter(|_| low < 0.0).map(|at| (at, -low)),
+            last.filter(|_| high > self.total)
+                .map(|at| (at, high - self.total)),
+        ]
+        .into_iter()
+        .flatten()
     }
 
     /// Разрыв, закрывающий отрезок длин `[a, b]`.
@@ -380,6 +403,10 @@ impl NodePaint {
                 );
             }
         }
+        let junction_keys: Vec<(i32, i32)> =
+            junctions.iter().map(|node| node_key(node.at)).collect();
+        let spills = std::mem::take(&mut paint.spills);
+        spill_over_ends(drawn, paths, (&junction_keys, &spills), &mut paint.breaks);
         for (road, breaks) in paint.breaks.iter_mut().enumerate() {
             bridge_short_runs(paths[road].as_ref(), breaks);
         }
@@ -520,14 +547,34 @@ impl NodePaint {
         for (&road, list) in &visits {
             let others = others(road);
             let own = rank(road);
+            // два плеча чужих улиц в одном узле — это крестовина, а не
+            // примыкание, даже если OSM режет поперечную на две улицы (у Макса
+            // Смирнова в Туле, 5968, 1582, юг односторонний, север нет, и
+            // «насквозь» она не проходила — главная шла пунктиром через
+            // перекрёсток). В одном узле, а не в кластере: примыкания с разных
+            // сторон вразбежку (Циолковского, 17 м) главную не рвут
+            let foreign: Vec<Vec2> = arms
+                .iter()
+                .filter(|arm| {
+                    others
+                        .iter()
+                        .any(|&other| street(other) == street(arm.road))
+                })
+                .map(|arm| arm.at)
+                .collect();
+            let crossed = foreign.iter().enumerate().any(|(index, at)| {
+                foreign[index + 1..]
+                    .iter()
+                    .any(|other| other.distance(*at) < JUNCTION_MARGIN)
+            });
             // ведёт узел: проходит насквозь, и уступать некому — ни дороге
-            // выше рангом, ни такой же проходящей. Кольцо ведёт всегда: у него
-            // приоритет, въезды ему уступают
+            // выше рангом, ни такой же проходящей или крестовине. Кольцо ведёт
+            // всегда: у него приоритет, въезды ему уступают
             let leads = passes(road)
                 && (drawn[road].is_roundabout()
                     || !others.iter().any(|&other| {
                         let theirs = rank(other);
-                        theirs > own || (theirs == own && passes(other))
+                        theirs > own || (theirs == own && (passes(other) || crossed))
                     }));
             let yields = signalized || !leads;
             let widest = others
@@ -731,6 +778,8 @@ impl NodePaint {
                 ));
             }
             self.breaks[arm.road].extend(walk.gap(edge, outer + dir * PAINT_CLEAR));
+            self.spills
+                .extend(walk.spills(edge, outer + dir * PAINT_CLEAR));
         }
     }
 
@@ -773,8 +822,9 @@ impl NodePaint {
             }
             reach = offset + STOP_WIDTH / 2.0;
         }
-        self.breaks[index]
-            .extend(walk.gap(center - reach - PAINT_CLEAR, center + reach + PAINT_CLEAR));
+        let (from, to) = (center - reach - PAINT_CLEAR, center + reach + PAINT_CLEAR);
+        self.breaks[index].extend(walk.gap(from, to));
+        self.spills.extend(walk.spills(from, to));
     }
 }
 
@@ -997,6 +1047,56 @@ fn overlaps(a: &Zebra, b: &Zebra) -> bool {
         point.dot(across).abs() < half_span - OVERLAP_SLACK
             && point.dot(along).abs() < half_length - OVERLAP_SLACK
     })
+}
+
+/// Разрыв краски, что выходит за конец дороги, продолжается на дороге за ним:
+/// OSM режет улицу на ways у светофора, у перехода, и зебра у самого конца
+/// короткого way отрезала линии только на нём — двойная сплошная соседнего
+/// начиналась вплотную к зебре (Первомайская в Туле, 3279, 2799). Продолжение —
+/// единственная другая проезжая часть, чей конец в той же точке, и точка не
+/// узел: на узле у каждой дороги свой разрыв, а ведущая линий не рвёт.
+/// Остатки разрывов (`spills`) — концы и длины, что обрезал [`Walk::gap`].
+fn spill_over_ends(
+    drawn: &[&RoadLine],
+    paths: &[impl AsRef<[Vec2]>],
+    (junctions, spills): (&[(i32, i32)], &[(Vec2, f32)]),
+    breaks: &mut [Vec<Break>],
+) {
+    if spills.is_empty() {
+        return;
+    }
+    let mut ends: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+    for (road, path) in paths.iter().enumerate() {
+        let path = path.as_ref();
+        if !is_carriageway(drawn[road]) || path.len() < 2 || is_ring(path) {
+            continue;
+        }
+        for end in [path[0], path[path.len() - 1]] {
+            ends.entry(node_key(end)).or_default().push(road);
+        }
+    }
+    for &(at, reach) in spills {
+        let key = node_key(at);
+        if junctions.contains(&key) {
+            continue;
+        }
+        let Some(roads) = ends.get(&key).filter(|roads| roads.len() == 2) else {
+            continue;
+        };
+        // оба конца в точке — и та дорога, чей разрыв обрезан: продолжение —
+        // вторая из двух
+        for &road in roads {
+            let path = paths[road].as_ref();
+            let walk = Walk::new(path);
+            let from = walk.project(at);
+            let covered = breaks[road].iter().any(|found| {
+                found.reach > 0.0 && (walk.project(found.at) - from).abs() <= found.reach + 1e-3
+            });
+            if !covered {
+                breaks[road].push(Break { at, reach });
+            }
+        }
+    }
 }
 
 /// Кусок линий между двумя разрывами короче [`MIN_RUN`] — тоже разрыв.

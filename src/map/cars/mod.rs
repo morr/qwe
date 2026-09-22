@@ -88,11 +88,14 @@ const END_MARGIN: f32 = 2.0;
 /// тротуар (полметра `CURB_GAP` держит и перекос).
 const PARK_SKEW_DEGREES: f32 = 2.5;
 const PARK_SLOP: f32 = 0.12;
-/// Насколько ряд не доходит до перекрёстка, м, сверх полуширины самой широкой
-/// из сошедшихся дорог (`Break::reach`): ближе пяти метров к перекрёстку не
-/// паркуются. Тупик приходит разрывом нулевого `reach`, и клиренс даёт в нём
-/// те же пять пустых метров, что и на настоящем узле.
-const JUNCTION_CLEARANCE: f32 = 5.0;
+/// Насколько **кузов** не доходит до разрыва ряда, м, сверх его `Break::reach`
+/// (у перекрёстка — полуширина самой широкой из сошедшихся дорог, у перехода
+/// — полдлины зебры, `roads::pockets::row_breaks`): ближе пяти метров к
+/// перекрёстку и переходу не паркуются, и ещё метр — зебра по правилу стоит
+/// за кромкой узла на метр и тянется на четыре (`roads::node_paint`), а
+/// машина, отмеренная центром в пяти метрах, вставала на неё носом. Тупик
+/// приходит разрывом нулевого `reach`, и клиренс даёт в нём те же метры.
+const JUNCTION_CLEARANCE: f32 = 6.0;
 /// Через сколько метров улицы застройка вокруг перечитывается заново, м.
 /// Квартал не меняется от места к месту, а запрос к [`Districts`] на каждое из
 /// двадцати двух тысяч мест стоил бы больше, чем весь слой; полсотни метров —
@@ -401,7 +404,7 @@ pub fn mesh_cars(
     // `examples/bench/map_meshing` (он печатает обе строки — `breaks` и `cars`)
     // и на клиньях между сечениями улицы: бордюр там ближе к оси; те же
     // разрывы режут карманы ленты (`roads::pockets`)
-    let junctions = pockets::row_breaks(&map.roads, &map.network, shape.taper());
+    let junctions = pockets::row_breaks(&map.roads, &map.network, &map.road_nodes, shape.taper());
     let breaks_took = started.elapsed();
     // застройка вокруг — тем же проходом и с тем же сроком жизни, что и
     // разрывы: индекс на 7.6 тысячи домов дешевле, чем повод его кешировать
@@ -738,11 +741,17 @@ fn park_along(
         let offset =
             half_road + if pocket { POCKET_WIDTH } else { 0.0 } - CURB_GAP - shape.width() / 2.0;
         let place = point + across * offset;
+        // до разрыва — вдоль улицы и от кузова, а не от центра машины: поперёк
+        // место отнесено к бордюру, и по прямой до узла выходило больше, чем
+        // вдоль
+        let clear = |junction: &Break| {
+            (place - junction.at).dot(direction).abs() - shape.length() / 2.0
+                >= junction.reach + JUNCTION_CLEARANCE
+                || place.distance(junction.at)
+                    > junction.reach + JUNCTION_CLEARANCE + half_road * 4.0
+        };
         if !(pocket || kerb.stand.lane)
-            || clearings
-                .junctions
-                .iter()
-                .any(|junction| place.distance(junction.at) < junction.reach + JUNCTION_CLEARANCE)
+            || !clearings.junctions.iter().all(clear)
             || clearings.decks.iter().any(|deck| deck.covers(place))
         {
             continue;

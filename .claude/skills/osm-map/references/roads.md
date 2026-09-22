@@ -69,9 +69,14 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   none; motorway and links → none; the rest → the lane (the old behaviour). `kerbsides`
   lists the sides in the cars' order (one-way: the kerb of its traffic; two-way: right,
   then left — the RNG stream depends on it); a pocket side's pockets are the axis minus
-  `reach + POCKET_CLEARANCE` 4 m around every **row break** (`pockets::row_breaks`: the
-  junction breaks without stitches plus the taper clearings — the same list the cars
-  use), `POCKET_TAPER` 6 m slanted ends where a pocket stops inside the way (none where
+  `reach + POCKET_CLEARANCE` 6 m around every **row break** (`pockets::row_breaks`: the
+  junction breaks without stitches — with **service drives** among the participants, so a
+  driveway into a yard breaks the row, `is_row_participant` — plus the taper clearings and
+  the **marked OSM crossings**, half a zebra around the node, spilled onto the continuing
+  way when the node is under `CROSSING_SPILL` 10 m from its way's end — the same list the
+  cars use; 6 m rather than 4 so the slant starts past a rule zebra, which stands 1–5 m
+  past the junction edge, the author's report of a bay cut off flat at a zebra, 3284
+  2806), `POCKET_TAPER` 6 m slanted ends where a pocket stops inside the way (none where
   it runs into the way's end, so it continues on the next way), at least `POCKET_MIN`
   10 m at full width. That full run is what a **tagged** side (`street_side`) gets. A
   side that is a pocket **by the rule** gets rare short bays out of it
@@ -255,10 +260,21 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     pins that both land on one grid.
   - **Dashes by the street's arclength** (`paint::street_stations` over the network's
     ordered ways and the axis paths): 3 m / 3 m, and the phase runs through a seam.
-  - **Solid near a junction**: the last `APPROACH` 25 m before a junction break. The axis
-    of a two-way street with 4+ lanes is a **double solid** (0.5 m gap, merging into one
-    line once the gap is under ~2 px); a two-lane two-way street has a dashed axis; an odd
-    two-way street and a one-way street have none.
+  - **Solid near a junction**: the last `APPROACH` 25 m before a junction break — for a
+    **lane line only on the approach**, in the direction its lanes flow
+    (`paint::flows_forward` by the line's side of the axis and `MapData::traffic_side`, a
+    one-way road forward): leaving a junction a lane line is dashed at once (the author's
+    report — Первомайская, 3265 2802, carried a solid line on the exit side).
+    `paint::approach_spans` finds the gap edges on the to-break profile (it is linear
+    between vertices, so an edge is a zero on a link), `split_at_spans` puts a vertex at
+    each span end, and the line goes out in pieces of `LineKind::Dashed` (10) and
+    `LineKind::Solid` (11); the shader only draws what the kind says. An **axis** and a
+    **ring's** lane lines keep the old symmetric rule (kind 0/1 — solid by to-break alone):
+    the axis separates two flows, and a ring's entries are not worth splitting a closed
+    strip for. The axis of a two-way street with 4+ lanes is a **double solid** (0.15 m gap
+    — ГОСТ 1.3's 10–15 cm; half a metre read as two separate lines, the author's report —
+    merging into one line once the gap is under ~2 px); a two-lane two-way street has a
+    dashed axis; an odd two-way street and a one-way street have none.
   - **Geometry**: one strip per line (`MeshBuilder::push_paint_strip`, miter joins),
     `LANE_STRIP` 0.6 m / `AXIS_STRIP` 1.4 m half-width — wider than the 0.15 m line so the
     1.3 px floor and the ±0.7 px antialiasing still fit at the farthest zoom where the line
@@ -307,7 +323,9 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   2 lanes, and the ribbon would step) — see **Roundabouts** below.
   **Breaks** — «to-break» is the signed distance to the nearest **marking break**
   (`meshing::Break { at, reach }`, passed as `RibbonBreaks::At`): negative inside a gap,
-  so a paint line fades at the gap edge (`smoothstep(0, 1)`) and the ruts fade over 5 m.
+  so a paint line is **cut sharp** at the gap edge (`smoothstep(±0.7 px)`, the same
+  antialiasing as its sides — a one-metre fade read as a blurred end, the author's report)
+  and the ruts fade over 5 m.
   Junctions (`junctions::marking_breaks`) are computed **always** now, markings on or
   off — the ruts need them too. The mesher projects each break's world point onto its own
   (smoothed, merged) path — that is why a break is a point, not an arclength: the smoothed
@@ -445,7 +463,12 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   below). The fill order is **narrow first, wide last** (`mesh_roads` sorts by width), so
   the main road's fill and its gapped line lie over the side street's end — and a road that
   **leads** some junction goes after all the others whatever its width: its ruts run
-  through the node, and a wider side street laid over them would cut them. This is why the
+  through the node, and a wider side street laid over them would cut them. «After all the
+  others» is **per junction** (`roads::fill_order`, a topological sort over «arm before
+  its junction's leader», the width key as the priority, the first by key on a cycle): a
+  side street that itself leads a junction further on used to land in the leaders' tail
+  and, being wider, lay its square end over the main road — a rut-less square in the
+  middle of the crossing (Tula, 5968 1582, the author's report). This is why the
   road layer must stay opaque with a world-position colour: transparency or a per-way tint
   would expose every crossing.
 - **Junction paint** (`map/roads/node_paint.rs`, `NodePaint::new`, called by `mesh_roads`
@@ -472,7 +495,12 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     half a step off. The other half of a divided street (`Pairs::runs` partner) is no
     rival. So a side street **joining** a through street — even of the same class — does
     not break its lines: the dashes run through the junction on the same axis, and the
-    report counts it as `main through`. Signals aside, such a road **leads** the junction
+    report counts it as `main through`. **A crossroads is not a joining**: when the other
+    streets have two arms or more there (`crossed`), an equal-rank road breaks even if its
+    rival does not "pass" by street identity — OSM splits a cross street into two streets
+    at a oneway change, and Петра Алексеева (Tula, 5968 1582) ran its dashes straight
+    through a four-way crossing of equals because Макса Смирнова is one-way south of it
+    and two-way north. Signals aside, such a road **leads** the junction
     (`Junction::leading`), and so does a roundabout that passes it whatever the approaches'
     class — a ring has priority. The leading road loses its asphalt breaks there
     (`NodePaint::asphalt`): the ruts run through, signals or not.
@@ -496,7 +524,16 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     zebra onto the first's line across the street (to the OSM one if there is one, else to
     the farther one). An arm whose way ends less than `ARM_TAIL` 8 m past the paint is a
     link inside a complex junction and gets nothing. The paint break covers the edge to
-    the outermost stroke plus `PAINT_CLEAR` 0.5 m.
+    the outermost stroke plus `PAINT_CLEAR` 1 m (it was 0.5 with the metre-long fade, which
+    ended the visible line about a metre out anyway; the cut is sharp now).
+  - **A paint gap spills over a way end** (`node_paint::spill_over_ends`): OSM splits a
+    street at a signal or a crossing, and a zebra at the very end of a short way cut the
+    lines of that way only — the next way's double solid started flush with the zebra
+    (Первомайская, 3279 2799: way 396629201 ends 1.7 m past its crossing). Whatever
+    `Walk::gap` clamps at a path end is kept as a spill (`Walk::spills`) and handed, as a
+    break from that end, to the one other carriageway ending at the same point — only at a
+    plain continuation, never at a junction node, where every road has its own break and a
+    leader keeps its lines.
   - **Mid-block crossings**: every marked OSM crossing on a carriageway not taken by an
     arm is a zebra with a gap in the lines around it, and stop lines on both approaches
     if it is signalized. A crossing inside a break already there is skipped.
@@ -532,7 +569,10 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     `RoadLine::turns` (`turn:lanes`, parsed per direction of flow, left to right) when the
     tag's lane count matches the arm's; otherwise the rule — straight from each lane into
     its own (kerb-first, as many as both sides have), near only from the kerb lane into the
-    kerb lane, far only from the inner lane into the inner lane. Tagged far turns pair from
+    kerb lane, far only from the inner lane into the inner lane — the lane nearest a turn
+    turns and goes straight, the rest go straight (the author's rule). **At the stem of a
+    T** (`dead_end`: the approach has no straight exit) every lane turns both ways except
+    the two outer ones, each of which turns only its own way. Tagged far turns pair from
     the axis side, the rest from the kerb.
   - **Straight along a leading road is skipped**: its ruts are the asphalt's. On a
     junction with no leader (a crossing of equals) both straights are curves, and their

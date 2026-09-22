@@ -436,3 +436,44 @@ fn the_wear_passes_have_their_own_materials_under_the_lines() {
         "маска, наложение, линии"
     );
 }
+
+#[test]
+fn a_lane_line_is_solid_only_on_the_approach() {
+    let along = [0.0, 10.0, 20.0, 30.0];
+    // разрыв узла — у конца пути, с 25 м
+    let ahead = [25.0, 15.0, 5.0, -5.0];
+    assert_eq!(approach_spans(&along, &ahead, true), vec![(0.0, 25.0)]);
+    assert!(
+        approach_spans(&along, &ahead, false).is_empty(),
+        "против хода — это выезд из узла: пунктир сразу"
+    );
+    // разрыв у начала, до 5 м: подход — против хода точек
+    let behind = [-5.0, 5.0, 15.0, 25.0];
+    assert_eq!(approach_spans(&along, &behind, false), vec![(5.0, 30.0)]);
+    assert!(approach_spans(&along, &behind, true).is_empty());
+}
+
+#[test]
+fn the_approach_splits_the_line_into_dashed_and_solid_links() {
+    let along = [0.0, 40.0];
+    let line = vec![Vec2::ZERO, Vec2::new(40.0, 0.0)];
+    let stations = vec![
+        PaintStation {
+            along: 0.0,
+            to_break: 40.0,
+            alpha: 1.0,
+        },
+        PaintStation {
+            along: 40.0,
+            to_break: 0.0,
+            alpha: 1.0,
+        },
+    ];
+    let (line, stations, solid) = split_at_spans(line, stations, &along, &[(15.0, 40.0)]);
+    assert_eq!(
+        line,
+        vec![Vec2::ZERO, Vec2::new(15.0, 0.0), Vec2::new(40.0, 0.0)]
+    );
+    assert_eq!(stations[1].to_break, 25.0);
+    assert_eq!(solid, vec![false, true]);
+}

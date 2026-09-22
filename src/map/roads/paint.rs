@@ -18,7 +18,9 @@
 //!   полосы — это плавный уход линий на длине клина, новая полоса справа по
 //!   ходу клина;
 //! - **штрихи — по длине улицы**, а не way: фаза не рвётся на шве;
-//! - **у узла линия сплошная** за [`APPROACH`] до разрыва перекрёстка; осевая
+//! - **у узла линия сплошная** за [`APPROACH`] до разрыва перекрёстка — у
+//!   линии полос только на подходе по ходу её полос, на выезде пунктир сразу
+//!   ([`approach_spans`]); осевая
 //!   двусторонней улицы в четыре полосы и больше — двойная сплошная, у́же —
 //!   пунктир, как линии полос. У нечётной двусторонней и у односторонней
 //!   осевой нет.
@@ -53,8 +55,8 @@ use crate::map::meshing::{
     ATTRIBUTE_RIBBON, Break, LaneFrame, MeshBuilder, PaintStation, break_distances, break_profile,
     miter_offsets,
 };
-use crate::map::osm::RoadLine;
 use crate::map::osm::model::polyline_length;
+use crate::map::osm::{RoadLine, TrafficSide};
 use crate::map::shapes::is_ring;
 use crate::map::shapes::{Shape, ring_of};
 use crate::map::surface::{LayerMesh, MaterialSpec};
@@ -75,8 +77,9 @@ const GAP: f32 = 3.0;
 /// перестраиваться нельзя.
 const APPROACH: f32 = 25.0;
 /// Центр каждой из двух линий двойной сплошной от оси, м: зазор между ними
-/// полметра.
-const DOUBLE_OFFSET: f32 = (0.5 + LINE_WIDTH) / 2.0;
+/// 15 см, как у настоящей (1.3 по ГОСТ — 10–15 см). Полметра читались двумя
+/// отдельными линиями, а не одной двойной.
+const DOUBLE_OFFSET: f32 = (0.15 + LINE_WIDTH) / 2.0;
 /// Цвет краски — белый с лёгкой желтизной старой разметки; прозрачность —
 /// ручка «Paint» ([`RoadPaintStyle::paint`]), не цвет.
 const PAINT_COLOR: Color = Color::srgb(0.95, 0.95, 0.93);
@@ -185,6 +188,12 @@ enum LineKind {
     /// Стрелка на полосе подхода (`roads/turns.rs`): заливка своего контура,
     /// гаснет с линиями полос.
     Arrow,
+    /// Кусок линии полос вне подхода к узлу — только пунктир. Сплошную у
+    /// узла линия полос открытой улицы получает не по близости разрыва, а по
+    /// ходу своих полос ([`approach_spans`]): на выезде из узла её нет.
+    Dashed,
+    /// Кусок линии полос на подходе к узлу по ходу движения — сплошной.
+    Solid,
 }
 
 impl LineKind {
@@ -200,6 +209,8 @@ impl LineKind {
             Self::Hatch => 7.0,
             Self::Edge => 8.0,
             Self::Arrow => 9.0,
+            Self::Dashed => 10.0,
+            Self::Solid => 11.0,
         }
     }
 }
@@ -403,11 +414,22 @@ pub struct Painter {
     bridge_lanes: MeshBuilder,
     bridge_axes: MeshBuilder,
     pub lines: usize,
+    /// Сторона движения карты: по ней линия полос знает, куда едут её
+    /// полосы, и сплошную кладёт только на подходе к узлу.
+    side: TrafficSide,
 }
 
 impl Default for Painter {
     fn default() -> Self {
+        Self::new(TrafficSide::default())
+    }
+}
+
+impl Painter {
+    /// Пустые меши краски карты со стороной движения `side`.
+    pub fn new(side: TrafficSide) -> Self {
         Self {
+            side,
             wear_mask: MeshBuilder::with_surface_coords(),
             wear: MeshBuilder::with_surface_coords(),
             lanes: MeshBuilder::with_surface_coords(),
@@ -596,25 +618,49 @@ impl Painter {
                 }
                 continue;
             }
-            // куски, где линия видна хоть на одном конце звена
-            let mut from = None;
-            for index in 0..path.len() {
-                let seen = index + 1 < path.len() && alphas[index].max(alphas[index + 1]) > 0.0;
-                match (seen, from) {
-                    (true, None) => from = Some(index),
-                    (false, Some(first)) => {
-                        builder.push_paint_strip(
-                            &line[first..=index],
-                            false,
-                            half,
-                            &stations[first..=index],
-                            kind.code(),
-                            color,
-                        );
-                        self.lines += 1;
-                        from = None;
-                    }
-                    _ => {}
+            // линия полос: сплошная — только на подходе к узлу по ходу её
+            // полос, на выезде из узла пунктир сразу
+            let (line, stations, solid) = match kind {
+                LineKind::Lane => {
+                    let forward = flows_forward(road, body.origin + step, self.side);
+                    let spans = approach_spans(&along, to_break, forward);
+                    split_at_spans(line, stations, &along, &spans)
+                }
+                _ => {
+                    let solid = vec![false; line.len().saturating_sub(1)];
+                    (line, stations, solid)
+                }
+            };
+            let code = |solid: bool| match kind {
+                LineKind::Lane if solid => LineKind::Solid.code(),
+                LineKind::Lane => LineKind::Dashed.code(),
+                _ => kind.code(),
+            };
+            // куски, где линия видна хоть на одном конце звена, одного вида
+            let key = |index: usize| {
+                (index + 1 < line.len()
+                    && stations[index].alpha.max(stations[index + 1].alpha) > 0.0)
+                    .then(|| solid[index])
+            };
+            let mut from: Option<usize> = None;
+            for index in 0..line.len() {
+                let here = key(index);
+                if let Some(first) = from
+                    && here != key(first)
+                {
+                    builder.push_paint_strip(
+                        &line[first..=index],
+                        false,
+                        half,
+                        &stations[first..=index],
+                        code(solid[first]),
+                        color,
+                    );
+                    self.lines += 1;
+                    from = None;
+                }
+                if from.is_none() && here.is_some() {
+                    from = Some(index);
                 }
             }
         }
@@ -922,6 +968,85 @@ fn insert_at(path: &mut Vec<Vec2>, along: &mut Vec<f32>, to_break: &mut Vec<f32>
         to_break[index] + (to_break[index + 1] - to_break[index]) * t,
     );
     along.insert(index + 1, at);
+}
+
+/// Едут ли полосы у линии со сдвигом `offset` от оси (плюс — влево по ходу
+/// точек) по ходу точек дороги. Односторонняя — вся по ходу (`oneway=-1`
+/// развёрнут парсом); у двусторонней по ходу — полосы своей стороны движения.
+fn flows_forward(road: &RoadLine, offset: f32, side: TrafficSide) -> bool {
+    road.oneway
+        || match side {
+            TrafficSide::Right => offset < 0.0,
+            TrafficSide::Left => offset > 0.0,
+        }
+}
+
+/// Отрезки длин пути, где линия полос сплошная: [`APPROACH`] до входа в
+/// каждый разрыв по ходу движения — перед узлом перестраиваться нельзя, а
+/// на выезде из него можно сразу. `to_break` — «до разрыва» в вершинах пути
+/// (в разрыве меньше нуля); между вершинами он линеен, так что край разрыва —
+/// ноль на звене.
+fn approach_spans(along: &[f32], to_break: &[f32], forward: bool) -> Vec<(f32, f32)> {
+    let mut spans = Vec::new();
+    for index in 0..along.len().saturating_sub(1) {
+        let (a, b) = (to_break[index], to_break[index + 1]);
+        let (entering, leaving) = if forward {
+            (a >= 0.0 && b < 0.0, false)
+        } else {
+            (false, a < 0.0 && b >= 0.0)
+        };
+        if !entering && !leaving {
+            continue;
+        }
+        let edge = along[index] + (along[index + 1] - along[index]) * a / (a - b);
+        spans.push(if forward {
+            (edge - APPROACH, edge)
+        } else {
+            (edge, edge + APPROACH)
+        });
+    }
+    spans
+}
+
+/// Линия с вершинами на концах отрезков `spans` и сплошная ли она на каждом
+/// звене: по середине звена — внутри ли отрезка.
+fn split_at_spans(
+    mut line: Vec<Vec2>,
+    mut stations: Vec<PaintStation>,
+    along: &[f32],
+    spans: &[(f32, f32)],
+) -> (Vec<Vec2>, Vec<PaintStation>, Vec<bool>) {
+    let mut along = along.to_vec();
+    for &at in spans.iter().flat_map(|(from, to)| [from, to]) {
+        let Some(index) = along
+            .windows(2)
+            .position(|pair| pair[0] < at && at < pair[1])
+        else {
+            continue;
+        };
+        let t = (at - along[index]) / (along[index + 1] - along[index]);
+        let (a, b) = (stations[index], stations[index + 1]);
+        line.insert(index + 1, line[index].lerp(line[index + 1], t));
+        stations.insert(
+            index + 1,
+            PaintStation {
+                along: a.along + (b.along - a.along) * t,
+                to_break: a.to_break + (b.to_break - a.to_break) * t,
+                alpha: a.alpha + (b.alpha - a.alpha) * t,
+            },
+        );
+        along.insert(index + 1, at);
+    }
+    let solid = along
+        .windows(2)
+        .map(|pair| {
+            let middle = (pair[0] + pair[1]) / 2.0;
+            spans
+                .iter()
+                .any(|&(from, to)| from <= middle && middle <= to)
+        })
+        .collect();
+    (line, stations, solid)
 }
 
 /// Ступени слоя краски: до [`LANE_ZOOM_MAX`] — всё, до [`ZEBRA_ZOOM_MAX`] —
