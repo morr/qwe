@@ -16,6 +16,7 @@ import sys
 # parse.rs::road_class
 ROAD_OK = {
     "motorway", "trunk", "primary", "secondary", "tertiary",
+    "motorway_link", "trunk_link", "primary_link", "secondary_link", "tertiary_link",
     "residential", "unclassified", "living_street", "service",
     "footway", "path", "pedestrian", "cycleway", "steps", "track",
 }
@@ -40,6 +41,7 @@ ROAD_NODES = {
 # parse/tags.rs::road_class — какие классы проезжие (остальное из ROAD_OK — пешее)
 STREET_CLASSES = {
     "motorway", "trunk", "primary", "secondary", "tertiary",
+    "motorway_link", "trunk_link", "primary_link", "secondary_link", "tertiary_link",
     "residential", "unclassified", "living_street", "service",
 }
 
