@@ -377,6 +377,18 @@ be called alone:
     Everything drawn on a block lies above it (`Z_LANDUSE` 0.25 against `Z_SIDEWALK` 1.6,
     parks and grass at 0.5–0.7), so the part that ends up under the road, under a park or
     on a neighbouring block is never seen; only the closed seam is.
+    **One exception moves a vertex inward**: the nearest road is a **walkway**
+    (`RoadClass::Alley` — a sidewalk mapped as its own footway) lying inside the fill
+    within `SIDEWALK_TUCK_MAX` 3 m, and a carriageway lies outward within
+    `LANDUSE_GAP_MAX`. The vertex then goes `LANDUSE_OVERLAP` under the footway. Berlin
+    draws its blocks to the kerb and maps the sidewalk as a footway inside them, while
+    our carriageway is narrower than the real one (Berlin, gallery 03: the block edge
+    6–7 m from the axis against a 3.8 m half width), so the yard stuck out from under the
+    sidewalk as a dark crescent at every rounded corner. The strip between a sidewalk
+    and the kerb is paving, not yard: it is left as ground.
+  - **The band is what is drawn**: a street's sidewalk counts in its reach only when it
+    has one (`RoadLine::sidewalks`). `sidewalk=separate|no` used to count anyway, and the
+    block was pulled under a sidewalk that is never drawn — its edge stood past the kerb.
   - **A long edge beside a road is split first** (`LANDUSE_STEP` 8 m, and only where the
     grid has a road near the edge): between its own two vertices an edge is straight while
     the road bends, and on the outside of a turn the seam would stay in the middle of the

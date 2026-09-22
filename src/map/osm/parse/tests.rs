@@ -8,8 +8,8 @@ use crate::map::osm::fixture::{
 };
 use crate::map::osm::model::{
     BuildingUse, Colours, FenceKind, Highway, LaneTurn, PitchKind, RailKind, RoadAreaKind,
-    RoadNodeKind, Sacred, SacredForm, ServiceTrack, StructureKind, WaterKind, distance_to_segment,
-    is_big_box,
+    RoadClass, RoadNodeKind, Sacred, SacredForm, ServiceTrack, StructureKind, WaterKind,
+    distance_to_segment, is_big_box,
 };
 use crate::map::osm::planting::{
     TREE_CROWN_REACH, TREE_MIN_SPACING, TREE_SHORE_CLEARANCE, TREE_WALL_CLEARANCE, near_area_edge,
@@ -2933,6 +2933,72 @@ fn pulling_the_blocks_to_the_roads_runs_on_its_own() {
             .zip(&far)
             .all(|(a, b)| a.distance(*b) < 0.01),
         "квартал в стороне от улицы тронут"
+    );
+}
+
+/// Квартал нарисован до бордюра, а тротуар замаплен дорожкой внутри него
+/// (Берлин, витрина 03): край квартала между дорожкой и улицей уходит под
+/// дорожку — иначе двор торчит из-под тротуара серпом. Без улицы снаружи
+/// дорожка край не трогает: зелень только растёт.
+#[test]
+fn a_block_drawn_to_the_kerb_is_tucked_under_its_sidewalk_footway() {
+    let footway = RoadLine {
+        class: RoadClass::Alley,
+        highway: Highway::Path,
+        ..street(
+            vec![
+                CENTER + Vec2::new(-400.0, -7.0),
+                CENTER + Vec2::new(400.0, -7.0),
+            ],
+            3.5,
+        )
+    };
+    let carriageway = RoadLine {
+        sidewalks: [false; 2],
+        ..street(
+            vec![
+                CENTER - Vec2::new(400.0, 0.0),
+                CENTER + Vec2::new(400.0, 0.0),
+            ],
+            2.0 * RESIDENTIAL_HALF,
+        )
+    };
+    // край квартала — в 5 м от оси улицы: в четверти метра над тротуаром
+    let ring = rect(
+        CENTER + Vec2::new(-40.0, -40.0),
+        CENTER + Vec2::new(40.0, -5.0),
+    );
+    let top = |roads: Vec<RoadLine>| {
+        let mut map = MapData {
+            roads,
+            landuse: vec![PolyArea {
+                kind: AreaKind::Residential,
+                ..building(ring.clone(), Vec::new())
+            }],
+            ..MapData::default()
+        };
+        pull_areas_to_roads(&mut map);
+        map.landuse[0]
+            .outer
+            .iter()
+            .map(|vertex| vertex.y - CENTER.y)
+            .fold(f32::NEG_INFINITY, f32::max)
+    };
+    // тротуара у улицы нет (`sidewalk=separate`) — край идёт под её бордюр,
+    // а не под полосу несуществующего тротуара
+    let pulled = top(vec![carriageway.clone()]);
+    assert!(
+        (pulled + RESIDENTIAL_HALF - LANDUSE_OVERLAP).abs() < 0.02,
+        "край не у бордюра: {pulled}"
+    );
+    let tucked = top(vec![carriageway, footway.clone()]);
+    assert!(
+        (tucked - (-7.0 + 1.75 - LANDUSE_OVERLAP)).abs() < 0.02,
+        "край не ушёл под тротуар: {tucked}"
+    );
+    assert!(
+        (top(vec![footway]) + 5.0).abs() < 0.01,
+        "без улицы край тронут"
     );
 }
 

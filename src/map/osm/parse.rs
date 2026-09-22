@@ -12,9 +12,9 @@ use crate::map::grid::Grid;
 use crate::map::osm::entrances::generate_entrances;
 use crate::map::osm::model::{
     AreaKind, BuildingUse, Faith, FenceLine, MapData, PipeLine, PolyArea, RailLine, RoadArea,
-    RoadLine, RoadNode, Sacred, SacredForm, Structure, TrafficSide, TreeCompose, TreeNode, TreeRow,
-    TreeRowLayout, WallLine, WaterLine, closest_on_segment, point_in_area, point_in_polygon,
-    ring_area, ring_bounds, ring_vertex_mean, signed_ring_area,
+    RoadClass, RoadLine, RoadNode, Sacred, SacredForm, Structure, TrafficSide, TreeCompose,
+    TreeNode, TreeRow, TreeRowLayout, WallLine, WaterLine, closest_on_segment, point_in_area,
+    point_in_polygon, ring_area, ring_bounds, ring_vertex_mean, signed_ring_area,
 };
 use crate::map::osm::overpass::{Element, GeoBounds, LatLon, Member, OverpassResponse};
 use crate::map::roads::network::sections::{self, SectionReport};
@@ -1189,6 +1189,21 @@ const LANDUSE_OVERLAP: f32 = 0.5;
 /// Между своими вершинами ребро прямое, а дорога гнётся, и на выпуклости
 /// поворота щель осталась бы посреди ребра, где двигать нечего.
 const LANDUSE_STEP: f32 = 8.0;
+/// Насколько далеко от тротуара-дорожки, м, край квартала между ней и улицей
+/// ещё уводится под неё ([`pull_vertex`]). Дальше — уже не обрезок мощения, а
+/// своя полоса: газон между тротуаром и проезжей частью.
+const SIDEWALK_TUCK_MAX: f32 = 3.0;
+
+/// Звенья дорог для [`pull_ring`]: полотна с сеткой и что за дорога у звена.
+struct Edges<'a> {
+    segments: &'a [Link],
+    lines: &'a Grid<usize>,
+    /// Проезжая часть ([`is_carriageway`]).
+    carriageway: &'a [bool],
+    /// Дорожка ([`RoadClass::Alley`]): тротуар, замапленный отдельно, и
+    /// прочие пешеходные пути.
+    walkway: &'a [bool],
+}
 
 /// Квартал (`landuse`), край которого не доходит до дороги считаные метры,
 /// **дотягивается под полотно**. Возвращает [`StretchedAreas`] — сдвинутые
@@ -1224,15 +1239,18 @@ const LANDUSE_STEP: f32 = 8.0;
 fn pull_areas_to_roads(map: &mut MapData) -> StretchedAreas {
     // `reach` — внешний край нарисованного полотна от оси
     let mut segments: Vec<Link> = Vec::new();
+    // звено — проезжей части; дорожки
+    let mut carriageway: Vec<bool> = Vec::new();
+    let mut walkway: Vec<bool> = Vec::new();
     for road in &map.roads {
         if road.bridge || road.passage {
             continue;
         }
-        let sidewalk = if is_carriageway(road) {
-            sidewalk_width(road).unwrap_or_default()
-        } else {
-            0.0
-        };
+        // тротуар — только тот, что рисуется: у `sidewalk=separate|no` его нет,
+        // и квартал, дотянутый под несуществующую полосу, вставал за бордюром
+        let sidewalk = sidewalk_width(road)
+            .filter(|_| road.sidewalks.contains(&true))
+            .unwrap_or_default();
         let edge = road.width / 2.0 + sidewalk;
         for link in road.points.windows(2) {
             segments.push(Link {
@@ -1240,6 +1258,8 @@ fn pull_areas_to_roads(map: &mut MapData) -> StretchedAreas {
                 to: link[1],
                 reach: edge,
             });
+            carriageway.push(is_carriageway(road));
+            walkway.push(road.class == RoadClass::Alley);
         }
     }
     // звено кладётся в ячейки с запасом на своё полотно и наибольший из
@@ -1250,14 +1270,20 @@ fn pull_areas_to_roads(map: &mut MapData) -> StretchedAreas {
         let pad = link.reach + LANDUSE_GAP_MAX;
         lines.insert_segment(link.from, link.to, pad, index);
     }
+    let roads = Edges {
+        segments: &segments,
+        lines: &lines,
+        carriageway: &carriageway,
+        walkway: &walkway,
+    };
 
     let mut stretched = StretchedAreas::default();
     for area in &mut map.landuse {
-        area.outer = pull_ring(&area.outer, false, &segments, &lines, &mut stretched.blocks);
+        area.outer = pull_ring(&area.outer, false, &roads, &mut stretched.blocks);
         area.holes = area
             .holes
             .iter()
-            .map(|hole| pull_ring(hole, true, &segments, &lines, &mut stretched.blocks))
+            .map(|hole| pull_ring(hole, true, &roads, &mut stretched.blocks))
             .collect();
     }
     stretched.lots = lots::pave_lots(map);
@@ -1289,13 +1315,7 @@ struct StretchedAreas {
 /// полосы газона между двумя улицами ближайшая улица бывает **за
 /// противоположным** краем, и такой ответ сжал бы полосу вместо того, чтобы её
 /// растянуть.
-fn pull_ring(
-    ring: &[Vec2],
-    hole: bool,
-    segments: &[Link],
-    lines: &Grid<usize>,
-    pulled: &mut usize,
-) -> Vec<Vec2> {
+fn pull_ring(ring: &[Vec2], hole: bool, roads: &Edges, pulled: &mut usize) -> Vec<Vec2> {
     // ориентация колец в OSM произвольная, так что сторону задаёт знак площади
     let sign = if (signed_ring_area(ring) > 0.0) == hole {
         1.0
@@ -1305,16 +1325,15 @@ fn pull_ring(
     let normal = |from: Vec2, to: Vec2| ((to - from).perp() * sign).normalize_or_zero();
     let mut out: Vec<Vec2> = Vec::with_capacity(ring.len());
     for (index, &point) in ring.iter().enumerate() {
-        let mut push = |point: Vec2, outward: Vec2, inserted: bool| match pull_vertex(
-            point, outward, segments, lines,
-        ) {
-            Some(shifted) => {
-                out.push(shifted);
-                *pulled += 1;
-            }
-            None if inserted => {}
-            None => out.push(point),
-        };
+        let mut push =
+            |point: Vec2, outward: Vec2, inserted: bool| match pull_vertex(point, outward, roads) {
+                Some(shifted) => {
+                    out.push(shifted);
+                    *pulled += 1;
+                }
+                None if inserted => {}
+                None => out.push(point),
+            };
         let previous = ring[(index + ring.len() - 1) % ring.len()];
         let next = ring[(index + 1) % ring.len()];
         // у вершины — биссектриса её рёбер, у вставленной точки — нормаль
@@ -1326,7 +1345,12 @@ fn pull_ring(
             false,
         );
         let length = point.distance(next);
-        if length <= LANDUSE_STEP || lines.near(point.min(next), point.max(next)).is_empty() {
+        if length <= LANDUSE_STEP
+            || roads
+                .lines
+                .near(point.min(next), point.max(next))
+                .is_empty()
+        {
             continue;
         }
         let steps = (length / LANDUSE_STEP).ceil() as usize;
@@ -1340,28 +1364,42 @@ fn pull_ring(
 /// Куда встаёт вершина квартала, которой до полотна дороги остался зазор не
 /// больше [`LANDUSE_GAP_MAX`]; `None` — двигать нечего или некуда. `outward` —
 /// куда от этой вершины прибывает заливка (см. [`pull_ring`]).
-fn pull_vertex(point: Vec2, outward: Vec2, segments: &[Link], lines: &Grid<usize>) -> Option<Vec2> {
+fn pull_vertex(point: Vec2, outward: Vec2, roads: &Edges) -> Option<Vec2> {
     // зазор мерится **до края полотна**, а не до оси: узкий проезд рядом ближе
     // широкой улицы, а щель оставляет улица. Берётся ближайшая дорога вообще;
     // лежит вершина под её полотном — это ответ «тянуть некуда», и никакая
     // другая дорога его не отменяет
-    let mut best: Option<(f32, Vec2)> = None;
-    for index in lines.near(point, point) {
-        let Link { from, to, reach } = segments[index];
-        let axis = closest_on_segment(point, from, to);
-        let gap = point.distance(axis) - reach;
-        if best.is_none_or(|(best_gap, _)| gap < best_gap) {
-            best = Some((gap, axis));
-        }
-    }
-    let (gap, axis) = best?;
+    let gaps = || {
+        roads.lines.near(point, point).into_iter().map(|index| {
+            let Link { from, to, reach } = roads.segments[index];
+            let axis = closest_on_segment(point, from, to);
+            (point.distance(axis) - reach, axis, index)
+        })
+    };
+    let (gap, axis, index) = gaps().min_by(|a, b| a.0.total_cmp(&b.0))?;
     if gap <= 0.0 || gap > LANDUSE_GAP_MAX {
         return None;
     }
     // зелень только прибывает: сдвиг к дороге, уводящий край внутрь заливки,
     // не делается вовсе — так улица, идущая внутри квартала, его не сжимает
     let direction = (axis - point).try_normalize()?;
-    (direction.dot(outward) > 0.0).then(|| point + direction * (gap + LANDUSE_OVERLAP))
+    if direction.dot(outward) > 0.0 {
+        return Some(point + direction * (gap + LANDUSE_OVERLAP));
+    }
+    // кроме одного случая: вершина между тротуаром, замапленным дорожкой, и
+    // улицей за ним. Квартал в OSM нарисован до бордюра, а наша проезжая
+    // часть уже (Берлин, витрина 03: край квартала в 6–7 м от оси при
+    // полуширине 3.8), и двор торчал из-под тротуара серпом у каждого
+    // скругления угла. Полоса между тротуаром и бордюром — мощение, не двор:
+    // край уходит под дорожку
+    let street_beyond = gaps().any(|(gap, axis, index)| {
+        roads.carriageway[index]
+            && gap > 0.0
+            && gap <= LANDUSE_GAP_MAX
+            && (axis - point).dot(outward) > 0.0
+    });
+    (roads.walkway[index] && gap <= SIDEWALK_TUCK_MAX && street_beyond)
+        .then(|| point + direction * (gap + LANDUSE_OVERLAP))
 }
 
 /// Во что сдвигаемый дом не должен упереться: другие здания и отрезки всего
