@@ -327,13 +327,20 @@ fn a_crossing_paints_a_zebra_and_stop_lines_across_the_arms() {
     let zebras = paint_layer(&layers, PAINT_ZEBRAS);
     assert_eq!(zebras.vertex_count(), 4 * 4);
     let kinds = zebras.ribbon_coords_for_test().unwrap();
-    assert!(kinds.iter().all(|coords| coords[3] == 5.0));
+    assert!(
+        kinds
+            .iter()
+            .all(|coords| coords[3] == LineKind::Zebra.code())
+    );
     // стоп-линии — в меше линий полос: их видно до того же зума
     let stops = paint_layer(&layers, PAINT_LANES)
         .ribbon_coords_for_test()
         .unwrap();
     assert_eq!(
-        stops.iter().filter(|coords| coords[3] == 3.0).count(),
+        stops
+            .iter()
+            .filter(|coords| coords[3] == LineKind::Stop.code())
+            .count(),
         4 * 4
     );
 
