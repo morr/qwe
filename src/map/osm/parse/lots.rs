@@ -82,10 +82,14 @@ type Rings = (Vec<Vec2>, Vec<Vec<Vec2>>);
 
 /// Звено полотна: отрезок оси и расстояние от неё до внешнего края
 /// нарисованного — у проезжей части вместе с тротуаром.
+#[derive(Clone, Copy)]
 struct RoadLink {
     from: Vec2,
     to: Vec2,
     reach: f32,
+    /// Край проезжей части без тротуара: до него дотягивается карман
+    /// (`parking=street_side`) — он врезан в тротуар, а не стоит за ним.
+    kerb: f32,
     /// Проезд без тротуара: его асфальт — тот же, что у площадки, и кусок,
     /// примкнувший к нему, примкнул к стоянке ([`paved`]).
     drive: bool,
@@ -143,14 +147,26 @@ struct Paved {
 pub(super) fn pave_lots(map: &mut MapData) -> PavedLots {
     let around = Around::of(map);
     let lots = &map.parking;
+    let mut street_side = vec![false; lots.len()];
+    for &index in &map.street_side_lots {
+        if let Some(flag) = street_side.get_mut(index) {
+            *flag = true;
+        }
+    }
     let workers = std::thread::available_parallelism().map_or(1, usize::from);
     let chunk = lots.len().div_ceil(workers).max(1);
     let results: Vec<Option<Paved>> = std::thread::scope(|scope| {
         let handles: Vec<_> = lots
             .chunks(chunk)
-            .map(|lots| {
+            .zip(street_side.chunks(chunk))
+            .map(|(lots, flags)| {
                 let around = &around;
-                scope.spawn(move || lots.iter().map(|lot| around.paved(lot)).collect::<Vec<_>>())
+                scope.spawn(move || {
+                    lots.iter()
+                        .zip(flags)
+                        .map(|(lot, &flag)| around.paved(lot, flag))
+                        .collect::<Vec<_>>()
+                })
             })
             .collect();
         handles
@@ -202,17 +218,18 @@ impl<'a> Around<'a> {
             .iter()
             .filter(|road| road.class == RoadClass::Street && !road.bridge && !road.passage)
             .flat_map(|road| {
-                let sidewalk = if is_carriageway(road) {
-                    sidewalk_width(road).unwrap_or_default()
-                } else {
-                    0.0
-                };
+                // тротуар — только тот, что рисуется (`sidewalk=separate|no`
+                // его не дают), как у дотягивания кварталов
+                let sidewalk = sidewalk_width(road)
+                    .filter(|_| road.sidewalks.contains(&true))
+                    .unwrap_or_default();
                 let reach = road.width / 2.0 + sidewalk;
                 let drive = !is_carriageway(road);
                 road.points.windows(2).map(move |pair| RoadLink {
                     from: pair[0],
                     to: pair[1],
                     reach,
+                    kerb: road.width / 2.0,
                     drive,
                 })
             })
@@ -271,8 +288,8 @@ impl<'a> Around<'a> {
     /// Оба события считаются порознь ([`PavedLots`]), и второе бывает без
     /// первого: дотягиваться не до чего, а отмостка всё равно отрезала от
     /// площадки кусок.
-    fn paved(&self, lot: &PolyArea) -> Option<Paved> {
-        let grown = self.grown(lot);
+    fn paved(&self, lot: &PolyArea, street_side: bool) -> Option<Paved> {
+        let grown = self.grown(lot, street_side);
         let shape: Shape = grown.clone().unwrap_or_else(|| area_contours(lot));
         let walls = self.walls(&shape);
         if walls.is_empty() {
@@ -329,19 +346,28 @@ impl<'a> Around<'a> {
 
     /// Контур площадки вместе с асфальтом, добавленным между ней и дорогами;
     /// `None` — добавлять нечего.
-    fn grown(&self, lot: &PolyArea) -> Option<Shape> {
+    fn grown(&self, lot: &PolyArea, street_side: bool) -> Option<Shape> {
         let radius = if is_ground(lot) {
             GROUND_CLOSING_RADIUS
         } else {
             CLOSING_RADIUS
         };
         let (low, high) = ring_bounds(&lot.outer);
-        let links: Vec<&RoadLink> = self
+        // у кармана полотно — без тротуара: замыкание затягивает полосу
+        // тротуара между ним и бордюром, и карман врезается в тротуар
+        let owned: Vec<RoadLink> = self
             .road_grid
             .near(low, high)
             .into_iter()
-            .map(|index| &self.links[index])
+            .map(|index| {
+                let link = self.links[index];
+                RoadLink {
+                    reach: if street_side { link.kerb } else { link.reach },
+                    ..link
+                }
+            })
             .collect();
+        let links: Vec<&RoadLink> = owned.iter().collect();
         let pieces = road_pieces(lot, &links, 2.0 * radius);
         if pieces.is_empty() {
             return None;

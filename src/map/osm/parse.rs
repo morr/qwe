@@ -1994,6 +1994,14 @@ fn as_ring(points: &[Vec2]) -> Option<Vec<Vec2>> {
     Some(points[..points.len() - 1].to_vec())
 }
 
+/// Стоянка — карман вдоль улицы (`parking=street_side`): запомнить её индекс
+/// до того, как [`push_area`] её положит.
+fn note_street_side(map: &mut MapData, kind: AreaKind, tags: &HashMap<String, String>) {
+    if kind == AreaKind::Parking && tags.get("parking").map(String::as_str) == Some("street_side") {
+        map.street_side_lots.push(map.parking.len());
+    }
+}
+
 fn push_area(map: &mut MapData, area: PolyArea) {
     match area.kind {
         AreaKind::Building | AreaKind::Kremlin => map.buildings.push(area),
@@ -2165,6 +2173,7 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
     // нужен контур, а не только теги — и тот же класс, которым дом рисуется
     let building_use = area_use(kind, &element.tags);
     let height = area_height(kind, &element.tags, building_use, &outer);
+    note_street_side(map, kind, &element.tags);
     push_area(
         map,
         PolyArea {
@@ -2239,6 +2248,7 @@ fn parse_relation(
         // торговой коробки меряется её пятном, и у ТЦ одним мультиполигоном
         // размечен и корпус, и пристройка под ним
         let height = area_height(kind, &element.tags, building_use, &outer);
+        note_street_side(map, kind, &element.tags);
         push_area(
             map,
             PolyArea {
