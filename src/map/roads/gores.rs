@@ -11,6 +11,7 @@
 //! Островок — свойство **сети у кольца**, а не стоянки, поэтому считается здесь
 //! для любого кольца города, а стоянка только вычитает его из своего бордюра.
 
+use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use i_overlay::core::fill_rule::FillRule;
 use i_overlay::core::overlay_rule::OverlayRule;
@@ -18,8 +19,6 @@ use i_overlay::float::simplify::SimplifyShape;
 use i_overlay::float::single::SingleFloatOverlay;
 use i_overlay::mesh::outline::offset::OutlineOffset;
 use i_overlay::mesh::style::{LineCap, LineJoin, OutlineStyle};
-
-use bevy::platform::collections::HashMap;
 
 use super::junctions::node_key;
 use super::medians::tip_of;

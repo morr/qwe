@@ -57,8 +57,7 @@ use crate::map::meshing::{
 };
 use crate::map::osm::model::polyline_length;
 use crate::map::osm::{RoadLine, TrafficSide};
-use crate::map::shapes::is_ring;
-use crate::map::shapes::{Shape, ring_of};
+use crate::map::shapes::{Shape, is_ring, ring_of};
 use crate::map::surface::{LayerMesh, MaterialSpec};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::settings::{
