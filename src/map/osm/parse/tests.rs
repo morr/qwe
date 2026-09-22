@@ -1015,13 +1015,7 @@ fn oneway_roundabout_and_lanes_reach_the_road() {
 
     // сам тег — до сечений, которые его неправдоподобное значение заменят
     // дефолтом по классу
-    let tagged = |pairs: &[(&str, &str)]| {
-        let tags: HashMap<String, String> = pairs
-            .iter()
-            .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
-            .collect();
-        tagged_lanes(&tags)
-    };
+    let tagged = |pairs: &[(&str, &str)]| tagged_lanes(&tags(pairs));
     assert_eq!(tagged(&[("lanes", "2;3")]), Some(2));
     assert_eq!(tagged(&[("lanes", "2.5")]), Some(2));
     assert_eq!(tagged(&[("lanes", "0")]), None);
@@ -1047,13 +1041,7 @@ fn oneway_roundabout_and_lanes_reach_the_road() {
 /// `:backward` становится первым, у двусторонней общий тег не читается.
 #[test]
 fn turn_lanes_follow_the_flow() {
-    let turns = |pairs: &[(&str, &str)]| {
-        let tags: HashMap<String, String> = pairs
-            .iter()
-            .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
-            .collect();
-        tagged_turns(&tags)
-    };
+    let turns = |pairs: &[(&str, &str)]| tagged_turns(&tags(pairs));
     let lane = |left, through, right| LaneTurn {
         left,
         through,
@@ -1092,13 +1080,7 @@ fn turn_lanes_follow_the_flow() {
 /// стороны меняются вместе с разворотом точек.
 #[test]
 fn sidewalk_tags_pick_the_sides() {
-    let sides = |pairs: &[(&str, &str)]| {
-        let tags: HashMap<String, String> = pairs
-            .iter()
-            .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
-            .collect();
-        tagged_sidewalks(&tags)
-    };
+    let sides = |pairs: &[(&str, &str)]| tagged_sidewalks(&tags(pairs));
     assert_eq!(sides(&[]), [true, true], "без тега — с обеих сторон");
     assert_eq!(sides(&[("sidewalk", "separate")]), [false, false]);
     assert_eq!(sides(&[("sidewalk", "no")]), [false, false]);

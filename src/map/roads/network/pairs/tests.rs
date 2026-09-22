@@ -3,6 +3,7 @@ use std::borrow::Cow;
 use bevy::prelude::*;
 
 use super::{ALIGN_TRANSITION, PAIR_MIN, PAVED_MIN_GAP, Pairs};
+use crate::map::meshing::distance_to_path;
 use crate::map::osm::fixture::street;
 use crate::map::osm::{Highway, RoadLine};
 use crate::map::roads::network::{RoadNetwork, RoadNodes};
@@ -133,13 +134,6 @@ fn at_x(path: &[Vec2], x: f32) -> Vec2 {
         .expect("ломаная проходит эту абсциссу")
 }
 
-/// Расстояние от точки до ломаной.
-fn distance_to(path: &[Vec2], at: Vec2) -> f32 {
-    path.windows(2)
-        .map(|pair| crate::map::osm::model::closest_on_segment(at, pair[0], pair[1]).distance(at))
-        .fold(f32::INFINITY, f32::min)
-}
-
 #[test]
 fn a_wandering_gap_is_straightened_away_from_the_ends() {
     // зазор между кромками плывёт от 0.2 до 1.8 м по длине 300 м
@@ -156,7 +150,7 @@ fn a_wandering_gap_is_straightened_away_from_the_ends() {
     assert!((gap - 1.0).abs() < 0.1, "зазор — медиана по куску: {gap}");
     for x in [60.0, 150.0, 240.0] {
         let at = at_x(&paths[0], x);
-        let apart = distance_to(&paths[1], at);
+        let apart = distance_to_path(at, &paths[1]);
         assert!(
             (apart - width - gap).abs() < 0.05,
             "у x = {x} между осями {apart}, а не {}",
@@ -175,7 +169,7 @@ fn halves_laid_over_each_other_are_pushed_apart() {
     assert_eq!(pairs.count(), [1, 0]);
     assert_eq!(pairs.medians[0].gap, PAVED_MIN_GAP);
     let width = 2.0 * 3.3 + 1.0;
-    let apart = distance_to(&paths[1], at_x(&paths[0], 100.0));
+    let apart = distance_to_path(at_x(&paths[0], 100.0), &paths[1]);
     assert!(
         (apart - width - PAVED_MIN_GAP).abs() < 0.05,
         "между осями {apart}"
@@ -217,6 +211,6 @@ fn the_median_lies_between_the_inner_kerbs() {
     {
         assert!((first.distance(*second) - 6.0).abs() < 0.05, "газон 6 м");
         assert!((mid.distance(*first) - 3.0).abs() < 0.05);
-        assert!((distance_to(&paths[0], *first) - width / 2.0).abs() < 0.05);
+        assert!((distance_to_path(*first, &paths[0]) - width / 2.0).abs() < 0.05);
     }
 }
