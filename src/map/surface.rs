@@ -352,8 +352,17 @@ pub struct SurfaceMaterials {
     paints: [Handle<PaintMaterial>; PAINT_PASSES.len()],
 }
 
-/// Проходы материала краски — порядок хэндлов [`SurfaceMaterials::paints`].
+/// Проходы материала краски — порядок хэндлов [`SurfaceMaterials::paints`]:
+/// хэндл прохода лежит под его номером (`pass as usize`), как хэндл вида под
+/// номером вида.
 const PAINT_PASSES: [PaintPass; 3] = [PaintPass::Lines, PaintPass::WearMask, PaintPass::Wear];
+const _: () = {
+    let mut slot = 0;
+    while slot < PAINT_PASSES.len() {
+        assert!(PAINT_PASSES[slot] as usize == slot);
+        slot += 1;
+    }
+};
 
 impl SurfaceMaterials {
     pub fn handle(&self, kind: SurfaceKind) -> Handle<SurfaceMaterial> {
@@ -430,7 +439,7 @@ pub enum MaterialSpec {
 /// мир, — рунга z, имя и вид материала.
 ///
 /// **Один тип на все слои карты**, а не свой на каждый модуль: дороги отдают
-/// девять таких, промзона пять, рельсы три, забор один. Модуль, собранный как
+/// восемнадцать таких, промзона пять, рельсы три, забор один. Модуль, собранный как
 /// `-> Vec<LayerMesh>`, читается тем же способом, что и любой соседний, и его
 /// адаптер — один вызов [`spawn_layers`], а не переписанный цикл.
 ///
@@ -533,8 +542,7 @@ impl LayerMaterials<'_> {
             MaterialSpec::Surface(kind) => LayerMaterial::Surface(self.surfaces.handle(kind)),
             MaterialSpec::Roof => LayerMaterial::Roof(self.roof.handle()),
             MaterialSpec::Paint(pass) => {
-                let slot = PAINT_PASSES.iter().position(|&known| known == pass);
-                LayerMaterial::Paint(self.surfaces.paints[slot.unwrap_or(0)].clone())
+                LayerMaterial::Paint(self.surfaces.paints[pass as usize].clone())
             }
         }
     }
