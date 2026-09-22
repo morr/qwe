@@ -18,7 +18,8 @@ one your change is about, not all of them**:
   and lots pulled to the roads), and how the parse is tested.
 - `references/roads.md` — how a street is drawn: sidewalks, divided streets and their
   medians, lane markings and their breaks, the ribbon, junctions and the drawn network (stitches, kerb returns),
-  `RoadStyle`, bridge layers, asphalt wear; the junction gallery `examples/demos/roads`.
+  `RoadStyle` and `RoadShape` (lane width, taper, curve tolerance, median gap, corner
+  radius), bridge layers, asphalt wear; the junction gallery `examples/demos/roads`.
 - `references/parking.md` — the parking layout and the big lot (its kerb, the medians,
   the gores at a roundabout), and the parked cars.
 - `references/layers.md` — water (rims, shoal, waterways), the yard, pitches, rails,
@@ -199,8 +200,9 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   below. `entrances: Vec<Vec2>` — the OSM
   doors on this building's outline, empty for most buildings; see
   `references/entrances.md`.
-- **RoadLine** — centerline polyline + width **from its section**: lanes × 3.3 m (3.0 on a
-  service drive) + 0.5 m of edge each side, set by the first parse pass
+- **RoadLine** — centerline polyline + width **from its section**: lanes × the lane width
+  knob (`RoadShape::lane_width`, 3.3 m by default; 0.3 m less on a service drive) + 0.5 m
+  of edge each side, set by the first parse pass
   (`map/roads/network/sections.rs`; footways keep 3.5 by class) — streets, sections and
   the tapers between them are in `references/roads.md`, **Streets, sections, tapers**.
   `highway: Highway` is the `highway` value (the five `*_link` are classes of their own);
@@ -651,7 +653,8 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
   `map/buildings/`) — **one merged `Mesh2d` per layer** (ground, parks, water, waterways,
   sidewalks, alleys, roads, rail layers, tram, building layers, walls): `MeshBuilder`
   triangulates polygons via `earcutr` (holes supported, degenerate contours skipped +
-  counted) and emits per-vertex colors. Facade, shadow, casing, rail and wall layers go
+  counted) and emits per-vertex colors. Facade, shadow, bridge-curb (`bridge_casings`),
+  rail and wall layers go
   over a single white `ColorMaterial`; every layer carrying a roof (`building_roofs`, and
   in 2.5D `building_extruded`, walls included) over the `RoofMaterial` of **Roof
   material** (`references/buildings.md`); the **surfaces** — ground, area fills, water, road and
@@ -764,7 +767,8 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     `fences/tests.rs::the_far_bucket_draws_nothing`, each asserting the log line itself.
   - **Converted — ten modules, eleven layer doors.** `fences`, `rail`, `tram`, `wagons`,
     `industry`, `cars`,
-    `roads` (20 layers, `mesh_roads` — ten of its own with the median lawn
+    `roads` (18 layers, `mesh_roads` — eight of its own with the median lawn (the two
+    road/alley casings went in stage 8)
     `road_medians`, the eight paint layers of `roads/paint.rs` (the turn paths' wear mask
     and apply among them, and the roundabout islands' hatching above a lot's asphalt) and
     the two over a big lot,
@@ -803,7 +807,8 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     still writes `DespawnOnExit` by hand — for the crowns. Every merged layer gets it
     from `spawn_layer`.
   - **`cars` is the one whose build is a layer rather than a mesh.** Every other
-    `mesh_*` takes the data it draws; `mesh_cars(bucket, style, smoothing, map, layout)`
+    `mesh_*` takes the data it draws; `mesh_cars(bucket, style, shape, map, layout)`
+    (`shape` — the settled `RoadShape`, whose curve tolerance and taper the row follows)
     takes the whole `MapData` (as `mesh_roads` does) and does the **assembly** as well —
     junction breaks, `Districts`, `park_cars`, `fill_lots` — because that assembly is
     exactly what the cutoff and the toggle gate. Off, or past the last zoom step, none
@@ -936,7 +941,8 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
   - `references/roads.md` — **Sidewalks**, **Paired halves** (the median: asphalt and
     double solid, or a lawn with a kerb), **Markings** (with **Breaks** and
     `lane_count`), **Ribbon**, **Junctions**, **The drawn network** (pinned nodes,
-    driveway crossings, stitches, **Kerb returns**), **RoadStyle**, **Bridge layers**,
+    driveway crossings, stitches, **Kerb returns**), **RoadStyle and RoadShape**,
+    **Bridge layers**,
     **Asphalt wear**, and **The junction gallery** (`examples/demos/roads`).
   - `references/parking.md` — **Parking** (the layout, aisles, pockets, **A big lot shows
     the road through it** with the lot kerb, the medians and the **gores**) and

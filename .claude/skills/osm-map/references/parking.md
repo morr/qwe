@@ -370,15 +370,17 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
       building the two grids it asks, and both got cheaper with the hasher — see **The
       uniform grid**), the kerb returns 7, the bridge shadows 5, the
       nodes and centrelines 4. It is paid at world load and whenever
-      `roads::rebuilds_on` fires (`RoadStyle`, the settled sun).
+      `roads::rebuilds_on` fires (`RoadStyle`, the settled `RoadShapeOnMap`, the settled
+      sun).
       **`dev` is only ~1.3× slower than `release` here, and that is the measurement to
       know before optimising**: what these steps spend is `i_overlay`, a dependency, and
       a dependency is built optimised in `dev` too (`opt-level = 1` applies to our code
       alone). `pave_lots` said it plainest — 119–133 ms release against 129–137 dev,
       i.e. nothing. So a `dev` bench number here is a real number, not one to be
       discounted by an imagined release factor.
-      Not optimised: the kerb and the gores depend on the map and three style knobs only
-      (`smoothing`, `sidewalks`, `markings`) and on the sun not at all, so caching them
+      Not optimised: the kerb and the gores depend on the map, the settled `RoadShape`
+      (curve tolerance) and two `RoadStyle` toggles only (`sidewalks`, `markings`) and on
+      the sun not at all, so caching them
       per world load is the obvious cut — but the hitch on a sun change is **not** theirs
       to fix: the building layer rebuilds on the same `SunOnMap` and costs 145–190 ms,
       against these 76.
@@ -669,13 +671,14 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
     style surface: `visible` (**on** by default) and `occupancy`. It is not a `RoadStyle`
     field for the tram's reason — that would remesh every road layer on a knob whose only
     effect is one merged mesh — and `rebuild_cars` is gated on `cars::rebuilds_on()`,
-    `retuned::<CarZoomBucket>.or_else(retuned::<CarStyle>).or_else(retuned::<RoadStyle>)
+    `retuned::<CarZoomBucket>.or_else(retuned::<CarStyle>).or_else(retuned::<RoadShapeOnMap>)
     .or_else(retuned::<SunOnMap>)`,
-    one registration by the rule under **When a layer rebuilds** above; `RoadStyle` is in
-    there because the row is walked along the **smoothed** centreline the ribbon is drawn
-    from (`smooth_path(road.points, road.width,
-    style.smoothing)`, never the raw OSM points), so Smoothing moves the cars with the
-    asphalt. The invisible case
+    one registration by the rule under **When a layer rebuilds** above; the settled
+    `RoadShapeOnMap` is in there because the row is walked along the **same street axis**
+    the ribbon is drawn from (`axis::street_axes(.., &shape)`, never the raw OSM points)
+    and breaks at the same taper clearings (`pockets::row_breaks(.., shape.taper())`), so
+    the curve tolerance and the taper move the cars with the asphalt
+    (`mesh_cars(bucket, style, shape, map, layout)`). The invisible case
     takes the same road as the far zoom bucket, and since the seam both of them live in
     `mesh_cars` rather than in the system: the adapter despawns the old layer
     unconditionally and is handed an empty list, so no second path can forget the

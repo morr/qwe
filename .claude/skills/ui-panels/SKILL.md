@@ -129,7 +129,8 @@ did not fit 1080 px and ran off the top of the screen.
   `+/-`, not `±`: the built-in font is a narrow subset and draws anything outside ASCII as
   an empty box. **Body radius** stood here and the crowd knobs in World until all six moved
   into the Nav tab's crowd groups — they are about movement.
-- **Map tab** — Trees → Tree rows → Buildings → Roads → Surfaces → Sun → Noise.
+- **Map tab** — Trees → Tree rows → Buildings → Roads → Road paint → Surfaces → Sun →
+  Noise.
   **Buildings** (`ui/buildings.rs`): the `Height` cycler on `BuildingHeightMode`, the
   `Roof texture` knob on `RoofStyle` (a uniform, so the drag rebuilds nothing) and
   **Industry** — `IndustryStyle::visible`, **off** by default, the section's one row of a
@@ -137,24 +138,38 @@ did not fit 1080 px and ran off the top of the screen.
   `BuildingHeightMode` case would remesh every building layer on a toggle whose only
   effect is one merged mesh (`map::industry::rebuild_industry`). It is read with the
   buildings because a cylinder stands on the ground and leans by the houses' own lift.
-  **Roads** (`ui/roads.rs`): seven cycle rows on `RoadStyle` — joins, smoothing, casing,
-  **sidewalks**, **markings**, **Crossings** (`CrossingMode`: `Off` / `OSM` / `OSM + gen`)
-  and **Stop lines** — the last two are the junction paint's (`map/roads/node_paint.rs`)
-  and, being `RoadStyle` fields, rebuild the road layers like the rest; the roads gallery
-  carries the same two rows. Then three sliders on `RoadPaintStyle` under them:
-  **Paint** (the paint layer's opacity, 0–100 %, step 5), **Wear** (the asphalt rut
-  amplitude, 0–15 %, step 0.5, printed with one decimal) and **Turn wear** (the junction
-  turn paths' rut amplitude, `map/roads/turns.rs`, 0–8 %, step 0.5, same print). Their own
-  resource because all three are material uniforms (`surface::retune_surface_materials`)
-  and a drag rebuilds nothing, while a `RoadStyle` edit rebuilds every road layer; the
-  roads gallery carries the same three sliders. Then **Tram**, a cycle row of another resource again
+  **Roads** (`ui/roads.rs`): the shape of the road first — five sliders on `RoadShape`
+  (`map/roads/shape.rs`): **Lane width** (2.75–3.75 m, printed `3.30 m`), **Taper**
+  (5–20, `10x`), **Curve tolerance** (0–5 m, `3.0 m`, `OSM` at 0), **Median gap**
+  (1–6 m, `3.0 m`), **Corner radius** (0.5–2, `1.0x`). The table is `pub fn
+  shape_knobs()`, re-exported as `qwe::ui::shape_knobs` and shared with the roads gallery.
+  A drag writes `RoadShape` on every step but the map follows **`RoadShapeOnMap`**, the
+  copy `settle_road_shape` makes after 0.35 s of quiet (the Sun section's trick): a
+  rebuild of axes, pairs, nodes and the car row per step would cost hundreds of ms. Lane
+  width, once settled, **reloads the world** (`city::reload_world` on `lane_width_moved` —
+  the parse reads it). Then **Sidewalks** (a `RoadStyle` toggle). The old Joins,
+  Smoothing and Casing rows went with the fields (stage 8).
+  **Road paint** (`ui/road_paint.rs`, `SectionSlot::RoadPaint` right after `Roads`, a
+  `panel_title` header with no count): what lies as paint on the asphalt. Four
+  `RoadStyle` toggles — **Markings**, **Crossings** (`CrossingMode`: `Off` / `OSM` /
+  `OSM + gen`), **Stop lines**, **Arrows** (the lane arrows, their own field now) — each
+  rebuilding the road layers; interleaved with three `RoadPaintStyle` sliders: **Paint**
+  (the paint layer's opacity, 0–100 %, step 5), **Wear** (the asphalt rut amplitude,
+  0–15 %, step 0.5, printed with one decimal) and **Turn wear** (the junction turn paths'
+  rut amplitude, `map/roads/turns.rs`, 0–8 %, step 0.5, same print). Their own resource
+  because all three are material uniforms (`surface::retune_surface_materials`) and a
+  drag rebuilds nothing. A section of its own rather than the tail of Roads: with the
+  shape sliders Roads would have grown to fifteen rows, and paint and shape are tuned
+  apart — one by the junction's picture, the other by the street's. The roads gallery's
+  panel mirrors both (a "Roads" and a "Road paint" header). Back in Roads, after
+  Sidewalks: **Tram**, a cycle row of another resource again
   (`TramStyle::visible`, off by default). The
   tram sits here because its track runs on the carriageway, and it is deliberately not a
   `RoadStyle` field: that would remesh every road layer on a toggle whose only effect is one
   merged mesh (`map::tram::rebuild_tram`). Under it, the second foreign resource in the
   section — so `add_knobs` is registered three times over: **Cars** and **Occupancy** on
-  `CarStyle` — a toggle (on by default) and the only
-  slider in Roads (0–100 %, step 5, printed as a percent), for the same reason and with the
+  `CarStyle` — a toggle (on by default) and a
+  slider (0–100 %, step 5, printed as a percent), for the same reason and with the
   same shape, rebuilding only `map::cars::rebuild_cars`. Its drag needs no debounce, and
   that is measured: the knob kit quantizes to the step, so a full-scale drag is 20 rebuilds
   of 4–7 ms each on Tula, not 400 — well under the ~30 ms at which
@@ -426,8 +441,14 @@ did not fit 1080 px and ran off the top of the screen.
   HUD: the hotkey help (bottom right) and the city select (bottom centre). What survived
   the deletion is the retina trap — `ComputedNode::size` is in *physical* pixels, and
   `offset_below_brp_badge` still multiplies by `inverse_scale_factor`.
-- **Debug tab** (`ui/debug/`) — the overlay rows (grid / doors / move paths / noise field),
-  the `Camera start` and `Navtile` cyclers, and `reset`. All of them are knob-kit rows
+- **Debug tab** (`ui/debug/`) — the overlay rows (grid / doors / move paths / noise field /
+  **Road network**), the `Camera start` and `Navtile` cyclers, and `reset`. **Road
+  network** is `DebugRoadNetwork` (settings group `debug`, key `road_network`):
+  `ui/debug/overlays.rs::sync_road_network_overlay` despawns the `RoadNetworkOverlayMarker`
+  layer and, when on, spawns `map::mesh_network_overlay` through `surface::spawn_layers`
+  (which is where its `DespawnOnExit` comes from) — on the toggle and on
+  `OnEnter(Playing)`, never on a shape knob: the network is the parse's and the knobs do
+  not move it. Each street its own colour, line width by lanes, a white dot on each seam. All of them are knob-kit rows
   (`spawn_cycle_row` + `add_knobs::<R>()`) now, which is why `DebugToggleButton`,
   `CyclerButton`, `cycler_state`, `sync_toggle_buttons`, `sync_cycler_buttons` and
   `sync_cycler_labels` are gone: the kit already keeps a label on its resource. The old row
