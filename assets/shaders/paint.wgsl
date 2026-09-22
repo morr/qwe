@@ -144,6 +144,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         cover = bars + fill * (1.0 - seen);
     } else if kind == 8u {
         cover = line_cover(abs(across), params.edge_width, px);
+    } else if kind == 9u {
+        // стрелка на полосе: заливка контура целиком
+        cover = 1.0;
     } else if kind == 5u {
         // зебра: плашка вдоль дороги, полосы поперёк неё; где период мельче
         // пары пикселей, полосы гаснут в свою среднюю долю — светлую плашку
@@ -194,7 +197,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // с зумом: линии полос уходят раньше осевых; к порогу, где меш прячется
     // (`roads::paint::PaintLods`), линия уже прозрачна
     var zoom_max = params.axis_zoom;
-    if kind == 0u || kind == 3u || kind == 4u {
+    if kind == 0u || kind == 3u || kind == 4u || kind == 9u {
         zoom_max = params.lane_zoom;
     } else if kind == 5u || kind == 7u || kind == 8u {
         zoom_max = params.zebra_zoom;

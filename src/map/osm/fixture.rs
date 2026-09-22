@@ -234,6 +234,7 @@ pub fn street(points: Vec<Vec2>, width: f32) -> RoadLine {
         parking_aisle: false,
         turns: Default::default(),
         sidewalks: [true; 2],
+        parking: Default::default(),
     }
 }
 

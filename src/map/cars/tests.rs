@@ -9,6 +9,7 @@
 
 use super::*;
 use crate::map::osm::fixture::{self, street};
+use crate::map::osm::model::{Highway, KerbParking};
 use crate::map::roads::junctions::JUNCTION_MARGIN;
 
 /// Большая стоянка пустее малой, и доля не выходит за свои края.
@@ -138,6 +139,41 @@ fn a_residential_street_gets_a_row() {
     // 5 м — `service`, проезд: там не паркуются
     let service = street(vec![Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)], 5.0);
     assert!(park(std::slice::from_ref(&service)).is_empty());
+}
+
+/// Магистраль без тега стоянки паркуется в карманах: ряд за кромкой
+/// проезжей части, на ширину кармана дальше от оси. `parking:*=no` снимает
+/// ряд совсем, `lane` возвращает его к бордюру.
+#[test]
+fn a_primary_parks_in_its_pockets() {
+    let primary = RoadLine {
+        highway: Highway::Primary,
+        ..street(vec![Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)], 14.0)
+    };
+    let style = CarStyle {
+        occupancy: 1.0,
+        ..default()
+    };
+    let cars = park_with(std::slice::from_ref(&primary), style);
+    assert!(!cars.is_empty());
+    for car in &cars {
+        assert!(
+            car.at.y.abs() > 7.0,
+            "машина за кромкой, в кармане: {}",
+            car.at.y
+        );
+    }
+    let banned = RoadLine {
+        parking: [KerbParking::No; 2],
+        ..primary.clone()
+    };
+    assert!(park_with(std::slice::from_ref(&banned), style).is_empty());
+    let lane = RoadLine {
+        parking: [KerbParking::Lane; 2],
+        ..primary
+    };
+    let cars = park_with(std::slice::from_ref(&lane), style);
+    assert!(!cars.is_empty() && cars.iter().all(|car| car.at.y.abs() < 7.0));
 }
 
 /// Та же улица в частном секторе запаркована много реже, чем в

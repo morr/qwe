@@ -12,7 +12,7 @@ use bevy::prelude::*;
 
 use crate::map::osm::model::{
     AreaKind, BIG_BOX_MAX_HEIGHT, BIG_BOX_MAX_LEVELS, BuildingUse, Colours, Faith, FenceKind,
-    Highway, LaneTurn, PitchKind, RailKind, Rgb, RoadAreaKind, RoadClass, RoadNodeKind, Sacred,
+    Highway, KerbParking, LaneTurn, PitchKind, RailKind, Rgb, RoadAreaKind, RoadClass, RoadNodeKind, Sacred,
     SacredForm, ServiceTrack, StructureKind, WaterKind, is_big_box_shape, polyline_length,
 };
 use crate::map::osm::overpass::Element;
@@ -806,7 +806,38 @@ pub(super) fn tagged_sidewalks(tags: &HashMap<String, String>) -> [bool; 2] {
     sides
 }
 
-/// Одна строка `turn:lanes`:`left|through;right`. Неизвестное слово (в Туле
+/// Стоянка у бордюра `[слева, справа]` по ходу точек после разбора:
+/// `parking:<side>` (или `parking:both`) и запрет из
+/// `parking:<side>:restriction`, который сильнее самого места — полоса под
+/// знаком «остановка запрещена» пуста. Развёрнутый `oneway=-1` меняет стороны,
+/// как у тротуара.
+pub(super) fn tagged_parking(tags: &HashMap<String, String>) -> [KerbParking; 2] {
+    let tag = |side: &str, key: &str| {
+        tags.get(&format!("parking:{side}{key}"))
+            .or_else(|| tags.get(&format!("parking:both{key}")))
+            .map(String::as_str)
+    };
+    let mut sides = ["left", "right"].map(|side| {
+        if matches!(
+            tag(side, ":restriction"),
+            Some("no_stopping" | "no_parking" | "no_standing")
+        ) {
+            return KerbParking::No;
+        }
+        match tag(side, "") {
+            Some("street_side") => KerbParking::Pocket,
+            Some("lane" | "on_kerb" | "half_on_kerb" | "shoulder" | "yes") => KerbParking::Lane,
+            Some("no" | "separate") => KerbParking::No,
+            _ => KerbParking::Untagged,
+        }
+    });
+    if is_oneway_backward(tags) {
+        sides.reverse();
+    }
+    sides
+}
+
+/// Одна строка `turn:lanes`: `left|through;right`. Неизвестное слово (в Туле
 /// есть `throught`) — прямо: полоса есть, и прямо из неё едут чаще всего.
 fn lane_turns(value: &str) -> Vec<LaneTurn> {
     value

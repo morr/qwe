@@ -40,7 +40,8 @@ use crate::map::osm::{MapData, PolyArea, RoadLine, TrafficSide};
 use crate::map::parking::{ParkingLayout, Stall};
 use crate::map::roads::junctions::{self, MarkingBreaks};
 use crate::map::roads::network::{RoadNetwork, RoadNodes};
-use crate::map::roads::{RoadStyle, axis, is_carriageway, tapers};
+use crate::map::roads::pockets::{self, Kerbside, POCKET_WIDTH};
+use crate::map::roads::{RoadStyle, axis, is_carriageway};
 use crate::map::seed::{Lcg, seed_from_point};
 use crate::map::shadow;
 use crate::map::smooth::Smoothing;
@@ -395,11 +396,9 @@ pub fn mesh_cars(
     // надо было прежде, чем его заводить. Доли, а не миллисекунды: абсолютное
     // время зависит от App Nap, перемеряет его `measure_cars` из
     // `examples/bench/map_meshing` (он печатает обе строки — `breaks` и `cars`)
-    let mut junctions = junctions::marking_breaks(&map.roads, is_carriageway, &[]);
-    // и на клиньях между сечениями улицы: бордюр там ближе к оси
-    for (road, clearing) in tapers::car_clearings(&map.roads, &map.network) {
-        junctions.breaks[road].push(clearing);
-    }
+    // и на клиньях между сечениями улицы: бордюр там ближе к оси; те же
+    // разрывы режут карманы ленты (`roads::pockets`)
+    let junctions = pockets::row_breaks(&map.roads, &map.network);
     let breaks_took = started.elapsed();
     // застройка вокруг — тем же проходом и с тем же сроком жизни, что и
     // разрывы: индекс на 7.6 тысячи домов дешевле, чем повод его кешировать
@@ -498,7 +497,7 @@ fn park_cars(
     let decks: Vec<BridgeDeck> = roads.iter().filter_map(BridgeDeck::of).collect();
     let mut near = Vec::new();
     for (index, road) in roads.iter().enumerate() {
-        if !parkable(road) {
+        if !pockets::parkable(road) {
             continue;
         }
         near.clear();
@@ -526,8 +525,14 @@ fn park_cars(
         // двусторонней улицы не зависит от `traffic`: он решает поток ГПСЧ, и
         // от стороны движения ряд не должен переставляться, только
         // разворачиваться
-        let sides: &[f32] = if road.oneway { &[kerb] } else { &[-1.0, 1.0] };
-        for &side in sides {
+        //
+        // Стороны и карманы на них — от `roads::pockets`, того же ответа, по
+        // которому лента кладёт асфальт кармана
+        for kerbside in pockets::kerbsides(road, centre, &junctions.breaks[index], traffic) {
+            if !kerbside.lane && kerbside.pockets.is_empty() {
+                continue;
+            }
+            let side = kerbside.side;
             park_along(
                 &mut cars,
                 centre,
@@ -535,6 +540,7 @@ fn park_cars(
                 Kerb {
                     side,
                     heading: if side == kerb { 1.0 } else { -1.0 },
+                    stand: &kerbside,
                 },
                 &Clearings {
                     junctions: &junctions.breaks[index],
@@ -590,15 +596,6 @@ fn lot_occupancy(stalls: usize) -> f32 {
 /// улиц, домов и крон.
 fn lot_seed(lot: &PolyArea) -> u32 {
     seed_from_point(lot.outer.first().copied().unwrap_or(Vec2::ZERO))
-}
-
-/// Улица, вдоль которой паркуются: настоящая проезжая часть — то же
-/// [`is_carriageway`], которым отбирает тротуары и разметку `map::roads`, —
-/// но не мост (на мосту не стоят) и не кольцо (по кольцу едут, а не
-/// паркуются). Разметке мост и кольцо нужны, машинам нет, поэтому оба
-/// условия здесь, а не внутри предиката.
-fn parkable(road: &RoadLine) -> bool {
-    is_carriageway(road) && !road.bridge && !road.is_roundabout()
 }
 
 /// Полотно моста, от которого ряд держится на [`JUNCTION_CLEARANCE`] — улица
@@ -671,11 +668,14 @@ struct Clearings<'a> {
 
 /// Бордюр, вдоль которого стоит ряд.
 #[derive(Clone, Copy)]
-struct Kerb {
+struct Kerb<'a> {
     /// Знак поперечной `direction.perp()`: `-1` — правая сторона по ходу way.
     side: f32,
     /// Куда смотрит нос: `1` — по ходу way, `-1` — против.
     heading: f32,
+    /// Где на этой стороне стоят: у бордюра на полосе и в карманах
+    /// (`roads::pockets`).
+    stand: &'a Kerbside,
 }
 
 /// Ряд вдоль одной стороны: шагом [`CAR_PITCH`] по **всей** ломаной улицы, со
@@ -729,9 +729,15 @@ fn park_along(
         // габарита именно этой машины, и у фургона он свой
         let shape = CarShape::from_share(rng.next_f32());
         let across = direction.perp() * kerb.side;
-        let offset = half_road - CURB_GAP - shape.width() / 2.0;
+        // в кармане бордюр отодвинут на его ширину; мимо кармана, где у
+        // бордюра не стоят, места нет
+        let pocket = kerb.stand.pocket_at(at).is_some();
+        let offset = half_road + if pocket { POCKET_WIDTH } else { 0.0 }
+            - CURB_GAP
+            - shape.width() / 2.0;
         let place = point + across * offset;
-        if clearings
+        if !(pocket || kerb.stand.lane)
+            || clearings
             .junctions
             .iter()
             .any(|junction| place.distance(junction.at) < junction.reach + JUNCTION_CLEARANCE)

@@ -322,6 +322,26 @@ pub struct RoadLine {
     /// важнее молчания данных. Проезду и дорожке тротуар не положен и так
     /// (`map::roads::is_carriageway`), это поле его не добавляет.
     pub sidewalks: [bool; 2],
+    /// Стоянка у бордюра `[слева, справа]` по ходу точек — по `parking:*`.
+    /// Что делать с [`KerbParking::Untagged`], решает правило
+    /// (`map::roads::pockets`), не разбор.
+    pub parking: [KerbParking; 2],
+}
+
+/// Стоянка вдоль одной стороны улицы по `parking:<side>` (схема 2022 г.).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum KerbParking {
+    /// Тега нет.
+    #[default]
+    Untagged,
+    /// `lane`, `on_kerb`, `half_on_kerb`, `yes` — машины у бордюра на
+    /// проезжей части.
+    Lane,
+    /// `street_side` — карман: асфальт вне проезжей части, в тротуаре.
+    Pocket,
+    /// `no`, `separate`, или запрет остановки / стоянки
+    /// (`parking:<side>:restriction=no_stopping|no_parking|no_standing`).
+    No,
 }
 
 /// Куда можно из полосы (`turn:lanes`): `slight_*` и `sharp_*` — те же

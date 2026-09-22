@@ -64,7 +64,25 @@ pub struct Turns {
     pub wear: Vec<JunctionWear>,
     /// Сколько всего кривых манёвров.
     pub maneuvers: usize,
+    /// Стрелки на полосах подходов: по `turn:lanes`, а без тега — у крупных
+    /// узлов по тем же манёврам, что и кривые ([`ARROW_MIN_LANES`]).
+    pub arrows: Vec<LaneArrow>,
 }
+
+/// Стрелка на полосе подхода к узлу: середина полосы на кромке узла, куда по
+/// ней едут и какие манёвры из неё разрешены. `left` / `right` — как в
+/// `turn:lanes`, по сторонам хода.
+#[derive(Clone, Copy, Debug)]
+pub struct LaneArrow {
+    pub at: Vec2,
+    pub travel: Vec2,
+    pub turn: LaneTurn,
+}
+
+/// Без `turn:lanes` стрелки рисуются только на подходе с этим числом полос
+/// своего направления и больше — у крупного узла; у двухполосной улицы на
+/// каждом дворовом перекрёстке их не рисуют.
+pub const ARROW_MIN_LANES: usize = 2;
 
 /// Колея одного узла: кривые манёвров от кромки до кромки и хвосты
 /// [`TURN_TAIL`] вглубь полос — по одному на полосу, сколько бы манёвров из
@@ -129,10 +147,13 @@ impl Turns {
         let mut wear = JunctionWear::default();
         // хвост — один на полосу: входящая `(плечо, полоса, false)`
         let mut tailed: Vec<(usize, usize, bool)> = Vec::new();
+        let near_is_left = side == TrafficSide::Left;
         for (a, from) in junction.arms.iter().enumerate() {
             let Some(first) = ins[a].lanes.first() else {
                 continue;
             };
+            // манёвры полос плеча по правилу — для стрелок, если тега нет
+            let mut granted = vec![LaneTurn::default(); ins[a].lanes.len()];
             for (b, to) in junction.arms.iter().enumerate() {
                 let Some(target) = outs[b].lanes.first() else {
                     continue;
@@ -144,7 +165,6 @@ impl Turns {
                 if angle.abs() > U_TURN {
                     continue;
                 }
-                let near_is_left = side == TrafficSide::Left;
                 let maneuver = if angle.abs() < STRAIGHT {
                     Maneuver::Straight
                 } else if (angle > 0.0) == near_is_left {
@@ -152,6 +172,18 @@ impl Turns {
                 } else {
                     Maneuver::Far
                 };
+                let lanes = pairs(&ins[a], outs[b].lanes.len(), maneuver, side);
+                for &(start, _) in &lanes {
+                    let turn = &mut granted[start];
+                    match maneuver {
+                        Maneuver::Straight => turn.through = true,
+                        // налево — поворот к оси при правостороннем
+                        Maneuver::Near if near_is_left => turn.left = true,
+                        Maneuver::Far if near_is_left => turn.right = true,
+                        Maneuver::Near => turn.right = true,
+                        Maneuver::Far => turn.left = true,
+                    }
+                }
                 // прямо по ведущей — колеёй асфальта
                 if maneuver == Maneuver::Straight
                     && junction.leading.contains(&from.road)
@@ -159,7 +191,7 @@ impl Turns {
                 {
                     continue;
                 }
-                for (start, end) in pairs(&ins[a], outs[b].lanes.len(), maneuver, side) {
+                for (start, end) in lanes {
                     let (from, to) = (ins[a].lanes[start], outs[b].lanes[end]);
                     wear.curves.push(curve(from, to));
                     self.maneuvers += 1;
@@ -172,6 +204,25 @@ impl Turns {
                             wear.tails.push([point, point + outward * TURN_TAIL]);
                         }
                     }
+                }
+            }
+            // стрелки: по тегу, иначе по правилу на многополосном подходе;
+            // на мосту своя краска, стрелок там нет
+            let turns = match &ins[a].turns {
+                Some(tagged) => tagged.clone(),
+                None if ins[a].lanes.len() >= ARROW_MIN_LANES => granted,
+                None => continue,
+            };
+            if drawn[from.road].bridge {
+                continue;
+            }
+            for (lane, turn) in ins[a].lanes.iter().zip(turns) {
+                if turn != LaneTurn::default() {
+                    self.arrows.push(LaneArrow {
+                        at: lane.point,
+                        travel: lane.travel,
+                        turn,
+                    });
                 }
             }
         }

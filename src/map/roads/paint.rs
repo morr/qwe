@@ -45,7 +45,7 @@ use super::network::RoadNetwork;
 use super::network::sections::STREET_LANE_WIDTH;
 use super::node_paint::{Pocket, STOP_WIDTH, StopLine, ZEBRA_LENGTH, Zebra};
 use super::tapers::{self, Tapers};
-use super::turns::JunctionWear;
+use super::turns::{JunctionWear, LaneArrow};
 use super::{is_carriageway, lane_count};
 use crate::map::along::arclengths;
 use crate::map::meshing::{
@@ -181,6 +181,9 @@ enum LineKind {
     Hatch,
     /// Обводка островка — сплошная линия.
     Edge,
+    /// Стрелка на полосе подхода (`roads/turns.rs`): заливка своего контура,
+    /// гаснет с линиями полос.
+    Arrow,
 }
 
 impl LineKind {
@@ -195,6 +198,7 @@ impl LineKind {
             Self::Wear => 6.0,
             Self::Hatch => 7.0,
             Self::Edge => 8.0,
+            Self::Arrow => 9.0,
         }
     }
 }
@@ -205,6 +209,18 @@ const HATCH_WIDTH: f32 = 0.35;
 const EDGE_WIDTH: f32 = 0.2;
 /// Полуширина полосы под обводку островка, м.
 pub(super) const EDGE_STRIP: f32 = 0.6;
+
+/// Стрелка на полосе: длина, доля длины до отвода поворота, наконечник
+/// (длина и ширина основания), толщина стебля, вынос отвода вбок и вперёд, м;
+/// кончик стоит за `ARROW_SETBACK` до кромки узла. Городская стрелка по
+/// ГОСТу — пять метров.
+const ARROW_LENGTH: f32 = 5.0;
+const ARROW_BRANCH: f32 = 0.45;
+const ARROW_HEAD: f32 = 1.2;
+const ARROW_HEAD_WIDTH: f32 = 0.7;
+const ARROW_STEM: f32 = 0.18;
+const ARROW_BRANCH_REACH: f32 = 0.8;
+const ARROW_SETBACK: f32 = 4.0;
 
 /// «До разрыва» у поперечной краски: разрывов у неё нет, шейдер её не гасит.
 const NO_BREAK: f32 = 1.0e4;
@@ -702,7 +718,64 @@ impl Painter {
         self.lines += 1;
     }
 
-    /// Восемь слоёв краски: маска и наложение колеи узлов, краска улиц над
+    /// Стрелка на полосе подхода: стебель вдоль хода, наконечник, если прямо
+    /// можно, и отвод с наконечником в каждую разрешённую сторону. Кончик —
+    /// за [`ARROW_SETBACK`] до кромки узла, чтобы стрелка не легла на
+    /// стоп-линию и переход.
+    pub(super) fn paint_arrow(&mut self, arrow: &LaneArrow) {
+        let forward = arrow.travel.normalize_or_zero();
+        if forward == Vec2::ZERO {
+            return;
+        }
+        let left = forward.perp();
+        let tail = arrow.at - forward * (ARROW_SETBACK + ARROW_LENGTH);
+        // точка стрелки в её раме: `x` — вдоль хода от хвоста, `y` — влево
+        let to_world = |x: f32, y: f32| tail + forward * x + left * y;
+        let turn = arrow.turn;
+        let branch_at = ARROW_LENGTH * ARROW_BRANCH;
+        let stem_end = if turn.through {
+            ARROW_LENGTH - ARROW_HEAD
+        } else {
+            branch_at
+        };
+        let mut shapes: Vec<Vec<Vec2>> = Vec::new();
+        let bar = |from: Vec2, to: Vec2| -> Vec<Vec2> {
+            let side = (to - from).normalize_or_zero().perp() * ARROW_STEM / 2.0;
+            vec![from - side, to - side, to + side, from + side]
+        };
+        let head = |base: Vec2, along: Vec2| -> Vec<Vec2> {
+            let side = along.perp() * ARROW_HEAD_WIDTH / 2.0;
+            vec![base - side, base + along * ARROW_HEAD, base + side]
+        };
+        shapes.push(bar(to_world(0.0, 0.0), to_world(stem_end, 0.0)));
+        if turn.through {
+            shapes.push(head(to_world(stem_end, 0.0), forward));
+        }
+        for (allowed, sign) in [(turn.left, 1.0), (turn.right, -1.0)] {
+            if !allowed {
+                continue;
+            }
+            let start = to_world(branch_at, 0.0);
+            let reach = ARROW_BRANCH_REACH;
+            let end = to_world(branch_at + reach, sign * reach);
+            let along = (end - start).normalize_or_zero();
+            shapes.push(bar(start, end));
+            shapes.push(head(end, along));
+        }
+        let color = PAINT_COLOR.to_linear();
+        for shape in &shapes {
+            self.lanes.push_paint_area(
+                shape,
+                &[],
+                forward,
+                [NO_BREAK, LineKind::Arrow.code()],
+                color,
+            );
+        }
+        self.lines += 1;
+    }
+
+    /// Восемь слоёв краски:маска и наложение колеи узлов, краска улиц над
     /// асфальтом улиц, островки колец над асфальтом стоянок, мосты над
     /// настилом.
     pub fn layers(self) -> [LayerMesh; 8] {

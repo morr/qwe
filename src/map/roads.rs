@@ -56,7 +56,8 @@ use crate::map::meshing::{
     merge_close_points, miter_offsets, to_break_beyond,
 };
 use crate::map::osm::model::{
-    distance_to_segment, point_in_area, point_in_polygon, polyline_length, ring_bounds,
+    RoadNodeKind, distance_to_segment, point_in_area, point_in_polygon, polyline_length,
+    ring_bounds,
 };
 use crate::map::osm::{AreaKind, MapData, PolyArea, RoadClass, RoadLine, WallLine};
 use crate::map::shadow;
@@ -679,6 +680,20 @@ pub fn lane_count(road: &RoadLine) -> u8 {
     lanes.clamp(1, most)
 }
 
+/// Граней у круга разворотной площадки.
+const TURNING_CIRCLE_SIDES: usize = 32;
+/// Радиус разворотной площадки по отношению к полуширине дороги и его
+/// пределы, м: легковой машине на развороте нужно метров шесть, мусоровозу —
+/// десять, а площадка шире дороги, которая к ней ведёт, раза в два.
+const TURNING_CIRCLE_SCALE: f32 = 2.2;
+const TURNING_CIRCLE_RADIUS: std::ops::RangeInclusive<f32> = 6.0..=10.0;
+
+/// Радиус разворотной площадки в тупике дороги шириной `width`, м.
+fn turning_radius(width: f32) -> f32 {
+    (width / 2.0 * TURNING_CIRCLE_SCALE)
+        .clamp(*TURNING_CIRCLE_RADIUS.start(), *TURNING_CIRCLE_RADIUS.end())
+}
+
 /// Дуги колец ([`rings`]) сечением всего кольца: ширина и полосы —
 /// наибольшие по его дугам. У дуг одного кольца в OSM бывает разное `lanes`
 /// (3 и 2 на кольце primary в Туле), и лента шла бы ступенями.
@@ -880,11 +895,17 @@ pub struct RoadReport {
     pub stop_lines: usize,
     pub pockets: usize,
     pub clusters: usize,
+    /// Карманы стоянки вдоль улиц (`roads/pockets.rs`) и разворотные
+    /// площадки в тупиках.
+    pub kerb_pockets: usize,
+    pub turning_circles: usize,
     pub through: usize,
     /// Траектории узлов (`roads/turns.rs`) — кривые манёвров; дороги, ведущие
     /// хоть один узел (колея сквозь).
     pub turns: usize,
     pub leading: usize,
+    /// Стрелки на полосах подходов (`roads/turns.rs`).
+    pub arrows: usize,
     pub kerb_returns: usize,
     pub sidewalk_returns: usize,
     /// Наружные углы узлов (`roads/corners.rs`): асфальт и тротуар.
@@ -921,9 +942,12 @@ impl std::fmt::Display for RoadReport {
             stop_lines,
             pockets,
             clusters,
+            kerb_pockets,
+            turning_circles,
             through,
             turns,
             leading,
+            arrows,
             kerb_returns,
             sidewalk_returns,
             outer_corners: [outer, outer_sidewalks],
@@ -945,9 +969,9 @@ impl std::fmt::Display for RoadReport {
              sidewalks {}, markings {}, paint {paint_lines} lines / {paint_vertices} verts, \
              junctions {junctions} ({clusters} clusters, main through {through}), zebras \
              {zebras} ({osm_zebras} from OSM), stop lines {stop_lines}, pockets {pockets}, \
-             turn paths {turns}, leading roads {leading}, kerb returns {kerb_returns} + \
+             turn paths {turns}, arrows {arrows}, leading roads {leading}, kerb returns {kerb_returns} + \
              {sidewalk_returns} on sidewalks, outer corners {outer} + {outer_sidewalks} on \
-             sidewalks, stitches {stitches}, driveway crossings \
+             sidewalks, stitches {stitches}, kerb pockets {kerb_pockets}, turning circles {turning_circles}, driveway crossings \
              {crossings}, rings {rings} ({webs} webs), gores {gores}, tapers {tapers}, medians {paved} paved + {lawns} \
              lawn, smooth seams {seams}, tight corners {tight}; {network:?} of it before the \
              ribbons)",
@@ -1084,6 +1108,84 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
     // и тот же угол в слое тротуаров: полоса поворачивает за бордюром
     for outline in &kerb_returns.sidewalks {
         sidewalks.push_convex(outline, SIDEWALK_COLOR.to_linear());
+    }
+    // карманы — по тому же ответу и тем же разрывам, что ряд машин
+    // (`map::cars`): асфальт за кромкой и тротуар, отодвинутый за него
+    let row_breaks = pockets::row_breaks(roads, &map.network);
+    let mut kerb_pockets = 0;
+    for (index, road) in roads.iter().enumerate() {
+        if !pockets::parkable(road) {
+            continue;
+        }
+        let half = road.width / 2.0;
+        let sidewalk = sidewalks_of(index);
+        for kerbside in
+            pockets::kerbsides(road, &paths[index], &row_breaks.breaks[index], map.traffic_side)
+        {
+            let sidewalk = sidewalk.filter(|_| road.sidewalks[usize::from(kerbside.side < 0.0)]);
+            for pocket in &kerbside.pockets {
+                let outline = |outer: f32| {
+                    pockets::outline(&paths[index], pocket, kerbside.side, [half - 0.05, outer])
+                };
+                let edge = half + pockets::POCKET_WIDTH;
+                streets.push_polygon(&outline(edge), &[], ROAD_COLOR.to_linear());
+                if style.casing {
+                    street_casings.push_polygon(
+                        &outline(edge + casing_width(road.width)),
+                        &[],
+                        ROAD_CASING_COLOR.to_linear(),
+                    );
+                }
+                if let Some(sidewalk) = sidewalk {
+                    sidewalks.push_polygon(
+                        &outline(edge + sidewalk),
+                        &[],
+                        SIDEWALK_COLOR.to_linear(),
+                    );
+                }
+                kerb_pockets += 1;
+            }
+        }
+    }
+    // разворотные площадки в тупиках (`highway=turning_circle`); тупик без
+    // тега кончается круглым торцом ленты и так
+    let mut turning_circles = 0;
+    for node in &map.road_nodes {
+        if node.kind != RoadNodeKind::TurningCircle || nodes.is_shared(node.pos) {
+            continue;
+        }
+        let Some(index) = roads.iter().position(|road| {
+            road.class == RoadClass::Street
+                && !road.bridge
+                && !road.passage
+                && [road.points.first(), road.points.last()]
+                    .into_iter()
+                    .flatten()
+                    .any(|end| end.distance(node.pos) < JOIN_EPSILON)
+        }) else {
+            continue;
+        };
+        let road = drawn[index];
+        let radius = turning_radius(road.width);
+        let disc = |radius: f32| -> Vec<Vec2> {
+            (0..TURNING_CIRCLE_SIDES)
+                .map(|step| {
+                    let angle = std::f32::consts::TAU * step as f32 / TURNING_CIRCLE_SIDES as f32;
+                    node.pos + Vec2::from_angle(angle) * radius
+                })
+                .collect()
+        };
+        streets.push_convex(&disc(radius), ROAD_COLOR.to_linear());
+        if style.casing {
+            street_casings.push_convex(
+                &disc(radius + casing_width(road.width)),
+                ROAD_CASING_COLOR.to_linear(),
+            );
+        }
+        if let Some(sidewalk) = sidewalks_of(index) {
+            sidewalks.push_convex(&disc(radius + sidewalk), SIDEWALK_COLOR.to_linear());
+        }
+        turning_circles += 1;
     }
     // стежок до дороги, до которой OSM торец не довёл (`roads/network.rs`)
     let stitched: Vec<Cow<[Vec2]>> = paths
@@ -1404,6 +1506,12 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
     }
     // колея траекторий — всегда, как колея полос
     painter.paint_turn_wear(&turns.wear);
+    // стрелки на полосах подходов — краска, с разметкой
+    if style.markings {
+        for arrow in &turns.arrows {
+            painter.paint_arrow(arrow);
+        }
+    }
     // направляющие островки у колец: асфальт — в слой улиц, поверх тротуаров,
     // разметка — в слой краски, своим мешем выше асфальта стоянок
     // (`roads/gores.rs`)
@@ -1528,8 +1636,11 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
         stop_lines: node_paint.stop_lines.len(),
         pockets: node_paint.pockets.iter().flatten().flatten().count(),
         clusters: node_paint.clusters,
+        kerb_pockets,
+        turning_circles,
         through: node_paint.through,
         turns: turns.maneuvers,
+        arrows: if style.markings { turns.arrows.len() } else { 0 },
         leading: leading.iter().filter(|&&lead| lead).count(),
         kerb_returns: kerb_returns.roads.len() - kerb_returns.outer[0],
         sidewalk_returns: kerb_returns.sidewalks.len() - kerb_returns.outer[1],
@@ -2041,6 +2152,9 @@ mod medians;
 pub mod network;
 pub mod node_paint;
 pub mod paint;
+/// Открыт наружу для [`map::cars`](crate::map::cars): машина встаёт в тот же
+/// карман, что кладёт лента.
+pub(super) mod pockets;
 mod rings;
 /// Открыт наружу для [`map::cars`](crate::map::cars): ряд машин прерывается
 /// на клине, где бордюр ближе к оси, чем полуширина участка.

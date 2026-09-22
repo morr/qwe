@@ -1,5 +1,6 @@
 use super::*;
 use crate::map::meshing::distance_to_path;
+use crate::map::osm::model::RoadNode;
 use crate::map::osm::{Highway, fixture};
 use crate::map::shadow_dir;
 
@@ -1198,6 +1199,41 @@ fn the_sidewalk_tag_picks_the_side() {
     );
     assert!(right.iter().any(|at| at[1] < 100.0 - half - 1.0));
     assert!(sidewalks_with([false, false]).is_empty());
+}
+
+/// Магистраль получает карманы с обеих сторон: асфальт за кромкой, тротуар
+/// отодвинут за карман.
+#[test]
+fn a_primary_gets_pockets_in_its_sidewalks() {
+    let mut map = one_street();
+    map.roads[0].highway = Highway::Primary;
+    let (layers, report) = mesh_roads(&map, RoadStyle::default());
+    assert_eq!(report.kerb_pockets, 2);
+    let edge = 100.0 + 6.0 + pockets::POCKET_WIDTH;
+    let roads = layer(&layers, "roads").builder.positions_for_test();
+    assert!(roads.iter().any(|at| (at[1] - edge).abs() < 0.01));
+    let sidewalks = layer(&layers, "sidewalks").builder.positions_for_test();
+    assert!(sidewalks.iter().any(|at| at[1] > edge + 1.0));
+}
+
+/// `highway=turning_circle` на торце тупика — круг асфальта шире дороги.
+#[test]
+fn a_turning_circle_widens_the_dead_end() {
+    let mut map = one_street();
+    map.road_nodes.push(RoadNode {
+        pos: Vec2::new(600.0, 100.0),
+        kind: RoadNodeKind::TurningCircle,
+    });
+    let (layers, report) = mesh_roads(&map, RoadStyle::default());
+    assert_eq!(report.turning_circles, 1);
+    let radius = turning_radius(12.0);
+    assert!(radius > 6.0);
+    let roads = layer(&layers, "roads").builder.positions_for_test();
+    assert!(
+        roads
+            .iter()
+            .any(|at| (at[1] - (100.0 + radius)).abs() < 0.01 && (at[0] - 600.0).abs() < 1.0)
+    );
 }
 
 /// Двойная сплошная доходит до перекрёстка так же, как линии полос: пробы пары

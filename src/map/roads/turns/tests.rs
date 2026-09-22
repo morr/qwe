@@ -151,6 +151,42 @@ fn left_hand_traffic_turns_near_to_the_left() {
     }
 }
 
+/// Стрелки: по тегу — на каждой полосе с тегом; без тега — только у
+/// двухполосного в своём направлении подхода, по правилу: крайняя правая —
+/// прямо и направо, крайняя левая — прямо и налево. Однополосная боковая
+/// улица стрелок не получает.
+#[test]
+fn arrows_follow_the_tag_or_the_rule_on_a_wide_approach() {
+    let mut main = road(
+        vec![Vec2::ZERO, NODE, Vec2::new(200.0, 0.0)],
+        Highway::Tertiary,
+        2,
+    );
+    main.oneway = true;
+    let (rule, _) = turns_of(
+        vec![main.clone(), side(Highway::Residential)],
+        TrafficSide::Right,
+    );
+    // подход главной — две полосы на восток; боковая двусторонняя — по одной
+    let arrows: Vec<&LaneArrow> = rule.arrows.iter().collect();
+    assert_eq!(arrows.len(), 2, "{arrows:?}");
+    assert!(arrows.iter().all(|arrow| arrow.travel.x > 0.9));
+    let kerb = arrows
+        .iter()
+        .min_by(|a, b| a.at.y.total_cmp(&b.at.y))
+        .unwrap();
+    assert!(kerb.turn.right && kerb.turn.through && !kerb.turn.left);
+
+    let left = LaneTurn {
+        left: true,
+        ..default()
+    };
+    main.turns = [vec![left, LaneTurn::default()], Vec::new()];
+    let (tagged, _) = turns_of(vec![main, side(Highway::Residential)], TrafficSide::Right);
+    assert_eq!(tagged.arrows.len(), 1, "полоса без манёвров — без стрелки");
+    assert!(tagged.arrows[0].turn.left);
+}
+
 #[test]
 fn tagged_lanes_decide_which_lanes_turn() {
     let mut main = road(
