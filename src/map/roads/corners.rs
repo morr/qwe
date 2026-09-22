@@ -213,6 +213,12 @@ pub fn kerb_returns(
                 // по лучу назад
                 let own = sidewalk(index);
                 let mut sides = [own; 2];
+                // тротуар по тегу — слева или справа по пути (`sidewalk=*`)
+                for (side, present) in road.sidewalks.into_iter().enumerate() {
+                    if !present {
+                        sides[usize::from((side == 0) != forward)] = None;
+                    }
+                }
                 if let Some(left) = paired(index, along) {
                     sides[usize::from(left != forward)] = None;
                 }

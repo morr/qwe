@@ -1087,6 +1087,34 @@ fn turn_lanes_follow_the_flow() {
     );
 }
 
+/// `sidewalk=*` — стороны по ходу точек после разбора: `separate` и `no` —
+/// нет тротуара, уточнение по стороне сильнее общего тега, у `oneway=-1`
+/// стороны меняются вместе с разворотом точек.
+#[test]
+fn sidewalk_tags_pick_the_sides() {
+    let sides = |pairs: &[(&str, &str)]| {
+        let tags: HashMap<String, String> = pairs
+            .iter()
+            .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+            .collect();
+        tagged_sidewalks(&tags)
+    };
+    assert_eq!(sides(&[]), [true, true], "без тега — с обеих сторон");
+    assert_eq!(sides(&[("sidewalk", "separate")]), [false, false]);
+    assert_eq!(sides(&[("sidewalk", "no")]), [false, false]);
+    assert_eq!(sides(&[("sidewalk", "right")]), [false, true]);
+    assert_eq!(
+        sides(&[("sidewalk", "both"), ("sidewalk:left", "separate")]),
+        [false, true]
+    );
+    assert_eq!(sides(&[("sidewalk:both", "separate")]), [false, false]);
+    assert_eq!(
+        sides(&[("sidewalk", "left"), ("oneway", "-1")]),
+        [false, true],
+        "развёрнутый way — тротуар справа по новому ходу"
+    );
+}
+
 /// Съезды развязок (`*_link`) — дороги своего класса, а не мусор словаря.
 #[test]
 fn a_link_road_reaches_the_map() {

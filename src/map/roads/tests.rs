@@ -1179,6 +1179,27 @@ fn paired_halves_share_a_paved_median_and_keep_sidewalks_outside() {
     assert!(layer(&layers, "road_medians").builder.is_empty());
 }
 
+/// `sidewalk=right` — полоса только справа по ходу (к югу у улицы на восток),
+/// `separate` с обеих сторон — никакой.
+#[test]
+fn the_sidewalk_tag_picks_the_side() {
+    let sidewalks_with = |sides: [bool; 2]| {
+        let mut map = one_street();
+        map.roads[0].sidewalks = sides;
+        let (layers, _) = mesh_roads(&map, RoadStyle::default());
+        layer(&layers, "sidewalks").builder.positions_for_test().to_vec()
+    };
+    let half = 12.0 / 2.0;
+    let right = sidewalks_with([false, true]);
+    assert!(!right.is_empty());
+    assert!(
+        right.iter().all(|at| at[1] <= 100.0 + half + 0.01),
+        "слева по ходу тротуара нет"
+    );
+    assert!(right.iter().any(|at| at[1] < 100.0 - half - 1.0));
+    assert!(sidewalks_with([false, false]).is_empty());
+}
+
 /// Двойная сплошная доходит до перекрёстка так же, как линии полос: пробы пары
 /// теряют соседа за несколько метров до узла, и середина кончалась там (отчёт
 /// автора, пример 2 витрины).

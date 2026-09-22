@@ -637,8 +637,14 @@ pub fn sidewalk_width(road: &RoadLine) -> Option<f32> {
 
 /// Ширина тротуара, который у дороги **рисуется** при этом стиле: один ответ
 /// и для ленты тротуара, и для его скругления в узле (`roads/corners.rs`).
+/// Улица с `sidewalk=no|separate` с обеих сторон ленты не несёт; с одной —
+/// её кладёт [`push_sidewalk`] по [`RoadLine::sidewalks`].
 fn drawn_sidewalk(style: &RoadStyle, road: &RoadLine) -> Option<f32> {
-    style.sidewalks.then(|| sidewalk_width(road)).flatten()
+    style
+        .sidewalks
+        .then(|| sidewalk_width(road))
+        .flatten()
+        .filter(|_| road.sidewalks.contains(&true))
 }
 
 /// Проезжая часть улицы — то, что несёт тротуар и разметку и участвует в
@@ -1326,12 +1332,18 @@ pub fn mesh_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
                 &mut sidewalks,
                 body,
                 [road.width, sidewalk],
-                (runs, stitch),
+                (runs, stitch, road.sidewalks),
                 SIDEWALK_COLOR.to_linear(),
                 style.join,
                 trimmed,
             );
-            for &(path, narrow, end) in &wedges {
+            // клин тротуара симметричен; у одностороннего тротуара его нет
+            let wedges = if road.sidewalks == [true; 2] {
+                wedges.as_slice()
+            } else {
+                &[]
+            };
+            for &(path, narrow, end) in wedges {
                 let from =
                     drawn_sidewalk(&style, narrow).map_or(narrow.width, |own| band(narrow, own));
                 let to = band(road, sidewalk);
@@ -1891,55 +1903,67 @@ fn push_ribbon_trimmed(
     builder.push_ribbon_capped(points, is_ring(points), width, color, join, caps);
 }
 
-/// Тротуар дороги шириной `widths[0]` с полосой `widths[1]` с каждой стороны
-/// — кроме кусков `runs`, где рядом идёт вторая половина разделённой улицы
-/// (`roads/network/pairs.rs`): там он только с внешней стороны. Длины кусков
-/// меряны по оси без стежка; `runs.1` — длина стежка перед её началом.
+/// Тротуар дороги шириной `widths[0]` с полосой `widths[1]` — с тех сторон
+/// `[слева, справа]`, где он есть по тегу (`runs.2`, [`RoadLine::sidewalks`]),
+/// и кроме кусков `runs.0`, где рядом идёт вторая половина разделённой улицы
+/// (`roads/network/pairs.rs`): со стороны пары его нет. Длины кусков меряны
+/// по оси без стежка; `runs.1` — длина стежка перед её началом.
 fn push_sidewalk(
     builder: &mut MeshBuilder,
     body: &[Vec2],
     [width, sidewalk]: [f32; 2],
-    (runs, stitch): (&[network::pairs::PairRun], f32),
+    (runs, stitch, sides): (&[network::pairs::PairRun], f32, [bool; 2]),
     color: LinearRgba,
     join: RoadJoin,
     trimmed: [bool; 2],
 ) {
-    if runs.is_empty() {
+    if runs.is_empty() && sides == [true; 2] {
         return push_ribbon_trimmed(builder, body, width + 2.0 * sidewalk, color, join, trimmed);
     }
     let total = polyline_length(body);
     let mut cursor = 0.0;
-    // кусок `from..to`: `side` — сдвиг полосы от оси, `None` — с обеих сторон
-    let mut piece = |from: f32, to: f32, side: Option<f32>| {
+    // кусок `from..to` с тротуаром по сторонам `[слева, справа]`
+    let mut piece = |from: f32, to: f32, [left, right]: [bool; 2]| {
         if to - from < 0.5 {
             return;
         }
         let points = tapers::cut(body, from, to);
         let trims = [from > 0.0 || trimmed[0], to < total || trimmed[1]];
-        match side {
-            None => {
-                push_ribbon_trimmed(builder, &points, width + 2.0 * sidewalk, color, join, trims)
+        // полоса с одной стороны — лента на полтротуара в её сторону:
+        // `miter_offsets` плюсом сдвигает влево
+        let shift = match (left, right) {
+            (true, true) => {
+                return push_ribbon_trimmed(
+                    builder,
+                    &points,
+                    width + 2.0 * sidewalk,
+                    color,
+                    join,
+                    trims,
+                );
             }
-            Some(shift) => {
-                let shifted: Vec<Vec2> = points
-                    .iter()
-                    .zip(miter_offsets(&points, false, shift))
-                    .map(|(point, offset)| *point + offset)
-                    .collect();
-                push_ribbon_trimmed(builder, &shifted, width + sidewalk, color, join, trims);
-            }
-        }
+            (true, false) => sidewalk / 2.0,
+            (false, true) => -sidewalk / 2.0,
+            (false, false) => return,
+        };
+        let shifted: Vec<Vec2> = points
+            .iter()
+            .zip(miter_offsets(&points, false, shift))
+            .map(|(point, offset)| *point + offset)
+            .collect();
+        push_ribbon_trimmed(builder, &shifted, width + sidewalk, color, join, trims);
     };
     for run in runs {
         let from = (run.from + stitch).clamp(cursor, total);
         let to = (run.to + stitch).clamp(from, total);
-        piece(cursor, from, None);
-        // пара слева — полоса уходит вправо на полтротуара, и наоборот
-        let shift = if run.left { -sidewalk } else { sidewalk } / 2.0;
-        piece(from, to, Some(shift));
+        piece(cursor, from, sides);
+        // со стороны пары тротуара нет
+        let mut paired = sides;
+        paired[usize::from(!run.left)] = false;
+        piece(from, to, paired);
         cursor = to;
     }
-    piece(cursor, total, None);
+    piece(cursor, total, sides);
 }
 
 /// Заливка проезжей части — лента с разрывами разметки по перекрёсткам. При
