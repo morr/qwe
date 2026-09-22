@@ -228,11 +228,14 @@ impl Turns {
             // стрелки: по тегу, иначе по правилу на многополосном подходе;
             // на мосту своя краска, стрелок там нет
             // у кольца манёвр — «въехать в кольцо», и стрелки по правилу там
-            // врут: только по тегу
+            // врут: только по тегу; и там, где выбора нет — одно «прямо» на
+            // развилке разделённой улицы, где вторая ветка уходит разворотом
             let ring = junction.arms.iter().any(|arm| on_ring(arm.road));
             let turns = match &ins[a].turns {
                 Some(tagged) => tagged.clone(),
-                None if !ring && ins[a].lanes.len() >= ARROW_MIN_LANES => granted,
+                None if !ring && ins[a].lanes.len() >= ARROW_MIN_LANES && has_choice(&granted) => {
+                    granted
+                }
                 None => continue,
             };
             if drawn[from.road].bridge {
@@ -254,6 +257,21 @@ impl Turns {
             self.wear.push(wear);
         }
     }
+}
+
+/// Есть ли у подхода выбор: полосы вместе дают хотя бы два разных манёвра.
+/// Стрелка «только прямо» на каждой полосе ничего не говорит водителю.
+fn has_choice(turns: &[LaneTurn]) -> bool {
+    let any = |pick: fn(&LaneTurn) -> bool| turns.iter().any(pick);
+    [
+        any(|turn| turn.left),
+        any(|turn| turn.through),
+        any(|turn| turn.right),
+    ]
+    .into_iter()
+    .filter(|&kind| kind)
+    .count()
+        >= 2
 }
 
 /// Ось входящей полосы со сдвигом `offset` от кромки плеча `arm` назад, против

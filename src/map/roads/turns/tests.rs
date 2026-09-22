@@ -187,6 +187,23 @@ fn arrows_follow_the_tag_or_the_rule_on_a_wide_approach() {
     assert!(tagged.arrows[0].turn.left);
 }
 
+/// Развилка разделённой улицы (кольцо «Макси», пример 17): съезд в две полосы
+/// кончается там, где половины сходятся в двустороннюю, а вторая половина
+/// уходит назад разворотом. Выбора нет — одно «прямо», и стрелок по правилу
+/// нет; две стрелки «прямо» читались как лишняя разметка.
+#[test]
+fn no_rule_arrows_where_the_approach_has_no_choice() {
+    let mut exit = road(vec![Vec2::ZERO, NODE], Highway::Unclassified, 2);
+    exit.oneway = true;
+    let mut entry = road(vec![NODE, Vec2::new(0.0, -20.0)], Highway::Unclassified, 2);
+    entry.oneway = true;
+    let onward = road(vec![NODE, Vec2::new(200.0, 0.0)], Highway::Unclassified, 4);
+    let (turns, _) = turns_of(vec![exit, entry, onward], TrafficSide::Right);
+    // встречный подход с востока тоже без выбора: только прямо во вторую
+    // половину
+    assert!(turns.arrows.is_empty(), "{:?}", turns.arrows);
+}
+
 /// На изогнутом подходе стрелка идёт по своей полосе, а не по прямой от
 /// кромки: ось стрелки держит сдвиг полосы от оси дороги на всей длине, в том
 /// числе за двадцать метров от узла, где прямая уже ушла бы с полосы.

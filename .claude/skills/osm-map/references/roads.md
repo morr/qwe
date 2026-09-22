@@ -558,7 +558,11 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     above (collected before the leading-road skip, so a straight along the leader still
     counts); none on a bridge, none for a lane with no maneuver, and **no rule arrows at a
     node with a ring arm** (`on_ring`, from `Axes::rings` — «straight» there means
-    «into the ring», gallery 17 showed arrows on the ring itself); tagged ones stay. `Painter::paint_arrow`
+    «into the ring», gallery 17 showed arrows on the ring itself), and **none where the
+    approach has no choice** (`has_choice`: the lanes together grant fewer than two of
+    left / through / right — at the split of a divided road the other half leaves as a
+    U-turn, and gallery 17 carried two «through» arrows on its west exit;
+    `no_rule_arrows_where_the_approach_has_no_choice`); tagged ones stay. `Painter::paint_arrow`
     lays them as filled polygons in the **lanes** mesh, `LineKind::Arrow` (kind 9, cover
     1, fades with the lane lines at `LANE_ZOOM_MAX` — the near zoom only): a stem along
     the travel, a head if straight is allowed, a 45° branch with its own head per allowed
