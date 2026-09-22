@@ -3002,6 +3002,47 @@ fn a_block_drawn_to_the_kerb_is_tucked_under_its_sidewalk_footway() {
     );
 }
 
+/// Карман вдоль улицы отдельным контуром (`parking=street_side`, Тула,
+/// Советская улица) стоял за полосой нарисованного тротуара, и въехать в него
+/// было не с чего. Он дотягивается до бордюра проезжей части; обычная стоянка
+/// на том же месте — по-прежнему до края тротуара.
+#[test]
+fn a_street_side_lot_reaches_the_kerb_across_the_sidewalk() {
+    let sidewalk = sidewalk_band(8.0);
+    let top = |street_side: bool| {
+        let lot = PolyArea {
+            kind: AreaKind::Parking,
+            ..building(
+                rect(
+                    CENTER + Vec2::new(-20.0, -4.0 - sidewalk - 2.5),
+                    CENTER + Vec2::new(20.0, -4.0 - sidewalk - 0.1),
+                ),
+                Vec::new(),
+            )
+        };
+        let mut map = MapData {
+            roads: vec![street(
+                vec![
+                    CENTER - Vec2::new(400.0, 0.0),
+                    CENTER + Vec2::new(400.0, 0.0),
+                ],
+                8.0,
+            )],
+            parking: vec![lot],
+            street_side_lots: if street_side { vec![0] } else { Vec::new() },
+            ..MapData::default()
+        };
+        pull_areas_to_roads(&mut map);
+        // посреди полосы тротуара и у самого бордюра
+        [0.5, 0.1].map(|share| {
+            let probe = CENTER + Vec2::new(0.0, -4.0 - sidewalk * share);
+            point_in_polygon(probe, &map.parking[0].outer)
+        })
+    };
+    assert_eq!(top(true), [true; 2], "карман не дошёл до бордюра");
+    assert_eq!(top(false), [false; 2], "обычная стоянка вылезла на тротуар");
+}
+
 /// Тем же проходом дотягивается и стоянка — но по своему правилу: её край
 /// пересекает проезд ряда, и вершина, стоящая на его полотне, обязана уехать к
 /// улице вместе с соседями. По правилу квартала («лежишь под лентой — тянуть
