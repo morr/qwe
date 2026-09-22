@@ -142,7 +142,7 @@ pub fn car_clearings(
 /// Ширину клином выравнивает только ровная проезжая лента: мост рисуется
 /// другим слоем со своим бордюром, арка приколота к стене дома.
 fn takes_taper(road: &RoadLine) -> bool {
-    !road.bridge && !road.passage && road.lanes.is_some()
+    !road.carves_navmesh() && road.lanes.is_some()
 }
 
 /// Нарисованный путь, разрезанный под клинья: `(клин у начала, середина, клин

@@ -370,6 +370,15 @@ impl RoadLine {
     pub fn is_roundabout(&self) -> bool {
         self.roundabout || (self.oneway && crate::map::shapes::is_ring(&self.points))
     }
+
+    /// Прорезает ли дорога навмеш: мост (`bridge`) — коридор через воду, арка
+    /// (`passage`) — сквозь дом. Точки такой дороги — навмеша, и рисовальщик
+    /// её ось не трогает: не сглаживает, не стягивает в пару, не вписывает в
+    /// кольцо, не режет под клин и не стежёт — мост кончается ровным срезом
+    /// бордюра, арка приколота к стенам дома.
+    pub fn carves_navmesh(&self) -> bool {
+        self.bridge || self.passage
+    }
 }
 
 /// Род пути — он же способ отрисовки.
@@ -1404,5 +1413,17 @@ mod tests {
     fn point_at_arc_length_skips_a_zero_length_link() {
         let path = [Vec2::ZERO, Vec2::ZERO, Vec2::new(4.0, 0.0)];
         assert!(point_at_arc_length(&path, 2.0).distance(Vec2::new(2.0, 0.0)) < 1e-4);
+    }
+
+    /// Навмеш прорезают ровно мост и арка — по любому из двух флагов.
+    #[test]
+    fn a_bridge_or_an_arch_carves_the_navmesh() {
+        let mut road = crate::map::osm::fixture::street(vec![Vec2::ZERO, Vec2::X], 7.0);
+        assert!(!road.carves_navmesh());
+        road.bridge = true;
+        assert!(road.carves_navmesh());
+        road.bridge = false;
+        road.passage = true;
+        assert!(road.carves_navmesh());
     }
 }

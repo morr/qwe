@@ -1146,7 +1146,7 @@ pub fn mesh_roads(
         let rounded: Vec<Option<&[Vec2]>> = drawn
             .iter()
             .zip(paths)
-            .map(|(road, path)| (!road.bridge && !road.passage).then_some(path.as_ref()))
+            .map(|(road, path)| (!road.carves_navmesh()).then_some(path.as_ref()))
             .collect();
         // со стороны второй половины тротуара нет — угла по нему тоже; кусок
         // пары может кончиться на пробу раньше узла
@@ -1232,8 +1232,7 @@ pub fn mesh_roads(
         }
         let Some(index) = roads.iter().position(|road| {
             road.class == RoadClass::Street
-                && !road.bridge
-                && !road.passage
+                && !road.carves_navmesh()
                 && [road.points.first(), road.points.last()]
                     .into_iter()
                     .flatten()
@@ -1321,7 +1320,7 @@ pub fn mesh_roads(
         .iter()
         .filter(|&&index| {
             let road = drawn[index];
-            road.class == RoadClass::Street && !road.passage && !road.bridge
+            road.class == RoadClass::Street && !road.carves_navmesh()
         })
         .map(|&index| gores::GoreRoad::new(drawn[index], &stitched[index]))
         .collect();

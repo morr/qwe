@@ -157,8 +157,7 @@ pub fn pairable(road: &RoadLine) -> bool {
         && !road.parking_aisle
         && road.oneway
         && !road.is_roundabout()
-        && !road.bridge
-        && !road.passage
+        && !road.carves_navmesh()
         && road.points.len() >= 2
 }
 

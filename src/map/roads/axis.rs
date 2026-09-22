@@ -135,10 +135,7 @@ pub fn street_axes<'a>(
     };
     if let Some(curve) = curve {
         for street in &network.streets {
-            let excluded = |way: &StreetWay| {
-                let road = &roads[way.road];
-                road.bridge || road.passage
-            };
+            let excluded = |way: &StreetWay| roads[way.road].carves_navmesh();
             let whole = street.closed && !street.ways.iter().any(excluded);
             for run in street.ways.split(excluded) {
                 if run.is_empty() {

@@ -139,7 +139,7 @@ impl Stitches {
 /// Может ли дорога участвовать в стежке — с любой стороны. Мост кончается
 /// ровным срезом бордюра, арка приколота к стенам дома: их торцы на месте.
 pub(in crate::map) fn stitchable(road: &RoadLine) -> bool {
-    !road.bridge && !road.passage && road.points.len() >= 2
+    !road.carves_navmesh() && road.points.len() >= 2
 }
 
 /// Продолжает ли `target` полотно дороги `own`. Улица — только улица: торец

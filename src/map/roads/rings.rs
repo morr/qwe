@@ -245,8 +245,7 @@ impl Rings {
 fn is_arc(road: &RoadLine) -> bool {
     road.is_roundabout()
         && road.class == RoadClass::Street
-        && !road.bridge
-        && !road.passage
+        && !road.carves_navmesh()
         && road.points.len() >= 2
 }
 
@@ -292,8 +291,7 @@ pub fn reshape<'a>(
         if rings.of_road[index].is_some()
             || !road.oneway
             || road.class != RoadClass::Street
-            || road.bridge
-            || road.passage
+            || road.carves_navmesh()
             || paths[index].len() < 2
         {
             continue;
@@ -344,8 +342,7 @@ pub fn reshape<'a>(
     for (index, road) in roads.iter().enumerate() {
         if rings.of_road[index].is_some()
             || road.class != RoadClass::Street
-            || road.bridge
-            || road.passage
+            || road.carves_navmesh()
         {
             continue;
         }
