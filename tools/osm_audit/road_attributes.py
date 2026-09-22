@@ -13,9 +13,11 @@ import collections
 import json
 import sys
 
-# parse/tags.rs::road_class — классы шириной от STREET_MIN_WIDTH (8 м)
+# parse/tags.rs::road_class — проезжие классы (`Highway::is_street`): без
+# service и дорожек; в кеше это все highway, которым road_class даёт 8 м и шире
 STREETS = {
     "motorway", "trunk", "primary", "secondary", "tertiary",
+    "motorway_link", "trunk_link", "primary_link", "secondary_link", "tertiary_link",
     "residential", "unclassified", "living_street",
 }
 # parse/tags.rs::is_oneway / is_roundabout

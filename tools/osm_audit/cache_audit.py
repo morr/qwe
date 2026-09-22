@@ -13,36 +13,31 @@ import json
 import os
 import sys
 
-# parse.rs::road_class
-ROAD_OK = {
+# parse/tags.rs::road_class — проезжие классы (`Highway::is_street`) и пешие
+STREET_CLASSES = {
     "motorway", "trunk", "primary", "secondary", "tertiary",
     "motorway_link", "trunk_link", "primary_link", "secondary_link", "tertiary_link",
     "residential", "unclassified", "living_street", "service",
-    "footway", "path", "pedestrian", "cycleway", "steps", "track",
 }
-# parse.rs::rail_class
+WALK_CLASSES = {"footway", "path", "pedestrian", "cycleway", "steps", "track"}
+ROAD_OK = STREET_CLASSES | WALK_CLASSES
+# parse/tags.rs::rail_class
 RAIL_OK = {
     "rail", "light_rail", "narrow_gauge", "subway", "tram",
     "abandoned", "disused", "razed", "dismantled",
 }
-# parse/tags.rs::is_service_track — станционный путь, на нём стоят вагоны.
+# parse/tags.rs::service_track — станционный путь, на нём стоят вагоны.
 # Белый список, а не «тег есть»: `service=crossover` — съезд между главными путями.
 SERVICE_OK = {"siding", "yard", "spur"}
-# parse.rs::water_class — линейные водотоки; `riverbank` тут не значится,
+# parse/tags.rs::water_class — линейные водотоки; `riverbank` тут не значится,
 # это площадь и её забирает area_kind
 WATER_OK = {"river", "canal", "weir", "stream", "brook", "ditch", "drain"}
-# parse.rs::NON_WALKABLE_ENTRANCES
+# parse/tags.rs::NON_WALKABLE_ENTRANCES
 NON_WALKABLE = {"no", "garage", "emergency"}
 # parse/tags.rs::road_node_kind
 ROAD_NODES = {
     "crossing", "traffic_signals", "stop", "give_way", "mini_roundabout",
     "turning_circle", "turning_loop",
-}
-# parse/tags.rs::road_class — какие классы проезжие (остальное из ROAD_OK — пешее)
-STREET_CLASSES = {
-    "motorway", "trunk", "primary", "secondary", "tertiary",
-    "motorway_link", "trunk_link", "primary_link", "secondary_link", "tertiary_link",
-    "residential", "unclassified", "living_street", "service",
 }
 
 
