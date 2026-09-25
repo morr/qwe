@@ -1270,7 +1270,9 @@ place to look at a road-network defect end to end:
   is 0.1747 m per CSS pixel at Tula's latitude, so the window is a square of
   `2·half / 0.1747` px round the map centre — and where that centre sits in the frame is
   **measured with a `&pt=lon,lat` marker**, because Yandex centres `ll` on the visible part
-  of the map beside its side panel, not on the viewport. The rest of the recipe (capture
+  of the map beside its side panel, not on the viewport — read off the DOM
+  (`.map-placemark`'s bounding rect), once per browser window size, then shot again
+  without `pt`. The rest of the recipe (capture
   twice, the map paints its tiles lazily; a live browser through Claude in Chrome, headless
   Chrome gets a `limited` stub) is in the docs of `examples/demos/roads/samples.rs`.
 - The panel mirrors the game's (`examples/demos/roads/panel.rs`): the city switch, a
