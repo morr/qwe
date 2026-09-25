@@ -1121,7 +1121,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   splitter island at a roundabout: the wedge between the entry arm, the exit arm and the
   ring is **asphalt with diagonal hatching**, not a triangle of sidewalk or kerb. A
   property of the network at a ring, not of a lot: computed for every roundabout
-  (`RoadLine::is_roundabout`), a wedge counting only if it touches **two arms**. The whole
+  (`RoadLine::is_roundabout`), a wedge counting only if it touches **two arms**; the
+  **fan** of an entry and an exit meeting in one node within 55 m is taken whole, from the
+  ring to that node (`gores::fans`). The whole
   wedge is asphalt, the wedge without its thin tips is what gets hatched — by the road
   paint layer's shader (`road_paint_islands`), which fades it with zoom. A **splitter**
   (`gores::splitters`) is the same island set **by rule** on an approach mapped as one

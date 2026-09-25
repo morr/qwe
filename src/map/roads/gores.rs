@@ -26,7 +26,7 @@ use super::rings::{Ring, Rings};
 use super::{is_carriageway, lane_count};
 use crate::map::along::{arclengths, place_on_path};
 use crate::map::meshing::{Break, MeshBuilder, min_area_rect};
-use crate::map::osm::model::{RoadLine, distance_to_segment, ring_bounds};
+use crate::map::osm::model::{RoadLine, distance_to_segment, polyline_length, ring_bounds};
 use crate::map::shapes::{
     ARC, Contour, RING_EPSILON, Shape, contour_area, contour_bounds, is_ring, oriented,
     point_in_shape, push_shape, ring_of, stroke,
@@ -214,6 +214,29 @@ impl Gores {
                 .collect();
             wedges.extend(vec![shape].overlay(&clip, OverlayRule::Difference, FillRule::NonZero));
         }
+        // Веер подхода — клин между въездом и съездом **целиком**, от кольца
+        // до узла, где они сходятся. Замыкание его не находит: подходы
+        // расходятся быстрее двух его радиусов, и клин выходил обрывком у
+        // кольца, а то и двумя (пример 04, север) — у Яндекса же островок
+        // занимает весь веер
+        for fan in fans(roads, &at_ring) {
+            let (low, high) = contour_bounds(&fan);
+            let clip: Vec<Contour> = solid
+                .iter()
+                .filter(|contour| {
+                    let (from, to) = contour_bounds(contour);
+                    from.cmple(high).all() && to.cmpge(low).all()
+                })
+                .cloned()
+                .collect();
+            wedges.extend(vec![vec![fan]].overlay(
+                &clip,
+                OverlayRule::Difference,
+                FillRule::NonZero,
+            ));
+        }
+        // клин, найденный и замыканием, и веером, — одна фигура
+        let wedges: Vec<Shape> = wedges.simplify_shape(FillRule::NonZero);
         let bodies: Vec<Shape> = wedges
             .into_iter()
             .filter(|shape| {
@@ -505,6 +528,52 @@ fn splitter(
             reach: length / 2.0 + SPLITTER_GAP,
         },
     })
+}
+
+/// Самый длинный подход, чей веер ещё островок, м: дальше между въездом и
+/// съездом уже квартал, а не клин разметки (пример 04, запад — 85 м).
+const FAN_REACH: f32 = 55.0;
+/// Насколько далеко могут кончаться въезд и съезд, чтобы их веер ещё
+/// замыкался, м: на юге примера 04 съезд кончается в узле развилки, а въезд —
+/// в десяти метрах от него, за короткой связкой.
+const FAN_MOUTH: f32 = 12.0;
+
+/// Вееры подходов к кольцам: контур между двумя односторонними полотнами,
+/// что начинаются в разных узлах кольца, а кончаются в одном узле (или в
+/// [`FAN_MOUTH`] друг от друга), — от кольца по одному, назад по другому.
+/// Хорда между узлами кольца проходит по его асфальту и острову, и их
+/// вычитают вместе с полотнами.
+fn fans(roads: &[GoreRoad], at_ring: &impl Fn(Vec2) -> bool) -> Vec<Contour> {
+    let outward: Vec<Vec<Vec2>> = roads
+        .iter()
+        .filter(|road| road.oneway && !road.roundabout)
+        .filter_map(|road| {
+            let (first, last) = (*road.path.first()?, *road.path.last()?);
+            let path: Vec<Vec2> = match (at_ring(first), at_ring(last)) {
+                (true, false) => road.path.clone(),
+                (false, true) => road.path.iter().rev().copied().collect(),
+                // перемычка между двумя узлами кольца или улица мимо
+                _ => return None,
+            };
+            (polyline_length(&path) <= FAN_REACH).then_some(path)
+        })
+        .collect();
+    let mut fans = Vec::new();
+    for (index, a) in outward.iter().enumerate() {
+        for b in &outward[index + 1..] {
+            if a[0].distance(b[0]) <= ARM_SNAP {
+                continue;
+            }
+            let mouth = a[a.len() - 1].distance(b[b.len() - 1]);
+            if mouth > FAN_MOUTH {
+                continue;
+            }
+            let mut outline = a.clone();
+            outline.extend(b.iter().rev().skip(usize::from(mouth <= RING_EPSILON)));
+            fans.push(oriented(&outline, true));
+        }
+    }
+    fans
 }
 
 /// Куда дотягивается замыкание ленты: её габарит, выпущенный на полуширину
