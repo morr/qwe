@@ -200,8 +200,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     `area:highway`, `highway` + `area=yes`, `traffic_calming=island`). The junction
     paint reads the crossings, signals and stop / give-way signs, the kerb pockets and
     the parked cars break at the marked crossings, a turning circle on a dead end is a
-    disc of asphalt; mini-roundabouts, island points and the road areas are parsed and
-    kept for later stages.
+    disc of asphalt; an island point or a crossing with an island on a two-way street is
+    a **safety island** — a kerbed lens over the asphalt and its paint — and so is an
+    `Island` outline, a `Carriageway` outline is asphalt under the ribbons
+    (`roads/islands.rs`); mini-roundabouts and walkway outlines are parsed and kept for
+    later stages.
   - **RoadLine** — centerline + width **from its section** (footways keep 3.5 by class);
     `RoadClass: Street | Alley`; `highway: Highway` (the `highway` value; `*_link` is a
     class of its own; `Highway::is_street` — not a service drive, not a path — is what

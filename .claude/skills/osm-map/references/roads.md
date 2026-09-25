@@ -641,9 +641,33 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     zebras and stop lines, `medians::crossing_breaks` over them), not only on the asphalt
     ones.
   - Not drawn from data: `footway=crossing` ways are not parsed (the crossing node is
-    what Tula maps); islands and `RoadArea` outlines are left to later stages.
+    what Tula maps). Islands and `RoadArea` outlines are drawn by **Safety islands** below.
   The report counts `junctions N (C clusters, main through T), zebras Z (O from OSM),
   stop lines S, pockets P`.
+- **Safety islands and carriageway areas** (`map/roads/islands.rs`, `RoadIslands`, roads
+  plan I6) — the first reader of the v15 islands and `RoadArea` outlines:
+  - **An island node** — `RoadNodeKind::Island` or a crossing with `island` — on a
+    **two-way** carriageway of two lanes or more (found by `node_key` of its vertices;
+    the node is a vertex of the way) becomes a kerbed lens on the drawn axis:
+    `REFUGE_LENGTH` 8 m along it (the zebra plus a metre of kerb each side),
+    `REFUGE_HALF_WIDTH` 0.9 m, an ellipse profile to a point at both ends. A one-way
+    street has no room between opposing lanes for it and gets none.
+  - **An `Island` outline** is a kerbed island by its outline.
+  - Both are sidewalk-coloured and go into the **`lot_sidewalks`** layer
+    (`Z_LOT_SIDEWALK` 2.002) — above the road asphalt **and** its paint: the way's
+    ribbon runs straight through the island (OSM does not split the axis around a
+    refuge), and on the ground the lane lines and the zebra stop at its kerb, which is
+    exactly what covering them does. The stroke of a flare around the island is not
+    drawn.
+  - **A `Carriageway` outline** is asphalt in the `roads` layer, under the ribbons: a
+    square, a lay-by, a widening the axis does not describe. `Walkway` outlines are left
+    to the sidewalks and alleys that already cover them.
+  - **Tula has almost none of it** (no island at all, one `crossing:island`, a dozen
+    service-yard outlines — `references/osm-coverage.md`, «v15»), so the gallery check
+    is Berlin (`ROADS_CITY=berlin`, samples 4–6: `area:highway=traffic_island` at
+    Rosenthaler Platz and the boulevards, `area:highway=primary|tertiary` outlines,
+    signalized crossings with islands). The report counts `safety islands N + A areas,
+    carriageway areas C`.
 - **Turn paths** (`map/roads/turns.rs`, `Turns::new` over `NodePaint::junctions`) — the
   wear a junction gets from traffic crossing it. The lane ruts fade in a junction gap (a
   car crossing a junction is not in a lane), so without these the middle of every node was
