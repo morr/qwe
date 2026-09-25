@@ -295,7 +295,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     rule on trunk/primary/secondary (cars do not stand on an arterial's lane) — there as
     rare short bays, seeded by the street, not a block-long run. One answer
     (`pockets::kerbsides`) for the ribbon and for `map::cars`. `sidewalk=*` likewise
-    decides which sides carry a sidewalk band.
+    decides which sides carry a sidewalk band; an **untagged** street has none on an
+    unpaved surface, and a residential one has them only among blocks of 3+ storeys on
+    average (`parse::infer_sidewalks`, the cars' district measure).
   - **Paired halves** (`map/roads/network/pairs.rs`, `Pairs`) — a divided street as OSM
     draws it: two opposite one-way ways of one class side by side (a street or a
     `service` drive, never a parking aisle), up to `PAIR_MAX_GAP` 15 m between the kerbs.

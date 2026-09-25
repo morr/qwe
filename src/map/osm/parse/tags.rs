@@ -782,10 +782,14 @@ pub(super) fn tagged_turns(tags: &HashMap<String, String>) -> [Vec<LaneTurn>; 2]
 
 /// Тротуар `[слева, справа]` по ходу точек **после разбора**: `sidewalk=both|
 /// left|right|no|separate`, уточнённый `sidewalk:both|left|right`. `no`,
-/// `none` и `separate` — нет тротуара у ленты (отдельный footway рисуется сам);
-/// без тега — с обеих сторон. У `oneway=-1` точки разворачиваются, и стороны
-/// меняются местами вместе с ними.
-pub(super) fn tagged_sidewalks(tags: &HashMap<String, String>) -> [bool; 2] {
+/// `none` и `separate` — нет тротуара у ленты (отдельный footway рисуется сам).
+/// `None` — ни одного ключа `sidewalk*`: решает не тег, а класс и окружение
+/// ([`untagged_sidewalks`], потом `parse::infer_sidewalks`). У `oneway=-1`
+/// точки разворачиваются, и стороны меняются местами вместе с ними.
+pub(super) fn tagged_sidewalks(tags: &HashMap<String, String>) -> Option<[bool; 2]> {
+    if !tags.keys().any(|key| key.starts_with("sidewalk")) {
+        return None;
+    }
     let present = |value: &str| !matches!(value, "no" | "none" | "separate");
     let mut sides = match tags.get("sidewalk").map(String::as_str) {
         Some("left") => [true, false],
@@ -804,7 +808,31 @@ pub(super) fn tagged_sidewalks(tags: &HashMap<String, String>) -> [bool; 2] {
     if is_oneway_backward(tags) {
         sides.reverse();
     }
-    sides
+    Some(sides)
+}
+
+/// Тротуар way без тега `sidewalk*` — до прохода по окружению: у грунтовой
+/// улицы (`surface=gravel|unpaved|ground|dirt|compacted|…`) его нет никогда,
+/// у прочих — пока с обеих сторон, а жилую и проезд без названия потом
+/// проверит застройка вокруг (`parse::infer_sidewalks`).
+pub(super) fn untagged_sidewalks(tags: &HashMap<String, String>) -> [bool; 2] {
+    let unpaved = matches!(
+        tags.get("surface").map(String::as_str),
+        Some(
+            "unpaved"
+                | "gravel"
+                | "fine_gravel"
+                | "pebblestone"
+                | "ground"
+                | "dirt"
+                | "earth"
+                | "mud"
+                | "sand"
+                | "grass"
+                | "compacted"
+        )
+    );
+    [!unpaved; 2]
 }
 
 /// Стоянка у бордюра `[слева, справа]` по ходу точек после разбора:

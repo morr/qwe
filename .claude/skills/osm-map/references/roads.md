@@ -52,7 +52,20 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   **`sidewalk=*` picks the sides** (stage 7): `RoadLine::sidewalks` `[left, right]` along
   the points (`parse/tags.rs::tagged_sidewalks` — `both|left|right|no|none|separate`,
   refined by `sidewalk:both|left|right`; `no` and `separate` mean no band, a separate
-  footway draws itself; untagged means both; `oneway=-1` swaps them with the points).
+  footway draws itself; `oneway=-1` swaps them with the points). **Untagged** (no
+  `sidewalk*` key at all — `tagged_sidewalks` returns `None`) is decided by the street and
+  what stands around it, not taken as "both": an unpaved `surface`
+  (`gravel|unpaved|ground|dirt|compacted|…`, `tags.rs::untagged_sidewalks`) never has
+  one; a residential / unclassified / living street keeps both only where the mean
+  **storeys of the blocks** along it (`cars::district::Districts::storeys_at`, the very
+  measure that thins the parked row, probed every 40 m) are at least
+  `SIDEWALK_STOREYS_MIN` 3 — the private sector and an empty field get a kerb with no
+  band (`parse.rs::infer_sidewalks`, right after the drowned buildings, so the house
+  pull and the block pull already read the decision); trunk…tertiary and the links keep
+  both. The trigger was the Yandex comparison: in Tula silence means "yes" in the centre
+  and "no" among private houses (galleries 09, 13, the side streets of 03 and 19), and
+  the band there drew the rule zebras after it. Tula: see the `osm parse: N of M
+  untagged residential streets left without sidewalks` line.
   `drawn_sidewalk` is `None` when neither side has one; `push_sidewalk` lays a one-sided
   band the paired-half way (width plus one sidewalk, shifted half a sidewalk to its side)
   and ANDs the tag with the pair runs; the kerb returns drop the arc on a missing side;

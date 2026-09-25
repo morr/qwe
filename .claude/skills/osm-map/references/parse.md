@@ -12,12 +12,13 @@ them, every tag reading and finishing pass in order, and how a tag rule is pinne
 `parse()` is two halves with a line between them, and the line is what makes a single
 pass reachable:
 
-- **`read_elements(response, bounds) -> (MapData, Vec<Vec2>, ReadReport)`** — the element
+- **`read_elements(response, bounds) -> (MapData, Pending, ReadReport)`** — the element
   loop and nothing else. What comes out is *raw*: houses still standing in water, churches
-  without a faith, skewed outlines, no doors, no trees. The `Vec<Vec2>` is the entrances
-  that have nowhere to go yet — Overpass hands out nodes before ways, so at that moment the
-  buildings do not exist.
-- **`finish_parse(&mut MapData, &[Vec2]) -> PassReport`** — the **nine** finishing passes
+  without a faith, skewed outlines, no doors, no trees. `Pending` is what has nowhere to go
+  yet: the entrances (Overpass hands out nodes before ways, so at that moment the
+  buildings do not exist) and `bare_sidewalks`, the roads with no `sidewalk*` tag at all,
+  whose sidewalks the blocks around them decide once the buildings are read.
+- **`finish_parse(&mut MapData, &Pending) -> PassReport`** — the **nine** finishing passes
   (step 0 is the street sections, `map::roads::network::sections`, since the width they
   set is read by the passes after them) in their one correct order, closed by a tenth
   step, `compose_trees` for the default
@@ -244,6 +245,14 @@ be called alone:
   standing on the pond reads as a render bug. One vertex on land is enough to survive —
   piers and embankment houses stay. Counts: Tula 1, Berlin 6, NY 17, London 28, Paris 28,
   Tokyo 0; logged on stderr when non-zero.
+- **Sidewalks of untagged streets** (`parse.rs::infer_sidewalks`, right after the drowned
+  buildings, which must not count) — a residential / unclassified / living street with no
+  `sidewalk*` key keeps its band only where the blocks along it average at least
+  `SIDEWALK_STOREYS_MIN` 3 storeys (`cars::district::Districts::storeys_at`, probed every
+  `SIDEWALK_PROBE_STEP` 40 m; nothing around counts as low); an unpaved one lost it
+  already in `tags.rs::untagged_sidewalks`. Before the house pull and the block pull, so
+  both push and pull against the sidewalk that is drawn. The rule itself — `roads.md`,
+  **Sidewalks**; logged as `N of M untagged residential streets left without sidewalks`.
 - **Squared houses** (`parse.rs::square_skewed_houses`) — a small house outlined as a
   **skewed quad** is replaced by a rectangle. The private sector is traced by eye off
   imagery, and a rectangular house comes out a rhombus (Tula way 968419942, corners

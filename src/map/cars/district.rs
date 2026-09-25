@@ -77,7 +77,7 @@ struct Block {
 /// загрузку мира, — ровно по той же причине, по которой не кешируются разрывы
 /// на перекрёстках: по Туле это единицы миллисекунд на 7.6 тысячи домов, а
 /// весь слой машин — проценты от зданиевого.
-pub(super) struct Districts {
+pub(crate) struct Districts {
     blocks: Vec<Block>,
     /// Номера домов из [`Self::blocks`] по ячейкам, до которых достаёт их
     /// радиус — имя `blocks` занято самим вектором, в который они индексируют.
@@ -85,7 +85,7 @@ pub(super) struct Districts {
 }
 
 impl Districts {
-    pub(super) fn new(buildings: &[PolyArea]) -> Self {
+    pub(crate) fn new(buildings: &[PolyArea]) -> Self {
         let mut blocks = Vec::with_capacity(buildings.len());
         let mut blocks_by_cell = Grid::new(CELL);
         for building in buildings {
@@ -124,7 +124,11 @@ impl Districts {
     /// Этажность застройки вокруг `point` — средневзвешенная по пятну высота
     /// домов ближе [`REACH`], делённая на высоту этажа. `None`, если рядом не
     /// стоит ничего.
-    fn storeys_at(&self, point: Vec2) -> Option<f32> {
+    ///
+    /// Её же читает разбор: тротуар у жилой улицы без тега решает та же мера
+    /// квартала (`osm::parse::infer_sidewalks`), чтобы машины у бордюра и
+    /// полоса вдоль него видели один и тот же частный сектор.
+    pub(crate) fn storeys_at(&self, point: Vec2) -> Option<f32> {
         let mut weight = 0.0;
         let mut volume = 0.0;
         for &index in self.blocks_by_cell.at(point) {
