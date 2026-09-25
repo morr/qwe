@@ -156,10 +156,13 @@ fn grid(frame: LaneFrame) -> Vec<f32> {
 #[test]
 fn the_wedge_asphalt_and_the_wedge_paint_share_one_grid() {
     for (body, narrow) in [(4, 2), (3, 2), (5, 2), (6, 3)] {
-        for end in [false, true] {
-            let [from, to] = wedge_frames(body, narrow, end);
+        for (end, drift) in [false, true]
+            .into_iter()
+            .flat_map(|end| [None, Some(1.0), Some(-1.0)].map(|drift| (end, drift)))
+        {
+            let [from, to] = wedge_frames(body, narrow, end, drift);
             let body_frame = lane_frame(body);
-            let paint_from = narrow_frame(body_frame, narrow, end);
+            let paint_from = narrow_frame(body_frame, narrow, end, drift);
             for step in 0..=10 {
                 let t = step as f32 / 10.0;
                 let asphalt = from.lerp(to, t);
@@ -184,11 +187,48 @@ fn the_wedge_asphalt_and_the_wedge_paint_share_one_grid() {
 #[test]
 fn a_wedge_starts_on_the_narrow_grid() {
     let body = lane_frame(4);
-    let seam = narrow_frame(body, 2, false);
+    let seam = narrow_frame(body, 2, false, None);
     assert_eq!(grid(seam), grid(lane_frame(2)));
     assert_eq!(seam.origin, 0.0, "две полосы в четыре: линии не двигаются");
-    let odd = narrow_frame(lane_frame(3), 2, false);
+    let odd = narrow_frame(lane_frame(3), 2, false, None);
     assert!((lane_frame(3).origin - odd.origin - lane_width() / 2.0).abs() < 1e-4);
+}
+
+/// Односторонний клин 2 → 4 (пример 16): общие полосы прижаты к левой кромке,
+/// обе новые рождаются у бордюра справа. Каждая линия узкого сечения на теле
+/// стоит на разницу полуширин левее, чем у шва.
+#[test]
+fn a_one_way_wedge_adds_its_lanes_at_the_kerb() {
+    let body = lane_frame(4);
+    let seam = narrow_frame(body, 2, false, Some(1.0));
+    assert_eq!(grid(seam), grid(lane_frame(2)), "у шва — сетка узкого");
+    let shift = body.high - lane_frame(2).high;
+    // линия между полосами узкого сечения уходит к левой линии тела
+    let divider = seam.origin + lane_width() * ((0.0 - seam.origin) / lane_width()).round();
+    let moved = divider + (body.origin - seam.origin);
+    assert!((moved - shift).abs() < 1e-4, "{moved} vs {shift}");
+    assert!(
+        (moved - lane_width()).abs() < 1e-4,
+        "делитель встаёт на +1 полосу"
+    );
+    // карман левого поворота — наоборот
+    let mut road = street(vec![Vec2::ZERO, Vec2::X * 100.0], 14.0);
+    road.oneway = true;
+    assert_eq!(wedge_drift(&road, TrafficSide::Right), Some(1.0));
+    assert_eq!(wedge_drift(&road, TrafficSide::Left), Some(-1.0));
+    let turn = |left, through, right| LaneTurn {
+        left,
+        through,
+        right,
+    };
+    road.turns[0] = vec![
+        turn(true, false, false),
+        turn(false, true, false),
+        turn(false, true, true),
+    ];
+    assert_eq!(wedge_drift(&road, TrafficSide::Right), Some(-1.0));
+    road.oneway = false;
+    assert_eq!(wedge_drift(&road, TrafficSide::Right), None);
 }
 
 /// Все линии краски в станции `x` — обоих видов.

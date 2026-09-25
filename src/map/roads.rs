@@ -1453,7 +1453,7 @@ pub fn mesh_roads(
             let wedges = if road.bridge {
                 [None; 2]
             } else {
-                paint::wedge_ends(points, &tapers, &drawn, index)
+                paint::wedge_ends(points, &tapers, &drawn, index, map.traffic_side)
             };
             painter.paint(
                 road,
@@ -1615,7 +1615,12 @@ pub fn mesh_roads(
             // линий краски на этом клине
             match lanes {
                 Some(_) => {
-                    let [from, to] = paint::wedge_frames(lane_count(road), lane_count(narrow), end);
+                    let [from, to] = paint::wedge_frames(
+                        lane_count(road),
+                        lane_count(narrow),
+                        end,
+                        paint::wedge_drift(road, map.traffic_side),
+                    );
                     fill.set_lane_taper(Some(from), Some(to));
                 }
                 None => fill.set_lanes(None),

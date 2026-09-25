@@ -250,7 +250,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     the lines** — the asphalt shader reads it from `ATTRIBUTE_RIBBON`, the paint layer
     builds its lines on it. On a taper it drifts from the narrow section's to the wide
     one's: the outer lane is born from the wedge, and when the parity changes the grid
-    slides by half a lane over the taper, the new lane on the right of the taper's run.
+    slides by half a lane over the taper, the new lane on the right of the taper's run. A
+    **one-way** wedge adds its lanes at one kerb (`paint::wedge_drift`): the kerb of the
+    traffic side, or the far one for a left-turn pocket by `turn:lanes`.
   - **Paint layer** (`map/roads/paint.rs`, shader `paint.wgsl`) — the lane lines as
     **geometry** off the street axis, not a pattern of the asphalt shader: one strip wider
     than the line per line, the shader draws the line (1.3 px floor), its dashes **by the

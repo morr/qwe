@@ -288,7 +288,17 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     for the lines). The grid node is picked so that on the path **from the seam to the
     body** it moves by `[0, lane)` to the left — so lines both sections share stay put
     (2 → 4), and a parity change (2 → 3) slides the grid by half a lane over the taper, the
-    new lane born on the right of the taper's run. A line that the narrow section lacks
+    new lane born on the right of the taper's run. **A one-way wedge adds its lanes at
+    one kerb** (`paint::wedge_drift`, roads plan D4): a two-way 2 → 4 gets a lane each
+    side, which the symmetric grid is right for, but a one-way street gains or loses
+    lanes at the kerb — an exit, a right-turn pocket (gallery 16, Советская 2 → 4 to the
+    right-hand slip). There the grid node is shifted by the whole difference of half
+    widths, so on the body the narrow section's lanes stand against the other edge and
+    the new ones grow in at the kerb (`MapData::traffic_side`); a `turn:lanes` on the wide
+    way that starts with a left-only lane and does not end with a right-only one is a
+    left-turn pocket, and the new lanes go to the far side instead. The axes in OSM run
+    straight through such a seam, so the shared lines slide over the wedge by that shift
+    rather than stay put — the only way to keep the asphalt continuous. A line that the narrow section lacks
     grows in from the kerb: its alpha is the distance to the nearer bound over
     `BIRTH_FADE` (half a lane). The asphalt wedge runs seam → body, so for the tail wedge
     its frame is the mirror (`paint::wedge_frames`); `the_wedge_asphalt_and_the_wedge_paint_share_one_grid`
