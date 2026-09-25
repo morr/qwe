@@ -232,6 +232,16 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     move (`meshing/tests.rs::a_taper_meets_the_body_cut_just_past_a_vertex`).
     The same taper is laid in the **sidewalk** band (from the narrow way's band). No taper
     on bridges or passages.
+    **A half of a divided street gets asphalt under its taper on the partner's side**
+    (`mesh_roads`, a wedge whose middle lies in a pair run): a ribbon of half the wide
+    way's width along the wedge, offset a quarter width toward the partner, butt ends, no
+    lane frame, pushed before the wedge. The symmetric wedge narrows toward the median as
+    well, while the median (**Paired halves**) is measured off the full width — and in the
+    gap between them lay the half's full sidewalk band (a tapered half keeps it), a light
+    strip the length of the wedge (roads plan D3, gallery 16). The dark line beside it on
+    16 is **not** a seam: it is a real metal fence down the median (way 357798630,
+    `barrier=fence` + an admin boundary, `height=1`) with its shadow — `tools/osm_near`
+    does not list it because it skips boundaries.
     Drawing only: navmesh, cars and parse see each way's width as is.
   - **The network overlay** — `map/roads/network/overlay.rs::mesh_network_overlay`
     (re-exported `qwe::map::mesh_network_overlay`, z 29): every street in its own colour,
@@ -535,7 +545,14 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     on a one-way arm leaving it. A `give_way` sign without signals makes it dashed. The
     two halves of a divided street cross on **one line**: `align_pair` moves the second
     zebra onto the first's line across the street (to the OSM one if there is one, else to
-    the farther one). Zebras that land on one another — the two branches of a fork at
+    the farther one); when **both** are OSM crossings — a `highway=crossing` node on each
+    half, which mappers place a metre apart (gallery 02: 0.9 and 1.2 m) — both move to the
+    line halfway between them. **Paint inside another road's asphalt is dropped**: a stop
+    line, or a rule zebra, whose point on the arm lies within another cluster road's half
+    width (less `EDGE_INSET`) of its axis. The edge is measured from the node point, and
+    an arm merging at a shallow angle (a link into Пролетарская, gallery 08; the fork's
+    throat, 06) is still under its neighbour's ribbon there — the paint lay as a stub in
+    the middle of the junction (roads plan D2). Zebras that land on one another — the two branches of a fork at
     one node, an OSM crossing beside a rule one — are reduced to one (`without_overlaps`,
     the last step of `NodePaint::new`, after the mid-block crossings): the OSM zebra
     stays, of two generated the first; a plank counts as inside another when a 9-point
@@ -561,7 +578,10 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     end at the junction edge (`Pocket`, one extra break for those lines only —
     `meshing::break_distances` re-measures to-break on the already cut path) — solid for
     the approach, as a turn pocket reads — instead of running into the junction.
-  - **Short runs**: a run of lines under `MIN_RUN` 6 m between two breaks is closed.
+  - **Short runs**: a run of lines under `MIN_RUN` 6 m between two breaks is closed. A
+    way end that is a pure seam into a way with **fewer lanes** (`narrowing_ends`) counts
+    as a break here: the lines the neighbour lacks die in the taper anyway, and a 9 m
+    street between a junction and its taper left a two-metre dash at the kerb (gallery 08).
   - **The median's double solid** breaks on the paint breaks as well (both halves'
     zebras and stop lines, `medians::crossing_breaks` over them), not only on the asphalt
     ones.
@@ -771,7 +791,10 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     tangent]` goes into that class's fill builder **before any ribbon** — ribbons and their
     markings then lie over it, and since it is pushed with no ribbon coords it carries no
     wear or markings of its own. One clamp: the tangent never runs past an arm's straight
-    run (past the next vertex the edge has turned) — which is why the street axis keeps
+    run (past the next vertex the edge has turned) **nor into a taper** (`kerb_returns`'s
+    `tapers` — the run ends where the wedge begins, since the edge there is already
+    closer to the axis; gallery 08's 9 m street tapering to one lane put two spikes of
+    asphalt and sidewalk out of its corners) — which is why the street axis keeps
     `KERB_STRAIGHT` next to a pinned node and pins only on carriageway nodes, and the
     paired halves keep `PIN_STRAIGHT` 16 m unshifted there (**The street axis** above,
     **Paired halves**). The old `r ≤ 3.4 × the narrower sidewalk` cap is gone: the sidewalk

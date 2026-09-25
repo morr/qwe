@@ -1174,6 +1174,11 @@ pub fn mesh_roads(
                 &nodes,
                 sidewalks_of,
                 paired,
+                |road| {
+                    tapers
+                        .at(road)
+                        .map(|end| end.map_or(0.0, |taper| taper.length))
+                },
                 shape.corner_radius(),
             ),
             corners::small_islands(&drawn, &rounded, &nodes),
@@ -1550,6 +1555,40 @@ pub fn mesh_roads(
                     SIDEWALK_COLOR.to_linear(),
                 );
             }
+        }
+        // Клин половины разделённой улицы сужается и со стороны пары, а
+        // разделительная считана по полной ширине: в щели между ними лежал
+        // полный тротуар половины — светлая полоса с тёмной кромкой вдоль
+        // всего клина (пример 16). Со стороны пары под клин кладётся асфальт
+        // полной полуширины — кромка там идёт прямо, как у тела.
+        let length = polyline_length(points);
+        for &(path, _, end) in &wedges {
+            let middle = if end {
+                length - polyline_length(path) / 2.0
+            } else {
+                polyline_length(path) / 2.0
+            };
+            let Some(run) = axes.pairs.runs[index]
+                .iter()
+                .find(|run| (run.from..=run.to).contains(&middle))
+            else {
+                continue;
+            };
+            let side = if run.left { 1.0 } else { -1.0 };
+            let inner: Vec<Vec2> = path
+                .iter()
+                .zip(miter_offsets(path, false, road.width / 4.0))
+                .map(|(&point, offset)| point + offset * side)
+                .collect();
+            fill.set_lanes(None);
+            push_ribbon_trimmed(
+                fill,
+                &inner,
+                road.width / 2.0,
+                color.to_linear(),
+                ROAD_JOIN,
+                [true; 2],
+            );
         }
         fill.set_lanes(lanes);
         push_street_fill(fill, body, road.width, color.to_linear(), breaks, trimmed);

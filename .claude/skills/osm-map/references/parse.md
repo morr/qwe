@@ -364,6 +364,16 @@ be called alone:
     more beyond that. The limit was 3 m first and went up on the author's look at the
     frame: at four and five metres the strip of ground along a street still reads as a
     seam rather than as a verge.
+  - **A corner at a crossing goes under both streets** (`pull_corner`): a vertex just
+    pulled under one band is slid along that street under the second one, when that one
+    lies across (the slide gains at least half its length on the second's normal),
+    outward from the fill and within `LANDUSE_CORNER_GAP_MAX` 8 m. Such a corner may start
+    that far off — it stands back from the crossing on the bisector, farther than its
+    edges do from either street — and a vertex beyond `LANDUSE_GAP_MAX` moves only if it
+    finds the second street. Pulled toward the nearest street alone, the corner kept a
+    triangle of bare ground by the kerb return (gallery 13, two corners of four; it read
+    as «a sidewalk corner missing» and was filed as roads plan D8, but the fillets were
+    all there). The grid of links is padded by the larger limit.
   - **Green only grows**, and that single rule is what keeps the pass safe: a vertex moves
     only when the move leads **outward from the fill**, which is read **locally off the
     ring** — the ring's own signed area gives the side, so the outer contour grows away

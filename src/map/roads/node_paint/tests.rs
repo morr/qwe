@@ -470,6 +470,116 @@ fn stop_lines_span_the_incoming_half_on_the_traffic_side() {
     assert!((line.to.x - NODE.x - (4.0 - EDGE_INSET)).abs() < 1e-3);
 }
 
+/// Разделённая жилая поперёк третичной: по переходу OSM на каждой половине, и
+/// маппер поставил их на метр с лишним вразнобой (Тула, витрина 02: 0.9 и
+/// 1.2 м). Обе зебры встают на одну линию посередине между узлами — не
+/// ступенькой, какой лежали, пока пара «OSM + OSM» не выравнивалась вовсе.
+#[test]
+fn two_osm_zebras_of_a_divided_street_meet_halfway() {
+    let half = |x: f32, down: bool, crossing: f32| {
+        let mut points = vec![
+            Vec2::new(x, 80.0),
+            Vec2::new(x, crossing),
+            Vec2::new(x, 0.0),
+            Vec2::new(x, -80.0),
+        ];
+        if !down {
+            points.reverse();
+        }
+        RoadLine {
+            oneway: true,
+            ..road(points, 7.6, Highway::Residential, 2)
+        }
+    };
+    let crossing = |pos: Vec2| RoadNode {
+        pos,
+        kind: RoadNodeKind::Crossing {
+            signals: false,
+            island: false,
+            marked: true,
+        },
+    };
+    let mut map = MapData {
+        roads: vec![
+            road(
+                vec![Vec2::new(0.0, 0.0), Vec2::new(200.0, 0.0)],
+                8.0,
+                Highway::Tertiary,
+                2,
+            ),
+            half(94.0, true, 12.0),
+            half(106.0, false, 13.2),
+        ],
+        road_nodes: vec![
+            crossing(Vec2::new(94.0, 12.0)),
+            crossing(Vec2::new(106.0, 13.2)),
+        ],
+        ..default()
+    };
+    map.roads[0]
+        .points
+        .splice(1..1, [Vec2::new(94.0, 0.0), Vec2::new(106.0, 0.0)]);
+    map.network = RoadNetwork::new(&map.roads);
+    let drawn: Vec<&RoadLine> = map.roads.iter().collect();
+    let paths: Vec<Vec<Vec2>> = map.roads.iter().map(|road| road.points.clone()).collect();
+    let base = marking_breaks(&map.roads, is_carriageway, &[]).breaks;
+    let paint = NodePaint::new(
+        &drawn,
+        &paths,
+        &base,
+        &[],
+        &map,
+        EVERYTHING,
+        |_| true,
+        |road| match road {
+            1 => vec![2],
+            2 => vec![1],
+            _ => Vec::new(),
+        },
+    );
+    let north: Vec<&Zebra> = paint
+        .zebras
+        .iter()
+        .filter(|zebra| zebra.osm && zebra.from.y > 0.0)
+        .collect();
+    assert_eq!(north.len(), 2, "{:?}", paint.zebras);
+    for zebra in north {
+        assert!((zebra.from.y - 12.6).abs() < 1e-3, "{zebra:?}");
+    }
+}
+
+/// Связка вливается в улицу под острым углом: у точки узла, откуда меряется
+/// кромка (полуширина соседа и метр), под связкой ещё асфальт улицы.
+/// Стоп-линия там легла бы обрывком посреди перекрёстка (витрина 08) — её нет;
+/// у того же примыкания под прямым углом она есть.
+#[test]
+fn no_stop_line_inside_the_asphalt_of_another_road() {
+    let join = |from: Vec2| RoadLine {
+        oneway: true,
+        ..road(vec![from, NODE], 4.3, Highway::Residential, 1)
+    };
+    let main = || {
+        road(
+            vec![Vec2::ZERO, NODE, Vec2::new(200.0, 0.0)],
+            14.0,
+            Highway::Primary,
+            4,
+        )
+    };
+    let square = paint_of(
+        vec![main(), join(Vec2::new(100.0, -80.0))],
+        Vec::new(),
+        EVERYTHING,
+    );
+    assert_eq!(square.stop_lines.len(), 1);
+    let shallow = paint_of(
+        vec![main(), join(Vec2::new(20.0, -6.0))],
+        Vec::new(),
+        EVERYTHING,
+    );
+    assert!(shallow.stop_lines.is_empty(), "{:?}", shallow.stop_lines);
+}
+
 #[test]
 fn crossed_zebras_keep_one_and_side_by_side_ones_both() {
     let zebra = |from: Vec2, to: Vec2, osm| Zebra { from, to, osm };

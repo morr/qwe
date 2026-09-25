@@ -2533,6 +2533,54 @@ fn a_block_edge_is_pulled_under_the_asphalt() {
     );
 }
 
+/// Угол квартала у перекрёстка двух улиц дотягивается под **оба** полотна, а
+/// не под одно ближайшее: иначе у скругления оставался треугольник голой земли
+/// (Тула, витрина 13). Угол тянется и с зазора больше обычного предела — он
+/// отступает от перекрёстка по биссектрисе.
+#[test]
+fn a_block_corner_at_a_crossing_is_pulled_under_both_streets() {
+    let edge = RESIDENTIAL_HALF + sidewalk_band(2.0 * RESIDENTIAL_HALF);
+    for gap in [3.0, 7.0] {
+        let corner = edge + gap;
+        let map = Overpass::new(CITY)
+            .way(
+                &[("highway", "residential")],
+                vec![
+                    CENTER - Vec2::new(200.0, 0.0),
+                    CENTER,
+                    CENTER + Vec2::new(200.0, 0.0),
+                ],
+            )
+            .way(
+                &[("highway", "residential")],
+                vec![
+                    CENTER - Vec2::new(0.0, 200.0),
+                    CENTER,
+                    CENTER + Vec2::new(0.0, 200.0),
+                ],
+            )
+            .area(
+                &[("landuse", "residential")],
+                rect(
+                    CENTER + Vec2::splat(corner),
+                    CENTER + Vec2::splat(corner + 60.0),
+                ),
+            )
+            .parse();
+        let near = map.landuse[0]
+            .outer
+            .iter()
+            .map(|vertex| *vertex - CENTER)
+            .min_by(|a, b| a.length().total_cmp(&b.length()))
+            .unwrap();
+        let under = edge - LANDUSE_OVERLAP;
+        assert!(
+            (near.x - under).abs() < 0.05 && (near.y - under).abs() < 0.05,
+            "зазор {gap}: угол {near} не под обоими полотнами ({under})"
+        );
+    }
+}
+
 /// Дырка в квартале, сквозь которую идёт улица, **сжимается** к ней: зелень у
 /// дырки — тот же край двора, и подходить к полотну обязан он.
 #[test]

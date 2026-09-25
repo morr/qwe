@@ -1182,6 +1182,13 @@ struct PulledHouses {
 /// 3 м, поднято по взгляду на кадр: на четвёртом и пятом метре полоска земли
 /// вдоль улицы всё ещё читается швом, а не обочиной.
 const LANDUSE_GAP_MAX: f32 = 5.0;
+/// Тот же предел для **угла** квартала у перекрёстка — вершины, под которой
+/// сходятся полотна двух улиц поперёк друг друга, м. Угол отступает от
+/// перекрёстка по биссектрисе, то есть дальше, чем край от каждой из улиц, и
+/// на пяти метрах треугольник земли у скругления оставался (пример 13). Угол
+/// встаёт под оба полотна сразу, так что больший предел не выводит зелень из-под
+/// дорог.
+const LANDUSE_CORNER_GAP_MAX: f32 = 8.0;
 /// На сколько метров дотянутый край площади — квартала или стоянки —
 /// заводится **под** полотно, м.
 /// Лента рисуется по сглаженной оси (`roads::centerline`), а зазор меряется по
@@ -1298,7 +1305,7 @@ fn pull_areas_to_roads(map: &mut MapData) -> StretchedAreas {
     let mut lines: Grid<usize> = Grid::new(SIDEWALK_CELL);
     for (index, edge) in edges.iter().enumerate() {
         let Link { from, to, reach } = edge.link;
-        lines.insert_segment(from, to, reach + LANDUSE_GAP_MAX, index);
+        lines.insert_segment(from, to, reach + LANDUSE_CORNER_GAP_MAX, index);
     }
     let roads = Edges {
         edges: &edges,
@@ -1405,14 +1412,24 @@ fn pull_vertex(point: Vec2, outward: Vec2, roads: &Edges) -> Option<Vec2> {
         })
     };
     let (gap, axis, index) = gaps().min_by(|a, b| a.0.total_cmp(&b.0))?;
-    if gap <= 0.0 || gap > LANDUSE_GAP_MAX {
+    if gap <= 0.0 || gap > LANDUSE_CORNER_GAP_MAX {
         return None;
     }
     // зелень только прибывает: сдвиг к дороге, уводящий край внутрь заливки,
     // не делается вовсе — так улица, идущая внутри квартала, его не сжимает
     let direction = (axis - point).try_normalize()?;
     if direction.dot(outward) > 0.0 {
-        return Some(point + direction * (gap + LANDUSE_OVERLAP));
+        let shifted = point + direction * (gap + LANDUSE_OVERLAP);
+        let corner = pull_corner(shifted, direction, outward, roads);
+        // дальше обычного предела тянется только угол у двух улиц
+        return match corner {
+            Some(corner) => Some(corner),
+            None if gap <= LANDUSE_GAP_MAX => Some(shifted),
+            None => None,
+        };
+    }
+    if gap > LANDUSE_GAP_MAX {
+        return None;
     }
     // кроме одного случая: вершина между тротуаром, замапленным дорожкой, и
     // улицей за ним. Квартал в OSM нарисован до бордюра, а наша проезжая
@@ -1428,6 +1445,40 @@ fn pull_vertex(point: Vec2, outward: Vec2, roads: &Edges) -> Option<Vec2> {
     });
     (roads.edges[index].kind == EdgeKind::Walkway && gap <= SIDEWALK_TUCK_MAX && street_beyond)
         .then(|| point + direction * (gap + LANDUSE_OVERLAP))
+}
+
+/// Вершина угла квартала у перекрёстка, уже дотянутая под полотно одной
+/// улицы (`first` — куда её тянули), — ещё и под полотно второй, если та
+/// лежит поперёк, наружу от заливки и в пределах [`LANDUSE_GAP_MAX`]. Иначе
+/// между углом квартала и скруглением перекрёстка оставался треугольник голой
+/// земли (пример 13, частный сектор: два угла из четырёх). Сдвиг — вдоль
+/// первой улицы, так что из-под её полотна вершина не уходит.
+fn pull_corner(point: Vec2, first: Vec2, outward: Vec2, roads: &Edges) -> Option<Vec2> {
+    let along = first.perp();
+    roads
+        .lines
+        .near(point, point)
+        .into_iter()
+        .filter_map(|index| {
+            let Link { from, to, reach } = roads.edges[index].link;
+            let axis = closest_on_segment(point, from, to);
+            let gap = point.distance(axis) - reach;
+            let direction = (axis - point).try_normalize()?;
+            // поперёк первой: вдоль неё тянуть — та же улица или параллельная
+            let slide = direction.dot(along);
+            (gap > 0.0
+                && gap <= LANDUSE_CORNER_GAP_MAX
+                && direction.dot(outward) > 0.0
+                && slide.abs() > 0.5)
+                .then(|| {
+                    (
+                        gap,
+                        along * slide.signum() * (gap + LANDUSE_OVERLAP) / slide.abs(),
+                    )
+                })
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, shift)| point + shift)
 }
 
 /// Во что сдвигаемый дом не должен упереться: другие здания и отрезки всего
