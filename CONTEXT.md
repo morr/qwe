@@ -312,7 +312,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     what lies between the halves: up to the **median gap** (`RoadShape::median_gap`, 3 m by
     default) asphalt under both ribbons with
     a double solid down the middle (the paint layer), wider a lawn with a kerb and a
-    rounded nose (`road_medians`, `Z_ROAD_MEDIAN`). A half has **no sidewalk on its
+    rounded nose (`road_medians`, `Z_ROAD_MEDIAN`); a median a tram runs in is a
+    **tram bed** at any width — asphalt with the double solids along both edges
+    (`medians::carries_tram`). A half has **no sidewalk on its
     paired side**. The median opens only at a break of **both** halves facing each
     other (a crossing street, a U-turn, a zebra); a street into one half does not open
     it. Drawing only: `RoadLine::points` do not move.

@@ -1370,7 +1370,8 @@ pub fn mesh_roads(
         // до перекрёстка — как линии полос, а не там, где кончились пробы
         let mut median = median.clone();
         medians::reach_breaks(&mut median, &breaks);
-        if median.is_paved() {
+        let tram = medians::carries_tram(&median, &map.rails);
+        if median.is_paved() || tram {
             medians::push_paved(&mut streets, &median, ROAD_COLOR.to_linear(), ROAD_JOIN);
             if style.markings {
                 let mut midline = median.midline.clone();
@@ -1382,7 +1383,21 @@ pub fn mesh_roads(
                     &median,
                     [&node_paint.breaks[first], &node_paint.breaks[second]],
                 ));
-                painter.paint_median(&midline, &painted);
+                if tram {
+                    // по кромкам полотна: между линиями — рельсы
+                    let offset = median.apart() / 2.0 - medians::TRAM_EDGE_INSET;
+                    let offsets = miter_offsets(&midline, false, offset);
+                    for side in [-1.0, 1.0] {
+                        let edge: Vec<Vec2> = midline
+                            .iter()
+                            .zip(&offsets)
+                            .map(|(&point, &shift)| point + shift * side)
+                            .collect();
+                        painter.paint_median(&edge, &painted);
+                    }
+                } else {
+                    painter.paint_median(&midline, &painted);
+                }
             }
             paved.push(median);
         } else {
@@ -1758,7 +1773,8 @@ pub fn mesh_roads(
         tapers: tapers.count,
         rings: [axes.rings.list.len(), axes.rings.webs.len()],
         islands: islands.len(),
-        medians: axes.pairs.count(),
+        // по тому, что нарисовано: трамвайное полотно мощёное при любой ширине
+        medians: [paved.len(), axes.pairs.medians.len() - paved.len()],
         seams: axes.seams,
         tight: axes.tight,
         vertices: layers.iter().map(|l| l.builder.vertex_count()).sum(),

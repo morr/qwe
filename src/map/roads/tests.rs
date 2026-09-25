@@ -1,7 +1,7 @@
 use super::*;
 use crate::map::footprint::casing_width;
 use crate::map::meshing::distance_to_path;
-use crate::map::osm::model::{KerbParking, RoadNode};
+use crate::map::osm::model::{KerbParking, RailKind, RailLine, RoadNode};
 use crate::map::osm::{Highway, fixture};
 use crate::map::shadow_dir;
 
@@ -1371,6 +1371,51 @@ fn a_wide_gap_between_halves_is_a_lawn_with_a_kerb() {
     }
     // осевой краски у газона нет
     assert!(layer(&layers, paint::PAINT_AXES).builder.is_empty());
+}
+
+/// Тот же зазор, но по нему идёт трамвай: полотно мощёное, газона нет, а
+/// двойные сплошные — у кромок половин, не по середине (Советская в Туле).
+#[test]
+fn a_tram_between_halves_paves_the_median_with_lines_at_its_edges() {
+    let (mut map, apart) = divided_avenue(8.0);
+    let middle = 100.0 + apart / 2.0;
+    map.rails.push(RailLine {
+        kind: RailKind::Tram,
+        ..fixture::rail(vec![Vec2::new(80.0, middle), Vec2::new(520.0, middle)], 1.2)
+    });
+    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    assert_eq!(report.medians, [1, 0]);
+    assert!(
+        layer(&layers, "road_medians").builder.is_empty(),
+        "газона нет"
+    );
+    let inner = (3.0 * 3.3 + 1.0) / 2.0;
+    let edges = [100.0 + inner, 100.0 + apart - inner];
+    // середины полос краски: вершины идут парами поперёк линии
+    let axes = layer(&layers, paint::PAINT_AXES)
+        .builder
+        .positions_for_test();
+    let centres: Vec<f32> = axes
+        .chunks(2)
+        .map(|pair| (pair[0][1] + pair[1][1]) / 2.0)
+        .collect();
+    assert!(!centres.is_empty());
+    let inset = [
+        edges[0] + medians::TRAM_EDGE_INSET,
+        edges[1] - medians::TRAM_EDGE_INSET,
+    ];
+    for centre in &centres {
+        assert!(
+            inset.iter().any(|line| (centre - line).abs() < 0.05),
+            "линия не у кромки: {centre}, кромки {edges:?}"
+        );
+    }
+    assert!(
+        inset
+            .iter()
+            .all(|line| centres.iter().any(|centre| (centre - line).abs() < 0.05)),
+        "по линии у каждой кромки: {centres:?}"
+    );
 }
 
 #[test]

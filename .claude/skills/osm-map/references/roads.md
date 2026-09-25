@@ -170,6 +170,14 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     `road_medians` (`Z_ROAD_MEDIAN` 1.7, `SurfaceKind::Grass`, the meadow colour); a lawn
     or kerb piece under `MIN_LAWN_AREA` 4 m² is not drawn. Drawn
     whatever `RoadStyle::sidewalks` says: a lawn is still a lawn.
+  - **Tram track bed** (`medians::carries_tram`) — a median of any width with a
+    `RailKind::Tram` axis within half its width on at least `TRAM_SHARE_MIN` half of the
+    midline (probed every 5 m) is paved like a narrow one, and its double solids run
+    along **both edges**, `TRAM_EDGE_INSET` 0.3 m inside the halves' inner kerbs, not
+    down the middle: the rails lie between them (the tram layer is off by default). In
+    OSM Советская is two halves with the tram ways in a 5 m gap, and the width alone
+    read it as a lawn down the avenue (gallery 18). `MeshReport::medians` counts what is
+    drawn, so a tram bed counts as paved.
   - **Where it opens** — `crossing_breaks`: only a junction break of one half **facing** a
     break of the other (within the axes' distance plus both reaches) — a crossing
     street, a U-turn link, a zebra's footway. A street into one half does not open the
