@@ -1320,7 +1320,10 @@ pub fn mesh_roads(
         |index| {
             axes.pairs.runs[index]
                 .iter()
-                .map(|run| run.partner)
+                .map(|run| node_paint::Partner {
+                    road: run.partner,
+                    paved: run.paved,
+                })
                 .collect()
         },
         |road| axes.rings.of(road).is_some(),
@@ -1463,7 +1466,10 @@ pub fn mesh_roads(
             painter.paint(
                 road,
                 points,
-                &node_paint.breaks[index],
+                paint::LineBreaks {
+                    cut: &node_paint.breaks[index],
+                    solid: &node_paint.solid[index],
+                },
                 wedges,
                 node_paint.pockets[index],
                 stations[index],
@@ -1655,6 +1661,11 @@ pub fn mesh_roads(
         for arrow in &turns.arrows {
             let setback = paint::Painter::arrow_setback(arrow, &marks);
             painter.paint_arrow(arrow, setback);
+            // и второй ряд дальше от узла, где полоса это позволяет
+            let breaks = &node_paint.breaks[arrow.road];
+            if let Some(repeat) = paint::Painter::repeat_setback(arrow, setback, &marks, breaks) {
+                painter.paint_arrow(arrow, repeat);
+            }
         }
     }
     // направляющие островки у колец: асфальт — в слой улиц, поверх тротуаров,

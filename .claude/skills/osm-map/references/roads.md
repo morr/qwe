@@ -304,7 +304,9 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     its frame is the mirror (`paint::wedge_frames`); `the_wedge_asphalt_and_the_wedge_paint_share_one_grid`
     pins that both land on one grid.
   - **Dashes by the street's arclength** (`paint::street_stations` over the network's
-    ordered ways and the axis paths): 3 m / 3 m, and the phase runs through a seam.
+    ordered ways and the axis paths): 2 m dash, 6 m gap (ГОСТ 1.5 in town — the gap three
+    times the dash; the old 3 / 3 read as a picket fence on a multi-lane street at the
+    gallery zoom, Yandex draws about 1 : 2.5), and the phase runs through a seam.
   - **Solid near a junction**: the last `APPROACH` 25 m before a junction break — for a
     **lane line only on the approach**, in the direction its lanes flow
     (`paint::flows_forward` by the line's side of the axis and `MapData::traffic_side`, a
@@ -313,10 +315,17 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     `paint::approach_spans` finds the gap edges on the to-break profile (it is linear
     between vertices, so an edge is a zero on a link), `split_at_spans` puts a vertex at
     each span end, and the line goes out in pieces of `LineKind::Dashed` (10) and
-    `LineKind::Solid` (11); the shader only draws what the kind says. An **axis** and a
-    **ring's** lane lines keep the old symmetric rule (kind 0/1 — solid by to-break alone):
-    the axis separates two flows, and a ring's entries are not worth splitting a closed
-    strip for. The axis of a two-way street with 4+ lanes is a **double solid** (0.15 m gap
+    `LineKind::Solid` (11); the shader only draws what the kind says. The **axis** of an
+    open street is split the same way into `AxisDashed` (12) / `AxisSolid` (13), but
+    symmetrically — it separates two flows, so it is solid `APPROACH` on **both** sides of
+    a break (`paint::near_spans`) — **and at a node the street passes through**: a
+    leading road that does not yield (**Junction paint** below) gets no break there, only
+    a `NodePaint::solid` zone (the reach its break would have had), and the axis is solid
+    `APPROACH` either side of it (ГОСТ 1.1 at a side street; Yandex draws the
+    Циолковского on gallery 19 so, while ours ran dashed straight past both side streets).
+    `Painter::paint` takes both lists as one `paint::LineBreaks { cut, solid }`. A **ring's**
+    lines and its closed axis keep the old rule (kind 0/1 — solid by to-break alone): a
+    ring's entries are not worth splitting a closed strip for. The axis of a two-way street with 4+ lanes is a **double solid** (0.15 m gap
     — ГОСТ 1.3's 10–15 cm; half a metre read as two separate lines, the author's report —
     merging into one line once the gap is under ~2 px); a two-lane two-way street has a
     dashed axis; an odd two-way street and a one-way street have none.
@@ -352,7 +361,8 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     `Visibility` (`paint::show_paint`, `PaintTag` on the entity, set by
     `spawn_road_meshes` by the layer's name) — **no rebuild** at a threshold. The gallery
     does not run the ladder and relies on the shader fade.
-  - **`RoadPaintStyle`** (group `road_paint`): `paint` 0–1 (0.85) — the line opacity,
+  - **`RoadPaintStyle`** (group `road_paint`): `paint` 0–1 (0.7 — Yandex's lines are
+    about 60 % white; 0.85 read heavier than the reference on 05 and 18) — the line opacity,
     `wear` 0–0.15 (0.075) — the rut amplitude, `turn_wear` 0–0.08 (0.035) — the turn
     paths' rut amplitude. All three uniforms
     (`surface::retune_surface_materials`), a knob drag rebuilds nothing; the Markings
@@ -583,7 +593,14 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     zebra onto the first's line across the street (to the OSM one if there is one, else to
     the farther one); when **both** are OSM crossings — a `highway=crossing` node on each
     half, which mappers place a metre apart (gallery 02: 0.9 and 1.2 m) — both move to the
-    line halfway between them. **Paint inside another road's asphalt is dropped**: a stop
+    line halfway between them. Over a **paved** median (`PairRun::paved`, handed to
+    `NodePaint::new` as `Partner { road, paved }`) the two aligned zebras then become **one
+    plank** kerb to kerb (`join_zebras`: parallel within `JOIN_PARALLEL`, on one line
+    within `JOIN_OFFSET` 1 m, the gap between them at most `JOIN_GAP` 8 m): the shader
+    counts the bars from the plank's end, so two planks put the bars out of step at the
+    seam — Yandex draws 02 and 12 as one plank. The median's double solid is broken there
+    anyway (its breaks are the halves'). A lawn median keeps two zebras, each to its
+    kerb. **Paint inside another road's asphalt is dropped**: a stop
     line, or a rule zebra, whose point on the arm lies within another cluster road's half
     width (less `EDGE_INSET`) of its axis. The edge is measured from the node point, and
     an arm merging at a shallow angle (a link into Пролетарская, gallery 08; the fork's
@@ -749,11 +766,18 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     arrow_setback`), or 4 m from the edge with none — a zebra stands off the edge by its
     crossing's position, and a fixed setback from the edge put arrows on it (gallery 1,
     21). The setback is measured **along the lane**: each arrow carries `LaneArrow::back`,
-    its lane's centreline from the edge back against the travel for `ARROW_BACK` 45 m (the
+    its lane's centreline from the edge back against the travel for `ARROW_BACK` 60 m (the
     drawn axis offset by the lane, `turns::lane_back`), and `paint_arrow` puts tip and tail
     on it by arc length (`paint::along_back`); a straight line back from the edge left the
     lane on a curved approach — 20 m out it sat on the lawn (Leipziger Straße, Berlin).
-    A lane shorter than that falls back to the straight line. The marks sit in a `Grid`
+    A lane shorter than that falls back to the straight line. **A second row** stands
+    `ARROW_REPEAT` 20 m behind the first (`Painter::repeat_setback`; Yandex puts them at
+    5 and 20–25 m from the crossing on 01, 02, 15, and ГОСТ 1.18 repeats them): only where
+    the lane's centreline runs on `ARROW_REPEAT_CLEAR` 5 m past its tail, no zebra or
+    stop line crosses the lane between the rows, and the row is clear of the approach
+    road's own breaks (`LaneArrow::road` → `NodePaint::breaks`) — the centreline is the
+    whole way's, and without that the row lay in the previous junction. A short block
+    therefore keeps one row. The marks sit in a `Grid`
     (`paint::ArrowMarks`): a scan over all 3600 per arrow
     cost Tula 4 ms of the road build. Stage 7 on Tula: 120.9 ms (118.5 before), 920 k
     vertices (900 k), 1089 arrows, 610 kerb pockets. Drawn under their own

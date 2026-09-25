@@ -21,7 +21,8 @@
 //! - **штрихи — по длине улицы**, а не way: фаза не рвётся на шве;
 //! - **у узла линия сплошная** за [`APPROACH`] до разрыва перекрёстка — у
 //!   линии полос только на подходе по ходу её полос, на выезде пунктир сразу
-//!   ([`approach_spans`]); осевая
+//!   ([`approach_spans`]); у осевой — по обе стороны разрыва и у узла,
+//!   который улица проходит насквозь ([`near_spans`]). Осевая
 //!   двусторонней улицы в четыре полосы и больше — двойная сплошная, у́же —
 //!   пунктир, как линии полос. У нечётной двусторонней и у односторонней
 //!   осевой нет.
@@ -70,9 +71,11 @@ const SHADER_PATH: &str = "shaders/paint.wgsl";
 /// Ширина линии, м — как у настоящей (10–15 см). На экране не тоньше 1.3 px:
 /// тоньше мерцает при сдвиге камеры, и шейдер её расширяет.
 const LINE_WIDTH: f32 = 0.15;
-/// Штрих и пропуск прерывистой линии, м.
-const DASH: f32 = 3.0;
-const GAP: f32 = 3.0;
+/// Штрих и пропуск прерывистой линии, м: городская 1.5 по ГОСТу — пропуск
+/// втрое длиннее штриха. При 3 / 3 многополосная улица на обзорном зуме
+/// читалась частоколом.
+const DASH: f32 = 2.0;
+const GAP: f32 = 6.0;
 /// Сколько метров до разрыва перекрёстка линия идёт сплошной — перед узлом
 /// перестраиваться нельзя.
 const APPROACH: f32 = 25.0;
@@ -138,7 +141,7 @@ pub struct RoadPaintStyle {
 impl Default for RoadPaintStyle {
     fn default() -> Self {
         Self {
-            paint: 0.85,
+            paint: 0.7,
             wear: 0.075,
             turn_wear: 0.035,
         }
@@ -194,6 +197,20 @@ enum LineKind {
     Dashed,
     /// Кусок линии полос на подходе к узлу по ходу движения — сплошной.
     Solid,
+    /// Кусок осевой открытой улицы на перегоне — пунктир. Гаснет с осевыми.
+    AxisDashed,
+    /// Кусок осевой у разрыва или у узла, который улица проходит насквозь, —
+    /// сплошной.
+    AxisSolid,
+}
+
+/// Что узлы сказали линиям одной дороги (`roads/node_paint.rs`): где они
+/// рвутся (`NodePaint::breaks`) и какие узлы дорога проходит насквозь
+/// (`NodePaint::solid`).
+#[derive(Clone, Copy, Default)]
+pub struct LineBreaks<'a> {
+    pub cut: &'a [Break],
+    pub solid: &'a [Break],
 }
 
 impl LineKind {
@@ -211,14 +228,18 @@ impl LineKind {
             Self::Arrow => 9.0,
             Self::Dashed => 10.0,
             Self::Solid => 11.0,
+            Self::AxisDashed => 12.0,
+            Self::AxisSolid => 13.0,
         }
     }
 }
 
 /// Островок у кольца: шаг косых полос, их ширина и ширина обводки, м.
+/// Обводка толще штриха — островок читается фигурой, а не пятном: при
+/// 0.2 / 0.35 она тонула в штриховке той же плотности.
 const HATCH_PERIOD: f32 = 1.6;
-const HATCH_WIDTH: f32 = 0.35;
-const EDGE_WIDTH: f32 = 0.2;
+const HATCH_WIDTH: f32 = 0.25;
+const EDGE_WIDTH: f32 = 0.3;
 /// Полуширина полосы под обводку островка, м.
 pub(super) const EDGE_STRIP: f32 = 0.6;
 
@@ -235,6 +256,12 @@ const ARROW_STEM: f32 = 0.22;
 const ARROW_BRANCH_REACH: f32 = 0.8;
 const ARROW_SETBACK: f32 = 4.0;
 const ARROW_MARK_REACH: f32 = 30.0;
+/// Второй ряд стрелок: на сколько его кончик дальше первого и сколько оси
+/// полосы должно остаться за ним, м. Ось несёт `turns::ARROW_BACK` 60 м и
+/// кончается у предыдущего узла раньше, так что у короткого перегона второго
+/// ряда нет.
+const ARROW_REPEAT: f32 = 20.0;
+const ARROW_REPEAT_CLEAR: f32 = 5.0;
 
 /// Поперечная краска узлов — зебры и стоп-линии отрезком и полутолщиной, — с
 /// сеткой для [`Painter::arrow_setback`]: перебор всех на каждую стрелку стоил
@@ -531,14 +558,17 @@ impl PaintTag {
 
 impl Painter {
     /// Линии проезжей части `road`, нарисованной по `points` (ось улицы со
-    /// стежками), с разрывами краски `breaks` (`roads/node_paint.rs`),
-    /// клиньями `wedges`, карманами у торцов `pockets` и началом длины улицы
-    /// `station`.
+    /// стежками), с разрывами краски и узлами насквозь `breaks`
+    /// (`roads/node_paint.rs`), клиньями `wedges`, карманами у торцов
+    /// `pockets` и началом длины улицы `station`.
     pub fn paint(
         &mut self,
         road: &RoadLine,
         points: &[Vec2],
-        breaks: &[Break],
+        LineBreaks {
+            cut: breaks,
+            solid: through,
+        }: LineBreaks,
         wedges: [Option<WedgeEnd>; 2],
         pockets: [Option<Pocket>; 2],
         station: Station,
@@ -591,6 +621,13 @@ impl Painter {
             .map(|&at| if reversed { start - at } else { start + at })
             .collect();
         let miters = miter_offsets(&path, closed, 1.0);
+        // «до узла насквозь» — узел в вершине пути (дорога его проходит), и
+        // между вершинами расстояние линейно
+        let to_through = if through.is_empty() {
+            vec![f32::INFINITY; path.len()]
+        } else {
+            break_distances(&path, closed, through)
+        };
         // «до разрыва» по набору разрывов линии: разрыв кармана у торца —
         // только у линий, которым за узлом нет места (вне раскладки узкого
         // продолжения). Ключ — маска торцов, где линия в кармане
@@ -682,6 +719,13 @@ impl Painter {
                     let spans = approach_spans(&along, to_break, forward);
                     split_at_spans(line, stations, &along, &spans)
                 }
+                // осевая обслуживает оба потока: сплошная по обе стороны
+                // разрыва — и у узла, который улица проходит насквозь
+                LineKind::Axis => {
+                    let mut spans = near_spans(&along, to_break, APPROACH);
+                    spans.extend(near_spans(&along, &to_through, APPROACH));
+                    split_at_spans(line, stations, &along, &spans)
+                }
                 _ => {
                     let solid = vec![false; line.len().saturating_sub(1)];
                     (line, stations, solid)
@@ -690,6 +734,8 @@ impl Painter {
             let code = |solid: bool| match kind {
                 LineKind::Lane if solid => LineKind::Solid.code(),
                 LineKind::Lane => LineKind::Dashed.code(),
+                LineKind::Axis if solid => LineKind::AxisSolid.code(),
+                LineKind::Axis => LineKind::AxisDashed.code(),
                 _ => kind.code(),
             };
             // куски, где линия видна хоть на одном конце звена, одного вида
@@ -890,6 +936,55 @@ impl Painter {
         farthest + ARROW_SETBACK
     }
 
+    /// Второй ряд стрелок, как у Яндекса и по ГОСТ 1.18: кончик в
+    /// [`ARROW_REPEAT`] за первым, если ось полосы за ним есть ещё на
+    /// [`ARROW_REPEAT_CLEAR`], между рядами нет поперечной краски и ряд не
+    /// в разрыве `breaks` своей дороги — иначе он лёг бы на соседний узел или
+    /// его переход.
+    pub(super) fn repeat_setback(
+        arrow: &LaneArrow,
+        setback: f32,
+        marks: &ArrowMarks,
+        breaks: &[Break],
+    ) -> Option<f32> {
+        let repeat = setback + ARROW_REPEAT;
+        let (_, total) = arclengths(&arrow.back);
+        if total < repeat + ARROW_LENGTH + ARROW_REPEAT_CLEAR {
+            return None;
+        }
+        let forward = arrow.travel.normalize_or_zero();
+        let occupied = repeat - ARROW_SETBACK..=repeat + ARROW_LENGTH + ARROW_SETBACK;
+        let in_break = breaks
+            .iter()
+            .filter(|found| found.reach > 0.0)
+            .any(|found| {
+                let offset = arrow.at - found.at;
+                let behind = offset.dot(forward);
+                offset.perp_dot(forward).abs() < found.reach + lane_width()
+                    && behind + found.reach >= *occupied.start()
+                    && behind - found.reach <= *occupied.end()
+            });
+        if in_break {
+            return None;
+        }
+        let span = setback + ARROW_LENGTH..=repeat + ARROW_LENGTH + ARROW_SETBACK;
+        let reach = Vec2::splat(*span.end());
+        let blocked = marks
+            .grid
+            .near(arrow.at - reach, arrow.at + reach)
+            .into_iter()
+            .any(|index| {
+                let Mark { from, to, .. } = marks.marks[index];
+                let [a, b] = [from, to].map(|point| forward.perp_dot(point - arrow.at));
+                if a * b > 0.0 || a == b {
+                    return false;
+                }
+                let crossing = from.lerp(to, a / (a - b));
+                span.contains(&(arrow.at - crossing).dot(forward))
+            });
+        (!blocked).then_some(repeat)
+    }
+
     /// Стрелка на полосе подхода: стебель вдоль хода, наконечник, если прямо
     /// можно, и отвод с наконечником в каждую разрешённую сторону. Кончик —
     /// в `setback` от кромки узла по оси полосы ([`Self::arrow_setback`]),
@@ -1074,6 +1169,28 @@ fn approach_spans(along: &[f32], to_break: &[f32], forward: bool) -> Vec<(f32, f
         } else {
             (edge, edge + APPROACH)
         });
+    }
+    spans
+}
+
+/// Отрезки длин пути, где `distance` (в вершинах, линейно между ними) меньше
+/// `within`: у осевой — [`APPROACH`] по обе стороны разрыва или узла насквозь.
+fn near_spans(along: &[f32], distance: &[f32], within: f32) -> Vec<(f32, f32)> {
+    let mut spans = Vec::new();
+    let mut from = (distance.first() < Some(&within)).then(|| along[0]);
+    for index in 0..along.len().saturating_sub(1) {
+        let (a, b) = (distance[index] - within, distance[index + 1] - within);
+        if (a < 0.0) == (b < 0.0) {
+            continue;
+        }
+        let edge = along[index] + (along[index + 1] - along[index]) * a / (a - b);
+        match from.take() {
+            Some(start) => spans.push((start, edge)),
+            None => from = Some(edge),
+        }
+    }
+    if let (Some(start), Some(&end)) = (from, along.last()) {
+        spans.push((start, end));
     }
     spans
 }

@@ -259,10 +259,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   - **Paint layer** (`map/roads/paint.rs`, shader `paint.wgsl`) — the lane lines as
     **geometry** off the street axis, not a pattern of the asphalt shader: one strip wider
     than the line per line, the shader draws the line (1.3 px floor), its dashes **by the
-    street's arclength** (the phase does not restart at a seam), a lane line solid for the
-    last 25 m of its **approach** to a junction break (dashed at once on the exit; an axis
-    is solid both ways), and the axis of a two-way street of 4+ lanes as a double
-    solid. Two meshes per level (lane lines, axes) plus the zebras, streets at
+    street's arclength** (2 m dash, 6 m gap; the phase does not restart at a seam), a lane
+    line solid for the last 25 m of its **approach** to a junction break (dashed at once on
+    the exit; an axis is solid both ways, and also 25 m either side of a node its street
+    passes through — **main through** below), and the axis of a two-way street of 4+ lanes
+    as a double solid. Two meshes per level (lane lines, axes) plus the zebras, streets at
     `Z_ROAD_PAINT` and bridges at `Z_BRIDGE_PAINT`; `PaintLods` hides the lane lines and
     stop lines past 0.4 m/px, the zebras past 0.6 and the axes past 0.9 without a rebuild.
     `RoadPaintStyle` (panel knobs Paint, Wear and Turn wear) is uniforms only.
@@ -286,7 +287,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     no ring in it — `RoadStyle::crossings`) and a **stop line** (where a zebra, signals,
     a sign or a tertiary+ street call for it) across the lanes
     coming in (dashed for give-way —
-    `RoadStyle::stop_lines`); the halves of a divided street share one zebra line. A
+    `RoadStyle::stop_lines`); the halves of a divided street share one zebra line — one
+    plank across both over a paved median, one zebra each to its kerb over a lawn. A
     marked crossing elsewhere is a zebra with a gap in the lines. A **pocket**: a wide
     arm's lines with no room on the narrower arm across the junction end at its edge.
     A **stitch** (the network's pulled loose end) is a junction node like a shared one.

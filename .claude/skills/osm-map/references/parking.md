@@ -344,7 +344,10 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
         road edges, is **asphalt** (pushed into the `roads` layer — above the sidewalks,
         so it covers their triangle); the wedge **opened** by `GORE_OPENING` 0.3 m —
         without tips and necks too thin for a stripe — is what gets the outline
-        (0.2 m) and the hatching (0.35 m every 1.6 m, at 45° to the wedge's long axis).
+        (0.3 m) and the hatching (0.25 m every 1.6 m, at 45° to the wedge's long axis).
+        The outline is the heavier of the two on purpose: at 0.2 against 0.35 it sank into
+        a hatching of the same weight and the island read as a smudge (04, 17); Yandex
+        reads an island by its outline first.
         One shape for both (tried first) showed ground wherever the opening had cut.
       - **The paint is the road paint layer's** (roads plan, stage 6): `Gores::islands`
         hands each hatched shape and the direction across its stripes to
