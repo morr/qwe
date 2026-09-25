@@ -64,7 +64,7 @@ use crate::map::osm::model::{
 };
 use crate::map::osm::{AreaKind, MapData, PolyArea, RoadClass, RoadLine, WallLine};
 use crate::map::shadow;
-use crate::map::shapes::is_ring;
+use crate::map::shapes::{is_ring, push_shape};
 use crate::map::smooth::{Smoothing, smooth_pinned};
 use crate::map::spawn::GRASS_COLOR;
 use crate::map::surface::{
@@ -996,6 +996,9 @@ pub struct RoadReport {
     pub islands: usize,
     /// Направляющие островки у колец (`roads/gores.rs`).
     pub gores: usize,
+    /// Из данных v15 (`roads/islands.rs`): островков-точек на улицах, контуров
+    /// островков и контуров полотна.
+    pub road_islands: [usize; 3],
     /// Клинья между сечениями улиц (`roads/tapers.rs`).
     pub tapers: usize,
     /// Разделительные парных половин (`roads/network/pairs.rs`): асфальтом и
@@ -1035,6 +1038,7 @@ impl std::fmt::Display for RoadReport {
             rings: [rings, webs],
             islands,
             gores,
+            road_islands: [refuges, island_areas, carriageways],
             tapers,
             medians: [paved, lawns],
             seams,
@@ -1051,7 +1055,8 @@ impl std::fmt::Display for RoadReport {
              turn paths {turns}, arrows {arrows}, leading roads {leading}, kerb returns {kerb_returns} + \
              {sidewalk_returns} on sidewalks, outer corners {outer} + {outer_sidewalks} on \
              sidewalks, stitches {stitches}, kerb pockets {kerb_pockets}, turning circles {turning_circles}, driveway crossings \
-             {crossings}, rings {rings} ({webs} webs), small islands {islands}, gores {gores}, tapers {tapers}, medians {paved} paved + {lawns} \
+             {crossings}, rings {rings} ({webs} webs), small islands {islands}, gores {gores}, safety islands {refuges} + {island_areas} areas, \
+             carriageway areas {carriageways}, tapers {tapers}, medians {paved} paved + {lawns} \
              lawn, smooth seams {seams}, tight corners {tight}; {network:?} of it before the \
              ribbons)",
             style.sidewalks, style.markings,
@@ -1295,6 +1300,7 @@ pub fn mesh_roads(
         &junctions.breaks,
         &stitches.targets,
         map,
+        &islands,
         node_paint::NodePaintStyle {
             crossings: if style.markings {
                 style.crossings
@@ -1452,7 +1458,7 @@ pub fn mesh_roads(
             let wedges = if road.bridge {
                 [None; 2]
             } else {
-                paint::wedge_ends(points, &tapers, &drawn, index)
+                paint::wedge_ends(points, &tapers, &drawn, index, map.traffic_side)
             };
             painter.paint(
                 road,
@@ -1614,7 +1620,12 @@ pub fn mesh_roads(
             // линий краски на этом клине
             match lanes {
                 Some(_) => {
-                    let [from, to] = paint::wedge_frames(lane_count(road), lane_count(narrow), end);
+                    let [from, to] = paint::wedge_frames(
+                        lane_count(road),
+                        lane_count(narrow),
+                        end,
+                        paint::wedge_drift(road, map.traffic_side),
+                    );
                     fill.set_lane_taper(Some(from), Some(to));
                 }
                 None => fill.set_lanes(None),
@@ -1650,7 +1661,21 @@ pub fn mesh_roads(
     // разметка — в слой краски, своим мешем выше асфальта стоянок
     // (`roads/gores.rs`)
     gores.push_asphalt(&mut streets, ROAD_COLOR.to_linear());
-    let lot_layers = grounds.layers(&style, &gores, &paved);
+    // островки безопасности и площади полотна из данных (`roads/islands.rs`):
+    // площадь — асфальтом улиц, островок — бордюром поверх асфальта и краски
+    let road_islands = islands::RoadIslands::new(map, &drawn, &stitched);
+    streets.set_lanes(None);
+    for shape in &road_islands.carriageways {
+        push_shape(&mut streets, shape.clone(), ROAD_COLOR.to_linear());
+    }
+    let mut lot_layers = grounds.layers(&style, &gores, &paved);
+    for shape in &road_islands.kerbs {
+        push_shape(
+            &mut lot_layers.sidewalks,
+            shape.clone(),
+            SIDEWALK_COLOR.to_linear(),
+        );
+    }
     if style.markings {
         for (island, across) in gores.islands() {
             painter.paint_island(island, across);
@@ -1770,6 +1795,11 @@ pub fn mesh_roads(
         stitches: stitches.count,
         crossings: crossings.len(),
         gores: gores.count(),
+        road_islands: [
+            road_islands.refuges,
+            road_islands.kerbs.len() - road_islands.refuges,
+            road_islands.carriageways.len(),
+        ],
         tapers: tapers.count,
         rings: [axes.rings.list.len(), axes.rings.webs.len()],
         islands: islands.len(),
@@ -2273,6 +2303,7 @@ pub(super) mod junctions;
 pub(super) mod axis;
 mod corners;
 mod gores;
+mod islands;
 mod lots;
 mod medians;
 /// Открыт наружу для [`map::footprint`](crate::map::footprint): проём в ограде

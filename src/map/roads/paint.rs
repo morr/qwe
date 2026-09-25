@@ -16,7 +16,8 @@
 //!   с кромками, а линия, которой у узкого сечения не было, проявляется из
 //!   кромки. Смена чётности числа полос (две → три) сдвигает сетку на пол
 //!   полосы — это плавный уход линий на длине клина, новая полоса справа по
-//!   ходу клина;
+//!   ходу клина. У односторонней улицы полосы прибавляются у одной кромки
+//!   ([`wedge_drift`]), и общие линии уходят на длине клина к другой;
 //! - **штрихи — по длине улицы**, а не way: фаза не рвётся на шве;
 //! - **у узла линия сплошная** за [`APPROACH`] до разрыва перекрёстка — у
 //!   линии полос только на подходе по ходу её полос, на выезде пунктир сразу
@@ -56,7 +57,7 @@ use crate::map::meshing::{
     miter_offsets,
 };
 use crate::map::osm::model::polyline_length;
-use crate::map::osm::{RoadLine, TrafficSide};
+use crate::map::osm::{LaneTurn, RoadLine, TrafficSide};
 use crate::map::shapes::{Shape, is_ring, ring_of};
 use crate::map::surface::{LayerMesh, MaterialSpec};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
@@ -319,17 +320,53 @@ pub fn lane_frame(lanes: u8) -> LaneFrame {
 /// телу** он сдвигался на `[0, шаг)` вперёд — влево по ходу клина. Новая полоса
 /// при смене чётности поэтому рождается справа по ходу клина. У торца `end`
 /// клин идёт против хода way, отсюда знак.
-fn narrow_frame(body: LaneFrame, narrow_lanes: u8, end: bool) -> LaneFrame {
+///
+/// У односторонней улицы `drift` ([`wedge_drift`]) — знак стороны, к которой
+/// прижаты общие полосы: узел сдвинут на всю разницу полуширин, и на теле
+/// полосы узкого сечения стоят у этой кромки, а новые рождаются у другой.
+fn narrow_frame(body: LaneFrame, narrow_lanes: u8, end: bool, drift: Option<f32>) -> LaneFrame {
     let narrow = lane_frame(narrow_lanes);
-    let shift = (body.origin - narrow.origin).rem_euclid(lane_width());
-    LaneFrame {
-        origin: if end {
-            body.origin + shift
-        } else {
-            body.origin - shift
-        },
-        ..narrow
+    let origin = match drift {
+        Some(sign) => body.origin - sign * (body.high - narrow.high),
+        None => {
+            let shift = (body.origin - narrow.origin).rem_euclid(lane_width());
+            if end {
+                body.origin + shift
+            } else {
+                body.origin - shift
+            }
+        }
+    };
+    LaneFrame { origin, ..narrow }
+}
+
+/// Куда плывут линии клина улицы `road`: у двусторонней — никуда (`None`,
+/// клин симметричен, по полосе с каждой стороны), у односторонней — знак
+/// стороны, где полосы общие. Полосы прибавляются у бордюра по
+/// `traffic_side` — съезд, карман направо (пример 16 витрины, Советская
+/// 4 → 2 к правому съезду); у дальней кромки — если `turn:lanes` широкого
+/// участка начинается с полосы только налево, а кончается не полосой только
+/// направо: это карман левого поворота. `+` — влево по ходу way.
+pub fn wedge_drift(road: &RoadLine, side: TrafficSide) -> Option<f32> {
+    if !road.oneway {
+        return None;
     }
+    let kerb = match side {
+        TrafficSide::Right => 1.0,
+        TrafficSide::Left => -1.0,
+    };
+    let turns = &road.turns[0];
+    let only_left = |turn: &LaneTurn| turn.left && !turn.through && !turn.right;
+    let only_right = |turn: &LaneTurn| turn.right && !turn.through && !turn.left;
+    let far_pocket = match side {
+        TrafficSide::Right => {
+            turns.first().is_some_and(only_left) && !turns.last().is_some_and(only_right)
+        }
+        TrafficSide::Left => {
+            turns.last().is_some_and(only_right) && !turns.first().is_some_and(only_left)
+        }
+    };
+    Some(if far_pocket { -kerb } else { kerb })
 }
 
 /// Раскладка, отражённая поперёк пути: так её видит путь, идущий навстречу.
@@ -344,9 +381,14 @@ fn mirrored(frame: LaneFrame) -> LaneFrame {
 /// Раскладки клина `[у шва, у тела]` — в раме **пути клина**, который идёт от
 /// шва к телу (`tapers::split`): у торца конца он смотрит против way, и
 /// раскладка отражена. Их кладёт в асфальт клина `MeshBuilder::set_lane_taper`.
-pub fn wedge_frames(body_lanes: u8, narrow_lanes: u8, end: bool) -> [LaneFrame; 2] {
+pub fn wedge_frames(
+    body_lanes: u8,
+    narrow_lanes: u8,
+    end: bool,
+    drift: Option<f32>,
+) -> [LaneFrame; 2] {
     let body = lane_frame(body_lanes);
-    let narrow = narrow_frame(body, narrow_lanes, end);
+    let narrow = narrow_frame(body, narrow_lanes, end, drift);
     if end {
         [mirrored(narrow), mirrored(body)]
     } else {
@@ -384,11 +426,12 @@ pub fn street_stations(network: &RoadNetwork, paths: &[impl AsRef<[Vec2]>]) -> V
 }
 
 /// Что лежит у торца way: клин длиной `length` от сечения соседа в `lanes`
-/// полос.
+/// полос; `drift` — куда плывут линии ([`wedge_drift`]).
 #[derive(Clone, Copy, Debug)]
 pub struct WedgeEnd {
     pub length: f32,
     pub lanes: u8,
+    pub drift: Option<f32>,
 }
 
 /// Клинья у торцов way так, как их нарежет `tapers::split` по этому пути.
@@ -397,13 +440,16 @@ pub fn wedge_ends(
     tapers: &Tapers,
     drawn: &[&RoadLine],
     road: usize,
+    side: TrafficSide,
 ) -> [Option<WedgeEnd>; 2] {
     let ends = tapers.at(road);
     let lengths = tapers::fit(polyline_length(path), ends.map(|end| end.map(|t| t.length)));
-    [0, 1].map(|side| {
+    let drift = wedge_drift(drawn[road], side);
+    [0, 1].map(|end| {
         Some(WedgeEnd {
-            length: lengths[side]?,
-            lanes: lane_count(drawn[ends[side]?.narrow]),
+            length: lengths[end]?,
+            lanes: lane_count(drawn[ends[end]?.narrow]),
+            drift,
         })
     })
 }
@@ -530,10 +576,11 @@ impl Painter {
             .iter()
             .map(|&at| match wedges {
                 [Some(head), _] if !closed && at < head.length => {
-                    narrow_frame(body, head.lanes, false).lerp(body, at / head.length)
+                    narrow_frame(body, head.lanes, false, head.drift).lerp(body, at / head.length)
                 }
                 [_, Some(tail)] if !closed && at > total - tail.length => {
-                    narrow_frame(body, tail.lanes, true).lerp(body, (total - at) / tail.length)
+                    narrow_frame(body, tail.lanes, true, tail.drift)
+                        .lerp(body, (total - at) / tail.length)
                 }
                 _ => body,
             })

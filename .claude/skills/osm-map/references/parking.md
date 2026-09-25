@@ -315,6 +315,20 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
         and arms meet a ring at a shallow angle, so that fillet is not small: what tells
         them apart is the neighbours, not the area — a gore **touches two arms**
         (`ARM_TOUCH`), a fillet one. `GORE_MIN_AREA` 12 m² on top.
+      - **The fan is taken whole** (`gores::fans`, roads plan D9). The closing only
+        pulls shut what is under two radii wide, and arms diverge faster than that: on
+        the north approach of gallery 04 (one-lane entry and exit, 50 m to their common
+        node) it left two scraps at the tip where Yandex draws one triangle over the
+        whole fan. So every pair of arms that start at **different** ring nodes and end
+        in one node — or within `FAN_MOUTH` 12 m of each other (04 south: the entry
+        ends ten metres short of the exit's node, behind a short link) — gives the
+        outline "out along one, back along the other"; the chord between the ring nodes
+        runs over the ring's asphalt and island, which the clip takes out with the
+        arms. An arm longer than `FAN_REACH` 55 m is no fan: past that the two are
+        streets around a block (04 west, 85 m). The fan is clipped like a closed shape
+        and joined with them (`simplify_shape`, NonZero), so a wedge found both ways is
+        one gore. Tula's other rings do not change: at 17 the arms run edge to edge
+        into the node and the closing already had their fan; 04 east has no common node.
       - **The subtraction is one wedge's business.** The closing has already broken the
         city into separate shapes, and asphalt from the other end of town touches none of
         them, so the difference runs per closed shape against the clip contours whose

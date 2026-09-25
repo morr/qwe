@@ -55,6 +55,7 @@ fn paint_of(roads: Vec<RoadLine>, marks: Vec<RoadNode>, style: NodePaintStyle) -
         &base,
         &[],
         &map,
+        &[],
         style,
         |_| true,
         |_| Vec::new(),
@@ -154,6 +155,7 @@ fn a_ring_node_gets_no_rule_zebras() {
             &base,
             &[],
             &map,
+            &[],
             EVERYTHING,
             |_| true,
             |_| Vec::new(),
@@ -293,6 +295,7 @@ fn a_stitched_side_street_is_an_arm_of_the_junction() {
         &base,
         &targets,
         &map,
+        &[],
         EVERYTHING,
         |_| true,
         |_| Vec::new(),
@@ -602,6 +605,7 @@ fn two_osm_zebras_of_a_divided_street_meet_halfway() {
         &base,
         &[],
         &map,
+        &[],
         EVERYTHING,
         |_| true,
         |road| match road {
@@ -652,6 +656,110 @@ fn no_stop_line_inside_the_asphalt_of_another_road() {
         EVERYTHING,
     );
     assert!(shallow.stop_lines.is_empty(), "{:?}", shallow.stop_lines);
+}
+
+/// Ветка треугольника развилки идёт от узла до узла по замощённому острову
+/// (`corners::small_islands`): из асфальта узла она не выходит — перемычка,
+/// ни стоп-линии, ни стрелок (пример 06, горловина). Без острова та же ветка —
+/// обычное плечо.
+#[test]
+fn an_arm_across_a_paved_island_is_a_link() {
+    let roads = || {
+        vec![
+            RoadLine {
+                oneway: true,
+                ..road(
+                    vec![Vec2::new(140.0, 30.0), NODE],
+                    7.6,
+                    Highway::Secondary,
+                    2,
+                )
+            },
+            through(Highway::Secondary),
+        ]
+    };
+    let paint = |paved: &[Vec<Vec2>]| {
+        let mut map = MapData {
+            roads: roads(),
+            ..default()
+        };
+        map.network = RoadNetwork::new(&map.roads);
+        let drawn: Vec<&RoadLine> = map.roads.iter().collect();
+        let paths: Vec<Vec<Vec2>> = map.roads.iter().map(|road| road.points.clone()).collect();
+        let base = marking_breaks(&map.roads, is_carriageway, &[]).breaks;
+        NodePaint::new(
+            &drawn,
+            &paths,
+            &base,
+            &[],
+            &map,
+            paved,
+            EVERYTHING,
+            |_| true,
+            |_| Vec::new(),
+            |_| false,
+        )
+    };
+    let link = |paint: &NodePaint| {
+        paint.junctions[0]
+            .arms
+            .iter()
+            .find(|arm| arm.road == 0)
+            .unwrap()
+            .link
+    };
+    let open = paint(&[]);
+    assert!(!link(&open));
+    assert_eq!(open.stop_lines.len(), 1);
+    let island = vec![
+        Vec2::new(90.0, -1.0),
+        Vec2::new(160.0, -1.0),
+        Vec2::new(160.0, 40.0),
+        Vec2::new(90.0, 40.0),
+    ];
+    let paved = paint(&[island]);
+    assert!(link(&paved));
+    assert!(paved.stop_lines.is_empty(), "{:?}", paved.stop_lines);
+}
+
+/// Кромка плеча — там, где его сечение выходит из асфальта соседа, а не в
+/// полуширине соседа от точки узла: у пологого примыкания стоп-линия встаёт
+/// за асфальтом главной, а не пропадает внутри него (пример 06, горловина).
+#[test]
+fn the_edge_of_a_shallow_arm_is_where_it_leaves_the_other_asphalt() {
+    let join = RoadLine {
+        oneway: true,
+        ..road(
+            vec![Vec2::new(40.0, -35.0), NODE],
+            7.6,
+            Highway::Tertiary,
+            2,
+        )
+    };
+    let main = road(
+        vec![Vec2::ZERO, NODE, Vec2::new(200.0, 0.0)],
+        14.0,
+        Highway::Primary,
+        4,
+    );
+    let paint = paint_of(vec![main, join], Vec::new(), EVERYTHING);
+    let [line] = paint.stop_lines.as_slice() else {
+        panic!("{:?}", paint.stop_lines);
+    };
+    for end in [line.from, line.to] {
+        assert!(end.y < -7.0 + EDGE_INSET, "{end} — в асфальте главной");
+    }
+    let [junction] = paint.junctions.as_slice() else {
+        panic!("один узел");
+    };
+    let arm = junction.arms.iter().find(|arm| arm.road == 1).unwrap();
+    let reach = 7.0 + JUNCTION_MARGIN;
+    let length = (NODE - Vec2::new(40.0, -35.0)).length();
+    assert!(
+        length - arm.edge > reach + 1.0,
+        "кромка дальше полуширины: {}",
+        length - arm.edge
+    );
 }
 
 #[test]

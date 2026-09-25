@@ -200,8 +200,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     `area:highway`, `highway` + `area=yes`, `traffic_calming=island`). The junction
     paint reads the crossings, signals and stop / give-way signs, the kerb pockets and
     the parked cars break at the marked crossings, a turning circle on a dead end is a
-    disc of asphalt; mini-roundabouts, island points and the road areas are parsed and
-    kept for later stages.
+    disc of asphalt; an island point or a crossing with an island on a two-way street is
+    a **safety island** — a kerbed lens over the asphalt and its paint — and so is an
+    `Island` outline, a `Carriageway` outline is asphalt under the ribbons
+    (`roads/islands.rs`); mini-roundabouts and walkway outlines are parsed and kept for
+    later stages.
   - **RoadLine** — centerline + width **from its section** (footways keep 3.5 by class);
     `RoadClass: Street | Alley`; `highway: Highway` (the `highway` value; `*_link` is a
     class of its own; `Highway::is_street` — not a service drive, not a path — is what
@@ -250,7 +253,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     the lines** — the asphalt shader reads it from `ATTRIBUTE_RIBBON`, the paint layer
     builds its lines on it. On a taper it drifts from the narrow section's to the wide
     one's: the outer lane is born from the wedge, and when the parity changes the grid
-    slides by half a lane over the taper, the new lane on the right of the taper's run.
+    slides by half a lane over the taper, the new lane on the right of the taper's run. A
+    **one-way** wedge adds its lanes at one kerb (`paint::wedge_drift`): the kerb of the
+    traffic side, or the far one for a left-turn pocket by `turn:lanes`.
   - **Paint layer** (`map/roads/paint.rs`, shader `paint.wgsl`) — the lane lines as
     **geometry** off the street axis, not a pattern of the asphalt shader: one strip wider
     than the line per line, the shader draws the line (1.3 px floor), its dashes **by the
@@ -265,7 +270,12 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     junction and what it draws there, on its own breaks rather than the asphalt ones
     (those stay for the ruts and the medians). **Junction cluster**: junction nodes whose
     zones (widest half width + 6 m) overlap are one junction — one set of arms, one break
-    per road. **Main through**: a road keeps its lines through a cluster unless it ends
+    per road. **Arm edge**: where the arm's cross-section leaves the other roads'
+    asphalt, paved node-triangle islands included (at least half the widest other road
+    + 1 m from the node; at a ring — just that) — rule zebras, stop lines and the turn
+    paths measure from it, OSM crossings keep their place. A **link** — an arm that never
+    leaves the junction's asphalt, the throat of a complex junction (a fork's triangle) —
+    gets no rule zebra, no stop line and no arrows. **Main through**: a road keeps its lines through a cluster unless it ends
     there, is crossed by a road of its rank that also passes (or at a **crossroads** —
     other streets bringing two arms to one node, however OSM splits them), meets a
     higher rank, or the
@@ -1114,7 +1124,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   splitter island at a roundabout: the wedge between the entry arm, the exit arm and the
   ring is **asphalt with diagonal hatching**, not a triangle of sidewalk or kerb. A
   property of the network at a ring, not of a lot: computed for every roundabout
-  (`RoadLine::is_roundabout`), a wedge counting only if it touches **two arms**. The whole
+  (`RoadLine::is_roundabout`), a wedge counting only if it touches **two arms**; the
+  **fan** of an entry and an exit meeting in one node within 55 m is taken whole, from the
+  ring to that node (`gores::fans`). The whole
   wedge is asphalt, the wedge without its thin tips is what gets hatched — by the road
   paint layer's shader (`road_paint_islands`), which fades it with zoom. A **splitter**
   (`gores::splitters`) is the same island set **by rule** on an approach mapped as one

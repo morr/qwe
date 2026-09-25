@@ -1027,6 +1027,43 @@ fn the_gore_is_paved_under_the_edges_of_both_arms() {
     );
 }
 
+/// Широкий веер: въезд и съезд расходятся от общего узла к кольцу под
+/// ±75°, и у кольца между их кромками больше двух радиусов замыкания — оно
+/// клин не затягивало, островок выходил обрывком у острия (пример 04,
+/// север). Веер берётся целиком — от кольца до узла.
+#[test]
+fn a_wide_fan_is_hatched_up_to_the_ring() {
+    let circle: Vec<Vec2> = (0..=24)
+        .map(|step| Vec2::from_angle(step as f32 * std::f32::consts::TAU / 24.0) * 20.0)
+        .collect();
+    let apex = Vec2::new(52.0, 0.0);
+    let arm = |from: Vec2| RoadLine {
+        oneway: true,
+        ..fixture::street(vec![from, apex], 5.0)
+    };
+    let mut map = MapData::default();
+    map.roads.push(RoadLine {
+        oneway: true,
+        roundabout: true,
+        ..fixture::street(circle.clone(), 8.0)
+    });
+    map.roads.push(arm(circle[5]));
+    map.roads.push(arm(circle[19]));
+    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    assert_eq!(report.gores, 1, "{report}");
+    let lines = layer(&layers, paint::PAINT_ISLANDS)
+        .builder
+        .positions_for_test();
+    // у кольца (его кромка — на 24 м): там подходы в двух десятках метров, и
+    // замыкание оставило бы штриховку только у острия, за 35 м
+    let nearest = lines
+        .iter()
+        .filter(|at| at[1].abs() < 5.0)
+        .map(|at| at[0])
+        .fold(f32::INFINITY, f32::min);
+    assert!(nearest < 30.0, "у кольца клин не заштрихован: {nearest}");
+}
+
 /// Двусторонний подход одним way — веера из въезда и съезда нет, и клин
 /// [`gores::Gores::of`] не находит. Островок ставится по правилу: капля на оси
 /// подхода от кромки кольца, подход вокруг неё раздвинут асфальтом.
@@ -1430,6 +1467,7 @@ fn an_arm_is_filled_before_its_leader_even_when_it_leads_elsewhere() {
         road,
         edge: 0.0,
         dir: 1.0,
+        link: false,
     };
     let junctions = [Junction {
         arms: vec![arm(0), arm(0), arm(1)],
