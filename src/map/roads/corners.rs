@@ -52,7 +52,7 @@ use bevy::prelude::*;
 use super::junctions::node_key;
 use super::network::RoadNodes;
 use crate::map::meshing::arc_steps;
-use crate::map::osm::model::ring_area;
+use crate::map::osm::model::{polyline_length, ring_area};
 use crate::map::osm::{Highway, RoadClass, RoadLine};
 
 /// Радиус бордюра по классу дороги, м; у пары берётся меньший. Между
@@ -130,14 +130,17 @@ impl KerbReturns {
 /// ширина тротуара дороги (по индексу), если он рисуется; `paired(дорога,
 /// длина по оси)` — лежит ли там рядом вторая половина разделённой улицы и
 /// слева ли (`roads/network/pairs.rs`): с её стороны тротуара нет, и угол по
-/// нему не скругляется. `scale` — множитель радиусов по классам (ручка
-/// `Corner radius`).
+/// нему не скругляется. `tapers(дорога)` — длины клиньев у её `[начала,
+/// конца]` (`roads/tapers.rs`, 0 — клина нет): в клине кромка уже ближе к оси,
+/// и прямой пробег луча кончается там, где он начинается. `scale` — множитель
+/// радиусов по классам (ручка `Corner radius`).
 pub fn kerb_returns(
     roads: &[&RoadLine],
     paths: &[Option<&[Vec2]>],
     nodes: &RoadNodes,
     sidewalk: impl Fn(usize) -> Option<f32>,
     paired: impl Fn(usize, f32) -> Option<bool>,
+    tapers: impl Fn(usize) -> [f32; 2],
     scale: f32,
 ) -> KerbReturns {
     let mut arms: HashMap<(i32, i32), (Vec2, Vec<Arm>)> = HashMap::new();
@@ -148,6 +151,8 @@ pub fn kerb_returns(
         if path.len() < 2 {
             continue;
         }
+        let [head, tail] = tapers(index);
+        let total = polyline_length(path);
         let closed = path[0] == path[path.len() - 1];
         let last = path.len() - 1;
         let mut along = 0.0;
@@ -213,6 +218,18 @@ pub fn kerb_returns(
                     }
                     run = along;
                     at = index;
+                }
+                // Кромка прямая только до клина: дальше лента сужается, и
+                // касательная, заведённая в клин, торчала из-под него шипом
+                // асфальта и тротуара (пример 08, улица в 9 м с клином к
+                // однополосной).
+                if !closed {
+                    let body = if forward {
+                        total - tail - along
+                    } else {
+                        along - head
+                    };
+                    run = run.min(body.max(0.0));
                 }
                 let at_end = !closed && (vertex == 0 || vertex == last);
                 // стороны луча: слева по пути — слева по лучу вперёд и справа
@@ -582,6 +599,7 @@ mod tests {
             &nodes,
             |index| sidewalk(&roads[index]),
             |_, _| None,
+            |_| [0.0; 2],
             1.0,
         )
     }
@@ -706,6 +724,38 @@ mod tests {
         }
     }
 
+    /// Поперечная в 20 м с клином на дальнем конце в 14 м: кромка прямая
+    /// только 6 м от узла, и дуга дальше не заходит — в клине лента уже, и
+    /// касательная торчала из-под него шипом (витрина 08).
+    #[test]
+    fn a_taper_on_the_arm_limits_the_radius() {
+        let roads = [
+            east_west(),
+            street(vec![Vec2::ZERO, Vec2::new(0.0, 20.0)], 8.0),
+        ];
+        let nodes = RoadNodes::new(&roads);
+        let paths: Vec<Option<&[Vec2]>> = roads
+            .iter()
+            .map(|road| Some(road.points.as_slice()))
+            .collect();
+        let drawn: Vec<&RoadLine> = roads.iter().collect();
+        let found = kerb_returns(
+            &drawn,
+            &paths,
+            &nodes,
+            |_| None,
+            |_, _| None,
+            |road| if road == 1 { [0.0, 14.0] } else { [0.0; 2] },
+            1.0,
+        );
+        assert!(!found.roads.is_empty());
+        for (_, outline) in &found.roads {
+            for point in outline {
+                assert!(point.y <= 6.0 + 1e-3, "{point:?}");
+            }
+        }
+    }
+
     #[test]
     fn the_sidewalk_turns_the_corner_on_the_kerb_arc() {
         let found = walked_returns_of(&crossing(), |_| Some(SIDEWALK));
@@ -808,6 +858,7 @@ mod tests {
             &nodes,
             |_| Some(SIDEWALK),
             |road, _| (road == 0).then_some(true),
+            |_| [0.0; 2],
             1.0,
         );
         assert_eq!(found.roads.len(), 4, "асфальт скругляется, как был");
