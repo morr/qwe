@@ -315,10 +315,17 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     `paint::approach_spans` finds the gap edges on the to-break profile (it is linear
     between vertices, so an edge is a zero on a link), `split_at_spans` puts a vertex at
     each span end, and the line goes out in pieces of `LineKind::Dashed` (10) and
-    `LineKind::Solid` (11); the shader only draws what the kind says. An **axis** and a
-    **ring's** lane lines keep the old symmetric rule (kind 0/1 — solid by to-break alone):
-    the axis separates two flows, and a ring's entries are not worth splitting a closed
-    strip for. The axis of a two-way street with 4+ lanes is a **double solid** (0.15 m gap
+    `LineKind::Solid` (11); the shader only draws what the kind says. The **axis** of an
+    open street is split the same way into `AxisDashed` (12) / `AxisSolid` (13), but
+    symmetrically — it separates two flows, so it is solid `APPROACH` on **both** sides of
+    a break (`paint::near_spans`) — **and at a node the street passes through**: a
+    leading road that does not yield (**Junction paint** below) gets no break there, only
+    a `NodePaint::solid` zone (the reach its break would have had), and the axis is solid
+    `APPROACH` either side of it (ГОСТ 1.1 at a side street; Yandex draws the
+    Циолковского on gallery 19 so, while ours ran dashed straight past both side streets).
+    `Painter::paint` takes both lists as one `paint::LineBreaks { cut, solid }`. A **ring's**
+    lines and its closed axis keep the old rule (kind 0/1 — solid by to-break alone): a
+    ring's entries are not worth splitting a closed strip for. The axis of a two-way street with 4+ lanes is a **double solid** (0.15 m gap
     — ГОСТ 1.3's 10–15 cm; half a metre read as two separate lines, the author's report —
     merging into one line once the gap is under ~2 px); a two-lane two-way street has a
     dashed axis; an odd two-way street and a one-way street have none.

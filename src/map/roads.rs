@@ -1466,7 +1466,10 @@ pub fn mesh_roads(
             painter.paint(
                 road,
                 points,
-                &node_paint.breaks[index],
+                paint::LineBreaks {
+                    cut: &node_paint.breaks[index],
+                    solid: &node_paint.solid[index],
+                },
                 wedges,
                 node_paint.pockets[index],
                 stations[index],

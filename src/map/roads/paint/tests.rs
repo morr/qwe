@@ -54,15 +54,13 @@ fn a_two_lane_street_gets_one_axis_and_no_lane_lines() {
     let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
     assert!(paint_layer(&layers, PAINT_LANES).is_empty());
     assert_eq!(line_offsets(&layers, PAINT_AXES, 0.0), vec![0.0]);
-    assert_eq!(report.paint_lines, 1);
+    // осевая — пунктир на перегоне и сплошная у тупиков по концам: три куска
+    assert_eq!(report.paint_lines, 3);
     let kinds = paint_layer(&layers, PAINT_AXES)
         .ribbon_coords_for_test()
         .unwrap();
-    assert!(
-        kinds
-            .iter()
-            .all(|ribbon| ribbon[3] == LineKind::Axis.code())
-    );
+    let axis = [LineKind::AxisDashed.code(), LineKind::AxisSolid.code()];
+    assert!(kinds.iter().all(|ribbon| axis.contains(&ribbon[3])));
 }
 
 #[test]
@@ -576,5 +574,83 @@ fn a_long_approach_gets_a_second_row_of_arrows() {
     assert_eq!(
         Painter::repeat_setback(&arrow(60.0), 4.0, &marked, &[]),
         None
+    );
+}
+
+#[test]
+fn the_axis_is_solid_on_both_sides_of_a_break() {
+    let along = [0.0, 10.0, 50.0, 90.0, 100.0];
+    // разрыв посередине: до его края 40 м с обеих сторон
+    let to_break = [40.0, 30.0, -10.0, 30.0, 40.0];
+    let spans = near_spans(&along, &to_break, APPROACH);
+    assert_eq!(spans.len(), 1, "{spans:?}");
+    let (from, to) = spans[0];
+    assert!(
+        (from - 15.0).abs() < 1e-3 && (to - 85.0).abs() < 1e-3,
+        "{spans:?}"
+    );
+    // путь начинается внутри зоны и кончается в ней
+    assert_eq!(
+        near_spans(&[0.0, 100.0], &[0.0, 0.0], APPROACH),
+        vec![(0.0, 100.0)]
+    );
+    assert!(near_spans(&[0.0, 100.0], &[f32::INFINITY; 2], APPROACH).is_empty());
+}
+
+/// Жилая примыкает к третичной сбоку: третичная проходит узел насквозь, её
+/// осевая не рвётся — и у примыкания она сплошная, а на перегоне пунктир.
+#[test]
+fn the_axis_of_a_through_street_is_solid_at_a_side_street() {
+    let mut main = with_lanes(
+        street(
+            vec![Vec2::ZERO, Vec2::new(150.0, 0.0), Vec2::new(300.0, 0.0)],
+            7.6,
+        ),
+        2,
+        false,
+    );
+    main.highway = Highway::Tertiary;
+    let side = with_lanes(
+        street(vec![Vec2::new(150.0, -80.0), Vec2::new(150.0, 0.0)], 7.6),
+        2,
+        false,
+    );
+    let map = map_of(vec![main, side]);
+    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let builder = paint_layer(&layers, PAINT_AXES);
+    let positions = builder.positions_for_test();
+    let ribbons = builder.ribbon_coords_for_test().unwrap();
+    // x вершин осевой главной (на оси y = 0) одного вида: вид у куска
+    // один, вершины у него только на концах и изломах
+    let xs_of = |kind: LineKind| {
+        positions
+            .iter()
+            .zip(ribbons.iter())
+            .filter(|(at, ribbon)| at[1].abs() < 2.0 && ribbon[3] == kind.code())
+            .map(|(at, _)| at[0])
+            .collect::<Vec<f32>>()
+    };
+    let solid = xs_of(LineKind::AxisSolid);
+    let dashed = xs_of(LineKind::AxisDashed);
+    // сплошная — от ~25 м до зоны узла до ~25 м после
+    let low = solid
+        .iter()
+        .copied()
+        .filter(|&x| x > 100.0)
+        .fold(f32::INFINITY, f32::min);
+    let high = solid
+        .iter()
+        .copied()
+        .filter(|&x| x < 200.0)
+        .fold(f32::NEG_INFINITY, f32::max);
+    assert!(low < 125.0 && high > 175.0, "{solid:?}");
+    // пунктир — на перегонах с обеих сторон и не у узла
+    assert!(dashed.iter().any(|&x| x < 100.0), "{dashed:?}");
+    assert!(dashed.iter().any(|&x| x > 200.0), "{dashed:?}");
+    assert!(
+        dashed
+            .iter()
+            .all(|&x| !(low + 0.5..high - 0.5).contains(&x)),
+        "{dashed:?}"
     );
 }

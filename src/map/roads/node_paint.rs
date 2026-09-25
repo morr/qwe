@@ -190,6 +190,10 @@ pub struct NodePaint {
     /// Разрывы асфальта — колеи и разделительных: базовые без тех, что лежали
     /// на ведущей дороге узла. Её колея идёт сквозь.
     pub asphalt: Vec<Vec<Break>>,
+    /// Узлы, которые дорога проходит насквозь, — там, где её разрыв был бы,
+    /// уступай она. Осевая у такого узла сплошная, как и перед разрывом
+    /// (`Painter::paint`): через примыкание не обгоняют.
+    pub solid: Vec<Vec<Break>>,
     pub junctions: Vec<Junction>,
     /// Карманы у торцов дорог `[начало, конец]`.
     pub pockets: Vec<[Option<Pocket>; 2]>,
@@ -402,6 +406,7 @@ impl NodePaint {
             breaks: base.to_vec(),
             asphalt: base.to_vec(),
             pockets: vec![[None; 2]; drawn.len()],
+            solid: vec![Vec::new(); drawn.len()],
             ..Self::default()
         };
         if drawn.len() != paths.len() || base.len() != drawn.len() {
@@ -705,6 +710,7 @@ impl NodePaint {
             breaks.retain(|found| !here.contains(&found.at) || found.reach == 0.0);
             if !yields {
                 self.through += 1;
+                self.solid[road].extend(here.iter().map(|&at| Break { at, reach }));
                 continue;
             }
             broken.insert(road, reach);

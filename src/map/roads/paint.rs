@@ -21,7 +21,8 @@
 //! - **штрихи — по длине улицы**, а не way: фаза не рвётся на шве;
 //! - **у узла линия сплошная** за [`APPROACH`] до разрыва перекрёстка — у
 //!   линии полос только на подходе по ходу её полос, на выезде пунктир сразу
-//!   ([`approach_spans`]); осевая
+//!   ([`approach_spans`]); у осевой — по обе стороны разрыва и у узла,
+//!   который улица проходит насквозь ([`near_spans`]). Осевая
 //!   двусторонней улицы в четыре полосы и больше — двойная сплошная, у́же —
 //!   пунктир, как линии полос. У нечётной двусторонней и у односторонней
 //!   осевой нет.
@@ -196,6 +197,20 @@ enum LineKind {
     Dashed,
     /// Кусок линии полос на подходе к узлу по ходу движения — сплошной.
     Solid,
+    /// Кусок осевой открытой улицы на перегоне — пунктир. Гаснет с осевыми.
+    AxisDashed,
+    /// Кусок осевой у разрыва или у узла, который улица проходит насквозь, —
+    /// сплошной.
+    AxisSolid,
+}
+
+/// Что узлы сказали линиям одной дороги (`roads/node_paint.rs`): где они
+/// рвутся (`NodePaint::breaks`) и какие узлы дорога проходит насквозь
+/// (`NodePaint::solid`).
+#[derive(Clone, Copy, Default)]
+pub struct LineBreaks<'a> {
+    pub cut: &'a [Break],
+    pub solid: &'a [Break],
 }
 
 impl LineKind {
@@ -213,6 +228,8 @@ impl LineKind {
             Self::Arrow => 9.0,
             Self::Dashed => 10.0,
             Self::Solid => 11.0,
+            Self::AxisDashed => 12.0,
+            Self::AxisSolid => 13.0,
         }
     }
 }
@@ -541,14 +558,17 @@ impl PaintTag {
 
 impl Painter {
     /// Линии проезжей части `road`, нарисованной по `points` (ось улицы со
-    /// стежками), с разрывами краски `breaks` (`roads/node_paint.rs`),
-    /// клиньями `wedges`, карманами у торцов `pockets` и началом длины улицы
-    /// `station`.
+    /// стежками), с разрывами краски и узлами насквозь `breaks`
+    /// (`roads/node_paint.rs`), клиньями `wedges`, карманами у торцов
+    /// `pockets` и началом длины улицы `station`.
     pub fn paint(
         &mut self,
         road: &RoadLine,
         points: &[Vec2],
-        breaks: &[Break],
+        LineBreaks {
+            cut: breaks,
+            solid: through,
+        }: LineBreaks,
         wedges: [Option<WedgeEnd>; 2],
         pockets: [Option<Pocket>; 2],
         station: Station,
@@ -601,6 +621,13 @@ impl Painter {
             .map(|&at| if reversed { start - at } else { start + at })
             .collect();
         let miters = miter_offsets(&path, closed, 1.0);
+        // «до узла насквозь» — узел в вершине пути (дорога его проходит), и
+        // между вершинами расстояние линейно
+        let to_through = if through.is_empty() {
+            vec![f32::INFINITY; path.len()]
+        } else {
+            break_distances(&path, closed, through)
+        };
         // «до разрыва» по набору разрывов линии: разрыв кармана у торца —
         // только у линий, которым за узлом нет места (вне раскладки узкого
         // продолжения). Ключ — маска торцов, где линия в кармане
@@ -692,6 +719,13 @@ impl Painter {
                     let spans = approach_spans(&along, to_break, forward);
                     split_at_spans(line, stations, &along, &spans)
                 }
+                // осевая обслуживает оба потока: сплошная по обе стороны
+                // разрыва — и у узла, который улица проходит насквозь
+                LineKind::Axis => {
+                    let mut spans = near_spans(&along, to_break, APPROACH);
+                    spans.extend(near_spans(&along, &to_through, APPROACH));
+                    split_at_spans(line, stations, &along, &spans)
+                }
                 _ => {
                     let solid = vec![false; line.len().saturating_sub(1)];
                     (line, stations, solid)
@@ -700,6 +734,8 @@ impl Painter {
             let code = |solid: bool| match kind {
                 LineKind::Lane if solid => LineKind::Solid.code(),
                 LineKind::Lane => LineKind::Dashed.code(),
+                LineKind::Axis if solid => LineKind::AxisSolid.code(),
+                LineKind::Axis => LineKind::AxisDashed.code(),
                 _ => kind.code(),
             };
             // куски, где линия видна хоть на одном конце звена, одного вида
@@ -1133,6 +1169,28 @@ fn approach_spans(along: &[f32], to_break: &[f32], forward: bool) -> Vec<(f32, f
         } else {
             (edge, edge + APPROACH)
         });
+    }
+    spans
+}
+
+/// Отрезки длин пути, где `distance` (в вершинах, линейно между ними) меньше
+/// `within`: у осевой — [`APPROACH`] по обе стороны разрыва или узла насквозь.
+fn near_spans(along: &[f32], distance: &[f32], within: f32) -> Vec<(f32, f32)> {
+    let mut spans = Vec::new();
+    let mut from = (distance.first() < Some(&within)).then(|| along[0]);
+    for index in 0..along.len().saturating_sub(1) {
+        let (a, b) = (distance[index] - within, distance[index + 1] - within);
+        if (a < 0.0) == (b < 0.0) {
+            continue;
+        }
+        let edge = along[index] + (along[index + 1] - along[index]) * a / (a - b);
+        match from.take() {
+            Some(start) => spans.push((start, edge)),
+            None => from = Some(edge),
+        }
+    }
+    if let (Some(start), Some(&end)) = (from, along.last()) {
+        spans.push((start, end));
     }
     spans
 }

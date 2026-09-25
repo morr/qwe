@@ -82,6 +82,15 @@ fn a_minor_street_does_not_break_the_main_one() {
     assert!(gaps(&paint, 0).is_empty(), "{:?}", paint.breaks[0]);
     assert!(!gaps(&paint, 1).is_empty());
     assert_eq!(paint.through, 1);
+    // осевая главной у примыкания сплошная: узел насквозь — в её `solid`
+    assert!(
+        paint.solid[0]
+            .iter()
+            .any(|found| found.at == NODE && found.reach > 0.0),
+        "{:?}",
+        paint.solid[0]
+    );
+    assert!(paint.solid[1].is_empty());
     // зебра и стоп-линия — только поперёк примыкания
     assert_eq!(paint.zebras.len(), 1);
     assert_eq!(paint.stop_lines.len(), 1);
