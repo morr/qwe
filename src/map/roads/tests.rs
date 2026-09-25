@@ -1146,7 +1146,9 @@ fn the_sidewalk_knob_takes_the_kerb_off_the_lot_road_too() {
 /// ручке «Sidewalks»: та лишь прячет ленту, у зебры своя ручка `crossings`.
 #[test]
 fn rule_zebras_do_not_follow_the_sidewalk_knob() {
-    let map = a_tee();
+    let mut map = a_tee();
+    // зебра по правилу — только у улицы не ниже `tertiary`
+    map.roads[0].highway = Highway::Tertiary;
     let zebras = |sidewalks| {
         let style = RoadStyle {
             sidewalks,

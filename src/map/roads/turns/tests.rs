@@ -48,6 +48,7 @@ fn turns_of(roads: Vec<RoadLine>, side: TrafficSide) -> (Turns, NodePaint) {
         },
         |_| true,
         |_| Vec::new(),
+        |_| false,
     );
     let turns = Turns::new(&drawn, &paths, &paint.junctions, side, |_| false);
     (turns, paint)

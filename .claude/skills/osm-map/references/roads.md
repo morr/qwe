@@ -545,13 +545,19 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     one, `CrossingMode::Generated` puts a zebra `ZEBRA_SETBACK` 1 m past the edge (edge =
     the break reach: half the widest other road + 1 m) — if the cluster joins two streets
     with sidewalks (by the `sidewalk=*` tag — `RoadLine::sidewalks`, like `kerb_parking`;
-    the Sidewalks toggle only hides the band, `crossings` is the zebra's own knob), the
+    the Sidewalks toggle only hides the band, `crossings` is the zebra's own knob), one of
+    the cluster's streets is at least `tertiary` (`RULE_ZEBRA_RANK`) or the cluster is
+    signalized, no road of the cluster is a ring arc (`on_ring`, the check the lane
+    arrows use — and no closed ring passes it), the
     arm is not a `*_link` and the next junction node on the same road
     lies at least `RULE_ZEBRA_ROOM` 30 m past the edge (`nodes_along`). A shorter arm is
     a link between two nodes — the branches of a fork's triangle (Tula, gallery 06, 22 and
     31 m) had a rule zebra at both ends and a stop line between them within fifteen metres;
     the crossing is left to the outer arms. An OSM crossing ignores the room. A zebra is `ZEBRA_LENGTH` 4 m along the
-    road, across the carriageway less 0.3 m at each kerb. The stop line (0.4 m) stands
+    road, across the carriageway less 0.3 m at each kerb. The stop line is called by the
+    same things as the zebra — a zebra on the arm, signals, a stop / give-way sign, or a
+    street of at least `tertiary` in the cluster; two residential streets with no sign get
+    neither (gallery 13: Yandex draws the cross bare). The stop line (0.4 m) stands
     `STOP_GAP` 1 m behind the zebra (or 1 m past the edge without one), across the lanes
     **coming to the node** — axis to kerb on the traffic side (`MapData::traffic_side`)
     for a two-way road, the full width for a one-way one that flows toward the node, none

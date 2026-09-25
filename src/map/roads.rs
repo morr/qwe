@@ -1317,6 +1317,7 @@ pub fn mesh_roads(
                 .map(|run| run.partner)
                 .collect()
         },
+        |road| axes.rings.of(road).is_some(),
     );
     // траектории манёвров (`roads/turns.rs`) — колея в узле
     let turns = turns::Turns::new(

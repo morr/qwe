@@ -23,7 +23,8 @@
 //! - **зебра и стоп-линия на плече**, которое рвётся: зебра — по узлу
 //!   `highway=crossing` на плече (до [`ARM_CROSSING_REACH`]), иначе
 //!   ([`CrossingMode::Generated`]) — в [`ZEBRA_SETBACK`] от кромки узла, если
-//!   в кластере сошлись две улицы с тротуарами. Стоп-линия — за зеброй, на
+//!   в кластере сошлись две улицы с тротуарами, одна из них не ниже
+//!   `tertiary` (или узел под светофором) и ни одна не дуга кольца. Стоп-линия — за зеброй, на
 //!   встречных узлу полосах; у `give_way` прерывистая. Дворовых проездов тут
 //!   нет вовсе: они не проезжая часть и узлов не образуют;
 //! - **зебра посреди квартала** — по любому размеченному переходу на улице,
@@ -77,6 +78,9 @@ const ARM_TAIL: f32 = 8.0;
 /// концов и стоп-линия между ними теснятся на пятнадцати метрах, и пешеход
 /// переходит на внешних плечах.
 const RULE_ZEBRA_ROOM: f32 = 30.0;
+/// Ранг ([`class_rank`]) улицы, без которой в кластере зебры по правилу нет,
+/// если узел не под светофором: `tertiary`.
+const RULE_ZEBRA_RANK: u8 = 2;
 /// Кусок линий между двумя разрывами короче этого — не рисуется: одинокий
 /// штрих между узлом и зеброй читается мусором.
 const MIN_RUN: f32 = 6.0;
@@ -287,7 +291,8 @@ impl NodePaint {
     /// которые тоже узлы, `sidewalk` — есть ли у дороги тротуар по тегу
     /// (`sidewalk=*`, независимо от `RoadStyle::sidewalks`: ручка прячет
     /// ленту, а зебра по правилу — вопрос модели), `partners` — вторые
-    /// половины разделённой улицы.
+    /// половины разделённой улицы, `on_ring` — дуга ли дорога кольца
+    /// (`roads/rings.rs`): узел кольца зебры по правилу не получает.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         drawn: &[&RoadLine],
@@ -298,6 +303,7 @@ impl NodePaint {
         style: NodePaintStyle,
         sidewalk: impl Fn(usize) -> bool,
         partners: impl Fn(usize) -> Vec<usize>,
+        on_ring: impl Fn(usize) -> bool,
     ) -> Self {
         let mut paint = Self {
             breaks: base.to_vec(),
@@ -375,6 +381,7 @@ impl NodePaint {
                     street: &street,
                     sidewalk: &sidewalk,
                     partners: &partners,
+                    on_ring: &on_ring,
                     nodes_along: &nodes_along,
                 },
                 &mut crossings,
@@ -422,6 +429,7 @@ impl NodePaint {
             street,
             sidewalk,
             partners,
+            on_ring,
             nodes_along,
         } = *context;
         if cluster.len() > 1 {
@@ -532,6 +540,17 @@ impl NodePaint {
             found.dedup();
             found.len()
         };
+        // зебра по правилу — только там, где пешеходу её и рисуют: у улицы не
+        // ниже `tertiary` или под светофором, и никогда у кольца. Двум
+        // жилым улицам разметку переходов никто не наносит (у Яндекса на
+        // таких узлах ни одной), а у кольца переходы стоят поодаль от въезда
+        // и приходят в OSM нодами — луч за лучом по зебре было выдумкой
+        let major = visits
+            .keys()
+            .any(|&road| class_rank(drawn[road].highway) >= RULE_ZEBRA_RANK);
+        let rule_zebras = (signalized || major)
+            && ring_arms.is_empty()
+            && !visits.keys().any(|&road| on_ring(road));
 
         let mut broken: BTreeMap<usize, f32> = BTreeMap::new();
         let mut reaches: BTreeMap<usize, f32> = BTreeMap::new();
@@ -693,6 +712,7 @@ impl NodePaint {
                 }
                 // связка — не улица, пешеходу там переходить незачем
                 None => (style.crossings == CrossingMode::Generated
+                    && rule_zebras
                     && sidewalk(arm.road)
                     && sidewalk_streets >= 2
                     && room >= RULE_ZEBRA_ROOM
@@ -743,7 +763,11 @@ impl NodePaint {
                 })
             };
             let zebra = zebra.filter(|&(center, osm)| osm || !in_other(center));
-            let stop = (style.stop_lines && incoming(road, dir))
+            // стоп-линию зовёт то же, что и зебру: переход, светофор, знак или
+            // улица не ниже `tertiary`; две жилые без знаков — ни того, ни
+            // другого (пример 13, у Яндекса крестовина пуста)
+            let called = zebra.is_some() || signalized || major || sign(arm.road).is_some();
+            let stop = (style.stop_lines && called && incoming(road, dir))
                 .then(|| {
                     let behind = match zebra {
                         Some((center, _)) => center + dir * (ZEBRA_LENGTH / 2.0 + STOP_GAP),
@@ -915,6 +939,7 @@ struct Context<'a, P> {
     street: &'a dyn Fn(usize) -> usize,
     sidewalk: &'a dyn Fn(usize) -> bool,
     partners: &'a dyn Fn(usize) -> Vec<usize>,
+    on_ring: &'a dyn Fn(usize) -> bool,
     /// Узлы на каждой дороге: длина на её пути и сама точка.
     nodes_along: &'a [Vec<(f32, Vec2)>],
 }
