@@ -304,7 +304,9 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     its frame is the mirror (`paint::wedge_frames`); `the_wedge_asphalt_and_the_wedge_paint_share_one_grid`
     pins that both land on one grid.
   - **Dashes by the street's arclength** (`paint::street_stations` over the network's
-    ordered ways and the axis paths): 3 m / 3 m, and the phase runs through a seam.
+    ordered ways and the axis paths): 2 m dash, 6 m gap (ГОСТ 1.5 in town — the gap three
+    times the dash; the old 3 / 3 read as a picket fence on a multi-lane street at the
+    gallery zoom, Yandex draws about 1 : 2.5), and the phase runs through a seam.
   - **Solid near a junction**: the last `APPROACH` 25 m before a junction break — for a
     **lane line only on the approach**, in the direction its lanes flow
     (`paint::flows_forward` by the line's side of the axis and `MapData::traffic_side`, a
@@ -352,7 +354,8 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     `Visibility` (`paint::show_paint`, `PaintTag` on the entity, set by
     `spawn_road_meshes` by the layer's name) — **no rebuild** at a threshold. The gallery
     does not run the ladder and relies on the shader fade.
-  - **`RoadPaintStyle`** (group `road_paint`): `paint` 0–1 (0.85) — the line opacity,
+  - **`RoadPaintStyle`** (group `road_paint`): `paint` 0–1 (0.7 — Yandex's lines are
+    about 60 % white; 0.85 read heavier than the reference on 05 and 18) — the line opacity,
     `wear` 0–0.15 (0.075) — the rut amplitude, `turn_wear` 0–0.08 (0.035) — the turn
     paths' rut amplitude. All three uniforms
     (`surface::retune_surface_materials`), a knob drag rebuilds nothing; the Markings
