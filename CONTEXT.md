@@ -265,7 +265,12 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     junction and what it draws there, on its own breaks rather than the asphalt ones
     (those stay for the ruts and the medians). **Junction cluster**: junction nodes whose
     zones (widest half width + 6 m) overlap are one junction — one set of arms, one break
-    per road. **Main through**: a road keeps its lines through a cluster unless it ends
+    per road. **Arm edge**: where the arm's cross-section leaves the other roads'
+    asphalt, paved node-triangle islands included (at least half the widest other road
+    + 1 m from the node; at a ring — just that) — rule zebras, stop lines and the turn
+    paths measure from it, OSM crossings keep their place. A **link** — an arm that never
+    leaves the junction's asphalt, the throat of a complex junction (a fork's triangle) —
+    gets no rule zebra, no stop line and no arrows. **Main through**: a road keeps its lines through a cluster unless it ends
     there, is crossed by a road of its rank that also passes (or at a **crossroads** —
     other streets bringing two arms to one node, however OSM splits them), meets a
     higher rank, or the

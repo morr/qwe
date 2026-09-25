@@ -42,6 +42,7 @@ fn turns_of(roads: Vec<RoadLine>, side: TrafficSide) -> (Turns, NodePaint) {
         &base,
         &[],
         &map,
+        &[],
         NodePaintStyle {
             crossings: CrossingMode::Off,
             stop_lines: false,

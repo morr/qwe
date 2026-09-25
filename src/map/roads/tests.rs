@@ -1430,6 +1430,7 @@ fn an_arm_is_filled_before_its_leader_even_when_it_leads_elsewhere() {
         road,
         edge: 0.0,
         dir: 1.0,
+        link: false,
     };
     let junctions = [Junction {
         arms: vec![arm(0), arm(0), arm(1)],

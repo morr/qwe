@@ -550,8 +550,7 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     `Crossing { marked: true }` node on the road, between the node and
     `ARM_CROSSING_REACH` 35 m past the junction edge — measured from the edge, since a
     wide junction's edge is itself tens of metres from the node) becomes the zebra; without
-    one, `CrossingMode::Generated` puts a zebra `ZEBRA_SETBACK` 1 m past the edge (edge =
-    the break reach: half the widest other road + 1 m) — if the cluster joins two streets
+    one, `CrossingMode::Generated` puts a zebra `ZEBRA_SETBACK` 1 m past the edge — if the cluster joins two streets
     with sidewalks (by the `sidewalk=*` tag — `RoadLine::sidewalks`, like `kerb_parking`;
     the Sidewalks toggle only hides the band, `crossings` is the zebra's own knob), one of
     the cluster's streets is at least `tertiary` (`RULE_ZEBRA_RANK`) or the cluster is
@@ -579,7 +578,26 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     width (less `EDGE_INSET`) of its axis. The edge is measured from the node point, and
     an arm merging at a shallow angle (a link into Пролетарская, gallery 08; the fork's
     throat, 06) is still under its neighbour's ribbon there — the paint lay as a stub in
-    the middle of the junction (roads plan D2). Zebras that land on one another — the two branches of a fork at
+    the middle of the junction (roads plan D2). **The edge of an arm is where its
+    cross-section leaves the other roads' asphalt** (`node_paint::clear_reach`, roads plan
+    D11): from the break reach (half the widest other road + 1 m) outward in
+    `EDGE_STEP` 0.5 m steps until both points `half width − EDGE_INSET` off the arm's axis
+    are outside every other road of the cluster (its half width off its axis; the
+    arm's own street and its paired half are no rivals) **and** outside every paved
+    island of a node triangle (`corners::small_islands`, handed to `NodePaint::new` as
+    `paved`), up to `EDGE_SEARCH` 25 m. The rule zebra, the stop line and the turn paths
+    and arrows (`JunctionArm::edge`) measure from it, and the lane lines break from the
+    node to the outermost paint. An **OSM crossing keeps its place** — it is measured
+    from the reach as before: pushed past the new edge, it no longer fitted a short arm
+    with its `ARM_TAIL` and was lost (gallery 04, south). **Not at a ring**: an approach
+    is fitted into the ring tangentially and runs over its asphalt for tens of metres.
+    **An arm that never leaves the junction's asphalt is a link** (`JunctionArm::link`,
+    `ArmPlan::link`) — a throat of a complex junction, not an approach to it: no rule
+    zebra, no stop line, no arrows. At the fork of gallery 06 the triangle's 22 and 31 m
+    branches run from node to node across the paved island, and their stop line and
+    arrows lay on it (Yandex has only the centre lines there). A length rule (under
+    30 m to the next node) was tried first and took the stop lines off every short
+    approach — the fan at 04 south among them. Zebras that land on one another — the two branches of a fork at
     one node, an OSM crossing beside a rule one — are reduced to one (`without_overlaps`,
     the last step of `NodePaint::new`, after the mid-block crossings): the OSM zebra
     stays, of two generated the first; a plank counts as inside another when a 9-point

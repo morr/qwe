@@ -248,7 +248,8 @@ impl Turns {
                 }
                 None => continue,
             };
-            if drawn[from.road].bridge {
+            // и на перемычке сложного узла: там горловина, а не подход
+            if drawn[from.road].bridge || from.link {
                 continue;
             }
             let path = paths[from.road].as_ref();

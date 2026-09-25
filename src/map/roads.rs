@@ -1295,6 +1295,7 @@ pub fn mesh_roads(
         &junctions.breaks,
         &stitches.targets,
         map,
+        &islands,
         node_paint::NodePaintStyle {
             crossings: if style.markings {
                 style.crossings
