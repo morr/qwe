@@ -583,7 +583,14 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     zebra onto the first's line across the street (to the OSM one if there is one, else to
     the farther one); when **both** are OSM crossings — a `highway=crossing` node on each
     half, which mappers place a metre apart (gallery 02: 0.9 and 1.2 m) — both move to the
-    line halfway between them. **Paint inside another road's asphalt is dropped**: a stop
+    line halfway between them. Over a **paved** median (`PairRun::paved`, handed to
+    `NodePaint::new` as `Partner { road, paved }`) the two aligned zebras then become **one
+    plank** kerb to kerb (`join_zebras`: parallel within `JOIN_PARALLEL`, on one line
+    within `JOIN_OFFSET` 1 m, the gap between them at most `JOIN_GAP` 8 m): the shader
+    counts the bars from the plank's end, so two planks put the bars out of step at the
+    seam — Yandex draws 02 and 12 as one plank. The median's double solid is broken there
+    anyway (its breaks are the halves'). A lawn median keeps two zebras, each to its
+    kerb. **Paint inside another road's asphalt is dropped**: a stop
     line, or a rule zebra, whose point on the arm lies within another cluster road's half
     width (less `EDGE_INSET`) of its axis. The edge is measured from the node point, and
     an arm merging at a shallow angle (a link into Пролетарская, gallery 08; the fork's

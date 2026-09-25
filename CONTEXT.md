@@ -286,7 +286,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     no ring in it — `RoadStyle::crossings`) and a **stop line** (where a zebra, signals,
     a sign or a tertiary+ street call for it) across the lanes
     coming in (dashed for give-way —
-    `RoadStyle::stop_lines`); the halves of a divided street share one zebra line. A
+    `RoadStyle::stop_lines`); the halves of a divided street share one zebra line — one
+    plank across both over a paved median, one zebra each to its kerb over a lawn. A
     marked crossing elsewhere is a zebra with a gap in the lines. A **pocket**: a wide
     arm's lines with no room on the narrower arm across the junction end at its edge.
     A **stitch** (the network's pulled loose end) is a junction node like a shared one.

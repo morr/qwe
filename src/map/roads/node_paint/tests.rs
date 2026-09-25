@@ -550,8 +550,46 @@ fn stop_lines_span_the_incoming_half_on_the_traffic_side() {
 /// маппер поставил их на метр с лишним вразнобой (Тула, витрина 02: 0.9 и
 /// 1.2 м). Обе зебры встают на одну линию посередине между узлами — не
 /// ступенькой, какой лежали, пока пара «OSM + OSM» не выравнивалась вовсе.
+/// Между половинами газон — зебр две, каждая до своего бордюра.
 #[test]
 fn two_osm_zebras_of_a_divided_street_meet_halfway() {
+    let paint = divided_street_crossing(false);
+    let north: Vec<&Zebra> = paint
+        .zebras
+        .iter()
+        .filter(|zebra| zebra.osm && zebra.from.y > 0.0)
+        .collect();
+    assert_eq!(north.len(), 2, "{:?}", paint.zebras);
+    for zebra in north {
+        assert!((zebra.from.y - 12.6).abs() < 1e-3, "{zebra:?}");
+    }
+}
+
+/// Та же пара по асфальтовой разделительной — одна планка от кромки до
+/// кромки через обе половины, как у Яндекса на 02: у двух полосы сбивались на
+/// шве.
+#[test]
+fn a_paved_divided_street_is_crossed_by_one_zebra() {
+    let paint = divided_street_crossing(true);
+    let north: Vec<&Zebra> = paint
+        .zebras
+        .iter()
+        .filter(|zebra| zebra.osm && zebra.from.y > 0.0)
+        .collect();
+    assert_eq!(north.len(), 1, "{:?}", paint.zebras);
+    let zebra = north[0];
+    assert!((zebra.from.y - 12.6).abs() < 1e-3, "{zebra:?}");
+    let [low, high] = [zebra.from.x.min(zebra.to.x), zebra.from.x.max(zebra.to.x)];
+    assert!((low - (94.0 - 3.8 + EDGE_INSET)).abs() < 1e-3, "{zebra:?}");
+    assert!(
+        (high - (106.0 + 3.8 - EDGE_INSET)).abs() < 1e-3,
+        "{zebra:?}"
+    );
+}
+
+/// Разделённая жилая (половины на x 94 и 106, по переходу OSM на каждой)
+/// поперёк третичной; `paved` — асфальт ли между половинами.
+fn divided_street_crossing(paved: bool) -> NodePaint {
     let half = |x: f32, down: bool, crossing: f32| {
         let mut points = vec![
             Vec2::new(x, 80.0),
@@ -599,7 +637,8 @@ fn two_osm_zebras_of_a_divided_street_meet_halfway() {
     let drawn: Vec<&RoadLine> = map.roads.iter().collect();
     let paths: Vec<Vec<Vec2>> = map.roads.iter().map(|road| road.points.clone()).collect();
     let base = marking_breaks(&map.roads, is_carriageway, &[]).breaks;
-    let paint = NodePaint::new(
+    let partner = |road: usize| vec![Partner { road, paved }];
+    NodePaint::new(
         &drawn,
         &paths,
         &base,
@@ -609,21 +648,12 @@ fn two_osm_zebras_of_a_divided_street_meet_halfway() {
         EVERYTHING,
         |_| true,
         |road| match road {
-            1 => vec![2],
-            2 => vec![1],
+            1 => partner(2),
+            2 => partner(1),
             _ => Vec::new(),
         },
         |_| false,
-    );
-    let north: Vec<&Zebra> = paint
-        .zebras
-        .iter()
-        .filter(|zebra| zebra.osm && zebra.from.y > 0.0)
-        .collect();
-    assert_eq!(north.len(), 2, "{:?}", paint.zebras);
-    for zebra in north {
-        assert!((zebra.from.y - 12.6).abs() < 1e-3, "{zebra:?}");
-    }
+    )
 }
 
 /// Связка вливается в улицу под острым углом: у точки узла, откуда меряется

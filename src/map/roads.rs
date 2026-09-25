@@ -1320,7 +1320,10 @@ pub fn mesh_roads(
         |index| {
             axes.pairs.runs[index]
                 .iter()
-                .map(|run| run.partner)
+                .map(|run| node_paint::Partner {
+                    road: run.partner,
+                    paved: run.paved,
+                })
                 .collect()
         },
         |road| axes.rings.of(road).is_some(),

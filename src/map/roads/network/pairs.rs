@@ -98,6 +98,8 @@ pub struct PairRun {
     pub left: bool,
     /// Асфальта или газона между кромками после разводки, м.
     pub gap: f32,
+    /// Асфальт между половинами, а не газон ([`Median::is_paved`]).
+    pub paved: bool,
 }
 
 /// Разделительная пары: то, что лежит между половинами.
@@ -258,6 +260,7 @@ impl Pairs {
             partner,
             left: heading.perp_dot(near - first.at) > 0.0,
             gap,
+            paved: gap <= median_gap,
         });
         if index < partner {
             self.medians.push(Median {

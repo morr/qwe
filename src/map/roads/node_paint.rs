@@ -93,6 +93,13 @@ const RULE_ZEBRA_RANK: u8 = 2;
 const MIN_RUN: f32 = 6.0;
 /// Насколько зебры могут зайти одна на другую краями, м.
 const OVERLAP_SLACK: f32 = 0.2;
+/// Зебры двух половин сливаются в одну планку ([`join_zebras`]), если они
+/// параллельны (косинус), лежат на одной прямой с точностью до метра и между
+/// ними не шире самой широкой асфальтовой разделительной (ручка `Median gap`
+/// до 6 м) с отступами от кромок.
+const JOIN_PARALLEL: f32 = 0.95;
+const JOIN_OFFSET: f32 = 1.0;
+const JOIN_GAP: f32 = 8.0;
 /// Шаг сетки кластеров, м.
 const CLUSTER_CELL: f32 = 50.0;
 
@@ -126,6 +133,14 @@ pub struct Zebra {
     pub to: Vec2,
     /// По данным OSM, а не по правилу.
     pub osm: bool,
+}
+
+/// Вторая половина разделённой улицы: её дорога и асфальт ли между ними — по
+/// асфальтовой разделительной зебра идёт одной планкой через обе половины.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Partner {
+    pub road: usize,
+    pub paved: bool,
 }
 
 /// Стоп-линия: отрезок поперёк встречных узлу полос.
@@ -380,7 +395,7 @@ impl NodePaint {
         paved: &[Vec<Vec2>],
         style: NodePaintStyle,
         sidewalk: impl Fn(usize) -> bool,
-        partners: impl Fn(usize) -> Vec<usize>,
+        partners: impl Fn(usize) -> Vec<Partner>,
         on_ring: impl Fn(usize) -> bool,
     ) -> Self {
         let mut paint = Self {
@@ -607,7 +622,10 @@ impl NodePaint {
         let rank =
             |road: usize| class_rank(drawn[road].highway) * 2 + u8::from(sign(road).is_none());
         let others = |road: usize| -> Vec<usize> {
-            let paired: Vec<usize> = partners(road).into_iter().map(street).collect();
+            let paired: Vec<usize> = partners(road)
+                .into_iter()
+                .map(|partner| street(partner.road))
+                .collect();
             visits
                 .keys()
                 .copied()
@@ -846,17 +864,28 @@ impl NodePaint {
             });
         }
         // половины разделённой улицы переходят одной зеброй: вторая встаёт
-        // на линию первой — той, что по данным, иначе той, что дальше
+        // на линию первой — той, что по данным, иначе той, что дальше; по
+        // асфальтовой разделительной обе станут одной планкой
+        let mut joined: Vec<[usize; 2]> = Vec::new();
         for a in 0..plans.len() {
             for b in a + 1..plans.len() {
-                let paired = partners(plans[a].arm.road).contains(&plans[b].arm.road)
-                    || partners(plans[b].arm.road).contains(&plans[a].arm.road);
-                if paired {
+                let pair = |from: usize, to: usize| {
+                    partners(plans[from].arm.road)
+                        .into_iter()
+                        .find(|partner| partner.road == plans[to].arm.road)
+                };
+                if let Some(partner) = pair(a, b).or_else(|| pair(b, a)) {
                     align_pair(&mut plans, a, b);
+                    if partner.paved {
+                        joined.push([a, b]);
+                    }
                 }
             }
         }
-        for plan in plans {
+        let first_zebra = self.zebras.len();
+        // какая зебра какого плеча — для слияния пар
+        let mut zebra_of: Vec<Option<usize>> = vec![None; plans.len()];
+        for (plan_index, plan) in plans.into_iter().enumerate() {
             let ArmPlan {
                 arm,
                 walk,
@@ -913,8 +942,11 @@ impl NodePaint {
             if let Some(index) = osm {
                 crossings[arm.road][index].used = true;
             }
-            if let Some((center, osm)) = zebra {
-                self.zebras.extend(zebra_at(&walk, road, center, osm));
+            if let Some((center, osm)) = zebra
+                && let Some(found) = zebra_at(&walk, road, center, osm)
+            {
+                zebra_of[plan_index] = Some(self.zebras.len());
+                self.zebras.push(found);
             }
             if let Some(at) = stop {
                 let yields = !signalized && sign(arm.road) == Some(Sign::GiveWay);
@@ -933,6 +965,23 @@ impl NodePaint {
             self.breaks[arm.road].extend(walk.gap(node, outer + dir * PAINT_CLEAR));
             self.spills
                 .extend(walk.spills(edge, outer + dir * PAINT_CLEAR));
+        }
+        // пары по асфальтовой разделительной — одной планкой: полосы шейдер
+        // считает от её края, и на двух планках они сбивались на шве
+        let mut merged: Vec<usize> = Vec::new();
+        for [a, b] in joined {
+            let (Some(a), Some(b)) = (zebra_of[a], zebra_of[b]) else {
+                continue;
+            };
+            if let Some(one) = join_zebras(&self.zebras[a], &self.zebras[b]) {
+                self.zebras[a] = one;
+                merged.push(b);
+            }
+        }
+        merged.sort_unstable();
+        for index in merged.into_iter().rev() {
+            debug_assert!(index >= first_zebra);
+            self.zebras.remove(index);
         }
     }
 
@@ -1064,7 +1113,7 @@ struct Context<'a, P> {
     style: NodePaintStyle,
     street: &'a dyn Fn(usize) -> usize,
     sidewalk: &'a dyn Fn(usize) -> bool,
-    partners: &'a dyn Fn(usize) -> Vec<usize>,
+    partners: &'a dyn Fn(usize) -> Vec<Partner>,
     on_ring: &'a dyn Fn(usize) -> bool,
     /// Узлы на каждой дороге: длина на её пути и сама точка.
     nodes_along: &'a [Vec<(f32, Vec2)>],
@@ -1134,6 +1183,34 @@ fn zebra_at(walk: &Walk, road: &RoadLine, at: f32, osm: bool) -> Option<Zebra> {
         from: point - across,
         to: point + across,
         osm,
+    })
+}
+
+/// Одна планка из зебр двух половин: от дальнего края одной до дальнего края
+/// другой. Только если они легли на одну прямую ([`align_pair`]) и между ними
+/// не больше [`JOIN_GAP`] — иначе это не пара через узкую разделительную.
+fn join_zebras(a: &Zebra, b: &Zebra) -> Option<Zebra> {
+    let across = (a.to - a.from).try_normalize()?;
+    let theirs = (b.to - b.from).try_normalize()?;
+    if across.dot(theirs).abs() < JOIN_PARALLEL
+        || (b.from - a.from).perp_dot(across).abs() > JOIN_OFFSET
+        || (b.to - a.from).perp_dot(across).abs() > JOIN_OFFSET
+    {
+        return None;
+    }
+    let ends = [a.from, a.to, b.from, b.to];
+    let along = ends.map(|point| (point - a.from).dot(across));
+    let (low, high) = along
+        .iter()
+        .fold((f32::INFINITY, f32::NEG_INFINITY), |(low, high), &at| {
+            (low.min(at), high.max(at))
+        });
+    // зазор между половинами: вся длина минус обе планки
+    let gap = high - low - a.from.distance(a.to) - b.from.distance(b.to);
+    (gap <= JOIN_GAP).then(|| Zebra {
+        from: a.from + across * low,
+        to: a.from + across * high,
+        osm: a.osm || b.osm,
     })
 }
 
