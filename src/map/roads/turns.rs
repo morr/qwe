@@ -83,6 +83,8 @@ pub struct Turns {
 /// съезжала с полосы на газон (Лейпцигер-штрассе, витрина Берлина).
 #[derive(Clone, Debug)]
 pub struct LaneArrow {
+    /// Дорога подхода: второй ряд не встаёт в её разрыв у соседнего узла.
+    pub road: usize,
     pub at: Vec2,
     pub travel: Vec2,
     pub turn: LaneTurn,
@@ -91,8 +93,8 @@ pub struct LaneArrow {
 
 /// Сколько оси полосы за кромкой узла несёт стрелка, м: дальше всякой зебры и
 /// стоп-линии, за которыми она встаёт (`paint::ARROW_MARK_REACH` 30 м), плюс
-/// её отступ и длина.
-const ARROW_BACK: f32 = 45.0;
+/// её отступ и длина — и второй ряд (`paint::ARROW_REPEAT`) за ней.
+const ARROW_BACK: f32 = 60.0;
 
 /// Без `turn:lanes` стрелки рисуются только на подходе с этим числом полос
 /// своего направления и больше — у крупного узла; у двухполосной улицы на
@@ -256,6 +258,7 @@ impl Turns {
             for (lane, turn) in ins[a].lanes.iter().zip(turns) {
                 if turn != LaneTurn::default() {
                     self.arrows.push(LaneArrow {
+                        road: from.road,
                         at: lane.point,
                         travel: lane.travel,
                         turn,

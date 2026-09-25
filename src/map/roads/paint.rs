@@ -235,6 +235,12 @@ const ARROW_STEM: f32 = 0.22;
 const ARROW_BRANCH_REACH: f32 = 0.8;
 const ARROW_SETBACK: f32 = 4.0;
 const ARROW_MARK_REACH: f32 = 30.0;
+/// Второй ряд стрелок: на сколько его кончик дальше первого и сколько оси
+/// полосы должно остаться за ним, м. Ось несёт `turns::ARROW_BACK` 60 м и
+/// кончается у предыдущего узла раньше, так что у короткого перегона второго
+/// ряда нет.
+const ARROW_REPEAT: f32 = 20.0;
+const ARROW_REPEAT_CLEAR: f32 = 5.0;
 
 /// Поперечная краска узлов — зебры и стоп-линии отрезком и полутолщиной, — с
 /// сеткой для [`Painter::arrow_setback`]: перебор всех на каждую стрелку стоил
@@ -888,6 +894,55 @@ impl Painter {
             }
         }
         farthest + ARROW_SETBACK
+    }
+
+    /// Второй ряд стрелок, как у Яндекса и по ГОСТ 1.18: кончик в
+    /// [`ARROW_REPEAT`] за первым, если ось полосы за ним есть ещё на
+    /// [`ARROW_REPEAT_CLEAR`], между рядами нет поперечной краски и ряд не
+    /// в разрыве `breaks` своей дороги — иначе он лёг бы на соседний узел или
+    /// его переход.
+    pub(super) fn repeat_setback(
+        arrow: &LaneArrow,
+        setback: f32,
+        marks: &ArrowMarks,
+        breaks: &[Break],
+    ) -> Option<f32> {
+        let repeat = setback + ARROW_REPEAT;
+        let (_, total) = arclengths(&arrow.back);
+        if total < repeat + ARROW_LENGTH + ARROW_REPEAT_CLEAR {
+            return None;
+        }
+        let forward = arrow.travel.normalize_or_zero();
+        let occupied = repeat - ARROW_SETBACK..=repeat + ARROW_LENGTH + ARROW_SETBACK;
+        let in_break = breaks
+            .iter()
+            .filter(|found| found.reach > 0.0)
+            .any(|found| {
+                let offset = arrow.at - found.at;
+                let behind = offset.dot(forward);
+                offset.perp_dot(forward).abs() < found.reach + lane_width()
+                    && behind + found.reach >= *occupied.start()
+                    && behind - found.reach <= *occupied.end()
+            });
+        if in_break {
+            return None;
+        }
+        let span = setback + ARROW_LENGTH..=repeat + ARROW_LENGTH + ARROW_SETBACK;
+        let reach = Vec2::splat(*span.end());
+        let blocked = marks
+            .grid
+            .near(arrow.at - reach, arrow.at + reach)
+            .into_iter()
+            .any(|index| {
+                let Mark { from, to, .. } = marks.marks[index];
+                let [a, b] = [from, to].map(|point| forward.perp_dot(point - arrow.at));
+                if a * b > 0.0 || a == b {
+                    return false;
+                }
+                let crossing = from.lerp(to, a / (a - b));
+                span.contains(&(arrow.at - crossing).dot(forward))
+            });
+        (!blocked).then_some(repeat)
     }
 
     /// Стрелка на полосе подхода: стебель вдоль хода, наконечник, если прямо

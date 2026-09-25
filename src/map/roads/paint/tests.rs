@@ -530,3 +530,51 @@ fn the_approach_splits_the_line_into_dashed_and_solid_links() {
     assert_eq!(stations[1].to_break, 25.0);
     assert_eq!(solid, vec![false, true]);
 }
+
+/// Второй ряд стрелок — в 20 м за первым, если полоса длинная и чистая; не
+/// встаёт на соседний узел и за переход.
+#[test]
+fn a_long_approach_gets_a_second_row_of_arrows() {
+    // полоса едет по +x к кромке узла в x = 0, ось назад — 60 м
+    let arrow = |back: f32| LaneArrow {
+        road: 0,
+        at: Vec2::ZERO,
+        travel: Vec2::X,
+        turn: LaneTurn {
+            left: true,
+            through: true,
+            right: false,
+        },
+        back: vec![Vec2::ZERO, Vec2::new(-back, 0.0)],
+    };
+    let clear = ArrowMarks::new(&[], &[]);
+    assert_eq!(
+        Painter::repeat_setback(&arrow(60.0), 4.0, &clear, &[]),
+        Some(24.0)
+    );
+    // короткий перегон — второго ряда нет
+    assert_eq!(
+        Painter::repeat_setback(&arrow(30.0), 4.0, &clear, &[]),
+        None
+    );
+    // разрыв соседнего узла под вторым рядом
+    let next = Break {
+        at: Vec2::new(-30.0, 0.0),
+        reach: 6.0,
+    };
+    assert_eq!(
+        Painter::repeat_setback(&arrow(60.0), 4.0, &clear, &[next]),
+        None
+    );
+    // переход между рядами
+    let zebra = Zebra {
+        from: Vec2::new(-15.0, -5.0),
+        to: Vec2::new(-15.0, 5.0),
+        osm: true,
+    };
+    let marked = ArrowMarks::new(&[zebra], &[]);
+    assert_eq!(
+        Painter::repeat_setback(&arrow(60.0), 4.0, &marked, &[]),
+        None
+    );
+}

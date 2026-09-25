@@ -1658,6 +1658,11 @@ pub fn mesh_roads(
         for arrow in &turns.arrows {
             let setback = paint::Painter::arrow_setback(arrow, &marks);
             painter.paint_arrow(arrow, setback);
+            // и второй ряд дальше от узла, где полоса это позволяет
+            let breaks = &node_paint.breaks[arrow.road];
+            if let Some(repeat) = paint::Painter::repeat_setback(arrow, setback, &marks, breaks) {
+                painter.paint_arrow(arrow, repeat);
+            }
         }
     }
     // направляющие островки у колец: асфальт — в слой улиц, поверх тротуаров,
