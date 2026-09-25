@@ -1,6 +1,6 @@
 use super::*;
-use crate::map::osm::MapData;
 use crate::map::osm::fixture::street;
+use crate::map::osm::{Highway, MapData};
 use crate::map::roads::shape::RoadShape;
 use crate::map::roads::{CrossingMode, RoadStyle, mesh_roads};
 
@@ -298,25 +298,31 @@ fn the_paint_ladder_hides_lane_lines_first() {
 
 #[test]
 fn a_crossing_paints_a_zebra_and_stop_lines_across_the_arms() {
-    // жилая крестовина: четыре плеча, на каждом зебра и стоп-линия
+    // крестовина двух `tertiary`: четыре плеча, на каждом зебра и стоп-линия
     let map = map_of(vec![
         with_lanes(
-            street(
-                vec![Vec2::ZERO, Vec2::new(100.0, 0.0), Vec2::new(200.0, 0.0)],
-                7.6,
-            ),
+            RoadLine {
+                highway: Highway::Tertiary,
+                ..street(
+                    vec![Vec2::ZERO, Vec2::new(100.0, 0.0), Vec2::new(200.0, 0.0)],
+                    7.6,
+                )
+            },
             2,
             false,
         ),
         with_lanes(
-            street(
-                vec![
-                    Vec2::new(100.0, -100.0),
-                    Vec2::new(100.0, 0.0),
-                    Vec2::new(100.0, 100.0),
-                ],
-                7.6,
-            ),
+            RoadLine {
+                highway: Highway::Tertiary,
+                ..street(
+                    vec![
+                        Vec2::new(100.0, -100.0),
+                        Vec2::new(100.0, 0.0),
+                        Vec2::new(100.0, 100.0),
+                    ],
+                    7.6,
+                )
+            },
             2,
             false,
         ),

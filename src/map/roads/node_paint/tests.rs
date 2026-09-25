@@ -58,6 +58,7 @@ fn paint_of(roads: Vec<RoadLine>, marks: Vec<RoadNode>, style: NodePaintStyle) -
         style,
         |_| true,
         |_| Vec::new(),
+        |_| false,
     )
 }
 
@@ -92,6 +93,75 @@ fn a_minor_street_does_not_break_the_main_one() {
         zebra.from.y < -4.0 - ZEBRA_SETBACK,
         "за кромкой узла: {zebra:?}"
     );
+}
+
+/// Две жилые улицы зебру по правилу не получают — ни тротуары, ни стоп-линия
+/// её не зовут; светофор в узле — получают. Та же жилая у `tertiary` —
+/// получает (`a_minor_street_does_not_break_the_main_one`).
+#[test]
+fn two_residential_streets_get_no_rule_zebra_unless_signalized() {
+    let quiet = paint_of(
+        vec![through(Highway::Residential), side()],
+        Vec::new(),
+        EVERYTHING,
+    );
+    assert!(quiet.zebras.is_empty(), "{:?}", quiet.zebras);
+    assert!(quiet.stop_lines.is_empty(), "и стоп-линий без знака тоже");
+    let stop = RoadNode {
+        pos: NODE + Vec2::new(0.0, -6.0),
+        kind: RoadNodeKind::Stop,
+    };
+    // знак стоит на вершине примыкания — так его и ищет `sign`
+    let signed_side = road(
+        vec![Vec2::new(100.0, -80.0), stop.pos, NODE],
+        8.0,
+        Highway::Residential,
+        2,
+    );
+    let signed = paint_of(
+        vec![through(Highway::Residential), signed_side],
+        vec![stop],
+        EVERYTHING,
+    );
+    assert!(signed.zebras.is_empty());
+    assert_eq!(signed.stop_lines.len(), 1, "знак «Стоп» — стоп-линия есть");
+    let signals = RoadNode {
+        pos: NODE,
+        kind: RoadNodeKind::TrafficSignals,
+    };
+    let lit = paint_of(
+        vec![through(Highway::Residential), side()],
+        vec![signals],
+        EVERYTHING,
+    );
+    assert!(!lit.zebras.is_empty());
+}
+
+/// Узел, где дорога — дуга кольца, зебры по правилу не получает ни на одном
+/// луче, какой бы ни был класс: переходы у кольца приходят нодами OSM.
+#[test]
+fn a_ring_node_gets_no_rule_zebras() {
+    let roads = vec![through(Highway::Tertiary), side()];
+    let mut map = MapData { roads, ..default() };
+    map.network = RoadNetwork::new(&map.roads);
+    let drawn: Vec<&RoadLine> = map.roads.iter().collect();
+    let paths: Vec<Vec<Vec2>> = map.roads.iter().map(|road| road.points.clone()).collect();
+    let base = marking_breaks(&map.roads, is_carriageway, &[]).breaks;
+    let paint = |on_ring: fn(usize) -> bool| {
+        NodePaint::new(
+            &drawn,
+            &paths,
+            &base,
+            &[],
+            &map,
+            EVERYTHING,
+            |_| true,
+            |_| Vec::new(),
+            on_ring,
+        )
+    };
+    assert_eq!(paint(|_| false).zebras.len(), 1);
+    assert!(paint(|road| road == 0).zebras.is_empty());
 }
 
 /// Перемычка между двумя узлами короче [`RULE_ZEBRA_ROOM`] за кромкой (ветка
@@ -145,11 +215,11 @@ fn an_equal_crossing_breaks_both_and_paints_every_arm() {
     let across = road(
         vec![Vec2::new(100.0, -100.0), NODE, Vec2::new(100.0, 100.0)],
         8.0,
-        Highway::Residential,
+        Highway::Tertiary,
         2,
     );
     let paint = paint_of(
-        vec![through(Highway::Residential), across],
+        vec![through(Highway::Tertiary), across],
         Vec::new(),
         EVERYTHING,
     );
@@ -226,6 +296,7 @@ fn a_stitched_side_street_is_an_arm_of_the_junction() {
         EVERYTHING,
         |_| true,
         |_| Vec::new(),
+        |_| false,
     );
     assert_eq!(paint.junctions.len(), 1);
     assert_eq!(paint.junctions[0].leading, vec![0]);
@@ -282,7 +353,8 @@ fn close_side_streets_from_both_sides_are_one_junction() {
         "главная проходит кластер целиком: {:?}",
         paint.breaks[0]
     );
-    assert_eq!(paint.zebras.len(), 2);
+    // три жилые — зебр по правилу нет (у Яндекса на Циолковского ни одной)
+    assert!(paint.zebras.is_empty(), "{:?}", paint.zebras);
 }
 
 #[test]
@@ -429,14 +501,15 @@ fn a_one_way_arm_leaving_the_node_has_no_stop_line() {
 #[test]
 fn a_give_way_sign_makes_the_stop_line_dashed() {
     let paint = paint_of(
-        vec![through(Highway::Residential), side()],
+        vec![through(Highway::Tertiary), side()],
         vec![RoadNode {
             pos: Vec2::new(100.0, -80.0),
             kind: RoadNodeKind::GiveWay,
         }],
         EVERYTHING,
     );
-    // знак в 80 м — дальше, чем его ищут: линия сплошная
+    // знак в 80 м — дальше, чем его ищут: линия сплошная (стоит она у
+    // `tertiary`; у двух жилых без знака её не было бы вовсе)
     assert!(!paint.stop_lines[0].yields);
     let near = Vec2::new(100.0, -20.0);
     let side = road(
@@ -536,6 +609,7 @@ fn two_osm_zebras_of_a_divided_street_meet_halfway() {
             2 => vec![1],
             _ => Vec::new(),
         },
+        |_| false,
     );
     let north: Vec<&Zebra> = paint
         .zebras

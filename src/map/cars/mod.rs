@@ -51,7 +51,7 @@ use crate::prefs::retuned;
 use crate::settings::{CAR_DETAIL_MAX_ZOOM, CAR_MAX_ZOOM, CAR_SILHOUETTE_MAX_ZOOM, Z_CAR};
 
 pub mod body;
-mod district;
+pub(crate) mod district;
 
 /// Дефолт, границы и шаг ползунка занятости мест ([`CarStyle::occupancy`]) —
 /// какая доля парковочных мест улицы занята. Сплошной ряд от перекрёстка до

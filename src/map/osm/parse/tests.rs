@@ -1081,20 +1081,78 @@ fn turn_lanes_follow_the_flow() {
 #[test]
 fn sidewalk_tags_pick_the_sides() {
     let sides = |pairs: &[(&str, &str)]| tagged_sidewalks(&tags(pairs));
-    assert_eq!(sides(&[]), [true, true], "без тега — с обеих сторон");
-    assert_eq!(sides(&[("sidewalk", "separate")]), [false, false]);
-    assert_eq!(sides(&[("sidewalk", "no")]), [false, false]);
-    assert_eq!(sides(&[("sidewalk", "right")]), [false, true]);
+    assert_eq!(sides(&[]), None, "без тега решает не тег");
+    assert_eq!(sides(&[("sidewalk", "separate")]), Some([false, false]));
+    assert_eq!(sides(&[("sidewalk", "no")]), Some([false, false]));
+    assert_eq!(sides(&[("sidewalk", "right")]), Some([false, true]));
     assert_eq!(
         sides(&[("sidewalk", "both"), ("sidewalk:left", "separate")]),
-        [false, true]
+        Some([false, true])
     );
-    assert_eq!(sides(&[("sidewalk:both", "separate")]), [false, false]);
+    assert_eq!(
+        sides(&[("sidewalk:both", "separate")]),
+        Some([false, false])
+    );
+    assert_eq!(
+        sides(&[("sidewalk:left", "no")]),
+        Some([false, true]),
+        "одна названная сторона — другая остаётся"
+    );
     assert_eq!(
         sides(&[("sidewalk", "left"), ("oneway", "-1")]),
-        [false, true],
+        Some([false, true]),
         "развёрнутый way — тротуар справа по новому ходу"
     );
+    let bare = |pairs: &[(&str, &str)]| untagged_sidewalks(&tags(pairs));
+    assert_eq!(bare(&[]), [true, true]);
+    assert_eq!(bare(&[("surface", "asphalt")]), [true, true]);
+    assert_eq!(
+        bare(&[("surface", "gravel")]),
+        [false, false],
+        "у грунтовой — никогда"
+    );
+}
+
+/// Жилая улица без тега тротуара: в частном секторе обочина без полосы, среди
+/// многоэтажек — тротуар с обеих сторон. Магистраль и улица с тегом в
+/// частном секторе тротуар сохраняют, улица вдали от домов — нет.
+#[test]
+fn an_untagged_street_takes_its_sidewalks_from_the_blocks_around() {
+    let street = |y: f32| vec![CENTER + Vec2::new(-150.0, y), CENTER + Vec2::new(150.0, y)];
+    let row = |scene: Overpass, y: f32, tags: &'static [(&str, &str)], side: f32| {
+        (0..6).fold(scene, |scene, i| {
+            let x = -125.0 + 50.0 * i as f32;
+            scene.area(
+                tags,
+                rect(
+                    CENTER + Vec2::new(x, y + 12.0),
+                    CENTER + Vec2::new(x + side, y + 12.0 + side),
+                ),
+            )
+        })
+    };
+    const HOUSE: &[(&str, &str)] = &[("building", "house")];
+    const SLAB: &[(&str, &str)] = &[("building", "apartments"), ("height", "27")];
+    // частный сектор у y = 0, микрорайон у y = 1000, пустырь у y = -1000
+    let scene = Overpass::new(CITY)
+        .way(&[("highway", "residential")], street(0.0))
+        .way(&[("highway", "tertiary")], street(20.0))
+        .way(
+            &[("highway", "residential"), ("sidewalk", "both")],
+            street(-20.0),
+        )
+        .way(&[("highway", "residential")], street(1000.0))
+        .way(&[("highway", "residential")], street(-1000.0));
+    let scene = row(scene, 0.0, HOUSE, 10.0);
+    let scene = row(scene, 1000.0, SLAB, 30.0);
+    let map = scene.parse();
+
+    let sides: Vec<[bool; 2]> = map.roads.iter().map(|road| road.sidewalks).collect();
+    assert_eq!(sides[0], [false; 2], "частный сектор — без полосы");
+    assert_eq!(sides[1], [true; 2], "tertiary — всегда");
+    assert_eq!(sides[2], [true; 2], "тег сильнее окружения");
+    assert_eq!(sides[3], [true; 2], "микрорайон — с тротуаром");
+    assert_eq!(sides[4], [false; 2], "без домов вокруг — без полосы");
 }
 
 /// Съезды развязок (`*_link`) — дороги своего класса, а не мусор словаря.
@@ -2500,7 +2558,7 @@ fn a_block_edge_is_pulled_under_the_asphalt() {
         CENTER + Vec2::new(-20.0, 60.0),
     );
     let map = Overpass::new(CITY)
-        .way(&[("highway", "residential")], street)
+        .way(&[("highway", "residential"), ("sidewalk", "both")], street)
         .area(&[("landuse", "residential")], near)
         .area(&[("landuse", "residential")], far.clone())
         .area(&[("landuse", "residential")], around)
@@ -2544,7 +2602,7 @@ fn a_block_corner_at_a_crossing_is_pulled_under_both_streets() {
         let corner = edge + gap;
         let map = Overpass::new(CITY)
             .way(
-                &[("highway", "residential")],
+                &[("highway", "residential"), ("sidewalk", "both")],
                 vec![
                     CENTER - Vec2::new(200.0, 0.0),
                     CENTER,
@@ -2552,7 +2610,7 @@ fn a_block_corner_at_a_crossing_is_pulled_under_both_streets() {
                 ],
             )
             .way(
-                &[("highway", "residential")],
+                &[("highway", "residential"), ("sidewalk", "both")],
                 vec![
                     CENTER - Vec2::new(0.0, 200.0),
                     CENTER,
@@ -2588,7 +2646,7 @@ fn a_street_in_a_courtyard_shrinks_the_hole_to_its_asphalt() {
     let edge = RESIDENTIAL_HALF + sidewalk_band(2.0 * RESIDENTIAL_HALF);
     let map = Overpass::new(CITY)
         .way(
-            &[("highway", "residential")],
+            &[("highway", "residential"), ("sidewalk", "both")],
             vec![
                 CENTER - Vec2::new(400.0, 0.0),
                 CENTER + Vec2::new(400.0, 0.0),
@@ -2674,7 +2732,7 @@ fn tagged_colours_reach_the_building() {
 // месту в фикстуре.
 
 /// Сырая карта из сцены — ровно то, что отдаёт элементный цикл, без доводки.
-fn read(scene: &Overpass) -> (MapData, Vec<Vec2>, ReadReport) {
+fn read(scene: &Overpass) -> (MapData, Pending, ReadReport) {
     let response: OverpassResponse =
         serde_json::from_str(&scene.json()).expect("фикстура строит валидный JSON");
     read_elements(&response, &GeoBounds::for_city(CITY))
@@ -2828,8 +2886,8 @@ fn finishing_the_parse_reports_what_each_pass_did() {
             CENTER + Vec2::new(-800.0, 0.0),
         );
 
-    let (mut map, entrances, _) = read(&scene);
-    let report = finish_parse(&mut map, &entrances);
+    let (mut map, pending, _) = read(&scene);
+    let report = finish_parse(&mut map, &pending);
 
     assert_eq!(report.drowned, 1);
     assert_eq!(report.squared, 1);

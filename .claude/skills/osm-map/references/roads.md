@@ -52,7 +52,20 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   **`sidewalk=*` picks the sides** (stage 7): `RoadLine::sidewalks` `[left, right]` along
   the points (`parse/tags.rs::tagged_sidewalks` — `both|left|right|no|none|separate`,
   refined by `sidewalk:both|left|right`; `no` and `separate` mean no band, a separate
-  footway draws itself; untagged means both; `oneway=-1` swaps them with the points).
+  footway draws itself; `oneway=-1` swaps them with the points). **Untagged** (no
+  `sidewalk*` key at all — `tagged_sidewalks` returns `None`) is decided by the street and
+  what stands around it, not taken as "both": an unpaved `surface`
+  (`gravel|unpaved|ground|dirt|compacted|…`, `tags.rs::untagged_sidewalks`) never has
+  one; a residential / unclassified / living street keeps both only where the mean
+  **storeys of the blocks** along it (`cars::district::Districts::storeys_at`, the very
+  measure that thins the parked row, probed every 40 m) are at least
+  `SIDEWALK_STOREYS_MIN` 3 — the private sector and an empty field get a kerb with no
+  band (`parse.rs::infer_sidewalks`, right after the drowned buildings, so the house
+  pull and the block pull already read the decision); trunk…tertiary and the links keep
+  both. The trigger was the Yandex comparison: in Tula silence means "yes" in the centre
+  and "no" among private houses (galleries 09, 13, the side streets of 03 and 19), and
+  the band there drew the rule zebras after it. Tula: see the `osm parse: N of M
+  untagged residential streets left without sidewalks` line.
   `drawn_sidewalk` is `None` when neither side has one; `push_sidewalk` lays a one-sided
   band the paired-half way (width plus one sidewalk, shifted half a sidewalk to its side)
   and ANDs the tag with the pair runs; the kerb returns drop the arc on a missing side;
@@ -157,6 +170,14 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     `road_medians` (`Z_ROAD_MEDIAN` 1.7, `SurfaceKind::Grass`, the meadow colour); a lawn
     or kerb piece under `MIN_LAWN_AREA` 4 m² is not drawn. Drawn
     whatever `RoadStyle::sidewalks` says: a lawn is still a lawn.
+  - **Tram track bed** (`medians::carries_tram`) — a median of any width with a
+    `RailKind::Tram` axis within half its width on at least `TRAM_SHARE_MIN` half of the
+    midline (probed every 5 m) is paved like a narrow one, and its double solids run
+    along **both edges**, `TRAM_EDGE_INSET` 0.3 m inside the halves' inner kerbs, not
+    down the middle: the rails lie between them (the tram layer is off by default). In
+    OSM Советская is two halves with the tram ways in a 5 m gap, and the width alone
+    read it as a lawn down the avenue (gallery 18). `MeshReport::medians` counts what is
+    drawn, so a tram bed counts as paved.
   - **Where it opens** — `crossing_breaks`: only a junction break of one half **facing** a
     break of the other (within the axes' distance plus both reaches) — a crossing
     street, a U-turn link, a zebra's footway. A street into one half does not open the
@@ -532,13 +553,19 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     one, `CrossingMode::Generated` puts a zebra `ZEBRA_SETBACK` 1 m past the edge (edge =
     the break reach: half the widest other road + 1 m) — if the cluster joins two streets
     with sidewalks (by the `sidewalk=*` tag — `RoadLine::sidewalks`, like `kerb_parking`;
-    the Sidewalks toggle only hides the band, `crossings` is the zebra's own knob), the
+    the Sidewalks toggle only hides the band, `crossings` is the zebra's own knob), one of
+    the cluster's streets is at least `tertiary` (`RULE_ZEBRA_RANK`) or the cluster is
+    signalized, no road of the cluster is a ring arc (`on_ring`, the check the lane
+    arrows use — and no closed ring passes it), the
     arm is not a `*_link` and the next junction node on the same road
     lies at least `RULE_ZEBRA_ROOM` 30 m past the edge (`nodes_along`). A shorter arm is
     a link between two nodes — the branches of a fork's triangle (Tula, gallery 06, 22 and
     31 m) had a rule zebra at both ends and a stop line between them within fifteen metres;
     the crossing is left to the outer arms. An OSM crossing ignores the room. A zebra is `ZEBRA_LENGTH` 4 m along the
-    road, across the carriageway less 0.3 m at each kerb. The stop line (0.4 m) stands
+    road, across the carriageway less 0.3 m at each kerb. The stop line is called by the
+    same things as the zebra — a zebra on the arm, signals, a stop / give-way sign, or a
+    street of at least `tertiary` in the cluster; two residential streets with no sign get
+    neither (gallery 13: Yandex draws the cross bare). The stop line (0.4 m) stands
     `STOP_GAP` 1 m behind the zebra (or 1 m past the edge without one), across the lanes
     **coming to the node** — axis to kerb on the traffic side (`MapData::traffic_side`)
     for a two-way road, the full width for a one-way one that flows toward the node, none

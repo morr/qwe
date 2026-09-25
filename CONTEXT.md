@@ -272,7 +272,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     cluster has signals; rank is the `highway` class, a stop / give-way sign on the arm
     lowers it. On every arm that breaks: a **zebra** (the OSM crossing on the arm, or one
     generated past the junction edge where two streets with sidewalks (by tag, not the
-    Sidewalks toggle) meet — `RoadStyle::crossings`) and a **stop line** across the lanes
+    Sidewalks toggle) meet, one of them at least tertiary or the cluster signalized, and
+    no ring in it — `RoadStyle::crossings`) and a **stop line** (where a zebra, signals,
+    a sign or a tertiary+ street call for it) across the lanes
     coming in (dashed for give-way —
     `RoadStyle::stop_lines`); the halves of a divided street share one zebra line. A
     marked crossing elsewhere is a zebra with a gap in the lines. A **pocket**: a wide
@@ -295,7 +297,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     rule on trunk/primary/secondary (cars do not stand on an arterial's lane) — there as
     rare short bays, seeded by the street, not a block-long run. One answer
     (`pockets::kerbsides`) for the ribbon and for `map::cars`. `sidewalk=*` likewise
-    decides which sides carry a sidewalk band.
+    decides which sides carry a sidewalk band; an **untagged** street has none on an
+    unpaved surface, and a residential one has them only among blocks of 3+ storeys on
+    average (`parse::infer_sidewalks`, the cars' district measure).
   - **Paired halves** (`map/roads/network/pairs.rs`, `Pairs`) — a divided street as OSM
     draws it: two opposite one-way ways of one class side by side (a street or a
     `service` drive, never a parking aisle), up to `PAIR_MAX_GAP` 15 m between the kerbs.
@@ -308,7 +312,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     what lies between the halves: up to the **median gap** (`RoadShape::median_gap`, 3 m by
     default) asphalt under both ribbons with
     a double solid down the middle (the paint layer), wider a lawn with a kerb and a
-    rounded nose (`road_medians`, `Z_ROAD_MEDIAN`). A half has **no sidewalk on its
+    rounded nose (`road_medians`, `Z_ROAD_MEDIAN`); a median a tram runs in is a
+    **tram bed** at any width — asphalt with the double solids along both edges
+    (`medians::carries_tram`). A half has **no sidewalk on its
     paired side**. The median opens only at a break of **both** halves facing each
     other (a crossing street, a U-turn, a zebra); a street into one half does not open
     it. Drawing only: `RoadLine::points` do not move.
