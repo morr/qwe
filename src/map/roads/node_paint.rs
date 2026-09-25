@@ -44,6 +44,7 @@ use super::junctions::{JUNCTION_MARGIN, SharedNode, Visit, node_key, with_stitch
 use super::network::StitchTarget;
 use super::{is_carriageway, lane_count};
 use crate::map::along::{arclengths, nearest_on_path, place_on_path};
+use crate::map::footprint::distance_to_polyline;
 use crate::map::grid::Grid;
 use crate::map::meshing::Break;
 use crate::map::osm::{Highway, MapData, RoadLine, RoadNodeKind, TrafficSide};
@@ -397,8 +398,9 @@ impl NodePaint {
             junctions.iter().map(|node| node_key(node.at)).collect();
         let spills = std::mem::take(&mut paint.spills);
         spill_over_ends(drawn, paths, &junction_keys, &spills, &mut paint.breaks);
+        let narrowing = narrowing_ends(drawn, paths);
         for (road, breaks) in paint.breaks.iter_mut().enumerate() {
-            bridge_short_runs(paths[road].as_ref(), breaks);
+            bridge_short_runs(paths[road].as_ref(), breaks, narrowing[road]);
         }
         paint.zebras = without_overlaps(std::mem::take(&mut paint.zebras));
         paint
@@ -726,13 +728,30 @@ impl NodePaint {
             } = plan;
             let road = drawn[arm.road];
             let dir = arm.dir;
-            let stop = (style.stop_lines && incoming(road, dir)).then(|| {
-                let behind = match zebra {
-                    Some((center, _)) => center + dir * (ZEBRA_LENGTH / 2.0 + STOP_GAP),
-                    None => edge + dir * ZEBRA_SETBACK,
-                };
-                behind + dir * STOP_WIDTH / 2.0
-            });
+            // Кромка узла — полуширина соседа от точки узла; у луча, что
+            // вливается в соседа под острым углом, там ещё его асфальт, и
+            // стоп-линия (зебра по правилу — тоже) ложилась обрывком посреди
+            // перекрёстка (пример 08, связка в Пролетарскую). Такая краска не
+            // рисуется.
+            let in_other = |along: f32| {
+                walk.at(along).is_some_and(|(point, _)| {
+                    visits.keys().any(|&other| {
+                        other != arm.road
+                            && distance_to_polyline(point, paths[other].as_ref())
+                                < drawn[other].width / 2.0 - EDGE_INSET
+                    })
+                })
+            };
+            let zebra = zebra.filter(|&(center, osm)| osm || !in_other(center));
+            let stop = (style.stop_lines && incoming(road, dir))
+                .then(|| {
+                    let behind = match zebra {
+                        Some((center, _)) => center + dir * (ZEBRA_LENGTH / 2.0 + STOP_GAP),
+                        None => edge + dir * ZEBRA_SETBACK,
+                    };
+                    behind + dir * STOP_WIDTH / 2.0
+                })
+                .filter(|&at| !in_other(at));
             let outer = [
                 zebra.map(|(center, _)| center + dir * ZEBRA_LENGTH / 2.0),
                 stop.map(|at| at + dir * STOP_WIDTH / 2.0),
@@ -838,7 +857,10 @@ impl ArmPlan<'_> {
 
 /// Зебры двух половин одной улицы — на одну линию поперёк неё: вторая
 /// сдвигается к той, что по данным, а если обе по правилу — к дальней от
-/// узла. Не ближе кромки узла.
+/// узла. Два перехода OSM — по узлу на каждой половине — маппер ставит не на
+/// одну прямую (на 02 они разошлись на метр), и тогда обе встают посередине
+/// между ними: сдвиг в метр остаётся внутри длины самой планки. Не ближе
+/// кромки узла.
 fn align_pair(plans: &mut [ArmPlan], a: usize, b: usize) {
     let (Some((point_a, out_a)), Some((point_b, out_b))) =
         (plans[a].zebra_frame(), plans[b].zebra_frame())
@@ -850,34 +872,36 @@ fn align_pair(plans: &mut [ArmPlan], a: usize, b: usize) {
     }
     let out = (out_a + out_b).normalize();
     let osm = |plan: &ArmPlan| plan.zebra.is_some_and(|(_, osm)| osm);
-    let (target, moved) = match (osm(&plans[a]), osm(&plans[b])) {
-        (true, true) => return,
-        (true, false) => (a, b),
-        (false, true) => (b, a),
-        (false, false) if point_a.dot(out) >= point_b.dot(out) => (a, b),
-        (false, false) => (b, a),
+    let (line, moved) = match (osm(&plans[a]), osm(&plans[b])) {
+        (true, true) => (
+            (point_a.dot(out) + point_b.dot(out)) / 2.0,
+            vec![(a, point_a, out_a), (b, point_b, out_b)],
+        ),
+        (true, false) => (point_a.dot(out), vec![(b, point_b, out_b)]),
+        (false, true) => (point_b.dot(out), vec![(a, point_a, out_a)]),
+        (false, false) if point_a.dot(out) >= point_b.dot(out) => {
+            (point_a.dot(out), vec![(b, point_b, out_b)])
+        }
+        (false, false) => (point_b.dot(out), vec![(a, point_a, out_a)]),
     };
-    let (to, from, along) = if target == a {
-        (point_a, point_b, out_b)
-    } else {
-        (point_b, point_a, out_a)
-    };
-    let shift = (to - from).dot(out) / along.dot(out);
-    let plan = &mut plans[moved];
-    let dir = plan.arm.dir;
-    let Some((center, osm)) = plan.zebra else {
-        return;
-    };
-    let nearest = plan.edge + dir * (ZEBRA_SETBACK + ZEBRA_LENGTH / 2.0);
-    let center = center + dir * shift;
-    plan.zebra = Some((
-        if (center - nearest) * dir < 0.0 {
-            nearest
-        } else {
-            center
-        },
-        osm,
-    ));
+    for (index, from, along) in moved {
+        let shift = (line - from.dot(out)) / along.dot(out);
+        let plan = &mut plans[index];
+        let dir = plan.arm.dir;
+        let Some((center, osm)) = plan.zebra else {
+            continue;
+        };
+        let nearest = plan.edge + dir * (ZEBRA_SETBACK + ZEBRA_LENGTH / 2.0);
+        let center = center + dir * shift;
+        plan.zebra = Some((
+            if (center - nearest) * dir < 0.0 {
+                nearest
+            } else {
+                center
+            },
+            osm,
+        ));
+    }
 }
 
 /// То, что `paint_cluster` читает, одним аргументом.
@@ -1087,9 +1111,47 @@ fn spill_over_ends(
     }
 }
 
-/// Кусок линий между двумя разрывами короче [`MIN_RUN`] — тоже разрыв.
-fn bridge_short_runs(path: &[Vec2], breaks: &mut Vec<Break>) {
-    if breaks.len() < 2 || path.len() < 2 {
+/// Концы `[начало, конец]` каждой дороги, за которыми улица идёт дальше с
+/// **меньшим** числом полос: чистый шов с одной проезжей частью, где линиям,
+/// которых у соседа нет, продолжаться некуда — они гаснут в клине.
+fn narrowing_ends(drawn: &[&RoadLine], paths: &[impl AsRef<[Vec2]>]) -> Vec<[bool; 2]> {
+    let mut ends: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+    for (road, path) in paths.iter().enumerate() {
+        let path = path.as_ref();
+        if !is_carriageway(drawn[road]) || path.len() < 2 || is_ring(path) {
+            continue;
+        }
+        for end in [path[0], path[path.len() - 1]] {
+            ends.entry(node_key(end)).or_default().push(road);
+        }
+    }
+    paths
+        .iter()
+        .enumerate()
+        .map(|(road, path)| {
+            let path = path.as_ref();
+            if !is_carriageway(drawn[road]) || path.len() < 2 || is_ring(path) {
+                return [false; 2];
+            }
+            [path[0], path[path.len() - 1]].map(|end| {
+                ends.get(&node_key(end)).is_some_and(|roads| {
+                    roads.len() == 2
+                        && roads
+                            .iter()
+                            .filter(|&&other| other != road)
+                            .all(|&other| lane_count(drawn[other]) < lane_count(drawn[road]))
+                })
+            })
+        })
+        .collect()
+}
+
+/// Кусок линий между двумя разрывами короче [`MIN_RUN`] — тоже разрыв. Конец
+/// пути, за которым улица сужается (`narrowing`, [`narrowing_ends`]), считается
+/// таким же разрывом: у короткой улицы между узлом и клином оставался штрих в
+/// пару метров у кромки (витрина 08).
+fn bridge_short_runs(path: &[Vec2], breaks: &mut Vec<Break>, narrowing: [bool; 2]) {
+    if path.len() < 2 {
         return;
     }
     let walk = Walk::new(path);
@@ -1100,6 +1162,14 @@ fn bridge_short_runs(path: &[Vec2], breaks: &mut Vec<Break>) {
             (at - found.reach, at + found.reach)
         })
         .collect();
+    for (narrows, at) in narrowing.into_iter().zip([0.0, walk.total]) {
+        if narrows {
+            spans.push((at, at));
+        }
+    }
+    if spans.len() < 2 {
+        return;
+    }
     spans.sort_by(|a, b| a.0.total_cmp(&b.0));
     let mut reach = spans[0].1;
     for span in &spans[1..] {
