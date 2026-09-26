@@ -1519,6 +1519,14 @@ pub fn mesh_roads(
     for island in &islands {
         streets.push_polygon(island, &[], ROAD_COLOR.to_linear());
     }
+    // островки безопасности и площади полотна из данных (`roads/islands.rs`):
+    // площадь — асфальтом улиц до лент, под ними (порядок пуша в слое —
+    // порядок отрисовки); островок — бордюром поверх асфальта и краски, ниже
+    let road_islands = islands::RoadIslands::new(map, &drawn, &stitched);
+    streets.set_lanes(None);
+    for shape in &road_islands.carriageways {
+        push_shape(&mut streets, shape.clone(), ROAD_COLOR.to_linear());
+    }
     if style.sidewalks {
         for ring in &axes.rings.list {
             let width = drawn[ring.roads[0]].width;
@@ -1776,17 +1784,11 @@ pub fn mesh_roads(
     // разметка — в слой краски, своим мешем выше асфальта стоянок
     // (`roads/gores.rs`)
     gores.push_asphalt(&mut streets, ROAD_COLOR.to_linear());
-    // островки безопасности и площади полотна из данных (`roads/islands.rs`):
-    // площадь — асфальтом улиц, островок — бордюром поверх асфальта и краски
-    let road_islands = islands::RoadIslands::new(map, &drawn, &stitched);
-    streets.set_lanes(None);
-    for shape in &road_islands.carriageways {
-        push_shape(&mut streets, shape.clone(), ROAD_COLOR.to_linear());
-    }
     // светлая полоса над рельсами (`roads/tram_band.rs`) — поверх всего
     // асфальта улиц: порядок пуша в слое — порядок отрисовки, а краска лежит
     // своим слоем выше
     let tram_bands = tram_band::tram_bands(&map.rails, &drawn, paths, &paved);
+    streets.set_lanes(None);
     // одной фигурой, со щелями между полосами соседних путей заросшими
     for shape in tram_band::band_cover(&tram_bands) {
         push_shape(&mut streets, shape, TRAM_BAND_COLOR.to_linear());
@@ -2361,8 +2363,8 @@ fn push_sidewalk(
         // со стороны пары тротуара нет
         let mut paired = sides;
         paired[usize::from(!run.left)] = false;
-        // и в щели между двумя кусками с той же стороны — полотном и газоном
-        // одной пары, — которые разделительные сводят торец в торец
+        // и в щели между двумя кусками с той же стороны — любыми, полотном и
+        // газоном тоже, — которые разделительные сводят торец в торец
         // (`Pairs::join_ends`): светлое пятно тротуара лежало между ними
         let bridged = previous == Some(run.left) && from - cursor < network::pairs::JOIN_GAP;
         piece(cursor, from, if bridged { paired } else { sides });
