@@ -22,8 +22,8 @@
 
 use bevy::prelude::*;
 
-use super::network::RoadNodes;
 use super::network::pairs::PairRun;
+use super::network::{RoadNetwork, RoadNodes};
 use crate::map::meshing::miter_offsets;
 use crate::map::osm::RoadLine;
 use crate::map::osm::model::polyline_length;
@@ -44,6 +44,10 @@ const MERGE_MAX_SHARE: f32 = 0.6;
 const MERGE_STEP: f32 = 2.0;
 /// На сколько полоса заходит под ленту половины, м.
 const MERGE_OVERLAP: f32 = 0.05;
+/// Насколько могут разойтись концы соседних ways улицы на нарисованных осях,
+/// чтобы клин всё ещё шёл с одного на другой, м: разводка пары сдвигает
+/// торец куска на метр, а сверяется только сосед по улице — спутать не с чем.
+const SEAM_SLACK: f32 = 2.0;
 
 /// Одно слияние: узел, половины и продолжение.
 #[derive(Debug, Clone, PartialEq)]
@@ -73,14 +77,19 @@ impl Merges {
 }
 
 /// Слияния по **нарисованным** осям `paths`: в узле кончаются две половины
-/// одной пары (`runs` — куски пар по дорогам), одна въезжает, другая
-/// выезжает, обе уходят от узла в одну сторону, а двусторонний way того же
-/// `Highway` — в обратную. Мосты и арки (`carves_navmesh`) не участвуют.
+/// одной пары, одна въезжает, другая выезжает, обе уходят от узла в одну
+/// сторону, а двусторонний way того же `Highway` — в обратную. Мосты и арки
+/// (`carves_navmesh`) не участвуют.
+///
+/// Пара — по улицам (`network`), а не по way у узла (`runs` — куски пар по
+/// дорогам): OSM режет половину у узла на короткие ways в 16–22 м, и на
+/// таком куске пары не набирается — она лежит на соседнем way той же улицы.
 pub fn merges(
     roads: &[&RoadLine],
     paths: &[impl AsRef<[Vec2]>],
     nodes: &RoadNodes,
     runs: &[Vec<PairRun>],
+    network: &RoadNetwork,
 ) -> Merges {
     let mut found = Merges {
         list: Vec::new(),
@@ -98,7 +107,7 @@ pub fn merges(
         let partner = at_node.iter().copied().find(|&other| {
             let path = paths[other].as_ref();
             other != half
-                && runs[half].iter().any(|run| run.partner == other)
+                && paired(half, other, runs, network)
                 && roads[other].oneway
                 && roads[other].highway == road.highway
                 && path.len() >= 2
@@ -145,6 +154,70 @@ pub fn merges(
     found
 }
 
+/// Лежат ли дороги `half` и `other` в одной паре: сами или любые ways их
+/// улиц.
+fn paired(half: usize, other: usize, runs: &[Vec<PairRun>], network: &RoadNetwork) -> bool {
+    if runs[half].iter().any(|run| run.partner == other) {
+        return true;
+    }
+    let street = |road: usize| network.street_of(road).map(|(street, _)| street);
+    let (Some(own), Some(theirs)) = (street(half), street(other)) else {
+        return false;
+    };
+    network.streets[own].ways.iter().any(|way| {
+        runs[way.road]
+            .iter()
+            .any(|run| street(run.partner) == Some(theirs))
+    })
+}
+
+/// Нарисованный путь дороги `road` от узла слияния — её конца (`node_at_end`)
+/// или начала — и дальше по ways её улицы, пока не наберётся `reach` метров.
+fn from_node(
+    road: usize,
+    node_at_end: bool,
+    reach: f32,
+    paths: &[impl AsRef<[Vec2]>],
+    network: &RoadNetwork,
+) -> Vec<Vec2> {
+    let mut points = paths[road].as_ref().to_vec();
+    if node_at_end {
+        points.reverse();
+    }
+    let Some((street, at)) = network.street_of(road) else {
+        return points;
+    };
+    let street = &network.streets[street];
+    // узел — выход way по порядку улицы: от него идём к её началу
+    let backward = node_at_end != street.ways[at].reversed;
+    let mut index = at;
+    while polyline_length(&points) < reach {
+        let next = if backward {
+            index.checked_sub(1)
+        } else {
+            (index + 1 < street.ways.len()).then_some(index + 1)
+        };
+        let Some(next) = next else {
+            break;
+        };
+        index = next;
+        let way = paths[street.ways[index].road].as_ref();
+        let (Some(&last), Some(&first), Some(&end)) = (points.last(), way.first(), way.last())
+        else {
+            break;
+        };
+        // разводка пар двигает оси, и шов соседних ways сходится не бит в бит
+        if first.distance(last) < SEAM_SLACK {
+            points.extend(way.iter().skip(1));
+        } else if end.distance(last) < SEAM_SLACK {
+            points.extend(way.iter().rev().skip(1));
+        } else {
+            break;
+        }
+    }
+    points
+}
+
 /// Направление пути от его торца: от конца (`from_end`) назад или от начала
 /// вперёд — хорда на [`ARM_REACH`].
 fn away(path: &[Vec2], from_end: bool) -> Vec2 {
@@ -186,40 +259,42 @@ pub struct MergeBand {
 
 /// Полосы, которыми кромки половин сходятся к кромкам продолжения: асфальт и,
 /// где у половины снаружи тротуар шириной `sidewalk(половина)`, тротуар за
-/// ним. `left(половина, пара)` — лежит ли пара слева по ходу половины.
-/// `per_meter` — длина клина на метр разницы ширин.
+/// ним. `per_meter` — длина клина на метр разницы ширин. Клин идёт от узла
+/// по пути половины и дальше по ways её улицы (`network`): у узла OSM режет
+/// половину на короткие ways, и клин в 30–60 м на одном таком не умещается.
 pub fn merge_bands(
     merge: &Merge,
     roads: &[&RoadLine],
     paths: &[impl AsRef<[Vec2]>],
-    left: impl Fn(usize, usize) -> Option<bool>,
+    network: &RoadNetwork,
     sidewalk: impl Fn(usize) -> Option<f32>,
     per_meter: f32,
 ) -> Vec<MergeBand> {
     let wide = roads[merge.street].width / 2.0;
     let [first, second] = merge.halves;
     let mut bands = Vec::new();
-    for (half, partner, from_end) in [(first, second, true), (second, first, false)] {
+    for (half, partner, node_at_end) in [(first, second, true), (second, first, false)] {
         let road = roads[half];
         let narrow = road.width / 2.0;
         let step = wide - narrow;
         if step < MERGE_MIN_STEP {
             continue;
         }
-        let Some(partner_left) = left(half, partner) else {
-            continue;
-        };
-        // путь от узла; снаружи — сторона, противоположная паре. У пути,
-        // развёрнутого к узлу, лево и право меняются местами
-        let mut path = paths[half].as_ref().to_vec();
-        if from_end {
-            path.reverse();
-        }
-        let outward = if partner_left != from_end { -1.0 } else { 1.0 };
-        let length = (2.0 * step * per_meter).min(polyline_length(&path) * MERGE_MAX_SHARE);
+        let wanted = 2.0 * step * per_meter;
+        let path = from_node(half, node_at_end, wanted / MERGE_MAX_SHARE, paths, network);
+        let length = wanted.min(polyline_length(&path) * MERGE_MAX_SHARE);
         if length < MERGE_STEP {
             continue;
         }
+        // снаружи — сторона, противоположная паре: пара слева от пути от
+        // узла, если её точка в хорде от узла лежит левее его
+        let theirs = from_node(partner, !node_at_end, ARM_REACH, paths, network);
+        let (Some(&own), Some(&other)) = (path.get(1), theirs.last()) else {
+            continue;
+        };
+        let ahead = along_path(&path, ARM_REACH).unwrap_or(own) - merge.node;
+        let partner_left = ahead.perp_dot(other - merge.node) > 0.0;
+        let outward = if partner_left { -1.0 } else { 1.0 };
         let (points, along) = resample(&path, length);
         let normals: Vec<Vec2> = miter_offsets(&points, false, 1.0)
             .into_iter()
@@ -243,8 +318,10 @@ pub fn merge_bands(
                 .collect();
             outer.chain(inner.into_iter().rev()).collect()
         };
-        // тротуар по тегу — на той стороне, что снаружи: `[слева, справа]`
-        let tagged = road.sidewalks[usize::from(partner_left)];
+        // тротуар по тегу — на той стороне, что снаружи, `[слева, справа]` по
+        // точкам way: у въезжающей половины путь от узла развёрнут
+        let outer_left = !partner_left != node_at_end;
+        let tagged = road.sidewalks[usize::from(!outer_left)];
         bands.push(MergeBand {
             half,
             length,
@@ -255,6 +332,19 @@ pub fn merge_bands(
         });
     }
     bands
+}
+
+/// Точка пути в `at` метрах от начала; путь короче — `None`.
+fn along_path(path: &[Vec2], at: f32) -> Option<Vec2> {
+    let mut walked = 0.0;
+    for pair in path.windows(2) {
+        let link = pair[0].distance(pair[1]);
+        if walked + link >= at && link > 0.0 {
+            return Some(pair[0].lerp(pair[1], (at - walked) / link));
+        }
+        walked += link;
+    }
+    None
 }
 
 /// Путь от начала до `length`, с вершиной не реже [`MERGE_STEP`], и длина

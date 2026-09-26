@@ -59,17 +59,19 @@ fn two_way_east() -> RoadLine {
 
 /// Пары и разведённые оси, как их отдаёт `axis::street_axes` без
 /// сглаживания, и найденные по ним слияния.
-fn found(roads: &[RoadLine]) -> (Merges, Pairs, Vec<Vec<Vec2>>) {
+fn found(roads: &[RoadLine]) -> (Merges, RoadNetwork, Vec<Vec<Vec2>>) {
     let mut paths: Vec<Cow<[Vec2]>> = roads
         .iter()
         .map(|road| Cow::Borrowed(road.points.as_slice()))
         .collect();
     let nodes = RoadNodes::new(roads);
+    let network = RoadNetwork::new(roads);
     let mut pairs = Pairs::new(roads, &paths, RoadShape::default().median_gap(), &[]);
-    pairs.align(&mut paths, roads, &RoadNetwork::new(roads), &nodes);
+    pairs.align(&mut paths, roads, &network, &nodes);
     let paths: Vec<Vec<Vec2>> = paths.into_iter().map(Cow::into_owned).collect();
     let drawn: Vec<&RoadLine> = roads.iter().collect();
-    (merges(&drawn, &paths, &nodes, &pairs.runs), pairs, paths)
+    let merges = merges(&drawn, &paths, &nodes, &pairs.runs, &network);
+    (merges, network, paths)
 }
 
 #[test]
@@ -138,19 +140,13 @@ fn a_merge_node_gets_no_square_ends_and_no_outer_corners() {
 #[test]
 fn each_outer_kerb_runs_into_the_kerb_of_the_continuation() {
     let roads = divided_into(two_way_east());
-    let (merges, pairs, paths) = found(&roads);
+    let (merges, network, paths) = found(&roads);
     let drawn: Vec<&RoadLine> = roads.iter().collect();
-    let left = |half: usize, partner: usize| {
-        pairs.runs[half]
-            .iter()
-            .find(|run| run.partner == partner)
-            .map(|run| run.left)
-    };
     let bands = merge_bands(
         &merges.list[0],
         &drawn,
         &paths,
-        left,
+        &network,
         |_| Some(3.0),
         TAPER_PER_METER,
     );
@@ -183,25 +179,57 @@ fn each_outer_kerb_runs_into_the_kerb_of_the_continuation() {
 }
 
 #[test]
+fn halves_cut_short_at_the_node_still_merge_and_the_wedge_runs_on_their_street() {
+    // OSM режет половину у узла: последний way — только сходящийся кусок в
+    // 40 м, пара лежит на соседнем
+    let apart = width(HALF_LANES) + 3.0;
+    let roads = vec![
+        primary(vec![Vec2::ZERO, Vec2::new(200.0, 0.0)], HALF_LANES, true),
+        primary(vec![Vec2::new(200.0, 0.0), node()], HALF_LANES, true),
+        primary(vec![node(), Vec2::new(200.0, apart)], HALF_LANES, true),
+        primary(
+            vec![Vec2::new(200.0, apart), Vec2::new(0.0, apart)],
+            HALF_LANES,
+            true,
+        ),
+        two_way_east(),
+    ];
+    let (merges, network, paths) = found(&roads);
+    assert_eq!(merges.list.len(), 1);
+    assert_eq!((merges.list[0].halves, merges.list[0].street), ([1, 2], 4));
+    let drawn: Vec<&RoadLine> = roads.iter().collect();
+    let bands = merge_bands(
+        &merges.list[0],
+        &drawn,
+        &paths,
+        &network,
+        |_| None,
+        TAPER_PER_METER,
+    );
+    // клин во всю длину, а не в 0.6 короткого way
+    let length = 2.0 * (width(4) - width(HALF_LANES)) / 2.0 * TAPER_PER_METER;
+    assert_eq!(bands.len(), 2);
+    for band in &bands {
+        assert!((band.length - length).abs() < 1e-3, "{}", band.length);
+        assert_eq!(band.asphalt[0].y < node().y, band.half == 1);
+    }
+}
+
+#[test]
 fn a_continuation_no_wider_than_a_half_needs_no_band() {
     let roads = divided_into(primary(
         vec![node(), node() + Vec2::new(160.0, 0.0)],
         2,
         false,
     ));
-    let (merges, pairs, paths) = found(&roads);
+    let (merges, network, paths) = found(&roads);
     assert_eq!(merges.list.len(), 1);
     let drawn: Vec<&RoadLine> = roads.iter().collect();
     let bands = merge_bands(
         &merges.list[0],
         &drawn,
         &paths,
-        |half, partner| {
-            pairs.runs[half]
-                .iter()
-                .find(|run| run.partner == partner)
-                .map(|run| run.left)
-        },
+        &network,
         |_| None,
         TAPER_PER_METER,
     );

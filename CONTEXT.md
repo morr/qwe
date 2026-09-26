@@ -1486,7 +1486,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     its three arms give each other no square ends and no corners — and each half's outer
     kerb runs into the continuation's kerb on its side over a **merge wedge**, asphalt
     (and sidewalk beyond it) outside the half's ribbon, as long as a taper of the same
-    width difference. Tula has 18; the node at Советская × Коминтерна is **not** one
+    width difference. Tula has 5; the node at Советская × Коминтерна is **not** one
     (all four ways there are one-way: the pair turns and goes on).
   - **Stitch** — a straight render-only segment appended to a **loose end** (a way end
     with no other road at its node that could carry it) up to the centreline of the
