@@ -1046,6 +1046,51 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
         opening, and its band showed as a light disc in the middle of the junction
         (sample 15).
       - Load-time only, like the rest of this module.
+  - **Merges** (`roads/merges.rs`, roads plan D6 / tram-bed plan stage 2) — a node
+    where a divided street becomes an ordinary one: a one-way half ends there flowing
+    **in**, its pair partner starts there flowing **out**, both leave the node within 40°
+    of each other (`MERGE_ALIGN`, a 20 m chord — OSM's first link may be half a metre),
+    and a **two-way** way of the same `Highway` ends there leaving it the other way.
+    Bridges and arches take no part. **The pair is checked by streets** (`paired`): a
+    run of **Paired halves** between the two ways themselves, or between any way of the
+    one's street and the other's street — OSM cuts a half into 16–22 m ways at the node,
+    and on such a piece no run forms (the first version asked the ways and found 4).
+    `merges(drawn, paths, nodes, runs, network)` finds them on the drawn axes, once per
+    load; Tula has **5** of the 18 nodes a tag-and-angle scan of the cache offers — the
+    other 13 are forks and one-way couplets that `Pairs` does not pair, so no median is
+    drawn there either. One is on a tram bed (Демидовская Плотина × Карла Маркса, 3 + 3
+    lanes into 4, gallery sample 25), sample 26 is a bare one (Рязанская).
+    - **Not a junction.** `kerb_returns` takes `merged(road, end)`: the merge's three arms
+      give each other no square ends and no fillet or outer corner — a node whose class
+      group is only merge arms is skipped altogether, so all three ribbons end round, as a
+      continuation does. With a fourth road at the node the junction stands, only the
+      pairs of merge arms are left out. As a junction it laid square ends and an outer
+      corner fan from the node, and the half's outer kerb — OSM brings both axes into the
+      node, so the kerb stood at the half's own half width from it — stepped out to the
+      continuation's in a spike.
+    - **The merge wedge** (`merge_bands`) — per half, the continuation's half width minus
+      its own (`MERGE_MIN_STEP` 0.1 m, less is nothing; a continuation no wider than a
+      half gets no band), over `RoadShape::taper` × twice that difference — a taper of
+      the same width step — at most `MERGE_MAX_SHARE` 0.6 of the path it runs on. That
+      path is the half's drawn axis from the node **carried on through the ways of its
+      street** (`from_node`, seams matched within `SEAM_SLACK` 2 m — the pair alignment
+      moves a piece's end by a metre), so a 16 m last way does not cut the wedge to ten
+      metres. The side is geometric — outward is away from the partner's axis 20 m out —
+      not a run's `left`, which a short last way does not have. The path is resampled
+      every `MERGE_STEP` 2 m from the node and the band runs from the half's kerb
+      (`MERGE_OVERLAP` 5 cm under its ribbon) outward to a reach that falls by smoothstep from the continuation's half width at the node
+      to the half's own at the wedge's end, into `streets` **before** the ribbons; the
+      same band plus the half's sidewalk width goes into `sidewalks` where the half has a
+      tagged sidewalk on its outer side. Each side has its own step, so a kerb already in
+      line with the continuation gets nothing — the wedge is **by kerbs**, not about the
+      axis. `RoadReport::merges` is `[merges, bands]`.
+    - **Not done**: the lane frame. The halves' lane lines run into the node as they did
+      and the continuation's start there; the paint through a merge (the two frames
+      meeting the continuation's) is the next step.
+    - **Советская × Коминтерна is not a merge**, whatever the tram-bed plan assumed: all
+      four ways there are one-way — the pair turns east and goes on as 3 + 4 lanes with a
+      lawn, while the tram leaves for Коминтерна. The bed ends there square at the lawn's
+      nose (`bed_caps`), and that is the whole of it (sample 24).
 - **RoadStyle and RoadShape** — three resources behind the roads, split by **how a change
   reaches the map**: `RoadPaintStyle` (**Markings — the paint layer** above) is uniforms
   only, a drag rebuilds nothing; `RoadStyle` is toggles, each click one rebuild;

@@ -1005,6 +1005,9 @@ pub struct RoadReport {
     pub road_islands: [usize; 3],
     /// Клинья между сечениями улиц (`roads/tapers.rs`).
     pub tapers: usize,
+    /// Слияния разделённой улицы в обычную (`roads/merges.rs`) и кромки,
+    /// сведённые на них к кромке продолжения.
+    pub merges: [usize; 2],
     /// Разделительные парных половин (`roads/network/pairs.rs`): асфальтом,
     /// газоном и из асфальтовых — трамвайных полотен.
     pub medians: [usize; 3],
@@ -1046,6 +1049,7 @@ impl std::fmt::Display for RoadReport {
             gores,
             road_islands: [refuges, island_areas, carriageways],
             tapers,
+            merges: [merges, merge_edges],
             medians: [paved, lawns, beds],
             tram_bands,
             seams,
@@ -1063,7 +1067,7 @@ impl std::fmt::Display for RoadReport {
              {sidewalk_returns} on sidewalks, outer corners {outer} + {outer_sidewalks} on \
              sidewalks, stitches {stitches}, kerb pockets {kerb_pockets}, turning circles {turning_circles}, driveway crossings \
              {crossings}, rings {rings} ({webs} webs), small islands {islands}, gores {gores}, safety islands {refuges} + {island_areas} areas, \
-             carriageway areas {carriageways}, tapers {tapers}, medians {paved} paved + {lawns} \
+             carriageway areas {carriageways}, tapers {tapers}, merges {merges} ({merge_edges} edges), medians {paved} paved + {lawns} \
              lawn (tram beds {beds}), tram bands {tram_bands}, smooth seams {seams}, tight corners {tight}; {network:?} of it before the \
              ribbons)",
             style.sidewalks, style.markings,
@@ -1162,6 +1166,8 @@ pub fn mesh_roads(
         |index: usize| drawn_sidewalk(&style, drawn[index]).filter(|_| !across_median[index]);
     // длина улицы у начала каждого way — по ней идут штрихи краски
     let stations = paint::street_stations(&map.network, paths);
+    // разделённая улица, сходящаяся в обычную: узел не перекрёсток
+    let merges = merges::merges(&drawn, paths, &nodes, &axes.pairs.runs, &map.network);
     // Скругления кладутся раньше всех лент своего слоя: лента поверх кроет
     // скругление, а не наоборот, и разметка остаётся целой.
     let (kerb_returns, islands) = {
@@ -1191,6 +1197,7 @@ pub fn mesh_roads(
                         .at(road)
                         .map(|end| end.map_or(0.0, |taper| taper.length))
                 },
+                |road, end| merges.is_merged(road, end),
                 shape.corner_radius(),
             ),
             corners::small_islands(&drawn, &rounded, &nodes),
@@ -1210,6 +1217,25 @@ pub fn mesh_roads(
     // и тот же угол в слое тротуаров: полоса поворачивает за бордюром
     for outline in &kerb_returns.sidewalks {
         sidewalks.push_convex(outline, SIDEWALK_COLOR.to_linear());
+    }
+    // кромки половин, сходящиеся к кромкам продолжения, — тоже до лент
+    let mut merge_edges = 0;
+    for merge in &merges.list {
+        let bands = merges::merge_bands(
+            merge,
+            &drawn,
+            paths,
+            &map.network,
+            sidewalks_of,
+            shape.taper(),
+        );
+        for band in bands {
+            streets.push_polygon(&band.asphalt, &[], ROAD_COLOR.to_linear());
+            if let Some(outline) = &band.sidewalk {
+                sidewalks.push_polygon(outline, &[], SIDEWALK_COLOR.to_linear());
+            }
+            merge_edges += 1;
+        }
     }
     // карманы — по тому же ответу и тем же разрывам, что ряд машин
     // (`map::cars`): асфальт за кромкой и тротуар, отодвинутый за него
@@ -1846,6 +1872,7 @@ pub fn mesh_roads(
             road_islands.carriageways.len(),
         ],
         tapers: tapers.count,
+        merges: [merges.list.len(), merge_edges],
         rings: [axes.rings.list.len(), axes.rings.webs.len()],
         islands: islands.len(),
         medians: axes.pairs.count(),
@@ -2357,6 +2384,7 @@ mod gores;
 mod islands;
 mod lots;
 mod medians;
+mod merges;
 /// Открыт наружу для [`map::footprint`](crate::map::footprint): проём в ограде
 /// у брошенного торца — тот же вопрос «висячий ли он», что у стежка, и второго
 /// ответа на него быть не должно. И для разбора: улицы и сечения
