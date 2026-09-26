@@ -151,7 +151,19 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     the axis is not moved at all for `PIN_STRAIGHT` 16 m and the fade begins beyond it: a
     kerb return is laid only on a straight edge, and a 10 m return to a crossing avenue
     needs its half width plus the tangent (stage 5 — before it the fade bent the edge from
-    the node on, and the corners of sample 2 came out a metre or two). Then the path is thinned back by
+    the node on, and the corners of sample 2 came out a metre or two). **Runs of one half
+    closer than `RUN_BRIDGE` 12 m are one span** (`spans`): the partner changes at every
+    seam of the *opposite* half, and a few probes at that seam find nothing (8 m holes on
+    Красноармейский), so a fade at each run end let the axis fall back to OSM for ~40 m at
+    every seam — on halves mapped 3.2 m over each other the carriageway "breathed" by
+    2–3 m every 50–100 m (the author's report, Красноармейский and Советская). Inside a
+    span the target gap passes from run to run over `ALIGN_TRANSITION` (`span_gap`), and a
+    point near a partner seam measures against whichever of the partner ways is nearer.
+    A continuation "carries a run at the same node" when that run reaches within
+    `RUN_BRIDGE` of it (it was one probe step, and a seam of the own half is often a seam
+    of the partner too, where the probes miss), and a span whose end is continued runs
+    to the very end of the drawn axis without fading.
+    Then the path is thinned back by
     Douglas–Peucker at `SIMPLIFY_TOLERANCE` 3 cm keeping every shared node, and the
     median's midline and the two inner kerbs are sampled off the aligned axes and thinned
     the same way; the thinning is what took the stage from +130 k vertices and +50 ms
@@ -178,10 +190,13 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     walk every track of the city. Wider than 8 m it is a reserved track on grass
     (Воздухофлотская, 3.2 km in Tula) and stays a lawn. A bed is **always paved**, the
     knob notwithstanding, and `PairRun::tram` / `paved` carry it to the zebras (one plank
-    across both halves, like any paved pair). **One gap per chain**
-    (`share_tram_gaps`, first thing in `align`): the bed runs of one pair of *streets*
-    (`RoadNetwork::street_of` of both halves) get the length-weighted median of their
-    gaps, so the axes do not step at every seam of a half made of several ways.
+    across both halves, like any paved pair). **Each bed run keeps its own gap** (its
+    median, like any pair). A shared gap per chain of streets (`share_tram_gaps`, stage E)
+    was tried and removed: Советская's chain median is 4.0 m while the halves on the
+    stretch south of Коминтерна are mapped 6.6 m apart, so between junctions the halves
+    were pulled 1.3 m each toward the middle and sprang back at every pinned node — the
+    avenue narrowed and widened by 2.6 m. The step at a seam it was written against is
+    now `span_gap`'s job (**Alignment** above).
     **Drawing** — each half is widened to the middle by its own inner lane, without
     marking: `push_bed` lays the asphalt from inner kerb to inner kerb (`BED_OVERLAP`
     5 cm under each ribbon) **as a contour, not a ribbon**, so it follows the kerbs
