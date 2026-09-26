@@ -1147,8 +1147,8 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     `rebuild_roads` (despawn `RoadLayerTag` layers, respawn from the unchanged `MapData`).
     Five toggles: **sidewalks** and **markings** (both on) are described above,
     **crossings** (`CrossingMode`: `Off` / `Osm` / `Generated`, the default) and
-    **stop_lines** (on) in **Junction paint**, **arrows** (on) — the lane arrows, their own
-    toggle since stage 8, no longer under `markings`. Stage 8 took out `join`, `smoothing`
+    **stop_lines** (on) in **Junction paint**, **arrows** (**off**, at the user's request) —
+    the lane arrows, their own toggle since stage 8, no longer under `markings`. Stage 8 took out `join`, `smoothing`
     and `casing`; old keys in `settings.toml` are ignored silently (bevy_settings applies
     only the fields the type has). The join is the constant `ROAD_JOIN` = `RoadJoin::Round`
     (the `Square`-only branches — no tapers, no kerb returns — went with it); `RoadJoin`

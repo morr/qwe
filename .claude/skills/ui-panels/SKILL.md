@@ -152,7 +152,7 @@ did not fit 1080 px and ran off the top of the screen.
   **Road paint** (`ui/road_paint.rs`, `SectionSlot::RoadPaint` right after `Roads`, a
   `panel_title` header with no count): what lies as paint on the asphalt. Four
   `RoadStyle` toggles — **Markings**, **Crossings** (`CrossingMode`: `Off` / `OSM` /
-  `OSM + gen`), **Stop lines**, **Arrows** (the lane arrows, their own field now) — each
+  `OSM + gen`), **Stop lines**, **Arrows** (the lane arrows, their own field now, off by default) — each
   rebuilding the road layers; interleaved with three `RoadPaintStyle` sliders: **Paint**
   (the paint layer's opacity, 0–100 %, step 5), **Wear** (the asphalt rut amplitude,
   0–15 %, step 0.5, printed with one decimal) and **Turn wear** (the junction turn paths'

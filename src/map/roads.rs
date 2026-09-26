@@ -642,7 +642,7 @@ impl Default for RoadStyle {
             markings: true,
             crossings: CrossingMode::default(),
             stop_lines: true,
-            arrows: true,
+            arrows: false,
         }
     }
 }
