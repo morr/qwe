@@ -132,8 +132,11 @@ impl KerbReturns {
 /// слева ли (`roads/network/pairs.rs`): с её стороны тротуара нет, и угол по
 /// нему не скругляется. `tapers(дорога)` — длины клиньев у её `[начала,
 /// конца]` (`roads/tapers.rs`, 0 — клина нет): в клине кромка уже ближе к оси,
-/// и прямой пробег луча кончается там, где он начинается. `scale` — множитель
-/// радиусов по классам (ручка `Corner radius`).
+/// и прямой пробег луча кончается там, где он начинается. `merged(дорога,
+/// торец)` — торец плечо слияния (`roads/merges.rs`): плечи одного слияния
+/// друг другу не перекрёсток — ни прямых торцов, ни углов между ними. `scale`
+/// — множитель радиусов по классам (ручка `Corner radius`).
+#[allow(clippy::too_many_arguments)]
 pub fn kerb_returns(
     roads: &[&RoadLine],
     paths: &[Option<&[Vec2]>],
@@ -141,6 +144,7 @@ pub fn kerb_returns(
     sidewalk: impl Fn(usize) -> Option<f32>,
     paired: impl Fn(usize, f32) -> Option<bool>,
     tapers: impl Fn(usize) -> [f32; 2],
+    merged: impl Fn(usize, usize) -> bool,
     scale: f32,
 ) -> KerbReturns {
     let mut arms: HashMap<(i32, i32), (Vec2, Vec<Arm>)> = HashMap::new();
@@ -262,6 +266,9 @@ pub fn kerb_returns(
         butt: vec![[false; 2]; roads.len()],
         ..default()
     };
+    let is_merged = |arm: &Arm| arm.end.is_some_and(|(road, end)| merged(road, end));
+    // между двумя плечами слияния нет ни угла, ни скругления
+    let merge_pair = |first: &Arm, second: &Arm| is_merged(first) && is_merged(second);
     for (node, mut found) in arms.into_values() {
         if found.len() < 2 {
             continue;
@@ -269,15 +276,19 @@ pub fn kerb_returns(
         found.sort_by(|a, b| a.direction.to_angle().total_cmp(&b.direction.to_angle()));
         for class in [RoadClass::Street, RoadClass::Alley] {
             let group: Vec<&Arm> = found.iter().filter(|arm| arm.class == class).collect();
-            if !is_junction(&group) {
+            // узел одного слияния — продолжение дороги, а не перекрёсток
+            if !is_junction(&group) || group.iter().all(|arm| is_merged(arm)) {
                 continue;
             }
             for arm in &group {
-                if let Some((road, end)) = arm.end {
+                if let Some((road, end)) = arm.end.filter(|_| !is_merged(arm)) {
                     returns.butt[road][end] = true;
                 }
             }
             for (first, second) in pairs(&group) {
+                if merge_pair(first, second) {
+                    continue;
+                }
                 let radius = kerb_radius(first, second) * scale;
                 let halves = (first.half, second.half);
                 if let Some(outline) = fillet(node, first, second, halves, radius) {
@@ -295,10 +306,13 @@ pub fn kerb_returns(
             .iter()
             .filter(|arm| arm.sidewalk.iter().any(Option::is_some))
             .collect();
-        if !is_junction(&walked) {
+        if !is_junction(&walked) || walked.iter().all(|arm| is_merged(arm)) {
             continue;
         }
         for (first, second) in pairs(&walked) {
+            if merge_pair(first, second) {
+                continue;
+            }
             // угол от левого края первого луча к правому краю второго
             let (Some(a), Some(b)) = (first.sidewalk[0], second.sidewalk[1]) else {
                 continue;
@@ -600,6 +614,7 @@ mod tests {
             |index| sidewalk(&roads[index]),
             |_, _| None,
             |_| [0.0; 2],
+            |_, _| false,
             1.0,
         )
     }
@@ -746,6 +761,7 @@ mod tests {
             |_| None,
             |_, _| None,
             |road| if road == 1 { [0.0, 14.0] } else { [0.0; 2] },
+            |_, _| false,
             1.0,
         );
         assert!(!found.roads.is_empty());
@@ -859,6 +875,7 @@ mod tests {
             |_| Some(SIDEWALK),
             |road, _| (road == 0).then_some(true),
             |_| [0.0; 2],
+            |_, _| false,
             1.0,
         );
         assert_eq!(found.roads.len(), 4, "асфальт скругляется, как был");
