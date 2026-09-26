@@ -29,7 +29,13 @@
 //! читался бы ступенькой. У узла ось ещё и прямая на [`PIN_STRAIGHT`]: на
 //! гнутом крае скругление бордюра не помещается. Стык с продолжением той же
 //! половины, у которого пара тоже есть, концом куска не считается — там
-//! разводка идёт насквозь.
+//! разводка идёт насквозь. Не считается им и стык двух кусков одной
+//! половины через дыру до [`RUN_BRIDGE`] — шов **встречной** половины, где
+//! пара сменила way: куски сводятся в участок, и зазор переходит от одного к
+//! другому за [`ALIGN_TRANSITION`]. Прежде разводка сходила на нет у каждого
+//! такого шва, ось возвращалась к OSM на 40 м, и край проспекта, сведённого
+//! картографом внахлёст, «дышал» на метр–полтора через каждые 50–100 м
+//! (Красноармейский, Советская — отчёт автора).
 //! Сдвигается только нарисованная ось: точки `RoadLine` читает навмеш.
 //!
 //! **Трамвайное полотно** ([`Median::carries_tram`]). Пара, в зазоре которой
@@ -37,13 +43,14 @@
 //! половины по две полосы и пути между ними в 5 м), — не газон, а асфальт с
 //! рельсами: каждая половина едет по нему своей внутренней полосой. Такая
 //! разделительная мощёная при любой ширине до [`TRAM_BED_MAX_GAP`]; шире —
-//! обособленное полотно на траве, газон. Куски одной пары улиц — половина из
-//! нескольких ways — получают **общий** зазор ([`Pairs::align`]): ширина
-//! трамвайной полосы не прыгает на каждом шве.
+//! обособленное полотно на траве, газон. Зазор у полотна — свой у каждого
+//! куска, как у любой пары: общий на всю улицу (медиана цепочки) стягивал
+//! половины там, где картограф развёл их шире, — между перекрёстками
+//! проспект сужался на пару метров, у закреплённых узлов возвращался.
+//! Ступеньки на швах нет и так: зазор на стыке кусков переходит плавно.
 
 use std::borrow::Cow;
 
-use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
 use super::{RoadNetwork, RoadNodes};
@@ -81,6 +88,12 @@ pub const JOIN_GAP: f32 = 5.0;
 /// За сколько метров до конца куска и до закреплённого узла разводка сходит
 /// на нет.
 pub const ALIGN_TRANSITION: f32 = 20.0;
+/// Куски одной половины, между которыми дыра не длиннее этого, м, — один
+/// участок разводки ([`Pairs::align`]): пара меняется на каждом шве
+/// встречной половины, а у шва несколько проб соседа не находят (8 м на
+/// Красноармейском). Сходи разводка на нет у каждого такого стыка, край
+/// проспекта «дышал» бы через каждые 50–100 м.
+const RUN_BRIDGE: f32 = 12.0;
 /// Сколько метров оси у закреплённого узла разводка не трогает вовсе: там
 /// ложится скругление бордюра к поперечной улице (`roads/corners.rs`), а оно
 /// кладётся только на прямой край — полуширина поперечного проспекта и
@@ -337,55 +350,6 @@ impl Pairs {
         }
     }
 
-    /// Один зазор на всё трамвайное полотно между двумя улицами: половина из
-    /// нескольких ways — несколько кусков, у каждого своя медиана, и на шве
-    /// соседние отличались на метр — ступенька ширины полосы у каждого шва.
-    /// Куски одной пары улиц (`network`) получают медиану зазоров по длине.
-    fn share_tram_gaps(&mut self, network: &RoadNetwork) {
-        let street = |road: usize| network.street_of(road).map(|(street, _)| street);
-        let key = |road: usize, partner: usize| {
-            let (a, b) = (street(road)?, street(partner)?);
-            Some((a.min(b), a.max(b)))
-        };
-        let mut chains: HashMap<(usize, usize), Vec<(f32, f32)>> = HashMap::new();
-        for median in self.medians.iter().filter(|median| median.tram) {
-            if let Some(key) = key(median.roads[0], median.roads[1]) {
-                chains
-                    .entry(key)
-                    .or_default()
-                    .push((median.gap, median.to - median.from));
-            }
-        }
-        let shared: HashMap<(usize, usize), f32> = chains
-            .into_iter()
-            .map(|(key, mut gaps)| {
-                gaps.sort_by(|a, b| a.0.total_cmp(&b.0));
-                let half = gaps.iter().map(|(_, length)| length).sum::<f32>() / 2.0;
-                let mut walked = 0.0;
-                let gap = gaps
-                    .iter()
-                    .find(|(_, length)| {
-                        walked += length;
-                        walked >= half
-                    })
-                    .map_or(gaps[0].0, |(gap, _)| *gap);
-                (key, gap)
-            })
-            .collect();
-        for median in self.medians.iter_mut().filter(|median| median.tram) {
-            if let Some(gap) = key(median.roads[0], median.roads[1]).and_then(|k| shared.get(&k)) {
-                median.gap = *gap;
-            }
-        }
-        for (road, runs) in self.runs.iter_mut().enumerate() {
-            for run in runs.iter_mut().filter(|run| run.tram) {
-                if let Some(gap) = key(road, run.partner).and_then(|k| shared.get(&k)) {
-                    run.gap = *gap;
-                }
-            }
-        }
-    }
-
     /// Развести половины на постоянный зазор — сдвигом нарисованных осей
     /// `paths` — и положить середины разделительных по разведённым осям.
     pub fn align(
@@ -395,7 +359,6 @@ impl Pairs {
         network: &RoadNetwork,
         nodes: &RoadNodes,
     ) {
-        self.share_tram_gaps(network);
         let mut original: Vec<Option<Vec<Vec2>>> = vec![None; paths.len()];
         for run in self.runs.iter().flatten() {
             original[run.partner].get_or_insert_with(|| paths[run.partner].to_vec());
@@ -411,18 +374,24 @@ impl Pairs {
             })
             .collect();
         // стык с продолжением той же половины, у которого пара у этого же
-        // узла тоже есть, — не конец куска
+        // узла тоже есть, — не конец куска. «У узла» — ближе [`RUN_BRIDGE`]:
+        // шов своей половины бывает и швом встречной, и у него несколько проб
+        // пары не находят. Отдаёт зазор куска продолжения: к нему зазор
+        // подходит через шов, без ступеньки
         let continued = |road: usize, node: Vec2| {
-            nodes.roads_at(node).iter().any(|&other| {
-                other != road
-                    && street(other).is_some()
-                    && street(other) == street(road)
-                    && self.runs[other].iter().any(|run| {
-                        let path = &paths[other];
-                        (path[0] == node && run.from <= PROBE_STEP)
+            nodes.roads_at(node).iter().find_map(|&other| {
+                if other == road || street(other).is_none() || street(other) != street(road) {
+                    return None;
+                }
+                let path = &paths[other];
+                self.runs[other]
+                    .iter()
+                    .find(|run| {
+                        (path[0] == node && run.from <= RUN_BRIDGE)
                             || (path[path.len() - 1] == node
-                                && run.to >= lengths[other] - PROBE_STEP)
+                                && run.to >= lengths[other] - RUN_BRIDGE)
                     })
+                    .map(|run| run.gap)
             })
         };
         let mut aligned: Vec<(usize, Vec<Vec2>)> = Vec::new();
@@ -451,23 +420,33 @@ impl Pairs {
                 })
                 .map(|(_, &at)| at)
                 .collect();
+            // участок, у конца которого ось продолжает та же половина с
+            // парой, тянется до самого конца оси и там не сходит на нет
+            let spans: Vec<(&[PairRun], f32, f32)> = spans(runs)
+                .into_iter()
+                .map(|span| {
+                    let (first, last) = (&span[0], &span[span.len() - 1]);
+                    let from = if ends[0].is_some() && first.from <= RUN_BRIDGE {
+                        f32::NEG_INFINITY
+                    } else {
+                        first.from
+                    };
+                    let to = if ends[1].is_some() && last.to >= total - RUN_BRIDGE {
+                        f32::INFINITY
+                    } else {
+                        last.to
+                    };
+                    (span, from, to)
+                })
+                .collect();
             for (point, &at) in dense.iter_mut().zip(&along) {
-                let Some(run) = runs
+                let Some(&(span, from, to)) = spans
                     .iter()
-                    .find(|run| run.from - 1e-3 <= at && at <= run.to + 1e-3)
+                    .find(|(_, from, to)| from - 1e-3 <= at && at <= to + 1e-3)
                 else {
                     continue;
                 };
-                let from_start = if ends[0] && run.from <= PROBE_STEP {
-                    f32::INFINITY
-                } else {
-                    at - run.from
-                };
-                let to_end = if ends[1] && run.to >= total - PROBE_STEP {
-                    f32::INFINITY
-                } else {
-                    run.to - at
-                };
+                let (from_start, to_end) = (at - from, to - at);
                 let to_pin = pinned
                     .iter()
                     .map(|pin| (pin - at).abs())
@@ -477,17 +456,35 @@ impl Pairs {
                 if weight <= 0.0 {
                     continue;
                 }
-                let partner = original[run.partner]
-                    .as_deref()
-                    .expect("ось пары сохранена до разводки");
-                let Some((near, _)) = nearest_on_path(partner, *point) else {
+                // у шва встречной половины ближайшей бывает любая из двух её
+                // ways — берётся та, что ближе
+                let Some((partner, near)) = span
+                    .iter()
+                    .filter(|run| run.from - RUN_BRIDGE <= at && at <= run.to + RUN_BRIDGE)
+                    .filter_map(|run| {
+                        let path = original[run.partner]
+                            .as_deref()
+                            .expect("ось пары сохранена до разводки");
+                        nearest_on_path(path, *point).map(|(near, _)| (run.partner, near))
+                    })
+                    .min_by(|a, b| a.1.distance(*point).total_cmp(&b.1.distance(*point)))
+                else {
                     continue;
                 };
                 let Some(outward) = (*point - near).try_normalize() else {
                     continue;
                 };
-                let asphalt = (roads[road].width + roads[run.partner].width) / 2.0;
-                let wanted = point.midpoint(near) + outward * (asphalt + run.gap) / 2.0;
+                // через шов своей половины — к зазору продолжения: у самого
+                // узла обе стороны берут середину между своими зазорами
+                let mut gap = span_gap(span, at);
+                if let (Some(before), true) = (ends[0], from == f32::NEG_INFINITY) {
+                    gap = blend(before, gap, at);
+                }
+                if let (Some(after), true) = (ends[1], to == f32::INFINITY) {
+                    gap = blend(gap, after, at - total);
+                }
+                let asphalt = (roads[road].width + roads[partner].width) / 2.0;
+                let wanted = point.midpoint(near) + outward * (asphalt + gap) / 2.0;
                 *point += (wanted - *point) * weight;
             }
             // узлы остаются вершинами: по их точному месту их находят соседи
@@ -662,6 +659,35 @@ impl<'a> Tracks<'a> {
 fn ease(distance: f32) -> f32 {
     let t = (distance / ALIGN_TRANSITION).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
+}
+
+/// Куски половины (по ходу), сведённые в участки разводки: соседние, между
+/// которыми не больше [`RUN_BRIDGE`], — один участок.
+fn spans(runs: &[PairRun]) -> Vec<&[PairRun]> {
+    let mut spans = Vec::new();
+    let mut start = 0;
+    for index in 1..=runs.len() {
+        if index == runs.len() || runs[index].from - runs[index - 1].to > RUN_BRIDGE {
+            spans.push(&runs[start..index]);
+            start = index;
+        }
+    }
+    spans
+}
+
+/// Зазор участка в точке `at`: у каждого куска — свой, а на стыке двух он
+/// переходит от одного к другому за [`ALIGN_TRANSITION`], без ступеньки.
+fn span_gap(span: &[PairRun], at: f32) -> f32 {
+    span.windows(2).fold(span[0].gap, |gap, pair| {
+        blend(gap, pair[1].gap, at - (pair[0].to + pair[1].from) / 2.0)
+    })
+}
+
+/// Зазор `before` до шва и `after` за ним в `beyond` м от шва (за ним — со
+/// знаком плюс): переход за [`ALIGN_TRANSITION`], на самом шве — середина.
+fn blend(before: f32, after: f32, beyond: f32) -> f32 {
+    let t = (beyond / ALIGN_TRANSITION + 0.5).clamp(0.0, 1.0);
+    before + (after - before) * t * t * (3.0 - 2.0 * t)
 }
 
 /// Ближайшая половина рядом с точкой `at` оси дороги `index`, идущей по

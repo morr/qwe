@@ -274,8 +274,58 @@ fn a_tram_on_a_median_wider_than_a_bed_stays_a_lawn() {
     assert_eq!(pairs.count(), [0, 1, 0], "обособленное полотно на траве");
 }
 
+/// Расстояние между осями `paths[0]` и `paths[1..]` через каждые 2 м по x
+/// от `from` до `to`.
+fn apart_along(
+    paths: &[Vec<Vec2>],
+    first: usize,
+    others: &[usize],
+    from: f32,
+    to: f32,
+) -> Vec<f32> {
+    (0..=((to - from) / 2.0) as usize)
+        .map(|step| {
+            let at = at_x(&paths[first], from + step as f32 * 2.0);
+            others
+                .iter()
+                .map(|&other| distance_to_path(at, &paths[other]))
+                .fold(f32::INFINITY, f32::min)
+        })
+        .collect()
+}
+
 #[test]
-fn a_tram_bed_of_two_ways_shares_one_gap() {
+fn a_seam_of_the_partner_half_does_not_let_the_axes_go() {
+    // половины наложены на 2 м; встречная — два way со швом у x = 130,
+    // своя — один way: пара меняет way посреди куска
+    let width = 3.0 * 3.3 + 1.0;
+    let apart = width - 2.0;
+    let roads = vec![
+        half(vec![Vec2::ZERO, Vec2::new(300.0, 0.0)], 3),
+        half(vec![Vec2::new(300.0, apart), Vec2::new(130.0, apart)], 3),
+        half(vec![Vec2::new(130.0, apart), Vec2::ZERO.with_y(apart)], 3),
+    ];
+    let (pairs, paths) = aligned(&roads);
+    assert_eq!(
+        pairs.runs[0].len(),
+        2,
+        "у своей половины два куска — по way пары"
+    );
+    let wanted = width + PAVED_MIN_GAP;
+    for (step, apart) in apart_along(&paths, 0, &[1, 2], 60.0, 240.0)
+        .into_iter()
+        .enumerate()
+    {
+        assert!(
+            (apart - wanted).abs() < 0.05,
+            "у x = {} между осями {apart}, а не {wanted}: у шва пары разводка сошла на нет",
+            60.0 + step as f32 * 2.0
+        );
+    }
+}
+
+#[test]
+fn a_tram_bed_of_two_ways_keeps_its_own_gaps_without_a_step() {
     // половина A — два way по y = 0, половина B — два way, чей зазор
     // сходится от 6 м к 4
     let width = 2.0 * 3.3 + 1.0;
@@ -295,12 +345,25 @@ fn a_tram_bed_of_two_ways_shares_one_gap() {
         Vec2::new(-10.0, (width + 3.8) / 2.0),
         Vec2::new(210.0, (width + 6.2) / 2.0),
     ])];
-    let (pairs, _) = aligned_with(&roads, &rails);
+    let (pairs, paths) = aligned_with(&roads, &rails);
     assert_eq!(pairs.count(), [2, 0, 2]);
-    let [first, second] = [&pairs.medians[0], &pairs.medians[1]];
-    assert_eq!(first.gap, second.gap, "один зазор на цепочку");
-    assert!((4.0..=6.0).contains(&first.gap), "зазор {}", first.gap);
-    for run in pairs.runs.iter().flatten() {
-        assert_eq!(run.gap, first.gap, "и у кусков обеих половин");
+    // зазор у каждого куска — свой: общий стягивал бы половины там, где
+    // картограф развёл их шире, и проспект сужался бы между перекрёстками
+    let mut gaps: Vec<f32> = pairs.medians.iter().map(|median| median.gap).collect();
+    gaps.sort_by(f32::total_cmp);
+    assert!(
+        (gaps[0] - 4.5).abs() < 0.1 && (gaps[1] - 5.5).abs() < 0.1,
+        "зазоры {gaps:?}"
+    );
+    // и на шве нет ступеньки: расстояние между осями меняется плавно — метр
+    // разницы зазоров за `ALIGN_TRANSITION`, круче всего полтора метра на
+    // двадцать, 0.15 м на шаг в 2 м; ступенька была бы всем метром сразу
+    let apart = apart_along(&paths, 0, &[2, 3], 20.0, 98.0)
+        .into_iter()
+        .chain(apart_along(&paths, 1, &[2, 3], 100.0, 180.0))
+        .collect::<Vec<_>>();
+    let steepest = 2.0 * 1.5 / ALIGN_TRANSITION + 0.02;
+    for pair in apart.windows(2) {
+        assert!((pair[1] - pair[0]).abs() < steepest, "ступенька {pair:?}");
     }
 }
