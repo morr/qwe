@@ -1167,7 +1167,7 @@ pub fn mesh_roads(
     // длина улицы у начала каждого way — по ней идут штрихи краски
     let stations = paint::street_stations(&map.network, paths);
     // разделённая улица, сходящаяся в обычную: узел не перекрёсток
-    let merges = merges::merges(&drawn, paths, &nodes, &axes.pairs.runs);
+    let merges = merges::merges(&drawn, paths, &nodes, &axes.pairs.runs, &map.network);
     // Скругления кладутся раньше всех лент своего слоя: лента поверх кроет
     // скругление, а не наоборот, и разметка остаётся целой.
     let (kerb_returns, islands) = {
@@ -1225,12 +1225,7 @@ pub fn mesh_roads(
             merge,
             &drawn,
             paths,
-            |half, partner| {
-                axes.pairs.runs[half]
-                    .iter()
-                    .find(|run| run.partner == partner)
-                    .map(|run| run.left)
-            },
+            &map.network,
             sidewalks_of,
             shape.taper(),
         );
