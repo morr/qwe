@@ -1480,6 +1480,14 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     the **outer corner** is a fan from the node, what the round caps used to give. A
     crossing street's piece between the two halves of a divided street lies in the
     median opening and carries no sidewalk.
+  - **Merge** (`map/roads/merges.rs`) — a node where both halves of one pair end on a
+    two-way way of their `Highway`, the halves leaving it one way and the street the
+    other: a divided street turning into an ordinary one. It is **not a junction** —
+    its three arms give each other no square ends and no corners — and each half's outer
+    kerb runs into the continuation's kerb on its side over a **merge wedge**, asphalt
+    (and sidewalk beyond it) outside the half's ribbon, as long as a taper of the same
+    width difference. Tula has 18; the node at Советская × Коминтерна is **not** one
+    (all four ways there are one-way: the pair turns and goes on).
   - **Stitch** — a straight render-only segment appended to a **loose end** (a way end
     with no other road at its node that could carry it) up to the centreline of the
     nearest road **ahead** of it (within 60° of its heading), when that road's drawn edge —
