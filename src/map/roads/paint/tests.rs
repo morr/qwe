@@ -192,6 +192,44 @@ fn a_wedge_starts_on_the_narrow_grid() {
     assert!((lane_frame(3).origin - odd.origin - lane_width() / 2.0).abs() < 1e-4);
 }
 
+/// Профиль колеи у узла слияния — тот же, что у линий краски: в узле раскладка
+/// узла, за клином тело; way, начатый в середине клина, получает пару на
+/// своём торце.
+#[test]
+fn a_merge_ramp_hands_the_asphalt_the_paint_frames() {
+    let body = lane_frame(2);
+    let node = LaneFrame {
+        origin: body.origin + 3.0,
+        low: body.low + 3.0,
+        high: body.high + 3.0,
+    };
+    let ramp = MergeRamp {
+        frame: node,
+        length: 20.0,
+        start: 30.0,
+        away: false,
+    };
+    // way длиной 30 кончается в узле: клин — его последние 20 м
+    let profile = ramp.lane_profile(body, 30.0);
+    assert!(profile.windows(2).all(|pair| pair[0].0 <= pair[1].0));
+    assert_eq!(profile.first().map(|pair| pair.0), Some(10.0));
+    assert_eq!(profile.first().map(|pair| pair.1), Some(body));
+    assert_eq!(profile.last().map(|pair| pair.0), Some(30.0));
+    assert_eq!(profile.last().map(|pair| pair.1), Some(node));
+    for &(along, frame) in &profile {
+        assert_eq!(Some(frame), ramp.frame_at(body, along).or(Some(body)));
+    }
+    // клин, начатый на соседнем way: пара на торце у узла
+    let farther = MergeRamp {
+        start: 5.0,
+        away: true,
+        ..ramp
+    };
+    let profile = farther.lane_profile(body, 30.0);
+    assert_eq!(profile.first().map(|pair| pair.0), Some(0.0));
+    assert_eq!(profile.last().map(|pair| pair.1), Some(body));
+}
+
 /// Односторонний клин 2 → 4 (пример 16): общие полосы прижаты к левой кромке,
 /// обе новые рождаются у бордюра справа. Каждая линия узкого сечения на теле
 /// стоит на разницу полуширин левее, чем у шва.

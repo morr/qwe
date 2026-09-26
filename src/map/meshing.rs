@@ -503,6 +503,10 @@ pub struct MeshBuilder {
     /// ширины обе одинаковы, у клина ([`Self::push_taper`]) плывут. `None` —
     /// лента без полос.
     lanes: [Option<LaneFrame>; 2],
+    /// Раскладка, плывущая вдоль ленты ([`Self::set_lane_profile`]): пары
+    /// «метров от начала пути — раскладка» по возрастанию; пусто — вся лента
+    /// в `lanes[0]`.
+    lane_profile: Vec<(f32, LaneFrame)>,
     /// `Some` — меш собирается для `buildings::material::RoofMaterial` и несёт
     /// [`ATTRIBUTE_ROOF`] на каждой вершине.
     roof: Option<Vec<[f32; 4]>>,
@@ -537,12 +541,47 @@ impl MeshBuilder {
     /// координат поверхности раскладку некуда записать.
     pub fn set_lanes(&mut self, lanes: Option<LaneFrame>) {
         self.lanes = [lanes; 2];
+        self.lane_profile.clear();
     }
 
     /// Раскладка клина ([`Self::push_taper`]), плывущая от `from` у его
     /// начала к `to` у конца.
     pub fn set_lane_taper(&mut self, from: Option<LaneFrame>, to: Option<LaneFrame>) {
         self.lanes = [from, to];
+        self.lane_profile.clear();
+    }
+
+    /// Раскладка ленты [`Self::push_ribbon_shaped`], заданная по длине пути:
+    /// `profile` — пары «метров от начала — раскладка» по возрастанию, между
+    /// ними — по прямой, за крайними — крайние. Так колея половины идёт за
+    /// линиями краски через клин слияния (`roads/merges.rs`): вершина ленты
+    /// встаёт на каждую пару. Пустой профиль — вся лента в `body`.
+    pub fn set_lane_profile(&mut self, body: Option<LaneFrame>, profile: Vec<(f32, LaneFrame)>) {
+        self.lanes = [body; 2];
+        self.lane_profile = profile;
+    }
+
+    /// Раскладка в `along` метрах от начала пути ленты.
+    fn lanes_at(&self, along: f32) -> Option<LaneFrame> {
+        let profile = &self.lane_profile;
+        let (Some(first), Some(last)) = (profile.first(), profile.last()) else {
+            return self.lanes[0];
+        };
+        if along <= first.0 {
+            return Some(first.1);
+        }
+        if along >= last.0 {
+            return Some(last.1);
+        }
+        let index = profile.partition_point(|&(at, _)| at <= along);
+        let (from, to) = (profile[index - 1], profile[index]);
+        let span = to.0 - from.0;
+        let t = if span > 0.0 {
+            (along - from.0) / span
+        } else {
+            1.0
+        };
+        Some(from.1.lerp(to.1, t))
     }
 
     /// Кровля, которой принадлежит геометрия после этого вызова; `None` —
@@ -1153,8 +1192,16 @@ impl MeshBuilder {
         let gaps = GapProfile::new(&path, &along, total, breaks, closed.then_some(total));
         if self.ribbon.is_some() {
             gaps.split_path(&mut path, &mut along, width / 4.0);
+            // и на каждой паре профиля раскладки: между ними GPU тянет её по
+            // прямой, как профиль
+            if !closed {
+                for &(at, _) in &self.lane_profile {
+                    insert_vertex_at(&mut path, &mut along, at, PROFILE_MERGE);
+                }
+            }
         }
         let ends: Vec<f32> = along.iter().map(|&at| gaps.distance(at)).collect();
+        let frames: Vec<Option<LaneFrame>> = along.iter().map(|&at| self.lanes_at(at)).collect();
 
         let count = path.len();
         let segments = if closed { count } else { count - 1 };
@@ -1178,7 +1225,12 @@ impl MeshBuilder {
                             path[next] + offsets[next],
                         ],
                         [color; 4],
-                        self.segment_coords(half_width, ends[index], ends[next]),
+                        Self::segment_coords(
+                            half_width,
+                            [frames[index], frames[next]],
+                            ends[index],
+                            ends[next],
+                        ),
                     );
                 }
             }
@@ -1238,7 +1290,12 @@ impl MeshBuilder {
                             path[next] + at_end,
                         ],
                         [color; 4],
-                        self.segment_coords(half_width, ends[index], ends[next]),
+                        Self::segment_coords(
+                            half_width,
+                            [frames[index], frames[next]],
+                            ends[index],
+                            ends[next],
+                        ),
                     );
                 }
                 for (index, bend) in bends.iter().enumerate() {
@@ -1251,7 +1308,7 @@ impl MeshBuilder {
                         incoming,
                         outgoing,
                         color,
-                        ends[index],
+                        (ends[index], frames[index]),
                     );
                 }
             }
@@ -1275,6 +1332,7 @@ impl MeshBuilder {
                         at_end: ends[0],
                         slope: slope_between(ends[0], ends[1], along[1] - along[0]),
                     },
+                    frames[0],
                 );
             }
             if caps[1] == RibbonCap::Round
@@ -1296,6 +1354,7 @@ impl MeshBuilder {
                             along[count - 1] - along[count - 2],
                         ),
                     },
+                    frames[count - 1],
                 );
             }
         }
@@ -1303,13 +1362,18 @@ impl MeshBuilder {
 
     /// Координаты четырёх углов квада сегмента: `+нормаль` в начале, `−нормаль`
     /// в начале, `−нормаль` в конце, `+нормаль` в конце — порядок
-    /// [`Self::push_quad_full`].
-    fn segment_coords(&self, half_width: f32, at_start: f32, at_end: f32) -> [[f32; 4]; 4] {
+    /// [`Self::push_quad_full`]; `lanes` — раскладка в начале и в конце.
+    fn segment_coords(
+        half_width: f32,
+        [lanes_start, lanes_end]: [Option<LaneFrame>; 2],
+        at_start: f32,
+        at_end: f32,
+    ) -> [[f32; 4]; 4] {
         [
-            self.coords(half_width, at_start, half_width),
-            self.coords(-half_width, at_start, half_width),
-            self.coords(-half_width, at_end, half_width),
-            self.coords(half_width, at_end, half_width),
+            Self::coords_in(lanes_start, half_width, at_start, half_width),
+            Self::coords_in(lanes_start, -half_width, at_start, half_width),
+            Self::coords_in(lanes_end, -half_width, at_end, half_width),
+            Self::coords_in(lanes_end, half_width, at_end, half_width),
         ]
     }
 
@@ -1328,7 +1392,7 @@ impl MeshBuilder {
         incoming: Vec2,
         outgoing: Vec2,
         color: LinearRgba,
-        to_break: f32,
+        (to_break, lanes): (f32, Option<LaneFrame>),
     ) {
         let turn = incoming.angle_to(outgoing);
         if join_gap_hidden(radius, turn) {
@@ -1345,10 +1409,13 @@ impl MeshBuilder {
             turn,
             color,
             FanCoords::Join { side, to_break },
+            lanes,
         );
     }
 
-    /// Веер треугольников по дуге: `sweep` радиан от `start` вокруг `center`.
+    /// Веер треугольников по дуге: `sweep` радиан от `start` вокруг `center`,
+    /// в раскладке `lanes`.
+    #[allow(clippy::too_many_arguments)]
     fn push_arc_fan(
         &mut self,
         center: Vec2,
@@ -1357,20 +1424,23 @@ impl MeshBuilder {
         sweep: f32,
         color: LinearRgba,
         coords: FanCoords,
+        lanes: Option<LaneFrame>,
     ) {
         let steps = arc_steps(radius, sweep.abs());
         let base = self.positions.len() as u32;
         let rgba = color.to_f32_array();
+        let coords_at =
+            |across: f32, to_break: f32| Self::coords_in(lanes, across, to_break, radius);
         let at_center = match coords {
-            FanCoords::Join { to_break, .. } => self.coords(0.0, to_break, radius),
-            FanCoords::Cap { at_end, .. } => self.coords(0.0, at_end, radius),
+            FanCoords::Join { to_break, .. } => coords_at(0.0, to_break),
+            FanCoords::Cap { at_end, .. } => coords_at(0.0, at_end),
         };
         self.push_vertex(center, rgba, at_center);
         for step in 0..=steps {
             let angle = start + sweep * step as f32 / steps as f32;
             let point = center + Vec2::from_angle(angle) * radius;
             let at_rim = match coords {
-                FanCoords::Join { side, to_break } => self.coords(side * radius, to_break, radius),
+                FanCoords::Join { side, to_break } => coords_at(side * radius, to_break),
                 FanCoords::Cap {
                     outward,
                     normal,
@@ -1378,11 +1448,7 @@ impl MeshBuilder {
                     slope,
                 } => {
                     let offset = point - center;
-                    self.coords(
-                        offset.dot(normal),
-                        at_end + slope * offset.dot(outward),
-                        radius,
-                    )
+                    coords_at(offset.dot(normal), at_end + slope * offset.dot(outward))
                 }
             };
             self.push_vertex(point, rgba, at_rim);
@@ -2002,6 +2068,10 @@ impl GapProfile {
         }
     }
 }
+
+/// Пара профиля раскладки ближе этого к вершине ленты вершины не получает, м:
+/// пары идут через пару метров, и сдвиг на десять сантиметров незаметен.
+const PROFILE_MERGE: f32 = 0.1;
 
 /// Вершина на длине дуги `at`, если та внутри какого-то сегмента и не ближе
 /// `merge_distance` к его концам. Отвечает, нашёлся ли такой сегмент, — чтобы

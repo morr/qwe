@@ -505,6 +505,35 @@ impl MergeRamp {
             frame
         })
     }
+
+    /// Раскладка way длиной `total` с телом `body` по его длине — профиль для
+    /// колеи асфальта (`MeshBuilder::set_lane_profile`): пары через
+    /// [`RAMP_STEP`] по клину, последняя — уже тело. Клин мимо way — пусто.
+    pub fn lane_profile(self, body: LaneFrame, total: f32) -> Vec<(f32, LaneFrame)> {
+        let steps = (self.length / RAMP_STEP).ceil().max(1.0) as usize;
+        let mut profile: Vec<(f32, LaneFrame)> = (0..=steps)
+            .filter_map(|step| {
+                let from_node = self.length * step as f32 / steps as f32;
+                let along = if self.away {
+                    from_node - self.start
+                } else {
+                    self.start - from_node
+                };
+                (0.0..=total)
+                    .contains(&along)
+                    .then(|| (along, self.frame_at(body, along).unwrap_or(body)))
+            })
+            .collect();
+        // клин, начатый на соседнем way или ушедший на следующий, — пары и на
+        // торцах этого: за крайней парой профиль стоит
+        for along in [0.0, total] {
+            if let Some(frame) = self.frame_at(body, along) {
+                profile.push((along, frame));
+            }
+        }
+        profile.sort_by(|a, b| a.0.total_cmp(&b.0));
+        profile
+    }
 }
 
 /// Шаг вершин на клине слияния, м: раскладка по smoothstep — кривая.

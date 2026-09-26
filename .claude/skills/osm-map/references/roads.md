@@ -1132,8 +1132,14 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
         with no median it stops where the halves' kerbs part (axes further apart than the
         two half widths): at Рязанская the halves' ribbons leave a wedge of bare ground
         before the lawn's nose, and the axis stops at its tip.
-      - **Not done**: the ruts. The asphalt keeps its body lane frame and its breaks at the
-        node, so the ruts fade there instead of following the ramp.
+      - **The ruts follow the ramp.** A pure merge node takes the halves' and the
+        continuation's `asphalt` breaks off too, and the half's fill gets the same ramp as a
+        lane profile: `MergeRamp::lane_profile` samples `frame_at` every `RAMP_STEP` along
+        the way (pairs at the way's ends when the ramp crosses them), and
+        `MeshBuilder::set_lane_profile` puts a ribbon vertex on each pair
+        (`PROFILE_MERGE` 0.1 m) and interpolates the frame per vertex, fans included —
+        `push_ribbon_shaped` only; `set_lanes` / `set_lane_taper` clear the profile. So
+        the ruts run between the paint lines through the node instead of fading 8 m short.
     - **Советская × Коминтерна is not a merge**, whatever the tram-bed plan assumed: all
       four ways there are one-way — the pair turns east and goes on as 3 + 4 lanes with a
       lawn, while the tram leaves for Коминтерна. The bed ends there square at the lawn's

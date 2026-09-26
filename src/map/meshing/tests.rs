@@ -881,6 +881,59 @@ fn a_taper_carries_the_lane_frame_across() {
     }
 }
 
+/// Профиль раскладки ставит вершину ленты на каждую свою пару и ведёт
+/// раскладку между ними по прямой; за крайней парой — крайняя.
+#[test]
+fn a_lane_profile_puts_a_vertex_on_each_pair() {
+    let mut builder = MeshBuilder::with_surface_coords();
+    let node = LaneFrame {
+        origin: 0.0,
+        low: 0.0,
+        high: 6.6,
+    };
+    let body = LaneFrame {
+        origin: 1.65,
+        low: -4.95,
+        high: 4.95,
+    };
+    builder.set_lane_profile(Some(body), vec![(0.0, node), (4.0, body)]);
+    builder.push_ribbon(
+        &[Vec2::ZERO, Vec2::new(30.0, 0.0)],
+        false,
+        10.9,
+        LinearRgba::WHITE,
+        RibbonJoin::Round,
+        RibbonCap::Butt,
+    );
+    let coords = builder.ribbon_coords_for_test().unwrap();
+    let at = |x: f32| {
+        builder
+            .positions
+            .iter()
+            .zip(coords)
+            .filter(|(position, _)| (position[0] - x).abs() < 1e-4)
+            .map(|(_, ribbon)| *ribbon)
+            .collect::<Vec<_>>()
+    };
+    let expect = |x: f32, frame: LaneFrame| {
+        let found = at(x);
+        assert!(!found.is_empty(), "no vertex at {x}");
+        for ribbon in found {
+            assert!(
+                (ribbon[2] - (frame.low - frame.origin)).abs() < 1e-4,
+                "{x}: {ribbon:?}"
+            );
+            assert!(
+                (ribbon[3] - (frame.high - frame.origin)).abs() < 1e-4,
+                "{x}: {ribbon:?}"
+            );
+        }
+    };
+    expect(0.0, node);
+    expect(4.0, body);
+    expect(30.0, body);
+}
+
 /// За торцом «до торца» отрицательно — по нему шейдер гасит разметку на
 /// полудиске, торчащем на перекрёсток.
 #[test]

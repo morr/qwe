@@ -1708,8 +1708,22 @@ pub fn mesh_roads(
                 [true; 2],
             );
         }
-        fill.set_lanes(lanes);
+        // у узла слияния колея плывёт за линиями краски — по той же рампе;
+        // профиль — по длине `points`, а тело начинается за клином у начала
+        match (lanes, ramps[index]) {
+            (Some(frame), Some(ramp)) => {
+                let head = head.as_deref().map_or(0.0, polyline_length);
+                let profile = ramp
+                    .lane_profile(frame, polyline_length(points))
+                    .into_iter()
+                    .map(|(along, frame)| (along - head, frame))
+                    .collect();
+                fill.set_lane_profile(lanes, profile);
+            }
+            _ => fill.set_lanes(lanes),
+        }
         push_street_fill(fill, body, road.width, color.to_linear(), breaks, trimmed);
+        fill.set_lanes(lanes);
         for &(path, narrow, end) in &wedges {
             let to_break = continued(path, road.width, breaks, end);
             // раскладка плывёт от сечения соседа к своему — та же, что у

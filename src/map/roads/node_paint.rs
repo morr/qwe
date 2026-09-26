@@ -434,7 +434,9 @@ impl NodePaint {
             };
             let key = node_key(node.at);
             for road in merge.roads() {
+                // и колея не гаснет: раскладка половин сведена к продолжению
                 paint.breaks[road].retain(|found| node_key(found.at) != key);
+                paint.asphalt[road].retain(|found| node_key(found.at) != key);
                 let widest = merge
                     .roads()
                     .into_iter()
