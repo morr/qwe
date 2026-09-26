@@ -23,7 +23,7 @@ use i_overlay::mesh::style::{LineCap, LineJoin, OutlineStyle};
 use super::network::pairs::Median;
 use crate::map::along::simplify;
 use crate::map::grid::Grid;
-use crate::map::osm::model::{RailKind, RailLine};
+use crate::map::osm::model::{RailKind, RailLine, polyline_length};
 use crate::map::osm::{RoadClass, RoadLine};
 use crate::map::shapes::{ARC, Contour, Shape, stroke};
 
@@ -115,7 +115,7 @@ pub fn tram_bands(
     for rail in rails.iter().filter(|rail| rail.kind == RailKind::Tram) {
         let mut run: Vec<Vec2> = Vec::new();
         let mut flush = |run: &mut Vec<Vec2>| {
-            if run.len() >= 2 && length(run) >= MIN_RUN {
+            if run.len() >= 2 && polyline_length(run) >= MIN_RUN {
                 let kept = simplify(run, false, SIMPLIFY_TOLERANCE, |_| false);
                 bands.push(kept.into_iter().map(|index| run[index]).collect());
             }
@@ -173,13 +173,6 @@ pub fn band_cover(bands: &[Vec<Vec2>]) -> Vec<Shape> {
     }
     let merged: Vec<Shape> = contours.simplify_shape(FillRule::NonZero);
     merged.outline(&OutlineStyle::new(-reach).line_join(LineJoin::Round(ARC)))
-}
-
-fn length(points: &[Vec2]) -> f32 {
-    points
-        .windows(2)
-        .map(|pair| pair[0].distance(pair[1]))
-        .sum()
 }
 
 #[cfg(test)]

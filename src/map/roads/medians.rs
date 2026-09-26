@@ -29,7 +29,7 @@ use i_overlay::float::single::SingleFloatOverlay;
 use i_overlay::mesh::outline::offset::OutlineOffset;
 use i_overlay::mesh::style::{LineJoin, OutlineStyle};
 
-use super::network::pairs::{Median, PAIR_MIN};
+use super::network::pairs::{Median, PAIR_MIN, TRAM_BED_MAX_GAP};
 use super::{RoadJoin, push_ribbon};
 use crate::map::meshing::{Break, MeshBuilder};
 use crate::map::osm::model::polyline_length;
@@ -214,8 +214,9 @@ pub fn push_lawn(
 }
 
 /// Насколько асфальт торца полотна тянется к носу соседнего газона, м:
-/// отступ носа от торца и его скругление на самом широком полотне.
-const BED_CAP: f32 = NOSE_CLEARANCE + NOSE_SHARE * 8.0;
+/// отступ носа от торца и его скругление на самом широком полотне
+/// ([`TRAM_BED_MAX_GAP`]).
+const BED_CAP: f32 = NOSE_CLEARANCE + NOSE_SHARE * TRAM_BED_MAX_GAP;
 
 /// Асфальт между торцом трамвайного полотна и носом газона той же пары.
 /// Нос отступает от торца на [`NOSE_CLEARANCE`] и скруглён, а между ними

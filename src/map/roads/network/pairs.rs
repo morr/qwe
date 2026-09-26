@@ -56,7 +56,7 @@ use bevy::prelude::*;
 use super::{RoadNetwork, RoadNodes};
 use crate::map::along::{nearest_on_path, simplify};
 use crate::map::grid::Grid;
-use crate::map::osm::model::{RailKind, RailLine, polyline_length};
+use crate::map::osm::model::{RailKind, RailLine, distance_to_segment, polyline_length};
 use crate::map::osm::{RoadClass, RoadLine};
 
 /// Шаг, которым ось ощупывается на соседа, м.
@@ -645,11 +645,7 @@ impl<'a> Tracks<'a> {
             .near_each(at - reach, at + reach)
             .any(|&(rail, link)| {
                 let points = &self.rails[rail].points;
-                let (from, to) = (points[link], points[link + 1]);
-                let along = to - from;
-                let t = ((at - from).dot(along) / along.length_squared().max(f32::EPSILON))
-                    .clamp(0.0, 1.0);
-                (from + along * t).distance(at) <= reach
+                distance_to_segment(at, points[link], points[link + 1]) <= reach
             })
     }
 }
