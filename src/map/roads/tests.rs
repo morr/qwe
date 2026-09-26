@@ -1142,7 +1142,7 @@ fn two_carriageways_side_by_side_get_a_double_line_and_no_kerb_between() {
         )
     });
     let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
-    assert_eq!(report.medians, [1, 0]);
+    assert_eq!(report.medians, [1, 0, 0]);
 
     let lines = &layer(&layers, "lot_lines").builder;
     assert!(!lines.is_empty());
@@ -1227,7 +1227,7 @@ fn divided_avenue(gap: f32) -> (MapData, f32) {
 fn paired_halves_share_a_paved_median_and_keep_sidewalks_outside() {
     let (map, apart) = divided_avenue(0.6);
     let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
-    assert_eq!(report.medians, [1, 0]);
+    assert_eq!(report.medians, [1, 0, 0]);
     let middle = 100.0 + apart / 2.0;
     // двойная сплошная — по середине между половинами
     let axes = layer(&layers, paint::PAINT_AXES)
@@ -1395,7 +1395,7 @@ fn a_street_into_one_half_does_not_open_the_median() {
 fn a_wide_gap_between_halves_is_a_lawn_with_a_kerb() {
     let (map, apart) = divided_avenue(8.0);
     let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
-    assert_eq!(report.medians, [0, 1]);
+    assert_eq!(report.medians, [0, 1, 0]);
     let inner = (3.0 * 3.3 + 1.0) / 2.0;
     let grass = layer(&layers, "road_medians").builder.positions_for_test();
     assert!(!grass.is_empty(), "газон есть");
@@ -1410,25 +1410,69 @@ fn a_wide_gap_between_halves_is_a_lawn_with_a_kerb() {
     assert!(layer(&layers, paint::PAINT_AXES).builder.is_empty());
 }
 
-/// Тот же зазор, но по нему идёт трамвай: полотно мощёное, газона нет, а
-/// двойные сплошные — у кромок половин, не по середине (Советская в Туле).
+/// Тот же зазор, но по нему идёт трамвай (Советская в Туле): газона нет,
+/// половины расширяются до середины асфальтом полотна, двойная сплошная —
+/// по середине, между путями, а над рельсами — светлая полоса.
 #[test]
-fn a_tram_between_halves_paves_the_median_with_lines_at_its_edges() {
-    let (mut map, apart) = divided_avenue(8.0);
+fn a_tram_between_halves_widens_both_halves_to_the_middle() {
+    let (mut map, apart) = divided_avenue(5.0);
     let middle = 100.0 + apart / 2.0;
-    map.rails.push(RailLine {
-        kind: RailKind::Tram,
-        ..fixture::rail(vec![Vec2::new(80.0, middle), Vec2::new(520.0, middle)], 1.2)
-    });
+    for track in [middle - 1.7, middle + 1.7] {
+        map.rails.push(RailLine {
+            kind: RailKind::Tram,
+            ..fixture::rail(vec![Vec2::new(80.0, track), Vec2::new(520.0, track)], 1.2)
+        });
+    }
     let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
-    assert_eq!(report.medians, [1, 0]);
+    assert_eq!(report.medians, [1, 0, 1]);
+    assert_eq!(report.tram_bands, 2, "полоса над каждым путём");
     assert!(
         layer(&layers, "road_medians").builder.is_empty(),
         "газона нет"
     );
+    // и бордюра газона в слое тротуаров — тоже: между кромками пусто
     let inner = (3.0 * 3.3 + 1.0) / 2.0;
     let edges = [100.0 + inner, 100.0 + apart - inner];
-    // середины полос краски: вершины идут парами поперёк линии
+    let sidewalks = layer(&layers, "sidewalks").builder.positions_for_test();
+    assert!(
+        sidewalks
+            .iter()
+            .filter(|at| at[0] > 200.0 && at[0] < 400.0)
+            .all(|at| at[1] <= edges[0] + 0.01 || at[1] >= edges[1] - 0.01),
+        "тротуар между половинами"
+    );
+    // асфальт полотна — от кромки до кромки, серым улиц, и светлая полоса
+    let roads = &layer(&layers, "roads").builder;
+    let road = ROAD_COLOR.to_linear().to_f32_array();
+    let band = TRAM_BAND_COLOR.to_linear().to_f32_array();
+    let bed: Vec<f32> = roads
+        .positions_for_test()
+        .iter()
+        .zip(roads.colors_for_test())
+        .filter(|(at, color)| **color == road && at[0] > 200.0 && at[0] < 400.0)
+        .map(|(at, _)| at[1])
+        .filter(|y| *y > edges[0] - 0.1 && *y < edges[1] + 0.1)
+        .collect();
+    assert!(
+        bed.iter().any(|y| (y - edges[0]).abs() < 0.1)
+            && bed.iter().any(|y| (y - edges[1]).abs() < 0.1),
+        "асфальт полотна кроет зазор: {bed:?}"
+    );
+    let banded: Vec<f32> = roads
+        .positions_for_test()
+        .iter()
+        .zip(roads.colors_for_test())
+        .filter(|(_, color)| **color == band)
+        .map(|(at, _)| at[1])
+        .collect();
+    assert!(!banded.is_empty(), "полоса над рельсами есть");
+    assert!(
+        banded
+            .iter()
+            .all(|y| (y - middle).abs() <= 1.7 + tram_band::TRAM_BAND_WIDTH / 2.0 + 0.01),
+        "полоса — над путями: {banded:?}"
+    );
+    // двойная сплошная — по середине
     let axes = layer(&layers, paint::PAINT_AXES)
         .builder
         .positions_for_test();
@@ -1437,22 +1481,75 @@ fn a_tram_between_halves_paves_the_median_with_lines_at_its_edges() {
         .map(|pair| (pair[0][1] + pair[1][1]) / 2.0)
         .collect();
     assert!(!centres.is_empty());
-    let inset = [
-        edges[0] + medians::TRAM_EDGE_INSET,
-        edges[1] - medians::TRAM_EDGE_INSET,
-    ];
-    for centre in &centres {
-        assert!(
-            inset.iter().any(|line| (centre - line).abs() < 0.05),
-            "линия не у кромки: {centre}, кромки {edges:?}"
-        );
-    }
     assert!(
-        inset
-            .iter()
-            .all(|line| centres.iter().any(|centre| (centre - line).abs() < 0.05)),
-        "по линии у каждой кромки: {centres:?}"
+        centres.iter().all(|centre| (centre - middle).abs() < 0.05),
+        "двойная сплошная не по середине: {centres:?}"
     );
+}
+
+/// Трамвай уходит с проспекта на полпути: полотно кончается, дальше газон.
+/// Торец полотна — ровный, а между ним и носом газона — асфальт, не
+/// тротуар и не земля (Советская у Коминтерна).
+#[test]
+fn a_tram_bed_ends_in_asphalt_up_to_the_nose_of_the_lawn() {
+    let (map, apart) = divided_avenue(5.0);
+    let split = |road: &RoadLine| -> [RoadLine; 2] {
+        let [from, to] = [road.points[0], road.points[1]];
+        let middle = Vec2::new(300.0, from.y);
+        [
+            RoadLine {
+                points: vec![from, middle],
+                ..road.clone()
+            },
+            RoadLine {
+                points: vec![middle, to],
+                ..road.clone()
+            },
+        ]
+    };
+    let mut map = MapData {
+        roads: split(&map.roads[0])
+            .into_iter()
+            .chain(split(&map.roads[1]))
+            .collect(),
+        ..map
+    };
+    let middle = 100.0 + apart / 2.0;
+    map.rails.push(RailLine {
+        kind: RailKind::Tram,
+        ..fixture::rail(vec![Vec2::new(80.0, middle), Vec2::new(300.0, middle)], 1.2)
+    });
+    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    assert_eq!(report.medians, [1, 1, 1], "полотно и газон");
+    let inner = (3.0 * 3.3 + 1.0) / 2.0;
+    let gap = |at: &&[f32; 3]| at[1] > 100.0 + inner + 0.1 && at[1] < 100.0 + apart - inner - 0.1;
+    // асфальт заходит за торец полотна — к носу газона
+    let roads = layer(&layers, "roads").builder.positions_for_test();
+    let reach = roads
+        .iter()
+        .filter(gap)
+        .map(|at| at[0])
+        .filter(|x| (295.0..320.0).contains(x))
+        .fold(f32::MIN, f32::max);
+    assert!(reach > 302.0, "асфальт полотна кончается у торца: {reach}");
+    // а трава газона на месте
+    assert!(!layer(&layers, "road_medians").builder.is_empty());
+}
+
+/// Полотно шире [`network::pairs::TRAM_BED_MAX_GAP`] — обособленное, на
+/// траве: газон остаётся.
+#[test]
+fn a_tram_on_a_wide_median_keeps_the_lawn() {
+    let (mut map, apart) = divided_avenue(12.0);
+    let middle = 100.0 + apart / 2.0;
+    map.rails.push(RailLine {
+        kind: RailKind::Tram,
+        ..fixture::rail(vec![Vec2::new(80.0, middle), Vec2::new(520.0, middle)], 1.2)
+    });
+    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    assert_eq!(report.medians, [0, 1, 0]);
+    assert_eq!(report.tram_bands, 0, "путь в траве — без полосы");
+    assert!(!layer(&layers, "road_medians").builder.is_empty());
 }
 
 #[test]

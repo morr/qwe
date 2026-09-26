@@ -14,19 +14,25 @@
 //!   ужатый на бордюр. Газон рвётся у перекрёстка: поперечная улица проходит
 //!   разделительную насквозь, и нос встаёт за [`NOSE_CLEARANCE`] до края
 //!   разрыва разметки.
-//! - **Трамвайное полотно** ([`carries_tram`]) — разделительная любой ширины,
-//!   по которой идёт трамвай: асфальт, как у узкой, но двойные сплошные — по
-//!   обеим кромкам, а не по середине.
+//! - **Трамвайное полотно** ([`push_bed`], `Median::carries_tram`) —
+//!   разделительная, по которой идёт трамвай: каждая половина расширяется до
+//!   середины своей внутренней полосой, без разметки. Асфальт кладётся от
+//!   внутренней кромки до внутренней кромки — с ровными торцами, а не
+//!   круглыми: соседний газон кладёт нос у торца полотна, как у перекрёстка.
+//!   Двойная сплошная — по середине, между путями; светлая полоса над
+//!   рельсами — `roads/tram_band.rs`.
 
 use bevy::prelude::*;
+use i_overlay::core::fill_rule::FillRule;
+use i_overlay::core::overlay_rule::OverlayRule;
+use i_overlay::float::single::SingleFloatOverlay;
 use i_overlay::mesh::outline::offset::OutlineOffset;
 use i_overlay::mesh::style::{LineJoin, OutlineStyle};
 
 use super::network::pairs::{Median, PAIR_MIN};
 use super::{RoadJoin, push_ribbon};
-use crate::map::footprint::distance_to_polyline;
 use crate::map::meshing::{Break, MeshBuilder};
-use crate::map::osm::model::{RailKind, RailLine, polyline_length};
+use crate::map::osm::model::polyline_length;
 use crate::map::shapes::{ARC, Shape, contour_area, oriented, push_shape};
 
 /// Насколько середина может не доходить до края разрыва перекрёстка, чтобы её
@@ -40,66 +46,6 @@ const NOSE_CLEARANCE: f32 = 1.0;
 const NOSE_SHARE: f32 = 0.45;
 /// Кусочек газона мельче этого, м², не рисуется.
 const MIN_LAWN_AREA: f32 = 4.0;
-
-/// Доля середины разделительной, на которой рядом лежит трамвай, начиная с
-/// которой разделительная — трамвайное полотно ([`carries_tram`]).
-const TRAM_SHARE_MIN: f32 = 0.5;
-/// Шаг, с которым середина проверяется на трамвай, м.
-const TRAM_PROBE_STEP: f32 = 5.0;
-/// Насколько внутрь от кромки половины ложится двойная сплошная трамвайного
-/// полотна, м: линия — на асфальте полотна, у самой кромки проезжей части.
-pub const TRAM_EDGE_INSET: f32 = 0.3;
-
-/// Трамвайное полотно между половинами: на большей части середины в пределах
-/// самой разделительной лежит ось `railway=tram`. В OSM такой проспект — две
-/// половины и пути между ними в зазоре шире `Median gap` (Советская в Туле,
-/// 5 м), и по ширине он читался газоном — лужайкой посреди проспекта, пока на
-/// месте трамвайные пути на общем с улицей полотне. Такое полотно мощёное,
-/// какой бы ширины ни было, с двойными сплошными **по кромкам**, а не по
-/// середине: рельсы — между ними (слой трамвая, выключен по умолчанию).
-pub fn carries_tram(median: &Median, rails: &[RailLine]) -> bool {
-    let reach = median.apart() / 2.0;
-    let points = &median.midline;
-    let Some((min, max)) = bounds(points) else {
-        return false;
-    };
-    let near: Vec<&RailLine> = rails
-        .iter()
-        .filter(|rail| rail.kind == RailKind::Tram)
-        .filter(|rail| {
-            bounds(&rail.points).is_some_and(|(low, high)| {
-                low.cmple(max + reach).all() && high.cmpge(min - reach).all()
-            })
-        })
-        .collect();
-    if near.is_empty() {
-        return false;
-    }
-    let probes: Vec<Vec2> = points
-        .windows(2)
-        .flat_map(|link| {
-            let parts = (link[0].distance(link[1]) / TRAM_PROBE_STEP)
-                .ceil()
-                .max(1.0) as usize;
-            (0..parts).map(move |part| link[0].lerp(link[1], part as f32 / parts as f32))
-        })
-        .collect();
-    let covered = probes
-        .iter()
-        .filter(|&&probe| {
-            near.iter()
-                .any(|rail| distance_to_polyline(probe, &rail.points) <= reach)
-        })
-        .count();
-    !probes.is_empty() && covered as f32 >= TRAM_SHARE_MIN * probes.len() as f32
-}
-
-fn bounds(points: &[Vec2]) -> Option<(Vec2, Vec2)> {
-    let first = *points.first()?;
-    Some(points.iter().fold((first, first), |(low, high), &point| {
-        (low.min(point), high.max(point))
-    }))
-}
 
 /// Разрывы, которые проходят разделительную насквозь: разрыв одной половины,
 /// против которого есть разрыв другой. Улица, примыкающая только к ближней
@@ -195,8 +141,44 @@ pub fn push_paved(builder: &mut MeshBuilder, median: &Median, color: LinearRgba,
     push_ribbon(builder, &median.midline, median.apart(), color, join);
 }
 
+/// Нахлёст асфальта полотна под ленты половин, м: край, совпадающий с
+/// краем ленты, но не делящий с ней вершин, растеризуется с пропусками.
+const BED_OVERLAP: f32 = 0.05;
+
+/// Асфальт трамвайного полотна — внутренние полосы обеих половин: от
+/// внутренней кромки одной до внутренней кромки другой, с нахлёстом
+/// [`BED_OVERLAP`] под их ленты, в слой улиц до лент половин. Контуром, а не
+/// лентой по середине: ширина идёт за кромками, где зазор гуляет, а торцы
+/// ровные — круглый торец ленты ложился поверх носа соседнего газона.
+/// Раскладки полос у него нет: колея — только на автомобильных полосах.
+pub fn push_bed(builder: &mut MeshBuilder, median: &Median, color: LinearRgba) {
+    let [first, second] = &median.inner;
+    if median.midline.len() < 2 || first.len() != median.midline.len() {
+        return;
+    }
+    let widened = |edge: &[Vec2]| -> Vec<Vec2> {
+        edge.iter()
+            .zip(&median.midline)
+            .map(|(&point, &mid)| point + (point - mid).normalize_or_zero() * BED_OVERLAP)
+            .collect()
+    };
+    let ring: Vec<Vec2> = widened(first)
+        .into_iter()
+        .chain(widened(second).into_iter().rev())
+        .collect();
+    builder.set_lanes(None);
+    builder.push_polygon(&ring, &[], color);
+}
+
+/// Торцы трамвайного полотна — разрывами для соседнего газона: нос газона
+/// встаёт за [`NOSE_CLEARANCE`] до торца, как у перекрёстка.
+pub fn bed_ends(median: &Median) -> [Option<Break>; 2] {
+    [false, true].map(|end| tip_of(&median.midline, end).map(|(at, _)| Break { at, reach: 0.0 }))
+}
+
 /// Газон разделительной: бордюр — в `kerbs` (слой тротуаров), трава — в
-/// `grass`. `breaks` — разрывы разметки обеих половин.
+/// `grass`. `breaks` — разрывы разметки обеих половин. Возвращает контуры
+/// бордюра — к ним подходит асфальт торца трамвайного полотна ([`bed_caps`]).
 pub fn push_lawn(
     kerbs: &mut MeshBuilder,
     grass: &mut MeshBuilder,
@@ -204,14 +186,16 @@ pub fn push_lawn(
     breaks: &[Break],
     kerb_color: LinearRgba,
     grass_color: LinearRgba,
-) {
+) -> Vec<Shape> {
     let nose = (median.gap * NOSE_SHARE).max(ARC);
     let round = || LineJoin::Round(ARC);
+    let mut drawn = Vec::new();
     for outline in lawn_outlines(median, breaks) {
         let kerb: Vec<Shape> = vec![vec![outline]]
             .outline(&OutlineStyle::new(-nose).line_join(round()))
             .outline(&OutlineStyle::new(nose).line_join(round()));
         let lawn: Vec<Shape> = kerb.outline(&OutlineStyle::new(-MEDIAN_KERB).line_join(round()));
+        drawn.extend(kerb.iter().cloned());
         for (shapes, builder, color) in [
             (kerb, &mut *kerbs, kerb_color),
             (lawn, &mut *grass, grass_color),
@@ -226,6 +210,51 @@ pub fn push_lawn(
             }
         }
     }
+    drawn
+}
+
+/// Насколько асфальт торца полотна тянется к носу соседнего газона, м:
+/// отступ носа от торца и его скругление на самом широком полотне.
+const BED_CAP: f32 = NOSE_CLEARANCE + NOSE_SHARE * 8.0;
+
+/// Асфальт между торцом трамвайного полотна и носом газона той же пары.
+/// Нос отступает от торца на [`NOSE_CLEARANCE`] и скруглён, а между ними
+/// ничего не лежало — светлел тротуар половины (у клина он со стороны пары
+/// есть) или земля. Торец продлевается на [`BED_CAP`] вперёд за вычетом
+/// бордюра газона `kerbs`: трава лежит под асфальтом улиц, и продление
+/// поверх съело бы нос. Только у торца, к которому подходит газон.
+pub fn bed_caps(median: &Median, kerbs: &[Shape]) -> Vec<Shape> {
+    let [first, second] = &median.inner;
+    let mut caps = Vec::new();
+    for end in [false, true] {
+        let (Some((mid, heading)), Some(&a), Some(&b)) = (
+            tip_of(&median.midline, end),
+            if end { first.last() } else { first.first() },
+            if end { second.last() } else { second.first() },
+        ) else {
+            continue;
+        };
+        let reach = mid + heading * BED_CAP;
+        let near: Vec<Shape> = kerbs
+            .iter()
+            .filter(|shape| {
+                shape.first().is_some_and(|outer| {
+                    outer
+                        .iter()
+                        .any(|point| Vec2::from(*point).distance(reach) < BED_CAP + median.apart())
+                })
+            })
+            .cloned()
+            .collect();
+        if near.is_empty() {
+            continue;
+        }
+        let back = heading * BED_OVERLAP;
+        let forward = heading * BED_CAP;
+        let quad = oriented(&[a - back, b - back, b + forward, a + forward], true);
+        caps.extend(vec![vec![quad]].overlay(&near, OverlayRule::Difference, FillRule::NonZero));
+    }
+    caps
 }
 
 /// Контуры газона между внутренними кромками половин — по кускам между

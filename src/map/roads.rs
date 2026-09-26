@@ -506,6 +506,10 @@ const SPAN_TO_HEIGHT: f32 = 1.0 / 8.0;
 /// городе, — на своём сером ступень яркости между кузовом и покрытием была бы
 /// не та.
 pub const ROAD_COLOR: Color = Color::srgb(0.545, 0.545, 0.55);
+/// Асфальт над трамвайными путями (`roads/tram_band.rs`): светлее
+/// [`ROAD_COLOR`] едва заметно, как на Яндексе, — трамвайная полоса читается
+/// цветом, а не разметкой.
+pub const TRAM_BAND_COLOR: Color = Color::srgb(0.59, 0.59, 0.595);
 const ALLEY_COLOR: Color = Color::srgb(0.914, 0.875, 0.769);
 const WALL_COLOR: Color = Color::srgb(0.639, 0.286, 0.235);
 
@@ -1001,9 +1005,11 @@ pub struct RoadReport {
     pub road_islands: [usize; 3],
     /// Клинья между сечениями улиц (`roads/tapers.rs`).
     pub tapers: usize,
-    /// Разделительные парных половин (`roads/network/pairs.rs`): асфальтом и
-    /// газоном.
-    pub medians: [usize; 2],
+    /// Разделительные парных половин (`roads/network/pairs.rs`): асфальтом,
+    /// газоном и из асфальтовых — трамвайных полотен.
+    pub medians: [usize; 3],
+    /// Куски светлой полосы над трамвайными путями (`roads/tram_band.rs`).
+    pub tram_bands: usize,
     /// Швы ways, пройденные осью улицы одной кривой (`roads/axis.rs`).
     pub seams: usize,
     /// Изломы, на которые звеньев не хватило для радиуса в полуширину.
@@ -1040,7 +1046,8 @@ impl std::fmt::Display for RoadReport {
             gores,
             road_islands: [refuges, island_areas, carriageways],
             tapers,
-            medians: [paved, lawns],
+            medians: [paved, lawns, beds],
+            tram_bands,
             seams,
             tight,
             vertices,
@@ -1057,7 +1064,7 @@ impl std::fmt::Display for RoadReport {
              sidewalks, stitches {stitches}, kerb pockets {kerb_pockets}, turning circles {turning_circles}, driveway crossings \
              {crossings}, rings {rings} ({webs} webs), small islands {islands}, gores {gores}, safety islands {refuges} + {island_areas} areas, \
              carriageway areas {carriageways}, tapers {tapers}, medians {paved} paved + {lawns} \
-             lawn, smooth seams {seams}, tight corners {tight}; {network:?} of it before the \
+             lawn (tram beds {beds}), tram bands {tram_bands}, smooth seams {seams}, tight corners {tight}; {network:?} of it before the \
              ribbons)",
             style.sidewalks, style.markings,
         )
@@ -1104,7 +1111,7 @@ pub fn mesh_roads(
     let nodes = RoadNodes::new(roads);
     // ось по улице целиком, не по way (`roads/axis.rs`); у переезда та же
     // ось, что у его дороги, — он отличается шириной и классом
-    let axes = axis::street_axes(roads, &map.network, &nodes, &shape);
+    let axes = axis::street_axes(roads, &map.rails, &map.network, &nodes, &shape);
     let paths = &axes.paths;
     // Дороги так, как они рисуются: переезд через тротуар — асфальтом
     // проезда, а не песочной дорожкой (`network::driveway_crossings`), дуга
@@ -1370,6 +1377,17 @@ pub fn mesh_roads(
     // половин, под ними; газон с бордюром — в свой слой над тротуарами
     let mut median_grass = MeshBuilder::with_surface_coords();
     let mut paved: Vec<network::pairs::Median> = Vec::new();
+    let mut lawn_kerbs = Vec::new();
+    // торцы трамвайных полотен — разрывы для газона рядом: полотно и газон
+    // одной пары улиц встречаются торец в торец
+    let bed_ends: Vec<Break> = axes
+        .pairs
+        .medians
+        .iter()
+        .filter(|median| median.carries_tram())
+        .flat_map(medians::bed_ends)
+        .flatten()
+        .collect();
     for median in &axes.pairs.medians {
         let [first, second] = median.roads;
         let breaks = medians::crossing_breaks(
@@ -1379,9 +1397,14 @@ pub fn mesh_roads(
         // до перекрёстка — как линии полос, а не там, где кончились пробы
         let mut median = median.clone();
         medians::reach_breaks(&mut median, &breaks);
-        let tram = medians::carries_tram(&median, &map.rails);
-        if median.is_paved() || tram {
-            medians::push_paved(&mut streets, &median, ROAD_COLOR.to_linear(), ROAD_JOIN);
+        if median.is_paved() {
+            // полотно — внутренние полосы половин до середины; узкая
+            // разделительная — полосой асфальта во всё расстояние между осями
+            if median.carries_tram() {
+                medians::push_bed(&mut streets, &median, ROAD_COLOR.to_linear());
+            } else {
+                medians::push_paved(&mut streets, &median, ROAD_COLOR.to_linear(), ROAD_JOIN);
+            }
             if style.markings {
                 let mut midline = median.midline.clone();
                 gores.reach(&mut midline);
@@ -1392,32 +1415,29 @@ pub fn mesh_roads(
                     &median,
                     [&node_paint.breaks[first], &node_paint.breaks[second]],
                 ));
-                if tram {
-                    // по кромкам полотна: между линиями — рельсы
-                    let offset = median.apart() / 2.0 - medians::TRAM_EDGE_INSET;
-                    let offsets = miter_offsets(&midline, false, offset);
-                    for side in [-1.0, 1.0] {
-                        let edge: Vec<Vec2> = midline
-                            .iter()
-                            .zip(&offsets)
-                            .map(|(&point, &shift)| point + shift * side)
-                            .collect();
-                        painter.paint_median(&edge, &painted);
-                    }
-                } else {
-                    painter.paint_median(&midline, &painted);
-                }
+                painter.paint_median(&midline, &painted);
             }
             paved.push(median);
         } else {
-            medians::push_lawn(
+            let mut breaks = breaks;
+            breaks.extend(bed_ends.iter().copied());
+            lawn_kerbs.extend(medians::push_lawn(
                 &mut sidewalks,
                 &mut median_grass,
                 &median,
                 &breaks,
                 SIDEWALK_COLOR.to_linear(),
                 GRASS_COLOR.to_linear(),
-            );
+            ));
+        }
+    }
+    // асфальт от торца полотна до носа газона рядом
+    if !lawn_kerbs.is_empty() {
+        streets.set_lanes(None);
+        for bed in paved.iter().filter(|median| median.carries_tram()) {
+            for cap in medians::bed_caps(bed, &lawn_kerbs) {
+                push_shape(&mut streets, cap, ROAD_COLOR.to_linear());
+            }
         }
     }
     let network_time = started.elapsed();
@@ -1679,6 +1699,20 @@ pub fn mesh_roads(
     for shape in &road_islands.carriageways {
         push_shape(&mut streets, shape.clone(), ROAD_COLOR.to_linear());
     }
+    // светлая полоса над рельсами (`roads/tram_band.rs`) — поверх всего
+    // асфальта улиц: порядок пуша в слое — порядок отрисовки, а краска лежит
+    // своим слоем выше
+    let tram_bands = tram_band::tram_bands(&map.rails, &drawn, paths, &paved);
+    for band in &tram_bands {
+        push_ribbon_trimmed(
+            &mut streets,
+            band,
+            tram_band::TRAM_BAND_WIDTH,
+            TRAM_BAND_COLOR.to_linear(),
+            ROAD_JOIN,
+            [true; 2],
+        );
+    }
     let mut lot_layers = grounds.layers(&style, &gores, &paved);
     for shape in &road_islands.kerbs {
         push_shape(
@@ -1814,8 +1848,8 @@ pub fn mesh_roads(
         tapers: tapers.count,
         rings: [axes.rings.list.len(), axes.rings.webs.len()],
         islands: islands.len(),
-        // по тому, что нарисовано: трамвайное полотно мощёное при любой ширине
-        medians: [paved.len(), axes.pairs.medians.len() - paved.len()],
+        medians: axes.pairs.count(),
+        tram_bands: tram_bands.len(),
         seams: axes.seams,
         tight: axes.tight,
         vertices: layers.iter().map(|l| l.builder.vertex_count()).sum(),
@@ -2241,15 +2275,21 @@ fn push_sidewalk(
             .collect();
         push_ribbon_trimmed(builder, &shifted, width + sidewalk, color, ROAD_JOIN, trims);
     };
+    let mut previous: Option<bool> = None;
     for run in runs {
         let from = (run.from + stitch).clamp(cursor, total);
         let to = (run.to + stitch).clamp(from, total);
-        piece(cursor, from, sides);
         // со стороны пары тротуара нет
         let mut paired = sides;
         paired[usize::from(!run.left)] = false;
+        // и в щели между двумя кусками с той же стороны — полотном и газоном
+        // одной пары, — которые разделительные сводят торец в торец
+        // (`Pairs::join_ends`): светлое пятно тротуара лежало между ними
+        let bridged = previous == Some(run.left) && from - cursor < network::pairs::JOIN_GAP;
+        piece(cursor, from, if bridged { paired } else { sides });
         piece(from, to, paired);
         cursor = to;
+        previous = Some(run.left);
     }
     piece(cursor, total, sides);
 }
@@ -2335,6 +2375,7 @@ pub mod shape;
 /// Открыт наружу для [`map::cars`](crate::map::cars): ряд машин прерывается
 /// на клине, где бордюр ближе к оси, чем полуширина участка.
 pub(super) mod tapers;
+mod tram_band;
 mod turns;
 
 #[cfg(test)]

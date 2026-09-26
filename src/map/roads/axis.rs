@@ -39,6 +39,7 @@ use super::rings::{self, Rings};
 use super::shape::RoadShape;
 use crate::map::along::simplify;
 use crate::map::meshing::arc_steps;
+use crate::map::osm::model::RailLine;
 use crate::map::osm::{RoadClass, RoadLine};
 use crate::map::smooth::Smoothing;
 
@@ -115,10 +116,12 @@ pub struct Axes<'a> {
 
 /// Осевые, по которым строятся ленты, ряды машин и полоса тротуара.
 ///
-/// `network` — улицы этих же `roads`; если она собрана не по ним (карта из
+/// `rails` — пути карты: по трамвайным находится полотно между половинами
+/// (`roads/network/pairs.rs`). `network` — улицы этих же `roads`; если она собрана не по ним (карта из
 /// теста, без разбора), улицы собираются здесь.
 pub fn street_axes<'a>(
     roads: &'a [RoadLine],
+    rails: &[RailLine],
     network: &RoadNetwork,
     nodes: &RoadNodes,
     shape: &RoadShape,
@@ -156,7 +159,7 @@ pub fn street_axes<'a>(
         })
         .collect();
     // половины разделённых улиц — на постоянный зазор, по уже гладким осям
-    let mut pairs = Pairs::new(roads, &paths, shape.median_gap());
+    let mut pairs = Pairs::new(roads, &paths, shape.median_gap(), rails);
     pairs.align(&mut paths, roads, network, nodes);
     // кольца — эллипсом, подходы к ним — по касательной; после разводки пар:
     // половины подхода гнутся у самого кольца, где пара уже разошлась

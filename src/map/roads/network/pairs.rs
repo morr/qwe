@@ -31,15 +31,25 @@
 //! половины, у которого пара тоже есть, концом куска не считается — там
 //! разводка идёт насквозь.
 //! Сдвигается только нарисованная ось: точки `RoadLine` читает навмеш.
+//!
+//! **Трамвайное полотно** ([`Median::carries_tram`]). Пара, в зазоре которой
+//! на большей части пути лежит `railway=tram` (Советская в Туле: две
+//! половины по две полосы и пути между ними в 5 м), — не газон, а асфальт с
+//! рельсами: каждая половина едет по нему своей внутренней полосой. Такая
+//! разделительная мощёная при любой ширине до [`TRAM_BED_MAX_GAP`]; шире —
+//! обособленное полотно на траве, газон. Куски одной пары улиц — половина из
+//! нескольких ways — получают **общий** зазор ([`Pairs::align`]): ширина
+//! трамвайной полосы не прыгает на каждом шве.
 
 use std::borrow::Cow;
 
+use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
 use super::{RoadNetwork, RoadNodes};
 use crate::map::along::{nearest_on_path, simplify};
 use crate::map::grid::Grid;
-use crate::map::osm::model::polyline_length;
+use crate::map::osm::model::{RailKind, RailLine, polyline_length};
 use crate::map::osm::{RoadClass, RoadLine};
 
 /// Шаг, которым ось ощупывается на соседа, м.
@@ -67,7 +77,7 @@ const PAIR_SKEW: f32 = 0.35;
 const END_OVERHANG: f32 = 3.0;
 /// Торцы соседних разделительных ближе этого, м, сводятся в одну точку
 /// ([`Pairs::join_ends`]).
-const JOIN_GAP: f32 = 5.0;
+pub const JOIN_GAP: f32 = 5.0;
 /// За сколько метров до конца куска и до закреплённого узла разводка сходит
 /// на нет.
 pub const ALIGN_TRANSITION: f32 = 20.0;
@@ -85,6 +95,16 @@ const ALIGN_STEP: f32 = 4.0;
 const SIMPLIFY_TOLERANCE: f32 = 0.03;
 /// Ячейка сетки звеньев, м.
 const CELL: f32 = 32.0;
+/// Доля проб куска, у середины которых лежит трамвай, начиная с которой
+/// разделительная — трамвайное полотно.
+const TRAM_SHARE_MIN: f32 = 0.5;
+/// Самое широкое трамвайное полотно между кромками половин, м. Шире —
+/// обособленное полотно на траве (Воздухофлотская в Туле, 10–24 м между
+/// осями): там газон правдоподобен.
+pub const TRAM_BED_MAX_GAP: f32 = 8.0;
+/// Путь засчитан у середины, если он не дальше этого от неё, даже когда
+/// зазор между кромками уже, м: два пути в 3–4 м друг от друга.
+const TRAM_REACH_MIN: f32 = 2.0;
 
 /// Кусок половины, на котором рядом идёт её пара.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -100,6 +120,8 @@ pub struct PairRun {
     pub gap: f32,
     /// Асфальт между половинами, а не газон ([`Median::is_paved`]).
     pub paved: bool,
+    /// Между половинами — трамвайное полотно ([`Median::carries_tram`]).
+    pub tram: bool,
 }
 
 /// Разделительная пары: то, что лежит между половинами.
@@ -112,8 +134,11 @@ pub struct Median {
     pub to: f32,
     /// Асфальта или газона между кромками после разводки, м.
     pub gap: f32,
-    /// Асфальт между половинами, а не газон: зазор не шире ручки `Median gap`.
+    /// Асфальт между половинами, а не газон: зазор не шире ручки `Median gap`
+    /// или трамвайное полотно.
     paved: bool,
+    /// Трамвайное полотно.
+    tram: bool,
     /// Середина между осями — по ходу первой половины. До [`Pairs::align`]
     /// пуста.
     pub midline: Vec<Vec2>,
@@ -125,6 +150,13 @@ impl Median {
     /// Асфальт между половинами, а не газон.
     pub fn is_paved(&self) -> bool {
         self.paved
+    }
+
+    /// Трамвайное полотно: на большей части куска у середины между
+    /// половинами лежит `railway=tram`, а зазор не шире
+    /// [`TRAM_BED_MAX_GAP`]. Всегда мощёное.
+    pub fn carries_tram(&self) -> bool {
+        self.tram
     }
 
     /// Наибольшее расстояние между осями, м: ширина полосы вдоль середины,
@@ -182,13 +214,20 @@ struct Probe {
 }
 
 impl Pairs {
-    /// Пары среди `roads`, нарисованных по `paths`. Середины разделительных
-    /// ещё пусты — их кладёт [`Pairs::align`].
-    pub fn new(roads: &[RoadLine], paths: &[impl AsRef<[Vec2]>], median_gap: f32) -> Self {
+    /// Пары среди `roads`, нарисованных по `paths`; `rails` — пути карты,
+    /// по трамвайным из них находится полотно. Середины разделительных ещё
+    /// пусты — их кладёт [`Pairs::align`].
+    pub fn new(
+        roads: &[RoadLine],
+        paths: &[impl AsRef<[Vec2]>],
+        median_gap: f32,
+        rails: &[RailLine],
+    ) -> Self {
         let mut pairs = Self {
             runs: vec![Vec::new(); roads.len()],
             medians: Vec::new(),
         };
+        let tracks = Tracks::new(rails);
         let candidates: Vec<usize> = (0..roads.len())
             .filter(|&index| pairable(&roads[index]) && paths[index].as_ref().len() >= 2)
             .collect();
@@ -226,7 +265,8 @@ impl Pairs {
                     .iter()
                     .position(|probe| probe.beside.map(|beside| beside.0) != Some(partner))
                     .map_or(probes.len(), |offset| start + offset);
-                pairs.push_run(index, partner, &probes[start..end], roads, median_gap);
+                let run = &probes[start..end];
+                pairs.push_run(index, partner, run, roads, median_gap, &tracks);
                 start = end;
             }
         }
@@ -240,6 +280,7 @@ impl Pairs {
         probes: &[Probe],
         roads: &[RoadLine],
         median_gap: f32,
+        tracks: &Tracks,
     ) {
         let (first, last) = (&probes[0], &probes[probes.len() - 1]);
         if last.along - first.along < PAIR_MIN {
@@ -251,7 +292,26 @@ impl Pairs {
             .filter_map(|probe| probe.beside.map(|(_, _, apart)| apart - asphalt))
             .collect();
         gaps.sort_by(f32::total_cmp);
-        let gap = target_gap(gaps[gaps.len() / 2], median_gap);
+        let raw = gaps[gaps.len() / 2];
+        // трамвай у середины между осями, в пределах самого зазора
+        let railed = probes
+            .iter()
+            .filter(|probe| {
+                probe.beside.is_some_and(|(_, near, apart)| {
+                    let reach = ((apart - asphalt) / 2.0).max(TRAM_REACH_MIN);
+                    tracks.near(probe.at.midpoint(near), reach)
+                })
+            })
+            .count();
+        let tram = raw <= TRAM_BED_MAX_GAP && railed as f32 >= TRAM_SHARE_MIN * probes.len() as f32;
+        // полотно — асфальт той ширины, что есть: половины расширяются до
+        // середины (`roads/medians.rs`), и разводить их не к чему
+        let gap = if tram {
+            raw.max(PAVED_MIN_GAP)
+        } else {
+            target_gap(raw, median_gap)
+        };
+        let paved = tram || gap <= median_gap;
         let (_, near, _) = first.beside.expect("кусок пары — из точек с соседом");
         let heading = probes[1].at - first.at;
         self.runs[index].push(PairRun {
@@ -260,7 +320,8 @@ impl Pairs {
             partner,
             left: heading.perp_dot(near - first.at) > 0.0,
             gap,
-            paved: gap <= median_gap,
+            paved,
+            tram,
         });
         if index < partner {
             self.medians.push(Median {
@@ -268,10 +329,60 @@ impl Pairs {
                 from: first.along,
                 to: last.along,
                 gap,
-                paved: gap <= median_gap,
+                paved,
+                tram,
                 midline: Vec::new(),
                 inner: [Vec::new(), Vec::new()],
             });
+        }
+    }
+
+    /// Один зазор на всё трамвайное полотно между двумя улицами: половина из
+    /// нескольких ways — несколько кусков, у каждого своя медиана, и на шве
+    /// соседние отличались на метр — ступенька ширины полосы у каждого шва.
+    /// Куски одной пары улиц (`network`) получают медиану зазоров по длине.
+    fn share_tram_gaps(&mut self, network: &RoadNetwork) {
+        let street = |road: usize| network.street_of(road).map(|(street, _)| street);
+        let key = |road: usize, partner: usize| {
+            let (a, b) = (street(road)?, street(partner)?);
+            Some((a.min(b), a.max(b)))
+        };
+        let mut chains: HashMap<(usize, usize), Vec<(f32, f32)>> = HashMap::new();
+        for median in self.medians.iter().filter(|median| median.tram) {
+            if let Some(key) = key(median.roads[0], median.roads[1]) {
+                chains
+                    .entry(key)
+                    .or_default()
+                    .push((median.gap, median.to - median.from));
+            }
+        }
+        let shared: HashMap<(usize, usize), f32> = chains
+            .into_iter()
+            .map(|(key, mut gaps)| {
+                gaps.sort_by(|a, b| a.0.total_cmp(&b.0));
+                let half = gaps.iter().map(|(_, length)| length).sum::<f32>() / 2.0;
+                let mut walked = 0.0;
+                let gap = gaps
+                    .iter()
+                    .find(|(_, length)| {
+                        walked += length;
+                        walked >= half
+                    })
+                    .map_or(gaps[0].0, |(gap, _)| *gap);
+                (key, gap)
+            })
+            .collect();
+        for median in self.medians.iter_mut().filter(|median| median.tram) {
+            if let Some(gap) = key(median.roads[0], median.roads[1]).and_then(|k| shared.get(&k)) {
+                median.gap = *gap;
+            }
+        }
+        for (road, runs) in self.runs.iter_mut().enumerate() {
+            for run in runs.iter_mut().filter(|run| run.tram) {
+                if let Some(gap) = key(road, run.partner).and_then(|k| shared.get(&k)) {
+                    run.gap = *gap;
+                }
+            }
         }
     }
 
@@ -284,6 +395,7 @@ impl Pairs {
         network: &RoadNetwork,
         nodes: &RoadNodes,
     ) {
+        self.share_tram_gaps(network);
         let mut original: Vec<Option<Vec<Vec2>>> = vec![None; paths.len()];
         for run in self.runs.iter().flatten() {
             original[run.partner].get_or_insert_with(|| paths[run.partner].to_vec());
@@ -497,17 +609,51 @@ impl Pairs {
         }
     }
 
-    /// Разделительных с асфальтом и с газоном — по ширине. Отчёт слоя дорог
-    /// считает нарисованное (трамвайное полотно мощёное при любой ширине,
-    /// `medians::carries_tram`), так что это мерка тестов пар.
-    #[cfg(test)]
-    pub fn count(&self) -> [usize; 2] {
-        let paved = self
-            .medians
-            .iter()
-            .filter(|median| median.is_paved())
-            .count();
-        [paved, self.medians.len() - paved]
+    /// Разделительных с асфальтом, с газоном и из них трамвайных полотен.
+    pub fn count(&self) -> [usize; 3] {
+        let count = |test: fn(&Median) -> bool| self.medians.iter().filter(|m| test(m)).count();
+        let paved = count(Median::is_paved);
+        [
+            paved,
+            self.medians.len() - paved,
+            count(Median::carries_tram),
+        ]
+    }
+}
+
+/// Звенья трамвайных путей карты — сеткой, чтобы пробы пар не перебирали
+/// все пути города.
+struct Tracks<'a> {
+    rails: &'a [RailLine],
+    links: Grid<(usize, usize)>,
+}
+
+impl<'a> Tracks<'a> {
+    fn new(rails: &'a [RailLine]) -> Self {
+        let mut links = Grid::new(CELL);
+        for (index, rail) in rails.iter().enumerate() {
+            if rail.kind != RailKind::Tram {
+                continue;
+            }
+            for (at, pair) in rail.points.windows(2).enumerate() {
+                links.insert_segment(pair[0], pair[1], 0.0, (index, at));
+            }
+        }
+        Self { rails, links }
+    }
+
+    /// Лежит ли трамвайный путь не дальше `reach` от точки.
+    fn near(&self, at: Vec2, reach: f32) -> bool {
+        self.links
+            .near_each(at - reach, at + reach)
+            .any(|&(rail, link)| {
+                let points = &self.rails[rail].points;
+                let (from, to) = (points[link], points[link + 1]);
+                let along = to - from;
+                let t = ((at - from).dot(along) / along.length_squared().max(f32::EPSILON))
+                    .clamp(0.0, 1.0);
+                (from + along * t).distance(at) <= reach
+            })
     }
 }
 

@@ -159,7 +159,7 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     together (`join_ends`): a half of two ways is two runs, and the gap at the seam was a
     hole in the double line and a kerb island on the «Макси» boulevard.
   - **Paved median** (gap ≤ `RoadShape::median_gap`, 1–6 m, default 3; the flag is
-    stored on `Median` at construction — `Pairs::new(roads, paths, median_gap)` — and
+    stored on `Median` at construction — `Pairs::new(roads, paths, median_gap, rails)` — and
     `Median::is_paved` reads it; the pair tests take the knob's default) — `push_paved` lays a ribbon down the
     midline as wide as the axes are apart into the `roads` layer **before** the halves
     (no lane frame, so no ruts; the halves lay theirs over it), and the paint layer draws
@@ -170,14 +170,67 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     `road_medians` (`Z_ROAD_MEDIAN` 1.7, `SurfaceKind::Grass`, the meadow colour); a lawn
     or kerb piece under `MIN_LAWN_AREA` 4 m² is not drawn. Drawn
     whatever `RoadStyle::sidewalks` says: a lawn is still a lawn.
-  - **Tram track bed** (`medians::carries_tram`) — a median of any width with a
-    `RailKind::Tram` axis within half its width on at least `TRAM_SHARE_MIN` half of the
-    midline (probed every 5 m) is paved like a narrow one, and its double solids run
-    along **both edges**, `TRAM_EDGE_INSET` 0.3 m inside the halves' inner kerbs, not
-    down the middle: the rails lie between them (the tram layer is off by default). In
-    OSM Советская is two halves with the tram ways in a 5 m gap, and the width alone
-    read it as a lawn down the avenue (gallery 18). `MeshReport::medians` counts what is
-    drawn, so a tram bed counts as paved.
+  - **Tram bed** (`Median::carries_tram`, found in `Pairs::new(roads, paths,
+    median_gap, rails)`) — a run whose gap is at most `TRAM_BED_MAX_GAP` 8 m and at
+    least `TRAM_SHARE_MIN` half of whose probes have a `RailKind::Tram` link within
+    half the gap (never less than `TRAM_REACH_MIN` 2 m) of the midpoint between the
+    axes. The rails come through a `Grid` of tram links (`Tracks`), so the probes do not
+    walk every track of the city. Wider than 8 m it is a reserved track on grass
+    (Воздухофлотская, 3.2 km in Tula) and stays a lawn. A bed is **always paved**, the
+    knob notwithstanding, and `PairRun::tram` / `paved` carry it to the zebras (one plank
+    across both halves, like any paved pair). **One gap per chain**
+    (`share_tram_gaps`, first thing in `align`): the bed runs of one pair of *streets*
+    (`RoadNetwork::street_of` of both halves) get the length-weighted median of their
+    gaps, so the axes do not step at every seam of a half made of several ways.
+    **Drawing** — each half is widened to the middle by its own inner lane, without
+    marking: `push_bed` lays the asphalt from inner kerb to inner kerb (`BED_OVERLAP`
+    5 cm under each ribbon) **as a contour, not a ribbon**, so it follows the kerbs
+    where the gap wanders and ends **square** — the round cap of the old ribbon lay over
+    the nose of the lawn next to it (Коминтерна, where the tram turns off Советская and
+    the median north of the node is grass again); the lawn beside a bed takes the bed's
+    ends as breaks (`bed_ends`), so its nose stands `NOSE_CLEARANCE` short of them.
+    Between the square end and the rounded nose nothing lay — the half's sidewalk showed
+    through as a pale square (a half with a wedge keeps its paired-side sidewalk), so
+    `bed_caps` carries the bed `BED_CAP` further on **minus the lawn's kerb contour**
+    (`push_lawn` returns it): the grass (`Z_ROAD_MEDIAN` 1.7) lies *under* the streets
+    (2.0), and a plain extension would have eaten the nose. And a half's sidewalk is not
+    drawn in a gap shorter than `JOIN_GAP` between two runs on the same side either
+    (`push_sidewalk`) — the medians of those runs are drawn tip to tip anyway. No
+    lane frame, so no ruts over the tram lane. The double solid runs **down the middle**,
+    between the tracks (as 2GIS draws it). What makes the tram lane read is the
+    **tram band** below, not paint. Stage-B history: the first version (`c53c6524`)
+    drew the bed as dark asphalt with a double solid along **each edge** — the GOST
+    reserved track — and read as «a dark corridor with no rails»; the author chose the
+    Yandex picture instead (plan «Трамвайное полотно на Советской»).
+    **Why the axes are not moved.** The plan asked for each half's axis to shift Δ/2
+    towards the middle with the width grown by Δ, so the outer kerb stays put. That was
+    prototyped on paper and dropped: everything that finds a node by a vertex of the
+    drawn path — `corners::kerb_returns` (`is_shared` at 5 cm), the zebras' crossing
+    marks, the ends of `node_paint` and the stitches — would have lost the nodes on
+    every half of Советская, and pinning the axis at each cross street would have made
+    the tram lane die and be born every 150–300 m. The contour between the inner kerbs
+    is the same picture — outer kerb, sidewalk, cars and lane frame all untouched by
+    construction — with the model and the drawn axis left alone. `RoadReport::medians`
+    is `[paved, lawn, tram beds]` (`Pairs::count`).
+  - **Tram band** (`roads/tram_band.rs`) — a lighter strip of asphalt (`TRAM_BAND_COLOR`,
+    `ROAD_COLOR` lighter by about 8 %) `TRAM_BAND_WIDTH` 3.3 m wide along every tram
+    track that lies **under a street's asphalt**: on a bed and on a single street with
+    the tram down its axis alike (21.5 km of Tula), the way Yandex fills it. A track is
+    probed every 2 m against a `Grid` of the drawn street links (no bridges, no arches)
+    and of the paved medians; a probe is covered when a link runs **along** it
+    (`ALONG_MIN` cos 0.8 — a tram crossing a street is a level crossing, not a lane),
+    the foot falls on the link (±`LINK_SLACK` 1 m) and the strip fits inside that
+    asphalt (`EDGE_SLACK` 0.6 m). Covered runs shorter than `MIN_RUN` 12 m are dropped.
+    Laid into `roads` **after every ribbon and carriageway area**, butt-ended, without a
+    lane frame; the paint is its own layer above, so the lane lines and the double solid
+    lie on top of it. Two tracks 3–4 m apart overlap into one band — same colour, same
+    world-position noise, no seam. `RoadReport::tram_bands` counts the pieces. Only the
+    streets whose box touches a cell of a tram link are indexed, and a covered run is
+    thinned back by Douglas–Peucker at 5 cm — one vertex per 2 m probe cost 65 k
+    vertices on Tula. **Cost** (`map_meshing`, Tula, dev): road meshing 171 → ~178 ms,
+    881 → 887 k vertices — bands ~4 ms, bed caps ~2 ms, the rest is the twelve medians
+    wider than 8 m that are lawns again (a lawn with a nose costs more than a paved
+    ribbon). Tula: 107 paved + 32 lawn, 37 of them tram beds, 100 band pieces.
   - **Where it opens** — `crossing_breaks`: only a junction break of one half **facing** a
     break of the other (within the axes' distance plus both reaches) — a crossing
     street, a U-turn link, a zebra's footway. A street into one half does not open the
