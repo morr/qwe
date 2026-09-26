@@ -1294,7 +1294,8 @@ arches.
       a house is the constant in `material.rs`.
     - `ROOF_GALLERY_SHOT=path.png` takes one frame and exits. The example has no BRP, and a
       screen grab over another window comes out black, so this is the only way a session
-      without the window in front of it can look at its own work.
+      without the window in front of it can look at its own work. The frame is rendered
+      into a texture (`gallery_shot.rs`), so it carries the scene without the UI panel.
     - **`roof.wgsl` holds two textures, and the two galleries split it by the section
       banner** (`─── стена`): the roof gallery parses everything **before** it, the wall
       gallery everything **after**. A name list would have to be extended on every new

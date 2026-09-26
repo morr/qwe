@@ -813,8 +813,8 @@ pub(super) fn tagged_sidewalks(tags: &HashMap<String, String>) -> Option<[bool; 
 
 /// Тротуар way без тега `sidewalk*` — до прохода по окружению: у грунтовой
 /// улицы (`surface=gravel|unpaved|ground|dirt|compacted|…`) его нет никогда,
-/// у прочих — пока с обеих сторон, а жилую и проезд без названия потом
-/// проверит застройка вокруг (`parse::infer_sidewalks`).
+/// у прочих — пока с обеих сторон, а жилую, проезд без названия и жилую зону
+/// потом проверит застройка вокруг (`parse::infer_sidewalks`).
 pub(super) fn untagged_sidewalks(tags: &HashMap<String, String>) -> [bool; 2] {
     let unpaved = matches!(
         tags.get("surface").map(String::as_str),

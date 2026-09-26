@@ -319,10 +319,11 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
         pulls shut what is under two radii wide, and arms diverge faster than that: on
         the north approach of gallery 04 (one-lane entry and exit, 50 m to their common
         node) it left two scraps at the tip where Yandex draws one triangle over the
-        whole fan. So every pair of arms that start at **different** ring nodes and end
-        in one node — or within `FAN_MOUTH` 12 m of each other (04 south: the entry
-        ends ten metres short of the exit's node, behind a short link) — gives the
-        outline "out along one, back along the other"; the chord between the ring nodes
+        whole fan. So every **entry and exit** (one flowing into the ring, one out of it)
+        that start at **different** ring nodes and end in one node — or within
+        `FAN_MOUTH` 12 m of each other (04 south: the entry ends ten metres short of the
+        exit's node, behind a short link) — gives the outline "out along one, back along
+        the other"; the chord between the ring nodes
         runs over the ring's asphalt and island, which the clip takes out with the
         arms. An arm longer than `FAN_REACH` 55 m is no fan: past that the two are
         streets around a block (04 west, 85 m). The fan is clipped like a closed shape
@@ -734,13 +735,15 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
     test talk about the same object. Its own is only the asphalt underneath, drawn with
     `MeshBuilder::push_ribbon` in the game's `ROAD_COLOR` — the brightness step between a
     body and the surface is half of how the row reads. `CAR_GALLERY_SHOT=path.png` takes one
-    frame and exits, the way the roof gallery does and for the same reason. It has already
+    frame and exits, the way the roof gallery does and for the same reason — the camera
+    rendered into a texture (`gallery_shot.rs`), so without the panel. It has already
     earned its keep once: the divided-avenue cell was built with the two carriageways
     swapped (left-hand traffic), and the picture said so at a glance.
     The `panel.rs` and `params.rs` modules repeat identically across galleries — intentionally,
     so examples read top-to-bottom as self-contained units. The auto-shot logic is shared in
-    `examples/demos/gallery_shot.rs`: it holds the frame counts and window-raise logic, both
-    debugged facts (commit 21853a3), and fixes apply there to all galleries at once.
+    `examples/demos/gallery_shot.rs`: it holds the frame counts and the render-to-texture
+    capture (a window surface shoots black on a locked screen), both debugged facts
+    (commits 21853a3, 4cbff7ff), and fixes apply there to all galleries at once.
   - **The ninth cell is the stand** (`car_gallery/stand.rs`) — five body types × three
     detail steps, and it answers the other question: not *where* a row stands but *what*
     stands in it. Neither is readable off a street — the type falls out of the LCG and a van

@@ -314,7 +314,8 @@ value — stroke widths and the shadow geometry.
 
 `TREE_GALLERY_SHOT=path.png` takes one frame and exits, the shared `gallery_shot.rs` the
 roof, wall and car galleries use. The example has no remote endpoint, so that is the only
-way a session can look at its own work on the crowns.
+way a session can look at its own work on the crowns. The frame is rendered into a texture,
+so it carries the scene without the UI panel.
 
 Two things the panel had to borrow from the game rather than invent, and both are the
 kind of thing that silently looks wrong: the widget kit (`qwe::ui::knob` over
