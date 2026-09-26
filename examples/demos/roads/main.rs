@@ -247,7 +247,6 @@ fn main() {
                 ),
                 build_next,
                 place_new,
-                hide_captions_under_panel,
                 auto_shot.run_if(resource_exists::<ShotRequest>),
             )
                 .chain(),
@@ -268,34 +267,6 @@ fn start_city() -> City {
 /// Полоса окна, занятая панелью: отступ от края, сама панель и такой же зазор.
 fn panel_span() -> f32 {
     PANEL_WIDTH_PX + 2.0 * UI_SCREEN_EDGE_PX_OFFSET
-}
-
-/// Строка подписи примера и её полоса по x в мире витрины.
-#[derive(Component)]
-struct Caption {
-    from: f32,
-    to: f32,
-}
-
-/// Подпись, зашедшая под панель, прячется целиком. Панель полупрозрачная, как в
-/// игре, и в крупном плане (`ROADS_SAMPLE`) подпись в тридцати метрах левее
-/// окна просвечивала сквозь неё обрывками строк. В обзоре подписи стоят правее
-/// панели и видны как были.
-fn hide_captions_under_panel(
-    window: Single<&Window, With<PrimaryWindow>>,
-    camera: Single<&Transform, With<PanCamera>>,
-    mut captions: Query<(&Caption, &mut Visibility)>,
-) {
-    let zoom = camera.scale.x;
-    let to_screen = |x: f32| (x - camera.translation.x) / zoom + window.width() / 2.0;
-    for (caption, mut visibility) in &mut captions {
-        let under = to_screen(caption.from) < panel_span() && to_screen(caption.to) > 0.0;
-        visibility.set_if_neq(if under {
-            Visibility::Hidden
-        } else {
-            Visibility::Inherited
-        });
-    }
 }
 
 fn spawn_camera(mut commands: Commands) {
@@ -715,10 +686,6 @@ fn spawn_caption(
     let mut line = |text: String, size: f32, color: Color, drop: f32| {
         commands.spawn((
             Placed,
-            Caption {
-                from: left,
-                to: left + CAPTION_WIDTH,
-            },
             Text2d::new(text),
             caption_font(assets, size),
             TextColor(color),
