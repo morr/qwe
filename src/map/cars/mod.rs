@@ -238,7 +238,7 @@ pub fn measure_cars(map: &MapData) -> (usize, Vec<LayerCost>) {
     let districts_took = started.elapsed();
     let started = std::time::Instant::now();
     let nodes = RoadNodes::new(&map.roads);
-    let axes = axis::street_axes(&map.roads, &map.network, &nodes, &shape);
+    let axes = axis::street_axes(&map.roads, &map.rails, &map.network, &nodes, &shape);
     let cars = park_cars(
         &map.roads,
         &junctions,
@@ -416,7 +416,7 @@ pub fn mesh_cars(
     // разрывы: индекс на 7.6 тысячи домов дешевле, чем повод его кешировать
     let districts = Districts::new(&map.buildings);
     let nodes = RoadNodes::new(&map.roads);
-    let axes = axis::street_axes(&map.roads, &map.network, &nodes, &shape);
+    let axes = axis::street_axes(&map.roads, &map.rails, &map.network, &nodes, &shape);
     let mut cars = park_cars(
         &map.roads,
         &junctions,
@@ -489,7 +489,7 @@ pub fn cars_mesh(
 /// стоял бы не на своей ленте.
 pub fn drawn_axes<'a>(roads: &'a [RoadLine], shape: &RoadShape) -> Vec<Cow<'a, [Vec2]>> {
     let nodes = RoadNodes::new(roads);
-    axis::street_axes(roads, &RoadNetwork::default(), &nodes, shape).paths
+    axis::street_axes(roads, &[], &RoadNetwork::default(), &nodes, shape).paths
 }
 
 /// Ряды вдоль всех улиц, годных под парковку.

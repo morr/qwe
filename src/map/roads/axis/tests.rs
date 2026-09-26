@@ -11,7 +11,7 @@ fn axes(roads: &[RoadLine], tolerance: f32) -> Vec<Vec<Vec2>> {
         curve_tolerance: tolerance,
         ..default()
     };
-    street_axes(roads, &network, &nodes, &shape)
+    street_axes(roads, &[], &network, &nodes, &shape)
         .paths
         .into_iter()
         .map(Cow::into_owned)
