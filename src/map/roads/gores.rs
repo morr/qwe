@@ -544,24 +544,27 @@ const FAN_MOUTH: f32 = 12.0;
 /// Хорда между узлами кольца проходит по его асфальту и острову, и их
 /// вычитают вместе с полотнами.
 fn fans(roads: &[GoreRoad], at_ring: &impl Fn(Vec2) -> bool) -> Vec<Contour> {
-    let outward: Vec<Vec<Vec2>> = roads
+    // (путь от кольца наружу, въезд ли: одностороннюю улицу парс развернул по
+    // потоку, так что въезд — тот, что кончается на кольце)
+    let outward: Vec<(Vec<Vec2>, bool)> = roads
         .iter()
         .filter(|road| road.oneway && !road.roundabout)
         .filter_map(|road| {
             let (first, last) = (*road.path.first()?, *road.path.last()?);
-            let path: Vec<Vec2> = match (at_ring(first), at_ring(last)) {
-                (true, false) => road.path.clone(),
-                (false, true) => road.path.iter().rev().copied().collect(),
+            let (path, entry): (Vec<Vec2>, bool) = match (at_ring(first), at_ring(last)) {
+                (true, false) => (road.path.clone(), false),
+                (false, true) => (road.path.iter().rev().copied().collect(), true),
                 // перемычка между двумя узлами кольца или улица мимо
                 _ => return None,
             };
-            (polyline_length(&path) <= FAN_REACH).then_some(path)
+            (polyline_length(&path) <= FAN_REACH).then_some((path, entry))
         })
         .collect();
     let mut fans = Vec::new();
-    for (index, a) in outward.iter().enumerate() {
-        for b in &outward[index + 1..] {
-            if a[0].distance(b[0]) <= ARM_SNAP {
+    for (index, (a, a_entry)) in outward.iter().enumerate() {
+        for (b, b_entry) in &outward[index + 1..] {
+            // веер — между въездом и съездом: два въезда подряд островка не делят
+            if a_entry == b_entry || a[0].distance(b[0]) <= ARM_SNAP {
                 continue;
             }
             let mouth = a[a.len() - 1].distance(b[b.len() - 1]);
