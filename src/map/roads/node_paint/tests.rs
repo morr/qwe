@@ -599,9 +599,37 @@ fn a_paved_divided_street_is_crossed_by_one_zebra() {
     );
 }
 
+/// Трамвайное полотно шириной почти в [`TRAM_BED_MAX_GAP`] между кромками —
+/// тоже асфальт (`PairRun::paved`), и через него тоже одна планка: зазор
+/// между планками — полотно и два отступа от кромок.
+#[test]
+fn the_widest_tram_bed_is_crossed_by_one_zebra() {
+    let gap = TRAM_BED_MAX_GAP - 0.2;
+    let apart = 7.6 + gap;
+    let paint = divided_street_crossing_apart(true, apart);
+    let north: Vec<&Zebra> = paint
+        .zebras
+        .iter()
+        .filter(|zebra| zebra.osm && zebra.from.y > 0.0)
+        .collect();
+    assert_eq!(north.len(), 1, "{:?}", paint.zebras);
+    let zebra = north[0];
+    let [low, high] = [zebra.from.x.min(zebra.to.x), zebra.from.x.max(zebra.to.x)];
+    let edge = apart / 2.0 + 3.8 - EDGE_INSET;
+    assert!((low - (100.0 - edge)).abs() < 1e-3, "{zebra:?}");
+    assert!((high - (100.0 + edge)).abs() < 1e-3, "{zebra:?}");
+}
+
 /// Разделённая жилая (половины на x 94 и 106, по переходу OSM на каждой)
 /// поперёк третичной; `paved` — асфальт ли между половинами.
 fn divided_street_crossing(paved: bool) -> NodePaint {
+    divided_street_crossing_apart(paved, 12.0)
+}
+
+/// [`divided_street_crossing`] с осями половин в `apart` метрах друг от
+/// друга, симметрично вокруг x 100.
+fn divided_street_crossing_apart(paved: bool, apart: f32) -> NodePaint {
+    let [west, east] = [100.0 - apart / 2.0, 100.0 + apart / 2.0];
     let half = |x: f32, down: bool, crossing: f32| {
         let mut points = vec![
             Vec2::new(x, 80.0),
@@ -633,18 +661,18 @@ fn divided_street_crossing(paved: bool) -> NodePaint {
                 Highway::Tertiary,
                 2,
             ),
-            half(94.0, true, 12.0),
-            half(106.0, false, 13.2),
+            half(west, true, 12.0),
+            half(east, false, 13.2),
         ],
         road_nodes: vec![
-            crossing(Vec2::new(94.0, 12.0)),
-            crossing(Vec2::new(106.0, 13.2)),
+            crossing(Vec2::new(west, 12.0)),
+            crossing(Vec2::new(east, 13.2)),
         ],
         ..default()
     };
     map.roads[0]
         .points
-        .splice(1..1, [Vec2::new(94.0, 0.0), Vec2::new(106.0, 0.0)]);
+        .splice(1..1, [Vec2::new(west, 0.0), Vec2::new(east, 0.0)]);
     map.network = RoadNetwork::new(&map.roads);
     let drawn: Vec<&RoadLine> = map.roads.iter().collect();
     let paths: Vec<Vec<Vec2>> = map.roads.iter().map(|road| road.points.clone()).collect();

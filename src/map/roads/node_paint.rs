@@ -24,8 +24,9 @@
 //!   `highway=crossing` на плече (до [`ARM_CROSSING_REACH`]), иначе
 //!   ([`CrossingMode::Generated`]) — в [`ZEBRA_SETBACK`] от кромки узла, если
 //!   в кластере сошлись две улицы с тротуарами, одна из них не ниже
-//!   `tertiary` (или узел под светофором) и ни одна не дуга кольца. Стоп-линия — за зеброй, на
-//!   встречных узлу полосах; у `give_way` прерывистая. Дворовых проездов тут
+//!   `tertiary` (или узел под светофором) и ни одна не дуга кольца.
+//!   Стоп-линия — за зеброй, на встречных узлу полосах; у `give_way`
+//!   прерывистая. Дворовых проездов тут
 //!   нет вовсе: они не проезжая часть и узлов не образуют;
 //! - **зебра посреди квартала** — по любому размеченному переходу на улице,
 //!   со стоп-линиями с обеих сторон, если переход регулируемый;
@@ -50,6 +51,7 @@ use bevy::prelude::*;
 use super::junctions::{JUNCTION_MARGIN, SharedNode, Visit, node_key, with_stitches};
 use super::merges::Merge;
 use super::network::StitchTarget;
+use super::network::pairs::TRAM_BED_MAX_GAP;
 use super::{is_carriageway, lane_count};
 use crate::map::along::{arclengths, nearest_on_path, place_on_path};
 use crate::map::footprint::distance_to_polyline;
@@ -96,11 +98,13 @@ const MIN_RUN: f32 = 6.0;
 const OVERLAP_SLACK: f32 = 0.2;
 /// Зебры двух половин сливаются в одну планку ([`join_zebras`]), если они
 /// параллельны (косинус), лежат на одной прямой с точностью до метра и между
-/// ними не шире самой широкой асфальтовой разделительной (ручка `Median gap`
-/// до 6 м) с отступами от кромок.
+/// ними не шире самой широкой асфальтовой разделительной с отступами
+/// [`EDGE_INSET`] от обеих кромок. Самая широкая — трамвайное полотно, оно
+/// мощёное до [`TRAM_BED_MAX_GAP`] (разделительная по ручке `Median gap` —
+/// до 6 м), и [`OVERLAP_SLACK`] на то, что планки ложатся не по пробе.
 const JOIN_PARALLEL: f32 = 0.95;
 const JOIN_OFFSET: f32 = 1.0;
-const JOIN_GAP: f32 = 8.0;
+const JOIN_GAP: f32 = TRAM_BED_MAX_GAP + 2.0 * EDGE_INSET + OVERLAP_SLACK;
 /// Шаг сетки кластеров, м.
 const CLUSTER_CELL: f32 = 50.0;
 
@@ -798,9 +802,10 @@ impl NodePaint {
         // перемычка ([`JunctionArm::link`]). Кроме кольца: подход вписан в
         // него по касательной и идёт по его асфальту десятки метров — кромка
         // ушла бы за переход (пример 04, юг)
+        let reach_of = |road: usize| reaches.get(&road).copied().unwrap_or(JUNCTION_MARGIN);
         let arm_edge = |arm: &Arm, walk: &Walk| -> (f32, bool) {
             let from = walk.project(arm.at);
-            let reach = reaches.get(&arm.road).copied().unwrap_or(JUNCTION_MARGIN);
+            let reach = reach_of(arm.road);
             if at_ring {
                 return (from + arm.dir * reach, false);
             }
@@ -822,11 +827,10 @@ impl NodePaint {
             .filter(|(arm, _)| !drawn[arm.road].bridge)
             .map(|(arm, cleared)| {
                 let walk = Walk::new(paths[arm.road].as_ref());
-                let reach = reaches.get(&arm.road).copied().unwrap_or(JUNCTION_MARGIN);
                 let (edge, link) = if cleared {
                     arm_edge(arm, &walk)
                 } else {
-                    (walk.project(arm.at) + arm.dir * reach, false)
+                    (walk.project(arm.at) + arm.dir * reach_of(arm.road), false)
                 };
                 let path = walk.path;
                 // у кольца длина идёт по кругу через шов
@@ -862,8 +866,7 @@ impl NodePaint {
             // переход по данным стоит, где стоит: от кромки по полуширине
             // соседа, как прежде, — толкать его за кромку по асфальту значило
             // бы выбросить с короткого плеча (пример 04, юг)
-            let reach = reaches.get(&arm.road).copied().unwrap_or(JUNCTION_MARGIN);
-            let near = from + dir * reach;
+            let near = from + dir * reach_of(arm.road);
             // переход плеча — от узла до [`ARM_CROSSING_REACH`] за кромкой
             let osm = crossings[arm.road]
                 .iter()
@@ -1352,16 +1355,7 @@ fn spill_over_ends(
     if spills.is_empty() {
         return;
     }
-    let mut ends: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
-    for (road, path) in paths.iter().enumerate() {
-        let path = path.as_ref();
-        if !is_carriageway(drawn[road]) || path.len() < 2 || is_ring(path) {
-            continue;
-        }
-        for end in [path[0], path[path.len() - 1]] {
-            ends.entry(node_key(end)).or_default().push(road);
-        }
-    }
+    let ends = open_ends(drawn, paths);
     for &(at, reach) in spills {
         let key = node_key(at);
         if junctions.contains(&key) {
@@ -1386,26 +1380,40 @@ fn spill_over_ends(
     }
 }
 
-/// Концы `[начало, конец]` каждой дороги, за которыми улица идёт дальше с
-/// **меньшим** числом полос: чистый шов с одной проезжей частью, где линиям,
-/// которых у соседа нет, продолжаться некуда — они гаснут в клине.
-fn narrowing_ends(drawn: &[&RoadLine], paths: &[impl AsRef<[Vec2]>]) -> Vec<[bool; 2]> {
+/// Торцы дороги могут быть швом: проезжая часть, не кольцо и не точка.
+fn has_open_ends(road: &RoadLine, path: &[Vec2]) -> bool {
+    is_carriageway(road) && path.len() >= 2 && !is_ring(path)
+}
+
+/// Дороги с торцом в каждом узле — по [`has_open_ends`].
+fn open_ends(
+    drawn: &[&RoadLine],
+    paths: &[impl AsRef<[Vec2]>],
+) -> HashMap<(i32, i32), Vec<usize>> {
     let mut ends: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
     for (road, path) in paths.iter().enumerate() {
         let path = path.as_ref();
-        if !is_carriageway(drawn[road]) || path.len() < 2 || is_ring(path) {
+        if !has_open_ends(drawn[road], path) {
             continue;
         }
         for end in [path[0], path[path.len() - 1]] {
             ends.entry(node_key(end)).or_default().push(road);
         }
     }
+    ends
+}
+
+/// Концы `[начало, конец]` каждой дороги, за которыми улица идёт дальше с
+/// **меньшим** числом полос: чистый шов с одной проезжей частью, где линиям,
+/// которых у соседа нет, продолжаться некуда — они гаснут в клине.
+fn narrowing_ends(drawn: &[&RoadLine], paths: &[impl AsRef<[Vec2]>]) -> Vec<[bool; 2]> {
+    let ends = open_ends(drawn, paths);
     paths
         .iter()
         .enumerate()
         .map(|(road, path)| {
             let path = path.as_ref();
-            if !is_carriageway(drawn[road]) || path.len() < 2 || is_ring(path) {
+            if !has_open_ends(drawn[road], path) {
                 return [false; 2];
             }
             [path[0], path[path.len() - 1]].map(|end| {
