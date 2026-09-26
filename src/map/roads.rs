@@ -1334,6 +1334,7 @@ pub fn mesh_roads(
         &stitches.targets,
         map,
         &islands,
+        &merges.list,
         node_paint::NodePaintStyle {
             crossings: if style.markings {
                 style.crossings
@@ -1399,6 +1400,20 @@ pub fn mesh_roads(
         node_paint.asphalt[splitter.road].push(splitter.gap);
     }
     gores.add_splitters(&splitters);
+    // каркасы половин у слияний сводятся в каркас продолжения
+    // (`roads/merges.rs`) — по той же нарисованной оси, что и линии
+    let mut ramps: Vec<Option<paint::MergeRamp>> = vec![None; roads.len()];
+    for merge in &merges.list {
+        for (road, ramp) in
+            merges::merge_ramps(merge, &drawn, &stitched, &map.network, shape.taper())
+        {
+            ramps[road] = Some(ramp);
+        }
+    }
+    // где у пары половин кончается разделительная — осевая слияния доходит
+    // до неё: торцы асфальтовой середины и носы газона, по улицам половин
+    let street_of = |road: usize| map.network.street_of(road).map(|(street, _)| street);
+    let mut median_ends: Vec<([Option<usize>; 2], merges::MedianEnd)> = Vec::new();
     // разделительные парных половин (`roads/medians.rs`): асфальт — до лент
     // половин, под ними; газон с бордюром — в свой слой над тротуарами
     let mut median_grass = MeshBuilder::with_surface_coords();
@@ -1441,20 +1456,48 @@ pub fn mesh_roads(
                     &median,
                     [&node_paint.breaks[first], &node_paint.breaks[second]],
                 ));
+                // узел слияния — не перекрёсток: двойная сплошная доходит до
+                // него и переходит в осевую продолжения
+                painted.retain(|gap| !merges.is_pure_node(gap.at));
                 painter.paint_median(&midline, &painted);
+                let pair = median.roads.map(street_of);
+                for tip in [midline.first(), midline.last()].into_iter().flatten() {
+                    median_ends.push((pair, merges::MedianEnd::Paved(*tip)));
+                }
             }
             paved.push(median);
         } else {
             let mut breaks = breaks;
             breaks.extend(bed_ends.iter().copied());
-            lawn_kerbs.extend(medians::push_lawn(
+            let kerbs = medians::push_lawn(
                 &mut sidewalks,
                 &mut median_grass,
                 &median,
                 &breaks,
                 SIDEWALK_COLOR.to_linear(),
                 GRASS_COLOR.to_linear(),
-            ));
+            );
+            let pair = median.roads.map(street_of);
+            for point in kerbs.iter().flatten().flatten() {
+                median_ends.push((pair, merges::MedianEnd::Lawn(Vec2::from(*point))));
+            }
+            lawn_kerbs.extend(kerbs);
+        }
+    }
+    // осевая продолжения — за узел слияния, до разделительной его пары
+    if style.markings {
+        for merge in merges.list.iter().filter(|merge| merge.pure) {
+            let halves = merge.halves.map(street_of);
+            let ends: Vec<merges::MedianEnd> = median_ends
+                .iter()
+                .filter(|(pair, _)| {
+                    pair.iter()
+                        .all(|street| street.is_some() && halves.contains(street))
+                })
+                .map(|&(_, end)| end)
+                .collect();
+            let axis = merges::merge_axis(merge, &drawn, &stitched, &map.network, &ends);
+            painter.paint_merge_axis(&axis, lane_count(drawn[merge.street]) >= 4);
         }
     }
     // асфальт от торца полотна до носа газона рядом
@@ -1518,6 +1561,7 @@ pub fn mesh_roads(
                 },
                 wedges,
                 node_paint.pockets[index],
+                ramps[index],
                 stations[index],
             );
         }

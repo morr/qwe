@@ -461,6 +461,55 @@ pub struct WedgeEnd {
     pub drift: Option<f32>,
 }
 
+/// Раскладка way половины у узла слияния (`roads/merges.rs`): в узле —
+/// `frame`, сторона продолжения, за `length` метров от узла — своё тело, между
+/// ними — плавно (smoothstep, как кромка слияния). `start` — метров от узла
+/// до первой точки way, `away` — растёт ли это расстояние по ходу его точек:
+/// клин идёт через несколько ways улицы.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MergeRamp {
+    pub frame: LaneFrame,
+    pub length: f32,
+    pub start: f32,
+    pub away: bool,
+}
+
+impl MergeRamp {
+    /// Метров от узла у точки way в `along` метрах от его начала.
+    fn distance(self, along: f32) -> f32 {
+        if self.away {
+            self.start + along
+        } else {
+            self.start - along
+        }
+    }
+
+    /// Раскладка в `along` метрах от начала way с телом `body`; за клином —
+    /// `None`. Кромка со стороны пары сжимается к оси продолжения на дальней
+    /// половине клина: лишняя полоса кончается там, и её линия гаснет в
+    /// стороне от осевой, а не у самой двойной сплошной.
+    fn frame_at(self, body: LaneFrame, along: f32) -> Option<LaneFrame> {
+        let smooth = |t: f32| {
+            let t = t.clamp(0.0, 1.0);
+            t * t * (3.0 - 2.0 * t)
+        };
+        let t = self.distance(along) / self.length;
+        (t < 1.0).then(|| {
+            let mut frame = self.frame.lerp(body, smooth(t));
+            let early = self.frame.lerp(body, smooth(2.0 * t - 1.0));
+            if self.frame.high.abs() < self.frame.low.abs() {
+                frame.high = early.high;
+            } else {
+                frame.low = early.low;
+            }
+            frame
+        })
+    }
+}
+
+/// Шаг вершин на клине слияния, м: раскладка по smoothstep — кривая.
+const RAMP_STEP: f32 = 2.0;
+
 /// Клинья у торцов way так, как их нарежет `tapers::split` по этому пути.
 pub fn wedge_ends(
     path: &[Vec2],
@@ -560,7 +609,9 @@ impl Painter {
     /// Линии проезжей части `road`, нарисованной по `points` (ось улицы со
     /// стежками), с разрывами краски и узлами насквозь `breaks`
     /// (`roads/node_paint.rs`), клиньями `wedges`, карманами у торцов
-    /// `pockets` и началом длины улицы `station`.
+    /// `pockets`, раскладкой у узла слияния `ramp` и началом длины улицы
+    /// `station`.
+    #[allow(clippy::too_many_arguments)]
     pub fn paint(
         &mut self,
         road: &RoadLine,
@@ -571,6 +622,7 @@ impl Painter {
         }: LineBreaks,
         wedges: [Option<WedgeEnd>; 2],
         pockets: [Option<Pocket>; 2],
+        ramp: Option<MergeRamp>,
         station: Station,
     ) {
         if !is_carriageway(road) {
@@ -600,19 +652,39 @@ impl Painter {
             if let Some(tail) = wedges[1] {
                 insert_at(&mut path, &mut along, &mut to_break, total - tail.length);
             }
+            // и по клину слияния — часто: раскладка там по кривой
+            if let Some(ramp) = ramp {
+                let steps = (ramp.length / RAMP_STEP).ceil() as usize;
+                for step in 0..=steps {
+                    let from_node = ramp.length * step as f32 / steps.max(1) as f32;
+                    let at = if ramp.away {
+                        from_node - ramp.start
+                    } else {
+                        ramp.start - from_node
+                    };
+                    insert_at(&mut path, &mut along, &mut to_break, at);
+                }
+            }
         }
         let body = lane_frame(lanes);
         let frames: Vec<LaneFrame> = along
             .iter()
-            .map(|&at| match wedges {
-                [Some(head), _] if !closed && at < head.length => {
-                    narrow_frame(body, head.lanes, false, head.drift).lerp(body, at / head.length)
+            .map(|&at| {
+                // клин слияния ведёт раскладку сам: торец в узле не шов
+                if let Some(frame) = ramp.and_then(|ramp| ramp.frame_at(body, at)) {
+                    return frame;
                 }
-                [_, Some(tail)] if !closed && at > total - tail.length => {
-                    narrow_frame(body, tail.lanes, true, tail.drift)
-                        .lerp(body, (total - at) / tail.length)
+                match wedges {
+                    [Some(head), _] if !closed && at < head.length => {
+                        narrow_frame(body, head.lanes, false, head.drift)
+                            .lerp(body, at / head.length)
+                    }
+                    [_, Some(tail)] if !closed && at > total - tail.length => {
+                        narrow_frame(body, tail.lanes, true, tail.drift)
+                            .lerp(body, (total - at) / tail.length)
+                    }
+                    _ => body,
                 }
-                _ => body,
             })
             .collect();
         let Station { start, reversed } = station;
@@ -791,6 +863,39 @@ impl Painter {
             AXIS_STRIP,
             &stations,
             LineKind::Double.code(),
+            PAINT_COLOR.to_linear(),
+        );
+        self.lines += 1;
+    }
+
+    /// Осевая продолжения, заведённая от узла слияния между половинами
+    /// (`roads/merges.rs::merge_axis`): сплошная, двойная — если двойная у
+    /// продолжения (`double`). Разрывов на ней нет: узел слияния — не
+    /// перекрёсток.
+    pub fn paint_merge_axis(&mut self, line: &[Vec2], double: bool) {
+        if line.len() < 2 {
+            return;
+        }
+        let (along, _) = arclengths(line);
+        let stations: Vec<PaintStation> = along
+            .iter()
+            .map(|&along| PaintStation {
+                along,
+                to_break: NO_BREAK,
+                alpha: 1.0,
+            })
+            .collect();
+        let kind = if double {
+            LineKind::Double
+        } else {
+            LineKind::AxisSolid
+        };
+        self.axes.push_paint_strip(
+            line,
+            false,
+            AXIS_STRIP,
+            &stations,
+            kind.code(),
             PAINT_COLOR.to_linear(),
         );
         self.lines += 1;

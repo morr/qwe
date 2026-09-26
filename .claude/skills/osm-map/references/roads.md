@@ -1099,9 +1099,41 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
       tagged sidewalk on its outer side. Each side has its own step, so a kerb already in
       line with the continuation gets nothing — the wedge is **by kerbs**, not about the
       axis. `RoadReport::merges` is `[merges, bands]`.
-    - **Not done**: the lane frame. The halves' lane lines run into the node as they did
-      and the continuation's start there; the paint through a merge (the two frames
-      meeting the continuation's) is the next step.
+    - **The paint runs through** — three pieces, each measured against sample 26, where
+      the halves' lines ran into the node as two solid lines closing in a V, the
+      continuation's started past a 13 m gap, and the double solid ended at the lawn:
+      - **No breaks at a pure merge** (`Merge::pure` — no other carriageway at the node).
+        `node_paint` saw three streets at a node (each half is a street of its own, the
+        continuation a third), so all three yielded and broke by the neighbour's half width
+        plus a metre (8.1 m on the halves). `NodePaint::new` takes `merges`: a pure merge
+        node is dropped from the junction list, its base breaks leave all three roads and a
+        `solid` break goes on each — the continuation's axis is solid there. No zebra, stop
+        line or turn wear. A merge on a junction (sample 25, five roads) breaks as any
+        junction does.
+      - **The ramp** (`merge_ramps` → `paint::MergeRamp`, passed to `Painter::paint`): per
+        way of each half, from the node on through its street (`walk`, the ways and how far
+        each starts from the node). At the node the half's frame is **its side of the
+        continuation's** — from the continuation's outer lane edge to its axis, on its grid
+        (a node on the axis for even lanes, half a lane off for odd); the grid is placed so
+        the half's **outer** line stays outer, which leaves the extra lanes at the pair's
+        side. The frame goes from there to the body by smoothstep, like the kerb band, over
+        `RoadShape::taper` × the largest shift (twice the kerb step, twice the grid shift,
+        at least a lane) and at most 0.6 of the path. The partner-side edge shrinks on the
+        **far half** of the ramp only: the extra lane ends there and its line fades away
+        from the axis — shrinking with the rest put two faint dashes right against the
+        double solid. The whole grid moves as one, so lines never cross. The painter inserts
+        a vertex every `RAMP_STEP` 2 m on the ramp. Рязанская (3 + 3 into 4): each half's
+        median-side line fades, the outer one runs into the continuation's lane line.
+      - **The axis** (`merge_axis` → `Painter::paint_merge_axis`, double from four lanes,
+        single solid below): from the node up the middle between the halves, to the nearest
+        `MedianEnd` of the pair's median within `AXIS_REACH` 60 m — a paved median's
+        midline tip (the median's own double solid no longer breaks at a pure merge node, so
+        the two meet), or a lawn kerb point less `NOSE_CLEARANCE` 1 m. Before a lawn or
+        with no median it stops where the halves' kerbs part (axes further apart than the
+        two half widths): at Рязанская the halves' ribbons leave a wedge of bare ground
+        before the lawn's nose, and the axis stops at its tip.
+      - **Not done**: the ruts. The asphalt keeps its body lane frame and its breaks at the
+        node, so the ruts fade there instead of following the ramp.
     - **Советская × Коминтерна is not a merge**, whatever the tram-bed plan assumed: all
       four ways there are one-way — the pair turns east and goes on as 3 + 4 lanes with a
       lawn, while the tram leaves for Коминтерна. The bed ends there square at the lawn's

@@ -2,13 +2,17 @@ use std::borrow::Cow;
 
 use bevy::prelude::*;
 
-use super::{Merge, Merges, merge_bands, merges};
+use super::{MedianEnd, Merge, Merges, merge_axis, merge_bands, merge_ramps, merges};
+use crate::map::meshing::LaneFrame;
 use crate::map::osm::fixture::street;
-use crate::map::osm::{Highway, RoadLine};
+use crate::map::osm::{Highway, MapData, RoadLine};
 use crate::map::roads::corners::kerb_returns;
+use crate::map::roads::is_carriageway;
+use crate::map::roads::junctions::marking_breaks;
 use crate::map::roads::network::pairs::Pairs;
 use crate::map::roads::network::{RoadNetwork, RoadNodes};
-use crate::map::roads::shape::RoadShape;
+use crate::map::roads::node_paint::{CrossingMode, NodePaint, NodePaintStyle};
+use crate::map::roads::shape::{RoadShape, lane_width};
 use crate::map::roads::tapers::TAPER_PER_METER;
 
 /// Полотно в `lanes` полос: ширина — как из сечения.
@@ -84,6 +88,7 @@ fn halves_ending_on_a_two_way_street_of_their_class_are_a_merge() {
             halves: [0, 1],
             street: 2,
             street_end: 0,
+            pure: true,
         }]
     );
     assert!(merges.is_merged(0, 1) && merges.is_merged(1, 0) && merges.is_merged(2, 0));
@@ -213,6 +218,157 @@ fn halves_cut_short_at_the_node_still_merge_and_the_wedge_runs_on_their_street()
         assert!((band.length - length).abs() < 1e-3, "{}", band.length);
         assert_eq!(band.asphalt[0].y < node().y, band.half == 1);
     }
+}
+
+#[test]
+fn a_street_crossing_the_node_makes_the_merge_a_junction_for_paint() {
+    let mut roads = divided_into(two_way_east());
+    roads.push(RoadLine {
+        highway: Highway::Residential,
+        ..street(vec![node(), node() - Vec2::new(0.0, 80.0)], 8.0)
+    });
+    let (merges, _, _) = found(&roads);
+    assert_eq!(merges.list.len(), 1);
+    assert!(!merges.list[0].pure);
+    assert!(!merges.is_pure_node(node()));
+}
+
+#[test]
+fn a_pure_merge_node_breaks_no_line_and_holds_the_axis_solid() {
+    let roads = divided_into(two_way_east());
+    let (merges, _, paths) = found(&roads);
+    let mut map = MapData {
+        roads: roads.clone(),
+        ..default()
+    };
+    map.network = RoadNetwork::new(&map.roads);
+    let drawn: Vec<&RoadLine> = roads.iter().collect();
+    let base = marking_breaks(&roads, is_carriageway, &[]).breaks;
+    let at_node = |breaks: &[crate::map::meshing::Break]| {
+        breaks.iter().any(|gap| gap.at.distance(node()) < 0.1)
+    };
+    // как перекрёсток трёх улиц — рвутся все три: это и был разрыв
+    assert!((0..3).all(|road| at_node(&base[road])));
+    let paint = |list: &[Merge]| {
+        NodePaint::new(
+            &drawn,
+            &paths,
+            &base,
+            &[],
+            &map,
+            &[],
+            list,
+            NodePaintStyle {
+                crossings: CrossingMode::Generated,
+                stop_lines: true,
+            },
+            |_| true,
+            |_| Vec::new(),
+            |_| false,
+        )
+    };
+    let merged = paint(&merges.list);
+    for road in 0..3 {
+        assert!(!at_node(&merged.breaks[road]), "{road}");
+        assert!(at_node(&merged.solid[road]), "{road}");
+    }
+    assert!(merged.zebras.is_empty() && merged.stop_lines.is_empty());
+    assert!(merged.junctions.is_empty());
+}
+
+#[test]
+fn each_half_frame_runs_into_its_side_of_the_continuation_frame() {
+    let roads = divided_into(two_way_east());
+    let (merges, network, paths) = found(&roads);
+    let drawn: Vec<&RoadLine> = roads.iter().collect();
+    let ramps = merge_ramps(&merges.list[0], &drawn, &paths, &network, TAPER_PER_METER);
+    let lane = lane_width();
+    assert_eq!(ramps.len(), 2);
+    for (road, ramp) in ramps {
+        // по ходу обеих половин пара слева: полосы — от кромки продолжения
+        // справа до его оси, сетка продолжения (четыре полосы — узел на оси),
+        // наружная линия тела (−½ полосы) уходит в наружную (−1)
+        assert_eq!(
+            ramp.frame,
+            LaneFrame {
+                origin: 0.0,
+                low: -2.0 * lane,
+                high: 0.0,
+            },
+            "{road}"
+        );
+        // сдвиг — полполосы, кромка — полполосы: клин в полосу
+        assert!((ramp.length - lane * TAPER_PER_METER).abs() < 1e-3);
+        let length = crate::map::osm::model::polyline_length(&paths[road]);
+        let (start, away) = if road == 0 {
+            (length, false)
+        } else {
+            (0.0, true)
+        };
+        assert!(
+            (ramp.start - start).abs() < 1e-3 && ramp.away == away,
+            "{road}"
+        );
+    }
+}
+
+#[test]
+fn a_ramp_runs_through_the_ways_of_a_half_cut_short_at_the_node() {
+    // короткие куски в 15 м у узла — клин в 33 м заходит на соседние ways
+    let apart = width(HALF_LANES) + 3.0;
+    let [south, north] = [0.0, apart].map(|y| Vec2::new(200.0, y).lerp(node(), 0.625));
+    let roads = vec![
+        primary(
+            vec![Vec2::ZERO, Vec2::new(200.0, 0.0), south],
+            HALF_LANES,
+            true,
+        ),
+        primary(vec![south, node()], HALF_LANES, true),
+        primary(vec![node(), north], HALF_LANES, true),
+        primary(
+            vec![north, Vec2::new(200.0, apart), Vec2::new(0.0, apart)],
+            HALF_LANES,
+            true,
+        ),
+        two_way_east(),
+    ];
+    let (merges, network, paths) = found(&roads);
+    let drawn: Vec<&RoadLine> = roads.iter().collect();
+    let ramps = merge_ramps(&merges.list[0], &drawn, &paths, &network, TAPER_PER_METER);
+    let roads: Vec<usize> = ramps.iter().map(|(road, _)| *road).collect();
+    assert_eq!(roads, vec![1, 0, 2, 3]);
+    // дальний way въезжающей — от узла за коротким
+    let short = crate::map::osm::model::polyline_length(&paths[1]);
+    let far = ramps[1].1;
+    let whole = crate::map::osm::model::polyline_length(&paths[0]);
+    assert!((far.start - (short + whole)).abs() < 1e-3 && !far.away);
+}
+
+#[test]
+fn the_merge_axis_runs_from_the_node_to_the_median_or_until_the_halves_part() {
+    let roads = divided_into(two_way_east());
+    let (merges, network, paths) = found(&roads);
+    let drawn: Vec<&RoadLine> = roads.iter().collect();
+    let merge = &merges.list[0];
+    // разделительной нет — пока кромки половин не разошлись
+    let free = merge_axis(merge, &drawn, &paths, &network, &[]);
+    assert_eq!(free[0], node());
+    let tip = *free.last().unwrap();
+    assert!(tip.x < node().x - 20.0 && tip.x > node().x - 40.0, "{tip}");
+    // по середине между половинами
+    assert!(free.iter().all(|point| (point.y - node().y).abs() < 0.5));
+    // до носа газона — с отступом
+    let nose = Vec2::new(node().x - 12.0, node().y);
+    let to_nose = merge_axis(merge, &drawn, &paths, &network, &[MedianEnd::Lawn(nose)]);
+    let tip = *to_nose.last().unwrap();
+    assert!((tip.x - (nose.x + 1.0)).abs() < 0.3, "{tip}");
+    // нос дальше, чем кромки сходятся, — осевая по земле не идёт
+    let far = Vec2::new(node().x - 50.0, node().y);
+    let short = merge_axis(merge, &drawn, &paths, &network, &[MedianEnd::Lawn(far)]);
+    assert_eq!(short.last(), free.last());
+    // до асфальтовой середины — сквозь, и смыкается с её торцом
+    let paved = merge_axis(merge, &drawn, &paths, &network, &[MedianEnd::Paved(far)]);
+    assert!(paved.last().unwrap().distance(far) < 0.01);
 }
 
 #[test]

@@ -48,6 +48,7 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
 use super::junctions::{JUNCTION_MARGIN, SharedNode, Visit, node_key, with_stitches};
+use super::merges::Merge;
 use super::network::StitchTarget;
 use super::{is_carriageway, lane_count};
 use crate::map::along::{arclengths, nearest_on_path, place_on_path};
@@ -389,6 +390,9 @@ impl NodePaint {
     /// ленту, а зебра по правилу — вопрос модели), `partners` — вторые
     /// половины разделённой улицы, `on_ring` — дуга ли дорога кольца
     /// (`roads/rings.rs`): узел кольца зебры по правилу не получает.
+    /// Узел слияния без других проезжих частей (`merges` — `roads/merges.rs`)
+    /// — не перекрёсток: улица его проходит, линии не рвутся, осевая
+    /// продолжения у него сплошная.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         drawn: &[&RoadLine],
@@ -397,6 +401,7 @@ impl NodePaint {
         targets: &[[Option<StitchTarget>; 2]],
         map: &MapData,
         paved: &[Vec<Vec2>],
+        merges: &[Merge],
         style: NodePaintStyle,
         sidewalk: impl Fn(usize) -> bool,
         partners: impl Fn(usize) -> Vec<Partner>,
@@ -413,7 +418,39 @@ impl NodePaint {
             return paint;
         }
         let nodes = with_stitches(drawn, is_carriageway, targets);
-        let junctions: Vec<&SharedNode> = nodes.iter().filter(|node| node.is_junction()).collect();
+        let merged = |node: &SharedNode| {
+            merges.iter().find(|merge| {
+                merge.pure
+                    && node_key(merge.node) == node_key(node.at)
+                    && node
+                        .visits
+                        .iter()
+                        .all(|visit| merge.roads().contains(&visit.road))
+            })
+        };
+        for node in &nodes {
+            let Some(merge) = merged(node) else {
+                continue;
+            };
+            let key = node_key(node.at);
+            for road in merge.roads() {
+                paint.breaks[road].retain(|found| node_key(found.at) != key);
+                let widest = merge
+                    .roads()
+                    .into_iter()
+                    .filter(|&other| other != road)
+                    .map(|other| drawn[other].width / 2.0)
+                    .fold(0.0_f32, f32::max);
+                paint.solid[road].push(Break {
+                    at: node.at,
+                    reach: widest + JUNCTION_MARGIN,
+                });
+            }
+        }
+        let junctions: Vec<&SharedNode> = nodes
+            .iter()
+            .filter(|node| node.is_junction() && merged(node).is_none())
+            .collect();
         let marks: HashMap<(i32, i32), RoadNodeKind> = map
             .road_nodes
             .iter()
