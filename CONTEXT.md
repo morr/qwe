@@ -1584,9 +1584,15 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   there is **Junction paint** above, on its own breaks; the asphalt keeps its
   **marking breaks** (`junctions::marking_breaks`: each carriageway's ruts stop half the
   widest other road + `JUNCTION_MARGIN` 1 m short of a junction node, a dead end is a
-  break of reach 0) for the ruts and the medians. Wider fills are pushed after narrower
-  ones, and a junction's **leading road** after all of its arms, so a junction shows the
-  main road's ruts rather than the side street's stub. Sidewalks and markings are
+  break of reach 0) for the ruts and the medians. **Junctions**
+  (`junctions::Junctions`) owns the marking breaks, the junction paint and the kerb
+  row's breaks in one value, and with them the **five sets of breaks** a road carries,
+  none of which may be merged into another: the **base** (the medians open on it,
+  nobody rewrites it), the **asphalt** (the base minus a leading road's — the fill and
+  its ruts), the paint **cut** and **solid**, and the **row** (no stitches, but service
+  drives, taper clearings and OSM zebras — kerb pockets and parked cars). Wider fills
+  are pushed after narrower ones, and a junction's **leading road** after all of its
+  arms, so a junction shows the main road's ruts rather than the side street's stub. Sidewalks and markings are
   `RoadStyle` knobs, on by default.
 - **Style resources** — each is BRP-writable, persisted, and a change rebuilds only its own
   layers from the unchanged `MapData`: **RoadStyle** (the sidewalks / markings / stop

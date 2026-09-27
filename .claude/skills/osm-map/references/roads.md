@@ -664,7 +664,27 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   layer breaks on its own set (**Junction paint** below), where a main road keeps its lines,
   and the street fill takes `NodePaint::asphalt` — these minus the ones on a junction's
   **leading** road, whose ruts run through (**Turn paths** below). The medians keep the
-  unrewritten set: a median opens at a crossing whoever leads it.
+  unrewritten set: a median opens at a crossing whoever leads it
+  (`tests.rs::the_median_base_keeps_the_break_a_leading_road_lost`).
+  **`Junctions`** (`junctions.rs`) is the one value `mesh_roads` asks all of this of —
+  `Junctions::new(&Drawn, map, paved, style)` owns the three computations over the
+  shared nodes: the base breaks (`marking_breaks`), the **Junction paint** below
+  (`NodePaint`) and the **row breaks** (`pockets::row_breaks`, **Kerb pockets**). Out of
+  them come **five sets of breaks per road, and merging any two is a regression, not a
+  simplification**: the **base** (`median_base()` — the medians; nobody rewrites it), the
+  **asphalt** (`paint().asphalt` — the base minus the leading road's, the fill and its
+  ruts), the paint **cut** and **solid** (`paint().breaks` / `paint().solid` — where lines
+  stop, and where an axis stays solid through a node its road passes), and the **row**
+  (`row()` — no stitches, but service drives, taper clearings and OSM zebras: the kerb
+  pockets and the cars). The one change from outside is `add_splitters` — a splitter
+  island (**Roundabouts**) is found on the ribbon axes and the rings, which the nodes do
+  not know, and cuts both the paint and the asphalt of its approach
+  (`a_splitter_gap_reaches_both_asphalt_and_paint`); the base and the row never see it.
+  Likewise three notions of «node» live here and stay three: `SharedNode::is_junction`
+  (the breaks), the corner node of `corners` (a kerb return between a drive and a street,
+  with no paint break) and the cluster of `node_paint::Junction` — one module, not one
+  concept. The car layer is not a `Junctions` client: its `Drawn::nodal` has no stitches
+  and no paint, so `mesh_cars` calls `pockets::row_breaks` itself.
   **Junction geometry is not computed as a union**: roads are independent polylines
   drawn overlapping in one opaque layer. Until stage 5 the `Round` caps were what made a
   junction *look* joined — the caps of the ways meeting at a node overlapped into a
@@ -684,7 +704,7 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   would expose every crossing.
 - **Junction paint** (`map/roads/node_paint.rs`, `NodePaint::new(&Drawn, base, map, paved,
   style)` — the roads, the ribbon axes, the stitches, the merges, the mapped sidewalk, the
-  pair partners and the ring arcs all come off `Drawn`; called by `mesh_roads`
+  pair partners and the ring arcs all come off `Drawn`; built by `Junctions::new`
   on the ribbon axes — **always**, markings on or off: with markings off it paints
   nothing, but the leading roads and the junction arms it finds are the asphalt's, not the
   paint's) — what the paint layer does at a junction. It starts from the asphalt breaks

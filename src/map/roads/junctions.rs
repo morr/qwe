@@ -9,13 +9,22 @@
 //! кончается и другой начинается, — стык одной дороги. Заодно это отделяет
 //! мост от улицы под ним: общей ноды у них нет, и разметка на обоих идёт
 //! насквозь — там, где поиск пересечений отрезков порвал бы обе.
+//!
+//! Слой дорог берёт узлы одним значением — [`Junctions`]: оно владеет тремя
+//! расчётами поверх узлов (базовые разрывы, краска узлов, разрывы ряда) и
+//! пятью множествами разрывов, которые из них выходят.
 
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
+use super::drawn::Drawn;
+use super::gores::Splitter;
+use super::is_carriageway;
 use super::network::StitchTarget;
+use super::node_paint::{NodePaint, NodePaintStyle};
+use super::pockets;
 use crate::map::meshing::Break;
-use crate::map::osm::RoadLine;
+use crate::map::osm::{MapData, RoadLine};
 
 /// Шаг квантования координат узла, м. Одна нода OSM даёт одну и ту же точку
 /// на всех своих ways, квантование лишь страхует от округления.
@@ -241,6 +250,78 @@ pub fn marking_breaks(
         }
     }
     MarkingBreaks { breaks, junctions }
+}
+
+/// Узлы карты для слоя дорог — одно значение на три расчёта поверх общих
+/// узлов: базовые разрывы ([`marking_breaks`]), краска узлов
+/// ([`NodePaint`]) и разрывы ряда у бордюра (`pockets::row_breaks`).
+///
+/// **Пять множеств разрывов на дорогу, и слить их нельзя** — у каждого своя
+/// семантика: база ([`Self::median_base`]) — по ней открываются
+/// разделительные, её никто не переписывает; асфальт (`NodePaint::asphalt`) —
+/// база без разрывов ведущей узла, колея идёт сквозь; краска —
+/// `NodePaint::breaks` (где линии рвутся) и `NodePaint::solid` (где осевая
+/// сплошная у узла насквозь); ряд ([`Self::row`]) — без стежков, но с
+/// проездами, клиньями и зебрами OSM: по нему стоят карманы и машины.
+/// Три понятия «узел» — `SharedNode::is_junction`, узел скругления
+/// (`corners`) и кластер краски (`node_paint::Junction`) — тоже разные: в один
+/// модуль, но не в одно понятие.
+pub struct Junctions {
+    base: MarkingBreaks,
+    paint: NodePaint,
+    row: MarkingBreaks,
+}
+
+impl Junctions {
+    /// Узлы по подготовленным дорогам `prepared` (стежки, клинья) и карте
+    /// (дороги OSM — по ним ключи узлов и вылет базовых разрывов; точки
+    /// дорог — переходы). `paved` — замощённые острова треугольников узлов
+    /// (`corners::small_islands`), `style` — что краска кладёт на узлах.
+    pub fn new(
+        prepared: &Drawn,
+        map: &MapData,
+        paved: &[Vec<Vec2>],
+        style: NodePaintStyle,
+    ) -> Self {
+        let roads = map.roads.as_slice();
+        let base = marking_breaks(roads, is_carriageway, &prepared.stitches().targets);
+        let paint = NodePaint::new(prepared, &base.breaks, map, paved, style);
+        let row = pockets::row_breaks(roads, prepared.tapers(), &map.road_nodes);
+        Self { base, paint, row }
+    }
+
+    /// Сколько узлов оказались перекрёстками (строка `road meshing:`).
+    pub fn count(&self) -> usize {
+        self.base.junctions
+    }
+
+    /// Базовые разрывы асфальта, **не переписанные** краской узлов: по ним
+    /// открываются разделительные — у перекрёстка, кто бы его ни вёл.
+    pub fn median_base(&self) -> &[Vec<Break>] {
+        &self.base.breaks
+    }
+
+    /// Краска узлов: разрывы краски и асфальта, сплошные, карманы, зебры,
+    /// стоп-линии и кластеры узлов.
+    pub fn paint(&self) -> &NodePaint {
+        &self.paint
+    }
+
+    /// Разрывы ряда у бордюра — карманы ленты и ряд машин.
+    pub fn row(&self) -> &MarkingBreaks {
+        &self.row
+    }
+
+    /// Островки по правилу на подходах к кольцам (`gores::splitters`): подход
+    /// рвётся на их длину и краской, и колеей. Единственная правка снаружи —
+    /// островки ставятся по осям ленты и кольцам, которых узлы не знают; база
+    /// и ряд их не видят.
+    pub(super) fn add_splitters(&mut self, splitters: &[Splitter]) {
+        for splitter in splitters {
+            self.paint.breaks[splitter.road].push(splitter.gap);
+            self.paint.asphalt[splitter.road].push(splitter.gap);
+        }
+    }
 }
 
 #[cfg(test)]

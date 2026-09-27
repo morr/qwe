@@ -1130,16 +1130,31 @@ pub fn mesh_roads(
     // узловые оси — скругления, слияния, карманы, станции штрихов, полотно
     // трамвая: их торцы стоят в точках OSM
     let nodal = prepared.axes(Axis::Nodal);
-    // перекрёстки, стежки среди них: по ним рвётся краска и гаснет колея
-    // асфальта — колея есть и с выключенной разметкой, так что считаются они
-    // всегда. По дорогам карты, не как рисуются (`roads/drawn.rs`)
-    let junctions = junctions::marking_breaks(roads, is_carriageway, &prepared.stitches().targets);
     // длина улицы у начала каждого way — по ней идут штрихи краски
     let stations = paint::street_stations(&map.network, &nodal);
     // Скругления кладутся раньше всех лент своего слоя: лента поверх кроет
     // скругление, а не наоборот, и разметка остаётся целой.
     let kerb_returns = corners::kerb_returns(&prepared, shape.corner_radius());
     let islands = corners::small_islands(&prepared);
+    // Узлы (`roads/junctions.rs`), стежки среди них: базовые разрывы
+    // асфальта, краска узлов, разрывы ряда у бордюра — одним значением. По
+    // ним рвётся краска и гаснет колея асфальта — колея есть и с выключенной
+    // разметкой, так что считаются они всегда. Краска строится и без
+    // разметки: ведущая дорога узла и плечи для траекторий — это колея
+    // асфальта, а не краска
+    let mut junctions = junctions::Junctions::new(
+        &prepared,
+        map,
+        &islands,
+        node_paint::NodePaintStyle {
+            crossings: if style.markings {
+                style.crossings
+            } else {
+                CrossingMode::Off
+            },
+            stop_lines: style.markings && style.stop_lines,
+        },
+    );
     for (class, outline) in &kerb_returns.roads {
         let (builder, color) = match class {
             RoadClass::Street => (&mut streets, ROAD_COLOR),
@@ -1176,11 +1191,10 @@ pub fn mesh_roads(
     }
     // карманы — по тому же ответу и тем же разрывам, что ряд машин
     // (`map::cars`): асфальт за кромкой и тротуар, отодвинутый за него
-    let row_breaks = pockets::row_breaks(roads, prepared.tapers(), &map.road_nodes);
     let kerbsides = pockets::all_kerbsides(
         roads,
         &nodal,
-        &row_breaks,
+        junctions.row(),
         map.traffic_side,
         prepared.lots(),
     );
@@ -1248,37 +1262,19 @@ pub fn mesh_roads(
     // оси ленты, со стежками — до дороги, до которой OSM торец не довёл:
     // асфальт, краска, траектории, острова
     let ribbon = prepared.axes(Axis::Ribbon);
-    // краска узлов (`roads/node_paint.rs`): где линии рвутся, а где главная
-    // проходит узел, зебры, стоп-линии, карманы — по той же оси, что и линии.
-    // Строится и без разметки: ведущая дорога узла и плечи для траекторий —
-    // это колея асфальта, а не краска
-    let mut node_paint = node_paint::NodePaint::new(
-        &prepared,
-        &junctions.breaks,
-        map,
-        &islands,
-        node_paint::NodePaintStyle {
-            crossings: if style.markings {
-                style.crossings
-            } else {
-                CrossingMode::Off
-            },
-            stop_lines: style.markings && style.stop_lines,
-        },
-    );
     // траектории манёвров (`roads/turns.rs`) — колея в узле
-    let turns = turns::Turns::new(&prepared, &node_paint.junctions, map.traffic_side);
+    let turns = turns::Turns::new(&prepared, &junctions.paint().junctions, map.traffic_side);
     // Широкие улицы поверх узких — см. доку модуля; ведущая узла — поверх
     // всех: её колея идёт через узел, и примыкание шире неё не должно её
     // закрыть.
     let mut leading = vec![false; roads.len()];
-    for junction in &node_paint.junctions {
+    for junction in &junctions.paint().junctions {
         for &road in &junction.leading {
             leading[road] = true;
         }
     }
     let widths: Vec<f32> = drawn.iter().map(|road| road.width).collect();
-    let order = fill_order(&widths, &leading, &node_paint.junctions);
+    let order = fill_order(&widths, &leading, &junctions.paint().junctions);
     // направляющие островки у колец (`roads/gores.rs`) — до лент: к ним
     // дотягиваются двойные сплошные разделительных
     let gore_roads: Vec<gores::GoreRoad> = order
@@ -1293,11 +1289,9 @@ pub fn mesh_roads(
     // островки по правилу — на двусторонних подходах, где веера из въезда и
     // съезда в OSM нет: краска и колея подхода рвутся на их длину
     let splitters = gores::splitters(&drawn, &ribbon, prepared.rings());
-    for splitter in &splitters {
-        node_paint.breaks[splitter.road].push(splitter.gap);
-        node_paint.asphalt[splitter.road].push(splitter.gap);
-    }
+    junctions.add_splitters(&splitters);
     gores.add_splitters(&splitters);
+    let node_paint = junctions.paint();
     // каркасы половин у слияний сводятся в каркас продолжения
     // (`roads/merges.rs`) — по той же нарисованной оси, что и линии
     let mut ramps: Vec<Option<paint::MergeRamp>> = vec![None; roads.len()];
@@ -1326,12 +1320,11 @@ pub fn mesh_roads(
         .flat_map(medians::bed_ends)
         .flatten()
         .collect();
+    // разделительная открывается по базе — у перекрёстка, кто бы его ни вёл
+    let base = junctions.median_base();
     for median in &prepared.pairs().medians {
         let [first, second] = median.roads;
-        let breaks = medians::crossing_breaks(
-            median,
-            [&junctions.breaks[first], &junctions.breaks[second]],
-        );
+        let breaks = medians::crossing_breaks(median, [&base[first], &base[second]]);
         // до перекрёстка — как линии полос, а не там, где кончились пробы
         let mut median = median.clone();
         medians::reach_breaks(&mut median, &breaks);
@@ -1804,7 +1797,7 @@ pub fn mesh_roads(
 
     let report = RoadReport {
         style,
-        junctions: junctions.junctions,
+        junctions: junctions.count(),
         paint_lines,
         paint_vertices,
         zebras: [
