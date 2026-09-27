@@ -3487,6 +3487,99 @@ fn a_lot_does_not_step_over_a_fence_it_was_not_standing_on() {
     }
 }
 
+/// Клин в кармане забора у торца стоянки асфальтом не становится. Тула,
+/// 441737398 у Кремлёвского сада: длинная кромка стоянки лежит на оси
+/// Садового переулка, у северного торца забор обходит карман, а за углом
+/// начинается улица Дзержинского. Замыкание затягивало карман, полоса забора
+/// оставляла от него клин уже самой ограды, и тот торчал из угла стоянки
+/// серым шипом на тротуар — отчёт автора со скриншота.
+#[test]
+fn a_fence_pocket_at_a_lot_end_leaves_no_asphalt_sliver() {
+    // настоящие метры карты, сдвинутые к центру сцены
+    let at = |x: f32, y: f32| CENTER + Vec2::new(x - 5818.0, y - 3240.0);
+    let lot = PolyArea {
+        kind: AreaKind::Parking,
+        ..building(
+            vec![
+                at(5775.27, 3192.40),
+                at(5779.90, 3184.04),
+                at(5811.05, 3220.77),
+                at(5827.75, 3240.47),
+                at(5864.04, 3283.25),
+                at(5858.17, 3287.70),
+            ],
+            Vec::new(),
+        )
+    };
+    let bare = |points: Vec<Vec2>, width: f32| RoadLine {
+        sidewalks: [false; 2],
+        ..street(points, width)
+    };
+    let mut map = MapData {
+        roads: vec![
+            // Садовый переулок — по кромке стоянки
+            bare(
+                vec![
+                    at(5864.04, 3283.25),
+                    at(5827.75, 3240.47),
+                    at(5811.05, 3220.77),
+                    at(5779.90, 3184.04),
+                    at(5774.87, 3178.77),
+                ],
+                7.6,
+            ),
+            // улица Дзержинского — от угла стоянки в обе стороны
+            bare(
+                vec![
+                    at(5879.56, 3271.45),
+                    at(5871.60, 3277.50),
+                    at(5868.61, 3279.77),
+                    at(5864.04, 3283.25),
+                    at(5871.12, 3287.65),
+                    at(5878.69, 3296.93),
+                ],
+                10.94,
+            ),
+        ],
+        parking: vec![lot],
+        fences: vec![fence(vec![
+            at(5775.3, 3192.4),
+            at(5858.2, 3287.7),
+            at(5861.1, 3290.8),
+            at(5865.1, 3287.3),
+            at(5874.0, 3297.3),
+            at(5870.6, 3299.8),
+        ])],
+        ..MapData::default()
+    };
+
+    let original = map.parking[0].clone();
+    pull_areas_to_roads(&mut map);
+    // у северного торца контур остался своим: ни одной вершины в кармане
+    let corner = at(5858.17, 3287.70);
+    let off = |vertex: Vec2| {
+        if point_in_area(vertex, &original) {
+            return 0.0;
+        }
+        (0..original.outer.len())
+            .map(|index| {
+                let next = original.outer[(index + 1) % original.outer.len()];
+                distance_to_segment(vertex, original.outer[index], next)
+            })
+            .fold(f32::INFINITY, f32::min)
+    };
+    let farthest = map.parking[0]
+        .outer
+        .iter()
+        .filter(|vertex| vertex.distance(corner) < 8.0)
+        .map(|&vertex| off(vertex))
+        .fold(0.0, f32::max);
+    assert!(
+        farthest < 0.3,
+        "асфальт в кармане забора, {farthest:.2} м от стоянки"
+    );
+}
+
 /// Сборка храмов — в одиночку, на трёх контурах: барабан внутри собора берёт
 /// его веру и его посев, а одинокая церковь без разметки — веру большинства
 /// города, и она же одна и попадает в счётчик угаданных.

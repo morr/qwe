@@ -495,6 +495,23 @@ be called alone:
       and each half fails one side of `between`. Both cases of the hospital lot (way
       344589378) are pinned: `a_fenced_lot_stays_behind_its_fence`,
       `a_lot_does_not_step_over_a_fence_it_was_not_standing_on`.
+    - **A piece an obstacle cut must still hold a band as wide as the fence**
+      (`REMNANT_HALF_WIDTH` = `FENCE_HALF`, `fits_band` — the remnant shrunk by 0.75 m
+      does not vanish). The subtraction runs **per piece**, and a piece that lost more than
+      `CUT_AREA` 0.1 m² to it keeps only such remnants: what the cut leaves narrower than
+      that is a crack between the fence and the road band, and it still touches both the
+      lot and the road, so `between` passes it. On Tula's lot 441737398 by the Кремлёвский
+      сад (its long edge on the axis of Садовый переулок, a fence pocket round its north
+      end) it came out as a grey spike of asphalt on the sidewalk — the author's report;
+      `a_fence_pocket_at_a_lot_end_leaves_no_asphalt_sliver`. An **uncut** piece is not
+      tested: a thin strip between the outline and the band is exactly what the closing is
+      for. Tula: 63 cut remnants go, 7 of them under 1 m² and 14 over 5; the step costs
+      ~6 ms more (119 → 126 ms, `dev`, same run).
+    - **The piece thresholds are only as good as `ring_area`**, and until the shoelace
+      was taken from the ring's first vertex (`model::signed_ring_area`) they were not:
+      in map metres `x · y` reaches 2·10⁷, where an `f32` step is 2, so a 0.07 m² crumb at
+      the same lot's south corner measured exactly 1.0 and passed `MIN_PIECE_AREA`. 201
+      such crumbs under 1 m² stood on Tula's lots.
     - **The road band itself is not part of the lot** — a lot is entered *from* that
       road, and the layout stripes whatever the outline holds. **Except a drive with the
       lot's asphalt on both sides of it** (`sandwiched`, probed every 3 m at `BESIDE`

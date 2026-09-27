@@ -73,6 +73,15 @@ const KEEP_BUILDING_AREA: f32 = 100.0;
 /// Шире [`TOUCH`] с запасом: кусок по ту сторону ограды, лежащей по кромке
 /// площадки, обязан перестать её касаться.
 const FENCE_HALF: f32 = 0.75;
+/// Полуширина полосы, которая должна уместиться в остатке куска, урезанного
+/// препятствием, — иначе остаток не асфальт, а щель между препятствиями, м.
+/// Столько же, сколько у полосы забора: остаток уже самой ограды — её обрезок
+/// (Тула, стоянка 441737398: клин в кармане забора у торца, 1.8 м²).
+const REMNANT_HALF_WIDTH: f32 = FENCE_HALF;
+/// Сколько препятствие должно откусить от куска, чтобы тот считался
+/// урезанным, м². Не [`MIN_PIECE_AREA`]: клин у 441737398 был мал с самого
+/// начала (2 м²), и забор снял с него всего 0.2 м².
+const CUT_AREA: f32 = 0.1;
 /// Отмостка: на сколько асфальт стоянки не доходит до стены **любого** дома, м.
 /// Контур в OSM сплошь и рядом рисуют внахлёст с домом или впритык к нему, а
 /// замыкание затягивает и щель между ними, — и площадка лезла под стену, места
@@ -421,15 +430,27 @@ impl<'a> Around<'a> {
             .collect();
         // препятствия вычитаются из уже отобранного — и отбор повторяется:
         // забор по кромке площадки отрезает кусок от неё, дом — от дороги
+        // Кусок, который препятствие урезало, оставляет по себе обрезки — клин
+        // между полосой забора и полотном, крошку у угла ограды, — и они
+        // касаются и площадки, и дороги не хуже честного асфальта. Поэтому
+        // у урезанного куска остаётся только то, во что влезает полоса
+        // шириной с сам забор ([`REMNANT_HALF_WIDTH`]): уже неё — это щель
+        // между препятствиями, а не пустырь у стоянки. Нетронутый кусок не
+        // проверяется — узкая полоса между кромкой и полотном и есть то, что
+        // замыкание затягивает
         let obstacles = self.obstacles(shapes_bounds(&kept)?);
         if !obstacles.is_empty() {
+            let obstacles = obstacles.simplify_shape(FillRule::NonZero);
             kept = kept
-                .overlay(
-                    &obstacles.simplify_shape(FillRule::NonZero),
-                    OverlayRule::Difference,
-                    FillRule::NonZero,
-                )
                 .into_iter()
+                .flat_map(|piece| {
+                    let area = shape_area(&piece);
+                    let rest =
+                        vec![piece].overlay(&obstacles, OverlayRule::Difference, FillRule::NonZero);
+                    let cut = rest.iter().map(shape_area).sum::<f32>() < area - CUT_AREA;
+                    rest.into_iter()
+                        .filter(move |remnant| !cut || fits_band(remnant, REMNANT_HALF_WIDTH))
+                })
                 .filter(between)
                 .collect();
         }
@@ -618,6 +639,14 @@ fn runs_along(lot: &PolyArea, link: &RoadLink) -> bool {
         return true;
     };
     side.dot(way).abs() >= STREET_SIDE_ANGLE.cos()
+}
+
+/// Влезает ли в фигуру где-нибудь полоса полушириной `half`: фигура,
+/// сжатая на `half`, не исчезает.
+fn fits_band(shape: &Shape, half: f32) -> bool {
+    !vec![shape.clone()]
+        .outline(&OutlineStyle::new(-half).line_join(LineJoin::Round(ARC)))
+        .is_empty()
 }
 
 /// Габарит фигур по их внешним кольцам; `None` — фигур нет.
