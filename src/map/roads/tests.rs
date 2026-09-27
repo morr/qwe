@@ -1520,6 +1520,44 @@ fn the_report_counts_the_junction_paint() {
     );
 }
 
+/// Въезд в кольцо: линия уступи дорогу — на кромке кольца, а не поперёк
+/// подхода в полуширине кольца от узла. Подход вписан по касательной, и там
+/// ещё середина кольца: линия ложилась через его полосы до бордюра острова
+/// (Тула, витрина 04, юг и восток).
+#[test]
+fn a_ring_entry_yields_on_the_ring_edge() {
+    let mut map = roundabout_with_an_approach(true, true);
+    // второй подход — въезд: точки к кольцу
+    map.roads[2].points.reverse();
+    for road in &mut map.roads {
+        road.highway = Highway::Tertiary;
+    }
+    let map = with_network(map.roads);
+    let drawn = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
+    let junctions = junctions::Junctions::new(
+        &drawn,
+        &map,
+        &[],
+        node_paint::NodePaintStyle {
+            crossings: CrossingMode::Generated,
+            stop_lines: true,
+        },
+    );
+    let lines = &junctions.node_paint().stop_lines;
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    let line = lines[0];
+    assert!(line.yields, "въезд кольцу уступает");
+    let ring = drawn.axis(0, Axis::Ribbon);
+    let half = drawn.road(0).width / 2.0;
+    for end in [line.from, line.to] {
+        let off = distance_to_path(end, ring) - half;
+        assert!(
+            (0.0..0.8).contains(&off),
+            "{end:?} от кромки кольца на {off}"
+        );
+    }
+}
+
 #[test]
 fn a_dangling_end_short_of_a_street_is_stitched() {
     // проезд кончается в трёх метрах за кромкой тротуара улицы
