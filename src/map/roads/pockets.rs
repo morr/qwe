@@ -789,6 +789,53 @@ mod tests {
         assert_eq!(first(1.0).tapers, [true, true], "слева — запрет у соседа");
     }
 
+    /// Магистраль, разрезанная OSM на два way по ходу: карман с обеих сторон
+    /// идёт через торец насквозь — скосы только на внешних торцах улицы.
+    #[test]
+    fn a_kerb_pocket_continues_across_the_way_end_of_its_own_street() {
+        let primary = |points: Vec<Vec2>| RoadLine {
+            highway: Highway::Primary,
+            parking: [KerbParking::Pocket; 2],
+            ..street(points, 14.0)
+        };
+        let roads = [
+            primary(vec![Vec2::ZERO, Vec2::new(100.0, 0.0)]),
+            primary(vec![Vec2::new(100.0, 0.0), Vec2::new(200.0, 0.0)]),
+        ];
+        let sides = city_sides(&roads, vec![Vec::new(), Vec::new()]);
+        for (road, tapers) in [(0, [true, false]), (1, [false, true])] {
+            assert_eq!(sides[road].len(), 2);
+            for side in &sides[road] {
+                assert_eq!(side.pockets.len(), 1, "{side:?}");
+                assert_eq!(side.pockets[0].tapers, tapers, "{side:?}");
+            }
+        }
+    }
+
+    /// Т-узел из трёх торцов: карман прямой улицы идёт на её продолжение, а
+    /// не на примыкающий way, и у примыкающего торец закрыт скосом. Разрывов
+    /// нет нарочно: в городе узел трёх участников ряда рвёт карманы сам
+    /// (`junctions::marking_breaks`), и здесь проверяется только выбор соседа.
+    #[test]
+    #[ignore = "join_way_ends takes the first way in the node with an open pocket, \
+                the side way of a tee by index; fixed by RoadNodes::next_way"]
+    fn a_kerb_pocket_stops_at_a_t_junction_side_way() {
+        let pocket = [KerbParking::Pocket; 2];
+        let roads = [
+            tagged(vec![Vec2::ZERO, Vec2::new(100.0, 0.0)], pocket),
+            // примыкающий — раньше продолжения по индексу
+            tagged(vec![Vec2::new(100.0, 0.0), Vec2::new(100.0, 100.0)], pocket),
+            tagged(vec![Vec2::new(100.0, 0.0), Vec2::new(200.0, 0.0)], pocket),
+        ];
+        let sides = city_sides(&roads, vec![Vec::new(); 3]);
+        for (road, tapers) in [(0, [true, false]), (1, [true, true]), (2, [false, true])] {
+            for side in &sides[road] {
+                assert_eq!(side.pockets.len(), 1, "{road}: {side:?}");
+                assert_eq!(side.pockets[0].tapers, tapers, "{road}: {side:?}");
+            }
+        }
+    }
+
     /// Без тега карманы редкие и короткие: каждый со скосами и в пределах
     /// длины по правилу, между соседними — тротуар, на улице в два километра
     /// карманами занята малая часть бордюра, но не ноль; и тот же ответ на
@@ -991,5 +1038,34 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    /// Зебра у торца way в Т-узле переливается только на продолжение улицы,
+    /// не на примыкающий way: у того в узле свой разрыв перекрёстка, шире.
+    #[test]
+    #[ignore = "crossing_breaks spills onto every carriageway ending in the node, \
+                the side way of a tee too; fixed by RoadNodes::next_way"]
+    fn a_zebra_at_a_way_end_spills_only_onto_the_continuation() {
+        let roads = [
+            street(
+                vec![Vec2::ZERO, Vec2::new(99.0, 0.0), Vec2::new(100.0, 0.0)],
+                8.0,
+            ),
+            street(vec![Vec2::new(100.0, 0.0), Vec2::new(200.0, 0.0)], 8.0),
+            street(vec![Vec2::new(100.0, 0.0), Vec2::new(100.0, 100.0)], 8.0),
+        ];
+        let zebra = RoadNode {
+            pos: Vec2::new(99.0, 0.0),
+            kind: RoadNodeKind::Crossing {
+                signals: false,
+                island: false,
+                marked: true,
+            },
+        };
+        let spilled: Vec<usize> = crossing_breaks(&roads, &[zebra])
+            .into_iter()
+            .map(|(road, _)| road)
+            .collect();
+        assert_eq!(spilled, vec![0, 1]);
     }
 }
