@@ -798,7 +798,11 @@ pub fn mesh_roads(
     // асфальт, краска, траектории, острова
     let ribbon = prepared.axes(Axis::Ribbon);
     // траектории манёвров (`roads/turns.rs`) — колея в узле
-    let turns = turns::Turns::new(&prepared, &junctions.node_paint().junctions, map.traffic_side);
+    let turns = turns::Turns::new(
+        &prepared,
+        &junctions.node_paint().junctions,
+        map.traffic_side,
+    );
     // Широкие улицы поверх узких — см. доку модуля; ведущая узла — поверх
     // всех: её колея идёт через узел, и примыкание шире неё не должно её
     // закрыть.

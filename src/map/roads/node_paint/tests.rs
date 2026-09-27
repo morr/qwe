@@ -238,7 +238,11 @@ fn a_leading_road_loses_its_asphalt_break_but_not_its_base_one() {
             .any(|found| found.at == NODE && found.reach > 0.0)
     };
     assert!(at_node(&base[0]));
-    assert!(!at_node(paint.asphalt().of(0)), "{:?}", paint.asphalt().of(0));
+    assert!(
+        !at_node(paint.asphalt().of(0)),
+        "{:?}",
+        paint.asphalt().of(0)
+    );
     assert!(at_node(paint.asphalt().of(1)));
 }
 

@@ -394,7 +394,10 @@ fn junctions_with(map: &MapData, markings: bool) -> usize {
         markings,
         ..RoadStyle::default()
     };
-    mesh_roads(map, style, RoadShape::default()).1.junctions.count
+    mesh_roads(map, style, RoadShape::default())
+        .1
+        .junctions
+        .count
 }
 
 #[test]
@@ -854,7 +857,10 @@ fn rule_zebras_do_not_follow_the_sidewalk_knob() {
             sidewalks,
             ..RoadStyle::default()
         };
-        mesh_roads(&map, style, RoadShape::default()).1.junctions.zebras[0]
+        mesh_roads(&map, style, RoadShape::default())
+            .1
+            .junctions
+            .zebras[0]
     };
 
     assert!(zebras(true) > 0, "у тройника есть зебра по правилу");

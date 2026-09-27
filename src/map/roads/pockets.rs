@@ -209,13 +209,7 @@ pub fn all_kerbsides<P: AsRef<[Vec2]>>(
         .enumerate()
         .map(|(index, road)| {
             if parkable(road) {
-                kerbsides(
-                    road,
-                    paths[index].as_ref(),
-                    breaks.of(index),
-                    traffic,
-                    lots,
-                )
+                kerbsides(road, paths[index].as_ref(), breaks.of(index), traffic, lots)
             } else {
                 Vec::new()
             }
