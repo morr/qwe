@@ -167,11 +167,18 @@ impl<'a> Grounds<'a> {
             if !ground.streets.iter().any(|street| street.kerb.is_some()) {
                 continue;
             }
-            let mut medians = on_lot(medians, ground);
-            for (midline, _) in &mut medians {
-                gores.reach(midline);
-            }
-            medians.retain(|(midline, _)| midline.len() >= 2);
+            // штриховка островка режет осевую на куски — каждый со своим
+            // расстоянием между осями
+            let medians: Vec<(Vec<Vec2>, f32)> = on_lot(medians, ground)
+                .into_iter()
+                .flat_map(|(midline, apart)| {
+                    gores
+                        .reach(&midline)
+                        .into_iter()
+                        .map(move |run| (run, apart))
+                })
+                .filter(|(midline, _)| midline.len() >= 2)
+                .collect();
             if style.markings {
                 for (midline, _) in &medians {
                     layers.lines.push_rails(

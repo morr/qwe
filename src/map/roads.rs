@@ -868,8 +868,8 @@ pub fn mesh_roads(
                 medians::push_paved(&mut streets, &median, ROAD_COLOR.to_linear(), ROAD_JOIN);
             }
             if style.markings {
-                let mut midline = median.midline.clone();
-                gores.reach(&mut midline);
+                // штриховка островка режет осевую на куски (`Gores::reach`)
+                let runs = gores.reach(&median.midline);
                 // и там, где обе половины рвёт краска узла — зебра поперёк
                 // обеих, стоп-линии
                 let mut painted = breaks.clone();
@@ -880,9 +880,16 @@ pub fn mesh_roads(
                 // узел слияния — не перекрёсток: двойная сплошная доходит до
                 // него и переходит в осевую продолжения
                 painted.retain(|gap| !prepared.merges().is_pure_node(gap.at));
-                painter.paint_median(&midline, &painted);
                 let pair = median.roads.map(street_of);
-                for tip in [midline.first(), midline.last()].into_iter().flatten() {
+                for midline in &runs {
+                    painter.paint_median(midline, &painted);
+                }
+                // торцы осевой для слияний — внешние, а не у штриховки
+                let tips = [
+                    runs.first().and_then(|run| run.first()),
+                    runs.last().and_then(|run| run.last()),
+                ];
+                for tip in tips.into_iter().flatten() {
                     median_ends.push((pair, merges::MedianEnd::Paved(*tip)));
                 }
             }

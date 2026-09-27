@@ -24,7 +24,7 @@ use super::junctions::node_key;
 use super::medians::tip_of;
 use super::rings::{Ring, Rings};
 use super::{is_carriageway, lane_count};
-use crate::map::along::{arclengths, place_on_path};
+use crate::map::along::{arclengths, densify, place_on_path};
 use crate::map::meshing::{Break, MeshBuilder, min_area_rect};
 use crate::map::osm::model::{RoadLine, distance_to_segment, polyline_length, ring_bounds};
 use crate::map::shapes::{
@@ -58,6 +58,16 @@ const MEDIAN_REACH: f32 = 8.0;
 const MEDIAN_REACH_STEP: f32 = 0.25;
 /// Зазор между торцом двойной линии и остриём штриховки, м.
 const MEDIAN_GORE_GAP: f32 = 0.6;
+/// Шаг проб, которыми осевая режется штриховкой ([`Gores::reach`]), м.
+const MEDIAN_PROBE_STEP: f32 = 0.5;
+/// Кусок осевой между двумя штриховками короче этого, м, не рисуется.
+const MEDIAN_RUN_MIN: f32 = 2.0;
+/// Островок, нигде не достигающий этой ширины, м, не штрихуется: в щепке
+/// шириной в метр обводка и штрихи сливаются в «лесенку», а зазор между
+/// половинами там — место двойной сплошной, и её [`Gores::reach`] больше
+/// не режет. Тула: щепка 25 × 1 м на подходе бульвара «Макси» к
+/// мини-кольцу (6641, 3156), где полотна сходятся почти параллельно.
+const GORE_MIN_WIDTH: f32 = 1.5;
 
 /// Улица так, как она нарисована, — что нужно островкам.
 pub(super) struct GoreRoad {
@@ -269,6 +279,7 @@ impl Gores {
                     .first()
                     .is_some_and(|outer| contour_area(outer) >= GORE_MIN_AREA)
             })
+            .filter(is_wide)
             .collect();
         let asphalt = bodies.outline(&OutlineStyle::new(ASPHALT_PAD).line_join(round));
         Self { asphalt, hatched }
@@ -299,29 +310,51 @@ impl Gores {
             .any(|shape| point_in_shape(point, shape))
     }
 
-    /// Дотянуть осевую разделительной до островка, если он в пределах
-    /// [`MEDIAN_REACH`] по её ходу.
+    /// Осевая разделительной вне штриховки — куски, каждый дотянут до
+    /// островка, если он в пределах [`MEDIAN_REACH`] по её ходу.
     ///
-    /// Осевая кончается там, где половины перестают идти бок о бок, а клин
-    /// штриховки — там, где зазор между ними сходит на нет, и между остриём
-    /// клина и двойной линией оставалось метра три голого асфальта (отчёт
-    /// автора). На земле края островка **сходятся в** двойную сплошную.
-    pub fn reach(&self, midline: &mut Vec<Vec2>) {
+    /// Осевая есть, пока между половинами до трёх метров асфальта, клин —
+    /// пока их от 0.6 м: в промежутке обе есть разом, и двойная линия уезжала
+    /// внутрь штриховки (отчёт автора). Поэтому осевая режется штриховкой по
+    /// пробам [`MEDIAN_PROBE_STEP`] — **вся**, а не только с концов: у
+    /// длинного клина, где подход сходится с кольцом почти параллельно,
+    /// осевая проходила его насквозь и продолжалась за ним, ни один её конец
+    /// в клин не попадал, и сквозь штриховку шла двойная сплошная — белая
+    /// «лесенка» на бульваре «Макси» (разведка C2). Кусок короче
+    /// [`MEDIAN_RUN_MIN`] выбрасывается.
+    ///
+    /// Кончается осевая там, где половины перестают идти бок о бок, а клин —
+    /// там, где зазор между ними сходит на нет, и между остриём клина и
+    /// двойной линией оставалось метра три голого асфальта (отчёт автора). На
+    /// земле края островка **сходятся в** двойную сплошную — поэтому каждый
+    /// кусок дотягивается до клина с зазором [`MEDIAN_GORE_GAP`].
+    pub fn reach(&self, midline: &[Vec2]) -> Vec<Vec<Vec2>> {
         if self.hatched.is_empty() {
-            return;
+            return vec![midline.to_vec()];
         }
-        // осевая есть, пока между половинами до трёх метров асфальта, клин —
-        // пока их от 0.6 м: в промежутке обе есть разом, и двойная линия
-        // уезжала внутрь штриховки (отчёт автора). Концы, попавшие в клин,
-        // срезаются, и дотягивается осевая уже от чистого места
-        while midline.last().is_some_and(|point| self.contains(*point)) {
-            midline.pop();
+        let probes = densify(midline, MEDIAN_PROBE_STEP);
+        let inside: Vec<bool> = probes.iter().map(|point| self.contains(*point)).collect();
+        let mut runs: Vec<Vec<Vec2>> = if inside.contains(&true) {
+            let flagged: Vec<(Vec2, bool)> = probes.into_iter().zip(inside).collect();
+            flagged
+                .chunk_by(|a, b| a.1 == b.1)
+                .filter(|run| !run[0].1)
+                .map(|run| run.iter().map(|(point, _)| *point).collect::<Vec<Vec2>>())
+                .filter(|run| polyline_length(run) >= MEDIAN_RUN_MIN)
+                .collect()
+        } else {
+            // мимо штриховки — осевая как была, без догущённых вершин
+            vec![midline.to_vec()]
+        };
+        for run in &mut runs {
+            self.extend_to_gore(run);
         }
-        let inside = midline
-            .iter()
-            .take_while(|point| self.contains(**point))
-            .count();
-        midline.drain(..inside);
+        runs
+    }
+
+    /// Дотянуть оба конца куска осевой до штриховки по его ходу (см.
+    /// [`Gores::reach`]).
+    fn extend_to_gore(&self, midline: &mut Vec<Vec2>) {
         for end in [false, true] {
             let count = midline.len();
             if count < 2 {
@@ -575,6 +608,16 @@ fn fans(roads: &[GoreRoad], at_ring: &impl Fn(Vec2) -> bool) -> Vec<Contour> {
     fans
 }
 
+/// Достигает ли островок где-нибудь ширины [`GORE_MIN_WIDTH`]: после сжатия
+/// на её половину от него что-то остаётся.
+fn is_wide(shape: &Shape) -> bool {
+    vec![shape.clone()]
+        .outline(&OutlineStyle::new(-GORE_MIN_WIDTH / 2.0).line_join(LineJoin::Round(ARC)))
+        .iter()
+        .filter_map(|shape| shape.first())
+        .any(|outer| contour_area(outer) > 0.0)
+}
+
 /// Куда дотягивается замыкание ленты: её габарит, выпущенный на полуширину
 /// полотна и на [`GORE_CLOSING`].
 fn closing_span(path: &[Vec2], width: f32) -> (Vec2, Vec2) {
@@ -601,4 +644,58 @@ fn head(points: impl Iterator<Item = Vec2>) -> Vec<Vec2> {
         path.push(point);
     }
     path
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::map::shapes::oriented;
+
+    /// Штриховка прямоугольником `min`–`max`.
+    fn hatched(min: Vec2, max: Vec2) -> Shape {
+        vec![oriented(
+            &[min, Vec2::new(max.x, min.y), max, Vec2::new(min.x, max.y)],
+            true,
+        )]
+    }
+
+    /// Осевая, проходящая клин насквозь, — два куска по обе стороны, каждый
+    /// дотянут до клина с зазором; внутрь штриховки не заходит ни один.
+    #[test]
+    fn a_midline_through_a_gore_is_cut_around_it() {
+        let gores = Gores {
+            asphalt: Vec::new(),
+            hatched: vec![hatched(Vec2::new(20.0, -2.0), Vec2::new(40.0, 2.0))],
+        };
+        let runs = gores.reach(&[Vec2::ZERO, Vec2::new(60.0, 0.0)]);
+        assert_eq!(runs.len(), 2, "{runs:?}");
+        for run in &runs {
+            assert!(run.iter().all(|point| !gores.contains(*point)), "{run:?}");
+        }
+        // с точностью до шага поиска клина
+        let near = |x: f32| (x - 20.0 + MEDIAN_GORE_GAP).abs() <= MEDIAN_REACH_STEP + 0.01;
+        let far = |x: f32| (x - 40.0 - MEDIAN_GORE_GAP).abs() <= MEDIAN_REACH_STEP + 0.01;
+        assert!(near(runs[0].last().unwrap().x), "{:?}", runs[0].last());
+        assert!(far(runs[1].first().unwrap().x), "{:?}", runs[1].first());
+    }
+
+    /// Мимо штриховки осевая остаётся как была — без догущённых вершин.
+    #[test]
+    fn a_midline_past_the_gores_is_left_alone() {
+        let gores = Gores {
+            asphalt: Vec::new(),
+            hatched: vec![hatched(Vec2::new(20.0, 10.0), Vec2::new(40.0, 14.0))],
+        };
+        let midline = [Vec2::ZERO, Vec2::new(60.0, 0.0)];
+        assert_eq!(gores.reach(&midline), vec![midline.to_vec()]);
+    }
+
+    /// Щепка шириной в метр не штрихуется, клин в три — штрихуется.
+    #[test]
+    fn a_sliver_is_too_narrow_to_hatch() {
+        let sliver = hatched(Vec2::ZERO, Vec2::new(25.0, 1.0));
+        let wedge = hatched(Vec2::ZERO, Vec2::new(25.0, 3.0));
+        assert!(!is_wide(&sliver));
+        assert!(is_wide(&wedge));
+    }
 }
