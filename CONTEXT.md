@@ -1264,11 +1264,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   shadow lives on the map's own sun, so the layer rebuilds on the zoom bucket and on
   `SunOnMap`, never on the slider. Tula: 429 lines — 356 fences, 72 walls (one of them a
   retaining wall), 1 hedge.
-- **Bridge shadow** (`map/roads.rs`, `Z_BRIDGE_SHADOW` 2.05) — a bridge deck throws the
+- **Bridge shadow** (`map/roads/bridges.rs`, `Z_BRIDGE_SHADOW` 2.05) — a bridge deck throws the
   same shadow every other object does: its own band, offset through
   `shadow_length_scale()` by the deck height, drawn under the bridge and over whatever it
   crosses — except what the z ladder draws above bridges (tram, cars, fences); rails and
-  wagons sit below the shadow, so a deck shades the track it spans. The invariants, all in `map/roads.rs` (mechanism and Tula measurements — the
+  wagons sit below the shadow, so a deck shades the track it spans. The invariants, all in `map/roads/bridges.rs` (mechanism and Tula measurements — the
   `osm-map` skill):
   **a bridge is a chain of ways, not one way** (`Bridges`, `BridgeSpan`) — ways glued
   **end to end** at `JOIN_EPSILON` (never `ways_joined`, which would fuse bridges that

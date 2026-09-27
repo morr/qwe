@@ -1408,7 +1408,7 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   `Off`/`Light`/`Strong` and the field name `smoothing` are values in `settings.toml` and
   may not be renamed; the type and the module may. `centerline` stays in `roads.rs` — it
   is the road wrapper that adds the arch and shared-node pins.
-- **Bridge layers** (`map/roads.rs`, same `RoadLayerTag`) — a road with `bridge` leaves
+- **Bridge layers** (`map/roads/bridges.rs`, same `RoadLayerTag`) — a road with `bridge` leaves
   its class layers for the **three** `bridge_shadows` (`Z_BRIDGE_SHADOW` 2.05) +
   `bridge_casings` (`Z_BRIDGE_CASING` 2.1) + `bridges`
   (`Z_BRIDGE` 2.2). The **shadow** is the deck's own band, offset along `shadow_dir()` by
@@ -1418,7 +1418,7 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   visible thing on the water. It sits **under** the deck and **over** what the bridge
   crosses — except what the z ladder draws above bridges: the rails (a tram on a bridge
   must stay visible), the tram line, wagons, parked cars, fences.
-  Eight decisions in `map/roads.rs` (`Bridges`, `probe_underneath`, `bridge_height`,
+  Eight decisions in `map/roads/bridges.rs` (`Bridges`, `probe_underneath`, `bridge_height`,
   `bridge_shadow_path`, `bridge_penumbra`, `push_bridge_shadows`) make it read instead of
   lie, and every one of them was a bug report first:
 
