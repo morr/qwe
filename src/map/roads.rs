@@ -73,8 +73,7 @@ use crate::map::surface::{
 use crate::map::SunOnMap;
 use crate::prefs::retuned;
 use crate::settings::{
-    Z_ALLEY, Z_BRIDGE, Z_BRIDGE_CASING, Z_BRIDGE_SHADOW, Z_BUILDING, Z_LOT_LINES, Z_LOT_SIDEWALK,
-    Z_ROAD, Z_ROAD_MEDIAN, Z_SIDEWALK,
+    Z_ALLEY, Z_BUILDING, Z_LOT_LINES, Z_LOT_SIDEWALK, Z_ROAD, Z_ROAD_MEDIAN, Z_SIDEWALK,
 };
 
 /// Ломаная, догущённая до шага не крупнее `step`: исходные вершины остаются на
@@ -1292,7 +1291,6 @@ pub fn mesh_roads(
     }
 
     let bridge_count = bridges.count();
-    let [bridge_shadows, bridge_casings, bridge_fills] = bridges.into_builders();
 
     let fortresses = Fortresses::of(&map.buildings);
     for wall in walls {
@@ -1307,9 +1305,8 @@ pub fn mesh_roads(
         }
     }
 
-    // тень моста полупрозрачна, поэтому у неё `Blend`: непрозрачный материал
-    // съел бы альфу вершинного цвета. Асфальт, тротуар и дорожка — фактурные,
-    // канты и лента стены — плоские
+    // асфальт, тротуар и дорожка — фактурные, лента стены — плоская; три
+    // мостовых слоя со своими высотами и материалами отдаёт `Bridges`
     let mut layers: Vec<LayerMesh> = [
         (
             alleys,
@@ -1347,28 +1344,11 @@ pub fn mesh_roads(
             "lot_lines",
             MaterialSpec::Flat,
         ),
-        (
-            bridge_shadows,
-            Z_BRIDGE_SHADOW,
-            "bridge_shadows",
-            MaterialSpec::Blend,
-        ),
-        (
-            bridge_casings,
-            Z_BRIDGE_CASING,
-            "bridge_casings",
-            MaterialSpec::Flat,
-        ),
-        (
-            bridge_fills,
-            Z_BRIDGE,
-            "bridges",
-            MaterialSpec::Surface(SurfaceKind::Street),
-        ),
         (wall_ribbons, Z_WALL, "walls", MaterialSpec::Flat),
     ]
     .into_iter()
     .map(|(builder, z, name, material)| LayerMesh::new(builder, z, name, material))
+    .chain(bridges.layers())
     .collect();
     let paint_lines = painter.lines;
     let paint_layers = painter.layers();

@@ -1588,8 +1588,9 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   take its street's lane frame and asphalt breaks (the ribbon attribute carries both —
   pinned by `deck_fill_carries_its_streets_lane_frame`), and bridge-over-bridge is push
   order. A layer module with a `deck` closure was the rejected shape: the closure would
-  have repeated half the loop body. `into_builders()` hands back the three meshes, the
-  shadow cores unioned there; `count()` is the
+  have repeated half the loop body. `layers()` hands back the three `LayerMesh`es with
+  their z and materials (the shadow `Blend`, the curb `Flat`, the deck the streets'
+  `Surface`), the shadow cores unioned there; `count()` is the
   `BridgeReport` on `RoadReport::bridges` — ways, bridges (chains) and the ones casting
   a shadow; v15 caches: Tula 91 / 86 / 73, Berlin 429 / 325 / 278, Kaluga 55 / 52 / 48,
   Ryazan 84 / 80 / 70 (the «61 ways, 56 bridges» above was counted on an older Tula

@@ -16,6 +16,8 @@ use crate::map::osm::model::{
 };
 use crate::map::osm::{MapData, PolyArea, RoadLine};
 use crate::map::shadow;
+use crate::map::surface::{LayerMesh, MaterialSpec, SurfaceKind};
+use crate::settings::{Z_BRIDGE, Z_BRIDGE_CASING, Z_BRIDGE_SHADOW};
 
 /// Путь тени настила: та же осевая, сдвинутая по свету на высоту моста,
 /// **сходящую к нулю у свободных торцов моста** ([`BridgeSpan`]).
@@ -344,11 +346,33 @@ impl Bridges {
         self.count
     }
 
-    /// Три меша: тени (ядра объединены здесь), бордюры, настилы.
-    pub(super) fn into_builders(self) -> [MeshBuilder; 3] {
+    /// Три мостовых слоя снизу вверх: тени (ядра объединены здесь), бордюры,
+    /// настилы. Тень полупрозрачна, поэтому у неё `Blend`: непрозрачный
+    /// материал съел бы альфу вершинного цвета; настил — фактурный асфальт
+    /// улиц, бордюр — плоский.
+    pub(super) fn layers(self) -> [LayerMesh; 3] {
         let mut shadows = MeshBuilder::default();
         push_bridge_shadows(&mut shadows, &self.shadows);
-        [shadows, self.casings, self.fills]
+        [
+            LayerMesh::new(
+                shadows,
+                Z_BRIDGE_SHADOW,
+                "bridge_shadows",
+                MaterialSpec::Blend,
+            ),
+            LayerMesh::new(
+                self.casings,
+                Z_BRIDGE_CASING,
+                "bridge_casings",
+                MaterialSpec::Flat,
+            ),
+            LayerMesh::new(
+                self.fills,
+                Z_BRIDGE,
+                "bridges",
+                MaterialSpec::Surface(SurfaceKind::Street),
+            ),
+        ]
     }
 }
 
