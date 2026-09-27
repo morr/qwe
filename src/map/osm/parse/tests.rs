@@ -2591,6 +2591,106 @@ fn a_block_edge_is_pulled_under_the_asphalt() {
     );
 }
 
+/// Три края дороги в разборе — пин до сведения их в профиль тротуара:
+/// квартал тянется к **нарисованному** краю (тег `sidewalk=no` его сужает до
+/// голой кромки, а односторонний тротуар — один край на обе стороны), а дом
+/// отодвигается от **края обочины** по классу, тег не смотрит.
+#[test]
+fn the_parse_reads_the_mapped_edge_for_blocks_and_the_verge_for_houses() {
+    let street = |y: f32| {
+        vec![
+            CENTER + Vec2::new(-400.0, y),
+            CENTER + Vec2::new(400.0, y),
+        ]
+    };
+    // квартал под улицей (с юга), зазор 6.5 м от оси
+    let block = |y: f32| {
+        rect(
+            CENTER + Vec2::new(-300.0, y - 40.0),
+            CENTER + Vec2::new(-220.0, y - 6.5),
+        )
+    };
+    let house = |y: f32| {
+        rect(
+            CENTER + Vec2::new(100.0, y + 4.7),
+            CENTER + Vec2::new(112.0, y + 14.7),
+        )
+    };
+    let map = Overpass::new(CITY)
+        .way(&[("highway", "residential"), ("sidewalk", "no")], street(0.0))
+        .way(
+            &[("highway", "residential"), ("sidewalk", "left")],
+            street(500.0),
+        )
+        .area(&[("landuse", "residential")], block(0.0))
+        .area(&[("landuse", "residential")], block(500.0))
+        .area(&[("building", "yes")], house(0.0))
+        .parse();
+
+    let top = |ring: &[Vec2], y: f32| {
+        ring.iter()
+            .map(|vertex| vertex.y - CENTER.y - y)
+            .fold(f32::NEG_INFINITY, f32::max)
+    };
+    let bare = top(&map.landuse[0].outer, 0.0);
+    assert!(
+        (bare + RESIDENTIAL_HALF - LANDUSE_OVERLAP).abs() < 0.02,
+        "без тротуара квартал тянется к голой кромке: {bare}"
+    );
+    // тротуар слева (с севера), квартал справа — край всё равно с тротуаром
+    let edge = RESIDENTIAL_HALF + sidewalk_band(2.0 * RESIDENTIAL_HALF);
+    let one_sided = top(&map.landuse[1].outer, 500.0);
+    assert!(
+        (one_sided + edge - LANDUSE_OVERLAP).abs() < 0.02,
+        "односторонний тротуар — один край на обе стороны: {one_sided}"
+    );
+    let reach = edge + SIDEWALK_CLEARANCE;
+    let gap = map.buildings[0]
+        .outer
+        .iter()
+        .map(|vertex| vertex.y - CENTER.y)
+        .fold(f32::INFINITY, f32::min);
+    assert!(
+        (gap - reach).abs() < 0.1,
+        "дом отодвинут от обочины по классу, `sidewalk=no` не в счёт: {gap}"
+    );
+}
+
+/// Порядок [`finish_parse`]: сечения (шаг 0) раньше дотягивания кварталов
+/// (шаг 6) — квартал тянется к краю четырёхполосной улицы, а не к ширине
+/// класса, с которой way вышел из чтения.
+#[test]
+fn blocks_are_pulled_to_the_width_the_sections_gave() {
+    let street = vec![
+        CENTER - Vec2::new(400.0, 0.0),
+        CENTER + Vec2::new(400.0, 0.0),
+    ];
+    let block = rect(
+        CENTER + Vec2::new(-300.0, -60.0),
+        CENTER + Vec2::new(-220.0, -12.0),
+    );
+    let map = Overpass::new(CITY)
+        .way(
+            &[("highway", "residential"), ("lanes", "4"), ("sidewalk", "both")],
+            street,
+        )
+        .area(&[("landuse", "residential")], block)
+        .parse();
+
+    let width = map.roads[0].width;
+    assert!(width > 12.0, "сечение не дошло до ширины: {width}");
+    let edge = width / 2.0 + sidewalk_band(width);
+    let top = map.landuse[0]
+        .outer
+        .iter()
+        .map(|vertex| vertex.y - CENTER.y)
+        .fold(f32::NEG_INFINITY, f32::max);
+    assert!(
+        (top + edge - LANDUSE_OVERLAP).abs() < 0.02,
+        "квартал дотянут не к краю по сечению: {top}, край {edge}"
+    );
+}
+
 /// Угол квартала у перекрёстка двух улиц дотягивается под **оба** полотна, а
 /// не под одно ближайшее: иначе у скругления оставался треугольник голой земли
 /// (Тула, витрина 13). Угол тянется и с зазора больше обычного предела — он

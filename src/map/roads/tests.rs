@@ -89,6 +89,29 @@ fn sidewalks_belong_to_streets_not_service_roads() {
     assert!(SIDEWALK_WIDTH_RANGE.contains(&primary));
 }
 
+/// Пин ширин тротуара до профиля: полоса по классу тег не смотрит (ей
+/// пользуются обочина дома и бордюр стоянки), по карте — только при
+/// тротуаре хоть с одной стороны; мост — проезжая часть, полоса у него есть
+/// (со своих слоёв его убирает рендер, а не ширина).
+#[test]
+fn the_sidewalk_widths_read_the_class_the_tag_and_the_bridge() {
+    let line = vec![Vec2::ZERO, Vec2::new(100.0, 0.0)];
+    let mut street = fixture::street(line.clone(), 8.0);
+    let band = sidewalk_band(8.0);
+    street.sidewalks = [false; 2];
+    assert_eq!(sidewalk_width(&street), Some(band), "полоса по классу");
+    assert_eq!(mapped_sidewalk(&street), None, "по карте — нет");
+    assert_eq!(crate::map::parking::kerb_width(&street), band);
+    street.sidewalks = [false, true];
+    assert_eq!(mapped_sidewalk(&street), Some(band), "хоть с одной стороны");
+    street.bridge = true;
+    assert_eq!(sidewalk_width(&street), Some(band), "мост — с полосой");
+    assert_eq!(mapped_sidewalk(&street), Some(band));
+    let mut service = fixture::street(line, 8.0);
+    service.highway = Highway::Service;
+    assert_eq!(crate::map::parking::kerb_width(&service), 1.2, "проезд — LOT_KERB");
+}
+
 #[test]
 fn lanes_come_from_the_tag_and_fall_back_to_the_width() {
     let mut street = fixture::street(vec![Vec2::ZERO, Vec2::new(100.0, 0.0)], 8.0);
