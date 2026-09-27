@@ -206,7 +206,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     `Island` outline, a `Carriageway` outline is asphalt under the ribbons
     (`roads/islands.rs`); mini-roundabouts and walkway outlines are parsed and kept for
     later stages.
-  - **RoadLine** — centerline + width **from its section** (footways keep 3.5 by class);
+  - **RoadLine** — centerline + width **from its section** (a path's width is its
+    `width` tag, clamped 1–8 m, or its kind and surface — `tags.rs::path_width`, 1.5 m
+    trail to 5 m pedestrian street; footbridges and arches keep the class 3.5, their band
+    is a navmesh corridor);
     `RoadClass: Street | Alley`; `highway: Highway` (the `highway` value; `*_link` is a
     class of its own; `Highway::is_street` — not a service drive, not a path — is what
     makes a **carriageway**, not the width); `bridge` / `passage` flags (the navmesh carves by them —

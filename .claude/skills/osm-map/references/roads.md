@@ -424,7 +424,7 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     reload** (**RoadStyle and RoadShape** below). **It is the one roads stage that moves the model**: the
     width is read by the passes after it (houses off the sidewalks, blocks and lots pulled
     to the roads), and then by bridge curbs, the navmesh's bridge corridors and the cars.
-    Paths keep their class width (3.5). The gallery parses each cut window on its own, so
+    Paths take theirs from the parse (`parse.md`, **Path width**). The gallery parses each cut window on its own, so
     a street there is inferred from the window's ways only.
   - **Tapers** (`tapers::Tapers`, built **once** per `mesh_roads` by `roads::Drawn` over
     the roads as drawn — the ribbon, the paint wedges and the kerb pockets' row breaks

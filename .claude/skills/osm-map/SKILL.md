@@ -203,7 +203,8 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
 - **RoadLine** — centerline polyline + width **from its section**: lanes × the lane width
   knob (`RoadShape::lane_width`, 3.3 m by default; 0.3 m less on a service drive) + 0.5 m
   of edge each side, set by the first parse pass
-  (`map/roads/network/sections.rs`; footways keep 3.5 by class) — streets, sections and
+  (`map/roads/network/sections.rs`; a path's width is `parse/tags.rs::path_width` —
+  `references/parse.md`, **Path width**) — streets, sections and
   the tapers between them are in `references/roads.md`, **Streets, sections, tapers**.
   `highway: Highway` is the `highway` value (the five `*_link` are classes of their own);
   `Highway::is_street` — not a service drive, not a path — is what `roads::is_carriageway`

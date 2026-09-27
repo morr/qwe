@@ -297,6 +297,22 @@ be called alone:
   logged as `N of M untagged footways run through greenery and stay unpaved`. Pinned by
   `parse/tests.rs::a_footway_is_paved_by_its_tag_its_kind_or_the_greenery_around`. How
   it is drawn — `roads.md`, **Paved paths**.
+- **Path width** (`parse/tags.rs::path_width`, in `parse_way`, not a pass — it reads only
+  the way's own tags). Every path used to be 3.5 m by class, so a `width=1 surface=mud`
+  trail beside улица Циолковского (Tula, gallery 19; scout B6) was a boulevard, and the
+  park's alleys, trails and the yard paths were all one width (scout C6). Now a plausible
+  `width` tag decides (`PATH_WIDTH_READ` 0.5–12 m — `0` and `0.3` are notes, a larger
+  value is the width of a square — clamped to `PATH_WIDTH_RANGE` 1–8 m, a thinner trail
+  being a thread nobody sees); without it the kind and the surface: `pedestrian` 5,
+  `track` 3, `footway=crossing` 3, `steps` and `footway=sidewalk` 2.5, `cycleway` 2, a
+  trail surface (`dirt|ground|earth|mud|grass|sand|woodchips`) 1.5, other `path` 2,
+  other `footway` 3. Tula v15: 100 of 3375 paths carry `width` (23 × `1`, 23 × `2`,
+  13 × `3`, 8 × `0.5`). **Footbridges and arches keep the class 3.5**: their band is the
+  corridor the navmesh carves (the navigation-deep skill) and a `width=1` footbridge
+  would narrow a river crossing to a tile. The navmesh still feels the change through the
+  fence gaps (a road ending on a fence counts within half its width): Tula
+  `fence_prune_audit` 555 → 552 road gaps, 113 → 114 default gates, prune 15 535 → 15 535,
+  doorless 73 → 73. Pinned by `parse/tests.rs::a_path_takes_its_width_from_the_tag_or_its_kind`.
 - **Squared houses** (`parse.rs::square_skewed_houses`) — a small house outlined as a
   **skewed quad** is replaced by a rectangle. The private sector is traced by eye off
   imagery, and a rectangular house comes out a rhombus (Tula way 968419942, corners
