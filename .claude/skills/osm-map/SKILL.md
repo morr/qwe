@@ -208,7 +208,9 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   `highway: Highway` is the `highway` value (the five `*_link` are classes of their own);
   `Highway::is_street` — not a service drive, not a path — is what `roads::is_carriageway`
   asks, **not the width**. `RoadClass: Street | Alley` (alleys = footways, park paths;
-  different color and z). `bridge` and `passage` flags — the navmesh carves (see the navigation-deep
+  different color and z). `pavement: Option<Pavement>` splits the alleys: a **paved
+  path** is drawn in the sidewalk layer, an unpaved one stays sand (`references/parse.md`,
+  **Pavement of untagged footways**; `references/roads.md`, **Paved paths**). `bridge` and `passage` flags — the navmesh carves (see the navigation-deep
   skill); `bridge` also moves the road into the bridge deck layers (see **Bridge
   layers** below). Three more fields feed the **markings** and the parked cars: `oneway`
   (`oneway=yes|1|true|-1`; `reversible`/`alternating` are not one-way), `roundabout`

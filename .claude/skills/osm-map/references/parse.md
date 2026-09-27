@@ -260,6 +260,20 @@ be called alone:
   the house pull and the block pull, so both push and pull against the sidewalk that is
   drawn. The rule itself — `roads.md`,
   **Sidewalks**; logged as `N of M untagged residential streets left without sidewalks`.
+- **Pavement of untagged footways** (`parse.rs::infer_pavements`, beside the sidewalks
+  pass; its place is free — the greenery it reads never moves and only the renderer reads
+  the answer). `RoadLine::pavement` leaves `parse_way` from `tags.rs::tagged_pavement`:
+  `surface` decides (`asphalt|paving_stones|concrete|sett|paved|metal|wood|…` → `Paved`,
+  the `untagged_sidewalks` dirt list plus `woodchips|grass_paver` → `Unpaved` — the two
+  share `surface_pavement`); without it the kind does — `footway=sidewalk|crossing`,
+  `steps`, `pedestrian`, `cycleway` paved, `path` and `track` unpaved; a bare `footway`
+  stays `None`. The pass then probes each `None` path every `PAVEMENT_PROBE_STEP` 10 m
+  against parks, woods and grass (a `Grid` of their boxes, `GREEN_CELL` 100 m): more than
+  half the probes in green → `Unpaved`, else `Paved`. Tula v15: 1952 paths paved by tag,
+  146 unpaved, 1271 without `surface` (690 of them bare `footway`, 58 in the green);
+  logged as `N of M untagged footways run through greenery and stay unpaved`. Pinned by
+  `parse/tests.rs::a_footway_is_paved_by_its_tag_its_kind_or_the_greenery_around`. How
+  it is drawn — `roads.md`, **Paved paths**.
 - **Squared houses** (`parse.rs::square_skewed_houses`) — a small house outlined as a
   **skewed quad** is replaced by a rectangle. The private sector is traced by eye off
   imagery, and a rectangular house comes out a rhombus (Tula way 968419942, corners

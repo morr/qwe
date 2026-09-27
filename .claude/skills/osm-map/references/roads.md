@@ -35,6 +35,19 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   path crossing a street still reaches the asphalt, because a **driveway crossing**
   (`network::driveway_crossings`) is redrawn as a `Street` and a footway that is not one
   is simply covered by the carriageway at 2.0 as before.
+  **Paved paths** (`RoadLine::is_paved_path`, `pavement` from `parse.md`, **Pavement of
+  untagged footways**) are not alleys in the drawing: `mesh_roads` lays them **in the
+  sidewalk layer** (1.6) in `SIDEWALK_COLOR`, the alley layer keeps only the unpaved sand
+  trails and paths nobody decided (a test's hand-built `None`). Before this every path was
+  sand, and in the centre that meant a `footway=sidewalk, surface=paving_stones` lying as
+  a sand strip beside the concrete band of its own street and a paved square's grid of
+  alleys reading as a beach (scout C1, Frunze street and the Kremlin garden). In the
+  sidewalk layer a mapped pavement merges with the band instead of sitting beside it in
+  another colour. The fill slot is picked **after** the street's own band in the loop — a
+  borrow, not a rule. A junction's kerb return between two arms of which **either** is
+  paved goes with it (`corners::Arm::paved` → `KerbReturns::sidewalks`, counted in
+  `outer[1]`): a sand fillet in the corner of two tiled alleys read as a stain. Pinned by
+  `roads/tests.rs::a_paved_path_is_drawn_in_the_sidewalk_layer`.
   A **bridge is the exception**: `is_carriageway` says yes, so a deck keeps its
   lane markings, but the bridge branch of `mesh_roads` `continue`s into `Bridges::push_deck`
   + `Bridges::fills` *before* the sidewalk block — a deck gets no band ever, at any width or
