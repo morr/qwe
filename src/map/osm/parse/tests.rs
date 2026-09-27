@@ -1168,6 +1168,59 @@ fn an_untagged_street_takes_its_sidewalks_from_the_blocks_around() {
     assert_eq!(sides[4], [false; 2], "без домов вокруг — без полосы");
 }
 
+/// Покрытие дорожки: `surface` решает сам, без него — вид дорожки, а голый
+/// `footway` — по окружению: в парке тропинка, во дворе асфальт. Улица поля
+/// не получает — его читают только дорожки.
+#[test]
+fn a_footway_is_paved_by_its_tag_its_kind_or_the_greenery_around() {
+    let path = |y: f32| vec![CENTER + Vec2::new(-80.0, y), CENTER + Vec2::new(80.0, y)];
+    let map = Overpass::new(CITY)
+        .area(
+            &[("leisure", "park")],
+            rect(
+                CENTER + Vec2::new(-100.0, -50.0),
+                CENTER + Vec2::new(100.0, 50.0),
+            ),
+        )
+        // в парке
+        .way(&[("highway", "footway")], path(0.0))
+        .way(
+            &[("highway", "footway"), ("surface", "paving_stones")],
+            path(10.0),
+        )
+        .way(
+            &[("highway", "footway"), ("footway", "sidewalk")],
+            path(20.0),
+        )
+        // вне парка
+        .way(&[("highway", "footway")], path(200.0))
+        .way(&[("highway", "path")], path(210.0))
+        .way(
+            &[("highway", "footway"), ("surface", "ground")],
+            path(220.0),
+        )
+        .way(&[("highway", "steps")], path(230.0))
+        .way(&[("highway", "residential")], path(300.0))
+        .parse();
+    let found: Vec<Option<Pavement>> = map.roads.iter().map(|road| road.pavement).collect();
+    use Pavement::{Paved, Unpaved};
+    assert_eq!(
+        found,
+        [
+            Some(Unpaved),
+            Some(Paved),
+            Some(Paved),
+            Some(Paved),
+            Some(Unpaved),
+            Some(Unpaved),
+            Some(Paved),
+            None,
+        ]
+    );
+    assert!(map.roads[1].is_paved_path());
+    assert!(!map.roads[7].is_paved_path(), "улица — не дорожка");
+}
+
 /// Улицы для прямых вызовов [`infer_sidewalks`]: жилая без тега (`Inferred`
 /// у `fixture::street`) и её вариант с другим классом или тегом.
 fn inferred_street(highway: Highway) -> RoadLine {

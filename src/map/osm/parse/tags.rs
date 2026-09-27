@@ -12,7 +12,7 @@ use bevy::prelude::*;
 
 use crate::map::osm::model::{
     AreaKind, BIG_BOX_MAX_HEIGHT, BIG_BOX_MAX_LEVELS, BuildingUse, Colours, Faith, FenceKind,
-    Highway, KerbParking, LaneTurn, PitchKind, RailKind, Rgb, RoadAreaKind, RoadClass,
+    Highway, KerbParking, LaneTurn, Pavement, PitchKind, RailKind, Rgb, RoadAreaKind, RoadClass,
     RoadNodeKind, Sacred, SacredForm, ServiceTrack, SidewalkSide, StructureKind, WaterKind,
     is_big_box_shape, polyline_length,
 };
@@ -825,26 +825,61 @@ pub(super) fn tagged_sidewalks(tags: &HashMap<String, String>) -> Option<[Sidewa
 /// проезд без названия и жилую зону потом проверит застройка вокруг
 /// (`parse::infer_sidewalks`).
 pub(super) fn untagged_sidewalks(tags: &HashMap<String, String>) -> [SidewalkSide; 2] {
-    let unpaved = matches!(
-        tags.get("surface").map(String::as_str),
-        Some(
-            "unpaved"
-                | "gravel"
-                | "fine_gravel"
-                | "pebblestone"
-                | "ground"
-                | "dirt"
-                | "earth"
-                | "mud"
-                | "sand"
-                | "grass"
-                | "compacted"
-        )
-    );
-    if unpaved {
+    if surface_pavement(tags) == Some(Pavement::Unpaved) {
         [SidewalkSide::None; 2]
     } else {
         [SidewalkSide::Inferred; 2]
+    }
+}
+
+/// Что говорит о покрытии тег `surface`; `None` — тега нет или значение не
+/// из словаря (`tartan` беговой дорожки, опечатка).
+fn surface_pavement(tags: &HashMap<String, String>) -> Option<Pavement> {
+    Some(match tags.get("surface")?.as_str() {
+        "asphalt"
+        | "paved"
+        | "paving_stones"
+        | "paving_stones:lanes"
+        | "concrete"
+        | "concrete:plates"
+        | "concrete:lanes"
+        | "sett"
+        | "cobblestone"
+        | "unhewn_cobblestone"
+        | "bricks"
+        | "metal"
+        | "wood"
+        | "rubber"
+        | "tartan" => Pavement::Paved,
+        "unpaved" | "gravel" | "fine_gravel" | "pebblestone" | "ground" | "dirt" | "earth"
+        | "mud" | "sand" | "grass" | "compacted" | "woodchips" | "grass_paver" => Pavement::Unpaved,
+        _ => return None,
+    })
+}
+
+/// Покрытие дорожки по её тегам — [`RoadLine::pavement`] до прохода по
+/// окружению. Решает `surface`; без него — вид дорожки: тротуар и переход
+/// (`footway=sidewalk|crossing`), лестница, пешеходная улица и велодорожка в
+/// городе мощёные, `path` и `track` — тропа и полевая дорога. Прочий
+/// `footway` без тега — `None`: в сквере это тропинка, во дворе — асфальт,
+/// и спросить надо окружение (`parse::infer_pavements`).
+///
+/// Тула, кеш v15 (дорожки-линии, без `area=yes`): мощёных по `surface` 1952,
+/// грунтовых 146, без тега 1271 — из них 690 голых `footway`, 171
+/// `footway=sidewalk`, 154 `path`, 126 `footway=crossing`, 93 `steps`, 36
+/// `track`.
+///
+/// [`RoadLine::pavement`]: crate::map::osm::model::RoadLine::pavement
+pub(super) fn tagged_pavement(tags: &HashMap<String, String>) -> Option<Pavement> {
+    if let Some(pavement) = surface_pavement(tags) {
+        return Some(pavement);
+    }
+    let tag = |key: &str| tags.get(key).map(String::as_str);
+    match (tag("highway"), tag("footway")) {
+        (Some("footway"), Some("sidewalk" | "crossing" | "access_aisle")) => Some(Pavement::Paved),
+        (Some("steps" | "pedestrian" | "cycleway"), _) => Some(Pavement::Paved),
+        (Some("path" | "track"), _) => Some(Pavement::Unpaved),
+        _ => None,
     }
 }
 

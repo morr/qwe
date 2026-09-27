@@ -13,8 +13,8 @@ use crate::map::cars::district::Districts;
 use crate::map::grid::Grid;
 use crate::map::osm::entrances::generate_entrances;
 use crate::map::osm::model::{
-    AreaKind, BuildingUse, Faith, FenceLine, Highway, MapData, PipeLine, PolyArea, RailLine,
-    RoadArea, RoadClass, RoadLine, RoadNode, Sacred, SacredForm, SidewalkSide, Structure,
+    AreaKind, BuildingUse, Faith, FenceLine, Highway, MapData, Pavement, PipeLine, PolyArea,
+    RailLine, RoadArea, RoadClass, RoadLine, RoadNode, Sacred, SacredForm, SidewalkSide, Structure,
     TrafficSide, TreeCompose, TreeNode, TreeRow, TreeRowLayout, WallLine, WaterLine,
     closest_on_segment, point_in_area, point_in_polygon, ring_area, ring_bounds, ring_vertex_mean,
     signed_ring_area,
@@ -174,6 +174,7 @@ struct PassReport {
     sections: SectionReport,
     drowned: usize,
     sidewalks: InferredSidewalks,
+    pavements: InferredPavements,
     faiths_guessed: usize,
     entrances_found: usize,
     entrances_orphaned: usize,
@@ -197,6 +198,7 @@ impl std::fmt::Display for PassReport {
             sections,
             drowned,
             sidewalks,
+            pavements,
             faiths_guessed,
             entrances_found,
             entrances_orphaned,
@@ -219,6 +221,7 @@ impl std::fmt::Display for PassReport {
             )?;
         }
         writeln!(f, "{sidewalks}")?;
+        writeln!(f, "{pavements}")?;
         if *faiths_guessed > 0 {
             writeln!(
                 f,
@@ -306,6 +309,9 @@ impl std::fmt::Display for PassReport {
 ///    — этажность застройки вокруг, и утонувший дом в неё входить не должен;
 ///    а читают решение шаги 5 и 6 (дом отъезжает только от нарисованного
 ///    тротуара, квартал дотягивается под него же).
+///    **Покрытие дорожек без тега** ([`infer_pavements`]) — там же, хотя
+///    место ему любое: зелень, которую он спрашивает, дальше не двигается, а
+///    читает решение только рендер.
 /// 2. **Вера** — до дверей и до выпрямления: она собирает храм из частей
 ///    (`resolve_faiths` зовёт `absorb_annexes` внутри себя), а часть,
 ///    ставшая приделом, дальше читается иначе.
@@ -351,6 +357,7 @@ fn finish_parse(map: &mut MapData, pending: &Pending) -> PassReport {
             .get_or_init(|| Districts::new(&map.buildings))
             .storeys_at(point)
     });
+    let pavements = infer_pavements(map);
     let faiths_guessed = resolve_faiths(&mut map.buildings);
     let entrances_orphaned = attach_entrances(map, entrances);
 
@@ -393,6 +400,7 @@ fn finish_parse(map: &mut MapData, pending: &Pending) -> PassReport {
         sections,
         drowned,
         sidewalks,
+        pavements,
         faiths_guessed,
         entrances_found: entrances.len(),
         entrances_orphaned,
@@ -492,6 +500,94 @@ fn infer_sidewalks(
     InferredSidewalks {
         asked: asked.len(),
         dropped,
+    }
+}
+
+/// Шаг, с которым дорожка без тега меряет, по зелени ли она идёт, м.
+const PAVEMENT_PROBE_STEP: f32 = 10.0;
+/// Клетка индекса зелени для [`infer_pavements`], м: парк — сотни метров,
+/// сквер — десятки.
+const GREEN_CELL: f32 = 100.0;
+
+/// Что решил [`infer_pavements`]: сколько дорожек без покрытия было спрошено
+/// и сколько из них ушли по зелени в тропинки.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+struct InferredPavements {
+    asked: usize,
+    unpaved: usize,
+}
+
+impl std::fmt::Display for InferredPavements {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self { asked, unpaved } = self;
+        write!(
+            f,
+            "osm parse: {unpaved} of {asked} untagged footways run through greenery and stay unpaved"
+        )
+    }
+}
+
+/// Покрытие дорожки без тега `surface` — по тому, где она идёт.
+///
+/// Мощёную дорожку долго рисовали песчаной тропинкой, как и всякую: в центре
+/// города тротуар из плитки (`footway=sidewalk, surface=paving_stones`)
+/// ложился песчаной лентой рядом с бетонной полосой тротуара улицы, а сетка
+/// аллей сквера из плитки — пляжем (разведка C1). Теги решают больше половины
+/// дорожек ([`tagged_pavement`]); остаётся голый `footway` без `surface`, и
+/// его решает **середина пути по длине**: больше половины проб по парку, лесу
+/// или газону — тропинка, иначе — асфальт двора и улицы. По тегам в Туле и в
+/// парке мощёных больше, но всё мощёное там и размечено; молчащий `footway`
+/// в сквере — чаще протоптанная дорожка.
+///
+/// Детерминировано: пробы — функция точек пути, индекс зелени — её контуров.
+fn infer_pavements(map: &mut MapData) -> InferredPavements {
+    let MapData {
+        roads,
+        parks,
+        woods,
+        grass,
+        ..
+    } = map;
+    let asked: Vec<usize> = roads
+        .iter()
+        .enumerate()
+        .filter(|(_, road)| road.class == RoadClass::Alley && road.pavement.is_none())
+        .map(|(index, _)| index)
+        .collect();
+    if asked.is_empty() {
+        return InferredPavements::default();
+    }
+    let green: Vec<&PolyArea> = parks
+        .iter()
+        .chain(woods.iter())
+        .chain(grass.iter())
+        .collect();
+    let mut index: Grid<usize> = Grid::new(GREEN_CELL);
+    for (at, area) in green.iter().enumerate() {
+        let (min, max) = ring_bounds(&area.outer);
+        index.insert(min, max, at);
+    }
+    let in_green = |point: Vec2| {
+        index
+            .at(point)
+            .iter()
+            .any(|&at| point_in_area(point, green[at]))
+    };
+    let mut unpaved = 0;
+    for &at in &asked {
+        let road = &mut roads[at];
+        let probes = densify(&road.points, PAVEMENT_PROBE_STEP);
+        let inside = probes.iter().filter(|point| in_green(**point)).count();
+        road.pavement = Some(if 2 * inside > probes.len() {
+            unpaved += 1;
+            Pavement::Unpaved
+        } else {
+            Pavement::Paved
+        });
+    }
+    InferredPavements {
+        asked: asked.len(),
+        unpaved,
     }
 }
 
@@ -2132,6 +2228,7 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
             sidewalks: tagged_sidewalks(&element.tags)
                 .unwrap_or_else(|| untagged_sidewalks(&element.tags)),
             parking: tagged_parking(&element.tags),
+            pavement: tagged_pavement(&element.tags),
         });
         return;
     }
@@ -2321,6 +2418,6 @@ use self::tags::{
     crown_radius, fence_kind, is_building_passage, is_oneway, is_oneway_backward, is_parking_aisle,
     is_road_underground, is_roundabout, is_underground, pipe_width, rail_class, road_area_kind,
     road_class, road_node_kind, row_spacing, service_track, structure_height, structure_kind,
-    structure_radius, structure_size, tagged_lanes, tagged_parking, tagged_sidewalks, tagged_turns,
-    untagged_sidewalks, water_class, water_width,
+    structure_radius, structure_size, tagged_lanes, tagged_parking, tagged_pavement,
+    tagged_sidewalks, tagged_turns, untagged_sidewalks, water_class, water_width,
 };

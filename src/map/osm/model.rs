@@ -341,6 +341,31 @@ pub struct RoadLine {
     /// Что делать с [`KerbParking::Untagged`], решает правило
     /// (`map::roads::pockets`), не разбор.
     pub parking: [KerbParking; 2],
+    /// Покрытие дорожки ([`RoadClass::Alley`]): мощёная рисуется плиткой
+    /// тротуара, грунтовая — песчаной тропинкой. Из разбора выходит тег
+    /// `surface` и то, что следует из вида дорожки (`footway=sidewalk`,
+    /// `steps` — мощёные, `path`/`track` — грунтовые); `None` у дорожки без
+    /// тега решает проход по окружению (`parse::infer_pavements`). У улиц не
+    /// читается; `None` у дорожки, собранной тестом руками, рисуется
+    /// тропинкой, как до поля.
+    pub pavement: Option<Pavement>,
+}
+
+impl RoadLine {
+    /// Мощёная дорожка — рисуется в слое тротуаров его плиткой, а не
+    /// песчаной тропинкой (`map::roads`).
+    pub fn is_paved_path(&self) -> bool {
+        self.class == RoadClass::Alley && self.pavement == Some(Pavement::Paved)
+    }
+}
+
+/// Покрытие дорожки — см. [`RoadLine::pavement`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pavement {
+    /// Асфальт, плитка, бетон, брусчатка, настил — рисуется тротуаром.
+    Paved,
+    /// Грунт, гравий, утоптанная земля — песчаная парковая тропинка.
+    Unpaved,
 }
 
 /// Откуда у одной стороны улицы тротуар — решение разбора, которое после него
