@@ -1171,6 +1171,11 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
         (`PROFILE_MERGE` 0.1 m) and interpolates the frame per vertex, fans included —
         `push_ribbon_shaped` only; `set_lanes` / `set_lane_taper` clear the profile. So
         the ruts run between the paint lines through the node instead of fading 8 m short.
+        The asphalt's profile is the paint's with one difference: on the pair side it is
+        never narrower than the body. The half's ribbon runs on to the node over its
+        partner, and past the paint frame squeezed toward the axis it was asphalt with no
+        ruts — a smooth patch by the continuation's axis (sample 26); near the node the
+        grid carried on is the continuation's own, so the ruts fall where the partner's do.
     - **Советская × Коминтерна is not a merge**, whatever the tram-bed plan assumed: all
       four ways there are one-way — the pair turns east and goes on as 3 + 4 lanes with a
       lawn, while the tram leaves for Коминтерна. The bed ends there square at the lawn's
