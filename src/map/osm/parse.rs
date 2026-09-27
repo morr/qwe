@@ -8,7 +8,7 @@ use bevy::math::Vec2;
 
 use super::planting::plant_trees;
 use crate::city::City;
-use crate::map::along::densify;
+use crate::map::along::{arclengths, densify, place_on_path};
 use crate::map::cars::district::Districts;
 use crate::map::grid::Grid;
 use crate::map::osm::entrances::generate_entrances;
@@ -17,7 +17,7 @@ use crate::map::osm::model::{
     RailLine, RoadArea, RoadClass, RoadLine, RoadNode, Sacred, SacredForm, SidewalkSide, Structure,
     TrafficSide, TreeCompose, TreeNode, TreeRow, TreeRowLayout, WallLine, WaterLine,
     closest_on_segment, point_in_area, point_in_polygon, ring_area, ring_bounds, ring_vertex_mean,
-    signed_ring_area,
+    sidewalk_band, signed_ring_area,
 };
 use crate::map::osm::overpass::{Element, GeoBounds, LatLon, Member, OverpassResponse};
 use crate::map::roads::network::sections::{self, SectionReport};
@@ -175,6 +175,7 @@ struct PassReport {
     drowned: usize,
     sidewalks: InferredSidewalks,
     pavements: InferredPavements,
+    separate: SeparateSidewalks,
     faiths_guessed: usize,
     entrances_found: usize,
     entrances_orphaned: usize,
@@ -199,6 +200,7 @@ impl std::fmt::Display for PassReport {
             drowned,
             sidewalks,
             pavements,
+            separate,
             faiths_guessed,
             entrances_found,
             entrances_orphaned,
@@ -222,6 +224,7 @@ impl std::fmt::Display for PassReport {
         }
         writeln!(f, "{sidewalks}")?;
         writeln!(f, "{pavements}")?;
+        writeln!(f, "{separate}")?;
         if *faiths_guessed > 0 {
             writeln!(
                 f,
@@ -312,6 +315,9 @@ impl std::fmt::Display for PassReport {
 ///    **Покрытие дорожек без тега** ([`infer_pavements`]) — там же, хотя
 ///    место ему любое: зелень, которую он спрашивает, дальше не двигается, а
 ///    читает решение только рендер.
+///    **Тротуар, отданный отдельной дорожке** ([`drop_sidewalks_beside_footways`]),
+///    — сразу за покрытием: он спрашивает, мощёная ли дорожка вдоль кромки, а
+///    читают его, как и тротуар по застройке, шаги 5 и 6.
 /// 2. **Вера** — до дверей и до выпрямления: она собирает храм из частей
 ///    (`resolve_faiths` зовёт `absorb_annexes` внутри себя), а часть,
 ///    ставшая приделом, дальше читается иначе.
@@ -358,6 +364,7 @@ fn finish_parse(map: &mut MapData, pending: &Pending) -> PassReport {
             .storeys_at(point)
     });
     let pavements = infer_pavements(map);
+    let separate = drop_sidewalks_beside_footways(&mut map.roads);
     let faiths_guessed = resolve_faiths(&mut map.buildings);
     let entrances_orphaned = attach_entrances(map, entrances);
 
@@ -401,6 +408,7 @@ fn finish_parse(map: &mut MapData, pending: &Pending) -> PassReport {
         drowned,
         sidewalks,
         pavements,
+        separate,
         faiths_guessed,
         entrances_found: entrances.len(),
         entrances_orphaned,
@@ -501,6 +509,123 @@ fn infer_sidewalks(
         asked: asked.len(),
         dropped,
     }
+}
+
+/// Шаг, с которым сторона улицы ищет вдоль себя отдельную дорожку, м.
+const SEPARATE_PROBE_STEP: f32 = 5.0;
+/// Как далеко за внешним краем полосы тротуара ещё лежит «её» дорожка, м: за
+/// газоном в пару метров, но не через дом.
+const SEPARATE_REACH: f32 = 4.0;
+/// Насколько дорожка может заходить на проезжую часть от кромки, м: `footway`
+/// бывает замаплен прямо по бордюру, и его ось тогда чуть внутри ленты.
+const SEPARATE_INSIDE: f32 = 1.0;
+/// Косинус угла, от которого дорожка считается идущей вдоль улицы.
+const SEPARATE_PARALLEL: f32 = 0.85;
+/// Доля проб стороны, у которых нашлась дорожка, чтобы полоса ушла.
+const SEPARATE_SHARE: f32 = 0.6;
+/// Клетка индекса дорожек, м.
+const SEPARATE_CELL: f32 = 40.0;
+
+/// Что решил [`drop_sidewalks_beside_footways`]: сколько сторон без тега
+/// было спрошено и сколько из них отдано отдельной дорожке.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+struct SeparateSidewalks {
+    asked: usize,
+    dropped: usize,
+    took: std::time::Duration,
+}
+
+impl std::fmt::Display for SeparateSidewalks {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            asked,
+            dropped,
+            took,
+        } = self;
+        write!(
+            f,
+            "osm parse: {dropped} of {asked} untagged sidewalk sides left to a separately mapped footway in {took:?}"
+        )
+    }
+}
+
+/// Тротуар без тега там, где его уже замапили отдельной дорожкой.
+///
+/// OSM рисует тротуар двумя способами: тегом `sidewalk*` на улице или
+/// отдельным `footway` (обычно `footway=sidewalk`) вдоль кромки — и тогда на
+/// улице ставят `sidewalk=separate`. Ставят не всегда: у юго-восточной
+/// половины Ленина в Туле тега нет вовсе, и полоса по правилу ложилась рядом с
+/// мощёной дорожкой в метре от неё — два параллельных тротуара со щелью травы
+/// на всю длину проспекта (разведка A1, примеры 01 и 02).
+///
+/// Сторона без тега ([`SidewalkSide::Inferred`]) у всякой проезжей части
+/// отдаётся дорожке, если на [`SEPARATE_SHARE`] проб вдоль неё (шаг
+/// [`SEPARATE_PROBE_STEP`]) с **этой** стороны идёт мощёная дорожка
+/// ([`RoadLine::is_paved_path`]) — параллельно ([`SEPARATE_PARALLEL`]) и от
+/// кромки до [`SEPARATE_REACH`] за внешним краем полосы. Грунтовая тропинка
+/// тротуаром не считается: песчаная лента вместо полосы была бы хуже дубля.
+/// Тег (`Tagged`) не трогается — его ставил человек.
+fn drop_sidewalks_beside_footways(roads: &mut [RoadLine]) -> SeparateSidewalks {
+    let started = std::time::Instant::now();
+    let mut links: Vec<(Vec2, Vec2)> = Vec::new();
+    let mut index: Grid<u32> = Grid::new(SEPARATE_CELL);
+    for road in roads.iter().filter(|road| road.is_paved_path()) {
+        for pair in road.points.windows(2) {
+            index.insert_segment(pair[0], pair[1], 0.0, links.len() as u32);
+            links.push((pair[0], pair[1]));
+        }
+    }
+    let mut report = SeparateSidewalks::default();
+    if links.is_empty() {
+        return report;
+    }
+    for road in roads.iter_mut() {
+        if !road.is_carriageway() || !road.sidewalks.contains(&SidewalkSide::Inferred) {
+            continue;
+        }
+        let half = road.width / 2.0;
+        let near = (half - SEPARATE_INSIDE).max(0.0);
+        let far = half + sidewalk_band(road.width) + SEPARATE_REACH;
+        let (along, total) = arclengths(&road.points);
+        let mut probes = 0;
+        let mut hits = [0usize; 2];
+        let mut at = SEPARATE_PROBE_STEP / 2.0;
+        while at < total {
+            if let Some((point, direction)) = place_on_path(&road.points, &along, at) {
+                probes += 1;
+                let mut found = [false; 2];
+                for link in index.near(point - far, point + far) {
+                    let (from, to) = links[link as usize];
+                    let heading = (to - from).normalize_or_zero();
+                    if heading.dot(direction).abs() < SEPARATE_PARALLEL {
+                        continue;
+                    }
+                    let offset = closest_on_segment(point, from, to) - point;
+                    let distance = offset.length();
+                    if (near..=far).contains(&distance) {
+                        // `perp` смотрит влево по ходу точек — сторона 0
+                        found[usize::from(offset.dot(direction.perp()) < 0.0)] = true;
+                    }
+                }
+                for (hit, found) in hits.iter_mut().zip(found) {
+                    *hit += usize::from(found);
+                }
+            }
+            at += SEPARATE_PROBE_STEP;
+        }
+        for (side, hit) in road.sidewalks.iter_mut().zip(hits) {
+            if *side != SidewalkSide::Inferred {
+                continue;
+            }
+            report.asked += 1;
+            if probes > 0 && hit as f32 >= SEPARATE_SHARE * probes as f32 {
+                *side = SidewalkSide::None;
+                report.dropped += 1;
+            }
+        }
+    }
+    report.took = started.elapsed();
+    report
 }
 
 /// Шаг, с которым дорожка без тега меряет, по зелени ли она идёт, м.

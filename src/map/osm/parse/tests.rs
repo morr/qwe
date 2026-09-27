@@ -1274,6 +1274,101 @@ fn infer_sidewalks_asks_only_inferred_residential_streets() {
     assert_eq!(roads[2].sidewalks, [SidewalkSide::None; 2]);
 }
 
+/// Мощёная дорожка вдоль оси `y`, как `footway=sidewalk` рядом с улицей.
+fn paved_footway(y: f32, from: f32, to: f32) -> RoadLine {
+    RoadLine {
+        pavement: Some(Pavement::Paved),
+        ..crate::map::osm::fixture::footway(vec![Vec2::new(from, y), Vec2::new(to, y)])
+    }
+}
+
+/// Отдельная мощёная дорожка в метре за полосой справа снимает полосу справа;
+/// левая сторона, где дорожки нет, остаётся.
+#[test]
+fn a_footway_along_the_kerb_takes_the_inferred_sidewalk_of_its_side() {
+    let street = inferred_street(Highway::Primary);
+    let edge = street.width / 2.0 + sidewalk_band(street.width);
+    let mut roads = vec![street, paved_footway(-(edge + 1.0), 0.0, 200.0)];
+    let report = drop_sidewalks_beside_footways(&mut roads);
+    assert_eq!((report.asked, report.dropped), (2, 1));
+    assert_eq!(
+        roads[0].sidewalks,
+        [SidewalkSide::Inferred, SidewalkSide::None]
+    );
+}
+
+/// Не отдаётся: тег, дорожка поперёк, дорожка на треть длины, грунтовая
+/// тропинка и дорожка за домом (дальше [`SEPARATE_REACH`] за полосой).
+#[test]
+fn a_sidewalk_stays_unless_a_paved_footway_runs_beside_it() {
+    let street = inferred_street(Highway::Residential);
+    let edge = street.width / 2.0 + sidewalk_band(street.width);
+    let check = |mut roads: Vec<RoadLine>, expected: [SidewalkSide; 2]| {
+        drop_sidewalks_beside_footways(&mut roads);
+        assert_eq!(roads[0].sidewalks, expected);
+    };
+    let inferred = [SidewalkSide::Inferred; 2];
+    // тег ставил человек
+    let tagged = RoadLine {
+        sidewalks: [SidewalkSide::Tagged; 2],
+        ..street.clone()
+    };
+    check(
+        vec![tagged, paved_footway(edge + 1.0, 0.0, 200.0)],
+        [SidewalkSide::Tagged; 2],
+    );
+    // поперёк
+    let across = RoadLine {
+        pavement: Some(Pavement::Paved),
+        ..crate::map::osm::fixture::footway(vec![Vec2::new(100.0, 2.0), Vec2::new(100.0, 30.0)])
+    };
+    check(vec![street.clone(), across], inferred);
+    // треть длины
+    check(
+        vec![street.clone(), paved_footway(edge + 1.0, 0.0, 66.0)],
+        inferred,
+    );
+    // грунтовая
+    let trail = RoadLine {
+        pavement: Some(Pavement::Unpaved),
+        ..paved_footway(edge + 1.0, 0.0, 200.0)
+    };
+    check(vec![street.clone(), trail], inferred);
+    // за домом
+    check(
+        vec![
+            street.clone(),
+            paved_footway(edge + SEPARATE_REACH + 2.0, 0.0, 200.0),
+        ],
+        inferred,
+    );
+}
+
+/// Шаг разбора целиком: `footway=sidewalk` вдоль улицы без тега доходит до
+/// стороны улицы, по тегам OSM, как в Туле.
+#[test]
+fn a_mapped_sidewalk_beside_an_untagged_street_replaces_its_band() {
+    let (sw, se, ..) = corners(HALF);
+    let offset = Vec2::new(0.0, 11.0);
+    let map = Overpass::new(CITY)
+        .way(&[("highway", "primary"), ("lanes", "4")], vec![sw, se])
+        .way(
+            &[("highway", "footway"), ("footway", "sidewalk")],
+            vec![sw + offset, se + offset],
+        )
+        .parse();
+    let street = map
+        .roads
+        .iter()
+        .find(|road| road.highway == Highway::Primary)
+        .unwrap();
+    // `sw → se` идёт на восток: дорожка севернее — слева
+    assert_eq!(
+        street.sidewalks,
+        [SidewalkSide::None, SidewalkSide::Inferred]
+    );
+}
+
 /// Съезды развязок (`*_link`) — дороги своего класса, а не мусор словаря.
 #[test]
 fn a_link_road_reaches_the_map() {
