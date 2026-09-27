@@ -1308,7 +1308,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   neighbouring penumbras may overlap.
 - **Parked cars** (`map/cars/`) — a row of cars along every **carriageway**: the same
   `roads::is_carriageway` that decides where a sidewalk and lane markings go (so a
-  `residential` street at 8 m parks and a `service` drive at 5 m does not), minus bridges
+  `residential` street at 8 m parks at the kerb and a `service` drive at 5 m does not — it
+  gets a **yard row** instead, below), minus bridges
   and roundabouts. The pitch is walked along the **whole street's arclength** (**Arclength
   walk** above), not segment
   by segment, and the row **breaks where the kerb pockets do** (`pockets::row_breaks` —
@@ -1327,7 +1328,13 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   nobody parks by a ruler. Cars also **fill the lots** — `fill_lots` takes the stalls above
   and occupies a share that **falls with the lot's size** (`lot_occupancy`: 50 % on a
   yard of ≤ 20 stalls down to 12 % from 400, by the log of the stall count) — a full mall
-  lot reads as a dealership.
+  lot reads as a dealership. **Yard rows** (`cars/yard.rs`) are the one place cars stand
+  along a `service` drive: data OSM does not carry, generated per drive from its first
+  point — one row on the right of the points, the body on the asphalt edge by `ON_ASPHALT`
+  and the rest on the lawn, only among multi-storey housing (0 at ≤ 2 storeys, full from 5,
+  × `YARD_SHARE` of the occupancy slider), never on a parking aisle or a drive under 20 m,
+  and every body **probed** (`yard::Blocked`) against buildings, lots, water, pitches and
+  other roads' drawn width — a drive has no kerb to keep a row off a facade.
   **How densely either of them parks is decided by the district** (`cars/district.rs`,
   `Districts`): the **area-weighted mean height** of the buildings within 120 m, in storeys,
   multiplies both shares — ×0.25 at ≤ 2 storeys (a private-house quarter parks its cars in

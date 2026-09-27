@@ -835,6 +835,44 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
     (`lot_seed`, its first point) exactly like a street. That curve is built from
     constants, not from `CarStyle::occupancy`: the slider is about the ragged kerb row, and the half-empty
     lot is a different observation.
+  - **Yard rows** (`cars/yard.rs`, `park_yards`, called by `mesh_cars` between the kerb
+    row and the lots) — the cars along `highway=service` drives, which `parkable` keeps
+    out of the kerb row and OSM never maps. Without them a courtyard of nine-storey slabs
+    was an empty grey loop on a lawn (scout C3) — the one thing that told the render from
+    an aerial photo. Generated, deterministic, seeded from the drive's first point like a
+    street:
+    - **which drives** (`is_yard_drive`): `Highway::Service`, not a `parking_aisle` (the lot
+      has its stalls), not a bridge, an arch or a ring, and at least `MIN_DRIVE_LENGTH`
+      20 m — a shorter one is a driveway to an entrance or a garage;
+    - **one side**, the right of the points: a 4 m drive with cars on both sides is not
+      passable, and which side does not matter as long as it is the same every build;
+    - **half on the lawn**: no kerb, so the body stands with `ON_ASPHALT` 0.6 m of its
+      width on the asphalt edge — offset `half + width/2 − 0.6` — and faces along the way;
+    - **only among flats**: the share is the district's storeys (`Districts::storeys_at`)
+      ramped from 0 at `LOW_STOREYS` 2 to 1 at `HIGH_STOREYS` 5, × `YARD_SHARE` 0.8 ×
+      `CarStyle::occupancy`; nothing where no house stands within 120 m. A private-house
+      quarter parks behind its fences, not along the lane;
+    - **every body probed** (`Blocked::fits` — centre and four corners inflated by
+      `CLEARANCE` 0.4 m): not inside a building, a lot, water or a pitch, not within the
+      drawn half-width (+ sidewalk band) of any other road. A yard drive runs 2–4 m from a
+      facade and along footpaths, and without the probe the row lay in the houses. Drives
+      meeting this one end-to-end (`RoadNodes::roads_at` on its ends, `service` only) are
+      not "other": OSM splits one drive into several ways, and the continuation's ribbon
+      would otherwise wipe the row out for a car length each side of the seam;
+    - breaks at junctions exactly as the kerb row does (`RowBreaks::of`, the same clear
+      test); the probe index (`Blocked`, a 40 m `Grid` of areas and road links) is built
+      once per car rebuild;
+    - **the occupancy roll comes before the probe**: the probe is the dearest step, and a
+      slot that stays empty — every slot of a private-sector lane, where the share is
+      zero — does not need it. Probing first cost the rebuild 3–6× more.
+    Tula (`map_meshing`, release): 20 532 → 26 838 cars, 1354k → 1771k vertices on the
+    near step, the whole rebuild 47 → 68 ms on the near step and 26 → 41 ms on the far
+    one (a rebuild runs on a zoom-bucket crossing or a style change, never per frame).
+    Pinned by
+    `a_yard_drive_among_towers_gets_a_row_on_its_right`, `a_yard_row_never_stands_in_a_house`,
+    `a_yard_row_keeps_off_a_footway_beside_it`, `no_yard_row_in_the_private_sector_or_on_a_lot`.
+    The roads gallery draws the car layer on request (`ROADS_CARS=1`,
+    `map::mesh_map_cars`) — that is how the yards are checked by eye.
   - **How densely a place parks at all is decided by the district** (`cars/district.rs`,
     `Districts`), and it multiplies **both** shares — the kerb row's `CarStyle::occupancy`
     and the lot's `lot_occupancy`. Until it existed the layer knew only the width of the
