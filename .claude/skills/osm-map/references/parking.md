@@ -705,12 +705,13 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
     .or_else(retuned::<SunOnMap>)`,
     one registration by the rule under **When a layer rebuilds** in `SKILL.md`; the settled
     `RoadShapeOnMap` is in there because the row is walked along the **same street axis**
-    the ribbon is drawn from (`axis::street_axes(.., &shape)`, never the raw OSM points)
-    and breaks at the same taper clearings (`pockets::row_breaks(.., &Tapers::of_map(..,
-    shape.taper()), ..)` — over the OSM roads; the ribbon's kerb pockets pass
-    `roads::Drawn`'s own `tapers` instead, equal on every cached city), so
+    the ribbon is drawn from and breaks at the same taper clearings: `rebuild_cars` builds
+    `roads::Drawn::nodal(map, shape)` — the prepared roads without the stitches and merges
+    the row has no use for — and `mesh_cars` takes its `Axis::Nodal` axes, its `tapers()`
+    (`pockets::row_breaks`) and its `lots()`; the ribbon reads the very same values off its
+    own `Drawn` (`references/roads.md`, **The drawn network**), so
     the curve tolerance and the taper move the cars with the asphalt
-    (`mesh_cars(bucket, style, shape, map, layout)`). The invisible case
+    (`mesh_cars(bucket, style, &Drawn, map, layout)`). The invisible case
     takes the same road as the far zoom bucket, and since the seam both of them live in
     `mesh_cars` rather than in the system: the adapter despawns the old layer
     unconditionally and is handed an empty list, so no second path can forget the
@@ -757,16 +758,21 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
     next to streets hundreds of metres long is otherwise invisible. The `Detail` knob drives
     the street cells, never the stand — the stand shows all three steps at once.
   - Tula at the default occupancy, from `examples/bench/map_meshing` (`dev` profile, one
-    machine, so compare runs against runs): **14 669 cars along the kerbs** — the bench
-    does not fill the lots — and per detail step
+    machine, so compare runs against runs), **as the rows stood when the bench assembled
+    the row itself**: **14 669 cars along the kerbs** — that bench did not fill the lots —
+    and per detail step
     **968 k verts / 18 ms** (Full), **322 k / 7 ms** (Silhouette), **146 k / 3 ms**
-    (Block). **Those are the mesh rows
-    alone**; the three steps in front of them do not depend on the detail and are measured
+    (Block). **Those were the mesh rows
+    alone**; the three steps in front of them did not depend on the detail and were measured
     once each — `breaks` 1 ms (measured on the bare `marking_breaks`, before the bench
-    took the game's `pockets::row_breaks` with its tapers and crossings — re-measure
-    before quoting it), `districts` 3 ms (the index) and
-    `parking` 4 ms (`park_cars`) — so a rebuild is 26 ms at the near step and 11 at the far
-    one.
+    took the game's `pockets::row_breaks` with its tapers and crossings), `districts` 3 ms
+    (the index) and `parking` 4 ms (`park_cars`) — so a rebuild was 26 ms at the near step
+    and 11 at the far one. **The bench now calls the door instead**: `measure_cars` times
+    `Drawn::nodal` as its `drawn` row (the nodes, axes, tapers and lot index the adapter
+    rebuilds every time), then runs `mesh_cars` once per detail step over a real
+    `ParkingLayout` — so a `cars *` row is a whole rebuild, breaks, districts, kerb row, lots
+    and mesh, and the `breaks` row is the first report's `breaks_took`. Re-measure before
+    quoting any number below against the new rows.
     **The district multiplier paid for itself and then some**, measured before and after on
     one machine: 21 929 → 14 669 cars (−33 %), and the row went **45.7 → 36.1 ms** — the
     3 ms index and the one millisecond the queries added to `parking` against 8 ms of mesh
@@ -791,11 +797,12 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
       construction, and `cars/body.rs::the_outline_is_convex` — an inline `mod tests`, there
       is no `body/tests.rs` — is what keeps it that way.
       Measured: Full 40 → 15 ms, Silhouette 35 → 9 ms, vertices unchanged.
-    - **The lots are outside every one of those numbers**, and the way to read them off is
-      the app's own `cars:` log line minus the bench's kerb count: **1 994** on Tula
+    - **The lots were outside every one of those numbers**, and the way to read them off
+      was the app's own `cars:` log line minus the bench's kerb count: **1 994** on Tula
       (16 663 in the app against 14 669 in the bench), at whatever the detail step of the
       moment costs per car. It was ~5 900 before the district multiplier reached the lots
-      too — most of Tula's are in low- or mid-rise quarters.
+      too — most of Tula's are in low- or mid-rise quarters. The bench fills the lots now
+      (**The bench now calls the door**, above), so its car count is the app's.
   - **The lots are filled by the same pass** (`fill_lots`): every stall from
     `ParkingLayout`, a share of them taken **that falls with the lot's size**
     (`lot_occupancy`): `LOT_OCCUPANCY_SMALL` 50 % up to `LOT_SMALL_STALLS` 20 stalls,
@@ -839,8 +846,8 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
       every cell its radius touches, so a query reads one cell — the wagons' `Fan`
       construction. Built **per rebuild**, not cached per world load, for the junction
       breaks' reason: it is milliseconds on 7.6 k buildings against a layer that is
-      percentages of the building one, and `measure_cars` prints it as its own `districts`
-      row so that decision stays measured.
+      percentages of the building one (3 ms on Tula when `measure_cars` still printed it as
+      its own `districts` row; it now sits inside each `cars *` rebuild row).
     - **Along a street the reading is refreshed every `DISTRICT_STEP` 48 m**, not per place:
       a query per each of 22 k places would cost more than the whole layer, and a quarter
       does not change from car to car. Forty-eight metres is a couple of private plots or

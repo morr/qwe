@@ -139,8 +139,8 @@ impl Tapers {
         self.ends[road][end] = Some(taper);
     }
 
-    /// Клинья по дорогам карты как есть, без подмен рисования, — для тех, у
-    /// кого нет `roads::Drawn` (ряд машин, бенч, витрина машин).
+    /// Клинья по дорогам карты как есть, без подмен рисования, — для того, у
+    /// кого нет `roads::Drawn`: витрины машин, где нет и карты.
     pub fn of_map(roads: &[RoadLine], network: &RoadNetwork, per_meter: f32) -> Self {
         let nodes = RoadNodes::new(roads);
         let drawn: Vec<&RoadLine> = roads.iter().collect();

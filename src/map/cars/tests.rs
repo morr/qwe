@@ -565,11 +565,12 @@ fn near_bucket() -> CarZoomBucket {
 
 #[test]
 fn a_street_builds_one_blended_layer() {
+    let map = city();
     let (layers, report) = mesh_cars(
         near_bucket(),
         CarStyle::default(),
-        straight(),
-        &city(),
+        &Drawn::nodal(&map, &straight()),
+        &map,
         &ParkingLayout::default(),
     );
 
@@ -589,11 +590,12 @@ fn the_toggle_off_draws_nothing() {
         visible: false,
         ..CarStyle::default()
     };
+    let map = city();
     let (layers, report) = mesh_cars(
         near_bucket(),
         style,
-        straight(),
-        &city(),
+        &Drawn::nodal(&map, &straight()),
+        &map,
         &ParkingLayout::default(),
     );
 
@@ -610,11 +612,12 @@ fn the_far_bucket_draws_nothing() {
     let far = CarZoomBucket::for_zoom(f32::INFINITY);
     assert_eq!(far.index, CarLods::max_zooms().count() - 1);
 
+    let map = city();
     let (layers, report) = mesh_cars(
         far,
         CarStyle::default(),
-        straight(),
-        &city(),
+        &Drawn::nodal(&map, &straight()),
+        &map,
         &ParkingLayout::default(),
     );
 
@@ -645,25 +648,25 @@ fn the_row_clears_the_seam_taper_of_the_ribbon() {
         occupancy: 1.0,
         ..default()
     };
+    let drawn = Drawn::nodal(&map, &straight());
     let (_, report) = mesh_cars(
         near_bucket(),
         style,
-        straight(),
+        &drawn,
         &map,
         &ParkingLayout::default(),
     );
     assert_eq!(report.junctions, 0, "шов одной улицы — не перекрёсток");
     assert!(report.cars > 0);
     // те же вызовы, что у `mesh_cars`, — ради координат машин
-    let tapers = Tapers::of_map(&map.roads, &map.network, straight().taper());
     let cars = park_cars(
         &map.roads,
-        &pockets::row_breaks(&map.roads, &tapers, &map.road_nodes),
+        &pockets::row_breaks(&map.roads, drawn.tapers(), &map.road_nodes),
         style,
-        &drawn_axes(&map.roads, &straight()),
+        &drawn.axes(Axis::Nodal),
         map.traffic_side,
         &Districts::new(&[]),
-        &KerbLots::new(&[]),
+        drawn.lots(),
     );
     assert_eq!(cars.len(), report.cars);
     let clearing = 200.0..200.0 + 66.0 + JUNCTION_CLEARANCE - 0.5;

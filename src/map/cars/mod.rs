@@ -38,12 +38,12 @@ use crate::map::meshing::{Break, MeshBuilder};
 use crate::map::osm::model::{distance_to_segment, ring_vertex_mean};
 use crate::map::osm::{MapData, PolyArea, RoadLine, TrafficSide};
 use crate::map::parking::{ParkingLayout, Stall};
-use crate::map::roads::axis;
 use crate::map::roads::junctions::MarkingBreaks;
 use crate::map::roads::network::{RoadNetwork, RoadNodes};
 use crate::map::roads::pockets::{self, KerbLots, Kerbside, POCKET_WIDTH};
 use crate::map::roads::shape::{RoadShape, RoadShapeOnMap};
 use crate::map::roads::tapers::Tapers;
+use crate::map::roads::{Axis, Drawn, axis};
 use crate::map::seed::{Lcg, seed_from_point};
 use crate::map::shadow;
 use crate::map::surface::{LayerCost, LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
@@ -228,60 +228,48 @@ pub fn detail_for(bucket: usize) -> Option<CarDetail> {
 /// между ними и есть то, ради чего заведён [`CarLods`], и она должна быть
 /// видна в тех же числах, что и цена зданиевых слоёв.
 pub fn measure_cars(map: &MapData) -> (usize, Vec<LayerCost>) {
-    // разрывы и оси — те же вызовы, что в `mesh_cars`, по собранной сети
-    // карты: иначе строки `breaks` и `cars` мерили бы не игровой ряд
+    // каркас — тот же, что строит `rebuild_cars` на каждую пересборку, и
+    // своей строкой: узлы, оси, клинья и стоянки — цена, которую ряд платит
+    // до первой машины
     let shape = RoadShape::default();
     let started = std::time::Instant::now();
-    let tapers = Tapers::of_map(&map.roads, &map.network, shape.taper());
-    let junctions = pockets::row_breaks(&map.roads, &tapers, &map.road_nodes);
-    let breaks_took = started.elapsed();
-    let started = std::time::Instant::now();
-    let districts = Districts::new(&map.buildings);
-    let districts_took = started.elapsed();
-    let started = std::time::Instant::now();
-    let nodes = RoadNodes::new(&map.roads);
-    let axes = axis::street_axes(&map.roads, &map.rails, &map.network, &nodes, &shape);
-    let cars = park_cars(
-        &map.roads,
-        &junctions,
-        CarStyle::default(),
-        &axes.paths,
-        map.traffic_side,
-        &districts,
-        &KerbLots::new(&map.parking),
-    );
-    let parking_took = started.elapsed();
-    let mut costs = vec![
-        LayerCost {
-            name: "breaks",
-            vertices: 0,
-            elapsed: breaks_took,
-        },
-        LayerCost {
-            name: "districts",
-            vertices: 0,
-            elapsed: districts_took,
-        },
-        LayerCost {
-            name: "parking",
-            vertices: 0,
-            elapsed: parking_took,
-        },
-    ];
-    for (name, detail) in [
-        ("cars full", CarDetail::Full),
-        ("cars silhouette", CarDetail::Silhouette),
-        ("cars block", CarDetail::Block),
-    ] {
-        let started = std::time::Instant::now();
-        let builder = mesh_bodies(&cars, detail);
+    let drawn = Drawn::nodal(map, &shape);
+    let drawn_took = started.elapsed();
+    // раскладка стоянок — вход слоя, не его цена: в игре она считается на
+    // загрузку мира (`map::spawn`), и без неё бенч не считал бы машины на
+    // стоянках, которые игра рисует
+    let layout = ParkingLayout::new(&map.parking, &map.roads);
+    let mut costs = vec![LayerCost {
+        name: "drawn",
+        vertices: 0,
+        elapsed: drawn_took,
+    }];
+    let mut cars = 0;
+    // сборка целиком на каждой ступени — ровно то, что стоит пересборка слоя
+    // на пересечении порога зума; разрывы — своей строкой из первой
+    for (name, step) in [("cars full", 0), ("cars silhouette", 1), ("cars block", 2)] {
+        let (_, report) = mesh_cars(
+            CarZoomBucket::at(step),
+            CarStyle::default(),
+            &drawn,
+            map,
+            &layout,
+        );
+        if step == 0 {
+            costs.push(LayerCost {
+                name: "breaks",
+                vertices: 0,
+                elapsed: report.breaks_took,
+            });
+        }
+        cars = report.cars;
         costs.push(LayerCost {
             name,
-            vertices: builder.vertex_count(),
-            elapsed: started.elapsed(),
+            vertices: report.vertices,
+            elapsed: report.elapsed,
         });
     }
-    (cars.len(), costs)
+    (cars, costs)
 }
 
 /// Когда пересобирать слой припаркованных машин: своя ступень зума, тумблер и
@@ -319,7 +307,10 @@ pub fn rebuild_cars(
     for entity in &existing {
         commands.entity(entity).despawn();
     }
-    let (layers, report) = mesh_cars(*bucket, *style, road_shape.0, &map, &layout);
+    // каркас — на каждую пересборку, как и разрывы: узлы, оси и клинья
+    // считаются заново, а не делятся с лентой через ресурс
+    let drawn = Drawn::nodal(&map, &road_shape.0);
+    let (layers, report) = mesh_cars(*bucket, *style, &drawn, &map, &layout);
     spawn_layers(&mut commands, &mut meshes, &materials, layers, CarLayerTag);
     info!("{report}");
 }
@@ -379,12 +370,13 @@ impl std::fmt::Display for CarReport {
 /// можно его забыть, нет. Сборка при этом не идёт вовсе — ни разрывов, ни
 /// расстановки: снятый слой не должен стоить дороже, чем стоил ранний возврат.
 ///
-/// `shape` — форма дорог: ряд стоит по той же ломаной, по которой
-/// `map::roads` кладёт ленту асфальта, и рвётся на тех же клиньях.
+/// `drawn` — подготовленные дороги (`roads::Drawn::nodal`): ряд стоит по той
+/// же узловой оси (`Axis::Nodal`), по которой `map::roads` кладёт ленту
+/// асфальта, рвётся на тех же клиньях и обходит те же стоянки.
 pub fn mesh_cars(
     bucket: CarZoomBucket,
     style: CarStyle,
-    shape: RoadShape,
+    drawn: &Drawn,
     map: &MapData,
     layout: &ParkingLayout,
 ) -> (Vec<LayerMesh>, CarReport) {
@@ -413,22 +405,19 @@ pub fn mesh_cars(
     // надо было прежде, чем его заводить. Доли, а не миллисекунды: абсолютное
     // время зависит от App Nap, перемеряет его `measure_cars` из
     // `examples/bench/map_meshing` (он печатает обе строки — `breaks` и `cars`)
-    let tapers = Tapers::of_map(&map.roads, &map.network, shape.taper());
-    let junctions = pockets::row_breaks(&map.roads, &tapers, &map.road_nodes);
+    let junctions = pockets::row_breaks(&map.roads, drawn.tapers(), &map.road_nodes);
     let breaks_took = started.elapsed();
     // застройка вокруг — тем же проходом и с тем же сроком жизни, что и
     // разрывы: индекс на 7.6 тысячи домов дешевле, чем повод его кешировать
     let districts = Districts::new(&map.buildings);
-    let nodes = RoadNodes::new(&map.roads);
-    let axes = axis::street_axes(&map.roads, &map.rails, &map.network, &nodes, &shape);
     let mut cars = park_cars(
         &map.roads,
         &junctions,
         style,
-        &axes.paths,
+        &drawn.axes(Axis::Nodal),
         map.traffic_side,
         &districts,
-        &KerbLots::new(&map.parking),
+        drawn.lots(),
     );
     cars.extend(fill_lots(&map.parking, &layout.0, &districts));
     let builder = mesh_bodies(&cars, detail);

@@ -346,9 +346,9 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     a street there is inferred from the window's ways only.
   - **Tapers** (`tapers::Tapers`, built **once** per `mesh_roads` by `roads::Drawn` over
     the roads as drawn — the ribbon, the paint wedges and the kerb pockets' row breaks
-    (`car_clearings(roads, &Tapers)`) all read that one value; the cars, the bench and
-    the car gallery have no `Drawn` and build theirs over the OSM roads,
-    `Tapers::of_map`) — where a way ends and another goes on
+    (`car_clearings(roads, &Tapers)`) all read that one value, and the car row reads it
+    off its own `Drawn::nodal`; only the car gallery, which has no map, builds
+    `Tapers::of_map` over bare roads) — where a way ends and another goes on
     from the node collinearly — a joint of one street or a continuation across streets
     (above) — and their widths differ by 0.1 m or more, the wider way's drawn path is **cut** at that end
     by `RoadShape::taper` (5–20, default 10; `Tapers::new(drawn, network, nodes, per_meter)`

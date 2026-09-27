@@ -50,8 +50,7 @@ use std::borrow::Cow;
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
-pub use self::drawn::DrawnStats;
-use self::drawn::{Axis, Drawn};
+pub use self::drawn::{Axis, Drawn, DrawnStats};
 use self::network::RoadNodes;
 pub use self::node_paint::CrossingMode;
 use self::shape::{RoadShape, RoadShapeOnMap};

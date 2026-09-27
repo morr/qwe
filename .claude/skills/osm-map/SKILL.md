@@ -810,8 +810,10 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     still writes `DespawnOnExit` by hand — for the crowns. Every merged layer gets it
     from `spawn_layer`.
   - **`cars` is the one whose build is a layer rather than a mesh.** Every other
-    `mesh_*` takes the data it draws; `mesh_cars(bucket, style, shape, map, layout)`
-    (`shape` — the settled `RoadShape`, whose curve tolerance and taper the row follows)
+    `mesh_*` takes the data it draws; `mesh_cars(bucket, style, &Drawn, map, layout)`
+    (`Drawn::nodal(map, shape)` — the prepared roads the row stands on, built by the adapter
+    with the settled `RoadShape`, so the curve tolerance and the taper move the row with the
+    ribbon; `references/roads.md`, **The drawn network**)
     takes the whole `MapData` (as `mesh_roads` does) and does the **assembly** as well —
     junction breaks, `Districts`, `park_cars`, `fill_lots` — because that assembly is
     exactly what the cutoff and the toggle gate. Off, or past the last zoom step, none
@@ -823,13 +825,14 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     assembly those counters would count is exactly what did not run. That is the one
     shape of the rule above (**"The layer is not drawn" is a state of the report**); the
     four modules whose input counters are free print theirs beside the word.
-    **The bench and the gallery still assemble on their own, deliberately**:
-    `measure_cars` times `breaks` / `districts` / `parking` as separate rows and meshes
-    all three detail steps, which one call cannot report — the same reason
-    `buildings::measure_layers` repeats the steps `mesh_buildings` takes; `cars_mesh` is
+    **The bench calls the door, the gallery still assembles on its own**:
+    `measure_cars` is `Drawn::nodal` on its own row (`drawn`) and then `mesh_cars` once per
+    detail step — the `breaks` row comes off the first report's `breaks_took`, the `cars *`
+    rows are each step's whole rebuild, lots included (`ParkingLayout::new` is built for it,
+    outside the timer: it is the layer's input, not its cost); `cars_mesh` is
     the gallery's one door and builds with neither lots nor districts on purpose. The
-    steps they repeat are the game's calls, not look-alikes: both break the row with
-    `pockets::row_breaks` (the bench over the map's network and road nodes, the gallery
+    steps the gallery repeats are the game's calls, not look-alikes: it breaks the row with
+    `pockets::row_breaks` over `Tapers::of_map` (the bench takes the tapers off `Drawn`, the gallery
     over an empty network and no nodes, as its axes are), never the bare
     `marking_breaks(is_carriageway)`, which let a service drive leave a gallery row
     unbroken and made the bench time a cheaper function than the game runs.
