@@ -374,6 +374,9 @@ pub fn mesh_trees(
     let mut shadows = MeshBuilder::default();
     let visible = planted.visible(style.density);
     let mut crowns = Vec::with_capacity(visible.len());
+    let tint_slots = TreeStyle::TINT_BELL.len();
+    // сколько крон уже стоит в каждой группе — их ранг внутри полосы группы
+    let mut ranks = vec![0_usize; shapes.len() * TREE_VARIANTS * tint_slots];
     for (index, &(at, radius)) in visible.iter().enumerate() {
         let shape = style.shape.resolve(field.is_conifer(index));
         let pool = shapes
@@ -381,14 +384,17 @@ pub fn mesh_trees(
             .position(|&pooled| pooled == shape)
             .expect("crown_shapes covers every shape resolve can return");
         let variant = index % pools[pool].len();
+        let tint = TreeStyle::tint_slot(index);
+        let group = (pool * TREE_VARIANTS + variant) * tint_slots + tint;
+        let rank = ranks[group];
+        ranks[group] += 1;
         crowns.push(CrownPlacement {
             at,
             radius,
-            // микрошаг по z: пересекающиеся кроны рисуются в стабильном порядке
-            z: Z_TREE + (index % 512) as f32 * 1e-3,
+            z: crown_z(group, rank),
             pool,
             variant,
-            tint: TreeStyle::tint_slot(index),
+            tint,
         });
         shadows.push_template(&pools[pool][variant].shadow, at, radius);
     }
@@ -415,6 +421,38 @@ pub fn mesh_trees(
         )],
     };
     (built, report)
+}
+
+/// Полоса z одной группы крон — одного меша (пул × вариант) под одним
+/// материалом (оттенок). Групп не больше `2 · TREE_VARIANTS · 5` = 120, так
+/// что все полосы укладываются в `Z_TREE..Z_TREE + 1` и под
+/// `Z_CONIFER_NOISE_OVERLAY`.
+const CROWN_GROUP_Z_STEP: f32 = 1.0 / 128.0;
+/// Микрошаг кроны внутри полосы своей группы: два ulp у `f32` около 20
+/// (2⁻¹⁹ каждый), то есть 2048 различимых мест на полосу.
+const CROWN_RANK_Z_STEP: f32 = 1.0 / 262_144.0;
+const CROWN_RANKS_PER_GROUP: usize = (CROWN_GROUP_Z_STEP / CROWN_RANK_Z_STEP) as usize;
+
+/// z кроны: полоса её группы плюс микрошаг по рангу внутри группы.
+///
+/// **z группирует кроны по мешу и материалу, а не идёт по номеру дерева.**
+/// Прозрачная фаза 2D (`Transparent2d`) сортирует только по z, а порядок
+/// видимых сущностей до сортировки собирается параллельно и кусками — поэтому
+/// соседями в фазе оказываются лишь элементы с близким z, и только общий
+/// диапазон z кладёт одинаковые меш + материал подряд, а bevy сливает подряд
+/// идущие одинаковые элементы в один draw. С микрошагом по номеру дерева
+/// (`index % 512`) соседние по z кроны почти всегда были разными вариантами:
+/// ~16 тыс. draw на Туле при полном отдалении; по группам — ~120. Замер
+/// (без vsync, пауза, полное отдаление): Тула 17.6 → 15.9 мс кадр, Калуга
+/// 58.8 → 28.6.
+///
+/// Цена — перекрытие двух крон разных групп теперь решает номер группы, а не
+/// номер дерева; для крон одной группы микрошаг по рангу по-прежнему даёт
+/// стабильный порядок.
+fn crown_z(group: usize, rank: usize) -> f32 {
+    Z_TREE
+        + group as f32 * CROWN_GROUP_Z_STEP
+        + (rank % CROWN_RANKS_PER_GROUP) as f32 * CROWN_RANK_Z_STEP
 }
 
 /// Собранные деревья — в мир: пул крон в `Assets`, по сущности на место, слой

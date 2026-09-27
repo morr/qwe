@@ -770,11 +770,10 @@ fn the_shadows_are_one_blended_layer() {
     assert!(report.shadow_vertices > 0);
 }
 
-/// Соседние кроны различаются и оттенком, и порядком отрисовки: пять подряд
-/// стоящих деревьев берут все пять слотов яркости, а микрошаг по z растёт, так
-/// что пересекающиеся кроны рисуются в стабильном порядке.
+/// Соседние кроны различаются оттенком: пять подряд стоящих деревьев берут
+/// все пять слотов яркости, а не идут полосами.
 #[test]
-fn neighbouring_crowns_differ_in_tint_and_in_z() {
+fn neighbouring_crowns_differ_in_tint() {
     let _sun = crate::map::default_sun();
     let (built, _) = mesh_ten(TreeShape::Cotton, 9.0);
 
@@ -782,11 +781,55 @@ fn neighbouring_crowns_differ_in_tint_and_in_z() {
         built.crowns[..5].iter().map(|crown| crown.tint).collect();
     assert_eq!(tints.len(), 5, "оттенки пошли полосами");
     assert_eq!(built.tints.len(), 5);
+}
+
+/// z группирует кроны по мешу и материалу: после сортировки по z — а только
+/// по нему сортирует прозрачная фаза — кроны одной группы (пул, вариант,
+/// оттенок) стоят подряд, иначе bevy не сольёт их в один draw. Внутри группы
+/// z растёт с номером дерева (стабильный порядок перекрытий), и вся полоса
+/// лежит между `Z_TREE` и следующей ступенью стопки.
+#[test]
+fn crowns_of_one_mesh_and_tint_are_contiguous_in_z() {
+    let _sun = crate::map::default_sun();
+    let style = TreeStyle {
+        shape: TreeShape::Mixed,
+        density: 1000.0,
+        ..default()
+    };
+    let spots: Vec<(Vec2, f32)> = (0..400)
+        .map(|i| (Vec2::new(i as f32 * 10.0, 0.0), 1.0))
+        .collect();
+    let planted = TreeSet::of(spots.iter().map(|&(at, radius)| (at, radius, 0.0)));
+    // хвоя по полю с полной примесью — чтобы в наборе стояли обе формы
+    let mut field = ConiferField::default();
+    field.resample(&spots, &ConiferNoiseStyle::default(), 1.0);
+    field.set_share(0.5);
+    let (built, _) = mesh_trees(&style, &params(), &planted, &field);
+    assert_eq!(built.crowns.len(), 400);
+
+    let group = |crown: &CrownPlacement| (crown.pool, crown.variant, crown.tint);
+    let mut by_z: Vec<(usize, &CrownPlacement)> = built.crowns.iter().enumerate().collect();
+    by_z.sort_by(|a, b| a.1.z.total_cmp(&b.1.z));
+    let mut seen = std::collections::HashSet::new();
+    for pair in by_z.windows(2) {
+        let (a, b) = (pair[0].1, pair[1].1);
+        assert!(b.z > a.z, "две кроны на одном z");
+        if group(a) == group(b) {
+            assert!(pair[1].0 > pair[0].0, "внутри группы z не растёт с номером");
+        } else {
+            assert!(seen.insert(group(a)), "группа {:?} разорвана по z", group(a));
+        }
+    }
+    let pools: std::collections::HashSet<usize> =
+        built.crowns.iter().map(|crown| crown.pool).collect();
+    assert_eq!(pools.len(), 2, "у Mixed две формы — два пула");
     assert!(
-        built.crowns.windows(2).all(|pair| pair[1].z > pair[0].z),
-        "микрошаг по z не растёт"
+        built
+            .crowns
+            .iter()
+            .all(|crown| crown.z >= Z_TREE && crown.z < Z_TREE + 1.0),
+        "полоса крон вышла за Z_TREE..Z_TREE + 1"
     );
-    assert!(built.crowns[0].z >= Z_TREE);
 }
 
 /// Плотность ниже порога появления первого дерева — пустой лес: ни одной кроны

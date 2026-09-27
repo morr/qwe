@@ -156,6 +156,16 @@ stand, how density works, and which resources restyle them.
   translucent copies never stack into double darkness. `TREE_VARIANTS` unit-radius crown meshes are reused
   across all trees; per tree — variant, quantized brightness tint and radius as
   `Transform::scale`.
+  **A crown's z is its draw group, not its index** (`trees.rs::crown_z`): every
+  (pool, variant, tint) group gets its own band of `1/128` above `Z_TREE`, and inside it
+  a 2⁻¹⁸ micro-step by the tree's rank in the group (so no two crowns share a z, the
+  blinking trap below). The reason is batching: `Transparent2d` sorts by z alone, the
+  visible-entity order before it is parallel and chunked, so only an equal z range puts
+  identical mesh + material next to each other, and only adjacent identical items batch
+  into one draw. With `index % 512` neighbours in z were nearly always different
+  variants — ~16 k draws on Tula at full zoom-out, ~120 now: 17.6 → 15.9 ms a frame on
+  Tula, 58.8 → 28.6 ms on Kaluga (no vsync, paused). The price: where two crowns of
+  different groups overlap, the group number decides which is on top.
   Geometry RNG is a deterministic Lehmer LCG (same family as tree planting).
   **Shadows are one merged mesh** (`tree_shadows`, like `building_shadows`), not an
   entity per tree: the silhouette template of each variant is baked into it with the
