@@ -832,6 +832,15 @@ pub(super) fn untagged_sidewalks(tags: &HashMap<String, String>) -> [SidewalkSid
     }
 }
 
+/// Есть ли на проезжей части разметка полос — [`RoadLine::lane_markings`]:
+/// только явное `lane_markings=no` её снимает. Тула, кеш v15: `no` на 11
+/// way (переулки, проезды, связки), `yes` на 3.
+///
+/// [`RoadLine::lane_markings`]: crate::map::osm::model::RoadLine::lane_markings
+pub(super) fn has_lane_markings(tags: &HashMap<String, String>) -> bool {
+    tags.get("lane_markings").map(String::as_str) != Some("no")
+}
+
 /// Что говорит о покрытии тег `surface`; `None` — тега нет или значение не
 /// из словаря (`tartan` беговой дорожки, опечатка).
 fn surface_pavement(tags: &HashMap<String, String>) -> Option<Pavement> {

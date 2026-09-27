@@ -2350,6 +2350,7 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
             lanes: tagged_lanes(&element.tags),
             parking_aisle: is_parking_aisle(&element.tags),
             turns: tagged_turns(&element.tags),
+            lane_markings: has_lane_markings(&element.tags),
             sidewalks: tagged_sidewalks(&element.tags)
                 .unwrap_or_else(|| untagged_sidewalks(&element.tags)),
             parking: tagged_parking(&element.tags),
@@ -2540,9 +2541,10 @@ mod tests;
 // разрезания, а `use super::*` в `tests.rs` продолжает доставать классификаторы.
 use self::tags::{
     NON_WALKABLE_ENTRANCES, area_colours, area_height, area_kind, area_storeys, area_use,
-    crown_radius, fence_kind, is_building_passage, is_oneway, is_oneway_backward, is_parking_aisle,
-    is_road_underground, is_roundabout, is_underground, pipe_width, rail_class, road_area_kind,
-    road_class, road_node_kind, row_spacing, service_track, structure_height, structure_kind,
-    structure_radius, structure_size, tagged_lanes, tagged_parking, tagged_pavement,
-    tagged_sidewalks, tagged_turns, untagged_sidewalks, water_class, water_width,
+    crown_radius, fence_kind, has_lane_markings, is_building_passage, is_oneway,
+    is_oneway_backward, is_parking_aisle, is_road_underground, is_roundabout, is_underground,
+    pipe_width, rail_class, road_area_kind, road_class, road_node_kind, row_spacing, service_track,
+    structure_height, structure_kind, structure_radius, structure_size, tagged_lanes,
+    tagged_parking, tagged_pavement, tagged_sidewalks, tagged_turns, untagged_sidewalks,
+    water_class, water_width,
 };

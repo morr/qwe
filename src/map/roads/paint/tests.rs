@@ -120,6 +120,28 @@ fn markings_off_paint_nothing() {
     assert_eq!(report.paint_lines, 0);
 }
 
+/// `lane_markings=no` снимает с улицы осевую и границы полос, как бы много
+/// полос у неё ни было (Тула, витрина 09: Бухоновский переулок).
+#[test]
+fn a_street_without_lane_markings_paints_no_lines() {
+    let road = RoadLine {
+        lane_markings: false,
+        ..with_lanes(
+            street(vec![Vec2::ZERO, Vec2::new(200.0, 0.0)], 14.2),
+            4,
+            false,
+        )
+    };
+    let (layers, report) = mesh_roads(
+        &map_of(vec![road]),
+        RoadStyle::default(),
+        RoadShape::default(),
+    );
+    assert!(paint_layer(&layers, PAINT_LANES).is_empty());
+    assert!(paint_layer(&layers, PAINT_AXES).is_empty());
+    assert_eq!(report.paint_lines, 0);
+}
+
 #[test]
 fn a_bridge_paints_into_its_own_layer() {
     let mut road = street(vec![Vec2::ZERO, Vec2::new(200.0, 0.0)], 7.6);

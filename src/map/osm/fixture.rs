@@ -233,6 +233,7 @@ pub fn street(points: Vec<Vec2>, width: f32) -> RoadLine {
         lanes: None,
         parking_aisle: false,
         turns: Default::default(),
+        lane_markings: true,
         sidewalks: [SidewalkSide::Inferred; 2],
         parking: Default::default(),
         pavement: None,

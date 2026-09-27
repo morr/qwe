@@ -704,7 +704,9 @@ impl Painter {
         ramp: Option<MergeRamp>,
         station: Station,
     ) {
-        if !is_carriageway(road) {
+        // `lane_markings=no` — ни осевой, ни границ полос; краску узла
+        // (зебры, стоп-линии) это не трогает
+        if !is_carriageway(road) || !road.lane_markings {
             return;
         }
         let lanes = lane_count(road);

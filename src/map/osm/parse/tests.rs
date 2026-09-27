@@ -1009,6 +1009,10 @@ fn oneway_roundabout_and_lanes_reach_the_road() {
     );
     assert!(road(&[("junction", "circular")]).roundabout);
 
+    assert!(plain.lane_markings, "без тега разметку решает число полос");
+    assert!(!road(&[("lane_markings", "no")]).lane_markings);
+    assert!(road(&[("lane_markings", "yes")]).lane_markings);
+
     let four = road(&[("lanes", "4")]);
     assert_eq!(four.lanes, Some(4));
     assert!((four.width - 14.2).abs() < 1e-4, "{}", four.width);
