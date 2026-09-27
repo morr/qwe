@@ -54,6 +54,7 @@ fn park_driving(roads: &[RoadLine], style: CarStyle, traffic: TrafficSide) -> Ve
         &drawn_axes(roads, &straight()),
         traffic,
         &Districts::new(&[]),
+        &KerbLots::new(&[]),
     )
 }
 
@@ -202,6 +203,7 @@ fn the_same_street_parks_thinner_in_a_private_sector() {
             &drawn_axes(roads, &straight()),
             TrafficSide::Right,
             &Districts::new(buildings),
+            &KerbLots::new(&[]),
         )
         .len()
     };
@@ -524,6 +526,7 @@ fn the_row_stays_on_the_drawn_asphalt_through_a_bend() {
         &drawn_axes(std::slice::from_ref(&road), &RoadShape::default()),
         TrafficSide::Right,
         &Districts::new(&[]),
+        &KerbLots::new(&[]),
     );
     assert!(!cars.is_empty());
     let drawn = drawn_axes(std::slice::from_ref(&road), &RoadShape::default()).remove(0);

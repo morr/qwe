@@ -1255,6 +1255,7 @@ pub fn mesh_roads(
     // карманы — по тому же ответу и тем же разрывам, что ряд машин
     // (`map::cars`): асфальт за кромкой и тротуар, отодвинутый за него
     let row_breaks = pockets::row_breaks(roads, &map.network, &map.road_nodes, shape.taper());
+    let lots = pockets::KerbLots::new(&map.parking);
     let mut kerb_pockets = 0;
     for (index, road) in roads.iter().enumerate() {
         if !pockets::parkable(road) {
@@ -1267,6 +1268,7 @@ pub fn mesh_roads(
             &paths[index],
             &row_breaks.breaks[index],
             map.traffic_side,
+            &lots,
         ) {
             let sidewalk = sidewalk.filter(|_| road.sidewalks[usize::from(kerbside.side < 0.0)]);
             for pocket in &kerbside.pockets {

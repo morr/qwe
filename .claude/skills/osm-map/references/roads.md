@@ -104,6 +104,14 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   `amenity=parking` + `parking=street_side` outlines (Berlin 3275, Tula 56), which
   reach the parking layer (`references/parking.md`) and are paved up to the kerb, cut
   into the sidewalk (`parse.md`, **kerbside lot** in `pave_lots`).
+  **No pocket beside a parking lot** (`pockets::KerbLots`, over `MapData::parking`): the
+  kerb is probed every `LOT_STEP` 2 m at the pocket's outer edge, and a probe inside a
+  lot or within `LOT_REACH` 6 m of its outline (a sidewalk and a verge) marks that
+  stretch as the lot's frontage — the cars go to the lot, and a bay in front of it read
+  as a spare lane (the author's report, Советская by the theatre, 6040 2900: the lot 4 m
+  past the bay's edge). A rule bay touching a frontage is **dropped after** the bays
+  are laid, so the RNG stream and every other bay of the block stay put; a tagged run
+  is **cut** around the frontage like around a row break, its tapers outside it.
   Drawn by `mesh_roads` as three polygons per pocket from
   `pockets::outline` (inner edge 5 cm under the carriageway edge, outer edge between the
   tapers): asphalt `POCKET_WIDTH` 2.5 m wide in `roads` (no casing — the road casing

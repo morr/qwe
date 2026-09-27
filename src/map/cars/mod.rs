@@ -41,7 +41,7 @@ use crate::map::parking::{ParkingLayout, Stall};
 use crate::map::roads::axis;
 use crate::map::roads::junctions::MarkingBreaks;
 use crate::map::roads::network::{RoadNetwork, RoadNodes};
-use crate::map::roads::pockets::{self, Kerbside, POCKET_WIDTH};
+use crate::map::roads::pockets::{self, KerbLots, Kerbside, POCKET_WIDTH};
 use crate::map::roads::shape::{RoadShape, RoadShapeOnMap};
 use crate::map::seed::{Lcg, seed_from_point};
 use crate::map::shadow;
@@ -246,6 +246,7 @@ pub fn measure_cars(map: &MapData) -> (usize, Vec<LayerCost>) {
         &axes.paths,
         map.traffic_side,
         &districts,
+        &KerbLots::new(&map.parking),
     );
     let parking_took = started.elapsed();
     let mut costs = vec![
@@ -424,6 +425,7 @@ pub fn mesh_cars(
         &axes.paths,
         map.traffic_side,
         &districts,
+        &KerbLots::new(&map.parking),
     );
     cars.extend(fill_lots(&map.parking, &layout.0, &districts));
     let builder = mesh_bodies(&cars, detail);
@@ -478,6 +480,7 @@ pub fn cars_mesh(
             &drawn_axes(roads, &shape),
             traffic,
             &districts,
+            &KerbLots::new(&[]),
         ),
         detail,
     )
@@ -504,6 +507,7 @@ fn park_cars(
     axes: &[Cow<[Vec2]>],
     traffic: TrafficSide,
     districts: &Districts,
+    lots: &KerbLots,
 ) -> Vec<Car> {
     let mut cars = Vec::new();
     let kerb = traffic.kerb();
@@ -545,7 +549,7 @@ fn park_cars(
         //
         // Стороны и карманы на них — от `roads::pockets`, того же ответа, по
         // которому лента кладёт асфальт кармана
-        for kerbside in pockets::kerbsides(road, centre, &junctions.breaks[index], traffic) {
+        for kerbside in pockets::kerbsides(road, centre, &junctions.breaks[index], traffic, lots) {
             if !kerbside.lane && kerbside.pockets.is_empty() {
                 continue;
             }

@@ -18,10 +18,13 @@ use super::junctions::{self, MarkingBreaks, node_key};
 use super::network::RoadNetwork;
 use super::node_paint::ZEBRA_LENGTH;
 use super::{is_carriageway, tapers};
-use crate::map::along::{arclengths, nearest_on_path};
+use crate::map::along::{arclengths, nearest_on_path, place_on_path};
+use crate::map::grid::Grid;
 use crate::map::meshing::{Break, miter_offsets};
-use crate::map::osm::model::{Highway, KerbParking, polyline_length};
-use crate::map::osm::{RoadLine, RoadNode, RoadNodeKind, TrafficSide};
+use crate::map::osm::model::{
+    Highway, KerbParking, distance_to_segment, point_in_area, polyline_length,
+};
+use crate::map::osm::{PolyArea, RoadLine, RoadNode, RoadNodeKind, TrafficSide};
 use crate::map::seed::{Lcg, seed_from_point};
 
 /// Ширина кармана за кромкой проезжей части, м: машина при параллельной
@@ -44,6 +47,73 @@ const RULE_BLOCK_SHARE: f32 = 0.4;
 const RULE_POCKET_LENGTH: (f32, f32) = (24.0, 42.0);
 /// Просвет тротуара между карманами по правилу, м.
 const RULE_POCKET_GAP: (f32, f32) = (30.0, 90.0);
+/// Досягаемость стоянки от наружного края кармана, м: тротуар (до трёх
+/// метров) и газон за ним. Стоянка ближе — машинам есть где встать и без
+/// кармана, и асфальт кармана перед ней читался лишней полосой (Тула,
+/// Советская у театра, 6040, 2900: стоянка в 4 м за краем кармана).
+const LOT_REACH: f32 = 6.0;
+/// Шаг, с которым край кармана проверяется на соседство со стоянкой, м.
+const LOT_STEP: f32 = 2.0;
+/// Ячейка индекса стоянок, м.
+const LOT_CELL: f32 = 60.0;
+
+/// Стоянки карты (`amenity=parking`), у которых карман не нужен: машины
+/// встают на стоянку, а не у бордюра перед ней.
+pub struct KerbLots<'a> {
+    areas: &'a [PolyArea],
+    grid: Grid<usize>,
+}
+
+impl<'a> KerbLots<'a> {
+    pub fn new(areas: &'a [PolyArea]) -> Self {
+        let mut grid = Grid::new(LOT_CELL);
+        for (index, area) in areas.iter().enumerate() {
+            let min = area.outer.iter().copied().fold(Vec2::MAX, Vec2::min);
+            let max = area.outer.iter().copied().fold(Vec2::MIN, Vec2::max);
+            if min.cmple(max).all() {
+                grid.insert(min - LOT_REACH, max + LOT_REACH, index);
+            }
+        }
+        Self { areas, grid }
+    }
+
+    /// Стоянка внутри или ближе [`LOT_REACH`] к точке.
+    fn near(&self, point: Vec2) -> bool {
+        self.grid.at(point).iter().any(|&index| {
+            let area = &self.areas[index];
+            point_in_area(point, area)
+                || std::iter::once(&area.outer).chain(&area.holes).any(|ring| {
+                    (0..ring.len()).any(|i| {
+                        let next = ring[(i + 1) % ring.len()];
+                        distance_to_segment(point, ring[i], next) <= LOT_REACH
+                    })
+                })
+        })
+    }
+
+    /// Куски осевой `path`, у которых за наружным краем кармана — на `edge`
+    /// от оси со стороны `side` — стоянка: `(from, to)` по длине осевой, по
+    /// возрастанию.
+    fn frontage(&self, path: &[Vec2], side: f32, edge: f32) -> Vec<(f32, f32)> {
+        let (along, total) = arclengths(path);
+        let mut found: Vec<(f32, f32)> = Vec::new();
+        let steps = (total / LOT_STEP).ceil() as usize;
+        for step in 0..=steps {
+            let at = (step as f32 * LOT_STEP).min(total);
+            let Some((point, direction)) = place_on_path(path, &along, at) else {
+                break;
+            };
+            if !self.near(point + direction.perp() * side * edge) {
+                continue;
+            }
+            match found.last_mut() {
+                Some(run) if at - run.1 <= LOT_STEP + 1e-3 => run.1 = at,
+                _ => found.push((at, at)),
+            }
+        }
+        found
+    }
+}
 
 /// Одна сторона улицы, вдоль которой может стоять ряд.
 #[derive(Clone, Debug)]
@@ -122,12 +192,15 @@ pub fn kerb_parking(road: &RoadLine, side: usize) -> KerbParking {
 /// обходит `map::cars` (от него зависит поток ГПСЧ): односторонняя — одна,
 /// у бордюра своей стороны движения; двусторонняя — правая, потом левая.
 /// `path` — нарисованная осевая, `breaks` — разрывы ряда на перекрёстках
-/// (`map::cars` зовёт их `junctions`).
+/// (`map::cars` зовёт их `junctions`), `lots` — стоянки, перед которыми
+/// кармана нет: по правилу карман рядом с ними не ставится, по тегу —
+/// прерывается на их длину.
 pub fn kerbsides(
     road: &RoadLine,
     path: &[Vec2],
     breaks: &[Break],
     traffic: TrafficSide,
+    lots: &KerbLots,
 ) -> Vec<Kerbside> {
     let sides: &[f32] = if road.oneway {
         &[traffic.kerb()]
@@ -141,10 +214,22 @@ pub fn kerbsides(
             let parking = kerb_parking(road, index);
             let pockets = if parking != KerbParking::Pocket {
                 Vec::new()
-            } else if road.parking[index] == KerbParking::Untagged {
-                sparse_pockets(pockets_along(path, breaks), road, index)
             } else {
-                pockets_along(path, breaks)
+                let frontage = lots.frontage(path, side, road.width / 2.0 + POCKET_WIDTH);
+                if road.parking[index] == KerbParking::Untagged {
+                    // бухты раскладываются как без стоянок и потом снимаются:
+                    // поток ГПСЧ не сдвигается, и остальные бухты квартала
+                    // стоят там же, где стояли
+                    let mut pockets = sparse_pockets(pockets_along(path, breaks, &[]), road, index);
+                    pockets.retain(|pocket| {
+                        frontage
+                            .iter()
+                            .all(|&(from, to)| to < pocket.from || from > pocket.to)
+                    });
+                    pockets
+                } else {
+                    pockets_along(path, breaks, &frontage)
+                }
             };
             Kerbside {
                 side,
@@ -297,8 +382,9 @@ fn crossing_breaks(roads: &[RoadLine], nodes: &[RoadNode]) -> Vec<(usize, Break)
     found
 }
 
-/// Карманы вдоль осевой: вся её длина, кроме окрестностей перекрёстков.
-fn pockets_along(path: &[Vec2], breaks: &[Break]) -> Vec<Pocket> {
+/// Карманы вдоль осевой: вся её длина, кроме окрестностей перекрёстков и
+/// кусков `frontage` перед стоянками (по длине осевой; скосы — за ними).
+fn pockets_along(path: &[Vec2], breaks: &[Break], frontage: &[(f32, f32)]) -> Vec<Pocket> {
     let total = polyline_length(path);
     let mut closed: Vec<(f32, f32)> = breaks
         .iter()
@@ -307,6 +393,7 @@ fn pockets_along(path: &[Vec2], breaks: &[Break]) -> Vec<Pocket> {
             let reach = found.reach + POCKET_CLEARANCE;
             (at - reach, at + reach)
         })
+        .chain(frontage.iter().copied())
         .collect();
     closed.sort_by(|a, b| a.0.total_cmp(&b.0));
     let mut pockets = Vec::new();
@@ -394,7 +481,13 @@ mod tests {
             at: Vec2::new(120.0, 0.0),
             reach: 8.0,
         };
-        let sides = kerbsides(&road, &road.points, &[junction], TrafficSide::Right);
+        let sides = kerbsides(
+            &road,
+            &road.points,
+            &[junction],
+            TrafficSide::Right,
+            &KerbLots::new(&[]),
+        );
         assert_eq!(sides.len(), 2);
         let pockets = &sides[0].pockets;
         assert_eq!(pockets.len(), 2);
@@ -425,8 +518,20 @@ mod tests {
                 reach: 8.0,
             })
             .collect();
-        let sides = kerbsides(&road, &road.points, &breaks, TrafficSide::Right);
-        let again = kerbsides(&road, &road.points, &breaks, TrafficSide::Right);
+        let sides = kerbsides(
+            &road,
+            &road.points,
+            &breaks,
+            TrafficSide::Right,
+            &KerbLots::new(&[]),
+        );
+        let again = kerbsides(
+            &road,
+            &road.points,
+            &breaks,
+            TrafficSide::Right,
+            &KerbLots::new(&[]),
+        );
         let mut covered = 0.0;
         for (side, repeat) in sides.iter().zip(&again) {
             assert_eq!(side.pockets, repeat.pockets, "посев от улицы");
@@ -448,6 +553,95 @@ mod tests {
             share > 0.02 && share < 0.3,
             "доля бордюра в карманах {share}"
         );
+    }
+
+    /// Стоянка за тротуаром справа от `from` до `to` по x: её край в 2.5 м за
+    /// наружным краем кармана улицы шириной 14.
+    fn lot_on_the_right(from: f32, to: f32) -> PolyArea {
+        crate::map::osm::fixture::area(
+            crate::map::osm::AreaKind::Parking,
+            vec![
+                Vec2::new(from, -12.0),
+                Vec2::new(to, -12.0),
+                Vec2::new(to, -40.0),
+                Vec2::new(from, -40.0),
+            ],
+        )
+    }
+
+    /// Без тега бухта рядом со стоянкой не ставится, остальные бухты — ни
+    /// на той стороне, ни на другой — не сдвигаются.
+    #[test]
+    fn a_rule_pocket_is_not_laid_beside_a_parking_lot() {
+        let road = RoadLine {
+            highway: Highway::Primary,
+            ..street(vec![Vec2::new(3.7, 1.2), Vec2::new(2003.7, 1.2)], 14.0)
+        };
+        // перекрёсток каждые 150 м — кварталы, и в каких-то из них бухты есть
+        let breaks: Vec<Break> = (1..13)
+            .map(|block| Break {
+                at: Vec2::new(3.7 + 150.0 * block as f32, 1.2),
+                reach: 8.0,
+            })
+            .collect();
+        let bare = kerbsides(
+            &road,
+            &road.points,
+            &breaks,
+            TrafficSide::Right,
+            &KerbLots::new(&[]),
+        );
+        let lots = [lot_on_the_right(0.0, 2000.0)];
+        let beside = kerbsides(
+            &road,
+            &road.points,
+            &breaks,
+            TrafficSide::Right,
+            &KerbLots::new(&lots),
+        );
+        assert!(!bare[0].pockets.is_empty(), "правило кладёт бухты справа");
+        assert!(beside[0].pockets.is_empty(), "{:?}", beside[0].pockets);
+        assert_eq!(
+            beside[1].pockets, bare[1].pockets,
+            "левую сторону стоянка не трогает"
+        );
+
+        let lots = [lot_on_the_right(1000.0, 2000.0)];
+        let half = kerbsides(
+            &road,
+            &road.points,
+            &breaks,
+            TrafficSide::Right,
+            &KerbLots::new(&lots),
+        );
+        let before: Vec<_> = bare[0].pockets.iter().filter(|p| p.to < 990.0).collect();
+        let after: Vec<_> = half[0].pockets.iter().collect();
+        assert_eq!(after, before, "бухты до стоянки остаются где были");
+    }
+
+    /// По тегу карман прерывается перед стоянкой на её длину, со скосами за
+    /// её краями, и продолжается за ней.
+    #[test]
+    fn a_tagged_pocket_breaks_off_beside_a_parking_lot() {
+        let road = RoadLine {
+            parking: [KerbParking::Pocket; 2],
+            ..primary()
+        };
+        let lots = [lot_on_the_right(80.0, 120.0)];
+        let sides = kerbsides(
+            &road,
+            &road.points,
+            &[],
+            TrafficSide::Right,
+            &KerbLots::new(&lots),
+        );
+        let right = &sides[0].pockets;
+        assert_eq!(right.len(), 2, "{right:?}");
+        assert!(right[0].to <= 80.0 && right[0].to > 60.0, "{right:?}");
+        assert!(right[1].from >= 120.0 && right[1].from < 140.0, "{right:?}");
+        assert_eq!(right[0].tapers, [false, true]);
+        assert!(sides[0].pocket_at(100.0).is_none());
+        assert_eq!(sides[1].pockets.len(), 1, "слева стоянки нет");
     }
 
     #[test]
