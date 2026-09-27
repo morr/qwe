@@ -89,6 +89,11 @@ const ARM_TAIL: f32 = 8.0;
 /// концов и стоп-линия между ними теснятся на пятнадцати метрах, и пешеход
 /// переходит на внешних плечах.
 const RULE_ZEBRA_ROOM: f32 = 30.0;
+/// Размеченный переход OSM на той же улице ближе этого к точке узла — и
+/// зебры по правилу на плечах этой улицы нет: переход узла уже есть по
+/// данным, м. Та же досягаемость, на которой переход становится зеброй
+/// самого плеча ([`ARM_CROSSING_REACH`]).
+const RULE_ZEBRA_DATA_REACH: f32 = ARM_CROSSING_REACH;
 /// Ранг ([`class_rank`]) улицы, без которой в кластере зебры по правилу нет,
 /// если узел не под светофором: `tertiary`.
 const RULE_ZEBRA_RANK: u8 = 2;
@@ -959,6 +964,21 @@ impl NodePaint {
                 .map(|(along, _)| (along - edge) * dir)
                 .filter(|ahead| *ahead > 0.0)
                 .fold(f32::INFINITY, f32::min);
+            // переход этой же улицы по данным у самого узла — на любом её
+            // плече: мапер разметил, где здесь переходят, и зебра по правилу
+            // на другом плече встала бы второй в двух десятках метров от
+            // первой (Тула, витрина 12: Т Халтурины с Красноармейским)
+            let crossed_by_data = visits
+                .keys()
+                .filter(|&&road| street(road) == street(arm.road))
+                .any(|&road| {
+                    let walk = Walk::new(paths[road].as_ref());
+                    crossings[road].iter().any(|crossing| {
+                        walk.at(crossing.along).is_some_and(|(point, _)| {
+                            point.distance(arm.at) <= RULE_ZEBRA_DATA_REACH
+                        })
+                    })
+                });
             let zebra = match osm {
                 Some((_, along)) => {
                     let ahead = ((along - near) * dir).max(first);
@@ -975,6 +995,7 @@ impl NodePaint {
                     && (sidewalk_streets >= 2
                         || (signalized && drawn[arm.road].sidewalk().both()))
                     && room >= RULE_ZEBRA_ROOM
+                    && !crossed_by_data
                     && !link
                     && !drawn[arm.road].highway.is_link())
                 .then_some((edge + dir * first, false)),

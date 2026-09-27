@@ -189,6 +189,46 @@ fn a_short_link_between_two_nodes_gets_no_rule_zebras() {
     assert_eq!(link(60.0).zebras.len(), 2);
 }
 
+/// Размеченный переход OSM на одном плече улицы снимает зебру по правилу с
+/// другого её плеча: узел уже переходят по данным, и вторая зебра в двух
+/// десятках метров от первой — лишняя (Тула, витрина 12). Без перехода оба
+/// плеча получают свою.
+#[test]
+fn an_osm_crossing_of_the_street_drops_the_rule_zebra_on_its_other_arm() {
+    let at = Vec2::new(100.0, -20.0);
+    let across = road(
+        vec![Vec2::new(100.0, -80.0), at, NODE, Vec2::new(100.0, 80.0)],
+        8.0,
+        Highway::Residential,
+        2,
+    );
+    let bare = paint_of(
+        vec![through(Highway::Tertiary), across.clone()],
+        Vec::new(),
+        EVERYTHING,
+    );
+    assert_eq!(bare.zebras.len(), 2, "{:?}", bare.zebras);
+    let crossing = RoadNode {
+        pos: at,
+        kind: RoadNodeKind::Crossing {
+            signals: false,
+            island: false,
+            marked: true,
+        },
+    };
+    let mapped = paint_of(
+        vec![through(Highway::Tertiary), across],
+        vec![crossing],
+        EVERYTHING,
+    );
+    assert_eq!(mapped.zebras.len(), 1, "{:?}", mapped.zebras);
+    let zebra = mapped.zebras[0];
+    assert!(
+        (zebra.from.y + 20.0).abs() < 1.0,
+        "зебра — по данным: {zebra:?}"
+    );
+}
+
 #[test]
 fn an_equal_side_street_does_not_break_the_through_one_either() {
     let paint = paint_of(
