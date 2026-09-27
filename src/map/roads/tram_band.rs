@@ -23,7 +23,7 @@ use i_overlay::mesh::style::{LineCap, LineJoin, OutlineStyle};
 use super::network::pairs::Median;
 use crate::map::along::simplify;
 use crate::map::grid::Grid;
-use crate::map::osm::model::{RailKind, RailLine, polyline_length};
+use crate::map::osm::model::{RailKind, RailLine, distance_to_segment, polyline_length};
 use crate::map::osm::{RoadClass, RoadLine};
 use crate::map::shapes::{ARC, Contour, Shape, stroke};
 
@@ -48,6 +48,14 @@ const MIN_RUN: f32 = 12.0;
 const SIMPLIFY_TOLERANCE: f32 = 0.05;
 /// Ячейка сетки звеньев улиц, м.
 const CELL: f32 = 32.0;
+/// Непокрытый участок пути между двумя кусками полосы короче этого, м,
+/// зарастает, если весь лежит у асфальта: трамвай между половинами
+/// проспекта проходит узел, где разделительная кончилась, а до лент половин
+/// от путей больше полуширины — без моста полоса рвалась посреди перекрёстка.
+const BRIDGE_MAX: f32 = 40.0;
+/// Насколько проба моста может отойти от ленты улицы, м, оставаясь у
+/// асфальта: пути посреди узла разделённой улицы — в 3 м от кромок половин.
+const BRIDGE_SLACK: f32 = 4.0;
 
 /// Куски трамвайных путей, лежащие под асфальтом: по улицам `roads`,
 /// нарисованным по `paths`, и по мощёным разделительным `medians`.
@@ -83,7 +91,12 @@ pub fn tram_bands(
             continue;
         }
         for pair in path.windows(2) {
-            links.insert_segment(pair[0], pair[1], half, (pair[0], pair[1], half));
+            links.insert_segment(
+                pair[0],
+                pair[1],
+                half + BRIDGE_SLACK,
+                (pair[0], pair[1], half),
+            );
         }
     }
     // мощёная разделительная — вместе с внутренними полосами половин по
@@ -91,7 +104,12 @@ pub fn tram_bands(
     for median in medians.iter().filter(|median| median.is_paved()) {
         let half = median.apart() / 2.0 + TRAM_BAND_WIDTH;
         for pair in median.midline.windows(2) {
-            links.insert_segment(pair[0], pair[1], half, (pair[0], pair[1], half));
+            links.insert_segment(
+                pair[0],
+                pair[1],
+                half + BRIDGE_SLACK,
+                (pair[0], pair[1], half),
+            );
         }
     }
     let covered = |at: Vec2, heading: Vec2| {
@@ -111,9 +129,19 @@ pub fn tram_bands(
             (from + direction * t).distance(at) + TRAM_BAND_WIDTH / 2.0 <= half + EDGE_SLACK
         })
     };
+    // у асфальта — в любую сторону от звена, для моста через узел
+    let near_asphalt = |at: Vec2| {
+        links
+            .at(at)
+            .iter()
+            .any(|&(from, to, half)| distance_to_segment(at, from, to) <= half + BRIDGE_SLACK)
+    };
     let mut bands = Vec::new();
     for rail in rails.iter().filter(|rail| rail.kind == RailKind::Tram) {
         let mut run: Vec<Vec2> = Vec::new();
+        // непокрытые пробы после куска: мост, пока он может зарасти
+        let mut gap: Vec<Vec2> = Vec::new();
+        let mut bridgeable = true;
         let mut flush = |run: &mut Vec<Vec2>| {
             if run.len() >= 2 && polyline_length(run) >= MIN_RUN {
                 let kept = simplify(run, false, SIMPLIFY_TOLERANCE, |_| false);
@@ -130,9 +158,19 @@ pub fn tram_bands(
             for step in from..=steps {
                 let at = pair[0].lerp(pair[1], step as f32 / steps as f32);
                 if covered(at, heading) {
+                    if !gap.is_empty() && bridgeable {
+                        run.append(&mut gap);
+                    }
+                    gap.clear();
+                    bridgeable = true;
                     run.push(at);
-                } else {
-                    flush(&mut run);
+                } else if !run.is_empty() {
+                    gap.push(at);
+                    bridgeable &= near_asphalt(at) && polyline_length(&gap) < BRIDGE_MAX;
+                    if !bridgeable {
+                        flush(&mut run);
+                        gap.clear();
+                    }
                 }
             }
         }
@@ -222,6 +260,29 @@ mod tests {
             "{high}"
         );
         assert_eq!(band_cover(&[band(0.0), band(10.0)]).len(), 2);
+    }
+
+    /// Путь проходит узел, где лента вдоль него прервалась: короткий участок
+    /// у асфальта зарастает мостом, длинный вне асфальта рвёт полосу.
+    #[test]
+    fn a_band_bridges_a_junction_but_not_open_ground() {
+        let street = |from: f32, to: f32| {
+            fixture::street(vec![Vec2::new(from, 0.0), Vec2::new(to, 0.0)], 14.0)
+        };
+        let track = tram(vec![Vec2::new(0.0, 1.5), Vec2::new(200.0, 1.5)]);
+        // узел: улица вдоль прервана на 25 м, поперёк идёт другая
+        let (west, east) = (street(0.0, 80.0), street(105.0, 200.0));
+        let across = fixture::street(vec![Vec2::new(92.0, -60.0), Vec2::new(92.0, 60.0)], 14.0);
+        let roads = [&west, &east, &across];
+        let paths: Vec<_> = roads.iter().map(|road| road.points.clone()).collect();
+        let bands = tram_bands(std::slice::from_ref(&track), &roads, &paths, &[]);
+        assert_eq!(bands.len(), 1, "узел зарос: {bands:?}");
+        assert!(polyline_length(&bands[0]) > 190.0);
+        // пустырь в 60 м между кусками улицы — не узел
+        let (west, east) = (street(0.0, 70.0), street(130.0, 200.0));
+        let roads = [&west, &east];
+        let paths: Vec<_> = roads.iter().map(|road| road.points.clone()).collect();
+        assert_eq!(tram_bands(&[track], &roads, &paths, &[]).len(), 2);
     }
 
     #[test]

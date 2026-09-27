@@ -239,7 +239,14 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     and of the paved medians; a probe is covered when a link runs **along** it
     (`ALONG_MIN` cos 0.8 — a tram crossing a street is a level crossing, not a lane),
     the foot falls on the link (±`LINK_SLACK` 1 m) and the strip fits inside that
-    asphalt (`EDGE_SLACK` 0.6 m). Covered runs shorter than `MIN_RUN` 12 m are dropped.
+    asphalt (`EDGE_SLACK` 0.6 m). An uncovered stretch between two covered probes of one
+    track is **bridged** when it is under `BRIDGE_MAX` 40 m and every probe of it lies within
+    `BRIDGE_SLACK` 4 m of some link's asphalt in any direction: tracks between the halves
+    of a divided street cross a junction where the median has ended and each half's
+    ribbon is 3 m short of them, and the band broke in mid-junction (gallery
+    `27_tram_through_junction`, Советская × Красноармейский, the author's report). Open
+    ground between two pieces of street is farther than that from any link and still cuts
+    the band. Covered runs shorter than `MIN_RUN` 12 m are dropped.
     Laid into `roads` **after every ribbon and carriageway area**, butt-ended, without a
     lane frame; the paint is its own layer above, so the lane lines and the double solid
     lie on top of it. The pieces are laid as **one cover** (`band_cover`): each stroked
@@ -1463,7 +1470,9 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
 ## The junction gallery — `examples/demos/roads`
 
 `cargo run --example roads` shows a city's typical road junctions in a column —
-twenty-six for Tula (the tram-bed and merge plans added three: `24_tram_bed_end`,
+twenty-seven for Tula (`27_tram_through_junction`, Советская × Красноармейский, the tram
+between the halves crossing a junction — the **Tram band** bridge; the tram-bed and merge
+plans added three: `24_tram_bed_end`,
 Советская at Коминтерна, where the tram turns off and the bed ends square at the nose of
 the lawn — all four ways are one-way and the pair goes on, so **not** a merge (**Tram
 bed**); `25_divided_merge`, Демидовская Плотина's halves ending on a two-way street at a
