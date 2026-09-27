@@ -215,7 +215,7 @@ pub fn stitches(
     let mut targets = vec![[None; 2]; roads.len()];
     let mut segments: Grid<(usize, usize)> = Grid::new(CELL);
     let mut widest = 0.0_f32;
-    let drawn = Drawn::new(roads, sidewalk);
+    let drawn = DrawnEdges::new(roads, sidewalk);
     for (index, road) in roads.iter().enumerate() {
         if !stitchable(road) {
             continue;
@@ -278,13 +278,15 @@ pub fn stitches(
 /// полуширина асфальта плюс тротуар, если он у неё нарисован. Одним типом, а не
 /// двумя срезами с общим индексом: зазор до цели меряется именно до этого края
 /// (см. [`stitches`]), и лента с её тротуаром обязаны ходить по коду парой.
-struct Drawn<'a, 'b> {
+/// Не путать с `roads::drawn::Drawn` — подготовленными дорогами целиком:
+/// здесь только кромки, которые меряют стежки.
+struct DrawnEdges<'a, 'b> {
     roads: &'a [&'b RoadLine],
     /// По индексу дороги, м.
     edges: Vec<f32>,
 }
 
-impl<'a, 'b> Drawn<'a, 'b> {
+impl<'a, 'b> DrawnEdges<'a, 'b> {
     fn new(roads: &'a [&'b RoadLine], sidewalk: impl Fn(&RoadLine) -> Option<f32>) -> Self {
         let edges = roads
             .iter()
@@ -298,7 +300,7 @@ impl<'a, 'b> Drawn<'a, 'b> {
 /// впереди ничего нет, торец уже лежит на чужой ленте или стежок прошёл бы
 /// сквозь дом или воду.
 fn stitch_end(
-    drawn: &Drawn,
+    drawn: &DrawnEdges,
     own: usize,
     end: Vec2,
     heading: Vec2,
