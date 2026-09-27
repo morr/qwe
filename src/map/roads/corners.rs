@@ -53,7 +53,7 @@ use super::drawn::{Axis, Drawn};
 use super::junctions::node_key;
 use crate::map::meshing::arc_steps;
 use crate::map::osm::model::{polyline_length, ring_area};
-use crate::map::osm::{Highway, RoadClass, RoadLine};
+use crate::map::osm::{Highway, RoadClass};
 
 /// Радиус бордюра по классу дороги, м; у пары берётся меньший. Между
 /// проспектами (`trunk`…`secondary` и их съезды) — 10 м, с улицей
@@ -615,9 +615,9 @@ mod tests {
     use super::super::network::pairs::PairRun;
     use super::super::tapers::Taper;
     use super::*;
-    use crate::map::osm::MapData;
     use crate::map::osm::fixture::street;
     use crate::map::osm::model::point_in_polygon;
+    use crate::map::osm::{MapData, RoadLine};
 
     fn returns_of(roads: &[RoadLine]) -> Vec<(RoadClass, Vec<Vec2>)> {
         walked_returns_of(roads, false).roads
