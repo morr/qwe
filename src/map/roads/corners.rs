@@ -865,10 +865,8 @@ mod tests {
         // сквозная — половина разделённой улицы, вторая половина слева (к
         // северу): с той стороны тротуара нет, и углов по нему тоже
         let map = map_of(&crossing());
-        let drawn = Drawn::for_test(&map).with_pairs(
-            0,
-            vec![PairRun::for_test(0.0, 100.0, 1, true, 0.0, true)],
-        );
+        let drawn = Drawn::for_test(&map)
+            .with_pairs(0, vec![PairRun::for_test(0.0, 100.0, 1, true, 0.0, true)]);
         let found = kerb_returns(&drawn, 1.0);
         assert_eq!(found.roads.len(), 4, "асфальт скругляется, как был");
         assert_eq!(found.sidewalks.len(), 2);

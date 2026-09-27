@@ -43,10 +43,10 @@ use super::network::pairs::{Median, PAIR_MIN, Pairs, TRAM_BED_MAX_GAP};
 use super::node_paint::PaintBreaks;
 use super::{ROAD_COLOR, ROAD_JOIN, RoadJoin, SIDEWALK_COLOR, push_ribbon};
 use crate::map::along::tip_of;
-use crate::map::spawn::GRASS_COLOR;
 use crate::map::meshing::{Break, MeshBuilder};
 use crate::map::osm::model::polyline_length;
 use crate::map::shapes::{ARC, Shape, contour_area, oriented, push_shape};
+use crate::map::spawn::GRASS_COLOR;
 
 /// Насколько середина может не доходить до края разрыва перекрёстка, чтобы её
 /// дотянули ([`reach_breaks`]), м.

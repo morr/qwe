@@ -867,7 +867,11 @@ pub fn mesh_roads(
             })
             .map(|&(_, end)| end)
             .collect();
-        for shape in merges::nose_fill(merge, &ribbon, &map.network, &ends,
+        for shape in merges::nose_fill(
+            merge,
+            &ribbon,
+            &map.network,
+            &ends,
             &median_drawing.lawn_kerbs,
         ) {
             push_shape(&mut streets, shape, ROAD_COLOR.to_linear());
