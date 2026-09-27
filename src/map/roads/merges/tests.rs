@@ -362,13 +362,52 @@ fn the_merge_axis_runs_from_the_node_to_the_median_or_until_the_halves_part() {
     let to_nose = merge_axis(merge, &drawn, &paths, &network, &[MedianEnd::Lawn(nose)]);
     let tip = *to_nose.last().unwrap();
     assert!((tip.x - (nose.x + 1.0)).abs() < 0.3, "{tip}");
-    // нос дальше, чем кромки сходятся, — осевая по земле не идёт
+    // нос дальше, чем кромки сходятся: до носа между половинами асфальт
+    // (`nose_fill`), и осевая идёт до него
     let far = Vec2::new(node().x - 50.0, node().y);
-    let short = merge_axis(merge, &drawn, &paths, &network, &[MedianEnd::Lawn(far)]);
-    assert_eq!(short.last(), free.last());
+    let long = merge_axis(merge, &drawn, &paths, &network, &[MedianEnd::Lawn(far)]);
+    assert!(
+        (long.last().unwrap().x - (far.x + 1.0)).abs() < 0.3,
+        "{long:?}"
+    );
     // до асфальтовой середины — сквозь, и смыкается с её торцом
     let paved = merge_axis(merge, &drawn, &paths, &network, &[MedianEnd::Paved(far)]);
     assert!(paved.last().unwrap().distance(far) < 0.01);
+}
+
+/// Где кромки половин разошлись, а газон ещё не начался, между ними асфальт
+/// до носа — и за острие, но не поверх бордюра газона.
+#[test]
+fn the_ground_between_parted_halves_is_paved_up_to_the_lawn_nose() {
+    use crate::map::shapes::{oriented, point_in_shape};
+    let roads = divided_into(two_way_east());
+    let (merges, network, paths) = found(&roads);
+    let merge = &merges.list[0];
+    let nose = Vec2::new(node().x - 50.0, node().y);
+    // газон — от острия на запад
+    let lawn = |x: f32| Vec2::new(x, node().y);
+    let kerb = vec![oriented(
+        &[
+            lawn(nose.x) + Vec2::new(0.0, -1.5),
+            lawn(nose.x - 30.0) + Vec2::new(0.0, -1.5),
+            lawn(nose.x - 30.0) + Vec2::new(0.0, 1.5),
+            lawn(nose.x) + Vec2::new(0.0, 1.5),
+        ],
+        true,
+    )];
+    let fill = super::nose_fill(merge, &paths, &network, &[MedianEnd::Lawn(nose)], &[kerb]);
+    let covered = |at: Vec2| fill.iter().any(|shape| point_in_shape(at, shape));
+    // между разошедшимися половинами перед носом — асфальт
+    assert!(covered(lawn(nose.x + 5.0)), "{fill:?}");
+    // за острие, но в стороне от бордюра — тоже
+    assert!(
+        covered(lawn(nose.x - 2.0) + Vec2::new(0.0, 2.5)),
+        "{fill:?}"
+    );
+    // на газоне — нет
+    assert!(!covered(lawn(nose.x - 2.0)), "{fill:?}");
+    // без газона — ничего
+    assert!(super::nose_fill(merge, &paths, &network, &[], &[]).is_empty());
 }
 
 #[test]

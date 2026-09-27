@@ -1159,10 +1159,15 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
         single solid below): from the node up the middle between the halves, to the nearest
         `MedianEnd` of the pair's median within `AXIS_REACH` 60 m — a paved median's
         midline tip (the median's own double solid no longer breaks at a pure merge node, so
-        the two meet), or a lawn kerb point less `NOSE_CLEARANCE` 1 m. Before a lawn or
-        with no median it stops where the halves' kerbs part (axes further apart than the
-        two half widths): at Рязанская the halves' ribbons leave a wedge of bare ground
-        before the lawn's nose, and the axis stops at its tip.
+        the two meet), or a lawn kerb point less `NOSE_CLEARANCE` 1 m. With no median it
+        stops where the halves' kerbs part (axes further apart than the two half widths).
+      - **Asphalt up to the lawn's nose** (`nose_fill`): where the halves' kerbs have parted
+        and the lawn has not begun, the ground between them was bare — a wedge before the
+        nose at Рязанская (sample 26). The outline between the halves' axes, from the node
+        to `NOSE_FILL_BEYOND` 4 m past the nose's tip, less the lawn kerbs within
+        `NOSE_FILL_NEAR` 10 m (the grass lies under the streets, and a cut square across
+        the tip left specks of ground at the kerb's corners), goes into `roads` before the
+        ribbons. Only before a lawn: a paved median is asphalt to the node anyway.
       - **The ruts follow the ramp.** A pure merge node takes the halves' and the
         continuation's `asphalt` breaks off too, and the half's fill gets the same ramp as a
         lane profile: `MergeRamp::lane_profile` samples `frame_at` every `RAMP_STEP` along

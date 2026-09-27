@@ -1501,18 +1501,23 @@ pub fn mesh_roads(
             lawn_kerbs.extend(kerbs);
         }
     }
-    // осевая продолжения — за узел слияния, до разделительной его пары
-    if style.markings {
-        for merge in merges.list.iter().filter(|merge| merge.pure) {
-            let halves = merge.halves.map(street_of);
-            let ends: Vec<merges::MedianEnd> = median_ends
-                .iter()
-                .filter(|(pair, _)| {
-                    pair.iter()
-                        .all(|street| street.is_some() && halves.contains(street))
-                })
-                .map(|&(_, end)| end)
-                .collect();
+    // за узлом слияния, до разделительной его пары: асфальт до носа газона —
+    // под лентами половин — и осевая продолжения
+    streets.set_lanes(None);
+    for merge in merges.list.iter().filter(|merge| merge.pure) {
+        let halves = merge.halves.map(street_of);
+        let ends: Vec<merges::MedianEnd> = median_ends
+            .iter()
+            .filter(|(pair, _)| {
+                pair.iter()
+                    .all(|street| street.is_some() && halves.contains(street))
+            })
+            .map(|&(_, end)| end)
+            .collect();
+        for shape in merges::nose_fill(merge, &stitched, &map.network, &ends, &lawn_kerbs) {
+            push_shape(&mut streets, shape, ROAD_COLOR.to_linear());
+        }
+        if style.markings {
             let axis = merges::merge_axis(merge, &drawn, &stitched, &map.network, &ends);
             painter.paint_merge_axis(&axis, lane_count(drawn[merge.street]));
         }

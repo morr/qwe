@@ -21,6 +21,9 @@
 //! Только картинка: `RoadLine` и оси не меняются.
 
 use bevy::prelude::*;
+use i_overlay::core::fill_rule::FillRule;
+use i_overlay::core::overlay_rule::OverlayRule;
+use i_overlay::float::single::SingleFloatOverlay;
 
 use super::network::pairs::PairRun;
 use super::network::{RoadNetwork, RoadNodes};
@@ -30,6 +33,7 @@ use super::{is_carriageway, lane_count, smoothstep};
 use crate::map::meshing::{LaneFrame, miter_offsets};
 use crate::map::osm::RoadLine;
 use crate::map::osm::model::{point_at_arc_length, polyline_length};
+use crate::map::shapes::{Shape, oriented};
 
 /// Косинус угла, в котором обе половины уходят от узла в одну сторону, а
 /// продолжение — в обратную: 40°. Половины в OSM сходятся к узлу клином
@@ -519,11 +523,91 @@ impl MedianEnd {
     }
 }
 
+/// Ближайший к узлу слияния из `ends` в [`AXIS_REACH`].
+fn nearest_end(merge: &Merge, ends: &[MedianEnd]) -> Option<MedianEnd> {
+    ends.iter()
+        .copied()
+        .filter(|end| end.at().distance(merge.node) <= AXIS_REACH)
+        .min_by(|a, b| {
+            a.at()
+                .distance(merge.node)
+                .total_cmp(&b.at().distance(merge.node))
+        })
+}
+
+/// Асфальт между половинами от узла слияния до носа газона их пары — контур
+/// между осями половин, под их лентами: где кромки половин разошлись, а газон
+/// ещё не начался, лежал клин голой земли (Рязанская, пример 26). Заходит за
+/// острие носа на [`NOSE_FILL_BEYOND`] за вычетом бордюра газона `kerbs` —
+/// трава лежит под асфальтом улиц, и срез поперёк острия оставлял у углов
+/// бордюра клочки земли. Без газона в [`AXIS_REACH`] — пусто: у асфальтовой
+/// середины асфальт и так до узла.
+pub fn nose_fill(
+    merge: &Merge,
+    paths: &[impl AsRef<[Vec2]>],
+    network: &RoadNetwork,
+    ends: &[MedianEnd],
+    kerbs: &[Shape],
+) -> Vec<Shape> {
+    let Some(MedianEnd::Lawn(nose)) = nearest_end(merge, ends) else {
+        return Vec::new();
+    };
+    let [first, second] = merge.halves;
+    let own = from_node(first, true, AXIS_REACH, paths, network);
+    let theirs = from_node(second, false, AXIS_REACH, paths, network);
+    let (mut outline, mut back) = (vec![merge.node], Vec::new());
+    let mut beyond = None;
+    let mut at = MERGE_STEP;
+    while at <= AXIS_REACH {
+        let (Some(a), Some(b)) = (along_path(&own, at), along_path(&theirs, at)) else {
+            return Vec::new();
+        };
+        outline.push(a);
+        back.push(b);
+        let middle = (a + b) / 2.0;
+        match beyond {
+            Some(end) if at >= end => break,
+            None if (nose - middle).dot(middle - merge.node) <= 0.0 => {
+                beyond = Some(at + NOSE_FILL_BEYOND);
+            }
+            _ => {}
+        }
+        at += MERGE_STEP;
+    }
+    if beyond.is_none() || outline.len() < 3 {
+        return Vec::new();
+    }
+    outline.extend(back.into_iter().rev());
+    let fill = oriented(&outline, true);
+    let near: Vec<Shape> = kerbs
+        .iter()
+        .filter(|shape| {
+            shape.first().is_some_and(|outer| {
+                outer
+                    .iter()
+                    .any(|point| Vec2::from(*point).distance(nose) < NOSE_FILL_NEAR)
+            })
+        })
+        .cloned()
+        .collect();
+    if near.is_empty() {
+        return vec![vec![fill]];
+    }
+    vec![vec![fill]].overlay(&near, OverlayRule::Difference, FillRule::NonZero)
+}
+
+/// Насколько асфальт слияния заходит за острие носа газона, м ([`nose_fill`]):
+/// с запасом на скругление носа.
+const NOSE_FILL_BEYOND: f32 = 4.0;
+/// Бордюр газона, вычитаемый из асфальта слияния, — тот, чей контур ближе
+/// этого к острию носа, м.
+const NOSE_FILL_NEAR: f32 = 10.0;
+
 /// Осевая продолжения, заведённая за узел слияния: по середине между путями
-/// половин от узла — до ближайшего к узлу из `ends` в [`AXIS_REACH`]. Перед
-/// газоном или без разделительной — не дальше, чем кромки половин сходятся:
-/// где они разошлись, между ними земля (у Рязанской — клин перед носом
-/// газона).
+/// половин от узла — до ближайшего к узлу из `ends` в [`AXIS_REACH`], перед
+/// газоном — с отступом (между половинами до носа лежит [`nose_fill`]). Без
+/// разделительной — не дальше, чем кромки половин сходятся: где они
+/// разошлись, между ними земля.
 pub fn merge_axis(
     merge: &Merge,
     roads: &[&RoadLine],
@@ -535,16 +619,7 @@ pub fn merge_axis(
     let own = from_node(first, true, AXIS_REACH, paths, network);
     let theirs = from_node(second, false, AXIS_REACH, paths, network);
     let apart = (roads[first].width + roads[second].width) / 2.0;
-    let nearest = ends
-        .iter()
-        .copied()
-        .filter(|end| end.at().distance(merge.node) <= AXIS_REACH)
-        .min_by(|a, b| {
-            a.at()
-                .distance(merge.node)
-                .total_cmp(&b.at().distance(merge.node))
-        });
-    let paved = matches!(nearest, Some(MedianEnd::Paved(_)));
+    let nearest = nearest_end(merge, ends);
     let target = nearest.map(|end| match end {
         MedianEnd::Paved(at) => (at, 0.0),
         MedianEnd::Lawn(at) => (at, NOSE_CLEARANCE),
@@ -571,8 +646,8 @@ pub fn merge_axis(
                 }
                 break;
             }
-            // кромки разошлись: между половинами уже не асфальт
-            _ if !paved && a.distance(b) > apart => break,
+            // кромки разошлись, а разделительной нет: между половинами земля
+            _ if nearest.is_none() && a.distance(b) > apart => break,
             _ => line.push(middle),
         }
         at += MERGE_STEP;
