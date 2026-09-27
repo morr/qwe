@@ -289,11 +289,19 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
       lot's first try) two double lines lay on each other a few centimetres off — the
       author's report. The «Макси» boulevard is two `service` drives, which is why a
       `service` one-way is `pairable`. **At a gore** (`Gores::reach`, shared with the
-      paint layer) the ends of the midline lying inside the hatching are trimmed — the
-      median exists while the gap is under 3 m, the gore from 0.6 m up, so they overlap
-      — and the line is then carried on along its heading up to `MEDIAN_REACH` 8 m,
-      stopping `MEDIAN_GORE_GAP` 0.6 m short of the hatching: flush, its end fused with
-      the island's outline.
+      paint layer) the midline is **cut by the hatching** — the median exists while the
+      gap is under 3 m, the gore from 0.6 m up, so they overlap: probed every
+      `MEDIAN_PROBE_STEP` 0.5 m, it falls into runs outside the hatching (shorter than
+      `MEDIAN_RUN_MIN` 2 m dropped), and each run is carried on along its heading up to
+      `MEDIAN_REACH` 8 m, stopping `MEDIAN_GORE_GAP` 0.6 m short of the hatching: flush,
+      its end fused with the island's outline. Only the ends used to be trimmed, and a
+      long gore where the approach meets the ring almost parallel had the midline run
+      right through it, neither end inside — a double solid inside the hatching, a white
+      «ladder» on the «Макси» boulevard (scout C2). A midline that meets no hatching is
+      returned as it was, without the probes as vertices. `reach` therefore returns
+      `Vec<Vec<Vec2>>`: the lot keeps each run with the pair's `apart`, the paint layer
+      paints each run and hands its outermost two tips to the merges. Pinned by
+      `gores::tests`.
     - **Gores — the splitter islands at a roundabout** (`roads/gores.rs`, the author's
       ask: «как у Яндекса»). An approach in OSM is two one-way ways, entry and exit,
       fanning out to two nodes of the ring; the wedge between them and the ring is flat
@@ -352,6 +360,13 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
         a hatching of the same weight and the island read as a smudge (04, 17); Yandex
         reads an island by its outline first.
         One shape for both (tried first) showed ground wherever the opening had cut.
+        **A sliver is not hatched**: an opened shape that nowhere reaches
+        `GORE_MIN_WIDTH` 1.5 m (`is_wide` — shrunk by half of it, nothing is left) keeps
+        its asphalt but gets no outline and no stripes, and the double solid runs
+        through the gap instead. In a metre-wide sliver the outline and the stripes
+        merged into a ladder with the double line inside it — Tula, a 25 × 1 m sliver on
+        the «Макси» boulevard's approach to the mini-ring (6641, 3156). The gores of
+        04 and 17 are several metres wide and do not change.
       - **The paint is the road paint layer's** (roads plan, stage 6): `Gores::islands`
         hands each hatched shape and the direction across its stripes to
         `Painter::paint_island`, which lays the outline as a closed paint strip

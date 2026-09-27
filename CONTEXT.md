@@ -1153,8 +1153,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   kerb on the lot but its **double solid line** again in `lot_lines` (`Z_LOT_LINES`
   2.003, flat paint) — the street paint layer lies under the lot's asphalt; the lot takes
   the stretch of the network's median over it and does not look for pairs itself. At a
-  gore the line stops `MEDIAN_GORE_GAP` 0.6 m short of the hatching (`Gores::reach`,
-  shared with the paint layer). **Gore** (`roads/gores.rs`) — the
+  gore the line is cut by the hatching and each piece stops `MEDIAN_GORE_GAP` 0.6 m
+  short of it (`Gores::reach`, shared with the paint layer); a gore that nowhere reaches
+  `GORE_MIN_WIDTH` 1.5 m is not hatched at all — the double solid runs through it. **Gore** (`roads/gores.rs`) — the
   splitter island at a roundabout: the wedge between the entry arm, the exit arm and the
   ring is **asphalt with diagonal hatching**, not a triangle of sidewalk or kerb. A
   property of the network at a ring, not of a lot: computed for every roundabout
