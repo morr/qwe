@@ -256,8 +256,9 @@ be called alone:
   `infer_sidewalks(&mut roads, storeys_at)` — it **takes** the measure instead of building
   it, so `finish_parse` builds `Districts` lazily (only if a street is asked) and three
   tests call it with a closure and not a single building
-  (`infer_sidewalks_drops_the_band_only_among_low_blocks` and its two neighbours). Before the house pull and the block pull, so
-  both push and pull against the sidewalk that is drawn. The rule itself — `roads.md`,
+  (`infer_sidewalks_drops_the_band_only_among_low_blocks` and its two neighbours). Before
+  the house pull and the block pull, so both push and pull against the sidewalk that is
+  drawn. The rule itself — `roads.md`,
   **Sidewalks**; logged as `N of M untagged residential streets left without sidewalks`.
 - **Squared houses** (`parse.rs::square_skewed_houses`) — a small house outlined as a
   **skewed quad** is replaced by a rectangle. The private sector is traced by eye off

@@ -83,7 +83,10 @@ fn sidewalks_belong_to_streets_not_service_roads() {
     let mut service = fixture::street(line.clone(), 8.0);
     service.highway = Highway::Service;
     assert_eq!(service.sidewalk().band(), None);
-    let residential = fixture::street(line.clone(), 8.0).sidewalk().band().unwrap();
+    let residential = fixture::street(line.clone(), 8.0)
+        .sidewalk()
+        .band()
+        .unwrap();
     let mut primary = fixture::street(line, 16.0);
     primary.highway = Highway::Primary;
     let primary = primary.sidewalk().band().unwrap();

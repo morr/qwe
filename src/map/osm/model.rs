@@ -1643,7 +1643,11 @@ mod tests {
         let profile = service.sidewalk();
         assert_eq!(profile.band(), None);
         assert_eq!(profile.on(0), None);
-        assert_eq!(profile.kerb_edge(4.0, 1.2), 5.2, "без полосы — бордюр стоянки");
+        assert_eq!(
+            profile.kerb_edge(4.0, 1.2),
+            5.2,
+            "без полосы — бордюр стоянки"
+        );
         assert_eq!(profile.verge_edge(4.0, 2.0), None);
     }
 

@@ -414,10 +414,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   sees the straightened outline.
 - **Pulled-back house** (`parse.rs::pull_houses_off_sidewalks`) — a building whose outline
   reaches into a street's **verge edge** (half the width + the sidewalk band by class + 2 m,
-  the `sidewalk=*` tag not read — see **Sidewalk profile**) is moved at parse, whole and with its doors, straight away from the street, by at
-  most 6 m — and its **row** with it: neighbours on the same side of the same street standing
-  on the same line take the same shift, so the facade line stays straight. A house needing
-  more than 6 m is moved by 6 m on its own, outside any row. A shift that would bring the
+  the `sidewalk=*` tag not read — see **Sidewalk profile**) is moved at parse, whole and
+  with its doors, straight away from the street, by at most 6 m — and its **row** with
+  it: neighbours on the same side of the same street standing on the same line take the
+  same shift, so the facade line stays straight. A house needing more than 6 m is moved by 6 m on its own, outside any row. A shift that would bring the
   house within 0.5 m of something it stood farther from — another building, a road or rail
   edge, a wall, fence, pipe, watercourse, water body, industrial cylinder — is shortened
   (¾, ½, ¼), and dropped if even ¼ does. Not when the street runs through it, a vertex is

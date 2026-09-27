@@ -1,6 +1,6 @@
 use super::*;
-use crate::map::osm::{RoadNode, SidewalkSide};
 use crate::map::osm::fixture::street;
+use crate::map::osm::{RoadNode, SidewalkSide};
 use crate::map::roads::junctions::marking_breaks;
 use crate::map::roads::network::RoadNetwork;
 use crate::map::roads::network::pairs::PairRun;

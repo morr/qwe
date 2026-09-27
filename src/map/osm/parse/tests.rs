@@ -6,6 +6,7 @@ use super::tags::{building_height, colour, parse_measure};
 use crate::map::osm::fixture::{
     Overpass, building, closed, fence, rect, square, street, water_area,
 };
+use crate::map::osm::model::sidewalk_band;
 use crate::map::osm::model::{
     BuildingUse, Colours, FenceKind, Highway, LaneTurn, PitchKind, RailKind, RoadAreaKind,
     RoadClass, RoadNodeKind, Sacred, SacredForm, ServiceTrack, StructureKind, WaterKind,
@@ -14,7 +15,6 @@ use crate::map::osm::model::{
 use crate::map::osm::planting::{
     TREE_CROWN_REACH, TREE_MIN_SPACING, TREE_SHORE_CLEARANCE, TREE_WALL_CLEARANCE, near_area_edge,
 };
-use crate::map::osm::model::sidewalk_band;
 use crate::settings::MAP_SIZE;
 
 /// Фикстуры строятся вокруг гео-центра Тулы — города по умолчанию.
@@ -1112,10 +1112,7 @@ fn sidewalk_tags_pick_the_sides() {
     );
     let bare = |pairs: &[(&str, &str)]| untagged_sidewalks(&tags(pairs));
     assert_eq!(bare(&[]), [SidewalkSide::Inferred; 2]);
-    assert_eq!(
-        bare(&[("surface", "asphalt")]),
-        [SidewalkSide::Inferred; 2]
-    );
+    assert_eq!(bare(&[("surface", "asphalt")]), [SidewalkSide::Inferred; 2]);
     assert_eq!(
         bare(&[("surface", "gravel")]),
         [SidewalkSide::None; 2],
@@ -2666,12 +2663,7 @@ fn a_block_edge_is_pulled_under_the_asphalt() {
 /// отодвигается от **края обочины** по классу, тег не смотрит.
 #[test]
 fn the_parse_reads_the_mapped_edge_for_blocks_and_the_verge_for_houses() {
-    let street = |y: f32| {
-        vec![
-            CENTER + Vec2::new(-400.0, y),
-            CENTER + Vec2::new(400.0, y),
-        ]
-    };
+    let street = |y: f32| vec![CENTER + Vec2::new(-400.0, y), CENTER + Vec2::new(400.0, y)];
     // квартал под улицей (с юга), зазор 6.5 м от оси
     let block = |y: f32| {
         rect(
@@ -2686,7 +2678,10 @@ fn the_parse_reads_the_mapped_edge_for_blocks_and_the_verge_for_houses() {
         )
     };
     let map = Overpass::new(CITY)
-        .way(&[("highway", "residential"), ("sidewalk", "no")], street(0.0))
+        .way(
+            &[("highway", "residential"), ("sidewalk", "no")],
+            street(0.0),
+        )
         .way(
             &[("highway", "residential"), ("sidewalk", "left")],
             street(500.0),
@@ -2740,7 +2735,11 @@ fn blocks_are_pulled_to_the_width_the_sections_gave() {
     );
     let map = Overpass::new(CITY)
         .way(
-            &[("highway", "residential"), ("lanes", "4"), ("sidewalk", "both")],
+            &[
+                ("highway", "residential"),
+                ("lanes", "4"),
+                ("sidewalk", "both"),
+            ],
             street,
         )
         .area(&[("landuse", "residential")], block)
