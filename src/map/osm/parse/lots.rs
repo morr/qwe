@@ -35,7 +35,7 @@ use crate::map::osm::model::{
     ring_bounds,
 };
 use crate::map::parking::is_ground;
-use crate::map::roads::{is_carriageway, sidewalk_width};
+use crate::map::roads::{is_carriageway, mapped_sidewalk};
 use crate::map::shapes::{
     ARC, Contour, Shape, area_contours, contour_area, contour_bounds, point_in_shape, ring_of,
     shape_area, stroke,
@@ -220,10 +220,7 @@ impl<'a> Around<'a> {
             .flat_map(|road| {
                 // тротуар — только тот, что рисуется (`sidewalk=separate|no`
                 // его не дают), как у дотягивания кварталов
-                let sidewalk = sidewalk_width(road)
-                    .filter(|_| road.sidewalks.contains(&true))
-                    .unwrap_or_default();
-                let reach = road.width / 2.0 + sidewalk;
+                let reach = road.width / 2.0 + mapped_sidewalk(road).unwrap_or_default();
                 let drive = !is_carriageway(road);
                 road.points.windows(2).map(move |pair| RoadLink {
                     from: pair[0],

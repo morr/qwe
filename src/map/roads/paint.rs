@@ -50,7 +50,7 @@ use super::node_paint::{Pocket, STOP_WIDTH, StopLine, ZEBRA_LENGTH, Zebra};
 use super::shape::lane_width;
 use super::tapers::{self, Tapers};
 use super::turns::{JunctionWear, LaneArrow};
-use super::{is_carriageway, lane_count};
+use super::{is_carriageway, lane_count, smoothstep};
 use crate::map::along::{arclengths, place_on_path};
 use crate::map::grid::Grid;
 use crate::map::meshing::{
@@ -83,6 +83,10 @@ const APPROACH: f32 = 25.0;
 /// 15 см, как у настоящей (1.3 по ГОСТ — 10–15 см). Полметра читались двумя
 /// отдельными линиями, а не одной двойной.
 const DOUBLE_OFFSET: f32 = (0.15 + LINE_WIDTH) / 2.0;
+/// Со скольких полос осевая двусторонней улицы — двойная сплошная; у́же — нет.
+/// Одно правило и для осевой улицы, и для осевой, заведённой от узла слияния
+/// ([`Painter::paint_merge_axis`]).
+const DOUBLE_AXIS_LANES: u8 = 4;
 /// Цвет краски — белый с лёгкой желтизной старой разметки; прозрачность —
 /// ручка «Paint» ([`RoadPaintStyle::paint`]), не цвет.
 const PAINT_COLOR: Color = Color::srgb(0.95, 0.95, 0.93);
@@ -484,19 +488,25 @@ impl MergeRamp {
         }
     }
 
+    /// Обратное [`Self::distance`]: метров от начала way у точки клина в
+    /// `from_node` метрах от узла.
+    fn along(self, from_node: f32) -> f32 {
+        if self.away {
+            from_node - self.start
+        } else {
+            self.start - from_node
+        }
+    }
+
     /// Раскладка в `along` метрах от начала way с телом `body`; за клином —
     /// `None`. Кромка со стороны пары сжимается к оси продолжения на дальней
     /// половине клина: лишняя полоса кончается там, и её линия гаснет в
     /// стороне от осевой, а не у самой двойной сплошной.
     fn frame_at(self, body: LaneFrame, along: f32) -> Option<LaneFrame> {
-        let smooth = |t: f32| {
-            let t = t.clamp(0.0, 1.0);
-            t * t * (3.0 - 2.0 * t)
-        };
         let t = self.distance(along) / self.length;
         (t < 1.0).then(|| {
-            let mut frame = self.frame.lerp(body, smooth(t));
-            let early = self.frame.lerp(body, smooth(2.0 * t - 1.0));
+            let mut frame = self.frame.lerp(body, smoothstep(t));
+            let early = self.frame.lerp(body, smoothstep(2.0 * t - 1.0));
             if self.frame.high.abs() < self.frame.low.abs() {
                 frame.high = early.high;
             } else {
@@ -513,12 +523,7 @@ impl MergeRamp {
         let steps = (self.length / RAMP_STEP).ceil().max(1.0) as usize;
         let mut profile: Vec<(f32, LaneFrame)> = (0..=steps)
             .filter_map(|step| {
-                let from_node = self.length * step as f32 / steps as f32;
-                let along = if self.away {
-                    from_node - self.start
-                } else {
-                    self.start - from_node
-                };
+                let along = self.along(self.length * step as f32 / steps as f32);
                 (0.0..=total)
                     .contains(&along)
                     .then(|| (along, self.frame_at(body, along).unwrap_or(body)))
@@ -685,12 +690,7 @@ impl Painter {
             if let Some(ramp) = ramp {
                 let steps = (ramp.length / RAMP_STEP).ceil() as usize;
                 for step in 0..=steps {
-                    let from_node = ramp.length * step as f32 / steps.max(1) as f32;
-                    let at = if ramp.away {
-                        from_node - ramp.start
-                    } else {
-                        ramp.start - from_node
-                    };
+                    let at = ramp.along(ramp.length * step as f32 / steps.max(1) as f32);
                     insert_at(&mut path, &mut along, &mut to_break, at);
                 }
             }
@@ -761,7 +761,7 @@ impl Painter {
         for k in lowest.floor() as i32..=highest.ceil() as i32 {
             let step = k as f32 * lane_width();
             let axis = !road.oneway && lanes.is_multiple_of(2) && (body.origin + step).abs() < 1e-3;
-            let kind = match (axis, lanes >= 4) {
+            let kind = match (axis, lanes >= DOUBLE_AXIS_LANES) {
                 (true, true) => LineKind::Double,
                 (true, false) => LineKind::Axis,
                 (false, _) => LineKind::Lane,
@@ -899,9 +899,9 @@ impl Painter {
 
     /// Осевая продолжения, заведённая от узла слияния между половинами
     /// (`roads/merges.rs::merge_axis`): сплошная, двойная — если двойная у
-    /// продолжения (`double`). Разрывов на ней нет: узел слияния — не
-    /// перекрёсток.
-    pub fn paint_merge_axis(&mut self, line: &[Vec2], double: bool) {
+    /// продолжения, в `lanes` полос ([`DOUBLE_AXIS_LANES`]). Разрывов на ней
+    /// нет: узел слияния — не перекрёсток.
+    pub fn paint_merge_axis(&mut self, line: &[Vec2], lanes: u8) {
         if line.len() < 2 {
             return;
         }
@@ -914,7 +914,7 @@ impl Painter {
                 alpha: 1.0,
             })
             .collect();
-        let kind = if double {
+        let kind = if lanes >= DOUBLE_AXIS_LANES {
             LineKind::Double
         } else {
             LineKind::AxisSolid

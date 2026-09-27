@@ -448,8 +448,9 @@ struct ShadowPoint {
 
 /// Ломаная, догущённая до шага не крупнее `step`: исходные вершины остаются на
 /// месте, между ними встают промежуточные. Нужна там, где вдоль ленты меняется
-/// не только направление, но и величина — здесь высота настила.
-fn densify(points: &[Vec2], step: f32) -> Vec<Vec2> {
+/// не только направление, но и величина — здесь высота настила; разбор так же
+/// расставляет пробы этажности вдоль улицы (`osm/parse.rs::infer_sidewalks`).
+pub(crate) fn densify(points: &[Vec2], step: f32) -> Vec<Vec2> {
     let Some((last, rest)) = points.split_last() else {
         return Vec::new();
     };
@@ -664,11 +665,16 @@ pub fn sidewalk_width(road: &RoadLine) -> Option<f32> {
 /// Улица с `sidewalk=no|separate` с обеих сторон ленты не несёт; с одной —
 /// её кладёт [`push_sidewalk`] по [`RoadLine::sidewalks`].
 fn drawn_sidewalk(style: &RoadStyle, road: &RoadLine) -> Option<f32> {
-    style
-        .sidewalks
-        .then(|| sidewalk_width(road))
-        .flatten()
-        .filter(|_| road.sidewalks.contains(&true))
+    style.sidewalks.then(|| mapped_sidewalk(road)).flatten()
+}
+
+/// Ширина тротуара, который у дороги есть на карте, — без оглядки на стиль:
+/// [`sidewalk_width`], но только если [`RoadLine::sidewalks`] кладёт его хоть с
+/// одной стороны (`sidewalk=separate|no` с обеих — нет). Одно правило и для
+/// ленты ([`drawn_sidewalk`]), и для разбора, дотягивающего кварталы и
+/// стоянки до внешнего края полотна (`osm/parse.rs`, `osm/parse/lots.rs`).
+pub fn mapped_sidewalk(road: &RoadLine) -> Option<f32> {
+    sidewalk_width(road).filter(|_| road.sidewalks.contains(&true))
 }
 
 /// Проезжая часть улицы — то, что несёт тротуар и разметку и участвует в
@@ -701,6 +707,15 @@ pub fn lane_count(road: &RoadLine) -> u8 {
         None => 2 * (road.width / TWOWAY_METERS_PER_LANE_PAIR).round() as u8,
     };
     lanes.clamp(1, most)
+}
+
+/// Плавный переход 0 → 1 по доле `t` (smoothstep, `t` зажато в 0..1): одна
+/// кривая на все переходы разметки и полотна — разводку половин
+/// (`network/pairs.rs`), кромку слияния (`merges.rs`) и раскладку полос на его
+/// клине (`paint.rs::MergeRamp`), которые обязаны идти друг по другу.
+pub(crate) fn smoothstep(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }
 
 /// Граней у круга разворотной площадки.
@@ -1497,7 +1512,7 @@ pub fn mesh_roads(
                 .map(|&(_, end)| end)
                 .collect();
             let axis = merges::merge_axis(merge, &drawn, &stitched, &map.network, &ends);
-            painter.paint_merge_axis(&axis, lane_count(drawn[merge.street]) >= 4);
+            painter.paint_merge_axis(&axis, lane_count(drawn[merge.street]));
         }
     }
     // асфальт от торца полотна до носа газона рядом

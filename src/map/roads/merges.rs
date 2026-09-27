@@ -26,10 +26,10 @@ use super::network::pairs::PairRun;
 use super::network::{RoadNetwork, RoadNodes};
 use super::paint::{MergeRamp, lane_frame};
 use super::shape::lane_width;
-use super::{is_carriageway, lane_count};
+use super::{is_carriageway, lane_count, smoothstep};
 use crate::map::meshing::{LaneFrame, miter_offsets};
 use crate::map::osm::RoadLine;
-use crate::map::osm::model::polyline_length;
+use crate::map::osm::model::{point_at_arc_length, polyline_length};
 
 /// Косинус угла, в котором обе половины уходят от узла в одну сторону, а
 /// продолжение — в обратную: 40°. Половины в OSM сходятся к узлу клином
@@ -363,10 +363,7 @@ pub fn merge_bands(
             .map(|normal| normal * outward)
             .collect();
         // у узла — кромка продолжения, за клином — своя
-        let reach = |at: f32| {
-            let t = (at / length).clamp(0.0, 1.0);
-            wide - step * t * t * (3.0 - 2.0 * t)
-        };
+        let reach = |at: f32| wide - step * smoothstep(at / length);
         let band = |inner: f32, extra: f32| -> Vec<Vec2> {
             let outer = points
                 .iter()
@@ -585,15 +582,7 @@ pub fn merge_axis(
 
 /// Точка пути в `at` метрах от начала; путь короче — `None`.
 fn along_path(path: &[Vec2], at: f32) -> Option<Vec2> {
-    let mut walked = 0.0;
-    for pair in path.windows(2) {
-        let link = pair[0].distance(pair[1]);
-        if walked + link >= at && link > 0.0 {
-            return Some(pair[0].lerp(pair[1], (at - walked) / link));
-        }
-        walked += link;
-    }
-    None
+    (path.len() >= 2 && at <= polyline_length(path)).then(|| point_at_arc_length(path, at))
 }
 
 /// Путь от начала до `length`, с вершиной не реже [`MERGE_STEP`], и длина

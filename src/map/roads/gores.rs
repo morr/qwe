@@ -185,6 +185,16 @@ impl Gores {
         // не касается. Одной булевой на все стоило вдвое-втрое дороже
         // (замеры — в `osm-map`): половина работы уходила на пересечения лент
         // между собой там, где клина и нет.
+        let clip_near = |low: Vec2, high: Vec2| -> Vec<Contour> {
+            solid
+                .iter()
+                .filter(|contour| {
+                    let (from, to) = contour_bounds(contour);
+                    from.cmple(high).all() && to.cmpge(low).all()
+                })
+                .cloned()
+                .collect()
+        };
         let mut wedges: Vec<Shape> = Vec::new();
         for shape in closed {
             let Some((low, high)) = shape.first().map(contour_bounds) else {
@@ -204,14 +214,7 @@ impl Gores {
             if between < 2 {
                 continue;
             }
-            let clip: Vec<Contour> = solid
-                .iter()
-                .filter(|contour| {
-                    let (from, to) = contour_bounds(contour);
-                    from.cmple(high).all() && to.cmpge(low).all()
-                })
-                .cloned()
-                .collect();
+            let clip = clip_near(low, high);
             wedges.extend(vec![shape].overlay(&clip, OverlayRule::Difference, FillRule::NonZero));
         }
         // Веер подхода — клин между въездом и съездом **целиком**, от кольца
@@ -221,14 +224,7 @@ impl Gores {
         // занимает весь веер
         for fan in fans(roads, &at_ring) {
             let (low, high) = contour_bounds(&fan);
-            let clip: Vec<Contour> = solid
-                .iter()
-                .filter(|contour| {
-                    let (from, to) = contour_bounds(contour);
-                    from.cmple(high).all() && to.cmpge(low).all()
-                })
-                .cloned()
-                .collect();
+            let clip = clip_near(low, high);
             wedges.extend(vec![vec![fan]].overlay(
                 &clip,
                 OverlayRule::Difference,

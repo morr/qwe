@@ -19,7 +19,7 @@ use crate::map::osm::model::{
 };
 use crate::map::osm::overpass::{Element, GeoBounds, LatLon, Member, OverpassResponse};
 use crate::map::roads::network::sections::{self, SectionReport};
-use crate::map::roads::{is_carriageway, sidewalk_width};
+use crate::map::roads::{densify, is_carriageway, mapped_sidewalk, sidewalk_width};
 use crate::map::seed::seed_from_point;
 
 /// Ширина стены Кремля, м.
@@ -477,7 +477,8 @@ fn infer_sidewalks(map: &mut MapData, bare: &[usize]) -> InferredSidewalks {
     let mut dropped = 0;
     for &index in &asked {
         let road = &mut map.roads[index];
-        let storeys: Vec<f32> = probes(&road.points, SIDEWALK_PROBE_STEP)
+        let storeys: Vec<f32> = densify(&road.points, SIDEWALK_PROBE_STEP)
+            .into_iter()
             .filter_map(|point| districts.storeys_at(point))
             .collect();
         let mean = storeys.iter().sum::<f32>() / storeys.len().max(1) as f32;
@@ -490,18 +491,6 @@ fn infer_sidewalks(map: &mut MapData, bare: &[usize]) -> InferredSidewalks {
         asked: asked.len(),
         dropped,
     }
-}
-
-/// Точки вдоль ломаной не реже чем через `step`: все вершины и
-/// промежуточные на длинных звеньях.
-fn probes(points: &[Vec2], step: f32) -> impl Iterator<Item = Vec2> + '_ {
-    let first = points.first().copied();
-    first
-        .into_iter()
-        .chain(points.windows(2).flat_map(move |link| {
-            let parts = (link[0].distance(link[1]) / step).ceil().max(1.0) as usize;
-            (1..=parts).map(move |part| link[0].lerp(link[1], part as f32 / parts as f32))
-        }))
 }
 
 /// Дома, целиком стоящие в воде, выбрасываются. В OSM это плавучие рестораны и
@@ -1403,10 +1392,7 @@ fn pull_areas_to_roads(map: &mut MapData) -> StretchedAreas {
         }
         // тротуар — только тот, что рисуется: у `sidewalk=separate|no` его нет,
         // и квартал, дотянутый под несуществующую полосу, вставал за бордюром
-        let sidewalk = sidewalk_width(road)
-            .filter(|_| road.sidewalks.contains(&true))
-            .unwrap_or_default();
-        let reach = road.width / 2.0 + sidewalk;
+        let reach = road.width / 2.0 + mapped_sidewalk(road).unwrap_or_default();
         let kind = EdgeKind::of(road);
         for link in road.points.windows(2) {
             edges.push(Edge {

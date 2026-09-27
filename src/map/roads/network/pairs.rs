@@ -58,6 +58,7 @@ use crate::map::along::{nearest_on_path, simplify};
 use crate::map::grid::Grid;
 use crate::map::osm::model::{RailKind, RailLine, distance_to_segment, polyline_length};
 use crate::map::osm::{RoadClass, RoadLine};
+use crate::map::roads::smoothstep;
 
 /// Шаг, которым ось ощупывается на соседа, м.
 pub const PROBE_STEP: f32 = 2.0;
@@ -653,8 +654,7 @@ impl<'a> Tracks<'a> {
 /// Плавный переход разводки: 0 у конца куска или у узла, 1 за
 /// [`ALIGN_TRANSITION`] от них.
 fn ease(distance: f32) -> f32 {
-    let t = (distance / ALIGN_TRANSITION).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
+    smoothstep(distance / ALIGN_TRANSITION)
 }
 
 /// Куски половины (по ходу), сведённые в участки разводки: соседние, между
@@ -682,8 +682,7 @@ fn span_gap(span: &[PairRun], at: f32) -> f32 {
 /// Зазор `before` до шва и `after` за ним в `beyond` м от шва (за ним — со
 /// знаком плюс): переход за [`ALIGN_TRANSITION`], на самом шве — середина.
 fn blend(before: f32, after: f32, beyond: f32) -> f32 {
-    let t = (beyond / ALIGN_TRANSITION + 0.5).clamp(0.0, 1.0);
-    before + (after - before) * t * t * (3.0 - 2.0 * t)
+    before + (after - before) * smoothstep(beyond / ALIGN_TRANSITION + 0.5)
 }
 
 /// Ближайшая половина рядом с точкой `at` оси дороги `index`, идущей по
