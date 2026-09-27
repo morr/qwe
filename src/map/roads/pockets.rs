@@ -14,8 +14,8 @@
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
-use super::junctions::{self, MarkingBreaks, node_key};
 use super::is_carriageway;
+use super::junctions::{self, MarkingBreaks, node_key};
 use super::node_paint::ZEBRA_LENGTH;
 use super::tapers::{self, Tapers};
 use crate::map::along::{arclengths, nearest_on_path, place_on_path};
