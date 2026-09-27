@@ -494,6 +494,12 @@ would say so.
   inflates the box by the reach it cares about, so any point the value has business with
   falls inside one of those cells. An error there returns a silently incomplete answer —
   which is exactly why it lives in one place now.
+  **A box that is not of this world is refused**: a non-finite corner is a
+  `debug_assert`, and a box over `MAX_INSERT_CELLS` (2²⁰ — 30 × 30 km at the smallest
+  30 m cell) is skipped with an `error!`. `as_ivec2` saturates a huge coordinate to
+  `i32::MAX`, so one broken axis point (Moscow NE's doubled-back spike, 4.9·10⁸ m) had the
+  double loop spread a single link over billions of cells — 12 GB and a load that never
+  finished. The skip is the net, not the fix; the fix is wherever the geometry broke.
 - **`insert_segment(from, to, pad, value)` is that insert for a link of a polyline**, and
   the box is the grid's arithmetic too: `from.min(to) - pad, from.max(to) + pad`. Twelve
   of the map's indexes wrote that line by hand — the doors (two of them), tree planting,
