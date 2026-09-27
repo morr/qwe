@@ -244,7 +244,7 @@ fn a_pure_merge_node_breaks_no_line_and_holds_the_axis_solid() {
     };
     // как перекрёсток трёх улиц — рвутся все три: это и был разрыв
     assert!((0..3).all(|road| at_node(&base[road])));
-    let merged = NodePaint::new(
+    let merged = NodePaint::for_test(
         &drawn,
         &base,
         &map,

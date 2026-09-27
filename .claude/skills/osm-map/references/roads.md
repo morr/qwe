@@ -676,7 +676,19 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   ruts), the paint **cut** and **solid** (`paint().breaks` / `paint().solid` — where lines
   stop, and where an axis stays solid through a node its road passes), and the **row**
   (`row()` — no stitches, but service drives, taper clearings and OSM zebras: the kerb
-  pockets and the cars). The one change from outside is `add_splitters` — a splitter
+  pockets and the cars). **The nodes are walked once**: `shared_nodes` over the row's
+  participants (`pockets::is_row_participant` — everything driven on, the carriageways
+  among it) gives the row, `restrict` keeps the carriageways' visits of the same nodes
+  (bit for bit what a second walk would find — the node's point is its first remaining
+  visit's) and `stitch` adds the stitches; the base and `NodePaint::new` take that one
+  list. The paint used to walk the roads *as drawn*, the base the map's: the nodes are
+  the same, because `Drawn` never moves a point and `is_carriageway` reads neither the
+  width nor the class a driveway crossing is given
+  (`tests.rs::one_shared_node_pass_feeds_both_base_and_paint`) — only the reach of a
+  break differs (`a_ring_arc_base_break_reaches_by_the_osm_width`), and that is read off
+  the map's widths. Three walks of the points per `mesh_roads` (and two stitch passes)
+  became one of each; the car layer still walks its own (`mesh_cars` builds no
+  `Junctions`). The one change from outside is `add_splitters` — a splitter
   island (**Roundabouts**) is found on the ribbon axes and the rings, which the nodes do
   not know, and cuts both the paint and the asphalt of its approach
   (`a_splitter_gap_reaches_both_asphalt_and_paint`); the base and the row never see it.

@@ -1642,19 +1642,7 @@ fn a_ring_arc_base_break_reaches_by_the_osm_width() {
     // рисуется сечением всего кольца (`ring_arcs`), а базовый разрыв на
     // подходе меряет вылет по ширине дуги из OSM. Перевести базовые разрывы на
     // дороги как рисуются — сдвинуть их на подходах к кольцу.
-    let mut map = roundabout_with_an_approach(true, true);
-    // кольцо из двух дуг разной ширины: узкая получает ширину широкой
-    let circle = map.roads[0].points.clone();
-    map.roads[0].points = circle[..=12].to_vec();
-    let mut second = map.roads[0].clone();
-    second.points = circle[12..].to_vec();
-    second.width = 12.0;
-    map.roads.push(second);
-    // подходы — проезжие части: проезд `Service` краску не рвёт
-    for road in &mut map.roads {
-        road.highway = Highway::Residential;
-    }
-    let map = with_network(map.roads);
+    let map = a_ring_of_two_arcs();
     let nodes = RoadNodes::new(&map.roads);
     let axes = axis::street_axes(
         &map.roads,
@@ -1672,6 +1660,46 @@ fn a_ring_arc_base_break_reaches_by_the_osm_width() {
     let osm = junctions::marking_breaks(&map.roads, is_carriageway, &[]);
     let as_drawn = junctions::marking_breaks(&drawn, is_carriageway, &[]);
     assert_ne!(osm.breaks, as_drawn.breaks);
+}
+
+/// Кольцо из двух дуг разной ширины и подход: узкая дуга рисуется шириной
+/// широкой (`ring_arcs`).
+fn a_ring_of_two_arcs() -> MapData {
+    let mut map = roundabout_with_an_approach(true, true);
+    let circle = map.roads[0].points.clone();
+    map.roads[0].points = circle[..=12].to_vec();
+    let mut second = map.roads[0].clone();
+    second.points = circle[12..].to_vec();
+    second.width = 12.0;
+    map.roads.push(second);
+    // подходы — проезжие части: проезд `Service` краску не рвёт
+    for road in &mut map.roads {
+        road.highway = Highway::Residential;
+    }
+    with_network(map.roads)
+}
+
+/// Узлы обходятся один раз (`junctions::Junctions::new`): узлы проезжих
+/// частей — это узлы участников ряда без прочих проходов, и по дорогам карты
+/// они те же, что по дорогам как рисуются: переезд и дуга кольца меняют
+/// ширину и класс, а не точки и не `is_carriageway`. Потому база (по дорогам
+/// карты) и краска (прежде — по дорогам как рисуются) берут одни узлы.
+#[test]
+fn one_shared_node_pass_feeds_both_base_and_paint() {
+    for map in [a_driveway(), a_ring_of_two_arcs()] {
+        let drawn = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
+        assert_eq!(drawn.stats().crossings, 1, "подмена легла");
+        let every = junctions::shared_nodes(&map.roads, pockets::is_row_participant);
+        assert_eq!(
+            junctions::restrict(&every, &map.roads, is_carriageway),
+            junctions::shared_nodes(&map.roads, is_carriageway)
+        );
+        let targets = &drawn.stitches().targets;
+        assert_eq!(
+            junctions::with_stitches(&map.roads, is_carriageway, targets),
+            junctions::with_stitches(&drawn.roads(), is_carriageway, targets)
+        );
+    }
 }
 
 #[test]

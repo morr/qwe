@@ -48,7 +48,7 @@ fn paint_of(roads: Vec<RoadLine>, marks: Vec<RoadNode>, style: NodePaintStyle) -
     };
     map.network = RoadNetwork::new(&map.roads);
     let base = marking_breaks(&map.roads, is_carriageway, &[]).breaks;
-    NodePaint::new(&Drawn::for_test(&map), &base, &map, &[], style)
+    NodePaint::for_test(&Drawn::for_test(&map), &base, &map, &[], style)
 }
 
 /// Разрывы дороги, что не тупики.
@@ -143,7 +143,7 @@ fn a_ring_node_gets_no_rule_zebras() {
     let mut map = MapData { roads, ..default() };
     map.network = RoadNetwork::new(&map.roads);
     let base = marking_breaks(&map.roads, is_carriageway, &[]).breaks;
-    let paint = |drawn: &Drawn| NodePaint::new(drawn, &base, &map, &[], EVERYTHING);
+    let paint = |drawn: &Drawn| NodePaint::for_test(drawn, &base, &map, &[], EVERYTHING);
     assert_eq!(paint(&Drawn::for_test(&map)).zebras.len(), 1);
     assert!(paint(&Drawn::for_test(&map).with_ring(0)).zebras.is_empty());
 }
@@ -224,7 +224,7 @@ fn a_leading_road_loses_its_asphalt_break_but_not_its_base_one() {
         ..default()
     };
     let base = marking_breaks(&map.roads, is_carriageway, &[]).breaks;
-    let paint = NodePaint::new(&Drawn::for_test(&map), &base, &map, &[], EVERYTHING);
+    let paint = NodePaint::for_test(&Drawn::for_test(&map), &base, &map, &[], EVERYTHING);
     assert_eq!(paint.junctions[0].leading, vec![0]);
     let at_node = |breaks: &[Break]| {
         breaks
@@ -284,7 +284,7 @@ fn a_stitched_side_street_is_an_arm_of_the_junction() {
     let ribbon = drawn.axis(1, Axis::Ribbon);
     assert!(ribbon[ribbon.len() - 1].distance(at) < 1e-3, "{ribbon:?}");
     let base = marking_breaks(&map.roads, is_carriageway, &drawn.stitches().targets).breaks;
-    let paint = NodePaint::new(&drawn, &base, &map, &[], EVERYTHING);
+    let paint = NodePaint::for_test(&drawn, &base, &map, &[], EVERYTHING);
     assert_eq!(paint.junctions.len(), 1);
     assert_eq!(paint.junctions[0].leading, vec![0]);
     assert!(gaps(&paint, 0).is_empty(), "{:?}", paint.breaks[0]);
@@ -331,7 +331,7 @@ fn a_signalled_t_crosses_the_walked_arm_even_without_a_second_walked_street() {
         };
         map.network = RoadNetwork::new(&map.roads);
         let base = marking_breaks(&map.roads, is_carriageway, &[]).breaks;
-        NodePaint::new(&Drawn::for_test(&map), &base, &map, &[], EVERYTHING)
+        NodePaint::for_test(&Drawn::for_test(&map), &base, &map, &[], EVERYTHING)
     };
     let signalled = paint(vec![RoadNode {
         pos: NODE,
@@ -697,7 +697,7 @@ fn divided_street_crossing_apart(paved: bool, apart: f32) -> NodePaint {
     let drawn = Drawn::for_test(&map)
         .with_pairs(1, run(2))
         .with_pairs(2, run(1));
-    NodePaint::new(&drawn, &base, &map, &[], EVERYTHING)
+    NodePaint::for_test(&drawn, &base, &map, &[], EVERYTHING)
 }
 
 /// Связка вливается в улицу под острым углом: у точки узла, откуда меряется
@@ -759,7 +759,7 @@ fn an_arm_across_a_paved_island_is_a_link() {
         };
         map.network = RoadNetwork::new(&map.roads);
         let base = marking_breaks(&map.roads, is_carriageway, &[]).breaks;
-        NodePaint::new(&Drawn::for_test(&map), &base, &map, paved, EVERYTHING)
+        NodePaint::for_test(&Drawn::for_test(&map), &base, &map, paved, EVERYTHING)
     };
     let link = |paint: &NodePaint| {
         paint.junctions[0]

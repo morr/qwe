@@ -50,7 +50,7 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
 use super::drawn::{Axis, Drawn};
-use super::junctions::{JUNCTION_MARGIN, SharedNode, Visit, node_key, with_stitches};
+use super::junctions::{JUNCTION_MARGIN, SharedNode, Visit, node_key};
 use super::network::pairs::TRAM_BED_MAX_GAP;
 use super::{is_carriageway, lane_count};
 use crate::map::along::{arclengths, nearest_on_path, place_on_path};
@@ -381,6 +381,24 @@ struct Crossing {
 }
 
 impl NodePaint {
+    /// Краска узлов теста: узлы проезжих частей со стежками `prepared` — те,
+    /// что `Junctions::new` передал бы [`Self::new`], — и готовая база.
+    #[cfg(test)]
+    pub(super) fn for_test(
+        prepared: &Drawn,
+        base: &[Vec<Break>],
+        map: &MapData,
+        paved: &[Vec<Vec2>],
+        style: NodePaintStyle,
+    ) -> Self {
+        let nodes = super::junctions::with_stitches(
+            &prepared.roads(),
+            is_carriageway,
+            &prepared.stitches().targets,
+        );
+        Self::new(prepared, &nodes, base, map, paved, style)
+    }
+
     /// Краска узлов по подготовленным дорогам `prepared` (`roads/drawn.rs`),
     /// по оси ленты (`Axis::Ribbon` — стежки тоже узлы). `base` — разрывы
     /// асфальта (`junctions::marking_breaks`), `paved` — замощённые острова
@@ -392,8 +410,12 @@ impl NodePaint {
     /// получает) и слияния (`merges`, `roads/merges.rs`): узел слияния без
     /// других проезжих частей — не перекрёсток, улица его проходит, линии не
     /// рвутся, осевая продолжения у него сплошная.
-    pub fn new(
+    ///
+    /// `nodes` — узлы проезжих частей со стежками, те же, по которым считана
+    /// база (`junctions::Junctions::new` обходит их один раз).
+    pub(super) fn new(
         prepared: &Drawn,
+        nodes: &[SharedNode],
         base: &[Vec<Break>],
         map: &MapData,
         paved: &[Vec<Vec2>],
@@ -414,7 +436,6 @@ impl NodePaint {
             solid: vec![Vec::new(); drawn.len()],
             ..Self::default()
         };
-        let nodes = with_stitches(drawn, is_carriageway, &prepared.stitches().targets);
         let merged = |node: &SharedNode| {
             merges.iter().find(|merge| {
                 merge.pure
@@ -425,7 +446,7 @@ impl NodePaint {
                         .all(|visit| merge.roads().contains(&visit.road))
             })
         };
-        for node in &nodes {
+        for node in nodes {
             let Some(merge) = merged(node) else {
                 continue;
             };
@@ -468,7 +489,7 @@ impl NodePaint {
         // переходы по дорогам — на нарисованной оси
         let mut crossings: Vec<Vec<Crossing>> = vec![Vec::new(); drawn.len()];
         if style.crossings != CrossingMode::Off {
-            for node in &nodes {
+            for node in nodes {
                 let Some(RoadNodeKind::Crossing {
                     signals,
                     marked: true,

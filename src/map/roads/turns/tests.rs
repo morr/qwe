@@ -35,7 +35,7 @@ fn turns_of(roads: Vec<RoadLine>, side: TrafficSide) -> (Turns, NodePaint) {
     map.network = RoadNetwork::new(&map.roads);
     let base = marking_breaks(&map.roads, is_carriageway, &[]).breaks;
     let drawn = Drawn::for_test(&map);
-    let paint = NodePaint::new(
+    let paint = NodePaint::for_test(
         &drawn,
         &base,
         &map,

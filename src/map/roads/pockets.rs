@@ -461,7 +461,23 @@ fn sparse_pockets(runs: Vec<Pocket>, road: &RoadLine, side: usize) -> Vec<Pocket
 /// стоянке съезжают через ряд, и машина на съезде его перегораживала (Тула,
 /// Ф. Энгельса у 3976, 1236).
 pub fn row_breaks(roads: &[RoadLine], tapers: &Tapers, nodes: &[RoadNode]) -> MarkingBreaks {
-    let mut found = junctions::marking_breaks(roads, is_row_participant, &[]);
+    row_breaks_over(
+        junctions::marking_breaks(roads, is_row_participant, &[]),
+        roads,
+        tapers,
+        nodes,
+    )
+}
+
+/// [`row_breaks`] по уже найденным разрывам перекрёстков `found` — узлам
+/// участников [`is_row_participant`] без стежков: у слоя дорог узлы
+/// обходятся один раз на всё (`junctions::Junctions`).
+pub(super) fn row_breaks_over(
+    mut found: MarkingBreaks,
+    roads: &[RoadLine],
+    tapers: &Tapers,
+    nodes: &[RoadNode],
+) -> MarkingBreaks {
     for (road, clearing) in tapers::car_clearings(roads, tapers) {
         found.breaks[road].push(clearing);
     }
@@ -472,8 +488,10 @@ pub fn row_breaks(roads: &[RoadLine], tapers: &Tapers, nodes: &[RoadNode]) -> Ma
 }
 
 /// Дорога, что рвёт ряд у бордюра, встретившись с улицей: проезжая часть или
-/// проезд — всё, по чему ездят, кроме дорожек.
-fn is_row_participant(road: &RoadLine) -> bool {
+/// проезд — всё, по чему ездят, кроме дорожек. Проезжие части
+/// (`roads::is_carriageway`) — все среди них: на этом `junctions::Junctions`
+/// строит узлы разметки из тех же узлов.
+pub(super) fn is_row_participant(road: &RoadLine) -> bool {
     road.highway != Highway::Path
 }
 
