@@ -405,12 +405,7 @@ pub fn mesh_cars(
     // надо было прежде, чем его заводить. Доли, а не миллисекунды: абсолютное
     // время зависит от App Nap, перемеряет его `measure_cars` из
     // `examples/bench/map_meshing` (он печатает обе строки — `breaks` и `cars`)
-    let junctions = pockets::row_breaks(
-        &map.roads,
-        drawn.nodes(),
-        drawn.tapers(),
-        &map.road_nodes,
-    );
+    let junctions = pockets::row_breaks(&map.roads, drawn.nodes(), drawn.tapers(), &map.road_nodes);
     let breaks_took = started.elapsed();
     // застройка вокруг — тем же проходом и с тем же сроком жизни, что и
     // разрывы: индекс на 7.6 тысячи домов дешевле, чем повод его кешировать

@@ -665,12 +665,7 @@ fn the_row_clears_the_seam_taper_of_the_ribbon() {
     let cars = park_cars(
         &map.roads,
         drawn.nodes(),
-        &pockets::row_breaks(
-            &map.roads,
-            drawn.nodes(),
-            drawn.tapers(),
-            &map.road_nodes,
-        ),
+        &pockets::row_breaks(&map.roads, drawn.nodes(), drawn.tapers(), &map.road_nodes),
         style,
         &drawn.axes(Axis::Nodal),
         map.traffic_side,
