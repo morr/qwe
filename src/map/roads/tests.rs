@@ -1167,6 +1167,27 @@ fn a_tram_between_halves_widens_both_halves_to_the_middle() {
 /// тротуар и не земля (Советская у Коминтерна).
 #[test]
 fn a_tram_bed_ends_in_asphalt_up_to_the_nose_of_the_lawn() {
+    let (map, apart) = tram_bed_then_lawn();
+    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    assert_eq!(report.drawn.medians, [1, 1, 1], "полотно и газон");
+    let inner = (3.0 * 3.3 + 1.0) / 2.0;
+    let gap = |at: &&[f32; 3]| at[1] > 100.0 + inner + 0.1 && at[1] < 100.0 + apart - inner - 0.1;
+    // асфальт заходит за торец полотна — к носу газона
+    let roads = layer(&layers, "roads").builder.positions_for_test();
+    let reach = roads
+        .iter()
+        .filter(gap)
+        .map(|at| at[0])
+        .filter(|x| (295.0..320.0).contains(x))
+        .fold(f32::MIN, f32::max);
+    assert!(reach > 302.0, "асфальт полотна кончается у торца: {reach}");
+    // а трава газона на месте
+    assert!(!layer(&layers, "road_medians").builder.is_empty());
+}
+
+/// Проспект с зазором 5 м из двух way на половину: до x = 300 между
+/// половинами трамвай (полотно), дальше газон.
+fn tram_bed_then_lawn() -> (MapData, f32) {
     let (map, apart) = divided_avenue(5.0);
     let split = |road: &RoadLine| -> [RoadLine; 2] {
         let [from, to] = [road.points[0], road.points[1]];
@@ -1194,21 +1215,59 @@ fn a_tram_bed_ends_in_asphalt_up_to_the_nose_of_the_lawn() {
         kind: RailKind::Tram,
         ..fixture::rail(vec![Vec2::new(80.0, middle), Vec2::new(300.0, middle)], 1.2)
     });
+    (map, apart)
+}
+
+/// Пин перед переносом цикла разделительных в `medians::draw`: полотно,
+/// газон, двойная сплошная, асфальт от торца полотна до носа — вершины
+/// каждого слоя, которого цикл касается, в том же порядке пуша.
+#[test]
+fn the_median_loop_lays_the_same_vertices() {
+    let (map, _) = tram_bed_then_lawn();
     let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
-    assert_eq!(report.drawn.medians, [1, 1, 1], "полотно и газон");
-    let inner = (3.0 * 3.3 + 1.0) / 2.0;
-    let gap = |at: &&[f32; 3]| at[1] > 100.0 + inner + 0.1 && at[1] < 100.0 + apart - inner - 0.1;
-    // асфальт заходит за торец полотна — к носу газона
+    let counts: Vec<usize> = ["roads", "sidewalks", "road_medians", paint::PAINT_AXES]
+        .map(|name| layer(&layers, name).builder.vertex_count())
+        .to_vec();
+    assert_eq!(counts, [152, 176, 24, 6]);
+    assert_eq!(report.paint_lines, 9);
+}
+
+/// Пин перед `Drawn::sidewalk_on`: карман по тегу со стороны без тротуара —
+/// асфальт за кромкой есть, тротуара за ним нет.
+#[test]
+fn a_pocket_on_the_side_without_a_sidewalk_pushes_no_sidewalk() {
+    let mut map = one_street();
+    map.roads[0].highway = Highway::Primary;
+    map.roads[0].parking = [KerbParking::Pocket; 2];
+    map.roads[0].sidewalks = [SidewalkSide::Tagged, SidewalkSide::None];
+    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    assert_eq!(report.kerb_pockets, 2);
+    let edge = 6.0 + pockets::POCKET_WIDTH;
     let roads = layer(&layers, "roads").builder.positions_for_test();
-    let reach = roads
-        .iter()
-        .filter(gap)
-        .map(|at| at[0])
-        .filter(|x| (295.0..320.0).contains(x))
-        .fold(f32::MIN, f32::max);
-    assert!(reach > 302.0, "асфальт полотна кончается у торца: {reach}");
-    // а трава газона на месте
-    assert!(!layer(&layers, "road_medians").builder.is_empty());
+    assert!(roads.iter().any(|at| (at[1] - (100.0 - edge)).abs() < 0.01));
+    let sidewalks = layer(&layers, "sidewalks").builder.positions_for_test();
+    assert!(sidewalks.iter().any(|at| at[1] > 100.0 + edge + 1.0));
+    assert!(
+        sidewalks.iter().all(|at| at[1] > 100.0 - 6.0 - 0.01),
+        "справа по ходу тротуара нет — ни у ленты, ни у кармана"
+    );
+}
+
+/// Пин перед `Drawn::sidewalk_on`: улица с тротуаром только слева (к северу)
+/// и примыкание с юга — скругления тротуара только там, где он есть.
+#[test]
+fn a_one_sided_street_turns_its_sidewalk_only_on_its_side() {
+    let mut main = fixture::street(vec![Vec2::new(100.0, 100.0), Vec2::new(500.0, 100.0)], 12.0);
+    main.points.insert(1, Vec2::new(300.0, 100.0));
+    main.sidewalks = [SidewalkSide::Tagged, SidewalkSide::None];
+    let map = with_network(vec![
+        main,
+        fixture::street(vec![Vec2::new(300.0, 0.0), Vec2::new(300.0, 100.0)], 8.0),
+        fixture::street(vec![Vec2::new(300.0, 100.0), Vec2::new(300.0, 200.0)], 8.0),
+    ]);
+    let (_, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    // четыре угла асфальта, а тротуар поворачивает только на северных
+    assert_eq!([report.kerb_returns, report.sidewalk_returns], [4, 2]);
 }
 
 /// Полотно шире [`network::pairs::TRAM_BED_MAX_GAP`] — обособленное, на
