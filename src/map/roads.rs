@@ -533,6 +533,8 @@ pub struct RoadReport {
     pub sidewalk_returns: usize,
     /// Наружные углы узлов (`roads/corners.rs`): асфальт и тротуар.
     pub outer_corners: [usize; 2],
+    /// Носы острых развилок (`roads/corners.rs`), всех слоёв.
+    pub noses: usize,
     /// Подготовка дорог (`roads/drawn.rs`): переезды, стежки, клинья,
     /// слияния, разделительные, кольца, швы осей — одним значением.
     pub drawn: DrawnStats,
@@ -580,6 +582,7 @@ impl std::fmt::Display for RoadReport {
             kerb_returns,
             sidewalk_returns,
             outer_corners: [outer, outer_sidewalks],
+            noses,
             drawn:
                 DrawnStats {
                     crossings,
@@ -613,7 +616,7 @@ impl std::fmt::Display for RoadReport {
              {zebras} ({osm_zebras} from OSM), stop lines {stop_lines}, pockets {pockets}, \
              turn paths {turns}, arrows {arrows}, leading roads {leading}, kerb returns {kerb_returns} + \
              {sidewalk_returns} on sidewalks, outer corners {outer} + {outer_sidewalks} on \
-             sidewalks, stitches {stitches}, kerb pockets {kerb_pockets}, turning circles {turning_circles}, driveway crossings \
+             sidewalks, noses {noses}, stitches {stitches}, kerb pockets {kerb_pockets}, turning circles {turning_circles}, driveway crossings \
              {crossings}, rings {rings} ({webs} webs), small islands {islands}, gores {gores}, safety islands {refuges} + {island_areas} areas, \
              carriageway areas {carriageways}, tapers {tapers}, merges {merges} ({merge_edges} edges), medians {paved} paved + {lawns} \
              lawn (tram beds {beds}), tram bands {tram_bands}, smooth seams {seams}, tight corners {tight}, bridges {bridges} of \
@@ -706,6 +709,17 @@ pub fn mesh_roads(
     // и тот же угол в слое тротуаров: полоса поворачивает за бордюром
     for outline in &kerb_returns.sidewalks {
         sidewalks.push_convex(outline, SIDEWALK_COLOR.to_linear());
+    }
+    // носы острых развилок идут по гнутым кромкам лент, и веер из острия
+    // их не покрыл бы — триангуляция целиком; носов в городе сотни
+    for (fill, outline) in &kerb_returns.noses {
+        let (builder, color) = match fill {
+            corners::Fill::Road(RoadClass::Street) => (&mut streets, ROAD_COLOR),
+            corners::Fill::Road(RoadClass::Alley) => (&mut alleys, ALLEY_COLOR),
+            corners::Fill::Unpaved => (&mut unpaved, UNPAVED_ROAD_COLOR),
+            corners::Fill::Sidewalk => (&mut sidewalks, SIDEWALK_COLOR),
+        };
+        builder.push_polygon(outline, &[], color.to_linear());
     }
     // кромки половин, сходящиеся к кромкам продолжения, — тоже до лент
     let mut merge_edges = 0;
@@ -1332,6 +1346,7 @@ pub fn mesh_roads(
         kerb_returns: kerb_returns.roads.len() + kerb_returns.unpaved.len() - kerb_returns.outer[0],
         sidewalk_returns: kerb_returns.sidewalks.len() - kerb_returns.outer[1],
         outer_corners: kerb_returns.outer,
+        noses: kerb_returns.noses.len(),
         drawn: prepared.stats(),
         bridges: bridge_count,
         gores: gores.count(),
