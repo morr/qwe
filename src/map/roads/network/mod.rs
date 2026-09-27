@@ -32,7 +32,7 @@ mod streets;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
-pub(in crate::map::roads) use self::streets::MAX_BEND;
+pub(in crate::map::roads) use self::streets::{MAX_BEND, arm_direction};
 pub use self::streets::{RoadNetwork, Street, StreetWay};
 use super::junctions::node_key;
 use crate::map::grid::Grid;
