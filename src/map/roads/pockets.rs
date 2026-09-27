@@ -127,8 +127,9 @@ pub struct Kerbside {
     pub pockets: Vec<Pocket>,
 }
 
-/// Карман: `from..to` по длине осевой, со скосами на торцах, которые не
-/// упираются в торец дороги (там карман продолжается на следующем way).
+/// Карман: `from..to` по длине осевой, со скосами на торцах, кроме торца
+/// way, за которым карман той же стороны продолжается на следующем way
+/// ([`join_way_ends`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Pocket {
     pub from: f32,
@@ -188,14 +189,178 @@ pub fn kerb_parking(road: &RoadLine, side: usize) -> KerbParking {
     }
 }
 
+/// Стороны всех улиц карты — по индексу дороги, у непарковочной пусто:
+/// [`kerbsides`] каждой, потом торцы карманов сшиты через узлы way
+/// ([`join_way_ends`]). Один вызов на ленту и на ряд машин: `paths` — их
+/// нарисованные осевые, `breaks` — [`row_breaks`], `lots` — стоянки, перед
+/// которыми кармана нет.
+pub fn all_kerbsides<P: AsRef<[Vec2]>>(
+    roads: &[RoadLine],
+    paths: &[P],
+    breaks: &MarkingBreaks,
+    traffic: TrafficSide,
+    lots: &KerbLots,
+) -> Vec<Vec<Kerbside>> {
+    let mut sides: Vec<Vec<Kerbside>> = roads
+        .iter()
+        .enumerate()
+        .map(|(index, road)| {
+            if parkable(road) {
+                kerbsides(
+                    road,
+                    paths[index].as_ref(),
+                    &breaks.breaks[index],
+                    traffic,
+                    lots,
+                )
+            } else {
+                Vec::new()
+            }
+        })
+        .collect();
+    join_way_ends(roads, &mut sides);
+    sides
+}
+
+/// Карман через торцы way — один карман. [`pockets_along`] оставляет торец
+/// кармана у торца way открытым в расчёте на соседа, и здесь это
+/// проверяется: торец, за которым у соседа нет открытого кармана той же
+/// стороны (запрет остановки, мост, конец улицы), получает скос, а
+/// [`POCKET_MIN`] меряется по всей цепочке кусков, сшитых открытыми
+/// торцами, а не по куску на каждом way. Иначе карман обрывался ступенькой:
+/// OSM режет улицу на короткие way у переходов и проездов, и кусок на way
+/// в 23 м у проезда во двор отбрасывался как короткий, а соседний кусок
+/// оставался открытым в пустоту (ул. Дзержинского в Туле, 5994, 3185).
+///
+/// Кусок, в котором скос длиннее его самого, уходит — скос через торец way
+/// не переносится; уход куска закрывает торец соседа, поэтому проход
+/// повторяется, пока что-то меняется: скосы только добавляются, куски
+/// только убывают, так что он кончается.
+fn join_way_ends(roads: &[RoadLine], sides: &mut [Vec<Kerbside>]) {
+    // торцы way с карманами: (дорога, 0 — первая точка / 1 — последняя)
+    let mut ends: HashMap<(i32, i32), Vec<(usize, usize)>> = HashMap::new();
+    for (index, road) in roads.iter().enumerate() {
+        if sides[index].is_empty() || road.points.len() < 2 {
+            continue;
+        }
+        for (end, point) in [road.points[0], road.points[road.points.len() - 1]]
+            .into_iter()
+            .enumerate()
+        {
+            ends.entry(node_key(point)).or_default().push((index, end));
+        }
+    }
+    let end_key = |road: usize, end: usize| {
+        let points = &roads[road].points;
+        node_key(if end == 0 {
+            points[0]
+        } else {
+            points[points.len() - 1]
+        })
+    };
+    // кусок у соседа, открытый на торце `end` дороги `road` со стороны `side`:
+    // (дорога, сторона в её списке, карман)
+    let partner = |sides: &[Vec<Kerbside>], road: usize, end: usize, side: f32| {
+        ends.get(&end_key(road, end))
+            .into_iter()
+            .flatten()
+            .filter(|&&next| next != (road, end))
+            .find_map(|&(next, next_end)| {
+                // way, сходящиеся торцами разного конца, идут в одну сторону,
+                // и сторона та же; одноимёнными — навстречу, и она меняется
+                let next_side = if next_end != end { side } else { -side };
+                sides[next]
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, kerbside)| kerbside.side == next_side)
+                    .find_map(|(at, kerbside)| {
+                        let index = kerbside
+                            .pockets
+                            .iter()
+                            .position(|pocket| !pocket.tapers[next_end])?;
+                        Some((next, at, index))
+                    })
+            })
+    };
+    loop {
+        let mut closing = Vec::new();
+        let mut links = Vec::new();
+        for (road, kerbsides) in sides.iter().enumerate() {
+            for (at, kerbside) in kerbsides.iter().enumerate() {
+                for (index, pocket) in kerbside.pockets.iter().enumerate() {
+                    for end in 0..2 {
+                        if pocket.tapers[end] {
+                            continue;
+                        }
+                        match partner(sides, road, end, kerbside.side) {
+                            Some(next) => links.push(((road, at, index), next)),
+                            None => closing.push((road, at, index, end)),
+                        }
+                    }
+                }
+            }
+        }
+        for &(road, at, index, end) in &closing {
+            sides[road][at].pockets[index].tapers[end] = true;
+        }
+        // цепочки кусков по открытым торцам и полная длина каждой
+        let mut chain: HashMap<(usize, usize, usize), (usize, usize, usize)> = HashMap::new();
+        fn root(
+            chain: &HashMap<(usize, usize, usize), (usize, usize, usize)>,
+            mut id: (usize, usize, usize),
+        ) -> (usize, usize, usize) {
+            while let Some(&up) = chain.get(&id) {
+                id = up;
+            }
+            id
+        }
+        for (a, b) in links {
+            let (a, b) = (root(&chain, a), root(&chain, b));
+            if a != b {
+                chain.insert(a, b);
+            }
+        }
+        let mut full: HashMap<(usize, usize, usize), f32> = HashMap::new();
+        let mut short_piece = false;
+        for (road, kerbsides) in sides.iter().enumerate() {
+            for (at, kerbside) in kerbsides.iter().enumerate() {
+                for (index, pocket) in kerbside.pockets.iter().enumerate() {
+                    let (from, to) = pocket.full();
+                    short_piece |= to < from;
+                    *full.entry(root(&chain, (road, at, index))).or_default() += to - from;
+                }
+            }
+        }
+        let dropped = short_piece || full.values().any(|&length| length < POCKET_MIN);
+        if dropped {
+            for (road, kerbsides) in sides.iter_mut().enumerate() {
+                for (at, kerbside) in kerbsides.iter_mut().enumerate() {
+                    let mut index = 0;
+                    kerbside.pockets.retain(|pocket| {
+                        let (from, to) = pocket.full();
+                        let keep =
+                            to >= from && full[&root(&chain, (road, at, index))] >= POCKET_MIN;
+                        index += 1;
+                        keep
+                    });
+                }
+            }
+        }
+        if closing.is_empty() && !dropped {
+            break;
+        }
+    }
+}
+
 /// Стороны улицы, вдоль которых стоит ряд, в том порядке, в каком их
 /// обходит `map::cars` (от него зависит поток ГПСЧ): односторонняя — одна,
 /// у бордюра своей стороны движения; двусторонняя — правая, потом левая.
 /// `path` — нарисованная осевая, `breaks` — разрывы ряда на перекрёстках
 /// (`map::cars` зовёт их `junctions`), `lots` — стоянки, перед которыми
 /// кармана нет: по правилу карман рядом с ними не ставится, по тегу —
-/// прерывается на их длину.
-pub fn kerbsides(
+/// прерывается на их длину. Торцы карманов у торцов way здесь ещё открыты —
+/// сшивает их [`all_kerbsides`].
+fn kerbsides(
     road: &RoadLine,
     path: &[Vec2],
     breaks: &[Break],
@@ -219,8 +384,17 @@ pub fn kerbsides(
                 if road.parking[index] == KerbParking::Untagged {
                     // бухты раскладываются как без стоянок и потом снимаются:
                     // поток ГПСЧ не сдвигается, и остальные бухты квартала
-                    // стоят там же, где стояли
-                    let mut pockets = sparse_pockets(pockets_along(path, breaks, &[]), road, index);
+                    // стоят там же, где стояли. Куски короче кармана — только
+                    // для тега: правило тянет ГПСЧ по куску, и лишний кусок
+                    // сдвинул бы его бухты
+                    let runs = pockets_along(path, breaks, &[])
+                        .into_iter()
+                        .filter(|run| {
+                            let (from, to) = run.full();
+                            to - from >= POCKET_MIN
+                        })
+                        .collect();
+                    let mut pockets = sparse_pockets(runs, road, index);
                     pockets.retain(|pocket| {
                         frontage
                             .iter()
@@ -404,8 +578,10 @@ fn pockets_along(path: &[Vec2], breaks: &[Break], frontage: &[(f32, f32)]) -> Ve
             to,
             tapers: [from > 0.0, to < total],
         };
+        // кусок, открытый в торец way, меряет цепочка ([`join_way_ends`])
         let (start, end) = pocket.full();
-        if end - start >= POCKET_MIN {
+        let open = pocket.tapers != [true, true];
+        if end - start >= POCKET_MIN || open && end > start {
             pockets.push(pocket);
         }
     };
@@ -499,6 +675,105 @@ mod tests {
         assert!(sides[0].pocket_at(60.0).is_some());
         assert!(sides[0].pocket_at(120.0).is_none());
         assert!(!sides[0].lane, "мимо кармана на магистрали не стоят");
+    }
+
+    fn tagged(points: Vec<Vec2>, parking: [KerbParking; 2]) -> RoadLine {
+        RoadLine {
+            parking,
+            ..street(points, 8.0)
+        }
+    }
+
+    fn city_sides(roads: &[RoadLine], breaks: Vec<Vec<Break>>) -> Vec<Vec<Kerbside>> {
+        let paths: Vec<Vec<Vec2>> = roads.iter().map(|road| road.points.clone()).collect();
+        let breaks = MarkingBreaks {
+            breaks,
+            junctions: 0,
+        };
+        all_kerbsides(
+            roads,
+            &paths,
+            &breaks,
+            TrafficSide::Right,
+            &KerbLots::new(&[]),
+        )
+    }
+
+    /// Карман через торец way — один карман, и [`POCKET_MIN`] меряется по
+    /// нему целиком. Ул. Дзержинского (Тула, 5994, 3185): way в 28 м от
+    /// перехода и way в 23 м до проезда во двор. Кусок на втором после скоса
+    /// короче двух машин и отбрасывался, а первый обрывался в торец way
+    /// ступенькой; вместе это карман, со скосами на внешних торцах.
+    #[test]
+    fn a_pocket_split_by_a_way_end_is_measured_whole() {
+        let pocket = [KerbParking::Pocket; 2];
+        let roads = [
+            tagged(vec![Vec2::ZERO, Vec2::new(28.0, 0.0)], pocket),
+            tagged(vec![Vec2::new(28.0, 0.0), Vec2::new(51.0, 0.0)], pocket),
+        ];
+        let crossing = Break {
+            at: Vec2::ZERO,
+            reach: 2.0,
+        };
+        let driveway = Break {
+            at: Vec2::new(51.0, 0.0),
+            reach: 3.0,
+        };
+        let sides = city_sides(&roads, vec![vec![crossing], vec![driveway]]);
+        for (road, tapers) in [(0, [true, false]), (1, [false, true])] {
+            for side in &sides[road] {
+                assert_eq!(side.pockets.len(), 1, "{side:?}");
+                assert_eq!(side.pockets[0].tapers, tapers, "{side:?}");
+            }
+        }
+    }
+
+    /// Та же пара, но короче: вместе меньше двух машин — ни куска, ни
+    /// ступеньки на соседе.
+    #[test]
+    fn a_short_pocket_across_a_way_end_goes_whole() {
+        let pocket = [KerbParking::Pocket; 2];
+        let roads = [
+            tagged(vec![Vec2::ZERO, Vec2::new(12.0, 0.0)], pocket),
+            tagged(vec![Vec2::new(12.0, 0.0), Vec2::new(30.0, 0.0)], pocket),
+        ];
+        let junction = |at: f32| Break {
+            at: Vec2::new(at, 0.0),
+            reach: 0.0,
+        };
+        let sides = city_sides(&roads, vec![vec![junction(0.0)], vec![junction(30.0)]]);
+        assert!(
+            sides.iter().flatten().all(|side| side.pockets.is_empty()),
+            "{sides:?}"
+        );
+    }
+
+    /// Там, где сосед продолжает карман, торец остаётся открытым — и когда
+    /// сосед нарисован навстречу: сторона у него та же на земле, но другого
+    /// знака. На запрещённой стороне соседа карман первого закрыт скосом.
+    #[test]
+    fn a_pocket_runs_on_into_a_reversed_way_on_the_same_kerb() {
+        let roads = [
+            tagged(
+                vec![Vec2::ZERO, Vec2::new(100.0, 0.0)],
+                [KerbParking::Pocket; 2],
+            ),
+            // навстречу: его левая сторона — правая первого
+            tagged(
+                vec![Vec2::new(200.0, 0.0), Vec2::new(100.0, 0.0)],
+                [KerbParking::Pocket, KerbParking::No],
+            ),
+        ];
+        let sides = city_sides(&roads, vec![Vec::new(), Vec::new()]);
+        let first = |side: f32| {
+            sides[0]
+                .iter()
+                .find(|kerbside| kerbside.side == side)
+                .unwrap()
+                .pockets[0]
+        };
+        assert_eq!(first(-1.0).tapers, [true, false], "справа — продолжается");
+        assert_eq!(first(1.0).tapers, [true, true], "слева — запрет у соседа");
     }
 
     /// Без тега карманы редкие и короткие: каждый со скосами и в пределах

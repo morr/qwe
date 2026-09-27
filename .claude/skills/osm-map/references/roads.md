@@ -90,9 +90,18 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   way when the node is under `CROSSING_SPILL` 10 m from its way's end — the same list the
   cars use; 6 m rather than 4 so the slant starts past a rule zebra, which stands 1–5 m
   past the junction edge, the author's report of a bay cut off flat at a zebra, 3284
-  2806), `POCKET_TAPER` 6 m slanted ends where a pocket stops inside the way (none where
-  it runs into the way's end, so it continues on the next way), at least `POCKET_MIN`
-  10 m at full width. That full run is what a **tagged** side (`street_side`) gets. A
+  2806), `POCKET_TAPER` 6 m slanted ends where a pocket stops inside the way, at least
+  `POCKET_MIN` 10 m at full width. **A pocket across a way end is one pocket**:
+  `pockets::all_kerbsides` (the one door for the ribbon and the cars) runs
+  `join_way_ends` over the per-way answers — an end open into the way's end stays open
+  only if the next way has an open piece on the same kerb there (the side sign flips on
+  a way drawn the other way round), otherwise it gets its taper; the pieces linked by open
+  ends form a chain and `POCKET_MIN` is measured on the chain, not per way; a piece whose
+  tapers outgrow it goes (a taper is not carried across a way end), and the pass repeats
+  until nothing changes. Per way, a short open piece was dropped while its neighbour
+  stayed open into nothing — a square step (ул. Дзержинского, 5994 3185: a 28 m way from
+  a crossing and a 23 m one to a driveway). The rule bays still see only pieces of
+  `POCKET_MIN` and more, so their RNG stream did not move. That full run is what a **tagged** side (`street_side`) gets. A
   side that is a pocket **by the rule** gets rare short bays out of it
   (`pockets::sparse_pockets`): a block run carries bays at all with
   `RULE_BLOCK_SHARE` 0.4, each bay `RULE_POCKET_LENGTH` 24–42 m with both tapers, bays

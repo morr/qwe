@@ -310,7 +310,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     rule on trunk/primary/secondary (cars do not stand on an arterial's lane) — there as
     rare short bays, seeded by the street, not a block-long run; never in front of a
     parking lot (`amenity=parking` within a sidewalk and a verge of it). One answer
-    (`pockets::kerbsides`) for the ribbon and for `map::cars`. `sidewalk=*` likewise
+    (`pockets::all_kerbsides`) for the ribbon and for `map::cars`; a pocket ends in a
+    taper everywhere except at a way end the next way carries it on from. `sidewalk=*` likewise
     decides which sides carry a sidewalk band; an **untagged** street has none on an
     unpaved surface, and a residential, unclassified or living street has them only among
     blocks of 3+ storeys on

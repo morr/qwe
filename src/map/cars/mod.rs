@@ -516,6 +516,7 @@ fn park_cars(
         districts,
     };
     let decks: Vec<BridgeDeck> = roads.iter().filter_map(BridgeDeck::of).collect();
+    let kerbsides = pockets::all_kerbsides(roads, axes, junctions, traffic, lots);
     let mut near = Vec::new();
     for (index, road) in roads.iter().enumerate() {
         if !pockets::parkable(road) {
@@ -549,7 +550,7 @@ fn park_cars(
         //
         // Стороны и карманы на них — от `roads::pockets`, того же ответа, по
         // которому лента кладёт асфальт кармана
-        for kerbside in pockets::kerbsides(road, centre, &junctions.breaks[index], traffic, lots) {
+        for kerbside in &kerbsides[index] {
             if !kerbside.lane && kerbside.pockets.is_empty() {
                 continue;
             }
@@ -561,7 +562,7 @@ fn park_cars(
                 Kerb {
                     side,
                     heading: if side == kerb { 1.0 } else { -1.0 },
-                    stand: &kerbside,
+                    stand: kerbside,
                 },
                 &Clearings {
                     junctions: &junctions.breaks[index],
