@@ -242,8 +242,9 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
       pixel for pixel the same as a street's sidewalk, 210/208/204; a thin light strip
       on dark asphalt only *looks* whiter). `RoadStyle::sidewalks` off takes it off.
     - **The kerb is a polygon** (`kerbs`, `i_overlay`): the bands of the through roads
-      whose axis enters the lot (`width + 2 · parking::kerb_width` — its sidewalk, or
-      `LOT_KERB` 1.2 m on a drive) plus the **island of every roundabout** (the ring's
+      whose axis enters the lot (`width + 2 · SidewalkProfile::kerb(LOT_KERB)` — its
+      sidewalk band by class, tag not read, or `LOT_KERB` 1.2 m on a drive; the stalls
+      stand clear of the matching **kerb edge** plus `THROUGH_CLEARANCE`) plus the **island of every roundabout** (the ring's
       own polygon), **minus the asphalt of every street on the lot** — an aisle cuts its
       **mouth**, so along the boulevard the kerb comes out as the islands at the row
       ends — **and minus the gores** at the roundabouts (next bullet but two), where

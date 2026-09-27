@@ -5,6 +5,7 @@ use crate::map::osm::model::{
     KerbParking, RailKind, RailLine, RoadNode, SIDEWALK_WIDTH_RANGE, SidewalkSide, sidewalk_band,
 };
 use crate::map::osm::{Highway, fixture};
+use crate::map::parking::LOT_KERB;
 
 fn road(points: Vec<Vec2>, width: f32, passage: bool) -> RoadLine {
     RoadLine {
@@ -81,37 +82,37 @@ fn sidewalks_belong_to_streets_not_service_roads() {
     let line = vec![Vec2::ZERO, Vec2::new(100.0, 0.0)];
     let mut service = fixture::street(line.clone(), 8.0);
     service.highway = Highway::Service;
-    assert_eq!(sidewalk_width(&service), None);
-    let residential = sidewalk_width(&fixture::street(line.clone(), 8.0)).unwrap();
+    assert_eq!(service.sidewalk().band(), None);
+    let residential = fixture::street(line.clone(), 8.0).sidewalk().band().unwrap();
     let mut primary = fixture::street(line, 16.0);
     primary.highway = Highway::Primary;
-    let primary = sidewalk_width(&primary).unwrap();
+    let primary = primary.sidewalk().band().unwrap();
     assert!(residential < primary);
     assert!(SIDEWALK_WIDTH_RANGE.contains(&residential));
     assert!(SIDEWALK_WIDTH_RANGE.contains(&primary));
 }
 
-/// Пин ширин тротуара до профиля: полоса по классу тег не смотрит (ей
-/// пользуются обочина дома и бордюр стоянки), по карте — только при
-/// тротуаре хоть с одной стороны; мост — проезжая часть, полоса у него есть
-/// (со своих слоёв его убирает рендер, а не ширина).
+/// Ширины тротуара профиля: полоса по классу тег не смотрит (ей пользуются
+/// обочина дома и бордюр стоянки), по карте — только при тротуаре хоть с
+/// одной стороны; мост — проезжая часть, полоса у него есть (со своих слоёв
+/// его убирает рендер, а не ширина).
 #[test]
 fn the_sidewalk_widths_read_the_class_the_tag_and_the_bridge() {
     let line = vec![Vec2::ZERO, Vec2::new(100.0, 0.0)];
     let mut street = fixture::street(line.clone(), 8.0);
     let band = sidewalk_band(8.0);
     street.sidewalks = [SidewalkSide::None; 2];
-    assert_eq!(sidewalk_width(&street), Some(band), "полоса по классу");
-    assert_eq!(mapped_sidewalk(&street), None, "по карте — нет");
-    assert_eq!(crate::map::parking::kerb_width(&street), band);
+    assert_eq!(street.sidewalk().band(), Some(band), "полоса по классу");
+    assert_eq!(street.sidewalk().any(), None, "по карте — нет");
+    assert_eq!(street.sidewalk().kerb(LOT_KERB), band);
     street.sidewalks = [SidewalkSide::None, SidewalkSide::Tagged];
-    assert_eq!(mapped_sidewalk(&street), Some(band), "хоть с одной стороны");
+    assert_eq!(street.sidewalk().any(), Some(band), "хоть с одной стороны");
     street.bridge = true;
-    assert_eq!(sidewalk_width(&street), Some(band), "мост — с полосой");
-    assert_eq!(mapped_sidewalk(&street), Some(band));
+    assert_eq!(street.sidewalk().band(), Some(band), "мост — с полосой");
+    assert_eq!(street.sidewalk().any(), Some(band));
     let mut service = fixture::street(line, 8.0);
     service.highway = Highway::Service;
-    assert_eq!(crate::map::parking::kerb_width(&service), 1.2, "проезд — LOT_KERB");
+    assert_eq!(service.sidewalk().kerb(LOT_KERB), 1.2, "проезд — LOT_KERB");
 }
 
 #[test]

@@ -21,7 +21,6 @@ use crate::map::osm::model::{
 };
 use crate::map::osm::overpass::{Element, GeoBounds, LatLon, Member, OverpassResponse};
 use crate::map::roads::network::sections::{self, SectionReport};
-use crate::map::roads::{is_carriageway, mapped_sidewalk, sidewalk_width};
 use crate::map::seed::seed_from_point;
 
 /// Ширина стены Кремля, м.
@@ -1088,7 +1087,7 @@ struct Link {
 /// сколько наезжающих оставлено как есть.
 ///
 /// Ширина улицы в модели — константа класса, а тротуар добавляет рендер
-/// (`roads::sidewalk_width`), и в старой застройке дом, стоящий в OSM у самой
+/// (полоса по классу, [`RoadLine::sidewalk`]), и в старой застройке дом, стоящий в OSM у самой
 /// кромки, выходит стеной на тротуар, а в 2.5D крышей — на асфальт (Тула,
 /// way 179102449 у улицы Бундурина: стена в 4.7 м от оси при 5.76 м полосы).
 /// Точность до метра игре не нужна, а дом на тротуаре читается как баг.
@@ -1117,13 +1116,17 @@ fn pull_houses_off_sidewalks(map: &mut MapData) -> PulledHouses {
     let mut segments: Vec<Link> = Vec::new();
     let mut segment_road: Vec<usize> = Vec::new();
     for (index, road) in map.roads.iter().enumerate() {
-        if road.bridge || !is_carriageway(road) {
+        if road.bridge || !road.is_carriageway() {
             continue;
         }
-        let Some(sidewalk) = sidewalk_width(road) else {
+        // край обочины: полоса по классу, тег не смотрит — там, где тег снял
+        // тротуар, дом всё равно не встаёт вплотную к бордюру
+        let Some(reach) = road
+            .sidewalk()
+            .verge_edge(road.width / 2.0, SIDEWALK_CLEARANCE)
+        else {
             continue;
         };
-        let reach = road.width / 2.0 + sidewalk + SIDEWALK_CLEARANCE;
         for link in road.points.windows(2) {
             segments.push(Link {
                 from: link[0],
@@ -1333,7 +1336,7 @@ struct Edge {
 /// бывает только у улицы ([`RoadClass::Street`]), дорожка — сама класс.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum EdgeKind {
-    /// Проезжая часть ([`is_carriageway`]).
+    /// Проезжая часть ([`RoadLine::is_carriageway`]).
     Carriageway,
     /// Дорожка ([`RoadClass::Alley`]): тротуар, замапленный отдельно, и
     /// прочие пешеходные пути.
@@ -1344,7 +1347,7 @@ enum EdgeKind {
 
 impl EdgeKind {
     fn of(road: &RoadLine) -> Self {
-        if is_carriageway(road) {
+        if road.is_carriageway() {
             Self::Carriageway
         } else if road.class == RoadClass::Alley {
             Self::Walkway
@@ -1394,7 +1397,7 @@ fn pull_areas_to_roads(map: &mut MapData) -> StretchedAreas {
         }
         // тротуар — только тот, что рисуется: у `sidewalk=separate|no` его нет,
         // и квартал, дотянутый под несуществующую полосу, вставал за бордюром
-        let reach = road.width / 2.0 + mapped_sidewalk(road).unwrap_or_default();
+        let reach = road.sidewalk().mapped_edge(road.width / 2.0);
         let kind = EdgeKind::of(road);
         for link in road.points.windows(2) {
             edges.push(Edge {

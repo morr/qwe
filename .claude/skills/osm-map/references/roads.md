@@ -19,7 +19,8 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   brightness step between them is what reads as the kerb) — a **carriageway**
   (`is_carriageway`: `RoadClass::Street` whose `Highway::is_street` — so `service`
   drives get none however wide, and never a `passage`) gets a band `width + 2 ·
-  sidewalk_width` (`sidewalk_band`: 22 % of the width, 1.2–3 m per side). **The class
+  band` (`osm::model::sidewalk_band`: 22 % of the width, 1.2–3 m per side, through
+  `RoadLine::sidewalk()`). **The class
   decides, not the width**: the test used to be `width ≥ STREET_MIN_WIDTH` 8 m, which was
   the class in other words while the width came from the class; with the width derived
   from the lanes (**Sections** below) a two-lane street is 7.6 m and a one-lane one-way
@@ -1024,8 +1025,8 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     seed, reads `RoadLine::points` off the map. Not to be
     confused with `network::DrawnEdges`, the outer edges the stitches measure against.
     **Three sidewalk rules live on it, and they are three on purpose**:
-    `sidewalk_drawn(i)` — the band that is *drawn*: `drawn_sidewalk` (the map's sidewalk
-    under the `Sidewalks` knob) minus the crossing piece in a pair's opening
+    `sidewalk_drawn(i)` — the band that is *drawn*: `SidewalkProfile::any` (the map's
+    sidewalk) under the `Sidewalks` knob, minus the crossing piece in a pair's opening
     (`across_median`, **Kerb return** below) — the ribbon, the kerb returns, the pockets,
     the turning circles and the merge edges read it; `sidewalk_mapped(i)` — the sidewalk
     the *map* has, knob or no knob, minus the same piece — the junction paint reads it, a
@@ -1133,8 +1134,9 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     anything) looks ahead for the nearest centreline of a road it may join: the closest
     point on each segment within 60° of its heading, and the heading's ray hit, scored by the
     gap to that road's **drawn edge**, ≤ `STITCH_MAX_GAP` 6 m. The drawn edge is the outer
-    edge of the **sidewalk** when the road carries one (`drawn_sidewalk`, so it follows
-    `RoadStyle::sidewalks`): OSM maps a drive «to the pavement footway», which sits ~9 m off
+    edge of the **sidewalk** when the road carries one (the mapped edge of
+    `SidewalkProfile` under `RoadStyle::sidewalks`, the closure `Drawn::new` hands
+    `network::stitches`): OSM maps a drive «to the pavement footway», which sits ~9 m off
     a 12 m street's axis, and measured to the asphalt the drive stayed 7.4 m short — it
     butted into the sand ribbon with the street showing again beyond the sidewalk (Tula way
     1309163271 at Первомайская, `cam 3420 2726`). If the end already lies inside a

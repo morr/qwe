@@ -32,7 +32,7 @@
 //! [`centerline`], дорожная обёртка над ним с её двумя закреплениями.
 //!
 //! Улица — это не одна лента, а три слоя: **тротуар** (`Z_SIDEWALK`, светлая
-//! полоса шире проезжей части на [`sidewalk_width`] с каждой стороны), кант и
+//! полоса шире проезжей части на полосу [`RoadLine::sidewalk`] с каждой стороны), кант и
 //! заливка асфальтом. Тротуар лежит под лентами **улицы** по той же логике, что
 //! кант: заливка поперечной улицы кроет его на перекрёстке, и тротуар
 //! обрывается там, где обрывается в жизни, — но **поверх ленты аллеи**: дорожка,
@@ -217,23 +217,6 @@ impl Default for RoadStyle {
             arrows: false,
         }
     }
-}
-
-/// Форвард на [`RoadLine::sidewalk`]`().band()`.
-pub fn sidewalk_width(road: &RoadLine) -> Option<f32> {
-    road.sidewalk().band()
-}
-
-/// Ширина тротуара, который у дороги **рисуется** при этом стиле: тротуар по
-/// карте ([`SidewalkProfile::any`](crate::map::osm::model::SidewalkProfile::any)),
-/// если ручка его не прячет.
-fn drawn_sidewalk(style: &RoadStyle, road: &RoadLine) -> Option<f32> {
-    style.sidewalks.then(|| road.sidewalk().any()).flatten()
-}
-
-/// Форвард на [`RoadLine::sidewalk`]`().any()`.
-pub fn mapped_sidewalk(road: &RoadLine) -> Option<f32> {
-    road.sidewalk().any()
 }
 
 /// [`RoadLine::is_carriageway`] свободной функцией — её зовут как предикат

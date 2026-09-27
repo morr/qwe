@@ -306,12 +306,15 @@ be called alone:
   thresholds; python estimate from the cache, the exact count is the `osm parse:` line).
 - **Houses pulled off the sidewalks** (`parse.rs::pull_houses_off_sidewalks`) — the street's
   width is a class constant and the sidewalk is added by the renderer
-  (`roads::sidewalk_width`), so an old house standing at the kerb in OSM came out with its
+  (`RoadLine::sidewalk()`, the band by class), so an old house standing at the kerb in OSM came out with its
   wall on the drawn sidewalk and, in 2.5D, its roof on the asphalt (Tula way 179102449 on
   улица Бундурина: the wall 4.7 m from the axis against a 5.76 m band). The game does not
   need metre accuracy, and a house on the pavement reads as a bug, so the house moves.
-  - **The band** is every non-bridge `roads::is_carriageway` link at `width / 2 +
-    sidewalk_width + SIDEWALK_CLEARANCE` 2 m, in a `SIDEWALK_CELL` 32 m grid; raw OSM
+  - **The band** is every non-bridge `RoadLine::is_carriageway` link out to its
+    **verge edge** — `SidewalkProfile::verge_edge(width / 2, SIDEWALK_CLEARANCE)`: the
+    band by class plus 2 m, **the tag not read** (a side `sidewalk=no|separate` took the
+    sidewalk from keeps a verge instead; pinned by
+    `the_parse_reads_the_mapped_edge_for_blocks_and_the_verge_for_houses`), in a `SIDEWALK_CELL` 32 m grid; raw OSM
     points, not the smoothed centreline — the difference is centimetres. The clearance was
     0.3 m first, and the author's look said the houses stood right on the pavement edge: the
     2.5D roof leans toward the street by another half metre to a metre.
@@ -362,8 +365,9 @@ be called alone:
   the axis against a 5.76 m band, i.e. a 34 cm seam). On a photo a yard runs up to the
   kerb, and a seam of ground beside the pavement reads as an unpainted layer.
   - **The vertex moves, not the block**, and it moves **under** the asphalt: a vertex whose
-    gap to the drawn edge (half the class width plus `roads::sidewalk_width` on a
-    carriageway) is within `LANDUSE_GAP_MAX` 5 m is pulled to the road's axis until it
+    gap to the road's **mapped edge** (`SidewalkProfile::mapped_edge(width / 2)`: half
+    the width plus the band by class when the road has a sidewalk on at least one side —
+    one reach for both sides, a one-sided `sidewalk=right` included) is within `LANDUSE_GAP_MAX` 5 m is pulled to the road's axis until it
     stands `LANDUSE_OVERLAP` 0.5 m inside the band. The overlap is not decoration: the
     ribbon is drawn from the *smoothed* centreline while the gap is measured on the raw OSM
     points, and without it a bend keeps a centimetre of seam. Beyond the limit nothing is

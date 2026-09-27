@@ -637,7 +637,7 @@ mod tests {
         kerb_returns(&Drawn::for_test(&map).with_sidewalks(sidewalks), 1.0)
     }
 
-    /// Тротуар улицы 8 м — как его считает `roads::sidewalk_width`.
+    /// Тротуар улицы 8 м — как его считает `osm::model::sidewalk_band`.
     const SIDEWALK: f32 = 1.76;
 
     /// Перекрёсток двух улиц 8 м в начале координат.

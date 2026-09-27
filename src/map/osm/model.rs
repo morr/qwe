@@ -490,11 +490,17 @@ impl SidewalkProfile {
         self.band.map(|band| half + band + clearance)
     }
 
-    /// **Край бордюра** (kerb edge) — чем дорога сквозь стоянку отделена от её
-    /// асфальта: полоса по классу, а у проезда без неё — `default`
+    /// Ширина бордюра, которым дорога сквозь стоянку отделена от её асфальта:
+    /// полоса по классу (тег не смотрит), а у проезда без неё — `default`
     /// (`parking::LOT_KERB`).
+    pub fn kerb(&self, default: f32) -> f32 {
+        self.band.unwrap_or(default)
+    }
+
+    /// **Край бордюра** (kerb edge) — полуширина `half` плюс [`Self::kerb`]:
+    /// ближе этого к оси место на стоянке не встаёт.
     pub fn kerb_edge(&self, half: f32, default: f32) -> f32 {
-        half + self.band.unwrap_or(default)
+        half + self.kerb(default)
     }
 }
 

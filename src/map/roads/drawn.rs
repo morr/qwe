@@ -20,7 +20,7 @@ use super::pockets::KerbLots;
 use super::rings::Rings;
 use super::shape::RoadShape;
 use super::tapers::{Taper, Tapers};
-use super::{MEDIAN_CROSSING_MAX, RoadStyle, drawn_sidewalk, ring_arcs};
+use super::{MEDIAN_CROSSING_MAX, RoadStyle, ring_arcs};
 use crate::map::osm::model::polyline_length;
 use crate::map::osm::{MapData, RoadClass, RoadLine};
 
@@ -109,7 +109,10 @@ impl<'m> Drawn<'m> {
         let nodal = Self::nodal(map, shape);
         let roads = nodal.roads();
         let (paths, nodes, runs) = (&nodal.axes.paths, &nodal.nodes, &nodal.axes.pairs.runs);
-        let stitches = network::stitches(&roads, map, nodes, |road| drawn_sidewalk(style, road));
+        // тротуар, который рисуется: по карте, если ручка его не прячет
+        let stitches = network::stitches(&roads, map, nodes, |road| {
+            road.sidewalk().any().filter(|_| style.sidewalks)
+        });
         // Торцы узлов — точки OSM, и ось их не двигает.
         let across_median = paths
             .iter()
@@ -370,7 +373,8 @@ impl<'m> Drawn<'m> {
     }
 
     /// Тротуар, который у дороги **рисуется**: по карте и при этой ручке
-    /// ([`drawn_sidewalk`]), минус кусок в проёме пары. Один ответ и для
+    /// ([`SidewalkProfile::any`](crate::map::osm::model::SidewalkProfile::any)
+    /// при [`RoadStyle::sidewalks`]), минус кусок в проёме пары. Один ответ и для
     /// ленты, и для скругления в узле, и для кармана.
     pub fn sidewalk_drawn(&self, index: usize) -> Option<f32> {
         self.by_style(self.roads[index].sidewalk().any())

@@ -413,8 +413,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   among them, do not count. Everything downstream — navmesh, doors, roof, render seed —
   sees the straightened outline.
 - **Pulled-back house** (`parse.rs::pull_houses_off_sidewalks`) — a building whose outline
-  reaches into a street's **drawn** sidewalk band (half the class width + `sidewalk_width` +
-  2 m) is moved at parse, whole and with its doors, straight away from the street, by at
+  reaches into a street's **verge edge** (half the width + the sidewalk band by class + 2 m,
+  the `sidewalk=*` tag not read — see **Sidewalk profile**) is moved at parse, whole and with its doors, straight away from the street, by at
   most 6 m — and its **row** with it: neighbours on the same side of the same street standing
   on the same line take the same shift, so the facade line stays straight. A house needing
   more than 6 m is moved by 6 m on its own, outside any row. A shift that would bring the
@@ -1134,7 +1134,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   ТРЦ «Макси» the boulevard with its three mini-roundabouts; the other big lots of Tula
   carry only untagged two-way aisles) is shown on the lot's asphalt by `roads/lots.rs`,
   and by its **kerb** alone — the asphalt is the lot's own tone and is not laid twice.
-  The kerb (`lot_sidewalks`, `Z_LOT_SIDEWALK` 2.002, `parking::kerb_width`) is a
+  The kerb (`lot_sidewalks`, `Z_LOT_SIDEWALK` 2.002, `SidewalkProfile::kerb` — the band
+  by class, `parking::LOT_KERB` on a drive) is a
   **polygon, not ribbons**: the through roads' bands with their kerbs and the islands of
   the roundabouts, minus the asphalt of every street on the lot (an aisle cuts its
   **mouth**, so along the boulevard the kerb comes out as islands at the row ends) and
@@ -1573,6 +1574,17 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   which enters the same union. A **waterway ribbon** carries the same field on its
   edges from the shader (`surface.wgsl`, by the ribbon's `across`), so the shoal turns
   from a pond into its channel without a seam.
+- **Sidewalk profile** (`osm/model.rs`, `RoadLine::sidewalk() -> SidewalkProfile`) — one
+  answer to "what sidewalk does this road have" for the parse and the renderer: the sides
+  (from the **`SidewalkSide`** tristate) and the **band by class** (`sidewalk_band`, on a
+  carriageway — a bridge included — and on nothing else). **Derived from the current
+  `width`, never stored** (the renderer's driveway-crossing and ring-arc clones change the
+  width). Three edges come off it, and they are three on purpose: the **mapped edge**
+  (half width + the band if at least one side has a sidewalk — the blocks and the lots are
+  pulled to it), the **verge edge** (half width + the band by class + a clearance, tag not
+  read — the houses are pushed off it) and the **kerb edge** (half width + the band, or
+  `LOT_KERB` on a drive — a lot's stalls stand clear of it). Every edge is one reach for
+  both sides, a one-sided `sidewalk=right` included.
 - **Sidewalks & markings** (`map/roads.rs`) — a **carriageway** (`is_carriageway`: a
   `Street` whose `Highway::is_street`, not a passage — by class, never by width; bridges
   included) is asphalt grey (`ROAD_COLOR`, a neutral mid grey — the
@@ -1580,8 +1592,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   light **sidewalk band** at
   `Z_SIDEWALK` 1.6 — under the street ribbon (a crossing street's fill covers it) and
   **over the alley one**, so a footway running into the street stops at the
-  band instead of drawing a sand ribbon across it — width `sidewalk_width` (22 %,
-  1.2–3 m per side) — **never a bridge deck**,
+  band instead of drawing a sand ribbon across it — width by class (`sidewalk_band`, 22 %,
+  1.2–3 m per side; the **Sidewalk profile** above) — **never a bridge deck**,
   which leaves for its own layers before the band is pushed and has its curb instead.
   At a junction the band **turns the corner on the kerb's own arc** — the sidewalk half
   of the **kerb return** above.

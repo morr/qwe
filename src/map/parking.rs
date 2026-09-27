@@ -66,7 +66,7 @@ use crate::map::osm::PolyArea;
 use crate::map::osm::model::{
     RoadClass, RoadLine, distance_to_segment, ring_bounds, signed_ring_area,
 };
-use crate::map::roads::{is_carriageway, sidewalk_width};
+use crate::map::roads::is_carriageway;
 
 /// Место, м: легковая машина плюс просвет по обе стороны.
 const STALL_WIDTH: f32 = 2.6;
@@ -361,16 +361,11 @@ impl<'a> Outline<'a> {
 }
 
 /// Бордюр дороги, идущей сквозь стоянку, с одной стороны, м, — когда у неё нет
-/// своего тротуара (проезд, `roads::is_carriageway`).
-const LOT_KERB: f32 = 1.2;
+/// своего тротуара (проезд, `roads::is_carriageway`); с тротуаром бордюр —
+/// его полоса по классу (`SidewalkProfile::kerb`).
+pub const LOT_KERB: f32 = 1.2;
 /// Сколько асфальта остаётся между бордюром сквозной дороги и местом, м.
 const THROUGH_CLEARANCE: f32 = 0.5;
-
-/// Ширина бордюра, которым дорога сквозь стоянку отделена от её асфальта:
-/// тротуар улицы, а у проезда — [`LOT_KERB`].
-pub fn kerb_width(road: &RoadLine) -> f32 {
-    sidewalk_width(road).unwrap_or(LOT_KERB)
-}
 
 /// Дороги вокруг площадки — звеньями `(от, до, расстояние от оси)`.
 #[derive(Default)]
@@ -401,7 +396,7 @@ impl Surroundings {
         };
         Self {
             through: links(through, |road| {
-                road.width / 2.0 + kerb_width(road) + THROUGH_CLEARANCE
+                road.sidewalk().kerb_edge(road.width / 2.0, LOT_KERB) + THROUGH_CLEARANCE
             }),
             drives: links(drives, |road| road.width / 2.0),
         }
@@ -2084,7 +2079,7 @@ mod tests {
         };
         assert!(is_through(&through));
         let stalls = stalls_beside(&lot, &[], &[&through], &[]);
-        let clear = through.width / 2.0 + kerb_width(&through);
+        let clear = through.sidewalk().kerb_edge(through.width / 2.0, LOT_KERB);
         assert!(stalls.iter().any(|stall| stall.at.y < 40.0 - clear));
         assert!(stalls.iter().any(|stall| stall.at.y > 40.0 + clear));
         for stall in &stalls {
