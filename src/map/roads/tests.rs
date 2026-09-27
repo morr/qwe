@@ -425,6 +425,37 @@ fn a_fork_is_one_bridge_and_stays_up() {
     assert_eq!(path[path.len() - 1].rise, 1.0);
 }
 
+/// Склейка — по торцам: два мостика, которые всего лишь пересекаются
+/// серединами (на Туле таких пар две), остаются двумя мостами, каждый со
+/// своим пролётом. `footprint::ways_joined` склеил бы их в один.
+#[test]
+fn crossing_decks_are_two_bridges_not_one() {
+    let map = bridge_map(vec![
+        fixture::bridge(vec![on_x(0.0), on_x(40.0)], 3.0),
+        fixture::bridge(vec![Vec2::new(20.0, -20.0), Vec2::new(20.0, 20.0)], 3.0),
+    ]);
+    let bridges = Bridges::new(&map);
+    for deck in 0..2 {
+        let span = bridges.span(deck).unwrap();
+        assert_eq!(span.span, 40.0, "deck {deck} was glued to its neighbour");
+        assert_eq!((span.from_start, span.from_end), (0.0, 0.0));
+    }
+}
+
+/// Не мост — не пролёт: улица и мост без двух точек в [`Bridges`] не входят.
+#[test]
+fn only_bridge_ways_get_a_span() {
+    let map = bridge_map(vec![
+        fixture::street(vec![on_x(0.0), on_x(40.0)], 8.0),
+        fixture::bridge(vec![on_x(40.0)], 8.0),
+        fixture::bridge(vec![on_x(40.0), on_x(80.0)], 8.0),
+    ]);
+    let bridges = Bridges::new(&map);
+    assert!(bridges.span(0).is_none());
+    assert!(bridges.span(1).is_none());
+    assert_eq!(bridges.span(2).unwrap().span, 40.0);
+}
+
 #[test]
 fn sidewalks_belong_to_streets_not_service_roads() {
     // проезд — без тротуара, как бы широк он ни был: решает класс, не ширина;
@@ -828,6 +859,60 @@ fn a_bridge_leaves_the_street_layers_for_the_deck_ones() {
     assert!(!layer(&layers, "bridges").builder.is_empty());
     // бордюр настила рисуется всегда, независимо от ручки канта
     assert!(!layer(&layers, "bridge_casings").builder.is_empty());
+}
+
+/// Заливка настила кладётся в порядке заливки улиц и несёт раму полос и
+/// разрывы асфальта своей улицы: колея шейдера на мосту та же, что на
+/// подходе, и гаснет на узле, где мост — не ведущий. Пешеходный мостик в том
+/// же меше рамы не получает.
+#[test]
+fn deck_fill_carries_its_streets_lane_frame() {
+    let mut map = MapData::default();
+    // широкая улица и мост у́же её, торцом в её средний узел: у моста там
+    // разрыв асфальта
+    map.roads.push(fixture::street(
+        vec![
+            Vec2::new(100.0, 100.0),
+            Vec2::new(350.0, 100.0),
+            Vec2::new(600.0, 100.0),
+        ],
+        16.0,
+    ));
+    map.roads.push(fixture::bridge(
+        vec![Vec2::new(350.0, 100.0), Vec2::new(350.0, 400.0)],
+        8.0,
+    ));
+    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let coords = layer(&layers, "bridges")
+        .builder
+        .ribbon_coords_for_test()
+        .expect("настил — фактурный слой");
+    assert!(!coords.is_empty());
+    // рама полос: `[поперёк, до разрыва, low, high]` от узла сетки, у ленты
+    // без полос — `[поперёк, до разрыва, полуширина, 0]`
+    assert!(
+        coords.iter().all(|c| c[2] < 0.0 && c[3] > 0.0),
+        "the deck fill lost its street's lane frame"
+    );
+    let nearest = coords.iter().map(|c| c[1]).fold(f32::INFINITY, f32::min);
+    assert!(
+        nearest < 10.0,
+        "the deck fill ignores the asphalt break at its junction ({nearest} m)"
+    );
+
+    // пешеходный мостик — в том же меше, но без полос
+    let mut footbridge = MapData::default();
+    footbridge.roads.push(RoadLine {
+        class: RoadClass::Alley,
+        ..fixture::bridge(vec![Vec2::new(0.0, 0.0), Vec2::new(0.0, 40.0)], 3.0)
+    });
+    let (layers, _) = mesh_roads(&footbridge, RoadStyle::default(), RoadShape::default());
+    let coords = layer(&layers, "bridges")
+        .builder
+        .ribbon_coords_for_test()
+        .unwrap();
+    assert!(!coords.is_empty());
+    assert!(coords.iter().all(|c| c[3] == 0.0), "a footbridge got lanes");
 }
 
 #[test]
