@@ -49,6 +49,10 @@ const CLOSING_RADIUS: f32 = 7.0;
 /// То же для **большой** стоянки ([`is_ground`]): объездная вокруг неё стоит в
 /// 15–20 м от контура, и вся эта полоса на снимке — асфальт площадки.
 const GROUND_CLOSING_RADIUS: f32 = 12.0;
+/// Насколько звено улицы может разойтись с длинной стороной кармана
+/// (`parking=street_side`), чтобы считаться улицей, вдоль которой он лежит, —
+/// рад. С запасом: карман рисуют не строго по оси, а улица у него плавно гнётся.
+const STREET_SIDE_ANGLE: f32 = std::f32::consts::FRAC_PI_6;
 /// Шаг, которым полотно дороги режется на куски, м: кусок берётся в замыкание,
 /// только если он рядом с площадкой, и длинная улица не тянет за собой асфальт
 /// на весь свой way.
@@ -351,15 +355,18 @@ impl<'a> Around<'a> {
         };
         let (low, high) = ring_bounds(&lot.outer);
         // у кармана полотно — без тротуара: замыкание затягивает полосу
-        // тротуара между ним и бордюром, и карман врезается в тротуар
+        // тротуара между ним и бордюром, и карман врезается в тротуар. Только у
+        // улицы, вдоль которой он лежит: поперечная в радиусе замыкания
+        // остаётся с тротуаром, и угол у перехода асфальтом не заливается
         let owned: Vec<RoadLink> = self
             .road_grid
             .near(low, high)
             .into_iter()
             .map(|index| {
                 let link = self.links[index];
+                let kerbside = street_side && runs_along(lot, &link);
                 RoadLink {
-                    reach: if street_side { link.kerb } else { link.reach },
+                    reach: if kerbside { link.kerb } else { link.reach },
                     ..link
                 }
             })
@@ -593,6 +600,24 @@ fn distance_to_rings(point: Vec2, lot: &PolyArea) -> f32 {
 
 fn touches_lot(point: Vec2, lot: &PolyArea) -> bool {
     distance_to_rings(point, lot) <= TOUCH
+}
+
+/// Идёт ли звено вдоль кармана: направление в пределах [`STREET_SIDE_ANGLE`]
+/// от самой длинной стороны контура. Карман — полоса вдоль улицы, и его длинная
+/// сторона и есть её направление; поперечная улица у торца под этот угол не
+/// попадает. Вырожденный контур или звено — вдоль (как было до разбора углов).
+fn runs_along(lot: &PolyArea, link: &RoadLink) -> bool {
+    let ring = &lot.outer;
+    let side = (0..ring.len())
+        .map(|index| ring[(index + 1) % ring.len()] - ring[index])
+        .max_by(|left, right| left.length_squared().total_cmp(&right.length_squared()));
+    let (Some(side), Some(way)) = (
+        side.and_then(Vec2::try_normalize),
+        (link.to - link.from).try_normalize(),
+    ) else {
+        return true;
+    };
+    side.dot(way).abs() >= STREET_SIDE_ANGLE.cos()
 }
 
 /// Габарит фигур по их внешним кольцам; `None` — фигур нет.

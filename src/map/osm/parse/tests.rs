@@ -3131,6 +3131,56 @@ fn a_street_side_lot_reaches_the_kerb_across_the_sidewalk() {
     assert_eq!(top(false), [false; 2], "обычная стоянка вылезла на тротуар");
 }
 
+/// Бордюр кармана — только у улицы, вдоль которой он лежит. Поперечная улица у
+/// его торца, в радиусе замыкания, остаётся с тротуаром: асфальт кармана
+/// доходит до края её тротуара, а не заливает угол до бордюра.
+#[test]
+fn a_street_side_lot_leaves_a_cross_street_sidewalk() {
+    let sidewalk = sidewalk_band(8.0);
+    let lot = PolyArea {
+        kind: AreaKind::Parking,
+        ..building(
+            rect(
+                CENTER + Vec2::new(-20.0, -4.0 - sidewalk - 2.5),
+                CENTER + Vec2::new(20.0, -4.0 - sidewalk - 0.1),
+            ),
+            Vec::new(),
+        )
+    };
+    let mut map = MapData {
+        roads: vec![
+            street(
+                vec![
+                    CENTER - Vec2::new(400.0, 0.0),
+                    CENTER + Vec2::new(400.0, 0.0),
+                ],
+                8.0,
+            ),
+            // поперечная: бордюр при x = 24, тротуар в 2.2 м от торца кармана
+            street(
+                vec![
+                    CENTER + Vec2::new(28.0, -60.0),
+                    CENTER + Vec2::new(28.0, 60.0),
+                ],
+                8.0,
+            ),
+        ],
+        parking: vec![lot],
+        street_side_lots: vec![0],
+        ..MapData::default()
+    };
+    pull_areas_to_roads(&mut map);
+    let paved = |probe: Vec2| point_in_polygon(CENTER + probe, &map.parking[0].outer);
+    assert!(
+        paved(Vec2::new(0.0, -4.0 - sidewalk * 0.5)),
+        "карман не дошёл до бордюра своей улицы"
+    );
+    assert!(
+        !paved(Vec2::new(24.0 - sidewalk * 0.5, -4.0 - sidewalk - 1.3)),
+        "карман залил тротуар поперечной улицы"
+    );
+}
+
 /// Тем же проходом дотягивается и стоянка — но по своему правилу: её край
 /// пересекает проезд ряда, и вершина, стоящая на его полотне, обязана уехать к
 /// улице вместе с соседями. По правилу квартала («лежишь под лентой — тянуть

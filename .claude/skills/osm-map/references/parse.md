@@ -443,7 +443,12 @@ be called alone:
       sidewalk: the closing then fills the sidewalk strip between it and the kerb, and the
       pocket is cut into the sidewalk instead of standing behind it — on Tula's Советская
       a lay-by was separated from the lanes by a strip of drawn sidewalk, with nothing to
-      drive in from (Tula: 55 such outlines, Berlin 3275). `closed` = `base` offset **out by the
+      drive in from (Tula: 56 such outlines — 55 ways and a relation, both parse paths
+      record it — Berlin 3275). Only the street the pocket **runs along** loses its
+      sidewalk (`runs_along`: a link within `STREET_SIDE_ANGLE` 30° of the outline's
+      longest side); a cross street at the pocket's end, inside the closing radius,
+      keeps its band whole, so the pocket stops at the edge of that sidewalk instead of
+      paving its corner to the kerb (`a_street_side_lot_leaves_a_cross_street_sidewalk`). `closed` = `base` offset **out by the
       radius and back in** (`i_overlay` `outline`, round joins, `ARC` 0.3). `closed − base`
       is what the closing added, and a piece of it is kept only if it lies **between the
       lot and a road** (`between`: a vertex within `TOUCH` 0.25 m of the lot's rings — or
