@@ -185,6 +185,20 @@ pub(crate) struct Sample {
 fn place(city: City) -> (&'static str, &'static str) {
     match city {
         City::Tula => ("Тульская область", "Тула"),
+        City::Ryazan => ("Рязанская область", "Рязань"),
+        City::Kaluga => ("Калужская область", "Калуга"),
+        City::Oryol => ("Орловская область", "Орёл"),
+        City::Rostov => ("Ростовская область", "Ростов-на-Дону"),
+        City::Belgorod => ("Белгородская область", "Белгород"),
+        City::MoscowCenter
+        | City::MoscowNorth
+        | City::MoscowNorthEast
+        | City::MoscowEast
+        | City::MoscowSouthEast
+        | City::MoscowSouth
+        | City::MoscowSouthWest
+        | City::MoscowWest
+        | City::MoscowNorthWest => ("Москва", "Москва"),
         City::NewYork => ("штат Нью-Йорк", "Нью-Йорк"),
         City::Paris => ("Иль-де-Франс", "Париж"),
         City::Berlin => ("Берлин", "Берлин"),

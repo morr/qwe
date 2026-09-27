@@ -152,7 +152,10 @@ portal at `START_ZOOM` regardless of `CameraPositionMode` — the camera side is
 ## City and the city switch
 
 **City** (`city.rs`, resource, remembered by `prefs.rs`) — which city the map is built from:
-`Tula | NewYork | Paris | Berlin | London | Tokyo | DevilsLake`. Each carries its **geo
+`Tula | Ryazan | Kaluga | Oryol | Rostov | Belgorod | Moscow{Center, North, NorthEast,
+East, SouthEast, South, SouthWest, West, NorthWest} | NewYork | Paris | Berlin | London |
+Tokyo | DevilsLake` — Moscow is nine extracts, one per administrative okrug (the centre,
+then clockwise from the north), since one `MAP_SIZE` frame covers only a sliver of it. Each carries its **geo
 center** (bbox center of the Overpass extract), its **portal hint** and its **cache slug**.
 `MAP_SIZE` and therefore the derived `grid_size()` are shared, so switching city never
 resizes the navmesh.

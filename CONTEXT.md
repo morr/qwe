@@ -127,8 +127,9 @@ Summary; the mechanism — **world-lifecycle skill** (states and the warmup hold
   for one from anywhere but R (a changed **world seed**, a flipped **Deterministic**).
   Consumed in `PreUpdate` after `InputSystems` — the same slot R uses, because a mass
   despawn may not happen in `Update` (CLAUDE.md). Always `to_portal: true`.
-- **City** (`city.rs`, resource, persisted) — `Tula | NewYork | Paris | Berlin | London |
-  Tokyo | DevilsLake`, each with its geo center, portal hint and cache slug. `MAP_SIZE` and
+- **City** (`city.rs`, resource, persisted) — `Tula | Ryazan | Kaluga | Oryol | Rostov |
+  Belgorod | Moscow{Center, North, NorthEast, East, SouthEast, South, SouthWest, West,
+  NorthWest} | NewYork | Paris | Berlin | London | Tokyo | DevilsLake`, each with its geo center, portal hint and cache slug. `MAP_SIZE` and
   therefore the derived `grid_size()` are shared, so switching city never resizes the
   navmesh. UI — a select at
   bottom centre (`ui/city.rs`).

@@ -21,6 +21,34 @@ use crate::settings::MAP_SIZE;
 /// Кремль — в правой части кадра). Проекция — локальная равнопромежуточная:
 /// метры от юго-западного угла bbox. `(широта, долгота)`.
 const TULA_GEO_CENTER: DVec2 = DVec2::new(54.18969, 37.59148);
+/// Рязань: исторический центр, Кремль и Трубеж — в правой части кадра.
+const RYAZAN_GEO_CENTER: DVec2 = DVec2::new(54.62800, 39.73500);
+/// Калуга: центр у Театральной улицы, Ока — вдоль южного края.
+const KALUGA_GEO_CENTER: DVec2 = DVec2::new(54.51600, 36.26000);
+/// Орёл: слияние Оки и Орлика, центр по обоим берегам.
+const ORYOL_GEO_CENTER: DVec2 = DVec2::new(52.96700, 36.07000);
+/// Ростов-на-Дону: Большая Садовая, Дон — в южной части кадра.
+const ROSTOV_GEO_CENTER: DVec2 = DVec2::new(47.22700, 39.71500);
+/// Белгород: Соборная площадь, Везелка — по южному краю центра.
+const BELGOROD_GEO_CENTER: DVec2 = DVec2::new(50.59600, 36.58700);
+/// Москва, центр: Кремль, Садовое кольцо почти целиком в кадре.
+const MOSCOW_CENTER_GEO_CENTER: DVec2 = DVec2::new(55.75200, 37.61750);
+/// Москва, север: Коптево и Войковская.
+const MOSCOW_NORTH_GEO_CENTER: DVec2 = DVec2::new(55.82000, 37.52000);
+/// Москва, северо-восток: Свиблово и Бабушкинский, край Лосиного Острова.
+const MOSCOW_NORTH_EAST_GEO_CENTER: DVec2 = DVec2::new(55.86000, 37.65000);
+/// Москва, восток: Перово и Измайлово.
+const MOSCOW_EAST_GEO_CENTER: DVec2 = DVec2::new(55.77000, 37.78000);
+/// Москва, юго-восток: Текстильщики и Кузьминки.
+const MOSCOW_SOUTH_EAST_GEO_CENTER: DVec2 = DVec2::new(55.70000, 37.75000);
+/// Москва, юг: Чертаново и Царицыно.
+const MOSCOW_SOUTH_GEO_CENTER: DVec2 = DVec2::new(55.62500, 37.62500);
+/// Москва, юго-запад: Черёмушки и Академический.
+const MOSCOW_SOUTH_WEST_GEO_CENTER: DVec2 = DVec2::new(55.67000, 37.56000);
+/// Москва, запад: Фили и Кунцево.
+const MOSCOW_WEST_GEO_CENTER: DVec2 = DVec2::new(55.73300, 37.47000);
+/// Москва, северо-запад: Щукино и Южное Тушино, канал имени Москвы.
+const MOSCOW_NORTH_WEST_GEO_CENTER: DVec2 = DVec2::new(55.81500, 37.45500);
 /// Гео-центр Нью-Йорка: Ист-Ривер у Бруклинского моста, в кадре — Даунтаун
 /// Манхэттена и северо-западный Бруклин.
 const NY_GEO_CENTER: DVec2 = DVec2::new(40.70979, -73.97284);
@@ -63,6 +91,20 @@ pub const MAP_CENTER_PORTAL_POS: Vec2 = Vec2::new(MAP_SIZE.x / 2.0, MAP_SIZE.y /
 pub enum City {
     #[default]
     Tula,
+    Ryazan,
+    Kaluga,
+    Oryol,
+    Rostov,
+    Belgorod,
+    MoscowCenter,
+    MoscowNorth,
+    MoscowNorthEast,
+    MoscowEast,
+    MoscowSouthEast,
+    MoscowSouth,
+    MoscowSouthWest,
+    MoscowWest,
+    MoscowNorthWest,
     NewYork,
     Paris,
     Berlin,
@@ -72,8 +114,22 @@ pub enum City {
 }
 
 impl City {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 21] = [
         Self::Tula,
+        Self::Ryazan,
+        Self::Kaluga,
+        Self::Oryol,
+        Self::Rostov,
+        Self::Belgorod,
+        Self::MoscowCenter,
+        Self::MoscowNorth,
+        Self::MoscowNorthEast,
+        Self::MoscowEast,
+        Self::MoscowSouthEast,
+        Self::MoscowSouth,
+        Self::MoscowSouthWest,
+        Self::MoscowWest,
+        Self::MoscowNorthWest,
         Self::NewYork,
         Self::Paris,
         Self::Berlin,
@@ -86,6 +142,20 @@ impl City {
     pub fn label(self) -> &'static str {
         match self {
             Self::Tula => "Tula",
+            Self::Ryazan => "Ryazan",
+            Self::Kaluga => "Kaluga",
+            Self::Oryol => "Oryol",
+            Self::Rostov => "Rostov",
+            Self::Belgorod => "Belgorod",
+            Self::MoscowCenter => "Moscow C",
+            Self::MoscowNorth => "Moscow N",
+            Self::MoscowNorthEast => "Moscow NE",
+            Self::MoscowEast => "Moscow E",
+            Self::MoscowSouthEast => "Moscow SE",
+            Self::MoscowSouth => "Moscow S",
+            Self::MoscowSouthWest => "Moscow SW",
+            Self::MoscowWest => "Moscow W",
+            Self::MoscowNorthWest => "Moscow NW",
             Self::NewYork => "NY",
             Self::Paris => "Paris",
             Self::Berlin => "Berlin",
@@ -99,6 +169,20 @@ impl City {
     pub fn slug(self) -> &'static str {
         match self {
             Self::Tula => "tula",
+            Self::Ryazan => "ryazan",
+            Self::Kaluga => "kaluga",
+            Self::Oryol => "oryol",
+            Self::Rostov => "rostov",
+            Self::Belgorod => "belgorod",
+            Self::MoscowCenter => "moscow_c",
+            Self::MoscowNorth => "moscow_n",
+            Self::MoscowNorthEast => "moscow_ne",
+            Self::MoscowEast => "moscow_e",
+            Self::MoscowSouthEast => "moscow_se",
+            Self::MoscowSouth => "moscow_s",
+            Self::MoscowSouthWest => "moscow_sw",
+            Self::MoscowWest => "moscow_w",
+            Self::MoscowNorthWest => "moscow_nw",
             Self::NewYork => "ny",
             Self::Paris => "paris",
             Self::Berlin => "berlin",
@@ -112,6 +196,20 @@ impl City {
     pub fn geo_center(self) -> DVec2 {
         match self {
             Self::Tula => TULA_GEO_CENTER,
+            Self::Ryazan => RYAZAN_GEO_CENTER,
+            Self::Kaluga => KALUGA_GEO_CENTER,
+            Self::Oryol => ORYOL_GEO_CENTER,
+            Self::Rostov => ROSTOV_GEO_CENTER,
+            Self::Belgorod => BELGOROD_GEO_CENTER,
+            Self::MoscowCenter => MOSCOW_CENTER_GEO_CENTER,
+            Self::MoscowNorth => MOSCOW_NORTH_GEO_CENTER,
+            Self::MoscowNorthEast => MOSCOW_NORTH_EAST_GEO_CENTER,
+            Self::MoscowEast => MOSCOW_EAST_GEO_CENTER,
+            Self::MoscowSouthEast => MOSCOW_SOUTH_EAST_GEO_CENTER,
+            Self::MoscowSouth => MOSCOW_SOUTH_GEO_CENTER,
+            Self::MoscowSouthWest => MOSCOW_SOUTH_WEST_GEO_CENTER,
+            Self::MoscowWest => MOSCOW_WEST_GEO_CENTER,
+            Self::MoscowNorthWest => MOSCOW_NORTH_WEST_GEO_CENTER,
             Self::NewYork => NY_GEO_CENTER,
             Self::Paris => PARIS_GEO_CENTER,
             Self::Berlin => BERLIN_GEO_CENTER,

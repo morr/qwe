@@ -348,7 +348,7 @@ did not fit 1080 px and ran off the top of the screen.
   two-text cycler rows. The caption is spawned as a child rather than passed as the scene's
   `@caption` because it comes from runtime strings.
 - **City select** (`ui/city.rs`) — one `FeathersMenu` (button + `FeathersMenuPopup` +
-  `FeathersMenuItem` per city), not a button per city: there are seven of them, the row took
+  `FeathersMenuItem` per city), not a button per city: at seven cities the row already took
   a third of the bottom edge and grew with each new city, and exactly one is ever chosen —
   that is a select. The popup flips itself above the button when there is no room below.
   `sync_city_label` keeps the button caption on the `City` resource, which `reset` and BRP
