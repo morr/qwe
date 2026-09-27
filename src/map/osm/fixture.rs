@@ -31,7 +31,7 @@ use serde_json::{Value, json};
 
 use super::model::{
     AreaKind, BuildingUse, FenceKind, FenceLine, Highway, MapData, PolyArea, RailKind, RailLine,
-    RoadClass, RoadLine, WallLine, WaterKind, WaterLine,
+    RoadClass, RoadLine, SidewalkSide, WallLine, WaterKind, WaterLine,
 };
 use super::overpass::GeoBounds;
 use crate::city::City;
@@ -233,7 +233,7 @@ pub fn street(points: Vec<Vec2>, width: f32) -> RoadLine {
         lanes: None,
         parking_aisle: false,
         turns: Default::default(),
-        sidewalks: [true; 2],
+        sidewalks: [SidewalkSide::Inferred; 2],
         parking: Default::default(),
     }
 }

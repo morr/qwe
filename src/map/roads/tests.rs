@@ -98,11 +98,11 @@ fn the_sidewalk_widths_read_the_class_the_tag_and_the_bridge() {
     let line = vec![Vec2::ZERO, Vec2::new(100.0, 0.0)];
     let mut street = fixture::street(line.clone(), 8.0);
     let band = sidewalk_band(8.0);
-    street.sidewalks = [false; 2];
+    street.sidewalks = [SidewalkSide::None; 2];
     assert_eq!(sidewalk_width(&street), Some(band), "полоса по классу");
     assert_eq!(mapped_sidewalk(&street), None, "по карте — нет");
     assert_eq!(crate::map::parking::kerb_width(&street), band);
-    street.sidewalks = [false, true];
+    street.sidewalks = [SidewalkSide::None, SidewalkSide::Tagged];
     assert_eq!(mapped_sidewalk(&street), Some(band), "хоть с одной стороны");
     street.bridge = true;
     assert_eq!(sidewalk_width(&street), Some(band), "мост — с полосой");
@@ -924,7 +924,13 @@ fn paired_halves_share_a_paved_median_and_keep_sidewalks_outside() {
 fn the_sidewalk_tag_picks_the_side() {
     let sidewalks_with = |sides: [bool; 2]| {
         let mut map = one_street();
-        map.roads[0].sidewalks = sides;
+        map.roads[0].sidewalks = sides.map(|present| {
+            if present {
+                SidewalkSide::Tagged
+            } else {
+                SidewalkSide::None
+            }
+        });
         let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
         layer(&layers, "sidewalks")
             .builder
@@ -1488,7 +1494,7 @@ fn a_crossing_piece_between_two_halves_carries_no_sidewalk() {
     assert_eq!(report.drawn.crossings, 0);
     assert_eq!(report.junctions, 2);
     let mut untagged = map.roads.clone();
-    untagged[3].sidewalks = [false; 2];
+    untagged[3].sidewalks = [SidewalkSide::None; 2];
     let untagged = with_network(untagged);
     let (bare, _) = mesh_roads(&untagged, RoadStyle::default(), RoadShape::default());
     for (tagged, untagged) in layers.iter().zip(&bare) {
@@ -1547,7 +1553,7 @@ fn a_one_sided_sidewalk_wedge_keeps_the_bare_kerb_on_the_untagged_side() {
         ..fixture::street(points, f32::from(lanes) * 3.3 + 1.0)
     };
     let mut wide = street(vec![Vec2::new(200.0, 0.0), Vec2::new(400.0, 0.0)], 4);
-    wide.sidewalks = [true, false];
+    wide.sidewalks = [SidewalkSide::Tagged, SidewalkSide::None];
     let map = with_network(vec![
         street(vec![Vec2::ZERO, Vec2::new(200.0, 0.0)], 2),
         wide,

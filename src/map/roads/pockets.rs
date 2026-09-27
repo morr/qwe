@@ -178,7 +178,7 @@ pub fn kerb_parking(road: &RoadLine, side: usize) -> KerbParking {
             Highway::Motorway => KerbParking::No,
             highway if highway.is_link() => KerbParking::No,
             Highway::Trunk | Highway::Primary | Highway::Secondary => {
-                if road.sidewalks[side] {
+                if road.sidewalks[side].is_present() {
                     KerbParking::Pocket
                 } else {
                     KerbParking::No
@@ -627,6 +627,7 @@ pub fn outline(path: &[Vec2], pocket: &Pocket, side: f32, [inner, outer]: [f32; 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::map::osm::SidewalkSide;
     use crate::map::osm::fixture::street;
 
     fn primary() -> RoadLine {
@@ -643,7 +644,7 @@ mod tests {
         let residential = street(road.points.clone(), 8.0);
         assert_eq!(kerb_parking(&residential, 1), KerbParking::Lane);
         let bare = RoadLine {
-            sidewalks: [true, false],
+            sidewalks: [SidewalkSide::Tagged, SidewalkSide::None],
             ..primary()
         };
         assert_eq!(kerb_parking(&bare, 1), KerbParking::No, "врезать некуда");

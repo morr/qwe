@@ -1080,8 +1080,15 @@ fn turn_lanes_follow_the_flow() {
 /// стороны меняются вместе с разворотом точек.
 #[test]
 fn sidewalk_tags_pick_the_sides() {
-    let sides = |pairs: &[(&str, &str)]| tagged_sidewalks(&tags(pairs));
+    let sides = |pairs: &[(&str, &str)]| {
+        tagged_sidewalks(&tags(pairs)).map(|sides| sides.map(SidewalkSide::is_present))
+    };
     assert_eq!(sides(&[]), None, "без тега решает не тег");
+    assert_eq!(
+        tagged_sidewalks(&tags(&[("sidewalk", "right")])),
+        Some([SidewalkSide::None, SidewalkSide::Tagged]),
+        "тротуар по тегу — `Tagged`, снятый тегом — `None`"
+    );
     assert_eq!(sides(&[("sidewalk", "separate")]), Some([false, false]));
     assert_eq!(sides(&[("sidewalk", "no")]), Some([false, false]));
     assert_eq!(sides(&[("sidewalk", "right")]), Some([false, true]));
@@ -1104,11 +1111,14 @@ fn sidewalk_tags_pick_the_sides() {
         "развёрнутый way — тротуар справа по новому ходу"
     );
     let bare = |pairs: &[(&str, &str)]| untagged_sidewalks(&tags(pairs));
-    assert_eq!(bare(&[]), [true, true]);
-    assert_eq!(bare(&[("surface", "asphalt")]), [true, true]);
+    assert_eq!(bare(&[]), [SidewalkSide::Inferred; 2]);
+    assert_eq!(
+        bare(&[("surface", "asphalt")]),
+        [SidewalkSide::Inferred; 2]
+    );
     assert_eq!(
         bare(&[("surface", "gravel")]),
-        [false, false],
+        [SidewalkSide::None; 2],
         "у грунтовой — никогда"
     );
 }
@@ -1147,11 +1157,17 @@ fn an_untagged_street_takes_its_sidewalks_from_the_blocks_around() {
     let scene = row(scene, 1000.0, SLAB, 30.0);
     let map = scene.parse();
 
-    let sides: Vec<[bool; 2]> = map.roads.iter().map(|road| road.sidewalks).collect();
+    let sides: Vec<[bool; 2]> = map
+        .roads
+        .iter()
+        .map(|road| road.sidewalks.map(SidewalkSide::is_present))
+        .collect();
     assert_eq!(sides[0], [false; 2], "частный сектор — без полосы");
     assert_eq!(sides[1], [true; 2], "tertiary — всегда");
     assert_eq!(sides[2], [true; 2], "тег сильнее окружения");
     assert_eq!(sides[3], [true; 2], "микрорайон — с тротуаром");
+    assert_eq!(map.roads[2].sidewalks, [SidewalkSide::Tagged; 2]);
+    assert_eq!(map.roads[3].sidewalks, [SidewalkSide::Inferred; 2]);
     assert_eq!(sides[4], [false; 2], "без домов вокруг — без полосы");
 }
 
@@ -3142,7 +3158,7 @@ fn a_block_drawn_to_the_kerb_is_tucked_under_its_sidewalk_footway() {
         )
     };
     let carriageway = RoadLine {
-        sidewalks: [false; 2],
+        sidewalks: [SidewalkSide::None; 2],
         ..street(
             vec![
                 CENTER - Vec2::new(400.0, 0.0),
@@ -3612,7 +3628,7 @@ fn a_fence_pocket_at_a_lot_end_leaves_no_asphalt_sliver() {
         )
     };
     let bare = |points: Vec<Vec2>, width: f32| RoadLine {
-        sidewalks: [false; 2],
+        sidewalks: [SidewalkSide::None; 2],
         ..street(points, width)
     };
     let mut map = MapData {

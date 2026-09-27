@@ -1,5 +1,5 @@
 use super::*;
-use crate::map::osm::RoadNode;
+use crate::map::osm::{RoadNode, SidewalkSide};
 use crate::map::osm::fixture::street;
 use crate::map::roads::junctions::marking_breaks;
 use crate::map::roads::network::RoadNetwork;
@@ -321,7 +321,7 @@ fn a_signalled_t_crosses_the_walked_arm_even_without_a_second_walked_street() {
         let mut map = MapData {
             roads: vec![
                 RoadLine {
-                    sidewalks: [false; 2],
+                    sidewalks: [SidewalkSide::None; 2],
                     ..through(Highway::Tertiary)
                 },
                 side(),

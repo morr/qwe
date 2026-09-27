@@ -228,10 +228,15 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   ones; each lane left to right as `LaneTurn { left, through, right }`, `slight_`/`sharp_`
   folded into the turn, an unknown word — Tula has `throught` — into through). Only the
   turn paths and their lane arrows read it (`references/roads.md`, **Turn paths**);
-  Tula 62 ways. `sidewalks: [bool; 2]` and `parking: [KerbParking; 2]` — `[left, right]`
-  along the points, from `sidewalk=*` and `parking:*` (swapped with the points on
-  `oneway=-1`); the sidewalk band and the kerb pockets read them (`references/roads.md`,
-  **Sidewalks**, **Kerb pockets**).
+  Tula 62 ways. `sidewalks: [SidewalkSide; 2]` and `parking: [KerbParking; 2]` —
+  `[left, right]` along the points, from `sidewalk=*` and `parking:*` (swapped with the
+  points on `oneway=-1`); the sidewalk band and the kerb pockets read them
+  (`references/roads.md`, **Sidewalks**, **Kerb pockets**). **`SidewalkSide`** is a
+  tristate — `Tagged` (by `sidewalk*`), `Inferred` (no tag: a paved street the blocks
+  around did not take it from), `None` (whatever took it: the tag, an unpaved surface,
+  the blocks) — so a present side still says after the parse where it came from, and
+  `Inferred` is what `parse::infer_sidewalks` asks; `references/parse.md`, **Sidewalks
+  of untagged streets**.
   **The direction of a one-way way is load-bearing now**, and it did not use to be: the
   cars park on one side of it, the right-hand kerb, so `oneway=-1` — "the traffic runs
   against the order of the points" — is **normalized at parse by reversing the way**

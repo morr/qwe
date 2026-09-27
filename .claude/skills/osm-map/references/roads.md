@@ -52,7 +52,9 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   **`sidewalk=*` picks the sides** (stage 7): `RoadLine::sidewalks` `[left, right]` along
   the points (`parse/tags.rs::tagged_sidewalks` — `both|left|right|no|none|separate`,
   refined by `sidewalk:both|left|right`; `no` and `separate` mean no band, a separate
-  footway draws itself; `oneway=-1` swaps them with the points). **Untagged** (no
+  footway draws itself; `oneway=-1` swaps them with the points). Each side is a
+  **`SidewalkSide`** (`osm/model.rs`): `Tagged` from the tag, `Inferred` without one,
+  `None` where there is no band — whatever took it. **Untagged** (no
   `sidewalk*` key at all — `tagged_sidewalks` returns `None`) is decided by the street and
   what stands around it, not taken as "both": an unpaved `surface`
   (`gravel|unpaved|ground|dirt|compacted|…`, `tags.rs::untagged_sidewalks`) never has

@@ -240,7 +240,7 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                 let mut sides = [own; 2];
                 // тротуар по тегу — слева или справа по пути (`sidewalk=*`)
                 for (side, present) in road.sidewalks.into_iter().enumerate() {
-                    if !present {
+                    if !present.is_present() {
                         sides[usize::from((side == 0) != forward)] = None;
                     }
                 }
@@ -257,7 +257,7 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                         half[at] = narrow.width / 2.0;
                         sides[at] = drawn
                             .sidewalk_drawn(wedge.narrow)
-                            .filter(|_| narrow.sidewalks[side]);
+                            .filter(|_| narrow.sidewalks[side].is_present());
                     }
                 }
                 if let Some(left) = drawn.paired(index, along) {

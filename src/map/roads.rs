@@ -64,7 +64,7 @@ use crate::map::meshing::{
     to_break_beyond,
 };
 use crate::map::osm::model::{RoadNodeKind, point_in_area, polyline_length, ring_bounds};
-use crate::map::osm::{AreaKind, MapData, PolyArea, RoadClass, RoadLine, WallLine};
+use crate::map::osm::{AreaKind, MapData, PolyArea, RoadClass, RoadLine, SidewalkSide, WallLine};
 use crate::map::shapes::{is_ring, push_shape};
 use crate::map::smooth::{Smoothing, smooth_pinned};
 use crate::map::spawn::GRASS_COLOR;
@@ -249,7 +249,7 @@ fn drawn_sidewalk(style: &RoadStyle, road: &RoadLine) -> Option<f32> {
 /// ленты ([`drawn_sidewalk`]), и для разбора, дотягивающего кварталы и
 /// стоянки до внешнего края полотна (`osm/parse.rs`, `osm/parse/lots.rs`).
 pub fn mapped_sidewalk(road: &RoadLine) -> Option<f32> {
-    sidewalk_width(road).filter(|_| road.sidewalks.contains(&true))
+    sidewalk_width(road).filter(|_| road.sidewalks.iter().any(|side| side.is_present()))
 }
 
 /// Проезжая часть улицы — то, что несёт тротуар и разметку и участвует в
@@ -780,7 +780,8 @@ pub fn mesh_roads(
         let half = road.width / 2.0;
         let sidewalk = prepared.sidewalk_drawn(index);
         for kerbside in &kerbsides[index] {
-            let sidewalk = sidewalk.filter(|_| road.sidewalks[usize::from(kerbside.side < 0.0)]);
+            let sidewalk =
+                sidewalk.filter(|_| road.sidewalks[usize::from(kerbside.side < 0.0)].is_present());
             for pocket in &kerbside.pockets {
                 let outline = |outer: f32| {
                     pockets::outline(
@@ -1115,7 +1116,7 @@ pub fn mesh_roads(
                 [road.width, sidewalk],
                 runs,
                 stitch,
-                road.sidewalks,
+                road.sidewalks.map(SidewalkSide::is_present),
                 SIDEWALK_COLOR.to_linear(),
                 trimmed,
             );

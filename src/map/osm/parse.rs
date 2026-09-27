@@ -14,7 +14,8 @@ use crate::map::grid::Grid;
 use crate::map::osm::entrances::generate_entrances;
 use crate::map::osm::model::{
     AreaKind, BuildingUse, Faith, FenceLine, Highway, MapData, PipeLine, PolyArea, RailLine,
-    RoadArea, RoadClass, RoadLine, RoadNode, Sacred, SacredForm, Structure, TrafficSide,
+    RoadArea, RoadClass, RoadLine, RoadNode, Sacred, SacredForm, SidewalkSide, Structure,
+    TrafficSide,
     TreeCompose, TreeNode, TreeRow, TreeRowLayout, WallLine, WaterLine, closest_on_segment,
     point_in_area, point_in_polygon, ring_area, ring_bounds, ring_vertex_mean, signed_ring_area,
 };
@@ -464,7 +465,7 @@ fn infer_sidewalks(map: &mut MapData, bare: &[usize]) -> InferredSidewalks {
         .copied()
         .filter(|&index| {
             let road = &map.roads[index];
-            road.sidewalks.contains(&true)
+            road.sidewalks.contains(&SidewalkSide::Inferred)
                 && matches!(
                     road.highway,
                     Highway::Residential | Highway::Unclassified | Highway::LivingStreet
@@ -484,7 +485,7 @@ fn infer_sidewalks(map: &mut MapData, bare: &[usize]) -> InferredSidewalks {
             .collect();
         let mean = storeys.iter().sum::<f32>() / storeys.len().max(1) as f32;
         if storeys.is_empty() || mean < SIDEWALK_STOREYS_MIN {
-            road.sidewalks = [false; 2];
+            road.sidewalks = [SidewalkSide::None; 2];
             dropped += 1;
         }
     }

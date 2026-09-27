@@ -321,7 +321,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     decides which sides carry a sidewalk band; an **untagged** street has none on an
     unpaved surface, and a residential, unclassified or living street has them only among
     blocks of 3+ storeys on
-    average (`parse::infer_sidewalks`, the cars' district measure).
+    average (`parse::infer_sidewalks`, the cars' district measure). The decision per side
+    is a **`SidewalkSide`** on the `RoadLine`: `Tagged`, `Inferred` (no tag, kept by the
+    rule) or `None`.
   - **Paired halves** (`map/roads/network/pairs.rs`, `Pairs`) — a divided street as OSM
     draws it: two opposite one-way ways of one class side by side (a street or a
     `service` drive, never a parking aisle), up to `PAIR_MAX_GAP` 15 m between the kerbs.

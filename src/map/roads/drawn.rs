@@ -393,7 +393,7 @@ impl<'m> Drawn<'m> {
         road.width / 2.0
             + self
                 .sidewalk_by_style(index)
-                .filter(|_| road.sidewalks[side])
+                .filter(|_| road.sidewalks[side].is_present())
                 .unwrap_or(0.0)
     }
 
@@ -422,7 +422,7 @@ impl<'m> Drawn<'m> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::map::osm::fixture;
+    use crate::map::osm::{SidewalkSide, fixture};
     use crate::map::roads::network::RoadNetwork;
 
     fn with_network(roads: Vec<RoadLine>) -> MapData {
@@ -505,7 +505,7 @@ mod tests {
     #[test]
     fn band_half_takes_the_sidewalk_only_where_the_tag_puts_it() {
         let mut street = fixture::street(vec![Vec2::ZERO, Vec2::new(100.0, 0.0)], 8.0);
-        street.sidewalks = [true, false];
+        street.sidewalks = [SidewalkSide::Tagged, SidewalkSide::None];
         let map = with_network(vec![street]);
         let drawn = Drawn::for_test(&map);
         let band = super::super::sidewalk_band(8.0);
