@@ -83,7 +83,10 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   both. The trigger was the Yandex comparison: in Tula silence means "yes" in the centre
   and "no" among private houses (galleries 09, 13, the side streets of 03 and 19), and
   the band there drew the rule zebras after it. Tula: see the `osm parse: N of M
-  untagged residential streets left without sidewalks` line.
+  untagged residential streets left without sidewalks` line. And any carriageway —
+  arterials included — gives an untagged side up to a **separately mapped paved footway**
+  running alongside it (`parse.rs::drop_sidewalks_beside_footways`, `parse.md`,
+  **Sidewalks left to a separate footway**): the band beside it was a second sidewalk.
   **One profile for the parse and the renderer**: `RoadLine::sidewalk()` →
   `SidewalkProfile` (`osm/model.rs`) — the sides as bools plus the **band by class**
   (`sidewalk_band`, 22 % of the width, 1.2–3 m; `Some` on a carriageway, a bridge

@@ -260,6 +260,29 @@ be called alone:
   the house pull and the block pull, so both push and pull against the sidewalk that is
   drawn. The rule itself — `roads.md`,
   **Sidewalks**; logged as `N of M untagged residential streets left without sidewalks`.
+- **Sidewalks left to a separate footway** (`parse.rs::drop_sidewalks_beside_footways`,
+  right after the pavements pass, whose answer it reads) — OSM maps a sidewalk either as a
+  `sidewalk*` tag or as its own `footway` along the kerb, and the street then should say
+  `sidewalk=separate`. Often it does not: the south-east half of Lenina in Tula carries no
+  `sidewalk*` at all, so the rule band lay a metre from the mapped `footway=sidewalk` — two
+  parallel sidewalks with a strip of grass between, the length of the avenue (scout A1,
+  gallery samples 01 and 02). The pass asks every **carriageway** (any class, the arterials
+  too — `infer_sidewalks` asks only residential ones) for each **`Inferred`** side: probes
+  every `SEPARATE_PROBE_STEP` 5 m, and a probe hits a side when a **paved** path
+  (`RoadLine::is_paved_path` — a sand trail beside the street is not its sidewalk) runs
+  parallel (`|cos| ≥ SEPARATE_PARALLEL` 0.85) on that side, its nearest point between
+  `SEPARATE_INSIDE` 1 m inside the kerb and `SEPARATE_REACH` 4 m past the outer edge of
+  the band. At least `SEPARATE_SHARE` 60 % of the probes → the side becomes `None`. A
+  `Tagged` side is never touched. Before the house and block pulls like the other sidewalk
+  pass, so both work against what is drawn. The consequences are the ones `sidewalk=separate`
+  already had: no band means no kerb pocket on an arterial side (`pockets::kerb_parking`)
+  and no rule zebra there — the same as the tagged north-west half of Lenina. Tula v15:
+  516 of 1982 untagged sides dropped in 8 ms (release); kerb pockets 271 → 201, zebras
+  775 → 750 (the 529 from OSM untouched), no house pull moved. Logged as
+  `N of M untagged sidewalk sides left to a separately mapped footway in T`; pinned by
+  `parse/tests.rs::a_footway_along_the_kerb_takes_the_inferred_sidewalk_of_its_side`,
+  `a_sidewalk_stays_unless_a_paved_footway_runs_beside_it` and, through the whole parse,
+  `a_mapped_sidewalk_beside_an_untagged_street_replaces_its_band`.
 - **Pavement of untagged footways** (`parse.rs::infer_pavements`, beside the sidewalks
   pass; its place is free — the greenery it reads never moves and only the renderer reads
   the answer). `RoadLine::pavement` leaves `parse_way` from `tags.rs::tagged_pavement`:

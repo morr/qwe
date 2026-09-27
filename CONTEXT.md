@@ -325,7 +325,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     decides which sides carry a sidewalk band; an **untagged** street has none on an
     unpaved surface, and a residential, unclassified or living street has them only among
     blocks of 3+ storeys on
-    average (`parse::infer_sidewalks`, the cars' district measure). The decision per side
+    average (`parse::infer_sidewalks`, the cars' district measure); and any carriageway
+    loses an untagged side to a **separately mapped footway** — a paved path running
+    alongside within a few metres of the band (`parse::drop_sidewalks_beside_footways`),
+    since a band next to it was a second sidewalk with a strip of grass between. The decision per side
     is a **`SidewalkSide`** on the `RoadLine`: `Tagged`, `Inferred` (no tag, kept by the
     rule) or `None`.
   - **Paired halves** (`map/roads/network/pairs.rs`, `Pairs`) — a divided street as OSM
