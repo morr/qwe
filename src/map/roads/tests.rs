@@ -1371,6 +1371,72 @@ fn one_shared_node_pass_feeds_both_base_and_paint() {
     }
 }
 
+/// Ряд у бордюра стежков не видит, база и краска — видят: торец, дотянутый до
+/// оси улицы, для карманов и машин остаётся тупиком (`Drawn::nodal` машин
+/// стежков не строит, и ряд ленты обязан стоять там же), а для базы это
+/// перекрёсток — улица рвётся, — и линии примыкания у него рвёт краска.
+#[test]
+fn row_breaks_ignore_stitches_but_paint_breaks_do_not() {
+    // примыкание кончается в трёх метрах за кромкой улицы — как в
+    // `a_dangling_end_short_of_a_street_is_stitched`, но улицей, а не
+    // проездом: база и краска считаются по проезжим частям
+    let map = with_network(vec![
+        fixture::street(vec![Vec2::ZERO, Vec2::new(100.0, 0.0)], 12.0),
+        fixture::street(vec![Vec2::new(50.0, -60.0), Vec2::new(50.0, -9.0)], 8.0),
+    ]);
+    let drawn = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
+    assert_eq!(drawn.stats().stitches, 1);
+    let junctions = junctions::Junctions::new(
+        &drawn,
+        &map,
+        &[],
+        node_paint::NodePaintStyle {
+            crossings: CrossingMode::Generated,
+            stop_lines: true,
+        },
+    );
+    let positive = |breaks: &[Break]| breaks.iter().filter(|found| found.reach > 0.0).count();
+    let dead_ends = |breaks: &[Break]| breaks.iter().filter(|found| found.reach == 0.0).count();
+    // база: стежок — узел, улица рвётся на нём, торец примыкания — не тупик
+    assert_eq!(junctions.count(), 1);
+    assert_eq!(positive(&junctions.median_base()[0]), 1);
+    assert_eq!(dead_ends(&junctions.median_base()[1]), 1);
+    // краска: примыкание уступает — его линии рвутся у стежка
+    assert_eq!(positive(&junctions.paint().breaks[1]), 1);
+    // ряд: стежка нет — улица цела, оба торца примыкания — тупики
+    assert_eq!(junctions.row().junctions, 0);
+    assert_eq!(positive(&junctions.row().breaks[0]), 0);
+    assert_eq!(positive(&junctions.row().breaks[1]), 0);
+    assert_eq!(dead_ends(&junctions.row().breaks[1]), 2);
+}
+
+/// Счётчики краски узлов в отчёте — перекрёстки, кластеры, проходы главной
+/// насквозь, ведущие дороги, зебры, стоп-линии, карманы краски — по карте с
+/// одним примыканием жилой к `tertiary`.
+#[test]
+fn the_report_counts_the_junction_paint() {
+    let main = RoadLine {
+        highway: Highway::Tertiary,
+        lanes: Some(2),
+        ..fixture::street(
+            vec![Vec2::ZERO, Vec2::new(100.0, 0.0), Vec2::new(200.0, 0.0)],
+            7.6,
+        )
+    };
+    let side = RoadLine {
+        lanes: Some(2),
+        ..fixture::street(vec![Vec2::new(100.0, -80.0), Vec2::new(100.0, 0.0)], 7.6)
+    };
+    let report = timeless(&with_network(vec![main, side]));
+    assert_eq!(report.junctions, 1);
+    assert_eq!(report.clusters, 0);
+    assert_eq!(report.through, 1);
+    assert_eq!(report.leading, 1);
+    assert_eq!(report.zebras, [1, 0]);
+    assert_eq!(report.stop_lines, 1);
+    assert_eq!(report.pockets, 0);
+}
+
 #[test]
 fn a_dangling_end_short_of_a_street_is_stitched() {
     // проезд кончается в трёх метрах за кромкой тротуара улицы
