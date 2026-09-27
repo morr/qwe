@@ -462,7 +462,16 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     two-lane street ending at a T where a one-lane one went on showed a kerb tooth on the
     far side (Крестовоздвиженская площадь into Союзная, gallery 27). The side with the
     arm keeps its full width up to the node, as before: the joining road's asphalt and
-    the kerb returns cover the step there. A crossing covers both sides — no taper, the
+    the kerb returns cover the step there — **but only an arm whose kerb radius is at
+    least the step** (`corners::road_radius` of the arm and the wide road, the smaller,
+    against half the width difference). A covered step still reads as a **tooth** when it
+    is higher than the corner beside it: on either side of a 5 m drive (radius 2.5) the
+    kerb of Болдина stood 3.3 m apart where 2 lanes became 4 (Tula, gallery 22); a
+    street's 6 m or an avenue's 10 m corner swallows a lane's step. Such a side is free,
+    and it narrows. A second test was tried and dropped — a slanting arm covers only the
+    foot of the step's wall (`half / |cos|` of its angle to the axis): it freed the side at
+    Orel's wide T (gallery 03), where the short way's wedge came out steeper than the step
+    it replaced. A crossing covers both sides — no taper, the
     step sinks in the node. `Taper::kept` names the untouched kerb (`+1` left) for the
     paint: on a one-sided wedge the narrow section's lanes hug that kerb
     (`paint::kept_frame` — the body's grid with the far bound pulled in by the missing

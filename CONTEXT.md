@@ -252,7 +252,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     past that end, never the side way of a tee)
     with a different width, the wider one starts at the narrower's width and widens over
     `RoadShape::taper` (10 by default) metres per metre of difference. Per side: at a
-    junction only the kerb with no other carriageway arm on it narrows; the kerb returns
+    junction only the kerb with no other carriageway arm on it narrows — an arm counts
+    only if the step is no higher than its kerb radius (a 5 m drive does not hide a
+    lane's step); the kerb returns
     read that end at the narrow width. Drawing only.
   - **Street axis** (`map/roads/axis.rs`) — the drawn centerline of a whole street, not of
     a way: within the **curve tolerance** (`RoadShape::curve_tolerance`) the street is
