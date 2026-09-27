@@ -207,6 +207,22 @@ pub struct PolyArea {
     pub colours: Colours,
 }
 
+impl PolyArea {
+    /// Направление самой длинной стороны внешнего контура. Именно стороны, а
+    /// не оси описанного прямоугольника: у площадки, дотянутой до дороги
+    /// (`osm::parse::pull_areas_to_roads`), контур зубчатый, и минимальный
+    /// прямоугольник разворачивается по случайному зубцу. `None` — контур
+    /// вырожден. Читают раскладка стоянки (`parking::generated_rows`) и карман у
+    /// бордюра при разборе (`parse/lots.rs::runs_along`).
+    pub fn longest_side(&self) -> Option<Vec2> {
+        let ring = &self.outer;
+        (0..ring.len())
+            .map(|index| ring[(index + 1) % ring.len()] - ring[index])
+            .max_by(|a, b| a.length_squared().total_cmp(&b.length_squared()))
+            .and_then(Vec2::try_normalize)
+    }
+}
+
 /// Цвет sRGB байтами — чтобы носитель оставался `Copy + Eq`.
 pub type Rgb = [u8; 3];
 
@@ -1584,6 +1600,31 @@ mod tests {
         road.bridge = false;
         road.passage = true;
         assert!(road.carves_navmesh());
+    }
+
+    /// Самая длинная сторона — сторона контура по ходу его вершин, а не ось
+    /// описанного прямоугольника; у пустого контура её нет.
+    #[test]
+    fn the_longest_side_is_a_side_of_the_outline() {
+        let area = |outer: Vec<Vec2>| PolyArea {
+            outer,
+            holes: Vec::new(),
+            kind: AreaKind::Parking,
+            building_use: BuildingUse::Other,
+            height: None,
+            storeys: None,
+            entrances: Vec::new(),
+            colours: Colours::default(),
+        };
+        // длинная сторона — верхняя, от (30, 4) к (0, 4)
+        let lot = area(vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(10.0, -1.0),
+            Vec2::new(30.0, 4.0),
+            Vec2::new(0.0, 4.0),
+        ]);
+        assert_eq!(lot.longest_side(), Some(Vec2::new(-1.0, 0.0)));
+        assert_eq!(area(Vec::new()).longest_side(), None);
     }
 
     fn street(width: f32) -> RoadLine {

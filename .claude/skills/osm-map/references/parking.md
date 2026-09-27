@@ -108,7 +108,8 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
       Tula's v14 cache: 2846 `highway=service`, of which 209 `parking_aisle`, 99
       `driveway`, 15 `alley`.
   - **A lot with no aisle in it gets an invented layout** (`generated_rows`) — the
-    majority of them: yard patches. Rows run along the **longest side of the outline**,
+    majority of them: yard patches. Rows run along the **longest side of the outline**
+    (`PolyArea::longest_side`, the same one the parse's kerbside lot reads in `runs_along`),
     not the long axis of `min_area_rect`: on a lot pulled to the road the outline is
     ragged and the minimal rectangle turns on whichever tooth happens to be longest in
     projection, so the stripes end up at an angle to the side the lot reads by.

@@ -456,7 +456,7 @@ be called alone:
       drive in from (Tula: 56 such outlines — 55 ways and a relation, both parse paths
       record it — Berlin 3275). Only the street the pocket **runs along** loses its
       sidewalk (`runs_along`: a link within `STREET_SIDE_ANGLE` 30° of the outline's
-      longest side); a cross street at the pocket's end, inside the closing radius,
+      longest side, `PolyArea::longest_side`); a cross street at the pocket's end, inside the closing radius,
       keeps its band whole, so the pocket stops at the edge of that sidewalk instead of
       paving its corner to the kerb (`a_street_side_lot_leaves_a_cross_street_sidewalk`). `closed` = `base` offset **out by the
       radius and back in** (`i_overlay` `outline`, round joins, `ARC` 0.3). `closed − base`

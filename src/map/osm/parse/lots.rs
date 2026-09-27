@@ -627,14 +627,8 @@ fn touches_lot(point: Vec2, lot: &PolyArea) -> bool {
 /// сторона и есть её направление; поперечная улица у торца под этот угол не
 /// попадает. Вырожденный контур или звено — вдоль (как было до разбора углов).
 fn runs_along(lot: &PolyArea, link: &RoadLink) -> bool {
-    let ring = &lot.outer;
-    let side = (0..ring.len())
-        .map(|index| ring[(index + 1) % ring.len()] - ring[index])
-        .max_by(|left, right| left.length_squared().total_cmp(&right.length_squared()));
-    let (Some(side), Some(way)) = (
-        side.and_then(Vec2::try_normalize),
-        (link.to - link.from).try_normalize(),
-    ) else {
+    let (Some(side), Some(way)) = (lot.longest_side(), (link.to - link.from).try_normalize())
+    else {
         return true;
     };
     side.dot(way).abs() >= STREET_SIDE_ANGLE.cos()

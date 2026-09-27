@@ -1076,7 +1076,7 @@ fn main_direction(segments: &[(Vec2, Vec2)]) -> Option<Vec2> {
 /// Выдуманная раскладка: ряды вдоль самой длинной стороны контура.
 fn generated_rows(outline: &Outline, through: &Surroundings) -> Vec<Stall> {
     let area = outline.area;
-    let Some(along) = longest_side(&area.outer) else {
+    let Some(along) = area.longest_side() else {
         return Vec::new();
     };
     if let Some(depth) = pocket_depth(area) {
@@ -1245,17 +1245,6 @@ fn pocket_rows(outline: &Outline, roads: &Surroundings, depth: f32) -> Vec<Stall
         }
     }
     placed.stalls
-}
-
-/// Направление самой длинной стороны контура. Именно стороны, а не оси
-/// описанного прямоугольника: у площадки, дотянутой до дороги
-/// (`osm::parse::pull_areas_to_roads`), контур зубчатый, и минимальный
-/// прямоугольник разворачивается по случайному зубцу.
-fn longest_side(ring: &[Vec2]) -> Option<Vec2> {
-    (0..ring.len())
-        .map(|index| ring[(index + 1) % ring.len()] - ring[index])
-        .max_by(|a, b| a.length_squared().total_cmp(&b.length_squared()))
-        .and_then(|side| side.try_normalize())
 }
 
 /// Габариты кольца в осях `along`/`across`: (мин, макс) проекций.
