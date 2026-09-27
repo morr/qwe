@@ -95,6 +95,11 @@ struct Arm {
     ///
     /// [`RoadLine::is_paved_path`]: crate::map::osm::RoadLine::is_paved_path
     paved: bool,
+    /// Грунтовая улица ([`RoadLine::is_unpaved_street`]): угол двух таких
+    /// ложится в слой грунтовок, а не асфальта.
+    ///
+    /// [`RoadLine::is_unpaved_street`]: crate::map::osm::RoadLine::is_unpaved_street
+    unpaved: bool,
     /// Полуширина слева и справа по ходу луча. Они разные у торца с клином
     /// на одну сторону (`roads/tapers.rs`): сужаемая кромка в узле стоит на
     /// полуширине узкого соседа, сохранённая — на своей.
@@ -115,6 +120,8 @@ pub struct KerbReturns {
     /// Контур и класс дорог, в чей слой заливки он ляжет: скругления и
     /// наружные углы. Каждый — веер из первой вершины.
     pub roads: Vec<(RoadClass, Vec<Vec2>)>,
+    /// Скругления между двумя грунтовыми улицами — в их слое, так же.
+    pub unpaved: Vec<Vec<Vec2>>,
     /// Контуры в слое тротуаров, так же: углы полос тротуара и скругления
     /// узлов с мощёной дорожкой.
     pub sidewalks: Vec<Vec<Vec2>>,
@@ -276,6 +283,7 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                     class: road.class,
                     highway: road.highway,
                     paved: road.is_paved_path(),
+                    unpaved: road.is_unpaved_street(),
                     half,
                     sidewalk: sides,
                     direction,
@@ -331,6 +339,10 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                 let layer = usize::from(paved);
                 if paved {
                     returns.sidewalks.push(outline);
+                } else if first.unpaved && second.unpaved {
+                    // угол двух грунтовок — грунтом; грунтовки с асфальтом —
+                    // асфальтом: узел там асфальтовый
+                    returns.unpaved.push(outline);
                 } else {
                     returns.roads.push((class, outline));
                 }

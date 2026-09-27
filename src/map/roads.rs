@@ -76,6 +76,7 @@ use crate::map::surface::{
 use crate::prefs::retuned;
 use crate::settings::{
     Z_ALLEY, Z_BUILDING, Z_LOT_LINES, Z_LOT_SIDEWALK, Z_ROAD, Z_ROAD_MEDIAN, Z_SIDEWALK,
+    Z_UNPAVED_ROAD,
 };
 
 /// Проезжая часть — асфальт: серый, заметно темнее тротуара и земли. Белой
@@ -94,6 +95,10 @@ pub const ROAD_COLOR: Color = Color::srgb(0.545, 0.545, 0.55);
 /// цветом, а не разметкой.
 pub const TRAM_BAND_COLOR: Color = Color::srgb(0.59, 0.59, 0.595);
 const ALLEY_COLOR: Color = Color::srgb(0.914, 0.875, 0.769);
+/// Грунтовая улица — серо-бурый утрамбованный щебень: светлее асфальта на
+/// ступень и теплее его, темнее песчаной тропинки, чтобы проезжая часть
+/// частного сектора читалась дорогой, а не дорожкой.
+const UNPAVED_ROAD_COLOR: Color = Color::srgb(0.64, 0.6, 0.53);
 const WALL_COLOR: Color = Color::srgb(0.639, 0.286, 0.235);
 
 /// Белая разметка на асфальте стоянки: двойная сплошная между встречными
@@ -640,6 +645,8 @@ pub fn mesh_roads(
     let mut sidewalks = MeshBuilder::with_surface_coords();
     let mut alleys = MeshBuilder::with_surface_coords();
     let mut streets = MeshBuilder::with_surface_coords();
+    // грунтовые улицы — своим слоем под асфальтом (`Z_UNPAVED_ROAD`)
+    let mut unpaved = MeshBuilder::with_surface_coords();
     // мост — цепочка ways, и тень считается по всей цепочке; мостовые слои
     // копит он же (`roads/bridges.rs`)
     let mut bridges = Bridges::new(map);
@@ -692,6 +699,9 @@ pub fn mesh_roads(
         // видна из угла. `earcutr` на восьми тысячах таких фигур стоил бы
         // больше самой укладки.
         builder.push_convex(outline, color.to_linear());
+    }
+    for outline in &kerb_returns.unpaved {
+        unpaved.push_convex(outline, UNPAVED_ROAD_COLOR.to_linear());
     }
     // и тот же угол в слое тротуаров: полоса поворачивает за бордюром
     for outline in &kerb_returns.sidewalks {
@@ -980,7 +990,9 @@ pub fn mesh_roads(
         let road = drawn[index];
         // мощёная дорожка — плиткой тротуара и в его слое (`paved_path`)
         let paved_path = road.is_paved_path();
+        let unpaved_street = road.is_unpaved_street();
         let color = match road.class {
+            RoadClass::Street if unpaved_street => UNPAVED_ROAD_COLOR,
             RoadClass::Street => ROAD_COLOR,
             RoadClass::Alley if paved_path => SIDEWALK_COLOR,
             RoadClass::Alley => ALLEY_COLOR,
@@ -1097,6 +1109,7 @@ pub fn mesh_roads(
         // слой заливки берётся после полосы тротуара: мощёная дорожка
         // ложится в тот же слой, а полоса выше брала его сама
         let fill = match road.class {
+            RoadClass::Street if unpaved_street => &mut unpaved,
             RoadClass::Street => &mut streets,
             RoadClass::Alley if paved_path => &mut sidewalks,
             RoadClass::Alley => &mut alleys,
@@ -1267,6 +1280,12 @@ pub fn mesh_roads(
             MaterialSpec::Surface(SurfaceKind::Grass),
         ),
         (
+            unpaved,
+            Z_UNPAVED_ROAD,
+            "unpaved_roads",
+            MaterialSpec::Surface(SurfaceKind::Unpaved),
+        ),
+        (
             streets,
             Z_ROAD,
             "roads",
@@ -1310,7 +1329,7 @@ pub fn mesh_roads(
         turning_circles,
         turns: turns.maneuvers,
         arrows: if style.arrows { turns.arrows.len() } else { 0 },
-        kerb_returns: kerb_returns.roads.len() - kerb_returns.outer[0],
+        kerb_returns: kerb_returns.roads.len() + kerb_returns.unpaved.len() - kerb_returns.outer[0],
         sidewalk_returns: kerb_returns.sidewalks.len() - kerb_returns.outer[1],
         outer_corners: kerb_returns.outer,
         drawn: prepared.stats(),

@@ -245,14 +245,15 @@ fn the_city_wall_ribbon_stays_off_fortress_buildings() {
 // телеметрия области жили внутри `spawn_roads` — 275 строк, взять которые из
 // теста было нечем: проверять можно было только хелперы под ними.
 
-/// Восемнадцать дорожных слоёв снизу вверх, ровно в том порядке, в каком они
-/// уходят в мир: десять лент и восемь слоёв краски над своим асфальтом —
+/// Девятнадцать дорожных слоёв снизу вверх, ровно в том порядке, в каком они
+/// уходят в мир: одиннадцать лент и восемь слоёв краски над своим асфальтом —
 /// колея траекторий узла (маска, потом наложение) ниже линий, островки колец
-/// над асфальтом стоянок.
-const LAYERS: [&str; 18] = [
+/// над асфальтом стоянок. Грунтовки — под асфальтом улиц.
+const LAYERS: [&str; 19] = [
     "alleys",
     "sidewalks",
     "road_medians",
+    "unpaved_roads",
     "roads",
     paint::PAINT_WEAR_MASK,
     paint::PAINT_WEAR,
@@ -287,7 +288,7 @@ fn layer<'a>(layers: &'a [LayerMesh], name: &str) -> &'a LayerMesh {
 }
 
 #[test]
-fn a_street_builds_eighteen_layers_bottom_up() {
+fn a_street_builds_nineteen_layers_bottom_up() {
     let (layers, report) = mesh_roads(&one_street(), RoadStyle::default(), RoadShape::default());
 
     let names: Vec<&str> = layers.iter().map(|layer| layer.name).collect();
@@ -321,6 +322,7 @@ fn only_the_bridge_shadow_is_blended() {
             "alleys" => MaterialSpec::Surface(SurfaceKind::Alley),
             "road_medians" => MaterialSpec::Surface(SurfaceKind::Grass),
             "roads" | "bridges" => MaterialSpec::Surface(SurfaceKind::Street),
+            "unpaved_roads" => MaterialSpec::Surface(SurfaceKind::Unpaved),
             paint::PAINT_WEAR_MASK => MaterialSpec::Paint(paint::PaintPass::WearMask),
             paint::PAINT_WEAR => MaterialSpec::Paint(paint::PaintPass::Wear),
             name if paint::PaintTag::of(name).is_some() => {
@@ -423,6 +425,37 @@ fn a_crossing_without_a_shared_node_is_not_a_junction() {
         0,
         "перекрёсток восстанавливается по общей ноде, а не по пересечению"
     );
+}
+
+/// Грунтовка (`surface=unpaved|gravel|…`) уходит из асфальта в свой слой —
+/// без линий краски, и угол двух грунтовок ложится грунтом. Та же Т с
+/// асфальтовой улицей: угол — асфальтом, узел асфальтовый.
+#[test]
+fn an_unpaved_street_draws_in_its_own_layer_without_lines() {
+    let unpave = |mut map: MapData, which: &[usize]| {
+        for &index in which {
+            map.roads[index].pavement = Some(Pavement::Unpaved);
+            map.roads[index].sidewalks = [SidewalkSide::None; 2];
+        }
+        map
+    };
+    let (layers, report) = mesh_roads(
+        &unpave(a_tee(), &[0, 1]),
+        RoadStyle::default(),
+        RoadShape::default(),
+    );
+    assert!(layer(&layers, "roads").builder.is_empty());
+    assert!(!layer(&layers, "unpaved_roads").builder.is_empty());
+    assert_eq!(report.paint_lines, 0, "{report}");
+    assert!(report.kerb_returns > 0, "углы грунтом: {report}");
+
+    let (mixed, _) = mesh_roads(
+        &unpave(a_tee(), &[1]),
+        RoadStyle::default(),
+        RoadShape::default(),
+    );
+    assert!(!layer(&mixed, "roads").builder.is_empty());
+    assert!(!layer(&mixed, "unpaved_roads").builder.is_empty());
 }
 
 #[test]

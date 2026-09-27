@@ -148,10 +148,13 @@ pub enum SurfaceKind {
     /// Дорожка, тропа.
     Alley,
     Sidewalk,
+    /// Грунтовая и гравийная проезжая часть: пятна утрамбованной земли,
+    /// крупное зерно, россыпь камешков и колея, как у асфальта.
+    Unpaved,
 }
 
 impl SurfaceKind {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Ground,
         Self::Yard,
         Self::Park,
@@ -162,6 +165,7 @@ impl SurfaceKind {
         Self::Street,
         Self::Alley,
         Self::Sidewalk,
+        Self::Unpaved,
     ];
 
     /// Фактура вида при силе `texture` и колее асфальта `wear`.
@@ -269,6 +273,21 @@ impl SurfaceKind {
                 mottle_scale: 40.0,
                 grain_amp: 0.035,
                 grain_scale: 1.5,
+                ..flat
+            },
+            // грунтовка: пятна втрое сильнее асфальтовых и мельче шагом
+            // (лужи, подсыпка), зерно крупнее, тёмная россыпь щебня и та же
+            // колея — по грунту ездят теми же колёсами
+            Self::Unpaved => SurfaceParams {
+                tint: Vec4::new(0.04, 0.02, -0.03, 0.0),
+                mottle_amp: 0.09,
+                mottle_scale: 14.0,
+                grain_amp: 0.07,
+                grain_scale: 0.9,
+                speckle_amp: 0.06,
+                speckle_scale: 0.8,
+                speckle_threshold: 0.7,
+                wear,
                 ..flat
             },
         };
@@ -655,7 +674,7 @@ mod tests {
     fn only_carriageways_wear() {
         for kind in SurfaceKind::ALL {
             let worn = kind.params(1.0, 0.075).wear > 0.0;
-            let carriageway = matches!(kind, SurfaceKind::Street);
+            let carriageway = matches!(kind, SurfaceKind::Street | SurfaceKind::Unpaved);
             assert_eq!(worn, carriageway, "{kind:?}");
         }
     }

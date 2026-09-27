@@ -705,8 +705,8 @@ impl Painter {
         station: Station,
     ) {
         // `lane_markings=no` — ни осевой, ни границ полос; краску узла
-        // (зебры, стоп-линии) это не трогает
-        if !is_carriageway(road) || !road.lane_markings {
+        // (зебры, стоп-линии) это не трогает. По грунту линий не бывает
+        if !is_carriageway(road) || !road.lane_markings || road.is_unpaved_street() {
             return;
         }
         let lanes = lane_count(road);

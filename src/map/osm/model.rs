@@ -349,13 +349,22 @@ pub struct RoadLine {
     /// тротуара, грунтовая — песчаной тропинкой. Из разбора выходит тег
     /// `surface` и то, что следует из вида дорожки (`footway=sidewalk`,
     /// `steps` — мощёные, `path`/`track` — грунтовые); `None` у дорожки без
-    /// тега решает проход по окружению (`parse::infer_pavements`). У улиц не
-    /// читается; `None` у дорожки, собранной тестом руками, рисуется
-    /// тропинкой, как до поля.
+    /// тега решает проход по окружению (`parse::infer_pavements`). У улицы
+    /// это только тег `surface`: грунтовая ([`RoadLine::is_unpaved_street`])
+    /// рисуется грунтом без разметки, без тега — асфальтом; `None` у
+    /// дорожки, собранной тестом руками, рисуется тропинкой, как до поля.
     pub pavement: Option<Pavement>,
 }
 
 impl RoadLine {
+    /// Грунтовая улица или проезд (`surface=unpaved|gravel|ground|dirt|…`):
+    /// своим слоем под асфальтом, без линий краски и без стоп-линии по
+    /// рангу узла (`map::roads`). Тротуара без тега у неё нет и так
+    /// (`parse/tags.rs::untagged_sidewalks`).
+    pub fn is_unpaved_street(&self) -> bool {
+        self.class == RoadClass::Street && self.pavement == Some(Pavement::Unpaved)
+    }
+
     /// Мощёная дорожка — рисуется в слое тротуаров его плиткой, а не
     /// песчаной тропинкой (`map::roads`).
     pub fn is_paved_path(&self) -> bool {

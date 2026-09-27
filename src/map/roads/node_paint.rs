@@ -565,7 +565,9 @@ impl NodePaint {
                     continue;
                 }
                 for visit in &node.visits {
-                    if drawn[visit.road].bridge {
+                    // зебры по грунту не бывает: обрывки белых планок на
+                    // щебне у тротуара читались мусором (Калуга, 06)
+                    if drawn[visit.road].bridge || drawn[visit.road].is_unpaved_street() {
                         continue;
                     }
                     let walk = Walk::new(paths[visit.road].as_ref());
@@ -996,6 +998,7 @@ impl NodePaint {
                         || (signalized && drawn[arm.road].sidewalk().both()))
                     && room >= RULE_ZEBRA_ROOM
                     && !crossed_by_data
+                    && !drawn[arm.road].is_unpaved_street()
                     && !link
                     && !drawn[arm.road].highway.is_link())
                 .then_some((edge + dir * first, false)),
@@ -1060,7 +1063,12 @@ impl NodePaint {
             // стоп-линию зовёт то же, что и зебру: переход, светофор, знак или
             // улица не ниже `tertiary`; две жилые без знаков — ни того, ни
             // другого (пример 13, у Яндекса крестовина пуста)
-            let called = zebra.is_some() || signalized || major || sign(arm.road).is_some();
+            // на грунтовке стоп-линии нет ничем не званой: краски на грунте не
+            // бывает, и обрывки линии уступи дорогу поперёк щебня читались
+            // мусором (Калуга, 06: знак `give_way` на Новаторском) — знак
+            // остаётся знаком
+            let called = !road.is_unpaved_street()
+                && (zebra.is_some() || signalized || major || sign(arm.road).is_some());
             // на перемычке сложного узла стоп-линии нет: она легла бы на
             // замощённый остров между его узлами (пример 06)
             let stop = (style.stop_lines && called && !link && incoming(road, dir))

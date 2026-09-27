@@ -189,6 +189,43 @@ fn a_short_link_between_two_nodes_gets_no_rule_zebras() {
     assert_eq!(link(60.0).zebras.len(), 2);
 }
 
+/// Грунтовое примыкание к `tertiary` — без краски: ни зебры по правилу, ни
+/// стоп-линии по рангу узла или по знаку, ни зебры на переходе OSM (Калуга,
+/// витрина 06). Асфальтовое — с ними
+/// (`a_minor_street_does_not_break_the_main_one`).
+#[test]
+fn an_unpaved_arm_gets_no_paint() {
+    let at = Vec2::new(100.0, -40.0);
+    let give_way = RoadNode {
+        pos: Vec2::new(100.0, -6.0),
+        kind: RoadNodeKind::GiveWay,
+    };
+    let side = RoadLine {
+        pavement: Some(crate::map::osm::model::Pavement::Unpaved),
+        ..road(
+            vec![Vec2::new(100.0, -80.0), at, give_way.pos, NODE],
+            8.0,
+            Highway::Residential,
+            2,
+        )
+    };
+    let crossing = RoadNode {
+        pos: at,
+        kind: RoadNodeKind::Crossing {
+            signals: false,
+            island: false,
+            marked: true,
+        },
+    };
+    let paint = paint_of(
+        vec![through(Highway::Tertiary), side],
+        vec![crossing, give_way],
+        EVERYTHING,
+    );
+    assert!(paint.zebras.is_empty(), "{:?}", paint.zebras);
+    assert!(paint.stop_lines.is_empty());
+}
+
 /// Размеченный переход OSM на одном плече улицы снимает зебру по правилу с
 /// другого её плеча: узел уже переходят по данным, и вторая зебра в двух
 /// десятках метров от первой — лишняя (Тула, витрина 12). Без перехода оба
