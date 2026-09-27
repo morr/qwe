@@ -392,8 +392,8 @@ impl<'m> Drawn<'m> {
 mod tests {
     use super::*;
     use crate::map::osm::{SidewalkSide, fixture};
-    use crate::map::roads::network::pairs::{PROBE_STEP, Partner};
     use crate::map::roads::network::RoadNetwork;
+    use crate::map::roads::network::pairs::{PROBE_STEP, Partner};
 
     fn with_network(roads: Vec<RoadLine>) -> MapData {
         MapData {
@@ -522,9 +522,10 @@ mod tests {
                 .pairs()
                 .across_median(road, drawn.axis(road, Axis::Nodal), drawn.nodes())
         };
-        assert_eq!((0..5).map(across).collect::<Vec<_>>(), [
-            false, false, false, true, false
-        ]);
+        assert_eq!(
+            (0..5).map(across).collect::<Vec<_>>(),
+            [false, false, false, true, false]
+        );
         assert!(drawn.sidewalk_mapped(2).is_some(), "подход с юга");
         assert!(drawn.sidewalk_mapped(4).is_some(), "продолжение на север");
     }

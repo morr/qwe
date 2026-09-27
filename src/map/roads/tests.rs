@@ -1871,10 +1871,16 @@ fn a_gap_shorter_than_join_gap_between_two_runs_gets_no_sidewalk_on_the_pair_sid
             .all(|at| at[0] < 10.01 || at[0] > 79.99),
         "слева тротуар только до пары и после неё"
     );
-    assert!(bridged.iter().any(|at| at[1] < -6.99), "справа тротуар есть");
+    assert!(
+        bridged.iter().any(|at| at[1] < -6.99),
+        "справа тротуар есть"
+    );
     // дыра в 10 м — не шов, с обеих сторон тротуар
     let open = sidewalk_of(&[run_left(10.0, 40.0), run_left(50.0, 80.0)], [true; 2]);
-    assert!(open.iter().any(|at| at[1] > 6.99 && at[0] > 39.99 && at[0] < 50.01));
+    assert!(
+        open.iter()
+            .any(|at| at[1] > 6.99 && at[0] > 39.99 && at[0] < 50.01)
+    );
     // обрезок короче полуметра не кладётся: у торцов пары тротуар не
     // появляется
     let trimmed = sidewalk_of(&[run_left(0.3, 99.8)], [true; 2]);
