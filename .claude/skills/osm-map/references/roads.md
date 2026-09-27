@@ -1297,6 +1297,36 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
       a wedge between the two butt ends on the side away from the crossing road, and at the
       old 1° threshold it showed as a light hairline. Tula: outer corners 960 → 1632,
       117 → 202 on sidewalks; the road build did not move (125.6 ms).
+    - **A sharp fork gets a nose** (`corners::nose`, `KerbReturns::noses`): between two
+      neighbour arms under 25° (`MIN_ANGLE`, down to `NOSE_MIN_ANGLE` 2°), and between
+      arms up to `NOSE_MAX_ANGLE` 60° whose fillet did not fit (the straight run shorter
+      than the tangent — a drive leaving a secondary at 34° with a kink 10 m out, gallery
+      06), the two facing edges used to meet in a mathematical point: a spike of sidewalk
+      and ground between the carriageways (galleries 04 ×3, 06, 14). A fillet cannot help
+      — its tangent `r / tan(θ/2)` runs tens of metres, far past the straight run — so the
+      nose is a different figure: an arc of a **small** radius (`NOSE_SHARE` 0.4 of the
+      pair's kerb radius, capped at `NOSE_RADIUS` 1.5 m × the corner knob — 1.5 on
+      streets, 1 with a drive, 0.8 on footways) where the edges have parted by two radii.
+      It is found on the **axes** (`Arm::trail`, the nodal path from the node out to
+      `NOSE_REACH` 100 m, built only for a nose), not on the arms' first directions: the
+      tip lies 30–60 m from the node, where a ring exit or a curving branch has long left
+      the straight line. `NOSE_STEP` 0.5 m stations along the first arm: its edge (with
+      the taper — `Arm::half_at`, linear over the fitted wedge the ribbon lays), the nearest
+      point of the second axis (searched in a `NOSE_WINDOW` of links around the previous
+      hit) and the gap between the edges; the tip is the last station where they still
+      crossed, the centre starts in the middle of the first gap of two radii and is then
+      **settled** (`NOSE_SETTLE` 8 passes) until it stands one radius off both edges — a
+      ring's edge bulges towards the island, and the midpoint's arc stopped short of the
+      straight edge with a notch. The outline — tip, the first edge, the arc between the
+      feet, the second edge back — follows bent edges, so it is **not** a fan: it goes into
+      `noses` with its `Fill` (street/alley layer, unpaved, sidewalk) and is triangulated
+      whole (`push_polygon`); the narrow part of the wedge keeps every `NOSE_THIN` 4th
+      station only. The sidewalk gets its own nose on the band edges (half + sidewalk),
+      with the same small radius — the concentric `r − sidewalk` would go negative, and the
+      tip of an island is all paving anyway. Tula: 385 noses, +7 k of the road
+      layers' 849 k vertices, the build unmoved (215–221 ms before, 210–213 after, the
+      `map_meshing` bench). The first cut built the trail for every arm and searched the
+      whole second axis at every station: +90 ms.
     - **A small island of three nodes is paved** (`small_islands`): three shared nodes
       pairwise joined by pieces of streets (a fork's triangle, Tula, gallery 06: sides
       17–31 m) whose inradius, less the widest half width of the three, is under

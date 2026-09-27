@@ -1536,6 +1536,14 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     of the **same centre** — the radius smaller by exactly the sidewalk width, so a
     constant band follows the kerb round the corner. A radius under the sidewalk width
     leaves that corner square, as it is on the ground.
+  - **Nose** (`map/roads/corners.rs::nose`) — the rounded tip of the island between two
+    arms of a **sharp fork**: under 25°, or under 60° where the kerb return did not fit.
+    Not a fillet (its tangent would run tens of metres) but an arc of a small radius
+    (1.5 m on streets, less with a drive or a footway) where the two edges have parted by
+    two radii, found by walking the arms' **axes** rather than their first directions,
+    since the tip lies tens of metres out where a ring exit already curves. The asphalt
+    from the tip to the arc goes into the class's fill, the sidewalk band gets a nose of
+    its own; both are triangulated whole, not fanned (`KerbReturns::noses`).
   - **Junction** (for the drawn asphalt, `map/roads/corners.rs`) — a node's class group
     of three arms or more, or two meeting at an angle. An arm that **ends** there ends
     **square** on the node (`KerbReturns::butt`) instead of with a round cap, which stuck
