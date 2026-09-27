@@ -1402,12 +1402,12 @@ fn row_breaks_ignore_stitches_but_paint_breaks_do_not() {
     assert_eq!(positive(&junctions.median_base()[0]), 1);
     assert_eq!(dead_ends(&junctions.median_base()[1]), 1);
     // краска: примыкание уступает — его линии рвутся у стежка
-    assert_eq!(positive(&junctions.paint().breaks[1]), 1);
+    assert_eq!(positive(junctions.paint().of(1).cut), 1);
     // ряд: стежка нет — улица цела, оба торца примыкания — тупики
     assert_eq!(junctions.row().junctions, 0);
-    assert_eq!(positive(&junctions.row().breaks[0]), 0);
-    assert_eq!(positive(&junctions.row().breaks[1]), 0);
-    assert_eq!(dead_ends(&junctions.row().breaks[1]), 2);
+    assert_eq!(positive(junctions.row().of(0)), 0);
+    assert_eq!(positive(junctions.row().of(1)), 0);
+    assert_eq!(dead_ends(junctions.row().of(1)), 2);
 }
 
 /// Счётчики краски узлов в отчёте — перекрёстки, кластеры, проходы главной

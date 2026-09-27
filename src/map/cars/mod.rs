@@ -38,9 +38,8 @@ use crate::map::meshing::{Break, MeshBuilder};
 use crate::map::osm::model::{distance_to_segment, ring_vertex_mean};
 use crate::map::osm::{MapData, PolyArea, RoadLine, TrafficSide};
 use crate::map::parking::{ParkingLayout, Stall};
-use crate::map::roads::junctions::MarkingBreaks;
 use crate::map::roads::network::{RoadNetwork, RoadNodes};
-use crate::map::roads::pockets::{self, KerbLots, Kerbside, POCKET_WIDTH};
+use crate::map::roads::pockets::{self, KerbLots, Kerbside, POCKET_WIDTH, RowBreaks};
 use crate::map::roads::shape::{RoadShape, RoadShapeOnMap};
 use crate::map::roads::tapers::Tapers;
 use crate::map::roads::{Axis, Drawn, axis};
@@ -494,15 +493,16 @@ pub fn drawn_axes<'a>(roads: &'a [RoadLine], shape: &RoadShape) -> Vec<Cow<'a, [
 
 /// Ряды вдоль всех улиц, годных под парковку.
 ///
-/// `junctions.breaks` индексирован по номеру дороги **во входном срезе**,
-/// поэтому `roads` — весь срез карты, а не отфильтрованный список
-/// парковочных; `shared` — их узлы (карман через торец way идёт на
-/// продолжение улицы), `axes` — по тому же индексу, нарисованные оси дорог.
+/// `junctions` — разрывы ряда ([`pockets::row_breaks`]), индексированы по
+/// номеру дороги **во входном срезе**, поэтому `roads` — весь срез карты, а не
+/// отфильтрованный список парковочных; `shared` — их узлы (карман через торец
+/// way идёт на продолжение улицы), `axes` — по тому же индексу, нарисованные
+/// оси дорог.
 #[allow(clippy::too_many_arguments)]
 fn park_cars(
     roads: &[RoadLine],
     shared: &RoadNodes,
-    junctions: &MarkingBreaks,
+    junctions: &RowBreaks,
     style: CarStyle,
     axes: &[Cow<[Vec2]>],
     traffic: TrafficSide,
@@ -565,7 +565,7 @@ fn park_cars(
                     stand: kerbside,
                 },
                 &Clearings {
-                    junctions: &junctions.breaks[index],
+                    junctions: junctions.of(index),
                     decks: &near,
                 },
                 &density,

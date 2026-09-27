@@ -10,8 +10,7 @@
 use super::*;
 use crate::map::osm::fixture::{self, street};
 use crate::map::osm::model::{Highway, KerbParking};
-use crate::map::roads::is_carriageway;
-use crate::map::roads::junctions::{self, JUNCTION_MARGIN};
+use crate::map::roads::junctions::JUNCTION_MARGIN;
 
 /// Форма дорог с осью по точкам OSM: ряд меряется по той ломаной, что в
 /// тесте нарисована.
@@ -20,6 +19,13 @@ fn straight() -> RoadShape {
         curve_tolerance: 0.0,
         ..default()
     }
+}
+
+/// Разрывы ряда по срезу без сети и точек дорог — те же, что берёт витрина
+/// (`cars_mesh`): игровые, с проездами среди участников.
+fn row_breaks_of(roads: &[RoadLine]) -> pockets::RowBreaks {
+    let tapers = Tapers::of_map(roads, &RoadNetwork::default(), straight().taper());
+    pockets::row_breaks(roads, &RoadNodes::new(roads), &tapers, &[])
 }
 
 /// Большая стоянка пустее малой, и доля не выходит за свои края.
@@ -50,7 +56,7 @@ fn park_driving(roads: &[RoadLine], style: CarStyle, traffic: TrafficSide) -> Ve
     park_cars(
         roads,
         &RoadNodes::new(roads),
-        &junctions::marking_breaks(roads, is_carriageway, &[]),
+        &row_breaks_of(roads),
         style,
         &drawn_axes(roads, &straight()),
         traffic,
@@ -195,7 +201,7 @@ fn a_primary_parks_in_its_pockets() {
 fn the_same_street_parks_thinner_in_a_private_sector() {
     let road = street(vec![Vec2::new(0.0, 0.0), Vec2::new(600.0, 0.0)], 8.0);
     let roads = std::slice::from_ref(&road);
-    let breaks = junctions::marking_breaks(roads, is_carriageway, &[]);
+    let breaks = row_breaks_of(roads);
     let rows = |buildings: &[PolyArea]| {
         park_cars(
             roads,
@@ -524,7 +530,7 @@ fn the_row_stays_on_the_drawn_asphalt_through_a_bend() {
     let cars = park_cars(
         std::slice::from_ref(&road),
         &RoadNodes::new(std::slice::from_ref(&road)),
-        &junctions::marking_breaks(std::slice::from_ref(&road), is_carriageway, &[]),
+        &row_breaks_of(std::slice::from_ref(&road)),
         style,
         &drawn_axes(std::slice::from_ref(&road), &RoadShape::default()),
         TrafficSide::Right,

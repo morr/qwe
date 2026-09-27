@@ -21,8 +21,8 @@ use super::drawn::Drawn;
 use super::gores::Splitter;
 use super::is_carriageway;
 use super::network::StitchTarget;
-use super::node_paint::{NodePaint, NodePaintStyle};
-use super::pockets;
+use super::node_paint::{AsphaltBreaks, NodePaint, NodePaintStyle, PaintBreaks};
+use super::pockets::{self, RowBreaks};
 use crate::map::meshing::Break;
 use crate::map::osm::{MapData, RoadLine};
 
@@ -306,19 +306,21 @@ pub(super) fn breaks_over(nodes: &[SharedNode], roads: &[RoadLine]) -> MarkingBr
 /// ([`NodePaint`]) и разрывы ряда у бордюра (`pockets::row_breaks`).
 ///
 /// **Пять множеств разрывов на дорогу, и слить их нельзя** — у каждого своя
-/// семантика: база ([`Self::median_base`]) — по ней открываются
-/// разделительные, её никто не переписывает; асфальт (`NodePaint::asphalt`) —
-/// база без разрывов ведущей узла, колея идёт сквозь; краска —
-/// `NodePaint::breaks` (где линии рвутся) и `NodePaint::solid` (где осевая
-/// сплошная у узла насквозь); ряд ([`Self::row`]) — без стежков, но с
-/// проездами, клиньями и зебрами OSM: по нему стоят карманы и машины.
-/// Три понятия «узел» — `SharedNode::is_junction`, узел скругления
-/// (`corners`) и кластер краски (`node_paint::Junction`) — тоже разные: в один
-/// модуль, но не в одно понятие.
+/// семантика, и каждое потребитель получает **своим типом**, так что взять
+/// чужое нельзя и по ошибке: база ([`Self::median_base`], `&[Vec<Break>]`) —
+/// по ней открываются разделительные, её никто не переписывает; асфальт
+/// ([`Self::asphalt`] → [`AsphaltBreaks`]) — база без разрывов ведущей узла,
+/// колея идёт сквозь: заливка; краска ([`Self::paint`] → [`PaintBreaks`]:
+/// `cut` — где линии рвутся, `solid` — где осевая сплошная у узла насквозь):
+/// линии, стрелки, зебры разделительных; ряд ([`Self::row`] →
+/// [`RowBreaks`]) — без стежков, но с проездами, клиньями и зебрами OSM: по
+/// нему стоят карманы и машины. Три понятия «узел» —
+/// `SharedNode::is_junction`, узел скругления (`corners`) и кластер краски
+/// (`node_paint::Junction`) — тоже разные: в один модуль, но не в одно понятие.
 pub struct Junctions {
     base: MarkingBreaks,
     paint: NodePaint,
-    row: MarkingBreaks,
+    row: RowBreaks,
 }
 
 impl Junctions {
@@ -371,14 +373,27 @@ impl Junctions {
         &self.base.breaks
     }
 
-    /// Краска узлов: разрывы краски и асфальта, сплошные, карманы, зебры,
-    /// стоп-линии и кластеры узлов.
-    pub fn paint(&self) -> &NodePaint {
+    /// Разрывы асфальта — заливке улиц и её колее: база без разрывов ведущей
+    /// узла, с островками по правилу ([`Self::add_splitters`]).
+    pub fn asphalt(&self) -> AsphaltBreaks<'_> {
+        self.paint.asphalt()
+    }
+
+    /// Разрывы краски — линиям, стрелкам и зебрам разделительных: где линии
+    /// рвутся и где осевая сплошная насквозь.
+    pub fn paint(&self) -> PaintBreaks<'_> {
+        self.paint.lines()
+    }
+
+    /// Что краска кладёт на узлах — карманы у торцов, зебры, стоп-линии — и
+    /// сами узлы-кластеры с их плечами и ведущими (траектории, порядок
+    /// заливки).
+    pub fn node_paint(&self) -> &NodePaint {
         &self.paint
     }
 
     /// Разрывы ряда у бордюра — карманы ленты и ряд машин.
-    pub fn row(&self) -> &MarkingBreaks {
+    pub fn row(&self) -> &RowBreaks {
         &self.row
     }
 
@@ -388,8 +403,7 @@ impl Junctions {
     /// и ряд их не видят.
     pub(super) fn add_splitters(&mut self, splitters: &[Splitter]) {
         for splitter in splitters {
-            self.paint.breaks[splitter.road].push(splitter.gap);
-            self.paint.asphalt[splitter.road].push(splitter.gap);
+            self.paint.add_splitter(splitter.road, splitter.gap);
         }
     }
 }

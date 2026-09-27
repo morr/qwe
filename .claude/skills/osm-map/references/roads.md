@@ -501,7 +501,8 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     a `NodePaint::solid` zone (the reach its break would have had), and the axis is solid
     `APPROACH` either side of it (ГОСТ 1.1 at a side street; Yandex draws the
     Циолковского on gallery 19 so, while ours ran dashed straight past both side streets).
-    `Painter::paint` takes both lists as one `paint::LineBreaks { cut, solid }`. A **ring's**
+    `Painter::paint` takes both lists as one `paint::LineBreaks { cut, solid }` — handed out
+    per road by `PaintBreaks::of` (**Junctions** below), never assembled by hand. A **ring's**
     lines and its closed axis keep the old rule (kind 0/1 — solid by to-break alone): a
     ring's entries are not worth splitting a closed strip for. The axis of a two-way street with 4+ lanes is a **double solid** (0.15 m gap
     — ГОСТ 1.3's 10–15 cm; half a metre read as two separate lines, the author's report —
@@ -700,12 +701,24 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   shared nodes: the base breaks (`marking_breaks`), the **Junction paint** below
   (`NodePaint`) and the **row breaks** (`pockets::row_breaks`, **Kerb pockets**). Out of
   them come **five sets of breaks per road, and merging any two is a regression, not a
-  simplification**: the **base** (`median_base()` — the medians; nobody rewrites it), the
-  **asphalt** (`paint().asphalt` — the base minus the leading road's, the fill and its
-  ruts), the paint **cut** and **solid** (`paint().breaks` / `paint().solid` — where lines
-  stop, and where an axis stays solid through a node its road passes), and the **row**
-  (`row()` — no stitches, but service drives, taper clearings and OSM zebras: the kerb
-  pockets and the cars). **The nodes are walked once**: `shared_nodes` over the row's
+  simplification** — so each leaves through a door of its own and **as a type of its
+  own**, and a consumer handed the wrong set does not compile: the **base**
+  (`median_base()`, a bare `&[Vec<Break>]` — the medians; nobody rewrites it), the
+  **asphalt** (`asphalt()` → `node_paint::AsphaltBreaks`, `of(road)` — the base minus
+  the leading road's, the fill and its ruts), the paint **cut** and **solid** (`paint()`
+  → `node_paint::PaintBreaks`, whose `of(road)` is the `paint::LineBreaks { cut, solid }`
+  `Painter::paint` takes — where lines stop, and where an axis stays solid through a
+  node its road passes), and the **row** (`row()` → `pockets::RowBreaks`, `of(road)` —
+  no stitches, but service drives, taper clearings and OSM zebras: the kerb pockets and
+  the cars). The two views are built by `NodePaint` (`asphalt()`, `lines()`), which owns
+  the vectors; `RowBreaks` is an owned value that **only `pockets::row_breaks` /
+  `row_breaks_over` produce** — a `MarkingBreaks` cannot be passed off as one, which is
+  what keeps `all_kerbsides` and `park_cars` off the base. What the paint *draws* — the
+  pockets at way ends, the zebras, the stop lines, and the `Junction` clusters the turn
+  paths and the fill order read — is `node_paint()`. Pinned by
+  `tests.rs::row_breaks_ignore_stitches_but_paint_breaks_do_not`: a stitched side street
+  is a junction for the base and the paint and a dead end for the row. **The nodes are
+  walked once**: `shared_nodes` over the row's
   participants (`pockets::is_row_participant` — everything driven on, the carriageways
   among it) gives the row, `restrict` keeps the carriageways' visits of the same nodes
   (bit for bit what a second walk would find — the node's point is its first remaining

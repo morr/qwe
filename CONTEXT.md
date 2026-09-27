@@ -1607,10 +1607,14 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   break of reach 0) for the ruts and the medians. **Junctions**
   (`junctions::Junctions`) owns the marking breaks, the junction paint and the kerb
   row's breaks in one value, and with them the **five sets of breaks** a road carries,
-  none of which may be merged into another: the **base** (the medians open on it,
-  nobody rewrites it), the **asphalt** (the base minus a leading road's — the fill and
-  its ruts), the paint **cut** and **solid**, and the **row** (no stitches, but service
-  drives, taper clearings and OSM zebras — kerb pockets and parked cars). Wider fills
+  none of which may be merged into another — **each consumer takes its own set as a
+  type of its own**, so a swap is a compile error, not a quiet regression: the **base**
+  (`median_base()` — the medians open on it, nobody rewrites it), the **asphalt**
+  (`AsphaltBreaks` — the base minus a leading road's: the fill and its ruts), the paint
+  **cut** and **solid** (`PaintBreaks`, one road's pair being `paint::LineBreaks`, the
+  only thing `Painter::paint` accepts), and the **row** (`pockets::RowBreaks` — no
+  stitches, but service drives, taper clearings and OSM zebras; kerb pockets and parked
+  cars, and only `pockets::row_breaks` makes one). Wider fills
   are pushed after narrower ones, and a junction's **leading road** after all of its
   arms, so a junction shows the main road's ruts rather than the side street's stub. Sidewalks and markings are
   `RoadStyle` knobs, on by default.

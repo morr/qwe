@@ -801,18 +801,18 @@ pub fn mesh_roads(
     // асфальт, краска, траектории, острова
     let ribbon = prepared.axes(Axis::Ribbon);
     // траектории манёвров (`roads/turns.rs`) — колея в узле
-    let turns = turns::Turns::new(&prepared, &junctions.paint().junctions, map.traffic_side);
+    let turns = turns::Turns::new(&prepared, &junctions.node_paint().junctions, map.traffic_side);
     // Широкие улицы поверх узких — см. доку модуля; ведущая узла — поверх
     // всех: её колея идёт через узел, и примыкание шире неё не должно её
     // закрыть.
     let mut leading = vec![false; roads.len()];
-    for junction in &junctions.paint().junctions {
+    for junction in &junctions.node_paint().junctions {
         for &road in &junction.leading {
             leading[road] = true;
         }
     }
     let widths: Vec<f32> = drawn.iter().map(|road| road.width).collect();
-    let order = fill_order(&widths, &leading, &junctions.paint().junctions);
+    let order = fill_order(&widths, &leading, &junctions.node_paint().junctions);
     // направляющие островки у колец (`roads/gores.rs`) — до лент: к ним
     // дотягиваются двойные сплошные разделительных
     let gore_roads: Vec<gores::GoreRoad> = order
@@ -829,7 +829,10 @@ pub fn mesh_roads(
     let splitters = gores::splitters(&drawn, &ribbon, prepared.rings());
     junctions.add_splitters(&splitters);
     gores.add_splitters(&splitters);
-    let node_paint = junctions.paint();
+    // три множества разрывов — каждому потребителю своё (`roads/junctions.rs`)
+    let node_paint = junctions.node_paint();
+    let asphalt = junctions.asphalt();
+    let paint_breaks = junctions.paint();
     // каркасы половин у слияний сводятся в каркас продолжения
     // (`roads/merges.rs`) — по той же нарисованной оси, что и линии
     let mut ramps: Vec<Option<paint::MergeRamp>> = vec![None; roads.len()];
@@ -882,7 +885,7 @@ pub fn mesh_roads(
                 let mut painted = breaks.clone();
                 painted.extend(medians::crossing_breaks(
                     &median,
-                    [&node_paint.breaks[first], &node_paint.breaks[second]],
+                    [paint_breaks.of(first).cut, paint_breaks.of(second).cut],
                 ));
                 // узел слияния — не перекрёсток: двойная сплошная доходит до
                 // него и переходит в осевую продолжения
@@ -984,7 +987,7 @@ pub fn mesh_roads(
         };
         let points: &[Vec2] = &ribbon[index];
         // колея гаснет по разрывам асфальта; у ведущей узла их там нет
-        let breaks = node_paint.asphalt[index].as_slice();
+        let breaks = asphalt.of(index);
         let lanes = road_lanes(road);
         // линии краски — по той же оси, разрывам и клиньям, что и асфальт
         if style.markings {
@@ -996,10 +999,7 @@ pub fn mesh_roads(
             painter.paint(
                 road,
                 points,
-                paint::LineBreaks {
-                    cut: &node_paint.breaks[index],
-                    solid: &node_paint.solid[index],
-                },
+                paint_breaks.of(index),
                 wedges,
                 node_paint.pockets[index],
                 ramps[index],
@@ -1197,7 +1197,7 @@ pub fn mesh_roads(
             let setback = paint::Painter::arrow_setback(arrow, &marks);
             painter.paint_arrow(arrow, setback);
             // и второй ряд дальше от узла, где полоса это позволяет
-            let breaks = &node_paint.breaks[arrow.road];
+            let breaks = paint_breaks.of(arrow.road).cut;
             if let Some(repeat) = paint::Painter::repeat_setback(arrow, setback, &marks, breaks) {
                 painter.paint_arrow(arrow, repeat);
             }

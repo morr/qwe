@@ -200,7 +200,7 @@ pub fn all_kerbsides<P: AsRef<[Vec2]>>(
     roads: &[RoadLine],
     shared: &RoadNodes,
     paths: &[P],
-    breaks: &MarkingBreaks,
+    breaks: &RowBreaks,
     traffic: TrafficSide,
     lots: &KerbLots,
 ) -> Vec<Vec<Kerbside>> {
@@ -212,7 +212,7 @@ pub fn all_kerbsides<P: AsRef<[Vec2]>>(
                 kerbsides(
                     road,
                     paths[index].as_ref(),
-                    &breaks.breaks[index],
+                    breaks.of(index),
                     traffic,
                     lots,
                 )
@@ -453,7 +453,7 @@ pub fn row_breaks(
     shared: &RoadNodes,
     tapers: &Tapers,
     nodes: &[RoadNode],
-) -> MarkingBreaks {
+) -> RowBreaks {
     row_breaks_over(
         junctions::marking_breaks(roads, is_row_participant, &[]),
         roads,
@@ -467,19 +467,50 @@ pub fn row_breaks(
 /// участников [`is_row_participant`] без стежков: у слоя дорог узлы
 /// обходятся один раз на всё (`junctions::Junctions`).
 pub(super) fn row_breaks_over(
-    mut found: MarkingBreaks,
+    found: MarkingBreaks,
     roads: &[RoadLine],
     shared: &RoadNodes,
     tapers: &Tapers,
     nodes: &[RoadNode],
-) -> MarkingBreaks {
+) -> RowBreaks {
+    let MarkingBreaks {
+        mut breaks,
+        junctions,
+    } = found;
     for (road, clearing) in tapers::car_clearings(roads, tapers) {
-        found.breaks[road].push(clearing);
+        breaks[road].push(clearing);
     }
     for (road, crossing) in crossing_breaks(roads, shared, nodes) {
-        found.breaks[road].push(crossing);
+        breaks[road].push(crossing);
     }
-    found
+    RowBreaks { breaks, junctions }
+}
+
+/// Разрывы **ряда** у бордюра по дорогам — карманы ленты ([`all_kerbsides`])
+/// и ряд машин (`map::cars`). Выходят только из [`row_breaks`]: перекрёстки
+/// участников ряда ([`is_row_participant`]) без стежков, клинья между
+/// сечениями, переходы OSM. Свой тип, а не `MarkingBreaks`, чтобы карман и
+/// ряд не встали по базе или по разрывам краски: у тех участники — проезжие
+/// части, стежки — узлы, а переходов и клиньев нет.
+pub struct RowBreaks {
+    breaks: Vec<Vec<Break>>,
+    /// Сколько узлов оказались перекрёстками (строка `cars:`).
+    pub junctions: usize,
+}
+
+impl RowBreaks {
+    pub fn of(&self, road: usize) -> &[Break] {
+        &self.breaks[road]
+    }
+
+    /// Разрывы теста как есть — без клиньев и переходов.
+    #[cfg(test)]
+    pub(super) fn for_test(breaks: Vec<Vec<Break>>) -> Self {
+        Self {
+            breaks,
+            junctions: 0,
+        }
+    }
 }
 
 /// Дорога, что рвёт ряд у бордюра, встретившись с улицей: проезжая часть или
@@ -695,10 +726,7 @@ mod tests {
 
     fn city_sides(roads: &[RoadLine], breaks: Vec<Vec<Break>>) -> Vec<Vec<Kerbside>> {
         let paths: Vec<Vec<Vec2>> = roads.iter().map(|road| road.points.clone()).collect();
-        let breaks = MarkingBreaks {
-            breaks,
-            junctions: 0,
-        };
+        let breaks = RowBreaks::for_test(breaks);
         all_kerbsides(
             roads,
             &RoadNodes::new(roads),

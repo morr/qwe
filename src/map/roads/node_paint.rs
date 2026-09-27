@@ -52,6 +52,7 @@ use bevy::prelude::*;
 use super::drawn::{Axis, Drawn};
 use super::junctions::{JUNCTION_MARGIN, SharedNode, Visit, node_key};
 use super::network::pairs::TRAM_BED_MAX_GAP;
+use super::paint::LineBreaks;
 use super::{is_carriageway, lane_count};
 use crate::map::along::{arclengths, nearest_on_path, place_on_path};
 use crate::map::footprint::distance_to_polyline;
@@ -179,6 +180,39 @@ pub struct JunctionArm {
 pub struct Junction {
     pub arms: Vec<JunctionArm>,
     pub leading: Vec<usize>,
+}
+
+/// Разрывы **асфальта** по дорогам — заливке улиц и её колее: база без
+/// разрывов ведущей узла, плюс островки по правилу
+/// (`Junctions::add_splitters`). Свой тип, а не `&[Vec<Break>]`: заливка
+/// берёт [`NodePaint::asphalt`] и не может взять разрывы краски или ряда,
+/// у которых другие участники и другой вылет.
+#[derive(Clone, Copy)]
+pub struct AsphaltBreaks<'a>(&'a [Vec<Break>]);
+
+impl<'a> AsphaltBreaks<'a> {
+    pub fn of(&self, road: usize) -> &'a [Break] {
+        &self.0[road]
+    }
+}
+
+/// Разрывы **краски** по дорогам: где линии рвутся (`cut`) и какие узлы дорога
+/// проходит насквозь (`solid` — осевая там сплошная). Одной дороге —
+/// [`LineBreaks`] через [`Self::of`]; `Painter::paint` берёт его и ничего
+/// другого.
+#[derive(Clone, Copy)]
+pub struct PaintBreaks<'a> {
+    cut: &'a [Vec<Break>],
+    solid: &'a [Vec<Break>],
+}
+
+impl<'a> PaintBreaks<'a> {
+    pub fn of(&self, road: usize) -> LineBreaks<'a> {
+        LineBreaks {
+            cut: &self.cut[road],
+            solid: &self.solid[road],
+        }
+    }
 }
 
 /// Краска узлов карты.
@@ -381,6 +415,28 @@ struct Crossing {
 }
 
 impl NodePaint {
+    /// Разрывы асфальта — заливке улиц (`roads::push_street_fill`) и клиньям.
+    pub fn asphalt(&self) -> AsphaltBreaks<'_> {
+        AsphaltBreaks(&self.asphalt)
+    }
+
+    /// Разрывы краски — линиям (`Painter::paint`), второму ряду стрелок и
+    /// зебрам поперёк разделительной (`medians::crossing_breaks`).
+    pub fn lines(&self) -> PaintBreaks<'_> {
+        PaintBreaks {
+            cut: &self.breaks,
+            solid: &self.solid,
+        }
+    }
+
+    /// Островок по правилу на подходе к кольцу (`gores::splitters`): подход
+    /// рвётся на его длину и краской, и колеей — единственная правка снаружи
+    /// (`Junctions::add_splitters`).
+    pub(super) fn add_splitter(&mut self, road: usize, gap: Break) {
+        self.breaks[road].push(gap);
+        self.asphalt[road].push(gap);
+    }
+
     /// Краска узлов теста: узлы проезжих частей со стежками `prepared` — те,
     /// что `Junctions::new` передал бы [`Self::new`], — и готовая база.
     #[cfg(test)]

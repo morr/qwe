@@ -600,6 +600,10 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
     **service drives** as participants (a car used to stand across a driveway, Ф. Энгельса
     at 3976 1236) and the **marked OSM crossings** (half a zebra, spilled onto the next way
     when the crossing is near its way's end) — see `references/roads.md`, **Kerb pockets**.
+    They arrive as `pockets::RowBreaks`, a type only `row_breaks` produces, and `park_cars`
+    and `all_kerbsides` take nothing else — the ribbon's `Junctions::row()` is the same
+    type, so the row and the pockets cannot be fed the base or the paint's breaks by
+    mistake (`references/roads.md`, **Junctions**).
   - **Nor does a row stand where a street crosses a bridge** (`BridgeDeck`, pinned by
     `a_street_crossing_a_bridge_clears_the_row_under_the_deck`). A street under a bridge,
     or one butting into its side, shares no node with it, so `marking_breaks` sees no
