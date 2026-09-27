@@ -7,6 +7,7 @@ use crate::map::meshing::LaneFrame;
 use crate::map::osm::fixture::street;
 use crate::map::osm::{Highway, MapData, RoadLine};
 use crate::map::roads::corners::kerb_returns;
+use crate::map::roads::drawn::Drawn;
 use crate::map::roads::is_carriageway;
 use crate::map::roads::junctions::marking_breaks;
 use crate::map::roads::network::pairs::Pairs;
@@ -115,27 +116,21 @@ fn a_street_across_the_node_or_of_another_class_is_no_merge() {
 #[test]
 fn a_merge_node_gets_no_square_ends_and_no_outer_corners() {
     let roads = divided_into(two_way_east());
-    let (merges, _, paths) = found(&roads);
-    let drawn: Vec<&RoadLine> = roads.iter().collect();
-    let rounded: Vec<Option<&[Vec2]>> = paths.iter().map(|path| Some(path.as_slice())).collect();
-    let nodes = RoadNodes::new(&roads);
-    let returns = |merged: &dyn Fn(usize, usize) -> bool| {
-        kerb_returns(
-            &drawn,
-            &rounded,
-            &nodes,
-            |_| None,
-            |_, _| None,
-            |_| [None; 2],
-            merged,
-            1.0,
-        )
+    let map = MapData {
+        network: RoadNetwork::new(&roads),
+        roads,
+        ..default()
     };
+    let drawn = Drawn::for_test(&map).with_sidewalks(false);
+    assert!(drawn.is_merged(0, 1) && drawn.is_merged(1, 0) && drawn.is_merged(2, 0));
     // как перекрёсток — торцы прямые (а где плечи разошлись шире
     // развёрнутого, ещё и наружный угол): это и был шип
-    let junction = returns(&|_, _| false);
+    let junction = kerb_returns(
+        &Drawn::for_test(&map).with_sidewalks(false).without_merges(),
+        1.0,
+    );
     assert!(junction.butt(0)[1] && junction.butt(1)[0] && junction.butt(2)[0]);
-    let merge = returns(&|road, end| merges.is_merged(road, end));
+    let merge = kerb_returns(&drawn, 1.0);
     for road in 0..3 {
         assert_eq!(merge.butt(road), [false; 2], "{road}");
     }

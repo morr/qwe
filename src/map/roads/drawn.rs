@@ -202,7 +202,7 @@ impl<'m> Drawn<'m> {
     }
 
     /// Каркас теста: оси по точкам OSM (без сглаживания), тротуары
-    /// рисуются. Сеть карты не собирается — клинья и пары кладёт сам тест
+    /// рисуются. Без сети карты клиньев и слияний нет — их кладёт сам тест
     /// ([`Self::with_taper`], [`Self::with_pair`]).
     #[cfg(test)]
     pub fn for_test(map: &'m MapData) -> Self {
@@ -217,6 +217,13 @@ impl<'m> Drawn<'m> {
     #[cfg(test)]
     pub fn with_sidewalks(mut self, sidewalks: bool) -> Self {
         self.sidewalks = sidewalks;
+        self
+    }
+
+    /// Тот же узел как перекрёсток: найденные слияния забыты.
+    #[cfg(test)]
+    pub fn without_merges(mut self) -> Self {
+        self.merges = Merges::default();
         self
     }
 

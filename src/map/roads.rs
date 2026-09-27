@@ -1139,26 +1139,8 @@ pub fn mesh_roads(
     let stations = paint::street_stations(&map.network, &nodal);
     // Скругления кладутся раньше всех лент своего слоя: лента поверх кроет
     // скругление, а не наоборот, и разметка остаётся целой.
-    let (kerb_returns, islands) = {
-        let rounded: Vec<Option<&[Vec2]>> = drawn
-            .iter()
-            .zip(&nodal)
-            .map(|(road, path)| (!road.carves_navmesh()).then_some(path.as_ref()))
-            .collect();
-        (
-            corners::kerb_returns(
-                &drawn,
-                &rounded,
-                nodes,
-                |road| prepared.sidewalk_drawn(road),
-                |road, at| prepared.paired(road, at),
-                |road| prepared.taper_ends(road),
-                |road, end| prepared.is_merged(road, end),
-                shape.corner_radius(),
-            ),
-            corners::small_islands(&drawn, &rounded, nodes),
-        )
-    };
+    let kerb_returns = corners::kerb_returns(&prepared, shape.corner_radius());
+    let islands = corners::small_islands(&prepared);
     for (class, outline) in &kerb_returns.roads {
         let (builder, color) = match class {
             RoadClass::Street => (&mut streets, ROAD_COLOR),

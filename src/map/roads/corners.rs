@@ -49,9 +49,8 @@ use std::f32::consts::PI;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
+use super::drawn::{Axis, Drawn};
 use super::junctions::node_key;
-use super::network::RoadNodes;
-use super::tapers::Taper;
 use crate::map::meshing::arc_steps;
 use crate::map::osm::model::{polyline_length, ring_area};
 use crate::map::osm::{Highway, RoadClass, RoadLine};
@@ -129,39 +128,31 @@ impl KerbReturns {
 /// Асфальт всех узлов: скругления проезжей части и тротуаров, наружные углы и
 /// прямые торцы плеч.
 ///
-/// `paths` — **нарисованные** осевые (после сглаживания, до стежков), по
-/// индексу дороги; `None` — дорога не участвует (мост, арка). `sidewalk` —
-/// ширина тротуара дороги (по индексу), если он рисуется; `paired(дорога,
-/// длина по оси)` — лежит ли там рядом вторая половина разделённой улицы и
-/// слева ли (`roads/network/pairs.rs`): с её стороны тротуара нет, и угол по
-/// нему не скругляется. `tapers(дорога)` — клинья у её `[начала, конца]`
-/// (`roads/tapers.rs`): в клине кромка уже ближе к оси, и прямой пробег луча
-/// с другого конца кончается там, где клин начинается; а торец под клином
-/// стоит в узле на полуширине узкого соседа с сужаемых сторон — по ней и
-/// считаются его углы. `merged(дорога,
-/// торец)` — торец плечо слияния (`roads/merges.rs`): плечи одного слияния
-/// друг другу не перекрёсток — ни прямых торцов, ни углов между ними. `scale`
-/// — множитель радиусов по классам (ручка `Corner radius`).
-#[allow(clippy::too_many_arguments)]
-pub fn kerb_returns(
-    roads: &[&RoadLine],
-    paths: &[Option<&[Vec2]>],
-    nodes: &RoadNodes,
-    sidewalk: impl Fn(usize) -> Option<f32>,
-    paired: impl Fn(usize, f32) -> Option<bool>,
-    tapers: impl Fn(usize) -> [Option<Taper>; 2],
-    merged: impl Fn(usize, usize) -> bool,
-    scale: f32,
-) -> KerbReturns {
+/// Всё — по подготовленным дорогам `drawn` (`roads/drawn.rs`): **узловые**
+/// осевые (`Axis::Nodal` — после сглаживания, до стежков; мост и арка не
+/// участвуют, [`rounded`]); тротуар, если он рисуется
+/// (`Drawn::sidewalk_drawn`); лежит ли рядом вторая половина разделённой
+/// улицы и слева ли (`Drawn::paired`, `roads/network/pairs.rs`) — с её
+/// стороны тротуара нет, и угол по нему не скругляется; клинья у торцов
+/// (`Drawn::taper_ends`, `roads/tapers.rs`) — в клине кромка уже ближе к
+/// оси, и прямой пробег луча с другого конца кончается там, где клин
+/// начинается, а торец под клином стоит в узле на полуширине узкого соседа с
+/// сужаемых сторон — по ней и считаются его углы; торец плечо слияния
+/// (`Drawn::is_merged`, `roads/merges.rs`) — плечи одного слияния друг другу
+/// не перекрёсток, ни прямых торцов, ни углов между ними. `scale` —
+/// множитель радиусов по классам (ручка `Corner radius`).
+pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
+    let roads = drawn.roads();
+    let nodes = drawn.nodes();
     let mut arms: HashMap<(i32, i32), (Vec2, Vec<Arm>)> = HashMap::new();
-    for (index, (&road, path)) in roads.iter().zip(paths).enumerate() {
-        let Some(path) = *path else {
+    for (index, &road) in roads.iter().enumerate() {
+        let Some(path) = rounded(drawn, index) else {
             continue;
         };
         if path.len() < 2 {
             continue;
         }
-        let wedges = tapers(index);
+        let wedges = drawn.taper_ends(index);
         let [head, tail] = wedges.map(|wedge| wedge.map_or(0.0, |wedge| wedge.length));
         let total = polyline_length(path);
         let closed = path[0] == path[path.len() - 1];
@@ -245,7 +236,7 @@ pub fn kerb_returns(
                 let at_end = !closed && (vertex == 0 || vertex == last);
                 // стороны луча: слева по пути — слева по лучу вперёд и справа
                 // по лучу назад
-                let own = sidewalk(index);
+                let own = drawn.sidewalk_drawn(index);
                 let mut sides = [own; 2];
                 // тротуар по тегу — слева или справа по пути (`sidewalk=*`)
                 for (side, present) in road.sidewalks.into_iter().enumerate() {
@@ -264,10 +255,12 @@ pub fn kerb_returns(
                         }
                         let at = usize::from((side == 0) != forward);
                         half[at] = narrow.width / 2.0;
-                        sides[at] = sidewalk(wedge.narrow).filter(|_| narrow.sidewalks[side]);
+                        sides[at] = drawn
+                            .sidewalk_drawn(wedge.narrow)
+                            .filter(|_| narrow.sidewalks[side]);
                     }
                 }
-                if let Some(left) = paired(index, along) {
+                if let Some(left) = drawn.paired(index, along) {
                     sides[usize::from(left != forward)] = None;
                 }
                 entry.1.push(Arm {
@@ -287,7 +280,10 @@ pub fn kerb_returns(
         butt: vec![[false; 2]; roads.len()],
         ..default()
     };
-    let is_merged = |arm: &Arm| arm.end.is_some_and(|(road, end)| merged(road, end));
+    let is_merged = |arm: &Arm| {
+        arm.end
+            .is_some_and(|(road, end)| drawn.is_merged(road, end))
+    };
     // между двумя плечами слияния нет ни угла, ни скругления
     let merge_pair = |first: &Arm, second: &Arm| is_merged(first) && is_merged(second);
     for (node, mut found) in arms.into_values() {
@@ -524,11 +520,8 @@ const ISLAND_PERIMETER_MAX: f32 = 120.0;
 /// кусками улиц, от которого за полотнами почти ничего не остаётся
 /// ([`ISLAND_FILL`]). Контур — по нарисованным осям `paths` (`None` — дорога
 /// не участвует); кладётся асфальтом под ленты, как перепонки колец.
-pub fn small_islands(
-    roads: &[&RoadLine],
-    paths: &[Option<&[Vec2]>],
-    nodes: &RoadNodes,
-) -> Vec<Vec<Vec2>> {
+pub fn small_islands(drawn: &Drawn) -> Vec<Vec<Vec2>> {
+    let nodes = drawn.nodes();
     // рёбра: куски улиц между соседними общими узлами
     struct Edge<'a> {
         ends: [(i32, i32); 2],
@@ -536,8 +529,11 @@ pub fn small_islands(
         half: f32,
     }
     let mut edges: Vec<Edge> = Vec::new();
-    for (road, path) in roads.iter().zip(paths) {
-        let Some(path) = *path else { continue };
+    for index in 0..drawn.len() {
+        let Some(path) = rounded(drawn, index) else {
+            continue;
+        };
+        let road = drawn.road(index);
         if road.class != RoadClass::Street || path.len() < 2 {
             continue;
         }
@@ -608,36 +604,37 @@ pub fn small_islands(
     islands
 }
 
+/// Узловая осевая дороги, если она участвует в узлах: мост и арка — нет, их
+/// торцы стоят ровным срезом бордюра и у стен дома.
+fn rounded<'d>(drawn: &'d Drawn, index: usize) -> Option<&'d [Vec2]> {
+    (!drawn.road(index).carves_navmesh()).then(|| drawn.axis(index, Axis::Nodal))
+}
+
 #[cfg(test)]
 mod tests {
+    use super::super::network::pairs::PairRun;
+    use super::super::tapers::Taper;
     use super::*;
+    use crate::map::osm::MapData;
     use crate::map::osm::fixture::street;
     use crate::map::osm::model::point_in_polygon;
 
     fn returns_of(roads: &[RoadLine]) -> Vec<(RoadClass, Vec<Vec2>)> {
-        walked_returns_of(roads, |_| None).roads
+        walked_returns_of(roads, false).roads
     }
 
-    fn walked_returns_of(
-        roads: &[RoadLine],
-        sidewalk: impl Fn(&RoadLine) -> Option<f32>,
-    ) -> KerbReturns {
-        let nodes = RoadNodes::new(roads);
-        let paths: Vec<Option<&[Vec2]>> = roads
-            .iter()
-            .map(|road| Some(road.points.as_slice()))
-            .collect();
-        let drawn: Vec<&RoadLine> = roads.iter().collect();
-        kerb_returns(
-            &drawn,
-            &paths,
-            &nodes,
-            |index| sidewalk(&roads[index]),
-            |_, _| None,
-            |_| [None; 2],
-            |_, _| false,
-            1.0,
-        )
+    /// Карта из одних дорог — вход [`Drawn::for_test`].
+    fn map_of(roads: &[RoadLine]) -> MapData {
+        MapData {
+            roads: roads.to_vec(),
+            ..default()
+        }
+    }
+
+    /// Скругления с тротуарами по карте (`sidewalks`) или без них.
+    fn walked_returns_of(roads: &[RoadLine], sidewalks: bool) -> KerbReturns {
+        let map = map_of(roads);
+        kerb_returns(&Drawn::for_test(&map).with_sidewalks(sidewalks), 1.0)
     }
 
     /// Тротуар улицы 8 м — как его считает `roads::sidewalk_width`.
@@ -765,39 +762,20 @@ mod tests {
     /// касательная торчала из-под него шипом (витрина 08).
     #[test]
     fn a_taper_on_the_arm_limits_the_radius() {
-        let roads = [
+        let map = map_of(&[
             east_west(),
             street(vec![Vec2::ZERO, Vec2::new(0.0, 20.0)], 8.0),
-        ];
-        let nodes = RoadNodes::new(&roads);
-        let paths: Vec<Option<&[Vec2]>> = roads
-            .iter()
-            .map(|road| Some(road.points.as_slice()))
-            .collect();
-        let drawn: Vec<&RoadLine> = roads.iter().collect();
-        let found = kerb_returns(
-            &drawn,
-            &paths,
-            &nodes,
-            |_| None,
-            |_, _| None,
-            |road| {
-                if road == 1 {
-                    [
-                        None,
-                        Some(Taper {
-                            length: 14.0,
-                            narrow: 0,
-                            sides: [true; 2],
-                        }),
-                    ]
-                } else {
-                    [None; 2]
-                }
+        ]);
+        let drawn = Drawn::for_test(&map).with_sidewalks(false).with_taper(
+            1,
+            1,
+            Taper {
+                length: 14.0,
+                narrow: 0,
+                sides: [true; 2],
             },
-            |_, _| false,
-            1.0,
         );
+        let found = kerb_returns(&drawn, 1.0);
         assert!(!found.roads.is_empty());
         for (_, outline) in &found.roads {
             for point in outline {
@@ -808,7 +786,7 @@ mod tests {
 
     #[test]
     fn the_sidewalk_turns_the_corner_on_the_kerb_arc() {
-        let found = walked_returns_of(&crossing(), |_| Some(SIDEWALK));
+        let found = walked_returns_of(&crossing(), true);
         assert_eq!(found.sidewalks.len(), 4);
         // центр бордюрной дуги в северо-восточном углу: угол краёв (4, 4) плюс
         // биссектриса на r/sin 45°
@@ -844,18 +822,18 @@ mod tests {
 
     #[test]
     fn a_kerb_radius_under_the_sidewalk_width_leaves_the_corner_square() {
-        // проезд с тротуаром выходит в магистраль: радиус проезда 2.5 м меньше
-        // трёхметрового тротуара, и внешний угол полосы на месте такой же
-        // прямой
+        // жилая зона с тротуаром выходит в магистраль: радиус жилой зоны
+        // 2.5 м меньше трёхметрового тротуара (16 м — `sidewalk_band` в
+        // потолке), и внешний угол полосы на месте такой же прямой
         let avenue = street(
             vec![Vec2::new(-50.0, 0.0), Vec2::ZERO, Vec2::new(50.0, 0.0)],
             16.0,
         );
         let side = RoadLine {
-            highway: Highway::Service,
-            ..street(vec![Vec2::new(0.0, 50.0), Vec2::ZERO], 8.0)
+            highway: Highway::LivingStreet,
+            ..street(vec![Vec2::new(0.0, 50.0), Vec2::ZERO], 16.0)
         };
-        let found = walked_returns_of(&[avenue, side], |_| Some(3.0));
+        let found = walked_returns_of(&[avenue, side], true);
         assert_eq!(found.roads.len(), 2);
         assert!(found.sidewalks.is_empty());
     }
@@ -866,9 +844,7 @@ mod tests {
         // а полоса тротуара идёт мимо него насквозь — скруглять нечего
         let through = east_west();
         let drive = street(vec![Vec2::new(0.0, 50.0), Vec2::ZERO], 5.0);
-        let found = walked_returns_of(&[through, drive], |road| {
-            (road.width >= 8.0).then_some(SIDEWALK)
-        });
+        let found = walked_returns_of(&[through, drive], true);
         assert_eq!(found.roads.len(), 2);
         assert!(found.sidewalks.is_empty());
     }
@@ -880,9 +856,7 @@ mod tests {
         let east = street(vec![Vec2::ZERO, Vec2::new(50.0, 0.0)], 8.0);
         let north = street(vec![Vec2::ZERO, Vec2::new(0.0, 50.0)], 8.0);
         let drive = street(vec![Vec2::ZERO, Vec2::new(35.0, 35.0)], 5.0);
-        let found = walked_returns_of(&[east, north, drive], |road| {
-            (road.width >= 8.0).then_some(SIDEWALK)
-        });
+        let found = walked_returns_of(&[east, north, drive], true);
         // скругление внутри угла и наружный угол по другую сторону узла
         assert_eq!(found.sidewalks.len(), 2);
         assert_eq!(found.outer[1], 1);
@@ -895,23 +869,20 @@ mod tests {
     fn no_sidewalk_corner_on_the_side_of_the_paired_half() {
         // сквозная — половина разделённой улицы, вторая половина слева (к
         // северу): с той стороны тротуара нет, и углов по нему тоже
-        let roads = crossing();
-        let nodes = RoadNodes::new(&roads);
-        let paths: Vec<Option<&[Vec2]>> = roads
-            .iter()
-            .map(|road| Some(road.points.as_slice()))
-            .collect();
-        let drawn: Vec<&RoadLine> = roads.iter().collect();
-        let found = kerb_returns(
-            &drawn,
-            &paths,
-            &nodes,
-            |_| Some(SIDEWALK),
-            |road, _| (road == 0).then_some(true),
-            |_| [None; 2],
-            |_, _| false,
-            1.0,
+        let map = map_of(&crossing());
+        let drawn = Drawn::for_test(&map).with_pair(
+            0,
+            PairRun {
+                from: 0.0,
+                to: 100.0,
+                partner: 1,
+                left: true,
+                gap: 0.0,
+                paved: true,
+                tram: false,
+            },
         );
+        let found = kerb_returns(&drawn, 1.0);
         assert_eq!(found.roads.len(), 4, "асфальт скругляется, как был");
         assert_eq!(found.sidewalks.len(), 2);
         for outline in &found.sidewalks {
@@ -950,12 +921,12 @@ mod tests {
         // сквозной там не торец
         let through = east_west();
         let side = street(vec![Vec2::new(0.0, 50.0), Vec2::ZERO], 8.0);
-        let found = walked_returns_of(&[through, side], |_| None);
+        let found = walked_returns_of(&[through, side], false);
         assert_eq!(found.butt, vec![[false; 2], [false, true]]);
         // шов двух ways одной улицы — не узел, торцы круглые
         let first = street(vec![Vec2::new(-50.0, 0.0), Vec2::ZERO], 8.0);
         let second = street(vec![Vec2::ZERO, Vec2::new(50.0, 0.0)], 8.0);
-        let found = walked_returns_of(&[first, second], |_| None);
+        let found = walked_returns_of(&[first, second], false);
         assert_eq!(found.butt, vec![[false; 2]; 2]);
         assert!(found.roads.is_empty());
     }
@@ -966,7 +937,7 @@ mod tests {
         // же, что прежде давали круглые торцы
         let east = street(vec![Vec2::ZERO, Vec2::new(50.0, 0.0)], 8.0);
         let north = street(vec![Vec2::ZERO, Vec2::new(0.0, 50.0)], 8.0);
-        let found = walked_returns_of(&[east, north], |_| None);
+        let found = walked_returns_of(&[east, north], false);
         assert_eq!(found.roads.len(), 2);
         assert_eq!(found.outer[0], 1);
         assert_eq!(found.butt, vec![[true, false]; 2]);
@@ -988,15 +959,7 @@ mod tests {
                 .map(|point| point * scale);
             [(a, b), (b, c), (c, a)].map(|(from, to)| street(vec![from, to], 7.6))
         };
-        let islands = |roads: &[RoadLine]| {
-            let nodes = RoadNodes::new(roads);
-            let paths: Vec<Option<&[Vec2]>> = roads
-                .iter()
-                .map(|road| Some(road.points.as_slice()))
-                .collect();
-            let drawn: Vec<&RoadLine> = roads.iter().collect();
-            small_islands(&drawn, &paths, &nodes)
-        };
+        let islands = |roads: &[RoadLine]| small_islands(&Drawn::for_test(&map_of(roads)));
         let small = islands(&triangle(1.0));
         assert_eq!(small.len(), 1);
         assert_eq!(small[0].len(), 3, "контур — три узла: {:?}", small[0]);
@@ -1019,7 +982,7 @@ mod tests {
             8.0,
         );
         let side = street(vec![Vec2::new(0.0, -50.0), Vec2::ZERO], 8.0);
-        let found = walked_returns_of(&[west, east, side], |_| None);
+        let found = walked_returns_of(&[west, east, side], false);
         assert_eq!(found.outer[0], 1, "{:?}", found.roads);
         // клин — у кромки над узлом, между торцами
         let wedge = Vec2::new(0.02, 3.9);

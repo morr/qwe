@@ -391,7 +391,7 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     the way); `push_taper` is the symmetric case of it. **The kerb returns read the
     tapered end at the narrow width**: an `Arm` carries `half: [left, right]`, and at an
     end vertex with a taper the tapered sides take the narrow road's half width and
-    sidewalk (`kerb_returns`'s `tapers` closure now hands the `Taper` itself) — the fillet
+    sidewalk (`Drawn::taper_ends` hands `kerb_returns` the `Taper` itself) — the fillet
     then meets the wedge edge at the wedge's own 2–3° slant instead of floating a metre off
     it, which is what the pure-seam rule was protecting against.
     The same taper is laid in the **sidewalk** band, per side as well: the narrowing side
@@ -1085,8 +1085,10 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     the turn paths (**Junctions** above). The
     markings see nothing of it: the end's dead-end break stands and the extension is
     past it. Tula: 39.
-  - **Kerb returns** (`kerb_returns`) — the rounded corner of a junction. At every shared
-    node, arms are collected from the **drawn** paths (pinned, so the node is a vertex of
+  - **Kerb returns** (`kerb_returns(&Drawn, scale)`, with `small_islands(&Drawn)` beside
+    it — both read everything they need off `Drawn`: the nodal axes, the drawn sidewalk,
+    the pair runs, the tapers, the merges) — the rounded corner of a junction. At every shared
+    node, arms are collected from the **nodal** paths (pinned, so the node is a vertex of
     each): a direction to the first vertex at least 0.5 m away and the straight **run** —
     to that vertex and on through every next one within `STRAIGHT_TOLERANCE` 0.15 m of
     the arm's line. OSM puts vertices on a straight drive wherever it likes (the node
@@ -1105,8 +1107,8 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     tangent]` goes into that class's fill builder **before any ribbon** — ribbons and their
     markings then lie over it, and since it is pushed with no ribbon coords it carries no
     wear or markings of its own. One clamp: the tangent never runs past an arm's straight
-    run (past the next vertex the edge has turned) **nor into a taper** (`kerb_returns`'s
-    `tapers` — the run ends where the wedge begins, since the edge there is already
+    run (past the next vertex the edge has turned) **nor into a taper** (`Drawn::taper_ends`
+    — the run ends where the wedge begins, since the edge there is already
     closer to the axis; gallery 08's 9 m street tapering to one lane put two spikes of
     asphalt and sidewalk out of its corners) — which is why the street axis keeps
     `KERB_STRAIGHT` next to a pinned node and pins only on carriageway nodes, and the
@@ -1218,7 +1220,7 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     other 13 are forks and one-way couplets that `Pairs` does not pair, so no median is
     drawn there either. One is on a tram bed (Демидовская Плотина × Карла Маркса, 3 + 3
     lanes into 4, gallery sample 25), sample 26 is a bare one (Рязанская).
-    - **Not a junction.** `kerb_returns` takes `merged(road, end)`: the merge's three arms
+    - **Not a junction.** `kerb_returns` asks `Drawn::is_merged(road, end)`: the merge's three arms
       give each other no square ends and no fillet or outer corner — a node whose class
       group is only merge arms is skipped altogether, so all three ribbons end round, as a
       continuation does. With a fourth road at the node the junction stands, only the
