@@ -1485,9 +1485,12 @@ plans added three: `24_tram_bed_end`,
 the lawn — all four ways are one-way and the pair goes on, so **not** a merge (**Tram
 bed**); `25_divided_merge`, Демидовская Плотина's halves ending on a two-way street at a
 node with a crossing street, and `26_pure_merge`, Рязанская's halves with no other arm —
-**Merges**; stage 7 added three: `21_turn_pocket`, проспект Ленина's one-way
-half widening from two lanes to three before a node, `turn:lanes` `left|left|right` —
-the **lane arrows** and a pocket's line ending in the gap; `22_lane_change`, two-way
+**Merges**; stage 7 added three: `21_turn_pocket`, Пушкинская at проспект Ленина, a
+two-way tertiary going from 2 + 1 lanes to 3 + 1 before the signals,
+`turn:lanes:forward` `left|through|right` — the new lane born in a wedge and the lines
+ending at the stop line (it first stood on проспект Ленина's pocket, the same window as
+`15_skew_avenues_link` five metres away, and was moved; it has no Yandex reference yet,
+nor have 25–27); `22_lane_change`, two-way
 secondary улица Болдина going from two lanes to four at a seam — the two-way twin of
 `16_lanes_taper`; `23_s_curve`, Путейская улица's 200 m right-then-left bend in one
 way — the smoothed axis carrying the ribbon, sidewalk and dashes; the twentieth, `20_roundabout_arcs`, is the secondary ring of six arcs — the
