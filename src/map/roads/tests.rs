@@ -1081,7 +1081,7 @@ fn a_two_way_approach_gets_a_splitter_island() {
     map.roads
         .push(fixture::street(vec![circle[0], Vec2::new(90.0, 0.0)], 7.6));
     let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
-    assert_eq!(report.rings[0], 1);
+    assert_eq!(report.drawn.rings[0], 1);
     assert_eq!(report.gores, 1, "островок на подходе один");
     // капля — на оси подхода за кромкой кольца (25 + 4 м), не дальше острия
     let island: Vec<&[f32; 3]> = layer(&layers, paint::PAINT_ISLANDS)
@@ -1142,7 +1142,7 @@ fn two_carriageways_side_by_side_get_a_double_line_and_no_kerb_between() {
         )
     });
     let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
-    assert_eq!(report.medians, [1, 0, 0]);
+    assert_eq!(report.drawn.medians, [1, 0, 0]);
 
     let lines = &layer(&layers, "lot_lines").builder;
     assert!(!lines.is_empty());
@@ -1227,7 +1227,7 @@ fn divided_avenue(gap: f32) -> (MapData, f32) {
 fn paired_halves_share_a_paved_median_and_keep_sidewalks_outside() {
     let (map, apart) = divided_avenue(0.6);
     let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
-    assert_eq!(report.medians, [1, 0, 0]);
+    assert_eq!(report.drawn.medians, [1, 0, 0]);
     let middle = 100.0 + apart / 2.0;
     // двойная сплошная — по середине между половинами
     let axes = layer(&layers, paint::PAINT_AXES)
@@ -1395,7 +1395,7 @@ fn a_street_into_one_half_does_not_open_the_median() {
 fn a_wide_gap_between_halves_is_a_lawn_with_a_kerb() {
     let (map, apart) = divided_avenue(8.0);
     let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
-    assert_eq!(report.medians, [0, 1, 0]);
+    assert_eq!(report.drawn.medians, [0, 1, 0]);
     let inner = (3.0 * 3.3 + 1.0) / 2.0;
     let grass = layer(&layers, "road_medians").builder.positions_for_test();
     assert!(!grass.is_empty(), "газон есть");
@@ -1424,7 +1424,7 @@ fn a_tram_between_halves_widens_both_halves_to_the_middle() {
         });
     }
     let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
-    assert_eq!(report.medians, [1, 0, 1]);
+    assert_eq!(report.drawn.medians, [1, 0, 1]);
     assert_eq!(report.tram_bands, 2, "полоса над каждым путём");
     assert!(
         layer(&layers, "road_medians").builder.is_empty(),
@@ -1520,7 +1520,7 @@ fn a_tram_bed_ends_in_asphalt_up_to_the_nose_of_the_lawn() {
         ..fixture::rail(vec![Vec2::new(80.0, middle), Vec2::new(300.0, middle)], 1.2)
     });
     let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
-    assert_eq!(report.medians, [1, 1, 1], "полотно и газон");
+    assert_eq!(report.drawn.medians, [1, 1, 1], "полотно и газон");
     let inner = (3.0 * 3.3 + 1.0) / 2.0;
     let gap = |at: &&[f32; 3]| at[1] > 100.0 + inner + 0.1 && at[1] < 100.0 + apart - inner - 0.1;
     // асфальт заходит за торец полотна — к носу газона
@@ -1547,7 +1547,7 @@ fn a_tram_on_a_wide_median_keeps_the_lawn() {
         ..fixture::rail(vec![Vec2::new(80.0, middle), Vec2::new(520.0, middle)], 1.2)
     });
     let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
-    assert_eq!(report.medians, [0, 1, 0]);
+    assert_eq!(report.drawn.medians, [0, 1, 0]);
     assert_eq!(report.tram_bands, 0, "путь в траве — без полосы");
     assert!(!layer(&layers, "road_medians").builder.is_empty());
 }
@@ -1619,7 +1619,7 @@ fn a_driveway_crossing_gets_no_base_break() {
     // ничего не сдвигает.
     let map = a_driveway();
     let report = timeless(&map);
-    assert_eq!(report.crossings, 1);
+    assert_eq!(report.drawn.crossings, 1);
     let nodes = RoadNodes::new(&map.roads);
     let crossings = network::driveway_crossings(&map.roads, &nodes);
     assert_eq!(crossings, vec![(2, 5.0)]);
@@ -1682,10 +1682,11 @@ fn a_dangling_end_short_of_a_street_is_stitched() {
         fixture::street(vec![Vec2::new(50.0, -60.0), Vec2::new(50.0, -9.0)], 5.0),
     ]);
     let report = timeless(&map);
-    assert_eq!(report.stitches, 1);
-    assert_eq!(report.crossings, 0);
-    assert_eq!(report.tapers, 0);
-    assert_eq!(report.merges, [0, 0]);
+    assert_eq!(report.drawn.stitches, 1);
+    assert_eq!(report.drawn.crossings, 0);
+    assert_eq!(report.drawn.tapers, 0);
+    assert_eq!(report.drawn.merges, 0);
+    assert_eq!(report.merge_edges, 0);
 }
 
 #[test]
@@ -1699,10 +1700,11 @@ fn a_section_seam_is_one_taper() {
         street(vec![Vec2::new(200.0, 0.0), Vec2::new(400.0, 0.0)], 4),
     ]);
     let report = timeless(&map);
-    assert_eq!(report.tapers, 1);
-    assert_eq!(report.stitches, 0);
-    assert_eq!(report.crossings, 0);
-    assert_eq!(report.merges, [0, 0]);
+    assert_eq!(report.drawn.tapers, 1);
+    assert_eq!(report.drawn.stitches, 0);
+    assert_eq!(report.drawn.crossings, 0);
+    assert_eq!(report.drawn.merges, 0);
+    assert_eq!(report.merge_edges, 0);
 }
 
 #[test]
@@ -1728,9 +1730,10 @@ fn a_divided_street_merging_into_a_two_way_one_is_one_merge() {
         primary(vec![node, node + Vec2::new(160.0, 0.0)], 4, false),
     ]);
     let report = timeless(&map);
-    assert_eq!(report.merges, [1, 2]);
-    assert_eq!(report.crossings, 0);
-    assert_eq!(report.stitches, 0);
-    assert_eq!(report.tapers, 0);
+    assert_eq!(report.drawn.merges, 1);
+    assert_eq!(report.merge_edges, 2);
+    assert_eq!(report.drawn.crossings, 0);
+    assert_eq!(report.drawn.stitches, 0);
+    assert_eq!(report.drawn.tapers, 0);
     assert_eq!(timeless(&map), report, "отчёт повторяется до поля");
 }

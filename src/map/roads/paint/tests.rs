@@ -309,7 +309,7 @@ fn seam_of(lanes: [u8; 2]) -> (Vec<LayerMesh>, f32) {
         ),
     ];
     let (layers, report) = mesh_roads(&map_of(roads), RoadStyle::default(), RoadShape::default());
-    assert_eq!(report.tapers, 1);
+    assert_eq!(report.drawn.tapers, 1);
     let taper = (width(lanes[1]) - width(lanes[0])) * tapers::TAPER_PER_METER;
     (layers, 200.0 + taper)
 }

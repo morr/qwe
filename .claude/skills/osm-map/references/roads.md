@@ -255,7 +255,7 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     every half of Советская, and pinning the axis at each cross street would have made
     the tram lane die and be born every 150–300 m. The contour between the inner kerbs
     is the same picture — outer kerb, sidewalk, cars and lane frame all untouched by
-    construction — with the model and the drawn axis left alone. `RoadReport::medians`
+    construction — with the model and the drawn axis left alone. `RoadReport::drawn.medians`
     is `[paved, lawn, tram beds]` (`Pairs::count`).
   - **Tram band** (`roads/tram_band.rs`) — a lighter strip of asphalt (`TRAM_BAND_COLOR`,
     `ROAD_COLOR` lighter by about 8 %) `TRAM_BAND_WIDTH` 3.3 m wide along every tram
@@ -961,6 +961,11 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     at its ring's section would move the base break on an approach
     (`tests.rs::a_ring_arc_base_break_reaches_by_the_osm_width`); a driveway crossing
     stays `Highway::Path` in both and moves nothing.
+    Its counters are one value too, `Drawn::stats() -> DrawnStats` (crossings, stitches,
+    seams, tight corners, tapers, merges, medians, rings), nested in the report as
+    `RoadReport::drawn`; the `road meshing:` line prints exactly what it printed before.
+    The merge **edges** stay a `RoadReport` field of their own (`merge_edges`) — the
+    ribbon lays them, not the preparation.
   - **The street axis** (`roads/axis.rs::street_axes`, stage 2 of the roads rework). The
     ribbon of every way that lies in a street ([`RoadNetwork`]) is drawn along **one curve
     per street**, not per way — per-way Chaikin pinned both ends of each way, so every
@@ -1201,7 +1206,7 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
       same band plus the half's sidewalk width goes into `sidewalks` where the half has a
       tagged sidewalk on its outer side. Each side has its own step, so a kerb already in
       line with the continuation gets nothing — the wedge is **by kerbs**, not about the
-      axis. `RoadReport::merges` is `[merges, bands]`.
+      axis. The merges are `RoadReport::drawn.merges`, the bands `RoadReport::merge_edges`.
     - **The paint runs through** — three pieces, each measured against sample 26, where
       the halves' lines ran into the node as two solid lines closing in a V, the
       continuation's started past a 13 m gap, and the double solid ended at the lawn:

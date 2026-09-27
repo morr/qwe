@@ -51,6 +51,7 @@ use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use self::drawn::Drawn;
+pub use self::drawn::DrawnStats;
 use self::network::RoadNodes;
 pub use self::node_paint::CrossingMode;
 use self::shape::{RoadShape, RoadShapeOnMap};
@@ -1006,11 +1007,9 @@ pub struct RoadReport {
     pub sidewalk_returns: usize,
     /// Наружные углы узлов (`roads/corners.rs`): асфальт и тротуар.
     pub outer_corners: [usize; 2],
-    pub stitches: usize,
-    pub crossings: usize,
-    /// Кольца, нарисованные гладкой фигурой (`roads/rings.rs`), и щели
-    /// между подходом и кольцом, залитые асфальтом.
-    pub rings: [usize; 2],
+    /// Подготовка дорог (`roads/drawn.rs`): переезды, стежки, клинья,
+    /// слияния, разделительные, кольца, швы осей — одним значением.
+    pub drawn: DrawnStats,
     /// Острова-крошки в треугольниках узлов, залитые асфальтом
     /// (`corners::small_islands`).
     pub islands: usize,
@@ -1019,20 +1018,11 @@ pub struct RoadReport {
     /// Из данных v15 (`roads/islands.rs`): островков-точек на улицах, контуров
     /// островков и контуров полотна.
     pub road_islands: [usize; 3],
-    /// Клинья между сечениями улиц (`roads/tapers.rs`).
-    pub tapers: usize,
-    /// Слияния разделённой улицы в обычную (`roads/merges.rs`) и кромки,
-    /// сведённые на них к кромке продолжения.
-    pub merges: [usize; 2],
-    /// Разделительные парных половин (`roads/network/pairs.rs`): асфальтом,
-    /// газоном и из асфальтовых — трамвайных полотен.
-    pub medians: [usize; 3],
+    /// Кромки, сведённые на слияниях (`drawn.merges`) к кромке продолжения
+    /// (`roads/merges.rs`): их кладёт лента, не подготовка.
+    pub merge_edges: usize,
     /// Куски светлой полосы над трамвайными путями (`roads/tram_band.rs`).
     pub tram_bands: usize,
-    /// Швы ways, пройденные осью улицы одной кривой (`roads/axis.rs`).
-    pub seams: usize,
-    /// Изломы, на которые звеньев не хватило для радиуса в полуширину.
-    pub tight: usize,
     pub vertices: usize,
     pub network: std::time::Duration,
     pub elapsed: std::time::Duration,
@@ -1058,18 +1048,22 @@ impl std::fmt::Display for RoadReport {
             kerb_returns,
             sidewalk_returns,
             outer_corners: [outer, outer_sidewalks],
-            stitches,
-            crossings,
-            rings: [rings, webs],
+            drawn:
+                DrawnStats {
+                    crossings,
+                    stitches,
+                    seams,
+                    tight,
+                    tapers,
+                    merges,
+                    medians: [paved, lawns, beds],
+                    rings: [rings, webs],
+                },
             islands,
             gores,
             road_islands: [refuges, island_areas, carriageways],
-            tapers,
-            merges: [merges, merge_edges],
-            medians: [paved, lawns, beds],
+            merge_edges,
             tram_bands,
-            seams,
-            tight,
             vertices,
             network,
             elapsed,
@@ -1134,7 +1128,6 @@ pub fn mesh_roads(
     let prepared = Drawn::new(map, &style, &shape);
     let (nodes, axes) = (&prepared.nodes, &prepared.axes);
     let paths = &axes.paths;
-    let crossings = &prepared.crossings;
     let drawn = prepared.roads();
     let (stitches, tapers, merges) = (&prepared.stitches, &prepared.tapers, &prepared.merges);
     let across_median = &prepared.across_median;
@@ -1888,22 +1881,16 @@ pub fn mesh_roads(
         kerb_returns: kerb_returns.roads.len() - kerb_returns.outer[0],
         sidewalk_returns: kerb_returns.sidewalks.len() - kerb_returns.outer[1],
         outer_corners: kerb_returns.outer,
-        stitches: stitches.count,
-        crossings: crossings.len(),
+        drawn: prepared.stats(),
         gores: gores.count(),
         road_islands: [
             road_islands.refuges,
             road_islands.kerbs.len() - road_islands.refuges,
             road_islands.carriageways.len(),
         ],
-        tapers: tapers.count,
-        merges: [merges.list.len(), merge_edges],
-        rings: [axes.rings.list.len(), axes.rings.webs.len()],
+        merge_edges,
         islands: islands.len(),
-        medians: axes.pairs.count(),
         tram_bands: tram_bands.len(),
-        seams: axes.seams,
-        tight: axes.tight,
         vertices: layers.iter().map(|l| l.builder.vertex_count()).sum(),
         network: network_time,
         elapsed: started.elapsed(),

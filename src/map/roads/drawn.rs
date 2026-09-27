@@ -49,6 +49,29 @@ pub struct Drawn<'m> {
     pub across_median: Vec<bool>,
 }
 
+/// Что подготовка нашла — вложенное поле `RoadReport::drawn`; строку лога
+/// печатает `RoadReport`, как и прежде.
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+pub struct DrawnStats {
+    /// Подмены: переезды через тротуар и дуги колец.
+    pub crossings: usize,
+    pub stitches: usize,
+    /// Швы ways, пройденные осью улицы одной кривой (`roads/axis.rs`).
+    pub seams: usize,
+    /// Изломы, на которые звеньев не хватило для радиуса в полуширину.
+    pub tight: usize,
+    /// Клинья между сечениями улиц (`roads/tapers.rs`).
+    pub tapers: usize,
+    /// Слияния разделённой улицы в обычную (`roads/merges.rs`).
+    pub merges: usize,
+    /// Разделительные парных половин (`roads/network/pairs.rs`): асфальтом,
+    /// газоном и из асфальтовых — трамвайных полотен.
+    pub medians: [usize; 3],
+    /// Кольца, нарисованные гладкой фигурой (`roads/rings.rs`), и щели
+    /// между подходом и кольцом, залитые асфальтом.
+    pub rings: [usize; 2],
+}
+
 impl<'m> Drawn<'m> {
     pub fn new(map: &'m MapData, style: &RoadStyle, shape: &RoadShape) -> Self {
         let roads = map.roads.as_slice();
@@ -120,6 +143,20 @@ impl<'m> Drawn<'m> {
     /// Дороги как рисуются, по индексу `map.roads`: подмены на своих местах.
     pub fn roads(&self) -> Vec<&RoadLine> {
         substituted(self.osm, &self.crossings)
+    }
+
+    /// Счётчики подготовки для строки `road meshing:`.
+    pub fn stats(&self) -> DrawnStats {
+        DrawnStats {
+            crossings: self.crossings.len(),
+            stitches: self.stitches.count,
+            seams: self.axes.seams,
+            tight: self.axes.tight,
+            tapers: self.tapers.count,
+            merges: self.merges.list.len(),
+            medians: self.axes.pairs.count(),
+            rings: [self.axes.rings.list.len(), self.axes.rings.webs.len()],
+        }
     }
 
     /// Оси со стежками — лента, краска, траектории: у тронутой стежком дороги
