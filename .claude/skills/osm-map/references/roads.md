@@ -1752,6 +1752,12 @@ avenue and a street, of private-sector streets and of yard drives, T's into an a
 into one half of a divided one, a fork round a triangular island, a roundabout, five
 arms, a drive into a street, a street that narrows, a sharp bend, a dead end — each with
 its full address and **game coordinates** in a caption to the left of its window.
+Ryazan, Kaluga, Oryol and Rostov have columns of their own (`ROADS_CITY=<slug>`, six
+samples each, all with a Yandex reference): the types Tula lacks or draws differently —
+Rostov's one-way grid, crossings of two divided avenues, a T into a six-lane two-way
+street, unpaved and gravel private-sector crossings, rings of every size (a three-lane
+primary, two rings side by side, a narrow ring round a square, a park ring, an oval one,
+a five-arm mini ring, a closed one-way loop without `junction`), six arms in one node.
 **The column is a list of junction *types*, one sample per type, with no target count**;
 the rules for adding one — one type once, readable in the window at a glance, flat road
 junctions only (no level crossings, no multi-level interchanges, no arch through a house:
