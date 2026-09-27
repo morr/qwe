@@ -1671,7 +1671,8 @@ place to look at a road-network defect end to end:
   without `pt`. The rest of the recipe (capture
   twice, the map paints its tiles lazily; a live browser through Claude in Chrome, headless
   Chrome gets a `limited` stub) is in the docs of `examples/demos/roads/samples.rs`.
-- The panel mirrors the game's (`examples/demos/roads/panel.rs`): the city switch, a
+- The panel mirrors the game's (`examples/demos/roads/panel.rs`): the city select (the
+  game's own `qwe::ui::spawn_city_select`, full panel width), a
   **Roads** header (the five `RoadShape` sliders from `qwe::ui::shape_knobs` + Sidewalks),
   a **Road paint** header (Markings, Paint, Crossings, Stop lines, Arrows, Wear, Turn wear)
   and the Network row; a change rebuilds every sample. The gallery settles `RoadShape`

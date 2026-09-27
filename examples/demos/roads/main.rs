@@ -97,10 +97,10 @@ use qwe::map::{
     mesh_tree_row_band, set_lane_width, settle_road_shape, spawn_road_meshes,
 };
 use qwe::ui::knob::AddKnobsExt;
-use qwe::ui::{PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET};
+use qwe::ui::{PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET, sync_city_label};
 
 use crate::overlay::NetworkOverlay;
-use crate::panel::{StatusLine, spawn_panel, sync_city_buttons};
+use crate::panel::{StatusLine, spawn_panel};
 use crate::samples::Sample;
 use crate::shot::{ShotRequest, auto_shot, request_shot};
 
@@ -228,7 +228,7 @@ fn main() {
                 // протяжка решает «камера или панель» сама, в кадре нажатия
                 (drag_pan, key_pan),
                 step_to_neighbour,
-                sync_city_buttons.run_if(resource_changed::<City>),
+                sync_city_label.run_if(resource_changed::<City>),
                 // форма — после паузы, как в игре; ширина полосы — в глобаль
                 // разбора, краски и колеи раньше, чем её прочтут материалы
                 settle_road_shape,

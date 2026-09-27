@@ -66,6 +66,8 @@ pub use self::quit::QuitOnEscPlugin;
 // ползунки формы и краски дорог — панели витрины `roads`: шкалы те же, что в игре
 pub use self::road_paint::paint_knobs;
 pub use self::roads::shape_knobs;
+// селект города — игре и витрине `roads`
+pub use self::city::{spawn_city_select, sync_city_label};
 use crate::loading::{AppState, PlayPhase};
 use crate::map::osm::MapData;
 use crate::map::{TreeRowStyle, TreeStyle};
