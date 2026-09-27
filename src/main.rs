@@ -76,8 +76,8 @@ fn main() {
                         },
                         position: WindowPosition::Automatic,
                         mode: bevy::window::WindowMode::Windowed,
-                        present_mode: bevy::window::PresentMode::AutoVsync,
-                        resolution: (1920, 1080).into(),
+                        present_mode: dev::perf_present_mode(),
+                        resolution: dev::perf_window_resolution(),
                         ..default()
                     }),
                     ..default()
