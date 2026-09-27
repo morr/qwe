@@ -504,6 +504,89 @@ mod tests {
         assert_eq!(nodal.axis(1, Axis::Nodal), nodal.axis(1, Axis::Ribbon));
     }
 
+    /// Разделённый проспект вдоль x (`roads/tests.rs::divided_avenue`): две
+    /// встречные половины в три полосы, `gap` метров между кромками, с
+    /// вершинами при x = 300. Возвращает дороги и расстояние между осями.
+    fn avenue(gap: f32) -> (Vec<RoadLine>, f32) {
+        let width = 3.0 * 3.3 + 1.0;
+        let apart = width + gap;
+        let half = |points: Vec<Vec2>| RoadLine {
+            highway: crate::map::osm::Highway::Primary,
+            oneway: true,
+            lanes: Some(3),
+            ..fixture::street(points, width)
+        };
+        let roads = vec![
+            half(vec![
+                Vec2::new(100.0, 100.0),
+                Vec2::new(300.0, 100.0),
+                Vec2::new(500.0, 100.0),
+            ]),
+            half(vec![
+                Vec2::new(500.0, 100.0 + apart),
+                Vec2::new(300.0, 100.0 + apart),
+                Vec2::new(100.0, 100.0 + apart),
+            ]),
+        ];
+        (roads, apart)
+    }
+
+    /// Тот же проспект с поперечной улицей из трёх way при x = 300: подход
+    /// с юга (2), кусок между половинами (3), продолжение на север (4).
+    fn crossed_avenue(gap: f32) -> MapData {
+        let (mut roads, apart) = avenue(gap);
+        let (south, north) = (Vec2::new(300.0, 100.0), Vec2::new(300.0, 100.0 + apart));
+        roads.push(fixture::street(vec![Vec2::new(300.0, 30.0), south], 8.0));
+        roads.push(fixture::street(vec![south, north], 8.0));
+        roads.push(fixture::street(vec![north, Vec2::new(300.0, 190.0)], 8.0));
+        with_network(roads)
+    }
+
+    #[test]
+    fn the_piece_between_two_halves_is_across_the_median() {
+        let map = crossed_avenue(0.6);
+        let drawn = Drawn::for_test(&map);
+        assert_eq!(drawn.stats().medians, [1, 0, 0]);
+        assert_eq!(drawn.sidewalk_mapped(3), None, "кусок в проёме пары");
+        assert_eq!(drawn.sidewalk_drawn(3), None);
+        assert!(drawn.sidewalk_mapped(2).is_some(), "подход с юга");
+        assert!(drawn.sidewalk_mapped(4).is_some(), "продолжение на север");
+    }
+
+    #[test]
+    fn a_short_piece_between_halves_that_are_no_pair_is_not_across_the_median() {
+        // 20 м между кромками — шире самого широкого газона пары, а кусок
+        // между ними короче самого длинного куска в проёме
+        let map = crossed_avenue(20.0);
+        let drawn = Drawn::for_test(&map);
+        assert_eq!(drawn.stats().medians, [0, 0, 0]);
+        assert!(drawn.sidewalk_mapped(3).is_some());
+    }
+
+    #[test]
+    fn paired_reaches_two_probes_past_the_run() {
+        let (roads, _) = avenue(0.6);
+        let map = with_network(roads);
+        let drawn = Drawn::for_test(&map);
+        let runs = &drawn.pairs().runs[0];
+        let (first, last) = (runs[0], runs[runs.len() - 1]);
+        assert!(first.left, "пара слева от половины, идущей на восток");
+        assert_eq!(drawn.paired(0, (first.from + first.to) / 2.0), Some(true));
+        assert_eq!(drawn.paired(0, first.from - 3.9), Some(true));
+        assert_eq!(drawn.paired(0, first.from - 4.1), None);
+        assert_eq!(drawn.paired(0, last.to + 3.9), Some(true));
+        assert_eq!(drawn.paired(0, last.to + 4.1), None);
+        assert_eq!(drawn.paired(1, 200.0), Some(true), "и у встречной");
+        let partners: Vec<Partner> = drawn.partners(0).collect();
+        assert_eq!(
+            partners.first(),
+            Some(&Partner {
+                road: 1,
+                paved: true
+            })
+        );
+    }
+
     #[test]
     fn band_half_takes_the_sidewalk_only_where_the_tag_puts_it() {
         let mut street = fixture::street(vec![Vec2::ZERO, Vec2::new(100.0, 0.0)], 8.0);

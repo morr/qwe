@@ -1814,3 +1814,66 @@ fn a_zebra_at_a_way_end_breaks_the_kerb_pockets_of_both_ways() {
     // карманы те же четыре: зебра их укорачивает, а не делит
     assert_eq!(timeless(&map).kerb_pockets, 4);
 }
+
+/// Кусок пары `from..to` у половины, идущей на восток: пара слева.
+fn run_left(from: f32, to: f32) -> network::pairs::PairRun {
+    network::pairs::PairRun {
+        from,
+        to,
+        partner: 1,
+        left: true,
+        gap: 0.6,
+        paved: true,
+        tram: false,
+    }
+}
+
+/// Вершины тротуара улицы в 10 м с полосой в 2 м вдоль x от 0 до 100 — с
+/// кусками пары `runs` и тротуаром по сторонам `sides`.
+fn sidewalk_of(runs: &[network::pairs::PairRun], sides: [bool; 2]) -> Vec<[f32; 3]> {
+    let mut builder = MeshBuilder::default();
+    let body = [Vec2::ZERO, Vec2::new(100.0, 0.0)];
+    push_sidewalk(
+        &mut builder,
+        &body,
+        [10.0, 2.0],
+        runs,
+        0.0,
+        sides,
+        SIDEWALK_COLOR.to_linear(),
+        [false; 2],
+    );
+    builder.positions_for_test().to_vec()
+}
+
+#[test]
+fn a_sidewalk_without_pairs_is_one_band_on_its_sides() {
+    let both = sidewalk_of(&[], [true; 2]);
+    assert!(both.iter().any(|at| at[1] > 6.99) && both.iter().any(|at| at[1] < -6.99));
+    // слева только: полоса в 12 м, сдвинутая на метр влево
+    let left = sidewalk_of(&[], [true, false]);
+    assert!(left.iter().all(|at| at[1] > -5.01 && at[1] < 7.01));
+    assert!(left.iter().any(|at| at[1] > 6.99) && left.iter().any(|at| at[1] < -4.99));
+    assert!(sidewalk_of(&[], [false; 2]).is_empty());
+}
+
+#[test]
+fn a_gap_shorter_than_join_gap_between_two_runs_gets_no_sidewalk_on_the_pair_side() {
+    // дыра в 3 м между кусками с одной стороны — без тротуара с неё
+    let bridged = sidewalk_of(&[run_left(10.0, 40.0), run_left(43.0, 80.0)], [true; 2]);
+    assert!(
+        bridged
+            .iter()
+            .filter(|at| at[1] > 5.01)
+            .all(|at| at[0] < 10.01 || at[0] > 79.99),
+        "слева тротуар только до пары и после неё"
+    );
+    assert!(bridged.iter().any(|at| at[1] < -6.99), "справа тротуар есть");
+    // дыра в 10 м — не шов, с обеих сторон тротуар
+    let open = sidewalk_of(&[run_left(10.0, 40.0), run_left(50.0, 80.0)], [true; 2]);
+    assert!(open.iter().any(|at| at[1] > 6.99 && at[0] > 39.99 && at[0] < 50.01));
+    // обрезок короче полуметра не кладётся: у торцов пары тротуар не
+    // появляется
+    let trimmed = sidewalk_of(&[run_left(0.3, 99.8)], [true; 2]);
+    assert!(trimmed.iter().all(|at| at[1] < 5.01));
+}
