@@ -776,7 +776,8 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     `fences/tests.rs::the_far_bucket_draws_nothing`, each asserting the log line itself.
   - **Converted — ten modules, eleven layer doors.** `fences`, `rail`, `tram`, `wagons`,
     `industry`, `cars`,
-    `roads` (18 layers, `mesh_roads` — eight of its own with the median lawn (the two
+    `roads` (19 layers, `mesh_roads` — nine of its own with the median lawn and the
+    unpaved streets (the two
     road/alley casings went in stage 8)
     `road_medians`, the eight paint layers of `roads/paint.rs` (the turn paths' wear mask
     and apply among them, and the roundabout islands' hatching above a lot's asphalt) and
@@ -909,7 +910,7 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
   asset: the vertex colour is the base, and the fragment multiplies in noise sampled by
   **world position**, so two overlapping ribbons of one layer get the same pixel (the
   junction trick survives). Per `SurfaceKind` (`Ground | Yard | Park | Wood | Grass | Sand |
-  Water | Street | Alley | Sidewalk`) a `SurfaceParams` uniform: **mottle** (four
+  Water | Street | Alley | Sidewalk | Unpaved`) a `SurfaceParams` uniform: **mottle** (four
   octaves of value noise from `mottle_scale` down to an eighth of it, with a per-channel
   `tint` shift so a lawn goes yellow-green ↔ blue-green, not just light ↔ dark), **grain**
   (three octaves from `grain_scale` down to a quarter), **speckle** (a thresholded noise

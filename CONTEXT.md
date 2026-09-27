@@ -221,10 +221,15 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     along it outside, where their kerbs have only just parted) and
     `lanes: Option<u8>` (the section's lane count, below); `parking_aisle`
     (`service=parking_aisle`) — read by the stall layout only, see **Parking lots** below;
-    `pavement: Option<Pavement>` (`Paved | Unpaved`, paths only) — a **paved path**
+    `pavement: Option<Pavement>` (`Paved | Unpaved`) — a **paved path**
     (`RoadLine::is_paved_path`) is drawn in the sidewalk layer in its colour, an unpaved
     one is the sand trail of the alley layer; `surface` or the path's kind decides, and
-    a bare `footway` takes the greenery around it (`parse::infer_pavements`).
+    a bare `footway` takes the greenery around it (`parse::infer_pavements`). On a street
+    only the `surface` tag sets it: an **unpaved street** (`RoadLine::is_unpaved_street`,
+    `surface=unpaved|gravel|ground|dirt|compacted|…`) is drawn in its own layer
+    `unpaved_roads` (`Z_UNPAVED_ROAD` 1.8, under the asphalt, `SurfaceKind::Unpaved`) with
+    no paint at all — no lane lines, zebras or stop lines; an untagged
+    street is asphalt.
   - **Street** (**RoadNetwork**, `MapData::network`, `map/roads/network/streets.rs`) — ways
     glued end to end through their seams: at a node the **most collinear pair of ends of
     one `Highway` class** (bend under 50°, one-way flow running through) continues one

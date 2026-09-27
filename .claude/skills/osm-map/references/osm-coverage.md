@@ -387,6 +387,14 @@ way (план считал 74 — это теги, а не way): 38 общих `
 `residential`, 1 `tertiary_link`; витрина 09 — Бухоновский переулок), `yes` на 3
 (не отличается от отсутствия тега). Запрос не менялся.
 
+**`surface` у улиц** (правка №8 полировки дорог, кеш v15) — грунтовое значение
+(`unpaved|gravel|ground|dirt|compacted|pebblestone|…`) делает улицу **грунтовкой**
+(`RoadLine::is_unpaved_street`): свой слой, без разметки; до правки тег снимал у неё
+только выведенный тротуар. Улиц и проездов с таким тегом (`residential`, `unclassified`,
+`tertiary`…`service`, `living_street`): Калуга 126 (56 `unpaved`, 40 `gravel`, 18
+`ground`), Орёл 39, Ростов 37 (`grass;unpaved` не читается — значение со списком).
+Запрос не менялся.
+
 **`sidewalk=*`** и **`parking:*`** (этап 7 плана дорог, кеш v15) —
 `RoadLine::sidewalks` и `RoadLine::parking`, по сторонам хода точек. В Туле
 `sidewalk`: 44 `no`, 42 `separate`, 30 `right`, 12 `both`, 10 `left` (и по

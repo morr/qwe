@@ -48,6 +48,28 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   paved goes with it (`corners::Arm::paved` → `KerbReturns::sidewalks`, counted in
   `outer[1]`): a sand fillet in the corner of two tiled alleys read as a stain. Pinned by
   `roads/tests.rs::a_paved_path_is_drawn_in_the_sidewalk_layer`.
+  **Unpaved streets** (`RoadLine::is_unpaved_street` — a `Street` whose `surface` is
+  `unpaved|gravel|fine_gravel|pebblestone|ground|dirt|earth|mud|sand|grass|compacted|…`,
+  the same vocabulary as the paths, `tags.rs::surface_pavement`) are the private sector's
+  lanes, and they used to be drawn as grey asphalt with a dashed axis (scout D4: Rostov
+  04, Kaluga 06, Oryol 06; Kaluga carries 126 such streets and drives, Rostov 37, Oryol
+  39). Now the fill goes to its own layer `unpaved_roads` at `Z_UNPAVED_ROAD` 1.8 —
+  above the sidewalks and the alleys like any carriageway, **below the asphalt at 2.0**,
+  so where a dirt lane runs out onto a paved street the junction is asphalt without any
+  draw-order bargaining — in `UNPAVED_ROAD_COLOR` (a warm grey-brown, a step lighter
+  than asphalt and darker than a sand trail) over `SurfaceKind::Unpaved`: mottle three
+  times the asphalt's at 14 m (puddles, patches of fill), coarser grain, dark gravel
+  speckle, and the same ruts as the asphalt (the lane frame stays — a dirt road is
+  driven by the same wheels). No paint on dirt: no lane lines (`Painter::paint`
+  returns), no zebra — neither by the rule nor off an OSM crossing node, which
+  `node_paint` does not even collect on such a road — and no stop line or give-way line,
+  whatever calls it (Kaluga 06: the `give_way` node on Новаторский drew two white stubs
+  of the dashed line across the gravel; the sign stays a sign). A kerb return between two
+  unpaved arms goes to their layer (`corners::Arm::unpaved` → `KerbReturns::unpaved`),
+  between an unpaved and a paved arm it stays asphalt. The sidewalk is already gone by
+  the parse (`untagged_sidewalks`). An untagged street stays asphalt — the tag is rare
+  (Tula has a handful), and a guessed dirt road in a city block would be a worse lie
+  than a missed one. Pinned by `roads/tests.rs::an_unpaved_street_draws_in_its_own_layer_without_lines`.
   A **bridge is the exception**: `is_carriageway` says yes, so a deck keeps its
   lane markings, but the bridge branch of `mesh_roads` `continue`s into `Bridges::push_deck`
   + `Bridges::fills` *before* the sidewalk block — a deck gets no band ever, at any width or
@@ -1446,7 +1468,8 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     and `Smoothing` stay for the tree-row band's own Joins / Smoothing rows and for rails,
     the tram and water (`Smoothing::Light`). The dark road/alley **casing layers are gone**
     (`alley_casings`, `road_casings`, `Z_ALLEY_CASING`, `Z_ROAD_CASING` and their colours),
-    so `mesh_roads` yields **18 layers**: ten ribbons + eight paint layers. `bridge_casings`
+    so `mesh_roads` yields **19 layers**: eleven ribbons (with `unpaved_roads`, **Unpaved
+    streets** above) + eight paint layers. `bridge_casings`
     stays — it is the bridge curb (**Bridge layers** below); `footprint::casing_width`
     stays for the tree-row band and the planting index.
   - **RoadShape** (`map/roads/shape.rs`, group `road_shape`; five sliders in the Roads
