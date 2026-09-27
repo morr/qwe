@@ -54,6 +54,7 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 pub use self::bridges::BridgeReport;
 use self::bridges::Bridges;
 pub use self::drawn::{Axis, Drawn, DrawnStats};
+pub use self::junctions::JunctionCounts;
 use self::network::RoadNodes;
 pub use self::node_paint::CrossingMode;
 use self::shape::{RoadShape, RoadShapeOnMap};
@@ -513,27 +514,20 @@ pub struct RoadLayerTag;
 pub struct RoadReport {
     /// Стиль, которым всё это нарисовано: тумблеры из лог-строки — это он.
     pub style: RoadStyle,
-    pub junctions: usize,
+    /// Узлы (`roads/junctions.rs`): перекрёстки, кластеры, проходы главной
+    /// насквозь, ведущие дороги, зебры (из них по OSM), стоп-линии, карманы
+    /// краски — одним значением.
+    pub junctions: JunctionCounts,
     /// Куски линий слоя краски (`roads/paint.rs`) и их вершины — отдельно от
     /// общего счёта: краска строится своими мешами и прячется с зумом.
     pub paint_lines: usize,
     pub paint_vertices: usize,
-    /// Краска узлов (`roads/node_paint.rs`): зебры (из них по OSM),
-    /// стоп-линии, карманы, кластеры сближенных узлов и проходы главной
-    /// сквозь узел.
-    pub zebras: [usize; 2],
-    pub stop_lines: usize,
-    pub pockets: usize,
-    pub clusters: usize,
     /// Карманы стоянки вдоль улиц (`roads/pockets.rs`) и разворотные
     /// площадки в тупиках.
     pub kerb_pockets: usize,
     pub turning_circles: usize,
-    pub through: usize,
-    /// Траектории узлов (`roads/turns.rs`) — кривые манёвров; дороги, ведущие
-    /// хоть один узел (колея сквозь).
+    /// Траектории узлов (`roads/turns.rs`) — кривые манёвров.
     pub turns: usize,
-    pub leading: usize,
     /// Стрелки на полосах подходов (`roads/turns.rs`).
     pub arrows: usize,
     pub kerb_returns: usize,
@@ -568,18 +562,21 @@ impl std::fmt::Display for RoadReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self {
             style,
-            junctions,
+            junctions:
+                JunctionCounts {
+                    count: junctions,
+                    clusters,
+                    through,
+                    leading,
+                    zebras: [zebras, osm_zebras],
+                    stop_lines,
+                    pockets,
+                },
             paint_lines,
             paint_vertices,
-            zebras: [zebras, osm_zebras],
-            stop_lines,
-            pockets,
-            clusters,
             kerb_pockets,
             turning_circles,
-            through,
             turns,
-            leading,
             arrows,
             kerb_returns,
             sidewalk_returns,
@@ -805,12 +802,7 @@ pub fn mesh_roads(
     // Широкие улицы поверх узких — см. доку модуля; ведущая узла — поверх
     // всех: её колея идёт через узел, и примыкание шире неё не должно её
     // закрыть.
-    let mut leading = vec![false; roads.len()];
-    for junction in &junctions.node_paint().junctions {
-        for &road in &junction.leading {
-            leading[road] = true;
-        }
-    }
+    let leading = junctions.leading();
     let widths: Vec<f32> = drawn.iter().map(|road| road.width).collect();
     let order = fill_order(&widths, &leading, &junctions.node_paint().junctions);
     // направляющие островки у колец (`roads/gores.rs`) — до лент: к ним
@@ -1303,22 +1295,13 @@ pub fn mesh_roads(
 
     let report = RoadReport {
         style,
-        junctions: junctions.count(),
+        junctions: junctions.counts(),
         paint_lines,
         paint_vertices,
-        zebras: [
-            node_paint.zebras.len(),
-            node_paint.zebras.iter().filter(|zebra| zebra.osm).count(),
-        ],
-        stop_lines: node_paint.stop_lines.len(),
-        pockets: node_paint.pockets.iter().flatten().flatten().count(),
-        clusters: node_paint.clusters,
         kerb_pockets,
         turning_circles,
-        through: node_paint.through,
         turns: turns.maneuvers,
         arrows: if style.arrows { turns.arrows.len() } else { 0 },
-        leading: leading.iter().filter(|&&lead| lead).count(),
         kerb_returns: kerb_returns.roads.len() - kerb_returns.outer[0],
         sidewalk_returns: kerb_returns.sidewalks.len() - kerb_returns.outer[1],
         outer_corners: kerb_returns.outer,

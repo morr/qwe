@@ -323,6 +323,25 @@ pub struct Junctions {
     row: RowBreaks,
 }
 
+/// Что узлы насчитали — вложенное поле `RoadReport::junctions`, как
+/// `DrawnStats` у подготовки; строку лога печатает `RoadReport`, как и прежде.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct JunctionCounts {
+    /// Узлов, оказавшихся перекрёстками.
+    pub count: usize,
+    /// Кластеров сближенных узлов — из двух узлов и больше.
+    pub clusters: usize,
+    /// Узлов, где главная прошла насквозь.
+    pub through: usize,
+    /// Дорог, ведущих хоть один узел (колея сквозь).
+    pub leading: usize,
+    /// Зебры: все и из них по OSM.
+    pub zebras: [usize; 2],
+    pub stop_lines: usize,
+    /// Карманы краски у торцов дорог.
+    pub pockets: usize,
+}
+
 impl Junctions {
     /// Узлы по подготовленным дорогам `prepared` (стежки, клинья) и карте
     /// (дороги OSM — по ним ключи узлов и вылет базовых разрывов; точки
@@ -362,9 +381,35 @@ impl Junctions {
         Self { base, paint, row }
     }
 
-    /// Сколько узлов оказались перекрёстками (строка `road meshing:`).
-    pub fn count(&self) -> usize {
-        self.base.junctions
+    /// Ведёт ли дорога хоть один узел — проходит его насквозь, и уступать ей
+    /// некому (`node_paint::Junction::leading`); по индексу дороги карты.
+    /// Ведущая кладётся после всех плеч узла (`roads::fill_order`): её колея
+    /// идёт через узел, и примыкание шире неё не должно её закрыть.
+    pub fn leading(&self) -> Vec<bool> {
+        let mut leading = vec![false; self.base.breaks.len()];
+        for junction in &self.paint.junctions {
+            for &road in &junction.leading {
+                leading[road] = true;
+            }
+        }
+        leading
+    }
+
+    /// Что узлы насчитали — вложенное поле `RoadReport::junctions`.
+    pub fn counts(&self) -> JunctionCounts {
+        let paint = &self.paint;
+        JunctionCounts {
+            count: self.base.junctions,
+            clusters: paint.clusters,
+            through: paint.through,
+            leading: self.leading().into_iter().filter(|&lead| lead).count(),
+            zebras: [
+                paint.zebras.len(),
+                paint.zebras.iter().filter(|zebra| zebra.osm).count(),
+            ],
+            stop_lines: paint.stop_lines.len(),
+            pockets: paint.pockets.iter().flatten().flatten().count(),
+        }
     }
 
     /// Базовые разрывы асфальта, **не переписанные** краской узлов: по ним

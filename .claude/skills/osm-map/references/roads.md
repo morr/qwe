@@ -717,7 +717,12 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   pockets at way ends, the zebras, the stop lines, and the `Junction` clusters the turn
   paths and the fill order read — is `node_paint()`. Pinned by
   `tests.rs::row_breaks_ignore_stitches_but_paint_breaks_do_not`: a stitched side street
-  is a junction for the base and the paint and a dead end for the row. **The nodes are
+  is a junction for the base and the paint and a dead end for the row. Its counters are
+  one value as well, `counts() -> JunctionCounts` (junctions, clusters, main through,
+  leading roads, zebras, stop lines, paint pockets), nested in the report as
+  `RoadReport::junctions` the way `DrawnStats` is in `drawn`; the `road meshing:` line
+  prints what it printed before, and `leading()` — one flag per road — is what the fill
+  order sorts by (`tests.rs::the_report_counts_the_junction_paint`). **The nodes are
   walked once**: `shared_nodes` over the row's
   participants (`pockets::is_row_participant` — everything driven on, the carriageways
   among it) gives the row, `restrict` keeps the carriageways' visits of the same nodes

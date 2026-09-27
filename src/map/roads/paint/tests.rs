@@ -418,8 +418,8 @@ fn a_crossing_paints_a_zebra_and_stop_lines_across_the_arms() {
         ),
     ]);
     let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
-    assert_eq!(report.zebras, [4, 0]);
-    assert_eq!(report.stop_lines, 4);
+    assert_eq!(report.junctions.zebras, [4, 0]);
+    assert_eq!(report.junctions.stop_lines, 4);
     let zebras = paint_layer(&layers, PAINT_ZEBRAS);
     assert_eq!(zebras.vertex_count(), 4 * 4);
     let kinds = zebras.ribbon_coords_for_test().unwrap();
@@ -449,8 +449,8 @@ fn a_crossing_paints_a_zebra_and_stop_lines_across_the_arms() {
         },
         RoadShape::default(),
     );
-    assert_eq!(report.zebras, [0, 0]);
-    assert_eq!(report.stop_lines, 0);
+    assert_eq!(report.junctions.zebras, [0, 0]);
+    assert_eq!(report.junctions.stop_lines, 0);
     assert!(paint_layer(&layers, PAINT_ZEBRAS).is_empty());
 }
 
@@ -469,7 +469,7 @@ fn a_pocket_line_ends_at_the_junction_and_the_rest_run_through() {
         RoadStyle::default(),
         RoadShape::default(),
     );
-    assert_eq!(report.pockets, 1);
+    assert_eq!(report.junctions.pockets, 1);
     // у самого узла: линия полос в кармане уже погашена, осевая — нет
     let near = |name: &str| -> Vec<f32> {
         paint_layer(&layers, name)

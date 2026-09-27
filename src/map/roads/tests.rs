@@ -394,7 +394,7 @@ fn junctions_with(map: &MapData, markings: bool) -> usize {
         markings,
         ..RoadStyle::default()
     };
-    mesh_roads(map, style, RoadShape::default()).1.junctions
+    mesh_roads(map, style, RoadShape::default()).1.junctions.count
 }
 
 #[test]
@@ -854,7 +854,7 @@ fn rule_zebras_do_not_follow_the_sidewalk_knob() {
             sidewalks,
             ..RoadStyle::default()
         };
-        mesh_roads(&map, style, RoadShape::default()).1.zebras[0]
+        mesh_roads(&map, style, RoadShape::default()).1.junctions.zebras[0]
     };
 
     assert!(zebras(true) > 0, "у тройника есть зебра по правилу");
@@ -1043,7 +1043,7 @@ fn a_street_into_one_half_does_not_open_the_median() {
         7.6,
     ));
     let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
-    assert!(report.junctions > 0, "узел у ближней половины есть");
+    assert!(report.junctions.count > 0, "узел у ближней половины есть");
     let axes = &layer(&layers, paint::PAINT_AXES).builder;
     let positions = axes.positions_for_test();
     assert!(positions.iter().any(|at| at[0] < 200.0) && positions.iter().any(|at| at[0] > 400.0));
@@ -1398,7 +1398,7 @@ fn row_breaks_ignore_stitches_but_paint_breaks_do_not() {
     let positive = |breaks: &[Break]| breaks.iter().filter(|found| found.reach > 0.0).count();
     let dead_ends = |breaks: &[Break]| breaks.iter().filter(|found| found.reach == 0.0).count();
     // база: стежок — узел, улица рвётся на нём, торец примыкания — не тупик
-    assert_eq!(junctions.count(), 1);
+    assert_eq!(junctions.counts().count, 1);
     assert_eq!(positive(&junctions.median_base()[0]), 1);
     assert_eq!(dead_ends(&junctions.median_base()[1]), 1);
     // краска: примыкание уступает — его линии рвутся у стежка
@@ -1428,13 +1428,18 @@ fn the_report_counts_the_junction_paint() {
         ..fixture::street(vec![Vec2::new(100.0, -80.0), Vec2::new(100.0, 0.0)], 7.6)
     };
     let report = timeless(&with_network(vec![main, side]));
-    assert_eq!(report.junctions, 1);
-    assert_eq!(report.clusters, 0);
-    assert_eq!(report.through, 1);
-    assert_eq!(report.leading, 1);
-    assert_eq!(report.zebras, [1, 0]);
-    assert_eq!(report.stop_lines, 1);
-    assert_eq!(report.pockets, 0);
+    assert_eq!(
+        report.junctions,
+        JunctionCounts {
+            count: 1,
+            clusters: 0,
+            through: 1,
+            leading: 1,
+            zebras: [1, 0],
+            stop_lines: 1,
+            pockets: 0,
+        }
+    );
 }
 
 #[test]
@@ -1564,7 +1569,7 @@ fn a_crossing_piece_between_two_halves_carries_no_sidewalk() {
     let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
     assert_eq!(report.drawn.medians, [1, 0, 0]);
     assert_eq!(report.drawn.crossings, 0);
-    assert_eq!(report.junctions, 2);
+    assert_eq!(report.junctions.count, 2);
     let mut untagged = map.roads.clone();
     untagged[3].sidewalks = [SidewalkSide::None; 2];
     let untagged = with_network(untagged);
@@ -1696,7 +1701,7 @@ fn the_median_base_keeps_the_break_a_leading_road_lost() {
     let (map, apart) = an_avenue_crossed_by_a_street();
     let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
     assert_eq!(report.drawn.medians, [1, 0, 0]);
-    assert_eq!(report.leading, 2, "узел ведут обе половины");
+    assert_eq!(report.junctions.leading, 2, "узел ведут обе половины");
     let middle = 100.0 + apart / 2.0;
     // двойная сплошная — вдоль середины; осевая поперечной на ней — полоса
     // поперёк, у самого x = 300, её вершины не в счёт
@@ -1765,14 +1770,11 @@ fn a_splitter_gap_reaches_both_asphalt_and_paint() {
 /// Счётчики узлов в строке `road meshing:` — ни одним тестом не пиннились.
 #[test]
 fn junction_counters_of_a_tee_and_an_avenue_crossing() {
-    let tee = timeless(&a_tee());
-    assert_eq!((tee.junctions, tee.clusters, tee.through), (1, 0, 1));
+    let tee = timeless(&a_tee()).junctions;
+    assert_eq!((tee.count, tee.clusters, tee.through), (1, 0, 1));
     let (avenue, _) = an_avenue_crossed_by_a_street();
-    let avenue = timeless(&avenue);
-    assert_eq!(
-        (avenue.junctions, avenue.clusters, avenue.through),
-        (2, 1, 2)
-    );
+    let avenue = timeless(&avenue).junctions;
+    assert_eq!((avenue.count, avenue.clusters, avenue.through), (2, 1, 2));
 }
 
 /// Зебра OSM у стыка двух way одной улицы рвёт карманы и на продолжении
