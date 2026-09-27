@@ -88,7 +88,7 @@ use qwe::map::surface::{
 };
 use qwe::map::trees::{
     ConiferField, ConiferNoiseStyle, CrownMaterial, CrownParams, TreeMaterials, TreeRowStyle,
-    TreeStyle, mesh_trees, spawn_tree_meshes,
+    TreeStyle, TreeZoomBucket, mesh_trees, spawn_tree_meshes,
 };
 use qwe::map::{
     BuildingHeightMode, FenceZoomBucket, GROUND_COLOR, MeshBuilder, PaintMaterial, ParkingLayout,
@@ -629,8 +629,14 @@ fn build_next(
         tree_style.noise_mix,
     );
     field.set_share(tree_style.conifer_share);
-    let (mut trees, tree_report) =
-        mesh_trees(&tree_style, &CrownParams::default(), &map.trees, &field);
+    // ближняя ступень: витрина смотрит на перекрёсток вблизи
+    let (mut trees, tree_report) = mesh_trees(
+        TreeZoomBucket::at(0),
+        &tree_style,
+        &CrownParams::default(),
+        &map.trees,
+        &field,
+    );
     // крона — сущность, а не часть слоя: её не режут, а оставляют по центру.
     // Свес за окно — метры, до соседнего окна `GAP`
     trees

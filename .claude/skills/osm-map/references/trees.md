@@ -96,6 +96,16 @@ stand, how density works, and which resources restyle them.
   `MapData::trees` holds the densest forest and the slider only **shows a prefix** of it —
   never a replant, which would reshuffle every position and make the whole forest jump on
   each step.
+- **The zoom caps the prefix too** (`trees.rs::TREE_LODS`, `TreeZoomBucket`, the
+  `map/zoom.rs` mechanism): up to 2 m/px nothing changes (the default view is 0.4), from
+  2 to 3.5 m/px the density is `min(slider, 3)`, beyond it `min(slider, 2)`. A 2–6 m crown
+  is 1–3 px at the full zoom-out, where the `Wood` fill under it carries the forest, and
+  every crown is an entity plus its share of the merged shadow mesh. Because it is the same
+  prefix, a crossing only drops the tail — standing crowns never move — and surveyed
+  trees (threshold 0) stay on every step. `mesh_trees` takes the bucket itself (the rule of
+  **Zoom buckets** in `SKILL.md`); the crossing is one more condition of the tree chain's
+  `rebuilds_on`, and its price is one rebuild: Tula 16.4 k → 8.4 k crowns, 20 → 17 ms of
+  build, Kaluga 95 k → 64 k, ~100–130 ms, plus the entity respawn.
 - **The density ceiling is derived, not chosen** (`planting.rs`) — `TREE_MIN_SPACING` (6 m)
   caps how dense a forest can *physically* get: random placement with a hard-core exclusion
   saturates near `RSA_JAMMING_FRACTION / (π·(d/2)²)` trees per m² — one per ~52 m² at

@@ -31,6 +31,7 @@ use crate::map::osm::{MapData, TreeCompose, TreeRowLayout, TreeRowPlacement};
 use crate::map::roads::RoadJoin;
 use crate::map::smooth::Smoothing;
 use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
+use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::prefs::retuned;
 use crate::settings::{TREE_VARIANTS, Z_TREE, Z_TREE_SHADOW};
 
@@ -334,6 +335,10 @@ pub struct TreeReport {
     pub crowns: usize,
     pub shadow_vertices: usize,
     pub shape: TreeShape,
+    /// Плотность, по которой взят префикс: ползунок, урезанный ступенью зума.
+    pub density: f32,
+    /// Время сборки — пересечение порога зума платит ровно его.
+    pub elapsed: std::time::Duration,
 }
 
 impl std::fmt::Display for TreeReport {
@@ -342,24 +347,74 @@ impl std::fmt::Display for TreeReport {
             crowns,
             shadow_vertices,
             shape,
+            density,
+            elapsed,
         } = self;
         write!(
             f,
-            "tree shadows: {shadow_vertices} vertices for {crowns} trees ({shape:?})"
+            "tree shadows: {shadow_vertices} vertices for {crowns} trees ({shape:?}, density {density}) in {elapsed:.1?}"
         )
     }
 }
 
+/// Ступень зум-LOD деревьев: до какого зума (метров на логический пиксель)
+/// она действует и какой плотностью посадки ограничена.
+pub struct TreeLod {
+    pub max_zoom: f32,
+    /// Потолок `TreeStyle::density` на этой ступени; `INFINITY` — без потолка.
+    pub density_cap: f32,
+}
+
+/// Ступени деревьев. Крона в 2–6 м радиусом на зуме от 2 м/px — это 2–6 px,
+/// на полном отдалении (4.5) — 1–3 px: лес там читается заливкой `Wood` под
+/// ним, а не отдельными кронами, и каждая лишняя крона — это сущность, её
+/// видимость, сортировка и тень в слитом меше. Ступень только **урезает
+/// префикс** набора ([`TreeSet::visible`]), так что стоящие деревья не
+/// переезжают, а одиночные деревья OSM (порог 0) остаются на любой ступени.
+///
+/// Ближняя ступень без потолка и доходит до 2 м/px: дефолтный вид (0.4) и
+/// всё, на чём кроны различимы, рисуются как раньше.
+pub const TREE_LODS: [TreeLod; 3] = [
+    TreeLod {
+        max_zoom: 2.0,
+        density_cap: f32::INFINITY,
+    },
+    TreeLod {
+        max_zoom: 3.5,
+        density_cap: 3.0,
+    },
+    TreeLod {
+        max_zoom: f32::INFINITY,
+        density_cap: 2.0,
+    },
+];
+
+/// [`TREE_LODS`] как таблица ступеней зум-LOD (`map/zoom.rs`).
+pub enum TreeLods {}
+
+impl ZoomLods for TreeLods {
+    fn max_zooms() -> impl Iterator<Item = f32> {
+        TREE_LODS.into_iter().map(|lod| lod.max_zoom)
+    }
+}
+
+/// Текущая ступень [`TREE_LODS`]; пересечение порога пересобирает кроны.
+pub type TreeZoomBucket = ZoomBucket<TreeLods>;
+
 /// Сборка деревьев без мира: `TREE_VARIANTS` крон единичного радиуса на каждую
 /// конкретную форму, каждому дереву — вариант, оттенок и масштаб
 /// детерминированно по индексу; ползунок плотности отдаёт префикс набора (см.
-/// [`TreeSet::visible_count`]).
+/// [`TreeSet::visible_count`]), а ступень зума `bucket` может его укоротить
+/// ([`TREE_LODS`]).
 pub fn mesh_trees(
+    bucket: TreeZoomBucket,
     style: &TreeStyle,
     params: &CrownParams,
     planted: &TreeSet,
     field: &ConiferField,
 ) -> (TreeMeshes, TreeReport) {
+    let started = std::time::Instant::now();
+    let density = style.density.min(TREE_LODS[bucket.index].density_cap);
     // по пулу вариантов на каждую конкретную форму — у `Mixed` их два
     let shapes = style.shape.crown_shapes();
     let pools: Vec<Vec<CrownVariant>> = shapes
@@ -372,7 +427,7 @@ pub fn mesh_trees(
         .collect();
 
     let mut shadows = MeshBuilder::default();
-    let visible = planted.visible(style.density);
+    let visible = planted.visible(density);
     let mut crowns = Vec::with_capacity(visible.len());
     let tint_slots = TreeStyle::TINT_BELL.len();
     // сколько крон уже стоит в каждой группе — их ранг внутри полосы группы
@@ -403,6 +458,8 @@ pub fn mesh_trees(
         crowns: crowns.len(),
         shadow_vertices: shadows.vertex_count(),
         shape: style.shape,
+        density,
+        elapsed: started.elapsed(),
     };
     let built = TreeMeshes {
         pools: pools
@@ -586,20 +643,27 @@ pub fn retune_conifer_field(
 ///
 /// **Условие одно, регистрация одна** (см. `crate::map::roads::rebuilds_on`) —
 /// здесь тем более: одно условие держит всю связку из четырёх систем.
+///
+/// Ступень зума ([`TreeZoomBucket`]) тоже здесь, хотя тронет она только кроны:
+/// остальные три системы связки выходят сразу, если их вход не поехал, а
+/// подложку аллей пересобрать заодно дешевле, чем заводить второе условие.
 pub fn rebuilds_on() -> impl SystemCondition<()> {
     retuned::<TreeStyle>
         .or_else(retuned::<TreeRowStyle>)
         .or_else(retuned::<ConiferNoiseStyle>)
         .or_else(retuned::<SunOnMap>)
+        .or_else(retuned::<TreeZoomBucket>)
 }
 
-/// Пересборка крон после правки стиля из UI: деспавн старых сущностей и
-/// повторный спавн из тех же позиций (`MapData::trees` не трогается).
+/// Пересборка крон после правки стиля из UI или смены ступени зума: деспавн
+/// старых сущностей и повторный спавн из тех же позиций (`MapData::trees` не
+/// трогается).
 pub fn rebuild_trees(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: TreeMaterials,
-    style: Res<TreeStyle>,
+    // парой — иначе подпись переваливает за предел clippy в семь аргументов
+    (style, bucket): (Res<TreeStyle>, Res<TreeZoomBucket>),
     map: Res<MapData>,
     mut field: ResMut<ConiferField>,
     existing: Query<Entity, With<TreeTag>>,
@@ -611,6 +675,7 @@ pub fn rebuild_trees(
         commands.entity(entity).despawn();
     }
     let built = mesh_trees(
+        *bucket,
         &style,
         // ручки геометрии кроны в игре не выведены никуда: город рисуется
         // дефолтом, а крутит их витрина `tree_gallery`

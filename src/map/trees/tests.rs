@@ -714,7 +714,51 @@ fn mesh_ten(shape: TreeShape, density: f32) -> (TreeMeshes, TreeReport) {
         density,
         ..default()
     };
-    mesh_trees(&style, &params(), &ten_trees(), &ConiferField::default())
+    mesh_trees(
+        TreeZoomBucket::at(0),
+        &style,
+        &params(),
+        &ten_trees(),
+        &ConiferField::default(),
+    )
+}
+
+/// Дальние ступени зума урезают **префикс** набора до своего потолка
+/// плотности: стоящие кроны не переезжают, а ближняя ступень рисует всё, что
+/// дал ползунок.
+#[test]
+fn a_far_zoom_step_trims_the_tail_of_the_set() {
+    let _sun = crate::map::default_sun();
+    let style = TreeStyle {
+        shape: TreeShape::Cotton,
+        density: 9.0,
+        ..default()
+    };
+    let build = |zoom: f32| {
+        mesh_trees(
+            TreeZoomBucket::for_zoom(zoom),
+            &style,
+            &params(),
+            &ten_trees(),
+            &ConiferField::default(),
+        )
+    };
+    let (near, near_report) = build(0.4);
+    assert_eq!(near_report.crowns, 10, "ближняя ступень без потолка");
+    for lod in &TREE_LODS[1..] {
+        let (far, report) = build(lod.max_zoom - 0.01);
+        let cap = lod.density_cap;
+        assert_eq!(report.density, cap);
+        // пороги у `ten_trees` — 0..=9
+        assert_eq!(report.crowns, cap as usize + 1);
+        assert!(
+            far.crowns
+                .iter()
+                .zip(&near.crowns)
+                .all(|(a, b)| a.at == b.at && a.variant == b.variant),
+            "кроны переехали"
+        );
+    }
 }
 
 /// Ползунок плотности отдаёт **префикс** набора: стоящие деревья не переезжают,
@@ -804,7 +848,7 @@ fn crowns_of_one_mesh_and_tint_are_contiguous_in_z() {
     let mut field = ConiferField::default();
     field.resample(&spots, &ConiferNoiseStyle::default(), 1.0);
     field.set_share(0.5);
-    let (built, _) = mesh_trees(&style, &params(), &planted, &field);
+    let (built, _) = mesh_trees(TreeZoomBucket::at(0), &style, &params(), &planted, &field);
     assert_eq!(built.crowns.len(), 400);
 
     let group = |crown: &CrownPlacement| (crown.pool, crown.variant, crown.tint);
@@ -817,7 +861,11 @@ fn crowns_of_one_mesh_and_tint_are_contiguous_in_z() {
         if group(a) == group(b) {
             assert!(pair[1].0 > pair[0].0, "внутри группы z не растёт с номером");
         } else {
-            assert!(seen.insert(group(a)), "группа {:?} разорвана по z", group(a));
+            assert!(
+                seen.insert(group(a)),
+                "группа {:?} разорвана по z",
+                group(a)
+            );
         }
     }
     let pools: std::collections::HashSet<usize> =

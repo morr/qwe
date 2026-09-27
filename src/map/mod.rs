@@ -154,6 +154,7 @@ impl Plugin for MapPlugin {
             .init_resource::<roads::paint::PaintZoomBucket>()
             .init_resource::<SurfaceStyle>()
             .init_resource::<rail::RailZoomBucket>()
+            .init_resource::<trees::TreeZoomBucket>()
             .init_resource::<tram::TramZoomBucket>()
             .init_resource::<TramStyle>()
             .init_resource::<IndustryStyle>()
@@ -258,6 +259,7 @@ impl Plugin for MapPlugin {
                     zoom::seed_zoom_bucket::<tram::TramLods>,
                     tram::rebuild_tram,
                     spawn::rebuild_tree_row_band,
+                    zoom::seed_zoom_bucket::<trees::TreeLods>,
                     trees::rebuild_trees,
                 )
                     .chain()
@@ -273,16 +275,21 @@ impl Plugin for MapPlugin {
                 (
                     // состав набора и поле хвои — до крон: обе системы
                     // выходят сразу, если их вход не поехал, так что отдельных
-                    // условий на них не надо
+                    // условий на них не надо. Ступень зума крон считается
+                    // перед связкой, и её смена — одно из условий связки
                     (
-                        trees::recompose_row_trees,
-                        trees::retune_conifer_field,
-                        spawn::rebuild_tree_row_band,
-                        trees::rebuild_trees,
+                        zoom::update_zoom_bucket::<trees::TreeLods>,
+                        (
+                            trees::recompose_row_trees,
+                            trees::retune_conifer_field,
+                            spawn::rebuild_tree_row_band,
+                            trees::rebuild_trees,
+                        )
+                            .chain()
+                            .run_if(trees::rebuilds_on()),
                     )
                         .chain()
-                        .run_if(in_state(AppState::Playing))
-                        .run_if(trees::rebuilds_on()),
+                        .run_if(in_state(AppState::Playing)),
                     (
                         zoom::update_zoom_bucket::<buildings::BuildingLods>,
                         buildings::rebuild_buildings.run_if(buildings::rebuilds_on()),
