@@ -238,8 +238,14 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     asphalt (`EDGE_SLACK` 0.6 m). Covered runs shorter than `MIN_RUN` 12 m are dropped.
     Laid into `roads` **after every ribbon and carriageway area**, butt-ended, without a
     lane frame; the paint is its own layer above, so the lane lines and the double solid
-    lie on top of it. Two tracks 3–4 m apart overlap into one band — same colour, same
-    world-position noise, no seam. `RoadReport::tram_bands` counts the pieces. Only the
+    lie on top of it. The pieces are laid as **one cover** (`band_cover`): each stroked
+    `CLOSE_GAP` 3 m wider and half of it longer at each end, unioned (`i_overlay`,
+    NonZero) and inset back by half the gap — a closing, so edges and ends stay where they
+    were while any gap under 3 m between neighbouring bands fills. Laid piece by piece,
+    the plain asphalt left between a turning track and the straight one, between two
+    tracks' pieces cut at different probes, read as dark holes in the light band (sample
+    5, the author's report); the closing cost nothing measurable (roads 172.1 → 172.7 ms,
+    1.7 k fewer vertices). `RoadReport::tram_bands` counts the pieces. Only the
     streets whose box touches a cell of a tram link are indexed, and a covered run is
     thinned back by Douglas–Peucker at 5 cm — one vertex per 2 m probe cost 65 k
     vertices on Tula. **Cost** (`map_meshing`, Tula, dev): road meshing 171 → ~178 ms,

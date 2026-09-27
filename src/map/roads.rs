@@ -1787,15 +1787,9 @@ pub fn mesh_roads(
     // асфальта улиц: порядок пуша в слое — порядок отрисовки, а краска лежит
     // своим слоем выше
     let tram_bands = tram_band::tram_bands(&map.rails, &drawn, paths, &paved);
-    for band in &tram_bands {
-        push_ribbon_trimmed(
-            &mut streets,
-            band,
-            tram_band::TRAM_BAND_WIDTH,
-            TRAM_BAND_COLOR.to_linear(),
-            ROAD_JOIN,
-            [true; 2],
-        );
+    // одной фигурой, со щелями между полосами соседних путей заросшими
+    for shape in tram_band::band_cover(&tram_bands) {
+        push_shape(&mut streets, shape, TRAM_BAND_COLOR.to_linear());
     }
     let mut lot_layers = grounds.layers(&style, &gores, &paved);
     for shape in &road_islands.kerbs {

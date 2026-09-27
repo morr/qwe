@@ -15,12 +15,17 @@
 //! [`MIN_RUN`] — тоже.
 
 use bevy::prelude::*;
+use i_overlay::core::fill_rule::FillRule;
+use i_overlay::float::simplify::SimplifyShape;
+use i_overlay::mesh::outline::offset::OutlineOffset;
+use i_overlay::mesh::style::{LineCap, LineJoin, OutlineStyle};
 
 use super::network::pairs::Median;
 use crate::map::along::simplify;
 use crate::map::grid::Grid;
 use crate::map::osm::model::{RailKind, RailLine};
 use crate::map::osm::{RoadClass, RoadLine};
+use crate::map::shapes::{ARC, Contour, Shape, stroke};
 
 /// Ширина полосы над одним путём, м: полоса движения. Два пути в 3–4 м друг
 /// от друга сливаются в одну полосу — нахлёст в одном слое не виден.
@@ -136,6 +141,40 @@ pub fn tram_bands(
     bands
 }
 
+/// Щель между полосами уже этого, м, зарастает ([`band_cover`]).
+const CLOSE_GAP: f32 = 3.0;
+
+/// Покрытие полосами `bands` одной фигурой, со щелями между ними заросшими:
+/// у поворота, где путь отходит от прямого, у стыка кусков соседних путей,
+/// оборванных на разной высоте, между полосами оставался клин обычного
+/// асфальта — на светлой полосе он читался дырой (пример 5). Замыкание:
+/// каждая полоса обводится шире на полщели с каждой стороны и длиннее на
+/// столько же с каждого торца, обводы сливаются и сжимаются обратно — края и
+/// торцы там, где были, а щели уже [`CLOSE_GAP`] нет.
+pub fn band_cover(bands: &[Vec<Vec2>]) -> Vec<Shape> {
+    let reach = CLOSE_GAP / 2.0;
+    let contours: Vec<Contour> = bands
+        .iter()
+        .filter(|band| band.len() >= 2)
+        .flat_map(|band| {
+            let mut band = band.clone();
+            let last = band.len() - 1;
+            if let Some(back) = (band[0] - band[1]).try_normalize() {
+                band[0] += back * reach;
+            }
+            if let Some(ahead) = (band[last] - band[last - 1]).try_normalize() {
+                band[last] += ahead * reach;
+            }
+            stroke(&band, TRAM_BAND_WIDTH + CLOSE_GAP, LineCap::Butt, false)
+        })
+        .collect();
+    if contours.is_empty() {
+        return Vec::new();
+    }
+    let merged: Vec<Shape> = contours.simplify_shape(FillRule::NonZero);
+    merged.outline(&OutlineStyle::new(-reach).line_join(LineJoin::Round(ARC)))
+}
+
 fn length(points: &[Vec2]) -> f32 {
     points
         .windows(2)
@@ -171,6 +210,25 @@ mod tests {
             "{band:?}"
         );
         assert!(band[band.len() - 1].x - band[0].x > 190.0);
+    }
+
+    /// Щель между полосами соседних путей зарастает, а края и торцы стоят,
+    /// где стояли; далёкие полосы остаются порознь.
+    #[test]
+    fn the_cover_closes_a_narrow_gap_and_keeps_the_ends() {
+        use crate::map::shapes::contour_bounds;
+        let band = |y: f32| vec![Vec2::new(0.0, y), Vec2::new(50.0, y)];
+        let cover = band_cover(&[band(0.0), band(5.0)]);
+        assert_eq!(cover.len(), 1, "щель 1.7 м заросла: {cover:?}");
+        assert_eq!(cover[0].len(), 1, "без дырок: {cover:?}");
+        let (low, high) = contour_bounds(&cover[0][0]);
+        let half = TRAM_BAND_WIDTH / 2.0;
+        assert!(low.abs_diff_eq(Vec2::new(0.0, -half), 0.05), "{low}");
+        assert!(
+            high.abs_diff_eq(Vec2::new(50.0, 5.0 + half), 0.05),
+            "{high}"
+        );
+        assert_eq!(band_cover(&[band(0.0), band(10.0)]).len(), 2);
     }
 
     #[test]
