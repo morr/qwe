@@ -202,3 +202,28 @@ fn smoothing_off_is_the_osm_centerline() {
     )];
     assert_eq!(axes(&roads, 0.0)[0], roads[0].points);
 }
+
+/// Шип OSM: way уходит от узла на метр с небольшим, соседний way той же улицы
+/// возвращается в тот же узел — в вершине шва ось разворачивается ровно на π.
+/// Дуги там нет, и ось остаётся в пределах своих точек; раньше `tan(π/2)` в
+/// `f32` давал отрицательный вынос, конец оси улетал на полмиллиарда метров, а
+/// загрузка Москвы СВ висла в `Pairs::new`, раскладывая это звено по сетке.
+#[test]
+fn a_spike_that_doubles_back_keeps_the_axis_finite() {
+    let node = Vec2::new(1217.4532, 3606.2524);
+    let tip = Vec2::new(1218.3842, 3607.1318);
+    let roads = vec![
+        street(vec![Vec2::new(1237.0828, 3622.7834), node, tip], 11.0),
+        street(vec![tip, node, Vec2::new(1198.6359, 3588.4858)], 11.0),
+        // поперечная улица закрепляет узел, как в данных
+        street(vec![node, Vec2::new(1240.0, 3580.0)], 8.0),
+    ];
+    for path in axes(&roads, 3.0) {
+        for point in path {
+            assert!(
+                point.is_finite() && point.distance(node) < 100.0,
+                "the axis ran off to {point}"
+            );
+        }
+    }
+}

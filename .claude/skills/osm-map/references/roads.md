@@ -1500,7 +1500,12 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
       takes at most half of each link — and next to a pinned node at most what leaves the
       node `KERB_STRAIGHT` 12 m of straight edge (never less than ¾ of a short link):
       **a kerb return is laid only on a straight edge**, and an arc eating into it cost
-      ~1000 kerb returns across Tula in the first cut;
+      ~1000 kerb returns across Tula in the first cut. **A full reversal (bend exactly π)
+      is left a corner** (`Corner::bend` takes `MIN_BEND..PI`): OSM has spikes where a way
+      steps a metre off a node and the next way of the street comes straight back, and
+      `tan(π/2)` in `f32` is *negative* (−2.3·10⁷) — the arc's reach went to −4.6·10⁸ m,
+      the axis end flew half a billion metres off and the Moscow NE load hung in
+      `Pairs::new` (pinned by `axis/tests.rs::a_spike_that_doubles_back_keeps_the_axis_finite`);
     - a **pinned node** — one a third **carriageway** touches (a street or a drive,
       `axis::pins`) — stays exactly in place: the kerb
       returns, the marking breaks, the stitches and the tapers all find each other by it.
