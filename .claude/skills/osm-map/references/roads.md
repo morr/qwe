@@ -69,7 +69,8 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   `drawn_sidewalk` is `None` when neither side has one; `push_sidewalk` lays a one-sided
   band the paired-half way (width plus one sidewalk, shifted half a sidewalk to its side)
   and ANDs the tag with the pair runs; the kerb returns drop the arc on a missing side;
-  a taper's sidewalk wedge is symmetric and skipped on a one-sided street. Tula: 44 `no`,
+  a taper's sidewalk wedge is laid per side, and a side without a sidewalk is the bare
+  half (**Streets, sections, tapers** — a one-sided street gets it too). Tula: 44 `no`,
   42 `separate`, 30 `right`, 10 `left`. The parse's house pull still keeps its clearance
   on a side the tag took the sidewalk from — a verge instead of a sidewalk there.
 - **Kerb pockets** (`map/roads/pockets.rs`, stage 7) — where parked cars stand along a
