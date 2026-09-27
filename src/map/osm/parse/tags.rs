@@ -68,6 +68,14 @@ const PIPE_WIDTH_RANGE: RangeInclusive<f32> = 0.9..=4.0;
 /// поймы, а не воды (такое место в OSM размечают полигоном, а не линией).
 const WATER_WIDTH_RANGE: RangeInclusive<f32> = 0.5..=50.0;
 
+/// Какой тег `width` дорожки вообще читается, м: `0` и `0.3` — не ширина, а
+/// пометка, за дюжиной метров — ширина площади или всей аллеи с газонами.
+/// Тула, кеш v15: у 100 из 3375 дорожек тег есть, три `0`, один `0.3`.
+const PATH_WIDTH_READ: RangeInclusive<f32> = 0.5..=12.0;
+/// Зажим прочитанной ширины дорожки, м: у́же метра тропа на карте — нитка,
+/// которой не видно (восемь `0.5` в Туле), шире восьми — уже не дорожка.
+const PATH_WIDTH_RANGE: RangeInclusive<f32> = 1.0..=8.0;
+
 /// Границы правдоподобия `lanes`: ноль — не дорога, а за восемью полосами —
 /// опечатка или сумма всей развязки, а не одной ленты.
 const LANES_RANGE: RangeInclusive<f32> = 1.0..=8.0;
@@ -490,7 +498,8 @@ fn tagged_height(tags: &HashMap<String, String>) -> Option<f32> {
 /// Ширина по классу, род ленты и класс по значению highway; `None` — дорогу
 /// не рисуем.
 ///
-/// Ширина здесь — **номинальная**, до сечений: у всего, кроме дорожек, её
+/// Ширина здесь — **номинальная**, до сечений: у дорожек её заменяет
+/// [`path_width`] (кроме мостиков и арок), у прочих её
 /// пересчитывает из числа полос проход сечений
 /// (`map::roads::network::sections`), первый в доводке разбора. Съезды
 /// (`*_link`) долго выбрасывались целиком — словарь их не знал, и въезд на
@@ -517,6 +526,40 @@ pub(super) fn road_class(highway: &str) -> Option<(f32, RoadClass, Highway)> {
         }
         _ => return None,
     })
+}
+
+/// Ширина дорожки ([`RoadClass::Alley`]), м — вместо одной на всех 3.5 м по
+/// классу. Правдоподобный `width` ([`PATH_WIDTH_READ`], зажатый в
+/// [`PATH_WIDTH_RANGE`]) решает сам; без него — вид и покрытие: пешеходная
+/// улица 5, полевая дорога 3, переход 3, лестница и тротуар 2.5, велодорожка
+/// 2, тропа по земле (`surface=dirt|ground|earth|mud|grass|sand|woodchips`)
+/// 1.5, прочая `path` 2, прочий `footway` 3 — аллея сквера и дорожка двора.
+/// Тула, кеш v15: 1916 голых `footway`, 571 `footway=sidewalk`, 388
+/// переходов, 285 `path`, 128 лестниц, 57 `track`.
+pub(super) fn path_width(tags: &HashMap<String, String>) -> f32 {
+    if let Some(width) = tags
+        .get("width")
+        .and_then(|value| parse_measure(value))
+        .filter(|width| PATH_WIDTH_READ.contains(width))
+    {
+        return width.clamp(*PATH_WIDTH_RANGE.start(), *PATH_WIDTH_RANGE.end());
+    }
+    let tag = |key: &str| tags.get(key).map(String::as_str);
+    let trail = matches!(
+        tag("surface"),
+        Some("dirt" | "ground" | "earth" | "mud" | "grass" | "sand" | "woodchips")
+    );
+    match (tag("highway"), tag("footway")) {
+        (Some("pedestrian"), _) => 5.0,
+        (Some("track"), _) => 3.0,
+        (Some("steps"), _) => 2.5,
+        (_, Some("crossing")) => 3.0,
+        (_, Some("sidewalk")) => 2.5,
+        (Some("cycleway"), _) => 2.0,
+        _ if trail => 1.5,
+        (Some("path"), _) => 2.0,
+        _ => 3.0,
+    }
 }
 
 /// Вид дорожного узла; `None` — нода не дорожный узел (вход, дерево, труба).

@@ -2330,6 +2330,15 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
             .tags
             .get("bridge")
             .is_some_and(|value| value != "no");
+        let passage = is_building_passage(&element.tags);
+        // ширина дорожки — по тегу и виду; мостик и арка остаются при
+        // ширине класса: их лента — коридор, который режет навмеш, и узкий
+        // `width=1` на мостике сузил бы переход через реку до одного тайла
+        let width = if class == RoadClass::Alley && !bridge && !passage {
+            path_width(&element.tags)
+        } else {
+            width
+        };
         // `oneway=-1` — поток против порядка точек; разворачиваем здесь, чтобы
         // ниже по конвейеру «направление way» и «направление движения» были
         // одним и тем же. Рельс и водоток той же ноды это не касается: их
@@ -2344,7 +2353,7 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
             class,
             highway,
             bridge,
-            passage: is_building_passage(&element.tags),
+            passage,
             oneway: is_oneway(&element.tags),
             roundabout: is_roundabout(&element.tags),
             lanes: tagged_lanes(&element.tags),
@@ -2543,8 +2552,8 @@ use self::tags::{
     NON_WALKABLE_ENTRANCES, area_colours, area_height, area_kind, area_storeys, area_use,
     crown_radius, fence_kind, has_lane_markings, is_building_passage, is_oneway,
     is_oneway_backward, is_parking_aisle, is_road_underground, is_roundabout, is_underground,
-    pipe_width, rail_class, road_area_kind, road_class, road_node_kind, row_spacing, service_track,
-    structure_height, structure_kind, structure_radius, structure_size, tagged_lanes,
-    tagged_parking, tagged_pavement, tagged_sidewalks, tagged_turns, untagged_sidewalks,
-    water_class, water_width,
+    path_width, pipe_width, rail_class, road_area_kind, road_class, road_node_kind, row_spacing,
+    service_track, structure_height, structure_kind, structure_radius, structure_size,
+    tagged_lanes, tagged_parking, tagged_pavement, tagged_sidewalks, tagged_turns,
+    untagged_sidewalks, water_class, water_width,
 };

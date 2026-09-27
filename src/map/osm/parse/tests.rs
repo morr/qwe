@@ -975,6 +975,41 @@ fn a_bridge_and_an_arch_outrank_the_underground_rule() {
     );
 }
 
+/// Ширина дорожки — по тегу `width` (зажатому, с отбраковкой пометок), без
+/// него — по виду и покрытию; мостик держит ширину класса (Тула, витрина 19:
+/// тропинка `width=1 surface=mud` была 3.5-метровым бульваром).
+#[test]
+fn a_path_takes_its_width_from_the_tag_or_its_kind() {
+    let (sw, se, ..) = corners(HALF);
+    let width = |pairs: &[(&str, &str)]| {
+        Overpass::new(CITY)
+            .way(pairs, vec![sw, se])
+            .parse()
+            .roads
+            .remove(0)
+            .width
+    };
+    let footway = ("highway", "footway");
+    assert_eq!(width(&[footway, ("width", "1"), ("surface", "mud")]), 1.0);
+    assert_eq!(width(&[footway, ("width", "2.55")]), 2.55);
+    assert_eq!(width(&[footway, ("width", "0.5")]), 1.0, "зажата до метра");
+    assert_eq!(width(&[footway, ("width", "0")]), 3.0, "пометка — по виду");
+    assert_eq!(width(&[footway, ("width", "40")]), 3.0, "габарит площади");
+    assert_eq!(width(&[footway]), 3.0);
+    assert_eq!(width(&[footway, ("footway", "sidewalk")]), 2.5);
+    assert_eq!(width(&[footway, ("surface", "ground")]), 1.5);
+    assert_eq!(width(&[("highway", "path")]), 2.0);
+    assert_eq!(width(&[("highway", "path"), ("surface", "dirt")]), 1.5);
+    assert_eq!(width(&[("highway", "pedestrian")]), 5.0);
+    assert_eq!(width(&[("highway", "steps")]), 2.5);
+    assert_eq!(width(&[("highway", "track")]), 3.0);
+    assert_eq!(
+        width(&[footway, ("width", "1"), ("bridge", "yes")]),
+        3.5,
+        "мостик — коридор навмеша, его ширина — класса"
+    );
+}
+
 /// Односторонность, кольцо и число полос — то, по чему рисуется разметка.
 #[test]
 fn oneway_roundabout_and_lanes_reach_the_road() {
