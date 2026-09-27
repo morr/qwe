@@ -316,6 +316,13 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     street round the circle; paths (`Highway::Path`) are in no street. The direction of an
     end is a 10 m chord (`ARM_REACH`), since OSM's first link can be half a metre long.
     Nodes are walked in key order, so the gluing does not depend on the map's order.
+    **Continuations** (`RoadNetwork::continuations`): the ends left unpaired are paired
+    once more by the same rule without the class and one-way tests — a secondary going on
+    as a residential, a two-way street becoming one-way. They make no street (a section is
+    never inferred across a class), but the taper below is laid on them too. An end with a
+    **twin** — another free one-way end in the node with the opposite flow, running within
+    `MAX_BEND` of it — is skipped: those are the halves of a **merge**, whose own wedges
+    draw the join.
   - **Sections** (`sections::apply`, **step 0 of `finish_parse`**). A way's lanes: the tag
     (`lanes`, else `lanes:forward` + `lanes:backward` + `lanes:both_ways`, the last one
     optional — one direction alone is not a sum),
@@ -336,10 +343,9 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     to the roads), and then by bridge curbs, the navmesh's bridge corridors and the cars.
     Paths keep their class width (3.5). The gallery parses each cut window on its own, so
     a street there is inferred from the window's ways only.
-  - **Tapers** (`tapers::Tapers`, in `mesh_roads`) — where two ways of one street meet at a
-    **pure seam** (`RoadNodes::roads_at` = exactly those two; at a junction the step sinks
-    into the junction's asphalt, and the kerb returns are built on the full width) and
-    their widths differ by 0.1 m or more, the wider way's drawn path is **cut** at that end
+  - **Tapers** (`tapers::Tapers`, in `mesh_roads`) — where a way ends and another goes on
+    from the node collinearly — a joint of one street or a continuation across streets
+    (above) — and their widths differ by 0.1 m or more, the wider way's drawn path is **cut** at that end
     by `RoadShape::taper` (5–20, default 10; `Tapers::new(drawn, network, nodes, per_meter)`
     — the old `TAPER_PER_METER` is test-only) × the difference (at most `TAPER_MAX_SHARE` 45 % of its drawn
     length, since both ends may taper; under 1 m no taper). The cut end gets a **butt** cap
@@ -361,12 +367,38 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     `break_profile` and `to_break_beyond` merge the same way, so the paint follows the
     ribbon's path. The polymesh still calls `merge_close_points` — its footprint must not
     move (`meshing/tests.rs::a_taper_meets_the_body_cut_just_past_a_vertex`).
-    The same taper is laid in the **sidewalk** band (from the narrow way's band). No taper
+    **The taper is per side** (`Taper::sides`, `[left, right]` along the way's points):
+    at a pure seam both kerbs narrow; at a junction only the kerb with **no other
+    carriageway arm on it** (`tapers::free_sides` — every `RoadClass::Street` road in the
+    node, one arm per vertex it has there, so a crossing road covers both sides; a footway
+    covers nothing, its layer hides no step). It used to be pure seams only, and a
+    two-lane street ending at a T where a one-lane one went on showed a kerb tooth on the
+    far side (Крестовоздвиженская площадь into Союзная, gallery 27). The side with the
+    arm keeps its full width up to the node, as before: the joining road's asphalt and
+    the kerb returns cover the step there. A crossing covers both sides — no taper, the
+    step sinks in the node. `Taper::kept` names the untouched kerb (`+1` left) for the
+    paint: on a one-sided wedge the narrow section's lanes hug that kerb
+    (`paint::kept_frame` — the body's grid with the far bound pulled in by the missing
+    lanes; the symmetric wedge keeps `narrow_frame` and its drift), and the new lanes are
+    born at the narrowing kerb with the kerb itself. The mesher lays it with
+    `push_taper_sided` (half widths `[[left from, left to], [right …]]` in the wedge path's
+    frame — `roads::wedge_halves` swaps the sides for a tail wedge, whose path runs against
+    the way); `push_taper` is the symmetric case of it. **The kerb returns read the
+    tapered end at the narrow width**: an `Arm` carries `half: [left, right]`, and at an
+    end vertex with a taper the tapered sides take the narrow road's half width and
+    sidewalk (`kerb_returns`'s `tapers` closure now hands the `Taper` itself) — the fillet
+    then meets the wedge edge at the wedge's own 2–3° slant instead of floating a metre off
+    it, which is what the pure-seam rule was protecting against.
+    The same taper is laid in the **sidewalk** band, per side as well: the narrowing side
+    from the narrow way's band (its bare half where it has no sidewalk) to this way's, the
+    kept side at this way's band; a side without a sidewalk by tag is the bare half, so a
+    one-sided street gets its wedge too (it used to get none). No taper
     on bridges or passages.
     **A half of a divided street gets asphalt under its taper on the partner's side**
     (`mesh_roads`, a wedge whose middle lies in a pair run): a ribbon of half the wide
     way's width along the wedge, offset a quarter width toward the partner, butt ends, no
-    lane frame, pushed before the wedge. The symmetric wedge narrows toward the median as
+    lane frame, pushed before the wedge; only when the wedge does narrow the partner's
+    side (a side kept for an arm needs none). The symmetric wedge narrows toward the median as
     well, while the median (**Paired halves**) is measured off the full width — and in the
     gap between them lay the half's full sidewalk band (a tapered half keeps it), a light
     strip the length of the wedge (roads plan D3, gallery 16). The dark line beside it on
@@ -1505,9 +1537,12 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
 ## The junction gallery — `examples/demos/roads`
 
 `cargo run --example roads` shows a city's typical road junctions in a column —
-twenty-seven for Tula (`27_tram_through_junction`, Советская × Красноармейский, the tram
-between the halves crossing a junction — the **Tram band** bridge; the tram-bed and merge
-plans added three: `24_tram_bed_end`,
+twenty-eight for Tula (the per-side taper added `28_narrowing_t`, Крестовоздвиженская
+площадь ending in two lanes at a T where Союзная goes on in one and a lane joins from the
+side — the taper on the free kerb of **Streets, sections, tapers**;
+`27_tram_through_junction`, Советская × Красноармейский, the tram between the halves
+crossing a junction — the **Tram band** bridge; the tram-bed and merge plans added three:
+`24_tram_bed_end`,
 Советская at Коминтерна, where the tram turns off and the bed ends square at the nose of
 the lawn — all four ways are one-way and the pair goes on, so **not** a merge (**Tram
 bed**); `25_divided_merge`, Демидовская Плотина's halves ending on a two-way street at a
@@ -1517,7 +1552,7 @@ two-way tertiary going from 2 + 1 lanes to 3 + 1 before the signals,
 `turn:lanes:forward` `left|through|right` — the new lane born in a wedge and the lines
 ending at the stop line (it first stood on проспект Ленина's pocket, the same window as
 `15_skew_avenues_link` five metres away, and was moved; it has no Yandex reference yet,
-nor have 25–27); `22_lane_change`, two-way
+nor have 25–28); `22_lane_change`, two-way
 secondary улица Болдина going from two lanes to four at a seam — the two-way twin of
 `16_lanes_taper`; `23_s_curve`, Путейская улица's 200 m right-then-left bend in one
 way — the smoothed axis carrying the ribbon, sidewalk and dashes; the twentieth, `20_roundabout_arcs`, is the secondary ring of six arcs — the

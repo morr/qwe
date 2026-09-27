@@ -232,10 +232,13 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     `RoadShape` knob, 3.3 m by default; 0.3 m less on a service drive) + a 0.5 m edge each
     side. **The only roads stage that moves the model** — the
     parse passes after it read the width.
-  - **Taper** (`map/roads/tapers.rs`) — where two ways of one street meet at a pure seam
-    (no third road) with different widths, the wider one starts at the narrower's width
-    and widens over `RoadShape::taper` (10 by default) metres per metre of difference.
-    Drawing only.
+  - **Taper** (`map/roads/tapers.rs`) — where a way ends and another goes on from the node
+    collinearly (a seam of one street, or a **continuation** across streets —
+    `RoadNetwork::continuations`, the same pairing without the class and one-way tests)
+    with a different width, the wider one starts at the narrower's width and widens over
+    `RoadShape::taper` (10 by default) metres per metre of difference. Per side: at a
+    junction only the kerb with no other carriageway arm on it narrows; the kerb returns
+    read that end at the narrow width. Drawing only.
   - **Street axis** (`map/roads/axis.rs`) — the drawn centerline of a whole street, not of
     a way: within the **curve tolerance** (`RoadShape::curve_tolerance`) the street is
     simplified and each bend becomes an arc (`Curve::of` — the three numbers off the one
