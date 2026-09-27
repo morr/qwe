@@ -44,12 +44,14 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   markings: a white line on white is invisible, and on grey the street grid also stops
   merging with the courtyards. At a junction the band turns the corner on the kerb's own
   arc — **The drawn network → Kerb returns → The sidewalk turns with the kerb** below.
-  **A half of a divided street has no band on its paired side** (`roads::push_sidewalk`,
-  **Paired halves** below): along a pair run the band is the width plus one sidewalk,
-  shifted half a sidewalk away from the partner, and the full band resumes past the run
-  with a butt joint; a piece under `SIDEWALK_PIECE_MIN` 0.5 m between two runs is
-  skipped (centimetre offcuts). On a half with a taper the runs are not re-cut and the
-  band stays full.
+  **A half of a divided street has no band on its paired side** (`Pairs::band_pieces`
+  cuts it, `roads::push_sidewalk` lays the pieces; **Paired halves** below): along a pair
+  run the band is the width plus one sidewalk, shifted half a sidewalk away from the
+  partner, and the full band resumes past the run with a butt joint; a piece under
+  `pairs::SIDEWALK_PIECE_MIN` 0.5 m between two runs is skipped (centimetre offcuts), and
+  so is a piece left with no side at all. `None` from `band_pieces` is the whole band on
+  both sides, laid uncut. On a half with a taper the runs are not re-cut and the band
+  stays as the tag has it (`Pairs::unpaired_pieces`).
   **`sidewalk=*` picks the sides** (stage 7): `RoadLine::sidewalks` `[left, right]` along
   the points (`parse/tags.rs::tagged_sidewalks` — `both|left|right|no|none|separate`,
   refined by `sidewalk:both|left|right`; `no` and `separate` mean no band, a separate
@@ -195,7 +197,9 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     wedge lying inside the run); `partners(road)` as `Partner { road, paved }` (the
     junction paint's zebra plank); `is_paired(half, other)` (the merges, which widen it to
     the streets); `across_median(road, path, nodes)` — the cross-street piece in the
-    median's opening (**Kerb return** below); `medians()`. `Drawn` answers none of them
+    median's opening (**Kerb return** below); `band_pieces(road, sides, stitch, total)` —
+    the sidewalk band cut into pieces without the pair side (**Sidewalks** above);
+    `medians()`. `Drawn` answers none of them
     itself: it hands out `pairs()`, one owner. The runs stay public until the median
     loop moves into `medians.rs` (roads plan stage H), and `align` reads them inside the
     module.
@@ -238,7 +242,7 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     drawn together (`join_ends`): a half of two ways is two runs, and the gap at the seam
     was a hole in the double line and a kerb island on the «Макси» boulevard. For the same
     reason a half's sidewalk is not drawn in a gap shorter than `pairs::JOIN_GAP` between
-    two runs on the same side (`roads::push_sidewalk`) — whatever the runs are, paved, lawn
+    two runs on the same side (`Pairs::band_pieces`) — whatever the runs are, paved, lawn
     or tram bed: their medians are drawn tip to tip, and the sidewalk lay between them as
     a pale patch.
   - **Paved median** (gap ≤ `RoadShape::median_gap`, 1–6 m, default 3; the flag is

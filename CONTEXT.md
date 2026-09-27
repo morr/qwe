@@ -348,8 +348,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     other (a crossing street, a U-turn, a zebra); a street into one half does not open
     it. Drawing only: `RoadLine::points` do not move. What a half differs by is asked of
     `Pairs` — `beside` (is the pair next to this length, and on the left), `partners`,
-    `is_paired`, `across_median` (a cross-street piece in the median's gap) — not read
-    off its runs.
+    `is_paired`, `across_median` (a cross-street piece in the median's gap),
+    `band_pieces` (the sidewalk band without the pair side) — not read off its runs.
     Underground road is dropped (`is_road_underground`) — a **separate** predicate from
     `is_underground`, because the risk is asymmetric: an extra ribbon is cosmetic, an extra
     deletion is a hole in the navmesh.

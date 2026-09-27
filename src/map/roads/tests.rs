@@ -1833,13 +1833,16 @@ fn run_left(from: f32, to: f32) -> network::pairs::PairRun {
 fn sidewalk_of(runs: &[network::pairs::PairRun], sides: [bool; 2]) -> Vec<[f32; 3]> {
     let mut builder = MeshBuilder::default();
     let body = [Vec2::ZERO, Vec2::new(100.0, 0.0)];
+    let pairs = Pairs {
+        runs: vec![runs.to_vec()],
+        ..default()
+    };
+    let pieces = pairs.band_pieces(0, sides, 0.0, 100.0);
     push_sidewalk(
         &mut builder,
         &body,
         [10.0, 2.0],
-        runs,
-        0.0,
-        sides,
+        pieces.as_deref(),
         SIDEWALK_COLOR.to_linear(),
         [false; 2],
     );
