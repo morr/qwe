@@ -51,16 +51,17 @@ use std::borrow::Cow;
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
-use self::bridges::Bridges;
 pub use self::bridges::BridgeReport;
+use self::bridges::Bridges;
 pub use self::drawn::{Axis, Drawn, DrawnStats};
 use self::network::RoadNodes;
 pub use self::node_paint::CrossingMode;
 use self::shape::{RoadShape, RoadShapeOnMap};
+use crate::map::SunOnMap;
 use crate::map::footprint::JOIN_EPSILON;
 use crate::map::meshing::{
-    Break, LaneFrame, MeshBuilder, RibbonBreaks, RibbonCap, RibbonJoin, RibbonShape,
-    miter_offsets, to_break_beyond,
+    Break, LaneFrame, MeshBuilder, RibbonBreaks, RibbonCap, RibbonJoin, RibbonShape, miter_offsets,
+    to_break_beyond,
 };
 use crate::map::osm::model::{RoadNodeKind, point_in_area, polyline_length, ring_bounds};
 use crate::map::osm::{AreaKind, MapData, PolyArea, RoadClass, RoadLine, WallLine};
@@ -70,7 +71,6 @@ use crate::map::spawn::GRASS_COLOR;
 use crate::map::surface::{
     self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec, SurfaceKind, spawn_layers,
 };
-use crate::map::SunOnMap;
 use crate::prefs::retuned;
 use crate::settings::{
     Z_ALLEY, Z_BUILDING, Z_LOT_LINES, Z_LOT_SIDEWALK, Z_ROAD, Z_ROAD_MEDIAN, Z_SIDEWALK,

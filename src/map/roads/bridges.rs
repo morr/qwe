@@ -739,12 +739,7 @@ fn shadow_edges(band: &ShadowBand) -> Vec<ShadowEdge> {
 /// срезом, как на 2ГИС. Полудиск `Round` или продление `push_polyline` при
 /// `Square` торчали бы бордюрным языком за конец моста, поэтому мимо
 /// [`super::push_ribbon`]-обёртки.
-fn push_bridge_curb(
-    builder: &mut MeshBuilder,
-    points: &[Vec2],
-    width: f32,
-    join: RoadJoin,
-) {
+fn push_bridge_curb(builder: &mut MeshBuilder, points: &[Vec2], width: f32, join: RoadJoin) {
     // `Square` — это `push_polyline` с продлёнными торцами, а торцы здесь
     // решены выше; его излом сводится к `Miter`, как у любой метки, а не дороги
     let join = match join {
