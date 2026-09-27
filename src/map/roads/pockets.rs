@@ -178,7 +178,7 @@ pub fn kerb_parking(road: &RoadLine, side: usize) -> KerbParking {
             Highway::Motorway => KerbParking::No,
             highway if highway.is_link() => KerbParking::No,
             Highway::Trunk | Highway::Primary | Highway::Secondary => {
-                if road.sidewalks[side].is_present() {
+                if road.sidewalk().sides()[side] {
                     KerbParking::Pocket
                 } else {
                     KerbParking::No

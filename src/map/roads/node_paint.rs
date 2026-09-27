@@ -915,8 +915,7 @@ impl NodePaint {
                     && rule_zebras
                     && sidewalk(arm.road)
                     && (sidewalk_streets >= 2
-                        || (signalized
-                            && drawn[arm.road].sidewalks.iter().all(|side| side.is_present())))
+                        || (signalized && drawn[arm.road].sidewalk().both()))
                     && room >= RULE_ZEBRA_ROOM
                     && !link
                     && !drawn[arm.road].highway.is_link())

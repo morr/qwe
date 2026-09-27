@@ -1,7 +1,9 @@
 use super::*;
 use crate::map::footprint::casing_width;
 use crate::map::meshing::distance_to_path;
-use crate::map::osm::model::{KerbParking, RailKind, RailLine, RoadNode};
+use crate::map::osm::model::{
+    KerbParking, RailKind, RailLine, RoadNode, SIDEWALK_WIDTH_RANGE, SidewalkSide, sidewalk_band,
+};
 use crate::map::osm::{Highway, fixture};
 
 fn road(points: Vec<Vec2>, width: f32, passage: bool) -> RoadLine {

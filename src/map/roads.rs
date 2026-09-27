@@ -64,7 +64,7 @@ use crate::map::meshing::{
     to_break_beyond,
 };
 use crate::map::osm::model::{RoadNodeKind, point_in_area, polyline_length, ring_bounds};
-use crate::map::osm::{AreaKind, MapData, PolyArea, RoadClass, RoadLine, SidewalkSide, WallLine};
+use crate::map::osm::{AreaKind, MapData, PolyArea, RoadClass, RoadLine, WallLine};
 use crate::map::shapes::{is_ring, push_shape};
 use crate::map::smooth::{Smoothing, smooth_pinned};
 use crate::map::spawn::GRASS_COLOR;
@@ -103,10 +103,6 @@ const LOT_LINE_COLOR: Color = Color::srgb(0.88, 0.88, 0.86);
 /// Тротуар — светлый бетон между асфальтом и тёплой землёй: светлее проезжей
 /// части на четверть, и именно эта ступень яркости читается как бордюр.
 const SIDEWALK_COLOR: Color = Color::srgb(0.82, 0.815, 0.80);
-/// Доля ширины улицы на тротуар с каждой стороны и её пределы, м: у
-/// магистрали в 16 м тротуар в 3 м, у жилой улицы в 8 м — 1.8 м.
-const SIDEWALK_SHARE: f32 = 0.22;
-const SIDEWALK_WIDTH_RANGE: std::ops::RangeInclusive<f32> = 1.2..=3.0;
 /// Кусок тротуара короче этого, м, не кладётся ([`push_sidewalk`]): между
 /// кусками пары остаются обрезки в сантиметры.
 const SIDEWALK_PIECE_MIN: f32 = 0.5;
@@ -223,50 +219,31 @@ impl Default for RoadStyle {
     }
 }
 
-/// Ширина тротуара с одной стороны проезжей части шириной `road_width`, м —
-/// без вопроса, есть ли у дороги тротуар вообще (это [`sidewalk_width`]).
-pub fn sidewalk_band(road_width: f32) -> f32 {
-    (road_width * SIDEWALK_SHARE).clamp(*SIDEWALK_WIDTH_RANGE.start(), *SIDEWALK_WIDTH_RANGE.end())
-}
-
-/// Ширина тротуара у дороги с одной стороны, м; у проезда и дорожки
-/// тротуара нет ([`is_carriageway`]).
+/// Форвард на [`RoadLine::sidewalk`]`().band()`.
 pub fn sidewalk_width(road: &RoadLine) -> Option<f32> {
-    is_carriageway(road).then(|| sidewalk_band(road.width))
+    road.sidewalk().band()
 }
 
-/// Ширина тротуара, который у дороги **рисуется** при этом стиле: один ответ
-/// и для ленты тротуара, и для его скругления в узле (`roads/corners.rs`).
-/// Улица с `sidewalk=no|separate` с обеих сторон ленты не несёт; с одной —
-/// её кладёт [`push_sidewalk`] по [`RoadLine::sidewalks`].
+/// Ширина тротуара, который у дороги **рисуется** при этом стиле: тротуар по
+/// карте ([`SidewalkProfile::any`](crate::map::osm::model::SidewalkProfile::any)),
+/// если ручка его не прячет.
 fn drawn_sidewalk(style: &RoadStyle, road: &RoadLine) -> Option<f32> {
-    style.sidewalks.then(|| mapped_sidewalk(road)).flatten()
+    style.sidewalks.then(|| road.sidewalk().any()).flatten()
 }
 
-/// Ширина тротуара, который у дороги есть на карте, — без оглядки на стиль:
-/// [`sidewalk_width`], но только если [`RoadLine::sidewalks`] кладёт его хоть с
-/// одной стороны (`sidewalk=separate|no` с обеих — нет). Одно правило и для
-/// ленты ([`drawn_sidewalk`]), и для разбора, дотягивающего кварталы и
-/// стоянки до внешнего края полотна (`osm/parse.rs`, `osm/parse/lots.rs`).
+/// Форвард на [`RoadLine::sidewalk`]`().any()`.
 pub fn mapped_sidewalk(road: &RoadLine) -> Option<f32> {
-    sidewalk_width(road).filter(|_| road.sidewalks.iter().any(|side| side.is_present()))
+    road.sidewalk().any()
 }
 
-/// Проезжая часть улицы — то, что несёт тротуар и разметку и участвует в
-/// перекрёстках: улица по классу ([`Highway::is_street`] — не дворовый
-/// проезд), не арка (`passage` идёт сквозь дом). Мост — тоже: улица через
-/// реку не теряет полос.
-///
-/// Решает **класс, а не ширина**: пока ширина шла по классу, порог в 8 м
-/// был тем же классом другими словами, но ширина из сечения
-/// (`network::sections`) у двухполосной улицы — 7.6 м, у однополосной
-/// односторонней — 4.3, и порог по ширине отнял бы у них тротуар.
+/// [`RoadLine::is_carriageway`] свободной функцией — её зовут как предикат
+/// (`filter(is_carriageway)`) по всему `map/`.
 ///
 /// Открыт наружу для [`map::cars`](crate::map::cars): «улица, вдоль которой
 /// паркуются» — то же самое понятие, что «улица, у которой есть тротуар и
 /// разметка», и второй копии предиката у слоя машин быть не должно.
 pub fn is_carriageway(road: &RoadLine) -> bool {
-    road.class == RoadClass::Street && !road.passage && road.highway.is_street()
+    road.is_carriageway()
 }
 
 /// Число полос проезжей части: из сечения ([`RoadLine::lanes`] — после
@@ -781,7 +758,7 @@ pub fn mesh_roads(
         let sidewalk = prepared.sidewalk_drawn(index);
         for kerbside in &kerbsides[index] {
             let sidewalk =
-                sidewalk.filter(|_| road.sidewalks[usize::from(kerbside.side < 0.0)].is_present());
+                sidewalk.filter(|_| road.sidewalk().sides()[usize::from(kerbside.side < 0.0)]);
             for pocket in &kerbside.pockets {
                 let outline = |outer: f32| {
                     pockets::outline(
@@ -1116,7 +1093,7 @@ pub fn mesh_roads(
                 [road.width, sidewalk],
                 runs,
                 stitch,
-                road.sidewalks.map(SidewalkSide::is_present),
+                road.sidewalk().sides(),
                 SIDEWALK_COLOR.to_linear(),
                 trimmed,
             );

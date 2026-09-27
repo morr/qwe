@@ -68,7 +68,20 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   and "no" among private houses (galleries 09, 13, the side streets of 03 and 19), and
   the band there drew the rule zebras after it. Tula: see the `osm parse: N of M
   untagged residential streets left without sidewalks` line.
-  `drawn_sidewalk` is `None` when neither side has one; `push_sidewalk` lays a one-sided
+  **One profile for the parse and the renderer**: `RoadLine::sidewalk()` →
+  `SidewalkProfile` (`osm/model.rs`) — the sides as bools plus the **band by class**
+  (`sidewalk_band`, 22 % of the width, 1.2–3 m; `Some` on a carriageway, a bridge
+  included, `None` on a drive or a path). It is **derived, never stored**: the driveway
+  crossings and the ring arcs are clones of a way with another `width`, and a stored band
+  would go stale on them. It answers `band()` (by class, tag ignored), `on(side)`,
+  `any()` (at least one side — `sidewalk=no|separate` on both gives `None`), `both()`,
+  `sides()`, and the three edges the parse reads — **mapped edge**, **verge edge**,
+  **kerb edge** (`references/parse.md`, **Houses pulled off the sidewalks** and **Blocks
+  pulled to the roads**). Every edge is one reach per road on both sides, even for a
+  one-sided `sidewalk=right`; a per-side edge would change the map, so it is not here.
+  The renderer's sidewalk is that profile under the Sidewalks toggle (`Drawn::sidewalk_drawn`
+  / `band_half`, the latter per side through `on(side)`).
+  The drawn sidewalk is `None` when neither side has one; `push_sidewalk` lays a one-sided
   band the paired-half way (width plus one sidewalk, shifted half a sidewalk to its side)
   and ANDs the tag with the pair runs; the kerb returns drop the arc on a missing side;
   a taper's sidewalk wedge is laid per side, and a side without a sidewalk is the bare

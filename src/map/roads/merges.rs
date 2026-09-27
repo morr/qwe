@@ -384,7 +384,7 @@ pub fn merge_bands(
         // тротуар по тегу — на той стороне, что снаружи, `[слева, справа]` по
         // точкам way: у въезжающей половины путь от узла развёрнут
         let outer_left = !partner_left != node_at_end;
-        let tagged = road.sidewalks[usize::from(!outer_left)].is_present();
+        let tagged = road.sidewalk().sides()[usize::from(!outer_left)];
         bands.push(MergeBand {
             half,
             length,

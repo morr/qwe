@@ -14,7 +14,7 @@ use crate::map::osm::model::{
 use crate::map::osm::planting::{
     TREE_CROWN_REACH, TREE_MIN_SPACING, TREE_SHORE_CLEARANCE, TREE_WALL_CLEARANCE, near_area_edge,
 };
-use crate::map::roads::sidewalk_band;
+use crate::map::osm::model::sidewalk_band;
 use crate::settings::MAP_SIZE;
 
 /// Фикстуры строятся вокруг гео-центра Тулы — города по умолчанию.

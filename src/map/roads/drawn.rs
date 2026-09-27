@@ -20,7 +20,7 @@ use super::pockets::KerbLots;
 use super::rings::Rings;
 use super::shape::RoadShape;
 use super::tapers::{Taper, Tapers};
-use super::{MEDIAN_CROSSING_MAX, RoadStyle, drawn_sidewalk, mapped_sidewalk, ring_arcs};
+use super::{MEDIAN_CROSSING_MAX, RoadStyle, drawn_sidewalk, ring_arcs};
 use crate::map::osm::model::polyline_length;
 use crate::map::osm::{MapData, RoadClass, RoadLine};
 
@@ -373,15 +373,19 @@ impl<'m> Drawn<'m> {
     /// ([`drawn_sidewalk`]), минус кусок в проёме пары. Один ответ и для
     /// ленты, и для скругления в узле, и для кармана.
     pub fn sidewalk_drawn(&self, index: usize) -> Option<f32> {
-        self.sidewalk_by_style(index)
+        self.by_style(self.roads[index].sidewalk().any())
             .filter(|_| !self.across_median[index])
     }
 
-    /// Тротуар, который у дороги есть **на карте** ([`mapped_sidewalk`]),
+    /// Тротуар, который у дороги есть **на карте**
+    /// ([`SidewalkProfile::any`](crate::map::osm::model::SidewalkProfile::any)),
     /// ручка не смотрит: зебра по правилу — вопрос модели, как карман, а
     /// ручка только прячет ленту. Кусок в проёме пары — нет.
     pub fn sidewalk_mapped(&self, index: usize) -> Option<f32> {
-        mapped_sidewalk(&self.roads[index]).filter(|_| !self.across_median[index])
+        self.roads[index]
+            .sidewalk()
+            .any()
+            .filter(|_| !self.across_median[index])
     }
 
     /// Полуширина полосы с тротуаром по стороне `[слева, справа]` по ходу
@@ -390,18 +394,12 @@ impl<'m> Drawn<'m> {
     /// шести местах — клин тротуара, скругления, кромки слияний, карманы.
     pub fn band_half(&self, index: usize, side: usize) -> f32 {
         let road = &self.roads[index];
-        road.width / 2.0
-            + self
-                .sidewalk_by_style(index)
-                .filter(|_| road.sidewalks[side].is_present())
-                .unwrap_or(0.0)
+        road.width / 2.0 + self.by_style(road.sidewalk().on(side)).unwrap_or(0.0)
     }
 
-    /// Тротуар по карте при ручке — без оглядки на проём пары.
-    fn sidewalk_by_style(&self, index: usize) -> Option<f32> {
-        self.sidewalks
-            .then(|| mapped_sidewalk(&self.roads[index]))
-            .flatten()
+    /// Тротуар при ручке — без оглядки на проём пары.
+    fn by_style(&self, sidewalk: Option<f32>) -> Option<f32> {
+        sidewalk.filter(|_| self.sidewalks)
     }
 
     /// Счётчики подготовки для строки `road meshing:`.
@@ -508,7 +506,7 @@ mod tests {
         street.sidewalks = [SidewalkSide::Tagged, SidewalkSide::None];
         let map = with_network(vec![street]);
         let drawn = Drawn::for_test(&map);
-        let band = super::super::sidewalk_band(8.0);
+        let band = crate::map::osm::model::sidewalk_band(8.0);
         assert_eq!(drawn.sidewalk_drawn(0), Some(band));
         assert_eq!(drawn.sidewalk_mapped(0), Some(band));
         assert_eq!(drawn.band_half(0, 0), 4.0 + band);
