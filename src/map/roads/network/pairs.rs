@@ -119,6 +119,10 @@ pub const TRAM_BED_MAX_GAP: f32 = 8.0;
 /// Путь засчитан у середины, если он не дальше этого от неё, даже когда
 /// зазор между кромками уже, м: два пути в 3–4 м друг от друга.
 const TRAM_REACH_MIN: f32 = 2.0;
+/// Самый длинный кусок поперечной улицы между половинами одной пары, м: две
+/// половины и самый широкий газон между ними. Такой кусок лежит в проёме
+/// разделительной ([`Pairs::across_median`]), и тротуара у него нет.
+const MEDIAN_CROSSING_MAX: f32 = 40.0;
 
 /// Вторая половина разделённой улицы: её дорога и асфальт ли между ними — по
 /// асфальтовой разделительной зебра идёт одной планкой через обе половины
@@ -631,6 +635,53 @@ impl Pairs {
             self.medians.len() - paved,
             count(Median::carries_tram),
         ]
+    }
+
+    /// Разделительные пар — по одной на пару кусков.
+    pub fn medians(&self) -> &[Median] {
+        &self.medians
+    }
+
+    /// Вторые половины разделённой улицы у дороги — по её кускам пары.
+    pub fn partners(&self, road: usize) -> impl Iterator<Item = Partner> + '_ {
+        self.runs[road].iter().map(|run| Partner {
+            road: run.partner,
+            paved: run.paved,
+        })
+    }
+
+    /// Есть ли у половины `half` кусок пары с дорогой `other`.
+    pub fn is_paired(&self, half: usize, other: usize) -> bool {
+        self.runs[half].iter().any(|run| run.partner == other)
+    }
+
+    /// Лежит ли на длине `at` по узловой оси дороги рядом вторая половина и
+    /// слева ли она: с её стороны у половины нет ни тротуара, ни кромки.
+    /// `slack` — на сколько метров `at` может выйти за кусок: кусок кончается
+    /// там, где пробы перестали находить пару, а скругление у узла стоит
+    /// дальше. Первый кусок, в который `at` попал, — ответ.
+    pub fn beside(&self, road: usize, at: f32, slack: f32) -> Option<bool> {
+        self.runs[road]
+            .iter()
+            .find(|run| run.from - slack <= at && at <= run.to + slack)
+            .map(|run| run.left)
+    }
+
+    /// Дорога — кусок поперечной улицы в проёме разделительной: короче
+    /// [`MEDIAN_CROSSING_MAX`] и соединяет узлом `path[0]` одну половину
+    /// пары, а узлом конца — её пару. `path` — узловая ось дороги; её торцы —
+    /// точки OSM, и ось их не двигает.
+    pub fn across_median(&self, road: usize, path: &[Vec2], nodes: &RoadNodes) -> bool {
+        let (Some(&start), Some(&end)) = (path.first(), path.last()) else {
+            return false;
+        };
+        polyline_length(path) < MEDIAN_CROSSING_MAX
+            && nodes.roads_at(start).iter().any(|&half| {
+                half != road
+                    && self.runs[half].iter().any(|run| {
+                        run.partner != road && nodes.roads_at(end).contains(&run.partner)
+                    })
+            })
     }
 }
 

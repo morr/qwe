@@ -25,7 +25,7 @@ use i_overlay::core::fill_rule::FillRule;
 use i_overlay::core::overlay_rule::OverlayRule;
 use i_overlay::float::single::SingleFloatOverlay;
 
-use super::network::pairs::PairRun;
+use super::network::pairs::Pairs;
 use super::network::{RoadNetwork, RoadNodes};
 use super::paint::{MergeRamp, lane_frame};
 use super::shape::lane_width;
@@ -110,14 +110,14 @@ const NODE_SLACK: f32 = 0.1;
 /// сторону, а двусторонний way того же `Highway` — в обратную. Мосты и арки
 /// (`carves_navmesh`) не участвуют.
 ///
-/// Пара — по улицам (`network`), а не по way у узла (`runs` — куски пар по
-/// дорогам): OSM режет половину у узла на короткие ways в 16–22 м, и на
+/// Пара — по улицам (`network`), а не по way у узла ([`Pairs::is_paired`] —
+/// по кускам пар дороги): OSM режет половину у узла на короткие ways в 16–22 м, и на
 /// таком куске пары не набирается — она лежит на соседнем way той же улицы.
 pub fn merges(
     roads: &[&RoadLine],
     paths: &[impl AsRef<[Vec2]>],
     nodes: &RoadNodes,
-    runs: &[Vec<PairRun>],
+    pairs: &Pairs,
     network: &RoadNetwork,
 ) -> Merges {
     let mut found = Merges {
@@ -136,7 +136,7 @@ pub fn merges(
         let partner = at_node.iter().copied().find(|&other| {
             let path = paths[other].as_ref();
             other != half
-                && paired(half, other, runs, network)
+                && paired(half, other, pairs, network)
                 && roads[other].oneway
                 && roads[other].highway == road.highway
                 && path.len() >= 2
@@ -189,8 +189,8 @@ pub fn merges(
 
 /// Лежат ли дороги `half` и `other` в одной паре: сами или любые ways их
 /// улиц.
-fn paired(half: usize, other: usize, runs: &[Vec<PairRun>], network: &RoadNetwork) -> bool {
-    if runs[half].iter().any(|run| run.partner == other) {
+fn paired(half: usize, other: usize, pairs: &Pairs, network: &RoadNetwork) -> bool {
+    if pairs.is_paired(half, other) {
         return true;
     }
     let street = |road: usize| network.street_of(road).map(|(street, _)| street);
@@ -198,9 +198,9 @@ fn paired(half: usize, other: usize, runs: &[Vec<PairRun>], network: &RoadNetwor
         return false;
     };
     network.streets[own].ways.iter().any(|way| {
-        runs[way.road]
-            .iter()
-            .any(|run| street(run.partner) == Some(theirs))
+        pairs
+            .partners(way.road)
+            .any(|partner| street(partner.road) == Some(theirs))
     })
 }
 

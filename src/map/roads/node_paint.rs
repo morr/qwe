@@ -484,7 +484,7 @@ impl NodePaint {
         let (drawn, paths) = (drawn.as_slice(), paths.as_slice());
         let merges = &prepared.merges().list;
         let sidewalk = |road: usize| prepared.sidewalk_mapped(road).is_some();
-        let partners = |road: usize| prepared.partners(road).collect::<Vec<Partner>>();
+        let partners = |road: usize| prepared.pairs().partners(road).collect::<Vec<Partner>>();
         let on_ring = |road: usize| prepared.on_ring(road);
         assert_eq!(base.len(), drawn.len(), "разрывы — на каждую дорогу карты");
         let mut paint = Self {

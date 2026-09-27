@@ -75,7 +75,7 @@ fn found(roads: &[RoadLine]) -> (Merges, RoadNetwork, Vec<Vec<Vec2>>) {
     pairs.align(&mut paths, roads, &network, &nodes);
     let paths: Vec<Vec<Vec2>> = paths.into_iter().map(Cow::into_owned).collect();
     let drawn: Vec<&RoadLine> = roads.iter().collect();
-    let merges = merges(&drawn, &paths, &nodes, &pairs.runs, &network);
+    let merges = merges(&drawn, &paths, &nodes, &pairs, &network);
     (merges, network, paths)
 }
 

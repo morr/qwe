@@ -346,7 +346,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     alike. A half has **no sidewalk on its
     paired side**. The median opens only at a break of **both** halves facing each
     other (a crossing street, a U-turn, a zebra); a street into one half does not open
-    it. Drawing only: `RoadLine::points` do not move.
+    it. Drawing only: `RoadLine::points` do not move. What a half differs by is asked of
+    `Pairs` — `beside` (is the pair next to this length, and on the left), `partners`,
+    `is_paired`, `across_median` (a cross-street piece in the median's gap) — not read
+    off its runs.
     Underground road is dropped (`is_road_underground`) — a **separate** predicate from
     `is_underground`, because the risk is asymmetric: an extra ribbon is cosmetic, an extra
     deletion is a hole in the navmesh.
@@ -1479,7 +1482,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     are drawn (driveway crossings as asphalt, ring arcs at the ring's section), their
     shared nodes and street axes, stitches, tapers and merges, built once per
     `mesh_roads` and indexed by `map.roads`; the fields are closed, consumers ask
-    (`sidewalk_drawn`, `band_half`, `paired`, `taper_ends`, …). The OSM roads stay
+    (`sidewalk_drawn`, `band_half`, `taper_ends`, …; the pair side — through
+    `pairs()`). The OSM roads stay
     beside it in `MapData` — node keys and the base marking breaks read those. Not the
     same thing as the stitches' `DrawnEdges`.
   - **Axis** (`Drawn::axis(i, Axis)`) — **which of a road's axes a consumer takes**, named

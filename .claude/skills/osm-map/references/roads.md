@@ -188,6 +188,17 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     run's gap is its median. One `Median` per pair of runs, from the half with the lower
     index — the old lot code computed it from both sides first and got two double lines
     a few centimetres apart.
+  - **Queries** — what a half differs by is asked of `Pairs`, not read off its runs in
+    each consumer: `beside(road, at, slack)` — is a run there and is the partner on the
+    left (the kerb returns pass two probes of slack, a run ending where the probes stopped
+    finding the partner; the wedge's asphalt under a half takes none, the middle of a
+    wedge lying inside the run); `partners(road)` as `Partner { road, paved }` (the
+    junction paint's zebra plank); `is_paired(half, other)` (the merges, which widen it to
+    the streets); `across_median(road, path, nodes)` — the cross-street piece in the
+    median's opening (**Kerb return** below); `medians()`. `Drawn` answers none of them
+    itself: it hands out `pairs()`, one owner. The runs stay public until the median
+    loop moves into `medians.rs` (roads plan stage H), and `align` reads them inside the
+    module.
   - **Alignment** (`Pairs::align`) — each half is densified to `ALIGN_STEP` 4 m and moved
     so that it stands at half the target distance from the midpoint between it and the
     partner's original axis: target gap = the run's median, paved ones no narrower than
@@ -827,7 +838,7 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     the farther one); when **both** are OSM crossings — a `highway=crossing` node on each
     half, which mappers place a metre apart (gallery 02: 0.9 and 1.2 m) — both move to the
     line halfway between them. Over a **paved** median (`PairRun::paved`, read through
-    `Drawn::partners` as `pairs::Partner { road, paved }`) the two aligned zebras then become **one
+    `Pairs::partners` as `pairs::Partner { road, paved }`) the two aligned zebras then become **one
     plank** kerb to kerb (`join_zebras`: parallel within `JOIN_PARALLEL`, on one line
     within `JOIN_OFFSET` 1 m, the gap between them at most `node_paint::JOIN_GAP` 8.8 m —
     `TRAM_BED_MAX_GAP` plus `EDGE_INSET` 0.3 m off both kerbs plus `OVERLAP_SLACK` 0.2 m,
@@ -1035,9 +1046,10 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     `nodes()` (`RoadNodes`), `axis(i, Axis)` / `axes(Axis)` (below), `pairs()`, `rings()`,
     `stitches()`, `tapers()` (the one taper pass of the layer, **Tapers** above),
     `merges()`, `lots()` (the `KerbLots` the pockets and the car row share), and the
-    per-road answers that used to be closures in `mesh_roads`: `paired(i, at)` (a pair run
-    beside the road there, with two probes of slack), `taper_ends(i)`, `is_merged(i, end)`,
-    `stitched_end(i)`, `stitch_offset(i)`, `on_ring(i)`, `partners(i)`. Every vector is
+    per-road answers that used to be closures in `mesh_roads`: `taper_ends(i)`,
+    `is_merged(i, end)`, `stitched_end(i)`, `stitch_offset(i)`, `on_ring(i)`. The pair
+    side is not among them: it is asked of `pairs()` (**Paired halves → Queries**), one
+    owner rather than a delegate on each. Every vector is
     indexed by `map.roads` (an `assert` in the build, not an empty answer on a mismatch).
     The OSM points are not in it — whatever finds a node by `node_key`, and the kerb-pocket
     seed, reads `RoadLine::points` off the map. Not to be
@@ -1279,12 +1291,13 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
         keeps the asphalt wedge inside).
       - **The side of a paired half has no sidewalk corner**: an arm carries a sidewalk
         per side (`Arm::sidewalk`, left and right of its heading), and where the arm lies in
-        a pair run (`paired`, the runs of **Paired halves** with two probes of slack) the
+        a pair run (`Pairs::beside`, the runs of **Paired halves** with two probes of slack) the
         partner's side is `None`. The corner is taken from the first arm's left to the
         second's right, so a corner facing the median gets none — it put light arcs into
         the median opening of a divided avenue.
       - **A crossing street's piece between two halves carries no sidewalk at all**
-        (`across_median` in `mesh_roads`, under `MEDIAN_CROSSING_MAX` 40 m, one end in a
+        (`Pairs::across_median`, asked once per road by `Drawn::new`, under
+        `MEDIAN_CROSSING_MAX` 40 m, one end in a
         node with a half and the other in a node with its partner): it lies in the median
         opening, and its band showed as a light disc in the middle of the junction
         (sample 15).
@@ -1294,7 +1307,8 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     **in**, its pair partner starts there flowing **out**, both leave the node within 40°
     of each other (`MERGE_ALIGN`, a 20 m chord — OSM's first link may be half a metre),
     and a **two-way** way of the same `Highway` ends there leaving it the other way.
-    Bridges and arches take no part. **The pair is checked by streets** (`paired`): a
+    Bridges and arches take no part. **The pair is checked by streets** (`paired`, over
+    `Pairs::is_paired` and `Pairs::partners`): a
     run of **Paired halves** between the two ways themselves, or between any way of the
     one's street and the other's street — OSM cuts a half into 16–22 m ways at the node,
     and on such a piece no run forms (the first version asked the ways and found 4).

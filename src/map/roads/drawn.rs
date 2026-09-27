@@ -14,14 +14,13 @@ use bevy::prelude::*;
 
 use super::axis::{self, Axes};
 use super::merges::{self, Merges};
-use super::network::pairs::{PROBE_STEP, Pairs, Partner};
+use super::network::pairs::Pairs;
 use super::network::{self, RoadNodes, Stitches};
 use super::pockets::KerbLots;
 use super::rings::Rings;
 use super::shape::RoadShape;
 use super::tapers::{Taper, Tapers};
-use super::{MEDIAN_CROSSING_MAX, RoadStyle, ring_arcs};
-use crate::map::osm::model::polyline_length;
+use super::{RoadStyle, ring_arcs};
 use crate::map::osm::{MapData, RoadClass, RoadLine};
 
 /// Какую ось берёт потребитель — решение вынесено из порядка `let` в тип.
@@ -108,30 +107,18 @@ impl<'m> Drawn<'m> {
     pub fn new(map: &'m MapData, style: &RoadStyle, shape: &RoadShape) -> Self {
         let nodal = Self::nodal(map, shape);
         let roads = nodal.roads();
-        let (paths, nodes, runs) = (&nodal.axes.paths, &nodal.nodes, &nodal.axes.pairs.runs);
+        let (paths, nodes, pairs) = (&nodal.axes.paths, &nodal.nodes, &nodal.axes.pairs);
         // тротуар, который рисуется: по карте, если ручка его не прячет
         let stitches = network::stitches(&roads, map, nodes, |road| {
             road.sidewalk().any().filter(|_| style.sidewalks)
         });
-        // Торцы узлов — точки OSM, и ось их не двигает.
         let across_median = paths
             .iter()
             .enumerate()
-            .map(|(index, path)| {
-                let (Some(&start), Some(&end)) = (path.first(), path.last()) else {
-                    return false;
-                };
-                polyline_length(path) < MEDIAN_CROSSING_MAX
-                    && nodes.roads_at(start).iter().any(|&half| {
-                        half != index
-                            && runs[half].iter().any(|run| {
-                                run.partner != index && nodes.roads_at(end).contains(&run.partner)
-                            })
-                    })
-            })
+            .map(|(index, path)| pairs.across_median(index, path, nodes))
             .collect();
         // разделённая улица, сходящаяся в обычную: узел не перекрёсток
-        let merges = merges::merges(&roads, paths, nodes, runs, &map.network);
+        let merges = merges::merges(&roads, paths, nodes, pairs, &map.network);
         // стежок до дороги, до которой OSM торец не довёл
         // (`roads/network/mod.rs`)
         let stitched = paths
@@ -347,26 +334,6 @@ impl<'m> Drawn<'m> {
         self.merges.is_merged(index, end)
     }
 
-    /// Лежит ли на длине `at` по узловой оси рядом вторая половина
-    /// разделённой улицы и слева ли она (`roads/network/pairs.rs`): с её
-    /// стороны тротуара нет. Кусок пары может кончиться на пробу раньше
-    /// узла — две пробы слака.
-    pub fn paired(&self, index: usize, at: f32) -> Option<bool> {
-        let slack = 2.0 * PROBE_STEP;
-        self.axes.pairs.runs[index]
-            .iter()
-            .find(|run| run.from - slack <= at && at <= run.to + slack)
-            .map(|run| run.left)
-    }
-
-    /// Вторые половины разделённой улицы у дороги — по её кускам пары.
-    pub fn partners(&self, index: usize) -> impl Iterator<Item = Partner> + '_ {
-        self.axes.pairs.runs[index].iter().map(|run| Partner {
-            road: run.partner,
-            paved: run.paved,
-        })
-    }
-
     /// Стоянки карты, перед которыми карман не нужен.
     pub fn lots(&self) -> &KerbLots<'m> {
         &self.lots
@@ -425,6 +392,7 @@ impl<'m> Drawn<'m> {
 mod tests {
     use super::*;
     use crate::map::osm::{SidewalkSide, fixture};
+    use crate::map::roads::network::pairs::{PROBE_STEP, Partner};
     use crate::map::roads::network::RoadNetwork;
 
     fn with_network(roads: Vec<RoadLine>) -> MapData {
@@ -549,6 +517,14 @@ mod tests {
         assert_eq!(drawn.stats().medians, [1, 0, 0]);
         assert_eq!(drawn.sidewalk_mapped(3), None, "кусок в проёме пары");
         assert_eq!(drawn.sidewalk_drawn(3), None);
+        let across = |road: usize| {
+            drawn
+                .pairs()
+                .across_median(road, drawn.axis(road, Axis::Nodal), drawn.nodes())
+        };
+        assert_eq!((0..5).map(across).collect::<Vec<_>>(), [
+            false, false, false, true, false
+        ]);
         assert!(drawn.sidewalk_mapped(2).is_some(), "подход с юга");
         assert!(drawn.sidewalk_mapped(4).is_some(), "продолжение на север");
     }
@@ -561,23 +537,35 @@ mod tests {
         let drawn = Drawn::for_test(&map);
         assert_eq!(drawn.stats().medians, [0, 0, 0]);
         assert!(drawn.sidewalk_mapped(3).is_some());
+        assert!(
+            !drawn
+                .pairs()
+                .across_median(3, drawn.axis(3, Axis::Nodal), drawn.nodes())
+        );
     }
 
     #[test]
-    fn paired_reaches_two_probes_past_the_run() {
+    fn beside_reaches_the_slack_past_the_run() {
         let (roads, _) = avenue(0.6);
         let map = with_network(roads);
         let drawn = Drawn::for_test(&map);
-        let runs = &drawn.pairs().runs[0];
+        let pairs = drawn.pairs();
+        let runs = &pairs.runs[0];
         let (first, last) = (runs[0], runs[runs.len() - 1]);
         assert!(first.left, "пара слева от половины, идущей на восток");
-        assert_eq!(drawn.paired(0, (first.from + first.to) / 2.0), Some(true));
-        assert_eq!(drawn.paired(0, first.from - 3.9), Some(true));
-        assert_eq!(drawn.paired(0, first.from - 4.1), None);
-        assert_eq!(drawn.paired(0, last.to + 3.9), Some(true));
-        assert_eq!(drawn.paired(0, last.to + 4.1), None);
-        assert_eq!(drawn.paired(1, 200.0), Some(true), "и у встречной");
-        let partners: Vec<Partner> = drawn.partners(0).collect();
+        // скругление в узле: две пробы слака
+        let slack = 2.0 * PROBE_STEP;
+        let beside = |at: f32| pairs.beside(0, at, slack);
+        assert_eq!(beside((first.from + first.to) / 2.0), Some(true));
+        assert_eq!(beside(first.from - 3.9), Some(true));
+        assert_eq!(beside(first.from - 4.1), None);
+        assert_eq!(beside(last.to + 3.9), Some(true));
+        assert_eq!(beside(last.to + 4.1), None);
+        // середина клина — без слака
+        assert_eq!(pairs.beside(0, last.to, 0.0), Some(true));
+        assert_eq!(pairs.beside(0, last.to + 0.1, 0.0), None);
+        assert_eq!(pairs.beside(1, 200.0, slack), Some(true), "и у встречной");
+        let partners: Vec<Partner> = pairs.partners(0).collect();
         assert_eq!(
             partners.first(),
             Some(&Partner {
@@ -585,6 +573,8 @@ mod tests {
                 paved: true
             })
         );
+        assert!(pairs.is_paired(0, 1) && pairs.is_paired(1, 0));
+        assert!(!pairs.is_paired(0, 0));
     }
 
     #[test]

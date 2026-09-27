@@ -51,6 +51,7 @@ use bevy::prelude::*;
 
 use super::drawn::{Axis, Drawn};
 use super::junctions::node_key;
+use super::network::pairs::PROBE_STEP;
 use crate::map::meshing::arc_steps;
 use crate::map::osm::model::{polyline_length, ring_area};
 use crate::map::osm::{Highway, RoadClass};
@@ -132,7 +133,7 @@ impl KerbReturns {
 /// осевые (`Axis::Nodal` — после сглаживания, до стежков; мост и арка не
 /// участвуют, [`rounded`]); тротуар, если он рисуется
 /// (`Drawn::sidewalk_drawn`); лежит ли рядом вторая половина разделённой
-/// улицы и слева ли (`Drawn::paired`, `roads/network/pairs.rs`) — с её
+/// улицы и слева ли (`Pairs::beside`, `roads/network/pairs.rs`) — с её
 /// стороны тротуара нет, и угол по нему не скругляется; клинья у торцов
 /// (`Drawn::taper_ends`, `roads/tapers.rs`) — в клине кромка уже ближе к
 /// оси, и прямой пробег луча с другого конца кончается там, где клин
@@ -260,7 +261,9 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                             .filter(|_| narrow.sidewalk().sides()[side]);
                     }
                 }
-                if let Some(left) = drawn.paired(index, along) {
+                // кусок пары кончается там, где пробы перестали её находить:
+                // до узла — не дальше двух проб
+                if let Some(left) = drawn.pairs().beside(index, along, 2.0 * PROBE_STEP) {
                     sides[usize::from(left != forward)] = None;
                 }
                 entry.1.push(Arm {

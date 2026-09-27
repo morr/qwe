@@ -107,10 +107,6 @@ const SIDEWALK_COLOR: Color = Color::srgb(0.82, 0.815, 0.80);
 /// Кусок тротуара короче этого, м, не кладётся ([`push_sidewalk`]): между
 /// кусками пары остаются обрезки в сантиметры.
 const SIDEWALK_PIECE_MIN: f32 = 0.5;
-/// Самый длинный кусок поперечной улицы между половинами одной пары, м: две
-/// половины и самый широкий газон между ними. Такой кусок лежит в проёме
-/// разделительной, и тротуара у него нет.
-const MEDIAN_CROSSING_MAX: f32 = 40.0;
 /// На сколько асфальт кармана стоянки заходит под кромку ленты, м: встык
 /// между ними светилась бы щель.
 const POCKET_OVERLAP: f32 = 0.05;
@@ -851,7 +847,7 @@ pub fn mesh_roads(
     // одной пары улиц встречаются торец в торец
     let bed_ends: Vec<Break> = prepared
         .pairs()
-        .medians
+        .medians()
         .iter()
         .filter(|median| median.carries_tram())
         .flat_map(medians::bed_ends)
@@ -859,7 +855,7 @@ pub fn mesh_roads(
         .collect();
     // разделительная открывается по базе — у перекрёстка, кто бы его ни вёл
     let base = junctions.median_base();
-    for median in &prepared.pairs().medians {
+    for median in prepared.pairs().medians() {
         let [first, second] = median.roads;
         let breaks = medians::crossing_breaks(median, [&base[first], &base[second]]);
         // до перекрёстка — как линии полос, а не там, где кончились пробы
@@ -1107,17 +1103,15 @@ pub fn mesh_roads(
             } else {
                 polyline_length(path) / 2.0
             };
-            let Some(run) = prepared.pairs().runs[index]
-                .iter()
-                .find(|run| (run.from..=run.to).contains(&middle))
-            else {
+            // пара у середины клина — без слака: клин лежит внутри куска
+            let Some(left) = prepared.pairs().beside(index, middle, 0.0) else {
                 continue;
             };
             // с сохранённой стороны кромка и так прямая
-            if !taper.sides[usize::from(!run.left)] {
+            if !taper.sides[usize::from(!left)] {
                 continue;
             }
-            let side = if run.left { 1.0 } else { -1.0 };
+            let side = if left { 1.0 } else { -1.0 };
             let inner: Vec<Vec2> = path
                 .iter()
                 .zip(miter_offsets(path, false, road.width / 4.0))
