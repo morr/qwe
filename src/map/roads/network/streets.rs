@@ -92,11 +92,8 @@ pub struct RoadNetwork {
 impl RoadNetwork {
     pub fn new(roads: &[RoadLine]) -> Self {
         let nodes = ends_at_nodes(roads);
-        let partners = pair_arms(&nodes, |arms, i, j| {
-            let (a, b) = (arms[i].0, arms[j].0);
-            continues(&roads[a.road], a, &roads[b.road], b)
-        });
-        let continuations = pair_continuations(roads, &nodes, &partners);
+        let partners = street_partners(roads, &nodes);
+        let continuations = pair_continuations(&onward_partners(roads, &nodes, &partners));
         let mut place: Vec<Option<(u32, u32)>> = vec![None; roads.len()];
         let mut streets = Vec::new();
         for road in 0..roads.len() {
@@ -269,17 +266,43 @@ fn pair_arms(
     partners
 }
 
+/// Склейка торцов в улицы: [`pair_arms`] по правилу [`continues`].
+fn street_partners(roads: &[RoadLine], nodes: &[((i32, i32), Vec<Arm>)]) -> HashMap<End, End> {
+    pair_arms(nodes, |arms, i, j| {
+        let (a, b) = (arms[i].0, arms[j].0);
+        continues(&roads[a.road], a, &roads[b.road], b)
+    })
+}
+
+/// Way, продолжающий каждый торец за узлом, — `[начало, конец]` по индексу
+/// дороги: `(way, идёт ли он навстречу)`. Партнёр по улице
+/// ([`RoadNetwork::joints`]), а без него — продолжение через границу улиц
+/// ([`RoadNetwork::continuations`]): одно правило с сетью, без её сборки —
+/// им отвечает `RoadNodes::next_way`.
+pub(super) fn next_ways(roads: &[RoadLine]) -> Vec<[Option<(usize, bool)>; 2]> {
+    let nodes = ends_at_nodes(roads);
+    let partners = street_partners(roads, &nodes);
+    let onward = onward_partners(roads, &nodes, &partners);
+    let mut next = vec![[None; 2]; roads.len()];
+    for (from, to) in partners.iter().chain(&onward) {
+        // торцы одного имени сходятся, когда way нарисованы навстречу
+        next[from.road][usize::from(from.end)] = Some((to.road, to.end == from.end));
+    }
+    next
+}
+
 /// Продолжения через границу улиц ([`RoadNetwork::continuations`]): среди
 /// торцов, не склеенных в улицу (`partners`), пары по той же соосности, но
-/// без оглядки на класс и односторонность. Половины слияния (`roads/merges.rs`)
-/// не берутся: у торца-половины есть двойник — другой односторонний свободный
-/// торец узла с обратным потоком, идущий с ним в одну сторону, — и
-/// продолжение с двусторонней улицы туда рисует само слияние.
-fn pair_continuations(
+/// без оглядки на класс и односторонность — партнёр каждого такого торца.
+/// Половины слияния (`roads/merges.rs`) не берутся: у торца-половины есть
+/// двойник — другой односторонний свободный торец узла с обратным потоком,
+/// идущий с ним в одну сторону, — и продолжение с двусторонней улицы туда
+/// рисует само слияние.
+fn onward_partners(
     roads: &[RoadLine],
     nodes: &[((i32, i32), Vec<Arm>)],
     partners: &HashMap<End, End>,
-) -> Vec<(StreetWay, StreetWay)> {
+) -> HashMap<End, End> {
     let free = |end: End| !partners.contains_key(&end);
     let twinned = |arms: &[Arm], i: usize| {
         let (end, direction) = arms[i];
@@ -296,9 +319,14 @@ fn pair_continuations(
                         && direction.dot(other_direction) >= MAX_BEND.cos()
                 })
     };
-    let onward = pair_arms(nodes, |arms, i, j| {
+    pair_arms(nodes, |arms, i, j| {
         free(arms[i].0) && free(arms[j].0) && !twinned(arms, i) && !twinned(arms, j)
-    });
+    })
+}
+
+/// Пары [`onward_partners`] как `(way, выходящий в узел; way, входящий из
+/// него)`, по возрастанию торцов — от порядка обхода карты не зависят.
+fn pair_continuations(onward: &HashMap<End, End>) -> Vec<(StreetWay, StreetWay)> {
     let mut pairs: Vec<(End, End)> = onward
         .iter()
         .filter(|(a, b)| a < b)

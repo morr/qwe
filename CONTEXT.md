@@ -235,7 +235,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     parse passes after it read the width.
   - **Taper** (`map/roads/tapers.rs`) — where a way ends and another goes on from the node
     collinearly (a seam of one street, or a **continuation** across streets —
-    `RoadNetwork::continuations`, the same pairing without the class and one-way tests)
+    `RoadNetwork::continuations`, the same pairing without the class and one-way tests;
+    per way end the two are one answer, `RoadNodes::next_way` — the way that goes on
+    past that end, never the side way of a tee)
     with a different width, the wider one starts at the narrower's width and widens over
     `RoadShape::taper` (10 by default) metres per metre of difference. Per side: at a
     junction only the kerb with no other carriageway arm on it narrows; the kerb returns

@@ -62,8 +62,14 @@ const MIN_TAIL: f32 = 0.5;
 /// вершин, и собираются они сортировкой, а не картой по каждой вершине: карта
 /// с вектором на вершину стоила десяток миллисекунд на каждую пересборку
 /// дорог.
+///
+/// Там же — **соседство way'ев по узлу** ([`Self::next_way`]): какой way
+/// продолжает каждый торец. Одно правило на всех, кто спрашивает «что за
+/// торцом» (карманы, переливы зебр), — то же, что склеивает улицы.
 pub struct RoadNodes {
     shared: HashMap<(i32, i32), Vec<usize>>,
+    /// `[начало, конец]` каждой дороги — [`Self::next_way`].
+    next: Vec<[Option<(usize, bool)>; 2]>,
 }
 
 impl RoadNodes {
@@ -86,7 +92,21 @@ impl RoadNodes {
                 shared.insert(run[0].0, run.iter().map(|visit| visit.1).collect());
             }
         }
-        Self { shared }
+        Self {
+            shared,
+            next: streets::next_ways(roads),
+        }
+    }
+
+    /// Way, продолжающий `road` за торцом `end` (`0` — первая точка, `1` —
+    /// последняя), и идёт ли он навстречу (сходятся торцы одного имени):
+    /// соосный — излом не круче [`MAX_BEND`], самая соосная пара узла, — того
+    /// же класса и направления, как склеивает улицы [`RoadNetwork`], а без
+    /// такого — продолжение через границу улиц
+    /// ([`RoadNetwork::continuations`]). На Т-узле примыкающий way ничьё не
+    /// продолжение; у кольца и замкнутого way торцов нет.
+    pub fn next_way(&self, road: usize, end: usize) -> Option<(usize, bool)> {
+        self.next.get(road).and_then(|ends| ends[end])
     }
 
     /// Через узел проходят две дороги и больше.
@@ -577,5 +597,44 @@ mod tests {
             ..default()
         };
         assert_eq!(stitched_map(map).count, 0);
+    }
+
+    /// Т-узел: прямая улица продолжается прямо, примыкающий way — ничьё
+    /// продолжение, хоть он и раньше по индексу; второй way прямой нарисован
+    /// навстречу.
+    #[test]
+    fn the_next_way_at_a_tee_is_the_straight_one() {
+        let roads = [
+            street(vec![Vec2::ZERO, Vec2::new(100.0, 0.0)], 8.0),
+            street(vec![Vec2::new(100.0, 0.0), Vec2::new(100.0, 100.0)], 8.0),
+            street(vec![Vec2::new(200.0, 0.0), Vec2::new(100.0, 0.0)], 8.0),
+        ];
+        let nodes = RoadNodes::new(&roads);
+        assert_eq!(nodes.next_way(0, 1), Some((2, true)));
+        assert_eq!(nodes.next_way(2, 1), Some((0, true)));
+        assert_eq!(nodes.next_way(1, 0), None);
+        assert_eq!(nodes.next_way(0, 0), None, "висячий торец");
+        assert_eq!(nodes.next_way(7, 0), None, "чужой индекс");
+    }
+
+    /// За границей улиц — тоже продолжение (`RoadNetwork::continuations`):
+    /// жилая, переходящая в проезд, идёт дальше по ходу; прямой угол не
+    /// продолжение ни в улице, ни через её границу.
+    #[test]
+    fn the_next_way_crosses_a_street_boundary_but_not_a_right_angle() {
+        let mut service = street(vec![Vec2::new(100.0, 0.0), Vec2::new(200.0, 0.0)], 5.0);
+        service.highway = crate::map::osm::Highway::Service;
+        let roads = [
+            street(vec![Vec2::ZERO, Vec2::new(100.0, 0.0)], 8.0),
+            service,
+        ];
+        let nodes = RoadNodes::new(&roads);
+        assert_eq!(nodes.next_way(0, 1), Some((1, false)));
+        assert_eq!(nodes.next_way(1, 0), Some((0, false)));
+        let corner = [
+            street(vec![Vec2::ZERO, Vec2::new(100.0, 0.0)], 8.0),
+            street(vec![Vec2::new(100.0, 0.0), Vec2::new(100.0, 100.0)], 8.0),
+        ];
+        assert_eq!(RoadNodes::new(&corner).next_way(0, 1), None);
     }
 }
