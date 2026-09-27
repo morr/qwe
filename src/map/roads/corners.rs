@@ -55,7 +55,7 @@ use super::network::pairs::PROBE_STEP;
 use crate::map::along::{arclengths, nearest_on_path, place_on_path};
 use crate::map::meshing::arc_steps;
 use crate::map::osm::model::{closest_on_segment, polyline_length, ring_area};
-use crate::map::osm::{Highway, RoadClass};
+use crate::map::osm::{Highway, RoadClass, RoadLine};
 
 /// Радиус бордюра по классу дороги, м; у пары берётся меньший. Между
 /// проспектами (`trunk`…`secondary` и их съезды) — 10 м, с улицей
@@ -567,10 +567,20 @@ fn nose_radius(radius: f32, scale: f32) -> f32 {
 }
 
 fn class_radius(arm: &Arm) -> f32 {
-    if arm.class == RoadClass::Alley {
+    radius_of(arm.class, arm.highway)
+}
+
+/// Радиус бордюра дороги по её классу — без ручки `Corner radius`. Им клин
+/// у шва решает, прикрывает ли примыкание уступ (`roads/tapers.rs`).
+pub(super) fn road_radius(road: &RoadLine) -> f32 {
+    radius_of(road.class, road.highway)
+}
+
+fn radius_of(class: RoadClass, highway: Highway) -> f32 {
+    if class == RoadClass::Alley {
         return PATH_RADIUS;
     }
-    match arm.highway {
+    match highway {
         Highway::Motorway
         | Highway::Trunk
         | Highway::Primary
