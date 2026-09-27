@@ -932,4 +932,46 @@ mod tests {
         let min = outer_x.iter().copied().fold(f32::INFINITY, f32::min);
         assert!((min - (20.0 + POCKET_TAPER)).abs() < 1e-3);
     }
+
+    /// Зебра в метре от торца way рвёт ряд и на way, что продолжает улицу
+    /// за торцом, — от торца на остаток полузебры ([`CROSSING_SPILL`]); ни
+    /// соосности, ни класса продолжения узел торца не спрашивает.
+    #[test]
+    fn a_zebra_at_a_way_end_spills_onto_the_next_way() {
+        let roads = [
+            street(
+                vec![Vec2::ZERO, Vec2::new(99.0, 0.0), Vec2::new(100.0, 0.0)],
+                8.0,
+            ),
+            street(vec![Vec2::new(100.0, 0.0), Vec2::new(200.0, 0.0)], 8.0),
+        ];
+        let zebra = RoadNode {
+            pos: Vec2::new(99.0, 0.0),
+            kind: RoadNodeKind::Crossing {
+                signals: false,
+                island: false,
+                marked: true,
+            },
+        };
+        let found = crossing_breaks(&roads, &[zebra]);
+        assert_eq!(
+            found,
+            vec![
+                (
+                    0,
+                    Break {
+                        at: Vec2::new(99.0, 0.0),
+                        reach: ZEBRA_LENGTH / 2.0
+                    }
+                ),
+                (
+                    1,
+                    Break {
+                        at: Vec2::new(100.0, 0.0),
+                        reach: ZEBRA_LENGTH / 2.0 - 1.0
+                    }
+                ),
+            ]
+        );
+    }
 }

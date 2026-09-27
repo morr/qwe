@@ -1885,3 +1885,161 @@ fn a_one_sided_sidewalk_wedge_keeps_the_bare_kerb_on_the_untagged_side() {
         .fold(f32::MIN, f32::max);
     assert!((top - (wide_half + wide_band)).abs() < 0.05, "{top}");
 }
+
+/// Проспект из двух половин, поперечная жилая пересекает обе: узлы — вершины
+/// на половинах, как в OSM.
+fn an_avenue_crossed_by_a_street() -> (MapData, f32) {
+    let (mut map, apart) = divided_avenue(0.6);
+    let (south, north) = (Vec2::new(300.0, 100.0), Vec2::new(300.0, 100.0 + apart));
+    map.roads[0].points.insert(1, south);
+    map.roads[1].points.insert(1, north);
+    map.roads.push(fixture::street(
+        vec![
+            Vec2::new(300.0, 30.0),
+            south,
+            north,
+            Vec2::new(300.0, 190.0),
+        ],
+        8.0,
+    ));
+    (with_network(map.roads), apart)
+}
+
+/// «До разрыва» (`ATTRIBUTE_RIBBON`) у вершин слоя `name`, что прошли
+/// фильтр; полигоны (нули) не в счёт. У асфальта это второе число, у полосы
+/// краски — третье (`MeshBuilder::push_paint_strip`).
+fn to_break_where(layers: &[LayerMesh], name: &str, keep: impl Fn(&[f32; 3]) -> bool) -> Vec<f32> {
+    let builder = &layer(layers, name).builder;
+    let slot = if name == "roads" { 1 } else { 2 };
+    let coords = builder
+        .ribbon_coords_for_test()
+        .expect("лента с координатами");
+    builder
+        .positions_for_test()
+        .iter()
+        .zip(coords)
+        .filter(|(at, coord)| **coord != [0.0; 4] && keep(at))
+        .map(|(_, coord)| coord[slot])
+        .collect()
+}
+
+/// Разделительная открывается по **базовым** разрывам (`marking_breaks`), а
+/// не по разрывам асфальта: половины ведут узел, и `NodePaint::asphalt` снял
+/// с них разрыв — колея идёт сквозь, — а двойная сплошная у поперечной всё
+/// равно рвётся. Перевести медианы на разрывы асфальта — провести её через
+/// перекрёсток.
+#[test]
+fn the_median_base_keeps_the_break_a_leading_road_lost() {
+    let (map, apart) = an_avenue_crossed_by_a_street();
+    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    assert_eq!(report.drawn.medians, [1, 0, 0]);
+    assert_eq!(report.leading, 2, "узел ведут обе половины");
+    let middle = 100.0 + apart / 2.0;
+    // двойная сплошная — вдоль середины; осевая поперечной на ней — полоса
+    // поперёк, у самого x = 300, её вершины не в счёт
+    let double: Vec<f32> = layer(&layers, paint::PAINT_AXES)
+        .builder
+        .positions_for_test()
+        .iter()
+        .filter(|at| (at[1] - middle).abs() < 2.0 && (at[0] - 300.0).abs() > 1.5)
+        .map(|at| at[0])
+        .collect();
+    assert!(double.iter().any(|&x| x < 250.0) && double.iter().any(|&x| x > 350.0));
+    let nearest = double
+        .iter()
+        .map(|x| (x - 300.0).abs())
+        .fold(f32::INFINITY, f32::min);
+    assert!(
+        nearest > 4.0,
+        "двойная сплошная через перекрёсток: {nearest}"
+    );
+}
+
+/// Островок по правилу (`gores::splitters`) рвёт подход дважды — краску и
+/// колею асфальта: его разрыв кладётся и в `NodePaint::breaks`, и в
+/// `NodePaint::asphalt`.
+#[test]
+fn a_splitter_gap_reaches_both_asphalt_and_paint() {
+    let circle: Vec<Vec2> = (0..=24)
+        .map(|step| Vec2::from_angle(step as f32 * std::f32::consts::TAU / 24.0) * 25.0)
+        .collect();
+    let mut map = MapData::default();
+    map.roads.push(RoadLine {
+        oneway: true,
+        roundabout: true,
+        ..fixture::street(circle.clone(), 8.0)
+    });
+    map.roads
+        .push(fixture::street(vec![circle[0], Vec2::new(90.0, 0.0)], 7.6));
+    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    assert_eq!(report.gores, 1);
+    let island = layer(&layers, paint::PAINT_ISLANDS)
+        .builder
+        .positions_for_test();
+    let low = island.iter().map(|at| at[0]).fold(f32::INFINITY, f32::min);
+    let high = island
+        .iter()
+        .map(|at| at[0])
+        .fold(f32::NEG_INFINITY, f32::max);
+    assert!(low > 28.0 && high < 50.0, "{low}..{high}");
+    // внутри островка, но дальше разрыва кольца (его полуширина + 1 м)
+    let inside = |at: &[f32; 3]| at[0] > 31.0 && at[0] < high - 1.0 && at[1].abs() < 3.9;
+    for name in ["roads", paint::PAINT_AXES] {
+        let found = to_break_where(&layers, name, inside);
+        assert!(!found.is_empty(), "{name}");
+        assert!(
+            found.iter().all(|&to_break| to_break < 0.0),
+            "{name}: {found:?}"
+        );
+        let beyond = to_break_where(&layers, name, |at| at[0] > high + 5.0 && at[1].abs() < 3.9);
+        assert!(
+            beyond.iter().any(|&to_break| to_break > 0.0),
+            "{name} за островком"
+        );
+    }
+}
+
+/// Счётчики узлов в строке `road meshing:` — ни одним тестом не пиннились.
+#[test]
+fn junction_counters_of_a_tee_and_an_avenue_crossing() {
+    let tee = timeless(&a_tee());
+    assert_eq!((tee.junctions, tee.clusters, tee.through), (1, 0, 1));
+    let (avenue, _) = an_avenue_crossed_by_a_street();
+    let avenue = timeless(&avenue);
+    assert_eq!(
+        (avenue.junctions, avenue.clusters, avenue.through),
+        (2, 1, 2)
+    );
+}
+
+/// Зебра OSM у стыка двух way одной улицы рвёт карманы и на продолжении
+/// (`pockets::crossing_breaks`) — счётчик карманов под пином.
+#[test]
+fn a_zebra_at_a_way_end_breaks_the_kerb_pockets_of_both_ways() {
+    let primary = |points: Vec<Vec2>| RoadLine {
+        highway: Highway::Primary,
+        parking: [KerbParking::Pocket; 2],
+        ..fixture::street(points, 14.0)
+    };
+    let roads = vec![
+        primary(vec![
+            Vec2::ZERO,
+            Vec2::new(99.0, 0.0),
+            Vec2::new(100.0, 0.0),
+        ]),
+        primary(vec![Vec2::new(100.0, 0.0), Vec2::new(200.0, 0.0)]),
+    ];
+    let zebra = RoadNode {
+        pos: Vec2::new(99.0, 0.0),
+        kind: RoadNodeKind::Crossing {
+            signals: false,
+            island: false,
+            marked: true,
+        },
+    };
+    let mut map = with_network(roads);
+    assert_eq!(timeless(&map).kerb_pockets, 4);
+    map.road_nodes.push(zebra);
+    // карманы те же четыре: зебра их укорачивает, а не делит
+    assert_eq!(timeless(&map).kerb_pockets, 4);
+}

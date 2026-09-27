@@ -213,6 +213,29 @@ fn an_equal_crossing_breaks_both_and_paints_every_arm() {
     assert_eq!(paint.stop_lines.len(), 4);
 }
 
+/// Ведущая узла теряет разрыв асфальта (колея сквозь), но в базе он
+/// остаётся: база не переписывается, по ней открываются разделительные.
+#[test]
+fn a_leading_road_loses_its_asphalt_break_but_not_its_base_one() {
+    let roads = vec![through(Highway::Primary), side()];
+    let map = MapData {
+        network: RoadNetwork::new(&roads),
+        roads,
+        ..default()
+    };
+    let base = marking_breaks(&map.roads, is_carriageway, &[]).breaks;
+    let paint = NodePaint::new(&Drawn::for_test(&map), &base, &map, &[], EVERYTHING);
+    assert_eq!(paint.junctions[0].leading, vec![0]);
+    let at_node = |breaks: &[Break]| {
+        breaks
+            .iter()
+            .any(|found| found.at == NODE && found.reach > 0.0)
+    };
+    assert!(at_node(&base[0]));
+    assert!(!at_node(&paint.asphalt[0]), "{:?}", paint.asphalt[0]);
+    assert!(at_node(&paint.asphalt[1]));
+}
+
 #[test]
 fn an_equal_crossing_keeps_the_asphalt_breaks_of_both() {
     let across = road(
