@@ -7,14 +7,14 @@
 
 use bevy::prelude::*;
 
-use super::{RoadJoin, densify};
+use super::{ROAD_JOIN, RoadJoin, densify};
 use crate::map::SHADOW_COLOR;
 use crate::map::footprint::JOIN_EPSILON;
 use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin, merge_close_points, miter_offsets};
 use crate::map::osm::model::{
     distance_to_segment, point_in_area, point_in_polygon, polyline_length, ring_bounds,
 };
-use crate::map::osm::{MapData, PolyArea};
+use crate::map::osm::{MapData, PolyArea, RoadLine};
 use crate::map::shadow;
 
 /// Путь тени настила: та же осевая, сдвинутая по свету на высоту моста,
@@ -47,7 +47,7 @@ use crate::map::shadow;
 /// моста тень успевала перевалить за торец и лечь тёмным клином на дорогу —
 /// тот самый клин, что торчал из-под каждого мостика через канал. Остаток
 /// тоже считается по всему мосту.
-pub(super) fn bridge_shadow_path(points: &[Vec2], deck: &BridgeSpan) -> Vec<ShadowPoint> {
+fn bridge_shadow_path(points: &[Vec2], deck: &BridgeSpan) -> Vec<ShadowPoint> {
     let dense = deck_centerline(points);
     if dense.len() < 2 {
         return Vec::new();
@@ -122,11 +122,11 @@ fn bridge_height(span: f32) -> f32 {
 /// счёта из этого не выходит: расстояние до земли берётся как минимум из двух
 /// сторон, и тот же самый маршрут уже учтён со стороны `from_start`.
 #[derive(Clone, Copy, Debug)]
-pub(super) struct BridgeSpan {
-    pub(super) span: f32,
+struct BridgeSpan {
+    span: f32,
     from_start: f32,
     from_end: f32,
-    pub(super) casts: bool,
+    casts: bool,
 }
 
 /// Мосты карты: **связные цепочки** мостовых ways, а не отдельные ways.
@@ -156,9 +156,36 @@ pub(super) struct BridgeSpan {
 /// не стоит — у трёхконцевого узла путь до свободного торца просто идёт по
 /// самой короткой из трёх веток, и настил на развилке остаётся поднятым, как
 /// ему и положено.
+///
+/// Он же и копит мостовые слои: бордюры и теневые ленты кладёт
+/// [`Self::push_deck`], а заливку настила — вызывающий в [`Self::fills`],
+/// из цикла порядка заливки улиц. Мост обязан остаться в этом порядке: у
+/// заливки рама полос и разрывы асфальта своей улицы, а мост над мостом —
+/// это порядок пуша.
 pub(super) struct Bridges {
     /// На индекс дороги; `None` — не мост.
     spans: Vec<Option<BridgeSpan>>,
+    count: BridgeReport,
+    /// Настилы — один меш на улицы и пешеходные мостики разом: белая и
+    /// песочная заливки соседствуют, и порядок перекрытия моста над мостом —
+    /// порядок пуша. Мост над мостом — редкость, четыре слоя ради него не
+    /// нужны.
+    casings: MeshBuilder,
+    fills: MeshBuilder,
+    /// Тень моста — на то, над чем он проходит: воду, дорогу, пути. Ленты
+    /// копятся и кладутся разом: их ядра объединяются
+    /// ([`push_bridge_shadows`]).
+    shadows: Vec<ShadowBand>,
+}
+
+/// Мосты карты счётом: мостовых ways, мостов из них (связных цепочек — см.
+/// [`Bridges`]) и мостов, отбрасывающих тень. Кеш v15: Тула — 91 way, 86
+/// мостов, 73 с тенью; Берлин — 429, 325, 278.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct BridgeReport {
+    pub ways: usize,
+    pub bridges: usize,
+    pub casting: usize,
 }
 
 impl Bridges {
@@ -171,8 +198,15 @@ impl Bridges {
             .filter(|(_, road)| road.bridge && road.points.len() >= 2)
             .map(|(index, _)| index)
             .collect();
+        let finish = |spans, count| Self {
+            spans,
+            count,
+            casings: MeshBuilder::default(),
+            fills: MeshBuilder::with_surface_coords(),
+            shadows: Vec::new(),
+        };
         if decks.is_empty() {
-            return Self { spans };
+            return finish(spans, BridgeReport::default());
         }
         // узлы — склеенные торцы; их вдвое больше ways, перебор квадратичен и
         // на шести десятках мостов не стоит ничего
@@ -263,11 +297,58 @@ impl Bridges {
                 casts: casts[root],
             });
         }
-        Self { spans }
+        let mut chains: Vec<usize> = ends.iter().map(|[first, _]| roots[*first]).collect();
+        chains.sort_unstable();
+        chains.dedup();
+        let count = BridgeReport {
+            ways: decks.len(),
+            bridges: chains.len(),
+            casting: chains.iter().filter(|&&root| casts[root]).count(),
+        };
+        finish(spans, count)
     }
 
-    pub(super) fn span(&self, road: usize) -> Option<&BridgeSpan> {
+    fn span(&self, road: usize) -> Option<&BridgeSpan> {
         self.spans[road].as_ref()
+    }
+
+    /// Бордюр и тень одного настила. Заливку с рамой полос и разрывами
+    /// асфальта своей улицы кладёт вызывающий в [`Self::fills`] — так мост
+    /// остаётся в порядке заливки улиц.
+    pub(super) fn push_deck(&mut self, road: usize, points: &[Vec2], line: &RoadLine) {
+        // бордюр настила — он и есть мост
+        push_bridge_curb(
+            &mut self.casings,
+            points,
+            2.0 * line.curb_reach(),
+            ROAD_JOIN,
+        );
+        // Тень настила — тот же настил, сдвинутый по свету на высоту
+        // моста. Ни один другой слой её не даёт: наземные тени считают
+        // только дома, а мост через Упу — самая заметная вещь на воде.
+        if let Some(deck) = self.span(road).copied().filter(|deck| deck.casts) {
+            self.shadows.push(ShadowBand {
+                path: bridge_shadow_path(points, &deck),
+                reach: line.curb_reach(),
+                penumbra: bridge_penumbra(deck.span),
+            });
+        }
+    }
+
+    /// Меш заливки настилов.
+    pub(super) fn fills(&mut self) -> &mut MeshBuilder {
+        &mut self.fills
+    }
+
+    pub(super) fn count(&self) -> BridgeReport {
+        self.count
+    }
+
+    /// Три меша: тени (ядра объединены здесь), бордюры, настилы.
+    pub(super) fn into_builders(self) -> [MeshBuilder; 3] {
+        let mut shadows = MeshBuilder::default();
+        push_bridge_shadows(&mut shadows, &self.shadows);
+        [shadows, self.casings, self.fills]
     }
 }
 
@@ -380,7 +461,7 @@ impl<'a> Underneath<'a> {
 /// уезжает за торец на `полуширину × sin` этого наклона. На карте это тёмный
 /// язычок из-под конца бортика (у мостика через Упу — 0.75 м), с той стороны,
 /// куда светит солнце; с другой стороны торец на столько же подрезан.
-pub(super) struct ShadowPoint {
+struct ShadowPoint {
     at: Vec2,
     rise: f32,
     normal: Vec2,
@@ -422,10 +503,10 @@ const BRIDGE_CURB_COLOR: Color = Color::srgb(0.80, 0.80, 0.79);
 
 /// Теневая лента одного моста, готовая к укладке: путь, полуширина настила и
 /// ширина полутени на полном подъёме.
-pub(super) struct ShadowBand {
-    pub(super) path: Vec<ShadowPoint>,
-    pub(super) reach: f32,
-    pub(super) penumbra: f32,
+struct ShadowBand {
+    path: Vec<ShadowPoint>,
+    reach: f32,
+    penumbra: f32,
 }
 
 /// Край теневой ленты в одной точке пути.
@@ -462,7 +543,7 @@ const PENUMBRA_MIN: f32 = 0.35;
 const PENUMBRA_MAX: f32 = 1.0;
 
 /// Ширина полутени для моста с таким пролётом — см. [`PENUMBRA_SHARE`].
-pub(super) fn bridge_penumbra(span: f32) -> f32 {
+fn bridge_penumbra(span: f32) -> f32 {
     let length = shadow::length(bridge_height(span));
     (length * PENUMBRA_SHARE).clamp(PENUMBRA_MIN, PENUMBRA_MAX)
 }
@@ -506,7 +587,7 @@ pub(super) fn bridge_penumbra(span: f32) -> f32 {
 /// Перекрытие двух кайм друг с другом карта уже разрешает явно (тени зданий:
 /// «каймы соседних фигур могут перекрываться, но обе гаснут в ноль»). Кайма,
 /// чья внешняя кромка лежит внутри ядра соседней ленты, не кладётся.
-pub(super) fn push_bridge_shadows(builder: &mut MeshBuilder, bands: &[ShadowBand]) {
+fn push_bridge_shadows(builder: &mut MeshBuilder, bands: &[ShadowBand]) {
     use i_overlay::core::fill_rule::FillRule;
     use i_overlay::float::simplify::SimplifyShape;
 
@@ -634,7 +715,7 @@ fn shadow_edges(band: &ShadowBand) -> Vec<ShadowEdge> {
 /// срезом, как на 2ГИС. Полудиск `Round` или продление `push_polyline` при
 /// `Square` торчали бы бордюрным языком за конец моста, поэтому мимо
 /// [`super::push_ribbon`]-обёртки.
-pub(super) fn push_bridge_curb(
+fn push_bridge_curb(
     builder: &mut MeshBuilder,
     points: &[Vec2],
     width: f32,

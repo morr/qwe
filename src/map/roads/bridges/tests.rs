@@ -373,6 +373,35 @@ fn crossing_decks_are_two_bridges_not_one() {
     }
 }
 
+/// Мост — цепочка ways, и считается мостом цепочка: на Туле (кеш v15) 91
+/// мостовой way дают 86 мостов. Здесь — развилка из трёх, пара из двух и
+/// одинокий мостик по сухой земле, который тени не отбрасывает.
+#[test]
+fn a_bridge_report_counts_chains_not_ways() {
+    let fork = Vec2::new(100.0, 0.0);
+    let map = bridge_map(vec![
+        fixture::bridge(vec![Vec2::ZERO, fork], 12.0),
+        fixture::bridge(vec![fork, Vec2::new(150.0, 0.0)], 12.0),
+        fixture::bridge(vec![fork, Vec2::new(100.0, 40.0)], 12.0),
+        fixture::bridge(vec![Vec2::new(0.0, 300.0), Vec2::new(60.0, 300.0)], 8.0),
+        fixture::bridge(vec![Vec2::new(60.0, 300.0), Vec2::new(90.0, 300.0)], 8.0),
+        fixture::street(vec![Vec2::new(0.0, 500.0), Vec2::new(60.0, 500.0)], 8.0),
+        fixture::bridge(vec![Vec2::new(0.0, 600.0), Vec2::new(20.0, 600.0)], 3.0),
+    ]);
+    assert_eq!(
+        Bridges::new(&map).count(),
+        BridgeReport {
+            ways: 6,
+            bridges: 3,
+            casting: 2,
+        }
+    );
+    assert_eq!(
+        Bridges::new(&MapData::default()).count(),
+        BridgeReport::default()
+    );
+}
+
 /// Не мост — не пролёт: улица и мост без двух точек в [`Bridges`] не входят.
 #[test]
 fn only_bridge_ways_get_a_span() {

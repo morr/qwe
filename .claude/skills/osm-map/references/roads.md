@@ -35,8 +35,8 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   (`network::driveway_crossings`) is redrawn as a `Street` and a footway that is not one
   is simply covered by the carriageway at 2.0 as before.
   A **bridge is the exception**: `is_carriageway` says yes, so a deck keeps its
-  lane markings, but the bridge branch of `mesh_roads` `continue`s into `bridge_casings`
-  + `bridges` *before* the sidewalk block — a deck gets no band ever, at any width or
+  lane markings, but the bridge branch of `mesh_roads` `continue`s into `Bridges::push_deck`
+  + `Bridges::fills` *before* the sidewalk block — a deck gets no band ever, at any width or
   `RoadStyle::sidewalks`. It would hang a metre or three past the deck edge over the
   water, and the deck already has its own kerb: `push_bridge_curb`, drawn unconditionally.
   The road fill went from osm-carto white to asphalt grey together with the
@@ -1580,6 +1580,21 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   is push order, rare enough not to warrant four layers. Rails carry no bridge flag —
   rail bridges are out of scope. The curb is not just paint: the navmesh blocks the
   same bands (see **Bridge curbs are impassable** in the navigation-deep skill).
+
+  **The owner is `Bridges`** (`roads/bridges.rs`) — a value `mesh_roads` makes once and
+  calls from inside its fill-order loop, not a layer module of its own. `push_deck(road,
+  points, line)` lays the curb and queues the shadow band; the **fill** is still pushed
+  by the loop, into `Bridges::fills()`, because a deck has to stay in `fill_order` and
+  take its street's lane frame and asphalt breaks (the ribbon attribute carries both —
+  pinned by `deck_fill_carries_its_streets_lane_frame`), and bridge-over-bridge is push
+  order. A layer module with a `deck` closure was the rejected shape: the closure would
+  have repeated half the loop body. `into_builders()` hands back the three meshes, the
+  shadow cores unioned there; `count()` is the
+  `BridgeReport` on `RoadReport::bridges` — ways, bridges (chains) and the ones casting
+  a shadow; v15 caches: Tula 91 / 86 / 73, Berlin 429 / 325 / 278, Kaluga 55 / 52 / 48,
+  Ryazan 84 / 80 / 70 (the «61 ways, 56 bridges» above was counted on an older Tula
+  extract). The width of the curb comes from `footprint::bridge_curb_width` through
+  `RoadLine::curb_reach` and stays in `footprint` — it is the seam with the navmesh.
 - **Asphalt wear** (`surface.wgsl`, `SurfaceParams::wear`, on `SurfaceKind::Street` only)
   — what keeps a road from being one flat tone, in the **lane frame** so it follows the
   lane rather than the compass: **wheel ruts** — a polished band `RUT_OFFSET` 0.85 m

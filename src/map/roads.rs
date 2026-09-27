@@ -51,10 +51,8 @@ use std::borrow::Cow;
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
-use self::bridges::{
-    Bridges, ShadowBand, bridge_penumbra, bridge_shadow_path, push_bridge_curb,
-    push_bridge_shadows,
-};
+use self::bridges::Bridges;
+pub use self::bridges::BridgeReport;
 pub use self::drawn::{Axis, Drawn, DrawnStats};
 use self::network::RoadNodes;
 pub use self::node_paint::CrossingMode;
@@ -607,6 +605,9 @@ pub struct RoadReport {
     /// Подготовка дорог (`roads/drawn.rs`): переезды, стежки, клинья,
     /// слияния, разделительные, кольца, швы осей — одним значением.
     pub drawn: DrawnStats,
+    /// Мосты (`roads/bridges.rs`): мостовых ways, мостов-цепочек из них и
+    /// мостов с тенью.
+    pub bridges: BridgeReport,
     /// Острова-крошки в треугольниках узлов, залитые асфальтом
     /// (`corners::small_islands`).
     pub islands: usize,
@@ -656,6 +657,12 @@ impl std::fmt::Display for RoadReport {
                     medians: [paved, lawns, beds],
                     rings: [rings, webs],
                 },
+            bridges:
+                BridgeReport {
+                    ways: bridge_ways,
+                    bridges,
+                    casting,
+                },
             islands,
             gores,
             road_islands: [refuges, island_areas, carriageways],
@@ -675,7 +682,8 @@ impl std::fmt::Display for RoadReport {
              sidewalks, stitches {stitches}, kerb pockets {kerb_pockets}, turning circles {turning_circles}, driveway crossings \
              {crossings}, rings {rings} ({webs} webs), small islands {islands}, gores {gores}, safety islands {refuges} + {island_areas} areas, \
              carriageway areas {carriageways}, tapers {tapers}, merges {merges} ({merge_edges} edges), medians {paved} paved + {lawns} \
-             lawn (tram beds {beds}), tram bands {tram_bands}, smooth seams {seams}, tight corners {tight}; {network:?} of it before the \
+             lawn (tram beds {beds}), tram bands {tram_bands}, smooth seams {seams}, tight corners {tight}, bridges {bridges} of \
+             {bridge_ways} ways ({casting} cast shadows); {network:?} of it before the \
              ribbons)",
             style.sidewalks, style.markings,
         )
@@ -703,17 +711,9 @@ pub fn mesh_roads(
     let mut sidewalks = MeshBuilder::with_surface_coords();
     let mut alleys = MeshBuilder::with_surface_coords();
     let mut streets = MeshBuilder::with_surface_coords();
-    // Настилы мостов — один меш на улицы и пешеходные мостики разом: белая и
-    // песочная заливки соседствуют, и порядок перекрытия моста над мостом —
-    // порядок пуша. Мост над мостом — редкость, четыре слоя ради него не нужны.
-    let mut bridge_casings = MeshBuilder::default();
-    let mut bridge_fills = MeshBuilder::with_surface_coords();
-    // тень моста — на то, над чем он проходит: воду, дорогу, пути. Ленты
-    // копятся и кладутся разом: их ядра объединяются (`push_bridge_shadows`)
-    let mut bridge_shadows = MeshBuilder::default();
-    let mut shadow_bands: Vec<ShadowBand> = Vec::new();
-    // мост — цепочка ways, и тень считается по всей цепочке
-    let bridges = Bridges::new(map);
+    // мост — цепочка ways, и тень считается по всей цепочке; мостовые слои
+    // копит он же (`roads/bridges.rs`)
+    let mut bridges = Bridges::new(map);
     let mut wall_ribbons = MeshBuilder::default();
     // улицы на больших стоянках — бордюром и разметкой поверх их асфальта
     // (`roads/lots.rs`)
@@ -1068,26 +1068,12 @@ pub fn mesh_roads(
             );
         }
         if road.bridge {
-            // бордюр настила — он и есть мост
-            push_bridge_curb(
-                &mut bridge_casings,
-                points,
-                2.0 * road.curb_reach(),
-                ROAD_JOIN,
-            );
-            // Тень настила — тот же настил, сдвинутый по свету на высоту
-            // моста. Ни один другой слой её не даёт: наземные тени считают
-            // только дома, а мост через Упу — самая заметная вещь на воде.
-            if let Some(deck) = bridges.span(index).filter(|deck| deck.casts) {
-                shadow_bands.push(ShadowBand {
-                    path: bridge_shadow_path(points, deck),
-                    reach: road.curb_reach(),
-                    penumbra: bridge_penumbra(deck.span),
-                });
-            }
-            bridge_fills.set_lanes(lanes);
+            // бордюр и тень — мосту; заливка — здесь, в порядке улиц
+            bridges.push_deck(index, points, road);
+            let fills = bridges.fills();
+            fills.set_lanes(lanes);
             push_street_fill(
-                &mut bridge_fills,
+                fills,
                 points,
                 road.width,
                 color.to_linear(),
@@ -1305,7 +1291,8 @@ pub fn mesh_roads(
         }
     }
 
-    push_bridge_shadows(&mut bridge_shadows, &shadow_bands);
+    let bridge_count = bridges.count();
+    let [bridge_shadows, bridge_casings, bridge_fills] = bridges.into_builders();
 
     let fortresses = Fortresses::of(&map.buildings);
     for wall in walls {
@@ -1416,6 +1403,7 @@ pub fn mesh_roads(
         sidewalk_returns: kerb_returns.sidewalks.len() - kerb_returns.outer[1],
         outer_corners: kerb_returns.outer,
         drawn: prepared.stats(),
+        bridges: bridge_count,
         gores: gores.count(),
         road_islands: [
             road_islands.refuges,
