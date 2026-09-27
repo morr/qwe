@@ -231,38 +231,29 @@ fn a_street_crossing_the_node_makes_the_merge_a_junction_for_paint() {
 #[test]
 fn a_pure_merge_node_breaks_no_line_and_holds_the_axis_solid() {
     let roads = divided_into(two_way_east());
-    let (merges, _, paths) = found(&roads);
-    let mut map = MapData {
-        roads: roads.clone(),
+    let map = MapData {
+        network: RoadNetwork::new(&roads),
+        roads,
         ..default()
     };
-    map.network = RoadNetwork::new(&map.roads);
-    let drawn: Vec<&RoadLine> = roads.iter().collect();
-    let base = marking_breaks(&roads, is_carriageway, &[]).breaks;
+    let drawn = Drawn::for_test(&map);
+    assert!(drawn.merges().list.iter().any(|merge| merge.pure));
+    let base = marking_breaks(&map.roads, is_carriageway, &[]).breaks;
     let at_node = |breaks: &[crate::map::meshing::Break]| {
         breaks.iter().any(|gap| gap.at.distance(node()) < 0.1)
     };
     // как перекрёсток трёх улиц — рвутся все три: это и был разрыв
     assert!((0..3).all(|road| at_node(&base[road])));
-    let paint = |list: &[Merge]| {
-        NodePaint::new(
-            &drawn,
-            &paths,
-            &base,
-            &[],
-            &map,
-            &[],
-            list,
-            NodePaintStyle {
-                crossings: CrossingMode::Generated,
-                stop_lines: true,
-            },
-            |_| true,
-            |_| Vec::new(),
-            |_| false,
-        )
-    };
-    let merged = paint(&merges.list);
+    let merged = NodePaint::new(
+        &drawn,
+        &base,
+        &map,
+        &[],
+        NodePaintStyle {
+            crossings: CrossingMode::Generated,
+            stop_lines: true,
+        },
+    );
     for road in 0..3 {
         assert!(!at_node(&merged.breaks[road]), "{road}");
         assert!(at_node(&merged.solid[road]), "{road}");

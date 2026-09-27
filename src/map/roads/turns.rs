@@ -30,6 +30,7 @@ use std::f32::consts::{FRAC_PI_2, PI};
 
 use bevy::prelude::*;
 
+use super::drawn::{Axis, Drawn};
 use super::lane_count;
 use super::node_paint::{Junction, JunctionArm};
 use super::paint::lane_frame;
@@ -128,22 +129,16 @@ struct ArmLanes {
 }
 
 impl Turns {
-    /// Траектории по узлам `junctions` дорог `drawn`, нарисованных по `paths`.
-    /// `on_ring(дорога)` — дуга ли она кольца (`roads/rings.rs`): у такого
-    /// узла стрелок по правилу нет.
-    pub fn new(
-        drawn: &[&RoadLine],
-        paths: &[impl AsRef<[Vec2]>],
-        junctions: &[Junction],
-        side: TrafficSide,
-        on_ring: impl Fn(usize) -> bool,
-    ) -> Self {
+    /// Траектории по узлам `junctions` подготовленных дорог `prepared`
+    /// (`roads/drawn.rs`), по оси ленты (`Axis::Ribbon`). Дуга кольца
+    /// (`Drawn::on_ring`, `roads/rings.rs`) стрелок по правилу не получает.
+    pub fn new(prepared: &Drawn, junctions: &[Junction], side: TrafficSide) -> Self {
         let mut turns = Self::default();
-        if drawn.len() != paths.len() {
-            return turns;
-        }
+        let drawn = prepared.roads();
+        let paths = prepared.axes(Axis::Ribbon);
+        let on_ring = |road: usize| prepared.on_ring(road);
         for junction in junctions {
-            turns.junction(drawn, paths, junction, side, &on_ring);
+            turns.junction(&drawn, &paths, junction, side, &on_ring);
         }
         turns
     }

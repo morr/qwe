@@ -682,8 +682,10 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   middle of the crossing (Tula, 5968 1582, the author's report). This is why the
   road layer must stay opaque with a world-position colour: transparency or a per-way tint
   would expose every crossing.
-- **Junction paint** (`map/roads/node_paint.rs`, `NodePaint::new`, called by `mesh_roads`
-  on the stitched axes — **always**, markings on or off: with markings off it paints
+- **Junction paint** (`map/roads/node_paint.rs`, `NodePaint::new(&Drawn, base, map, paved,
+  style)` — the roads, the ribbon axes, the stitches, the merges, the mapped sidewalk, the
+  pair partners and the ring arcs all come off `Drawn`; called by `mesh_roads`
+  on the ribbon axes — **always**, markings on or off: with markings off it paints
   nothing, but the leading roads and the junction arms it finds are the asphalt's, not the
   paint's) — what the paint layer does at a junction. It starts from the asphalt breaks
   and rewrites them per road:
@@ -745,8 +747,8 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     zebra onto the first's line across the street (to the OSM one if there is one, else to
     the farther one); when **both** are OSM crossings — a `highway=crossing` node on each
     half, which mappers place a metre apart (gallery 02: 0.9 and 1.2 m) — both move to the
-    line halfway between them. Over a **paved** median (`PairRun::paved`, handed to
-    `NodePaint::new` as `Partner { road, paved }`) the two aligned zebras then become **one
+    line halfway between them. Over a **paved** median (`PairRun::paved`, read through
+    `Drawn::partners` as `pairs::Partner { road, paved }`) the two aligned zebras then become **one
     plank** kerb to kerb (`join_zebras`: parallel within `JOIN_PARALLEL`, on one line
     within `JOIN_OFFSET` 1 m, the gap between them at most `node_paint::JOIN_GAP` 8.8 m —
     `TRAM_BED_MAX_GAP` plus `EDGE_INSET` 0.3 m off both kerbs plus `OVERLAP_SLACK` 0.2 m,
@@ -840,7 +842,8 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     Rosenthaler Platz and the boulevards, `area:highway=primary|tertiary` outlines,
     signalized crossings with islands). The report counts `safety islands N + A areas,
     carriageway areas C`.
-- **Turn paths** (`map/roads/turns.rs`, `Turns::new` over `NodePaint::junctions`) — the
+- **Turn paths** (`map/roads/turns.rs`, `Turns::new(&Drawn, junctions, side)` over
+  `NodePaint::junctions`, on the ribbon axes) — the
   wear a junction gets from traffic crossing it. The lane ruts fade in a junction gap (a
   car crossing a junction is not in a lane), so without these the middle of every node was
   bare asphalt, and a real one is polished lighter than its approaches.
@@ -1250,7 +1253,7 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
       - **No breaks at a pure merge** (`Merge::pure` — no other carriageway at the node).
         `node_paint` saw three streets at a node (each half is a street of its own, the
         continuation a third), so all three yielded and broke by the neighbour's half width
-        plus a metre (8.1 m on the halves). `NodePaint::new` takes `merges`: a pure merge
+        plus a metre (8.1 m on the halves). `NodePaint::new` reads `Drawn::merges`: a pure merge
         node is dropped from the junction list, its base breaks leave all three roads and a
         `solid` break goes on each — the continuation's axis is solid there. No zebra, stop
         line or turn wear. A merge on a junction (sample 25, five roads) breaks as any

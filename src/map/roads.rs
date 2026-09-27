@@ -1254,13 +1254,10 @@ pub fn mesh_roads(
     // Строится и без разметки: ведущая дорога узла и плечи для траекторий —
     // это колея асфальта, а не краска
     let mut node_paint = node_paint::NodePaint::new(
-        &drawn,
-        &ribbon,
+        &prepared,
         &junctions.breaks,
-        &prepared.stitches().targets,
         map,
         &islands,
-        &prepared.merges().list,
         node_paint::NodePaintStyle {
             crossings: if style.markings {
                 style.crossings
@@ -1269,21 +1266,9 @@ pub fn mesh_roads(
             },
             stop_lines: style.markings && style.stop_lines,
         },
-        // тротуар по тегу (`sidewalk=*`), а не по ручке «Sidewalks»: ручка
-        // прячет ленту, а зебра по правилу — вопрос модели, как карман у
-        // `pockets::kerb_parking`
-        |index| prepared.sidewalk_mapped(index).is_some(),
-        |index| prepared.partners(index).collect(),
-        |road| prepared.on_ring(road),
     );
     // траектории манёвров (`roads/turns.rs`) — колея в узле
-    let turns = turns::Turns::new(
-        &drawn,
-        &ribbon,
-        &node_paint.junctions,
-        map.traffic_side,
-        |road| prepared.on_ring(road),
-    );
+    let turns = turns::Turns::new(&prepared, &node_paint.junctions, map.traffic_side);
     // Широкие улицы поверх узких — см. доку модуля; ведущая узла — поверх
     // всех: её колея идёт через узел, и примыкание шире неё не должно её
     // закрыть.

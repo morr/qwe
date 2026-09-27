@@ -49,9 +49,8 @@ use std::collections::BTreeMap;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
+use super::drawn::{Axis, Drawn};
 use super::junctions::{JUNCTION_MARGIN, SharedNode, Visit, node_key, with_stitches};
-use super::merges::Merge;
-use super::network::StitchTarget;
 use super::network::pairs::TRAM_BED_MAX_GAP;
 use super::{is_carriageway, lane_count};
 use crate::map::along::{arclengths, nearest_on_path, place_on_path};
@@ -382,30 +381,32 @@ struct Crossing {
 }
 
 impl NodePaint {
-    /// Краска узлов по дорогам `drawn`, нарисованным по `paths`. `base` —
-    /// разрывы асфальта (`junctions::marking_breaks`), `targets` — стежки,
-    /// которые тоже узлы, `sidewalk` — есть ли у дороги тротуар по тегу
-    /// (`sidewalk=*`, независимо от `RoadStyle::sidewalks`: ручка прячет
-    /// ленту, а зебра по правилу — вопрос модели), `partners` — вторые
-    /// половины разделённой улицы, `on_ring` — дуга ли дорога кольца
-    /// (`roads/rings.rs`): узел кольца зебры по правилу не получает.
-    /// Узел слияния без других проезжих частей (`merges` — `roads/merges.rs`)
-    /// — не перекрёсток: улица его проходит, линии не рвутся, осевая
-    /// продолжения у него сплошная.
-    #[allow(clippy::too_many_arguments)]
+    /// Краска узлов по подготовленным дорогам `prepared` (`roads/drawn.rs`),
+    /// по оси ленты (`Axis::Ribbon` — стежки тоже узлы). `base` — разрывы
+    /// асфальта (`junctions::marking_breaks`), `paved` — замощённые острова
+    /// треугольников узлов (`corners::small_islands`). Из `Drawn` берутся:
+    /// тротуар по тегу (`sidewalk_mapped` — `sidewalk=*` независимо от
+    /// `RoadStyle::sidewalks`: ручка прячет ленту, а зебра по правилу —
+    /// вопрос модели), вторые половины разделённой улицы (`partners`), дуги
+    /// колец (`on_ring`, `roads/rings.rs` — узел кольца зебры по правилу не
+    /// получает) и слияния (`merges`, `roads/merges.rs`): узел слияния без
+    /// других проезжих частей — не перекрёсток, улица его проходит, линии не
+    /// рвутся, осевая продолжения у него сплошная.
     pub fn new(
-        drawn: &[&RoadLine],
-        paths: &[impl AsRef<[Vec2]>],
+        prepared: &Drawn,
         base: &[Vec<Break>],
-        targets: &[[Option<StitchTarget>; 2]],
         map: &MapData,
         paved: &[Vec<Vec2>],
-        merges: &[Merge],
         style: NodePaintStyle,
-        sidewalk: impl Fn(usize) -> bool,
-        partners: impl Fn(usize) -> Vec<Partner>,
-        on_ring: impl Fn(usize) -> bool,
     ) -> Self {
+        let drawn = prepared.roads();
+        let paths = prepared.axes(Axis::Ribbon);
+        let (drawn, paths) = (drawn.as_slice(), paths.as_slice());
+        let merges = &prepared.merges().list;
+        let sidewalk = |road: usize| prepared.sidewalk_mapped(road).is_some();
+        let partners = |road: usize| prepared.partners(road).collect::<Vec<Partner>>();
+        let on_ring = |road: usize| prepared.on_ring(road);
+        assert_eq!(base.len(), drawn.len(), "разрывы — на каждую дорогу карты");
         let mut paint = Self {
             breaks: base.to_vec(),
             asphalt: base.to_vec(),
@@ -413,10 +414,7 @@ impl NodePaint {
             solid: vec![Vec::new(); drawn.len()],
             ..Self::default()
         };
-        if drawn.len() != paths.len() || base.len() != drawn.len() {
-            return paint;
-        }
-        let nodes = with_stitches(drawn, is_carriageway, targets);
+        let nodes = with_stitches(drawn, is_carriageway, &prepared.stitches().targets);
         let merged = |node: &SharedNode| {
             merges.iter().find(|merge| {
                 merge.pure

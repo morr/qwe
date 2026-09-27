@@ -3,6 +3,7 @@ use crate::map::osm::RoadNode;
 use crate::map::osm::fixture::street;
 use crate::map::roads::junctions::marking_breaks;
 use crate::map::roads::network::RoadNetwork;
+use crate::map::roads::network::pairs::PairRun;
 
 const NODE: Vec2 = Vec2::new(100.0, 0.0);
 
@@ -46,22 +47,8 @@ fn paint_of(roads: Vec<RoadLine>, marks: Vec<RoadNode>, style: NodePaintStyle) -
         ..default()
     };
     map.network = RoadNetwork::new(&map.roads);
-    let drawn: Vec<&RoadLine> = map.roads.iter().collect();
-    let paths: Vec<Vec<Vec2>> = map.roads.iter().map(|road| road.points.clone()).collect();
     let base = marking_breaks(&map.roads, is_carriageway, &[]).breaks;
-    NodePaint::new(
-        &drawn,
-        &paths,
-        &base,
-        &[],
-        &map,
-        &[],
-        &[],
-        style,
-        |_| true,
-        |_| Vec::new(),
-        |_| false,
-    )
+    NodePaint::new(&Drawn::for_test(&map), &base, &map, &[], style)
 }
 
 /// Разрывы дороги, что не тупики.
@@ -155,26 +142,10 @@ fn a_ring_node_gets_no_rule_zebras() {
     let roads = vec![through(Highway::Tertiary), side()];
     let mut map = MapData { roads, ..default() };
     map.network = RoadNetwork::new(&map.roads);
-    let drawn: Vec<&RoadLine> = map.roads.iter().collect();
-    let paths: Vec<Vec<Vec2>> = map.roads.iter().map(|road| road.points.clone()).collect();
     let base = marking_breaks(&map.roads, is_carriageway, &[]).breaks;
-    let paint = |on_ring: fn(usize) -> bool| {
-        NodePaint::new(
-            &drawn,
-            &paths,
-            &base,
-            &[],
-            &map,
-            &[],
-            &[],
-            EVERYTHING,
-            |_| true,
-            |_| Vec::new(),
-            on_ring,
-        )
-    };
-    assert_eq!(paint(|_| false).zebras.len(), 1);
-    assert!(paint(|road| road == 0).zebras.is_empty());
+    let paint = |drawn: &Drawn| NodePaint::new(drawn, &base, &map, &[], EVERYTHING);
+    assert_eq!(paint(&Drawn::for_test(&map)).zebras.len(), 1);
+    assert!(paint(&Drawn::for_test(&map).with_ring(0)).zebras.is_empty());
 }
 
 /// Перемычка между двумя узлами короче [`RULE_ZEBRA_ROOM`] за кромкой (ветка
@@ -283,36 +254,14 @@ fn a_stitched_side_street_is_an_arm_of_the_junction() {
         ..default()
     };
     map.network = RoadNetwork::new(&map.roads);
-    let at = Vec2::new(90.0, 0.0);
-    let targets = [
-        [None, None],
-        [
-            None,
-            Some(StitchTarget {
-                road: 0,
-                segment: 0,
-                at,
-            }),
-        ],
-    ];
-    let drawn: Vec<&RoadLine> = map.roads.iter().collect();
-    let mut paths: Vec<Vec<Vec2>> = map.roads.iter().map(|road| road.points.clone()).collect();
+    let drawn = Drawn::for_test(&map);
     // стежок — до оси улицы
-    paths[1].push(at);
-    let base = marking_breaks(&map.roads, is_carriageway, &targets).breaks;
-    let paint = NodePaint::new(
-        &drawn,
-        &paths,
-        &base,
-        &targets,
-        &map,
-        &[],
-        &[],
-        EVERYTHING,
-        |_| true,
-        |_| Vec::new(),
-        |_| false,
-    );
+    assert_eq!(drawn.stitched_end(1), [false, true]);
+    let at = Vec2::new(90.0, 0.0);
+    let ribbon = drawn.axis(1, Axis::Ribbon);
+    assert!(ribbon[ribbon.len() - 1].distance(at) < 1e-3, "{ribbon:?}");
+    let base = marking_breaks(&map.roads, is_carriageway, &drawn.stitches().targets).breaks;
+    let paint = NodePaint::new(&drawn, &base, &map, &[], EVERYTHING);
     assert_eq!(paint.junctions.len(), 1);
     assert_eq!(paint.junctions[0].leading, vec![0]);
     assert!(gaps(&paint, 0).is_empty(), "{:?}", paint.breaks[0]);
@@ -358,22 +307,8 @@ fn a_signalled_t_crosses_the_walked_arm_even_without_a_second_walked_street() {
             ..default()
         };
         map.network = RoadNetwork::new(&map.roads);
-        let drawn: Vec<&RoadLine> = map.roads.iter().collect();
-        let paths: Vec<Vec<Vec2>> = map.roads.iter().map(|road| road.points.clone()).collect();
         let base = marking_breaks(&map.roads, is_carriageway, &[]).breaks;
-        NodePaint::new(
-            &drawn,
-            &paths,
-            &base,
-            &[],
-            &map,
-            &[],
-            &[],
-            EVERYTHING,
-            |index| drawn[index].sidewalks.contains(&true),
-            |_| Vec::new(),
-            |_| false,
-        )
+        NodePaint::new(&Drawn::for_test(&map), &base, &map, &[], EVERYTHING)
     };
     let signalled = paint(vec![RoadNode {
         pos: NODE,
@@ -723,27 +658,23 @@ fn divided_street_crossing_apart(paved: bool, apart: f32) -> NodePaint {
         .points
         .splice(1..1, [Vec2::new(west, 0.0), Vec2::new(east, 0.0)]);
     map.network = RoadNetwork::new(&map.roads);
-    let drawn: Vec<&RoadLine> = map.roads.iter().collect();
-    let paths: Vec<Vec<Vec2>> = map.roads.iter().map(|road| road.points.clone()).collect();
     let base = marking_breaks(&map.roads, is_carriageway, &[]).breaks;
-    let partner = |road: usize| vec![Partner { road, paved }];
-    NodePaint::new(
-        &drawn,
-        &paths,
-        &base,
-        &[],
-        &map,
-        &[],
-        &[],
-        EVERYTHING,
-        |_| true,
-        |road| match road {
-            1 => partner(2),
-            2 => partner(1),
-            _ => Vec::new(),
-        },
-        |_| false,
-    )
+    // половины — пара на всю длину, мощёная или с газоном, как скажет тест
+    let run = |partner: usize| {
+        vec![PairRun {
+            from: 0.0,
+            to: 160.0,
+            partner,
+            left: true,
+            gap: apart - 7.6,
+            paved,
+            tram: false,
+        }]
+    };
+    let drawn = Drawn::for_test(&map)
+        .with_pairs(1, run(2))
+        .with_pairs(2, run(1));
+    NodePaint::new(&drawn, &base, &map, &[], EVERYTHING)
 }
 
 /// Связка вливается в улицу под острым углом: у точки узла, откуда меряется
@@ -804,22 +735,8 @@ fn an_arm_across_a_paved_island_is_a_link() {
             ..default()
         };
         map.network = RoadNetwork::new(&map.roads);
-        let drawn: Vec<&RoadLine> = map.roads.iter().collect();
-        let paths: Vec<Vec<Vec2>> = map.roads.iter().map(|road| road.points.clone()).collect();
         let base = marking_breaks(&map.roads, is_carriageway, &[]).breaks;
-        NodePaint::new(
-            &drawn,
-            &paths,
-            &base,
-            &[],
-            &map,
-            paved,
-            &[],
-            EVERYTHING,
-            |_| true,
-            |_| Vec::new(),
-            |_| false,
-        )
+        NodePaint::new(&Drawn::for_test(&map), &base, &map, paved, EVERYTHING)
     };
     let link = |paint: &NodePaint| {
         paint.junctions[0]

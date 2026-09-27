@@ -72,6 +72,8 @@ pub struct Drawn<'m> {
     across_median: Vec<bool>,
     /// Ручка «Sidewalks»: рисуется ли тротуар вовсе ([`Self::sidewalk_drawn`]).
     sidewalks: bool,
+    /// Дорога — дуга кольца (`roads/rings.rs`), по индексу.
+    on_ring: Vec<bool>,
     /// Стоянки, перед которыми карман не нужен (`roads/pockets.rs`).
     lots: KerbLots<'m>,
 }
@@ -182,11 +184,15 @@ impl<'m> Drawn<'m> {
         let drawn: Vec<&RoadLine> = roads.iter().map(Cow::as_ref).collect();
         let tapers = Tapers::new(&drawn, &map.network, &nodes, shape.taper());
         assert_eq!(axes.paths.len(), count, "ось на каждую дорогу карты");
+        let on_ring = (0..count)
+            .map(|road| axes.rings.of(road).is_some())
+            .collect();
         Self {
             roads,
             crossings,
             nodes,
             axes,
+            on_ring,
             stitches: Stitches {
                 ends: vec![[None; 2]; count],
                 targets: vec![[None; 2]; count],
@@ -203,7 +209,7 @@ impl<'m> Drawn<'m> {
 
     /// Каркас теста: оси по точкам OSM (без сглаживания), тротуары
     /// рисуются. Без сети карты клиньев и слияний нет — их кладёт сам тест
-    /// ([`Self::with_taper`], [`Self::with_pair`]).
+    /// ([`Self::with_taper`], [`Self::with_pairs`], [`Self::with_ring`]).
     #[cfg(test)]
     pub fn for_test(map: &'m MapData) -> Self {
         let shape = RoadShape {
@@ -234,10 +240,17 @@ impl<'m> Drawn<'m> {
         self
     }
 
-    /// Кусок пары на дороге `road` — как если бы его нашли `Pairs`.
+    /// Куски пары на дороге `road` — вместо найденных `Pairs`.
     #[cfg(test)]
-    pub fn with_pair(mut self, road: usize, run: super::network::pairs::PairRun) -> Self {
-        self.axes.pairs.runs[road].push(run);
+    pub fn with_pairs(mut self, road: usize, runs: Vec<super::network::pairs::PairRun>) -> Self {
+        self.axes.pairs.runs[road] = runs;
+        self
+    }
+
+    /// Дорога `road` — дуга кольца, каким бы ни был её контур.
+    #[cfg(test)]
+    pub fn with_ring(mut self, road: usize) -> Self {
+        self.on_ring[road] = true;
         self
     }
 
@@ -292,7 +305,7 @@ impl<'m> Drawn<'m> {
 
     /// Дорога — дуга кольца (`roads/rings.rs`).
     pub fn on_ring(&self, index: usize) -> bool {
-        self.axes.rings.of(index).is_some()
+        self.on_ring[index]
     }
 
     /// Стежки — цели их узлы краски (`junctions::marking_breaks`).
