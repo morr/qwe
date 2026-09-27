@@ -344,7 +344,11 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     to the roads), and then by bridge curbs, the navmesh's bridge corridors and the cars.
     Paths keep their class width (3.5). The gallery parses each cut window on its own, so
     a street there is inferred from the window's ways only.
-  - **Tapers** (`tapers::Tapers`, in `mesh_roads`) — where a way ends and another goes on
+  - **Tapers** (`tapers::Tapers`, built **once** per `mesh_roads` by `roads::Drawn` over
+    the roads as drawn — the ribbon, the paint wedges and the kerb pockets' row breaks
+    (`car_clearings(roads, &Tapers)`) all read that one value; the cars, the bench and
+    the car gallery have no `Drawn` and build theirs over the OSM roads,
+    `Tapers::of_map`) — where a way ends and another goes on
     from the node collinearly — a joint of one street or a continuation across streets
     (above) — and their widths differ by 0.1 m or more, the wider way's drawn path is **cut** at that end
     by `RoadShape::taper` (5–20, default 10; `Tapers::new(drawn, network, nodes, per_meter)`
@@ -940,13 +944,18 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   the drawn street axis — **The street axis** below). All four
   are counted in the `road meshing:` line, with the time spent before the first ribbon.
   - **`Drawn`** (`roads/drawn.rs`) — the prepared roads as one value, built once at the
-    top of `mesh_roads` (`Drawn::new(map, shape)`) instead of the locals that used to open
-    it: `osm` (the map's roads as they are — whatever finds a node by `node_key`, and the
-    kerb-pocket seed, reads these), `nodes` (`RoadNodes`), `axes` (`street_axes`: paths,
-    pairs, rings) and `crossings` (the substitutions — driveway crossings, then ring arcs;
-    `roads()` lays them over `osm` by index, the later one winning). Every vector is
-    indexed by `map.roads`. The fields are still open to the `roads` submodules, whose
-    signatures did not change — they take `&drawn.roads()`, `&drawn.axes.paths`. Not to be
+    top of `mesh_roads` (`Drawn::new(map, style, shape)`) instead of the locals that used
+    to open it: `osm` (the map's roads as they are — whatever finds a node by `node_key`,
+    and the kerb-pocket seed, reads these), `nodes` (`RoadNodes`), `axes` (`street_axes`:
+    paths, pairs, rings), `crossings` (the substitutions — driveway crossings, then ring
+    arcs; `roads()` lays them over `osm` by index, the later one winning), `stitches`,
+    `tapers` (the one taper pass of the layer, **Tapers** above), `merges`,
+    `across_median`, and the stitched axes (`stitched()` — a copy only on a road a stitch
+    touched, the plain axis elsewhere). Three axes, then: the OSM points, the nodal
+    `axes.paths` (kerb returns, merges, pockets, tram bands) and the stitched one (ribbon,
+    paint, turn paths). Every vector is indexed by `map.roads`. The fields are still open
+    to the `roads` submodules, whose signatures did not change — they take
+    `&drawn.roads()`, `&drawn.axes.paths`. Not to be
     confused with `network::DrawnEdges`, the outer edges the stitches measure against.
     **The base marking breaks stay on the OSM roads**, not on `roads()`: a ring arc drawn
     at its ring's section would move the base break on an approach

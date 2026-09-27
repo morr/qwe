@@ -1130,44 +1130,22 @@ pub fn mesh_roads(
 
     // Дороги так, как они рисуются (`roads/drawn.rs`): переезд через тротуар —
     // асфальтом проезда, а не песочной дорожкой, дуга кольца — сечением всего
-    // кольца; узлы и оси улиц — там же.
-    let prepared = Drawn::new(map, &shape);
+    // кольца; узлы, оси улиц, стежки, клинья и слияния — там же.
+    let prepared = Drawn::new(map, &style, &shape);
     let (nodes, axes) = (&prepared.nodes, &prepared.axes);
     let paths = &axes.paths;
     let crossings = &prepared.crossings;
     let drawn = prepared.roads();
-    let stitches = network::stitches(&drawn, map, nodes, |road| drawn_sidewalk(&style, road));
+    let (stitches, tapers, merges) = (&prepared.stitches, &prepared.tapers, &prepared.merges);
+    let across_median = &prepared.across_median;
     // перекрёстки, стежки среди них: по ним рвётся краска и гаснет колея
     // асфальта — колея есть и с выключенной разметкой, так что считаются они
-    // всегда
+    // всегда. По дорогам карты, не как рисуются (`roads/drawn.rs`)
     let junctions = junctions::marking_breaks(roads, is_carriageway, &stitches.targets);
-    // клинья между сечениями улиц
-    let tapers = tapers::Tapers::new(&drawn, &map.network, nodes, shape.taper());
-    // Кусок поперечной улицы в проёме разделительной — между половинами одной
-    // пары — тротуара не несёт: его полоса светлым пятном лежала посреди
-    // перекрёстка. Торцы узлов — точки OSM, и ось их не двигает.
-    let across_median: Vec<bool> = paths
-        .iter()
-        .enumerate()
-        .map(|(index, path)| {
-            let (Some(&start), Some(&end)) = (path.first(), path.last()) else {
-                return false;
-            };
-            polyline_length(path) < MEDIAN_CROSSING_MAX
-                && nodes.roads_at(start).iter().any(|&half| {
-                    half != index
-                        && axes.pairs.runs[half].iter().any(|run| {
-                            run.partner != index && nodes.roads_at(end).contains(&run.partner)
-                        })
-                })
-        })
-        .collect();
     let sidewalks_of =
         |index: usize| drawn_sidewalk(&style, drawn[index]).filter(|_| !across_median[index]);
     // длина улицы у начала каждого way — по ней идут штрихи краски
     let stations = paint::street_stations(&map.network, paths);
-    // разделённая улица, сходящаяся в обычную: узел не перекрёсток
-    let merges = merges::merges(&drawn, paths, nodes, &axes.pairs.runs, &map.network);
     // Скругления кладутся раньше всех лент своего слоя: лента поверх кроет
     // скругление, а не наоборот, и разметка остаётся целой.
     let (kerb_returns, islands) = {
@@ -1235,7 +1213,7 @@ pub fn mesh_roads(
     }
     // карманы — по тому же ответу и тем же разрывам, что ряд машин
     // (`map::cars`): асфальт за кромкой и тротуар, отодвинутый за него
-    let row_breaks = pockets::row_breaks(roads, &map.network, &map.road_nodes, shape.taper());
+    let row_breaks = pockets::row_breaks(roads, tapers, &map.road_nodes);
     let lots = pockets::KerbLots::new(&map.parking);
     let kerbsides = pockets::all_kerbsides(roads, paths, &row_breaks, map.traffic_side, &lots);
     let mut kerb_pockets = 0;
@@ -1299,20 +1277,8 @@ pub fn mesh_roads(
         }
         turning_circles += 1;
     }
-    // стежок до дороги, до которой OSM торец не довёл (`roads/network.rs`)
-    let stitched: Vec<Cow<[Vec2]>> = paths
-        .iter()
-        .enumerate()
-        .map(|(index, path)| {
-            if stitches.touches(index) {
-                let mut points = path.to_vec();
-                stitches.apply(index, &mut points);
-                Cow::Owned(points)
-            } else {
-                Cow::Borrowed(path.as_ref())
-            }
-        })
-        .collect();
+    // оси со стежками — до дороги, до которой OSM торец не довёл
+    let stitched = prepared.stitched();
     // краска узлов (`roads/node_paint.rs`): где линии рвутся, а где главная
     // проходит узел, зебры, стоп-линии, карманы — по той же оси, что и линии.
     // Строится и без разметки: ведущая дорога узла и плечи для траекторий —
@@ -1553,7 +1519,7 @@ pub fn mesh_roads(
             let wedges = if road.bridge {
                 [None; 2]
             } else {
-                paint::wedge_ends(points, &tapers, &drawn, index, map.traffic_side)
+                paint::wedge_ends(points, tapers, &drawn, index, map.traffic_side)
             };
             painter.paint(
                 road,

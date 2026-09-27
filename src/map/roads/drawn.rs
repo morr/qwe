@@ -6,12 +6,17 @@
 //! Все векторы — по индексу в `map.roads`, длины равны. Ни одна правка
 //! `RoadLine::points` не трогает: навмеш, двери и деревья видят OSM как есть.
 
+use std::borrow::Cow;
+
 use bevy::prelude::*;
 
 use super::axis::{self, Axes};
-use super::network::{self, RoadNodes};
-use super::ring_arcs;
+use super::merges::{self, Merges};
+use super::network::{self, RoadNodes, Stitches};
 use super::shape::RoadShape;
+use super::tapers::Tapers;
+use super::{MEDIAN_CROSSING_MAX, RoadStyle, drawn_sidewalk, ring_arcs};
+use crate::map::osm::model::polyline_length;
 use crate::map::osm::{MapData, RoadClass, RoadLine};
 
 /// Подготовленные дороги. Поля пока открыты подмодулям `roads` — сигнатуры
@@ -28,10 +33,24 @@ pub struct Drawn<'m> {
     /// (`network::driveway_crossings`), дуга кольца — сечением всего кольца
     /// ([`ring_arcs`]). Порядок — порядок подмены: поздняя побеждает.
     pub crossings: Vec<(usize, RoadLine)>,
+    /// Стежки висячих торцов (`network::stitches`) — по дорогам как рисуются.
+    pub stitches: Stitches,
+    /// Ось со стежками — только у дорог, которых стежок коснулся; прочие
+    /// рисуются по своей оси ([`Self::stitched`]).
+    stitched: Vec<Option<Vec<Vec2>>>,
+    /// Клинья между сечениями улиц (`roads/tapers.rs`) — **единственный**
+    /// расчёт на `mesh_roads`: карманы и ряд машин берут его же.
+    pub tapers: Tapers,
+    /// Слияния разделённой улицы в обычную (`roads/merges.rs`).
+    pub merges: Merges,
+    /// Кусок поперечной улицы в проёме разделительной — между половинами
+    /// одной пары: тротуара он не несёт, его полоса светлым пятном лежала
+    /// посреди перекрёстка.
+    pub across_median: Vec<bool>,
 }
 
 impl<'m> Drawn<'m> {
-    pub fn new(map: &'m MapData, shape: &RoadShape) -> Self {
+    pub fn new(map: &'m MapData, style: &RoadStyle, shape: &RoadShape) -> Self {
         let roads = map.roads.as_slice();
         let nodes = RoadNodes::new(roads);
         // ось по улице целиком, не по way (`roads/axis.rs`); у переезда та же
@@ -49,22 +68,78 @@ impl<'m> Drawn<'m> {
             })
             .chain(ring_arcs(roads, &axes.rings))
             .collect();
+        let drawn = substituted(roads, &crossings);
+        let paths = &axes.paths;
+        let stitches = network::stitches(&drawn, map, &nodes, |road| drawn_sidewalk(style, road));
+        let tapers = Tapers::new(&drawn, &map.network, &nodes, shape.taper());
+        // Торцы узлов — точки OSM, и ось их не двигает.
+        let across_median: Vec<bool> = paths
+            .iter()
+            .enumerate()
+            .map(|(index, path)| {
+                let (Some(&start), Some(&end)) = (path.first(), path.last()) else {
+                    return false;
+                };
+                polyline_length(path) < MEDIAN_CROSSING_MAX
+                    && nodes.roads_at(start).iter().any(|&half| {
+                        half != index
+                            && axes.pairs.runs[half].iter().any(|run| {
+                                run.partner != index && nodes.roads_at(end).contains(&run.partner)
+                            })
+                    })
+            })
+            .collect();
+        // разделённая улица, сходящаяся в обычную: узел не перекрёсток
+        let merges = merges::merges(&drawn, paths, &nodes, &axes.pairs.runs, &map.network);
+        // стежок до дороги, до которой OSM торец не довёл
+        // (`roads/network/mod.rs`)
+        let stitched = paths
+            .iter()
+            .enumerate()
+            .map(|(index, path)| {
+                stitches.touches(index).then(|| {
+                    let mut points = path.to_vec();
+                    stitches.apply(index, &mut points);
+                    points
+                })
+            })
+            .collect();
         Self {
             osm: roads,
             nodes,
             axes,
             crossings,
+            stitches,
+            stitched,
+            tapers,
+            merges,
+            across_median,
         }
     }
 
     /// Дороги как рисуются, по индексу `map.roads`: подмены на своих местах.
     pub fn roads(&self) -> Vec<&RoadLine> {
-        let mut drawn: Vec<&RoadLine> = self.osm.iter().collect();
-        for (index, crossing) in &self.crossings {
-            drawn[*index] = crossing;
-        }
-        drawn
+        substituted(self.osm, &self.crossings)
     }
+
+    /// Оси со стежками — лента, краска, траектории: у тронутой стежком дороги
+    /// своя копия, у прочих — их ось из [`Axes::paths`].
+    pub fn stitched(&self) -> Vec<Cow<'_, [Vec2]>> {
+        self.stitched
+            .iter()
+            .zip(&self.axes.paths)
+            .map(|(stitched, path)| Cow::Borrowed(stitched.as_deref().unwrap_or(path)))
+            .collect()
+    }
+}
+
+/// Дороги карты с подменами на своих местах.
+fn substituted<'a>(roads: &'a [RoadLine], crossings: &'a [(usize, RoadLine)]) -> Vec<&'a RoadLine> {
+    let mut drawn: Vec<&RoadLine> = roads.iter().collect();
+    for (index, crossing) in crossings {
+        drawn[*index] = crossing;
+    }
+    drawn
 }
 
 #[cfg(test)]
@@ -83,7 +158,7 @@ mod tests {
             vec![Vec2::new(50.0, 0.0), Vec2::new(50.0, 80.0)],
             8.0,
         ));
-        let drawn = Drawn::new(&map, &RoadShape::default());
+        let drawn = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
         assert_eq!(drawn.osm.len(), 2);
         assert_eq!(drawn.roads().len(), 2);
         assert_eq!(drawn.axes.paths.len(), 2);

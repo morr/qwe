@@ -15,9 +15,9 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
 use super::junctions::{self, MarkingBreaks, node_key};
-use super::network::RoadNetwork;
+use super::is_carriageway;
 use super::node_paint::ZEBRA_LENGTH;
-use super::{is_carriageway, tapers};
+use super::tapers::{self, Tapers};
 use crate::map::along::{arclengths, nearest_on_path, place_on_path};
 use crate::map::grid::Grid;
 use crate::map::meshing::{Break, miter_offsets};
@@ -453,21 +453,16 @@ fn sparse_pockets(runs: Vec<Pocket>, road: &RoadLine, side: usize) -> Vec<Pocket
 
 /// Разрывы ряда у бордюра по дорогам: перекрёстки (без стежков — ряд их не
 /// видит), переходы и клинья между сечениями, где бордюр ближе к оси. Один
-/// расчёт на ряд машин и на ленту с карманами; `taper` — длина клина на метр
-/// разницы ширин (ручка `Taper`), `nodes` — точки дорог карты, из которых
-/// берутся переходы.
+/// расчёт на ряд машин и на ленту с карманами; `tapers` — клинья карты (у
+/// ленты — те, что у `roads::Drawn`, у машин — [`Tapers::of_map`]), `nodes` —
+/// точки дорог карты, из которых берутся переходы.
 ///
 /// В перекрёстках участвуют и проезды, не только улицы разметки: во двор, к
 /// стоянке съезжают через ряд, и машина на съезде его перегораживала (Тула,
 /// Ф. Энгельса у 3976, 1236).
-pub fn row_breaks(
-    roads: &[RoadLine],
-    network: &RoadNetwork,
-    nodes: &[RoadNode],
-    taper: f32,
-) -> MarkingBreaks {
+pub fn row_breaks(roads: &[RoadLine], tapers: &Tapers, nodes: &[RoadNode]) -> MarkingBreaks {
     let mut found = junctions::marking_breaks(roads, is_row_participant, &[]);
-    for (road, clearing) in tapers::car_clearings(roads, network, taper) {
+    for (road, clearing) in tapers::car_clearings(roads, tapers) {
         found.breaks[road].push(clearing);
     }
     for (road, crossing) in crossing_breaks(roads, nodes) {

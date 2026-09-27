@@ -1466,7 +1466,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   axis, like the ribbon):
   - **Drawn** (`map/roads/drawn.rs`) — the **prepared roads**: the map's roads as they
     are drawn (driveway crossings as asphalt, ring arcs at the ring's section), their
-    shared nodes and street axes, built once per `mesh_roads` and indexed by `map.roads`.
+    shared nodes and street axes, stitches, tapers and merges, built once per
+    `mesh_roads` and indexed by `map.roads`.
     The OSM roads stay beside it (`Drawn::osm`) — node keys and the base marking breaks
     read those. Not the same thing as the stitches' `DrawnEdges`.
   - **Pinned nodes** — Chaikin smoothing never cuts a shared node, so a side street

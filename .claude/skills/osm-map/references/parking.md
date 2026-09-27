@@ -706,7 +706,9 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
     one registration by the rule under **When a layer rebuilds** in `SKILL.md`; the settled
     `RoadShapeOnMap` is in there because the row is walked along the **same street axis**
     the ribbon is drawn from (`axis::street_axes(.., &shape)`, never the raw OSM points)
-    and breaks at the same taper clearings (`pockets::row_breaks(.., shape.taper())`), so
+    and breaks at the same taper clearings (`pockets::row_breaks(.., &Tapers::of_map(..,
+    shape.taper()), ..)` — over the OSM roads; the ribbon's kerb pockets pass
+    `roads::Drawn`'s own `tapers` instead, equal on every cached city), so
     the curve tolerance and the taper move the cars with the asphalt
     (`mesh_cars(bucket, style, shape, map, layout)`). The invisible case
     takes the same road as the far zoom bucket, and since the seam both of them live in

@@ -43,6 +43,7 @@ use crate::map::roads::junctions::MarkingBreaks;
 use crate::map::roads::network::{RoadNetwork, RoadNodes};
 use crate::map::roads::pockets::{self, KerbLots, Kerbside, POCKET_WIDTH};
 use crate::map::roads::shape::{RoadShape, RoadShapeOnMap};
+use crate::map::roads::tapers::Tapers;
 use crate::map::seed::{Lcg, seed_from_point};
 use crate::map::shadow;
 use crate::map::surface::{LayerCost, LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
@@ -231,7 +232,8 @@ pub fn measure_cars(map: &MapData) -> (usize, Vec<LayerCost>) {
     // карты: иначе строки `breaks` и `cars` мерили бы не игровой ряд
     let shape = RoadShape::default();
     let started = std::time::Instant::now();
-    let junctions = pockets::row_breaks(&map.roads, &map.network, &map.road_nodes, shape.taper());
+    let tapers = Tapers::of_map(&map.roads, &map.network, shape.taper());
+    let junctions = pockets::row_breaks(&map.roads, &tapers, &map.road_nodes);
     let breaks_took = started.elapsed();
     let started = std::time::Instant::now();
     let districts = Districts::new(&map.buildings);
@@ -411,7 +413,8 @@ pub fn mesh_cars(
     // надо было прежде, чем его заводить. Доли, а не миллисекунды: абсолютное
     // время зависит от App Nap, перемеряет его `measure_cars` из
     // `examples/bench/map_meshing` (он печатает обе строки — `breaks` и `cars`)
-    let junctions = pockets::row_breaks(&map.roads, &map.network, &map.road_nodes, shape.taper());
+    let tapers = Tapers::of_map(&map.roads, &map.network, shape.taper());
+    let junctions = pockets::row_breaks(&map.roads, &tapers, &map.road_nodes);
     let breaks_took = started.elapsed();
     // застройка вокруг — тем же проходом и с тем же сроком жизни, что и
     // разрывы: индекс на 7.6 тысячи домов дешевле, чем повод его кешировать
@@ -470,7 +473,8 @@ pub fn cars_mesh(
 ) -> MeshBuilder {
     // разрывы — игровые (`row_breaks`: проезды тоже рвут ряд); сети и точек
     // дорог у витрины нет, как нет их и у её осей (`drawn_axes`)
-    let junctions = pockets::row_breaks(roads, &RoadNetwork::default(), &[], shape.taper());
+    let tapers = Tapers::of_map(roads, &RoadNetwork::default(), shape.taper());
+    let junctions = pockets::row_breaks(roads, &tapers, &[]);
     let districts = Districts::new(&[]);
     mesh_bodies(
         &park_cars(
