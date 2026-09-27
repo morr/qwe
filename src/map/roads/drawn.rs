@@ -348,6 +348,18 @@ impl<'m> Drawn<'m> {
             .filter(|_| !self.across_median[index])
     }
 
+    /// Тротуар, который рисуется **с этой стороны** `[слева, справа]` по ходу
+    /// точек: [`Self::sidewalk_drawn`] там, где его ставит тег
+    /// ([`SidewalkProfile::on`](crate::map::osm::model::SidewalkProfile::on)).
+    /// Карта, ручка, проём пары и сторона — одним ответом карману, скруглению
+    /// в узле и кромке слияния. Сторону пары он не снимает: там её снимает
+    /// сам потребитель по [`Pairs::beside`] — у скругления со слаком, у ленты
+    /// кусками ([`Pairs::band_pieces`]).
+    pub fn sidewalk_on(&self, index: usize, side: usize) -> Option<f32> {
+        self.sidewalk_drawn(index)
+            .filter(|_| self.roads[index].sidewalk().sides()[side])
+    }
+
     /// Тротуар, который у дороги есть **на карте**
     /// ([`SidewalkProfile::any`](crate::map::osm::model::SidewalkProfile::any)),
     /// ручка не смотрит: зебра по правилу — вопрос модели, как карман, а
@@ -363,6 +375,8 @@ impl<'m> Drawn<'m> {
     /// точек: `width / 2` плюс тротуар, если он рисуется и стоит с этой
     /// стороны по тегу (`sidewalk=*`); иначе голая кромка. Считалась в
     /// шести местах — клин тротуара, скругления, кромки слияний, карманы.
+    /// Проём пары не смотрит, в отличие от [`Self::sidewalk_on`]: клин лежит
+    /// на теле улицы, а не на куске между половинами.
     pub fn band_half(&self, index: usize, side: usize) -> f32 {
         let road = &self.roads[index];
         road.width / 2.0 + self.by_style(road.sidewalk().on(side)).unwrap_or(0.0)
@@ -598,5 +612,19 @@ mod tests {
         assert_eq!(hidden.sidewalk_drawn(0), None);
         assert_eq!(hidden.sidewalk_mapped(0), Some(band));
         assert_eq!(hidden.band_half(0, 0), 4.0);
+    }
+
+    #[test]
+    fn sidewalk_on_answers_the_map_the_knob_the_median_gap_and_the_side() {
+        let mut map = crossed_avenue(0.6);
+        map.roads[2].sidewalks = [SidewalkSide::None, SidewalkSide::Inferred];
+        let drawn = Drawn::for_test(&map);
+        let band = drawn.sidewalk_drawn(2).expect("подход с юга с тротуаром");
+        assert_eq!(drawn.sidewalk_on(2, 0), None, "по тегу слева нет");
+        assert_eq!(drawn.sidewalk_on(2, 1), Some(band));
+        assert_eq!(drawn.sidewalk_on(3, 0), None, "кусок в проёме пары");
+        assert_eq!(drawn.sidewalk_on(3, 1), None);
+        let hidden = Drawn::for_test(&map).with_sidewalks(false);
+        assert_eq!(hidden.sidewalk_on(2, 1), None, "ручка прячет");
     }
 }

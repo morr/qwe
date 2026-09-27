@@ -1482,7 +1482,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     are drawn (driveway crossings as asphalt, ring arcs at the ring's section), their
     shared nodes and street axes, stitches, tapers and merges, built once per
     `mesh_roads` and indexed by `map.roads`; the fields are closed, consumers ask
-    (`sidewalk_drawn`, `band_half`, `taper_ends`, …; the pair side — through
+    (`sidewalk_drawn`, per side `sidewalk_on` / `band_half`, `taper_ends`, …; the pair side — through
     `pairs()`). The OSM roads stay
     beside it in `MapData` — node keys and the base marking breaks read those. Not the
     same thing as the stitches' `DrawnEdges`.

@@ -705,7 +705,7 @@ pub fn mesh_roads(
             &drawn,
             &nodal,
             &map.network,
-            |road| prepared.sidewalk_drawn(road),
+            |road, side| prepared.sidewalk_on(road, side),
             shape.taper(),
         );
         for band in bands {
@@ -729,10 +729,8 @@ pub fn mesh_roads(
     let mut kerb_pockets = 0;
     for (index, road) in roads.iter().enumerate() {
         let half = road.width / 2.0;
-        let sidewalk = prepared.sidewalk_drawn(index);
         for kerbside in &kerbsides[index] {
-            let sidewalk =
-                sidewalk.filter(|_| road.sidewalk().sides()[usize::from(kerbside.side < 0.0)]);
+            let sidewalk = prepared.sidewalk_on(index, usize::from(kerbside.side < 0.0));
             for pocket in &kerbside.pockets {
                 let outline = |outer: f32| {
                     pockets::outline(
