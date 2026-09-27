@@ -308,13 +308,16 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     no ring in it — `RoadStyle::crossings`) and a **stop line** (where a zebra, signals,
     a sign or a tertiary+ street call for it) across the lanes
     coming in (dashed for give-way —
-    `RoadStyle::stop_lines`); the halves of a divided street share one zebra line — one
+    `RoadStyle::stop_lines`); at a **ring entry** the line is a give-way line **along the
+    ring's edge**, between where its two ends leave the ring's asphalt, and a ring road
+    itself never gets one; the halves of a divided street share one zebra line — one
     plank across both over a paved median, one zebra each to its kerb over a lawn. A
     marked crossing elsewhere is a zebra with a gap in the lines. A **pocket**: a wide
     arm's lines with no room on the narrower arm across the junction end at its edge.
     A **stitch** (the network's pulled loose end) is a junction node like a shared one.
     The **leading road** of a junction — passing, and yielding by rank to nobody (a ring
-    always leads) — keeps its asphalt ruts through it.
+    road always leads, even an arc that ends there; an approach never leads a ring node)
+    — keeps its asphalt ruts through it.
   - **Turn paths** (`map/roads/turns.rs`) — a lane-to-lane Bézier curve for every allowed
     maneuver through a junction (`turn:lanes` — `RoadLine::turns` — when it matches the
     lanes, else the rule: straight lane to lane, the near turn from the kerb lane, the far

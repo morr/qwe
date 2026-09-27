@@ -851,8 +851,9 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     at a oneway change, and Петра Алексеева (Tula, 5968 1582) ran its dashes straight
     through a four-way crossing of equals because Макса Смирнова is one-way south of it
     and two-way north. Signals aside, such a road **leads** the junction
-    (`Junction::leading`), and so does a roundabout that passes it whatever the approaches'
-    class — a ring has priority. The leading road loses its asphalt breaks there
+    (`Junction::leading`), and so does a ring road (an arc of `on_ring` or a closed way —
+    whether it passes or not, since OSM ends an arc at every entry) whatever the
+    approaches' class — a ring has priority; an approach never leads a ring node. The leading road loses its asphalt breaks there
     (`NodePaint::asphalt`): the ruts run through, signals or not.
   - **Zebras and stop lines on the arms that break**: an OSM crossing on the arm (a
     `Crossing { marked: true }` node on the road, between the node and
@@ -919,7 +920,26 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     node to the outermost paint. An **OSM crossing keeps its place** — it is measured
     from the reach as before: pushed past the new edge, it no longer fitted a short arm
     with its `ARM_TAIL` and was lost (gallery 04, south). **Not at a ring**: an approach
-    is fitted into the ring tangentially and runs over its asphalt for tens of metres.
+    is fitted into the ring tangentially and runs over its asphalt for tens of metres, so
+    the other roads' asphalt would push the edge past the crossing; the turn paths keep
+    the break reach there. **The paint of a ring entry is set by the ring alone**
+    (`RingEntry`, `ring_entry`): the ring roads of the cluster (`on_ring` or a closed way)
+    are the only rivals, and each of three points across the arm — the far end of the stop
+    line (the left kerb of a one-way entry, the axis of a two-way one), its kerb end, the
+    other kerb — is walked out in `EDGE_STEP` from the node until it leaves the ring's
+    ribbon. The line of an entry without a zebra then runs **from where one end left the
+    ring to where the other did** — along the ring's edge, as it stands on the ground,
+    not across the approach — and is always dashed (**give way** to the ring; solid only
+    under signals); the arm's edge, from which the lane lines break, is where the whole
+    section has left. The old line stood across the approach at the break reach (half the
+    ring + 1 m from the node), which on a tangential entry is still the middle of the
+    ring: it ran over the ring's lanes up to the island's kerb, with the approach's
+    solid lines after it (gallery 04, south and north-west). **A ring road never gets a
+    stop line** and **always leads** its node — OSM cuts a ring into arcs at every entry,
+    so an arc "passes" by street identity nowhere: every arc broke at every entry with a
+    stop line across all its lanes and 25 m of solid approach lines (gallery 04 south,
+    Ryazan 01, Kaluga 01). And an approach never leads a ring node, even where the network
+    carries its street on into an arc.
     **An arm that never leaves the junction's asphalt is a link** (`JunctionArm::link`,
     `ArmPlan::link`) — a throat of a complex junction, not an approach to it: no rule
     zebra, no stop line, no arrows. At the fork of gallery 06 the triangle's 22 and 31 m
