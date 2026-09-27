@@ -589,6 +589,11 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   seam (**Ribbon** below). A drawn ring takes one section for all its arcs — the widest
   arc's width and lane count (`roads::ring_arcs`; Tula's primary ring has arcs of 3 and
   2 lanes, and the ribbon would step) — see **Roundabouts** below.
+  **`lane_markings=no`** (`RoadLine::lane_markings`, `parse/tags.rs::has_lane_markings`)
+  overrides the count: `Painter::paint` draws neither the axis nor the lane lines of such
+  a street, however many lanes it has (Tula, 11 ways; gallery 09, Бухоновский переулок,
+  drew a dashed axis Yandex does not have). The junction paint — zebras, stop lines,
+  arrows — does not read it; the ruts do not either (the lane frame stays).
   **Breaks** — «to-break» is the signed distance to the nearest **marking break**
   (`meshing::Break { at, reach }`, passed as `RibbonBreaks::At`): negative inside a gap,
   so a paint line is **cut sharp** at the gap edge (`smoothstep(±0.7 px)`, the same

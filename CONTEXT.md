@@ -273,7 +273,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     line solid for the last 25 m of its **approach** to a junction break (dashed at once on
     the exit; an axis is solid both ways, and also 25 m either side of a node its street
     passes through — **main through** below), and the axis of a two-way street of 4+ lanes
-    as a double solid. Two meshes per level (lane lines, axes) plus the zebras, streets at
+    as a double solid; a street tagged `lane_markings=no` gets neither axis nor lane
+    lines. Two meshes per level (lane lines, axes) plus the zebras, streets at
     `Z_ROAD_PAINT` and bridges at `Z_BRIDGE_PAINT`; `PaintLods` hides the lane lines and
     stop lines past 0.4 m/px, the zebras past 0.6 and the axes past 0.9 without a rebuild.
     `RoadPaintStyle` (panel knobs Paint, Wear and Turn wear) is uniforms only.

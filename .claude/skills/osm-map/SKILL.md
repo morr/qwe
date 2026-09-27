@@ -230,7 +230,9 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   ones; each lane left to right as `LaneTurn { left, through, right }`, `slight_`/`sharp_`
   folded into the turn, an unknown word — Tula has `throught` — into through). Only the
   turn paths and their lane arrows read it (`references/roads.md`, **Turn paths**);
-  Tula 62 ways. `sidewalks: [SidewalkSide; 2]` and `parking: [KerbParking; 2]` —
+  Tula 62 ways. `lane_markings: bool` — false only on `lane_markings=no`: the paint
+  layer draws no axis and no lane lines there (`references/roads.md`, **Lane count**);
+  Tula 11 ways. `sidewalks: [SidewalkSide; 2]` and `parking: [KerbParking; 2]` —
   `[left, right]` along the points, from `sidewalk=*` and `parking:*` (swapped with the
   points on `oneway=-1`); the sidewalk band and the kerb pockets read them
   (`references/roads.md`, **Sidewalks**, **Kerb pockets**). **`SidewalkSide`** is a
