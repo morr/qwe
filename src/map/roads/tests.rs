@@ -1737,3 +1737,148 @@ fn a_divided_street_merging_into_a_two_way_one_is_one_merge() {
     assert_eq!(report.drawn.tapers, 0);
     assert_eq!(timeless(&map), report, "отчёт повторяется до поля");
 }
+
+/// Вершины слоя цвета `color` — `[x, y]`.
+fn vertices_of(layers: &[LayerMesh], name: &str, color: Color) -> Vec<[f32; 2]> {
+    let builder = &layer(layers, name).builder;
+    let wanted = color.to_linear().to_f32_array();
+    builder
+        .positions_for_test()
+        .iter()
+        .zip(builder.colors_for_test())
+        .filter(|(_, color)| **color == wanted)
+        .map(|(at, _)| [at[0], at[1]])
+        .collect()
+}
+
+#[test]
+fn tram_band_follows_the_nodal_axis() {
+    // Проезд кончается в трёх метрах за кромкой тротуара улицы и пришит к
+    // ней стежком (`a_dangling_end_short_of_a_street_is_stitched`); путь
+    // трамвая идёт по проезду и дальше, через улицу. Полоса над путём
+    // берёт ось **без** стежка: она кончается у торца OSM (y = −9), а не у
+    // оси улицы (y = 0), куда стежок довёл бы ленту.
+    let mut map = with_network(vec![
+        fixture::street(vec![Vec2::ZERO, Vec2::new(100.0, 0.0)], 12.0),
+        fixture::street(vec![Vec2::new(50.0, -60.0), Vec2::new(50.0, -9.0)], 5.0),
+    ]);
+    map.rails.push(RailLine {
+        kind: RailKind::Tram,
+        ..fixture::rail(vec![Vec2::new(50.0, -70.0), Vec2::new(50.0, 20.0)], 1.2)
+    });
+    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    assert_eq!(report.drawn.stitches, 1);
+    assert_eq!(report.tram_bands, 1);
+    let band = vertices_of(&layers, "roads", TRAM_BAND_COLOR);
+    assert!(!band.is_empty());
+    let top = band.iter().map(|at| at[1]).fold(f32::MIN, f32::max);
+    assert!(top < -5.0, "полоса кончается у торца OSM, не у стежка: {top}");
+    assert!(top > -12.0, "{top}");
+}
+
+#[test]
+fn a_crossing_piece_between_two_halves_carries_no_sidewalk() {
+    // Поперечная улица из трёх way: подход с юга, кусок между половинами
+    // разделённого проспекта и продолжение на север. Кусок в проёме пары
+    // (`across_median`) тротуара не несёт — ни лентой, ни скруглением, ни
+    // зеброй по правилу: слои те же, что у куска с `sidewalk=no`.
+    // узлы поперечной — вершины на половинах, как в OSM
+    let crossed = |gap: f32| {
+        let (map, apart) = divided_avenue(gap);
+        let (south, north) = (Vec2::new(300.0, 100.0), Vec2::new(300.0, 100.0 + apart));
+        let mut roads = map.roads;
+        roads[0].points.insert(1, south);
+        roads[1].points.insert(1, north);
+        roads.push(fixture::street(vec![Vec2::new(300.0, 30.0), south], 8.0));
+        roads.push(fixture::street(vec![south, north], 8.0));
+        roads.push(fixture::street(vec![north, Vec2::new(300.0, 190.0)], 8.0));
+        (with_network(roads), apart)
+    };
+    let (map, _) = crossed(0.6);
+    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    assert_eq!(report.drawn.medians, [1, 0, 0]);
+    assert_eq!(report.drawn.crossings, 0);
+    assert_eq!(report.junctions, 2);
+    let mut untagged = map.roads.clone();
+    untagged[3].sidewalks = [false; 2];
+    let untagged = with_network(untagged);
+    let (bare, _) = mesh_roads(&untagged, RoadStyle::default(), RoadShape::default());
+    for (with, without) in layers.iter().zip(&bare) {
+        assert_eq!(with.name, without.name);
+        let (with, without) = (
+            with.builder.positions_for_test(),
+            without.builder.positions_for_test(),
+        );
+        let differs = with
+            .iter()
+            .zip(without)
+            .position(|(a, b)| a != b)
+            .or_else(|| (with.len() != without.len()).then_some(with.len().min(without.len())));
+        assert!(
+            differs.is_none(),
+            "{}: кусок в проёме пары рисуется как без тротуара; расходится с вершины {:?} из {} / {}: {:?} / {:?}",
+            layers.iter().find(|l| l.builder.positions_for_test() == with).map_or("?", |l| l.name),
+            differs,
+            with.len(),
+            without.len(),
+            &with[differs.unwrap_or(0)..(differs.unwrap_or(0) + 12).min(with.len())],
+            &without[differs.unwrap_or(0)..(differs.unwrap_or(0) + 12).min(without.len())],
+        );
+    }
+    // а у подхода с юга тротуар есть
+    let half = (3.0 * 3.3 + 1.0) / 2.0;
+    let sidewalks = layer(&layers, "sidewalks").builder.positions_for_test();
+    assert!(
+        sidewalks
+            .iter()
+            .any(|at| (at[0] - 300.0).abs() > 4.5 && at[1] > 60.0 && at[1] < 100.0 - half)
+    );
+    // и без пары тот же кусок его несёт: половины дальше 40 м друг от друга —
+    // не пара, и куску между ними тротуар положен
+    let (far, _) = crossed(60.0);
+    let (layers, report) = mesh_roads(&far, RoadStyle::default(), RoadShape::default());
+    assert_eq!(report.drawn.medians, [0, 0, 0]);
+    let sidewalks = layer(&layers, "sidewalks").builder.positions_for_test();
+    assert!(
+        sidewalks
+            .iter()
+            .any(|at| (at[0] - 300.0).abs() > 4.5 && at[1] > 120.0 && at[1] < 140.0),
+        "без пары кусок несёт тротуар"
+    );
+}
+
+#[test]
+fn a_one_sided_sidewalk_wedge_keeps_the_bare_kerb_on_the_untagged_side() {
+    // Двухполосная улица переходит в четырёхполосную (`a_section_seam_is_one_taper`);
+    // у широкой тротуар только слева по ходу (`sidewalk=left`, к северу).
+    // Клин тротуара кладётся по сторонам: слева — от полосы узкой к своей,
+    // справа — голая кромка от полуширины узкой к своей полуширине, а не
+    // зеркало левой полосы.
+    let street = |points: Vec<Vec2>, lanes: u8| RoadLine {
+        lanes: Some(lanes),
+        ..fixture::street(points, f32::from(lanes) * 3.3 + 1.0)
+    };
+    let mut wide = street(vec![Vec2::new(200.0, 0.0), Vec2::new(400.0, 0.0)], 4);
+    wide.sidewalks = [true, false];
+    let map = with_network(vec![
+        street(vec![Vec2::ZERO, Vec2::new(200.0, 0.0)], 2),
+        wide,
+    ]);
+    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    assert_eq!(report.drawn.tapers, 1);
+    let sidewalks = layer(&layers, "sidewalks").builder.positions_for_test();
+    let (wide_half, wide_band) = (14.2 / 2.0, sidewalk_band(14.2));
+    assert!((wide_band - 3.0).abs() < 1e-3);
+    let bottom = sidewalks.iter().map(|at| at[1]).fold(f32::MAX, f32::min);
+    assert!(
+        bottom >= -wide_half - 0.05,
+        "справа кромка голая, тротуара нет: {bottom}"
+    );
+    // слева клин доходит до своей полосы: полуширина плюс тротуар
+    let top = sidewalks
+        .iter()
+        .filter(|at| at[0] > 200.0 && at[0] < 300.0)
+        .map(|at| at[1])
+        .fold(f32::MIN, f32::max);
+    assert!((top - (wide_half + wide_band)).abs() < 0.05, "{top}");
+}

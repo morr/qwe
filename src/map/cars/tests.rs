@@ -622,3 +622,56 @@ fn the_far_bucket_draws_nothing() {
     assert_eq!(report.detail, None);
     assert_eq!(report.cars, 0);
 }
+
+/// Ряд рвётся на клине между сечениями улицы там же, где лента: на широком
+/// way от шва до конца клина (66 м на 6.6 м разницы) и ещё на просвет от
+/// узла машин нет; узкий way стоит до шва.
+#[test]
+fn the_row_clears_the_seam_taper_of_the_ribbon() {
+    let street = |points: Vec<Vec2>, lanes: u8| RoadLine {
+        lanes: Some(lanes),
+        ..street(points, f32::from(lanes) * 3.3 + 1.0)
+    };
+    let roads = vec![
+        street(vec![Vec2::ZERO, Vec2::new(200.0, 0.0)], 2),
+        street(vec![Vec2::new(200.0, 0.0), Vec2::new(400.0, 0.0)], 4),
+    ];
+    let map = MapData {
+        network: RoadNetwork::new(&roads),
+        roads,
+        ..default()
+    };
+    let style = CarStyle {
+        occupancy: 1.0,
+        ..default()
+    };
+    let (_, report) = mesh_cars(
+        near_bucket(),
+        style,
+        straight(),
+        &map,
+        &ParkingLayout::default(),
+    );
+    assert_eq!(report.junctions, 0, "шов одной улицы — не перекрёсток");
+    assert!(report.cars > 0);
+    // те же вызовы, что у `mesh_cars`, — ради координат машин
+    let tapers = Tapers::of_map(&map.roads, &map.network, straight().taper());
+    let cars = park_cars(
+        &map.roads,
+        &pockets::row_breaks(&map.roads, &tapers, &map.road_nodes),
+        style,
+        &drawn_axes(&map.roads, &straight()),
+        map.traffic_side,
+        &Districts::new(&[]),
+        &KerbLots::new(&[]),
+    );
+    assert_eq!(cars.len(), report.cars);
+    let clearing = 200.0..200.0 + 66.0 + JUNCTION_CLEARANCE - 0.5;
+    assert!(
+        cars.iter().all(|car| !clearing.contains(&car.at.x)),
+        "машина в клине: {:?}",
+        cars.iter().map(|car| car.at.x).collect::<Vec<_>>()
+    );
+    assert!(cars.iter().any(|car| car.at.x > 190.0 && car.at.x < 200.0));
+    assert!(cars.iter().any(|car| car.at.x > 266.0 && car.at.x < 290.0));
+}
