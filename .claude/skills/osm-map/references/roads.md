@@ -349,6 +349,24 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     `MEDIAN_EXTEND` 12 m) so that the double solid dies at the break edge like the lane
     lines do, whatever the probes did. Toward a gore at a ring the line is trimmed and
     reached by `Gores::reach` (`MEDIAN_GORE_GAP` 0.6 m short of the hatching).
+  - **One door** — `medians::draw(pairs, &MedianInputs, streets, sidewalks, grass) ->
+    MedianDrawing`; every other function of `medians.rs` is private. The loop over the
+    medians (open by the base, reach the break, paved / bed / lawn, the tram beds' ends
+    as breaks for the lawn beside) lived in `mesh_roads` with five neighbours borrowed
+    `&mut`; now it takes `MedianInputs { base (Junctions::median_base), paint
+    (PaintBreaks), markings, pure_merge, reach_gores, street_of }` — the merges, the
+    gores and the network come in as closures, so `medians` depends on neither `paint`
+    nor `gores` (the reverse edge `gores → along::tip_of` is all that is left of their
+    old circle; `tip_of` moved to `map/along.rs`). What it hands back is what the rest
+    of `mesh_roads` reads: `paved` (the reached paved medians — the tram band, the big
+    lot's kerb), `lawn_kerbs` (the merges' nose fill), `ends` (`MedianEnd` by the pair's
+    streets — the merge axis), `bed_caps()` (the asphalt from a bed's end to the lawn's
+    nose, pushed **after** the nose fill, in the old order) and **`painted`** — the
+    double solids as `(midline, breaks)`, which `mesh_roads` hands to
+    `Painter::paint_median` itself: drawing them inside would have pulled `paint.rs` into
+    the module. Push order into each layer is the old loop's, byte for byte — pinned by
+    `tests.rs::the_median_loop_lays_the_same_vertices`; `medians/tests.rs` calls `draw`
+    directly (paved with and without markings, lawn), without a painter.
   - **Cars** need nothing: a one-way half parks one row on its driving-side kerb, i.e.
     away from the partner, and the row stands on the aligned axis. **Navmesh** does not
     see any of it — `RoadLine::points` never move.
