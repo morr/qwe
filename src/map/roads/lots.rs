@@ -249,14 +249,14 @@ fn kerbs(ground: &Ground, medians: &[(Vec<Vec2>, f32)], gores: &Gores) -> Vec<Sh
 fn on_lot(medians: &[Median], ground: &Ground) -> Vec<(Vec<Vec2>, f32)> {
     let mut found = Vec::new();
     for median in medians {
-        let (low, high) = ring_bounds(&median.midline);
+        let (low, high) = ring_bounds(median.midline());
         if low.cmpgt(ground.high).any() || high.cmplt(ground.low).any() {
             continue;
         }
         let apart = median.apart();
         // по пробам, а не по вершинам: прямая середина — две точки, и обе
         // бывают за площадкой
-        let probes: Vec<Vec2> = samples(&median.midline)
+        let probes: Vec<Vec2> = samples(median.midline())
             .into_iter()
             .map(|(_, at, _)| at)
             .collect();

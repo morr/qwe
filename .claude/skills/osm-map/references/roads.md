@@ -200,9 +200,16 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     median's opening (**Kerb return** below); `band_pieces(road, sides, stitch, total)` —
     the sidewalk band cut into pieces without the pair side (**Sidewalks** above);
     `medians()`. `Drawn` answers none of them
-    itself: it hands out `pairs()`, one owner. The runs stay public until the median
-    loop moves into `medians.rs` (roads plan stage H), and `align` reads them inside the
-    module.
+    itself: it hands out `pairs()`, one owner. **The fields are closed** (`pub(super)`,
+    visible to `roads/network` only): `PairRun` and `Pairs::runs` are read by nobody
+    outside the module, and a `Median` answers `roads()`, `gap()`, `midline()`,
+    `inner()`, `is_paved()`, `carries_tram()`, `apart()` — the drawing
+    (`roads/medians.rs`), the big lot's kerb (`roads/lots.rs`) and the tram band read
+    those — while the one mutation from outside, the midline reaching the junction ahead
+    (`medians::reach_breaks`, which decides *how far*), goes through `Median::extend(end,
+    along)`, which lengthens the midline and both inner kerbs at once. Tests build runs
+    with `PairRun::for_test` and hand them in through `Pairs::of_runs` /
+    `Drawn::with_pairs` (`Pairs::set_runs`).
   - **Alignment** (`Pairs::align`) — each half is densified to `ALIGN_STEP` 4 m and moved
     so that it stands at half the target distance from the midpoint between it and the
     partner's original axis: target gap = the run's median, paved ones no narrower than
@@ -799,7 +806,7 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     rank that also passes (a crossing). Rank is the `highway` class (trunk 5, primary 4,
     secondary 3, tertiary 2, residential / unclassified / living street / links 1),
     doubled, and a `stop` / `give_way` node on the road within 30 m of the cluster takes
-    half a step off. The other half of a divided street (`Pairs::runs` partner) is no
+    half a step off. The other half of a divided street (`Pairs::partners`) is no
     rival. So a side street **joining** a through street — even of the same class — does
     not break its lines: the dashes run through the junction on the same axis, and the
     report counts it as `main through`. **A crossroads is not a joining**: when the other
@@ -841,7 +848,7 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     zebra onto the first's line across the street (to the OSM one if there is one, else to
     the farther one); when **both** are OSM crossings — a `highway=crossing` node on each
     half, which mappers place a metre apart (gallery 02: 0.9 and 1.2 m) — both move to the
-    line halfway between them. Over a **paved** median (`PairRun::paved`, read through
+    line halfway between them. Over a **paved** median (the run's `paved`, handed out by
     `Pairs::partners` as `pairs::Partner { road, paved }`) the two aligned zebras then become **one
     plank** kerb to kerb (`join_zebras`: parallel within `JOIN_PARALLEL`, on one line
     within `JOIN_OFFSET` 1 m, the gap between them at most `node_paint::JOIN_GAP` 8.8 m —

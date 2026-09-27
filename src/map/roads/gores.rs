@@ -21,7 +21,7 @@ use i_overlay::mesh::outline::offset::OutlineOffset;
 use i_overlay::mesh::style::{LineCap, LineJoin, OutlineStyle};
 
 use super::junctions::node_key;
-use super::medians::tip_of;
+use crate::map::along::tip_of;
 use super::rings::{Ring, Rings};
 use super::{is_carriageway, lane_count};
 use crate::map::along::{arclengths, place_on_path};

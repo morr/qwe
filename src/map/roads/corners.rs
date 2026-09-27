@@ -867,15 +867,7 @@ mod tests {
         let map = map_of(&crossing());
         let drawn = Drawn::for_test(&map).with_pairs(
             0,
-            vec![PairRun {
-                from: 0.0,
-                to: 100.0,
-                partner: 1,
-                left: true,
-                gap: 0.0,
-                paved: true,
-                tram: false,
-            }],
+            vec![PairRun::for_test(0.0, 100.0, 1, true, 0.0, true)],
         );
         let found = kerb_returns(&drawn, 1.0);
         assert_eq!(found.roads.len(), 4, "асфальт скругляется, как был");

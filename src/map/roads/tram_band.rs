@@ -103,7 +103,7 @@ pub fn tram_bands(
     // бокам: полоса над путём у самой кромки заходит на них, а они асфальт
     for median in medians.iter().filter(|median| median.is_paved()) {
         let half = median.apart() / 2.0 + TRAM_BAND_WIDTH;
-        for pair in median.midline.windows(2) {
+        for pair in median.midline().windows(2) {
             links.insert_segment(
                 pair[0],
                 pair[1],

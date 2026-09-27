@@ -852,7 +852,7 @@ pub fn mesh_roads(
     // разделительная открывается по базе — у перекрёстка, кто бы его ни вёл
     let base = junctions.median_base();
     for median in prepared.pairs().medians() {
-        let [first, second] = median.roads;
+        let [first, second] = median.roads();
         let breaks = medians::crossing_breaks(median, [&base[first], &base[second]]);
         // до перекрёстка — как линии полос, а не там, где кончились пробы
         let mut median = median.clone();
@@ -866,7 +866,7 @@ pub fn mesh_roads(
                 medians::push_paved(&mut streets, &median, ROAD_COLOR.to_linear(), ROAD_JOIN);
             }
             if style.markings {
-                let mut midline = median.midline.clone();
+                let mut midline = median.midline().to_vec();
                 gores.reach(&mut midline);
                 // и там, где обе половины рвёт краска узла — зебра поперёк
                 // обеих, стоп-линии
@@ -879,7 +879,7 @@ pub fn mesh_roads(
                 // него и переходит в осевую продолжения
                 painted.retain(|gap| !prepared.merges().is_pure_node(gap.at));
                 painter.paint_median(&midline, &painted);
-                let pair = median.roads.map(street_of);
+                let pair = median.roads().map(street_of);
                 for tip in [midline.first(), midline.last()].into_iter().flatten() {
                     median_ends.push((pair, merges::MedianEnd::Paved(*tip)));
                 }
@@ -896,7 +896,7 @@ pub fn mesh_roads(
                 SIDEWALK_COLOR.to_linear(),
                 GRASS_COLOR.to_linear(),
             );
-            let pair = median.roads.map(street_of);
+            let pair = median.roads().map(street_of);
             for point in kerbs.iter().flatten().flatten() {
                 median_ends.push((pair, merges::MedianEnd::Lawn(Vec2::from(*point))));
             }
