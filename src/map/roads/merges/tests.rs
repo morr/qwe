@@ -126,7 +126,7 @@ fn a_merge_node_gets_no_square_ends_and_no_outer_corners() {
             &nodes,
             |_| None,
             |_, _| None,
-            |_| [0.0; 2],
+            |_| [None; 2],
             merged,
             1.0,
         )

@@ -820,7 +820,27 @@ impl MeshBuilder {
         to_break: [f32; 2],
         color: LinearRgba,
     ) {
-        let path = merge_ribbon_points(points, false, widths[0].min(widths[1]) / 4.0);
+        let halves = widths.map(|width| width / 2.0);
+        self.push_taper_sided(points, [halves, halves], to_break, color);
+    }
+
+    /// [`Self::push_taper`] с кромками по сторонам: `halves[сторона]` —
+    /// полуширина `[в начале, в конце]` слева (`0`) и справа (`1`) по ходу
+    /// ломаной. Так сужается одна кромка, пока другая идёт прямо, — клин у
+    /// примыкания (`roads/tapers.rs`); симметричный клин — частный случай.
+    pub fn push_taper_sided(
+        &mut self,
+        points: &[Vec2],
+        halves: [[f32; 2]; 2],
+        to_break: [f32; 2],
+        color: LinearRgba,
+    ) {
+        let narrowest = halves
+            .iter()
+            .flatten()
+            .copied()
+            .fold(f32::INFINITY, f32::min);
+        let path = merge_ribbon_points(points, false, narrowest / 2.0);
         if path.len() < 2 {
             return;
         }
@@ -838,7 +858,7 @@ impl MeshBuilder {
         let base = self.positions.len() as u32;
         for ((&point, &at), miter) in path.iter().zip(&along).zip(&miters) {
             let share = at / total;
-            let half_width = (widths[0] + (widths[1] - widths[0]) * share) / 2.0;
+            let [left, right] = halves.map(|[from, to]| from + (to - from) * share);
             let to_break = to_break[0] + (to_break[1] - to_break[0]) * share;
             // раскладка полос плывёт вместе с краями: крайняя полоса
             // рождается из клина, а колея остаётся между линиями краски
@@ -847,14 +867,14 @@ impl MeshBuilder {
                 [from, _] => from,
             };
             self.push_vertex(
-                point + *miter * half_width,
+                point + *miter * left,
                 rgba,
-                Self::coords_in(lanes, half_width, to_break, half_width),
+                Self::coords_in(lanes, left, to_break, left),
             );
             self.push_vertex(
-                point - *miter * half_width,
+                point - *miter * right,
                 rgba,
-                Self::coords_in(lanes, -half_width, to_break, half_width),
+                Self::coords_in(lanes, -right, to_break, right),
             );
         }
         for index in 0..path.len() as u32 - 1 {

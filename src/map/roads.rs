@@ -1207,11 +1207,7 @@ pub fn mesh_roads(
                 &nodes,
                 sidewalks_of,
                 paired,
-                |road| {
-                    tapers
-                        .at(road)
-                        .map(|end| end.map_or(0.0, |taper| taper.length))
-                },
+                |road| tapers.at(road),
                 |road, end| merges.is_merged(road, end),
                 shape.corner_radius(),
             ),
@@ -1638,12 +1634,10 @@ pub fn mesh_roads(
             head.is_some() || (butt[0] && !stitched_end[0]),
             tail.is_some() || (butt[1] && !stitched_end[1]),
         ];
-        let wedges: Vec<(&[Vec2], &RoadLine, bool)> =
+        let wedges: Vec<(&[Vec2], tapers::Taper, bool)> =
             [(&head, ends[0], false), (&tail, ends[1], true)]
                 .into_iter()
-                .filter_map(|(path, taper, end)| {
-                    Some((path.as_deref()?, drawn[taper?.narrow], end))
-                })
+                .filter_map(|(path, taper, end)| Some((path.as_deref()?, taper?, end)))
                 .collect();
         // «до разрыва» клина — продолжение срезанной ленты за её торцом: от
         // узла шва до стыка с лентой, чтобы штрихи шли через стык без сдвига
@@ -1678,20 +1672,26 @@ pub fn mesh_roads(
                 SIDEWALK_COLOR.to_linear(),
                 trimmed,
             );
-            // клин тротуара симметричен; у одностороннего тротуара его нет
-            let wedges = if road.sidewalks == [true; 2] {
-                wedges.as_slice()
-            } else {
-                &[]
+            // клин тротуара — по сторонам, как у асфальта: с сужаемой стороны
+            // от полосы узкого соседа (или его голой кромки, если тротуара у
+            // него нет) к своей, с сохранённой — своя на всём клине; сторона
+            // без тротуара по тегу — голая кромка
+            let band_half = |road: &RoadLine, sidewalk: Option<f32>, side: usize| {
+                road.width / 2.0 + sidewalk.filter(|_| road.sidewalks[side]).unwrap_or(0.0)
             };
-            for &(path, narrow, end) in wedges {
-                let from =
-                    drawn_sidewalk(&style, narrow).map_or(narrow.width, |own| band(narrow, own));
-                let to = band(road, sidewalk);
-                sidewalks.push_taper(
+            for &(path, taper, end) in &wedges {
+                let narrow = drawn[taper.narrow];
+                let narrow_sidewalk = drawn_sidewalk(&style, narrow);
+                let halves = wedge_halves(taper.sides, end, |side| {
+                    [
+                        band_half(narrow, narrow_sidewalk, side),
+                        band_half(road, Some(sidewalk), side),
+                    ]
+                });
+                sidewalks.push_taper_sided(
                     path,
-                    [from, to],
-                    continued(path, to, &[], end),
+                    halves,
+                    continued(path, band(road, sidewalk), &[], end),
                     SIDEWALK_COLOR.to_linear(),
                 );
             }
@@ -1702,7 +1702,7 @@ pub fn mesh_roads(
         // всего клина (пример 16). Со стороны пары под клин кладётся асфальт
         // полной полуширины — кромка там идёт прямо, как у тела.
         let length = polyline_length(points);
-        for &(path, _, end) in &wedges {
+        for &(path, taper, end) in &wedges {
             let middle = if end {
                 length - polyline_length(path) / 2.0
             } else {
@@ -1714,6 +1714,10 @@ pub fn mesh_roads(
             else {
                 continue;
             };
+            // с сохранённой стороны кромка и так прямая
+            if !taper.sides[usize::from(!run.left)] {
+                continue;
+            }
             let side = if run.left { 1.0 } else { -1.0 };
             let inner: Vec<Vec2> = path
                 .iter()
@@ -1746,25 +1750,27 @@ pub fn mesh_roads(
         }
         push_street_fill(fill, body, road.width, color.to_linear(), breaks, trimmed);
         fill.set_lanes(lanes);
-        for &(path, narrow, end) in &wedges {
+        for &(path, taper, end) in &wedges {
+            let narrow = drawn[taper.narrow];
             let to_break = continued(path, road.width, breaks, end);
             // раскладка плывёт от сечения соседа к своему — та же, что у
             // линий краски на этом клине
             match lanes {
                 Some(_) => {
-                    let [from, to] = paint::wedge_frames(
-                        lane_count(road),
-                        lane_count(narrow),
-                        end,
-                        paint::wedge_drift(road, map.traffic_side),
-                    );
+                    let wedge = paint::WedgeEnd {
+                        length: polyline_length(path),
+                        lanes: lane_count(narrow),
+                        drift: paint::wedge_drift(road, map.traffic_side),
+                        kept: taper.kept(),
+                    };
+                    let [from, to] = paint::wedge_frames(lane_count(road), wedge, end);
                     fill.set_lane_taper(Some(from), Some(to));
                 }
                 None => fill.set_lanes(None),
             }
-            fill.push_taper(
+            fill.push_taper_sided(
                 path,
-                [narrow.width, road.width],
+                wedge_halves(taper.sides, end, |_| [narrow.width / 2.0, road.width / 2.0]),
                 to_break,
                 color.to_linear(),
             );
@@ -2309,6 +2315,24 @@ fn push_ribbon_trimmed(
     };
     let caps = trimmed.map(|trimmed| if trimmed { RibbonCap::Butt } else { cap });
     builder.push_ribbon_capped(points, is_ring(points), width, color, join, caps);
+}
+
+/// Полуширины клина для `MeshBuilder::push_taper_sided` — `[[слева в начале,
+/// слева в конце], [справа …]]` в раме **пути клина** (от шва к телу):
+/// `half(сторона по ходу way)` — полуширина `[узкого соседа, своя]` с той
+/// стороны; сужаемая сторона (`sides`, `roads/tapers.rs`) идёт от первой ко
+/// второй, сохранённая — своя на всём клине. У торца конца путь идёт против
+/// way, и стороны меняются местами.
+fn wedge_halves(sides: [bool; 2], end: bool, half: impl Fn(usize) -> [f32; 2]) -> [[f32; 2]; 2] {
+    let by_side = [0, 1].map(|side| {
+        let [narrow, own] = half(side);
+        if sides[side] { [narrow, own] } else { [own; 2] }
+    });
+    if end {
+        [by_side[1], by_side[0]]
+    } else {
+        by_side
+    }
 }
 
 /// Тротуар дороги шириной `widths[0]` с полосой `widths[1]` — с тех сторон

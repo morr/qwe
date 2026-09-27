@@ -409,17 +409,41 @@ fn mirrored(frame: LaneFrame) -> LaneFrame {
     }
 }
 
+/// Раскладка у шва клина, суженного на одну сторону (`Taper::kept`): кромка
+/// `kept` (`+1` — левая по ходу way) идёт прямо, и полосы узкого соседа
+/// прижаты к ней — сетка тела, граница с другой стороны придвинута на
+/// недостающие полосы. Новые полосы рождаются у сужаемой кромки, вместе с
+/// самой кромкой.
+fn kept_frame(body: LaneFrame, narrow_lanes: u8, kept: f32) -> LaneFrame {
+    let span = f32::from(narrow_lanes) * lane_width();
+    if kept > 0.0 {
+        LaneFrame {
+            low: body.high - span,
+            ..body
+        }
+    } else {
+        LaneFrame {
+            high: body.low + span,
+            ..body
+        }
+    }
+}
+
+/// Раскладка у шва клина `wedge` в раме way — по его форме: суженный на одну
+/// сторону — [`kept_frame`], симметричный — [`narrow_frame`].
+fn wedge_frame(body: LaneFrame, wedge: WedgeEnd, end: bool) -> LaneFrame {
+    match wedge.kept {
+        Some(kept) => kept_frame(body, wedge.lanes, kept),
+        None => narrow_frame(body, wedge.lanes, end, wedge.drift),
+    }
+}
+
 /// Раскладки клина `[у шва, у тела]` — в раме **пути клина**, который идёт от
 /// шва к телу (`tapers::split`): у торца конца он смотрит против way, и
 /// раскладка отражена. Их кладёт в асфальт клина `MeshBuilder::set_lane_taper`.
-pub fn wedge_frames(
-    body_lanes: u8,
-    narrow_lanes: u8,
-    end: bool,
-    drift: Option<f32>,
-) -> [LaneFrame; 2] {
+pub fn wedge_frames(body_lanes: u8, wedge: WedgeEnd, end: bool) -> [LaneFrame; 2] {
     let body = lane_frame(body_lanes);
-    let narrow = narrow_frame(body, narrow_lanes, end, drift);
+    let narrow = wedge_frame(body, wedge, end);
     if end {
         [mirrored(narrow), mirrored(body)]
     } else {
@@ -457,12 +481,14 @@ pub fn street_stations(network: &RoadNetwork, paths: &[impl AsRef<[Vec2]>]) -> V
 }
 
 /// Что лежит у торца way: клин длиной `length` от сечения соседа в `lanes`
-/// полос; `drift` — куда плывут линии ([`wedge_drift`]).
+/// полос; `drift` — куда плывут линии ([`wedge_drift`]); `kept` — кромка,
+/// которую клин не трогает (`Taper::kept`), `None` у симметричного.
 #[derive(Clone, Copy, Debug)]
 pub struct WedgeEnd {
     pub length: f32,
     pub lanes: u8,
     pub drift: Option<f32>,
+    pub kept: Option<f32>,
 }
 
 /// Раскладка way половины у узла слияния (`roads/merges.rs`): в узле —
@@ -572,10 +598,12 @@ pub fn wedge_ends(
     let lengths = tapers::fit(polyline_length(path), ends.map(|end| end.map(|t| t.length)));
     let drift = wedge_drift(drawn[road], side);
     [0, 1].map(|end| {
+        let taper = ends[end]?;
         Some(WedgeEnd {
             length: lengths[end]?,
-            lanes: lane_count(drawn[ends[end]?.narrow]),
+            lanes: lane_count(drawn[taper.narrow]),
             drift,
+            kept: taper.kept(),
         })
     })
 }
@@ -721,12 +749,10 @@ impl Painter {
                 }
                 match wedges {
                     [Some(head), _] if !closed && at < head.length => {
-                        narrow_frame(body, head.lanes, false, head.drift)
-                            .lerp(body, at / head.length)
+                        wedge_frame(body, head, false).lerp(body, at / head.length)
                     }
                     [_, Some(tail)] if !closed && at > total - tail.length => {
-                        narrow_frame(body, tail.lanes, true, tail.drift)
-                            .lerp(body, (total - at) / tail.length)
+                        wedge_frame(body, tail, true).lerp(body, (total - at) / tail.length)
                     }
                     _ => body,
                 }

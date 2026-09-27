@@ -51,6 +51,7 @@ use bevy::prelude::*;
 
 use super::junctions::node_key;
 use super::network::RoadNodes;
+use super::tapers::Taper;
 use crate::map::meshing::arc_steps;
 use crate::map::osm::model::{polyline_length, ring_area};
 use crate::map::osm::{Highway, RoadClass, RoadLine};
@@ -89,7 +90,10 @@ const OVERLAP: f32 = 0.05;
 struct Arm {
     class: RoadClass,
     highway: Highway,
-    half: f32,
+    /// Полуширина слева и справа по ходу луча. Они разные у торца с клином
+    /// на одну сторону (`roads/tapers.rs`): сужаемая кромка в узле стоит на
+    /// полуширине узкого соседа, сохранённая — на своей.
+    half: [f32; 2],
     /// Тротуар слева и справа по ходу луча: у половины разделённой улицы со
     /// стороны пары его нет.
     sidewalk: [Option<f32>; 2],
@@ -130,9 +134,11 @@ impl KerbReturns {
 /// ширина тротуара дороги (по индексу), если он рисуется; `paired(дорога,
 /// длина по оси)` — лежит ли там рядом вторая половина разделённой улицы и
 /// слева ли (`roads/network/pairs.rs`): с её стороны тротуара нет, и угол по
-/// нему не скругляется. `tapers(дорога)` — длины клиньев у её `[начала,
-/// конца]` (`roads/tapers.rs`, 0 — клина нет): в клине кромка уже ближе к оси,
-/// и прямой пробег луча кончается там, где он начинается. `merged(дорога,
+/// нему не скругляется. `tapers(дорога)` — клинья у её `[начала, конца]`
+/// (`roads/tapers.rs`): в клине кромка уже ближе к оси, и прямой пробег луча
+/// с другого конца кончается там, где клин начинается; а торец под клином
+/// стоит в узле на полуширине узкого соседа с сужаемых сторон — по ней и
+/// считаются его углы. `merged(дорога,
 /// торец)` — торец плечо слияния (`roads/merges.rs`): плечи одного слияния
 /// друг другу не перекрёсток — ни прямых торцов, ни углов между ними. `scale`
 /// — множитель радиусов по классам (ручка `Corner radius`).
@@ -143,7 +149,7 @@ pub fn kerb_returns(
     nodes: &RoadNodes,
     sidewalk: impl Fn(usize) -> Option<f32>,
     paired: impl Fn(usize, f32) -> Option<bool>,
-    tapers: impl Fn(usize) -> [f32; 2],
+    tapers: impl Fn(usize) -> [Option<Taper>; 2],
     merged: impl Fn(usize, usize) -> bool,
     scale: f32,
 ) -> KerbReturns {
@@ -155,7 +161,8 @@ pub fn kerb_returns(
         if path.len() < 2 {
             continue;
         }
-        let [head, tail] = tapers(index);
+        let wedges = tapers(index);
+        let [head, tail] = wedges.map(|wedge| wedge.map_or(0.0, |wedge| wedge.length));
         let total = polyline_length(path);
         let closed = path[0] == path[path.len() - 1];
         let last = path.len() - 1;
@@ -246,13 +253,27 @@ pub fn kerb_returns(
                         sides[usize::from((side == 0) != forward)] = None;
                     }
                 }
+                // торец под клином: с сужаемых сторон кромка и тротуар в узле
+                // — узкого соседа, с сохранённой — свои
+                let mut half = [road.width / 2.0; 2];
+                if let Some(wedge) = wedges[usize::from(vertex == last)].filter(|_| at_end) {
+                    let narrow = roads[wedge.narrow];
+                    for (side, tapered) in wedge.sides.into_iter().enumerate() {
+                        if !tapered {
+                            continue;
+                        }
+                        let at = usize::from((side == 0) != forward);
+                        half[at] = narrow.width / 2.0;
+                        sides[at] = sidewalk(wedge.narrow).filter(|_| narrow.sidewalks[side]);
+                    }
+                }
                 if let Some(left) = paired(index, along) {
                     sides[usize::from(left != forward)] = None;
                 }
                 entry.1.push(Arm {
                     class: road.class,
                     highway: road.highway,
-                    half: road.width / 2.0,
+                    half,
                     sidewalk: sides,
                     direction,
                     run,
@@ -290,7 +311,7 @@ pub fn kerb_returns(
                     continue;
                 }
                 let radius = kerb_radius(first, second) * scale;
-                let halves = (first.half, second.half);
+                let halves = (first.half[0], second.half[1]);
                 if let Some(outline) = fillet(node, first, second, halves, radius) {
                     returns.roads.push((class, outline));
                 } else if let Some(outline) = outer_corner(node, first, second, halves) {
@@ -322,7 +343,7 @@ pub fn kerb_returns(
             // разной их ширине одной дугой обе полосы не обойти, а меньший
             // радиус оставляет асфальтовый клин внутри тротуарного
             let radius = kerb_radius(first, second) * scale - a.max(b);
-            let halves = (first.half + a, second.half + b);
+            let halves = (first.half[0] + a, second.half[1] + b);
             if let Some(outline) = fillet(node, first, second, halves, radius) {
                 returns.sidewalks.push(outline);
             } else if let Some(outline) = outer_corner(node, first, second, halves) {
@@ -613,7 +634,7 @@ mod tests {
             &nodes,
             |index| sidewalk(&roads[index]),
             |_, _| None,
-            |_| [0.0; 2],
+            |_| [None; 2],
             |_, _| false,
             1.0,
         )
@@ -760,7 +781,20 @@ mod tests {
             &nodes,
             |_| None,
             |_, _| None,
-            |road| if road == 1 { [0.0, 14.0] } else { [0.0; 2] },
+            |road| {
+                if road == 1 {
+                    [
+                        None,
+                        Some(Taper {
+                            length: 14.0,
+                            narrow: 0,
+                            sides: [true; 2],
+                        }),
+                    ]
+                } else {
+                    [None; 2]
+                }
+            },
             |_, _| false,
             1.0,
         );
@@ -874,7 +908,7 @@ mod tests {
             &nodes,
             |_| Some(SIDEWALK),
             |road, _| (road == 0).then_some(true),
-            |_| [0.0; 2],
+            |_| [None; 2],
             |_, _| false,
             1.0,
         );

@@ -158,7 +158,13 @@ fn the_wedge_asphalt_and_the_wedge_paint_share_one_grid() {
             .into_iter()
             .flat_map(|end| [None, Some(1.0), Some(-1.0)].map(|drift| (end, drift)))
         {
-            let [from, to] = wedge_frames(body, narrow, end, drift);
+            let wedge = WedgeEnd {
+                length: 10.0,
+                lanes: narrow,
+                drift,
+                kept: None,
+            };
+            let [from, to] = wedge_frames(body, wedge, end);
             let body_frame = lane_frame(body);
             let paint_from = narrow_frame(body_frame, narrow, end, drift);
             for step in 0..=10 {

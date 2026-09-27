@@ -1,14 +1,22 @@
-//! **Клинья** — переход между сечениями одной улицы
-//! (`network::sections`): там, где у соседних по улице ways разное число
-//! полос, более широкий начинается не с полной ширины, а с ширины соседа, и
-//! расходится до своей на длине «ручка `Taper` × разница ширин» (10 м на
-//! метр по умолчанию). До этого
-//! ширина менялась ступенькой прямо в узле шва.
+//! **Клинья** — переход между сечениями там, где одна дорога кончается и её
+//! соосно продолжает другая, а ширина у них разная: на шве улицы
+//! (`network::sections`, число полос сменилось) и на продолжении через
+//! границу улиц (`RoadNetwork::continuations` — другой класс, другая
+//! односторонность). Более широкий way начинается не с полной ширины, а с
+//! ширины соседа, и расходится до своей на длине «ручка `Taper` × разница
+//! ширин» (10 м на метр по умолчанию). До этого ширина менялась ступенькой
+//! прямо в узле.
 //!
-//! Клин кладётся только в **чистом шве** — узле, где сходятся ровно два way
-//! одной улицы. На перекрёстке ступенька тонет в асфальте узла, а скругления
-//! бордюра (`roads/corners.rs`) считаются по полной ширине дороги, и клин,
-//! начатый прямо от угла, разошёлся бы с дугой бордюра.
+//! **Клин — по сторонам.** В чистом шве (в узле никого, кроме двух way)
+//! сужаются обе кромки. На перекрёстке — только та, с которой к узлу не
+//! подходит другая проезжая часть ([`Taper::sides`]): со стороны примыкания
+//! уступ и так закрывают асфальт примыкающей и скругления бордюра
+//! (`roads/corners.rs`), а с пустой стороны он торчал бордюрным зубом — широкая
+//! улица кончалась, и узкая шла дальше. С сохранённой стороны кромка идёт
+//! полной ширины до самого узла, как раньше; скругления считают тот торец по
+//! полуширине его стороны: сужаемой — по узкому соседу. У крестовины, где
+//! примыкания с обеих сторон, клина нет вовсе — ступень тонет в узле. Дорожка
+//! (`RoadClass::Alley`) стороны не закрывает: её слой уступа не кроет.
 //!
 //! Только картинка: `RoadLine` не меняется, навмеш и разбор видят ширину
 //! участка как есть. Машины — тоже, но ряд у бордюра на длину клина
@@ -16,10 +24,11 @@
 
 use bevy::prelude::*;
 
-use super::network::{RoadNetwork, RoadNodes};
+use super::junctions::node_key;
+use super::network::{RoadNetwork, RoadNodes, arm_direction};
 use crate::map::meshing::Break;
-use crate::map::osm::RoadLine;
 use crate::map::osm::model::polyline_length;
+use crate::map::osm::{RoadClass, RoadLine};
 
 /// Длина клина на метр разницы ширин по умолчанию, м: полоса в 3.3 м
 /// появляется за 33 м — как отгон уширения на городской улице. В игре — ручка
@@ -35,11 +44,26 @@ const TAPER_MIN_LENGTH: f32 = 1.0;
 const TAPER_MAX_SHARE: f32 = 0.45;
 
 /// Клин у одного торца way: длина по разнице ширин (до обрезки по длине
-/// нарисованного пути) и дорога, с ширины которой он начинается.
+/// нарисованного пути), дорога, с ширины которой он начинается, и стороны
+/// `[слева, справа]` по ходу точек way, которые он сужает (хотя бы одна).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Taper {
     pub length: f32,
     pub narrow: usize,
+    pub sides: [bool; 2],
+}
+
+impl Taper {
+    /// Кромка, которую клин не трогает: `+1` — левая по ходу way, `-1` —
+    /// правая, `None` — клин симметричен. Раскладка полос на односторонне
+    /// суженном клине прижата к ней (`roads/paint.rs`).
+    pub fn kept(&self) -> Option<f32> {
+        match self.sides {
+            [true, true] => None,
+            [false, _] => Some(1.0),
+            [true, false] => Some(-1.0),
+        }
+    }
 }
 
 /// Клинья карты: у каждой дороги — по торцам `[начало, конец]`.
@@ -50,9 +74,10 @@ pub struct Tapers {
 }
 
 impl Tapers {
-    /// Клинья по стыкам улиц сети. `drawn` — дороги так, как они рисуются
-    /// (переезд через тротуар уже асфальтом), по тем же индексам, что у сети;
-    /// `per_meter` — длина клина на метр разницы ширин.
+    /// Клинья по стыкам улиц сети и по продолжениям через их границы. `drawn`
+    /// — дороги так, как они рисуются (переезд через тротуар уже асфальтом),
+    /// по тем же индексам, что у сети; `per_meter` — длина клина на метр
+    /// разницы ширин.
     pub fn new(
         drawn: &[&RoadLine],
         network: &RoadNetwork,
@@ -66,7 +91,7 @@ impl Tapers {
         if drawn.is_empty() || !network.covers(drawn.len()) {
             return tapers;
         }
-        for (a, b) in network.joints() {
+        for (a, b) in network.joints().chain(network.continuations()) {
             let (first, second) = (drawn[a.road], drawn[b.road]);
             if a.road == b.road || !takes_taper(first) || !takes_taper(second) {
                 continue;
@@ -76,9 +101,6 @@ impl Tapers {
             } else {
                 first.points[first.points.len() - 1]
             };
-            if nodes.roads_at(node).len() != 2 {
-                continue;
-            }
             let step = (first.width - second.width).abs();
             if step < TAPER_MIN_STEP {
                 continue;
@@ -89,9 +111,14 @@ impl Tapers {
             } else {
                 (b.road, b.reversed, a.road)
             };
+            let sides = free_sides(drawn, nodes, node, wide, end, narrow);
+            if sides == [false; 2] {
+                continue;
+            }
             tapers.ends[wide][usize::from(end)] = Some(Taper {
                 length: step * per_meter,
                 narrow,
+                sides,
             });
             tapers.count += 1;
         }
@@ -143,6 +170,52 @@ pub fn car_clearings(
 /// другим слоем со своим бордюром, арка приколота к стене дома.
 fn takes_taper(road: &RoadLine) -> bool {
     !road.carves_navmesh() && road.lanes.is_some()
+}
+
+/// Стороны `[слева, справа]` по ходу точек way `wide` у его торца `end` в
+/// узле `node`, с которых к узлу не подходит другая проезжая часть — там
+/// уступ виден, и клин сужает только их. Лучи чужих дорог берутся по всем их
+/// вершинам в узле (сквозная дорога даёт два), дорожки (`RoadClass::Alley`)
+/// не считаются.
+fn free_sides(
+    drawn: &[&RoadLine],
+    nodes: &RoadNodes,
+    node: Vec2,
+    wide: usize,
+    end: bool,
+    narrow: usize,
+) -> [bool; 2] {
+    let Some(away) = arm_direction(&drawn[wide].points, end) else {
+        return [false; 2];
+    };
+    let key = node_key(node);
+    let mut free = [true; 2];
+    for &other in nodes.roads_at(node) {
+        if other == wide || other == narrow || drawn[other].class != RoadClass::Street {
+            continue;
+        }
+        let points = &drawn[other].points;
+        for (vertex, point) in points.iter().enumerate() {
+            if node_key(*point) != key {
+                continue;
+            }
+            let arms = [
+                arm_direction(&points[vertex..], false),
+                arm_direction(&points[..=vertex], true),
+            ];
+            for direction in arms.into_iter().flatten() {
+                let cross = away.perp_dot(direction);
+                if cross == 0.0 {
+                    continue;
+                }
+                // слева от луча `away` — слева по ходу way у его начала и
+                // справа у конца
+                let left_of_way = (cross > 0.0) != end;
+                free[usize::from(!left_of_way)] = false;
+            }
+        }
+    }
+    free
 }
 
 /// Нарисованный путь, разрезанный под клинья: `(клин у начала, середина, клин
@@ -243,12 +316,13 @@ mod tests {
         assert_eq!(tapers.count, 0);
     }
 
-    #[test]
-    fn a_seam_on_a_junction_takes_no_taper() {
+    /// Шов 8 → 14.2 м в узле (100, 0) с третьей дорогой `side`; клин — у
+    /// начала широкого way 1, если он есть.
+    fn seam_with(side: RoadLine) -> Tapers {
         let mut roads = vec![
             street(vec![Vec2::new(0.0, 0.0), Vec2::new(100.0, 0.0)], 8.0),
             street(vec![Vec2::new(100.0, 0.0), Vec2::new(200.0, 0.0)], 14.2),
-            street(vec![Vec2::new(100.0, 0.0), Vec2::new(100.0, 80.0)], 8.0),
+            side,
         ];
         for road in &mut roads {
             road.lanes = Some(2);
@@ -256,10 +330,64 @@ mod tests {
         let network = RoadNetwork::new(&roads);
         let nodes = RoadNodes::new(&roads);
         let drawn: Vec<&RoadLine> = roads.iter().collect();
-        assert_eq!(
-            Tapers::new(&drawn, &network, &nodes, TAPER_PER_METER).count,
-            0
-        );
+        Tapers::new(&drawn, &network, &nodes, TAPER_PER_METER)
+    }
+
+    #[test]
+    fn a_side_street_keeps_its_side_of_the_seam() {
+        // примыкание слева по ходу широкого way (вверх): сужается только
+        // правая кромка, где уступ ничем не закрыт
+        let tapers = seam_with(street(
+            vec![Vec2::new(100.0, 0.0), Vec2::new(100.0, 80.0)],
+            8.0,
+        ));
+        assert_eq!(tapers.count, 1);
+        let start = tapers.at(1)[0].unwrap();
+        assert_eq!(start.sides, [false, true]);
+        assert_eq!(start.kept(), Some(1.0));
+        assert_eq!(start.narrow, 0);
+    }
+
+    #[test]
+    fn a_crossing_street_covers_both_sides() {
+        // узел — вершина сквозной дороги, как в OSM
+        let tapers = seam_with(street(
+            vec![
+                Vec2::new(100.0, -80.0),
+                Vec2::new(100.0, 0.0),
+                Vec2::new(100.0, 80.0),
+            ],
+            8.0,
+        ));
+        assert_eq!(tapers.count, 0);
+    }
+
+    #[test]
+    fn a_footway_at_the_seam_covers_nothing() {
+        let tapers = seam_with(crate::map::osm::fixture::footway(vec![
+            Vec2::new(100.0, -80.0),
+            Vec2::new(100.0, 0.0),
+            Vec2::new(100.0, 80.0),
+        ]));
+        assert_eq!(tapers.count, 1);
+        let start = tapers.at(1)[0].unwrap();
+        assert_eq!(start.sides, [true; 2]);
+        assert_eq!(start.kept(), None);
+    }
+
+    #[test]
+    fn another_class_going_on_collinearly_takes_the_taper_too() {
+        let (mut roads, _) = seam([8.0, 14.2], [2, 4]);
+        roads[1].highway = crate::map::osm::Highway::Secondary;
+        let network = RoadNetwork::new(&roads);
+        assert_eq!(network.glued(), 0, "разный класс — разные улицы");
+        let nodes = RoadNodes::new(&roads);
+        let drawn: Vec<&RoadLine> = roads.iter().collect();
+        let tapers = Tapers::new(&drawn, &network, &nodes, TAPER_PER_METER);
+        assert_eq!(tapers.count, 1);
+        let start = tapers.at(1)[0].unwrap();
+        assert_eq!(start.narrow, 0);
+        assert_eq!(start.sides, [true; 2]);
     }
 
     #[test]
