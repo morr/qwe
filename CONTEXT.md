@@ -283,7 +283,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     cluster has signals; rank is the `highway` class, a stop / give-way sign on the arm
     lowers it. On every arm that breaks: a **zebra** (the OSM crossing on the arm, or one
     generated past the junction edge where two streets with sidewalks (by tag, not the
-    Sidewalks toggle) meet, one of them at least tertiary or the cluster signalized, and
+    Sidewalks toggle) meet — or, in a signalized cluster, on an arm with a sidewalk on
+    both sides by its tags — one of them at least tertiary or the cluster signalized, and
     no ring in it — `RoadStyle::crossings`) and a **stop line** (where a zebra, signals,
     a sign or a tertiary+ street call for it) across the lanes
     coming in (dashed for give-way —
@@ -310,7 +311,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     rare short bays, seeded by the street, not a block-long run. One answer
     (`pockets::kerbsides`) for the ribbon and for `map::cars`. `sidewalk=*` likewise
     decides which sides carry a sidewalk band; an **untagged** street has none on an
-    unpaved surface, and a residential one has them only among blocks of 3+ storeys on
+    unpaved surface, and a residential, unclassified or living street has them only among
+    blocks of 3+ storeys on
     average (`parse::infer_sidewalks`, the cars' district measure).
   - **Paired halves** (`map/roads/network/pairs.rs`, `Pairs`) — a divided street as OSM
     draws it: two opposite one-way ways of one class side by side (a street or a
@@ -431,6 +433,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   row with its aisle — is asphalt; `GROUND_CLOSING_RADIUS` 12 m on a *big lot*), and of
   what the closing added only the pieces lying **between the lot and a road** are kept — a
   notch in the outline touches no road, a wedge between two streets touches no lot. A
+  road's band is its carriageway plus the sidewalks it draws; a **kerbside lot**
+  (`parking=street_side`, `MapData::street_side_lots`) takes the carriageway alone, so it
+  is paved up to the kerb, cut into the sidewalk rather than standing behind it. A
   drive without a sidewalk counts as the lot's side. Buildings of `KEEP_BUILDING_AREA`
   100 m² or more, greenery, water and **fences** (a band of `FENCE_HALF` 0.75 m either
   side) are subtracted from the added pieces, and a piece cut off from the lot by one is

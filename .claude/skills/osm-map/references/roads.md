@@ -102,7 +102,8 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   pocket read as an extra lane wherever no cars stood in it (the gallery has none),
   and real bays are a few cars long; OSM's own bays arrive as tags or as separate
   `amenity=parking` + `parking=street_side` outlines (Berlin 3275, Tula 56), which
-  reach the parking layer (`references/parking.md`).
+  reach the parking layer (`references/parking.md`) and are paved up to the kerb, cut
+  into the sidewalk (`parse.md`, **kerbside lot** in `pave_lots`).
   Drawn by `mesh_roads` as three polygons per pocket from
   `pockets::outline` (inner edge 5 cm under the carriageway edge, outer edge between the
   tapers): asphalt `POCKET_WIDTH` 2.5 m wide in `roads` (no casing — the road casing
@@ -167,9 +168,13 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     Douglas–Peucker at `SIMPLIFY_TOLERANCE` 3 cm keeping every shared node, and the
     median's midline and the two inner kerbs are sampled off the aligned axes and thinned
     the same way; the thinning is what took the stage from +130 k vertices and +50 ms
-    down to +24 k and +18 ms. Ends of two medians closer than `JOIN_GAP` 5 m are drawn
-    together (`join_ends`): a half of two ways is two runs, and the gap at the seam was a
-    hole in the double line and a kerb island on the «Макси» boulevard.
+    down to +24 k and +18 ms. Ends of two medians closer than `pairs::JOIN_GAP` 5 m are
+    drawn together (`join_ends`): a half of two ways is two runs, and the gap at the seam
+    was a hole in the double line and a kerb island on the «Макси» boulevard. For the same
+    reason a half's sidewalk is not drawn in a gap shorter than `pairs::JOIN_GAP` between
+    two runs on the same side (`roads::push_sidewalk`) — whatever the runs are, paved, lawn
+    or tram bed: their medians are drawn tip to tip, and the sidewalk lay between them as
+    a pale patch.
   - **Paved median** (gap ≤ `RoadShape::median_gap`, 1–6 m, default 3; the flag is
     stored on `Median` at construction — `Pairs::new(roads, paths, median_gap, rails)` — and
     `Median::is_paved` reads it; the pair tests take the knob's default) — `push_paved` lays a ribbon down the
@@ -208,9 +213,8 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     through as a pale square (a half with a wedge keeps its paired-side sidewalk), so
     `bed_caps` carries the bed `BED_CAP` further on **minus the lawn's kerb contour**
     (`push_lawn` returns it): the grass (`Z_ROAD_MEDIAN` 1.7) lies *under* the streets
-    (2.0), and a plain extension would have eaten the nose. And a half's sidewalk is not
-    drawn in a gap shorter than `JOIN_GAP` between two runs on the same side either
-    (`push_sidewalk`) — the medians of those runs are drawn tip to tip anyway. No
+    (2.0), and a plain extension would have eaten the nose. (The sidewalk in a short gap
+    between two runs is the general rule of **Paired halves**, **Alignment** above.) No
     lane frame, so no ruts over the tram lane. The double solid runs **down the middle**,
     between the tracks (as 2GIS draws it). What makes the tram lane read is the
     **tram band** below, not paint. Stage-B history: the first version (`c53c6524`)
@@ -673,7 +677,10 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     line halfway between them. Over a **paved** median (`PairRun::paved`, handed to
     `NodePaint::new` as `Partner { road, paved }`) the two aligned zebras then become **one
     plank** kerb to kerb (`join_zebras`: parallel within `JOIN_PARALLEL`, on one line
-    within `JOIN_OFFSET` 1 m, the gap between them at most `JOIN_GAP` 8 m): the shader
+    within `JOIN_OFFSET` 1 m, the gap between them at most `node_paint::JOIN_GAP` 8.8 m —
+    `TRAM_BED_MAX_GAP` plus `EDGE_INSET` 0.3 m off both kerbs plus `OVERLAP_SLACK` 0.2 m,
+    since the widest paved median is a tram bed and at a flat 8 m a bed wider than 7.4 m
+    kept two planks and a seam): the shader
     counts the bars from the plank's end, so two planks put the bars out of step at the
     seam — Yandex draws 02 and 12 as one plank. The median's double solid is broken there
     anyway (its breaks are the halves'). A lawn median keeps two zebras, each to its
@@ -845,7 +852,7 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     21). The setback is measured **along the lane**: each arrow carries `LaneArrow::back`,
     its lane's centreline from the edge back against the travel for `ARROW_BACK` 60 m (the
     drawn axis offset by the lane, `turns::lane_back`), and `paint_arrow` puts tip and tail
-    on it by arc length (`paint::along_back`); a straight line back from the edge left the
+    on it by arc length (`map::along::place_on_path`); a straight line back from the edge left the
     lane on a curved approach — 20 m out it sat on the lawn (Leipziger Straße, Berlin).
     A lane shorter than that falls back to the straight line. **A second row** stands
     `ARROW_REPEAT` 20 m behind the first (`Painter::repeat_setback`; Yandex puts them at
@@ -1456,7 +1463,12 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
 ## The junction gallery — `examples/demos/roads`
 
 `cargo run --example roads` shows a city's typical road junctions in a column —
-twenty-three for Tula (stage 7 added three: `21_turn_pocket`, проспект Ленина's one-way
+twenty-six for Tula (the tram-bed and merge plans added three: `24_tram_bed_end`,
+Советская at Коминтерна, where the tram turns off and the bed ends square at the nose of
+the lawn — all four ways are one-way and the pair goes on, so **not** a merge (**Tram
+bed**); `25_divided_merge`, Демидовская Плотина's halves ending on a two-way street at a
+node with a crossing street, and `26_pure_merge`, Рязанская's halves with no other arm —
+**Merges**; stage 7 added three: `21_turn_pocket`, проспект Ленина's one-way
 half widening from two lanes to three before a node, `turn:lanes` `left|left|right` —
 the **lane arrows** and a pocket's line ending in the gap; `22_lane_change`, two-way
 secondary улица Болдина going from two lanes to four at a seam — the two-way twin of
@@ -1468,8 +1480,10 @@ joining from opposite sides 17 m apart — one cluster of **Junction paint**; th
 two at a pure seam — the taper of **Streets, sections, tapers**; the seventeenth,
 `17_ring_gores`, is the mall ring the plan's acceptance names — three hatched gores and
 the boulevard's double solid line must survive every stage; the eighteenth,
-`18_lawn_median`, is Советская улица with a 5 m lawn between the halves and a lane into
-one of them — **Paired halves**): crossings of avenues (square and skew), of an avenue and a street, of a divided
+`18_lawn_median`, is Советская улица with two tram tracks in the 5 m between the halves
+and a lane into one of them — each half widened to the middle, the tram band, the double
+solid between the tracks, the sidewalk only outside (**Tram bed**); the stem is kept from
+before the tracks were drawn, since the Yandex shot is keyed by it): crossings of avenues (square and skew), of an avenue and a street, of a divided
 avenue and a street, of private-sector streets and of yard drives, T's into an avenue and
 into one half of a divided one, a fork round a triangular island, a roundabout, five
 arms, a drive into a street, a street that narrows, a sharp bend, a dead end — each with
