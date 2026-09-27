@@ -284,7 +284,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     per road. **Arm edge**: where the arm's cross-section leaves the other roads'
     asphalt, paved node-triangle islands included (at least half the widest other road
     + 1 m from the node; at a ring — just that) — rule zebras, stop lines and the turn
-    paths measure from it, OSM crossings keep their place. A **link** — an arm that never
+    paths measure from it, OSM crossings keep their place; a street that has a marked OSM
+    crossing within 35 m of the node gets no rule zebra on any of its arms. A **link** — an arm that never
     leaves the junction's asphalt, the throat of a complex junction (a fork's triangle) —
     gets no rule zebra, no stop line and no arrows. **Main through**: a road keeps its lines through a cluster unless it ends
     there, is crossed by a road of its rank that also passes (or at a **crossroads** —

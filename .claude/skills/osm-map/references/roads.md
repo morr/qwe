@@ -844,7 +844,15 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     lies at least `RULE_ZEBRA_ROOM` 30 m past the edge (`nodes_along`). A shorter arm is
     a link between two nodes — the branches of a fork's triangle (Tula, gallery 06, 22 and
     31 m) had a rule zebra at both ends and a stop line between them within fifteen metres;
-    the crossing is left to the outer arms. An OSM crossing ignores the room. A zebra is `ZEBRA_LENGTH` 4 m along the
+    the crossing is left to the outer arms. An OSM crossing ignores the room. **A
+    street already crossed by the data gets no rule zebra**: a marked OSM crossing on any
+    road of the same street (`street_of`) visiting the cluster, within
+    `RULE_ZEBRA_DATA_REACH` (= `ARM_CROSSING_REACH`, 35 m) of the arm's node point, drops
+    the rule zebra from every arm of that street — the mapper said where this junction is
+    crossed, and a second zebra twenty metres from the first read as a mistake (Tula,
+    gallery 12: the T of Халтурина into Красноармейский had the rule zebra west of the T
+    and the signalled OSM crossing east of it; Yandex draws one). The stop line stays;
+    the other street's arms are untouched. A zebra is `ZEBRA_LENGTH` 4 m along the
     road, across the carriageway less 0.3 m at each kerb. The stop line is called by the
     same things as the zebra — a zebra on the arm, signals, a stop / give-way sign, or a
     street of at least `tertiary` in the cluster; two residential streets with no sign get
