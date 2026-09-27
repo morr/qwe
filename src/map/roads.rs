@@ -1193,6 +1193,7 @@ pub fn mesh_roads(
     // (`map::cars`): асфальт за кромкой и тротуар, отодвинутый за него
     let kerbsides = pockets::all_kerbsides(
         roads,
+        nodes,
         &nodal,
         junctions.row(),
         map.traffic_side,

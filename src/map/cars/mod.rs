@@ -405,13 +405,19 @@ pub fn mesh_cars(
     // надо было прежде, чем его заводить. Доли, а не миллисекунды: абсолютное
     // время зависит от App Nap, перемеряет его `measure_cars` из
     // `examples/bench/map_meshing` (он печатает обе строки — `breaks` и `cars`)
-    let junctions = pockets::row_breaks(&map.roads, drawn.tapers(), &map.road_nodes);
+    let junctions = pockets::row_breaks(
+        &map.roads,
+        drawn.nodes(),
+        drawn.tapers(),
+        &map.road_nodes,
+    );
     let breaks_took = started.elapsed();
     // застройка вокруг — тем же проходом и с тем же сроком жизни, что и
     // разрывы: индекс на 7.6 тысячи домов дешевле, чем повод его кешировать
     let districts = Districts::new(&map.buildings);
     let mut cars = park_cars(
         &map.roads,
+        drawn.nodes(),
         &junctions,
         style,
         &drawn.axes(Axis::Nodal),
@@ -461,13 +467,16 @@ pub fn cars_mesh(
     detail: CarDetail,
 ) -> MeshBuilder {
     // разрывы — игровые (`row_breaks`: проезды тоже рвут ряд); сети и точек
-    // дорог у витрины нет, как нет их и у её осей (`drawn_axes`)
+    // дорог у витрины нет, как нет их и у её осей (`drawn_axes`), а соседство
+    // way'ев по узлу `RoadNodes` выводит сам
     let tapers = Tapers::of_map(roads, &RoadNetwork::default(), shape.taper());
-    let junctions = pockets::row_breaks(roads, &tapers, &[]);
+    let shared = RoadNodes::new(roads);
+    let junctions = pockets::row_breaks(roads, &shared, &tapers, &[]);
     let districts = Districts::new(&[]);
     mesh_bodies(
         &park_cars(
             roads,
+            &shared,
             &junctions,
             style,
             &drawn_axes(roads, &shape),
@@ -492,9 +501,12 @@ pub fn drawn_axes<'a>(roads: &'a [RoadLine], shape: &RoadShape) -> Vec<Cow<'a, [
 ///
 /// `junctions.breaks` индексирован по номеру дороги **во входном срезе**,
 /// поэтому `roads` — весь срез карты, а не отфильтрованный список
-/// парковочных; `axes` — по тому же индексу, нарисованные оси дорог.
+/// парковочных; `shared` — их узлы (карман через торец way идёт на
+/// продолжение улицы), `axes` — по тому же индексу, нарисованные оси дорог.
+#[allow(clippy::too_many_arguments)]
 fn park_cars(
     roads: &[RoadLine],
+    shared: &RoadNodes,
     junctions: &MarkingBreaks,
     style: CarStyle,
     axes: &[Cow<[Vec2]>],
@@ -509,7 +521,7 @@ fn park_cars(
         districts,
     };
     let decks: Vec<BridgeDeck> = roads.iter().filter_map(BridgeDeck::of).collect();
-    let kerbsides = pockets::all_kerbsides(roads, axes, junctions, traffic, lots);
+    let kerbsides = pockets::all_kerbsides(roads, shared, axes, junctions, traffic, lots);
     let mut near = Vec::new();
     for (index, road) in roads.iter().enumerate() {
         if !pockets::parkable(road) {

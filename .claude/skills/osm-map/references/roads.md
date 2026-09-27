@@ -88,7 +88,8 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   junction breaks without stitches — with **service drives** among the participants, so a
   driveway into a yard breaks the row, `is_row_participant` — plus the taper clearings and
   the **marked OSM crossings**, half a zebra around the node, spilled onto the continuing
-  way when the node is under `CROSSING_SPILL` 10 m from its way's end — the same list the
+  way (`RoadNodes::next_way`, see below) when the node is under `CROSSING_SPILL` 10 m
+  from its way's end — the same list the
   cars use; 6 m rather than 4 so the slant starts past a rule zebra, which stands 1–5 m
   past the junction edge, the author's report of a bay cut off flat at a zebra, 3284
   2806), `POCKET_TAPER` 6 m slanted ends where a pocket stops inside the way, at least
@@ -96,7 +97,19 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   `pockets::all_kerbsides` (the one door for the ribbon and the cars) runs
   `join_way_ends` over the per-way answers — an end open into the way's end stays open
   only if the next way has an open piece on the same kerb there (the side sign flips on
-  a way drawn the other way round), otherwise it gets its taper; the pieces linked by open
+  a way drawn the other way round), otherwise it gets its taper. **The next way is
+  `RoadNodes::next_way`** (`roads/network/mod.rs`), the one answer to "which way goes on
+  past this end": the most collinear pair in the node within `MAX_BEND` 50°, same class
+  and flow as `RoadNetwork` glues streets, else a continuation across streets
+  (`RoadNetwork::continuations`) — computed from the roads alone, so the car gallery,
+  which has no network, gets it too. Both the pocket join and the zebra spill used to
+  take *any* way ending in the node: on a tee that was the side way when it came first by
+  index (pinned `a_kerb_pocket_stops_at_a_t_junction_side_way`,
+  `a_zebra_at_a_way_end_spills_only_onto_the_continuation`), and a pocket ran round a
+  right-angle seam (`a_kerb_pocket_does_not_turn_a_right_angle_way_end`). No city moved:
+  a tee of three row participants is a junction break that closes the pockets anyway, and
+  on Tula, Berlin, Kaluga and Ryazan no vertex of the road or car layers changed. The
+  pieces linked by open
   ends form a chain and `POCKET_MIN` is measured on the chain, not per way; a piece whose
   tapers outgrow it goes (a taper is not carried across a way end), and the pass repeats
   until nothing changes. Per way, a short open piece was dropped while its neighbour

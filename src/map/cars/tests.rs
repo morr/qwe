@@ -49,6 +49,7 @@ fn park_with(roads: &[RoadLine], style: CarStyle) -> Vec<Car> {
 fn park_driving(roads: &[RoadLine], style: CarStyle, traffic: TrafficSide) -> Vec<Car> {
     park_cars(
         roads,
+        &RoadNodes::new(roads),
         &junctions::marking_breaks(roads, is_carriageway, &[]),
         style,
         &drawn_axes(roads, &straight()),
@@ -198,6 +199,7 @@ fn the_same_street_parks_thinner_in_a_private_sector() {
     let rows = |buildings: &[PolyArea]| {
         park_cars(
             roads,
+            &RoadNodes::new(roads),
             &breaks,
             CarStyle::default(),
             &drawn_axes(roads, &straight()),
@@ -521,6 +523,7 @@ fn the_row_stays_on_the_drawn_asphalt_through_a_bend() {
     };
     let cars = park_cars(
         std::slice::from_ref(&road),
+        &RoadNodes::new(std::slice::from_ref(&road)),
         &junctions::marking_breaks(std::slice::from_ref(&road), is_carriageway, &[]),
         style,
         &drawn_axes(std::slice::from_ref(&road), &RoadShape::default()),
@@ -661,7 +664,13 @@ fn the_row_clears_the_seam_taper_of_the_ribbon() {
     // те же вызовы, что у `mesh_cars`, — ради координат машин
     let cars = park_cars(
         &map.roads,
-        &pockets::row_breaks(&map.roads, drawn.tapers(), &map.road_nodes),
+        drawn.nodes(),
+        &pockets::row_breaks(
+            &map.roads,
+            drawn.nodes(),
+            drawn.tapers(),
+            &map.road_nodes,
+        ),
         style,
         &drawn.axes(Axis::Nodal),
         map.traffic_side,

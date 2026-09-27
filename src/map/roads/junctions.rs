@@ -345,6 +345,7 @@ impl Junctions {
         let row = pockets::row_breaks_over(
             breaks_over(&every, roads),
             roads,
+            prepared.nodes(),
             prepared.tapers(),
             &map.road_nodes,
         );
