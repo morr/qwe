@@ -133,8 +133,8 @@ impl<T: Copy> Grid<T> {
             "рамка {min}..{max} — не числа"
         );
         let (low, high) = (self.cell_of(min), self.cell_of(max));
-        let cells = (i64::from(high.x) - i64::from(low.x) + 1)
-            * (i64::from(high.y) - i64::from(low.y) + 1);
+        let cells =
+            (i64::from(high.x) - i64::from(low.x) + 1) * (i64::from(high.y) - i64::from(low.y) + 1);
         if !(min.is_finite() && max.is_finite()) || cells > MAX_INSERT_CELLS {
             error!("grid: box {min}..{max} ({cells} cells) skipped — broken geometry upstream");
             return;
