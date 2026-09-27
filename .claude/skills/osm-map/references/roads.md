@@ -171,7 +171,15 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     A continuation "carries a run at the same node" when that run reaches within
     `RUN_BRIDGE` of it (it was one probe step, and a seam of the own half is often a seam
     of the partner too, where the probes miss), and a span whose end is continued runs
-    to the very end of the drawn axis without fading.
+    to the very end of the drawn axis without fading. The seam is looked up by the
+    way's **OSM end point**, never by the end of the drawn axis: the smoothed axis is
+    cut into ways at the point of the arc nearest the seam (**The street axis**), a few
+    millimetres off the node, and `RoadNodes` found nothing there — every seam of the
+    own half counted as a run end, and the axis fell back to OSM at each one
+    (Красноармейский: 1.3–1.9 m dips every 35–80 m, the author's report after the
+    `RUN_BRIDGE` fix). The pair tests that align raw points could not see it;
+    `a_seam_of_the_own_half_on_a_smoothed_axis_does_not_let_the_axes_go` runs
+    `street_axes` with the default curve.
     Then the path is thinned back by
     Douglas–Peucker at `SIMPLIFY_TOLERANCE` 3 cm keeping every shared node, and the
     median's midline and the two inner kerbs are sampled off the aligned axes and thinned

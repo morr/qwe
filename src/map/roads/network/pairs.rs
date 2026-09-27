@@ -378,18 +378,27 @@ impl Pairs {
         // узла тоже есть, — не конец куска. «У узла» — ближе [`RUN_BRIDGE`]:
         // шов своей половины бывает и швом встречной, и у него несколько проб
         // пары не находят. Отдаёт зазор куска продолжения: к нему зазор
-        // подходит через шов, без ступеньки
-        let continued = |road: usize, node: Vec2| {
+        // подходит через шов, без ступеньки. Узел — точка OSM, а не конец
+        // нарисованной оси: сглаженная ось режется на ways в ближайшей к шву
+        // точке дуги (`roads/axis.rs`), и по концу оси узел не находился —
+        // разводка сходила на нет у каждого шва своей половины
+        let continued = |road: usize, end: bool| {
+            let points = &roads[road].points;
+            let node = if end {
+                points[points.len() - 1]
+            } else {
+                points[0]
+            };
             nodes.roads_at(node).iter().find_map(|&other| {
                 if other == road || street(other).is_none() || street(other) != street(road) {
                     return None;
                 }
-                let path = &paths[other];
+                let points = &roads[other].points;
                 self.runs[other]
                     .iter()
                     .find(|run| {
-                        (path[0] == node && run.from <= RUN_BRIDGE)
-                            || (path[path.len() - 1] == node
+                        (points[0] == node && run.from <= RUN_BRIDGE)
+                            || (points[points.len() - 1] == node
                                 && run.to >= lengths[other] - RUN_BRIDGE)
                     })
                     .map(|run| run.gap)
@@ -401,10 +410,7 @@ impl Pairs {
                 continue;
             }
             let path = &paths[road];
-            let ends = [
-                continued(road, path[0]),
-                continued(road, path[path.len() - 1]),
-            ];
+            let ends = [continued(road, false), continued(road, true)];
             let (mut dense, along) = densify(path, ALIGN_STEP);
             let total = along[along.len() - 1];
             // узлы с чужими проезжими дорогами — закреплены; переход дорожки

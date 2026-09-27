@@ -325,6 +325,54 @@ fn a_seam_of_the_partner_half_does_not_let_the_axes_go() {
 }
 
 #[test]
+fn a_seam_of_the_own_half_on_a_smoothed_axis_does_not_let_the_axes_go() {
+    // своя половина — два way с изломом в 4° у x = 150, встречная — один
+    // way; оси сглажены, как в игре, и сглаженная ось режется на ways не в
+    // самом узле шва, а в ближайшей к нему точке дуги (`roads/axis.rs`)
+    let width = 3.0 * 3.3 + 1.0;
+    let apart = width - 2.0;
+    let rise = 150.0 * 4f32.to_radians().tan();
+    let roads = vec![
+        half(vec![Vec2::ZERO, Vec2::new(150.0, 0.0)], 3),
+        half(vec![Vec2::new(150.0, 0.0), Vec2::new(300.0, rise)], 3),
+        half(
+            vec![
+                Vec2::new(300.0, rise + apart),
+                Vec2::new(150.0, apart),
+                Vec2::new(0.0, apart),
+            ],
+            3,
+        ),
+    ];
+    let nodes = RoadNodes::new(&roads);
+    let axes = crate::map::roads::axis::street_axes(
+        &roads,
+        &[],
+        &RoadNetwork::new(&roads),
+        &nodes,
+        &RoadShape::default(),
+    );
+    assert_ne!(
+        axes.paths[0].last(),
+        Some(&Vec2::new(150.0, 0.0)),
+        "нарисованная ось режется не в узле шва — иначе тест ничего не ловит"
+    );
+    let paths: Vec<Vec<Vec2>> = axes.paths.iter().map(|path| path.to_vec()).collect();
+    let wanted = width + PAVED_MIN_GAP;
+    for (step, apart) in apart_along(&paths, 0, &[2], 60.0, 148.0)
+        .into_iter()
+        .chain(apart_along(&paths, 1, &[2], 152.0, 240.0))
+        .enumerate()
+    {
+        assert!(
+            (apart - wanted).abs() < 0.1,
+            "шаг {step}: между осями {apart}, а не {wanted}: у шва своей половины разводка \
+             сошла на нет"
+        );
+    }
+}
+
+#[test]
 fn a_tram_bed_of_two_ways_keeps_its_own_gaps_without_a_step() {
     // половина A — два way по y = 0, половина B — два way, чей зазор
     // сходится от 6 м к 4
