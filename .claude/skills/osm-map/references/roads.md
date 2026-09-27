@@ -1864,7 +1864,10 @@ place to look at a road-network defect end to end:
   a **Road paint** header (Markings, Paint, Crossings, Stop lines, Arrows, Wear, Turn wear)
   and the Network row; a change rebuilds every sample. The gallery settles `RoadShape`
   like the game and sets the lane-width global (`apply_lane_width`) before re-parsing its
-  samples. `ROADS_SHOT=path.png` takes a frame and exits, `ROADS_SAMPLE=N` frames sample N,
+  samples. `ROADS_SHOT=path.png` takes a frame and exits — counting the shared
+  `gallery_shot.rs` frames only from the frame every sample is built and placed
+  (`gallery_ready`), since the samples build one per frame and a fixed frame number left
+  the late ones (Tula's 28th) empty; `ROADS_SAMPLE=N` frames sample N,
   `ROADS_CITY=<slug>` opens the gallery on that city (the automatic shot of a city other
   than Tula).
 - **Captions are always drawn**, even where they run under the panel or off the screen.

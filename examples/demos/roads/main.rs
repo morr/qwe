@@ -247,7 +247,10 @@ fn main() {
                 ),
                 build_next,
                 place_new,
-                auto_shot.run_if(resource_exists::<ShotRequest>),
+                // счёт кадров снимка идёт с кадра, когда собраны и сдвинуты все
+                // примеры: собираются они по одному на кадр, и на общем
+                // `SHOT_FRAME` поздние ещё не стояли в колонке
+                auto_shot.run_if(resource_exists::<ShotRequest>.and_then(gallery_ready)),
             )
                 .chain(),
         )
@@ -668,6 +671,12 @@ fn place_new(
         transform.translation += shift.extend(0.0);
         commands.entity(entity).insert(Placed);
     }
+}
+
+/// Витрина готова к снимку: все примеры собраны и сдвинуты на свои места.
+/// Пустой список (манифест не прочитан) тоже готов — снимается сообщение.
+fn gallery_ready(gallery: Res<Gallery>) -> bool {
+    gallery.built == gallery.samples.len() && gallery.pending_shift.is_none()
 }
 
 /// Подпись слева от окна: вид пересечения, полный адрес, игровые координаты,
