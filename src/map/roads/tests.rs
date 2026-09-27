@@ -1574,3 +1574,163 @@ fn an_arm_is_filled_before_its_leader_even_when_it_leads_elsewhere() {
     // без узла — прежний ключ
     assert_eq!(fill_order(&widths, &leading, &[]), vec![2, 0, 1]);
 }
+
+/// Отчёт без часов: два прогона одной карты обязаны совпасть до поля.
+fn timeless(map: &MapData) -> RoadReport {
+    let (_, mut report) = mesh_roads(map, RoadStyle::default(), RoadShape::default());
+    report.network = Default::default();
+    report.elapsed = Default::default();
+    report
+}
+
+fn with_network(roads: Vec<RoadLine>) -> MapData {
+    MapData {
+        network: network::RoadNetwork::new(&roads),
+        roads,
+        ..default()
+    }
+}
+
+/// Въезд с улицы через тротуар, как его размечает OSM: проезд — дорожка
+/// поперёк тротуара — снова проезд. Дорожка — `2`.
+fn a_driveway() -> MapData {
+    let footway = RoadLine {
+        class: RoadClass::Alley,
+        highway: Highway::Path,
+        ..fixture::street(vec![Vec2::new(50.0, -10.0), Vec2::new(50.0, -18.0)], 3.5)
+    };
+    with_network(vec![
+        fixture::street(
+            vec![Vec2::ZERO, Vec2::new(50.0, 0.0), Vec2::new(100.0, 0.0)],
+            12.0,
+        ),
+        fixture::street(vec![Vec2::new(50.0, 0.0), Vec2::new(50.0, -10.0)], 5.0),
+        footway,
+        fixture::street(vec![Vec2::new(50.0, -18.0), Vec2::new(50.0, -60.0)], 5.0),
+    ])
+}
+
+#[test]
+fn a_driveway_crossing_gets_no_base_break() {
+    // Базовые разрывы (`junctions::marking_breaks`) считаются по дорогам
+    // карты, краска узлов — по дорогам как рисуются, где переезд уже улица.
+    // Разрыва у переезда нет ни в одном: дорожка остаётся `Highway::Path`, и
+    // `is_carriageway` её не берёт в обоих — смена класса на `Street` тут
+    // ничего не сдвигает.
+    let map = a_driveway();
+    let report = timeless(&map);
+    assert_eq!(report.crossings, 1);
+    let nodes = RoadNodes::new(&map.roads);
+    let crossings = network::driveway_crossings(&map.roads, &nodes);
+    assert_eq!(crossings, vec![(2, 5.0)]);
+    let osm = junctions::marking_breaks(&map.roads, is_carriageway, &[]);
+    assert!(osm.breaks[2].is_empty());
+    let mut drawn = map.roads.clone();
+    drawn[2] = RoadLine {
+        class: RoadClass::Street,
+        width: 5.0,
+        ..map.roads[2].clone()
+    };
+    let as_drawn = junctions::marking_breaks(&drawn, is_carriageway, &[]);
+    assert!(as_drawn.breaks[2].is_empty());
+    assert_eq!(osm.breaks, as_drawn.breaks);
+}
+
+#[test]
+fn a_ring_arc_base_break_reaches_by_the_osm_width() {
+    // Где базовые разрывы и краска узлов правда расходятся — дуга кольца:
+    // рисуется сечением всего кольца (`ring_arcs`), а базовый разрыв на
+    // подходе меряет вылет по ширине дуги из OSM. Перевести базовые разрывы на
+    // дороги как рисуются — сдвинуть их на подходах к кольцу.
+    let mut map = roundabout_with_an_approach(true, true);
+    // кольцо из двух дуг разной ширины: узкая получает ширину широкой
+    let circle = map.roads[0].points.clone();
+    map.roads[0].points = circle[..=12].to_vec();
+    let mut second = map.roads[0].clone();
+    second.points = circle[12..].to_vec();
+    second.width = 12.0;
+    map.roads.push(second);
+    // подходы — проезжие части: проезд `Service` краску не рвёт
+    for road in &mut map.roads {
+        road.highway = Highway::Residential;
+    }
+    let map = with_network(map.roads);
+    let nodes = RoadNodes::new(&map.roads);
+    let axes = axis::street_axes(
+        &map.roads,
+        &map.rails,
+        &map.network,
+        &nodes,
+        &RoadShape::default(),
+    );
+    let arcs = ring_arcs(&map.roads, &axes.rings);
+    assert_eq!(arcs.len(), 1);
+    assert_eq!(arcs[0].0, 0);
+    assert_eq!(arcs[0].1.width, 12.0);
+    let mut drawn = map.roads.clone();
+    drawn[0] = arcs[0].1.clone();
+    let osm = junctions::marking_breaks(&map.roads, is_carriageway, &[]);
+    let as_drawn = junctions::marking_breaks(&drawn, is_carriageway, &[]);
+    assert_ne!(osm.breaks, as_drawn.breaks);
+}
+
+#[test]
+fn a_dangling_end_short_of_a_street_is_stitched() {
+    // проезд кончается в трёх метрах за кромкой тротуара улицы
+    let map = with_network(vec![
+        fixture::street(vec![Vec2::ZERO, Vec2::new(100.0, 0.0)], 12.0),
+        fixture::street(vec![Vec2::new(50.0, -60.0), Vec2::new(50.0, -9.0)], 5.0),
+    ]);
+    let report = timeless(&map);
+    assert_eq!(report.stitches, 1);
+    assert_eq!(report.crossings, 0);
+    assert_eq!(report.tapers, 0);
+    assert_eq!(report.merges, [0, 0]);
+}
+
+#[test]
+fn a_section_seam_is_one_taper() {
+    let street = |points: Vec<Vec2>, lanes: u8| RoadLine {
+        lanes: Some(lanes),
+        ..fixture::street(points, f32::from(lanes) * 3.3 + 1.0)
+    };
+    let map = with_network(vec![
+        street(vec![Vec2::ZERO, Vec2::new(200.0, 0.0)], 2),
+        street(vec![Vec2::new(200.0, 0.0), Vec2::new(400.0, 0.0)], 4),
+    ]);
+    let report = timeless(&map);
+    assert_eq!(report.tapers, 1);
+    assert_eq!(report.stitches, 0);
+    assert_eq!(report.crossings, 0);
+    assert_eq!(report.merges, [0, 0]);
+}
+
+#[test]
+fn a_divided_street_merging_into_a_two_way_one_is_one_merge() {
+    // половины в три полосы сходятся в узел, двусторонняя в четыре уходит
+    // от него на восток — как в `merges/tests.rs`
+    let width = |lanes: u8| f32::from(lanes) * 3.3 + 1.0;
+    let primary = |points: Vec<Vec2>, lanes: u8, oneway: bool| RoadLine {
+        highway: Highway::Primary,
+        oneway,
+        lanes: Some(lanes),
+        ..fixture::street(points, width(lanes))
+    };
+    let apart = width(3) + 3.0;
+    let node = Vec2::new(240.0, apart / 2.0);
+    let map = with_network(vec![
+        primary(vec![Vec2::ZERO, Vec2::new(200.0, 0.0), node], 3, true),
+        primary(
+            vec![node, Vec2::new(200.0, apart), Vec2::new(0.0, apart)],
+            3,
+            true,
+        ),
+        primary(vec![node, node + Vec2::new(160.0, 0.0)], 4, false),
+    ]);
+    let report = timeless(&map);
+    assert_eq!(report.merges, [1, 2]);
+    assert_eq!(report.crossings, 0);
+    assert_eq!(report.stitches, 0);
+    assert_eq!(report.tapers, 0);
+    assert_eq!(timeless(&map), report, "отчёт повторяется до поля");
+}
