@@ -7,8 +7,9 @@
 
 use bevy::prelude::*;
 
-use super::{ROAD_JOIN, RoadJoin, densify};
+use super::{ROAD_JOIN, RoadJoin, smoothstep};
 use crate::map::SHADOW_COLOR;
+use crate::map::along::densify;
 use crate::map::footprint::JOIN_EPSILON;
 use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin, merge_close_points, miter_offsets};
 use crate::map::osm::model::{
@@ -75,9 +76,8 @@ fn bridge_shadow_path(points: &[Vec2], deck: &BridgeSpan) -> Vec<ShadowPoint> {
             // что за его стыком
             let behind = deck.from_start + at;
             let ahead = deck.from_end + (length - at);
-            let raised = (behind.min(ahead) / ramp).clamp(0.0, 1.0);
             // плавно, а не изломом: у настоящей насыпи профиль сглажен
-            let rise = raised * raised * (3.0 - 2.0 * raised);
+            let rise = smoothstep(behind.min(ahead) / ramp);
             // ход тени вдоль моста и сколько его осталось до торца впереди
             let tangent = (dense[(index + 1).min(last)] - dense[index.saturating_sub(1)])
                 .normalize_or(Vec2::X);

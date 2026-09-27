@@ -8,6 +8,7 @@ use bevy::math::Vec2;
 
 use super::planting::plant_trees;
 use crate::city::City;
+use crate::map::along::densify;
 use crate::map::cars::district::Districts;
 use crate::map::grid::Grid;
 use crate::map::osm::entrances::generate_entrances;
@@ -19,7 +20,7 @@ use crate::map::osm::model::{
 };
 use crate::map::osm::overpass::{Element, GeoBounds, LatLon, Member, OverpassResponse};
 use crate::map::roads::network::sections::{self, SectionReport};
-use crate::map::roads::{densify, is_carriageway, mapped_sidewalk, sidewalk_width};
+use crate::map::roads::{is_carriageway, mapped_sidewalk, sidewalk_width};
 use crate::map::seed::seed_from_point;
 
 /// Ширина стены Кремля, м.

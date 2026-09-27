@@ -961,6 +961,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   and a refusal there would drop the last object of a row. A repeated vertex does not eat a
   place either — coinciding vertices are one point, and the direction comes from the nearest
   link that has length; `None` is left only for a polyline with no length at all.
+  `densify` lives beside it — a polyline refined to a step, original vertices kept exactly
+  (the bridge shadow's rise and the parse's storey probes read it; the pair alignment keeps
+  its own copy, whose arclengths come off the OSM links — summing the refined steps
+  instead moves the halves by the last bits, and the drawn medians with them).
 - **Shape vocabulary** (`map/shapes.rs`) — the one dialect of `i_overlay` on the map, shared
   by the parse's lot paving, the big lot's kerb and the gores the way `map/seed.rs` shares
   the RNG: `Contour` / `Shape`, the offset rounding `ARC`, the ring tolerance `RING_EPSILON`

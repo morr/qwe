@@ -76,27 +76,6 @@ use crate::settings::{
     Z_ALLEY, Z_BUILDING, Z_LOT_LINES, Z_LOT_SIDEWALK, Z_ROAD, Z_ROAD_MEDIAN, Z_SIDEWALK,
 };
 
-/// Ломаная, догущённая до шага не крупнее `step`: исходные вершины остаются на
-/// месте, между ними встают промежуточные. Нужна там, где вдоль ленты меняется
-/// не только направление, но и величина — здесь высота настила; разбор так же
-/// расставляет пробы этажности вдоль улицы (`osm/parse.rs::infer_sidewalks`).
-pub(crate) fn densify(points: &[Vec2], step: f32) -> Vec<Vec2> {
-    let Some((last, rest)) = points.split_last() else {
-        return Vec::new();
-    };
-    let mut dense = Vec::with_capacity(rest.len() + 1);
-    for pair in points.windows(2) {
-        let (from, to) = (pair[0], pair[1]);
-        dense.push(from);
-        let parts = (from.distance(to) / step).ceil().max(1.0);
-        for part in 1..parts as usize {
-            dense.push(from.lerp(to, part as f32 / parts));
-        }
-    }
-    dense.push(*last);
-    dense
-}
-
 /// Проезжая часть — асфальт: серый, заметно темнее тротуара и земли. Белой
 /// (osm-carto) она была, пока не появилась разметка: белую линию на белом не
 /// видно. Потом была светло-голубовато-серой (0.655, как на детальных картах
