@@ -215,9 +215,17 @@ fn a_merge_ramp_hands_the_asphalt_the_paint_frames() {
     assert_eq!(profile.first().map(|pair| pair.0), Some(10.0));
     assert_eq!(profile.first().map(|pair| pair.1), Some(body));
     assert_eq!(profile.last().map(|pair| pair.0), Some(30.0));
-    assert_eq!(profile.last().map(|pair| pair.1), Some(node));
+    // со стороны пары (здесь low — ближе к оси продолжения) асфальт не уже
+    // тела: лента половины у узла лежит поверх соседки
+    let widened = LaneFrame {
+        low: body.low,
+        ..node
+    };
+    assert_eq!(profile.last().map(|pair| pair.1), Some(widened));
     for &(along, frame) in &profile {
-        assert_eq!(Some(frame), ramp.frame_at(body, along).or(Some(body)));
+        let paint = ramp.frame_at(body, along).unwrap_or(body);
+        assert_eq!((frame.origin, frame.high), (paint.origin, paint.high));
+        assert_eq!(frame.low, paint.low.min(body.low));
     }
     // клин, начатый на соседнем way: пара на торце у узла
     let farther = MergeRamp {
