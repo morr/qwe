@@ -50,6 +50,7 @@ use std::borrow::Cow;
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
+use self::drawn::Drawn;
 use self::network::RoadNodes;
 pub use self::node_paint::CrossingMode;
 use self::shape::{RoadShape, RoadShapeOnMap};
@@ -1127,37 +1128,21 @@ pub fn mesh_roads(
     // (`roads/lots.rs`)
     let mut grounds = lots::Grounds::of(map);
 
-    let nodes = RoadNodes::new(roads);
-    // ось по улице целиком, не по way (`roads/axis.rs`); у переезда та же
-    // ось, что у его дороги, — он отличается шириной и классом
-    let axes = axis::street_axes(roads, &map.rails, &map.network, &nodes, &shape);
+    // Дороги так, как они рисуются (`roads/drawn.rs`): переезд через тротуар —
+    // асфальтом проезда, а не песочной дорожкой, дуга кольца — сечением всего
+    // кольца; узлы и оси улиц — там же.
+    let prepared = Drawn::new(map, &shape);
+    let (nodes, axes) = (&prepared.nodes, &prepared.axes);
     let paths = &axes.paths;
-    // Дороги так, как они рисуются: переезд через тротуар — асфальтом
-    // проезда, а не песочной дорожкой (`network::driveway_crossings`), дуга
-    // кольца — сечением всего кольца (`ring_arcs`).
-    let crossings: Vec<(usize, RoadLine)> = network::driveway_crossings(roads, &nodes)
-        .into_iter()
-        .map(|(index, width)| {
-            let crossing = RoadLine {
-                class: RoadClass::Street,
-                width,
-                ..roads[index].clone()
-            };
-            (index, crossing)
-        })
-        .chain(ring_arcs(roads, &axes.rings))
-        .collect();
-    let mut drawn: Vec<&RoadLine> = roads.iter().collect();
-    for (index, crossing) in &crossings {
-        drawn[*index] = crossing;
-    }
-    let stitches = network::stitches(&drawn, map, &nodes, |road| drawn_sidewalk(&style, road));
+    let crossings = &prepared.crossings;
+    let drawn = prepared.roads();
+    let stitches = network::stitches(&drawn, map, nodes, |road| drawn_sidewalk(&style, road));
     // перекрёстки, стежки среди них: по ним рвётся краска и гаснет колея
     // асфальта — колея есть и с выключенной разметкой, так что считаются они
     // всегда
     let junctions = junctions::marking_breaks(roads, is_carriageway, &stitches.targets);
     // клинья между сечениями улиц
-    let tapers = tapers::Tapers::new(&drawn, &map.network, &nodes, shape.taper());
+    let tapers = tapers::Tapers::new(&drawn, &map.network, nodes, shape.taper());
     // Кусок поперечной улицы в проёме разделительной — между половинами одной
     // пары — тротуара не несёт: его полоса светлым пятном лежала посреди
     // перекрёстка. Торцы узлов — точки OSM, и ось их не двигает.
@@ -1182,7 +1167,7 @@ pub fn mesh_roads(
     // длина улицы у начала каждого way — по ней идут штрихи краски
     let stations = paint::street_stations(&map.network, paths);
     // разделённая улица, сходящаяся в обычную: узел не перекрёсток
-    let merges = merges::merges(&drawn, paths, &nodes, &axes.pairs.runs, &map.network);
+    let merges = merges::merges(&drawn, paths, nodes, &axes.pairs.runs, &map.network);
     // Скругления кладутся раньше всех лент своего слоя: лента поверх кроет
     // скругление, а не наоборот, и разметка остаётся целой.
     let (kerb_returns, islands) = {
@@ -1204,14 +1189,14 @@ pub fn mesh_roads(
             corners::kerb_returns(
                 &drawn,
                 &rounded,
-                &nodes,
+                nodes,
                 sidewalks_of,
                 paired,
                 |road| tapers.at(road),
                 |road, end| merges.is_merged(road, end),
                 shape.corner_radius(),
             ),
-            corners::small_islands(&drawn, &rounded, &nodes),
+            corners::small_islands(&drawn, &rounded, nodes),
         )
     };
     for (class, outline) in &kerb_returns.roads {
@@ -2472,6 +2457,7 @@ pub(super) mod junctions;
 /// же оси, что и лента.
 pub(super) mod axis;
 mod corners;
+mod drawn;
 mod gores;
 mod islands;
 mod lots;

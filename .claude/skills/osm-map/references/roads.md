@@ -939,6 +939,19 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   the navmesh, doors, trees and arches still read OSM as it is (the parked cars stand on
   the drawn street axis — **The street axis** below). All four
   are counted in the `road meshing:` line, with the time spent before the first ribbon.
+  - **`Drawn`** (`roads/drawn.rs`) — the prepared roads as one value, built once at the
+    top of `mesh_roads` (`Drawn::new(map, shape)`) instead of the locals that used to open
+    it: `osm` (the map's roads as they are — whatever finds a node by `node_key`, and the
+    kerb-pocket seed, reads these), `nodes` (`RoadNodes`), `axes` (`street_axes`: paths,
+    pairs, rings) and `crossings` (the substitutions — driveway crossings, then ring arcs;
+    `roads()` lays them over `osm` by index, the later one winning). Every vector is
+    indexed by `map.roads`. The fields are still open to the `roads` submodules, whose
+    signatures did not change — they take `&drawn.roads()`, `&drawn.axes.paths`. Not to be
+    confused with `network::DrawnEdges`, the outer edges the stitches measure against.
+    **The base marking breaks stay on the OSM roads**, not on `roads()`: a ring arc drawn
+    at its ring's section would move the base break on an approach
+    (`tests.rs::a_ring_arc_base_break_reaches_by_the_osm_width`); a driveway crossing
+    stays `Highway::Path` in both and moves nothing.
   - **The street axis** (`roads/axis.rs::street_axes`, stage 2 of the roads rework). The
     ribbon of every way that lies in a street ([`RoadNetwork`]) is drawn along **one curve
     per street**, not per way — per-way Chaikin pinned both ends of each way, so every
