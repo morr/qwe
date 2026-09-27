@@ -52,6 +52,7 @@ use crate::settings::{CAR_DETAIL_MAX_ZOOM, CAR_MAX_ZOOM, CAR_SILHOUETTE_MAX_ZOOM
 
 pub mod body;
 pub(crate) mod district;
+mod yard;
 
 /// Дефолт, границы и шаг ползунка занятости мест ([`CarStyle::occupancy`]) —
 /// какая доля парковочных мест улицы занята. Сплошной ряд от перекрёстка до
@@ -409,16 +410,28 @@ pub fn mesh_cars(
     // застройка вокруг — тем же проходом и с тем же сроком жизни, что и
     // разрывы: индекс на 7.6 тысячи домов дешевле, чем повод его кешировать
     let districts = Districts::new(&map.buildings);
+    let axes = drawn.axes(Axis::Nodal);
     let mut cars = park_cars(
         &map.roads,
         drawn.nodes(),
         &junctions,
         style,
-        &drawn.axes(Axis::Nodal),
+        &axes,
         map.traffic_side,
         &districts,
         drawn.lots(),
     );
+    // дворовые проезды — своим проходом: у них нет бордюра, и место каждой
+    // машины проверяется по домам, стоянкам и чужим лентам (`yard.rs`)
+    cars.extend(yard::park_yards(
+        &map.roads,
+        drawn.nodes(),
+        &junctions,
+        &axes,
+        style.occupancy,
+        &districts,
+        &yard::Blocked::new(map),
+    ));
     cars.extend(fill_lots(&map.parking, &layout.0, &districts));
     let builder = mesh_bodies(&cars, detail);
     let report = CarReport {
@@ -433,6 +446,25 @@ pub fn mesh_cars(
     (
         vec![LayerMesh::new(builder, Z_CAR, "cars", MaterialSpec::Blend)],
         report,
+    )
+}
+
+/// Слой машин по готовой карте на ближней ступени зума — дверь для витрины
+/// `examples/demos/roads` (`ROADS_CARS=1`): у неё своя карта на пример, и
+/// подготовленные дороги ([`Drawn`]) она строить не умеет. Тот же
+/// [`mesh_cars`], что зовёт игра, с той же формой дорог, что у ленты.
+pub fn mesh_map_cars(
+    map: &MapData,
+    shape: &RoadShape,
+    layout: &ParkingLayout,
+) -> (Vec<LayerMesh>, CarReport) {
+    let drawn = Drawn::nodal(map, shape);
+    mesh_cars(
+        CarZoomBucket::at(0),
+        CarStyle::default(),
+        &drawn,
+        map,
+        layout,
     )
 }
 

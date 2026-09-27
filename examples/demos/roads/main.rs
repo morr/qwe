@@ -93,7 +93,7 @@ use qwe::map::trees::{
 use qwe::map::{
     BuildingHeightMode, FenceZoomBucket, GROUND_COLOR, MeshBuilder, PaintMaterial, ParkingLayout,
     RailZoomBucket, RoadPaintStyle, RoadShape, RoadShapeOnMap, RoadStyle, RoofStyle, SunOnMap,
-    SurfaceStyle, apply_sun, mesh_fences, mesh_rails, mesh_roads, mesh_surfaces,
+    SurfaceStyle, apply_sun, mesh_fences, mesh_map_cars, mesh_rails, mesh_roads, mesh_surfaces,
     mesh_tree_row_band, set_lane_width, settle_road_shape, spawn_road_meshes,
 };
 use qwe::ui::knob::AddKnobsExt;
@@ -103,6 +103,9 @@ use crate::overlay::NetworkOverlay;
 use crate::panel::{StatusLine, spawn_panel};
 use crate::samples::Sample;
 use crate::shot::{ShotRequest, auto_shot, request_shot};
+
+/// Переменная окружения, по которой витрина кладёт и слой машин.
+const CARS_ENV: &str = "ROADS_CARS";
 
 const WINDOW_WIDTH: f32 = 1500.0;
 const WINDOW_HEIGHT: f32 = 950.0;
@@ -563,6 +566,19 @@ fn build_next(
         &materials.layers,
         (road_layers, road_report),
     );
+
+    // машины — по заказу: витрина про дороги, и ряд у бордюра закрывает то,
+    // на что она смотрит, но у дворов и карманов он и есть предмет проверки
+    if std::env::var_os(CARS_ENV).is_some() {
+        let (cars, _) = mesh_map_cars(&map, &road_shape.0, &layout);
+        spawn_layers(
+            &mut commands,
+            &mut meshes,
+            &materials.layers,
+            clip(cars),
+            SampleLayer,
+        );
+    }
 
     if overlay.visible {
         spawn_layers(

@@ -107,6 +107,7 @@ pub use self::tram::TramStyle;
 // своей системе, потому что у неё карт не одна на мир, а по одной на пример.
 // Ступени зума идут следом: `mesh_fences` и `mesh_rails` берут ступень, а не
 // развёрнутую из таблицы ширину
+pub use self::cars::mesh_map_cars;
 pub use self::fences::{FenceZoomBucket, mesh_fences};
 pub use self::parking::ParkingLayout;
 pub use self::rail::{RailZoomBucket, mesh_rails};
