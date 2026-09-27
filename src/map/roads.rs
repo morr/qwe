@@ -971,8 +971,11 @@ pub fn mesh_roads(
     }
     for index in order {
         let road = drawn[index];
+        // мощёная дорожка — плиткой тротуара и в его слое (`paved_path`)
+        let paved_path = road.is_paved_path();
         let color = match road.class {
             RoadClass::Street => ROAD_COLOR,
+            RoadClass::Alley if paved_path => SIDEWALK_COLOR,
             RoadClass::Alley => ALLEY_COLOR,
         };
         let points: &[Vec2] = &ribbon[index];
@@ -1011,10 +1014,6 @@ pub fn mesh_roads(
             );
             continue;
         }
-        let fill = match road.class {
-            RoadClass::Street => &mut streets,
-            RoadClass::Alley => &mut alleys,
-        };
         // клинья у швов со сменой сечения: торцы, срезанные под них, и сами
         // клинья от ширины узкого соседа (`roads/tapers.rs`)
         let ends = prepared.taper_ends(index);
@@ -1088,6 +1087,13 @@ pub fn mesh_roads(
                 );
             }
         }
+        // слой заливки берётся после полосы тротуара: мощёная дорожка
+        // ложится в тот же слой, а полоса выше брала его сама
+        let fill = match road.class {
+            RoadClass::Street => &mut streets,
+            RoadClass::Alley if paved_path => &mut sidewalks,
+            RoadClass::Alley => &mut alleys,
+        };
         // Клин половины разделённой улицы сужается и со стороны пары, а
         // разделительная считана по полной ширине: в щели между ними лежал
         // полный тротуар половины — светлая полоса с тёмной кромкой вдоль

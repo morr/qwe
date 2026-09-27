@@ -2,7 +2,8 @@ use super::*;
 use crate::map::footprint::casing_width;
 use crate::map::meshing::distance_to_path;
 use crate::map::osm::model::{
-    KerbParking, RailKind, RailLine, RoadNode, SIDEWALK_WIDTH_RANGE, SidewalkSide, sidewalk_band,
+    KerbParking, Pavement, RailKind, RailLine, RoadNode, SIDEWALK_WIDTH_RANGE, SidewalkSide,
+    sidewalk_band,
 };
 use crate::map::osm::{Highway, fixture};
 use crate::map::parking::LOT_KERB;
@@ -440,6 +441,44 @@ fn a_bridge_leaves_the_street_layers_for_the_deck_ones() {
     assert!(!layer(&layers, "bridges").builder.is_empty());
     // бордюр настила рисуется всегда, независимо от ручки канта
     assert!(!layer(&layers, "bridge_casings").builder.is_empty());
+}
+
+/// Мощёная дорожка ложится плиткой в слой тротуаров, грунтовая и дорожка без
+/// решения (собранная руками) — песчаной тропинкой в слой дорожек; со
+/// скруглением их узла — так же.
+#[test]
+fn a_paved_path_is_drawn_in_the_sidewalk_layer() {
+    let cross = |pavement: Option<Pavement>| {
+        let mut map = MapData::default();
+        for points in [
+            // Т-узел: общая вершина — скругления в нём
+            vec![
+                Vec2::new(0.0, 100.0),
+                Vec2::new(100.0, 100.0),
+                Vec2::new(200.0, 100.0),
+            ],
+            vec![Vec2::new(100.0, 100.0), Vec2::new(100.0, 200.0)],
+        ] {
+            map.roads.push(RoadLine {
+                pavement,
+                ..road(points, 3.5, false)
+            });
+        }
+        let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+        [
+            layer(&layers, "alleys").builder.vertex_count(),
+            layer(&layers, "sidewalks").builder.vertex_count(),
+        ]
+    };
+    for pavement in [None, Some(Pavement::Unpaved)] {
+        let [alleys, sidewalks] = cross(pavement);
+        assert!(
+            alleys > 0 && sidewalks == 0,
+            "{pavement:?}: {alleys} / {sidewalks}"
+        );
+    }
+    let [alleys, sidewalks] = cross(Some(Pavement::Paved));
+    assert!(alleys == 0 && sidewalks > 0, "{alleys} / {sidewalks}");
 }
 
 /// Заливка настила кладётся в порядке заливки улиц и несёт раму полос и

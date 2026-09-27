@@ -90,6 +90,11 @@ const OVERLAP: f32 = 0.05;
 struct Arm {
     class: RoadClass,
     highway: Highway,
+    /// Мощёная дорожка ([`RoadLine::is_paved_path`]): её скругления ложатся
+    /// в слой тротуаров, а не тропинок.
+    ///
+    /// [`RoadLine::is_paved_path`]: crate::map::osm::RoadLine::is_paved_path
+    paved: bool,
     /// Полуширина слева и справа по ходу луча. Они разные у торца с клином
     /// на одну сторону (`roads/tapers.rs`): сужаемая кромка в узле стоит на
     /// полуширине узкого соседа, сохранённая — на своей.
@@ -110,7 +115,8 @@ pub struct KerbReturns {
     /// Контур и класс дорог, в чей слой заливки он ляжет: скругления и
     /// наружные углы. Каждый — веер из первой вершины.
     pub roads: Vec<(RoadClass, Vec<Vec2>)>,
-    /// Контуры в слое тротуаров, так же.
+    /// Контуры в слое тротуаров, так же: углы полос тротуара и скругления
+    /// узлов с мощёной дорожкой.
     pub sidewalks: Vec<Vec<Vec2>>,
     /// Сколько из `roads` и `sidewalks` — наружные углы, а не скругления.
     pub outer: [usize; 2],
@@ -269,6 +275,7 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                 entry.1.push(Arm {
                     class: road.class,
                     highway: road.highway,
+                    paved: road.is_paved_path(),
                     half,
                     sidewalk: sides,
                     direction,
@@ -311,12 +318,23 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                 }
                 let radius = kerb_radius(first, second) * scale;
                 let halves = (first.half[0], second.half[1]);
-                if let Some(outline) = fillet(node, first, second, halves, radius) {
+                // угол у мощёной дорожки — плиткой, в слое тротуаров: песчаное
+                // скругление на стыке двух плиточных аллей читалось бы пятном
+                let paved = first.paved || second.paved;
+                let (outline, outer) = match fillet(node, first, second, halves, radius) {
+                    Some(outline) => (outline, false),
+                    None => match outer_corner(node, first, second, halves) {
+                        Some(outline) => (outline, true),
+                        None => continue,
+                    },
+                };
+                let layer = usize::from(paved);
+                if paved {
+                    returns.sidewalks.push(outline);
+                } else {
                     returns.roads.push((class, outline));
-                } else if let Some(outline) = outer_corner(node, first, second, halves) {
-                    returns.roads.push((class, outline));
-                    returns.outer[0] += 1;
                 }
+                returns.outer[layer] += usize::from(outer);
             }
         }
         // Тротуары — свои соседи: проезд без тротуара не рвёт полосу улицы,
