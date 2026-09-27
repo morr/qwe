@@ -1719,8 +1719,8 @@ fn the_median_base_keeps_the_break_a_leading_road_lost() {
 }
 
 /// Островок по правилу (`gores::splitters`) рвёт подход дважды — краску и
-/// колею асфальта: его разрыв кладётся и в `NodePaint::breaks`, и в
-/// `NodePaint::asphalt`.
+/// колею асфальта: его разрыв кладётся и в разрывы краски (`PaintBreaks`), и
+/// в разрывы асфальта (`AsphaltBreaks`) — `NodePaint::add_splitter`.
 #[test]
 fn a_splitter_gap_reaches_both_asphalt_and_paint() {
     let circle: Vec<Vec2> = (0..=24)

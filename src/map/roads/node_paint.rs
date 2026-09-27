@@ -218,15 +218,17 @@ impl<'a> PaintBreaks<'a> {
 /// Краска узлов карты.
 #[derive(Default)]
 pub struct NodePaint {
-    /// Разрывы краски по дорогам — вместо разрывов асфальта.
-    pub breaks: Vec<Vec<Break>>,
+    /// Разрывы краски по дорогам — вместо разрывов асфальта. Наружу — только
+    /// как [`PaintBreaks`] ([`Self::lines`]), вместе с `solid`.
+    breaks: Vec<Vec<Break>>,
     /// Разрывы асфальта — колеи и разделительных: базовые без тех, что лежали
-    /// на ведущей дороге узла. Её колея идёт сквозь.
-    pub asphalt: Vec<Vec<Break>>,
+    /// на ведущей дороге узла. Её колея идёт сквозь. Наружу — только как
+    /// [`AsphaltBreaks`] ([`Self::asphalt`]).
+    asphalt: Vec<Vec<Break>>,
     /// Узлы, которые дорога проходит насквозь, — там, где её разрыв был бы,
     /// уступай она. Осевая у такого узла сплошная, как и перед разрывом
     /// (`Painter::paint`): через примыкание не обгоняют.
-    pub solid: Vec<Vec<Break>>,
+    solid: Vec<Vec<Break>>,
     pub junctions: Vec<Junction>,
     /// Карманы у торцов дорог `[начало, конец]`.
     pub pockets: Vec<[Option<Pocket>; 2]>,

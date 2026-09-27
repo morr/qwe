@@ -209,8 +209,9 @@ enum LineKind {
 }
 
 /// Что узлы сказали линиям одной дороги (`roads/node_paint.rs`): где они
-/// рвутся (`NodePaint::breaks`) и какие узлы дорога проходит насквозь
-/// (`NodePaint::solid`).
+/// рвутся (`cut`) и какие узлы дорога проходит насквозь (`solid`). Одной
+/// дороге его выдаёт `node_paint::PaintBreaks::of` — по-другому пара не
+/// собирается.
 #[derive(Clone, Copy, Default)]
 pub struct LineBreaks<'a> {
     pub cut: &'a [Break],

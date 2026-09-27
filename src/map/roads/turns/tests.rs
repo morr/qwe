@@ -72,12 +72,14 @@ fn the_main_road_keeps_its_ruts_and_turns_get_curves() {
     assert_eq!(paint.junctions.len(), 1);
     assert_eq!(paint.junctions[0].leading, vec![0], "главная ведёт узел");
     assert!(
-        paint.asphalt[0].iter().all(|found| found.at != NODE),
+        paint.asphalt().of(0).iter().all(|found| found.at != NODE),
         "колея главной идёт сквозь: {:?}",
-        paint.asphalt[0]
+        paint.asphalt().of(0)
     );
     assert!(
-        paint.asphalt[1]
+        paint
+            .asphalt()
+            .of(1)
             .iter()
             .any(|found| found.at == NODE && found.reach > 0.0)
     );

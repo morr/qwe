@@ -53,7 +53,10 @@ fn paint_of(roads: Vec<RoadLine>, marks: Vec<RoadNode>, style: NodePaintStyle) -
 
 /// Разрывы дороги, что не тупики.
 fn gaps(paint: &NodePaint, road: usize) -> Vec<Break> {
-    paint.breaks[road]
+    paint
+        .lines()
+        .of(road)
+        .cut
         .iter()
         .copied()
         .filter(|found| found.reach > 0.0)
@@ -67,18 +70,21 @@ fn a_minor_street_does_not_break_the_main_one() {
         Vec::new(),
         EVERYTHING,
     );
-    assert!(gaps(&paint, 0).is_empty(), "{:?}", paint.breaks[0]);
+    assert!(gaps(&paint, 0).is_empty(), "{:?}", paint.lines().of(0).cut);
     assert!(!gaps(&paint, 1).is_empty());
     assert_eq!(paint.through, 1);
     // осевая главной у примыкания сплошная: узел насквозь — в её `solid`
     assert!(
-        paint.solid[0]
+        paint
+            .lines()
+            .of(0)
+            .solid
             .iter()
             .any(|found| found.at == NODE && found.reach > 0.0),
         "{:?}",
-        paint.solid[0]
+        paint.lines().of(0).solid
     );
-    assert!(paint.solid[1].is_empty());
+    assert!(paint.lines().of(1).solid.is_empty());
     // зебра и стоп-линия — только поперёк примыкания
     assert_eq!(paint.zebras.len(), 1);
     assert_eq!(paint.stop_lines.len(), 1);
@@ -190,7 +196,7 @@ fn an_equal_side_street_does_not_break_the_through_one_either() {
         Vec::new(),
         EVERYTHING,
     );
-    assert!(gaps(&paint, 0).is_empty(), "{:?}", paint.breaks[0]);
+    assert!(gaps(&paint, 0).is_empty(), "{:?}", paint.lines().of(0).cut);
     assert!(!gaps(&paint, 1).is_empty());
 }
 
@@ -232,8 +238,8 @@ fn a_leading_road_loses_its_asphalt_break_but_not_its_base_one() {
             .any(|found| found.at == NODE && found.reach > 0.0)
     };
     assert!(at_node(&base[0]));
-    assert!(!at_node(&paint.asphalt[0]), "{:?}", paint.asphalt[0]);
-    assert!(at_node(&paint.asphalt[1]));
+    assert!(!at_node(paint.asphalt().of(0)), "{:?}", paint.asphalt().of(0));
+    assert!(at_node(paint.asphalt().of(1)));
 }
 
 #[test]
@@ -252,7 +258,9 @@ fn an_equal_crossing_keeps_the_asphalt_breaks_of_both() {
     assert!(paint.junctions[0].leading.is_empty());
     for road in 0..2 {
         assert!(
-            paint.asphalt[road]
+            paint
+                .asphalt()
+                .of(road)
                 .iter()
                 .any(|found| found.at == NODE && found.reach > 0.0)
         );
@@ -287,7 +295,7 @@ fn a_stitched_side_street_is_an_arm_of_the_junction() {
     let paint = NodePaint::for_test(&drawn, &base, &map, &[], EVERYTHING);
     assert_eq!(paint.junctions.len(), 1);
     assert_eq!(paint.junctions[0].leading, vec![0]);
-    assert!(gaps(&paint, 0).is_empty(), "{:?}", paint.breaks[0]);
+    assert!(gaps(&paint, 0).is_empty(), "{:?}", paint.lines().of(0).cut);
     assert!(!gaps(&paint, 1).is_empty());
     assert_eq!(paint.zebras.len(), 1, "зебра поперёк примыкания");
     assert_eq!(paint.stop_lines.len(), 1);
@@ -373,7 +381,7 @@ fn close_side_streets_from_both_sides_are_one_junction() {
     assert!(
         gaps(&paint, 0).is_empty(),
         "главная проходит кластер целиком: {:?}",
-        paint.breaks[0]
+        paint.lines().of(0).cut
     );
     // три жилые — зебр по правилу нет (у Яндекса на Циолковского ни одной)
     assert!(paint.zebras.is_empty(), "{:?}", paint.zebras);
@@ -408,7 +416,7 @@ fn a_crossing_street_through_close_nodes_breaks_once_without_an_orphan_dash() {
             .any(|found| (found.at.x - x).abs() <= found.reach + 1e-3)
     };
     for x in [90.0, 95.0, 98.5, 102.0, 107.0] {
-        assert!(covered(x), "x = {x}: {:?}", paint.breaks[0]);
+        assert!(covered(x), "x = {x}: {:?}", paint.lines().of(0).cut);
     }
 }
 

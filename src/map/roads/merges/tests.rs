@@ -255,8 +255,9 @@ fn a_pure_merge_node_breaks_no_line_and_holds_the_axis_solid() {
         },
     );
     for road in 0..3 {
-        assert!(!at_node(&merged.breaks[road]), "{road}");
-        assert!(at_node(&merged.solid[road]), "{road}");
+        let lines = merged.lines().of(road);
+        assert!(!at_node(lines.cut), "{road}");
+        assert!(at_node(lines.solid), "{road}");
     }
     assert!(merged.zebras.is_empty() && merged.stop_lines.is_empty());
     assert!(merged.junctions.is_empty());

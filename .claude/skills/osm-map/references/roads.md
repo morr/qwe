@@ -498,7 +498,7 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     symmetrically — it separates two flows, so it is solid `APPROACH` on **both** sides of
     a break (`paint::near_spans`) — **and at a node the street passes through**: a
     leading road that does not yield (**Junction paint** below) gets no break there, only
-    a `NodePaint::solid` zone (the reach its break would have had), and the axis is solid
+    a `solid` zone in its `LineBreaks` (the reach its break would have had), and the axis is solid
     `APPROACH` either side of it (ГОСТ 1.1 at a side street; Yandex draws the
     Циолковского on gallery 19 so, while ours ran dashed straight past both side streets).
     `Painter::paint` takes both lists as one `paint::LineBreaks { cut, solid }` — handed out
@@ -1007,7 +1007,7 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     5 and 20–25 m from the crossing on 01, 02, 15, and ГОСТ 1.18 repeats them): only where
     the lane's centreline runs on `ARROW_REPEAT_CLEAR` 5 m past its tail, no zebra or
     stop line crosses the lane between the rows, and the row is clear of the approach
-    road's own breaks (`LaneArrow::road` → `NodePaint::breaks`) — the centreline is the
+    road's own breaks (`LaneArrow::road` → `PaintBreaks::of(road).cut`) — the centreline is the
     whole way's, and without that the row lay in the previous junction. A short block
     therefore keeps one row. The marks sit in a `Grid`
     (`paint::ArrowMarks`): a scan over all 3600 per arrow
