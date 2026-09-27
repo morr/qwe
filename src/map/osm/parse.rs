@@ -104,10 +104,6 @@ struct Pending {
     /// Входы: Overpass отдаёт ноды раньше way, так что на момент разбора ноды
     /// зданий ещё нет.
     entrances: Vec<Vec2>,
-    /// Номера дорог в `MapData::roads` без единого тега `sidewalk*`: их
-    /// тротуар решает застройка вокруг ([`infer_sidewalks`]), а домов к
-    /// моменту разбора way ещё может не быть.
-    bare_sidewalks: Vec<usize>,
 }
 
 /// Элементы Overpass — в сырую `MapData` и то, что ещё некуда положить
@@ -143,13 +139,7 @@ fn read_elements(
                     map.road_nodes.push(node);
                 }
             }
-            "way" => {
-                let roads = map.roads.len();
-                parse_way(element, bounds, &mut map);
-                if map.roads.len() > roads && tagged_sidewalks(&element.tags).is_none() {
-                    pending.bare_sidewalks.push(roads);
-                }
-            }
+            "way" => parse_way(element, bounds, &mut map),
             "relation" => parse_relation(element, bounds, &mut map, &mut unclosed_rings),
             _ => {}
         }
@@ -354,7 +344,13 @@ fn finish_parse(map: &mut MapData, pending: &Pending) -> PassReport {
     let entrances = &pending.entrances;
     let sections = sections::apply(map);
     let drowned = drop_buildings_in_water(map);
-    let sidewalks = infer_sidewalks(map, &pending.bare_sidewalks);
+    // мера квартала строится по домам, только если есть кого спросить
+    let districts = std::cell::OnceCell::new();
+    let sidewalks = infer_sidewalks(&mut map.roads, |point| {
+        districts
+            .get_or_init(|| Districts::new(&map.buildings))
+            .storeys_at(point)
+    });
     let faiths_guessed = resolve_faiths(&mut map.buildings);
     let entrances_orphaned = attach_entrances(map, entrances);
 
@@ -458,29 +454,34 @@ impl std::fmt::Display for InferredSidewalks {
 /// проезд без названия и жилая зона: у магистрали и улиц до `tertiary`
 /// тротуар остаётся, у дворового проезда его не было и так, а грунтовой
 /// улице полосу уже снял [`untagged_sidewalks`].
-fn infer_sidewalks(map: &mut MapData, bare: &[usize]) -> InferredSidewalks {
-    let asked: Vec<usize> = bare
+///
+/// Кого спрашивать, говорит сама дорога: тротуар без тега —
+/// [`SidewalkSide::Inferred`], и только такой здесь может быть снят. Меру
+/// застройки проход не строит, а получает (`storeys_at` — этажность квартала
+/// у точки, `None` — вокруг пусто), так что его можно проверить без единого
+/// дома.
+fn infer_sidewalks(
+    roads: &mut [RoadLine],
+    storeys_at: impl Fn(Vec2) -> Option<f32>,
+) -> InferredSidewalks {
+    let asked: Vec<usize> = roads
         .iter()
-        .copied()
-        .filter(|&index| {
-            let road = &map.roads[index];
+        .enumerate()
+        .filter(|(_, road)| {
             road.sidewalks.contains(&SidewalkSide::Inferred)
                 && matches!(
                     road.highway,
                     Highway::Residential | Highway::Unclassified | Highway::LivingStreet
                 )
         })
+        .map(|(index, _)| index)
         .collect();
-    if asked.is_empty() {
-        return InferredSidewalks::default();
-    }
-    let districts = Districts::new(&map.buildings);
     let mut dropped = 0;
     for &index in &asked {
-        let road = &mut map.roads[index];
+        let road = &mut roads[index];
         let storeys: Vec<f32> = densify(&road.points, SIDEWALK_PROBE_STEP)
             .into_iter()
-            .filter_map(|point| districts.storeys_at(point))
+            .filter_map(&storeys_at)
             .collect();
         let mean = storeys.iter().sum::<f32>() / storeys.len().max(1) as f32;
         if storeys.is_empty() || mean < SIDEWALK_STOREYS_MIN {

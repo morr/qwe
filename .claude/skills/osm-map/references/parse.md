@@ -16,8 +16,9 @@ pass reachable:
   loop and nothing else. What comes out is *raw*: houses still standing in water, churches
   without a faith, skewed outlines, no doors, no trees. `Pending` is what has nowhere to go
   yet: the entrances (Overpass hands out nodes before ways, so at that moment the
-  buildings do not exist) and `bare_sidewalks`, the roads with no `sidewalk*` tag at all,
-  whose sidewalks the blocks around them decide once the buildings are read.
+  buildings do not exist). The roads with no `sidewalk*` tag at all, whose sidewalks the
+  blocks around decide once the buildings are read, need no list there: they carry
+  `SidewalkSide::Inferred` on the `RoadLine` itself.
 - **`finish_parse(&mut MapData, &Pending) -> PassReport`** — the **nine** finishing passes
   (step 0 is the street sections, `map::roads::network::sections`, since the width they
   set is read by the passes after them) in their one correct order, closed by a tenth
@@ -247,10 +248,15 @@ be called alone:
   Tokyo 0; logged on stderr when non-zero.
 - **Sidewalks of untagged streets** (`parse.rs::infer_sidewalks`, right after the drowned
   buildings, which must not count) — a residential / unclassified / living street with no
-  `sidewalk*` key keeps its band only where the blocks along it average at least
+  `sidewalk*` key (`SidewalkSide::Inferred` — the tristate is the whole "who is asked")
+  keeps its band only where the blocks along it average at least
   `SIDEWALK_STOREYS_MIN` 3 storeys (`cars::district::Districts::storeys_at`, probed every
-  `SIDEWALK_PROBE_STEP` 40 m; nothing around counts as low); an unpaved one lost it
-  already in `tags.rs::untagged_sidewalks`. Before the house pull and the block pull, so
+  `SIDEWALK_PROBE_STEP` 40 m; nothing around counts as low) and loses it to `[None; 2]`
+  otherwise; an unpaved one lost it already in `tags.rs::untagged_sidewalks`. The pass is
+  `infer_sidewalks(&mut roads, storeys_at)` — it **takes** the measure instead of building
+  it, so `finish_parse` builds `Districts` lazily (only if a street is asked) and three
+  tests call it with a closure and not a single building
+  (`infer_sidewalks_drops_the_band_only_among_low_blocks` and its two neighbours). Before the house pull and the block pull, so
   both push and pull against the sidewalk that is drawn. The rule itself — `roads.md`,
   **Sidewalks**; logged as `N of M untagged residential streets left without sidewalks`.
 - **Squared houses** (`parse.rs::square_skewed_houses`) — a small house outlined as a
