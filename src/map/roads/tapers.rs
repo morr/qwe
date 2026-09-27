@@ -130,6 +130,15 @@ impl Tapers {
         self.ends.get(road).copied().unwrap_or([None; 2])
     }
 
+    /// Клин теста у торца `end` дороги `road`, как если бы его нашёл [`Self::new`].
+    #[cfg(test)]
+    pub fn set(&mut self, road: usize, end: usize, taper: Taper) {
+        if self.ends[road][end].is_none() {
+            self.count += 1;
+        }
+        self.ends[road][end] = Some(taper);
+    }
+
     /// Клинья по дорогам карты как есть, без подмен рисования, — для тех, у
     /// кого нет `roads::Drawn` (ряд машин, бенч, витрина машин).
     pub fn of_map(roads: &[RoadLine], network: &RoadNetwork, per_meter: f32) -> Self {

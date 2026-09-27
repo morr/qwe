@@ -1772,7 +1772,10 @@ fn tram_band_follows_the_nodal_axis() {
     let band = vertices_of(&layers, "roads", TRAM_BAND_COLOR);
     assert!(!band.is_empty());
     let top = band.iter().map(|at| at[1]).fold(f32::MIN, f32::max);
-    assert!(top < -5.0, "полоса кончается у торца OSM, не у стежка: {top}");
+    assert!(
+        top < -5.0,
+        "полоса кончается у торца OSM, не у стежка: {top}"
+    );
     assert!(top > -12.0, "{top}");
 }
 
@@ -1803,26 +1806,26 @@ fn a_crossing_piece_between_two_halves_carries_no_sidewalk() {
     untagged[3].sidewalks = [false; 2];
     let untagged = with_network(untagged);
     let (bare, _) = mesh_roads(&untagged, RoadStyle::default(), RoadShape::default());
-    for (with, without) in layers.iter().zip(&bare) {
-        assert_eq!(with.name, without.name);
+    for (tagged, untagged) in layers.iter().zip(&bare) {
+        assert_eq!(tagged.name, untagged.name);
         let (with, without) = (
-            with.builder.positions_for_test(),
-            without.builder.positions_for_test(),
+            tagged.builder.positions_for_test(),
+            untagged.builder.positions_for_test(),
         );
         let differs = with
             .iter()
             .zip(without)
             .position(|(a, b)| a != b)
             .or_else(|| (with.len() != without.len()).then_some(with.len().min(without.len())));
+        let from = differs.unwrap_or(0);
         assert!(
             differs.is_none(),
-            "{}: кусок в проёме пары рисуется как без тротуара; расходится с вершины {:?} из {} / {}: {:?} / {:?}",
-            layers.iter().find(|l| l.builder.positions_for_test() == with).map_or("?", |l| l.name),
-            differs,
+            "{}: кусок в проёме пары рисуется как без тротуара; расходится с вершины {from} из {} / {}: {:?} / {:?}",
+            tagged.name,
             with.len(),
             without.len(),
-            &with[differs.unwrap_or(0)..(differs.unwrap_or(0) + 12).min(with.len())],
-            &without[differs.unwrap_or(0)..(differs.unwrap_or(0) + 12).min(without.len())],
+            &with[from..(from + 12).min(with.len())],
+            &without[from..(from + 12).min(without.len())],
         );
     }
     // а у подхода с юга тротуар есть

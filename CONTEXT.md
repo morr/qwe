@@ -1468,9 +1468,16 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   - **Drawn** (`map/roads/drawn.rs`) — the **prepared roads**: the map's roads as they
     are drawn (driveway crossings as asphalt, ring arcs at the ring's section), their
     shared nodes and street axes, stitches, tapers and merges, built once per
-    `mesh_roads` and indexed by `map.roads`.
-    The OSM roads stay beside it (`Drawn::osm`) — node keys and the base marking breaks
-    read those. Not the same thing as the stitches' `DrawnEdges`.
+    `mesh_roads` and indexed by `map.roads`; the fields are closed, consumers ask
+    (`sidewalk_drawn`, `band_half`, `paired`, `taper_ends`, …). The OSM roads stay
+    beside it in `MapData` — node keys and the base marking breaks read those. Not the
+    same thing as the stitches' `DrawnEdges`.
+  - **Axis** (`Drawn::axis(i, Axis)`) — **which of a road's axes a consumer takes**, named
+    in the type rather than implied by which local it happened to read: `Nodal` — after
+    smoothing, before stitches; its ends are OSM points, so a node still keys on them
+    (kerb returns, merges, kerb pockets, dash stations, tram bands, the car row); `Ribbon`
+    — with the stitches (asphalt, paint, turn paths, islands, the merge nose). The OSM
+    points are the third axis and stay on `RoadLine::points`.
   - **Pinned nodes** — Chaikin smoothing never cuts a shared node, so a side street
     still ends exactly on the through road's drawn centreline. The street axis pins only
     nodes shared with another **carriageway** (street or drive): a footway crossing

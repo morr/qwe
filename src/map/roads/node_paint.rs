@@ -141,13 +141,7 @@ pub struct Zebra {
     pub osm: bool,
 }
 
-/// Вторая половина разделённой улицы: её дорога и асфальт ли между ними — по
-/// асфальтовой разделительной зебра идёт одной планкой через обе половины.
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub struct Partner {
-    pub road: usize,
-    pub paved: bool,
-}
+pub use super::network::pairs::Partner;
 
 /// Стоп-линия: отрезок поперёк встречных узлу полос.
 #[derive(Clone, Copy, PartialEq, Debug)]

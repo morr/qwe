@@ -397,7 +397,9 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     The same taper is laid in the **sidewalk** band, per side as well: the narrowing side
     from the narrow way's band (its bare half where it has no sidewalk) to this way's, the
     kept side at this way's band; a side without a sidewalk by tag is the bare half, so a
-    one-sided street gets its wedge too (it used to get none). No taper
+    one-sided street gets its wedge too (it used to get none). The half width per side is
+    one answer, `Drawn::band_half(road, side)`, asked for the narrow way and for this one
+    (**The drawn network** below). No taper
     on bridges or passages.
     **A half of a divided street gets asphalt under its taper on the partner's side**
     (`mesh_roads`, a wedge whose middle lies in a pair run): a ribbon of half the wide
@@ -945,18 +947,51 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   are counted in the `road meshing:` line, with the time spent before the first ribbon.
   - **`Drawn`** (`roads/drawn.rs`) — the prepared roads as one value, built once at the
     top of `mesh_roads` (`Drawn::new(map, style, shape)`) instead of the locals that used
-    to open it: `osm` (the map's roads as they are — whatever finds a node by `node_key`,
-    and the kerb-pocket seed, reads these), `nodes` (`RoadNodes`), `axes` (`street_axes`:
-    paths, pairs, rings), `crossings` (the substitutions — driveway crossings, then ring
-    arcs; `roads()` lays them over `osm` by index, the later one winning), `stitches`,
-    `tapers` (the one taper pass of the layer, **Tapers** above), `merges`,
-    `across_median`, and the stitched axes (`stitched()` — a copy only on a road a stitch
-    touched, the plain axis elsewhere). Three axes, then: the OSM points, the nodal
-    `axes.paths` (kerb returns, merges, pockets, tram bands) and the stitched one (ribbon,
-    paint, turn paths). Every vector is indexed by `map.roads`. The fields are still open
-    to the `roads` submodules, whose signatures did not change — they take
-    `&drawn.roads()`, `&drawn.axes.paths`. Not to be
+    to open it. **Its fields are closed**; what it holds is reached by queries: `road(i)` /
+    `roads()` (the map's roads with the substitutions on their index — driveway crossings,
+    then ring arcs, the later one winning; an unsubstituted road is a borrow of the map's),
+    `nodes()` (`RoadNodes`), `axis(i, Axis)` / `axes(Axis)` (below), `pairs()`, `rings()`,
+    `stitches()`, `tapers()` (the one taper pass of the layer, **Tapers** above),
+    `merges()`, `lots()` (the `KerbLots` the pockets and the car row share), and the
+    per-road answers that used to be closures in `mesh_roads`: `paired(i, at)` (a pair run
+    beside the road there, with two probes of slack), `taper_ends(i)`, `is_merged(i, end)`,
+    `stitched_end(i)`, `stitch_offset(i)`, `on_ring(i)`, `partners(i)`. Every vector is
+    indexed by `map.roads` (an `assert` in the build, not an empty answer on a mismatch).
+    The OSM points are not in it — whatever finds a node by `node_key`, and the kerb-pocket
+    seed, reads `RoadLine::points` off the map. Not to be
     confused with `network::DrawnEdges`, the outer edges the stitches measure against.
+    **Three sidewalk rules live on it, and they are three on purpose**:
+    `sidewalk_drawn(i)` — the band that is *drawn*: `drawn_sidewalk` (the map's sidewalk
+    under the `Sidewalks` knob) minus the crossing piece in a pair's opening
+    (`across_median`, **Kerb return** below) — the ribbon, the kerb returns, the pockets,
+    the turning circles and the merge edges read it; `sidewalk_mapped(i)` — the sidewalk
+    the *map* has, knob or no knob, minus the same piece — the junction paint reads it, a
+    rule zebra being a question of the model and not of a display toggle
+    (`tests.rs::rule_zebras_do_not_follow_the_sidewalk_knob`); `band_half(i, side)` — the
+    half width of the band on one side, `width / 2 + drawn sidewalk ∧ sidewalks[side]`, the
+    bare kerb where the tag has no sidewalk — the per-side wedge (**Streets, sections,
+    tapers**) reads it for the road and for its narrow neighbour. The crossing piece is
+    pinned by `tests.rs::a_crossing_piece_between_two_halves_carries_no_sidewalk` (drawn
+    exactly as the same piece tagged `sidewalk=no`), the per-side wedge by
+    `a_one_sided_sidewalk_wedge_keeps_the_bare_kerb_on_the_untagged_side`.
+  - **`Axis`** (`drawn.rs`) — which axis a consumer takes, named in the call rather than
+    implied by which local it read. A road has three: the **OSM points**
+    (`RoadLine::points`) — everything that keys a node (`junctions::node_key`): the base
+    marking breaks, `Tapers::new` and `free_sides`, `row_breaks` / `crossing_breaks` /
+    `join_way_ends`, `Pairs::align::continued`, the turning circles, the kerb-pocket seed;
+    **`Axis::Nodal`** (the street axis after smoothing, before the stitches — its ends are
+    still OSM points): `street_stations`, `merges::merges` and `merge_bands`,
+    `kerb_returns`, `all_kerbsides` and `pockets::outline`, `KerbLots::frontage`,
+    `tram_bands`, `across_median`, `Pairs::runs`, the car row; **`Axis::Ribbon`** (with the
+    stitches — a stitched end sits on another road's axis and keys no node):
+    `NodePaint::new`, `Turns::new`, `GoreRoad::new`, `splitters`, `merge_ramps`,
+    `nose_fill`, `merge_axis`, `RoadIslands::new`, `wedge_ends`, `Painter::paint`, every
+    ribbon. `axes(which)` hands a submodule the whole slice as borrows (a stitched copy
+    exists only on a road a stitch touched); `mesh_roads` binds them once as `nodal` and
+    `ribbon`. The tram band on the nodal axis is a pin, not an accident
+    (`tests.rs::tram_band_follows_the_nodal_axis` — on the ribbon it would run on down every
+    stitch); `tram_band.rs` decides for itself what a junction is (`near_asphalt`, 40 m /
+    4 m), pinned by its own `a_band_bridges_a_junction_but_not_open_ground`.
     **The base marking breaks stay on the OSM roads**, not on `roads()`: a ring arc drawn
     at its ring's section would move the base break on an approach
     (`tests.rs::a_ring_arc_base_break_reaches_by_the_osm_width`); a driveway crossing

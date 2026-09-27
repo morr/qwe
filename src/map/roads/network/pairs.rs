@@ -120,6 +120,15 @@ pub const TRAM_BED_MAX_GAP: f32 = 8.0;
 /// зазор между кромками уже, м: два пути в 3–4 м друг от друга.
 const TRAM_REACH_MIN: f32 = 2.0;
 
+/// Вторая половина разделённой улицы: её дорога и асфальт ли между ними — по
+/// асфальтовой разделительной зебра идёт одной планкой через обе половины
+/// (`roads/node_paint.rs`).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Partner {
+    pub road: usize,
+    pub paved: bool,
+}
+
 /// Кусок половины, на котором рядом идёт её пара.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PairRun {
