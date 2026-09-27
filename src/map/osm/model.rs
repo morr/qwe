@@ -1140,12 +1140,22 @@ pub fn ring_vertex_mean(ring: &[Vec2]) -> Option<Vec2> {
 /// одинаково закручены) и генератору входов (от обхода зависит, куда смотрит
 /// внешняя нормаль грани), поэтому базовая формула — знаковая, а абсолютная
 /// [`ring_area`] получается из неё.
+///
+/// Считается **от первой вершины**, а не от начала координат: в метрах карты
+/// `x · y` доходит до 2·10⁷, где шаг `f32` — целых 2, и площадь кольца в
+/// пару метров выходила с ошибкой в метр (крошка асфальта в 0.07 м² читалась
+/// как 1.0 и проходила порог `MIN_PIECE_AREA`). От своей вершины произведения
+/// малы, и точность зависит от размера кольца, а не от того, где оно лежит.
 pub fn signed_ring_area(ring: &[Vec2]) -> f32 {
+    let Some(&origin) = ring.first() else {
+        return 0.0;
+    };
     let mut doubled = 0.0;
-    let mut j = ring.len() - 1;
-    for i in 0..ring.len() {
-        doubled += ring[j].perp_dot(ring[i]);
-        j = i;
+    let mut previous = ring[ring.len() - 1] - origin;
+    for &point in ring {
+        let point = point - origin;
+        doubled += previous.perp_dot(point);
+        previous = point;
     }
     doubled / 2.0
 }
@@ -1308,6 +1318,28 @@ mod tests {
             Vec2::new(10.0, 10.0),
             Vec2::new(0.0, 10.0),
         ]
+    }
+
+    /// Крошка в десятую квадратного метра на краю Тулы — там, где стоянка
+    /// 441737398 оставила её у угла забора: от начала координат шнурование
+    /// давало ей целый метр, от своей вершины — её собственную площадь.
+    #[test]
+    fn a_small_ring_far_from_the_origin_keeps_its_area() {
+        let corner = Vec2::new(5775.27, 3192.40);
+        let crumb = vec![
+            corner,
+            corner + Vec2::new(0.5, 0.0),
+            corner + Vec2::new(0.5, 0.4),
+        ];
+        assert!(
+            (ring_area(&crumb) - 0.1).abs() < 1e-3,
+            "{}",
+            ring_area(&crumb)
+        );
+        // знак — прежний: обход против часовой стрелки положителен
+        assert!(signed_ring_area(&crumb) > 0.0);
+        assert!(signed_ring_area(&crumb.iter().rev().copied().collect::<Vec<_>>()) < 0.0);
+        assert_eq!(signed_ring_area(&[]), 0.0);
     }
 
     #[test]
