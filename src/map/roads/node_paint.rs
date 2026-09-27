@@ -1392,10 +1392,7 @@ fn has_open_ends(road: &RoadLine, path: &[Vec2]) -> bool {
 }
 
 /// Дороги с торцом в каждом узле — по [`has_open_ends`].
-fn open_ends(
-    drawn: &[&RoadLine],
-    paths: &[impl AsRef<[Vec2]>],
-) -> HashMap<(i32, i32), Vec<usize>> {
+fn open_ends(drawn: &[&RoadLine], paths: &[impl AsRef<[Vec2]>]) -> HashMap<(i32, i32), Vec<usize>> {
     let mut ends: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
     for (road, path) in paths.iter().enumerate() {
         let path = path.as_ref();
