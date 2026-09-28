@@ -908,6 +908,99 @@ fn no_stop_line_inside_the_asphalt_of_another_road() {
     assert!(shallow.stop_lines.is_empty(), "{:?}", shallow.stop_lines);
 }
 
+/// Двусторонняя третичная со светофорами поперёк пары односторонних с газоном
+/// между половинами (оси в `apart` метрах, симметрично вокруг x 100), и на
+/// перемычке посередине — переход OSM.
+fn signals_across_a_pair(apart: f32) -> NodePaint {
+    let [west, east] = [100.0 - apart / 2.0, 100.0 + apart / 2.0];
+    let half = |x: f32, down: bool| {
+        let mut points = vec![Vec2::new(x, 80.0), Vec2::new(x, 0.0), Vec2::new(x, -80.0)];
+        if !down {
+            points.reverse();
+        }
+        RoadLine {
+            oneway: true,
+            ..road(points, 7.6, Highway::Secondary, 2)
+        }
+    };
+    let signals = |pos: Vec2| RoadNode {
+        pos,
+        kind: RoadNodeKind::TrafficSignals,
+    };
+    let mut map = MapData {
+        roads: vec![
+            road(
+                vec![
+                    Vec2::ZERO,
+                    Vec2::new(west, 0.0),
+                    Vec2::new(100.0, 0.0),
+                    Vec2::new(east, 0.0),
+                    Vec2::new(200.0, 0.0),
+                ],
+                8.0,
+                Highway::Tertiary,
+                2,
+            ),
+            half(west, true),
+            half(east, false),
+        ],
+        road_nodes: vec![
+            signals(Vec2::new(west, 0.0)),
+            signals(Vec2::new(east, 0.0)),
+            RoadNode {
+                pos: Vec2::new(100.0, 0.0),
+                kind: RoadNodeKind::Crossing {
+                    signals: true,
+                    island: false,
+                    marked: true,
+                },
+            },
+        ],
+        ..default()
+    };
+    map.network = RoadNetwork::new(&map.roads);
+    let base = marking_breaks(&map.roads, is_carriageway, &[]).breaks;
+    let run = |partner: usize| {
+        vec![PairRun {
+            from: 0.0,
+            to: 160.0,
+            partner,
+            left: true,
+            gap: apart - 7.6,
+            paved: false,
+            tram: false,
+        }]
+    };
+    let drawn = Drawn::for_test(&map)
+        .with_pairs(1, run(2))
+        .with_pairs(2, run(1));
+    NodePaint::for_test(&drawn, &base, &map, &[], EVERYTHING)
+}
+
+/// Стоп-линии на перемычке между половинами — только если за ними есть где
+/// ждать: на 28 м между осями (Рязань, витрина 07) очередь за линией встала бы
+/// на соседний перекрёсток или на зебру через газон, и линий там нет; на
+/// 60 м они есть. Подходы снаружи и сами половины — со стоп-линиями всегда.
+#[test]
+fn a_stop_line_needs_room_for_a_queue_behind_it() {
+    // поперёк третичной (линия по y) между осями половин
+    let inside = |paint: &NodePaint, apart: f32| {
+        paint
+            .stop_lines
+            .iter()
+            .filter(|line| {
+                (line.from.x - line.to.x).abs() < 0.1 && (line.from.x - 100.0).abs() < apart / 2.0
+            })
+            .count()
+    };
+    let narrow = signals_across_a_pair(28.0);
+    assert_eq!(inside(&narrow, 28.0), 0, "{:?}", narrow.stop_lines);
+    assert_eq!(narrow.stop_lines.len(), 4, "{:?}", narrow.stop_lines);
+    let wide = signals_across_a_pair(60.0);
+    assert_eq!(inside(&wide, 60.0), 2, "{:?}", wide.stop_lines);
+    assert_eq!(wide.stop_lines.len(), 6, "{:?}", wide.stop_lines);
+}
+
 /// Ветка треугольника развилки идёт от узла до узла по замощённому острову
 /// (`corners::small_islands`): из асфальта узла она не выходит — перемычка,
 /// ни стоп-линии, ни стрелок (пример 06, горловина). Без острова та же ветка —

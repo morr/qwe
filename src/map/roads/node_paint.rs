@@ -78,6 +78,11 @@ const EDGE_INSET: f32 = 0.3;
 /// Стоп-линия: ширина и зазор до зебры, м.
 pub const STOP_WIDTH: f32 = 0.4;
 const STOP_GAP: f32 = 1.0;
+/// Сколько свободной дороги нужно за стоп-линией, м: две машины в очереди.
+/// Меньше — линия на перемычке между половинами разделённой улицы, где ждать
+/// негде: машина встала бы на соседний перекрёсток или на зебру через газон
+/// (Рязань, витрина 07: Горького через газон Есенина, 28 м между узлами).
+const STOP_QUEUE_ROOM: f32 = 10.0;
 /// Сколько чистого асфальта линии полос оставляют вокруг зебры и
 /// стоп-линии, м. Метр — столько же, сколько было видно, пока линия гасла у
 /// разрыва за метр; теперь она обрывается резко на самом краю разрыва.
@@ -428,6 +433,15 @@ struct Crossing {
     used: bool,
 }
 
+/// Узел на пути дороги: длина на её пути, сама точка и где по ней кончается
+/// асфальт других дорог узла — полуширина самой широкой из них, м.
+#[derive(Clone, Copy)]
+struct NodeAlong {
+    along: f32,
+    at: Vec2,
+    reach: f32,
+}
+
 impl NodePaint {
     /// Разрывы асфальта — заливке улиц (`roads::push_street_fill`) и клиньям.
     pub fn asphalt(&self) -> AsphaltBreaks<'_> {
@@ -592,11 +606,21 @@ impl NodePaint {
             .filter(|ring| ring.len() >= 3)
             .map(|ring| PavedIsland::new(ring))
             .collect();
-        let mut nodes_along: Vec<Vec<(f32, Vec2)>> = vec![Vec::new(); drawn.len()];
+        let mut nodes_along: Vec<Vec<NodeAlong>> = vec![Vec::new(); drawn.len()];
         for node in &junctions {
             for visit in &node.visits {
                 let walk = Walk::new(paths[visit.road].as_ref());
-                nodes_along[visit.road].push((walk.project(node.at), node.at));
+                let reach = node
+                    .visits
+                    .iter()
+                    .filter(|other| other.road != visit.road)
+                    .map(|other| drawn[other.road].width / 2.0)
+                    .fold(0.0, f32::max);
+                nodes_along[visit.road].push(NodeAlong {
+                    along: walk.project(node.at),
+                    at: node.at,
+                    reach,
+                });
             }
         }
 
@@ -1048,11 +1072,20 @@ impl NodePaint {
                 })
                 .map(|(index, crossing)| (index, crossing.along));
             // до следующего узла той же дороги, не из этого кластера
-            let room = nodes_along[arm.road]
+            let ahead: Vec<NodeAlong> = nodes_along[arm.road]
                 .iter()
-                .filter(|(_, at)| cluster.iter().all(|node| node.at != *at))
-                .map(|(along, _)| (along - edge) * dir)
-                .filter(|ahead| *ahead > 0.0)
+                .filter(|node| cluster.iter().all(|own| own.at != node.at))
+                .filter(|node| (node.along - edge) * dir > 0.0)
+                .copied()
+                .collect();
+            let room = ahead
+                .iter()
+                .map(|node| (node.along - edge) * dir)
+                .fold(f32::INFINITY, f32::min);
+            // где за плечом начинается асфальт следующего узла
+            let next_edge = ahead
+                .iter()
+                .map(|node| (node.along - edge) * dir - node.reach)
                 .fold(f32::INFINITY, f32::min);
             // переход этой же улицы по данным у самого узла — на любом её
             // плече: мапер разметил, где здесь переходят, и зебра по правилу
@@ -1099,6 +1132,7 @@ impl NodePaint {
                 zebra,
                 link,
                 ring_line: ring.map(|entry| entry.line),
+                next_edge,
             });
         }
         // половины разделённой улицы переходят одной зеброй: вторая встаёт
@@ -1132,6 +1166,7 @@ impl NodePaint {
                 zebra,
                 link,
                 ring_line,
+                next_edge,
             } = plan;
             let road = drawn[arm.road];
             let dir = arm.dir;
@@ -1180,7 +1215,19 @@ impl NodePaint {
                 };
                 behind + dir * STOP_WIDTH / 2.0
             })
-            .filter(|&at| ring_line.is_some() || !in_other(at));
+            .filter(|&at| ring_line.is_some() || !in_other(at))
+            .filter(|&at| {
+                // очереди за линией нужно место: до асфальта следующего узла
+                // и до зебры перехода по пути к ней
+                let back = at + dir * STOP_WIDTH / 2.0;
+                let zebra_ahead = crossings[arm.road]
+                    .iter()
+                    .map(|crossing| (crossing.along - back) * dir - ZEBRA_LENGTH / 2.0)
+                    .filter(|&gap| gap > -ZEBRA_LENGTH)
+                    .fold(f32::INFINITY, f32::min);
+                let queue = ((edge - back) * dir + next_edge).min(zebra_ahead);
+                ring_line.is_some() || queue >= STOP_QUEUE_ROOM
+            });
             let outer = [
                 zebra.map(|(center, _)| center + dir * ZEBRA_LENGTH / 2.0),
                 stop.map(|at| at + dir * STOP_WIDTH / 2.0),
@@ -1321,6 +1368,9 @@ struct ArmPlan<'a> {
     link: bool,
     /// Въезд в кольцо: линия по его кромке ([`RingEntry::line`]).
     ring_line: Option<(Vec2, Vec2)>,
+    /// Сколько дороги от кромки до асфальта следующего узла на плече, м
+    /// (бесконечность — узла дальше нет).
+    next_edge: f32,
 }
 
 /// Въезд в кольцо: где подход выходит из асфальта самого кольца.
@@ -1407,8 +1457,8 @@ struct Context<'a, P> {
     sidewalk: &'a dyn Fn(usize) -> bool,
     partners: &'a dyn Fn(usize) -> Vec<Partner>,
     on_ring: &'a dyn Fn(usize) -> bool,
-    /// Узлы на каждой дороге: длина на её пути и сама точка.
-    nodes_along: &'a [Vec<(f32, Vec2)>],
+    /// Узлы на каждой дороге.
+    nodes_along: &'a [Vec<NodeAlong>],
     /// Замощённые острова треугольников узлов.
     paved: &'a [PavedIsland],
 }

@@ -1165,7 +1165,18 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     `STOP_GAP` 1 m behind the zebra (or 1 m past the edge without one), across the lanes
     **coming to the node** — axis to kerb on the traffic side (`MapData::traffic_side`)
     for a two-way road, the full width for a one-way one that flows toward the node, none
-    on a one-way arm leaving it. A `give_way` sign without signals makes it dashed. The
+    on a one-way arm leaving it. A `give_way` sign without signals makes it dashed. **A
+    stop line needs room for a queue behind it**: at least `STOP_QUEUE_ROOM` 10 m (two
+    cars) of free road from its back to whichever comes first upstream — the asphalt of
+    the next junction node on the road (its node point less the half width of its widest
+    other road) or an OSM crossing's zebra. Shorter, and the line is dropped (the zebra
+    stays): it lay on the throat between the halves of a divided street, where a waiting
+    car would stand on the neighbouring junction or on the zebra across the median
+    (Ryazan, gallery 07: Горького through Есенина's lawn, 28 m node to node — one line
+    right behind the median zebra, the other just out of the far half; Rostov,
+    Театральный × Красноармейская, the same). 1–3 % of the lines per city (Tula 759 →
+    751, Ryazan 705 → 688, Kaluga 819 → 799, Oryol 742 → 729, Rostov 1680 → 1664).
+    Ring entry lines are exempt. The
     two halves of a divided street cross on **one line**: `align_pair` moves the second
     zebra onto the first's line across the street (to the OSM one if there is one, else to
     the farther one); when **both** are OSM crossings — a `highway=crossing` node on each
@@ -2178,7 +2189,8 @@ into one half of a divided one, a fork round a triangular island, a roundabout, 
 arms, a drive into a street, a street that narrows, a sharp bend, a dead end — each with
 its full address and **game coordinates** in a caption to the left of its window.
 Ryazan, Kaluga, Oryol and Rostov have columns of their own (`ROADS_CITY=<slug>`, six
-samples each, all with a Yandex reference): the types Tula lacks or draws differently —
+samples each with a Yandex reference, plus Ryazan's `07_signals_across_pair` without
+one — the stop lines' queue room): the types Tula lacks or draws differently —
 Rostov's one-way grid, crossings of two divided avenues, a T into a six-lane two-way
 street, unpaved and gravel private-sector crossings, rings of every size (a three-lane
 primary, two rings side by side, a narrow ring round a square, a park ring, an oval one,
