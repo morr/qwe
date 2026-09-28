@@ -270,15 +270,28 @@ be called alone:
   too — `infer_sidewalks` asks only residential ones) for each **`Inferred`** side: probes
   every `SEPARATE_PROBE_STEP` 5 m, and a probe hits a side when a **paved** path
   (`RoadLine::is_paved_path` — a sand trail beside the street is not its sidewalk) runs
-  parallel (`|cos| ≥ SEPARATE_PARALLEL` 0.85) on that side, its nearest point between
+  parallel (`|cos| ≥ SEPARATE_PARALLEL` 0.85) on that side, its axis between
   `SEPARATE_INSIDE` 1 m inside the kerb and `SEPARATE_REACH` 4 m past the outer edge of
-  the band. At least `SEPARATE_SHARE` 60 % of the probes → the side becomes `None`. A
+  the band (the nearest such footway per probe is kept). The side goes only if the
+  **median lawn** — kerb to the footway's near edge (axis minus the path's half width) —
+  is at least `SEPARATE_LAWN` 1.5 m. A footway closer than that keeps the band, which
+  then lies under it (both are pavement, the overlap is invisible): taken away, it left a
+  metre of bare ground between the kerb and the footway, and at a corner a hole down to
+  the ground framed by the kerb returns (scout R3). The same pass then gives every side
+  of a paved carriageway whose probes found such a footway — the probe window reaching
+  `VERGE_REACH` 10 m past the kerb for this, band or no band — a **verge**:
+  `RoadLine::verges`, the median distance from the kerb to the footway's axis. Only the
+  renderer reads it (**Sidewalks** in `roads.md`: sidewalk tile under the greens). At least `SEPARATE_SHARE` 60 % of the probes → the side becomes `None`. A
   `Tagged` side is never touched. Before the house and block pulls like the other sidewalk
   pass, so both work against what is drawn. The consequences are the ones `sidewalk=separate`
   already had: no band means no kerb pocket on an arterial side (`pockets::kerb_parking`)
   and no rule zebra there — the same as the tagged north-west half of Lenina. Tula v15:
-  516 of 1982 untagged sides dropped in 8 ms (release); kerb pockets 271 → 201, zebras
-  775 → 750 (the 529 from OSM untouched), no house pull moved. Logged as
+  516 of 1982 untagged sides dropped in 8 ms (release) when it came in; kerb pockets
+  271 → 201, zebras 775 → 750 (the 529 from OSM untouched), no house pull moved. With the
+  lawn rule and the verges: **284** of 1982 dropped, the pass 18 ms (release — every paved
+  carriageway is probed now, over the wider verge window; `Grid::near_each`, the sorted
+  `near` cost 48), house pulls 1336 (52 partial), zebras 731, kerb pockets 225;
+  `road_verges` 47 k vertices. Logged as
   `N of M untagged sidewalk sides left to a separately mapped footway in T`; pinned by
   `parse/tests.rs::a_footway_along_the_kerb_takes_the_inferred_sidewalk_of_its_side`,
   `a_sidewalk_stays_unless_a_paved_footway_runs_beside_it` and, through the whole parse,

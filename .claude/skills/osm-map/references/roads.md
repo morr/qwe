@@ -109,7 +109,22 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   untagged residential streets left without sidewalks` line. And any carriageway —
   arterials included — gives an untagged side up to a **separately mapped paved footway**
   running alongside it (`parse.rs::drop_sidewalks_beside_footways`, `parse.md`,
-  **Sidewalks left to a separate footway**): the band beside it was a second sidewalk.
+  **Sidewalks left to a separate footway**): the band beside it was a second sidewalk —
+  but only behind a real lawn (`SEPARATE_LAWN` 1.5 m to the footway's near edge); a
+  footway at the kerb keeps the band under it. **Any side** of a paved street with such a
+  footway alongside — up to `VERGE_REACH` 10 m past the kerb, band or no band, dropped
+  or `sidewalk=separate` — gets a **verge** (`RoadLine::verges`, metres from the kerb to
+  the footway's axis, the median over the probes), drawn by `roads.rs::push_verges` as a
+  one-sided ribbon in sidewalk tile, from the axis past the kerb, round-capped, in its own
+  layer **`road_verges` at `Z_ROAD_VERGE` 0.1 — under the landuse blocks and every
+  green**: a lawn mapped between the kerb and the footway stays a lawn, and bare ground
+  there — a hole down to the earth framed by the kerb returns at every corner of Tula's
+  centre (scout R3, galleries 15, 21; Kaluga 03 and Oryol 03 too) — is paved. **The
+  corner** comes from the kerb returns (`corners.rs`, `KerbReturns::verges`): between two
+  sidewalk-carrying arms where at least one side has a verge, a fillet by the verge (the
+  band where there is none) with the arc at the kerb radius less the **narrower** of the
+  two — by the wider, as the band corners do, it left a wedge of ground along the
+  narrower. Render-only: the navmesh and the house pull never read it.
   **One profile for the parse and the renderer**: `RoadLine::sidewalk()` →
   `SidewalkProfile` (`osm/model.rs`) — the sides as bools plus the **band by class**
   (`sidewalk_band`, 22 % of the width, 1.2–3 m; `Some` on a carriageway, a bridge
@@ -1675,8 +1690,8 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     and `Smoothing` stay for the tree-row band's own Joins / Smoothing rows and for rails,
     the tram and water (`Smoothing::Light`). The dark road/alley **casing layers are gone**
     (`alley_casings`, `road_casings`, `Z_ALLEY_CASING`, `Z_ROAD_CASING` and their colours),
-    so `mesh_roads` yields **19 layers**: eleven ribbons (with `unpaved_roads`, **Unpaved
-    streets** above) + eight paint layers. `bridge_casings`
+    so `mesh_roads` yields **20 layers**: twelve ribbons (with `unpaved_roads`, **Unpaved
+    streets** above, and `road_verges`, **Sidewalks**) + eight paint layers. `bridge_casings`
     stays — it is the bridge curb (**Bridge layers** below); `footprint::casing_width`
     stays for the tree-row band and the planting index.
   - **RoadShape** (`map/roads/shape.rs`, group `road_shape`; five sliders in the Roads

@@ -359,8 +359,14 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     blocks of 3+ storeys on
     average (`parse::infer_sidewalks`, the cars' district measure); and any carriageway
     loses an untagged side to a **separately mapped footway** — a paved path running
-    alongside within a few metres of the band (`parse::drop_sidewalks_beside_footways`),
-    since a band next to it was a second sidewalk with a strip of grass between. The decision per side
+    alongside within a few metres of the band, behind a real lawn of at least 1.5 m
+    (`parse::drop_sidewalks_beside_footways`), since a band next to it was a second
+    sidewalk with a strip of grass between, while a band taken from under a footway at
+    the kerb left a slit of bare ground and holes at the corners. Any side of a paved
+    street with such a footway alongside (up to 10 m past the kerb), band or no band,
+    carries a **verge** (`RoadLine::verges`, kerb to the footway's axis): sidewalk tile
+    drawn under every green (`road_verges`, its corners by the kerb returns), so a
+    mapped lawn stays a lawn and bare ground there is paved. The decision per side
     is a **`SidewalkSide`** on the `RoadLine`: `Tagged`, `Inferred` (no tag, kept by the
     rule) or `None`.
   - **Paired halves** (`map/roads/network/pairs.rs`, `Pairs`) — a divided street as OSM
