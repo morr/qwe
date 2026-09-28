@@ -225,7 +225,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     the mall's big ring carries no tag; a **Ring** (`roads/rings.rs`) is such ways chained
     into a loop and drawn as one smooth ellipse through its nodes, one section for all
     arcs, a kerb round its island and a lawn over it (`ring_islands`, right over the
-    ground, under whatever is mapped on the island), approaches entering by a tangent arc (a two-way one,
+    ground, under whatever is mapped on the island; the island's mapped grass laid once
+    more over the grass, `ring_island_grass`, so its rim does not show in the lawn),
+    approaches entering by a tangent arc (a two-way one,
     mapped into its node along the ring, by an arc along the ray; the two **legs** of a
     **Y-approach** — two short two-way ways from one node into two nodes of one ring,
     or one such way whose fork reaches another node of the ring along a **tail** of
