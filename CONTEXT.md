@@ -386,8 +386,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     no fortress building stands on it** (`roads.rs::Fortresses`): Tula maps its wall as a
     `building=wall` and its towers as buildings too, and the ribbon over them read as a
     dark-orange outline. The navmesh still blocks the whole line.
-  - **FenceLine** — a plot boundary: `FenceKind: Fence | Wall | Hedge` from
-    `barrier=fence|wall|retaining_wall|hedge` (`retaining_wall` is a `Wall`), plus the
+  - **FenceLine** — a plot boundary: `FenceKind: Fence | Railing | Wall | Hedge` from
+    `barrier=fence|wall|retaining_wall|hedge` (`retaining_wall` is a `Wall`; a `fence`
+    whose `fence_type` is all see-through — metal bars, mesh, wire — is a `Railing`,
+    drawn without a shadow), plus the
     **default gates** the load adds (`gates`). Drawn by `map/fences.rs`; **impassable in
     the navmesh with gaps** (`FENCE_BAND_WIDTH` 0.3 m — the physical thickness, not the
     zoom-grown drawn width; see **Fence gap** under Navigation). The branch falls through,
