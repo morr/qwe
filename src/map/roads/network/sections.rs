@@ -25,10 +25,13 @@
 
 use std::time::Duration;
 
+use bevy::prelude::*;
+
 use super::streets::RoadNetwork;
 use crate::map::osm::model::polyline_length;
 use crate::map::osm::{Highway, MapData, RoadLine};
 use crate::map::roads::shape;
+use crate::map::shapes::is_ring;
 
 /// Насколько полоса дворового проезда уже полосы улицы, м: 3.0 против 3.3.
 /// Ширина полосы улицы — одна на весь город, ручка `Lane width`
@@ -51,7 +54,12 @@ pub fn lane_width(highway: Highway) -> Option<f32> {
 }
 
 /// Число полос по классу, когда ни тег, ни соседи по улице не подсказали.
-/// Одностороннему — половина двустороннего, но не меньше одной полосы.
+/// Одностороннему — половина двустороннего, но не меньше одной полосы;
+/// кроме `tertiary`: одностороннее полотно такой улицы — то же полотно, что
+/// у двусторонней, только ехать по нему в одну сторону (центр Ростова,
+/// Рязани, Калуги — две-три полосы), и одна полоса в 4.3 м читалась
+/// проездом рядом с тротуаром втрое шире. Половина разделённой `tertiary`
+/// тоже встаёт в две: бульвар 2 + 2 правдоподобнее, чем 1 + 1.
 pub fn default_lanes(highway: Highway, oneway: bool) -> u8 {
     let two_way = match highway {
         Highway::Motorway | Highway::Trunk | Highway::Primary | Highway::Secondary => 4,
@@ -66,11 +74,56 @@ pub fn default_lanes(highway: Highway, oneway: bool) -> u8 {
         | Highway::Unclassified
         | Highway::LivingStreet => 2,
     };
-    if oneway {
-        (two_way / 2).max(1)
-    } else {
+    if !oneway || highway == Highway::Tertiary {
         two_way
+    } else {
+        (two_way / 2).max(1)
     }
+}
+
+/// Кольцо шире этого радиуса, м, без тега `lanes` получает не меньше
+/// [`WIDE_RING_LANES`] полос: по большому кольцу едут в два ряда (Рязань,
+/// площадь Мичурина, — радиус 52 м). Кольцо в парке в 20 м (Рязань, витрина
+/// 05) остаётся в одну полосу, как у Яндекса.
+const WIDE_RING_RADIUS: f32 = 30.0;
+const WIDE_RING_LANES: u8 = 2;
+
+/// Число полос дороги без тега и без соседа с тегом: по классу
+/// ([`default_lanes`]), а на большом кольце — не меньше двух.
+fn inferred_lanes(road: &RoadLine) -> u8 {
+    let lanes = default_lanes(road.highway, road.oneway);
+    let wide_ring = road.highway != Highway::Service
+        && road.is_roundabout()
+        && ring_radius(&road.points).is_some_and(|radius| radius >= WIDE_RING_RADIUS);
+    if wide_ring {
+        lanes.max(WIDE_RING_LANES)
+    } else {
+        lanes
+    }
+}
+
+/// Радиус кольца по его way, м: у замкнутого — по длине окружности, у дуги —
+/// окружность через её концы и середину. `None` — дуга прямая или из двух
+/// точек.
+fn ring_radius(points: &[Vec2]) -> Option<f32> {
+    let length = polyline_length(points);
+    if is_ring(points) {
+        return Some(length / std::f32::consts::TAU);
+    }
+    if points.len() < 3 {
+        return None;
+    }
+    let (a, c) = (points[0], points[points.len() - 1]);
+    // середина — по длине дуги, а не по номеру вершины
+    let mut run = 0.0;
+    let b = points.windows(2).find_map(|link| {
+        let step = link[0].distance(link[1]);
+        run += step;
+        (run >= length / 2.0).then(|| link[1].lerp(link[0], (run - length / 2.0) / step.max(1e-6)))
+    })?;
+    let (ab, bc, ca) = (a.distance(b), b.distance(c), c.distance(a));
+    let twice_area = (b - a).perp_dot(c - a).abs();
+    (twice_area > 1e-3).then(|| ab * bc * ca / (2.0 * twice_area))
 }
 
 /// Ширина проезжей части из сечения; `None` — у дорожки сечения нет.
@@ -142,7 +195,7 @@ pub fn apply(map: &mut MapData) -> SectionReport {
         }
         let lanes = lanes.unwrap_or_else(|| {
             report.by_class += 1;
-            default_lanes(road.highway, road.oneway)
+            inferred_lanes(road)
         });
         road.lanes = Some(lanes);
         if let Some(width) = section_width(road.highway, lanes) {
@@ -274,6 +327,53 @@ mod tests {
         let (map, report) = sections(vec![piece(0.0, 100.0, None)]);
         assert_eq!(map.roads[0].lanes, Some(2));
         assert_eq!(report.by_class, 1);
+    }
+
+    #[test]
+    fn a_one_way_tertiary_keeps_the_lanes_of_a_two_way_one() {
+        let one_way = |highway: Highway| RoadLine {
+            highway,
+            oneway: true,
+            ..piece(0.0, 100.0, None)
+        };
+        let (map, _) = sections(vec![
+            one_way(Highway::Tertiary),
+            one_way(Highway::Residential),
+            one_way(Highway::Secondary),
+        ]);
+        let lanes: Vec<Option<u8>> = map.roads.iter().map(|road| road.lanes).collect();
+        assert_eq!(
+            lanes,
+            [Some(2), Some(1), Some(2)],
+            "односторонняя tertiary — две, жилая — одна, половина secondary — две"
+        );
+    }
+
+    #[test]
+    fn a_wide_ring_without_the_tag_gets_two_lanes() {
+        let ring = |radius: f32| {
+            let mut points: Vec<Vec2> = (0..24)
+                .map(|step| Vec2::from_angle(step as f32 * std::f32::consts::TAU / 24.0) * radius)
+                .collect();
+            points.push(points[0]);
+            RoadLine {
+                highway: Highway::Unclassified,
+                oneway: true,
+                roundabout: true,
+                points,
+                ..piece(0.0, 1.0, None)
+            }
+        };
+        // и дуга большого кольца — по окружности через её концы и середину
+        let arc = RoadLine {
+            points: (0..=6)
+                .map(|step| Vec2::from_angle(step as f32 * 0.2) * 50.0 + Vec2::new(500.0, 0.0))
+                .collect(),
+            ..ring(50.0)
+        };
+        let (map, _) = sections(vec![ring(50.0), ring(20.0), arc]);
+        let lanes: Vec<Option<u8>> = map.roads.iter().map(|road| road.lanes).collect();
+        assert_eq!(lanes, [Some(2), Some(1), Some(2)]);
     }
 
     #[test]
