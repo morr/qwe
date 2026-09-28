@@ -146,7 +146,11 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   the tile laid from the kerb to a footway fifteen metres off made the street read as
   poured concrete; there it is a lawn with the footway on it, as in any Soviet yard,
   while the narrow paved verges of the centre's corners stay tile, and nothing between
-  the kerb and the footway is bare ground either way (roads plan S4).
+  the kerb and the footway is bare ground either way (roads plan S4). **A ring arc takes
+  its verge on the outer side only** (`Ring::ccw` says which: the island is on the left of
+  a counter-clockwise ring) — inside is the island and its lawn, and without it a
+  parallelogram of bare ground lay between the ring's sidewalk and a footway along it
+  (Kaluga 01, roads plan S3); the arc's end discs lie under its own asphalt.
   Render-only: the navmesh and the house pull never read it.
   **One profile for the parse and the renderer**: `RoadLine::sidewalk()` →
   `SidewalkProfile` (`osm/model.rs`) — the sides as bools plus the **band by class**
@@ -2190,7 +2194,14 @@ place to look at a road-network defect end to end:
   whether a house is squared. The first version clipped ways to the window and the sample
   visibly stopped matching the game (other stalls in the lot, other cars in it). Roads
   that share a node with a kept road are added too (`joining_roads`, one level) so the
-  kept streets have their junctions. Only non-building multipolygons (a river runs for
+  kept streets have their junctions, and so are the **footways along a kept street**
+  anywhere on its length (`footways_along`: a path way — the `road_class` Alley values —
+  with a vertex within `FOOTWAY_REACH` 32 m of a kept carriageway's link). The parse
+  decides a street's sidewalk band and its verge by probes along the **whole** street
+  (60 % of them must find a footway), and a 600 m avenue kept whole with only its
+  window's footways lost its verge altogether: a pocket of bare ground framed by tile
+  at Tula 02's south-east corner (roads plan S3) that the game, parsing the whole city,
+  never had. Only non-building multipolygons (a river runs for
   kilometres) are polygon-clipped; the tag-only `is_in` boundary (the `driving_side`
   carrier) is kept with its `name:*` tags dropped; nodes inside the window are kept (doors,
   trees today; crossings and signals once the query asks for them). `CROP_MARGIN` is 120 m
