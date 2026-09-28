@@ -274,22 +274,42 @@ const FILL_OVERLAP: f32 = 2.5;
 
 /// Контур между внутренними кромками половин, с нахлёстом `overlap` под их
 /// ленты; `None`, если кромок нет.
+///
+/// Кромка уходит под **свою** ленту — прочь от кромки напротив, а не от
+/// середины: середина лежит посередине между осями, и у половин разной
+/// ширины кромка широкой заходит за неё. Уводимая от середины, эта кромка
+/// шла под чужую ленту, контур ложился целиком под узкую половину, и зазор
+/// между половинами светился землёй — иглой при нахлёсте в метр, плашкой в
+/// два метра при нынешнем (Орёл, витрина 05: Московская, 10.9 и 7.6 м).
 fn between_edges(median: &Median, overlap: f32) -> Option<Vec<Vec2>> {
-    let [first, second] = &median.inner;
-    let count = median.midline.len();
+    edges_ring(&median.midline, &median.inner, overlap)
+}
+
+/// [`between_edges`] по середине `midline` и кромкам `inner` в тех же точках.
+fn edges_ring(midline: &[Vec2], inner: &[Vec<Vec2>; 2], overlap: f32) -> Option<Vec<Vec2>> {
+    let [first, second] = inner;
+    let count = midline.len();
     if count < 2 || first.len() != count || second.len() != count {
         return None;
     }
-    let widened = |edge: &[Vec2]| -> Vec<Vec2> {
+    // куда от кромки её лента: прочь от кромки напротив; кромки сошлись в
+    // точку — прочь от середины
+    let widened = |edge: &[Vec2], facing: &[Vec2]| -> Vec<Vec2> {
         edge.iter()
-            .zip(&median.midline)
-            .map(|(&point, &mid)| point + (point - mid).normalize_or_zero() * overlap)
+            .zip(facing)
+            .zip(midline)
+            .map(|((&point, &other), &mid)| {
+                let away = (point - other)
+                    .try_normalize()
+                    .unwrap_or_else(|| (point - mid).normalize_or_zero());
+                point + away * overlap
+            })
             .collect()
     };
     Some(
-        widened(first)
+        widened(first, second)
             .into_iter()
-            .chain(widened(second).into_iter().rev())
+            .chain(widened(second, first).into_iter().rev())
             .collect(),
     )
 }
@@ -622,6 +642,29 @@ mod tests {
         assert!(
             (area - (10.0 - CUT_MARGIN) * 4.0).abs() < 0.1,
             "асфальта {area} м²"
+        );
+    }
+
+    /// Половины 10.9 и 7.6 м, оси в 10.8 м: середина между осями в 5.4 от
+    /// широкой, и её кромка (5.45) зашла за середину. Контур асфальта кроет
+    /// зазор между кромками целиком и заходит под обе ленты; уводимая от
+    /// середины, кромка широкой шла под узкую, и зазор светился землёй
+    /// (Орёл, витрина 05).
+    #[test]
+    fn the_paved_fill_covers_the_gap_when_the_wide_edge_crosses_the_midline() {
+        let xs = [0.0, 20.0];
+        let at = |y: f32| xs.map(|x| Vec2::new(x, y)).to_vec();
+        let midline = at(5.4);
+        let inner = [at(5.45), at(7.0)];
+        let ring = edges_ring(&midline, &inner, FILL_OVERLAP).expect("кромки есть");
+        let (low, high) = ring
+            .iter()
+            .fold((f32::INFINITY, f32::NEG_INFINITY), |(low, high), p| {
+                (low.min(p.y), high.max(p.y))
+            });
+        assert!(
+            low <= 5.45 - FILL_OVERLAP + 1e-3 && high >= 7.0 + FILL_OVERLAP - 1e-3,
+            "контур {low}..{high} не кроет зазор 5.45..7.0 с нахлёстом"
         );
     }
 
