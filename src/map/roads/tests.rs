@@ -758,6 +758,31 @@ fn roundabout_with_an_approach(tagged: bool, oneway: bool) -> MapData {
     map
 }
 
+/// Обочина у дуги кольца — только снаружи: внутри остров и его газон, а
+/// снаружи между тротуаром кольца и дорожкой вдоль него лежала голая земля
+/// (Калуга, витрина 01).
+#[test]
+fn a_ring_takes_its_verge_on_the_outer_side_only() {
+    let mut map = roundabout_with_an_approach(true, true);
+    map.roads[0].verges = [6.0, 6.0];
+    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let radii: Vec<f32> = layer(&layers, "road_verge_lawns")
+        .builder
+        .positions_for_test()
+        .iter()
+        .map(|at| Vec2::new(at[0], at[1]).length())
+        .collect();
+    assert!(
+        radii.iter().any(|&r| r > 12.0 + 4.0 + 5.9),
+        "обочина снаружи: {radii:?}"
+    );
+    // внутрь — не дальше внутренней кромки полотна (торцы-круги лежат под ним)
+    assert!(
+        radii.iter().all(|&r| r > 12.0 - 4.0 - 0.1),
+        "обочина на острове: {radii:?}"
+    );
+}
+
 /// Клин между въездом, съездом и кольцом — направляющий островок: асфальт со
 /// штриховкой, как рисует Яндекс, — и стоянка для этого не нужна.
 #[test]

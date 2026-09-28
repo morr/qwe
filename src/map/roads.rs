@@ -1223,16 +1223,21 @@ pub fn mesh_roads(
         // обочина до отдельного тротуара — лентой от оси за кромку на её
         // ширину, в свою сторону: проезжую часть она кроет под асфальтом, а
         // до угла узла доходит торцом, и угол между двумя такими улицами
-        // замощён их обочинами
-        if ring.is_none() {
-            push_verges(
-                [&mut verges, &mut verge_lawns],
-                road,
-                points,
-                road.width,
-                prepared.verges_drawn(index),
-            );
+        // замощён их обочинами. У дуги кольца — только снаружи: внутри остров
+        // и его газон (`ring_islands`), а снаружи между тротуаром кольца и
+        // дорожкой вдоль него оставалась голая земля (Калуга, витрина 01, СВ)
+        let mut verged = prepared.verges_drawn(index);
+        if let Some(ring) = ring {
+            // остров — слева по ходу против часовой стрелки
+            verged[usize::from(!ring.ccw)] = 0.0;
         }
+        push_verges(
+            [&mut verges, &mut verge_lawns],
+            road,
+            points,
+            road.width,
+            verged,
+        );
         // слой заливки берётся после полосы тротуара: мощёная дорожка
         // ложится в тот же слой, а полоса выше брала его сама
         let fill = match road.class {
