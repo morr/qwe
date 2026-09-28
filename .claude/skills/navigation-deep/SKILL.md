@@ -502,6 +502,13 @@ inserts the resource instead.
   wanderer counts as on screen — a pawn is a dot there, and "in view" would otherwise
   mean half the map, flooding the task pool and the per-frame sort with ~17k peaceful
   requests. Demons and fleeing humans are always dispatched at any zoom.
+  **The live dispatcher stands while the player pauses** (`live_dispatch_runs`): nothing
+  walks, the queue does not change, and the pass over ~17k waiting requests was ~0.3 ms a
+  frame for nothing; requests pile up and leave on the first unpaused frame. The warmup
+  pause is the exception and must stay one — `loading::pause_world` holds
+  `Time<Virtual>` paused through `PlayPhase::Warmup`, and the warmup waits for exactly
+  these answers. The deterministic dispatcher is untouched (it is `FixedUpdate`, which a
+  pause stops anyway), so replay is not affected.
   **Priority** (`priority::` in `movement/pathfinding.rs`): demons and fleeing humans
   (`URGENT`) go before wandering humans in frame (`WANDER_ON_SCREEN`), within a
   priority nearest-to-camera-center first, capped at `MAX_PATHFINDING_IN_FLIGHT`
