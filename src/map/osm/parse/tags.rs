@@ -1144,14 +1144,45 @@ pub(super) fn pitch_kind(tags: &HashMap<String, String>) -> Option<PitchKind> {
 /// ещё и `kerb`, `gate`, `bollard`, `block` — это точки и мелочь, а не линия,
 /// и `city_wall`, который забирает ветка выше: кремлёвская стена
 /// **непроходима**, а забор рисуется и только.
+///
+/// Забор, у которого **каждый** материал `fence_type` сквозной
+/// ([`SEE_THROUGH_FENCES`]), — [`FenceKind::Railing`]: тени не отбрасывает.
+/// Смешанный `barbed_wire;concrete` — сплошной: бетон тень даёт.
 pub(super) fn fence_kind(tags: &HashMap<String, String>) -> Option<FenceKind> {
     match tags.get("barrier").map(String::as_str)? {
-        "fence" => Some(FenceKind::Fence),
+        "fence" => Some(match tags.get("fence_type") {
+            Some(types)
+                if types
+                    .split(';')
+                    .all(|kind| SEE_THROUGH_FENCES.contains(&kind.trim())) =>
+            {
+                FenceKind::Railing
+            }
+            _ => FenceKind::Fence,
+        }),
         "wall" | "retaining_wall" => Some(FenceKind::Wall),
         "hedge" => Some(FenceKind::Hedge),
         _ => None,
     }
 }
+
+/// Сквозные `fence_type`: решётка, сетка, проволока, жерди. Тула, кеш v15:
+/// `wire` 20, `metal` 18, `chain_link` 15, `bars` 5, `pole` 3 из 84 заборов с
+/// тегом; `metal` в Туле — решётки (разделительная Советской), профнастил
+/// ходит под `corrugated_metal`.
+const SEE_THROUGH_FENCES: &[&str] = &[
+    "metal",
+    "metal_bars",
+    "railing",
+    "bars",
+    "chain_link",
+    "mesh",
+    "wire",
+    "barbed_wire",
+    "electric",
+    "pole",
+    "split_rail",
+];
 
 /// Высота имеет смысл только у зданий: у пруда и газона её не бывает даже при
 /// случайно проставленном теге.

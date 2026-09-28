@@ -615,6 +615,11 @@ pub struct WallLine {
 pub enum FenceKind {
     /// `barrier=fence` — доска, штакетник, профнастил.
     Fence,
+    /// `barrier=fence` сквозной — решётка, сетка, проволока, жерди по
+    /// `fence_type` (`parse/tags.rs::fence_kind`): линия есть, тени нет.
+    /// Метровая решётка посреди проспекта сплошной тенью ложилась на асфальт
+    /// тёмным бруском.
+    Railing,
     /// `barrier=wall|retaining_wall` — бетон или кирпич, светлее и шире.
     Wall,
     /// `barrier=hedge` — живая изгородь, зелёная и мягкая.

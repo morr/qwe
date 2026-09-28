@@ -93,8 +93,9 @@ pub type FenceZoomBucket = ZoomBucket<FenceLods>;
 pub struct FenceLayerTag;
 
 /// Цвета: доска и профнастил серо-бурые, бетонная стена светлее и холоднее,
-/// изгородь зелёная.
+/// изгородь зелёная, решётка — серый металл.
 const FENCE_COLOR: Color = Color::srgb(0.435, 0.404, 0.353);
+const RAILING_COLOR: Color = Color::srgb(0.46, 0.46, 0.45);
 const WALL_COLOR: Color = Color::srgb(0.549, 0.541, 0.522);
 const HEDGE_COLOR: Color = Color::srgb(0.298, 0.376, 0.243);
 
@@ -226,6 +227,7 @@ pub fn mesh_fences(
     for (kind, points) in &pieces {
         let color = match kind {
             FenceKind::Fence => FENCE_COLOR,
+            FenceKind::Railing => RAILING_COLOR,
             FenceKind::Wall => WALL_COLOR,
             FenceKind::Hedge => HEDGE_COLOR,
         };
@@ -308,6 +310,9 @@ fn push_shadows(
         let height = match kind {
             FenceKind::Fence | FenceKind::Wall => FENCE_HEIGHT,
             FenceKind::Hedge => HEDGE_HEIGHT,
+            // сквозь решётку свет проходит: сплошная тень метровой решётки
+            // посреди проспекта читалась тёмным бруском на асфальте
+            FenceKind::Railing => continue,
         };
         let offset = shadow::offset(height);
         for pair in points.windows(2) {

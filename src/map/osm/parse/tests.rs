@@ -652,6 +652,15 @@ fn a_barrier_becomes_a_fence_but_the_city_wall_stays_a_wall() {
         .way(&[("barrier", "wall")], vec![sw, ne])
         .way(&[("barrier", "retaining_wall")], vec![sw, ne])
         .way(&[("barrier", "hedge")], vec![sw, ne])
+        // решётка — сквозная, смешанный с бетоном — сплошной
+        .way(
+            &[("barrier", "fence"), ("fence_type", "metal")],
+            vec![sw, ne],
+        )
+        .way(
+            &[("barrier", "fence"), ("fence_type", "barbed_wire;concrete")],
+            vec![sw, ne],
+        )
         .way(&[("barrier", "city_wall")], vec![sw, ne])
         // не линия и не ограда: калитка и бордюр
         .way(&[("barrier", "gate")], vec![sw, ne])
@@ -665,7 +674,9 @@ fn a_barrier_becomes_a_fence_but_the_city_wall_stays_a_wall() {
             FenceKind::Fence,
             FenceKind::Wall,
             FenceKind::Wall,
-            FenceKind::Hedge
+            FenceKind::Hedge,
+            FenceKind::Railing,
+            FenceKind::Fence,
         ]
     );
     assert_eq!(map.walls.len(), 1);
