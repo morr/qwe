@@ -333,6 +333,26 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     uses to carry a median to the junction (the tip and its heading are
     `along::tip_of`, shared with the gores). Tests build runs with
     `PairRun::for_test`, `Pairs::of_runs` and `Drawn::with_pairs` (`Pairs::set_runs`).
+  - **One door** (`medians::draw`) — every median of every pair goes through one call
+    from `mesh_roads`, and every other function of `medians.rs` is private to it: the
+    base breaks it opens on, the reach to the junction, the paved strip or the tram bed
+    in the streets layer, the lawn (kerb in the sidewalks, grass in `road_medians`, the
+    rest between the kerbs as asphalt), the zebras cut through as passages, the second
+    pass that carries each double solid up to the nose of its pair's lawn and bridges its
+    stubs. What it needs from neighbours comes in `MedianInputs` — the median base, the
+    paint breaks and the zebras (`Junctions`), the half widths, the markings knob, and
+    three closures (`Merges::is_pure_node`, `Gores::reach`, `RoadNetwork::street_of`) —
+    so `medians` pulls in neither `gores` nor `merges`' logic. It **paints nothing**: the
+    double solids come back in `MedianDrawing::painted`, ready (midline + breaks), and
+    `mesh_roads` hands them to `Painter::paint_median` — otherwise `medians` would drag
+    in `paint.rs`. The rest of `MedianDrawing` is what the neighbours read further down
+    `mesh_roads`: `paved` (the tram band, the big lot's edge), `lawn_kerbs` (the merge
+    nose, `merges::nose_fill`), `ends` (the merge axis meeting a median,
+    `merges::merge_axis`) and `bed_caps()` (the asphalt past a tram bed's end). The push
+    order into each builder is the old loop's, pinned by
+    `tests.rs::the_median_loop_lays_the_same_vertices`; `draw` itself is tested on a bare
+    avenue in `medians.rs` (`a_paved_median_hands_back_its_double_solid_instead_of_painting_it`,
+    `a_lawn_median_hands_back_its_kerbs_and_nose_ends`).
   - **Alignment** (`Pairs::align`) — each half is densified to `ALIGN_STEP` 4 m and moved
     so that it stands at half the target distance from the midpoint between it and the
     partner's original axis: target gap = the run's median, paved ones no narrower than
