@@ -508,7 +508,12 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   The one inward move: an edge between a sidewalk mapped as a footway and the street
   beyond it goes to the footway's axis — a corner lying under the crossing path the
   sidewalk meets included — since the strip up to the kerb is paving, not yard.
-  Render-only in effect: `landuse` touches neither the navmesh nor planting.
+  **A vertex in the bare side's verge**: the mapped edge is one for both sides, so on a
+  street with a sidewalk on one side only a vertex beyond the kerb of the *other* side —
+  in its verge, which is drawn *under* the blocks — counted as «under the road» and
+  stayed, and the yard stuck out of the verge's tiles as a dark stroke (Tula, gallery 15).
+  It goes to the nearer drawn rim instead: under the footway (tucked) or 0.5 m under the
+  kerb. Render-only in effect: `landuse` touches neither the navmesh nor planting.
   **Lot paved to its roads** — a parking lot reaches its roads in the same parse step, but
   **as a polygon, not vertex by vertex** (`parse/lots.rs::pave_lots`). The vertex pull was
   tried first and removed: neighbouring points moved by different amounts, and a big lot

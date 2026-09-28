@@ -505,7 +505,25 @@ be called alone:
     walkway it is *not* under: left where it was, it stayed 2 m off the sidewalk while
     its neighbours went under it, and the edge between them stuck out as a wedge of yard
     (Tula, gallery 21, both corners of Ленина × Пушкинская). A vertex under a
-    carriageway is still left alone.
+    carriageway is still left alone — under what is **drawn** of it, though.
+    **A vertex in the bare side's verge** (`parse.rs::in_bare_verge`, `Edge::gap`): the
+    mapped edge is one for both sides, so beside a street with a sidewalk on one side
+    only, a vertex beyond the kerb of the side without one (`sidewalk=separate|no`, the
+    `Edge::bare` flag) but within the other side's band counted as «under the road» and
+    stayed. That strip is the verge up to the footway, and the verge is drawn **under**
+    the blocks (`Z_ROAD_VERGE` < `Z_LANDUSE`), so the yard stuck out of its tiles: a dark
+    stroke where block 7749152 is traced around the footway's hook at Ленина × Советская
+    (Tula, gallery 15), a strip of yard inside the tiles (Tula 21, Oryol 03 — a hairline
+    along the footway). Such a vertex goes to the **nearer drawn rim**: the footway
+    (tucked, when `tuck` allows) or the kerb (0.5 m under the asphalt, outward only). The
+    gap to the drawn rim of a bare side (`Edge::gap`) is used there and in `tuck`'s
+    «street beyond» — and nowhere else: measured everywhere, the nearest road flipped
+    from street to footway on vertices outside the band as well, and the edges beside
+    Kaluga 01's ring came out zigzag between the two. Tula 15 keeps a sliver (~2 × 0.3 m):
+    one vertex of the hook stands outside the phantom band, 0.47 m from Ленина's mapped
+    edge against 0.48 from the footway, and goes the old way — to the phantom band and a
+    corner slide. Pinned by
+    `a_block_edge_in_the_verge_of_a_bare_side_goes_to_the_nearer_of_its_rims`.
   - **The band is what is drawn**: a street's sidewalk counts in its reach only when it
     has one (`RoadLine::sidewalks`). `sidewalk=separate|no` used to count anyway, and the
     block was pulled under a sidewalk that is never drawn — its edge stood past the kerb.
