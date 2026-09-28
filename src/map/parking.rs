@@ -2170,6 +2170,15 @@ mod tests {
         assert!(!builder.is_empty());
     }
 
+    /// Полоса у бордюра тоньше места поперёк (4 м) — ни ряда поперёк, ни
+    /// выдуманной раскладки: мест нет.
+    #[test]
+    fn a_strip_thinner_than_a_stall_gets_no_stalls() {
+        let strip = lot(rect(4.0, 60.0));
+        let street = fixture::street(vec![Vec2::new(-20.0, -4.0), Vec2::new(80.0, -4.0)], 8.0);
+        assert!(stalls_beside(&strip, &[], &[], &[&street]).is_empty());
+    }
+
     /// Асфальт перед носом — это и полотно улицы у кромки: двор в два ряда, у
     /// которого второй ряд выезжает прямо на проезд вдоль площадки.
     #[test]

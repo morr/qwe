@@ -3695,6 +3695,38 @@ fn a_street_side_lot_leaves_a_cross_street_sidewalk() {
     );
 }
 
+/// Большая ли стоянка, решает **замощённый** контур, а не нарисованный: у
+/// площадки в 7800 м² за три метра от улицы полоса до тротуара — тоже её
+/// асфальт, и вместе с ней она большая.
+#[test]
+fn a_lot_paved_past_the_threshold_is_a_big_lot() {
+    let edge = RESIDENTIAL_HALF + sidewalk_band(2.0 * RESIDENTIAL_HALF);
+    let lot = PolyArea {
+        kind: AreaKind::Parking,
+        ..building(
+            rect(
+                CENTER + Vec2::new(-50.0, -edge - 3.0 - 78.0),
+                CENTER + Vec2::new(50.0, -edge - 3.0),
+            ),
+            Vec::new(),
+        )
+    };
+    assert!(!crate::map::parking::is_ground(&lot));
+    let mut map = MapData {
+        roads: vec![street(
+            vec![
+                CENTER - Vec2::new(400.0, 0.0),
+                CENTER + Vec2::new(400.0, 0.0),
+            ],
+            2.0 * RESIDENTIAL_HALF,
+        )],
+        parking: vec![lot],
+        ..MapData::default()
+    };
+    pull_areas_to_roads(&mut map);
+    assert!(crate::map::parking::is_ground(&map.parking[0]));
+}
+
 /// Тем же проходом дотягивается и стоянка — но по своему правилу: её край
 /// пересекает проезд ряда, и вершина, стоящая на его полотне, обязана уехать к
 /// улице вместе с соседями. По правилу квартала («лежишь под лентой — тянуть
