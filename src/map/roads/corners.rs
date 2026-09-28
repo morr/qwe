@@ -117,6 +117,13 @@ const MIN_ARM: f32 = 0.5;
 const STRAIGHT_TOLERANCE: f32 = 0.15;
 /// На сколько прямые стороны скругления заходят под ленты дорог, м.
 const OVERLAP: f32 = 0.05;
+/// То же у наружного угла ([`outer_corner`]), м: его стороны — по лучам
+/// узловой оси, а прямой торец ленты — по её собственному концевому звену,
+/// и на почти прямом стыке двух way одной улицы они расходятся на градус.
+/// На восьми метрах полосы тротуара это полтора десятка сантиметров, и
+/// пяти сантиметров нахлёста не хватало — через тротуар шла нить (Орёл,
+/// витрина 04, север).
+const OUTER_OVERLAP: f32 = 0.3;
 
 /// Одна дорога, выходящая из узла.
 struct Arm<'d> {
@@ -560,7 +567,18 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
             .iter()
             .filter(|arm| arm.sidewalk.iter().any(Option::is_some))
             .collect();
-        if !is_junction(&walked) || walked.iter().all(|arm| is_merged(arm)) {
+        // две полосы одной улицы сквозь узел, где к ней примыкает улица без
+        // тротуара: сами по себе они продолжение, но торцы у них прямые —
+        // узел улиц перекрёсток, — и без угла между ними через тротуар шла
+        // нить (Орёл, витрина 04, север)
+        let streets: Vec<&Arm> = found
+            .iter()
+            .filter(|arm| arm.class == RoadClass::Street)
+            .collect();
+        let butted = walked.len() == 2
+            && walked.iter().all(|arm| arm.end.is_some())
+            && is_junction(&streets);
+        if !(is_junction(&walked) || butted) || walked.iter().all(|arm| is_merged(arm)) {
             continue;
         }
         for (first, second) in pairs(&walked) {
@@ -694,14 +712,14 @@ fn outer_corner(node: Vec2, first: &Arm, second: &Arm, halves: (f32, f32)) -> Op
     let steps = arc_steps(halves.0.max(halves.1), sweep).max(1);
     let middle = Vec2::from_angle(sweep / 2.0).rotate(from);
     let mut outline = Vec::with_capacity(steps + 2);
-    outline.push(node - middle * OVERLAP);
-    outline.push(node + from * halves.0 + first.direction * OVERLAP);
+    outline.push(node - middle * OUTER_OVERLAP);
+    outline.push(node + from * halves.0 + first.direction * OUTER_OVERLAP);
     for step in 1..steps {
         let share = step as f32 / steps as f32;
         let radius = halves.0 + (halves.1 - halves.0) * share;
         outline.push(node + Vec2::from_angle(sweep * share).rotate(from) * radius);
     }
-    outline.push(node - second.direction.perp() * halves.1 + second.direction * OVERLAP);
+    outline.push(node - second.direction.perp() * halves.1 + second.direction * OUTER_OVERLAP);
     Some(outline)
 }
 
@@ -1248,6 +1266,20 @@ mod tests {
         let found = walked_returns_of(&[through, drive], true);
         assert_eq!(found.roads.len(), 2);
         assert!(found.sidewalks.is_empty());
+    }
+
+    /// Улица из двух way с изломом в узле, где к ней примыкает проезд без
+    /// тротуара: торцы её полос прямые (узел улиц — перекрёсток), и наружный
+    /// угол между ними закрывает щель; без него через тротуар шла нить
+    /// (Орёл, витрина 04, север).
+    #[test]
+    fn a_band_butted_at_a_drive_gets_its_outer_corner() {
+        let west = street(vec![Vec2::new(-50.0, 0.0), Vec2::ZERO], 8.0);
+        let east = street(vec![Vec2::ZERO, Vec2::new(50.0, -1.5)], 8.0);
+        let drive = street(vec![Vec2::new(0.0, -50.0), Vec2::ZERO], 5.0);
+        let found = walked_returns_of(&[west, east, drive], true);
+        assert!(found.butt(0)[1] && found.butt(1)[0], "торцы прямые");
+        assert_eq!(found.outer[1], 1, "{:?}", found.sidewalks);
     }
 
     #[test]
