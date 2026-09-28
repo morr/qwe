@@ -630,12 +630,8 @@ fn build_next(
     );
     field.set_share(tree_style.conifer_share);
     // ближняя ступень: витрина смотрит на перекрёсток вблизи
-    let (mut trees, tree_report) = mesh_trees(
-        &tree_style,
-        &CrownParams::default(),
-        &map.trees,
-        &field,
-    );
+    let (mut trees, tree_report) =
+        mesh_trees(&tree_style, &CrownParams::default(), &map.trees, &field);
     // на ближней ступени крона — сущность, а не часть слоя: её не режут, а
     // оставляют по центру. Свес за окно — метры, до соседнего окна `GAP`.
     // Слитые куски дальних ступеней (здесь их нет) режутся, как всякий слой

@@ -775,7 +775,12 @@ fn a_far_zoom_step_trims_the_tail_of_the_set() {
         assert_eq!(report.steps[step], lod.density_cap as usize + 1);
     }
     // кроны-сущности — только ближней ступени, все десять
-    assert!(built.crowns.iter().all(|crown| crown.shows == TreeLodMask::of([0])));
+    assert!(
+        built
+            .crowns
+            .iter()
+            .all(|crown| crown.shows == TreeLodMask::of([0]))
+    );
     // префикс: тени дальней ступени — ровно тени первых крон ступени ближе
     // (сравнимы ступени одной подробности: у ближней шаблон тени полный)
     let far = shadows_shown(&built, TREE_LODS.len() - 1);
@@ -908,7 +913,10 @@ fn far_zoom_steps_merge_crowns_into_chunks() {
             .far
             .vertex_count()
     };
-    assert_eq!(built.merged[0].layer.builder.vertex_count(), far(0) + far(1));
+    assert_eq!(
+        built.merged[0].layer.builder.vertex_count(),
+        far(0) + far(1)
+    );
     assert_eq!(built.merged[1].layer.builder.vertex_count(), far(2));
 }
 
@@ -928,9 +936,17 @@ fn merged_crowns_are_split_by_density_band() {
     assert_eq!(tail.shows, TreeLodMask::of([1]));
     assert!(tail.layer.z > head.layer.z);
     let far = |variant| {
-        crown_variant(TreeShape::Cotton, variant, &TreeStyle { density: 9.0, ..default() }, &params())
-            .far
-            .vertex_count()
+        crown_variant(
+            TreeShape::Cotton,
+            variant,
+            &TreeStyle {
+                density: 9.0,
+                ..default()
+            },
+            &params(),
+        )
+        .far
+        .vertex_count()
     };
     assert_eq!(head.layer.builder.vertex_count(), far(0) + far(1) + far(2));
     assert_eq!(tail.layer.builder.vertex_count(), far(3));
@@ -1225,13 +1241,20 @@ fn crown_entities_stream_in_by_batches_and_leave_on_the_far_steps() {
     let step = |world: &mut World| world.run_system_once(stream_tree_crowns).unwrap();
 
     step(&mut world);
-    assert!(crowns(&mut world).is_empty(), "дальняя ступень кроны не ставит");
+    assert!(
+        crowns(&mut world).is_empty(),
+        "дальняя ступень кроны не ставит"
+    );
 
     world.insert_resource(TreeZoomBucket::at(0));
     step(&mut world);
     let first = crowns(&mut world);
     assert_eq!(first.len(), CROWN_SPAWN_BATCH);
-    assert!(first.iter().all(|visibility| *visibility == Visibility::Hidden));
+    assert!(
+        first
+            .iter()
+            .all(|visibility| *visibility == Visibility::Hidden)
+    );
     assert_eq!(shown(&world), 1, "ступень показана до последней пачки");
 
     step(&mut world);
@@ -1241,5 +1264,8 @@ fn crown_entities_stream_in_by_batches_and_leave_on_the_far_steps() {
     world.insert_resource(TreeZoomBucket::at(1));
     step(&mut world);
     assert_eq!(shown(&world), 1, "дальняя ступень показывается сразу");
-    assert!(crowns(&mut world).is_empty(), "спрятанные кроны уходят из мира");
+    assert!(
+        crowns(&mut world).is_empty(),
+        "спрятанные кроны уходят из мира"
+    );
 }

@@ -259,7 +259,11 @@ pub struct TreeLodMask(u8);
 impl TreeLodMask {
     /// Маска ступеней `buckets`.
     pub fn of(buckets: impl IntoIterator<Item = usize>) -> Self {
-        Self(buckets.into_iter().fold(0, |mask, bucket| mask | 1 << bucket))
+        Self(
+            buckets
+                .into_iter()
+                .fold(0, |mask, bucket| mask | 1 << bucket),
+        )
     }
 
     /// Виден ли слой на ступени `bucket`.
@@ -620,9 +624,10 @@ fn detailed_bands(
             [CrownDetail::Full, CrownDetail::Merged]
                 .into_iter()
                 .filter_map(move |detail| {
-                    let shows = TreeLodMask::of((0..TREE_LODS.len()).filter(|&step| {
-                        band.shows(step) && TREE_LODS[step].detail == detail
-                    }));
+                    let shows = TreeLodMask::of(
+                        (0..TREE_LODS.len())
+                            .filter(|&step| band.shows(step) && TREE_LODS[step].detail == detail),
+                    );
                     (!shows.is_empty()).then(|| (range.clone(), shows, detail))
                 })
         })
@@ -1155,10 +1160,7 @@ pub fn rebuilds_on() -> impl SystemCondition<()> {
 /// порога заново строило и заливало весь меш теней (Калуга 10–15 млн вершин,
 /// ~600 МБ), а вход на ближнюю ступень спавнил разом все кроны-сущности
 /// (Тула 16 тыс., Калуга 95 тыс. — три-четыре тяжёлых кадра).
-pub fn show_tree_lod(
-    shown: Res<TreeLodShown>,
-    mut masked: Query<(&TreeLodMask, &mut Visibility)>,
-) {
+pub fn show_tree_lod(shown: Res<TreeLodShown>, mut masked: Query<(&TreeLodMask, &mut Visibility)>) {
     masked.par_iter_mut().for_each(|(shows, mut visibility)| {
         visibility.set_if_neq(shows.visibility(shown.0));
     });
