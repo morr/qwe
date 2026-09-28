@@ -354,6 +354,22 @@ fn a_wide_verge_is_a_lawn_with_a_paved_kerb_strip() {
     assert!((lawn - 18.0).abs() < 0.05, "газон — до дорожки: {lawn}");
 }
 
+/// Обочина по месту заходит за торец своей улицы внахлёст: у стыка двух way
+/// одной улицы между торцами обочин светилась нить (Орёл, витрина 04).
+#[test]
+fn a_verge_by_place_overlaps_past_its_street_end() {
+    let mut map = one_street();
+    map.roads[0].verges = [3.0, 0.0];
+    map.roads[0].verge_profile = [vec![(0.0, 3.0), (500.0, 3.0)], Vec::new()];
+    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let tiles = layer(&layers, "road_verges").builder.positions_for_test();
+    let reach = tiles.iter().map(|at| at[0]).fold(f32::INFINITY, f32::min);
+    assert!(
+        (reach - (100.0 - VERGE_END_OVERLAP)).abs() < 0.01,
+        "обочина начинается у x = {reach}"
+    );
+}
+
 #[test]
 fn only_the_bridge_shadow_is_blended() {
     let (layers, _) = mesh_roads(&one_street(), RoadStyle::default(), RoadShape::default());

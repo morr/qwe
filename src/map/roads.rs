@@ -1764,6 +1764,9 @@ const VERGE_STEP: f32 = 2.5;
 /// пятнадцать метров до дома «заливала улицу бетоном» (Фрунзе в Туле,
 /// районный кадр d2). Уже — плитка до дорожки, как у углов центра.
 const VERGE_PAVED_MAX: f32 = 4.0;
+/// На сколько обочина по месту заходит за торец своей улицы, м
+/// ([`push_verges`]): внахлёст с обочиной продолжения.
+const VERGE_END_OVERLAP: f32 = 0.3;
 /// Полоса плитки у бордюра перед газоном широкой обочины, м.
 const VERGE_KERB: f32 = 0.5;
 /// На какой ширине обочины сверх [`VERGE_PAVED_MAX`] плитка сходит на
@@ -1829,7 +1832,19 @@ fn push_verges(
             }
             continue;
         }
-        let dense = crate::map::along::densify(points, VERGE_STEP);
+        // торцы — продлённые на `VERGE_END_OVERLAP` по касательной: у стыка
+        // двух way одной улицы край каждой обочины кончался своим перпендикуляром,
+        // и между ними светилась нить (Орёл, витрина 04, север). Круга торцевой
+        // ширины здесь нет и не было: огрызок в сантиметр, из которого его
+        // строили, лента сливала в точку (`merge_ribbon_points`)
+        let mut dense = crate::map::along::densify(points, VERGE_STEP);
+        let count = dense.len();
+        let [head, tail] = [
+            (dense[0] - dense[1]).normalize_or_zero(),
+            (dense[count - 1] - dense[count - 2]).normalize_or_zero(),
+        ];
+        dense.insert(0, dense[0] + head * VERGE_END_OVERLAP);
+        dense.push(dense[count] + tail * VERGE_END_OVERLAP);
         let (along, total) = crate::map::along::arclengths(&dense);
         let scale = raw / total.max(f32::EPSILON);
         let widths: Vec<f32> = along
@@ -1852,18 +1867,6 @@ fn push_verges(
         let lawn = widths.iter().any(|&verge| verge > VERGE_PAVED_MAX);
         if lawn {
             lawns.push_polygon(&band(&mut widths.iter().copied()), &[], grass_color);
-        }
-        // торцы — кругом во всю ширину торца, как у постоянной ленты
-        let last = dense.len() - 1;
-        for (at, toward, index) in [
-            (dense[0], dense[1], 0),
-            (dense[last], dense[last - 1], last),
-        ] {
-            let stub = at + (toward - at).normalize_or_zero() * 0.01;
-            ribbon(tiles, &[at, stub], paved[index], tile_color);
-            if widths[index] > VERGE_PAVED_MAX {
-                ribbon(lawns, &[at, stub], widths[index], grass_color);
-            }
         }
     }
 }
