@@ -795,6 +795,8 @@ impl Painter {
         let mut profiles: [Option<Vec<f32>>; 4] = Default::default();
         profiles[every] = Some(to_break);
 
+        // осевая — граница потоков тела, на сетке его раскладки
+        let axis_at = axis_offset(road, lanes, self.side);
         let lowest = frames
             .iter()
             .map(|frame| (frame.low - frame.origin) / lane_width())
@@ -805,7 +807,7 @@ impl Painter {
             .fold(f32::NEG_INFINITY, f32::max);
         for k in lowest.floor() as i32..=highest.ceil() as i32 {
             let step = k as f32 * lane_width();
-            let axis = !road.oneway && lanes.is_multiple_of(2) && (body.origin + step).abs() < 1e-3;
+            let axis = axis_at.is_some_and(|at| (body.origin + step - at).abs() < 1e-3);
             let kind = match (axis, lanes >= DOUBLE_AXIS_LANES) {
                 (true, true) => LineKind::Double,
                 (true, false) => LineKind::Axis,
@@ -861,7 +863,8 @@ impl Painter {
             // полос, на выезде из узла пунктир сразу
             let (line, stations, solid) = match kind {
                 LineKind::Lane => {
-                    let forward = flows_forward(road, body.origin + step, self.side);
+                    let forward =
+                        flows_forward(road, body.origin + step, axis_at.unwrap_or(0.0), self.side);
                     let spans = approach_spans(&along, to_break, forward);
                     split_at_spans(line, stations, &along, &spans)
                 }
@@ -1316,13 +1319,39 @@ fn insert_at(path: &mut Vec<Vec2>, along: &mut Vec<f32>, to_break: &mut Vec<f32>
 
 /// Едут ли полосы у линии со сдвигом `offset` от оси (плюс — влево по ходу
 /// точек) по ходу точек дороги. Односторонняя — вся по ходу (`oneway=-1`
-/// развёрнут парсом); у двусторонней по ходу — полосы своей стороны движения.
-fn flows_forward(road: &RoadLine, offset: f32, side: TrafficSide) -> bool {
+/// развёрнут парсом); у двусторонней по ходу — полосы своей стороны от
+/// осевой `axis` ([`axis_offset`]).
+fn flows_forward(road: &RoadLine, offset: f32, axis: f32, side: TrafficSide) -> bool {
     road.oneway
         || match side {
-            TrafficSide::Right => offset < 0.0,
-            TrafficSide::Left => offset > 0.0,
+            TrafficSide::Right => offset < axis,
+            TrafficSide::Left => offset > axis,
         }
+}
+
+/// Где осевая двусторонней дороги с `lanes` полосами: сдвиг от оси way в
+/// раме раскладки ([`lane_frame`], плюс — влево по ходу точек) — граница
+/// между потоками. Против хода точек — [`RoadLine::lanes_backward`] полос, а
+/// без тега поровну; лишнюю полосу нечётной берёт поток по ходу точек. Так у
+/// `lanes=5` осевая встаёт на границу полос, а не посреди средней, и её
+/// не было вовсе: чётность решала, есть ли осевая (Ростов, витрина 03 —
+/// Текучёва в пять полос одними пунктирами). `None` — осевой нет:
+/// односторонняя или одна полоса на оба потока.
+pub fn axis_offset(road: &RoadLine, lanes: u8, side: TrafficSide) -> Option<f32> {
+    if road.oneway || lanes < 2 {
+        return None;
+    }
+    let backward = road
+        .lanes_backward
+        .filter(|&backward| backward > 0 && backward < lanes)
+        .unwrap_or(lanes / 2);
+    let forward = f32::from(lanes - backward) * lane_width();
+    let half = f32::from(lanes) * lane_width() / 2.0;
+    // по ходу точек едут справа при правостороннем
+    Some(match side {
+        TrafficSide::Right => forward - half,
+        TrafficSide::Left => half - forward,
+    })
 }
 
 /// Отрезки длин пути, где линия полос сплошная: [`APPROACH`] до входа в

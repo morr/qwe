@@ -1085,6 +1085,25 @@ fn oneway_roundabout_and_lanes_reach_the_road() {
         "одно направление без второго — не сумма"
     );
     assert_eq!(road(&[("lanes", "0")]).lanes, Some(2));
+
+    // деление по потокам: назад — `lanes:backward`, иначе `lanes` без
+    // `lanes:forward`; у общей средней полосы и у односторонней его нет
+    let backward = |pairs: &[(&str, &str)]| tagged_lanes_backward(&tags(pairs));
+    assert_eq!(backward(&[("lanes", "5"), ("lanes:forward", "3")]), Some(2));
+    assert_eq!(backward(&[("lanes:backward", "1")]), Some(1));
+    assert_eq!(backward(&[("lanes", "5")]), None);
+    assert_eq!(
+        backward(&[
+            ("lanes", "5"),
+            ("lanes:forward", "2"),
+            ("lanes:both_ways", "1")
+        ]),
+        None
+    );
+    assert_eq!(
+        backward(&[("lanes", "3"), ("lanes:forward", "2"), ("oneway", "yes")]),
+        None
+    );
 }
 
 /// `turn:lanes` — по направлению потока: у односторонней `oneway=-1` тег

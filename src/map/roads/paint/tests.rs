@@ -85,6 +85,62 @@ fn four_lanes_get_a_double_axis_and_a_lane_line_each_way() {
     assert!((lanes[1] - lane_width()).abs() < 1e-3, "{lanes:?}");
 }
 
+/// Пять полос в обе стороны (Ростов, Текучёва): осевая есть — двойная
+/// сплошная на границе потоков, а не посреди средней полосы. Без
+/// `lanes:backward` лишняя полоса — потоку по ходу точек (справа), с ним —
+/// как сказано.
+#[test]
+fn five_two_way_lanes_get_a_double_axis_between_the_flows() {
+    let five = |backward: Option<u8>| {
+        let mut road = with_lanes(
+            street(vec![Vec2::ZERO, Vec2::new(200.0, 0.0)], 17.5),
+            5,
+            false,
+        );
+        road.highway = Highway::Primary;
+        road.lanes_backward = backward;
+        let (layers, _) = mesh_roads(
+            &map_of(vec![road]),
+            RoadStyle::default(),
+            RoadShape::default(),
+        );
+        let axes = line_offsets(&layers, PAINT_AXES, 100.0);
+        let lanes = line_offsets(&layers, PAINT_LANES, 100.0);
+        let kinds: Vec<_> = paint_layer(&layers, PAINT_AXES)
+            .ribbon_coords_for_test()
+            .map(|coords| coords.iter().map(|ribbon| ribbon[3]).collect())
+            .unwrap_or_default();
+        (axes, lanes, kinds)
+    };
+    let (axes, lanes, kinds) = five(None);
+    assert_eq!(axes.len(), 1, "{axes:?}");
+    assert!((axes[0] - lane_width() / 2.0).abs() < 1e-3, "{axes:?}");
+    assert!(!kinds.is_empty());
+    assert!(kinds.iter().all(|&kind| kind == LineKind::Double.code()));
+    // остальные три границы — линии полос
+    assert_eq!(lanes.len(), 3, "{lanes:?}");
+    let (axes, _, _) = five(Some(3));
+    assert!((axes[0] + lane_width() / 2.0).abs() < 1e-3, "{axes:?}");
+}
+
+#[test]
+fn an_odd_axis_sits_on_the_border_of_the_flows() {
+    let mut road = with_lanes(street(vec![Vec2::ZERO, Vec2::X], 17.5), 5, false);
+    let right = axis_offset(&road, 5, TrafficSide::Right).unwrap();
+    assert!((right - lane_width() / 2.0).abs() < 1e-4);
+    let left = axis_offset(&road, 5, TrafficSide::Left).unwrap();
+    assert!((left + lane_width() / 2.0).abs() < 1e-4);
+    assert_eq!(axis_offset(&road, 4, TrafficSide::Right), Some(0.0));
+    road.lanes_backward = Some(1);
+    let pushed = axis_offset(&road, 4, TrafficSide::Right).unwrap();
+    assert!(
+        (pushed - lane_width()).abs() < 1e-4,
+        "три по ходу, одна назад"
+    );
+    road.oneway = true;
+    assert_eq!(axis_offset(&road, 4, TrafficSide::Right), None);
+}
+
 #[test]
 fn a_one_way_street_has_no_axis() {
     let map = map_of(vec![with_lanes(

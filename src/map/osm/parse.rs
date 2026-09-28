@@ -2357,6 +2357,7 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
             oneway: is_oneway(&element.tags),
             roundabout: is_roundabout(&element.tags),
             lanes: tagged_lanes(&element.tags),
+            lanes_backward: tagged_lanes_backward(&element.tags),
             parking_aisle: is_parking_aisle(&element.tags),
             turns: tagged_turns(&element.tags),
             lane_markings: has_lane_markings(&element.tags),
@@ -2554,6 +2555,6 @@ use self::tags::{
     is_oneway_backward, is_parking_aisle, is_road_underground, is_roundabout, is_underground,
     path_width, pipe_width, rail_class, road_area_kind, road_class, road_node_kind, row_spacing,
     service_track, structure_height, structure_kind, structure_radius, structure_size,
-    tagged_lanes, tagged_parking, tagged_pavement, tagged_sidewalks, tagged_turns,
-    untagged_sidewalks, water_class, water_width,
+    tagged_lanes, tagged_lanes_backward, tagged_parking, tagged_pavement, tagged_sidewalks,
+    tagged_turns, untagged_sidewalks, water_class, water_width,
 };

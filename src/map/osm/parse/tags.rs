@@ -797,6 +797,30 @@ pub(super) fn tagged_lanes(tags: &HashMap<String, String>) -> Option<u8> {
     LANES_RANGE.contains(&lanes).then_some(lanes as u8)
 }
 
+/// Полосы двусторонней дороги против хода точек: `lanes:backward`, иначе
+/// `lanes` − `lanes:forward` (Ростов, Текучёва: `lanes=5`, `lanes:forward=3`
+/// — назад две). Полоса `lanes:both_ways` — общая средняя, делить потоки по
+/// ней некому, и ответа нет; у односторонней — тоже. Сходится ли число с
+/// итоговым `lanes`, проверяет проход сечений.
+pub(super) fn tagged_lanes_backward(tags: &HashMap<String, String>) -> Option<u8> {
+    if is_oneway(tags) {
+        return None;
+    }
+    let count = |key: &str| {
+        tags.get(key)
+            .and_then(|value| parse_measure(value))
+            .map(f32::floor)
+    };
+    if count("lanes:both_ways").is_some_and(|both| both > 0.0) {
+        return None;
+    }
+    let backward =
+        count("lanes:backward").or_else(|| Some(count("lanes")? - count("lanes:forward")?))?;
+    (0.0..=*LANES_RANGE.end())
+        .contains(&backward)
+        .then_some(backward as u8)
+}
+
 /// Манёвры полос `[по ходу точек, против]` из `turn:lanes`. Односторонней
 /// годится и общий тег, и тег направления её потока (`oneway=-1` развёрнут
 /// ниже, так что поток после разбора всегда по ходу точек); двусторонней —

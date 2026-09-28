@@ -202,6 +202,7 @@ pub fn apply(map: &mut MapData) -> SectionReport {
             road.width = width;
         }
     }
+    settle_splits(&network, &mut map.roads);
     map.network = network;
     report.elapsed = started.elapsed();
     report
@@ -243,6 +244,64 @@ fn fill_from_street(members: &[usize], roads: &[RoadLine], lanes: &mut [Option<u
         filled += 1;
     }
     filled
+}
+
+/// Деление полос двусторонней по потокам ([`RoadLine::lanes_backward`]) —
+/// после того, как число полос улеглось. Тег, не сходящийся с итоговым
+/// числом (срезанный скачок, `lanes:backward` больше `lanes`), снимается;
+/// участок без деления берёт его у ближайшего участка своей улицы с тем же
+/// числом полос — по ходу улицы, так что встречно нарисованный way получает
+/// его зеркально. Иначе на шве с участком без тега осевая нечётной улицы
+/// прыгала бы на полполосы (Ростов, Текучёва: `lanes=5, lanes:forward=3` и
+/// соседний кусок `lanes=6`, срезанный до пяти).
+fn settle_splits(network: &RoadNetwork, roads: &mut [RoadLine]) {
+    for road in roads.iter_mut() {
+        let valid = !road.oneway
+            && road
+                .lanes
+                .zip(road.lanes_backward)
+                .is_some_and(|(lanes, back)| back > 0 && back < lanes);
+        if !valid {
+            road.lanes_backward = None;
+        }
+    }
+    for street in &network.streets {
+        // каждый участок и его середина вдоль улицы
+        let mut run = 0.0;
+        let mut places = Vec::with_capacity(street.ways.len());
+        for way in &street.ways {
+            let length = polyline_length(&roads[way.road].points);
+            places.push((*way, run + length / 2.0));
+            run += length;
+        }
+        // (середина, полос, против хода улицы)
+        let known: Vec<(f32, u8, u8)> = places
+            .iter()
+            .filter_map(|&(way, at)| {
+                let road = &roads[way.road];
+                let (lanes, back) = (road.lanes?, road.lanes_backward?);
+                Some((at, lanes, if way.reversed { lanes - back } else { back }))
+            })
+            .collect();
+        if known.is_empty() {
+            continue;
+        }
+        for &(way, at) in &places {
+            let road = &roads[way.road];
+            if road.oneway || road.lanes_backward.is_some() {
+                continue;
+            }
+            let Some(lanes) = road.lanes else { continue };
+            let nearest = known
+                .iter()
+                .filter(|&&(_, count, _)| count == lanes)
+                .min_by(|a, b| (a.0 - at).abs().total_cmp(&(b.0 - at).abs()));
+            if let Some(&(_, _, back)) = nearest {
+                roads[way.road].lanes_backward =
+                    Some(if way.reversed { lanes - back } else { back });
+            }
+        }
+    }
 }
 
 /// Срезать одиночные скачки числа полос до соседей. Возвращает, сколько
@@ -307,6 +366,33 @@ mod tests {
         }]);
         assert!((map.roads[0].width - 7.6).abs() < 1e-4);
         assert!((map.roads[1].width - 10.9).abs() < 1e-4);
+    }
+
+    /// Деление потоков — от соседа по улице с тем же числом полос, зеркально
+    /// у встречно нарисованного way (Ростов, Текучёва); у соседа с другим
+    /// числом полос — не берётся, а тег, что с числом не сходится, снимается.
+    #[test]
+    fn an_untagged_piece_takes_the_split_of_its_street() {
+        let tagged = RoadLine {
+            lanes_backward: Some(2),
+            ..piece(0.0, 100.0, Some(5))
+        };
+        // тот же поток, но way нарисован навстречу улице
+        let mut reversed = piece(100.0, 160.0, Some(5));
+        reversed.points.reverse();
+        let other = piece(160.0, 300.0, Some(4));
+        let wrong = RoadLine {
+            lanes_backward: Some(6),
+            ..piece(300.0, 400.0, Some(4))
+        };
+        let (map, _) = sections(vec![tagged, reversed, other, wrong]);
+        assert_eq!(map.roads[0].lanes_backward, Some(2));
+        assert_eq!(map.roads[1].lanes_backward, Some(3), "зеркально");
+        assert_eq!(
+            map.roads[2].lanes_backward, None,
+            "у четырёх полос деления нет"
+        );
+        assert_eq!(map.roads[3].lanes_backward, None, "шесть назад из четырёх");
     }
 
     #[test]

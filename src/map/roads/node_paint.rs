@@ -53,7 +53,7 @@ use bevy::prelude::*;
 use super::drawn::{Axis, Drawn};
 use super::junctions::{JUNCTION_MARGIN, SharedNode, Visit, node_key};
 use super::network::pairs::TRAM_BED_MAX_GAP;
-use super::paint::LineBreaks;
+use super::paint::{LineBreaks, axis_offset};
 use super::{is_carriageway, lane_count};
 use crate::map::along::{arclengths, nearest_on_path, place_on_path};
 use crate::map::footprint::distance_to_polyline;
@@ -1524,10 +1524,12 @@ fn stop_line_at(
         TrafficSide::Right => right,
         TrafficSide::Left => -right,
     } * (road.width / 2.0 - EDGE_INSET);
+    // у двусторонней — от осевой: у нечётной она не посередине
     let from = if road.oneway {
         point - kerb
     } else {
-        point + kerb.normalize_or_zero() * EDGE_INSET
+        let axis = axis_offset(road, lane_count(road), side).unwrap_or(0.0);
+        point + direction.perp() * axis + kerb.normalize_or_zero() * EDGE_INSET
     };
     Some(StopLine {
         from,
