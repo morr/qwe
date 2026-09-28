@@ -110,6 +110,12 @@ const NOSE_SETTLE: usize = 8;
 /// Тула, витрина 08) при пороге в градус оставалась без угла, и между
 /// прямыми торцами её плеч светлел клин в семь сантиметров.
 const MIN_OUTER: f32 = 0.05 * PI / 180.0;
+/// Площадка плитки у бордюрной дуги угла, за которым газон обочины
+/// ([`kerb_pad`]): ширина от бордюра, м, и на сколько она продолжается по
+/// прямому краю каждой улицы за точкой касания, м. На углу выходят зебры и
+/// стоят люди — на месте здесь плитка, а газон начинается за ней.
+const KERB_PAD_WIDTH: f32 = 3.0;
+const KERB_PAD_RUN: f32 = 4.0;
 /// Луч меряет направление по звену не короче этого, м.
 const MIN_ARM: f32 = 0.5;
 /// Насколько вершина может отойти вбок от прямой луча и всё ещё продолжать
@@ -240,7 +246,7 @@ pub struct KerbReturns {
     /// стороны или с обеих вместо полосы тротуара обочина.
     pub verges: Vec<Vec<Vec2>>,
     /// Те же углы между двумя **широкими** обочинами — газоном
-    /// (`road_verge_lawns`), как и сами обочины: плиткой угол во все
+    /// (`road_verge_lawns` или `road_verge_yards`), как и сами обочины: плиткой угол во все
     /// пятнадцать метров до дорожек был площадью посреди двора.
     pub verge_lawns: Vec<Vec<Vec2>>,
     /// Сколько из `roads` и `sidewalks` — наружные углы, а не скругления.
@@ -558,6 +564,16 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                         returns.verges.push(outline);
                     }
                 }
+                // у газона угол, куда выходят зебры, — площадкой плитки вдоль
+                // бордюрной дуги, иначе переход кончался на траве серпом
+                // между двумя газонами (Тула, 01)
+                if a.max(b) > VERGE_PAVED_MAX {
+                    let road = (first.half[0], second.half[1]);
+                    let radius = kerb_radius(first, second) * scale;
+                    returns
+                        .verges
+                        .extend(kerb_pad(node, first, second, road, radius));
+                }
             }
         }
         // Тротуары — свои соседи: проезд без тротуара не рвёт полосу улицы,
@@ -731,8 +747,116 @@ fn fillet(
     first: &Arm,
     second: &Arm,
     halves: (f32, f32),
-    mut radius: f32,
+    radius: f32,
 ) -> Option<Vec<Vec2>> {
+    let arc = fillet_arc(node, first, second, halves, radius)?;
+    // прямые стороны заходят под ленты на `OVERLAP`: сторона, совпадающая с
+    // краем ленты, но не делящая с ней вершин, растеризуется с пропусками —
+    // по краю проезда шла пунктирная щель со светлым тротуаром под ней
+    let mut outline = Vec::with_capacity(arc.steps + 4);
+    outline.push(arc.corner - (arc.side_first + arc.side_second) * OVERLAP);
+    outline.push(arc.on_first - arc.side_first * OVERLAP);
+    outline.extend(arc.points(0.0));
+    outline.push(arc.on_second - arc.side_second * OVERLAP);
+    Some(outline)
+}
+
+/// Площадка плитки у бордюрной дуги угла между обочинами с газоном
+/// ([`KERB_PAD_WIDTH`]): кольцевой сектор за дугой скругления дорог
+/// (`halves`, `radius` — те же, что у него) и по прямому хвосту
+/// [`KERB_PAD_RUN`] вдоль края каждой дороги. Куски — выпуклые, каждый
+/// веером из первой вершины.
+fn kerb_pad(
+    node: Vec2,
+    first: &Arm,
+    second: &Arm,
+    halves: (f32, f32),
+    radius: f32,
+) -> Vec<Vec<Vec2>> {
+    let Some(arc) = fillet_arc(node, first, second, halves, radius) else {
+        return Vec::new();
+    };
+    // кромка заходит под асфальт на `OVERLAP`, внутренняя дуга — того же
+    // центра, на ширину площадки ближе к нему
+    let outer: Vec<Vec2> = arc.points(OVERLAP).collect();
+    let inner: Vec<Vec2> = arc.points(-KERB_PAD_WIDTH.min(arc.radius)).collect();
+    let mut pieces: Vec<Vec<Vec2>> = outer
+        .windows(2)
+        .zip(inner.windows(2))
+        .map(|(out, inn)| vec![out[0], out[1], inn[1], inn[0]])
+        .collect();
+    for (on, along, side, room) in [
+        (
+            arc.on_first,
+            first.direction,
+            arc.side_first,
+            first.run - arc.t_first,
+        ),
+        (
+            arc.on_second,
+            second.direction,
+            arc.side_second,
+            second.run - arc.t_second,
+        ),
+    ] {
+        let run = KERB_PAD_RUN.min(room - arc.tangent);
+        if run <= 0.0 {
+            continue;
+        }
+        let kerb = on - side * OVERLAP;
+        let back = on + side * KERB_PAD_WIDTH;
+        pieces.push(vec![kerb, kerb + along * run, back + along * run, back]);
+    }
+    pieces
+}
+
+/// Дуга скругления ([`fillet`]): вершина угла краёв, точки касания, центр и
+/// радиус — зажатый так, чтобы касательная не выходила за прямой край лучей.
+struct FilletArc {
+    corner: Vec2,
+    on_first: Vec2,
+    on_second: Vec2,
+    centre: Vec2,
+    radius: f32,
+    tangent: f32,
+    /// Где от узла вдоль лучей край сошёлся с краем, м.
+    t_first: f32,
+    t_second: f32,
+    side_first: Vec2,
+    side_second: Vec2,
+    from: Vec2,
+    turn: f32,
+    sweep: f32,
+    steps: usize,
+}
+
+impl FilletArc {
+    /// Точки дуги того же центра, на `extra` дальше от него, чем дуга
+    /// скругления, — от касания с первым лучом до касания со вторым, концы
+    /// включительно. При `extra == 0` это сама дуга, точка в точку.
+    fn points(&self, extra: f32) -> impl Iterator<Item = Vec2> + '_ {
+        let scale = (self.radius + extra) / self.radius;
+        let ends = [self.on_first, self.on_second]
+            .map(|on| on + (on - self.centre).normalize_or_zero() * extra);
+        (0..=self.steps).map(move |step| match step {
+            0 => ends[0],
+            step if step == self.steps => ends[1],
+            step => {
+                let rotation =
+                    Vec2::from_angle(self.turn * self.sweep * step as f32 / self.steps as f32);
+                self.centre + rotation.rotate(self.from) * scale
+            }
+        })
+    }
+}
+
+fn fillet_arc(
+    node: Vec2,
+    first: &Arm,
+    second: &Arm,
+    halves: (f32, f32),
+    mut radius: f32,
+) -> Option<FilletArc> {
     let angle = ccw_angle(first, second);
     if !(MIN_ANGLE..=MAX_ANGLE).contains(&angle) {
         return None;
@@ -773,21 +897,23 @@ fn fillet(
     let sweep = PI - angle;
     let from = on_first - centre;
     let turn = from.perp_dot(on_second - centre).signum();
-    let steps = arc_steps(radius, sweep);
-    // прямые стороны заходят под ленты на `OVERLAP`: сторона, совпадающая с
-    // краем ленты, но не делящая с ней вершин, растеризуется с пропусками —
-    // по краю проезда шла пунктирная щель со светлым тротуаром под ней
-    let mut outline = Vec::with_capacity(steps + 4);
-    outline.push(corner - (side_first + side_second) * OVERLAP);
-    outline.push(on_first - side_first * OVERLAP);
-    outline.push(on_first);
-    for step in 1..steps {
-        let rotation = Vec2::from_angle(turn * sweep * step as f32 / steps as f32);
-        outline.push(centre + rotation.rotate(from));
-    }
-    outline.push(on_second);
-    outline.push(on_second - side_second * OVERLAP);
-    Some(outline)
+    let steps = arc_steps(radius, sweep).max(1);
+    Some(FilletArc {
+        corner,
+        on_first,
+        on_second,
+        centre,
+        radius,
+        tangent,
+        t_first: t,
+        t_second: s,
+        side_first,
+        side_second,
+        from,
+        turn,
+        sweep,
+        steps,
+    })
 }
 
 /// Нос острой развилки от луча `first` против часовой стрелки до луча

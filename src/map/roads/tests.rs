@@ -246,16 +246,17 @@ fn the_city_wall_ribbon_stays_off_fortress_buildings() {
 // телеметрия области жили внутри `spawn_roads` — 275 строк, взять которые из
 // теста было нечем: проверять можно было только хелперы под ними.
 
-/// Двадцать три дорожных слоя снизу вверх, ровно в том порядке, в каком они
-/// уходят в мир: газон островов колец и их трава без канта, газон широких
-/// обочин, двенадцать лент и восемь слоёв краски над своим асфальтом — колея
+/// Двадцать четыре дорожных слоя снизу вверх, ровно в том порядке, в каком
+/// они уходят в мир: газон островов колец и их трава без канта, газон широких
+/// обочин лугом и травой двора, двенадцать лент и восемь слоёв краски над своим асфальтом — колея
 /// траекторий узла (маска, потом наложение) ниже линий, островки колец над
 /// асфальтом стоянок. Грунтовки — под асфальтом улиц, обочины — под всей
 /// зеленью, их газон — под их плиткой, газон острова — под всем, его трава —
 /// над замапленной травой.
-const LAYERS: [&str; 23] = [
+const LAYERS: [&str; 24] = [
     "ring_islands",
     "road_verge_lawns",
+    "road_verge_yards",
     "road_verges",
     "ring_island_grass",
     "alleys",
@@ -296,7 +297,7 @@ fn layer<'a>(layers: &'a [LayerMesh], name: &str) -> &'a LayerMesh {
 }
 
 #[test]
-fn a_street_builds_twenty_three_layers_bottom_up() {
+fn a_street_builds_twenty_four_layers_bottom_up() {
     let (layers, report) = mesh_roads(&one_street(), RoadStyle::default(), RoadShape::default());
 
     let names: Vec<&str> = layers.iter().map(|layer| layer.name).collect();
@@ -354,6 +355,69 @@ fn a_wide_verge_is_a_lawn_with_a_paved_kerb_strip() {
     assert!((lawn - 18.0).abs() < 0.05, "газон — до дорожки: {lawn}");
 }
 
+/// Газон широкой обочины у двора — травой двора, а не лугом: светлый луг
+/// лежал вдоль улиц спального района лентой со швом на кромке квартала
+/// (районный кадр d2). Вне двора — лугом, как газоны вокруг.
+#[test]
+fn a_wide_verge_beside_a_yard_takes_the_yard_grass() {
+    let lawns = |yard: bool| {
+        let mut map = one_street();
+        map.roads[0].verges = [12.0, 0.0];
+        if yard {
+            // двор слева, кончается в метре за дорожкой
+            map.landuse.push(fixture::area(
+                AreaKind::Residential,
+                vec![
+                    Vec2::new(50.0, 110.0),
+                    Vec2::new(650.0, 110.0),
+                    Vec2::new(650.0, 300.0),
+                    Vec2::new(50.0, 300.0),
+                ],
+            ));
+        }
+        let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+        ["road_verge_lawns", "road_verge_yards"]
+            .map(|name| !layer(&layers, name).builder.is_empty())
+    };
+    assert_eq!(lawns(true), [false, true], "у двора — травой двора");
+    assert_eq!(lawns(false), [true, false], "без двора — лугом");
+}
+
+/// Угол, за которым газон обочин, — площадкой плитки вдоль бордюрной дуги:
+/// зебры выходили на траву серпом между двумя газонами (Тула, витрина 01).
+#[test]
+fn a_corner_between_wide_verges_is_paved_along_the_kerb() {
+    let mut map = MapData::default();
+    for points in [
+        vec![
+            Vec2::new(100.0, 100.0),
+            Vec2::new(300.0, 100.0),
+            Vec2::new(500.0, 100.0),
+        ],
+        vec![
+            Vec2::new(300.0, -100.0),
+            Vec2::new(300.0, 100.0),
+            Vec2::new(300.0, 300.0),
+        ],
+    ] {
+        map.roads.push(RoadLine {
+            sidewalks: [SidewalkSide::None; 2],
+            verges: [12.0; 2],
+            ..fixture::street(points, 12.0)
+        });
+    }
+    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    // в четверти за углом кромок (306, 106): дальше полосы у бордюра от
+    // обеих кромок, но ближе газона
+    let pad = layer(&layers, "road_verges")
+        .builder
+        .positions_for_test()
+        .iter()
+        .filter(|at| (1.0..6.0).contains(&(at[0] - 306.0)) && (1.0..6.0).contains(&(at[1] - 106.0)))
+        .count();
+    assert!(pad > 0, "у бордюрной дуги нет плитки");
+}
+
 /// Обочина по месту заходит за торец своей улицы внахлёст: у стыка двух way
 /// одной улицы между торцами обочин светилась нить (Орёл, витрина 04).
 #[test]
@@ -386,6 +450,7 @@ fn only_the_bridge_shadow_is_blended() {
             "road_medians" | "ring_islands" | "ring_island_grass" | "road_verge_lawns" => {
                 MaterialSpec::Surface(SurfaceKind::Grass)
             }
+            "road_verge_yards" => MaterialSpec::Surface(SurfaceKind::Yard),
             "roads" | "bridges" => MaterialSpec::Surface(SurfaceKind::Street),
             "unpaved_roads" => MaterialSpec::Surface(SurfaceKind::Unpaved),
             paint::PAINT_WEAR_MASK => MaterialSpec::Paint(paint::PaintPass::WearMask),

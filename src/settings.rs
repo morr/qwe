@@ -383,6 +383,10 @@ pub const Z_RING_ISLAND: f32 = 0.05;
 /// обочины: плитка узкой полосой у бордюра и у углов ложится поверх, а газон
 /// от кромки до дорожки — там, где обочина шире спального тротуара.
 pub const Z_ROAD_VERGE_LAWN: f32 = 0.08;
+/// Тот же газон у двора (`road_verge_yards`) — травой двора, волосом выше
+/// луга: два непрозрачных слоя с разными материалами на одной высоте
+/// делила бы очередь фазы, а не карта.
+pub const Z_ROAD_VERGE_YARD: f32 = 0.09;
 /// Обочина до отдельного тротуара (`road_verges`, `RoadLine::verges`) — плитка
 /// сразу над голой землёй и под кварталами и зеленью: газон, замапленный между
 /// кромкой и дорожкой, остаётся газоном, а голая земля там — мостится.
@@ -590,7 +594,8 @@ const _: () = {
     // площадные заливки: земля → парк → лес → трава → песок → вода
     assert!(Z_GROUND < Z_LANDUSE);
     // газон широкой обочины — под её плиткой, оба — под кварталами
-    assert!(Z_ROAD_VERGE_LAWN < Z_ROAD_VERGE);
+    assert!(Z_ROAD_VERGE_LAWN < Z_ROAD_VERGE_YARD);
+    assert!(Z_ROAD_VERGE_YARD < Z_ROAD_VERGE);
     assert!(Z_ROAD_VERGE < Z_LANDUSE);
     assert!(Z_LANDUSE < Z_LANDUSE_YARD);
     assert!(Z_LANDUSE_YARD < Z_PARK);

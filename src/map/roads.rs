@@ -69,14 +69,14 @@ use crate::map::osm::model::{RoadNodeKind, point_in_area, polyline_length, ring_
 use crate::map::osm::{AreaKind, MapData, PolyArea, RoadClass, RoadLine, WallLine};
 use crate::map::shapes::{Shape, area_contours, is_ring, oriented, push_shape};
 use crate::map::smooth::{Smoothing, smooth_pinned};
-use crate::map::spawn::GRASS_COLOR;
+use crate::map::spawn::{GRASS_COLOR, RESIDENTIAL_COLOR};
 use crate::map::surface::{
     self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec, SurfaceKind, spawn_layers,
 };
 use crate::prefs::retuned;
 use crate::settings::{
     Z_ALLEY, Z_BUILDING, Z_LOT_LINES, Z_LOT_SIDEWALK, Z_RING_GRASS, Z_RING_ISLAND, Z_ROAD,
-    Z_ROAD_MEDIAN, Z_ROAD_VERGE, Z_ROAD_VERGE_LAWN, Z_SIDEWALK, Z_UNPAVED_ROAD,
+    Z_ROAD_MEDIAN, Z_ROAD_VERGE, Z_ROAD_VERGE_LAWN, Z_ROAD_VERGE_YARD, Z_SIDEWALK, Z_UNPAVED_ROAD,
 };
 
 /// Проезжая часть — асфальт: серый, заметно темнее тротуара и земли. Белой
@@ -512,6 +512,68 @@ impl<'a> Fortresses<'a> {
     }
 }
 
+/// Жилые кварталы (`landuse=residential`) — чьей травой засеян газон
+/// широкой обочины ([`push_verges`]): у двора — травой двора, иначе лугом.
+struct Yards<'a> {
+    areas: Vec<(&'a PolyArea, (Vec2, Vec2))>,
+}
+
+impl<'a> Yards<'a> {
+    fn of(landuse: &'a [PolyArea]) -> Self {
+        Self {
+            areas: landuse
+                .iter()
+                .filter(|area| area.kind == AreaKind::Residential)
+                .map(|area| (area, ring_bounds(&area.outer)))
+                .collect(),
+        }
+    }
+
+    fn covers(&self, point: Vec2) -> bool {
+        self.areas.iter().any(|(area, (min, max))| {
+            point.cmpge(*min).all() && point.cmple(*max).all() && point_in_area(point, area)
+        })
+    }
+
+    /// Лежит ли двор у обочины шириной `verge` по стороне `side` дороги
+    /// шириной `width` по `points`: пробы [`YARD_PROBES`] долей длины — на
+    /// середине обочины и на [`YARD_PROBE_BEYOND`] за ней. Двор в OSM то
+    /// доходит до бордюра, то кончается у дорожки, отсюда две глубины.
+    fn beside(&self, points: &[Vec2], width: f32, side: usize, verge: f32) -> bool {
+        if self.areas.is_empty() {
+            return false;
+        }
+        let (along, total) = crate::map::along::arclengths(points);
+        // `perp` смотрит влево — сторона 0
+        let sign = if side == 0 { 1.0 } else { -1.0 };
+        YARD_PROBES.iter().any(|share| {
+            let Some((at, direction)) =
+                crate::map::along::place_on_path(points, &along, total * share)
+            else {
+                return false;
+            };
+            let normal = direction.perp() * sign;
+            [
+                width / 2.0 + verge / 2.0,
+                width / 2.0 + verge + YARD_PROBE_BEYOND,
+            ]
+            .into_iter()
+            .any(|offset| self.covers(at + normal * offset))
+        })
+    }
+
+    /// Лежит ли двор под каким-нибудь углом контура `outline` или его
+    /// серединой — для газона угла ([`corners::KerbReturns::verge_lawns`]).
+    fn under(&self, outline: &[Vec2]) -> bool {
+        let centre = outline.iter().copied().sum::<Vec2>() / outline.len().max(1) as f32;
+        !self.areas.is_empty()
+            && outline
+                .iter()
+                .chain([&centre])
+                .any(|&point| self.covers(point))
+    }
+}
+
 /// Кусок крепостной ленты короче этого между крепостными зданиями не рисуется, м.
 /// Двенадцати не хватило: у северо-восточных башен Тульского кремля осевая
 /// расходится с контурами на куски в пятнадцать–тридцать метров, и от ленты
@@ -671,8 +733,11 @@ pub fn mesh_roads(
     let mut sidewalks = MeshBuilder::with_surface_coords();
     // обочины до отдельных тротуаров — под зеленью (`Z_ROAD_VERGE`)
     let mut verges = MeshBuilder::with_surface_coords();
-    // и газон широких обочин — под их плиткой (`Z_ROAD_VERGE_LAWN`)
+    // и газон широких обочин — под их плиткой (`Z_ROAD_VERGE_LAWN`): лугом,
+    // а у двора — травой двора (`Yards`)
     let mut verge_lawns = MeshBuilder::with_surface_coords();
+    let mut verge_yards = MeshBuilder::with_surface_coords();
+    let yards = Yards::of(&map.landuse);
     let mut alleys = MeshBuilder::with_surface_coords();
     let mut streets = MeshBuilder::with_surface_coords();
     // грунтовые улицы — своим слоем под асфальтом (`Z_UNPAVED_ROAD`)
@@ -742,7 +807,11 @@ pub fn mesh_roads(
         verges.push_convex(outline, SIDEWALK_COLOR.to_linear());
     }
     for outline in &kerb_returns.verge_lawns {
-        verge_lawns.push_convex(outline, GRASS_COLOR.to_linear());
+        if yards.under(outline) {
+            verge_yards.push_convex(outline, VERGE_YARD_COLOR.to_linear());
+        } else {
+            verge_lawns.push_convex(outline, GRASS_COLOR.to_linear());
+        }
     }
     // носы острых развилок идут по гнутым кромкам лент, и веер из острия
     // их не покрыл бы — триангуляция целиком; носов в городе сотни
@@ -1232,7 +1301,8 @@ pub fn mesh_roads(
             verged[usize::from(!ring.ccw)] = 0.0;
         }
         push_verges(
-            [&mut verges, &mut verge_lawns],
+            [&mut verges, &mut verge_lawns, &mut verge_yards],
+            &yards,
             road,
             points,
             road.width,
@@ -1386,6 +1456,12 @@ pub fn mesh_roads(
             Z_ROAD_VERGE_LAWN,
             "road_verge_lawns",
             MaterialSpec::Surface(SurfaceKind::Grass),
+        ),
+        (
+            verge_yards,
+            Z_ROAD_VERGE_YARD,
+            "road_verge_yards",
+            MaterialSpec::Surface(SurfaceKind::Yard),
         ),
         (
             verges,
@@ -1764,6 +1840,17 @@ const VERGE_STEP: f32 = 2.5;
 /// пятнадцать метров до дома «заливала улицу бетоном» (Фрунзе в Туле,
 /// районный кадр d2). Уже — плитка до дорожки, как у углов центра.
 const VERGE_PAVED_MAX: f32 = 4.0;
+/// Газон широкой обочины у двора — трава двора (`SurfaceKind::Yard`,
+/// слой `road_verge_yards`), а не луг разделительной: обочина у многоэтажки —
+/// край того же двора, и светлый луг (`GRASS_COLOR`) лежал вдоль улиц яркой
+/// лентой со швом на кромке квартала (районный кадр d2). Фактура по мировой
+/// позиции та же, что у двора, поэтому шва нет вовсе. Вне двора газон —
+/// лугом, как газоны OSM вокруг (Тула, 15: сквер с лугами на плитке).
+const VERGE_YARD_COLOR: Color = RESIDENTIAL_COLOR;
+/// Доли длины дороги, на которых обочина спрашивает двор ([`Yards::beside`]).
+const YARD_PROBES: [f32; 3] = [0.25, 0.5, 0.75];
+/// Насколько за обочиной, м, ищется двор, который кончается у дорожки.
+const YARD_PROBE_BEYOND: f32 = 3.0;
 /// На сколько обочина по месту заходит за торец своей улицы, м
 /// ([`push_verges`]): внахлёст с обочиной продолжения.
 const VERGE_END_OVERLAP: f32 = 0.3;
@@ -1792,22 +1879,35 @@ fn paved_verge(verge: f32) -> f32 {
 /// каждого торца — круг торцевой ширины: торцом она доходит до угла узла, как
 /// постоянная лента.
 ///
-/// Плитка — в `tiles` на ширину [`paved_verge`], газон — в `lawns` на всю
-/// обочину, где она шире [`VERGE_PAVED_MAX`]: слой газона лежит под плиткой,
-/// и голой земли между кромкой и дорожкой не остаётся ни там, ни там.
+/// Плитка — в `tiles` на ширину [`paved_verge`], газон — на всю обочину, где
+/// она шире [`VERGE_PAVED_MAX`]: в `yard_lawns` травой двора, если у этой
+/// стороны двор ([`Yards::beside`]), иначе в `meadows` лугом. Слои газона
+/// лежат под плиткой, и голой земли между кромкой и дорожкой не остаётся.
 fn push_verges(
-    [tiles, lawns]: [&mut MeshBuilder; 2],
+    [tiles, meadows, yard_lawns]: [&mut MeshBuilder; 3],
+    yards: &Yards,
     road: &RoadLine,
     points: &[Vec2],
     width: f32,
     verges: [f32; 2],
 ) {
-    let [tile_color, grass_color] = [SIDEWALK_COLOR, GRASS_COLOR].map(|color| color.to_linear());
+    let [tile_color, grass_color, yard_color] =
+        [SIDEWALK_COLOR, GRASS_COLOR, VERGE_YARD_COLOR].map(|color| color.to_linear());
     let raw = polyline_length(&road.points);
     for (side, verge) in verges.into_iter().enumerate() {
         if verge <= 0.0 {
             continue;
         }
+        // двор спрашивается, только когда газон вообще будет
+        let widest = road.verge_profile[side]
+            .iter()
+            .fold(verge, |widest, &(_, width)| widest.max(width));
+        let (lawns, lawn_color) =
+            if widest > VERGE_PAVED_MAX && yards.beside(points, width, side, verge) {
+                (&mut *yard_lawns, yard_color)
+            } else {
+                (&mut *meadows, grass_color)
+            };
         // `miter_offsets` плюсом сдвигает влево — сторона 0
         let sign = if side == 0 { 1.0 } else { -1.0 };
         let ribbon = |builder: &mut MeshBuilder, path: &[Vec2], verge: f32, color: LinearRgba| {
@@ -1828,7 +1928,7 @@ fn push_verges(
         if road.verge_profile[side].is_empty() || points.len() < 2 {
             ribbon(tiles, points, paved_verge(verge), tile_color);
             if verge > VERGE_PAVED_MAX {
-                ribbon(lawns, points, verge, grass_color);
+                ribbon(lawns, points, verge, lawn_color);
             }
             continue;
         }
@@ -1866,7 +1966,7 @@ fn push_verges(
         tiles.push_polygon(&band(&mut paved.iter().copied()), &[], tile_color);
         let lawn = widths.iter().any(|&verge| verge > VERGE_PAVED_MAX);
         if lawn {
-            lawns.push_polygon(&band(&mut widths.iter().copied()), &[], grass_color);
+            lawns.push_polygon(&band(&mut widths.iter().copied()), &[], lawn_color);
         }
     }
 }
