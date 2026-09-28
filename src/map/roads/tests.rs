@@ -463,6 +463,26 @@ fn an_unpaved_street_draws_in_its_own_layer_without_lines() {
     assert!(!layer(&mixed, "unpaved_roads").builder.is_empty());
 }
 
+/// Асфальтовая улица, упёршаяся в грунтовку, кончается на её кромке: ни
+/// лента, ни скругления не заходят на грунт (Тула, 13: торец лежал языком до
+/// оси грунтовки).
+#[test]
+fn an_asphalt_street_stops_at_the_edge_of_the_dirt_road_it_meets() {
+    let mut map = a_tee();
+    map.roads[0].pavement = Some(Pavement::Unpaved);
+    map.roads[0].sidewalks = [SidewalkSide::None; 2];
+    map.roads[1].sidewalks = [SidewalkSide::None; 2];
+    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let asphalt = layer(&layers, "roads").builder.positions_for_test();
+    assert!(!asphalt.is_empty());
+    // грунтовка по y = 100 шириной 12 — кромка на 106
+    let lowest = asphalt.iter().map(|at| at[1]).fold(f32::INFINITY, f32::min);
+    assert!(
+        lowest > 106.0 - 0.1,
+        "асфальт заходит на грунт до y = {lowest}"
+    );
+}
+
 #[test]
 fn a_bridge_leaves_the_street_layers_for_the_deck_ones() {
     let mut map = MapData::default();

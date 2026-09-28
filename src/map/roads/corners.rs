@@ -236,12 +236,20 @@ pub struct KerbReturns {
     /// Торцы, кончающиеся в узле, по дорогам: `[начало, конец]` — ленты с
     /// таким торцом кладутся с прямым, а не круглым.
     pub butt: Vec<[bool; 2]>,
+    /// На сколько метров не доходит до узла заливка торца `[начало, конец]`:
+    /// у асфальтовой улицы, упёршейся в грунтовку, — полуширина грунтовки.
+    pub setback: Vec<[f32; 2]>,
 }
 
 impl KerbReturns {
     /// Торцы дороги `road`; вне узлов (или без скруглений вовсе) — круглые.
     pub fn butt(&self, road: usize) -> [bool; 2] {
         self.butt.get(road).copied().unwrap_or_default()
+    }
+
+    /// Недоход заливки дороги `road` до узла у каждого торца, м.
+    pub fn setback(&self, road: usize) -> [f32; 2] {
+        self.setback.get(road).copied().unwrap_or_default()
     }
 }
 
@@ -418,6 +426,7 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
 
     let mut returns = KerbReturns {
         butt: vec![[false; 2]; roads.len()],
+        setback: vec![[0.0; 2]; roads.len()],
         ..default()
     };
     let is_merged = |arm: &Arm| {
@@ -441,6 +450,20 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                 if let Some((road, end)) = arm.end.filter(|_| !is_merged(arm)) {
                     returns.butt[road][end] = true;
                 }
+            }
+            // Асфальт, упёршийся в грунтовку, кончается на её кромке: лента
+            // до узла лежала поверх грунта языком до оси грунтовки, с двумя
+            // уступами там, где её торец шире скруглений (Тула, 13). Только
+            // когда асфальтовое плечо в узле одно — асфальт, пересекающий
+            // грунтовку, идёт через неё.
+            let paved: Vec<&&Arm> = group.iter().filter(|arm| !arm.unpaved).collect();
+            let dirt = group.iter().filter(|arm| arm.unpaved).map(|arm| arm.full);
+            if class == RoadClass::Street
+                && let [arm] = paved[..]
+                && let Some((road, end)) = arm.end.filter(|_| !is_merged(arm))
+                && group.len() - paved.len() >= 2
+            {
+                returns.setback[road][end] = dirt.fold(0.0, f32::max);
             }
             for (first, second) in pairs(&group) {
                 if merge_pair(first, second) {

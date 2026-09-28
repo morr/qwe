@@ -1252,7 +1252,20 @@ pub fn mesh_roads(
             }
             _ => fill.set_lanes(lanes),
         }
-        push_street_fill(fill, body, road.width, color.to_linear(), breaks, trimmed);
+        // асфальт, упёршийся в грунтовку, — до её кромки (`corners.rs`)
+        let setback = kerb_returns.setback(index);
+        let set_back: Option<Vec<Vec2>> = (setback != [0.0; 2] && head.is_none() && tail.is_none())
+            .then(|| tapers::cut(body, setback[0], polyline_length(body) - setback[1]))
+            .filter(|cut| cut.len() >= 2);
+        let fill_body = set_back.as_deref().unwrap_or(body);
+        push_street_fill(
+            fill,
+            fill_body,
+            road.width,
+            color.to_linear(),
+            breaks,
+            trimmed,
+        );
         fill.set_lanes(lanes);
         for &(path, taper, end) in &wedges {
             let narrow = drawn[taper.narrow];
