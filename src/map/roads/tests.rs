@@ -246,14 +246,16 @@ fn the_city_wall_ribbon_stays_off_fortress_buildings() {
 // телеметрия области жили внутри `spawn_roads` — 275 строк, взять которые из
 // теста было нечем: проверять можно было только хелперы под ними.
 
-/// Двадцать один дорожный слой снизу вверх, ровно в том порядке, в каком они
-/// уходят в мир: газон островов колец, двенадцать лент и восемь слоёв краски
-/// над своим асфальтом — колея траекторий узла (маска, потом наложение) ниже
-/// линий, островки колец над асфальтом стоянок. Грунтовки — под асфальтом
-/// улиц, обочины — под всей зеленью, газон острова — под всем.
-const LAYERS: [&str; 21] = [
+/// Двадцать два дорожных слоя снизу вверх, ровно в том порядке, в каком они
+/// уходят в мир: газон островов колец и их трава без канта, двенадцать лент и
+/// восемь слоёв краски над своим асфальтом — колея траекторий узла (маска,
+/// потом наложение) ниже линий, островки колец над асфальтом стоянок.
+/// Грунтовки — под асфальтом улиц, обочины — под всей зеленью, газон острова —
+/// под всем, его трава — над замапленной травой.
+const LAYERS: [&str; 22] = [
     "ring_islands",
     "road_verges",
+    "ring_island_grass",
     "alleys",
     "sidewalks",
     "road_medians",
@@ -292,7 +294,7 @@ fn layer<'a>(layers: &'a [LayerMesh], name: &str) -> &'a LayerMesh {
 }
 
 #[test]
-fn a_street_builds_twenty_one_layers_bottom_up() {
+fn a_street_builds_twenty_two_layers_bottom_up() {
     let (layers, report) = mesh_roads(&one_street(), RoadStyle::default(), RoadShape::default());
 
     let names: Vec<&str> = layers.iter().map(|layer| layer.name).collect();
@@ -326,7 +328,9 @@ fn only_the_bridge_shadow_is_blended() {
                 MaterialSpec::Surface(SurfaceKind::Sidewalk)
             }
             "alleys" => MaterialSpec::Surface(SurfaceKind::Alley),
-            "road_medians" | "ring_islands" => MaterialSpec::Surface(SurfaceKind::Grass),
+            "road_medians" | "ring_islands" | "ring_island_grass" => {
+                MaterialSpec::Surface(SurfaceKind::Grass)
+            }
             "roads" | "bridges" => MaterialSpec::Surface(SurfaceKind::Street),
             "unpaved_roads" => MaterialSpec::Surface(SurfaceKind::Unpaved),
             paint::PAINT_WEAR_MASK => MaterialSpec::Paint(paint::PaintPass::WearMask),
@@ -971,6 +975,55 @@ fn a_roundabout_island_is_a_lawn_under_everything() {
         RoadShape::default(),
     );
     assert!(layer(&layers, "ring_islands").builder.is_empty());
+}
+
+/// Замапленная трава острова ложится ещё раз над травой, без канта, — только
+/// внутри острова: её кант был бледным кругом внутри газона (Рязань 04, Орёл
+/// 02). Парк на острове не кроется (Калуга 05).
+#[test]
+fn a_roundabout_island_covers_the_rim_of_its_mapped_grass() {
+    use crate::settings::{Z_GRASS, Z_SAND};
+    let square = |half: f32| {
+        vec![
+            Vec2::new(-half, -half),
+            Vec2::new(half, -half),
+            Vec2::new(half, half),
+            Vec2::new(-half, half),
+        ]
+    };
+    let mut map = roundabout_with_an_approach(true, true);
+    // трава шире острова (ось в 12 м): кроется только его часть
+    map.grass.push(PolyArea {
+        kind: AreaKind::Grass,
+        ..fixture::building(square(20.0), Vec::new())
+    });
+    map.parks.push(PolyArea {
+        kind: AreaKind::Park,
+        ..fixture::building(square(5.0), Vec::new())
+    });
+    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let grass = layer(&layers, "ring_island_grass");
+    assert!(grass.z > Z_GRASS && grass.z < Z_SAND);
+    let positions = grass.builder.positions_for_test();
+    assert!(!positions.is_empty(), "трава острова не легла");
+    assert!(
+        positions
+            .iter()
+            .all(|at| Vec2::new(at[0], at[1]).length() < 12.5),
+        "трава вылезла за остров"
+    );
+    let (layers, _) = mesh_roads(
+        &MapData {
+            grass: Vec::new(),
+            ..map
+        },
+        RoadStyle::default(),
+        RoadShape::default(),
+    );
+    assert!(
+        layer(&layers, "ring_island_grass").builder.is_empty(),
+        "парк острова перекрашен"
+    );
 }
 
 #[test]

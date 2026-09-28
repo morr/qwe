@@ -67,7 +67,7 @@ use crate::map::meshing::{
 };
 use crate::map::osm::model::{RoadNodeKind, point_in_area, polyline_length, ring_bounds};
 use crate::map::osm::{AreaKind, MapData, PolyArea, RoadClass, RoadLine, WallLine};
-use crate::map::shapes::{Shape, is_ring, push_shape};
+use crate::map::shapes::{Shape, area_contours, is_ring, oriented, push_shape};
 use crate::map::smooth::{Smoothing, smooth_pinned};
 use crate::map::spawn::GRASS_COLOR;
 use crate::map::surface::{
@@ -75,8 +75,8 @@ use crate::map::surface::{
 };
 use crate::prefs::retuned;
 use crate::settings::{
-    Z_ALLEY, Z_BUILDING, Z_LOT_LINES, Z_LOT_SIDEWALK, Z_RING_ISLAND, Z_ROAD, Z_ROAD_MEDIAN,
-    Z_ROAD_VERGE, Z_SIDEWALK, Z_UNPAVED_ROAD,
+    Z_ALLEY, Z_BUILDING, Z_LOT_LINES, Z_LOT_SIDEWALK, Z_RING_GRASS, Z_RING_ISLAND, Z_ROAD,
+    Z_ROAD_MEDIAN, Z_ROAD_VERGE, Z_SIDEWALK, Z_UNPAVED_ROAD,
 };
 
 /// Проезжая часть — асфальт: серый, заметно темнее тротуара и земли. Белой
@@ -880,6 +880,7 @@ pub fn mesh_roads(
         .map(|ring| ring.path.as_slice())
         .collect();
     let ring_lawns = ring_island_lawns(&ring_islands);
+    let ring_grass = ring_island_grass(&ring_islands, &map.grass);
     let mut gores = gores::Gores::of(&gore_roads, &ring_islands);
     // островки по правилу — на двусторонних подходах, где веера из въезда и
     // съезда в OSM нет: краска и колея подхода рвутся на их длину
@@ -1379,6 +1380,12 @@ pub fn mesh_roads(
             MaterialSpec::Surface(SurfaceKind::Sidewalk),
         ),
         (
+            ring_grass,
+            Z_RING_GRASS,
+            "ring_island_grass",
+            MaterialSpec::Surface(SurfaceKind::Grass),
+        ),
+        (
             alleys,
             Z_ALLEY,
             "alleys",
@@ -1691,6 +1698,44 @@ fn ring_island_lawns(rings: &[&[Vec2]]) -> MeshBuilder {
         let open = &path[..path.len().saturating_sub(1)];
         if open.len() >= 3 {
             lawns.push_polygon(open, &[], color);
+        }
+    }
+    lawns
+}
+
+/// Замапленная трава на островах колец — ещё раз, без канта, над травой
+/// ([`Z_RING_GRASS`]): пересечение каждого острова (замкнутой оси кольца) с
+/// каждым полигоном травы рядом. Газон острова ([`ring_island_lawns`]) и
+/// трава одного цвета и фактуры, и между ними был виден только кант полигона
+/// травы — бледный круг внутри газона (Рязань 04, Орёл 02). Кроется только
+/// трава: парк, лес, квартал на острове остаются собой (Калуга 05).
+fn ring_island_grass(rings: &[&[Vec2]], grass: &[PolyArea]) -> MeshBuilder {
+    use i_overlay::core::fill_rule::FillRule;
+    use i_overlay::core::overlay_rule::OverlayRule;
+    use i_overlay::float::single::SingleFloatOverlay;
+
+    let mut lawns = MeshBuilder::with_surface_coords();
+    let color = GRASS_COLOR.to_linear();
+    for path in rings {
+        // замкнутая ось: последняя точка равна первой
+        let open = &path[..path.len().saturating_sub(1)];
+        if open.len() < 3 {
+            continue;
+        }
+        let island: Shape = vec![oriented(open, true)];
+        let (low, high) = ring_bounds(open);
+        for area in grass {
+            let (from, to) = ring_bounds(&area.outer);
+            if from.cmpgt(high).any() || to.cmplt(low).any() {
+                continue;
+            }
+            for shape in island.overlay(
+                &area_contours(area),
+                OverlayRule::Intersect,
+                FillRule::NonZero,
+            ) {
+                push_shape(&mut lawns, shape, color);
+            }
         }
     }
     lawns
