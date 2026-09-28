@@ -283,7 +283,8 @@ fn spawn_camera(mut commands: Commands) {
             far: 1000.0,
             ..OrthographicProjection::default_2d()
         }),
-        Msaa::Off,
+        // сглаживание кромок, как у камеры игры (`post::Antialias`)
+        Msaa::Sample4,
         // контроллер и всё движение — игровые: пределы зума, колесо к курсору,
         // WASD и протяжка в экранной скорости (`camera::key_pan`/`drag_pan`)
         pan_controller(1.0),

@@ -224,6 +224,7 @@ fn spawn_camera(
     city: Res<City>,
     mode: Res<CameraPositionMode>,
     saved: Res<SavedCameraView>,
+    antialias: Res<crate::post::Antialias>,
 ) {
     // портал ещё не снапнут по navmesh — до входа в `Playing` известен только
     // хинт города; `place_camera_on_world_ready` поправит на точный
@@ -236,7 +237,8 @@ fn spawn_camera(
             ..OrthographicProjection::default_2d()
         }),
         Transform::from_translation(view.position.extend(0.0)).with_scale(Vec3::splat(view.zoom)),
-        Msaa::Off,
+        // сглаживание кромок — тумблер `post::Antialias`
+        antialias.msaa(),
         // камера панелей названа, а не вычислена. Это НЕ защита от закадрового
         // снимка (`dev::OffscreenShotEvent`): его камера целится в текстуру, а
         // фолбэк `DefaultUiCamera::get` перебирает только камеры, целящиеся в

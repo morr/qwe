@@ -18,7 +18,10 @@ use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
 use bevy::picking::Pickable;
 use bevy::post_process::bloom::{Bloom, BloomCompositeMode, BloomPrefilter};
 use bevy::prelude::*;
+use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use bevy::ui::{ColorStop, GlobalZIndex};
+
+use crate::prefs::{TrackPrefExt, retuned};
 
 /// Сила bloom — доля свечения в кадре. Бевины «естественные» 0.15 рассчитаны
 /// на тёмные сцены и над светлой картой теряются; 0.4 ставилось, пока
@@ -59,11 +62,53 @@ pub fn camera_post_process() -> impl Bundle {
     )
 }
 
+/// Сглаживание кромок — строка `Antialias` вкладки Debug. Кромки лент карты
+/// (асфальт, тротуар, газон, островки, носы медиан) — голая геометрия, и без
+/// MSAA на крупном плане они идут лесенкой, тогда как краска рядом
+/// сглажена своим шейдером (`paint.wgsl`). `Msaa::Sample4` берёт четыре
+/// выборки на пиксель только на кромках треугольников, заливка по-прежнему
+/// шейдится раз на пиксель.
+///
+/// Цена — память, а не кадр: на 4K-окне многовыборочная HDR-цель и глубина —
+/// около 400 МБ сверху. Время кадра замерено в витрине `roads` (цель
+/// 7500×4750, вчетверо больше 4K-окна): медианы с MSAA и без — в пределах
+/// миллисекунды, обе упираются в 60 Гц. Отсюда тумблер: сглаживание включено,
+/// но машина с тесной памятью может его выключить.
+#[derive(Resource, Reflect, SettingsGroup, Clone, Copy, PartialEq, Eq, Debug)]
+#[reflect(Resource, SettingsGroup, Default)]
+#[settings_group(group = "render", key = "antialias")]
+pub struct Antialias(pub bool);
+
+impl Default for Antialias {
+    fn default() -> Self {
+        Self(true)
+    }
+}
+
+impl Antialias {
+    /// Компонент камеры, которым тумблер включается.
+    pub fn msaa(self) -> Msaa {
+        if self.0 { Msaa::Sample4 } else { Msaa::Off }
+    }
+}
+
 pub struct PostProcessPlugin;
 
 impl Plugin for PostProcessPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_vignette);
+        app.init_resource::<Antialias>()
+            .register_type::<Antialias>()
+            .track_pref::<Antialias>()
+            .add_systems(Startup, spawn_vignette)
+            .add_systems(Update, apply_antialias.run_if(retuned::<Antialias>));
+    }
+}
+
+/// Тумблер — на все камеры карты: пользовательскую и закадровую, если снимок
+/// идёт прямо сейчас (новая берёт значение при спавне).
+fn apply_antialias(antialias: Res<Antialias>, mut cameras: Query<&mut Msaa, With<Camera2d>>) {
+    for mut msaa in &mut cameras {
+        msaa.set_if_neq(antialias.msaa());
     }
 }
 
@@ -88,4 +133,24 @@ fn spawn_vignette(mut commands: Commands) {
         GlobalZIndex(-1),
         Name::new("vignette"),
     ));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn antialias_is_on_and_the_toggle_reaches_every_map_camera() {
+        assert_eq!(Antialias::default().msaa(), Msaa::Sample4);
+        let mut app = App::new();
+        app.insert_resource(Antialias::default())
+            .add_systems(Update, apply_antialias);
+        let user = app.world_mut().spawn((Camera2d, Msaa::Sample4)).id();
+        let shot = app.world_mut().spawn((Camera2d, Msaa::Sample4)).id();
+        app.world_mut().resource_mut::<Antialias>().0 = false;
+        app.update();
+        for camera in [user, shot] {
+            assert_eq!(app.world().get::<Msaa>(camera), Some(&Msaa::Off));
+        }
+    }
 }

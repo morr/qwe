@@ -169,6 +169,7 @@ fn on_offscreen_shot(
     // событие подряд не оставляло ни файла, ни строки в логе. Здесь фильтр
     // держит уже сам `&mut PanCamera`: он есть только у камеры пользователя
     camera: Single<(&mut Transform, &Projection, &mut PanCamera), With<Camera2d>>,
+    antialias: Res<crate::post::Antialias>,
 ) {
     let (mut transform, projection, mut controller) = camera.into_inner();
     let size = event
@@ -222,7 +223,8 @@ fn on_offscreen_shot(
         RenderTarget::Image(target.clone().into()),
         projection.clone(),
         Transform::from_translation(at.extend(0.0)).with_scale(Vec3::splat(zoom)),
-        Msaa::Off,
+        // снимок сглажен так же, как окно
+        antialias.msaa(),
         crate::post::camera_post_process(),
         OffscreenCamera {
             target,

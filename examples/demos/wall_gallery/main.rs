@@ -538,7 +538,8 @@ fn spawn_camera(
             ..OrthographicProjection::default_2d()
         }),
         Transform::from_translation(centre.extend(0.0)).with_scale(Vec3::splat(zoom)),
-        Msaa::Off,
+        // сглаживание кромок, как у камеры игры (`post::Antialias`)
+        Msaa::Sample4,
         PanCamera {
             zoom_factor: zoom,
             min_zoom: zoom / 60.0,

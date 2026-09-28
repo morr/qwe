@@ -17,6 +17,7 @@
 //!
 //! - `Camera start` — откуда стартует камера (`save` ⇄ `reset`,
 //!   `camera::CameraPositionMode`);
+//! - `Antialias` — сглаживание кромок карты (`4x` ⇄ `Off`, `post::Antialias`);
 //! - `Navtile` — сторона ячейки навигации (`grid::NavtileBase`, смена
 //!   перезагружает мир).
 //!
@@ -47,6 +48,7 @@ use crate::loading::{AppState, WorldInitSet};
 use crate::map::trees::{ConiferNoiseStyle, TreeRowStyle, TreeStyle};
 use crate::movement::DrawMovePaths;
 use crate::navigation::PolymeshDebug;
+use crate::post::Antialias;
 use crate::prefs::{ResetSettings, TrackPrefExt};
 use crate::ui::knob::{AddKnobsExt, CycleBinding, spawn_cycle_row};
 use crate::ui::rows::{ROW_LEFT_PX, on_off};
@@ -102,6 +104,7 @@ impl Plugin for UiDebugTogglesPlugin {
             .add_knobs::<DebugConiferNoise>()
             .add_knobs::<DebugRoadNetwork>()
             .add_knobs::<CameraPositionMode>()
+            .add_knobs::<Antialias>()
             .add_knobs::<NavtileBase>()
             .init_resource::<DebugGrid>()
             .init_resource::<DebugNavmesh>()
@@ -189,6 +192,7 @@ impl Plugin for UiDebugTogglesPlugin {
 #[derive(SystemParam)]
 struct DebugValues<'w> {
     position_mode: Res<'w, CameraPositionMode>,
+    antialias: Res<'w, Antialias>,
     navtile: Res<'w, NavtileBase>,
     grid: Res<'w, DebugGrid>,
     doors: Res<'w, DebugDoors>,
@@ -280,6 +284,18 @@ fn build_debug_tab(mut commands: Commands, panes: Res<SettingsPanes>, values: De
         CycleBinding {
             cycle: |mode: &mut CameraPositionMode| *mode = mode.next(),
             text: |mode| mode.label().to_string(),
+        },
+    );
+    // сглаживание кромок карты: MSAA 4x ⇄ Off (`post::Antialias`)
+    spawn_cycle_row(
+        &mut commands,
+        world,
+        "Antialias",
+        ROW_LEFT_PX,
+        &*values.antialias,
+        CycleBinding {
+            cycle: |antialias: &mut Antialias| antialias.0 = !antialias.0,
+            text: |antialias| if antialias.0 { "4x" } else { "Off" }.to_string(),
         },
     );
     // сторона навтайла: клик листает 2m ⇄ 1m и перезагружает мир
