@@ -837,7 +837,14 @@ pub fn mesh_roads(
         })
         .map(|&index| gores::GoreRoad::new(drawn[index], &ribbon[index]))
         .collect();
-    let mut gores = gores::Gores::of(&gore_roads);
+    // остров кольца из дуг — его замкнутая ось (`rings::Ring::path`)
+    let ring_islands: Vec<&[Vec2]> = prepared
+        .rings()
+        .list
+        .iter()
+        .map(|ring| ring.path.as_slice())
+        .collect();
+    let mut gores = gores::Gores::of(&gore_roads, &ring_islands);
     // островки по правилу — на двусторонних подходах, где веера из въезда и
     // съезда в OSM нет: краска и колея подхода рвутся на их длину
     let splitters = gores::splitters(&drawn, &ribbon, prepared.rings());

@@ -118,7 +118,14 @@ impl Gores {
     /// подхода, а подходы к кольцу пологие, и оно выходит немаленьким. Отличает
     /// его не площадь, а соседи: островок лежит **между двумя подходами**,
     /// скругление касается одного.
-    pub fn of(roads: &[GoreRoad]) -> Self {
+    ///
+    /// Остров кольца — это `islands`, замкнутые оси колец из дуг
+    /// (`rings::Ring::path`), и ось кольца одним way. Кольцо из дуг ни одной
+    /// замкнутой дорогой не приходит, и остров его из клина не вычитался: хорда
+    /// веера между двумя узлами кольца уходит за его внутреннюю кромку, если
+    /// дуга между ними крутая, и штрихованная линза ложилась на полосу у
+    /// острова (Орёл, витрина 01: хорда в 6 м от дуги при полуширине 3.8).
+    pub fn of(roads: &[GoreRoad], islands: &[&[Vec2]]) -> Self {
         let knots: Vec<Vec2> = roads
             .iter()
             .filter(|road| road.roundabout)
@@ -165,6 +172,9 @@ impl Gores {
             if ring {
                 solid.push(oriented(&road.path[1..], true));
             }
+        }
+        for island in islands.iter().filter(|island| is_ring(island)) {
+            solid.push(oriented(&island[1..], true));
         }
         // Доходит до клина улица **кромкой**, а не осью: у проспекта это
         // восемь метров, и по оси он в замыкание не попадал.
@@ -771,6 +781,48 @@ mod tests {
         // наружный угол излома — скруглён, а не срезан хордой
         let outer = Vec2::new(10.0, 0.0) + Vec2::new(1.0, -1.0).normalize() * (reach - 0.3);
         assert!(point_in_shape(outer, shape), "угол срезан");
+    }
+
+    /// Кольцо из двух дуг и веер въезда и съезда к узлам на ±60°: хорда между
+    /// ними проходит глубоко по острову. Без острова кольца (`islands`)
+    /// штриховка ложилась за внутреннюю кромку кольца (Орёл, витрина 01), с
+    /// ним — только снаружи.
+    #[test]
+    fn a_fan_of_a_ring_of_arcs_stays_off_its_island() {
+        let circle: Vec<Vec2> = (0..=24)
+            .map(|step| Vec2::from_angle(step as f32 * std::f32::consts::TAU / 24.0) * 20.0)
+            .collect();
+        let arc = |points: &[Vec2]| GoreRoad {
+            path: points.to_vec(),
+            width: 8.0,
+            oneway: true,
+            roundabout: true,
+        };
+        let apex = Vec2::new(52.0, 0.0);
+        // подходы широкие: линза у острова касается обоих, как в Орле, где
+        // подход у кольца заведён по касательной
+        let approach = |path: Vec<Vec2>| GoreRoad {
+            path,
+            width: 10.0,
+            oneway: true,
+            roundabout: false,
+        };
+        let roads = [
+            arc(&circle[..=12]),
+            arc(&circle[12..]),
+            approach(vec![apex, circle[4]]),
+            approach(vec![circle[20], apex]),
+        ];
+        let island = Vec2::new(13.0, 0.0);
+        let outside = Vec2::new(30.0, 0.0);
+        let bare = Gores::of(&roads, &[]);
+        assert!(bare.contains(island), "без острова хорда кроет его");
+        let gores = Gores::of(&roads, &[&circle]);
+        assert!(!gores.contains(island), "штриховка на острове");
+        assert!(
+            gores.contains(outside),
+            "веер снаружи кольца не заштрихован"
+        );
     }
 
     /// Штриховка прямоугольником `min`–`max`.
