@@ -427,6 +427,9 @@ const SPLITTER_LENGTH: std::ops::RangeInclusive<f32> = 6.0..=20.0;
 /// Полуширина основания — доля радиуса, в пределах, м.
 const SPLITTER_WIDTH_SHARE: f32 = 0.06;
 const SPLITTER_HALF_WIDTH: std::ops::RangeInclusive<f32> = 0.6..=1.5;
+/// Косинус угла, дальше которого подход у основания островка и на всей его
+/// длине не отходит от луча из центра кольца, — 35°.
+const SPLITTER_MIN_OUTWARD: f32 = 0.82;
 /// Звенья контура островка вдоль подхода.
 const SPLITTER_STEPS: usize = 8;
 
@@ -510,6 +513,16 @@ fn splitter(
         .clamp(*SPLITTER_LENGTH.start(), *SPLITTER_LENGTH.end())
         .min(total - base - width);
     if length < *SPLITTER_LENGTH.start() {
+        return None;
+    }
+    // островок стоит на подходе, который уходит от кольца: ось, у основания
+    // идущая вдоль кольца, положила бы каплю на его полотно и загнула бы её
+    // крюком (Рязань, витрина 05 — подходы, заведённые в узел по касательной)
+    let (at_base, heading) = place_on_path(path, &along, base)?;
+    let at_tip = place_on_path(path, &along, base + length)?.0;
+    let outward = (at_base - ring.center).try_normalize()?;
+    let chord = (at_tip - at_base).try_normalize()?;
+    if heading.dot(outward) < SPLITTER_MIN_OUTWARD || chord.dot(outward) < SPLITTER_MIN_OUTWARD {
         return None;
     }
     let half = (SPLITTER_WIDTH_SHARE * radius)

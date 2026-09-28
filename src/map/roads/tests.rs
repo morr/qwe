@@ -845,6 +845,37 @@ fn a_two_way_approach_gets_a_splitter_island() {
     );
 }
 
+/// Подход, заведённый в узел кольца по касательной (Рязань, витрина 05):
+/// ось гнётся в узел по лучу (`rings::reshape`), а островок, если встал, —
+/// за кромкой кольца, не на его полотне.
+#[test]
+fn a_splitter_island_stays_off_the_ring_when_the_approach_comes_in_along_it() {
+    let circle: Vec<Vec2> = (0..=24)
+        .map(|step| Vec2::from_angle(step as f32 * std::f32::consts::TAU / 24.0) * 25.0)
+        .collect();
+    let mut map = MapData::default();
+    map.roads.push(RoadLine {
+        oneway: true,
+        roundabout: true,
+        ..fixture::street(circle.clone(), 8.0)
+    });
+    map.roads.push(fixture::street(
+        vec![Vec2::new(31.0, 70.0), Vec2::new(31.0, 16.0), circle[0]],
+        7.6,
+    ));
+    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let island = layer(&layers, paint::PAINT_ISLANDS)
+        .builder
+        .positions_for_test();
+    let edge = 25.0 + 8.0 / 2.0;
+    assert!(
+        island
+            .iter()
+            .all(|at| Vec2::new(at[0], at[1]).length() > edge),
+        "островок лежит на полотне кольца"
+    );
+}
+
 #[test]
 fn a_two_way_loop_without_the_tag_is_not_a_roundabout() {
     let map = roundabout_with_an_approach(false, false);
