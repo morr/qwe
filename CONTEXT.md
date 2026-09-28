@@ -51,7 +51,11 @@ in `main.rs`.
 - **Post-processing** (`post.rs`) — the camera renders to an HDR target with **bloom**
   thresholded at 1.1, so only what draws itself above 1.0 glows — the portal vortex, demon
   halos, soul sparks — and the map's white markings and light roofs do not; tonemapping is
-  off so the map palette is untouched, and `Msaa` stays off. A full-screen **vignette** is
+  off so the map palette is untouched. The map's edges are smoothed by **`Antialias`**
+  (`post.rs`, persisted, the Debug tab's `Antialias` row, on by default): `Msaa::Sample4`
+  on the user's camera and on the offscreen-shot one — ribbon edges are bare geometry, and
+  without it they stair-step on a close-up while the paint beside them is smoothed by its
+  own shader. The galleries run `Sample4` too. A full-screen **vignette** is
   a UI node under the panels, `Pickable::IGNORE` (detail in the `ui-panels` skill).
 - **Viewport** (`camera.rs`) — the piece of the world in frame, as a value **and a
   resource**: `centre`, `half_extent`, `zoom` (world m per logical pixel). `contains`
