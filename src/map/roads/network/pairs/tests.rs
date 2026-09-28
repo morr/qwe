@@ -9,6 +9,7 @@ use crate::map::osm::model::{RailKind, RailLine};
 use crate::map::osm::{Highway, RoadLine};
 use crate::map::roads::network::{RoadNetwork, RoadNodes};
 use crate::map::roads::shape::RoadShape;
+use crate::map::roads::tapers::{TAPER_PER_METER, Tapers};
 
 /// Разделительная уже, чем столько, — асфальт: дефолт ручки `Median gap`.
 fn median_gap() -> f32 {
@@ -48,12 +49,10 @@ fn aligned_with(roads: &[RoadLine], rails: &[RailLine]) -> (Pairs, Vec<Vec<Vec2>
         .map(|road| Cow::Borrowed(road.points.as_slice()))
         .collect();
     let mut pairs = Pairs::new(roads, &paths, median_gap(), rails);
-    pairs.align(
-        &mut paths,
-        roads,
-        &RoadNetwork::new(roads),
-        &RoadNodes::new(roads),
-    );
+    let (network, nodes) = (RoadNetwork::new(roads), RoadNodes::new(roads));
+    let osm: Vec<&RoadLine> = roads.iter().collect();
+    let wedges = Tapers::new(&osm, &network, &nodes, TAPER_PER_METER);
+    pairs.align(&mut paths, roads, &network, &nodes, &wedges);
     let paths = paths.into_iter().map(Cow::into_owned).collect();
     (pairs, paths)
 }
@@ -370,6 +369,61 @@ fn a_seam_of_the_own_half_on_a_smoothed_axis_does_not_let_the_axes_go() {
              сошла на нет"
         );
     }
+}
+
+#[test]
+fn a_widening_seam_of_the_own_half_meets_and_keeps_the_inner_kerb_straight() {
+    // своя половина — две полосы до x = 150, дальше четыре: у шва клин
+    // (`roads/tapers.rs`); встречная — один way в две полосы. Ось широкой
+    // части OSM уходит наружу на полразницы ширин, и зазор между кромками по
+    // всей длине один — 1.4 м
+    let shift = (4.0 - 2.0) * 3.3 / 2.0;
+    let roads = vec![
+        half(vec![Vec2::ZERO, Vec2::new(150.0, 0.0)], 2),
+        half(
+            vec![
+                Vec2::new(150.0, 0.0),
+                Vec2::new(200.0, -shift),
+                Vec2::new(400.0, -shift),
+            ],
+            4,
+        ),
+        half(vec![Vec2::new(400.0, 9.0), Vec2::new(0.0, 9.0)], 2),
+    ];
+    let (_, paths) = aligned(&roads);
+    let (narrow_end, wide_start) = (paths[0][paths[0].len() - 1], paths[1][0]);
+    assert!(
+        narrow_end.distance(wide_start) < 0.05,
+        "оси половины сходятся на шве: {narrow_end} против {wide_start}"
+    );
+    // зазор между кромками на клине — тот же, что у узкой части: клин сужает
+    // внешнюю кромку, внутренняя идёт вдоль встречной
+    let [narrow, wide, partner] = [roads[0].width, roads[1].width, roads[2].width];
+    let length = (wide - narrow) * TAPER_PER_METER;
+    let gap_at = |x: f32, own: &[Vec2], half: f32| {
+        y_at(&paths[2], x) - partner / 2.0 - (y_at(own, x) + half)
+    };
+    let seam = gap_at(149.0, &paths[0], narrow / 2.0);
+    assert!((seam - 1.4).abs() < 0.1, "у шва зазор {seam}");
+    for at in [10.0, 30.0, 50.0] {
+        let x = 150.0 + at;
+        let gap = gap_at(x, &paths[1], (narrow + (wide - narrow) * at / length) / 2.0);
+        assert!(
+            (gap - seam).abs() < 0.1,
+            "у x = {x} зазор между кромками {gap}, а у шва {seam}"
+        );
+    }
+}
+
+/// Высота ломаной `path`, идущей по x, в точке `x`.
+fn y_at(path: &[Vec2], x: f32) -> f32 {
+    path.windows(2)
+        .find(|link| link[0].x.min(link[1].x) <= x && x <= link[0].x.max(link[1].x))
+        .map(|link| {
+            let t = (x - link[0].x) / (link[1].x - link[0].x);
+            link[0].y + (link[1].y - link[0].y) * t
+        })
+        .expect("x на ломаной")
 }
 
 #[test]

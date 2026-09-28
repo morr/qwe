@@ -59,6 +59,7 @@ use crate::map::grid::Grid;
 use crate::map::osm::model::{RailKind, RailLine, distance_to_segment, polyline_length};
 use crate::map::osm::{RoadClass, RoadLine};
 use crate::map::roads::smoothstep;
+use crate::map::roads::tapers::{self, Tapers};
 
 /// Шаг, которым ось ощупывается на соседа, м.
 pub const PROBE_STEP: f32 = 2.0;
@@ -381,17 +382,31 @@ impl Pairs {
 
     /// Развести половины на постоянный зазор — сдвигом нарисованных осей
     /// `paths` — и положить середины разделительных по разведённым осям.
+    ///
+    /// `wedges` — клинья у швов половин (`roads/tapers.rs`): на клине, который
+    /// сужает сторону пары, полуширина к паре берётся суженной
+    /// ([`facing_half`]). Иначе ось широкого way на шве стояла дальше от
+    /// середины, чем ось узкого, — на полразницы ширин: у шва ступенька на
+    /// внешней кромке и дыра в землю у внутренней (Тула, витрина 16).
     pub fn align(
         &mut self,
         paths: &mut [Cow<[Vec2]>],
         roads: &[RoadLine],
         network: &RoadNetwork,
         nodes: &RoadNodes,
+        wedges: &Tapers,
     ) {
+        let facing = |road: usize, at: f32, total: f32, left: bool| {
+            facing_half(roads, wedges, road, at, total, left)
+        };
         let mut original: Vec<Option<Vec<Vec2>>> = vec![None; paths.len()];
         for run in self.runs.iter().flatten() {
             original[run.partner].get_or_insert_with(|| paths[run.partner].to_vec());
         }
+        let original_lengths: Vec<f32> = original
+            .iter()
+            .map(|path| path.as_deref().map_or(0.0, polyline_length))
+            .collect();
         let street = |road: usize| network.street_of(road).map(|(street, _)| street);
         let lengths: Vec<f32> = (0..paths.len())
             .map(|road| {
@@ -493,19 +508,20 @@ impl Pairs {
                 }
                 // у шва встречной половины ближайшей бывает любая из двух её
                 // ways — берётся та, что ближе
-                let Some((partner, near)) = span
+                let Some((run, near, near_along)) = span
                     .iter()
                     .filter(|run| run.from - RUN_BRIDGE <= at && at <= run.to + RUN_BRIDGE)
                     .filter_map(|run| {
                         let path = original[run.partner]
                             .as_deref()
                             .expect("ось пары сохранена до разводки");
-                        nearest_on_path(path, *point).map(|(near, _)| (run.partner, near))
+                        nearest_on_path(path, *point).map(|(near, along)| (run, near, along))
                     })
                     .min_by(|a, b| a.1.distance(*point).total_cmp(&b.1.distance(*point)))
                 else {
                     continue;
                 };
+                let partner = run.partner;
                 let Some(outward) = (*point - near).try_normalize() else {
                     continue;
                 };
@@ -518,7 +534,12 @@ impl Pairs {
                 if let (Some(after), true) = (ends[1], to == f32::INFINITY) {
                     gap = blend(gap, after, at - total);
                 }
-                let asphalt = (roads[road].width + roads[partner].width) / 2.0;
+                // полуширины половин, обращённые друг к другу, — с клиньями
+                let partner_path = original[partner].as_deref().unwrap_or_default();
+                let partner_left = heading_at(partner_path, near_along)
+                    .is_some_and(|heading| heading.perp_dot(*point - near) > 0.0);
+                let asphalt = facing(road, at, total, run.left)
+                    + facing(partner, near_along, original_lengths[partner], partner_left);
                 let wanted = point.midpoint(near) + outward * (asphalt + gap) / 2.0;
                 *point += (wanted - *point) * weight;
             }
@@ -534,17 +555,21 @@ impl Pairs {
         for median in &mut self.medians {
             let [first, second] = median.roads;
             let (path, partner) = (paths[first].as_ref(), paths[second].as_ref());
-            let [half_first, half_second] = [roads[first].width / 2.0, roads[second].width / 2.0];
+            let totals = [polyline_length(path), polyline_length(partner)];
             median.midline.clear();
             median.inner = [Vec::new(), Vec::new()];
-            for (_, at, _) in samples(path)
+            for (along, at, heading) in samples(path)
                 .into_iter()
                 .filter(|(along, ..)| median.from <= *along && *along <= median.to)
             {
-                let Some((near, _)) = nearest_on_path(partner, at) else {
+                let Some((near, near_along)) = nearest_on_path(partner, at) else {
                     continue;
                 };
                 let across = (near - at).normalize_or_zero();
+                let half_first = facing(first, along, totals[0], heading.perp_dot(across) > 0.0);
+                let second_left = heading_at(partner, near_along)
+                    .is_some_and(|heading| heading.perp_dot(at - near) > 0.0);
+                let half_second = facing(second, near_along, totals[1], second_left);
                 median.midline.push(at.midpoint(near));
                 median.inner[0].push(at + across * half_first);
                 median.inner[1].push(near - across * half_second);
@@ -886,6 +911,57 @@ fn beside(
 }
 
 /// Точки оси с шагом [`PROBE_STEP`]: длина от начала, точка, направление.
+/// Полуширина половины `road` в `at` метрах от начала её оси длиной `total`
+/// со стороны пары (`left` — пара слева по ходу way): у клина, сужающего эту
+/// сторону, — суженная, как её рисует клин (от узкого соседа у шва к своей
+/// ширине на длине клина, `tapers::fit`); иначе — половина ширины.
+fn facing_half(
+    roads: &[RoadLine],
+    wedges: &Tapers,
+    road: usize,
+    at: f32,
+    total: f32,
+    left: bool,
+) -> f32 {
+    let width = roads[road].width;
+    let ends = wedges.at(road);
+    let lengths = tapers::fit(total, ends.map(|end| end.map(|taper| taper.length)));
+    let mut half = width / 2.0;
+    for (end, (taper, length)) in ends.iter().zip(lengths).enumerate() {
+        let (Some(taper), Some(length)) = (taper, length) else {
+            continue;
+        };
+        if !taper.sides[usize::from(!left)] {
+            continue;
+        }
+        let from_node = if end == 0 { at } else { total - at };
+        if from_node < length {
+            let narrow = roads[taper.narrow].width.min(width);
+            let share = (from_node / length).max(0.0);
+            half = half.min((narrow + (width - narrow) * share) / 2.0);
+        }
+    }
+    half
+}
+
+/// Направление звена ломаной на дуговой координате `at`.
+fn heading_at(path: &[Vec2], at: f32) -> Option<Vec2> {
+    let mut run = 0.0;
+    let mut last = None;
+    for link in path.windows(2) {
+        let length = link[0].distance(link[1]);
+        let heading = (link[1] - link[0]).try_normalize();
+        if heading.is_some() {
+            last = heading;
+        }
+        run += length;
+        if run >= at && last.is_some() {
+            return last;
+        }
+    }
+    last
+}
+
 pub(in crate::map::roads) fn samples(path: &[Vec2]) -> Vec<(f32, Vec2, Vec2)> {
     let mut points = Vec::new();
     let mut start = 0.0;

@@ -37,6 +37,7 @@ use super::network::pairs::Pairs;
 use super::network::{self, RoadNetwork, RoadNodes, StreetWay};
 use super::rings::{self, Rings};
 use super::shape::RoadShape;
+use super::tapers::Tapers;
 use crate::map::along::simplify;
 use crate::map::meshing::arc_steps;
 use crate::map::osm::model::RailLine;
@@ -160,7 +161,11 @@ pub fn street_axes<'a>(
         .collect();
     // половины разделённых улиц — на постоянный зазор, по уже гладким осям
     let mut pairs = Pairs::new(roads, &paths, shape.median_gap(), rails);
-    pairs.align(&mut paths, roads, network, nodes);
+    // клинья у швов половин — по дорогам как есть; `Drawn` находит их потом
+    // по тем же стыкам, подмены рисования половин не касаются
+    let osm: Vec<&RoadLine> = roads.iter().collect();
+    let wedges = Tapers::new(&osm, network, nodes, shape.taper());
+    pairs.align(&mut paths, roads, network, nodes, &wedges);
     // кольца — эллипсом, подходы к ним — по касательной; после разводки пар:
     // половины подхода гнутся у самого кольца, где пара уже разошлась
     let rings = if curve.is_some() {

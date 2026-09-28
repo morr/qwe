@@ -1170,38 +1170,9 @@ pub fn mesh_roads(
             RoadClass::Alley if paved_path => &mut sidewalks,
             RoadClass::Alley => &mut alleys,
         };
-        // Клин половины разделённой улицы сужается и со стороны пары, а
-        // разделительная считана по полной ширине: в щели между ними лежал
-        // полный тротуар половины — светлая полоса с тёмной кромкой вдоль
-        // всего клина (пример 16). Со стороны пары под клин кладётся асфальт
-        // полной полуширины — кромка там идёт прямо, как у тела.
-        let length = polyline_length(points);
-        for &(path, taper, end) in &wedges {
-            let middle = wedge_middle(length, polyline_length(path), end);
-            // пара у середины клина — без слака: клин лежит внутри куска
-            let Some(left) = prepared.pairs().beside(index, middle, 0.0) else {
-                continue;
-            };
-            // с сохранённой стороны кромка и так прямая
-            if !taper.sides[usize::from(!left)] {
-                continue;
-            }
-            let side = if left { 1.0 } else { -1.0 };
-            let inner: Vec<Vec2> = path
-                .iter()
-                .zip(miter_offsets(path, false, road.width / 4.0))
-                .map(|(&point, offset)| point + offset * side)
-                .collect();
-            fill.set_lanes(None);
-            push_ribbon_trimmed(
-                fill,
-                &inner,
-                road.width / 2.0,
-                color.to_linear(),
-                ROAD_JOIN,
-                [true; 2],
-            );
-        }
+        // Кромка клина половины разделённой улицы со стороны пары прямая
+        // сама: разводка пары ставит ось клина по его суженной полуширине
+        // (`Pairs::align`), и сужается одна внешняя кромка.
         // у узла слияния колея плывёт за линиями краски — по той же рампе;
         // профиль — по длине `points`, а тело начинается за клином у начала
         match (lanes, ramps[index]) {
