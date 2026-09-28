@@ -534,6 +534,31 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
     nose per side, toward the street if `paved` finds it in front. The bar test follows
     (`push_markings`): it asks for `EDGE_MARGIN` beyond the bar **along the row** and for
     as much margin in depth as the stall itself has, or a pocket would get no paint.
+  - **Parallel rows** (`parallel_rows`) — a **kerbside lot** (`LotKind::Kerbside`) whose
+    thickness leaves less than `STALL_DEPTH_MIN` for a stall across it. That is most OSM
+    lay-bys: in Tula 42 of the 56 `parking=street_side` outlines are 1.6–5.1 m thick after
+    paving, and 30 of them had not one stall — the strip was a dark ribbon by the kerb
+    (the rest got the invented layout's cross stalls only where a bend widened the
+    outline). The cars stand **along the kerb**: a stall is `PARALLEL_LENGTH` 6 m down the
+    sides of the outline (the car row's own pitch, room for a Gazelle), longest side
+    first, `PARALLEL_WIDTH` 2.2 m across in the corner test, centred on the strip —
+    across the strip by `strip_width`, the short side of the rectangle with the
+    outline's area and perimeter, since `2 · area / perimeter` reads a 4 × 60 m strip as
+    3.75 m and would push the row a quarter metre off centre. The opposite side's row
+    lands on the first and `Placed` drops it. `Stall::along` is the car's heading, along
+    the kerb, and it follows the **traffic of its side** (`TrafficSide`, now an argument
+    of `ParkingLayout::new`): the street is behind the strip edge where `paved` finds its
+    carriageway, and with right-hand traffic it is on the car's left. `Stall::parallel`
+    marks such a stall and `push_markings` skips it — the bars along its sides would lie
+    along the kerb and read as a lane edge. A **yard** strip that thin stays empty
+    (`a_strip_thinner_than_a_stall_gets_no_stalls`); only the lot OSM calls a lay-by is
+    read as one. Measured on v15 caches, stalls in kerbside lots / kerbside lots with
+    any stall / cars: Tula 359 → 518 / 24 → 47 of 56 / +92; Berlin 2376 → 6508 / 260 →
+    1307 of 3275 / +2222; Kaluga 579 → 744 / 36 → 60 of 63 / +75; Ryazan 678 → 906 /
+    36 → 54 of 59 / +112. The parking paint shrank a little (Tula 70 772 → 70 440
+    vertices): the cross stalls the invented layout used to put in those strips went.
+    Stalls of other lots moved by a handful (Berlin −4, Ryazan −7, Kaluga +1): a
+    neighbour paved over the same asphalt now meets the parallel row in `Placed`.
   - **Overlapping lots do not share stalls.** Two lots paved to one drive both hold the
     gap between them, and both layouts striped it — cars of two lots parked across each
     other (the mall's north-west lot and the two pockets along its drive). Lots are laid

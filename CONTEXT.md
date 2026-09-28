@@ -1297,7 +1297,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   block keeps its **own lane grid**: in one shared grid a southern lane split a northern
   pocket, and a single row stood where a pair belongs; a **pocket** (`pocket_depth`: a one-row strip along a
   street, read off `2·area/perimeter`) gets its row along the **sides of the outline**
-  with only `STRIP_MARGIN` 0.2 m to the kerb, nose to the street; **asphalt in front of a
+  with only `STRIP_MARGIN` 0.2 m to the kerb, nose to the street; a **kerbside lot too thin
+  for that** (`LotKind::Kerbside` under `STALL_DEPTH_MIN` across — most OSM lay-bys) gets a
+  **parallel row** (`parallel_rows`): cars along the kerb, `PARALLEL_LENGTH` 6 m apiece down
+  the middle of the strip, facing the traffic of their side, and no paint
+  (`Stall::parallel`); a yard strip that thin stays empty; **asphalt in front of a
   nose is also a street's band beside the lot** (`Surroundings::paved`), not only the lot;
   and **overlapping lots do not share stalls** — neighbours paved to one drive overlap in
   the gap between them, so `ParkingLayout::new` lays lots out from the largest down and

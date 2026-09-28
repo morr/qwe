@@ -548,7 +548,7 @@ fn build_next(
     };
 
     // раскладка стоянок — вход поверхностям: по ней рисуется разметка мест
-    let layout = ParkingLayout::new(&map.parking, &map.roads);
+    let layout = ParkingLayout::new(&map.parking, &map.roads, map.traffic_side);
     let (surfaces, _) = mesh_surfaces(&map, &layout);
     spawn_layers(
         &mut commands,

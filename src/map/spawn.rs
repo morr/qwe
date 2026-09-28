@@ -143,7 +143,7 @@ pub fn spawn_map(
     // `surface meshing:`, ни в офлайн-замер, и «сколько стоит раскладка»
     // нечем ответить.
     let layout_started = std::time::Instant::now();
-    *parking_layout = parking::ParkingLayout::new(&map.parking, &map.roads);
+    *parking_layout = parking::ParkingLayout::new(&map.parking, &map.roads, map.traffic_side);
     info!(
         "parking layout: {} lots, {} stalls in {:.1?}",
         map.parking.len(),
@@ -386,7 +386,7 @@ pub fn measure_surfaces(map: &MapData) -> Vec<LayerCost> {
     // попадает в замер вовсе. Вершин у неё нет (она не меш), поэтому строка
     // печатается миллисекундами — ровно как `build`.
     let started = std::time::Instant::now();
-    let layout = parking::ParkingLayout::new(&map.parking, &map.roads);
+    let layout = parking::ParkingLayout::new(&map.parking, &map.roads, map.traffic_side);
     let layout_cost = LayerCost {
         name: "parking layout",
         vertices: 0,

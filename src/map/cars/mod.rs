@@ -226,7 +226,7 @@ pub fn measure_cars(map: &MapData) -> (usize, Vec<LayerCost>) {
     // раскладка стоянок — вход слоя, не его цена: в игре она считается на
     // загрузку мира (`map::spawn`), и без неё бенч не считал бы машины на
     // стоянках, которые игра рисует
-    let layout = ParkingLayout::new(&map.parking, &map.roads);
+    let layout = ParkingLayout::new(&map.parking, &map.roads, map.traffic_side);
     let mut costs = vec![LayerCost {
         name: "drawn",
         vertices: 0,
