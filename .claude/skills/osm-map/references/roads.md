@@ -66,7 +66,16 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   whatever calls it (Kaluga 06: the `give_way` node on Новаторский drew two white stubs
   of the dashed line across the gravel; the sign stays a sign). A kerb return between two
   unpaved arms goes to their layer (`corners::Arm::unpaved` → `KerbReturns::unpaved`),
-  between an unpaved and a paved arm it stays asphalt. The sidewalk is already gone by
+  between an unpaved and a paved arm it stays asphalt. **An asphalt street ending at a
+  dirt road** — the only paved arm of its node, the node's other two or more arms dirt —
+  stops at the dirt road's kerb: `KerbReturns::setback` gives that end the widest dirt
+  arm's half width, and `mesh_roads` cuts the fill back by it (`tapers::cut`; not on an
+  end under a taper). Carried to the node like every ribbon, its butt lay over the gravel
+  as a square tongue up to the dirt road's axis, with a step on each side where it was
+  wider than the kerb returns (scout R2, Tula 13); now the asphalt mouth — the ribbon and
+  its asphalt kerb returns — ends flush with the dirt edge. An asphalt road crossing the
+  dirt one (two paved arms) runs through as before
+  (`an_asphalt_street_stops_at_the_edge_of_the_dirt_road_it_meets`). The sidewalk is already gone by
   the parse (`untagged_sidewalks`). An untagged street stays asphalt — the tag is rare
   (Tula has a handful), and a guessed dirt road in a city block would be a worse lie
   than a missed one. Pinned by `roads/tests.rs::an_unpaved_street_draws_in_its_own_layer_without_lines`.
