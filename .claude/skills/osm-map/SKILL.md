@@ -854,10 +854,16 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     assembly those counters would count is exactly what did not run. That is the one
     shape of the rule above (**"The layer is not drawn" is a state of the report**); the
     four modules whose input counters are free print theirs beside the word.
-    **The bench calls the door, the gallery still assembles on its own**:
-    `measure_cars` is `Drawn::nodal` on its own row (`drawn`) and then `mesh_cars` once per
-    detail step — the `breaks` row comes off the first report's `breaks_took`, the `cars *`
-    rows are each step's whole rebuild, lots included (`ParkingLayout::new` is built for it,
+    **The game splits the door at the zoom crossing**: the assembly does not depend on
+    the bucket, so `rebuild_cars` keeps it in `cars::CarPlacement` (`park_all` →
+    `ParkedCars`, keyed on the occupancy and the `RoadShape`, reset on world entry by
+    `forget_parked_cars`) and a crossing costs `mesh_parked` — the bodies only;
+    `CarReport::placed` says which of the two a log line was. `mesh_cars` is still the
+    whole thing in one call, for the tests.
+    **The bench follows that split, the gallery still assembles on its own**:
+    `measure_cars` is `Drawn::nodal` on its own row (`drawn`), the placement once
+    (`placement`, with `breaks` as its share) and then `mesh_parked` once per detail step —
+    the `cars *` rows are exactly a zoom crossing (`ParkingLayout::new` is built for it,
     outside the timer: it is the layer's input, not its cost); `cars_mesh` is
     the gallery's one door and builds with neither lots nor districts on purpose. The
     steps the gallery repeats are the game's calls, not look-alikes: it breaks the row with

@@ -208,29 +208,17 @@ pub fn detail_for(bucket: usize) -> Option<CarDetail> {
 ///
 /// Отдаёт число машин и цену теми же [`LayerCost`], что зданиевые слои:
 /// миллисекунды — ровно то, ради чего замер и выносили из живого приложения, а
-/// `breaks` и `parking` отдельными строками — та же разбивка, что печатает
-/// `rebuild_cars` (разрывы считаются на каждую пересборку, и это решение
-/// перемеряется здесь).
+/// `drawn`, `breaks` и `placement` отдельными строками: каркас дорог и
+/// расстановка платятся один раз на город и на правку занятости или формы
+/// дорог ([`CarPlacement`]), а не на пересечение порога зума.
 ///
-/// Расстановка стоит своей строки, а не молчания: `park_cars` — это проход по
-/// всем улицам города с бинарным поиском по дуговой координате и несколькими
-/// бросками ГПСЧ на место, и от ступени подробности она не зависит, поэтому
-/// меряется один раз. Без неё строка `cars *` мерила бы одну укладку меша, и
-/// её миллисекунды нельзя было бы сравнить ни с логом `rebuild_cars`, ни с
-/// прежним замером, где расстановка входила в общее время.
-///
-/// Индекс застройки ([`Districts`]) — тоже своей строкой, и по той же причине:
-/// он строится на все семь с половиной тысяч домов и от ступени подробности не
-/// зависит, а решение не кешировать его между пересборками держится ровно на
-/// этом числе.
-///
-/// Кузов меряется на **каждой** ступени подробности, своей строкой: разница
-/// между ними и есть то, ради чего заведён [`CarLods`], и она должна быть
-/// видна в тех же числах, что и цена зданиевых слоёв.
+/// Кузов меряется на **каждой** ступени подробности, своей строкой, и эти
+/// строки — ровно цена пересечения порога: разница между ними и есть то, ради
+/// чего заведён [`CarLods`], и она должна быть видна в тех же числах, что и
+/// цена зданиевых слоёв.
 pub fn measure_cars(map: &MapData) -> (usize, Vec<LayerCost>) {
-    // каркас — тот же, что строит `rebuild_cars` на каждую пересборку, и
-    // своей строкой: узлы, оси, клинья и стоянки — цена, которую ряд платит
-    // до первой машины
+    // каркас — тот же, что строит расстановка ([`park_all`]), своей строкой:
+    // узлы, оси, клинья и стоянки — цена, которую ряд платит до первой машины
     let shape = RoadShape::default();
     let started = std::time::Instant::now();
     let drawn = Drawn::nodal(map, &shape);
@@ -244,32 +232,36 @@ pub fn measure_cars(map: &MapData) -> (usize, Vec<LayerCost>) {
         vertices: 0,
         elapsed: drawn_took,
     }];
-    let mut cars = 0;
-    // сборка целиком на каждой ступени — ровно то, что стоит пересборка слоя
-    // на пересечении порога зума; разрывы — своей строкой из первой
+    // расстановка — один раз, как в игре ([`CarPlacement`]); разрывы — её
+    // долей своей строкой
+    let parked = park_on(
+        CarStyle::default(),
+        &drawn,
+        map,
+        &layout,
+        std::time::Instant::now(),
+    );
+    costs.push(LayerCost {
+        name: "breaks",
+        vertices: 0,
+        elapsed: parked.breaks_took,
+    });
+    costs.push(LayerCost {
+        name: "placement",
+        vertices: 0,
+        elapsed: parked.took,
+    });
+    // меш кузовов на каждой ступени — ровно то, что стоит пересборка слоя на
+    // пересечении порога зума
     for (name, step) in [("cars full", 0), ("cars silhouette", 1), ("cars block", 2)] {
-        let (_, report) = mesh_cars(
-            CarZoomBucket::at(step),
-            CarStyle::default(),
-            &drawn,
-            map,
-            &layout,
-        );
-        if step == 0 {
-            costs.push(LayerCost {
-                name: "breaks",
-                vertices: 0,
-                elapsed: report.breaks_took,
-            });
-        }
-        cars = report.cars;
+        let (_, report) = mesh_parked(CarZoomBucket::at(step), CarStyle::default(), &parked, false);
         costs.push(LayerCost {
             name,
             vertices: report.vertices,
             elapsed: report.elapsed,
         });
     }
-    (cars, costs)
+    (parked.cars.len(), costs)
 }
 
 /// Когда пересобирать слой припаркованных машин: своя ступень зума, тумблер и
@@ -300,113 +292,66 @@ pub fn rebuild_cars(
     // форма дорог: ряд стоит по той же ломаной, по которой `map::roads`
     // кладёт ленту асфальта
     road_shape: Res<RoadShapeOnMap>,
-    map: Res<MapData>,
-    layout: Res<ParkingLayout>,
+    (map, layout): (Res<MapData>, Res<ParkingLayout>),
+    mut placement: ResMut<CarPlacement>,
     existing: Query<Entity, With<CarLayerTag>>,
 ) {
     for entity in &existing {
         commands.entity(entity).despawn();
     }
-    // каркас — на каждую пересборку, как и разрывы: узлы, оси и клинья
-    // считаются заново, а не делятся с лентой через ресурс
-    let drawn = Drawn::nodal(&map, &road_shape.0);
-    let (layers, report) = mesh_cars(*bucket, *style, &drawn, &map, &layout);
+    // снятый слой не расставляет ничего — ни каркаса, ни разрывов
+    let placed = if detail_for(bucket.index).is_some() && style.visible {
+        placement.refresh(*style, road_shape.0, &map, &layout)
+    } else {
+        false
+    };
+    let (layers, report) = mesh_parked(*bucket, *style, &placement.parked, placed);
     spawn_layers(&mut commands, &mut meshes, &materials, layers, CarLayerTag);
     info!("{report}");
 }
 
-/// Что вышло из сборки слоя машин — значением, а не только строкой в логе.
-///
-/// `detail` — ступень подробности кузова, и `None` в ней значит «слоя нет»:
-/// зум ушёл за последнюю ступень или выключен тумблер. Остальные счётчики тогда
-/// нули, и это не заглушка: сборка в таком случае действительно не идёт.
-///
-/// `elapsed` меряется внутри сборки, потому что время тратится там; печатает его
-/// адаптер — `info!` на macOS ещё и меряет не то, потому что App Nap решает, как
-/// быстро идёт сборка. `breaks_took` — доля того же времени, ушедшая на поиск
-/// перекрёстков: разрывы считаются заново на каждую пересборку, и решение их не
-/// кешировать держится ровно на этой доле.
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub struct CarReport {
-    /// Сколько машин расставлено — и вдоль бордюров, и на размеченных стоянках.
-    pub cars: usize,
-    /// Подробность кузова на этой ступени зума; `None` — слой не строился.
-    pub detail: Option<CarDetail>,
-    /// Сколько найдено перекрёстков, по которым рвутся ряды.
+/// Расстановка машин без меша: всё, что слой знает до первой вершины, и
+/// ничто в ней не зависит ни от ступени зума, ни от солнца.
+#[derive(Default)]
+pub struct ParkedCars {
+    pub cars: Vec<Car>,
+    /// Перекрёстков, по которым рвутся ряды.
     pub junctions: usize,
-    pub vertices: usize,
-    pub elapsed: std::time::Duration,
+    /// Время расстановки целиком — каркас дорог, разрывы, квартала, ряды.
+    pub took: std::time::Duration,
+    /// Доля `took`, ушедшая на поиск перекрёстков.
     pub breaks_took: std::time::Duration,
 }
 
-impl std::fmt::Display for CarReport {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let Self {
-            cars,
-            detail,
-            junctions,
-            vertices,
-            elapsed,
-            breaks_took,
-        } = self;
-        match detail {
-            Some(detail) => write!(
-                f,
-                "cars: {cars} parked, {detail:?} ({vertices} verts) in {elapsed:?} \
-                 (junctions {junctions}, {breaks_took:?})"
-            ),
-            None => write!(f, "cars: hidden"),
-        }
-    }
+/// Расставить машины: каркас дорог (`Drawn::nodal` — та же узловая ось, по
+/// которой `map::roads` кладёт ленту), разрывы на перекрёстках, застройка
+/// вокруг, ряды вдоль улиц и стоянки.
+pub fn park_all(
+    style: CarStyle,
+    shape: &RoadShape,
+    map: &MapData,
+    layout: &ParkingLayout,
+) -> ParkedCars {
+    let started = std::time::Instant::now();
+    let drawn = Drawn::nodal(map, shape);
+    park_on(style, &drawn, map, layout, started)
 }
 
-/// Слой машин целиком: разрывы на перекрёстках, застройка вокруг, расстановка
-/// вдоль улиц, заполнение стоянок и меш кузовов с тенями.
-///
-/// **Чистая функция и единственная дверь в слой.** Ни `Commands`, ни `Assets`:
-/// её зовёт и игра (через [`rebuild_cars`]), и тест. Выключенный тумблер и
-/// ушедший за последнюю ступень зум — это пустой список слоёв, а не ранний выход
-/// у вызывающего: деспавн в адаптере безусловен, и второй дороги, на которой
-/// можно его забыть, нет. Сборка при этом не идёт вовсе — ни разрывов, ни
-/// расстановки: снятый слой не должен стоить дороже, чем стоил ранний возврат.
-///
-/// `drawn` — подготовленные дороги (`roads::Drawn::nodal`): ряд стоит по той
-/// же узловой оси (`Axis::Nodal`), по которой `map::roads` кладёт ленту
-/// асфальта, рвётся на тех же клиньях и обходит те же стоянки.
-pub fn mesh_cars(
-    bucket: CarZoomBucket,
+/// Расстановка по готовому каркасу; `started` — откуда мерить `took`.
+fn park_on(
     style: CarStyle,
     drawn: &Drawn,
     map: &MapData,
     layout: &ParkingLayout,
-) -> (Vec<LayerMesh>, CarReport) {
-    let Some(detail) = detail_for(bucket.index).filter(|_| style.visible) else {
-        return (
-            Vec::new(),
-            CarReport {
-                cars: 0,
-                detail: None,
-                junctions: 0,
-                vertices: 0,
-                elapsed: std::time::Duration::ZERO,
-                breaks_took: std::time::Duration::ZERO,
-            },
-        );
-    };
-    let started = std::time::Instant::now();
+    started: std::time::Instant,
+) -> ParkedCars {
     // разрывы — по **всем** настоящим улицам, а не только по парковочным: ряд
     // обязан прерваться и там, где к жилой улице примыкает другая жилая, — и
     // на клиньях между сечениями улицы: бордюр там ближе к оси; те же
-    // разрывы режут карманы ленты (`roads::pockets`).
-    //
-    // Считаются заново на каждую пересборку слоя, а не один раз на загрузку
-    // мира: по Туле это около четверти сборки слоя машин, а весь слой —
-    // проценты от зданиевого, так что кеш ради этого не окупается, и мерить
-    // надо было прежде, чем его заводить. Доли, а не миллисекунды: абсолютное
-    // время зависит от App Nap, перемеряет его `measure_cars` из
-    // `examples/bench/map_meshing` (он печатает обе строки — `breaks` и `cars`)
+    // разрывы режут карманы ленты (`roads::pockets`)
+    let breaks_started = std::time::Instant::now();
     let junctions = pockets::row_breaks(&map.roads, drawn.nodes(), drawn.tapers(), &map.road_nodes);
-    let breaks_took = started.elapsed();
+    let breaks_took = breaks_started.elapsed();
     // застройка вокруг — тем же проходом и с тем же сроком жизни, что и
     // разрывы: индекс на 7.6 тысячи домов дешевле, чем повод его кешировать
     let districts = Districts::new(&map.buildings);
@@ -433,14 +378,174 @@ pub fn mesh_cars(
         &yard::Blocked::new(map),
     ));
     cars.extend(fill_lots(&map.parking, &layout.0, &districts));
-    let builder = mesh_bodies(&cars, detail);
-    let report = CarReport {
-        cars: cars.len(),
-        detail: Some(detail),
+    ParkedCars {
+        cars,
         junctions: junctions.junctions,
-        vertices: builder.vertex_count(),
-        elapsed: started.elapsed(),
+        took: started.elapsed(),
         breaks_took,
+    }
+}
+
+/// Расставленные машины текущего мира — **между пересечениями порога зума**.
+///
+/// Ступень зума меняет только подробность кузова, а расстановка от неё не
+/// зависит; до кеша каждое пересечение порога заново строило каркас дорог
+/// (`Drawn::nodal`, 25 мс Тула / 49 Калуга) и расставляло машины. Теперь
+/// пересечение платит один меш кузовов.
+///
+/// Ключ — то, от чего расстановка зависит из настроек: занятость (`CarStyle`
+/// без тумблера) и форма дорог. Город ключом не является: при входе в мир
+/// кеш сбрасывает [`forget_parked_cars`].
+#[derive(Resource, Default)]
+pub struct CarPlacement {
+    key: Option<(f32, RoadShape)>,
+    parked: ParkedCars,
+}
+
+impl CarPlacement {
+    /// Расставить заново, если ключ поехал; `true` — если расставили.
+    fn refresh(
+        &mut self,
+        style: CarStyle,
+        shape: RoadShape,
+        map: &MapData,
+        layout: &ParkingLayout,
+    ) -> bool {
+        let key = (style.occupancy, shape);
+        if self.key == Some(key) {
+            return false;
+        }
+        self.parked = park_all(style, &shape, map, layout);
+        self.key = Some(key);
+        true
+    }
+}
+
+/// Сброс расстановки при входе в мир: у нового города свои улицы, а ключ
+/// кеша про город не знает.
+pub fn forget_parked_cars(mut placement: ResMut<CarPlacement>) {
+    *placement = CarPlacement::default();
+}
+
+/// Что вышло из сборки слоя машин — значением, а не только строкой в логе.
+///
+/// `detail` — ступень подробности кузова, и `None` в ней значит «слоя нет»:
+/// зум ушёл за последнюю ступень или выключен тумблер. Остальные счётчики тогда
+/// нули, и это не заглушка: сборка в таком случае действительно не идёт.
+///
+/// `elapsed` меряется внутри сборки, потому что время тратится там; печатает его
+/// адаптер — `info!` на macOS ещё и меряет не то, потому что App Nap решает, как
+/// быстро идёт сборка. `breaks_took` — доля того же времени, ушедшая на поиск
+/// перекрёстков. Когда расстановка взята из [`CarPlacement`] (пересечение
+/// порога зума), `placed` ложно, а `elapsed` и `breaks_took` — только меш и
+/// ноль: расстановка в этой сборке не шла.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct CarReport {
+    /// Сколько машин расставлено — и вдоль бордюров, и на размеченных стоянках.
+    pub cars: usize,
+    /// Подробность кузова на этой ступени зума; `None` — слой не строился.
+    pub detail: Option<CarDetail>,
+    /// Сколько найдено перекрёстков, по которым рвутся ряды.
+    pub junctions: usize,
+    pub vertices: usize,
+    /// Расставлены ли машины этой сборкой (а не взяты из кеша).
+    pub placed: bool,
+    pub elapsed: std::time::Duration,
+    pub breaks_took: std::time::Duration,
+}
+
+impl std::fmt::Display for CarReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            cars,
+            detail,
+            junctions,
+            vertices,
+            placed,
+            elapsed,
+            breaks_took,
+        } = self;
+        match detail {
+            Some(detail) if *placed => write!(
+                f,
+                "cars: {cars} parked, {detail:?} ({vertices} verts) in {elapsed:?} \
+                 (junctions {junctions}, {breaks_took:?})"
+            ),
+            Some(detail) => write!(
+                f,
+                "cars: {cars} parked (placement reused), {detail:?} ({vertices} verts) \
+                 in {elapsed:?}"
+            ),
+            None => write!(f, "cars: hidden"),
+        }
+    }
+}
+
+/// Слой машин целиком: разрывы на перекрёстках, застройка вокруг, расстановка
+/// вдоль улиц, заполнение стоянок и меш кузовов с тенями.
+///
+/// **Чистая функция и единственная дверь в слой.** Ни `Commands`, ни `Assets`:
+/// её зовёт и игра (через [`rebuild_cars`]), и тест. Выключенный тумблер и
+/// ушедший за последнюю ступень зум — это пустой список слоёв, а не ранний выход
+/// у вызывающего: деспавн в адаптере безусловен, и второй дороги, на которой
+/// можно его забыть, нет. Сборка при этом не идёт вовсе — ни разрывов, ни
+/// расстановки: снятый слой не должен стоить дороже, чем стоил ранний возврат.
+///
+/// `drawn` — подготовленные дороги (`roads::Drawn::nodal`): ряд стоит по той
+/// же узловой оси (`Axis::Nodal`), по которой `map::roads` кладёт ленту
+/// асфальта, рвётся на тех же клиньях и обходит те же стоянки.
+pub fn mesh_cars(
+    bucket: CarZoomBucket,
+    style: CarStyle,
+    drawn: &Drawn,
+    map: &MapData,
+    layout: &ParkingLayout,
+) -> (Vec<LayerMesh>, CarReport) {
+    if detail_for(bucket.index).filter(|_| style.visible).is_none() {
+        return mesh_parked(bucket, style, &ParkedCars::default(), false);
+    }
+    let parked = park_on(style, drawn, map, layout, std::time::Instant::now());
+    mesh_parked(bucket, style, &parked, true)
+}
+
+/// Меш кузовов по готовой расстановке — то, что стоит пересечение порога
+/// зума, когда расстановка взята из [`CarPlacement`]. `placed` — расставлены
+/// ли машины этой же сборкой: тогда в отчёт идёт и её время.
+pub fn mesh_parked(
+    bucket: CarZoomBucket,
+    style: CarStyle,
+    parked: &ParkedCars,
+    placed: bool,
+) -> (Vec<LayerMesh>, CarReport) {
+    let Some(detail) = detail_for(bucket.index).filter(|_| style.visible) else {
+        return (
+            Vec::new(),
+            CarReport {
+                cars: 0,
+                detail: None,
+                junctions: 0,
+                vertices: 0,
+                placed: false,
+                elapsed: std::time::Duration::ZERO,
+                breaks_took: std::time::Duration::ZERO,
+            },
+        );
+    };
+    let started = std::time::Instant::now();
+    let builder = mesh_bodies(&parked.cars, detail);
+    let meshed = started.elapsed();
+    let report = CarReport {
+        cars: parked.cars.len(),
+        detail: Some(detail),
+        junctions: parked.junctions,
+        vertices: builder.vertex_count(),
+        placed,
+        elapsed: if placed { parked.took + meshed } else { meshed },
+        breaks_took: if placed {
+            parked.breaks_took
+        } else {
+            std::time::Duration::ZERO
+        },
     };
     // слой с блендингом: тень машины полупрозрачна, кузов — нет
     (

@@ -1464,8 +1464,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   plus the 1 ms of junction breaks, 3 ms of the district index and 4 ms of parking every
   step pays alike
   (`measure_cars` — `examples/bench/map_meshing` — now times the `Drawn::nodal` skeleton
-  on its own row and each detail step as the whole `mesh_cars` rebuild, lots included; the
-  numbers here predate that and are the kerb row alone). The district multiplier is what
+  and the placement on rows of their own, and each detail step as the mesh a zoom crossing
+  costs; the numbers here predate that and are the kerb row alone). The placement is
+  cached between crossings (`CarPlacement`, keyed on occupancy + road shape): a crossing
+  re-meshes the bodies and nothing else. The district multiplier is what
   the last of those numbers moved: on one machine 21 929 → 14 669 cars and 45.7 → 36.1 ms,
   the index costing 3 ms against 8 ms of mesh no longer laid. Every
   street shape the row broke on, and every body type on all three detail steps, side by

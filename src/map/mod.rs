@@ -142,6 +142,7 @@ impl Plugin for MapPlugin {
             .init_resource::<BuildingHeightMode>()
             .init_resource::<buildings::BuildingZoomBucket>()
             .init_resource::<cars::CarZoomBucket>()
+            .init_resource::<cars::CarPlacement>()
             .init_resource::<CarStyle>()
             .init_resource::<wagons::WagonZoomBucket>()
             .init_resource::<parking::ParkingLayout>()
@@ -249,6 +250,7 @@ impl Plugin for MapPlugin {
                     zoom::seed_zoom_bucket::<buildings::BuildingLods>,
                     spawn::spawn_map,
                     zoom::seed_zoom_bucket::<cars::CarLods>,
+                    cars::forget_parked_cars,
                     cars::rebuild_cars,
                     zoom::seed_zoom_bucket::<wagons::WagonLods>,
                     wagons::rebuild_wagons,

@@ -673,7 +673,13 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
     The side order of a two-way street (`[-1, 1]`) does **not** depend on the driving side,
     because it decides the RNG stream: the traffic side turns a row, it never moves one
     (`the_traffic_side_turns_the_row_without_moving_it`).
-  - **Not cached, and that is measured, not assumed**: on Tula the `breaks` row
+  - **Cached per placement now, and that too is measured** — `cars::CarPlacement` keeps
+    the placed `Vec<Car>` (with the junction count) keyed on `(occupancy, RoadShape)`,
+    reset on world entry by `forget_parked_cars`; a zoom-bucket crossing is `mesh_parked`
+    alone. The skeleton under the placement was what made the old verdict below wrong:
+    `Drawn::nodal` alone is 25 ms on Tula and 49 on Kaluga, paid on every crossing of a car
+    threshold (and even past `CAR_MAX_ZOOM`, where the layer is hidden). The verdict that
+    stood here, kept for the numbers: **not cached, and that is measured, not assumed**: on Tula the `breaks` row
     (`pockets::row_breaks` since the bench took the game's breaks; the 1 ms was measured
     on the bare `marking_breaks`, see the rows below) is 1 ms against the 7 ms the layer costs at its far detail step and the 18 at
     its near one, and the layer itself is well under the building layer's 79 — a resource
@@ -758,9 +764,10 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
     .or_else(retuned::<SunOnMap>)`,
     one registration by the rule under **When a layer rebuilds** in `SKILL.md`; the settled
     `RoadShapeOnMap` is in there because the row is walked along the **same street axis**
-    the ribbon is drawn from and breaks at the same taper clearings: `rebuild_cars` builds
+    the ribbon is drawn from and breaks at the same taper clearings: the placement
+    (`park_all`, cached in `CarPlacement` until the occupancy or the shape moves) builds
     `roads::Drawn::nodal(map, shape)` — the prepared roads without the stitches and merges
-    the row has no use for — and `mesh_cars` takes its `Axis::Nodal` axes, its `tapers()`
+    the row has no use for — and takes its `Axis::Nodal` axes, its `tapers()`
     (`pockets::row_breaks`) and its `lots()`; the ribbon reads the very same values off its
     own `Drawn` (`references/roads.md`, **The drawn network**), so
     the curve tolerance and the taper move the cars with the asphalt
@@ -820,12 +827,13 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
     once each — `breaks` 1 ms (measured on the bare `marking_breaks`, before the bench
     took the game's `pockets::row_breaks` with its tapers and crossings), `districts` 3 ms
     (the index) and `parking` 4 ms (`park_cars`) — so a rebuild was 26 ms at the near step
-    and 11 at the far one. **The bench now calls the door instead**: `measure_cars` times
-    `Drawn::nodal` as its `drawn` row (the nodes, axes, tapers and lot index the adapter
-    rebuilds every time), then runs `mesh_cars` once per detail step over a real
-    `ParkingLayout` — so a `cars *` row is a whole rebuild, breaks, districts, kerb row, lots
-    and mesh, and the `breaks` row is the first report's `breaks_took`. Re-measure before
-    quoting any number below against the new rows.
+    and 11 at the far one. **The bench follows the game's split**: `measure_cars` times
+    `Drawn::nodal` as its `drawn` row, the placement once as its `placement` row (breaks,
+    districts, kerb row, lots — `breaks` is its share on a row of its own), then
+    `mesh_parked` once per detail step over that placement — so a `cars *` row is exactly
+    what a zoom crossing costs, and a world load or an occupancy edit costs
+    `drawn` + `placement` + one `cars *`. Re-measure before quoting any number below
+    against the new rows.
     **The district multiplier paid for itself and then some**, measured before and after on
     one machine: 21 929 → 14 669 cars (−33 %), and the row went **45.7 → 36.1 ms** — the
     3 ms index and the one millisecond the queries added to `parking` against 8 ms of mesh
@@ -935,10 +943,10 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
       nine-storey block in a quarter the cars treat as private sector.
     - **The index is a grid** of building centroids, `CELL` = `REACH`, each registered in
       every cell its radius touches, so a query reads one cell — the wagons' `Fan`
-      construction. Built **per rebuild**, not cached per world load, for the junction
-      breaks' reason: it is milliseconds on 7.6 k buildings against a layer that is
-      percentages of the building one (3 ms on Tula when `measure_cars` still printed it as
-      its own `districts` row; it now sits inside each `cars *` rebuild row).
+      construction. Built **per placement** (`park_all`), i.e. once per world load and per
+      occupancy or road-shape edit, not per zoom crossing — it is not kept after the
+      placement: milliseconds on 7.6 k buildings (3 ms on Tula when `measure_cars` still
+      printed it as its own `districts` row; it now sits inside the `placement` row).
     - **Along a street the reading is refreshed every `DISTRICT_STEP` 48 m**, not per place:
       a query per each of 22 k places would cost more than the whole layer, and a quarter
       does not change from car to car. Forty-eight metres is a couple of private plots or
