@@ -395,7 +395,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     default) asphalt under both ribbons with
     a double solid down the middle (the paint layer), wider a lawn with a kerb and a
     rounded nose (`road_medians`, `Z_ROAD_MEDIAN`) from break to break, cut on a
-    densified midline rather than on the OSM vertices; whatever lies between the inner kerbs
+    densified midline rather than on the OSM vertices; a zebra across both halves does not
+    end the lawn but cuts a **passage** through its grass, the zebra's length wide, over the
+    island's paving; whatever lies between the inner kerbs
     and is not lawn — the wedge the nose rounds off, the stretch to the node — is asphalt,
     and a double solid meeting a lawn of its pair runs straight up to its nose. A median a tram runs in, up to
     `TRAM_BED_MAX_GAP` 8 m, is a **tram bed** (`Median::carries_tram`, found in

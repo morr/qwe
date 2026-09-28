@@ -383,8 +383,22 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     two zebras; a break more than `BREAK_ASIDE` 12 m past the kerb is no break of this
     pair); the contour keeps only the piece's two ends and the original vertices. The
     breaks are the base ones **and the paint's** facing across both halves
-    (`crossing_breaks` over `paint().of(half).cut`): a lawn stops before the zebra and
-    the stop line, where the pedestrian crosses the median. On the OSM vertices alone a
+    (`crossing_breaks` over `paint().of(half).cut`), **but a zebra does not end a lawn**:
+    `split_zebras` takes every paint break a zebra passes through out of that list and
+    turns it into a **crossing** — a break `ZEBRA_LENGTH` wide where the zebra meets the
+    half's axis — and `push_lawn` cuts a **passage** (`passages`: a quad across the whole
+    median, the zebra's length along the midline) out of the grass only. The kerb runs
+    through it, so the pedestrian crosses the median on the island's paving between two
+    pieces of lawn; a paint break with no zebra in it (a stop line at a node) still ends
+    the lawn with a nose. A paint break round a zebra is half the zebra, the signal's stop
+    line and the paint clearance — nine to eleven metres — and two `crossing:island=yes`
+    zebras set six metres apart along the axis, plus the node's break, left no piece at
+    all: Рязань 03's Вокзальная lost its whole lawn (roads plan S1, a regression of the
+    densified cut). A piece shorter than `MIN_LAWN_RUN` 3 m is dropped (not `PAIR_MIN`:
+    a five-metre island between a zebra and a node is a normal lawn), and the nose of a
+    piece shorter than the gap is rounded by `NOSE_SHARE` of its **length**, not of the
+    gap — the opening erases everything under two radii, and a 6 m piece of an 8.8 m
+    median vanished whole. On the OSM vertices alone a
     straight avenue lost its lawn span by span: the first vertex past the junction lay
     inside the break and the next one sixty metres on, so the whole span was bare asphalt
     with no line between the halves (Kaluga 02, the east arm of Кирова, roads plan E2);
@@ -427,7 +441,11 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     through as a pale square (a half with a wedge keeps its paired-side sidewalk), so
     `bed_caps` carries the bed `BED_CAP` further on **minus the lawn's kerb contour**
     (`push_lawn` returns it): the grass (`Z_ROAD_MEDIAN` 1.7) lies *under* the streets
-    (2.0), and a plain extension would have eaten the nose. (The sidewalk in a short gap
+    (2.0), and a plain extension would have eaten the nose. An end with **no lawn
+    kerb near** is carried on too, whole, `BED_CAP` plus the bed's width and `BED_WIDER`
+    1 m wider than the kerbs on each side: the node's paint breaks had cut away the lawn
+    that used to lie there, and a 2×2 m square of bare ground was left in front of the bed
+    end in the middle of Орёл 04's six-arm tram node (roads plan S2). (The sidewalk in a short gap
     between two runs is the general rule of **Paired halves**, **Alignment** above.) No
     lane frame, so no ruts over the tram lane. The double solid runs **down the middle**,
     between the tracks (as 2GIS draws it). What makes the tram lane read is the
