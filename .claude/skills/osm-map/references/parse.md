@@ -491,12 +491,21 @@ be called alone:
     **One exception moves a vertex inward**: the nearest road is a **walkway**
     (`RoadClass::Alley` — a sidewalk mapped as its own footway) lying inside the fill
     within `SIDEWALK_TUCK_MAX` 3 m, and a carriageway lies outward within
-    `LANDUSE_GAP_MAX`. The vertex then goes `LANDUSE_OVERLAP` under the footway. Berlin
+    `LANDUSE_GAP_MAX`. The vertex then goes **to the footway's axis** — not
+    `LANDUSE_OVERLAP` past its edge: the block edge is straight between its vertices
+    while the footway bends, and half a metre of margin left a hair of yard along the
+    footway (Tula, gallery 15). Berlin
     draws its blocks to the kerb and maps the sidewalk as a footway inside them, while
     our carriageway is narrower than the real one (Berlin, gallery 03: the block edge
     6–7 m from the axis against a 3.8 m half width), so the yard stuck out from under the
     sidewalk as a dark crescent at every rounded corner. The strip between a sidewalk
-    and the kerb is paving, not yard: it is left as ground.
+    and the kerb is paving, not yard: it is left to the verge.
+    **A vertex lying under another walkway** — the block's corner under the crossing
+    path the sidewalk meets at the junction — is tucked the same way, to the nearest
+    walkway it is *not* under: left where it was, it stayed 2 m off the sidewalk while
+    its neighbours went under it, and the edge between them stuck out as a wedge of yard
+    (Tula, gallery 21, both corners of Ленина × Пушкинская). A vertex under a
+    carriageway is still left alone.
   - **The band is what is drawn**: a street's sidewalk counts in its reach only when it
     has one (`RoadLine::sidewalks`). `sidewalk=separate|no` used to count anyway, and the
     block was pulled under a sidewalk that is never drawn — its edge stood past the kerb.

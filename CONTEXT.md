@@ -496,6 +496,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   invisible. **Green only grows**: the vertex moves only when the move leads outward from
   the fill, read locally off the ring's own signed area — so a street running through a
   block does not shrink it, while a street in a courtyard pulls the hole's edge in.
+  The one inward move: an edge between a sidewalk mapped as a footway and the street
+  beyond it goes to the footway's axis — a corner lying under the crossing path the
+  sidewalk meets included — since the strip up to the kerb is paving, not yard.
   Render-only in effect: `landuse` touches neither the navmesh nor planting.
   **Lot paved to its roads** — a parking lot reaches its roads in the same parse step, but
   **as a polygon, not vertex by vertex** (`parse/lots.rs::pave_lots`). The vertex pull was
