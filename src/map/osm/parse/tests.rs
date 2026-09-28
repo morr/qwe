@@ -4377,3 +4377,64 @@ fn a_pocket_on_a_tile_seam_is_sown_once() {
         .for_each(|point| *point += shift);
     assert_eq!(pockets::fill_ground_pockets(&mut map), 1);
 }
+
+/// Край квартала в обочине — между кромкой стороны без тротуара
+/// (`sidewalk=separate`) и дорожкой за ней — уходит к тому, что ближе: к
+/// дорожке — под неё, к кромке — под асфальт. Раньше он стоял «под полотном»
+/// по краю с тротуаром другой стороны и оставался в обочине, а обочина лежит
+/// под кварталом — угол двора торчал из плитки тёмным штрихом (Тула, витрина
+/// 15, угол Ленина и Советской).
+#[test]
+fn a_block_edge_in_the_verge_of_a_bare_side_goes_to_the_nearer_of_its_rims() {
+    // улица на восток: тротуар слева (с севера), справа — дорожка за обочиной
+    let scene = |edge: f32, footway: f32| {
+        let mut road = street(
+            vec![
+                CENTER - Vec2::new(400.0, 0.0),
+                CENTER + Vec2::new(400.0, 0.0),
+            ],
+            2.0 * RESIDENTIAL_HALF,
+        );
+        road.sidewalks = [SidewalkSide::Tagged, SidewalkSide::None];
+        let path = RoadLine {
+            pavement: Some(Pavement::Paved),
+            ..crate::map::osm::fixture::footway(vec![
+                CENTER + Vec2::new(-400.0, -footway),
+                CENTER + Vec2::new(400.0, -footway),
+            ])
+        };
+        let mut map = MapData {
+            roads: vec![road, path],
+            landuse: vec![PolyArea {
+                kind: AreaKind::Residential,
+                ..building(
+                    rect(
+                        CENTER + Vec2::new(-40.0, -40.0),
+                        CENTER + Vec2::new(40.0, -edge),
+                    ),
+                    Vec::new(),
+                )
+            }],
+            ..MapData::default()
+        };
+        pull_areas_to_roads(&mut map);
+        map.landuse[0]
+            .outer
+            .iter()
+            .map(|vertex| vertex.y - CENTER.y)
+            .fold(f32::NEG_INFINITY, f32::max)
+    };
+    // в 5 м от оси: за кромкой (3.8), но в полосе по карте (3.8 + 1.67), в
+    // 0.75 м от полосы дорожки — под дорожку
+    let tucked = scene(5.0, 7.5);
+    assert!(
+        (tucked + 7.5).abs() < 0.02,
+        "край остался в обочине: {tucked}"
+    );
+    // в 4.5 м — к кромке ближе, чем к дорожке в 9 м: под асфальт
+    let pulled = scene(4.5, 9.0);
+    assert!(
+        (pulled + RESIDENTIAL_HALF - LANDUSE_OVERLAP).abs() < 0.02,
+        "край не дотянут до кромки: {pulled}"
+    );
+}

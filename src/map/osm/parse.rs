@@ -1658,6 +1658,23 @@ struct Edges<'a> {
 struct Edge {
     link: Link,
     kind: EdgeKind,
+    /// Полуширина проезжей части — кромка там, где тротуара нет.
+    kerb: f32,
+    /// `[слева, справа]` по ходу звена: у проезжей части с этой стороны
+    /// тротуар не рисуется (`sidewalk=no|separate`), и за кромкой лежит голая
+    /// земля или обочина до дорожки, а не плитка тротуара.
+    bare: [bool; 2],
+}
+
+impl Edge {
+    /// Зазор от точки до края полотна, **нарисованного с её стороны**: у
+    /// голой стороны — до кромки, у прочих — до края по карте (`link.reach`).
+    fn gap(&self, point: Vec2, axis: Vec2) -> f32 {
+        let Link { from, to, reach } = self.link;
+        // `perp` смотрит влево по ходу точек — сторона 0
+        let side = usize::from((to - from).perp_dot(point - from) < 0.0);
+        point.distance(axis) - if self.bare[side] { self.kerb } else { reach }
+    }
 }
 
 /// Что за дорога у звена [`Edge`]. Варианты не пересекаются: проезжая часть
@@ -1725,8 +1742,10 @@ fn pull_areas_to_roads(map: &mut MapData) -> StretchedAreas {
         }
         // тротуар — только тот, что рисуется: у `sidewalk=separate|no` его нет,
         // и квартал, дотянутый под несуществующую полосу, вставал за бордюром
-        let reach = road.sidewalk().mapped_edge(road.width / 2.0);
+        let sidewalk = road.sidewalk();
+        let reach = sidewalk.mapped_edge(road.width / 2.0);
         let kind = EdgeKind::of(road);
+        let bare = [0, 1].map(|side| kind == EdgeKind::Carriageway && sidewalk.on(side).is_none());
         for link in road.points.windows(2) {
             edges.push(Edge {
                 link: Link {
@@ -1735,6 +1754,8 @@ fn pull_areas_to_roads(map: &mut MapData) -> StretchedAreas {
                     reach,
                 },
                 kind,
+                kerb: road.width / 2.0,
+                bare,
             });
         }
     }
@@ -1860,9 +1881,11 @@ fn pull_vertex(point: Vec2, outward: Vec2, roads: &Edges) -> Option<Vec2> {
     // запаса оставляли вдоль неё волосяную нить двора (Тула, витрина 15)
     let tuck = |gap: f32, axis: Vec2, index: usize| -> Option<Vec2> {
         let direction = (axis - point).try_normalize()?;
+        // улица за ней — по нарисованному краю: у стороны без тротуара
+        // вершина может стоять в полосе тротуара по карте, которого там нет
         let street_beyond = gaps().any(|(gap, axis, index)| {
             roads.edges[index].kind == EdgeKind::Carriageway
-                && gap > 0.0
+                && roads.edges[index].gap(point, axis) > 0.0
                 && gap <= LANDUSE_GAP_MAX
                 && (axis - point).dot(outward) > 0.0
         });
@@ -1882,6 +1905,9 @@ fn pull_vertex(point: Vec2, outward: Vec2, roads: &Edges) -> Option<Vec2> {
             .filter(|&(gap, _, index)| gap > 0.0 && roads.edges[index].kind == EdgeKind::Walkway)
             .min_by(|a, b| a.0.total_cmp(&b.0))
             .and_then(|(gap, axis, index)| tuck(gap, axis, index));
+    }
+    if gap <= 0.0 && roads.edges[index].kind == EdgeKind::Carriageway {
+        return in_bare_verge(point, outward, roads, gaps().collect(), &tuck);
     }
     if gap <= 0.0 || gap > LANDUSE_CORNER_GAP_MAX {
         return None;
@@ -1903,6 +1929,53 @@ fn pull_vertex(point: Vec2, outward: Vec2, roads: &Edges) -> Option<Vec2> {
         return None;
     }
     tuck(gap, axis, index)
+}
+
+/// Вершина под краем проезжей части **по карте**, но, может быть, за её
+/// кромкой — с той стороны, где тротуара нет (`sidewalk=no|separate`), а край
+/// по карте один на обе стороны. Там лежит голая полоса или обочина до
+/// дорожки, а обочина рисуется под кварталом: угол двора, обведённый вокруг
+/// изгиба дорожки, торчал из её плитки тёмным штрихом (Тула, витрина 15, угол
+/// Ленина и Советской), полоска двора — полосой в плитке (Тула 21, Орёл 03).
+/// Такая вершина уходит к ближнему из двух краёв нарисованного: к дорожке —
+/// под неё ([`pull_vertex`], `tuck`), к кромке — под асфальт, наружу от
+/// заливки. `None` — вершина под нарисованным полотном какой-нибудь улицы,
+/// двигать нечего.
+fn in_bare_verge(
+    point: Vec2,
+    outward: Vec2,
+    roads: &Edges,
+    all: Vec<(f32, Vec2, usize)>,
+    tuck: &dyn Fn(f32, Vec2, usize) -> Option<Vec2>,
+) -> Option<Vec2> {
+    // зазоры до нарисованного края у проезжих частей
+    let kerbs: Vec<(f32, Vec2)> = all
+        .iter()
+        .filter(|&&(_, _, index)| roads.edges[index].kind == EdgeKind::Carriageway)
+        .map(|&(_, axis, index)| (roads.edges[index].gap(point, axis), axis))
+        .collect();
+    // под нарисованным — асфальтом улицы, дорожкой, проездом: двигать нечего
+    let covered = all
+        .iter()
+        .any(|&(gap, _, index)| roads.edges[index].kind != EdgeKind::Carriageway && gap <= 0.0);
+    if covered || kerbs.iter().any(|&(gap, _)| gap <= 0.0) {
+        return None;
+    }
+    let (kerb, axis) = kerbs.into_iter().min_by(|a, b| a.0.total_cmp(&b.0))?;
+    let walkway = all
+        .iter()
+        .copied()
+        .filter(|&(gap, _, index)| gap > 0.0 && roads.edges[index].kind == EdgeKind::Walkway)
+        .min_by(|a, b| a.0.total_cmp(&b.0));
+    if let Some((gap, walk_axis, index)) = walkway
+        && gap < kerb
+        && let Some(tucked) = tuck(gap, walk_axis, index)
+    {
+        return Some(tucked);
+    }
+    let direction = (axis - point).try_normalize()?;
+    (direction.dot(outward) > 0.0 && kerb <= LANDUSE_GAP_MAX)
+        .then(|| point + direction * (kerb + LANDUSE_OVERLAP))
 }
 
 /// Вершина угла квартала у перекрёстка, уже дотянутая под полотно одной
