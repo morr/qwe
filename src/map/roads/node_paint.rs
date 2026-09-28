@@ -17,7 +17,8 @@
 //!   рангом, либо примыкает дорога выше рангом. Ранг — класс `highway`, знак
 //!   `stop`/`give_way` на плече понижает его на полступени. Примыкание
 //!   второстепенной улицы линий главной не рвёт; крестовина — два плеча чужих
-//!   улиц в одном узле — рвёт, как и проходящая насквозь; половина
+//!   улиц в одном узле — рвёт равную, как и проходящая насквозь, а крестовина
+//!   не ниже `tertiary` ([`CROSSING_CUTS_RANK`]) — и старшую; половина
 //!   разделённой улицы своей второй половине не соперник. Светофор в кластере
 //!   рвёт всех;
 //! - **зебра и стоп-линия на плече**, которое рвётся: зебра — по узлу
@@ -97,6 +98,12 @@ const RULE_ZEBRA_DATA_REACH: f32 = ARM_CROSSING_REACH;
 /// Ранг ([`class_rank`]) улицы, без которой в кластере зебры по правилу нет,
 /// если узел не под светофором: `tertiary`.
 const RULE_ZEBRA_RANK: u8 = 2;
+/// Ранг ([`class_rank`]) крестовины, которая рвёт линии и старшей дороги:
+/// `tertiary`. Через поле настоящего перекрёстка линий полос не кладут ни
+/// одной из дорог — в Орле (витрина 05) сплошная primary Московской шла
+/// наискось через полотно secondary-пары Пушкина. Жилая крестовина главную
+/// не рвёт: там её осевая через узел — обычное дело.
+const CROSSING_CUTS_RANK: u8 = 2;
 /// Кусок линий между двумя разрывами короче этого — не рисуется: одинокий
 /// штрих между узлом и зеброй читается мусором.
 const MIN_RUN: f32 = 6.0;
@@ -795,20 +802,31 @@ impl NodePaint {
             // «насквозь» она не проходила — главная шла пунктиром через
             // перекрёсток). В одном узле, а не в кластере: примыкания с разных
             // сторон вразбежку (Циолковского, 17 м) главную не рвут
-            let foreign: Vec<Vec2> = arms
+            let foreign: Vec<&Arm> = arms
                 .iter()
                 .filter(|arm| {
                     others
                         .iter()
                         .any(|&other| street(other) == street(arm.road))
                 })
-                .map(|arm| arm.at)
                 .collect();
-            let crossed = foreign.iter().enumerate().any(|(index, at)| {
-                foreign[index + 1..]
-                    .iter()
-                    .any(|other| other.distance(*at) < JUNCTION_MARGIN)
-            });
+            // ранг крестовины — младшей из двух её улиц; `None` — крестовины нет
+            let crossing = foreign
+                .iter()
+                .enumerate()
+                .flat_map(|(index, arm)| {
+                    foreign[index + 1..]
+                        .iter()
+                        .filter(|other| other.at.distance(arm.at) < JUNCTION_MARGIN)
+                        .map(|other| {
+                            class_rank(drawn[arm.road].highway)
+                                .min(class_rank(drawn[other.road].highway))
+                        })
+                })
+                .max();
+            let crossed = crossing.is_some();
+            // крестовина не ниже `tertiary` рвёт и старшую дорогу
+            let cut = crossing.is_some_and(|rank| rank >= CROSSING_CUTS_RANK);
             // ведёт узел: проходит насквозь, и уступать некому — ни дороге
             // выше рангом, ни такой же проходящей или крестовине. Кольцо ведёт
             // всегда: у него приоритет, въезды ему уступают
@@ -822,6 +840,7 @@ impl NodePaint {
             let leads = (passes(road) || ring_road(road))
                 && (drawn[road].is_roundabout()
                     || (!at_ring || ring_road(road))
+                        && !cut
                         && !others.iter().any(|&other| {
                             let theirs = rank(other);
                             theirs > own || (theirs == own && (passes(other) || crossed))

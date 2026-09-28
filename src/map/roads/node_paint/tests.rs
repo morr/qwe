@@ -296,6 +296,54 @@ fn an_equal_crossing_breaks_both_and_paints_every_arm() {
     assert_eq!(paint.stop_lines.len(), 4);
 }
 
+/// Крестовина `tertiary` рвёт и старшую primary: через поле перекрёстка
+/// линий полос нет ни у одной из дорог (Орёл, витрина 05). Жилая крестовина
+/// и примыкание `tertiary` главную не рвут.
+#[test]
+fn a_tertiary_crossing_breaks_the_primary_too_but_a_residential_one_does_not() {
+    let across = |highway| {
+        road(
+            vec![Vec2::new(100.0, -100.0), NODE, Vec2::new(100.0, 100.0)],
+            8.0,
+            highway,
+            2,
+        )
+    };
+    let crossed = paint_of(
+        vec![through(Highway::Primary), across(Highway::Tertiary)],
+        Vec::new(),
+        EVERYTHING,
+    );
+    assert!(
+        !gaps(&crossed, 0).is_empty(),
+        "{:?}",
+        crossed.lines().of(0).solid
+    );
+    assert!(!gaps(&crossed, 1).is_empty());
+    assert!(crossed.junctions[0].leading.is_empty());
+
+    let quiet = paint_of(
+        vec![through(Highway::Primary), across(Highway::Residential)],
+        Vec::new(),
+        EVERYTHING,
+    );
+    assert!(gaps(&quiet, 0).is_empty(), "{:?}", quiet.lines().of(0).cut);
+    assert_eq!(quiet.junctions[0].leading, vec![0]);
+
+    let side = road(
+        vec![Vec2::new(100.0, -80.0), NODE],
+        8.0,
+        Highway::Tertiary,
+        2,
+    );
+    let tee = paint_of(
+        vec![through(Highway::Primary), side],
+        Vec::new(),
+        EVERYTHING,
+    );
+    assert!(gaps(&tee, 0).is_empty(), "{:?}", tee.lines().of(0).cut);
+}
+
 /// Ведущая узла теряет разрыв асфальта (колея сквозь), но в базе он
 /// остаётся: база не переписывается, по ней открываются разделительные.
 #[test]
