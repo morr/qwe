@@ -228,7 +228,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     ground, under whatever is mapped on the island), approaches entering by a tangent arc (a two-way one,
     mapped into its node along the ring, by an arc along the ray; the two **legs** of a
     **Y-approach** — two short two-way ways from one node into two nodes of one ring,
-    `Rings::leg_flow` — as a one-lane entry and exit), and a **web**
+    or one such way whose fork reaches another node of the ring along a **tail** of
+    other streets, `Rings::leg_flow` — as a one-lane entry and exit), and a **web**
     (`Rings::webs`) — asphalt filling the slit between the ring and a street running
     along it outside, where their kerbs have only just parted) and
     `lanes: Option<u8>` (the section's lane count, below); `parking_aisle`

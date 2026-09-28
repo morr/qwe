@@ -888,9 +888,24 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     (`roads.rs::leg_sections`, a `Drawn` substitute like `ring_arcs`: `section_width` of
     one lane, `lanes` 1) — two 7.6 m two-way ribbons covered the whole wedge and left the
     island no room — and its wedge is the fan's (**The fan is taken whole** in
-    `parking.md`). A leg that is the first stretch of a longer way (Рязань 05, north: the
-    «Старая дорога» runs on past the fork) is not found; that approach keeps the two-way
-    bend (`the_legs_of_a_y_approach_enter_and_leave_along_the_ring`).
+    `parking.md`). **The other leg may be a tail of other streets** (`rings::tail_walk`):
+    Рязань 05, north — the «Старая дорога» runs on past the fork, and the end of the
+    street coming from the north takes it into the second ring node, so only one short
+    way leaves the fork. A lone such way (group of one in `y_legs`) is still a leg when
+    a walk from its far node along approach streets (not itself, not ring arcs; at most
+    one change of street; within `LEG_MAX`) reaches **another** node of the same ring
+    within `TAIL_ARC` (a quarter of the ring) — the shortest walk decides entry or exit
+    by the same downstream rule. The tail is **two streets**: the first runs **through**
+    the fork (an inner vertex of it) and the second, started on it, ends in the ring. A
+    street that goes into the ring by itself is a neighbouring approach, not a tail — on
+    Рязань 04's big ring (60 m) two wide two-way approaches found such one-street
+    "tails" 23 and 38 m along the ring, narrowed to a lane and opened a wedge of bare
+    ground. The leg then goes one lane by the tangent arc; the tail
+    is drawn as it is, being part of other streets. Before, it was a two-way arm bent
+    along the ray, a 7.6 m ribbon merging with the tail into one wide mouth. No island
+    appears there: the OSM fork lies 8 m off the ring's axis, and the two-way tail hugs
+    the ring (`the_legs_of_a_y_approach_enter_and_leave_along_the_ring`,
+    `a_y_approach_whose_other_leg_is_a_tail_of_two_streets`).
   - **Webs** (`Rings::webs`, `webs_along`): wherever a street — an arm, its continuation,
     or a slip road that bypasses the ring without entering it (Tula, gallery 04,
     south-east) — runs **along** the ring outside it (within `WEB_ALONG` cos 0.7 of the
