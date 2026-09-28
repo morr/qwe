@@ -320,8 +320,13 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
         ring vertex, taken for `ARM_REACH` 40 m from the ring — an avenue's carriageway
         runs for hundreds of metres and would hatch the whole median with its opposite.
       - **The wedge** is what a closing by `GORE_CLOSING` 6 m of the rings' and arms'
-        asphalt pulls shut, minus the asphalt of every street nearby and the island of a
-        small ring. The same closing fills the fillet on the **outer** side of an arm,
+        asphalt pulls shut, minus the asphalt of every street nearby and the **island of
+        the ring** — the axis polygon of a ring mapped as one closed way, and of every
+        ring chained from arcs (`rings::Ring::path`, handed in as `islands`). The second
+        used to be missing: no arc of a chained ring is a closed way, and where the arc
+        between an entry's and an exit's ring nodes is steep, the fan's chord runs past
+        the ring's inner edge — a hatched lens lay on the lane by the island (Орёл 01: the
+        chord 6 m off the arc against a 3.8 m half width). The same closing fills the fillet on the **outer** side of an arm,
         and arms meet a ring at a shallow angle, so that fillet is not small: what tells
         them apart is the neighbours, not the area — a gore **touches two arms**
         (`ARM_TOUCH`), a fillet one. `GORE_MIN_AREA` 12 m² on top.
