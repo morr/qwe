@@ -402,7 +402,9 @@ pub struct TreeMeshes {
     /// своей маской ступеней, и собраны они сразу на все ступени: дальняя
     /// ступень рисует префикс набора, так что её тени — это полосы ближней
     /// без хвоста, и на пересечении порога остаётся только спрятать хвост.
-    /// Порядок слоёв — от первых деревьев набора к последним.
+    /// Полоса ещё и режется по кускам карты [`CROWN_CHUNK`], как слитые кроны:
+    /// кусок вне кадра отсекается целиком. Порядок слоёв — от первых деревьев
+    /// набора к последним, внутри полосы — куски по месту на карте.
     ///
     /// Слитые, а не сущность на тень: полупрозрачная сущность попадает в
     /// сортируемую фазу `Transparent2d`, а тысяча таких сущностей на одном z
@@ -688,9 +690,8 @@ fn build_trees(
                 });
             }
             CrownDetail::Merged => {
-                let key = (at / CROWN_CHUNK).floor().as_ivec2();
                 chunks
-                    .entry(key)
+                    .entry(chunk_of(at))
                     .or_insert_with(MeshBuilder::with_crown_coords)
                     .push_crown(
                         &pools.variant((pool, variant)).far,
@@ -702,16 +703,12 @@ fn build_trees(
         }
     }
 
-    // z кусков — по их месту на карте (снизу вверх, слева направо), а не по
-    // порядку обхода словаря: так он не зависит ни от хэшера, ни от набора
-    let mut keys: Vec<IVec2> = chunks.keys().copied().collect();
-    keys.sort_by_key(|key| (key.y, key.x));
-    let merged: Vec<LayerMesh> = keys
+    let merged: Vec<LayerMesh> = sorted_chunks(chunks)
         .into_iter()
         .enumerate()
-        .map(|(ordinal, key)| {
+        .map(|(ordinal, builder)| {
             LayerMesh::new(
-                chunks.remove(&key).expect("key came from the map"),
+                builder,
                 Z_TREE + ordinal as f32 * CROWN_CHUNK_Z_STEP,
                 "tree_crowns",
                 MaterialSpec::Crown,
@@ -778,9 +775,13 @@ fn shadow_layers(
                 (!shows.is_empty()).then(|| (range.clone(), shows, detail))
             })
         })
-        .enumerate()
-        .map(|(ordinal, (range, shows, detail))| {
-            let mut builder = MeshBuilder::default();
+        .flat_map(|(range, shows, detail)| {
+            // по куску карты [`CROWN_CHUNK`] на слой, как у слитых крон: слой на
+            // весь лес виден всегда, а кусок вне кадра отсекается целиком.
+            // Тень дерева лежит в куске его ствола, так что на границе кусков
+            // ничего не дублируется, а перекрытие теней соседних кусков темнит
+            // ровно как внутри одного меша — цвет у всех теней один
+            let mut chunks: HashMap<IVec2, MeshBuilder> = HashMap::new();
             for index in range {
                 let (at, radius) = trees[index];
                 let variant = pools.variant(pools.pick(index));
@@ -788,18 +789,40 @@ fn shadow_layers(
                     CrownDetail::Full => &variant.shadow,
                     CrownDetail::Merged => &variant.far_shadow,
                 };
-                builder.push_template(template, at, radius);
+                chunks
+                    .entry(chunk_of(at))
+                    .or_default()
+                    .push_template(template, at, radius);
             }
-            TreeLayer {
-                shows,
-                layer: LayerMesh::new(
-                    builder,
-                    Z_TREE_SHADOW + ordinal as f32 * TREE_SHADOW_Z_STEP,
-                    "tree_shadows",
-                    MaterialSpec::Blend,
-                ),
-            }
+            sorted_chunks(chunks)
+                .into_iter()
+                .map(move |builder| (shows, builder))
         })
+        .enumerate()
+        .map(|(ordinal, (shows, builder))| TreeLayer {
+            shows,
+            layer: LayerMesh::new(
+                builder,
+                Z_TREE_SHADOW + ordinal as f32 * TREE_SHADOW_Z_STEP,
+                "tree_shadows",
+                MaterialSpec::Blend,
+            ),
+        })
+        .collect()
+}
+
+/// Кусок карты [`CROWN_CHUNK`], в котором стоит ствол.
+fn chunk_of(at: Vec2) -> IVec2 {
+    (at / CROWN_CHUNK).floor().as_ivec2()
+}
+
+/// Куски в порядке их места на карте (снизу вверх, слева направо), а не в
+/// порядке обхода словаря: так z кусков не зависит ни от хэшера, ни от набора.
+fn sorted_chunks(mut chunks: HashMap<IVec2, MeshBuilder>) -> Vec<MeshBuilder> {
+    let mut keys: Vec<IVec2> = chunks.keys().copied().collect();
+    keys.sort_by_key(|key| (key.y, key.x));
+    keys.into_iter()
+        .map(|key| chunks.remove(&key).expect("key came from the map"))
         .collect()
 }
 

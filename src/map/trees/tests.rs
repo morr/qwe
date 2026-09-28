@@ -993,6 +993,59 @@ fn every_chunk_of_the_map_fits_the_crown_z_band() {
     assert!(worst * CROWN_CHUNK_Z_STEP <= 1.0, "{worst} кусков");
 }
 
+/// Тени режутся по тем же кускам карты, что слитые кроны: два ствола в двух
+/// кусках — два слоя одной полосы на разных z, и тень каждого дерева лежит в
+/// куске своего ствола, без дублей на границе.
+#[test]
+fn tree_shadows_are_chunked_like_the_merged_crowns() {
+    let _sun = crate::map::default_sun();
+    let style = TreeStyle {
+        shape: TreeShape::Cotton,
+        density: 9.0,
+        ..default()
+    };
+    let planted = TreeSet::of([
+        (Vec2::new(10.0, 10.0), 3.0, 0.0),
+        (Vec2::new(CROWN_CHUNK - 1.0, 10.0), 3.0, 0.0),
+        (Vec2::new(CROWN_CHUNK + 1.0, 10.0), 3.0, 0.0),
+    ]);
+    let (built, _) = mesh_trees(
+        TreeZoomBucket::at(0),
+        &style,
+        &params(),
+        &planted,
+        &ConiferField::default(),
+    );
+    let near: Vec<&TreeLayer> = built
+        .shadows
+        .iter()
+        .filter(|shadow| shadow.shows.shows(0))
+        .collect();
+    assert_eq!(near.len(), 2, "три дерева в двух кусках — два слоя");
+    assert_ne!(near[0].layer.z, near[1].layer.z);
+    let shadow = |variant| {
+        crown_variant(TreeShape::Cotton, variant, &style, &params())
+            .shadow
+            .vertex_count()
+    };
+    assert_eq!(near[0].layer.builder.vertex_count(), shadow(0) + shadow(1));
+    assert_eq!(near[1].layer.builder.vertex_count(), shadow(2));
+}
+
+/// Все слои теней карты помещаются в полосу теней: куски на каждый вид слоя
+/// (полоса плотности × подробность шаблона) — не больше шагов
+/// `TREE_SHADOW_Z_STEP` в `Z_TREE_SHADOW..Z_TREE_SHADOW + 1`.
+#[test]
+fn every_shadow_layer_of_the_map_fits_the_shadow_z_band() {
+    let chunks = (crate::settings::MAP_SIZE / CROWN_CHUNK).ceil();
+    let worst_chunks = (chunks.x + 1.0) * (chunks.y + 1.0);
+    let kinds = (2 * TREE_LODS.len()) as f32;
+    assert!(
+        worst_chunks * kinds * TREE_SHADOW_Z_STEP <= 1.0,
+        "{worst_chunks} кусков × {kinds}"
+    );
+}
+
 /// Ползунок плотности отдаёт **префикс** набора: стоящие деревья не переезжают,
 /// к ним только добавляются следующие. Это и есть [`TreeSet::visible_count`], но здесь
 /// оно проверено на том, что реально попадает в мир, — на местах крон.

@@ -131,6 +131,18 @@ stand, how density works, and which resources restyle them.
     the full shadow (`the_far_shadow_is_a_thinned_copy_of_the_full_one`). From 2 m/px a
     shadow is a couple of pixels, so the ring's scallops are invisible. Cost: the thin
     layers are built and held alongside the full ones (≈ +¼ of the shadow vertices).
+  - **Shadows are chunked like the merged crowns** (`chunk_of`, `sorted_chunks`, the same
+    `CROWN_CHUNK` 1 km squares): every (band × template) layer is split into one mesh per
+    chunk holding a trunk, each on its own z. A whole-forest mesh is never culled, so at
+    the default view (0.4 m/px, a ~640 m frame) the GPU walked every shadow vertex of the
+    city; now the frustum drops the chunks outside the frame — roughly nine in ten.
+    **No seam**: a tree's shadow lies in its trunk's chunk only, so nothing is duplicated
+    across a border, and two neighbouring chunks' shadows overlap exactly as two shadows
+    inside one mesh did — one colour at one alpha, order-independent. At most
+    `2 × TREE_LODS.len()` kinds × 9 × 7 chunks fit `Z_TREE_SHADOW..+1` at
+    `TREE_SHADOW_Z_STEP` 1/1024 (`every_shadow_layer_of_the_map_fits_the_shadow_z_band`).
+    Cost: up to 5 kinds × 48 chunks = 240 shadow entities instead of 5 (Tula 34 chunks,
+    Kaluga 48), of which a step shows at most a third; a culled one costs a frustum test.
 - **Crown detail by zoom** (`TreeLod::detail`, `CrownDetail`) — the near step draws
   `Full` crowns, an **entity per tree** over its variant's shared mesh; the two far steps
   draw `Merged` crowns: **no entity per tree at all**, the crowns baked into
