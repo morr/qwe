@@ -300,6 +300,29 @@ fn ring_arcs(roads: &[RoadLine], rings: &rings::Rings) -> Vec<(usize, RoadLine)>
         .collect()
 }
 
+/// Ноги Y-подходов (`rings::Rings::leg_flow`) сечением в одну полосу: по
+/// смыслу нога — въезд или съезд, а двусторонней шириной две ноги по 7.6 м
+/// накрывали весь клин между собой, и островку негде было встать (Рязань,
+/// витрина 05: узлы кольца в двадцати метрах друг от друга).
+fn leg_sections(roads: &[RoadLine], rings: &rings::Rings) -> Vec<(usize, RoadLine)> {
+    roads
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| rings.leg_flow(*index).is_some())
+        .filter_map(|(index, road)| {
+            let width = network::sections::section_width(road.highway, 1)?;
+            (width < road.width).then(|| {
+                let leg = RoadLine {
+                    width,
+                    lanes: Some(1),
+                    ..road.clone()
+                };
+                (index, leg)
+            })
+        })
+        .collect()
+}
+
 /// Тротуар кольца и бордюр его острова. Тротуар — только снаружи, лентой по
 /// всему кольцу сразу, без швов между дугами; внутри вместо тротуарного
 /// кольца — бордюр [`medians::MEDIAN_KERB`] по кромке острова, как у газона
@@ -835,7 +858,13 @@ pub fn mesh_roads(
             let road = drawn[index];
             road.class == RoadClass::Street && !road.carves_navmesh()
         })
-        .map(|&index| gores::GoreRoad::new(drawn[index], &ribbon[index]))
+        .map(|&index| {
+            gores::GoreRoad::new(
+                drawn[index],
+                &ribbon[index],
+                prepared.rings().leg_flow(index),
+            )
+        })
         .collect();
     // остров кольца из дуг — его замкнутая ось (`rings::Ring::path`)
     let ring_islands: Vec<&[Vec2]> = prepared

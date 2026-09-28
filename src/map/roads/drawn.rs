@@ -20,7 +20,7 @@ use super::pockets::KerbLots;
 use super::rings::Rings;
 use super::shape::RoadShape;
 use super::tapers::{Taper, Tapers};
-use super::{RoadStyle, ring_arcs};
+use super::{RoadStyle, leg_sections, ring_arcs};
 use crate::map::osm::{MapData, RoadClass, RoadLine};
 
 /// Какую ось берёт потребитель — решение вынесено из порядка `let` в тип.
@@ -165,7 +165,8 @@ impl<'m> Drawn<'m> {
                 };
                 (index, crossing)
             })
-            .chain(ring_arcs(osm, &axes.rings));
+            .chain(ring_arcs(osm, &axes.rings))
+            .chain(leg_sections(osm, &axes.rings));
         for (index, road) in substitutes {
             roads[index] = Cow::Owned(road);
             crossings += 1;

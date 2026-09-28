@@ -29,6 +29,7 @@ use super::junctions::node_key;
 use super::network::RoadNodes;
 use super::turns::{LaneEnd, curve};
 use crate::map::along::nearest_on_path;
+use crate::map::osm::model::polyline_length;
 use crate::map::osm::{RoadClass, RoadLine};
 use crate::map::shapes::is_ring;
 
@@ -230,6 +231,8 @@ impl Ring {
 pub struct Rings {
     pub list: Vec<Ring>,
     of_road: Vec<Option<usize>>,
+    /// Ноги Y-подходов ([`y_legs`]): идёт ли поток ноги по порядку её точек.
+    legs: Vec<Option<bool>>,
     /// Асфальт между кольцом и улицей вдоль него, где их кромки только
     /// разошлись ([`webs_along`]): без него в щели серпом проступал тротуар.
     pub webs: Vec<Vec<Vec2>>,
@@ -243,6 +246,13 @@ impl Rings {
             .copied()
             .flatten()
             .map(|ring| &self.list[ring])
+    }
+
+    /// Нога ли дорога Y-подхода ([`y_legs`]) и куда по ней поток: `true` — по
+    /// порядку её точек. Двусторонний way рисуется такой ногой как
+    /// односторонний: въезд или съезд.
+    pub fn leg_flow(&self, road: usize) -> Option<bool> {
+        self.legs.get(road).copied().flatten()
     }
 }
 
@@ -265,6 +275,7 @@ pub fn reshape<'a>(
     let mut rings = Rings {
         list: Vec::new(),
         of_road: vec![None; roads.len()],
+        legs: vec![None; roads.len()],
         webs: Vec::new(),
     };
     for chain in chains(roads) {
@@ -291,15 +302,13 @@ pub fn reshape<'a>(
             }
         }
     }
+    rings.legs = y_legs(roads, &rings, &pins, paths);
     // подходы
     for (index, road) in roads.iter().enumerate() {
-        if rings.of_road[index].is_some()
-            || road.class != RoadClass::Street
-            || road.carves_navmesh()
-            || paths[index].len() < 2
-        {
+        if rings.of_road[index].is_some() || !is_approach(road) || paths[index].len() < 2 {
             continue;
         }
+        let leg = rings.legs[index];
         let mut path = paths[index].to_vec();
         let mut bent = false;
         for entry in [true, false] {
@@ -311,16 +320,16 @@ pub fn reshape<'a>(
             let (travel, outward) = (ring.travel(t), ring.outward(t));
             let (sin, cos) = ENTRY_ANGLE.sin_cos();
             // въезд приходит в узел снаружи, съезд уходит из него наружу;
-            // съезд строится как въезд по развёрнутому подходу. Двусторонний
-            // подход — и въезд, и съезд: он приходит в кольцо по лучу, а
-            // гнётся, только если ось OSM у узла идёт вдоль кольца
-            // ([`TWO_WAY_BEND_MIN_ANGLE`])
-            let (arrival, min_angle) = if !road.oneway {
-                (-outward, TWO_WAY_BEND_MIN_ANGLE)
-            } else if entry {
-                (travel * cos - outward * sin, BEND_MIN_ANGLE)
-            } else {
-                (-(travel * cos + outward * sin), BEND_MIN_ANGLE)
+            // съезд строится как въезд по развёрнутому подходу. Односторонний
+            // въезжает концом своих точек; нога Y-подхода — как её поток
+            // ([`y_legs`]). Двусторонний подход — и въезд, и съезд: он
+            // приходит в кольцо по лучу, а гнётся, только если ось OSM у узла
+            // идёт вдоль кольца ([`TWO_WAY_BEND_MIN_ANGLE`])
+            let flow = if road.oneway { Some(true) } else { leg };
+            let (arrival, min_angle) = match flow.map(|along| along == entry) {
+                None => (-outward, TWO_WAY_BEND_MIN_ANGLE),
+                Some(true) => (travel * cos - outward * sin, BEND_MIN_ANGLE),
+                Some(false) => (-(travel * cos + outward * sin), BEND_MIN_ANGLE),
             };
             if !entry {
                 path.reverse();
@@ -349,10 +358,7 @@ pub fn reshape<'a>(
         })
         .collect();
     for (index, road) in roads.iter().enumerate() {
-        if rings.of_road[index].is_some()
-            || road.class != RoadClass::Street
-            || road.carves_navmesh()
-        {
+        if rings.of_road[index].is_some() || !is_approach(road) {
             continue;
         }
         for (ring, &width) in rings.list.iter().zip(&widths) {
@@ -588,6 +594,76 @@ fn fit(roads: &[RoadLine], chain: &[usize], nodes: &RoadNodes) -> Option<Ring> {
     pins.dedup_by(|a, b| (a.0 - b.0).abs() < 1e-4);
     ring.pins = pins;
     Some(ring)
+}
+
+/// Может ли дорога быть подходом к кольцу — гнуться в его узел.
+fn is_approach(road: &RoadLine) -> bool {
+    road.class == RoadClass::Street && !road.carves_navmesh()
+}
+
+/// Самая длинная нога Y-подхода, м: дальше между двумя дорогами уже квартал,
+/// а не островок (как `FAN_REACH` у веера, `roads/gores.rs`).
+const LEG_MAX: f32 = 55.0;
+
+/// Ноги Y-подходов: две двусторонние дороги, что выходят из одного узла и
+/// кончаются в двух **разных** узлах одного кольца. Так замаплены подходы к
+/// кольцам Рязани (витрина 05): каждый — «Y» из двух way по 15–25 м в узлы в
+/// двадцати метрах друг от друга. По смыслу это въезд и съезд, только без
+/// `oneway`: гнутые к лучу, как двусторонний подход, обе ноги заметали асфальтом
+/// весь треугольник между ними, а островок по правилу вставал на каждую и
+/// ложился на кольцо крюком. Нога рисуется односторонней: въезд — та, чей
+/// узел ниже по ходу кольца (въехавший поворачивает по ходу, и ноги не
+/// пересекаются), — гнётся в узел по касательной, а клин между ногами
+/// находит веер (`gores::fans`).
+///
+/// По дороге — идёт ли поток ноги по порядку её точек.
+fn y_legs(
+    roads: &[RoadLine],
+    rings: &Rings,
+    pins: &HashMap<(i32, i32), (usize, f32)>,
+    paths: &[Cow<[Vec2]>],
+) -> Vec<Option<bool>> {
+    let mut legs = vec![None; roads.len()];
+    // (ring, far node) → [(road, param at the ring, ring at the last point)]
+    let mut feet: HashMap<(usize, (i32, i32)), Vec<(usize, f32, bool)>> = HashMap::new();
+    for (index, road) in roads.iter().enumerate() {
+        let path: &[Vec2] = &paths[index];
+        if rings.of_road[index].is_some()
+            || road.oneway
+            || !is_approach(road)
+            || path.len() < 2
+            || polyline_length(path) > LEG_MAX
+        {
+            continue;
+        }
+        let (first, last) = (path[0], path[path.len() - 1]);
+        let at_ring = |point: Vec2| pins.get(&node_key(point)).copied();
+        let (ring, t, far, at_last) = match (at_ring(first), at_ring(last)) {
+            (Some((ring, t)), None) => (ring, t, last, false),
+            (None, Some((ring, t))) => (ring, t, first, true),
+            _ => continue,
+        };
+        feet.entry((ring, node_key(far)))
+            .or_default()
+            .push((index, t, at_last));
+    }
+    for ((ring, _), group) in feet {
+        let [(a, t_a, a_last), (b, t_b, b_last)] = group[..] else {
+            continue;
+        };
+        let ring = &rings.list[ring];
+        let direction = if ring.ccw { 1.0 } else { -1.0 };
+        let ahead = ((t_a - t_b) * direction).rem_euclid(TAU);
+        // один узел кольца на двоих — не вилка
+        if ahead * ring.mean_radius() < 1.0 || (TAU - ahead) * ring.mean_radius() < 1.0 {
+            continue;
+        }
+        // узел `a` ниже по ходу — `a` въезд: поток к кольцу
+        let a_entry = ahead < std::f32::consts::PI;
+        legs[a] = Some(a_entry == a_last);
+        legs[b] = Some(!a_entry == b_last);
+    }
+    legs
 }
 
 /// Дуга подхода `path`, идущего **к** узлу кольца в его последней точке:

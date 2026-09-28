@@ -876,6 +876,51 @@ fn a_splitter_island_stays_off_the_ring_when_the_approach_comes_in_along_it() {
     );
 }
 
+/// Y-подход (Рязань, витрина 05): две двусторонние ноги из одного узла в два
+/// узла кольца — въезд и съезд, и клин между ними — один островок, за
+/// кромкой кольца, между ногами; по островку на каждую ногу не ставится.
+#[test]
+fn a_y_approach_gets_one_island_between_its_legs() {
+    let circle: Vec<Vec2> = (0..=24)
+        .map(|step| Vec2::from_angle(step as f32 * std::f32::consts::TAU / 24.0) * 25.0)
+        .collect();
+    let mut map = MapData::default();
+    map.roads.push(RoadLine {
+        oneway: true,
+        roundabout: true,
+        ..fixture::street(circle.clone(), 8.0)
+    });
+    let apex = Vec2::new(0.0, 62.0);
+    map.roads.push(fixture::street(vec![apex, circle[4]], 7.6));
+    map.roads.push(fixture::street(vec![circle[8], apex], 7.6));
+    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let island: Vec<Vec2> = layer(&layers, paint::PAINT_ISLANDS)
+        .builder
+        .positions_for_test()
+        .iter()
+        .map(|at| Vec2::new(at[0], at[1]))
+        .collect();
+    assert!(!island.is_empty(), "островка нет");
+    // кромка кольца — по хордам граней обводки клина, обводка островка —
+    // полоса: метр допуска, крюк на полотне заходил бы на метры
+    let edge = 25.0 + 8.0 / 2.0 - 1.0;
+    let nearest = island
+        .iter()
+        .map(|at| at.length())
+        .fold(f32::INFINITY, f32::min);
+    assert!(nearest > edge, "островок на полотне кольца: {nearest}");
+    assert!(
+        island.iter().all(|at| at.x.abs() < 14.0),
+        "островок не между ногами: {island:?}"
+    );
+    // нога — въезд или съезд, в одну полосу
+    let drawn = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
+    for leg in [1, 2] {
+        assert!(drawn.road(leg).width < map.roads[leg].width);
+        assert_eq!(drawn.road(leg).lanes, Some(1));
+    }
+}
+
 #[test]
 fn a_two_way_loop_without_the_tag_is_not_a_roundabout() {
     let map = roundabout_with_an_approach(false, false);

@@ -172,6 +172,66 @@ fn a_two_way_approach_along_the_ring_is_bent_into_it_across() {
     assert_eq!(paths[2], straight.points, "подход по лучу не гнётся");
 }
 
+/// Y-подход (Рязань, витрина 05): две двусторонние ноги из одного узла в два
+/// узла кольца — въезд и съезд. Въезд — нога, чей узел ниже по ходу; обе
+/// гнутся в узел по касательной, как односторонние, а не к лучу.
+#[test]
+fn the_legs_of_a_y_approach_enter_and_leave_along_the_ring() {
+    let ring = faceted_ring(12);
+    // кольцо против часовой: узел 4 (120°) ниже по ходу, чем узел 2 (60°)
+    let (upstream, downstream) = (ring.points[2], ring.points[4]);
+    let apex = CENTER + Vec2::new(0.0, 70.0);
+    let leg = |points: Vec<Vec2>| RoadLine {
+        oneway: false,
+        ..street(points, 7.6)
+    };
+    // ноги нарочно в разном порядке точек
+    let exit = leg(vec![upstream, apex]);
+    let entry = leg(vec![downstream, apex]);
+    let (paths, rings) = reshaped(&[ring, exit, entry]);
+    assert_eq!(rings.leg_flow(0), None, "кольцо — не нога");
+    assert_eq!(
+        rings.leg_flow(1),
+        Some(true),
+        "съезд — от кольца, по точкам"
+    );
+    assert_eq!(
+        rings.leg_flow(2),
+        Some(false),
+        "въезд — к кольцу, против точек"
+    );
+    let ring = &rings.list[0];
+    for (path, node, into) in [(&paths[1], upstream, false), (&paths[2], downstream, true)] {
+        assert_eq!(path[0], node);
+        assert!(path.len() > 2, "нога гнётся: {path:?}");
+        let t = ring.param(node).0;
+        // по ходу потока: въезд приходит в узел, съезд уходит из него
+        let away = (path[1] - path[0]).normalize();
+        let flow = if into { -away } else { away };
+        let angle = flow.angle_to(ring.travel(t)).abs();
+        assert!(
+            (angle - ENTRY_ANGLE).abs() < 0.25,
+            "нога под {angle} к ходу кольца, а не по касательной"
+        );
+    }
+}
+
+/// Одна двусторонняя дорога в узел кольца — не нога, даже если рядом
+/// другая кончается в том же узле кольца.
+#[test]
+fn two_ways_into_one_ring_node_are_no_y_approach() {
+    let ring = faceted_ring(12);
+    let node = ring.points[3];
+    let apex = CENTER + Vec2::new(0.0, 70.0);
+    let leg = |points: Vec<Vec2>| RoadLine {
+        oneway: false,
+        ..street(points, 7.6)
+    };
+    let (_, rings) = reshaped(&[ring, leg(vec![apex, node]), leg(vec![apex, node])]);
+    assert_eq!(rings.leg_flow(1), None);
+    assert_eq!(rings.leg_flow(2), None);
+}
+
 #[test]
 fn a_long_loop_is_not_a_ring() {
     let mut points = vec![

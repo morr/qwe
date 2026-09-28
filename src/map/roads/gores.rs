@@ -86,8 +86,14 @@ impl GoreRoad {
     /// точкам OSM: это свойство way, а не стиля рисования. Сглаживание кольцо
     /// замыкает (`smooth_pinned` идёт по циклу), так что дозамыкание —
     /// страховка на случай оси, пришедшей другим путём.
-    pub fn new(road: &RoadLine, drawn: &[Vec2]) -> Self {
+    ///
+    /// `leg` — нога Y-подхода (`Rings::leg_flow`): она односторонняя, путь —
+    /// по её потоку, и клин между двумя ногами находит веер ([`fans`]).
+    pub fn new(road: &RoadLine, drawn: &[Vec2], leg: Option<bool>) -> Self {
         let mut path = drawn.to_vec();
+        if leg == Some(false) {
+            path.reverse();
+        }
         if let (true, Some(first)) = (is_ring(&road.points), path.first().copied())
             && path
                 .last()
@@ -98,7 +104,7 @@ impl GoreRoad {
         Self {
             path,
             width: road.width,
-            oneway: road.oneway,
+            oneway: road.oneway || leg.is_some(),
             roundabout: road.is_roundabout(),
         }
     }
@@ -483,6 +489,8 @@ pub(super) fn splitters(
             || !is_carriageway(line)
             || lane_count(line) < 2
             || rings.of(road).is_some()
+            // нога Y-подхода — въезд или съезд, островок ей — веер
+            || rings.leg_flow(road).is_some()
         {
             continue;
         }
