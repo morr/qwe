@@ -547,8 +547,8 @@ pub struct RoadReport {
     /// Направляющие островки у колец (`roads/gores.rs`).
     pub gores: usize,
     /// Из данных v15 (`roads/islands.rs`): островков-точек на улицах, контуров
-    /// островков и контуров полотна.
-    pub road_islands: [usize; 3],
+    /// островков, контуров полотна и пешеходных площадей.
+    pub road_islands: [usize; 4],
     /// Кромки, сведённые на слияниях (`drawn.merges`) к кромке продолжения
     /// (`roads/merges.rs`): их кладёт лента, не подготовка.
     pub merge_edges: usize,
@@ -602,7 +602,7 @@ impl std::fmt::Display for RoadReport {
                 },
             islands,
             gores,
-            road_islands: [refuges, island_areas, carriageways],
+            road_islands: [refuges, island_areas, carriageways, walkways],
             merge_edges,
             tram_bands,
             vertices,
@@ -618,7 +618,7 @@ impl std::fmt::Display for RoadReport {
              {sidewalk_returns} on sidewalks, outer corners {outer} + {outer_sidewalks} on \
              sidewalks, noses {noses}, stitches {stitches}, kerb pockets {kerb_pockets}, turning circles {turning_circles}, driveway crossings \
              {crossings}, rings {rings} ({webs} webs), small islands {islands}, gores {gores}, safety islands {refuges} + {island_areas} areas, \
-             carriageway areas {carriageways}, tapers {tapers}, merges {merges} ({merge_edges} edges), medians {paved} paved + {lawns} \
+             carriageway areas {carriageways}, walkway areas {walkways}, tapers {tapers}, merges {merges} ({merge_edges} edges), medians {paved} paved + {lawns} \
              lawn (tram beds {beds}), tram bands {tram_bands}, smooth seams {seams}, tight corners {tight}, bridges {bridges} of \
              {bridge_ways} ways ({casting} cast shadows); {network:?} of it before the \
              ribbons)",
@@ -1005,6 +1005,11 @@ pub fn mesh_roads(
     for shape in &road_islands.carriageways {
         push_shape(&mut streets, shape.clone(), ROAD_COLOR.to_linear());
     }
+    // пешеходная площадь — плиткой тротуара, как мощёная дорожка
+    sidewalks.set_lanes(None);
+    for shape in &road_islands.walkways {
+        push_shape(&mut sidewalks, shape.clone(), SIDEWALK_COLOR.to_linear());
+    }
     if style.sidewalks {
         for ring in &prepared.rings().list {
             let width = drawn[ring.roads[0]].width;
@@ -1023,6 +1028,11 @@ pub fn mesh_roads(
     }
     for index in order {
         let road = drawn[index];
+        // замкнутая линия площади (`highway=*` + `area=yes`) — контур
+        // заливки выше, а не кольцо ленты
+        if road_islands.outlines[index] {
+            continue;
+        }
         // мощёная дорожка — плиткой тротуара и в его слое (`paved_path`)
         let paved_path = road.is_paved_path();
         let unpaved_street = road.is_unpaved_street();
@@ -1382,6 +1392,7 @@ pub fn mesh_roads(
             road_islands.refuges,
             road_islands.kerbs.len() - road_islands.refuges,
             road_islands.carriageways.len(),
+            road_islands.walkways.len(),
         ],
         merge_edges,
         islands: islands.len(),
