@@ -554,6 +554,7 @@ pub fn rebuilds_on() -> impl SystemCondition<()> {
 
 /// Пересборка зданиевых слоёв после переключения режима из UI или BRP:
 /// деспавн старых слоёв и повторный спавн из той же `MapData`.
+#[allow(clippy::too_many_arguments)]
 pub fn rebuild_buildings(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
