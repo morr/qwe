@@ -1037,14 +1037,29 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     exactly what covering them does. The stroke of a flare around the island is not
     drawn.
   - **A `Carriageway` outline** is asphalt in the `roads` layer, under the ribbons: a
-    square, a lay-by, a widening the axis does not describe. `Walkway` outlines are left
-    to the sidewalks and alleys that already cover them.
+    square, a lay-by, a widening the axis does not describe.
+  - **A `Walkway` outline** (`area:highway=footway|pedestrian|…`, `highway=pedestrian`
+    + `area=yes`) is **paving in the `sidewalks` layer**, the colour of a paved path.
+    It used to be left "to the sidewalks and alleys that already cover them", and they
+    did not: Tula's 62×75 m `area:highway=footway` plaza on the Lenina park paths
+    (way 27582887) was bare ground with a service drive ending in a round cap in the
+    middle of nothing, and the 18×18 m `pedestrian` square on the ring island at
+    2539 2393 (way 234168508) was a ring of path ribbon round a patch of ground.
+  - **The closed line of an area is not drawn as a ribbon** (`RoadIslands::outlines`,
+    one flag per drawn road, skipped at the top of the ribbon loop). The parse still
+    hands `highway=*` + `area=yes` over as both an outline and a `RoadLine` (every other
+    reader of `MapData::roads` keeps seeing it as before), and that line is recognised here as a
+    closed ring whose points are exactly an outline's (indexed by `node_key` of the
+    first vertex). Laid as a ribbon it was the ring above; a carriageway area's line
+    is skipped likewise, its outline being asphalt already.
+  - Tula v15: 19 walkway areas (the report's `walkway areas W`), 2 of them
+    `pedestrian` + `area=yes`.
   - **Tula has almost none of it** (no island at all, one `crossing:island`, a dozen
     service-yard outlines — `references/osm-coverage.md`, «v15»), so the gallery check
     is Berlin (`ROADS_CITY=berlin`, samples 4–6: `area:highway=traffic_island` at
     Rosenthaler Platz and the boulevards, `area:highway=primary|tertiary` outlines,
     signalized crossings with islands). The report counts `safety islands N + A areas,
-    carriageway areas C`.
+    carriageway areas C, walkway areas W`.
 - **Turn paths** (`map/roads/turns.rs`, `Turns::new(&Drawn, junctions, side)` over
   `NodePaint::junctions`, on the ribbon axes) — the
   wear a junction gets from traffic crossing it. The lane ruts fade in a junction gap (a

@@ -203,9 +203,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     the parked cars break at the marked crossings, a turning circle on a dead end is a
     disc of asphalt; an island point or a crossing with an island on a two-way street is
     a **safety island** — a kerbed lens over the asphalt and its paint — and so is an
-    `Island` outline, a `Carriageway` outline is asphalt under the ribbons
-    (`roads/islands.rs`); mini-roundabouts and walkway outlines are parsed and kept for
-    later stages.
+    `Island` outline, a `Carriageway` outline is asphalt under the ribbons, a `Walkway`
+    outline is paving in the sidewalks layer, and the closed line an area also arrives as
+    (`highway=*` + `area=yes`) is not laid as a ribbon (`roads/islands.rs`);
+    mini-roundabouts are parsed and kept for later stages.
   - **RoadLine** — centerline + width **from its section** (a path's width is its
     `width` tag, clamped 1–8 m, or its kind and surface — `tags.rs::path_width`, 1.5 m
     trail to 5 m pedestrian street; footbridges and arches keep the class 3.5, their band

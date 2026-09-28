@@ -270,8 +270,10 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   lines. The **junction paint** (`roads/node_paint.rs`, `references/roads.md`) reads the
   crossings (zebras), signals and the stop / give-way signs (who breaks, stop lines);
   a turning circle on a dead end is a disc of asphalt (`references/roads.md`, **Turning
-  circles**); mini-roundabouts, islands and the `RoadArea` outlines are still drawn by
-  nothing — later stages of the roads plan consume them. `MapData::road_nodes` — a point on a way's axis with
+  circles**); islands and the `RoadArea` outlines are drawn by `roads/islands.rs`
+  (`references/roads.md`, **Safety islands and carriageway areas** — a walkway outline
+  is paving, and the closed line of an area is not laid as a ribbon); mini-roundabouts
+  are still drawn by nothing. `MapData::road_nodes` — a point on a way's axis with
   `RoadNodeKind`: `Crossing { signals, island, marked }` (`crossing=traffic_signals` /
   `crossing:signals=yes`; `crossing:island=yes` / `crossing=island`; `marked` is cleared
   only by an explicit `crossing=unmarked` or `crossing:markings=no` — Tula has 111 of 801
