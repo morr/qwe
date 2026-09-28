@@ -1833,7 +1833,39 @@ fn pull_vertex(point: Vec2, outward: Vec2, roads: &Edges) -> Option<Vec2> {
             (point.distance(axis) - reach, axis, index)
         })
     };
+    // кроме одного случая: вершина между тротуаром, замапленным дорожкой, и
+    // улицей за ним. Квартал в OSM нарисован до бордюра, а наша проезжая
+    // часть уже (Берлин, витрина 03: край квартала в 6–7 м от оси при
+    // полуширине 3.8), и двор торчал из-под тротуара серпом у каждого
+    // скругления угла. Полоса между тротуаром и бордюром — мощение, не двор:
+    // край уходит под дорожку — до её оси, а не на [`LANDUSE_OVERLAP`] за
+    // кромку: край между вершинами прямой, а дорожка гнётся, и полметра
+    // запаса оставляли вдоль неё волосяную нить двора (Тула, витрина 15)
+    let tuck = |gap: f32, axis: Vec2, index: usize| -> Option<Vec2> {
+        let direction = (axis - point).try_normalize()?;
+        let street_beyond = gaps().any(|(gap, axis, index)| {
+            roads.edges[index].kind == EdgeKind::Carriageway
+                && gap > 0.0
+                && gap <= LANDUSE_GAP_MAX
+                && (axis - point).dot(outward) > 0.0
+        });
+        (roads.edges[index].kind == EdgeKind::Walkway
+            && gap <= SIDEWALK_TUCK_MAX
+            && direction.dot(outward) <= 0.0
+            && street_beyond)
+            .then_some(axis)
+    };
     let (gap, axis, index) = gaps().min_by(|a, b| a.0.total_cmp(&b.0))?;
+    if gap <= 0.0 && roads.edges[index].kind == EdgeKind::Walkway {
+        // угол квартала под **другой** дорожкой — под кольцом перехода, к
+        // которому подходит тротуар: соседние точки края ушли под тротуар, а
+        // угол остался, где был, и край от него к ним вылезал из-под тротуара
+        // клином двора (Тула, витрина 21). Угол уходит под тротуар тоже
+        return gaps()
+            .filter(|&(gap, _, index)| gap > 0.0 && roads.edges[index].kind == EdgeKind::Walkway)
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .and_then(|(gap, axis, index)| tuck(gap, axis, index));
+    }
     if gap <= 0.0 || gap > LANDUSE_CORNER_GAP_MAX {
         return None;
     }
@@ -1853,20 +1885,7 @@ fn pull_vertex(point: Vec2, outward: Vec2, roads: &Edges) -> Option<Vec2> {
     if gap > LANDUSE_GAP_MAX {
         return None;
     }
-    // кроме одного случая: вершина между тротуаром, замапленным дорожкой, и
-    // улицей за ним. Квартал в OSM нарисован до бордюра, а наша проезжая
-    // часть уже (Берлин, витрина 03: край квартала в 6–7 м от оси при
-    // полуширине 3.8), и двор торчал из-под тротуара серпом у каждого
-    // скругления угла. Полоса между тротуаром и бордюром — мощение, не двор:
-    // край уходит под дорожку
-    let street_beyond = gaps().any(|(gap, axis, index)| {
-        roads.edges[index].kind == EdgeKind::Carriageway
-            && gap > 0.0
-            && gap <= LANDUSE_GAP_MAX
-            && (axis - point).dot(outward) > 0.0
-    });
-    (roads.edges[index].kind == EdgeKind::Walkway && gap <= SIDEWALK_TUCK_MAX && street_beyond)
-        .then(|| point + direction * (gap + LANDUSE_OVERLAP))
+    tuck(gap, axis, index)
 }
 
 /// Вершина угла квартала у перекрёстка, уже дотянутая под полотно одной

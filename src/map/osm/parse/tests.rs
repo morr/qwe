@@ -3578,14 +3578,29 @@ fn a_block_drawn_to_the_kerb_is_tucked_under_its_sidewalk_footway() {
         (pulled + RESIDENTIAL_HALF - LANDUSE_OVERLAP).abs() < 0.02,
         "край не у бордюра: {pulled}"
     );
-    let tucked = top(vec![carriageway, footway.clone()]);
+    let tucked = top(vec![carriageway.clone(), footway.clone()]);
+    // до оси дорожки: край прямой между вершинами, дорожка гнётся
     assert!(
-        (tucked - (-7.0 + 1.75 - LANDUSE_OVERLAP)).abs() < 0.02,
+        (tucked + 7.0).abs() < 0.02,
         "край не ушёл под тротуар: {tucked}"
     );
     assert!(
-        (top(vec![footway]) + 5.0).abs() < 0.01,
+        (top(vec![footway.clone()]) + 5.0).abs() < 0.01,
         "без улицы край тронут"
+    );
+    // угол квартала лежит под другой дорожкой — переходом к улице: он уходит
+    // под тротуар вместе с краем, а не остаётся клином двора (Тула, витрина 21)
+    let crossing = RoadLine {
+        points: vec![
+            CENTER + Vec2::new(40.0, -30.0),
+            CENTER + Vec2::new(40.0, 0.0),
+        ],
+        ..footway.clone()
+    };
+    let cornered = top(vec![carriageway, footway, crossing]);
+    assert!(
+        (cornered + 7.0).abs() < 0.02,
+        "угол под переходом не ушёл под тротуар: {cornered}"
     );
 }
 
