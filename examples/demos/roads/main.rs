@@ -631,7 +631,6 @@ fn build_next(
     field.set_share(tree_style.conifer_share);
     // ближняя ступень: витрина смотрит на перекрёсток вблизи
     let (mut trees, tree_report) = mesh_trees(
-        TreeZoomBucket::at(0),
         &tree_style,
         &CrownParams::default(),
         &map.trees,
@@ -643,9 +642,8 @@ fn build_next(
     trees
         .crowns
         .retain(|crown| crown.at.cmpge(window_min).all() && crown.at.cmple(window_max).all());
-    trees.merged = clip(trees.merged);
-    for shadow in &mut trees.shadows {
-        shadow.layer.builder.clip_to_rect(window_min, window_max);
+    for layer in trees.merged.iter_mut().chain(&mut trees.shadows) {
+        layer.layer.builder.clip_to_rect(window_min, window_max);
     }
     spawn_tree_meshes(
         &mut commands,

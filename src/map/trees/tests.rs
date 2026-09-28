@@ -759,13 +759,7 @@ fn mesh_ten(shape: TreeShape, density: f32) -> (TreeMeshes, TreeReport) {
         density,
         ..default()
     };
-    mesh_trees(
-        TreeZoomBucket::at(0),
-        &style,
-        &params(),
-        &ten_trees(),
-        &ConiferField::default(),
-    )
+    mesh_trees(&style, &params(), &ten_trees(), &ConiferField::default())
 }
 
 /// Дальние ступени зума урезают **префикс** набора до своего потолка
@@ -774,35 +768,18 @@ fn mesh_ten(shape: TreeShape, density: f32) -> (TreeMeshes, TreeReport) {
 #[test]
 fn a_far_zoom_step_trims_the_tail_of_the_set() {
     let _sun = crate::map::default_sun();
-    let style = TreeStyle {
-        shape: TreeShape::Cotton,
-        density: 9.0,
-        ..default()
-    };
-    let build = |zoom: f32| {
-        mesh_trees(
-            TreeZoomBucket::for_zoom(zoom),
-            &style,
-            &params(),
-            &ten_trees(),
-            &ConiferField::default(),
-        )
-    };
-    let (near, near_report) = build(0.4);
-    assert_eq!(near_report.crowns, 10, "ближняя ступень без потолка");
-    assert_eq!(near_report.detail, CrownDetail::Full);
-    assert!(near.merged.is_empty());
-    for lod in &TREE_LODS[1..] {
-        let (_, report) = build(lod.max_zoom - 0.01);
-        let cap = lod.density_cap;
-        assert_eq!(report.density, cap);
+    let (built, report) = mesh_ten(TreeShape::Cotton, 9.0);
+    assert_eq!(report.crowns, 10, "ближняя ступень без потолка");
+    for (step, lod) in TREE_LODS.iter().enumerate().skip(1) {
         // пороги у `ten_trees` — 0..=9
-        assert_eq!(report.crowns, cap as usize + 1);
+        assert_eq!(report.steps[step], lod.density_cap as usize + 1);
     }
+    // кроны-сущности — только ближней ступени, все десять
+    assert!(built.crowns.iter().all(|crown| crown.shows == TreeLodMask::of([0])));
     // префикс: тени дальней ступени — ровно тени первых крон ступени ближе
     // (сравнимы ступени одной подробности: у ближней шаблон тени полный)
-    let far = shadows_shown(&near, TREE_LODS.len() - 1);
-    let nearer = shadows_shown(&near, TREE_LODS.len() - 2);
+    let far = shadows_shown(&built, TREE_LODS.len() - 1);
+    let nearer = shadows_shown(&built, TREE_LODS.len() - 2);
     assert!(far.len() < nearer.len());
     assert_eq!(far, &nearer[..far.len()], "кроны переехали");
 }
@@ -817,9 +794,9 @@ fn shadows_shown(built: &TreeMeshes, bucket: usize) -> Vec<[f32; 3]> {
         .collect()
 }
 
-/// Тени собраны на все ступени сразу и от ступени сборки не зависят: смена
-/// ступени их только прячет и показывает ([`switch_tree_lod`]), а не
-/// пересобирает. Каждая ступень видит ровно тени своего префикса.
+/// Тени собраны на все ступени сразу: смена ступени их только прячет и
+/// показывает ([`show_tree_lod`]), а не пересобирает. Каждая ступень видит
+/// ровно тени своего префикса, и каждого дерева — ровно одна на ступень.
 #[test]
 fn tree_shadows_are_built_once_for_every_zoom_step() {
     let _sun = crate::map::default_sun();
@@ -828,26 +805,7 @@ fn tree_shadows_are_built_once_for_every_zoom_step() {
         density: 9.0,
         ..default()
     };
-    let build = |bucket: usize| {
-        mesh_trees(
-            TreeZoomBucket::at(bucket),
-            &style,
-            &params(),
-            &ten_trees(),
-            &ConiferField::default(),
-        )
-        .0
-    };
-    let near = build(0);
-    let far = build(TREE_LODS.len() - 1);
-    assert_eq!(near.shadows.len(), far.shadows.len());
-    for (a, b) in near.shadows.iter().zip(&far.shadows) {
-        assert_eq!(a.shows, b.shows);
-        assert_eq!(
-            a.layer.builder.positions_for_test(),
-            b.layer.builder.positions_for_test()
-        );
-    }
+    let (near, _) = mesh_trees(&style, &params(), &ten_trees(), &ConiferField::default());
     // видимые на ступени вершины — ровно шаблоны теней её префикса
     let counts = step_counts(&style, &ten_trees());
     assert_eq!(counts, [10, 4, 3]);
@@ -901,9 +859,11 @@ fn the_far_shadow_is_a_thinned_copy_of_the_full_one() {
     }
 }
 
-/// Дальние ступени рисуют кроны не сущностями, а слитыми кусками: ни одного
-/// места, пул не выгружается, по слою `tree_crowns` на кусок карты со своим
-/// z — две кроны в двух кусках дают два слоя на разных z в полосе крон.
+/// Дальние ступени рисуют кроны не сущностями, а слитыми кусками: по слою
+/// `tree_crowns` на кусок карты со своим z — две кроны в двух кусках дают два
+/// слоя на разных z в полосе крон, — а кроны-сущности тех же деревьев видны
+/// только ближней ступени. Обе формы собраны сразу, смена ступени лишь
+/// переключает маски.
 #[test]
 fn far_zoom_steps_merge_crowns_into_chunks() {
     let _sun = crate::map::default_sun();
@@ -917,27 +877,30 @@ fn far_zoom_steps_merge_crowns_into_chunks() {
         (Vec2::new(20.0, 10.0), 3.0, 0.0),
         (Vec2::new(CROWN_CHUNK + 10.0, 10.0), 3.0, 0.0),
     ]);
-    let (built, report) = mesh_trees(
-        TreeZoomBucket::at(TREE_LODS.len() - 1),
-        &style,
-        &params(),
-        &planted,
-        &ConiferField::default(),
-    );
-    assert_eq!(report.detail, CrownDetail::Merged);
-    assert!(built.crowns.is_empty() && built.pools.is_empty());
+    let (built, report) = mesh_trees(&style, &params(), &planted, &ConiferField::default());
+    let near_only = TreeLodMask::of([0]);
+    assert_eq!(built.crowns.len(), 3);
+    assert!(built.crowns.iter().all(|crown| crown.shows == near_only));
+    assert_eq!(built.pools.len(), 1);
     assert_eq!(built.merged.len(), 2);
     assert_eq!(report.chunks, 2);
-    for layer in &built.merged {
+    let far_steps = TreeLodMask::of(1..TREE_LODS.len());
+    for merged in &built.merged {
+        let layer = &merged.layer;
+        assert_eq!(merged.shows, far_steps);
         assert_eq!(layer.name, "tree_crowns");
         assert_eq!(layer.material, MaterialSpec::Crown);
         assert!(layer.z >= Z_TREE && layer.z < Z_TREE + 1.0);
     }
     assert!(
-        built.merged[0].z != built.merged[1].z,
+        built.merged[0].layer.z != built.merged[1].layer.z,
         "два куска на одном z"
     );
-    let vertices: usize = built.merged.iter().map(|l| l.builder.vertex_count()).sum();
+    let vertices: usize = built
+        .merged
+        .iter()
+        .map(|merged| merged.layer.builder.vertex_count())
+        .sum();
     assert_eq!(report.merged_vertices, vertices);
     // первый кусок — кроны 0 и 1 (варианты 0 и 1), второй — крона 2
     let far = |variant| {
@@ -945,8 +908,32 @@ fn far_zoom_steps_merge_crowns_into_chunks() {
             .far
             .vertex_count()
     };
-    assert_eq!(built.merged[0].builder.vertex_count(), far(0) + far(1));
-    assert_eq!(built.merged[1].builder.vertex_count(), far(2));
+    assert_eq!(built.merged[0].layer.builder.vertex_count(), far(0) + far(1));
+    assert_eq!(built.merged[1].layer.builder.vertex_count(), far(2));
+}
+
+/// Слитые кроны режутся ещё и по полосам плотности: дальняя ступень с
+/// меньшим потолком прячет полосу хвоста целиком, а полоса хвоста лежит выше
+/// по z — крона с бо́льшим номером остаётся поверх и между полосами.
+#[test]
+fn merged_crowns_are_split_by_density_band() {
+    let _sun = crate::map::default_sun();
+    let (built, report) = mesh_ten(TreeShape::Cotton, 9.0);
+    // `ten_trees` в одном куске: полоса 0..3 — обеим дальним ступеням, 3..4 —
+    // только первой из них
+    assert_eq!(report.steps, [10, 4, 3]);
+    assert_eq!(built.merged.len(), 2);
+    let (head, tail) = (&built.merged[0], &built.merged[1]);
+    assert_eq!(head.shows, TreeLodMask::of([1, 2]));
+    assert_eq!(tail.shows, TreeLodMask::of([1]));
+    assert!(tail.layer.z > head.layer.z);
+    let far = |variant| {
+        crown_variant(TreeShape::Cotton, variant, &TreeStyle { density: 9.0, ..default() }, &params())
+            .far
+            .vertex_count()
+    };
+    assert_eq!(head.layer.builder.vertex_count(), far(0) + far(1) + far(2));
+    assert_eq!(tail.layer.builder.vertex_count(), far(3));
 }
 
 /// Яркость дерева в слитом куске запечена в цвет вершин — тем же множителем,
@@ -983,13 +970,14 @@ fn merged_crowns_bake_the_tint_and_keep_the_local_coordinate() {
     }
 }
 
-/// Все куски карты помещаются в полосу крон: у каждого свой z, и их не
-/// больше, чем шагов `CROWN_CHUNK_Z_STEP` в `Z_TREE..Z_TREE + 1`.
+/// Все куски карты — на каждую полосу плотности — помещаются в полосу крон: у
+/// каждого свой z, и их не больше, чем шагов `CROWN_CHUNK_Z_STEP` в
+/// `Z_TREE..Z_TREE + 1`.
 #[test]
 fn every_chunk_of_the_map_fits_the_crown_z_band() {
     let chunks = (crate::settings::MAP_SIZE / CROWN_CHUNK).ceil();
     // кусок ствола на самой границе карты — ещё один ряд
-    let worst = (chunks.x + 1.0) * (chunks.y + 1.0);
+    let worst = (chunks.x + 1.0) * (chunks.y + 1.0) * TREE_LODS.len() as f32;
     assert!(worst * CROWN_CHUNK_Z_STEP <= 1.0, "{worst} кусков");
 }
 
@@ -1009,13 +997,7 @@ fn tree_shadows_are_chunked_like_the_merged_crowns() {
         (Vec2::new(CROWN_CHUNK - 1.0, 10.0), 3.0, 0.0),
         (Vec2::new(CROWN_CHUNK + 1.0, 10.0), 3.0, 0.0),
     ]);
-    let (built, _) = mesh_trees(
-        TreeZoomBucket::at(0),
-        &style,
-        &params(),
-        &planted,
-        &ConiferField::default(),
-    );
+    let (built, _) = mesh_trees(&style, &params(), &planted, &ConiferField::default());
     let near: Vec<&TreeLayer> = built
         .shadows
         .iter()
@@ -1149,7 +1131,7 @@ fn crowns_of_one_mesh_and_tint_are_contiguous_in_z() {
     let mut field = ConiferField::default();
     field.resample(&spots, &ConiferNoiseStyle::default(), 1.0);
     field.set_share(0.5);
-    let (built, _) = mesh_trees(TreeZoomBucket::at(0), &style, &params(), &planted, &field);
+    let (built, _) = mesh_trees(&style, &params(), &planted, &field);
     assert_eq!(built.crowns.len(), 400);
 
     let group = |crown: &CrownPlacement| (crown.pool, crown.variant, crown.tint);

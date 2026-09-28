@@ -814,23 +814,25 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     still spawning by hand.
   - **`trees` is a scatter, and the seam takes a different shape there.** On the near
     zoom step a crown is an **entity per tree** — its own tint, its own micro-step of z,
-    its own scale — so it does not fit a `LayerMesh` at all, and `mesh_trees(bucket,
-    style, params, planted, field)` returns `TreeMeshes { pools, tints, crowns, merged,
-    shadows }` instead. On the far steps (`CrownDetail::Merged`) `crowns` and `pools`
-    are empty and **`merged`** carries ordinary `LayerMesh`es — one `tree_crowns` chunk
-    per `CROWN_CHUNK` square, `MaterialSpec::Crown` — so there the trees are a converted
+    its own scale — so it does not fit a `LayerMesh` at all, and `mesh_trees(style,
+    params, planted, field)` returns `TreeMeshes { pools, tints, crowns, merged,
+    shadows }` instead, **for every zoom step at once**: each piece carries the
+    `TreeLodMask` of the steps that draw it, and a step crossing only flips visibility
+    (`show_tree_lod`). For the far steps (`CrownDetail::Merged`) **`merged`** carries
+    `TreeLayer`s — ordinary `LayerMesh`es, one `tree_crowns` chunk per `CROWN_CHUNK`
+    square and density band, `MaterialSpec::Crown` — so there the trees are a converted
     layer like any other (`references/trees.md`, **Crown detail by zoom**):
     - **`pools`** — the crown meshes, `TREE_VARIANTS` of them per concrete shape (`Mixed`
       has two pools, every other shape one), as plain `Mesh` **values**. A
       `Handle<Mesh>` would be the world, which is exactly what `MaterialSpec` keeps out
       of a build; the adapter uploads the pool to `Assets` and nothing else changes.
-    - **`crowns`** — `CrownPlacement { at, radius, z, pool, variant, tint }`, one per
-      drawn tree. This is what the conversion actually bought: the density prefix
+    - **`crowns`** — `CrownPlacement { at, radius, z, shows, pool, variant, tint }`, one
+      per tree the near step draws. This is what the conversion actually bought: the density prefix
       (`TreeSet::visible_count`), the species resolve off the conifer field, the tint slot and the
       z micro-step were all inside a Bevy system and unreachable from a test.
     - **`shadows`** — the merged shadow meshes, one `TreeLayer` (a `LayerMesh` plus the
       `TreeLodMask` of the zoom steps that draw it) per density band, built for every
-      step at once and only shown or hidden by a step crossing (`switch_tree_lod`;
+      step at once and only shown or hidden by a step crossing (`show_tree_lod`;
       `references/trees.md`). Its colour moved **into the vertices** (`shadow_template` pushes
       `SHADOW_COLOR`) so the layer can be a plain `MaterialSpec::Blend`, the way every
       other shadow on the map already was; before that the layer allocated a coloured

@@ -102,17 +102,32 @@ stand, how density works, and which resources restyle them.
   is 1–3 px at the full zoom-out, where the `Wood` fill under it carries the forest, and
   every crown is an entity plus its share of the merged shadow mesh. Because it is the same
   prefix, a crossing only drops the tail — standing crowns never move — and surveyed
-  trees (threshold 0) stay on every step. `mesh_trees` takes the bucket itself (the rule of
-  **Zoom buckets** in `SKILL.md`). The crossing is **not** a condition of the tree chain's
-  `rebuilds_on` any more — it runs `switch_tree_lod` (`switches_on`), which re-lays the
-  crowns for the new step (`mesh_tree_crowns`) and flips the shadows' visibility; the
-  set, the conifer field and the tree-row band are left alone.
+  trees (threshold 0) stay on every step. **`mesh_trees` builds every step at once** and
+  takes no bucket: everything it returns — crown entities, merged crown chunks, shadow
+  layers — carries the `TreeLodMask` of the steps that draw it. The crossing is **not** a
+  condition of the tree chain's `rebuilds_on` — it runs `show_tree_lod` (`switches_on`),
+  which only flips `Visibility` (`set_if_neq`, `par_iter_mut`); the set, the conifer
+  field, the tree-row band and every mesh are left alone. The bucket reaches the build
+  only through `spawn_tree_meshes`, which spawns each piece visible or hidden for the
+  current step.
+  - **Both crown forms stay in the world** (the near step's entities hidden on the far
+    steps, the far chunks hidden on the near one). This replaced the respawn of every
+    crown entity on the way into the near step — 16 k on Tula, 95 k on Kaluga, three or
+    four heavy frames — and the rebuild of the merged chunks on the way out. The price is
+    the hidden entities: `extract_mesh2d` walks every `Mesh2d` each frame and skips a
+    hidden one on one `ViewVisibility` check, `check_visibility` likewise.
+  - **Merged crowns are split by density band too** (`detailed_bands`): a far step with a
+    lower cap hides the tail band's chunks instead of rebuilding. Bands run from the first
+    trees of the set, so the tail band's chunks sit **above** the head's in z and a
+    higher-numbered crown stays on top across bands as it does inside a chunk;
+    `CROWN_CHUNK_Z_STEP` is 1/256 so 3 bands × 63 chunks fit `Z_TREE..+1`
+    (`merged_crowns_are_split_by_density_band`).
   - **Shadows by density band** (`step_counts`, `density_bands`, `TreeLodMask`,
     `TreeLayer`): step `b` draws the prefix `counts[b]`, the counts do not grow from
     near to far, so band `b` — trees `counts[b + 1]..counts[b]` — is drawn on steps
     `0..=b`. `mesh_trees` builds one `tree_shadows` layer per band on every rebuild (all
     steps at once, each on its own z, `TREE_SHADOW_Z_STEP` 1/1024 over `Z_TREE_SHADOW`),
-    spawned with its mask and a `Visibility` for the current step; `switch_tree_lod`
+    spawned with its mask and a `Visibility` for the current step; `show_tree_lod`
     flips them with `set_if_neq`. Before, the whole shadow mesh was rebuilt and uploaded
     on every crossing — Tula 1.3–4.6 M vertices (~183 MB), Kaluga 10–15 M (~600 MB) — for
     a prefix that differs only in its tail. Splitting the mesh changes nothing on screen:
@@ -192,7 +207,9 @@ stand, how density works, and which resources restyle them.
     What is left of the Kaluga hitch is mostly the **tree shadow mesh** — 10–14 M
     vertices for the whole forest, rebuilt and uploaded on every crossing — the next
     candidate (a light far shadow template, the same move). Crossing into the near step
-    still respawns every crown (Kaluga ~750–800 ms, Tula ~130 ms).
+    still respawned every crown (Kaluga ~750–800 ms, Tula ~130 ms). All three are gone
+    since: the shadows are built once per band (above), thinned on the far steps, and
+    both crown forms stay in the world behind their masks.
   - **The draw-group z (`crown_z`) stays** — it is what batches the near step's entities
     into ~120 draws; the far steps do not use it.
 - **The density ceiling is derived, not chosen** (`planting.rs`) — `TREE_MIN_SPACING` (6 m)

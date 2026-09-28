@@ -1134,11 +1134,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   shared mesh; far (from 2 m/px), the crowns are light fills in the full crown's average
   colour, **merged into `tree_crowns` chunks** of `CROWN_CHUNK` (1 km) — no entity per
   tree, each chunk on its own z, crowns inside a chunk drawn in `TreeSet` order. **The
-  tree shadows are built once for every zoom step**: one `tree_shadows` layer per
-  **density band** (the trees between two steps' prefixes), each carrying a
-  `TreeLodMask` of the steps that draw it; a step crossing (`switch_tree_lod`) only flips
-  their `Visibility` and re-lays the crowns. Detail in the `osm-map` skill's
-  `references/trees.md`.
+  trees are built once for every zoom step**: crown entities, merged crown chunks and
+  `tree_shadows` layers are split by **density band** (the trees between two steps'
+  prefixes) and each carries a `TreeLodMask` of the steps that draw it; a step crossing
+  (`show_tree_lod`) only flips `Visibility` — no rebuild, no respawn. Detail in the
+  `osm-map` skill's `references/trees.md`.
 - **Pitches** (`map/pitch.rs`) — sports and children's grounds (`leisure=pitch|track|
   playground|sports_centre|stadium`), `Z_PITCH` 2.005 with the markings at 2.006 —
   **over every road ribbon** and parking, under water: OSM runs yard footways across a
@@ -1547,9 +1547,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   shadows carry their own tag and their own rebuild schedule; a tag is what the
   *adapter* despawns by, so it stays outside `LayerMesh`. **`trees` is a scatter, not a
   merged mesh** — a crown is an entity per tree (own tint, own z), so `mesh_trees`
-  returns `TreeMeshes { pools, tints, crowns, shadows }`: the crown pool as plain `Mesh`
-  values (a `Handle` is the world, exactly what `MaterialSpec` keeps out of a build), the
-  placements, and only the shadows as a `LayerMesh`. Its adapter uploads the pool, spawns
+  returns `TreeMeshes { pools, tints, crowns, merged, shadows }`: the crown pool as plain
+  `Mesh` values (a `Handle` is the world, exactly what `MaterialSpec` keeps out of a
+  build), the placements, and the far chunks and shadows as masked `LayerMesh`es. Its adapter uploads the pool, spawns
   one entity per placement and hands the shadows to `spawn_layers` — so the merged layers
   of the map all get their `DespawnOnExit` from `spawn_layer`, and the tree crowns are
   the one scatter that writes its own, in one place. The two
