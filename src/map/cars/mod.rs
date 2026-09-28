@@ -624,8 +624,8 @@ pub fn cars_mesh(
 /// её асфальт лежит по этим же осям, а не по своему сглаживанию, — иначе ряд
 /// стоял бы не на своей ленте.
 pub fn drawn_axes<'a>(roads: &'a [RoadLine], shape: &RoadShape) -> Vec<Cow<'a, [Vec2]>> {
-    let nodes = RoadNodes::new(roads);
-    axis::street_axes(roads, &[], &RoadNetwork::default(), &nodes, shape).paths
+    let mut nodes = RoadNodes::new(roads);
+    axis::street_axes(roads, &[], &RoadNetwork::default(), &mut nodes, shape).paths
 }
 
 /// Ряды вдоль всех улиц, годных под парковку.

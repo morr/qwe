@@ -211,18 +211,78 @@ fn halves_laid_over_each_other_are_pushed_apart() {
 }
 
 #[test]
-fn a_node_shared_with_a_cross_street_stays_put() {
+fn a_node_shared_with_a_side_street_moves_with_the_half_and_the_street_follows() {
+    // выезд из двора посреди куска. Прежде узел был закреплён, и у каждого
+    // выезда ось возвращалась к OSM: кромка Красноармейского гуляла на
+    // метр–полтора через каждые 50–100 м
     let mut roads = avenue(2, -0.6, 200.0);
     roads[0].points.insert(1, Vec2::new(100.0, 0.0));
-    let apart = roads[1].points[0].y;
     roads.push(street(
         vec![Vec2::new(100.0, -40.0), Vec2::new(100.0, 0.0)],
         7.6,
     ));
+    let mut nodes = RoadNodes::new(&roads);
+    let axes = crate::map::roads::axis::street_axes(
+        &roads,
+        &[],
+        &RoadNetwork::new(&roads),
+        &mut nodes,
+        &RoadShape::default(),
+    );
+    let paths: Vec<Vec<Vec2>> = axes.paths.iter().map(|path| path.to_vec()).collect();
+    let wanted = 2.0 * 3.3 + 1.0 + PAVED_MIN_GAP;
+    for (step, apart) in apart_along(&paths, 0, &[1], 40.0, 160.0).into_iter().enumerate() {
+        assert!(
+            (apart - wanted).abs() < 0.05,
+            "у x = {}: между осями {apart}, а не {wanted} — у выезда разводка сошла на нет",
+            40.0 + step as f32 * 2.0
+        );
+    }
+    let node = paths[2][paths[2].len() - 1];
+    assert!(node.y < -0.2, "узел уехал с половиной: {node}");
+    assert!(
+        paths[0].contains(&node),
+        "улица пришла в вершину половины: {node}"
+    );
+    assert_eq!(
+        nodes.roads_at(node),
+        &[0, 2],
+        "узел находится и по новому месту"
+    );
+}
+
+#[test]
+fn the_halves_of_a_bridge_are_a_pair_and_are_pushed_apart() {
+    // Красноармейский над каналом: без пары оси моста стояли в 9.5 м, и
+    // подходы с обеих сторон сходились к ним
+    let roads: Vec<RoadLine> = avenue(2, -0.6, 200.0)
+        .into_iter()
+        .map(|half| RoadLine {
+            bridge: true,
+            ..half
+        })
+        .collect();
+    let (pairs, paths) = aligned(&roads);
+    assert_eq!(pairs.count(), [1, 0, 0], "мост — пара, как любые половины");
+    let apart = distance_to_path(at_x(&paths[0], 100.0), &paths[1]);
+    let wanted = 2.0 * 3.3 + 1.0 + PAVED_MIN_GAP;
+    assert!((apart - wanted).abs() < 0.05, "между осями {apart}");
+}
+
+#[test]
+fn a_node_shared_with_a_bridge_stays_put() {
+    // за узлом, который дорога повторить не может, ось держится на месте
+    let mut roads = avenue(2, -0.6, 200.0);
+    roads[0].points.insert(1, Vec2::new(100.0, 0.0));
+    let apart = roads[1].points[0].y;
+    roads.push(RoadLine {
+        bridge: true,
+        ..street(vec![Vec2::new(100.0, -40.0), Vec2::new(100.0, 0.0)], 7.6)
+    });
     let (_, paths) = aligned(&roads);
     assert!(
         paths[0].contains(&Vec2::new(100.0, 0.0)),
-        "узел с поперечной улицей не сдвинут"
+        "узел с мостом не сдвинут"
     );
     // а за переходом от узла половина уже разведена
     let away = at_x(&paths[0], 100.0 + ALIGN_TRANSITION + 8.0);
@@ -368,12 +428,12 @@ fn a_seam_of_the_own_half_on_a_smoothed_axis_does_not_let_the_axes_go() {
             3,
         ),
     ];
-    let nodes = RoadNodes::new(&roads);
+    let mut nodes = RoadNodes::new(&roads);
     let axes = crate::map::roads::axis::street_axes(
         &roads,
         &[],
         &RoadNetwork::new(&roads),
-        &nodes,
+        &mut nodes,
         &RoadShape::default(),
     );
     assert_ne!(
@@ -616,3 +676,4 @@ fn a_run_ending_near_the_end_keeps_the_pair_side_bare_to_the_end() {
         ])
     );
 }
+

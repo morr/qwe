@@ -6,12 +6,12 @@ use crate::map::shapes::is_ring;
 /// Оси при допуске `tolerance`, м: 3 — дефолт ручки, 0 — ось по OSM.
 fn axes(roads: &[RoadLine], tolerance: f32) -> Vec<Vec<Vec2>> {
     let network = RoadNetwork::new(roads);
-    let nodes = RoadNodes::new(roads);
+    let mut nodes = RoadNodes::new(roads);
     let shape = RoadShape {
         curve_tolerance: tolerance,
         ..default()
     };
-    street_axes(roads, &[], &network, &nodes, &shape)
+    street_axes(roads, &[], &network, &mut nodes, &shape)
         .paths
         .into_iter()
         .map(Cow::into_owned)

@@ -27,11 +27,15 @@
 //! Туле на одной паре от наложения в метр до зазора в полтора. Половины
 //! разводятся от середины между ними на постоянное расстояние: зазор куска —
 //! его медиана, у асфальтовой разделительной — не у́же [`PAVED_MIN_GAP`].
-//! Разводка сходит на нет за [`ALIGN_TRANSITION`] до конца куска и до узла с
-//! чужой улицей: узел закреплён (по нему находят друг друга скругления
-//! бордюров, разрывы разметки и стежки), а сдвиг в полметра у конца куска
-//! читался бы ступенькой. У узла ось ещё и прямая на [`PIN_STRAIGHT`]: на
-//! гнутом крае скругление бордюра не помещается. Стык с продолжением той же
+//! Разводка сходит на нет за [`ALIGN_TRANSITION`] до конца куска: сдвиг в
+//! полметра у конца куска читался бы ступенькой. Узел с чужой дорогой —
+//! выездом из двора, поперечной улицей — едет вместе с половиной, а его
+//! дороги идут следом ([`Pairs::follow_moved_nodes`]); `RoadNodes` узнаёт его
+//! и по новому месту (по нему находят друг друга скругления бордюров,
+//! разрывы разметки и стежки). Закреплён только узел, за которым дорога
+//! пойти не может, — с чужой разводимой половиной, кольцом или мостом; там
+//! разводка сходит на нет, а ось ещё и прямая на [`PIN_STRAIGHT`]: на гнутом
+//! крае скругление бордюра не помещается. Стык с продолжением той же
 //! половины, у которого пара тоже есть, концом куска не считается — там
 //! разводка идёт насквозь. Не считается им и стык двух кусков одной
 //! половины через дыру до [`RUN_BRIDGE`] — шов **встречной** половины, где
@@ -55,7 +59,7 @@
 
 use std::borrow::Cow;
 
-use bevy::platform::collections::HashSet;
+use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 
 use super::{RoadNetwork, RoadNodes};
@@ -117,6 +121,17 @@ const RUN_BRIDGE: f32 = 12.0;
 /// кладётся только на прямой край — полуширина поперечного проспекта и
 /// касательная дуги в 10 м. Переход начинается за этим участком.
 const PIN_STRAIGHT: f32 = 16.0;
+/// На каком расстоянии от шва двух половин, сведённых в одну точку, м, их
+/// оси встают на общую касательную ([`Pairs::align`]).
+const SEAM_TAIL: f32 = 0.5;
+/// Излом на шве двух половин круче этого, рад, — не продолжение, торцы не
+/// выравниваются.
+const SEAM_MAX_BEND: f32 = 10.0 * std::f32::consts::PI / 180.0;
+/// Сдвиг узла короче этого, м, — не сдвиг: дорогам узла идти некуда.
+const MOVE_EPSILON: f32 = 0.01;
+/// На каком расстоянии от сдвинутого узла, м, дорога, идущая за ним
+/// ([`Pairs::follow_moved_nodes`]), возвращается на своё место.
+const FOLLOW_FADE: f32 = 12.0;
 /// Шаг вершин разводимой оси, м: на длинном прямом звене сдвиг одних его
 /// концов не держал бы зазор посередине.
 const ALIGN_STEP: f32 = 4.0;
@@ -259,16 +274,23 @@ pub struct Pairs {
 }
 
 /// Может ли дорога быть половиной разделённой улицы: одностороннее полотно,
-/// не кольцо, не мост и не арка. Проезд (`service`) — тоже: бульвар у ТРЦ
+/// не кольцо и не арка. Проезд (`service`) — тоже: бульвар у ТРЦ
 /// «Макси» размечен именно так, двумя встречными проездами, а пара ищется
 /// только в своём классе. Проезд ряда стоянки — нет: встречные ряды
 /// разделяют места, а не разделительная.
+///
+/// Мост — половина, как любая: без пары его оси стояли там, где их положил
+/// картограф, а подходы с обеих сторон сходились к ним — проспект сужался у
+/// каждого моста (Красноармейский над каналом: 9.5 м между осями вместо
+/// 11.4). Навмеш режет мост по точкам OSM, а разводка раздвигает половины
+/// наружу — проходимое остаётся внутри нарисованного настила. Арка — нет:
+/// её стены — стены дома.
 pub fn pairable(road: &RoadLine) -> bool {
     road.class == RoadClass::Street
         && !road.parking_aisle
         && road.oneway
         && !road.is_roundabout()
-        && !road.carves_navmesh()
+        && !road.passage
         && road.points.len() >= 2
 }
 
@@ -344,6 +366,7 @@ impl Pairs {
                 })
                 .collect();
             let total = probes.last().map_or(0.0, |probe| probe.along);
+            let mut pieces: Vec<(usize, usize, usize)> = Vec::new();
             let mut start = 0;
             while start < probes.len() {
                 let Some((partner, ..)) = probes[start].beside else {
@@ -354,15 +377,31 @@ impl Pairs {
                     .iter()
                     .position(|probe| probe.beside.map(|beside| beside.0) != Some(partner))
                     .map_or(probes.len(), |offset| start + offset);
-                let run = &probes[start..end];
-                match run_kind(run, total) {
-                    RunKind::Pair => {
-                        pairs.push_run(index, partner, run, roads, median_gap, &tracks)
-                    }
-                    RunKind::Short => short.push((index, partner, run.to_vec())),
-                    RunKind::None => {}
-                }
+                pieces.push((start, end, partner));
                 start = end;
+            }
+            // длина куска меряется по цепочке, в которой сосед сменился без
+            // пропуска: на шве встречной половины короткий way видит пару
+            // половиной длины с одним её way и половиной — с другим, и ни
+            // один кусок не дотягивал до пары (Красноармейский у моста: way в
+            // 16 м — по 7.4 м с каждым), а половина сходилась к мосту
+            for chain in pieces.chunk_by(|a, b| a.1 == b.0) {
+                let span = probes[chain[chain.len() - 1].1 - 1].along - probes[chain[0].0].along;
+                for &(start, end, partner) in chain {
+                    let run = &probes[start..end];
+                    // осколок у шва, где обе половины меняют way, — не кусок
+                    if chain.len() > 1 && run[run.len() - 1].along - run[0].along < PAIR_MIN / 2.0
+                    {
+                        continue;
+                    }
+                    match run_kind(span, total) {
+                        RunKind::Pair => {
+                            pairs.push_run(index, partner, run, roads, median_gap, &tracks)
+                        }
+                        RunKind::Short => short.push((index, partner, run.to_vec())),
+                        RunKind::None => {}
+                    }
+                }
             }
         }
         // короткий way, целиком идущий рядом с парой, — пара, если он
@@ -457,6 +496,10 @@ impl Pairs {
     /// ([`facing_half`]). Иначе ось широкого way на шве стояла дальше от
     /// середины, чем ось узкого, — на полразницы ширин: у шва ступенька на
     /// внешней кромке и дыра в землю у внутренней (Тула, витрина 16).
+    ///
+    /// Отдаёт узлы с чужими дорогами, которые уехали вместе с половиной:
+    /// `(точка OSM, куда нарисован)` — их дорогам идти следом
+    /// ([`Self::follow_moved_nodes`]).
     pub fn align(
         &mut self,
         paths: &mut [Cow<[Vec2]>],
@@ -464,7 +507,7 @@ impl Pairs {
         network: &RoadNetwork,
         nodes: &RoadNodes,
         wedges: &Tapers,
-    ) {
+    ) -> Vec<(Vec2, Vec2)> {
         let facing = |road: usize, at: f32, total: f32, left: bool| {
             facing_half(roads, wedges, road, at, total, left)
         };
@@ -493,7 +536,18 @@ impl Pairs {
         // подходит через шов, без ступеньки. Узел — точка OSM, а не конец
         // нарисованной оси: сглаженная ось режется на ways в ближайшей к шву
         // точке дуги (`roads/axis.rs`), и по концу оси узел не находился —
-        // разводка сходила на нет у каждого шва своей половины
+        // разводка сходила на нет у каждого шва своей половины. Продолжение —
+        // way той же улицы или соосный way за торцом ([`RoadNodes::next_way`]):
+        // у перекрёстка улица сети кончается (Красноармейский — tertiary до
+        // узла и primary после), а половина идёт дальше, и разводка, сходившая
+        // на нет с обеих сторон, сужала проспект у каждого перекрёстка
+        let continues = |road: usize, other: usize| {
+            other != road
+                && ((street(other).is_some() && street(other) == street(road))
+                    || [0, 1]
+                        .into_iter()
+                        .any(|end| nodes.next_way(road, end).is_some_and(|(next, _)| next == other)))
+        };
         let continued = |road: usize, end: bool| {
             let points = &roads[road].points;
             let node = if end {
@@ -502,7 +556,7 @@ impl Pairs {
                 points[0]
             };
             nodes.roads_at(node).iter().find_map(|&other| {
-                if other == road || street(other).is_none() || street(other) != street(road) {
+                if !continues(road, other) {
                     return None;
                 }
                 let points = &roads[other].points;
@@ -517,6 +571,7 @@ impl Pairs {
             })
         };
         let mut aligned: Vec<(usize, Vec<Vec2>)> = Vec::new();
+        let mut moved: Vec<(Vec2, Vec2)> = Vec::new();
         for (road, runs) in self.runs.iter().enumerate() {
             if runs.is_empty() {
                 continue;
@@ -525,19 +580,47 @@ impl Pairs {
             let ends = [continued(road, false), continued(road, true)];
             let (mut dense, along) = densify(path, ALIGN_STEP);
             let total = along[along.len() - 1];
-            // узлы с чужими проезжими дорогами — закреплены; переход дорожки
-            // — нет, как и у оси улицы (`roads/axis.rs`)
-            let pinned: Vec<f32> = dense
-                .iter()
-                .zip(&along)
-                .filter(|(point, _)| {
-                    nodes.roads_at(**point).iter().any(|&other| {
-                        other != road
-                            && roads[other].class == RoadClass::Street
-                            && (street(other).is_none() || street(other) != street(road))
-                    })
+            let foreign = |other: usize| other != road && !continues(road, other);
+            // узел с чужой дорогой едет вместе с половиной, а дорога идёт
+            // следом (`Pairs::follow_moved_nodes`). Держит ось только тот, за
+            // которым дорога пойти не может: другая разводимая половина,
+            // кольцо или мост — у них своё место. Прежде закреплён был каждый
+            // узел с проездом, и у каждого выезда из двора ось возвращалась
+            // к OSM: кромка Красноармейского гуляла на метр–полтора через
+            // каждые 50–100 м
+            let held = |point: Vec2| {
+                nodes.roads_at(point).iter().any(|&other| {
+                    foreign(other)
+                        && roads[other].class == RoadClass::Street
+                        && (!self.runs[other].is_empty()
+                            || roads[other].is_roundabout()
+                            || roads[other].carves_navmesh())
                 })
-                .map(|(_, &at)| at)
+            };
+            // узел на конце оси — точка OSM: сглаженная ось режется на ways
+            // рядом с узлом, а не в нём (`continued` выше)
+            let osm = &roads[road].points;
+            let last = dense.len() - 1;
+            let node_of = |index: usize| match index {
+                0 => osm[0],
+                _ if index == last => osm[osm.len() - 1],
+                _ => dense[index],
+            };
+            let pinned: Vec<f32> = (0..dense.len())
+                .filter(|&index| held(node_of(index)))
+                .map(|index| along[index])
+                .collect();
+            // узлы запоминаются до сдвига: после него по вершине их не найти
+            let shared: Vec<bool> = (0..dense.len())
+                .map(|index| nodes.is_shared(node_of(index)))
+                .collect();
+            // и шов с продолжением: обе половины сдвигают его каждая сама, и
+            // их концы расходились на сантиметры — узел по ним не находился
+            let movable: Vec<Option<Vec2>> = (0..dense.len())
+                .map(|index| {
+                    let node = node_of(index);
+                    (shared[index] && !held(node)).then_some(node)
+                })
                 .collect();
             // участок, у конца которого ось продолжает та же половина с
             // парой, тянется до самого конца оси и там не сходит на нет
@@ -613,10 +696,44 @@ impl Pairs {
                 *point += (wanted - *point) * weight;
             }
             // узлы остаются вершинами: по их точному месту их находят соседи
-            let kept = simplify(&dense, false, SIMPLIFY_TOLERANCE, |index| {
-                nodes.is_shared(dense[index])
-            });
+            let kept = simplify(&dense, false, SIMPLIFY_TOLERANCE, |index| shared[index]);
+            moved.extend(
+                movable
+                    .iter()
+                    .zip(&dense)
+                    .filter_map(|(from, &to)| from.map(|from| (from, to)))
+                    .filter(|(from, to)| from.distance(*to) > MOVE_EPSILON),
+            );
             aligned.push((road, kept.into_iter().map(|index| dense[index]).collect()));
+        }
+        // узел, сдвинутый концом половины и началом её продолжения, — в одном
+        // месте, середине сдвигов: скругления и стежки ищут его по вершине
+        let mut meets: HashMap<(i32, i32), (Vec2, f32)> = HashMap::new();
+        for (from, to) in &moved {
+            let meet = meets.entry(node_key(*from)).or_insert((Vec2::ZERO, 0.0));
+            meet.0 += *to;
+            meet.1 += 1.0;
+        }
+        let place = |from: Vec2| {
+            let (sum, count) = meets[&node_key(from)];
+            sum / count
+        };
+        let bits = |point: Vec2| [point.x.to_bits(), point.y.to_bits()];
+        let met: HashMap<[u32; 2], Vec2> = moved
+            .iter()
+            .filter(|(from, _)| meets[&node_key(*from)].1 > 1.0)
+            .map(|&(from, to)| (bits(to), place(from)))
+            .collect();
+        if !met.is_empty() {
+            for point in aligned.iter_mut().flat_map(|(_, path)| path.iter_mut()) {
+                if let Some(&place) = met.get(&bits(*point)) {
+                    *point = place;
+                }
+            }
+            align_seam_ends(&mut aligned, &met);
+        }
+        for (from, to) in &mut moved {
+            *to = place(*from);
         }
         for (road, path) in aligned {
             paths[road] = Cow::Owned(path);
@@ -662,6 +779,52 @@ impl Pairs {
             thin(&mut median.inner[1]);
         }
         self.join_ends();
+        moved
+    }
+
+    /// Дороги узлов, уехавших с половиной ([`Self::align`]), идут следом:
+    /// вершина узла — туда же, куда половина, соседние вершины — с затуханием
+    /// на [`FOLLOW_FADE`], до следующего узла. Разводимые половины
+    /// сдвинуты своей разводкой и не трогаются.
+    pub fn follow_moved_nodes(
+        &self,
+        paths: &mut [Cow<[Vec2]>],
+        nodes: &RoadNodes,
+        moved: &[(Vec2, Vec2)],
+    ) {
+        let mut seen = HashSet::new();
+        for &(from, to) in moved {
+            let key = node_key(from);
+            if !seen.insert(key) {
+                continue;
+            }
+            let shift = to - from;
+            for &road in nodes.roads_at(from) {
+                if !self.runs[road].is_empty() {
+                    continue;
+                }
+                let Some(vertex) = paths[road].iter().position(|point| node_key(*point) == key)
+                else {
+                    continue;
+                };
+                let original = paths[road].to_vec();
+                let points = paths[road].to_mut();
+                points[vertex] = to;
+                let after = (vertex + 1..original.len()).collect::<Vec<_>>();
+                let before = (0..vertex).rev().collect::<Vec<_>>();
+                for side in [after, before] {
+                    let (mut at, mut walked) = (vertex, 0.0);
+                    for next in side {
+                        walked += original[next].distance(original[at]);
+                        if walked >= FOLLOW_FADE || nodes.is_shared(original[next]) {
+                            break;
+                        }
+                        points[next] += shift * (1.0 - smoothstep(walked / FOLLOW_FADE));
+                        at = next;
+                    }
+                }
+            }
+        }
     }
 
     /// Свести торцы соседних разделительных, лежащие ближе [`JOIN_GAP`], в
@@ -895,6 +1058,65 @@ impl<'a> Tracks<'a> {
     }
 }
 
+/// Торцы двух половин, сведённых в одну точку `met`, — на общую касательную:
+/// у каждой вершина в [`SEAM_TAIL`] от шва по биссектрисе их направлений.
+/// Ленты кончаются торцом поперёк своей оси, и при изломе в пару градусов
+/// (картограф свёл мост и подход не по прямой — Красноармейский над каналом)
+/// угол бордюра настила заходил на асфальт подхода зубцом; излом уходит
+/// внутрь лент, где его кроют их соединения.
+fn align_seam_ends(aligned: &mut [(usize, Vec<Vec2>)], met: &HashMap<[u32; 2], Vec2>) {
+    let bits = |point: Vec2| [point.x.to_bits(), point.y.to_bits()];
+    let places: HashSet<[u32; 2]> = met.values().map(|place| bits(*place)).collect();
+    let mut at_place: HashMap<[u32; 2], Vec<(usize, bool)>> = HashMap::new();
+    for (slot, (_, path)) in aligned.iter().enumerate() {
+        if path.len() < 2 {
+            continue;
+        }
+        for end in [false, true] {
+            let point = if end { path[path.len() - 1] } else { path[0] };
+            if places.contains(&bits(point)) {
+                at_place.entry(bits(point)).or_default().push((slot, end));
+            }
+        }
+    }
+    // направление от шва вдоль оси
+    let away = |path: &[Vec2], end: bool| {
+        let (node, next) = if end {
+            (path[path.len() - 1], path[path.len() - 2])
+        } else {
+            (path[0], path[1])
+        };
+        (next - node).normalize_or_zero()
+    };
+    for ends in at_place.into_values() {
+        let [(first, first_end), (second, second_end)] = ends[..] else {
+            continue;
+        };
+        let (a, b) = (
+            away(&aligned[first].1, first_end),
+            away(&aligned[second].1, second_end),
+        );
+        if a.dot(-b) < SEAM_MAX_BEND.cos() {
+            continue;
+        }
+        let Some(tangent) = (a - b).try_normalize() else {
+            continue;
+        };
+        for (slot, end, direction) in [(first, first_end, tangent), (second, second_end, -tangent)] {
+            let path = &mut aligned[slot].1;
+            let (node, neighbour, at) = if end {
+                (path[path.len() - 1], path[path.len() - 2], path.len() - 1)
+            } else {
+                (path[0], path[1], 1)
+            };
+            // соседняя вершина может быть узлом — не трогается, новая встаёт
+            // между ней и швом
+            let reach = SEAM_TAIL.min(neighbour.distance(node) / 2.0);
+            path.insert(at, node + direction * reach);
+        }
+    }
+}
+
 /// Плавный переход разводки: 0 у конца куска или у узла, 1 за
 /// [`ALIGN_TRANSITION`] от них.
 fn ease(distance: f32) -> f32 {
@@ -929,7 +1151,7 @@ fn blend(before: f32, after: f32, beyond: f32) -> f32 {
     before + (after - before) * smoothstep(beyond / ALIGN_TRANSITION + 0.5)
 }
 
-/// Что за кусок проб `run` у половины длиной `total`.
+/// Что за кусок проб, чья цепочка длиной `span`, у половины длиной `total`.
 enum RunKind {
     /// Не короче [`PAIR_MIN`] — пара.
     Pair,
@@ -943,11 +1165,7 @@ enum RunKind {
     None,
 }
 
-fn run_kind(run: &[Probe], total: f32) -> RunKind {
-    let (Some(first), Some(last)) = (run.first(), run.last()) else {
-        return RunKind::None;
-    };
-    let span = last.along - first.along;
+fn run_kind(span: f32, total: f32) -> RunKind {
     if span >= PAIR_MIN {
         RunKind::Pair
     } else if span >= PAIR_MIN / 2.0 && span >= PAIR_COVER * total {

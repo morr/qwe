@@ -316,10 +316,41 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     partner's original axis: target gap = the run's median, paved ones no narrower than
     `PAVED_MIN_GAP` 0.5. The weight fades (smoothstep) over `ALIGN_TRANSITION` 20 m to a
     run's end — unless the end is a seam whose continuation carries a run at the same
-    node — and to a node shared with **another** carriageway (a street or a drive — a
-    footway crossing pins nothing, as on **The street axis**), which stays exactly in
-    place (kerb returns, breaks and stitches find each other by it). Next to such a node
-    the axis is not moved at all for `PIN_STRAIGHT` 16 m and the fade begins beyond it: a
+    node. **A node shared with another road moves with the half**: `align` returns each
+    such node as `(OSM point, drawn point)`, `Pairs::follow_moved_nodes` moves that
+    vertex of every other road there to the same place (its neighbours follow, fading
+    over `FOLLOW_FADE` 12 m, up to the next node), and `RoadNodes::alias` makes the new
+    place find the same roads — kerb returns, breaks, stitches and rings look nodes up by
+    a vertex of the drawn axis. Before, every node with a carriageway was pinned, and at
+    each yard exit the axis fell back to OSM: on Красноармейский the distance between
+    the axes dipped from 11.4 to 9.9–10.7 m every 50–100 m and the kerb waved by a metre
+    and a half (the author's report after the seam fix). A node moved by two halves —
+    a half's end and its continuation's start — is put at the **mean** of the two moves,
+    so both drawn ends stay one vertex (apart, they missed each other by 5–8 cm and the
+    node was lost). A **continuation** is a way of the same street *or* the coaxial way
+    past the end (`RoadNodes::next_way`): at a crossing the network's street ends
+    (Красноармейский is tertiary up to the node and primary past it) while the half goes
+    on, and a fade on both sides narrowed the avenue at every crossing. **A bridge is a
+    half like any** (`pairable` excludes only arches): unpaired, its axes stood where
+    the mapper laid them, 9.5 m apart on Красноармейский over the canal, and the
+    approaches converged on them. The navmesh carves the bridge by the OSM points, and
+    the alignment moves the halves *outward*, so the walkable part stays inside the
+    drawn deck. Such a bridge is also **smoothed with its street** (`axis.rs`, the
+    `excluded` rule keeps out only unpaired bridges and arches), and a footway bridge
+    mapped beside it follows it (`follow_bridge_sidewalks`: every vertex takes the shift
+    of the nearest deck point): bridge decks lie over the streets, and the footway deck
+    left at its OSM place put its tail over the moved approach as a pale tooth. At a node
+    where two halves meet (the mean above), both ends are put on **one tangent**
+    (`align_seam_ends`, a vertex `SEAM_TAIL` 0.5 m in along the bisector): the ribbons
+    end square to their own axis, and a 2° kink between a bridge and its approach showed
+    as a notch in the kerb. **A run is judged by its chain** in `Pairs::new`: pieces of
+    probes that change partner with no gap count their length together (a piece under
+    `PAIR_MIN / 2` inside a chain is a sliver at a seam and is dropped) — a 16 m way at a
+    seam of the opposite half saw 7.4 m of each of its two ways, neither piece reached
+    `PAIR_MIN`, and the half went unpaired into the bridge. **Pinned** is now only a node
+    the other road cannot follow to: one with another aligned half, a ring or a bridge
+    (a street or a drive — a footway pins nothing, as on **The street axis**). Next to
+    such a node the axis is not moved at all for `PIN_STRAIGHT` 16 m and the fade begins beyond it: a
     kerb return is laid only on a straight edge, and a 10 m return to a crossing avenue
     needs its half width plus the tangent (stage 5 — before it the fade bent the edge from
     the node on, and the corners of sample 2 came out a metre or two). **Runs of one half

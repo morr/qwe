@@ -148,10 +148,10 @@ impl<'m> Drawn<'m> {
     /// подготовки. [`Axis::Ribbon`] здесь совпадает с [`Axis::Nodal`].
     pub fn nodal(map: &'m MapData, shape: &RoadShape) -> Self {
         let osm = map.roads.as_slice();
-        let nodes = RoadNodes::new(osm);
+        let mut nodes = RoadNodes::new(osm);
         // ось по улице целиком, не по way (`roads/axis.rs`); у переезда та же
         // ось, что у его дороги, — он отличается шириной и классом
-        let axes = axis::street_axes(osm, &map.rails, &map.network, &nodes, shape);
+        let axes = axis::street_axes(osm, &map.rails, &map.network, &mut nodes, shape);
         let mut roads: Vec<Cow<'m, RoadLine>> = osm.iter().map(Cow::Borrowed).collect();
         let mut crossings = 0;
         // порядок — порядок подмены: поздняя побеждает
@@ -260,7 +260,8 @@ impl<'m> Drawn<'m> {
         self.roads.iter().map(Cow::as_ref).collect()
     }
 
-    /// Общие узлы дорог — по точкам OSM.
+    /// Общие узлы дорог — по точкам OSM и по месту, куда их сдвинула разводка
+    /// пар ([`RoadNodes::alias`]).
     pub fn nodes(&self) -> &RoadNodes {
         &self.nodes
     }

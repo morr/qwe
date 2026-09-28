@@ -1826,12 +1826,12 @@ fn a_ring_arc_base_break_reaches_by_the_osm_width() {
     // подходе меряет вылет по ширине дуги из OSM. Перевести базовые разрывы на
     // дороги как рисуются — сдвинуть их на подходах к кольцу.
     let map = a_ring_of_two_arcs();
-    let nodes = RoadNodes::new(&map.roads);
+    let mut nodes = RoadNodes::new(&map.roads);
     let axes = axis::street_axes(
         &map.roads,
         &map.rails,
         &map.network,
-        &nodes,
+        &mut nodes,
         &RoadShape::default(),
     );
     let arcs = ring_arcs(&map.roads, &axes.rings);
