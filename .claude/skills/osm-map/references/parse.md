@@ -645,6 +645,50 @@ be called alone:
     effect is purely what is drawn. **After the squaring** (step 4) it must stay, though:
     `vertex_uses` counts a parking outline among the layers a house may share a vertex
     with, so a pulled edge would change which houses get squared.
+- **Ground pockets sown as yard** (`parse/pockets.rs::fill_ground_pockets`, into
+  `MapData::pockets`) — its own step right after the block and lot pulls, with its own
+  `osm parse:` line and timing. What it closes: a scrap of bare ground **enclosed** by what
+  is drawn, which no tag describes and the vertex pull cannot reach — the triangle
+  between a footway along the street, a diagonal footway and block 164045103 standing
+  ~10 m short of them (Tula, gallery 02, SE corner), the strip between block 141157692, a
+  curved footway and the sidewalk, and the wedge where a verge ends at a footway turning
+  toward a crossing (Oryol, gallery 03). The wedge's corner stands on the footways'
+  junction, where the block has no vertex to move — no vertex rule can fill it.
+  - **The rule is a hole of the union.** Covers: every road but bridges and arches as a
+    band of its mapped edge (`SidewalkProfile::mapped_edge`, so a one-sided sidewalk
+    counts on both sides — over-cover is the safe error) in pieces of `RUN` 16 links,
+    **bevel joins and square caps** (a round join is a dozen points, and the union's price
+    is points: round → bevel took the whole pass from 229 to ~120 ms on Tula); each
+    verge side (`RoadLine::verge_at`) as a band from the axis to the kerb plus the verge,
+    every `VERGE_STEP` 5 m (the profile's own probe step); and the outlines of blocks,
+    parks, woods, grass, sand, water, lots and pitches. **Houses are left out**: a hole
+    that runs under a house only gets grass under the house.
+  - **A hole is sown** when it is at most `POCKET_AREA_MAX` 400 m² (above that it is a
+    plot of its own — a waste plot, a building site), has a vertex within `POCKET_NEAR`
+    4 m of a block's ring (a block's edge often lies *under* the footway, and the wedge
+    beyond touches the footway, not the block; the nearest block gives the kind), touches
+    a paved road's band (`TOUCH` 0.25 m — a hole cut into a block by its own
+    multipolygon has no road on its rim) and touches **no** dirt path or unpaved street
+    (a waste plot crossed by trails, Oryol 03 south-west). The ring grows
+    `LANDUSE_OVERLAP` 0.5 m (bevel) so the seam goes under the smoothed ribbons.
+  - **Why the errors are safe**: the block layer lies below everything drawn on it, so a
+    cover the parse misses only makes a hole bigger (a missed fill) or puts grass under
+    something drawn (unseen); a cover the parse invents only closes a hole that is then
+    not filled.
+  - **Tiles**: `TILE` 400 m cells touched by a block, a window of `MARGIN` 30 m around each;
+    a hole counts only when it lies wholly in the window (then every cover touching it is
+    in the window) and its bbox centre lies in the tile (one tile owns it). Tiles and the
+    road bands go across threads through a counter (`in_parallel`) — a centre tile costs
+    tens of times an outer one — and the results are put back in tile order.
+  - **A pocket is not a block** (`MapData::pockets`, drawn in the block layer by
+    `spawn.rs`): pushed into `landuse` first, it made `roads.rs::Yards::beside` find a yard
+    beside every verge next to a sown sliver, and meadow verges along Фрунзе (district
+    frame d2) and Советская (d6) turned to yard grass.
+  - Tula: **610 pockets, ~120–140 ms** at load (dev profile, a loaded machine;
+    `map_meshing`), Oryol 431 / 84 ms. Pinned by
+    `a_ground_pocket_between_a_block_and_two_footways_is_sown_as_yard`,
+    `a_pocket_by_a_dirt_path_a_large_one_and_a_hole_in_the_block_stay_ground`,
+    `a_pocket_on_a_tile_seam_is_sown_once`.
 - **Ring assembly** (`parse.rs::assemble_rings`) — multipolygon relation members joined
   end-to-end (ε = 0.01 m) into closed rings; chains broken by the bbox edge are
   force-closed if ≥ 3 points. Inner rings become holes of the outer containing them.

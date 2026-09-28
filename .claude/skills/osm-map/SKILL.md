@@ -15,7 +15,8 @@ one your change is about, not all of them**:
 
 - `references/parse.md` — the parse seam and every reading and finishing pass (heights,
   building use, retail box, churches, squaring, houses pulled off the sidewalks, blocks
-  and lots pulled to the roads), and how the parse is tested.
+  and lots pulled to the roads, ground pockets sown as yard), and how the parse is
+  tested.
 - `references/roads.md` — how a street is drawn: sidewalks, divided streets and their
   medians, lane markings and their breaks, the ribbon, junctions and the drawn network (stitches, kerb returns),
   `RoadStyle` and `RoadShape` (lane width, taper, curve tolerance, median gap, corner

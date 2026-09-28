@@ -538,6 +538,22 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   so «paved up to its roads» and «merely stepped back from the houses on it» are two
   different things and are counted as two. Lots are independent and are paved **across
   threads** — the cost is the `i_overlay` calls per lot, not the geometry.
+- **Ground pocket** (`parse/pockets.rs::fill_ground_pockets`, `MapData::pockets`) — a
+  scrap of bare ground **enclosed** by what is drawn — road bands with their sidewalks,
+  verges, blocks, greens, water, lots, pitches — that no tag describes: the triangle
+  between two footways and a block cut short of them (Tula, gallery 02), the wedge where a
+  verge ends at a footway turning away (Oryol, 03). The vertex pull cannot close it: the
+  wedge's corner stands on the footways' junction, where the block has no vertex. It is a
+  **hole of the union** of those covers, found per 400 m tile across threads; a hole
+  within `POCKET_NEAR` 4 m of a block, touching a paved road, touching no dirt path and
+  no larger than `POCKET_AREA_MAX` 400 m² is sown with that block's grass (grown 0.5 m
+  under its neighbours) and drawn in the block layer. A pocket is **not a block**: it
+  lives beside `landuse`, so a verge next to it does not turn to yard grass. What stays
+  ground stays: a waste plot with trails (a dirt path on its rim), anything larger (a
+  plot of its own), a hole cut into a block by its own multipolygon (no road on its rim).
+  The covers err on the safe side: the block lies below everything drawn, so grass sown
+  under a sidewalk or a house is never seen — houses are left out of the union for that
+  reason. Render-only, like the block pull.
 - **Inferred storeys** (`map/buildings/heights.rs`) — what a building without a `height`
   tag is drawn as, and it is **the shape of the footprint that decides**, the way an eye
   reads an aerial photo: a long thin box (≥ 35 m by ≤ 18 m) is a panel section (5 / 9 / 12
