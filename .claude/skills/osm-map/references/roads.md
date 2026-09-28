@@ -999,7 +999,12 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     island of a node triangle (`corners::small_islands`, handed to `NodePaint::new` as
     `paved`), up to `EDGE_SEARCH` 25 m. The rule zebra, the stop line and the turn paths
     and arrows (`JunctionArm::edge`) measure from it, and the lane lines break from the
-    node to the outermost paint. An **OSM crossing keeps its place** — it is measured
+    node to the outermost paint — and on an arm with **no paint at all** (a one-way
+    leaving the node, an arm no zebra or stop line is called for) to the edge itself:
+    at a shallow crossing the break reach is the neighbour's half width, 3 m for a
+    one-lane street, while its asphalt runs a dozen metres along the arm, and the lines
+    crossed the junction field (Орёл 05, Московская at 23° to the Пушкина pair; roads
+    plan G3). An **OSM crossing keeps its place** — it is measured
     from the reach as before: pushed past the new edge, it no longer fitted a short arm
     with its `ARM_TAIL` and was lost (gallery 04, south). **Not at a ring**: an approach
     is fitted into the ring tangentially and runs over its asphalt for tens of metres, so
@@ -1060,7 +1065,11 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     street between a junction and its taper left a two-metre dash at the kerb (gallery 08).
   - **The median's double solid** breaks on the paint breaks as well (both halves'
     zebras and stop lines, `medians::crossing_breaks` over them), not only on the asphalt
-    ones.
+    ones. Those breaks lie on the halves' axes, off to the side of the midline, so a long
+    one covers the midline short of its end; a piece of the double solid under
+    `MEDIAN_MIN_RUN` 6 m between two breaks or between a break and the run's end is
+    closed as well (`medians::bridge_short_pieces`) — a metre-to-five stub was left in the
+    middle of Орёл 05's junction. A midline no break touches stays as it is.
   - Not drawn from data: `footway=crossing` ways are not parsed (the crossing node is
     what Tula maps). Islands and `RoadArea` outlines are drawn by **Safety islands** below.
   The report counts `junctions N (C clusters, main through T), zebras Z (O from OSM),
