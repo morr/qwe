@@ -250,7 +250,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     two-way one, a ring of radius ≥ 30 m at least two); a lone jump shorter than 60 m
     (2→4→2) is cut to its neighbours. The width follows: lanes × the **lane width** (a
     `RoadShape` knob, 3.3 m by default; 0.3 m less on a service drive) + a 0.5 m edge each
-    side. **The only roads stage that moves the model** — the
+    side. A two-way way also carries its **split** between the flows
+    (`RoadLine::lanes_backward`, from `lanes:backward` or `lanes − lanes:forward`,
+    settled against the final count and handed on along the street). **The only roads stage that moves the model** — the
     parse passes after it read the width.
   - **Taper** (`map/roads/tapers.rs`) — where a way ends and another goes on from the node
     collinearly (a seam of one street, or a **continuation** across streets —
@@ -290,7 +292,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     line solid for the last 25 m of its **approach** to a junction break (dashed at once on
     the exit; an axis is solid both ways, and also 25 m either side of a node its street
     passes through — **main through** below), and the axis of a two-way street of 4+ lanes
-    as a double solid; a street tagged `lane_markings=no` gets neither axis nor lane
+    as a double solid — the axis being the **border between the flows**
+    (`paint::axis_offset`: an odd count gives its extra lane to the flow along the points
+    unless the split says otherwise), so a five-lane street has one too; a street tagged `lane_markings=no` gets neither axis nor lane
     lines. Two meshes per level (lane lines, axes) plus the zebras, streets at
     `Z_ROAD_PAINT` and bridges at `Z_BRIDGE_PAINT`; `PaintLods` hides the lane lines and
     stop lines past 0.4 m/px, the zebras past 0.6 and the axes past 0.9 without a rebuild.

@@ -225,7 +225,10 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   without `lanes`, `lanes:forward` + `lanes:backward` (+ `lanes:both_ways` when tagged) — then **overwritten** by the
   section pass with the inferred count on every street and drive, so after the parse it
   is `None` on paths only). Coverage per city is in `references/osm-coverage.md` — Tula has `lanes` on 97 % of its
-  streets ≥ 8 m, the European cities on about half. `turns: [Vec<LaneTurn>; 2]` — the
+  streets ≥ 8 m, the European cities on about half. `lanes_backward: Option<u8>` — the
+  lanes of a two-way way against its points (`lanes:backward`, else `lanes −
+  lanes:forward`; none with a `lanes:both_ways` centre lane), settled by the section
+  pass; it places the axis (`references/roads.md`, **Markings**). `turns: [Vec<LaneTurn>; 2]` — the
   `turn:lanes` per direction of flow (`parse/tags.rs::tagged_turns`: a one-way road reads
   the plain tag or its flow's `:forward`/`:backward`, a two-way one only the directional
   ones; each lane left to right as `LaneTurn { left, through, right }`, `slight_`/`sharp_`

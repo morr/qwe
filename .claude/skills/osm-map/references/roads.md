@@ -466,9 +466,15 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     **twin** — another free one-way end in the node with the opposite flow, running within
     `MAX_BEND` of it — is skipped: those are the halves of a **merge**, whose own wedges
     draw the join.
-  - **Sections** (`sections::apply`, **step 0 of `finish_parse`**). A way's lanes: the tag
-    (`lanes`, else `lanes:forward` + `lanes:backward` + `lanes:both_ways`, the last one
-    optional — one direction alone is not a sum),
+  - **Sections** (`sections::apply`, **step 0 of `finish_parse`**). The **split** of a
+    two-way way's lanes between the flows (`RoadLine::lanes_backward`: `lanes:backward`,
+    else `lanes − lanes:forward`; none with a `lanes:both_ways` centre lane) is settled
+    last (`settle_splits`): a split that does not fit the final count (a cut spike, more
+    backward lanes than lanes) is dropped, and a way without one takes it from the
+    nearest way of its street with the same count, mirrored for a way drawn against the
+    street, so an odd street's axis does not jump half a lane at a seam. A way's lanes:
+    the tag (`lanes`, else `lanes:forward` + `lanes:backward` + `lanes:both_ways`, the
+    last one optional — one direction alone is not a sum),
     else the **nearest tagged way of its street** by the distance between their middles
     along it, else `default_lanes` by class (four on motorway/trunk/primary/secondary
     two-way, two on the rest — every `*_link` included, half of that one-way, one on a
@@ -644,7 +650,19 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     ring's entries are not worth splitting a closed strip for. The axis of a two-way street with 4+ lanes is a **double solid** (0.15 m gap
     — ГОСТ 1.3's 10–15 cm; half a metre read as two separate lines, the author's report —
     merging into one line once the gap is under ~2 px); a two-lane two-way street has a
-    dashed axis; an odd two-way street and a one-way street have none.
+    dashed axis; a one-way street and a one-lane street have none. **The axis is the
+    border between the flows** (`paint::axis_offset`), not the middle of the
+    carriageway: `RoadLine::lanes_backward` lanes run against the points, the rest along
+    them on the traffic side's half, so the axis lies on a lane border at
+    `forward · lane − half` (right-hand traffic; mirrored for left). Without the split
+    the lanes divide in half and an odd count gives its extra lane to the flow along the
+    points — a three-lane two-way street gets a dashed axis, a five-lane one a double
+    solid. Before, the parity decided whether there was an axis at all, and Текучёва in
+    Rostov (gallery 03, `lanes=5, lanes:forward=3`) was dashes only (roads plan D3).
+    `lane_count` and the lane frame do not move: the carriageway stays centred on the
+    way, only which of its borders is the axis changes. The stop line of a two-way arm
+    runs from its kerb to that axis, and the lanes of an arm (`turns::arm_lanes`) split
+    at it.
   - **Geometry**: one strip per line (`MeshBuilder::push_paint_strip`, miter joins),
     `LANE_STRIP` 0.6 m / `AXIS_STRIP` 1.4 m half-width — wider than the 0.15 m line so the
     1.3 px floor and the ±0.7 px antialiasing still fit at the farthest zoom where the line
@@ -1141,9 +1159,10 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     plus 1 m, the asphalt break's reach), on a ring taken around the seam.
   - **Lanes on an arm**: the body lane frame (`paint::lane_frame`), lane centres between
     the lines; a one-way road carries traffic along its points only, a two-way road along
-    them on the traffic side's half (`MapData::traffic_side`), the middle lane of an odd
-    two-way road belonging to neither — except a one-lane road, driven both ways. Lanes
-    are counted **from the kerb**.
+    them on the traffic side's side of the axis (`MapData::traffic_side`,
+    `paint::axis_offset` — an odd road's extra lane goes to the flow along the points or
+    as `lanes_backward` says) — except a one-lane road, driven both ways. Lanes are
+    counted **from the kerb**.
   - **Maneuvers** by the turn angle between the in-lane's travel and the out-lane's:
     under 35° straight, over 150° a U-turn (not drawn), else a **near** turn (toward the
     kerb — right under right-hand traffic) or a **far** one. Which lanes into which:
