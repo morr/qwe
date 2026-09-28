@@ -147,7 +147,7 @@ fn each_outer_kerb_runs_into_the_kerb_of_the_continuation() {
         &drawn,
         &paths,
         &network,
-        |_| Some(3.0),
+        |_, _| Some(3.0),
         TAPER_PER_METER,
     );
     assert_eq!(bands.len(), 2);
@@ -203,7 +203,7 @@ fn halves_cut_short_at_the_node_still_merge_and_the_wedge_runs_on_their_street()
         &drawn,
         &paths,
         &network,
-        |_| None,
+        |_, _| None,
         TAPER_PER_METER,
     );
     // клин во всю длину, а не в 0.6 короткого way
@@ -412,7 +412,7 @@ fn a_continuation_no_wider_than_a_half_needs_no_band() {
         &drawn,
         &paths,
         &network,
-        |_| None,
+        |_, _| None,
         TAPER_PER_METER,
     );
     assert!(bands.is_empty());

@@ -195,8 +195,8 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   **kerb edge** (`references/parse.md`, **Houses pulled off the sidewalks** and **Blocks
   pulled to the roads**). Every edge is one reach per road on both sides, even for a
   one-sided `sidewalk=right`; a per-side edge would change the map, so it is not here.
-  The renderer's sidewalk is that profile under the Sidewalks toggle (`Drawn::sidewalk_drawn`
-  / `band_half`, the latter per side through `on(side)`).
+  The renderer's sidewalk is that profile under the Sidewalks toggle (`Drawn::sidewalk_drawn`,
+  and per side `sidewalk_on` / `band_half` through `sides()` / `on(side)`).
   The drawn sidewalk is `None` when neither side has one; `push_sidewalk` lays a one-sided
   band the paired-half way (width plus one sidewalk, shifted half a sidewalk to its side)
   and ANDs the tag with the pair runs; the kerb returns drop the arc on a missing side;
@@ -1496,8 +1496,14 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     **Three sidewalk rules live on it, and they are three on purpose**:
     `sidewalk_drawn(i)` — the band that is *drawn*: `SidewalkProfile::any` (the map's
     sidewalk) under the `Sidewalks` knob, minus the crossing piece in a pair's opening
-    (`across_median`, **Kerb return** below) — the ribbon, the kerb returns, the pockets,
-    the turning circles and the merge edges read it; `sidewalk_mapped(i)` — the sidewalk
+    (`across_median`, **Kerb return** below) — the ribbon and the turning circles read it;
+    its per-side form `sidewalk_on(i, side)` is the same answer where the tag puts a
+    sidewalk on that side (`SidewalkProfile::sides`), one call where the kerb pockets, the
+    kerb returns (the road's own sides and the narrow neighbour's under a wedge) and the
+    merge edges (`merge_bands` takes it as `sidewalk(half, side)`) each used to AND the
+    tag in by hand; the pair side is still the consumer's to drop (`Pairs::beside`,
+    `band_pieces`) — pinned by `tests.rs::a_pocket_on_the_side_without_a_sidewalk_pushes_no_sidewalk`
+    and `a_one_sided_street_turns_its_sidewalk_only_on_its_side`; `sidewalk_mapped(i)` — the sidewalk
     the *map* has, knob or no knob, minus the same piece — the junction paint reads it, a
     rule zebra being a question of the model and not of a display toggle
     (`tests.rs::rule_zebras_do_not_follow_the_sidewalk_knob`); `band_half(i, side)` — the

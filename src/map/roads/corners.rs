@@ -276,8 +276,8 @@ impl KerbReturns {
 ///
 /// Всё — по подготовленным дорогам `drawn` (`roads/drawn.rs`): **узловые**
 /// осевые (`Axis::Nodal` — после сглаживания, до стежков; мост и арка не
-/// участвуют, [`rounded`]); тротуар, если он рисуется
-/// (`Drawn::sidewalk_drawn`); лежит ли рядом вторая половина разделённой
+/// участвуют, [`rounded`]); тротуар по стороне, если он рисуется
+/// (`Drawn::sidewalk_on`); лежит ли рядом вторая половина разделённой
 /// улицы и слева ли (`Pairs::beside`, `roads/network/pairs.rs`) — с её
 /// стороны тротуара нет, и угол по нему не скругляется; клинья у торцов
 /// (`Drawn::taper_ends`, `roads/tapers.rs`) — в клине кромка уже ближе к
@@ -381,15 +381,9 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                 }
                 let at_end = !closed && (vertex == 0 || vertex == last);
                 // стороны луча: слева по пути — слева по лучу вперёд и справа
-                // по лучу назад
-                let own = drawn.sidewalk_drawn(index);
-                let mut sides = [own; 2];
-                // тротуар по тегу — слева или справа по пути (`sidewalk=*`)
-                for (side, present) in road.sidewalk().sides().into_iter().enumerate() {
-                    if !present {
-                        sides[usize::from((side == 0) != forward)] = None;
-                    }
-                }
+                // по лучу назад; тротуар — по тегу со своей стороны пути
+                let mut sides =
+                    [0, 1].map(|at| drawn.sidewalk_on(index, usize::from((at == 0) != forward)));
                 // торец под клином: с сужаемых сторон кромка и тротуар в узле
                 // — узкого соседа, с сохранённой — свои
                 let mut half = [road.width / 2.0; 2];
@@ -406,9 +400,7 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                         }
                         let at = usize::from((side == 0) != forward);
                         half[at] = narrow.width / 2.0;
-                        sides[at] = drawn
-                            .sidewalk_drawn(wedge.narrow)
-                            .filter(|_| narrow.sidewalk().sides()[side]);
+                        sides[at] = drawn.sidewalk_on(wedge.narrow, side);
                     }
                 }
                 // кусок пары кончается там, где пробы перестали её находить:

@@ -326,8 +326,9 @@ pub struct MergeBand {
 }
 
 /// Полосы, которыми кромки половин сходятся к кромкам продолжения: асфальт и,
-/// где у половины снаружи тротуар шириной `sidewalk(половина)`, тротуар за
-/// ним. `per_meter` — длина клина на метр разницы ширин. Клин идёт от узла
+/// где у половины снаружи тротуар шириной `sidewalk(половина, сторона)`
+/// (`Drawn::sidewalk_on`, сторона `[слева, справа]` по точкам way), тротуар
+/// за ним. `per_meter` — длина клина на метр разницы ширин. Клин идёт от узла
 /// по пути половины и дальше по ways её улицы (`network`): у узла OSM режет
 /// половину на короткие ways, и клин в 30–60 м на одном таком не умещается.
 pub fn merge_bands(
@@ -335,7 +336,7 @@ pub fn merge_bands(
     roads: &[&RoadLine],
     paths: &[impl AsRef<[Vec2]>],
     network: &RoadNetwork,
-    sidewalk: impl Fn(usize) -> Option<f32>,
+    sidewalk: impl Fn(usize, usize) -> Option<f32>,
     per_meter: f32,
 ) -> Vec<MergeBand> {
     let wide = roads[merge.street].width / 2.0;
@@ -384,14 +385,11 @@ pub fn merge_bands(
         // тротуар по тегу — на той стороне, что снаружи, `[слева, справа]` по
         // точкам way: у въезжающей половины путь от узла развёрнут
         let outer_left = !partner_left != node_at_end;
-        let tagged = road.sidewalk().sides()[usize::from(!outer_left)];
         bands.push(MergeBand {
             half,
             length,
             asphalt: band(narrow - MERGE_OVERLAP, 0.0),
-            sidewalk: sidewalk(half)
-                .filter(|_| tagged)
-                .map(|width| band(narrow, width)),
+            sidewalk: sidewalk(half, usize::from(!outer_left)).map(|width| band(narrow, width)),
         });
     }
     bands
