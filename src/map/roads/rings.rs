@@ -64,6 +64,11 @@ const APPROACH_LENGTH_SHARE: f32 = 0.6;
 const BEND_MIN_LENGTH: f32 = 4.0;
 /// Подход, приходящий в узел почти под нужным углом, не трогается, рад.
 const BEND_MIN_ANGLE: f32 = 5.0 * std::f32::consts::PI / 180.0;
+/// Двусторонний подход, приходящий в узел ближе к лучу из центра, не
+/// трогается, рад. Круче — ось OSM у кольца идёт вдоль него (картограф завёл
+/// её в узел по касательной, Рязань, витрина 05), и плоский торец ленты,
+/// поставленный поперёк такой оси, углом вылезал за кромку кольца.
+const TWO_WAY_BEND_MIN_ANGLE: f32 = 30.0 * std::f32::consts::PI / 180.0;
 /// Сколько подхода, м, остаётся прямым перед его общим узлом с кем-то ещё.
 const PIN_MARGIN: f32 = 1.0;
 /// Насколько кромки подхода и кольца могут разойтись, м, чтобы щель между
@@ -289,7 +294,6 @@ pub fn reshape<'a>(
     // подходы
     for (index, road) in roads.iter().enumerate() {
         if rings.of_road[index].is_some()
-            || !road.oneway
             || road.class != RoadClass::Street
             || road.carves_navmesh()
             || paths[index].len() < 2
@@ -307,17 +311,22 @@ pub fn reshape<'a>(
             let (travel, outward) = (ring.travel(t), ring.outward(t));
             let (sin, cos) = ENTRY_ANGLE.sin_cos();
             // въезд приходит в узел снаружи, съезд уходит из него наружу;
-            // съезд строится как въезд по развёрнутому подходу
-            let arrival = if entry {
-                travel * cos - outward * sin
+            // съезд строится как въезд по развёрнутому подходу. Двусторонний
+            // подход — и въезд, и съезд: он приходит в кольцо по лучу, а
+            // гнётся, только если ось OSM у узла идёт вдоль кольца
+            // ([`TWO_WAY_BEND_MIN_ANGLE`])
+            let (arrival, min_angle) = if !road.oneway {
+                (-outward, TWO_WAY_BEND_MIN_ANGLE)
+            } else if entry {
+                (travel * cos - outward * sin, BEND_MIN_ANGLE)
             } else {
-                -(travel * cos + outward * sin)
+                (-(travel * cos + outward * sin), BEND_MIN_ANGLE)
             };
             if !entry {
                 path.reverse();
             }
             let reach = (APPROACH_SHARE * ring.mean_radius()).clamp(APPROACH_MIN, APPROACH_MAX);
-            if let Some(new) = bend_approach(&path, arrival, reach, nodes) {
+            if let Some(new) = bend_approach(&path, arrival, min_angle, reach, nodes) {
                 path = new;
                 bent = true;
             }
@@ -585,7 +594,13 @@ fn fit(roads: &[RoadLine], chain: &[usize], nodes: &RoadNodes) -> Option<Ring> {
 /// последние `reach` метров заменяет кривая, касательная к подходу и
 /// приходящая в узел по `arrival`. `None` — подход и так приходит под нужным
 /// углом, или места под дугу нет: дальше по нему узел с кем-то ещё.
-fn bend_approach(path: &[Vec2], arrival: Vec2, reach: f32, nodes: &RoadNodes) -> Option<Vec<Vec2>> {
+fn bend_approach(
+    path: &[Vec2],
+    arrival: Vec2,
+    min_angle: f32,
+    reach: f32,
+    nodes: &RoadNodes,
+) -> Option<Vec<Vec2>> {
     let end = *path.last()?;
     // пройденное от торца до каждой вершины
     let mut back = vec![0.0; path.len()];
@@ -595,7 +610,7 @@ fn bend_approach(path: &[Vec2], arrival: Vec2, reach: f32, nodes: &RoadNodes) ->
     let length = back[0];
     let point_at = |distance: f32| point_back(path, &back, distance);
     let heading = (end - point_at(HEADING_BASE.min(length))).try_normalize()?;
-    if heading.angle_to(arrival).abs() < BEND_MIN_ANGLE {
+    if heading.angle_to(arrival).abs() < min_angle {
         return None;
     }
     let pinned = (1..path.len() - 1)

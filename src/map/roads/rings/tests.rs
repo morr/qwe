@@ -135,6 +135,44 @@ fn an_approach_enters_at_an_angle_to_the_ring() {
 }
 
 #[test]
+fn a_two_way_approach_along_the_ring_is_bent_into_it_across() {
+    let ring = faceted_ring(12);
+    let node = ring.points[3];
+    let t = TAU * 3.0 / 12.0;
+    let (radial, along) = (Vec2::from_angle(t), Vec2::from_angle(t).perp());
+    // двусторонний подход, заведённый в узел вдоль кольца: последние 15 м
+    // идут по касательной снаружи, а по лучу — только те, что до них
+    let tangential = RoadLine {
+        oneway: false,
+        ..street(
+            vec![
+                node + radial * 40.0 + along * 15.0,
+                node + radial * 4.0 + along * 15.0,
+                node,
+            ],
+            7.6,
+        )
+    };
+    // и такой же, приходящий по лучу, — его не трогают
+    let other = ring.points[9];
+    let straight = RoadLine {
+        oneway: false,
+        ..street(vec![other * 2.0 - CENTER, other], 7.6)
+    };
+    let (paths, rings) = reshaped(&[ring, tangential.clone(), straight.clone()]);
+    let ring = &rings.list[0];
+    let path = &paths[1];
+    assert_eq!(path.last(), Some(&node));
+    let arrival = (path[path.len() - 1] - path[path.len() - 2]).normalize();
+    let inward = -ring.outward(ring.param(node).0);
+    assert!(
+        arrival.dot(inward) > 0.9,
+        "приходит в узел по лучу, а не вдоль кольца: {arrival}"
+    );
+    assert_eq!(paths[2], straight.points, "подход по лучу не гнётся");
+}
+
+#[test]
 fn a_long_loop_is_not_a_ring() {
     let mut points = vec![
         CENTER,
