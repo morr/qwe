@@ -29,11 +29,12 @@ use i_overlay::float::single::SingleFloatOverlay;
 use i_overlay::mesh::outline::offset::OutlineOffset;
 use i_overlay::mesh::style::{LineJoin, OutlineStyle};
 
-use super::network::pairs::{Median, PAIR_MIN, TRAM_BED_MAX_GAP};
+use super::network::pairs::{Median, TRAM_BED_MAX_GAP};
+use super::node_paint::{ZEBRA_LENGTH, Zebra};
 use super::{RoadJoin, push_ribbon};
 use crate::map::along::{arclengths, nearest_on_path, place_on_path};
 use crate::map::meshing::{Break, MeshBuilder};
-use crate::map::osm::model::polyline_length;
+use crate::map::osm::model::{closest_on_segment, polyline_length};
 use crate::map::shapes::{ARC, Shape, contour_area, oriented, point_in_shape, push_shape};
 
 /// Насколько середина может не доходить до края разрыва перекрёстка, чтобы её
@@ -47,6 +48,11 @@ const NOSE_CLEARANCE: f32 = 1.0;
 const NOSE_SHARE: f32 = 0.45;
 /// Кусочек газона мельче этого, м², не рисуется.
 const MIN_LAWN_AREA: f32 = 4.0;
+/// Кусок середины между разрывами короче этого, м, газоном не становится.
+/// Не длина пары (`PAIR_MIN`): кусок в пять метров между зеброй и узлом —
+/// обычный островок газона, а слишком узкое для носа стирает само
+/// скругление ([`nosed`]) и площадь ([`MIN_LAWN_AREA`]).
+const MIN_LAWN_RUN: f32 = 3.0;
 /// Срезанное носом мельче этого, м², асфальтом не кладётся: крошки
 /// булевой разности вдоль кромки.
 const MIN_CUT_AREA: f32 = 0.05;
@@ -71,6 +77,64 @@ pub fn crossing_breaks(median: &Median, [first, second]: [&[Break]; 2]) -> Vec<B
         .filter(|gap| facing(gap, second))
         .chain(second.iter().filter(|gap| facing(gap, first)))
         .copied()
+        .collect()
+}
+
+/// Разрывы краски половины `cut`, разделённые на зебры и остальное:
+/// `(переходы, прочее)`. Разрыв, через который проходит зебра `zebras`, —
+/// переходом шириной в зебру у точки, где она пересекает ось (вместе с самой
+/// зеброй); разрыв без зебры (стоп-линия у узла) — в прочее как есть.
+///
+/// Газон зебра не рвёт, а **прорезает** на свою ширину — проходом через
+/// островок ([`push_lawn`]). Разрыв краски у зебры — полдлины зебры,
+/// стоп-линия у светофора и запас краски, до девяти-одиннадцати метров, — и
+/// нос газона перед ним: две зебры `crossing:island=yes` со сдвигом вдоль оси
+/// (Рязань, витрина 03, Вокзальная) с разрывом узла не оставляли газону ни
+/// одного куска, и газон разделительной пропадал целиком.
+pub fn split_zebras(cut: &[Break], zebras: &[Zebra]) -> (Vec<(Break, Zebra)>, Vec<Break>) {
+    let (mut crossings, mut rest) = (Vec::new(), Vec::new());
+    for gap in cut {
+        let before = crossings.len();
+        for zebra in zebras {
+            let at = closest_on_segment(gap.at, zebra.from, zebra.to);
+            if at.distance(gap.at) < gap.reach {
+                let reach = ZEBRA_LENGTH / 2.0;
+                crossings.push((Break { at, reach }, *zebra));
+            }
+        }
+        if crossings.len() == before {
+            rest.push(*gap);
+        }
+    }
+    (crossings, rest)
+}
+
+/// Переходы через разделительную насквозь: зебра одной половины, против
+/// которой есть зебра другой — ближе ширины разделительной и двух зебр со
+/// сдвигом вдоль оси, — или та же планка через обе. Меряются сами зебры, а не
+/// разрывы на осях ([`crossing_breaks`]): у разрыва шириной в зебру ось
+/// половины дальше от оси соседки, чем допуск по разрывам, и сдвинутые зебры
+/// Вокзальной друг друга не видели.
+pub fn facing_zebras(median: &Median, [first, second]: [&[(Break, Zebra)]; 2]) -> Vec<Break> {
+    let reach = median.apart() + 2.0 * ZEBRA_LENGTH;
+    let apart = |a: &Zebra, b: &Zebra| {
+        [
+            closest_on_segment(a.from, b.from, b.to).distance(a.from),
+            closest_on_segment(a.to, b.from, b.to).distance(a.to),
+            closest_on_segment(b.from, a.from, a.to).distance(b.from),
+            closest_on_segment(b.to, a.from, a.to).distance(b.to),
+        ]
+        .into_iter()
+        .fold(f32::INFINITY, f32::min)
+    };
+    let facing = |zebra: &Zebra, others: &[(Break, Zebra)]| {
+        others.iter().any(|(_, other)| apart(zebra, other) <= reach)
+    };
+    first
+        .iter()
+        .filter(|(_, zebra)| facing(zebra, second))
+        .chain(second.iter().filter(|(_, zebra)| facing(zebra, first)))
+        .map(|&(gap, _)| gap)
         .collect()
 }
 
@@ -341,7 +405,9 @@ pub fn bed_ends(median: &Median) -> [Option<Break>; 2] {
 /// Газон разделительной: бордюр — в `kerbs` (слой тротуаров), трава — в
 /// `grass`, а всё между внутренними кромками половин, что не газон, —
 /// асфальтом в `streets` (слой улиц, под лентами половин). `breaks` —
-/// разрывы разметки обеих половин. Возвращает контуры бордюра — к ним
+/// разрывы обеих половин, у которых газон кончается носом; `crossings` —
+/// зебры через обе половины ([`split_zebras`]): газон ими не рвётся, а
+/// прорезается проходом ([`passages`]). Возвращает контуры бордюра — к ним
 /// подходит асфальт торца трамвайного полотна ([`bed_caps`]).
 ///
 /// **Не газон — асфальт.** Газон рвётся у перекрёстка, а нос — морфологическое
@@ -356,14 +422,18 @@ pub fn push_lawn(
     grass: &mut MeshBuilder,
     streets: &mut MeshBuilder,
     median: &Median,
-    breaks: &[Break],
+    [breaks, crossings]: [&[Break]; 2],
     [kerb_color, grass_color, road_color]: [LinearRgba; 3],
 ) -> Vec<Shape> {
-    let nose = (median.gap * NOSE_SHARE).max(ARC);
     let round = || LineJoin::Round(ARC);
     let mut drawn = Vec::new();
     let mut visible = Vec::new();
-    for outline in lawn_outlines(median, breaks) {
+    let passages = passages(median, crossings);
+    for (outline, length) in lawn_outlines(median, breaks) {
+        // нос — почти полукруг во всю ширину, а у куска короче ширины — по
+        // его длине: открытие стирает всё у́же двух радиусов, и островок
+        // между зеброй и узлом пропадал целиком (Рязань, витрина 03)
+        let nose = (median.gap.min(length) * NOSE_SHARE).max(ARC);
         let kerb = nosed(outline, nose);
         let lawn: Vec<Shape> = kerb
             .outline(&OutlineStyle::new(-MEDIAN_KERB).line_join(round()))
@@ -384,6 +454,15 @@ pub fn push_lawn(
                 })
             })
             .collect();
+        // проход по зебре — плиткой бордюра поперёк: трава вырезана
+        let lawn: Vec<Shape> = if passages.is_empty() {
+            lawn
+        } else {
+            lawn.overlay(&passages, OverlayRule::Difference, FillRule::NonZero)
+                .into_iter()
+                .filter(is_drawn)
+                .collect()
+        };
         visible.extend(kerb.iter().cloned());
         drawn.extend(kerb.iter().cloned());
         for (shapes, builder, color) in [
@@ -403,6 +482,30 @@ pub fn push_lawn(
         }
     }
     drawn
+}
+
+/// Проходы через газон по зебрам `crossings` (разрывы шириной в зебру на
+/// осях половин): прямоугольник поперёк разделительной во всю её ширину, на
+/// длину зебры вдоль середины. Из травы вычитается, бордюр остаётся — проход
+/// лежит плиткой островка между двумя кусками газона.
+fn passages(median: &Median, crossings: &[Break]) -> Vec<Shape> {
+    let (along, _) = arclengths(&median.midline);
+    let across = median.apart();
+    crossings
+        .iter()
+        .filter_map(|gap| {
+            let (at, length) = nearest_on_path(&median.midline, gap.at)?;
+            let (_, heading) = place_on_path(&median.midline, &along, length)?;
+            let [ahead, aside] = [heading * gap.reach, heading.perp() * across];
+            let quad = [
+                at - ahead - aside,
+                at + ahead - aside,
+                at + ahead + aside,
+                at - ahead + aside,
+            ];
+            Some(vec![oriented(&quad, true)])
+        })
+        .collect()
 }
 
 /// Кусочек газона или бордюра, который рисуется: не мельче [`MIN_LAWN_AREA`].
@@ -446,13 +549,15 @@ fn uncovered(ring: Vec<[f32; 2]>, kerbs: Vec<Shape>) -> Vec<Shape> {
 /// отступ носа от торца и его скругление на самом широком полотне
 /// ([`TRAM_BED_MAX_GAP`]).
 const BED_CAP: f32 = NOSE_CLEARANCE + NOSE_SHARE * TRAM_BED_MAX_GAP;
+/// Насколько продление торца полотна без газона впереди шире кромок, м.
+const BED_WIDER: f32 = 1.0;
 
 /// Асфальт между торцом трамвайного полотна и носом газона той же пары.
 /// Нос отступает от торца на [`NOSE_CLEARANCE`] и скруглён, а между ними
 /// ничего не лежало — светлел тротуар половины (у клина он со стороны пары
 /// есть) или земля. Торец продлевается на [`BED_CAP`] вперёд за вычетом
 /// бордюра газона `kerbs`: трава лежит под асфальтом улиц, и продление
-/// поверх съело бы нос. Только у торца, к которому подходит газон.
+/// поверх съело бы нос. У торца без газона рядом — продление целиком.
 pub fn bed_caps(median: &Median, kerbs: &[Shape]) -> Vec<Shape> {
     let [first, second] = &median.inner;
     let mut caps = Vec::new();
@@ -476,10 +581,21 @@ pub fn bed_caps(median: &Median, kerbs: &[Shape]) -> Vec<Shape> {
             })
             .cloned()
             .collect();
+        let back = heading * BED_OVERLAP;
         if near.is_empty() {
+            // газона впереди нет — его срезали разрывы узла, и между торцом
+            // полотна и узлом светилась земля (Орёл, витрина 04, квадрат у
+            // торца полотна): продление — на ширину полотна дальше, до лент
+            // узла, и шире кромок: за торцом половины расходятся
+            let forward = heading * (BED_CAP + median.apart());
+            let wider = (a - b).normalize_or_zero() * BED_WIDER;
+            let [a, b] = [a + wider, b - wider];
+            caps.push(vec![oriented(
+                &[a - back, b - back, b + forward, a + forward],
+                true,
+            )]);
             continue;
         }
-        let back = heading * BED_OVERLAP;
         let forward = heading * BED_CAP;
         let quad = oriented(&[a - back, b - back, b + forward, a + forward], true);
         caps.extend(vec![vec![quad]].overlay(&near, OverlayRule::Difference, FillRule::NonZero));
@@ -535,7 +651,10 @@ fn densified(median: &Median) -> ([Vec<Vec2>; 3], Vec<bool>) {
 /// шестидесяти метрах, газона на этом пролёте не было вовсе — между
 /// половинами лежал голый асфальт без осевой (Калуга, витрина 02, восточный
 /// луч Кирова).
-fn lawn_outlines(median: &Median, breaks: &[Break]) -> Vec<Vec<[f32; 2]>> {
+///
+/// Каждый контур — с длиной своего куска по середине: нос короткого куска
+/// скругляется по длине, а не по ширине ([`push_lawn`]).
+fn lawn_outlines(median: &Median, breaks: &[Break]) -> Vec<(Vec<[f32; 2]>, f32)> {
     let ([midline, first, second], own) = densified(median);
     // Разрыв лежит на оси половины, в стороне от середины, и меряется **вдоль**
     // неё: по прямой до его центра круг разрыва накрывал середину на пару
@@ -565,7 +684,8 @@ fn lawn_outlines(median: &Median, breaks: &[Break]) -> Vec<Vec<[f32; 2]>> {
             (true, None) => start = Some(index),
             (false, Some(from)) => {
                 start = None;
-                if index - from < 2 || polyline_length(&midline[from..index]) < PAIR_MIN {
+                let length = polyline_length(&midline[from..index]);
+                if index - from < 2 || length < MIN_LAWN_RUN {
                     continue;
                 }
                 // вставленные точки на прямом звене контуру не нужны
@@ -577,7 +697,7 @@ fn lawn_outlines(median: &Median, breaks: &[Break]) -> Vec<Vec<[f32; 2]>> {
                     .map(|&at| first[at])
                     .chain(kept.iter().rev().map(|&at| second[at]))
                     .collect();
-                outlines.push(oriented(&ring, true));
+                outlines.push((oriented(&ring, true), length));
             }
             _ => {}
         }
@@ -666,6 +786,39 @@ mod tests {
             low <= 5.45 - FILL_OVERLAP + 1e-3 && high >= 7.0 + FILL_OVERLAP - 1e-3,
             "контур {low}..{high} не кроет зазор 5.45..7.0 с нахлёстом"
         );
+    }
+
+    /// Разрыв краски со стоп-линией и зеброй — переходом шириной в зебру там,
+    /// где она пересекает ось; разрыв без зебры остаётся как был.
+    #[test]
+    fn a_paint_break_with_a_zebra_becomes_a_zebra_wide_crossing() {
+        let zebra = Zebra {
+            from: Vec2::new(12.0, -6.0),
+            to: Vec2::new(12.0, 6.0),
+            osm: true,
+        };
+        let cut = [
+            Break {
+                at: Vec2::new(10.0, 0.0),
+                reach: 5.5,
+            },
+            Break {
+                at: Vec2::new(60.0, 0.0),
+                reach: 3.0,
+            },
+        ];
+        let (crossings, rest) = split_zebras(&cut, &[zebra]);
+        assert_eq!(
+            crossings,
+            vec![(
+                Break {
+                    at: Vec2::new(12.0, 0.0),
+                    reach: ZEBRA_LENGTH / 2.0
+                },
+                zebra
+            )]
+        );
+        assert_eq!(rest, vec![cut[1]]);
     }
 
     /// Обрывок осевой между разрывом узла (он лежит на оси половины, в трёх

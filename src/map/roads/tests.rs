@@ -1383,6 +1383,70 @@ fn a_lawn_starts_at_its_nose_past_a_crossing() {
     );
 }
 
+/// Две зебры `crossing:island=yes` посреди квартала, со сдвигом вдоль оси
+/// (Вокзальная в Рязани, витрина 03): газон разделительной не рвётся на
+/// разрывы краски и не пропадает, а прорезан проходом — травы нет только
+/// на ширину зебры, а бордюр (плитка островка) идёт через проход насквозь.
+#[test]
+fn island_zebras_cut_a_passage_through_the_lawn_instead_of_dropping_it() {
+    let (mut map, apart) = divided_avenue(8.0);
+    let [near, far] = [Vec2::new(300.0, 100.0), Vec2::new(306.0, 100.0 + apart)];
+    map.roads[0].points.insert(1, near);
+    map.roads[1].points.insert(1, far);
+    // переход — узел дорожки поперёк: без неё точка на одном way не узел
+    map.roads.push(RoadLine {
+        class: RoadClass::Alley,
+        highway: Highway::Path,
+        ..fixture::street(
+            vec![near - Vec2::Y * 12.0, near, far, far + Vec2::Y * 12.0],
+            3.5,
+        )
+    });
+    let mut map = with_network(map.roads);
+    for pos in [near, far] {
+        map.road_nodes.push(RoadNode {
+            pos,
+            kind: RoadNodeKind::Crossing {
+                signals: true,
+                island: true,
+                marked: true,
+            },
+        });
+    }
+    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let grass = layer(&layers, "road_medians").builder.positions_for_test();
+    // трава подходит к проходу вплотную с обеих сторон, а не носом за
+    // десять метров до разрыва краски
+    let before = grass
+        .iter()
+        .map(|at| at[0])
+        .filter(|&x| x < 300.0)
+        .fold(f32::MIN, f32::max);
+    let after = grass
+        .iter()
+        .map(|at| at[0])
+        .filter(|&x| x > 300.0)
+        .fold(f32::MAX, f32::min);
+    assert!(before > 296.5, "газон до перехода кончается у x = {before}");
+    assert!(after < 303.5, "газон за переходом начинается у x = {after}");
+    // и не на самом проходе: контур травы обходит его по краям
+    let middle = 100.0 + apart / 2.0;
+    assert!(
+        grass.iter().all(|at| (at[0] - 300.0).abs() > 1.5),
+        "трава на проходе"
+    );
+    // бордюр островка — через проход
+    let kerb = layer(&layers, "sidewalks").builder.positions_for_test();
+    assert!(
+        kerb.iter()
+            .any(|at| (at[1] - middle).abs() < apart / 2.0 - 5.0 && at[0] < 298.0)
+            && kerb
+                .iter()
+                .any(|at| (at[1] - middle).abs() < apart / 2.0 - 5.0 && at[0] > 302.0),
+        "бордюр островка по обе стороны прохода"
+    );
+}
+
 /// Тот же зазор, но по нему идёт трамвай (Советская в Туле): газона нет,
 /// половины расширяются до середины асфальтом полотна, двойная сплошная —
 /// по середине, между путями, а над рельсами — светлая полоса.

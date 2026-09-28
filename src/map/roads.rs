@@ -968,18 +968,19 @@ pub fn mesh_roads(
         } else {
             let mut breaks = breaks;
             breaks.extend(bed_ends.iter().copied());
-            // газон кончается и перед зеброй через обе половины, и перед
-            // стоп-линией: пешеход переходит разделительную, а не газон
-            breaks.extend(medians::crossing_breaks(
-                &median,
-                [paint_breaks.of(first).cut, paint_breaks.of(second).cut],
-            ));
+            // газон кончается перед стоп-линией через обе половины, а зебра
+            // через обе его прорезает проходом: пешеход переходит
+            // разделительную по островку (`medians::split_zebras`)
+            let [(near, near_rest), (far, far_rest)] = [first, second]
+                .map(|road| medians::split_zebras(paint_breaks.of(road).cut, &node_paint.zebras));
+            breaks.extend(medians::crossing_breaks(&median, [&near_rest, &far_rest]));
+            let crossings = medians::facing_zebras(&median, [&near, &far]);
             let kerbs = medians::push_lawn(
                 &mut sidewalks,
                 &mut median_grass,
                 &mut streets,
                 &median,
-                &breaks,
+                [&breaks, &crossings],
                 [SIDEWALK_COLOR, GRASS_COLOR, ROAD_COLOR].map(|color| color.to_linear()),
             );
             for point in kerbs.iter().flatten().flatten() {
@@ -1032,13 +1033,11 @@ pub fn mesh_roads(
             painter.paint_merge_axis(&axis, lane_count(drawn[merge.street]));
         }
     }
-    // асфальт от торца полотна до носа газона рядом
-    if !lawn_kerbs.is_empty() {
-        streets.set_lanes(None);
-        for bed in paved.iter().filter(|median| median.carries_tram()) {
-            for cap in medians::bed_caps(bed, &lawn_kerbs) {
-                push_shape(&mut streets, cap, ROAD_COLOR.to_linear());
-            }
+    // асфальт от торца полотна до носа газона рядом — или вперёд за торец
+    streets.set_lanes(None);
+    for bed in paved.iter().filter(|median| median.carries_tram()) {
+        for cap in medians::bed_caps(bed, &lawn_kerbs) {
+            push_shape(&mut streets, cap, ROAD_COLOR.to_linear());
         }
     }
     let network_time = started.elapsed();
