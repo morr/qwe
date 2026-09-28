@@ -361,7 +361,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     0.5 m) from the midpoint between them, fading out over `ALIGN_TRANSITION` 20 m at a
     run's end and at a node shared with another carriageway (untouched for 16 m next to
     it, where a kerb return needs a straight edge), so the ribbons and the parked
-    cars stand on the aligned axis. **Median** (`Median`, drawn by `roads/medians.rs`) —
+    cars stand on the aligned axis. The gap is kept between the **facing half widths**,
+    tapered on a wedge that narrows the partner's side: the two ways of a half meet at
+    their seam and only the outer kerb of the wedge narrows. **Median** (`Median`, drawn by `roads/medians.rs`) —
     what lies between the halves: up to the **median gap** (`RoadShape::median_gap`, 3 m by
     default) asphalt under both ribbons with
     a double solid down the middle (the paint layer), wider a lawn with a kerb and a

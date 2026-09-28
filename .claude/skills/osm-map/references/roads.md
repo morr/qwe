@@ -232,8 +232,8 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   - **Queries** — what a half differs by is asked of `Pairs`, not read off its runs in
     each consumer: `beside(road, at, slack)` — is a run there and is the partner on the
     left (the kerb returns pass two probes of slack, a run ending where the probes stopped
-    finding the partner; the wedge's asphalt under a half takes none, the middle of a
-    wedge lying inside the run); `partners(road)` as `Partner { road, paved }` (the
+    finding the partner; the sidewalk wedge of a half, bare on the partner's side, takes
+    none, the middle of a wedge lying inside the run); `partners(road)` as `Partner { road, paved }` (the
     junction paint's zebra plank); `is_paired(half, other)` (the merges, which widen it to
     the streets); `across_median(road, path, nodes)` — the cross-street piece in the
     median's opening (**Kerb return** below); `band_pieces(road, sides, stitch, total)` —
@@ -273,6 +273,20 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     `RUN_BRIDGE` fix). The pair tests that align raw points could not see it;
     `a_seam_of_the_own_half_on_a_smoothed_axis_does_not_let_the_axes_go` runs
     `street_axes` with the default curve.
+    **The distance is measured with the half widths that face each other, and on a
+    taper that is the tapered one** (`facing_half`, fed by `street_axes` with a
+    `Tapers::new` over the roads as parsed — the same joints `Drawn` finds later): a
+    wedge that narrows the partner's side gives the half, at `d` metres from the seam,
+    `narrow + (wide − narrow)·d/L` over the wedge length `L` (`tapers::fit`), both for
+    the half being moved and for the partner at its nearest point, and the median's
+    inner edges use the same halves. With the full width the wide way's axis stood
+    half the width difference further from the middle than the narrow one's, so at a
+    2 → 4 seam the two axes of one half missed each other by 1.4 m: a step on the outer
+    kerb and a 1 m hole to the ground at the inner corner, between the two medians and
+    the wedge (Tula 16, Советская, the author's report after stage №14). Now the axes
+    meet (within ~0.3 m where the two ends measure against different partner ways) and
+    the wedge's inner edge runs on straight: only the outer kerb narrows
+    (`a_widening_seam_of_the_own_half_meets_and_keeps_the_inner_kerb_straight`).
     Then the path is thinned back by
     Douglas–Peucker at `SIMPLIFY_TOLERANCE` 3 cm keeping every shared node, and the
     median's midline and the two inner kerbs are sampled off the aligned axes and thinned
@@ -521,14 +535,16 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     one answer, `Drawn::band_half(road, side)`, asked for the narrow way and for this one
     (**The drawn network** below). No taper
     on bridges or passages.
-    **A half of a divided street gets asphalt under its taper on the partner's side**
-    (`mesh_roads`, a wedge whose middle lies in a pair run): a ribbon of half the wide
-    way's width along the wedge, offset a quarter width toward the partner, butt ends, no
-    lane frame, pushed before the wedge; only when the wedge does narrow the partner's
-    side (a side kept for an arm needs none). The symmetric wedge narrows toward the median as
-    well, while the median (**Paired halves**) is measured off the full width — and in the
-    gap between them lay the half's full sidewalk band (a tapered half keeps it), a light
-    strip the length of the wedge (roads plan D3, gallery 16). The dark line beside it on
+    **A half of a divided street keeps its partner-side kerb straight through a taper by
+    its axis, not by extra asphalt**: the alignment (**Paired halves → Alignment**) sets
+    the wedge's axis by its tapered half width, so the symmetric wedge narrows only on the
+    outer side. It used to be the other way round — the median measured off the full
+    width, the wedge narrowing toward it, the half's full sidewalk band showing in the gap
+    (roads plan D3, gallery 16) — and a ribbon of half the wide width offset toward the
+    partner was pushed under the wedge to cover it. That patch is gone with the cause: it
+    left the 1.4 m miss between the two axes of the half at the seam (a hole at the
+    median nose, a step on the outer kerb), and on a tail wedge, whose path runs against
+    the way, it stood on the wrong side. The dark line beside the median on
     16 is **not** a seam: it is a real metal fence down the median (way 357798630,
     `barrier=fence` + an admin boundary, `height=1`) with its shadow — `tools/osm_near`
     does not list it because it skips boundaries.
