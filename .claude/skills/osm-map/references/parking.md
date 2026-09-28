@@ -398,7 +398,16 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
         flare also **grows** from the carriageway's half-width at the ring's kerb to the
         full `half` at the island's base (a smoothstep), instead of starting full-width with
         a square end whose corners stuck out of the ring kerb as steps.
-        `a_sweep_round_a_sharp_bend_covers_the_band_without_teeth` pins the sweep. Tula has none (its big
+        `a_sweep_round_a_sharp_bend_covers_the_band_without_teeth` pins the sweep.
+        **An island stands only on an approach that leaves the ring**: the drawn
+        axis at the island's base and the chord from its base to its tip must both lie
+        within 35° of the ray from the ring's centre (`SPLITTER_MIN_OUTWARD`), or no
+        island and no flare. An approach mapped into its node *along* the ring put the
+        teardrop on the ring's carriageway and bent it into a hook (Рязань 05, three of
+        its four); most such approaches are straightened first by `rings::reshape`
+        (**Roundabouts** in `roads.md`), and what still runs along the ring gets none —
+        `roads/tests.rs::a_splitter_island_stays_off_the_ring_when_the_approach_comes_in_along_it`.
+        Tula has none (its big
         rings are fed by one-way fans, its two-way approaches are service drives);
         `roads/tests.rs::a_two_way_approach_gets_a_splitter_island` holds it.
     - `Z_PARKING_LINES` lies **above** both layers, so a stall bar is never covered.

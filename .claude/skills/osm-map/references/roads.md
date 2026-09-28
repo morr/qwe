@@ -767,7 +767,14 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     travel — inward for an entry, outward for an exit. An arm already within 5° is left
     (its heading is taken over its last `HEADING_BASE` 3 m); the arc stops `PIN_MARGIN`
     1 m short of a node the arm shares with someone else, and an arc left shorter than
-    `BEND_MIN_LENGTH` 4 m is not built.
+    `BEND_MIN_LENGTH` 4 m is not built. **A two-way arm** is bent the same way, into the
+    node **along the ray** from the centre, but only when its axis arrives more than
+    `TWO_WAY_BEND_MIN_ANGLE` 30° off that ray — i.e. when the mapper led it into the node
+    along the ring. Its butt end is square to the last link, and square to an axis
+    running along the ring that end lay across the kerb and stuck out of it as a step on
+    both sides (Рязань 05, the author's report); the island rule reads the bent axis
+    (**Splitters by rule** in `parking.md`). A radial arm is left as it is
+    (`a_two_way_approach_along_the_ring_is_bent_into_it_across`).
   - **Webs** (`Rings::webs`, `webs_along`): wherever a street — an arm, its continuation,
     or a slip road that bypasses the ring without entering it (Tula, gallery 04,
     south-east) — runs **along** the ring outside it (within `WEB_ALONG` cos 0.7 of the

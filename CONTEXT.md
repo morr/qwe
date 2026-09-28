@@ -224,7 +224,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     `RoadLine::is_roundabout`, **tag or shape**: a closed one-way way is a ring too, and
     the mall's big ring carries no tag; a **Ring** (`roads/rings.rs`) is such ways chained
     into a loop and drawn as one smooth ellipse through its nodes, one section for all
-    arcs, a kerb round its island, approaches entering by a tangent arc, and a **web**
+    arcs, a kerb round its island, approaches entering by a tangent arc (a two-way one,
+    mapped into its node along the ring, by an arc along the ray), and a **web**
     (`Rings::webs`) — asphalt filling the slit between the ring and a street running
     along it outside, where their kerbs have only just parted) and
     `lanes: Option<u8>` (the section's lane count, below); `parking_aisle`
@@ -1196,7 +1197,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   wedge is asphalt, the wedge without its thin tips is what gets hatched — by the road
   paint layer's shader (`road_paint_islands`), which fades it with zoom. A **splitter**
   (`gores::splitters`) is the same island set **by rule** on an approach mapped as one
-  two-way way, where there is no fan and so no wedge. **Closedness of
+  two-way way, where there is no fan and so no wedge — only where that approach leaves
+  the ring along its ray, never on one running along the ring. **Closedness of
   a way is read off the raw OSM points, never off the drawn path** — a style knob must not
   decide whether a way is a ring. No stall stands under
   a through road or its kerb (`Surroundings::cover`). A small lot hides its roads as
