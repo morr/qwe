@@ -387,7 +387,18 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
         teardrop on its axis — from 1 m past the ring's kerb, `0.6 × radius` long (6–20 m),
         `0.06 × radius` half wide at the base (0.6–1.5 m) — hatched like a gore; the
         approach is widened around it by an asphalt flare so each lane keeps its width,
-        and its paint and ruts break over the island's length. Tula has none (its big
+        and its paint and ruts break over the island's length. Island and flare are one
+        construction, `gores::sweep`: a band of variable half-width along the approach's
+        drawn path — the union (`NonZero`) of a trapezoid per piece between stations
+        (evenly spaced **plus every path vertex inside the span**, so a piece never
+        straddles a bend) and a 16-sided disc at each vertex. Two sides offset along each
+        link's normal, which it replaced, jumped `reach · sin(bend)` at a bend and crossed
+        themselves on its inner side — a metre-deep saw on the kerb at Рязань's rings
+        (gallery sample 05), whose approaches run along the ring before they join it. The
+        flare also **grows** from the carriageway's half-width at the ring's kerb to the
+        full `half` at the island's base (a smoothstep), instead of starting full-width with
+        a square end whose corners stuck out of the ring kerb as steps.
+        `a_sweep_round_a_sharp_bend_covers_the_band_without_teeth` pins the sweep. Tula has none (its big
         rings are fed by one-way fans, its two-way approaches are service drives);
         `roads/tests.rs::a_two_way_approach_gets_a_splitter_island` holds it.
     - `Z_PARKING_LINES` lies **above** both layers, so a stall bar is never covered.
