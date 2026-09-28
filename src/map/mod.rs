@@ -298,6 +298,9 @@ impl Plugin for MapPlugin {
                     (
                         zoom::update_zoom_bucket::<buildings::BuildingLods>,
                         buildings::rebuild_buildings.run_if(buildings::rebuilds_on()),
+                        // ступень зума зданий не пересобирает слой, а прячет
+                        // оборудование кровли в шейдере
+                        buildings::material::show_roof_clutter,
                     )
                         .chain()
                         .run_if(in_state(AppState::Playing)),

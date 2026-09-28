@@ -961,8 +961,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   penthouse and the shafts, corrugated sheds the skylights, a gable roof with a ridge a
   chimney (a lean-to has no ridge).
   **The clutter is the only thing zoom changes about buildings** —
-  `BuildingZoomBucket` (`ROOF_CLUTTER_MAX_ZOOM` 0.5 m/px) rebuilds the layer without it
-  once a metre stops being worth two pixels, the way rail and tram rebuild themselves.
+  `BuildingZoomBucket` (`ROOF_CLUTTER_MAX_ZOOM` 0.5 m/px) hides it once a metre stops
+  being worth two pixels — not by a rebuild: the clutter vertices carry a negative
+  material slot and the roof shader's vertex stage collapses them
+  (`material::show_roof_clutter`), so the painter's order of the houses is untouched.
 - **Lean** (`map/buildings/mod.rs`, `Lean`) — which way the *top* of a building is
   displaced, and the second thing (with the sun) that a 2.5D building answers to. One
   oblique skew for every building, which is what a **satellite** frame looks like: 5 km of

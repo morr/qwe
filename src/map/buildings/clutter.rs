@@ -17,7 +17,9 @@
 //!
 //! Видно всё это только вблизи: [`super::BuildingZoomBucket`] снимает
 //! оборудование целиком, когда метр кровли становится мельче пары пикселей —
-//! иначе субпиксельные коробки мерцают при панораме.
+//! иначе субпиксельные коробки мерцают при панораме. Снимает шейдером, а не
+//! пересборкой: [`push_items`] метит вершины оборудования
+//! (`MeshBuilder::set_clutter`), и вершинный шейдер кровель схлопывает их.
 
 use bevy::color::Mix;
 use bevy::prelude::*;
@@ -544,7 +546,9 @@ pub(super) fn push_items(
         return;
     }
     let shadow_color: LinearRgba = roof.mix(&Srgba::BLACK, CLUTTER_SHADOW_MIX).into();
-    builder.set_roof(None);
+    // метка оборудования: дальние ступени зума прячут его в шейдере
+    // (`RoofParams::clutter`), а не пересборкой слоя
+    builder.set_clutter();
     for item in items {
         // тень — свип основания по свету: два ребра силуэта плюс сдвинутое
         // основание. Ровно та же конструкция, что у теней самих домов, и по
@@ -574,6 +578,9 @@ pub(super) fn push_items(
         }
         builder.push_quad(item.base.map(|point| point + lift), item.top.to_linear());
     }
+    // дальше в меш идёт уже не оборудование, а рамка — та же, что ставил сюда
+    // прежний `set_roof(None)`
+    builder.set_roof(None);
 }
 
 /// Докуда тень коробки дотянется, не съехав с нарисованной кровли: ближайшее

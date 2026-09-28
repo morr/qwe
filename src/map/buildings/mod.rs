@@ -163,9 +163,13 @@ pub struct BuildingShadowTag;
 
 /// Ступени детализации кровли — единственное, чем зум правит слой зданий:
 /// вблизи на крышах стоит оборудование ([`clutter`]), дальше его нет. Коробка
-/// в метр становится субпиксельной и мерцает при панораме, а нарисована она в
-/// том же меше, что и дома, — снять её можно только пересборкой слоя, как
-/// пересобирают себя путь и трамвай.
+/// в метр становится субпиксельной и мерцает при панораме.
+///
+/// Нарисована она в том же меше, что и дома (так её закрывают стены ближних
+/// соседей — painter's порядок один), и **снимается не пересборкой**, а
+/// шейдером: игра строит слой всегда с оборудованием ([`BuildingPlan::game`]),
+/// а на дальней ступени [`material::show_roof_clutter`] велит вершинному
+/// шейдеру схлопнуть его треугольники.
 pub enum BuildingLods {}
 
 impl ZoomLods for BuildingLods {
@@ -186,6 +190,19 @@ pub struct BuildingPlan {
     pub bucket: BuildingZoomBucket,
     /// `false` — теневой слой оставить как есть (см. [`BuildingShadowTag`]).
     pub shadows: bool,
+}
+
+impl BuildingPlan {
+    /// План игры: оборудование кровли в меше всегда (ступень `0`), а дальняя
+    /// ступень зума прячет его в шейдере ([`material::show_roof_clutter`]) —
+    /// без пересборки. Ступень без оборудования остаётся бенчу и витринам.
+    pub fn game(mode: BuildingHeightMode, shadows: bool) -> Self {
+        Self {
+            mode,
+            bucket: BuildingZoomBucket::at(0),
+            shadows,
+        }
+    }
 }
 
 /// Что билдеры слоёв рисуют сверх геометрии. Оба флага — не про режим высот,
@@ -524,35 +541,31 @@ pub fn mesh_buildings(
     (meshes, report)
 }
 
-/// Когда пересобирать зданиевые слои: режим высот, осевшее солнце и ступень
-/// зума кровельного оборудования.
+/// Когда пересобирать зданиевые слои: режим высот и осевшее солнце.
 ///
-/// Ступень зума здесь потому, что оборудование на кровле живёт в том же
-/// слитом меше, что и дома, и снять его иначе, чем пересборкой, нельзя.
+/// Ступени зума кровельного оборудования здесь **нет**: оборудование в меше
+/// всегда, а прячет его шейдер ([`material::show_roof_clutter`]). Раньше порог
+/// пересобирал весь слой экструзии.
 ///
 /// **Условие одно, регистрация одна** (см. `crate::map::roads::rebuilds_on`).
 pub fn rebuilds_on() -> impl SystemCondition<()> {
-    retuned::<BuildingHeightMode>
-        .or_else(retuned::<SunOnMap>)
-        .or_else(retuned::<BuildingZoomBucket>)
+    retuned::<BuildingHeightMode>.or_else(retuned::<SunOnMap>)
 }
 
 /// Пересборка зданиевых слоёв после переключения режима из UI или BRP:
 /// деспавн старых слоёв и повторный спавн из той же `MapData`.
-#[allow(clippy::too_many_arguments)]
 pub fn rebuild_buildings(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     materials: LayerMaterials,
     mode: Res<BuildingHeightMode>,
     sun: Res<SunOnMap>,
-    bucket: Res<BuildingZoomBucket>,
     map: Res<MapData>,
     layers: Query<Entity, With<BuildingLayerTag>>,
     shadows: Query<Entity, With<BuildingShadowTag>>,
 ) {
-    // ступень зума решает только судьбу оборудования на кровле; тени от неё
-    // не зависят, а стоят дороже всего остального вместе взятого
+    // обе причины пересборки трогают и тени; флаг остался на случай причины,
+    // которая их не трогает
     let with_shadows = mode.is_changed() || sun.is_changed();
     for entity in &layers {
         commands.entity(entity).despawn();
@@ -562,11 +575,7 @@ pub fn rebuild_buildings(
             commands.entity(entity).despawn();
         }
     }
-    let plan = BuildingPlan {
-        mode: *mode,
-        bucket: *bucket,
-        shadows: with_shadows,
-    };
+    let plan = BuildingPlan::game(*mode, with_shadows);
     spawn_building_meshes(
         &mut commands,
         &mut meshes,

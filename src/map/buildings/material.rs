@@ -1030,6 +1030,11 @@ pub struct RoofParams {
     /// Общий множитель амплитуд — ползунок панели; ноль возвращает прежнюю
     /// плоскую заливку.
     pub intensity: f32,
+    /// Видно ли оборудование кровли: `1` — да, `0` — вершинный шейдер
+    /// схлопывает его треугольники в точку (метка — знак слота материала,
+    /// `meshing::MeshBuilder::set_clutter`). Пишет [`show_roof_clutter`] по
+    /// ступени зума; слой зданий от этого не пересобирается.
+    pub clutter: f32,
 }
 
 /// Материал зданиевых слоёв: вершинный цвет × процедурная фактура кровли.
@@ -1091,10 +1096,13 @@ impl Default for RoofStyle {
 }
 
 impl RoofStyle {
+    /// Параметры материала; оборудование кровли — видно (его прячет
+    /// [`show_roof_clutter`], а ретюн ползунком сохраняет что есть).
     fn params(self) -> RoofParams {
         RoofParams {
             light: sun_light(),
             intensity: self.texture,
+            clutter: 1.0,
         }
     }
 }
@@ -1148,6 +1156,38 @@ pub fn retune_roof_material(
     mut materials: ResMut<Assets<RoofMaterial>>,
 ) {
     if let Some(mut material) = materials.get_mut(&handle.0) {
-        material.params = style.params();
+        // видимость оборудования — дело ступени зума, а не ползунка
+        material.params = RoofParams {
+            clutter: material.params.clutter,
+            ..style.params()
+        };
+    }
+}
+
+/// Оборудование кровли видно на ступени `0` зданиевых ступеней зума
+/// ([`super::BuildingLods`]) и спрятано дальше: шейдер схлопывает его
+/// треугольники, а меш остаётся тем же.
+///
+/// Каждый кадр, а не по смене ступени: одно чтение ассета и сравнение, а
+/// пишет система только на пересечении порога. Так же ей не нужен отдельный
+/// вызов на входе в мир — ступень там сеется без флага изменения
+/// (`zoom::seed_zoom_bucket`), и условие по смене её бы пропустило.
+///
+/// Раньше порог 0.5 м/px пересобирал весь слой экструзии — 535 тыс. ⇄ 1.18 млн
+/// вершин на Туле (83 мс сборки, 20–47 МБ заливки), Калуга 106 мс — ради
+/// коробок в метр, субпиксельных на этом зуме.
+pub fn show_roof_clutter(
+    bucket: Res<super::BuildingZoomBucket>,
+    handle: Res<RoofMaterialHandle>,
+    mut materials: ResMut<Assets<RoofMaterial>>,
+) {
+    let shown = if bucket.index == 0 { 1.0 } else { 0.0 };
+    // `get` сначала: `get_mut` помечает ассет изменённым и перезаливает юниформ
+    if materials
+        .get(&handle.0)
+        .is_some_and(|material| material.params.clutter != shown)
+        && let Some(mut material) = materials.get_mut(&handle.0)
+    {
+        material.params.clutter = shown;
     }
 }

@@ -1008,7 +1008,8 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
   implementing `ZoomLods` (`RailLods`, `TramLods`, `FenceLods`, `CarLods`, `WagonLods`,
   `BuildingLods`, `PaintLods`, `TreeLods` — empty enums handing over the `max_zoom`s; the
   trees' table caps the density prefix, `references/trees.md`; the paint's
-  bucket only flips `Visibility`, nothing is rebuilt — **Markings** in `roads.md`). `ZoomBucket<T>` is the
+  and the trees' buckets only flip `Visibility`, the buildings' only a roof-material
+  uniform — nothing is rebuilt — **Markings** in `roads.md`, `references/buildings.md`). `ZoomBucket<T>` is the
   resource with the current index for that table;
   `for_zoom` is the single selection rule (first bucket whose bound is above the zoom,
   a zoom on the bound goes up — `zoom/tests.rs`). Two generic systems:

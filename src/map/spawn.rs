@@ -8,7 +8,7 @@
 
 use bevy::prelude::*;
 
-use crate::map::buildings::{self, BuildingHeightMode, BuildingZoomBucket};
+use crate::map::buildings::{self, BuildingHeightMode};
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::{AreaKind, MapData, PolyArea, TreeRow};
 use crate::map::parking;
@@ -129,7 +129,6 @@ pub fn spawn_map(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     materials: LayerMaterials,
-    building_bucket: Res<BuildingZoomBucket>,
     map: Res<MapData>,
     height_mode: Res<BuildingHeightMode>,
     road_style: Res<RoadStyle>,
@@ -172,11 +171,7 @@ pub fn spawn_map(
         roads::mesh_roads(&map, *road_style, road_shape.0),
     );
 
-    let plan = buildings::BuildingPlan {
-        mode: *height_mode,
-        bucket: *building_bucket,
-        shadows: true,
-    };
+    let plan = buildings::BuildingPlan::game(*height_mode, true);
     buildings::spawn_building_meshes(
         &mut commands,
         &mut meshes,
