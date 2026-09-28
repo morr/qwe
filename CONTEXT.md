@@ -246,7 +246,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   - **Section** (`map/roads/network/sections.rs`, first pass of `finish_parse`) — how many
     lanes a way has: `lanes` (or `lanes:forward` + `lanes:backward`, plus
     `lanes:both_ways` when tagged), else the nearest
-    tagged way of its street, else a default by class; a lone jump shorter than 60 m
+    tagged way of its street, else a default by class (a one-way `tertiary` as many as a
+    two-way one, a ring of radius ≥ 30 m at least two); a lone jump shorter than 60 m
     (2→4→2) is cut to its neighbours. The width follows: lanes × the **lane width** (a
     `RoadShape` knob, 3.3 m by default; 0.3 m less on a service drive) + a 0.5 m edge each
     side. **The only roads stage that moves the model** — the

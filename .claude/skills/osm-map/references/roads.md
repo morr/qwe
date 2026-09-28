@@ -455,7 +455,20 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     else the **nearest tagged way of its street** by the distance between their middles
     along it, else `default_lanes` by class (four on motorway/trunk/primary/secondary
     two-way, two on the rest — every `*_link` included, half of that one-way, one on a
-    service drive). Then a **lone jump** — a run shorter
+    service drive; **a one-way `tertiary` keeps the two-way count**, and a ring — tag or
+    shape — whose own way gives a radius of `WIDE_RING_RADIUS` 30 m or more gets at least
+    `WIDE_RING_LANES` 2, `inferred_lanes`). The two exceptions are generated data, not
+    read: a one-way tertiary is the carriageway of a two-way one driven in one direction
+    (the grids of Ростов, Рязань, Калуга — two or three lanes), and one lane of 4.3 m read
+    as a drive beside a sidewalk three times wider (Ростов 01, scout D1); a big ring is
+    driven in two rows (Рязань, площадь Мичурина, r 52 m, tertiary, scout E17), while
+    Рязань 05's 20 m park ring keeps its one lane, as on Yandex. The radius is read off
+    the way alone — the perimeter of a closed one, the circle through the ends and the
+    middle of an arc — since the rings are assembled only when drawn. Untagged one-way
+    tertiaries per v15 cache: Rostov 127, Ryazan 65, Berlin 44, Kaluga 27, Oryol 16,
+    Moscow 14, Tula 7 (some take a neighbour's tag first). Residential and unclassified
+    one-ways stay at one: their houses stand closer, and a wider default would push them
+    off the sidewalks for nothing. Then a **lone jump** — a run shorter
     than `SPIKE_MAX_LENGTH` 60 m with the same count on both sides and another of its own —
     is cut to its neighbours. `RoadLine::lanes` is **overwritten** with the result on every
     street and drive, and `width = lanes × lane width + 2 × EDGE_WIDTH` — a lane on a
