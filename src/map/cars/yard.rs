@@ -102,7 +102,7 @@ impl<'a> Blocked<'a> {
         let mut links = Vec::new();
         let mut links_by_cell = Grid::new(CELL);
         for (index, road) in map.roads.iter().enumerate() {
-            let reach = road.width / 2.0 + road.sidewalk().any().unwrap_or(0.0);
+            let reach = road.sidewalk().mapped_edge(road.width / 2.0);
             for pair in road.points.windows(2) {
                 links_by_cell.insert_segment(
                     pair[0],
