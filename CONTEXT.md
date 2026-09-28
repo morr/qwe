@@ -1551,11 +1551,13 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   **`buildings` returns two lists** (`BuildingMeshes { layers, shadows }`), because its
   shadows carry their own tag and their own rebuild schedule; a tag is what the
   *adapter* despawns by, so it stays outside `LayerMesh`. **`trees` is a scatter, not a
-  merged mesh** — a crown is an entity per tree (own tint, own z), so `mesh_trees`
+  merged mesh** on the near zoom step — there a crown is an entity per tree (own tint,
+  own z), so `mesh_trees`
   returns `TreeMeshes { pools, tints, crowns, merged, shadows }`: the crown pool as plain
   `Mesh` values (a `Handle` is the world, exactly what `MaterialSpec` keeps out of a
   build), the placements, and the far chunks and shadows as masked `LayerMesh`es. Its adapter uploads the pool, spawns
-  one entity per placement and hands the shadows to `spawn_layers` — so the merged layers
+  the entities of the placements (at once, or streamed in batches by `CrownStream`) and
+  hands the far chunks and the shadows to `spawn_layers` — so the merged layers
   of the map all get their `DespawnOnExit` from `spawn_layer`, and the tree crowns are
   the one scatter that writes its own, in one place. The two
   flat `ColorMaterial`s `MaterialSpec` names live in **`FlatMaterials`**, a `Startup`

@@ -223,8 +223,9 @@ stand, how density works, and which resources restyle them.
     vertices for the whole forest, rebuilt and uploaded on every crossing — the next
     candidate (a light far shadow template, the same move). Crossing into the near step
     still respawned every crown (Kaluga ~750–800 ms, Tula ~130 ms). All three are gone
-    since: the shadows are built once per band (above), thinned on the far steps, and
-    both crown forms stay in the world behind their masks.
+    since: the shadows are built once per band (above), thinned on the far steps, the
+    merged far chunks stay in the world behind their masks, and the near step's crown
+    entities are streamed in and out in batches (`CrownStream`, above).
   - **The draw-group z (`crown_z`) stays** — it is what batches the near step's entities
     into ~120 draws; the far steps do not use it.
 - **The density ceiling is derived, not chosen** (`planting.rs`) — `TREE_MIN_SPACING` (6 m)
