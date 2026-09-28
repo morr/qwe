@@ -4266,3 +4266,114 @@ fn the_closest_pair_of_two_segments_is_none_only_when_they_cross() {
     assert!(near_a.distance(b) < 1e-3, "{near_a} вместо конца отрезка");
     assert!(near_c.distance(CENTER + Vec2::new(14.0, 0.0)) < 1e-3);
 }
+
+/// Сцена кармана: квартал, чей северо-западный угол срезан диагональю, и две
+/// дорожки по его краям — вдоль верхнего и вдоль левого, сходящиеся над
+/// срезанным углом. Катет среза — `cut` м; между диагональю и дорожками
+/// остаётся треугольник земли. `rough` — левая дорожка грунтовая.
+fn pocket_scene(cut: f32, rough: bool) -> MapData {
+    let at = |x: f32, y: f32| CENTER + Vec2::new(x, y);
+    let path = |points: Vec<Vec2>, pavement: Pavement| RoadLine {
+        pavement: Some(pavement),
+        ..crate::map::osm::fixture::footway(points)
+    };
+    let left = if rough {
+        Pavement::Unpaved
+    } else {
+        Pavement::Paved
+    };
+    // край квартала — под дорожками: полоса дорожки кроет его на метр
+    let block = PolyArea {
+        kind: AreaKind::Residential,
+        ..building(
+            vec![
+                at(-1.0, -1.0 - cut),
+                at(-1.0, -80.0),
+                at(80.0, -80.0),
+                at(80.0, 1.0),
+                at(cut - 1.0, 1.0),
+            ],
+            Vec::new(),
+        )
+    };
+    MapData {
+        roads: vec![
+            path(vec![at(-2.0, 2.0), at(100.0, 2.0)], Pavement::Paved),
+            path(vec![at(-2.0, 2.0), at(-2.0, -100.0)], left),
+        ],
+        landuse: vec![block],
+        ..MapData::default()
+    }
+}
+
+/// Засеян ли точкой `(x, y)` от центра хоть один карман.
+fn sown_at(map: &MapData, x: f32, y: f32) -> bool {
+    map.pockets
+        .iter()
+        .any(|area| crate::map::osm::model::point_in_polygon(CENTER + Vec2::new(x, y), &area.outer))
+}
+
+/// Треугольник земли между срезанным углом квартала и двумя мощёными
+/// дорожками — карман: он засевается травой двора того же вида, и край его
+/// заходит под дорожки. Тула, витрина 02: квартал 164045103 не доходит до
+/// дорожки десяти метров.
+#[test]
+fn a_ground_pocket_between_a_block_and_two_footways_is_sown_as_yard() {
+    let mut map = pocket_scene(16.0, false);
+    let sown = pockets::fill_ground_pockets(&mut map);
+    assert_eq!(sown, 1, "карманов засеяно: {sown}");
+    // карман — не квартал: обочина спрашивает двор только у настоящих
+    assert_eq!(map.landuse.len(), 1);
+    let pocket = &map.pockets[0];
+    assert_eq!(pocket.kind, AreaKind::Residential);
+    assert!(sown_at(&map, 4.0, -4.0), "середина клина осталась землёй");
+    // заведён под дорожку: край кармана заходит за край её полосы (0.25 м)
+    let top = pocket
+        .outer
+        .iter()
+        .map(|point| point.y - CENTER.y)
+        .fold(f32::NEG_INFINITY, f32::max);
+    assert!(top > 0.5, "край кармана не под дорожкой: {top}");
+}
+
+/// Что должно остаться землёй, остаётся: карман у грунтовой тропы (пустырь с
+/// тропинками), большой карман (площадка сама по себе) и дырка в самом
+/// квартале, у которой нет дороги на краю.
+#[test]
+fn a_pocket_by_a_dirt_path_a_large_one_and_a_hole_in_the_block_stay_ground() {
+    let mut rough = pocket_scene(16.0, true);
+    assert_eq!(pockets::fill_ground_pockets(&mut rough), 0, "у тропы");
+
+    // катет 40 м — 800 м² земли
+    let mut large = pocket_scene(40.0, false);
+    assert_eq!(pockets::fill_ground_pockets(&mut large), 0, "большой");
+
+    let mut holed = pocket_scene(0.0, false);
+    holed.landuse[0].holes = vec![rect(
+        CENTER + Vec2::new(30.0, -40.0),
+        CENTER + Vec2::new(36.0, -34.0),
+    )];
+    assert_eq!(
+        pockets::fill_ground_pockets(&mut holed),
+        0,
+        "дырка квартала засеяна"
+    );
+}
+
+/// Карман ищется плитками, и тот, что лёг на шов двух плиток, засевается
+/// ровно один раз: серединой он принадлежит одной из них.
+#[test]
+fn a_pocket_on_a_tile_seam_is_sown_once() {
+    // сдвиг сцены так, чтобы клин лёг поперёк границы плиток в 250 м
+    let seam = (CENTER / 250.0).ceil() * 250.0;
+    let shift = seam - (CENTER + Vec2::new(4.0, -4.0));
+    let mut map = pocket_scene(16.0, false);
+    for road in &mut map.roads {
+        road.points.iter_mut().for_each(|point| *point += shift);
+    }
+    map.landuse[0]
+        .outer
+        .iter_mut()
+        .for_each(|point| *point += shift);
+    assert_eq!(pockets::fill_ground_pockets(&mut map), 1);
+}

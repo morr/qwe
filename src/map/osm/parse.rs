@@ -185,6 +185,10 @@ struct PassReport {
     pulling: std::time::Duration,
     stretched: StretchedAreas,
     stretching: std::time::Duration,
+    /// Карманов земли у кварталов, засеянных травой двора
+    /// (`pockets::fill_ground_pockets`).
+    sown: usize,
+    sowing: std::time::Duration,
     generated: usize,
     generating: std::time::Duration,
     planted: PlantedReport,
@@ -210,6 +214,8 @@ impl std::fmt::Display for PassReport {
             pulling,
             stretched,
             stretching,
+            sown,
+            sowing,
             generated,
             generating,
             planted,
@@ -261,6 +267,10 @@ impl std::fmt::Display for PassReport {
         writeln!(
             f,
             "osm parse: {blocks} block vertices pulled to the drawn road edge, {grown} parking lots paved up to their roads, {trimmed} only stepped back from the houses on them, in {stretching:?}"
+        )?;
+        writeln!(
+            f,
+            "osm parse: {sown} ground pockets between the blocks and the roads sown as yard in {sowing:?}"
         )?;
         let attached = entrances_found - entrances_orphaned;
         writeln!(
@@ -380,6 +390,11 @@ fn finish_parse(map: &mut MapData, pending: &Pending) -> PassReport {
     let stretched = pull_areas_to_roads(map);
     let stretching = started.elapsed();
 
+    // после кварталов и стоянок: дотянутые, они уже покрывают свою землю
+    let started = std::time::Instant::now();
+    let sown = pockets::fill_ground_pockets(map);
+    let sowing = started.elapsed();
+
     // размеченных дверей в OSM единицы процентов — остальным дом получает свои
     // по замеру когорт, см. `entrances/`
     let started = std::time::Instant::now();
@@ -418,6 +433,8 @@ fn finish_parse(map: &mut MapData, pending: &Pending) -> PassReport {
         pulling,
         stretched,
         stretching,
+        sown,
+        sowing,
         generated,
         generating,
         planted,
@@ -2653,6 +2670,7 @@ fn assemble_rings(
 }
 
 mod lots;
+mod pockets;
 mod tags;
 #[cfg(test)]
 mod tests;

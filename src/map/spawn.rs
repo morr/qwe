@@ -254,7 +254,8 @@ pub fn mesh_surfaces(
     // оба означала бы траву на бетонной площадке.
     let mut yards = MeshBuilder::with_surface_coords();
     let mut works = MeshBuilder::with_surface_coords();
-    for area in &map.landuse {
+    // и карманы земли у них (`parse/pockets.rs`) — травой того же двора
+    for area in map.landuse.iter().chain(&map.pockets) {
         let (builder, color) = match area.kind {
             AreaKind::Industrial => (&mut works, INDUSTRIAL_COLOR),
             _ => (&mut yards, RESIDENTIAL_COLOR),
