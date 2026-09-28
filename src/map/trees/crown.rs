@@ -634,7 +634,7 @@ pub(super) fn far_crown(
     // шаг вниз, а не вверх: кольцо короче двух норм не прореживается вовсе —
     // у ели и пальмы вершины чередуются остриё/впадина, и шаг 2 срезал бы
     // все острия разом
-    let step = (geometry.outer.len() / FAR_CROWN_RING).max(1);
+    let step = far_ring_step(geometry.outer.len());
     let grow = 1.0 + params.outline_stroke / 2.0;
     let ring: Vec<Vec2> = geometry
         .outer
@@ -828,36 +828,85 @@ pub(super) fn leaf_arcs(ring: &[Vec2], weight: f32, rng: &mut Lcg) -> Vec<Vec<Ve
 /// цвет лежал в отдельном `ColorMaterial`, который слой заводил себе на
 /// каждую пересборку; со швом слой красится общим `MaterialSpec::Blend`, и
 /// цвету больше негде быть.
+///
+/// Игра берёт шаблон вместе с дальним ([`shadow_templates`]); отдельно он
+/// нужен только тестам.
+#[cfg(test)]
 pub(super) fn shadow_template(
     geometry: &CrownGeometry,
     rng: &mut Lcg,
     params: &CrownParams,
 ) -> MeshBuilder {
-    let color = SHADOW_COLOR.to_linear();
+    shadow_templates(geometry, rng, params).0
+}
+
+/// Шаблон тени и его дальний вариант — **от одной разыгранной высоты**: тень
+/// дальней ступени обязана быть той же тенью, только с прореженным контуром.
+///
+/// Дальний (`trees::CrownDetail::Merged`, от 2 м/px) — силуэт по контуру,
+/// прореженному тем же шагом, что у дальней кроны ([`far_ring`]): облачный
+/// контур в 144–188 вершин сходится к 32–37, и на Калуге слой теней дальней
+/// ступени легчает вчетверо (14.9 → 3.55 млн вершин, сборка 88 → 24 мс).
+/// Контур ели (32) и пальмы (48) не прореживается вовсе — у ели тогда и веер
+/// тот же самый, и второй union по нему не считается.
+pub(super) fn shadow_templates(
+    geometry: &CrownGeometry,
+    rng: &mut Lcg,
+    params: &CrownParams,
+) -> (MeshBuilder, MeshBuilder) {
     // высоту разыгрывает вариант, а во сколько раз тень от неё длиннее —
     // солнце ([`sun_stretch`], у домов оно же растягивает зажим длины). Тип
     // тени при этом выбирает сама разыгранная высота, до растяжения: иначе на
     // 15° всякая крона разом получила бы длинную тень вместо сдвинутого
     // силуэта
     let height = params.shadow_height_base + params.shadow_height_spread * rng.gauss3();
+    let full = shadow_silhouette(geometry.shape, &geometry.outer, height, params);
+    let far = match far_ring(&geometry.outer) {
+        Some(thinned) => shadow_silhouette(geometry.shape, &thinned, height, params),
+        None => full.clone(),
+    };
+    (full, far)
+}
+
+/// Силуэт тени по контуру `outer` при разыгранной высоте `height`.
+fn shadow_silhouette(
+    shape: TreeShape,
+    outer: &[Vec2],
+    height: f32,
+    params: &CrownParams,
+) -> MeshBuilder {
+    let color = SHADOW_COLOR.to_linear();
     let mut builder = MeshBuilder::default();
-    match geometry.shape {
+    match shape {
         TreeShape::Conifer => {
-            for (outer, holes) in conifer_shadow(&geometry.outer, height) {
+            for (outer, holes) in conifer_shadow(outer, height) {
                 builder.push_polygon(&outer, &holes, color);
             }
         }
         _ if height > params.long_shadow_height => {
-            builder.push_polygon(&shadow_ring(&geometry.outer, params), &[], color);
+            builder.push_polygon(&shadow_ring(outer, params), &[], color);
         }
         // `drawSimpleShadow`: тот же силуэт, просто сдвинутый по тени
         _ => {
             let offset = shadow_dir() * height * sun_stretch();
-            let ring: Vec<Vec2> = geometry.outer.iter().map(|&p| p + offset).collect();
+            let ring: Vec<Vec2> = outer.iter().map(|&p| p + offset).collect();
             builder.push_polygon(&ring, &[], color);
         }
     }
     builder
+}
+
+/// Шаг, которым дальние ступени прореживают контур кроны ([`far_crown`],
+/// [`shadow_templates`]): ровный, `len / FAR_CROWN_RING`, округлённый вниз.
+fn far_ring_step(len: usize) -> usize {
+    (len / FAR_CROWN_RING).max(1)
+}
+
+/// Контур, прореженный шагом [`far_ring_step`]; `None` — прореживать нечего
+/// (шаг 1: ель, пальма).
+fn far_ring(outer: &[Vec2]) -> Option<Vec<Vec2>> {
+    let step = far_ring_step(outer.len());
+    (step > 1).then(|| outer.iter().step_by(step).copied().collect())
 }
 
 /// `drawConiferShadow`: тень ели — не растянутый силуэт, а **конус**.

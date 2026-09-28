@@ -22,8 +22,10 @@ pub use self::conifer::{ConiferField, ConiferNoiseStyle};
 pub use self::crown::CrownParams;
 #[cfg(test)]
 use self::crown::crown_mesh;
+#[cfg(test)]
+use self::crown::shadow_template;
 use self::crown::{
-    CROWN_COLOR, INK_COLOR, crown_builder, crown_geometry, far_crown, shadow_template, variant_rng,
+    CROWN_COLOR, INK_COLOR, crown_builder, crown_geometry, far_crown, shadow_templates, variant_rng,
 };
 use crate::loading::AppState;
 use crate::map::SunOnMap;
@@ -300,6 +302,9 @@ pub struct CrownVariant {
     /// Шаблон силуэта тени; в игре он копируется в общий меш теней
     /// (`MeshBuilder::push_template`).
     pub shadow: MeshBuilder,
+    /// Шаблон тени дальних ступеней ([`CrownDetail::Merged`]) — та же тень по
+    /// контуру, прореженному как у [`Self::far`].
+    pub far_shadow: MeshBuilder,
     /// Шаблон дальней кроны — заливка прореженного контура средним цветом
     /// полной; из таких собраны слитые куски дальних ступеней зума
     /// ([`CrownDetail::Merged`], `MeshBuilder::push_crown`).
@@ -323,12 +328,13 @@ pub fn crown_variant(
     let mut rng = variant_rng(variant, params);
     let geometry = crown_geometry(shape, &mut rng, params);
     let (crown, ink_share) = crown_builder(&geometry, style, &mut rng, params);
-    let shadow = shadow_template(&geometry, &mut rng, params);
+    let (shadow, far_shadow) = shadow_templates(&geometry, &mut rng, params);
     // дальняя крона генератора не трогает: она читает уже разыгранный контур
     let far = far_crown(&geometry, style, params, ink_share);
     CrownVariant {
         crown: crown.build(),
         shadow,
+        far_shadow,
         far,
     }
 }
@@ -759,13 +765,30 @@ fn shadow_layers(
 ) -> Vec<TreeLayer> {
     let total = counts.iter().copied().max().unwrap_or(0);
     let trees = &planted.visible(f32::INFINITY)[..total];
+    // шаблон тени — по подробности ступени: полный на ближней, прореженный
+    // ([`CrownVariant::far_shadow`]) на дальних, где силуэт — пара пикселей
+    let details = [CrownDetail::Full, CrownDetail::Merged];
     density_bands(counts)
+        .flat_map(|(range, band)| {
+            details.into_iter().filter_map(move |detail| {
+                let shows = TreeLodMask::of(
+                    (0..TREE_LODS.len())
+                        .filter(|&step| band.shows(step) && TREE_LODS[step].detail == detail),
+                );
+                (!shows.is_empty()).then(|| (range.clone(), shows, detail))
+            })
+        })
         .enumerate()
-        .map(|(ordinal, (range, shows))| {
+        .map(|(ordinal, (range, shows, detail))| {
             let mut builder = MeshBuilder::default();
             for index in range {
                 let (at, radius) = trees[index];
-                builder.push_template(&pools.variant(pools.pick(index)).shadow, at, radius);
+                let variant = pools.variant(pools.pick(index));
+                let template = match detail {
+                    CrownDetail::Full => &variant.shadow,
+                    CrownDetail::Merged => &variant.far_shadow,
+                };
+                builder.push_template(template, at, radius);
             }
             TreeLayer {
                 shows,

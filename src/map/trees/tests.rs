@@ -792,22 +792,19 @@ fn a_far_zoom_step_trims_the_tail_of_the_set() {
     assert_eq!(near_report.crowns, 10, "ближняя ступень без потолка");
     assert_eq!(near_report.detail, CrownDetail::Full);
     assert!(near.merged.is_empty());
-    let near_shadows = shadows_shown(&near, 0);
-    for (bucket, lod) in TREE_LODS.iter().enumerate().skip(1) {
-        let (far, report) = build(lod.max_zoom - 0.01);
+    for lod in &TREE_LODS[1..] {
+        let (_, report) = build(lod.max_zoom - 0.01);
         let cap = lod.density_cap;
         assert_eq!(report.density, cap);
         // пороги у `ten_trees` — 0..=9
         assert_eq!(report.crowns, cap as usize + 1);
-        // префикс: тени дальней ступени — ровно тени первых её крон ближней
-        let far_shadows = shadows_shown(&far, bucket);
-        assert!(far_shadows.len() < near_shadows.len());
-        assert_eq!(
-            far_shadows,
-            &near_shadows[..far_shadows.len()],
-            "кроны переехали"
-        );
     }
+    // префикс: тени дальней ступени — ровно тени первых крон ступени ближе
+    // (сравнимы ступени одной подробности: у ближней шаблон тени полный)
+    let far = shadows_shown(&near, TREE_LODS.len() - 1);
+    let nearer = shadows_shown(&near, TREE_LODS.len() - 2);
+    assert!(far.len() < nearer.len());
+    assert_eq!(far, &nearer[..far.len()], "кроны переехали");
 }
 
 /// Вершины теней, которые видны на ступени `bucket`, в порядке слоёв.
@@ -854,16 +851,53 @@ fn tree_shadows_are_built_once_for_every_zoom_step() {
     // видимые на ступени вершины — ровно шаблоны теней её префикса
     let counts = step_counts(&style, &ten_trees());
     assert_eq!(counts, [10, 4, 3]);
-    for (bucket, _) in TREE_LODS.iter().enumerate() {
+    for (bucket, lod) in TREE_LODS.iter().enumerate() {
         let shown = shadows_shown(&near, bucket).len();
         let expected: usize = (0..counts[bucket])
             .map(|index| {
-                crown_variant(TreeShape::Cotton, index % TREE_VARIANTS, &style, &params())
-                    .shadow
-                    .vertex_count()
+                let variant =
+                    crown_variant(TreeShape::Cotton, index % TREE_VARIANTS, &style, &params());
+                match lod.detail {
+                    CrownDetail::Full => variant.shadow.vertex_count(),
+                    CrownDetail::Merged => variant.far_shadow.vertex_count(),
+                }
             })
             .sum();
         assert_eq!(shown, expected, "ступень {bucket}");
+    }
+}
+
+/// Тень дальних ступеней — та же тень по прореженному контуру: у облачной
+/// кроны она в разы легче полной и по площади от неё почти не отличается, у
+/// ели и пальмы (контур не прореживается) совпадает с полной целиком.
+#[test]
+fn the_far_shadow_is_a_thinned_copy_of_the_full_one() {
+    let _sun = crate::map::default_sun();
+    let style = TreeStyle::default();
+    for shape in TreeShape::CONCRETE {
+        for variant in 0..TREE_VARIANTS {
+            let built = crown_variant(shape, variant, &style, &params());
+            let (full, far) = (&built.shadow, &built.far_shadow);
+            if shape == TreeShape::Cotton {
+                assert!(
+                    far.vertex_count() * 3 < full.vertex_count(),
+                    "{shape:?} #{variant}: {} против {}",
+                    far.vertex_count(),
+                    full.vertex_count()
+                );
+                let (far_area, full_area) = (far.area_since(0), full.area_since(0));
+                assert!(
+                    (far_area / full_area - 1.0).abs() < 0.1,
+                    "{shape:?} #{variant}: площадь {far_area} против {full_area}"
+                );
+            } else {
+                assert_eq!(
+                    far.positions_for_test(),
+                    full.positions_for_test(),
+                    "{shape:?} #{variant}"
+                );
+            }
+        }
     }
 }
 
@@ -1005,7 +1039,9 @@ fn the_shadows_are_blended_layers_on_their_own_z() {
     let _sun = crate::map::default_sun();
     let (built, report) = mesh_ten(TreeShape::Cotton, 9.0);
 
-    assert_eq!(built.shadows.len(), TREE_LODS.len());
+    // полоса на ступень, и у полос, которые видят обе подробности, — по слою
+    // на каждую (полный шаблон и прореженный)
+    assert!(built.shadows.len() >= TREE_LODS.len());
     let mut zs = Vec::new();
     for shadow in &built.shadows {
         let layer = &shadow.layer;

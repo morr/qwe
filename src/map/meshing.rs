@@ -500,7 +500,7 @@ enum FanCoords {
     },
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct MeshBuilder {
     positions: Vec<[f32; 3]>,
     colors: Vec<[f32; 4]>,

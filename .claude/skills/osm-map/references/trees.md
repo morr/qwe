@@ -119,6 +119,18 @@ stand, how density works, and which resources restyle them.
     every tree shadow is one colour at one alpha, and alpha-blending one colour is
     order-independent, so overlaps darken exactly as they did inside one mesh.
     `tree_shadows_are_built_once_for_every_zoom_step` pins it.
+  - **The far steps draw a thinned shadow** (`CrownVariant::far_shadow`,
+    `crown.rs::shadow_templates`): the same shadow, from the same rolled height, laid
+    over the outer ring thinned by the far crown's step (`far_ring_step`,
+    `len / FAR_CROWN_RING`, rounded down). The cotton ring (144–188) comes out at 32–37,
+    the conifer (32) and palm (48) rings are not thinned at all, so the conifer fan is
+    the very same one and its union is not run twice. So a density band seen by both
+    detail kinds gets two layers — full template for the `Full` steps, thin for the
+    `Merged` ones — each with its own mask. Measured by the round-2 prototype: Kaluga's
+    far shadow layer **14.9 M → 3.55 M vertices**, build 88 → 24 ms; area within ±10 % of
+    the full shadow (`the_far_shadow_is_a_thinned_copy_of_the_full_one`). From 2 m/px a
+    shadow is a couple of pixels, so the ring's scallops are invisible. Cost: the thin
+    layers are built and held alongside the full ones (≈ +¼ of the shadow vertices).
 - **Crown detail by zoom** (`TreeLod::detail`, `CrownDetail`) — the near step draws
   `Full` crowns, an **entity per tree** over its variant's shared mesh; the two far steps
   draw `Merged` crowns: **no entity per tree at all**, the crowns baked into
