@@ -349,6 +349,15 @@ impl<'m> Drawn<'m> {
             .filter(|_| !self.across_median[index])
     }
 
+    /// Обочины дороги до отдельных тротуаров (`RoadLine::verges`), если
+    /// тротуары рисуются; кусок в проёме пары — без них.
+    pub fn verges_drawn(&self, index: usize) -> [f32; 2] {
+        if !self.sidewalks || self.across_median[index] {
+            return [0.0; 2];
+        }
+        self.roads[index].verges
+    }
+
     /// Тротуар, который у дороги есть **на карте**
     /// ([`SidewalkProfile::any`](crate::map::osm::model::SidewalkProfile::any)),
     /// ручка не смотрит: зебра по правилу — вопрос модели, как карман, а

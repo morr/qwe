@@ -75,8 +75,8 @@ use crate::map::surface::{
 };
 use crate::prefs::retuned;
 use crate::settings::{
-    Z_ALLEY, Z_BUILDING, Z_LOT_LINES, Z_LOT_SIDEWALK, Z_ROAD, Z_ROAD_MEDIAN, Z_SIDEWALK,
-    Z_UNPAVED_ROAD,
+    Z_ALLEY, Z_BUILDING, Z_LOT_LINES, Z_LOT_SIDEWALK, Z_ROAD, Z_ROAD_MEDIAN, Z_ROAD_VERGE,
+    Z_SIDEWALK, Z_UNPAVED_ROAD,
 };
 
 /// Проезжая часть — асфальт: серый, заметно темнее тротуара и земли. Белой
@@ -669,6 +669,8 @@ pub fn mesh_roads(
     let mut painter = paint::Painter::new(map.traffic_side);
 
     let mut sidewalks = MeshBuilder::with_surface_coords();
+    // обочины до отдельных тротуаров — под зеленью (`Z_ROAD_VERGE`)
+    let mut verges = MeshBuilder::with_surface_coords();
     let mut alleys = MeshBuilder::with_surface_coords();
     let mut streets = MeshBuilder::with_surface_coords();
     // грунтовые улицы — своим слоем под асфальтом (`Z_UNPAVED_ROAD`)
@@ -732,6 +734,10 @@ pub fn mesh_roads(
     // и тот же угол в слое тротуаров: полоса поворачивает за бордюром
     for outline in &kerb_returns.sidewalks {
         sidewalks.push_convex(outline, SIDEWALK_COLOR.to_linear());
+    }
+    // и в слое обочин — где вместо полосы обочина до отдельной дорожки
+    for outline in &kerb_returns.verges {
+        verges.push_convex(outline, SIDEWALK_COLOR.to_linear());
     }
     // носы острых развилок идут по гнутым кромкам лент, и веер из острия
     // их не покрыл бы — триангуляция целиком; носов в городе сотни
@@ -1208,6 +1214,19 @@ pub fn mesh_roads(
                 );
             }
         }
+        // обочина до отдельного тротуара — лентой от оси за кромку на её
+        // ширину, в свою сторону: проезжую часть она кроет под асфальтом, а
+        // до угла узла доходит торцом, и угол между двумя такими улицами
+        // замощён их обочинами
+        if ring.is_none() {
+            push_verges(
+                &mut verges,
+                points,
+                road.width,
+                prepared.verges_drawn(index),
+                SIDEWALK_COLOR.to_linear(),
+            );
+        }
         // слой заливки берётся после полосы тротуара: мощёная дорожка
         // ложится в тот же слой, а полоса выше брала его сама
         let fill = match road.class {
@@ -1330,6 +1349,12 @@ pub fn mesh_roads(
     // асфальт, тротуар и дорожка — фактурные, лента стены — плоская; три
     // мостовых слоя со своими высотами и материалами отдаёт `Bridges`
     let mut layers: Vec<LayerMesh> = [
+        (
+            verges,
+            Z_ROAD_VERGE,
+            "road_verges",
+            MaterialSpec::Surface(SurfaceKind::Sidewalk),
+        ),
         (
             alleys,
             Z_ALLEY,
@@ -1624,6 +1649,37 @@ fn push_sidewalk(
             .map(|(point, offset)| *point + offset)
             .collect();
         push_ribbon_trimmed(builder, &shifted, width + sidewalk, color, ROAD_JOIN, trims);
+    }
+}
+
+/// Обочины дороги шириной `width` ([`RoadLine::verges`]) — по ленте на
+/// сторону: от оси до кромки плюс обочина, круглыми торцами.
+fn push_verges(
+    builder: &mut MeshBuilder,
+    points: &[Vec2],
+    width: f32,
+    verges: [f32; 2],
+    color: LinearRgba,
+) {
+    for (side, verge) in verges.into_iter().enumerate() {
+        if verge <= 0.0 {
+            continue;
+        }
+        // `miter_offsets` плюсом сдвигает влево — сторона 0
+        let shift = if side == 0 { verge / 2.0 } else { -verge / 2.0 };
+        let shifted: Vec<Vec2> = points
+            .iter()
+            .zip(miter_offsets(points, false, shift))
+            .map(|(point, offset)| *point + offset)
+            .collect();
+        push_ribbon_trimmed(
+            builder,
+            &shifted,
+            width + verge,
+            color,
+            ROAD_JOIN,
+            [false; 2],
+        );
     }
 }
 

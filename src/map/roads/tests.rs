@@ -246,11 +246,13 @@ fn the_city_wall_ribbon_stays_off_fortress_buildings() {
 // телеметрия области жили внутри `spawn_roads` — 275 строк, взять которые из
 // теста было нечем: проверять можно было только хелперы под ними.
 
-/// Девятнадцать дорожных слоёв снизу вверх, ровно в том порядке, в каком они
-/// уходят в мир: одиннадцать лент и восемь слоёв краски над своим асфальтом —
+/// Двадцать дорожных слоёв снизу вверх, ровно в том порядке, в каком они
+/// уходят в мир: двенадцать лент и восемь слоёв краски над своим асфальтом —
 /// колея траекторий узла (маска, потом наложение) ниже линий, островки колец
-/// над асфальтом стоянок. Грунтовки — под асфальтом улиц.
-const LAYERS: [&str; 19] = [
+/// над асфальтом стоянок. Грунтовки — под асфальтом улиц, обочины — под
+/// всей зеленью.
+const LAYERS: [&str; 20] = [
+    "road_verges",
     "alleys",
     "sidewalks",
     "road_medians",
@@ -319,7 +321,9 @@ fn only_the_bridge_shadow_is_blended() {
     for layer in &layers {
         let expected = match layer.name {
             "bridge_shadows" => MaterialSpec::Blend,
-            "sidewalks" | "lot_sidewalks" => MaterialSpec::Surface(SurfaceKind::Sidewalk),
+            "sidewalks" | "lot_sidewalks" | "road_verges" => {
+                MaterialSpec::Surface(SurfaceKind::Sidewalk)
+            }
             "alleys" => MaterialSpec::Surface(SurfaceKind::Alley),
             "road_medians" => MaterialSpec::Surface(SurfaceKind::Grass),
             "roads" | "bridges" => MaterialSpec::Surface(SurfaceKind::Street),

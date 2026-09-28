@@ -138,6 +138,9 @@ struct Arm<'d> {
     /// Тротуар слева и справа по ходу луча: у половины разделённой улицы со
     /// стороны пары его нет.
     sidewalk: [Option<f32>; 2],
+    /// Обочина до отдельного тротуара слева и справа по ходу луча
+    /// (`RoadLine::verges`, `Drawn::verges_drawn`).
+    verge: [Option<f32>; 2],
     direction: Vec2,
     /// Сколько метров край ленты идёт прямо — до следующей вершины.
     run: f32,
@@ -225,6 +228,9 @@ pub struct KerbReturns {
     /// Контуры в слое тротуаров, так же: углы полос тротуара и скругления
     /// узлов с мощёной дорожкой.
     pub sidewalks: Vec<Vec<Vec2>>,
+    /// Контуры в слое обочин (`road_verges`), так же: углы, где с одной
+    /// стороны или с обеих вместо полосы тротуара обочина.
+    pub verges: Vec<Vec<Vec2>>,
     /// Сколько из `roads` и `sidewalks` — наружные углы, а не скругления.
     pub outer: [usize; 2],
     /// Торцы, кончающиеся в узле, по дорогам: `[начало, конец]` — ленты с
@@ -384,6 +390,11 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                 if let Some(left) = drawn.pairs().beside(index, along, 2.0 * PROBE_STEP) {
                     sides[usize::from(left != forward)] = None;
                 }
+                // обочины — слева и справа по пути, как тротуар по тегу
+                let mut verge = [None; 2];
+                for (side, width) in drawn.verges_drawn(index).into_iter().enumerate() {
+                    verge[usize::from((side == 0) != forward)] = (width > 0.0).then_some(width);
+                }
                 entry.1.push(Arm {
                     class: road.class,
                     highway: road.highway,
@@ -391,6 +402,7 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                     unpaved: road.is_unpaved_street(),
                     half,
                     sidewalk: sides,
+                    verge,
                     direction,
                     run,
                     end: at_end.then_some((index, usize::from(vertex == last))),
@@ -471,6 +483,39 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                     returns.roads.push((class, outline));
                 }
                 returns.outer[layer] += usize::from(outer);
+            }
+        }
+        // Угол, где хоть с одной стороны вместо полосы тротуара обочина до
+        // отдельной дорожки, — той же дугой, но в слой обочин под зеленью:
+        // без него между концом полосы (или обочины) одной улицы, обочиной
+        // другой и бордюрной дугой оставался клин голой земли (Тула, 15).
+        let verged: Vec<&Arm> = found
+            .iter()
+            .filter(|arm| (0..2).any(|side| arm.sidewalk[side].or(arm.verge[side]).is_some()))
+            .collect();
+        if is_junction(&verged) && !verged.iter().all(|arm| is_merged(arm)) {
+            for (first, second) in pairs(&verged) {
+                if merge_pair(first, second)
+                    || (first.verge[0].is_none() && second.verge[1].is_none())
+                {
+                    continue;
+                }
+                // обочина тянется дальше полосы — угол по ней, где она есть
+                let (Some(a), Some(b)) = (
+                    first.verge[0].or(first.sidewalk[0]),
+                    second.verge[1].or(second.sidewalk[1]),
+                ) else {
+                    continue;
+                };
+                // дуга — по узкой из двух: по широкой (как у полос тротуара)
+                // она уходила от бордюра, и вдоль узкой оставался клин земли
+                let halves = (first.half[0] + a, second.half[1] + b);
+                let radius = kerb_radius(first, second) * scale - a.min(b);
+                if let Some(outline) = fillet(node, first, second, halves, radius)
+                    .or_else(|| outer_corner(node, first, second, halves))
+                {
+                    returns.verges.push(outline);
+                }
             }
         }
         // Тротуары — свои соседи: проезд без тротуара не рвёт полосу улицы,
