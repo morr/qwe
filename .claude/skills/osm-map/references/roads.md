@@ -350,7 +350,13 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     the inner kerbs** widened `FILL_OVERLAP` 2.5 m under each half (`between_edges`; it
     was 1 m, and where a half bends hard at a node the drawn ribbon rounds the bend while
     the median's kerb runs a chord, and a half-metre sidewalk spike showed between them —
-    Вокзальная at Первомайский, Ryazan 03, roads plan №32): the
+    Вокзальная at Первомайский, Ryazan 03, roads plan №32). Each kerb is widened **away
+    from the kerb across**, not away from the midline: the wider half's kerb crosses
+    the midline, and pushed away from it that kerb went under the *narrower* half, the
+    whole contour lay under the narrow ribbon and the gap between the kerbs showed the
+    ground — a needle at 1 m of overlap, a 12 × 2 m plank at 2.5 (Oryol 05, Московская
+    at 10.9 and 7.6 m; Ryazan 03 and Rostov 02 had thinner ones). The same contour is
+    the lawn median's asphalt and the tram bed. The
     midline is measured between the *axes*, so between halves of different widths it
     lies near the narrower one's kerb and the ribbon fell short of the wider one's where
     the gap widens toward a lawn — a pale tongue along the double solid (sample 16). The
