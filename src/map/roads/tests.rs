@@ -1189,6 +1189,50 @@ fn a_wide_gap_between_halves_is_a_lawn_with_a_kerb() {
     assert!(layer(&layers, paint::PAINT_AXES).builder.is_empty());
 }
 
+/// Газон за перекрёстком начинается у его носа, а не у первой вершины оси за
+/// разрывом: вершины прямого проспекта стоят в десятках метров, и газона на
+/// всём пролёте не было — голый асфальт без осевой (Калуга, витрина 02).
+#[test]
+fn a_lawn_starts_at_its_nose_past_a_crossing() {
+    // газон чуть шире асфальтовой разделительной, поперечная — проспект
+    let (mut map, apart) = divided_avenue(3.4);
+    map.roads.push(RoadLine {
+        highway: Highway::Primary,
+        lanes: Some(4),
+        ..fixture::street(
+            vec![
+                Vec2::new(300.0, 40.0),
+                Vec2::new(300.0, 100.0),
+                Vec2::new(300.0, 100.0 + apart),
+                Vec2::new(300.0, 160.0 + apart),
+            ],
+            14.2,
+        )
+    });
+    map.roads[0].points.insert(1, Vec2::new(300.0, 100.0));
+    map.roads[1]
+        .points
+        .insert(1, Vec2::new(300.0, 100.0 + apart));
+    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let grass = layer(&layers, "road_medians").builder.positions_for_test();
+    let nearest = grass
+        .iter()
+        .map(|at| at[0])
+        .filter(|&x| x > 300.0)
+        .fold(f32::INFINITY, f32::min);
+    // нос — за зеброй и стоп-линией, но не за полтысячи метров у конца оси
+    assert!(
+        nearest < 335.0,
+        "газон за перекрёстком начинается у x = {nearest}"
+    );
+    // и через сам перекрёсток не идёт: у двух вершин оси по краям проспекта
+    // обе вне разрыва, и газон лежал одним куском поперёк поперечной
+    assert!(
+        grass.iter().all(|at| (at[0] - 300.0).abs() > 5.0),
+        "газон на перекрёстке"
+    );
+}
+
 /// Тот же зазор, но по нему идёт трамвай (Советская в Туле): газона нет,
 /// половины расширяются до середины асфальтом полотна, двойная сплошная —
 /// по середине, между путями, а над рельсами — светлая полоса.

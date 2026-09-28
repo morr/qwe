@@ -931,6 +931,12 @@ pub fn mesh_roads(
         } else {
             let mut breaks = breaks;
             breaks.extend(bed_ends.iter().copied());
+            // газон кончается и перед зеброй через обе половины, и перед
+            // стоп-линией: пешеход переходит разделительную, а не газон
+            breaks.extend(medians::crossing_breaks(
+                &median,
+                [paint_breaks.of(first).cut, paint_breaks.of(second).cut],
+            ));
             let kerbs = medians::push_lawn(
                 &mut sidewalks,
                 &mut median_grass,

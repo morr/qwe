@@ -342,14 +342,32 @@ pub fn push_lawn(
     let mut visible = Vec::new();
     for outline in lawn_outlines(median, breaks) {
         let kerb = nosed(outline, nose);
-        visible.extend(kerb.iter().filter(|shape| is_drawn(shape)).cloned());
-        let lawn: Vec<Shape> = kerb.outline(&OutlineStyle::new(-MEDIAN_KERB).line_join(round()));
+        let lawn: Vec<Shape> = kerb
+            .outline(&OutlineStyle::new(-MEDIAN_KERB).line_join(round()))
+            .into_iter()
+            .filter(is_drawn)
+            .collect();
+        // бордюр без травы внутри — бледный обрубок на поле перекрёстка
+        // (Орёл, витрина 04): не рисуется, и под ним ляжет асфальт
+        let kerb: Vec<Shape> = kerb
+            .into_iter()
+            .filter(is_drawn)
+            .filter(|shape| {
+                lawn.iter().any(|grass| {
+                    grass
+                        .first()
+                        .and_then(|outer| outer.first())
+                        .is_some_and(|point| point_in_shape(Vec2::from(*point), shape))
+                })
+            })
+            .collect();
+        visible.extend(kerb.iter().cloned());
         drawn.extend(kerb.iter().cloned());
         for (shapes, builder, color) in [
             (kerb, &mut *kerbs, kerb_color),
             (lawn, &mut *grass, grass_color),
         ] {
-            for shape in shapes.into_iter().filter(is_drawn) {
+            for shape in shapes {
                 push_shape(builder, shape, color);
             }
         }
@@ -446,30 +464,95 @@ pub fn bed_caps(median: &Median, kerbs: &[Shape]) -> Vec<Shape> {
     caps
 }
 
+/// Шаг, до которого догущаются середина и кромки перед поиском кусков газона,
+/// м ([`lawn_outlines`]).
+const LAWN_STEP: f32 = 1.0;
+/// Насколько ось половины может отстоять от кромки газона, м, — полуширина
+/// шестиполосной половины с запасом: разрыв дальше сбоку газон не режет.
+const BREAK_ASIDE: f32 = 12.0;
+
+/// Середина и обе кромки разделительной, догущённые до шага [`LAWN_STEP`] —
+/// каждое звено делится на одно и то же число частей во всех трёх, так что
+/// точки остаются друг против друга. И по точке — своя ли это вершина, а не
+/// вставленная: в контур газона идут только свои и концы куска.
+fn densified(median: &Median) -> ([Vec<Vec2>; 3], Vec<bool>) {
+    let [first, second] = &median.inner;
+    let lines = [&median.midline, first, second];
+    let mut dense: [Vec<Vec2>; 3] = Default::default();
+    let mut own = Vec::new();
+    let count = lines.iter().map(|line| line.len()).min().unwrap_or(0);
+    for index in 0..count {
+        for (line, out) in lines.iter().zip(dense.iter_mut()) {
+            out.push(line[index]);
+        }
+        own.push(true);
+        if index + 1 == count {
+            break;
+        }
+        let parts = (median.midline[index].distance(median.midline[index + 1]) / LAWN_STEP)
+            .ceil()
+            .max(1.0);
+        for part in 1..parts as usize {
+            let t = part as f32 / parts;
+            for (line, out) in lines.iter().zip(dense.iter_mut()) {
+                out.push(line[index].lerp(line[index + 1], t));
+            }
+            own.push(false);
+        }
+    }
+    (dense, own)
+}
+
 /// Контуры газона между внутренними кромками половин — по кускам между
 /// перекрёстками.
+///
+/// Куски ищутся по точкам середины, **догущённой** ([`densified`]): вершины
+/// OSM на прямом проспекте стоят в десятках метров друг от друга, и когда
+/// первая за узлом попадала в разрыв перекрёстка, а следующая была в
+/// шестидесяти метрах, газона на этом пролёте не было вовсе — между
+/// половинами лежал голый асфальт без осевой (Калуга, витрина 02, восточный
+/// луч Кирова).
 fn lawn_outlines(median: &Median, breaks: &[Break]) -> Vec<Vec<[f32; 2]>> {
-    let clear = |at: Vec2| {
-        breaks
-            .iter()
-            .all(|gap| at.distance(gap.at) - gap.reach > NOSE_CLEARANCE)
+    let ([midline, first, second], own) = densified(median);
+    // Разрыв лежит на оси половины, в стороне от середины, и меряется **вдоль**
+    // неё: по прямой до его центра круг разрыва накрывал середину на пару
+    // метров короче, чем ось, и нос газона въезжал между зебрами (Калуга, 02).
+    // Сбоку — не дальше оси половины: разрыв своей пары, а не колена
+    // разделительной за поворотом.
+    let aside_max = median.apart() / 2.0 + BREAK_ASIDE;
+    let clear = |index: usize| {
+        let at = midline[index];
+        let ahead = midline[(index + 1).min(midline.len() - 1)];
+        let behind = midline[index.saturating_sub(1)];
+        let heading = (ahead - behind).normalize_or_zero();
+        breaks.iter().all(|gap| {
+            let offset = at - gap.at;
+            if heading == Vec2::ZERO {
+                return offset.length() - gap.reach > NOSE_CLEARANCE;
+            }
+            offset.dot(heading.perp()).abs() > aside_max
+                || offset.dot(heading).abs() - gap.reach > NOSE_CLEARANCE
+        })
     };
-    let [first, second] = &median.inner;
     let mut outlines = Vec::new();
     let mut start = None;
-    for index in 0..=median.midline.len() {
-        let open = index < median.midline.len() && clear(median.midline[index]);
+    for index in 0..=midline.len() {
+        let open = index < midline.len() && clear(index);
         match (open, start) {
             (true, None) => start = Some(index),
             (false, Some(from)) => {
                 start = None;
-                if index - from < 2 || polyline_length(&median.midline[from..index]) < PAIR_MIN {
+                if index - from < 2 || polyline_length(&midline[from..index]) < PAIR_MIN {
                     continue;
                 }
-                let ring: Vec<Vec2> = first[from..index]
+                // вставленные точки на прямом звене контуру не нужны
+                let kept: Vec<usize> = (from..index)
+                    .filter(|&at| at == from || at + 1 == index || own[at])
+                    .collect();
+                let ring: Vec<Vec2> = kept
                     .iter()
-                    .chain(second[from..index].iter().rev())
-                    .copied()
+                    .map(|&at| first[at])
+                    .chain(kept.iter().rev().map(|&at| second[at]))
                     .collect();
                 outlines.push(oriented(&ring, true));
             }
