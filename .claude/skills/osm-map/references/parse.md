@@ -279,8 +279,19 @@ be called alone:
   metre of bare ground between the kerb and the footway, and at a corner a hole down to
   the ground framed by the kerb returns (scout R3). The same pass then gives every side
   of a paved carriageway whose probes found such a footway — the probe window reaching
-  `VERGE_REACH` 10 m past the kerb for this, band or no band — a **verge**:
-  `RoadLine::verges`, the median distance from the kerb to the footway's axis. Only the
+  `VERGE_REACH` 10 m past the kerb for this (`VERGE_REACH_TWO_WAY` 16 m on a two-way
+  street: Фрунзе in Tula, gallery 02, has its footways 8–15 m out and only half the
+  probes found them within 10 m, so the side had no verge and bare ground lay between
+  the band and the footway; a half of a divided street keeps 10 m, past which on its
+  inner side lie the other half's footways), band or no band — a **verge**:
+  `RoadLine::verges`, the median distance from the kerb to the footway's axis, and
+  **its profile** `RoadLine::verge_profile` — `(metres along the points, verge)` at every
+  probe that found a footway, a **slanted** link included (`VERGE_SLANT`, cos ≥ 0.5 —
+  counted for the profile only, not as a footway alongside): the footway turns at the
+  corner and drifts off the street, and a verge of one width left a wedge of ground
+  between itself and the footway (roads plan №33). `RoadLine::verge_at(side, along)`
+  reads it — linear between probes, the end values past them, the constant median with
+  no profile. Only the
   renderer reads it (**Sidewalks** in `roads.md`: sidewalk tile under the greens). At least `SEPARATE_SHARE` 60 % of the probes → the side becomes `None`. A
   `Tagged` side is never touched. Before the house and block pulls like the other sidewalk
   pass, so both work against what is drawn. The consequences are the ones `sidewalk=separate`
@@ -291,7 +302,9 @@ be called alone:
   lawn rule and the verges: **284** of 1982 dropped, the pass 18 ms (release — every paved
   carriageway is probed now, over the wider verge window; `Grid::near_each`, the sorted
   `near` cost 48), house pulls 1336 (52 partial), zebras 731, kerb pockets 225;
-  `road_verges` 47 k vertices. Logged as
+  `road_verges` 47 k vertices — 117 k with the profile and the two-way reach (roads plan
+  №33; the pass itself unchanged at 12–17 ms, the road build 227 → 231 ms, `dev`
+  profile of `map_meshing`). Logged as
   `N of M untagged sidewalk sides left to a separately mapped footway in T`; pinned by
   `parse/tests.rs::a_footway_along_the_kerb_takes_the_inferred_sidewalk_of_its_side`,
   `a_sidewalk_stays_unless_a_paved_footway_runs_beside_it` and, through the whole parse,

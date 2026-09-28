@@ -366,8 +366,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     (`parse::drop_sidewalks_beside_footways`), since a band next to it was a second
     sidewalk with a strip of grass between, while a band taken from under a footway at
     the kerb left a slit of bare ground and holes at the corners. Any side of a paved
-    street with such a footway alongside (up to 10 m past the kerb), band or no band,
-    carries a **verge** (`RoadLine::verges`, kerb to the footway's axis): sidewalk tile
+    street with such a footway alongside (up to 10 m past the kerb, 16 m on a two-way
+    street), band or no band, carries a **verge** (`RoadLine::verges`, kerb to the
+    footway's axis — and **by place**, `RoadLine::verge_profile` / `verge_at`, following a
+    footway that drifts away or turns at the corner): sidewalk tile
     drawn under every green (`road_verges`, its corners by the kerb returns), so a
     mapped lawn stays a lawn and bare ground there is paved. The decision per side
     is a **`SidewalkSide`** on the `RoadLine`: `Tagged`, `Inferred` (no tag, kept by the
