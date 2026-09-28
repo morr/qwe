@@ -126,8 +126,12 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   metres from the kerb to the footway's axis, the median over the probes, and its
   profile by place, `RoadLine::verge_at`), drawn by `roads.rs::push_verges` as a
   one-sided strip in sidewalk tile, from the axis past the kerb — with a profile a
-  polygon of varying width on the path densified every `VERGE_STEP` 2.5 m, a disc of the
-  end's width at each end; without one the old ribbon — round-capped, in its own
+  polygon of varying width on the path densified every `VERGE_STEP` 2.5 m, carried
+  `VERGE_END_OVERLAP` 0.3 m past each end along the tangent so the verges of two ways of
+  one street overlap at their seam (a disc of the end's width was meant to do that and
+  never drew: it was a ribbon over a 1 cm stub, and `merge_ribbon_points` merged the stub
+  into a point — a hairline across the verge at every such seam, Oryol 04 north); without
+  one the old ribbon — round-capped, in its own
   layer **`road_verges` at `Z_ROAD_VERGE` 0.1 — under the landuse blocks and every
   green**: a lawn mapped between the kerb and the footway stays a lawn, and bare ground
   there — a hole down to the earth framed by the kerb returns at every corner of Tula's
@@ -1242,7 +1246,12 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     one covers the midline short of its end; a piece of the double solid under
     `MEDIAN_MIN_RUN` 6 m between two breaks or between a break and the run's end is
     closed as well (`medians::bridge_short_pieces`) — a metre-to-five stub was left in the
-    middle of Орёл 05's junction. A midline no break touches stays as it is.
+    middle of Орёл 05's junction. A midline no break touches stays as it is. **The paved
+    median keeps the full paint breaks, zebra and stop lines together** — unlike the lawn,
+    which a zebra only cuts a passage through. Narrowing them to the zebra was tried for
+    Moskovskaya at Pushkina (Орёл 05, roads plan №41), where four crossings within thirty
+    metres leave no piece of double solid: the line came back there, but the neighbouring
+    pair's double solid ran on past a stop line into the junction, so it stays by rule.
   - Not drawn from data: `footway=crossing` ways are not parsed (the crossing node is
     what Tula maps). Islands and `RoadArea` outlines are drawn by **Safety islands** below.
   The report counts `junctions N (C clusters, main through T), zebras Z (O from OSM),
@@ -1596,7 +1605,15 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
       junction with a slight kink (Ложевая at Пролетарская, Tula, gallery 08, 0.7°) leaves
       a wedge between the two butt ends on the side away from the crossing road, and at the
       old 1° threshold it showed as a light hairline. Tula: outer corners 960 → 1632,
-      117 → 202 on sidewalks; the road build did not move (125.6 ms).
+      117 → 202 on sidewalks; the road build did not move (125.6 ms). The fan's straight
+      sides reach `OUTER_OVERLAP` 0.3 m (not `OVERLAP`) into the butt ends: they follow the
+      nodal axis's arms while a butt end follows the ribbon's own last link, and a degree
+      between the two is fifteen centimetres at the far edge of a sidewalk band. **In the
+      sidewalk layer the fan is also laid between exactly two banded arms** when both are
+      way ends and the streets at the node make a junction — a street split into two ways
+      where a drive without a sidewalk joins it: its band ends are butt (the street node is
+      a junction), yet two banded arms alone read as a continuation and got no corner, and a
+      hairline crossed the sidewalk (Oryol 04 north).
     - **A sharp fork gets a nose** (`corners::nose`, `KerbReturns::noses`): between two
       neighbour arms under 25° (`MIN_ANGLE`, down to `NOSE_MIN_ANGLE` 2°), and between
       arms up to `NOSE_MAX_ANGLE` 60° whose fillet did not fit (the straight run shorter
