@@ -592,12 +592,83 @@ pub(super) fn shadow_ring(outer: &[Vec2], params: &CrownParams) -> Vec<Vec2> {
 /// юниформом (`canopy::CrownUniform::brightness`), так зелень варьируется. Чернила
 /// контура и штрихов уведены к листве на [`INK_FOLIAGE_MIX`]: чистых чернил на
 /// карте больше нет.
+#[cfg(test)]
 pub(super) fn crown_mesh(
     geometry: &CrownGeometry,
     style: &TreeStyle,
     rng: &mut Lcg,
     params: &CrownParams,
 ) -> Mesh {
+    crown_builder(geometry, style, rng, params).0.build()
+}
+
+/// Сколько вершин контура примерно оставляет дальняя крона ([`far_crown`]).
+/// Облачный контур несёт 144–188 вершин и прореживается ровным шагом
+/// `len / 32` до 32–37; хвойный (32) и пальмовый (48) короче двух норм и
+/// остаются целыми — у них вершины чередуются остриё/впадина, и любой шаг
+/// срезал бы острия. На дальних ступенях, где крона — 1–6 px, это
+/// неотличимо от полного контура.
+const FAR_CROWN_RING: usize = 32;
+
+/// Дальняя крона — шаблон для слитых мешей дальних ступеней зума
+/// (`trees::CrownDetail::Merged`): одна заливка прореженного контура, без
+/// контура и колец. Штрих контура — 12 % радиуса, колец — 6 %: на 2 м/px и
+/// дальше это десятые доли пикселя, так что вместо геометрии в заливку
+/// запекается **средний цвет** кроны — листва, смешанная с чернилами в той
+/// доле площади, которую чернила занимают у полной кроны (`ink_share`).
+///
+/// Контур раздут на половину штриха контура: полная крона кончается не на
+/// своём кольце, а на внешнем краю обводки, и без этого лес дальней ступени
+/// выходил реже и светлее. Доля чернил тогда считается к площади раздутой
+/// заливки.
+///
+/// Меш полной кроны — около тысячи вершин; слитый из таких на весь лес
+/// весил бы гигабайты (95 тыс. крон Калуги × 1100 × 36 байт), дальняя —
+/// 32–48 вершин.
+pub(super) fn far_crown(
+    geometry: &CrownGeometry,
+    style: &TreeStyle,
+    params: &CrownParams,
+    ink_share: f32,
+) -> MeshBuilder {
+    // шаг вниз, а не вверх: кольцо короче двух норм не прореживается вовсе —
+    // у ели и пальмы вершины чередуются остриё/впадина, и шаг 2 срезал бы
+    // все острия разом
+    let step = (geometry.outer.len() / FAR_CROWN_RING).max(1);
+    let grow = 1.0 + params.outline_stroke / 2.0;
+    let ring: Vec<Vec2> = geometry
+        .outer
+        .iter()
+        .step_by(step)
+        .map(|&point| point * grow)
+        .collect();
+    let foliage = style.foliage.to_linear();
+    let share = ink_share / (grow * grow);
+    let color = foliage.mix(&ink_color(style), share.clamp(0.0, 1.0));
+    let mut builder = MeshBuilder::with_crown_coords();
+    builder.push_polygon(&ring, &[], color);
+    builder
+}
+
+/// Чернила кроны: цвет «Crown details», уведённый к листве на
+/// [`INK_FOLIAGE_MIX`].
+fn ink_color(style: &TreeStyle) -> LinearRgba {
+    style
+        .details
+        .mix(&style.foliage, INK_FOLIAGE_MIX)
+        .to_linear()
+}
+
+/// Полная крона, ещё не собранная в `Mesh`, и доля её заливки, которую
+/// закрывают чернила контура и колец (площадь штрихов к площади заливки) —
+/// по ней красится [`far_crown`]. Перекрытия штрихов считаются дважды — для
+/// среднего цвета кроны в пару пикселей точнее и не надо.
+pub(super) fn crown_builder(
+    geometry: &CrownGeometry,
+    style: &TreeStyle,
+    rng: &mut Lcg,
+    params: &CrownParams,
+) -> (MeshBuilder, f32) {
     let mut builder = MeshBuilder::default();
     // Чернила смешиваются с листвой: на снимке у кроны нет обводки, у неё
     // есть **затенённый край**. Ручка «Crown details» остаётся ручкой — она
@@ -605,11 +676,10 @@ pub(super) fn crown_mesh(
     // больше нет, и полог перестаёт читаться клипартом. Отдельным дефолтом
     // этого было не сделать: цвет сохраняется в настройках, и у всех, кто
     // уже играл, в `settings.toml` лежат прежние чернила.
-    let ink = style
-        .details
-        .mix(&style.foliage, INK_FOLIAGE_MIX)
-        .to_linear();
+    let ink = ink_color(style);
     builder.push_polygon(&geometry.outer, &[], style.foliage.to_linear());
+    let fill_area = builder.area_since(0);
+    let ink_from = builder.index_count();
     builder.push_stroke(&geometry.outer, true, params.outline_stroke, ink);
 
     for (ring, weight) in &geometry.bands {
@@ -628,7 +698,12 @@ pub(super) fn crown_mesh(
             );
         }
     }
-    builder.build()
+    let ink_share = if fill_area > 0.0 {
+        builder.area_since(ink_from) / fill_area
+    } else {
+        0.0
+    };
+    (builder, ink_share)
 }
 
 /// Сборка дуг из отбора: `drawn[i]` — рисуется ли кусок кольца из `step`

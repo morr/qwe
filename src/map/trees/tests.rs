@@ -458,6 +458,51 @@ fn crown_mesh_builds_non_empty() {
     }
 }
 
+/// Дальняя крона — в восемь с лишним раз легче полной и не больше 48 вершин, у
+/// ели все шипы на месте (32 вершины контура — 16 остриёв и 16 впадин), по
+/// площади она — силуэт полной кроны с обводкой, а цвет —
+/// между листвой и чернилами: чернила закрывают часть кроны, но не всю.
+#[test]
+fn the_far_crown_is_a_light_average_of_the_full_one() {
+    let _sun = crate::map::default_sun();
+    let style = TreeStyle::default();
+    let foliage = style.foliage.to_linear();
+    for shape in TreeShape::CONCRETE {
+        for variant in 0..TREE_VARIANTS {
+            let built = crown_variant(shape, variant, &style, &params());
+            let far = built.far.vertex_count();
+            assert!(far <= 48, "{shape:?} #{variant}: {far} вершин");
+            assert!(
+                far * 8 < built.crown.count_vertices(),
+                "{shape:?} #{variant}"
+            );
+            if shape == TreeShape::Conifer {
+                assert_eq!(far, 32, "у ели прорежены шипы");
+            }
+            let [r, g, b, a] = built.far.colors_for_test()[0];
+            assert_eq!(a, 1.0);
+            assert!(
+                g < foliage.green && g > foliage.green * 0.5,
+                "{shape:?} {r} {g} {b}"
+            );
+            // площадь дальней кроны — площадь силуэта полной: заливка плюс
+            // внешняя половина обводки (периметр × полштриха)
+            let geometry = crown_geometry(shape, &mut variant_rng(variant, &params()), &params());
+            let ring = &geometry.outer;
+            let perimeter: f32 = (0..ring.len())
+                .map(|i| ring[i].distance(ring[(i + 1) % ring.len()]))
+                .sum();
+            let silhouette =
+                signed_ring_area(ring).abs() + perimeter * params().outline_stroke / 2.0;
+            let far_area = built.far.area_since(0);
+            assert!(
+                (far_area / silhouette - 1.0).abs() < 0.1,
+                "{shape:?} #{variant}: дальняя {far_area} против силуэта {silhouette}"
+            );
+        }
+    }
+}
+
 /// Кольцо кроны единичного радиуса — как его строит `crown_geometry`.
 fn band_centre(ring: &[Vec2]) -> Vec2 {
     ring.iter().copied().sum::<Vec2>() / ring.len() as f32
@@ -745,20 +790,115 @@ fn a_far_zoom_step_trims_the_tail_of_the_set() {
     };
     let (near, near_report) = build(0.4);
     assert_eq!(near_report.crowns, 10, "ближняя ступень без потолка");
+    assert_eq!(near_report.detail, CrownDetail::Full);
+    assert!(near.merged.is_empty());
     for lod in &TREE_LODS[1..] {
         let (far, report) = build(lod.max_zoom - 0.01);
         let cap = lod.density_cap;
         assert_eq!(report.density, cap);
         // пороги у `ten_trees` — 0..=9
         assert_eq!(report.crowns, cap as usize + 1);
-        assert!(
-            far.crowns
-                .iter()
-                .zip(&near.crowns)
-                .all(|(a, b)| a.at == b.at && a.variant == b.variant),
+        // префикс: тени дальней ступени — ровно тени первых её крон ближней
+        let near_shadows = near.shadows[0].builder.positions_for_test();
+        let far_shadows = far.shadows[0].builder.positions_for_test();
+        assert_eq!(
+            far_shadows,
+            &near_shadows[..far_shadows.len()],
             "кроны переехали"
         );
     }
+}
+
+/// Дальние ступени рисуют кроны не сущностями, а слитыми кусками: ни одного
+/// места, пул не выгружается, по слою `tree_crowns` на кусок карты со своим
+/// z — две кроны в двух кусках дают два слоя на разных z в полосе крон.
+#[test]
+fn far_zoom_steps_merge_crowns_into_chunks() {
+    let _sun = crate::map::default_sun();
+    let style = TreeStyle {
+        shape: TreeShape::Cotton,
+        density: 9.0,
+        ..default()
+    };
+    let planted = TreeSet::of([
+        (Vec2::new(10.0, 10.0), 3.0, 0.0),
+        (Vec2::new(20.0, 10.0), 3.0, 0.0),
+        (Vec2::new(CROWN_CHUNK + 10.0, 10.0), 3.0, 0.0),
+    ]);
+    let (built, report) = mesh_trees(
+        TreeZoomBucket::at(TREE_LODS.len() - 1),
+        &style,
+        &params(),
+        &planted,
+        &ConiferField::default(),
+    );
+    assert_eq!(report.detail, CrownDetail::Merged);
+    assert!(built.crowns.is_empty() && built.pools.is_empty());
+    assert_eq!(built.merged.len(), 2);
+    assert_eq!(report.chunks, 2);
+    for layer in &built.merged {
+        assert_eq!(layer.name, "tree_crowns");
+        assert_eq!(layer.material, MaterialSpec::Crown);
+        assert!(layer.z >= Z_TREE && layer.z < Z_TREE + 1.0);
+    }
+    assert!(
+        built.merged[0].z != built.merged[1].z,
+        "два куска на одном z"
+    );
+    let vertices: usize = built.merged.iter().map(|l| l.builder.vertex_count()).sum();
+    assert_eq!(report.merged_vertices, vertices);
+    // первый кусок — кроны 0 и 1 (варианты 0 и 1), второй — крона 2
+    let far = |variant| {
+        crown_variant(TreeShape::Cotton, variant, &style, &params())
+            .far
+            .vertex_count()
+    };
+    assert_eq!(built.merged[0].builder.vertex_count(), far(0) + far(1));
+    assert_eq!(built.merged[1].builder.vertex_count(), far(2));
+}
+
+/// Яркость дерева в слитом куске запечена в цвет вершин — тем же множителем,
+/// что у кроны-сущности лежит в юниформе, — а координата кроны несёт место в
+/// шаблоне единичного радиуса, не мировое.
+#[test]
+fn merged_crowns_bake_the_tint_and_keep_the_local_coordinate() {
+    let _sun = crate::map::default_sun();
+    let style = TreeStyle {
+        shape: TreeShape::Cotton,
+        variance: 0.35,
+        ..default()
+    };
+    let template = crown_variant(TreeShape::Cotton, 0, &style, &params()).far;
+    let factor = style.tint_factors()[TreeStyle::tint_slot(0)];
+    let at = Vec2::new(100.0, 50.0);
+    let mut merged = MeshBuilder::with_crown_coords();
+    merged.push_crown(&template, at, 4.0, factor);
+
+    let base = template.colors_for_test()[0];
+    let baked = merged.colors_for_test()[0];
+    for channel in 0..3 {
+        assert!((baked[channel] - base[channel] * factor).abs() < 1e-6);
+    }
+    assert_eq!(baked[3], base[3]);
+    let local = merged
+        .crown_coords_for_test()
+        .expect("сборщик с координатами кроны");
+    let placed = merged.positions_for_test();
+    let unit = template.positions_for_test();
+    for ((local, placed), unit) in local.iter().zip(placed).zip(unit) {
+        assert_eq!(*local, [unit[0], unit[1]]);
+        assert!((placed[0] - (unit[0] * 4.0 + at.x)).abs() < 1e-4);
+    }
+}
+
+/// Все куски карты помещаются в полосу крон: у каждого свой z, и их не
+/// больше, чем шагов `CROWN_CHUNK_Z_STEP` в `Z_TREE..Z_TREE + 1`.
+#[test]
+fn every_chunk_of_the_map_fits_the_crown_z_band() {
+    let chunks = (crate::settings::MAP_SIZE / CROWN_CHUNK).ceil();
+    // кусок ствола на самой границе карты — ещё один ряд
+    let worst = (chunks.x + 1.0) * (chunks.y + 1.0);
+    assert!(worst * CROWN_CHUNK_Z_STEP <= 1.0, "{worst} кусков");
 }
 
 /// Ползунок плотности отдаёт **префикс** набора: стоящие деревья не переезжают,

@@ -684,8 +684,9 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
   the tree-row band — over the `SurfaceMaterial` below. The parking **markings** are the
   exception that proves the rule: paint over asphalt, so that layer stays on the flat
   `ColorMaterial`. ~7000
-  buildings cost a handful of entities. Trees stay individual entities (see
-  `references/trees.md`).
+  buildings cost a handful of entities. Trees are individual entities on the near zoom
+  step and merged `tree_crowns` chunks on the far ones (see `references/trees.md`,
+  **Crown detail by zoom**).
 - **The layer seam** (`map/surface.rs`) — building a layer and putting it in the world
   are two things, and this is the line between them. A **converted** module offers one
   pure function, `mesh_<layer>(data, style) -> (Vec<LayerMesh>, <Layer>Report)`, and
@@ -703,7 +704,8 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     every layer of the map**, not a type per module. That is the point: a module read as
     `-> Vec<LayerMesh>` is read the same way as any neighbour. `name` is the entity's
     `Name` in the live world, i.e. what a BRP query looks it up by.
-  - **`MaterialSpec`** — `Flat` / `Blend` / `Surface(SurfaceKind)` / `Roof`. It **names** the
+  - **`MaterialSpec`** — `Flat` / `Blend` / `Surface(SurfaceKind)` / `Roof` / `Paint(PaintPass)`
+    / `Crown` (the one app-wide `CrownMaterialHandle`, for the merged far crowns). It **names** the
     material instead of carrying a `Handle`, and a handle is the only thing that would
     have dragged Bevy into the build: with a spec the build needs neither `Commands` nor
     `Assets`, so the game, a test and the offline bench call one and the same function.
@@ -810,10 +812,14 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     left".** The tree-row band lives in `spawn.rs` and is not
     `trees` — that mistake is what once made the list read "all ten" with `trees.rs`
     still spawning by hand.
-  - **`trees` is a scatter, and the seam takes a different shape there.** A crown is an
-    **entity per tree** — its own tint, its own micro-step of z, its own scale — so it
-    does not fit a `LayerMesh` at all, and `mesh_trees(style, params, planted, field)`
-    returns `TreeMeshes { pools, tints, crowns, shadows }` instead:
+  - **`trees` is a scatter, and the seam takes a different shape there.** On the near
+    zoom step a crown is an **entity per tree** — its own tint, its own micro-step of z,
+    its own scale — so it does not fit a `LayerMesh` at all, and `mesh_trees(bucket,
+    style, params, planted, field)` returns `TreeMeshes { pools, tints, crowns, merged,
+    shadows }` instead. On the far steps (`CrownDetail::Merged`) `crowns` and `pools`
+    are empty and **`merged`** carries ordinary `LayerMesh`es — one `tree_crowns` chunk
+    per `CROWN_CHUNK` square, `MaterialSpec::Crown` — so there the trees are a converted
+    layer like any other (`references/trees.md`, **Crown detail by zoom**):
     - **`pools`** — the crown meshes, `TREE_VARIANTS` of them per concrete shape (`Mixed`
       has two pools, every other shape one), as plain `Mesh` **values**. A
       `Handle<Mesh>` would be the world, which is exactly what `MaterialSpec` keeps out
@@ -830,8 +836,8 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
       does not go through `spawn_tree_meshes`, but it had to follow the colour: its
       shadow material is now a blended white one.
     So `spawn_tree_meshes` is the adapter, and it is the **one** place on the map that
-    still writes `DespawnOnExit` by hand — for the crowns. Every merged layer gets it
-    from `spawn_layer`.
+    still writes `DespawnOnExit` by hand — for the near-step crown entities. Every merged
+    layer, the far crown chunks included, gets it from `spawn_layer`.
   - **`cars` is the one whose build is a layer rather than a mesh.** Every other
     `mesh_*` takes the data it draws; `mesh_cars(bucket, style, &Drawn, map, layout)`
     (`Drawn::nodal(map, shape)` — the prepared roads the row stands on, built by the adapter

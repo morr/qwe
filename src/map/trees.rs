@@ -10,8 +10,9 @@ mod canopy;
 pub mod conifer;
 mod crown;
 
-pub use self::canopy::CrownMaterial;
+pub use self::canopy::{CrownMaterial, CrownMaterialHandle, init_crown_material};
 
+use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
@@ -19,8 +20,10 @@ pub use self::conifer::{ConiferField, ConiferNoiseStyle};
 // Приватные реэкспорты: снаружи модуль виден тем же набором имён, что и до
 // разрезания, а `use super::*` в `tests.rs` продолжает доставать геометрию.
 pub use self::crown::CrownParams;
+#[cfg(test)]
+use self::crown::crown_mesh;
 use self::crown::{
-    CROWN_COLOR, INK_COLOR, crown_geometry, crown_mesh, shadow_template, variant_rng,
+    CROWN_COLOR, INK_COLOR, crown_builder, crown_geometry, far_crown, shadow_template, variant_rng,
 };
 use crate::loading::AppState;
 use crate::map::SunOnMap;
@@ -252,6 +255,10 @@ pub struct CrownVariant {
     /// Шаблон силуэта тени; в игре он копируется в общий меш теней
     /// (`MeshBuilder::push_template`).
     pub shadow: MeshBuilder,
+    /// Шаблон дальней кроны — заливка прореженного контура средним цветом
+    /// полной; из таких собраны слитые куски дальних ступеней зума
+    /// ([`CrownDetail::Merged`], `MeshBuilder::push_crown`).
+    pub far: MeshBuilder,
 }
 
 /// Крона варианта `variant` формы `shape` под стилем `style`. Вариант задан
@@ -270,9 +277,15 @@ pub fn crown_variant(
 ) -> CrownVariant {
     let mut rng = variant_rng(variant, params);
     let geometry = crown_geometry(shape, &mut rng, params);
-    let crown = crown_mesh(&geometry, style, &mut rng, params);
+    let (crown, ink_share) = crown_builder(&geometry, style, &mut rng, params);
     let shadow = shadow_template(&geometry, &mut rng, params);
-    CrownVariant { crown, shadow }
+    // дальняя крона генератора не трогает: она читает уже разыгранный контур
+    let far = far_crown(&geometry, style, params, ink_share);
+    CrownVariant {
+        crown: crown.build(),
+        shadow,
+        far,
+    }
 }
 
 /// Хранилища материалов, которые нужны дереву: крона красится своим
@@ -285,17 +298,24 @@ pub fn crown_variant(
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct TreeMaterials<'w> {
     pub crowns: ResMut<'w, Assets<CrownMaterial>>,
+    /// Материал слитых крон — тот же, что `layers` отдаёт по
+    /// `MaterialSpec::Crown`; здесь он ради света, который переписывает
+    /// пересборка.
+    pub merged: Res<'w, CrownMaterialHandle>,
     pub layers: LayerMaterials<'w>,
 }
 
 /// Одна крона в мире: какой меш из пула поставить, где, какого радиуса и каким
 /// оттенком.
 ///
-/// Крона — **сущность на дерево** (свой оттенок и свой z), а не часть слитого
-/// меша, поэтому дерево не укладывается в [`LayerMesh`], и шов здесь принимает
-/// другую форму: сборка отдаёт пул крон и список мест, а адаптер заливает пул
-/// в `Assets` и спавнит по сущности на место. Деление то же самое — сборка
-/// говорит, **что** нарисовано, адаптер знает, **куда** это деть.
+/// На ближней ступени зума ([`CrownDetail::Full`]) крона — **сущность на
+/// дерево** (свой оттенок и свой z) над общим мешем варианта, а не часть
+/// слитого меша: полная крона — около тысячи вершин, и слитый из них лес
+/// весил бы гигабайты. Поэтому там дерево не укладывается в [`LayerMesh`], и
+/// шов принимает другую форму: сборка отдаёт пул крон и список мест, а
+/// адаптер заливает пул в `Assets` и спавнит по сущности на место. Деление то
+/// же самое — сборка говорит, **что** нарисовано, адаптер знает, **куда** это
+/// деть. Дальние ступени ([`CrownDetail::Merged`]) обходятся без мест вовсе.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct CrownPlacement {
     pub at: Vec2,
@@ -317,10 +337,16 @@ pub struct CrownPlacement {
 /// стоит за `MaterialSpec` в [`LayerMesh`].
 pub struct TreeMeshes {
     /// По пулу на каждую конкретную форму, `TREE_VARIANTS` крон в каждом.
+    /// Пусто на [`CrownDetail::Merged`]: там меши вариантов не нужны миру.
     pub pools: Vec<Vec<Mesh>>,
     /// Множители яркости листвы — по слоту на оттенок.
     pub tints: Vec<f32>,
+    /// Кроны-сущности — только на [`CrownDetail::Full`].
     pub crowns: Vec<CrownPlacement>,
+    /// Слитые кроны — только на [`CrownDetail::Merged`]: по слою
+    /// `tree_crowns` на кусок карты [`CROWN_CHUNK`] × [`CROWN_CHUNK`], в
+    /// котором стоят стволы.
+    pub merged: Vec<LayerMesh>,
     /// Слитый меш теней, одним слоем. Один, а не сущность на тень:
     /// полупрозрачная сущность попадает в сортируемую фазу `Transparent2d`, а
     /// тысяча таких сущностей в ней вместе с двадцатью тысячами спрайтов
@@ -337,6 +363,12 @@ pub struct TreeReport {
     pub shape: TreeShape,
     /// Плотность, по которой взят префикс: ползунок, урезанный ступенью зума.
     pub density: f32,
+    /// Как нарисованы кроны на этой ступени.
+    pub detail: CrownDetail,
+    /// Слитых кусков крон (ноль на [`CrownDetail::Full`]).
+    pub chunks: usize,
+    /// Вершин во всех слитых кусках крон.
+    pub merged_vertices: usize,
     /// Время сборки — пересечение порога зума платит ровно его.
     pub elapsed: std::time::Duration,
 }
@@ -348,46 +380,95 @@ impl std::fmt::Display for TreeReport {
             shadow_vertices,
             shape,
             density,
+            detail,
+            chunks,
+            merged_vertices,
             elapsed,
         } = self;
         write!(
             f,
-            "tree shadows: {shadow_vertices} vertices for {crowns} trees ({shape:?}, density {density}) in {elapsed:.1?}"
-        )
+            "tree shadows: {shadow_vertices} vertices for {crowns} trees ({shape:?}, density {density}), "
+        )?;
+        match detail {
+            CrownDetail::Full => write!(f, "crowns as entities")?,
+            CrownDetail::Merged => write!(
+                f,
+                "crowns merged: {merged_vertices} vertices in {chunks} chunks"
+            )?,
+        }
+        write!(f, " in {elapsed:.1?}")
     }
 }
 
+/// Как ступень зума рисует кроны.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CrownDetail {
+    /// Полная крона (заливка, контур, кольца — около тысячи вершин у облачной)
+    /// **сущностью на дерево** над общим мешем варианта: вершины одни на
+    /// вариант, дерево — это трансформ и материал оттенка.
+    Full,
+    /// Дальняя крона ([`CrownVariant::far`], 32–48 вершин, средний цвет) —
+    /// **слитыми мешами по кускам карты** ([`CROWN_CHUNK`]), без единой
+    /// сущности на дерево. На этих зумах штрихи — доли пикселя, а сущность
+    /// на крону стоила видимости, извлечения, очереди и сортировки каждый
+    /// кадр и спавна на каждой пересборке.
+    Merged,
+}
+
 /// Ступень зум-LOD деревьев: до какого зума (метров на логический пиксель)
-/// она действует и какой плотностью посадки ограничена.
+/// она действует, какой плотностью посадки ограничена и как рисует кроны.
 pub struct TreeLod {
     pub max_zoom: f32,
     /// Потолок `TreeStyle::density` на этой ступени; `INFINITY` — без потолка.
     pub density_cap: f32,
+    pub detail: CrownDetail,
 }
 
-/// Ступени деревьев. Крона в 2–6 м радиусом на зуме от 2 м/px — это 2–6 px,
-/// на полном отдалении (4.5) — 1–3 px: лес там читается заливкой `Wood` под
-/// ним, а не отдельными кронами, и каждая лишняя крона — это сущность, её
-/// видимость, сортировка и тень в слитом меше. Ступень только **урезает
-/// префикс** набора ([`TreeSet::visible`]), так что стоящие деревья не
-/// переезжают, а одиночные деревья OSM (порог 0) остаются на любой ступени.
+/// Ступени деревьев. Крона в 2–6 м радиусом на зуме от 2 м/px — это 1–3 px
+/// радиусом, на полном отдалении (4.5) — меньше полутора: лес там читается
+/// заливкой `Wood` под ним, а не отдельными кронами. Дальние ступени
+/// **урезают префикс** набора ([`TreeSet::visible`]), так что стоящие деревья
+/// не переезжают, а одиночные деревья OSM (порог 0) остаются на любой
+/// ступени, — и рисуют кроны слитыми дальними ([`CrownDetail::Merged`]).
 ///
-/// Ближняя ступень без потолка и доходит до 2 м/px: дефолтный вид (0.4) и
-/// всё, на чём кроны различимы, рисуются как раньше.
+/// Ближняя ступень без потолка, с полными кронами-сущностями, и доходит до
+/// 2 м/px: дефолтный вид (0.4) и всё, на чём кроны различимы, рисуются как
+/// раньше.
 pub const TREE_LODS: [TreeLod; 3] = [
     TreeLod {
         max_zoom: 2.0,
         density_cap: f32::INFINITY,
+        detail: CrownDetail::Full,
     },
     TreeLod {
         max_zoom: 3.5,
         density_cap: 3.0,
+        detail: CrownDetail::Merged,
     },
     TreeLod {
         max_zoom: f32::INFINITY,
         density_cap: 2.0,
+        detail: CrownDetail::Merged,
     },
 ];
+
+/// Сторона куска карты, в который сливаются дальние кроны, в метрах.
+///
+/// Слитые куски нужны не ради слитности как таковой, а чтобы отсечение по
+/// кадру ещё работало: меш на весь лес виден всегда. Дальние ступени
+/// начинаются с 2 м/px, где окно 1600 px — это уже 3.2 км по ширине, почти
+/// половина карты (7.6 км); километровый кусок — треть такого кадра, так что
+/// сдвинутый в сторону кадр отбрасывает целые куски, а кусков на всю карту —
+/// не больше 8 × 6 = 48, то есть 48 draw против ~120 групп крон-сущностей.
+/// Мельче кусок — больше draw при том же полном отдалении, где отсекать
+/// нечего; крупнее — отсечение перестаёт что-либо отсекать.
+pub const CROWN_CHUNK: f32 = 1000.0;
+
+/// Шаг z между слитыми кусками крон. У каждого куска свой z: кроны у границы
+/// двух кусков перекрываются, и равный z отдал бы порядок на откуп фазе
+/// `Transparent2d` — ловушка мигающих теней (см. `TreeMeshes::shadows`). 48
+/// кусков по 1/64 укладываются в `Z_TREE..Z_TREE + 1`.
+const CROWN_CHUNK_Z_STEP: f32 = 1.0 / 64.0;
 
 /// [`TREE_LODS`] как таблица ступеней зум-LOD (`map/zoom.rs`).
 pub enum TreeLods {}
@@ -405,7 +486,8 @@ pub type TreeZoomBucket = ZoomBucket<TreeLods>;
 /// конкретную форму, каждому дереву — вариант, оттенок и масштаб
 /// детерминированно по индексу; ползунок плотности отдаёт префикс набора (см.
 /// [`TreeSet::visible_count`]), а ступень зума `bucket` может его укоротить
-/// ([`TREE_LODS`]).
+/// ([`TREE_LODS`]) и решает, сущностями рисовать кроны или слитыми кусками
+/// ([`CrownDetail`]).
 pub fn mesh_trees(
     bucket: TreeZoomBucket,
     style: &TreeStyle,
@@ -414,7 +496,8 @@ pub fn mesh_trees(
     field: &ConiferField,
 ) -> (TreeMeshes, TreeReport) {
     let started = std::time::Instant::now();
-    let density = style.density.min(TREE_LODS[bucket.index].density_cap);
+    let lod = &TREE_LODS[bucket.index];
+    let density = style.density.min(lod.density_cap);
     // по пулу вариантов на каждую конкретную форму — у `Mixed` их два
     let shapes = style.shape.crown_shapes();
     let pools: Vec<Vec<CrownVariant>> = shapes
@@ -428,7 +511,12 @@ pub fn mesh_trees(
 
     let mut shadows = MeshBuilder::default();
     let visible = planted.visible(density);
-    let mut crowns = Vec::with_capacity(visible.len());
+    let mut crowns = Vec::new();
+    // слитые куски по ключу клетки [`CROWN_CHUNK`]; кроны ложатся в кусок в
+    // порядке набора, и порядок треугольников в меше — это порядок рисования:
+    // крона с бо́льшим номером лежит поверх
+    let mut chunks: HashMap<IVec2, MeshBuilder> = HashMap::new();
+    let tint_factors = style.tint_factors();
     let tint_slots = TreeStyle::TINT_BELL.len();
     // сколько крон уже стоит в каждой группе — их ранг внутри полосы группы
     let mut ranks = vec![0_usize; shapes.len() * TREE_VARIANTS * tint_slots];
@@ -440,36 +528,75 @@ pub fn mesh_trees(
             .expect("crown_shapes covers every shape resolve can return");
         let variant = index % pools[pool].len();
         let tint = TreeStyle::tint_slot(index);
-        let group = (pool * TREE_VARIANTS + variant) * tint_slots + tint;
-        let rank = ranks[group];
-        ranks[group] += 1;
-        crowns.push(CrownPlacement {
-            at,
-            radius,
-            z: crown_z(group, rank),
-            pool,
-            variant,
-            tint,
-        });
+        match lod.detail {
+            CrownDetail::Full => {
+                let group = (pool * TREE_VARIANTS + variant) * tint_slots + tint;
+                let rank = ranks[group];
+                ranks[group] += 1;
+                crowns.push(CrownPlacement {
+                    at,
+                    radius,
+                    z: crown_z(group, rank),
+                    pool,
+                    variant,
+                    tint,
+                });
+            }
+            CrownDetail::Merged => {
+                let key = (at / CROWN_CHUNK).floor().as_ivec2();
+                chunks
+                    .entry(key)
+                    .or_insert_with(MeshBuilder::with_crown_coords)
+                    .push_crown(&pools[pool][variant].far, at, radius, tint_factors[tint]);
+            }
+        }
         shadows.push_template(&pools[pool][variant].shadow, at, radius);
     }
 
+    // z кусков — по их месту на карте (снизу вверх, слева направо), а не по
+    // порядку обхода словаря: так он не зависит ни от хэшера, ни от набора
+    let mut keys: Vec<IVec2> = chunks.keys().copied().collect();
+    keys.sort_by_key(|key| (key.y, key.x));
+    let merged: Vec<LayerMesh> = keys
+        .into_iter()
+        .enumerate()
+        .map(|(ordinal, key)| {
+            LayerMesh::new(
+                chunks.remove(&key).expect("key came from the map"),
+                Z_TREE + ordinal as f32 * CROWN_CHUNK_Z_STEP,
+                "tree_crowns",
+                MaterialSpec::Crown,
+            )
+        })
+        .collect();
+
     let report = TreeReport {
-        crowns: crowns.len(),
+        crowns: visible.len(),
         shadow_vertices: shadows.vertex_count(),
         shape: style.shape,
         density,
+        detail: lod.detail,
+        chunks: merged.len(),
+        merged_vertices: merged
+            .iter()
+            .map(|layer| layer.builder.vertex_count())
+            .sum(),
         elapsed: started.elapsed(),
     };
-    let built = TreeMeshes {
-        pools: pools
+    let pools = match lod.detail {
+        CrownDetail::Full => pools
             .into_iter()
             .map(|pool| pool.into_iter().map(|built| built.crown).collect())
             .collect(),
-        // множитель яркости уехал из цвета материала в юниформ: цвет кроне
-        // теперь считает шейдер (`canopy`), и слотов ровно столько же
-        tints: style.tint_factors().to_vec(),
+        CrownDetail::Merged => Vec::new(),
+    };
+    let built = TreeMeshes {
+        pools,
+        // множитель яркости кроны-сущности — в юниформе её материала: меш
+        // один на вариант. У слитых крон он уже запечён в вершины
+        tints: tint_factors.to_vec(),
         crowns,
+        merged,
         shadows: vec![LayerMesh::new(
             shadows,
             Z_TREE_SHADOW,
@@ -490,7 +617,9 @@ const CROWN_GROUP_Z_STEP: f32 = 1.0 / 128.0;
 const CROWN_RANK_Z_STEP: f32 = 1.0 / 262_144.0;
 const CROWN_RANKS_PER_GROUP: usize = (CROWN_GROUP_Z_STEP / CROWN_RANK_Z_STEP) as usize;
 
-/// z кроны: полоса её группы плюс микрошаг по рангу внутри группы.
+/// z кроны-сущности ([`CrownDetail::Full`]): полоса её группы плюс микрошаг по
+/// рангу внутри группы. Слитые кроны дальних ступеней обходятся без него —
+/// у них z на кусок, а порядок внутри куска — порядок треугольников.
 ///
 /// **z группирует кроны по мешу и материалу, а не идёт по номеру дерева.**
 /// Прозрачная фаза 2D (`Transparent2d`) сортирует только по z, а порядок
@@ -512,8 +641,9 @@ fn crown_z(group: usize, rank: usize) -> f32 {
         + (rank % CROWN_RANKS_PER_GROUP) as f32 * CROWN_RANK_Z_STEP
 }
 
-/// Собранные деревья — в мир: пул крон в `Assets`, по сущности на место, слой
-/// теней через общий [`spawn_layers`].
+/// Собранные деревья — в мир: пул крон в `Assets` и по сущности на место
+/// (ближняя ступень), слитые куски крон (дальние) и слой теней — через общий
+/// [`spawn_layers`].
 pub fn spawn_tree_meshes(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -524,15 +654,22 @@ pub fn spawn_tree_meshes(
         pools,
         tints,
         crowns,
+        merged,
         shadows,
     } = built;
+    spawn_layers(commands, meshes, &materials.layers, merged, TreeTag);
+    // материалы оттенков — только кронам-сущностям: слитым хватает общего
+    let tints: Vec<Handle<CrownMaterial>> = if crowns.is_empty() {
+        Vec::new()
+    } else {
+        tints
+            .into_iter()
+            .map(|factor| materials.crowns.add(CrownMaterial::of(factor)))
+            .collect()
+    };
     let pools: Vec<Vec<Handle<Mesh>>> = pools
         .into_iter()
         .map(|pool| pool.into_iter().map(|crown| meshes.add(crown)).collect())
-        .collect();
-    let tints: Vec<Handle<CrownMaterial>> = tints
-        .into_iter()
-        .map(|factor| materials.crowns.add(CrownMaterial::of(factor)))
         .collect();
 
     for crown in &crowns {
@@ -671,6 +808,9 @@ pub fn rebuild_trees(
     // порог поля пересчитывается только если поехала сама доля — правка цвета
     // листвы не должна платить за сортировку значений
     field.set_share(style.conifer_share);
+    // солнце — одно из условий пересборки: свет слитых крон едет вместе с
+    // тенями (материал кроны-сущности заводится заново с каждой сборкой)
+    canopy::relight_crown_material(&materials.merged, &mut materials.crowns);
     for entity in &existing {
         commands.entity(entity).despawn();
     }

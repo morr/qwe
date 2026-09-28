@@ -8,6 +8,11 @@
 // освещение по **локальной** координате (её хватает: меш нормирован), рябь по
 // **мировой** (иначе соседние деревья одного варианта были бы близнецами).
 //
+// Дальние ступени зума рисуют кроны не сущностями, а слитыми мешами по
+// кускам карты (`trees::CrownDetail::Merged`): там позиция вершины мировая, а
+// локальная координата приходит атрибутом — `CROWN_LOCAL` ставит
+// `canopy::CrownMaterial::specialize`, увидев его в меше.
+//
 // Шум общий: `fbm3` берётся из библиотеки `shaders/noise.wgsl` — та же рябь и
 // то же гашение по размеру пикселя, что у поверхностей и кровель (`visible`
 // вызывается внутри неё, отдельного импорта не требует).
@@ -51,6 +56,11 @@ struct Vertex {
     @builtin(instance_index) instance_index: u32,
     @location(0) position: vec3<f32>,
     @location(1) color: vec4<f32>,
+#ifdef CROWN_LOCAL
+    // слитый меш дальних крон: позиция уже мировая, координата внутри кроны
+    // едет отдельным атрибутом (`meshing::ATTRIBUTE_CROWN`)
+    @location(2) local: vec2<f32>,
+#endif
 }
 
 struct VertexOutput {
@@ -73,7 +83,11 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     out.position = mesh_functions::mesh2d_position_world_to_clip(world_position);
     out.world_position = world_position.xy;
     out.color = vertex.color;
+#ifdef CROWN_LOCAL
+    out.local = vertex.local;
+#else
     out.local = vertex.position.xy;
+#endif
     return out;
 }
 

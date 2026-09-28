@@ -42,6 +42,7 @@ use qwe::map::osm::{AreaKind, BuildingUse, Colours, Faith, PolyArea, Sacred, Sac
 use qwe::map::surface::{
     LayerMaterials, SurfaceMaterial, SurfaceStyle, init_flat_materials, init_surface_materials,
 };
+use qwe::map::trees::{CrownMaterial, init_crown_material};
 use qwe::map::{GROUND_COLOR, PaintMaterial, RoofStyle, SunOnMap, apply_sun};
 
 use crate::shot::{ShotRequest, auto_shot, request_shot};
@@ -134,6 +135,8 @@ fn main() {
         .add_plugins(Material2dPlugin::<SurfaceMaterial>::default())
         // и материал краски улиц — он живёт в том же комплекте поверхностей
         .add_plugins(Material2dPlugin::<PaintMaterial>::default())
+        // и материал слитых крон — `LayerMaterials` отдаёт и его
+        .add_plugins(Material2dPlugin::<CrownMaterial>::default())
         .add_plugins(qwe::ui::PanelWidgetsPlugin)
         .add_plugins(qwe::ui::QuitOnEscPlugin)
         .add_plugins(qwe::ui::AgentBadgePlugin)
@@ -147,7 +150,7 @@ fn main() {
                 spawn_camera,
                 // солнце — до кровельного материала: его юниформ `light`
                 // пишется один раз на всё приложение
-                (apply_sun, init_roof_material).chain(),
+                (apply_sun, (init_roof_material, init_crown_material)).chain(),
                 init_surface_materials,
                 init_flat_materials,
                 request_shot("TEMPLE_GALLERY_SHOT"),

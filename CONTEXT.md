@@ -1129,8 +1129,12 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   sun is lighter, the far side darker with a falloff by radius, and a leaf ripple by
   world position keeps two neighbouring trees of one variant from being copies. The ink
   of the outline and the hatching is mixed toward the foliage (`INK_FOLIAGE_MIX`) — from
-  the air a crown has no outline, it has a shaded edge. Detail in the `osm-map` skill's
-  `references/trees.md`.
+  the air a crown has no outline, it has a shaded edge. **Crown detail follows the zoom
+  step** (`CrownDetail`): near, a full crown is an entity per tree over its variant's
+  shared mesh; far (from 2 m/px), the crowns are light fills in the full crown's average
+  colour, **merged into `tree_crowns` chunks** of `CROWN_CHUNK` (1 km) — no entity per
+  tree, each chunk on its own z, crowns inside a chunk drawn in `TreeSet` order. Detail in
+  the `osm-map` skill's `references/trees.md`.
 - **Pitches** (`map/pitch.rs`) — sports and children's grounds (`leisure=pitch|track|
   playground|sports_centre|stadium`), `Z_PITCH` 2.005 with the markings at 2.006 —
   **over every road ribbon** and parking, under water: OSM runs yard footways across a

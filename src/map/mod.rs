@@ -207,6 +207,7 @@ impl Plugin for MapPlugin {
                         surface::init_surface_materials,
                         surface::init_flat_materials,
                         buildings::material::init_roof_material,
+                        trees::init_crown_material,
                     ),
                 )
                     .chain(),

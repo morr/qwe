@@ -88,7 +88,7 @@ use qwe::map::surface::{
 };
 use qwe::map::trees::{
     ConiferField, ConiferNoiseStyle, CrownMaterial, CrownParams, TreeMaterials, TreeRowStyle,
-    TreeStyle, TreeZoomBucket, mesh_trees, spawn_tree_meshes,
+    TreeStyle, TreeZoomBucket, init_crown_material, mesh_trees, spawn_tree_meshes,
 };
 use qwe::map::{
     BuildingHeightMode, FenceZoomBucket, GROUND_COLOR, MeshBuilder, PaintMaterial, ParkingLayout,
@@ -215,7 +215,7 @@ fn main() {
                 spawn_camera,
                 // солнце — до кровельного материала: его юниформ `light`
                 // пишется один раз на всё приложение
-                (apply_sun, init_roof_material).chain(),
+                (apply_sun, (init_roof_material, init_crown_material)).chain(),
                 init_surface_materials,
                 init_flat_materials,
                 spawn_panel,
@@ -637,11 +637,13 @@ fn build_next(
         &map.trees,
         &field,
     );
-    // крона — сущность, а не часть слоя: её не режут, а оставляют по центру.
-    // Свес за окно — метры, до соседнего окна `GAP`
+    // на ближней ступени крона — сущность, а не часть слоя: её не режут, а
+    // оставляют по центру. Свес за окно — метры, до соседнего окна `GAP`.
+    // Слитые куски дальних ступеней (здесь их нет) режутся, как всякий слой
     trees
         .crowns
         .retain(|crown| crown.at.cmpge(window_min).all() && crown.at.cmple(window_max).all());
+    trees.merged = clip(trees.merged);
     trees.shadows = clip(trees.shadows);
     spawn_tree_meshes(
         &mut commands,

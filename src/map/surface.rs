@@ -32,6 +32,7 @@ use crate::loading::AppState;
 use crate::map::buildings::material::{RoofMaterial, RoofMaterialHandle};
 use crate::map::meshing::{ATTRIBUTE_RIBBON, MeshBuilder};
 use crate::map::roads::paint::{PaintMaterial, PaintParams, PaintPass, RoadPaintStyle};
+use crate::map::trees::{CrownMaterial, CrownMaterialHandle};
 use crate::map::water::{WATER_SHORE_COLOR, WATER_SHORE_WIDTH};
 use crate::prefs::retuned;
 
@@ -425,6 +426,7 @@ enum LayerMaterial {
     Surface(Handle<SurfaceMaterial>),
     Roof(Handle<RoofMaterial>),
     Paint(Handle<PaintMaterial>),
+    Crown(Handle<CrownMaterial>),
 }
 
 /// Чем красить слой — **описанием, а не хэндлом**.
@@ -452,6 +454,11 @@ pub enum MaterialSpec {
     /// или маска и наложение колеи узлов. Меш — полосы
     /// `MeshBuilder::push_paint_strip` в сборщике с координатами поверхности.
     Paint(PaintPass),
+    /// Материал крон (`map::trees::canopy`) — для слитых крон дальних ступеней
+    /// зума. Меш обязан быть собран через [`MeshBuilder::with_crown_coords`];
+    /// яркость дерева запечена в его вершины, так что материал один на всё
+    /// приложение.
+    Crown,
 }
 
 /// Собранный слой карты: меш плюс всё, что нужно знать, чтобы положить его в
@@ -536,6 +543,7 @@ fn spawn_layer(
         LayerMaterial::Surface(handle) => layer.insert(MeshMaterial2d(handle)),
         LayerMaterial::Roof(handle) => layer.insert(MeshMaterial2d(handle)),
         LayerMaterial::Paint(handle) => layer.insert(MeshMaterial2d(handle)),
+        LayerMaterial::Crown(handle) => layer.insert(MeshMaterial2d(handle)),
     };
 }
 
@@ -550,6 +558,7 @@ pub struct LayerMaterials<'w> {
     flats: Res<'w, FlatMaterials>,
     surfaces: Res<'w, SurfaceMaterials>,
     roof: Res<'w, RoofMaterialHandle>,
+    crown: Res<'w, CrownMaterialHandle>,
 }
 
 impl LayerMaterials<'_> {
@@ -563,6 +572,7 @@ impl LayerMaterials<'_> {
             MaterialSpec::Paint(pass) => {
                 LayerMaterial::Paint(self.surfaces.paints[pass as usize].clone())
             }
+            MaterialSpec::Crown => LayerMaterial::Crown(self.crown.handle()),
         }
     }
 }
