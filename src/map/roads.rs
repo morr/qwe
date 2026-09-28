@@ -998,14 +998,14 @@ pub fn mesh_roads(
     // разделительная открывается по базе — у перекрёстка, кто бы его ни вёл
     let base = junctions.median_base();
     for median in prepared.pairs().medians() {
-        let [first, second] = median.roads;
+        let [first, second] = median.roads();
         // оси половин — на их полуширины за кромками разделительной
-        let halves = median.roads.map(|road| prepared.road(road).width / 2.0);
+        let halves = median.roads().map(|road| prepared.road(road).width / 2.0);
         let breaks = medians::crossing_breaks(median, halves, [&base[first], &base[second]]);
         // до перекрёстка — как линии полос, а не там, где кончились пробы
         let mut median = median.clone();
         medians::reach_breaks(&mut median, &breaks);
-        let pair = median.roads.map(street_of);
+        let pair = median.roads().map(street_of);
         if median.is_paved() {
             // полотно — внутренние полосы половин до середины; узкая
             // разделительная — полосой асфальта во всю свою ширину
@@ -1016,7 +1016,7 @@ pub fn mesh_roads(
             }
             if style.markings {
                 // штриховка островка режет осевую на куски (`Gores::reach`)
-                let runs = gores.reach(&median.midline);
+                let runs = gores.reach(median.midline());
                 // и там, где обе половины рвёт краска узла — зебра поперёк
                 // обеих, стоп-линии
                 let mut painted = breaks.clone();

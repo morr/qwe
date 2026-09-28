@@ -14,8 +14,9 @@
 //!
 //! Сюда же — то, что смотрит на ломаную целиком, а не на звено: ближайшая
 //! точка с её дуговой координатой ([`nearest_on_path`]), упрощение Дугласа —
-//! Пекера ([`simplify`]) и догущение до шага ([`densify`]). У каждого было по
-//! две-три копии в `roads/*`.
+//! Пекера ([`simplify`]), догущение до шага ([`densify`]) и торец с
+//! направлением наружу ([`tip_of`]). У каждого было по две-три копии в
+//! `roads/*`.
 
 use bevy::prelude::*;
 
@@ -91,6 +92,21 @@ fn direction_at(points: &[Vec2], index: usize) -> Option<Vec2> {
     (index..points.len() - 1)
         .chain((0..index).rev())
         .find_map(|link| (points[link + 1] - points[link]).try_normalize())
+}
+
+/// Торец ломаной (`end` — конец, иначе начало) и направление её крайнего
+/// звена наружу. `None` — у ломаной меньше двух точек или звено нулевой длины.
+pub(super) fn tip_of(line: &[Vec2], end: bool) -> Option<(Vec2, Vec2)> {
+    let count = line.len();
+    if count < 2 {
+        return None;
+    }
+    let (tip, before) = if end {
+        (line[count - 1], line[count - 2])
+    } else {
+        (line[0], line[1])
+    };
+    Some((tip, (tip - before).try_normalize()?))
 }
 
 /// Ближайшая к `point` точка ломаной и её дуговая координата; при равных

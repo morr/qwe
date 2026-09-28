@@ -860,15 +860,14 @@ fn divided_street_crossing_apart(paved: bool, apart: f32) -> NodePaint {
     let base = marking_breaks(&map.roads, is_carriageway, &[]).breaks;
     // половины — пара на всю длину, мощёная или с газоном, как скажет тест
     let run = |partner: usize| {
-        vec![PairRun {
-            from: 0.0,
-            to: 160.0,
+        vec![PairRun::for_test(
+            0.0,
+            160.0,
             partner,
-            left: true,
-            gap: apart - 7.6,
+            true,
+            apart - 7.6,
             paved,
-            tram: false,
-        }]
+        )]
     };
     let drawn = Drawn::for_test(&map)
         .with_pairs(1, run(2))
@@ -961,15 +960,14 @@ fn signals_across_a_pair(apart: f32) -> NodePaint {
     map.network = RoadNetwork::new(&map.roads);
     let base = marking_breaks(&map.roads, is_carriageway, &[]).breaks;
     let run = |partner: usize| {
-        vec![PairRun {
-            from: 0.0,
-            to: 160.0,
+        vec![PairRun::for_test(
+            0.0,
+            160.0,
             partner,
-            left: true,
-            gap: apart - 7.6,
-            paved: false,
-            tram: false,
-        }]
+            true,
+            apart - 7.6,
+            false,
+        )]
     };
     let drawn = Drawn::for_test(&map)
         .with_pairs(1, run(2))

@@ -32,7 +32,7 @@ use i_overlay::mesh::style::{LineJoin, OutlineStyle};
 use super::network::pairs::{Median, TRAM_BED_MAX_GAP};
 use super::node_paint::{ZEBRA_LENGTH, Zebra};
 use super::{RoadJoin, push_ribbon};
-use crate::map::along::{arclengths, nearest_on_path, place_on_path};
+use crate::map::along::{arclengths, nearest_on_path, place_on_path, tip_of};
 use crate::map::meshing::{Break, MeshBuilder};
 use crate::map::osm::model::{closest_on_segment, polyline_length};
 use crate::map::shapes::{ARC, Shape, contour_area, oriented, point_in_shape, push_shape};
@@ -201,17 +201,11 @@ pub fn bridge_short_pieces(midline: &[Vec2], breaks: &mut Vec<Break>) {
 /// центра разрыва, она гаснет у его края сама — как линии полос.
 /// Кромки газона продлеваются на ту же длину, каждая по своему ходу.
 pub fn reach_breaks(median: &mut Median, breaks: &[Break]) {
-    fn lines(median: &mut Median) -> [&mut Vec<Vec2>; 3] {
-        let Median { midline, inner, .. } = median;
-        let [first, second] = inner;
-        [midline, first, second]
-    }
     for end in [false, true] {
-        let count = median.midline.len();
-        if count < 2 {
+        if median.midline().len() < 2 {
             return;
         }
-        let Some((tip, heading)) = tip_of(&median.midline, end) else {
+        let Some((tip, heading)) = tip_of(median.midline(), end) else {
             continue;
         };
         // ближайший разрыв впереди, до края которого не дальше предела
@@ -224,19 +218,8 @@ pub fn reach_breaks(median: &mut Median, breaks: &[Break]) {
                     .then_some(along)
             })
             .min_by(f32::total_cmp);
-        let Some(along) = ahead else {
-            continue;
-        };
-        for line in lines(median) {
-            let Some((tip, heading)) = tip_of(line, end) else {
-                continue;
-            };
-            let point = tip + heading * along;
-            if end {
-                line.push(point);
-            } else {
-                line.insert(0, point);
-            }
+        if let Some(along) = ahead {
+            median.extend(end, along);
         }
     }
 }
@@ -305,20 +288,6 @@ pub fn reach_nose(line: &mut Vec<Vec2>, kerbs: &[Shape]) {
     }
 }
 
-/// Торец ломаной и направление её последнего звена наружу.
-pub(super) fn tip_of(line: &[Vec2], end: bool) -> Option<(Vec2, Vec2)> {
-    let count = line.len();
-    if count < 2 {
-        return None;
-    }
-    let (tip, before) = if end {
-        (line[count - 1], line[count - 2])
-    } else {
-        (line[0], line[1])
-    };
-    Some((tip, (tip - before).try_normalize()?))
-}
-
 /// Асфальт узкой разделительной — полосой по середине шириной в саму
 /// разделительную ([`Median::width`]), в слой улиц до лент половин, и контуром между
 /// внутренними кромками ([`between_edges`]): середина меряется между осями,
@@ -326,11 +295,11 @@ pub(super) fn tip_of(line: &[Vec2], end: bool) -> Option<(Vec2, Vec2)> {
 /// доставала до кромки широкой там, где зазор разводится (пример 16 Тулы —
 /// светлый язык вдоль двойной сплошной).
 pub fn push_paved(builder: &mut MeshBuilder, median: &Median, color: LinearRgba, join: RoadJoin) {
-    if median.midline.len() < 2 {
+    if median.midline().len() < 2 {
         return;
     }
     builder.set_lanes(None);
-    push_ribbon(builder, &median.midline, median.width(), color, join);
+    push_ribbon(builder, median.midline(), median.width(), color, join);
     if let Some(ring) = between_edges(median, FILL_OVERLAP) {
         builder.push_polygon(&ring, &[], color);
     }
@@ -355,7 +324,7 @@ const FILL_OVERLAP: f32 = 2.5;
 /// между половинами светился землёй — иглой при нахлёсте в метр, плашкой в
 /// два метра при нынешнем (Орёл, витрина 05: Московская, 10.9 и 7.6 м).
 fn between_edges(median: &Median, overlap: f32) -> Option<Vec<Vec2>> {
-    edges_ring(&median.midline, &median.inner, overlap)
+    edges_ring(median.midline(), median.inner(), overlap)
 }
 
 /// [`between_edges`] по середине `midline` и кромкам `inner` в тех же точках.
@@ -408,7 +377,7 @@ pub fn push_bed(builder: &mut MeshBuilder, median: &Median, color: LinearRgba) {
 /// Торцы трамвайного полотна — разрывами для соседнего газона: нос газона
 /// встаёт за [`NOSE_CLEARANCE`] до торца, как у перекрёстка.
 pub fn bed_ends(median: &Median) -> [Option<Break>; 2] {
-    [false, true].map(|end| tip_of(&median.midline, end).map(|(at, _)| Break { at, reach: 0.0 }))
+    [false, true].map(|end| tip_of(median.midline(), end).map(|(at, _)| Break { at, reach: 0.0 }))
 }
 
 /// Газон разделительной: бордюр — в `kerbs` (слой тротуаров), трава — в
@@ -442,7 +411,7 @@ pub fn push_lawn(
         // нос — почти полукруг во всю ширину, а у куска короче ширины — по
         // его длине: открытие стирает всё у́же двух радиусов, и островок
         // между зеброй и узлом пропадал целиком (Рязань, витрина 03)
-        let nose = (median.gap.min(length) * NOSE_SHARE).max(ARC);
+        let nose = (median.gap().min(length) * NOSE_SHARE).max(ARC);
         let kerb = nosed(outline, nose);
         let lawn: Vec<Shape> = kerb
             .outline(&OutlineStyle::new(-MEDIAN_KERB).line_join(round()))
@@ -498,13 +467,14 @@ pub fn push_lawn(
 /// длину зебры вдоль середины. Из травы вычитается, бордюр остаётся — проход
 /// лежит плиткой островка между двумя кусками газона.
 fn passages(median: &Median, crossings: &[Break]) -> Vec<Shape> {
-    let (along, _) = arclengths(&median.midline);
+    let midline = median.midline();
+    let (along, _) = arclengths(midline);
     let across = median.width();
     crossings
         .iter()
         .filter_map(|gap| {
-            let (at, length) = nearest_on_path(&median.midline, gap.at)?;
-            let (_, heading) = place_on_path(&median.midline, &along, length)?;
+            let (at, length) = nearest_on_path(midline, gap.at)?;
+            let (_, heading) = place_on_path(midline, &along, length)?;
             let [ahead, aside] = [heading * gap.reach, heading.perp() * across];
             let quad = [
                 at - ahead - aside,
@@ -568,11 +538,11 @@ const BED_WIDER: f32 = 1.0;
 /// бордюра газона `kerbs`: трава лежит под асфальтом улиц, и продление
 /// поверх съело бы нос. У торца без газона рядом — продление целиком.
 pub fn bed_caps(median: &Median, kerbs: &[Shape]) -> Vec<Shape> {
-    let [first, second] = &median.inner;
+    let [first, second] = median.inner();
     let mut caps = Vec::new();
     for end in [false, true] {
         let (Some((mid, heading)), Some(&a), Some(&b)) = (
-            tip_of(&median.midline, end),
+            tip_of(median.midline(), end),
             if end { first.last() } else { first.first() },
             if end { second.last() } else { second.first() },
         ) else {
@@ -624,8 +594,9 @@ const BREAK_ASIDE: f32 = 12.0;
 /// точки остаются друг против друга. И по точке — своя ли это вершина, а не
 /// вставленная: в контур газона идут только свои и концы куска.
 fn densified(median: &Median) -> ([Vec<Vec2>; 3], Vec<bool>) {
-    let [first, second] = &median.inner;
-    let lines = [&median.midline, first, second];
+    let [first, second] = median.inner();
+    let midline = median.midline();
+    let lines = [midline, first.as_slice(), second.as_slice()];
     let mut dense: [Vec<Vec2>; 3] = Default::default();
     let mut own = Vec::new();
     let count = lines.iter().map(|line| line.len()).min().unwrap_or(0);
@@ -637,7 +608,7 @@ fn densified(median: &Median) -> ([Vec<Vec2>; 3], Vec<bool>) {
         if index + 1 == count {
             break;
         }
-        let parts = (median.midline[index].distance(median.midline[index + 1]) / LAWN_STEP)
+        let parts = (midline[index].distance(midline[index + 1]) / LAWN_STEP)
             .ceil()
             .max(1.0);
         for part in 1..parts as usize {

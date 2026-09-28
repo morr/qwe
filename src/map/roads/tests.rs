@@ -2508,15 +2508,7 @@ fn a_zebra_at_a_way_end_breaks_the_kerb_pockets_of_both_ways() {
 
 /// Кусок пары `from..to` у половины, идущей на восток: пара слева.
 fn run_left(from: f32, to: f32) -> network::pairs::PairRun {
-    network::pairs::PairRun {
-        from,
-        to,
-        partner: 1,
-        left: true,
-        gap: 0.6,
-        paved: true,
-        tram: false,
-    }
+    network::pairs::PairRun::for_test(from, to, 1, true, 0.6, true)
 }
 
 /// Вершины тротуара улицы в 10 м с полосой в 2 м вдоль x от 0 до 100 — с
@@ -2524,10 +2516,7 @@ fn run_left(from: f32, to: f32) -> network::pairs::PairRun {
 fn sidewalk_of(runs: &[network::pairs::PairRun], sides: [bool; 2]) -> Vec<[f32; 3]> {
     let mut builder = MeshBuilder::default();
     let body = [Vec2::ZERO, Vec2::new(100.0, 0.0)];
-    let pairs = Pairs {
-        runs: vec![runs.to_vec()],
-        ..default()
-    };
+    let pairs = Pairs::of_runs(vec![runs.to_vec()]);
     let pieces = pairs.band_pieces(0, sides, 0.0, 100.0);
     push_sidewalk(
         &mut builder,

@@ -179,7 +179,7 @@ pub fn street_axes<'a>(
     let decks: Vec<(usize, Vec<Vec2>)> = roads
         .iter()
         .enumerate()
-        .filter(|(index, road)| road.bridge && !pairs.runs[*index].is_empty())
+        .filter(|(index, road)| road.bridge && pairs.has_runs(*index))
         .map(|(index, _)| (index, paths[index].to_vec()))
         .collect();
     let moved = pairs.align(&mut paths, roads, network, nodes, &wedges);

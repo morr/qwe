@@ -234,7 +234,7 @@ impl<'m> Drawn<'m> {
     /// Куски пары на дороге `road` — вместо найденных `Pairs`.
     #[cfg(test)]
     pub fn with_pairs(mut self, road: usize, runs: Vec<super::network::pairs::PairRun>) -> Self {
-        self.axes.pairs.runs[road] = runs;
+        self.axes.pairs.set_runs(road, runs);
         self
     }
 
@@ -576,20 +576,21 @@ mod tests {
         let map = with_network(roads);
         let drawn = Drawn::for_test(&map);
         let pairs = drawn.pairs();
-        let runs = &pairs.runs[0];
+        let runs = pairs.runs(0);
         let (first, last) = (runs[0], runs[runs.len() - 1]);
-        assert!(first.left, "пара слева от половины, идущей на восток");
+        assert!(first.is_left(), "пара слева от половины, идущей на восток");
+        let ([from, to], [_, end]) = (first.span(), last.span());
         // скругление в узле: две пробы слака
         let slack = 2.0 * PROBE_STEP;
         let beside = |at: f32| pairs.beside(0, at, slack);
-        assert_eq!(beside((first.from + first.to) / 2.0), Some(true));
-        assert_eq!(beside(first.from - 3.9), Some(true));
-        assert_eq!(beside(first.from - 4.1), None);
-        assert_eq!(beside(last.to + 3.9), Some(true));
-        assert_eq!(beside(last.to + 4.1), None);
+        assert_eq!(beside((from + to) / 2.0), Some(true));
+        assert_eq!(beside(from - 3.9), Some(true));
+        assert_eq!(beside(from - 4.1), None);
+        assert_eq!(beside(end + 3.9), Some(true));
+        assert_eq!(beside(end + 4.1), None);
         // середина клина — без слака
-        assert_eq!(pairs.beside(0, last.to, 0.0), Some(true));
-        assert_eq!(pairs.beside(0, last.to + 0.1, 0.0), None);
+        assert_eq!(pairs.beside(0, end, 0.0), Some(true));
+        assert_eq!(pairs.beside(0, end + 0.1, 0.0), None);
         assert_eq!(pairs.beside(1, 200.0, slack), Some(true), "и у встречной");
         let partners: Vec<Partner> = pairs.partners(0).collect();
         assert_eq!(

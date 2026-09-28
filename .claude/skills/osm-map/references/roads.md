@@ -322,10 +322,17 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     the streets); `across_median(road, path, nodes)` — the cross-street piece in the
     median's opening (**Kerb return** below); `band_pieces(road, sides, stitch, total)` —
     the sidewalk band cut into pieces without the pair side (**Sidewalks** above);
-    `medians()`. `Drawn` answers none of them
-    itself: it hands out `pairs()`, one owner. The runs stay public until the median
-    loop moves into `medians.rs` (roads plan stage H), and `align` reads them inside the
-    module.
+    `has_runs(road)` — is the road a half anywhere (the bridge decks the alignment
+    carries along, `roads/axis.rs`); `medians()`. `Drawn` answers none of them
+    itself: it hands out `pairs()`, one owner. **The fields are closed** — `PairRun`,
+    `Median` and `Pairs` keep them `pub(super)`, so only `network/*` (`align`, the pair
+    tests) reads them. A median is read through `roads()`, `gap()`, `width()`,
+    `midline()`, `inner()`, `is_paved()`, `carries_tram()`, and the one change it takes
+    from outside is `Median::extend(end, along)` — the midline and both inner edges
+    lengthened at one end, each along its own last link, which `medians::reach_breaks`
+    uses to carry a median to the junction (the tip and its heading are
+    `along::tip_of`, shared with the gores). Tests build runs with
+    `PairRun::for_test`, `Pairs::of_runs` and `Drawn::with_pairs` (`Pairs::set_runs`).
   - **Alignment** (`Pairs::align`) — each half is densified to `ALIGN_STEP` 4 m and moved
     so that it stands at half the target distance from the midpoint between it and the
     partner's original axis: target gap = the run's median, paved ones no narrower than
