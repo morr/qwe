@@ -360,8 +360,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   - **Kerb pocket** (`map/roads/pockets.rs`) — a parking bay cut into the sidewalk beside
     the carriageway, where the parked cars stand: by `parking:<side>=street_side`, or by
     rule on trunk/primary/secondary (cars do not stand on an arterial's lane) — there as
-    rare short bays, seeded by the street, not a block-long run; never in front of a
-    parking lot (`amenity=parking` within a sidewalk and a verge of it). One answer
+    rare short bays, seeded by the street, not a block-long run; never along a lot's
+    **frontage** — the stretch of kerb with a parking lot of **any** `LotKind` within a
+    sidewalk and a verge of it (`pockets::KerbLots::frontage`): the cars go to the lot, and
+    a bay in front of it reads as a spare lane. One answer
     (`pockets::all_kerbsides`) for the ribbon and for `map::cars`; a pocket ends in a
     taper everywhere except at a way end the next way carries it on from. `sidewalk=*` likewise
     decides which sides carry a sidewalk band; an **untagged** street has none on an

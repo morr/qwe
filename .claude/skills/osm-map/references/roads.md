@@ -266,6 +266,16 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   past the bay's edge). A rule bay touching a frontage is **dropped after** the bays
   are laid, so the RNG stream and every other bay of the block stay put; a tagged run
   is **cut** around the frontage like around a row break, its tapers outside it.
+  **Any lot kind makes a frontage, not only the kerbside lot of that side.** Resolving
+  the two OSM records of one lay-by — the road's `parking:<side>=street_side` and a
+  `LotKind::Kerbside` outline — onto the road side at parse, and letting only that lot
+  silence the pocket, was considered and rejected: the rule exists
+  for the author's report above, and that lot is `parking=surface` (way 479605523), a
+  `Yard`; narrowing it to kerbside lots would put the bay back in front of the theatre.
+  The two records of a lay-by are already reconciled by this same frontage — the kerbside
+  lot is paved to the kerb and silences the pocket along itself — so a parse-side link
+  would have added a second answer to a question this one already settles
+  (`a_rule_pocket_is_not_laid_beside_a_parking_lot` pins it on a yard).
   Drawn by `mesh_roads` as three polygons per pocket from
   `pockets::outline` (inner edge 5 cm under the carriageway edge, outer edge between the
   tapers): asphalt `POCKET_WIDTH` 2.5 m wide in `roads` (no casing — the road casing
