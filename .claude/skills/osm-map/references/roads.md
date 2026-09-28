@@ -136,7 +136,18 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   sidewalk-carrying arms where at least one side has a verge, a fillet by the verge at
   the node (`verge_at` there; the band where there is none) with the arc at the kerb radius less the **narrower** of the
   two — by the wider, as the band corners do, it left a wedge of ground along the
-  narrower. Render-only: the navmesh and the house pull never read it.
+  narrower. **A wide verge is a lawn** (`paved_verge`): tile covers a verge up to
+  `VERGE_PAVED_MAX` 4 m whole; wider, the tile narrows over `VERGE_PAVED_RAMP` 2 m of
+  extra width down to a `VERGE_KERB` 0.5 m strip at the kerb, and the whole verge — body
+  and end discs where the width is past 4 m — goes as grass (`GRASS_COLOR`,
+  `SurfaceKind::Grass`) into **`road_verge_lawns` at `Z_ROAD_VERGE_LAWN` 0.08**, under the
+  tile. A corner between two verges both wider than 4 m goes there too
+  (`KerbReturns::verge_lawns`). In a microdistrict (Фрунзе in Tula, the district frame d2)
+  the tile laid from the kerb to a footway fifteen metres off made the street read as
+  poured concrete; there it is a lawn with the footway on it, as in any Soviet yard,
+  while the narrow paved verges of the centre's corners stay tile, and nothing between
+  the kerb and the footway is bare ground either way (roads plan S4).
+  Render-only: the navmesh and the house pull never read it.
   **One profile for the parse and the renderer**: `RoadLine::sidewalk()` →
   `SidewalkProfile` (`osm/model.rs`) — the sides as bools plus the **band by class**
   (`sidewalk_band`, 22 % of the width, 1.2–3 m; `Some` on a carriageway, a bridge
@@ -1783,8 +1794,9 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     and `Smoothing` stay for the tree-row band's own Joins / Smoothing rows and for rails,
     the tram and water (`Smoothing::Light`). The dark road/alley **casing layers are gone**
     (`alley_casings`, `road_casings`, `Z_ALLEY_CASING`, `Z_ROAD_CASING` and their colours),
-    so `mesh_roads` yields **22 layers**: twelve ribbons (with `unpaved_roads`, **Unpaved
-    streets** above, and `road_verges`, **Sidewalks**), the ring islands' lawn and their
+    so `mesh_roads` yields **23 layers**: twelve ribbons (with `unpaved_roads`, **Unpaved
+    streets** above, and `road_verges`, **Sidewalks**), the wide verges' lawn
+    (`road_verge_lawns`, **Sidewalks**), the ring islands' lawn and their
     grass without the rim (`ring_islands`, `ring_island_grass`, **Roundabouts**) + eight
     paint layers. `bridge_casings`
     stays — it is the bridge curb (**Bridge layers** below); `footprint::casing_width`
