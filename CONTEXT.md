@@ -296,7 +296,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     passes through — **main through** below), and the axis of a two-way street of 4+ lanes
     as a double solid — the axis being the **border between the flows**
     (`paint::axis_offset`: an odd count gives its extra lane to the flow along the points
-    unless the split says otherwise), so a five-lane street has one too; a street tagged `lane_markings=no` gets neither axis nor lane
+    unless the split says otherwise), so a five-lane street has one too, and across a
+    taper between two two-way sections the axis starts on the narrow one's and drifts to
+    its own over the wedge (`paint::seam_origin`) instead of jumping half a lane; a street tagged `lane_markings=no` gets neither axis nor lane
     lines. Two meshes per level (lane lines, axes) plus the zebras, streets at
     `Z_ROAD_PAINT` and bridges at `Z_BRIDGE_PAINT`; `PaintLods` hides the lane lines and
     stop lines past 0.4 m/px, the zebras past 0.6 and the axes past 0.9 without a rebuild.

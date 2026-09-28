@@ -648,6 +648,19 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     `BIRTH_FADE` (half a lane). The asphalt wedge runs seam → body, so for the tail wedge
     its frame is the mirror (`paint::wedge_frames`); `the_wedge_asphalt_and_the_wedge_paint_share_one_grid`
     pins that both land on one grid.
+    **Between two two-way sections the axis leads** (`paint::seam_origin`, carried as
+    `WedgeEnd::origin`, roads plan №30): the seam frame is the narrow neighbour's own
+    frame (`lane_frame(narrow)`, whatever the wedge's shape) with its node placed so that
+    the wide way's axis line lands on the neighbour's axis — in the wide way's frame,
+    mirrored when the neighbour is drawn against it — and the lerp then carries the axis
+    to its own place over the wedge. Without it a seam of different splits jumped:
+    Текучёва in Rostov (gallery 03), `lanes=5, lanes:forward=3` into six lanes, has the
+    five-lane axis on the flow border half a lane off the middle and the six-lane one in
+    the middle, and the kept frame of that T-junction wedge put the whole grid half a
+    lane off as well. The shift is snapped to whole half lanes (a 1e-7 tail made
+    `Painter::paint`'s `ceil` add a line beyond the kerb) and taken only up to one lane;
+    a one-way side, or a shift over a lane, leaves the frame to the wedge's shape rule.
+    Pinned by `the_axis_runs_through_a_seam_of_different_splits`.
   - **Dashes by the street's arclength** (`paint::street_stations` over the network's
     ordered ways and the axis paths): 2 m dash, 6 m gap (ГОСТ 1.5 in town — the gap three
     times the dash; the old 3 / 3 read as a picket fence on a multi-lane street at the
