@@ -62,9 +62,9 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
 use crate::map::meshing::MeshBuilder;
-use crate::map::osm::PolyArea;
 use crate::map::osm::model::{
-    RoadClass, RoadLine, distance_to_segment, ring_bounds, signed_ring_area,
+    AreaKind, LotKind, PolyArea, RoadClass, RoadLine, distance_to_segment, ring_bounds,
+    signed_ring_area,
 };
 use crate::map::roads::is_carriageway;
 
@@ -141,17 +141,12 @@ const LINE_COLOR: Color = Color::srgb(0.82, 0.82, 0.80);
 /// никто не расчерчивает. Места на ней остаются — машины на них стоят
 /// (`map::cars::fill_lots`), просто по неразмеченному асфальту.
 const MIN_AREA: f32 = 120.0;
-/// С какой площади стоянка — **большая**, м². Маленькая кроет все ленты, что
-/// на неё заходят, и это верно: во дворе асфальт стоянки и есть проезд. У
-/// большой сквозь площадку идёт настоящая дорога — с односторонним движением,
-/// с кольцами на развязках, — и спрятанная под асфальтом, она оставляет поле
-/// штриховки без единого ориентира. В Туле таких площадок шесть, и дорога
-/// ([`is_through`]) идёт сквозь одну — стоянку ТРЦ «Макси», 8.3 га.
-const GROUND_MIN_AREA: f32 = 8000.0;
 
-/// Большая ли это стоянка — см. [`GROUND_MIN_AREA`].
+/// Большая ли это стоянка — [`LotKind::Ground`], который решил разбор по
+/// замощённому контуру (`parse/lots.rs`). У неё сквозь площадку видна дорога
+/// ([`is_through`]) — в Туле сквозь одну, стоянку ТРЦ «Макси», 8.3 га.
 pub fn is_ground(area: &PolyArea) -> bool {
-    signed_ring_area(&area.outer).abs() >= GROUND_MIN_AREA
+    area.kind == AreaKind::Parking(LotKind::Ground)
 }
 
 /// Дорога **сквозь** большую стоянку — та, что рисуется поверх её асфальта, с
@@ -1555,11 +1550,11 @@ mod tests {
     use super::*;
     // полный обход кольца — то, с чем тесты сверяют ответ `Outline`; в самой
     // раскладке его больше нет
+    use crate::map::osm::fixture;
     use crate::map::osm::model::point_in_area;
-    use crate::map::osm::{AreaKind, fixture};
 
     fn lot(outer: Vec<Vec2>) -> PolyArea {
-        fixture::area(AreaKind::Parking, outer)
+        fixture::area(AreaKind::Parking(LotKind::Yard), outer)
     }
 
     fn rect(width: f32, length: f32) -> Vec<Vec2> {

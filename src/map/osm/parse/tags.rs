@@ -12,9 +12,9 @@ use bevy::prelude::*;
 
 use crate::map::osm::model::{
     AreaKind, BIG_BOX_MAX_HEIGHT, BIG_BOX_MAX_LEVELS, BuildingUse, Colours, Faith, FenceKind,
-    Highway, KerbParking, LaneTurn, Pavement, PitchKind, RailKind, Rgb, RoadAreaKind, RoadClass,
-    RoadNodeKind, Sacred, SacredForm, ServiceTrack, SidewalkSide, StructureKind, WaterKind,
-    is_big_box_shape, polyline_length,
+    Highway, KerbParking, LaneTurn, LotKind, Pavement, PitchKind, RailKind, Rgb, RoadAreaKind,
+    RoadClass, RoadNodeKind, Sacred, SacredForm, ServiceTrack, SidewalkSide, StructureKind,
+    WaterKind, is_big_box_shape, polyline_length,
 };
 use crate::map::osm::overpass::Element;
 use crate::settings::STOREY_HEIGHT;
@@ -353,13 +353,14 @@ pub(super) fn area_kind(element: &Element) -> Option<AreaKind> {
     // стоянка — после зелени и до кварталов: зелёный тег на том же контуре
     // выигрывает (сквер с парковкой по краю остаётся сквером), а вот двор
     // `landuse=residential` — нет, там асфальт главное. Парковочный дом
-    // (`building=*` + `amenity=parking`) сюда не доходит: здание выше
-    if tags.get("amenity").map(String::as_str) == Some("parking")
-        && !tags
-            .get("parking")
-            .is_some_and(|value| HIDDEN_PARKING.contains(&value.as_str()))
-    {
-        return Some(AreaKind::Parking);
+    // (`building=*` + `amenity=parking`) сюда не доходит: здание выше. Большая
+    // ли она, скажет замощённый контур (`lots::pave_lots`), не тег
+    if tags.get("amenity").map(String::as_str) == Some("parking") {
+        match tags.get("parking").map(String::as_str) {
+            Some(value) if HIDDEN_PARKING.contains(&value) => {}
+            Some("street_side") => return Some(AreaKind::Parking(LotKind::Kerbside)),
+            _ => return Some(AreaKind::Parking(LotKind::Yard)),
+        }
     }
     // площадка — после стоянки и до кварталов: `leisure=pitch` во дворе
     // сплошь и рядом лежит внутри `landuse=residential`, и покрытие поля

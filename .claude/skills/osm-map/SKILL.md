@@ -152,7 +152,7 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   matches is the *sub-class within* a vector, which is exactly what the vector cannot say.
 - **PolyArea** — polygon with holes; rings are open (no repeated last point).
   `AreaKind: Building | Kremlin | Water | Park | Wood | Grass | Sand | Residential |
-  Industrial | Parking | Pitch(PitchKind)`. **Park** is the
+  Industrial | Parking(LotKind) | Pitch(PitchKind)`. **Park** is the
   light base fill; **Wood** (`natural=wood` / `landuse=forest`) are the darker stands
   *inside* it and the **only** areas that carry trees; **Grass** (lawns, meadows) and
   **Sand** (beaches) also sit above the park fill, lighter green / sandy. Everything
@@ -179,11 +179,19 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   Tula, cache v14: 355 in the bbox, 349 reach `MapData::parking` — five carry
   `building` and stay buildings, one is `parking=multi-storey` with no building on it.
   Recount with `tools/osm_audit/cache_audit.py` on the cache in `assets/osm/`.
+  A lot carries its **`LotKind`**, the parse's one answer to "what kind of lot": `Kerbside`
+  (`parking=street_side`, read off the tag in `area_kind` — paved up to the kerb),
+  `Ground` (a big lot: the **paved** outline ≥ `GROUND_MIN_AREA` 8000 m², settled at the
+  end of `parse/lots.rs::pave_lots`, so a lot the paving grew past the line is big and a
+  part a building cut off is judged by itself), `Yard` (the rest). The layout, the big
+  lot's kerb and the paving read it; none of them measures an area again. It replaced the
+  side list `MapData::street_side_lots` and a render-side `parking::is_ground` that the
+  parse imported. Tula v15: 56 kerbside, 10 big.
   **Pitch** (`leisure=pitch|track|playground|sports_centre|stadium`) is the fourth —
   `MapData::pitches`, a surface plus markings (see **Pitches** below). It is tried after
   parking and before the landuse blocks, but **after `park`/`garden`**: a park with a
-  pitch drawn on it stays a park, and the pitch arrives as its own way. Alone among the
-  area kinds it **carries a payload**, `PitchKind`, because the sport decides both the
+  pitch drawn on it stays a park, and the pitch arrives as its own way. It **carries a
+  payload** (the other one that does is `Parking(LotKind)`, below), `PitchKind`, because the sport decides both the
   colour and the marking and nothing else in the model has one — a field on `PolyArea`
   (the `building_use` pattern) would be meaningless for every other area kind and would
   touch all 33 literal constructions in the tests. Tula v10: 128 grounds in the bbox — 59

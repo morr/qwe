@@ -6,7 +6,7 @@ use crate::map::osm::model::{
     KerbParking, Pavement, RailKind, RailLine, RoadNode, SIDEWALK_WIDTH_RANGE, SidewalkSide,
     sidewalk_band,
 };
-use crate::map::osm::{Highway, fixture};
+use crate::map::osm::{Highway, LotKind, fixture};
 use crate::map::parking::LOT_KERB;
 
 fn road(points: Vec<Vec2>, width: f32, passage: bool) -> RoadLine {
@@ -806,8 +806,14 @@ fn an_empty_map_still_describes_every_layer() {
 /// оба края площадки; проезд ряда лежит внутри целиком.
 fn ground_with_roads(lot_side: f32) -> MapData {
     let mut map = MapData::default();
+    // вид решает разбор по площади: 100 × 100 — большая, 60 × 60 — двор
+    let kind = if lot_side * lot_side >= 8000.0 {
+        LotKind::Ground
+    } else {
+        LotKind::Yard
+    };
     map.parking.push(fixture::area(
-        AreaKind::Parking,
+        AreaKind::Parking(kind),
         vec![
             Vec2::new(100.0, 100.0),
             Vec2::new(100.0 + lot_side, 100.0),

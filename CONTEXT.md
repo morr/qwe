@@ -188,7 +188,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     older half-tone-off-the-ground fill was what made the whole city read as one beige
     sheet with buildings placed on it. Industrial keeps the cold grey.
     **Parking** (`amenity=parking`,
-    `MapData::parking`) is asphalt with marked stalls — see **Parking lots** below;
+    `MapData::parking`) is asphalt with marked stalls — see **Parking lots** below; its
+    **lot kind** (`AreaKind::Parking(LotKind)`) is the parse's answer, read and never
+    re-derived downstream: `Kerbside` (`parking=street_side`), `Ground` (a big lot), `Yard`;
     `area_kind` tries it after the greens and **before** `landuse`, so a multi-storey car
     park (`building` + `amenity=parking`) stays a building — and a lot whose asphalt is
     not on the ground (`parking=underground|multi-storey|rooftop`) is no area at all.
@@ -531,7 +533,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   what the closing added only the pieces lying **between the lot and a road** are kept — a
   notch in the outline touches no road, a wedge between two streets touches no lot. A
   road's band is its carriageway plus the sidewalks it draws; a **kerbside lot**
-  (`parking=street_side`, `MapData::street_side_lots`) takes the carriageway alone, so it
+  (`parking=street_side`, `LotKind::Kerbside`) takes the carriageway alone, so it
   is paved up to the kerb, cut into the sidewalk rather than standing behind it. A
   drive without a sidewalk counts as the lot's side. Buildings of `KEEP_BUILDING_AREA`
   100 m² or more, greenery, water and **fences** (a band of `FENCE_HALF` 0.75 m either
@@ -1244,7 +1246,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   (**Lot paved to its roads** above), so the strip of ground between the lot and its
   perimeter drive, which read as light pockets between the aisles crossing it, is asphalt
   like the rest of the lot; where the paved strip is wide enough the layout stripes it too.
-  **Big lot** (`parking::is_ground`, outline ≥ `GROUND_MIN_AREA` 8000 m²) — the one kind of
+  **Big lot** (`LotKind::Ground`: the **paved** outline ≥ `GROUND_MIN_AREA` 8000 m², settled
+  by `parse/lots.rs::pave_lots`; `parking::is_ground` reads it) — the one kind of
   lot that does **not** hide every road on it. A **through road** (`parking::is_through`: a
   street that is one-way, a roundabout or a carriageway, and not a `parking_aisle` — at
   ТРЦ «Макси» the boulevard with its three mini-roundabouts; the other big lots of Tula

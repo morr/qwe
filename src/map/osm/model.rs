@@ -24,13 +24,29 @@ pub enum AreaKind {
     Industrial,
     /// Стоянка (`amenity=parking`) — асфальт с расчерченными местами. На
     /// снимке двор со стоянкой ни с чем не спутать, и это единственная
-    /// площадная зона, на которой что-то стоит (`map::cars`).
-    Parking,
+    /// площадная зона, на которой что-то стоит (`map::cars`). Какая это
+    /// стоянка, решает разбор ([`LotKind`]).
+    Parking(LotKind),
     /// Спортивная или детская площадка (`leisure=pitch|track|playground|…`).
     /// Вид спорта решает и цвет покрытия, и разметку, поэтому он едет прямо
     /// в значении: отдельного поля на `PolyArea` ради него заводить не за
     /// что — площадкой оно не бывает ни у чего другого.
     Pitch(PitchKind),
+}
+
+/// Что за стоянка — решается при разборе (`parse/lots.rs`), и читают её
+/// раскладка мест (`map::parking`) и кромка большой стоянки (`roads/lots.rs`),
+/// а сами ничего не выводят.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LotKind {
+    /// **Kerbside lot** — `parking=street_side`: карман вдоль улицы отдельным
+    /// контуром. Дотягивается до бордюра, врезаясь в тротуар, а не до его края.
+    Kerbside,
+    /// **Big lot** — замощённый контур от `GROUND_MIN_AREA` (`parse/lots.rs`):
+    /// дорога сквозь неё видна на её асфальте, а не спрятана под ним.
+    Ground,
+    /// Остальные: двор, стоянка у магазина.
+    Yard,
 }
 
 /// Что за площадка — по ней выбирается цвет покрытия и разметка
@@ -1165,12 +1181,9 @@ pub struct MapData {
     /// повод красить её травой двора.
     pub pockets: Vec<PolyArea>,
     /// Стоянки (`amenity=parking`) — асфальт с разметкой мест; по ним же
-    /// расставляются машины. Навмеш не трогают: по стоянке ходят.
+    /// расставляются машины. Навмеш не трогают: по стоянке ходят. Вид каждой
+    /// ([`LotKind`]) в её `kind`.
     pub parking: Vec<PolyArea>,
-    /// Индексы в [`Self::parking`] стоянок `parking=street_side` — кармана
-    /// вдоль улицы, отдельным контуром: дотягиваются до бордюра, а не до края
-    /// тротуара (`parse/lots.rs`).
-    pub street_side_lots: Vec<usize>,
     /// Спортивные и детские площадки (`leisure=*`) — покрытие своего цвета и
     /// разметка (`map::pitch`). Навмеш не трогают: по площадке ходят.
     pub pitches: Vec<PolyArea>,
@@ -1705,7 +1718,7 @@ mod tests {
         let area = |outer: Vec<Vec2>| PolyArea {
             outer,
             holes: Vec::new(),
-            kind: AreaKind::Parking,
+            kind: AreaKind::Parking(LotKind::Kerbside),
             building_use: BuildingUse::Other,
             height: None,
             storeys: None,

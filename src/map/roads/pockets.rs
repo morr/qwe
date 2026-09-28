@@ -925,10 +925,11 @@ mod tests {
     }
 
     /// Стоянка за тротуаром справа от `from` до `to` по x: её край в 2.5 м за
-    /// наружным краем кармана улицы шириной 14.
+    /// наружным краем кармана улицы шириной 14. Двор, а не карман вдоль улицы:
+    /// карман гасит **любая** стоянка перед ним, не только своя.
     fn lot_on_the_right(from: f32, to: f32) -> PolyArea {
         crate::map::osm::fixture::area(
-            crate::map::osm::AreaKind::Parking,
+            crate::map::osm::AreaKind::Parking(crate::map::osm::LotKind::Yard),
             vec![
                 Vec2::new(from, -12.0),
                 Vec2::new(to, -12.0),

@@ -225,8 +225,9 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
   - **A big lot shows the road through it** — the author's later call, on ТРЦ «Макси»:
     hiding the roads is right for a yard and wrong for eight hectares, which came out as
     a field of hatching with no landmark in it, while 2GIS and Yandex draw the boulevard.
-    - **Big** is `parking::is_ground`, the outline at `GROUND_MIN_AREA` 8000 m² or more
-      (six lots in Tula). **Through** is `parking::is_through`: a `Street` that is not a
+    - **Big** is `LotKind::Ground` (`parking::is_ground` reads it), the **paved** outline
+      at `GROUND_MIN_AREA` 8000 m² or more — decided by the parse
+      (`parse/lots.rs::settled_kind`, `references/parse.md`); ten lots in Tula (v15). **Through** is `parking::is_through`: a `Street` that is not a
       `parking_aisle`, a bridge or a passage, and is **one-way, a roundabout or a
       carriageway**. That is the one thing tags say about it: the mall's boulevard is
       `highway=service` + `oneway=yes` with three mini-roundabouts, while the plain

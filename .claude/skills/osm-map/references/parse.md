@@ -555,13 +555,13 @@ be called alone:
       along its whole way; pieces of one road are glued across links into one stroke;
       `RoadClass::Street` only — a footpath is not what a lot is entered from; the band
       of a carriageway includes its sidewalks — only those it draws, never a
-      `sidewalk=separate|no` one). **A kerbside lot** (`parking=street_side`, its index
-      in `MapData::street_side_lots`) takes the carriageway band **without** the
+      `sidewalk=separate|no` one). **A kerbside lot** (`parking=street_side`,
+      `LotKind::Kerbside`) takes the carriageway band **without** the
       sidewalk: the closing then fills the sidewalk strip between it and the kerb, and the
       pocket is cut into the sidewalk instead of standing behind it — on Tula's Советская
       a lay-by was separated from the lanes by a strip of drawn sidewalk, with nothing to
-      drive in from (Tula: 56 such outlines — 55 ways and a relation, both parse paths
-      record it — Berlin 3275). Only the street the pocket **runs along** loses its
+      drive in from (Tula: 56 such outlines — 55 ways and a relation, `area_kind` reads
+      the tag on both parse paths — Berlin 3275). Only the street the pocket **runs along** loses its
       sidewalk (`runs_along`: a link within `STREET_SIDE_ANGLE` 30° of the outline's
       longest side, `PolyArea::longest_side`); a cross street at the pocket's end, inside the closing radius,
       keeps its band whole, so the pocket stops at the edge of that sidewalk instead of
@@ -599,9 +599,16 @@ be called alone:
     - **`CLOSING_RADIUS` 7 m** — a gap under 14 m closes: a stall row with its aisle
       (`STALL_DEPTH` 5.2 + `AISLE` 6) and a little, the same reading the 12 m limit had;
       the pockets between the mall's aisle stubs are 12 m between bands.
-      **`GROUND_CLOSING_RADIUS` 12 m** on a big lot (`parking::is_ground`): its perimeter
-      drive stands 15–20 m off, and all of that strip is the lot's asphalt on a photo —
-      exactly the pockets the vertex pull was written down as not reaching.
+      **`GROUND_CLOSING_RADIUS` 12 m** on a big lot (`is_big`: the **drawn** outline ≥
+      `GROUND_MIN_AREA` 8000 m² — the radius is chosen before there is a paved one): its
+      perimeter drive stands 15–20 m off, and all of that strip is the lot's asphalt on a
+      photo — exactly the pockets the vertex pull was written down as not reaching.
+    - **The lot kind is settled last** (`settled_kind`): once every lot is paved, a lot
+      that is not `Kerbside` becomes `LotKind::Ground` if its **paved** outline reaches
+      `GROUND_MIN_AREA`, else `Yard` — the outline that is drawn is the one the big lot's
+      kerb and the layout stand on, and a part a building cut off is judged by itself
+      (`a_lot_paved_past_the_threshold_is_a_big_lot`). The render reads the kind
+      (`parking::is_ground`) and measures nothing.
     - **What the asphalt does not crawl over** is subtracted from the kept pieces, and
       `between` is asked again: a building of `KEEP_BUILDING_AREA` 100 m² or more (the
       hardware shop, way 764017758, has a yard behind it; the ticket booth *in* the lot,

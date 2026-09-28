@@ -43,8 +43,8 @@ bbox 5600 × 3700. Контур этих 349 стоянок — **54.4 км**, �
 Тула 1, Париж 11, Берлин 26, Лондон 10, Токио 3, NY 3; `location=underground|roof`
 на таких контурах — 0 во всех шести.
 `parking=street_side` на контуре `amenity=parking` (карман вдоль улицы) читается с
-PR #74: индекс площадки ложится в `MapData::street_side_lots`
-(`parse.rs::note_street_side`, и у way, и у relation), и `parse/lots.rs::pave_lots`
+PR #74: `area_kind` даёт такой площадке вид `LotKind::Kerbside` (и у way, и у
+relation; до того — индекс в `MapData::street_side_lots`), и `parse/lots.rs::pave_lots`
 дотягивает такую площадку до бордюра, а не до края тротуара. По кешам v15: Тула 56
 (55 way + 1 relation), Берлин 3275. Запрос не менялся — тег приходит с контуром.
 Проезды стоянок читаются с той же дороги, что и раньше — запрос не менялся,

@@ -8,7 +8,7 @@ use crate::map::osm::fixture::{
 };
 use crate::map::osm::model::sidewalk_band;
 use crate::map::osm::model::{
-    BuildingUse, Colours, FenceKind, Highway, LaneTurn, PitchKind, RailKind, RoadAreaKind,
+    BuildingUse, Colours, FenceKind, Highway, LaneTurn, LotKind, PitchKind, RailKind, RoadAreaKind,
     RoadClass, RoadNodeKind, Sacred, SacredForm, ServiceTrack, StructureKind, WaterKind,
     distance_to_segment, is_big_box,
 };
@@ -396,11 +396,36 @@ fn a_parking_lot_is_its_own_layer_and_a_parking_house_stays_a_building() {
         .parse();
 
     assert_eq!(map.parking.len(), 1);
-    assert_eq!(map.parking[0].kind, AreaKind::Parking);
+    // 110 × 110 м — от `GROUND_MIN_AREA`, большая
+    assert_eq!(map.parking[0].kind, AreaKind::Parking(LotKind::Ground));
     assert_eq!(map.buildings.len(), 1);
     assert_eq!(map.parks.len(), 1);
     // в кварталы стоянка не падает: до ветки `landuse` дело не доходит
     assert!(map.landuse.is_empty());
+}
+
+/// Вид стоянки решает разбор: `parking=street_side` — карман вдоль улицы,
+/// прочая небольшая — двор, что бы ни стояло в `parking`.
+#[test]
+fn a_street_side_lot_is_kerbside_and_a_small_lot_is_a_yard() {
+    let map = Overpass::new(CITY)
+        .area(
+            &[("amenity", "parking"), ("parking", "street_side")],
+            rect(CENTER, CENTER + Vec2::new(40.0, 4.0)),
+        )
+        .area(
+            &[("amenity", "parking"), ("parking", "surface")],
+            square(CENTER + Vec2::new(0.0, 60.0), 10.0),
+        )
+        .parse();
+    let kinds: Vec<AreaKind> = map.parking.iter().map(|lot| lot.kind).collect();
+    assert_eq!(
+        kinds,
+        [
+            AreaKind::Parking(LotKind::Kerbside),
+            AreaKind::Parking(LotKind::Yard)
+        ]
+    );
 }
 
 #[test]
@@ -3613,7 +3638,11 @@ fn a_street_side_lot_reaches_the_kerb_across_the_sidewalk() {
     let sidewalk = sidewalk_band(8.0);
     let top = |street_side: bool| {
         let lot = PolyArea {
-            kind: AreaKind::Parking,
+            kind: AreaKind::Parking(if street_side {
+                LotKind::Kerbside
+            } else {
+                LotKind::Yard
+            }),
             ..building(
                 rect(
                     CENTER + Vec2::new(-20.0, -4.0 - sidewalk - 2.5),
@@ -3631,7 +3660,6 @@ fn a_street_side_lot_reaches_the_kerb_across_the_sidewalk() {
                 8.0,
             )],
             parking: vec![lot],
-            street_side_lots: if street_side { vec![0] } else { Vec::new() },
             ..MapData::default()
         };
         pull_areas_to_roads(&mut map);
@@ -3652,7 +3680,7 @@ fn a_street_side_lot_reaches_the_kerb_across_the_sidewalk() {
 fn a_street_side_lot_leaves_a_cross_street_sidewalk() {
     let sidewalk = sidewalk_band(8.0);
     let lot = PolyArea {
-        kind: AreaKind::Parking,
+        kind: AreaKind::Parking(LotKind::Kerbside),
         ..building(
             rect(
                 CENTER + Vec2::new(-20.0, -4.0 - sidewalk - 2.5),
@@ -3680,7 +3708,6 @@ fn a_street_side_lot_leaves_a_cross_street_sidewalk() {
             ),
         ],
         parking: vec![lot],
-        street_side_lots: vec![0],
         ..MapData::default()
     };
     pull_areas_to_roads(&mut map);
@@ -3702,7 +3729,7 @@ fn a_street_side_lot_leaves_a_cross_street_sidewalk() {
 fn a_lot_paved_past_the_threshold_is_a_big_lot() {
     let edge = RESIDENTIAL_HALF + sidewalk_band(2.0 * RESIDENTIAL_HALF);
     let lot = PolyArea {
-        kind: AreaKind::Parking,
+        kind: AreaKind::Parking(LotKind::Yard),
         ..building(
             rect(
                 CENTER + Vec2::new(-50.0, -edge - 3.0 - 78.0),
@@ -3735,7 +3762,7 @@ fn a_lot_paved_past_the_threshold_is_a_big_lot() {
 fn a_lot_reaches_the_road_across_its_own_aisle() {
     let edge = RESIDENTIAL_HALF + sidewalk_band(2.0 * RESIDENTIAL_HALF);
     let lot = PolyArea {
-        kind: AreaKind::Parking,
+        kind: AreaKind::Parking(LotKind::Yard),
         ..building(
             rect(
                 CENTER + Vec2::new(-40.0, -40.0),
@@ -3798,7 +3825,7 @@ fn a_lot_reaches_the_road_across_its_own_aisle() {
 #[test]
 fn the_pocket_between_two_aisle_stubs_is_paved() {
     let lot = PolyArea {
-        kind: AreaKind::Parking,
+        kind: AreaKind::Parking(LotKind::Yard),
         ..building(
             rect(
                 CENTER + Vec2::new(-40.0, -60.0),
@@ -3853,7 +3880,7 @@ fn the_pocket_between_two_aisle_stubs_is_paved() {
 fn a_notch_in_the_lot_is_not_paved() {
     let base = CENTER + Vec2::new(0.0, -60.0);
     let lot = PolyArea {
-        kind: AreaKind::Parking,
+        kind: AreaKind::Parking(LotKind::Yard),
         ..building(
             vec![
                 base + Vec2::new(-40.0, 0.0),
@@ -3891,7 +3918,7 @@ fn a_notch_in_the_lot_is_not_paved() {
 #[test]
 fn a_lot_steps_back_from_the_houses_on_it() {
     let lot = PolyArea {
-        kind: AreaKind::Parking,
+        kind: AreaKind::Parking(LotKind::Yard),
         ..building(
             rect(
                 CENTER + Vec2::new(-40.0, -40.0),
@@ -3951,7 +3978,7 @@ fn a_lot_steps_back_from_the_houses_on_it() {
 fn a_fenced_lot_stays_behind_its_fence() {
     let top = CENTER.y - 12.0;
     let lot = PolyArea {
-        kind: AreaKind::Parking,
+        kind: AreaKind::Parking(LotKind::Yard),
         ..building(
             rect(
                 CENTER + Vec2::new(-40.0, -40.0),
@@ -3997,7 +4024,7 @@ fn a_fenced_lot_stays_behind_its_fence() {
 fn a_lot_does_not_step_over_a_fence_it_was_not_standing_on() {
     let fence_y = CENTER.y - 16.0;
     let lot = PolyArea {
-        kind: AreaKind::Parking,
+        kind: AreaKind::Parking(LotKind::Yard),
         ..building(
             rect(
                 CENTER + Vec2::new(-40.0, -40.0),
@@ -4044,7 +4071,7 @@ fn a_fence_pocket_at_a_lot_end_leaves_no_asphalt_sliver() {
     // настоящие метры карты, сдвинутые к центру сцены
     let at = |x: f32, y: f32| CENTER + Vec2::new(x - 5818.0, y - 3240.0);
     let lot = PolyArea {
-        kind: AreaKind::Parking,
+        kind: AreaKind::Parking(LotKind::Yard),
         ..building(
             vec![
                 at(5775.27, 3192.40),
