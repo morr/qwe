@@ -305,8 +305,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     leaves the junction's asphalt, the throat of a complex junction (a fork's triangle) —
     gets no rule zebra, no stop line and no arrows. **Main through**: a road keeps its lines through a cluster unless it ends
     there, is crossed by a road of its rank that also passes (or at a **crossroads** —
-    other streets bringing two arms to one node, however OSM splits them), meets a
-    higher rank, or the
+    other streets bringing two arms to one node, however OSM splits them), is crossed at
+    a crossroads of at least tertiary rank (`CROSSING_CUTS_RANK` — a higher road loses
+    its lines there too; a residential crossroads and any **joining** street leave it
+    through), meets a higher rank, or the
     cluster has signals; rank is the `highway` class, a stop / give-way sign on the arm
     lowers it. On every arm that breaks: a **zebra** (the OSM crossing on the arm, or one
     generated past the junction edge where two streets with sidewalks (by tag, not the

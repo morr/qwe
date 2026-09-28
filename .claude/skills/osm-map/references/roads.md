@@ -888,7 +888,15 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     rival does not "pass" by street identity — OSM splits a cross street into two streets
     at a oneway change, and Петра Алексеева (Tula, 5968 1582) ran its dashes straight
     through a four-way crossing of equals because Макса Смирнова is one-way south of it
-    and two-way north. Signals aside, such a road **leads** the junction
+    and two-way north. **A crossroads of tertiary rank or higher breaks the higher road
+    too** (`CROSSING_CUTS_RANK` 2 — the crossroads' rank is the lower of its two
+    streets): no road paints its lanes through the field of a real crossroads, and
+    before this a primary kept its solid line diagonally across a secondary pair (Орёл,
+    gallery sample 05 — Московская over Пушкина; the signals there stand 27–29 m out,
+    beyond the cluster zone). A residential crossroads does not cut a main road, and a
+    joining street of any rank never does (Ростов 03 stays through) — pinned by
+    `a_tertiary_crossing_breaks_the_primary_too_but_a_residential_one_does_not`. Signals
+    aside, such a road **leads** the junction
     (`Junction::leading`), and so does a ring road (an arc of `on_ring` or a closed way —
     whether it passes or not, since OSM ends an arc at every entry) whatever the
     approaches' class — a ring has priority; an approach never leads a ring node. The leading road loses its asphalt breaks there
