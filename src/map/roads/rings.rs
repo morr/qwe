@@ -302,7 +302,7 @@ pub fn reshape<'a>(
             }
         }
     }
-    rings.legs = y_legs(roads, &rings, &pins, paths);
+    rings.legs = y_legs(roads, &rings, &pins, nodes, paths);
     // подходы
     for (index, road) in roads.iter().enumerate() {
         if rings.of_road[index].is_some() || !is_approach(road) || paths[index].len() < 2 {
@@ -617,10 +617,19 @@ const LEG_MAX: f32 = 55.0;
 /// находит веер (`gores::fans`).
 ///
 /// По дороге — идёт ли поток ноги по порядку её точек.
+///
+/// **Вторая нога бывает не своим way, а хвостом чужих** ([`tail_walk`]): у
+/// северного подхода Рязани 05 «Старая дорога» идёт через развилку дальше, а
+/// в другой узел кольца её доводит конец улицы, что приходит с севера. Ногой
+/// своим way там одна короткая дорога, и она рисовалась двусторонним
+/// подходом по лучу — полосой в 7.6 м, слитой с хвостом в одно широкое устье.
+/// Нога с хвостом — такая же: въезд или съезд в одну полосу по касательной;
+/// хвост рисуется как есть — он часть чужих улиц.
 fn y_legs(
     roads: &[RoadLine],
     rings: &Rings,
     pins: &HashMap<(i32, i32), (usize, f32)>,
+    nodes: &RoadNodes,
     paths: &[Cow<[Vec2]>],
 ) -> Vec<Option<bool>> {
     let mut legs = vec![None; roads.len()];
@@ -647,23 +656,133 @@ fn y_legs(
             .or_default()
             .push((index, t, at_last));
     }
-    for ((ring, _), group) in feet {
-        let [(a, t_a, a_last), (b, t_b, b_last)] = group[..] else {
-            continue;
-        };
-        let ring = &rings.list[ring];
+    for ((ring_index, far), group) in feet {
+        let ring = &rings.list[ring_index];
         let direction = if ring.ccw { 1.0 } else { -1.0 };
-        let ahead = ((t_a - t_b) * direction).rem_euclid(TAU);
-        // один узел кольца на двоих — не вилка
-        if ahead * ring.mean_radius() < 1.0 || (TAU - ahead) * ring.mean_radius() < 1.0 {
-            continue;
+        // узел `a` ниже по ходу `b` — `a` въезд: поток к кольцу
+        let forks = |t_a: f32, t_b: f32| -> Option<bool> {
+            let ahead = ((t_a - t_b) * direction).rem_euclid(TAU);
+            // один узел кольца на двоих — не вилка
+            let apart = ahead.min(TAU - ahead) * ring.mean_radius();
+            (apart >= 1.0).then_some(ahead < std::f32::consts::PI)
+        };
+        match group[..] {
+            [(a, t_a, a_last), (b, t_b, b_last)] => {
+                let Some(a_entry) = forks(t_a, t_b) else {
+                    continue;
+                };
+                legs[a] = Some(a_entry == a_last);
+                legs[b] = Some(!a_entry == b_last);
+            }
+            [(a, t_a, a_last)] => {
+                let foot = roads[a].points[if a_last { roads[a].points.len() - 1 } else { 0 }];
+                let Some(t_b) = tail_walk(roads, rings, pins, nodes, a, far, foot) else {
+                    continue;
+                };
+                // хвост — в тот же угол кольца, а не через полкольца
+                let ahead = ((t_a - t_b) * direction).rem_euclid(TAU);
+                let Some(a_entry) = forks(t_a, t_b).filter(|_| ahead.min(TAU - ahead) <= TAIL_ARC)
+                else {
+                    continue;
+                };
+                legs[a] = Some(a_entry == a_last);
+            }
+            _ => {}
         }
-        // узел `a` ниже по ходу — `a` въезд: поток к кольцу
-        let a_entry = ahead < std::f32::consts::PI;
-        legs[a] = Some(a_entry == a_last);
-        legs[b] = Some(!a_entry == b_last);
     }
     legs
+}
+
+/// Наибольший угол между узлами кольца двух ног, когда вторая — хвост чужих
+/// дорог ([`tail_walk`]), рад: четверть кольца. Дальше путь от развилки к
+/// кольцу — уже объезд, а не нога.
+const TAIL_ARC: f32 = std::f32::consts::FRAC_PI_2;
+
+/// Хвост Y-подхода ([`y_legs`]): путь от развилки `fork` по дорогам-подходам
+/// (кроме ноги `leg` и дуг колец) в **другой** узел того же кольца, что и
+/// `foot` — узел ноги, — не длиннее [`LEG_MAX`], по сырым точкам: первая
+/// улица идёт через развилку дальше, вторая, начатая на ней, кончается в
+/// кольце. Параметр на кольце узла самого короткого такого пути; `None` —
+/// хвоста нет.
+fn tail_walk(
+    roads: &[RoadLine],
+    rings: &Rings,
+    pins: &HashMap<(i32, i32), (usize, f32)>,
+    nodes: &RoadNodes,
+    leg: usize,
+    fork: (i32, i32),
+    foot: Vec2,
+) -> Option<f32> {
+    let (ring, _) = *pins.get(&node_key(foot))?;
+    let usable =
+        |road: usize| road != leg && rings.of_road[road].is_none() && is_approach(&roads[road]);
+    let fork_point = roads[leg]
+        .points
+        .iter()
+        .copied()
+        .find(|point| node_key(*point) == fork)?;
+    // (длина, параметр на кольце) самого короткого хвоста
+    let mut best: Option<(f32, f32)> = None;
+    // (дорога, узел, первая ли дорога пути, пройдено). Первая — улица, что
+    // идёт **через** развилку дальше, а в кольцо хвост доводит вторая: улица,
+    // что сама уходит в кольцо, — соседний подход (площадь Мичурина, Рязань
+    // 04: такой «хвост» в узел за 23 и 38 м сужал широкий двусторонний
+    // подход в полосу и открывал клин голой земли)
+    let through = |road: usize| {
+        let points = &roads[road].points;
+        points.len() > 2
+            && points[1..points.len() - 1]
+                .iter()
+                .any(|point| node_key(*point) == fork)
+    };
+    let mut stack: Vec<(usize, Vec2, bool, f32)> = nodes
+        .roads_at(fork_point)
+        .iter()
+        .filter(|&&road| usable(road) && through(road))
+        .map(|&road| (road, fork_point, true, 0.0))
+        .collect();
+    while let Some((road, from, first, walked)) = stack.pop() {
+        let points = &roads[road].points;
+        let Some(at) = points
+            .iter()
+            .position(|point| node_key(*point) == node_key(from))
+        else {
+            continue;
+        };
+        for step in [1_isize, -1] {
+            let (mut length, mut previous) = (walked, from);
+            let mut index = at as isize + step;
+            while let Some(&point) = usize::try_from(index).ok().and_then(|i| points.get(i)) {
+                length += previous.distance(point);
+                if length > LEG_MAX {
+                    break;
+                }
+                if let Some(&(other, t)) = pins.get(&node_key(point)) {
+                    // узел кольца: свой другой, куда довела вторая улица, —
+                    // хвост; свой же, чужой или доведённый первой — тупик
+                    if other == ring
+                        && !first
+                        && node_key(point) != node_key(foot)
+                        && best.is_none_or(|(shortest, _)| length < shortest)
+                    {
+                        best = Some((length, t));
+                    }
+                    break;
+                }
+                // смена дороги — одна
+                if first {
+                    for &next in nodes.roads_at(point) {
+                        if next != road && usable(next) {
+                            stack.push((next, point, false, length));
+                        }
+                    }
+                }
+                previous = point;
+                index += step;
+            }
+        }
+    }
+    best.map(|(_, t)| t)
 }
 
 /// Дуга подхода `path`, идущего **к** узлу кольца в его последней точке:

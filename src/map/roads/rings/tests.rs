@@ -216,6 +216,43 @@ fn the_legs_of_a_y_approach_enter_and_leave_along_the_ring() {
     }
 }
 
+/// Вторая нога Y-подхода — хвост чужих улиц (Рязань, витрина 05, север):
+/// улица идёт через развилку дальше, а в другой узел кольца её доводит конец
+/// поперечной. Короткая дорога из развилки — всё равно нога, въезд по
+/// касательной; без хвоста — двусторонний подход, как был.
+#[test]
+fn a_y_approach_whose_other_leg_is_a_tail_of_two_streets() {
+    let ring = faceted_ring(12);
+    let (upstream, downstream) = (ring.points[2], ring.points[4]);
+    let fork = CENTER + Vec2::new(0.0, 70.0);
+    let joint = CENTER + Vec2::new(12.0, 45.0);
+    let two_way = |points: Vec<Vec2>| RoadLine {
+        oneway: false,
+        ..street(points, 7.6)
+    };
+    let leg = two_way(vec![downstream, fork]);
+    let through = two_way(vec![CENTER + Vec2::new(-80.0, 90.0), fork, joint]);
+    let across = two_way(vec![CENTER + Vec2::new(12.0, 120.0), joint, upstream]);
+    let (_, rings) = reshaped(&[ring.clone(), leg.clone(), through.clone(), across]);
+    assert_eq!(
+        rings.leg_flow(1),
+        Some(false),
+        "въезд — к кольцу, против точек"
+    );
+    assert_eq!(rings.leg_flow(2), None, "хвост рисуется как есть");
+    assert_eq!(rings.leg_flow(3), None);
+    let (_, lone) = reshaped(&[ring.clone(), leg.clone(), through]);
+    assert_eq!(lone.leg_flow(1), None, "без хвоста — не нога");
+    // односторонний соседний подход из той же развилки — не хвост: улица
+    // хвоста идёт через развилку дальше (Рязань 04)
+    let beside = RoadLine {
+        oneway: true,
+        ..street(vec![fork, upstream], 7.6)
+    };
+    let (_, apart) = reshaped(&[ring, leg, beside]);
+    assert_eq!(apart.leg_flow(1), None, "соседний подход — не хвост");
+}
+
 /// Одна двусторонняя дорога в узел кольца — не нога, даже если рядом
 /// другая кончается в том же узле кольца.
 #[test]
