@@ -1453,13 +1453,14 @@ fn a_street_into_one_half_does_not_open_the_median() {
     let positions = axes.positions_for_test();
     assert!(positions.iter().any(|at| at[0] < 200.0) && positions.iter().any(|at| at[0] > 400.0));
     // разрыв — в «до разрыва» полосы краски: внутри него оно отрицательно
-    // осевая самой примыкающей улицы лежит ниже половин — её не считаем
+    // осевая самой примыкающей улицы лежит ниже половин — её не считаем, как
+    // и торцы: там кончаются обе половины, и их торцы друг против друга
     assert!(
         axes.ribbon_coords_for_test()
             .expect("у краски атрибут есть")
             .iter()
             .zip(positions)
-            .filter(|(_, at)| at[1] > 100.0)
+            .filter(|(_, at)| at[1] > 100.0 && (150.0..450.0).contains(&at[0]))
             .all(|(coords, _)| coords[2] > 0.0),
         "двойная сплошная рвётся у узла одной половины"
     );

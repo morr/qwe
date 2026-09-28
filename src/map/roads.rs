@@ -1001,14 +1001,16 @@ pub fn mesh_roads(
     let base = junctions.median_base();
     for median in prepared.pairs().medians() {
         let [first, second] = median.roads;
-        let breaks = medians::crossing_breaks(median, [&base[first], &base[second]]);
+        // оси половин — на их полуширины за кромками разделительной
+        let halves = median.roads.map(|road| prepared.road(road).width / 2.0);
+        let breaks = medians::crossing_breaks(median, halves, [&base[first], &base[second]]);
         // до перекрёстка — как линии полос, а не там, где кончились пробы
         let mut median = median.clone();
         medians::reach_breaks(&mut median, &breaks);
         let pair = median.roads.map(street_of);
         if median.is_paved() {
             // полотно — внутренние полосы половин до середины; узкая
-            // разделительная — полосой асфальта во всё расстояние между осями
+            // разделительная — полосой асфальта во всю свою ширину
             if median.carries_tram() {
                 medians::push_bed(&mut streets, &median, ROAD_COLOR.to_linear());
             } else {
@@ -1022,6 +1024,7 @@ pub fn mesh_roads(
                 let mut painted = breaks.clone();
                 painted.extend(medians::crossing_breaks(
                     &median,
+                    halves,
                     [paint_breaks.of(first).cut, paint_breaks.of(second).cut],
                 ));
                 // узел слияния — не перекрёсток: двойная сплошная доходит до
@@ -1047,7 +1050,11 @@ pub fn mesh_roads(
             // разделительную по островку (`medians::split_zebras`)
             let [(near, near_rest), (far, far_rest)] = [first, second]
                 .map(|road| medians::split_zebras(paint_breaks.of(road).cut, &node_paint.zebras));
-            breaks.extend(medians::crossing_breaks(&median, [&near_rest, &far_rest]));
+            breaks.extend(medians::crossing_breaks(
+                &median,
+                halves,
+                [&near_rest, &far_rest],
+            ));
             let crossings = medians::facing_zebras(&median, [&near, &far]);
             let kerbs = medians::push_lawn(
                 &mut sidewalks,

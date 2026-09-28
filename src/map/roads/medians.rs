@@ -65,12 +65,21 @@ const CUT_MARGIN: f32 = 0.05;
 /// половине, разделительную не открывает — ни газон, ни двойную сплошную:
 /// дальняя половина идёт мимо, а налево через неё не повернуть. Открывают её
 /// поперечная улица и разворот — у обеих половин по узлу напротив друг друга.
-pub fn crossing_breaks(median: &Median, [first, second]: [&[Break]; 2]) -> Vec<Break> {
-    let apart = median.apart();
+///
+/// Разрывы лежат на **осях** половин, а оси разнесены на саму разделительную
+/// ([`Median::width`]) и полуширины обеих половин `halves`: с одной шириной
+/// разделительной разрывы трёхполосных половин напротив друг друга друг
+/// друга не видели, и разделительная не открывалась там, где её пересекают.
+pub fn crossing_breaks(
+    median: &Median,
+    halves: [f32; 2],
+    [first, second]: [&[Break]; 2],
+) -> Vec<Break> {
+    let axes = median.width() + halves[0] + halves[1];
     let facing = |gap: &Break, others: &[Break]| {
         others
             .iter()
-            .any(|other| gap.at.distance(other.at) <= apart + gap.reach + other.reach)
+            .any(|other| gap.at.distance(other.at) <= axes + gap.reach + other.reach)
     };
     first
         .iter()
@@ -116,7 +125,7 @@ pub fn split_zebras(cut: &[Break], zebras: &[Zebra]) -> (Vec<(Break, Zebra)>, Ve
 /// половины дальше от оси соседки, чем допуск по разрывам, и сдвинутые зебры
 /// Вокзальной друг друга не видели.
 pub fn facing_zebras(median: &Median, [first, second]: [&[(Break, Zebra)]; 2]) -> Vec<Break> {
-    let reach = median.apart() + 2.0 * ZEBRA_LENGTH;
+    let reach = median.width() + 2.0 * ZEBRA_LENGTH;
     let apart = |a: &Zebra, b: &Zebra| {
         [
             closest_on_segment(a.from, b.from, b.to).distance(a.from),
@@ -310,8 +319,8 @@ pub(super) fn tip_of(line: &[Vec2], end: bool) -> Option<(Vec2, Vec2)> {
     Some((tip, (tip - before).try_normalize()?))
 }
 
-/// Асфальт узкой разделительной — полосой по середине шириной во всё
-/// расстояние между осями, в слой улиц до лент половин, и контуром между
+/// Асфальт узкой разделительной — полосой по середине шириной в саму
+/// разделительную ([`Median::width`]), в слой улиц до лент половин, и контуром между
 /// внутренними кромками ([`between_edges`]): середина меряется между осями,
 /// и у половин разной ширины она ближе к узкой, так что полоса по ней не
 /// доставала до кромки широкой там, где зазор разводится (пример 16 Тулы —
@@ -321,7 +330,7 @@ pub fn push_paved(builder: &mut MeshBuilder, median: &Median, color: LinearRgba,
         return;
     }
     builder.set_lanes(None);
-    push_ribbon(builder, &median.midline, median.apart(), color, join);
+    push_ribbon(builder, &median.midline, median.width(), color, join);
     if let Some(ring) = between_edges(median, FILL_OVERLAP) {
         builder.push_polygon(&ring, &[], color);
     }
@@ -490,7 +499,7 @@ pub fn push_lawn(
 /// лежит плиткой островка между двумя кусками газона.
 fn passages(median: &Median, crossings: &[Break]) -> Vec<Shape> {
     let (along, _) = arclengths(&median.midline);
-    let across = median.apart();
+    let across = median.width();
     crossings
         .iter()
         .filter_map(|gap| {
@@ -576,7 +585,7 @@ pub fn bed_caps(median: &Median, kerbs: &[Shape]) -> Vec<Shape> {
                 shape.first().is_some_and(|outer| {
                     outer
                         .iter()
-                        .any(|point| Vec2::from(*point).distance(reach) < BED_CAP + median.apart())
+                        .any(|point| Vec2::from(*point).distance(reach) < BED_CAP + median.width())
                 })
             })
             .cloned()
@@ -587,7 +596,7 @@ pub fn bed_caps(median: &Median, kerbs: &[Shape]) -> Vec<Shape> {
             // полотна и узлом светилась земля (Орёл, витрина 04, квадрат у
             // торца полотна): продление — на ширину полотна дальше, до лент
             // узла, и шире кромок: за торцом половины расходятся
-            let forward = heading * (BED_CAP + median.apart());
+            let forward = heading * (BED_CAP + median.width());
             let wider = (a - b).normalize_or_zero() * BED_WIDER;
             let [a, b] = [a + wider, b - wider];
             caps.push(vec![oriented(
@@ -661,7 +670,7 @@ fn lawn_outlines(median: &Median, breaks: &[Break]) -> Vec<(Vec<[f32; 2]>, f32)>
     // метров короче, чем ось, и нос газона въезжал между зебрами (Калуга, 02).
     // Сбоку — не дальше оси половины: разрыв своей пары, а не колена
     // разделительной за поворотом.
-    let aside_max = median.apart() / 2.0 + BREAK_ASIDE;
+    let aside_max = median.width() / 2.0 + BREAK_ASIDE;
     let clear = |index: usize| {
         let at = midline[index];
         let ahead = midline[(index + 1).min(midline.len() - 1)];
@@ -763,6 +772,29 @@ mod tests {
             (area - (10.0 - CUT_MARGIN) * 4.0).abs() < 0.1,
             "асфальта {area} м²"
         );
+    }
+
+    /// Разделительная в 4 м между трёхполосными половинами (10.9 м): оси
+    /// разнесены на 14.9 м. Поперечная двухполосная улица рвёт обе оси на
+    /// 4.8 м — друг против друга, и разделительную она открывает; с одной
+    /// шириной разделительной (4 + 4.8 + 4.8 < 14.9) разрывы друг друга не
+    /// видели. Улица, примыкающая к одной половине в 40 м от перекрёстка, —
+    /// нет.
+    #[test]
+    fn breaks_face_each_other_across_the_axes_of_wide_halves() {
+        let at = |y: f32| vec![Vec2::new(0.0, y), Vec2::new(100.0, y)];
+        let median = Median::lawn_for_test(at(0.0), [at(-2.0), at(2.0)]);
+        let halves = [10.9 / 2.0; 2];
+        let cross = |y: f32| Break {
+            at: Vec2::new(50.0, y),
+            reach: 4.8,
+        };
+        let aside = Break {
+            at: Vec2::new(90.0, -7.45),
+            reach: 4.8,
+        };
+        let found = crossing_breaks(&median, halves, [&[cross(-7.45), aside], &[cross(7.45)]]);
+        assert_eq!(found, vec![cross(-7.45), cross(7.45)]);
     }
 
     /// Половины 10.9 и 7.6 м, оси в 10.8 м: середина между осями в 5.4 от

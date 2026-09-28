@@ -218,9 +218,27 @@ impl Median {
         self.tram
     }
 
-    /// Наибольшее расстояние между осями, м: ширина полосы вдоль середины,
-    /// которая кроет всё между половинами.
-    pub fn apart(&self) -> f32 {
+    /// Газонная разделительная по середине и внутренним кромкам — тестам
+    /// тех, кто её читает.
+    #[cfg(test)]
+    pub fn lawn_for_test(midline: Vec<Vec2>, inner: [Vec<Vec2>; 2]) -> Self {
+        Self {
+            roads: [0, 1],
+            from: 0.0,
+            to: crate::map::osm::model::polyline_length(&midline),
+            gap: 0.0,
+            paved: false,
+            tram: false,
+            midline,
+            inner,
+        }
+    }
+
+    /// Наибольшая ширина разделительной, м, — зазор между **внутренними
+    /// кромками** половин, не между их осями: ширина полосы вдоль середины,
+    /// которая кроет всё между половинами. Оси дальше друг от друга на
+    /// полуширины обеих половин (`medians::crossing_breaks`).
+    pub fn width(&self) -> f32 {
         self.midline
             .iter()
             .zip(&self.inner[0])
