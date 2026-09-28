@@ -29,7 +29,7 @@ use crate::map::meshing::{Break, MeshBuilder, min_area_rect};
 use crate::map::osm::model::{RoadLine, distance_to_segment, polyline_length, ring_bounds};
 use crate::map::shapes::{
     ARC, Contour, RING_EPSILON, Shape, contour_area, contour_bounds, is_ring, oriented,
-    point_in_shape, push_shape, ring_of, stroke,
+    point_in_shape, push_shape, ring_of, shape_area, stroke,
 };
 
 /// Радиус замыкания, м: клин между двумя полотнами ближе двух радиусов друг к
@@ -294,7 +294,7 @@ impl Gores {
     pub fn add_splitters(&mut self, splitters: &[Splitter]) {
         for splitter in splitters {
             self.hatched.push(splitter.island.clone());
-            self.asphalt.push(splitter.flare.clone());
+            self.asphalt.extend(splitter.flare.iter().cloned());
         }
     }
 
@@ -440,7 +440,7 @@ pub(super) struct Splitter {
     /// Штрихуемый контур — капля от основания у кольца к острию.
     pub island: Shape,
     /// Асфальт расширения подхода.
-    pub flare: Shape,
+    pub flare: Vec<Shape>,
     /// Разрыв краски и колеи подхода на длину островка.
     pub gap: Break,
 }
@@ -519,44 +519,116 @@ fn splitter(
         let share = ((at - base) / length).clamp(0.0, 1.0);
         half * (1.0 - share).powf(0.8)
     };
-    let sample = |at: f32| {
-        let (point, direction) = place_on_path(path, &along, at)?;
-        Some((point, direction.perp()))
-    };
-    let mut left = Vec::new();
-    let mut right = Vec::new();
-    for step in 0..=SPLITTER_STEPS {
-        let at = base + length * step as f32 / SPLITTER_STEPS as f32;
-        let (point, normal) = sample(at)?;
-        left.push(point + normal * spread(at));
-        right.push(point - normal * spread(at));
-    }
-    right.pop();
-    right.reverse();
-    let island: Vec<Vec2> = left.into_iter().chain(right).collect();
-    // расширение — от кромки кольца до острия, полотно раздвинуто на островок
+    let island = sweep(path, &along, base..base + length, SPLITTER_STEPS, spread)
+        .into_iter()
+        .max_by(|a, b| shape_area(a).total_cmp(&shape_area(b)))?;
+    // расширение — от кромки кольца до острия, полотно раздвинуто на островок.
+    // От кромки до основания оно **растёт** из ширины полотна, а не стоит
+    // полной ширины сразу: торец во всю ширину — прямоугольный, и там, где
+    // ось подхода у кольца идёт вдоль него (Рязань, витрина 05), его углы
+    // вылезали за кромку кольца ступенями
     let edge = (ring_width / 2.0 - ASPHALT_PAD).max(0.0);
-    let mut sides = [Vec::new(), Vec::new()];
-    let steps = SPLITTER_STEPS * 2;
-    for step in 0..=steps {
-        let at = edge + (base + length - edge) * step as f32 / steps as f32;
-        let (point, normal) = sample(at)?;
-        let reach = width / 2.0 + if at < base { half } else { spread(at) };
-        sides[0].push(point + normal * reach);
-        sides[1].push(point - normal * reach);
-    }
-    sides[1].reverse();
-    let flare: Vec<Vec2> = sides.concat();
-    let middle = sample(base + length / 2.0)?.0;
+    let flare = sweep(
+        path,
+        &along,
+        edge..base + length,
+        SPLITTER_STEPS * 2,
+        |at| {
+            width / 2.0
+                + if at < base {
+                    let share = ((at - edge) / (base - edge).max(f32::EPSILON)).clamp(0.0, 1.0);
+                    half * share * share * (3.0 - 2.0 * share)
+                } else {
+                    spread(at)
+                }
+        },
+    );
+    let middle = place_on_path(path, &along, base + length / 2.0)?.0;
     Some(Splitter {
         road,
-        island: vec![oriented(&island, true)],
-        flare: vec![oriented(&flare, true)],
+        island,
+        flare,
         gap: Break {
             at: middle,
             reach: length / 2.0 + SPLITTER_GAP,
         },
     })
+}
+
+/// Стороны круга, которым [`sweep`] скругляет излом пути.
+const SWEEP_JOIN_SIDES: usize = 16;
+
+/// Полоса вдоль `path` на дуговом отрезке `span` с полушириной `reach(at)`:
+/// объединение трапеций между станциями (их `steps` поровну плюс каждая
+/// вершина пути внутри отрезка) и кругов в вершинах.
+///
+/// Не два бока, сдвинутых по нормали звена, как было: на изломе пути
+/// соседние станции лежали на разных звеньях, и бок прыгал на
+/// `reach · sin(излом)` — у подходов к кольцам Рязани (витрина 05), чья ось
+/// у кольца круто заворачивает, кромка асфальта шла пилой с зубом в метр, а
+/// внутренний бок перехлёстывал сам себя. Трапеция лежит на одном звене и
+/// выпукла всегда, круг заполняет клин снаружи излома, а объединение
+/// (`NonZero`) снимает перехлёст внутри — это обводка переменной ширины с
+/// круглыми стыками.
+fn sweep(
+    path: &[Vec2],
+    along: &[f32],
+    span: std::ops::Range<f32>,
+    steps: usize,
+    reach: impl Fn(f32) -> f32,
+) -> Vec<Shape> {
+    let mut stations: Vec<f32> = (0..=steps)
+        .map(|step| span.start + (span.end - span.start) * step as f32 / steps as f32)
+        .collect();
+    let corners: Vec<f32> = along
+        .iter()
+        .copied()
+        .filter(|at| span.contains(at) && *at > span.start)
+        .collect();
+    stations.extend(&corners);
+    stations.sort_by(f32::total_cmp);
+    stations.dedup_by(|a, b| (*a - *b).abs() < 1e-3);
+    let mut pieces: Vec<Shape> = Vec::new();
+    for pair in stations.windows(2) {
+        let (from, to) = (pair[0], pair[1]);
+        let (Some((start, _)), Some((end, _)), Some((_, direction))) = (
+            place_on_path(path, along, from),
+            place_on_path(path, along, to),
+            place_on_path(path, along, (from + to) / 2.0),
+        ) else {
+            continue;
+        };
+        let normal = direction.perp();
+        let (near, far) = (reach(from), reach(to));
+        if near.max(far) <= 1e-3 {
+            continue;
+        }
+        let quad = [
+            start + normal * near,
+            end + normal * far,
+            end - normal * far,
+            start - normal * near,
+        ];
+        pieces.push(vec![oriented(&quad, true)]);
+    }
+    for at in corners {
+        let (Some((center, _)), radius) = (place_on_path(path, along, at), reach(at)) else {
+            continue;
+        };
+        if radius <= 1e-3 {
+            continue;
+        }
+        let circle: Vec<Vec2> = (0..SWEEP_JOIN_SIDES)
+            .map(|side| {
+                center
+                    + Vec2::from_angle(
+                        side as f32 * std::f32::consts::TAU / SWEEP_JOIN_SIDES as f32,
+                    ) * radius
+            })
+            .collect();
+        pieces.push(vec![oriented(&circle, true)]);
+    }
+    pieces.simplify_shape(FillRule::NonZero)
 }
 
 /// Самый длинный подход, чей веер ещё островок, м: дальше между въездом и
@@ -650,6 +722,43 @@ fn head(points: impl Iterator<Item = Vec2>) -> Vec<Vec2> {
 mod tests {
     use super::*;
     use crate::map::shapes::oriented;
+
+    /// Полоса вокруг пути с прямым изломом — одна фигура без пилы: всё, что
+    /// ближе полуширины к пути (снаружи излома тоже), внутри, и ни одна
+    /// вершина контура не дальше полуширины. Бока, сдвинутые по нормали звена,
+    /// срезали наружный угол хордой и перехлёстывали внутренний.
+    #[test]
+    fn a_sweep_round_a_sharp_bend_covers_the_band_without_teeth() {
+        let path = [Vec2::ZERO, Vec2::new(10.0, 0.0), Vec2::new(10.0, 20.0)];
+        let (along, _) = arclengths(&path);
+        let reach = 5.0;
+        let shapes = sweep(&path, &along, 2.0..25.0, 8, |_| reach);
+        assert_eq!(shapes.len(), 1, "{shapes:?}");
+        let shape = &shapes[0];
+        let distance = |point: Vec2| {
+            path.windows(2)
+                .map(|link| distance_to_segment(point, link[0], link[1]))
+                .fold(f32::INFINITY, f32::min)
+        };
+        for contour in shape {
+            for &[x, y] in contour {
+                let point = Vec2::new(x, y);
+                assert!(distance(point) <= reach + 0.01, "{point} за полосой");
+            }
+        }
+        let mut at = 2.5;
+        while at < 24.5 {
+            let (center, direction) = place_on_path(&path, &along, at).unwrap();
+            for step in -5..=5 {
+                let point = center + direction.perp() * (reach - 0.2) * step as f32 / 5.0;
+                assert!(point_in_shape(point, shape), "{point} не покрыт");
+            }
+            at += 0.5;
+        }
+        // наружный угол излома — скруглён, а не срезан хордой
+        let outer = Vec2::new(10.0, 0.0) + Vec2::new(1.0, -1.0).normalize() * (reach - 0.3);
+        assert!(point_in_shape(outer, shape), "угол срезан");
+    }
 
     /// Штриховка прямоугольником `min`–`max`.
     fn hatched(min: Vec2, max: Vec2) -> Shape {
