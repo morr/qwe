@@ -374,8 +374,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     rule) or `None`.
   - **Paired halves** (`map/roads/network/pairs.rs`, `Pairs`) — a divided street as OSM
     draws it: two opposite one-way ways of one class side by side (a street or a
-    `service` drive, never a parking aisle), up to `PAIR_MAX_GAP` 15 m between the kerbs.
-    Found once, by `axis::street_axes`, on the drawn axes, and **aligned** there: the
+    `service` drive, never a parking aisle), up to `PAIR_MAX_GAP` 15 m between the kerbs,
+    beside each other for `PAIR_MIN` 8 m — or, for a short way continuing a half that
+    has a pair, for most of its length; a probe keeps its partner way while it is about
+    as near as the nearest (`PARTNER_SLACK`), so a seam of the opposite half does not
+    split the pair. Found once, by `axis::street_axes`, on the drawn axes, and **aligned** there: the
     halves are set at the run's median gap (paved no narrower than `PAVED_MIN_GAP`
     0.5 m) from the midpoint between them, fading out over `ALIGN_TRANSITION` 20 m at a
     run's end and at a node shared with another carriageway (untouched for 16 m next to

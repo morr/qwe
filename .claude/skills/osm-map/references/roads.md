@@ -250,7 +250,17 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     that end shifted along the axis, lost the pair metres before every node and seam, and
     the double solid stopped short of the junction (the author's report, sample 2).
     Consecutive probes with one partner are a **run** (`PairRun`, `PAIR_MIN` 8 m), and a
-    run's gap is its median. One `Median` per pair of runs, from the half with the lower
+    run's gap is its median. **The partner holds from probe to probe** while it is within
+    `PARTNER_SLACK` 0.5 m of the nearest: at a seam of the opposite half its two ways
+    stand end to end, and inside `END_OVERHANG` the nearest flipped between them every
+    other probe, cutting the pair into pieces under `PAIR_MIN` (roads plan №32). **A short
+    way can be a half too** (`RunKind::Short`): a run under `PAIR_MIN` but at least half
+    of it and `PAIR_COVER` 0.75 of the way's own length is taken in a second pass if the
+    way shares an end with a half that found a pair — a street cut into ten-metre ways at
+    a bridge; two slips meeting are no continuation of a pair and stay unpaired. Before,
+    Первомайский in Ryazan (gallery 03) had a 9 m and a 13 m way between the lawn and the
+    bridge left unpaired, and their inner sidewalks tiled the whole median with a square
+    of bare ground in its corner. One `Median` per pair of runs, from the half with the lower
     index — the old lot code computed it from both sides first and got two double lines
     a few centimetres apart.
   - **Queries** — what a half differs by is asked of `Pairs`, not read off its runs in
@@ -334,7 +344,10 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     `Median::is_paved` reads it; the pair tests take the knob's default) — `push_paved` lays a ribbon down the
     midline as wide as the axes are apart into the `roads` layer **before** the halves
     (no lane frame, so no ruts; the halves lay theirs over it) **plus the contour between
-    the inner kerbs** widened `FILL_OVERLAP` 1 m under each half (`between_edges`): the
+    the inner kerbs** widened `FILL_OVERLAP` 2.5 m under each half (`between_edges`; it
+    was 1 m, and where a half bends hard at a node the drawn ribbon rounds the bend while
+    the median's kerb runs a chord, and a half-metre sidewalk spike showed between them —
+    Вокзальная at Первомайский, Ryazan 03, roads plan №32): the
     midline is measured between the *axes*, so between halves of different widths it
     lies near the narrower one's kerb and the ribbon fell short of the wider one's where
     the gap widens toward a lawn — a pale tongue along the double solid (sample 16). The
