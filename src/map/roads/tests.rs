@@ -246,14 +246,16 @@ fn the_city_wall_ribbon_stays_off_fortress_buildings() {
 // телеметрия области жили внутри `spawn_roads` — 275 строк, взять которые из
 // теста было нечем: проверять можно было только хелперы под ними.
 
-/// Двадцать два дорожных слоя снизу вверх, ровно в том порядке, в каком они
-/// уходят в мир: газон островов колец и их трава без канта, двенадцать лент и
-/// восемь слоёв краски над своим асфальтом — колея траекторий узла (маска,
-/// потом наложение) ниже линий, островки колец над асфальтом стоянок.
-/// Грунтовки — под асфальтом улиц, обочины — под всей зеленью, газон острова —
-/// под всем, его трава — над замапленной травой.
-const LAYERS: [&str; 22] = [
+/// Двадцать три дорожных слоя снизу вверх, ровно в том порядке, в каком они
+/// уходят в мир: газон островов колец и их трава без канта, газон широких
+/// обочин, двенадцать лент и восемь слоёв краски над своим асфальтом — колея
+/// траекторий узла (маска, потом наложение) ниже линий, островки колец над
+/// асфальтом стоянок. Грунтовки — под асфальтом улиц, обочины — под всей
+/// зеленью, их газон — под их плиткой, газон острова — под всем, его трава —
+/// над замапленной травой.
+const LAYERS: [&str; 23] = [
     "ring_islands",
+    "road_verge_lawns",
     "road_verges",
     "ring_island_grass",
     "alleys",
@@ -294,7 +296,7 @@ fn layer<'a>(layers: &'a [LayerMesh], name: &str) -> &'a LayerMesh {
 }
 
 #[test]
-fn a_street_builds_twenty_two_layers_bottom_up() {
+fn a_street_builds_twenty_three_layers_bottom_up() {
     let (layers, report) = mesh_roads(&one_street(), RoadStyle::default(), RoadShape::default());
 
     let names: Vec<&str> = layers.iter().map(|layer| layer.name).collect();
@@ -315,6 +317,43 @@ fn a_street_builds_twenty_two_layers_bottom_up() {
     assert!(report.vertices > 0);
 }
 
+/// Обочина до дорожки: узкая — плиткой целиком, широкая — газоном до
+/// дорожки с полосой плитки у бордюра (дворы Фрунзе, районный кадр d2).
+#[test]
+fn a_wide_verge_is_a_lawn_with_a_paved_kerb_strip() {
+    assert_eq!(paved_verge(3.0), 3.0);
+    assert_eq!(paved_verge(VERGE_PAVED_MAX), VERGE_PAVED_MAX);
+    assert_eq!(paved_verge(15.0), VERGE_KERB);
+    assert!(paved_verge(VERGE_PAVED_MAX + 1.0) < VERGE_PAVED_MAX);
+
+    let verged = |verge: f32| {
+        let mut map = one_street();
+        map.roads[0].verges = [verge, 0.0];
+        let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+        let reach = |name: &str| {
+            layer(&layers, name)
+                .builder
+                .positions_for_test()
+                .iter()
+                .map(|at| at[1] - 100.0)
+                .fold(0.0_f32, f32::max)
+        };
+        [reach("road_verges"), reach("road_verge_lawns")]
+    };
+    // улица 12 м: кромка в 6 м от оси
+    let [tiles, lawn] = verged(3.0);
+    assert!(
+        (tiles - 9.0).abs() < 0.05 && lawn == 0.0,
+        "узкая: {tiles} / {lawn}"
+    );
+    let [tiles, lawn] = verged(12.0);
+    assert!(
+        (tiles - (6.0 + VERGE_KERB)).abs() < 0.05,
+        "плитка широкой — полосой у бордюра: {tiles}"
+    );
+    assert!((lawn - 18.0).abs() < 0.05, "газон — до дорожки: {lawn}");
+}
+
 #[test]
 fn only_the_bridge_shadow_is_blended() {
     let (layers, _) = mesh_roads(&one_street(), RoadStyle::default(), RoadShape::default());
@@ -328,7 +367,7 @@ fn only_the_bridge_shadow_is_blended() {
                 MaterialSpec::Surface(SurfaceKind::Sidewalk)
             }
             "alleys" => MaterialSpec::Surface(SurfaceKind::Alley),
-            "road_medians" | "ring_islands" | "ring_island_grass" => {
+            "road_medians" | "ring_islands" | "ring_island_grass" | "road_verge_lawns" => {
                 MaterialSpec::Surface(SurfaceKind::Grass)
             }
             "roads" | "bridges" => MaterialSpec::Surface(SurfaceKind::Street),

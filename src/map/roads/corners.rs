@@ -49,6 +49,7 @@ use std::f32::consts::PI;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
+use super::VERGE_PAVED_MAX;
 use super::drawn::{Axis, Drawn};
 use super::junctions::node_key;
 use super::network::pairs::PROBE_STEP;
@@ -231,6 +232,10 @@ pub struct KerbReturns {
     /// Контуры в слое обочин (`road_verges`), так же: углы, где с одной
     /// стороны или с обеих вместо полосы тротуара обочина.
     pub verges: Vec<Vec<Vec2>>,
+    /// Те же углы между двумя **широкими** обочинами — газоном
+    /// (`road_verge_lawns`), как и сами обочины: плиткой угол во все
+    /// пятнадцать метров до дорожек был площадью посреди двора.
+    pub verge_lawns: Vec<Vec<Vec2>>,
     /// Сколько из `roads` и `sidewalks` — наружные углы, а не скругления.
     pub outer: [usize; 2],
     /// Торцы, кончающиеся в узле, по дорогам: `[начало, конец]` — ленты с
@@ -540,7 +545,11 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                 if let Some(outline) = fillet(node, first, second, halves, radius)
                     .or_else(|| outer_corner(node, first, second, halves))
                 {
-                    returns.verges.push(outline);
+                    if a.min(b) > VERGE_PAVED_MAX {
+                        returns.verge_lawns.push(outline);
+                    } else {
+                        returns.verges.push(outline);
+                    }
                 }
             }
         }

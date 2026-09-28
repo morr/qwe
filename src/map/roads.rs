@@ -76,7 +76,7 @@ use crate::map::surface::{
 use crate::prefs::retuned;
 use crate::settings::{
     Z_ALLEY, Z_BUILDING, Z_LOT_LINES, Z_LOT_SIDEWALK, Z_RING_GRASS, Z_RING_ISLAND, Z_ROAD,
-    Z_ROAD_MEDIAN, Z_ROAD_VERGE, Z_SIDEWALK, Z_UNPAVED_ROAD,
+    Z_ROAD_MEDIAN, Z_ROAD_VERGE, Z_ROAD_VERGE_LAWN, Z_SIDEWALK, Z_UNPAVED_ROAD,
 };
 
 /// Проезжая часть — асфальт: серый, заметно темнее тротуара и земли. Белой
@@ -671,6 +671,8 @@ pub fn mesh_roads(
     let mut sidewalks = MeshBuilder::with_surface_coords();
     // обочины до отдельных тротуаров — под зеленью (`Z_ROAD_VERGE`)
     let mut verges = MeshBuilder::with_surface_coords();
+    // и газон широких обочин — под их плиткой (`Z_ROAD_VERGE_LAWN`)
+    let mut verge_lawns = MeshBuilder::with_surface_coords();
     let mut alleys = MeshBuilder::with_surface_coords();
     let mut streets = MeshBuilder::with_surface_coords();
     // грунтовые улицы — своим слоем под асфальтом (`Z_UNPAVED_ROAD`)
@@ -738,6 +740,9 @@ pub fn mesh_roads(
     // и в слое обочин — где вместо полосы обочина до отдельной дорожки
     for outline in &kerb_returns.verges {
         verges.push_convex(outline, SIDEWALK_COLOR.to_linear());
+    }
+    for outline in &kerb_returns.verge_lawns {
+        verge_lawns.push_convex(outline, GRASS_COLOR.to_linear());
     }
     // носы острых развилок идут по гнутым кромкам лент, и веер из острия
     // их не покрыл бы — триангуляция целиком; носов в городе сотни
@@ -1221,12 +1226,11 @@ pub fn mesh_roads(
         // замощён их обочинами
         if ring.is_none() {
             push_verges(
-                &mut verges,
+                [&mut verges, &mut verge_lawns],
                 road,
                 points,
                 road.width,
                 prepared.verges_drawn(index),
-                SIDEWALK_COLOR.to_linear(),
             );
         }
         // слой заливки берётся после полосы тротуара: мощёная дорожка
@@ -1370,6 +1374,12 @@ pub fn mesh_roads(
             ring_lawns,
             Z_RING_ISLAND,
             "ring_islands",
+            MaterialSpec::Surface(SurfaceKind::Grass),
+        ),
+        (
+            verge_lawns,
+            Z_ROAD_VERGE_LAWN,
+            "road_verge_lawns",
             MaterialSpec::Surface(SurfaceKind::Grass),
         ),
         (
@@ -1744,20 +1754,47 @@ fn ring_island_grass(rings: &[&[Vec2]], grass: &[PolyArea]) -> MeshBuilder {
 /// стоят через пять.
 const VERGE_STEP: f32 = 2.5;
 
+/// Обочина шире этого, м, — газон, а не плитка ([`paved_verge`]): у
+/// многоэтажки между бордюром и тротуаром лежит газон, а сплошная плитка в
+/// пятнадцать метров до дома «заливала улицу бетоном» (Фрунзе в Туле,
+/// районный кадр d2). Уже — плитка до дорожки, как у углов центра.
+const VERGE_PAVED_MAX: f32 = 4.0;
+/// Полоса плитки у бордюра перед газоном широкой обочины, м.
+const VERGE_KERB: f32 = 0.5;
+/// На какой ширине обочины сверх [`VERGE_PAVED_MAX`] плитка сходит на
+/// полосу у бордюра, м: без перехода кромка плитки прыгала бы уступом там,
+/// где дорожка отходит от улицы.
+const VERGE_PAVED_RAMP: f32 = 2.0;
+
+/// Сколько обочины шириной `verge` мостится плиткой от кромки: узкая —
+/// целиком, широкая — полосой [`VERGE_KERB`] у бордюра, а газон под ней
+/// ([`push_verges`]) — до дорожки.
+fn paved_verge(verge: f32) -> f32 {
+    if verge <= VERGE_PAVED_MAX {
+        return verge;
+    }
+    let past = (verge - VERGE_PAVED_MAX) / VERGE_PAVED_RAMP;
+    (VERGE_PAVED_MAX - past * (VERGE_PAVED_MAX - VERGE_KERB)).max(VERGE_KERB)
+}
+
 /// Обочины дороги `road` шириной `width`, нарисованной по `points`, — по ленте
 /// на сторону: от оси до кромки плюс обочина, круглыми торцами. `verges` —
 /// какие стороны рисуются ([`Drawn::verges_drawn`]). Обочина по месту
 /// ([`RoadLine::verge_at`]) — полосой переменной ширины от оси до края, и у
 /// каждого торца — круг торцевой ширины: торцом она доходит до угла узла, как
 /// постоянная лента.
+///
+/// Плитка — в `tiles` на ширину [`paved_verge`], газон — в `lawns` на всю
+/// обочину, где она шире [`VERGE_PAVED_MAX`]: слой газона лежит под плиткой,
+/// и голой земли между кромкой и дорожкой не остаётся ни там, ни там.
 fn push_verges(
-    builder: &mut MeshBuilder,
+    [tiles, lawns]: [&mut MeshBuilder; 2],
     road: &RoadLine,
     points: &[Vec2],
     width: f32,
     verges: [f32; 2],
-    color: LinearRgba,
 ) {
+    let [tile_color, grass_color] = [SIDEWALK_COLOR, GRASS_COLOR].map(|color| color.to_linear());
     let raw = polyline_length(&road.points);
     for (side, verge) in verges.into_iter().enumerate() {
         if verge <= 0.0 {
@@ -1765,7 +1802,7 @@ fn push_verges(
         }
         // `miter_offsets` плюсом сдвигает влево — сторона 0
         let sign = if side == 0 { 1.0 } else { -1.0 };
-        let ribbon = |builder: &mut MeshBuilder, path: &[Vec2], verge: f32| {
+        let ribbon = |builder: &mut MeshBuilder, path: &[Vec2], verge: f32, color: LinearRgba| {
             let shifted: Vec<Vec2> = path
                 .iter()
                 .zip(miter_offsets(path, false, sign * verge / 2.0))
@@ -1781,7 +1818,10 @@ fn push_verges(
             );
         };
         if road.verge_profile[side].is_empty() || points.len() < 2 {
-            ribbon(builder, points, verge);
+            ribbon(tiles, points, paved_verge(verge), tile_color);
+            if verge > VERGE_PAVED_MAX {
+                ribbon(lawns, points, verge, grass_color);
+            }
             continue;
         }
         let dense = crate::map::along::densify(points, VERGE_STEP);
@@ -1792,22 +1832,33 @@ fn push_verges(
             .map(|&at| road.verge_at(side, at * scale))
             .collect();
         let normals = miter_offsets(&dense, false, sign);
-        let mut outline: Vec<Vec2> = dense
-            .iter()
-            .zip(&normals)
-            .zip(&widths)
-            .map(|((&point, &normal), &verge)| point + normal * (width / 2.0 + verge))
-            .collect();
-        outline.extend(dense.iter().rev());
-        builder.push_polygon(&outline, &[], color);
+        let band = |widths: &mut dyn Iterator<Item = f32>| -> Vec<Vec2> {
+            let mut outline: Vec<Vec2> = dense
+                .iter()
+                .zip(&normals)
+                .zip(widths)
+                .map(|((&point, &normal), verge)| point + normal * (width / 2.0 + verge))
+                .collect();
+            outline.extend(dense.iter().rev());
+            outline
+        };
+        let paved: Vec<f32> = widths.iter().map(|&verge| paved_verge(verge)).collect();
+        tiles.push_polygon(&band(&mut paved.iter().copied()), &[], tile_color);
+        let lawn = widths.iter().any(|&verge| verge > VERGE_PAVED_MAX);
+        if lawn {
+            lawns.push_polygon(&band(&mut widths.iter().copied()), &[], grass_color);
+        }
         // торцы — кругом во всю ширину торца, как у постоянной ленты
         let last = dense.len() - 1;
-        for (at, toward, verge) in [
-            (dense[0], dense[1], widths[0]),
-            (dense[last], dense[last - 1], widths[last]),
+        for (at, toward, index) in [
+            (dense[0], dense[1], 0),
+            (dense[last], dense[last - 1], last),
         ] {
             let stub = at + (toward - at).normalize_or_zero() * 0.01;
-            ribbon(builder, &[at, stub], verge);
+            ribbon(tiles, &[at, stub], paved[index], tile_color);
+            if widths[index] > VERGE_PAVED_MAX {
+                ribbon(lawns, &[at, stub], widths[index], grass_color);
+            }
         }
     }
 }
