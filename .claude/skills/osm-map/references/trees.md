@@ -105,17 +105,32 @@ stand, how density works, and which resources restyle them.
   trees (threshold 0) stay on every step. **`mesh_trees` builds every step at once** and
   takes no bucket: everything it returns — crown entities, merged crown chunks, shadow
   layers — carries the `TreeLodMask` of the steps that draw it. The crossing is **not** a
-  condition of the tree chain's `rebuilds_on` — it runs `show_tree_lod` (`switches_on`),
-  which only flips `Visibility` (`set_if_neq`, `par_iter_mut`); the set, the conifer
-  field, the tree-row band and every mesh are left alone. The bucket reaches the build
-  only through `spawn_tree_meshes`, which spawns each piece visible or hidden for the
-  current step.
-  - **Both crown forms stay in the world** (the near step's entities hidden on the far
-    steps, the far chunks hidden on the near one). This replaced the respawn of every
-    crown entity on the way into the near step — 16 k on Tula, 95 k on Kaluga, three or
-    four heavy frames — and the rebuild of the merged chunks on the way out. The price is
-    the hidden entities: `extract_mesh2d` walks every `Mesh2d` each frame and skips a
-    hidden one on one `ViewVisibility` check, `check_visibility` likewise.
+  condition of the tree chain's `rebuilds_on` — it runs `stream_tree_crowns` (below) and
+  `show_tree_lod` (`switches_on`, on `TreeLodShown`), which only flips `Visibility`
+  (`set_if_neq`, `par_iter_mut`); the set, the conifer field, the tree-row band and
+  every mesh are left alone. The bucket reaches the build only through
+  `spawn_tree_meshes`, which spawns each piece visible or hidden for the current step.
+  - **Crown entities are streamed, not respawned at once and not kept hidden**
+    (`CrownStream`, `stream_tree_crowns`, `TreeLodShown`). The merged far chunks are
+    built once and only toggled, but the near step's entities are a different matter:
+    spawning 95 k of them on the crossing (Kaluga; Tula 16 k) was three or four heavy
+    frames, and the first fix — keep them spawned and hidden on the far steps — was
+    measured and rejected: an A/B of one binary (Kaluga, full zoom-out, paused, locked
+    screen) gave `PostUpdate` 9–17 ms without them against 23–24 ms with them hidden,
+    `main` 15–28 against 35–37 — every frame of the zoom-out paid for crowns nobody saw.
+    So `spawn_tree_meshes` returns the placements and handles as a `CrownStream`
+    (placements + the spawned entities as a **prefix** of them); on the way into the near
+    step `stream_tree_crowns` spawns `CROWN_SPAWN_BATCH` (4096) a frame, **hidden**, and
+    `TreeLodShown` — the step `show_tree_lod` shows, which only here lags
+    `TreeZoomBucket` — stays on the far step until the last batch is in, so the merged
+    crowns cover the ~24 frames (Kaluga; Tula 4) and nothing pops in piecemeal. On the
+    far steps the step is shown at once (crown entities hidden in that frame) and the
+    entities leave `CROWN_DESPAWN_BATCH` (16384) a frame. A world entry or a style
+    rebuild at the near step spawns them all at once, under the loader or the edit.
+    `crown_entities_stream_in_by_batches_and_leave_on_the_far_steps` pins it.
+    Side effect worth knowing: an `OffscreenShotEvent` that zooms from far to near
+    captures on its sixth frame, before Kaluga's 24 batches are in — such a shot shows
+    the merged crowns.
   - **Merged crowns are split by density band too** (`detailed_bands`): a far step with a
     lower cap hides the tail band's chunks instead of rebuilding. Bands run from the first
     trees of the set, so the tail band's chunks sit **above** the head's in z and a

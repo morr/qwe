@@ -818,7 +818,8 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     params, planted, field)` returns `TreeMeshes { pools, tints, crowns, merged,
     shadows }` instead, **for every zoom step at once**: each piece carries the
     `TreeLodMask` of the steps that draw it, and a step crossing only flips visibility
-    (`show_tree_lod`). For the far steps (`CrownDetail::Merged`) **`merged`** carries
+    (`show_tree_lod`) — except the crown entities, which `spawn_tree_meshes` hands back
+    as a `CrownStream` to be spawned and despawned in batches (`stream_tree_crowns`). For the far steps (`CrownDetail::Merged`) **`merged`** carries
     `TreeLayer`s — ordinary `LayerMesh`es, one `tree_crowns` chunk per `CROWN_CHUNK`
     square and density band, `MaterialSpec::Crown` — so there the trees are a converted
     layer like any other (`references/trees.md`, **Crown detail by zoom**):

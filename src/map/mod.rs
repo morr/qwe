@@ -156,6 +156,8 @@ impl Plugin for MapPlugin {
             .init_resource::<SurfaceStyle>()
             .init_resource::<rail::RailZoomBucket>()
             .init_resource::<trees::TreeZoomBucket>()
+            .init_resource::<trees::CrownStream>()
+            .init_resource::<trees::TreeLodShown>()
             .init_resource::<tram::TramZoomBucket>()
             .init_resource::<TramStyle>()
             .init_resource::<IndustryStyle>()
@@ -291,6 +293,9 @@ impl Plugin for MapPlugin {
                         )
                             .chain()
                             .run_if(trees::rebuilds_on()),
+                        // кроны-сущности досыпаются и убираются пачками, а
+                        // показанная ступень ждёт, пока встанут все
+                        trees::stream_tree_crowns,
                         trees::show_tree_lod.run_if(trees::switches_on()),
                     )
                         .chain()

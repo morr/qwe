@@ -1139,8 +1139,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   trees are built once for every zoom step**: crown entities, merged crown chunks and
   `tree_shadows` layers are split by **density band** (the trees between two steps'
   prefixes) and each carries a `TreeLodMask` of the steps that draw it; a step crossing
-  (`show_tree_lod`) only flips `Visibility` — no rebuild, no respawn. Detail in the
-  `osm-map` skill's `references/trees.md`.
+  (`show_tree_lod`) only flips `Visibility` — no rebuild. The near step's crown entities
+  are **streamed** (`CrownStream`): spawned in batches, hidden, on the way in — the shown
+  step (`TreeLodShown`) waits for the last batch — and despawned in batches on the far
+  steps, where hidden entities would cost every frame. Detail in the `osm-map` skill's
+  `references/trees.md`.
 - **Pitches** (`map/pitch.rs`) — sports and children's grounds (`leisure=pitch|track|
   playground|sports_centre|stadium`), `Z_PITCH` 2.005 with the markings at 2.006 —
   **over every road ribbon** and parking, under water: OSM runs yard footways across a

@@ -251,7 +251,8 @@ pub struct TreeTag;
 /// Всё, что строят деревья, — кроны-сущности, слитые куски крон, слои теней —
 /// собрано один раз на все ступени и несёт эту маску; смена ступени
 /// ([`show_tree_lod`]) только переключает `Visibility`: ни пересборки, ни
-/// спавна, ни заливки вершин на пересечении порога.
+/// заливки вершин на пересечении порога. Кроны-сущности при этом ещё и
+/// досыпаются и убираются пачками ([`CrownStream`]).
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct TreeLodMask(u8);
 
@@ -856,17 +857,22 @@ fn crown_z(group: usize, rank: usize) -> f32 {
         + (rank % CROWN_RANKS_PER_GROUP) as f32 * CROWN_RANK_Z_STEP
 }
 
-/// Собранные деревья — в мир: пул крон в `Assets` и по сущности на место
-/// (ближняя ступень), слитые куски крон (дальние) и слои теней — через общий
-/// [`spawn_layers`]. Всё встаёт видимым или спрятанным по своей маске и
-/// текущей ступени `bucket`; дальше видимость ведёт [`show_tree_lod`].
+/// Собранные деревья — в мир: пул крон в `Assets`, слитые куски крон
+/// (дальние ступени) и слои теней — через общий [`spawn_layers`], всё видимым
+/// или спрятанным по своей маске и ступени `bucket`; дальше видимость ведёт
+/// [`show_tree_lod`].
+///
+/// Кроны-сущности ближней ступени встают сразу, только если `bucket` их
+/// рисует; иначе их места уходят в возвращённый [`CrownStream`], и в мир их
+/// досыпает [`stream_tree_crowns`], когда зум до них дойдёт. Игра кладёт этот
+/// поток в ресурс; витрине, которая смотрит вблизи, он не нужен.
 pub fn spawn_tree_meshes(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut TreeMaterials,
     bucket: TreeZoomBucket,
     (built, report): (TreeMeshes, TreeReport),
-) {
+) -> CrownStream {
     let TreeMeshes {
         pools,
         tints,
@@ -889,24 +895,135 @@ pub fn spawn_tree_meshes(
         .map(|pool| pool.into_iter().map(|crown| meshes.add(crown)).collect())
         .collect();
 
-    for crown in &crowns {
-        commands.spawn((
-            TreeTag,
-            crown.shows,
-            crown.shows.visibility(bucket.index),
-            Mesh2d(pools[crown.pool][crown.variant].clone()),
-            MeshMaterial2d(tints[crown.tint].clone()),
-            Transform::from_translation(crown.at.extend(crown.z))
-                .with_scale(Vec3::splat(crown.radius)),
-            DespawnOnExit(AppState::Playing),
-            Name::new("tree"),
-        ));
+    let mut stream = CrownStream {
+        placements: crowns,
+        pools,
+        tints,
+        entities: Vec::new(),
+    };
+    // на входе в мир (и на правке стиля) кроны нужной ступени встают сразу:
+    // экран загрузки прикрывает цену, а досыпать кадрами было бы видно
+    if stream.wanted_at(bucket.index) {
+        stream.spawn_next(commands, usize::MAX, bucket.index);
     }
 
     // веер хвои весит вчетверо против одиночного силуэта: при разборе просадок
     // смотреть в первую очередь сюда
     debug!("{report}");
     spawn_masked(commands, meshes, &materials.layers, bucket, shadows);
+    stream
+}
+
+/// Сколько крон-сущностей встаёт в мир за кадр на пути к ближней ступени.
+/// Спавн разом стоил на Калуге (95 тыс. крон) секунды кадра под App Nap —
+/// три-четыре тяжёлых кадра и без неё; пачкой в 4096 это 24 кадра по доле
+/// той цены, а слитые кроны дальней ступени стоят до конца досыпки.
+const CROWN_SPAWN_BATCH: usize = 4096;
+/// Сколько спрятанных крон-сущностей уходит из мира за кадр на дальних
+/// ступенях. Спрятанная сущность не бесплатна: её каждый кадр обходят
+/// видимость, трансформы и извлечение рендера — 95 тыс. спрятанных крон
+/// Калуги стоили на полном отдалении +8…15 мс `PostUpdate` (замер A/B одного
+/// бинарника, экран заблокирован), и держать их там незачем.
+const CROWN_DESPAWN_BATCH: usize = 16384;
+
+/// Кроны-сущности ближней ступени, которые адаптер держит наготове: места,
+/// хэндлы пула и материалов оттенков и уже стоящие сущности — **префикс**
+/// мест, в том же порядке.
+///
+/// Ни спавн всех крон на пересечении порога, ни держать их спрятанными на
+/// дальних ступенях не годятся: первое — секунда кадра на Калуге, второе —
+/// постоянная цена каждого кадра полного отдаления. Поэтому на ближнюю ступень
+/// кроны досыпаются пачками ([`CROWN_SPAWN_BATCH`]) спрятанными, а
+/// показывается ступень ([`TreeLodShown`]) только когда встали все; на дальних
+/// они сначала прячутся, потом уходят пачками ([`CROWN_DESPAWN_BATCH`]).
+/// Хэндлы держат пул и материалы живыми, пока сущностей нет.
+#[derive(Resource, Default)]
+pub struct CrownStream {
+    placements: Vec<CrownPlacement>,
+    pools: Vec<Vec<Handle<Mesh>>>,
+    tints: Vec<Handle<CrownMaterial>>,
+    entities: Vec<Entity>,
+}
+
+impl CrownStream {
+    /// Нужны ли кроны-сущности на ступени `step`. Маска у всех крон одна —
+    /// ступени [`CrownDetail::Full`], — так что хватает первой.
+    fn wanted_at(&self, step: usize) -> bool {
+        self.placements
+            .first()
+            .is_some_and(|crown| crown.shows.shows(step))
+    }
+
+    /// Все ли кроны стоят в мире.
+    fn complete(&self) -> bool {
+        self.entities.len() == self.placements.len()
+    }
+
+    /// Поставить следующие `batch` крон; видимость — по ступени `shown`.
+    fn spawn_next(&mut self, commands: &mut Commands, batch: usize, shown: usize) {
+        let from = self.entities.len();
+        let to = self.placements.len().min(from.saturating_add(batch));
+        for crown in &self.placements[from..to] {
+            let entity = commands
+                .spawn((
+                    TreeTag,
+                    crown.shows,
+                    crown.shows.visibility(shown),
+                    Mesh2d(self.pools[crown.pool][crown.variant].clone()),
+                    MeshMaterial2d(self.tints[crown.tint].clone()),
+                    Transform::from_translation(crown.at.extend(crown.z))
+                        .with_scale(Vec3::splat(crown.radius)),
+                    DespawnOnExit(AppState::Playing),
+                    Name::new("tree"),
+                ))
+                .id();
+            self.entities.push(entity);
+        }
+    }
+
+    /// Убрать из мира до `batch` последних стоящих крон.
+    fn despawn_last(&mut self, commands: &mut Commands, batch: usize) {
+        let keep = self.entities.len().saturating_sub(batch);
+        for entity in self.entities.drain(keep..) {
+            commands.entity(entity).despawn();
+        }
+    }
+}
+
+/// Ступень [`TREE_LODS`], которую деревья **показывают** — по ней
+/// [`show_tree_lod`] ставит видимость. Совпадает с [`TreeZoomBucket`], кроме
+/// одного случая: на пути к ближней ступени, пока кроны-сущности досыпаются
+/// ([`CrownStream`]), показывается прежняя дальняя.
+#[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
+pub struct TreeLodShown(pub usize);
+
+/// Досыпка и уборка крон-сущностей по ступени зума — каждый кадр, дёшево,
+/// когда делать нечего. См. [`CrownStream`].
+pub fn stream_tree_crowns(
+    mut commands: Commands,
+    bucket: Res<TreeZoomBucket>,
+    mut stream: ResMut<CrownStream>,
+    mut shown: ResMut<TreeLodShown>,
+) {
+    if stream.wanted_at(bucket.index) {
+        if stream.complete() {
+            shown.set_if_neq(TreeLodShown(bucket.index));
+        } else {
+            // пока досыпаются — видна прежняя ступень, новые кроны спрятаны
+            let showing = shown.0;
+            stream.spawn_next(&mut commands, CROWN_SPAWN_BATCH, showing);
+            if stream.complete() {
+                shown.set_if_neq(TreeLodShown(bucket.index));
+            }
+        }
+    } else {
+        // дальняя ступень показывается сразу: кроны-сущности прячутся в этом
+        // же кадре, а уходят из мира пачками в следующих
+        shown.set_if_neq(TreeLodShown(bucket.index));
+        if !stream.entities.is_empty() {
+            stream.despawn_last(&mut commands, CROWN_DESPAWN_BATCH);
+        }
+    }
 }
 
 /// Слои с маской ступеней — в мир, видимыми или спрятанными по `bucket`.
@@ -1021,7 +1138,8 @@ pub fn retune_conifer_field(
 ///
 /// Ступени зума ([`TreeZoomBucket`]) здесь **нет**: её смена не трогает ни
 /// набор, ни поле, ни подложку аллей, ни тени — тени собраны на все ступени
-/// сразу, — и идёт своей системой, [`show_tree_lod`].
+/// сразу, — и идёт своими системами, [`stream_tree_crowns`] и
+/// [`show_tree_lod`].
 pub fn rebuilds_on() -> impl SystemCondition<()> {
     retuned::<TreeStyle>
         .or_else(retuned::<TreeRowStyle>)
@@ -1029,28 +1147,26 @@ pub fn rebuilds_on() -> impl SystemCondition<()> {
         .or_else(retuned::<SunOnMap>)
 }
 
-/// Смена ступени зума деревьев: только видимость. Кроны-сущности, слитые
-/// куски крон и тени собраны на все ступени сразу ([`mesh_trees`]), и каждое
-/// несёт маску ступеней.
+/// Смена показанной ступени деревьев ([`TreeLodShown`]): только видимость.
+/// Слитые куски крон и тени собраны на все ступени сразу ([`mesh_trees`]),
+/// кроны-сущности досыпает [`stream_tree_crowns`], и всё несёт маску ступеней.
 ///
 /// Раньше ступень была условием всей связки [`rebuilds_on`]: пересечение
 /// порога заново строило и заливало весь меш теней (Калуга 10–15 млн вершин,
-/// ~600 МБ), а вход на ближнюю ступень спавнил заново все кроны-сущности
-/// (Тула 16 тыс., Калуга 95 тыс. — три-четыре тяжёлых кадра). Цена держать
-/// обе формы: на дальних ступенях кроны-сущности стоят спрятанными, и
-/// извлечение каждый кадр проходит их одной проверкой видимости.
+/// ~600 МБ), а вход на ближнюю ступень спавнил разом все кроны-сущности
+/// (Тула 16 тыс., Калуга 95 тыс. — три-четыре тяжёлых кадра).
 pub fn show_tree_lod(
-    bucket: Res<TreeZoomBucket>,
+    shown: Res<TreeLodShown>,
     mut masked: Query<(&TreeLodMask, &mut Visibility)>,
 ) {
     masked.par_iter_mut().for_each(|(shows, mut visibility)| {
-        visibility.set_if_neq(shows.visibility(bucket.index));
+        visibility.set_if_neq(shows.visibility(shown.0));
     });
 }
 
-/// Когда менять ступень деревьев — одно условие, одна регистрация.
+/// Когда менять видимость деревьев — одно условие, одна регистрация.
 pub fn switches_on() -> impl SystemCondition<()> {
-    IntoSystem::into_system(retuned::<TreeZoomBucket>)
+    IntoSystem::into_system(retuned::<TreeLodShown>)
 }
 
 /// Пересборка деревьев после правки стиля из UI: деспавн старых сущностей и
@@ -1061,8 +1177,8 @@ pub fn rebuild_trees(
     mut materials: TreeMaterials,
     // парой — иначе подпись переваливает за предел clippy в семь аргументов
     (style, bucket): (Res<TreeStyle>, Res<TreeZoomBucket>),
-    map: Res<MapData>,
-    mut field: ResMut<ConiferField>,
+    (map, mut field): (Res<MapData>, ResMut<ConiferField>),
+    (mut stream, mut shown): (ResMut<CrownStream>, ResMut<TreeLodShown>),
     existing: Query<Entity, With<TreeTag>>,
 ) {
     // порог поля пересчитывается только если поехала сама доля — правка цвета
@@ -1082,7 +1198,9 @@ pub fn rebuild_trees(
         &map.trees,
         &field,
     );
-    spawn_tree_meshes(&mut commands, &mut meshes, &mut materials, *bucket, built);
+    // кроны ступени, которую видно, встают сразу — показывается она же
+    *stream = spawn_tree_meshes(&mut commands, &mut meshes, &mut materials, *bucket, built);
+    shown.set_if_neq(TreeLodShown(bucket.index));
 }
 
 #[cfg(test)]
