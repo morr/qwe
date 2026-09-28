@@ -17,7 +17,11 @@
 //! [`PAIR_SKEW`] — продолжение той же дороги торец в торец соседом не
 //! считается), того же класса ([`Highway`](crate::map::osm::Highway)) и не
 //! дальше [`PAIR_MAX_GAP`] между кромками. Кусок короче [`PAIR_MIN`] — не
-//! пара: так сходятся два съезда.
+//! пара: так сходятся два съезда; кроме короткого way, идущего рядом с парой
+//! почти целиком ([`PAIR_COVER`]) и продолжающего половину, у которой пара
+//! уже нашлась ([`RunKind::Short`]). Сосед держится от пробы к пробе, пока он
+//! почти так же близок ([`PARTNER_SLACK`]): у шва встречной половины иначе
+//! перескакивал с одного её way на другой.
 //!
 //! **Общая ось** ([`Pairs::align`]). Зазор между половинами OSM гуляет — в
 //! Туле на одной паре от наложения в метр до зазора в полтора. Половины
@@ -51,6 +55,7 @@
 
 use std::borrow::Cow;
 
+use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
 
 use super::{RoadNetwork, RoadNodes};
@@ -58,6 +63,7 @@ use crate::map::along::{nearest_on_path, simplify};
 use crate::map::grid::Grid;
 use crate::map::osm::model::{RailKind, RailLine, distance_to_segment, polyline_length};
 use crate::map::osm::{RoadClass, RoadLine};
+use crate::map::roads::junctions::node_key;
 use crate::map::roads::smoothstep;
 use crate::map::roads::tapers::{self, Tapers};
 
@@ -76,6 +82,9 @@ pub const PAIR_MAX_GAP: f32 = 15.0;
 pub const PAIR_OVERLAP: f32 = 3.3;
 /// Кусок пары короче этого, м, — не пара: так сходятся два съезда.
 pub const PAIR_MIN: f32 = 8.0;
+/// Доля своей длины, которую короткий way должен пройти рядом с парой,
+/// чтобы кусок короче [`PAIR_MIN`] всё же был парой ([`is_pair_run`]).
+const PAIR_COVER: f32 = 0.75;
 /// Косинус угла между встречными осями, при котором половины ещё идут рядом.
 const PAIR_PARALLEL: f32 = 0.9;
 /// Доля расстояния, на которую сосед смещён вдоль оси: больше — это торец
@@ -84,6 +93,13 @@ const PAIR_SKEW: f32 = 0.35;
 /// Насколько проба может выйти за торец звена соседа, чтобы он ещё шёл рядом,
 /// м: полторы пробы — шов или узел, а не продолжение торец в торец.
 const END_OVERHANG: f32 = 3.0;
+/// Насколько сосед прошлой пробы может быть дальше ближайшего, м, чтобы
+/// остаться соседом ([`beside`]). У шва встречной половины её два way идут
+/// торец в торец, и в полосе [`END_OVERHANG`] ближайшим через пробу
+/// оказывался то один, то другой — пара рвалась на куски короче
+/// [`PAIR_MIN`] и не находилась вовсе (Рязань, Первомайский у моста —
+/// тротуары половин легли плиткой на всю разделительную).
+const PARTNER_SLACK: f32 = 0.5;
 /// Торцы соседних разделительных ближе этого, м, сводятся в одну точку
 /// ([`Pairs::join_ends`]).
 const JOIN_GAP: f32 = 5.0;
@@ -249,6 +265,7 @@ fn target_gap(gap: f32, median_gap: f32) -> f32 {
 }
 
 /// Точка оси, ощупанная на соседа.
+#[derive(Clone)]
 struct Probe {
     along: f32,
     at: Vec2,
@@ -287,17 +304,28 @@ impl Pairs {
                 segments.insert_segment(pair[0], pair[1], 0.0, (index, at));
             }
         }
+        // куски короче `PAIR_MIN`, почти во весь свой way — до второго прохода
+        let mut short: Vec<(usize, usize, Vec<Probe>)> = Vec::new();
         for &index in &candidates {
             let path = paths[index].as_ref();
             let reach = (roads[index].width + widest) / 2.0 + PAIR_MAX_GAP;
+            // сосед прошлой пробы держится, пока он почти так же близок
+            // ([`PARTNER_SLACK`]): у шва встречной половины два её way стоят
+            // рядом, и ближайший перескакивал с одного на другой через пробу
+            let mut previous = None;
             let probes: Vec<Probe> = samples(path)
                 .into_iter()
-                .map(|(along, at, heading)| Probe {
-                    along,
-                    at,
-                    beside: beside(index, at, heading, reach, roads, paths, &segments),
+                .map(|(along, at, heading)| {
+                    let near = beside(index, at, heading, reach, roads, paths, &segments, previous);
+                    previous = near.map(|(partner, ..)| partner);
+                    Probe {
+                        along,
+                        at,
+                        beside: near,
+                    }
                 })
                 .collect();
+            let total = probes.last().map_or(0.0, |probe| probe.along);
             let mut start = 0;
             while start < probes.len() {
                 let Some((partner, ..)) = probes[start].beside else {
@@ -309,8 +337,34 @@ impl Pairs {
                     .position(|probe| probe.beside.map(|beside| beside.0) != Some(partner))
                     .map_or(probes.len(), |offset| start + offset);
                 let run = &probes[start..end];
-                pairs.push_run(index, partner, run, roads, median_gap, &tracks);
+                match run_kind(run, total) {
+                    RunKind::Pair => {
+                        pairs.push_run(index, partner, run, roads, median_gap, &tracks)
+                    }
+                    RunKind::Short => short.push((index, partner, run.to_vec())),
+                    RunKind::None => {}
+                }
                 start = end;
+            }
+        }
+        // короткий way, целиком идущий рядом с парой, — пара, если он
+        // продолжает половину, у которой пара уже есть: у моста или газона
+        // улицу режут на куски в десяток метров, а два сходящихся съезда
+        // продолжением пары не бывают
+        let paired_ends: HashSet<(i32, i32)> = (0..roads.len())
+            .filter(|&index| !pairs.runs[index].is_empty())
+            .flat_map(|index| {
+                let path = paths[index].as_ref();
+                [path[0], path[path.len() - 1]].map(node_key)
+            })
+            .collect();
+        for (index, partner, run) in short {
+            let path = paths[index].as_ref();
+            if [path[0], path[path.len() - 1]]
+                .iter()
+                .any(|&end| paired_ends.contains(&node_key(end)))
+            {
+                pairs.push_run(index, partner, &run, roads, median_gap, &tracks);
             }
         }
         pairs
@@ -326,9 +380,6 @@ impl Pairs {
         tracks: &Tracks,
     ) {
         let (first, last) = (&probes[0], &probes[probes.len() - 1]);
-        if last.along - first.along < PAIR_MIN {
-            return;
-        }
         let asphalt = (roads[index].width + roads[partner].width) / 2.0;
         let mut gaps: Vec<f32> = probes
             .iter()
@@ -860,8 +911,38 @@ fn blend(before: f32, after: f32, beyond: f32) -> f32 {
     before + (after - before) * smoothstep(beyond / ALIGN_TRANSITION + 0.5)
 }
 
+/// Что за кусок проб `run` у половины длиной `total`.
+enum RunKind {
+    /// Не короче [`PAIR_MIN`] — пара.
+    Pair,
+    /// Короче, но почти весь way ([`PAIR_COVER`]) и не короче половины
+    /// [`PAIR_MIN`]: пара, если way продолжает половину, у которой пара уже
+    /// есть. Way в девять метров между газоном и мостом (Рязань,
+    /// Первомайский) идёт рядом с парой целиком — и без пары клал тротуар
+    /// плиткой в разделительную.
+    Short,
+    /// Два съезда сходятся — не пара.
+    None,
+}
+
+fn run_kind(run: &[Probe], total: f32) -> RunKind {
+    let (Some(first), Some(last)) = (run.first(), run.last()) else {
+        return RunKind::None;
+    };
+    let span = last.along - first.along;
+    if span >= PAIR_MIN {
+        RunKind::Pair
+    } else if span >= PAIR_MIN / 2.0 && span >= PAIR_COVER * total {
+        RunKind::Short
+    } else {
+        RunKind::None
+    }
+}
+
 /// Ближайшая половина рядом с точкой `at` оси дороги `index`, идущей по
-/// `heading`, — или никакой.
+/// `heading`, — или никакой. Сосед прошлой пробы `prefer` остаётся, если он
+/// дальше ближайшего не больше чем на [`PARTNER_SLACK`].
+#[allow(clippy::too_many_arguments)]
 fn beside(
     index: usize,
     at: Vec2,
@@ -870,9 +951,11 @@ fn beside(
     roads: &[RoadLine],
     paths: &[impl AsRef<[Vec2]>],
     segments: &Grid<(usize, usize)>,
+    prefer: Option<usize>,
 ) -> Option<(usize, Vec2, f32)> {
     let own = &roads[index];
     let mut best: Option<(usize, Vec2, f32)> = None;
+    let mut preferred: Option<(usize, Vec2, f32)> = None;
     for &(other, segment) in segments.near_each(at - reach, at + reach) {
         if other == index || roads[other].highway != own.highway {
             continue;
@@ -901,13 +984,21 @@ fn beside(
         let gap = distance - (own.width + roads[other].width) / 2.0;
         if !(-PAIR_OVERLAP..=PAIR_MAX_GAP).contains(&gap)
             || apart.dot(heading).abs() > PAIR_SKEW * distance
-            || best.is_some_and(|(_, _, closest)| closest <= distance)
         {
+            continue;
+        }
+        if Some(other) == prefer && preferred.is_none_or(|(_, _, closest)| distance < closest) {
+            preferred = Some((other, near, distance));
+        }
+        if best.is_some_and(|(_, _, closest)| closest <= distance) {
             continue;
         }
         best = Some((other, near, distance));
     }
-    best
+    match (preferred, best) {
+        (Some(kept), Some((_, _, closest))) if kept.2 <= closest + PARTNER_SLACK => Some(kept),
+        _ => best,
+    }
 }
 
 /// Точки оси с шагом [`PROBE_STEP`]: длина от начала, точка, направление.

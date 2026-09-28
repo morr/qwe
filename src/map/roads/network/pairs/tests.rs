@@ -122,6 +122,31 @@ fn a_short_stretch_side_by_side_is_two_slips_meeting() {
     assert_eq!(pairs.count(), [0, 0, 0]);
 }
 
+/// Улица, порезанная у моста на куски в десяток метров (Рязань,
+/// Первомайский): короткий way нижней половины, продолжающий её длинный,
+/// — пара, хотя кусок рядом с соседом короче `PAIR_MIN`; а короткий way
+/// верхней, стоящий над швом нижней, не рвёт пару на куски, перескакивая с
+/// одного её way на другой.
+#[test]
+fn a_short_way_continuing_a_paired_half_is_paired_too() {
+    let apart = 2.0 * 3.3 + 1.0 + 4.0;
+    let roads = vec![
+        half(vec![Vec2::ZERO, Vec2::new(100.0, 0.0)], 2),
+        half(vec![Vec2::new(100.0, 0.0), Vec2::new(109.0, 0.0)], 2),
+        half(vec![Vec2::new(109.0, apart), Vec2::new(96.0, apart)], 2),
+        half(vec![Vec2::new(96.0, apart), Vec2::new(0.0, apart)], 2),
+    ];
+    let pairs = pairs_of(&roads);
+    for road in 0..4 {
+        assert!(!pairs.runs[road].is_empty(), "way {road} без пары");
+    }
+    assert!(
+        pairs.runs[2].iter().all(|run| run.partner == 1),
+        "короткий верхний — в паре с коротким нижним: {:?}",
+        pairs.runs[2]
+    );
+}
+
 #[test]
 fn a_continuation_end_to_end_is_not_beside() {
     let roads = vec![
