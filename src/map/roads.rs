@@ -75,8 +75,8 @@ use crate::map::surface::{
 };
 use crate::prefs::retuned;
 use crate::settings::{
-    Z_ALLEY, Z_BUILDING, Z_LOT_LINES, Z_LOT_SIDEWALK, Z_ROAD, Z_ROAD_MEDIAN, Z_ROAD_VERGE,
-    Z_SIDEWALK, Z_UNPAVED_ROAD,
+    Z_ALLEY, Z_BUILDING, Z_LOT_LINES, Z_LOT_SIDEWALK, Z_RING_ISLAND, Z_ROAD, Z_ROAD_MEDIAN,
+    Z_ROAD_VERGE, Z_SIDEWALK, Z_UNPAVED_ROAD,
 };
 
 /// Проезжая часть — асфальт: серый, заметно темнее тротуара и земли. Белой
@@ -879,6 +879,7 @@ pub fn mesh_roads(
         .iter()
         .map(|ring| ring.path.as_slice())
         .collect();
+    let ring_lawns = ring_island_lawns(&ring_islands);
     let mut gores = gores::Gores::of(&gore_roads, &ring_islands);
     // островки по правилу — на двусторонних подходах, где веера из въезда и
     // съезда в OSM нет: краска и колея подхода рвутся на их длину
@@ -1365,6 +1366,12 @@ pub fn mesh_roads(
     // мостовых слоя со своими высотами и материалами отдаёт `Bridges`
     let mut layers: Vec<LayerMesh> = [
         (
+            ring_lawns,
+            Z_RING_ISLAND,
+            "ring_islands",
+            MaterialSpec::Surface(SurfaceKind::Grass),
+        ),
+        (
             verges,
             Z_ROAD_VERGE,
             "road_verges",
@@ -1665,6 +1672,27 @@ fn push_sidewalk(
             .collect();
         push_ribbon_trimmed(builder, &shifted, width + sidewalk, color, ROAD_JOIN, trims);
     }
+}
+
+/// Газон островов колец: каждое кольцо заливается травой по своей
+/// нарисованной оси (`rings::Ring::path`, замкнутой) — внешнюю половину
+/// кроет асфальт кольца, и газон виден ровно до внутренней кромки.
+/// Замапленная трава острова обычно меньше нарисованного острова, и по краю
+/// оставалось кольцо бледной земли (Орёл, витрины 01 и 02). Слой лежит сразу
+/// над землёй ([`Z_RING_ISLAND`]): что на острове замаплено — трава, парк,
+/// квартал, площадь, вода, дом, — остаётся собой, газоном становится только
+/// голая земля.
+fn ring_island_lawns(rings: &[&[Vec2]]) -> MeshBuilder {
+    let mut lawns = MeshBuilder::with_surface_coords();
+    let color = GRASS_COLOR.to_linear();
+    for path in rings {
+        // замкнутая ось: последняя точка равна первой
+        let open = &path[..path.len().saturating_sub(1)];
+        if open.len() >= 3 {
+            lawns.push_polygon(open, &[], color);
+        }
+    }
+    lawns
 }
 
 /// Обочины дороги шириной `width` ([`RoadLine::verges`]) — по ленте на

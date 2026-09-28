@@ -246,12 +246,13 @@ fn the_city_wall_ribbon_stays_off_fortress_buildings() {
 // телеметрия области жили внутри `spawn_roads` — 275 строк, взять которые из
 // теста было нечем: проверять можно было только хелперы под ними.
 
-/// Двадцать дорожных слоёв снизу вверх, ровно в том порядке, в каком они
-/// уходят в мир: двенадцать лент и восемь слоёв краски над своим асфальтом —
-/// колея траекторий узла (маска, потом наложение) ниже линий, островки колец
-/// над асфальтом стоянок. Грунтовки — под асфальтом улиц, обочины — под
-/// всей зеленью.
-const LAYERS: [&str; 20] = [
+/// Двадцать один дорожный слой снизу вверх, ровно в том порядке, в каком они
+/// уходят в мир: газон островов колец, двенадцать лент и восемь слоёв краски
+/// над своим асфальтом — колея траекторий узла (маска, потом наложение) ниже
+/// линий, островки колец над асфальтом стоянок. Грунтовки — под асфальтом
+/// улиц, обочины — под всей зеленью, газон острова — под всем.
+const LAYERS: [&str; 21] = [
+    "ring_islands",
     "road_verges",
     "alleys",
     "sidewalks",
@@ -291,7 +292,7 @@ fn layer<'a>(layers: &'a [LayerMesh], name: &str) -> &'a LayerMesh {
 }
 
 #[test]
-fn a_street_builds_nineteen_layers_bottom_up() {
+fn a_street_builds_twenty_one_layers_bottom_up() {
     let (layers, report) = mesh_roads(&one_street(), RoadStyle::default(), RoadShape::default());
 
     let names: Vec<&str> = layers.iter().map(|layer| layer.name).collect();
@@ -325,7 +326,7 @@ fn only_the_bridge_shadow_is_blended() {
                 MaterialSpec::Surface(SurfaceKind::Sidewalk)
             }
             "alleys" => MaterialSpec::Surface(SurfaceKind::Alley),
-            "road_medians" => MaterialSpec::Surface(SurfaceKind::Grass),
+            "road_medians" | "ring_islands" => MaterialSpec::Surface(SurfaceKind::Grass),
             "roads" | "bridges" => MaterialSpec::Surface(SurfaceKind::Street),
             "unpaved_roads" => MaterialSpec::Surface(SurfaceKind::Unpaved),
             paint::PAINT_WEAR_MASK => MaterialSpec::Paint(paint::PaintPass::WearMask),
@@ -943,6 +944,33 @@ fn a_y_approach_gets_one_island_between_its_legs() {
         assert!(drawn.road(leg).width < map.roads[leg].width);
         assert_eq!(drawn.road(leg).lanes, Some(1));
     }
+}
+
+/// Остров кольца — газон под всем, что на нём замаплено: заливка по оси
+/// кольца, до его внутренней кромки; у двустороннего кольца без тега (не
+/// кольцо) — ничего.
+#[test]
+fn a_roundabout_island_is_a_lawn_under_everything() {
+    use crate::settings::{Z_GROUND, Z_LANDUSE, Z_ROAD_VERGE};
+    let map = roundabout_with_an_approach(true, true);
+    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let lawn = layer(&layers, "ring_islands");
+    assert!(lawn.z > Z_GROUND && lawn.z < Z_ROAD_VERGE.min(Z_LANDUSE));
+    let positions = lawn.builder.positions_for_test();
+    assert!(!positions.is_empty());
+    // вершины — на оси кольца радиусом 12 м, не дальше
+    assert!(
+        positions
+            .iter()
+            .all(|at| Vec2::new(at[0], at[1]).length() < 12.5),
+        "газон вылез за ось кольца"
+    );
+    let (layers, _) = mesh_roads(
+        &roundabout_with_an_approach(false, false),
+        RoadStyle::default(),
+        RoadShape::default(),
+    );
+    assert!(layer(&layers, "ring_islands").builder.is_empty());
 }
 
 #[test]
