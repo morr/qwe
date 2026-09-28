@@ -325,8 +325,25 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     the gap for a **rounded nose**, goes into the `sidewalks` layer (it shows as a
     `MEDIAN_KERB` 0.5 m kerb along each half), and shrunk by the kerb it is grass in
     `road_medians` (`Z_ROAD_MEDIAN` 1.7, `SurfaceKind::Grass`, the meadow colour); a lawn
-    or kerb piece under `MIN_LAWN_AREA` 4 m² is not drawn. Drawn
-    whatever `RoadStyle::sidewalks` says: a lawn is still a lawn. **Everything between
+    or kerb piece under `MIN_LAWN_AREA` 4 m² is not drawn, nor is a kerb piece with no
+    drawn grass inside it (a pale stub on the junction field; asphalt lies there
+    instead). Drawn
+    whatever `RoadStyle::sidewalks` says: a lawn is still a lawn. **The pieces are cut
+    on a densified midline** (`lawn_outlines` over `densified`: every link split into
+    parts of at most `LAWN_STEP` 1 m, alike on the midline and both edges), a station
+    counting while it is more than `NOSE_CLEARANCE` past every break **measured along
+    the midline** (a break lies on a half's axis, off to the side, and a circle round
+    it covered the midline a couple of metres short — the nose poked in between the
+    two zebras; a break more than `BREAK_ASIDE` 12 m past the kerb is no break of this
+    pair); the contour keeps only the piece's two ends and the original vertices. The
+    breaks are the base ones **and the paint's** facing across both halves
+    (`crossing_breaks` over `paint().of(half).cut`): a lawn stops before the zebra and
+    the stop line, where the pedestrian crosses the median. On the OSM vertices alone a
+    straight avenue lost its lawn span by span: the first vertex past the junction lay
+    inside the break and the next one sixty metres on, so the whole span was bare asphalt
+    with no line between the halves (Kaluga 02, the east arm of Кирова, roads plan E2);
+    and with both vertices outside a break in the middle of a link, the lawn ran right
+    across the junction. **Everything between
     the inner kerbs that is not lawn is asphalt** (`push_lawn` → `uncovered`): the
     contour between the kerbs (`FILL_OVERLAP` under the halves) minus the drawn kerbs
     inflated by `CUT_MARGIN` 5 cm, into the `roads` layer before the halves. The
