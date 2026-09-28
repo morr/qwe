@@ -1274,12 +1274,14 @@ pub fn mesh_roads(
             // линий краски на этом клине
             match lanes {
                 Some(_) => {
-                    let wedge = paint::WedgeEnd {
-                        length: polyline_length(path),
-                        lanes: lane_count(narrow),
-                        drift: paint::wedge_drift(road, map.traffic_side),
-                        kept: taper.kept(),
-                    };
+                    let wedge = paint::WedgeEnd::new(
+                        road,
+                        narrow,
+                        taper,
+                        end,
+                        polyline_length(path),
+                        map.traffic_side,
+                    );
                     let [from, to] = paint::wedge_frames(lane_count(road), wedge, end);
                     fill.set_lane_taper(Some(from), Some(to));
                 }

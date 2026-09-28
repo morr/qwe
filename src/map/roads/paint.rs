@@ -48,7 +48,7 @@ use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey};
 use super::network::RoadNetwork;
 use super::node_paint::{Pocket, STOP_WIDTH, StopLine, ZEBRA_LENGTH, Zebra};
 use super::shape::lane_width;
-use super::tapers::{self, Tapers};
+use super::tapers::{self, Taper, Tapers};
 use super::turns::{JunctionWear, LaneArrow};
 use super::{is_carriageway, lane_count, smoothstep};
 use crate::map::along::{arclengths, place_on_path};
@@ -432,7 +432,17 @@ fn kept_frame(body: LaneFrame, narrow_lanes: u8, kept: f32) -> LaneFrame {
 
 /// Раскладка у шва клина `wedge` в раме way — по его форме: суженный на одну
 /// сторону — [`kept_frame`], симметричный — [`narrow_frame`].
+/// Узел, выставленный по осевой соседа ([`WedgeEnd::origin`]), берёт у шва
+/// раскладку соседа целиком, какой бы формы ни был клин: сетка стоит на его
+/// линиях, и прижатая к кромке раскладка ([`kept_frame`]) со сдвинутым узлом
+/// оставляла бы по полполосы у обеих кромок.
 fn wedge_frame(body: LaneFrame, wedge: WedgeEnd, end: bool) -> LaneFrame {
+    if let Some(origin) = wedge.origin {
+        return LaneFrame {
+            origin,
+            ..lane_frame(wedge.lanes)
+        };
+    }
     match wedge.kept {
         Some(kept) => kept_frame(body, wedge.lanes, kept),
         None => narrow_frame(body, wedge.lanes, end, wedge.drift),
@@ -483,13 +493,69 @@ pub fn street_stations(network: &RoadNetwork, paths: &[impl AsRef<[Vec2]>]) -> V
 
 /// Что лежит у торца way: клин длиной `length` от сечения соседа в `lanes`
 /// полос; `drift` — куда плывут линии ([`wedge_drift`]); `kept` — кромка,
-/// которую клин не трогает (`Taper::kept`), `None` у симметричного.
+/// которую клин не трогает (`Taper::kept`), `None` у симметричного;
+/// `origin` — узел сетки у шва, выставленный по осевой соседа
+/// ([`seam_origin`]), `None` — по правилу формы клина.
 #[derive(Clone, Copy, Debug)]
 pub struct WedgeEnd {
     pub length: f32,
     pub lanes: u8,
     pub drift: Option<f32>,
     pub kept: Option<f32>,
+    pub origin: Option<f32>,
+}
+
+impl WedgeEnd {
+    /// Клин длиной `length` у торца `end` дороги `road`, начатый с сечения
+    /// `narrow` по клину `taper`.
+    pub fn new(
+        road: &RoadLine,
+        narrow: &RoadLine,
+        taper: Taper,
+        end: bool,
+        length: f32,
+        side: TrafficSide,
+    ) -> Self {
+        Self {
+            length,
+            lanes: lane_count(narrow),
+            drift: wedge_drift(road, side),
+            kept: taper.kept(),
+            origin: seam_origin(road, narrow, end, side),
+        }
+    }
+}
+
+/// Узел сетки у шва клина в раме way `road` (у торца `end`) такой, чтобы
+/// **осевая шла через шов без скачка**: у шва она стоит там же, где осевая
+/// узкого соседа `narrow`, и на длине клина плавно уходит на своё место.
+/// Иначе у двусторонней, где у соседей разное деление потоков — Ростов,
+/// Текучёва: `lanes=5, lanes:forward=3` к шести полосам, 3 + 2 → 3 + 3, —
+/// осевая прыгала на полполосы: у пяти она на границе потоков, у шести —
+/// посреди полотна. Сосед, нарисованный навстречу, видит осевую зеркально.
+/// `None` — осевой нет у одного из двух или сдвиг больше полосы: тогда
+/// раскладку у шва решает форма клина ([`wedge_frame`]).
+pub fn seam_origin(
+    road: &RoadLine,
+    narrow: &RoadLine,
+    end: bool,
+    side: TrafficSide,
+) -> Option<f32> {
+    let lanes = lane_count(road);
+    let own = axis_offset(road, lanes, side)?;
+    let theirs = axis_offset(narrow, lane_count(narrow), side)?;
+    let (&first, &last) = (road.points.first()?, road.points.last()?);
+    let seam = if end { last } else { first };
+    let (&from, &to) = (narrow.points.first()?, narrow.points.last()?);
+    // сосед идёт по ходу way, если в шов приходит его конец (у начала way)
+    // или из шва выходит его начало (у конца)
+    let enters = to.distance(seam) < from.distance(seam);
+    let target = if enters != end { theirs } else { -theirs };
+    // сдвиг — целое число полуполос; округление держит узел ровно на сетке,
+    // иначе хвост в 1e-7 добавлял линию за кромкой (`ceil` в `Painter::paint`)
+    let half = lane_width() / 2.0;
+    let shift = ((target - own) / half).round() * half;
+    (shift.abs() <= lane_width() + 1e-3).then(|| lane_frame(lanes).origin + shift)
 }
 
 /// Раскладка way половины у узла слияния (`roads/merges.rs`): в узле —
@@ -597,15 +663,16 @@ pub fn wedge_ends(
 ) -> [Option<WedgeEnd>; 2] {
     let ends = tapers.at(road);
     let lengths = tapers::fit(polyline_length(path), ends.map(|end| end.map(|t| t.length)));
-    let drift = wedge_drift(drawn[road], side);
     [0, 1].map(|end| {
         let taper = ends[end]?;
-        Some(WedgeEnd {
-            length: lengths[end]?,
-            lanes: lane_count(drawn[taper.narrow]),
-            drift,
-            kept: taper.kept(),
-        })
+        Some(WedgeEnd::new(
+            drawn[road],
+            drawn[taper.narrow],
+            taper,
+            end == 1,
+            lengths[end]?,
+            side,
+        ))
     })
 }
 
