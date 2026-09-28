@@ -224,7 +224,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     `RoadLine::is_roundabout`, **tag or shape**: a closed one-way way is a ring too, and
     the mall's big ring carries no tag; a **Ring** (`roads/rings.rs`) is such ways chained
     into a loop and drawn as one smooth ellipse through its nodes, one section for all
-    arcs, a kerb round its island, approaches entering by a tangent arc (a two-way one,
+    arcs, a kerb round its island and a lawn over it (`ring_islands`, right over the
+    ground, under whatever is mapped on the island), approaches entering by a tangent arc (a two-way one,
     mapped into its node along the ring, by an arc along the ray; the two **legs** of a
     **Y-approach** — two short two-way ways from one node into two nodes of one ring,
     `Rings::leg_flow` — as a one-lane entry and exit), and a **web**

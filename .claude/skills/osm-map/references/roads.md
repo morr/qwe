@@ -887,8 +887,16 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   - **One section, one kerb.** All arcs are drawn at the widest arc's width and lanes
     (`roads::ring_arcs`); the sidewalk is drawn once per ring as a closed ribbon, **outside
     only**, and the central island gets a `MEDIAN_KERB` 0.5 m kerb along the inner edge
-    instead of a sidewalk ring (`push_ring_edges`). The island's fill is whatever the map
-    has there (a park, a lawn, the ground).
+    instead of a sidewalk ring (`push_ring_edges`). **The island is a lawn**
+    (`roads::ring_island_lawns`, layer `ring_islands` at `Z_RING_ISLAND` 0.05, roads plan
+    №31): the ring's closed drawn axis filled with grass — the ring's asphalt covers the
+    outer half, so the lawn shows up to the inner kerb. The mapped grass on an island is
+    usually smaller than the drawn island and left a ring of pale ground round it (Orel
+    01 and 02). The layer sits right over the bare ground, **under** everything mapped
+    on the island — grass, a park, a block, a square, water, a house stay themselves,
+    and only the ground turns to lawn. Over the grass it would also hide the faint rim
+    of the grass polygon (visible in Ryazan 04 as a circle in the lawn), but it repainted
+    an island park as lawn too (Kaluga 05) — tried and rejected.
   - The report counts `rings N (M webs)`. Tula (release): 8 rings, 19 webs (11 while
     only the arms were walked); the road build did not move (118.5 ms against 120.7 when
     the rings came, 125.4 → 125.6 when the webs spread to every street along a ring).
@@ -1712,8 +1720,9 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     and `Smoothing` stay for the tree-row band's own Joins / Smoothing rows and for rails,
     the tram and water (`Smoothing::Light`). The dark road/alley **casing layers are gone**
     (`alley_casings`, `road_casings`, `Z_ALLEY_CASING`, `Z_ROAD_CASING` and their colours),
-    so `mesh_roads` yields **20 layers**: twelve ribbons (with `unpaved_roads`, **Unpaved
-    streets** above, and `road_verges`, **Sidewalks**) + eight paint layers. `bridge_casings`
+    so `mesh_roads` yields **21 layers**: twelve ribbons (with `unpaved_roads`, **Unpaved
+    streets** above, and `road_verges`, **Sidewalks**), the ring islands' lawn
+    (`ring_islands`, **Roundabouts**) + eight paint layers. `bridge_casings`
     stays — it is the bridge curb (**Bridge layers** below); `footprint::casing_width`
     stays for the tree-row band and the planting index.
   - **RoadShape** (`map/roads/shape.rs`, group `road_shape`; five sliders in the Roads
