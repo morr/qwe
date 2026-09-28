@@ -528,7 +528,12 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     wider than 8 m that are lawns again (a lawn with a nose costs more than a paved
     ribbon). Tula: 107 paved + 32 lawn, 37 of them tram beds, 100 band pieces.
   - **Where it opens** — `crossing_breaks`: only a junction break of one half **facing** a
-    break of the other (within the axes' distance plus both reaches) — a crossing
+    break of the other (within the axes' distance plus both reaches; the axes stand
+    `Median::width` — the gap between the **inner edges**, not between the axes — plus
+    both halves' half-widths apart; the method was called `apart()` and the test read
+    it as the axes' distance, so a narrow cross street between two three-lane halves
+    did not open the median, and Московская across Пушкина's halves at a skew
+    left the double solid running into the crossing, Oryol 05) — a crossing
     street, a U-turn link, a zebra's footway. A street into one half does not open the
     median: the far half runs past, and the double solid runs past with it (sample 12's
     note). At such a break the lawn stops `NOSE_CLEARANCE` 1 m short of it, and

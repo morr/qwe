@@ -299,7 +299,7 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
       right through it, neither end inside — a double solid inside the hatching, a white
       «ladder» on the «Макси» boulevard (scout C2). A midline that meets no hatching is
       returned as it was, without the probes as vertices. `reach` therefore returns
-      `Vec<Vec<Vec2>>`: the lot keeps each run with the pair's `apart`, the paint layer
+      `Vec<Vec<Vec2>>`: the lot keeps each run with the pair's `Median::width`, the paint layer
       paints each run and hands its outermost two tips to the merges. Pinned by
       `gores::tests`.
     - **Gores — the splitter islands at a roundabout** (`roads/gores.rs`, the author's
