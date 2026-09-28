@@ -358,7 +358,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     what lies between the halves: up to the **median gap** (`RoadShape::median_gap`, 3 m by
     default) asphalt under both ribbons with
     a double solid down the middle (the paint layer), wider a lawn with a kerb and a
-    rounded nose (`road_medians`, `Z_ROAD_MEDIAN`). A median a tram runs in, up to
+    rounded nose (`road_medians`, `Z_ROAD_MEDIAN`); whatever lies between the inner kerbs
+    and is not lawn — the wedge the nose rounds off, the stretch to the node — is asphalt,
+    and a double solid meeting a lawn of its pair runs straight up to its nose. A median a tram runs in, up to
     `TRAM_BED_MAX_GAP` 8 m, is a **tram bed** (`Median::carries_tram`, found in
     `Pairs::new` from the rails): each half is widened to the middle by an inner lane
     without marking — asphalt from inner kerb to inner kerb, square-ended, the double

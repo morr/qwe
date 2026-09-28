@@ -85,8 +85,9 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   partner, and the full band resumes past the run with a butt joint; a piece under
   `pairs::SIDEWALK_PIECE_MIN` 0.5 m between two runs is skipped (centimetre offcuts), and
   so is a piece left with no side at all. `None` from `band_pieces` is the whole band on
-  both sides, laid uncut. On a half with a taper the runs are not re-cut and the band
-  stays as the tag has it (`Pairs::unpaired_pieces`).
+  both sides, laid uncut. On a half with a taper the runs are shifted by the head
+  wedge's length, since the band is laid along the body past it (`Pairs::unpaired_pieces`,
+  which left the paired side on, is gone).
   **`sidewalk=*` picks the sides** (stage 7): `RoadLine::sidewalks` `[left, right]` along
   the points (`parse/tags.rs::tagged_sidewalks` — `both|left|right|no|none|separate`,
   refined by `sidewalk:both|left|right`; `no` and `separate` mean no band, a separate
@@ -279,22 +280,49 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     down to +24 k and +18 ms. Ends of two medians closer than `pairs::JOIN_GAP` 5 m are
     drawn together (`join_ends`): a half of two ways is two runs, and the gap at the seam
     was a hole in the double line and a kerb island on the «Макси» boulevard. For the same
-    reason a half's sidewalk is not drawn in a gap shorter than `pairs::JOIN_GAP` between
-    two runs on the same side (`Pairs::band_pieces`) — whatever the runs are, paved, lawn
-    or tram bed: their medians are drawn tip to tip, and the sidewalk lay between them as
-    a pale patch.
+    reason a half's sidewalk is not drawn in a gap shorter than `pairs::PAIR_SIDE_REACH`
+    12 m between two runs on the same side (`Pairs::band_pieces`) — whatever the runs are,
+    paved, lawn or tram bed: their medians are drawn tip to tip, and the sidewalk lay
+    between them as a pale patch (the seam of Советская's paved and lawn medians in
+    sample 16 is 8 m, past the old `JOIN_GAP` 5 m) — **nor between the end run and the
+    road's end** when that stretch is under the same 12 m: the probes lose the partner a
+    few metres before the node where the halves converge, and both halves' paired-side
+    sidewalks lay there as a pale wedge poking into the junction (Kaluga, Кирова ×
+    Плеханова). A half with a taper takes the same pieces, shifted by the head wedge's
+    length (the body starts past it), and its wedge lays no sidewalk on the paired side
+    either (`Pairs::beside` at the wedge's middle).
   - **Paved median** (gap ≤ `RoadShape::median_gap`, 1–6 m, default 3; the flag is
     stored on `Median` at construction — `Pairs::new(roads, paths, median_gap, rails)` — and
     `Median::is_paved` reads it; the pair tests take the knob's default) — `push_paved` lays a ribbon down the
     midline as wide as the axes are apart into the `roads` layer **before** the halves
-    (no lane frame, so no ruts; the halves lay theirs over it), and the paint layer draws
-    a **double solid** down the midline (`Painter::paint_median`, the axes mesh).
+    (no lane frame, so no ruts; the halves lay theirs over it) **plus the contour between
+    the inner kerbs** widened `FILL_OVERLAP` 1 m under each half (`between_edges`): the
+    midline is measured between the *axes*, so between halves of different widths it
+    lies near the narrower one's kerb and the ribbon fell short of the wider one's where
+    the gap widens toward a lawn — a pale tongue along the double solid (sample 16). The
+    paint layer draws a **double solid** down the midline (`Painter::paint_median`, the
+    axes mesh). It is painted **after** every lawn is known: at a seam with a lawn of
+    the same pair (`medians::reach_nose`) a terminal link under `SEAM_STUB` 1 m — the
+    stub the two medians' shared seam point leaves, turned toward it, which curled the
+    line into a hook — is dropped, and the line runs straight on up to `NOSE_REACH` 12 m
+    until it meets that lawn's kerb, stopping `PAINT_NOSE_CLEARANCE` 0.5 m short. An end
+    with no lawn ahead (a junction) is left as it was.
   - **Lawn** (wider) — the contour between the inner kerbs, opened by `NOSE_SHARE` 0.45 of
     the gap for a **rounded nose**, goes into the `sidewalks` layer (it shows as a
     `MEDIAN_KERB` 0.5 m kerb along each half), and shrunk by the kerb it is grass in
     `road_medians` (`Z_ROAD_MEDIAN` 1.7, `SurfaceKind::Grass`, the meadow colour); a lawn
     or kerb piece under `MIN_LAWN_AREA` 4 m² is not drawn. Drawn
-    whatever `RoadStyle::sidewalks` says: a lawn is still a lawn.
+    whatever `RoadStyle::sidewalks` says: a lawn is still a lawn. **Everything between
+    the inner kerbs that is not lawn is asphalt** (`push_lawn` → `uncovered`): the
+    contour between the kerbs (`FILL_OVERLAP` under the halves) minus the drawn kerbs
+    inflated by `CUT_MARGIN` 5 cm, into the `roads` layer before the halves. The
+    opening erases whatever is narrower than two nose radii — at a run's end, where the
+    alignment only spreads the gap to the lawn's width, or where the halves converge to
+    a node, that is metres of wedge — and under it lay nothing: the half's sidewalk or
+    the ground showed as a pale tongue behind the nose (Tula 16/24) and a pale wedge on
+    the junction field (Kaluga 02). The margin matters: flush with the kerb the
+    difference left hairlines of asphalt, which the roads layer (above the grass) drew
+    as dashes along the kerb.
   - **Tram bed** (`Median::carries_tram`, found in `Pairs::new(roads, paths,
     median_gap, rails)`) — a run whose gap is at most `TRAM_BED_MAX_GAP` 8 m and at
     least `TRAM_SHARE_MIN` half of whose probes have a `RailKind::Tram` link within
@@ -311,8 +339,9 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     avenue narrowed and widened by 2.6 m. The step at a seam it was written against is
     now `span_gap`'s job (**Alignment** above).
     **Drawing** — each half is widened to the middle by its own inner lane, without
-    marking: `push_bed` lays the asphalt from inner kerb to inner kerb (`BED_OVERLAP`
-    5 cm under each ribbon) **as a contour, not a ribbon**, so it follows the kerbs
+    marking: `push_bed` lays the asphalt from inner kerb to inner kerb (`FILL_OVERLAP`
+    1 m under each ribbon, like the paved and lawn fills — 5 cm left the ground showing
+    where a half's ribbon wobbles at a seam) **as a contour, not a ribbon**, so it follows the kerbs
     where the gap wanders and ends **square** — the round cap of the old ribbon lay over
     the nose of the lawn next to it (Коминтерна, where the tram turns off Советская and
     the median north of the node is grass again); the lawn beside a bed takes the bed's
