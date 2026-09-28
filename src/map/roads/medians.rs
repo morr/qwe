@@ -33,7 +33,7 @@ use super::network::pairs::{Median, PAIR_MIN, TRAM_BED_MAX_GAP};
 use super::{RoadJoin, push_ribbon};
 use crate::map::meshing::{Break, MeshBuilder};
 use crate::map::osm::model::polyline_length;
-use crate::map::shapes::{ARC, Shape, contour_area, oriented, push_shape};
+use crate::map::shapes::{ARC, Shape, contour_area, oriented, point_in_shape, push_shape};
 
 /// Насколько середина может не доходить до края разрыва перекрёстка, чтобы её
 /// дотянули ([`reach_breaks`]), м.
@@ -46,6 +46,12 @@ const NOSE_CLEARANCE: f32 = 1.0;
 const NOSE_SHARE: f32 = 0.45;
 /// Кусочек газона мельче этого, м², не рисуется.
 const MIN_LAWN_AREA: f32 = 4.0;
+/// Срезанное носом мельче этого, м², асфальтом не кладётся: крошки
+/// булевой разности вдоль кромки.
+const MIN_CUT_AREA: f32 = 0.05;
+/// На сколько бордюр газона раздут, прежде чем его вычесть из асфальта
+/// между кромками, м ([`uncovered`]).
+const CUT_MARGIN: f32 = 0.05;
 
 /// Разрывы, которые проходят разделительную насквозь: разрыв одной половины,
 /// против которого есть разрыв другой. Улица, примыкающая только к ближней
@@ -117,6 +123,70 @@ pub fn reach_breaks(median: &mut Median, breaks: &[Break]) {
     }
 }
 
+/// Звено у торца середины короче этого, м, — огрызок шва: у стыка
+/// асфальтовой разделительной с газонной той же пары обе начинаются в общей
+/// точке, и последнее звено асфальтовой к ней заворачивает.
+const SEAM_STUB: f32 = 1.0;
+/// Насколько далеко впереди торца двойной сплошной ищется нос газона той же
+/// пары, м.
+const NOSE_REACH: f32 = 12.0;
+/// Шаг, с которым осевая щупает бордюр носа впереди, м.
+const NOSE_PROBE: f32 = 0.25;
+/// Сколько асфальта двойная сплошная оставляет до бордюра носа, м.
+const PAINT_NOSE_CLEARANCE: f32 = 0.5;
+
+/// Двойная сплошная асфальтовой разделительной — к торцу газона той же пары.
+///
+/// Там, где асфальтовая разделительная переходит в газонную, её середина
+/// кончалась в общей точке шва огрызком звена, повёрнутым к ней, и двойная
+/// сплошная у носа загибалась крюком; а нос газона стоит на метры дальше
+/// шва — асфальт между ними кладёт [`push_lawn`], и линия до носа не
+/// доходила. Здесь у торца, впереди которого в [`NOSE_REACH`] лежит бордюр
+/// газона `kerbs`, огрызок короче [`SEAM_STUB`] снимается, а линия идёт
+/// прямо по ходу до бордюра без [`PAINT_NOSE_CLEARANCE`]. Торец без газона
+/// впереди — у перекрёстка — остаётся как был.
+pub fn reach_nose(line: &mut Vec<Vec2>, kerbs: &[Shape]) {
+    let inside = |at: Vec2| kerbs.iter().any(|shape| point_in_shape(at, shape));
+    for end in [false, true] {
+        let mut trimmed = line.clone();
+        while trimmed.len() > 2 {
+            let (tip, before) = if end {
+                (trimmed[trimmed.len() - 1], trimmed[trimmed.len() - 2])
+            } else {
+                (trimmed[0], trimmed[1])
+            };
+            if tip.distance(before) >= SEAM_STUB {
+                break;
+            }
+            if end {
+                trimmed.pop();
+            } else {
+                trimmed.remove(0);
+            }
+        }
+        let Some((tip, heading)) = tip_of(&trimmed, end) else {
+            continue;
+        };
+        let steps = (NOSE_REACH / NOSE_PROBE) as usize;
+        let Some(hit) = (0..=steps)
+            .map(|step| step as f32 * NOSE_PROBE)
+            .find(|&along| inside(tip + heading * along))
+        else {
+            continue;
+        };
+        let reach = hit - PAINT_NOSE_CLEARANCE;
+        if reach > 0.0 {
+            let point = tip + heading * reach;
+            if end {
+                trimmed.push(point);
+            } else {
+                trimmed.insert(0, point);
+            }
+        }
+        *line = trimmed;
+    }
+}
+
 /// Торец ломаной и направление её последнего звена наружу.
 pub(super) fn tip_of(line: &[Vec2], end: bool) -> Option<(Vec2, Vec2)> {
     let count = line.len();
@@ -132,13 +202,48 @@ pub(super) fn tip_of(line: &[Vec2], end: bool) -> Option<(Vec2, Vec2)> {
 }
 
 /// Асфальт узкой разделительной — полосой по середине шириной во всё
-/// расстояние между осями, в слой улиц до лент половин.
+/// расстояние между осями, в слой улиц до лент половин, и контуром между
+/// внутренними кромками ([`between_edges`]): середина меряется между осями,
+/// и у половин разной ширины она ближе к узкой, так что полоса по ней не
+/// доставала до кромки широкой там, где зазор разводится (пример 16 Тулы —
+/// светлый язык вдоль двойной сплошной).
 pub fn push_paved(builder: &mut MeshBuilder, median: &Median, color: LinearRgba, join: RoadJoin) {
     if median.midline.len() < 2 {
         return;
     }
     builder.set_lanes(None);
     push_ribbon(builder, &median.midline, median.apart(), color, join);
+    if let Some(ring) = between_edges(median, FILL_OVERLAP) {
+        builder.push_polygon(&ring, &[], color);
+    }
+}
+
+/// Нахлёст асфальта разделительной под ленты половин у асфальтовой и
+/// газонной, м: кромки середины сняты с оси пробами и прорежены, а лента
+/// половины у шва двух разделительных виляет по разводке, и в полуметре от
+/// кромки светилась земля или тротуар. Под лентой лишний асфальт не виден.
+const FILL_OVERLAP: f32 = 1.0;
+
+/// Контур между внутренними кромками половин, с нахлёстом `overlap` под их
+/// ленты; `None`, если кромок нет.
+fn between_edges(median: &Median, overlap: f32) -> Option<Vec<Vec2>> {
+    let [first, second] = &median.inner;
+    let count = median.midline.len();
+    if count < 2 || first.len() != count || second.len() != count {
+        return None;
+    }
+    let widened = |edge: &[Vec2]| -> Vec<Vec2> {
+        edge.iter()
+            .zip(&median.midline)
+            .map(|(&point, &mid)| point + (point - mid).normalize_or_zero() * overlap)
+            .collect()
+    };
+    Some(
+        widened(first)
+            .into_iter()
+            .chain(widened(second).into_iter().rev())
+            .collect(),
+    )
 }
 
 /// Нахлёст асфальта полотна под ленты половин, м: край, совпадающий с
@@ -147,25 +252,14 @@ const BED_OVERLAP: f32 = 0.05;
 
 /// Асфальт трамвайного полотна — внутренние полосы обеих половин: от
 /// внутренней кромки одной до внутренней кромки другой, с нахлёстом
-/// [`BED_OVERLAP`] под их ленты, в слой улиц до лент половин. Контуром, а не
+/// [`FILL_OVERLAP`] под их ленты, в слой улиц до лент половин. Контуром, а не
 /// лентой по середине: ширина идёт за кромками, где зазор гуляет, а торцы
 /// ровные — круглый торец ленты ложился поверх носа соседнего газона.
 /// Раскладки полос у него нет: колея — только на автомобильных полосах.
 pub fn push_bed(builder: &mut MeshBuilder, median: &Median, color: LinearRgba) {
-    let [first, second] = &median.inner;
-    if median.midline.len() < 2 || first.len() != median.midline.len() {
+    let Some(ring) = between_edges(median, FILL_OVERLAP) else {
         return;
-    }
-    let widened = |edge: &[Vec2]| -> Vec<Vec2> {
-        edge.iter()
-            .zip(&median.midline)
-            .map(|(&point, &mid)| point + (point - mid).normalize_or_zero() * BED_OVERLAP)
-            .collect()
     };
-    let ring: Vec<Vec2> = widened(first)
-        .into_iter()
-        .chain(widened(second).into_iter().rev())
-        .collect();
     builder.set_lanes(None);
     builder.push_polygon(&ring, &[], color);
 }
@@ -177,40 +271,89 @@ pub fn bed_ends(median: &Median) -> [Option<Break>; 2] {
 }
 
 /// Газон разделительной: бордюр — в `kerbs` (слой тротуаров), трава — в
-/// `grass`. `breaks` — разрывы разметки обеих половин. Возвращает контуры
-/// бордюра — к ним подходит асфальт торца трамвайного полотна ([`bed_caps`]).
+/// `grass`, а всё между внутренними кромками половин, что не газон, —
+/// асфальтом в `streets` (слой улиц, под лентами половин). `breaks` —
+/// разрывы разметки обеих половин. Возвращает контуры бордюра — к ним
+/// подходит асфальт торца трамвайного полотна ([`bed_caps`]).
+///
+/// **Не газон — асфальт.** Газон рвётся у перекрёстка, а нос — морфологическое
+/// открытие контура: всё, что у́же двух радиусов носа, стирается целиком, а
+/// у конца куска, где зазор между половинами только разводится до ширины
+/// газона (`Pairs::align`) или половины сходятся к узлу, это метры клина. Под
+/// ним не лежало ничего — светился тротуар половины или земля: светлый язык
+/// за носом (пример 16 Тулы), бледный клин на поле перекрёстка (Калуга,
+/// Кирова × Плеханова).
 pub fn push_lawn(
     kerbs: &mut MeshBuilder,
     grass: &mut MeshBuilder,
+    streets: &mut MeshBuilder,
     median: &Median,
     breaks: &[Break],
-    kerb_color: LinearRgba,
-    grass_color: LinearRgba,
+    [kerb_color, grass_color, road_color]: [LinearRgba; 3],
 ) -> Vec<Shape> {
     let nose = (median.gap * NOSE_SHARE).max(ARC);
     let round = || LineJoin::Round(ARC);
     let mut drawn = Vec::new();
+    let mut visible = Vec::new();
     for outline in lawn_outlines(median, breaks) {
-        let kerb: Vec<Shape> = vec![vec![outline]]
-            .outline(&OutlineStyle::new(-nose).line_join(round()))
-            .outline(&OutlineStyle::new(nose).line_join(round()));
+        let kerb = nosed(outline, nose);
+        visible.extend(kerb.iter().filter(|shape| is_drawn(shape)).cloned());
         let lawn: Vec<Shape> = kerb.outline(&OutlineStyle::new(-MEDIAN_KERB).line_join(round()));
         drawn.extend(kerb.iter().cloned());
         for (shapes, builder, color) in [
             (kerb, &mut *kerbs, kerb_color),
             (lawn, &mut *grass, grass_color),
         ] {
-            for shape in shapes {
-                if shape
-                    .first()
-                    .is_some_and(|outer| contour_area(outer) >= MIN_LAWN_AREA)
-                {
-                    push_shape(builder, shape, color);
-                }
+            for shape in shapes.into_iter().filter(is_drawn) {
+                push_shape(builder, shape, color);
             }
         }
     }
+    if let Some(ring) = between_edges(median, FILL_OVERLAP) {
+        let ring = oriented(&ring, true);
+        streets.set_lanes(None);
+        for cut in uncovered(ring, visible) {
+            push_shape(streets, cut, road_color);
+        }
+    }
     drawn
+}
+
+/// Кусочек газона или бордюра, который рисуется: не мельче [`MIN_LAWN_AREA`].
+fn is_drawn(shape: &Shape) -> bool {
+    shape
+        .first()
+        .is_some_and(|outer| contour_area(outer) >= MIN_LAWN_AREA)
+}
+
+/// Контур газона `outline`, скруглённый в нос радиуса `nose`: открытие —
+/// внутрь и обратно.
+fn nosed(outline: Vec<[f32; 2]>, nose: f32) -> Vec<Shape> {
+    let round = || LineJoin::Round(ARC);
+    vec![vec![outline]]
+        .outline(&OutlineStyle::new(-nose).line_join(round()))
+        .outline(&OutlineStyle::new(nose).line_join(round()))
+}
+
+/// Что от контура `ring` между кромками остаётся за вычетом бордюров газона
+/// `kerbs`, — без крошек мельче [`MIN_CUT_AREA`].
+fn uncovered(ring: Vec<[f32; 2]>, kerbs: Vec<Shape>) -> Vec<Shape> {
+    let whole: Vec<Shape> = vec![vec![ring]];
+    let cuts = if kerbs.is_empty() {
+        whole
+    } else {
+        // бордюр чуть шире себя: вдоль газона кромки кольца и бордюра
+        // совпадают, и разность оставляла нитки асфальта — слой улиц лежит
+        // выше газона, и нитки читались штрихами по бордюру
+        let kerbs = kerbs.outline(&OutlineStyle::new(CUT_MARGIN).line_join(LineJoin::Round(ARC)));
+        whole.overlay(&kerbs, OverlayRule::Difference, FillRule::NonZero)
+    };
+    cuts.into_iter()
+        .filter(|cut| {
+            cut.first()
+                .is_some_and(|outer| contour_area(outer) >= MIN_CUT_AREA)
+        })
+        .collect()
 }
 
 /// Насколько асфальт торца полотна тянется к носу соседнего газона, м:
@@ -289,4 +432,65 @@ fn lawn_outlines(median: &Median, breaks: &[Break]) -> Vec<Vec<[f32; 2]>> {
         }
     }
     outlines
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::map::shapes::shape_area;
+
+    fn rect(min: Vec2, max: Vec2) -> Shape {
+        let ring = [min, Vec2::new(max.x, min.y), max, Vec2::new(min.x, max.y)];
+        vec![oriented(&ring, true)]
+    }
+
+    /// Шов асфальтовой разделительной с газонной (Советская в Туле, пример
+    /// 16): огрызок звена у торца, повёрнутый к общей точке, снимается, и
+    /// двойная сплошная идёт прямо до бордюра носа — без крюка.
+    #[test]
+    fn the_median_line_drops_the_seam_stub_and_reaches_the_nose() {
+        let kerb = rect(Vec2::new(24.0, -2.0), Vec2::new(40.0, 2.0));
+        let mut line = vec![Vec2::ZERO, Vec2::new(20.0, 0.0), Vec2::new(20.5, 0.3)];
+        reach_nose(&mut line, &[kerb]);
+        assert!(line.iter().all(|at| at.y.abs() < 1e-3), "крюк: {line:?}");
+        let tip = *line.last().unwrap();
+        assert!(
+            (tip.x - (24.0 - PAINT_NOSE_CLEARANCE)).abs() <= NOSE_PROBE + 1e-3,
+            "линия кончается не у носа: {tip}"
+        );
+        // начало, перед которым газона нет, — как было
+        assert_eq!(line[0], Vec2::ZERO);
+    }
+
+    #[test]
+    fn a_median_line_without_a_lawn_ahead_stays_as_it_was() {
+        let far = rect(Vec2::new(40.0, -2.0), Vec2::new(60.0, 2.0));
+        let original = vec![Vec2::ZERO, Vec2::new(20.0, 0.0), Vec2::new(20.5, 0.3)];
+        let mut line = original.clone();
+        reach_nose(&mut line, &[far]);
+        assert_eq!(line, original);
+    }
+
+    /// Между кромками половин всё, что не газон, — асфальт: срезанный носом
+    /// клин и кусок у перекрёстка, до которого газон не доходит.
+    #[test]
+    fn what_the_lawn_leaves_between_the_edges_is_asphalt() {
+        let ring = oriented(
+            &[
+                Vec2::ZERO,
+                Vec2::new(40.0, 0.0),
+                Vec2::new(40.0, 4.0),
+                Vec2::new(0.0, 4.0),
+            ],
+            true,
+        );
+        let kerb = rect(Vec2::new(10.0, 0.0), Vec2::new(40.0, 4.0));
+        let cuts = uncovered(ring, vec![kerb]);
+        let area: f32 = cuts.iter().map(shape_area).sum();
+        // бордюр раздут на `CUT_MARGIN`
+        assert!(
+            (area - (10.0 - CUT_MARGIN) * 4.0).abs() < 0.1,
+            "асфальта {area} м²"
+        );
+    }
 }

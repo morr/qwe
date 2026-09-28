@@ -449,37 +449,45 @@ fn a_band_without_runs_is_whole_or_one_piece_on_its_sides() {
         Some(vec![(0.0, 100.0, LEFT)])
     );
     assert_eq!(none.band_pieces(0, [false; 2], 0.0, 100.0), Some(vec![]));
-    assert_eq!(Pairs::unpaired_pieces(BOTH, 100.0), None);
-    assert_eq!(
-        Pairs::unpaired_pieces(RIGHT, 100.0),
-        Some(vec![(0.0, 100.0, RIGHT)])
-    );
 }
 
 #[test]
-fn a_band_loses_the_pair_side_on_a_run_and_in_a_gap_under_join_gap() {
+fn a_band_loses_the_pair_side_on_a_run_and_in_a_gap_under_the_reach() {
     // дыра в 3 м между кусками с одной стороны — шов, без тротуара с неё;
-    // в 10 м — нет
-    let pairs = with_runs(&[(10.0, 40.0, true), (43.0, 80.0, true), (90.0, 95.0, true)]);
+    // в 15 м — нет
+    let pairs = with_runs(&[(15.0, 40.0, true), (43.0, 70.0, true), (85.0, 87.0, true)]);
     assert_eq!(
         pairs.band_pieces(0, BOTH, 0.0, 100.0),
         Some(vec![
-            (0.0, 10.0, BOTH),
-            (10.0, 40.0, RIGHT),
+            (0.0, 15.0, BOTH),
+            (15.0, 40.0, RIGHT),
             (40.0, 43.0, RIGHT),
-            (43.0, 80.0, RIGHT),
-            (80.0, 90.0, BOTH),
-            (90.0, 95.0, RIGHT),
-            (95.0, 100.0, BOTH),
+            (43.0, 70.0, RIGHT),
+            (70.0, 85.0, BOTH),
+            (85.0, 87.0, RIGHT),
+            (87.0, 100.0, BOTH),
+        ])
+    );
+    // шов асфальтовой разделительной с газонной — восемь метров без пары
+    // (Советская в Туле): тоже без тротуара
+    let seam = with_runs(&[(15.0, 40.0, true), (48.0, 80.0, true)]);
+    assert_eq!(
+        seam.band_pieces(0, BOTH, 0.0, 100.0),
+        Some(vec![
+            (0.0, 15.0, BOTH),
+            (15.0, 40.0, RIGHT),
+            (40.0, 48.0, RIGHT),
+            (48.0, 80.0, RIGHT),
+            (80.0, 100.0, BOTH),
         ])
     );
     // пара то справа, то слева — шва нет
-    let across = with_runs(&[(10.0, 40.0, true), (43.0, 80.0, false)]);
+    let across = with_runs(&[(15.0, 40.0, true), (43.0, 80.0, false)]);
     assert_eq!(
         across.band_pieces(0, BOTH, 0.0, 100.0),
         Some(vec![
-            (0.0, 10.0, BOTH),
-            (10.0, 40.0, RIGHT),
+            (0.0, 15.0, BOTH),
+            (15.0, 40.0, RIGHT),
             (40.0, 43.0, BOTH),
             (43.0, 80.0, LEFT),
             (80.0, 100.0, BOTH),
@@ -495,10 +503,37 @@ fn a_band_on_one_side_drops_the_pieces_left_bare_and_the_offcuts() {
         pairs.band_pieces(0, LEFT, 0.0, 100.0),
         Some(vec![(0.0, 20.0, LEFT), (60.0, 100.0, LEFT)])
     );
-    // стежок в 5 м сдвигает куски; обрезок в 0.25 м у торца пропущен
+    // стежок в 5 м сдвигает куски; обрезок в 0.25 м у торца пропущен, а
+    // кусок у самого начала снимает сторону пары и до начала
     let pairs = with_runs(&[(0.25, 94.75, false)]);
     assert_eq!(
         pairs.band_pieces(0, BOTH, 5.0, 100.0),
-        Some(vec![(0.0, 5.25, BOTH), (5.25, 99.75, LEFT)])
+        Some(vec![(0.0, 5.25, LEFT), (5.25, 99.75, LEFT)])
+    );
+}
+
+/// Кусок пары, кончившийся ближе `PAIR_SIDE_REACH` к концу дороги, снимает
+/// тротуар со стороны пары до самого конца: пробы теряют соседа за метры до
+/// узла, и там тротуары обеих половин ложились клином на перекрёсток
+/// (Калуга, Кирова × Плеханова). Дальше — тротуар возвращается.
+#[test]
+fn a_run_ending_near_the_end_keeps_the_pair_side_bare_to_the_end() {
+    let near = with_runs(&[(20.0, 90.0, true)]);
+    assert_eq!(
+        near.band_pieces(0, BOTH, 0.0, 100.0),
+        Some(vec![
+            (0.0, 20.0, BOTH),
+            (20.0, 90.0, RIGHT),
+            (90.0, 100.0, RIGHT)
+        ])
+    );
+    let far = with_runs(&[(20.0, 80.0, true)]);
+    assert_eq!(
+        far.band_pieces(0, BOTH, 0.0, 100.0),
+        Some(vec![
+            (0.0, 20.0, BOTH),
+            (20.0, 80.0, RIGHT),
+            (80.0, 100.0, BOTH)
+        ])
     );
 }

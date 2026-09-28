@@ -56,7 +56,7 @@ use self::bridges::Bridges;
 pub use self::drawn::{Axis, Drawn, DrawnStats};
 pub use self::junctions::JunctionCounts;
 use self::network::RoadNodes;
-use self::network::pairs::{BandPiece, Pairs};
+use self::network::pairs::BandPiece;
 pub use self::node_paint::CrossingMode;
 use self::shape::{RoadShape, RoadShapeOnMap};
 use crate::map::SunOnMap;
@@ -67,7 +67,7 @@ use crate::map::meshing::{
 };
 use crate::map::osm::model::{RoadNodeKind, point_in_area, polyline_length, ring_bounds};
 use crate::map::osm::{AreaKind, MapData, PolyArea, RoadClass, RoadLine, WallLine};
-use crate::map::shapes::{is_ring, push_shape};
+use crate::map::shapes::{Shape, is_ring, push_shape};
 use crate::map::smooth::{Smoothing, smooth_pinned};
 use crate::map::spawn::GRASS_COLOR;
 use crate::map::surface::{
@@ -865,6 +865,10 @@ pub fn mesh_roads(
     let mut median_grass = MeshBuilder::with_surface_coords();
     let mut paved: Vec<network::pairs::Median> = Vec::new();
     let mut lawn_kerbs = Vec::new();
+    // пара улиц каждого контура `lawn_kerbs` и двойные сплошные асфальтовых
+    // разделительных, отложенные до носов газонов
+    let mut lawn_pairs: Vec<[Option<usize>; 2]> = Vec::new();
+    let mut median_lines = Vec::new();
     // торцы трамвайных полотен — разрывы для газона рядом: полотно и газон
     // одной пары улиц встречаются торец в торец
     let bed_ends: Vec<Break> = prepared
@@ -883,6 +887,7 @@ pub fn mesh_roads(
         // до перекрёстка — как линии полос, а не там, где кончились пробы
         let mut median = median.clone();
         medians::reach_breaks(&mut median, &breaks);
+        let pair = median.roads.map(street_of);
         if median.is_paved() {
             // полотно — внутренние полосы половин до середины; узкая
             // разделительная — полосой асфальта во всё расстояние между осями
@@ -904,10 +909,6 @@ pub fn mesh_roads(
                 // узел слияния — не перекрёсток: двойная сплошная доходит до
                 // него и переходит в осевую продолжения
                 painted.retain(|gap| !prepared.merges().is_pure_node(gap.at));
-                let pair = median.roads.map(street_of);
-                for midline in &runs {
-                    painter.paint_median(midline, &painted);
-                }
                 // торцы осевой для слияний — внешние, а не у штриховки
                 let tips = [
                     runs.first().and_then(|run| run.first()),
@@ -916,6 +917,8 @@ pub fn mesh_roads(
                 for tip in tips.into_iter().flatten() {
                     median_ends.push((pair, merges::MedianEnd::Paved(*tip)));
                 }
+                // кладётся, когда известны носы газонов (`medians::reach_nose`)
+                median_lines.push((pair, runs, painted));
             }
             paved.push(median);
         } else {
@@ -924,16 +927,34 @@ pub fn mesh_roads(
             let kerbs = medians::push_lawn(
                 &mut sidewalks,
                 &mut median_grass,
+                &mut streets,
                 &median,
                 &breaks,
-                SIDEWALK_COLOR.to_linear(),
-                GRASS_COLOR.to_linear(),
+                [SIDEWALK_COLOR, GRASS_COLOR, ROAD_COLOR].map(|color| color.to_linear()),
             );
-            let pair = median.roads.map(street_of);
             for point in kerbs.iter().flatten().flatten() {
                 median_ends.push((pair, merges::MedianEnd::Lawn(Vec2::from(*point))));
             }
+            lawn_pairs.extend(kerbs.iter().map(|_| pair));
             lawn_kerbs.extend(kerbs);
+        }
+    }
+    // двойная сплошная асфальтовой — до носа газона той же пары
+    for (pair, runs, painted) in median_lines {
+        let kerbs: Vec<Shape> = lawn_kerbs
+            .iter()
+            .zip(&lawn_pairs)
+            .filter(|&(_, lawn)| {
+                lawn.iter()
+                    .all(|street| street.is_some() && pair.contains(street))
+            })
+            .map(|(kerb, _)| kerb.clone())
+            .collect();
+        for mut midline in runs {
+            if !kerbs.is_empty() {
+                medians::reach_nose(&mut midline, &kerbs);
+            }
+            painter.paint_median(&midline, &painted);
         }
     }
     // за узлом слияния, до разделительной его пары: асфальт до носа газона —
@@ -1084,15 +1105,14 @@ pub fn mesh_roads(
         let ring = prepared.rings().of(index);
         if let Some(sidewalk) = prepared.sidewalk_drawn(index).filter(|_| ring.is_none()) {
             let band = |road: &RoadLine, sidewalk: f32| road.width + 2.0 * sidewalk;
-            // у половины разделённой улицы тротуара со стороны пары нет; на
-            // клине куски пары не пересчитываются — там тротуар как был
+            // у половины разделённой улицы тротуара со стороны пары нет;
+            // тело клиновой половины начинается за головным клином — куски
+            // пары сдвигаются на его длину. На самом клине тротуар как был
+            // (ниже): там его кроет газон или его бордюр
             let (sides, total) = (road.sidewalk().sides(), polyline_length(body));
-            let pieces = if wedges.is_empty() {
-                let stitch = prepared.stitch_offset(index);
-                prepared.pairs().band_pieces(index, sides, stitch, total)
-            } else {
-                Pairs::unpaired_pieces(sides, total)
-            };
+            let head_length = head.as_deref().map_or(0.0, polyline_length);
+            let stitch = prepared.stitch_offset(index) - head_length;
+            let pieces = prepared.pairs().band_pieces(index, sides, stitch, total);
             push_sidewalk(
                 &mut sidewalks,
                 body,
@@ -1104,13 +1124,25 @@ pub fn mesh_roads(
             // клин тротуара — по сторонам, как у асфальта: с сужаемой стороны
             // от полосы узкого соседа (или его голой кромки, если тротуара у
             // него нет) к своей, с сохранённой — своя на всём клине; сторона
-            // без тротуара по тегу — голая кромка (`Drawn::band_half`)
+            // без тротуара по тегу — голая кромка (`Drawn::band_half`); и
+            // сторона пары у клина половины: там асфальт до разделительной, а
+            // тротуар светился за сужаемой кромкой узким языком (пример 16)
+            let total_length = polyline_length(points);
             for &(path, taper, end) in &wedges {
+                let middle = wedge_middle(total_length, polyline_length(path), end);
+                let paired = prepared
+                    .pairs()
+                    .beside(index, middle, 0.0)
+                    .map(|left| usize::from(!left));
                 let halves = wedge_halves(taper.sides, end, |side| {
-                    [
-                        prepared.band_half(taper.narrow, side),
-                        prepared.band_half(index, side),
-                    ]
+                    if paired == Some(side) {
+                        [drawn[taper.narrow].width / 2.0, road.width / 2.0]
+                    } else {
+                        [
+                            prepared.band_half(taper.narrow, side),
+                            prepared.band_half(index, side),
+                        ]
+                    }
                 });
                 sidewalks.push_taper_sided(
                     path,
@@ -1135,11 +1167,7 @@ pub fn mesh_roads(
         // полной полуширины — кромка там идёт прямо, как у тела.
         let length = polyline_length(points);
         for &(path, taper, end) in &wedges {
-            let middle = if end {
-                length - polyline_length(path) / 2.0
-            } else {
-                polyline_length(path) / 2.0
-            };
+            let middle = wedge_middle(length, polyline_length(path), end);
             // пара у середины клина — без слака: клин лежит внутри куска
             let Some(left) = prepared.pairs().beside(index, middle, 0.0) else {
                 continue;
@@ -1509,8 +1537,18 @@ fn wedge_halves(sides: [bool; 2], end: bool, half: impl Fn(usize) -> [f32; 2]) -
     }
 }
 
+/// Середина клина длиной `wedge` у начала (`end == false`) или конца пути
+/// длиной `length`, м по оси ленты: по ней ищется пара клина половины.
+fn wedge_middle(length: f32, wedge: f32, end: bool) -> f32 {
+    if end {
+        length - wedge / 2.0
+    } else {
+        wedge / 2.0
+    }
+}
+
 /// Тротуар дороги шириной `widths[0]` с полосой `widths[1]` — кусками
-/// `pieces` ([`Pairs::band_pieces`]: стороны по тегу, без стороны пары), или,
+/// `pieces` (`Pairs::band_pieces`: стороны по тегу, без стороны пары), или,
 /// при `None`, одной лентой с обеих сторон.
 fn push_sidewalk(
     builder: &mut MeshBuilder,

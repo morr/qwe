@@ -126,6 +126,14 @@ const MEDIAN_CROSSING_MAX: f32 = 40.0;
 /// Кусок тротуара короче этого, м, не кладётся ([`Pairs::band_pieces`]):
 /// между кусками пары остаются обрезки в сантиметры.
 const SIDEWALK_PIECE_MIN: f32 = 0.5;
+/// Щель короче этого, м, — между двумя кусками пары с одной стороны или
+/// между куском и концом дороги — остаётся без тротуара со стороны пары
+/// ([`Pairs::band_pieces`]). Пробы теряют соседа за несколько метров до
+/// узла, где половины сходятся, и у шва асфальтовой разделительной с
+/// газонной (восемь метров на Советской в Туле, пример 16), и в этих метрах
+/// тротуар половины светился со стороны пары светлым языком. Столько же
+/// дотягивается и середина (`MEDIAN_EXTEND` в `roads/medians.rs`).
+const PAIR_SIDE_REACH: f32 = 12.0;
 
 /// Кусок полосы тротуара половины: от и до, м по оси ленты, и с каких сторон
 /// `[слева, справа]` по ходу точек он есть ([`Pairs::band_pieces`]).
@@ -694,11 +702,12 @@ impl Pairs {
     /// Куски полосы тротуара дороги длиной `total` по оси ленты: с тех
     /// сторон, где он есть по тегу (`sides`, `RoadLine::sidewalks`), и **без
     /// стороны пары** на её кусках. Куски пары меряны по узловой оси;
-    /// `stitch` — длина стежка перед её началом на ленте. В щели короче
-    /// [`JOIN_GAP`] между двумя кусками с одной стороны — любыми, полотном и
-    /// газоном тоже, — которые разделительные сводят торец в торец
-    /// ([`Self::join_ends`]), тротуара с той стороны тоже нет: светлое пятно
-    /// лежало между ними. Обрезки короче [`SIDEWALK_PIECE_MIN`] и куски без
+    /// `stitch` — длина стежка перед её началом на ленте (со знаком: у
+    /// клиновой половины тело начинается за клином). В щели короче
+    /// [`PAIR_SIDE_REACH`] между двумя кусками с одной стороны — любыми,
+    /// полотном и газоном тоже, — и между крайним куском и концом дороги
+    /// тротуара с той стороны тоже нет: светлое пятно лежало между ними.
+    /// Обрезки короче [`SIDEWALK_PIECE_MIN`] и куски без
     /// сторон пропущены. `None` — полоса целиком, с обеих сторон, резать
     /// нечего.
     pub fn band_pieces(
@@ -709,12 +718,6 @@ impl Pairs {
         total: f32,
     ) -> Option<Vec<BandPiece>> {
         band_pieces(&self.runs[road], sides, stitch, total)
-    }
-
-    /// Куски полосы без пары — по одним сторонам тега: у половины на клине
-    /// куски пары не пересчитываются (`roads::mesh_roads`).
-    pub fn unpaired_pieces(sides: [bool; 2], total: f32) -> Option<Vec<BandPiece>> {
-        band_pieces(&[], sides, 0.0, total)
     }
 }
 
@@ -742,14 +745,27 @@ fn band_pieces(
         // со стороны пары тротуара нет
         let mut paired = sides;
         paired[usize::from(!run.left)] = false;
-        // и в щели до предыдущего куска с той же стороны
-        let bridged = previous == Some(run.left) && from - cursor < JOIN_GAP;
+        // и в щели до предыдущего куска с той же стороны, и от начала
+        // дороги, если кусок начался у самого узла
+        let bridged = match previous {
+            Some(left) => left == run.left && from - cursor < PAIR_SIDE_REACH,
+            None => from < PAIR_SIDE_REACH,
+        };
         piece(cursor, from, if bridged { paired } else { sides });
         piece(from, to, paired);
         cursor = to;
         previous = Some(run.left);
     }
-    piece(cursor, total, sides);
+    // и до конца дороги, если последний кусок кончился у самого узла
+    let tail = match (previous, runs.last()) {
+        (Some(left), Some(_)) if total - cursor < PAIR_SIDE_REACH => {
+            let mut paired = sides;
+            paired[usize::from(!left)] = false;
+            paired
+        }
+        _ => sides,
+    };
+    piece(cursor, total, tail);
     Some(pieces)
 }
 

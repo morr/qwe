@@ -1,3 +1,4 @@
+use super::network::pairs::Pairs;
 use super::*;
 use crate::map::footprint::casing_width;
 use crate::map::meshing::distance_to_path;
@@ -1971,7 +1972,7 @@ fn a_sidewalk_without_pairs_is_one_band_on_its_sides() {
 }
 
 #[test]
-fn a_gap_shorter_than_join_gap_between_two_runs_gets_no_sidewalk_on_the_pair_side() {
+fn a_short_gap_between_two_runs_gets_no_sidewalk_on_the_pair_side() {
     // дыра в 3 м между кусками с одной стороны — без тротуара с неё
     let bridged = sidewalk_of(&[run_left(10.0, 40.0), run_left(43.0, 80.0)], [true; 2]);
     assert!(
@@ -1985,11 +1986,11 @@ fn a_gap_shorter_than_join_gap_between_two_runs_gets_no_sidewalk_on_the_pair_sid
         bridged.iter().any(|at| at[1] < -6.99),
         "справа тротуар есть"
     );
-    // дыра в 10 м — не шов, с обеих сторон тротуар
-    let open = sidewalk_of(&[run_left(10.0, 40.0), run_left(50.0, 80.0)], [true; 2]);
+    // дыра в 15 м — не шов, с обеих сторон тротуар
+    let open = sidewalk_of(&[run_left(10.0, 40.0), run_left(55.0, 80.0)], [true; 2]);
     assert!(
         open.iter()
-            .any(|at| at[1] > 6.99 && at[0] > 39.99 && at[0] < 50.01)
+            .any(|at| at[1] > 6.99 && at[0] > 39.99 && at[0] < 55.01)
     );
     // обрезок короче полуметра не кладётся: у торцов пары тротуар не
     // появляется
