@@ -608,6 +608,77 @@ fn an_asphalt_street_stops_at_the_edge_of_the_dirt_road_it_meets() {
     );
 }
 
+/// Грунтовка, упёршаяся в асфальт, входит в его кромку как есть: асфальт идёт
+/// прямо, без скруглений к ней, и грунт не расходится веером (Калуга, 07).
+#[test]
+fn a_dirt_road_enters_the_asphalt_without_kerb_returns() {
+    let mut map = a_tee();
+    map.roads[1].pavement = Some(Pavement::Unpaved);
+    for road in &mut map.roads {
+        road.sidewalks = [SidewalkSide::None; 2];
+    }
+    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    // асфальт по y = 100 шириной 12 — кромка на 106
+    let asphalt = layer(&layers, "roads").builder.positions_for_test();
+    let highest = asphalt
+        .iter()
+        .map(|at| at[1])
+        .fold(f32::NEG_INFINITY, f32::max);
+    assert!(
+        highest < 106.0 + 0.1,
+        "асфальт уходит к грунтовке до y = {highest}"
+    );
+    // грунтовка по x = 350 шириной 10
+    let dirt = layer(&layers, "unpaved_roads").builder.positions_for_test();
+    assert!(!dirt.is_empty());
+    for at in dirt {
+        assert!(
+            (at[0] - 350.0).abs() < 5.0 + 0.1,
+            "грунт веером до x = {}",
+            at[0]
+        );
+    }
+}
+
+/// Асфальт, продолженный грунтовкой, обрывается поперёк: ни его круглый торец
+/// не ложится на грунт, ни грунтовый — на асфальт. Излом в 11° — чтобы шов
+/// был в сглаживаемой оси (Калуга, 08: дугой сквозь шов узел уходил с оси, и
+/// торцы оставались круглыми).
+#[test]
+fn asphalt_turning_into_dirt_ends_square() {
+    let mut map = MapData::default();
+    map.roads.push(fixture::street(
+        vec![Vec2::new(0.0, 100.0), Vec2::new(300.0, 100.0)],
+        10.0,
+    ));
+    map.roads.push(fixture::street(
+        vec![Vec2::new(300.0, 100.0), Vec2::new(600.0, 160.0)],
+        10.0,
+    ));
+    map.roads[1].pavement = Some(Pavement::Unpaved);
+    for road in &mut map.roads {
+        road.sidewalks = [SidewalkSide::None; 2];
+    }
+    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let reach = |name: &str, fold: fn(f32, f32) -> f32, from: f32| {
+        let positions = layer(&layers, name).builder.positions_for_test();
+        assert!(!positions.is_empty(), "{name}");
+        positions.iter().map(|at| at[0]).fold(from, fold)
+    };
+    let asphalt = reach("roads", f32::max, f32::NEG_INFINITY);
+    let dirt = reach("unpaved_roads", f32::min, f32::INFINITY);
+    // прямые торцы режутся по биссектрисе излома — полметра за узлом с
+    // наружной стороны; круглый торец ушёл бы на полуширину, 5 м
+    assert!(
+        asphalt < 300.0 + 1.0,
+        "асфальт заходит на грунт до x = {asphalt}"
+    );
+    assert!(
+        dirt > 300.0 - 1.0,
+        "грунт заходит под асфальт до x = {dirt}"
+    );
+}
+
 #[test]
 fn a_bridge_leaves_the_street_layers_for_the_deck_ones() {
     let mut map = MapData::default();

@@ -280,10 +280,15 @@ impl Run {
                 this.starts.push(0);
                 this.push(own[0], half, false);
             } else {
-                // шов: закреплён, если в нём сходится кто-то кроме соседей
+                // шов: закреплён, если в нём сходится кто-то кроме соседей, —
+                // или асфальт переходит в грунт: там ленты обрываются поперёк
+                // (`corners::kerb_returns`), и узел нужен им на оси, а не в
+                // миллиметрах от неё на дуге
                 let joint = this.points.len() - 1;
                 let previous = run[k - 1].road;
-                this.pinned[joint] = pins(roads, nodes, this.points[joint], &[way.road, previous]);
+                let resurfaced = road.is_unpaved_street() != roads[previous].is_unpaved_street();
+                this.pinned[joint] =
+                    resurfaced || pins(roads, nodes, this.points[joint], &[way.road, previous]);
                 this.halves[joint] = this.halves[joint].max(half);
                 this.starts.push(joint);
             }

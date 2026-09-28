@@ -65,15 +65,30 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   `node_paint` does not even collect on such a road — and no stop line or give-way line,
   whatever calls it (Kaluga 06: the `give_way` node on Новаторский drew two white stubs
   of the dashed line across the gravel; the sign stays a sign). A kerb return between two
-  unpaved arms goes to their layer (`corners::Arm::unpaved` → `KerbReturns::unpaved`),
-  between an unpaved and a paved arm it stays asphalt. **An asphalt street ending at a
+  unpaved arms goes to their layer (`corners::Arm::unpaved` → `KerbReturns::unpaved`).
+  **Between an unpaved and a paved arm there is no kerb return at all** — the way a
+  gravel lane really meets a street: the asphalt runs straight past the mouth, not
+  branching off, and the dirt enters its edge as it is, without asphalt flares or
+  bevels. The asphalt fillets there read as a paved apron leaving the street for the
+  dirt road (Kaluga 07, Новаторский переулок into Новаторская). What such a pair still
+  closes — a sharp fork's nose, an outer corner — goes to the unpaved layer, under the
+  asphalt. **Asphalt continued by dirt** (two nearly collinear ends of one surface each,
+  nothing else of their class at the node) ends square on both sides: the round cap of
+  the asphalt lay on the gravel as a half-disc; the gap on the outside of a slight kink
+  is an outer corner in dirt. For that the seam must stay on the node: the street axis
+  passes a free seam as one arc and cuts the ways a few millimetres off it, where
+  `kerb_returns` sees no node and the caps stayed round — so a seam where the surface
+  changes is **pinned** (`axis.rs::Run::stitch`, `resurfaced`), the same as a seam
+  another street joins. Pinned by `a_dirt_road_enters_the_asphalt_without_kerb_returns`
+  and `asphalt_turning_into_dirt_ends_square`; gallery `kaluga/07_gravel_tee`.
+  **An asphalt street ending at a
   dirt road** — the only paved arm of its node, the node's other two or more arms dirt —
   stops at the dirt road's kerb: `KerbReturns::setback` gives that end the widest dirt
   arm's half width, and `mesh_roads` cuts the fill back by it (`tapers::cut`; not on an
   end under a taper). Carried to the node like every ribbon, its butt lay over the gravel
   as a square tongue up to the dirt road's axis, with a step on each side where it was
-  wider than the kerb returns (scout R2, Tula 13); now the asphalt mouth — the ribbon and
-  its asphalt kerb returns — ends flush with the dirt edge. An asphalt road crossing the
+  wider than the kerb returns (scout R2, Tula 13); now the asphalt ribbon ends flush with
+  the dirt edge, square, with no kerb returns (the rule above). An asphalt road crossing the
   dirt one (two paved arms) runs through as before
   (`an_asphalt_street_stops_at_the_edge_of_the_dirt_road_it_meets`). The sidewalk is already gone by
   the parse (`untagged_sidewalks`). An untagged street stays asphalt — the tag is rare
@@ -1647,7 +1662,8 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     ribbon edge without sharing its vertices rasterizes with dropouts, a dotted light
     crack along the drive edge.
     Mixed-class arms get nothing: a grey wedge over a sand
-    footway would read as asphalt spilled onto the path. Bridges and passages give no arms
+    footway would read as asphalt spilled onto the path — and so do a dirt street and an
+    asphalt one (**Unpaved streets** above). Bridges and passages give no arms
     (their paths go in as `None`). The radii are scaled by `RoadShape::corner_radius`
     (0.5–2, `kerb_returns(..., scale)`).
     - **An arm that ends in a junction ends square** (`KerbReturns::butt`, stage 5). A

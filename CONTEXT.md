@@ -244,7 +244,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     `surface=unpaved|gravel|ground|dirt|compacted|…`) is drawn in its own layer
     `unpaved_roads` (`Z_UNPAVED_ROAD` 1.8, under the asphalt, `SurfaceKind::Unpaved`) with
     no paint at all — no lane lines, zebras or stop lines; an asphalt street ending at a
-    dirt road stops at its kerb (`KerbReturns::setback`); an untagged street is asphalt.
+    dirt road stops at its kerb (`KerbReturns::setback`); a dirt road meets asphalt with
+    no kerb return between them — the asphalt runs straight past its mouth, and a street
+    turning from one surface to the other ends square; an untagged street is asphalt.
   - **Street** (**RoadNetwork**, `MapData::network`, `map/roads/network/streets.rs`) — ways
     glued end to end through their seams: at a node the **most collinear pair of ends of
     one `Highway` class** (bend under 50°, one-way flow running through) continues one

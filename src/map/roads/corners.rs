@@ -463,6 +463,26 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
         found.sort_by(|a, b| a.direction.to_angle().total_cmp(&b.direction.to_angle()));
         for class in [RoadClass::Street, RoadClass::Alley] {
             let group: Vec<&Arm> = found.iter().filter(|arm| arm.class == class).collect();
+            // Асфальт, продолженный грунтовкой, обрывается поперёк: круглый
+            // торец ленты лежал на грунте полукругом. Оба торца прямые, а
+            // щель с наружной стороны излома закрывает грунт — под асфальтом.
+            if let [first, second] = group[..]
+                && first.unpaved != second.unpaved
+                && !is_junction(&group)
+                && let (Some((a, a_end)), Some((b, b_end))) = (first.end, second.end)
+                && !is_merged(first)
+                && !is_merged(second)
+            {
+                returns.butt[a][a_end] = true;
+                returns.butt[b][b_end] = true;
+                for (first, second) in pairs(&group) {
+                    let halves = (first.half[0], second.half[1]);
+                    if let Some(outline) = outer_corner(node, first, second, halves) {
+                        returns.unpaved.push(outline);
+                    }
+                }
+                continue;
+            }
             // узел одного слияния — продолжение дороги, а не перекрёсток
             if !is_junction(&group) || group.iter().all(|arm| is_merged(arm)) {
                 continue;
@@ -495,12 +515,22 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                 // угол у мощёной дорожки — плиткой, в слое тротуаров: песчаное
                 // скругление на стыке двух плиточных аллей читалось бы пятном
                 let paved = first.paved || second.paved;
-                let (outline, outer) = match fillet(node, first, second, halves, radius) {
+                // Грунтовка входит в асфальт без скругления: асфальт идёт
+                // прямо, и его кромка — край грунтовки (Калуга, 07). Асфальтовый
+                // веер у её устья читался отводом от асфальтовой улицы. Всё,
+                // что между ними всё же закрывается, — грунтом, под асфальтом.
+                let mixed = first.unpaved != second.unpaved;
+                let round = if mixed {
+                    None
+                } else {
+                    fillet(node, first, second, halves, radius)
+                };
+                let (outline, outer) = match round {
                     Some(outline) => (outline, false),
                     None if is_nose(first, second) => {
                         let fill = if paved {
                             Fill::Sidewalk
-                        } else if first.unpaved && second.unpaved {
+                        } else if first.unpaved || second.unpaved {
                             Fill::Unpaved
                         } else {
                             Fill::Road(class)
@@ -519,9 +549,9 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                 let layer = usize::from(paved);
                 if paved {
                     returns.sidewalks.push(outline);
-                } else if first.unpaved && second.unpaved {
-                    // угол двух грунтовок — грунтом; грунтовки с асфальтом —
-                    // асфальтом: узел там асфальтовый
+                } else if first.unpaved || second.unpaved {
+                    // угол двух грунтовок — грунтом; грунтовки с асфальтом
+                    // сюда доходит только наружным — тоже грунтом
                     returns.unpaved.push(outline);
                 } else {
                     returns.roads.push((class, outline));
