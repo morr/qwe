@@ -1475,6 +1475,58 @@ fn a_side_left_to_a_footway_gets_a_verge_up_to_it() {
     assert_eq!(roads[0].verges[1], 0.0);
 }
 
+/// Дорожка, уходящая от улицы, ведёт обочину за собой: у каждой пробы —
+/// своя ширина (`RoadLine::verge_at`), а не одна медиана на всю сторону.
+#[test]
+fn a_verge_follows_a_footway_drifting_away() {
+    let street = inferred_street(Highway::Residential);
+    let half = street.width / 2.0;
+    let drifting = RoadLine {
+        pavement: Some(Pavement::Paved),
+        ..crate::map::osm::fixture::footway(vec![
+            Vec2::new(0.0, half + 3.0),
+            Vec2::new(200.0, half + 9.0),
+        ])
+    };
+    let mut roads = vec![street, drifting];
+    drop_sidewalks_beside_footways(&mut roads);
+    let road = &roads[0];
+    assert!(road.verges[0] > 0.0);
+    let (near, far) = (road.verge_at(0, 10.0), road.verge_at(0, 190.0));
+    assert!((near - 3.3).abs() < 0.2, "у начала {near}");
+    assert!((far - 8.7).abs() < 0.2, "у конца {far}");
+    assert_eq!(road.verge_at(1, 100.0), 0.0, "справа дорожки нет");
+}
+
+/// Дорожка в 13 м от кромки: у двусторонней улицы до неё мостится обочина
+/// (Тула, Фрунзе), у половины разделённой — нет: так далеко по её внутренней
+/// стороне лежит уже встречная половина.
+#[test]
+fn a_two_way_street_reaches_a_farther_footway_than_a_half() {
+    let street = inferred_street(Highway::Residential);
+    let half = street.width / 2.0;
+    let axis = half + 13.0;
+    let mut roads = vec![street.clone(), paved_footway(axis, 0.0, 200.0)];
+    drop_sidewalks_beside_footways(&mut roads);
+    assert!(
+        (roads[0].verges[0] - 13.0).abs() < 0.01,
+        "{:?}",
+        roads[0].verges
+    );
+    assert_eq!(
+        roads[0].sidewalks[0],
+        SidewalkSide::Inferred,
+        "полоса остаётся"
+    );
+    let one_way = RoadLine {
+        oneway: true,
+        ..street
+    };
+    let mut roads = vec![one_way, paved_footway(axis, 0.0, 200.0)];
+    drop_sidewalks_beside_footways(&mut roads);
+    assert_eq!(roads[0].verges, [0.0; 2]);
+}
+
 /// Шаг разбора целиком: `footway=sidewalk` вдоль улицы без тега доходит до
 /// стороны улицы, по тегам OSM, как в Туле.
 #[test]

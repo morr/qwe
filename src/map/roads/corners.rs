@@ -398,10 +398,13 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                 if let Some(left) = drawn.pairs().beside(index, along, 2.0 * PROBE_STEP) {
                     sides[usize::from(left != forward)] = None;
                 }
-                // обочины — слева и справа по пути, как тротуар по тегу
+                // обочины — слева и справа по пути, как тротуар по тегу; у
+                // узла — какая она там по месту (`RoadLine::verge_at`)
                 let mut verge = [None; 2];
+                let scale = polyline_length(&road.points) / total.max(f32::EPSILON);
                 for (side, width) in drawn.verges_drawn(index).into_iter().enumerate() {
-                    verge[usize::from((side == 0) != forward)] = (width > 0.0).then_some(width);
+                    verge[usize::from((side == 0) != forward)] =
+                        (width > 0.0).then(|| road.verge_at(side, along * scale));
                 }
                 entry.1.push(Arm {
                     class: road.class,

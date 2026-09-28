@@ -1222,6 +1222,7 @@ pub fn mesh_roads(
         if ring.is_none() {
             push_verges(
                 &mut verges,
+                road,
                 points,
                 road.width,
                 prepared.verges_drawn(index),
@@ -1695,34 +1696,75 @@ fn ring_island_lawns(rings: &[&[Vec2]]) -> MeshBuilder {
     lawns
 }
 
-/// Обочины дороги шириной `width` ([`RoadLine::verges`]) — по ленте на
-/// сторону: от оси до кромки плюс обочина, круглыми торцами.
+/// Шаг вершин обочины по месту ([`RoadLine::verge_profile`]), м: пробы
+/// стоят через пять.
+const VERGE_STEP: f32 = 2.5;
+
+/// Обочины дороги `road` шириной `width`, нарисованной по `points`, — по ленте
+/// на сторону: от оси до кромки плюс обочина, круглыми торцами. `verges` —
+/// какие стороны рисуются ([`Drawn::verges_drawn`]). Обочина по месту
+/// ([`RoadLine::verge_at`]) — полосой переменной ширины от оси до края, и у
+/// каждого торца — круг торцевой ширины: торцом она доходит до угла узла, как
+/// постоянная лента.
 fn push_verges(
     builder: &mut MeshBuilder,
+    road: &RoadLine,
     points: &[Vec2],
     width: f32,
     verges: [f32; 2],
     color: LinearRgba,
 ) {
+    let raw = polyline_length(&road.points);
     for (side, verge) in verges.into_iter().enumerate() {
         if verge <= 0.0 {
             continue;
         }
         // `miter_offsets` плюсом сдвигает влево — сторона 0
-        let shift = if side == 0 { verge / 2.0 } else { -verge / 2.0 };
-        let shifted: Vec<Vec2> = points
+        let sign = if side == 0 { 1.0 } else { -1.0 };
+        let ribbon = |builder: &mut MeshBuilder, path: &[Vec2], verge: f32| {
+            let shifted: Vec<Vec2> = path
+                .iter()
+                .zip(miter_offsets(path, false, sign * verge / 2.0))
+                .map(|(point, offset)| *point + offset)
+                .collect();
+            push_ribbon_trimmed(
+                builder,
+                &shifted,
+                width + verge,
+                color,
+                ROAD_JOIN,
+                [false; 2],
+            );
+        };
+        if road.verge_profile[side].is_empty() || points.len() < 2 {
+            ribbon(builder, points, verge);
+            continue;
+        }
+        let dense = crate::map::along::densify(points, VERGE_STEP);
+        let (along, total) = crate::map::along::arclengths(&dense);
+        let scale = raw / total.max(f32::EPSILON);
+        let widths: Vec<f32> = along
             .iter()
-            .zip(miter_offsets(points, false, shift))
-            .map(|(point, offset)| *point + offset)
+            .map(|&at| road.verge_at(side, at * scale))
             .collect();
-        push_ribbon_trimmed(
-            builder,
-            &shifted,
-            width + verge,
-            color,
-            ROAD_JOIN,
-            [false; 2],
-        );
+        let normals = miter_offsets(&dense, false, sign);
+        let mut outline: Vec<Vec2> = dense
+            .iter()
+            .zip(&normals)
+            .zip(&widths)
+            .map(|((&point, &normal), &verge)| point + normal * (width / 2.0 + verge))
+            .collect();
+        outline.extend(dense.iter().rev());
+        builder.push_polygon(&outline, &[], color);
+        // торцы — кругом во всю ширину торца, как у постоянной ленты
+        let last = dense.len() - 1;
+        for (at, toward, verge) in [
+            (dense[0], dense[1], widths[0]),
+            (dense[last], dense[last - 1], widths[last]),
+        ] {
+            let stub = at + (toward - at).normalize_or_zero() * 0.01;
+            ribbon(builder, &[at, stub], verge);
+        }
     }
 }
 

@@ -356,6 +356,13 @@ pub struct RoadLine {
     /// Только рисунок: плитка под зеленью (`map::roads`), навмеш и дома её не
     /// читают.
     pub verges: [f32; 2],
+    /// Обочина **по месту** `[слева, справа]`: `(метров по точкам, обочина)`
+    /// у каждой пробы стороны, нашедшей дорожку, по возрастанию. Дорожка
+    /// уходит от улицы и подходит к ней — у угла перекрёстка она
+    /// заворачивает, — и обочина постоянной ширины (медиана [`Self::verges`])
+    /// оставляла между собой и дорожкой клин голой земли (Тула, витрина 02).
+    /// Пусто — обочина постоянная; читать через [`Self::verge_at`].
+    pub verge_profile: [Vec<(f32, f32)>; 2],
     /// Стоянка у бордюра `[слева, справа]` по ходу точек — по `parking:*`.
     /// Что делать с [`KerbParking::Untagged`], решает правило
     /// (`map::roads::pockets`), не разбор.
@@ -372,6 +379,30 @@ pub struct RoadLine {
 }
 
 impl RoadLine {
+    /// Обочина стороны `side` в `along` метрах по точкам: по
+    /// [`Self::verge_profile`] — между пробами по прямой, за крайними — как у
+    /// крайней; без профиля — постоянная [`Self::verges`]; ноль — обочины нет.
+    pub fn verge_at(&self, side: usize, along: f32) -> f32 {
+        if self.verges[side] <= 0.0 {
+            return 0.0;
+        }
+        let profile = &self.verge_profile[side];
+        let (Some(&(first_at, first)), Some(&(last_at, last))) = (profile.first(), profile.last())
+        else {
+            return self.verges[side];
+        };
+        if along <= first_at {
+            return first;
+        }
+        if along >= last_at {
+            return last;
+        }
+        let next = profile.partition_point(|&(at, _)| at <= along);
+        let ((from_at, from), (to_at, to)) = (profile[next - 1], profile[next]);
+        let t = (along - from_at) / (to_at - from_at).max(f32::EPSILON);
+        from + (to - from) * t
+    }
+
     /// Грунтовая улица или проезд (`surface=unpaved|gravel|ground|dirt|…`):
     /// своим слоем под асфальтом, без линий краски и без стоп-линии по
     /// рангу узла (`map::roads`). Тротуара без тега у неё нет и так
