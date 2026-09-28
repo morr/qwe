@@ -327,7 +327,7 @@ step when adding one):
 | entity | file |
 |---|---|
 | ground mesh, merged area layer meshes (landuse/parks/woods/grass/sand/parking + its markings/water), waterway ribbons, tree-row band | `map/spawn.rs` (through `map/surface.rs::spawn_layers`) |
-| road layers — twelve ribbons (road verges/alleys/sidewalks/road medians/unpaved roads/roads/lot sidewalks + lot lines/bridge shadows/bridge curbs (`bridge_casings`)/bridges/walls), the wide verges' lawn (`road_verge_lawns`), the ring islands' lawn (`ring_islands`) and their mapped grass without the rim (`ring_island_grass`), and the eight paint layers of `roads/paint.rs` (wear mask + wear, zebras, islands, lanes + axes, bridge lanes + axes), the latter tagged `(RoadLayerTag, PaintTag)` | `map/roads.rs::spawn_road_meshes` (same helper, from `rebuild_roads` and `spawn_map`) |
+| road layers — twelve ribbons (road verges/alleys/sidewalks/road medians/unpaved roads/roads/lot sidewalks + lot lines/bridge shadows/bridge curbs (`bridge_casings`)/bridges/walls), the wide verges' lawn as meadow and as yard grass (`road_verge_lawns`, `road_verge_yards`), the ring islands' lawn (`ring_islands`) and their mapped grass without the rim (`ring_island_grass`), and the eight paint layers of `roads/paint.rs` (wear mask + wear, zebras, islands, lanes + axes, bridge lanes + axes), the latter tagged `(RoadLayerTag, PaintTag)` | `map/roads.rs::spawn_road_meshes` (same helper, from `rebuild_roads` and `spawn_map`) |
 | rail layers (ballast/ties/steel) | `map/rail.rs::rebuild_rails` (same helper) |
 | parked cars | `map/cars/mod.rs::rebuild_cars` (through `surface::spawn_layers`; geometry — `cars/body.rs`) |
 | standing wagons | `map/wagons.rs::rebuild_wagons` (same helper) |

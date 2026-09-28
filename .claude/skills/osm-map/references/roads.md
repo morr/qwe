@@ -143,10 +143,23 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   narrower. **A wide verge is a lawn** (`paved_verge`): tile covers a verge up to
   `VERGE_PAVED_MAX` 4 m whole; wider, the tile narrows over `VERGE_PAVED_RAMP` 2 m of
   extra width down to a `VERGE_KERB` 0.5 m strip at the kerb, and the whole verge — body
-  and end discs where the width is past 4 m — goes as grass (`GRASS_COLOR`,
-  `SurfaceKind::Grass`) into **`road_verge_lawns` at `Z_ROAD_VERGE_LAWN` 0.08**, under the
-  tile. A corner between two verges both wider than 4 m goes there too
-  (`KerbReturns::verge_lawns`). In a microdistrict (Фрунзе in Tula, the district frame d2)
+  and end discs where the width is past 4 m — goes as grass under the tile, and **which
+  grass is the neighbour's**: beside a residential block (`Yards::beside` — `landuse=
+  residential` under the verge's middle or 3 m past it, probed at a quarter, half and
+  three quarters of the way) it is the yard itself (`RESIDENTIAL_COLOR`,
+  `SurfaceKind::Yard`, **`road_verge_yards` at `Z_ROAD_VERGE_YARD` 0.09**) — the noise is
+  by world position, so there is no seam at the block's edge; elsewhere a meadow
+  (`GRASS_COLOR`, `SurfaceKind::Grass`, **`road_verge_lawns` at `Z_ROAD_VERGE_LAWN`
+  0.08**), like the mapped lawns around it. One colour for both read wrong both ways: the
+  meadow lay as a bright ribbon along every street of the district frame d2, the yard
+  green lay heavy beside the meadows of Tula 15's square (roads plan №42). A corner
+  between two verges both wider than 4 m goes there too (`KerbReturns::verge_lawns`,
+  `Yards::under` — any vertex or the centre in a yard). **A corner with a lawn behind it
+  gets a kerb pad** (`corners.rs::kerb_pad`): tile `KERB_PAD_WIDTH` 3 m deep along the
+  road fillet's own arc (same centre, `FilletArc`), running on `KERB_PAD_RUN` 4 m along
+  each straight kerb, into `KerbReturns::verges` — the zebras land at the corner, and
+  without it they ended on grass, a lawn sickle between two lawns (Tula 01).
+  In a microdistrict (Фрунзе in Tula, the district frame d2)
   the tile laid from the kerb to a footway fifteen metres off made the street read as
   poured concrete; there it is a lawn with the footway on it, as in any Soviet yard,
   while the narrow paved verges of the centre's corners stay tile, and nothing between
@@ -1815,9 +1828,9 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     and `Smoothing` stay for the tree-row band's own Joins / Smoothing rows and for rails,
     the tram and water (`Smoothing::Light`). The dark road/alley **casing layers are gone**
     (`alley_casings`, `road_casings`, `Z_ALLEY_CASING`, `Z_ROAD_CASING` and their colours),
-    so `mesh_roads` yields **23 layers**: twelve ribbons (with `unpaved_roads`, **Unpaved
-    streets** above, and `road_verges`, **Sidewalks**), the wide verges' lawn
-    (`road_verge_lawns`, **Sidewalks**), the ring islands' lawn and their
+    so `mesh_roads` yields **24 layers**: twelve ribbons (with `unpaved_roads`, **Unpaved
+    streets** above, and `road_verges`, **Sidewalks**), the wide verges' lawn as meadow
+    and as yard grass (`road_verge_lawns`, `road_verge_yards`, **Sidewalks**), the ring islands' lawn and their
     grass without the rim (`ring_islands`, `ring_island_grass`, **Roundabouts**) + eight
     paint layers. `bridge_casings`
     stays — it is the bridge curb (**Bridge layers** below); `footprint::casing_width`

@@ -375,7 +375,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     footway that drifts away or turns at the corner): sidewalk tile
     drawn under every green (`road_verges`, its corners by the kerb returns), so a
     mapped lawn stays a lawn and bare ground there is paved; a verge wider than 4 m is a
-    **lawn** under a narrow tile strip at the kerb (`road_verge_lawns`). The decision per side
+    **lawn** under a narrow tile strip at the kerb — the yard's own grass beside a
+    residential block (`road_verge_yards`), a meadow elsewhere (`road_verge_lawns`) — and
+    a corner behind such a lawn is a **kerb pad** of tile along the kerb arc, where the
+    zebras land. The decision per side
     is a **`SidewalkSide`** on the `RoadLine`: `Tagged`, `Inferred` (no tag, kept by the
     rule) or `None`.
   - **Paired halves** (`map/roads/network/pairs.rs`, `Pairs`) — a divided street as OSM
