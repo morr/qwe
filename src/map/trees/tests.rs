@@ -792,20 +792,78 @@ fn a_far_zoom_step_trims_the_tail_of_the_set() {
     assert_eq!(near_report.crowns, 10, "ближняя ступень без потолка");
     assert_eq!(near_report.detail, CrownDetail::Full);
     assert!(near.merged.is_empty());
-    for lod in &TREE_LODS[1..] {
+    let near_shadows = shadows_shown(&near, 0);
+    for (bucket, lod) in TREE_LODS.iter().enumerate().skip(1) {
         let (far, report) = build(lod.max_zoom - 0.01);
         let cap = lod.density_cap;
         assert_eq!(report.density, cap);
         // пороги у `ten_trees` — 0..=9
         assert_eq!(report.crowns, cap as usize + 1);
         // префикс: тени дальней ступени — ровно тени первых её крон ближней
-        let near_shadows = near.shadows[0].builder.positions_for_test();
-        let far_shadows = far.shadows[0].builder.positions_for_test();
+        let far_shadows = shadows_shown(&far, bucket);
+        assert!(far_shadows.len() < near_shadows.len());
         assert_eq!(
             far_shadows,
             &near_shadows[..far_shadows.len()],
             "кроны переехали"
         );
+    }
+}
+
+/// Вершины теней, которые видны на ступени `bucket`, в порядке слоёв.
+fn shadows_shown(built: &TreeMeshes, bucket: usize) -> Vec<[f32; 3]> {
+    built
+        .shadows
+        .iter()
+        .filter(|shadow| shadow.shows.shows(bucket))
+        .flat_map(|shadow| shadow.layer.builder.positions_for_test().iter().copied())
+        .collect()
+}
+
+/// Тени собраны на все ступени сразу и от ступени сборки не зависят: смена
+/// ступени их только прячет и показывает ([`switch_tree_lod`]), а не
+/// пересобирает. Каждая ступень видит ровно тени своего префикса.
+#[test]
+fn tree_shadows_are_built_once_for_every_zoom_step() {
+    let _sun = crate::map::default_sun();
+    let style = TreeStyle {
+        shape: TreeShape::Cotton,
+        density: 9.0,
+        ..default()
+    };
+    let build = |bucket: usize| {
+        mesh_trees(
+            TreeZoomBucket::at(bucket),
+            &style,
+            &params(),
+            &ten_trees(),
+            &ConiferField::default(),
+        )
+        .0
+    };
+    let near = build(0);
+    let far = build(TREE_LODS.len() - 1);
+    assert_eq!(near.shadows.len(), far.shadows.len());
+    for (a, b) in near.shadows.iter().zip(&far.shadows) {
+        assert_eq!(a.shows, b.shows);
+        assert_eq!(
+            a.layer.builder.positions_for_test(),
+            b.layer.builder.positions_for_test()
+        );
+    }
+    // видимые на ступени вершины — ровно шаблоны теней её префикса
+    let counts = step_counts(&style, &ten_trees());
+    assert_eq!(counts, [10, 4, 3]);
+    for (bucket, _) in TREE_LODS.iter().enumerate() {
+        let shown = shadows_shown(&near, bucket).len();
+        let expected: usize = (0..counts[bucket])
+            .map(|index| {
+                crown_variant(TreeShape::Cotton, index % TREE_VARIANTS, &style, &params())
+                    .shadow
+                    .vertex_count()
+            })
+            .sum();
+        assert_eq!(shown, expected, "ступень {bucket}");
     }
 }
 
@@ -938,19 +996,33 @@ fn mixed_carries_two_pools_and_a_concrete_shape_one() {
     }
 }
 
-/// Тени — один слитый слой на весь лес, полупрозрачный: цвет лежит в вершинах,
-/// материалу остаётся блендинг. Кроны в этот слой не попадают — они сущности.
+/// Тени — слитые слои по полосам плотности, полупрозрачные: цвет лежит в
+/// вершинах, материалу остаётся блендинг. У каждого слоя свой z в полосе теней
+/// (равный z отдал бы порядок сортировке — мигание). Кроны в эти слои не
+/// попадают.
 #[test]
-fn the_shadows_are_one_blended_layer() {
+fn the_shadows_are_blended_layers_on_their_own_z() {
     let _sun = crate::map::default_sun();
     let (built, report) = mesh_ten(TreeShape::Cotton, 9.0);
 
-    assert_eq!(built.shadows.len(), 1);
-    let layer = &built.shadows[0];
-    assert_eq!(layer.name, "tree_shadows");
-    assert_eq!(layer.z, Z_TREE_SHADOW);
-    assert_eq!(layer.material, MaterialSpec::Blend);
-    assert_eq!(layer.builder.vertex_count(), report.shadow_vertices);
+    assert_eq!(built.shadows.len(), TREE_LODS.len());
+    let mut zs = Vec::new();
+    for shadow in &built.shadows {
+        let layer = &shadow.layer;
+        assert_eq!(layer.name, "tree_shadows");
+        assert!(layer.z >= Z_TREE_SHADOW && layer.z < Z_TREE_SHADOW + 1.0);
+        assert_eq!(layer.material, MaterialSpec::Blend);
+        assert!(!shadow.shows.is_empty());
+        zs.push(layer.z);
+    }
+    zs.dedup();
+    assert_eq!(zs.len(), built.shadows.len(), "два слоя теней на одном z");
+    let vertices: usize = built
+        .shadows
+        .iter()
+        .map(|shadow| shadow.layer.builder.vertex_count())
+        .sum();
+    assert_eq!(vertices, report.shadow_vertices);
     assert!(report.shadow_vertices > 0);
 }
 
@@ -1033,6 +1105,10 @@ fn a_density_under_the_first_threshold_plants_nothing() {
 
     assert!(built.crowns.is_empty());
     assert_eq!(report.crowns, 0);
-    assert_eq!(built.shadows.len(), 1);
-    assert!(built.shadows[0].builder.is_empty());
+    assert!(
+        built
+            .shadows
+            .iter()
+            .all(|shadow| shadow.layer.builder.is_empty())
+    );
 }

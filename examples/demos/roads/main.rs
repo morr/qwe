@@ -644,11 +644,14 @@ fn build_next(
         .crowns
         .retain(|crown| crown.at.cmpge(window_min).all() && crown.at.cmple(window_max).all());
     trees.merged = clip(trees.merged);
-    trees.shadows = clip(trees.shadows);
+    for shadow in &mut trees.shadows {
+        shadow.layer.builder.clip_to_rect(window_min, window_max);
+    }
     spawn_tree_meshes(
         &mut commands,
         &mut meshes,
         &mut materials,
+        TreeZoomBucket::at(0),
         (trees, tree_report),
     );
 

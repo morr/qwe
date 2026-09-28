@@ -103,10 +103,22 @@ stand, how density works, and which resources restyle them.
   every crown is an entity plus its share of the merged shadow mesh. Because it is the same
   prefix, a crossing only drops the tail — standing crowns never move — and surveyed
   trees (threshold 0) stay on every step. `mesh_trees` takes the bucket itself (the rule of
-  **Zoom buckets** in `SKILL.md`); the crossing is one more condition of the tree chain's
-  `rebuilds_on`, and its price is one rebuild: Tula 16.4 k → 8.4 k crowns, 20 → 17 ms of
-  build, Kaluga 95 k → 64 k, ~100–160 ms — plus, into the near step, the respawn of the
-  crown entities (see the next bullet for what the far steps pay instead).
+  **Zoom buckets** in `SKILL.md`). The crossing is **not** a condition of the tree chain's
+  `rebuilds_on` any more — it runs `switch_tree_lod` (`switches_on`), which re-lays the
+  crowns for the new step (`mesh_tree_crowns`) and flips the shadows' visibility; the
+  set, the conifer field and the tree-row band are left alone.
+  - **Shadows by density band** (`step_counts`, `density_bands`, `TreeLodMask`,
+    `TreeLayer`): step `b` draws the prefix `counts[b]`, the counts do not grow from
+    near to far, so band `b` — trees `counts[b + 1]..counts[b]` — is drawn on steps
+    `0..=b`. `mesh_trees` builds one `tree_shadows` layer per band on every rebuild (all
+    steps at once, each on its own z, `TREE_SHADOW_Z_STEP` 1/1024 over `Z_TREE_SHADOW`),
+    spawned with its mask and a `Visibility` for the current step; `switch_tree_lod`
+    flips them with `set_if_neq`. Before, the whole shadow mesh was rebuilt and uploaded
+    on every crossing — Tula 1.3–4.6 M vertices (~183 MB), Kaluga 10–15 M (~600 MB) — for
+    a prefix that differs only in its tail. Splitting the mesh changes nothing on screen:
+    every tree shadow is one colour at one alpha, and alpha-blending one colour is
+    order-independent, so overlaps darken exactly as they did inside one mesh.
+    `tree_shadows_are_built_once_for_every_zoom_step` pins it.
 - **Crown detail by zoom** (`TreeLod::detail`, `CrownDetail`) — the near step draws
   `Full` crowns, an **entity per tree** over its variant's shared mesh; the two far steps
   draw `Merged` crowns: **no entity per tree at all**, the crowns baked into
@@ -236,7 +248,10 @@ stand, how density works, and which resources restyle them.
   tree's offset and radius. A blended `Mesh2d` lands in the sorted `Transparent2d`
   phase, and a thousand of them sharing one z alongside the pawn sprites lose a
   random one or two per frame — the tree shadow visibly blinks. One mesh, one phase
-  item, no blinking (and one draw call instead of hundreds).
+  item, no blinking (and one draw call instead of hundreds). It is now a handful of
+  merged meshes — one per density band (see **The zoom caps the prefix too**) — each on
+  its own z, which keeps the same guarantee: the trap is many items on **one** z, not
+  a few items on distinct ones.
 - **The canopy material — `CrownMaterial`** (`map/trees/canopy.rs`, shader
   `assets/shaders/crown.wgsl`, registered as a `Material2dPlugin` in `map/mod.rs`) —
   the crown is drawn by a `Material2d` of its own rather than by `ColorMaterial`, because

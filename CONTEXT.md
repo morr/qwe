@@ -1133,8 +1133,12 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   step** (`CrownDetail`): near, a full crown is an entity per tree over its variant's
   shared mesh; far (from 2 m/px), the crowns are light fills in the full crown's average
   colour, **merged into `tree_crowns` chunks** of `CROWN_CHUNK` (1 km) — no entity per
-  tree, each chunk on its own z, crowns inside a chunk drawn in `TreeSet` order. Detail in
-  the `osm-map` skill's `references/trees.md`.
+  tree, each chunk on its own z, crowns inside a chunk drawn in `TreeSet` order. **The
+  tree shadows are built once for every zoom step**: one `tree_shadows` layer per
+  **density band** (the trees between two steps' prefixes), each carrying a
+  `TreeLodMask` of the steps that draw it; a step crossing (`switch_tree_lod`) only flips
+  their `Visibility` and re-lays the crowns. Detail in the `osm-map` skill's
+  `references/trees.md`.
 - **Pitches** (`map/pitch.rs`) — sports and children's grounds (`leisure=pitch|track|
   playground|sports_centre|stadium`), `Z_PITCH` 2.005 with the markings at 2.006 —
   **over every road ribbon** and parking, under water: OSM runs yard footways across a

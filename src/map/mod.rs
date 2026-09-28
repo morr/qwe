@@ -279,7 +279,8 @@ impl Plugin for MapPlugin {
                     // состав набора и поле хвои — до крон: обе системы
                     // выходят сразу, если их вход не поехал, так что отдельных
                     // условий на них не надо. Ступень зума крон считается
-                    // перед связкой, и её смена — одно из условий связки
+                    // перед связкой, а её смена идёт своей системой следом:
+                    // связку она не трогает, тени только прячет
                     (
                         zoom::update_zoom_bucket::<trees::TreeLods>,
                         (
@@ -290,6 +291,7 @@ impl Plugin for MapPlugin {
                         )
                             .chain()
                             .run_if(trees::rebuilds_on()),
+                        trees::switch_tree_lod.run_if(trees::switches_on()),
                     )
                         .chain()
                         .run_if(in_state(AppState::Playing)),

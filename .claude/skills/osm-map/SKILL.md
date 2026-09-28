@@ -828,8 +828,10 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
       drawn tree. This is what the conversion actually bought: the density prefix
       (`TreeSet::visible_count`), the species resolve off the conifer field, the tint slot and the
       z micro-step were all inside a Bevy system and unreachable from a test.
-    - **`shadows`** — the one merged shadow mesh, an ordinary `LayerMesh` at
-      `Z_TREE_SHADOW`. Its colour moved **into the vertices** (`shadow_template` pushes
+    - **`shadows`** — the merged shadow meshes, one `TreeLayer` (a `LayerMesh` plus the
+      `TreeLodMask` of the zoom steps that draw it) per density band, built for every
+      step at once and only shown or hidden by a step crossing (`switch_tree_lod`;
+      `references/trees.md`). Its colour moved **into the vertices** (`shadow_template` pushes
       `SHADOW_COLOR`) so the layer can be a plain `MaterialSpec::Blend`, the way every
       other shadow on the map already was; before that the layer allocated a coloured
       `ColorMaterial` on every rebuild. `tree_gallery` lays its own grid and therefore
