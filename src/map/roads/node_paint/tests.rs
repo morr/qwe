@@ -344,6 +344,45 @@ fn a_tertiary_crossing_breaks_the_primary_too_but_a_residential_one_does_not() {
     assert!(gaps(&tee, 0).is_empty(), "{:?}", tee.lines().of(0).cut);
 }
 
+/// Плечо без зебры и стоп-линии — односторонняя уходит из узла — рвётся до
+/// кромки, где его сечение вышло из чужого асфальта, а не на полуширине
+/// соседа: на пологой крестовине (23°, Орёл, витрина 05) чужая полоса
+/// тянется вдоль плеча на десяток метров, и линии шли по полю перекрёстка.
+#[test]
+fn a_bare_arm_of_a_shallow_crossing_breaks_up_to_its_edge() {
+    let mut main = road(
+        vec![Vec2::ZERO, NODE, Vec2::new(200.0, 0.0)],
+        7.6,
+        Highway::Primary,
+        2,
+    );
+    main.oneway = true;
+    let slope = Vec2::from_angle(23f32.to_radians());
+    let mut across = road(
+        vec![NODE - slope * 80.0, NODE, NODE + slope * 80.0],
+        4.3,
+        Highway::Secondary,
+        1,
+    );
+    across.oneway = true;
+    let paint = paint_of(
+        vec![main, across],
+        Vec::new(),
+        NodePaintStyle {
+            crossings: CrossingMode::Off,
+            stop_lines: true,
+        },
+    );
+    // за узлом по ходу — ни зебры, ни стоп-линии: разрыв до кромки
+    let beyond = gaps(&paint, 0)
+        .iter()
+        .map(|found| found.at.x + found.reach - NODE.x)
+        .fold(f32::MIN, f32::max);
+    // бок сечения (полуширина без отступа) выходит из соседа за
+    // (2.15 + 3.5·cos 23°) / sin 23° ≈ 13.8 м
+    assert!(beyond > 13.0, "{beyond} {:?}", paint.lines().of(0).cut);
+}
+
 /// Ведущая узла теряет разрыв асфальта (колея сквозь), но в базе он
 /// остаётся: база не переписывается, по ней открываются разделительные.
 #[test]

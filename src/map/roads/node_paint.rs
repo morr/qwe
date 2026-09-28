@@ -1188,7 +1188,21 @@ impl NodePaint {
             .into_iter()
             .flatten()
             .max_by(|a, b| (a * dir).total_cmp(&(b * dir)));
-            let Some(outer) = outer else { continue };
+            // Плечо без краски — уходящая из узла односторонняя, плечо без
+            // зебры и стоп-линии — рвётся всё равно до кромки, а не на
+            // полуширине соседа: на пологой крестовине чужой асфальт тянется
+            // вдоль плеча на десяток метров, и линии полос шли по полю
+            // перекрёстка (Орёл, витрина 05: Московская под 23° к паре
+            // Пушкина — соседу в одну полосу хватало трёх метров)
+            let Some(outer) = outer else {
+                // кромка на самой досягаемости разрыва — разрыв уже есть
+                let node = walk.project(arm.at);
+                if (edge - node).abs() > reach_of(arm.road) + EDGE_STEP / 2.0 {
+                    self.breaks[arm.road].extend(walk.gap(node, edge));
+                    self.spills.extend(walk.spills(edge, edge));
+                }
+                continue;
+            };
             // плечо короче краски с хвостом — ничего: это перемычка внутри
             // сложного узла, а не подход к нему
             if walk.at(outer + dir * (PAINT_CLEAR + ARM_TAIL)).is_none() {

@@ -31,6 +31,7 @@ use i_overlay::mesh::style::{LineJoin, OutlineStyle};
 
 use super::network::pairs::{Median, PAIR_MIN, TRAM_BED_MAX_GAP};
 use super::{RoadJoin, push_ribbon};
+use crate::map::along::{arclengths, nearest_on_path, place_on_path};
 use crate::map::meshing::{Break, MeshBuilder};
 use crate::map::osm::model::polyline_length;
 use crate::map::shapes::{ARC, Shape, contour_area, oriented, point_in_shape, push_shape};
@@ -71,6 +72,50 @@ pub fn crossing_breaks(median: &Median, [first, second]: [&[Break]; 2]) -> Vec<B
         .chain(second.iter().filter(|gap| facing(gap, first)))
         .copied()
         .collect()
+}
+
+/// Кусок двойной сплошной между разрывом и торцом (или другим разрывом)
+/// короче этого, м, не рисуется — тот же порог, что у линий полос
+/// (`node_paint::MIN_RUN`).
+const MEDIAN_MIN_RUN: f32 = 6.0;
+
+/// Закрыть разрывом каждый кусок осевой `midline` короче [`MEDIAN_MIN_RUN`]
+/// между двумя разрывами `breaks` или между разрывом и торцом. Разрывы узла
+/// лежат на осях половин, а середина — в стороне от них: длинный разрыв
+/// плеча на пологой крестовине (Орёл, витрина 05) покрывал её не до конца, и
+/// посреди поля перекрёстка оставался обрывок двойной сплошной в метр-пять.
+/// Осевая, которой не касается ни один разрыв, остаётся как есть.
+pub fn bridge_short_pieces(midline: &[Vec2], breaks: &mut Vec<Break>) {
+    let (along, total) = arclengths(midline);
+    if total <= 0.0 {
+        return;
+    }
+    let mut spans: Vec<(f32, f32)> = breaks
+        .iter()
+        .filter_map(|gap| {
+            let (_, at) = nearest_on_path(midline, gap.at)?;
+            Some((at - gap.reach, at + gap.reach))
+        })
+        .filter(|&(low, high)| high > 0.0 && low < total)
+        .collect();
+    if spans.is_empty() {
+        return;
+    }
+    spans.extend([(0.0, 0.0), (total, total)]);
+    spans.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut reach = spans[0].1;
+    for span in &spans[1..] {
+        if span.0 > reach && span.0 - reach < MEDIAN_MIN_RUN {
+            let middle = (reach + span.0) / 2.0;
+            if let Some((at, _)) = place_on_path(midline, &along, middle) {
+                breaks.push(Break {
+                    at,
+                    reach: (span.0 - reach) / 2.0 + CUT_MARGIN,
+                });
+            }
+        }
+        reach = reach.max(span.1);
+    }
 }
 
 /// Дотянуть середину разделительной до разрыва перекрёстка впереди — не
@@ -492,5 +537,27 @@ mod tests {
             (area - (10.0 - CUT_MARGIN) * 4.0).abs() < 0.1,
             "асфальта {area} м²"
         );
+    }
+
+    /// Обрывок осевой между разрывом узла (он лежит на оси половины, в трёх
+    /// метрах сбоку) и торцом — тоже разрыв; длинный кусок по другую сторону
+    /// остаётся, осевая без разрывов — тоже.
+    #[test]
+    fn a_median_stub_past_a_break_is_bridged() {
+        let midline = [Vec2::ZERO, Vec2::new(20.0, 0.0)];
+        let mut breaks = vec![Break {
+            at: Vec2::new(14.0, 3.0),
+            reach: 5.0,
+        }];
+        bridge_short_pieces(&midline, &mut breaks);
+        assert_eq!(breaks.len(), 2, "{breaks:?}");
+        let stub = breaks[1];
+        assert!(
+            stub.at.x - stub.reach <= 19.0 && stub.at.x + stub.reach >= 20.0,
+            "{stub:?}"
+        );
+        let mut none = Vec::new();
+        bridge_short_pieces(&[Vec2::ZERO, Vec2::new(4.0, 0.0)], &mut none);
+        assert!(none.is_empty());
     }
 }

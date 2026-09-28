@@ -954,6 +954,10 @@ pub fn mesh_roads(
             if !kerbs.is_empty() {
                 medians::reach_nose(&mut midline, &kerbs);
             }
+            // огрызок двойной сплошной между разрывом узла и торцом — тоже
+            // разрыв, как штрих линий полос короче `MIN_RUN`
+            let mut painted = painted.clone();
+            medians::bridge_short_pieces(&midline, &mut painted);
             painter.paint_median(&midline, &painted);
         }
     }
