@@ -225,7 +225,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     the mall's big ring carries no tag; a **Ring** (`roads/rings.rs`) is such ways chained
     into a loop and drawn as one smooth ellipse through its nodes, one section for all
     arcs, a kerb round its island, approaches entering by a tangent arc (a two-way one,
-    mapped into its node along the ring, by an arc along the ray), and a **web**
+    mapped into its node along the ring, by an arc along the ray; the two **legs** of a
+    **Y-approach** — two short two-way ways from one node into two nodes of one ring,
+    `Rings::leg_flow` — as a one-lane entry and exit), and a **web**
     (`Rings::webs`) — asphalt filling the slit between the ring and a street running
     along it outside, where their kerbs have only just parted) and
     `lanes: Option<u8>` (the section's lane count, below); `parking_aisle`
@@ -1200,7 +1202,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   ring is **asphalt with diagonal hatching**, not a triangle of sidewalk or kerb. A
   property of the network at a ring, not of a lot: computed for every roundabout
   (`RoadLine::is_roundabout`), a wedge counting only if it touches **two arms**; the
-  **fan** of an entry and an exit meeting in one node within 55 m is taken whole, from the
+  **fan** of an entry and an exit (the legs of a Y-approach among them) meeting in one
+  node within 55 m is taken whole, from the
   ring to that node (`gores::fans`), less the ring's asphalt and its island (a ring
   chained from arcs too — `Ring::path`). The whole
   wedge is asphalt, the wedge without its thin tips is what gets hatched — by the road

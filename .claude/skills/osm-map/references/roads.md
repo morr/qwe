@@ -823,6 +823,21 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     both sides (Рязань 05, the author's report); the island rule reads the bent axis
     (**Splitters by rule** in `parking.md`). A radial arm is left as it is
     (`a_two_way_approach_along_the_ring_is_bent_into_it_across`).
+    **A Y-approach is not two two-way arms** (`rings::y_legs`, `Rings::leg_flow`): two
+    two-way ways, each at most `LEG_MAX` 55 m, that leave one node and end in two
+    **different** nodes of one ring are its **legs** — an entry and an exit mapped without
+    `oneway` (Рязань 05: every approach is such a «Y», legs of 15–25 m into nodes 20 m
+    apart). The entry is the leg whose ring node lies **downstream** along the ring's
+    travel (one who enters turns with the travel, so the legs never cross), and each leg
+    is bent as a one-way arm of its flow, by the tangent arc. Bent along the ray as
+    two-way arms, both swept the whole triangle between them with asphalt and a splitter
+    stood on each and hooked onto the ring. A leg is also **drawn one lane wide**
+    (`roads.rs::leg_sections`, a `Drawn` substitute like `ring_arcs`: `section_width` of
+    one lane, `lanes` 1) — two 7.6 m two-way ribbons covered the whole wedge and left the
+    island no room — and its wedge is the fan's (**The fan is taken whole** in
+    `parking.md`). A leg that is the first stretch of a longer way (Рязань 05, north: the
+    «Старая дорога» runs on past the fork) is not found; that approach keeps the two-way
+    bend (`the_legs_of_a_y_approach_enter_and_leave_along_the_ring`).
   - **Webs** (`Rings::webs`, `webs_along`): wherever a street — an arm, its continuation,
     or a slip road that bypasses the ring without entering it (Tula, gallery 04,
     south-east) — runs **along** the ring outside it (within `WEB_ALONG` cos 0.7 of the

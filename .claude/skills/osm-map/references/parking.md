@@ -345,6 +345,11 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
         and joined with them (`simplify_shape`, NonZero), so a wedge found both ways is
         one gore. Tula's other rings do not change: at 17 the arms run edge to edge
         into the node and the closing already had their fan; 04 east has no common node.
+        **The legs of a Y-approach count as an entry and an exit** (`Rings::leg_flow`,
+        **Roundabouts** in `roads.md`): `GoreRoad::new` makes such a two-way way one-way
+        and turns its path along its flow, so the fan between the two legs is found the
+        same way — Рязань 05, east and south-west
+        (`roads/tests.rs::a_y_approach_gets_one_island_between_its_legs`).
       - **The subtraction is one wedge's business.** The closing has already broken the
         city into separate shapes, and asphalt from the other end of town touches none of
         them, so the difference runs per closed shape against the clip contours whose
@@ -412,7 +417,9 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
         its four); most such approaches are straightened first by `rings::reshape`
         (**Roundabouts** in `roads.md`), and what still runs along the ring gets none —
         `roads/tests.rs::a_splitter_island_stays_off_the_ring_when_the_approach_comes_in_along_it`.
-        Tula has none (its big
+        **A leg of a Y-approach gets none** — its island is the fan between it and the
+        other leg (above); a splitter on each leg was what bent two hooks into every
+        approach of Рязань 05. Tula has none (its big
         rings are fed by one-way fans, its two-way approaches are service drives);
         `roads/tests.rs::a_two_way_approach_gets_a_splitter_island` holds it.
     - `Z_PARKING_LINES` lies **above** both layers, so a stall bar is never covered.
