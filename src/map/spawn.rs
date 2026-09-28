@@ -288,7 +288,11 @@ pub fn mesh_surfaces(
     // вода — не каймой по контуру, как зелень: отмель у неё — расстояние до
     // ближайшего берега по всем полигонам сразу (`water::mesh_water_areas`)
     let water_started = std::time::Instant::now();
-    let water = mesh_water_areas(&map.water, &channels.gaps);
+    let water = mesh_water_areas(
+        &map.water,
+        &channels.gaps,
+        Rect::from_corners(Vec2::ZERO, MAP_SIZE),
+    );
     let water_took = water_started.elapsed();
 
     // стоянка — асфальт своим слоем, того же тона, что проезжая часть; по

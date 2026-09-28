@@ -35,6 +35,12 @@ The layers that are neither roads, parking, buildings nor trees. Each bullet is 
     (`split_channels`, under **Waterways** below) — two polygons of one river that do
     *not* touch, because OSM cut the `riverbank` at a bridge, are joined by the channel
     between them, and their service edges across the river stop being banks the same way.
+    **The union is an intersection with the map** (`within`, inflated by
+    `WATER_CLIP_MARGIN` 50 m — wider than the shoal, so the shoal along the cut lies off
+    the map): Overpass hands a lake's multipolygon over whole, and Devils Lake is 35 346
+    vertices over 38 km, of which ~800 fall in the map. Every shoal band of it went to
+    earcut whole, and the load hung in `spawn_map` for minutes — while the loader screen
+    still read "Pruning unreachable areas", the last line it managed to draw. Clipped: 30 ms.
   - **Then nested inward offsets** (`OutlineOffset::outline`, negative offset, `Round`
     joins, `SHOAL_STEP` 0.5 m, twelve levels), each always taken from level 0 rather than
     from the previous one, so errors do not accumulate. The band between depth `d` and

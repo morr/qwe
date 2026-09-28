@@ -59,6 +59,12 @@ const SHOAL_STEP: f32 = 0.5;
 /// у `i_overlay`). На радиусе в шесть метров — хорда в полтора.
 const SHOAL_ARC: f32 = 0.25;
 
+/// Запас за краем карты, м, по которому площадная вода обрезается до отмели.
+/// Шире [`WATER_SHORE_WIDTH`], чтобы отмель на линии среза легла за картой.
+/// Без среза Devils Lake — 35 тыс. вершин на 38 км озера, из которых в карту
+/// попадает 800, — вешал загрузку: каждая полоса отмели шла в earcut целиком.
+const WATER_CLIP_MARGIN: f32 = 50.0;
+
 /// Кольца одной фигуры `i_overlay`: внешнее первым, дальше дырки.
 type Shape = Vec<Vec<[f32; 2]>>;
 
@@ -88,9 +94,14 @@ type Rings = (Vec<Vec2>, Vec<Vec<Vec2>>);
 /// Вместе с полигонами в союз идут `gaps` — полосы русел, которыми река
 /// продолжается там, где полигон оборван (`split_channels`): их служебные
 /// рёбра «поперёк реки» тоже перестают быть берегом.
-pub fn mesh_water_areas(areas: &[PolyArea], gaps: &[Vec<Vec2>]) -> MeshBuilder {
+///
+/// Вода обрезается по `within` (в игре — карта) с запасом
+/// [`WATER_CLIP_MARGIN`]: мультиполигон озера отдаётся Overpass'ом целиком,
+/// далеко за край карты.
+pub fn mesh_water_areas(areas: &[PolyArea], gaps: &[Vec<Vec2>], within: Rect) -> MeshBuilder {
     use i_overlay::core::fill_rule::FillRule;
-    use i_overlay::float::simplify::SimplifyShape;
+    use i_overlay::core::overlay_rule::OverlayRule;
+    use i_overlay::float::single::SingleFloatOverlay;
     use i_overlay::mesh::outline::offset::OutlineOffset;
     use i_overlay::mesh::style::{LineJoin, OutlineStyle};
 
@@ -108,7 +119,16 @@ pub fn mesh_water_areas(areas: &[PolyArea], gaps: &[Vec<Vec2>]) -> MeshBuilder {
     if contours.is_empty() {
         return builder;
     }
-    let water: Vec<Shape> = contours.simplify_shape(FillRule::NonZero);
+    let clip = within.inflate(WATER_CLIP_MARGIN);
+    let clip = vec![vec![
+        [clip.min.x, clip.min.y],
+        [clip.max.x, clip.min.y],
+        [clip.max.x, clip.max.y],
+        [clip.min.x, clip.max.y],
+    ]];
+    // пересечение с прямоугольником само сливает вход по NonZero — отдельный
+    // `simplify_shape` перед ним не нужен
+    let water: Vec<Shape> = contours.overlay(&clip, OverlayRule::Intersect, FillRule::NonZero);
 
     let shore = WATER_SHORE_COLOR.to_linear();
     let deep = WATER_COLOR.to_linear();
