@@ -31,8 +31,8 @@ use i_overlay::mesh::style::{LineCap, LineJoin, OutlineStyle};
 use super::{LANDUSE_OVERLAP, SIDEWALK_CELL};
 use crate::map::grid::Grid;
 use crate::map::osm::model::{
-    AreaKind, LotKind, MapData, PolyArea, RoadClass, distance_to_segment, point_in_area,
-    point_in_polygon, ring_area, ring_bounds, signed_ring_area,
+    AreaKind, LotKind, MapData, PolyArea, RoadClass, distance_to_area, distance_to_outline,
+    distance_to_segment, point_in_area, point_in_polygon, ring_area, ring_bounds, signed_ring_area,
 };
 use crate::map::shapes::{
     ARC, Contour, Shape, area_contours, contour_area, contour_bounds, point_in_shape, ring_of,
@@ -564,7 +564,7 @@ fn road_pieces(lot: &PolyArea, links: &[&RoadLink], gap: f32) -> Vec<RoadPiece> 
             let middle = from.midpoint(to);
             let near = middle.cmpge(low - reach).all()
                 && middle.cmple(high + reach).all()
-                && distance_to_lot(middle, lot) - link.reach <= gap;
+                && distance_to_area(middle, lot) - link.reach <= gap;
             if !near {
                 flush(&mut run, last);
                 continue;
@@ -617,26 +617,8 @@ fn sandwiched(piece: &RoadPiece, lot: &PolyArea, kept: &[Shape]) -> Vec<Vec<Vec2
     runs
 }
 
-/// Расстояние от точки до площадки: ноль внутри, иначе до ближайшего ребра.
-fn distance_to_lot(point: Vec2, lot: &PolyArea) -> f32 {
-    if point_in_area(point, lot) {
-        return 0.0;
-    }
-    distance_to_rings(point, lot)
-}
-
-fn distance_to_rings(point: Vec2, lot: &PolyArea) -> f32 {
-    std::iter::once(&lot.outer)
-        .chain(&lot.holes)
-        .flat_map(|ring| {
-            (0..ring.len()).map(move |index| (ring[index], ring[(index + 1) % ring.len()]))
-        })
-        .map(|(from, to)| distance_to_segment(point, from, to))
-        .fold(f32::INFINITY, f32::min)
-}
-
 fn touches_lot(point: Vec2, lot: &PolyArea) -> bool {
-    distance_to_rings(point, lot) <= TOUCH
+    distance_to_outline(point, lot) <= TOUCH
 }
 
 /// Идёт ли звено вдоль кармана: направление в пределах [`STREET_SIDE_ANGLE`]

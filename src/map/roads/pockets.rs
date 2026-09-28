@@ -22,9 +22,7 @@ use super::tapers::{self, Tapers};
 use crate::map::along::{arclengths, nearest_on_path, place_on_path};
 use crate::map::grid::Grid;
 use crate::map::meshing::{Break, miter_offsets};
-use crate::map::osm::model::{
-    Highway, KerbParking, distance_to_segment, point_in_area, polyline_length,
-};
+use crate::map::osm::model::{Highway, KerbParking, distance_to_area, polyline_length};
 use crate::map::osm::{PolyArea, RoadLine, RoadNode, RoadNodeKind, TrafficSide};
 use crate::map::seed::{Lcg, seed_from_point};
 
@@ -80,16 +78,10 @@ impl<'a> KerbLots<'a> {
 
     /// Стоянка внутри или ближе [`LOT_REACH`] к точке.
     fn near(&self, point: Vec2) -> bool {
-        self.grid.at(point).iter().any(|&index| {
-            let area = &self.areas[index];
-            point_in_area(point, area)
-                || std::iter::once(&area.outer).chain(&area.holes).any(|ring| {
-                    (0..ring.len()).any(|i| {
-                        let next = ring[(i + 1) % ring.len()];
-                        distance_to_segment(point, ring[i], next) <= LOT_REACH
-                    })
-                })
-        })
+        self.grid
+            .at(point)
+            .iter()
+            .any(|&index| distance_to_area(point, &self.areas[index]) <= LOT_REACH)
     }
 
     /// Куски осевой `path`, у которых за наружным краем кармана — на `edge`

@@ -1321,6 +1321,28 @@ pub fn point_in_area(point: Vec2, area: &PolyArea) -> bool {
         && !area.holes.iter().any(|hole| point_in_polygon(point, hole))
 }
 
+/// Расстояние от точки до ближайшего ребра полигона — внешнего кольца или
+/// кольца дырки (кольца замкнуты неявно), изнутри тоже.
+pub fn distance_to_outline(point: Vec2, area: &PolyArea) -> f32 {
+    std::iter::once(&area.outer)
+        .chain(&area.holes)
+        .flat_map(|ring| {
+            (0..ring.len()).map(move |index| (ring[index], ring[(index + 1) % ring.len()]))
+        })
+        .map(|(from, to)| distance_to_segment(point, from, to))
+        .fold(f32::INFINITY, f32::min)
+}
+
+/// Расстояние от точки до площади: ноль внутри, иначе до ближайшего ребра.
+/// «Стоянка в стольких-то метрах» — это оно (`parse/lots.rs`,
+/// `roads/pockets.rs`).
+pub fn distance_to_area(point: Vec2, area: &PolyArea) -> f32 {
+    if point_in_area(point, area) {
+        return 0.0;
+    }
+    distance_to_outline(point, area)
+}
+
 /// Ближайшая точка отрезка. Проекция, зажатая концами: за пределами отрезка
 /// ближайшая точка — его конец, а не точка на прямой.
 pub fn closest_on_segment(point: Vec2, from: Vec2, to: Vec2) -> Vec2 {
