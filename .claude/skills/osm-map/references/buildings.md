@@ -622,7 +622,7 @@ arches.
     would otherwise be a tower.
   - **The slot inside a group is the building's own seed** — the same
     `material::building_seed` that picks the roofing material, so heights survive a mode
-    switch, a zoom rebuild and a restart, and two identical footprints in different places
+    switch, a sun rebuild and a restart, and two identical footprints in different places
     still come out different. **A tag always wins**; the inference runs only where
     `PolyArea::height` is `None`.
   - **`height_mix`** puts the result in the `building meshing:` log line
@@ -1383,7 +1383,7 @@ arches.
     whole of `map/*` (crowns, this clutter, the parked cars), the crown generator's
     original lifted out of `map/trees` — seeded from the roof material's building seed
     (`seed::seed_from_point`, the same door), so the
-    equipment survives a mode switch, a zoom-bucket rebuild and a restart in the same
+    equipment survives a mode switch, a sun rebuild and a restart in the same
     place. Positions are rolled in the building's own frame (long axis × its
     perpendicular, extent projected from the outline — no second `min_area_rect`),
     inset by `EDGE_MARGIN` 1.6 m or 18 % of the short side, whichever is smaller. Every

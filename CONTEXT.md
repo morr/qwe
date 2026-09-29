@@ -1941,7 +1941,10 @@ Summary; the mechanism and the measurements — **navigation-deep skill** (polym
 - **PathfindingRequest → dispatcher → PathfindingTask** (`movement/`) — requests become
   async tasks with **visibility gating** (peaceful wanderers off-screen or at zoom ≥
   `WANDER_DISPATCH_MAX_ZOOM` wait; **`UrgentPath` always dispatches**) and **priority**
-  (urgent first, nearest-to-camera, cap `MAX_PATHFINDING_IN_FLIGHT` 1024).
+  (urgent first, nearest-to-camera, cap `MAX_PATHFINDING_IN_FLIGHT` 1024). **The live
+  dispatcher stands while the player pauses** (`live_dispatch_runs`) — urgent requests
+  included; they pile up and leave on the first unpaused frame. The warmup pause is the
+  exception: the warmup waits for exactly these answers.
 - **UrgentPath** (`movement/components.rs`) — "this pawn may not wait for the camera". The
   species own it: a demon and the test walker carry it always, a human only while panicking;
   `strip_movement` takes it off a corpse. **Movement asks `Has<UrgentPath>` and names no
