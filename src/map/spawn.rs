@@ -164,10 +164,12 @@ pub fn spawn_map(
     // причиной пересобирать, а её пока нет.
     spawn_layers(&mut commands, &mut meshes, &materials, surfaces, ());
 
-    let (road_layers, road_report, ruts) =
+    let (road_layers, road_report, ruts, tram) =
         roads::mesh_roads_with_ruts(&map, *road_style, road_shape.0);
-    // линии колеи — ресурсом, для оверлея колеи вкладки Debug
+    // линии колеи — ресурсом, для оверлея колеи вкладки Debug; пути трамвая
+    // по нарисованной улице — слою трамвая (`tram::rebuild_tram`, следом)
     commands.insert_resource(ruts);
+    commands.insert_resource(tram);
     roads::spawn_road_meshes(
         &mut commands,
         &mut meshes,

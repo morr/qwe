@@ -1865,6 +1865,65 @@ fn a_tram_between_halves_widens_both_halves_to_the_middle() {
     );
 }
 
+/// R24, Советская в Туле: пути OSM лежат на два метра южнее середины между
+/// половинами и в 2.8 м друг от друга. Нарисованы они — и светлая полоса над
+/// ними — симметрично от двойной сплошной, в [`tram_lay::TRACK_SPACING`]
+/// друг от друга; за концом проспекта путь возвращается туда, где его провёл
+/// картограф.
+#[test]
+fn tram_tracks_in_a_bed_lie_symmetric_about_the_drawn_middle() {
+    let (mut map, apart) = divided_avenue(5.0);
+    let middle = 100.0 + apart / 2.0;
+    for track in [middle - 3.4, middle - 0.6] {
+        map.rails.push(RailLine {
+            kind: RailKind::Tram,
+            ..fixture::rail(vec![Vec2::new(0.0, track), Vec2::new(520.0, track)], 1.2)
+        });
+    }
+    let (layers, report, _, tracks) =
+        mesh_roads_with_ruts(&map, RoadStyle::default(), RoadShape::default());
+    assert_eq!(report.drawn.medians, [1, 0, 1]);
+    assert_eq!(tracks.0.len(), 2);
+    let half = tram_lay::TRACK_SPACING / 2.0;
+    // путь с запада на восток: высота у `x` — по звену, которое его проходит
+    let y_at = |points: &[Vec2], x: f32| {
+        points.windows(2).find_map(|pair| {
+            (pair[0].x <= x && pair[1].x >= x && pair[1].x > pair[0].x).then(|| {
+                pair[0]
+                    .lerp(pair[1], (x - pair[0].x) / (pair[1].x - pair[0].x))
+                    .y
+            })
+        })
+    };
+    for (track, expected) in tracks.0.iter().zip([middle - half, middle + half]) {
+        for x in [200.0, 250.0, 300.0, 350.0, 400.0] {
+            let y = y_at(&track.points, x).expect("путь проходит полотно");
+            assert!(
+                (y - expected).abs() < 0.05,
+                "путь у x = {x} на {y}, а не на {expected}: {:?}",
+                track.points
+            );
+        }
+        // на своём полотне за концом проспекта — где был
+        let start = track.points[0];
+        assert!(
+            (start.y - expected).abs() > 0.5,
+            "путь за проспектом сдвинут: {start}"
+        );
+    }
+    // светлая полоса над рельсами — симметрично от середины
+    let band = vertices_of(&layers, "roads", TRAM_BAND_COLOR);
+    assert!(!band.is_empty(), "полоса над рельсами есть");
+    let (low, high) = band.iter().fold((f32::MAX, f32::MIN), |(low, high), at| {
+        (low.min(at[1]), high.max(at[1]))
+    });
+    let reach = half + tram_band::TRAM_BAND_WIDTH / 2.0;
+    assert!(
+        (low - (middle - reach)).abs() < 0.1 && (high - (middle + reach)).abs() < 0.1,
+        "полоса {low}..{high}, середина {middle}"
+    );
+}
+
 /// Трамвай уходит с проспекта на полпути: полотно кончается, дальше газон.
 /// Торец полотна — ровный, а между ним и носом газона — асфальт, не
 /// тротуар и не земля (Советская у Коминтерна).

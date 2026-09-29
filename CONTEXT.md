@@ -438,7 +438,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     solid between the tracks; the outer kerb does not move. A **tram band** is the
     lighter asphalt along a tram track wherever it lies under a street's asphalt
     (`roads/tram_band.rs`) — how the tram lane reads, on a bed and on a single street
-    alike. A half has **no sidewalk on its
+    alike. Both lie along the **laid tracks** (`roads/tram_lay.rs`, `TramTracks`), not
+    the OSM ones: on a bed a track stands `TRACK_SPACING`/2 off the drawn middle, on
+    its side of the other track; along a single street it moves with the street's drawn
+    axis; off the asphalt it is where OSM put it, the shift fading over 20 m. A half has **no sidewalk on its
     paired side**. The median opens only at a break of **both** halves facing each
     other (a crossing street, a U-turn, a zebra); a street into one half does not open
     it. Drawing only: `RoadLine::points` do not move. What a half differs by is asked of
@@ -466,7 +469,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     ballast and ties inside the road and its sidewalks with a light deck the rails run
     over (`rail::mesh_level_crossings`, laid by the road layer along the street **as
     drawn**, never along the OSM centerline). Tram is `map/tram.rs`, with its
-    own LOD, and is drawn only while `TramStyle::visible`.
+    own LOD, and is drawn only while `TramStyle::visible` — along the laid tracks the
+    road build hands it (`TramTracks`), never `MapData::rails` as they are.
   - **WallLine** — `barrier=city_wall` (the kremlin), 3 m, impassable. **Drawn only where
     no fortress building stands on it** (`roads.rs::Fortresses`): Tula maps its wall as a
     `building=wall` and its towers as buildings too, and the ribbon over them read as a

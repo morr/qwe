@@ -12,7 +12,8 @@ use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin};
-use crate::map::osm::{MapData, RailKind, RailLine};
+use crate::map::osm::{RailKind, RailLine};
+use crate::map::roads::tram_lay::TramTracks;
 use crate::map::smooth::{Smoothing, smooth_path};
 use crate::map::surface::{self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
@@ -262,25 +263,31 @@ pub fn measure_tram(rails: &[RailLine]) -> Vec<(usize, Vec<LayerCost>)> {
 ///
 /// **Условие одно, регистрация одна** (см. `roads::rebuilds_on`).
 pub fn rebuilds_on() -> impl SystemCondition<()> {
-    retuned::<TramZoomBucket>.or_else(retuned::<TramStyle>)
+    retuned::<TramZoomBucket>
+        .or_else(retuned::<TramStyle>)
+        .or_else(resource_changed::<TramTracks>)
 }
 
 /// Пересборка трамвайного меша при смене ступени зума или переключении
 /// [`TramStyle`] — дорожные и рельсовые слои не трогаются. Выключенный трамвай
 /// проходит через ту же пересборку: деспавн старого слоя и никакого нового.
+///
+/// Пути берутся не из карты, а уложенными по нарисованной улице
+/// ([`TramTracks`], пишет сборка дорог): пересобрали дороги с другой формой —
+/// пересобрался и трамвай.
 pub fn rebuild_tram(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     materials: LayerMaterials,
     bucket: Res<TramZoomBucket>,
     style: Res<TramStyle>,
-    map: Res<MapData>,
+    tracks: Res<TramTracks>,
     existing: Query<Entity, With<TramLayerTag>>,
 ) {
     for entity in &existing {
         commands.entity(entity).despawn();
     }
-    let (layers, report) = mesh_tram(*bucket, &style, &map.rails);
+    let (layers, report) = mesh_tram(*bucket, &style, &tracks.0);
     spawn_layers(&mut commands, &mut meshes, &materials, layers, TramLayerTag);
     info!("{report}");
 }

@@ -68,7 +68,8 @@
 //! линиями колёс и траектории узлов;
 //! `ROADS_RAW=parse|draw` — сырой OSM (строка `Raw OSM`, `RawOsm`): без
 //! доводочных проходов разбора, а с `draw` — и без достроек отрисовки;
-//! `ROADS_CARS=1` кладёт в примеры и слой припаркованных машин.
+//! `ROADS_CARS=1` кладёт в примеры и слой припаркованных машин;
+//! `ROADS_TRAM=1` — и слой трамвая (в игре он выключен по умолчанию).
 
 mod overlay;
 mod panel;
@@ -104,8 +105,9 @@ use qwe::map::trees::{
 use qwe::map::{
     BuildingHeightMode, FenceZoomBucket, GROUND_COLOR, MeshBuilder, PaintMaterial, ParkingLayout,
     RailZoomBucket, RoadPaintStyle, RoadShape, RoadShapeOnMap, RoadStyle, RoofStyle, SunOnMap,
-    SurfaceStyle, apply_sun, mesh_fences, mesh_map_cars, mesh_rails, mesh_roads_with_ruts,
-    mesh_surfaces, mesh_tree_row_band, set_lane_width, settle_road_shape, spawn_road_meshes,
+    SurfaceStyle, TramStyle, TramZoomBucket, apply_sun, mesh_fences, mesh_map_cars, mesh_rails,
+    mesh_roads_with_ruts, mesh_surfaces, mesh_tram, mesh_tree_row_band, set_lane_width,
+    settle_road_shape, spawn_road_meshes,
 };
 use qwe::ui::knob::AddKnobsExt;
 use qwe::ui::{PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET, sync_city_label};
@@ -117,6 +119,8 @@ use crate::shot::{ShotRequest, auto_shot, request_shot};
 
 /// Переменная окружения, по которой витрина кладёт и слой машин.
 const CARS_ENV: &str = "ROADS_CARS";
+/// Переменная окружения, по которой витрина кладёт и слой трамвая.
+const TRAM_ENV: &str = "ROADS_TRAM";
 
 const WINDOW_WIDTH: f32 = 1500.0;
 const WINDOW_HEIGHT: f32 = 950.0;
@@ -589,7 +593,8 @@ fn build_next(
         SampleLayer,
     );
 
-    let (road_layers, road_report, ruts) = mesh_roads_with_ruts(&map, *road_style, road_shape.0);
+    let (road_layers, road_report, ruts, tram_tracks) =
+        mesh_roads_with_ruts(&map, *road_style, road_shape.0);
     let road_layers = clip(road_layers);
     let road_line = road_report.to_string();
     spawn_road_meshes(
@@ -657,6 +662,24 @@ fn build_next(
         &materials.layers,
         (buildings, building_report),
     );
+
+    // трамвай — по заказу, как в игре (там он выключен по умолчанию): синяя
+    // линия поверх полотна нужна, когда проверяется сам путь. Пути — те, что
+    // сборка дорог уложила по нарисованной улице, как у `tram::rebuild_tram`
+    if std::env::var_os(TRAM_ENV).is_some() {
+        let (tram, _) = mesh_tram(
+            TramZoomBucket::at(0),
+            &TramStyle { visible: true },
+            &tram_tracks.0,
+        );
+        spawn_layers(
+            &mut commands,
+            &mut meshes,
+            &materials.layers,
+            clip(tram),
+            SampleLayer,
+        );
+    }
 
     let (fences, _) = mesh_fences(FenceZoomBucket::at(0), &map.fences, &map.roads);
     let (rails, _) = mesh_rails(RailZoomBucket::at(0), &map.rails);

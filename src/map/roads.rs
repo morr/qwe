@@ -60,6 +60,7 @@ use self::network::pairs::BandPiece;
 pub use self::node_paint::CrossingMode;
 use self::ruts::{LaneRuts, RutLines};
 use self::shape::{RoadShape, RoadShapeOnMap};
+use self::tram_lay::TramTracks;
 use crate::map::SunOnMap;
 use crate::map::footprint::JOIN_EPSILON;
 use crate::map::meshing::{
@@ -745,7 +746,7 @@ pub fn mesh_roads(
     style: RoadStyle,
     shape: RoadShape,
 ) -> (Vec<LayerMesh>, RoadReport) {
-    let (layers, report, _) = mesh_roads_with_ruts(map, style, shape);
+    let (layers, report, ..) = mesh_roads_with_ruts(map, style, shape);
     (layers, report)
 }
 
@@ -755,15 +756,25 @@ pub fn mesh_roads(
 /// оверлей колеи (Debug → Overlays → `Rut lines`) показывает ровно то, что
 /// нарисовано. Игра берёт эту дверь (`rebuild_roads`, `spawn_map`) и кладёт
 /// линии ресурсом; тестам и витрине хватает [`mesh_roads`].
+///
+/// Тем же проходом — и **трамвайные пути по нарисованной улице**
+/// ([`TramTracks`], `roads/tram_lay.rs`): по ним лежит светлая полоса над
+/// рельсами здесь же, а ресурсом их читает слой трамвая (`map/tram.rs`).
 pub fn mesh_roads_with_ruts(
     map: &MapData,
     style: RoadStyle,
     shape: RoadShape,
-) -> (Vec<LayerMesh>, RoadReport, RutLines) {
-    // сырой OSM, второй уровень: ни одной достройки отрисовки — и колеи нет
+) -> (Vec<LayerMesh>, RoadReport, RutLines, TramTracks) {
+    // сырой OSM, второй уровень: ни одной достройки отрисовки — и колеи нет,
+    // и пути трамвая лежат, где их провёл картограф
     if map.knobs.raw.draws_raw() {
         let (layers, report) = mesh_raw_roads(map, style);
-        return (layers, report, RutLines::default());
+        return (
+            layers,
+            report,
+            RutLines::default(),
+            TramTracks::as_mapped(&map.rails),
+        );
     }
     let started = std::time::Instant::now();
     let (roads, walls): (&[RoadLine], &[WallLine]) = (&map.roads, &map.walls);
@@ -1401,7 +1412,10 @@ pub fn mesh_roads_with_ruts(
     // светлая полоса над рельсами (`roads/tram_band.rs`) — поверх всего
     // асфальта улиц: порядок пуша в слое — порядок отрисовки, а краска лежит
     // своим слоем выше
-    let tram_bands = tram_band::tram_bands(&map.rails, &drawn, &nodal, &median_drawing.paved);
+    // по путям, уложенным по нарисованной улице (`roads/tram_lay.rs`), а не
+    // по OSM: полоса обязана лежать под тем же рельсом, что рисует трамвай
+    let tram_tracks = tram_lay::lay_tracks(&map.rails, &drawn, &nodal, &median_drawing.paved);
+    let tram_bands = tram_band::tram_bands(&tram_tracks.0, &drawn, &nodal, &median_drawing.paved);
     streets.set_lanes(None);
     // одной фигурой, со щелями между полосами соседних путей заросшими
     for shape in tram_band::band_cover(&tram_bands) {
@@ -1587,7 +1601,7 @@ pub fn mesh_roads_with_ruts(
         network: network_time,
         elapsed: started.elapsed(),
     };
-    (layers, report, ruts)
+    (layers, report, ruts, tram_tracks)
 }
 
 /// Дорожные слои **сырого OSM** (`RawOsm::Draw`): каждый way — простая лента
@@ -1736,9 +1750,11 @@ pub fn rebuild_roads(
     for entity in &existing {
         commands.entity(entity).despawn();
     }
-    let (layers, report, ruts) = mesh_roads_with_ruts(&map, *style, shape.0);
-    // линии колеи — ресурсом: по нему строится оверлей колеи
+    let (layers, report, ruts, tram) = mesh_roads_with_ruts(&map, *style, shape.0);
+    // линии колеи — ресурсом: по нему строится оверлей колеи; пути трамвая —
+    // по ним пересобирается слой трамвая
     commands.insert_resource(ruts);
+    commands.insert_resource(tram);
     spawn_road_meshes(&mut commands, &mut meshes, &materials, (layers, report));
 }
 
@@ -2272,6 +2288,9 @@ pub mod shape;
 /// на клине, где бордюр ближе к оси, чем полуширина участка.
 pub(super) mod tapers;
 mod tram_band;
+/// Открыт для слоя трамвая (`map/tram.rs`): ресурс путей по нарисованной
+/// улице.
+pub mod tram_lay;
 mod turns;
 
 #[cfg(test)]

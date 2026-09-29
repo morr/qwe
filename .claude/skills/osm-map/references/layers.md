@@ -348,6 +348,12 @@ The layers that are neither roads, parking, buildings nor trees. Each bullet is 
   fixed `TRAM_SMOOTH_WIDTH` (1.2 m) clamp rather than the bucket's line width, so the
   path itself is identical across buckets and LOD switches don't wiggle the track.
   `RailLine::width` from parse is ignored for trams.
+  **The tracks are the laid ones, not `MapData::rails`** (R24): `rebuild_tram` reads the
+  `TramTracks` resource the road build writes — on a tram bed symmetric about the drawn
+  middle, along a single street moved with its drawn axis (`roads.md`, **Laid tracks**) —
+  and rebuilds on `resource_changed::<TramTracks>` as well as on the bucket and the toggle.
+  `mesh_tram` itself still takes `&[RailLine]` (the bench measures the OSM ones), and the
+  roads gallery draws the layer on `ROADS_TRAM=1`.
 
 ## Industry, standing stock, fences
 

@@ -649,6 +649,28 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     is the same picture — outer kerb, sidewalk, cars and lane frame all untouched by
     construction — with the model and the drawn axis left alone. `RoadReport::drawn.medians`
     is `[paved, lawn, tram beds]` (`Pairs::count`).
+  - **Laid tracks** (`roads/tram_lay.rs`, R24) — the tram tracks **as drawn**: OSM puts
+    them where the mapper did, while the street is drawn smoothed and a pair is pulled
+    apart from its middle, so the OSM track wandered off its street (Советская, Tula 6037
+    2926: both tracks on the northern half, the offset changing at every OSM node). Each
+    `RailKind::Tram` track is probed every 2 m (`densify`); a probe **on a tram bed**
+    (`Median::carries_tram`, the reached-to-breaks `MedianDrawing::paved`, within the bed's
+    half width + `BED_SLACK` = one `TRACK_SPACING` — the Советская bed is 3.8 m and its
+    southern OSM track lies 3.1 m off the middle) moves to the median's middle, the very
+    line the double solid is painted on, ± `TRACK_SPACING` 3.2 m / 2 on its own side of the
+    other track (the nearest one across, more than `PARTNER_MIN` 0.5 m away; alone — on
+    the middle). A probe **along a single street** (drawn nodal axis link along it,
+    `ALONG_MIN` 0.8, inside half width + 0.6 m) moves by what the drawn axis moved there
+    (foot on the drawn link − nearest point of the OSM axis), so the mapper's offset from
+    the axis stays. Off the asphalt the shift fades over `TRANSITION` 20 m; a gap under
+    `BRIDGE_MAX` 40 m between two shifted pieces (a junction where the bed breaks) is
+    crossed with the shift blended from one edge to the other; the result is thinned at
+    5 cm. `mesh_roads_with_ruts` returns them as `TramTracks` (one per tram track, map
+    order; `as_mapped` in the raw-OSM mode) — the tram band is laid over **them**, and
+    `rebuild_roads` / `spawn_map` insert them as a resource the tram layer draws
+    (`tram::rebuild_tram`, gated on `resource_changed::<TramTracks>` too, so a shape knob
+    moves the tram with the road; on world entry that means one extra tram build).
+    Pinned by `roads/tests.rs::tram_tracks_in_a_bed_lie_symmetric_about_the_drawn_middle`.
   - **Tram band** (`roads/tram_band.rs`) — a lighter strip of asphalt (`TRAM_BAND_COLOR`,
     `ROAD_COLOR` lighter by about 8 %) `TRAM_BAND_WIDTH` 3.3 m wide along every tram
     track that lies **under a street's asphalt**: on a bed and on a single street with
