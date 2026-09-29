@@ -451,9 +451,9 @@ impl std::fmt::Display for TreeReport {
         } = self;
         write!(
             f,
-            "tree shadows: {shadow_vertices} vertices, trees per zoom step {steps:?} \
-             ({shape:?}, density {density}), {crowns} crowns as entities, \
-             crowns merged: {merged_vertices} vertices in {chunks} chunks in {elapsed:.1?}"
+            "trees: {steps:?} per zoom step ({shape:?}, density {density}), \
+             {crowns} crowns as entities, {merged_vertices} merged crown vertices in \
+             {chunks} chunks, {shadow_vertices} shadow vertices, built in {elapsed:.1?}"
         )
     }
 }
@@ -691,25 +691,17 @@ pub fn mesh_trees(
                 // слитые куски по ключу клетки [`CROWN_CHUNK`]; кроны ложатся в
                 // кусок в порядке набора, и порядок треугольников в меше — это
                 // порядок рисования: крона с бо́льшим номером лежит поверх
-                let mut chunks: HashMap<IVec2, MeshBuilder> = HashMap::new();
-                for index in range.clone() {
-                    let (at, radius) = trees[index];
-                    let tint = TreeStyle::tint_slot(index);
-                    chunks
-                        .entry(chunk_of(at))
-                        .or_insert_with(MeshBuilder::with_crown_coords)
-                        .push_crown(
-                            &pools.variant(pools.pick(index)).far,
-                            at,
-                            radius,
-                            tint_factors[tint],
-                        );
-                }
-                merged_chunks.extend(
-                    sorted_chunks(chunks)
-                        .into_iter()
-                        .map(|builder| (*shows, builder)),
+                let chunks = sorted_chunks(
+                    range.clone(),
+                    trees,
+                    MeshBuilder::with_crown_coords,
+                    |chunk, index, at, radius| {
+                        let far = &pools.variant(pools.pick(index)).far;
+                        let tint = tint_factors[TreeStyle::tint_slot(index)];
+                        chunk.push_crown(far, at, radius, tint);
+                    },
                 );
+                merged_chunks.extend(chunks.into_iter().map(|builder| (*shows, builder)));
             }
         }
     }
@@ -785,22 +777,21 @@ fn shadow_layers(
             // Тень дерева лежит в куске его ствола, так что на границе кусков
             // ничего не дублируется, а перекрытие теней соседних кусков темнит
             // ровно как внутри одного меша — цвет у всех теней один
-            let mut chunks: HashMap<IVec2, MeshBuilder> = HashMap::new();
-            for index in range {
-                let (at, radius) = trees[index];
-                let variant = pools.variant(pools.pick(index));
-                let template = match detail {
-                    CrownDetail::Full => &variant.shadow,
-                    CrownDetail::Merged => &variant.far_shadow,
-                };
-                chunks
-                    .entry(chunk_of(at))
-                    .or_default()
-                    .push_template(template, at, radius);
-            }
-            sorted_chunks(chunks)
-                .into_iter()
-                .map(move |builder| (shows, builder))
+            sorted_chunks(
+                range,
+                trees,
+                MeshBuilder::default,
+                |chunk, index, at, radius| {
+                    let variant = pools.variant(pools.pick(index));
+                    let template = match detail {
+                        CrownDetail::Full => &variant.shadow,
+                        CrownDetail::Merged => &variant.far_shadow,
+                    };
+                    chunk.push_template(template, at, radius);
+                },
+            )
+            .into_iter()
+            .map(move |builder| (shows, builder))
         })
         .enumerate()
         .map(|(ordinal, (shows, builder))| TreeLayer {
@@ -820,9 +811,24 @@ fn chunk_of(at: Vec2) -> IVec2 {
     (at / CROWN_CHUNK).floor().as_ivec2()
 }
 
-/// Куски в порядке их места на карте (снизу вверх, слева направо), а не в
-/// порядке обхода словаря: так z кусков не зависит ни от хэшера, ни от набора.
-fn sorted_chunks(mut chunks: HashMap<IVec2, MeshBuilder>) -> Vec<MeshBuilder> {
+/// Деревья `range` по кускам карты [`CROWN_CHUNK`] их стволов — одна раскладка
+/// на слитые кроны и на тени: `push` кладёт дерево (номер, ствол, радиус) в
+/// сборщик его куска, свежий кусок берётся из `new`. Внутри куска деревья идут
+/// в порядке набора, а сами куски — в порядке их места на карте (снизу вверх,
+/// слева направо), а не обхода словаря: так z кусков не зависит ни от хэшера,
+/// ни от набора.
+fn sorted_chunks(
+    range: std::ops::Range<usize>,
+    trees: &[(Vec2, f32)],
+    new: fn() -> MeshBuilder,
+    mut push: impl FnMut(&mut MeshBuilder, usize, Vec2, f32),
+) -> Vec<MeshBuilder> {
+    let mut chunks: HashMap<IVec2, MeshBuilder> = HashMap::new();
+    for index in range {
+        let (at, radius) = trees[index];
+        let chunk = chunks.entry(chunk_of(at)).or_insert_with(new);
+        push(chunk, index, at, radius);
+    }
     let mut keys: Vec<IVec2> = chunks.keys().copied().collect();
     keys.sort_by_key(|key| (key.y, key.x));
     keys.into_iter()
@@ -1175,14 +1181,17 @@ pub fn switches_on() -> impl SystemCondition<()> {
 
 /// Пересборка деревьев после правки стиля из UI: деспавн старых сущностей и
 /// повторный спавн из тех же позиций (`MapData::trees` не трогается).
+#[allow(clippy::too_many_arguments)]
 pub fn rebuild_trees(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: TreeMaterials,
-    // парой — иначе подпись переваливает за предел clippy в семь аргументов
-    (style, bucket): (Res<TreeStyle>, Res<TreeZoomBucket>),
-    (map, mut field): (Res<MapData>, ResMut<ConiferField>),
-    (mut stream, mut shown): (ResMut<CrownStream>, ResMut<TreeLodShown>),
+    style: Res<TreeStyle>,
+    bucket: Res<TreeZoomBucket>,
+    map: Res<MapData>,
+    mut field: ResMut<ConiferField>,
+    mut stream: ResMut<CrownStream>,
+    mut shown: ResMut<TreeLodShown>,
     existing: Query<Entity, With<TreeTag>>,
 ) {
     // порог поля пересчитывается только если поехала сама доля — правка цвета
