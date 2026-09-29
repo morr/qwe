@@ -712,6 +712,21 @@ impl MeshBuilder {
         &self.positions
     }
 
+    /// Кроет ли точку хоть один треугольник — тестам, которым важно, что
+    /// место закрыто слоем, а не какими вершинами.
+    #[cfg(test)]
+    pub fn covers_for_test(&self, point: Vec2) -> bool {
+        self.indices.chunks_exact(3).any(|triangle| {
+            let [a, b, c] = [0, 1, 2].map(|at| {
+                let [x, y, _] = self.positions[triangle[at] as usize];
+                Vec2::new(x, y)
+            });
+            let sides =
+                [(a, b), (b, c), (c, a)].map(|(from, to)| (to - from).perp_dot(point - from));
+            sides.iter().all(|&side| side >= 0.0) || sides.iter().all(|&side| side <= 0.0)
+        })
+    }
+
     /// Накопленные цвета — тестам мягких краёв: «кайма гаснет» проверяется
     /// альфой на вершине, а по одним позициям её не отличить от ленты, которая
     /// просто шире.

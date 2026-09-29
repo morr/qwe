@@ -633,6 +633,8 @@ pub struct RoadReport {
     pub outer_corners: [usize; 2],
     /// Носы острых развилок (`roads/corners.rs`), всех слоёв.
     pub noses: usize,
+    /// Лоскуты газона обочин, замощённые плиткой (`roads/scraps.rs`).
+    pub lawn_scraps: usize,
     /// Подготовка дорог (`roads/drawn.rs`): переезды, стежки, клинья,
     /// слияния, разделительные, кольца, швы осей — одним значением.
     pub drawn: DrawnStats,
@@ -685,6 +687,7 @@ impl std::fmt::Display for RoadReport {
             sidewalk_returns,
             outer_corners: [outer, outer_sidewalks],
             noses,
+            lawn_scraps,
             drawn:
                 DrawnStats {
                     crossings,
@@ -720,7 +723,7 @@ impl std::fmt::Display for RoadReport {
              {zebras} ({osm_zebras} from OSM), stop lines {stop_lines}, pockets {pockets}, \
              turn paths {turns}, arrows {arrows}, leading roads {leading}, kerb returns {kerb_returns} + \
              {sidewalk_returns} on sidewalks, outer corners {outer} + {outer_sidewalks} on \
-             sidewalks, noses {noses}, stitches {stitches}, kerb pockets {kerb_pockets}, turning circles {turning_circles}, driveway crossings \
+             sidewalks, noses {noses}, lawn scraps {lawn_scraps}, stitches {stitches}, kerb pockets {kerb_pockets}, turning circles {turning_circles}, driveway crossings \
              {crossings}, rings {rings} ({webs} webs), small islands {islands}, gores {gores}, safety islands {refuges} + {island_areas} areas, \
              carriageway areas {carriageways}, walkway areas {walkways}, tapers {tapers}, merges {merges} ({merge_edges} edges), medians {paved} paved + {lawns} \
              lawn (tram beds {beds}), tram bands {tram_bands}, smooth seams {seams}, tight corners {tight}, bridges {bridges} of \
@@ -836,6 +839,12 @@ pub fn mesh_roads_with_ruts(
             stop_lines: style.markings && style.stop_lines,
         },
     );
+    // газоны обочин и мощение вокруг них — для лоскутов (`roads/scraps.rs`):
+    // угол газона — газон, мощение собирается после лент
+    let mut scraps = scraps::Scraps::default();
+    for outline in &kerb_returns.verge_lawns {
+        scraps.push_lawn(outline.clone());
+    }
     for (class, outline) in &kerb_returns.roads {
         let (builder, color) = match class {
             RoadClass::Street => (&mut streets, ROAD_COLOR),
@@ -1305,8 +1314,9 @@ pub fn mesh_roads_with_ruts(
             &meadows,
             road,
             points,
-            road.width,
+            butt,
             verged,
+            &mut scraps,
         );
         // слой заливки берётся после полосы тротуара: мощёная дорожка
         // ложится в тот же слой, а полоса выше брала его сама
@@ -1378,6 +1388,53 @@ pub fn mesh_roads_with_ruts(
         if road.class == RoadClass::Street && !road.passage {
             grounds.push(road, points);
         }
+    }
+    // Лоскуты газона обочин, замкнутые мощением, — плиткой поверх газона
+    // (`roads/scraps.rs`): слой обочин лежит над слоями газона. Мощение, которым
+    // они замкнуты, собирается только у газонов, которые спрашиваются: улиц и
+    // углов в городе десятки тысяч, а концов газона у узлов — тысяча.
+    // Скругления, площадки и носы узлов — мощение, грунт — нет; полотно — с
+    // тротуаром по сторонам
+    let paved_fill = |fill: &corners::Fill| {
+        matches!(
+            fill,
+            corners::Fill::Road(RoadClass::Street) | corners::Fill::Sidewalk
+        )
+    };
+    for outline in kerb_returns
+        .roads
+        .iter()
+        .filter(|(class, _)| *class == RoadClass::Street)
+        .map(|(_, outline)| outline)
+        .chain(&kerb_returns.sidewalks)
+        .chain(&kerb_returns.verges)
+        .chain(
+            kerb_returns
+                .noses
+                .iter()
+                .filter(|(fill, _)| paved_fill(fill))
+                .map(|(_, outline)| outline),
+        )
+    {
+        if scraps.near_lawn(outline, 0.0) {
+            scraps.push_paving(outline);
+        }
+    }
+    for (index, road) in drawn.iter().enumerate() {
+        let paved =
+            !road.is_unpaved_street() && (road.class == RoadClass::Street || road.is_paved_path());
+        if !paved || road.bridge || road_islands.outlines[index] {
+            continue;
+        }
+        let halves = [0, 1].map(|side| prepared.band_half(index, side));
+        if scraps.near_lawn(&ribbon[index], halves[0].max(halves[1])) {
+            scraps.push_band(&ribbon[index], halves);
+        }
+    }
+    let lawn_scraps = scraps.find();
+    verges.set_lanes(None);
+    for shape in &lawn_scraps {
+        push_shape(&mut verges, shape.clone(), SIDEWALK_COLOR.to_linear());
     }
     for zebra in &node_paint.zebras {
         painter.paint_zebra(zebra);
@@ -1583,6 +1640,7 @@ pub fn mesh_roads_with_ruts(
         sidewalk_returns: kerb_returns.sidewalks.len() - kerb_returns.outer[1],
         outer_corners: kerb_returns.outer,
         noses: kerb_returns.noses.len(),
+        lawn_scraps: lawn_scraps.len(),
         drawn: prepared.stats(),
         bridges: bridge_count,
         track_bridges,
@@ -2094,9 +2152,11 @@ fn verge_runs(dense: &[Vec2], along: &[f32], widths: &[f32]) -> (Vec<Vec2>, Vec<
     (points, verges, kinds)
 }
 
-/// Обочины дороги `road` шириной `width`, нарисованной по `points`, — по ленте
-/// на сторону: от оси до кромки плюс обочина, круглыми торцами. `verges` —
-/// какие стороны рисуются ([`Drawn::verges_drawn`]). Обочина по месту
+/// Обочины дороги `road`, нарисованной по `points`, — по ленте на сторону: от
+/// оси до кромки плюс обочина, круглыми торцами. `verges` — какие стороны
+/// рисуются ([`Drawn::verges_drawn`]). Газон и плитка уходят ещё и в `scraps`
+/// (`roads/scraps.rs`); `ends` — какие торцы `[начало, конец]` кончаются в
+/// узле (`KerbReturns::butt`): лоскуты ищутся только у них. Обочина по месту
 /// ([`RoadLine::verge_at`]) — полосой переменной ширины от оси до края, и у
 /// каждого торца — круг торцевой ширины: торцом она доходит до угла узла, как
 /// постоянная лента.
@@ -2111,9 +2171,11 @@ fn push_verges(
     mapped: &Meadows,
     road: &RoadLine,
     points: &[Vec2],
-    width: f32,
+    ends: [bool; 2],
     verges: [f32; 2],
+    scraps: &mut scraps::Scraps,
 ) {
+    let width = road.width;
     let [tile_color, grass_color, yard_color] =
         [SIDEWALK_COLOR, GRASS_COLOR, VERGE_YARD_COLOR].map(|color| color.to_linear());
     let raw = polyline_length(&road.points);
@@ -2150,8 +2212,14 @@ fn push_verges(
         };
         if road.verge_profile[side].is_empty() || points.len() < 2 {
             ribbon(tiles, points, paved_verge(verge), tile_color);
+            // лоскутам — те же полосы от оси за кромку, по точкам через шаг
+            let dense = crate::map::along::densify(points, VERGE_STEP);
+            let normals = miter_offsets(&dense, false, sign);
+            let reach = |verge: f32| vec![width / 2.0 + verge; dense.len()];
+            scraps.push_paving_band(&dense, &normals, &reach(paved_verge(verge)));
             if verge > VERGE_PAVED_MAX {
                 ribbon(lawns, points, verge, lawn_color);
+                scraps.push_lawn_band(&dense, &normals, &reach(verge), ends);
             }
             continue;
         }
@@ -2192,8 +2260,13 @@ fn push_verges(
             .map(|(&verge, &lawn)| if lawn { VERGE_KERB.min(verge) } else { verge })
             .collect();
         tiles.push_polygon(&band(&mut paved.iter().copied()), &[], tile_color);
+        let reach = |widths: &[f32]| -> Vec<f32> {
+            widths.iter().map(|verge| width / 2.0 + verge).collect()
+        };
+        scraps.push_paving_band(&dense, &normals, &reach(&paved));
         if lawns_at.iter().any(|&lawn| lawn) {
             lawns.push_polygon(&band(&mut widths.iter().copied()), &[], lawn_color);
+            scraps.push_lawn_band(&dense, &normals, &reach(&widths), ends);
         }
     }
 }
@@ -2281,6 +2354,7 @@ pub(super) mod pockets;
 pub(crate) mod rings;
 /// Линии колеи — оверлей вкладки Debug (`ui/debug/overlays.rs`).
 pub mod ruts;
+mod scraps;
 /// Открыт наружу для панели и витрины: ресурс ручек формы и глобаль ширины
 /// полосы.
 pub mod shape;

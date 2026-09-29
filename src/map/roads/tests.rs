@@ -500,6 +500,51 @@ fn a_corner_between_wide_verges_is_paved_along_the_kerb() {
     assert!(pad > 0, "у бордюрной дуги нет плитки");
 }
 
+/// Лоскут газона обочины, со всех сторон закрытый мощением, — плиткой: между
+/// двумя мощёными дорожками поперёк обочины в метре друг от друга газон
+/// оставался зелёным карманом посреди плитки (Тула, угол Халтурина и
+/// Гоголевской, R9). Газон за дорожками, открытый вдоль улицы, — газон.
+#[test]
+fn a_lawn_scrap_enclosed_by_paving_is_tiled() {
+    let paved = |points: Vec<Vec2>| RoadLine {
+        pavement: Some(Pavement::Paved),
+        ..fixture::footway(points)
+    };
+    let mut map = one_street();
+    map.roads[0].sidewalks = [SidewalkSide::None; 2];
+    map.roads[0].verges = [6.0, 0.0];
+    // улица начинается на перекрёстке: лоскуты ищутся у концов в узле
+    map.roads.push(fixture::street(
+        vec![
+            Vec2::new(100.0, -100.0),
+            Vec2::new(100.0, 100.0),
+            Vec2::new(100.0, 300.0),
+        ],
+        12.0,
+    ));
+    // дорожка по кромке обочины и две поперёк неё у конца улицы: между их
+    // лентами (по 3.5 м) метр газона от полосы у бордюра до дорожки вдоль
+    map.roads.push(paved(vec![
+        Vec2::new(100.0, 112.0),
+        Vec2::new(600.0, 112.0),
+    ]));
+    for x in [120.0, 124.5] {
+        map.roads
+            .push(paved(vec![Vec2::new(x, 106.0), Vec2::new(x, 112.0)]));
+    }
+    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let tiles = &layer(&layers, "road_verges").builder;
+    assert!(
+        tiles.covers_for_test(Vec2::new(122.25, 108.5)),
+        "лоскут между дорожками — газоном"
+    );
+    assert!(report.lawn_scraps >= 1, "{}", report.lawn_scraps);
+    assert!(
+        !tiles.covers_for_test(Vec2::new(200.0, 108.5)),
+        "газон вдоль улицы замощён"
+    );
+}
+
 /// Обочина по месту заходит за торец своей улицы внахлёст: у стыка двух way
 /// одной улицы между торцами обочин светилась нить (Орёл, витрина 04).
 #[test]

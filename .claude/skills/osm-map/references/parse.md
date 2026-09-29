@@ -802,7 +802,11 @@ be called alone:
     them (`roads.rs::Meadows`); else `Residential`, the yard grass every other verge lawn
     is — but only from `LONE_POCKET_MIN` 10 m² up: a smaller lone hole is a gap between
     paving bands (a sidewalk corner at a crossing, Oryol 03), where yard grass lay on the
-    tiles as a dark stain and bare ground nearly matches them. Before this a pocket with no block beside it stayed bare — the beige parallelogram
+    tiles as a dark stain and bare ground nearly matches them. (A green pocket in the
+    tiles that *is* drawn — what the kerb pad and the crossings leave of a **verge lawn** —
+    is not a hole of this union at all: the verge covers it here, and the render tiles it
+    over, `roads/scraps.rs`, `references/roads.md` **A lawn scrap is tiled**; R9 was that,
+    not a pocket.) Before this a pocket with no block beside it stayed bare — the beige parallelogram
     between the verge lawns by the Kaluga 01 ring — and the tiles were those touched by a
     block; now they are those touched by a road link (± `MARGIN`), since the road is what
     every pocket has.

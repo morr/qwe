@@ -400,7 +400,13 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     yard's muted grass by default
     (`road_verge_yards`), a meadow only beside a mapped lawn or park (`road_verge_lawns`) — and
     a corner behind such a lawn is a **kerb pad** of tile along the kerb arc, where the
-    zebras land. The decision per side
+    zebras land. What the pad, a crossing path and a footway pressed against the kerb
+    leave of such a lawn is a **lawn scrap** (`map/roads/scraps.rs`): a piece of verge
+    lawn within 25 m of the verge's end at a node (the corner — mid-block the lawn is a
+    strip open along) enclosed by paving (at most 1 m of it on the lawn's own edge), no larger than
+    10 m² or thinner than 1.5 m on average — tiled over in `road_verges`, since a green
+    pocket in the middle of the paving does not happen on the ground; mapped greens are
+    never asked. The decision per side
     is a **`SidewalkSide`** on the `RoadLine`: `Tagged`, `Inferred` (no tag, kept by the
     rule) or `None`.
   - **Paired halves** (`map/roads/network/pairs.rs`, `Pairs`) — a divided street as OSM

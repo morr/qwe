@@ -207,6 +207,48 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   tangent) a tooth of lawn showed behind the centre; there the pad is the whole corner
   `KERB_PAD_WIDTH` deep from both kerbs, one convex piece from the arc out to where the
   two back edges meet.
+  **A lawn scrap is tiled** (`roads/scraps.rs`, `Scraps`, R9): the pad, a crossing path
+  and a footway turning toward it cut the lawn at a corner, and a footway pressed
+  against the kerb leaves a thin run of it, so what is left visible is a green pocket in
+  the middle of the tile — about 9 m² at Халтурина × Гоголевская (Tula), a 10 × <1 m
+  sliver between the kerb tile and footway 1133530613 at Орджоникидзе × Ляшко (Oryol).
+  The question is asked of the drawn picture, not the tags: the verge lawn (`push_verges`
+  hands it over as the band from the axis to the verge edge on its 2.5 m points, and the
+  corner lawns `KerbReturns::verge_lawns` whole) **minus the paving around it** — every
+  paved carriageway and paved path as a band of `Drawn::band_half` per side on its ribbon
+  axis, the verge tile bands, the street/sidewalk kerb returns, noses, the
+  verge corners and pads — in one `i_overlay` difference per lawn piece, pieces across
+  threads (`in_parallel`), the paving cut into `CHUNK` 16-link pieces and found through a
+  `Grid` of 32 m cells. **Only the ends of a verge lawn that end in a node are asked**
+  (`push_verges` gets `KerbReturns::butt` as `ends`; a seam of two ways of one street
+  runs on into the next way's lawn) — `END_REACH` 10 points, 25 m from the end, the
+  whole band when it is shorter than two of those, with the transverse edge where the
+  piece is cut off the band kept as a **cut**: a piece reaching a cut runs on into the
+  lawn and is never a scrap. Scraps are made at corners (the pad, the crosswalk, the
+  footway turning to it); mid-block the lawn is a strip open along its length, and asking
+  every 40 m of it cost ~80 ms on Tula (6091 pieces, 1.5 M clip points). A scrap
+  mid-block (a footway kinking against the kerb between two drives) is therefore left as
+  it was. The paving is gathered **after** the ribbons and only near a lawn piece
+  (`Scraps::near_lawn`, a grid of the pieces' boxes): pushing every street band and
+  every corner of the city cost ~10 ms more than the difference itself. A piece of the
+  remainder is a **scrap** when it is small — `SCRAP_AREA_MAX` 10 m², or thinner than
+  `SCRAP_WIDTH_MAX` 1.5 m on average (twice the area over the perimeter) — and
+  **enclosed**: at most `SCRAP_OPENING` 1 m of its boundary lies on the lawn polygon's
+  own edge (an edge counts when its middle and both ends are within 2 cm of it). Past
+  that edge the lawn goes on — the next street's verge, the corner lawn, a block over
+  it — and a piece open to it is a strip of the same lawn, left alone. Oryol's sliver
+  touches its edge at its tip over 0.7 m (a block lies beyond), hence the metre. A scrap
+  grows `SCRAP_OVERLAP` 0.2 m (bevel) under the paving around it — the paving was taken
+  on the unsmoothed band offsets — and goes into `road_verges` in tile colour; that
+  layer lies above both lawn layers, so nothing else changes order. The errors are safe
+  one way: paving not counted only leaves a piece open to the lawn's edge, and it stays
+  lawn; a band is taken **per side** (`band_half`), not by the wider one, because
+  over-counted paving is what could fake a small enclosed piece. Mapped greens (`parks`,
+  `grass`) are never asked — a real small lawn in a square is a polygon of its own, not
+  a verge. Tula: 1078 lawn pieces asked, **144 scraps** (`lawn scraps` in the `road
+  meshing:` line); the road build 314 → 350 ms (`map_meshing`, dev, five alternating
+  runs), ~22 ms of it the differences across threads (176 ms on one), ~6 ms the paving.
+  Pinned by `a_lawn_scrap_enclosed_by_paving_is_tiled` and `scraps::tests`.
   In a microdistrict (Фрунзе in Tula, the district frame d2)
   the tile laid from the kerb to a footway fifteen metres off made the street read as
   poured concrete; there it is a lawn with the footway on it, as in any Soviet yard,
