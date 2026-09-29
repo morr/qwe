@@ -1112,3 +1112,52 @@ fn a_wider_through_street_leaves_its_extra_lanes_in_a_pocket() {
     assert_eq!(pocket.gap.at, NODE);
     assert!(paint.pockets[1] == [None; 2]);
 }
+
+/// Ветка развилки под 21° (Вокзальная из Первомайского, Рязань, витрина 03):
+/// из асфальта главной в четыре полосы её сечение не выходит и за
+/// `EDGE_SEARCH` — перемычка, и линия ветки начиналась на полуширине соседа,
+/// посреди полос главной, крест-накрест с их линией. Её линия рвётся до
+/// места, где ось ветки вышла из асфальта главной: 7.1 / sin 21° ≈ 19.8 м.
+#[test]
+fn a_fork_branch_keeps_its_line_off_the_lanes_of_the_main_road() {
+    let oneway = |points: Vec<Vec2>, width: f32, highway: Highway, lanes: u8| RoadLine {
+        oneway: true,
+        ..road(points, width, highway, lanes)
+    };
+    let heading = Vec2::from_angle((180f32 - 21.0).to_radians());
+    let paint = paint_of(
+        vec![
+            oneway(vec![Vec2::new(200.0, 0.0), NODE], 14.2, Highway::Primary, 4),
+            oneway(vec![NODE, Vec2::ZERO], 14.2, Highway::Primary, 4),
+            oneway(
+                vec![NODE, NODE + heading * 80.0],
+                7.6,
+                Highway::Secondary,
+                2,
+            ),
+        ],
+        vec![RoadNode {
+            pos: NODE,
+            kind: RoadNodeKind::TrafficSignals,
+        }],
+        NodePaintStyle {
+            crossings: CrossingMode::Off,
+            stop_lines: true,
+        },
+    );
+    let arm = paint.junctions[0]
+        .arms
+        .iter()
+        .find(|arm| arm.road == 2)
+        .expect("плечо ветки");
+    assert!(arm.link, "ветка из асфальта главной не выходит — перемычка");
+    let beyond = gaps(&paint, 2)
+        .iter()
+        .map(|found| (found.at - NODE).length() + found.reach)
+        .fold(f32::MIN, f32::max);
+    assert!(
+        beyond > 19.0,
+        "линия ветки с {beyond} м — в полосах главной: {:?}",
+        paint.lines().of(2).cut
+    );
+}

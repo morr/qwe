@@ -1319,7 +1319,18 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     at a shallow crossing the break reach is the neighbour's half width, 3 m for a
     one-lane street, while its asphalt runs a dozen metres along the arm, and the lines
     crossed the junction field (Орёл 05, Московская at 23° to the Пушкина pair; roads
-    plan G3). An **OSM crossing keeps its place** — it is measured
+    plan G3). A **link** with no paint — an arm whose section never left within
+    `EDGE_SEARCH` — breaks up to where its **lines** leave the other roads' asphalt
+    (`lines_edge`: the same walk with the half width of `line_half`, the outermost lane
+    line's offset — the lane frame less one lane, plus a two-way axis shift; none on a
+    one-lane road): a branch peeling off a four-lane primary at 21° (Вокзальная out of
+    Первомайский, Ryazan 03, roads tails L2) never clears its section within 25 m, so its
+    edge stayed at the neighbour's half width and its lane line started in the middle of
+    the primary's lanes, crossing their line. The primary itself is not touched — its
+    section's two side points clear the narrow branch at once, and the main road keeps
+    its lines past the fork; the branch's line now starts past the primary's kerb
+    (`a_fork_branch_keeps_its_line_off_the_lanes_of_the_main_road`). The turn paths keep
+    the arm's edge as it was. An **OSM crossing keeps its place** — it is measured
     from the reach as before: pushed past the new edge, it no longer fitted a short arm
     with its `ARM_TAIL` and was lost (gallery 04, south). **Not at a ring**: an approach
     is fitted into the ring tangentially and runs over its asphalt for tens of metres, so

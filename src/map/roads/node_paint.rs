@@ -53,7 +53,8 @@ use bevy::prelude::*;
 use super::drawn::{Axis, Drawn};
 use super::junctions::{JUNCTION_MARGIN, SharedNode, Visit, node_key};
 use super::network::pairs::TRAM_BED_MAX_GAP;
-use super::paint::{LineBreaks, axis_offset};
+use super::paint::{LineBreaks, axis_offset, lane_frame};
+use super::shape::lane_width;
 use super::{is_carriageway, lane_count};
 use crate::map::along::{arclengths, nearest_on_path, place_on_path};
 use crate::map::footprint::distance_to_polyline;
@@ -423,6 +424,19 @@ fn clear_reach(
         ahead += EDGE_STEP;
     }
     None
+}
+
+/// Насколько дальняя линия полос дороги отстоит от её оси, м: рама полос
+/// ([`lane_frame`]) без крайней полосы, со сдвигом осевой двусторонней.
+/// `None` — полоса одна, линий нет.
+fn line_half(road: &RoadLine, side: TrafficSide) -> Option<f32> {
+    let lanes = lane_count(road);
+    if lanes < 2 || !road.lane_markings {
+        return None;
+    }
+    let frame = lane_frame(lanes);
+    let shift = axis_offset(road, lanes, side).unwrap_or(0.0).abs();
+    Some(frame.high - lane_width() + shift)
 }
 
 /// Переход на дороге.
@@ -935,21 +949,53 @@ impl NodePaint {
         // него по касательной и идёт по его асфальту десятки метров — кромка
         // ушла бы за переход (пример 04, юг)
         let reach_of = |road: usize| reaches.get(&road).copied().unwrap_or(JUNCTION_MARGIN);
+        let foreign_of = |road: usize| -> Vec<(&[Vec2], f32)> {
+            others(road)
+                .into_iter()
+                .map(|other| (paths[other].as_ref(), drawn[other].width / 2.0))
+                .collect()
+        };
         let arm_edge = |arm: &Arm, walk: &Walk| -> (f32, bool) {
             let from = walk.project(arm.at);
             let reach = reach_of(arm.road);
             if at_ring {
                 return (from + arm.dir * reach, false);
             }
-            let foreign: Vec<(&[Vec2], f32)> = others(arm.road)
-                .into_iter()
-                .map(|other| (paths[other].as_ref(), drawn[other].width / 2.0))
-                .collect();
             let half = drawn[arm.road].width / 2.0 - EDGE_INSET;
-            match clear_reach(walk, from, arm.dir, reach, half, &foreign, paved) {
+            match clear_reach(
+                walk,
+                from,
+                arm.dir,
+                reach,
+                half,
+                &foreign_of(arm.road),
+                paved,
+            ) {
                 Some(ahead) => (from + arm.dir * ahead, false),
                 None => (from + arm.dir * reach, true),
             }
+        };
+        // Кромка линий перемычки: где из чужого асфальта вышли её линии полос,
+        // а не всё сечение. Ветка развилки под острым углом (Вокзальная из
+        // Первомайского, Рязань, витрина 03) целиком из асфальта главной не
+        // выходит и за [`EDGE_SEARCH`] — перемычка с кромкой на полуширине
+        // соседа, и её линия шла по полосам главной, перекрещиваясь с их
+        // линией. `None` — линии не вышли и тут, кромка остаётся как была.
+        let lines_edge = |arm: &Arm, walk: &Walk| -> Option<f32> {
+            let road = drawn[arm.road];
+            let half = line_half(road, map.traffic_side)?;
+            let from = walk.project(arm.at);
+            let reach = reach_of(arm.road);
+            clear_reach(
+                walk,
+                from,
+                arm.dir,
+                reach,
+                half,
+                &foreign_of(arm.road),
+                paved,
+            )
+            .map(|ahead| from + arm.dir * ahead)
         };
         // Въезд в кольцо: где подход выходит из асфальта самого кольца. Подход
         // вписан по касательной, и полуширина кольца от узла по его оси —
@@ -1242,6 +1288,11 @@ impl NodePaint {
             // перекрёстка (Орёл, витрина 05: Московская под 23° к паре
             // Пушкина — соседу в одну полосу хватало трёх метров)
             let Some(outer) = outer else {
+                let edge = if link {
+                    lines_edge(&arm, &walk).unwrap_or(edge)
+                } else {
+                    edge
+                };
                 // кромка на самой досягаемости разрыва — разрыв уже есть
                 let node = walk.project(arm.at);
                 if (edge - node).abs() > reach_of(arm.road) + EDGE_STEP / 2.0 {

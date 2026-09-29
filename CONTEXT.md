@@ -323,7 +323,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     their place; a street that has a marked OSM
     crossing within 35 m of the node gets no rule zebra on any of its arms. A **link** — an arm that never
     leaves the junction's asphalt, the throat of a complex junction (a fork's triangle) —
-    gets no rule zebra, no stop line and no arrows. **Main through**: a road keeps its lines through a cluster unless it ends
+    gets no rule zebra, no stop line and no arrows; its lines break until they (not its
+    whole section) leave the other roads' asphalt, so a branch peeling off a wider road at
+    a sharp fork does not paint across that road's lanes. **Main through**: a road keeps its lines through a cluster unless it ends
     there, is crossed by a road of its rank that also passes (or at a **crossroads** —
     other streets bringing two arms to one node, however OSM splits them), is crossed at
     a crossroads of at least tertiary rank (`CROSSING_CUTS_RANK` — a higher road loses
