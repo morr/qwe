@@ -1805,21 +1805,104 @@ const MEADOW_PROBE_BEYOND: f32 = 3.0;
 const VERGE_END_OVERLAP: f32 = 0.3;
 /// Полоса плитки у бордюра перед газоном широкой обочины, м.
 const VERGE_KERB: f32 = 0.5;
-/// На какой ширине обочины сверх [`VERGE_PAVED_MAX`] плитка сходит на
-/// полосу у бордюра, м: без перехода кромка плитки прыгала бы уступом там,
-/// где дорожка отходит от улицы.
-const VERGE_PAVED_RAMP: f32 = 2.0;
+/// Самый короткий кусок обочины по месту одного рода — газон или плитка —
+/// между кусками другого, м ([`verge_runs`]): короче — он того же рода, что
+/// соседи. Профиль, колеблющийся у [`VERGE_PAVED_MAX`], резал плитку зубцами.
+const VERGE_RUN_MIN: f32 = 10.0;
+/// Полуширина шва между плиткой и газоном вдоль обочины, м: плитка кончается
+/// поперёк улицы, а не косой.
+const VERGE_SEAM: f32 = 0.05;
 
 /// Сколько обочины шириной `verge` мостится плиткой от кромки: узкая —
 /// целиком, широкая — полосой [`VERGE_KERB`] у бордюра, а газон под ней
 /// ([`push_verges`]) — до дорожки. Её же вырезает из кварталов разбор
 /// (`osm/parse/verges.rs`): плитка обочины — не двор.
+///
+/// **Ступенью, без перехода.** Плитка сходила на полосу у бордюра за 2 м
+/// лишней ширины, и там, где дорожка медленно отходит от улицы, её кромка
+/// шла косой через всю обочину — тонкий косой клин газона между плиткой и
+/// дорожкой, а где профиль колебался у 4 м — зубцы (Орёл, витрина 03). Где
+/// плитка кончается, решает [`verge_runs`] — швом поперёк улицы.
 pub(crate) fn paved_verge(verge: f32) -> f32 {
     if verge <= VERGE_PAVED_MAX {
-        return verge;
+        verge
+    } else {
+        VERGE_KERB
     }
-    let past = (verge - VERGE_PAVED_MAX) / VERGE_PAVED_RAMP;
-    (VERGE_PAVED_MAX - past * (VERGE_PAVED_MAX - VERGE_KERB)).max(VERGE_KERB)
+}
+
+/// Обочина по месту — газон или плитка на каждой точке `dense` (с длинами
+/// `along` и обочинами `widths`): газон, где обочина шире
+/// [`VERGE_PAVED_MAX`], без кусков короче [`VERGE_RUN_MIN`] между кусками
+/// другого рода (концевые куски остаются — у торца угол узла). На каждой
+/// смене рода вставляется пара точек в [`VERGE_SEAM`] от места, где обочина
+/// проходит 4 м, — плитка кончается там поперечным швом. Возвращает точки,
+/// обочины и род каждой точки.
+fn verge_runs(dense: &[Vec2], along: &[f32], widths: &[f32]) -> (Vec<Vec2>, Vec<f32>, Vec<bool>) {
+    let count = dense.len();
+    let mut lawn: Vec<bool> = widths
+        .iter()
+        .map(|&verge| verge > VERGE_PAVED_MAX)
+        .collect();
+    // куски одного рода: [начало, конец] по индексам точек
+    let runs = |lawn: &[bool]| -> Vec<(usize, usize)> {
+        let mut runs = Vec::new();
+        let mut start = 0;
+        for index in 1..=count {
+            if index == count || lawn[index] != lawn[start] {
+                runs.push((start, index - 1));
+                start = index;
+            }
+        }
+        runs
+    };
+    // длина куска — от середины шва до середины шва
+    let seam = |index: usize| (along[index] + along[index + 1]) / 2.0;
+    loop {
+        let found = runs(&lawn);
+        let shortest = found[1..found.len().saturating_sub(1).max(1)]
+            .iter()
+            .map(|&(start, end)| (seam(end) - seam(start - 1), start, end))
+            .filter(|&(length, ..)| length < VERGE_RUN_MIN)
+            .min_by(|a, b| a.0.total_cmp(&b.0));
+        let Some((_, start, end)) = shortest else {
+            break;
+        };
+        for flag in &mut lawn[start..=end] {
+            *flag = !*flag;
+        }
+    }
+    let mut points = Vec::with_capacity(count + 4);
+    let mut verges = Vec::with_capacity(count + 4);
+    let mut kinds = Vec::with_capacity(count + 4);
+    for index in 0..count {
+        points.push(dense[index]);
+        verges.push(widths[index]);
+        kinds.push(lawn[index]);
+        if index + 1 == count || lawn[index] == lawn[index + 1] {
+            continue;
+        }
+        let [from, to] = [widths[index], widths[index + 1]];
+        let length = (dense[index + 1] - dense[index]).length();
+        // шов — там, где обочина проходит 4 м; у перекрашенного куска её
+        // перехода нет, и шов — посредине
+        let crossing = if from != to && (from - VERGE_PAVED_MAX) * (to - VERGE_PAVED_MAX) <= 0.0 {
+            (VERGE_PAVED_MAX - from) / (to - from)
+        } else {
+            0.5
+        };
+        let margin = (VERGE_SEAM / length.max(f32::EPSILON)).min(0.25);
+        let crossing = crossing.clamp(2.0 * margin, 1.0 - 2.0 * margin);
+        for (t, kind) in [
+            (crossing - margin, lawn[index]),
+            (crossing + margin, lawn[index + 1]),
+        ] {
+            points.push(dense[index].lerp(dense[index + 1], t));
+            verges.push(from + (to - from) * t);
+            kinds.push(kind);
+        }
+    }
+    (points, verges, kinds)
 }
 
 /// Обочины дороги `road` шириной `width`, нарисованной по `points`, — по ленте
@@ -1902,6 +1985,7 @@ fn push_verges(
             .iter()
             .map(|&at| road.verge_at(side, at * scale))
             .collect();
+        let (dense, widths, lawns_at) = verge_runs(&dense, &along, &widths);
         let normals = miter_offsets(&dense, false, sign);
         let band = |widths: &mut dyn Iterator<Item = f32>| -> Vec<Vec2> {
             let mut outline: Vec<Vec2> = dense
@@ -1913,10 +1997,13 @@ fn push_verges(
             outline.extend(dense.iter().rev());
             outline
         };
-        let paved: Vec<f32> = widths.iter().map(|&verge| paved_verge(verge)).collect();
+        let paved: Vec<f32> = widths
+            .iter()
+            .zip(&lawns_at)
+            .map(|(&verge, &lawn)| if lawn { VERGE_KERB.min(verge) } else { verge })
+            .collect();
         tiles.push_polygon(&band(&mut paved.iter().copied()), &[], tile_color);
-        let lawn = widths.iter().any(|&verge| verge > VERGE_PAVED_MAX);
-        if lawn {
+        if lawns_at.iter().any(|&lawn| lawn) {
             lawns.push_polygon(&band(&mut widths.iter().copied()), &[], lawn_color);
         }
     }

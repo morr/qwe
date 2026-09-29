@@ -389,7 +389,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     footway that drifts away or turns at the corner): sidewalk tile
     drawn under every green (`road_verges`, its corners by the kerb returns), so a
     mapped lawn stays a lawn and bare ground there is paved; a verge wider than 4 m is a
-    **lawn** under a narrow tile strip at the kerb — the yard's muted grass by default
+    **lawn** under a narrow tile strip at the kerb (tile and lawn change by a seam across
+    the street, never a slanted edge; a run under 10 m folds into its neighbours) — the
+    yard's muted grass by default
     (`road_verge_yards`), a meadow only beside a mapped lawn or park (`road_verge_lawns`) — and
     a corner behind such a lawn is a **kerb pad** of tile along the kerb arc, where the
     zebras land. The decision per side

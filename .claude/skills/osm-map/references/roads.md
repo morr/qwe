@@ -156,8 +156,17 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   the node (`verge_at` there; the band where there is none) with the arc at the kerb radius less the **narrower** of the
   two — by the wider, as the band corners do, it left a wedge of ground along the
   narrower. **A wide verge is a lawn** (`paved_verge`): tile covers a verge up to
-  `VERGE_PAVED_MAX` 4 m whole; wider, the tile narrows over `VERGE_PAVED_RAMP` 2 m of
-  extra width down to a `VERGE_KERB` 0.5 m strip at the kerb, and the whole verge — body
+  `VERGE_PAVED_MAX` 4 m whole; wider, only a `VERGE_KERB` 0.5 m strip at the kerb —
+  **a step, not a ramp**. The tile used to narrow over 2 m of extra width, and where a
+  footway leaves the street slowly its edge ran obliquely across the whole verge: a
+  thin slanted wedge of lawn between the tile and the footway, and teeth where the
+  profile wavered around 4 m (Oryol 03, roads tails L7). Along a verge by place
+  `roads.rs::verge_runs` decides lawn or tile per vertex, folds a run shorter than
+  `VERGE_RUN_MIN` 10 m between runs of the other kind into its neighbours (the end runs
+  stay — the node's corner is there), and at each change inserts a vertex pair
+  `VERGE_SEAM` 0.05 m either side of where the verge passes 4 m, so the tile ends in a
+  seam across the street. Pinned by `a_verge_turns_from_tiles_to_lawn_across_the_street`.
+  The whole verge — body
   and end discs where the width is past 4 m — goes as grass under the tile, and **which
   grass is the neighbour's**: by default the yard's muted grass (`RESIDENTIAL_COLOR`,
   `SurfaceKind::Yard`, **`road_verge_yards` at `Z_ROAD_VERGE_YARD` 0.09**) — beside a

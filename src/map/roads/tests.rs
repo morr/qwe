@@ -355,6 +355,67 @@ fn a_wide_verge_is_a_lawn_with_a_paved_kerb_strip() {
     assert!((lawn - 18.0).abs() < 0.05, "газон — до дорожки: {lawn}");
 }
 
+/// Обочина по месту переходит от плитки к газону швом поперёк улицы, а не
+/// косой кромкой плитки через всю обочину, и короткий провал профиля ниже
+/// 4 м не вырезает в газоне зуб плитки (Орёл, витрина 03, L7).
+#[test]
+fn a_verge_turns_from_tiles_to_lawn_across_the_street() {
+    let tiles_past_kerb = |profile: Vec<(f32, f32)>| {
+        let mut map = one_street();
+        map.roads[0].verges = [6.0, 0.0];
+        map.roads[0].verge_profile = [profile, Vec::new()];
+        let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+        // точки кромки плитки за бордюром (кромка — в 6 м от оси): (x, вылет)
+        let reach: Vec<(f32, f32)> = layer(&layers, "road_verges")
+            .builder
+            .positions_for_test()
+            .iter()
+            .filter(|at| at[1] > 106.01)
+            .map(|at| (at[0], at[1] - 106.0))
+            .collect();
+        reach
+    };
+    // 3 м до x = 300, от x = 320 — 7 м: дорожка отходит за 20 м, 4 м — у x = 305
+    let reach = tiles_past_kerb(vec![(0.0, 3.0), (200.0, 3.0), (220.0, 7.0), (500.0, 7.0)]);
+    let slanted: Vec<_> = reach
+        .iter()
+        .filter(|(x, past)| {
+            *x > 305.0 + 2.0 * VERGE_SEAM + 0.01 && (past - VERGE_KERB).abs() >= 0.01
+        })
+        .collect();
+    assert!(
+        slanted.is_empty(),
+        "плитка сходит на полосу у бордюра косой: {slanted:?}"
+    );
+    let lawn_start = reach
+        .iter()
+        .filter(|(_, past)| (past - VERGE_KERB).abs() < 0.01)
+        .map(|(x, _)| *x)
+        .fold(f32::INFINITY, f32::min);
+    assert!(
+        (lawn_start - 305.0).abs() < 0.2,
+        "газон начинается у x = {lawn_start}, а не там, где обочина проходит 4 м"
+    );
+    // провал до 3.5 м на десять метров посреди газона
+    let reach = tiles_past_kerb(vec![
+        (0.0, 7.0),
+        (200.0, 7.0),
+        (205.0, 3.5),
+        (210.0, 7.0),
+        (500.0, 7.0),
+    ]);
+    assert!(
+        reach
+            .iter()
+            .all(|(_, past)| (past - VERGE_KERB).abs() < 0.01),
+        "зуб плитки в газоне: {:?}",
+        reach
+            .iter()
+            .filter(|(_, past)| (past - VERGE_KERB).abs() >= 0.01)
+            .collect::<Vec<_>>()
+    );
+}
+
 /// Газон широкой обочины — приглушённой травой двора, а лугом только у
 /// замапленного газона или сквера: у двора светлый луг лежал лентой со швом
 /// на кромке квартала (районный кадр d2, №42), а у площади или голой земли
