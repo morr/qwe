@@ -686,6 +686,19 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
     centreline is dropped, the way a junction's is; the bridges are prefiltered per street
     by their AABB (grown by the street's width), so a place tests only the decks near it.
     Past the gap the RNG stream differs, exactly as past a junction.
+  - **No car stands on a railway or by its ballast** (`cars/rails.rs::RailKeepout`, pinned
+    by `no_car_parks_on_a_track_crossing_the_street`). None of the three placements knows
+    the tracks, and a station track crossing a street had the kerb row parked on its rails
+    (Tula, 2605 3110). So the keepout is **one last step of `park_on`**, after the kerb
+    rows, the yards and the lots alike: a car whose body comes closer than `RAIL_CAR_GAP`
+    2.5 m to the ballast shoulder (`rail::SHOULDER_SCALE` × the track's width / 2 — 3 m on a
+    5 m mainline, so 5.5 m from the axis) is dropped. The body's reach toward the track is
+    its half length × |cos| + half width × |sin| of its angle to the link (`CAR_HALF_LENGTH`
+    2.7 / `CAR_HALF_WIDTH` 1.0, the largest silhouette), so a car across the track keeps
+    farther back than one alongside it. Filtering rather than breaking the row keeps the
+    RNG stream of every other car where it was. Trams keep no zone — they run on the
+    carriageway, and a zone would empty every tram street. A rail gap stitched at parse
+    (`references/parse.md`) is a track like any other here.
   - **A one-way carriageway gets one row, on the kerb of the driving side**
     (`MapData::traffic_side`, see **Driving side** in `SKILL.md`; `TrafficSide::kerb`). With
     right-hand traffic, each half of a divided avenue has the kerb on the right and the

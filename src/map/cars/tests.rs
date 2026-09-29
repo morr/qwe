@@ -594,6 +594,38 @@ fn a_street_builds_one_blended_layer() {
     assert!(report.vertices > 0);
 }
 
+/// Станционный путь поперёк улицы (Тула, 2605, 3110): ряд у бордюра рвётся
+/// перед ним, ни одна машина не стоит на путях и у балласта.
+#[test]
+fn no_car_parks_on_a_track_crossing_the_street() {
+    let mut map = city();
+    map.rails.push(fixture::rail(
+        vec![Vec2::new(100.0, -60.0), Vec2::new(100.0, 60.0)],
+        5.0,
+    ));
+    let style = CarStyle {
+        occupancy: 1.0,
+        ..CarStyle::default()
+    };
+    let parked = park_all(style, &straight(), &map, &ParkingLayout::default());
+    assert!(!parked.cars.is_empty(), "ряд вдоль улицы стоит");
+    let clearance = 5.0 * crate::map::rail::SHOULDER_SCALE / 2.0 + rails::RAIL_CAR_GAP;
+    for car in &parked.cars {
+        let nearest = corners(car)
+            .into_iter()
+            .map(|corner| (corner.x - 100.0).abs())
+            .fold(f32::INFINITY, f32::min);
+        assert!(
+            nearest >= clearance - 0.01,
+            "машина в {nearest:.1} м от оси пути: {:?}",
+            car.at
+        );
+    }
+    // по обе стороны пути ряд есть: запрет — полоса, а не вся улица
+    assert!(parked.cars.iter().any(|car| car.at.x < 90.0));
+    assert!(parked.cars.iter().any(|car| car.at.x > 110.0));
+}
+
 #[test]
 fn the_toggle_off_draws_nothing() {
     let style = CarStyle {

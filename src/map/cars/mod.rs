@@ -53,6 +53,7 @@ use crate::settings::{CAR_DETAIL_MAX_ZOOM, CAR_MAX_ZOOM, CAR_SILHOUETTE_MAX_ZOOM
 
 pub mod body;
 pub(crate) mod district;
+mod rails;
 mod yard;
 
 /// Дефолт, границы и шаг ползунка занятости мест ([`CarStyle::occupancy`]) —
@@ -396,6 +397,10 @@ fn park_on(
         &yard::Blocked::new(map),
     ));
     cars.extend(fill_lots(&map.parking, &layout.0, &districts));
+    // последний шаг всех трёх расстановок: на путях и у самого балласта
+    // машина не стоит (`rails.rs`)
+    let keepout = rails::RailKeepout::new(&map.rails);
+    cars.retain(|car| !keepout.blocks(car));
     ParkedCars {
         cars,
         junctions: junctions.junctions,
