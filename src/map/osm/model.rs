@@ -1161,6 +1161,12 @@ pub struct MapData {
     /// (зеркало без областей, `is_in` пуст) — правостороннее, с предупреждением
     /// при разборе.
     pub traffic_side: TrafficSide,
+    /// С какими входами разобрана карта — снимок [`ParseKnobs`](super::parse::ParseKnobs),
+    /// которые получил разбор. Его ширину полосы сравнивает с осевшей ручкой
+    /// `city::lane_width_moved` (разошлись — перезагрузка), и из него же на
+    /// входе в мир пишется глобаль краски (`roads::shape::adopt_lane_width`).
+    /// У карты, собранной тестом руками, — входы по умолчанию.
+    pub knobs: super::parse::ParseKnobs,
     pub buildings: Vec<PolyArea>,
     pub water: Vec<PolyArea>,
     pub parks: Vec<PolyArea>,

@@ -228,12 +228,18 @@ impl Plugin for MapPlugin {
                     roads::shape::settle_road_shape,
                 ),
             )
-            // колея асфальта ложится по ширине полосы, с которой разобран
-            // мир (`roads::shape::lane_width`); материалы живут вне мира, так
-            // что после перезагрузки с другой шириной их надо перенастроить
+            // краска и колея асфальта ложатся по ширине полосы, с которой
+            // разобран мир: глобаль краски — из снимка карты, до сборки мира;
+            // материалы живут вне мира, так что после перезагрузки с другой
+            // шириной их надо перенастроить
             .add_systems(
                 OnEnter(AppState::Playing),
-                surface::retune_surface_materials,
+                (
+                    roads::shape::adopt_lane_width,
+                    surface::retune_surface_materials,
+                )
+                    .chain()
+                    .before(WorldInitSet::Navmesh),
             )
             .add_systems(
                 OnEnter(AppState::Playing),

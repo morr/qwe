@@ -488,7 +488,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   answer: `lane_width` (the street lane width the sections take) and `navtile` (the door
   generator's clearance). `parse(json, city, knobs)` / `parse_response` take them as an
   argument and **the parse reads no process global**; `Default` is the knobs' defaults
-  (3.3 m, 2 m). The load thread gets the settled knobs from `loading::start_job`.
+  (3.3 m, 2 m). The load thread gets the settled knobs from `loading::start_job`. The map
+  keeps a snapshot, **`MapData::knobs`** — what the world was parsed with: the lane-width
+  reload compares the settled knob with it, and the paint's global is written from it on
+  entering the world.
 - **Building height** (`parse/tags.rs::building_height`) — metres from `height` or
   `building:levels` × 3 m; outside 2–600 m counts as no tag. `None` is normal, and common:
   coverage varies wildly by city (NY 97 % … Tula 31 % … Tokyo 5 %) and is logged on load.
@@ -1782,7 +1785,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   (the `SunOnMap` idea); the lane width is read by the parse, so a settled new lane width
   is a **world reload** (same city, camera kept) and reaches the load thread as an
   argument (**ParseKnobs**); the process global `shape::lane_width()` is left to the paint,
-  the turn paths and the ruts' uniform. Any smoothing works on a *copy*,
+  the turn paths and the ruts' uniform, and is written from `MapData::knobs` on entering
+  the world. Any smoothing works on a *copy*,
   since `RoadLine::points`/`width` are load-bearing for navmesh, arches, planting and
   entrances; the Chaikin rule is **`Smoothing`** in `map/smooth.rs`, shared by six layers,
   not a road's own. `RoadPaintStyle` (Paint, Wear, Turn wear) is uniforms only. Then

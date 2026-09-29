@@ -166,7 +166,7 @@ impl<'m> Drawn<'m> {
                 (index, crossing)
             })
             .chain(ring_arcs(osm, &axes.rings))
-            .chain(leg_sections(osm, &axes.rings));
+            .chain(leg_sections(osm, &axes.rings, map.knobs.lane_width));
         for (index, road) in substitutes {
             roads[index] = Cow::Owned(road);
             crossings += 1;

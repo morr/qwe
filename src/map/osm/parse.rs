@@ -395,6 +395,7 @@ impl std::fmt::Display for PassReport {
 /// Входы вне ответа Overpass — только `knobs`: ширину полосы берёт шаг 0,
 /// навтайл — шаг 7. Глобалей проходы не читают.
 fn finish_parse(map: &mut MapData, pending: &Pending, knobs: ParseKnobs) -> PassReport {
+    map.knobs = knobs;
     let entrances = &pending.entrances;
     let sections = sections::apply(map, knobs.lane_width);
     let drowned = drop_buildings_in_water(map);

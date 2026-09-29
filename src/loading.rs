@@ -178,7 +178,7 @@ impl Plugin for LoadingPlugin {
                 OnEnter(AppState::Loading),
                 (
                     spawn_loader_ui,
-                    (sync_navtile_size, sync_lane_width, start_job).chain(),
+                    (sync_navtile_size, start_job).chain(),
                     reset_warmup,
                     warn_leftover_world_entities,
                 ),
@@ -231,16 +231,6 @@ fn parse_knobs(navtile: &NavtileBase, shape: Option<&RoadShape>) -> ParseKnobs {
 /// и каждую перезагрузку мира.
 fn sync_navtile_size(base: Res<NavtileBase>) {
     crate::grid::set_navtile_size(base.size());
-}
-
-/// Ширина полосы — в глобаль, из которой её читают краска и колея асфальта
-/// (`map::roads::shape`); разбор получает её аргументом ([`parse_knobs`]).
-/// Ручка — та же, что у разбора, поэтому мир красится с той шириной, с которой
-/// разобран. Без ресурса (сцена без `MapPlugin`) глобаль остаётся дефолтом.
-fn sync_lane_width(shape: Option<Res<RoadShape>>) {
-    if let Some(shape) = shape {
-        crate::map::set_lane_width(shape.lane_width());
-    }
 }
 
 fn spawn_loader_ui(mut commands: Commands) {

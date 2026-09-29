@@ -1968,13 +1968,17 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     `shape::lane_width()` / `set_lane_width()`, an `AtomicU32`, the same way as the sun:
     threading it through `Painter::paint`, `lane_frame`, `wedge_frames`, `merge_ramps` and
     `arm_lanes` would widen five interfaces inside pure functions for one number.
-    `loading.rs::sync_lane_width` writes it on `OnEnter(Loading)`
-    right before `start_job` (next to `sync_navtile_size`); `city.rs::reload_world` fires
-    on `lane_width_moved` (the settled width differs from the global) — same city, the
-    camera stays. Paint and turns read the same global (`BIRTH_FADE` is half a lane), and
-    the surface shader gets it as `SurfaceParams::lane_width` (`surface.wgsl` no longer
-    hardcodes 3.3); `surface::retune_surface_materials` also runs on `OnEnter(Playing)`
-    so the ruts follow a new width.
+    The map keeps what it was parsed with, `MapData::knobs`, and that snapshot is the one
+    source both ends read: `shape::adopt_lane_width` writes the global from it on
+    `OnEnter(Playing)`, chained before `surface::retune_surface_materials` and before
+    `WorldInitSet::Navmesh` (so before any road layer is meshed); `city.rs::reload_world`
+    fires on `lane_width_moved` (the settled `RoadShapeOnMap` width differs from
+    `MapData::knobs.lane_width`) — same city, the camera stays. The one-lane Y legs of a
+    roundabout (`leg_sections`) are sections of the parse too and take the snapshot, not
+    the global. Paint and turns read the global (`BIRTH_FADE` is half a lane), and the
+    surface shader gets it as `SurfaceParams::lane_width` (`surface.wgsl` no longer
+    hardcodes 3.3) — the retune on `OnEnter(Playing)` is what makes the ruts follow a new
+    width.
   - **Smoothing off the street axis** — a bridge or a path goes through `centerline`
     with Chaikin corner-cutting (`Smoothing::Light` when the curve tolerance is above 0,
     `Off` at 0): only bends over `MIN_SMOOTH_ANGLE` (10°) are cut and the cut length is

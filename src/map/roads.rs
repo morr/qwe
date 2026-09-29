@@ -303,14 +303,20 @@ fn ring_arcs(roads: &[RoadLine], rings: &rings::Rings) -> Vec<(usize, RoadLine)>
 /// Ноги Y-подходов (`rings::Rings::leg_flow`) сечением в одну полосу: по
 /// смыслу нога — въезд или съезд, а двусторонней шириной две ноги по 7.6 м
 /// накрывали весь клин между собой, и островку негде было встать (Рязань,
-/// витрина 05: узлы кольца в двадцати метрах друг от друга).
-fn leg_sections(roads: &[RoadLine], rings: &rings::Rings) -> Vec<(usize, RoadLine)> {
+/// витрина 05: узлы кольца в двадцати метрах друг от друга). Сечение — той же
+/// ширины полосы, с которой разобрана карта (`street_lane`, `MapData::knobs`):
+/// нога — участок сечений разбора, только в одну полосу.
+fn leg_sections(
+    roads: &[RoadLine],
+    rings: &rings::Rings,
+    street_lane: f32,
+) -> Vec<(usize, RoadLine)> {
     roads
         .iter()
         .enumerate()
         .filter(|(index, _)| rings.leg_flow(*index).is_some())
         .filter_map(|(index, road)| {
-            let width = network::sections::section_width(road.highway, 1, shape::lane_width())?;
+            let width = network::sections::section_width(road.highway, 1, street_lane)?;
             (width < road.width).then(|| {
                 let leg = RoadLine {
                     width,

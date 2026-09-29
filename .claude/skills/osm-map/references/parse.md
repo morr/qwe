@@ -20,7 +20,11 @@ door generator's clearance, one tile in front of a door, carried by
 without a serial mutex (`cargo test` is multithreaded). `Default` is the knobs' defaults
 (3.3 m, 2 m) — the fixture, the tests, the bench and the replay parse with it; the game's
 load thread gets the settled knobs from `loading.rs::start_job`, the roads gallery the
-lane width off its own `RoadShapeOnMap`.
+lane width off its own `RoadShapeOnMap`. `finish_parse` stores them in the map as
+**`MapData::knobs`** — the snapshot of what the world was parsed with, which the
+lane-width reload (`city.rs::lane_width_moved`), the paint's global
+(`roads::shape::adopt_lane_width`) and the roundabout legs (`roads::leg_sections`) read;
+a map built by hand in a test carries the defaults.
 
 - **`read_elements(response, bounds) -> (MapData, Pending, ReadReport)`** — the element
   loop and nothing else. What comes out is *raw*: houses still standing in water, churches
