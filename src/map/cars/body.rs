@@ -31,6 +31,8 @@
 //! на пяти пикселях длины ни скругление, ни стёкла не читаются, а вершины
 //! стоят столько же, сколько вблизи.
 
+use std::sync::LazyLock;
+
 use bevy::prelude::*;
 
 use crate::map::SHADOW_COLOR;
@@ -260,6 +262,66 @@ pub enum CarDetail {
     Block,
 }
 
+/// Контур тени без аллокации: восемь точек силуэта или четыре габарита.
+struct ShadowContour {
+    points: [Vec2; 8],
+    len: usize,
+}
+
+impl std::ops::Deref for ShadowContour {
+    type Target = [Vec2];
+
+    fn deref(&self) -> &[Vec2] {
+        &self.points[..self.len]
+    }
+}
+
+/// Краски кузова в линейном пространстве: сам кузов, крыша и зеркала.
+///
+/// Перевод из sRGB — три `powf` на цвет, а цветов на машину три, так что на
+/// городе в двадцать тысяч машин он стоил сопоставимо с укладкой вершин.
+/// Палитра же — десять слотов ([`COLORS`]), и краски каждого считаются один
+/// раз на процесс; цвет не из палитры (тесты, витрина) считается на месте —
+/// той же функцией, так что меш от кеша не меняется ни в одном бите.
+#[derive(Clone, Copy)]
+struct Paint {
+    body: LinearRgba,
+    roof: LinearRgba,
+    mirror: LinearRgba,
+}
+
+impl Paint {
+    fn mix(color: Color) -> Self {
+        Self {
+            body: color.to_linear(),
+            roof: lighten(color, ROOF_LIGHTEN).to_linear(),
+            mirror: lighten(color, -MIRROR_DARKEN).to_linear(),
+        }
+    }
+
+    fn of(color: Color) -> Self {
+        static PALETTE: LazyLock<[Paint; COLORS.len()]> = LazyLock::new(|| COLORS.map(Paint::mix));
+        COLORS
+            .iter()
+            .position(|&slot| slot == color)
+            .map_or_else(|| Self::mix(color), |slot| PALETTE[slot])
+    }
+}
+
+/// Краски, общие для всех машин, — переведённые в линейное пространство один
+/// раз на процесс по той же причине, что и [`Paint`].
+struct Inks {
+    shadow: LinearRgba,
+    glass_front: LinearRgba,
+    glass_back: LinearRgba,
+}
+
+static INKS: LazyLock<Inks> = LazyLock::new(|| Inks {
+    shadow: SHADOW_COLOR.to_linear(),
+    glass_front: GLASS_FRONT.to_linear(),
+    glass_back: GLASS_BACK.to_linear(),
+});
+
 /// Машина на своём месте: центр, направление вдоль кузова, цвет и тип.
 pub struct Car {
     pub at: Vec2,
@@ -280,34 +342,51 @@ impl Car {
     }
 
     /// Контур по точкам борта: правый борт от носа к корме, потом левый
-    /// обратно.
-    fn ring(&self, profile: &Profile, side: &[(f32, f32)], offset: Vec2) -> Vec<Vec2> {
-        let mut points = Vec::with_capacity(side.len() * 2);
-        for &(x, y) in side {
-            points.push(self.point(profile, offset, x, y));
-        }
-        for &(x, y) in side.iter().rev() {
-            points.push(self.point(profile, offset, x, -y));
-        }
-        points
+    /// обратно. `M` — вдвое больше `N`: массив, а не `Vec`, потому что контур
+    /// кладётся на каждую из двадцати тысяч машин города, и аллокация на
+    /// контур стоила заметную долю сборки слоя.
+    fn ring<const N: usize, const M: usize>(
+        &self,
+        profile: &Profile,
+        side: &[(f32, f32); N],
+        offset: Vec2,
+    ) -> [Vec2; M] {
+        debug_assert_eq!(M, 2 * N);
+        std::array::from_fn(|at| {
+            if at < N {
+                let (x, y) = side[at];
+                self.point(profile, offset, x, y)
+            } else {
+                let (x, y) = side[M - 1 - at];
+                self.point(profile, offset, x, -y)
+            }
+        })
     }
 
     /// Контур кузова. Шесть точек на борт — скруглений ровно столько, сколько
     /// видно на экране в самом ближнем бакете, где машина длиной под сотню
     /// пикселей.
-    fn outline(&self, profile: &Profile, offset: Vec2) -> Vec<Vec2> {
+    fn outline(&self, profile: &Profile, offset: Vec2) -> [Vec2; 12] {
         self.ring(profile, &body_side(profile), offset)
     }
 
     /// Контур, которым машина отбрасывает тень: на `Block` — габаритный
     /// прямоугольник, иначе силуэт по [`SHADOW_CORNERS`].
-    fn shadow_contour(&self, profile: &Profile, detail: CarDetail) -> Vec<Vec2> {
+    fn shadow_contour(&self, profile: &Profile, detail: CarDetail) -> ShadowContour {
+        let mut contour = ShadowContour {
+            points: [Vec2::ZERO; 8],
+            len: 0,
+        };
         if detail == CarDetail::Block {
-            return self.block(profile, Vec2::ZERO).to_vec();
+            contour.points[..4].copy_from_slice(&self.block(profile, Vec2::ZERO));
+            contour.len = 4;
+            return contour;
         }
         let side = body_side(profile);
-        let corners: Vec<(f32, f32)> = SHADOW_CORNERS.iter().map(|&at| side[at]).collect();
-        self.ring(profile, &corners, Vec2::ZERO)
+        let corners = SHADOW_CORNERS.map(|at| side[at]);
+        contour.points = self.ring(profile, &corners, Vec2::ZERO);
+        contour.len = 8;
+        contour
     }
 
     /// Прямоугольник габарита — им рисуется и дальний бакет, и тень под ним.
@@ -346,7 +425,7 @@ impl Car {
 /// света, ширина схлопывается в ноль, и такое ребро не кладётся вовсе.
 pub fn push_shadow(builder: &mut MeshBuilder, car: &Car, offset: Vec2, detail: CarDetail) {
     let profile = car.shape.profile();
-    let color = SHADOW_COLOR.to_linear();
+    let color = INKS.shadow;
     let cast = sweep_convex(&car.shadow_contour(&profile, detail), offset);
     builder.push_convex(&cast, color);
     if detail != CarDetail::Full {
@@ -365,12 +444,12 @@ pub fn push_shadow(builder: &mut MeshBuilder, car: &Car, offset: Vec2, detail: C
 /// у всех треугольников одна, и поверх ложится то, что положено позже.
 pub fn push_body(builder: &mut MeshBuilder, car: &Car, detail: CarDetail) {
     let profile = car.shape.profile();
-    let color = car.color.to_linear();
+    let paint = Paint::of(car.color);
     if detail == CarDetail::Block {
-        builder.push_quad(car.block(&profile, Vec2::ZERO), color);
+        builder.push_quad(car.block(&profile, Vec2::ZERO), paint.body);
         return;
     }
-    builder.push_convex(&car.outline(&profile, Vec2::ZERO), color);
+    builder.push_convex(&car.outline(&profile, Vec2::ZERO), paint.body);
     if detail == CarDetail::Silhouette {
         return;
     }
@@ -390,7 +469,7 @@ pub fn push_body(builder: &mut MeshBuilder, car: &Car, detail: CarDetail) {
             profile.roof_front,
             CABIN_NARROW,
         ),
-        GLASS_FRONT.to_linear(),
+        INKS.glass_front,
     );
     builder.push_quad(
         glass(
@@ -399,7 +478,7 @@ pub fn push_body(builder: &mut MeshBuilder, car: &Car, detail: CarDetail) {
             profile.roof_back,
             CABIN_NARROW,
         ),
-        lighten(car.color, ROOF_LIGHTEN).to_linear(),
+        paint.roof,
     );
     builder.push_quad(
         glass(
@@ -408,10 +487,10 @@ pub fn push_body(builder: &mut MeshBuilder, car: &Car, detail: CarDetail) {
             profile.backlight,
             CABIN_WIDE,
         ),
-        GLASS_BACK.to_linear(),
+        INKS.glass_back,
     );
 
-    let mirror = lighten(car.color, -MIRROR_DARKEN).to_linear();
+    let mirror = paint.mirror;
     let front = profile.windshield + MIRROR_LONG;
     let back = profile.windshield - MIRROR_LONG;
     for side in [-1.0, 1.0] {
@@ -575,7 +654,7 @@ mod tests {
             let contour = car.shadow_contour(&profile, CarDetail::Full);
             for offset in sun_offsets(shape.height()) {
                 let hull = sweep_convex(&contour, offset);
-                for &point in &contour {
+                for &point in contour.iter() {
                     for corner in 0..hull.len() {
                         let from = hull[corner];
                         let to = hull[(corner + 1) % hull.len()];
