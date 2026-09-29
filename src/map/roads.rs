@@ -1812,8 +1812,9 @@ const VERGE_PAVED_RAMP: f32 = 2.0;
 
 /// Сколько обочины шириной `verge` мостится плиткой от кромки: узкая —
 /// целиком, широкая — полосой [`VERGE_KERB`] у бордюра, а газон под ней
-/// ([`push_verges`]) — до дорожки.
-fn paved_verge(verge: f32) -> f32 {
+/// ([`push_verges`]) — до дорожки. Её же вырезает из кварталов разбор
+/// (`osm/parse/verges.rs`): плитка обочины — не двор.
+pub(crate) fn paved_verge(verge: f32) -> f32 {
     if verge <= VERGE_PAVED_MAX {
         return verge;
     }

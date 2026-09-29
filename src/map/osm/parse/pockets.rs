@@ -44,9 +44,8 @@ use i_overlay::mesh::stroke::offset::StrokeOffset;
 use i_overlay::mesh::style::{LineCap, LineJoin, OutlineStyle, StrokeStyle};
 
 use super::LANDUSE_OVERLAP;
-use crate::map::along::{arclengths, densify};
+use super::verges::verge_rings;
 use crate::map::grid::Grid;
-use crate::map::meshing::miter_offsets;
 use crate::map::osm::model::{
     AreaKind, BuildingUse, MapData, PolyArea, RoadClass, RoadLine, distance_to_segment, ring_area,
 };
@@ -81,12 +80,6 @@ const MARGIN: f32 = 30.0;
 /// Звеньев дороги в одном куске обводки: кусок берётся в плитку по габариту,
 /// и длинная улица не тащит в каждую свои сотни метров.
 const RUN: usize = 16;
-/// Шаг точек обочины, м: вдвое реже рисунка (`roads.rs`, 2.5 м) — профиль
-/// обочины ([`RoadLine::verge_profile`]) и так снят пробами через пять
-/// метров, а точки — цена объединения.
-const VERGE_STEP: f32 = 5.0;
-/// Точек обочины в одном куске.
-const VERGE_RUN: usize = 16;
 
 /// Кусок покрытия: контуры `i_overlay` и габарит.
 struct Cover {
@@ -168,7 +161,7 @@ pub(super) fn fill_ground_pockets(map: &mut MapData) -> usize {
 /// так что от числа потоков и их гонки ничего не зависит. Задания разбираются
 /// по одному со счётчика, а не кусками поровну: плитка центра дороже плитки
 /// окраины в десятки раз, и поток с кучей центральных плиток держал бы всех.
-fn in_parallel<T: Sync, R: Send>(items: &[T], work: impl Fn(&T) -> R + Sync) -> Vec<R> {
+pub(super) fn in_parallel<T: Sync, R: Send>(items: &[T], work: impl Fn(&T) -> R + Sync) -> Vec<R> {
     use std::sync::atomic::{AtomicUsize, Ordering};
     let next = AtomicUsize::new(0);
     let workers = std::thread::available_parallelism().map_or(1, usize::from);
@@ -444,44 +437,10 @@ fn band(path: &[Vec2], width: f32) -> Vec<Contour> {
 }
 
 /// Обочины дороги ([`RoadLine::verge_at`]) — полосами от оси до кромки плюс
-/// обочина, по кускам в [`VERGE_RUN`] точек. Та же постройка, что у рисунка
-/// (`roads.rs::push_verges`), только по сырым точкам и без плитки с газоном:
-/// покрытию важно, что земля закрыта, а не чем.
+/// обочина ([`verge_rings`], во всю ширину): покрытию важно, что земля
+/// закрыта, а не чем.
 fn verge_covers(road: &RoadLine, covers: &mut Vec<Cover>) {
-    let half = road.width / 2.0;
-    let raw = arclengths(&road.points).1;
-    for side in 0..2 {
-        if road.verges[side] <= 0.0 {
-            continue;
-        }
-        let dense = densify(&road.points, VERGE_STEP);
-        if dense.len() < 2 {
-            continue;
-        }
-        let (along, total) = arclengths(&dense);
-        let scale = raw / total.max(f32::EPSILON);
-        // `miter_offsets` плюсом сдвигает влево — сторона 0
-        let sign = if side == 0 { 1.0 } else { -1.0 };
-        let normals = miter_offsets(&dense, false, sign);
-        let outer: Vec<Vec2> = dense
-            .iter()
-            .zip(&normals)
-            .zip(&along)
-            .map(|((&point, &normal), &at)| {
-                point + normal * (half + road.verge_at(side, at * scale))
-            })
-            .collect();
-        let last = dense.len() - 1;
-        for start in (0..last).step_by(VERGE_RUN - 1) {
-            let end = (start + VERGE_RUN - 1).min(last);
-            let ring: Vec<Vec2> = outer[start..=end]
-                .iter()
-                .chain(dense[start..=end].iter().rev())
-                .copied()
-                .collect();
-            if ring_area(&ring) > 0.0 {
-                covers.push(Cover::of(vec![oriented(&ring, true)]));
-            }
-        }
+    for ring in verge_rings(road, |verge| verge) {
+        covers.push(Cover::of(vec![oriented(&ring, true)]));
     }
 }

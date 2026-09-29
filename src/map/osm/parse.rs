@@ -307,11 +307,13 @@ impl std::fmt::Display for PassReport {
         )?;
         let StretchedAreas {
             blocks,
+            cut,
+            cutting,
             lots: lots::PavedLots { grown, trimmed },
         } = stretched;
         writeln!(
             f,
-            "osm parse: {blocks} block vertices pulled to the drawn road edge, {grown} parking lots paved up to their roads, {trimmed} only stepped back from the houses on them, in {stretching:?}"
+            "osm parse: {blocks} block vertices pulled to the drawn road edge, {cut} blocks cut off the verges (in {cutting:?}), {grown} parking lots paved up to their roads, {trimmed} only stepped back from the houses on them, in {stretching:?}"
         )?;
         writeln!(
             f,
@@ -1836,6 +1838,11 @@ fn pull_areas_to_roads(map: &mut MapData) -> StretchedAreas {
             .map(|hole| pull_ring(hole, true, &roads, &mut stretched.blocks))
             .collect();
     }
+    // вершины решают порознь, а ребро между ними прямое: на плитке обочины
+    // двор ещё мог остаться — вырезается площадью
+    let started = std::time::Instant::now();
+    stretched.cut = verges::cut_verges_from_blocks(map);
+    stretched.cutting = started.elapsed();
     stretched.lots = lots::pave_lots(map);
     stretched
 }
@@ -1850,6 +1857,10 @@ fn pull_areas_to_roads(map: &mut MapData) -> StretchedAreas {
 #[derive(Default)]
 struct StretchedAreas {
     blocks: usize,
+    /// Кварталов, из которых вырезаны обочины ([`verges`]).
+    cut: usize,
+    /// Сколько длился вырез — доля общего времени прохода.
+    cutting: std::time::Duration,
     lots: lots::PavedLots,
 }
 
@@ -2792,6 +2803,7 @@ mod pockets;
 mod tags;
 #[cfg(test)]
 mod tests;
+mod verges;
 
 // Приватный реэкспорт: снаружи модуль виден тем же набором имён, что и до
 // разрезания, а `use super::*` в `tests.rs` продолжает доставать классификаторы.

@@ -4609,3 +4609,89 @@ fn a_block_edge_in_the_verge_of_a_bare_side_goes_to_the_nearer_of_its_rims() {
         "край не дотянут до кромки: {pulled}"
     );
 }
+
+/// Щепка двора на плитке обочины вырезается **площадью**, что бы ни решили
+/// вершины: угол квартала, оставшийся у кромки, пока соседи ушли под дорожку,
+/// давал щепку на плитке (Тула, витрина 15, развилка дорожек у Ленина, 15).
+/// Край выреза — кромка обочины без полуметра, под лентой дорожки. Широкая
+/// полоса двора до бордюра — газон по данным — остаётся; квартал, обочины не
+/// задевший, остаётся теми же кольцами; у широкой обочины вырезается только
+/// плитка у бордюра, газон под двором — та же трава.
+#[test]
+fn a_sliver_of_block_on_the_verge_tiles_is_cut_back_under_the_footway() {
+    let half = residential_half(ParseKnobs::DEFAULT);
+    // квартал ниже улицы — клином с углом `tip` метров от оси
+    let wedge = |tip: f32| {
+        vec![
+            CENTER + Vec2::new(-20.0, -40.0),
+            CENTER + Vec2::new(20.0, -40.0),
+            CENTER + Vec2::new(20.0, -10.0),
+            CENTER + Vec2::new(0.0, -tip),
+            CENTER + Vec2::new(-20.0, -10.0),
+        ]
+    };
+    // улица на восток, обочина `verge` справа (с юга)
+    let scene = |verge: f32, ring: Vec<Vec2>| {
+        let mut road = street(
+            vec![
+                CENTER - Vec2::new(400.0, 0.0),
+                CENTER + Vec2::new(400.0, 0.0),
+            ],
+            2.0 * half,
+        );
+        road.verges = [0.0, verge];
+        let block = PolyArea {
+            kind: AreaKind::Residential,
+            ..building(ring, Vec::new())
+        };
+        let mut map = MapData {
+            roads: vec![road],
+            landuse: vec![block.clone()],
+            ..MapData::default()
+        };
+        let cut = verges::cut_verges_from_blocks(&mut map);
+        (cut, block, map.landuse)
+    };
+    let top = |blocks: &[PolyArea]| {
+        blocks
+            .iter()
+            .flat_map(|block| &block.outer)
+            .map(|vertex| vertex.y - CENTER.y)
+            .fold(f32::NEG_INFINITY, f32::max)
+    };
+
+    // угол в метре за кромкой, обочина в 3 м: клин полтора метра высотой —
+    // щепка, срезан до 0.5 м от края обочины
+    let (cut, _, blocks) = scene(3.0, wedge(half + 1.0));
+    assert_eq!(cut, 1);
+    assert_eq!(blocks.len(), 1, "квартал развалился: {blocks:?}");
+    let edge = -(half + 3.0 - LANDUSE_OVERLAP);
+    assert!(
+        (top(&blocks) - edge).abs() < 0.02,
+        "двор на плитке обочины: верх {} при крае выреза {edge}",
+        top(&blocks)
+    );
+
+    // квартал до кромки полосой в 40 м: два метра двора на плитке — газон,
+    // не щепка, и остаётся
+    let (cut, block, blocks) = scene(
+        3.0,
+        rect(
+            CENTER + Vec2::new(-20.0, -40.0),
+            CENTER + Vec2::new(20.0, -(half + 0.5)),
+        ),
+    );
+    assert_eq!(cut, 0);
+    assert_eq!(blocks[0].outer, block.outer);
+
+    // угол за обочиной: квартал не тронут, кольца те же
+    let (cut, block, blocks) = scene(3.0, wedge(half + 3.0));
+    assert_eq!(cut, 0);
+    assert_eq!(blocks[0].outer, block.outer);
+
+    // обочина в 8 м — газон под плиткой у бордюра (0.5 м): угол в метре за
+    // кромкой лежит на газоне и остаётся
+    let (cut, block, blocks) = scene(8.0, wedge(half + 1.0));
+    assert_eq!(cut, 0);
+    assert_eq!(blocks[0].outer, block.outer);
+}

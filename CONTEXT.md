@@ -542,7 +542,14 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   in its verge, which is drawn *under* the blocks — counted as «under the road» and
   stayed, and the yard stuck out of the verge's tiles as a dark stroke (Tula, gallery 15).
   It goes to the nearer drawn rim instead: under the footway (tucked) or 0.5 m under the
-  kerb. Render-only in effect: `landuse` touches neither the navmesh nor planting.
+  kerb. **Slivers left on the verge tiles are then cut out by area** (`parse/verges.rs`):
+  vertices decide one by one and the edge between two of them is straight, so a sliver of
+  yard could still lie on the tiles (Tula 15, the footways' fork by Ленина, 15); a block
+  loses the **thin** pieces (mean width under 1 m) of its overlap with the paved strip of
+  every verge — axis to the tile's rim less 0.5 m, i.e. up to under the footway — and one
+  cut in two becomes two blocks. A wide overlap stays: a block drawn to the kerb is a lawn
+  between kerb and sidewalk by the data. Render-only in effect: `landuse` touches neither
+  the navmesh nor planting.
   **Lot paved to its roads** — a parking lot reaches its roads in the same parse step, but
   **as a polygon, not vertex by vertex** (`parse/lots.rs::pave_lots`). The vertex pull was
   tried first and removed: neighbouring points moved by different amounts, and a big lot

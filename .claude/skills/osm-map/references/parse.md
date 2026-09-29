@@ -536,11 +536,38 @@ be called alone:
     gap to the drawn rim of a bare side (`Edge::gap`) is used there and in `tuck`'s
     «street beyond» — and nowhere else: measured everywhere, the nearest road flipped
     from street to footway on vertices outside the band as well, and the edges beside
-    Kaluga 01's ring came out zigzag between the two. Tula 15 keeps a sliver (~2 × 0.3 m):
-    one vertex of the hook stands outside the phantom band, 0.47 m from Ленина's mapped
-    edge against 0.48 from the footway, and goes the old way — to the phantom band and a
-    corner slide. Pinned by
-    `a_block_edge_in_the_verge_of_a_bare_side_goes_to_the_nearer_of_its_rims`.
+    Kaluga 01's ring came out zigzag between the two. Pinned by
+    `a_block_edge_in_the_verge_of_a_bare_side_goes_to_the_nearer_of_its_rims`. What the
+    vertex rules still miss the area cut below takes.
+  - **Slivers of yard on the verge tiles are cut out by area** (`parse/verges.rs::
+    cut_verges_from_blocks`, right after the vertex pull, before the lots). The rules
+    above decide **per vertex**, and the edge between two decided vertices is straight:
+    Tula 15 kept a sliver (~2 × 0.3 m) of yard on the tiles at the footways' fork by
+    Ленина, 15 — one vertex of the hook stood outside the phantom band, 0.47 m from
+    Ленина's mapped edge against 0.48 from the footway, went to the phantom band, while
+    its neighbours went under the footway. So the block is asked as an area: it is
+    intersected (`i_overlay`, NonZero) with the **paved strip** of every verge — from
+    the street's axis to `paved_verge(verge_at)` past the kerb (`roads.rs::paved_verge`,
+    the drawing's own rule, now `pub(crate)`), less `VERGE_CUT_INSET` 0.5 m: the verge's
+    rim is the footway's axis, so a cut edge lies under the footway ribbon, and the half
+    metre absorbs the smoothing of the drawn axis. Of that intersection only the **thin**
+    pieces are subtracted — mean width `2·area / perimeter` under `SLIVER_WIDTH_MAX`
+    1 m (`is_sliver`). **The first version subtracted the whole strip and was
+    narrowed**: along Советская in the same frame a block drawn to the kerb lies on the
+    verge as a 3 m band of yard for sixty metres, and it reads as the lawn between kerb
+    and sidewalk it is; cut, it turned into a band of concrete. A wide piece is the data
+    saying «lawn», a sliver or a hair along a footway is an artefact of the vertex
+    rules. **Only the tiles** are asked: the lawn of a verge wider than 4 m is the yard's
+    own grass (`VERGE_YARD_COLOR` = `RESIDENTIAL_COLOR`). The strip is built by
+    `verge_rings` — the same raw-point construction the ground pockets take as their
+    verge cover (at full width there). A block with no sliver keeps its rings as they
+    were — no re-tracing, no drift; one cut in two becomes two `PolyArea`s of the same
+    kind (a part under `MIN_BLOCK_PART` 1 m² goes). Nothing reads `landuse` by index, so
+    the split is free. Blocks are cut across threads (`pockets::in_parallel`); the log
+    line says how many blocks lost a sliver and what the cut cost — Tula 66 blocks in
+    5–6 ms, Berlin 584 in 41 ms (dev build, `map_meshing`'s parse; the parse's passes
+    total 1.2 s there, so about 3 %). Pinned by
+    `a_sliver_of_block_on_the_verge_tiles_is_cut_back_under_the_footway`.
   - **The band is what is drawn**: a street's sidewalk counts in its reach only when it
     has one (`RoadLine::sidewalks`). `sidewalk=separate|no` used to count anyway, and the
     block was pulled under a sidewalk that is never drawn — its edge stood past the kerb.
