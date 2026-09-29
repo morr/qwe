@@ -2164,7 +2164,21 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     **in**, its pair partner starts there flowing **out**, both leave the node within 40°
     of each other (`MERGE_ALIGN`, a 20 m chord — OSM's first link may be half a metre),
     and a **two-way** way of the same `Highway` ends there leaving it the other way.
-    Bridges and arches take no part. **The pair is checked by streets** (`paired`, over
+    Bridges and arches take no part as halves; the continuation may be a bridge when the
+    node is pure. **A Y-fork is a merge without a pair** (R16): a two-way way splitting
+    into an entry and an exit that `Pairs` never pairs (the branches part at once —
+    Tula's south approach to the primary ring, Болдина, Oryol's Р-119 at a bridge head)
+    counts when the node is **pure** (no other carriageway), none of the three is unpaved
+    and the branches part within `FORK_ALIGN` 70° (they reach the ring's nodes 48–58°
+    apart on the 20 m chord). As a junction both branches' ribbons started on the
+    continuation's axis and the carriageway pinched to one branch's width with a kerb step
+    on both sides; as a merge each branch continues its side of the continuation over the
+    merge wedge and the island opens between them. A oneway grid corner (90°) and a fork
+    with a third carriageway at the node stay junctions. At a pure merge an **OSM
+    crossing** on the node is kept as a mid-block zebra across the continuation, pulled
+    whole onto it (`ZEBRA_LENGTH / 2 + PAINT_CLEAR` from the node), since the rule zebras
+    and stop lines go. Merges: Tula 6 → 22, Oryol 5 → 12, Belgorod 35 → 57.
+    **The pair is checked by streets** (`paired`, over
     `Pairs::is_paired` and `Pairs::partners`): a
     run of **Paired halves** between the two ways themselves, or between any way of the
     one's street and the other's street — OSM cuts a half into 16–22 m ways at the node,

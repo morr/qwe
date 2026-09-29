@@ -39,6 +39,10 @@ use crate::map::shapes::{Shape, oriented};
 /// продолжение — в обратную: 40°. Половины в OSM сходятся к узлу клином
 /// градусов в 10–30, продолжение смотрит почти ровно назад.
 const MERGE_ALIGN: f32 = 0.766;
+/// То же для Y-развилки без пары ([`merges`]): 70°. Ветки въезда и съезда у
+/// кольца расходятся к его узлам на 48–58° по хорде в двадцать метров (Тула,
+/// южный подход и Болдина, R16).
+const FORK_ALIGN: f32 = 0.342;
 /// Направление плеча — хорда на столько метров от узла: первое звено OSM
 /// бывает в полметра.
 const ARM_REACH: f32 = 20.0;
@@ -133,49 +137,76 @@ pub fn merges(
         let node = path[path.len() - 1];
         let at_node = nodes.roads_at(node);
         let into = away(path, true);
-        let partner = at_node.iter().copied().find(|&other| {
-            let path = paths[other].as_ref();
-            other != half
-                && paired(half, other, pairs, network)
-                && roads[other].oneway
-                && roads[other].highway == road.highway
-                && path.len() >= 2
-                && path[0] == node
-                && away(path, false).dot(into) > MERGE_ALIGN
-        });
-        let Some(partner) = partner else {
-            continue;
+        // В узле нет проезжих частей, кроме этих трёх.
+        let pure_with = |partner: usize, street: usize| {
+            at_node.iter().all(|&other| {
+                [half, partner, street].contains(&other) || !is_carriageway(roads[other])
+            })
         };
-        let out = away(paths[partner].as_ref(), false);
-        let mean = (into + out).normalize_or_zero();
-        let street = at_node.iter().copied().find_map(|other| {
-            let candidate = roads[other];
+        // продолжение: двусторонний way того же класса в обратную сторону; им
+        // бывает и мост (Орёл, Р-119 у кольца, R16) — ветки сходятся на его
+        // торце
+        let street_for = |partner: usize| {
+            let out = away(paths[partner].as_ref(), false);
+            let mean = (into + out).normalize_or_zero();
+            at_node.iter().copied().find_map(|other| {
+                let candidate = roads[other];
+                let path = paths[other].as_ref();
+                if candidate.oneway || candidate.highway != road.highway || path.len() < 2 {
+                    return None;
+                }
+                let end = if path[0] == node {
+                    0
+                } else if path[path.len() - 1] == node {
+                    1
+                } else {
+                    return None;
+                };
+                (away(path, end == 1).dot(mean) < -MERGE_ALIGN).then_some((other, end))
+            })
+        };
+        // Половины пары — или **Y-развилка** (R16): двусторонний way делится
+        // на въезд и съезд без разделительной, пары на коротких расходящихся
+        // ветках не набирается. Развилку берём только в чистом узле — угол
+        // сетки односторонних улиц с двусторонней рядом остаётся перекрёстком
+        // — и ветки её расходятся шире половин пары: до [`FORK_ALIGN`].
+        let found_merge = at_node.iter().copied().find_map(|other| {
             let path = paths[other].as_ref();
-            if candidate.oneway
-                || candidate.carves_navmesh()
-                || candidate.highway != road.highway
+            if other == half
+                || !roads[other].oneway
+                || roads[other].carves_navmesh()
+                || roads[other].highway != road.highway
                 || path.len() < 2
+                || path[0] != node
             {
                 return None;
             }
-            let end = if path[0] == node {
-                0
-            } else if path[path.len() - 1] == node {
-                1
-            } else {
+            let alignment = away(path, false).dot(into);
+            let is_pair = paired(half, other, pairs, network);
+            if alignment <= if is_pair { MERGE_ALIGN } else { FORK_ALIGN } {
                 return None;
+            }
+            let (street, end) = street_for(other)?;
+            // развилка грунтовки асфальтом не мостится: клин ветки ложился
+            // асфальтовым языком на грунт (Тула, 371, 4078)
+            let unpaved = [half, other, street]
+                .iter()
+                .any(|&road| roads[road].is_unpaved_street());
+            let pure = pure_with(other, street);
+            let accepted = if is_pair {
+                !roads[street].carves_navmesh() || pure
+            } else {
+                !unpaved && pure
             };
-            (away(path, end == 1).dot(mean) < -MERGE_ALIGN).then_some((other, end))
+            accepted.then_some((other, street, end))
         });
-        let Some((street, street_end)) = street else {
+        let Some((partner, street, street_end)) = found_merge else {
             continue;
         };
         found.ends[half][1] = true;
         found.ends[partner][0] = true;
         found.ends[street][street_end] = true;
-        let pure = at_node.iter().all(|&other| {
-            [half, partner, street].contains(&other) || !is_carriageway(roads[other])
-        });
+        let pure = pure_with(partner, street);
         found.list.push(Merge {
             node,
             halves: [half, partner],

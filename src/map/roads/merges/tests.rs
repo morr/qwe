@@ -5,7 +5,7 @@ use bevy::prelude::*;
 use super::{MedianEnd, Merge, Merges, merge_axis, merge_bands, merge_ramps, merges};
 use crate::map::meshing::LaneFrame;
 use crate::map::osm::fixture::street;
-use crate::map::osm::{Highway, MapData, RoadLine};
+use crate::map::osm::{Highway, MapData, RoadLine, RoadNode, RoadNodeKind};
 use crate::map::roads::corners::kerb_returns;
 use crate::map::roads::drawn::Drawn;
 use crate::map::roads::is_carriageway;
@@ -416,4 +416,138 @@ fn a_continuation_no_wider_than_a_half_needs_no_band() {
         TAPER_PER_METER,
     );
     assert!(bands.is_empty());
+}
+
+/// Y-развилка южного подхода к кольцу Тулы (R16): двусторонняя primary в 4
+/// полосы с юга кончается в узле, из него съезд въезжает с северо-запада,
+/// въезд уходит на северо-северо-восток — ветки по 2 полосы расходятся на 48°,
+/// пары между ними нет. `street` — продолжение, `extra` — прочие дороги узла.
+fn fork(street: RoadLine, extra: &[RoadLine]) -> Vec<RoadLine> {
+    let mut roads = vec![
+        primary(
+            vec![Vec2::new(-19.6, 27.7), Vec2::new(-8.3, 15.6), Vec2::ZERO],
+            2,
+            true,
+        ),
+        primary(vec![Vec2::ZERO, Vec2::new(3.3, 10.1)], 2, true),
+        street,
+    ];
+    roads.extend_from_slice(extra);
+    roads
+}
+
+fn fork_street() -> RoadLine {
+    primary(vec![Vec2::new(6.1, -120.0), Vec2::ZERO], 4, false)
+}
+
+#[test]
+fn a_two_way_splitting_into_two_oneways_is_a_fork_merge() {
+    let (merges, _, _) = found(&fork(fork_street(), &[]));
+    assert_eq!(
+        merges.list,
+        vec![Merge {
+            node: Vec2::ZERO,
+            halves: [0, 1],
+            street: 2,
+            street_end: 1,
+            pure: true,
+        }]
+    );
+    // и ветки продолжают каждая свою половину: у узла кромка ветки — на
+    // полуширине продолжения
+    let roads = fork(fork_street(), &[]);
+    let (merges, network, paths) = found(&roads);
+    let drawn: Vec<&RoadLine> = roads.iter().collect();
+    let bands = merge_bands(
+        &merges.list[0],
+        &drawn,
+        &paths,
+        &network,
+        |_, _| None,
+        TAPER_PER_METER,
+    );
+    assert_eq!(bands.len(), 2);
+    for band in &bands {
+        assert!((band.asphalt[0].length() - width(4) / 2.0).abs() < 0.05);
+    }
+}
+
+#[test]
+fn a_fork_at_a_bridge_head_is_a_merge() {
+    // Орёл, Р-119: двусторонний мост делится на въезд и съезд на своём торце
+    let bridge = RoadLine {
+        bridge: true,
+        ..fork_street()
+    };
+    let (merges, _, _) = found(&fork(bridge, &[]));
+    assert_eq!(merges.list.len(), 1);
+    assert_eq!(merges.list[0].street, 2);
+}
+
+#[test]
+fn a_oneway_grid_corner_is_not_a_fork() {
+    // угол сетки: односторонняя въезжает с запада, другая уходит на север —
+    // между ветками 90°, это перекрёсток
+    let corner = vec![
+        primary(vec![Vec2::new(-80.0, 0.0), Vec2::ZERO], 2, true),
+        primary(vec![Vec2::ZERO, Vec2::new(0.0, 80.0)], 2, true),
+        primary(vec![Vec2::ZERO, Vec2::new(60.0, -60.0)], 4, false),
+    ];
+    assert!(found(&corner).0.list.is_empty());
+    // развилка с третьей проезжей частью в узле — тоже перекрёсток
+    let side = RoadLine {
+        highway: Highway::Residential,
+        ..street(vec![Vec2::ZERO, Vec2::new(-60.0, -10.0)], 8.0)
+    };
+    assert!(found(&fork(fork_street(), &[side])).0.list.is_empty());
+}
+
+#[test]
+fn a_pure_fork_gets_no_rule_zebra_or_stop_line() {
+    let roads = fork(fork_street(), &[]);
+    let map = MapData {
+        network: RoadNetwork::new(&roads),
+        roads,
+        ..default()
+    };
+    let drawn = Drawn::for_test(&map);
+    let base = marking_breaks(&map.roads, is_carriageway, &[]).breaks;
+    let paint = NodePaint::for_test(
+        &drawn,
+        &base,
+        &map,
+        &[],
+        NodePaintStyle {
+            crossings: CrossingMode::Generated,
+            stop_lines: true,
+        },
+    );
+    assert!(paint.zebras.is_empty() && paint.stop_lines.is_empty());
+    assert!(paint.junctions.is_empty());
+    // переход OSM в узле развилки (Болдина, R17) — одна зебра поперёк
+    // продолжения, целиком на нём
+    let mut map = map;
+    map.road_nodes.push(RoadNode {
+        pos: Vec2::ZERO,
+        kind: RoadNodeKind::Crossing {
+            signals: false,
+            island: false,
+            marked: true,
+        },
+    });
+    let drawn = Drawn::for_test(&map);
+    let paint = NodePaint::for_test(
+        &drawn,
+        &base,
+        &map,
+        &[],
+        NodePaintStyle {
+            crossings: CrossingMode::Osm,
+            stop_lines: true,
+        },
+    );
+    assert_eq!(paint.zebras.len(), 1, "{:?}", paint.zebras);
+    let zebra = paint.zebras[0];
+    let middle = (zebra.from + zebra.to) / 2.0;
+    assert!(zebra.osm && middle.y < -1.0, "{zebra:?}");
 }

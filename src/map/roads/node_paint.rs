@@ -703,18 +703,31 @@ impl NodePaint {
                 else {
                     continue;
                 };
-                if node.is_junction() {
+                // чистый узел слияния — не перекрёсток: переход OSM в нём
+                // ложится поперёк продолжения, как посреди улицы (Болдина у
+                // кольца, R16/R17)
+                let merge = merged(node);
+                if node.is_junction() && merge.is_none() {
                     continue;
                 }
                 for visit in &node.visits {
+                    if merge.is_some_and(|merge| visit.road != merge.street) {
+                        continue;
+                    }
                     // зебры по грунту не бывает: обрывки белых планок на
                     // щебне у тротуара читались мусором (Калуга, 06)
                     if drawn[visit.road].bridge || drawn[visit.road].is_unpaved_street() {
                         continue;
                     }
                     let walk = Walk::new(paths[visit.road].as_ref());
+                    let mut along = walk.project(node.at);
+                    // у слияния — целиком на продолжении, до линий веток
+                    if merge.is_some() {
+                        let reach = ZEBRA_LENGTH / 2.0 + PAINT_CLEAR;
+                        along = along.clamp(reach, (walk.total - reach).max(reach));
+                    }
                     crossings[visit.road].push(Crossing {
-                        along: walk.project(node.at),
+                        along,
                         signals: *signals,
                         used: false,
                     });
