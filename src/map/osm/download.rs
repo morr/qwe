@@ -12,7 +12,7 @@ use bevy::prelude::*;
 use crate::city::City;
 use crate::map::osm::model::MapData;
 use crate::map::osm::overpass::{cache_path, overpass_query, prune_stale_caches};
-use crate::map::osm::parse::parse;
+use crate::map::osm::parse::{ParseKnobs, parse};
 use crate::navigation::{Navmesh, snap_portal_position};
 
 /// Зеркала Overpass по порядку обхода. Основной инстанс на плотных городах
@@ -83,10 +83,16 @@ impl MapLoadJob {
 }
 
 /// Выделенный поток, а не пул задач: многосекундное блокирующее чтение
-/// сети не должно занимать воркер `AsyncComputeTaskPool`.
-pub fn start_load_thread(job: MapLoadJob, navmesh: Arc<RwLock<Navmesh>>, city: City) {
+/// сети не должно занимать воркер `AsyncComputeTaskPool`. Входы разбора
+/// (`knobs`) приходят аргументом: ECS в потоке нет, а глобалей разбор не читает.
+pub fn start_load_thread(
+    job: MapLoadJob,
+    navmesh: Arc<RwLock<Navmesh>>,
+    city: City,
+    knobs: ParseKnobs,
+) {
     std::thread::spawn(move || {
-        let result = run(&job, city).map(|map| build_navmesh(&job, map, &navmesh, city));
+        let result = run(&job, city, knobs).map(|map| build_navmesh(&job, map, &navmesh, city));
         job.set(match result {
             Ok(world) => JobState::Done(Some(Box::new(world))),
             Err(message) => JobState::Failed(message),
@@ -146,7 +152,7 @@ fn build_navmesh(
     LoadedWorld { map, portal }
 }
 
-fn run(job: &MapLoadJob, city: City) -> Result<MapData, String> {
+fn run(job: &MapLoadJob, city: City, knobs: ParseKnobs) -> Result<MapData, String> {
     let path = cache_path(city);
     // до чтения, а не после записи: устаревшие файлы надо подмести и на
     // попадании в кеш, иначе они переживут все следующие запуски
@@ -154,7 +160,7 @@ fn run(job: &MapLoadJob, city: City) -> Result<MapData, String> {
 
     if let Some(json) = read_cache(city)? {
         job.set(JobState::Parsing);
-        match parse(&json, city) {
+        match parse(&json, city, knobs) {
             Ok(map) => return Ok(map),
             Err(error) => {
                 // битый кеш самоизлечивается: удаляем и качаем заново
@@ -164,7 +170,7 @@ fn run(job: &MapLoadJob, city: City) -> Result<MapData, String> {
         }
     }
 
-    download_and_cache(job, city).map(|(_, map)| map)
+    download_and_cache(job, city, knobs).map(|(_, map)| map)
 }
 
 /// Выгрузка города как её видит игра — JSON ответа Overpass: из кеша, а нет
@@ -178,7 +184,9 @@ pub fn city_extract(city: City) -> Result<String, String> {
     if let Some(json) = read_cache(city)? {
         return Ok(json);
     }
-    download_and_cache(&MapLoadJob::default(), city).map(|(json, _)| json)
+    // разбор здесь — только проверка, что зеркало отдало годный ответ: карта
+    // выбрасывается, так что входы разбора — любые
+    download_and_cache(&MapLoadJob::default(), city, ParseKnobs::default()).map(|(json, _)| json)
 }
 
 fn read_cache(city: City) -> Result<Option<String>, String> {
@@ -193,11 +201,15 @@ fn read_cache(city: City) -> Result<Option<String>, String> {
 }
 
 /// Скачать, разобрать и только после успешного разбора записать кеш.
-fn download_and_cache(job: &MapLoadJob, city: City) -> Result<(String, MapData), String> {
+fn download_and_cache(
+    job: &MapLoadJob,
+    city: City,
+    knobs: ParseKnobs,
+) -> Result<(String, MapData), String> {
     let path = cache_path(city);
     let json = download(job, city)?;
     job.set(JobState::Parsing);
-    let map = parse(&json, city)?;
+    let map = parse(&json, city, knobs)?;
 
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);

@@ -164,8 +164,9 @@ whole algorithm:
 - **Blocked walls** (`FootprintIndex`) — a wall a neighbour stands against carries no
   door. OSM buildings routinely touch, share an outline edge, or overlap outright, and
   a door placed there sits *inside* the neighbour: invisible from the street and
-  unreachable. Every candidate point is probed `entrance_clearance()` (= one navtile,
-  2 m by default) along the edge's outward normal, and a probe that lands inside another
+  unreachable. Every candidate point is probed `FootprintIndex::blocks_door` — one navtile
+  (`ParseKnobs::navtile`, handed to `generate_entrances(map, navtile)` as an argument, 2 m
+  by default) along the edge's outward normal — and a probe that lands inside another
   `AreaKind::Building` kills that slot; the facade simply yields fewer doors and the
   next one by score picks them up. The probe distance is also the smallest gap worth
   a door — less than a navtile of free space in front and nobody can stand there.

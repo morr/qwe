@@ -79,6 +79,7 @@ use bevy::sprite::Anchor;
 use bevy::sprite_render::Material2dPlugin;
 use bevy::window::PrimaryWindow;
 use qwe::camera::{hovering_ui, zoom_to_cursor};
+use qwe::grid::DEFAULT_NAVTILE_SIZE;
 use qwe::map::buildings::material::{
     RoofKind, RoofLook, RoofMaterial, RoofMaterialHandle, WallKind, WallLook, init_roof_material,
     retune_roof_material,
@@ -797,7 +798,7 @@ impl HouseExt for PolyArea {
             buildings: vec![self],
             ..default()
         };
-        generate_entrances(&mut map);
+        generate_entrances(&mut map, DEFAULT_NAVTILE_SIZE);
         map.buildings.pop().expect("дом вернулся из генератора")
     }
 }

@@ -8,6 +8,7 @@ use bevy::math::Vec2;
 
 use super::planting::plant_trees;
 use crate::city::City;
+use crate::grid::DEFAULT_NAVTILE_SIZE;
 use crate::map::along::{arclengths, densify, place_on_path};
 use crate::map::cars::district::Districts;
 use crate::map::grid::Grid;
@@ -21,6 +22,7 @@ use crate::map::osm::model::{
 };
 use crate::map::osm::overpass::{Element, GeoBounds, LatLon, Member, OverpassResponse};
 use crate::map::roads::network::sections::{self, SectionReport};
+use crate::map::roads::shape::LANE_WIDTH_DEFAULT;
 use crate::map::seed::seed_from_point;
 
 /// Ширина стены Кремля, м.
@@ -44,22 +46,49 @@ const ENTRANCE_SNAP_SCALE: f32 = 100.0;
 /// было не то чтобы нельзя — просто не за что было взяться: у стадии не было
 /// имени. Все шестьдесят тестов разбора поэтому гоняли конвейер целиком и
 /// адресовали дома по их месту в фикстуре.
-pub fn parse(json: &str, city: City) -> Result<MapData, String> {
+pub fn parse(json: &str, city: City, knobs: ParseKnobs) -> Result<MapData, String> {
     let response: OverpassResponse =
         serde_json::from_str(json).map_err(|error| format!("overpass json: {error}"))?;
-    Ok(parse_response(&response, city))
+    Ok(parse_response(&response, city, knobs))
+}
+
+/// Входы разбора, которых нет в ответе Overpass. Раньше обе были процессными
+/// глобалями, которые разбор читал сам (`shape::lane_width()`,
+/// `grid::navtile_size()`): у `parse(json, city)` было два невидимых входа, и
+/// тест не мог назвать ширину полосы, не заперев глобаль мьютексом —
+/// `cargo test` многопоточный. Теперь их называет вызывающий: поток загрузки —
+/// осевшими ручками (`loading::start_job`), витрина дорог — своей ширины
+/// полосы, всё прочее — [`Default`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ParseKnobs {
+    /// Ширина полосы улицы, м — ручка `Lane width` (`RoadShape::lane_width`).
+    /// Её читают сечения (шаг 0 [`finish_parse`]), а по ширине дорог
+    /// двигаются дома, кварталы и стоянки.
+    pub lane_width: f32,
+    /// Размер навтайла, м (`NavtileBase::size`): зазор, который генератор
+    /// дверей проверяет перед стеной (шаг 7).
+    pub navtile: f32,
+}
+
+impl Default for ParseKnobs {
+    fn default() -> Self {
+        Self {
+            lane_width: LANE_WIDTH_DEFAULT,
+            navtile: DEFAULT_NAVTILE_SIZE,
+        }
+    }
 }
 
 /// [`parse`] уже десериализованного ответа. Отдельной дверью — ради витрины
 /// дорог: она читает выгрузку города один раз и режет из неё окна
 /// ([`super::crop`]), и гонять каждое окно обратно через JSON было бы
 /// круговой поездкой ни за чем.
-pub fn parse_response(response: &OverpassResponse, city: City) -> MapData {
+pub fn parse_response(response: &OverpassResponse, city: City, knobs: ParseKnobs) -> MapData {
     let bounds = GeoBounds::for_city(city);
 
     let (mut map, pending, read) = read_elements(response, &bounds);
     eprint!("{read}");
-    let passes = finish_parse(&mut map, &pending);
+    let passes = finish_parse(&mut map, &pending, knobs);
     eprint!("{passes}");
     map
 }
@@ -362,9 +391,12 @@ impl std::fmt::Display for PassReport {
 /// оба спрашивают «эта вершина общая?», и между ними контуры **двигаются**:
 /// выпрямленный дом уносит свои вершины на новые места, и счёт, снятый до
 /// него, отвечал бы про старую карту.
-fn finish_parse(map: &mut MapData, pending: &Pending) -> PassReport {
+///
+/// Входы вне ответа Overpass — только `knobs`: ширину полосы берёт шаг 0,
+/// навтайл — шаг 7. Глобалей проходы не читают.
+fn finish_parse(map: &mut MapData, pending: &Pending, knobs: ParseKnobs) -> PassReport {
     let entrances = &pending.entrances;
-    let sections = sections::apply(map, crate::map::roads::shape::lane_width());
+    let sections = sections::apply(map, knobs.lane_width);
     let drowned = drop_buildings_in_water(map);
     // мера квартала строится по домам, только если есть кого спросить
     let districts = std::cell::OnceCell::new();
@@ -398,7 +430,7 @@ fn finish_parse(map: &mut MapData, pending: &Pending) -> PassReport {
     // размеченных дверей в OSM единицы процентов — остальным дом получает свои
     // по замеру когорт, см. `entrances/`
     let started = std::time::Instant::now();
-    let generated = generate_entrances(map);
+    let generated = generate_entrances(map, knobs.navtile);
     let generating = started.elapsed();
 
     let started = std::time::Instant::now();

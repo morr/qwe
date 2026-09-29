@@ -3411,7 +3411,7 @@ fn finishing_the_parse_reports_what_each_pass_did() {
         );
 
     let (mut map, pending, _) = read(&scene);
-    let report = finish_parse(&mut map, &pending);
+    let report = finish_parse(&mut map, &pending, ParseKnobs::default());
 
     assert_eq!(report.drowned, 1);
     assert_eq!(report.squared, 1);

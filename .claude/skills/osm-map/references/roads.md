@@ -1961,10 +1961,14 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     `seed_road_shape` at Startup, `track_pref::<RoadShapeOnMap>`. `roads::rebuilds_on` =
     `RoadStyle` | `RoadShapeOnMap` | `SunOnMap`; `cars::rebuilds_on` reads
     `RoadShapeOnMap` instead of `RoadStyle`.
-  - **Lane width is a world reload**, not a rebuild: the parse reads it (**Sections**), and
-    the parse runs on the load thread with no ECS, so it travels as a process global —
-    `shape::lane_width()` / `set_lane_width()`, an `AtomicU32`, the same way as the sun
-    and the navtile size. `loading.rs::sync_lane_width` writes it on `OnEnter(Loading)`
+  - **Lane width is a world reload**, not a rebuild: the parse reads it (**Sections**). The
+    parse gets it as an **argument** — `ParseKnobs::lane_width`, built by
+    `loading.rs::start_job` from the `RoadShape` knob and handed to the load thread
+    (`parse.md`, the parse seam). The paint and the ruts still read a process global —
+    `shape::lane_width()` / `set_lane_width()`, an `AtomicU32`, the same way as the sun:
+    threading it through `Painter::paint`, `lane_frame`, `wedge_frames`, `merge_ramps` and
+    `arm_lanes` would widen five interfaces inside pure functions for one number.
+    `loading.rs::sync_lane_width` writes it on `OnEnter(Loading)`
     right before `start_job` (next to `sync_navtile_size`); `city.rs::reload_world` fires
     on `lane_width_moved` (the settled width differs from the global) — same city, the
     camera stays. Paint and turns read the same global (`BIRTH_FADE` is half a lane), and
@@ -2386,8 +2390,8 @@ place to look at a road-network defect end to end:
   **Roads** header (the five `RoadShape` sliders from `qwe::ui::shape_knobs` + Sidewalks),
   a **Road paint** header (Markings, Paint, Crossings, Stop lines, Arrows, Wear, Turn wear)
   and the Network row; a change rebuilds every sample. The gallery settles `RoadShape`
-  like the game and sets the lane-width global (`apply_lane_width`) before re-parsing its
-  samples. `ROADS_SHOT=path.png` takes a frame and exits — counting the shared
+  like the game, hands the settled lane width to `parse_response` in `ParseKnobs` and sets
+  the paint's lane-width global (`apply_lane_width`) before re-parsing its samples. `ROADS_SHOT=path.png` takes a frame and exits — counting the shared
   `gallery_shot.rs` frames only from the frame every sample is built and placed
   (`gallery_ready`), since the samples build one per frame and a fixed frame number left
   the late ones (Tula's 28th) empty; `ROADS_SAMPLE=N` frames sample N,

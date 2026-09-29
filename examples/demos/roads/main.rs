@@ -81,7 +81,7 @@ use qwe::map::buildings::material::{RoofMaterial, init_roof_material};
 use qwe::map::buildings::{
     BuildingPlan, BuildingZoomBucket, mesh_buildings, spawn_building_meshes,
 };
-use qwe::map::osm::parse::parse_response;
+use qwe::map::osm::parse::{ParseKnobs, parse_response};
 use qwe::map::surface::{
     LayerMesh, SurfaceMaterial, init_flat_materials, init_surface_materials,
     retune_surface_materials, retunes_on, spawn_layers,
@@ -502,9 +502,9 @@ fn load_reference(path: &std::path::Path) -> Option<Image> {
     .ok()
 }
 
-/// Ширина полосы — в глобаль, которую читают разбор, краска и колея
-/// асфальта: игра пишет её перед потоком загрузки, витрина — перед разбором
-/// примеров, которые `reload` по этой же правке соберёт заново.
+/// Ширина полосы — в глобаль, которую читают краска и колея асфальта; разбор
+/// примеров получает её аргументом (`ParseKnobs`) из той же осевшей ручки, и
+/// `reload` по этой же правке соберёт их заново.
 fn apply_lane_width(shape: Res<RoadShapeOnMap>) {
     set_lane_width(shape.0.lane_width());
 }
@@ -532,7 +532,13 @@ fn build_next(
     let slot = gallery.slots[index];
     let started = std::time::Instant::now();
 
-    let map = parse_response(&sample.osm, *city);
+    // ширина полосы — осевшей ручки, как у игры; навтайл витрина не
+    // переключает, двери она не рисует
+    let knobs = ParseKnobs {
+        lane_width: road_shape.0.lane_width(),
+        ..ParseKnobs::default()
+    };
+    let map = parse_response(&sample.osm, *city, knobs);
     let parsed = started.elapsed();
 
     // Всякий слой режется окном примера (в игровых координатах — до сдвига):

@@ -119,10 +119,17 @@ pub(super) struct FootprintIndex<'a> {
     /// занято самим срезом, в который эти номера индексируют.
     buildings_by_cell: Grid<usize>,
     buildings: &'a [PolyArea],
+    /// Насколько далеко от стены проверяется, свободно ли перед дверью, м —
+    /// ровно навтайл (`ParseKnobs::navtile`): дверь имеет смысл только там, где
+    /// перед ней есть куда встать, а меньше тайла свободного места навмеш всё
+    /// равно не разрешит. Заодно этот же зазор съедает разнобой в координатах
+    /// общей стены — соседние дома в OSM обводят по одному и тому же ряду точек
+    /// редко.
+    clearance: f32,
 }
 
 impl<'a> FootprintIndex<'a> {
-    pub(super) fn build(buildings: &'a [PolyArea]) -> Self {
+    pub(super) fn build(buildings: &'a [PolyArea], clearance: f32) -> Self {
         let mut buildings_by_cell = Grid::new(FOOTPRINT_CELL);
         for (index, building) in buildings.iter().enumerate() {
             // загораживает дверь только дом; вода и парк — не преграда
@@ -135,12 +142,19 @@ impl<'a> FootprintIndex<'a> {
         Self {
             buildings_by_cell,
             buildings,
+            clearance,
         }
+    }
+
+    /// Перед дверью в `at` на стене с внешней нормалью `outward` нет места:
+    /// точка на [`Self::clearance`] наружу накрыта чужим домом.
+    pub(super) fn blocks_door(&self, at: Vec2, outward: Vec2, owner: usize) -> bool {
+        self.is_covered(at + outward * self.clearance, owner)
     }
 
     /// Точка занята чужим домом? Свой дом (`owner`) не в счёт — дверь стоит на
     /// его собственной стене.
-    pub(super) fn is_covered(&self, point: Vec2, owner: usize) -> bool {
+    fn is_covered(&self, point: Vec2, owner: usize) -> bool {
         self.buildings_by_cell
             .at(point)
             .iter()

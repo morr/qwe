@@ -484,6 +484,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   **before** the skewed houses are squared, and `vertex_uses` is deliberately computed
   **twice**, because the outlines move between its two readers. Detail in the `osm-map`
   skill.
+- **ParseKnobs** (`map/osm/parse.rs`) — the parse's inputs that are not in the Overpass
+  answer: `lane_width` (the street lane width the sections take) and `navtile` (the door
+  generator's clearance). `parse(json, city, knobs)` / `parse_response` take them as an
+  argument and **the parse reads no process global**; `Default` is the knobs' defaults
+  (3.3 m, 2 m). The load thread gets the settled knobs from `loading::start_job`.
 - **Building height** (`parse/tags.rs::building_height`) — metres from `height` or
   `building:levels` × 3 m; outside 2–600 m counts as no tag. `None` is normal, and common:
   coverage varies wildly by city (NY 97 % … Tula 31 % … Tokyo 5 %) and is logged on load.
@@ -1775,8 +1780,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   curve tolerance, median gap, corner radius; ranges beside it, clamped on read). The map
   follows **RoadShapeOnMap**, the copy that settles 0.35 s after the last slider step
   (the `SunOnMap` idea); the lane width is read by the parse, so a settled new lane width
-  is a **world reload** (same city, camera kept) and reaches the load thread as a process
-  global (`shape::lane_width()`), like the navtile size. Any smoothing works on a *copy*,
+  is a **world reload** (same city, camera kept) and reaches the load thread as an
+  argument (**ParseKnobs**); the process global `shape::lane_width()` is left to the paint,
+  the turn paths and the ruts' uniform. Any smoothing works on a *copy*,
   since `RoadLine::points`/`width` are load-bearing for navmesh, arches, planting and
   entrances; the Chaikin rule is **`Smoothing`** in `map/smooth.rs`, shared by six layers,
   not a road's own. `RoadPaintStyle` (Paint, Wear, Turn wear) is uniforms only. Then

@@ -9,8 +9,18 @@ them, every tag reading and finishing pass in order, and how a tag rule is pinne
 
 ### The parse seam: reading the elements, then finishing
 
-`parse()` is two halves with a line between them, and the line is what makes a single
-pass reachable:
+`parse(json, city, knobs)` is two halves with a line between them, and the line is what
+makes a single pass reachable. **`ParseKnobs { lane_width, navtile }`** (`parse.rs`) are
+the parse's inputs that are not in the Overpass answer: the street lane width (the
+sections — and by the width the houses, blocks and lots move) and the navtile size (the
+door generator's clearance, one tile in front of a door, carried by
+`entrances::FootprintIndex`). **The parse reads no process global** — both used to be one
+(`shape::lane_width()`, `grid::navtile_size()`), which the parse read on its own, so
+`parse(json, city)` had two invisible inputs and a test could not name a lane width
+without a serial mutex (`cargo test` is multithreaded). `Default` is the knobs' defaults
+(3.3 m, 2 m) — the fixture, the tests, the bench and the replay parse with it; the game's
+load thread gets the settled knobs from `loading.rs::start_job`, the roads gallery the
+lane width off its own `RoadShapeOnMap`.
 
 - **`read_elements(response, bounds) -> (MapData, Pending, ReadReport)`** — the element
   loop and nothing else. What comes out is *raw*: houses still standing in water, churches
@@ -19,7 +29,7 @@ pass reachable:
   buildings do not exist). The roads with no `sidewalk*` tag at all, whose sidewalks the
   blocks around decide once the buildings are read, need no list there: they carry
   `SidewalkSide::Inferred` on the `RoadLine` itself.
-- **`finish_parse(&mut MapData, &Pending) -> PassReport`** — the **nine** finishing passes
+- **`finish_parse(&mut MapData, &Pending, ParseKnobs) -> PassReport`** — the **nine** finishing passes
   (step 0 is the street sections, `map::roads::network::sections`, since the width they
   set is read by the passes after them) in their one correct order, closed by a tenth
   step, `compose_trees` for the default
