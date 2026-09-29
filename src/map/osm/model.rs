@@ -207,6 +207,22 @@ pub struct PolyArea {
     pub colours: Colours,
 }
 
+impl PolyArea {
+    /// Направление самой длинной стороны внешнего контура. Именно стороны, а
+    /// не оси описанного прямоугольника: у площадки, дотянутой до дороги
+    /// (`osm::parse::pull_areas_to_roads`), контур зубчатый, и минимальный
+    /// прямоугольник разворачивается по случайному зубцу. `None` — контур
+    /// вырожден. Читают раскладка стоянки (`parking::generated_rows`) и карман у
+    /// бордюра при разборе (`parse/lots.rs::runs_along`).
+    pub fn longest_side(&self) -> Option<Vec2> {
+        let ring = &self.outer;
+        (0..ring.len())
+            .map(|index| ring[(index + 1) % ring.len()] - ring[index])
+            .max_by(|a, b| a.length_squared().total_cmp(&b.length_squared()))
+            .and_then(Vec2::try_normalize)
+    }
+}
+
 /// Цвет sRGB байтами — чтобы носитель оставался `Copy + Eq`.
 pub type Rgb = [u8; 3];
 
@@ -316,16 +332,37 @@ pub struct RoadLine {
     /// первое (порядок точек и есть поток); у двусторонней общий `turn:lanes`
     /// без направления не читается — чьи это полосы, не сказано.
     pub turns: [Vec<LaneTurn>; 2],
-    /// Есть ли у улицы тротуар `[слева, справа]` по ходу точек — по
-    /// `sidewalk=*` (`no` и `separate` — нет: тротуар замаплен отдельным
-    /// footway или его нет вовсе). Без тега — с обеих сторон: правдоподобие
-    /// важнее молчания данных. Проезду и дорожке тротуар не положен и так
+    /// Откуда у улицы тротуар `[слева, справа]` по ходу точек — см.
+    /// [`SidewalkSide`]: по `sidewalk=*`, по классу и застройке, или его нет.
+    /// Проезду и дорожке тротуар не положен и так
     /// (`map::roads::is_carriageway`), это поле его не добавляет.
-    pub sidewalks: [bool; 2],
+    pub sidewalks: [SidewalkSide; 2],
     /// Стоянка у бордюра `[слева, справа]` по ходу точек — по `parking:*`.
     /// Что делать с [`KerbParking::Untagged`], решает правило
     /// (`map::roads::pockets`), не разбор.
     pub parking: [KerbParking; 2],
+}
+
+/// Откуда у одной стороны улицы тротуар — решение разбора, которое после него
+/// не теряется: `sidewalk=no` и «снято по застройке» различимы по тому, был
+/// ли тег.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SidewalkSide {
+    /// Тротуар по тегу `sidewalk*` (`both|left|right|yes`).
+    Tagged,
+    /// Тега нет — тротуар по правдоподобию: улица с твёрдым покрытием, и
+    /// застройка вокруг не отняла его (`parse::infer_sidewalks`).
+    Inferred,
+    /// Тротуара нет: `sidewalk=no|none|separate` (отдельный footway рисуется
+    /// сам), грунтовая улица без тега или застройка вокруг ниже городской.
+    None,
+}
+
+impl SidewalkSide {
+    /// Есть ли тротуар с этой стороны — неважно, откуда.
+    pub fn is_present(self) -> bool {
+        self != Self::None
+    }
 }
 
 /// Стоянка вдоль одной стороны улицы по `parking:<side>` (схема 2022 г.).
@@ -378,6 +415,108 @@ impl RoadLine {
     /// бордюра, арка приколота к стенам дома.
     pub fn carves_navmesh(&self) -> bool {
         self.bridge || self.passage
+    }
+
+    /// Проезжая часть улицы — то, что несёт тротуар и разметку и участвует в
+    /// перекрёстках: улица по классу ([`Highway::is_street`] — не дворовый
+    /// проезд), не арка (`passage` идёт сквозь дом). Мост — тоже: улица через
+    /// реку не теряет полос.
+    ///
+    /// Решает **класс, а не ширина**: пока ширина шла по классу, порог в 8 м
+    /// был тем же классом другими словами, но ширина из сечения
+    /// (`network::sections`) у двухполосной улицы — 7.6 м, у однополосной
+    /// односторонней — 4.3, и порог по ширине отнял бы у них тротуар.
+    pub fn is_carriageway(&self) -> bool {
+        self.class == RoadClass::Street && !self.passage && self.highway.is_street()
+    }
+
+    /// Тротуар дороги как он есть на карте — одно решение для разбора и
+    /// рендера. Считается от текущей `width`, а не хранится: клоны переездов
+    /// и дуг колец (`map::roads`) меняют ширину, и хранимая полоса устарела бы.
+    pub fn sidewalk(&self) -> SidewalkProfile {
+        SidewalkProfile {
+            sides: self.sidewalks.map(SidewalkSide::is_present),
+            band: self.is_carriageway().then(|| sidewalk_band(self.width)),
+        }
+    }
+}
+
+/// Доля ширины улицы на тротуар с каждой стороны и её пределы, м: у
+/// магистрали в 16 м тротуар в 3 м, у жилой улицы в 8 м — 1.8 м.
+const SIDEWALK_SHARE: f32 = 0.22;
+pub const SIDEWALK_WIDTH_RANGE: std::ops::RangeInclusive<f32> = 1.2..=3.0;
+
+/// Ширина тротуара с одной стороны проезжей части шириной `road_width`, м —
+/// без вопроса, есть ли у дороги тротуар вообще (это [`RoadLine::sidewalk`]).
+pub fn sidewalk_band(road_width: f32) -> f32 {
+    (road_width * SIDEWALK_SHARE).clamp(*SIDEWALK_WIDTH_RANGE.start(), *SIDEWALK_WIDTH_RANGE.end())
+}
+
+/// Тротуар одной дороги ([`RoadLine::sidewalk`]): по каким сторонам он стоит
+/// и какой ширины полоса положена ей по классу. Отсюда три края, которые
+/// читает разбор, — у каждого свой довод, сливать их нельзя.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SidewalkProfile {
+    /// `[слева, справа]` по ходу точек — есть ли тротуар ([`SidewalkSide`]).
+    sides: [bool; 2],
+    /// Полоса по классу — у проезжей части ([`RoadLine::is_carriageway`]),
+    /// мост включительно; у проезда и дорожки `None`.
+    band: Option<f32>,
+}
+
+impl SidewalkProfile {
+    /// Полоса по классу, тег не смотрит: край обочины у дома, бордюр стоянки.
+    pub fn band(&self) -> Option<f32> {
+        self.band
+    }
+
+    /// Тротуар с этой стороны `[слева, справа]` по ходу точек.
+    pub fn on(&self, side: usize) -> Option<f32> {
+        self.band.filter(|_| self.sides[side])
+    }
+
+    /// Тротуар хоть с одной стороны: у `sidewalk=no|separate` с обеих — нет.
+    pub fn any(&self) -> Option<f32> {
+        self.band.filter(|_| self.sides.contains(&true))
+    }
+
+    /// Тротуар по тегу с обеих сторон — ширину не спрашивает.
+    pub fn both(&self) -> bool {
+        self.sides == [true; 2]
+    }
+
+    /// `[слева, справа]` — есть ли тротуар по стороне.
+    pub fn sides(&self) -> [bool; 2] {
+        self.sides
+    }
+
+    /// **Край по карте** (mapped edge) — внешний край нарисованного полотна от
+    /// оси: полуширина `half` плюс тротуар, если он есть хоть с одной
+    /// стороны. Один на обе стороны и у одностороннего тротуара. К нему
+    /// тянутся кварталы и стоянки (`parse::pull_areas_to_roads`,
+    /// `parse/lots.rs`).
+    pub fn mapped_edge(&self, half: f32) -> f32 {
+        half + self.any().unwrap_or_default()
+    }
+
+    /// **Край обочины** (verge edge) — полоса по классу с зазором: от него
+    /// отодвигается дом (`parse::pull_houses_off_sidewalks`). Тег не смотрит:
+    /// там, где тег тротуар снял, остаётся обочина. `None` у проезда.
+    pub fn verge_edge(&self, half: f32, clearance: f32) -> Option<f32> {
+        self.band.map(|band| half + band + clearance)
+    }
+
+    /// Ширина бордюра, которым дорога сквозь стоянку отделена от её асфальта:
+    /// полоса по классу (тег не смотрит), а у проезда без неё — `default`
+    /// (`parking::LOT_KERB`).
+    pub fn kerb(&self, default: f32) -> f32 {
+        self.band.unwrap_or(default)
+    }
+
+    /// **Край бордюра** (kerb edge) — полуширина `half` плюс [`Self::kerb`]:
+    /// ближе этого к оси место на стоянке не встаёт.
+    pub fn kerb_edge(&self, half: f32, default: f32) -> f32 {
+        half + self.kerb(default)
     }
 }
 
@@ -1461,5 +1600,83 @@ mod tests {
         road.bridge = false;
         road.passage = true;
         assert!(road.carves_navmesh());
+    }
+
+    /// Самая длинная сторона — сторона контура по ходу его вершин, а не ось
+    /// описанного прямоугольника; у пустого контура её нет.
+    #[test]
+    fn the_longest_side_is_a_side_of_the_outline() {
+        let area = |outer: Vec<Vec2>| PolyArea {
+            outer,
+            holes: Vec::new(),
+            kind: AreaKind::Parking,
+            building_use: BuildingUse::Other,
+            height: None,
+            storeys: None,
+            entrances: Vec::new(),
+            colours: Colours::default(),
+        };
+        // длинная сторона — верхняя, от (30, 4) к (0, 4)
+        let lot = area(vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(10.0, -1.0),
+            Vec2::new(30.0, 4.0),
+            Vec2::new(0.0, 4.0),
+        ]);
+        assert_eq!(lot.longest_side(), Some(Vec2::new(-1.0, 0.0)));
+        assert_eq!(area(Vec::new()).longest_side(), None);
+    }
+
+    fn street(width: f32) -> RoadLine {
+        crate::map::osm::fixture::street(vec![Vec2::ZERO, Vec2::new(100.0, 0.0)], width)
+    }
+
+    /// Мост — проезжая часть: полоса у него по классу есть (со своих слоёв его
+    /// убирает рендер, а не профиль); у проезда полосы нет вовсе.
+    #[test]
+    fn a_bridge_keeps_its_band_and_a_service_drive_has_none() {
+        let mut bridge = street(8.0);
+        bridge.bridge = true;
+        assert_eq!(bridge.sidewalk().band(), Some(sidewalk_band(8.0)));
+        let mut service = street(8.0);
+        service.highway = Highway::Service;
+        let profile = service.sidewalk();
+        assert_eq!(profile.band(), None);
+        assert_eq!(profile.on(0), None);
+        assert_eq!(
+            profile.kerb_edge(4.0, 1.2),
+            5.2,
+            "без полосы — бордюр стоянки"
+        );
+        assert_eq!(profile.verge_edge(4.0, 2.0), None);
+    }
+
+    /// `sidewalk=right` — тротуар только справа по ходу: слева `on` пусто,
+    /// а край по карте один на обе стороны — с тротуаром.
+    #[test]
+    fn a_right_sidewalk_is_on_one_side_and_its_edge_on_both() {
+        let mut road = street(8.0);
+        road.sidewalks = [SidewalkSide::None, SidewalkSide::Tagged];
+        let profile = road.sidewalk();
+        let band = sidewalk_band(8.0);
+        assert_eq!(profile.on(0), None);
+        assert_eq!(profile.on(1), Some(band));
+        assert_eq!(profile.any(), Some(band));
+        assert!(!profile.both());
+        assert_eq!(profile.mapped_edge(4.0), 4.0 + band);
+    }
+
+    /// Без тротуара с обеих сторон край по карте — голая кромка, а обочина
+    /// дома и бордюр стоянки остаются по классу: тег их не трогает.
+    #[test]
+    fn without_sidewalks_the_mapped_edge_is_the_kerb_and_the_verge_stays() {
+        let mut road = street(8.0);
+        road.sidewalks = [SidewalkSide::None; 2];
+        let profile = road.sidewalk();
+        let band = sidewalk_band(8.0);
+        assert_eq!(profile.any(), None);
+        assert_eq!(profile.mapped_edge(4.0), 4.0);
+        assert_eq!(profile.verge_edge(4.0, 2.0), Some(4.0 + band + 2.0));
+        assert_eq!(profile.kerb_edge(4.0, 1.2), 4.0 + band);
     }
 }

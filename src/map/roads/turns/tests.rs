@@ -33,26 +33,19 @@ fn turns_of(roads: Vec<RoadLine>, side: TrafficSide) -> (Turns, NodePaint) {
         ..default()
     };
     map.network = RoadNetwork::new(&map.roads);
-    let drawn: Vec<&RoadLine> = map.roads.iter().collect();
-    let paths: Vec<Vec<Vec2>> = map.roads.iter().map(|road| road.points.clone()).collect();
     let base = marking_breaks(&map.roads, is_carriageway, &[]).breaks;
-    let paint = NodePaint::new(
+    let drawn = Drawn::for_test(&map);
+    let paint = NodePaint::for_test(
         &drawn,
-        &paths,
         &base,
-        &[],
         &map,
-        &[],
         &[],
         NodePaintStyle {
             crossings: CrossingMode::Off,
             stop_lines: false,
         },
-        |_| true,
-        |_| Vec::new(),
-        |_| false,
     );
-    let turns = Turns::new(&drawn, &paths, &paint.junctions, side, |_| false);
+    let turns = Turns::new(&drawn, &paint.junctions, side);
     (turns, paint)
 }
 
@@ -79,12 +72,14 @@ fn the_main_road_keeps_its_ruts_and_turns_get_curves() {
     assert_eq!(paint.junctions.len(), 1);
     assert_eq!(paint.junctions[0].leading, vec![0], "главная ведёт узел");
     assert!(
-        paint.asphalt[0].iter().all(|found| found.at != NODE),
+        paint.asphalt().of(0).iter().all(|found| found.at != NODE),
         "колея главной идёт сквозь: {:?}",
-        paint.asphalt[0]
+        paint.asphalt().of(0)
     );
     assert!(
-        paint.asphalt[1]
+        paint
+            .asphalt()
+            .of(1)
             .iter()
             .any(|found| found.at == NODE && found.reach > 0.0)
     );

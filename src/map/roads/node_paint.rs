@@ -49,10 +49,10 @@ use std::collections::BTreeMap;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
-use super::junctions::{JUNCTION_MARGIN, SharedNode, Visit, node_key, with_stitches};
-use super::merges::Merge;
-use super::network::StitchTarget;
+use super::drawn::{Axis, Drawn};
+use super::junctions::{JUNCTION_MARGIN, SharedNode, Visit, node_key};
 use super::network::pairs::TRAM_BED_MAX_GAP;
+use super::paint::LineBreaks;
 use super::{is_carriageway, lane_count};
 use crate::map::along::{arclengths, nearest_on_path, place_on_path};
 use crate::map::footprint::distance_to_polyline;
@@ -141,13 +141,7 @@ pub struct Zebra {
     pub osm: bool,
 }
 
-/// Вторая половина разделённой улицы: её дорога и асфальт ли между ними — по
-/// асфальтовой разделительной зебра идёт одной планкой через обе половины.
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub struct Partner {
-    pub road: usize,
-    pub paved: bool,
-}
+pub use super::network::pairs::Partner;
 
 /// Стоп-линия: отрезок поперёк встречных узлу полос.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -188,18 +182,53 @@ pub struct Junction {
     pub leading: Vec<usize>,
 }
 
+/// Разрывы **асфальта** по дорогам — заливке улиц и её колее: база без
+/// разрывов ведущей узла, плюс островки по правилу
+/// (`Junctions::add_splitters`). Свой тип, а не `&[Vec<Break>]`: заливка
+/// берёт [`NodePaint::asphalt`] и не может взять разрывы краски или ряда,
+/// у которых другие участники и другой вылет.
+#[derive(Clone, Copy)]
+pub struct AsphaltBreaks<'a>(&'a [Vec<Break>]);
+
+impl<'a> AsphaltBreaks<'a> {
+    pub fn of(&self, road: usize) -> &'a [Break] {
+        &self.0[road]
+    }
+}
+
+/// Разрывы **краски** по дорогам: где линии рвутся (`cut`) и какие узлы дорога
+/// проходит насквозь (`solid` — осевая там сплошная). Одной дороге —
+/// [`LineBreaks`] через [`Self::of`]; `Painter::paint` берёт его и ничего
+/// другого.
+#[derive(Clone, Copy)]
+pub struct PaintBreaks<'a> {
+    cut: &'a [Vec<Break>],
+    solid: &'a [Vec<Break>],
+}
+
+impl<'a> PaintBreaks<'a> {
+    pub fn of(&self, road: usize) -> LineBreaks<'a> {
+        LineBreaks {
+            cut: &self.cut[road],
+            solid: &self.solid[road],
+        }
+    }
+}
+
 /// Краска узлов карты.
 #[derive(Default)]
 pub struct NodePaint {
-    /// Разрывы краски по дорогам — вместо разрывов асфальта.
-    pub breaks: Vec<Vec<Break>>,
+    /// Разрывы краски по дорогам — вместо разрывов асфальта. Наружу — только
+    /// как [`PaintBreaks`] ([`Self::lines`]), вместе с `solid`.
+    breaks: Vec<Vec<Break>>,
     /// Разрывы асфальта — колеи и разделительных: базовые без тех, что лежали
-    /// на ведущей дороге узла. Её колея идёт сквозь.
-    pub asphalt: Vec<Vec<Break>>,
+    /// на ведущей дороге узла. Её колея идёт сквозь. Наружу — только как
+    /// [`AsphaltBreaks`] ([`Self::asphalt`]).
+    asphalt: Vec<Vec<Break>>,
     /// Узлы, которые дорога проходит насквозь, — там, где её разрыв был бы,
     /// уступай она. Осевая у такого узла сплошная, как и перед разрывом
     /// (`Painter::paint`): через примыкание не обгоняют.
-    pub solid: Vec<Vec<Break>>,
+    solid: Vec<Vec<Break>>,
     pub junctions: Vec<Junction>,
     /// Карманы у торцов дорог `[начало, конец]`.
     pub pockets: Vec<[Option<Pocket>; 2]>,
@@ -388,30 +417,76 @@ struct Crossing {
 }
 
 impl NodePaint {
-    /// Краска узлов по дорогам `drawn`, нарисованным по `paths`. `base` —
-    /// разрывы асфальта (`junctions::marking_breaks`), `targets` — стежки,
-    /// которые тоже узлы, `sidewalk` — есть ли у дороги тротуар по тегу
-    /// (`sidewalk=*`, независимо от `RoadStyle::sidewalks`: ручка прячет
-    /// ленту, а зебра по правилу — вопрос модели), `partners` — вторые
-    /// половины разделённой улицы, `on_ring` — дуга ли дорога кольца
-    /// (`roads/rings.rs`): узел кольца зебры по правилу не получает.
-    /// Узел слияния без других проезжих частей (`merges` — `roads/merges.rs`)
-    /// — не перекрёсток: улица его проходит, линии не рвутся, осевая
-    /// продолжения у него сплошная.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        drawn: &[&RoadLine],
-        paths: &[impl AsRef<[Vec2]>],
+    /// Разрывы асфальта — заливке улиц (`roads::push_street_fill`) и клиньям.
+    pub fn asphalt(&self) -> AsphaltBreaks<'_> {
+        AsphaltBreaks(&self.asphalt)
+    }
+
+    /// Разрывы краски — линиям (`Painter::paint`), второму ряду стрелок и
+    /// зебрам поперёк разделительной (`medians::crossing_breaks`).
+    pub fn lines(&self) -> PaintBreaks<'_> {
+        PaintBreaks {
+            cut: &self.breaks,
+            solid: &self.solid,
+        }
+    }
+
+    /// Островок по правилу на подходе к кольцу (`gores::splitters`): подход
+    /// рвётся на его длину и краской, и колеей — единственная правка снаружи
+    /// (`Junctions::add_splitters`).
+    pub(super) fn add_splitter(&mut self, road: usize, gap: Break) {
+        self.breaks[road].push(gap);
+        self.asphalt[road].push(gap);
+    }
+
+    /// Краска узлов теста: узлы проезжих частей со стежками `prepared` — те,
+    /// что `Junctions::new` передал бы [`Self::new`], — и готовая база.
+    #[cfg(test)]
+    pub(super) fn for_test(
+        prepared: &Drawn,
         base: &[Vec<Break>],
-        targets: &[[Option<StitchTarget>; 2]],
         map: &MapData,
         paved: &[Vec<Vec2>],
-        merges: &[Merge],
         style: NodePaintStyle,
-        sidewalk: impl Fn(usize) -> bool,
-        partners: impl Fn(usize) -> Vec<Partner>,
-        on_ring: impl Fn(usize) -> bool,
     ) -> Self {
+        let nodes = super::junctions::with_stitches(
+            &prepared.roads(),
+            is_carriageway,
+            &prepared.stitches().targets,
+        );
+        Self::new(prepared, &nodes, base, map, paved, style)
+    }
+
+    /// Краска узлов по подготовленным дорогам `prepared` (`roads/drawn.rs`),
+    /// по оси ленты (`Axis::Ribbon` — стежки тоже узлы). `base` — разрывы
+    /// асфальта (`junctions::marking_breaks`), `paved` — замощённые острова
+    /// треугольников узлов (`corners::small_islands`). Из `Drawn` берутся:
+    /// тротуар по тегу (`sidewalk_mapped` — `sidewalk=*` независимо от
+    /// `RoadStyle::sidewalks`: ручка прячет ленту, а зебра по правилу —
+    /// вопрос модели), вторые половины разделённой улицы (`partners`), дуги
+    /// колец (`on_ring`, `roads/rings.rs` — узел кольца зебры по правилу не
+    /// получает) и слияния (`merges`, `roads/merges.rs`): узел слияния без
+    /// других проезжих частей — не перекрёсток, улица его проходит, линии не
+    /// рвутся, осевая продолжения у него сплошная.
+    ///
+    /// `nodes` — узлы проезжих частей со стежками, те же, по которым считана
+    /// база (`junctions::Junctions::new` обходит их один раз).
+    pub(super) fn new(
+        prepared: &Drawn,
+        nodes: &[SharedNode],
+        base: &[Vec<Break>],
+        map: &MapData,
+        paved: &[Vec<Vec2>],
+        style: NodePaintStyle,
+    ) -> Self {
+        let drawn = prepared.roads();
+        let paths = prepared.axes(Axis::Ribbon);
+        let (drawn, paths) = (drawn.as_slice(), paths.as_slice());
+        let merges = &prepared.merges().list;
+        let sidewalk = |road: usize| prepared.sidewalk_mapped(road).is_some();
+        let partners = |road: usize| prepared.pairs().partners(road).collect::<Vec<Partner>>();
+        let on_ring = |road: usize| prepared.on_ring(road);
+        assert_eq!(base.len(), drawn.len(), "разрывы — на каждую дорогу карты");
         let mut paint = Self {
             breaks: base.to_vec(),
             asphalt: base.to_vec(),
@@ -419,10 +494,6 @@ impl NodePaint {
             solid: vec![Vec::new(); drawn.len()],
             ..Self::default()
         };
-        if drawn.len() != paths.len() || base.len() != drawn.len() {
-            return paint;
-        }
-        let nodes = with_stitches(drawn, is_carriageway, targets);
         let merged = |node: &SharedNode| {
             merges.iter().find(|merge| {
                 merge.pure
@@ -433,7 +504,7 @@ impl NodePaint {
                         .all(|visit| merge.roads().contains(&visit.road))
             })
         };
-        for node in &nodes {
+        for node in nodes {
             let Some(merge) = merged(node) else {
                 continue;
             };
@@ -476,7 +547,7 @@ impl NodePaint {
         // переходы по дорогам — на нарисованной оси
         let mut crossings: Vec<Vec<Crossing>> = vec![Vec::new(); drawn.len()];
         if style.crossings != CrossingMode::Off {
-            for node in &nodes {
+            for node in nodes {
                 let Some(RoadNodeKind::Crossing {
                     signals,
                     marked: true,
@@ -902,7 +973,7 @@ impl NodePaint {
                     && rule_zebras
                     && sidewalk(arm.road)
                     && (sidewalk_streets >= 2
-                        || (signalized && drawn[arm.road].sidewalks == [true; 2]))
+                        || (signalized && drawn[arm.road].sidewalk().both()))
                     && room >= RULE_ZEBRA_ROOM
                     && !link
                     && !drawn[arm.road].highway.is_link())

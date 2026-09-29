@@ -8,7 +8,8 @@
 //! штриховки без единого ориентира (отчёт автора).
 //!
 //! Асфальт у такой дороги тот же, что у площадки, и второй раз не кладётся:
-//! дорогу на площадке показывает её **бордюр** ([`parking::kerb_width`], слой
+//! дорогу на площадке показывает её **бордюр** (`SidewalkProfile::kerb` с
+//! [`parking::LOT_KERB`], слой
 //! `lot_sidewalks`). Он считается **полигоном, а не лентами**: полосы сквозных
 //! дорог с бордюром, минус асфальт всех улиц площадки (проезд ряда прорезает в
 //! бордюре устье, и вдоль бульвара тот выходит островками у торцов рядов) и
@@ -51,7 +52,7 @@ use crate::map::meshing::{MeshBuilder, RibbonJoin};
 use crate::map::osm::model::{
     MapData, PolyArea, RoadLine, point_in_area, polyline_length, ring_bounds,
 };
-use crate::map::parking::{is_ground, is_through, kerb_width};
+use crate::map::parking::{LOT_KERB, is_ground, is_through};
 use crate::map::shapes::{
     ARC, Contour, RING_EPSILON, Shape, area_contours, contour_area, is_ring, oriented, push_shape,
     stroke,
@@ -123,7 +124,7 @@ impl<'a> Grounds<'a> {
         if self.0.is_empty() || path.len() < 2 {
             return;
         }
-        let kerb = is_through(road).then(|| kerb_width(road));
+        let kerb = is_through(road).then(|| road.sidewalk().kerb(LOT_KERB));
         let reach = road.width / 2.0 + kerb.unwrap_or_default();
         // замкнутость — по сырым точкам OSM, а не по нарисованной оси: свойство
         // way, а не стиля рисования. Сглаживание кольцо замыкает
@@ -248,14 +249,14 @@ fn kerbs(ground: &Ground, medians: &[(Vec<Vec2>, f32)], gores: &Gores) -> Vec<Sh
 fn on_lot(medians: &[Median], ground: &Ground) -> Vec<(Vec<Vec2>, f32)> {
     let mut found = Vec::new();
     for median in medians {
-        let (low, high) = ring_bounds(&median.midline);
+        let (low, high) = ring_bounds(median.midline());
         if low.cmpgt(ground.high).any() || high.cmplt(ground.low).any() {
             continue;
         }
         let apart = median.apart();
         // по пробам, а не по вершинам: прямая середина — две точки, и обе
         // бывают за площадкой
-        let probes: Vec<Vec2> = samples(&median.midline)
+        let probes: Vec<Vec2> = samples(median.midline())
             .into_iter()
             .map(|(_, at, _)| at)
             .collect();

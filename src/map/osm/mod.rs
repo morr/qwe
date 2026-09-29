@@ -14,9 +14,9 @@ pub use self::download::{JobState, MapLoadJob, OVERPASS_MIRRORS, start_load_thre
 pub use self::model::{
     AreaKind, BuildingUse, Colours, Faith, FenceKind, FenceLine, Highway, LaneTurn, MapData,
     PipeLine, PitchKind, PolyArea, RailKind, RailLine, Rgb, RoadArea, RoadAreaKind, RoadClass,
-    RoadLine, RoadNode, RoadNodeKind, RowTrees, Sacred, SacredForm, ServiceTrack, Structure,
-    StructureKind, TrafficSide, TreeCompose, TreeRow, TreeRowLayout, TreeRowPlacement, WallLine,
-    WaterKind, WaterLine, srgba_of, water_line_caps,
+    RoadLine, RoadNode, RoadNodeKind, RowTrees, Sacred, SacredForm, ServiceTrack, SidewalkSide,
+    Structure, StructureKind, TrafficSide, TreeCompose, TreeRow, TreeRowLayout, TreeRowPlacement,
+    WallLine, WaterKind, WaterLine, srgba_of, water_line_caps,
 };
 // потолок плотности считается от минимального зазора посадки, поэтому живёт
 // рядом с ним, а не в `settings.rs`

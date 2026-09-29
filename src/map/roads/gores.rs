@@ -21,9 +21,9 @@ use i_overlay::mesh::outline::offset::OutlineOffset;
 use i_overlay::mesh::style::{LineCap, LineJoin, OutlineStyle};
 
 use super::junctions::node_key;
-use super::medians::tip_of;
 use super::rings::{Ring, Rings};
 use super::{is_carriageway, lane_count};
+use crate::map::along::tip_of;
 use crate::map::along::{arclengths, place_on_path};
 use crate::map::meshing::{Break, MeshBuilder, min_area_rect};
 use crate::map::osm::model::{RoadLine, distance_to_segment, polyline_length, ring_bounds};

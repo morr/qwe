@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use bevy::prelude::*;
 
-use super::{ALIGN_TRANSITION, PAIR_MIN, PAVED_MIN_GAP, Pairs, TRAM_BED_MAX_GAP};
+use super::{ALIGN_TRANSITION, PAIR_MIN, PAVED_MIN_GAP, PairRun, Pairs, TRAM_BED_MAX_GAP};
 use crate::map::meshing::distance_to_path;
 use crate::map::osm::fixture::{rail, street};
 use crate::map::osm::model::{RailKind, RailLine};
@@ -414,4 +414,91 @@ fn a_tram_bed_of_two_ways_keeps_its_own_gaps_without_a_step() {
     for pair in apart.windows(2) {
         assert!((pair[1] - pair[0]).abs() < steepest, "ступенька {pair:?}");
     }
+}
+
+/// Одна дорога с кусками пары `runs`, пара у каждого слева или справа.
+fn with_runs(runs: &[(f32, f32, bool)]) -> Pairs {
+    let runs = runs
+        .iter()
+        .map(|&(from, to, left)| PairRun {
+            from,
+            to,
+            partner: 1,
+            left,
+            gap: 0.6,
+            paved: true,
+            tram: false,
+        })
+        .collect();
+    Pairs {
+        runs: vec![runs],
+        ..default()
+    }
+}
+
+const BOTH: [bool; 2] = [true; 2];
+const LEFT: [bool; 2] = [true, false];
+const RIGHT: [bool; 2] = [false, true];
+
+#[test]
+fn a_band_without_runs_is_whole_or_one_piece_on_its_sides() {
+    let none = with_runs(&[]);
+    assert_eq!(none.band_pieces(0, BOTH, 0.0, 100.0), None, "режь нечего");
+    assert_eq!(
+        none.band_pieces(0, LEFT, 0.0, 100.0),
+        Some(vec![(0.0, 100.0, LEFT)])
+    );
+    assert_eq!(none.band_pieces(0, [false; 2], 0.0, 100.0), Some(vec![]));
+    assert_eq!(Pairs::unpaired_pieces(BOTH, 100.0), None);
+    assert_eq!(
+        Pairs::unpaired_pieces(RIGHT, 100.0),
+        Some(vec![(0.0, 100.0, RIGHT)])
+    );
+}
+
+#[test]
+fn a_band_loses_the_pair_side_on_a_run_and_in_a_gap_under_join_gap() {
+    // дыра в 3 м между кусками с одной стороны — шов, без тротуара с неё;
+    // в 10 м — нет
+    let pairs = with_runs(&[(10.0, 40.0, true), (43.0, 80.0, true), (90.0, 95.0, true)]);
+    assert_eq!(
+        pairs.band_pieces(0, BOTH, 0.0, 100.0),
+        Some(vec![
+            (0.0, 10.0, BOTH),
+            (10.0, 40.0, RIGHT),
+            (40.0, 43.0, RIGHT),
+            (43.0, 80.0, RIGHT),
+            (80.0, 90.0, BOTH),
+            (90.0, 95.0, RIGHT),
+            (95.0, 100.0, BOTH),
+        ])
+    );
+    // пара то справа, то слева — шва нет
+    let across = with_runs(&[(10.0, 40.0, true), (43.0, 80.0, false)]);
+    assert_eq!(
+        across.band_pieces(0, BOTH, 0.0, 100.0),
+        Some(vec![
+            (0.0, 10.0, BOTH),
+            (10.0, 40.0, RIGHT),
+            (40.0, 43.0, BOTH),
+            (43.0, 80.0, LEFT),
+            (80.0, 100.0, BOTH),
+        ])
+    );
+}
+
+#[test]
+fn a_band_on_one_side_drops_the_pieces_left_bare_and_the_offcuts() {
+    // тротуар только слева, пара слева: на куске пары полосы нет вовсе
+    let pairs = with_runs(&[(20.0, 60.0, true)]);
+    assert_eq!(
+        pairs.band_pieces(0, LEFT, 0.0, 100.0),
+        Some(vec![(0.0, 20.0, LEFT), (60.0, 100.0, LEFT)])
+    );
+    // стежок в 5 м сдвигает куски; обрезок в 0.25 м у торца пропущен
+    let pairs = with_runs(&[(0.25, 94.75, false)]);
+    assert_eq!(
+        pairs.band_pieces(0, BOTH, 5.0, 100.0),
+        Some(vec![(0.0, 5.25, BOTH), (5.25, 99.75, LEFT)])
+    );
 }

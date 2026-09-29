@@ -11,16 +11,14 @@
 //! **Шрифт панель ставит себе сама** — `apply_panel_font` живёт в `UiPlugin`,
 //! которого здесь нет, а во встроенном шрифте bevy нет кириллицы.
 
-use bevy::feathers::controls::ButtonVariant;
 use bevy::prelude::*;
-use bevy::ui_widgets::Activate;
 use qwe::city::City;
 use qwe::map::{CrossingMode, RoadPaintStyle, RoadShape, RoadStyle};
 use qwe::ui::knob::{CycleBinding, spawn_cycle_row, spawn_knob};
 use qwe::ui::{
-    GROUP_HEADER_PAD_PX, PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET, button_variant, paint_knobs,
-    panel_background, panel_block_background, panel_font, panel_title, row_label, shape_knobs,
-    spawn_panel_button, ui_node,
+    GROUP_HEADER_PAD_PX, PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET, paint_knobs, panel_background,
+    panel_block_background, panel_font, panel_title, row_label, shape_knobs, spawn_city_select,
+    ui_node,
 };
 
 use crate::overlay::NetworkOverlay;
@@ -31,10 +29,6 @@ const ROW_LEFT_PX: f32 = 8.0;
 const HOTKEYS: &str = "колесо — зум, ЛКМ / WASD — панорама\n\
     ↑ ↓ — к соседнему примеру\n\
     F5 — нарезать срезы OSM заново";
-
-/// Кнопка города: подсвечена у выбранного.
-#[derive(Component)]
-pub(crate) struct CityButton(City);
 
 /// Строка состояния под кнопками: сколько примеров собрано или почему их нет.
 #[derive(Component)]
@@ -93,20 +87,8 @@ pub(crate) fn spawn_panel(
     };
 
     header(&mut commands, "Город");
-    for option in City::ALL {
-        spawn_panel_button(
-            &mut commands,
-            panel,
-            CityButton(option),
-            option.label(),
-            option == *city,
-            move |_: On<Activate>, mut city: ResMut<City>| {
-                // `set_if_neq`: повторный клик по выбранному городу не должен
-                // пересобирать витрину
-                city.set_if_neq(option);
-            },
-        );
-    }
+    // тот же селект, что внизу экрана игры; подпись держит `sync_city_label`
+    spawn_city_select(&mut commands, panel, *city, percent(100.));
     let status = commands.spawn((row_label(""), StatusLine)).id();
     commands.entity(panel).add_child(status);
 
@@ -201,14 +183,4 @@ pub(crate) fn spawn_panel(
 
     let hotkeys = commands.spawn(row_label(HOTKEYS)).id();
     commands.entity(panel).add_child(hotkeys);
-}
-
-/// Подсветка кнопки выбранного города — вслед за ресурсом.
-pub(crate) fn sync_city_buttons(
-    city: Res<City>,
-    mut buttons: Query<(&CityButton, &mut ButtonVariant)>,
-) {
-    for (button, mut variant) in &mut buttons {
-        *variant = button_variant(button.0 == *city);
-    }
 }

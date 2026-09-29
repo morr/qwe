@@ -13,8 +13,10 @@
 //! расстоянию до предыдущего поставленного объекта, а не по дуговой координате.
 //!
 //! Сюда же — то, что смотрит на ломаную целиком, а не на звено: ближайшая
-//! точка с её дуговой координатой ([`nearest_on_path`]) и упрощение Дугласа —
-//! Пекера ([`simplify`]). У каждого было по две-три копии в `roads/*`.
+//! точка с её дуговой координатой ([`nearest_on_path`]), упрощение Дугласа —
+//! Пекера ([`simplify`]), догущение до шага ([`densify`]) и торец с
+//! направлением наружу ([`tip_of`]). У каждого было по две-три копии в
+//! `roads/*`.
 
 use bevy::prelude::*;
 
@@ -31,6 +33,31 @@ pub(super) fn arclengths(points: &[Vec2]) -> (Vec<f32>, f32) {
         along.push(total);
     }
     (along, total)
+}
+
+/// Ломаная, догущённая до шага не крупнее `step`: исходные вершины остаются на
+/// месте (как есть, без `lerp` — по их точному месту узел находят соседи),
+/// между ними встают промежуточные. Нужна там, где вдоль линии меняется не
+/// только направление, но и величина: высота настила моста
+/// (`roads/bridges.rs`), пробы этажности вдоль улицы
+/// (`osm/parse.rs::infer_sidewalks`). У выравнивания половин пары
+/// (`roads/network/pairs.rs`) своя копия — с длиной дуги, считанной по
+/// звеньям OSM; почему она не эта, сказано там.
+pub(super) fn densify(points: &[Vec2], step: f32) -> Vec<Vec2> {
+    let Some((last, rest)) = points.split_last() else {
+        return Vec::new();
+    };
+    let mut dense = Vec::with_capacity(rest.len() + 1);
+    for pair in points.windows(2) {
+        let (from, to) = (pair[0], pair[1]);
+        dense.push(from);
+        let parts = (from.distance(to) / step).ceil().max(1.0);
+        for part in 1..parts as usize {
+            dense.push(from.lerp(to, part as f32 / parts));
+        }
+    }
+    dense.push(*last);
+    dense
 }
 
 /// Точка ломаной на дуговой координате `at` и направление звена, на которое
@@ -65,6 +92,21 @@ fn direction_at(points: &[Vec2], index: usize) -> Option<Vec2> {
     (index..points.len() - 1)
         .chain((0..index).rev())
         .find_map(|link| (points[link + 1] - points[link]).try_normalize())
+}
+
+/// Торец ломаной (`end` — конец, иначе начало) и направление её крайнего
+/// звена наружу. `None` — у ломаной меньше двух точек или звено нулевой длины.
+pub(super) fn tip_of(line: &[Vec2], end: bool) -> Option<(Vec2, Vec2)> {
+    let count = line.len();
+    if count < 2 {
+        return None;
+    }
+    let (tip, before) = if end {
+        (line[count - 1], line[count - 2])
+    } else {
+        (line[0], line[1])
+    };
+    Some((tip, (tip - before).try_normalize()?))
 }
 
 /// Ближайшая к `point` точка ломаной и её дуговая координата; при равных

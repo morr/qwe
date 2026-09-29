@@ -13,8 +13,8 @@ use bevy::prelude::*;
 use crate::map::osm::model::{
     AreaKind, BIG_BOX_MAX_HEIGHT, BIG_BOX_MAX_LEVELS, BuildingUse, Colours, Faith, FenceKind,
     Highway, KerbParking, LaneTurn, PitchKind, RailKind, Rgb, RoadAreaKind, RoadClass,
-    RoadNodeKind, Sacred, SacredForm, ServiceTrack, StructureKind, WaterKind, is_big_box_shape,
-    polyline_length,
+    RoadNodeKind, Sacred, SacredForm, ServiceTrack, SidewalkSide, StructureKind, WaterKind,
+    is_big_box_shape, polyline_length,
 };
 use crate::map::osm::overpass::Element;
 use crate::settings::STOREY_HEIGHT;
@@ -782,20 +782,28 @@ pub(super) fn tagged_turns(tags: &HashMap<String, String>) -> [Vec<LaneTurn>; 2]
 
 /// Тротуар `[слева, справа]` по ходу точек **после разбора**: `sidewalk=both|
 /// left|right|no|separate`, уточнённый `sidewalk:both|left|right`. `no`,
-/// `none` и `separate` — нет тротуара у ленты (отдельный footway рисуется сам).
-/// `None` — ни одного ключа `sidewalk*`: решает не тег, а класс и окружение
-/// ([`untagged_sidewalks`], потом `parse::infer_sidewalks`). У `oneway=-1`
-/// точки разворачиваются, и стороны меняются местами вместе с ними.
-pub(super) fn tagged_sidewalks(tags: &HashMap<String, String>) -> Option<[bool; 2]> {
+/// `none` и `separate` — [`SidewalkSide::None`] (отдельный footway рисуется
+/// сам), остальное — [`SidewalkSide::Tagged`]. `None` — ни одного ключа
+/// `sidewalk*`: решает не тег, а класс и окружение ([`untagged_sidewalks`],
+/// потом `parse::infer_sidewalks`). У `oneway=-1` точки разворачиваются, и
+/// стороны меняются местами вместе с ними.
+pub(super) fn tagged_sidewalks(tags: &HashMap<String, String>) -> Option<[SidewalkSide; 2]> {
+    use SidewalkSide::{None as Bare, Tagged};
     if !tags.keys().any(|key| key.starts_with("sidewalk")) {
         return None;
     }
-    let present = |value: &str| !matches!(value, "no" | "none" | "separate");
+    let present = |value: &str| {
+        if matches!(value, "no" | "none" | "separate") {
+            Bare
+        } else {
+            Tagged
+        }
+    };
     let mut sides = match tags.get("sidewalk").map(String::as_str) {
-        Some("left") => [true, false],
-        Some("right") => [false, true],
+        Some("left") => [Tagged, Bare],
+        Some("right") => [Bare, Tagged],
         Some(value) => [present(value); 2],
-        None => [true; 2],
+        None => [Tagged; 2],
     };
     if let Some(value) = tags.get("sidewalk:both") {
         sides = [present(value); 2];
@@ -813,9 +821,10 @@ pub(super) fn tagged_sidewalks(tags: &HashMap<String, String>) -> Option<[bool; 
 
 /// Тротуар way без тега `sidewalk*` — до прохода по окружению: у грунтовой
 /// улицы (`surface=gravel|unpaved|ground|dirt|compacted|…`) его нет никогда,
-/// у прочих — пока с обеих сторон, а жилую, проезд без названия и жилую зону
-/// потом проверит застройка вокруг (`parse::infer_sidewalks`).
-pub(super) fn untagged_sidewalks(tags: &HashMap<String, String>) -> [bool; 2] {
+/// у прочих — пока с обеих сторон ([`SidewalkSide::Inferred`]), а жилую,
+/// проезд без названия и жилую зону потом проверит застройка вокруг
+/// (`parse::infer_sidewalks`).
+pub(super) fn untagged_sidewalks(tags: &HashMap<String, String>) -> [SidewalkSide; 2] {
     let unpaved = matches!(
         tags.get("surface").map(String::as_str),
         Some(
@@ -832,7 +841,11 @@ pub(super) fn untagged_sidewalks(tags: &HashMap<String, String>) -> [bool; 2] {
                 | "compacted"
         )
     );
-    [!unpaved; 2]
+    if unpaved {
+        [SidewalkSide::None; 2]
+    } else {
+        [SidewalkSide::Inferred; 2]
+    }
 }
 
 /// Стоянка у бордюра `[слева, справа]` по ходу точек после разбора:

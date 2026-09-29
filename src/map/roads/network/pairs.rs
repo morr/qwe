@@ -54,7 +54,7 @@ use std::borrow::Cow;
 use bevy::prelude::*;
 
 use super::{RoadNetwork, RoadNodes};
-use crate::map::along::{nearest_on_path, simplify};
+use crate::map::along::{nearest_on_path, simplify, tip_of};
 use crate::map::grid::Grid;
 use crate::map::osm::model::{RailKind, RailLine, distance_to_segment, polyline_length};
 use crate::map::osm::{RoadClass, RoadLine};
@@ -85,7 +85,7 @@ const PAIR_SKEW: f32 = 0.35;
 const END_OVERHANG: f32 = 3.0;
 /// Торцы соседних разделительных ближе этого, м, сводятся в одну точку
 /// ([`Pairs::join_ends`]).
-pub const JOIN_GAP: f32 = 5.0;
+const JOIN_GAP: f32 = 5.0;
 /// За сколько метров до конца куска и до закреплённого узла разводка сходит
 /// на нет.
 pub const ALIGN_TRANSITION: f32 = 20.0;
@@ -119,35 +119,87 @@ pub const TRAM_BED_MAX_GAP: f32 = 8.0;
 /// Путь засчитан у середины, если он не дальше этого от неё, даже когда
 /// зазор между кромками уже, м: два пути в 3–4 м друг от друга.
 const TRAM_REACH_MIN: f32 = 2.0;
+/// Самый длинный кусок поперечной улицы между половинами одной пары, м: две
+/// половины и самый широкий газон между ними. Такой кусок лежит в проёме
+/// разделительной ([`Pairs::across_median`]), и тротуара у него нет.
+const MEDIAN_CROSSING_MAX: f32 = 40.0;
+/// Кусок тротуара короче этого, м, не кладётся ([`Pairs::band_pieces`]):
+/// между кусками пары остаются обрезки в сантиметры.
+const SIDEWALK_PIECE_MIN: f32 = 0.5;
+
+/// Кусок полосы тротуара половины: от и до, м по оси ленты, и с каких сторон
+/// `[слева, справа]` по ходу точек он есть ([`Pairs::band_pieces`]).
+pub type BandPiece = (f32, f32, [bool; 2]);
+
+/// Вторая половина разделённой улицы: её дорога и асфальт ли между ними — по
+/// асфальтовой разделительной зебра идёт одной планкой через обе половины
+/// (`roads/node_paint.rs`).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Partner {
+    pub road: usize,
+    pub paved: bool,
+}
 
 /// Кусок половины, на котором рядом идёт её пара.
 #[derive(Debug, Clone, Copy, PartialEq)]
+///
+/// Поля закрыты: что половина рядом с парой, спрашивают у [`Pairs`]
+/// ([`Pairs::beside`], [`Pairs::partners`], [`Pairs::band_pieces`]).
 pub struct PairRun {
     /// Длина по нарисованной оси половины, м: начало и конец куска.
-    pub from: f32,
-    pub to: f32,
+    pub(super) from: f32,
+    pub(super) to: f32,
     /// Индекс второй половины.
-    pub partner: usize,
+    pub(super) partner: usize,
     /// Пара лежит слева по ходу половины.
-    pub left: bool,
+    pub(super) left: bool,
     /// Асфальта или газона между кромками после разводки, м.
-    pub gap: f32,
+    pub(super) gap: f32,
     /// Асфальт между половинами, а не газон ([`Median::is_paved`]).
-    pub paved: bool,
+    pub(super) paved: bool,
     /// Между половинами — трамвайное полотно ([`Median::carries_tram`]).
-    pub tram: bool,
+    pub(super) tram: bool,
+}
+
+#[cfg(test)]
+impl PairRun {
+    /// Кусок `from..to` с парой `partner` слева или справа — без трамвая.
+    pub fn for_test(from: f32, to: f32, partner: usize, left: bool, gap: f32, paved: bool) -> Self {
+        Self {
+            from,
+            to,
+            partner,
+            left,
+            gap,
+            paved,
+            tram: false,
+        }
+    }
+
+    /// Начало и конец куска, м.
+    pub fn span(&self) -> [f32; 2] {
+        [self.from, self.to]
+    }
+
+    /// Пара слева по ходу половины.
+    pub fn is_left(&self) -> bool {
+        self.left
+    }
 }
 
 /// Разделительная пары: то, что лежит между половинами.
+///
+/// Поля закрыты: рисует её `roads/medians.rs` по запросам ниже, а
+/// дотягивает до перекрёстка — [`Median::extend`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct Median {
     /// Половины: та, по чьей оси она меряется (с меньшим индексом), и её пара.
-    pub roads: [usize; 2],
+    pub(super) roads: [usize; 2],
     /// Кусок первой половины, м.
-    pub from: f32,
-    pub to: f32,
+    pub(super) from: f32,
+    pub(super) to: f32,
     /// Асфальта или газона между кромками после разводки, м.
-    pub gap: f32,
+    pub(super) gap: f32,
     /// Асфальт между половинами, а не газон: зазор не шире ручки `Median gap`
     /// или трамвайное полотно.
     paved: bool,
@@ -155,12 +207,50 @@ pub struct Median {
     tram: bool,
     /// Середина между осями — по ходу первой половины. До [`Pairs::align`]
     /// пуста.
-    pub midline: Vec<Vec2>,
+    pub(super) midline: Vec<Vec2>,
     /// Внутренние кромки половин в тех же точках, что и середина.
-    pub inner: [Vec<Vec2>; 2],
+    pub(super) inner: [Vec<Vec2>; 2],
 }
 
 impl Median {
+    /// Половины пары: первая — та, по чьей оси она меряется.
+    pub fn roads(&self) -> [usize; 2] {
+        self.roads
+    }
+
+    /// Асфальта или газона между кромками после разводки, м.
+    pub fn gap(&self) -> f32 {
+        self.gap
+    }
+
+    /// Середина между осями — по ходу первой половины.
+    pub fn midline(&self) -> &[Vec2] {
+        &self.midline
+    }
+
+    /// Внутренние кромки половин в тех же точках, что и [`Self::midline`].
+    pub fn inner(&self) -> [&[Vec2]; 2] {
+        [&self.inner[0], &self.inner[1]]
+    }
+
+    /// Продлить середину и обе кромки у торца (`end` — у конца) на `along`
+    /// метров — каждую по направлению своего крайнего звена
+    /// (`medians::reach_breaks`).
+    pub fn extend(&mut self, end: bool, along: f32) {
+        let [first, second] = &mut self.inner;
+        for line in [&mut self.midline, first, second] {
+            let Some((tip, heading)) = tip_of(line, end) else {
+                continue;
+            };
+            let point = tip + heading * along;
+            if end {
+                line.push(point);
+            } else {
+                line.insert(0, point);
+            }
+        }
+    }
+
     /// Асфальт между половинами, а не газон.
     pub fn is_paved(&self) -> bool {
         self.paved
@@ -188,11 +278,11 @@ impl Median {
 #[derive(Debug, Clone, Default)]
 pub struct Pairs {
     /// По каждой дороге — её куски с парой, по ходу.
-    pub runs: Vec<Vec<PairRun>>,
+    pub(super) runs: Vec<Vec<PairRun>>,
     /// По разделительной на каждую пару кусков — одну, а не с обеих сторон:
     /// две двойные линии, посчитанные от каждой половины, ложились бы одна на
     /// другую со сдвигом в сантиметры.
-    pub medians: Vec<Median>,
+    pub(super) medians: Vec<Median>,
 }
 
 /// Может ли дорога быть половиной разделённой улицы: одностороннее полотно,
@@ -623,6 +713,136 @@ impl Pairs {
             count(Median::carries_tram),
         ]
     }
+
+    /// Разделительные пар — по одной на пару кусков.
+    pub fn medians(&self) -> &[Median] {
+        &self.medians
+    }
+
+    /// Пары без разделительных: куски `runs` по каждой дороге, как их
+    /// нашёл бы [`Self::new`].
+    #[cfg(test)]
+    pub fn of_runs(runs: Vec<Vec<PairRun>>) -> Self {
+        Self {
+            runs,
+            medians: Vec::new(),
+        }
+    }
+
+    /// Куски пары на дороге `road` — вместо найденных.
+    #[cfg(test)]
+    pub fn set_runs(&mut self, road: usize, runs: Vec<PairRun>) {
+        self.runs[road] = runs;
+    }
+
+    /// Куски пары на дороге `road`, по ходу.
+    #[cfg(test)]
+    pub fn runs(&self, road: usize) -> &[PairRun] {
+        &self.runs[road]
+    }
+
+    /// Вторые половины разделённой улицы у дороги — по её кускам пары.
+    pub fn partners(&self, road: usize) -> impl Iterator<Item = Partner> + '_ {
+        self.runs[road].iter().map(|run| Partner {
+            road: run.partner,
+            paved: run.paved,
+        })
+    }
+
+    /// Есть ли у половины `half` кусок пары с дорогой `other`.
+    pub fn is_paired(&self, half: usize, other: usize) -> bool {
+        self.runs[half].iter().any(|run| run.partner == other)
+    }
+
+    /// Лежит ли на длине `at` по узловой оси дороги рядом вторая половина и
+    /// слева ли она: с её стороны у половины нет ни тротуара, ни кромки.
+    /// `slack` — на сколько метров `at` может выйти за кусок: кусок кончается
+    /// там, где пробы перестали находить пару, а скругление у узла стоит
+    /// дальше. Первый кусок, в который `at` попал, — ответ.
+    pub fn beside(&self, road: usize, at: f32, slack: f32) -> Option<bool> {
+        self.runs[road]
+            .iter()
+            .find(|run| run.from - slack <= at && at <= run.to + slack)
+            .map(|run| run.left)
+    }
+
+    /// Дорога — кусок поперечной улицы в проёме разделительной: короче
+    /// [`MEDIAN_CROSSING_MAX`] и соединяет узлом `path[0]` одну половину
+    /// пары, а узлом конца — её пару. `path` — узловая ось дороги; её торцы —
+    /// точки OSM, и ось их не двигает.
+    pub fn across_median(&self, road: usize, path: &[Vec2], nodes: &RoadNodes) -> bool {
+        let (Some(&start), Some(&end)) = (path.first(), path.last()) else {
+            return false;
+        };
+        polyline_length(path) < MEDIAN_CROSSING_MAX
+            && nodes.roads_at(start).iter().any(|&half| {
+                half != road
+                    && self.runs[half].iter().any(|run| {
+                        run.partner != road && nodes.roads_at(end).contains(&run.partner)
+                    })
+            })
+    }
+
+    /// Куски полосы тротуара дороги длиной `total` по оси ленты: с тех
+    /// сторон, где он есть по тегу (`sides`, `RoadLine::sidewalks`), и **без
+    /// стороны пары** на её кусках. Куски пары меряны по узловой оси;
+    /// `stitch` — длина стежка перед её началом на ленте. В щели короче
+    /// [`JOIN_GAP`] между двумя кусками с одной стороны — любыми, полотном и
+    /// газоном тоже, — которые разделительные сводят торец в торец
+    /// ([`Self::join_ends`]), тротуара с той стороны тоже нет: светлое пятно
+    /// лежало между ними. Обрезки короче [`SIDEWALK_PIECE_MIN`] и куски без
+    /// сторон пропущены. `None` — полоса целиком, с обеих сторон, резать
+    /// нечего.
+    pub fn band_pieces(
+        &self,
+        road: usize,
+        sides: [bool; 2],
+        stitch: f32,
+        total: f32,
+    ) -> Option<Vec<BandPiece>> {
+        band_pieces(&self.runs[road], sides, stitch, total)
+    }
+
+    /// Куски полосы без пары — по одним сторонам тега: у половины на клине
+    /// куски пары не пересчитываются (`roads::mesh_roads`).
+    pub fn unpaired_pieces(sides: [bool; 2], total: f32) -> Option<Vec<BandPiece>> {
+        band_pieces(&[], sides, 0.0, total)
+    }
+}
+
+/// [`Pairs::band_pieces`] по кускам пары `runs` одной дороги.
+fn band_pieces(
+    runs: &[PairRun],
+    sides: [bool; 2],
+    stitch: f32,
+    total: f32,
+) -> Option<Vec<BandPiece>> {
+    if runs.is_empty() && sides == [true; 2] {
+        return None;
+    }
+    let mut pieces = Vec::new();
+    let mut piece = |from: f32, to: f32, sides: [bool; 2]| {
+        if to - from >= SIDEWALK_PIECE_MIN && sides != [false; 2] {
+            pieces.push((from, to, sides));
+        }
+    };
+    let mut cursor = 0.0;
+    let mut previous: Option<bool> = None;
+    for run in runs {
+        let from = (run.from + stitch).clamp(cursor, total);
+        let to = (run.to + stitch).clamp(from, total);
+        // со стороны пары тротуара нет
+        let mut paired = sides;
+        paired[usize::from(!run.left)] = false;
+        // и в щели до предыдущего куска с той же стороны
+        let bridged = previous == Some(run.left) && from - cursor < JOIN_GAP;
+        piece(cursor, from, if bridged { paired } else { sides });
+        piece(from, to, paired);
+        cursor = to;
+        previous = Some(run.left);
+    }
+    piece(cursor, total, sides);
+    Some(pieces)
 }
 
 /// Звенья трамвайных путей карты — сеткой, чтобы пробы пар не перебирали
@@ -763,6 +983,14 @@ pub(in crate::map::roads) fn samples(path: &[Vec2]) -> Vec<(f32, Vec2, Vec2)> {
 
 /// Ломаная с вершинами не реже `step` и длина дуги в каждой вершине.
 /// Исходные вершины остаются на месте.
+///
+/// Точки — те же, что у `along::densify`, но **длины — нет**, и потому это
+/// своя функция, а не `along::densify` + `along::arclengths`. Здесь длина —
+/// `start + length·t` по звену OSM, там — сумма расстояний между соседними
+/// догущёнными точками; разница в последних битах, но выравнивание половин
+/// на неё отзывается: замена сдвинула асфальт, тротуары и газоны
+/// разделительных на всех четырёх проверенных городах (Берлин — +38
+/// вершин дорожных слоёв).
 fn densify(path: &[Vec2], step: f32) -> (Vec<Vec2>, Vec<f32>) {
     let mut points = vec![path[0]];
     let mut along = vec![0.0];

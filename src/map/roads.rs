@@ -11,8 +11,9 @@
 //! настила и заливка цветом
 //! класса над `Z_ROAD` — эстакада кроет улицу, которую пересекает, а ровные
 //! торцы бордюра читаются как края настила, вид 2ГИС. Под ними —
-//! [`push_bridge_shadows`]: единственное на карте, что говорит, что настил
-//! поднят, потому что наземные тени считают только дома.
+//! [`bridges::push_bridge_shadows`]: единственное на карте, что говорит, что
+//! настил поднят, потому что наземные тени считают только дома. Всё мостовое
+//! — цепочки ways, бордюр, тень — в `roads/bridges.rs`.
 //!
 //! Раньше дороги рисовал `MeshBuilder::push_polyline` — свой квад на
 //! сегмент, продлённый с обоих концов на полуширины. Стыков у него нет вообще:
@@ -31,7 +32,7 @@
 //! [`centerline`], дорожная обёртка над ним с её двумя закреплениями.
 //!
 //! Улица — это не одна лента, а три слоя: **тротуар** (`Z_SIDEWALK`, светлая
-//! полоса шире проезжей части на [`sidewalk_width`] с каждой стороны), кант и
+//! полоса шире проезжей части на полосу [`RoadLine::sidewalk`] с каждой стороны), кант и
 //! заливка асфальтом. Тротуар лежит под лентами **улицы** по той же логике, что
 //! кант: заливка поперечной улицы кроет его на перекрёстке, и тротуар
 //! обрывается там, где обрывается в жизни, — но **поверх ленты аллеи**: дорожка,
@@ -50,451 +51,31 @@ use std::borrow::Cow;
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
+pub use self::bridges::BridgeReport;
+use self::bridges::Bridges;
+pub use self::drawn::{Axis, Drawn, DrawnStats};
+pub use self::junctions::JunctionCounts;
 use self::network::RoadNodes;
+use self::network::pairs::{BandPiece, Pairs};
 pub use self::node_paint::CrossingMode;
 use self::shape::{RoadShape, RoadShapeOnMap};
+use crate::map::SunOnMap;
 use crate::map::footprint::JOIN_EPSILON;
 use crate::map::meshing::{
-    Break, LaneFrame, MeshBuilder, RibbonBreaks, RibbonCap, RibbonJoin, RibbonShape,
-    merge_close_points, miter_offsets, to_break_beyond,
+    Break, LaneFrame, MeshBuilder, RibbonBreaks, RibbonCap, RibbonJoin, RibbonShape, miter_offsets,
+    to_break_beyond,
 };
-use crate::map::osm::model::{
-    RoadNodeKind, distance_to_segment, point_in_area, point_in_polygon, polyline_length,
-    ring_bounds,
-};
+use crate::map::osm::model::{RoadNodeKind, point_in_area, polyline_length, ring_bounds};
 use crate::map::osm::{AreaKind, MapData, PolyArea, RoadClass, RoadLine, WallLine};
-use crate::map::shadow;
 use crate::map::shapes::{is_ring, push_shape};
 use crate::map::smooth::{Smoothing, smooth_pinned};
-use crate::map::spawn::GRASS_COLOR;
 use crate::map::surface::{
     self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec, SurfaceKind, spawn_layers,
 };
-use crate::map::{SHADOW_COLOR, SunOnMap};
 use crate::prefs::retuned;
 use crate::settings::{
-    Z_ALLEY, Z_BRIDGE, Z_BRIDGE_CASING, Z_BRIDGE_SHADOW, Z_BUILDING, Z_LOT_LINES, Z_LOT_SIDEWALK,
-    Z_ROAD, Z_ROAD_MEDIAN, Z_SIDEWALK,
+    Z_ALLEY, Z_BUILDING, Z_LOT_LINES, Z_LOT_SIDEWALK, Z_ROAD, Z_ROAD_MEDIAN, Z_SIDEWALK,
 };
-
-/// Путь тени настила: та же осевая, сдвинутая по свету на высоту моста,
-/// **сходящую к нулю у свободных торцов моста** ([`BridgeSpan`]).
-///
-/// Без схождения тень вылезала на дорогу в месте примыкания: у береговой
-/// опоры настил лежит на земле, и тени там нет вовсе, а сдвинутая на полную
-/// высоту лента выезжала за торец моста и ложилась тёмной полосой поперёк
-/// подходящей улицы. Подъём считается по длине дуги: `RAMP_SHARE` длины с
-/// каждого конца (но не больше `RAMP_MAX`) — это и есть насыпь.
-///
-/// **Расстояние до торца меряется по всему мосту, а не по этому way.** Мост в
-/// OSM нарезан: развязка Оружейного моста — три way (424 + 95 + 299 м),
-/// сходящиеся в одном узле, и в этом узле настил идёт на полной высоте. Меряя
-/// от торцов куска, рампа отрабатывала в узле у каждого из трёх кусков, и тень
-/// проваливалась под настил посреди развязки. `from_start`/`from_end` — это путь до
-/// ближайшего свободного торца **через соседние ways**, поэтому у внутреннего
-/// стыка он велик и подъём там равен единице.
-///
-/// Осевая для этого **догущается** ([`densify`]): подъём живёт в вершинах, а
-/// прямой мост в OSM — это ровно две точки, и обе они торцы. Без догущения
-/// `rise` в обеих ноль, тень ложится точь-в-точь под настил и пропадает
-/// целиком — так мостики через пруд и не отбрасывали тени вовсе, тогда как
-/// изломанный путепровод (вершин много) давал рваную полосу: подъём прыгал от
-/// вершины к вершине.
-///
-/// Подъём вдобавок **зажат остатком пролёта**: если тень едет вдоль моста, то
-/// на расстоянии `at` от торца ей позволено уехать не дальше чем на `at`.
-/// Гладкая насыпь поднимается быстрее, чем набирается длина, и у короткого
-/// моста тень успевала перевалить за торец и лечь тёмным клином на дорогу —
-/// тот самый клин, что торчал из-под каждого мостика через канал. Остаток
-/// тоже считается по всему мосту.
-fn bridge_shadow_path(points: &[Vec2], deck: &BridgeSpan) -> Vec<ShadowPoint> {
-    let dense = deck_centerline(points);
-    if dense.len() < 2 {
-        return Vec::new();
-    }
-    let mut along = Vec::with_capacity(dense.len());
-    let mut travelled = 0.0;
-    for (index, point) in dense.iter().enumerate() {
-        if index > 0 {
-            travelled += point.distance(dense[index - 1]);
-        }
-        along.push(travelled);
-    }
-    let length = travelled;
-    let offset = shadow::offset(bridge_height(deck.span));
-    let ramp = (deck.span * RAMP_SHARE).clamp(f32::EPSILON, RAMP_MAX);
-    let last = dense.len() - 1;
-    // нормали стыка — по осевой **настила**, до сдвига: см. [`ShadowPoint`]
-    let normals = miter_offsets(&dense, false, 1.0);
-    (0..dense.len())
-        .map(|index| {
-            let (point, at) = (dense[index], along[index]);
-            // до свободного торца моста в обе стороны: по этому куску плюс то,
-            // что за его стыком
-            let behind = deck.from_start + at;
-            let ahead = deck.from_end + (length - at);
-            let raised = (behind.min(ahead) / ramp).clamp(0.0, 1.0);
-            // плавно, а не изломом: у настоящей насыпи профиль сглажен
-            let rise = raised * raised * (3.0 - 2.0 * raised);
-            // ход тени вдоль моста и сколько его осталось до торца впереди
-            let tangent = (dense[(index + 1).min(last)] - dense[index.saturating_sub(1)])
-                .normalize_or(Vec2::X);
-            let travel = offset.dot(tangent);
-            let room = if travel > 0.0 { ahead } else { behind };
-            let rise = if travel.abs() > f32::EPSILON {
-                rise.min(room / travel.abs())
-            } else {
-                rise
-            };
-            ShadowPoint {
-                at: point + offset * rise,
-                rise,
-                normal: normals[index],
-            }
-        })
-        .collect()
-}
-
-/// Высота настила над тем, что под ним, м: [`SPAN_TO_HEIGHT`] пролёта, но не
-/// выше [`BRIDGE_HEIGHT`].
-///
-/// Высота росла с пролётом всегда — просто раньше об этом не спрашивали, и
-/// всякий way с `bridge=yes` поднимался на шесть метров. В OSM этот тег носят
-/// не только пролёты: им же размечены сходы с набережной, тротуар вдоль
-/// путепровода, четырёхметровый переход через ливнёвку. Шестиметровая тень от
-/// двадцатиметровой дорожки, под которой на месте ничего нет, — самое заметное
-/// враньё, какое карта может себе позволить, потому что тень читается как
-/// высота.
-fn bridge_height(span: f32) -> f32 {
-    (span * SPAN_TO_HEIGHT).min(BRIDGE_HEIGHT)
-}
-
-/// Место одного мостового way в своём мосту.
-///
-/// `span` — длина **всего** моста, `from_start`/`from_end` — кратчайший путь
-/// от торцов этого куска до ближайшего свободного торца моста
-/// (бесконечность, если свободного торца нет вовсе — кольцевая эстакада
-/// нигде не садится на землю, и подъём у неё везде полный). `casts` —
-/// решение целого моста, а не куска.
-///
-/// Кратчайший путь от дальнего узла может вести **назад по этому же куску** —
-/// у первого way цепочки 60 + 30 + 60 он и ведёт, давая 60, а не 90. Двойного
-/// счёта из этого не выходит: расстояние до земли берётся как минимум из двух
-/// сторон, и тот же самый маршрут уже учтён со стороны `from_start`.
-#[derive(Clone, Copy, Debug)]
-struct BridgeSpan {
-    span: f32,
-    from_start: f32,
-    from_end: f32,
-    casts: bool,
-}
-
-/// Мосты карты: **связные цепочки** мостовых ways, а не отдельные ways.
-///
-/// Мост в OSM нарезан — Тула: 61 мостовой way, из них 8 сцеплены в 3 моста
-/// (424 + 95 + 299 = 818 м развязка Оружейного моста, 34 + 129 + 22 = 185 м и
-/// 39 + 4 = 43 м), итого 56 мостов. Считая каждый way отдельным мостом, тень
-/// врала дважды: рампа отрабатывала на каждом внутреннем стыке (тень
-/// проваливалась под настил посреди длинного моста), а [`SHORT_SPAN`]
-/// применялся к куску — 22-метровая середина 185-метрового моста проверялась
-/// как отдельный мостик и могла остаться без тени вовсе.
-///
-/// **Склейка — по торцам, а не [`crate::map::footprint::ways_joined`].** Тот
-/// предикат отвечает на другой вопрос — «есть ли у этих ломаных общая точка
-/// вообще», — и им же меряется примыкание дороги к мосту для бордюра. Здесь
-/// он ошибается в обе стороны: на Туле он склеил бы две пары пешеходных
-/// мостиков, которые всего лишь пересекаются, а T-образное примыкание торца к
-/// середине чужого моста (на Туле таких нет, но данные их не запрещают)
-/// превратило бы ветку в продолжение. Сходятся именно **торцы** — с тем же
-/// допуском [`JOIN_EPSILON`], потому что это цена проекции.
-///
-/// **Геометрия при этом не склеивается.** Куски одного моста бывают разной
-/// ширины, и одной ломаной их не описать; а главное — в узле сходятся и три
-/// конца сразу (на Туле ровно один такой: 424 + 95 + 299 сходятся в одной
-/// точке, это съезд развязки, а не цепочка). Поэтому склеивается не путь, а
-/// **счёт**: длина моста и расстояние до свободного торца. Развилке это ничего
-/// не стоит — у трёхконцевого узла путь до свободного торца просто идёт по
-/// самой короткой из трёх веток, и настил на развилке остаётся поднятым, как
-/// ему и положено.
-struct Bridges {
-    /// На индекс дороги; `None` — не мост.
-    spans: Vec<Option<BridgeSpan>>,
-}
-
-impl Bridges {
-    fn new(map: &MapData) -> Self {
-        let mut spans = vec![None; map.roads.len()];
-        let decks: Vec<usize> = map
-            .roads
-            .iter()
-            .enumerate()
-            .filter(|(_, road)| road.bridge && road.points.len() >= 2)
-            .map(|(index, _)| index)
-            .collect();
-        if decks.is_empty() {
-            return Self { spans };
-        }
-        // узлы — склеенные торцы; их вдвое больше ways, перебор квадратичен и
-        // на шести десятках мостов не стоит ничего
-        let mut nodes: Vec<Vec2> = Vec::new();
-        let node_at = |nodes: &mut Vec<Vec2>, point: Vec2| {
-            if let Some(found) = nodes
-                .iter()
-                .position(|known| known.distance(point) < JOIN_EPSILON)
-            {
-                return found;
-            }
-            nodes.push(point);
-            nodes.len() - 1
-        };
-        let mut ends: Vec<[usize; 2]> = Vec::with_capacity(decks.len());
-        let mut lengths: Vec<f32> = Vec::with_capacity(decks.len());
-        for &index in &decks {
-            let points = &map.roads[index].points;
-            let (first, last) = (points[0], points[points.len() - 1]);
-            ends.push([node_at(&mut nodes, first), node_at(&mut nodes, last)]);
-            lengths.push(polyline_length(points));
-        }
-
-        // компоненты связности по узлам — это и есть мосты
-        let mut parent: Vec<usize> = (0..nodes.len()).collect();
-        for [first, second] in &ends {
-            let (a, b) = (
-                component_root(&mut parent, *first),
-                component_root(&mut parent, *second),
-            );
-            if a != b {
-                parent[a] = b;
-            }
-        }
-        let roots: Vec<usize> = (0..nodes.len())
-            .map(|node| component_root(&mut parent, node))
-            .collect();
-
-        let mut degree = vec![0_usize; nodes.len()];
-        let mut span = vec![0.0_f32; nodes.len()];
-        for (deck, [first, second]) in ends.iter().enumerate() {
-            degree[*first] += 1;
-            degree[*second] += 1;
-            span[roots[*first]] += lengths[deck];
-        }
-
-        // Путь до ближайшего свободного торца. Граф крошечный (десятки рёбер),
-        // поэтому расслабление до сходимости, а не очередь с приоритетом.
-        let mut to_free: Vec<f32> = degree
-            .iter()
-            .map(|&count| if count == 1 { 0.0 } else { f32::INFINITY })
-            .collect();
-        for _ in 0..=decks.len() {
-            let mut moved = false;
-            for (deck, [first, second]) in ends.iter().enumerate() {
-                for (from, to) in [(*first, *second), (*second, *first)] {
-                    let through = to_free[from] + lengths[deck];
-                    if through < to_free[to] {
-                        to_free[to] = through;
-                        moved = true;
-                    }
-                }
-            }
-            if !moved {
-                break;
-            }
-        }
-
-        // Есть ли под мостом разрыв — вопрос всему мосту сразу: кусок над
-        // сушей рядом с куском над водой обязан получить ту же тень.
-        let underneath = Underneath::new(map);
-        let mut casts: Vec<bool> = span.iter().map(|&length| length >= SHORT_SPAN).collect();
-        for (deck, &index) in decks.iter().enumerate() {
-            let root = roots[ends[deck][0]];
-            if casts[root] {
-                continue;
-            }
-            casts[root] = probe_underneath(&map.roads[index].points, &underneath);
-        }
-
-        for (deck, &index) in decks.iter().enumerate() {
-            let [first, second] = ends[deck];
-            let root = roots[first];
-            spans[index] = Some(BridgeSpan {
-                span: span[root],
-                from_start: to_free[first],
-                from_end: to_free[second],
-                casts: casts[root],
-            });
-        }
-        Self { spans }
-    }
-
-    fn span(&self, road: usize) -> Option<&BridgeSpan> {
-        self.spans[road].as_ref()
-    }
-}
-
-/// Корень компоненты со сжатием пути.
-fn component_root(parent: &mut [usize], mut node: usize) -> usize {
-    while parent[node] != node {
-        parent[node] = parent[parent[node]];
-        node = parent[node];
-    }
-    node
-}
-
-/// Есть ли под этим настилом разрыв — проба по точке через каждые
-/// [`SHADOW_STEP`] метров.
-///
-/// Спрашивают только у короткого моста. Пропорциональной высоты мало:
-/// западный подход к мосту через Упу на Советской — это четыре way по 23–30 м с
-/// `bridge=yes` и `layer=1`, а на месте там ровная земля: насыпь, а не
-/// эстакада. Отличить насыпь от пролёта по тегам нельзя, зато можно спросить,
-/// есть ли под ней разрыв. Дороги в этот список не входят намеренно — именно
-/// вдоль дорог и лежат подходы, — а вода и путь под коротким настилом
-/// сомнений не оставляют.
-///
-/// Длинному мосту вопрос не задаётся: на сотне метров насыпи не бывает, а
-/// перебирать контуры воды под каждым из них незачем.
-fn probe_underneath(points: &[Vec2], underneath: &Underneath) -> bool {
-    deck_centerline(points)
-        .iter()
-        .any(|point| underneath.covers(*point))
-}
-
-/// Осевая настила, по которой идут и тень, и проба: слипшиеся точки OSM
-/// склеены (они вырождают нормаль стыка — то же, что делает лента), остальное
-/// догущено до [`SHADOW_STEP`].
-fn deck_centerline(points: &[Vec2]) -> Vec<Vec2> {
-    densify(
-        &merge_close_points(points, false, SHADOW_STEP / 4.0),
-        SHADOW_STEP,
-    )
-}
-
-/// Что лежит под настилом: контуры воды, русла водотоков и рельсовые пути,
-/// каждый со своим габаритом.
-///
-/// Габарит считается один раз на сборку слоёв, и это не оптимизация впрок:
-/// проба идёт по точке через каждые два метра короткого моста, а контуров воды
-/// в городе бывает под тысячу.
-struct Underneath<'a> {
-    /// Контуры воды — пруд, река, затон.
-    areas: Vec<(Rect, &'a PolyArea)>,
-    /// Русла водотоков и пути: осевая и полуширина.
-    lines: Vec<(Rect, &'a [Vec2], f32)>,
-}
-
-impl<'a> Underneath<'a> {
-    fn new(map: &'a MapData) -> Self {
-        let bounds = |points: &[Vec2], margin: f32| {
-            let (min, max) = points.iter().fold(
-                (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY)),
-                |(min, max), point| (min.min(*point), max.max(*point)),
-            );
-            Rect::from_corners(min - margin, max + margin)
-        };
-        let channels = map
-            .water_lines
-            .iter()
-            // труба не разрыв: вода идёт под землёй, поверху проходят пешком
-            .filter(|line| !line.tunnel)
-            .map(|line| (line.points.as_slice(), line.width));
-        let rails = map
-            .rails
-            .iter()
-            .map(|rail| (rail.points.as_slice(), rail.width));
-        Self {
-            areas: map
-                .water
-                .iter()
-                .map(|area| (bounds(&area.outer, 0.0), area))
-                .collect(),
-            lines: channels
-                .chain(rails)
-                .map(|(points, width)| (bounds(points, width / 2.0), points, width / 2.0))
-                .collect(),
-        }
-    }
-
-    fn covers(&self, point: Vec2) -> bool {
-        self.areas
-            .iter()
-            .any(|(bounds, area)| bounds.contains(point) && point_in_area(point, area))
-            || self.lines.iter().any(|(bounds, path, half)| {
-                bounds.contains(point)
-                    && path
-                        .windows(2)
-                        .any(|span| distance_to_segment(point, span[0], span[1]) <= *half)
-            })
-    }
-}
-
-/// Точка теневой ленты: куда съехал настил и насколько он в этом месте поднят
-/// (0 у береговой опоры, 1 на полной высоте). Подъём нужен и после сдвига —
-/// им же сходит на нет и уширение, и полутень ([`push_bridge_shadows`]).
-///
-/// `normal` — нормаль стыка **осевой настила**, а не съехавшей ленты, и
-/// считается она здесь же, до сдвига. Тень плиты это её силуэт, сдвинутый по
-/// свету: поперечник ленты обязан стоять поперёк моста, а не поперёк той
-/// кривой, в которую лента складывается. Разница видна ровно у торца, где
-/// сдвиг только начинается: съехавшая осевая уходит вбок прямо от устоя, её
-/// нормаль наклонена, торцевое ребро ленты получается косым — и один его угол
-/// уезжает за торец на `полуширину × sin` этого наклона. На карте это тёмный
-/// язычок из-под конца бортика (у мостика через Упу — 0.75 м), с той стороны,
-/// куда светит солнце; с другой стороны торец на столько же подрезан.
-struct ShadowPoint {
-    at: Vec2,
-    rise: f32,
-    normal: Vec2,
-}
-
-/// Ломаная, догущённая до шага не крупнее `step`: исходные вершины остаются на
-/// месте, между ними встают промежуточные. Нужна там, где вдоль ленты меняется
-/// не только направление, но и величина — здесь высота настила; разбор так же
-/// расставляет пробы этажности вдоль улицы (`osm/parse.rs::infer_sidewalks`).
-pub(crate) fn densify(points: &[Vec2], step: f32) -> Vec<Vec2> {
-    let Some((last, rest)) = points.split_last() else {
-        return Vec::new();
-    };
-    let mut dense = Vec::with_capacity(rest.len() + 1);
-    for pair in points.windows(2) {
-        let (from, to) = (pair[0], pair[1]);
-        dense.push(from);
-        let parts = (from.distance(to) / step).ceil().max(1.0);
-        for part in 1..parts as usize {
-            dense.push(from.lerp(to, part as f32 / parts));
-        }
-    }
-    dense.push(*last);
-    dense
-}
-
-/// Доля длины моста, на которой настил поднимается от земли до полной высоты,
-/// потолок этой длины в метрах и шаг, которым осевая догущается под подъём.
-const RAMP_SHARE: f32 = 0.25;
-const RAMP_MAX: f32 = 25.0;
-const SHADOW_STEP: f32 = 2.0;
-
-/// Пролёт, короче которого мост ([`Bridges`] — связные мостовые ways, а не
-/// один way) считается мостом только над водой или путями — см.
-/// [`probe_underneath`]. Тридцать пять метров: подходы к мосту через Упу на
-/// Советской это 23–30 м, мостик через канал в парке — 39.
-const SHORT_SPAN: f32 = 35.0;
-
-/// Насколько тень настила шире самого настила с каждой стороны, м. Метр — это
-/// тень перил, толщина плиты и полоса воды, которой настил закрыл небо; от
-/// высоты моста, в отличие от сдвига, эта кайма почти не зависит (перила у
-/// пешеходного мостика те же, что у моста через Упу), но вместе с настилом
-/// садится на землю у торцов. См. [`push_bridge_shadows`].
-const SHADOW_SPREAD: f32 = 1.0;
-
-/// Потолок высоты настила над тем, что под ним, м, и высота на метр пролёта.
-/// Длину тени высота даёт тем же котангенсом высоты солнца, что у домов и
-/// вагонов: путепровод над улицей поднят метров на шесть, и тень от него —
-/// самое заметное, что бывает на воде под мостом. Полную высоту набирает
-/// пролёт от 48 м — мост через Упу на Советской (137 м) и Оружейный мост
-/// (571 м) на потолке,
-/// мостик через пруд (14 м) поднят на метр восемьдесят.
-const BRIDGE_HEIGHT: f32 = 6.0;
-const SPAN_TO_HEIGHT: f32 = 1.0 / 8.0;
 
 /// Проезжая часть — асфальт: серый, заметно темнее тротуара и земли. Белой
 /// (osm-carto) она была, пока не появилась разметка: белую линию на белом не
@@ -523,17 +104,6 @@ const LOT_LINE_COLOR: Color = Color::srgb(0.88, 0.88, 0.86);
 /// Тротуар — светлый бетон между асфальтом и тёплой землёй: светлее проезжей
 /// части на четверть, и именно эта ступень яркости читается как бордюр.
 const SIDEWALK_COLOR: Color = Color::srgb(0.82, 0.815, 0.80);
-/// Доля ширины улицы на тротуар с каждой стороны и её пределы, м: у
-/// магистрали в 16 м тротуар в 3 м, у жилой улицы в 8 м — 1.8 м.
-const SIDEWALK_SHARE: f32 = 0.22;
-const SIDEWALK_WIDTH_RANGE: std::ops::RangeInclusive<f32> = 1.2..=3.0;
-/// Кусок тротуара короче этого, м, не кладётся ([`push_sidewalk`]): между
-/// кусками пары остаются обрезки в сантиметры.
-const SIDEWALK_PIECE_MIN: f32 = 0.5;
-/// Самый длинный кусок поперечной улицы между половинами одной пары, м: две
-/// половины и самый широкий газон между ними. Такой кусок лежит в проёме
-/// разделительной, и тротуара у него нет.
-const MEDIAN_CROSSING_MAX: f32 = 40.0;
 /// На сколько асфальт кармана стоянки заходит под кромку ленты, м: встык
 /// между ними светилась бы щель.
 const POCKET_OVERLAP: f32 = 0.05;
@@ -551,11 +121,6 @@ const ONEWAY_METERS_PER_LANE: f32 = 4.5;
 
 /// Стены Кремля поверх зданий.
 const Z_WALL: f32 = Z_BUILDING + 0.1;
-
-/// Бордюр моста — светлый бетонный парапет над серым настилом, общий для
-/// улиц и пешеходных мостиков. Толщины (и почему их диапазоны не
-/// пересекаются) — в `map::footprint`.
-const BRIDGE_CURB_COLOR: Color = Color::srgb(0.80, 0.80, 0.79);
 
 /// Чем закрыт излом ленты дороги.
 #[derive(Reflect, Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -648,50 +213,14 @@ impl Default for RoadStyle {
     }
 }
 
-/// Ширина тротуара с одной стороны проезжей части шириной `road_width`, м —
-/// без вопроса, есть ли у дороги тротуар вообще (это [`sidewalk_width`]).
-pub fn sidewalk_band(road_width: f32) -> f32 {
-    (road_width * SIDEWALK_SHARE).clamp(*SIDEWALK_WIDTH_RANGE.start(), *SIDEWALK_WIDTH_RANGE.end())
-}
-
-/// Ширина тротуара у дороги с одной стороны, м; у проезда и дорожки
-/// тротуара нет ([`is_carriageway`]).
-pub fn sidewalk_width(road: &RoadLine) -> Option<f32> {
-    is_carriageway(road).then(|| sidewalk_band(road.width))
-}
-
-/// Ширина тротуара, который у дороги **рисуется** при этом стиле: один ответ
-/// и для ленты тротуара, и для его скругления в узле (`roads/corners.rs`).
-/// Улица с `sidewalk=no|separate` с обеих сторон ленты не несёт; с одной —
-/// её кладёт [`push_sidewalk`] по [`RoadLine::sidewalks`].
-fn drawn_sidewalk(style: &RoadStyle, road: &RoadLine) -> Option<f32> {
-    style.sidewalks.then(|| mapped_sidewalk(road)).flatten()
-}
-
-/// Ширина тротуара, который у дороги есть на карте, — без оглядки на стиль:
-/// [`sidewalk_width`], но только если [`RoadLine::sidewalks`] кладёт его хоть с
-/// одной стороны (`sidewalk=separate|no` с обеих — нет). Одно правило и для
-/// ленты ([`drawn_sidewalk`]), и для разбора, дотягивающего кварталы и
-/// стоянки до внешнего края полотна (`osm/parse.rs`, `osm/parse/lots.rs`).
-pub fn mapped_sidewalk(road: &RoadLine) -> Option<f32> {
-    sidewalk_width(road).filter(|_| road.sidewalks.contains(&true))
-}
-
-/// Проезжая часть улицы — то, что несёт тротуар и разметку и участвует в
-/// перекрёстках: улица по классу ([`Highway::is_street`] — не дворовый
-/// проезд), не арка (`passage` идёт сквозь дом). Мост — тоже: улица через
-/// реку не теряет полос.
-///
-/// Решает **класс, а не ширина**: пока ширина шла по классу, порог в 8 м
-/// был тем же классом другими словами, но ширина из сечения
-/// (`network::sections`) у двухполосной улицы — 7.6 м, у однополосной
-/// односторонней — 4.3, и порог по ширине отнял бы у них тротуар.
+/// [`RoadLine::is_carriageway`] свободной функцией — её зовут как предикат
+/// (`filter(is_carriageway)`) по всему `map/`.
 ///
 /// Открыт наружу для [`map::cars`](crate::map::cars): «улица, вдоль которой
 /// паркуются» — то же самое понятие, что «улица, у которой есть тротуар и
 /// разметка», и второй копии предиката у слоя машин быть не должно.
 pub fn is_carriageway(road: &RoadLine) -> bool {
-    road.class == RoadClass::Street && !road.passage && road.highway.is_street()
+    road.is_carriageway()
 }
 
 /// Число полос проезжей части: из сечения ([`RoadLine::lanes`] — после
@@ -978,38 +507,32 @@ pub struct RoadLayerTag;
 pub struct RoadReport {
     /// Стиль, которым всё это нарисовано: тумблеры из лог-строки — это он.
     pub style: RoadStyle,
-    pub junctions: usize,
+    /// Узлы (`roads/junctions.rs`): перекрёстки, кластеры, проходы главной
+    /// насквозь, ведущие дороги, зебры (из них по OSM), стоп-линии, карманы
+    /// краски — одним значением.
+    pub junctions: JunctionCounts,
     /// Куски линий слоя краски (`roads/paint.rs`) и их вершины — отдельно от
     /// общего счёта: краска строится своими мешами и прячется с зумом.
     pub paint_lines: usize,
     pub paint_vertices: usize,
-    /// Краска узлов (`roads/node_paint.rs`): зебры (из них по OSM),
-    /// стоп-линии, карманы, кластеры сближенных узлов и проходы главной
-    /// сквозь узел.
-    pub zebras: [usize; 2],
-    pub stop_lines: usize,
-    pub pockets: usize,
-    pub clusters: usize,
     /// Карманы стоянки вдоль улиц (`roads/pockets.rs`) и разворотные
     /// площадки в тупиках.
     pub kerb_pockets: usize,
     pub turning_circles: usize,
-    pub through: usize,
-    /// Траектории узлов (`roads/turns.rs`) — кривые манёвров; дороги, ведущие
-    /// хоть один узел (колея сквозь).
+    /// Траектории узлов (`roads/turns.rs`) — кривые манёвров.
     pub turns: usize,
-    pub leading: usize,
     /// Стрелки на полосах подходов (`roads/turns.rs`).
     pub arrows: usize,
     pub kerb_returns: usize,
     pub sidewalk_returns: usize,
     /// Наружные углы узлов (`roads/corners.rs`): асфальт и тротуар.
     pub outer_corners: [usize; 2],
-    pub stitches: usize,
-    pub crossings: usize,
-    /// Кольца, нарисованные гладкой фигурой (`roads/rings.rs`), и щели
-    /// между подходом и кольцом, залитые асфальтом.
-    pub rings: [usize; 2],
+    /// Подготовка дорог (`roads/drawn.rs`): переезды, стежки, клинья,
+    /// слияния, разделительные, кольца, швы осей — одним значением.
+    pub drawn: DrawnStats,
+    /// Мосты (`roads/bridges.rs`): мостовых ways, мостов-цепочек из них и
+    /// мостов с тенью.
+    pub bridges: BridgeReport,
     /// Острова-крошки в треугольниках узлов, залитые асфальтом
     /// (`corners::small_islands`).
     pub islands: usize,
@@ -1018,20 +541,11 @@ pub struct RoadReport {
     /// Из данных v15 (`roads/islands.rs`): островков-точек на улицах, контуров
     /// островков и контуров полотна.
     pub road_islands: [usize; 3],
-    /// Клинья между сечениями улиц (`roads/tapers.rs`).
-    pub tapers: usize,
-    /// Слияния разделённой улицы в обычную (`roads/merges.rs`) и кромки,
-    /// сведённые на них к кромке продолжения.
-    pub merges: [usize; 2],
-    /// Разделительные парных половин (`roads/network/pairs.rs`): асфальтом,
-    /// газоном и из асфальтовых — трамвайных полотен.
-    pub medians: [usize; 3],
+    /// Кромки, сведённые на слияниях (`drawn.merges`) к кромке продолжения
+    /// (`roads/merges.rs`): их кладёт лента, не подготовка.
+    pub merge_edges: usize,
     /// Куски светлой полосы над трамвайными путями (`roads/tram_band.rs`).
     pub tram_bands: usize,
-    /// Швы ways, пройденные осью улицы одной кривой (`roads/axis.rs`).
-    pub seams: usize,
-    /// Изломы, на которые звеньев не хватило для радиуса в полуширину.
-    pub tight: usize,
     pub vertices: usize,
     pub network: std::time::Duration,
     pub elapsed: std::time::Duration,
@@ -1041,34 +555,47 @@ impl std::fmt::Display for RoadReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self {
             style,
-            junctions,
+            junctions:
+                JunctionCounts {
+                    count: junctions,
+                    clusters,
+                    through,
+                    leading,
+                    zebras: [zebras, osm_zebras],
+                    stop_lines,
+                    pockets,
+                },
             paint_lines,
             paint_vertices,
-            zebras: [zebras, osm_zebras],
-            stop_lines,
-            pockets,
-            clusters,
             kerb_pockets,
             turning_circles,
-            through,
             turns,
-            leading,
             arrows,
             kerb_returns,
             sidewalk_returns,
             outer_corners: [outer, outer_sidewalks],
-            stitches,
-            crossings,
-            rings: [rings, webs],
+            drawn:
+                DrawnStats {
+                    crossings,
+                    stitches,
+                    seams,
+                    tight,
+                    tapers,
+                    merges,
+                    medians: [paved, lawns, beds],
+                    rings: [rings, webs],
+                },
+            bridges:
+                BridgeReport {
+                    ways: bridge_ways,
+                    bridges,
+                    casting,
+                },
             islands,
             gores,
             road_islands: [refuges, island_areas, carriageways],
-            tapers,
-            merges: [merges, merge_edges],
-            medians: [paved, lawns, beds],
+            merge_edges,
             tram_bands,
-            seams,
-            tight,
             vertices,
             network,
             elapsed,
@@ -1083,7 +610,8 @@ impl std::fmt::Display for RoadReport {
              sidewalks, stitches {stitches}, kerb pockets {kerb_pockets}, turning circles {turning_circles}, driveway crossings \
              {crossings}, rings {rings} ({webs} webs), small islands {islands}, gores {gores}, safety islands {refuges} + {island_areas} areas, \
              carriageway areas {carriageways}, tapers {tapers}, merges {merges} ({merge_edges} edges), medians {paved} paved + {lawns} \
-             lawn (tram beds {beds}), tram bands {tram_bands}, smooth seams {seams}, tight corners {tight}; {network:?} of it before the \
+             lawn (tram beds {beds}), tram bands {tram_bands}, smooth seams {seams}, tight corners {tight}, bridges {bridges} of \
+             {bridge_ways} ways ({casting} cast shadows); {network:?} of it before the \
              ribbons)",
             style.sidewalks, style.markings,
         )
@@ -1111,109 +639,48 @@ pub fn mesh_roads(
     let mut sidewalks = MeshBuilder::with_surface_coords();
     let mut alleys = MeshBuilder::with_surface_coords();
     let mut streets = MeshBuilder::with_surface_coords();
-    // Настилы мостов — один меш на улицы и пешеходные мостики разом: белая и
-    // песочная заливки соседствуют, и порядок перекрытия моста над мостом —
-    // порядок пуша. Мост над мостом — редкость, четыре слоя ради него не нужны.
-    let mut bridge_casings = MeshBuilder::default();
-    let mut bridge_fills = MeshBuilder::with_surface_coords();
-    // тень моста — на то, над чем он проходит: воду, дорогу, пути. Ленты
-    // копятся и кладутся разом: их ядра объединяются (`push_bridge_shadows`)
-    let mut bridge_shadows = MeshBuilder::default();
-    let mut shadow_bands: Vec<ShadowBand> = Vec::new();
-    // мост — цепочка ways, и тень считается по всей цепочке
-    let bridges = Bridges::new(map);
+    // мост — цепочка ways, и тень считается по всей цепочке; мостовые слои
+    // копит он же (`roads/bridges.rs`)
+    let mut bridges = Bridges::new(map);
     let mut wall_ribbons = MeshBuilder::default();
     // улицы на больших стоянках — бордюром и разметкой поверх их асфальта
     // (`roads/lots.rs`)
     let mut grounds = lots::Grounds::of(map);
 
-    let nodes = RoadNodes::new(roads);
-    // ось по улице целиком, не по way (`roads/axis.rs`); у переезда та же
-    // ось, что у его дороги, — он отличается шириной и классом
-    let axes = axis::street_axes(roads, &map.rails, &map.network, &nodes, &shape);
-    let paths = &axes.paths;
-    // Дороги так, как они рисуются: переезд через тротуар — асфальтом
-    // проезда, а не песочной дорожкой (`network::driveway_crossings`), дуга
-    // кольца — сечением всего кольца (`ring_arcs`).
-    let crossings: Vec<(usize, RoadLine)> = network::driveway_crossings(roads, &nodes)
-        .into_iter()
-        .map(|(index, width)| {
-            let crossing = RoadLine {
-                class: RoadClass::Street,
-                width,
-                ..roads[index].clone()
-            };
-            (index, crossing)
-        })
-        .chain(ring_arcs(roads, &axes.rings))
-        .collect();
-    let mut drawn: Vec<&RoadLine> = roads.iter().collect();
-    for (index, crossing) in &crossings {
-        drawn[*index] = crossing;
-    }
-    let stitches = network::stitches(&drawn, map, &nodes, |road| drawn_sidewalk(&style, road));
-    // перекрёстки, стежки среди них: по ним рвётся краска и гаснет колея
-    // асфальта — колея есть и с выключенной разметкой, так что считаются они
-    // всегда
-    let junctions = junctions::marking_breaks(roads, is_carriageway, &stitches.targets);
-    // клинья между сечениями улиц
-    let tapers = tapers::Tapers::new(&drawn, &map.network, &nodes, shape.taper());
-    // Кусок поперечной улицы в проёме разделительной — между половинами одной
-    // пары — тротуара не несёт: его полоса светлым пятном лежала посреди
-    // перекрёстка. Торцы узлов — точки OSM, и ось их не двигает.
-    let across_median: Vec<bool> = paths
-        .iter()
-        .enumerate()
-        .map(|(index, path)| {
-            let (Some(&start), Some(&end)) = (path.first(), path.last()) else {
-                return false;
-            };
-            polyline_length(path) < MEDIAN_CROSSING_MAX
-                && nodes.roads_at(start).iter().any(|&half| {
-                    half != index
-                        && axes.pairs.runs[half].iter().any(|run| {
-                            run.partner != index && nodes.roads_at(end).contains(&run.partner)
-                        })
-                })
-        })
-        .collect();
-    let sidewalks_of =
-        |index: usize| drawn_sidewalk(&style, drawn[index]).filter(|_| !across_median[index]);
+    // Дороги так, как они рисуются (`roads/drawn.rs`): переезд через тротуар —
+    // асфальтом проезда, а не песочной дорожкой, дуга кольца — сечением всего
+    // кольца; узлы, оси улиц, стежки, клинья и слияния — там же.
+    let prepared = Drawn::new(map, &style, &shape);
+    let nodes = prepared.nodes();
+    let drawn = prepared.roads();
+    // узловые оси — скругления, слияния, карманы, станции штрихов, полотно
+    // трамвая: их торцы стоят в точках OSM
+    let nodal = prepared.axes(Axis::Nodal);
     // длина улицы у начала каждого way — по ней идут штрихи краски
-    let stations = paint::street_stations(&map.network, paths);
-    // разделённая улица, сходящаяся в обычную: узел не перекрёсток
-    let merges = merges::merges(&drawn, paths, &nodes, &axes.pairs.runs, &map.network);
+    let stations = paint::street_stations(&map.network, &nodal);
     // Скругления кладутся раньше всех лент своего слоя: лента поверх кроет
     // скругление, а не наоборот, и разметка остаётся целой.
-    let (kerb_returns, islands) = {
-        let rounded: Vec<Option<&[Vec2]>> = drawn
-            .iter()
-            .zip(paths)
-            .map(|(road, path)| (!road.carves_navmesh()).then_some(path.as_ref()))
-            .collect();
-        // со стороны второй половины тротуара нет — угла по нему тоже; кусок
-        // пары может кончиться на пробу раньше узла
-        let slack = 2.0 * network::pairs::PROBE_STEP;
-        let paired = |road: usize, at: f32| {
-            axes.pairs.runs[road]
-                .iter()
-                .find(|run| run.from - slack <= at && at <= run.to + slack)
-                .map(|run| run.left)
-        };
-        (
-            corners::kerb_returns(
-                &drawn,
-                &rounded,
-                &nodes,
-                sidewalks_of,
-                paired,
-                |road| tapers.at(road),
-                |road, end| merges.is_merged(road, end),
-                shape.corner_radius(),
-            ),
-            corners::small_islands(&drawn, &rounded, &nodes),
-        )
-    };
+    let kerb_returns = corners::kerb_returns(&prepared, shape.corner_radius());
+    let islands = corners::small_islands(&prepared);
+    // Узлы (`roads/junctions.rs`), стежки среди них: базовые разрывы
+    // асфальта, краска узлов, разрывы ряда у бордюра — одним значением. По
+    // ним рвётся краска и гаснет колея асфальта — колея есть и с выключенной
+    // разметкой, так что считаются они всегда. Краска строится и без
+    // разметки: ведущая дорога узла и плечи для траекторий — это колея
+    // асфальта, а не краска
+    let mut junctions = junctions::Junctions::new(
+        &prepared,
+        map,
+        &islands,
+        node_paint::NodePaintStyle {
+            crossings: if style.markings {
+                style.crossings
+            } else {
+                CrossingMode::Off
+            },
+            stop_lines: style.markings && style.stop_lines,
+        },
+    );
     for (class, outline) in &kerb_returns.roads {
         let (builder, color) = match class {
             RoadClass::Street => (&mut streets, ROAD_COLOR),
@@ -1231,13 +698,13 @@ pub fn mesh_roads(
     }
     // кромки половин, сходящиеся к кромкам продолжения, — тоже до лент
     let mut merge_edges = 0;
-    for merge in &merges.list {
+    for merge in &prepared.merges().list {
         let bands = merges::merge_bands(
             merge,
             &drawn,
-            paths,
+            &nodal,
             &map.network,
-            sidewalks_of,
+            |road, side| prepared.sidewalk_on(road, side),
             shape.taper(),
         );
         for band in bands {
@@ -1250,19 +717,23 @@ pub fn mesh_roads(
     }
     // карманы — по тому же ответу и тем же разрывам, что ряд машин
     // (`map::cars`): асфальт за кромкой и тротуар, отодвинутый за него
-    let row_breaks = pockets::row_breaks(roads, &map.network, &map.road_nodes, shape.taper());
-    let lots = pockets::KerbLots::new(&map.parking);
-    let kerbsides = pockets::all_kerbsides(roads, paths, &row_breaks, map.traffic_side, &lots);
+    let kerbsides = pockets::all_kerbsides(
+        roads,
+        nodes,
+        &nodal,
+        junctions.row(),
+        map.traffic_side,
+        prepared.lots(),
+    );
     let mut kerb_pockets = 0;
     for (index, road) in roads.iter().enumerate() {
         let half = road.width / 2.0;
-        let sidewalk = sidewalks_of(index);
         for kerbside in &kerbsides[index] {
-            let sidewalk = sidewalk.filter(|_| road.sidewalks[usize::from(kerbside.side < 0.0)]);
+            let sidewalk = prepared.sidewalk_on(index, usize::from(kerbside.side < 0.0));
             for pocket in &kerbside.pockets {
                 let outline = |outer: f32| {
                     pockets::outline(
-                        &paths[index],
+                        &nodal[index],
                         pocket,
                         kerbside.side,
                         [half - POCKET_OVERLAP, outer],
@@ -1298,7 +769,7 @@ pub fn mesh_roads(
         }) else {
             continue;
         };
-        let road = drawn[index];
+        let road = prepared.road(index);
         let radius = turning_radius(road.width);
         let disc = |radius: f32| -> Vec<Vec2> {
             (0..TURNING_CIRCLE_SIDES)
@@ -1309,83 +780,26 @@ pub fn mesh_roads(
                 .collect()
         };
         streets.push_convex(&disc(radius), ROAD_COLOR.to_linear());
-        if let Some(sidewalk) = sidewalks_of(index) {
+        if let Some(sidewalk) = prepared.sidewalk_drawn(index) {
             sidewalks.push_convex(&disc(radius + sidewalk), SIDEWALK_COLOR.to_linear());
         }
         turning_circles += 1;
     }
-    // стежок до дороги, до которой OSM торец не довёл (`roads/network.rs`)
-    let stitched: Vec<Cow<[Vec2]>> = paths
-        .iter()
-        .enumerate()
-        .map(|(index, path)| {
-            if stitches.touches(index) {
-                let mut points = path.to_vec();
-                stitches.apply(index, &mut points);
-                Cow::Owned(points)
-            } else {
-                Cow::Borrowed(path.as_ref())
-            }
-        })
-        .collect();
-    // краска узлов (`roads/node_paint.rs`): где линии рвутся, а где главная
-    // проходит узел, зебры, стоп-линии, карманы — по той же оси, что и линии.
-    // Строится и без разметки: ведущая дорога узла и плечи для траекторий —
-    // это колея асфальта, а не краска
-    let mut node_paint = node_paint::NodePaint::new(
-        &drawn,
-        &stitched,
-        &junctions.breaks,
-        &stitches.targets,
-        map,
-        &islands,
-        &merges.list,
-        node_paint::NodePaintStyle {
-            crossings: if style.markings {
-                style.crossings
-            } else {
-                CrossingMode::Off
-            },
-            stop_lines: style.markings && style.stop_lines,
-        },
-        // тротуар по тегу (`sidewalk=*`), а не по ручке «Sidewalks»: ручка
-        // прячет ленту, а зебра по правилу — вопрос модели, как карман у
-        // `pockets::kerb_parking`; кусок поперечной в проёме пары — нет
-        |index| {
-            sidewalk_width(drawn[index]).is_some()
-                && drawn[index].sidewalks.contains(&true)
-                && !across_median[index]
-        },
-        |index| {
-            axes.pairs.runs[index]
-                .iter()
-                .map(|run| node_paint::Partner {
-                    road: run.partner,
-                    paved: run.paved,
-                })
-                .collect()
-        },
-        |road| axes.rings.of(road).is_some(),
-    );
+    // оси ленты, со стежками — до дороги, до которой OSM торец не довёл:
+    // асфальт, краска, траектории, острова
+    let ribbon = prepared.axes(Axis::Ribbon);
     // траектории манёвров (`roads/turns.rs`) — колея в узле
     let turns = turns::Turns::new(
-        &drawn,
-        &stitched,
-        &node_paint.junctions,
+        &prepared,
+        &junctions.node_paint().junctions,
         map.traffic_side,
-        |road| axes.rings.of(road).is_some(),
     );
     // Широкие улицы поверх узких — см. доку модуля; ведущая узла — поверх
     // всех: её колея идёт через узел, и примыкание шире неё не должно её
     // закрыть.
-    let mut leading = vec![false; roads.len()];
-    for junction in &node_paint.junctions {
-        for &road in &junction.leading {
-            leading[road] = true;
-        }
-    }
+    let leading = junctions.leading();
     let widths: Vec<f32> = drawn.iter().map(|road| road.width).collect();
-    let order = fill_order(&widths, &leading, &node_paint.junctions);
+    let order = fill_order(&widths, &leading, &junctions.node_paint().junctions);
     // направляющие островки у колец (`roads/gores.rs`) — до лент: к ним
     // дотягиваются двойные сплошные разделительных
     let gore_roads: Vec<gores::GoreRoad> = order
@@ -1394,23 +808,23 @@ pub fn mesh_roads(
             let road = drawn[index];
             road.class == RoadClass::Street && !road.carves_navmesh()
         })
-        .map(|&index| gores::GoreRoad::new(drawn[index], &stitched[index]))
+        .map(|&index| gores::GoreRoad::new(drawn[index], &ribbon[index]))
         .collect();
     let mut gores = gores::Gores::of(&gore_roads);
     // островки по правилу — на двусторонних подходах, где веера из въезда и
     // съезда в OSM нет: краска и колея подхода рвутся на их длину
-    let splitters = gores::splitters(&drawn, &stitched, &axes.rings);
-    for splitter in &splitters {
-        node_paint.breaks[splitter.road].push(splitter.gap);
-        node_paint.asphalt[splitter.road].push(splitter.gap);
-    }
+    let splitters = gores::splitters(&drawn, &ribbon, prepared.rings());
+    junctions.add_splitters(&splitters);
     gores.add_splitters(&splitters);
+    // три множества разрывов — каждому потребителю своё (`roads/junctions.rs`)
+    let node_paint = junctions.node_paint();
+    let asphalt = junctions.asphalt();
+    let paint_breaks = junctions.paint();
     // каркасы половин у слияний сводятся в каркас продолжения
     // (`roads/merges.rs`) — по той же нарисованной оси, что и линии
     let mut ramps: Vec<Option<paint::MergeRamp>> = vec![None; roads.len()];
-    for merge in &merges.list {
-        for (road, ramp) in
-            merges::merge_ramps(merge, &drawn, &stitched, &map.network, shape.taper())
+    for merge in &prepared.merges().list {
+        for (road, ramp) in merges::merge_ramps(merge, &drawn, &ribbon, &map.network, shape.taper())
         {
             ramps[road] = Some(ramp);
         }
@@ -1418,83 +832,34 @@ pub fn mesh_roads(
     // где у пары половин кончается разделительная — осевая слияния доходит
     // до неё: торцы асфальтовой середины и носы газона, по улицам половин
     let street_of = |road: usize| map.network.street_of(road).map(|(street, _)| street);
-    let mut median_ends: Vec<([Option<usize>; 2], merges::MedianEnd)> = Vec::new();
     // разделительные парных половин (`roads/medians.rs`): асфальт — до лент
-    // половин, под ними; газон с бордюром — в свой слой над тротуарами
+    // половин, под ними; газон с бордюром — в свой слой над тротуарами;
+    // открываются по базе — у перекрёстка, кто бы его ни вёл
     let mut median_grass = MeshBuilder::with_surface_coords();
-    let mut paved: Vec<network::pairs::Median> = Vec::new();
-    let mut lawn_kerbs = Vec::new();
-    // торцы трамвайных полотен — разрывы для газона рядом: полотно и газон
-    // одной пары улиц встречаются торец в торец
-    let bed_ends: Vec<Break> = axes
-        .pairs
-        .medians
-        .iter()
-        .filter(|median| median.carries_tram())
-        .flat_map(medians::bed_ends)
-        .flatten()
-        .collect();
-    for median in &axes.pairs.medians {
-        let [first, second] = median.roads;
-        let breaks = medians::crossing_breaks(
-            median,
-            [&junctions.breaks[first], &junctions.breaks[second]],
-        );
-        // до перекрёстка — как линии полос, а не там, где кончились пробы
-        let mut median = median.clone();
-        medians::reach_breaks(&mut median, &breaks);
-        if median.is_paved() {
-            // полотно — внутренние полосы половин до середины; узкая
-            // разделительная — полосой асфальта во всё расстояние между осями
-            if median.carries_tram() {
-                medians::push_bed(&mut streets, &median, ROAD_COLOR.to_linear());
-            } else {
-                medians::push_paved(&mut streets, &median, ROAD_COLOR.to_linear(), ROAD_JOIN);
-            }
-            if style.markings {
-                let mut midline = median.midline.clone();
-                gores.reach(&mut midline);
-                // и там, где обе половины рвёт краска узла — зебра поперёк
-                // обеих, стоп-линии
-                let mut painted = breaks.clone();
-                painted.extend(medians::crossing_breaks(
-                    &median,
-                    [&node_paint.breaks[first], &node_paint.breaks[second]],
-                ));
-                // узел слияния — не перекрёсток: двойная сплошная доходит до
-                // него и переходит в осевую продолжения
-                painted.retain(|gap| !merges.is_pure_node(gap.at));
-                painter.paint_median(&midline, &painted);
-                let pair = median.roads.map(street_of);
-                for tip in [midline.first(), midline.last()].into_iter().flatten() {
-                    median_ends.push((pair, merges::MedianEnd::Paved(*tip)));
-                }
-            }
-            paved.push(median);
-        } else {
-            let mut breaks = breaks;
-            breaks.extend(bed_ends.iter().copied());
-            let kerbs = medians::push_lawn(
-                &mut sidewalks,
-                &mut median_grass,
-                &median,
-                &breaks,
-                SIDEWALK_COLOR.to_linear(),
-                GRASS_COLOR.to_linear(),
-            );
-            let pair = median.roads.map(street_of);
-            for point in kerbs.iter().flatten().flatten() {
-                median_ends.push((pair, merges::MedianEnd::Lawn(Vec2::from(*point))));
-            }
-            lawn_kerbs.extend(kerbs);
-        }
+    let median_drawing = medians::draw(
+        prepared.pairs(),
+        &medians::MedianInputs {
+            base: junctions.median_base(),
+            paint: paint_breaks,
+            markings: style.markings,
+            pure_merge: &|at| prepared.merges().is_pure_node(at),
+            reach_gores: &|midline| gores.reach(midline),
+            street_of: &street_of,
+        },
+        &mut streets,
+        &mut sidewalks,
+        &mut median_grass,
+    );
+    for (midline, breaks) in &median_drawing.painted {
+        painter.paint_median(midline, breaks);
     }
     // за узлом слияния, до разделительной его пары: асфальт до носа газона —
     // под лентами половин — и осевая продолжения
     streets.set_lanes(None);
-    for merge in merges.list.iter().filter(|merge| merge.pure) {
+    for merge in prepared.merges().list.iter().filter(|merge| merge.pure) {
         let halves = merge.halves.map(street_of);
-        let ends: Vec<merges::MedianEnd> = median_ends
+        let ends: Vec<merges::MedianEnd> = median_drawing
+            .ends
             .iter()
             .filter(|(pair, _)| {
                 pair.iter()
@@ -1502,27 +867,28 @@ pub fn mesh_roads(
             })
             .map(|&(_, end)| end)
             .collect();
-        for shape in merges::nose_fill(merge, &stitched, &map.network, &ends, &lawn_kerbs) {
+        for shape in merges::nose_fill(
+            merge,
+            &ribbon,
+            &map.network,
+            &ends,
+            &median_drawing.lawn_kerbs,
+        ) {
             push_shape(&mut streets, shape, ROAD_COLOR.to_linear());
         }
         if style.markings {
-            let axis = merges::merge_axis(merge, &drawn, &stitched, &map.network, &ends);
+            let axis = merges::merge_axis(merge, &drawn, &ribbon, &map.network, &ends);
             painter.paint_merge_axis(&axis, lane_count(drawn[merge.street]));
         }
     }
     // асфальт от торца полотна до носа газона рядом
-    if !lawn_kerbs.is_empty() {
-        streets.set_lanes(None);
-        for bed in paved.iter().filter(|median| median.carries_tram()) {
-            for cap in medians::bed_caps(bed, &lawn_kerbs) {
-                push_shape(&mut streets, cap, ROAD_COLOR.to_linear());
-            }
-        }
+    for cap in median_drawing.bed_caps() {
+        push_shape(&mut streets, cap, ROAD_COLOR.to_linear());
     }
     let network_time = started.elapsed();
 
     // щель между подходом и кольцом — асфальтом, под лентами
-    for web in &axes.rings.webs {
+    for web in &prepared.rings().webs {
         streets.push_polygon(web, &[], ROAD_COLOR.to_linear());
     }
     // остров-крошка в треугольнике узлов — тоже
@@ -1532,18 +898,18 @@ pub fn mesh_roads(
     // островки безопасности и площади полотна из данных (`roads/islands.rs`):
     // площадь — асфальтом улиц до лент, под ними (порядок пуша в слое —
     // порядок отрисовки); островок — бордюром поверх асфальта и краски, ниже
-    let road_islands = islands::RoadIslands::new(map, &drawn, &stitched);
+    let road_islands = islands::RoadIslands::new(map, &drawn, &ribbon);
     streets.set_lanes(None);
     for shape in &road_islands.carriageways {
         push_shape(&mut streets, shape.clone(), ROAD_COLOR.to_linear());
     }
     if style.sidewalks {
-        for ring in &axes.rings.list {
+        for ring in &prepared.rings().list {
             let width = drawn[ring.roads[0]].width;
             let sidewalk = ring
                 .roads
                 .iter()
-                .filter_map(|&road| sidewalks_of(road))
+                .filter_map(|&road| prepared.sidewalk_drawn(road))
                 .fold(0.0, f32::max);
             push_ring_edges(
                 &mut sidewalks,
@@ -1559,24 +925,21 @@ pub fn mesh_roads(
             RoadClass::Street => ROAD_COLOR,
             RoadClass::Alley => ALLEY_COLOR,
         };
-        let points: &[Vec2] = &stitched[index];
+        let points: &[Vec2] = &ribbon[index];
         // колея гаснет по разрывам асфальта; у ведущей узла их там нет
-        let breaks = node_paint.asphalt[index].as_slice();
+        let breaks = asphalt.of(index);
         let lanes = road_lanes(road);
         // линии краски — по той же оси, разрывам и клиньям, что и асфальт
         if style.markings {
             let wedges = if road.bridge {
                 [None; 2]
             } else {
-                paint::wedge_ends(points, &tapers, &drawn, index, map.traffic_side)
+                paint::wedge_ends(points, prepared.tapers(), &drawn, index, map.traffic_side)
             };
             painter.paint(
                 road,
                 points,
-                paint::LineBreaks {
-                    cut: &node_paint.breaks[index],
-                    solid: &node_paint.solid[index],
-                },
+                paint_breaks.of(index),
                 wedges,
                 node_paint.pockets[index],
                 ramps[index],
@@ -1584,26 +947,12 @@ pub fn mesh_roads(
             );
         }
         if road.bridge {
-            // бордюр настила — он и есть мост
-            push_bridge_curb(
-                &mut bridge_casings,
-                points,
-                2.0 * road.curb_reach(),
-                ROAD_JOIN,
-            );
-            // Тень настила — тот же настил, сдвинутый по свету на высоту
-            // моста. Ни один другой слой её не даёт: наземные тени считают
-            // только дома, а мост через Упу — самая заметная вещь на воде.
-            if let Some(deck) = bridges.span(index).filter(|deck| deck.casts) {
-                shadow_bands.push(ShadowBand {
-                    path: bridge_shadow_path(points, deck),
-                    reach: road.curb_reach(),
-                    penumbra: bridge_penumbra(deck.span),
-                });
-            }
-            bridge_fills.set_lanes(lanes);
+            // бордюр и тень — мосту; заливка — здесь, в порядке улиц
+            bridges.push_deck(index, points, road);
+            let fills = bridges.fills();
+            fills.set_lanes(lanes);
             push_street_fill(
-                &mut bridge_fills,
+                fills,
                 points,
                 road.width,
                 color.to_linear(),
@@ -1618,7 +967,7 @@ pub fn mesh_roads(
         };
         // клинья у швов со сменой сечения: торцы, срезанные под них, и сами
         // клинья от ширины узкого соседа (`roads/tapers.rs`)
-        let ends = tapers.at(index);
+        let ends = prepared.taper_ends(index);
         let [head, body, tail] = if ends == [None; 2] {
             [None, None, None]
         } else {
@@ -1629,7 +978,7 @@ pub fn mesh_roads(
         // закрывают скругления и наружные углы (`roads/corners.rs`); торец
         // со стежком уже не в узле
         let butt = kerb_returns.butt(index);
-        let stitched_end = stitches.ends[index].map(|end| end.is_some());
+        let stitched_end = prepared.stitched_end(index);
         let trimmed = [
             head.is_some() || (butt[0] && !stitched_end[0]),
             tail.is_some() || (butt[1] && !stitched_end[1]),
@@ -1650,42 +999,35 @@ pub fn mesh_roads(
         };
 
         // тротуар кольца — одной лентой на всё кольцо (`push_ring_edges`)
-        let ring = axes.rings.of(index);
-        if let Some(sidewalk) = sidewalks_of(index).filter(|_| ring.is_none()) {
+        let ring = prepared.rings().of(index);
+        if let Some(sidewalk) = prepared.sidewalk_drawn(index).filter(|_| ring.is_none()) {
             let band = |road: &RoadLine, sidewalk: f32| road.width + 2.0 * sidewalk;
             // у половины разделённой улицы тротуара со стороны пары нет; на
             // клине куски пары не пересчитываются — там тротуар как был
-            let runs = if wedges.is_empty() {
-                axes.pairs.runs[index].as_slice()
+            let (sides, total) = (road.sidewalk().sides(), polyline_length(body));
+            let pieces = if wedges.is_empty() {
+                let stitch = prepared.stitch_offset(index);
+                prepared.pairs().band_pieces(index, sides, stitch, total)
             } else {
-                &[]
+                Pairs::unpaired_pieces(sides, total)
             };
-            let stitch =
-                stitches.ends[index][0].map_or(0.0, |start| start.distance(paths[index][0]));
             push_sidewalk(
                 &mut sidewalks,
                 body,
                 [road.width, sidewalk],
-                runs,
-                stitch,
-                road.sidewalks,
+                pieces.as_deref(),
                 SIDEWALK_COLOR.to_linear(),
                 trimmed,
             );
             // клин тротуара — по сторонам, как у асфальта: с сужаемой стороны
             // от полосы узкого соседа (или его голой кромки, если тротуара у
             // него нет) к своей, с сохранённой — своя на всём клине; сторона
-            // без тротуара по тегу — голая кромка
-            let band_half = |road: &RoadLine, sidewalk: Option<f32>, side: usize| {
-                road.width / 2.0 + sidewalk.filter(|_| road.sidewalks[side]).unwrap_or(0.0)
-            };
+            // без тротуара по тегу — голая кромка (`Drawn::band_half`)
             for &(path, taper, end) in &wedges {
-                let narrow = drawn[taper.narrow];
-                let narrow_sidewalk = drawn_sidewalk(&style, narrow);
                 let halves = wedge_halves(taper.sides, end, |side| {
                     [
-                        band_half(narrow, narrow_sidewalk, side),
-                        band_half(road, Some(sidewalk), side),
+                        prepared.band_half(taper.narrow, side),
+                        prepared.band_half(index, side),
                     ]
                 });
                 sidewalks.push_taper_sided(
@@ -1708,17 +1050,15 @@ pub fn mesh_roads(
             } else {
                 polyline_length(path) / 2.0
             };
-            let Some(run) = axes.pairs.runs[index]
-                .iter()
-                .find(|run| (run.from..=run.to).contains(&middle))
-            else {
+            // пара у середины клина — без слака: клин лежит внутри куска
+            let Some(left) = prepared.pairs().beside(index, middle, 0.0) else {
                 continue;
             };
             // с сохранённой стороны кромка и так прямая
-            if !taper.sides[usize::from(!run.left)] {
+            if !taper.sides[usize::from(!left)] {
                 continue;
             }
-            let side = if run.left { 1.0 } else { -1.0 };
+            let side = if left { 1.0 } else { -1.0 };
             let inner: Vec<Vec2> = path
                 .iter()
                 .zip(miter_offsets(path, false, road.width / 4.0))
@@ -1794,7 +1134,7 @@ pub fn mesh_roads(
             let setback = paint::Painter::arrow_setback(arrow, &marks);
             painter.paint_arrow(arrow, setback);
             // и второй ряд дальше от узла, где полоса это позволяет
-            let breaks = &node_paint.breaks[arrow.road];
+            let breaks = paint_breaks.of(arrow.road).cut;
             if let Some(repeat) = paint::Painter::repeat_setback(arrow, setback, &marks, breaks) {
                 painter.paint_arrow(arrow, repeat);
             }
@@ -1807,13 +1147,13 @@ pub fn mesh_roads(
     // светлая полоса над рельсами (`roads/tram_band.rs`) — поверх всего
     // асфальта улиц: порядок пуша в слое — порядок отрисовки, а краска лежит
     // своим слоем выше
-    let tram_bands = tram_band::tram_bands(&map.rails, &drawn, paths, &paved);
+    let tram_bands = tram_band::tram_bands(&map.rails, &drawn, &nodal, &median_drawing.paved);
     streets.set_lanes(None);
     // одной фигурой, со щелями между полосами соседних путей заросшими
     for shape in tram_band::band_cover(&tram_bands) {
         push_shape(&mut streets, shape, TRAM_BAND_COLOR.to_linear());
     }
-    let mut lot_layers = grounds.layers(&style, &gores, &paved);
+    let mut lot_layers = grounds.layers(&style, &gores, &median_drawing.paved);
     for shape in &road_islands.kerbs {
         push_shape(
             &mut lot_layers.sidewalks,
@@ -1827,7 +1167,7 @@ pub fn mesh_roads(
         }
     }
 
-    push_bridge_shadows(&mut bridge_shadows, &shadow_bands);
+    let bridge_count = bridges.count();
 
     let fortresses = Fortresses::of(&map.buildings);
     for wall in walls {
@@ -1842,9 +1182,8 @@ pub fn mesh_roads(
         }
     }
 
-    // тень моста полупрозрачна, поэтому у неё `Blend`: непрозрачный материал
-    // съел бы альфу вершинного цвета. Асфальт, тротуар и дорожка — фактурные,
-    // канты и лента стены — плоские
+    // асфальт, тротуар и дорожка — фактурные, лента стены — плоская; три
+    // мостовых слоя со своими высотами и материалами отдаёт `Bridges`
     let mut layers: Vec<LayerMesh> = [
         (
             alleys,
@@ -1882,28 +1221,11 @@ pub fn mesh_roads(
             "lot_lines",
             MaterialSpec::Flat,
         ),
-        (
-            bridge_shadows,
-            Z_BRIDGE_SHADOW,
-            "bridge_shadows",
-            MaterialSpec::Blend,
-        ),
-        (
-            bridge_casings,
-            Z_BRIDGE_CASING,
-            "bridge_casings",
-            MaterialSpec::Flat,
-        ),
-        (
-            bridge_fills,
-            Z_BRIDGE,
-            "bridges",
-            MaterialSpec::Surface(SurfaceKind::Street),
-        ),
         (wall_ribbons, Z_WALL, "walls", MaterialSpec::Flat),
     ]
     .into_iter()
     .map(|(builder, z, name, material)| LayerMesh::new(builder, z, name, material))
+    .chain(bridges.layers())
     .collect();
     let paint_lines = painter.lines;
     let paint_layers = painter.layers();
@@ -1918,41 +1240,27 @@ pub fn mesh_roads(
 
     let report = RoadReport {
         style,
-        junctions: junctions.junctions,
+        junctions: junctions.counts(),
         paint_lines,
         paint_vertices,
-        zebras: [
-            node_paint.zebras.len(),
-            node_paint.zebras.iter().filter(|zebra| zebra.osm).count(),
-        ],
-        stop_lines: node_paint.stop_lines.len(),
-        pockets: node_paint.pockets.iter().flatten().flatten().count(),
-        clusters: node_paint.clusters,
         kerb_pockets,
         turning_circles,
-        through: node_paint.through,
         turns: turns.maneuvers,
         arrows: if style.arrows { turns.arrows.len() } else { 0 },
-        leading: leading.iter().filter(|&&lead| lead).count(),
         kerb_returns: kerb_returns.roads.len() - kerb_returns.outer[0],
         sidewalk_returns: kerb_returns.sidewalks.len() - kerb_returns.outer[1],
         outer_corners: kerb_returns.outer,
-        stitches: stitches.count,
-        crossings: crossings.len(),
+        drawn: prepared.stats(),
+        bridges: bridge_count,
         gores: gores.count(),
         road_islands: [
             road_islands.refuges,
             road_islands.kerbs.len() - road_islands.refuges,
             road_islands.carriageways.len(),
         ],
-        tapers: tapers.count,
-        merges: [merges.list.len(), merge_edges],
-        rings: [axes.rings.list.len(), axes.rings.webs.len()],
+        merge_edges,
         islands: islands.len(),
-        medians: axes.pairs.count(),
         tram_bands: tram_bands.len(),
-        seams: axes.seams,
-        tight: axes.tight,
         vertices: layers.iter().map(|l| l.builder.vertex_count()).sum(),
         network: network_time,
         elapsed: started.elapsed(),
@@ -2042,237 +1350,6 @@ pub fn spawn_road_meshes(
     info!("{report}");
 }
 
-/// Теневая лента одного моста, готовая к укладке: путь, полуширина настила и
-/// ширина полутени на полном подъёме.
-struct ShadowBand {
-    path: Vec<ShadowPoint>,
-    reach: f32,
-    penumbra: f32,
-}
-
-/// Край теневой ленты в одной точке пути.
-struct ShadowEdge {
-    left: Vec2,
-    right: Vec2,
-    /// единичная нормаль стыка, наружу слева
-    normal: Vec2,
-    /// ширина полутени здесь — ноль у устоя, полная на пролёте
-    blur: f32,
-}
-
-/// Ширина мягкого края тени настила, м.
-///
-/// Не физическая полутень — угловой размер солнца дал бы на такой длине
-/// сантиметры, — а то, чем край тени размыт на снимке: разрешением кадра и
-/// светом неба. Правило у карты уже есть, и оно сформулировано в машинном
-/// `cars/body.rs::SHADOW_BLUR`: «у зданий метр, и он втрое больше, **потому
-/// что и тень там втрое-вдесятеро длиннее**». Значит кайма — доля **длины
-/// собственной тени**, то есть высоты настила через `shadow_length_scale()`,
-/// а не константа, как у машины и забора, у которых высота одна на всех.
-///
-/// Мост тут самый высокий из всех, кто отбрасывает тень на этой карте, и
-/// самый разный: от двухметрового мостика через пруд до шестиметрового
-/// путепровода. Поэтому доля, а концы — два числа, которые на карте уже
-/// стоят: [`PENUMBRA_MIN`] — кайма машины и забора (мягче на этой карте не
-/// размыт никакой край), [`PENUMBRA_MAX`] — кайма дома
-/// (`buildings::shadows::PENUMBRA_WIDTH`, мягче не бывает вовсе). Между ними
-/// доля и работает: пролёт 16 м — 0.36 м каймы, 40 м — 0.9, от 44 м и выше —
-/// потолок. Концы у солнца не едут (это константы соседних слоёв), а сама
-/// доля едет: на низком солнце тень длиннее, и край у неё мягче.
-const PENUMBRA_SHARE: f32 = 0.3;
-const PENUMBRA_MIN: f32 = 0.35;
-const PENUMBRA_MAX: f32 = 1.0;
-
-/// Ширина полутени для моста с таким пролётом — см. [`PENUMBRA_SHARE`].
-fn bridge_penumbra(span: f32) -> f32 {
-    let length = shadow::length(bridge_height(span));
-    (length * PENUMBRA_SHARE).clamp(PENUMBRA_MIN, PENUMBRA_MAX)
-}
-
-/// Тени всех мостов разом: **объединённые** ядра ([`ShadowBand`]) плюс мягкая
-/// кайма по краю каждой ленты.
-///
-/// Ядро ленты — переменной ширины по [`bridge_shadow_path`], **шире самого
-/// настила** на [`SHADOW_SPREAD`] с каждой стороны, и торцы у неё прямые.
-///
-/// Уширение — не украшение, а единственное, что даёт мосту тень **вдоль
-/// света**. Тень плиты это её силуэт, сдвинутый по солнцу; у ленты сдвиг
-/// раскладывается на поперечную часть (видимая полоса сбоку) и продольную
-/// (лента съезжает сама по себе и остаётся под настилом). Мостики через пруд
-/// на Упе идут ровно по азимуту солнца — поперечной части у них нет, и честная
-/// тень-сдвиг у них невидима до последнего пикселя. На снимке они, однако,
-/// обведены тёмным: вода под настилом не освещена небом, к этому добавляется
-/// тень перил и толщина самой плиты. Это и есть `SHADOW_SPREAD` — кайма,
-/// сходящая к нулю там же, где садится на землю настил.
-///
-/// Торцы прямые (лента режется по вершинам, полудиска нет ни на одном конце):
-/// круглый торец и был тем артефактом, из-за которого тень «оставалась у
-/// дороги» — полудиск радиусом в полширины настила вылезал за прямой срез
-/// моста и ложился на улицу, к которой мост примыкает.
-///
-/// **Ядра объединяются булевым union** (`i_overlay`, NonZero — приём теней
-/// зданий и оград), и это не про запас: на Туле **28 пар разных мостов**
-/// накрывают друг друга тенями. Так OSM размечает мост с тротуаром — отдельным
-/// параллельным way с тем же `bridge=yes`, — и в полупрозрачном слое такая пара
-/// читается полосой двойной темноты вдоль всего моста. Одна лента — это один
-/// контур (левый рельс вперёд, правый назад), и её собственное самокасание на
-/// крутом повороте NonZero закрашивает один раз, так что союз нужен именно
-/// ради соседей.
-///
-/// **Кайма при этом кладётся от каждой ленты своей**, до объединения, и вот
-/// почему её нельзя считать от контура союза: её ширина берётся из `rise`,
-/// то есть из того, насколько настил в этой точке поднят над землёй, а союз
-/// эту величину теряет. Отказаться от `rise` тоже нельзя — у устоя настил
-/// лежит на земле, и метр мягкой тени вокруг его торца это ровно та «грязная
-/// обводка», ради избавления от которой у зданий убирали контактную юбку.
-/// Перекрытие двух кайм друг с другом карта уже разрешает явно (тени зданий:
-/// «каймы соседних фигур могут перекрываться, но обе гаснут в ноль»). Кайма,
-/// чья внешняя кромка лежит внутри ядра соседней ленты, не кладётся.
-fn push_bridge_shadows(builder: &mut MeshBuilder, bands: &[ShadowBand]) {
-    use i_overlay::core::fill_rule::FillRule;
-    use i_overlay::float::simplify::SimplifyShape;
-
-    let color = SHADOW_COLOR.to_linear();
-    let fade = LinearRgba {
-        alpha: 0.0,
-        ..color
-    };
-    let edges: Vec<Vec<ShadowEdge>> = bands.iter().map(shadow_edges).collect();
-
-    // Ядра лент для проверки погружения каймы — с габаритом на каждое.
-    // Проба идёт на каждый квад каймы (лента уплотнена до `SHADOW_STEP`, так
-    // что у моста через Упу их под сотню) и без габарита обходила бы кольца
-    // **всех** мостов города: пересекаются же считанные пары, соседи по
-    // одному настилу. Отсечка — та же, что у `Underneath` в `probe_underneath`
-    // и у `Fortresses`. Пустое ядро даёт `(INFINITY, NEG_INFINITY)`, то есть
-    // габарит, в который не попадает ничто, — как и надо.
-    let cores: Vec<(Vec2, Vec2, Vec<Vec2>)> = edges
-        .iter()
-        .map(|band| {
-            let ring: Vec<Vec2> = if band.len() < 2 {
-                Vec::new()
-            } else {
-                band.iter()
-                    .map(|edge| edge.left)
-                    .chain(band.iter().rev().map(|edge| edge.right))
-                    .collect()
-            };
-            let (low, high) = ring_bounds(&ring);
-            (low, high, ring)
-        })
-        .collect();
-
-    // контур ленты — левый рельс вперёд, правый назад
-    let contours: Vec<Vec<[f32; 2]>> = edges
-        .iter()
-        .filter(|band| band.len() >= 2)
-        .map(|band| {
-            band.iter()
-                .map(|edge| edge.left.to_array())
-                .chain(band.iter().rev().map(|edge| edge.right.to_array()))
-                .collect()
-        })
-        .collect();
-    for shape in contours.simplify_shape(FillRule::NonZero) {
-        let mut rings = shape.into_iter().map(|contour| {
-            contour
-                .into_iter()
-                .map(Vec2::from_array)
-                .collect::<Vec<Vec2>>()
-        });
-        let Some(outer) = rings.next() else {
-            continue;
-        };
-        let holes: Vec<Vec<Vec2>> = rings.collect();
-        builder.push_polygon(&outer, &holes, color);
-    }
-
-    for (own, band) in edges.iter().enumerate() {
-        for pair in band.windows(2) {
-            let (near, far) = (&pair[0], &pair[1]);
-            // у устоя кайма схлопнута с обеих сторон — квада там нет вовсе
-            if near.blur <= 0.0 && far.blur <= 0.0 {
-                continue;
-            }
-            for side in [1.0_f32, -1.0] {
-                let (from, to) = if side > 0.0 {
-                    (near.left, far.left)
-                } else {
-                    (near.right, far.right)
-                };
-                let lip =
-                    (from + near.normal * (side * near.blur) + to + far.normal * (side * far.blur))
-                        / 2.0;
-                // кайма, чья внешняя кромка лежит в ядре соседа, легла бы
-                // поверх уже закрашенного союза двойной темнотой
-                let buried = cores.iter().enumerate().any(|(other, (low, high, ring))| {
-                    other != own
-                        && lip.cmpge(*low).all()
-                        && lip.cmple(*high).all()
-                        && point_in_polygon(lip, ring)
-                });
-                if buried {
-                    continue;
-                }
-                builder.push_quad_gradient(
-                    [
-                        from,
-                        from + near.normal * (side * near.blur),
-                        to + far.normal * (side * far.blur),
-                        to,
-                    ],
-                    [color, fade, fade, color],
-                );
-            }
-        }
-    }
-}
-
-/// Края ленты: рельсы, нормаль стыка и ширина полутени в каждой точке пути.
-/// Общие у контура и у каймы, чтобы кайма садилась ровно на край ядра.
-///
-/// Нормаль берётся готовой из [`ShadowPoint`] — она поперёк **настила**, а не
-/// поперёк съехавшей ленты; почему это не одно и то же, написано там же.
-fn shadow_edges(band: &ShadowBand) -> Vec<ShadowEdge> {
-    if band.path.len() < 2 {
-        return Vec::new();
-    }
-    band.path
-        .iter()
-        .map(|point| {
-            // единичную нормаль стыка растягивает своя полуширина
-            let half = band.reach + SHADOW_SPREAD * point.rise;
-            ShadowEdge {
-                left: point.at + point.normal * half,
-                right: point.at - point.normal * half,
-                normal: point.normal,
-                blur: band.penumbra * point.rise,
-            }
-        })
-        .collect()
-}
-
-/// Бордюр моста: торцы всегда [`RibbonCap::Butt`] — настил кончается ровным
-/// срезом, как на 2ГИС. Полудиск `Round` или продление `push_polyline` при
-/// `Square` торчали бы бордюрным языком за конец моста, поэтому мимо
-/// [`push_ribbon`]-обёртки.
-fn push_bridge_curb(builder: &mut MeshBuilder, points: &[Vec2], width: f32, join: RoadJoin) {
-    // `Square` — это `push_polyline` с продлёнными торцами, а торцы здесь
-    // решены выше; его излом сводится к `Miter`, как у любой метки, а не дороги
-    let join = match join {
-        RoadJoin::Square | RoadJoin::Miter => RibbonJoin::Miter,
-        RoadJoin::Round => RibbonJoin::Round,
-    };
-    builder.push_ribbon(
-        points,
-        false,
-        width,
-        BRIDGE_CURB_COLOR.to_linear(),
-        join,
-        RibbonCap::Butt,
-    );
-}
-
 /// Лента выбранного стиля — `RoadJoin` через [`RoadJoin::ribbon_shape`]. Общая
 /// с подложкой аллей (`map::spawn`): у неё те же три настройки, что у дорог, и
 /// мапиться на `MeshBuilder` они обязаны одинаково.
@@ -2335,23 +1412,18 @@ fn wedge_halves(sides: [bool; 2], end: bool, half: impl Fn(usize) -> [f32; 2]) -
     }
 }
 
-/// Тротуар дороги шириной `widths[0]` с полосой `widths[1]` — с тех сторон
-/// `[слева, справа]`, где он есть по тегу (`sides`, [`RoadLine::sidewalks`]),
-/// и кроме кусков `runs`, где рядом идёт вторая половина разделённой улицы
-/// (`roads/network/pairs.rs`): со стороны пары его нет. Длины кусков меряны
-/// по оси без стежка; `stitch` — длина стежка перед её началом.
-#[allow(clippy::too_many_arguments)]
+/// Тротуар дороги шириной `widths[0]` с полосой `widths[1]` — кусками
+/// `pieces` ([`Pairs::band_pieces`]: стороны по тегу, без стороны пары), или,
+/// при `None`, одной лентой с обеих сторон.
 fn push_sidewalk(
     builder: &mut MeshBuilder,
     body: &[Vec2],
     [width, sidewalk]: [f32; 2],
-    runs: &[network::pairs::PairRun],
-    stitch: f32,
-    sides: [bool; 2],
+    pieces: Option<&[BandPiece]>,
     color: LinearRgba,
     trimmed: [bool; 2],
 ) {
-    if runs.is_empty() && sides == [true; 2] {
+    let Some(pieces) = pieces else {
         return push_ribbon_trimmed(
             builder,
             body,
@@ -2360,21 +1432,16 @@ fn push_sidewalk(
             ROAD_JOIN,
             trimmed,
         );
-    }
+    };
     let total = polyline_length(body);
-    let mut cursor = 0.0;
-    // кусок `from..to` с тротуаром по сторонам `[слева, справа]`
-    let mut piece = |from: f32, to: f32, [left, right]: [bool; 2]| {
-        if to - from < SIDEWALK_PIECE_MIN {
-            return;
-        }
+    for &(from, to, [left, right]) in pieces {
         let points = tapers::cut(body, from, to);
         let trims = [from > 0.0 || trimmed[0], to < total || trimmed[1]];
         // полоса с одной стороны — лента на полтротуара в её сторону:
         // `miter_offsets` плюсом сдвигает влево
         let shift = match (left, right) {
             (true, true) => {
-                return push_ribbon_trimmed(
+                push_ribbon_trimmed(
                     builder,
                     &points,
                     width + 2.0 * sidewalk,
@@ -2382,10 +1449,11 @@ fn push_sidewalk(
                     ROAD_JOIN,
                     trims,
                 );
+                continue;
             }
             (true, false) => sidewalk / 2.0,
             (false, true) => -sidewalk / 2.0,
-            (false, false) => return,
+            (false, false) => continue,
         };
         let shifted: Vec<Vec2> = points
             .iter()
@@ -2393,24 +1461,7 @@ fn push_sidewalk(
             .map(|(point, offset)| *point + offset)
             .collect();
         push_ribbon_trimmed(builder, &shifted, width + sidewalk, color, ROAD_JOIN, trims);
-    };
-    let mut previous: Option<bool> = None;
-    for run in runs {
-        let from = (run.from + stitch).clamp(cursor, total);
-        let to = (run.to + stitch).clamp(from, total);
-        // со стороны пары тротуара нет
-        let mut paired = sides;
-        paired[usize::from(!run.left)] = false;
-        // и в щели между двумя кусками с той же стороны — любыми, полотном и
-        // газоном тоже, — которые разделительные сводят торец в торец
-        // (`Pairs::join_ends`): светлое пятно тротуара лежало между ними
-        let bridged = previous == Some(run.left) && from - cursor < network::pairs::JOIN_GAP;
-        piece(cursor, from, if bridged { paired } else { sides });
-        piece(from, to, paired);
-        cursor = to;
-        previous = Some(run.left);
     }
-    piece(cursor, total, sides);
 }
 
 /// Заливка проезжей части — лента [`ROAD_RIBBON`] с разрывами разметки по
@@ -2471,7 +1522,9 @@ pub(super) mod junctions;
 /// Открыт наружу для [`map::cars`](crate::map::cars): ряд машин стоит на той
 /// же оси, что и лента.
 pub(super) mod axis;
+mod bridges;
 mod corners;
+mod drawn;
 mod gores;
 mod islands;
 mod lots;

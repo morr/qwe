@@ -2,8 +2,8 @@
 //! список остальных. Клик по пункту пишет ресурс `City`, а перезагрузку мира
 //! делает `city::reload_world_on_city_change`.
 //!
-//! Список, а не ряд кнопок на город: городов семь, ряд занимал треть нижнего
-//! края экрана и рос с каждым новым, а выбран из них всегда ровно один — это
+//! Список, а не ряд кнопок на город: уже при семи городах ряд занимал треть
+//! нижнего края экрана и рос с каждым новым, а выбран из них всегда ровно один — это
 //! и есть select. Виджет первопартийный (`FeathersMenu` + `FeathersMenuPopup`),
 //! всплывающая часть сама переворачивается вверх, когда снизу нет места.
 
@@ -21,7 +21,7 @@ use crate::ui::{GameUiRoot, PANEL_FONT, UI_SCREEN_EDGE_PX_OFFSET, panel_backgrou
 /// Подпись на кнопке списка — по ней синхронизация находит текст, который надо
 /// перечитать из ресурса.
 #[derive(Component, Default, Clone)]
-struct CityLabel;
+pub struct CityLabel;
 
 pub struct UiCityPlugin;
 
@@ -53,9 +53,18 @@ fn render_city_panel(mut commands: Commands, current: Res<City>) {
             Name::new("city_panel"),
         ))
         .id();
+    // ширина прибита: названия городов разной длины, и по авто-ширине кнопка
+    // (а с ней и вся панель) прыгала бы при каждом выборе
+    spawn_city_select(&mut commands, panel, *current, px(140.));
+}
 
+/// Селект города под `parent`: кнопка с текущим городом и выпадающий список.
+/// Клик по пункту пишет `City`; подпись кнопки держит `sync_city_label`, его
+/// регистрирует тот, кто зовёт. `pub` ради витрины `roads`, у которой тот же
+/// выбор города на своей панели.
+pub fn spawn_city_select(commands: &mut Commands, parent: Entity, current: City, width: Val) {
     let menu = commands.spawn_scene(bsn! { @FeathersMenu }).id();
-    commands.entity(panel).add_child(menu);
+    commands.entity(parent).add_child(menu);
 
     let label = current.label().to_string();
     let button = commands
@@ -63,9 +72,7 @@ fn render_city_panel(mut commands: Commands, current: Res<City>) {
             @FeathersMenuButton {
                 @caption: bsn! { Text({label}) ThemedText CityLabel }
             }
-            // ширина прибита: названия городов разной длины, и по авто-ширине
-            // кнопка (а с ней и вся панель) прыгала бы при каждом выборе
-            Node { width: px(140) }
+            Node { width: {width} }
             InheritableFont { font_size: {PANEL_FONT} }
         })
         .id();
@@ -95,7 +102,7 @@ fn render_city_panel(mut commands: Commands, current: Res<City>) {
 
 /// Подпись кнопки следует за ресурсом: город меняют не только эти пункты, но и
 /// `reset` настроек, и BRP.
-fn sync_city_label(city: Res<City>, mut labels: Query<&mut Text, With<CityLabel>>) {
+pub fn sync_city_label(city: Res<City>, mut labels: Query<&mut Text, With<CityLabel>>) {
     for mut text in &mut labels {
         text.set_if_neq(Text(city.label().to_string()));
     }

@@ -348,11 +348,14 @@ did not fit 1080 px and ran off the top of the screen.
   two-text cycler rows. The caption is spawned as a child rather than passed as the scene's
   `@caption` because it comes from runtime strings.
 - **City select** (`ui/city.rs`) — one `FeathersMenu` (button + `FeathersMenuPopup` +
-  `FeathersMenuItem` per city), not a button per city: there are seven of them, the row took
+  `FeathersMenuItem` per city), not a button per city: at seven cities the row already took
   a third of the bottom edge and grew with each new city, and exactly one is ever chosen —
   that is a select. The popup flips itself above the button when there is no room below.
   `sync_city_label` keeps the button caption on the `City` resource, which `reset` and BRP
-  also write.
+  also write. The select itself is `pub fn spawn_city_select(commands, parent, city,
+  width)`, re-exported with `sync_city_label` from `qwe::ui`: the roads gallery puts the
+  same select on its own panel (full width there, a pinned 140 px in the game) and
+  registers the label sync itself.
 - **Knob kit** (`ui/knob.rs`) — what panels actually call. A knob is a slider row bound
   to one field of one resource: `spawn_knob(commands, panel, label, &*resource, binding)`
   where `SliderBinding<R> { get, set, range, text }` is four function pointers, and

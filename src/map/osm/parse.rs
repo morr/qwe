@@ -8,18 +8,19 @@ use bevy::math::Vec2;
 
 use super::planting::plant_trees;
 use crate::city::City;
+use crate::map::along::densify;
 use crate::map::cars::district::Districts;
 use crate::map::grid::Grid;
 use crate::map::osm::entrances::generate_entrances;
 use crate::map::osm::model::{
     AreaKind, BuildingUse, Faith, FenceLine, Highway, MapData, PipeLine, PolyArea, RailLine,
-    RoadArea, RoadClass, RoadLine, RoadNode, Sacred, SacredForm, Structure, TrafficSide,
-    TreeCompose, TreeNode, TreeRow, TreeRowLayout, WallLine, WaterLine, closest_on_segment,
-    point_in_area, point_in_polygon, ring_area, ring_bounds, ring_vertex_mean, signed_ring_area,
+    RoadArea, RoadClass, RoadLine, RoadNode, Sacred, SacredForm, SidewalkSide, Structure,
+    TrafficSide, TreeCompose, TreeNode, TreeRow, TreeRowLayout, WallLine, WaterLine,
+    closest_on_segment, point_in_area, point_in_polygon, ring_area, ring_bounds, ring_vertex_mean,
+    signed_ring_area,
 };
 use crate::map::osm::overpass::{Element, GeoBounds, LatLon, Member, OverpassResponse};
 use crate::map::roads::network::sections::{self, SectionReport};
-use crate::map::roads::{densify, is_carriageway, mapped_sidewalk, sidewalk_width};
 use crate::map::seed::seed_from_point;
 
 /// Ширина стены Кремля, м.
@@ -103,10 +104,6 @@ struct Pending {
     /// Входы: Overpass отдаёт ноды раньше way, так что на момент разбора ноды
     /// зданий ещё нет.
     entrances: Vec<Vec2>,
-    /// Номера дорог в `MapData::roads` без единого тега `sidewalk*`: их
-    /// тротуар решает застройка вокруг ([`infer_sidewalks`]), а домов к
-    /// моменту разбора way ещё может не быть.
-    bare_sidewalks: Vec<usize>,
 }
 
 /// Элементы Overpass — в сырую `MapData` и то, что ещё некуда положить
@@ -142,13 +139,7 @@ fn read_elements(
                     map.road_nodes.push(node);
                 }
             }
-            "way" => {
-                let roads = map.roads.len();
-                parse_way(element, bounds, &mut map);
-                if map.roads.len() > roads && tagged_sidewalks(&element.tags).is_none() {
-                    pending.bare_sidewalks.push(roads);
-                }
-            }
+            "way" => parse_way(element, bounds, &mut map),
             "relation" => parse_relation(element, bounds, &mut map, &mut unclosed_rings),
             _ => {}
         }
@@ -353,7 +344,13 @@ fn finish_parse(map: &mut MapData, pending: &Pending) -> PassReport {
     let entrances = &pending.entrances;
     let sections = sections::apply(map);
     let drowned = drop_buildings_in_water(map);
-    let sidewalks = infer_sidewalks(map, &pending.bare_sidewalks);
+    // мера квартала строится по домам, только если есть кого спросить
+    let districts = std::cell::OnceCell::new();
+    let sidewalks = infer_sidewalks(&mut map.roads, |point| {
+        districts
+            .get_or_init(|| Districts::new(&map.buildings))
+            .storeys_at(point)
+    });
     let faiths_guessed = resolve_faiths(&mut map.buildings);
     let entrances_orphaned = attach_entrances(map, entrances);
 
@@ -457,33 +454,38 @@ impl std::fmt::Display for InferredSidewalks {
 /// проезд без названия и жилая зона: у магистрали и улиц до `tertiary`
 /// тротуар остаётся, у дворового проезда его не было и так, а грунтовой
 /// улице полосу уже снял [`untagged_sidewalks`].
-fn infer_sidewalks(map: &mut MapData, bare: &[usize]) -> InferredSidewalks {
-    let asked: Vec<usize> = bare
+///
+/// Кого спрашивать, говорит сама дорога: тротуар без тега —
+/// [`SidewalkSide::Inferred`], и только такой здесь может быть снят. Меру
+/// застройки проход не строит, а получает (`storeys_at` — этажность квартала
+/// у точки, `None` — вокруг пусто), так что его можно проверить без единого
+/// дома.
+fn infer_sidewalks(
+    roads: &mut [RoadLine],
+    storeys_at: impl Fn(Vec2) -> Option<f32>,
+) -> InferredSidewalks {
+    let asked: Vec<usize> = roads
         .iter()
-        .copied()
-        .filter(|&index| {
-            let road = &map.roads[index];
-            road.sidewalks.contains(&true)
+        .enumerate()
+        .filter(|(_, road)| {
+            road.sidewalks.contains(&SidewalkSide::Inferred)
                 && matches!(
                     road.highway,
                     Highway::Residential | Highway::Unclassified | Highway::LivingStreet
                 )
         })
+        .map(|(index, _)| index)
         .collect();
-    if asked.is_empty() {
-        return InferredSidewalks::default();
-    }
-    let districts = Districts::new(&map.buildings);
     let mut dropped = 0;
     for &index in &asked {
-        let road = &mut map.roads[index];
+        let road = &mut roads[index];
         let storeys: Vec<f32> = densify(&road.points, SIDEWALK_PROBE_STEP)
             .into_iter()
-            .filter_map(|point| districts.storeys_at(point))
+            .filter_map(&storeys_at)
             .collect();
         let mean = storeys.iter().sum::<f32>() / storeys.len().max(1) as f32;
         if storeys.is_empty() || mean < SIDEWALK_STOREYS_MIN {
-            road.sidewalks = [false; 2];
+            road.sidewalks = [SidewalkSide::None; 2];
             dropped += 1;
         }
     }
@@ -1086,7 +1088,7 @@ struct Link {
 /// сколько наезжающих оставлено как есть.
 ///
 /// Ширина улицы в модели — константа класса, а тротуар добавляет рендер
-/// (`roads::sidewalk_width`), и в старой застройке дом, стоящий в OSM у самой
+/// (полоса по классу, [`RoadLine::sidewalk`]), и в старой застройке дом, стоящий в OSM у самой
 /// кромки, выходит стеной на тротуар, а в 2.5D крышей — на асфальт (Тула,
 /// way 179102449 у улицы Бундурина: стена в 4.7 м от оси при 5.76 м полосы).
 /// Точность до метра игре не нужна, а дом на тротуаре читается как баг.
@@ -1115,13 +1117,17 @@ fn pull_houses_off_sidewalks(map: &mut MapData) -> PulledHouses {
     let mut segments: Vec<Link> = Vec::new();
     let mut segment_road: Vec<usize> = Vec::new();
     for (index, road) in map.roads.iter().enumerate() {
-        if road.bridge || !is_carriageway(road) {
+        if road.bridge || !road.is_carriageway() {
             continue;
         }
-        let Some(sidewalk) = sidewalk_width(road) else {
+        // край обочины: полоса по классу, тег не смотрит — там, где тег снял
+        // тротуар, дом всё равно не встаёт вплотную к бордюру
+        let Some(reach) = road
+            .sidewalk()
+            .verge_edge(road.width / 2.0, SIDEWALK_CLEARANCE)
+        else {
             continue;
         };
-        let reach = road.width / 2.0 + sidewalk + SIDEWALK_CLEARANCE;
         for link in road.points.windows(2) {
             segments.push(Link {
                 from: link[0],
@@ -1331,7 +1337,7 @@ struct Edge {
 /// бывает только у улицы ([`RoadClass::Street`]), дорожка — сама класс.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum EdgeKind {
-    /// Проезжая часть ([`is_carriageway`]).
+    /// Проезжая часть ([`RoadLine::is_carriageway`]).
     Carriageway,
     /// Дорожка ([`RoadClass::Alley`]): тротуар, замапленный отдельно, и
     /// прочие пешеходные пути.
@@ -1342,7 +1348,7 @@ enum EdgeKind {
 
 impl EdgeKind {
     fn of(road: &RoadLine) -> Self {
-        if is_carriageway(road) {
+        if road.is_carriageway() {
             Self::Carriageway
         } else if road.class == RoadClass::Alley {
             Self::Walkway
@@ -1392,7 +1398,7 @@ fn pull_areas_to_roads(map: &mut MapData) -> StretchedAreas {
         }
         // тротуар — только тот, что рисуется: у `sidewalk=separate|no` его нет,
         // и квартал, дотянутый под несуществующую полосу, вставал за бордюром
-        let reach = road.width / 2.0 + mapped_sidewalk(road).unwrap_or_default();
+        let reach = road.sidewalk().mapped_edge(road.width / 2.0);
         let kind = EdgeKind::of(road);
         for link in road.points.windows(2) {
             edges.push(Edge {

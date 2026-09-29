@@ -9,13 +9,22 @@
 //! кончается и другой начинается, — стык одной дороги. Заодно это отделяет
 //! мост от улицы под ним: общей ноды у них нет, и разметка на обоих идёт
 //! насквозь — там, где поиск пересечений отрезков порвал бы обе.
+//!
+//! Слой дорог берёт узлы одним значением — [`Junctions`]: оно владеет тремя
+//! расчётами поверх узлов (базовые разрывы, краска узлов, разрывы ряда) и
+//! пятью множествами разрывов, которые из них выходят.
 
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
+use super::drawn::Drawn;
+use super::gores::Splitter;
+use super::is_carriageway;
 use super::network::StitchTarget;
+use super::node_paint::{AsphaltBreaks, NodePaint, NodePaintStyle, PaintBreaks};
+use super::pockets::{self, RowBreaks};
 use crate::map::meshing::Break;
-use crate::map::osm::RoadLine;
+use crate::map::osm::{MapData, RoadLine};
 
 /// Шаг квантования координат узла, м. Одна нода OSM даёт одну и ту же точку
 /// на всех своих ways, квантование лишь страхует от округления.
@@ -37,7 +46,7 @@ pub const JUNCTION_MARGIN: f32 = 1.0;
 /// Чья дорога прошла через узел, какой её вершиной и торец ли это её.
 /// `inner` — узел не на вершине, а внутри отрезка `vertex..vertex + 1`: так
 /// в чужую ось упирается стежок ([`with_stitches`]).
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub(super) struct Visit {
     pub road: usize,
     pub vertex: usize,
@@ -46,6 +55,7 @@ pub(super) struct Visit {
 }
 
 /// Общий узел участвующих дорог и все их проходы через него.
+#[derive(PartialEq, Debug)]
 pub(super) struct SharedNode {
     pub at: Vec2,
     pub visits: Vec<Visit>,
@@ -101,6 +111,34 @@ pub(super) fn shared_nodes(
     nodes.into_iter().map(|(_, node)| node).collect()
 }
 
+/// Узлы [`shared_nodes`] более узкого круга участников — без второго обхода
+/// точек: `nodes` найдены по участникам, среди которых все `participates`.
+/// Совпадает с `shared_nodes(roads, participates)` бит в бит: проходы
+/// остаются в порядке обхода, узел без проходов уходит, а его точка — та, что
+/// положил первый оставшийся проход (при обходе заново узел завёл бы он).
+pub(super) fn restrict(
+    nodes: &[SharedNode],
+    roads: &[impl std::borrow::Borrow<RoadLine>],
+    participates: impl Fn(&RoadLine) -> bool,
+) -> Vec<SharedNode> {
+    nodes
+        .iter()
+        .filter_map(|node| {
+            let visits: Vec<Visit> = node
+                .visits
+                .iter()
+                .copied()
+                .filter(|visit| participates(roads[visit.road].borrow()))
+                .collect();
+            let first = visits.first()?;
+            Some(SharedNode {
+                at: roads[first.road].borrow().points[first.vertex],
+                visits,
+            })
+        })
+        .collect()
+}
+
 /// Узлы участвующих дорог вместе со **стежками** (`network::stitches`):
 /// торец, дотянутый до чужой оси, — такое же примыкание, как общая нода, только
 /// OSM её не провёл. Узел стежка стоит на оси цели, в точке `targets[i][side]`;
@@ -111,7 +149,22 @@ pub(super) fn with_stitches(
     participates: impl Fn(&RoadLine) -> bool,
     targets: &[[Option<StitchTarget>; 2]],
 ) -> Vec<SharedNode> {
-    let mut nodes = shared_nodes(roads, &participates);
+    stitch(
+        shared_nodes(roads, &participates),
+        roads,
+        participates,
+        targets,
+    )
+}
+
+/// Стежки `targets` поверх уже найденных узлов `nodes` тех же участников
+/// ([`with_stitches`]).
+fn stitch(
+    mut nodes: Vec<SharedNode>,
+    roads: &[impl std::borrow::Borrow<RoadLine>],
+    participates: impl Fn(&RoadLine) -> bool,
+    targets: &[[Option<StitchTarget>; 2]],
+) -> Vec<SharedNode> {
     let takes = |index: usize| {
         let road = roads[index].borrow();
         participates(road) && road.points.len() >= 2
@@ -212,10 +265,15 @@ pub fn marking_breaks(
     participates: impl Fn(&RoadLine) -> bool,
     targets: &[[Option<StitchTarget>; 2]],
 ) -> MarkingBreaks {
+    breaks_over(&with_stitches(roads, participates, targets), roads)
+}
+
+/// Разрывы [`marking_breaks`] по готовым узлам — вылет по ширинам `roads`.
+pub(super) fn breaks_over(nodes: &[SharedNode], roads: &[RoadLine]) -> MarkingBreaks {
     let mut breaks = vec![Vec::new(); roads.len()];
     let mut junctions = 0;
-    for node in with_stitches(roads, participates, targets) {
-        let SharedNode { at, visits } = &node;
+    for node in nodes {
+        let SharedNode { at, visits } = node;
         let at = *at;
         if !node.is_junction() {
             // одна дорога: её торец — тупик, прочие вершины — просто изломы;
@@ -241,6 +299,158 @@ pub fn marking_breaks(
         }
     }
     MarkingBreaks { breaks, junctions }
+}
+
+/// Узлы карты для слоя дорог — одно значение на три расчёта поверх общих
+/// узлов: базовые разрывы ([`marking_breaks`]), краска узлов
+/// ([`NodePaint`]) и разрывы ряда у бордюра (`pockets::row_breaks`).
+///
+/// **Пять множеств разрывов на дорогу, и слить их нельзя** — у каждого своя
+/// семантика, и каждое потребитель получает **своим типом**, так что взять
+/// чужое нельзя и по ошибке: база ([`Self::median_base`], `&[Vec<Break>]`) —
+/// по ней открываются разделительные, её никто не переписывает; асфальт
+/// ([`Self::asphalt`] → [`AsphaltBreaks`]) — база без разрывов ведущей узла,
+/// колея идёт сквозь: заливка; краска ([`Self::paint`] → [`PaintBreaks`]:
+/// `cut` — где линии рвутся, `solid` — где осевая сплошная у узла насквозь):
+/// линии, стрелки, зебры разделительных; ряд ([`Self::row`] →
+/// [`RowBreaks`]) — без стежков, но с проездами, клиньями и зебрами OSM: по
+/// нему стоят карманы и машины. Три понятия «узел» —
+/// `SharedNode::is_junction`, узел скругления (`corners`) и кластер краски
+/// (`node_paint::Junction`) — тоже разные: в один модуль, но не в одно понятие.
+pub struct Junctions {
+    base: MarkingBreaks,
+    paint: NodePaint,
+    row: RowBreaks,
+}
+
+/// Что узлы насчитали — вложенное поле `RoadReport::junctions`, как
+/// `DrawnStats` у подготовки; строку лога печатает `RoadReport`, как и прежде.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct JunctionCounts {
+    /// Узлов, оказавшихся перекрёстками.
+    pub count: usize,
+    /// Кластеров сближенных узлов — из двух узлов и больше.
+    pub clusters: usize,
+    /// Узлов, где главная прошла насквозь.
+    pub through: usize,
+    /// Дорог, ведущих хоть один узел (колея сквозь).
+    pub leading: usize,
+    /// Зебры: все и из них по OSM.
+    pub zebras: [usize; 2],
+    pub stop_lines: usize,
+    /// Карманы краски у торцов дорог.
+    pub pockets: usize,
+}
+
+impl Junctions {
+    /// Узлы по подготовленным дорогам `prepared` (стежки, клинья) и карте
+    /// (дороги OSM — по ним ключи узлов и вылет базовых разрывов; точки
+    /// дорог — переходы). `paved` — замощённые острова треугольников узлов
+    /// (`corners::small_islands`), `style` — что краска кладёт на узлах.
+    ///
+    /// **Узлы обходятся один раз.** Участники ряда — всё, по чему ездят
+    /// (`pockets::is_row_participant`), проезжие части среди них; узлы
+    /// проезжих частей — те же узлы без прочих проходов ([`restrict`]), к ним
+    /// стежки, и по ним и база, и краска. Краска прежде обходила дороги как
+    /// рисуются, база — дороги карты; узлы у них одни и те же: подмены
+    /// `Drawn` точек не трогают, а `is_carriageway` не смотрит ни ширину, ни
+    /// класс переезда (он остаётся `Highway::Path`).
+    pub fn new(
+        prepared: &Drawn,
+        map: &MapData,
+        paved: &[Vec<Vec2>],
+        style: NodePaintStyle,
+    ) -> Self {
+        let roads = map.roads.as_slice();
+        let every = shared_nodes(roads, pockets::is_row_participant);
+        let row = pockets::row_breaks_over(
+            breaks_over(&every, roads),
+            roads,
+            prepared.nodes(),
+            prepared.tapers(),
+            &map.road_nodes,
+        );
+        let nodes = stitch(
+            restrict(&every, roads, is_carriageway),
+            roads,
+            is_carriageway,
+            &prepared.stitches().targets,
+        );
+        let base = breaks_over(&nodes, roads);
+        let paint = NodePaint::new(prepared, &nodes, &base.breaks, map, paved, style);
+        Self { base, paint, row }
+    }
+
+    /// Ведёт ли дорога хоть один узел — проходит его насквозь, и уступать ей
+    /// некому (`node_paint::Junction::leading`); по индексу дороги карты.
+    /// Ведущая кладётся после всех плеч узла (`roads::fill_order`): её колея
+    /// идёт через узел, и примыкание шире неё не должно её закрыть.
+    pub fn leading(&self) -> Vec<bool> {
+        let mut leading = vec![false; self.base.breaks.len()];
+        for junction in &self.paint.junctions {
+            for &road in &junction.leading {
+                leading[road] = true;
+            }
+        }
+        leading
+    }
+
+    /// Что узлы насчитали — вложенное поле `RoadReport::junctions`.
+    pub fn counts(&self) -> JunctionCounts {
+        let paint = &self.paint;
+        JunctionCounts {
+            count: self.base.junctions,
+            clusters: paint.clusters,
+            through: paint.through,
+            leading: self.leading().into_iter().filter(|&lead| lead).count(),
+            zebras: [
+                paint.zebras.len(),
+                paint.zebras.iter().filter(|zebra| zebra.osm).count(),
+            ],
+            stop_lines: paint.stop_lines.len(),
+            pockets: paint.pockets.iter().flatten().flatten().count(),
+        }
+    }
+
+    /// Базовые разрывы асфальта, **не переписанные** краской узлов: по ним
+    /// открываются разделительные — у перекрёстка, кто бы его ни вёл.
+    pub fn median_base(&self) -> &[Vec<Break>] {
+        &self.base.breaks
+    }
+
+    /// Разрывы асфальта — заливке улиц и её колее: база без разрывов ведущей
+    /// узла, с островками по правилу ([`Self::add_splitters`]).
+    pub fn asphalt(&self) -> AsphaltBreaks<'_> {
+        self.paint.asphalt()
+    }
+
+    /// Разрывы краски — линиям, стрелкам и зебрам разделительных: где линии
+    /// рвутся и где осевая сплошная насквозь.
+    pub fn paint(&self) -> PaintBreaks<'_> {
+        self.paint.lines()
+    }
+
+    /// Что краска кладёт на узлах — карманы у торцов, зебры, стоп-линии — и
+    /// сами узлы-кластеры с их плечами и ведущими (траектории, порядок
+    /// заливки).
+    pub fn node_paint(&self) -> &NodePaint {
+        &self.paint
+    }
+
+    /// Разрывы ряда у бордюра — карманы ленты и ряд машин.
+    pub fn row(&self) -> &RowBreaks {
+        &self.row
+    }
+
+    /// Островки по правилу на подходах к кольцам (`gores::splitters`): подход
+    /// рвётся на их длину и краской, и колеей. Единственная правка снаружи —
+    /// островки ставятся по осям ленты и кольцам, которых узлы не знают; база
+    /// и ряд их не видят.
+    pub(super) fn add_splitters(&mut self, splitters: &[Splitter]) {
+        for splitter in splitters {
+            self.paint.add_splitter(splitter.road, splitter.gap);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -366,6 +576,32 @@ mod tests {
             1,
             "торец со стежком — не тупик: {:?}",
             found.breaks[1]
+        );
+    }
+
+    /// Узел, заведённый проездом, после сужения круга стоит в точке первой
+    /// оставшейся дороги — как если бы его завела она: две ноды OSM в одной
+    /// клетке ключа (5 см) расходятся на сантиметр.
+    #[test]
+    fn a_restricted_node_takes_the_point_of_its_first_participant() {
+        let drive = street(vec![Vec2::new(50.0, -30.0), Vec2::new(50.0, 0.01)], 5.0);
+        let main = across(0.0, 12.0);
+        let side = street(vec![Vec2::new(50.0, 0.0), Vec2::new(50.0, 40.0)], 8.0);
+        let roads = [drive, main, side];
+        let every = shared_nodes(&roads, |_| true);
+        let wide = |road: &RoadLine| road.width >= 8.0;
+        let restricted = restrict(&every, &roads, wide);
+        assert_eq!(restricted, shared_nodes(&roads, wide));
+        let node = restricted
+            .iter()
+            .find(|node| node.visits.len() == 2)
+            .expect("узел двух улиц");
+        assert_eq!(node.at, Vec2::new(50.0, 0.0));
+        assert!(
+            every
+                .iter()
+                .any(|node| node.at == Vec2::new(50.0, 0.01) && node.visits.len() == 3),
+            "в общем обходе узел завёл проезд"
         );
     }
 

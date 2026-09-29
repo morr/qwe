@@ -6,6 +6,7 @@ use super::tags::{building_height, colour, parse_measure};
 use crate::map::osm::fixture::{
     Overpass, building, closed, fence, rect, square, street, water_area,
 };
+use crate::map::osm::model::sidewalk_band;
 use crate::map::osm::model::{
     BuildingUse, Colours, FenceKind, Highway, LaneTurn, PitchKind, RailKind, RoadAreaKind,
     RoadClass, RoadNodeKind, Sacred, SacredForm, ServiceTrack, StructureKind, WaterKind,
@@ -14,7 +15,6 @@ use crate::map::osm::model::{
 use crate::map::osm::planting::{
     TREE_CROWN_REACH, TREE_MIN_SPACING, TREE_SHORE_CLEARANCE, TREE_WALL_CLEARANCE, near_area_edge,
 };
-use crate::map::roads::sidewalk_band;
 use crate::settings::MAP_SIZE;
 
 /// Фикстуры строятся вокруг гео-центра Тулы — города по умолчанию.
@@ -1080,8 +1080,15 @@ fn turn_lanes_follow_the_flow() {
 /// стороны меняются вместе с разворотом точек.
 #[test]
 fn sidewalk_tags_pick_the_sides() {
-    let sides = |pairs: &[(&str, &str)]| tagged_sidewalks(&tags(pairs));
+    let sides = |pairs: &[(&str, &str)]| {
+        tagged_sidewalks(&tags(pairs)).map(|sides| sides.map(SidewalkSide::is_present))
+    };
     assert_eq!(sides(&[]), None, "без тега решает не тег");
+    assert_eq!(
+        tagged_sidewalks(&tags(&[("sidewalk", "right")])),
+        Some([SidewalkSide::None, SidewalkSide::Tagged]),
+        "тротуар по тегу — `Tagged`, снятый тегом — `None`"
+    );
     assert_eq!(sides(&[("sidewalk", "separate")]), Some([false, false]));
     assert_eq!(sides(&[("sidewalk", "no")]), Some([false, false]));
     assert_eq!(sides(&[("sidewalk", "right")]), Some([false, true]));
@@ -1104,11 +1111,11 @@ fn sidewalk_tags_pick_the_sides() {
         "развёрнутый way — тротуар справа по новому ходу"
     );
     let bare = |pairs: &[(&str, &str)]| untagged_sidewalks(&tags(pairs));
-    assert_eq!(bare(&[]), [true, true]);
-    assert_eq!(bare(&[("surface", "asphalt")]), [true, true]);
+    assert_eq!(bare(&[]), [SidewalkSide::Inferred; 2]);
+    assert_eq!(bare(&[("surface", "asphalt")]), [SidewalkSide::Inferred; 2]);
     assert_eq!(
         bare(&[("surface", "gravel")]),
-        [false, false],
+        [SidewalkSide::None; 2],
         "у грунтовой — никогда"
     );
 }
@@ -1147,12 +1154,71 @@ fn an_untagged_street_takes_its_sidewalks_from_the_blocks_around() {
     let scene = row(scene, 1000.0, SLAB, 30.0);
     let map = scene.parse();
 
-    let sides: Vec<[bool; 2]> = map.roads.iter().map(|road| road.sidewalks).collect();
+    let sides: Vec<[bool; 2]> = map
+        .roads
+        .iter()
+        .map(|road| road.sidewalks.map(SidewalkSide::is_present))
+        .collect();
     assert_eq!(sides[0], [false; 2], "частный сектор — без полосы");
     assert_eq!(sides[1], [true; 2], "tertiary — всегда");
     assert_eq!(sides[2], [true; 2], "тег сильнее окружения");
     assert_eq!(sides[3], [true; 2], "микрорайон — с тротуаром");
+    assert_eq!(map.roads[2].sidewalks, [SidewalkSide::Tagged; 2]);
+    assert_eq!(map.roads[3].sidewalks, [SidewalkSide::Inferred; 2]);
     assert_eq!(sides[4], [false; 2], "без домов вокруг — без полосы");
+}
+
+/// Улицы для прямых вызовов [`infer_sidewalks`]: жилая без тега (`Inferred`
+/// у `fixture::street`) и её вариант с другим классом или тегом.
+fn inferred_street(highway: Highway) -> RoadLine {
+    RoadLine {
+        highway,
+        ..street(vec![Vec2::ZERO, Vec2::new(200.0, 0.0)], 8.0)
+    }
+}
+
+/// Застройка ниже городской снимает тротуар без тега, городская оставляет —
+/// мера приходит снаружи, ни одного дома не нужно.
+#[test]
+fn infer_sidewalks_drops_the_band_only_among_low_blocks() {
+    let mut roads = vec![inferred_street(Highway::Residential)];
+    let low = infer_sidewalks(&mut roads, |_| Some(2.0));
+    assert_eq!((low.asked, low.dropped), (1, 1));
+    assert_eq!(roads[0].sidewalks, [SidewalkSide::None; 2]);
+
+    let mut roads = vec![inferred_street(Highway::Unclassified)];
+    let tall = infer_sidewalks(&mut roads, |_| Some(SIDEWALK_STOREYS_MIN));
+    assert_eq!((tall.asked, tall.dropped), (1, 0));
+    assert_eq!(roads[0].sidewalks, [SidewalkSide::Inferred; 2]);
+}
+
+/// Пусто вокруг — тоже обочина: ни одной пробы с этажностью.
+#[test]
+fn infer_sidewalks_drops_the_band_where_nothing_stands_around() {
+    let mut roads = vec![inferred_street(Highway::LivingStreet)];
+    let empty = infer_sidewalks(&mut roads, |_| None);
+    assert_eq!((empty.asked, empty.dropped), (1, 1));
+    assert_eq!(roads[0].sidewalks, [SidewalkSide::None; 2]);
+}
+
+/// Спрашивается только тротуар без тега на жилой улице: тег, магистраль и
+/// уже снятый (грунтовка) не трогаются и в счёт не идут.
+#[test]
+fn infer_sidewalks_asks_only_inferred_residential_streets() {
+    let tagged = RoadLine {
+        sidewalks: [SidewalkSide::Tagged; 2],
+        ..inferred_street(Highway::Residential)
+    };
+    let unpaved = RoadLine {
+        sidewalks: [SidewalkSide::None; 2],
+        ..inferred_street(Highway::Residential)
+    };
+    let mut roads = vec![tagged, inferred_street(Highway::Tertiary), unpaved];
+    let report = infer_sidewalks(&mut roads, |_| None);
+    assert_eq!((report.asked, report.dropped), (0, 0));
+    assert_eq!(roads[0].sidewalks, [SidewalkSide::Tagged; 2]);
+    assert_eq!(roads[1].sidewalks, [SidewalkSide::Inferred; 2]);
+    assert_eq!(roads[2].sidewalks, [SidewalkSide::None; 2]);
 }
 
 /// Съезды развязок (`*_link`) — дороги своего класса, а не мусор словаря.
@@ -2591,6 +2657,108 @@ fn a_block_edge_is_pulled_under_the_asphalt() {
     );
 }
 
+/// Три края дороги в разборе — пин до сведения их в профиль тротуара:
+/// квартал тянется к **нарисованному** краю (тег `sidewalk=no` его сужает до
+/// голой кромки, а односторонний тротуар — один край на обе стороны), а дом
+/// отодвигается от **края обочины** по классу, тег не смотрит.
+#[test]
+fn the_parse_reads_the_mapped_edge_for_blocks_and_the_verge_for_houses() {
+    let street = |y: f32| vec![CENTER + Vec2::new(-400.0, y), CENTER + Vec2::new(400.0, y)];
+    // квартал под улицей (с юга), зазор 6.5 м от оси
+    let block = |y: f32| {
+        rect(
+            CENTER + Vec2::new(-300.0, y - 40.0),
+            CENTER + Vec2::new(-220.0, y - 6.5),
+        )
+    };
+    let house = |y: f32| {
+        rect(
+            CENTER + Vec2::new(100.0, y + 4.7),
+            CENTER + Vec2::new(112.0, y + 14.7),
+        )
+    };
+    let map = Overpass::new(CITY)
+        .way(
+            &[("highway", "residential"), ("sidewalk", "no")],
+            street(0.0),
+        )
+        .way(
+            &[("highway", "residential"), ("sidewalk", "left")],
+            street(500.0),
+        )
+        .area(&[("landuse", "residential")], block(0.0))
+        .area(&[("landuse", "residential")], block(500.0))
+        .area(&[("building", "yes")], house(0.0))
+        .parse();
+
+    let top = |ring: &[Vec2], y: f32| {
+        ring.iter()
+            .map(|vertex| vertex.y - CENTER.y - y)
+            .fold(f32::NEG_INFINITY, f32::max)
+    };
+    let bare = top(&map.landuse[0].outer, 0.0);
+    assert!(
+        (bare + RESIDENTIAL_HALF - LANDUSE_OVERLAP).abs() < 0.02,
+        "без тротуара квартал тянется к голой кромке: {bare}"
+    );
+    // тротуар слева (с севера), квартал справа — край всё равно с тротуаром
+    let edge = RESIDENTIAL_HALF + sidewalk_band(2.0 * RESIDENTIAL_HALF);
+    let one_sided = top(&map.landuse[1].outer, 500.0);
+    assert!(
+        (one_sided + edge - LANDUSE_OVERLAP).abs() < 0.02,
+        "односторонний тротуар — один край на обе стороны: {one_sided}"
+    );
+    let reach = edge + SIDEWALK_CLEARANCE;
+    let gap = map.buildings[0]
+        .outer
+        .iter()
+        .map(|vertex| vertex.y - CENTER.y)
+        .fold(f32::INFINITY, f32::min);
+    assert!(
+        (gap - reach).abs() < 0.1,
+        "дом отодвинут от обочины по классу, `sidewalk=no` не в счёт: {gap}"
+    );
+}
+
+/// Порядок [`finish_parse`]: сечения (шаг 0) раньше дотягивания кварталов
+/// (шаг 6) — квартал тянется к краю четырёхполосной улицы, а не к ширине
+/// класса, с которой way вышел из чтения.
+#[test]
+fn blocks_are_pulled_to_the_width_the_sections_gave() {
+    let street = vec![
+        CENTER - Vec2::new(400.0, 0.0),
+        CENTER + Vec2::new(400.0, 0.0),
+    ];
+    let block = rect(
+        CENTER + Vec2::new(-300.0, -60.0),
+        CENTER + Vec2::new(-220.0, -12.0),
+    );
+    let map = Overpass::new(CITY)
+        .way(
+            &[
+                ("highway", "residential"),
+                ("lanes", "4"),
+                ("sidewalk", "both"),
+            ],
+            street,
+        )
+        .area(&[("landuse", "residential")], block)
+        .parse();
+
+    let width = map.roads[0].width;
+    assert!(width > 12.0, "сечение не дошло до ширины: {width}");
+    let edge = width / 2.0 + sidewalk_band(width);
+    let top = map.landuse[0]
+        .outer
+        .iter()
+        .map(|vertex| vertex.y - CENTER.y)
+        .fold(f32::NEG_INFINITY, f32::max);
+    assert!(
+        (top + edge - LANDUSE_OVERLAP).abs() < 0.02,
+        "квартал дотянут не к краю по сечению: {top}, край {edge}"
+    );
+}
+
 /// Угол квартала у перекрёстка двух улиц дотягивается под **оба** полотна, а
 /// не под одно ближайшее: иначе у скругления оставался треугольник голой земли
 /// (Тула, витрина 13). Угол тянется и с зазора больше обычного предела — он
@@ -3042,7 +3210,7 @@ fn a_block_drawn_to_the_kerb_is_tucked_under_its_sidewalk_footway() {
         )
     };
     let carriageway = RoadLine {
-        sidewalks: [false; 2],
+        sidewalks: [SidewalkSide::None; 2],
         ..street(
             vec![
                 CENTER - Vec2::new(400.0, 0.0),
@@ -3512,7 +3680,7 @@ fn a_fence_pocket_at_a_lot_end_leaves_no_asphalt_sliver() {
         )
     };
     let bare = |points: Vec<Vec2>, width: f32| RoadLine {
-        sidewalks: [false; 2],
+        sidewalks: [SidewalkSide::None; 2],
         ..street(points, width)
     };
     let mut map = MapData {

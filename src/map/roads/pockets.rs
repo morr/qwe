@@ -14,10 +14,11 @@
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
+use super::is_carriageway;
 use super::junctions::{self, MarkingBreaks, node_key};
-use super::network::RoadNetwork;
+use super::network::RoadNodes;
 use super::node_paint::ZEBRA_LENGTH;
-use super::{is_carriageway, tapers};
+use super::tapers::{self, Tapers};
 use crate::map::along::{arclengths, nearest_on_path, place_on_path};
 use crate::map::grid::Grid;
 use crate::map::meshing::{Break, miter_offsets};
@@ -177,7 +178,7 @@ pub fn kerb_parking(road: &RoadLine, side: usize) -> KerbParking {
             Highway::Motorway => KerbParking::No,
             highway if highway.is_link() => KerbParking::No,
             Highway::Trunk | Highway::Primary | Highway::Secondary => {
-                if road.sidewalks[side] {
+                if road.sidewalk().sides()[side] {
                     KerbParking::Pocket
                 } else {
                     KerbParking::No
@@ -191,13 +192,15 @@ pub fn kerb_parking(road: &RoadLine, side: usize) -> KerbParking {
 
 /// Стороны всех улиц карты — по индексу дороги, у непарковочной пусто:
 /// [`kerbsides`] каждой, потом торцы карманов сшиты через узлы way
-/// ([`join_way_ends`]). Один вызов на ленту и на ряд машин: `paths` — их
+/// ([`join_way_ends`]). Один вызов на ленту и на ряд машин: `shared` — узлы
+/// тех же `roads` (соседство way'ев, [`RoadNodes::next_way`]), `paths` — их
 /// нарисованные осевые, `breaks` — [`row_breaks`], `lots` — стоянки, перед
 /// которыми кармана нет.
 pub fn all_kerbsides<P: AsRef<[Vec2]>>(
     roads: &[RoadLine],
+    shared: &RoadNodes,
     paths: &[P],
-    breaks: &MarkingBreaks,
+    breaks: &RowBreaks,
     traffic: TrafficSide,
     lots: &KerbLots,
 ) -> Vec<Vec<Kerbside>> {
@@ -206,19 +209,13 @@ pub fn all_kerbsides<P: AsRef<[Vec2]>>(
         .enumerate()
         .map(|(index, road)| {
             if parkable(road) {
-                kerbsides(
-                    road,
-                    paths[index].as_ref(),
-                    &breaks.breaks[index],
-                    traffic,
-                    lots,
-                )
+                kerbsides(road, paths[index].as_ref(), breaks.of(index), traffic, lots)
             } else {
                 Vec::new()
             }
         })
         .collect();
-    join_way_ends(roads, &mut sides);
+    join_way_ends(shared, &mut sides);
     sides
 }
 
@@ -236,50 +233,34 @@ pub fn all_kerbsides<P: AsRef<[Vec2]>>(
 /// не переносится; уход куска закрывает торец соседа, поэтому проход
 /// повторяется, пока что-то меняется: скосы только добавляются, куски
 /// только убывают, так что он кончается.
-fn join_way_ends(roads: &[RoadLine], sides: &mut [Vec<Kerbside>]) {
-    // торцы way с карманами: (дорога, 0 — первая точка / 1 — последняя)
-    let mut ends: HashMap<(i32, i32), Vec<(usize, usize)>> = HashMap::new();
-    for (index, road) in roads.iter().enumerate() {
-        if sides[index].is_empty() || road.points.len() < 2 {
-            continue;
-        }
-        for (end, point) in [road.points[0], road.points[road.points.len() - 1]]
-            .into_iter()
-            .enumerate()
-        {
-            ends.entry(node_key(point)).or_default().push((index, end));
-        }
-    }
-    let end_key = |road: usize, end: usize| {
-        let points = &roads[road].points;
-        node_key(if end == 0 {
-            points[0]
-        } else {
-            points[points.len() - 1]
-        })
-    };
+///
+/// Сосед — way, продолжающий улицу за торцом ([`RoadNodes::next_way`]), а не
+/// любой way узла: на Т-узле карман прямой улицы не сворачивает в
+/// примыкающую. В городе такой узел рвёт карманы и сам — три участника ряда
+/// дают разрыв перекрёстка ([`row_breaks`]), — так что выбор соседа решает
+/// на шве двух way одной улицы или через границу улиц.
+fn join_way_ends(shared: &RoadNodes, sides: &mut [Vec<Kerbside>]) {
     // кусок у соседа, открытый на торце `end` дороги `road` со стороны `side`:
     // (дорога, сторона в её списке, карман)
     let partner = |sides: &[Vec<Kerbside>], road: usize, end: usize, side: f32| {
-        ends.get(&end_key(road, end))
-            .into_iter()
-            .flatten()
-            .filter(|&&next| next != (road, end))
-            .find_map(|&(next, next_end)| {
-                // way, сходящиеся торцами разного конца, идут в одну сторону,
-                // и сторона та же; одноимёнными — навстречу, и она меняется
-                let next_side = if next_end != end { side } else { -side };
-                sides[next]
+        let (next, reversed) = shared.next_way(road, end)?;
+        // way, сходящиеся торцами разного конца, идут в одну сторону, и
+        // сторона та же; одноимёнными — навстречу, и она меняется
+        let (next_end, next_side) = if reversed {
+            (end, -side)
+        } else {
+            (1 - end, side)
+        };
+        sides[next]
+            .iter()
+            .enumerate()
+            .filter(|(_, kerbside)| kerbside.side == next_side)
+            .find_map(|(at, kerbside)| {
+                let index = kerbside
+                    .pockets
                     .iter()
-                    .enumerate()
-                    .filter(|(_, kerbside)| kerbside.side == next_side)
-                    .find_map(|(at, kerbside)| {
-                        let index = kerbside
-                            .pockets
-                            .iter()
-                            .position(|pocket| !pocket.tapers[next_end])?;
-                        Some((next, at, index))
-                    })
+                    .position(|pocket| !pocket.tapers[next_end])?;
+                Some((next, at, index))
             })
     };
     loop {
@@ -453,32 +434,84 @@ fn sparse_pockets(runs: Vec<Pocket>, road: &RoadLine, side: usize) -> Vec<Pocket
 
 /// Разрывы ряда у бордюра по дорогам: перекрёстки (без стежков — ряд их не
 /// видит), переходы и клинья между сечениями, где бордюр ближе к оси. Один
-/// расчёт на ряд машин и на ленту с карманами; `taper` — длина клина на метр
-/// разницы ширин (ручка `Taper`), `nodes` — точки дорог карты, из которых
-/// берутся переходы.
+/// расчёт на ряд машин и на ленту с карманами; `tapers` — клинья карты (у
+/// ленты — те, что у `roads::Drawn`, у машин — [`Tapers::of_map`]), `shared` —
+/// узлы тех же `roads` (продолжение улицы за торцом way), `nodes` — точки
+/// дорог карты, из которых берутся переходы.
 ///
 /// В перекрёстках участвуют и проезды, не только улицы разметки: во двор, к
 /// стоянке съезжают через ряд, и машина на съезде его перегораживала (Тула,
 /// Ф. Энгельса у 3976, 1236).
 pub fn row_breaks(
     roads: &[RoadLine],
-    network: &RoadNetwork,
+    shared: &RoadNodes,
+    tapers: &Tapers,
     nodes: &[RoadNode],
-    taper: f32,
-) -> MarkingBreaks {
-    let mut found = junctions::marking_breaks(roads, is_row_participant, &[]);
-    for (road, clearing) in tapers::car_clearings(roads, network, taper) {
-        found.breaks[road].push(clearing);
+) -> RowBreaks {
+    row_breaks_over(
+        junctions::marking_breaks(roads, is_row_participant, &[]),
+        roads,
+        shared,
+        tapers,
+        nodes,
+    )
+}
+
+/// [`row_breaks`] по уже найденным разрывам перекрёстков `found` — узлам
+/// участников [`is_row_participant`] без стежков: у слоя дорог узлы
+/// обходятся один раз на всё (`junctions::Junctions`).
+pub(super) fn row_breaks_over(
+    found: MarkingBreaks,
+    roads: &[RoadLine],
+    shared: &RoadNodes,
+    tapers: &Tapers,
+    nodes: &[RoadNode],
+) -> RowBreaks {
+    let MarkingBreaks {
+        mut breaks,
+        junctions,
+    } = found;
+    for (road, clearing) in tapers::car_clearings(roads, tapers) {
+        breaks[road].push(clearing);
     }
-    for (road, crossing) in crossing_breaks(roads, nodes) {
-        found.breaks[road].push(crossing);
+    for (road, crossing) in crossing_breaks(roads, shared, nodes) {
+        breaks[road].push(crossing);
     }
-    found
+    RowBreaks { breaks, junctions }
+}
+
+/// Разрывы **ряда** у бордюра по дорогам — карманы ленты ([`all_kerbsides`])
+/// и ряд машин (`map::cars`). Выходят только из [`row_breaks`]: перекрёстки
+/// участников ряда ([`is_row_participant`]) без стежков, клинья между
+/// сечениями, переходы OSM. Свой тип, а не `MarkingBreaks`, чтобы карман и
+/// ряд не встали по базе или по разрывам краски: у тех участники — проезжие
+/// части, стежки — узлы, а переходов и клиньев нет.
+pub struct RowBreaks {
+    breaks: Vec<Vec<Break>>,
+    /// Сколько узлов оказались перекрёстками (строка `cars:`).
+    pub junctions: usize,
+}
+
+impl RowBreaks {
+    pub fn of(&self, road: usize) -> &[Break] {
+        &self.breaks[road]
+    }
+
+    /// Разрывы теста как есть — без клиньев и переходов.
+    #[cfg(test)]
+    pub(super) fn for_test(breaks: Vec<Vec<Break>>) -> Self {
+        Self {
+            breaks,
+            junctions: 0,
+        }
+    }
 }
 
 /// Дорога, что рвёт ряд у бордюра, встретившись с улицей: проезжая часть или
-/// проезд — всё, по чему ездят, кроме дорожек.
-fn is_row_participant(road: &RoadLine) -> bool {
+/// проезд — всё, по чему ездят, кроме дорожек. Проезжие части
+/// (`roads::is_carriageway`) — все среди них: на этом `junctions::Junctions`
+/// строит узлы разметки из тех же узлов.
+pub(super) fn is_row_participant(road: &RoadLine) -> bool {
     road.highway != Highway::Path
 }
 
@@ -489,9 +522,15 @@ fn is_row_participant(road: &RoadLine) -> bool {
 const CROSSING_SPILL: f32 = 10.0;
 
 /// Разрывы на размеченных переходах OSM: полдлины зебры вокруг узла на его
-/// дороге, а если до торца её way ближе [`CROSSING_SPILL`] — и на дороге,
-/// что продолжает улицу за этим торцом, от торца на остаток.
-fn crossing_breaks(roads: &[RoadLine], nodes: &[RoadNode]) -> Vec<(usize, Break)> {
+/// дороге, а если до торца её way ближе [`CROSSING_SPILL`] — и на проезжей
+/// части, что продолжает улицу за этим торцом ([`RoadNodes::next_way`]), от
+/// торца на остаток. Примыкающий way Т-узла не продолжение: у него в узле
+/// свой разрыв перекрёстка, шире полузебры.
+fn crossing_breaks(
+    roads: &[RoadLine],
+    shared: &RoadNodes,
+    nodes: &[RoadNode],
+) -> Vec<(usize, Break)> {
     let reach = ZEBRA_LENGTH / 2.0;
     let crossings: HashMap<(i32, i32), Vec2> = nodes
         .iter()
@@ -500,15 +539,6 @@ fn crossing_breaks(roads: &[RoadLine], nodes: &[RoadNode]) -> Vec<(usize, Break)
         .collect();
     if crossings.is_empty() {
         return Vec::new();
-    }
-    let mut ends: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
-    for (index, road) in roads.iter().enumerate() {
-        if !is_carriageway(road) || road.points.len() < 2 {
-            continue;
-        }
-        for end in [road.points[0], road.points[road.points.len() - 1]] {
-            ends.entry(node_key(end)).or_default().push(index);
-        }
     }
     let mut found = Vec::new();
     for (index, road) in roads.iter().enumerate() {
@@ -529,26 +559,29 @@ fn crossing_breaks(roads: &[RoadLine], nodes: &[RoadNode]) -> Vec<(usize, Break)
             else {
                 continue;
             };
-            for (end, left) in [
+            for (end, (tip, left)) in [
                 (road.points[0], station),
                 (road.points[road.points.len() - 1], total - station),
-            ] {
+            ]
+            .into_iter()
+            .enumerate()
+            {
                 if left <= 0.0 || left >= CROSSING_SPILL {
                     continue;
                 }
-                let key = node_key(end);
-                for &next in ends.get(&key).into_iter().flatten() {
-                    if next != index {
-                        found.push((
-                            next,
-                            // клиренс ряда отмеряется от разрыва, и торцу
-                            // хватает остатка полузебры за ним
-                            Break {
-                                at: end,
-                                reach: (reach - left).max(0.0),
-                            },
-                        ));
-                    }
+                let Some((next, _)) = shared.next_way(index, end) else {
+                    continue;
+                };
+                if is_carriageway(&roads[next]) {
+                    found.push((
+                        next,
+                        // клиренс ряда отмеряется от разрыва, и торцу хватает
+                        // остатка полузебры за ним
+                        Break {
+                            at: tip,
+                            reach: (reach - left).max(0.0),
+                        },
+                    ));
                 }
             }
         }
@@ -619,6 +652,7 @@ pub fn outline(path: &[Vec2], pocket: &Pocket, side: f32, [inner, outer]: [f32; 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::map::osm::SidewalkSide;
     use crate::map::osm::fixture::street;
 
     fn primary() -> RoadLine {
@@ -635,7 +669,7 @@ mod tests {
         let residential = street(road.points.clone(), 8.0);
         assert_eq!(kerb_parking(&residential, 1), KerbParking::Lane);
         let bare = RoadLine {
-            sidewalks: [true, false],
+            sidewalks: [SidewalkSide::Tagged, SidewalkSide::None],
             ..primary()
         };
         assert_eq!(kerb_parking(&bare, 1), KerbParking::No, "врезать некуда");
@@ -686,12 +720,10 @@ mod tests {
 
     fn city_sides(roads: &[RoadLine], breaks: Vec<Vec<Break>>) -> Vec<Vec<Kerbside>> {
         let paths: Vec<Vec<Vec2>> = roads.iter().map(|road| road.points.clone()).collect();
-        let breaks = MarkingBreaks {
-            breaks,
-            junctions: 0,
-        };
+        let breaks = RowBreaks::for_test(breaks);
         all_kerbsides(
             roads,
+            &RoadNodes::new(roads),
             &paths,
             &breaks,
             TrafficSide::Right,
@@ -774,6 +806,68 @@ mod tests {
         };
         assert_eq!(first(-1.0).tapers, [true, false], "справа — продолжается");
         assert_eq!(first(1.0).tapers, [true, true], "слева — запрет у соседа");
+    }
+
+    /// Магистраль, разрезанная OSM на два way по ходу: карман с обеих сторон
+    /// идёт через торец насквозь — скосы только на внешних торцах улицы.
+    #[test]
+    fn a_kerb_pocket_continues_across_the_way_end_of_its_own_street() {
+        let primary = |points: Vec<Vec2>| RoadLine {
+            highway: Highway::Primary,
+            parking: [KerbParking::Pocket; 2],
+            ..street(points, 14.0)
+        };
+        let roads = [
+            primary(vec![Vec2::ZERO, Vec2::new(100.0, 0.0)]),
+            primary(vec![Vec2::new(100.0, 0.0), Vec2::new(200.0, 0.0)]),
+        ];
+        let sides = city_sides(&roads, vec![Vec::new(), Vec::new()]);
+        for (road, tapers) in [(0, [true, false]), (1, [false, true])] {
+            assert_eq!(sides[road].len(), 2);
+            for side in &sides[road] {
+                assert_eq!(side.pockets.len(), 1, "{side:?}");
+                assert_eq!(side.pockets[0].tapers, tapers, "{side:?}");
+            }
+        }
+    }
+
+    /// Шов двух way под прямым углом — не продолжение (`RoadNodes::next_way`,
+    /// излом круче `MAX_BEND`): карман не огибает угол, оба торца со скосом.
+    /// До `next_way` сосед искался по совпадению точки при любом изломе.
+    #[test]
+    fn a_kerb_pocket_does_not_turn_a_right_angle_way_end() {
+        let pocket = [KerbParking::Pocket; 2];
+        let roads = [
+            tagged(vec![Vec2::ZERO, Vec2::new(100.0, 0.0)], pocket),
+            tagged(vec![Vec2::new(100.0, 0.0), Vec2::new(100.0, 100.0)], pocket),
+        ];
+        let sides = city_sides(&roads, vec![Vec::new(); 2]);
+        for side in sides.iter().flatten() {
+            assert_eq!(side.pockets.len(), 1, "{side:?}");
+            assert_eq!(side.pockets[0].tapers, [true, true], "{side:?}");
+        }
+    }
+
+    /// Т-узел из трёх торцов: карман прямой улицы идёт на её продолжение, а
+    /// не на примыкающий way, и у примыкающего торец закрыт скосом. Разрывов
+    /// нет нарочно: в городе узел трёх участников ряда рвёт карманы сам
+    /// (`junctions::marking_breaks`), и здесь проверяется только выбор соседа.
+    #[test]
+    fn a_kerb_pocket_stops_at_a_t_junction_side_way() {
+        let pocket = [KerbParking::Pocket; 2];
+        let roads = [
+            tagged(vec![Vec2::ZERO, Vec2::new(100.0, 0.0)], pocket),
+            // примыкающий — раньше продолжения по индексу
+            tagged(vec![Vec2::new(100.0, 0.0), Vec2::new(100.0, 100.0)], pocket),
+            tagged(vec![Vec2::new(100.0, 0.0), Vec2::new(200.0, 0.0)], pocket),
+        ];
+        let sides = city_sides(&roads, vec![Vec::new(); 3]);
+        for (road, tapers) in [(0, [true, false]), (1, [true, true]), (2, [false, true])] {
+            for side in &sides[road] {
+                assert_eq!(side.pockets.len(), 1, "{road}: {side:?}");
+                assert_eq!(side.pockets[0].tapers, tapers, "{road}: {side:?}");
+            }
+        }
     }
 
     /// Без тега карманы редкие и короткие: каждый со скосами и в пределах
@@ -936,5 +1030,73 @@ mod tests {
             .collect();
         let min = outer_x.iter().copied().fold(f32::INFINITY, f32::min);
         assert!((min - (20.0 + POCKET_TAPER)).abs() < 1e-3);
+    }
+
+    /// Зебра в метре от торца way рвёт ряд и на way, что продолжает улицу
+    /// за торцом, — от торца на остаток полузебры ([`CROSSING_SPILL`]).
+    #[test]
+    fn a_zebra_at_a_way_end_spills_onto_the_next_way() {
+        let roads = [
+            street(
+                vec![Vec2::ZERO, Vec2::new(99.0, 0.0), Vec2::new(100.0, 0.0)],
+                8.0,
+            ),
+            street(vec![Vec2::new(100.0, 0.0), Vec2::new(200.0, 0.0)], 8.0),
+        ];
+        let zebra = RoadNode {
+            pos: Vec2::new(99.0, 0.0),
+            kind: RoadNodeKind::Crossing {
+                signals: false,
+                island: false,
+                marked: true,
+            },
+        };
+        let found = crossing_breaks(&roads, &RoadNodes::new(&roads), &[zebra]);
+        assert_eq!(
+            found,
+            vec![
+                (
+                    0,
+                    Break {
+                        at: Vec2::new(99.0, 0.0),
+                        reach: ZEBRA_LENGTH / 2.0
+                    }
+                ),
+                (
+                    1,
+                    Break {
+                        at: Vec2::new(100.0, 0.0),
+                        reach: ZEBRA_LENGTH / 2.0 - 1.0
+                    }
+                ),
+            ]
+        );
+    }
+
+    /// Зебра у торца way в Т-узле переливается только на продолжение улицы,
+    /// не на примыкающий way: у того в узле свой разрыв перекрёстка, шире.
+    #[test]
+    fn a_zebra_at_a_way_end_spills_only_onto_the_continuation() {
+        let roads = [
+            street(
+                vec![Vec2::ZERO, Vec2::new(99.0, 0.0), Vec2::new(100.0, 0.0)],
+                8.0,
+            ),
+            street(vec![Vec2::new(100.0, 0.0), Vec2::new(200.0, 0.0)], 8.0),
+            street(vec![Vec2::new(100.0, 0.0), Vec2::new(100.0, 100.0)], 8.0),
+        ];
+        let zebra = RoadNode {
+            pos: Vec2::new(99.0, 0.0),
+            kind: RoadNodeKind::Crossing {
+                signals: false,
+                island: false,
+                marked: true,
+            },
+        };
+        let spilled: Vec<usize> = crossing_breaks(&roads, &RoadNodes::new(&roads), &[zebra])
+            .into_iter()
+            .map(|(road, _)| road)
+            .collect();
+        assert_eq!(spilled, vec![0, 1]);
     }
 }

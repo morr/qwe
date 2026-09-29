@@ -129,20 +129,30 @@ impl Tapers {
     pub fn at(&self, road: usize) -> [Option<Taper>; 2] {
         self.ends.get(road).copied().unwrap_or([None; 2])
     }
+
+    /// Клин теста у торца `end` дороги `road`, как если бы его нашёл [`Self::new`].
+    #[cfg(test)]
+    pub fn set(&mut self, road: usize, end: usize, taper: Taper) {
+        if self.ends[road][end].is_none() {
+            self.count += 1;
+        }
+        self.ends[road][end] = Some(taper);
+    }
+
+    /// Клинья по дорогам карты как есть, без подмен рисования, — для того, у
+    /// кого нет `roads::Drawn`: витрины машин, где нет и карты.
+    pub fn of_map(roads: &[RoadLine], network: &RoadNetwork, per_meter: f32) -> Self {
+        let nodes = RoadNodes::new(roads);
+        let drawn: Vec<&RoadLine> = roads.iter().collect();
+        Self::new(&drawn, network, &nodes, per_meter)
+    }
 }
 
 /// Разрывы ряда припаркованных машин (`map::cars`) на клиньях: ряд стоит на
 /// полуширине участка, а в клине бордюр ближе к оси — машина встала бы на
 /// тротуар. Разрыв — в узле шва, длиной в клин, по дороге, на которой клин
-/// лежит, — `(дорога, разрыв)`.
-pub fn car_clearings(
-    roads: &[RoadLine],
-    network: &RoadNetwork,
-    per_meter: f32,
-) -> Vec<(usize, Break)> {
-    let nodes = RoadNodes::new(roads);
-    let drawn: Vec<&RoadLine> = roads.iter().collect();
-    let tapers = Tapers::new(&drawn, network, &nodes, per_meter);
+/// лежит, — `(дорога, разрыв)`. `tapers` — по тем же индексам, что `roads`.
+pub fn car_clearings(roads: &[RoadLine], tapers: &Tapers) -> Vec<(usize, Break)> {
     let mut clearings = Vec::with_capacity(tapers.count);
     for (road, ends) in tapers.ends.iter().enumerate() {
         let points = &roads[road].points;

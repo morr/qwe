@@ -10,8 +10,7 @@
 use super::*;
 use crate::map::osm::fixture::{self, street};
 use crate::map::osm::model::{Highway, KerbParking};
-use crate::map::roads::is_carriageway;
-use crate::map::roads::junctions::{self, JUNCTION_MARGIN};
+use crate::map::roads::junctions::JUNCTION_MARGIN;
 
 /// Форма дорог с осью по точкам OSM: ряд меряется по той ломаной, что в
 /// тесте нарисована.
@@ -20,6 +19,13 @@ fn straight() -> RoadShape {
         curve_tolerance: 0.0,
         ..default()
     }
+}
+
+/// Разрывы ряда по срезу без сети и точек дорог — те же, что берёт витрина
+/// (`cars_mesh`): игровые, с проездами среди участников.
+fn row_breaks_of(roads: &[RoadLine]) -> pockets::RowBreaks {
+    let tapers = Tapers::of_map(roads, &RoadNetwork::default(), straight().taper());
+    pockets::row_breaks(roads, &RoadNodes::new(roads), &tapers, &[])
 }
 
 /// Большая стоянка пустее малой, и доля не выходит за свои края.
@@ -49,7 +55,8 @@ fn park_with(roads: &[RoadLine], style: CarStyle) -> Vec<Car> {
 fn park_driving(roads: &[RoadLine], style: CarStyle, traffic: TrafficSide) -> Vec<Car> {
     park_cars(
         roads,
-        &junctions::marking_breaks(roads, is_carriageway, &[]),
+        &RoadNodes::new(roads),
+        &row_breaks_of(roads),
         style,
         &drawn_axes(roads, &straight()),
         traffic,
@@ -194,10 +201,11 @@ fn a_primary_parks_in_its_pockets() {
 fn the_same_street_parks_thinner_in_a_private_sector() {
     let road = street(vec![Vec2::new(0.0, 0.0), Vec2::new(600.0, 0.0)], 8.0);
     let roads = std::slice::from_ref(&road);
-    let breaks = junctions::marking_breaks(roads, is_carriageway, &[]);
+    let breaks = row_breaks_of(roads);
     let rows = |buildings: &[PolyArea]| {
         park_cars(
             roads,
+            &RoadNodes::new(roads),
             &breaks,
             CarStyle::default(),
             &drawn_axes(roads, &straight()),
@@ -521,7 +529,8 @@ fn the_row_stays_on_the_drawn_asphalt_through_a_bend() {
     };
     let cars = park_cars(
         std::slice::from_ref(&road),
-        &junctions::marking_breaks(std::slice::from_ref(&road), is_carriageway, &[]),
+        &RoadNodes::new(std::slice::from_ref(&road)),
+        &row_breaks_of(std::slice::from_ref(&road)),
         style,
         &drawn_axes(std::slice::from_ref(&road), &RoadShape::default()),
         TrafficSide::Right,
@@ -565,11 +574,12 @@ fn near_bucket() -> CarZoomBucket {
 
 #[test]
 fn a_street_builds_one_blended_layer() {
+    let map = city();
     let (layers, report) = mesh_cars(
         near_bucket(),
         CarStyle::default(),
-        straight(),
-        &city(),
+        &Drawn::nodal(&map, &straight()),
+        &map,
         &ParkingLayout::default(),
     );
 
@@ -589,11 +599,12 @@ fn the_toggle_off_draws_nothing() {
         visible: false,
         ..CarStyle::default()
     };
+    let map = city();
     let (layers, report) = mesh_cars(
         near_bucket(),
         style,
-        straight(),
-        &city(),
+        &Drawn::nodal(&map, &straight()),
+        &map,
         &ParkingLayout::default(),
     );
 
@@ -610,15 +621,70 @@ fn the_far_bucket_draws_nothing() {
     let far = CarZoomBucket::for_zoom(f32::INFINITY);
     assert_eq!(far.index, CarLods::max_zooms().count() - 1);
 
+    let map = city();
     let (layers, report) = mesh_cars(
         far,
         CarStyle::default(),
-        straight(),
-        &city(),
+        &Drawn::nodal(&map, &straight()),
+        &map,
         &ParkingLayout::default(),
     );
 
     assert!(layers.is_empty());
     assert_eq!(report.detail, None);
     assert_eq!(report.cars, 0);
+}
+
+/// Ряд рвётся на клине между сечениями улицы там же, где лента: на широком
+/// way от шва до конца клина (66 м на 6.6 м разницы) и ещё на просвет от
+/// узла машин нет; узкий way стоит до шва.
+#[test]
+fn the_row_clears_the_seam_taper_of_the_ribbon() {
+    let street = |points: Vec<Vec2>, lanes: u8| RoadLine {
+        lanes: Some(lanes),
+        ..street(points, f32::from(lanes) * 3.3 + 1.0)
+    };
+    let roads = vec![
+        street(vec![Vec2::ZERO, Vec2::new(200.0, 0.0)], 2),
+        street(vec![Vec2::new(200.0, 0.0), Vec2::new(400.0, 0.0)], 4),
+    ];
+    let map = MapData {
+        network: RoadNetwork::new(&roads),
+        roads,
+        ..default()
+    };
+    let style = CarStyle {
+        occupancy: 1.0,
+        ..default()
+    };
+    let drawn = Drawn::nodal(&map, &straight());
+    let (_, report) = mesh_cars(
+        near_bucket(),
+        style,
+        &drawn,
+        &map,
+        &ParkingLayout::default(),
+    );
+    assert_eq!(report.junctions, 0, "шов одной улицы — не перекрёсток");
+    assert!(report.cars > 0);
+    // те же вызовы, что у `mesh_cars`, — ради координат машин
+    let cars = park_cars(
+        &map.roads,
+        drawn.nodes(),
+        &pockets::row_breaks(&map.roads, drawn.nodes(), drawn.tapers(), &map.road_nodes),
+        style,
+        &drawn.axes(Axis::Nodal),
+        map.traffic_side,
+        &Districts::new(&[]),
+        drawn.lots(),
+    );
+    assert_eq!(cars.len(), report.cars);
+    let clearing = 200.0..200.0 + 66.0 + JUNCTION_CLEARANCE - 0.5;
+    assert!(
+        cars.iter().all(|car| !clearing.contains(&car.at.x)),
+        "машина в клине: {:?}",
+        cars.iter().map(|car| car.at.x).collect::<Vec<_>>()
+    );
+    assert!(cars.iter().any(|car| car.at.x > 190.0 && car.at.x < 200.0));
+    assert!(cars.iter().any(|car| car.at.x > 266.0 && car.at.x < 290.0));
 }
