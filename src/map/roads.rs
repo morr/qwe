@@ -1731,14 +1731,19 @@ fn push_sidewalk(
 fn ring_island_lawns(rings: &[&[Vec2]]) -> MeshBuilder {
     let mut lawns = MeshBuilder::with_surface_coords();
     let color = GRASS_COLOR.to_linear();
-    for path in rings {
-        // замкнутая ось: последняя точка равна первой
-        let open = &path[..path.len().saturating_sub(1)];
-        if open.len() >= 3 {
-            lawns.push_polygon(open, &[], color);
-        }
+    for open in ring_islands(rings) {
+        lawns.push_polygon(open, &[], color);
     }
     lawns
+}
+
+/// Острова колец — замкнутые оси `rings` без повторённой последней точки;
+/// ось короче треугольника острова не даёт.
+fn ring_islands<'a>(rings: &'a [&'a [Vec2]]) -> impl Iterator<Item = &'a [Vec2]> {
+    rings
+        .iter()
+        .map(|path| &path[..path.len().saturating_sub(1)])
+        .filter(|open| open.len() >= 3)
 }
 
 /// Замапленная трава на островах колец — ещё раз, без канта, над травой
@@ -1754,12 +1759,7 @@ fn ring_island_grass(rings: &[&[Vec2]], grass: &[PolyArea]) -> MeshBuilder {
 
     let mut lawns = MeshBuilder::with_surface_coords();
     let color = GRASS_COLOR.to_linear();
-    for path in rings {
-        // замкнутая ось: последняя точка равна первой
-        let open = &path[..path.len().saturating_sub(1)];
-        if open.len() < 3 {
-            continue;
-        }
+    for open in ring_islands(rings) {
         let island: Shape = vec![oriented(open, true)];
         let (low, high) = ring_bounds(open);
         for area in grass {

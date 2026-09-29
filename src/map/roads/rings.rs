@@ -619,6 +619,9 @@ fn is_approach(road: &RoadLine) -> bool {
 /// Самая длинная нога Y-подхода, м: дальше между двумя дорогами уже квартал,
 /// а не островок (как `FAN_REACH` у веера, `roads/gores.rs`).
 const LEG_MAX: f32 = 55.0;
+/// Узлы двух ног на кольце ближе этого друг к другу, м, — один узел на
+/// двоих, а не вилка ([`y_legs`]).
+const LEG_APART_MIN: f32 = 1.0;
 
 /// Ноги Y-подходов: две двусторонние дороги, что выходят из одного узла и
 /// кончаются в двух **разных** узлах одного кольца. Так замаплены подходы к
@@ -682,7 +685,7 @@ fn y_legs(
             let ahead = ((t_a - t_b) * direction).rem_euclid(TAU);
             // один узел кольца на двоих — не вилка
             let apart = ahead.min(TAU - ahead) * ring.mean_radius();
-            (apart >= 1.0).then_some(ahead < std::f32::consts::PI)
+            (apart >= LEG_APART_MIN).then_some(ahead < std::f32::consts::PI)
         };
         match group[..] {
             [(a, t_a, a_last), (b, t_b, b_last)] => {

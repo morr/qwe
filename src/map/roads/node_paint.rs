@@ -114,7 +114,7 @@ const RULE_ZEBRA_RANK: u8 = 2;
 const CROSSING_CUTS_RANK: u8 = 2;
 /// Кусок линий между двумя разрывами короче этого — не рисуется: одинокий
 /// штрих между узлом и зеброй читается мусором.
-const MIN_RUN: f32 = 6.0;
+pub(super) const MIN_RUN: f32 = 6.0;
 /// Насколько зебры могут зайти одна на другую краями, м.
 const OVERLAP_SLACK: f32 = 0.2;
 /// Зебры двух половин сливаются в одну планку ([`join_zebras`]), если они
@@ -484,7 +484,7 @@ fn leaves_ring(
 /// пути не лежит.
 fn throat_on(ring: &[Vec2], node: Vec2, last: Vec2, lead: f32) -> Option<Throat> {
     let walk = Walk::new(ring);
-    let closed = ring.len() > 2 && ring[0] == ring[ring.len() - 1];
+    let closed = is_closed(ring);
     let (a, b) = (walk.project(node), walk.project(last));
     let mut delta = b - a;
     if closed && delta.abs() > walk.total / 2.0 {
@@ -1161,7 +1161,7 @@ impl NodePaint {
                 };
                 let path = walk.path;
                 // у кольца длина идёт по кругу через шов
-                let closed = path.len() > 2 && path[0] == path[path.len() - 1];
+                let closed = is_closed(path);
                 JunctionArm {
                     road: arm.road,
                     edge: if closed {
@@ -1914,17 +1914,29 @@ fn bridge_short_runs(path: &[Vec2], breaks: &mut Vec<Break>, narrowing: [bool; 2
             spans.push((at, at));
         }
     }
-    if spans.len() < 2 {
-        return;
+    for (low, high) in short_runs(spans, MIN_RUN) {
+        breaks.extend(walk.gap(low, high));
     }
+}
+
+/// Куски пути между отрезками длин `spans` (разрывы, спроецированные на путь;
+/// порядок любой) короче `min_run`: каждый — пара длин `(от, до)`, которую
+/// вызывающий закрывает разрывом по-своему. Перекрытые и смежные отрезки куска
+/// не оставляют. Общий обход у линий полос ([`bridge_short_runs`]) и у двойной
+/// сплошной разделительной (`medians::bridge_short_pieces`).
+pub(super) fn short_runs(mut spans: Vec<(f32, f32)>, min_run: f32) -> Vec<(f32, f32)> {
     spans.sort_by(|a, b| a.0.total_cmp(&b.0));
-    let mut reach = spans[0].1;
+    let mut runs = Vec::new();
+    let Some(&(_, mut reach)) = spans.first() else {
+        return runs;
+    };
     for span in &spans[1..] {
-        if span.0 > reach && span.0 - reach < MIN_RUN {
-            breaks.extend(walk.gap(reach, span.0));
+        if span.0 > reach && span.0 - reach < min_run {
+            runs.push((reach, span.0));
         }
         reach = reach.max(span.1);
     }
+    runs
 }
 
 #[cfg(test)]

@@ -63,7 +63,7 @@ use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 
 use super::{RoadNetwork, RoadNodes};
-use crate::map::along::{nearest_on_path, simplify, tip_of};
+use crate::map::along::{arclengths, nearest_on_path, place_on_path, simplify, tip_of};
 use crate::map::grid::Grid;
 use crate::map::osm::model::{RailKind, RailLine, distance_to_segment, polyline_length};
 use crate::map::osm::{RoadClass, RoadLine};
@@ -597,6 +597,13 @@ impl Pairs {
             .iter()
             .map(|path| path.as_deref().map_or(0.0, polyline_length))
             .collect();
+        let original_along: Vec<Vec<f32>> = original
+            .iter()
+            .map(|path| {
+                path.as_deref()
+                    .map_or_else(Vec::new, |path| arclengths(path).0)
+            })
+            .collect();
         let street = |road: usize| network.street_of(road).map(|(street, _)| street);
         let lengths: Vec<f32> = (0..paths.len())
             .map(|road| {
@@ -806,8 +813,9 @@ impl Pairs {
                 }
                 // полуширины половин, обращённые друг к другу, — с клиньями
                 let partner_path = original[partner].as_deref().unwrap_or_default();
-                let partner_left = heading_at(partner_path, near_along)
-                    .is_some_and(|heading| heading.perp_dot(*point - near) > 0.0);
+                let partner_left =
+                    place_on_path(partner_path, &original_along[partner], near_along)
+                        .is_some_and(|(_, heading)| heading.perp_dot(*point - near) > 0.0);
                 let asphalt = facing(road, at, total, run.left)
                     + facing(partner, near_along, original_lengths[partner], partner_left);
                 let wanted = point.midpoint(near) + outward * (asphalt + gap) / 2.0;
@@ -836,15 +844,14 @@ impl Pairs {
             let (sum, count) = meets[&node_key(from)];
             sum / count
         };
-        let bits = |point: Vec2| [point.x.to_bits(), point.y.to_bits()];
         let met: HashMap<[u32; 2], Vec2> = moved
             .iter()
             .filter(|(from, _)| meets[&node_key(*from)].1 > 1.0)
-            .map(|&(from, to)| (bits(to), place(from)))
+            .map(|&(from, to)| (point_bits(to), place(from)))
             .collect();
         if !met.is_empty() {
             for point in aligned.iter_mut().flat_map(|(_, path)| path.iter_mut()) {
-                if let Some(&place) = met.get(&bits(*point)) {
+                if let Some(&place) = met.get(&point_bits(*point)) {
                     *point = place;
                 }
             }
@@ -884,6 +891,7 @@ impl Pairs {
             let totals = [polyline_length(path), polyline_length(partner)];
             median.midline.clear();
             median.inner = [Vec::new(), Vec::new()];
+            let partner_along = arclengths(partner).0;
             for (along, at, heading) in samples(path)
                 .into_iter()
                 .filter(|(along, ..)| median.from <= *along && *along <= median.to)
@@ -893,8 +901,8 @@ impl Pairs {
                 };
                 let across = (near - at).normalize_or_zero();
                 let half_first = facing(first, along, totals[0], heading.perp_dot(across) > 0.0);
-                let second_left = heading_at(partner, near_along)
-                    .is_some_and(|heading| heading.perp_dot(at - near) > 0.0);
+                let second_left = place_on_path(partner, &partner_along, near_along)
+                    .is_some_and(|(_, heading)| heading.perp_dot(at - near) > 0.0);
                 let half_second = facing(second, near_along, totals[1], second_left);
                 median.midline.push(at.midpoint(near));
                 median.inner[0].push(at + across * half_first);
@@ -1234,6 +1242,12 @@ impl<'a> Tracks<'a> {
     }
 }
 
+/// Ключ точки по её точным битам: сведённый узел находят по вершине,
+/// совпадающей до последнего бита.
+fn point_bits(point: Vec2) -> [u32; 2] {
+    [point.x.to_bits(), point.y.to_bits()]
+}
+
 /// Торцы двух половин, сведённых в одну точку `met`, — на общую касательную:
 /// у каждой вершина в [`SEAM_TAIL`] от шва по биссектрисе их направлений.
 /// Ленты кончаются торцом поперёк своей оси, и при изломе в пару градусов
@@ -1241,8 +1255,7 @@ impl<'a> Tracks<'a> {
 /// угол бордюра настила заходил на асфальт подхода зубцом; излом уходит
 /// внутрь лент, где его кроют их соединения.
 fn align_seam_ends(aligned: &mut [(usize, Vec<Vec2>)], met: &HashMap<[u32; 2], Vec2>) {
-    let bits = |point: Vec2| [point.x.to_bits(), point.y.to_bits()];
-    let places: HashSet<[u32; 2]> = met.values().map(|place| bits(*place)).collect();
+    let places: HashSet<[u32; 2]> = met.values().map(|place| point_bits(*place)).collect();
     let mut at_place: HashMap<[u32; 2], Vec<(usize, bool)>> = HashMap::new();
     for (slot, (_, path)) in aligned.iter().enumerate() {
         if path.len() < 2 {
@@ -1250,8 +1263,11 @@ fn align_seam_ends(aligned: &mut [(usize, Vec<Vec2>)], met: &HashMap<[u32; 2], V
         }
         for end in [false, true] {
             let point = if end { path[path.len() - 1] } else { path[0] };
-            if places.contains(&bits(point)) {
-                at_place.entry(bits(point)).or_default().push((slot, end));
+            if places.contains(&point_bits(point)) {
+                at_place
+                    .entry(point_bits(point))
+                    .or_default()
+                    .push((slot, end));
             }
         }
     }
@@ -1439,7 +1455,6 @@ fn beside(
     }
 }
 
-/// Точки оси с шагом [`PROBE_STEP`]: длина от начала, точка, направление.
 /// Полуширина половины `road` в `at` метрах от начала её оси длиной `total`
 /// со стороны пары (`left` — пара слева по ходу way): у клина, сужающего эту
 /// сторону, — суженная, как её рисует клин (от узкого соседа у шва к своей
@@ -1473,24 +1488,7 @@ fn facing_half(
     half
 }
 
-/// Направление звена ломаной на дуговой координате `at`.
-fn heading_at(path: &[Vec2], at: f32) -> Option<Vec2> {
-    let mut run = 0.0;
-    let mut last = None;
-    for link in path.windows(2) {
-        let length = link[0].distance(link[1]);
-        let heading = (link[1] - link[0]).try_normalize();
-        if heading.is_some() {
-            last = heading;
-        }
-        run += length;
-        if run >= at && last.is_some() {
-            return last;
-        }
-    }
-    last
-}
-
+/// Точки оси с шагом [`PROBE_STEP`]: длина от начала, точка, направление.
 pub(in crate::map::roads) fn samples(path: &[Vec2]) -> Vec<(f32, Vec2, Vec2)> {
     let mut points = Vec::new();
     let mut start = 0.0;

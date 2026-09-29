@@ -29,6 +29,7 @@ use std::time::Duration;
 use bevy::prelude::*;
 
 use super::streets::RoadNetwork;
+use crate::map::along::{arclengths, place_on_path};
 use crate::map::osm::model::polyline_length;
 use crate::map::osm::{Highway, MapData, RoadLine};
 use crate::map::shapes::is_ring;
@@ -107,21 +108,16 @@ fn inferred_lanes(road: &RoadLine) -> u8 {
 /// окружность через её концы и середину. `None` — дуга прямая или из двух
 /// точек.
 fn ring_radius(points: &[Vec2]) -> Option<f32> {
-    let length = polyline_length(points);
     if is_ring(points) {
-        return Some(length / std::f32::consts::TAU);
+        return Some(polyline_length(points) / std::f32::consts::TAU);
     }
     if points.len() < 3 {
         return None;
     }
     let (a, c) = (points[0], points[points.len() - 1]);
     // середина — по длине дуги, а не по номеру вершины
-    let mut run = 0.0;
-    let b = points.windows(2).find_map(|link| {
-        let step = link[0].distance(link[1]);
-        run += step;
-        (run >= length / 2.0).then(|| link[1].lerp(link[0], (run - length / 2.0) / step.max(1e-6)))
-    })?;
+    let (along, length) = arclengths(points);
+    let (b, _) = place_on_path(points, &along, length / 2.0)?;
     let (ab, bc, ca) = (a.distance(b), b.distance(c), c.distance(a));
     let twice_area = (b - a).perp_dot(c - a).abs();
     (twice_area > 1e-3).then(|| ab * bc * ca / (2.0 * twice_area))

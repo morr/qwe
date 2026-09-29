@@ -521,6 +521,15 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                 // угол у мощёной дорожки — плиткой, в слое тротуаров: песчаное
                 // скругление на стыке двух плиточных аллей читалось бы пятном
                 let paved = first.paved || second.paved;
+                // угол двух грунтовок — грунтом; грунтовки с асфальтом сюда
+                // доходит только наружным или носом — тоже грунтом
+                let fill = if paved {
+                    Fill::Sidewalk
+                } else if first.unpaved || second.unpaved {
+                    Fill::Unpaved
+                } else {
+                    Fill::Road(class)
+                };
                 // Грунтовка входит в асфальт без скругления: асфальт идёт
                 // прямо, и его кромка — край грунтовки (Калуга, 07). Асфальтовый
                 // веер у её устья читался отводом от асфальтовой улицы. Всё,
@@ -534,13 +543,6 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                 let (outline, outer) = match round {
                     Some(outline) => (outline, false),
                     None if is_nose(first, second) => {
-                        let fill = if paved {
-                            Fill::Sidewalk
-                        } else if first.unpaved || second.unpaved {
-                            Fill::Unpaved
-                        } else {
-                            Fill::Road(class)
-                        };
                         let radius = nose_radius(radius, scale);
                         // клин штрихуется только на развилке — узел из трёх
                         // лучей, острый угол, а не нос несложившегося
@@ -566,17 +568,12 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                         None => continue,
                     },
                 };
-                let layer = usize::from(paved);
-                if paved {
-                    returns.sidewalks.push(outline);
-                } else if first.unpaved || second.unpaved {
-                    // угол двух грунтовок — грунтом; грунтовки с асфальтом
-                    // сюда доходит только наружным — тоже грунтом
-                    returns.unpaved.push(outline);
-                } else {
-                    returns.roads.push((class, outline));
+                match fill {
+                    Fill::Sidewalk => returns.sidewalks.push(outline),
+                    Fill::Unpaved => returns.unpaved.push(outline),
+                    Fill::Road(class) => returns.roads.push((class, outline)),
                 }
-                returns.outer[layer] += usize::from(outer);
+                returns.outer[usize::from(paved)] += usize::from(outer);
             }
             // Асфальт, идущий сквозь грунтовку двумя way с изломом: торцы
             // прямые, скруглений к грунту нет, и щель с наружной стороны

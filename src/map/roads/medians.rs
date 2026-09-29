@@ -40,7 +40,7 @@ use i_overlay::mesh::style::{LineJoin, OutlineStyle};
 
 use super::merges::MedianEnd;
 use super::network::pairs::{Median, Pairs, TRAM_BED_MAX_GAP};
-use super::node_paint::{PaintBreaks, ZEBRA_LENGTH, Zebra};
+use super::node_paint::{MIN_RUN, PaintBreaks, ZEBRA_LENGTH, Zebra, short_runs};
 use super::{ROAD_COLOR, ROAD_JOIN, RoadJoin, SIDEWALK_COLOR, push_ribbon};
 use crate::map::along::{arclengths, nearest_on_path, place_on_path, tip_of};
 use crate::map::meshing::{Break, MeshBuilder};
@@ -354,9 +354,13 @@ fn facing_zebras(median: &Median, [first, second]: [&[(Break, Zebra)]; 2]) -> Ve
 }
 
 /// Кусок двойной сплошной между разрывом и торцом (или другим разрывом)
-/// короче этого, м, не рисуется — тот же порог, что у линий полос
-/// (`node_paint::MIN_RUN`).
-const MEDIAN_MIN_RUN: f32 = 6.0;
+/// короче этого, м, не рисуется — порог линий полос: огрызок середины и штрих
+/// полосы у узла читаются одним мусором.
+const MEDIAN_MIN_RUN: f32 = MIN_RUN;
+/// На сколько разрыв огрызка ([`bridge_short_pieces`]) шире самого огрызка с
+/// каждой стороны, м: его края сходятся с краями соседних разрывов, и запас не
+/// оставляет на стыке волоска двойной сплошной.
+const STUB_MARGIN: f32 = 0.05;
 
 /// Закрыть разрывом каждый кусок осевой `midline` короче [`MEDIAN_MIN_RUN`]
 /// между двумя разрывами `breaks` или между разрывом и торцом. Разрывы узла
@@ -381,19 +385,13 @@ fn bridge_short_pieces(midline: &[Vec2], breaks: &mut Vec<Break>) {
         return;
     }
     spans.extend([(0.0, 0.0), (total, total)]);
-    spans.sort_by(|a, b| a.0.total_cmp(&b.0));
-    let mut reach = spans[0].1;
-    for span in &spans[1..] {
-        if span.0 > reach && span.0 - reach < MEDIAN_MIN_RUN {
-            let middle = (reach + span.0) / 2.0;
-            if let Some((at, _)) = place_on_path(midline, &along, middle) {
-                breaks.push(Break {
-                    at,
-                    reach: (span.0 - reach) / 2.0 + CUT_MARGIN,
-                });
-            }
+    for (low, high) in short_runs(spans, MEDIAN_MIN_RUN) {
+        if let Some((at, _)) = place_on_path(midline, &along, (low + high) / 2.0) {
+            breaks.push(Break {
+                at,
+                reach: (high - low) / 2.0 + STUB_MARGIN,
+            });
         }
-        reach = reach.max(span.1);
     }
 }
 
@@ -712,7 +710,6 @@ fn push_lawn(
 ) -> Vec<Shape> {
     let round = || LineJoin::Round(ARC);
     let mut drawn = Vec::new();
-    let mut visible = Vec::new();
     let passages = passages(median, crossings);
     for (outline, length) in lawn_outlines(median, breaks) {
         // нос — почти полукруг во всю ширину, а у куска короче ширины — по
@@ -748,7 +745,6 @@ fn push_lawn(
                 .filter(is_drawn)
                 .collect()
         };
-        visible.extend(kerb.iter().cloned());
         drawn.extend(kerb.iter().cloned());
         for (shapes, builder, color) in [
             (kerb, &mut *kerbs, kerb_color),
@@ -762,7 +758,7 @@ fn push_lawn(
     if let Some(ring) = between_edges(median, FILL_OVERLAP) {
         let ring = oriented(&ring, true);
         streets.set_lanes(None);
-        for cut in uncovered(ring, visible) {
+        for cut in uncovered(ring, drawn.clone()) {
             push_shape(streets, cut, road_color);
         }
     }

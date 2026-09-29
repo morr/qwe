@@ -22,7 +22,7 @@ use i_overlay::mesh::style::{LineCap, LineJoin, OutlineStyle};
 
 use super::junctions::node_key;
 use super::rings::{Ring, Rings};
-use super::{is_carriageway, lane_count};
+use super::{is_carriageway, lane_count, smoothstep};
 use crate::map::along::{arclengths, densify, place_on_path, tip_of};
 use crate::map::meshing::{Break, MeshBuilder, min_area_rect};
 use crate::map::osm::model::{RoadLine, distance_to_segment, polyline_length, ring_bounds};
@@ -579,8 +579,7 @@ fn splitter(
         |at| {
             width / 2.0
                 + if at < base {
-                    let share = ((at - edge) / (base - edge).max(f32::EPSILON)).clamp(0.0, 1.0);
-                    half * share * share * (3.0 - 2.0 * share)
+                    half * smoothstep((at - edge) / (base - edge).max(f32::EPSILON))
                 } else {
                     spread(at)
                 }
