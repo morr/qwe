@@ -171,16 +171,18 @@ mod tests {
 
     #[test]
     fn a_street_and_a_house_draw_their_contours() {
-        let mut map = MapData::default();
-        map.roads = vec![street(vec![Vec2::ZERO, Vec2::new(100.0, 0.0)], 8.0)];
-        map.buildings = vec![building(
-            vec![
-                Vec2::new(10.0, 10.0),
-                Vec2::new(20.0, 10.0),
-                Vec2::new(20.0, 20.0),
-            ],
-            Vec::new(),
-        )];
+        let map = MapData {
+            roads: vec![street(vec![Vec2::ZERO, Vec2::new(100.0, 0.0)], 8.0)],
+            buildings: vec![building(
+                vec![
+                    Vec2::new(10.0, 10.0),
+                    Vec2::new(20.0, 10.0),
+                    Vec2::new(20.0, 20.0),
+                ],
+                Vec::new(),
+            )],
+            ..Default::default()
+        };
         let contours = OsmContours::of(&map);
         assert_eq!(contours.streets.len(), 1);
         assert_eq!(contours.rings.len(), 1);

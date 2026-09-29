@@ -106,9 +106,7 @@ impl ParseKnobs {
 ///   стоянка и площадка — своим полигоном без раскладки мест и разметки поля;
 ///   ни машин, ни сгенерированных деревьев (лес и аллеи не сажаются, остаются
 ///   только деревья-ноды OSM).
-#[derive(
-    Resource, Reflect, SettingsGroup, Clone, Copy, PartialEq, Eq, Debug, Default,
-)]
+#[derive(Resource, Reflect, SettingsGroup, Clone, Copy, PartialEq, Eq, Debug, Default)]
 #[reflect(Resource, SettingsGroup, Default)]
 #[settings_group(group = "debug", key = "raw_osm")]
 pub enum RawOsm {

@@ -301,6 +301,8 @@ fn spawn_loader_ui(mut commands: Commands) {
 }
 
 /// Кнопка Retry: сброс состояния и новый поток загрузки.
+// входы разбора — три ручки, и каждая своим ресурсом, как у `start_job`
+#[allow(clippy::too_many_arguments)]
 fn on_retry(
     _activate: On<Activate>,
     job: Res<MapLoadJob>,

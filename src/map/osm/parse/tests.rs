@@ -4765,12 +4765,25 @@ fn raw_osm_skips_the_finishing_passes() {
     let skewed = &raw.buildings[0];
     assert!(!right_angles(&skewed.outer), "сырой домик остаётся косым");
     for (data, kept) in skewed_house(CENTER).iter().zip(&skewed.outer) {
-        assert!(data.distance(*kept) < 0.01, "вершина {data} уехала в {kept}");
+        assert!(
+            data.distance(*kept) < 0.01,
+            "вершина {data} уехала в {kept}"
+        );
     }
-    assert_eq!(raw.buildings[0].entrances.len(), 1, "размеченный вход — данные");
+    assert_eq!(
+        raw.buildings[0].entrances.len(),
+        1,
+        "размеченный вход — данные"
+    );
 
-    assert!(!cooked.buildings[1].entrances.is_empty(), "без флага двери сочиняются");
-    assert!(raw.buildings[1].entrances.is_empty(), "сырой дом без сочинённых дверей");
+    assert!(
+        !cooked.buildings[1].entrances.is_empty(),
+        "без флага двери сочиняются"
+    );
+    assert!(
+        raw.buildings[1].entrances.is_empty(),
+        "сырой дом без сочинённых дверей"
+    );
 
     assert_eq!(cooked.roads[0].lanes, Some(2), "без флага полосы по классу");
     assert_eq!(raw.roads[0].lanes, None, "сырая улица без выведенных полос");
@@ -4795,7 +4808,12 @@ fn raw_osm_draw_plants_no_generated_trees() {
         raw,
         ..ParseKnobs::DEFAULT
     };
-    assert!(!wood_scene().parse_with(knobs(RawOsm::Parse)).wood_trees.is_empty());
+    assert!(
+        !wood_scene()
+            .parse_with(knobs(RawOsm::Parse))
+            .wood_trees
+            .is_empty()
+    );
     let raw = wood_scene().parse_with(knobs(RawOsm::Draw));
     assert!(raw.wood_trees.is_empty());
     assert_eq!(raw.trees.len(), 0);
