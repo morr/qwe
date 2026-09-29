@@ -1168,6 +1168,11 @@ pub struct MapData {
     /// входе в мир пишется глобаль краски (`roads::shape::adopt_lane_width`).
     /// У карты, собранной тестом руками, — входы по умолчанию.
     pub knobs: super::parse::ParseKnobs,
+    /// **Контуры OSM** — геометрия, какой её прочёл элементный цикл, до
+    /// доводочных проходов (`super::contours`): по ней рисуется оверлей
+    /// `OSM contours`, который отвечает «данные или наш разбор». У карты,
+    /// собранной тестом руками, пуст.
+    pub osm_contours: super::contours::OsmContours,
     pub buildings: Vec<PolyArea>,
     pub water: Vec<PolyArea>,
     pub parks: Vec<PolyArea>,

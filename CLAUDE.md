@@ -358,6 +358,7 @@ step when adding one):
 | navmesh overlay | `ui/debug/overlays.rs::sync_navmesh_overlay` |
 | conifer noise overlay | `ui/debug/overlays.rs::sync_conifer_noise_overlay` |
 | road network overlay | `ui/debug/overlays.rs::sync_road_network_overlay` (through `surface::spawn_layers`; geometry — `map/roads/network/overlay.rs`) |
+| OSM contours overlay | `ui/debug/overlays.rs::sync_osm_contours_overlay` (through `surface::spawn_layers`; geometry — `map/osm/contours.rs`) |
 | polymesh overlay | `ui/navigation/overlay.rs::sync_polymesh_overlay` |
 | test walker | `dev.rs::on_spawn_test_walker` |
 

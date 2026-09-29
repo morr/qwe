@@ -33,6 +33,16 @@ a map built by hand in a test carries the defaults.
   buildings do not exist). The roads with no `sidewalk*` tag at all, whose sidewalks the
   blocks around decide once the buildings are read, need no list there: they carry
   `SidewalkSide::Inferred` on the `RoadLine` itself.
+  Its last act is the **OSM contours** snapshot (`contours.rs`, `MapData::osm_contours`):
+  a copy of every road axis (streets and paths apart), every other line (rails,
+  watercourses, fences, walls, tree rows, pipes) and every ring of every area vector and
+  road area — the geometry before a single finishing pass moved it. Only points; the tags
+  are on the map already. `ReadReport` logs its size (`osm parse: N contour points kept
+  for the OSM overlay in …`). The overlay `mesh_osm_contours` draws it — street axes
+  magenta with a square on each vertex (an OSM node), paths cyan, other lines blue, area
+  rings yellow, flat material at z 29.5 over the network overlay — in the Debug tab
+  (`OSM contours`) and in the roads gallery (`Contours`, `ROADS_CONTOURS=1`). It is the
+  cheap half of the **raw OSM** question («data or our parse?»): no reload, one frame.
 - **`finish_parse(&mut MapData, &Pending, ParseKnobs) -> PassReport`** — the **nine** finishing passes
   (step 0 is the street sections, `map::roads::network::sections`, since the width they
   set is read by the passes after them — and right before them the roundabout tail Ys

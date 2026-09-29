@@ -57,9 +57,13 @@
 //! `ROADS_SHOT=путь.png` — снять витрину в текстуру (без панелей) и выйти;
 //! `ROADS_SHOT_SCALE=2` — снять её вдвое крупнее окна (тот же кадр, чётче);
 //! `ROADS_SAMPLE=N` ставит камеру на пример N (с единицы) крупным планом;
+//! `ROADS_AT=x,y[,half]` — вместо колонки одно окно вокруг точки в метрах
+//! карты (полуразмер по умолчанию 40 м): место из отчёта, не пример манифеста;
 //! `ROADS_CITY=<slug>` (`berlin`, `paris`…) открывает витрину на этом городе —
 //! для автоснимка не Тулы;
 //! `ROADS_NETWORK=1` открывает витрину с оверлеем сети (строка `Network` панели);
+//! `ROADS_CONTOURS=1` — с оверлеем контуров OSM (строка `Contours`): оси и
+//! контуры до доводочных проходов разбора поверх отрисовки;
 //! `ROADS_CARS=1` кладёт в примеры и слой припаркованных машин.
 
 mod overlay;
@@ -102,7 +106,7 @@ use qwe::map::{
 use qwe::ui::knob::AddKnobsExt;
 use qwe::ui::{PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET, sync_city_label};
 
-use crate::overlay::NetworkOverlay;
+use crate::overlay::Overlays;
 use crate::panel::{StatusLine, spawn_panel};
 use crate::samples::Sample;
 use crate::shot::{ShotRequest, auto_shot, request_shot};
@@ -205,12 +209,12 @@ fn main() {
         .init_resource::<SurfaceStyle>()
         .init_resource::<SunOnMap>()
         .init_resource::<Gallery>()
-        .init_resource::<NetworkOverlay>()
+        .init_resource::<Overlays>()
         // подписи строк стиля ведёт кит — по разу на ресурс, как в игре
         .add_knobs::<RoadStyle>()
         .add_knobs::<RoadShape>()
         .add_knobs::<RoadPaintStyle>()
-        .add_knobs::<NetworkOverlay>()
+        .add_knobs::<Overlays>()
         .insert_resource(ClearColor(GROUND_COLOR))
         .add_systems(
             Startup,
@@ -248,7 +252,7 @@ fn main() {
                     resource_changed::<City>
                         .or_else(resource_changed::<RoadStyle>)
                         .or_else(resource_changed::<RoadShapeOnMap>)
-                        .or_else(resource_changed::<NetworkOverlay>)
+                        .or_else(resource_changed::<Overlays>)
                         .or_else(input_just_pressed(KeyCode::F5)),
                 ),
                 build_next,
@@ -524,7 +528,7 @@ fn build_next(
     city: Res<City>,
     road_style: Res<RoadStyle>,
     road_shape: Res<RoadShapeOnMap>,
-    overlay: Res<NetworkOverlay>,
+    overlay: Res<Overlays>,
     mut gallery: ResMut<Gallery>,
     mut status: Single<&mut Text, With<StatusLine>>,
 ) {
@@ -590,12 +594,21 @@ fn build_next(
         );
     }
 
-    if overlay.visible {
+    if overlay.network {
         spawn_layers(
             &mut commands,
             &mut meshes,
             &materials.layers,
             clip(vec![qwe::map::mesh_network_overlay(&map)]),
+            SampleLayer,
+        );
+    }
+    if overlay.contours {
+        spawn_layers(
+            &mut commands,
+            &mut meshes,
+            &materials.layers,
+            clip(vec![qwe::map::mesh_osm_contours(&map.osm_contours)]),
             SampleLayer,
         );
     }

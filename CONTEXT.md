@@ -501,6 +501,13 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   **before** the skewed houses are squared, and `vertex_uses` is deliberately computed
   **twice**, because the outlines move between its two readers. Detail in the `osm-map`
   skill.
+- **OSM contours** (`map/osm/contours.rs`, `MapData::osm_contours`) — the map's geometry
+  as the element loop read it, **before any finishing pass**: road axes (streets and
+  paths apart), the other lines, every area ring and hole. A copy of points taken at the
+  end of `read_elements`; drawn by `mesh_osm_contours` as thin lines over the processed
+  map (Debug → Overlays → `OSM contours`, gallery `Contours` / `ROADS_CONTOURS=1`). It
+  answers the first question of every visual report in one frame: **the contour sits on
+  the defect — the data; it does not — our processing**.
 - **ParseKnobs** (`map/osm/parse.rs`) — the parse's inputs that are not in the Overpass
   answer: `lane_width` (the street lane width the sections take) and `navtile` (the door
   generator's clearance). `parse(json, city, knobs)` / `parse_response` take them as an
@@ -2317,7 +2324,8 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   (`spawn_value_row`; a row whose click does nothing gets `bevy::ui::InteractionDisabled`).
   **Use these, don't hand-roll a panel row.**
 - **Debug tab** (`ui/debug/`) — the grid / doors / movepath / noise / **road network**
-  (`DebugRoadNetwork`: every street its own colour, a dot on each seam) overlay rows, the
+  (`DebugRoadNetwork`: every street its own colour, a dot on each seam) / **OSM contours**
+  (`DebugOsmContours`: the data before our passes, over the map) overlay rows, the
   `Camera start` and `Navtile` cyclers (global settings, deliberately not under a backend
   section) and **`reset`** (`prefs::ResetSettings`). The navmesh overlay is **one merged
   mesh** (per-tile entities once cost 330 k); the noise overlay is one CPU-built texture

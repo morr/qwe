@@ -468,7 +468,12 @@ did not fit 1080 px and ran off the top of the screen.
   layer and, when on, spawns `map::mesh_network_overlay` through `surface::spawn_layers`
   (which is where its `DespawnOnExit` comes from) — on the toggle and on
   `OnEnter(Playing)`, never on a shape knob: the network is the parse's and the knobs do
-  not move it. Each street its own colour, line width by lanes, a white dot on each seam. All of them are knob-kit rows
+  not move it. Each street its own colour, line width by lanes, a white dot on each seam.
+  **OSM contours** (`DebugOsmContours`, key `osm_contours`, right under Road network) is
+  the same shape over another layer: `sync_osm_contours_overlay` spawns
+  `map::mesh_osm_contours(&map.osm_contours)` — the parse's snapshot of the geometry
+  before its finishing passes (osm-map `references/parse.md`) — on the toggle and on world
+  entry only, and logs its vertex count and build time. All of them are knob-kit rows
   (`spawn_cycle_row` + `add_knobs::<R>()`) now, which is why `DebugToggleButton`,
   `CyclerButton`, `cycler_state`, `sync_toggle_buttons`, `sync_cycler_buttons` and
   `sync_cycler_labels` are gone: the kit already keeps a label on its resource. The old row

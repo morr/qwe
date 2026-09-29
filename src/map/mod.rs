@@ -89,6 +89,8 @@ pub use self::roads::paint::{
 pub use self::roads::network::{RoadNetwork, Street, StreetWay};
 // оверлей сети — строке Debug игры и строке `Network` витрины `roads`
 pub use self::roads::network::overlay::mesh_network_overlay;
+// оверлей контуров OSM — строке Debug игры и строке `Contours` витрины `roads`
+pub use self::osm::contours::mesh_osm_contours;
 // `smooth_path` со `Smoothing` — витрине машин (`car_gallery` кладёт асфальт
 // под ряд по сглаженной осевой) и панели аллей (`TreeRowStyle::smoothing`)
 pub use self::smooth::{Smoothing, smooth_path};

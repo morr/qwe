@@ -7,13 +7,13 @@ use bevy::image::{Image, ImageSampler};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
-use super::{DebugConiferNoise, DebugNavmesh, DebugRoadNetwork};
+use super::{DebugConiferNoise, DebugNavmesh, DebugOsmContours, DebugRoadNetwork};
 use crate::camera::Viewport;
 use crate::grid::{grid_size, navtile_size};
 use crate::loading::AppState;
 use crate::map::osm::MapData;
 use crate::map::surface::{LayerMaterials, spawn_layers};
-use crate::map::{ConiferField, mesh_network_overlay};
+use crate::map::{ConiferField, mesh_network_overlay, mesh_osm_contours};
 use crate::navigation::{ArcNavmesh, PolymeshDebug};
 use crate::settings::{MAP_SIZE, Z_CONIFER_NOISE_OVERLAY};
 
@@ -47,6 +47,43 @@ pub(super) fn sync_road_network_overlay(
             &materials,
             [mesh_network_overlay(&map)],
             RoadNetworkOverlayMarker,
+        );
+    }
+}
+
+/// Слой оверлея контуров OSM (`map::mesh_osm_contours`).
+#[derive(Component, Clone, Copy)]
+pub(super) struct OsmContoursOverlayMarker;
+
+/// Спавн/despawn оверлея контуров OSM: снимок геометрии до доводочных
+/// проходов (`MapData::osm_contours`) поверх обработанной карты. Снимок —
+/// разбора, ручки его не двигают, так что слой строится только по тумблеру и
+/// на входе в мир. `DespawnOnExit` слою ставит `spawn_layers`.
+pub(super) fn sync_osm_contours_overlay(
+    mut commands: Commands,
+    show: Res<DebugOsmContours>,
+    map: Res<MapData>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    materials: LayerMaterials,
+    overlay: Query<Entity, With<OsmContoursOverlayMarker>>,
+) {
+    for entity in &overlay {
+        commands.entity(entity).despawn();
+    }
+    if show.0 {
+        let started = std::time::Instant::now();
+        let layer = mesh_osm_contours(&map.osm_contours);
+        info!(
+            "osm contours overlay: {} verts in {:?}",
+            layer.builder.vertex_count(),
+            started.elapsed()
+        );
+        spawn_layers(
+            &mut commands,
+            &mut meshes,
+            &materials,
+            [layer],
+            OsmContoursOverlayMarker,
         );
     }
 }

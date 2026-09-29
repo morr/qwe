@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 
 use bevy::math::Vec2;
 
+use super::contours::OsmContours;
 use super::planting::plant_trees;
 use crate::city::City;
 use crate::grid::DEFAULT_NAVTILE_SIZE;
@@ -105,6 +106,9 @@ struct ReadReport {
     /// `None` — зеркало не отдало `is_in`; карта рисуется правосторонней.
     traffic_side: Option<TrafficSide>,
     unclosed_rings: usize,
+    /// Вершин в снимке контуров OSM ([`OsmContours`]) и цена копии.
+    contour_points: usize,
+    contouring: std::time::Duration,
 }
 
 impl std::fmt::Display for ReadReport {
@@ -114,7 +118,13 @@ impl std::fmt::Display for ReadReport {
         let Self {
             traffic_side,
             unclosed_rings,
+            contour_points,
+            contouring,
         } = self;
+        writeln!(
+            f,
+            "osm parse: {contour_points} contour points kept for the OSM overlay in {contouring:?}"
+        )?;
         if traffic_side.is_none() {
             // не error: зеркало без областей отдаёт пустой `is_in`, а карта без
             // стороны движения всё равно рисуется
@@ -181,9 +191,14 @@ fn read_elements(
         }
     }
 
+    // снимок для оверлея контуров — до единого доводочного прохода
+    let started = std::time::Instant::now();
+    map.osm_contours = OsmContours::of(&map);
     let report = ReadReport {
         traffic_side,
         unclosed_rings,
+        contour_points: map.osm_contours.points(),
+        contouring: started.elapsed(),
     };
     (map, pending, report)
 }

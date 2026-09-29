@@ -236,8 +236,13 @@ pub(crate) fn load(city: City) -> Result<Vec<Sample>, String> {
             manifest_path.display()
         )
     })?;
-    let manifest: Manifest = serde_json::from_str(&text)
+    let mut manifest: Manifest = serde_json::from_str(&text)
         .map_err(|error| format!("{}: {error}", manifest_path.display()))?;
+    // разовое окно вместо манифеста — снять место из отчёта, не добавляя
+    // пример в обход критериев выше
+    if let Some(window) = window_from_env()? {
+        manifest.samples = vec![window];
+    }
     let bounds = GeoBounds::for_city(city);
     let folder = data_dir().join(city.slug());
     let dump = std::env::var_os(DUMP_ENV).map(PathBuf::from);
@@ -306,6 +311,40 @@ pub(crate) fn load(city: City) -> Result<Vec<Sample>, String> {
         })
         .collect()
 }
+
+/// `ROADS_AT=x,y[,half]` — одно окно вокруг точки в метрах карты (полуразмер
+/// по умолчанию [`AT_HALF`]) вместо всей колонки манифеста. Для снимка места
+/// из отчёта или карточки: «до/после» одного и того же окна, данные против
+/// разбора (`ROADS_CONTOURS`, `ROADS_RAW`). В манифест такое окно не пишется —
+/// его критерии про типы пересечений, а не про места.
+fn window_from_env() -> Result<Option<ManifestSample>, String> {
+    let Ok(value) = std::env::var(AT_ENV) else {
+        return Ok(None);
+    };
+    let numbers: Vec<f32> = value
+        .split(',')
+        .map(|part| part.trim().parse::<f32>())
+        .collect::<Result<_, _>>()
+        .map_err(|error| format!("{AT_ENV}={value}: {error}"))?;
+    let (at, half) = match numbers.as_slice() {
+        [x, y] => ([*x, *y], AT_HALF),
+        [x, y, half] => ([*x, *y], *half),
+        _ => return Err(format!("{AT_ENV}={value}: ждём x,y или x,y,half")),
+    };
+    Ok(Some(ManifestSample {
+        name: format!("at_{:.0}_{:.0}", at[0], at[1]),
+        title: format!("Окно {:.0}, {:.0}", at[0], at[1]),
+        note: format!("разовое окно {AT_ENV}"),
+        geo: None,
+        at: Some(at),
+        half,
+    }))
+}
+
+/// Переменная окружения разового окна ([`window_from_env`]).
+const AT_ENV: &str = "ROADS_AT";
+/// Полуразмер разового окна по умолчанию, м.
+const AT_HALF: f32 = 40.0;
 
 fn frozen_path(folder: &Path, name: &str) -> PathBuf {
     folder.join(format!("{name}.json"))

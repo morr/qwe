@@ -5,7 +5,10 @@
 //! - doors — входы в здания, свои и досочинённые (`map/osm/entrances/`);
 //! - movepath — существующий `DrawMovePaths` (он же на клавише M);
 //! - noise — поле хвои (`map/trees/conifer.rs`) текстурой на всю карту:
-//!   серым — значение поля, зелёным — будущие хвойные массивы.
+//!   серым — значение поля, зелёным — будущие хвойные массивы;
+//! - road network — улицы сети и их швы (`map::mesh_network_overlay`);
+//! - OSM contours — оси путей и контуры полигонов, какими их прочёл разбор до
+//!   доводочных проходов (`map::mesh_osm_contours`): «данные или наш разбор».
 //!
 //! Хоткеи: N — слой навигации (`toggle_navmesh`: показ той подсистемы, по
 //! которой сейчас ходят), M — movepath (в `movement`), G — «гизмо» одной
@@ -87,11 +90,19 @@ pub struct DebugConiferNoise(pub bool);
 #[settings_group(group = "debug", key = "road_network")]
 pub struct DebugRoadNetwork(pub bool);
 
+/// Показывать ли оверлей контуров OSM — строка `OSM contours` вкладки Debug:
+/// оси путей и контуры полигонов, какими их прочёл разбор до доводочных
+/// проходов (`map::mesh_osm_contours`), поверх обработанной карты.
+#[derive(Resource, Reflect, SettingsGroup, Default)]
+#[reflect(Resource, SettingsGroup, Default)]
+#[settings_group(group = "debug", key = "osm_contours")]
+pub struct DebugOsmContours(pub bool);
+
 mod overlays;
 
 use self::overlays::{
     render_doors, render_grid, sync_conifer_noise_overlay, sync_navmesh_overlay,
-    sync_road_network_overlay,
+    sync_osm_contours_overlay, sync_road_network_overlay,
 };
 
 pub struct UiDebugTogglesPlugin;
@@ -103,6 +114,7 @@ impl Plugin for UiDebugTogglesPlugin {
             .add_knobs::<DrawMovePaths>()
             .add_knobs::<DebugConiferNoise>()
             .add_knobs::<DebugRoadNetwork>()
+            .add_knobs::<DebugOsmContours>()
             .add_knobs::<CameraPositionMode>()
             .add_knobs::<Antialias>()
             .add_knobs::<NavtileBase>()
@@ -111,16 +123,19 @@ impl Plugin for UiDebugTogglesPlugin {
             .init_resource::<DebugDoors>()
             .init_resource::<DebugConiferNoise>()
             .init_resource::<DebugRoadNetwork>()
+            .init_resource::<DebugOsmContours>()
             .register_type::<DebugGrid>()
             .register_type::<DebugNavmesh>()
             .register_type::<DebugDoors>()
             .register_type::<DebugConiferNoise>()
             .register_type::<DebugRoadNetwork>()
+            .register_type::<DebugOsmContours>()
             .track_pref::<DebugGrid>()
             .track_pref::<DebugNavmesh>()
             .track_pref::<DebugDoors>()
             .track_pref::<DebugConiferNoise>()
             .track_pref::<DebugRoadNetwork>()
+            .track_pref::<DebugOsmContours>()
             .add_systems(Startup, build_debug_tab.in_set(UiBuildSet::Sections))
             // тумблер, восстановленный из настроек, менялся до того, как
             // navmesh был заполнен и поле хвои посчитано, — красим слои ещё
@@ -132,6 +147,7 @@ impl Plugin for UiDebugTogglesPlugin {
                     // порог красит хвойную область, а считает его посадка
                     sync_conifer_noise_overlay.after(crate::map::trees::build_conifer_field),
                     sync_road_network_overlay,
+                    sync_osm_contours_overlay,
                 )
                     .in_set(WorldInitSet::Spawn),
             )
@@ -175,6 +191,11 @@ impl Plugin for UiDebugTogglesPlugin {
                     sync_road_network_overlay
                         .run_if(in_state(AppState::Playing))
                         .run_if(resource_changed::<DebugRoadNetwork>),
+                    // контуры — снимок разбора, ручки их не двигают: слой
+                    // строится по тумблеру и на входе в мир, как сеть
+                    sync_osm_contours_overlay
+                        .run_if(in_state(AppState::Playing))
+                        .run_if(resource_changed::<DebugOsmContours>),
                     toggle_navmesh
                         .run_if(input_just_pressed(KeyCode::KeyN))
                         .run_if(not(super::typing_in_text_input)),
@@ -199,6 +220,7 @@ struct DebugValues<'w> {
     movepaths: Res<'w, DrawMovePaths>,
     conifer_noise: Res<'w, DebugConiferNoise>,
     road_network: Res<'w, DebugRoadNetwork>,
+    osm_contours: Res<'w, DebugOsmContours>,
 }
 
 fn build_debug_tab(mut commands: Commands, panes: Res<SettingsPanes>, values: DebugValues) {
@@ -264,6 +286,17 @@ fn build_debug_tab(mut commands: Commands, panes: Res<SettingsPanes>, values: De
         CycleBinding {
             cycle: |network: &mut DebugRoadNetwork| network.0 = !network.0,
             text: |network| on_off(network.0).to_string(),
+        },
+    );
+    spawn_cycle_row(
+        &mut commands,
+        overlays,
+        "OSM contours",
+        ROW_LEFT_PX,
+        &*values.osm_contours,
+        CycleBinding {
+            cycle: |contours: &mut DebugOsmContours| contours.0 = !contours.0,
+            text: |contours| on_off(contours.0).to_string(),
         },
     );
 

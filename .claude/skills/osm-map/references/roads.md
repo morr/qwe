@@ -838,7 +838,16 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     the line thicker by the way's lanes, a white dot on every seam of a street. Shown by the
     game's Debug → Overlays **Road network** row (`DebugRoadNetwork`,
     `ui/debug/overlays.rs::sync_road_network_overlay`) and by the gallery's `Network` row
-    (or `ROADS_NETWORK=1`; `examples/demos/roads/overlay.rs` keeps only the toggle).
+    (or `ROADS_NETWORK=1`; `examples/demos/roads/overlay.rs` keeps only the toggles).
+  - **The OSM contours overlay** — `map/osm/contours.rs::mesh_osm_contours` (z 29.5): the
+    geometry before the finishing passes over the drawn map (`references/parse.md`, the
+    parse seam). Gallery row `Contours` / `ROADS_CONTOURS=1`, game Debug → Overlays
+    **OSM contours**. **Every visual road report starts here**: the magenta axis and its
+    node squares lying on the defect say "data", lying off it say "our parse or drawing".
+  - **A one-off window** — `ROADS_AT=x,y[,half]` (map metres, half 40 m by default)
+    replaces the manifest column with a single window around that point
+    (`samples.rs::window_from_env`), so a report's place can be shot before/after without
+    adding a sample in breach of the manifest's criteria; `ROADS_SAMPLE=1` frames it.
 - **Markings — the paint layer** (`map/roads/paint.rs`, shader `assets/shaders/paint.wgsl`).
   The lane lines are **geometry off the street axis**, not a pattern of the asphalt
   shader any more. Until stage 3 of the roads plan the asphalt shader drew them from the

@@ -21,7 +21,7 @@ use qwe::ui::{
     ui_node,
 };
 
-use crate::overlay::NetworkOverlay;
+use crate::overlay::Overlays;
 
 /// Отступ строки-значения слева — как у строк панели игры.
 const ROW_LEFT_PX: f32 = 8.0;
@@ -50,7 +50,7 @@ pub(crate) fn spawn_panel(
     shape: Res<RoadShape>,
     style: Res<RoadStyle>,
     paint: Res<RoadPaintStyle>,
-    overlay: Res<NetworkOverlay>,
+    overlay: Res<Overlays>,
 ) {
     let panel = commands
         .spawn((
@@ -176,8 +176,20 @@ pub(crate) fn spawn_panel(
         ROW_LEFT_PX,
         &*overlay,
         CycleBinding {
-            cycle: |overlay: &mut NetworkOverlay| overlay.visible = !overlay.visible,
-            text: |overlay| on_off(overlay.visible),
+            cycle: |overlay: &mut Overlays| overlay.network = !overlay.network,
+            text: |overlay| on_off(overlay.network),
+        },
+    );
+    // и данные против разбора: оси и контуры OSM до доводочных проходов
+    spawn_cycle_row(
+        &mut commands,
+        panel,
+        "Contours",
+        ROW_LEFT_PX,
+        &*overlay,
+        CycleBinding {
+            cycle: |overlay: &mut Overlays| overlay.contours = !overlay.contours,
+            text: |overlay| on_off(overlay.contours),
         },
     );
 
