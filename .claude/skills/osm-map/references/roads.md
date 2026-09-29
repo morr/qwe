@@ -844,6 +844,22 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     parse seam). Gallery row `Contours` / `ROADS_CONTOURS=1`, game Debug → Overlays
     **OSM contours**. **Every visual road report starts here**: the magenta axis and its
     node squares lying on the defect say "data", lying off it say "our parse or drawing".
+  - **Raw OSM, drawing level** (`RawOsm::Draw`, `references/parse.md`; gallery
+    `ROADS_RAW=draw`) — `mesh_roads` hands over to **`mesh_raw_roads`**, a separate
+    build rather than switches inside the full one (its passes are interwoven, and half
+    of them off would draw a picture neither the data nor the game has): every way one
+    bare ribbon along its OSM axis at the parse's width (section width by a `lanes` tag,
+    else the class width), miter joins and butt caps — no node gluing, kerb returns,
+    mouths, pairs, medians, gores, tapers, sidewalk bands, verge lawns, turning circles,
+    kerb pockets, big-lot kerb, tram band, paint or ruts (no lane frame). Kept: the
+    layers by surface (asphalt, unpaved, sand paths, paved paths as sidewalk tiles), the
+    `RoadArea` outlines as their own polygons, the fortress wall ribbon. A bridge is
+    drawn in the street layer, without deck, curb or shadow. The same level empties the
+    car placement (`cars::park_on`) and drops the stall and pitch markings in
+    `spawn::mesh_surfaces`; lots and pitches stay as their polygons. Buildings are drawn
+    as always (their outline is already the data's — the parse level skipped squaring and
+    pulling). Tula, one debug run's `road meshing:` lines: 161 k vertices in 6 ms, against
+    1.09 M in 315 ms for the full build (790 k in 264 ms on the parse level).
   - **A one-off window** — `ROADS_AT=x,y[,half]` (map metres, half 40 m by default)
     replaces the manifest column with a single window around that point
     (`samples.rs::window_from_env`), so a report's place can be shot before/after without

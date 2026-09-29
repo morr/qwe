@@ -356,6 +356,13 @@ fn park_on(
     layout: &ParkingLayout,
     started: std::time::Instant,
 ) -> ParkedCars {
+    // сырой OSM, второй уровень: машины — наша достройка, их нет вовсе
+    if map.knobs.raw.draws_raw() {
+        return ParkedCars {
+            took: started.elapsed(),
+            ..Default::default()
+        };
+    }
     // разрывы — по **всем** настоящим улицам, а не только по парковочным: ряд
     // обязан прерваться и там, где к жилой улице примыкает другая жилая, — и
     // на клиньях между сечениями улицы: бордюр там ближе к оси; те же

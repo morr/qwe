@@ -314,9 +314,14 @@ pub fn mesh_surfaces(
         // рисовала на въезде градиент поперёк дороги.
         parking.push_polygon(&area.outer, &area.holes, PARKING_COLOR.to_linear());
     }
+    // сырой OSM, второй уровень: стоянка и площадка — своими полигонами, без
+    // раскладки мест и разметки поля (`osm::parse::RawOsm`)
+    let raw = map.knobs.raw.draws_raw();
     let mut parking_lines = MeshBuilder::default();
     for (area, stalls) in map.parking.iter().zip(&parking_layout.0) {
-        parking::push_markings(&mut parking_lines, area, stalls);
+        if !raw {
+            parking::push_markings(&mut parking_lines, area, stalls);
+        }
     }
 
     // площадка — покрытие своего цвета, и на нём разметка (`map::pitch`).
@@ -329,7 +334,7 @@ pub fn mesh_surfaces(
         push_area(&mut pitches, area, pitch::color(kind), &PITCH_RIM);
     }
     let mut pitch_lines = MeshBuilder::default();
-    for area in &map.pitches {
+    for area in map.pitches.iter().filter(|_| !raw) {
         pitch::push_markings(&mut pitch_lines, area);
     }
 
