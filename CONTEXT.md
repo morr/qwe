@@ -1731,7 +1731,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     none on its partner's side), on the band edges (half width + sidewalk) and on an arc
     of the **same centre** — the radius smaller by exactly the sidewalk width, so a
     constant band follows the kerb round the corner. A radius under the sidewalk width
-    leaves that corner square, as it is on the ground.
+    leaves that corner square, as it is on the ground. Where an arm's edge runs straight
+    for less than the tangent — a ring arc, drawn in chords of a couple of metres — the
+    corner is a **bend** (`corners::bend`, `KerbReturns::bends`): the same arc seated on
+    the **curved** edges (the arms' axes offset by the half widths), 60°–155° apart only
+    (sharper is a nose's, or a ring's gore); triangulated whole.
   - **Nose** (`map/roads/corners.rs::nose`) — the rounded tip of the island between two
     arms of a **sharp fork**: under 25°, or under 60° where the kerb return did not fit.
     Not a fillet (its tangent would run tens of metres) but an arc of a small radius

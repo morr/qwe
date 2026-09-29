@@ -633,6 +633,8 @@ pub struct RoadReport {
     pub outer_corners: [usize; 2],
     /// Носы острых развилок (`roads/corners.rs`), всех слоёв.
     pub noses: usize,
+    /// Изогнутые скругления (`corners::bend`) — у колец и гнутых подходов.
+    pub bends: usize,
     /// Лоскуты газона обочин, замощённые плиткой (`roads/scraps.rs`).
     pub lawn_scraps: usize,
     /// Подготовка дорог (`roads/drawn.rs`): переезды, стежки, клинья,
@@ -687,6 +689,7 @@ impl std::fmt::Display for RoadReport {
             sidewalk_returns,
             outer_corners: [outer, outer_sidewalks],
             noses,
+            bends,
             lawn_scraps,
             drawn:
                 DrawnStats {
@@ -723,7 +726,7 @@ impl std::fmt::Display for RoadReport {
              {zebras} ({osm_zebras} from OSM), stop lines {stop_lines}, pockets {pockets}, \
              turn paths {turns}, arrows {arrows}, leading roads {leading}, kerb returns {kerb_returns} + \
              {sidewalk_returns} on sidewalks, outer corners {outer} + {outer_sidewalks} on \
-             sidewalks, noses {noses}, lawn scraps {lawn_scraps}, stitches {stitches}, kerb pockets {kerb_pockets}, turning circles {turning_circles}, driveway crossings \
+             sidewalks, noses {noses}, bends {bends}, lawn scraps {lawn_scraps}, stitches {stitches}, kerb pockets {kerb_pockets}, turning circles {turning_circles}, driveway crossings \
              {crossings}, rings {rings} ({webs} webs), small islands {islands}, gores {gores}, safety islands {refuges} + {island_areas} areas, \
              carriageway areas {carriageways}, walkway areas {walkways}, tapers {tapers}, merges {merges} ({merge_edges} edges), medians {paved} paved + {lawns} \
              lawn (tram beds {beds}), tram bands {tram_bands}, smooth seams {seams}, tight corners {tight}, bridges {bridges} of \
@@ -876,7 +879,7 @@ pub fn mesh_roads_with_ruts(
     }
     // носы острых развилок идут по гнутым кромкам лент, и веер из острия
     // их не покрыл бы — триангуляция целиком; носов в городе сотни
-    for (fill, outline) in &kerb_returns.noses {
+    for (fill, outline) in kerb_returns.noses.iter().chain(&kerb_returns.bends) {
         let (builder, color) = match fill {
             corners::Fill::Road(RoadClass::Street) => (&mut streets, ROAD_COLOR),
             corners::Fill::Road(RoadClass::Alley) => (&mut alleys, ALLEY_COLOR),
@@ -1412,6 +1415,7 @@ pub fn mesh_roads_with_ruts(
             kerb_returns
                 .noses
                 .iter()
+                .chain(&kerb_returns.bends)
                 .filter(|(fill, _)| paved_fill(fill))
                 .map(|(_, outline)| outline),
         )
@@ -1638,6 +1642,7 @@ pub fn mesh_roads_with_ruts(
         arrows: if style.arrows { turns.arrows.len() } else { 0 },
         kerb_returns: kerb_returns.roads.len() + kerb_returns.unpaved.len() - kerb_returns.outer[0],
         sidewalk_returns: kerb_returns.sidewalks.len() - kerb_returns.outer[1],
+        bends: kerb_returns.bends.len(),
         outer_corners: kerb_returns.outer,
         noses: kerb_returns.noses.len(),
         lawn_scraps: lawn_scraps.len(),

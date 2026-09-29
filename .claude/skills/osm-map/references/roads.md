@@ -216,7 +216,7 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   hands it over as the band from the axis to the verge edge on its 2.5 m points, and the
   corner lawns `KerbReturns::verge_lawns` whole) **minus the paving around it** — every
   paved carriageway and paved path as a band of `Drawn::band_half` per side on its ribbon
-  axis, the verge tile bands, the street/sidewalk kerb returns, noses, the
+  axis, the verge tile bands, the street/sidewalk kerb returns, noses and bends, the
   verge corners and pads — in one `i_overlay` difference per lawn piece, pieces across
   threads (`in_parallel`), the paving cut into `CHUNK` 16-link pieces and found through a
   `Grid` of 32 m cells. **Only the ends of a verge lawn that end in a node are asked**
@@ -245,7 +245,7 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   lawn; a band is taken **per side** (`band_half`), not by the wider one, because
   over-counted paving is what could fake a small enclosed piece. Mapped greens (`parks`,
   `grass`) are never asked — a real small lawn in a square is a polygon of its own, not
-  a verge. Tula: 1078 lawn pieces asked, **144 scraps** (`lawn scraps` in the `road
+  a verge. Tula: 1078 lawn pieces asked, **142 scraps** (`lawn scraps` in the `road
   meshing:` line); the road build 314 → 350 ms (`map_meshing`, dev, five alternating
   runs), ~22 ms of it the differences across threads (176 ms on one), ~6 ms the paving.
   Pinned by `a_lawn_scrap_enclosed_by_paving_is_tiled` and `scraps::tests`.
@@ -2012,6 +2012,36 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
       layers' 849 k vertices, the build unmoved (215–221 ms before, 210–213 after, the
       `map_meshing` bench). The first cut built the trail for every arm and searched the
       whole second axis at every station: +90 ms.
+    - **A curved edge gets a bend** (`corners::bend`, `KerbReturns::bends`, R26): where
+      the straight fillet does not fit because an arm's straight run is shorter than the
+      tangent. A ring is redrawn on an ellipse in chords of centimetres of sag
+      (`rings.rs`), so its arm's run is the couple of metres a chord stays within
+      `STRAIGHT_TOLERANCE` — Belgorod's Ø 29 m ring (way 45246617) gave runs of 1–2.7 m
+      against a tangent of 3.6, and the entry of ул. Чапаева (a living street, 2.5 m)
+      met the ring with square corners, the ring's sidewalk band ending in a sharp wedge
+      in the carriageway on both sides. The bend is the same arc seated on the **real**
+      edges: both arms' `Arm::trail` (cut to `BEND_REACH` 40 m) offset by the half widths,
+      the corner is their first crossing, and the centre starts on the bisector of the
+      two edges' first directions and is **settled** `BEND_SETTLE` 8 times to stand one
+      radius off both polylines (the nose's trick); a foot at the corner or at the end of
+      the reach, or an arc off an edge by more than `BEND_FIT` 5 cm, gives nothing. The
+      outline — corner, the first edge to the foot, the arc, the second edge back — is
+      concave where a ring's edge bulges into the corner, so it is triangulated whole
+      (`bends`, pushed with the noses). Its sides go `BEND_OVERLAP` 0.3 m under the
+      ribbons, not `OVERLAP`: the edge is computed on the dense axis while the ribbon
+      lays its curved edge in chords between the vertices it keeps, and 5 cm left a dotted
+      crack along the side (Rostov 06). Tried after the fillet in the street group (not
+      for a mixed dirt/asphalt pair) and in the sidewalk group (on `half + sidewalk`,
+      radius less the sidewalk, the concentric rule); the verge corner and the kerb pad
+      stay on the straight `fillet_arc`. **Only 60°–155°** (`NOSE_MAX_ANGLE`..`MAX_ANGLE`):
+      sharper is a nose's, and at a ring an approach bent in at 25° (`bend_approach`)
+      meets the ring at ~30° — a 6 m bend there poured asphalt twenty metres into the
+      island's gore. Across the gallery the bends round every ring entry that had square
+      corners (Ryazan 01/04/05/06, Oryol 02, Rostov 06, Kaluga 03) and a few city corners
+      whose run a smoothed bend had cut (Tula 05, 15, 18, 27); Tula 04, 17 and Belgorod
+      01–02 did not move, Tula 20 by a handful of pixels. Tula: 464 bends (`bends` in the
+      `road meshing:` line); `kerb_returns` itself did not move past the noise (a trail
+      and two offsets only where the fillet failed).
     - **A sharp fork of two streets gets a hatched gore ahead of its nose**
       (`corners::fork_gore`, `KerbReturns::fork_gores` → `Gores::add_forks`, painted like
       every gore by `road_paint_islands`). The nose stands where the ribbons' edges have
