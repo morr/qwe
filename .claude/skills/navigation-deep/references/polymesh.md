@@ -362,7 +362,16 @@ was born in the vendored copy and upstreamed as vleue/polyanya#151 (merged rewor
 a search-node arena), like the immediate `NotFound` return (#150) — both now arrive with
 the vendored master itself. What stays a **local `QWE:` patch** in `vendor/polyanya` (a
 `[patch.crates-io]` path dep) is `Mesh::get_path_on_layers` — the polled search honoring
-blocked layers with `Coords` ends, which upstream does not have. Belt and braces on top:
+blocked layers with `Coords` ends, which upstream does not have — and **dedup from the
+first pop** (`SearchInstance::new`, `recording: true`). Upstream turns the dedup on only
+after 512 pops in a row without `f` rising, and on our chunk seams that detector never
+fires: the rings are many and short, `f` rises between them and resets the counter.
+Belgorod, radius 0.2, a 2.6 km corridor of 3010 polygons: 111 647 of 133 317 pops were
+exact repeats, the budget ran out and the game panicked; with dedup always on it is 26 ms.
+Cost on healthy searches is noise (Tula, 1000 queries, `polymesh_bench`: 10.52 vs
+10.31 ms mean, 82 vs 77 worst, same RSS). A search spending tens of pops per open polygon
+while the Tula set spends ~1.3 is the signature of this class — count repeats of the full
+node key before blaming the budget. Belt and braces on top:
 `bounded_path` is the **only door to polyanya** — the corridor branch included, via that
 `get_path_on_layers` (the blocking `path_on_layers` is not used, its internal
 limit counts the whole mesh and cannot be interrupted). The external work budget scales
