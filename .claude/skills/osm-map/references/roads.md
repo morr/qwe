@@ -197,7 +197,16 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   gets a kerb pad** (`corners.rs::kerb_pad`): tile `KERB_PAD_WIDTH` 3 m deep along the
   road fillet's own arc (same centre, `FilletArc`), running on `KERB_PAD_RUN` 4 m along
   each straight kerb, into `KerbReturns::verges` — the zebras land at the corner, and
-  without it they ended on grass, a lawn sickle between two lawns (Tula 01).
+  without it they ended on grass, a lawn sickle between two lawns (Tula 01). The run
+  stops at the first shared node on the arm's straight run (`Arm::crossed`): a footway
+  crossing the street right past the corner lays its own ribbon over the verge, and the
+  pad's tail beyond it stood in the lawn as a square of tile a metre across
+  (Гоголевская at Халтурина, R10). **An arc tighter than the pad** (a drive's 2.5 m, or a
+  fillet clamped by a short straight run) is not an annulus — its inner arc would
+  collapse into the centre, and where an arm has no tail (its straight edge ends at the
+  tangent) a tooth of lawn showed behind the centre; there the pad is the whole corner
+  `KERB_PAD_WIDTH` deep from both kerbs, one convex piece from the arc out to where the
+  two back edges meet.
   In a microdistrict (Фрунзе in Tula, the district frame d2)
   the tile laid from the kerb to a footway fifteen metres off made the street read as
   poured concrete; there it is a lawn with the footway on it, as in any Soviet yard,

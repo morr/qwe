@@ -167,6 +167,10 @@ struct Arm<'d> {
     direction: Vec2,
     /// Сколько метров край ленты идёт прямо — до следующей вершины.
     run: f32,
+    /// Где луч пересекает другая дорога — ближайший общий узел, м по оси от
+    /// узла; нет такого в досягаемости хвоста площадки — бесконечность.
+    /// Площадка плитки у бордюра ([`kerb_pad`]) за него не тянется.
+    crossed: f32,
     /// Дорога и её торец (`0` — начало, `1` — конец), если луч — торец пути.
     end: Option<(usize, usize)>,
     /// Своя полуширина дороги — та, до которой клин у торца (`half` в узле
@@ -395,6 +399,22 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                     }
                     run = along;
                 }
+                // первый общий узел по оси, докуда может дотянуться хвост
+                // площадки у бордюра: за ним дорогу пересекает дорожка или
+                // проезд
+                let mut crossed = f32::INFINITY;
+                let (mut at, mut reach) = (vertex, 0.0);
+                while let Some(index) = step(at, forward) {
+                    if index == vertex || reach > run + KERB_PAD_RUN {
+                        break;
+                    }
+                    reach += path[index].distance(path[at]);
+                    at = index;
+                    if nodes.is_shared(path[index]) {
+                        crossed = reach;
+                        break;
+                    }
+                }
                 // Кромка прямая только до клина: дальше лента сужается, и
                 // касательная, заведённая в клин, торчала из-под него шипом
                 // асфальта и тротуара (пример 08, улица в 9 м с клином к
@@ -455,6 +475,7 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                     verge,
                     direction,
                     run,
+                    crossed,
                     end: at_end.then_some((index, usize::from(vertex == last))),
                     full: road.width / 2.0,
                     widening,
@@ -849,9 +870,10 @@ fn fillet(
 
 /// Площадка плитки у бордюрной дуги угла между обочинами с газоном
 /// ([`KERB_PAD_WIDTH`]): кольцевой сектор за дугой скругления дорог
-/// (`halves`, `radius` — те же, что у него) и по прямому хвосту
-/// [`KERB_PAD_RUN`] вдоль края каждой дороги. Куски — выпуклые, каждый
-/// веером из первой вершины.
+/// (`halves`, `radius` — те же, что у него; дуга уже площадки — весь угол на
+/// её ширину от обеих кромок) и по прямому хвосту [`KERB_PAD_RUN`] вдоль
+/// края каждой дороги — не дальше дороги, которая её пересекает
+/// ([`Arm::crossed`]). Куски — выпуклые, каждый веером из первой вершины.
 fn kerb_pad(
     node: Vec2,
     first: &Arm,
@@ -865,24 +887,54 @@ fn kerb_pad(
     // кромка заходит под асфальт на `OVERLAP`, внутренняя дуга — того же
     // центра, на ширину площадки ближе к нему
     let outer: Vec<Vec2> = arc.points(OVERLAP).collect();
-    let inner: Vec<Vec2> = arc.points(-KERB_PAD_WIDTH.min(arc.radius)).collect();
-    let mut pieces: Vec<Vec<Vec2>> = outer
-        .windows(2)
-        .zip(inner.windows(2))
-        .map(|(out, inn)| vec![out[0], out[1], inn[1], inn[0]])
-        .collect();
+    let sides = [arc.side_first, arc.side_second];
+    let alongs = [arc.along_first, arc.along_second];
+    let mut pieces: Vec<Vec<Vec2>> = if arc.radius > KERB_PAD_WIDTH {
+        let inner: Vec<Vec2> = arc.points(-KERB_PAD_WIDTH).collect();
+        outer
+            .windows(2)
+            .zip(inner.windows(2))
+            .map(|(out, inn)| vec![out[0], out[1], inn[1], inn[0]])
+            .collect()
+    } else {
+        // Дуга уже площадки: внутренняя сходилась в центр, и за ним, где у
+        // луча нет хвоста (его прямой край кончился у касания), в угол
+        // площадки проглядывал газон зубцом (Тула, Халтурина у Гоголевской).
+        // Здесь площадка — весь угол на её ширину от обеих кромок: от дуги
+        // по кромкам до задних краёв и до угла, где те сходятся.
+        let determinant = sides[0].perp_dot(sides[1]);
+        if determinant.abs() < 1e-6 {
+            return Vec::new();
+        }
+        // на ширине площадки за обеими кромками: `side · (p − угол) = W`
+        let back = arc.corner
+            + Vec2::new(sides[1].y - sides[0].y, sides[0].x - sides[1].x) * KERB_PAD_WIDTH
+                / determinant;
+        // по кромке — докуда она на ширину площадки от другой кромки
+        let edge = |index: usize| {
+            let reach = KERB_PAD_WIDTH / alongs[index].dot(sides[1 - index]).max(1e-3);
+            arc.corner + alongs[index] * reach.max(arc.tangent) - sides[index] * OVERLAP
+        };
+        let mut outline = vec![back, edge(0)];
+        outline.extend(&outer);
+        outline.push(edge(1));
+        vec![outline]
+    };
+    // хвост — не дальше прямого края и не за дорожку, пересекающую улицу:
+    // за ней снова газон, и хвост торчал за её лентой квадратом плитки в
+    // газоне (Тула, Гоголевская у Халтурина, R10)
     for (on, along, side, room) in [
         (
             arc.on_first,
-            first.direction,
+            arc.along_first,
             arc.side_first,
-            first.run - arc.t_first,
+            first.run.min(first.crossed) - arc.t_first,
         ),
         (
             arc.on_second,
-            second.direction,
+            arc.along_second,
             arc.side_second,
-            second.run - arc.t_second,
+            second.run.min(second.crossed) - arc.t_second,
         ),
     ] {
         let run = KERB_PAD_RUN.min(room - arc.tangent);
@@ -908,6 +960,9 @@ struct FilletArc {
     /// Где от узла вдоль лучей край сошёлся с краем, м.
     t_first: f32,
     t_second: f32,
+    /// Направления кромок от угла и нормали к ним наружу, в угол.
+    along_first: Vec2,
+    along_second: Vec2,
     side_first: Vec2,
     side_second: Vec2,
     from: Vec2,
@@ -993,6 +1048,8 @@ fn fillet_arc(
         tangent,
         t_first: t,
         t_second: s,
+        along_first,
+        along_second,
         side_first,
         side_second,
         from,
@@ -1531,6 +1588,100 @@ mod tests {
                 .iter()
                 .all(|point| point.x <= -10.0 + OVERLAP + 1e-3),
             "{south_west:?}"
+        );
+    }
+
+    /// Плитка у бордюра угла с газоном обочины кончается на дорожке,
+    /// пересекающей улицу сразу за углом: за её лентой снова газон, и хвост
+    /// площадки торчал в него квадратом плитки (Тула, Гоголевская у Халтурина).
+    #[test]
+    fn the_kerb_pad_stops_at_a_path_crossing_the_street() {
+        use crate::map::osm::model::SidewalkSide;
+        let verged = |points: Vec<Vec2>| RoadLine {
+            sidewalks: [SidewalkSide::None; 2],
+            verges: [12.0; 2],
+            ..street(points, 12.0)
+        };
+        let path = RoadLine {
+            class: RoadClass::Alley,
+            ..street(
+                vec![
+                    Vec2::new(14.0, -30.0),
+                    Vec2::new(14.0, 0.0),
+                    Vec2::new(14.0, 30.0),
+                ],
+                3.0,
+            )
+        };
+        let roads = [
+            verged(vec![
+                Vec2::new(-50.0, 0.0),
+                Vec2::ZERO,
+                Vec2::new(14.0, 0.0),
+                Vec2::new(50.0, 0.0),
+            ]),
+            verged(vec![
+                Vec2::new(0.0, -50.0),
+                Vec2::ZERO,
+                Vec2::new(0.0, 50.0),
+            ]),
+            path,
+        ];
+        let found = walked_returns_of(&roads, true);
+        let north_east: Vec<Vec2> = found
+            .verges
+            .iter()
+            .flatten()
+            .copied()
+            .filter(|point| point.x > 0.0 && point.y > 0.0)
+            .collect();
+        assert!(!north_east.is_empty(), "у угла нет площадки");
+        // касание дуги в (12, 6), дорожка — на x = 14
+        let reach = north_east.iter().map(|point| point.x).fold(0.0, f32::max);
+        assert!(reach <= 14.0 + 1e-3, "{reach}");
+    }
+
+    /// Площадка за дугой уже своей ширины лежит на всю ширину от обеих
+    /// кромок: внутренняя дуга сходилась в центр, и за ним в угол площадки
+    /// проглядывал газон зубцом (Тула, Халтурина у Гоголевской).
+    #[test]
+    fn a_kerb_pad_behind_a_tight_arc_keeps_its_depth() {
+        use crate::map::osm::model::SidewalkSide;
+        let verged = |road: RoadLine| RoadLine {
+            sidewalks: [SidewalkSide::None; 2],
+            verges: [12.0; 2],
+            ..road
+        };
+        // оба прямых края кончаются у касаний дуги — хвостов у площадки нет
+        let roads = [
+            verged(street(
+                vec![
+                    Vec2::new(-50.0, 0.0),
+                    Vec2::ZERO,
+                    Vec2::new(5.0, 0.0),
+                    Vec2::new(20.0, -20.0),
+                ],
+                12.0,
+            )),
+            verged(with_highway(
+                street(
+                    vec![Vec2::ZERO, Vec2::new(0.0, 8.5), Vec2::new(20.0, 30.0)],
+                    5.0,
+                ),
+                Highway::Service,
+            )),
+        ];
+        let found = walked_returns_of(&roads, true);
+        // угол кромок (2.5, 6), дуга проезда в 2.5 м — центр (5, 8.5); за ним
+        // площадка идёт до 3 м от обеих кромок
+        let behind = Vec2::new(5.25, 8.75);
+        assert!(
+            found
+                .verges
+                .iter()
+                .any(|outline| point_in_polygon(behind, outline)),
+            "{:?}",
+            found.verges
         );
     }
 
