@@ -746,7 +746,25 @@ arches.
       `Industrial` or `Retail` (which is settled by its size) drops into `LOW_RISE_WALLS`,
       because a low building is neither a panel block nor a curtain wall whatever OSM calls
       it — and the retail exception is only about the curtain wall: neither trade table
-      carries a panel. The seed is read from **other bytes**
+      carries a panel. **A hull deeper than housing is not housing**: a `BuildingUse::Other`
+      (`building=yes` and the like — no apartments/residential tag) whose plan is deeper than
+      `DEEP_HULL_MIN` 30 m (`material::is_deep_hull`) takes `DEEP_HULL_WALLS` — shed 7,
+      plaster 3, no panel and no brick, so no balcony either (`balcony_house` asks the
+      cladding) — before the low-rise arm, since a one-storey 100 m hull is a warehouse, not
+      a cottage. A residential section is 12–18 m deep, a point tower up to ~25. Depth is
+      read **twice and both must pass**: the short side of `min_area_rect`, and the short
+      side of the *equivalent rectangle* (same area and perimeter as the plan, courtyards
+      subtracted and their rims added) — equal to the span on a solid box, the wing width on
+      a courtyard block, an L or a U. The span alone would have taken another 258 houses in
+      Oryol and 240 in Tula, courtyard and L-shaped housing; an area rule (> 3000 m²) was
+      rejected because it catches long 20–29 m slabs. Cache v15, `building=yes` ways deep by
+      both measures: Oryol 112 (the R36 hull on Lomonosova 6/5, 127 × 144, among them), Tula
+      100 — an upper bound, as a `shop`/`amenity` on the outline moves some of them to
+      another use first; only 1 and 13 carry `building:levels ≥ 4`, and Tula's are the Тулаточмаш
+      works on Kominterna, a works hall on Demidovskaya (both inside `landuse=industrial`),
+      «Октава», the concert hall, a hotel — none of them housing. The roof is
+      not moved: `kind_of` still covers a large `Other` with `APARTMENTS_ROOFS`.
+      The seed is read from **other bytes**
       than the roof's (`>> 4`, `>> 12`, `>> 20` against the roof's raw, `>> 8`, `>> 16`):
       the two materials must be independent, or every panel block would also be under one
       bitumen. Kremlin is brick (every wall `WallMark::Solid` — no window, and `push_doors`

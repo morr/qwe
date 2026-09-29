@@ -804,6 +804,60 @@ fn the_cladding_follows_the_use_and_the_height() {
     }
 }
 
+/// Корпус без назначения глубже жилого (R36: Орёл, Ломоносова 6/5, 127 × 144 м,
+/// `building=yes`) — не панелька: ни панели, ни кирпича, ни одного балкона, на
+/// каком бы посеве он ни стоял. Жилая пластина 15 × 80 и каре из 15-метровых
+/// крыльев с тем же `building=yes` остаются в жилой таблице, как были.
+#[test]
+fn a_hull_deeper_than_housing_carries_no_balconies() {
+    let _sun = crate::map::default_sun();
+    let at = |outer: Vec<Vec2>, offset: Vec2| -> Vec<Vec2> {
+        outer.into_iter().map(|point| point + offset).collect()
+    };
+    let mut slab_kinds = Vec::new();
+    let mut court_kinds = Vec::new();
+    for step in 0..40 {
+        let offset = Vec2::new(step as f32 * 211.0, step as f32 * 37.0);
+
+        let hull = building(
+            at(oblong(130.0, 145.0), offset),
+            Some(27.0),
+            AreaKind::Building,
+        );
+        assert!(is_deep_hull(&hull));
+        let kind = wall_of(&hull).kind;
+        assert!(
+            !matches!(kind, WallKind::Panel | WallKind::Brick),
+            "корпус 130 × 145 одет в {kind:?}"
+        );
+        assert!(
+            wall_marks(&hull, kind).iter().all(|seed| *seed < 0.0),
+            "балконы на корпусе 130 × 145 ({kind:?})"
+        );
+
+        let slab = building(
+            at(oblong(15.0, 80.0), offset),
+            Some(27.0),
+            AreaKind::Building,
+        );
+        assert!(!is_deep_hull(&slab));
+        slab_kinds.push(wall_of(&slab).kind);
+
+        // каре 60 × 60 с двором 30 × 30: габарит 60, крыло 15
+        let mut court = building(
+            at(oblong(60.0, 60.0), offset),
+            Some(27.0),
+            AreaKind::Building,
+        );
+        court.holes = vec![at(rect(Vec2::splat(15.0), Vec2::splat(45.0)), offset)];
+        assert!(!is_deep_hull(&court));
+        court_kinds.push(wall_of(&court).kind);
+    }
+    // жилая таблица как была: панель у пластины и у каре встречается
+    assert!(slab_kinds.contains(&WallKind::Panel), "{slab_kinds:?}");
+    assert!(court_kinds.contains(&WallKind::Panel), "{court_kinds:?}");
+}
+
 /// Каждая облицовка **из таблиц** обязана встречаться в городе. Тест не про
 /// красоту: он ловит и мёртвый слот в таблице, и слабый разбор посева — сетка
 /// домов ровным шагом это ровно тот вход, на котором плохо перемешанный хеш

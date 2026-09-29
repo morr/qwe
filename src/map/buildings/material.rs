@@ -43,7 +43,7 @@ use super::garages::GarageRun;
 // один смысл «это дом, а не корпус».
 use super::roofs::SMALL_FOOTPRINT_MAX;
 use super::{fortress, temples};
-use crate::map::meshing::{ATTRIBUTE_ROOF, Roof, min_area_rect};
+use crate::map::meshing::{ATTRIBUTE_ROOF, Roof, min_area_rect, ring_perimeter};
 use crate::map::osm::model::is_big_box;
 use crate::map::osm::{AreaKind, BuildingUse, PolyArea};
 use crate::map::seed::seed_from_point;
@@ -841,6 +841,11 @@ fn wall_kind_of(building: &PolyArea, storeys: f32, seed: u32) -> WallKind {
         {
             &HOUSE_WALLS
         }
+        // корпус без назначения глубже любой жилой секции — не жильё, какой бы
+        // высоты он ни был: ни панели, ни кирпича, а с ними и балконов
+        // (`layers::balcony_house`) у него нет. До порога малоэтажности, потому
+        // что низкий корпус в сто метров — тот же склад, а не малоэтажка
+        BuildingUse::Other if is_deep_hull(building) => &DEEP_HULL_WALLS,
         _ if storeys < LOW_RISE_STOREYS => &LOW_RISE_WALLS,
         BuildingUse::Apartments => &APARTMENTS_WALLS,
         BuildingUse::Commercial => &COMMERCIAL_WALLS,
@@ -857,6 +862,62 @@ fn wall_kind_of(building: &PolyArea, storeys: f32, seed: u32) -> WallKind {
 /// константа, а не совпадающее число: одна граница, один смысл «панельного
 /// дома тут нет».
 const LOW_RISE_STOREYS: f32 = super::layers::BALCONY_STOREYS_MIN;
+
+/// Глубина плана, начиная с которой дом без назначения — корпус, а не жильё, м.
+/// Жилая секция глубиной 12–18 м, точечный дом — до ~25: свет в квартиры идёт
+/// с двух фасадов, и глубже жилья не строят. Дальше — цех, склад, НИИ, ТЦ.
+pub(super) const DEEP_HULL_MIN: f32 = 30.0;
+
+/// Корпус глубже жилого ([`DEEP_HULL_MIN`]) — по **обеим** мерам глубины сразу:
+///
+/// * короткая сторона минимального описанного прямоугольника (`min_area_rect`,
+///   тот же, по которому идёт конёк и длинная ось плана) — габарит;
+/// * короткая сторона **равновеликого прямоугольника** — того, у которого те же
+///   площадь и периметр, что у плана (с дворами: их площадь вычтена, их
+///   периметр прибавлен). У сплошного прямоугольника она равна габариту, а у
+///   каре, буквы Г или П из жилых крыльев — ширине крыла.
+///
+/// Одного габарита мало, и это измерено: квартал-каре или Г-образный дом в
+/// 15 м шириной даёт габарит в 60–100 м, и одним им в «корпуса» ушли бы ещё
+/// 258 домов Орла и 240 Тулы с `building=yes` — ровно жилые. Порог по площади
+/// (> 3000 м²) отвергнут по той же причине с другой стороны: он ловит длинные
+/// жилые пластины 20–29 м шириной, у которых глубина жилая.
+///
+/// Если равновеликого прямоугольника нет (план компактнее квадрата — круг,
+/// восьмиугольник), глубина — сторона квадрата того же периметра.
+pub(super) fn is_deep_hull(building: &PolyArea) -> bool {
+    let Some(rect) = min_area_rect(&building.outer) else {
+        return false;
+    };
+    let span = (rect[1] - rect[0])
+        .length()
+        .min((rect[2] - rect[1]).length());
+    span > DEEP_HULL_MIN && equivalent_width(building) > DEEP_HULL_MIN
+}
+
+/// Короткая сторона прямоугольника с той же площадью и тем же периметром, что у
+/// плана: корень `w² − (P/2)·w + A = 0`.
+fn equivalent_width(building: &PolyArea) -> f32 {
+    let area = footprint_area(building)
+        - building
+            .holes
+            .iter()
+            .map(|hole| crate::map::osm::model::signed_ring_area(hole).abs())
+            .sum::<f32>();
+    let half = (ring_perimeter(&building.outer)
+        + building
+            .holes
+            .iter()
+            .map(|hole| ring_perimeter(hole))
+            .sum::<f32>())
+        / 2.0;
+    let discriminant = half * half - 4.0 * area;
+    if discriminant > 0.0 {
+        (half - discriminant.sqrt()) / 2.0
+    } else {
+        half / 2.0
+    }
+}
 
 /// Таблицы материалов стен — по десять слотов, чтобы читались как проценты,
 /// ровно как кровельные.
@@ -894,6 +955,21 @@ const APARTMENTS_WALLS: [WallKind; 10] = [
     WallKind::Brick,
     WallKind::Brick,
     WallKind::Brick,
+    WallKind::Plaster,
+];
+/// Стена корпуса без назначения, глубже жилого ([`is_deep_hull`]): профлист
+/// цеха и склада, реже штукатурка старого корпуса. Ни панели, ни кирпича — это
+/// те две стены, что носят балконы, а у цеха их не бывает.
+const DEEP_HULL_WALLS: [WallKind; 10] = [
+    WallKind::Shed,
+    WallKind::Shed,
+    WallKind::Shed,
+    WallKind::Shed,
+    WallKind::Shed,
+    WallKind::Shed,
+    WallKind::Shed,
+    WallKind::Plaster,
+    WallKind::Plaster,
     WallKind::Plaster,
 ];
 /// Стена гипермаркета: композитная кассета почти всегда, изредка окрашенный

@@ -801,7 +801,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   `LOW_RISE_STOREYS` (4) that the tag has not already settled (`House`, `Garage`,
   `Industrial` keep their own tables, `Retail` its size, `Church` its `Sacred`) drops into
   the low-rise table, because a low
-  building is neither a panel block nor a curtain wall. `BigBox` is the one cladding whose
+  building is neither a panel block nor a curtain wall. A **deep hull** — an untagged
+  (`Other`) building whose plan is deeper than housing, over `DEEP_HULL_MIN` 30 m both by its
+  bounding span and by the wing width of its equivalent rectangle — is not housing either:
+  shed or plaster, never panel or brick, so never a balcony. `BigBox` is the one cladding whose
   cell is neither the 3.2 m panel nor the 3 m storey — a 7 m cassette bay by a 5.5 m
   trading tier — and the one that carries a **brand band** as geometry over it (**Retail
   box**). The cladding decides three things at
