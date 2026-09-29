@@ -860,7 +860,7 @@ pub(super) fn tagged_sidewalks(tags: &HashMap<String, String>) -> Option<[Sidewa
     if !tags.keys().any(|key| key.starts_with("sidewalk")) {
         return None;
     }
-    let present = |value: &str| {
+    let side_of = |value: &str| {
         if matches!(value, "no" | "none" | "separate") {
             Bare
         } else {
@@ -870,15 +870,15 @@ pub(super) fn tagged_sidewalks(tags: &HashMap<String, String>) -> Option<[Sidewa
     let mut sides = match tags.get("sidewalk").map(String::as_str) {
         Some("left") => [Tagged, Bare],
         Some("right") => [Bare, Tagged],
-        Some(value) => [present(value); 2],
+        Some(value) => [side_of(value); 2],
         None => [Tagged; 2],
     };
     if let Some(value) = tags.get("sidewalk:both") {
-        sides = [present(value); 2];
+        sides = [side_of(value); 2];
     }
     for (side, key) in ["sidewalk:left", "sidewalk:right"].into_iter().enumerate() {
         if let Some(value) = tags.get(key) {
-            sides[side] = present(value);
+            sides[side] = side_of(value);
         }
     }
     if is_oneway_backward(tags) {

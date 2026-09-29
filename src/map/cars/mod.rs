@@ -204,6 +204,14 @@ pub fn detail_for(bucket: usize) -> Option<CarDetail> {
     }
 }
 
+/// Подробность, с которой слой рисуется при этой ступени и этих настройках;
+/// `None` — слоя нет (тумблер снят или зум за последней ступенью). Одно
+/// условие на адаптер, дверь слоя и меш кузовов: снятый слой не расставляет
+/// ничего.
+fn shown_detail(bucket: CarZoomBucket, style: CarStyle) -> Option<CarDetail> {
+    detail_for(bucket.index).filter(|_| style.visible)
+}
+
 /// Замер слоя машин без мира — для офлайн-бенча, по той же причине, что и
 /// `buildings::measure_layers`. Ручки берутся игровые: бенч меряет тот слой,
 /// который город строит на дефолтных настройках, а не произвольный.
@@ -294,7 +302,8 @@ pub fn rebuild_cars(
     // форма дорог: ряд стоит по той же ломаной, по которой `map::roads`
     // кладёт ленту асфальта
     road_shape: Res<RoadShapeOnMap>,
-    (map, layout): (Res<MapData>, Res<ParkingLayout>),
+    map: Res<MapData>,
+    layout: Res<ParkingLayout>,
     mut placement: ResMut<CarPlacement>,
     existing: Query<Entity, With<CarLayerTag>>,
 ) {
@@ -302,7 +311,7 @@ pub fn rebuild_cars(
         commands.entity(entity).despawn();
     }
     // снятый слой не расставляет ничего — ни каркаса, ни разрывов
-    let placed = if detail_for(bucket.index).is_some() && style.visible {
+    let placed = if shown_detail(*bucket, *style).is_some() {
         placement.refresh(*style, road_shape.0, &map, &layout)
     } else {
         false
@@ -503,7 +512,7 @@ pub fn mesh_cars(
     map: &MapData,
     layout: &ParkingLayout,
 ) -> (Vec<LayerMesh>, CarReport) {
-    if detail_for(bucket.index).filter(|_| style.visible).is_none() {
+    if shown_detail(bucket, style).is_none() {
         return mesh_parked(bucket, style, &ParkedCars::default(), false);
     }
     let parked = park_on(style, drawn, map, layout, std::time::Instant::now());
@@ -519,7 +528,7 @@ pub fn mesh_parked(
     parked: &ParkedCars,
     placed: bool,
 ) -> (Vec<LayerMesh>, CarReport) {
-    let Some(detail) = detail_for(bucket.index).filter(|_| style.visible) else {
+    let Some(detail) = shown_detail(bucket, style) else {
         return (
             Vec::new(),
             CarReport {
