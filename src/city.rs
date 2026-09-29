@@ -278,3 +278,35 @@ fn reload_world(city: Res<City>, navtile: Res<NavtileBase>, mut next: ResMut<Nex
     // карты — его владельцы на `OnExit(Playing)` (`navigation`, `determinism`)
     next.set(AppState::Loading);
 }
+
+#[cfg(test)]
+mod tests {
+    use bevy::ecs::system::RunSystemOnce;
+
+    use super::*;
+    use crate::map::RoadShape;
+    use crate::map::osm::MapData;
+
+    /// Спрашивает условие перезагрузки о мире, разобранном с шириной полосы
+    /// по умолчанию, при осевшей ручке `lane_width`.
+    fn moved(settled: Option<f32>) -> bool {
+        let mut world = World::new();
+        world.insert_resource(MapData::default());
+        if let Some(lane_width) = settled {
+            world.insert_resource(RoadShapeOnMap(RoadShape {
+                lane_width,
+                ..default()
+            }));
+        }
+        world.run_system_once(lane_width_moved).unwrap()
+    }
+
+    #[test]
+    fn a_settled_lane_width_off_the_parsed_one_reloads_the_world() {
+        let default = RoadShape::default().lane_width;
+        assert!(!moved(Some(default)));
+        assert!(moved(Some(default + 0.2)));
+        // сцена без `MapPlugin` — ручки нет, перезагружать нечего
+        assert!(!moved(None));
+    }
+}
