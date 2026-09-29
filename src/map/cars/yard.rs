@@ -35,7 +35,7 @@ use super::{
 use crate::map::along::{arclengths, place_on_path};
 use crate::map::grid::Grid;
 use crate::map::meshing::Break;
-use crate::map::osm::model::{Highway, distance_to_segment, point_in_area};
+use crate::map::osm::model::{Highway, distance_to_segment, point_in_area, ring_bounds};
 use crate::map::osm::{MapData, PolyArea, RoadLine};
 use crate::map::roads::network::RoadNodes;
 use crate::map::roads::pockets::RowBreaks;
@@ -93,9 +93,10 @@ impl<'a> Blocked<'a> {
             .chain(&map.water)
             .chain(&map.pitches)
         {
-            let Some((min, max)) = bounds(&area.outer) else {
+            if area.outer.is_empty() {
                 continue;
-            };
+            }
+            let (min, max) = ring_bounds(&area.outer);
             areas_by_cell.insert(min, max, areas.len() as u32);
             areas.push(area);
         }
@@ -155,13 +156,6 @@ impl<'a> Blocked<'a> {
     }
 }
 
-fn bounds(ring: &[Vec2]) -> Option<(Vec2, Vec2)> {
-    let first = *ring.first()?;
-    Some(ring.iter().fold((first, first), |(min, max), &point| {
-        (min.min(point), max.max(point))
-    }))
-}
-
 /// Доля занятых мест у проезда в точке `point`: ноль в частном секторе и там,
 /// где домов рядом нет, полная [`YARD_SHARE`] ползунка среди многоэтажек.
 fn yard_fill(districts: &Districts, point: Vec2) -> f32 {
@@ -172,7 +166,6 @@ fn yard_fill(districts: &Districts, point: Vec2) -> f32 {
 
 /// Ряды вдоль всех дворовых проездов карты. `junctions` и `axes` — по индексу
 /// дороги во всём срезе, как у [`super::park_cars`].
-#[allow(clippy::too_many_arguments)]
 pub(super) fn park_yards(
     roads: &[RoadLine],
     shared: &RoadNodes,

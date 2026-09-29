@@ -49,6 +49,7 @@ use crate::map::grid::Grid;
 use crate::map::osm::model::{
     AreaKind, BuildingUse, MapData, PolyArea, RoadClass, RoadLine, distance_to_segment, ring_area,
 };
+use crate::map::parallel::in_parallel;
 use crate::map::shapes::{Contour, Shape, area_contours, contour_bounds, oriented, ring_of};
 
 /// Больше этого, м², дырка покрытия — уже не карман, а площадка: пустырь,
@@ -155,39 +156,6 @@ pub(super) fn fill_ground_pockets(map: &mut MapData) -> usize {
         });
     }
     sown
-}
-
-/// `work` над каждым из `items` по потокам — результаты в порядке `items`,
-/// так что от числа потоков и их гонки ничего не зависит. Задания разбираются
-/// по одному со счётчика, а не кусками поровну: плитка центра дороже плитки
-/// окраины в десятки раз, и поток с кучей центральных плиток держал бы всех.
-pub(super) fn in_parallel<T: Sync, R: Send>(items: &[T], work: impl Fn(&T) -> R + Sync) -> Vec<R> {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    let next = AtomicUsize::new(0);
-    let workers = std::thread::available_parallelism().map_or(1, usize::from);
-    let mut done: Vec<(usize, R)> = std::thread::scope(|scope| {
-        let handles: Vec<_> = (0..workers.min(items.len()))
-            .map(|_| {
-                let (next, work) = (&next, &work);
-                scope.spawn(move || {
-                    let mut done = Vec::new();
-                    loop {
-                        let index = next.fetch_add(1, Ordering::Relaxed);
-                        let Some(item) = items.get(index) else {
-                            break done;
-                        };
-                        done.push((index, work(item)));
-                    }
-                })
-            })
-            .collect();
-        handles
-            .into_iter()
-            .flat_map(|handle| handle.join().expect("поток прохода карманов упал"))
-            .collect()
-    });
-    done.sort_by_key(|&(index, _)| index);
-    done.into_iter().map(|(_, result)| result).collect()
 }
 
 /// Плитки, которых касается хоть одно звено дороги (с запасом [`MARGIN`]:

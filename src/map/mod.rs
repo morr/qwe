@@ -17,6 +17,7 @@ pub(crate) mod grid;
 mod industry;
 mod meshing;
 pub mod osm;
+mod parallel;
 mod parking;
 mod pitch;
 mod rail;

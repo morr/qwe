@@ -37,6 +37,7 @@ use crate::map::along::{arclengths, place_on_path};
 use crate::map::meshing::{Break, MeshBuilder};
 use crate::map::osm::model::{distance_to_segment, ring_vertex_mean};
 use crate::map::osm::{MapData, PolyArea, RoadLine, TrafficSide};
+use crate::map::parallel::{self, in_parallel};
 use crate::map::parking::{ParkingLayout, Stall};
 use crate::map::roads::network::{RoadNetwork, RoadNodes};
 use crate::map::roads::pockets::{self, KerbLots, Kerbside, POCKET_WIDTH, RowBreaks};
@@ -72,8 +73,9 @@ const _: () = {
 use self::district::Districts;
 pub use body::{Car, CarDetail, CarShape};
 
-/// Шаг парковочного места вдоль улицы, м: машина плюс просвет.
-const CAR_PITCH: f32 = 6.0;
+/// Шаг парковочного места вдоль улицы, м: машина плюс просвет. Одно число с
+/// местом вдоль бордюра в кармане-стоянке — живёт у раскладки, машины его читают.
+const CAR_PITCH: f32 = crate::map::parking::PARALLEL_LENGTH;
 /// Насколько край машины отступает от кромки проезжей части, м. Ноль —
 /// колесо на кромке; полметра оставляют полосу асфальта между рядом и
 /// разметкой, как на настоящей улице.
@@ -326,7 +328,7 @@ pub struct ParkedCars {
 /// Расставить машины: каркас дорог (`Drawn::nodal` — та же узловая ось, по
 /// которой `map::roads` кладёт ленту), разрывы на перекрёстках, застройка
 /// вокруг, ряды вдоль улиц и стоянки.
-pub fn park_all(
+fn park_all(
     style: CarStyle,
     shape: &RoadShape,
     map: &MapData,
@@ -975,15 +977,13 @@ fn park_along(
 /// зума машин: расстановка между порогами не пересчитывается, и на пороге
 /// собираются только кузова.
 ///
-/// Потоки — свои (`std::thread::scope`, как у `parse::lots::pave_lots`), а не
-/// `ComputeTaskPool`: игра отдаёт тому пулу треть ядер (половина уходит
-/// A*-таскам, `main.rs`), а переход порога держит кадр целиком, и ждать ему
-/// некого — пусть работают все ядра.
+/// Потоки — свои, общие с разбором карты ([`in_parallel`]), а не
+/// `ComputeTaskPool`: переход порога держит кадр целиком, и ждать ему некого.
 fn mesh_bodies(cars: &[Car], detail: CarDetail) -> MeshBuilder {
     // сдвиг на метр высоты — общий множитель слоя, а высоту прикладывает
     // каждая машина своей (`CarShape::height`)
     let stretch = shadow::offset(1.0);
-    let workers = std::thread::available_parallelism().map_or(1, usize::from);
+    let workers = parallel::workers();
     let chunk = cars.len().div_ceil(workers).max(BODY_CHUNK_MIN);
     let (shadow_size, body_size) = body::vertices_per_car(detail);
     let build = |chunk: &[Car]| {
@@ -1000,23 +1000,8 @@ fn mesh_bodies(cars: &[Car], detail: CarDetail) -> MeshBuilder {
         }
         (shadows, bodies)
     };
-    let parts: Vec<(MeshBuilder, MeshBuilder)> = std::thread::scope(|scope| {
-        let mut chunks = cars.chunks(chunk);
-        // первый кусок — на вызывающем потоке: ему всё равно ждать
-        let first = chunks.next();
-        let handles: Vec<_> = chunks
-            .map(|chunk| scope.spawn(move || build(chunk)))
-            .collect();
-        first
-            .map(build)
-            .into_iter()
-            .chain(
-                handles
-                    .into_iter()
-                    .map(|handle| handle.join().expect("поток сборки кузовов упал")),
-            )
-            .collect()
-    });
+    let chunks: Vec<&[Car]> = cars.chunks(chunk).collect();
+    let parts: Vec<(MeshBuilder, MeshBuilder)> = in_parallel(&chunks, |&chunk| build(chunk));
     let (shadows, bodies): (Vec<_>, Vec<_>) = parts.into_iter().unzip();
     let ordered: Vec<MeshBuilder> = shadows.into_iter().chain(bodies).collect();
     MeshBuilder::concat(&ordered, workers)

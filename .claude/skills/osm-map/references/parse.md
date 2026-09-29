@@ -571,7 +571,7 @@ be called alone:
     verge cover (at full width there). A block with no sliver keeps its rings as they
     were — no re-tracing, no drift; one cut in two becomes two `PolyArea`s of the same
     kind (a part under `MIN_BLOCK_PART` 1 m² goes). Nothing reads `landuse` by index, so
-    the split is free. Blocks are cut across threads (`pockets::in_parallel`); the log
+    the split is free. Blocks are cut across threads (`map/parallel.rs::in_parallel`); the log
     line says how many blocks lost a sliver and what the cut cost — Tula 66 blocks in
     5–6 ms, Berlin 584 in 41 ms (dev build, `map_meshing`'s parse; the parse's passes
     total 1.2 s there, so about 3 %). Pinned by
@@ -703,9 +703,10 @@ be called alone:
     - **Cost, and why it is threaded.** A lot costs half a dozen `i_overlay` calls, and
       the price of a call is the call, not the geometry — ≈ 0.3 ms even on a four-vertex
       lot — so 349 lots were 0.5–1 s single-threaded against 74 ms for the whole old step.
-      Lots are independent, so `pave_lots` splits them across `available_parallelism`
-      threads (`std::thread::scope`, results applied in order — the output does not
-      depend on the split): the step is **112 ms** on Tula (`map_meshing`'s parse, `dev`
+      Lots are independent, so `pave_lots` hands them to the map's one fan-out
+      (`map/parallel.rs::in_parallel` — `available_parallelism` scoped threads taking lots
+      off a counter, results applied in order — the output does not depend on the
+      split): the step is **112 ms** on Tula (`map_meshing`'s parse, `dev`
       profile), +38 ms per world load — and **137 ms** with the road-only growth and the
       apron (one more boolean each, same run of the bench). **Release buys nothing here**
       — 119–133 ms then, 98–103 once the grids went off SipHash (**The uniform grid**),

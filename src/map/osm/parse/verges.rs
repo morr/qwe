@@ -26,11 +26,11 @@ use i_overlay::core::overlay_rule::OverlayRule;
 use i_overlay::float::single::SingleFloatOverlay;
 
 use super::LANDUSE_OVERLAP;
-use super::pockets::in_parallel;
 use crate::map::along::{arclengths, densify};
 use crate::map::grid::Grid;
 use crate::map::meshing::miter_offsets;
 use crate::map::osm::model::{MapData, PolyArea, RoadLine, ring_area};
+use crate::map::parallel::in_parallel;
 use crate::map::roads::paved_verge;
 use crate::map::shapes::{Contour, area_contours, contour_bounds, oriented, ring_of};
 

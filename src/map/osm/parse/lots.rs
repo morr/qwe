@@ -34,6 +34,7 @@ use crate::map::osm::model::{
     AreaKind, LotKind, MapData, PolyArea, RoadClass, distance_to_area, distance_to_outline,
     distance_to_segment, point_in_area, point_in_polygon, ring_area, ring_bounds, signed_ring_area,
 };
+use crate::map::parallel::in_parallel;
 use crate::map::shapes::{
     ARC, Contour, Shape, area_contours, contour_area, contour_bounds, point_in_shape, ring_of,
     shape_area, stroke,
@@ -163,25 +164,11 @@ struct Paved {
 /// Площадки друг от друга не зависят и считаются **по потокам**: на каждую
 /// уходит с полдюжины булевых операций `i_overlay`, у которых цена — не
 /// геометрия, а сам вызов (≈ 0.3 мс на площадке в четыре вершины), и на 349
-/// площадках Тулы это полсекунды в один поток.
+/// площадках Тулы это полсекунды в один поток. Результаты — в порядке
+/// площадок ([`in_parallel`]), так что от числа потоков ничего не зависит.
 pub(super) fn pave_lots(map: &mut MapData) -> PavedLots {
     let around = Around::of(map);
-    let lots = &map.parking;
-    let workers = std::thread::available_parallelism().map_or(1, usize::from);
-    let chunk = lots.len().div_ceil(workers).max(1);
-    let results: Vec<Option<Paved>> = std::thread::scope(|scope| {
-        let handles: Vec<_> = lots
-            .chunks(chunk)
-            .map(|lots| {
-                let around = &around;
-                scope.spawn(move || lots.iter().map(|lot| around.paved(lot)).collect::<Vec<_>>())
-            })
-            .collect();
-        handles
-            .into_iter()
-            .flat_map(|handle| handle.join().expect("поток прохода стоянок упал"))
-            .collect()
-    });
+    let results: Vec<Option<Paved>> = in_parallel(&map.parking, |lot| around.paved(lot));
     drop(around);
 
     let mut paved = PavedLots::default();

@@ -1903,14 +1903,14 @@ impl MeshBuilder {
     /// (`vec![0; n]` берёт у системы уже обнулённые страницы), так что первое
     /// касание достаётся потокам.
     ///
-    /// Только куски без фактуры (ни ленты, ни кровли): склеивать их пока
-    /// нечему, а атрибут, которого нет у одного из кусков, лёг бы не на каждую
-    /// вершину.
+    /// Только куски без фактуры (ни ленты, ни кровли, ни координат кроны):
+    /// склеивать их пока нечему, а атрибут, которого нет у одного из кусков,
+    /// лёг бы не на каждую вершину.
     pub fn concat(parts: &[MeshBuilder], groups: usize) -> MeshBuilder {
         assert!(
             parts
                 .iter()
-                .all(|part| part.ribbon.is_none() && part.roof.is_none()),
+                .all(|part| part.ribbon.is_none() && part.roof.is_none() && part.crown.is_none()),
             "concat: куски с фактурой не склеиваются"
         );
         let vertices = parts.iter().map(|part| part.positions.len()).sum();
@@ -1992,6 +1992,9 @@ impl MeshBuilder {
         }
         if let Some(roof) = &mut self.roof {
             roof.reserve(vertices);
+        }
+        if let Some(crown) = &mut self.crown {
+            crown.reserve(vertices);
         }
     }
 
