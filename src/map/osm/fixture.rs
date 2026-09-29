@@ -140,8 +140,12 @@ impl Overpass {
     /// Разобранная карта. Идёт через текст, а не мимо него: десериализация
     /// ответа — часть того, что проверяют тесты разбора.
     pub fn parse(&self) -> MapData {
-        super::parse::parse(&self.json(), self.city, super::parse::ParseKnobs::default())
-            .expect("fixture must parse")
+        self.parse_with(super::parse::ParseKnobs::default())
+    }
+
+    /// Разобранная карта при своих входах разбора — ширине полосы, навтайле.
+    pub fn parse_with(&self, knobs: super::parse::ParseKnobs) -> MapData {
+        super::parse::parse(&self.json(), self.city, knobs).expect("fixture must parse")
     }
 
     fn next_id(&self) -> u64 {

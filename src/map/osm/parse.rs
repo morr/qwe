@@ -70,12 +70,18 @@ pub struct ParseKnobs {
     pub navtile: f32,
 }
 
+impl ParseKnobs {
+    /// Входы по умолчанию — дефолты обеих ручек (3.3 м, 2 м). Константой, а
+    /// не только [`Default`]: тест называет её там, где нужна константа.
+    pub const DEFAULT: Self = Self {
+        lane_width: LANE_WIDTH_DEFAULT,
+        navtile: DEFAULT_NAVTILE_SIZE,
+    };
+}
+
 impl Default for ParseKnobs {
     fn default() -> Self {
-        Self {
-            lane_width: LANE_WIDTH_DEFAULT,
-            navtile: DEFAULT_NAVTILE_SIZE,
-        }
+        Self::DEFAULT
     }
 }
 

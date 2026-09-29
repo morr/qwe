@@ -19,9 +19,12 @@ use crate::settings::MAP_SIZE;
 
 /// Фикстуры строятся вокруг гео-центра Тулы — города по умолчанию.
 const CITY: City = City::Tula;
-/// Полуширина `highway=residential` без `lanes`, м: две полосы по классу,
-/// 2 × 3.3 + две кромки по 0.5 (`roads::network::sections`).
-const RESIDENTIAL_HALF: f32 = 3.8;
+/// Полуширина `highway=residential` без `lanes` при входах разбора `knobs`, м:
+/// две полосы по классу и две кромки (`roads::network::sections`) — при
+/// ширине полосы по умолчанию 2 × 3.3 + 2 × 0.5, полуширина 3.8.
+fn residential_half(knobs: ParseKnobs) -> f32 {
+    sections::section_width(Highway::Residential, 2, knobs.lane_width).expect("a street") / 2.0
+}
 
 /// Храм, чья вера досталась ему от города без размеченных храмов.
 const WESTERN_CHURCH: BuildingUse = BuildingUse::Church(Sacred {
@@ -2795,7 +2798,9 @@ fn a_steeply_skewed_house_and_a_large_house_are_squared() {
 #[test]
 fn a_house_on_the_sidewalk_is_pulled_back_into_the_block() {
     // residential 7.6 м: полоса с тротуаром и зазором — 3.8 + 1.67 + 2 от оси
-    let reach = RESIDENTIAL_HALF + sidewalk_band(2.0 * RESIDENTIAL_HALF) + SIDEWALK_CLEARANCE;
+    let reach = residential_half(ParseKnobs::DEFAULT)
+        + sidewalk_band(2.0 * residential_half(ParseKnobs::DEFAULT))
+        + SIDEWALK_CLEARANCE;
     let street = vec![
         CENTER - Vec2::new(300.0, 0.0),
         CENTER + Vec2::new(300.0, 0.0),
@@ -2886,7 +2891,9 @@ fn a_house_on_the_sidewalk_is_pulled_back_into_the_block() {
 /// соседнее здание, укорачивается, пока между ними не останется зазор.
 #[test]
 fn a_pull_is_capped_and_stops_short_of_what_stands_behind() {
-    let reach = RESIDENTIAL_HALF + sidewalk_band(2.0 * RESIDENTIAL_HALF) + SIDEWALK_CLEARANCE;
+    let reach = residential_half(ParseKnobs::DEFAULT)
+        + sidewalk_band(2.0 * residential_half(ParseKnobs::DEFAULT))
+        + SIDEWALK_CLEARANCE;
     let street = vec![
         CENTER - Vec2::new(300.0, 0.0),
         CENTER + Vec2::new(300.0, 0.0),
@@ -2961,7 +2968,8 @@ fn a_pull_is_capped_and_stops_short_of_what_stands_behind() {
 #[test]
 fn a_block_edge_is_pulled_under_the_asphalt() {
     // residential 7.6 м: край полотна с тротуаром — 3.8 + 1.67 от оси
-    let edge = RESIDENTIAL_HALF + sidewalk_band(2.0 * RESIDENTIAL_HALF);
+    let edge = residential_half(ParseKnobs::DEFAULT)
+        + sidewalk_band(2.0 * residential_half(ParseKnobs::DEFAULT));
     let street = vec![
         CENTER - Vec2::new(400.0, 0.0),
         CENTER + Vec2::new(400.0, 0.0),
@@ -3054,11 +3062,12 @@ fn the_parse_reads_the_mapped_edge_for_blocks_and_the_verge_for_houses() {
     };
     let bare = top(&map.landuse[0].outer, 0.0);
     assert!(
-        (bare + RESIDENTIAL_HALF - LANDUSE_OVERLAP).abs() < 0.02,
+        (bare + residential_half(ParseKnobs::DEFAULT) - LANDUSE_OVERLAP).abs() < 0.02,
         "без тротуара квартал тянется к голой кромке: {bare}"
     );
     // тротуар слева (с севера), квартал справа — край всё равно с тротуаром
-    let edge = RESIDENTIAL_HALF + sidewalk_band(2.0 * RESIDENTIAL_HALF);
+    let edge = residential_half(ParseKnobs::DEFAULT)
+        + sidewalk_band(2.0 * residential_half(ParseKnobs::DEFAULT));
     let one_sided = top(&map.landuse[1].outer, 500.0);
     assert!(
         (one_sided + edge - LANDUSE_OVERLAP).abs() < 0.02,
@@ -3074,6 +3083,54 @@ fn the_parse_reads_the_mapped_edge_for_blocks_and_the_verge_for_houses() {
         (gap - reach).abs() < 0.1,
         "дом отодвинут от обочины по классу, `sidewalk=no` не в счёт: {gap}"
     );
+}
+
+/// Ширина полосы — вход разбора ([`ParseKnobs`]), а не глобаль: тест называет
+/// её сам, без мьютекса. Разбор с полосой на 0.3 м шире выводит двухполосное
+/// сечение на 0.6 м шире, проезд — тоже шире на свою одну полосу, и карта
+/// помнит, с какими входами разобрана.
+#[test]
+fn a_wider_lane_widens_the_section() {
+    let scene = Overpass::new(CITY)
+        .way(
+            &[("highway", "residential")],
+            vec![CENTER - Vec2::X * HALF, CENTER + Vec2::X * HALF],
+        )
+        .way(
+            &[("highway", "service")],
+            vec![
+                CENTER + Vec2::new(-HALF, 40.0),
+                CENTER + Vec2::new(HALF, 40.0),
+            ],
+        );
+    let wider = ParseKnobs {
+        lane_width: ParseKnobs::DEFAULT.lane_width + 0.3,
+        ..ParseKnobs::DEFAULT
+    };
+    let by_default = scene.parse();
+    let widened = scene.parse_with(wider);
+
+    let street = |map: &MapData| {
+        map.roads
+            .iter()
+            .find(|road| road.highway == Highway::Residential)
+            .unwrap()
+            .width
+    };
+    let drive = |map: &MapData| {
+        map.roads
+            .iter()
+            .find(|road| road.highway == Highway::Service)
+            .unwrap()
+            .width
+    };
+    assert!((street(&by_default) - 2.0 * residential_half(ParseKnobs::DEFAULT)).abs() < 1e-4);
+    assert!((street(&by_default) - 7.6).abs() < 1e-4);
+    assert!((street(&widened) - 2.0 * residential_half(wider)).abs() < 1e-4);
+    assert!((street(&widened) - street(&by_default) - 0.6).abs() < 1e-4);
+    assert!((drive(&widened) - drive(&by_default) - 0.3).abs() < 1e-4);
+    assert_eq!(by_default.knobs, ParseKnobs::DEFAULT);
+    assert_eq!(widened.knobs, wider);
 }
 
 /// Порядок [`finish_parse`]: сечения (шаг 0) раньше дотягивания кварталов
@@ -3121,7 +3178,8 @@ fn blocks_are_pulled_to_the_width_the_sections_gave() {
 /// отступает от перекрёстка по биссектрисе.
 #[test]
 fn a_block_corner_at_a_crossing_is_pulled_under_both_streets() {
-    let edge = RESIDENTIAL_HALF + sidewalk_band(2.0 * RESIDENTIAL_HALF);
+    let edge = residential_half(ParseKnobs::DEFAULT)
+        + sidewalk_band(2.0 * residential_half(ParseKnobs::DEFAULT));
     for gap in [3.0, 7.0] {
         let corner = edge + gap;
         let map = Overpass::new(CITY)
@@ -3167,7 +3225,8 @@ fn a_block_corner_at_a_crossing_is_pulled_under_both_streets() {
 /// дырки — тот же край двора, и подходить к полотну обязан он.
 #[test]
 fn a_street_in_a_courtyard_shrinks_the_hole_to_its_asphalt() {
-    let edge = RESIDENTIAL_HALF + sidewalk_band(2.0 * RESIDENTIAL_HALF);
+    let edge = residential_half(ParseKnobs::DEFAULT)
+        + sidewalk_band(2.0 * residential_half(ParseKnobs::DEFAULT));
     let map = Overpass::new(CITY)
         .way(
             &[("highway", "residential"), ("sidewalk", "both")],
@@ -3447,7 +3506,9 @@ fn finishing_the_parse_reports_what_each_pass_did() {
 #[test]
 fn pulling_houses_off_the_sidewalks_runs_on_its_own() {
     // residential 7.6 м: полоса с тротуаром и зазором — 3.8 + 1.67 + 2 от оси
-    let reach = RESIDENTIAL_HALF + sidewalk_band(2.0 * RESIDENTIAL_HALF) + SIDEWALK_CLEARANCE;
+    let reach = residential_half(ParseKnobs::DEFAULT)
+        + sidewalk_band(2.0 * residential_half(ParseKnobs::DEFAULT))
+        + SIDEWALK_CLEARANCE;
     let on_sidewalk = rect(
         CENTER + Vec2::new(-20.0, 4.7),
         CENTER + Vec2::new(-8.0, 14.7),
@@ -3462,7 +3523,7 @@ fn pulling_houses_off_the_sidewalks_runs_on_its_own() {
                 CENTER - Vec2::new(300.0, 0.0),
                 CENTER + Vec2::new(300.0, 0.0),
             ],
-            2.0 * RESIDENTIAL_HALF,
+            2.0 * residential_half(ParseKnobs::DEFAULT),
         )],
         buildings: vec![
             building(on_sidewalk.clone(), Vec::new()),
@@ -3502,7 +3563,8 @@ fn pulling_houses_off_the_sidewalks_runs_on_its_own() {
 #[test]
 fn pulling_the_blocks_to_the_roads_runs_on_its_own() {
     // residential 7.6 м: край полотна с тротуаром — 3.8 + 1.67 от оси
-    let edge = RESIDENTIAL_HALF + sidewalk_band(2.0 * RESIDENTIAL_HALF);
+    let edge = residential_half(ParseKnobs::DEFAULT)
+        + sidewalk_band(2.0 * residential_half(ParseKnobs::DEFAULT));
     let block = |ring: Vec<Vec2>| PolyArea {
         kind: AreaKind::Residential,
         ..building(ring, Vec::new())
@@ -3521,7 +3583,7 @@ fn pulling_the_blocks_to_the_roads_runs_on_its_own() {
                 CENTER - Vec2::new(400.0, 0.0),
                 CENTER + Vec2::new(400.0, 0.0),
             ],
-            2.0 * RESIDENTIAL_HALF,
+            2.0 * residential_half(ParseKnobs::DEFAULT),
         )],
         landuse: vec![block(near), block(far.clone())],
         ..MapData::default()
@@ -3572,7 +3634,7 @@ fn a_block_drawn_to_the_kerb_is_tucked_under_its_sidewalk_footway() {
                 CENTER - Vec2::new(400.0, 0.0),
                 CENTER + Vec2::new(400.0, 0.0),
             ],
-            2.0 * RESIDENTIAL_HALF,
+            2.0 * residential_half(ParseKnobs::DEFAULT),
         )
     };
     // край квартала — в 5 м от оси улицы: в четверти метра над тротуаром
@@ -3600,7 +3662,7 @@ fn a_block_drawn_to_the_kerb_is_tucked_under_its_sidewalk_footway() {
     // а не под полосу несуществующего тротуара
     let pulled = top(vec![carriageway.clone()]);
     assert!(
-        (pulled + RESIDENTIAL_HALF - LANDUSE_OVERLAP).abs() < 0.02,
+        (pulled + residential_half(ParseKnobs::DEFAULT) - LANDUSE_OVERLAP).abs() < 0.02,
         "край не у бордюра: {pulled}"
     );
     let tucked = top(vec![carriageway.clone(), footway.clone()]);
@@ -3727,7 +3789,8 @@ fn a_street_side_lot_leaves_a_cross_street_sidewalk() {
 /// асфальт, и вместе с ней она большая.
 #[test]
 fn a_lot_paved_past_the_threshold_is_a_big_lot() {
-    let edge = RESIDENTIAL_HALF + sidewalk_band(2.0 * RESIDENTIAL_HALF);
+    let edge = residential_half(ParseKnobs::DEFAULT)
+        + sidewalk_band(2.0 * residential_half(ParseKnobs::DEFAULT));
     let lot = PolyArea {
         kind: AreaKind::Parking(LotKind::Yard),
         ..building(
@@ -3745,7 +3808,7 @@ fn a_lot_paved_past_the_threshold_is_a_big_lot() {
                 CENTER - Vec2::new(400.0, 0.0),
                 CENTER + Vec2::new(400.0, 0.0),
             ],
-            2.0 * RESIDENTIAL_HALF,
+            2.0 * residential_half(ParseKnobs::DEFAULT),
         )],
         parking: vec![lot],
         ..MapData::default()
@@ -3760,7 +3823,8 @@ fn a_lot_paved_past_the_threshold_is_a_big_lot() {
 /// некуда») она осталась бы на месте, и вдоль улицы вышла бы пила.
 #[test]
 fn a_lot_reaches_the_road_across_its_own_aisle() {
-    let edge = RESIDENTIAL_HALF + sidewalk_band(2.0 * RESIDENTIAL_HALF);
+    let edge = residential_half(ParseKnobs::DEFAULT)
+        + sidewalk_band(2.0 * residential_half(ParseKnobs::DEFAULT));
     let lot = PolyArea {
         kind: AreaKind::Parking(LotKind::Yard),
         ..building(
@@ -4452,7 +4516,7 @@ fn a_block_edge_in_the_verge_of_a_bare_side_goes_to_the_nearer_of_its_rims() {
                 CENTER - Vec2::new(400.0, 0.0),
                 CENTER + Vec2::new(400.0, 0.0),
             ],
-            2.0 * RESIDENTIAL_HALF,
+            2.0 * residential_half(ParseKnobs::DEFAULT),
         );
         road.sidewalks = [SidewalkSide::Tagged, SidewalkSide::None];
         let path = RoadLine {
@@ -4493,7 +4557,7 @@ fn a_block_edge_in_the_verge_of_a_bare_side_goes_to_the_nearer_of_its_rims() {
     // в 4.5 м — к кромке ближе, чем к дорожке в 9 м: под асфальт
     let pulled = scene(4.5, 9.0);
     assert!(
-        (pulled + RESIDENTIAL_HALF - LANDUSE_OVERLAP).abs() < 0.02,
+        (pulled + residential_half(ParseKnobs::DEFAULT) - LANDUSE_OVERLAP).abs() < 0.02,
         "край не дотянут до кромки: {pulled}"
     );
 }

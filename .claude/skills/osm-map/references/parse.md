@@ -769,7 +769,11 @@ new JSON literal. Coverage of tags overall is the audit in `references/osm-cover
 and the choice is what is under test:
 
 - **The fixture through the real `parse`** — a tag rule, which is most cases. The route
-  above.
+  above. `Overpass::parse()` parses with `ParseKnobs::default()`; `parse_with(knobs)` names
+  the lane width or the navtile itself — no global to lock, so such a test runs in
+  parallel with the rest (`a_wider_lane_widens_the_section`). Expected road widths are
+  functions of the knobs too (`residential_half(ParseKnobs::DEFAULT)` rather than a bare
+  3.8), so a test states which lane width its number belongs to.
 - **`read(scene)`** (the helper in `tests.rs`) — the fixture's JSON through `read_elements`
   alone, so the *raw* map can be asserted on before any pass touches it
   (`reading_the_elements_leaves_the_passes_undone`), or `finish_parse` called on it as one
