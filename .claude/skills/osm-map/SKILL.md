@@ -840,7 +840,8 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
       (`TreeSet::visible_count`), the species resolve off the conifer field, the tint slot and the
       z micro-step were all inside a Bevy system and unreachable from a test.
     - **`shadows`** — the merged shadow meshes, one `TreeLayer` (a `LayerMesh` plus the
-      `TreeLodMask` of the zoom steps that draw it) per density band, built for every
+      `TreeLodMask` of the zoom steps that draw it) per density band, shadow template
+      (full or thinned far) and `CROWN_CHUNK` square, built for every
       step at once and only shown or hidden by a step crossing (`show_tree_lod`;
       `references/trees.md`). Its colour moved **into the vertices** (`shadow_template` pushes
       `SHADOW_COLOR`) so the layer can be a plain `MaterialSpec::Blend`, the way every

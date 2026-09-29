@@ -58,6 +58,18 @@ $b msg WindowCloseRequested "{\"window\":$w}"
 $b raise; $b msg KeyboardInput "{\"key_code\":\"Escape\",\"logical_key\":\"Escape\",\"state\":\"Pressed\",\"text\":null,\"repeat\":false,\"window\":$w}"
 ```
 
+### Perf toggles — environment, read once at launch (`dev.rs`)
+
+For a frame-time measurement launch with any of these in front of `cargo run`; without
+them the app is unchanged:
+
+- `QWE_PERF_NOVSYNC=1` — `AutoNoVsync`, so `frame_time` is not pinned to the display's 60 Hz;
+- `QWE_PERF_WINDOW=WxH` — the logical window size (default 1920 × 1080), to compare the
+  same frame across runs;
+- `QWE_PERF_POP=<n>` — `n` humans instead of the stock population;
+- `QWE_PERF_RENDER_DIAG=1` — `RenderDiagnosticsPlugin`: CPU time of every render pass
+  (`render/<pass>/elapsed_cpu`) in the diagnostics log.
+
 ## Ready markers in the log
 
 `brp wait` only proves the port answers — the map is still loading at that point. The

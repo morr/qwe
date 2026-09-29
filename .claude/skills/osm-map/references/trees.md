@@ -201,11 +201,11 @@ stand, how density works, and which resources restyle them.
   - **Draw order**: a chunk emits its crowns **in `TreeSet` order** (the order of the
     set, so a crown with a higher index lies on top — the per-index order the entities
     had before the draw-group z, without its `% 512` wrap), and triangle order inside one mesh *is* draw order. The
-    chunks each get their own z (`CROWN_CHUNK_Z_STEP` 1/64, ordered by the chunk's
+    chunks each get their own z (`CROWN_CHUNK_Z_STEP` 1/256, ordered by the chunk's
     place on the map — south row first, west to east), because crowns overlap across a
     chunk seam and an equal z would hand their order to the `Transparent2d` sort — the
-    blinking trap of the shadows below. At most 9 × 7 chunks fit `Z_TREE..Z_TREE + 1`
-    (`every_chunk_of_the_map_fits_the_crown_z_band`).
+    blinking trap of the shadows below. At most 9 × 7 chunks of each of the three density
+    bands fit `Z_TREE..Z_TREE + 1` (`every_chunk_of_the_map_fits_the_crown_z_band`).
   - **Why 1000 m chunks**: from 2 m/px a 1600 px window is ≥ 3.2 km wide, almost half
     the 7.6 km map; a 1 km chunk is a third of such a frame, so a panned view still culls
     whole chunks, while the whole map is at most 8 × 6 = 48 draws (Tula 34, Kaluga 48)
@@ -305,10 +305,10 @@ stand, how density works, and which resources restyle them.
   tree's offset and radius. A blended `Mesh2d` lands in the sorted `Transparent2d`
   phase, and a thousand of them sharing one z alongside the pawn sprites lose a
   random one or two per frame — the tree shadow visibly blinks. One mesh, one phase
-  item, no blinking (and one draw call instead of hundreds). It is now a handful of
-  merged meshes — one per density band (see **The zoom caps the prefix too**) — each on
-  its own z, which keeps the same guarantee: the trap is many items on **one** z, not
-  a few items on distinct ones.
+  item, no blinking (and one draw call instead of hundreds). It is now a few hundred
+  merged meshes at most — one per density band × shadow template × 1 km chunk (see
+  **The zoom caps the prefix too**) — each on its own z, which keeps the same guarantee:
+  the trap is many items on **one** z, not a few items on distinct ones.
 - **The canopy material — `CrownMaterial`** (`map/trees/canopy.rs`, shader
   `assets/shaders/crown.wgsl`, registered as a `Material2dPlugin` in `map/mod.rs`) —
   the crown is drawn by a `Material2d` of its own rather than by `ColorMaterial`, because

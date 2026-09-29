@@ -1587,8 +1587,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   one merged `Mesh2d` per layer: earcut triangulation, per-vertex colors over one white
   `ColorMaterial` (facades, shadows, bridge curbs, rails, walls), the **surface material** below
   (everything that is ground) or the **roof material** above (every layer that carries a
-  roof — in 2.5D that is the walls' layer too); ~7000 buildings cost a handful of entities. Trees stay
-  individual entities; tree and building **shadows** are each one merged mesh.
+  roof — in 2.5D that is the walls' layer too); ~7000 buildings cost a handful of entities. Trees are
+  individual entities on the near zoom step only; on the far steps their crowns, and on
+  every step their **shadows**, are merged meshes cut by density band and 1 km chunk
+  (**Trees** above). Building shadows are one merged mesh.
 - **The layer seam** — building a layer and putting it in the world are two things, and
   the line between them is `map/surface.rs`. A converted module offers **one pure
   function**, `mesh_<layer>(data, style) -> (Vec<LayerMesh>, <Layer>Report)`: no

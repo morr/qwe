@@ -1454,8 +1454,9 @@ arches.
     its near-zoom size in memory.
   - **What it costs** (Tula, 7723 buildings, 2.5D+shadows+tint, from
     `examples/bench/map_meshing` on the `dev` profile): 792 147 verts / 101 ms with clutter
-    against 468 867 / 89 ms without — one hitch on the threshold crossing, in the same
-    class as the rail layer's deepest bucket (673 k / 23 ms). Most of it is the shafts:
+    against 468 867 / 89 ms without — the build the game always pays now (**Zoom**
+    above: the crossing rebuilds nothing), and the `clutter false` row of the bench is
+    the clutter's share, not the cost of any zoom step. Most of it is the shafts:
     every flat roof gets at least one, and a shaft is 6 quads. The 78 / 65 ms that stood
     here came off a run that predates the roof-shadow layer in its current shape (and the
     sharing of the sweeps and the draw order, which took 13 ms back off these very
