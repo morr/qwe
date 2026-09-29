@@ -468,8 +468,7 @@ impl Pairs {
                 for &(start, end, partner) in chain {
                     let run = &probes[start..end];
                     // осколок у шва, где обе половины меняют way, — не кусок
-                    if chain.len() > 1 && run[run.len() - 1].along - run[0].along < PAIR_MIN / 2.0
-                    {
+                    if chain.len() > 1 && run[run.len() - 1].along - run[0].along < PAIR_MIN / 2.0 {
                         continue;
                     }
                     match run_kind(span, total) {
@@ -629,9 +628,11 @@ impl Pairs {
         let continues = |road: usize, other: usize| {
             other != road
                 && ((street(other).is_some() && street(other) == street(road))
-                    || [0, 1]
-                        .into_iter()
-                        .any(|end| nodes.next_way(road, end).is_some_and(|(next, _)| next == other)))
+                    || [0, 1].into_iter().any(|end| {
+                        nodes
+                            .next_way(road, end)
+                            .is_some_and(|(next, _)| next == other)
+                    }))
         };
         let continued = |road: usize, end: bool| {
             let points = &roads[road].points;
@@ -1294,7 +1295,8 @@ fn align_seam_ends(aligned: &mut [(usize, Vec<Vec2>)], met: &HashMap<[u32; 2], V
         let Some(tangent) = (a - b).try_normalize() else {
             continue;
         };
-        for (slot, end, direction) in [(first, first_end, tangent), (second, second_end, -tangent)] {
+        for (slot, end, direction) in [(first, first_end, tangent), (second, second_end, -tangent)]
+        {
             let path = &mut aligned[slot].1;
             let (node, neighbour, at) = if end {
                 (path[path.len() - 1], path[path.len() - 2], path.len() - 1)

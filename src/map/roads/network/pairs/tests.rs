@@ -231,7 +231,10 @@ fn a_node_shared_with_a_side_street_moves_with_the_half_and_the_street_follows()
     );
     let paths: Vec<Vec<Vec2>> = axes.paths.iter().map(|path| path.to_vec()).collect();
     let wanted = 2.0 * 3.3 + 1.0 + PAVED_MIN_GAP;
-    for (step, apart) in apart_along(&paths, 0, &[1], 40.0, 160.0).into_iter().enumerate() {
+    for (step, apart) in apart_along(&paths, 0, &[1], 40.0, 160.0)
+        .into_iter()
+        .enumerate()
+    {
         assert!(
             (apart - wanted).abs() < 0.05,
             "у x = {}: между осями {apart}, а не {wanted} — у выезда разводка сошла на нет",
@@ -748,4 +751,3 @@ fn a_run_ending_near_the_end_keeps_the_pair_side_bare_to_the_end() {
         ])
     );
 }
-
