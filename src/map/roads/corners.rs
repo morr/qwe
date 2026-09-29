@@ -572,6 +572,25 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                 }
                 returns.outer[layer] += usize::from(outer);
             }
+            // Асфальт, идущий сквозь грунтовку двумя way с изломом: торцы
+            // прямые, скруглений к грунту нет, и щель с наружной стороны
+            // излома светилась грунтом тонкой чертой поперёк асфальта (Калуга,
+            // 06: шов участков с `lane_markings=no` на переезде гравийки).
+            // Закрывает её тот же наружный веер, что у продолжения дороги.
+            let paved: Vec<&Arm> = group.iter().copied().filter(|arm| !arm.unpaved).collect();
+            if paved.len() < group.len()
+                && paved.len() == 2
+                && !is_junction(&paved)
+                && paved.iter().all(|arm| arm.end.is_some() && !is_merged(arm))
+            {
+                for (first, second) in pairs(&paved) {
+                    let halves = (first.half[0], second.half[1]);
+                    if let Some(outline) = outer_corner(node, first, second, halves) {
+                        returns.roads.push((class, outline));
+                        returns.outer[0] += 1;
+                    }
+                }
+            }
         }
         // Угол, где хоть с одной стороны вместо полосы тротуара обочина до
         // отдельной дорожки, — той же дугой, но в слой обочин под зеленью:
@@ -1458,6 +1477,38 @@ mod tests {
                 assert!(point.y <= 6.0 + 1e-3, "{point:?}");
             }
         }
+    }
+
+    /// Асфальт двумя way с изломом в узле, где его пересекает грунтовка:
+    /// торцы прямые, скруглений к грунту нет — щель с наружной стороны
+    /// излома закрыта асфальтом, а не светится грунтом (Калуга, 06).
+    #[test]
+    fn asphalt_kinked_across_a_dirt_road_leaves_no_gap_at_the_seam() {
+        let mut dirt = street(
+            vec![Vec2::new(0.0, -50.0), Vec2::ZERO, Vec2::new(0.0, 50.0)],
+            6.0,
+        );
+        dirt.pavement = Some(crate::map::osm::model::Pavement::Unpaved);
+        let roads = [
+            street(vec![Vec2::new(-50.0, 0.0), Vec2::ZERO], 8.0),
+            street(vec![Vec2::ZERO, Vec2::new(50.0, 5.0)], 8.0),
+            dirt,
+        ];
+        let found = walked_returns_of(&roads, false);
+        assert!(found.butt(0)[1] && found.butt(1)[0], "торцы в узле прямые");
+        // между торцами с южной стороны: левее торца восточного и правее
+        // западного — ни одна лента сюда не доходит
+        let gap = Vec2::new(0.15, -3.5);
+        assert!(
+            found
+                .roads
+                .iter()
+                .any(|(_, outline)| point_in_polygon(gap, outline)),
+            "щель у излома открыта: {:?}",
+            found.roads
+        );
+        // и только она: к грунтовке асфальт не скругляется
+        assert_eq!(found.roads.len(), 1, "{:?}", found.roads);
     }
 
     /// Поперечная в 20 м с клином на дальнем конце в 14 м: кромка прямая

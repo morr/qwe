@@ -72,7 +72,14 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   bevels. The asphalt fillets there read as a paved apron leaving the street for the
   dirt road (Kaluga 07, Новаторский переулок into Новаторская). What such a pair still
   closes — a sharp fork's nose, an outer corner — goes to the unpaved layer, under the
-  asphalt. **Asphalt continued by dirt** (two nearly collinear ends of one surface each,
+  asphalt. **Asphalt split into two ways where the dirt crosses it** (the only two paved
+  arms of the node, nearly collinear, both ends) butts on both sides like any junction
+  arm, and with no fillet to the dirt the gap on the outside of its kink stayed open: a
+  thin line of gravel across the asphalt (Kaluga 06, Молодёжная, where the way with
+  `lane_markings=no` begins on the gravel crossing). The two asphalt arms get the
+  asphalt outer corner between them (`outer_corner`, counted in `outer[0]`); pinned by
+  `corners.rs::asphalt_kinked_across_a_dirt_road_leaves_no_gap_at_the_seam`.
+  **Asphalt continued by dirt** (two nearly collinear ends of one surface each,
   nothing else of their class at the node) ends square on both sides: the round cap of
   the asphalt lay on the gravel as a half-disc; the gap on the outside of a slight kink
   is an outer corner in dirt. For that the seam must stay on the node: the street axis
