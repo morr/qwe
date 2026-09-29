@@ -65,7 +65,11 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   `node_paint` does not even collect on such a road — and no stop line or give-way line,
   whatever calls it (Kaluga 06: the `give_way` node on Новаторский drew two white stubs
   of the dashed line across the gravel; the sign stays a sign). A kerb return between two
-  unpaved arms goes to their layer (`corners::Arm::unpaved` → `KerbReturns::unpaved`).
+  unpaved arms goes to their layer (`corners::Arm::unpaved` → `KerbReturns::unpaved`),
+  and with a radius of at most `DIRT_RADIUS` 3 m whatever their class (`kerb_radius`):
+  the street's 6 m on a one-lane private-sector lane (Tula, 18-й × 8-й проезд Мясново)
+  was a crisp kerb arc wider than the lane itself — a paved crossing cast in gravel.
+  Pinned by `corners.rs::two_dirt_roads_meet_with_a_small_corner`.
   **Between an unpaved and a paved arm there is no kerb return at all** — the way a
   gravel lane really meets a street: the asphalt runs straight past the mouth, not
   branching off, and the dirt enters its edge as it is, without asphalt flares or
@@ -1800,7 +1804,8 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     rework): `MAJOR_RADIUS` 10 m between avenues (`trunk`…`secondary` and their links),
     `STREET_RADIUS` 6 m with a street (`tertiary`, residential, `unclassified`),
     `DRIVE_RADIUS` 2.5 m with a drive, a living street or a driveway crossing,
-    `PATH_RADIUS` 2 m between footways. It used to follow the widths — `0.6 × (half +
+    `PATH_RADIUS` 2 m between footways, and never more than `DIRT_RADIUS` 3 m between
+    two dirt roads (**Unpaved streets** above). It used to follow the widths — `0.6 × (half +
     half)`, and only 0.4 × the narrower half width for a minor entry — and on a divided
     avenue, where halves of different lane counts meet in one node, every corner came out
     a metre or two (sample 2). The wedge `[corner, tangent, arc…,

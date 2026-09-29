@@ -66,6 +66,12 @@ const MAJOR_RADIUS: f32 = 10.0;
 const STREET_RADIUS: f32 = 6.0;
 const DRIVE_RADIUS: f32 = 2.5;
 const PATH_RADIUS: f32 = 2.0;
+/// Радиус угла двух грунтовок, м, — не больше этого, какого бы класса они ни
+/// были. Уличные 6 м на однополосном проезде частного сектора (Тула, 18-й и
+/// 8-й проезды Мясново) ложились чёткой бордюрной дугой шире самого проезда —
+/// асфальтовым перекрёстком, отлитым в грунте. Угол грунтовок срезан колёсами
+/// невысоко: радиус чуть больше, чем у проезда.
+const DIRT_RADIUS: f32 = 3.0;
 /// Скругление меньше этого не кладётся, м: его всё равно не видно.
 const MIN_RADIUS: f32 = 0.5;
 /// Угол между лучами, в котором скругление имеет смысл. Острее — дуга
@@ -727,9 +733,14 @@ fn pairs<'a, 'd>(group: &'a [&'a Arm<'d>]) -> impl Iterator<Item = (&'a Arm<'d>,
 }
 
 /// Радиус бордюра между двумя лучами узла — по младшему классу пары (см.
-/// [`MAJOR_RADIUS`]).
+/// [`MAJOR_RADIUS`]); между двумя грунтовками — не больше [`DIRT_RADIUS`].
 fn kerb_radius(first: &Arm, second: &Arm) -> f32 {
-    class_radius(first).min(class_radius(second))
+    let radius = class_radius(first).min(class_radius(second));
+    if first.unpaved && second.unpaved {
+        radius.min(DIRT_RADIUS)
+    } else {
+        radius
+    }
 }
 
 /// Острый ли угол от `first` до `second` для носа ([`NOSE_SHARE`]) — если
@@ -1509,6 +1520,26 @@ mod tests {
         );
         // и только она: к грунтовке асфальт не скругляется
         assert_eq!(found.roads.len(), 1, "{:?}", found.roads);
+    }
+
+    /// Угол двух грунтовок — грунтом и малым радиусом: уличные 6 м ложились
+    /// бордюрной дугой шире самого проезда (Тула, проезды Мясново). Та же
+    /// крестовина в асфальте свой радиус улиц сохраняет.
+    #[test]
+    fn two_dirt_roads_meet_with_a_small_corner() {
+        let mut dirt = crossing();
+        for road in &mut dirt {
+            road.pavement = Some(crate::map::osm::model::Pavement::Unpaved);
+        }
+        let found = walked_returns_of(&dirt, false);
+        assert!(found.roads.is_empty(), "асфальта нет: {:?}", found.roads);
+        assert_eq!(found.unpaved.len(), 4);
+        for outline in &found.unpaved {
+            let radius = right_angle_radius(outline);
+            assert!((radius - DIRT_RADIUS).abs() < 1e-2, "{radius}");
+        }
+        let paved = returns_of(&crossing());
+        assert!((right_angle_radius(&paved[0].1) - STREET_RADIUS).abs() < 1e-2);
     }
 
     /// Поперечная в 20 м с клином на дальнем конце в 14 м: кромка прямая

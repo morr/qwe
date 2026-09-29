@@ -249,7 +249,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     only the `surface` tag sets it: an **unpaved street** (`RoadLine::is_unpaved_street`,
     `surface=unpaved|gravel|ground|dirt|compacted|…`) is drawn in its own layer
     `unpaved_roads` (`Z_UNPAVED_ROAD` 1.8, under the asphalt, `SurfaceKind::Unpaved`) with
-    no paint at all — no lane lines, zebras or stop lines; an asphalt street ending at a
+    no paint at all — no lane lines, zebras or stop lines — and two dirt roads meet with a
+    small corner (`DIRT_RADIUS` 3 m, not a street's 6 m kerb arc); an asphalt street ending at a
     dirt road stops at its kerb (`KerbReturns::setback`); a dirt road meets asphalt with
     no kerb return between them — the asphalt runs straight past its mouth (split into two
     ways there, its seam's kink is closed by an outer corner in asphalt), and a street
