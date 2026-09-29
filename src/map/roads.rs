@@ -58,6 +58,7 @@ pub use self::junctions::JunctionCounts;
 use self::network::RoadNodes;
 use self::network::pairs::BandPiece;
 pub use self::node_paint::CrossingMode;
+use self::ruts::{LaneRuts, RutLines};
 use self::shape::{RoadShape, RoadShapeOnMap};
 use crate::map::SunOnMap;
 use crate::map::footprint::JOIN_EPSILON;
@@ -735,13 +736,30 @@ pub fn mesh_roads(
     style: RoadStyle,
     shape: RoadShape,
 ) -> (Vec<LayerMesh>, RoadReport) {
-    // сырой OSM, второй уровень: ни одной достройки отрисовки
+    let (layers, report, _) = mesh_roads_with_ruts(map, style, shape);
+    (layers, report)
+}
+
+/// [`mesh_roads`] и заодно **линии колеи** ([`RutLines`]) — оси полос с
+/// раскладкой, по которой легла колея асфальта, и траектории узлов, по которым
+/// её положил `Painter::paint_turn_wear`. Тем же проходом, а не пересчётом:
+/// оверлей колеи (Debug → Overlays → `Rut lines`) показывает ровно то, что
+/// нарисовано. Игра берёт эту дверь (`rebuild_roads`, `spawn_map`) и кладёт
+/// линии ресурсом; тестам и витрине хватает [`mesh_roads`].
+pub fn mesh_roads_with_ruts(
+    map: &MapData,
+    style: RoadStyle,
+    shape: RoadShape,
+) -> (Vec<LayerMesh>, RoadReport, RutLines) {
+    // сырой OSM, второй уровень: ни одной достройки отрисовки — и колеи нет
     if map.knobs.raw.draws_raw() {
-        return mesh_raw_roads(map, style);
+        let (layers, report) = mesh_raw_roads(map, style);
+        return (layers, report, RutLines::default());
     }
     let started = std::time::Instant::now();
     let (roads, walls): (&[RoadLine], &[WallLine]) = (&map.roads, &map.walls);
     let mut painter = paint::Painter::new(map.traffic_side);
+    let mut ruts = RutLines::default();
 
     let mut sidewalks = MeshBuilder::with_surface_coords();
     // обочины до отдельных тротуаров — под зеленью (`Z_ROAD_VERGE`)
@@ -1127,6 +1145,14 @@ pub fn mesh_roads(
         // колея гаснет по разрывам асфальта; у ведущей узла их там нет
         let breaks = asphalt.of(index);
         let lanes = road_lanes(road);
+        // колея полос ляжет по этой оси и этой раскладке — её и запомнить
+        // для оверлея (`roads/ruts.rs`)
+        if let Some(frame) = lanes {
+            ruts.lanes.push(LaneRuts {
+                axis: points.to_vec(),
+                frame,
+            });
+        }
         // линии краски — по той же оси, разрывам и клиньям, что и асфальт
         if style.markings {
             let wedges = if road.bridge {
@@ -1341,6 +1367,11 @@ pub fn mesh_roads(
     }
     // колея траекторий — всегда, как колея полос
     painter.paint_turn_wear(&turns.wear);
+    // те же кривые и хвосты — оверлею колеи, без пересчёта
+    for junction in turns.wear {
+        ruts.curves.extend(junction.curves);
+        ruts.tails.extend(junction.tails);
+    }
     // стрелки на полосах подходов — краска, своим тумблером
     if style.arrows {
         let marks = paint::ArrowMarks::new(&node_paint.zebras, &node_paint.stop_lines);
@@ -1517,7 +1548,7 @@ pub fn mesh_roads(
         network: network_time,
         elapsed: started.elapsed(),
     };
-    (layers, report)
+    (layers, report, ruts)
 }
 
 /// Дорожные слои **сырого OSM** (`RawOsm::Draw`): каждый way — простая лента
@@ -1666,12 +1697,10 @@ pub fn rebuild_roads(
     for entity in &existing {
         commands.entity(entity).despawn();
     }
-    spawn_road_meshes(
-        &mut commands,
-        &mut meshes,
-        &materials,
-        mesh_roads(&map, *style, shape.0),
-    );
+    let (layers, report, ruts) = mesh_roads_with_ruts(&map, *style, shape.0);
+    // линии колеи — ресурсом: по нему строится оверлей колеи
+    commands.insert_resource(ruts);
+    spawn_road_meshes(&mut commands, &mut meshes, &materials, (layers, report));
 }
 
 /// Положить в мир то, что собрал [`mesh_roads`]: слои под `RoadLayerTag`, плюс
@@ -2195,6 +2224,8 @@ pub(super) mod pockets;
 /// (`rings::straighten_tails`), до сечений, — по тем же кольцам и ногам,
 /// что потом рисует лента.
 pub(crate) mod rings;
+/// Линии колеи — оверлей вкладки Debug (`ui/debug/overlays.rs`).
+pub mod ruts;
 /// Открыт наружу для панели и витрины: ресурс ручек формы и глобаль ширины
 /// полосы.
 pub mod shape;

@@ -2333,7 +2333,10 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   (`spawn_value_row`; a row whose click does nothing gets `bevy::ui::InteractionDisabled`).
   **Use these, don't hand-roll a panel row.**
 - **Debug tab** (`ui/debug/`) — the grid / doors / movepath / noise / **road network**
-  (`DebugRoadNetwork`: every street its own colour, a dot on each seam) / **OSM contours**
+  (`DebugRoadNetwork`: every street its own colour, a dot on each seam) / **rut lines**
+  (`DebugRutLines`: the lane axes with their two wheel lines at `RUT_OFFSET` in orange,
+  the junction turn curves and tails in green — the two sources of asphalt wear, taken
+  from the same road build as `RutLines`, never recomputed) / **OSM contours**
   (`DebugOsmContours`: the data before our passes, over the map) overlay rows, the
   `Camera start` and `Navtile` cyclers (global settings, deliberately not under a backend
   section) and **`reset`** (`prefs::ResetSettings`). The navmesh overlay is **one merged

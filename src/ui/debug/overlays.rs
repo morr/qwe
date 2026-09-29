@@ -7,13 +7,15 @@ use bevy::image::{Image, ImageSampler};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
-use super::{DebugConiferNoise, DebugNavmesh, DebugOsmContours, DebugRoadNetwork};
+use super::{DebugConiferNoise, DebugNavmesh, DebugOsmContours, DebugRoadNetwork, DebugRutLines};
 use crate::camera::Viewport;
 use crate::grid::{grid_size, navtile_size};
 use crate::loading::AppState;
 use crate::map::osm::MapData;
 use crate::map::surface::{LayerMaterials, spawn_layers};
-use crate::map::{ConiferField, mesh_network_overlay, mesh_osm_contours};
+use crate::map::{
+    ConiferField, RutLines, lane_width, mesh_network_overlay, mesh_osm_contours, mesh_rut_overlay,
+};
 use crate::navigation::{ArcNavmesh, PolymeshDebug};
 use crate::settings::{MAP_SIZE, Z_CONIFER_NOISE_OVERLAY};
 
@@ -47,6 +49,37 @@ pub(super) fn sync_road_network_overlay(
             &materials,
             [mesh_network_overlay(&map)],
             RoadNetworkOverlayMarker,
+        );
+    }
+}
+
+/// Слой оверлея линий колеи (`map::mesh_rut_overlay`).
+#[derive(Component, Clone, Copy)]
+pub(super) struct RutOverlayMarker;
+
+/// Спавн/despawn оверлея линий колеи: оси полос с линиями колёс и траектории
+/// узлов — из ресурса `RutLines`, который кладёт тот же проход сборки дорог,
+/// что рисует колею (`roads::mesh_roads_with_ruts`). Ручки формы двигают
+/// колею, и слой идёт за ресурсом. Шаг полосы — глобаль краски, та же, что у
+/// шейдера. `DespawnOnExit` слою ставит `spawn_layers`.
+pub(super) fn sync_rut_overlay(
+    mut commands: Commands,
+    show: Res<DebugRutLines>,
+    ruts: Res<RutLines>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    materials: LayerMaterials,
+    overlay: Query<Entity, With<RutOverlayMarker>>,
+) {
+    for entity in &overlay {
+        commands.entity(entity).despawn();
+    }
+    if show.0 {
+        spawn_layers(
+            &mut commands,
+            &mut meshes,
+            &materials,
+            [mesh_rut_overlay(&ruts, lane_width())],
+            RutOverlayMarker,
         );
     }
 }

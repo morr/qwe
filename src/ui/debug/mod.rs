@@ -7,6 +7,8 @@
 //! - noise — поле хвои (`map/trees/conifer.rs`) текстурой на всю карту:
 //!   серым — значение поля, зелёным — будущие хвойные массивы;
 //! - road network — улицы сети и их швы (`map::mesh_network_overlay`);
+//! - rut lines — вдоль чего легла колея: оси полос с линиями колёс и
+//!   траектории узлов (`map::mesh_rut_overlay`);
 //! - OSM contours — оси путей и контуры полигонов, какими их прочёл разбор до
 //!   доводочных проходов (`map::mesh_osm_contours`): «данные или наш разбор».
 //!
@@ -51,6 +53,7 @@ use bevy::prelude::*;
 use crate::camera::CameraPositionMode;
 use crate::grid::NavtileBase;
 use crate::loading::{AppState, WorldInitSet};
+use crate::map::RutLines;
 use crate::map::osm::parse::RawOsm;
 use crate::map::trees::{ConiferNoiseStyle, TreeRowStyle, TreeStyle};
 use crate::movement::DrawMovePaths;
@@ -94,6 +97,14 @@ pub struct DebugConiferNoise(pub bool);
 #[settings_group(group = "debug", key = "road_network")]
 pub struct DebugRoadNetwork(pub bool);
 
+/// Показывать ли оверлей линий колеи — строка `Rut lines` вкладки Debug: оси
+/// полос с двумя линиями колёс (колея шейдера асфальта) и траектории узлов
+/// (колея краски износа), разными цветами (`map::mesh_rut_overlay`).
+#[derive(Resource, Reflect, SettingsGroup, Default)]
+#[reflect(Resource, SettingsGroup, Default)]
+#[settings_group(group = "debug", key = "rut_lines")]
+pub struct DebugRutLines(pub bool);
+
 /// Показывать ли оверлей контуров OSM — строка `OSM contours` вкладки Debug:
 /// оси путей и контуры полигонов, какими их прочёл разбор до доводочных
 /// проходов (`map::mesh_osm_contours`), поверх обработанной карты.
@@ -106,7 +117,7 @@ mod overlays;
 
 use self::overlays::{
     render_doors, render_grid, sync_conifer_noise_overlay, sync_navmesh_overlay,
-    sync_osm_contours_overlay, sync_road_network_overlay,
+    sync_osm_contours_overlay, sync_road_network_overlay, sync_rut_overlay,
 };
 
 pub struct UiDebugTogglesPlugin;
@@ -119,6 +130,7 @@ impl Plugin for UiDebugTogglesPlugin {
             .add_knobs::<DebugConiferNoise>()
             .add_knobs::<DebugRoadNetwork>()
             .add_knobs::<DebugOsmContours>()
+            .add_knobs::<DebugRutLines>()
             .add_knobs::<CameraPositionMode>()
             .add_knobs::<Antialias>()
             .add_knobs::<NavtileBase>()
@@ -129,18 +141,21 @@ impl Plugin for UiDebugTogglesPlugin {
             .init_resource::<DebugConiferNoise>()
             .init_resource::<DebugRoadNetwork>()
             .init_resource::<DebugOsmContours>()
+            .init_resource::<DebugRutLines>()
             .register_type::<DebugGrid>()
             .register_type::<DebugNavmesh>()
             .register_type::<DebugDoors>()
             .register_type::<DebugConiferNoise>()
             .register_type::<DebugRoadNetwork>()
             .register_type::<DebugOsmContours>()
+            .register_type::<DebugRutLines>()
             .track_pref::<DebugGrid>()
             .track_pref::<DebugNavmesh>()
             .track_pref::<DebugDoors>()
             .track_pref::<DebugConiferNoise>()
             .track_pref::<DebugRoadNetwork>()
             .track_pref::<DebugOsmContours>()
+            .track_pref::<DebugRutLines>()
             .add_systems(Startup, build_debug_tab.in_set(UiBuildSet::Sections))
             // тумблер, восстановленный из настроек, менялся до того, как
             // navmesh был заполнен и поле хвои посчитано, — красим слои ещё
@@ -201,6 +216,12 @@ impl Plugin for UiDebugTogglesPlugin {
                     sync_osm_contours_overlay
                         .run_if(in_state(AppState::Playing))
                         .run_if(resource_changed::<DebugOsmContours>),
+                    // линии колеи кладёт сборка дорог ресурсом — и на входе в
+                    // мир, и на всякой пересборке по ручкам формы: слой идёт
+                    // за ресурсом, отдельной строки в `OnEnter` ему не нужно
+                    sync_rut_overlay.run_if(in_state(AppState::Playing)).run_if(
+                        resource_changed::<DebugRutLines>.or_else(resource_changed::<RutLines>),
+                    ),
                     toggle_navmesh
                         .run_if(input_just_pressed(KeyCode::KeyN))
                         .run_if(not(super::typing_in_text_input)),
@@ -226,6 +247,7 @@ struct DebugValues<'w> {
     conifer_noise: Res<'w, DebugConiferNoise>,
     road_network: Res<'w, DebugRoadNetwork>,
     osm_contours: Res<'w, DebugOsmContours>,
+    rut_lines: Res<'w, DebugRutLines>,
     raw_osm: Res<'w, RawOsm>,
 }
 
@@ -292,6 +314,17 @@ fn build_debug_tab(mut commands: Commands, panes: Res<SettingsPanes>, values: De
         CycleBinding {
             cycle: |network: &mut DebugRoadNetwork| network.0 = !network.0,
             text: |network| on_off(network.0).to_string(),
+        },
+    );
+    spawn_cycle_row(
+        &mut commands,
+        overlays,
+        "Rut lines",
+        ROW_LEFT_PX,
+        &*values.rut_lines,
+        CycleBinding {
+            cycle: |ruts: &mut DebugRutLines| ruts.0 = !ruts.0,
+            text: |ruts| on_off(ruts.0).to_string(),
         },
     );
     spawn_cycle_row(

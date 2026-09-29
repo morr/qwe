@@ -2400,6 +2400,21 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   The ruts fade by `visible(...)` like the rest of the surface texture, by their lane
   pitch.
 
+  **The rut lines overlay** (`roads/ruts.rs`, Debug → Overlays → **Rut lines**,
+  `DebugRutLines`; gallery row `Ruts` / `ROADS_RUTS=1`) draws where both sources of wear
+  lie: every lane's axis (orange) with its two wheel lines at `RUT_OFFSET` (pale orange) —
+  the shader's ruts — and the junction turn curves and tails of `JunctionWear` (green) —
+  the paint layer's. The lines come out of the same build: `mesh_roads_with_ruts` records
+  each ribbon's axis and body `LaneFrame` where it calls `set_lanes`, and moves
+  `turns.wear` in after `paint_turn_wear`; the game keeps them as the `RutLines`
+  resource (`rebuild_roads`, `spawn_map`) and `ui/debug/overlays.rs::sync_rut_overlay`
+  follows that resource, so a shape knob moves the overlay with the ruts. `mesh_roads`
+  is the same build without the third return, for the tests and the bench. **Known
+  simplification**: on a taper wedge and a merge ramp the shader's frame drifts
+  (`set_lane_taper`, `set_lane_profile`), while the overlay draws the body frame over the
+  whole axis, so there its wheel lines sit up to part of a lane off the painted ruts. Raw
+  OSM's drawing level lays no ruts and records none.
+
   **And they fade out in a junction gap**, by `smoothstep(0, WEAR_FADE, to_break)` over
   the same `to_break` the lane dashes use — the second component of `ATTRIBUTE_RIBBON`,
   negative inside a gap. `WEAR_FADE` is 5 m, not the dashes' 1 m: over a metre the ruts

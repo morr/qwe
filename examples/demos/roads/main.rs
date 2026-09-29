@@ -64,6 +64,8 @@
 //! `ROADS_NETWORK=1` открывает витрину с оверлеем сети (строка `Network` панели);
 //! `ROADS_CONTOURS=1` — с оверлеем контуров OSM (строка `Contours`): оси и
 //! контуры до доводочных проходов разбора поверх отрисовки;
+//! `ROADS_RUTS=1` — с оверлеем линий колеи (строка `Ruts`): оси полос с
+//! линиями колёс и траектории узлов;
 //! `ROADS_RAW=parse|draw` — сырой OSM (строка `Raw OSM`, `RawOsm`): без
 //! доводочных проходов разбора, а с `draw` — и без достроек отрисовки;
 //! `ROADS_CARS=1` кладёт в примеры и слой припаркованных машин.
@@ -102,8 +104,8 @@ use qwe::map::trees::{
 use qwe::map::{
     BuildingHeightMode, FenceZoomBucket, GROUND_COLOR, MeshBuilder, PaintMaterial, ParkingLayout,
     RailZoomBucket, RoadPaintStyle, RoadShape, RoadShapeOnMap, RoadStyle, RoofStyle, SunOnMap,
-    SurfaceStyle, apply_sun, mesh_fences, mesh_map_cars, mesh_rails, mesh_roads, mesh_surfaces,
-    mesh_tree_row_band, set_lane_width, settle_road_shape, spawn_road_meshes,
+    SurfaceStyle, apply_sun, mesh_fences, mesh_map_cars, mesh_rails, mesh_roads_with_ruts,
+    mesh_surfaces, mesh_tree_row_band, set_lane_width, settle_road_shape, spawn_road_meshes,
 };
 use qwe::ui::knob::AddKnobsExt;
 use qwe::ui::{PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET, sync_city_label};
@@ -587,7 +589,7 @@ fn build_next(
         SampleLayer,
     );
 
-    let (road_layers, road_report) = mesh_roads(&map, *road_style, road_shape.0);
+    let (road_layers, road_report, ruts) = mesh_roads_with_ruts(&map, *road_style, road_shape.0);
     let road_layers = clip(road_layers);
     let road_line = road_report.to_string();
     spawn_road_meshes(
@@ -616,6 +618,18 @@ fn build_next(
             &mut meshes,
             &materials.layers,
             clip(vec![qwe::map::mesh_network_overlay(&map)]),
+            SampleLayer,
+        );
+    }
+    if overlay.ruts {
+        spawn_layers(
+            &mut commands,
+            &mut meshes,
+            &materials.layers,
+            clip(vec![qwe::map::mesh_rut_overlay(
+                &ruts,
+                road_shape.0.lane_width(),
+            )]),
             SampleLayer,
         );
     }

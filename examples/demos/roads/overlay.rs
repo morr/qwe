@@ -6,7 +6,9 @@
 //!   `ROADS_NETWORK=1` при запуске;
 //! - контуры OSM (`qwe::map::mesh_osm_contours`, строка `OSM contours`): оси
 //!   путей и контуры полигонов до доводочных проходов разбора — «данные или наш
-//!   разбор» на одном кадре; строка `Contours`, либо `ROADS_CONTOURS=1`.
+//!   разбор» на одном кадре; строка `Contours`, либо `ROADS_CONTOURS=1`;
+//! - линии колеи (`qwe::map::mesh_rut_overlay`, строка `Rut lines`): оси полос
+//!   с линиями колёс и траектории узлов — строка `Ruts`, либо `ROADS_RUTS=1`.
 //!
 //! Переменные окружения — для автоснимка.
 
@@ -17,6 +19,7 @@ use bevy::prelude::*;
 pub(crate) struct Overlays {
     pub network: bool,
     pub contours: bool,
+    pub ruts: bool,
 }
 
 impl Default for Overlays {
@@ -24,6 +27,7 @@ impl Default for Overlays {
         Self {
             network: std::env::var_os("ROADS_NETWORK").is_some(),
             contours: std::env::var_os("ROADS_CONTOURS").is_some(),
+            ruts: std::env::var_os("ROADS_RUTS").is_some(),
         }
     }
 }

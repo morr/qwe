@@ -164,11 +164,15 @@ pub fn spawn_map(
     // причиной пересобирать, а её пока нет.
     spawn_layers(&mut commands, &mut meshes, &materials, surfaces, ());
 
+    let (road_layers, road_report, ruts) =
+        roads::mesh_roads_with_ruts(&map, *road_style, road_shape.0);
+    // линии колеи — ресурсом, для оверлея колеи вкладки Debug
+    commands.insert_resource(ruts);
     roads::spawn_road_meshes(
         &mut commands,
         &mut meshes,
         &materials,
-        roads::mesh_roads(&map, *road_style, road_shape.0),
+        (road_layers, road_report),
     );
 
     let plan = buildings::BuildingPlan::game(*height_mode);

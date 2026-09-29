@@ -184,6 +184,18 @@ pub(crate) fn spawn_panel(
             text: |overlay| on_off(overlay.network),
         },
     );
+    // вдоль чего легла колея: оси полос с колёсами и траектории узлов
+    spawn_cycle_row(
+        &mut commands,
+        panel,
+        "Ruts",
+        ROW_LEFT_PX,
+        &*overlay,
+        CycleBinding {
+            cycle: |overlay: &mut Overlays| overlay.ruts = !overlay.ruts,
+            text: |overlay| on_off(overlay.ruts),
+        },
+    );
     // и данные против разбора: оси и контуры OSM до доводочных проходов
     spawn_cycle_row(
         &mut commands,

@@ -91,6 +91,8 @@ pub use self::roads::network::{RoadNetwork, Street, StreetWay};
 pub use self::roads::network::overlay::mesh_network_overlay;
 // оверлей контуров OSM — строке Debug игры и строке `Contours` витрины `roads`
 pub use self::osm::contours::mesh_osm_contours;
+// оверлей линий колеи — строке `Rut lines` вкладки Debug и строке `Ruts` витрины
+pub use self::roads::ruts::{RutLines, mesh_rut_overlay};
 // `smooth_path` со `Smoothing` — витрине машин (`car_gallery` кладёт асфальт
 // под ряд по сглаженной осевой) и панели аллей (`TreeRowStyle::smoothing`)
 pub use self::smooth::{Smoothing, smooth_path};
@@ -114,7 +116,7 @@ pub use self::cars::mesh_map_cars;
 pub use self::fences::{FenceZoomBucket, mesh_fences};
 pub use self::parking::ParkingLayout;
 pub use self::rail::{RailZoomBucket, mesh_rails};
-pub use self::roads::{mesh_roads, spawn_road_meshes};
+pub use self::roads::{mesh_roads, mesh_roads_with_ruts, spawn_road_meshes};
 pub use self::spawn::{mesh_surfaces, mesh_tree_row_band};
 pub use self::trees::{ConiferField, ConiferNoiseStyle, TreeRowStyle, TreeShape, TreeStyle};
 
@@ -139,6 +141,9 @@ impl Plugin for MapPlugin {
             // сырой OSM — вход разбора (`loading::parse_knobs`); смена
             // перезагружает мир (`city::raw_osm_moved`)
             .init_resource::<osm::parse::RawOsm>()
+            // линии колеи кладёт сборка дорог (`roads::rebuild_roads`,
+            // `spawn_map`); до первой сборки — пусто
+            .init_resource::<RutLines>()
             .register_type::<osm::parse::RawOsm>()
             .track_pref::<osm::parse::RawOsm>()
             .init_resource::<SunStyle>()

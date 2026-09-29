@@ -816,7 +816,10 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     `mesh_tree_row_band`); `grep 'pub fn mesh_' src/map/` gives fourteen, the three
     extra being no layer doors of their own — `water.rs`'s `mesh_water_areas` /
     `mesh_water_lines`, called from `mesh_surfaces`, and the Debug tab's
-    `mesh_network_overlay` (`roads/network/overlay.rs`). **Count the modules when asking "is anything
+    `mesh_network_overlay` (`roads/network/overlay.rs`) — plus, since, the other two
+    Debug overlays `mesh_rut_overlay` (`roads/ruts.rs`) and `mesh_osm_contours`
+    (`osm/contours.rs`) and `mesh_roads_with_ruts`, the roads door that also hands out
+    the rut lines. **Count the modules when asking "is anything
     left".** The tree-row band lives in `spawn.rs` and is not
     `trees` — that mistake is what once made the list read "all ten" with `trees.rs`
     still spawning by hand.

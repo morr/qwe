@@ -462,7 +462,7 @@ did not fit 1080 px and ran off the top of the screen.
   the deletion is the retina trap — `ComputedNode::size` is in *physical* pixels, and
   `offset_below_brp_badge` still multiplies by `inverse_scale_factor`.
 - **Debug tab** (`ui/debug/`) — the overlay rows (grid / doors / move paths / noise field /
-  **Road network** / **OSM contours**), the `Camera start`, `Antialias`, `Navtile` and
+  **Road network** / **Rut lines** / **OSM contours**), the `Camera start`, `Antialias`, `Navtile` and
   **`Raw OSM`** cyclers, and `reset`. `Raw OSM` cycles `map::osm::parse::RawOsm`
   (`Off` → `parse` → `parse+draw`, persisted `debug.raw_osm`, registered by `MapPlugin`);
   it is a parse input, so it sits beside Navtile and reloads the world the same way
@@ -473,7 +473,12 @@ did not fit 1080 px and ran off the top of the screen.
   (which is where its `DespawnOnExit` comes from) — on the toggle and on
   `OnEnter(Playing)`, never on a shape knob: the network is the parse's and the knobs do
   not move it. Each street its own colour, line width by lanes, a white dot on each seam.
-  **OSM contours** (`DebugOsmContours`, key `osm_contours`, right under Road network) is
+  **Rut lines** (`DebugRutLines`, key `rut_lines`, right under Road network) is the same
+  shape again, with one difference: its source is the `RutLines` resource the road build
+  writes on every rebuild, so `sync_rut_overlay` runs on the toggle **or** on
+  `resource_changed::<RutLines>` (no `OnEnter` entry — world entry writes the resource
+  too), and a shape knob moves it (osm-map `references/roads.md`, **Asphalt wear**).
+  **OSM contours** (`DebugOsmContours`, key `osm_contours`, under Rut lines) is
   the same shape over another layer: `sync_osm_contours_overlay` spawns
   `map::mesh_osm_contours(&map.osm_contours)` — the parse's snapshot of the geometry
   before its finishing passes (osm-map `references/parse.md`) — on the toggle and on world
