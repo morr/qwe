@@ -196,11 +196,13 @@ impl BuildingPlan {
     /// План игры: оборудование кровли в меше всегда (ступень `0`), а дальняя
     /// ступень зума прячет его в шейдере ([`material::show_roof_clutter`]) —
     /// без пересборки. Ступень без оборудования остаётся бенчу и витринам.
-    pub fn game(mode: BuildingHeightMode, shadows: bool) -> Self {
+    /// Тени — всегда: и вход в мир, и обе причины пересборки ([`rebuilds_on`])
+    /// их трогают.
+    pub fn game(mode: BuildingHeightMode) -> Self {
         Self {
             mode,
             bucket: BuildingZoomBucket::at(0),
-            shadows,
+            shadows: true,
         }
     }
 }
@@ -569,7 +571,7 @@ pub fn rebuild_buildings(
     for entity in layers.iter().chain(&shadows) {
         commands.entity(entity).despawn();
     }
-    let plan = BuildingPlan::game(*mode, true);
+    let plan = BuildingPlan::game(*mode);
     spawn_building_meshes(
         &mut commands,
         &mut meshes,

@@ -171,7 +171,7 @@ pub fn spawn_map(
         roads::mesh_roads(&map, *road_style, road_shape.0),
     );
 
-    let plan = buildings::BuildingPlan::game(*height_mode, true);
+    let plan = buildings::BuildingPlan::game(*height_mode);
     buildings::spawn_building_meshes(
         &mut commands,
         &mut meshes,
