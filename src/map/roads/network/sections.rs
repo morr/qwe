@@ -5,10 +5,11 @@
 //! полосы — по тегу, и полоса выходила то 2.5 м, то 5: однополосная
 //! односторонняя половина проспекта рисовалась те же 16 м, что и
 //! четырёхполосный двусторонний участок, и пара половин читалась дорогой в
-//! 32 м. Теперь полоса одна по городу — [`shape::lane_width`] на улице (ручка
-//! `Lane width`, 3.3 м по умолчанию), на [`SERVICE_LANE_NARROWING`] уже в
-//! проезде, — и шире дорога становится только
-//! числом полос.
+//! 32 м. Теперь полоса одна по городу — ширина полосы улицы (ручка
+//! `Lane width`, 3.3 м по умолчанию) на улице, на [`SERVICE_LANE_NARROWING`]
+//! уже в проезде, — и шире дорога становится только числом полос. Ширину
+//! полосы улицы проход получает **аргументом** — от разбора, который получил
+//! её так же; глобали рисования (`shape::lane_width()`) он не читает.
 //!
 //! Полосы участка: тег `lanes` (`lanes:forward` + `lanes:backward`, если
 //! общего нет), без тега — от ближайшего по длине улицы участка с тегом
@@ -30,12 +31,11 @@ use bevy::prelude::*;
 use super::streets::RoadNetwork;
 use crate::map::osm::model::polyline_length;
 use crate::map::osm::{Highway, MapData, RoadLine};
-use crate::map::roads::shape;
 use crate::map::shapes::is_ring;
 
 /// Насколько полоса дворового проезда уже полосы улицы, м: 3.0 против 3.3.
 /// Ширина полосы улицы — одна на весь город, ручка `Lane width`
-/// ([`shape::lane_width`]).
+/// ([`RoadShape::lane_width`](crate::map::roads::shape::RoadShape::lane_width)).
 const SERVICE_LANE_NARROWING: f32 = 0.3;
 /// Кромка проезжей части с каждой стороны, м: лоток у бордюра, по которому
 /// не едут.
@@ -44,12 +44,13 @@ pub const EDGE_WIDTH: f32 = 0.5;
 /// полос, м.
 pub const SPIKE_MAX_LENGTH: f32 = 60.0;
 
-/// Ширина полосы по классу; `None` — у дорожки сечения нет.
-pub fn lane_width(highway: Highway) -> Option<f32> {
+/// Ширина полосы по классу при ширине полосы улицы `street_lane`; `None` — у
+/// дорожки сечения нет.
+pub fn lane_width(highway: Highway, street_lane: f32) -> Option<f32> {
     match highway {
         Highway::Path => None,
-        Highway::Service => Some(shape::lane_width() - SERVICE_LANE_NARROWING),
-        _ => Some(shape::lane_width()),
+        Highway::Service => Some(street_lane - SERVICE_LANE_NARROWING),
+        _ => Some(street_lane),
     }
 }
 
@@ -126,9 +127,10 @@ fn ring_radius(points: &[Vec2]) -> Option<f32> {
     (twice_area > 1e-3).then(|| ab * bc * ca / (2.0 * twice_area))
 }
 
-/// Ширина проезжей части из сечения; `None` — у дорожки сечения нет.
-pub fn section_width(highway: Highway, lanes: u8) -> Option<f32> {
-    lane_width(highway).map(|lane| f32::from(lanes) * lane + 2.0 * EDGE_WIDTH)
+/// Ширина проезжей части из сечения при ширине полосы улицы `street_lane`;
+/// `None` — у дорожки сечения нет.
+pub fn section_width(highway: Highway, lanes: u8, street_lane: f32) -> Option<f32> {
+    lane_width(highway, street_lane).map(|lane| f32::from(lanes) * lane + 2.0 * EDGE_WIDTH)
 }
 
 /// Что сделал проход — строкой `osm parse:`.
@@ -167,8 +169,9 @@ impl std::fmt::Display for SectionReport {
 }
 
 /// Склеить улицы, вывести сечение каждого участка и пересчитать по нему
-/// ширину. Сеть остаётся в [`MapData::network`].
-pub fn apply(map: &mut MapData) -> SectionReport {
+/// ширину при ширине полосы улицы `street_lane`. Сеть остаётся в
+/// [`MapData::network`].
+pub fn apply(map: &mut MapData, street_lane: f32) -> SectionReport {
     let started = std::time::Instant::now();
     let network = RoadNetwork::new(&map.roads);
     let roads = &map.roads;
@@ -180,7 +183,7 @@ pub fn apply(map: &mut MapData) -> SectionReport {
 
     let mut lanes: Vec<Option<u8>> = roads
         .iter()
-        .map(|road| lane_width(road.highway).and(road.lanes))
+        .map(|road| lane_width(road.highway, street_lane).and(road.lanes))
         .collect();
     report.tagged = lanes.iter().flatten().count();
     for street in &network.streets {
@@ -190,7 +193,7 @@ pub fn apply(map: &mut MapData) -> SectionReport {
     }
 
     for (road, lanes) in map.roads.iter_mut().zip(&lanes) {
-        if lane_width(road.highway).is_none() {
+        if lane_width(road.highway, street_lane).is_none() {
             continue;
         }
         let lanes = lanes.unwrap_or_else(|| {
@@ -198,7 +201,7 @@ pub fn apply(map: &mut MapData) -> SectionReport {
             inferred_lanes(road)
         });
         road.lanes = Some(lanes);
-        if let Some(width) = section_width(road.highway, lanes) {
+        if let Some(width) = section_width(road.highway, lanes, street_lane) {
             road.width = width;
         }
     }
@@ -340,6 +343,7 @@ mod tests {
 
     use super::*;
     use crate::map::osm::fixture::street;
+    use crate::map::roads::shape::LANE_WIDTH_DEFAULT;
 
     fn piece(from: f32, to: f32, lanes: Option<u8>) -> RoadLine {
         let mut road = street(vec![Vec2::new(from, 0.0), Vec2::new(to, 0.0)], 8.0);
@@ -352,7 +356,7 @@ mod tests {
             roads,
             ..Default::default()
         };
-        let report = apply(&mut map);
+        let report = apply(&mut map, LANE_WIDTH_DEFAULT);
         (map, report)
     }
 

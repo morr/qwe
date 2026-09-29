@@ -310,7 +310,7 @@ fn leg_sections(roads: &[RoadLine], rings: &rings::Rings) -> Vec<(usize, RoadLin
         .enumerate()
         .filter(|(index, _)| rings.leg_flow(*index).is_some())
         .filter_map(|(index, road)| {
-            let width = network::sections::section_width(road.highway, 1)?;
+            let width = network::sections::section_width(road.highway, 1, shape::lane_width())?;
             (width < road.width).then(|| {
                 let leg = RoadLine {
                     width,

@@ -679,8 +679,10 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     than `SPIKE_MAX_LENGTH` 60 m with the same count on both sides and another of its own —
     is cut to its neighbours. `RoadLine::lanes` is **overwritten** with the result on every
     street and drive, and `width = lanes × lane width + 2 × EDGE_WIDTH` — a lane on a
-    street is the **lane width** knob (`shape::lane_width()`, `RoadShape::lane_width`
-    2.75–3.75 m, default 3.3), on a service drive that minus `SERVICE_LANE_NARROWING`
+    street is the **lane width** knob (`RoadShape::lane_width` 2.75–3.75 m, default 3.3,
+    handed to `sections::apply(map, street_lane)` as an **argument** — the pass reads no
+    global, and neither do `sections::lane_width` / `section_width`, which take it the same
+    way), on a service drive that minus `SERVICE_LANE_NARROWING`
     0.3, 0.5 m of edge each side: at the default a
     two-lane street is 7.6 m, a six-lane avenue 20.8, a one-lane one-way half 4.3 — where
     the class gave 8, 16 and 16. Because the parse reads it, a new lane width is a **world

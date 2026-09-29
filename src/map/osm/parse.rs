@@ -364,7 +364,7 @@ impl std::fmt::Display for PassReport {
 /// него, отвечал бы про старую карту.
 fn finish_parse(map: &mut MapData, pending: &Pending) -> PassReport {
     let entrances = &pending.entrances;
-    let sections = sections::apply(map);
+    let sections = sections::apply(map, crate::map::roads::shape::lane_width());
     let drowned = drop_buildings_in_water(map);
     // мера квартала строится по домам, только если есть кого спросить
     let districts = std::cell::OnceCell::new();
