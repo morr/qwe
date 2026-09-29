@@ -2542,7 +2542,8 @@ place to look at a road-network defect end to end:
   the paint's lane-width global (`apply_lane_width`) before re-parsing its samples. `ROADS_SHOT=path.png` takes a frame and exits — counting the shared
   `gallery_shot.rs` frames only from the frame every sample is built and placed
   (`gallery_ready`), since the samples build one per frame and a fixed frame number left
-  the late ones (Tula's 28th) empty; `ROADS_SAMPLE=N` frames sample N,
+  the late ones (Tula's 28th) empty; `ROADS_SHOT_SCALE=2` takes it at twice the window's
+  logical size — the same frame, sharper; `ROADS_SAMPLE=N` frames sample N,
   `ROADS_CITY=<slug>` opens the gallery on that city (the automatic shot of a city other
   than Tula).
 - **Captions are always drawn**, even where they run under the panel or off the screen.

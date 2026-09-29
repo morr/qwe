@@ -832,7 +832,14 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
     so examples read top-to-bottom as self-contained units. The auto-shot logic is shared in
     `examples/demos/gallery_shot.rs`: it holds the frame counts and the render-to-texture
     capture (a window surface shoots black on a locked screen), both debugged facts
-    (commits 21853a3, 4cbff7ff), and fixes apply there to all galleries at once.
+    (commits 21853a3, 4cbff7ff), and fixes apply there to all galleries at once. Every
+    gallery's `<VAR>` also reads `<VAR>_SCALE` (`ROADS_SHOT_SCALE=2`, `CAR_GALLERY_SHOT_SCALE=2`):
+    the image is the window's logical size × the scale, with the same `scale_factor` on
+    the `ImageRenderTarget`, so the frame holds what the window does, only sharper. That
+    scale once shot black, and not because of the locked screen: `Screenshot::image(handle)`
+    names the target with scale 1, `prepare_screenshots` swaps the output attachment keyed
+    by the **whole** target (scale included), and the camera drew past the swap. The shot
+    is therefore spawned as `Screenshot(RenderTarget::Image(<the camera's target>))`.
   - **The ninth cell is the stand** (`car_gallery/stand.rs`) — five body types × three
     detail steps, and it answers the other question: not *where* a row stands but *what*
     stands in it. Neither is readable off a street — the type falls out of the LCG and a van
