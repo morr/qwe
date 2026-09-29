@@ -1071,11 +1071,39 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     Рязань 04's big ring (60 m) two wide two-way approaches found such one-street
     "tails" 23 and 38 m along the ring, narrowed to a lane and opened a wedge of bare
     ground. The leg then goes one lane by the tangent arc; the tail
-    is drawn as it is, being part of other streets. Before, it was a two-way arm bent
-    along the ray, a 7.6 m ribbon merging with the tail into one wide mouth. No island
-    appears there: the OSM fork lies 8 m off the ring's axis, and the two-way tail hugs
-    the ring (`the_legs_of_a_y_approach_enter_and_leave_along_the_ring`,
+    is drawn as it is, being part of other streets
+    (`the_legs_of_a_y_approach_enter_and_leave_along_the_ring`,
     `a_y_approach_whose_other_leg_is_a_tail_of_two_streets`).
+  - **A tail Y is straightened in the data, not in the drawing**
+    (`rings/straighten.rs::straighten_tails`, the parse's first finishing pass, before
+    the sections — it moves nodes and cuts a way, and the street network is assembled
+    from the ways). Drawn as found, it had no island: on Рязань 05 north the fork lies
+    10 m off the ring's axis, the joint where the second street takes the tail over
+    3.6 m, and from there the full-width two-way tail runs along the ring — one smooth
+    asphalt flow from the fork to the ring. No path substitute can fix that, since the
+    nodes stay put in `Drawn`. So the pass runs the same `fit_rings` + `y_legs` over the
+    raw points (`y_legs` hands the tail Ys back as a second list, `Tail` / `TailWalk`)
+    and, per tail: the **fork and the joint merge into one node** (`fork_point`) on the
+    ray through the middle of the ring arc between the two leg nodes, `FORK_SHARE` 0.7
+    of the chord between them off the axis (at least `FORK_MIN` 10 m; the two «Y» of two
+    ways on the same ring stand 11 m off at a 20 m chord and their island barely
+    shows); the first street loses the piece between fork and joint and ends in the new
+    fork; the second street's run from the joint to the ring becomes **a way of its own**
+    (cut off when the street goes on past the joint), straight; the own leg is
+    straightened too; every road through the fork or the joint is moved with them.
+    What reaches the drawing is an ordinary Y of two ways — one-lane entry and exit by
+    the tangent arc and the fan's hatched island between them. Left as it is: a vertex
+    that would go (between fork and joint, between joint and ring, inside the leg)
+    shared with any road — it would be left hanging; a second street not ending in the
+    ring node; a fork moving more than `SHIFT_MAX` 20 m, or a leg longer than
+    `LEG_MAX`. Only the tail Ys are touched — a Y of two ways, a lone two-way approach,
+    a short way with no tail keep their points
+    (`a_y_tail_along_the_ring_becomes_two_legs_from_a_fork_off_it`,
+    `other_approaches_are_not_straightened`, `a_tail_crossed_by_another_road_is_left_as_it_is`).
+    Plausibility over faithfulness: the fork is no longer where the mapper put it
+    (about 10 m further out), but the approach reads as an approach. Roads carve the
+    navmesh only through bridges, passages and fence gaps, so the pass does not reach
+    it in a park; the doors, blocks and lots see the same fork as the ribbon.
   - **Webs** (`Rings::webs`, `webs_along`): wherever a street — an arm, its continuation,
     or a slip road that bypasses the ring without entering it (Tula, gallery 04,
     south-east) — runs **along** the ring outside it (within `WEB_ALONG` cos 0.7 of the

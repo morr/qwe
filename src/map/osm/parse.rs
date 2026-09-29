@@ -22,6 +22,7 @@ use crate::map::osm::model::{
 };
 use crate::map::osm::overpass::{Element, GeoBounds, LatLon, Member, OverpassResponse};
 use crate::map::roads::network::sections::{self, SectionReport};
+use crate::map::roads::rings;
 use crate::map::roads::shape::LANE_WIDTH_DEFAULT;
 use crate::map::seed::seed_from_point;
 
@@ -206,6 +207,9 @@ struct PlantedReport {
 /// этого единственным способом узнать, сколько домов отодвинулось от
 /// тротуаров, было прочесть строку на stderr.
 struct PassReport {
+    /// Y-подходов с хвостом, выпрямленных в обычный «Y»
+    /// (`roads::rings::straighten_tails`).
+    straightened: rings::Straightened,
     sections: SectionReport,
     drowned: usize,
     sidewalks: InferredSidewalks,
@@ -235,6 +239,7 @@ impl std::fmt::Display for PassReport {
         // разбор по полям, а не `self.…`: в строке посадки шесть подстановок, и
         // по именам они читаются, а по позициям — только счётом
         let Self {
+            straightened,
             sections,
             drowned,
             sidewalks,
@@ -256,6 +261,11 @@ impl std::fmt::Display for PassReport {
             planted,
             planting,
         } = self;
+        let rings::Straightened { tails, elapsed } = straightened;
+        writeln!(
+            f,
+            "osm parse: {tails} roundabout Y approaches straightened off their tails in {elapsed:?}"
+        )?;
         writeln!(f, "{sections}")?;
         if *drowned > 0 {
             writeln!(
@@ -350,6 +360,10 @@ impl std::fmt::Display for PassReport {
 ///    ширина дороги выводится из числа полос, а её читают шаги 5 и 6 (тротуар
 ///    отодвигает дома, край дороги притягивает кварталы и стоянки). Домов этот
 ///    шаг не касается, так что ставить его раньше утопленников ничему не мешает.
+///    Ещё раньше, прямо перед ним, **выпрямляются Y-подходы к кольцам**
+///    (`map::roads::rings::straighten_tails`): проход двигает узлы и режет way,
+///    а сеть улиц собирается по готовым way, так что после сечений он бы её
+///    сломал.
 /// 1. **Утопленники** уходят первыми: дом, целиком стоящий в воде, не должен
 ///    получить ни веры, ни двери, ни выпрямленного контура — всё это работа
 ///    по дому, которого не будет.
@@ -403,6 +417,7 @@ impl std::fmt::Display for PassReport {
 fn finish_parse(map: &mut MapData, pending: &Pending, knobs: ParseKnobs) -> PassReport {
     map.knobs = knobs;
     let entrances = &pending.entrances;
+    let straightened = rings::straighten_tails(&mut map.roads);
     let sections = sections::apply(map, knobs.lane_width);
     let drowned = drop_buildings_in_water(map);
     // мера квартала строится по домам, только если есть кого спросить
@@ -458,6 +473,7 @@ fn finish_parse(map: &mut MapData, pending: &Pending, knobs: ParseKnobs) -> Pass
     map.compose_trees(TreeCompose::default());
 
     PassReport {
+        straightened,
         sections,
         drowned,
         sidewalks,

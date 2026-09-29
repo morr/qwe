@@ -35,7 +35,10 @@ a map built by hand in a test carries the defaults.
   `SidewalkSide::Inferred` on the `RoadLine` itself.
 - **`finish_parse(&mut MapData, &Pending, ParseKnobs) -> PassReport`** — the **nine** finishing passes
   (step 0 is the street sections, `map::roads::network::sections`, since the width they
-  set is read by the passes after them) in their one correct order, closed by a tenth
+  set is read by the passes after them — and right before them the roundabout tail Ys
+  are straightened, `map::roads::rings::straighten_tails`, which moves nodes and cuts a
+  way and so must run before the network is assembled; `references/roads.md`, **A tail
+  Y is straightened in the data**) in their one correct order, closed by a tenth
   step, `compose_trees` for the default
   layout (the parser knows nothing about the panels, but it must not hand out a `MapData`
   whose `trees` is empty, or every reader has to remember a separate compose step; the
