@@ -87,6 +87,10 @@ const DOUBLE_OFFSET: f32 = (0.15 + LINE_WIDTH) / 2.0;
 /// Одно правило и для осевой улицы, и для осевой, заведённой от узла слияния
 /// ([`Painter::paint_merge_axis`]).
 const DOUBLE_AXIS_LANES: u8 = 4;
+/// Допуск, м, с которым линия раскладки считается у края кармана (за
+/// раскладкой узкого продолжения) и по сторону горла съезда: линия на самой
+/// границе — ещё не в кармане и не в горле.
+const LINE_SLACK: f32 = 0.05;
 /// Цвет краски — белый с лёгкой желтизной старой разметки; прозрачность —
 /// ручка «Paint» ([`RoadPaintStyle::paint`]), не цвет.
 const PAINT_COLOR: Color = Color::srgb(0.95, 0.95, 0.93);
@@ -853,7 +857,7 @@ impl Painter {
                 .filter(|&end| {
                     pockets[end].is_some_and(|pocket| {
                         let narrow = lane_frame(pocket.lanes);
-                        offset < narrow.low + 0.05 || offset > narrow.high - 0.05
+                        offset < narrow.low + LINE_SLACK || offset > narrow.high - LINE_SLACK
                     })
                 })
                 .map(|end| 1 << end)
@@ -865,7 +869,7 @@ impl Painter {
         let in_throat = |offset: f32| -> usize {
             throats
                 .iter()
-                .filter(|throat| offset * throat.side > 0.05)
+                .filter(|throat| offset * throat.side > LINE_SLACK)
                 .map(|throat| throat_bit(throat.side))
                 .fold(0, |mask, bit| mask | bit)
         };

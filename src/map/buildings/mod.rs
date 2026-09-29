@@ -554,29 +554,22 @@ pub fn rebuilds_on() -> impl SystemCondition<()> {
 
 /// Пересборка зданиевых слоёв после переключения режима из UI или BRP:
 /// деспавн старых слоёв и повторный спавн из той же `MapData`.
-#[allow(clippy::too_many_arguments)]
+///
+/// Тени пересобираются всегда: обе причины из [`rebuilds_on`] — режим высот и
+/// солнце — их трогают.
 pub fn rebuild_buildings(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     materials: LayerMaterials,
     mode: Res<BuildingHeightMode>,
-    sun: Res<SunOnMap>,
     map: Res<MapData>,
     layers: Query<Entity, With<BuildingLayerTag>>,
     shadows: Query<Entity, With<BuildingShadowTag>>,
 ) {
-    // обе причины пересборки трогают и тени; флаг остался на случай причины,
-    // которая их не трогает
-    let with_shadows = mode.is_changed() || sun.is_changed();
-    for entity in &layers {
+    for entity in layers.iter().chain(&shadows) {
         commands.entity(entity).despawn();
     }
-    if with_shadows {
-        for entity in &shadows {
-            commands.entity(entity).despawn();
-        }
-    }
-    let plan = BuildingPlan::game(*mode, with_shadows);
+    let plan = BuildingPlan::game(*mode, true);
     spawn_building_meshes(
         &mut commands,
         &mut meshes,

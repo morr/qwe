@@ -594,6 +594,12 @@ pub const Z_CONIFER_NOISE_OVERLAY: f32 = 21.0;
 const _: () = {
     // площадные заливки: земля → парк → лес → трава → песок → вода
     assert!(Z_GROUND < Z_LANDUSE);
+    // газон острова кольца — сразу над землёй, под всем замапленным на нём;
+    // его трава без канта — над травой и под песком
+    assert!(Z_GROUND < Z_RING_ISLAND);
+    assert!(Z_RING_ISLAND < Z_LANDUSE);
+    assert!(Z_GRASS < Z_RING_GRASS);
+    assert!(Z_RING_GRASS < Z_SAND);
     // газон широкой обочины — под её плиткой, оба — под кварталами
     assert!(Z_ROAD_VERGE_LAWN < Z_ROAD_VERGE_YARD);
     assert!(Z_ROAD_VERGE_YARD < Z_ROAD_VERGE);
@@ -611,6 +617,9 @@ const _: () = {
     assert!(Z_ALLEY < Z_SIDEWALK);
     assert!(Z_SIDEWALK < Z_ROAD_MEDIAN);
     assert!(Z_ROAD_MEDIAN < Z_ROAD);
+    // грунтовка — над тротуарами и дорожками, под асфальтом: узел асфальтовый
+    assert!(Z_SIDEWALK < Z_UNPAVED_ROAD);
+    assert!(Z_UNPAVED_ROAD < Z_ROAD);
     // стоянка — над дорогами (её край обрезает проезды), под площадкой;
     // разметка — поверх своего покрытия
     assert!(Z_ROAD < Z_ROAD_WEAR_MASK);
