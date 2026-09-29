@@ -2431,6 +2431,14 @@ Rostov's one-way grid, crossings of two divided avenues, a T into a six-lane two
 street, unpaved and gravel private-sector crossings, rings of every size (a three-lane
 primary, two rings side by side, a narrow ring round a square, a park ring, an oval one,
 a five-arm mini ring, a closed one-way loop without `junction`), six arms in one node.
+**Belgorod** has two, both from the author's reports and both drawn wrong when added:
+`01_divided_merge_junction` (улица Попова × Павлова — the halves of a divided secondary
+meet in the signalled junction node itself, the east half kinked in OSM right at the
+node; the game bulges that half and zebras only the west one, Yandex keeps both halves
+straight with a paved strip between them up to one zebra across the arm) and
+`02_links_into_avenue` (улица Победы — two one-way `primary_link`s leave one node of a
+four-lane primary: not a merge, the class differs; the entry's lane runs into the solid
+line by the hatched gore).
 **The column is a list of junction *types*, one sample per type, with no target count**;
 the rules for adding one — one type once, readable in the window at a glance, flat road
 junctions only (no level crossings, no multi-level interchanges, no arch through a house:
