@@ -54,7 +54,7 @@ use super::drawn::{Axis, Drawn};
 use super::junctions::node_key;
 use super::network::pairs::PROBE_STEP;
 use crate::map::along::{arclengths, nearest_on_path, place_on_path};
-use crate::map::meshing::arc_steps;
+use crate::map::meshing::{arc_steps, ribbon_merge_distance, ribbon_vertices};
 use crate::map::osm::model::{closest_on_segment, polyline_length, ring_area};
 use crate::map::osm::{Highway, RoadClass, RoadLine};
 
@@ -316,6 +316,9 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
         let total = polyline_length(path);
         let closed = path[0] == path[path.len() - 1];
         let last = path.len() - 1;
+        // вершины, которые оставит лента (`meshing::ribbon_vertices`): край
+        // ленты прямой между ними, а не между вершинами оси
+        let drawn_vertices = ribbon_vertices(path, closed, ribbon_merge_distance(road.width));
         let mut along = 0.0;
         for (vertex, &node) in path.iter().enumerate() {
             if vertex > 0 {
@@ -346,6 +349,15 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                     from.checked_sub(1)
                 }
             };
+            // Луч меряется по вершинам **ленты**: она сливает точки оси ближе
+            // четверти своей ширины, и край идёт прямо до следующей
+            // оставленной. Направление на слитую вершину расходилось с краем
+            // ленты — у широкой улицы на градусы, и сторона скругления
+            // отходила от края светлой щелью (Тула, Сойфера × Лейтейзена);
+            // прямой край, продлённый через слитую вершину на изгибе оси,
+            // выводил дугу за кромку асфальтовым язычком (Халтурина ×
+            // Гоголевская). Узел, который лента сама слила, — по вершинам оси.
+            let on_ribbon = |index: usize| drawn_vertices[index] || !drawn_vertices[vertex];
             for forward in [true, false] {
                 let mut at = vertex;
                 let mut next = None;
@@ -354,7 +366,7 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                         break;
                     }
                     at = index;
-                    if path[index].distance(node) >= MIN_ARM {
+                    if on_ribbon(index) && path[index].distance(node) >= MIN_ARM {
                         next = Some(path[index]);
                         break;
                     }
@@ -372,13 +384,16 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                     if index == vertex {
                         break;
                     }
+                    at = index;
+                    if !on_ribbon(index) {
+                        continue;
+                    }
                     let offset = path[index] - node;
                     let along = offset.dot(direction);
                     if along <= run || direction.perp_dot(offset).abs() > STRAIGHT_TOLERANCE {
                         break;
                     }
                     run = along;
-                    at = index;
                 }
                 // Кромка прямая только до клина: дальше лента сужается, и
                 // касательная, заведённая в клин, торчала из-под него шипом
@@ -1485,6 +1500,38 @@ mod tests {
                 assert!(point.y <= 6.0 + 1e-3, "{point:?}");
             }
         }
+    }
+
+    /// Широкая улица сливает вершину оси ближе четверти своей ширины, и её
+    /// край идёт прямо на следующую оставленную: дуга скругления кончается на
+    /// этом крае, а не на прямой к слитой вершине — та уводила её конец за
+    /// кромку в тротуар (Тула, Халтурина × Гоголевская, Сойфера × Лейтейзена).
+    #[test]
+    fn the_corner_ends_on_the_edge_the_ribbon_draws() {
+        let wide = street(
+            vec![
+                Vec2::new(0.0, 60.0),
+                Vec2::ZERO,
+                Vec2::new(-0.45, -4.5),
+                Vec2::new(0.0, -40.0),
+            ],
+            20.0,
+        );
+        let drive = street(vec![Vec2::new(-50.0, 0.0), Vec2::ZERO], 5.0);
+        let found = returns_of(&[wide, drive]);
+        let (_, south_west) = found
+            .iter()
+            .find(|(_, outline)| outline[0].x < 0.0 && outline[0].y < 0.0)
+            .expect("скругление юго-западного угла");
+        // лента идёт от узла прямо на (0, −40): её западный край — x = −10
+        let on_edge = south_west[south_west.len() - 2];
+        assert!((on_edge.x + 10.0).abs() < 1e-3, "{on_edge:?}");
+        assert!(
+            south_west
+                .iter()
+                .all(|point| point.x <= -10.0 + OVERLAP + 1e-3),
+            "{south_west:?}"
+        );
     }
 
     /// Асфальт двумя way с изломом в узле, где его пересекает грунтовка:

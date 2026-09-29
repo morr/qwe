@@ -1308,7 +1308,7 @@ impl MeshBuilder {
             caps,
             breaks,
         } = shape;
-        let mut path = merge_ribbon_points(points, closed, width / 4.0);
+        let mut path = merge_ribbon_points(points, closed, ribbon_merge_distance(width));
         if path.len() < 2 {
             return;
         }
@@ -2118,7 +2118,7 @@ pub fn to_break_beyond(
     end: bool,
     beyond: f32,
 ) -> f32 {
-    let path = merge_ribbon_points(points, false, width / 4.0);
+    let path = merge_ribbon_points(points, false, ribbon_merge_distance(width));
     if path.len() < 2 {
         return FAR_FROM_BREAKS;
     }
@@ -2501,17 +2501,54 @@ pub fn merge_close_points(points: &[Vec2], closed: bool, merge_distance: f32) ->
 /// соседним куском (клин смены сечения и тело улицы, `roads/tapers.rs`) — щель
 /// поперёк проезжей части.
 pub fn merge_ribbon_points(points: &[Vec2], closed: bool, merge_distance: f32) -> Vec<Vec2> {
-    let mut path = merge_close_points(points, closed, merge_distance);
-    // путь, схлопнутый в точку, так и остаётся точкой
-    if !closed
-        && path.len() > 1
-        && let Some(&end) = points.last()
-        && path.last() != Some(&end)
-    {
-        path.pop();
-        path.push(end);
+    ribbon_vertices(points, closed, merge_distance)
+        .into_iter()
+        .zip(points)
+        .filter_map(|(kept, &point)| kept.then_some(point))
+        .collect()
+}
+
+/// Какие точки `points` лента оставит вершинами ([`merge_ribbon_points`] —
+/// ровно они, по порядку). По ним скругления бордюра в узле
+/// (`roads/corners.rs`) меряют прямой край луча: край ленты идёт по этим
+/// вершинам, а не по слитым, и дуга по слитой вершине садилась мимо края —
+/// у широкой улицы, где слияние берёт четверть ширины, на десятки сантиметров.
+pub fn ribbon_vertices(points: &[Vec2], closed: bool, merge_distance: f32) -> Vec<bool> {
+    let merge_distance_sq = merge_distance.powi(2);
+    let mut kept = vec![false; points.len()];
+    let mut last: Option<usize> = None;
+    let mut count = 0;
+    for (index, &point) in points.iter().enumerate() {
+        if last.is_none_or(|last| points[last].distance_squared(point) > merge_distance_sq) {
+            kept[index] = true;
+            last = Some(index);
+            count += 1;
+        }
     }
-    path
+    let Some(mut last) = last else {
+        return kept;
+    };
+    let first = kept.iter().position(|&kept| kept).unwrap_or_default();
+    if closed {
+        // хвост, сошедшийся с началом
+        while count > 1 && points[first].distance_squared(points[last]) <= merge_distance_sq {
+            kept[last] = false;
+            count -= 1;
+            last = kept[..last].iter().rposition(|&kept| kept).unwrap_or(first);
+        }
+    } else if count > 1 && points[last] != points[points.len() - 1] {
+        // конец остаётся на месте, сливается с ним предпоследняя точка; путь,
+        // схлопнутый в точку, так и остаётся точкой
+        kept[last] = false;
+        kept[points.len() - 1] = true;
+    }
+    kept
+}
+
+/// Расстояние, на котором лента шириной `width` сливает соседние точки оси
+/// ([`merge_ribbon_points`]): на четверти ширины их не видно.
+pub fn ribbon_merge_distance(width: f32) -> f32 {
+    width / 4.0
 }
 
 /// Нормаль прямого торца: поперёк **исходного** крайнего звена `points`, а не

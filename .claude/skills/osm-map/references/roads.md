@@ -1823,7 +1823,17 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     the arm's line. OSM puts vertices on a straight drive wherever it likes (the node
     where the pavement footway crosses it, 2 m off the street), and a run cut at the
     first of them clipped the tangent to nothing: the drive met the street with square
-    corners (reported from a screenshot; 8220 → 8710 returns on Tula). Arms of one class are sorted by angle, and between neighbours 25°–155° apart the
+    corners (reported from a screenshot; 8220 → 8710 returns on Tula). **Both are measured
+    on the vertices the ribbon keeps** (`meshing::ribbon_vertices`, the mask behind
+    `merge_ribbon_points`, at the ribbon's own `ribbon_merge_distance` — a quarter of the
+    road's width): the ribbon merges axis points closer than that, and its edge runs
+    straight to the next vertex it kept, not to the merged one. On a 20 m avenue that is
+    five metres, and a direction aimed at a merged vertex parted from the drawn edge by
+    degrees — the fillet's side stood off the kerb as a light sliver of sidewalk (Tula,
+    Сойфера × Лейтейзена, R4); a run carried through a merged vertex on a smoothed bend
+    ended the arc beyond the kerb as a tongue of asphalt in the sidewalk (Халтурина ×
+    Гоголевская, R8). A node the ribbon merged away itself falls back to the axis
+    vertices. Arms of one class are sorted by angle, and between neighbours 25°–155° apart the
     corner of the two facing edges is found, a circle is fitted tangent to both — its
     radius **by the minor class of the pair** (`kerb_radius`, stage 5 of the roads
     rework): `MAJOR_RADIUS` 10 m between avenues (`trunk`…`secondary` and their links),
