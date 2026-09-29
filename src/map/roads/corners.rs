@@ -1296,13 +1296,21 @@ fn kerb_pad(
     let Some(arc) = fillet_arc(node, first, second, halves, radius) else {
         return Vec::new();
     };
+    // Ширина площадки у каждого луча — не шире его полосы тротуара, если
+    // она есть: площадка в 3 м за тротуаром в 2.5 выходила в газон уступом
+    // в полметра у конца хвоста и у начала дуги (Тула, Фёдора Смирнова у
+    // Красноармейского, R1). Где тротуара нет, газон подходит к бордюру, и
+    // площадка — во всю [`KERB_PAD_WIDTH`].
+    let width = |sidewalk: Option<f32>| sidewalk.map_or(KERB_PAD_WIDTH, |s| s.min(KERB_PAD_WIDTH));
+    let widths = [width(first.sidewalk[0]), width(second.sidewalk[1])];
     // кромка заходит под асфальт на `OVERLAP`, внутренняя дуга — того же
-    // центра, на ширину площадки ближе к нему
+    // центра, на ширину площадки ближе к нему (от ширины у первого луча к
+    // ширине у второго)
     let outer: Vec<Vec2> = arc.points(OVERLAP).collect();
     let sides = [arc.side_first, arc.side_second];
     let alongs = [arc.along_first, arc.along_second];
-    let mut pieces: Vec<Vec<Vec2>> = if arc.radius > KERB_PAD_WIDTH {
-        let inner: Vec<Vec2> = arc.points(-KERB_PAD_WIDTH).collect();
+    let mut pieces: Vec<Vec<Vec2>> = if arc.radius > widths[0].max(widths[1]) {
+        let inner: Vec<Vec2> = arc.points_between(-widths[0], -widths[1]).collect();
         outer
             .windows(2)
             .zip(inner.windows(2))
@@ -1318,13 +1326,15 @@ fn kerb_pad(
         if determinant.abs() < 1e-6 {
             return Vec::new();
         }
-        // на ширине площадки за обеими кромками: `side · (p − угол) = W`
+        // на ширине площадки за каждой кромкой: `side_i · (p − угол) = W_i`
         let back = arc.corner
-            + Vec2::new(sides[1].y - sides[0].y, sides[0].x - sides[1].x) * KERB_PAD_WIDTH
-                / determinant;
+            + Vec2::new(
+                widths[0] * sides[1].y - widths[1] * sides[0].y,
+                widths[1] * sides[0].x - widths[0] * sides[1].x,
+            ) / determinant;
         // по кромке — докуда она на ширину площадки от другой кромки
         let edge = |index: usize| {
-            let reach = KERB_PAD_WIDTH / alongs[index].dot(sides[1 - index]).max(1e-3);
+            let reach = widths[1 - index] / alongs[index].dot(sides[1 - index]).max(1e-3);
             arc.corner + alongs[index] * reach.max(arc.tangent) - sides[index] * OVERLAP
         };
         let mut outline = vec![back, edge(0)];
@@ -1335,18 +1345,20 @@ fn kerb_pad(
     // хвост — не дальше прямого края и не за дорожку, пересекающую улицу:
     // за ней снова газон, и хвост торчал за её лентой квадратом плитки в
     // газоне (Тула, Гоголевская у Халтурина, R10)
-    for (on, along, side, room) in [
+    for (on, along, side, room, width) in [
         (
             arc.on_first,
             arc.along_first,
             arc.side_first,
             first.run.min(first.crossed) - arc.t_first,
+            widths[0],
         ),
         (
             arc.on_second,
             arc.along_second,
             arc.side_second,
             second.run.min(second.crossed) - arc.t_second,
+            widths[1],
         ),
     ] {
         let run = KERB_PAD_RUN.min(room - arc.tangent);
@@ -1354,7 +1366,7 @@ fn kerb_pad(
             continue;
         }
         let kerb = on - side * OVERLAP;
-        let back = on + side * KERB_PAD_WIDTH;
+        let back = on + side * width;
         pieces.push(vec![kerb, kerb + along * run, back + along * run, back]);
     }
     pieces
@@ -1399,6 +1411,17 @@ impl FilletArc {
                     Vec2::from_angle(self.turn * self.sweep * step as f32 / self.steps as f32);
                 self.centre + rotation.rotate(self.from) * scale
             }
+        })
+    }
+
+    /// Как [`Self::points`], но отступ от дуги плывёт линейно от `from` у
+    /// касания с первым лучом до `to` у касания со вторым.
+    fn points_between(&self, from: f32, to: f32) -> impl Iterator<Item = Vec2> + '_ {
+        (0..=self.steps).map(move |step| {
+            let share = step as f32 / self.steps as f32;
+            let extra = from + (to - from) * share;
+            let rotation = Vec2::from_angle(self.turn * self.sweep * share);
+            self.centre + rotation.rotate(self.from) * ((self.radius + extra) / self.radius)
         })
     }
 }
@@ -2066,6 +2089,56 @@ mod tests {
         // касание дуги в (12, 6), дорожка — на x = 14
         let reach = north_east.iter().map(|point| point.x).fold(0.0, f32::max);
         assert!(reach <= 14.0 + 1e-3, "{reach}");
+    }
+
+    /// Площадка у угла, где за бордюром полоса тротуара уже площадки, а за ней
+    /// газон обочины: площадка — не шире тротуара, иначе у конца хвоста и у
+    /// начала дуги кромка газона шла уступом (Тула, Фёдора Смирнова, R1).
+    #[test]
+    fn a_kerb_pad_is_no_wider_than_the_sidewalk_band() {
+        let verged = |points: Vec<Vec2>| RoadLine {
+            highway: Highway::Residential,
+            verges: [12.0; 2],
+            ..street(points, 12.0)
+        };
+        let roads = [
+            verged(vec![
+                Vec2::new(-50.0, 0.0),
+                Vec2::ZERO,
+                Vec2::new(50.0, 0.0),
+            ]),
+            verged(vec![
+                Vec2::new(0.0, -50.0),
+                Vec2::ZERO,
+                Vec2::new(0.0, 50.0),
+            ]),
+        ];
+        let map = map_of(&roads);
+        let drawn = Drawn::for_test(&map).with_sidewalks(true);
+        let sidewalk = drawn.sidewalk_on(0, 0).expect("у улицы тротуар");
+        assert!(sidewalk < KERB_PAD_WIDTH - 0.1, "{sidewalk}");
+        let found = kerb_returns(&drawn, 1.0);
+        let pad: Vec<Vec2> = found
+            .verges
+            .iter()
+            .flatten()
+            .copied()
+            .filter(|point| point.x > 0.0 && point.y > 0.0)
+            .collect();
+        assert!(!pad.is_empty(), "у угла нет площадки");
+        // от кромки — бордюрной дуги радиуса 6 м или прямых краёв — не дальше
+        // полосы тротуара
+        let centre = Vec2::splat(6.0 + STREET_RADIUS);
+        for point in pad {
+            let off = if point.x >= centre.x {
+                point.y - 6.0
+            } else if point.y >= centre.y {
+                point.x - 6.0
+            } else {
+                STREET_RADIUS - point.distance(centre)
+            };
+            assert!(off <= sidewalk + 0.01, "{point:?} за кромкой на {off}");
+        }
     }
 
     /// Площадка за дугой уже своей ширины лежит на всю ширину от обеих

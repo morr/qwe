@@ -206,7 +206,14 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   collapse into the centre, and where an arm has no tail (its straight edge ends at the
   tangent) a tooth of lawn showed behind the centre; there the pad is the whole corner
   `KERB_PAD_WIDTH` deep from both kerbs, one convex piece from the arc out to where the
-  two back edges meet.
+  two back edges meet. **The pad is no wider than the sidewalk band** on an arm that
+  carries one (R1): the lawn then starts behind the band, and a 3 m pad behind a 2.5 m
+  band stepped the lawn's edge out by half a metre where the tail ended and where the arc
+  began, on both sides of Фёдора Смирнова at Красноармейский (Tula) — the card read it
+  as the carriageway widening. Each arm has its own depth (its band, else the full 3 m),
+  the tail keeps its arm's, the annulus's inner arc slides from one to the other
+  (`FilletArc::points_between`) and the tight-arc corner meets both back edges at their
+  own depths.
   **A lawn scrap is tiled** (`roads/scraps.rs`, `Scraps`, R9): the pad, a crossing path
   and a footway turning toward it cut the lawn at a corner, and a footway pressed
   against the kerb leaves a thin run of it, so what is left visible is a green pocket in
