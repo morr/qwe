@@ -4,7 +4,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use bevy::math::Vec2;
+use bevy::math::{IVec2, Vec2};
 
 use super::planting::plant_trees;
 use crate::city::City;
@@ -797,20 +797,27 @@ const PAVEMENT_PROBE_STEP: f32 = 10.0;
 /// сквер — десятки.
 const GREEN_CELL: f32 = 100.0;
 
-/// Что решил [`infer_pavements`]: сколько дорожек без покрытия было спрошено
-/// и сколько из них ушли по зелени в тропинки.
+/// Что решил [`infer_pavements`]: сколько дорожек без покрытия было спрошено,
+/// сколько из них ушли по зелени в тропинки и сколько остались мощёными,
+/// потому что оба их конца на мощёных дорожках.
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 struct InferredPavements {
     asked: usize,
     unpaved: usize,
+    between_paved: usize,
 }
 
 impl std::fmt::Display for InferredPavements {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let Self { asked, unpaved } = self;
+        let Self {
+            asked,
+            unpaved,
+            between_paved,
+        } = self;
         write!(
             f,
-            "osm parse: {unpaved} of {asked} untagged footways run through greenery and stay unpaved"
+            "osm parse: {unpaved} of {asked} untagged footways run through greenery and stay \
+             unpaved, {between_paved} more are paved between paved paths"
         )
     }
 }
@@ -825,7 +832,10 @@ impl std::fmt::Display for InferredPavements {
 /// его решает **середина пути по длине**: больше половины проб по парку, лесу
 /// или газону — тропинка, иначе — асфальт двора и улицы. По тегам в Туле и в
 /// парке мощёных больше, но всё мощёное там и размечено; молчащий `footway`
-/// в сквере — чаще протоптанная дорожка.
+/// в сквере — чаще протоптанная дорожка. **Кроме звена между мощёными**:
+/// дорожка по зелени, оба конца которой — точки мощёных дорожек (тег, род —
+/// лестница, площадь — или сама решённая мощёной), тоже мощёная. Один проход,
+/// без цепочек: звено, стоящее на другом таком звене, остаётся тропинкой.
 ///
 /// Детерминировано: пробы — функция точек пути, индекс зелени — её контуров.
 fn infer_pavements(map: &mut MapData) -> InferredPavements {
@@ -873,9 +883,36 @@ fn infer_pavements(map: &mut MapData) -> InferredPavements {
             Pavement::Paved
         });
     }
+    // Дорожка по газону, оба конца которой стоят на мощёных, — звено мощёной
+    // сети, а не тропинка: лучи сквера от кольцевой аллеи к лестницам
+    // центральной площадки ложились песком, и лестницы торчали на нём
+    // мощёными обрубками с круглыми торцами (Тула, остров кольца, витрина 04)
+    let key = |point: Vec2| (point * 100.0).round().as_ivec2();
+    let paved_joints: HashSet<IVec2> = roads
+        .iter()
+        .filter(|road| road.is_paved_path())
+        .flat_map(|road| road.points.iter().map(|&point| key(point)))
+        .collect();
+    let mut between_paved = 0;
+    for &at in &asked {
+        let road = &mut roads[at];
+        let (Some(&first), Some(&last)) = (road.points.first(), road.points.last()) else {
+            continue;
+        };
+        if road.pavement == Some(Pavement::Unpaved)
+            && key(first) != key(last)
+            && paved_joints.contains(&key(first))
+            && paved_joints.contains(&key(last))
+        {
+            road.pavement = Some(Pavement::Paved);
+            unpaved -= 1;
+            between_paved += 1;
+        }
+    }
     InferredPavements {
         asked: asked.len(),
         unpaved,
+        between_paved,
     }
 }
 

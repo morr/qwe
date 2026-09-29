@@ -1318,6 +1318,43 @@ fn a_footway_is_paved_by_its_tag_its_kind_or_the_greenery_around() {
     assert!(!map.roads[7].is_paved_path(), "улица — не дорожка");
 }
 
+/// Дорожка по газону между двумя мощёными — звено мощёной сети, а не
+/// тропинка: лучи сквера на острове кольца от аллеи к лестницам площадки
+/// ложились песком, лестницы торчали на нём обрубками (Тула, витрина 04, L7).
+#[test]
+fn a_footway_on_a_lawn_between_paved_paths_is_paved() {
+    let at = |x: f32, y: f32| CENTER + Vec2::new(x, y);
+    let map = Overpass::new(CITY)
+        .area(
+            &[("landuse", "grass")],
+            rect(at(-100.0, -100.0), at(100.0, 100.0)),
+        )
+        // аллея по краю газона — мощёная тегом
+        .way(
+            &[("highway", "footway"), ("surface", "asphalt")],
+            vec![at(-80.0, -60.0), at(0.0, -60.0), at(80.0, -60.0)],
+        )
+        // лестница у площадки — мощёная родом
+        .way(&[("highway", "steps")], vec![at(0.0, -10.0), at(0.0, -5.0)])
+        // от вершины аллеи до лестницы
+        .way(
+            &[("highway", "footway")],
+            vec![at(0.0, -60.0), at(0.0, -10.0)],
+        )
+        // от аллеи в никуда
+        .way(
+            &[("highway", "footway")],
+            vec![at(80.0, -60.0), at(80.0, 20.0)],
+        )
+        .parse();
+    let found: Vec<Option<Pavement>> = map.roads.iter().map(|road| road.pavement).collect();
+    use Pavement::{Paved, Unpaved};
+    assert_eq!(
+        found,
+        [Some(Paved), Some(Paved), Some(Paved), Some(Unpaved)]
+    );
+}
+
 /// Улицы для прямых вызовов [`infer_sidewalks`]: жилая без тега (`Inferred`
 /// у `fixture::street`) и её вариант с другим классом или тегом.
 fn inferred_street(highway: Highway) -> RoadLine {

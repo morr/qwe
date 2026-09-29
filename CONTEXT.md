@@ -244,7 +244,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     `pavement: Option<Pavement>` (`Paved | Unpaved`) — a **paved path**
     (`RoadLine::is_paved_path`) is drawn in the sidewalk layer in its colour, an unpaved
     one is the sand trail of the alley layer; `surface` or the path's kind decides, and
-    a bare `footway` takes the greenery around it (`parse::infer_pavements`). On a street
+    a bare `footway` takes the greenery around it (`parse::infer_pavements`) — unless both
+    its ends stand on paved paths, which keeps it a paved link of that network. On a street
     only the `surface` tag sets it: an **unpaved street** (`RoadLine::is_unpaved_street`,
     `surface=unpaved|gravel|ground|dirt|compacted|…`) is drawn in its own layer
     `unpaved_roads` (`Z_UNPAVED_ROAD` 1.8, under the asphalt, `SurfaceKind::Unpaved`) with

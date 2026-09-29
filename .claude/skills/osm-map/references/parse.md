@@ -335,7 +335,15 @@ be called alone:
   `steps`, `pedestrian`, `cycleway` paved, `path` and `track` unpaved; a bare `footway`
   stays `None`. The pass then probes each `None` path every `PAVEMENT_PROBE_STEP` 10 m
   against parks, woods and grass (a `Grid` of their boxes, `GREEN_CELL` 100 m): more than
-  half the probes in green → `Unpaved`, else `Paved`. Tula v15: 1952 paths paved by tag,
+  half the probes in green → `Unpaved`, else `Paved`. **A link between paved paths stays
+  paved**: a footway the probes sent to the sand whose two ends (not a ring) are both
+  vertices of paved paths — tagged, paved by kind (`steps`, `pedestrian`) or paved by the
+  probes — is set back to `Paved`, in one pass (a link standing on another such link stays
+  a trail). The spokes of the Tula ring island (gallery 04, Площадь 50-ой армии) run over
+  the lawn from the paved ring footway to the steps of the central square; drawn as sand,
+  they left the steps as paved stubs with round caps on it (roads tails L7). Keys are the
+  points in centimetres; logged as `…, N more are paved between paved paths`. Pinned by
+  `a_footway_on_a_lawn_between_paved_paths_is_paved`. Tula v15: 1952 paths paved by tag,
   146 unpaved, 1271 without `surface` (690 of them bare `footway`, 58 in the green);
   logged as `N of M untagged footways run through greenery and stay unpaved`. Pinned by
   `parse/tests.rs::a_footway_is_paved_by_its_tag_its_kind_or_the_greenery_around`. How
