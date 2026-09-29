@@ -335,6 +335,57 @@ fn a_junction_clears_the_row_and_the_row_resumes() {
     );
 }
 
+/// R31, 2-я Пушкарная у Колхозной в Орле: улица в полосу в каждую сторону
+/// примыкает к главной. Вдоль сплошной подхода — осевой в полутора метрах от
+/// машины у бордюра — ряда нет по обе стороны улицы (ПДД 12.4), и уж тем
+/// более в десяти метрах от кромки главной; дальше ряд идёт.
+#[test]
+fn no_car_stands_along_the_solid_approach_of_a_narrow_street() {
+    let main = RoadLine {
+        highway: Highway::Secondary,
+        lanes: Some(2),
+        ..street(
+            vec![
+                Vec2::new(0.0, 0.0),
+                Vec2::new(100.0, 0.0),
+                Vec2::new(200.0, 0.0),
+            ],
+            7.6,
+        )
+    };
+    let side = RoadLine {
+        highway: Highway::Residential,
+        lanes: Some(2),
+        ..street(vec![Vec2::new(100.0, 0.0), Vec2::new(100.0, 150.0)], 7.6)
+    };
+    let cars = park_with(
+        &[main, side],
+        CarStyle {
+            occupancy: 1.0,
+            ..default()
+        },
+    );
+    // кромка главной — в её полуширине от узла, сплошная подхода — на
+    // `paint::APPROACH` дальше края разрыва разметки
+    let solid_end = 7.6 / 2.0 + JUNCTION_MARGIN + paint::APPROACH;
+    let on_side: Vec<&Car> = cars
+        .iter()
+        .filter(|car| (car.at.x - 100.0).abs() < 4.0)
+        .collect();
+    for car in &on_side {
+        assert!(
+            car.at.y - car.shape.length() / 2.0 >= solid_end - 0.3,
+            "машина вдоль сплошной подхода: {}",
+            car.at
+        );
+    }
+    assert!(
+        on_side.iter().any(|car| car.at.x > 100.0) && on_side.iter().any(|car| car.at.x < 100.0),
+        "за сплошной ряд идёт по обе стороны: {:?}",
+        on_side.iter().map(|car| car.at).collect::<Vec<_>>()
+    );
+}
+
 #[test]
 fn a_way_split_in_the_middle_keeps_the_row() {
     // одна прямая улица, разрезанная на два way в общей ноде: стык двух

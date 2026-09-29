@@ -1509,7 +1509,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   walk** above), not segment
   by segment, and the row **breaks where the kerb pockets do** (`pockets::row_breaks` —
   junctions, service drives, marked OSM crossings and section tapers — plus
-  `JUNCTION_CLEARANCE` 6 m measured from the car's body) rather than at the ends of an OSM way,
+  `JUNCTION_CLEARANCE` 6 m measured from the car's body; at a junction of carriageways also
+  `CROSSED_EDGE_CLEARANCE` 10 m from the crossed carriageway's edge and nowhere alongside
+  the 25 m solid approach closer than 3 m to it, ПДД 12.4) rather than at the ends of an OSM way,
   and wherever it passes under or butts into a **bridge deck** (`BridgeDeck` — no shared
   node, so no junction, and `Z_CAR` would draw the car on the deck).
   A **one-way** carriageway gets a single row, on the kerb of the **driving side** — which is

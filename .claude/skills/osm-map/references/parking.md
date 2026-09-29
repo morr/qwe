@@ -678,6 +678,32 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
     and `all_kerbsides` take nothing else — the ribbon's `Junctions::row()` is the same
     type, so the row and the pockets cannot be fed the base or the paint's breaks by
     mistake (`references/roads.md`, **Junctions**).
+  - **At a junction of carriageways the row keeps further off** (R31, 2-я Пушкарная at
+    Колхозная, Oryol 1785 1913: a car stood a few metres behind the stop line, in the
+    mouth, alongside the solid approach). `park_cars` takes a second set of breaks,
+    `junctions::marking_breaks(roads, is_carriageway)` — the carriageway nodes where the
+    paint lays a stop line and a solid approach; dead ends (reach 0) are skipped — and a
+    place is dropped, measured along the street from the body as above, when
+    - its body is within `CROSSED_EDGE_CLEARANCE` 10 m of the **crossed carriageway's
+      edge** (`reach − JUNCTION_MARGIN`): ПДД 12.4 says five, a car at five read as
+      parked in the mouth;
+    - or it stands **alongside the solid approach** (`paint::APPROACH` 25 m past the
+      break's reach — one number with the paint) closer than `SOLID_LINE_CLEARANCE` 3 m to
+      it (ПДД 12.4 again). The line is `SolidLine::of(road)`: none on a one-lane street,
+      an unpaved one or `lane_markings=no`; `EDGE_WIDTH` + one lane from the kerb
+      otherwise — the **axis** of a two-way street of 2–3 lanes, solid on both sides of
+      the node, else a **lane line**, solid only on the approach side (`ahead ·
+      kerb.heading > 0`). The gap is that distance minus `CURB_GAP` and the body width,
+      plus `POCKET_WIDTH` in a pocket — a 1+1 street leaves 1.5 m, so its row starts ~30 m
+      from the node on both kerbs; a car in a kerb pocket clears 3 m and may stay.
+    It takes a node on the main road too (its axis runs solid through the node,
+    `near_spans(to_through)`), and it is geometry, not the paint's own breaks: the
+    through road's lane lines, which the paint leaves dashed at a node it passes, are
+    still cleared on the approach side. Crossings keep the plain 6 m. Tula (`map_meshing`,
+    default occupancy): 26 902 → 24 594 cars (−8.6 %, 2.64 → 2.41 M vertices), placement
+    time unchanged within noise (~49 ms — the extra `marking_breaks` pass is a few ms of
+    it). The gallery shows it with `ROADS_CARS=full`. Pinned by
+    `cars/tests.rs::no_car_stands_along_the_solid_approach_of_a_narrow_street`.
   - **Nor does a row stand where a street crosses a bridge** (`BridgeDeck`, pinned by
     `a_street_crossing_a_bridge_clears_the_row_under_the_deck`). A street under a bridge,
     or one butting into its side, shares no node with it, so `marking_breaks` sees no
@@ -982,7 +1008,9 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
     `a_yard_drive_among_towers_gets_a_row_on_its_right`, `a_yard_row_never_stands_in_a_house`,
     `a_yard_row_keeps_off_a_footway_beside_it`, `no_yard_row_in_the_private_sector_or_on_a_lot`.
     The roads gallery draws the car layer on request (`ROADS_CARS=1`,
-    `map::mesh_map_cars`) — that is how the yards are checked by eye.
+    `map::mesh_map_cars`) — that is how the yards are checked by eye; `ROADS_CARS=full`
+    (or a number) sets the row's occupancy, so a rule that forbids a place shows on the
+    shot rather than on a roll of the dice.
   - **How densely a place parks at all is decided by the district** (`cars/district.rs`,
     `Districts`), and it multiplies **both** shares — the kerb row's `CarStyle::occupancy`
     and the lot's `lot_occupancy`. Until it existed the layer knew only the width of the

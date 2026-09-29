@@ -39,11 +39,14 @@ use crate::map::osm::model::{distance_to_segment, ring_vertex_mean};
 use crate::map::osm::{MapData, PolyArea, RoadLine, TrafficSide};
 use crate::map::parallel::{self, in_parallel};
 use crate::map::parking::{ParkingLayout, Stall};
+use crate::map::roads::junctions::{self, JUNCTION_MARGIN};
+use crate::map::roads::network::sections::EDGE_WIDTH;
 use crate::map::roads::network::{RoadNetwork, RoadNodes};
 use crate::map::roads::pockets::{self, KerbLots, Kerbside, POCKET_WIDTH, RowBreaks};
 use crate::map::roads::shape::{RoadShape, RoadShapeOnMap};
 use crate::map::roads::tapers::Tapers;
 use crate::map::roads::{Axis, Drawn, axis};
+use crate::map::roads::{is_carriageway, lane_count, paint};
 use crate::map::seed::{Lcg, seed_from_point};
 use crate::map::shadow;
 use crate::map::surface::{LayerCost, LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
@@ -100,6 +103,18 @@ const PARK_SLOP: f32 = 0.12;
 /// машина, отмеренная центром в пяти метрах, вставала на неё носом. Тупик
 /// приходит разрывом нулевого `reach`, и клиренс даёт в нём те же метры.
 const JUNCTION_CLEARANCE: f32 = 6.0;
+/// Насколько кузов не доходит до кромки **пересекаемой проезжей части**, м
+/// (R31). ПДД 12.4 требует пять метров, но у настоящего перекрёстка машина
+/// стоит дальше: ближе десяти метров она стоит у стоп-линии, в самом устье, и
+/// читалась помехой на выезде. Кромка — вылет разрыва без
+/// `junctions::JUNCTION_MARGIN`: вылет — полуширина самой широкой из
+/// сошедшихся плюс этот запас.
+const CROSSED_EDGE_CLEARANCE: f32 = 10.0;
+/// Ближе этого, м, к сплошной линии разметки не паркуются (ПДД 12.4): вдоль
+/// сплошной подхода ([`paint::APPROACH`] до перекрёстка) на улице в полосу
+/// в каждую сторону ряда нет вовсе, — машина у бордюра там в полутора метрах
+/// от осевой. Карман отодвигает ряд на свою ширину, и в нём стоять можно.
+const SOLID_LINE_CLEARANCE: f32 = 3.0;
 /// Запас по прямой, в полуширинах дороги, за которым разрыв заведомо не
 /// мешает месту, как бы ни легла проекция на звено: на изломе узел за
 /// поворотом проецируется на текущее звено коротко, и без этого запаса он
@@ -581,15 +596,24 @@ pub fn mesh_parked(
 /// `examples/demos/roads` (`ROADS_CARS=1`): у неё своя карта на пример, и
 /// подготовленные дороги ([`Drawn`]) она строить не умеет. Тот же
 /// [`mesh_cars`], что зовёт игра, с той же формой дорог, что у ленты.
+///
+/// `occupancy` — ползунок `Occupancy` игры (`None` — его умолчание): полная
+/// занятость ставит машину на каждое разрешённое место, и правило, которое
+/// место запрещает, видно на снимке, а не на броске кости.
 pub fn mesh_map_cars(
     map: &MapData,
     shape: &RoadShape,
     layout: &ParkingLayout,
+    occupancy: Option<f32>,
 ) -> (Vec<LayerMesh>, CarReport) {
     let drawn = Drawn::nodal(map, shape);
+    let defaults = CarStyle::default();
     mesh_cars(
         CarZoomBucket::at(0),
-        CarStyle::default(),
+        CarStyle {
+            occupancy: occupancy.unwrap_or(defaults.occupancy),
+            ..defaults
+        },
         &drawn,
         map,
         layout,
@@ -677,6 +701,10 @@ fn park_cars(
     };
     let decks: Vec<BridgeDeck> = roads.iter().filter_map(BridgeDeck::of).collect();
     let kerbsides = pockets::all_kerbsides(roads, shared, axes, junctions, traffic, lots);
+    // перекрёстки проезжих частей — те, у которых краска кладёт стоп-линию и
+    // сплошную подхода (`roads/paint.rs`): от них ряд держится дальше
+    // ([`CROSSED_EDGE_CLEARANCE`], [`SolidLine`])
+    let crossed = junctions::marking_breaks(roads, is_carriageway, &[]);
     let mut near = Vec::new();
     for (index, road) in roads.iter().enumerate() {
         if !pockets::parkable(road) {
@@ -726,6 +754,8 @@ fn park_cars(
                 },
                 &Clearings {
                     junctions: junctions.of(index),
+                    crossed: &crossed.breaks[index],
+                    line: SolidLine::of(road),
                     decks: &near,
                 },
                 &density,
@@ -845,7 +875,44 @@ struct Density<'a> {
 /// Где ряду стоять нельзя: перекрёстки этой улицы и мосты рядом с ней.
 struct Clearings<'a> {
     junctions: &'a [Break],
+    /// Перекрёстки с проезжими частями: разрывы разметки этой улицы у узлов
+    /// проезжих частей (`junctions::marking_breaks` по `is_carriageway`),
+    /// тупики — с нулевым вылетом, их правило не касается.
+    crossed: &'a [Break],
+    /// Ближайшая к ряду линия разметки, сплошная у перекрёстка.
+    line: Option<SolidLine>,
     decks: &'a [&'a BridgeDeck<'a>],
+}
+
+/// Линия разметки, ближайшая к ряду у бордюра, — та, что у перекрёстка
+/// становится сплошной (`roads/paint.rs`, [`paint::APPROACH`]).
+#[derive(Clone, Copy)]
+struct SolidLine {
+    /// От кромки проезжей части до линии, м: кромка и крайняя полоса.
+    from_kerb: f32,
+    /// Осевая двусторонней улицы — сплошная по обе стороны узла; линия
+    /// полос — только на подходе к нему по ходу своих полос.
+    both: bool,
+}
+
+impl SolidLine {
+    /// Линия у бордюра улицы `road`: у улицы в одну полосу линий нет, как и у
+    /// грунтовой и у `lane_markings=no`. У двусторонней в две-три полосы
+    /// ближняя к бордюру — осевая, у широкой и у односторонней — линия полос.
+    fn of(road: &RoadLine) -> Option<Self> {
+        if !road.lane_markings || road.is_unpaved_street() {
+            return None;
+        }
+        let lanes = lane_count(road);
+        if lanes < 2 {
+            return None;
+        }
+        let lane = (road.width - 2.0 * EDGE_WIDTH) / f32::from(lanes);
+        Some(Self {
+            from_kerb: EDGE_WIDTH + lane,
+            both: !road.oneway && lanes <= 3,
+        })
+    }
 }
 
 /// Бордюр, вдоль которого стоит ряд.
@@ -926,8 +993,33 @@ fn park_along(
                 || place.distance(junction.at)
                     > junction.reach + JUNCTION_CLEARANCE + half_road * BREAK_BEND_SLACK_HALF_WIDTHS
         };
+        // перекрёсток проезжих частей: кузов — не ближе
+        // [`CROSSED_EDGE_CLEARANCE`] к кромке пересекаемой, и не вдоль
+        // сплошной подхода, если до неё меньше [`SOLID_LINE_CLEARANCE`]
+        // (ПДД 12.4). Карман отодвигает машину от линии на свою ширину
+        let line_gap = clearings.line.map(|line| {
+            let gap =
+                line.from_kerb - CURB_GAP - shape.width() + if pocket { POCKET_WIDTH } else { 0.0 };
+            (line, gap)
+        });
+        let clear_of_crossing = |junction: &Break| {
+            if junction.reach <= 0.0 {
+                return true;
+            }
+            let ahead = (junction.at - place).dot(direction);
+            let mut keep = junction.reach - JUNCTION_MARGIN + CROSSED_EDGE_CLEARANCE;
+            if let Some((line, gap)) = line_gap
+                && gap < SOLID_LINE_CLEARANCE
+                && (line.both || ahead * kerb.heading > 0.0)
+            {
+                keep = keep.max(junction.reach + paint::APPROACH);
+            }
+            ahead.abs() - shape.length() / 2.0 >= keep
+                || place.distance(junction.at) > keep + half_road * BREAK_BEND_SLACK_HALF_WIDTHS
+        };
         if !(pocket || kerb.stand.lane)
             || !clearings.junctions.iter().all(clear)
+            || !clearings.crossed.iter().all(clear_of_crossing)
             || clearings.decks.iter().any(|deck| deck.covers(place))
         {
             continue;

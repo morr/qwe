@@ -68,7 +68,8 @@
 //! линиями колёс и траектории узлов;
 //! `ROADS_RAW=parse|draw` — сырой OSM (строка `Raw OSM`, `RawOsm`): без
 //! доводочных проходов разбора, а с `draw` — и без достроек отрисовки;
-//! `ROADS_CARS=1` кладёт в примеры и слой припаркованных машин;
+//! `ROADS_CARS=1` кладёт в примеры и слой припаркованных машин (`full` — на
+//! каждое разрешённое место, число — своя занятость ряда);
 //! `ROADS_TRAM=1` — и слой трамвая (в игре он выключен по умолчанию).
 
 mod overlay;
@@ -607,7 +608,16 @@ fn build_next(
     // машины — по заказу: витрина про дороги, и ряд у бордюра закрывает то,
     // на что она смотрит, но у дворов и карманов он и есть предмет проверки
     if std::env::var_os(CARS_ENV).is_some() {
-        let (cars, _) = mesh_map_cars(&map, &road_shape.0, &layout);
+        // `ROADS_CARS=0.3` — своя занятость ряда (`1` — умолчание игры,
+        // `full` — каждое разрешённое место)
+        let occupancy = std::env::var(CARS_ENV)
+            .ok()
+            .and_then(|value| match value.as_str() {
+                "full" => Some(1.0),
+                "1" => None,
+                other => other.parse::<f32>().ok(),
+            });
+        let (cars, _) = mesh_map_cars(&map, &road_shape.0, &layout, occupancy);
         spawn_layers(
             &mut commands,
             &mut meshes,
