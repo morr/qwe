@@ -1375,7 +1375,26 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     section has left. The old line stood across the approach at the break reach (half the
     ring + 1 m from the node), which on a tangential entry is still the middle of the
     ring: it ran over the ring's lanes up to the island's kerb, with the approach's
-    solid lines after it (gallery 04, south and north-west). **A ring road never gets a
+    solid lines after it (gallery 04, south and north-west). The walk goes out to
+    `RING_EDGE_SEARCH` 60 m (`leaves_ring`), not the arm's `EDGE_SEARCH` 25 m: the east
+    entry of gallery 04 (way 131741966) runs along the ring's asphalt for about thirty
+    metres, the entry was not found at all, and its lane line ran over the ring toward
+    its axis as a merge would, solid for the last 25 m (roads tails L5,
+    `a_long_tangential_ring_entry_yields_and_keeps_its_lines_off_the_ring`).
+    **A ring exit has a throat** (`node_paint::Throat`, `throat_on`): for a one-way arm
+    leaving a ring node, both kerbs of its section are walked out of the ring's asphalt
+    the same way, and the ring road's stretch from half the exit's width before the
+    node's projection (the exit's ribbon end already lies on the outer lane there, and a
+    dash cut by the node was left as a stub) to the projection of the point that left
+    last (the shorter way round a closed ring) breaks
+    the ring's lane lines **on the exit's side of the ring's axis only** (`side`, the sign
+    of the path's left normal; `Painter::paint` keys the profile by it, bits 2 and 3 of
+    the pocket mask). The outer lane is the exit there, and its dashes ran straight
+    across the mouth out of step with the exit's solid line (gallery 04, south, roads
+    tails L5); the inner lines run through. The throat is no approach: the ring's lines
+    stay dashed before it (the solid approach spans are taken off the profile without
+    the throat). An arc that ends at the node gets only that stretch before it — both
+    projections fall on its end (`a_ring_exit_breaks_the_outer_ring_line_across_its_throat`). **A ring road never gets a
     stop line** and **always leads** its node — OSM cuts a ring into arcs at every entry,
     so an arc "passes" by street identity nowhere: every arc broke at every entry with a
     stop line across all its lanes and 25 m of solid approach lines (gallery 04 south,

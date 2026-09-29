@@ -343,8 +343,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     a sign or a tertiary+ street call for it) across the lanes
     coming in (dashed for give-way —
     `RoadStyle::stop_lines`); at a **ring entry** the line is a give-way line **along the
-    ring's edge**, between where its two ends leave the ring's asphalt, and a ring road
-    itself never gets one; the halves of a divided street share one zebra line — one
+    ring's edge**, between where its two ends leave the ring's asphalt (searched up to
+    60 m — a tangential entry runs along the ring that long), and a ring road
+    itself never gets one; a **ring exit's throat** — the stretch of the ring from the
+    exit node to where the exit's section leaves the ring's asphalt — breaks the ring's
+    lane lines on the exit's side of its axis (`node_paint::Throat`); the halves of a divided street share one zebra line — one
     plank across both over a paved median, one zebra each to its kerb over a lawn. A
     marked crossing elsewhere is a zebra with a gap in the lines. A **pocket**: a wide
     arm's lines with no room on the narrower arm across the junction end at its edge.

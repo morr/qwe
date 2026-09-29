@@ -2164,6 +2164,157 @@ fn a_ring_entry_yields_on_the_ring_edge() {
     }
 }
 
+/// Большое кольцо в три полосы, радиус 40 м, одним замкнутым односторонним
+/// way против часовой — и подход `arm` к вершине `node` его 48-угольника
+/// (точки подхода — `arm_points(ring)`, вершина берётся из того же круга).
+fn a_big_ring_with(arm_points: impl Fn(&[Vec2]) -> Vec<Vec2>) -> MapData {
+    let circle: Vec<Vec2> = (0..=48)
+        .map(|step| Vec2::from_angle(step as f32 * std::f32::consts::TAU / 48.0) * 40.0)
+        .collect();
+    let primary = |points: Vec<Vec2>, lanes: u8| RoadLine {
+        highway: Highway::Primary,
+        oneway: true,
+        lanes: Some(lanes),
+        ..fixture::street(points, f32::from(lanes) * 3.3 + 1.0)
+    };
+    let ring = RoadLine {
+        roundabout: true,
+        ..primary(circle.clone(), 3)
+    };
+    let arm = primary(arm_points(&circle), 2);
+    with_network(vec![ring, arm])
+}
+
+/// Точка на круге радиуса `radius` под углом `degrees`.
+fn polar(radius: f32, degrees: f32) -> Vec2 {
+    Vec2::from_angle(degrees.to_radians()) * radius
+}
+
+/// Горло съезда: съезд уходит с кольца по касательной, и от узла до места,
+/// где его сечение вышло из асфальта кольца, линия наружной полосы кольца
+/// рвётся, а внутренняя идёт насквозь. Пунктир наружной шёл поперёк горла
+/// вразнобой со сплошной съезда (Тула, витрина 04, юг).
+#[test]
+fn a_ring_exit_breaks_the_outer_ring_line_across_its_throat() {
+    // съезд из южной вершины (−90°), где кольцо идёт на восток, — наружу
+    let map = a_big_ring_with(|circle| {
+        vec![
+            circle[36],
+            polar(42.0, -75.0),
+            polar(48.0, -60.0),
+            polar(60.0, -48.0),
+            polar(90.0, -40.0),
+        ]
+    });
+    let drawn = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
+    let junctions = junctions::Junctions::new(
+        &drawn,
+        &map,
+        &[],
+        node_paint::NodePaintStyle {
+            crossings: CrossingMode::Generated,
+            stop_lines: true,
+        },
+    );
+    let throats = junctions.node_paint().throats(0);
+    assert_eq!(throats.len(), 1, "{throats:?}");
+    let throat = throats[0];
+    // против часовой левая нормаль смотрит внутрь: съезд — справа
+    assert_eq!(throat.side, -1.0);
+    assert!(throat.gap.reach > 3.0, "{throat:?}");
+    // горло — за узлом по ходу кольца, не перед ним
+    assert!(throat.gap.at.x > 1.0, "{throat:?}");
+    assert!(junctions.node_paint().throats(1).is_empty());
+
+    // краска: в середине горла наружная линия (r + 1.65) погашена,
+    // внутренняя (r − 1.65) — нет
+    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let lanes = &layer(&layers, paint::PAINT_LANES).builder;
+    let middle = throat.gap.at.to_angle();
+    // середина горла — его доля в полдлины вокруг точки разрыва
+    let window = 0.5 * throat.gap.reach / 40.0;
+    let at_radius = |radius: f32| -> Vec<f32> {
+        lanes
+            .ribbon_coords_for_test()
+            .unwrap()
+            .iter()
+            .zip(lanes.positions_for_test())
+            .filter(|(_, position)| {
+                let point = Vec2::new(position[0], position[1]);
+                // вершины полосы краски — по её кромкам, в 0.6 м от линии
+                (point.length() - radius).abs() < 0.7 && (point.to_angle() - middle).abs() < window
+            })
+            .map(|(coords, _)| coords[2])
+            .collect()
+    };
+    let lane = 3.3 / 2.0;
+    let outer = at_radius(40.0 + lane);
+    let inner = at_radius(40.0 - lane);
+    assert!(
+        !outer.is_empty() && !inner.is_empty(),
+        "{outer:?} {inner:?}"
+    );
+    assert!(outer.iter().all(|&to_break| to_break < 0.0), "{outer:?}");
+    assert!(inner.iter().all(|&to_break| to_break > 0.0), "{inner:?}");
+}
+
+/// Въезд, что идёт по асфальту кольца дольше [`node_paint`]-ского поиска
+/// кромки плеча (25 м): линия уступи дорогу на кромке кольца есть, и линии
+/// полос въезда рвутся, пока он из асфальта кольца не вышел, — а не тянутся по
+/// кольцу к его оси (Тула, витрина 04, восток).
+#[test]
+fn a_long_tangential_ring_entry_yields_and_keeps_its_lines_off_the_ring() {
+    // въезд с юго-востока вдоль кольца в восточную вершину (0°), где кольцо
+    // идёт на север
+    let map = a_big_ring_with(|circle| {
+        vec![
+            polar(80.0, -90.0),
+            polar(60.0, -75.0),
+            polar(50.0, -55.0),
+            polar(46.5, -35.0),
+            polar(44.0, -18.0),
+            circle[0],
+        ]
+    });
+    let drawn = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
+    let junctions = junctions::Junctions::new(
+        &drawn,
+        &map,
+        &[],
+        node_paint::NodePaintStyle {
+            crossings: CrossingMode::Generated,
+            stop_lines: true,
+        },
+    );
+    let lines = &junctions.node_paint().stop_lines;
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(lines[0].yields, "въезд кольцу уступает");
+    // каждая точка оси въезда в асфальте кольца — в разрыве его линий
+    let ring = drawn.axis(0, Axis::Ribbon);
+    let half = drawn.road(0).width / 2.0;
+    let entry = drawn.axis(1, Axis::Ribbon);
+    let cut = junctions.paint().of(1).cut;
+    let along = |point: Vec2| crate::map::along::nearest_on_path(entry, point).unwrap().1;
+    let (arclengths, total) = crate::map::along::arclengths(entry);
+    let mut inside = 0;
+    for step in 0..(total * 2.0) as usize {
+        let at = step as f32 * 0.5;
+        let Some((point, _)) = crate::map::along::place_on_path(entry, &arclengths, at) else {
+            continue;
+        };
+        if distance_to_path(point, ring) > half - 0.5 {
+            continue;
+        }
+        inside += 1;
+        assert!(
+            cut.iter()
+                .any(|found| (along(found.at) - at).abs() <= found.reach + 0.1),
+            "{point:?} ({at} of {total} m) в асфальте кольца, а линии не рвутся: {cut:?}"
+        );
+    }
+    assert!(inside > 3, "въезд идёт по кольцу: {inside}");
+}
+
 #[test]
 fn a_dangling_end_short_of_a_street_is_stitched() {
     // проезд кончается в трёх метрах за кромкой тротуара улицы

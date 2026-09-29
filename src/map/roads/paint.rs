@@ -46,7 +46,7 @@ use bevy::shader::ShaderRef;
 use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey};
 
 use super::network::RoadNetwork;
-use super::node_paint::{Pocket, STOP_WIDTH, StopLine, ZEBRA_LENGTH, Zebra};
+use super::node_paint::{Pocket, STOP_WIDTH, StopLine, Throat, ZEBRA_LENGTH, Zebra};
 use super::shape::lane_width;
 use super::tapers::{self, Taper, Tapers};
 use super::turns::{JunctionWear, LaneArrow};
@@ -209,13 +209,15 @@ enum LineKind {
 }
 
 /// Что узлы сказали линиям одной дороги (`roads/node_paint.rs`): где они
-/// рвутся (`cut`) и какие узлы дорога проходит насквозь (`solid`). Одной
-/// дороге его выдаёт `node_paint::PaintBreaks::of` — по-другому пара не
+/// рвутся (`cut`), какие узлы дорога проходит насквозь (`solid`) и где на
+/// кольце горла съездов (`throats` — рвут только линии со стороны съезда).
+/// Одной дороге его выдаёт `node_paint::PaintBreaks::of` — по-другому набор не
 /// собирается.
 #[derive(Clone, Copy, Default)]
 pub struct LineBreaks<'a> {
     pub cut: &'a [Break],
     pub solid: &'a [Break],
+    pub throats: &'a [Throat],
 }
 
 impl LineKind {
@@ -765,6 +767,7 @@ impl Painter {
         LineBreaks {
             cut: breaks,
             solid: through,
+            throats,
         }: LineBreaks,
         wedges: [Option<WedgeEnd>; 2],
         pockets: [Option<Pocket>; 2],
@@ -785,6 +788,7 @@ impl Painter {
         // изломах «до разрыва» нужны и линиям кармана, и прочим
         let mut all = breaks.to_vec();
         all.extend(pockets.iter().flatten().map(|pocket| pocket.gap));
+        all.extend(throats.iter().map(|throat| throat.gap));
         let (mut path, mut along, to_break) = break_profile(points, closed, &all, 0.5);
         if path.len() < 2 {
             return;
@@ -855,12 +859,41 @@ impl Painter {
                 .map(|end| 1 << end)
                 .sum()
         };
+        // и горла съездов: бит 2 — горла слева по ходу пути, бит 3 — справа;
+        // линия в горле — строго по его сторону оси
+        let throat_bit = |side: f32| if side > 0.0 { 1 << 2 } else { 1 << 3 };
+        let in_throat = |offset: f32| -> usize {
+            throats
+                .iter()
+                .filter(|throat| offset * throat.side > 0.05)
+                .map(|throat| throat_bit(throat.side))
+                .fold(0, |mask, bit| mask | bit)
+        };
         let every = (0..2)
             .filter(|&end| pockets[end].is_some())
             .map(|end| 1 << end)
-            .sum::<usize>();
-        let mut profiles: [Option<Vec<f32>>; 4] = Default::default();
+            .sum::<usize>()
+            | throats
+                .iter()
+                .map(|throat| throat_bit(throat.side))
+                .fold(0, |mask, bit| mask | bit);
+        let mut profiles: [Option<Vec<f32>>; 16] = Default::default();
         profiles[every] = Some(to_break);
+        let profile = |mask: usize| {
+            let mut chosen = breaks.to_vec();
+            chosen.extend(
+                (0..2)
+                    .filter(|&end| mask & (1 << end) != 0)
+                    .filter_map(|end| pockets[end].map(|pocket| pocket.gap)),
+            );
+            chosen.extend(
+                throats
+                    .iter()
+                    .filter(|throat| mask & throat_bit(throat.side) != 0)
+                    .map(|throat| throat.gap),
+            );
+            break_distances(&path, closed, &chosen)
+        };
 
         // осевая — граница потоков тела, на сетке его раскладки
         let axis_at = axis_offset(road, lanes, self.side);
@@ -895,16 +928,20 @@ impl Painter {
                 .zip(&offsets)
                 .map(|((&point, &miter), &offset)| point + miter * offset)
                 .collect();
-            let mask = in_pocket(body.origin + step);
-            let to_break = profiles[mask].get_or_insert_with(|| {
-                let mut chosen = breaks.to_vec();
-                chosen.extend(
-                    (0..2)
-                        .filter(|&end| mask & (1 << end) != 0)
-                        .filter_map(|end| pockets[end].map(|pocket| pocket.gap)),
-                );
-                break_distances(&path, closed, &chosen)
-            });
+            let mask = in_pocket(body.origin + step) | in_throat(body.origin + step);
+            // сплошная подхода — только к разрывам узлов и карманов: горло
+            // съезда линию кольца рвёт, но кольцо пунктирное и перед ним
+            let approach_mask = mask & 0b11;
+            for key in [mask, approach_mask] {
+                if profiles[key].is_none() {
+                    profiles[key] = Some(profile(key));
+                }
+            }
+            let (Some(to_break), Some(approach_break)) =
+                (&profiles[mask], &profiles[approach_mask])
+            else {
+                unreachable!("профили посчитаны выше");
+            };
             let stations: Vec<PaintStation> = (0..path.len())
                 .map(|index| PaintStation {
                     along: street_along[index],
@@ -932,7 +969,7 @@ impl Painter {
                 LineKind::Lane => {
                     let forward =
                         flows_forward(road, body.origin + step, axis_at.unwrap_or(0.0), self.side);
-                    let spans = approach_spans(&along, to_break, forward);
+                    let spans = approach_spans(&along, approach_break, forward);
                     split_at_spans(line, stations, &along, &spans)
                 }
                 // осевая обслуживает оба потока: сплошная по обе стороны

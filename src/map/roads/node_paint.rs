@@ -34,7 +34,9 @@
 //!   со стоп-линиями с обеих сторон, если переход регулируемый;
 //! - **карман**: если у сквозной пары разное число полос, линия широкой
 //!   дороги, которой на узкой места нет, кончается у кромки узла сплошной, а
-//!   не висит посреди перекрёстка.
+//!   не висит посреди перекрёстка;
+//! - **горло съезда** ([`Throat`]): от узла съезда с кольца до места, где
+//!   съезд вышел из асфальта кольца, линии кольца со стороны съезда рвутся.
 //!
 //! **Кромка узла** на плече — где его сечение выходит из асфальта чужих дорог
 //! кластера ([`clear_reach`]), не ближе полуширины самой широкой из них плюс
@@ -178,6 +180,18 @@ pub struct Pocket {
     pub gap: Break,
 }
 
+/// Горло съезда на дуге кольца: от узла съезда до места, где сечение съезда
+/// вышло из асфальта кольца, линии кольца со стороны съезда (`side` — знак
+/// левой нормали пути кольца: `+1` — слева по ходу пути, `−1` — справа)
+/// рвутся в разрыве `gap`. Наружная полоса кольца там уходит в съезд, и её
+/// пунктир шёл поперёк горла вразнобой со сплошной съезда (Тула, витрина 04,
+/// юг). Линии по другую сторону оси кольца идут дальше.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Throat {
+    pub gap: Break,
+    pub side: f32,
+}
+
 /// Плечо узла так, как его видят траектории манёвров (`roads/turns.rs`):
 /// дорога уходит от кромки узла — длины `edge` на её нарисованной оси — в
 /// сторону `dir` (+1 — к концу). `link` — плечо это перемычка: его сечение
@@ -222,6 +236,7 @@ impl<'a> AsphaltBreaks<'a> {
 pub struct PaintBreaks<'a> {
     cut: &'a [Vec<Break>],
     solid: &'a [Vec<Break>],
+    throats: &'a [Vec<Throat>],
 }
 
 impl<'a> PaintBreaks<'a> {
@@ -229,6 +244,7 @@ impl<'a> PaintBreaks<'a> {
         LineBreaks {
             cut: &self.cut[road],
             solid: &self.solid[road],
+            throats: &self.throats[road],
         }
     }
 }
@@ -250,6 +266,8 @@ pub struct NodePaint {
     pub junctions: Vec<Junction>,
     /// Карманы у торцов дорог `[начало, конец]`.
     pub pockets: Vec<[Option<Pocket>; 2]>,
+    /// Горла съездов на дорогах колец. Наружу — в [`PaintBreaks`].
+    throats: Vec<Vec<Throat>>,
     pub zebras: Vec<Zebra>,
     pub stop_lines: Vec<StopLine>,
     /// Кластеры из двух узлов и больше.
@@ -365,6 +383,13 @@ impl<'a> Walk<'a> {
 const EDGE_SEARCH: f32 = 25.0;
 /// Шаг этого поиска, м.
 const EDGE_STEP: f32 = 0.5;
+/// Как далеко от узла ищется, где подход к кольцу вышел из его асфальта
+/// ([`leaves_ring`]), м. Подход вписан по касательной и идёт по асфальту
+/// кольца дольше, чем плечо перекрёстка по чужому: въезд с востока в кольцо
+/// витрины 04 выходит из него целиком лишь метров через тридцать, и за
+/// [`EDGE_SEARCH`] въезд не находился вовсе — ни линии уступи дорогу, ни
+/// разрыва, и его линия полос тянулась по кольцу к его оси.
+const RING_EDGE_SEARCH: f32 = 60.0;
 
 /// Замощённый остров треугольника узлов (`corners::small_islands`) — тоже
 /// асфальт узла: ветки развилки идут по нему от узла до узла.
@@ -426,6 +451,79 @@ fn clear_reach(
     None
 }
 
+/// Где точка сечения плеча в `offset` вбок от оси (по левой нормали пути)
+/// вышла из асфальта колец `rings` (путь и полуширина): длина от узла `from`
+/// по ходу `dir` и сама точка. `None` — не вышла за [`RING_EDGE_SEARCH`] или
+/// до конца дороги.
+fn leaves_ring(
+    walk: &Walk,
+    from: f32,
+    dir: f32,
+    offset: f32,
+    rings: &[(&[Vec2], f32)],
+) -> Option<(f32, Vec2)> {
+    let mut ahead = 0.0;
+    while ahead <= RING_EDGE_SEARCH {
+        let (point, tangent) = walk.at(from + dir * ahead)?;
+        let side = point + tangent.perp() * offset;
+        if rings
+            .iter()
+            .all(|&(path, half)| distance_to_polyline(side, path) >= half)
+        {
+            return Some((ahead, side));
+        }
+        ahead += EDGE_STEP;
+    }
+    None
+}
+
+/// Горло съезда на оси кольца `ring`: от `lead` метров перед проекцией узла
+/// `node` до проекции точки `last`, где из асфальта кольца вышла последняя
+/// сторона сечения съезда, со стороной съезда относительно оси. Дуге, что в
+/// узле кончается, — только отрезок `lead` перед ним. `None` — горло на этом
+/// пути не лежит.
+fn throat_on(ring: &[Vec2], node: Vec2, last: Vec2, lead: f32) -> Option<Throat> {
+    let walk = Walk::new(ring);
+    let closed = ring.len() > 2 && ring[0] == ring[ring.len() - 1];
+    let (a, b) = (walk.project(node), walk.project(last));
+    let mut delta = b - a;
+    if closed && delta.abs() > walk.total / 2.0 {
+        // через шов замкнутого кольца — короткой дорогой
+        delta -= delta.signum() * walk.total;
+    }
+    // дуга, что в узле кончается (обе проекции в её торце), получает только
+    // хвост `lead` перед узлом; кольцо одностороннее, точки — по ходу, и горло
+    // лежит за узлом по ходу пути
+    let direction = if delta.abs() >= EDGE_STEP {
+        delta.signum()
+    } else if !closed && walk.total - a < EDGE_STEP && lead > 0.0 {
+        delta = 0.0;
+        1.0
+    } else {
+        return None;
+    };
+    // и назад от узла на `lead`: торец ленты съезда в узле уже лежит на
+    // наружной полосе, и штрих, разрезанный узлом, оставался огрызком
+    let start = a - direction * lead;
+    let length = delta.abs() + lead;
+    let mid = start + direction * length / 2.0;
+    let mid = if closed {
+        mid.rem_euclid(walk.total)
+    } else {
+        mid.clamp(0.0, walk.total)
+    };
+    let (at, _) = walk.at(mid)?;
+    let (on, tangent) = walk.at(b)?;
+    let side = (last - on).dot(tangent.perp()).signum();
+    Some(Throat {
+        gap: Break {
+            at,
+            reach: length / 2.0,
+        },
+        side,
+    })
+}
+
 /// Насколько дальняя линия полос дороги отстоит от её оси, м: рама полос
 /// ([`lane_frame`]) без крайней полосы, со сдвигом осевой двусторонней.
 /// `None` — полоса одна, линий нет.
@@ -468,7 +566,15 @@ impl NodePaint {
         PaintBreaks {
             cut: &self.breaks,
             solid: &self.solid,
+            throats: &self.throats,
         }
+    }
+
+    /// Горла съездов на дороге `road` ([`Throat`]) — тестам; краска берёт их
+    /// из [`Self::lines`].
+    #[cfg(test)]
+    pub(super) fn throats(&self, road: usize) -> &[Throat] {
+        &self.throats[road]
     }
 
     /// Островок по правилу на подходе к кольцу (`gores::splitters`): подход
@@ -531,6 +637,7 @@ impl NodePaint {
             breaks: base.to_vec(),
             asphalt: base.to_vec(),
             pockets: vec![[None; 2]; drawn.len()],
+            throats: vec![Vec::new(); drawn.len()],
             solid: vec![Vec::new(); drawn.len()],
             ..Self::default()
         };
@@ -1030,22 +1137,7 @@ impl NodePaint {
             } else {
                 kerb.signum() * EDGE_INSET
             };
-            // где точка сечения на `offset` вбок от оси вышла из кольца
-            let exit = |offset: f32| -> Option<(f32, Vec2)> {
-                let mut ahead = 0.0;
-                while ahead <= EDGE_SEARCH {
-                    let (point, tangent) = walk.at(from + arm.dir * ahead)?;
-                    let side = point + tangent.perp() * offset;
-                    if ring_roads
-                        .iter()
-                        .all(|&(path, half)| distance_to_polyline(side, path) >= half)
-                    {
-                        return Some((ahead, side));
-                    }
-                    ahead += EDGE_STEP;
-                }
-                None
-            };
+            let exit = |offset: f32| leaves_ring(walk, from, arm.dir, offset, &ring_roads);
             let (near, from_point) = exit(far)?;
             let (kerbside, to_point) = exit(kerb)?;
             let (other, _) = exit(-kerb)?;
@@ -1086,6 +1178,34 @@ impl NodePaint {
             arms: junction_arms,
             leading,
         });
+
+        // Горло съезда: съезд уходит с кольца по касательной, и от узла до
+        // места, где его сечение вышло из асфальта кольца, наружная полоса
+        // кольца — уже съезд. Её линия там рвётся, а не идёт пунктиром поперёк
+        // горла вразнобой со сплошной съезда (пример 04, юг).
+        if !ring_roads.is_empty() {
+            for arm in &arms {
+                let road = drawn[arm.road];
+                if ring_road(arm.road) || road.bridge || !road.oneway || incoming(road, arm.dir) {
+                    continue;
+                }
+                let walk = Walk::new(paths[arm.road].as_ref());
+                let from = walk.project(arm.at);
+                let half = road.width / 2.0 - EDGE_INSET;
+                let sides = [half, -half]
+                    .map(|offset| leaves_ring(&walk, from, arm.dir, offset, &ring_roads));
+                let [Some(left), Some(right)] = sides else {
+                    continue;
+                };
+                let (_, last) = if left.0 >= right.0 { left } else { right };
+                for &ring in visits.keys().filter(|&&road| ring_road(road)) {
+                    let lead = road.width / 2.0;
+                    if let Some(throat) = throat_on(paths[ring].as_ref(), arm.at, last, lead) {
+                        self.throats[ring].push(throat);
+                    }
+                }
+            }
+        }
 
         // зебры и стоп-линии на плечах, что рвутся: сперва где встать зебре
         let first = ZEBRA_SETBACK + ZEBRA_LENGTH / 2.0;
