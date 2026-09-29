@@ -1735,7 +1735,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     for less than the tangent — a ring arc, drawn in chords of a couple of metres — the
     corner is a **bend** (`corners::bend`, `KerbReturns::bends`): the same arc seated on
     the **curved** edges (the arms' axes offset by the half widths), 60°–155° apart only
-    (sharper is a nose's, or a ring's gore); triangulated whole.
+    (sharper is a nose's, or a ring's gore); triangulated whole. Two arms 155°–178° apart
+    at a junction whose widths differ get the **wide kerb's wedge** instead
+    (`corners::obtuse_corner`): the wide arm's edge carried on past its square end into
+    the narrow arm's edge by one gentle arc, where a straight cut and a wedge of ground
+    used to be.
   - **Nose** (`map/roads/corners.rs::nose`) — the rounded tip of the island between two
     arms of a **sharp fork**: under 25°, or under 60° where the kerb return did not fit.
     Not a fillet (its tangent would run tens of metres) but an arc of a small radius

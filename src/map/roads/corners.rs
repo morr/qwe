@@ -79,6 +79,10 @@ const MIN_RADIUS: f32 = 0.5;
 /// развёрнутый угол — это продолжение дороги, а не поворот.
 const MIN_ANGLE: f32 = 25.0 * PI / 180.0;
 const MAX_ANGLE: f32 = 155.0 * PI / 180.0;
+/// Тупой угол от [`MAX_ANGLE`] до этого на перекрёстке со сменой ширины
+/// получает клин широкой кромки ([`obtuse_corner`]); почти соосные плечи —
+/// продолжение дороги, их уступ — дело клина сечений (`roads/tapers.rs`).
+const OBTUSE_MAX: f32 = 178.0 * PI / 180.0;
 /// Острее [`MIN_ANGLE`] (и до [`NOSE_MAX_ANGLE`], где скругление не легло)
 /// угол между лучами не скругляется, а получает **нос**:
 /// дугу малого радиуса там, где кромки разошлись на два таких радиуса, — как
@@ -666,6 +670,12 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                     returns.bends.push((fill, outline));
                     continue;
                 }
+                // тупой угол со сменой ширины — клин широкой кромки
+                let round = round.or_else(|| {
+                    (!mixed)
+                        .then(|| obtuse_corner(node, first, second, halves))
+                        .flatten()
+                });
                 let (outline, outer) = match round {
                     Some(outline) => (outline, false),
                     None if is_nose(first, second) => {
@@ -748,6 +758,7 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                 let halves = (first.half[0] + a, second.half[1] + b);
                 let radius = kerb_radius(first, second) * scale - a.min(b);
                 if let Some(outline) = fillet(node, first, second, halves, radius)
+                    .or_else(|| obtuse_corner(node, first, second, halves))
                     .or_else(|| outer_corner(node, first, second, halves))
                 {
                     if a.min(b) > VERGE_PAVED_MAX {
@@ -807,6 +818,8 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                 returns.sidewalks.push(outline);
             } else if let Some(outline) = bend(first, second, halves, radius) {
                 returns.bends.push((Fill::Sidewalk, outline));
+            } else if let Some(outline) = obtuse_corner(node, first, second, halves) {
+                returns.sidewalks.push(outline);
             } else if is_nose(first, second) {
                 // У носа концентричная дуга ушла бы в минус — остриё островка
                 // всё мощёное, — и нос тротуара свой, того же малого радиуса:
@@ -1125,6 +1138,91 @@ fn bend(first: &Arm, second: &Arm, halves: (f32, f32), radius: f32) -> Option<Ve
     back.reverse();
     outline.extend(back);
     (outline.len() >= 4 && ring_area(&outline) > 0.01).then_some(outline)
+}
+
+/// **Тупой угол со сменой ширины** от луча `first` против часовой стрелки до
+/// луча `second`, [`MAX_ANGLE`]..[`OBTUSE_MAX`] (R13): почти продолжение
+/// дороги, но в узле перекрёстка, где торцы прямые, а ширины разные. Кромка
+/// широкого плеча, продлённая за узел, сходится с кромкой узкого только за
+/// узлом по узкому — скругление ([`fillet_arc`]) там не ляжет (угол краёв
+/// позади торца широкого), и между прямым торцом широкого и кромкой узкого
+/// оставался клин земли, асфальт обрывался срезом (Тула, Одоевский
+/// путепровод × Демонстрации, 162°).
+///
+/// Контур — клин от торца широкого по его продлённой кромке до пологой дуги,
+/// касательной к обеим кромкам: касание на широком — не дальше его торца,
+/// на узком — не дальше его прямого края ([`Arm::run`]). Первая вершина —
+/// в узле чуть под лентой широкого, стороны заходят под ленты на
+/// [`OVERLAP`]; веером из первой вершины. Сквозная дорога (оба луча — одна
+/// ось), клин под лучом и равные ширины (кромки сходятся перед узлом по
+/// обоим лучам) — `None`.
+fn obtuse_corner(node: Vec2, first: &Arm, second: &Arm, halves: (f32, f32)) -> Option<Vec<Vec2>> {
+    let angle = ccw_angle(first, second);
+    if angle <= MAX_ANGLE || angle >= OBTUSE_MAX {
+        return None;
+    }
+    if std::ptr::eq(first.path, second.path) || first.slope[0] != 0.0 || second.slope[1] != 0.0 {
+        return None;
+    }
+    // кромки: слева у первого, справа у второго — `node + n·h + u·x`
+    let (u1, u2) = (first.direction, second.direction);
+    let (n1, n2) = (u1.perp(), -u2.perp());
+    let rhs = n2 * halves.1 - n1 * halves.0;
+    let determinant = -u1.perp_dot(u2);
+    if determinant.abs() < 1e-6 {
+        return None;
+    }
+    let t = rhs.perp_dot(-u2) / determinant;
+    let s = u1.perp_dot(rhs) / determinant;
+    // угол краёв — позади торца широкого и на прямом крае узкого
+    let (wide, narrow, behind, on) = match (t >= 0.0, s >= 0.0) {
+        (true, false) => (second, first, -s, t),
+        (false, true) => (first, second, -t, s),
+        _ => return None,
+    };
+    wide.end?;
+    let corner = node + n1 * halves.0 + u1 * t;
+    let tangent = behind.min(narrow.run - on);
+    if tangent <= OVERLAP {
+        return None;
+    }
+    let half_angle = angle / 2.0;
+    let radius = tangent * half_angle.tan();
+    let (on_first, on_second) = (corner + u1 * tangent, corner + u2 * tangent);
+    let centre = corner + (u1 + u2).normalize() * (radius / half_angle.sin());
+    let (from, to) = (on_first - centre, on_second - centre);
+    let sweep = from.angle_to(to);
+    let steps = arc_steps(radius, sweep.abs()).max(1);
+    let (wide_normal, wide_half) = if std::ptr::eq(wide, first) {
+        (n1, halves.0)
+    } else {
+        (n2, halves.1)
+    };
+    let narrow_normal = if std::ptr::eq(wide, first) { n2 } else { n1 };
+    let narrow_half = if std::ptr::eq(wide, first) {
+        halves.1
+    } else {
+        halves.0
+    };
+    // торец широкого — под его лентой, кромка узкого — под своей
+    let wide_end = node + wide_normal * (wide_half - OVERLAP) + wide.direction * OVERLAP;
+    let narrow_end = node + narrow_normal * (narrow_half - OVERLAP);
+    let arc = (0..=steps)
+        .map(|step| centre + Vec2::from_angle(sweep * step as f32 / steps as f32).rotate(from));
+    let mut outline = Vec::with_capacity(steps + 5);
+    outline.push(node + wide.direction * OUTER_OVERLAP);
+    if std::ptr::eq(wide, first) {
+        outline.push(wide_end);
+        outline.extend(arc);
+        outline.push(on_second - n2 * OVERLAP);
+        outline.push(narrow_end);
+    } else {
+        outline.push(narrow_end);
+        outline.push(on_first - n1 * OVERLAP);
+        outline.extend(arc);
+        outline.push(wide_end);
+    }
+    (ring_area(&outline).abs() > 0.01).then_some(outline)
 }
 
 /// Начало ломаной `path` длиной до `reach` м (последнее звено — целиком).
@@ -2573,6 +2671,60 @@ mod tests {
                 .iter()
                 .any(|(_, outline)| point_in_polygon(wedge, outline)),
             "клин открыт"
+        );
+    }
+
+    /// Узел R13 (Тула, Одоевский путепровод): широкая 14.2 м уходит на 150°,
+    /// улица 7.6 м — на −12° (между ними 162°), третья 7.6 м — на юг под −54°.
+    /// Направление узкой на `kink` градусов от −12°.
+    fn obtuse_junction(kink: f32) -> [RoadLine; 3] {
+        let ray = |degrees: f32, length: f32| Vec2::from_angle(degrees.to_radians()) * length;
+        [
+            street(vec![Vec2::ZERO, ray(150.0, 40.0)], 14.2),
+            street(vec![Vec2::ZERO, ray(-12.0 + kink, 50.0)], 7.6),
+            street(vec![Vec2::ZERO, ray(-54.0, 40.0)], 7.6),
+        ]
+    }
+
+    #[test]
+    fn an_obtuse_junction_pair_gets_its_corner() {
+        // кромка широкой, продлённая за узел, сходится с кромкой узкой в
+        // десяти метрах по узкой — между прямым торцом широкой и кромкой узкой
+        // клин земли, пока его не закроет клин широкой кромки
+        let found = walked_returns_of(&obtuse_junction(0.0), false);
+        let along = Vec2::from_angle((-12.0_f32).to_radians());
+        let wedge = along * 6.0 + along.perp() * 4.3;
+        assert!(
+            found
+                .roads
+                .iter()
+                .any(|(_, outline)| point_in_polygon(wedge, outline)),
+            "клин у торца широкой открыт: {:?}",
+            found.roads
+        );
+        // и за кромкой широкой, продлённой за узел, асфальта нет
+        let wide = Vec2::from_angle(150.0_f32.to_radians());
+        let beyond = -wide.perp() * 7.6 - wide * 3.0;
+        assert!(
+            !found
+                .roads
+                .iter()
+                .any(|(_, outline)| point_in_polygon(beyond, outline))
+        );
+    }
+
+    #[test]
+    fn a_street_split_at_a_junction_with_a_slight_kink_gets_no_obtuse_corner() {
+        // 179° между широкой и узкой — продолжение, уступ там — дело клина
+        // сечений, а не угла узла
+        let found = walked_returns_of(&obtuse_junction(-17.0), false);
+        let along = Vec2::from_angle((-29.0_f32).to_radians());
+        let wedge = along * 6.0 + along.perp() * 4.3;
+        assert!(
+            !found
+                .roads
+                .iter()
+                .any(|(_, outline)| point_in_polygon(wedge, outline))
         );
     }
 }

@@ -2042,6 +2042,25 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
       01–02 did not move, Tula 20 by a handful of pixels. Tula: 464 bends (`bends` in the
       `road meshing:` line); `kerb_returns` itself did not move past the noise (a trail
       and two offsets only where the fillet failed).
+    - **An obtuse corner with a change of width gets the wide kerb's wedge**
+      (`corners::obtuse_corner`, R13): two neighbour arms of a junction
+      `MAX_ANGLE`..`OBTUSE_MAX` (155°–178°) apart are nearly one road continued, but at a
+      junction their ends are square, and when the widths differ the wide arm's edge,
+      carried on past the node, meets the narrow arm's edge only **behind** the wide arm's
+      butt end (along the narrow one). No fillet sits there — its corner lies behind the
+      wide end — and between the square end of the wide ribbon and the narrow one's edge a
+      wedge of ground showed, the asphalt ending in a straight cut (Tula, Одоевский
+      путепровод 14.2 m × Демонстрации 7.6 m at 162°). The outline: from the wide end along
+      its edge carried past the node to an arc tangent to both edges, its tangent as long
+      as the room allows — no further back than the wide end, no further out than the
+      narrow arm's straight run — so the width change reads as one gentle sweep (at R13 a
+      radius of tens of metres). A fan from a point just inside the wide ribbon at the
+      node, pushed with the returns into the class's fill; the same call on `half +
+      sidewalk` in the sidewalk group and on the verge corners (tried after the fillet).
+      Skipped when both arms are one axis (a road running through), under a taper wedge
+      (`Arm::slope`) and when the edges meet ahead of the node on both arms (equal
+      widths — nothing to close). Past `OBTUSE_MAX` the arms are one street continued and
+      a width step there is the section taper's (`roads/tapers.rs`).
     - **A sharp fork of two streets gets a hatched gore ahead of its nose**
       (`corners::fork_gore`, `KerbReturns::fork_gores` → `Gores::add_forks`, painted like
       every gore by `road_paint_islands`). The nose stands where the ribbons' edges have
