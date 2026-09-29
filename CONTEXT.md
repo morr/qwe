@@ -452,7 +452,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     deletion is a hole in the navmesh.
   - **RailLine** — `railway=*` centerline; `RailKind: Active | Tram | Disused` *is* the
     drawing style; underground track is dropped. The rail branch of `parse_way` runs before
-    `highway` and falls through — a way can be both street and track. A non-tram track is
+    `highway` and falls through — a way can be both street and track. A **rail gap** — two
+    tracks broken at the two kerbs of a street, the crossing unmapped — is stitched into one
+    way at parse (`parse/rails.rs`). A non-tram track is
     drawn as the **track** itself (`map/rail.rs`): ballast with a shoulder, ties across it
     and two steel rails on the gauge, thinned out by **rail zoom LOD** into a dashed
     symbol darker than its ballast on the city-wide view. Tram is `map/tram.rs`, with its

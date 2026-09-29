@@ -294,6 +294,20 @@ be called alone:
   standing on the pond reads as a render bug. One vertex on land is enough to survive —
   piers and embankment houses stay. Counts: Tula 1, Berlin 6, NY 17, London 28, Paris 28,
   Tokyo 0; logged on stderr when non-zero.
+- **Rail gaps stitched across a street** (`parse/rails.rs::stitch_rail_gaps`, step 1
+  right after the drowned buildings) — OSM routinely breaks a spur exactly at the road it
+  crosses: two `railway=rail` ways stop at the two kerbs and the crossing itself is not
+  mapped (Tula, 2613 3122 → 3140, 18 m across a tertiary street; `level_crossing` nodes are
+  not even in the query). Two **free** ends (no vertex of another track within 0.5 m — an
+  end on a switch is not a break) of tracks of the same `RailKind` (never a tram) are
+  joined into one way when the gap is under `STITCH_GAP_MAX` 30 m, each end looks at the
+  other within `STITCH_ANGLE_MAX` 12° (heading taken 8 m back, the last OSM link is noise)
+  and the gap crosses the axis of an at-grade carriageway. Nearest pair first, one per
+  loop, the first way hosts the joined points, `service` kept from either. Counted on the
+  v15 caches: Tula 1 (that pair), Kaluga 3 (abandoned track across streets), Oryol,
+  Belgorod, Berlin, the four Moscows, Rostov, Ryazan 0; without the street condition Berlin
+  alone would stitch 37 station stubs facing each other over a platform. Skipped in raw
+  OSM; logged when non-zero.
 - **Sidewalks of untagged streets** (`parse.rs::infer_sidewalks`, right after the drowned
   buildings, which must not count) — a residential / unclassified / living street with no
   `sidewalk*` key (`SidewalkSide::Inferred` — the tristate is the whole "who is asked")

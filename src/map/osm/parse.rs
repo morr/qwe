@@ -306,6 +306,8 @@ struct PassReport {
     straightened: rings::Straightened,
     sections: SectionReport,
     drowned: usize,
+    /// Пар путей, сшитых через дорогу (`rails::stitch_rail_gaps`).
+    stitched_rails: usize,
     sidewalks: InferredSidewalks,
     pavements: InferredPavements,
     separate: verges::SeparateSidewalks,
@@ -337,6 +339,7 @@ impl std::fmt::Display for PassReport {
             straightened,
             sections,
             drowned,
+            stitched_rails,
             sidewalks,
             pavements,
             separate,
@@ -373,6 +376,12 @@ impl std::fmt::Display for PassReport {
             writeln!(
                 f,
                 "osm parse: {drowned} buildings dropped as standing entirely in water"
+            )?;
+        }
+        if *stitched_rails > 0 {
+            writeln!(
+                f,
+                "osm parse: {stitched_rails} rail tracks broken at a street stitched across it"
             )?;
         }
         writeln!(f, "{sidewalks}")?;
@@ -471,6 +480,10 @@ impl std::fmt::Display for PassReport {
 /// 1. **Утопленники** уходят первыми: дом, целиком стоящий в воде, не должен
 ///    получить ни веры, ни двери, ни выпрямленного контура — всё это работа
 ///    по дому, которого не будет.
+///    **Пути, оборванные на дороге, сшиваются** сразу за ними
+///    ([`rails::stitch_rail_gaps`]): проход читает только осевые улиц и
+///    путей, а место — любое после сечений (ему нужен класс проезжей части);
+///    дальше пути в разборе никто не двигает.
 ///    **Тротуары без тега** решаются сразу за ними ([`infer_sidewalks`]): мера
 ///    — этажность застройки вокруг, и утонувший дом в неё входить не должен;
 ///    а читают решение шаги 5 и 6 (дом отъезжает только от нарисованного
@@ -542,6 +555,8 @@ fn finish_parse(map: &mut MapData, pending: &Pending, knobs: ParseKnobs) -> Pass
         sections::apply(map, knobs.lane_width)
     };
     let drowned = if raw { 0 } else { drop_buildings_in_water(map) };
+    // переезд, которого нет в OSM: путь, оборванный на дороге, сшивается
+    let stitched_rails = if raw { 0 } else { rails::stitch_rail_gaps(map) };
     let (sidewalks, pavements, separate, faiths_guessed) = if raw {
         // тротуар — только по тегу: достроенный без тега снимается
         let dropped = drop_untagged_sidewalks(&mut map.roads);
@@ -636,6 +651,7 @@ fn finish_parse(map: &mut MapData, pending: &Pending, knobs: ParseKnobs) -> Pass
         straightened,
         sections,
         drowned,
+        stitched_rails,
         sidewalks,
         pavements,
         separate,
@@ -2803,6 +2819,7 @@ fn assemble_rings(
 
 mod lots;
 mod pockets;
+mod rails;
 mod tags;
 #[cfg(test)]
 mod tests;
