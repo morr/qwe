@@ -1889,6 +1889,112 @@ impl MeshBuilder {
         self.indices = indices;
     }
 
+    /// Склеить куски в один сборщик — ровно в том порядке, в каком их
+    /// геометрия легла бы в один сборщик подряд: индексы каждого куска
+    /// сдвигаются на вершины кусков перед ним, так что меш выходит тем же байт
+    /// в байт. Так собирается слой, чьи куски строятся по потокам
+    /// (`cars::mesh_bodies`).
+    ///
+    /// Копирование идёт **тоже по потокам** — по `groups` подряд идущих
+    /// кусков на поток, в заранее выделенные буферы: склейка в один поток
+    /// стоила на слое машин Калуги (полтора миллиона вершин, полсотни
+    /// мегабайт) столько же, сколько сама сборка кусков, — это копирование и
+    /// первое касание свежей памяти, а не арифметика. Буферы выделяются нулями
+    /// (`vec![0; n]` берёт у системы уже обнулённые страницы), так что первое
+    /// касание достаётся потокам.
+    ///
+    /// Только куски без фактуры (ни ленты, ни кровли): склеивать их пока
+    /// нечему, а атрибут, которого нет у одного из кусков, лёг бы не на каждую
+    /// вершину.
+    pub fn concat(parts: &[MeshBuilder], groups: usize) -> MeshBuilder {
+        assert!(
+            parts
+                .iter()
+                .all(|part| part.ribbon.is_none() && part.roof.is_none()),
+            "concat: куски с фактурой не склеиваются"
+        );
+        let vertices = parts.iter().map(|part| part.positions.len()).sum();
+        let index_count = parts.iter().map(|part| part.indices.len()).sum();
+        let mut positions = vec![[0.0; 3]; vertices];
+        let mut colors = vec![[0.0; 4]; vertices];
+        let mut indices = vec![0; index_count];
+
+        /// Куда ляжет один кусок: его доли трёх буферов и сдвиг индексов.
+        struct Slot<'a> {
+            part: &'a MeshBuilder,
+            positions: &'a mut [[f32; 3]],
+            colors: &'a mut [[f32; 4]],
+            indices: &'a mut [u32],
+            offset: u32,
+        }
+        let mut slots = Vec::with_capacity(parts.len());
+        let (mut positions_rest, mut colors_rest, mut indices_rest) = (
+            positions.as_mut_slice(),
+            colors.as_mut_slice(),
+            indices.as_mut_slice(),
+        );
+        let mut offset = 0u32;
+        for part in parts {
+            let count = part.positions.len();
+            let (to_positions, rest) = positions_rest.split_at_mut(count);
+            positions_rest = rest;
+            let (to_colors, rest) = colors_rest.split_at_mut(count);
+            colors_rest = rest;
+            let (to_indices, rest) = indices_rest.split_at_mut(part.indices.len());
+            indices_rest = rest;
+            slots.push(Slot {
+                part,
+                positions: to_positions,
+                colors: to_colors,
+                indices: to_indices,
+                offset,
+            });
+            offset += count as u32;
+        }
+        let copy = |slots: &mut [Slot]| {
+            for slot in slots {
+                slot.positions.copy_from_slice(&slot.part.positions);
+                slot.colors.copy_from_slice(&slot.part.colors);
+                for (to, from) in slot.indices.iter_mut().zip(&slot.part.indices) {
+                    *to = from + slot.offset;
+                }
+            }
+        };
+        let per_group = slots.len().div_ceil(groups.max(1)).max(1);
+        std::thread::scope(|scope| {
+            let mut chunks = slots.chunks_mut(per_group);
+            // первая группа — на вызывающем потоке: ему всё равно ждать
+            let first = chunks.next();
+            for chunk in chunks {
+                scope.spawn(move || copy(chunk));
+            }
+            if let Some(chunk) = first {
+                copy(chunk);
+            }
+        });
+        MeshBuilder {
+            positions,
+            colors,
+            indices,
+            skipped_polygons: parts.iter().map(|part| part.skipped_polygons).sum(),
+            ..MeshBuilder::default()
+        }
+    }
+
+    /// Зарезервировать место под `vertices` вершин и `indices` индексов —
+    /// когда объём геометрии известен заранее хотя бы оценкой.
+    pub fn reserve(&mut self, vertices: usize, indices: usize) {
+        self.positions.reserve(vertices);
+        self.colors.reserve(vertices);
+        self.indices.reserve(indices);
+        if let Some(ribbon) = &mut self.ribbon {
+            ribbon.reserve(vertices);
+        }
+        if let Some(roof) = &mut self.roof {
+            roof.reserve(vertices);
+        }
+    }
+
     pub fn build(self) -> Mesh {
         let mut mesh = Mesh::new(
             PrimitiveTopology::TriangleList,

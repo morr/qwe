@@ -506,6 +506,21 @@ pub fn push_body(builder: &mut MeshBuilder, car: &Car, detail: CarDetail) {
     }
 }
 
+/// Сколько вершин на машину кладут [`push_shadow`] и [`push_body`] на этой
+/// ступени — **оценка** для резерва места под слой, а не граница: у тени
+/// кайма теряет рёбра, глядящие против света, и сколько их, решает солнце.
+/// Кузов точен: контур в двенадцать точек, три стекла и два зеркала на
+/// `Full`, контур на `Silhouette`, квад на `Block`; тень — оболочка свипа
+/// (восемь-десять точек) с каймой на половине рёбер, габарит со свипом на
+/// `Block`. На Туле в среднем 66 вершин на машину на `Full`.
+pub fn vertices_per_car(detail: CarDetail) -> (usize, usize) {
+    match detail {
+        CarDetail::Full => (36, 32),
+        CarDetail::Silhouette => (10, 12),
+        CarDetail::Block => (6, 4),
+    }
+}
+
 /// Осветлить (`amount > 0`) или затемнить цвет кузова, в sRGB — как это
 /// делают тона стен и скатов в `map::buildings`.
 fn lighten(color: Color, amount: f32) -> Color {

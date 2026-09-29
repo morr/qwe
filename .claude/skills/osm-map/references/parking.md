@@ -884,6 +884,26 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
     `references/buildings.md`) and above
     the rail layer's deepest bucket (673 k, 23 ms) — still a
     layer built once per rebuild that costs nothing per frame.
+    - **The bodies are built by threads** (`cars::mesh_bodies`, L10): the cars are cut into
+      one chunk per core (`available_parallelism`, no fewer than `BODY_CHUNK_MIN` 1024 cars
+      a chunk), each chunk lays its shadows and its bodies into two builders of its own,
+      and `MeshBuilder::concat` glues them back **in the old order** — all the chunks'
+      shadows, then all the chunks' bodies, indices shifted — so the mesh is the
+      single-thread one byte for byte (`cars/tests.rs::the_threaded_mesh_is_the_sequential_one`,
+      and a vertex/index hash of the layer on Tula, Kaluga and Berlin at all three steps).
+      The glue is threaded too: done in one thread it cost as much as the chunks
+      themselves (copying 50 MB and first-touching fresh pages, not arithmetic). The threads
+      are `std::thread::scope` rather than `ComputeTaskPool`, which the game gives a third
+      of the cores (`main.rs` hands half to A*): a crossing holds the frame anyway. Two
+      single-thread savings came with it — the body paints (body, roof, mirror in linear
+      space) are computed once per palette slot (`body::Paint`), not three `powf`-heavy
+      conversions per car, and the contours are arrays instead of a `Vec` per car.
+      Measured with `measure_cars` (`dev`, 10 cores, a `cars *` row is one zoom crossing;
+      three interleaved rounds of five runs, median of the round medians, on a machine
+      loaded by other builds — load average 15–50): Tula 26 952 cars Full 33.3 → 6.2 ms,
+      Silhouette 12.2 → 2.5, Block 6.5 → 1.4; Kaluga 23 250 cars Full 27.6 → 5.4,
+      Silhouette 11.1 → 2.2, Block 5.6 → 1.3; Berlin 34 563 cars Full 44.3 → 8.1,
+      Silhouette 15.5 → 3.7, Block 8.8 → 1.7. Vertices unchanged.
     - **The body outline goes through `MeshBuilder::push_convex`, not `push_polygon`**, and
       that is most of those milliseconds: `push_polygon` calls `earcutr`, which on a
       12-vertex contour costs several times the laying-out itself and runs twice per car

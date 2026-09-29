@@ -617,6 +617,48 @@ fn the_toggle_off_draws_nothing() {
     assert_eq!(report.vertices, 0);
 }
 
+/// Меш, собранный по потокам, — тот же байт в байт, что сборка подряд в один
+/// сборщик: сначала все тени, потом все кузова. Машин — на несколько кусков,
+/// всех типов и всех цветов палитры (краски кузова берутся из кеша палитры),
+/// и одна белая — цвет не из палитры.
+#[test]
+fn the_threaded_mesh_is_the_sequential_one() {
+    let _sun = crate::map::default_sun();
+    let mut rng = Lcg::new(7);
+    let mut cars: Vec<Car> = (0..BODY_CHUNK_MIN * 3 + 17)
+        .map(|_| Car {
+            at: Vec2::new(rng.range(0.0, 3000.0), rng.range(0.0, 2000.0)),
+            along: Vec2::from_angle(rng.range(0.0, std::f32::consts::TAU)),
+            color: body::color_from_share(rng.next_f32()),
+            shape: CarShape::from_share(rng.next_f32()),
+        })
+        .collect();
+    cars[5].color = Color::WHITE;
+    let bytes = |builder: MeshBuilder| {
+        let mesh = builder.build();
+        let mut bytes: Vec<u8> = Vec::new();
+        for (_, values) in mesh.attributes() {
+            bytes.extend_from_slice(values.get_bytes());
+        }
+        let indices: Vec<usize> = mesh.indices().expect("индексы").iter().collect();
+        (bytes, indices)
+    };
+    for detail in [CarDetail::Full, CarDetail::Silhouette, CarDetail::Block] {
+        let stretch = shadow::offset(1.0);
+        let mut sequential = MeshBuilder::default();
+        for car in &cars {
+            body::push_shadow(&mut sequential, car, stretch * car.shape.height(), detail);
+        }
+        for car in &cars {
+            body::push_body(&mut sequential, car, detail);
+        }
+        assert!(
+            bytes(mesh_bodies(&cars, detail)) == bytes(sequential),
+            "{detail:?}: меш по потокам разошёлся с последовательным"
+        );
+    }
+}
+
 #[test]
 fn the_far_bucket_draws_nothing() {
     let far = CarZoomBucket::for_zoom(f32::INFINITY);

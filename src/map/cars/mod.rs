@@ -966,19 +966,65 @@ fn park_along(
 /// машин стоил бы дороже всего слоя. При низком солнце тени вдоль ряда
 /// перекрываются и складываются в пятна двойной темноты — известная плата за
 /// это решение.
+///
+/// **Собирается по потокам**: машины друг от друга не зависят, и ряд режется
+/// на куски по числу ядер, каждый из которых кладёт свои тени и свои кузова в
+/// два своих сборщика. Склейка ([`MeshBuilder::concat`]) идёт в прежнем
+/// порядке — тени всех кусков, потом кузова всех кусков, — так что меш тот же
+/// байт в байт, что при сборке в один поток. Это и есть цена перехода порога
+/// зума машин: расстановка между порогами не пересчитывается, и на пороге
+/// собираются только кузова.
+///
+/// Потоки — свои (`std::thread::scope`, как у `parse::lots::pave_lots`), а не
+/// `ComputeTaskPool`: игра отдаёт тому пулу треть ядер (половина уходит
+/// A*-таскам, `main.rs`), а переход порога держит кадр целиком, и ждать ему
+/// некого — пусть работают все ядра.
 fn mesh_bodies(cars: &[Car], detail: CarDetail) -> MeshBuilder {
-    let mut builder = MeshBuilder::default();
     // сдвиг на метр высоты — общий множитель слоя, а высоту прикладывает
     // каждая машина своей (`CarShape::height`)
     let stretch = shadow::offset(1.0);
-    for car in cars {
-        body::push_shadow(&mut builder, car, stretch * car.shape.height(), detail);
-    }
-    for car in cars {
-        body::push_body(&mut builder, car, detail);
-    }
-    builder
+    let workers = std::thread::available_parallelism().map_or(1, usize::from);
+    let chunk = cars.len().div_ceil(workers).max(BODY_CHUNK_MIN);
+    let (shadow_size, body_size) = body::vertices_per_car(detail);
+    let build = |chunk: &[Car]| {
+        // место — сразу под весь кусок: иначе вектор вершин удваивается с
+        // десяток раз, и каждый раз копирует всё, что уже положено. Индексов —
+        // полтора на вершину (квад), веер контура дешевле, так что с запасом
+        let mut shadows = MeshBuilder::default();
+        shadows.reserve(chunk.len() * shadow_size, chunk.len() * shadow_size * 3 / 2);
+        let mut bodies = MeshBuilder::default();
+        bodies.reserve(chunk.len() * body_size, chunk.len() * body_size * 3 / 2);
+        for car in chunk {
+            body::push_shadow(&mut shadows, car, stretch * car.shape.height(), detail);
+            body::push_body(&mut bodies, car, detail);
+        }
+        (shadows, bodies)
+    };
+    let parts: Vec<(MeshBuilder, MeshBuilder)> = std::thread::scope(|scope| {
+        let mut chunks = cars.chunks(chunk);
+        // первый кусок — на вызывающем потоке: ему всё равно ждать
+        let first = chunks.next();
+        let handles: Vec<_> = chunks
+            .map(|chunk| scope.spawn(move || build(chunk)))
+            .collect();
+        first
+            .map(build)
+            .into_iter()
+            .chain(
+                handles
+                    .into_iter()
+                    .map(|handle| handle.join().expect("поток сборки кузовов упал")),
+            )
+            .collect()
+    });
+    let (shadows, bodies): (Vec<_>, Vec<_>) = parts.into_iter().unzip();
+    let ordered: Vec<MeshBuilder> = shadows.into_iter().chain(bodies).collect();
+    MeshBuilder::concat(&ordered, workers)
 }
+
+/// Меньше этого машин на кусок [`mesh_bodies`] не режет: витрине и маленькому
+/// городу поток на горстку машин стоит дороже, чем они сами.
+const BODY_CHUNK_MIN: usize = 1024;
 
 #[cfg(test)]
 mod tests;
