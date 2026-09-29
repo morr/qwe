@@ -135,6 +135,9 @@ const OUTER_OVERLAP: f32 = 0.3;
 struct Arm<'d> {
     class: RoadClass,
     highway: Highway,
+    /// Дуга кольца (`Drawn::on_ring`): у колец клинья штрихуют свои островки
+    /// (`roads/gores.rs`), и клина развилки ([`fork_gore`]) им не нужно.
+    ring: bool,
     /// Мощёная дорожка ([`RoadLine::is_paved_path`]): её скругления ложатся
     /// в слой тротуаров, а не тропинок.
     ///
@@ -234,6 +237,10 @@ pub struct KerbReturns {
     /// веером не кладётся: его стороны идут по кромкам лент, а они у острой
     /// развилки гнутые, — контур триангулируется целиком.
     pub noses: Vec<(Fill, Vec<Vec2>)>,
+    /// Штрихуемые клинья перед носами острых развилок улиц ([`fork_gore`]):
+    /// контур от острия клина до дуги носа — слою островков
+    /// (`roads/gores.rs`).
+    pub fork_gores: Vec<Vec<Vec2>>,
     /// Контур и класс дорог, в чей слой заливки он ляжет: скругления и
     /// наружные углы. Каждый — веер из первой вершины.
     pub roads: Vec<(RoadClass, Vec<Vec2>)>,
@@ -419,6 +426,7 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                 entry.1.push(Arm {
                     class: road.class,
                     highway: road.highway,
+                    ring: drawn.on_ring(index),
                     paved: road.is_paved_path(),
                     unpaved: road.is_unpaved_street(),
                     half,
@@ -528,8 +536,22 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                             Fill::Road(class)
                         };
                         let radius = nose_radius(radius, scale);
-                        if let Some(outline) = nose(first, second, (0.0, 0.0), radius) {
-                            returns.noses.push((fill, outline));
+                        // клин штрихуется только на развилке — узел из трёх
+                        // лучей, острый угол, а не нос несложившегося
+                        // скругления — и между проезжими частями улиц, а не
+                        // у проезда, дорожки или грунтовки. На сложном узле
+                        // клинья легли островками посреди его асфальта (Орёл,
+                        // витрина 04), у развилки под 34° — клочком в горле
+                        // узла (Тула, 06)
+                        let gored = fill == Fill::Road(RoadClass::Street)
+                            && group.len() == 3
+                            && ccw_angle(first, second) < MIN_ANGLE
+                            && [first, second]
+                                .iter()
+                                .all(|arm| arm.highway.is_street() && !arm.ring);
+                        if let Some(found) = nose(first, second, (0.0, 0.0), radius, gored) {
+                            returns.noses.push((fill, found.outline));
+                            returns.fork_gores.extend(found.gore);
                         }
                         continue;
                     }
@@ -640,8 +662,8 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                 // всё мощёное, — и нос тротуара свой, того же малого радиуса:
                 // иначе между полосами тротуара торчал бы шип земли.
                 let radius = nose_radius(kerb_radius(first, second) * scale, scale);
-                if let Some(outline) = nose(first, second, (a, b), radius) {
-                    returns.noses.push((Fill::Sidewalk, outline));
+                if let Some(found) = nose(first, second, (a, b), radius, false) {
+                    returns.noses.push((Fill::Sidewalk, found.outline));
                 }
             } else if let Some(outline) = outer_corner(node, first, second, halves) {
                 returns.sidewalks.push(outline);
@@ -951,7 +973,10 @@ fn fillet_arc(
 /// второго и просвет между кромками; остриё — где просвет стал положительным,
 /// центр носа — середина просвета в два радиуса. Не нашлось (второй луч
 /// кончился, просвет не дорос за [`NOSE_REACH`]) — `None`.
-fn nose(first: &Arm, second: &Arm, extra: (f32, f32), radius: f32) -> Option<Vec<Vec2>> {
+///
+/// `gored` — перед носом ещё и штрихуемый клин развилки ([`fork_gore`]) по тем
+/// же пробам.
+fn nose(first: &Arm, second: &Arm, extra: (f32, f32), radius: f32, gored: bool) -> Option<Nose> {
     if radius < MIN_RADIUS {
         return None;
     }
@@ -965,10 +990,12 @@ fn nose(first: &Arm, second: &Arm, extra: (f32, f32), radius: f32) -> Option<Vec
     // звено второго, у которого нашлась прошлая проба: пробы идут вперёд, и
     // ближайшая точка ищется в окне от него, а не по всей осевой
     let mut hint: usize = 0;
-    // кромка первого на `at`, лицом к ней — кромка второго, и просвет между ними
-    let mut facing = |at: f32| -> Option<(Vec2, Vec2, f32)> {
+    // кромка первого на `at`, лицом к ней — кромка второго, и просвет между
+    // ними; в пробе — ещё полуширины обоих и нормали к кромкам внутрь развилки
+    let mut facing = |at: f32| -> Option<(Vec2, Vec2, f32, Station)> {
         let (point, tangent) = place_on_path(&first_trail, &along_first, at)?;
-        let edge = point + tangent.perp() * (first.half_at(0, at) + extra.0);
+        let near_half = first.half_at(0, at) + extra.0;
+        let edge = point + tangent.perp() * near_half;
         let (link, onto) = (hint.saturating_sub(NOSE_WINDOW)..(hint + NOSE_WINDOW).min(links))
             .map(|link| {
                 let onto = closest_on_segment(edge, second_trail[link], second_trail[link + 1]);
@@ -988,19 +1015,33 @@ fn nose(first: &Arm, second: &Arm, extra: (f32, f32), radius: f32) -> Option<Vec
         let out = -direction.perp();
         let half = second.half_at(1, reach) + extra.1;
         let gap = (edge - onto).dot(out) - half;
-        Some((edge, onto + out * half, gap))
+        let opposite = onto + out * half;
+        let station = Station {
+            at,
+            edges: [edge, opposite],
+            gap,
+            halves: [near_half, half],
+            inward: [tangent.perp(), out],
+        };
+        Some((edge, opposite, gap, station))
     };
     let mut tip = None;
     let mut left = Vec::new();
     let mut right = Vec::new();
+    let mut stations = Vec::new();
     let mut at = 0.0;
     // середина просвета в два радиуса и докуда ещё вести стороны: основания
     // перпендикуляров из центра лягут чуть дальше неё
     let mut found: Option<(Vec2, f32)> = None;
+    // проба, на которой просвет дорос до двух радиусов, — там кончается клин
+    let mut widest = None;
     while at <= total_first {
-        let Some((edge, opposite, gap)) = facing(at) else {
+        let Some((edge, opposite, gap, station)) = facing(at) else {
             break;
         };
+        if gored {
+            stations.push(station);
+        }
         if gap < 0.0 && found.is_none() {
             // остриё — середина скрещённых кромок последней пробы, под обеими
             // лентами
@@ -1025,6 +1066,7 @@ fn nose(first: &Arm, second: &Arm, extra: (f32, f32), radius: f32) -> Option<Vec
             match found {
                 None if gap >= 2.0 * radius => {
                     found = Some(((edge + opposite) / 2.0, at + 2.0 * radius));
+                    widest = stations.len().checked_sub(1);
                 }
                 Some((_, until)) if at >= until => break,
                 _ => {}
@@ -1065,11 +1107,105 @@ fn nose(first: &Arm, second: &Arm, extra: (f32, f32), radius: f32) -> Option<Vec
     // короткой стороной — она и смотрит на остриё
     let sweep = from.angle_to(to);
     let steps = arc_steps(radius, sweep.abs()).max(1);
-    for step in 0..=steps {
-        outline.push(centre + Vec2::from_angle(sweep * step as f32 / steps as f32).rotate(from));
-    }
+    let arc: Vec<Vec2> = (0..=steps)
+        .map(|step| centre + Vec2::from_angle(sweep * step as f32 / steps as f32).rotate(from))
+        .collect();
+    outline.extend(&arc);
     // остриё — уже первая вершина левой стороны
     outline.extend(keep(&right, cut_right).into_iter().skip(1).rev());
+    if outline.len() < 3 {
+        return None;
+    }
+    let gore = widest.and_then(|widest| fork_gore(&stations[..=widest], &arc));
+    Some(Nose { outline, gore })
+}
+
+/// Нос развилки ([`nose`]) и штрихуемый клин перед ним ([`fork_gore`]).
+struct Nose {
+    outline: Vec<Vec2>,
+    gore: Option<Vec<Vec2>>,
+}
+
+/// Проба носа ([`nose`]) в `at` метрах по первому лучу: кромки обоих лучей
+/// лицом друг к другу, просвет между ними (меньше нуля — ленты
+/// перекрываются), полуширины (с тротуаром, если он в кромке) и нормали к
+/// кромкам внутрь развилки.
+struct Station {
+    at: f32,
+    edges: [Vec2; 2],
+    gap: f32,
+    halves: [f32; 2],
+    inward: [Vec2; 2],
+}
+
+/// Клин развилки короче этого, м, не штрихуется. У развилки острее 25° он
+/// не короче 12 м (полоса и два радиуса носа на синус угла); короче выходит
+/// между гнутыми лучами внутри сложного узла — треугольнички в 3–5 м
+/// островками посреди его асфальта (Орёл, витрина 04).
+const FORK_GORE_MIN: f32 = 8.0;
+
+/// Штрихуемый клин перед носом острой развилки. Ленты двух улиц под 8–25°
+/// перекрываются на десятки метров, и нос встаёт только там, где их кромки
+/// разошлись, — до него между полотнами тянулся ровный асфальтовый язык
+/// (Тула, витрина 14: 34 м от узла). На земле полосы расходятся раньше, а
+/// между ними — штриховка. Клин начинается, где ось узкой улицы вышла из
+/// полотна широкой (перекрытие кромок сошло до меньшей полуширины), и
+/// расходится до ширины просвета у носа (`stations` кончаются пробой, где
+/// просвет дорос до двух радиусов носа), кончаясь поперёк у вершины дуги
+/// носа `arc`. Стороны
+/// заходят в полотна на недостающую ширину — каждая пропорционально своей
+/// полуширине, так что обе полосы сужаются заодно. `None` — клин короче
+/// [`FORK_GORE_MIN`] или ось узкой не выходит из широкой до носа.
+fn fork_gore(stations: &[Station], arc: &[Vec2]) -> Option<Vec<Vec2>> {
+    let (widest, _) = stations.split_last()?;
+    let start = stations
+        .iter()
+        .position(|station| station.gap >= -station.halves[0].min(station.halves[1]))?;
+    let (from, to) = (stations[start].at, widest.at);
+    if to - from < FORK_GORE_MIN {
+        return None;
+    }
+    let mut sides = [Vec::new(), Vec::new()];
+    for station in &stations[start..] {
+        let width = widest.gap * (station.at - from) / (to - from);
+        let cut = (width - station.gap).max(0.0);
+        let total = station.halves[0] + station.halves[1];
+        for (side, points) in sides.iter_mut().enumerate() {
+            let into = cut * station.halves[side] / total;
+            points.push(station.edges[side] - station.inward[side] * into);
+        }
+    }
+    // Кончается клин поперёк, по касательной к вершине дуги носа: вдоль самой
+    // дуги по бордюру обводка легла бы белой скобой с крючками у её концов.
+    let tip = sides[0][0].midpoint(sides[1][0]);
+    let apex = arc
+        .iter()
+        .copied()
+        .min_by(|a, b| a.distance(tip).total_cmp(&b.distance(tip)))?;
+    let along = (apex - tip).try_normalize()?;
+    let reach = apex.distance(tip);
+    let side = |points: &[Vec2]| -> Vec<Vec2> {
+        let depth = |point: Vec2| (point - tip).dot(along);
+        let mut kept = Vec::new();
+        for (index, pair) in points.windows(2).enumerate() {
+            // прямым сторонам вершина через [`NOSE_THIN`] проб не нужна
+            if index % NOSE_THIN == 0 {
+                kept.push(pair[0]);
+            }
+            let [near, far] = [depth(pair[0]), depth(pair[1])];
+            if far >= reach {
+                let share = ((reach - near) / (far - near)).clamp(0.0, 1.0);
+                kept.push(pair[0].lerp(pair[1], share));
+                return kept;
+            }
+        }
+        kept.extend(points.last());
+        kept
+    };
+    let mut outline = side(&sides[0]);
+    // остриё — уже первая вершина первой стороны
+    let back = side(&sides[1]);
+    outline.extend(back.into_iter().skip(1).rev());
     (outline.len() >= 3).then_some(outline)
 }
 
@@ -1590,6 +1726,52 @@ mod tests {
             "остриё тротуара закрыто"
         );
         assert!(!covered(Fill::Sidewalk, walked + 0.5));
+    }
+
+    #[test]
+    fn a_sharp_street_fork_hatches_a_gore_ahead_of_its_nose() {
+        // та же развилка под 15°: ленты по 8 м перекрываются до острия носа
+        // в 30.6 м по биссектрисе. Клин начинается, где ось ветки вышла из
+        // полотна сквозной (оси разошлись на полуширину, 4 м: ~15.5 м от
+        // узла), и кончается у вершины дуги носа (Тула, витрина 14)
+        let angle = 15_f32.to_radians();
+        let branch = street(
+            vec![Vec2::ZERO, Vec2::from_angle(angle).rotate(Vec2::X) * 80.0],
+            8.0,
+        );
+        let through = street(
+            vec![Vec2::new(-50.0, 0.0), Vec2::ZERO, Vec2::new(100.0, 0.0)],
+            8.0,
+        );
+        let found = walked_returns_of(&[through.clone(), branch.clone()], false);
+        assert_eq!(found.fork_gores.len(), 1, "{:?}", found.fork_gores);
+        let gore = &found.fork_gores[0];
+        let bisector = Vec2::from_angle(angle / 2.0).rotate(Vec2::X);
+        let half_angle = angle / 2.0;
+        let apex = 4.0 / half_angle.sin() + NOSE_RADIUS / half_angle.sin() - NOSE_RADIUS;
+        let start = 4.0 / angle.sin();
+        let inside = |at: f32| point_in_polygon(bisector * at, gore);
+        assert!(inside(start + 3.0), "клин начался у выхода оси ветки");
+        assert!(inside(apex - 1.0), "и дошёл до носа");
+        assert!(!inside(start - 3.0), "у самого узла клина нет");
+        assert!(
+            !inside(apex + 1.0),
+            "за вершиной дуги — остров, не штриховка"
+        );
+        // клин лежит на асфальте лент, не на земле
+        for point in gore {
+            let under = [&through, &branch].iter().any(|road| {
+                crate::map::footprint::distance_to_polyline(*point, &road.points) <= 4.0 + 0.05
+            });
+            assert!(under, "{point:?} вне лент");
+        }
+        // у развилки с проездом клина нет: штриховка — между полотнами улиц
+        let drive = street(branch.points.clone(), 5.0);
+        assert!(
+            walked_returns_of(&[through, drive], false)
+                .fork_gores
+                .is_empty()
+        );
     }
 
     #[test]

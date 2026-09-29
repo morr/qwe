@@ -967,6 +967,8 @@ pub fn mesh_roads(
     let splitters = gores::splitters(&drawn, &ribbon, prepared.rings());
     junctions.add_splitters(&splitters);
     gores.add_splitters(&splitters);
+    // клинья перед носами острых развилок улиц (`corners::fork_gore`)
+    gores.add_forks(&kerb_returns.fork_gores);
     // три множества разрывов — каждому потребителю своё (`roads/junctions.rs`)
     let node_paint = junctions.node_paint();
     let asphalt = junctions.asphalt();

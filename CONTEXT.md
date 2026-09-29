@@ -1315,7 +1315,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   paint layer's shader (`road_paint_islands`), which fades it with zoom. A **splitter**
   (`gores::splitters`) is the same island set **by rule** on an approach mapped as one
   two-way way, where there is no fan and so no wedge — only where that approach leaves
-  the ring along its ray, never on one running along the ring. **Closedness of
+  the ring along its ray, never on one running along the ring. A **fork gore**
+  (`corners::fork_gore`) is the same hatching ahead of the nose of a sharp fork of two
+  streets away from a ring: it starts where the narrower street's axis has left the wider
+  one's carriageway and widens to the nose, so the two ribbons' overlap is no longer
+  one long tongue of plain asphalt. **Closedness of
   a way is read off the raw OSM points, never off the drawn path** — a style knob must not
   decide whether a way is a ring. No stall stands under
   a through road or its kerb (`Surroundings::cover`). A small lot hides its roads as

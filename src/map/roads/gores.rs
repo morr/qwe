@@ -313,6 +313,19 @@ impl Gores {
         }
     }
 
+    /// Добавить штрихуемые клинья острых развилок (`corners::fork_gore`):
+    /// асфальт под ними уже лежит — это лента и нос развилки, — так что
+    /// штрихуется только контур. Клин, попавший на островок кольца, не
+    /// кладётся: там свой.
+    pub fn add_forks(&mut self, forks: &[Vec<Vec2>]) {
+        for fork in forks {
+            if fork.iter().any(|point| self.contains(*point)) {
+                continue;
+            }
+            self.hatched.push(vec![oriented(fork, true)]);
+        }
+    }
+
     /// Контуры островков — тому, кто вычитает их из своего (бордюр стоянки).
     pub fn contours(&self) -> impl Iterator<Item = &Contour> {
         self.asphalt.iter().flatten()

@@ -1879,6 +1879,33 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
       layers' 849 k vertices, the build unmoved (215–221 ms before, 210–213 after, the
       `map_meshing` bench). The first cut built the trail for every arm and searched the
       whole second axis at every station: +90 ms.
+    - **A sharp fork of two streets gets a hatched gore ahead of its nose**
+      (`corners::fork_gore`, `KerbReturns::fork_gores` → `Gores::add_forks`, painted like
+      every gore by `road_paint_islands`). The nose stands where the ribbons' edges have
+      parted, and before it the two ribbons overlap for tens of metres: at Tula's 8–15°
+      fork of Курковая and a residential street (gallery 14) one plain tongue of asphalt
+      ran 34 m from the node to the nose. On the ground the lanes part earlier and the
+      space between them is hatched. The gore is built off the nose's own stations
+      (`Station`: both facing edges, the gap, the half widths, the inward normals): it
+      **starts** at the first station where the overlap of the edges is down to the
+      narrower half width — the narrower street's axis has left the wider one's
+      carriageway — widens linearly to the gap at the station where the nose was found
+      (two radii), and **ends square** on the line through the nose arc's apex (running it
+      along the arc laid the outline as a white bracket over the kerb, with hooks at its
+      feet). Where the gore is wider than the gap, its sides go into both ribbons, each
+      by its share of the half widths, so both carriageways narrow together; past the
+      edge crossing it is exactly the nose's asphalt. Only at a **fork** — a node of
+      exactly three street arms, the two under `MIN_ANGLE` 25° (not the nose of a fillet
+      that did not fit, up to 60°): on a six-arm node the gores lay as hatched islets in
+      the middle of its asphalt (Oryol, gallery 04), at Tula 06's 34° drive as a scrap in
+      the throat. Only between two `Highway::is_street` arms, neither of them a ring arc (a
+      ring hatches its own wedges — `Gores::add_forks` also skips a gore that touches
+      one), not on footways, drives or dirt, and not shorter than `FORK_GORE_MIN` 8 m —
+      a fork under 25° gives at least 12 m (a lane and two nose radii over the sine), and
+      the 3–5 m ones came from bent arms inside a complex node (Oryol 04, two hatched
+      triangles afloat in its asphalt).
+      The asphalt under it is the ribbons and the nose: only the hatching is added
+      (`a_sharp_street_fork_hatches_a_gore_ahead_of_its_nose`).
     - **A small island of three nodes is paved** (`small_islands`): three shared nodes
       pairwise joined by pieces of streets (a fork's triangle, Tula, gallery 06: sides
       17–31 m) whose inradius, less the widest half width of the three, is under
