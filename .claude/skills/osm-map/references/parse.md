@@ -687,7 +687,7 @@ be called alone:
     effect is purely what is drawn. **After the squaring** (step 4) it must stay, though:
     `vertex_uses` counts a parking outline among the layers a house may share a vertex
     with, so a pulled edge would change which houses get squared.
-- **Ground pockets sown as yard** (`parse/pockets.rs::fill_ground_pockets`, into
+- **Ground pockets sown with grass** (`parse/pockets.rs::fill_ground_pockets`, into
   `MapData::pockets`) — its own step right after the block and lot pulls, with its own
   `osm parse:` line and timing. What it closes: a scrap of bare ground **enclosed** by what
   is drawn, which no tag describes and the vertex pull cannot reach — the triangle
@@ -706,18 +706,28 @@ be called alone:
     parks, woods, grass, sand, water, lots and pitches. **Houses are left out**: a hole
     that runs under a house only gets grass under the house.
   - **A hole is sown** when it is at most `POCKET_AREA_MAX` 400 m² (above that it is a
-    plot of its own — a waste plot, a building site), has a vertex within `POCKET_NEAR`
-    4 m of a block's ring (a block's edge often lies *under* the footway, and the wedge
-    beyond touches the footway, not the block; the nearest block gives the kind), touches
+    plot of its own — a waste plot, a building site), touches
     a paved road's band (`TOUCH` 0.25 m — a hole cut into a block by its own
     multipolygon has no road on its rim) and touches **no** dirt path or unpaved street
     (a waste plot crossed by trails, Oryol 03 south-west). The ring grows
     `LANDUSE_OVERLAP` 0.5 m (bevel) so the seam goes under the smoothed ribbons.
+  - **Which grass** (`Scene::grass_near`, the verge lawn's rule, not a third one): a
+    vertex within `POCKET_NEAR` 4 m of a **block's** ring gives that block's kind (a
+    block's edge often lies *under* the footway, and the wedge beyond touches the footway,
+    not the block); else one within 4 m of a mapped **park or lawn** (`parks`, `grass`)
+    gives `Grass` — the meadow, drawn without a rim in the lawn layer, as the verge beside
+    them (`roads.rs::Meadows`); else `Residential`, the yard grass every other verge lawn
+    is — but only from `LONE_POCKET_MIN` 10 m² up: a smaller lone hole is a gap between
+    paving bands (a sidewalk corner at a crossing, Oryol 03), where yard grass lay on the
+    tiles as a dark stain and bare ground nearly matches them. Before this a pocket with no block beside it stayed bare — the beige parallelogram
+    between the verge lawns by the Kaluga 01 ring — and the tiles were those touched by a
+    block; now they are those touched by a road link (± `MARGIN`), since the road is what
+    every pocket has.
   - **Why the errors are safe**: the block layer lies below everything drawn on it, so a
     cover the parse misses only makes a hole bigger (a missed fill) or puts grass under
     something drawn (unseen); a cover the parse invents only closes a hole that is then
     not filled.
-  - **Tiles**: `TILE` 400 m cells touched by a block, a window of `MARGIN` 30 m around each;
+  - **Tiles**: `TILE` 400 m cells touched by a road link, a window of `MARGIN` 30 m around each;
     a hole counts only when it lies wholly in the window (then every cover touching it is
     in the window) and its bbox centre lies in the tile (one tile owns it). Tiles and the
     road bands go across threads through a counter (`in_parallel`) — a centre tile costs
@@ -729,9 +739,12 @@ be called alone:
     to yard grass. The verge now asks the other way round — yard grass by default, a
     meadow only beside `parks` / `grass` (`Meadows::beside`, `references/roads.md`,
     **Sidewalks**) — so a pocket does not reach that choice at all.
-  - Tula: **610 pockets, ~120–140 ms** at load (dev profile, a loaded machine;
-    `map_meshing`), Oryol 431 / 84 ms. Pinned by
+  - Tula: **1220 pockets, ~112 ms** at load (dev profile, `map_meshing`) since the
+    pockets with no block beside them are sown too — 610 in ~120–140 ms before, on a
+    loaded machine, Oryol 431 / 84 ms then. Most of the new ones lie under what is drawn
+    anyway (the Kaluga 01 and Tula 02 gallery frames did not change by a pixel). Pinned by
     `a_ground_pocket_between_a_block_and_two_footways_is_sown_as_yard`,
+    `a_pocket_with_no_block_beside_is_meadow_by_a_lawn_and_yard_elsewhere`,
     `a_pocket_by_a_dirt_path_a_large_one_and_a_hole_in_the_block_stay_ground`,
     `a_pocket_on_a_tile_seam_is_sown_once`.
 - **Ring assembly** (`parse.rs::assemble_rings`) — multipolygon relation members joined

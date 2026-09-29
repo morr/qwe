@@ -576,9 +576,12 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   verge ends at a footway turning away (Oryol, 03). The vertex pull cannot close it: the
   wedge's corner stands on the footways' junction, where the block has no vertex. It is a
   **hole of the union** of those covers, found per 400 m tile across threads; a hole
-  within `POCKET_NEAR` 4 m of a block, touching a paved road, touching no dirt path and
-  no larger than `POCKET_AREA_MAX` 400 m² is sown with that block's grass (grown 0.5 m
-  under its neighbours) and drawn in the block layer. A pocket is **not a block**: it
+  touching a paved road, touching no dirt path and no larger than `POCKET_AREA_MAX`
+  400 m² is sown with grass (grown 0.5 m under its neighbours) by the verge lawn's rule:
+  within `POCKET_NEAR` 4 m of a block — that block's grass, in the block layer; else of a
+  mapped park or lawn — the meadow (`Grass`, lawn layer, no rim); else the yard grass
+  (the parallelogram by the Kaluga 01 ring), from `LONE_POCKET_MIN` 10 m² up — a smaller
+  lone hole is a gap in the paving and stays ground. A pocket is **not a block**: it
   lives beside `landuse`, so a verge next to it does not turn to yard grass. What stays
   ground stays: a waste plot with trails (a dirt path on its rim), anything larger (a
   plot of its own), a hole cut into a block by its own multipolygon (no road on its rim).

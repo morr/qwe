@@ -249,10 +249,12 @@ pub fn mesh_surfaces(
     // оба означала бы траву на бетонной площадке.
     let mut yards = MeshBuilder::with_surface_coords();
     let mut works = MeshBuilder::with_surface_coords();
-    // и карманы земли у них (`parse/pockets.rs`) — травой того же двора
+    // и карманы земли (`parse/pockets.rs`) — травой квартала рядом или двора;
+    // карман у газона — лугом, ниже в слое газонов
     for area in map.landuse.iter().chain(&map.pockets) {
         let (builder, color) = match area.kind {
             AreaKind::Industrial => (&mut works, INDUSTRIAL_COLOR),
+            AreaKind::Grass => continue,
             _ => (&mut yards, RESIDENTIAL_COLOR),
         };
         builder.push_polygon(&area.outer, &area.holes, color.to_linear());
@@ -271,6 +273,14 @@ pub fn mesh_surfaces(
     let mut grass = MeshBuilder::with_surface_coords();
     for area in &map.grass {
         push_area(&mut grass, area, GRASS_COLOR, &GRASS_RIM);
+    }
+    // луг кармана — без каймы: он не газон, а продолжение газона обочины
+    for area in map
+        .pockets
+        .iter()
+        .filter(|area| area.kind == AreaKind::Grass)
+    {
+        grass.push_polygon(&area.outer, &area.holes, GRASS_COLOR.to_linear());
     }
 
     let mut sand = MeshBuilder::with_surface_coords();

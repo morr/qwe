@@ -15,9 +15,14 @@
 //! что из земли **замкнуто** нарисованным — полотнами дорог с тротуарами,
 //! обочинами, кварталами, зеленью, водой, стоянками, площадками. Дырка их
 //! объединения — это и есть карман: вокруг него всё покрыто, и ни один тег
-//! его не описал. Карман, который касается квартала и дороги и мал
-//! ([`POCKET_AREA_MAX`]), засевается травой того же квартала
-//! (`MapData::pockets`, рисуется слоем кварталов).
+//! его не описал. Карман, который касается мощёной дороги и мал
+//! ([`POCKET_AREA_MAX`]), засевается травой (`MapData::pockets`) — какой,
+//! решает сосед ([`Scene::grass_near`]): у квартала — травой того же
+//! квартала (рисуется его слоем), у замапленного газона или сквера — лугом,
+//! а без них — травой двора. Это правило газона широкой обочины
+//! (`roads.rs::Meadows`): луг — только у замапленной зелени, по умолчанию —
+//! двор. Без квартала рядом карман оставался землёй — бежевый параллелограмм
+//! между газонами обочин у кольца Калуги 01.
 //!
 //! Что должно остаться землёй, остаётся ею: карман у грунтовой тропы — не
 //! двор (пустырь с тропинками, как юго-запад Орла, 03), большой — это уже
@@ -43,8 +48,7 @@ use crate::map::along::{arclengths, densify};
 use crate::map::grid::Grid;
 use crate::map::meshing::miter_offsets;
 use crate::map::osm::model::{
-    BuildingUse, MapData, PolyArea, RoadClass, RoadLine, distance_to_segment, ring_area,
-    ring_bounds,
+    AreaKind, BuildingUse, MapData, PolyArea, RoadClass, RoadLine, distance_to_segment, ring_area,
 };
 use crate::map::shapes::{Contour, Shape, area_contours, contour_bounds, oriented, ring_of};
 
@@ -54,9 +58,14 @@ use crate::map::shapes::{Contour, Shape, area_contours, contour_bounds, oriented
 const POCKET_AREA_MAX: f32 = 400.0;
 /// Меньше этого, м², — шум обводки, а не земля.
 const POCKET_AREA_MIN: f32 = 0.05;
-/// Как близко к кольцу квартала, м, должна подходить хоть одна вершина
-/// кармана: край квартала сплошь и рядом лежит **под** дорожкой, и клин за
-/// ней касается уже её полотна, а не квартала. Ширина дорожки с запасом.
+/// Меньше этого, м², карман без квартала и газона рядом — не земля, а щель
+/// между полосами плитки (угол тротуара у перехода, Орёл 03): травой двора
+/// он ложился на плитку тёмным пятном, землёй почти сливается с ней.
+const LONE_POCKET_MIN: f32 = 10.0;
+/// Как близко к кольцу квартала (или газона), м, должна подходить хоть одна
+/// вершина кармана, чтобы взять его траву: край квартала сплошь и рядом
+/// лежит **под** дорожкой, и клин за ней касается уже её полотна, а не
+/// квартала. Ширина дорожки с запасом.
 const POCKET_NEAR: f32 = 4.0;
 /// Насколько близко к краю полотна вершина кармана, м, чтобы он считался
 /// касающимся дороги.
@@ -102,40 +111,45 @@ struct Scene {
     cover_grid: Grid<usize>,
     links: Vec<Link>,
     link_grid: Grid<usize>,
-    /// Рёбра колец кварталов: `(от, до, индекс квартала)`.
-    edges: Vec<(Vec2, Vec2, usize)>,
-    edge_grid: Grid<usize>,
+    /// Рёбра колец кварталов: `(от, до, вид квартала)`.
+    blocks: Rim,
+    /// Рёбра колец замапленной зелени (`parks`, `grass`) — вид всегда
+    /// `Grass`: у газона и у сквера карман засевается одним лугом, как
+    /// газон обочины рядом с ними.
+    meadows: Rim,
 }
 
-/// Карман, найденный в плитке: кольцо, уже заведённое под соседей, и
-/// квартал, чью траву он берёт.
+/// Рёбра колец площадей одного рода с индексом по [`Grid`]: у какого кольца
+/// карман и какой травой он тогда засевается.
+struct Rim {
+    edges: Vec<(Vec2, Vec2, AreaKind)>,
+    grid: Grid<usize>,
+}
+
+/// Карман, найденный в плитке: кольцо, уже заведённое под соседей, и вид
+/// травы, которой он засевается.
 struct Pocket {
     outer: Vec<Vec2>,
-    block: usize,
+    kind: AreaKind,
 }
 
-/// Засеять карманы земли у кварталов травой их двора: каждый — площадью
-/// того же вида, что ближний квартал, в `MapData::pockets` (не в `landuse`:
-/// карман — не квартал, и обочина рядом с ним двор не спрашивает).
-/// Возвращает, сколько.
+/// Засеять карманы земли травой ([`Scene::grass_near`]): каждый — площадью
+/// в `MapData::pockets` (не в `landuse`: карман — не квартал, и обочина
+/// рядом с ним двор не спрашивает). Возвращает, сколько.
 ///
 /// Плитки друг от друга не зависят и считаются по потокам, как стоянки
 /// (`lots::pave_lots`); порядок результата — порядок плиток, так что он не
 /// зависит от числа потоков.
 pub(super) fn fill_ground_pockets(map: &mut MapData) -> usize {
-    if map.landuse.is_empty() {
-        return 0;
-    }
     let scene = Scene::of(map);
-    let tiles = tiles_of(&map.landuse);
+    let tiles = tiles_of(&map.roads);
     let pockets: Vec<Pocket> = in_parallel(&tiles, |&tile| scene.pockets(tile))
         .into_iter()
         .flatten()
         .collect();
     drop(scene);
     let sown = pockets.len();
-    for Pocket { outer, block } in pockets {
-        let kind = map.landuse[block].kind;
+    for Pocket { outer, kind } in pockets {
         map.pockets.push(PolyArea {
             outer,
             holes: Vec::new(),
@@ -183,15 +197,17 @@ fn in_parallel<T: Sync, R: Send>(items: &[T], work: impl Fn(&T) -> R + Sync) -> 
     done.into_iter().map(|(_, result)| result).collect()
 }
 
-/// Плитки, которых касается хоть один квартал (с запасом [`POCKET_NEAR`]), —
-/// по возрастанию: карман без квартала рядом не засевается, и считать там
-/// нечего.
-fn tiles_of(blocks: &[PolyArea]) -> Vec<IVec2> {
+/// Плитки, которых касается хоть одно звено дороги (с запасом [`MARGIN`]:
+/// середина кармана у дороги — не дальше), — по возрастанию: карман без
+/// дороги на краю не засевается, и считать там нечего.
+fn tiles_of(roads: &[RoadLine]) -> Vec<IVec2> {
     let cell = |point: Vec2| (point / TILE).floor().as_ivec2();
     let mut tiles: Vec<IVec2> = Vec::new();
-    for block in blocks {
-        let (low, high) = ring_bounds(&block.outer);
-        let (low, high) = (cell(low - POCKET_NEAR), cell(high + POCKET_NEAR));
+    for pair in roads.iter().flat_map(|road| road.points.windows(2)) {
+        let (low, high) = (
+            cell(pair[0].min(pair[1]) - MARGIN),
+            cell(pair[0].max(pair[1]) + MARGIN),
+        );
         for x in low.x..=high.x {
             for y in low.y..=high.y {
                 tiles.push(IVec2::new(x, y));
@@ -254,25 +270,30 @@ impl Scene {
         for (index, link) in links.iter().enumerate() {
             link_grid.insert_segment(link.from, link.to, link.reach + TOUCH, index);
         }
-        let mut edges = Vec::new();
-        let mut edge_grid = Grid::new(MARGIN);
-        for (block, area) in map.landuse.iter().enumerate() {
-            for ring in std::iter::once(&area.outer).chain(&area.holes) {
-                for (index, &from) in ring.iter().enumerate() {
-                    let to = ring[(index + 1) % ring.len()];
-                    edge_grid.insert_segment(from, to, POCKET_NEAR, edges.len());
-                    edges.push((from, to, block));
-                }
-            }
-        }
         Self {
             covers,
             cover_grid,
             links,
             link_grid,
-            edges,
-            edge_grid,
+            blocks: Rim::of(map.landuse.iter().map(|area| (area, area.kind))),
+            meadows: Rim::of(
+                map.parks
+                    .iter()
+                    .chain(&map.grass)
+                    .map(|area| (area, AreaKind::Grass)),
+            ),
         }
+    }
+
+    /// Какой травой засевается карман `ring` площадью `area`: квартала рядом,
+    /// иначе лугом у замапленного газона или сквера, иначе — травой двора
+    /// (`Residential`), как газон обочины (`roads.rs::Meadows`). Карман без
+    /// соседа меньше [`LONE_POCKET_MIN`] не засевается вовсе.
+    fn grass_near(&self, ring: &[Vec2], area: f32) -> Option<AreaKind> {
+        self.blocks
+            .near(ring)
+            .or_else(|| self.meadows.near(ring))
+            .or((area >= LONE_POCKET_MIN).then_some(AreaKind::Residential))
     }
 
     /// Карманы, чей габарит серединой в плитке `tile`.
@@ -310,12 +331,12 @@ impl Scene {
             if !(POCKET_AREA_MIN..=POCKET_AREA_MAX).contains(&area) {
                 continue;
             }
-            let Some(block) = self.block_near(&ring) else {
-                continue;
-            };
             if !self.on_road(&ring, false) || self.on_road(&ring, true) {
                 continue;
             }
+            let Some(kind) = self.grass_near(&ring, area) else {
+                continue;
+            };
             // край заводится под соседей: лента рисуется по сглаженной оси, а
             // покрытие считалось по сырым точкам
             let grown: Vec<Shape> = vec![vec![oriented(&ring, true)]]
@@ -325,25 +346,10 @@ impl Scene {
             };
             pockets.push(Pocket {
                 outer: ring_of(outer),
-                block,
+                kind,
             });
         }
         pockets
-    }
-
-    /// Квартал, к кольцу которого ближе всего подходит карман, — если ближе
-    /// [`POCKET_NEAR`].
-    fn block_near(&self, ring: &[Vec2]) -> Option<usize> {
-        ring.iter()
-            .flat_map(|&point| {
-                self.edge_grid.at(point).iter().map(move |&index| {
-                    let (from, to, block) = self.edges[index];
-                    (distance_to_segment(point, from, to), block)
-                })
-            })
-            .filter(|&(distance, _)| distance <= POCKET_NEAR)
-            .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)))
-            .map(|(_, block)| block)
     }
 
     /// Касается ли карман полотна дороги — грунтовой (`rough`) или мощёной.
@@ -355,6 +361,38 @@ impl Scene {
                     && distance_to_segment(point, link.from, link.to) <= link.reach + TOUCH
             })
         })
+    }
+}
+
+impl Rim {
+    fn of<'a>(areas: impl Iterator<Item = (&'a PolyArea, AreaKind)>) -> Self {
+        let mut edges = Vec::new();
+        let mut grid = Grid::new(MARGIN);
+        for (area, kind) in areas {
+            for ring in std::iter::once(&area.outer).chain(&area.holes) {
+                for (index, &from) in ring.iter().enumerate() {
+                    let to = ring[(index + 1) % ring.len()];
+                    grid.insert_segment(from, to, POCKET_NEAR, edges.len());
+                    edges.push((from, to, kind));
+                }
+            }
+        }
+        Self { edges, grid }
+    }
+
+    /// Вид площади, к кольцу которой ближе всего подходит карман, — если
+    /// ближе [`POCKET_NEAR`]; при равенстве — раньше заведённой.
+    fn near(&self, ring: &[Vec2]) -> Option<AreaKind> {
+        ring.iter()
+            .flat_map(|&point| {
+                self.grid.at(point).iter().map(move |&index| {
+                    let (from, to, _) = self.edges[index];
+                    (distance_to_segment(point, from, to), index)
+                })
+            })
+            .filter(|&(distance, _)| distance <= POCKET_NEAR)
+            .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)))
+            .map(|(_, index)| self.edges[index].2)
     }
 }
 

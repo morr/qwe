@@ -4459,6 +4459,54 @@ fn a_ground_pocket_between_a_block_and_two_footways_is_sown_as_yard() {
     assert!(top > 0.5, "край кармана не под дорожкой: {top}");
 }
 
+/// Карман без квартала рядом засевается тоже — по правилу газона обочины:
+/// у замапленного газона или сквера лугом (`Grass`), у чего-то другого (тут
+/// стоянка) травой двора. Раньше без квартала его засеять было нечем, и
+/// бежевый параллелограмм оставался между газонами обочин (Калуга 01).
+#[test]
+fn a_pocket_with_no_block_beside_is_meadow_by_a_lawn_and_yard_elsewhere() {
+    let scene_beside = |kind: AreaKind, cut: f32| {
+        let mut map = pocket_scene(cut, false);
+        let mut area = map.landuse.pop().expect("квартал сцены");
+        area.kind = kind;
+        match kind {
+            AreaKind::Park => map.parks.push(area),
+            AreaKind::Grass => map.grass.push(area),
+            _ => map.parking.push(area),
+        }
+        map
+    };
+    let sown_beside = |kind: AreaKind| {
+        let mut map = scene_beside(kind, 16.0);
+        assert_eq!(pockets::fill_ground_pockets(&mut map), 1, "{kind:?}");
+        assert!(
+            sown_at(&map, 4.0, -4.0),
+            "середина клина у {kind:?} — землёй"
+        );
+        map.pockets[0].kind
+    };
+    assert_eq!(sown_beside(AreaKind::Park), AreaKind::Grass, "у сквера");
+    assert_eq!(sown_beside(AreaKind::Grass), AreaKind::Grass, "у газона");
+    assert_eq!(
+        sown_beside(AreaKind::Parking(LotKind::Yard)),
+        AreaKind::Residential,
+        "у стоянки"
+    );
+    // щель в несколько м² без соседа — не земля, а зазор плитки: не засевается,
+    // а у газона та же щель — лугом
+    let lot = AreaKind::Parking(LotKind::Yard);
+    assert_eq!(
+        pockets::fill_ground_pockets(&mut scene_beside(lot, 4.0)),
+        0,
+        "щель у стоянки"
+    );
+    assert_eq!(
+        pockets::fill_ground_pockets(&mut scene_beside(AreaKind::Grass, 4.0)),
+        1,
+        "щель у газона"
+    );
+}
+
 /// Что должно остаться землёй, остаётся: карман у грунтовой тропы (пустырь с
 /// тропинками), большой карман (площадка сама по себе) и дырка в самом
 /// квартале, у которой нет дороги на краю.

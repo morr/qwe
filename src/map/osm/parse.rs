@@ -224,7 +224,7 @@ struct PassReport {
     pulling: std::time::Duration,
     stretched: StretchedAreas,
     stretching: std::time::Duration,
-    /// Карманов земли у кварталов, засеянных травой двора
+    /// Карманов земли у дорог, засеянных травой
     /// (`pockets::fill_ground_pockets`).
     sown: usize,
     sowing: std::time::Duration,
@@ -315,7 +315,7 @@ impl std::fmt::Display for PassReport {
         )?;
         writeln!(
             f,
-            "osm parse: {sown} ground pockets between the blocks and the roads sown as yard in {sowing:?}"
+            "osm parse: {sown} ground pockets by the roads sown with grass in {sowing:?}"
         )?;
         let attached = entrances_found - entrances_orphaned;
         writeln!(
