@@ -1250,7 +1250,15 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     node. A street meeting the ring across (a two-way arm into a node) is not along it and
     gets none: that corner is a kerb return's.
   - **One section, one kerb.** All arcs are drawn at the widest arc's width and lanes
-    (`roads::ring_arcs`); the sidewalk is drawn once per ring as a closed ribbon, **outside
+    (`roads::ring_arcs`), and the **asphalt is one closed fill along the ring's drawn
+    axis** (`Ring::path`, R15), laid in the fill order at the place of the ring's first
+    arc, with the asphalt breaks of all its arcs and one rut record on the closed axis;
+    the arcs lay no fill of their own (their paint, verges and ground stay per arc). An
+    arc ending in a node with an approach is a junction arm, and as its own ribbon it
+    ended square across its last chord: on the curve the square ends of neighbouring arcs
+    fanned apart and left wedge slits along the outer kerb (Tula's primary ring, arcs of
+    6 × 4 and 6 × 10 m between an entry and an exit — four slits in the frame). A closed
+    fill has no ends. The sidewalk is drawn once per ring as a closed ribbon, **outside
     only**, and the central island gets a `MEDIAN_KERB` 0.5 m kerb along the inner edge
     instead of a sidewalk ring (`push_ring_edges`). **The island is a lawn**
     (`roads::ring_island_lawns`, layer `ring_islands` at `Z_RING_ISLAND` 0.05, roads plan
@@ -2057,6 +2065,9 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
       radius of tens of metres). A fan from a point just inside the wide ribbon at the
       node, pushed with the returns into the class's fill; the same call on `half +
       sidewalk` in the sidewalk group and on the verge corners (tried after the fillet).
+      Streets only, and never between two ring arcs: a ring is one closed fill with its
+      own sidewalk (**Roundabouts**), and a wedge on the arcs' differing sidewalk widths
+      ran a tile strip across the lawn of Tula's big ring island (the R15 frame).
       Skipped when both arms are one axis (a road running through), under a taper wedge
       (`Arm::slope`) and when the edges meet ahead of the node on both arms (equal
       widths — nothing to close). Past `OBTUSE_MAX` the arms are one street continued and

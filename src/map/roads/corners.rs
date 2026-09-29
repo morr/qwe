@@ -1164,6 +1164,17 @@ fn obtuse_corner(node: Vec2, first: &Arm, second: &Arm, halves: (f32, f32)) -> O
     if std::ptr::eq(first.path, second.path) || first.slope[0] != 0.0 || second.slope[1] != 0.0 {
         return None;
     }
+    // только кромка проезжей части и не у кольца: у дорожек ширины разные по
+    // классу покрытия, а две дуги кольца — одна замкнутая лента со своим
+    // тротуаром (`roads::push_ring_edges`), и клин по тротуарам дуг разной
+    // ширины ложился плиткой поперёк газона острова (Тула, кадр R15)
+    if first.class != RoadClass::Street
+        || second.class != RoadClass::Street
+        || first.ring
+        || second.ring
+    {
+        return None;
+    }
     // кромки: слева у первого, справа у второго — `node + n·h + u·x`
     let (u1, u2) = (first.direction, second.direction);
     let (n1, n2) = (u1.perp(), -u2.perp());

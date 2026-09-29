@@ -2380,6 +2380,115 @@ fn a_big_ring_with(arm_points: impl Fn(&[Vec2]) -> Vec<Vec2>) -> MapData {
     with_network(vec![ring, arm])
 }
 
+/// Кольцо Тулы у R15 точками OSM: шесть дуг primary в 3 и 2 полосы, короткая
+/// дуга 1191542887 в 12 м между узлом въезда 595574104 (по касательной) и
+/// узлом съезда Радищева. Оба узла — перекрёстки, и дуги клались лентами с
+/// прямыми торцами: на кривизне торцы соседних дуг расходились веером, и по
+/// внешней кромке оставались клинья-щели.
+#[test]
+fn a_ring_of_arcs_lays_one_closed_fill_without_seam_slits() {
+    let v = |points: &[(f32, f32)]| -> Vec<Vec2> {
+        points.iter().map(|&(x, y)| Vec2::new(x, y)).collect()
+    };
+    let way = |points: Vec<Vec2>, highway: Highway, lanes: u8, ring: bool| RoadLine {
+        highway,
+        oneway: true,
+        roundabout: ring,
+        lanes: Some(lanes),
+        ..fixture::street(points, f32::from(lanes) * 3.3 + 1.0)
+    };
+    let arcs = [
+        (
+            v(&[
+                (2563.7, 2427.7),
+                (2549.0, 2431.6),
+                (2533.6, 2432.1),
+                (2521.1, 2427.6),
+                (2508.3, 2419.1),
+            ]),
+            3,
+        ),
+        (v(&[(2508.3, 2419.1), (2501.9, 2409.3)]), 3),
+        (
+            v(&[
+                (2501.9, 2409.3),
+                (2499.9, 2391.4),
+                (2502.4, 2377.3),
+                (2508.0, 2365.5),
+                (2517.9, 2355.7),
+                (2525.6, 2350.2),
+                (2533.2, 2346.6),
+            ]),
+            3,
+        ),
+        (
+            v(&[
+                (2533.2, 2346.6),
+                (2545.0, 2346.1),
+                (2555.3, 2348.0),
+                (2566.7, 2351.5),
+            ]),
+            2,
+        ),
+        (
+            v(&[
+                (2566.7, 2351.5),
+                (2578.0, 2371.6),
+                (2581.0, 2383.8),
+                (2579.4, 2398.9),
+                (2576.5, 2408.5),
+                (2569.5, 2423.8),
+            ]),
+            2,
+        ),
+        (v(&[(2569.5, 2423.8), (2563.7, 2427.7)]), 3),
+    ];
+    let mut roads: Vec<RoadLine> = arcs
+        .into_iter()
+        .map(|(points, lanes)| way(points, Highway::Primary, lanes, true))
+        .collect();
+    roads.push(way(
+        v(&[
+            (2528.7, 2463.3),
+            (2524.9, 2447.8),
+            (2517.4, 2433.2),
+            (2508.3, 2419.1),
+        ]),
+        Highway::Primary,
+        1,
+        false,
+    ));
+    roads.push(way(
+        v(&[
+            (2501.9, 2409.3),
+            (2478.0, 2369.8),
+            (2464.2, 2355.7),
+            (2445.8, 2351.9),
+        ]),
+        Highway::Residential,
+        2,
+        false,
+    ));
+    let map = with_network(roads);
+    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    assert_eq!(report.drawn.rings[0], 1, "шесть дуг — одно кольцо");
+    let streets = &layer(&layers, "roads").builder;
+    // внешняя кромка кольца у обоих узлов — асфальт сплошь, до трёх
+    // десятков сантиметров от кромки широкой дуги
+    let centre = Vec2::new(2540.0, 2389.0);
+    let half = 10.9 / 2.0;
+    for node in [Vec2::new(2508.3, 2419.1), Vec2::new(2501.9, 2409.3)] {
+        let outward = (node - centre).normalize();
+        for step in -30..=30 {
+            let at = node + outward * (half - 0.3) + outward.perp() * (step as f32 * 0.1);
+            assert!(
+                streets.covers_for_test(at),
+                "щель на кромке кольца у {at:?}"
+            );
+        }
+    }
+}
+
 /// Точка на круге радиуса `radius` под углом `degrees`.
 fn polar(radius: f32, degrees: f32) -> Vec2 {
     Vec2::from_angle(degrees.to_radians()) * radius

@@ -248,6 +248,11 @@ impl Rings {
             .map(|ring| &self.list[ring])
     }
 
+    /// Номер кольца дороги в [`Rings::list`].
+    pub fn index_of(&self, road: usize) -> Option<usize> {
+        self.of_road.get(road).copied().flatten()
+    }
+
     /// Нога ли дорога Y-подхода ([`y_legs`]) и куда по ней поток: `true` — по
     /// порядку её точек. Двусторонний way рисуется такой ногой как
     /// односторонний: въезд или съезд.

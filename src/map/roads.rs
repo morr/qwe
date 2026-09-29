@@ -1157,6 +1157,11 @@ pub fn mesh_roads_with_ruts(
             );
         }
     }
+    // асфальт кольца — одной замкнутой заливкой по его оси, на месте первой
+    // его дуги в порядке заливки (R15): дуги, кончающиеся в узлах с
+    // подходами, клались лентами с прямыми торцами, и на кривизне торцы
+    // соседних дуг расходились веером — по внешней кромке клинья-щели
+    let mut ring_filled = vec![false; prepared.rings().list.len()];
     for index in order {
         let road = drawn[index];
         // замкнутая линия площади (`highway=*` + `area=yes`) — контур
@@ -1164,6 +1169,7 @@ pub fn mesh_roads_with_ruts(
         if road_islands.outlines[index] {
             continue;
         }
+        let ring_index = prepared.rings().index_of(index);
         // мощёная дорожка — плиткой тротуара и в его слое (`paved_path`)
         let paved_path = road.is_paved_path();
         let unpaved_street = road.is_unpaved_street();
@@ -1178,12 +1184,16 @@ pub fn mesh_roads_with_ruts(
         let breaks = asphalt.of(index);
         let lanes = road_lanes(road);
         // колея полос ляжет по этой оси и этой раскладке — её и запомнить
-        // для оверлея (`roads/ruts.rs`)
+        // для оверлея (`roads/ruts.rs`); у кольца — по его замкнутой оси
         if let Some(frame) = lanes {
-            ruts.lanes.push(LaneRuts {
-                axis: points.to_vec(),
-                frame,
-            });
+            let axis = match ring_index {
+                Some(ring) if ring_filled[ring] => None,
+                Some(ring) => Some(prepared.rings().list[ring].path.clone()),
+                None => Some(points.to_vec()),
+            };
+            if let Some(axis) = axis {
+                ruts.lanes.push(LaneRuts { axis, frame });
+            }
         }
         // линии краски — по той же оси, разрывам и клиньям, что и асфальт
         if style.markings {
@@ -1352,14 +1362,34 @@ pub fn mesh_roads_with_ruts(
             .then(|| tapers::cut(body, setback[0], polyline_length(body) - setback[1]))
             .filter(|cut| cut.len() >= 2);
         let fill_body = set_back.as_deref().unwrap_or(body);
-        push_street_fill(
-            fill,
-            fill_body,
-            road.width,
-            color.to_linear(),
-            breaks,
-            trimmed,
-        );
+        match ring_index {
+            Some(ring) if ring_filled[ring] => {}
+            Some(ring) => {
+                ring_filled[ring] = true;
+                let ring = &prepared.rings().list[ring];
+                let breaks: Vec<Break> = ring
+                    .roads
+                    .iter()
+                    .flat_map(|&arc| asphalt.of(arc).iter().copied())
+                    .collect();
+                push_street_fill(
+                    fill,
+                    &ring.path,
+                    road.width,
+                    color.to_linear(),
+                    &breaks,
+                    [false; 2],
+                );
+            }
+            None => push_street_fill(
+                fill,
+                fill_body,
+                road.width,
+                color.to_linear(),
+                breaks,
+                trimmed,
+            ),
+        }
         fill.set_lanes(lanes);
         for &(path, taper, end) in &wedges {
             let narrow = drawn[taper.narrow];
