@@ -580,7 +580,8 @@ impl SidewalkProfile {
         self.band.filter(|_| self.sides.contains(&true))
     }
 
-    /// Тротуар по тегу с обеих сторон — ширину не спрашивает.
+    /// Тротуар с обеих сторон — по тегу или выведенный ([`SidewalkSide`]);
+    /// ширину не спрашивает.
     pub fn both(&self) -> bool {
         self.sides == [true; 2]
     }

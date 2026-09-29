@@ -28,7 +28,9 @@
 
 use bevy::platform::collections::HashMap;
 
+use super::model::RoadClass;
 use super::overpass::{Element, GeoBounds, LatLon, Member, OverpassResponse};
+use super::parse::road_class;
 
 /// Теги границы, которые переживают резку: имя страны читает подпись
 /// витрины, `driving_side` — разбор.
@@ -306,16 +308,14 @@ fn crop_relation(element: &Element, members: &[Member], window: GeoRect) -> Opti
         })
 }
 
-/// Значения `highway` дорожек — то, что разбор читает как `RoadClass::Alley`
-/// (`parse/tags.rs::road_class`).
-const PATH_HIGHWAYS: [&str; 6] = [
-    "footway",
-    "path",
-    "pedestrian",
-    "cycleway",
-    "steps",
-    "track",
-];
+/// Дорожка ли это — то, что разбор читает как `RoadClass::Alley`. Спрашивает
+/// словарь разбора (`parse/tags.rs::road_class`), а не свой список: значение,
+/// добавленное туда, обрезка оставляет само.
+fn is_path(element: &Element) -> bool {
+    element.tags.get("highway").is_some_and(|highway| {
+        road_class(highway).is_some_and(|(_, class, _)| class == RoadClass::Alley)
+    })
+}
 /// Насколько далеко от оси оставленной улицы дорожка за окном ещё нужна, м:
 /// полуширина широкой улицы, полоса тротуара и дальняя обочина
 /// (`parse.rs::VERGE_REACH_TWO_WAY` 16 м) с запасом.
@@ -336,11 +336,7 @@ fn footways_along(cropper: &Cropper, kept_roads: &[usize], joining: &[usize]) ->
     let mut links: Vec<(Point, Point, GeoRect)> = Vec::new();
     for &index in kept_roads {
         let element = &cropper.elements[index];
-        let is_path = element
-            .tags
-            .get("highway")
-            .is_some_and(|highway| PATH_HIGHWAYS.contains(&highway.as_str()));
-        let Some(geometry) = road_geometry(element).filter(|_| !is_path) else {
+        let Some(geometry) = road_geometry(element).filter(|_| !is_path(element)) else {
             continue;
         };
         let line = points(geometry);
@@ -383,10 +379,7 @@ fn footways_along(cropper: &Cropper, kept_roads: &[usize], joining: &[usize]) ->
         .enumerate()
         .filter(|(index, element)| {
             element.kind == "way"
-                && element
-                    .tags
-                    .get("highway")
-                    .is_some_and(|highway| PATH_HIGHWAYS.contains(&highway.as_str()))
+                && is_path(element)
                 && kept_roads.binary_search(index).is_err()
                 && joining.binary_search(index).is_err()
         })

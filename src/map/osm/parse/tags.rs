@@ -505,7 +505,7 @@ fn tagged_height(tags: &HashMap<String, String>) -> Option<f32> {
 /// (`map::roads::network::sections`), первый в доводке разбора. Съезды
 /// (`*_link`) долго выбрасывались целиком — словарь их не знал, и въезд на
 /// мост в Туле (22 way `primary_link`) обрывался пустым местом.
-pub(super) fn road_class(highway: &str) -> Option<(f32, RoadClass, Highway)> {
+pub(in crate::map::osm) fn road_class(highway: &str) -> Option<(f32, RoadClass, Highway)> {
     let street = |width: f32, highway: Highway| (width, RoadClass::Street, highway);
     Some(match highway {
         "motorway" => street(16.0, Highway::Motorway),
@@ -910,7 +910,7 @@ pub(super) fn has_lane_markings(tags: &HashMap<String, String>) -> bool {
 }
 
 /// Что говорит о покрытии тег `surface`; `None` — тега нет или значение не
-/// из словаря (`tartan` беговой дорожки, опечатка).
+/// из словаря (`clay` корта, опечатка).
 fn surface_pavement(tags: &HashMap<String, String>) -> Option<Pavement> {
     Some(match tags.get("surface")?.as_str() {
         "asphalt"

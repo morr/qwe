@@ -4,7 +4,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use bevy::math::{IVec2, Vec2};
+use bevy::math::Vec2;
 
 use super::planting::plant_trees;
 use crate::city::City;
@@ -887,11 +887,10 @@ fn infer_pavements(map: &mut MapData) -> InferredPavements {
     // сети, а не тропинка: лучи сквера от кольцевой аллеи к лестницам
     // центральной площадки ложились песком, и лестницы торчали на нём
     // мощёными обрубками с круглыми торцами (Тула, остров кольца, витрина 04)
-    let key = |point: Vec2| (point * 100.0).round().as_ivec2();
-    let paved_joints: HashSet<IVec2> = roads
+    let paved_joints: HashSet<(i32, i32)> = roads
         .iter()
         .filter(|road| road.is_paved_path())
-        .flat_map(|road| road.points.iter().map(|&point| key(point)))
+        .flat_map(|road| road.points.iter().map(|&point| vertex_key(point)))
         .collect();
     let mut between_paved = 0;
     for &at in &asked {
@@ -900,9 +899,9 @@ fn infer_pavements(map: &mut MapData) -> InferredPavements {
             continue;
         };
         if road.pavement == Some(Pavement::Unpaved)
-            && key(first) != key(last)
-            && paved_joints.contains(&key(first))
-            && paved_joints.contains(&key(last))
+            && vertex_key(first) != vertex_key(last)
+            && paved_joints.contains(&vertex_key(first))
+            && paved_joints.contains(&vertex_key(last))
         {
             road.pavement = Some(Pavement::Paved);
             unpaved -= 1;
@@ -2848,8 +2847,11 @@ use self::tags::{
     NON_WALKABLE_ENTRANCES, area_colours, area_height, area_kind, area_storeys, area_use,
     crown_radius, fence_kind, has_lane_markings, is_building_passage, is_oneway,
     is_oneway_backward, is_parking_aisle, is_road_underground, is_roundabout, is_underground,
-    path_width, pipe_width, rail_class, road_area_kind, road_class, road_node_kind, row_spacing,
-    service_track, structure_height, structure_kind, structure_radius, structure_size,
-    tagged_lanes, tagged_lanes_backward, tagged_parking, tagged_pavement, tagged_sidewalks,
-    tagged_turns, untagged_sidewalks, water_class, water_width,
+    path_width, pipe_width, rail_class, road_area_kind, road_node_kind, row_spacing, service_track,
+    structure_height, structure_kind, structure_radius, structure_size, tagged_lanes,
+    tagged_lanes_backward, tagged_parking, tagged_pavement, tagged_sidewalks, tagged_turns,
+    untagged_sidewalks, water_class, water_width,
 };
+// Словарь `highway` нужен и обрезке витрины (`osm::crop`): какие значения —
+// дорожки, решает он один.
+pub(in crate::map::osm) use self::tags::road_class;
