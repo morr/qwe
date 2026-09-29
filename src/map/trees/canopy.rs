@@ -12,7 +12,10 @@
 //! иначе два соседних дерева одного варианта вышли бы копиями.
 //!
 //! Материалов столько же, сколько было `ColorMaterial`-ов: по одному на слот
-//! яркости (`TreeStyle::tint_factors`) — множитель уехал в юниформ.
+//! яркости (`TreeStyle::tint_factors`) — множитель уехал в юниформ. Это кроны
+//! ближней ступени; слитые куски дальних рисует один общий материал
+//! ([`CrownMaterialHandle`]) с яркостью, запечённой в вершины, а локальную
+//! координату несёт атрибут `meshing::ATTRIBUTE_CROWN`.
 
 use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::prelude::*;
@@ -23,6 +26,7 @@ use bevy::render::render_resource::{
 use bevy::shader::ShaderRef;
 use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey};
 
+use crate::map::meshing::ATTRIBUTE_CROWN;
 use crate::map::sun_light;
 use crate::settings::CROWN_SHADING;
 
@@ -84,11 +88,45 @@ impl Material2d for CrownMaterial {
         layout: &MeshVertexBufferLayoutRef,
         _key: Material2dKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
-        let vertex_layout = layout.0.get_layout(&[
+        let mut attributes = vec![
             Mesh::ATTRIBUTE_POSITION.at_shader_location(0),
             Mesh::ATTRIBUTE_COLOR.at_shader_location(1),
-        ])?;
-        descriptor.vertex.buffers = vec![vertex_layout];
+        ];
+        // слитый меш дальних крон несёт координату внутри кроны отдельно:
+        // позиция в нём уже мировая. Решает меш, а не материал, — один и тот
+        // же материал рисует и кроны-сущности, и слитые куски
+        if layout.0.contains(ATTRIBUTE_CROWN) {
+            attributes.push(ATTRIBUTE_CROWN.at_shader_location(2));
+            descriptor.vertex.shader_defs.push("CROWN_LOCAL".into());
+        }
+        descriptor.vertex.buffers = vec![layout.0.get_layout(&attributes)?];
         Ok(())
+    }
+}
+
+/// Материал слитых крон (`trees::CrownDetail::Merged`): один на всё
+/// приложение, с яркостью 1 — слот яркости дерева запечён в цвет его вершин
+/// (`MeshBuilder::push_crown`). Живёт вне мира, как кровельный; свет в нём
+/// переписывает `rebuild_trees` (солнце и так в условиях её пересборки).
+#[derive(Resource)]
+pub struct CrownMaterialHandle(Handle<CrownMaterial>);
+
+impl CrownMaterialHandle {
+    pub fn handle(&self) -> Handle<CrownMaterial> {
+        self.0.clone()
+    }
+}
+
+/// Материал слитых крон на старте приложения — после `apply_sun`, из
+/// глобали которого [`CrownMaterial::of`] читает свет.
+pub fn init_crown_material(mut commands: Commands, mut materials: ResMut<Assets<CrownMaterial>>) {
+    let handle = materials.add(CrownMaterial::of(1.0));
+    commands.insert_resource(CrownMaterialHandle(handle));
+}
+
+/// Свет осевшего солнца — в материал слитых крон; меши не трогаются.
+pub fn relight_crown_material(handle: &CrownMaterialHandle, materials: &mut Assets<CrownMaterial>) {
+    if let Some(mut material) = materials.get_mut(&handle.0) {
+        material.params.light = sun_light();
     }
 }

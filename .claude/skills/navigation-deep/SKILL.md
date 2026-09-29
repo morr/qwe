@@ -27,8 +27,10 @@ the Debug tab (`NavtileBase` in `src/grid.rs`, persisted in prefs). Switching it
 world like a city switch, except the camera stays where it was — same city, same spot under
 inspection.
 
-**The live value is a process-global atomic**, read by `grid::navtile_size()`: background
-threads (navmesh fill, entrance generation) have no ECS access. It is written only in
+**The live value is a process-global atomic**, read by `grid::navtile_size()`: the
+background navmesh fill has no ECS access. The parse, where the same size is the door
+generator's clearance, does **not** read it — it gets `ParseKnobs::navtile` as an
+argument (osm-map `references/parse.md`). It is written only in
 `OnEnter(Loading)`, before the load thread starts.
 
 Grid size is derived as `MAP_SIZE / navtile_size()` (3800 × 2850 tiles at 2 m). **A filled
@@ -502,6 +504,13 @@ inserts the resource instead.
   wanderer counts as on screen — a pawn is a dot there, and "in view" would otherwise
   mean half the map, flooding the task pool and the per-frame sort with ~17k peaceful
   requests. Demons and fleeing humans are always dispatched at any zoom.
+  **The live dispatcher stands while the player pauses** (`live_dispatch_runs`): nothing
+  walks, the queue does not change, and the pass over ~17k waiting requests was ~0.3 ms a
+  frame for nothing; requests pile up and leave on the first unpaused frame. The warmup
+  pause is the exception and must stay one — `loading::pause_world` holds
+  `Time<Virtual>` paused through `PlayPhase::Warmup`, and the warmup waits for exactly
+  these answers. The deterministic dispatcher is untouched (it is `FixedUpdate`, which a
+  pause stops anyway), so replay is not affected.
   **Priority** (`priority::` in `movement/pathfinding.rs`): demons and fleeing humans
   (`URGENT`) go before wandering humans in frame (`WANDER_ON_SCREEN`), within a
   priority nearest-to-camera-center first, capped at `MAX_PATHFINDING_IN_FLIGHT`

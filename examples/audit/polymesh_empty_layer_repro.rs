@@ -77,5 +77,6 @@ fn load_map(city: City) -> MapData {
         std::fs::write(&path, &json).expect("write cache");
     }
     let json = std::fs::read_to_string(&path).expect("read OSM cache");
-    parse::parse(&json, city).expect("failed to parse cached OSM json")
+    parse::parse(&json, city, parse::ParseKnobs::default())
+        .expect("failed to parse cached OSM json")
 }

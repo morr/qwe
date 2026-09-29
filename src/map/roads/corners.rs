@@ -49,12 +49,14 @@ use std::f32::consts::PI;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
+use super::VERGE_PAVED_MAX;
 use super::drawn::{Axis, Drawn};
 use super::junctions::node_key;
 use super::network::pairs::PROBE_STEP;
+use crate::map::along::{arclengths, nearest_on_path, place_on_path};
 use crate::map::meshing::arc_steps;
-use crate::map::osm::model::{polyline_length, ring_area};
-use crate::map::osm::{Highway, RoadClass};
+use crate::map::osm::model::{closest_on_segment, polyline_length, ring_area};
+use crate::map::osm::{Highway, RoadClass, RoadLine};
 
 /// Радиус бордюра по классу дороги, м; у пары берётся меньший. Между
 /// проспектами (`trunk`…`secondary` и их съезды) — 10 м, с улицей
@@ -64,13 +66,49 @@ const MAJOR_RADIUS: f32 = 10.0;
 const STREET_RADIUS: f32 = 6.0;
 const DRIVE_RADIUS: f32 = 2.5;
 const PATH_RADIUS: f32 = 2.0;
+/// Радиус угла двух грунтовок, м, — не больше этого, какого бы класса они ни
+/// были. Уличные 6 м на однополосном проезде частного сектора (Тула, 18-й и
+/// 8-й проезды Мясново) ложились чёткой бордюрной дугой шире самого проезда —
+/// асфальтовым перекрёстком, отлитым в грунте. Угол грунтовок срезан колёсами
+/// невысоко: радиус чуть больше, чем у проезда.
+const DIRT_RADIUS: f32 = 3.0;
 /// Скругление меньше этого не кладётся, м: его всё равно не видно.
 const MIN_RADIUS: f32 = 0.5;
 /// Угол между лучами, в котором скругление имеет смысл. Острее — дуга
-/// вытягивается в длинный клин; почти развёрнутый угол — это продолжение
-/// дороги, а не поворот.
+/// вытягивается в длинный клин, и там кладётся нос ([`NOSE_SHARE`]); почти
+/// развёрнутый угол — это продолжение дороги, а не поворот.
 const MIN_ANGLE: f32 = 25.0 * PI / 180.0;
 const MAX_ANGLE: f32 = 155.0 * PI / 180.0;
+/// Острее [`MIN_ANGLE`] (и до [`NOSE_MAX_ANGLE`], где скругление не легло)
+/// угол между лучами не скругляется, а получает **нос**:
+/// дугу малого радиуса там, где кромки разошлись на два таких радиуса, — как
+/// бордюр острия островка между расходящимися полотнами. Без него две кромки
+/// сходились в математическое остриё, и между полотнами развилки торчал шип
+/// тротуара и земли (Тула, витрины 04, 06, 14). Радиус — доля
+/// [`NOSE_SHARE`] радиуса пары, не больше [`NOSE_RADIUS`]: улицы 1.5 м,
+/// проезд 1, дорожки 0.8.
+const NOSE_SHARE: f32 = 0.4;
+const NOSE_RADIUS: f32 = 1.5;
+/// Острее этого нос не кладётся: почти параллельные полотна — одна дорога
+/// из двух way.
+const NOSE_MIN_ANGLE: f32 = 2.0 * PI / 180.0;
+/// Нос ложится и в угол до этого, когда скругление не легло: прямой край
+/// луча короче касательной — проезд под 34° от секундарной с изломом в
+/// 10 м от узла (Тула, витрина 06) оставлял тот же шип тротуара.
+const NOSE_MAX_ANGLE: f32 = 60.0 * PI / 180.0;
+/// Как далеко от узла ищется нос, м: у развилки под 8° (Тула, витрина 14)
+/// кромки улиц в 8 м сходятся в 57 м от узла, и нос встаёт ещё на 20 м дальше.
+const NOSE_REACH: f32 = 100.0;
+/// Шаг, которым нос ищется вдоль первого луча, м.
+const NOSE_STEP: f32 = 0.5;
+/// В узкой части носа (просвет меньше радиуса) вершиной становится каждая
+/// такая проба.
+const NOSE_THIN: usize = 4;
+/// Окно звеньев второго луча вокруг прошлой находки, в котором ищется
+/// ближайшая к кромке первого точка.
+const NOSE_WINDOW: usize = 8;
+/// Сколько раз центр носа сдвигается к касанию обеих кромок.
+const NOSE_SETTLE: usize = 8;
 /// Наружный угол узла закругляется, когда просвет между плечами шире
 /// развёрнутого хотя бы на столько: у сквозной дороги просветы ровно по
 /// 180°, и веер там лёг бы под её же ленту. Порог — на шум округления, не
@@ -78,6 +116,12 @@ const MAX_ANGLE: f32 = 155.0 * PI / 180.0;
 /// Тула, витрина 08) при пороге в градус оставалась без угла, и между
 /// прямыми торцами её плеч светлел клин в семь сантиметров.
 const MIN_OUTER: f32 = 0.05 * PI / 180.0;
+/// Площадка плитки у бордюрной дуги угла, за которым газон обочины
+/// ([`kerb_pad`]): ширина от бордюра, м, и на сколько она продолжается по
+/// прямому краю каждой улицы за точкой касания, м. На углу выходят зебры и
+/// стоят люди — на месте здесь плитка, а газон начинается за ней.
+const KERB_PAD_WIDTH: f32 = 3.0;
+const KERB_PAD_RUN: f32 = 4.0;
 /// Луч меряет направление по звену не короче этого, м.
 const MIN_ARM: f32 = 0.5;
 /// Насколько вершина может отойти вбок от прямой луча и всё ещё продолжать
@@ -85,11 +129,31 @@ const MIN_ARM: f32 = 0.5;
 const STRAIGHT_TOLERANCE: f32 = 0.15;
 /// На сколько прямые стороны скругления заходят под ленты дорог, м.
 const OVERLAP: f32 = 0.05;
+/// То же у наружного угла ([`outer_corner`]), м: его стороны — по лучам
+/// узловой оси, а прямой торец ленты — по её собственному концевому звену,
+/// и на почти прямом стыке двух way одной улицы они расходятся на градус.
+/// На восьми метрах полосы тротуара это полтора десятка сантиметров, и
+/// пяти сантиметров нахлёста не хватало — через тротуар шла нить (Орёл,
+/// витрина 04, север).
+const OUTER_OVERLAP: f32 = 0.3;
 
 /// Одна дорога, выходящая из узла.
-struct Arm {
+struct Arm<'d> {
     class: RoadClass,
     highway: Highway,
+    /// Дуга кольца (`Drawn::on_ring`): у колец клинья штрихуют свои островки
+    /// (`roads/gores.rs`), и клина развилки ([`fork_gore`]) им не нужно.
+    ring: bool,
+    /// Мощёная дорожка ([`RoadLine::is_paved_path`]): её скругления ложатся
+    /// в слой тротуаров, а не тропинок.
+    ///
+    /// [`RoadLine::is_paved_path`]: crate::map::osm::RoadLine::is_paved_path
+    paved: bool,
+    /// Грунтовая улица ([`RoadLine::is_unpaved_street`]): угол двух таких
+    /// ложится в слой грунтовок, а не асфальта.
+    ///
+    /// [`RoadLine::is_unpaved_street`]: crate::map::osm::RoadLine::is_unpaved_street
+    unpaved: bool,
     /// Полуширина слева и справа по ходу луча. Они разные у торца с клином
     /// на одну сторону (`roads/tapers.rs`): сужаемая кромка в узле стоит на
     /// полуширине узкого соседа, сохранённая — на своей.
@@ -97,32 +161,126 @@ struct Arm {
     /// Тротуар слева и справа по ходу луча: у половины разделённой улицы со
     /// стороны пары его нет.
     sidewalk: [Option<f32>; 2],
+    /// Обочина до отдельного тротуара слева и справа по ходу луча
+    /// (`RoadLine::verges`, `Drawn::verges_drawn`).
+    verge: [Option<f32>; 2],
     direction: Vec2,
     /// Сколько метров край ленты идёт прямо — до следующей вершины.
     run: f32,
     /// Дорога и её торец (`0` — начало, `1` — конец), если луч — торец пути.
     end: Option<(usize, usize)>,
+    /// Своя полуширина дороги — та, до которой клин у торца (`half` в узле
+    /// — по узкому соседу) расходится за `widening` метров.
+    full: f32,
+    widening: f32,
+    /// Узловая осевая дороги, вершина узла на ней и куда по ней идёт луч —
+    /// из них [`Arm::trail`].
+    path: &'d [Vec2],
+    vertex: usize,
+    forward: bool,
+}
+
+impl Arm<'_> {
+    /// Осевая луча от узла на [`NOSE_REACH`] вперёд — по ней ищется нос: у
+    /// острой развилки кромки сходятся за десятки метров от узла, где ленты
+    /// давно уже не прямые (съезд с кольца, ветка по дуге). Собирается только
+    /// для носа: лучей в городе десятки тысяч, носов — сотни. У замкнутого
+    /// кольца — через шов.
+    fn trail(&self) -> Vec<Vec2> {
+        let path = self.path;
+        let last = path.len() - 1;
+        let closed = path[0] == path[last];
+        let step = |from: usize| {
+            if closed {
+                Some(if self.forward {
+                    (from + 1) % last
+                } else {
+                    (from + last - 1) % last
+                })
+            } else if self.forward {
+                (from < last).then_some(from + 1)
+            } else {
+                from.checked_sub(1)
+            }
+        };
+        let mut trail = vec![path[self.vertex]];
+        let (mut reach, mut from) = (0.0, self.vertex);
+        while reach < NOSE_REACH {
+            let Some(index) = step(from).filter(|&index| index != self.vertex) else {
+                break;
+            };
+            reach += path[index].distance(path[from]);
+            trail.push(path[index]);
+            from = index;
+        }
+        trail
+    }
+
+    /// Полуширина стороны `side` в `along` метрах от узла по лучу: в клине
+    /// кромка расходится линейно, как её кладёт лента
+    /// (`MeshBuilder::push_taper_sided`).
+    fn half_at(&self, side: usize, along: f32) -> f32 {
+        if self.widening <= 0.0 {
+            return self.half[side];
+        }
+        let share = (along / self.widening).min(1.0);
+        self.half[side] + (self.full - self.half[side]) * share
+    }
+}
+
+/// Слой, в который ложится нос ([`KerbReturns::noses`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Fill {
+    Road(RoadClass),
+    Unpaved,
+    Sidewalk,
 }
 
 /// Асфальт всех узлов.
 #[derive(Default)]
 pub struct KerbReturns {
+    /// Носы острых развилок ([`NOSE_SHARE`]) и слой каждого. Нос не выпукл и
+    /// веером не кладётся: его стороны идут по кромкам лент, а они у острой
+    /// развилки гнутые, — контур триангулируется целиком.
+    pub noses: Vec<(Fill, Vec<Vec2>)>,
+    /// Штрихуемые клинья перед носами острых развилок улиц ([`fork_gore`]):
+    /// контур от острия клина до дуги носа — слою островков
+    /// (`roads/gores.rs`).
+    pub fork_gores: Vec<Vec<Vec2>>,
     /// Контур и класс дорог, в чей слой заливки он ляжет: скругления и
     /// наружные углы. Каждый — веер из первой вершины.
     pub roads: Vec<(RoadClass, Vec<Vec2>)>,
-    /// Контуры в слое тротуаров, так же.
+    /// Скругления между двумя грунтовыми улицами — в их слое, так же.
+    pub unpaved: Vec<Vec<Vec2>>,
+    /// Контуры в слое тротуаров, так же: углы полос тротуара и скругления
+    /// узлов с мощёной дорожкой.
     pub sidewalks: Vec<Vec<Vec2>>,
+    /// Контуры в слое обочин (`road_verges`), так же: углы, где с одной
+    /// стороны или с обеих вместо полосы тротуара обочина.
+    pub verges: Vec<Vec<Vec2>>,
+    /// Те же углы между двумя **широкими** обочинами — газоном
+    /// (`road_verge_lawns` или `road_verge_yards`), как и сами обочины: плиткой угол во все
+    /// пятнадцать метров до дорожек был площадью посреди двора.
+    pub verge_lawns: Vec<Vec<Vec2>>,
     /// Сколько из `roads` и `sidewalks` — наружные углы, а не скругления.
     pub outer: [usize; 2],
     /// Торцы, кончающиеся в узле, по дорогам: `[начало, конец]` — ленты с
     /// таким торцом кладутся с прямым, а не круглым.
     pub butt: Vec<[bool; 2]>,
+    /// На сколько метров не доходит до узла заливка торца `[начало, конец]`:
+    /// у асфальтовой улицы, упёршейся в грунтовку, — полуширина грунтовки.
+    pub setback: Vec<[f32; 2]>,
 }
 
 impl KerbReturns {
     /// Торцы дороги `road`; вне узлов (или без скруглений вовсе) — круглые.
     pub fn butt(&self, road: usize) -> [bool; 2] {
         self.butt.get(road).copied().unwrap_or_default()
+    }
+
+    /// Недоход заливки дороги `road` до узла у каждого торца, м.
+    pub fn setback(&self, road: usize) -> [f32; 2] {
+        self.setback.get(road).copied().unwrap_or_default()
     }
 }
 
@@ -242,7 +400,12 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                 // торец под клином: с сужаемых сторон кромка и тротуар в узле
                 // — узкого соседа, с сохранённой — свои
                 let mut half = [road.width / 2.0; 2];
+                let mut widening = 0.0;
                 if let Some(wedge) = wedges[usize::from(vertex == last)].filter(|_| at_end) {
+                    // клин так, как его нарежет лента; не лёг — кромка сразу своя
+                    widening = super::tapers::fit(total, [head, tail].map(Some))
+                        [usize::from(vertex == last)]
+                    .unwrap_or(f32::MIN_POSITIVE);
                     let narrow = roads[wedge.narrow];
                     for (side, tapered) in wedge.sides.into_iter().enumerate() {
                         if !tapered {
@@ -258,14 +421,31 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                 if let Some(left) = drawn.pairs().beside(index, along, 2.0 * PROBE_STEP) {
                     sides[usize::from(left != forward)] = None;
                 }
+                // обочины — слева и справа по пути, как тротуар по тегу; у
+                // узла — какая она там по месту (`RoadLine::verge_at`)
+                let mut verge = [None; 2];
+                let scale = polyline_length(&road.points) / total.max(f32::EPSILON);
+                for (side, width) in drawn.verges_drawn(index).into_iter().enumerate() {
+                    verge[usize::from((side == 0) != forward)] =
+                        (width > 0.0).then(|| road.verge_at(side, along * scale));
+                }
                 entry.1.push(Arm {
                     class: road.class,
                     highway: road.highway,
+                    ring: drawn.on_ring(index),
+                    paved: road.is_paved_path(),
+                    unpaved: road.is_unpaved_street(),
                     half,
                     sidewalk: sides,
+                    verge,
                     direction,
                     run,
                     end: at_end.then_some((index, usize::from(vertex == last))),
+                    full: road.width / 2.0,
+                    widening,
+                    path,
+                    vertex,
+                    forward,
                 });
             }
         }
@@ -273,6 +453,7 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
 
     let mut returns = KerbReturns {
         butt: vec![[false; 2]; roads.len()],
+        setback: vec![[0.0; 2]; roads.len()],
         ..default()
     };
     let is_merged = |arm: &Arm| {
@@ -288,6 +469,26 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
         found.sort_by(|a, b| a.direction.to_angle().total_cmp(&b.direction.to_angle()));
         for class in [RoadClass::Street, RoadClass::Alley] {
             let group: Vec<&Arm> = found.iter().filter(|arm| arm.class == class).collect();
+            // Асфальт, продолженный грунтовкой, обрывается поперёк: круглый
+            // торец ленты лежал на грунте полукругом. Оба торца прямые, а
+            // щель с наружной стороны излома закрывает грунт — под асфальтом.
+            if let [first, second] = group[..]
+                && first.unpaved != second.unpaved
+                && !is_junction(&group)
+                && let (Some((a, a_end)), Some((b, b_end))) = (first.end, second.end)
+                && !is_merged(first)
+                && !is_merged(second)
+            {
+                returns.butt[a][a_end] = true;
+                returns.butt[b][b_end] = true;
+                for (first, second) in pairs(&group) {
+                    let halves = (first.half[0], second.half[1]);
+                    if let Some(outline) = outer_corner(node, first, second, halves) {
+                        returns.unpaved.push(outline);
+                    }
+                }
+                continue;
+            }
             // узел одного слияния — продолжение дороги, а не перекрёсток
             if !is_junction(&group) || group.iter().all(|arm| is_merged(arm)) {
                 continue;
@@ -297,17 +498,147 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                     returns.butt[road][end] = true;
                 }
             }
+            // Асфальт, упёршийся в грунтовку, кончается на её кромке: лента
+            // до узла лежала поверх грунта языком до оси грунтовки, с двумя
+            // уступами там, где её торец шире скруглений (Тула, 13). Только
+            // когда асфальтовое плечо в узле одно — асфальт, пересекающий
+            // грунтовку, идёт через неё.
+            let paved: Vec<&&Arm> = group.iter().filter(|arm| !arm.unpaved).collect();
+            let dirt = group.iter().filter(|arm| arm.unpaved).map(|arm| arm.full);
+            if class == RoadClass::Street
+                && let [arm] = paved[..]
+                && let Some((road, end)) = arm.end.filter(|_| !is_merged(arm))
+                && group.len() - paved.len() >= 2
+            {
+                returns.setback[road][end] = dirt.fold(0.0, f32::max);
+            }
             for (first, second) in pairs(&group) {
                 if merge_pair(first, second) {
                     continue;
                 }
                 let radius = kerb_radius(first, second) * scale;
                 let halves = (first.half[0], second.half[1]);
-                if let Some(outline) = fillet(node, first, second, halves, radius) {
-                    returns.roads.push((class, outline));
-                } else if let Some(outline) = outer_corner(node, first, second, halves) {
-                    returns.roads.push((class, outline));
-                    returns.outer[0] += 1;
+                // угол у мощёной дорожки — плиткой, в слое тротуаров: песчаное
+                // скругление на стыке двух плиточных аллей читалось бы пятном
+                let paved = first.paved || second.paved;
+                // угол двух грунтовок — грунтом; грунтовки с асфальтом сюда
+                // доходит только наружным или носом — тоже грунтом
+                let fill = if paved {
+                    Fill::Sidewalk
+                } else if first.unpaved || second.unpaved {
+                    Fill::Unpaved
+                } else {
+                    Fill::Road(class)
+                };
+                // Грунтовка входит в асфальт без скругления: асфальт идёт
+                // прямо, и его кромка — край грунтовки (Калуга, 07). Асфальтовый
+                // веер у её устья читался отводом от асфальтовой улицы. Всё,
+                // что между ними всё же закрывается, — грунтом, под асфальтом.
+                let mixed = first.unpaved != second.unpaved;
+                let round = if mixed {
+                    None
+                } else {
+                    fillet(node, first, second, halves, radius)
+                };
+                let (outline, outer) = match round {
+                    Some(outline) => (outline, false),
+                    None if is_nose(first, second) => {
+                        let radius = nose_radius(radius, scale);
+                        // клин штрихуется только на развилке — узел из трёх
+                        // лучей, острый угол, а не нос несложившегося
+                        // скругления — и между проезжими частями улиц, а не
+                        // у проезда, дорожки или грунтовки. На сложном узле
+                        // клинья легли островками посреди его асфальта (Орёл,
+                        // витрина 04), у развилки под 34° — клочком в горле
+                        // узла (Тула, 06)
+                        let gored = fill == Fill::Road(RoadClass::Street)
+                            && group.len() == 3
+                            && ccw_angle(first, second) < MIN_ANGLE
+                            && [first, second]
+                                .iter()
+                                .all(|arm| arm.highway.is_street() && !arm.ring);
+                        if let Some(found) = nose(first, second, (0.0, 0.0), radius, gored) {
+                            returns.noses.push((fill, found.outline));
+                            returns.fork_gores.extend(found.gore);
+                        }
+                        continue;
+                    }
+                    None => match outer_corner(node, first, second, halves) {
+                        Some(outline) => (outline, true),
+                        None => continue,
+                    },
+                };
+                match fill {
+                    Fill::Sidewalk => returns.sidewalks.push(outline),
+                    Fill::Unpaved => returns.unpaved.push(outline),
+                    Fill::Road(class) => returns.roads.push((class, outline)),
+                }
+                returns.outer[usize::from(paved)] += usize::from(outer);
+            }
+            // Асфальт, идущий сквозь грунтовку двумя way с изломом: торцы
+            // прямые, скруглений к грунту нет, и щель с наружной стороны
+            // излома светилась грунтом тонкой чертой поперёк асфальта (Калуга,
+            // 06: шов участков с `lane_markings=no` на переезде гравийки).
+            // Закрывает её тот же наружный веер, что у продолжения дороги.
+            let paved: Vec<&Arm> = group.iter().copied().filter(|arm| !arm.unpaved).collect();
+            if paved.len() < group.len()
+                && paved.len() == 2
+                && !is_junction(&paved)
+                && paved.iter().all(|arm| arm.end.is_some() && !is_merged(arm))
+            {
+                for (first, second) in pairs(&paved) {
+                    let halves = (first.half[0], second.half[1]);
+                    if let Some(outline) = outer_corner(node, first, second, halves) {
+                        returns.roads.push((class, outline));
+                        returns.outer[0] += 1;
+                    }
+                }
+            }
+        }
+        // Угол, где хоть с одной стороны вместо полосы тротуара обочина до
+        // отдельной дорожки, — той же дугой, но в слой обочин под зеленью:
+        // без него между концом полосы (или обочины) одной улицы, обочиной
+        // другой и бордюрной дугой оставался клин голой земли (Тула, 15).
+        let verged: Vec<&Arm> = found
+            .iter()
+            .filter(|arm| (0..2).any(|side| arm.sidewalk[side].or(arm.verge[side]).is_some()))
+            .collect();
+        if is_junction(&verged) && !verged.iter().all(|arm| is_merged(arm)) {
+            for (first, second) in pairs(&verged) {
+                if merge_pair(first, second)
+                    || (first.verge[0].is_none() && second.verge[1].is_none())
+                {
+                    continue;
+                }
+                // обочина тянется дальше полосы — угол по ней, где она есть
+                let (Some(a), Some(b)) = (
+                    first.verge[0].or(first.sidewalk[0]),
+                    second.verge[1].or(second.sidewalk[1]),
+                ) else {
+                    continue;
+                };
+                // дуга — по узкой из двух: по широкой (как у полос тротуара)
+                // она уходила от бордюра, и вдоль узкой оставался клин земли
+                let halves = (first.half[0] + a, second.half[1] + b);
+                let radius = kerb_radius(first, second) * scale - a.min(b);
+                if let Some(outline) = fillet(node, first, second, halves, radius)
+                    .or_else(|| outer_corner(node, first, second, halves))
+                {
+                    if a.min(b) > VERGE_PAVED_MAX {
+                        returns.verge_lawns.push(outline);
+                    } else {
+                        returns.verges.push(outline);
+                    }
+                }
+                // у газона угол, куда выходят зебры, — площадкой плитки вдоль
+                // бордюрной дуги, иначе переход кончался на траве серпом
+                // между двумя газонами (Тула, 01)
+                if a.max(b) > VERGE_PAVED_MAX {
+                    let road = (first.half[0], second.half[1]);
+                    let radius = kerb_radius(first, second) * scale;
+                    returns
+                        .verges
+                        .extend(kerb_pad(node, first, second, road, radius));
                 }
             }
         }
@@ -318,7 +649,18 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
             .iter()
             .filter(|arm| arm.sidewalk.iter().any(Option::is_some))
             .collect();
-        if !is_junction(&walked) || walked.iter().all(|arm| is_merged(arm)) {
+        // две полосы одной улицы сквозь узел, где к ней примыкает улица без
+        // тротуара: сами по себе они продолжение, но торцы у них прямые —
+        // узел улиц перекрёсток, — и без угла между ними через тротуар шла
+        // нить (Орёл, витрина 04, север)
+        let streets: Vec<&Arm> = found
+            .iter()
+            .filter(|arm| arm.class == RoadClass::Street)
+            .collect();
+        let butted = walked.len() == 2
+            && walked.iter().all(|arm| arm.end.is_some())
+            && is_junction(&streets);
+        if !(is_junction(&walked) || butted) || walked.iter().all(|arm| is_merged(arm)) {
             continue;
         }
         for (first, second) in pairs(&walked) {
@@ -333,10 +675,18 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
             // полоса шире на него же. Берётся больший из двух тротуаров — при
             // разной их ширине одной дугой обе полосы не обойти, а меньший
             // радиус оставляет асфальтовый клин внутри тротуарного
-            let radius = kerb_radius(first, second) * scale - a.max(b);
             let halves = (first.half[0] + a, second.half[1] + b);
+            let radius = kerb_radius(first, second) * scale - a.max(b);
             if let Some(outline) = fillet(node, first, second, halves, radius) {
                 returns.sidewalks.push(outline);
+            } else if is_nose(first, second) {
+                // У носа концентричная дуга ушла бы в минус — остриё островка
+                // всё мощёное, — и нос тротуара свой, того же малого радиуса:
+                // иначе между полосами тротуара торчал бы шип земли.
+                let radius = nose_radius(kerb_radius(first, second) * scale, scale);
+                if let Some(found) = nose(first, second, (a, b), radius, false) {
+                    returns.noses.push((Fill::Sidewalk, found.outline));
+                }
             } else if let Some(outline) = outer_corner(node, first, second, halves) {
                 returns.sidewalks.push(outline);
                 returns.outer[1] += 1;
@@ -374,22 +724,48 @@ fn ccw_angle(first: &Arm, second: &Arm) -> f32 {
 
 /// Соседние по углу пары лучей группы — по кругу, чтобы последний луч встретил
 /// первый. Меньше двух лучей — пар нет.
-fn pairs<'a>(group: &'a [&'a Arm]) -> impl Iterator<Item = (&'a Arm, &'a Arm)> {
+fn pairs<'a, 'd>(group: &'a [&'a Arm<'d>]) -> impl Iterator<Item = (&'a Arm<'d>, &'a Arm<'d>)> {
     let count = if group.len() < 2 { 0 } else { group.len() };
     (0..count).map(move |index| (group[index], group[(index + 1) % group.len()]))
 }
 
 /// Радиус бордюра между двумя лучами узла — по младшему классу пары (см.
-/// [`MAJOR_RADIUS`]).
+/// [`MAJOR_RADIUS`]); между двумя грунтовками — не больше [`DIRT_RADIUS`].
 fn kerb_radius(first: &Arm, second: &Arm) -> f32 {
-    class_radius(first).min(class_radius(second))
+    let radius = class_radius(first).min(class_radius(second));
+    if first.unpaved && second.unpaved {
+        radius.min(DIRT_RADIUS)
+    } else {
+        radius
+    }
+}
+
+/// Острый ли угол от `first` до `second` для носа ([`NOSE_SHARE`]) — если
+/// скругление там не легло.
+fn is_nose(first: &Arm, second: &Arm) -> bool {
+    (NOSE_MIN_ANGLE..NOSE_MAX_ANGLE).contains(&ccw_angle(first, second))
+}
+
+/// Радиус носа при радиусе пары `radius` (уже умноженном на `scale`).
+fn nose_radius(radius: f32, scale: f32) -> f32 {
+    (radius * NOSE_SHARE).min(NOSE_RADIUS * scale)
 }
 
 fn class_radius(arm: &Arm) -> f32 {
-    if arm.class == RoadClass::Alley {
+    radius_of(arm.class, arm.highway)
+}
+
+/// Радиус бордюра дороги по её классу — без ручки `Corner radius`. Им клин
+/// у шва решает, прикрывает ли примыкание уступ (`roads/tapers.rs`).
+pub(super) fn road_radius(road: &RoadLine) -> f32 {
+    radius_of(road.class, road.highway)
+}
+
+fn radius_of(class: RoadClass, highway: Highway) -> f32 {
+    if class == RoadClass::Alley {
         return PATH_RADIUS;
     }
-    match arm.highway {
+    match highway {
         Highway::Motorway
         | Highway::Trunk
         | Highway::Primary
@@ -423,14 +799,14 @@ fn outer_corner(node: Vec2, first: &Arm, second: &Arm, halves: (f32, f32)) -> Op
     let steps = arc_steps(halves.0.max(halves.1), sweep).max(1);
     let middle = Vec2::from_angle(sweep / 2.0).rotate(from);
     let mut outline = Vec::with_capacity(steps + 2);
-    outline.push(node - middle * OVERLAP);
-    outline.push(node + from * halves.0 + first.direction * OVERLAP);
+    outline.push(node - middle * OUTER_OVERLAP);
+    outline.push(node + from * halves.0 + first.direction * OUTER_OVERLAP);
     for step in 1..steps {
         let share = step as f32 / steps as f32;
         let radius = halves.0 + (halves.1 - halves.0) * share;
         outline.push(node + Vec2::from_angle(sweep * share).rotate(from) * radius);
     }
-    outline.push(node - second.direction.perp() * halves.1 + second.direction * OVERLAP);
+    outline.push(node - second.direction.perp() * halves.1 + second.direction * OUTER_OVERLAP);
     Some(outline)
 }
 
@@ -442,8 +818,116 @@ fn fillet(
     first: &Arm,
     second: &Arm,
     halves: (f32, f32),
-    mut radius: f32,
+    radius: f32,
 ) -> Option<Vec<Vec2>> {
+    let arc = fillet_arc(node, first, second, halves, radius)?;
+    // прямые стороны заходят под ленты на `OVERLAP`: сторона, совпадающая с
+    // краем ленты, но не делящая с ней вершин, растеризуется с пропусками —
+    // по краю проезда шла пунктирная щель со светлым тротуаром под ней
+    let mut outline = Vec::with_capacity(arc.steps + 4);
+    outline.push(arc.corner - (arc.side_first + arc.side_second) * OVERLAP);
+    outline.push(arc.on_first - arc.side_first * OVERLAP);
+    outline.extend(arc.points(0.0));
+    outline.push(arc.on_second - arc.side_second * OVERLAP);
+    Some(outline)
+}
+
+/// Площадка плитки у бордюрной дуги угла между обочинами с газоном
+/// ([`KERB_PAD_WIDTH`]): кольцевой сектор за дугой скругления дорог
+/// (`halves`, `radius` — те же, что у него) и по прямому хвосту
+/// [`KERB_PAD_RUN`] вдоль края каждой дороги. Куски — выпуклые, каждый
+/// веером из первой вершины.
+fn kerb_pad(
+    node: Vec2,
+    first: &Arm,
+    second: &Arm,
+    halves: (f32, f32),
+    radius: f32,
+) -> Vec<Vec<Vec2>> {
+    let Some(arc) = fillet_arc(node, first, second, halves, radius) else {
+        return Vec::new();
+    };
+    // кромка заходит под асфальт на `OVERLAP`, внутренняя дуга — того же
+    // центра, на ширину площадки ближе к нему
+    let outer: Vec<Vec2> = arc.points(OVERLAP).collect();
+    let inner: Vec<Vec2> = arc.points(-KERB_PAD_WIDTH.min(arc.radius)).collect();
+    let mut pieces: Vec<Vec<Vec2>> = outer
+        .windows(2)
+        .zip(inner.windows(2))
+        .map(|(out, inn)| vec![out[0], out[1], inn[1], inn[0]])
+        .collect();
+    for (on, along, side, room) in [
+        (
+            arc.on_first,
+            first.direction,
+            arc.side_first,
+            first.run - arc.t_first,
+        ),
+        (
+            arc.on_second,
+            second.direction,
+            arc.side_second,
+            second.run - arc.t_second,
+        ),
+    ] {
+        let run = KERB_PAD_RUN.min(room - arc.tangent);
+        if run <= 0.0 {
+            continue;
+        }
+        let kerb = on - side * OVERLAP;
+        let back = on + side * KERB_PAD_WIDTH;
+        pieces.push(vec![kerb, kerb + along * run, back + along * run, back]);
+    }
+    pieces
+}
+
+/// Дуга скругления ([`fillet`]): вершина угла краёв, точки касания, центр и
+/// радиус — зажатый так, чтобы касательная не выходила за прямой край лучей.
+struct FilletArc {
+    corner: Vec2,
+    on_first: Vec2,
+    on_second: Vec2,
+    centre: Vec2,
+    radius: f32,
+    tangent: f32,
+    /// Где от узла вдоль лучей край сошёлся с краем, м.
+    t_first: f32,
+    t_second: f32,
+    side_first: Vec2,
+    side_second: Vec2,
+    from: Vec2,
+    turn: f32,
+    sweep: f32,
+    steps: usize,
+}
+
+impl FilletArc {
+    /// Точки дуги того же центра, на `extra` дальше от него, чем дуга
+    /// скругления, — от касания с первым лучом до касания со вторым, концы
+    /// включительно. При `extra == 0` это сама дуга, точка в точку.
+    fn points(&self, extra: f32) -> impl Iterator<Item = Vec2> + '_ {
+        let scale = (self.radius + extra) / self.radius;
+        let ends = [self.on_first, self.on_second]
+            .map(|on| on + (on - self.centre).normalize_or_zero() * extra);
+        (0..=self.steps).map(move |step| match step {
+            0 => ends[0],
+            step if step == self.steps => ends[1],
+            step => {
+                let rotation =
+                    Vec2::from_angle(self.turn * self.sweep * step as f32 / self.steps as f32);
+                self.centre + rotation.rotate(self.from) * scale
+            }
+        })
+    }
+}
+
+fn fillet_arc(
+    node: Vec2,
+    first: &Arm,
+    second: &Arm,
+    halves: (f32, f32),
+    mut radius: f32,
+) -> Option<FilletArc> {
     let angle = ccw_angle(first, second);
     if !(MIN_ANGLE..=MAX_ANGLE).contains(&angle) {
         return None;
@@ -484,21 +968,272 @@ fn fillet(
     let sweep = PI - angle;
     let from = on_first - centre;
     let turn = from.perp_dot(on_second - centre).signum();
-    let steps = arc_steps(radius, sweep);
-    // прямые стороны заходят под ленты на `OVERLAP`: сторона, совпадающая с
-    // краем ленты, но не делящая с ней вершин, растеризуется с пропусками —
-    // по краю проезда шла пунктирная щель со светлым тротуаром под ней
-    let mut outline = Vec::with_capacity(steps + 4);
-    outline.push(corner - (side_first + side_second) * OVERLAP);
-    outline.push(on_first - side_first * OVERLAP);
-    outline.push(on_first);
-    for step in 1..steps {
-        let rotation = Vec2::from_angle(turn * sweep * step as f32 / steps as f32);
-        outline.push(centre + rotation.rotate(from));
+    let steps = arc_steps(radius, sweep).max(1);
+    Some(FilletArc {
+        corner,
+        on_first,
+        on_second,
+        centre,
+        radius,
+        tangent,
+        t_first: t,
+        t_second: s,
+        side_first,
+        side_second,
+        from,
+        turn,
+        sweep,
+        steps,
+    })
+}
+
+/// Нос острой развилки от луча `first` против часовой стрелки до луча
+/// `second` ([`NOSE_SHARE`]): асфальт (или тротуар) от острия, где сошлись
+/// кромки, до дуги радиуса `radius`, касательной к обеим кромкам. Кромка —
+/// полуширина луча ([`Arm::half_at`], с клином) плюс `extra` (тротуар:
+/// левый у первого, правый у второго).
+///
+/// Кромки идут по **осевым лучей** ([`Arm::trail`]), а не по их начальным
+/// направлениям: остриё лежит в десятках метров от узла, и прямая от узла
+/// ушла бы с гнутой ленты — съезд с кольца, ветка по дуге — на метры. Шаг
+/// [`NOSE_STEP`] вдоль первого луча: его кромка, ближайшая к ней точка оси
+/// второго и просвет между кромками; остриё — где просвет стал положительным,
+/// центр носа — середина просвета в два радиуса. Не нашлось (второй луч
+/// кончился, просвет не дорос за [`NOSE_REACH`]) — `None`.
+///
+/// `gored` — перед носом ещё и штрихуемый клин развилки ([`fork_gore`]) по тем
+/// же пробам.
+fn nose(first: &Arm, second: &Arm, extra: (f32, f32), radius: f32, gored: bool) -> Option<Nose> {
+    if radius < MIN_RADIUS {
+        return None;
     }
-    outline.push(on_second);
-    outline.push(on_second - side_second * OVERLAP);
-    Some(outline)
+    let (first_trail, second_trail) = (first.trail(), second.trail());
+    let (along_first, total_first) = arclengths(&first_trail);
+    let (along_second, _) = arclengths(&second_trail);
+    let links = second_trail
+        .len()
+        .checked_sub(1)
+        .filter(|&links| links > 0)?;
+    // звено второго, у которого нашлась прошлая проба: пробы идут вперёд, и
+    // ближайшая точка ищется в окне от него, а не по всей осевой
+    let mut hint: usize = 0;
+    // кромка первого на `at`, лицом к ней — кромка второго, и просвет между
+    // ними; в пробе — ещё полуширины обоих и нормали к кромкам внутрь развилки
+    let mut facing = |at: f32| -> Option<(Vec2, Vec2, f32, Station)> {
+        let (point, tangent) = place_on_path(&first_trail, &along_first, at)?;
+        let near_half = first.half_at(0, at) + extra.0;
+        let edge = point + tangent.perp() * near_half;
+        let (link, onto) = (hint.saturating_sub(NOSE_WINDOW)..(hint + NOSE_WINDOW).min(links))
+            .map(|link| {
+                let onto = closest_on_segment(edge, second_trail[link], second_trail[link + 1]);
+                (link, onto)
+            })
+            .min_by(|(_, a), (_, b)| {
+                a.distance_squared(edge)
+                    .total_cmp(&b.distance_squared(edge))
+            })?;
+        hint = link;
+        // второй кончился: ближайшая точка — его конец, не перпендикуляр
+        if link + 1 == links && onto == second_trail[links] {
+            return None;
+        }
+        let reach = along_second[link] + second_trail[link].distance(onto);
+        let direction = (second_trail[link + 1] - second_trail[link]).try_normalize()?;
+        let out = -direction.perp();
+        let half = second.half_at(1, reach) + extra.1;
+        let gap = (edge - onto).dot(out) - half;
+        let opposite = onto + out * half;
+        let station = Station {
+            at,
+            edges: [edge, opposite],
+            gap,
+            halves: [near_half, half],
+            inward: [tangent.perp(), out],
+        };
+        Some((edge, opposite, gap, station))
+    };
+    let mut tip = None;
+    let mut left = Vec::new();
+    let mut right = Vec::new();
+    let mut stations = Vec::new();
+    let mut at = 0.0;
+    // середина просвета в два радиуса и докуда ещё вести стороны: основания
+    // перпендикуляров из центра лягут чуть дальше неё
+    let mut found: Option<(Vec2, f32)> = None;
+    // проба, на которой просвет дорос до двух радиусов, — там кончается клин
+    let mut widest = None;
+    while at <= total_first {
+        let Some((edge, opposite, gap, station)) = facing(at) else {
+            break;
+        };
+        if gored {
+            stations.push(station);
+        }
+        if gap < 0.0 && found.is_none() {
+            // остриё — середина скрещённых кромок последней пробы, под обеими
+            // лентами
+            tip = Some((edge + opposite) / 2.0);
+        } else {
+            let tip = tip?;
+            if left.is_empty() {
+                left.push(tip);
+                right.push(tip);
+            }
+            // стороны заходят под ленты на `OVERLAP`; в узкой части клина —
+            // вершина через [`NOSE_THIN`] проб: у развилки под 8° он тянется
+            // на двадцать метров, и все его пробы были бы вершинами меша
+            if found.is_some()
+                || gap >= radius
+                || ((at / NOSE_STEP) as usize).is_multiple_of(NOSE_THIN)
+            {
+                let inward = (opposite - edge).normalize_or_zero() * OVERLAP;
+                left.push(edge - inward);
+                right.push(opposite + inward);
+            }
+            match found {
+                None if gap >= 2.0 * radius => {
+                    found = Some(((edge + opposite) / 2.0, at + 2.0 * radius));
+                    widest = stations.len().checked_sub(1);
+                }
+                Some((_, until)) if at >= until => break,
+                _ => {}
+            }
+        }
+        at += NOSE_STEP;
+    }
+    let (mut centre, _) = found?;
+    // Дуга касается обеих кромок: центр сдвигается, пока не встанет на радиус
+    // от каждой. Середина просвета — только начало: гнутая кромка (кольцо
+    // выпукло в сторону островка) ближе к ней, чем прямая, и дуга в радиус до
+    // ближней не доставала до дальней — у острия оставалась зазубрина.
+    for _ in 0..NOSE_SETTLE {
+        let (left_foot, _) = nearest_on_path(&left, centre)?;
+        let (right_foot, _) = nearest_on_path(&right, centre)?;
+        let (away_left, away_right) = (centre - left_foot, centre - right_foot);
+        centre += away_left.normalize_or_zero() * (radius - away_left.length())
+            + away_right.normalize_or_zero() * (radius - away_right.length());
+    }
+    let (foot_left, cut_left) = nearest_on_path(&left, centre)?;
+    let (foot_right, cut_right) = nearest_on_path(&right, centre)?;
+    let radius = centre.distance(foot_left).min(centre.distance(foot_right));
+    if radius < MIN_RADIUS {
+        return None;
+    }
+    let keep = |chain: &[Vec2], cut: f32| -> Vec<Vec2> {
+        let (along, _) = arclengths(chain);
+        chain
+            .iter()
+            .zip(&along)
+            .take_while(|(_, along)| **along < cut)
+            .map(|(point, _)| *point)
+            .collect()
+    };
+    let mut outline = keep(&left, cut_left);
+    let from = (foot_left - centre).normalize_or_zero() * radius;
+    let to = (foot_right - centre).normalize_or_zero() * radius;
+    // короткой стороной — она и смотрит на остриё
+    let sweep = from.angle_to(to);
+    let steps = arc_steps(radius, sweep.abs()).max(1);
+    let arc: Vec<Vec2> = (0..=steps)
+        .map(|step| centre + Vec2::from_angle(sweep * step as f32 / steps as f32).rotate(from))
+        .collect();
+    outline.extend(&arc);
+    // остриё — уже первая вершина левой стороны
+    outline.extend(keep(&right, cut_right).into_iter().skip(1).rev());
+    if outline.len() < 3 {
+        return None;
+    }
+    let gore = widest.and_then(|widest| fork_gore(&stations[..=widest], &arc));
+    Some(Nose { outline, gore })
+}
+
+/// Нос развилки ([`nose`]) и штрихуемый клин перед ним ([`fork_gore`]).
+struct Nose {
+    outline: Vec<Vec2>,
+    gore: Option<Vec<Vec2>>,
+}
+
+/// Проба носа ([`nose`]) в `at` метрах по первому лучу: кромки обоих лучей
+/// лицом друг к другу, просвет между ними (меньше нуля — ленты
+/// перекрываются), полуширины (с тротуаром, если он в кромке) и нормали к
+/// кромкам внутрь развилки.
+struct Station {
+    at: f32,
+    edges: [Vec2; 2],
+    gap: f32,
+    halves: [f32; 2],
+    inward: [Vec2; 2],
+}
+
+/// Клин развилки короче этого, м, не штрихуется. У развилки острее 25° он
+/// не короче 12 м (полоса и два радиуса носа на синус угла); короче выходит
+/// между гнутыми лучами внутри сложного узла — треугольнички в 3–5 м
+/// островками посреди его асфальта (Орёл, витрина 04).
+const FORK_GORE_MIN: f32 = 8.0;
+
+/// Штрихуемый клин перед носом острой развилки. Ленты двух улиц под 8–25°
+/// перекрываются на десятки метров, и нос встаёт только там, где их кромки
+/// разошлись, — до него между полотнами тянулся ровный асфальтовый язык
+/// (Тула, витрина 14: 34 м от узла). На земле полосы расходятся раньше, а
+/// между ними — штриховка. Клин начинается, где ось узкой улицы вышла из
+/// полотна широкой (перекрытие кромок сошло до меньшей полуширины), и
+/// расходится до ширины просвета у носа (`stations` кончаются пробой, где
+/// просвет дорос до двух радиусов носа), кончаясь поперёк у вершины дуги
+/// носа `arc`. Стороны
+/// заходят в полотна на недостающую ширину — каждая пропорционально своей
+/// полуширине, так что обе полосы сужаются заодно. `None` — клин короче
+/// [`FORK_GORE_MIN`] или ось узкой не выходит из широкой до носа.
+fn fork_gore(stations: &[Station], arc: &[Vec2]) -> Option<Vec<Vec2>> {
+    let (widest, _) = stations.split_last()?;
+    let start = stations
+        .iter()
+        .position(|station| station.gap >= -station.halves[0].min(station.halves[1]))?;
+    let (from, to) = (stations[start].at, widest.at);
+    if to - from < FORK_GORE_MIN {
+        return None;
+    }
+    let mut sides = [Vec::new(), Vec::new()];
+    for station in &stations[start..] {
+        let width = widest.gap * (station.at - from) / (to - from);
+        let cut = (width - station.gap).max(0.0);
+        let total = station.halves[0] + station.halves[1];
+        for (side, points) in sides.iter_mut().enumerate() {
+            let into = cut * station.halves[side] / total;
+            points.push(station.edges[side] - station.inward[side] * into);
+        }
+    }
+    // Кончается клин поперёк, по касательной к вершине дуги носа: вдоль самой
+    // дуги по бордюру обводка легла бы белой скобой с крючками у её концов.
+    let tip = sides[0][0].midpoint(sides[1][0]);
+    let apex = arc
+        .iter()
+        .copied()
+        .min_by(|a, b| a.distance(tip).total_cmp(&b.distance(tip)))?;
+    let along = (apex - tip).try_normalize()?;
+    let reach = apex.distance(tip);
+    let side = |points: &[Vec2]| -> Vec<Vec2> {
+        let depth = |point: Vec2| (point - tip).dot(along);
+        let mut kept = Vec::new();
+        for (index, pair) in points.windows(2).enumerate() {
+            // прямым сторонам вершина через [`NOSE_THIN`] проб не нужна
+            if index % NOSE_THIN == 0 {
+                kept.push(pair[0]);
+            }
+            let [near, far] = [depth(pair[0]), depth(pair[1])];
+            if far >= reach {
+                let share = ((reach - near) / (far - near)).clamp(0.0, 1.0);
+                kept.push(pair[0].lerp(pair[1], share));
+                return kept;
+            }
+        }
+        kept.extend(points.last());
+        kept
+    };
+    let mut outline = side(&sides[0]);
+    // остриё — уже первая вершина первой стороны
+    let back = side(&sides[1]);
+    outline.extend(back.into_iter().skip(1).rev());
+    (outline.len() >= 3).then_some(outline)
 }
 
 /// Остров внутри треугольника узлов заливается, когда от него за вычетом
@@ -752,6 +1487,58 @@ mod tests {
         }
     }
 
+    /// Асфальт двумя way с изломом в узле, где его пересекает грунтовка:
+    /// торцы прямые, скруглений к грунту нет — щель с наружной стороны
+    /// излома закрыта асфальтом, а не светится грунтом (Калуга, 06).
+    #[test]
+    fn asphalt_kinked_across_a_dirt_road_leaves_no_gap_at_the_seam() {
+        let mut dirt = street(
+            vec![Vec2::new(0.0, -50.0), Vec2::ZERO, Vec2::new(0.0, 50.0)],
+            6.0,
+        );
+        dirt.pavement = Some(crate::map::osm::model::Pavement::Unpaved);
+        let roads = [
+            street(vec![Vec2::new(-50.0, 0.0), Vec2::ZERO], 8.0),
+            street(vec![Vec2::ZERO, Vec2::new(50.0, 5.0)], 8.0),
+            dirt,
+        ];
+        let found = walked_returns_of(&roads, false);
+        assert!(found.butt(0)[1] && found.butt(1)[0], "торцы в узле прямые");
+        // между торцами с южной стороны: левее торца восточного и правее
+        // западного — ни одна лента сюда не доходит
+        let gap = Vec2::new(0.15, -3.5);
+        assert!(
+            found
+                .roads
+                .iter()
+                .any(|(_, outline)| point_in_polygon(gap, outline)),
+            "щель у излома открыта: {:?}",
+            found.roads
+        );
+        // и только она: к грунтовке асфальт не скругляется
+        assert_eq!(found.roads.len(), 1, "{:?}", found.roads);
+    }
+
+    /// Угол двух грунтовок — грунтом и малым радиусом: уличные 6 м ложились
+    /// бордюрной дугой шире самого проезда (Тула, проезды Мясново). Та же
+    /// крестовина в асфальте свой радиус улиц сохраняет.
+    #[test]
+    fn two_dirt_roads_meet_with_a_small_corner() {
+        let mut dirt = crossing();
+        for road in &mut dirt {
+            road.pavement = Some(crate::map::osm::model::Pavement::Unpaved);
+        }
+        let found = walked_returns_of(&dirt, false);
+        assert!(found.roads.is_empty(), "асфальта нет: {:?}", found.roads);
+        assert_eq!(found.unpaved.len(), 4);
+        for outline in &found.unpaved {
+            let radius = right_angle_radius(outline);
+            assert!((radius - DIRT_RADIUS).abs() < 1e-2, "{radius}");
+        }
+        let paved = returns_of(&crossing());
+        assert!((right_angle_radius(&paved[0].1) - STREET_RADIUS).abs() < 1e-2);
+    }
+
     /// Поперечная в 20 м с клином на дальнем конце в 14 м: кромка прямая
     /// только 6 м от узла, и дуга дальше не заходит — в клине лента уже, и
     /// касательная торчала из-под него шипом (витрина 08).
@@ -842,6 +1629,20 @@ mod tests {
         let found = walked_returns_of(&[through, drive], true);
         assert_eq!(found.roads.len(), 2);
         assert!(found.sidewalks.is_empty());
+    }
+
+    /// Улица из двух way с изломом в узле, где к ней примыкает проезд без
+    /// тротуара: торцы её полос прямые (узел улиц — перекрёсток), и наружный
+    /// угол между ними закрывает щель; без него через тротуар шла нить
+    /// (Орёл, витрина 04, север).
+    #[test]
+    fn a_band_butted_at_a_drive_gets_its_outer_corner() {
+        let west = street(vec![Vec2::new(-50.0, 0.0), Vec2::ZERO], 8.0);
+        let east = street(vec![Vec2::ZERO, Vec2::new(50.0, -1.5)], 8.0);
+        let drive = street(vec![Vec2::new(0.0, -50.0), Vec2::ZERO], 5.0);
+        let found = walked_returns_of(&[west, east, drive], true);
+        assert!(found.butt(0)[1] && found.butt(1)[0], "торцы прямые");
+        assert_eq!(found.outer[1], 1, "{:?}", found.sidewalks);
     }
 
     #[test]
@@ -952,6 +1753,150 @@ mod tests {
         assert!(
             islands(&triangle(2.0)).is_empty(),
             "большой остров — настоящий"
+        );
+    }
+
+    #[test]
+    fn a_sharp_fork_gets_a_small_nose_instead_of_a_spike() {
+        // ветка уходит от сквозной улицы под 15°: кромки сходятся в 30.6 м от
+        // узла по биссектрисе, и нос радиуса NOSE_RADIUS закрывает остриё до
+        // дуги в 40.6 м (Тула, витрины 04, 06, 14)
+        let angle = 15_f32.to_radians();
+        let branch = street(
+            vec![Vec2::ZERO, Vec2::from_angle(angle).rotate(Vec2::X) * 80.0],
+            8.0,
+        );
+        let through = street(
+            vec![Vec2::new(-50.0, 0.0), Vec2::ZERO, Vec2::new(100.0, 0.0)],
+            8.0,
+        );
+        let found = walked_returns_of(&[through, branch], true);
+        let bisector = Vec2::from_angle(angle / 2.0).rotate(Vec2::X);
+        let half_angle = angle / 2.0;
+        let apex =
+            |half: f32| half / half_angle.sin() + NOSE_RADIUS / half_angle.sin() - NOSE_RADIUS;
+        let covered = |fill: Fill, at: f32| {
+            found
+                .noses
+                .iter()
+                .any(|(layer, outline)| *layer == fill && point_in_polygon(bisector * at, outline))
+        };
+        let road = Fill::Road(RoadClass::Street);
+        // шаг поиска 0.5 м — центр носа может уйти на четверть метра
+        assert!(covered(road, apex(4.0) - 1.0), "остриё до дуги — асфальт");
+        assert!(!covered(road, apex(4.0) + 0.5), "за дугой асфальта нет");
+        // дуга носа — на радиусе от центра и не ближе к нему
+        let (_, outline) = found.noses.iter().find(|(fill, _)| *fill == road).unwrap();
+        let centre = bisector * (apex(4.0) + NOSE_RADIUS);
+        let on_arc = outline
+            .iter()
+            .filter(|point| (point.distance(centre) - NOSE_RADIUS).abs() < 0.3)
+            .count();
+        assert!(on_arc >= 3, "{outline:?}");
+        assert!(
+            outline
+                .iter()
+                .all(|point| point.distance(centre) > NOSE_RADIUS - 0.3)
+        );
+        // тротуар — своим носом по краям полос, дальше асфальтового
+        let walked = apex(4.0 + SIDEWALK);
+        assert!(
+            covered(Fill::Sidewalk, walked - 1.0),
+            "остриё тротуара закрыто"
+        );
+        assert!(!covered(Fill::Sidewalk, walked + 0.5));
+    }
+
+    #[test]
+    fn a_sharp_street_fork_hatches_a_gore_ahead_of_its_nose() {
+        // та же развилка под 15°: ленты по 8 м перекрываются до острия носа
+        // в 30.6 м по биссектрисе. Клин начинается, где ось ветки вышла из
+        // полотна сквозной (оси разошлись на полуширину, 4 м: ~15.5 м от
+        // узла), и кончается у вершины дуги носа (Тула, витрина 14)
+        let angle = 15_f32.to_radians();
+        let branch = street(
+            vec![Vec2::ZERO, Vec2::from_angle(angle).rotate(Vec2::X) * 80.0],
+            8.0,
+        );
+        let through = street(
+            vec![Vec2::new(-50.0, 0.0), Vec2::ZERO, Vec2::new(100.0, 0.0)],
+            8.0,
+        );
+        let found = walked_returns_of(&[through.clone(), branch.clone()], false);
+        assert_eq!(found.fork_gores.len(), 1, "{:?}", found.fork_gores);
+        let gore = &found.fork_gores[0];
+        let bisector = Vec2::from_angle(angle / 2.0).rotate(Vec2::X);
+        let half_angle = angle / 2.0;
+        let apex = 4.0 / half_angle.sin() + NOSE_RADIUS / half_angle.sin() - NOSE_RADIUS;
+        let start = 4.0 / angle.sin();
+        let inside = |at: f32| point_in_polygon(bisector * at, gore);
+        assert!(inside(start + 3.0), "клин начался у выхода оси ветки");
+        assert!(inside(apex - 1.0), "и дошёл до носа");
+        assert!(!inside(start - 3.0), "у самого узла клина нет");
+        assert!(
+            !inside(apex + 1.0),
+            "за вершиной дуги — остров, не штриховка"
+        );
+        // клин лежит на асфальте лент, не на земле
+        for point in gore {
+            let under = [&through, &branch].iter().any(|road| {
+                crate::map::footprint::distance_to_polyline(*point, &road.points) <= 4.0 + 0.05
+            });
+            assert!(under, "{point:?} вне лент");
+        }
+        // у развилки с проездом клина нет: штриховка — между полотнами улиц
+        let drive = street(branch.points.clone(), 5.0);
+        assert!(
+            walked_returns_of(&[through, drive], false)
+                .fork_gores
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_nose_follows_a_bent_branch() {
+        // ветка уходит под 15° и через 20 м загибается до 30°: прямая от
+        // узла ушла бы с её кромки, нос же лежит на кромках лент — ни одна его
+        // вершина, кроме острия, не заходит под ленты глубже OVERLAP
+        let first = Vec2::from_angle(15_f32.to_radians()).rotate(Vec2::X) * 20.0;
+        let branch = street(
+            vec![
+                Vec2::ZERO,
+                first,
+                first + Vec2::from_angle(30_f32.to_radians()).rotate(Vec2::X) * 60.0,
+            ],
+            8.0,
+        );
+        let through = street(
+            vec![Vec2::new(-50.0, 0.0), Vec2::ZERO, Vec2::new(100.0, 0.0)],
+            8.0,
+        );
+        let found = walked_returns_of(&[through.clone(), branch.clone()], false);
+        assert_eq!(found.noses.len(), 1);
+        let (_, outline) = &found.noses[0];
+        for point in &outline[1..] {
+            for road in [&through, &branch] {
+                let inside =
+                    4.0 - crate::map::footprint::distance_to_polyline(*point, &road.points);
+                assert!(inside <= OVERLAP + 0.02, "{point:?} под лентой на {inside}");
+            }
+        }
+    }
+
+    #[test]
+    fn nearly_parallel_arms_get_no_nose() {
+        // почти параллельные полотна — одна дорога из двух way
+        let branch = street(
+            vec![
+                Vec2::ZERO,
+                Vec2::from_angle(1_f32.to_radians()).rotate(Vec2::X) * 80.0,
+            ],
+            8.0,
+        );
+        assert!(
+            walked_returns_of(&[east_west(), branch], false)
+                .noses
+                .is_empty()
         );
     }
 

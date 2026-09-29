@@ -1,5 +1,6 @@
 use super::cohorts::COHORT_ROW_MEAN;
 use super::*;
+use crate::grid::DEFAULT_NAVTILE_SIZE;
 use crate::map::osm::fixture;
 use crate::map::osm::model::{BuildingUse, RoadLine};
 
@@ -52,7 +53,7 @@ fn the_entrance_lands_on_the_facade_facing_the_nearest_road() {
         ..Default::default()
     };
 
-    assert!(generate_entrances(&mut map) >= 1);
+    assert!(generate_entrances(&mut map, DEFAULT_NAVTILE_SIZE) >= 1);
     let entrances = &map.buildings[0].entrances;
     // первая дверь — на лучшей грани, то есть на южной, у самой улицы
     assert!(
@@ -90,8 +91,8 @@ fn generation_is_deterministic() {
     };
 
     let (mut first, mut second) = (make(), make());
-    generate_entrances(&mut first);
-    generate_entrances(&mut second);
+    generate_entrances(&mut first, DEFAULT_NAVTILE_SIZE);
+    generate_entrances(&mut second, DEFAULT_NAVTILE_SIZE);
     for (a, b) in first.buildings.iter().zip(&second.buildings) {
         assert_eq!(a.entrances, b.entrances);
         assert!(!a.entrances.is_empty());
@@ -127,8 +128,8 @@ fn a_building_keeps_its_entrances_regardless_of_its_neighbours() {
         ..Default::default()
     };
 
-    generate_entrances(&mut solo);
-    generate_entrances(&mut crowded);
+    generate_entrances(&mut solo, DEFAULT_NAVTILE_SIZE);
+    generate_entrances(&mut crowded, DEFAULT_NAVTILE_SIZE);
     assert_eq!(solo.buildings[0].entrances, crowded.buildings[1].entrances);
 }
 
@@ -145,7 +146,7 @@ fn a_real_entrance_stays_where_it_was_mapped() {
         ..Default::default()
     };
 
-    generate_entrances(&mut map);
+    generate_entrances(&mut map, DEFAULT_NAVTILE_SIZE);
     assert_eq!(map.buildings[0].entrances[0], real);
 }
 
@@ -169,7 +170,7 @@ fn a_block_mapped_with_one_door_gets_the_rest() {
         ..Default::default()
     };
 
-    assert!(generate_entrances(&mut map) >= 5);
+    assert!(generate_entrances(&mut map, DEFAULT_NAVTILE_SIZE) >= 5);
     let street = doors_on(&map, 100.0);
     assert!(street.contains(&real), "{street:?}");
     assert!(street.len() >= 6, "250 m block got {} doors", street.len());
@@ -204,7 +205,7 @@ fn cohorts_scale_the_door_count_with_the_building() {
         ..Default::default()
     };
 
-    generate_entrances(&mut map);
+    generate_entrances(&mut map, DEFAULT_NAVTILE_SIZE);
     assert_eq!(map.buildings[0].entrances.len(), 1);
 
     let block = &map.buildings[1].entrances;
@@ -245,8 +246,8 @@ fn a_long_slab_gets_more_doors_than_a_compact_building_of_the_same_area() {
         ..Default::default()
     };
 
-    generate_entrances(&mut slab);
-    generate_entrances(&mut compact);
+    generate_entrances(&mut slab, DEFAULT_NAVTILE_SIZE);
+    generate_entrances(&mut compact, DEFAULT_NAVTILE_SIZE);
     // считаем по уличной стене: у корпуса подъезд сквозной, и его дворовая
     // половина — та же дверь, а не лишняя
     let slab_doors = doors_on(&slab, 100.0);
@@ -283,7 +284,7 @@ fn a_giant_slab_does_not_get_a_door_once_per_hundred_metres() {
         ..Default::default()
     };
 
-    generate_entrances(&mut map);
+    generate_entrances(&mut map, DEFAULT_NAVTILE_SIZE);
     let doors = doors_on(&map, 100.0);
     assert!(
         doors.len() >= 6,
@@ -318,7 +319,7 @@ fn the_pitch_between_doors_holds_across_building_sizes() {
             roads: vec![road(vec![Vec2::new(0.0, 95.0), Vec2::new(600.0, 95.0)])],
             ..Default::default()
         };
-        generate_entrances(&mut map);
+        generate_entrances(&mut map, DEFAULT_NAVTILE_SIZE);
         let doors = doors_on(&map, 100.0).len();
         let pitch = length / doors as f32;
         assert!(
@@ -344,7 +345,7 @@ fn a_shopping_centre_spreads_its_entrances_around_the_perimeter() {
         roads: vec![road(vec![Vec2::new(0.0, 95.0), Vec2::new(600.0, 95.0)])],
         ..Default::default()
     };
-    generate_entrances(&mut map);
+    generate_entrances(&mut map, DEFAULT_NAVTILE_SIZE);
 
     let doors = &map.buildings[0].entrances;
     // закон шага: 1000 м периметра при шаге 55 — восемнадцать входных групп
@@ -427,7 +428,7 @@ fn a_door_never_lands_on_a_wall_a_neighbour_stands_against() {
         ..Default::default()
     };
 
-    generate_entrances(&mut map);
+    generate_entrances(&mut map, DEFAULT_NAVTILE_SIZE);
     let right = &map.buildings[1].entrances;
     assert!(!right.is_empty(), "the right building got no door at all");
     for door in right {
@@ -456,7 +457,7 @@ fn a_building_walled_in_on_every_side_still_gets_a_door() {
         ..Default::default()
     };
 
-    generate_entrances(&mut map);
+    generate_entrances(&mut map, DEFAULT_NAVTILE_SIZE);
     assert!(!map.buildings[1].entrances.is_empty());
 }
 
@@ -473,7 +474,7 @@ fn a_building_with_no_road_in_reach_still_gets_a_door() {
         ..Default::default()
     };
 
-    assert!(generate_entrances(&mut map) >= 1);
+    assert!(generate_entrances(&mut map, DEFAULT_NAVTILE_SIZE) >= 1);
     for entrance in &map.buildings[0].entrances {
         assert!(
             (99.9..=130.1).contains(&entrance.x) && (99.9..=130.1).contains(&entrance.y),
@@ -496,7 +497,7 @@ fn block_by_the_street(depth: f32, length: f32, height: f32, building_use: Build
         roads: vec![road(vec![Vec2::new(0.0, 95.0), Vec2::new(600.0, 95.0)])],
         ..Default::default()
     };
-    generate_entrances(&mut map);
+    generate_entrances(&mut map, DEFAULT_NAVTILE_SIZE);
     map
 }
 
@@ -632,7 +633,7 @@ fn a_step_in_the_outline_is_not_a_facade() {
         ..Default::default()
     };
 
-    generate_entrances(&mut map);
+    generate_entrances(&mut map, DEFAULT_NAVTILE_SIZE);
     let doors = &map.buildings[0].entrances;
     assert!(!doors.is_empty());
     for door in doors {
@@ -676,7 +677,7 @@ fn a_door_does_not_stand_in_an_arch() {
         roads: vec![street.clone()],
         ..Default::default()
     };
-    generate_entrances(&mut solid);
+    generate_entrances(&mut solid, DEFAULT_NAVTILE_SIZE);
     let blocked = |doors: &[Vec2]| {
         doors
             .iter()
@@ -694,7 +695,7 @@ fn a_door_does_not_stand_in_an_arch() {
         roads: vec![street, arch],
         ..Default::default()
     };
-    generate_entrances(&mut pierced);
+    generate_entrances(&mut pierced, DEFAULT_NAVTILE_SIZE);
     let doors = &pierced.buildings[0].entrances;
     assert!(!doors.is_empty(), "дом остался без дверей вовсе");
     assert_eq!(blocked(doors), 0, "подъезд в арке: {doors:?}");
@@ -719,7 +720,7 @@ fn a_through_door_does_not_come_out_in_the_far_mouth_of_an_arch() {
         roads: vec![street, arch],
         ..Default::default()
     };
-    generate_entrances(&mut map);
+    generate_entrances(&mut map, DEFAULT_NAVTILE_SIZE);
 
     let street_doors = doors_on(&map, LOW.y);
     let yard_doors = doors_on(&map, LOW.y + 20.0);
@@ -766,7 +767,7 @@ fn the_last_resort_door_steps_out_of_the_arch() {
         ..Default::default()
     };
 
-    generate_entrances(&mut map);
+    generate_entrances(&mut map, DEFAULT_NAVTILE_SIZE);
     let doors = &map.buildings[0].entrances;
     assert!(!doors.is_empty(), "зажатый дом остался без двери вовсе");
     for door in doors {
@@ -814,7 +815,7 @@ fn a_mapped_entrance_in_an_arch_is_dropped() {
         ..Default::default()
     };
 
-    generate_entrances(&mut map);
+    generate_entrances(&mut map, DEFAULT_NAVTILE_SIZE);
 
     let doors = &map.buildings[0].entrances;
     assert!(

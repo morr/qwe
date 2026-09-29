@@ -2,6 +2,12 @@ use super::*;
 use crate::map::osm::fixture::{rect, square, stream, water_area};
 use crate::map::osm::model::polyline_length;
 
+/// Срез воды, заведомо шире любого пруда тестов: они лежат вокруг нуля.
+const ANYWHERE: Rect = Rect {
+    min: Vec2::splat(-1e4),
+    max: Vec2::splat(1e4),
+};
+
 /// Вершины меша воды с долей глубины: 0 — цвет берега, 1 — полная глубина.
 fn depths(builder: &MeshBuilder) -> Vec<(Vec2, f32)> {
     let shore = WATER_SHORE_COLOR.to_linear().red;
@@ -21,7 +27,7 @@ fn depths(builder: &MeshBuilder) -> Vec<(Vec2, f32)> {
 
 #[test]
 fn the_shoal_runs_from_the_bank_to_full_depth() {
-    let found = depths(&mesh_water_areas(&[pond(0.0)], &[]));
+    let found = depths(&mesh_water_areas(&[pond(0.0)], &[], ANYWHERE));
     let on_bank =
         |point: Vec2| (point.x.abs() - 50.0).abs() < 1e-2 || (point.y.abs() - 50.0).abs() < 1e-2;
     assert!(found.iter().any(|&(point, _)| on_bank(point)));
@@ -38,7 +44,7 @@ fn the_shoal_runs_from_the_bank_to_full_depth() {
 fn two_ponds_sharing_a_border_have_no_shoal_across_it() {
     // рукав упирается в реку общей границей x = 50: вдоль неё берега нет
     let arm = water_area(square(on_x(100.0), 50.0), Vec::new());
-    let found = depths(&mesh_water_areas(&[pond(0.0), arm], &[]));
+    let found = depths(&mesh_water_areas(&[pond(0.0), arm], &[], ANYWHERE));
     for &(point, depth) in &found {
         if (point.x - 50.0).abs() < 1e-2 && point.y.abs() < 40.0 {
             assert!(depth > 0.5, "the seam at {point} is only {depth} deep");
@@ -53,11 +59,31 @@ fn a_narrow_arm_never_reaches_full_depth() {
         rect(Vec2::new(-4.0, -60.0), Vec2::new(4.0, 60.0)),
         Vec::new(),
     );
-    let found = depths(&mesh_water_areas(&[strip], &[]));
+    let found = depths(&mesh_water_areas(&[strip], &[], ANYWHERE));
     assert!(!found.is_empty());
     let deepest = found.iter().map(|&(_, depth)| depth).fold(0.0, f32::max);
     assert!(deepest < 4.0 / WATER_SHORE_WIDTH + 0.1, "{deepest}");
     assert!(deepest > 0.5, "{deepest}");
+}
+
+#[test]
+fn water_past_the_map_edge_is_cut_off() {
+    // озеро на 20 км, карта — квадрат в 200 м внутри него: мешу нечего
+    // делать дальше запаса за краем
+    let lake = water_area(square(Vec2::ZERO, 10_000.0), Vec::new());
+    let map = Rect::from_center_half_size(Vec2::ZERO, Vec2::splat(100.0));
+    let found = depths(&mesh_water_areas(&[lake], &[], map));
+    assert!(!found.is_empty());
+    let reach = 100.0 + WATER_CLIP_MARGIN + 1e-2;
+    for &(point, _) in &found {
+        assert!(point.x.abs() <= reach && point.y.abs() <= reach, "{point}");
+    }
+    // отмель на линии среза целиком лежит за картой: в карте берега нет
+    for &(point, depth) in &found {
+        if depth < 1.0 - 1e-3 {
+            assert!(point.abs().max_element() > 100.0, "{point} at {depth}");
+        }
+    }
 }
 
 const REACH: f32 = 6.0;
@@ -228,7 +254,7 @@ fn the_bank_of_a_cut_polygon_turns_into_the_channel() {
     // берег на обрезанном ребре: вершины на самом берегу (глубина 0) там, где
     // ребро x = ±50 пересекает русло
     let across_the_river = |gaps: &[Vec<Vec2>]| {
-        depths(&mesh_water_areas(&water, gaps))
+        depths(&mesh_water_areas(&water, gaps, ANYWHERE))
             .into_iter()
             .filter(|&(point, depth)| {
                 (point.x.abs() - 50.0).abs() < 1e-2 && point.y.abs() < 5.0 && depth < 1e-3

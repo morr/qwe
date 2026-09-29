@@ -8,19 +8,22 @@ use bevy::math::Vec2;
 
 use super::planting::plant_trees;
 use crate::city::City;
+use crate::grid::DEFAULT_NAVTILE_SIZE;
 use crate::map::along::densify;
 use crate::map::cars::district::Districts;
 use crate::map::grid::Grid;
 use crate::map::osm::entrances::generate_entrances;
 use crate::map::osm::model::{
-    AreaKind, BuildingUse, Faith, FenceLine, Highway, MapData, PipeLine, PolyArea, RailLine,
-    RoadArea, RoadClass, RoadLine, RoadNode, Sacred, SacredForm, SidewalkSide, Structure,
+    AreaKind, BuildingUse, Faith, FenceLine, Highway, MapData, Pavement, PipeLine, PolyArea,
+    RailLine, RoadArea, RoadClass, RoadLine, RoadNode, Sacred, SacredForm, SidewalkSide, Structure,
     TrafficSide, TreeCompose, TreeNode, TreeRow, TreeRowLayout, WallLine, WaterLine,
     closest_on_segment, point_in_area, point_in_polygon, ring_area, ring_bounds, ring_vertex_mean,
     signed_ring_area,
 };
 use crate::map::osm::overpass::{Element, GeoBounds, LatLon, Member, OverpassResponse};
 use crate::map::roads::network::sections::{self, SectionReport};
+use crate::map::roads::rings;
+use crate::map::roads::shape::LANE_WIDTH_DEFAULT;
 use crate::map::seed::seed_from_point;
 
 /// Ширина стены Кремля, м.
@@ -44,22 +47,55 @@ const ENTRANCE_SNAP_SCALE: f32 = 100.0;
 /// было не то чтобы нельзя — просто не за что было взяться: у стадии не было
 /// имени. Все шестьдесят тестов разбора поэтому гоняли конвейер целиком и
 /// адресовали дома по их месту в фикстуре.
-pub fn parse(json: &str, city: City) -> Result<MapData, String> {
+pub fn parse(json: &str, city: City, knobs: ParseKnobs) -> Result<MapData, String> {
     let response: OverpassResponse =
         serde_json::from_str(json).map_err(|error| format!("overpass json: {error}"))?;
-    Ok(parse_response(&response, city))
+    Ok(parse_response(&response, city, knobs))
+}
+
+/// Входы разбора, которых нет в ответе Overpass. Раньше обе были процессными
+/// глобалями, которые разбор читал сам (`shape::lane_width()`,
+/// `grid::navtile_size()`): у `parse(json, city)` было два невидимых входа, и
+/// тест не мог назвать ширину полосы, не заперев глобаль мьютексом —
+/// `cargo test` многопоточный. Теперь их называет вызывающий: поток загрузки —
+/// осевшими ручками (`loading::start_job`), витрина дорог — своей ширины
+/// полосы, всё прочее — [`Default`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ParseKnobs {
+    /// Ширина полосы улицы, м — ручка `Lane width` (`RoadShape::lane_width`).
+    /// Её читают сечения (шаг 0 [`finish_parse`]), а по ширине дорог
+    /// двигаются дома, кварталы и стоянки.
+    pub lane_width: f32,
+    /// Размер навтайла, м (`NavtileBase::size`): зазор, который генератор
+    /// дверей проверяет перед стеной (шаг 7).
+    pub navtile: f32,
+}
+
+impl ParseKnobs {
+    /// Входы по умолчанию — дефолты обеих ручек (3.3 м, 2 м). Константой, а
+    /// не только [`Default`]: тест называет её там, где нужна константа.
+    pub const DEFAULT: Self = Self {
+        lane_width: LANE_WIDTH_DEFAULT,
+        navtile: DEFAULT_NAVTILE_SIZE,
+    };
+}
+
+impl Default for ParseKnobs {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
 }
 
 /// [`parse`] уже десериализованного ответа. Отдельной дверью — ради витрины
 /// дорог: она читает выгрузку города один раз и режет из неё окна
 /// ([`super::crop`]), и гонять каждое окно обратно через JSON было бы
 /// круговой поездкой ни за чем.
-pub fn parse_response(response: &OverpassResponse, city: City) -> MapData {
+pub fn parse_response(response: &OverpassResponse, city: City, knobs: ParseKnobs) -> MapData {
     let bounds = GeoBounds::for_city(city);
 
     let (mut map, pending, read) = read_elements(response, &bounds);
     eprint!("{read}");
-    let passes = finish_parse(&mut map, &pending);
+    let passes = finish_parse(&mut map, &pending, knobs);
     eprint!("{passes}");
     map
 }
@@ -171,9 +207,14 @@ struct PlantedReport {
 /// этого единственным способом узнать, сколько домов отодвинулось от
 /// тротуаров, было прочесть строку на stderr.
 struct PassReport {
+    /// Y-подходов с хвостом, выпрямленных в обычный «Y»
+    /// (`roads::rings::straighten_tails`).
+    straightened: rings::Straightened,
     sections: SectionReport,
     drowned: usize,
     sidewalks: InferredSidewalks,
+    pavements: InferredPavements,
+    separate: verges::SeparateSidewalks,
     faiths_guessed: usize,
     entrances_found: usize,
     entrances_orphaned: usize,
@@ -183,6 +224,10 @@ struct PassReport {
     pulling: std::time::Duration,
     stretched: StretchedAreas,
     stretching: std::time::Duration,
+    /// Карманов земли у дорог, засеянных травой
+    /// (`pockets::fill_ground_pockets`).
+    sown: usize,
+    sowing: std::time::Duration,
     generated: usize,
     generating: std::time::Duration,
     planted: PlantedReport,
@@ -194,9 +239,12 @@ impl std::fmt::Display for PassReport {
         // разбор по полям, а не `self.…`: в строке посадки шесть подстановок, и
         // по именам они читаются, а по позициям — только счётом
         let Self {
+            straightened,
             sections,
             drowned,
             sidewalks,
+            pavements,
+            separate,
             faiths_guessed,
             entrances_found,
             entrances_orphaned,
@@ -206,11 +254,18 @@ impl std::fmt::Display for PassReport {
             pulling,
             stretched,
             stretching,
+            sown,
+            sowing,
             generated,
             generating,
             planted,
             planting,
         } = self;
+        let rings::Straightened { tails, elapsed } = straightened;
+        writeln!(
+            f,
+            "osm parse: {tails} roundabout Y approaches straightened off their tails in {elapsed:?}"
+        )?;
         writeln!(f, "{sections}")?;
         if *drowned > 0 {
             writeln!(
@@ -219,6 +274,8 @@ impl std::fmt::Display for PassReport {
             )?;
         }
         writeln!(f, "{sidewalks}")?;
+        writeln!(f, "{pavements}")?;
+        writeln!(f, "{separate}")?;
         if *faiths_guessed > 0 {
             writeln!(
                 f,
@@ -250,11 +307,17 @@ impl std::fmt::Display for PassReport {
         )?;
         let StretchedAreas {
             blocks,
+            cut,
+            cutting,
             lots: lots::PavedLots { grown, trimmed },
         } = stretched;
         writeln!(
             f,
-            "osm parse: {blocks} block vertices pulled to the drawn road edge, {grown} parking lots paved up to their roads, {trimmed} only stepped back from the houses on them, in {stretching:?}"
+            "osm parse: {blocks} block vertices pulled to the drawn road edge, {cut} blocks cut off the verges (in {cutting:?}), {grown} parking lots paved up to their roads, {trimmed} only stepped back from the houses on them, in {stretching:?}"
+        )?;
+        writeln!(
+            f,
+            "osm parse: {sown} ground pockets by the roads sown with grass in {sowing:?}"
         )?;
         let attached = entrances_found - entrances_orphaned;
         writeln!(
@@ -299,6 +362,10 @@ impl std::fmt::Display for PassReport {
 ///    ширина дороги выводится из числа полос, а её читают шаги 5 и 6 (тротуар
 ///    отодвигает дома, край дороги притягивает кварталы и стоянки). Домов этот
 ///    шаг не касается, так что ставить его раньше утопленников ничему не мешает.
+///    Ещё раньше, прямо перед ним, **выпрямляются Y-подходы к кольцам**
+///    (`map::roads::rings::straighten_tails`): проход двигает узлы и режет way,
+///    а сеть улиц собирается по готовым way, так что после сечений он бы её
+///    сломал.
 /// 1. **Утопленники** уходят первыми: дом, целиком стоящий в воде, не должен
 ///    получить ни веры, ни двери, ни выпрямленного контура — всё это работа
 ///    по дому, которого не будет.
@@ -306,6 +373,12 @@ impl std::fmt::Display for PassReport {
 ///    — этажность застройки вокруг, и утонувший дом в неё входить не должен;
 ///    а читают решение шаги 5 и 6 (дом отъезжает только от нарисованного
 ///    тротуара, квартал дотягивается под него же).
+///    **Покрытие дорожек без тега** ([`infer_pavements`]) — там же, хотя
+///    место ему любое: зелень, которую он спрашивает, дальше не двигается, а
+///    читает решение только рендер.
+///    **Тротуар, отданный отдельной дорожке** ([`verges::measure_footways_beside_streets`]),
+///    — сразу за покрытием: он спрашивает, мощёная ли дорожка вдоль кромки, а
+///    читают его, как и тротуар по застройке, шаги 5 и 6.
 /// 2. **Вера** — до дверей и до выпрямления: она собирает храм из частей
 ///    (`resolve_faiths` зовёт `absorb_annexes` внутри себя), а часть,
 ///    ставшая приделом, дальше читается иначе.
@@ -340,9 +413,14 @@ impl std::fmt::Display for PassReport {
 /// оба спрашивают «эта вершина общая?», и между ними контуры **двигаются**:
 /// выпрямленный дом уносит свои вершины на новые места, и счёт, снятый до
 /// него, отвечал бы про старую карту.
-fn finish_parse(map: &mut MapData, pending: &Pending) -> PassReport {
+///
+/// Входы вне ответа Overpass — только `knobs`: ширину полосы берёт шаг 0,
+/// навтайл — шаг 7. Глобалей проходы не читают.
+fn finish_parse(map: &mut MapData, pending: &Pending, knobs: ParseKnobs) -> PassReport {
+    map.knobs = knobs;
     let entrances = &pending.entrances;
-    let sections = sections::apply(map);
+    let straightened = rings::straighten_tails(&mut map.roads);
+    let sections = sections::apply(map, knobs.lane_width);
     let drowned = drop_buildings_in_water(map);
     // мера квартала строится по домам, только если есть кого спросить
     let districts = std::cell::OnceCell::new();
@@ -351,6 +429,8 @@ fn finish_parse(map: &mut MapData, pending: &Pending) -> PassReport {
             .get_or_init(|| Districts::new(&map.buildings))
             .storeys_at(point)
     });
+    let pavements = infer_pavements(map);
+    let separate = verges::measure_footways_beside_streets(&mut map.roads);
     let faiths_guessed = resolve_faiths(&mut map.buildings);
     let entrances_orphaned = attach_entrances(map, entrances);
 
@@ -366,10 +446,15 @@ fn finish_parse(map: &mut MapData, pending: &Pending) -> PassReport {
     let stretched = pull_areas_to_roads(map);
     let stretching = started.elapsed();
 
+    // после кварталов и стоянок: дотянутые, они уже покрывают свою землю
+    let started = std::time::Instant::now();
+    let sown = pockets::fill_ground_pockets(map);
+    let sowing = started.elapsed();
+
     // размеченных дверей в OSM единицы процентов — остальным дом получает свои
     // по замеру когорт, см. `entrances/`
     let started = std::time::Instant::now();
-    let generated = generate_entrances(map);
+    let generated = generate_entrances(map, knobs.navtile);
     let generating = started.elapsed();
 
     let started = std::time::Instant::now();
@@ -390,9 +475,12 @@ fn finish_parse(map: &mut MapData, pending: &Pending) -> PassReport {
     map.compose_trees(TreeCompose::default());
 
     PassReport {
+        straightened,
         sections,
         drowned,
         sidewalks,
+        pavements,
+        separate,
         faiths_guessed,
         entrances_found: entrances.len(),
         entrances_orphaned,
@@ -402,6 +490,8 @@ fn finish_parse(map: &mut MapData, pending: &Pending) -> PassReport {
         pulling,
         stretched,
         stretching,
+        sown,
+        sowing,
         generated,
         generating,
         planted,
@@ -492,6 +582,130 @@ fn infer_sidewalks(
     InferredSidewalks {
         asked: asked.len(),
         dropped,
+    }
+}
+
+/// Шаг, с которым дорожка без тега меряет, по зелени ли она идёт, м.
+const PAVEMENT_PROBE_STEP: f32 = 10.0;
+/// Клетка индекса зелени для [`infer_pavements`], м: парк — сотни метров,
+/// сквер — десятки.
+const GREEN_CELL: f32 = 100.0;
+
+/// Что решил [`infer_pavements`]: сколько дорожек без покрытия было спрошено,
+/// сколько из них ушли по зелени в тропинки и сколько остались мощёными,
+/// потому что оба их конца на мощёных дорожках.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+struct InferredPavements {
+    asked: usize,
+    unpaved: usize,
+    between_paved: usize,
+}
+
+impl std::fmt::Display for InferredPavements {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            asked,
+            unpaved,
+            between_paved,
+        } = self;
+        write!(
+            f,
+            "osm parse: {unpaved} of {asked} untagged footways run through greenery and stay \
+             unpaved, {between_paved} more are paved between paved paths"
+        )
+    }
+}
+
+/// Покрытие дорожки без тега `surface` — по тому, где она идёт.
+///
+/// Мощёную дорожку долго рисовали песчаной тропинкой, как и всякую: в центре
+/// города тротуар из плитки (`footway=sidewalk, surface=paving_stones`)
+/// ложился песчаной лентой рядом с бетонной полосой тротуара улицы, а сетка
+/// аллей сквера из плитки — пляжем (разведка C1). Теги решают больше половины
+/// дорожек ([`tagged_pavement`]); остаётся голый `footway` без `surface`, и
+/// его решает **середина пути по длине**: больше половины проб по парку, лесу
+/// или газону — тропинка, иначе — асфальт двора и улицы. По тегам в Туле и в
+/// парке мощёных больше, но всё мощёное там и размечено; молчащий `footway`
+/// в сквере — чаще протоптанная дорожка. **Кроме звена между мощёными**:
+/// дорожка по зелени, оба конца которой — точки мощёных дорожек (тег, род —
+/// лестница, площадь — или сама решённая мощёной), тоже мощёная. Один проход,
+/// без цепочек: звено, стоящее на другом таком звене, остаётся тропинкой.
+///
+/// Детерминировано: пробы — функция точек пути, индекс зелени — её контуров.
+fn infer_pavements(map: &mut MapData) -> InferredPavements {
+    let MapData {
+        roads,
+        parks,
+        woods,
+        grass,
+        ..
+    } = map;
+    let asked: Vec<usize> = roads
+        .iter()
+        .enumerate()
+        .filter(|(_, road)| road.class == RoadClass::Alley && road.pavement.is_none())
+        .map(|(index, _)| index)
+        .collect();
+    if asked.is_empty() {
+        return InferredPavements::default();
+    }
+    let green: Vec<&PolyArea> = parks
+        .iter()
+        .chain(woods.iter())
+        .chain(grass.iter())
+        .collect();
+    let mut index: Grid<usize> = Grid::new(GREEN_CELL);
+    for (at, area) in green.iter().enumerate() {
+        let (min, max) = ring_bounds(&area.outer);
+        index.insert(min, max, at);
+    }
+    let in_green = |point: Vec2| {
+        index
+            .at(point)
+            .iter()
+            .any(|&at| point_in_area(point, green[at]))
+    };
+    let mut unpaved = 0;
+    for &at in &asked {
+        let road = &mut roads[at];
+        let probes = densify(&road.points, PAVEMENT_PROBE_STEP);
+        let inside = probes.iter().filter(|point| in_green(**point)).count();
+        road.pavement = Some(if 2 * inside > probes.len() {
+            unpaved += 1;
+            Pavement::Unpaved
+        } else {
+            Pavement::Paved
+        });
+    }
+    // Дорожка по газону, оба конца которой стоят на мощёных, — звено мощёной
+    // сети, а не тропинка: лучи сквера от кольцевой аллеи к лестницам
+    // центральной площадки ложились песком, и лестницы торчали на нём
+    // мощёными обрубками с круглыми торцами (Тула, остров кольца, витрина 04)
+    let paved_joints: HashSet<(i32, i32)> = roads
+        .iter()
+        .filter(|road| road.is_paved_path())
+        .flat_map(|road| road.points.iter().map(|&point| vertex_key(point)))
+        .collect();
+    let mut between_paved = 0;
+    for &at in &asked {
+        let road = &mut roads[at];
+        let (Some(&first), Some(&last)) = (road.points.first(), road.points.last()) else {
+            continue;
+        };
+        if road.pavement == Some(Pavement::Unpaved)
+            && vertex_key(first) != vertex_key(last)
+            && paved_joints.contains(&vertex_key(first))
+            && paved_joints.contains(&vertex_key(last))
+        {
+            road.pavement = Some(Pavement::Paved);
+            unpaved -= 1;
+            between_paved += 1;
+        }
+    }
+    InferredPavements {
+        asked: asked.len(),
+        unpaved,
+        between_paved,
     }
 }
 
@@ -1331,6 +1545,23 @@ struct Edges<'a> {
 struct Edge {
     link: Link,
     kind: EdgeKind,
+    /// Полуширина проезжей части — кромка там, где тротуара нет.
+    kerb: f32,
+    /// `[слева, справа]` по ходу звена: у проезжей части с этой стороны
+    /// тротуар не рисуется (`sidewalk=no|separate`), и за кромкой лежит голая
+    /// земля или обочина до дорожки, а не плитка тротуара.
+    bare: [bool; 2],
+}
+
+impl Edge {
+    /// Зазор от точки до края полотна, **нарисованного с её стороны**: у
+    /// голой стороны — до кромки, у прочих — до края по карте (`link.reach`).
+    fn gap(&self, point: Vec2, axis: Vec2) -> f32 {
+        let Link { from, to, reach } = self.link;
+        // `perp` смотрит влево по ходу точек — сторона 0
+        let side = usize::from((to - from).perp_dot(point - from) < 0.0);
+        point.distance(axis) - if self.bare[side] { self.kerb } else { reach }
+    }
 }
 
 /// Что за дорога у звена [`Edge`]. Варианты не пересекаются: проезжая часть
@@ -1398,8 +1629,10 @@ fn pull_areas_to_roads(map: &mut MapData) -> StretchedAreas {
         }
         // тротуар — только тот, что рисуется: у `sidewalk=separate|no` его нет,
         // и квартал, дотянутый под несуществующую полосу, вставал за бордюром
-        let reach = road.sidewalk().mapped_edge(road.width / 2.0);
+        let sidewalk = road.sidewalk();
+        let reach = sidewalk.mapped_edge(road.width / 2.0);
         let kind = EdgeKind::of(road);
+        let bare = [0, 1].map(|side| kind == EdgeKind::Carriageway && sidewalk.on(side).is_none());
         for link in road.points.windows(2) {
             edges.push(Edge {
                 link: Link {
@@ -1408,6 +1641,8 @@ fn pull_areas_to_roads(map: &mut MapData) -> StretchedAreas {
                     reach,
                 },
                 kind,
+                kerb: road.width / 2.0,
+                bare,
             });
         }
     }
@@ -1433,6 +1668,11 @@ fn pull_areas_to_roads(map: &mut MapData) -> StretchedAreas {
             .map(|hole| pull_ring(hole, true, &roads, &mut stretched.blocks))
             .collect();
     }
+    // вершины решают порознь, а ребро между ними прямое: на плитке обочины
+    // двор ещё мог остаться — вырезается площадью
+    let started = std::time::Instant::now();
+    stretched.cut = verges::cut_verges_from_blocks(map);
+    stretched.cutting = started.elapsed();
     stretched.lots = lots::pave_lots(map);
     stretched
 }
@@ -1447,6 +1687,10 @@ fn pull_areas_to_roads(map: &mut MapData) -> StretchedAreas {
 #[derive(Default)]
 struct StretchedAreas {
     blocks: usize,
+    /// Кварталов, из которых вырезаны обочины ([`verges`]).
+    cut: usize,
+    /// Сколько длился вырез — доля общего времени прохода.
+    cutting: std::time::Duration,
     lots: lots::PavedLots,
 }
 
@@ -1523,7 +1767,44 @@ fn pull_vertex(point: Vec2, outward: Vec2, roads: &Edges) -> Option<Vec2> {
             (point.distance(axis) - reach, axis, index)
         })
     };
+    // кроме одного случая: вершина между тротуаром, замапленным дорожкой, и
+    // улицей за ним. Квартал в OSM нарисован до бордюра, а наша проезжая
+    // часть уже (Берлин, витрина 03: край квартала в 6–7 м от оси при
+    // полуширине 3.8), и двор торчал из-под тротуара серпом у каждого
+    // скругления угла. Полоса между тротуаром и бордюром — мощение, не двор:
+    // край уходит под дорожку — до её оси, а не на [`LANDUSE_OVERLAP`] за
+    // кромку: край между вершинами прямой, а дорожка гнётся, и полметра
+    // запаса оставляли вдоль неё волосяную нить двора (Тула, витрина 15)
+    let tuck = |gap: f32, axis: Vec2, index: usize| -> Option<Vec2> {
+        let direction = (axis - point).try_normalize()?;
+        // улица за ней — по нарисованному краю: у стороны без тротуара
+        // вершина может стоять в полосе тротуара по карте, которого там нет
+        let street_beyond = gaps().any(|(gap, axis, index)| {
+            roads.edges[index].kind == EdgeKind::Carriageway
+                && roads.edges[index].gap(point, axis) > 0.0
+                && gap <= LANDUSE_GAP_MAX
+                && (axis - point).dot(outward) > 0.0
+        });
+        (roads.edges[index].kind == EdgeKind::Walkway
+            && gap <= SIDEWALK_TUCK_MAX
+            && direction.dot(outward) <= 0.0
+            && street_beyond)
+            .then_some(axis)
+    };
     let (gap, axis, index) = gaps().min_by(|a, b| a.0.total_cmp(&b.0))?;
+    if gap <= 0.0 && roads.edges[index].kind == EdgeKind::Walkway {
+        // угол квартала под **другой** дорожкой — под кольцом перехода, к
+        // которому подходит тротуар: соседние точки края ушли под тротуар, а
+        // угол остался, где был, и край от него к ним вылезал из-под тротуара
+        // клином двора (Тула, витрина 21). Угол уходит под тротуар тоже
+        return gaps()
+            .filter(|&(gap, _, index)| gap > 0.0 && roads.edges[index].kind == EdgeKind::Walkway)
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .and_then(|(gap, axis, index)| tuck(gap, axis, index));
+    }
+    if gap <= 0.0 && roads.edges[index].kind == EdgeKind::Carriageway {
+        return in_bare_verge(point, outward, roads, gaps().collect(), &tuck);
+    }
     if gap <= 0.0 || gap > LANDUSE_CORNER_GAP_MAX {
         return None;
     }
@@ -1543,20 +1824,54 @@ fn pull_vertex(point: Vec2, outward: Vec2, roads: &Edges) -> Option<Vec2> {
     if gap > LANDUSE_GAP_MAX {
         return None;
     }
-    // кроме одного случая: вершина между тротуаром, замапленным дорожкой, и
-    // улицей за ним. Квартал в OSM нарисован до бордюра, а наша проезжая
-    // часть уже (Берлин, витрина 03: край квартала в 6–7 м от оси при
-    // полуширине 3.8), и двор торчал из-под тротуара серпом у каждого
-    // скругления угла. Полоса между тротуаром и бордюром — мощение, не двор:
-    // край уходит под дорожку
-    let street_beyond = gaps().any(|(gap, axis, index)| {
-        roads.edges[index].kind == EdgeKind::Carriageway
-            && gap > 0.0
-            && gap <= LANDUSE_GAP_MAX
-            && (axis - point).dot(outward) > 0.0
-    });
-    (roads.edges[index].kind == EdgeKind::Walkway && gap <= SIDEWALK_TUCK_MAX && street_beyond)
-        .then(|| point + direction * (gap + LANDUSE_OVERLAP))
+    tuck(gap, axis, index)
+}
+
+/// Вершина под краем проезжей части **по карте**, но, может быть, за её
+/// кромкой — с той стороны, где тротуара нет (`sidewalk=no|separate`), а край
+/// по карте один на обе стороны. Там лежит голая полоса или обочина до
+/// дорожки, а обочина рисуется под кварталом: угол двора, обведённый вокруг
+/// изгиба дорожки, торчал из её плитки тёмным штрихом (Тула, витрина 15, угол
+/// Ленина и Советской), полоска двора — полосой в плитке (Тула 21, Орёл 03).
+/// Такая вершина уходит к ближнему из двух краёв нарисованного: к дорожке —
+/// под неё ([`pull_vertex`], `tuck`), к кромке — под асфальт, наружу от
+/// заливки. `None` — вершина под нарисованным полотном какой-нибудь улицы,
+/// двигать нечего.
+fn in_bare_verge(
+    point: Vec2,
+    outward: Vec2,
+    roads: &Edges,
+    all: Vec<(f32, Vec2, usize)>,
+    tuck: &dyn Fn(f32, Vec2, usize) -> Option<Vec2>,
+) -> Option<Vec2> {
+    // зазоры до нарисованного края у проезжих частей
+    let kerbs: Vec<(f32, Vec2)> = all
+        .iter()
+        .filter(|&&(_, _, index)| roads.edges[index].kind == EdgeKind::Carriageway)
+        .map(|&(_, axis, index)| (roads.edges[index].gap(point, axis), axis))
+        .collect();
+    // под нарисованным — асфальтом улицы, дорожкой, проездом: двигать нечего
+    let covered = all
+        .iter()
+        .any(|&(gap, _, index)| roads.edges[index].kind != EdgeKind::Carriageway && gap <= 0.0);
+    if covered || kerbs.iter().any(|&(gap, _)| gap <= 0.0) {
+        return None;
+    }
+    let (kerb, axis) = kerbs.into_iter().min_by(|a, b| a.0.total_cmp(&b.0))?;
+    let walkway = all
+        .iter()
+        .copied()
+        .filter(|&(gap, _, index)| gap > 0.0 && roads.edges[index].kind == EdgeKind::Walkway)
+        .min_by(|a, b| a.0.total_cmp(&b.0));
+    if let Some((gap, walk_axis, index)) = walkway
+        && gap < kerb
+        && let Some(tucked) = tuck(gap, walk_axis, index)
+    {
+        return Some(tucked);
+    }
+    let direction = (axis - point).try_normalize()?;
+    (direction.dot(outward) > 0.0 && kerb <= LANDUSE_GAP_MAX)
+        .then(|| point + direction * (kerb + LANDUSE_OVERLAP))
 }
 
 /// Вершина угла квартала у перекрёстка, уже дотянутая под полотно одной
@@ -1986,14 +2301,6 @@ fn as_ring(points: &[Vec2]) -> Option<Vec<Vec2>> {
     Some(points[..points.len() - 1].to_vec())
 }
 
-/// Стоянка — карман вдоль улицы (`parking=street_side`): запомнить её индекс
-/// до того, как [`push_area`] её положит.
-fn note_street_side(map: &mut MapData, kind: AreaKind, tags: &HashMap<String, String>) {
-    if kind == AreaKind::Parking && tags.get("parking").map(String::as_str) == Some("street_side") {
-        map.street_side_lots.push(map.parking.len());
-    }
-}
-
 fn push_area(map: &mut MapData, area: PolyArea) {
     match area.kind {
         AreaKind::Building | AreaKind::Kremlin => map.buildings.push(area),
@@ -2003,7 +2310,7 @@ fn push_area(map: &mut MapData, area: PolyArea) {
         AreaKind::Grass => map.grass.push(area),
         AreaKind::Sand => map.sand.push(area),
         AreaKind::Residential | AreaKind::Industrial => map.landuse.push(area),
-        AreaKind::Parking => map.parking.push(area),
+        AreaKind::Parking(_) => map.parking.push(area),
         AreaKind::Pitch(_) => map.pitches.push(area),
     }
 }
@@ -2109,6 +2416,15 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
             .tags
             .get("bridge")
             .is_some_and(|value| value != "no");
+        let passage = is_building_passage(&element.tags);
+        // ширина дорожки — по тегу и виду; мостик и арка остаются при
+        // ширине класса: их лента — коридор, который режет навмеш, и узкий
+        // `width=1` на мостике сузил бы переход через реку до одного тайла
+        let width = if class == RoadClass::Alley && !bridge && !passage {
+            path_width(&element.tags)
+        } else {
+            width
+        };
         // `oneway=-1` — поток против порядка точек; разворачиваем здесь, чтобы
         // ниже по конвейеру «направление way» и «направление движения» были
         // одним и тем же. Рельс и водоток той же ноды это не касается: их
@@ -2123,15 +2439,20 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
             class,
             highway,
             bridge,
-            passage: is_building_passage(&element.tags),
+            passage,
             oneway: is_oneway(&element.tags),
             roundabout: is_roundabout(&element.tags),
             lanes: tagged_lanes(&element.tags),
+            lanes_backward: tagged_lanes_backward(&element.tags),
             parking_aisle: is_parking_aisle(&element.tags),
             turns: tagged_turns(&element.tags),
+            lane_markings: has_lane_markings(&element.tags),
             sidewalks: tagged_sidewalks(&element.tags)
                 .unwrap_or_else(|| untagged_sidewalks(&element.tags)),
+            verges: [0.0; 2],
+            verge_profile: Default::default(),
             parking: tagged_parking(&element.tags),
+            pavement: tagged_pavement(&element.tags),
         });
         return;
     }
@@ -2165,7 +2486,6 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
     // нужен контур, а не только теги — и тот же класс, которым дом рисуется
     let building_use = area_use(kind, &element.tags);
     let height = area_height(kind, &element.tags, building_use, &outer);
-    note_street_side(map, kind, &element.tags);
     push_area(
         map,
         PolyArea {
@@ -2240,7 +2560,6 @@ fn parse_relation(
         // торговой коробки меряется её пятном, и у ТЦ одним мультиполигоном
         // размечен и корпус, и пристройка под ним
         let height = area_height(kind, &element.tags, building_use, &outer);
-        note_street_side(map, kind, &element.tags);
         push_area(
             map,
             PolyArea {
@@ -2310,17 +2629,23 @@ fn assemble_rings(
 }
 
 mod lots;
+mod pockets;
 mod tags;
 #[cfg(test)]
 mod tests;
+mod verges;
 
 // Приватный реэкспорт: снаружи модуль виден тем же набором имён, что и до
 // разрезания, а `use super::*` в `tests.rs` продолжает доставать классификаторы.
 use self::tags::{
     NON_WALKABLE_ENTRANCES, area_colours, area_height, area_kind, area_storeys, area_use,
-    crown_radius, fence_kind, is_building_passage, is_oneway, is_oneway_backward, is_parking_aisle,
-    is_road_underground, is_roundabout, is_underground, pipe_width, rail_class, road_area_kind,
-    road_class, road_node_kind, row_spacing, service_track, structure_height, structure_kind,
-    structure_radius, structure_size, tagged_lanes, tagged_parking, tagged_sidewalks, tagged_turns,
+    crown_radius, fence_kind, has_lane_markings, is_building_passage, is_oneway,
+    is_oneway_backward, is_parking_aisle, is_road_underground, is_roundabout, is_underground,
+    path_width, pipe_width, rail_class, road_area_kind, road_node_kind, row_spacing, service_track,
+    structure_height, structure_kind, structure_radius, structure_size, tagged_lanes,
+    tagged_lanes_backward, tagged_parking, tagged_pavement, tagged_sidewalks, tagged_turns,
     untagged_sidewalks, water_class, water_width,
 };
+// Словарь `highway` нужен и обрезке витрины (`osm::crop`): какие значения —
+// дорожки, решает он один.
+pub(in crate::map::osm) use self::tags::road_class;

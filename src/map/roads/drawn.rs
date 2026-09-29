@@ -20,7 +20,7 @@ use super::pockets::KerbLots;
 use super::rings::Rings;
 use super::shape::RoadShape;
 use super::tapers::{Taper, Tapers};
-use super::{RoadStyle, ring_arcs};
+use super::{RoadStyle, leg_sections, ring_arcs};
 use crate::map::osm::{MapData, RoadClass, RoadLine};
 
 /// Какую ось берёт потребитель — решение вынесено из порядка `let` в тип.
@@ -148,10 +148,10 @@ impl<'m> Drawn<'m> {
     /// подготовки. [`Axis::Ribbon`] здесь совпадает с [`Axis::Nodal`].
     pub fn nodal(map: &'m MapData, shape: &RoadShape) -> Self {
         let osm = map.roads.as_slice();
-        let nodes = RoadNodes::new(osm);
+        let mut nodes = RoadNodes::new(osm);
         // ось по улице целиком, не по way (`roads/axis.rs`); у переезда та же
         // ось, что у его дороги, — он отличается шириной и классом
-        let axes = axis::street_axes(osm, &map.rails, &map.network, &nodes, shape);
+        let axes = axis::street_axes(osm, &map.rails, &map.network, &mut nodes, shape);
         let mut roads: Vec<Cow<'m, RoadLine>> = osm.iter().map(Cow::Borrowed).collect();
         let mut crossings = 0;
         // порядок — порядок подмены: поздняя побеждает
@@ -165,7 +165,8 @@ impl<'m> Drawn<'m> {
                 };
                 (index, crossing)
             })
-            .chain(ring_arcs(osm, &axes.rings));
+            .chain(ring_arcs(osm, &axes.rings))
+            .chain(leg_sections(osm, &axes.rings, map.knobs.lane_width));
         for (index, road) in substitutes {
             roads[index] = Cow::Owned(road);
             crossings += 1;
@@ -259,7 +260,8 @@ impl<'m> Drawn<'m> {
         self.roads.iter().map(Cow::as_ref).collect()
     }
 
-    /// Общие узлы дорог — по точкам OSM.
+    /// Общие узлы дорог — по точкам OSM и по месту, куда их сдвинула разводка
+    /// пар ([`RoadNodes::alias`]).
     pub fn nodes(&self) -> &RoadNodes {
         &self.nodes
     }
@@ -349,8 +351,8 @@ impl<'m> Drawn<'m> {
     }
 
     /// Тротуар, который рисуется **с этой стороны** `[слева, справа]` по ходу
-    /// точек: [`Self::sidewalk_drawn`] там, где его ставит тег
-    /// ([`SidewalkProfile::on`](crate::map::osm::model::SidewalkProfile::on)).
+    /// точек: [`Self::sidewalk_drawn`] там, где его ставит профиль
+    /// ([`SidewalkProfile::sides`](crate::map::osm::model::SidewalkProfile::sides)).
     /// Карта, ручка, проём пары и сторона — одним ответом карману, скруглению
     /// в узле и кромке слияния. Сторону пары он не снимает: там её снимает
     /// сам потребитель по [`Pairs::beside`] — у скругления со слаком, у ленты
@@ -358,6 +360,15 @@ impl<'m> Drawn<'m> {
     pub fn sidewalk_on(&self, index: usize, side: usize) -> Option<f32> {
         self.sidewalk_drawn(index)
             .filter(|_| self.roads[index].sidewalk().sides()[side])
+    }
+
+    /// Обочины дороги до отдельных тротуаров (`RoadLine::verges`), если
+    /// тротуары рисуются; кусок в проёме пары — без них.
+    pub fn verges_drawn(&self, index: usize) -> [f32; 2] {
+        if !self.sidewalks || self.across_median[index] {
+            return [0.0; 2];
+        }
+        self.roads[index].verges
     }
 
     /// Тротуар, который у дороги есть **на карте**

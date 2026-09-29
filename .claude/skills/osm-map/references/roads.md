@@ -35,6 +35,76 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   path crossing a street still reaches the asphalt, because a **driveway crossing**
   (`network::driveway_crossings`) is redrawn as a `Street` and a footway that is not one
   is simply covered by the carriageway at 2.0 as before.
+  **Paved paths** (`RoadLine::is_paved_path`, `pavement` from `parse.md`, **Pavement of
+  untagged footways**) are not alleys in the drawing: `mesh_roads` lays them **in the
+  sidewalk layer** (1.6) in `SIDEWALK_COLOR`, the alley layer keeps only the unpaved sand
+  trails and paths nobody decided (a test's hand-built `None`). Before this every path was
+  sand, and in the centre that meant a `footway=sidewalk, surface=paving_stones` lying as
+  a sand strip beside the concrete band of its own street and a paved square's grid of
+  alleys reading as a beach (scout C1, Frunze street and the Kremlin garden). In the
+  sidewalk layer a mapped pavement merges with the band instead of sitting beside it in
+  another colour. The fill slot is picked **after** the street's own band in the loop — a
+  borrow, not a rule. A junction's kerb return between two arms of which **either** is
+  paved goes with it (`corners::Arm::paved` → `KerbReturns::sidewalks`, counted in
+  `outer[1]`): a sand fillet in the corner of two tiled alleys read as a stain. Pinned by
+  `roads/tests.rs::a_paved_path_is_drawn_in_the_sidewalk_layer`.
+  **Unpaved streets** (`RoadLine::is_unpaved_street` — a `Street` whose `surface` is
+  `unpaved|gravel|fine_gravel|pebblestone|ground|dirt|earth|mud|sand|grass|compacted|…`,
+  the same vocabulary as the paths, `tags.rs::surface_pavement`) are the private sector's
+  lanes, and they used to be drawn as grey asphalt with a dashed axis (scout D4: Rostov
+  04, Kaluga 06, Oryol 06; Kaluga carries 126 such streets and drives, Rostov 37, Oryol
+  39). Now the fill goes to its own layer `unpaved_roads` at `Z_UNPAVED_ROAD` 1.8 —
+  above the sidewalks and the alleys like any carriageway, **below the asphalt at 2.0**,
+  so where a dirt lane runs out onto a paved street the junction is asphalt without any
+  draw-order bargaining — in `UNPAVED_ROAD_COLOR` (a warm grey-brown, a step lighter
+  than asphalt and darker than a sand trail) over `SurfaceKind::Unpaved`: mottle three
+  times the asphalt's at 14 m (puddles, patches of fill), coarser grain, dark gravel
+  speckle, and the same ruts as the asphalt (the lane frame stays — a dirt road is
+  driven by the same wheels). No paint on dirt: no lane lines (`Painter::paint`
+  returns), no zebra — neither by the rule nor off an OSM crossing node, which
+  `node_paint` does not even collect on such a road — and no stop line or give-way line,
+  whatever calls it (Kaluga 06: the `give_way` node on Новаторский drew two white stubs
+  of the dashed line across the gravel; the sign stays a sign). A kerb return between two
+  unpaved arms goes to their layer (`corners::Arm::unpaved` → `KerbReturns::unpaved`),
+  and with a radius of at most `DIRT_RADIUS` 3 m whatever their class (`kerb_radius`):
+  the street's 6 m on a one-lane private-sector lane (Tula, 18-й × 8-й проезд Мясново)
+  was a crisp kerb arc wider than the lane itself — a paved crossing cast in gravel.
+  Pinned by `corners.rs::two_dirt_roads_meet_with_a_small_corner`.
+  **Between an unpaved and a paved arm there is no kerb return at all** — the way a
+  gravel lane really meets a street: the asphalt runs straight past the mouth, not
+  branching off, and the dirt enters its edge as it is, without asphalt flares or
+  bevels. The asphalt fillets there read as a paved apron leaving the street for the
+  dirt road (Kaluga 07, Новаторский переулок into Новаторская). What such a pair still
+  closes — a sharp fork's nose, an outer corner — goes to the unpaved layer, under the
+  asphalt. **Asphalt split into two ways where the dirt crosses it** (the only two paved
+  arms of the node, nearly collinear, both ends) butts on both sides like any junction
+  arm, and with no fillet to the dirt the gap on the outside of its kink stayed open: a
+  thin line of gravel across the asphalt (Kaluga 06, Молодёжная, where the way with
+  `lane_markings=no` begins on the gravel crossing). The two asphalt arms get the
+  asphalt outer corner between them (`outer_corner`, counted in `outer[0]`); pinned by
+  `corners.rs::asphalt_kinked_across_a_dirt_road_leaves_no_gap_at_the_seam`.
+  **Asphalt continued by dirt** (two nearly collinear ends of one surface each,
+  nothing else of their class at the node) ends square on both sides: the round cap of
+  the asphalt lay on the gravel as a half-disc; the gap on the outside of a slight kink
+  is an outer corner in dirt. For that the seam must stay on the node: the street axis
+  passes a free seam as one arc and cuts the ways a few millimetres off it, where
+  `kerb_returns` sees no node and the caps stayed round — so a seam where the surface
+  changes is **pinned** (`axis.rs::Run::stitch`, `resurfaced`), the same as a seam
+  another street joins. Pinned by `a_dirt_road_enters_the_asphalt_without_kerb_returns`
+  and `asphalt_turning_into_dirt_ends_square`; gallery `kaluga/07_gravel_tee`.
+  **An asphalt street ending at a
+  dirt road** — the only paved arm of its node, the node's other two or more arms dirt —
+  stops at the dirt road's kerb: `KerbReturns::setback` gives that end the widest dirt
+  arm's half width, and `mesh_roads` cuts the fill back by it (`tapers::cut`; not on an
+  end under a taper). Carried to the node like every ribbon, its butt lay over the gravel
+  as a square tongue up to the dirt road's axis, with a step on each side where it was
+  wider than the kerb returns (scout R2, Tula 13); now the asphalt ribbon ends flush with
+  the dirt edge, square, with no kerb returns (the rule above). An asphalt road crossing the
+  dirt one (two paved arms) runs through as before
+  (`an_asphalt_street_stops_at_the_edge_of_the_dirt_road_it_meets`). The sidewalk is already gone by
+  the parse (`untagged_sidewalks`). An untagged street stays asphalt — the tag is rare
+  (Tula has a handful), and a guessed dirt road in a city block would be a worse lie
+  than a missed one. Pinned by `roads/tests.rs::an_unpaved_street_draws_in_its_own_layer_without_lines`.
   A **bridge is the exception**: `is_carriageway` says yes, so a deck keeps its
   lane markings, but the bridge branch of `mesh_roads` `continue`s into `Bridges::push_deck`
   + `Bridges::fills` *before* the sidewalk block — a deck gets no band ever, at any width or
@@ -50,8 +120,9 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   partner, and the full band resumes past the run with a butt joint; a piece under
   `pairs::SIDEWALK_PIECE_MIN` 0.5 m between two runs is skipped (centimetre offcuts), and
   so is a piece left with no side at all. `None` from `band_pieces` is the whole band on
-  both sides, laid uncut. On a half with a taper the runs are not re-cut and the band
-  stays as the tag has it (`Pairs::unpaired_pieces`).
+  both sides, laid uncut. On a half with a taper the runs are shifted by the head
+  wedge's length, since the band is laid along the body past it (`Pairs::unpaired_pieces`,
+  which left the paired side on, is gone).
   **`sidewalk=*` picks the sides** (stage 7): `RoadLine::sidewalks` `[left, right]` along
   the points (`parse/tags.rs::tagged_sidewalks` — `both|left|right|no|none|separate`,
   refined by `sidewalk:both|left|right`; `no` and `separate` mean no band, a separate
@@ -70,7 +141,73 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   both. The trigger was the Yandex comparison: in Tula silence means "yes" in the centre
   and "no" among private houses (galleries 09, 13, the side streets of 03 and 19), and
   the band there drew the rule zebras after it. Tula: see the `osm parse: N of M
-  untagged residential streets left without sidewalks` line.
+  untagged residential streets left without sidewalks` line. And any carriageway —
+  arterials included — gives an untagged side up to a **separately mapped paved footway**
+  running alongside it (`parse/verges.rs::measure_footways_beside_streets`, `parse.md`,
+  **Sidewalks left to a separate footway**): the band beside it was a second sidewalk —
+  but only behind a real lawn (`SEPARATE_LAWN` 1.5 m to the footway's near edge); a
+  footway at the kerb keeps the band under it. **Any side** of a paved street with such a
+  footway alongside — up to `VERGE_REACH` 10 m past the kerb (16 m on a two-way street),
+  band or no band, dropped or `sidewalk=separate` — gets a **verge** (`RoadLine::verges`,
+  metres from the kerb to the footway's axis, the median over the probes, and its
+  profile by place, `RoadLine::verge_at`), drawn by `roads.rs::push_verges` as a
+  one-sided strip in sidewalk tile, from the axis past the kerb — with a profile a
+  polygon of varying width on the path densified every `VERGE_STEP` 2.5 m, carried
+  `VERGE_END_OVERLAP` 0.3 m past each end along the tangent so the verges of two ways of
+  one street overlap at their seam (a disc of the end's width was meant to do that and
+  never drew: it was a ribbon over a 1 cm stub, and `merge_ribbon_points` merged the stub
+  into a point — a hairline across the verge at every such seam, Oryol 04 north); without
+  one the old ribbon — round-capped, in its own
+  layer **`road_verges` at `Z_ROAD_VERGE` 0.1 — under the landuse blocks and every
+  green**: a lawn mapped between the kerb and the footway stays a lawn, and bare ground
+  there — a hole down to the earth framed by the kerb returns at every corner of Tula's
+  centre (scout R3, galleries 15, 21; Kaluga 03 and Oryol 03 too) — is paved. **The
+  corner** comes from the kerb returns (`corners.rs`, `KerbReturns::verges`): between two
+  sidewalk-carrying arms where at least one side has a verge, a fillet by the verge at
+  the node (`verge_at` there; the band where there is none) with the arc at the kerb radius less the **narrower** of the
+  two — by the wider, as the band corners do, it left a wedge of ground along the
+  narrower. **A wide verge is a lawn** (`paved_verge`): tile covers a verge up to
+  `VERGE_PAVED_MAX` 4 m whole; wider, only a `VERGE_KERB` 0.5 m strip at the kerb —
+  **a step, not a ramp**. The tile used to narrow over 2 m of extra width, and where a
+  footway leaves the street slowly its edge ran obliquely across the whole verge: a
+  thin slanted wedge of lawn between the tile and the footway, and teeth where the
+  profile wavered around 4 m (Oryol 03, roads tails L7). Along a verge by place
+  `roads.rs::verge_runs` decides lawn or tile per vertex, folds a run shorter than
+  `VERGE_RUN_MIN` 10 m between runs of the other kind into its neighbours (the end runs
+  stay — the node's corner is there), and at each change inserts a vertex pair
+  `VERGE_SEAM` 0.05 m either side of where the verge passes 4 m, so the tile ends in a
+  seam across the street. Pinned by `a_verge_turns_from_tiles_to_lawn_across_the_street`.
+  The whole verge — body
+  and end discs where the width is past 4 m — goes as grass under the tile, and **which
+  grass is the neighbour's**: by default the yard's muted grass (`RESIDENTIAL_COLOR`,
+  `SurfaceKind::Yard`, **`road_verge_yards` at `Z_ROAD_VERGE_YARD` 0.09**) — beside a
+  residential block the noise is by world position, so there is no seam at the block's
+  edge; a meadow (`GRASS_COLOR`, `SurfaceKind::Grass`, **`road_verge_lawns` at
+  `Z_ROAD_VERGE_LAWN` 0.08**) only beside a **mapped lawn or park** (`Meadows::beside` —
+  `MapData::parks` or `MapData::grass` under the verge's middle or 3 m past it, probed
+  at a quarter, half and three quarters of the way), like the lawns it continues. One
+  colour for both read wrong both ways: the meadow lay as a bright ribbon along every
+  street of the district frame d2, the yard green lay heavy beside the meadows of Tula
+  15's square (roads plan №42). Asking for the yard was not enough either — the verge
+  in front of a square, a lot or bare ground stayed a light-green ribbon on the district
+  (the east side of Фрунзе, d2; roads tails L1), hence the default is the yard grass
+  and the meadow is the exception. A corner between two verges both wider than 4 m
+  goes there too (`KerbReturns::verge_lawns`, `Meadows::under` — any vertex or the
+  centre on a mapped lawn). **A corner with a lawn behind it
+  gets a kerb pad** (`corners.rs::kerb_pad`): tile `KERB_PAD_WIDTH` 3 m deep along the
+  road fillet's own arc (same centre, `FilletArc`), running on `KERB_PAD_RUN` 4 m along
+  each straight kerb, into `KerbReturns::verges` — the zebras land at the corner, and
+  without it they ended on grass, a lawn sickle between two lawns (Tula 01).
+  In a microdistrict (Фрунзе in Tula, the district frame d2)
+  the tile laid from the kerb to a footway fifteen metres off made the street read as
+  poured concrete; there it is a lawn with the footway on it, as in any Soviet yard,
+  while the narrow paved verges of the centre's corners stay tile, and nothing between
+  the kerb and the footway is bare ground either way (roads plan S4). **A ring arc takes
+  its verge on the outer side only** (`Ring::ccw` says which: the island is on the left of
+  a counter-clockwise ring) — inside is the island and its lawn, and without it a
+  parallelogram of bare ground lay between the ring's sidewalk and a footway along it
+  (Kaluga 01, roads plan S3); the arc's end discs lie under its own asphalt.
+  Render-only: the navmesh and the house pull never read it.
   **One profile for the parse and the renderer**: `RoadLine::sidewalk()` →
   `SidewalkProfile` (`osm/model.rs`) — the sides as bools plus the **band by class**
   (`sidewalk_band`, 22 % of the width, 1.2–3 m; `Some` on a carriageway, a bridge
@@ -83,7 +220,7 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   pulled to the roads**). Every edge is one reach per road on both sides, even for a
   one-sided `sidewalk=right`; a per-side edge would change the map, so it is not here.
   The renderer's sidewalk is that profile under the Sidewalks toggle (`Drawn::sidewalk_drawn`,
-  and per side `Drawn::sidewalk_on` / `band_half` through `on(side)`).
+  and per side `sidewalk_on` / `band_half` through `sides()` / `on(side)`).
   The drawn sidewalk is `None` when neither side has one; `push_sidewalk` lays a one-sided
   band the paired-half way (width plus one sidewalk, shifted half a sidewalk to its side)
   and ANDs the tag with the pair runs; the kerb returns drop the arc on a missing side;
@@ -153,6 +290,16 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   past the bay's edge). A rule bay touching a frontage is **dropped after** the bays
   are laid, so the RNG stream and every other bay of the block stay put; a tagged run
   is **cut** around the frontage like around a row break, its tapers outside it.
+  **Any lot kind makes a frontage, not only the kerbside lot of that side.** Resolving
+  the two OSM records of one lay-by — the road's `parking:<side>=street_side` and a
+  `LotKind::Kerbside` outline — onto the road side at parse, and letting only that lot
+  silence the pocket, was considered and rejected: the rule exists
+  for the author's report above, and that lot is `parking=surface` (way 479605523), a
+  `Yard`; narrowing it to kerbside lots would put the bay back in front of the theatre.
+  The two records of a lay-by are already reconciled by this same frontage — the kerbside
+  lot is paved to the kerb and silences the pocket along itself — so a parse-side link
+  would have added a second answer to a question this one already settles
+  (`a_rule_pocket_is_not_laid_beside_a_parking_lot` pins it on a yard).
   Drawn by `mesh_roads` as three polygons per pocket from
   `pockets::outline` (inner edge 5 cm under the carriageway edge, outer edge between the
   tapers): asphalt `POCKET_WIDTH` 2.5 m wide in `roads` (no casing — the road casing
@@ -187,38 +334,99 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     that end shifted along the axis, lost the pair metres before every node and seam, and
     the double solid stopped short of the junction (the author's report, sample 2).
     Consecutive probes with one partner are a **run** (`PairRun`, `PAIR_MIN` 8 m), and a
-    run's gap is its median. One `Median` per pair of runs, from the half with the lower
+    run's gap is its median. **The partner holds from probe to probe** while it is within
+    `PARTNER_SLACK` 0.5 m of the nearest: at a seam of the opposite half its two ways
+    stand end to end, and inside `END_OVERHANG` the nearest flipped between them every
+    other probe, cutting the pair into pieces under `PAIR_MIN` (roads plan №32). **A short
+    way can be a half too** (`RunKind::Short`): a run under `PAIR_MIN` but at least half
+    of it and `PAIR_COVER` 0.75 of the way's own length is taken in a second pass if the
+    way shares an end with a half that found a pair — a street cut into ten-metre ways at
+    a bridge; two slips meeting are no continuation of a pair and stay unpaired. Before,
+    Первомайский in Ryazan (gallery 03) had a 9 m and a 13 m way between the lawn and the
+    bridge left unpaired, and their inner sidewalks tiled the whole median with a square
+    of bare ground in its corner. One `Median` per pair of runs, from the half with the lower
     index — the old lot code computed it from both sides first and got two double lines
     a few centimetres apart.
   - **Queries** — what a half differs by is asked of `Pairs`, not read off its runs in
     each consumer: `beside(road, at, slack)` — is a run there and is the partner on the
     left (the kerb returns pass two probes of slack, a run ending where the probes stopped
-    finding the partner; the wedge's asphalt under a half takes none, the middle of a
-    wedge lying inside the run); `partners(road)` as `Partner { road, paved }` (the
+    finding the partner; the sidewalk wedge of a half, bare on the partner's side, takes
+    none, the middle of a wedge lying inside the run); `partners(road)` as `Partner { road, paved }` (the
     junction paint's zebra plank); `is_paired(half, other)` (the merges, which widen it to
     the streets); `across_median(road, path, nodes)` — the cross-street piece in the
     median's opening (**Kerb return** below); `band_pieces(road, sides, stitch, total)` —
     the sidewalk band cut into pieces without the pair side (**Sidewalks** above);
-    `medians()`. `Drawn` answers none of them
-    itself: it hands out `pairs()`, one owner. **The fields are closed** (`pub(super)`,
-    visible to `roads/network` only): `PairRun` and `Pairs::runs` are read by nobody
-    outside the module, and a `Median` answers `roads()`, `gap()`, `midline()`,
-    `inner()`, `is_paved()`, `carries_tram()`, `apart()` — the drawing
-    (`roads/medians.rs`), the big lot's kerb (`roads/lots.rs`) and the tram band read
-    those — while the one mutation from outside, the midline reaching the junction ahead
-    (`medians::reach_breaks`, which decides *how far*), goes through `Median::extend(end,
-    along)`, which lengthens the midline and both inner kerbs at once. Tests build runs
-    with `PairRun::for_test` and hand them in through `Pairs::of_runs` /
-    `Drawn::with_pairs` (`Pairs::set_runs`).
+    `has_runs(road)` — is the road a half anywhere (the bridge decks the alignment
+    carries along, `roads/axis.rs`); `medians()`. `Drawn` answers none of them
+    itself: it hands out `pairs()`, one owner. **The fields are closed** — `PairRun`,
+    `Median` and `Pairs` keep them `pub(super)`, so only `network/*` (`align`, the pair
+    tests) reads them. A median is read through `roads()`, `gap()`, `width()`,
+    `midline()`, `inner()`, `is_paved()`, `carries_tram()`, and the one change it takes
+    from outside is `Median::extend(end, along)` — the midline and both inner edges
+    lengthened at one end, each along its own last link, which `medians::reach_breaks`
+    uses to carry a median to the junction (the tip and its heading are
+    `along::tip_of`, shared with the gores). Tests build runs with
+    `PairRun::for_test`, `Pairs::of_runs` and `Drawn::with_pairs` (`Pairs::set_runs`).
+  - **One door** (`medians::draw`) — every median of every pair goes through one call
+    from `mesh_roads`, and every other function of `medians.rs` is private to it: the
+    base breaks it opens on, the reach to the junction, the paved strip or the tram bed
+    in the streets layer, the lawn (kerb in the sidewalks, grass in `road_medians`, the
+    rest between the kerbs as asphalt), the zebras cut through as passages, the second
+    pass that carries each double solid up to the nose of its pair's lawn and bridges its
+    stubs. What it needs from neighbours comes in `MedianInputs` — the median base, the
+    paint breaks and the zebras (`Junctions`), the half widths, the markings knob, and
+    three closures (`Merges::is_pure_node`, `Gores::reach`, `RoadNetwork::street_of`) —
+    so `medians` pulls in neither `gores` nor `merges`' logic. It **paints nothing**: the
+    double solids come back in `MedianDrawing::painted`, ready (midline + breaks), and
+    `mesh_roads` hands them to `Painter::paint_median` — otherwise `medians` would drag
+    in `paint.rs`. The rest of `MedianDrawing` is what the neighbours read further down
+    `mesh_roads`: `paved` (the tram band, the big lot's edge), `lawn_kerbs` (the merge
+    nose, `merges::nose_fill`), `ends` (the merge axis meeting a median,
+    `merges::merge_axis`) and `bed_caps()` (the asphalt past a tram bed's end). The push
+    order into each builder is the old loop's, pinned by
+    `tests.rs::the_median_loop_lays_the_same_vertices`; `draw` itself is tested on a bare
+    avenue in `medians.rs` (`a_paved_median_hands_back_its_double_solid_instead_of_painting_it`,
+    `a_lawn_median_hands_back_its_kerbs_and_nose_ends`).
   - **Alignment** (`Pairs::align`) — each half is densified to `ALIGN_STEP` 4 m and moved
     so that it stands at half the target distance from the midpoint between it and the
     partner's original axis: target gap = the run's median, paved ones no narrower than
     `PAVED_MIN_GAP` 0.5. The weight fades (smoothstep) over `ALIGN_TRANSITION` 20 m to a
     run's end — unless the end is a seam whose continuation carries a run at the same
-    node — and to a node shared with **another** carriageway (a street or a drive — a
-    footway crossing pins nothing, as on **The street axis**), which stays exactly in
-    place (kerb returns, breaks and stitches find each other by it). Next to such a node
-    the axis is not moved at all for `PIN_STRAIGHT` 16 m and the fade begins beyond it: a
+    node. **A node shared with another road moves with the half**: `align` returns each
+    such node as `(OSM point, drawn point)`, `Pairs::follow_moved_nodes` moves that
+    vertex of every other road there to the same place (its neighbours follow, fading
+    over `FOLLOW_FADE` 12 m, up to the next node), and `RoadNodes::alias` makes the new
+    place find the same roads — kerb returns, breaks, stitches and rings look nodes up by
+    a vertex of the drawn axis. Before, every node with a carriageway was pinned, and at
+    each yard exit the axis fell back to OSM: on Красноармейский the distance between
+    the axes dipped from 11.4 to 9.9–10.7 m every 50–100 m and the kerb waved by a metre
+    and a half (the author's report after the seam fix). A node moved by two halves —
+    a half's end and its continuation's start — is put at the **mean** of the two moves,
+    so both drawn ends stay one vertex (apart, they missed each other by 5–8 cm and the
+    node was lost). A **continuation** is a way of the same street *or* the coaxial way
+    past the end (`RoadNodes::next_way`): at a crossing the network's street ends
+    (Красноармейский is tertiary up to the node and primary past it) while the half goes
+    on, and a fade on both sides narrowed the avenue at every crossing. **A bridge is a
+    half like any** (`pairable` excludes only arches): unpaired, its axes stood where
+    the mapper laid them, 9.5 m apart on Красноармейский over the canal, and the
+    approaches converged on them. The navmesh carves the bridge by the OSM points, and
+    the alignment moves the halves *outward*, so the walkable part stays inside the
+    drawn deck. Such a bridge is also **smoothed with its street** (`axis.rs`, the
+    `excluded` rule keeps out only unpaired bridges and arches), and a footway bridge
+    mapped beside it follows it (`follow_bridge_sidewalks`: every vertex takes the shift
+    of the nearest deck point): bridge decks lie over the streets, and the footway deck
+    left at its OSM place put its tail over the moved approach as a pale tooth. At a node
+    where two halves meet (the mean above), both ends are put on **one tangent**
+    (`align_seam_ends`, a vertex `SEAM_TAIL` 0.5 m in along the bisector): the ribbons
+    end square to their own axis, and a 2° kink between a bridge and its approach showed
+    as a notch in the kerb. **A run is judged by its chain** in `Pairs::new`: pieces of
+    probes that change partner with no gap count their length together (a piece under
+    `PAIR_MIN / 2` inside a chain is a sliver at a seam and is dropped) — a 16 m way at a
+    seam of the opposite half saw 7.4 m of each of its two ways, neither piece reached
+    `PAIR_MIN`, and the half went unpaired into the bridge. **Pinned** is now only a node
+    the other road cannot follow to: one with another aligned half, a ring or a bridge
+    (a street or a drive — a footway pins nothing, as on **The street axis**). Next to
+    such a node the axis is not moved at all for `PIN_STRAIGHT` 16 m and the fade begins beyond it: a
     kerb return is laid only on a straight edge, and a 10 m return to a crossing avenue
     needs its half width plus the tangent (stage 5 — before it the fade bent the edge from
     the node on, and the corners of sample 2 came out a metre or two). **Runs of one half
@@ -241,29 +449,148 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     `RUN_BRIDGE` fix). The pair tests that align raw points could not see it;
     `a_seam_of_the_own_half_on_a_smoothed_axis_does_not_let_the_axes_go` runs
     `street_axes` with the default curve.
+    **At a seam with a taper the gap changes along the wedge, not across the node**
+    (`seam_blend`, `SeamWedge`): the narrow way keeps its own gap up to the node, the
+    wide one goes from the narrow one's gap at the node to its own at the end of the
+    fitted wedge, linearly, like the wedge itself — so both kerbs of the wedge are
+    straight lines. The `ALIGN_TRANSITION` blend centred on the node used to fall on the
+    same seam as the wedge, and where a lawn median ends at a change of section the
+    outer kerb first went in with the closing gap and then out with the wedge — a
+    0.2 m dogleg (Tula, gallery 16: Советская 2 → 4 lanes, the lawn of 4.8 m becoming a
+    0.8 m paved median; `a_gap_changing_at_a_taper_seam_changes_along_the_wedge_and_keeps_the_kerbs_straight`).
+    A seam without a taper keeps the centred blend.
+    **The distance is measured with the half widths that face each other, and on a
+    taper that is the tapered one** (`facing_half`, fed by `street_axes` with a
+    `Tapers::new` over the roads as parsed — the same joints `Drawn` finds later): a
+    wedge that narrows the partner's side gives the half, at `d` metres from the seam,
+    `narrow + (wide − narrow)·d/L` over the wedge length `L` (`tapers::fit`), both for
+    the half being moved and for the partner at its nearest point, and the median's
+    inner edges use the same halves. With the full width the wide way's axis stood
+    half the width difference further from the middle than the narrow one's, so at a
+    2 → 4 seam the two axes of one half missed each other by 1.4 m: a step on the outer
+    kerb and a 1 m hole to the ground at the inner corner, between the two medians and
+    the wedge (Tula 16, Советская, the author's report after stage №14). Now the axes
+    meet (within ~0.3 m where the two ends measure against different partner ways) and
+    the wedge's inner edge runs on straight: only the outer kerb narrows
+    (`a_widening_seam_of_the_own_half_meets_and_keeps_the_inner_kerb_straight`).
     Then the path is thinned back by
     Douglas–Peucker at `SIMPLIFY_TOLERANCE` 3 cm keeping every shared node, and the
     median's midline and the two inner kerbs are sampled off the aligned axes and thinned
     the same way; the thinning is what took the stage from +130 k vertices and +50 ms
     down to +24 k and +18 ms. Ends of two medians closer than `pairs::JOIN_GAP` 5 m are
     drawn together (`join_ends`): a half of two ways is two runs, and the gap at the seam
-    was a hole in the double line and a kerb island on the «Макси» boulevard. For the same
-    reason a half's sidewalk is not drawn in a gap shorter than `pairs::JOIN_GAP` between
-    two runs on the same side (`Pairs::band_pieces`) — whatever the runs are, paved, lawn
-    or tram bed: their medians are drawn tip to tip, and the sidewalk lay between them as
-    a pale patch.
+    was a hole in the double line and a kerb island on the «Макси» boulevard. **At a pure
+    seam of a half** (only its two ways among the streets at the node, drawn where the
+    alignment put it) the ends join up to `SEAM_JOIN_GAP` 8 m apart, with the seam within
+    8 m of their midpoint: a lawn measured along the partner half ends a few metres short
+    of the own half's seam, and once the gap stopped closing across a taper seam (above)
+    the lawn's tip and the paved median past the seam stood 5.07 m apart in sample 16 — a
+    hole to the ground between them. `JOIN_GAP` itself stays: raised to 6 m, it joined two
+    medians across the six-arm node of Oryol 04 and grew its asphalt
+    (`median_ends_meet_further_apart_at_a_seam_of_a_half_than_elsewhere`). For the same
+    reason a half's sidewalk is not drawn in a gap shorter than `pairs::PAIR_SIDE_REACH`
+    12 m between two runs on the same side (`Pairs::band_pieces`) — whatever the runs are,
+    paved, lawn or tram bed: their medians are drawn tip to tip, and the sidewalk lay
+    between them as a pale patch (the seam of Советская's paved and lawn medians in
+    sample 16 is 8 m, past the old `JOIN_GAP` 5 m) — **nor between the end run and the
+    road's end** when that stretch is under the same 12 m: the probes lose the partner a
+    few metres before the node where the halves converge, and both halves' paired-side
+    sidewalks lay there as a pale wedge poking into the junction (Kaluga, Кирова ×
+    Плеханова). A half with a taper takes the same pieces, shifted by the head wedge's
+    length (the body starts past it), and its wedge lays no sidewalk on the paired side
+    either (`Pairs::beside` at the wedge's middle).
   - **Paved median** (gap ≤ `RoadShape::median_gap`, 1–6 m, default 3; the flag is
     stored on `Median` at construction — `Pairs::new(roads, paths, median_gap, rails)` — and
     `Median::is_paved` reads it; the pair tests take the knob's default) — `push_paved` lays a ribbon down the
     midline as wide as the axes are apart into the `roads` layer **before** the halves
-    (no lane frame, so no ruts; the halves lay theirs over it), and the paint layer draws
-    a **double solid** down the midline (`Painter::paint_median`, the axes mesh).
+    (no lane frame, so no ruts; the halves lay theirs over it) **plus the contour between
+    the inner kerbs** widened `FILL_OVERLAP` 2.5 m under each half (`between_edges`; it
+    was 1 m, and where a half bends hard at a node the drawn ribbon rounds the bend while
+    the median's kerb runs a chord, and a half-metre sidewalk spike showed between them —
+    Вокзальная at Первомайский, Ryazan 03, roads plan №32). Each kerb is widened **away
+    from the kerb across**, not away from the midline: the wider half's kerb crosses
+    the midline, and pushed away from it that kerb went under the *narrower* half, the
+    whole contour lay under the narrow ribbon and the gap between the kerbs showed the
+    ground — a needle at 1 m of overlap, a 12 × 2 m plank at 2.5 (Oryol 05, Московская
+    at 10.9 and 7.6 m; Ryazan 03 and Rostov 02 had thinner ones). The same contour is
+    the lawn median's asphalt and the tram bed. The
+    midline is measured between the *axes*, so between halves of different widths it
+    lies near the narrower one's kerb and the ribbon fell short of the wider one's where
+    the gap widens toward a lawn — a pale tongue along the double solid (sample 16). The
+    paint layer draws a **double solid** down the midline (`Painter::paint_median`, the
+    axes mesh). It is painted **after** every lawn is known: at a seam with a lawn of
+    the same pair (`medians::reach_nose`) a terminal link under `SEAM_STUB` 1 m — the
+    stub the two medians' shared seam point leaves, turned toward it, which curled the
+    line into a hook — is dropped, and the line runs straight on up to `NOSE_REACH` 12 m
+    until it meets that lawn's kerb, stopping `PAINT_NOSE_CLEARANCE` 0.5 m short. An end
+    with no lawn ahead (a junction) is left as it was.
   - **Lawn** (wider) — the contour between the inner kerbs, opened by `NOSE_SHARE` 0.45 of
     the gap for a **rounded nose**, goes into the `sidewalks` layer (it shows as a
     `MEDIAN_KERB` 0.5 m kerb along each half), and shrunk by the kerb it is grass in
     `road_medians` (`Z_ROAD_MEDIAN` 1.7, `SurfaceKind::Grass`, the meadow colour); a lawn
-    or kerb piece under `MIN_LAWN_AREA` 4 m² is not drawn. Drawn
-    whatever `RoadStyle::sidewalks` says: a lawn is still a lawn.
+    or kerb piece under `MIN_LAWN_AREA` 4 m² is not drawn, nor is a kerb piece with no
+    drawn grass inside it (a pale stub on the junction field; asphalt lies there
+    instead). Drawn
+    whatever `RoadStyle::sidewalks` says: a lawn is still a lawn. **The pieces are cut
+    on a densified midline** (`lawn_outlines` over `densified`: every link split into
+    parts of at most `LAWN_STEP` 1 m, alike on the midline and both edges), a station
+    counting while it is more than `NOSE_CLEARANCE` past every break **measured along
+    the midline** (a break lies on a half's axis, off to the side, and a circle round
+    it covered the midline a couple of metres short — the nose poked in between the
+    two zebras; a break more than `BREAK_ASIDE` 12 m past the kerb is no break of this
+    pair); the contour keeps only the piece's two ends and the original vertices. The
+    breaks are the base ones **and the paint's** facing across both halves
+    (`crossing_breaks` over `paint().of(half).cut`), **but a zebra does not end a lawn**:
+    `split_zebras` takes every paint break a zebra passes through out of that list and
+    turns it into a **crossing** — a break `ZEBRA_LENGTH` wide where the zebra meets the
+    half's axis — and `push_lawn` cuts a **passage** (`passages`: a quad across the whole
+    median, the zebra's length along the midline) out of the grass only. The kerb runs
+    through it, so the pedestrian crosses the median on the island's paving between two
+    pieces of lawn; a paint break with no zebra in it (a stop line at a node) still ends
+    the lawn with a nose. A paint break round a zebra is half the zebra, the signal's stop
+    line and the paint clearance — nine to eleven metres — and two `crossing:island=yes`
+    zebras set six metres apart along the axis, plus the node's break, left no piece at
+    all: Рязань 03's Вокзальная lost its whole lawn (roads plan S1, a regression of the
+    densified cut). A piece shorter than `MIN_LAWN_RUN` 3 m is dropped (not `PAIR_MIN`:
+    a five-metre island between a zebra and a node is a normal lawn), and the nose of a
+    piece shorter than the gap is rounded by `NOSE_SHARE` of its **length**, not of the
+    gap — the opening erases everything under two radii, and a 6 m piece of an 8.8 m
+    median vanished whole. On the OSM vertices alone a
+    straight avenue lost its lawn span by span: the first vertex past the junction lay
+    inside the break and the next one sixty metres on, so the whole span was bare asphalt
+    with no line between the halves (Kaluga 02, the east arm of Кирова, roads plan E2);
+    and with both vertices outside a break in the middle of a link, the lawn ran right
+    across the junction. **Everything between
+    the inner kerbs that is not lawn is asphalt** (`push_lawn` → `uncovered`): the
+    contour between the kerbs (`FILL_OVERLAP` under the halves) minus the drawn kerbs
+    inflated by `CUT_MARGIN` 5 cm, into the `roads` layer before the halves. The
+    opening erases whatever is narrower than two nose radii — at a run's end, where the
+    alignment only spreads the gap to the lawn's width, or where the halves converge to
+    a node, that is metres of wedge — and under it lay nothing: the half's sidewalk or
+    the ground showed as a pale tongue behind the nose (Tula 16/24) and a pale wedge on
+    the junction field (Kaluga 02). The margin matters: flush with the kerb the
+    difference left hairlines of asphalt, which the roads layer (above the grass) drew
+    as dashes along the kerb.
+  - **Pocket at a median end** (`medians::end_caps`, any median but a tram bed, which has
+    `bed_caps`) — a median ends where the pair's probes ran out, and when the gap ahead
+    is closed by another carriageway — a U-turn or a link between the halves — rather than
+    opened by a junction, the few metres between the median's end and that road were
+    nobody's: the sidewalks of three roads, a scrap of verge lawn and bare ground, a pale
+    four-sided stub of an island with a hairline crack of a way seam over it (Ryazan 03,
+    Вокзальная under the link above Первомайский, roads tails L2). Now an end with **no
+    break on its line** (the `reach_breaks` test, breaks behind the tip included — those
+    ends are opened by a junction) whose ray meets, within `MEDIAN_EXTEND` 12 m, the axis
+    of a carriageway from a node of either half near the tip (`MedianInputs::closer`,
+    `closing_reach` — the first axis crossed, so it never paves past a cross street into
+    the next median) gets a rectangle of asphalt from the inner kerbs, `CAP_WIDER` wider
+    on each side — `FILL_OVERLAP` 2.5 m under the halves, like the fill between the
+    kerbs; at 1 m the half's sidewalk band still lay under its ribbon there, and the
+    hairline of its way seam showed over it — up to that axis, minus the median's own
+    lawn kerb, into the `roads` layer before the ribbons. Rounding the stub into an island was
+    the alternative and was not taken: the island is a few metres of kerb between three
+    ribbons and reads as a crumb either way. Pinned by
+    `a_pocket_between_the_median_end_and_a_closing_link_is_asphalt` and
+    `the_closing_reach_is_the_first_axis_across_the_ray`.
   - **Tram bed** (`Median::carries_tram`, found in `Pairs::new(roads, paths,
     median_gap, rails)`) — a run whose gap is at most `TRAM_BED_MAX_GAP` 8 m and at
     least `TRAM_SHARE_MIN` half of whose probes have a `RailKind::Tram` link within
@@ -280,8 +607,9 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     avenue narrowed and widened by 2.6 m. The step at a seam it was written against is
     now `span_gap`'s job (**Alignment** above).
     **Drawing** — each half is widened to the middle by its own inner lane, without
-    marking: `push_bed` lays the asphalt from inner kerb to inner kerb (`BED_OVERLAP`
-    5 cm under each ribbon) **as a contour, not a ribbon**, so it follows the kerbs
+    marking: `push_bed` lays the asphalt from inner kerb to inner kerb (`FILL_OVERLAP`
+    1 m under each ribbon, like the paved and lawn fills — 5 cm left the ground showing
+    where a half's ribbon wobbles at a seam) **as a contour, not a ribbon**, so it follows the kerbs
     where the gap wanders and ends **square** — the round cap of the old ribbon lay over
     the nose of the lawn next to it (Коминтерна, where the tram turns off Советская and
     the median north of the node is grass again); the lawn beside a bed takes the bed's
@@ -290,7 +618,11 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     through as a pale square (a half with a wedge keeps its paired-side sidewalk), so
     `bed_caps` carries the bed `BED_CAP` further on **minus the lawn's kerb contour**
     (`push_lawn` returns it): the grass (`Z_ROAD_MEDIAN` 1.7) lies *under* the streets
-    (2.0), and a plain extension would have eaten the nose. (The sidewalk in a short gap
+    (2.0), and a plain extension would have eaten the nose. An end with **no lawn
+    kerb near** is carried on too, whole, `BED_CAP` plus the bed's width and `BED_WIDER`
+    1 m wider than the kerbs on each side: the node's paint breaks had cut away the lawn
+    that used to lie there, and a 2×2 m square of bare ground was left in front of the bed
+    end in the middle of Орёл 04's six-arm tram node (roads plan S2). (The sidewalk in a short gap
     between two runs is the general rule of **Paired halves**, **Alignment** above.) No
     lane frame, so no ruts over the tram lane. The double solid runs **down the middle**,
     between the tracks (as 2GIS draws it). What makes the tram lane read is the
@@ -341,7 +673,12 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     wider than 8 m that are lawns again (a lawn with a nose costs more than a paved
     ribbon). Tula: 107 paved + 32 lawn, 37 of them tram beds, 100 band pieces.
   - **Where it opens** — `crossing_breaks`: only a junction break of one half **facing** a
-    break of the other (within the axes' distance plus both reaches) — a crossing
+    break of the other (within the axes' distance plus both reaches; the axes stand
+    `Median::width` — the gap between the **inner edges**, not between the axes — plus
+    both halves' half-widths apart; the method was called `apart()` and the test read
+    it as the axes' distance, so a narrow cross street between two three-lane halves
+    did not open the median, and Московская across Пушкина's halves at a skew
+    left the double solid running into the crossing, Oryol 05) — a crossing
     street, a U-turn link, a zebra's footway. A street into one half does not open the
     median: the far half runs past, and the double solid runs past with it (sample 12's
     note). At such a break the lawn stops `NOSE_CLEARANCE` 1 m short of it, and
@@ -349,24 +686,6 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     `MEDIAN_EXTEND` 12 m) so that the double solid dies at the break edge like the lane
     lines do, whatever the probes did. Toward a gore at a ring the line is trimmed and
     reached by `Gores::reach` (`MEDIAN_GORE_GAP` 0.6 m short of the hatching).
-  - **One door** — `medians::draw(pairs, &MedianInputs, streets, sidewalks, grass) ->
-    MedianDrawing`; every other function of `medians.rs` is private. The loop over the
-    medians (open by the base, reach the break, paved / bed / lawn, the tram beds' ends
-    as breaks for the lawn beside) lived in `mesh_roads` with five neighbours borrowed
-    `&mut`; now it takes `MedianInputs { base (Junctions::median_base), paint
-    (PaintBreaks), markings, pure_merge, reach_gores, street_of }` — the merges, the
-    gores and the network come in as closures, so `medians` depends on neither `paint`
-    nor `gores` (the reverse edge `gores → along::tip_of` is all that is left of their
-    old circle; `tip_of` moved to `map/along.rs`). What it hands back is what the rest
-    of `mesh_roads` reads: `paved` (the reached paved medians — the tram band, the big
-    lot's kerb), `lawn_kerbs` (the merges' nose fill), `ends` (`MedianEnd` by the pair's
-    streets — the merge axis), `bed_caps()` (the asphalt from a bed's end to the lawn's
-    nose, pushed **after** the nose fill, in the old order) and **`painted`** — the
-    double solids as `(midline, breaks)`, which `mesh_roads` hands to
-    `Painter::paint_median` itself: drawing them inside would have pulled `paint.rs` into
-    the module. Push order into each layer is the old loop's, byte for byte — pinned by
-    `tests.rs::the_median_loop_lays_the_same_vertices`; `medians/tests.rs` calls `draw`
-    directly (paved with and without markings, lawn), without a painter.
   - **Cars** need nothing: a one-way half parks one row on its driving-side kerb, i.e.
     away from the partner, and the row stands on the aligned axis. **Navmesh** does not
     see any of it — `RoadLine::points` never move.
@@ -393,25 +712,46 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     **twin** — another free one-way end in the node with the opposite flow, running within
     `MAX_BEND` of it — is skipped: those are the halves of a **merge**, whose own wedges
     draw the join.
-  - **Sections** (`sections::apply`, **step 0 of `finish_parse`**). A way's lanes: the tag
-    (`lanes`, else `lanes:forward` + `lanes:backward` + `lanes:both_ways`, the last one
-    optional — one direction alone is not a sum),
+  - **Sections** (`sections::apply`, **step 0 of `finish_parse`**). The **split** of a
+    two-way way's lanes between the flows (`RoadLine::lanes_backward`: `lanes:backward`,
+    else `lanes − lanes:forward`; none with a `lanes:both_ways` centre lane) is settled
+    last (`settle_splits`): a split that does not fit the final count (a cut spike, more
+    backward lanes than lanes) is dropped, and a way without one takes it from the
+    nearest way of its street with the same count, mirrored for a way drawn against the
+    street, so an odd street's axis does not jump half a lane at a seam. A way's lanes:
+    the tag (`lanes`, else `lanes:forward` + `lanes:backward` + `lanes:both_ways`, the
+    last one optional — one direction alone is not a sum),
     else the **nearest tagged way of its street** by the distance between their middles
     along it, else `default_lanes` by class (four on motorway/trunk/primary/secondary
     two-way, two on the rest — every `*_link` included, half of that one-way, one on a
-    service drive). Then a **lone jump** — a run shorter
+    service drive; **a one-way `tertiary` keeps the two-way count**, and a ring — tag or
+    shape — whose own way gives a radius of `WIDE_RING_RADIUS` 30 m or more gets at least
+    `WIDE_RING_LANES` 2, `inferred_lanes`). The two exceptions are generated data, not
+    read: a one-way tertiary is the carriageway of a two-way one driven in one direction
+    (the grids of Ростов, Рязань, Калуга — two or three lanes), and one lane of 4.3 m read
+    as a drive beside a sidewalk three times wider (Ростов 01, scout D1); a big ring is
+    driven in two rows (Рязань, площадь Мичурина, r 52 m, tertiary, scout E17), while
+    Рязань 05's 20 m park ring keeps its one lane, as on Yandex. The radius is read off
+    the way alone — the perimeter of a closed one, the circle through the ends and the
+    middle of an arc — since the rings are assembled only when drawn. Untagged one-way
+    tertiaries per v15 cache: Rostov 127, Ryazan 65, Berlin 44, Kaluga 27, Oryol 16,
+    Moscow 14, Tula 7 (some take a neighbour's tag first). Residential and unclassified
+    one-ways stay at one: their houses stand closer, and a wider default would push them
+    off the sidewalks for nothing. Then a **lone jump** — a run shorter
     than `SPIKE_MAX_LENGTH` 60 m with the same count on both sides and another of its own —
     is cut to its neighbours. `RoadLine::lanes` is **overwritten** with the result on every
     street and drive, and `width = lanes × lane width + 2 × EDGE_WIDTH` — a lane on a
-    street is the **lane width** knob (`shape::lane_width()`, `RoadShape::lane_width`
-    2.75–3.75 m, default 3.3), on a service drive that minus `SERVICE_LANE_NARROWING`
+    street is the **lane width** knob (`RoadShape::lane_width` 2.75–3.75 m, default 3.3,
+    handed to `sections::apply(map, street_lane)` as an **argument** — the pass reads no
+    global, and neither do `sections::lane_width` / `section_width`, which take it the same
+    way), on a service drive that minus `SERVICE_LANE_NARROWING`
     0.3, 0.5 m of edge each side: at the default a
     two-lane street is 7.6 m, a six-lane avenue 20.8, a one-lane one-way half 4.3 — where
     the class gave 8, 16 and 16. Because the parse reads it, a new lane width is a **world
     reload** (**RoadStyle and RoadShape** below). **It is the one roads stage that moves the model**: the
     width is read by the passes after it (houses off the sidewalks, blocks and lots pulled
     to the roads), and then by bridge curbs, the navmesh's bridge corridors and the cars.
-    Paths keep their class width (3.5). The gallery parses each cut window on its own, so
+    Paths take theirs from the parse (`parse.md`, **Path width**). The gallery parses each cut window on its own, so
     a street there is inferred from the window's ways only.
   - **Tapers** (`tapers::Tapers`, built **once** per `mesh_roads` by `roads::Drawn` over
     the roads as drawn — the ribbon, the paint wedges and the kerb pockets' row breaks
@@ -449,7 +789,16 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     two-lane street ending at a T where a one-lane one went on showed a kerb tooth on the
     far side (Крестовоздвиженская площадь into Союзная, gallery 27). The side with the
     arm keeps its full width up to the node, as before: the joining road's asphalt and
-    the kerb returns cover the step there. A crossing covers both sides — no taper, the
+    the kerb returns cover the step there — **but only an arm whose kerb radius is at
+    least the step** (`corners::road_radius` of the arm and the wide road, the smaller,
+    against half the width difference). A covered step still reads as a **tooth** when it
+    is higher than the corner beside it: on either side of a 5 m drive (radius 2.5) the
+    kerb of Болдина stood 3.3 m apart where 2 lanes became 4 (Tula, gallery 22); a
+    street's 6 m or an avenue's 10 m corner swallows a lane's step. Such a side is free,
+    and it narrows. A second test was tried and dropped — a slanting arm covers only the
+    foot of the step's wall (`half / |cos|` of its angle to the axis): it freed the side at
+    Orel's wide T (gallery 03), where the short way's wedge came out steeper than the step
+    it replaced. A crossing covers both sides — no taper, the
     step sinks in the node. `Taper::kept` names the untouched kerb (`+1` left) for the
     paint: on a one-sided wedge the narrow section's lanes hug that kerb
     (`paint::kept_frame` — the body's grid with the far bound pulled in by the missing
@@ -470,14 +819,16 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     one answer, `Drawn::band_half(road, side)`, asked for the narrow way and for this one
     (**The drawn network** below). No taper
     on bridges or passages.
-    **A half of a divided street gets asphalt under its taper on the partner's side**
-    (`mesh_roads`, a wedge whose middle lies in a pair run): a ribbon of half the wide
-    way's width along the wedge, offset a quarter width toward the partner, butt ends, no
-    lane frame, pushed before the wedge; only when the wedge does narrow the partner's
-    side (a side kept for an arm needs none). The symmetric wedge narrows toward the median as
-    well, while the median (**Paired halves**) is measured off the full width — and in the
-    gap between them lay the half's full sidewalk band (a tapered half keeps it), a light
-    strip the length of the wedge (roads plan D3, gallery 16). The dark line beside it on
+    **A half of a divided street keeps its partner-side kerb straight through a taper by
+    its axis, not by extra asphalt**: the alignment (**Paired halves → Alignment**) sets
+    the wedge's axis by its tapered half width, so the symmetric wedge narrows only on the
+    outer side. It used to be the other way round — the median measured off the full
+    width, the wedge narrowing toward it, the half's full sidewalk band showing in the gap
+    (roads plan D3, gallery 16) — and a ribbon of half the wide width offset toward the
+    partner was pushed under the wedge to cover it. That patch is gone with the cause: it
+    left the 1.4 m miss between the two axes of the half at the seam (a hole at the
+    median nose, a step on the outer kerb), and on a tail wedge, whose path runs against
+    the way, it stood on the wrong side. The dark line beside the median on
     16 is **not** a seam: it is a real metal fence down the median (way 357798630,
     `barrier=fence` + an admin boundary, `height=1`) with its shadow — `tools/osm_near`
     does not list it because it skips boundaries.
@@ -521,6 +872,19 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     `BIRTH_FADE` (half a lane). The asphalt wedge runs seam → body, so for the tail wedge
     its frame is the mirror (`paint::wedge_frames`); `the_wedge_asphalt_and_the_wedge_paint_share_one_grid`
     pins that both land on one grid.
+    **Between two two-way sections the axis leads** (`paint::seam_origin`, carried as
+    `WedgeEnd::origin`, roads plan №30): the seam frame is the narrow neighbour's own
+    frame (`lane_frame(narrow)`, whatever the wedge's shape) with its node placed so that
+    the wide way's axis line lands on the neighbour's axis — in the wide way's frame,
+    mirrored when the neighbour is drawn against it — and the lerp then carries the axis
+    to its own place over the wedge. Without it a seam of different splits jumped:
+    Текучёва in Rostov (gallery 03), `lanes=5, lanes:forward=3` into six lanes, has the
+    five-lane axis on the flow border half a lane off the middle and the six-lane one in
+    the middle, and the kept frame of that T-junction wedge put the whole grid half a
+    lane off as well. The shift is snapped to whole half lanes (a 1e-7 tail made
+    `Painter::paint`'s `ceil` add a line beyond the kerb) and taken only up to one lane;
+    a one-way side, or a shift over a lane, leaves the frame to the wedge's shape rule.
+    Pinned by `the_axis_runs_through_a_seam_of_different_splits`.
   - **Dashes by the street's arclength** (`paint::street_stations` over the network's
     ordered ways and the axis paths): 2 m dash, 6 m gap (ГОСТ 1.5 in town — the gap three
     times the dash; the old 3 / 3 read as a picket fence on a multi-lane street at the
@@ -547,7 +911,19 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     ring's entries are not worth splitting a closed strip for. The axis of a two-way street with 4+ lanes is a **double solid** (0.15 m gap
     — ГОСТ 1.3's 10–15 cm; half a metre read as two separate lines, the author's report —
     merging into one line once the gap is under ~2 px); a two-lane two-way street has a
-    dashed axis; an odd two-way street and a one-way street have none.
+    dashed axis; a one-way street and a one-lane street have none. **The axis is the
+    border between the flows** (`paint::axis_offset`), not the middle of the
+    carriageway: `RoadLine::lanes_backward` lanes run against the points, the rest along
+    them on the traffic side's half, so the axis lies on a lane border at
+    `forward · lane − half` (right-hand traffic; mirrored for left). Without the split
+    the lanes divide in half and an odd count gives its extra lane to the flow along the
+    points — a three-lane two-way street gets a dashed axis, a five-lane one a double
+    solid. Before, the parity decided whether there was an axis at all, and Текучёва in
+    Rostov (gallery 03, `lanes=5, lanes:forward=3`) was dashes only (roads plan D3).
+    `lane_count` and the lane frame do not move: the carriageway stays centred on the
+    way, only which of its borders is the axis changes. The stop line of a two-way arm
+    runs from its kerb to that axis, and the lanes of an arm (`turns::arm_lanes`) split
+    at it.
   - **Geometry**: one strip per line (`MeshBuilder::push_paint_strip`, miter joins),
     `LANE_STRIP` 0.6 m / `AXIS_STRIP` 1.4 m half-width — wider than the 0.15 m line so the
     1.3 px floor and the ±0.7 px antialiasing still fit at the farthest zoom where the line
@@ -598,6 +974,11 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   seam (**Ribbon** below). A drawn ring takes one section for all its arcs — the widest
   arc's width and lane count (`roads::ring_arcs`; Tula's primary ring has arcs of 3 and
   2 lanes, and the ribbon would step) — see **Roundabouts** below.
+  **`lane_markings=no`** (`RoadLine::lane_markings`, `parse/tags.rs::has_lane_markings`)
+  overrides the count: `Painter::paint` draws neither the axis nor the lane lines of such
+  a street, however many lanes it has (Tula, 11 ways; gallery 09, Бухоновский переулок,
+  drew a dashed axis Yandex does not have). The junction paint — zebras, stop lines,
+  arrows — does not read it; the ruts do not either (the lane frame stays).
   **Breaks** — «to-break» is the signed distance to the nearest **marking break**
   (`meshing::Break { at, reach }`, passed as `RibbonBreaks::At`): negative inside a gap,
   so a paint line is **cut sharp** at the gap edge (`smoothstep(±0.7 px)`, the same
@@ -695,7 +1076,72 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     travel — inward for an entry, outward for an exit. An arm already within 5° is left
     (its heading is taken over its last `HEADING_BASE` 3 m); the arc stops `PIN_MARGIN`
     1 m short of a node the arm shares with someone else, and an arc left shorter than
-    `BEND_MIN_LENGTH` 4 m is not built.
+    `BEND_MIN_LENGTH` 4 m is not built. **A two-way arm** is bent the same way, into the
+    node **along the ray** from the centre, but only when its axis arrives more than
+    `TWO_WAY_BEND_MIN_ANGLE` 30° off that ray — i.e. when the mapper led it into the node
+    along the ring. Its butt end is square to the last link, and square to an axis
+    running along the ring that end lay across the kerb and stuck out of it as a step on
+    both sides (Рязань 05, the author's report); the island rule reads the bent axis
+    (**Splitters by rule** in `parking.md`). A radial arm is left as it is
+    (`a_two_way_approach_along_the_ring_is_bent_into_it_across`).
+    **A Y-approach is not two two-way arms** (`rings::y_legs`, `Rings::leg_flow`): two
+    two-way ways, each at most `LEG_MAX` 55 m, that leave one node and end in two
+    **different** nodes of one ring are its **legs** — an entry and an exit mapped without
+    `oneway` (Рязань 05: every approach is such a «Y», legs of 15–25 m into nodes 20 m
+    apart). The entry is the leg whose ring node lies **downstream** along the ring's
+    travel (one who enters turns with the travel, so the legs never cross), and each leg
+    is bent as a one-way arm of its flow, by the tangent arc. Bent along the ray as
+    two-way arms, both swept the whole triangle between them with asphalt and a splitter
+    stood on each and hooked onto the ring. A leg is also **drawn one lane wide**
+    (`roads.rs::leg_sections`, a `Drawn` substitute like `ring_arcs`: `section_width` of
+    one lane, `lanes` 1) — two 7.6 m two-way ribbons covered the whole wedge and left the
+    island no room — and its wedge is the fan's (**The fan is taken whole** in
+    `parking.md`). **The other leg may be a tail of other streets** (`rings::tail_walk`):
+    Рязань 05, north — the «Старая дорога» runs on past the fork, and the end of the
+    street coming from the north takes it into the second ring node, so only one short
+    way leaves the fork. A lone such way (group of one in `y_legs`) is still a leg when
+    a walk from its far node along approach streets (not itself, not ring arcs; at most
+    one change of street; within `LEG_MAX`) reaches **another** node of the same ring
+    within `TAIL_ARC` (a quarter of the ring) — the shortest walk decides entry or exit
+    by the same downstream rule. The tail is **two streets**: the first runs **through**
+    the fork (an inner vertex of it) and the second, started on it, ends in the ring. A
+    street that goes into the ring by itself is a neighbouring approach, not a tail — on
+    Рязань 04's big ring (60 m) two wide two-way approaches found such one-street
+    "tails" 23 and 38 m along the ring, narrowed to a lane and opened a wedge of bare
+    ground. The leg then goes one lane by the tangent arc; the tail
+    is drawn as it is, being part of other streets
+    (`the_legs_of_a_y_approach_enter_and_leave_along_the_ring`,
+    `a_y_approach_whose_other_leg_is_a_tail_of_two_streets`).
+  - **A tail Y is straightened in the data, not in the drawing**
+    (`rings/straighten.rs::straighten_tails`, the parse's first finishing pass, before
+    the sections — it moves nodes and cuts a way, and the street network is assembled
+    from the ways). Drawn as found, it had no island: on Рязань 05 north the fork lies
+    10 m off the ring's axis, the joint where the second street takes the tail over
+    3.6 m, and from there the full-width two-way tail runs along the ring — one smooth
+    asphalt flow from the fork to the ring. No path substitute can fix that, since the
+    nodes stay put in `Drawn`. So the pass runs the same `fit_rings` + `y_legs` over the
+    raw points (`y_legs` hands the tail Ys back as a second list, `Tail` / `TailWalk`)
+    and, per tail: the **fork and the joint merge into one node** (`fork_point`) on the
+    ray through the middle of the ring arc between the two leg nodes, `FORK_SHARE` 0.7
+    of the chord between them off the axis (at least `FORK_MIN` 10 m; the two «Y» of two
+    ways on the same ring stand 11 m off at a 20 m chord and their island barely
+    shows); the first street loses the piece between fork and joint and ends in the new
+    fork; the second street's run from the joint to the ring becomes **a way of its own**
+    (cut off when the street goes on past the joint), straight; the own leg is
+    straightened too; every road through the fork or the joint is moved with them.
+    What reaches the drawing is an ordinary Y of two ways — one-lane entry and exit by
+    the tangent arc and the fan's hatched island between them. Left as it is: a vertex
+    that would go (between fork and joint, between joint and ring, inside the leg)
+    shared with any road — it would be left hanging; a second street not ending in the
+    ring node; a fork moving more than `SHIFT_MAX` 20 m, or a leg longer than
+    `LEG_MAX`. Only the tail Ys are touched — a Y of two ways, a lone two-way approach,
+    a short way with no tail keep their points
+    (`a_y_tail_along_the_ring_becomes_two_legs_from_a_fork_off_it`,
+    `other_approaches_are_not_straightened`, `a_tail_crossed_by_another_road_is_left_as_it_is`).
+    Plausibility over faithfulness: the fork is no longer where the mapper put it
+    (about 10 m further out), but the approach reads as an approach. Roads carve the
+    navmesh only through bridges, passages and fence gaps, so the pass does not reach
+    it in a park; the doors, blocks and lots see the same fork as the ribbon.
   - **Webs** (`Rings::webs`, `webs_along`): wherever a street — an arm, its continuation,
     or a slip road that bypasses the ring without entering it (Tula, gallery 04,
     south-east) — runs **along** the ring outside it (within `WEB_ALONG` cos 0.7 of the
@@ -708,8 +1154,24 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   - **One section, one kerb.** All arcs are drawn at the widest arc's width and lanes
     (`roads::ring_arcs`); the sidewalk is drawn once per ring as a closed ribbon, **outside
     only**, and the central island gets a `MEDIAN_KERB` 0.5 m kerb along the inner edge
-    instead of a sidewalk ring (`push_ring_edges`). The island's fill is whatever the map
-    has there (a park, a lawn, the ground).
+    instead of a sidewalk ring (`push_ring_edges`). **The island is a lawn**
+    (`roads::ring_island_lawns`, layer `ring_islands` at `Z_RING_ISLAND` 0.05, roads plan
+    №31): the ring's closed drawn axis filled with grass — the ring's asphalt covers the
+    outer half, so the lawn shows up to the inner kerb. The mapped grass on an island is
+    usually smaller than the drawn island and left a ring of pale ground round it (Orel
+    01 and 02). The layer sits right over the bare ground, **under** everything mapped
+    on the island — grass, a park, a block, a square, water, a house stay themselves,
+    and only the ground turns to lawn. Over the grass it would also hide the faint rim
+    of the grass polygon (visible in Ryazan 04 as a circle in the lawn), but it repainted
+    an island park as lawn too (Kaluga 05) — tried and rejected. **The rim goes by a
+    second layer instead** (`roads::ring_island_grass`, layer `ring_island_grass` at
+    `Z_RING_GRASS` 0.65 — over the grass, under the sand, roads plan №37): each island
+    intersected (`i_overlay`, NonZero) with every `MapData::grass` polygon whose box
+    touches it, laid again in the grass colour and material, so the lawn and the mapped
+    grass meet with no rim between them (Ryazan 04: an 81 m `landuse=grass` circle on a
+    60 m ring; Orel 02). Only grass is laid — a park, a wood, a block on the island are
+    not touched (Kaluga 05 identical). A mapped grass patch inside a park island
+    (Ryazan 05's octagon) keeps its fill and loses only its inner rim.
   - The report counts `rings N (M webs)`. Tula (release): 8 rings, 19 webs (11 while
     only the arms were walked); the road build did not move (118.5 ms against 120.7 when
     the rings came, 125.4 → 125.6 when the webs spread to every street along a ring).
@@ -824,7 +1286,7 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     rank that also passes (a crossing). Rank is the `highway` class (trunk 5, primary 4,
     secondary 3, tertiary 2, residential / unclassified / living street / links 1),
     doubled, and a `stop` / `give_way` node on the road within 30 m of the cluster takes
-    half a step off. The other half of a divided street (`Pairs::partners`) is no
+    half a step off. The other half of a divided street (`Pairs::runs` partner) is no
     rival. So a side street **joining** a through street — even of the same class — does
     not break its lines: the dashes run through the junction on the same axis, and the
     report counts it as `main through`. **A crossroads is not a joining**: when the other
@@ -832,9 +1294,18 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     rival does not "pass" by street identity — OSM splits a cross street into two streets
     at a oneway change, and Петра Алексеева (Tula, 5968 1582) ran its dashes straight
     through a four-way crossing of equals because Макса Смирнова is one-way south of it
-    and two-way north. Signals aside, such a road **leads** the junction
-    (`Junction::leading`), and so does a roundabout that passes it whatever the approaches'
-    class — a ring has priority. The leading road loses its asphalt breaks there
+    and two-way north. **A crossroads of tertiary rank or higher breaks the higher road
+    too** (`CROSSING_CUTS_RANK` 2 — the crossroads' rank is the lower of its two
+    streets): no road paints its lanes through the field of a real crossroads, and
+    before this a primary kept its solid line diagonally across a secondary pair (Орёл,
+    gallery sample 05 — Московская over Пушкина; the signals there stand 27–29 m out,
+    beyond the cluster zone). A residential crossroads does not cut a main road, and a
+    joining street of any rank never does (Ростов 03 stays through) — pinned by
+    `a_tertiary_crossing_breaks_the_primary_too_but_a_residential_one_does_not`. Signals
+    aside, such a road **leads** the junction
+    (`Junction::leading`), and so does a ring road (an arc of `on_ring` or a closed way —
+    whether it passes or not, since OSM ends an arc at every entry) whatever the
+    approaches' class — a ring has priority; an approach never leads a ring node. The leading road loses its asphalt breaks there
     (`NodePaint::asphalt`): the ruts run through, signals or not.
   - **Zebras and stop lines on the arms that break**: an OSM crossing on the arm (a
     `Crossing { marked: true }` node on the road, between the node and
@@ -853,7 +1324,15 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     lies at least `RULE_ZEBRA_ROOM` 30 m past the edge (`nodes_along`). A shorter arm is
     a link between two nodes — the branches of a fork's triangle (Tula, gallery 06, 22 and
     31 m) had a rule zebra at both ends and a stop line between them within fifteen metres;
-    the crossing is left to the outer arms. An OSM crossing ignores the room. A zebra is `ZEBRA_LENGTH` 4 m along the
+    the crossing is left to the outer arms. An OSM crossing ignores the room. **A
+    street already crossed by the data gets no rule zebra**: a marked OSM crossing on any
+    road of the same street (`street_of`) visiting the cluster, within
+    `RULE_ZEBRA_DATA_REACH` (= `ARM_CROSSING_REACH`, 35 m) of the arm's node point, drops
+    the rule zebra from every arm of that street — the mapper said where this junction is
+    crossed, and a second zebra twenty metres from the first read as a mistake (Tula,
+    gallery 12: the T of Халтурина into Красноармейский had the rule zebra west of the T
+    and the signalled OSM crossing east of it; Yandex draws one). The stop line stays;
+    the other street's arms are untouched. A zebra is `ZEBRA_LENGTH` 4 m along the
     road, across the carriageway less 0.3 m at each kerb. The stop line is called by the
     same things as the zebra — a zebra on the arm, signals, a stop / give-way sign, or a
     street of at least `tertiary` in the cluster; two residential streets with no sign get
@@ -861,12 +1340,23 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     `STOP_GAP` 1 m behind the zebra (or 1 m past the edge without one), across the lanes
     **coming to the node** — axis to kerb on the traffic side (`MapData::traffic_side`)
     for a two-way road, the full width for a one-way one that flows toward the node, none
-    on a one-way arm leaving it. A `give_way` sign without signals makes it dashed. The
+    on a one-way arm leaving it. A `give_way` sign without signals makes it dashed. **A
+    stop line needs room for a queue behind it**: at least `STOP_QUEUE_ROOM` 10 m (two
+    cars) of free road from its back to whichever comes first upstream — the asphalt of
+    the next junction node on the road (its node point less the half width of its widest
+    other road) or an OSM crossing's zebra. Shorter, and the line is dropped (the zebra
+    stays): it lay on the throat between the halves of a divided street, where a waiting
+    car would stand on the neighbouring junction or on the zebra across the median
+    (Ryazan, gallery 07: Горького through Есенина's lawn, 28 m node to node — one line
+    right behind the median zebra, the other just out of the far half; Rostov,
+    Театральный × Красноармейская, the same). 1–3 % of the lines per city (Tula 759 →
+    751, Ryazan 705 → 688, Kaluga 819 → 799, Oryol 742 → 729, Rostov 1680 → 1664).
+    Ring entry lines are exempt. The
     two halves of a divided street cross on **one line**: `align_pair` moves the second
     zebra onto the first's line across the street (to the OSM one if there is one, else to
     the farther one); when **both** are OSM crossings — a `highway=crossing` node on each
     half, which mappers place a metre apart (gallery 02: 0.9 and 1.2 m) — both move to the
-    line halfway between them. Over a **paved** median (the run's `paved`, handed out by
+    line halfway between them. Over a **paved** median (`PairRun::paved`, read through
     `Pairs::partners` as `pairs::Partner { road, paved }`) the two aligned zebras then become **one
     plank** kerb to kerb (`join_zebras`: parallel within `JOIN_PARALLEL`, on one line
     within `JOIN_OFFSET` 1 m, the gap between them at most `node_paint::JOIN_GAP` 8.8 m —
@@ -890,10 +1380,64 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     island of a node triangle (`corners::small_islands`, handed to `NodePaint::new` as
     `paved`), up to `EDGE_SEARCH` 25 m. The rule zebra, the stop line and the turn paths
     and arrows (`JunctionArm::edge`) measure from it, and the lane lines break from the
-    node to the outermost paint. An **OSM crossing keeps its place** — it is measured
+    node to the outermost paint — and on an arm with **no paint at all** (a one-way
+    leaving the node, an arm no zebra or stop line is called for) to the edge itself:
+    at a shallow crossing the break reach is the neighbour's half width, 3 m for a
+    one-lane street, while its asphalt runs a dozen metres along the arm, and the lines
+    crossed the junction field (Орёл 05, Московская at 23° to the Пушкина pair; roads
+    plan G3). A **link** with no paint — an arm whose section never left within
+    `EDGE_SEARCH` — breaks up to where its **lines** leave the other roads' asphalt
+    (`lines_edge`: the same walk with the half width of `line_half`, the outermost lane
+    line's offset — the lane frame less one lane, plus a two-way axis shift; none on a
+    one-lane road): a branch peeling off a four-lane primary at 21° (Вокзальная out of
+    Первомайский, Ryazan 03, roads tails L2) never clears its section within 25 m, so its
+    edge stayed at the neighbour's half width and its lane line started in the middle of
+    the primary's lanes, crossing their line. The primary itself is not touched — its
+    section's two side points clear the narrow branch at once, and the main road keeps
+    its lines past the fork; the branch's line now starts past the primary's kerb
+    (`a_fork_branch_keeps_its_line_off_the_lanes_of_the_main_road`). The turn paths keep
+    the arm's edge as it was. An **OSM crossing keeps its place** — it is measured
     from the reach as before: pushed past the new edge, it no longer fitted a short arm
     with its `ARM_TAIL` and was lost (gallery 04, south). **Not at a ring**: an approach
-    is fitted into the ring tangentially and runs over its asphalt for tens of metres.
+    is fitted into the ring tangentially and runs over its asphalt for tens of metres, so
+    the other roads' asphalt would push the edge past the crossing; the turn paths keep
+    the break reach there. **The paint of a ring entry is set by the ring alone**
+    (`RingEntry`, `ring_entry`): the ring roads of the cluster (`on_ring` or a closed way)
+    are the only rivals, and each of three points across the arm — the far end of the stop
+    line (the left kerb of a one-way entry, the axis of a two-way one), its kerb end, the
+    other kerb — is walked out in `EDGE_STEP` from the node until it leaves the ring's
+    ribbon. The line of an entry without a zebra then runs **from where one end left the
+    ring to where the other did** — along the ring's edge, as it stands on the ground,
+    not across the approach — and is always dashed (**give way** to the ring; solid only
+    under signals); the arm's edge, from which the lane lines break, is where the whole
+    section has left. The old line stood across the approach at the break reach (half the
+    ring + 1 m from the node), which on a tangential entry is still the middle of the
+    ring: it ran over the ring's lanes up to the island's kerb, with the approach's
+    solid lines after it (gallery 04, south and north-west). The walk goes out to
+    `RING_EDGE_SEARCH` 60 m (`leaves_ring`), not the arm's `EDGE_SEARCH` 25 m: the east
+    entry of gallery 04 (way 131741966) runs along the ring's asphalt for about thirty
+    metres, the entry was not found at all, and its lane line ran over the ring toward
+    its axis as a merge would, solid for the last 25 m (roads tails L5,
+    `a_long_tangential_ring_entry_yields_and_keeps_its_lines_off_the_ring`).
+    **A ring exit has a throat** (`node_paint::Throat`, `throat_on`): for a one-way arm
+    leaving a ring node, both kerbs of its section are walked out of the ring's asphalt
+    the same way, and the ring road's stretch from half the exit's width before the
+    node's projection (the exit's ribbon end already lies on the outer lane there, and a
+    dash cut by the node was left as a stub) to the projection of the point that left
+    last (the shorter way round a closed ring) breaks
+    the ring's lane lines **on the exit's side of the ring's axis only** (`side`, the sign
+    of the path's left normal; `Painter::paint` keys the profile by it, bits 2 and 3 of
+    the pocket mask). The outer lane is the exit there, and its dashes ran straight
+    across the mouth out of step with the exit's solid line (gallery 04, south, roads
+    tails L5); the inner lines run through. The throat is no approach: the ring's lines
+    stay dashed before it (the solid approach spans are taken off the profile without
+    the throat). An arc that ends at the node gets only that stretch before it — both
+    projections fall on its end (`a_ring_exit_breaks_the_outer_ring_line_across_its_throat`). **A ring road never gets a
+    stop line** and **always leads** its node — OSM cuts a ring into arcs at every entry,
+    so an arc "passes" by street identity nowhere: every arc broke at every entry with a
+    stop line across all its lanes and 25 m of solid approach lines (gallery 04 south,
+    Ryazan 01, Kaluga 01). And an approach never leads a ring node, even where the network
+    carries its street on into an arc.
     **An arm that never leaves the junction's asphalt is a link** (`JunctionArm::link`,
     `ArmPlan::link`) — a throat of a complex junction, not an approach to it: no rule
     zebra, no stop line, no arrows. At the fork of gallery 06 the triangle's 22 and 31 m
@@ -932,7 +1476,16 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     street between a junction and its taper left a two-metre dash at the kerb (gallery 08).
   - **The median's double solid** breaks on the paint breaks as well (both halves'
     zebras and stop lines, `medians::crossing_breaks` over them), not only on the asphalt
-    ones.
+    ones. Those breaks lie on the halves' axes, off to the side of the midline, so a long
+    one covers the midline short of its end; a piece of the double solid under
+    `MEDIAN_MIN_RUN` 6 m between two breaks or between a break and the run's end is
+    closed as well (`medians::bridge_short_pieces`) — a metre-to-five stub was left in the
+    middle of Орёл 05's junction. A midline no break touches stays as it is. **The paved
+    median keeps the full paint breaks, zebra and stop lines together** — unlike the lawn,
+    which a zebra only cuts a passage through. Narrowing them to the zebra was tried for
+    Moskovskaya at Pushkina (Орёл 05, roads plan №41), where four crossings within thirty
+    metres leave no piece of double solid: the line came back there, but the neighbouring
+    pair's double solid ran on past a stop line into the junction, so it stays by rule.
   - Not drawn from data: `footway=crossing` ways are not parsed (the crossing node is
     what Tula maps). Islands and `RoadArea` outlines are drawn by **Safety islands** below.
   The report counts `junctions N (C clusters, main through T), zebras Z (O from OSM),
@@ -953,14 +1506,29 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     exactly what covering them does. The stroke of a flare around the island is not
     drawn.
   - **A `Carriageway` outline** is asphalt in the `roads` layer, under the ribbons: a
-    square, a lay-by, a widening the axis does not describe. `Walkway` outlines are left
-    to the sidewalks and alleys that already cover them.
+    square, a lay-by, a widening the axis does not describe.
+  - **A `Walkway` outline** (`area:highway=footway|pedestrian|…`, `highway=pedestrian`
+    + `area=yes`) is **paving in the `sidewalks` layer**, the colour of a paved path.
+    It used to be left "to the sidewalks and alleys that already cover them", and they
+    did not: Tula's 62×75 m `area:highway=footway` plaza on the Lenina park paths
+    (way 27582887) was bare ground with a service drive ending in a round cap in the
+    middle of nothing, and the 18×18 m `pedestrian` square on the ring island at
+    2539 2393 (way 234168508) was a ring of path ribbon round a patch of ground.
+  - **The closed line of an area is not drawn as a ribbon** (`RoadIslands::outlines`,
+    one flag per drawn road, skipped at the top of the ribbon loop). The parse still
+    hands `highway=*` + `area=yes` over as both an outline and a `RoadLine` (every other
+    reader of `MapData::roads` keeps seeing it as before), and that line is recognised here as a
+    closed ring whose points are exactly an outline's (indexed by `node_key` of the
+    first vertex). Laid as a ribbon it was the ring above; a carriageway area's line
+    is skipped likewise, its outline being asphalt already.
+  - Tula v15: 19 walkway areas (the report's `walkway areas W`), 2 of them
+    `pedestrian` + `area=yes`.
   - **Tula has almost none of it** (no island at all, one `crossing:island`, a dozen
     service-yard outlines — `references/osm-coverage.md`, «v15»), so the gallery check
     is Berlin (`ROADS_CITY=berlin`, samples 4–6: `area:highway=traffic_island` at
     Rosenthaler Platz and the boulevards, `area:highway=primary|tertiary` outlines,
     signalized crossings with islands). The report counts `safety islands N + A areas,
-    carriageway areas C`.
+    carriageway areas C, walkway areas W`.
 - **Turn paths** (`map/roads/turns.rs`, `Turns::new(&Drawn, junctions, side)` over
   `NodePaint::junctions`, on the ribbon axes) — the
   wear a junction gets from traffic crossing it. The lane ruts fade in a junction gap (a
@@ -972,9 +1540,10 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     plus 1 m, the asphalt break's reach), on a ring taken around the seam.
   - **Lanes on an arm**: the body lane frame (`paint::lane_frame`), lane centres between
     the lines; a one-way road carries traffic along its points only, a two-way road along
-    them on the traffic side's half (`MapData::traffic_side`), the middle lane of an odd
-    two-way road belonging to neither — except a one-lane road, driven both ways. Lanes
-    are counted **from the kerb**.
+    them on the traffic side's side of the axis (`MapData::traffic_side`,
+    `paint::axis_offset` — an odd road's extra lane goes to the flow along the points or
+    as `lanes_backward` says) — except a one-lane road, driven both ways. Lanes are
+    counted **from the kerb**.
   - **Maneuvers** by the turn angle between the in-lane's travel and the out-lane's:
     under 35° straight, over 150° a U-turn (not drawn), else a **near** turn (toward the
     kerb — right under right-hand traffic) or a **far** one. Which lanes into which:
@@ -1086,25 +1655,20 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     **Three sidewalk rules live on it, and they are three on purpose**:
     `sidewalk_drawn(i)` — the band that is *drawn*: `SidewalkProfile::any` (the map's
     sidewalk) under the `Sidewalks` knob, minus the crossing piece in a pair's opening
-    (`across_median`, **Kerb return** below) — the ribbon, the ring edges and the turning
-    circles read it; its per-side form `sidewalk_on(i, side)` — the same answer where the
-    tag puts a sidewalk on that side (`SidewalkProfile::on`) — is what the kerb pockets,
-    the kerb returns (for the road and for a wedge's narrow neighbour) and the merge edges
-    read, the map ∧ knob ∧ opening ∧ side asked in one place instead of a
-    `sidewalk_drawn(i).filter(sides[side])` at each of them (pinned by
-    `tests.rs::a_pocket_on_the_side_without_a_sidewalk_pushes_no_sidewalk` and
-    `a_one_sided_street_turns_its_sidewalk_only_on_its_side`). The pair's own side is
-    not in it: the kerb returns take it off through `Pairs::beside` with two probes of
-    slack, the ribbon through `Pairs::band_pieces` — two different reaches, so two
-    consumers' calls; `sidewalk_mapped(i)` — the sidewalk
+    (`across_median`, **Kerb return** below) — the ribbon and the turning circles read it;
+    its per-side form `sidewalk_on(i, side)` is the same answer where the tag puts a
+    sidewalk on that side (`SidewalkProfile::sides`), one call where the kerb pockets, the
+    kerb returns (the road's own sides and the narrow neighbour's under a wedge) and the
+    merge edges (`merge_bands` takes it as `sidewalk(half, side)`) each used to AND the
+    tag in by hand; the pair side is still the consumer's to drop (`Pairs::beside`,
+    `band_pieces`) — pinned by `tests.rs::a_pocket_on_the_side_without_a_sidewalk_pushes_no_sidewalk`
+    and `a_one_sided_street_turns_its_sidewalk_only_on_its_side`; `sidewalk_mapped(i)` — the sidewalk
     the *map* has, knob or no knob, minus the same piece — the junction paint reads it, a
     rule zebra being a question of the model and not of a display toggle
     (`tests.rs::rule_zebras_do_not_follow_the_sidewalk_knob`); `band_half(i, side)` — the
     half width of the band on one side, `width / 2 + drawn sidewalk ∧ sidewalks[side]`, the
     bare kerb where the tag has no sidewalk — the per-side wedge (**Streets, sections,
-    tapers**) reads it for the road and for its narrow neighbour; unlike `sidewalk_on` it
-    ignores the pair's opening, since a wedge lies on a street's body, not on the piece
-    between the halves. The crossing piece is
+    tapers**) reads it for the road and for its narrow neighbour. The crossing piece is
     pinned by `tests.rs::a_crossing_piece_between_two_halves_carries_no_sidewalk` (drawn
     exactly as the same piece tagged `sidewalk=no`), the per-side wedge by
     `a_one_sided_sidewalk_wedge_keeps_the_bare_kerb_on_the_untagged_side`.
@@ -1158,7 +1722,12 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
       takes at most half of each link — and next to a pinned node at most what leaves the
       node `KERB_STRAIGHT` 12 m of straight edge (never less than ¾ of a short link):
       **a kerb return is laid only on a straight edge**, and an arc eating into it cost
-      ~1000 kerb returns across Tula in the first cut;
+      ~1000 kerb returns across Tula in the first cut. **A full reversal (bend exactly π)
+      is left a corner** (`Corner::bend` takes `MIN_BEND..PI`): OSM has spikes where a way
+      steps a metre off a node and the next way of the street comes straight back, and
+      `tan(π/2)` in `f32` is *negative* (−2.3·10⁷) — the arc's reach went to −4.6·10⁸ m,
+      the axis end flew half a billion metres off and the Moscow NE load hung in
+      `Pairs::new` (pinned by `axis/tests.rs::a_spike_that_doubles_back_keeps_the_axis_finite`);
     - a **pinned node** — one a third **carriageway** touches (a street or a drive,
       `axis::pins`) — stays exactly in place: the kerb
       returns, the marking breaks, the stitches and the tapers all find each other by it.
@@ -1235,7 +1804,8 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     rework): `MAJOR_RADIUS` 10 m between avenues (`trunk`…`secondary` and their links),
     `STREET_RADIUS` 6 m with a street (`tertiary`, residential, `unclassified`),
     `DRIVE_RADIUS` 2.5 m with a drive, a living street or a driveway crossing,
-    `PATH_RADIUS` 2 m between footways. It used to follow the widths — `0.6 × (half +
+    `PATH_RADIUS` 2 m between footways, and never more than `DIRT_RADIUS` 3 m between
+    two dirt roads (**Unpaved streets** above). It used to follow the widths — `0.6 × (half +
     half)`, and only 0.4 × the narrower half width for a minor entry — and on a divided
     avenue, where halves of different lane counts meet in one node, every corner came out
     a metre or two (sample 2). The wedge `[corner, tangent, arc…,
@@ -1258,7 +1828,8 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     ribbon edge without sharing its vertices rasterizes with dropouts, a dotted light
     crack along the drive edge.
     Mixed-class arms get nothing: a grey wedge over a sand
-    footway would read as asphalt spilled onto the path. Bridges and passages give no arms
+    footway would read as asphalt spilled onto the path — and so do a dirt street and an
+    asphalt one (**Unpaved streets** above). Bridges and passages give no arms
     (their paths go in as `None`). The radii are scaled by `RoadShape::corner_radius`
     (0.5–2, `kerb_returns(..., scale)`).
     - **An arm that ends in a junction ends square** (`KerbReturns::butt`, stage 5). A
@@ -1281,7 +1852,72 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
       junction with a slight kink (Ложевая at Пролетарская, Tula, gallery 08, 0.7°) leaves
       a wedge between the two butt ends on the side away from the crossing road, and at the
       old 1° threshold it showed as a light hairline. Tula: outer corners 960 → 1632,
-      117 → 202 on sidewalks; the road build did not move (125.6 ms).
+      117 → 202 on sidewalks; the road build did not move (125.6 ms). The fan's straight
+      sides reach `OUTER_OVERLAP` 0.3 m (not `OVERLAP`) into the butt ends: they follow the
+      nodal axis's arms while a butt end follows the ribbon's own last link, and a degree
+      between the two is fifteen centimetres at the far edge of a sidewalk band. **In the
+      sidewalk layer the fan is also laid between exactly two banded arms** when both are
+      way ends and the streets at the node make a junction — a street split into two ways
+      where a drive without a sidewalk joins it: its band ends are butt (the street node is
+      a junction), yet two banded arms alone read as a continuation and got no corner, and a
+      hairline crossed the sidewalk (Oryol 04 north).
+    - **A sharp fork gets a nose** (`corners::nose`, `KerbReturns::noses`): between two
+      neighbour arms under 25° (`MIN_ANGLE`, down to `NOSE_MIN_ANGLE` 2°), and between
+      arms up to `NOSE_MAX_ANGLE` 60° whose fillet did not fit (the straight run shorter
+      than the tangent — a drive leaving a secondary at 34° with a kink 10 m out, gallery
+      06), the two facing edges used to meet in a mathematical point: a spike of sidewalk
+      and ground between the carriageways (galleries 04 ×3, 06, 14). A fillet cannot help
+      — its tangent `r / tan(θ/2)` runs tens of metres, far past the straight run — so the
+      nose is a different figure: an arc of a **small** radius (`NOSE_SHARE` 0.4 of the
+      pair's kerb radius, capped at `NOSE_RADIUS` 1.5 m × the corner knob — 1.5 on
+      streets, 1 with a drive, 0.8 on footways) where the edges have parted by two radii.
+      It is found on the **axes** (`Arm::trail`, the nodal path from the node out to
+      `NOSE_REACH` 100 m, built only for a nose), not on the arms' first directions: the
+      tip lies 30–60 m from the node, where a ring exit or a curving branch has long left
+      the straight line. `NOSE_STEP` 0.5 m stations along the first arm: its edge (with
+      the taper — `Arm::half_at`, linear over the fitted wedge the ribbon lays), the nearest
+      point of the second axis (searched in a `NOSE_WINDOW` of links around the previous
+      hit) and the gap between the edges; the tip is the last station where they still
+      crossed, the centre starts in the middle of the first gap of two radii and is then
+      **settled** (`NOSE_SETTLE` 8 passes) until it stands one radius off both edges — a
+      ring's edge bulges towards the island, and the midpoint's arc stopped short of the
+      straight edge with a notch. The outline — tip, the first edge, the arc between the
+      feet, the second edge back — follows bent edges, so it is **not** a fan: it goes into
+      `noses` with its `Fill` (street/alley layer, unpaved, sidewalk) and is triangulated
+      whole (`push_polygon`); the narrow part of the wedge keeps every `NOSE_THIN` 4th
+      station only. The sidewalk gets its own nose on the band edges (half + sidewalk),
+      with the same small radius — the concentric `r − sidewalk` would go negative, and the
+      tip of an island is all paving anyway. Tula: 385 noses, +7 k of the road
+      layers' 849 k vertices, the build unmoved (215–221 ms before, 210–213 after, the
+      `map_meshing` bench). The first cut built the trail for every arm and searched the
+      whole second axis at every station: +90 ms.
+    - **A sharp fork of two streets gets a hatched gore ahead of its nose**
+      (`corners::fork_gore`, `KerbReturns::fork_gores` → `Gores::add_forks`, painted like
+      every gore by `road_paint_islands`). The nose stands where the ribbons' edges have
+      parted, and before it the two ribbons overlap for tens of metres: at Tula's 8–15°
+      fork of Курковая and a residential street (gallery 14) one plain tongue of asphalt
+      ran 34 m from the node to the nose. On the ground the lanes part earlier and the
+      space between them is hatched. The gore is built off the nose's own stations
+      (`Station`: both facing edges, the gap, the half widths, the inward normals): it
+      **starts** at the first station where the overlap of the edges is down to the
+      narrower half width — the narrower street's axis has left the wider one's
+      carriageway — widens linearly to the gap at the station where the nose was found
+      (two radii), and **ends square** on the line through the nose arc's apex (running it
+      along the arc laid the outline as a white bracket over the kerb, with hooks at its
+      feet). Where the gore is wider than the gap, its sides go into both ribbons, each
+      by its share of the half widths, so both carriageways narrow together; past the
+      edge crossing it is exactly the nose's asphalt. Only at a **fork** — a node of
+      exactly three street arms, the two under `MIN_ANGLE` 25° (not the nose of a fillet
+      that did not fit, up to 60°): on a six-arm node the gores lay as hatched islets in
+      the middle of its asphalt (Oryol, gallery 04), at Tula 06's 34° drive as a scrap in
+      the throat. Only between two `Highway::is_street` arms, neither of them a ring arc (a
+      ring hatches its own wedges — `Gores::add_forks` also skips a gore that touches
+      one), not on footways, drives or dirt, and not shorter than `FORK_GORE_MIN` 8 m —
+      a fork under 25° gives at least 12 m (a lane and two nose radii over the sine), and
+      the 3–5 m ones came from bent arms inside a complex node (Oryol 04, two hatched
+      triangles afloat in its asphalt).
+      The asphalt under it is the ribbons and the nose: only the hatching is added
+      (`a_sharp_street_fork_hatches_a_gore_ahead_of_its_nose`).
     - **A small island of three nodes is paved** (`small_islands`): three shared nodes
       pairwise joined by pieces of streets (a fork's triangle, Tula, gallery 06: sides
       17–31 m) whose inradius, less the widest half width of the three, is under
@@ -1453,7 +2089,11 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     and `Smoothing` stay for the tree-row band's own Joins / Smoothing rows and for rails,
     the tram and water (`Smoothing::Light`). The dark road/alley **casing layers are gone**
     (`alley_casings`, `road_casings`, `Z_ALLEY_CASING`, `Z_ROAD_CASING` and their colours),
-    so `mesh_roads` yields **18 layers**: ten ribbons + eight paint layers. `bridge_casings`
+    so `mesh_roads` yields **24 layers**: twelve ribbons (with `unpaved_roads`, **Unpaved
+    streets** above, and `road_verges`, **Sidewalks**), the wide verges' lawn as meadow
+    and as yard grass (`road_verge_lawns`, `road_verge_yards`, **Sidewalks**), the ring islands' lawn and their
+    grass without the rim (`ring_islands`, `ring_island_grass`, **Roundabouts**) + eight
+    paint layers. `bridge_casings`
     stays — it is the bridge curb (**Bridge layers** below); `footprint::casing_width`
     stays for the tree-row band and the planting index.
   - **RoadShape** (`map/roads/shape.rs`, group `road_shape`; five sliders in the Roads
@@ -1469,16 +2109,24 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     `seed_road_shape` at Startup, `track_pref::<RoadShapeOnMap>`. `roads::rebuilds_on` =
     `RoadStyle` | `RoadShapeOnMap` | `SunOnMap`; `cars::rebuilds_on` reads
     `RoadShapeOnMap` instead of `RoadStyle`.
-  - **Lane width is a world reload**, not a rebuild: the parse reads it (**Sections**), and
-    the parse runs on the load thread with no ECS, so it travels as a process global —
-    `shape::lane_width()` / `set_lane_width()`, an `AtomicU32`, the same way as the sun
-    and the navtile size. `loading.rs::sync_lane_width` writes it on `OnEnter(Loading)`
-    right before `start_job` (next to `sync_navtile_size`); `city.rs::reload_world` fires
-    on `lane_width_moved` (the settled width differs from the global) — same city, the
-    camera stays. Paint and turns read the same global (`BIRTH_FADE` is half a lane), and
-    the surface shader gets it as `SurfaceParams::lane_width` (`surface.wgsl` no longer
-    hardcodes 3.3); `surface::retune_surface_materials` also runs on `OnEnter(Playing)`
-    so the ruts follow a new width.
+  - **Lane width is a world reload**, not a rebuild: the parse reads it (**Sections**). The
+    parse gets it as an **argument** — `ParseKnobs::lane_width`, built by
+    `loading.rs::start_job` from the `RoadShape` knob and handed to the load thread
+    (`parse.md`, the parse seam). The paint and the ruts still read a process global —
+    `shape::lane_width()` / `set_lane_width()`, an `AtomicU32`, the same way as the sun:
+    threading it through `Painter::paint`, `lane_frame`, `wedge_frames`, `merge_ramps` and
+    `arm_lanes` would widen five interfaces inside pure functions for one number.
+    The map keeps what it was parsed with, `MapData::knobs`, and that snapshot is the one
+    source both ends read: `shape::adopt_lane_width` writes the global from it on
+    `OnEnter(Playing)`, chained before `surface::retune_surface_materials` and before
+    `WorldInitSet::Navmesh` (so before any road layer is meshed); `city.rs::reload_world`
+    fires on `lane_width_moved` (the settled `RoadShapeOnMap` width differs from
+    `MapData::knobs.lane_width`) — same city, the camera stays. The one-lane Y legs of a
+    roundabout (`leg_sections`) are sections of the parse too and take the snapshot, not
+    the global. Paint and turns read the global (`BIRTH_FADE` is half a lane), and the
+    surface shader gets it as `SurfaceParams::lane_width` (`surface.wgsl` no longer
+    hardcodes 3.3) — the retune on `OnEnter(Playing)` is what makes the ruts follow a new
+    width.
   - **Smoothing off the street axis** — a bridge or a path goes through `centerline`
     with Chaikin corner-cutting (`Smoothing::Light` when the curve tolerance is above 0,
     `Off` at 0): only bends over `MIN_SMOOTH_ANGLE` (10°) are cut and the cut length is
@@ -1788,6 +2436,21 @@ avenue and a street, of private-sector streets and of yard drives, T's into an a
 into one half of a divided one, a fork round a triangular island, a roundabout, five
 arms, a drive into a street, a street that narrows, a sharp bend, a dead end — each with
 its full address and **game coordinates** in a caption to the left of its window.
+Ryazan, Kaluga, Oryol and Rostov have columns of their own (`ROADS_CITY=<slug>`, six
+samples each with a Yandex reference, plus Ryazan's `07_signals_across_pair` without
+one — the stop lines' queue room): the types Tula lacks or draws differently —
+Rostov's one-way grid, crossings of two divided avenues, a T into a six-lane two-way
+street, unpaved and gravel private-sector crossings, rings of every size (a three-lane
+primary, two rings side by side, a narrow ring round a square, a park ring, an oval one,
+a five-arm mini ring, a closed one-way loop without `junction`), six arms in one node.
+**Belgorod** has two, both from the author's reports and both drawn wrong when added:
+`01_divided_merge_junction` (улица Попова × Павлова — the halves of a divided secondary
+meet in the signalled junction node itself, the east half kinked in OSM right at the
+node; the game bulges that half and zebras only the west one, Yandex keeps both halves
+straight with a paved strip between them up to one zebra across the arm) and
+`02_links_into_avenue` (улица Победы — two one-way `primary_link`s leave one node of a
+four-lane primary: not a merge, the class differs; the entry's lane runs into the solid
+line by the hatched gore).
 **The column is a list of junction *types*, one sample per type, with no target count**;
 the rules for adding one — one type once, readable in the window at a glance, flat road
 junctions only (no level crossings, no multi-level interchanges, no arch through a house:
@@ -1839,7 +2502,14 @@ place to look at a road-network defect end to end:
   whether a house is squared. The first version clipped ways to the window and the sample
   visibly stopped matching the game (other stalls in the lot, other cars in it). Roads
   that share a node with a kept road are added too (`joining_roads`, one level) so the
-  kept streets have their junctions. Only non-building multipolygons (a river runs for
+  kept streets have their junctions, and so are the **footways along a kept street**
+  anywhere on its length (`footways_along`: a path way — the `road_class` Alley values —
+  with a vertex within `FOOTWAY_REACH` 32 m of a kept carriageway's link). The parse
+  decides a street's sidewalk band and its verge by probes along the **whole** street
+  (60 % of them must find a footway), and a 600 m avenue kept whole with only its
+  window's footways lost its verge altogether: a pocket of bare ground framed by tile
+  at Tula 02's south-east corner (roads plan S3) that the game, parsing the whole city,
+  never had. Only non-building multipolygons (a river runs for
   kilometres) are polygon-clipped; the tag-only `is_in` boundary (the `driving_side`
   carrier) is kept with its `name:*` tags dropped; nodes inside the window are kept (doors,
   trees today; crossings and signals once the query asks for them). `CROP_MARGIN` is 120 m
@@ -1880,8 +2550,12 @@ place to look at a road-network defect end to end:
   **Roads** header (the five `RoadShape` sliders from `qwe::ui::shape_knobs` + Sidewalks),
   a **Road paint** header (Markings, Paint, Crossings, Stop lines, Arrows, Wear, Turn wear)
   and the Network row; a change rebuilds every sample. The gallery settles `RoadShape`
-  like the game and sets the lane-width global (`apply_lane_width`) before re-parsing its
-  samples. `ROADS_SHOT=path.png` takes a frame and exits, `ROADS_SAMPLE=N` frames sample N,
+  like the game, hands the settled lane width to `parse_response` in `ParseKnobs` and sets
+  the paint's lane-width global (`apply_lane_width`) before re-parsing its samples. `ROADS_SHOT=path.png` takes a frame and exits — counting the shared
+  `gallery_shot.rs` frames only from the frame every sample is built and placed
+  (`gallery_ready`), since the samples build one per frame and a fixed frame number left
+  the late ones (Tula's 28th) empty; `ROADS_SHOT_SCALE=2` takes it at twice the window's
+  logical size — the same frame, sharper; `ROADS_SAMPLE=N` frames sample N,
   `ROADS_CITY=<slug>` opens the gallery on that city (the automatic shot of a city other
   than Tula).
 - **Captions are always drawn**, even where they run under the panel or off the screen.

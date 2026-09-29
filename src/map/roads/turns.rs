@@ -33,7 +33,7 @@ use bevy::prelude::*;
 use super::drawn::{Axis, Drawn};
 use super::lane_count;
 use super::node_paint::{Junction, JunctionArm};
-use super::paint::lane_frame;
+use super::paint::{axis_offset, lane_frame};
 use super::shape::lane_width;
 use super::tapers;
 use crate::map::along::{arclengths, place_on_path};
@@ -340,11 +340,13 @@ fn arm_lanes(
         TrafficSide::Right => -travel_sign,
         TrafficSide::Left => travel_sign,
     };
+    // полосы по сторону осевой ([`axis_offset`]): у нечётной она на границе
+    // полос, и лишняя полоса — потока по ходу точек или по `lanes:backward`
+    let axis = axis_offset(road, count, side).unwrap_or(0.0);
     let mut offsets: Vec<f32> = (0..count)
         .map(|index| frame.low + (f32::from(index) + 0.5) * lane_width())
-        // средняя полоса нечётной двусторонней — ничья, кроме единственной:
         // по однополосной едут в обе стороны
-        .filter(|offset| road.oneway || count == 1 || offset * kerb > 1e-3)
+        .filter(|offset| road.oneway || count == 1 || (offset - axis) * kerb > 1e-3)
         .collect();
     offsets.sort_by(|a, b| (b * kerb).total_cmp(&(a * kerb)));
     let normal = direction.perp();

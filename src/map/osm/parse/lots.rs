@@ -31,10 +31,10 @@ use i_overlay::mesh::style::{LineCap, LineJoin, OutlineStyle};
 use super::{LANDUSE_OVERLAP, SIDEWALK_CELL};
 use crate::map::grid::Grid;
 use crate::map::osm::model::{
-    MapData, PolyArea, RoadClass, distance_to_segment, point_in_area, point_in_polygon, ring_area,
-    ring_bounds,
+    AreaKind, LotKind, MapData, PolyArea, RoadClass, distance_to_area, distance_to_outline,
+    distance_to_segment, point_in_area, point_in_polygon, ring_area, ring_bounds, signed_ring_area,
 };
-use crate::map::parking::is_ground;
+use crate::map::parallel::in_parallel;
 use crate::map::shapes::{
     ARC, Contour, Shape, area_contours, contour_area, contour_bounds, point_in_shape, ring_of,
     shape_area, stroke,
@@ -45,9 +45,17 @@ use crate::map::shapes::{
 /// запас: полоса шире — уже своя площадка, а не пустырь у кромки. Карманы между
 /// торцами проездов (у «Макси» — 12 м между полотнами) сюда попадают.
 const CLOSING_RADIUS: f32 = 7.0;
-/// То же для **большой** стоянки ([`is_ground`]): объездная вокруг неё стоит в
+/// То же для **большой** стоянки ([`is_big`]): объездная вокруг неё стоит в
 /// 15–20 м от контура, и вся эта полоса на снимке — асфальт площадки.
 const GROUND_CLOSING_RADIUS: f32 = 12.0;
+/// С какой площади стоянка — **большая** ([`LotKind::Ground`]), м². Маленькая
+/// кроет все ленты, что на неё заходят, и это верно: во дворе асфальт стоянки
+/// и есть проезд. У большой сквозь площадку идёт настоящая дорога — с
+/// односторонним движением, с кольцами на развязках, — и спрятанная под
+/// асфальтом, она оставляет поле штриховки без единого ориентира
+/// (`roads/lots.rs`). В Туле таких площадок десять, и дорога идёт сквозь одну —
+/// стоянку ТРЦ «Макси», 8.3 га.
+const GROUND_MIN_AREA: f32 = 8000.0;
 /// Насколько звено улицы может разойтись с длинной стороной кармана
 /// (`parking=street_side`), чтобы считаться улицей, вдоль которой он лежит, —
 /// рад. С запасом: карман рисуют не строго по оси, а улица у него плавно гнётся.
@@ -150,42 +158,17 @@ struct Paved {
 }
 
 /// Дотянуть все стоянки карты до дорог. Возвращает, скольких площадок это
-/// коснулось, по событиям ([`PavedLots`]).
+/// коснулось, по событиям ([`PavedLots`]). Заодно решается, какая стоянка
+/// большая ([`LotKind::Ground`]): по замощённому контуру, тому, что рисуется.
 ///
 /// Площадки друг от друга не зависят и считаются **по потокам**: на каждую
 /// уходит с полдюжины булевых операций `i_overlay`, у которых цена — не
 /// геометрия, а сам вызов (≈ 0.3 мс на площадке в четыре вершины), и на 349
-/// площадках Тулы это полсекунды в один поток.
+/// площадках Тулы это полсекунды в один поток. Результаты — в порядке
+/// площадок ([`in_parallel`]), так что от числа потоков ничего не зависит.
 pub(super) fn pave_lots(map: &mut MapData) -> PavedLots {
     let around = Around::of(map);
-    let lots = &map.parking;
-    let mut street_side = vec![false; lots.len()];
-    for &index in &map.street_side_lots {
-        if let Some(flag) = street_side.get_mut(index) {
-            *flag = true;
-        }
-    }
-    let workers = std::thread::available_parallelism().map_or(1, usize::from);
-    let chunk = lots.len().div_ceil(workers).max(1);
-    let results: Vec<Option<Paved>> = std::thread::scope(|scope| {
-        let handles: Vec<_> = lots
-            .chunks(chunk)
-            .zip(street_side.chunks(chunk))
-            .map(|(lots, flags)| {
-                let around = &around;
-                scope.spawn(move || {
-                    lots.iter()
-                        .zip(flags)
-                        .map(|(lot, &flag)| around.paved(lot, flag))
-                        .collect::<Vec<_>>()
-                })
-            })
-            .collect();
-        handles
-            .into_iter()
-            .flat_map(|handle| handle.join().expect("поток прохода стоянок упал"))
-            .collect()
-    });
+    let results: Vec<Option<Paved>> = in_parallel(&map.parking, |lot| around.paved(lot));
     drop(around);
 
     let mut paved = PavedLots::default();
@@ -218,7 +201,27 @@ pub(super) fn pave_lots(map: &mut MapData) -> PavedLots {
         }));
     }
     map.parking.extend(parts);
+    for lot in &mut map.parking {
+        lot.kind = AreaKind::Parking(settled_kind(lot));
+    }
     paved
+}
+
+/// Вид стоянки после мощения: карман вдоль улицы остаётся карманом, прочие —
+/// большая или нет по замощённому контуру. Часть площадки, разрезанной домом,
+/// судится по себе.
+fn settled_kind(lot: &PolyArea) -> LotKind {
+    match lot.kind {
+        AreaKind::Parking(LotKind::Kerbside) => LotKind::Kerbside,
+        _ if is_big(&lot.outer) => LotKind::Ground,
+        _ => LotKind::Yard,
+    }
+}
+
+/// Площадь кольца от [`GROUND_MIN_AREA`]. До мощения по ней выбирается радиус
+/// замыкания, после — вид ([`settled_kind`]).
+fn is_big(ring: &[Vec2]) -> bool {
+    signed_ring_area(ring).abs() >= GROUND_MIN_AREA
 }
 
 impl<'a> Around<'a> {
@@ -297,8 +300,8 @@ impl<'a> Around<'a> {
     /// Оба события считаются порознь ([`PavedLots`]), и второе бывает без
     /// первого: дотягиваться не до чего, а отмостка всё равно отрезала от
     /// площадки кусок.
-    fn paved(&self, lot: &PolyArea, street_side: bool) -> Option<Paved> {
-        let grown = self.grown(lot, street_side);
+    fn paved(&self, lot: &PolyArea) -> Option<Paved> {
+        let grown = self.grown(lot);
         let shape: Shape = grown.clone().unwrap_or_else(|| area_contours(lot));
         let walls = self.walls(&shape);
         if walls.is_empty() {
@@ -355,8 +358,9 @@ impl<'a> Around<'a> {
 
     /// Контур площадки вместе с асфальтом, добавленным между ней и дорогами;
     /// `None` — добавлять нечего.
-    fn grown(&self, lot: &PolyArea, street_side: bool) -> Option<Shape> {
-        let radius = if is_ground(lot) {
+    fn grown(&self, lot: &PolyArea) -> Option<Shape> {
+        let street_side = lot.kind == AreaKind::Parking(LotKind::Kerbside);
+        let radius = if is_big(&lot.outer) {
             GROUND_CLOSING_RADIUS
         } else {
             CLOSING_RADIUS
@@ -547,7 +551,7 @@ fn road_pieces(lot: &PolyArea, links: &[&RoadLink], gap: f32) -> Vec<RoadPiece> 
             let middle = from.midpoint(to);
             let near = middle.cmpge(low - reach).all()
                 && middle.cmple(high + reach).all()
-                && distance_to_lot(middle, lot) - link.reach <= gap;
+                && distance_to_area(middle, lot) - link.reach <= gap;
             if !near {
                 flush(&mut run, last);
                 continue;
@@ -600,26 +604,8 @@ fn sandwiched(piece: &RoadPiece, lot: &PolyArea, kept: &[Shape]) -> Vec<Vec<Vec2
     runs
 }
 
-/// Расстояние от точки до площадки: ноль внутри, иначе до ближайшего ребра.
-fn distance_to_lot(point: Vec2, lot: &PolyArea) -> f32 {
-    if point_in_area(point, lot) {
-        return 0.0;
-    }
-    distance_to_rings(point, lot)
-}
-
-fn distance_to_rings(point: Vec2, lot: &PolyArea) -> f32 {
-    std::iter::once(&lot.outer)
-        .chain(&lot.holes)
-        .flat_map(|ring| {
-            (0..ring.len()).map(move |index| (ring[index], ring[(index + 1) % ring.len()]))
-        })
-        .map(|(from, to)| distance_to_segment(point, from, to))
-        .fold(f32::INFINITY, f32::min)
-}
-
 fn touches_lot(point: Vec2, lot: &PolyArea) -> bool {
-    distance_to_rings(point, lot) <= TOUCH
+    distance_to_outline(point, lot) <= TOUCH
 }
 
 /// Идёт ли звено вдоль кармана: направление в пределах [`STREET_SIDE_ANGLE`]

@@ -9,8 +9,22 @@ them, every tag reading and finishing pass in order, and how a tag rule is pinne
 
 ### The parse seam: reading the elements, then finishing
 
-`parse()` is two halves with a line between them, and the line is what makes a single
-pass reachable:
+`parse(json, city, knobs)` is two halves with a line between them, and the line is what
+makes a single pass reachable. **`ParseKnobs { lane_width, navtile }`** (`parse.rs`) are
+the parse's inputs that are not in the Overpass answer: the street lane width (the
+sections — and by the width the houses, blocks and lots move) and the navtile size (the
+door generator's clearance, one tile in front of a door, carried by
+`entrances::FootprintIndex`). **The parse reads no process global** — both used to be one
+(`shape::lane_width()`, `grid::navtile_size()`), which the parse read on its own, so
+`parse(json, city)` had two invisible inputs and a test could not name a lane width
+without a serial mutex (`cargo test` is multithreaded). `Default` is the knobs' defaults
+(3.3 m, 2 m) — the fixture, the tests, the bench and the replay parse with it; the game's
+load thread gets the settled knobs from `loading.rs::start_job`, the roads gallery the
+lane width off its own `RoadShapeOnMap`. `finish_parse` stores them in the map as
+**`MapData::knobs`** — the snapshot of what the world was parsed with, which the
+lane-width reload (`city.rs::lane_width_moved`), the paint's global
+(`roads::shape::adopt_lane_width`) and the roundabout legs (`roads::leg_sections`) read;
+a map built by hand in a test carries the defaults.
 
 - **`read_elements(response, bounds) -> (MapData, Pending, ReadReport)`** — the element
   loop and nothing else. What comes out is *raw*: houses still standing in water, churches
@@ -19,9 +33,12 @@ pass reachable:
   buildings do not exist). The roads with no `sidewalk*` tag at all, whose sidewalks the
   blocks around decide once the buildings are read, need no list there: they carry
   `SidewalkSide::Inferred` on the `RoadLine` itself.
-- **`finish_parse(&mut MapData, &Pending) -> PassReport`** — the **nine** finishing passes
+- **`finish_parse(&mut MapData, &Pending, ParseKnobs) -> PassReport`** — the **nine** finishing passes
   (step 0 is the street sections, `map::roads::network::sections`, since the width they
-  set is read by the passes after them) in their one correct order, closed by a tenth
+  set is read by the passes after them — and right before them the roundabout tail Ys
+  are straightened, `map::roads::rings::straighten_tails`, which moves nodes and cuts a
+  way and so must run before the network is assembled; `references/roads.md`, **A tail
+  Y is straightened in the data**) in their one correct order, closed by a tenth
   step, `compose_trees` for the default
   layout (the parser knows nothing about the panels, but it must not hand out a `MapData`
   whose `trees` is empty, or every reader has to remember a separate compose step; the
@@ -260,6 +277,93 @@ be called alone:
   the house pull and the block pull, so both push and pull against the sidewalk that is
   drawn. The rule itself — `roads.md`,
   **Sidewalks**; logged as `N of M untagged residential streets left without sidewalks`.
+- **Sidewalks left to a separate footway** (`parse/verges.rs::measure_footways_beside_streets`,
+  right after the pavements pass, whose answer it reads) — OSM maps a sidewalk either as a
+  `sidewalk*` tag or as its own `footway` along the kerb, and the street then should say
+  `sidewalk=separate`. Often it does not: the south-east half of Lenina in Tula carries no
+  `sidewalk*` at all, so the rule band lay a metre from the mapped `footway=sidewalk` — two
+  parallel sidewalks with a strip of grass between, the length of the avenue (scout A1,
+  gallery samples 01 and 02). The pass asks every **carriageway** (any class, the arterials
+  too — `infer_sidewalks` asks only residential ones) for each **`Inferred`** side: probes
+  every `SEPARATE_PROBE_STEP` 5 m, and a probe hits a side when a **paved** path
+  (`RoadLine::is_paved_path` — a sand trail beside the street is not its sidewalk) runs
+  parallel (`|cos| ≥ SEPARATE_PARALLEL` 0.85) on that side, its axis between
+  `SEPARATE_INSIDE` 1 m inside the kerb and `SEPARATE_REACH` 4 m past the outer edge of
+  the band (the nearest such footway per probe is kept). The side goes only if the
+  **median lawn** — kerb to the footway's near edge (axis minus the path's half width) —
+  is at least `SEPARATE_LAWN` 1.5 m. A footway closer than that keeps the band, which
+  then lies under it (both are pavement, the overlap is invisible): taken away, it left a
+  metre of bare ground between the kerb and the footway, and at a corner a hole down to
+  the ground framed by the kerb returns (scout R3). The same pass then gives every side
+  of a paved carriageway whose probes found such a footway — the probe window reaching
+  `VERGE_REACH` 10 m past the kerb for this (`VERGE_REACH_TWO_WAY` 16 m on a two-way
+  street: Фрунзе in Tula, gallery 02, has its footways 8–15 m out and only half the
+  probes found them within 10 m, so the side had no verge and bare ground lay between
+  the band and the footway; a half of a divided street keeps 10 m, past which on its
+  inner side lie the other half's footways), band or no band — a **verge**:
+  `RoadLine::verges`, the median distance from the kerb to the footway's axis, and
+  **its profile** `RoadLine::verge_profile` — `(metres along the points, verge)` at every
+  probe that found a footway, a **slanted** link included (`VERGE_SLANT`, cos ≥ 0.5 —
+  counted for the profile only, not as a footway alongside): the footway turns at the
+  corner and drifts off the street, and a verge of one width left a wedge of ground
+  between itself and the footway (roads plan №33). `RoadLine::verge_at(side, along)`
+  reads it — linear between probes, the end values past them, the constant median with
+  no profile. Only the
+  renderer reads it (**Sidewalks** in `roads.md`: sidewalk tile under the greens). At least `SEPARATE_SHARE` 60 % of the probes → the side becomes `None`. A
+  `Tagged` side is never touched. Before the house and block pulls like the other sidewalk
+  pass, so both work against what is drawn. The consequences are the ones `sidewalk=separate`
+  already had: no band means no kerb pocket on an arterial side (`pockets::kerb_parking`)
+  and no rule zebra there — the same as the tagged north-west half of Lenina. Tula v15:
+  516 of 1982 untagged sides dropped in 8 ms (release) when it came in; kerb pockets
+  271 → 201, zebras 775 → 750 (the 529 from OSM untouched), no house pull moved. With the
+  lawn rule and the verges: **284** of 1982 dropped, the pass 18 ms (release — every paved
+  carriageway is probed now, over the wider verge window; `Grid::near_each`, the sorted
+  `near` cost 48), house pulls 1336 (52 partial), zebras 731, kerb pockets 225;
+  `road_verges` 47 k vertices — 117 k with the profile and the two-way reach (roads plan
+  №33; the pass itself unchanged at 12–17 ms, the road build 227 → 231 ms, `dev`
+  profile of `map_meshing`). Logged as
+  `N of M untagged sidewalk sides left to a separately mapped footway in T`; pinned by
+  `parse/tests.rs::a_footway_along_the_kerb_takes_the_inferred_sidewalk_of_its_side`,
+  `a_sidewalk_stays_unless_a_paved_footway_runs_beside_it` and, through the whole parse,
+  `a_mapped_sidewalk_beside_an_untagged_street_replaces_its_band`.
+- **Pavement of untagged footways** (`parse.rs::infer_pavements`, beside the sidewalks
+  pass; its place is free — the greenery it reads never moves and only the renderer reads
+  the answer). `RoadLine::pavement` leaves `parse_way` from `tags.rs::tagged_pavement`:
+  `surface` decides (`asphalt|paving_stones|concrete|sett|paved|metal|wood|…` → `Paved`,
+  the `untagged_sidewalks` dirt list plus `woodchips|grass_paver` → `Unpaved` — the two
+  share `surface_pavement`); without it the kind does — `footway=sidewalk|crossing`,
+  `steps`, `pedestrian`, `cycleway` paved, `path` and `track` unpaved; a bare `footway`
+  stays `None`. The pass then probes each `None` path every `PAVEMENT_PROBE_STEP` 10 m
+  against parks, woods and grass (a `Grid` of their boxes, `GREEN_CELL` 100 m): more than
+  half the probes in green → `Unpaved`, else `Paved`. **A link between paved paths stays
+  paved**: a footway the probes sent to the sand whose two ends (not a ring) are both
+  vertices of paved paths — tagged, paved by kind (`steps`, `pedestrian`) or paved by the
+  probes — is set back to `Paved`, in one pass (a link standing on another such link stays
+  a trail). The spokes of the Tula ring island (gallery 04, Площадь 50-ой армии) run over
+  the lawn from the paved ring footway to the steps of the central square; drawn as sand,
+  they left the steps as paved stubs with round caps on it (roads tails L7). Keys are the
+  points in centimetres; logged as `…, N more are paved between paved paths`. Pinned by
+  `a_footway_on_a_lawn_between_paved_paths_is_paved`. Tula v15: 1952 paths paved by tag,
+  146 unpaved, 1271 without `surface` (690 of them bare `footway`, 58 in the green);
+  logged as `N of M untagged footways run through greenery and stay unpaved`. Pinned by
+  `parse/tests.rs::a_footway_is_paved_by_its_tag_its_kind_or_the_greenery_around`. How
+  it is drawn — `roads.md`, **Paved paths**.
+- **Path width** (`parse/tags.rs::path_width`, in `parse_way`, not a pass — it reads only
+  the way's own tags). Every path used to be 3.5 m by class, so a `width=1 surface=mud`
+  trail beside улица Циолковского (Tula, gallery 19; scout B6) was a boulevard, and the
+  park's alleys, trails and the yard paths were all one width (scout C6). Now a plausible
+  `width` tag decides (`PATH_WIDTH_READ` 0.5–12 m — `0` and `0.3` are notes, a larger
+  value is the width of a square — clamped to `PATH_WIDTH_RANGE` 1–8 m, a thinner trail
+  being a thread nobody sees); without it the kind and the surface: `pedestrian` 5,
+  `track` 3, `footway=crossing` 3, `steps` and `footway=sidewalk` 2.5, `cycleway` 2, a
+  trail surface (`dirt|ground|earth|mud|grass|sand|woodchips`) 1.5, other `path` 2,
+  other `footway` 3. Tula v15: 100 of 3375 paths carry `width` (23 × `1`, 23 × `2`,
+  13 × `3`, 8 × `0.5`). **Footbridges and arches keep the class 3.5**: their band is the
+  corridor the navmesh carves (the navigation-deep skill) and a `width=1` footbridge
+  would narrow a river crossing to a tile. The navmesh still feels the change through the
+  fence gaps (a road ending on a fence counts within half its width): Tula
+  `fence_prune_audit` 555 → 552 road gaps, 113 → 114 default gates, prune 15 535 → 15 535,
+  doorless 73 → 73. Pinned by `parse/tests.rs::a_path_takes_its_width_from_the_tag_or_its_kind`.
 - **Squared houses** (`parse.rs::square_skewed_houses`) — a small house outlined as a
   **skewed quad** is replaced by a rectangle. The private sector is traced by eye off
   imagery, and a rectangular house comes out a rhombus (Tula way 968419942, corners
@@ -412,12 +516,66 @@ be called alone:
     **One exception moves a vertex inward**: the nearest road is a **walkway**
     (`RoadClass::Alley` — a sidewalk mapped as its own footway) lying inside the fill
     within `SIDEWALK_TUCK_MAX` 3 m, and a carriageway lies outward within
-    `LANDUSE_GAP_MAX`. The vertex then goes `LANDUSE_OVERLAP` under the footway. Berlin
+    `LANDUSE_GAP_MAX`. The vertex then goes **to the footway's axis** — not
+    `LANDUSE_OVERLAP` past its edge: the block edge is straight between its vertices
+    while the footway bends, and half a metre of margin left a hair of yard along the
+    footway (Tula, gallery 15). Berlin
     draws its blocks to the kerb and maps the sidewalk as a footway inside them, while
     our carriageway is narrower than the real one (Berlin, gallery 03: the block edge
     6–7 m from the axis against a 3.8 m half width), so the yard stuck out from under the
     sidewalk as a dark crescent at every rounded corner. The strip between a sidewalk
-    and the kerb is paving, not yard: it is left as ground.
+    and the kerb is paving, not yard: it is left to the verge.
+    **A vertex lying under another walkway** — the block's corner under the crossing
+    path the sidewalk meets at the junction — is tucked the same way, to the nearest
+    walkway it is *not* under: left where it was, it stayed 2 m off the sidewalk while
+    its neighbours went under it, and the edge between them stuck out as a wedge of yard
+    (Tula, gallery 21, both corners of Ленина × Пушкинская). A vertex under a
+    carriageway is still left alone — under what is **drawn** of it, though.
+    **A vertex in the bare side's verge** (`parse.rs::in_bare_verge`, `Edge::gap`): the
+    mapped edge is one for both sides, so beside a street with a sidewalk on one side
+    only, a vertex beyond the kerb of the side without one (`sidewalk=separate|no`, the
+    `Edge::bare` flag) but within the other side's band counted as «under the road» and
+    stayed. That strip is the verge up to the footway, and the verge is drawn **under**
+    the blocks (`Z_ROAD_VERGE` < `Z_LANDUSE`), so the yard stuck out of its tiles: a dark
+    stroke where block 7749152 is traced around the footway's hook at Ленина × Советская
+    (Tula, gallery 15), a strip of yard inside the tiles (Tula 21, Oryol 03 — a hairline
+    along the footway). Such a vertex goes to the **nearer drawn rim**: the footway
+    (tucked, when `tuck` allows) or the kerb (0.5 m under the asphalt, outward only). The
+    gap to the drawn rim of a bare side (`Edge::gap`) is used there and in `tuck`'s
+    «street beyond» — and nowhere else: measured everywhere, the nearest road flipped
+    from street to footway on vertices outside the band as well, and the edges beside
+    Kaluga 01's ring came out zigzag between the two. Pinned by
+    `a_block_edge_in_the_verge_of_a_bare_side_goes_to_the_nearer_of_its_rims`. What the
+    vertex rules still miss the area cut below takes.
+  - **Slivers of yard on the verge tiles are cut out by area** (`parse/verges.rs::
+    cut_verges_from_blocks`, right after the vertex pull, before the lots). The rules
+    above decide **per vertex**, and the edge between two decided vertices is straight:
+    Tula 15 kept a sliver (~2 × 0.3 m) of yard on the tiles at the footways' fork by
+    Ленина, 15 — one vertex of the hook stood outside the phantom band, 0.47 m from
+    Ленина's mapped edge against 0.48 from the footway, went to the phantom band, while
+    its neighbours went under the footway. So the block is asked as an area: it is
+    intersected (`i_overlay`, NonZero) with the **paved strip** of every verge — from
+    the street's axis to `paved_verge(verge_at)` past the kerb (`roads.rs::paved_verge`,
+    the drawing's own rule, now `pub(crate)`), less `VERGE_CUT_INSET` 0.5 m: the verge's
+    rim is the footway's axis, so a cut edge lies under the footway ribbon, and the half
+    metre absorbs the smoothing of the drawn axis. Of that intersection only the **thin**
+    pieces are subtracted — mean width `2·area / perimeter` under `SLIVER_WIDTH_MAX`
+    1 m (`is_sliver`). **The first version subtracted the whole strip and was
+    narrowed**: along Советская in the same frame a block drawn to the kerb lies on the
+    verge as a 3 m band of yard for sixty metres, and it reads as the lawn between kerb
+    and sidewalk it is; cut, it turned into a band of concrete. A wide piece is the data
+    saying «lawn», a sliver or a hair along a footway is an artefact of the vertex
+    rules. **Only the tiles** are asked: the lawn of a verge wider than 4 m is the yard's
+    own grass (`VERGE_YARD_COLOR` = `RESIDENTIAL_COLOR`). The strip is built by
+    `verge_rings` — the same raw-point construction the ground pockets take as their
+    verge cover (at full width there). A block with no sliver keeps its rings as they
+    were — no re-tracing, no drift; one cut in two becomes two `PolyArea`s of the same
+    kind (a part under `MIN_BLOCK_PART` 1 m² goes). Nothing reads `landuse` by index, so
+    the split is free. Blocks are cut across threads (`map/parallel.rs::in_parallel`); the log
+    line says how many blocks lost a sliver and what the cut cost — Tula 66 blocks in
+    5–6 ms, Berlin 584 in 41 ms (dev build, `map_meshing`'s parse; the parse's passes
+    total 1.2 s there, so about 3 %). Pinned by
+    `a_sliver_of_block_on_the_verge_tiles_is_cut_back_under_the_footway`.
   - **The band is what is drawn**: a street's sidewalk counts in its reach only when it
     has one (`RoadLine::sidewalks`). `sidewalk=separate|no` used to count anyway, and the
     block was pulled under a sidewalk that is never drawn — its edge stood past the kerb.
@@ -449,13 +607,13 @@ be called alone:
       along its whole way; pieces of one road are glued across links into one stroke;
       `RoadClass::Street` only — a footpath is not what a lot is entered from; the band
       of a carriageway includes its sidewalks — only those it draws, never a
-      `sidewalk=separate|no` one). **A kerbside lot** (`parking=street_side`, its index
-      in `MapData::street_side_lots`) takes the carriageway band **without** the
+      `sidewalk=separate|no` one). **A kerbside lot** (`parking=street_side`,
+      `LotKind::Kerbside`) takes the carriageway band **without** the
       sidewalk: the closing then fills the sidewalk strip between it and the kerb, and the
       pocket is cut into the sidewalk instead of standing behind it — on Tula's Советская
       a lay-by was separated from the lanes by a strip of drawn sidewalk, with nothing to
-      drive in from (Tula: 56 such outlines — 55 ways and a relation, both parse paths
-      record it — Berlin 3275). Only the street the pocket **runs along** loses its
+      drive in from (Tula: 56 such outlines — 55 ways and a relation, `area_kind` reads
+      the tag on both parse paths — Berlin 3275). Only the street the pocket **runs along** loses its
       sidewalk (`runs_along`: a link within `STREET_SIDE_ANGLE` 30° of the outline's
       longest side, `PolyArea::longest_side`); a cross street at the pocket's end, inside the closing radius,
       keeps its band whole, so the pocket stops at the edge of that sidewalk instead of
@@ -493,9 +651,16 @@ be called alone:
     - **`CLOSING_RADIUS` 7 m** — a gap under 14 m closes: a stall row with its aisle
       (`STALL_DEPTH` 5.2 + `AISLE` 6) and a little, the same reading the 12 m limit had;
       the pockets between the mall's aisle stubs are 12 m between bands.
-      **`GROUND_CLOSING_RADIUS` 12 m** on a big lot (`parking::is_ground`): its perimeter
-      drive stands 15–20 m off, and all of that strip is the lot's asphalt on a photo —
-      exactly the pockets the vertex pull was written down as not reaching.
+      **`GROUND_CLOSING_RADIUS` 12 m** on a big lot (`is_big`: the **drawn** outline ≥
+      `GROUND_MIN_AREA` 8000 m² — the radius is chosen before there is a paved one): its
+      perimeter drive stands 15–20 m off, and all of that strip is the lot's asphalt on a
+      photo — exactly the pockets the vertex pull was written down as not reaching.
+    - **The lot kind is settled last** (`settled_kind`): once every lot is paved, a lot
+      that is not `Kerbside` becomes `LotKind::Ground` if its **paved** outline reaches
+      `GROUND_MIN_AREA`, else `Yard` — the outline that is drawn is the one the big lot's
+      kerb and the layout stand on, and a part a building cut off is judged by itself
+      (`a_lot_paved_past_the_threshold_is_a_big_lot`). The render reads the kind
+      (`parking::is_ground`) and measures nothing.
     - **What the asphalt does not crawl over** is subtracted from the kept pieces, and
       `between` is asked again: a building of `KEEP_BUILDING_AREA` 100 m² or more (the
       hardware shop, way 764017758, has a yard behind it; the ticket booth *in* the lot,
@@ -538,9 +703,10 @@ be called alone:
     - **Cost, and why it is threaded.** A lot costs half a dozen `i_overlay` calls, and
       the price of a call is the call, not the geometry — ≈ 0.3 ms even on a four-vertex
       lot — so 349 lots were 0.5–1 s single-threaded against 74 ms for the whole old step.
-      Lots are independent, so `pave_lots` splits them across `available_parallelism`
-      threads (`std::thread::scope`, results applied in order — the output does not
-      depend on the split): the step is **112 ms** on Tula (`map_meshing`'s parse, `dev`
+      Lots are independent, so `pave_lots` hands them to the map's one fan-out
+      (`map/parallel.rs::in_parallel` — `available_parallelism` scoped threads taking lots
+      off a counter, results applied in order — the output does not depend on the
+      split): the step is **112 ms** on Tula (`map_meshing`'s parse, `dev`
       profile), +38 ms per world load — and **137 ms** with the road-only growth and the
       apron (one more boolean each, same run of the bench). **Release buys nothing here**
       — 119–133 ms then, 98–103 once the grids went off SipHash (**The uniform grid**),
@@ -557,6 +723,66 @@ be called alone:
     effect is purely what is drawn. **After the squaring** (step 4) it must stay, though:
     `vertex_uses` counts a parking outline among the layers a house may share a vertex
     with, so a pulled edge would change which houses get squared.
+- **Ground pockets sown with grass** (`parse/pockets.rs::fill_ground_pockets`, into
+  `MapData::pockets`) — its own step right after the block and lot pulls, with its own
+  `osm parse:` line and timing. What it closes: a scrap of bare ground **enclosed** by what
+  is drawn, which no tag describes and the vertex pull cannot reach — the triangle
+  between a footway along the street, a diagonal footway and block 164045103 standing
+  ~10 m short of them (Tula, gallery 02, SE corner), the strip between block 141157692, a
+  curved footway and the sidewalk, and the wedge where a verge ends at a footway turning
+  toward a crossing (Oryol, gallery 03). The wedge's corner stands on the footways'
+  junction, where the block has no vertex to move — no vertex rule can fill it.
+  - **The rule is a hole of the union.** Covers: every road but bridges and arches as a
+    band of its mapped edge (`SidewalkProfile::mapped_edge`, so a one-sided sidewalk
+    counts on both sides — over-cover is the safe error) in pieces of `RUN` 16 links,
+    **bevel joins and square caps** (a round join is a dozen points, and the union's price
+    is points: round → bevel took the whole pass from 229 to ~120 ms on Tula); each
+    verge side (`RoadLine::verge_at`) as a band from the axis to the kerb plus the verge,
+    every `VERGE_STEP` 5 m (the profile's own probe step); and the outlines of blocks,
+    parks, woods, grass, sand, water, lots and pitches. **Houses are left out**: a hole
+    that runs under a house only gets grass under the house.
+  - **A hole is sown** when it is at most `POCKET_AREA_MAX` 400 m² (above that it is a
+    plot of its own — a waste plot, a building site), touches
+    a paved road's band (`TOUCH` 0.25 m — a hole cut into a block by its own
+    multipolygon has no road on its rim) and touches **no** dirt path or unpaved street
+    (a waste plot crossed by trails, Oryol 03 south-west). The ring grows
+    `LANDUSE_OVERLAP` 0.5 m (bevel) so the seam goes under the smoothed ribbons.
+  - **Which grass** (`Scene::grass_near`, the verge lawn's rule, not a third one): a
+    vertex within `POCKET_NEAR` 4 m of a **block's** ring gives that block's kind (a
+    block's edge often lies *under* the footway, and the wedge beyond touches the footway,
+    not the block); else one within 4 m of a mapped **park or lawn** (`parks`, `grass`)
+    gives `Grass` — the meadow, drawn without a rim in the lawn layer, as the verge beside
+    them (`roads.rs::Meadows`); else `Residential`, the yard grass every other verge lawn
+    is — but only from `LONE_POCKET_MIN` 10 m² up: a smaller lone hole is a gap between
+    paving bands (a sidewalk corner at a crossing, Oryol 03), where yard grass lay on the
+    tiles as a dark stain and bare ground nearly matches them. Before this a pocket with no block beside it stayed bare — the beige parallelogram
+    between the verge lawns by the Kaluga 01 ring — and the tiles were those touched by a
+    block; now they are those touched by a road link (± `MARGIN`), since the road is what
+    every pocket has.
+  - **Why the errors are safe**: the block layer lies below everything drawn on it, so a
+    cover the parse misses only makes a hole bigger (a missed fill) or puts grass under
+    something drawn (unseen); a cover the parse invents only closes a hole that is then
+    not filled.
+  - **Tiles**: `TILE` 400 m cells touched by a road link, a window of `MARGIN` 30 m around each;
+    a hole counts only when it lies wholly in the window (then every cover touching it is
+    in the window) and its bbox centre lies in the tile (one tile owns it). Tiles and the
+    road bands go across threads through a counter (`in_parallel`) — a centre tile costs
+    tens of times an outer one — and the results are put back in tile order.
+  - **A pocket is not a block** (`MapData::pockets`, drawn in the block layer by
+    `spawn.rs`): pushed into `landuse` first, it made the verge lawn's yard test of the
+    time (`roads.rs::Yards::beside`) find a yard beside every verge next to a sown
+    sliver, and meadow verges along Фрунзе (district frame d2) and Советская (d6) turned
+    to yard grass. The verge now asks the other way round — yard grass by default, a
+    meadow only beside `parks` / `grass` (`Meadows::beside`, `references/roads.md`,
+    **Sidewalks**) — so a pocket does not reach that choice at all.
+  - Tula: **1220 pockets, ~112 ms** at load (dev profile, `map_meshing`) since the
+    pockets with no block beside them are sown too — 610 in ~120–140 ms before, on a
+    loaded machine, Oryol 431 / 84 ms then. Most of the new ones lie under what is drawn
+    anyway (the Kaluga 01 and Tula 02 gallery frames did not change by a pixel). Pinned by
+    `a_ground_pocket_between_a_block_and_two_footways_is_sown_as_yard`,
+    `a_pocket_with_no_block_beside_is_meadow_by_a_lawn_and_yard_elsewhere`,
+    `a_pocket_by_a_dirt_path_a_large_one_and_a_hole_in_the_block_stay_ground`,
+    `a_pocket_on_a_tile_seam_is_sown_once`.
 - **Ring assembly** (`parse.rs::assemble_rings`) — multipolygon relation members joined
   end-to-end (ε = 0.01 m) into closed rings; chains broken by the bbox edge are
   force-closed if ≥ 3 points. Inner rings become holes of the outer containing them.
@@ -598,7 +824,11 @@ new JSON literal. Coverage of tags overall is the audit in `references/osm-cover
 and the choice is what is under test:
 
 - **The fixture through the real `parse`** — a tag rule, which is most cases. The route
-  above.
+  above. `Overpass::parse()` parses with `ParseKnobs::default()`; `parse_with(knobs)` names
+  the lane width or the navtile itself — no global to lock, so such a test runs in
+  parallel with the rest (`a_wider_lane_widens_the_section`). Expected road widths are
+  functions of the knobs too (`residential_half(ParseKnobs::DEFAULT)` rather than a bare
+  3.8), so a test states which lane width its number belongs to.
 - **`read(scene)`** (the helper in `tests.rs`) — the fixture's JSON through `read_elements`
   alone, so the *raw* map can be asserted on before any pass touches it
   (`reading_the_elements_leaves_the_passes_undone`), or `finish_parse` called on it as one

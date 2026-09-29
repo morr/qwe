@@ -44,7 +44,7 @@ use crate::spatial::SimSet;
 
 use self::pathfinding::{
     apply_pathfinding_results, dispatch_pathfinding_requests,
-    dispatch_pathfinding_requests_deterministic, listen_for_pathfinding_tasks,
+    dispatch_pathfinding_requests_deterministic, listen_for_pathfinding_tasks, live_dispatch_runs,
     stamp_pathfinding_requests,
 };
 use self::systems::{
@@ -192,7 +192,7 @@ impl Plugin for MovementPlugin {
                     // уехать в поиск раньше, чем ей назначен слот, — через раз
                     // и невоспроизводимо
                     assign_destination_slots.after(crate::human::pick_wander_targets),
-                    dispatch_pathfinding_requests,
+                    dispatch_pathfinding_requests.run_if(live_dispatch_runs),
                 )
                     .chain()
                     // в детерминированном режиме этот конвейер заменён

@@ -189,6 +189,83 @@ fn a_short_link_between_two_nodes_gets_no_rule_zebras() {
     assert_eq!(link(60.0).zebras.len(), 2);
 }
 
+/// Грунтовое примыкание к `tertiary` — без краски: ни зебры по правилу, ни
+/// стоп-линии по рангу узла или по знаку, ни зебры на переходе OSM (Калуга,
+/// витрина 06). Асфальтовое — с ними
+/// (`a_minor_street_does_not_break_the_main_one`).
+#[test]
+fn an_unpaved_arm_gets_no_paint() {
+    let at = Vec2::new(100.0, -40.0);
+    let give_way = RoadNode {
+        pos: Vec2::new(100.0, -6.0),
+        kind: RoadNodeKind::GiveWay,
+    };
+    let side = RoadLine {
+        pavement: Some(crate::map::osm::model::Pavement::Unpaved),
+        ..road(
+            vec![Vec2::new(100.0, -80.0), at, give_way.pos, NODE],
+            8.0,
+            Highway::Residential,
+            2,
+        )
+    };
+    let crossing = RoadNode {
+        pos: at,
+        kind: RoadNodeKind::Crossing {
+            signals: false,
+            island: false,
+            marked: true,
+        },
+    };
+    let paint = paint_of(
+        vec![through(Highway::Tertiary), side],
+        vec![crossing, give_way],
+        EVERYTHING,
+    );
+    assert!(paint.zebras.is_empty(), "{:?}", paint.zebras);
+    assert!(paint.stop_lines.is_empty());
+}
+
+/// Размеченный переход OSM на одном плече улицы снимает зебру по правилу с
+/// другого её плеча: узел уже переходят по данным, и вторая зебра в двух
+/// десятках метров от первой — лишняя (Тула, витрина 12). Без перехода оба
+/// плеча получают свою.
+#[test]
+fn an_osm_crossing_of_the_street_drops_the_rule_zebra_on_its_other_arm() {
+    let at = Vec2::new(100.0, -20.0);
+    let across = road(
+        vec![Vec2::new(100.0, -80.0), at, NODE, Vec2::new(100.0, 80.0)],
+        8.0,
+        Highway::Residential,
+        2,
+    );
+    let bare = paint_of(
+        vec![through(Highway::Tertiary), across.clone()],
+        Vec::new(),
+        EVERYTHING,
+    );
+    assert_eq!(bare.zebras.len(), 2, "{:?}", bare.zebras);
+    let crossing = RoadNode {
+        pos: at,
+        kind: RoadNodeKind::Crossing {
+            signals: false,
+            island: false,
+            marked: true,
+        },
+    };
+    let mapped = paint_of(
+        vec![through(Highway::Tertiary), across],
+        vec![crossing],
+        EVERYTHING,
+    );
+    assert_eq!(mapped.zebras.len(), 1, "{:?}", mapped.zebras);
+    let zebra = mapped.zebras[0];
+    assert!(
+        (zebra.from.y + 20.0).abs() < 1.0,
+        "зебра — по данным: {zebra:?}"
+    );
+}
+
 #[test]
 fn an_equal_side_street_does_not_break_the_through_one_either() {
     let paint = paint_of(
@@ -217,6 +294,93 @@ fn an_equal_crossing_breaks_both_and_paints_every_arm() {
     assert!(!gaps(&paint, 1).is_empty());
     assert_eq!(paint.zebras.len(), 4);
     assert_eq!(paint.stop_lines.len(), 4);
+}
+
+/// Крестовина `tertiary` рвёт и старшую primary: через поле перекрёстка
+/// линий полос нет ни у одной из дорог (Орёл, витрина 05). Жилая крестовина
+/// и примыкание `tertiary` главную не рвут.
+#[test]
+fn a_tertiary_crossing_breaks_the_primary_too_but_a_residential_one_does_not() {
+    let across = |highway| {
+        road(
+            vec![Vec2::new(100.0, -100.0), NODE, Vec2::new(100.0, 100.0)],
+            8.0,
+            highway,
+            2,
+        )
+    };
+    let crossed = paint_of(
+        vec![through(Highway::Primary), across(Highway::Tertiary)],
+        Vec::new(),
+        EVERYTHING,
+    );
+    assert!(
+        !gaps(&crossed, 0).is_empty(),
+        "{:?}",
+        crossed.lines().of(0).solid
+    );
+    assert!(!gaps(&crossed, 1).is_empty());
+    assert!(crossed.junctions[0].leading.is_empty());
+
+    let quiet = paint_of(
+        vec![through(Highway::Primary), across(Highway::Residential)],
+        Vec::new(),
+        EVERYTHING,
+    );
+    assert!(gaps(&quiet, 0).is_empty(), "{:?}", quiet.lines().of(0).cut);
+    assert_eq!(quiet.junctions[0].leading, vec![0]);
+
+    let side = road(
+        vec![Vec2::new(100.0, -80.0), NODE],
+        8.0,
+        Highway::Tertiary,
+        2,
+    );
+    let tee = paint_of(
+        vec![through(Highway::Primary), side],
+        Vec::new(),
+        EVERYTHING,
+    );
+    assert!(gaps(&tee, 0).is_empty(), "{:?}", tee.lines().of(0).cut);
+}
+
+/// Плечо без зебры и стоп-линии — односторонняя уходит из узла — рвётся до
+/// кромки, где его сечение вышло из чужого асфальта, а не на полуширине
+/// соседа: на пологой крестовине (23°, Орёл, витрина 05) чужая полоса
+/// тянется вдоль плеча на десяток метров, и линии шли по полю перекрёстка.
+#[test]
+fn a_bare_arm_of_a_shallow_crossing_breaks_up_to_its_edge() {
+    let mut main = road(
+        vec![Vec2::ZERO, NODE, Vec2::new(200.0, 0.0)],
+        7.6,
+        Highway::Primary,
+        2,
+    );
+    main.oneway = true;
+    let slope = Vec2::from_angle(23f32.to_radians());
+    let mut across = road(
+        vec![NODE - slope * 80.0, NODE, NODE + slope * 80.0],
+        4.3,
+        Highway::Secondary,
+        1,
+    );
+    across.oneway = true;
+    let paint = paint_of(
+        vec![main, across],
+        Vec::new(),
+        NodePaintStyle {
+            crossings: CrossingMode::Off,
+            stop_lines: true,
+        },
+    );
+    // за узлом по ходу — ни зебры, ни стоп-линии: разрыв до кромки
+    let beyond = gaps(&paint, 0)
+        .iter()
+        .map(|found| found.at.x + found.reach - NODE.x)
+        .fold(f32::MIN, f32::max);
+    // бок сечения (полуширина без отступа) выходит из соседа за
+    // (2.15 + 3.5·cos 23°) / sin 23° ≈ 13.8 м
+    assert!(beyond > 13.0, "{beyond} {:?}", paint.lines().of(0).cut);
 }
 
 /// Ведущая узла теряет разрыв асфальта (колея сквозь), но в базе он
@@ -743,6 +907,98 @@ fn no_stop_line_inside_the_asphalt_of_another_road() {
     assert!(shallow.stop_lines.is_empty(), "{:?}", shallow.stop_lines);
 }
 
+/// Двусторонняя третичная со светофорами поперёк пары односторонних с газоном
+/// между половинами (оси в `apart` метрах, симметрично вокруг x 100), и на
+/// перемычке посередине — переход OSM.
+fn signals_across_a_pair(apart: f32) -> NodePaint {
+    let [west, east] = [100.0 - apart / 2.0, 100.0 + apart / 2.0];
+    let half = |x: f32, down: bool| {
+        let mut points = vec![Vec2::new(x, 80.0), Vec2::new(x, 0.0), Vec2::new(x, -80.0)];
+        if !down {
+            points.reverse();
+        }
+        RoadLine {
+            oneway: true,
+            ..road(points, 7.6, Highway::Secondary, 2)
+        }
+    };
+    let signals = |pos: Vec2| RoadNode {
+        pos,
+        kind: RoadNodeKind::TrafficSignals,
+    };
+    let mut map = MapData {
+        roads: vec![
+            road(
+                vec![
+                    Vec2::ZERO,
+                    Vec2::new(west, 0.0),
+                    Vec2::new(100.0, 0.0),
+                    Vec2::new(east, 0.0),
+                    Vec2::new(200.0, 0.0),
+                ],
+                8.0,
+                Highway::Tertiary,
+                2,
+            ),
+            half(west, true),
+            half(east, false),
+        ],
+        road_nodes: vec![
+            signals(Vec2::new(west, 0.0)),
+            signals(Vec2::new(east, 0.0)),
+            RoadNode {
+                pos: Vec2::new(100.0, 0.0),
+                kind: RoadNodeKind::Crossing {
+                    signals: true,
+                    island: false,
+                    marked: true,
+                },
+            },
+        ],
+        ..default()
+    };
+    map.network = RoadNetwork::new(&map.roads);
+    let base = marking_breaks(&map.roads, is_carriageway, &[]).breaks;
+    let run = |partner: usize| {
+        vec![PairRun::for_test(
+            0.0,
+            160.0,
+            partner,
+            true,
+            apart - 7.6,
+            false,
+        )]
+    };
+    let drawn = Drawn::for_test(&map)
+        .with_pairs(1, run(2))
+        .with_pairs(2, run(1));
+    NodePaint::for_test(&drawn, &base, &map, &[], EVERYTHING)
+}
+
+/// Стоп-линии на перемычке между половинами — только если за ними есть где
+/// ждать: на 28 м между осями (Рязань, витрина 07) очередь за линией встала бы
+/// на соседний перекрёсток или на зебру через газон, и линий там нет; на
+/// 60 м они есть. Подходы снаружи и сами половины — со стоп-линиями всегда.
+#[test]
+fn a_stop_line_needs_room_for_a_queue_behind_it() {
+    // поперёк третичной (линия по y) между осями половин
+    let inside = |paint: &NodePaint, apart: f32| {
+        paint
+            .stop_lines
+            .iter()
+            .filter(|line| {
+                (line.from.x - line.to.x).abs() < 0.1 && (line.from.x - 100.0).abs() < apart / 2.0
+            })
+            .count()
+    };
+    let narrow = signals_across_a_pair(28.0);
+    assert_eq!(inside(&narrow, 28.0), 0, "{:?}", narrow.stop_lines);
+    assert_eq!(narrow.stop_lines.len(), 4, "{:?}", narrow.stop_lines);
+    let wide = signals_across_a_pair(60.0);
+    assert_eq!(inside(&wide, 60.0), 2, "{:?}", wide.stop_lines);
+    assert_eq!(wide.stop_lines.len(), 6, "{:?}", wide.stop_lines);
+}
+
 /// Ветка треугольника развилки идёт от узла до узла по замощённому острову
 /// (`corners::small_islands`): из асфальта узла она не выходит — перемычка,
 /// ни стоп-линии, ни стрелок (пример 06, горловина). Без острова та же ветка —
@@ -855,4 +1111,53 @@ fn a_wider_through_street_leaves_its_extra_lanes_in_a_pocket() {
     assert_eq!(pocket.lanes, 2);
     assert_eq!(pocket.gap.at, NODE);
     assert!(paint.pockets[1] == [None; 2]);
+}
+
+/// Ветка развилки под 21° (Вокзальная из Первомайского, Рязань, витрина 03):
+/// из асфальта главной в четыре полосы её сечение не выходит и за
+/// `EDGE_SEARCH` — перемычка, и линия ветки начиналась на полуширине соседа,
+/// посреди полос главной, крест-накрест с их линией. Её линия рвётся до
+/// места, где ось ветки вышла из асфальта главной: 7.1 / sin 21° ≈ 19.8 м.
+#[test]
+fn a_fork_branch_keeps_its_line_off_the_lanes_of_the_main_road() {
+    let oneway = |points: Vec<Vec2>, width: f32, highway: Highway, lanes: u8| RoadLine {
+        oneway: true,
+        ..road(points, width, highway, lanes)
+    };
+    let heading = Vec2::from_angle((180f32 - 21.0).to_radians());
+    let paint = paint_of(
+        vec![
+            oneway(vec![Vec2::new(200.0, 0.0), NODE], 14.2, Highway::Primary, 4),
+            oneway(vec![NODE, Vec2::ZERO], 14.2, Highway::Primary, 4),
+            oneway(
+                vec![NODE, NODE + heading * 80.0],
+                7.6,
+                Highway::Secondary,
+                2,
+            ),
+        ],
+        vec![RoadNode {
+            pos: NODE,
+            kind: RoadNodeKind::TrafficSignals,
+        }],
+        NodePaintStyle {
+            crossings: CrossingMode::Off,
+            stop_lines: true,
+        },
+    );
+    let arm = paint.junctions[0]
+        .arms
+        .iter()
+        .find(|arm| arm.road == 2)
+        .expect("плечо ветки");
+    assert!(arm.link, "ветка из асфальта главной не выходит — перемычка");
+    let beyond = gaps(&paint, 2)
+        .iter()
+        .map(|found| (found.at - NODE).length() + found.reach)
+        .fold(f32::MIN, f32::max);
+    assert!(
+        beyond > 19.0,
+        "линия ветки с {beyond} м — в полосах главной: {:?}",
+        paint.lines().of(2).cut
+    );
 }

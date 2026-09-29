@@ -118,6 +118,14 @@ impl RoadNodes {
     pub fn roads_at(&self, point: Vec2) -> &[usize] {
         self.shared.get(&node_key(point)).map_or(&[], Vec::as_slice)
     }
+
+    /// Узел `from` нарисован в `to` (разводка пар, `roads/axis.rs`): по
+    /// вершине нарисованной оси он находится там же, где по точке OSM.
+    pub fn alias(&mut self, from: Vec2, to: Vec2) {
+        if let Some(roads) = self.shared.get(&node_key(from)).cloned() {
+            self.shared.entry(node_key(to)).or_insert(roads);
+        }
+    }
 }
 
 /// Стежки по дорогам: `ends[i]` — точка, которую надо добавить перед началом и

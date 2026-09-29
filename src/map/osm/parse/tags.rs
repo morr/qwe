@@ -12,9 +12,9 @@ use bevy::prelude::*;
 
 use crate::map::osm::model::{
     AreaKind, BIG_BOX_MAX_HEIGHT, BIG_BOX_MAX_LEVELS, BuildingUse, Colours, Faith, FenceKind,
-    Highway, KerbParking, LaneTurn, PitchKind, RailKind, Rgb, RoadAreaKind, RoadClass,
-    RoadNodeKind, Sacred, SacredForm, ServiceTrack, SidewalkSide, StructureKind, WaterKind,
-    is_big_box_shape, polyline_length,
+    Highway, KerbParking, LaneTurn, LotKind, Pavement, PitchKind, RailKind, Rgb, RoadAreaKind,
+    RoadClass, RoadNodeKind, Sacred, SacredForm, ServiceTrack, SidewalkSide, StructureKind,
+    WaterKind, is_big_box_shape, polyline_length,
 };
 use crate::map::osm::overpass::Element;
 use crate::settings::STOREY_HEIGHT;
@@ -67,6 +67,14 @@ const PIPE_WIDTH_RANGE: RangeInclusive<f32> = 0.9..=4.0;
 /// водоток, а разметочная линия; шире полусотни — либо опечатка, либо ширина
 /// поймы, а не воды (такое место в OSM размечают полигоном, а не линией).
 const WATER_WIDTH_RANGE: RangeInclusive<f32> = 0.5..=50.0;
+
+/// Какой тег `width` дорожки вообще читается, м: `0` и `0.3` — не ширина, а
+/// пометка, за дюжиной метров — ширина площади или всей аллеи с газонами.
+/// Тула, кеш v15: у 100 из 3375 дорожек тег есть, три `0`, один `0.3`.
+const PATH_WIDTH_READ: RangeInclusive<f32> = 0.5..=12.0;
+/// Зажим прочитанной ширины дорожки, м: у́же метра тропа на карте — нитка,
+/// которой не видно (восемь `0.5` в Туле), шире восьми — уже не дорожка.
+const PATH_WIDTH_RANGE: RangeInclusive<f32> = 1.0..=8.0;
 
 /// Границы правдоподобия `lanes`: ноль — не дорога, а за восемью полосами —
 /// опечатка или сумма всей развязки, а не одной ленты.
@@ -345,13 +353,14 @@ pub(super) fn area_kind(element: &Element) -> Option<AreaKind> {
     // стоянка — после зелени и до кварталов: зелёный тег на том же контуре
     // выигрывает (сквер с парковкой по краю остаётся сквером), а вот двор
     // `landuse=residential` — нет, там асфальт главное. Парковочный дом
-    // (`building=*` + `amenity=parking`) сюда не доходит: здание выше
-    if tags.get("amenity").map(String::as_str) == Some("parking")
-        && !tags
-            .get("parking")
-            .is_some_and(|value| HIDDEN_PARKING.contains(&value.as_str()))
-    {
-        return Some(AreaKind::Parking);
+    // (`building=*` + `amenity=parking`) сюда не доходит: здание выше. Большая
+    // ли она, скажет замощённый контур (`lots::pave_lots`), не тег
+    if tags.get("amenity").map(String::as_str) == Some("parking") {
+        match tags.get("parking").map(String::as_str) {
+            Some(value) if HIDDEN_PARKING.contains(&value) => {}
+            Some("street_side") => return Some(AreaKind::Parking(LotKind::Kerbside)),
+            _ => return Some(AreaKind::Parking(LotKind::Yard)),
+        }
     }
     // площадка — после стоянки и до кварталов: `leisure=pitch` во дворе
     // сплошь и рядом лежит внутри `landuse=residential`, и покрытие поля
@@ -490,12 +499,13 @@ fn tagged_height(tags: &HashMap<String, String>) -> Option<f32> {
 /// Ширина по классу, род ленты и класс по значению highway; `None` — дорогу
 /// не рисуем.
 ///
-/// Ширина здесь — **номинальная**, до сечений: у всего, кроме дорожек, её
+/// Ширина здесь — **номинальная**, до сечений: у дорожек её заменяет
+/// [`path_width`] (кроме мостиков и арок), у прочих её
 /// пересчитывает из числа полос проход сечений
 /// (`map::roads::network::sections`), первый в доводке разбора. Съезды
 /// (`*_link`) долго выбрасывались целиком — словарь их не знал, и въезд на
 /// мост в Туле (22 way `primary_link`) обрывался пустым местом.
-pub(super) fn road_class(highway: &str) -> Option<(f32, RoadClass, Highway)> {
+pub(in crate::map::osm) fn road_class(highway: &str) -> Option<(f32, RoadClass, Highway)> {
     let street = |width: f32, highway: Highway| (width, RoadClass::Street, highway);
     Some(match highway {
         "motorway" => street(16.0, Highway::Motorway),
@@ -517,6 +527,40 @@ pub(super) fn road_class(highway: &str) -> Option<(f32, RoadClass, Highway)> {
         }
         _ => return None,
     })
+}
+
+/// Ширина дорожки ([`RoadClass::Alley`]), м — вместо одной на всех 3.5 м по
+/// классу. Правдоподобный `width` ([`PATH_WIDTH_READ`], зажатый в
+/// [`PATH_WIDTH_RANGE`]) решает сам; без него — вид и покрытие: пешеходная
+/// улица 5, полевая дорога 3, переход 3, лестница и тротуар 2.5, велодорожка
+/// 2, тропа по земле (`surface=dirt|ground|earth|mud|grass|sand|woodchips`)
+/// 1.5, прочая `path` 2, прочий `footway` 3 — аллея сквера и дорожка двора.
+/// Тула, кеш v15: 1916 голых `footway`, 571 `footway=sidewalk`, 388
+/// переходов, 285 `path`, 128 лестниц, 57 `track`.
+pub(super) fn path_width(tags: &HashMap<String, String>) -> f32 {
+    if let Some(width) = tags
+        .get("width")
+        .and_then(|value| parse_measure(value))
+        .filter(|width| PATH_WIDTH_READ.contains(width))
+    {
+        return width.clamp(*PATH_WIDTH_RANGE.start(), *PATH_WIDTH_RANGE.end());
+    }
+    let tag = |key: &str| tags.get(key).map(String::as_str);
+    let trail = matches!(
+        tag("surface"),
+        Some("dirt" | "ground" | "earth" | "mud" | "grass" | "sand" | "woodchips")
+    );
+    match (tag("highway"), tag("footway")) {
+        (Some("pedestrian"), _) => 5.0,
+        (Some("track"), _) => 3.0,
+        (Some("steps"), _) => 2.5,
+        (_, Some("crossing")) => 3.0,
+        (_, Some("sidewalk")) => 2.5,
+        (Some("cycleway"), _) => 2.0,
+        _ if trail => 1.5,
+        (Some("path"), _) => 2.0,
+        _ => 3.0,
+    }
 }
 
 /// Вид дорожного узла; `None` — нода не дорожный узел (вход, дерево, труба).
@@ -754,6 +798,30 @@ pub(super) fn tagged_lanes(tags: &HashMap<String, String>) -> Option<u8> {
     LANES_RANGE.contains(&lanes).then_some(lanes as u8)
 }
 
+/// Полосы двусторонней дороги против хода точек: `lanes:backward`, иначе
+/// `lanes` − `lanes:forward` (Ростов, Текучёва: `lanes=5`, `lanes:forward=3`
+/// — назад две). Полоса `lanes:both_ways` — общая средняя, делить потоки по
+/// ней некому, и ответа нет; у односторонней — тоже. Сходится ли число с
+/// итоговым `lanes`, проверяет проход сечений.
+pub(super) fn tagged_lanes_backward(tags: &HashMap<String, String>) -> Option<u8> {
+    if is_oneway(tags) {
+        return None;
+    }
+    let count = |key: &str| {
+        tags.get(key)
+            .and_then(|value| parse_measure(value))
+            .map(f32::floor)
+    };
+    if count("lanes:both_ways").is_some_and(|both| both > 0.0) {
+        return None;
+    }
+    let backward =
+        count("lanes:backward").or_else(|| Some(count("lanes")? - count("lanes:forward")?))?;
+    (0.0..=*LANES_RANGE.end())
+        .contains(&backward)
+        .then_some(backward as u8)
+}
+
 /// Манёвры полос `[по ходу точек, против]` из `turn:lanes`. Односторонней
 /// годится и общий тег, и тег направления её потока (`oneway=-1` развёрнут
 /// ниже, так что поток после разбора всегда по ходу точек); двусторонней —
@@ -792,7 +860,7 @@ pub(super) fn tagged_sidewalks(tags: &HashMap<String, String>) -> Option<[Sidewa
     if !tags.keys().any(|key| key.starts_with("sidewalk")) {
         return None;
     }
-    let present = |value: &str| {
+    let side_of = |value: &str| {
         if matches!(value, "no" | "none" | "separate") {
             Bare
         } else {
@@ -802,15 +870,15 @@ pub(super) fn tagged_sidewalks(tags: &HashMap<String, String>) -> Option<[Sidewa
     let mut sides = match tags.get("sidewalk").map(String::as_str) {
         Some("left") => [Tagged, Bare],
         Some("right") => [Bare, Tagged],
-        Some(value) => [present(value); 2],
+        Some(value) => [side_of(value); 2],
         None => [Tagged; 2],
     };
     if let Some(value) = tags.get("sidewalk:both") {
-        sides = [present(value); 2];
+        sides = [side_of(value); 2];
     }
     for (side, key) in ["sidewalk:left", "sidewalk:right"].into_iter().enumerate() {
         if let Some(value) = tags.get(key) {
-            sides[side] = present(value);
+            sides[side] = side_of(value);
         }
     }
     if is_oneway_backward(tags) {
@@ -825,26 +893,70 @@ pub(super) fn tagged_sidewalks(tags: &HashMap<String, String>) -> Option<[Sidewa
 /// проезд без названия и жилую зону потом проверит застройка вокруг
 /// (`parse::infer_sidewalks`).
 pub(super) fn untagged_sidewalks(tags: &HashMap<String, String>) -> [SidewalkSide; 2] {
-    let unpaved = matches!(
-        tags.get("surface").map(String::as_str),
-        Some(
-            "unpaved"
-                | "gravel"
-                | "fine_gravel"
-                | "pebblestone"
-                | "ground"
-                | "dirt"
-                | "earth"
-                | "mud"
-                | "sand"
-                | "grass"
-                | "compacted"
-        )
-    );
-    if unpaved {
+    if surface_pavement(tags) == Some(Pavement::Unpaved) {
         [SidewalkSide::None; 2]
     } else {
         [SidewalkSide::Inferred; 2]
+    }
+}
+
+/// Есть ли на проезжей части разметка полос — [`RoadLine::lane_markings`]:
+/// только явное `lane_markings=no` её снимает. Тула, кеш v15: `no` на 11
+/// way (переулки, проезды, связки), `yes` на 3.
+///
+/// [`RoadLine::lane_markings`]: crate::map::osm::model::RoadLine::lane_markings
+pub(super) fn has_lane_markings(tags: &HashMap<String, String>) -> bool {
+    tags.get("lane_markings").map(String::as_str) != Some("no")
+}
+
+/// Что говорит о покрытии тег `surface`; `None` — тега нет или значение не
+/// из словаря (`clay` корта, опечатка).
+fn surface_pavement(tags: &HashMap<String, String>) -> Option<Pavement> {
+    Some(match tags.get("surface")?.as_str() {
+        "asphalt"
+        | "paved"
+        | "paving_stones"
+        | "paving_stones:lanes"
+        | "concrete"
+        | "concrete:plates"
+        | "concrete:lanes"
+        | "sett"
+        | "cobblestone"
+        | "unhewn_cobblestone"
+        | "bricks"
+        | "metal"
+        | "wood"
+        | "rubber"
+        | "tartan" => Pavement::Paved,
+        "unpaved" | "gravel" | "fine_gravel" | "pebblestone" | "ground" | "dirt" | "earth"
+        | "mud" | "sand" | "grass" | "compacted" | "woodchips" | "grass_paver" => Pavement::Unpaved,
+        _ => return None,
+    })
+}
+
+/// Покрытие дорожки по её тегам — [`RoadLine::pavement`] до прохода по
+/// окружению. Решает `surface`; без него — вид дорожки: тротуар и переход
+/// (`footway=sidewalk|crossing`), лестница, пешеходная улица и велодорожка в
+/// городе мощёные, `path` и `track` — тропа и полевая дорога. Прочий
+/// `footway` без тега — `None`: в сквере это тропинка, во дворе — асфальт,
+/// и спросить надо окружение (`parse::infer_pavements`).
+///
+/// Тула, кеш v15 (дорожки-линии, без `area=yes`): мощёных по `surface` 1952,
+/// грунтовых 146, без тега 1271 — из них 690 голых `footway`, 171
+/// `footway=sidewalk`, 154 `path`, 126 `footway=crossing`, 93 `steps`, 36
+/// `track`.
+///
+/// [`RoadLine::pavement`]: crate::map::osm::model::RoadLine::pavement
+pub(super) fn tagged_pavement(tags: &HashMap<String, String>) -> Option<Pavement> {
+    if let Some(pavement) = surface_pavement(tags) {
+        return Some(pavement);
+    }
+    let tag = |key: &str| tags.get(key).map(String::as_str);
+    match (tag("highway"), tag("footway")) {
+        (Some("footway"), Some("sidewalk" | "crossing" | "access_aisle")) => Some(Pavement::Paved),
+        (Some("steps" | "pedestrian" | "cycleway"), _) => Some(Pavement::Paved),
+        (Some("path" | "track"), _) => Some(Pavement::Unpaved),
+        _ => None,
     }
 }
 
@@ -1057,14 +1169,45 @@ pub(super) fn pitch_kind(tags: &HashMap<String, String>) -> Option<PitchKind> {
 /// ещё и `kerb`, `gate`, `bollard`, `block` — это точки и мелочь, а не линия,
 /// и `city_wall`, который забирает ветка выше: кремлёвская стена
 /// **непроходима**, а забор рисуется и только.
+///
+/// Забор, у которого **каждый** материал `fence_type` сквозной
+/// ([`SEE_THROUGH_FENCES`]), — [`FenceKind::Railing`]: тени не отбрасывает.
+/// Смешанный `barbed_wire;concrete` — сплошной: бетон тень даёт.
 pub(super) fn fence_kind(tags: &HashMap<String, String>) -> Option<FenceKind> {
     match tags.get("barrier").map(String::as_str)? {
-        "fence" => Some(FenceKind::Fence),
+        "fence" => Some(match tags.get("fence_type") {
+            Some(types)
+                if types
+                    .split(';')
+                    .all(|kind| SEE_THROUGH_FENCES.contains(&kind.trim())) =>
+            {
+                FenceKind::Railing
+            }
+            _ => FenceKind::Fence,
+        }),
         "wall" | "retaining_wall" => Some(FenceKind::Wall),
         "hedge" => Some(FenceKind::Hedge),
         _ => None,
     }
 }
+
+/// Сквозные `fence_type`: решётка, сетка, проволока, жерди. Тула, кеш v15:
+/// `wire` 20, `metal` 18, `chain_link` 15, `bars` 5, `pole` 3 из 84 заборов с
+/// тегом; `metal` в Туле — решётки (разделительная Советской), профнастил
+/// ходит под `corrugated_metal`.
+const SEE_THROUGH_FENCES: &[&str] = &[
+    "metal",
+    "metal_bars",
+    "railing",
+    "bars",
+    "chain_link",
+    "mesh",
+    "wire",
+    "barbed_wire",
+    "electric",
+    "pole",
+    "split_rail",
+];
 
 /// Высота имеет смысл только у зданий: у пруда и газона её не бывает даже при
 /// случайно проставленном теге.

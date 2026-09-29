@@ -14,6 +14,7 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use crate::grid::NavtileBase;
 use crate::loading::AppState;
 use crate::map::RoadShapeOnMap;
+use crate::map::osm::MapData;
 use crate::prefs::{TrackPrefExt, retuned};
 use crate::settings::MAP_SIZE;
 
@@ -255,10 +256,14 @@ impl Plugin for CityPlugin {
 /// ширину читает разбор (дома отодвигаются от тротуаров, стоянки
 /// подтягиваются к дорогам), так что её смена — тот же возврат в загрузку,
 /// что смена города. Простое сравнение, без окна `is_changed`: расхождение
-/// держится, пока мир не перезагружен, и пропустить его нельзя. Без ресурса
-/// (сцена без `MapPlugin`) не срабатывает.
-fn lane_width_moved(shape: Option<Res<RoadShapeOnMap>>) -> bool {
-    shape.is_some_and(|shape| shape.0.lane_width() != crate::map::lane_width())
+/// держится, пока мир не перезагружен, и пропустить его нельзя. Сравнивается
+/// со снимком разбора (`MapData::knobs`), а не с глобалью краски: снимок — это
+/// и есть «с чем разобран мир». Без ресурсов (сцена без `MapPlugin`, мира ещё
+/// нет) не срабатывает.
+fn lane_width_moved(shape: Option<Res<RoadShapeOnMap>>, map: Option<Res<MapData>>) -> bool {
+    shape
+        .zip(map)
+        .is_some_and(|(shape, map)| shape.0.lane_width() != map.knobs.lane_width)
 }
 
 /// Возврат в `Loading` под новый город, размер навтайла или ширину полосы.
@@ -277,4 +282,59 @@ fn reload_world(city: Res<City>, navtile: Res<NavtileBase>, mut next: ResMut<Nex
     // обсерверы `WorldStarted` на входе нового мира в `Live`, производное от
     // карты — его владельцы на `OnExit(Playing)` (`navigation`, `determinism`)
     next.set(AppState::Loading);
+}
+
+#[cfg(test)]
+mod tests {
+    use bevy::ecs::system::RunSystemOnce;
+
+    use super::*;
+    use crate::map::RoadShape;
+
+    /// Спрашивает условие перезагрузки о мире, разобранном с шириной полосы
+    /// по умолчанию, при осевшей ручке `lane_width`.
+    fn moved(settled: Option<f32>) -> bool {
+        let mut world = World::new();
+        world.insert_resource(MapData::default());
+        if let Some(lane_width) = settled {
+            world.insert_resource(RoadShapeOnMap(RoadShape {
+                lane_width,
+                ..default()
+            }));
+        }
+        world.run_system_once(lane_width_moved).unwrap()
+    }
+
+    #[test]
+    fn a_settled_lane_width_off_the_parsed_one_reloads_the_world() {
+        let default = RoadShape::default().lane_width;
+        assert!(!moved(Some(default)));
+        assert!(moved(Some(default + 0.2)));
+        // сцена без `MapPlugin` — ручки нет, перезагружать нечего
+        assert!(!moved(None));
+    }
+
+    /// Сравнение — со снимком разбора в карте: мир, разобранный с шириной
+    /// 3.5, при ручке 3.5 стоит, а при ручке по умолчанию перезагружается.
+    #[test]
+    fn the_reload_compares_the_knob_with_the_width_the_map_was_parsed_with() {
+        let parsed = |lane_width: f32, settled: f32| {
+            let mut world = World::new();
+            let mut map = MapData::default();
+            map.knobs.lane_width = lane_width;
+            world.insert_resource(map);
+            world.insert_resource(RoadShapeOnMap(RoadShape {
+                lane_width: settled,
+                ..default()
+            }));
+            world.run_system_once(lane_width_moved).unwrap()
+        };
+        let default = RoadShape::default().lane_width;
+        assert!(!parsed(3.5, 3.5));
+        assert!(parsed(3.5, default));
+        // мира ещё нет (карта не вставлена) — сравнивать не с чем
+        let mut world = World::new();
+        world.insert_resource(RoadShapeOnMap(RoadShape::default()));
+        assert!(!world.run_system_once(lane_width_moved).unwrap());
+    }
 }

@@ -15,7 +15,9 @@ use super::{
 };
 use crate::map::footprint::casing_width;
 use crate::map::grid::Grid;
-use crate::map::osm::model::{MapData, PolyArea, distance_to_segment, point_in_area, ring_bounds};
+use crate::map::osm::model::{
+    MapData, PolyArea, distance_to_outline, distance_to_segment, point_in_area, ring_bounds,
+};
 
 /// Сторона ячейки индексов близости, м. Того же порядка, что `FOOTPRINT_CELL`
 /// (30) у генератора входов: в ячейке должно лежать несколько кандидатов, а не
@@ -246,9 +248,5 @@ impl Occupied {
 /// Точка ближе `clearance` к любому ребру полигона — внешнему кольцу или
 /// кольцу дырки (кольца замкнуты неявно, последнее ребро — от конца к началу).
 pub(in crate::map::osm) fn near_area_edge(point: Vec2, area: &PolyArea, clearance: f32) -> bool {
-    std::iter::once(&area.outer).chain(&area.holes).any(|ring| {
-        (0..ring.len()).any(|index| {
-            distance_to_segment(point, ring[index], ring[(index + 1) % ring.len()]) <= clearance
-        })
-    })
+    distance_to_outline(point, area) <= clearance
 }

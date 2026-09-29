@@ -146,6 +146,15 @@ opt-level = 1
 [profile.dev.package."*"]
 opt-level = 3
 
+# objc2 verifies the type encoding of every Objective-C message it sends when
+# debug_assertions are on, and the dev profile keeps them on for dependencies
+# too. wgpu-hal's Metal backend sends one per draw call and per buffer/bind
+# group set, so at ~16k draws this check was ~42% of the render thread's
+# encoding time: Tula at full zoom-out, no vsync, 30.9 -> 17.0 ms a frame.
+# Only objc2 loses its assertions; everything else keeps them.
+[profile.dev.package.objc2]
+debug-assertions = false
+
 [lints.clippy]
 type_complexity = "allow"
 wildcard_imports = "warn"

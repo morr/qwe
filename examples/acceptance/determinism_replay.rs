@@ -140,7 +140,7 @@ fn load_json() -> String {
 }
 
 fn parse_map(json: &str) -> MapData {
-    parse::parse(json, CITY).expect("failed to parse cached OSM json")
+    parse::parse(json, CITY, parse::ParseKnobs::default()).expect("failed to parse cached OSM json")
 }
 
 /// Та же последовательность, что и в загрузке игры: заливка, снап портала,

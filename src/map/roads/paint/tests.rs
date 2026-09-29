@@ -85,6 +85,62 @@ fn four_lanes_get_a_double_axis_and_a_lane_line_each_way() {
     assert!((lanes[1] - lane_width()).abs() < 1e-3, "{lanes:?}");
 }
 
+/// Пять полос в обе стороны (Ростов, Текучёва): осевая есть — двойная
+/// сплошная на границе потоков, а не посреди средней полосы. Без
+/// `lanes:backward` лишняя полоса — потоку по ходу точек (справа), с ним —
+/// как сказано.
+#[test]
+fn five_two_way_lanes_get_a_double_axis_between_the_flows() {
+    let five = |backward: Option<u8>| {
+        let mut road = with_lanes(
+            street(vec![Vec2::ZERO, Vec2::new(200.0, 0.0)], 17.5),
+            5,
+            false,
+        );
+        road.highway = Highway::Primary;
+        road.lanes_backward = backward;
+        let (layers, _) = mesh_roads(
+            &map_of(vec![road]),
+            RoadStyle::default(),
+            RoadShape::default(),
+        );
+        let axes = line_offsets(&layers, PAINT_AXES, 100.0);
+        let lanes = line_offsets(&layers, PAINT_LANES, 100.0);
+        let kinds: Vec<_> = paint_layer(&layers, PAINT_AXES)
+            .ribbon_coords_for_test()
+            .map(|coords| coords.iter().map(|ribbon| ribbon[3]).collect())
+            .unwrap_or_default();
+        (axes, lanes, kinds)
+    };
+    let (axes, lanes, kinds) = five(None);
+    assert_eq!(axes.len(), 1, "{axes:?}");
+    assert!((axes[0] - lane_width() / 2.0).abs() < 1e-3, "{axes:?}");
+    assert!(!kinds.is_empty());
+    assert!(kinds.iter().all(|&kind| kind == LineKind::Double.code()));
+    // остальные три границы — линии полос
+    assert_eq!(lanes.len(), 3, "{lanes:?}");
+    let (axes, _, _) = five(Some(3));
+    assert!((axes[0] + lane_width() / 2.0).abs() < 1e-3, "{axes:?}");
+}
+
+#[test]
+fn an_odd_axis_sits_on_the_border_of_the_flows() {
+    let mut road = with_lanes(street(vec![Vec2::ZERO, Vec2::X], 17.5), 5, false);
+    let right = axis_offset(&road, 5, TrafficSide::Right).unwrap();
+    assert!((right - lane_width() / 2.0).abs() < 1e-4);
+    let left = axis_offset(&road, 5, TrafficSide::Left).unwrap();
+    assert!((left + lane_width() / 2.0).abs() < 1e-4);
+    assert_eq!(axis_offset(&road, 4, TrafficSide::Right), Some(0.0));
+    road.lanes_backward = Some(1);
+    let pushed = axis_offset(&road, 4, TrafficSide::Right).unwrap();
+    assert!(
+        (pushed - lane_width()).abs() < 1e-4,
+        "три по ходу, одна назад"
+    );
+    road.oneway = true;
+    assert_eq!(axis_offset(&road, 4, TrafficSide::Right), None);
+}
+
 #[test]
 fn a_one_way_street_has_no_axis() {
     let map = map_of(vec![with_lanes(
@@ -117,6 +173,28 @@ fn markings_off_paint_nothing() {
     ] {
         assert!(paint_layer(&layers, name).is_empty(), "{name}");
     }
+    assert_eq!(report.paint_lines, 0);
+}
+
+/// `lane_markings=no` снимает с улицы осевую и границы полос, как бы много
+/// полос у неё ни было (Тула, витрина 09: Бухоновский переулок).
+#[test]
+fn a_street_without_lane_markings_paints_no_lines() {
+    let road = RoadLine {
+        lane_markings: false,
+        ..with_lanes(
+            street(vec![Vec2::ZERO, Vec2::new(200.0, 0.0)], 14.2),
+            4,
+            false,
+        )
+    };
+    let (layers, report) = mesh_roads(
+        &map_of(vec![road]),
+        RoadStyle::default(),
+        RoadShape::default(),
+    );
+    assert!(paint_layer(&layers, PAINT_LANES).is_empty());
+    assert!(paint_layer(&layers, PAINT_AXES).is_empty());
     assert_eq!(report.paint_lines, 0);
 }
 
@@ -163,6 +241,7 @@ fn the_wedge_asphalt_and_the_wedge_paint_share_one_grid() {
                 lanes: narrow,
                 drift,
                 kept: None,
+                origin: None,
             };
             let [from, to] = wedge_frames(body, wedge, end);
             let body_frame = lane_frame(body);
@@ -340,6 +419,65 @@ fn a_wedge_with_odd_lanes_drifts_the_line_over_its_length() {
     assert_eq!(lines.len(), 2, "{lines:?}");
     assert!((lines[0] + lane_width() / 2.0).abs() < 1e-3, "{lines:?}");
     assert!((lines[1] - lane_width() / 2.0).abs() < 1e-3, "{lines:?}");
+}
+
+/// Пять полос (3 + 2) в шесть (3 + 3): осевая пяти — на границе потоков, в
+/// полполосы от середины, у шести — посередине. На шве осевая широкого
+/// стоит там же, где у узкого, и уходит на середину по длине клина, без
+/// скачка (Ростов, Текучёва). Узкий, нарисованный навстречу, — зеркально.
+#[test]
+fn the_axis_runs_through_a_seam_of_different_splits() {
+    let width = |lanes: u8| f32::from(lanes) * lane_width() + 1.0;
+    for reversed in [false, true] {
+        let mut narrow = with_lanes(
+            street(vec![Vec2::ZERO, Vec2::new(200.0, 0.0)], width(5)),
+            5,
+            false,
+        );
+        narrow.lanes_backward = Some(2);
+        if reversed {
+            narrow.points.reverse();
+            narrow.lanes_backward = Some(3);
+        }
+        let wide = with_lanes(
+            street(vec![Vec2::new(200.0, 0.0), Vec2::new(400.0, 0.0)], width(6)),
+            6,
+            false,
+        );
+        // плюс — влево по ходу широкого; поток по ходу — справа, в три
+        // полосы, и осевая пяти — в полполосы левее середины
+        let seam = lane_width() / 2.0;
+        // у шва узел сетки широкого — на осевой узкого: осевая шести (k = 0)
+        // начинается там же, где кончилась осевая пяти
+        let taper = Taper {
+            length: 33.0,
+            narrow: 0,
+            sides: [true; 2],
+        };
+        let wedge = WedgeEnd::new(&wide, &narrow, taper, false, 33.0, TrafficSide::Right);
+        let frame = wedge_frame(lane_frame(6), wedge, false);
+        assert!(
+            (frame.origin - seam).abs() < 1e-6,
+            "reversed {reversed}: {frame:?}"
+        );
+        let (layers, report) = mesh_roads(
+            &map_of(vec![narrow, wide]),
+            RoadStyle::default(),
+            RoadShape::default(),
+        );
+        assert_eq!(report.drawn.tapers, 1);
+        let at_seam = line_offsets(&layers, PAINT_AXES, 200.0);
+        assert!(
+            at_seam.iter().all(|&y| (y - seam).abs() < 1e-3) && !at_seam.is_empty(),
+            "reversed {reversed}: {at_seam:?}"
+        );
+        let taper = (width(6) - width(5)) * tapers::TAPER_PER_METER;
+        let after = line_offsets(&layers, PAINT_AXES, 200.0 + taper);
+        assert!(
+            after.iter().all(|&y| y.abs() < 1e-3) && !after.is_empty(),
+            "reversed {reversed}: {after:?}"
+        );
+    }
 }
 
 #[test]

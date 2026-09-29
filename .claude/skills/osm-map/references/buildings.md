@@ -622,7 +622,7 @@ arches.
     would otherwise be a tower.
   - **The slot inside a group is the building's own seed** — the same
     `material::building_seed` that picks the roofing material, so heights survive a mode
-    switch, a zoom rebuild and a restart, and two identical footprints in different places
+    switch, a sun rebuild and a restart, and two identical footprints in different places
     still come out different. **A tag always wins**; the inference runs only where
     `PolyArea::height` is `None`.
   - **`height_mix`** puts the result in the `building meshing:` log line
@@ -1383,7 +1383,7 @@ arches.
     whole of `map/*` (crowns, this clutter, the parked cars), the crown generator's
     original lifted out of `map/trees` — seeded from the roof material's building seed
     (`seed::seed_from_point`, the same door), so the
-    equipment survives a mode switch, a zoom-bucket rebuild and a restart in the same
+    equipment survives a mode switch, a sun rebuild and a restart in the same
     place. Positions are rolled in the building's own frame (long axis × its
     perpendicular, extent projected from the outline — no second `min_area_rect`),
     inset by `EDGE_MARGIN` 1.6 m or 18 % of the short side, whichever is smaller. Every
@@ -1430,16 +1430,33 @@ arches.
     for is what dominates at the end of the slider — but the default picture is not
     untouched by it.
   - **Zoom.** The clutter is the only thing zoom changes about the building layer, and
-    it cannot be hidden without rebuilding, since it lives in the same merged mesh as
-    the houses (painter's order is per building: walls, roof, then its own clutter). So buildings got a zoom bucket of their own — `BuildingLods` /
-    `BuildingZoomBucket`, two steps at `ROOF_CLUTTER_MAX_ZOOM` (0.5 m/px), seeded on
-    world entry before `spawn_map` and rebuilt on a threshold crossing through the same
-    `buildings::rebuilds_on()` the height mode uses — one registration with `or_else`, by
-    the rule under **When a layer rebuilds** in `SKILL.md`.
+    it lives in the same merged mesh as the houses (painter's order is per building:
+    walls, roof, then its own clutter — a nearer neighbour's wall covers a farther roof's
+    shaft). Buildings have a zoom bucket of their own — `BuildingLods` /
+    `BuildingZoomBucket`, two steps at `ROOF_CLUTTER_MAX_ZOOM` (0.5 m/px) — and **the
+    crossing rebuilds nothing**: the game always builds the layer with clutter
+    (`BuildingPlan::game`), `push_items` marks every clutter vertex by a **negative**
+    material slot (`MeshBuilder::set_clutter`, `[0, 0, -1, 0]`; the fragment reads the
+    slot through `max(…, 0)`, so it is still "no texture"), and on the far step
+    `material::show_roof_clutter` sets `RoofParams::clutter` to 0, on which `roof.wgsl`'s
+    vertex stage sends those vertices to one point past the far plane — degenerate,
+    clipped, no fragments. It runs every frame (one asset read and a compare; it writes
+    only on a crossing), so the unflagged `seed_zoom_bucket` needs no second call.
+    The crossing used to rebuild the whole extruded layer through `rebuilds_on()`:
+    Tula 535 k ⇄ 1 176 k vertices, 64 / 83 ms of build plus 20–47 MB of upload and 2–3
+    heavy frames; Kaluga 506 k ⇄ 1 033 k, 88 / 107 ms (`map_meshing`, round 3).
+    **Rejected alternatives**: a separate clutter layer on top — it would break the
+    painter's order and show a low roof's shafts through a taller nearer wall; two
+    prebuilt variants of the extruded mesh with a `Visibility` switch — twice the build on
+    every mode/sun change and +1 M resident vertices for nothing the shader cannot do.
+    The cost that stays: on the far step the clutter vertices (+640 k on Tula, +527 k on
+    Kaluga) still go through the vertex stage every frame, and the far-zoom mesh stays at
+    its near-zoom size in memory.
   - **What it costs** (Tula, 7723 buildings, 2.5D+shadows+tint, from
     `examples/bench/map_meshing` on the `dev` profile): 792 147 verts / 101 ms with clutter
-    against 468 867 / 89 ms without — one hitch on the threshold crossing, in the same
-    class as the rail layer's deepest bucket (673 k / 23 ms). Most of it is the shafts:
+    against 468 867 / 89 ms without — the build the game always pays now (**Zoom**
+    above: the crossing rebuilds nothing), and the `clutter false` row of the bench is
+    the clutter's share, not the cost of any zoom step. Most of it is the shafts:
     every flat roof gets at least one, and a shaft is 6 quads. The 78 / 65 ms that stood
     here came off a run that predates the roof-shadow layer in its current shape (and the
     sharing of the sweeps and the draw order, which took 13 ms back off these very

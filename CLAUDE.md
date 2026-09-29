@@ -182,6 +182,19 @@ command whose build directory holds no fingerprints while the main checkout's `t
 does; when an empty one is the actual point (timing a cold build) say so with the literal
 `# cold-build` in the command.
 
+**`target/` leaks object files, and `tools/prune-target-objects.sh` is what bounds it.** On
+macOS the dev profile's debuginfo is `unpacked`: the DWARF stays in the codegen units'
+`.o` files, which rustc hard-links from its incremental session into `deps/` (and
+`examples/`) under a fresh per-session name. When the session is replaced the `deps/` link
+stays behind, so every rebuild of every qwe target — lib, unit tests, bin, each `tests/*.rs`,
+each example — left one more set: 77 506 such files, 127 GB of a 133 GB `deps/`, plus
+51 000 more (11 GB) in `examples/`, until the disk filled. The script deletes the
+single-linked ones — no session holds them any more, no binary's debug map points at them —
+and only in the incremental naming, so the registry crates' objects (their only debuginfo)
+are never touched. `tools/check.sh` runs it after every check; after a day of plain `cargo
+test` / `cargo run`, run it by hand (`tools/prune-target-objects.sh [target-dir]`). No
+`[profile]` change was needed, so nothing rebuilt: backtraces keep their line numbers.
+
 `dynamic_linking` is already enabled in `Cargo.toml` — never pass `--features bevy/dynamic_linking`.
 
 First `cargo run` downloads the OSM extract from Overpass into `assets/osm/` (gitignored
@@ -327,7 +340,7 @@ step when adding one):
 | entity | file |
 |---|---|
 | ground mesh, merged area layer meshes (landuse/parks/woods/grass/sand/parking + its markings/water), waterway ribbons, tree-row band | `map/spawn.rs` (through `map/surface.rs::spawn_layers`) |
-| road layers — ten ribbons (alleys/sidewalks/road medians/roads/lot sidewalks + lot lines/bridge shadows/bridge curbs (`bridge_casings`)/bridges/walls) and the eight paint layers of `roads/paint.rs` (wear mask + wear, zebras, islands, lanes + axes, bridge lanes + axes), the latter tagged `(RoadLayerTag, PaintTag)` | `map/roads.rs::spawn_road_meshes` (same helper, from `rebuild_roads` and `spawn_map`) |
+| road layers — twelve ribbons (road verges/alleys/sidewalks/road medians/unpaved roads/roads/lot sidewalks + lot lines/bridge shadows/bridge curbs (`bridge_casings`)/bridges/walls), the wide verges' lawn as meadow and as yard grass (`road_verge_lawns`, `road_verge_yards`), the ring islands' lawn (`ring_islands`) and their mapped grass without the rim (`ring_island_grass`), and the eight paint layers of `roads/paint.rs` (wear mask + wear, zebras, islands, lanes + axes, bridge lanes + axes), the latter tagged `(RoadLayerTag, PaintTag)` | `map/roads.rs::spawn_road_meshes` (same helper, from `rebuild_roads` and `spawn_map`) |
 | rail layers (ballast/ties/steel) | `map/rail.rs::rebuild_rails` (same helper) |
 | parked cars | `map/cars/mod.rs::rebuild_cars` (through `surface::spawn_layers`; geometry — `cars/body.rs`) |
 | standing wagons | `map/wagons.rs::rebuild_wagons` (same helper) |
@@ -335,7 +348,7 @@ step when adding one):
 | tram mesh | `map/tram.rs::rebuild_tram` (same helper) |
 | fence lines + their shadows (one mesh) | `map/fences.rs::rebuild_fences` (through `surface::spawn_layers`) |
 | building layers (facades/roofs/shadows/extrusion) | `map/buildings/mod.rs::spawn_building_meshes` (same helper, from `rebuild_buildings` and `spawn_map`) |
-| tree crowns + shadows | `map/trees.rs::spawn_tree_meshes` (build — `::mesh_trees`, geometry — `trees/crown.rs`) |
+| tree crowns (an entity per tree on the near zoom step, merged `tree_crowns` chunks on the far ones) + shadows | `map/trees.rs::spawn_tree_meshes` (the chunks and shadows through `surface::spawn_layers`; the crown entities through `CrownStream::spawn_next`, also batched from `::stream_tree_crowns`; build — `::mesh_trees`, geometry — `trees/crown.rs`) |
 | portal (vortex quad) + portal stain | `portal.rs::spawn_portal` |
 | humans (and corpses — same entity, retagged) | `human/systems.rs::spawn_population` |
 | blood pool and blood spatter — two **children** of the corpse, no component of their own: despawn is recursive | `human/look.rs::blood_pool` / `::blood_spatter` |

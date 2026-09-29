@@ -24,6 +24,11 @@ use crate::{
 /// need to leave much more room than that. A mesh with fewer polygons than this uses its
 /// polygon count instead, so that a small mesh still gets there well inside the iteration
 /// limit `Mesh::path` searches under.
+///
+/// QWE: в поиске, который строит `SearchInstance::new`, не используется — там запись
+/// включена с первого извлечения (почему — комментарий у `recording`). Константа и
+/// счётчик оставлены ради тестовых конструкторов в `lib.rs` и ради малого диффа с
+/// upstream.
 const STALL_LIMIT: usize = 512;
 
 pub(crate) struct Root(Vec2);
@@ -260,7 +265,16 @@ impl<'m> SearchInstance<'m> {
                 .map(|layer| layer.polygons.len())
                 .sum::<usize>()
                 .min(STALL_LIMIT) as u32,
-            recording: false,
+            // QWE: `is_new` пишет с первого извлечения, детектор застоя не ждём. Он
+            // ловит кольцо как 512 извлечений подряд без роста `f`, а на швах чанков
+            // колец много и короткие: `f` между ними растёт, счётчик сбрасывается, и
+            // запись не включается никогда. Белгород, радиус 0.2, 2.6 км по коридору
+            // из 3010 полигонов: 111 647 из 133 317 извлечений — точные повторы, бюджет
+            // `SEARCH_POPS_PER_POLYGON` исчерпан, игра упала; с записью — 26 мс
+            // (`examples/audit/polymesh_budget_repro`). Цена для здорового поиска в
+            // шуме: Тула, 1000 запросов, радиус 0.2 (`polymesh_bench`) — 10.52 мс
+            // против 10.31 в среднем, худший 82 против 77, память та же.
+            recording: true,
             path_arena: Vec::with_capacity(50),
             from: (from.0, from.1.first().map_or(0, |polygon| polygon.layer())),
             to: to.0,
@@ -1167,6 +1181,9 @@ impl<'m> SearchInstance<'m> {
     /// returned. `root_history` cannot stop it: it drops nodes that are strictly worse,
     /// and these are equal. Recording them is what ends the lap, and doing it only once a
     /// search looks stuck keeps it off the paths of every search that does not.
+    ///
+    /// QWE: у нас запись идёт с первого извлечения — «только когда поиск завис» на швах
+    /// чанков не наступало никогда (см. `recording` в `SearchInstance::new`).
     #[inline(always)]
     fn is_new(&mut self, node: &SearchNode) -> bool {
         self.seen_nodes.insert([

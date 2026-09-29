@@ -176,7 +176,17 @@ back to `AppState::Loading`:
 would put two threads into one navmesh.
 
 The same reload path is taken by the **navtile size** cycler, with one difference: the camera
-stays where it was (same city, same spot under inspection).
+stays where it was (same city, same spot under inspection). A settled new **lane width**
+reloads the same way: `lane_width_moved` compares `RoadShapeOnMap` with the snapshot the map
+was parsed with (`MapData::knobs`), not with a global.
+
+**What the load thread parses with is an argument.** `start_job` (and the Retry button)
+build `ParseKnobs { lane_width, navtile }` from the knobs as they stand and hand them to
+`start_load_thread`; the parse reads no global. `sync_navtile_size` still writes the navtile
+atomic first, because the navmesh fill in the same thread reads it. The paint's lane-width
+global is written on the other end, in `OnEnter(Playing)`, from `MapData::knobs`
+(`roads::shape::adopt_lane_width`) — so the world is painted with the width it was parsed
+with even if the knob moved while it loaded.
 
 ## DespawnOnExit — the only teardown
 

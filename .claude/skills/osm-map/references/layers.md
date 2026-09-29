@@ -35,6 +35,12 @@ The layers that are neither roads, parking, buildings nor trees. Each bullet is 
     (`split_channels`, under **Waterways** below) — two polygons of one river that do
     *not* touch, because OSM cut the `riverbank` at a bridge, are joined by the channel
     between them, and their service edges across the river stop being banks the same way.
+    **The union is an intersection with the map** (`within`, inflated by
+    `WATER_CLIP_MARGIN` 50 m — wider than the shoal, so the shoal along the cut lies off
+    the map): Overpass hands a lake's multipolygon over whole, and Devils Lake is 35 346
+    vertices over 38 km, of which ~800 fall in the map. Every shoal band of it went to
+    earcut whole, and the load hung in `spawn_map` for minutes — while the loader screen
+    still read "Pruning unreachable areas", the last line it managed to draw. Clipped: 30 ms.
   - **Then nested inward offsets** (`OutlineOffset::outline`, negative offset, `Round`
     joins, `SHOAL_STEP` 0.5 m, twelve levels), each always taken from level 0 rather than
     from the previous one, so errors do not accumulate. The band between depth `d` and
@@ -553,6 +559,16 @@ The layers that are neither roads, parking, buildings nor trees. Each bullet is 
     contour gets the cars' `SHADOW_BLUR` (0.35 m) band, tapered by `direction ·
     shadow_dir()` — hard at the fence, soft at the far edge. **Shadows first, lines last**
     still holds: the whole union goes into the mesh before any ribbon.
+  - **A see-through fence casts no shadow** — `FenceKind::Railing`, a `barrier=fence`
+    whose every `fence_type` value is in `parse/tags.rs::SEE_THROUGH_FENCES` (`metal`,
+    `bars`, `chain_link`, `mesh`, `wire`, `pole`, …; a mix such as
+    `barbed_wire;concrete` stays a solid `Fence`). It is drawn as a grey-metal line and
+    skipped by `push_shadows`. The case that brought it: the metre-high `metal` railing
+    down the median of Sovetskaya in Tula (way 357798630, also an admin boundary) swept
+    a solid 2 m shadow onto the asphalt and read as a dark bar between the carriageways
+    (`fences/tests.rs::a_railing_casts_no_shadow`). Tula v15: 61 of the 84 fences with a
+    `fence_type` are see-through. Navigation does not look at the kind — the band is the
+    same 0.3 m.
   - Tula: **429 lines** — 356 `fence`, 71 `wall` + 1 `retaining_wall` (both drawn as a
     wall, so 72 walls), 1 `hedge` (the audit was right that live hedges are mapped as
     `barrier=hedge`, not `natural=hedge` — the latter is zero in all six cities). The

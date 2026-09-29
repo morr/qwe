@@ -59,9 +59,10 @@ fn main() {
     );
 
     for mode in BuildingHeightMode::ALL {
-        // ступени зума у слоя зданий две, и различает их ровно оборудование на
-        // кровле (порог `ROOF_CLUTTER_MAX_ZOOM`): замер берёт сам флаг, а не
-        // зум по обе стороны порога
+        // игра строит слой всегда с оборудованием на кровле, а дальняя ступень
+        // (`ROOF_CLUTTER_MAX_ZOOM`) прячет его шейдером: строка `clutter true`
+        // — цена слоя на любой ступени, `clutter false` — доля оборудования в
+        // ней, а не цена какой-либо ступени
         for clutter in [true, false] {
             let costs = measure_layers(&map.buildings, &map.roads, mode, clutter);
             row(mode.label(), &format!("clutter {clutter:<5}"), &costs);

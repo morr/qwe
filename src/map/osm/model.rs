@@ -24,13 +24,29 @@ pub enum AreaKind {
     Industrial,
     /// Стоянка (`amenity=parking`) — асфальт с расчерченными местами. На
     /// снимке двор со стоянкой ни с чем не спутать, и это единственная
-    /// площадная зона, на которой что-то стоит (`map::cars`).
-    Parking,
+    /// площадная зона, на которой что-то стоит (`map::cars`). Какая это
+    /// стоянка, решает разбор ([`LotKind`]).
+    Parking(LotKind),
     /// Спортивная или детская площадка (`leisure=pitch|track|playground|…`).
     /// Вид спорта решает и цвет покрытия, и разметку, поэтому он едет прямо
     /// в значении: отдельного поля на `PolyArea` ради него заводить не за
     /// что — площадкой оно не бывает ни у чего другого.
     Pitch(PitchKind),
+}
+
+/// Что за стоянка — решается при разборе (`parse/lots.rs`), и читают её
+/// раскладка мест (`map::parking`) и кромка большой стоянки (`roads/lots.rs`),
+/// а сами ничего не выводят.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LotKind {
+    /// **Kerbside lot** — `parking=street_side`: карман вдоль улицы отдельным
+    /// контуром. Дотягивается до бордюра, врезаясь в тротуар, а не до его края.
+    Kerbside,
+    /// **Big lot** — замощённый контур от `GROUND_MIN_AREA` (`parse/lots.rs`):
+    /// дорога сквозь неё видна на её асфальте, а не спрятана под ним.
+    Ground,
+    /// Остальные: двор, стоянка у магазина.
+    Yard,
 }
 
 /// Что за площадка — по ней выбирается цвет покрытия и разметка
@@ -322,6 +338,14 @@ pub struct RoadLine {
     /// `None` остаётся у дорожек и у дорог, собранных тестом руками; дефолт
     /// по ширине для них — у потребителя (`map::roads::lane_count`).
     pub lanes: Option<u8>,
+    /// Сколько из [`Self::lanes`] двусторонней дороги идут **против** хода
+    /// точек: `lanes:backward`, иначе `lanes` − `lanes:forward`. Где встаёт
+    /// осевая: между потоками, а не посреди полотна, — при `lanes=5,
+    /// lanes:forward=3` на границе третьей полосы. Проход сечений сверяет его
+    /// с итоговым числом полос и дописывает участкам без тега от соседа по
+    /// улице с тем же числом; `None` — не известно (делит потребитель,
+    /// `roads::paint::axis_offset`) или дорога односторонняя.
+    pub lanes_backward: Option<u8>,
     /// Проезд стоянки (`service=parking_aisle`) — полоса, по которой машина
     /// подъезжает к месту, и **единственная дорога, которую читает раскладка
     /// мест** (`map::parking`): ряды ложатся по обе стороны от неё. Рисуется
@@ -332,15 +356,91 @@ pub struct RoadLine {
     /// первое (порядок точек и есть поток); у двусторонней общий `turn:lanes`
     /// без направления не читается — чьи это полосы, не сказано.
     pub turns: [Vec<LaneTurn>; 2],
+    /// Разметка полос на проезжей части: `false` — `lane_markings=no`, у
+    /// улицы нет ни осевой, ни границ полос (зебры и стоп-линии узла это не
+    /// снимает). Без тега — `true`: есть ли линии, решает число полос.
+    pub lane_markings: bool,
     /// Откуда у улицы тротуар `[слева, справа]` по ходу точек — см.
     /// [`SidewalkSide`]: по `sidewalk=*`, по классу и застройке, или его нет.
     /// Проезду и дорожке тротуар не положен и так
     /// (`map::roads::is_carriageway`), это поле его не добавляет.
     pub sidewalks: [SidewalkSide; 2],
+    /// **Обочина** `[слева, справа]` по ходу точек, м: у стороны мощёной
+    /// улицы, вдоль которой идёт отдельно замапленная мощёная дорожка, — от
+    /// кромки до её оси (`parse/verges.rs::measure_footways_beside_streets`), с полосой
+    /// тротуара или без; ноль — нет.
+    /// Только рисунок: плитка под зеленью (`map::roads`), навмеш и дома её не
+    /// читают.
+    pub verges: [f32; 2],
+    /// Обочина **по месту** `[слева, справа]`: `(метров по точкам, обочина)`
+    /// у каждой пробы стороны, нашедшей дорожку, по возрастанию. Дорожка
+    /// уходит от улицы и подходит к ней — у угла перекрёстка она
+    /// заворачивает, — и обочина постоянной ширины (медиана [`Self::verges`])
+    /// оставляла между собой и дорожкой клин голой земли (Тула, витрина 02).
+    /// Пусто — обочина постоянная; читать через [`Self::verge_at`].
+    pub verge_profile: [Vec<(f32, f32)>; 2],
     /// Стоянка у бордюра `[слева, справа]` по ходу точек — по `parking:*`.
     /// Что делать с [`KerbParking::Untagged`], решает правило
     /// (`map::roads::pockets`), не разбор.
     pub parking: [KerbParking; 2],
+    /// Покрытие дорожки ([`RoadClass::Alley`]): мощёная рисуется плиткой
+    /// тротуара, грунтовая — песчаной тропинкой. Из разбора выходит тег
+    /// `surface` и то, что следует из вида дорожки (`footway=sidewalk`,
+    /// `steps` — мощёные, `path`/`track` — грунтовые); `None` у дорожки без
+    /// тега решает проход по окружению (`parse::infer_pavements`). У улицы
+    /// это только тег `surface`: грунтовая ([`RoadLine::is_unpaved_street`])
+    /// рисуется грунтом без разметки, без тега — асфальтом; `None` у
+    /// дорожки, собранной тестом руками, рисуется тропинкой, как до поля.
+    pub pavement: Option<Pavement>,
+}
+
+impl RoadLine {
+    /// Обочина стороны `side` в `along` метрах по точкам: по
+    /// [`Self::verge_profile`] — между пробами по прямой, за крайними — как у
+    /// крайней; без профиля — постоянная [`Self::verges`]; ноль — обочины нет.
+    pub fn verge_at(&self, side: usize, along: f32) -> f32 {
+        if self.verges[side] <= 0.0 {
+            return 0.0;
+        }
+        let profile = &self.verge_profile[side];
+        let (Some(&(first_at, first)), Some(&(last_at, last))) = (profile.first(), profile.last())
+        else {
+            return self.verges[side];
+        };
+        if along <= first_at {
+            return first;
+        }
+        if along >= last_at {
+            return last;
+        }
+        let next = profile.partition_point(|&(at, _)| at <= along);
+        let ((from_at, from), (to_at, to)) = (profile[next - 1], profile[next]);
+        let t = (along - from_at) / (to_at - from_at).max(f32::EPSILON);
+        from + (to - from) * t
+    }
+
+    /// Грунтовая улица или проезд (`surface=unpaved|gravel|ground|dirt|…`):
+    /// своим слоем под асфальтом, без линий краски и без стоп-линии по
+    /// рангу узла (`map::roads`). Тротуара без тега у неё нет и так
+    /// (`parse/tags.rs::untagged_sidewalks`).
+    pub fn is_unpaved_street(&self) -> bool {
+        self.class == RoadClass::Street && self.pavement == Some(Pavement::Unpaved)
+    }
+
+    /// Мощёная дорожка — рисуется в слое тротуаров его плиткой, а не
+    /// песчаной тропинкой (`map::roads`).
+    pub fn is_paved_path(&self) -> bool {
+        self.class == RoadClass::Alley && self.pavement == Some(Pavement::Paved)
+    }
+}
+
+/// Покрытие дорожки — см. [`RoadLine::pavement`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pavement {
+    /// Асфальт, плитка, бетон, брусчатка, настил — рисуется тротуаром.
+    Paved,
+    /// Грунт, гравий, утоптанная земля — песчаная парковая тропинка.
+    Unpaved,
 }
 
 /// Откуда у одной стороны улицы тротуар — решение разбора, которое после него
@@ -480,7 +580,8 @@ impl SidewalkProfile {
         self.band.filter(|_| self.sides.contains(&true))
     }
 
-    /// Тротуар по тегу с обеих сторон — ширину не спрашивает.
+    /// Тротуар с обеих сторон — по тегу или выведенный ([`SidewalkSide`]);
+    /// ширину не спрашивает.
     pub fn both(&self) -> bool {
         self.sides == [true; 2]
     }
@@ -577,6 +678,11 @@ pub struct WallLine {
 pub enum FenceKind {
     /// `barrier=fence` — доска, штакетник, профнастил.
     Fence,
+    /// `barrier=fence` сквозной — решётка, сетка, проволока, жерди по
+    /// `fence_type` (`parse/tags.rs::fence_kind`): линия есть, тени нет.
+    /// Метровая решётка посреди проспекта сплошной тенью ложилась на асфальт
+    /// тёмным бруском.
+    Railing,
     /// `barrier=wall|retaining_wall` — бетон или кирпич, светлее и шире.
     Wall,
     /// `barrier=hedge` — живая изгородь, зелёная и мягкая.
@@ -1056,6 +1162,12 @@ pub struct MapData {
     /// (зеркало без областей, `is_in` пуст) — правостороннее, с предупреждением
     /// при разборе.
     pub traffic_side: TrafficSide,
+    /// С какими входами разобрана карта — снимок [`ParseKnobs`](super::parse::ParseKnobs),
+    /// которые получил разбор. Его ширину полосы сравнивает с осевшей ручкой
+    /// `city::lane_width_moved` (разошлись — перезагрузка), и из него же на
+    /// входе в мир пишется глобаль краски (`roads::shape::adopt_lane_width`).
+    /// У карты, собранной тестом руками, — входы по умолчанию.
+    pub knobs: super::parse::ParseKnobs,
     pub buildings: Vec<PolyArea>,
     pub water: Vec<PolyArea>,
     pub parks: Vec<PolyArea>,
@@ -1068,13 +1180,18 @@ pub struct MapData {
     /// Кварталы `landuse` (жильё, промзона) — самая нижняя заливка, под
     /// парками; на навмеш и посадку деревьев не влияют.
     pub landuse: Vec<PolyArea>,
+    /// **Карманы земли** — замкнутые нарисованным клочки у дорог, которые
+    /// никакой тег не описал, засеянные травой (`parse/pockets.rs`): вид —
+    /// вид соседнего квартала, `Grass` у замапленного газона или сквера
+    /// (рисуется лугом в слое газонов), иначе `Residential` — трава двора.
+    /// Рисуются слоями кварталов, но ни кварталом, ни газоном не считаются:
+    /// луг обочины спрашивает замапленную зелень (`roads.rs::Meadows`), а
+    /// карман рядом — не повод красить её лугом.
+    pub pockets: Vec<PolyArea>,
     /// Стоянки (`amenity=parking`) — асфальт с разметкой мест; по ним же
-    /// расставляются машины. Навмеш не трогают: по стоянке ходят.
+    /// расставляются машины. Навмеш не трогают: по стоянке ходят. Вид каждой
+    /// ([`LotKind`]) в её `kind`.
     pub parking: Vec<PolyArea>,
-    /// Индексы в [`Self::parking`] стоянок `parking=street_side` — кармана
-    /// вдоль улицы, отдельным контуром: дотягиваются до бордюра, а не до края
-    /// тротуара (`parse/lots.rs`).
-    pub street_side_lots: Vec<usize>,
     /// Спортивные и детские площадки (`leisure=*`) — покрытие своего цвета и
     /// разметка (`map::pitch`). Навмеш не трогают: по площадке ходят.
     pub pitches: Vec<PolyArea>,
@@ -1212,6 +1329,28 @@ pub fn point_in_area(point: Vec2, area: &PolyArea) -> bool {
         && !area.holes.iter().any(|hole| point_in_polygon(point, hole))
 }
 
+/// Расстояние от точки до ближайшего ребра полигона — внешнего кольца или
+/// кольца дырки (кольца замкнуты неявно), изнутри тоже.
+pub fn distance_to_outline(point: Vec2, area: &PolyArea) -> f32 {
+    std::iter::once(&area.outer)
+        .chain(&area.holes)
+        .flat_map(|ring| {
+            (0..ring.len()).map(move |index| (ring[index], ring[(index + 1) % ring.len()]))
+        })
+        .map(|(from, to)| distance_to_segment(point, from, to))
+        .fold(f32::INFINITY, f32::min)
+}
+
+/// Расстояние от точки до площади: ноль внутри, иначе до ближайшего ребра.
+/// «Стоянка в стольких-то метрах» — это оно (`parse/lots.rs`,
+/// `roads/pockets.rs`).
+pub fn distance_to_area(point: Vec2, area: &PolyArea) -> f32 {
+    if point_in_area(point, area) {
+        return 0.0;
+    }
+    distance_to_outline(point, area)
+}
+
 /// Ближайшая точка отрезка. Проекция, зажатая концами: за пределами отрезка
 /// ближайшая точка — его конец, а не точка на прямой.
 pub fn closest_on_segment(point: Vec2, from: Vec2, to: Vec2) -> Vec2 {
@@ -1318,9 +1457,7 @@ pub fn is_fortress_tower(area: &PolyArea) -> bool {
     if area.kind != AreaKind::Kremlin || !area.holes.is_empty() || area.outer.len() < 3 {
         return false;
     }
-    let perimeter: f32 = (0..area.outer.len())
-        .map(|index| area.outer[index].distance(area.outer[(index + 1) % area.outer.len()]))
-        .sum();
+    let perimeter = crate::map::meshing::ring_perimeter(&area.outer);
     perimeter > 0.0
         && ring_area(&area.outer) / (perimeter * perimeter) >= FORTRESS_TOWER_COMPACTNESS_MIN
 }
@@ -1609,7 +1746,7 @@ mod tests {
         let area = |outer: Vec<Vec2>| PolyArea {
             outer,
             holes: Vec::new(),
-            kind: AreaKind::Parking,
+            kind: AreaKind::Parking(LotKind::Kerbside),
             building_use: BuildingUse::Other,
             height: None,
             storeys: None,

@@ -24,8 +24,11 @@
 //!
 //! Мосты и арки в улицу не сглаживаются: их точки читает навмеш, и ось
 //! моста строится по-прежнему ([`centerline`]). Они делят улицу на пробеги,
-//! концы пробега закреплены. Дорожки ни в какой улице не лежат и тоже идут
-//! по [`centerline`].
+//! концы пробега закреплены. Кроме моста — половины разделённой улицы
+//! ([`pairable`]): разводка пар и так сдвигает его ось на метр наружу, а
+//! прямой мост между сглаженными подходами вставал под углом, и на стыке
+//! лент кромка выступала клином (Красноармейский над каналом). Дорожки ни в
+//! какой улице не лежат и тоже идут по [`centerline`].
 
 use std::borrow::Cow;
 use std::f32::consts::PI;
@@ -33,11 +36,12 @@ use std::f32::consts::PI;
 use bevy::prelude::*;
 
 use super::centerline;
-use super::network::pairs::Pairs;
+use super::network::pairs::{Pairs, pairable};
 use super::network::{self, RoadNetwork, RoadNodes, StreetWay};
 use super::rings::{self, Rings};
 use super::shape::RoadShape;
-use crate::map::along::simplify;
+use super::tapers::Tapers;
+use crate::map::along::{nearest_on_path, simplify};
 use crate::map::meshing::arc_steps;
 use crate::map::osm::model::RailLine;
 use crate::map::osm::{RoadClass, RoadLine};
@@ -62,6 +66,9 @@ const THROUGH_MIN_BEND: f32 = 4.0 * PI / 180.0;
 /// Сколько прямого края дуги оставляют закреплённому узлу, м: столько берёт
 /// скругление бордюра к поперечной улице (`roads/corners.rs`).
 const KERB_STRAIGHT: f32 = 12.0;
+/// Насколько между кромками моста и пешеходного моста рядом может быть
+/// пусто, м, чтобы второй шёл вслед за первым ([`follow_bridge_sidewalks`]).
+const SIDEWALK_DECK_GAP: f32 = 3.0;
 /// Излом мельче этого не скругляется, рад: дуга была бы в сантиметр.
 const MIN_BEND: f32 = 0.5 * PI / 180.0;
 
@@ -119,11 +126,13 @@ pub struct Axes<'a> {
 /// `rails` — пути карты: по трамвайным находится полотно между половинами
 /// (`roads/network/pairs.rs`). `network` — улицы этих же `roads`; если она
 /// собрана не по ним (карта из теста, без разбора), улицы собираются здесь.
+/// `nodes` узнают узлы, сдвинутые разводкой пар, и по новому месту
+/// ([`RoadNodes::alias`]).
 pub fn street_axes<'a>(
     roads: &'a [RoadLine],
     rails: &[RailLine],
     network: &RoadNetwork,
-    nodes: &RoadNodes,
+    nodes: &mut RoadNodes,
     shape: &RoadShape,
 ) -> Axes<'a> {
     let curve = Curve::of(shape.curve_tolerance());
@@ -138,7 +147,10 @@ pub fn street_axes<'a>(
     };
     if let Some(curve) = curve {
         for street in &network.streets {
-            let excluded = |way: &StreetWay| roads[way.road].carves_navmesh();
+            let excluded = |way: &StreetWay| {
+                let road = &roads[way.road];
+                road.carves_navmesh() && !(road.bridge && pairable(road))
+            };
             let whole = street.closed && !street.ways.iter().any(excluded);
             for run in street.ways.split(excluded) {
                 if run.is_empty() {
@@ -160,7 +172,24 @@ pub fn street_axes<'a>(
         .collect();
     // половины разделённых улиц — на постоянный зазор, по уже гладким осям
     let mut pairs = Pairs::new(roads, &paths, shape.median_gap(), rails);
-    pairs.align(&mut paths, roads, network, nodes);
+    // клинья у швов половин — по дорогам как есть; `Drawn` находит их потом
+    // по тем же стыкам, подмены рисования половин не касаются
+    let osm: Vec<&RoadLine> = roads.iter().collect();
+    let wedges = Tapers::new(&osm, network, nodes, shape.taper());
+    let decks: Vec<(usize, Vec<Vec2>)> = roads
+        .iter()
+        .enumerate()
+        .filter(|(index, road)| road.bridge && pairs.has_runs(*index))
+        .map(|(index, _)| (index, paths[index].to_vec()))
+        .collect();
+    let moved = pairs.align(&mut paths, roads, network, nodes, &wedges);
+    follow_bridge_sidewalks(roads, &mut paths, &decks);
+    // узлы, уехавшие с половиной, находятся и по новому месту: скругления,
+    // стежки и кольца ищут их по вершине нарисованной оси
+    pairs.follow_moved_nodes(&mut paths, nodes, &moved);
+    for (from, to) in moved {
+        nodes.alias(from, to);
+    }
     // кольца — эллипсом, подходы к ним — по касательной; после разводки пар:
     // половины подхода гнутся у самого кольца, где пара уже разошлась
     let rings = if curve.is_some() {
@@ -174,6 +203,51 @@ pub fn street_axes<'a>(
         tight,
         pairs,
         rings,
+    }
+}
+
+/// Пешеходный мост вдоль моста-половины, разведённого парой (`decks` — их оси
+/// до разводки), едет вслед за ней: каждая вершина — на тот же сдвиг, что у
+/// ближайшей точки настила. Настилы мостов лежат над улицами, и тротуар,
+/// нанесённый рядом с мостом отдельным way, оставался на месте OSM: хвост
+/// его настила за торцом моста ложился на асфальт разведённого подхода
+/// светлым зубцом, а на самом мосту закрывал край проезжей части
+/// (Красноармейский над каналом). Наземный тротуар и так тонет в полосе
+/// улицы — его не трогает.
+fn follow_bridge_sidewalks(
+    roads: &[RoadLine],
+    paths: &mut [Cow<[Vec2]>],
+    decks: &[(usize, Vec<Vec2>)],
+) {
+    if decks.is_empty() {
+        return;
+    }
+    for (index, road) in roads.iter().enumerate() {
+        if !road.bridge || road.class != RoadClass::Alley {
+            continue;
+        }
+        let shift = |point: Vec2| {
+            decks
+                .iter()
+                .filter_map(|(deck, before)| {
+                    let (near, _) = nearest_on_path(before, point)?;
+                    let reach = (roads[*deck].width + road.width) / 2.0 + SIDEWALK_DECK_GAP;
+                    let distance = near.distance(point);
+                    (distance <= reach).then_some((distance, *deck, near))
+                })
+                .min_by(|a, b| a.0.total_cmp(&b.0))
+                .and_then(|(_, deck, near)| {
+                    let (after, _) = nearest_on_path(&paths[deck], near)?;
+                    Some(after - near)
+                })
+        };
+        let shifted: Vec<Vec2> = paths[index]
+            .iter()
+            .map(|&point| point + shift(point).unwrap_or(Vec2::ZERO))
+            .collect();
+        if shifted.as_slice() != paths[index].as_ref() {
+            paths[index] = Cow::Owned(shifted);
+        }
     }
 }
 
@@ -206,10 +280,15 @@ impl Run {
                 this.starts.push(0);
                 this.push(own[0], half, false);
             } else {
-                // шов: закреплён, если в нём сходится кто-то кроме соседей
+                // шов: закреплён, если в нём сходится кто-то кроме соседей, —
+                // или асфальт переходит в грунт: там ленты обрываются поперёк
+                // (`corners::kerb_returns`), и узел нужен им на оси, а не в
+                // миллиметрах от неё на дуге
                 let joint = this.points.len() - 1;
                 let previous = run[k - 1].road;
-                this.pinned[joint] = pins(roads, nodes, this.points[joint], &[way.road, previous]);
+                let resurfaced = road.is_unpaved_street() != roads[previous].is_unpaved_street();
+                this.pinned[joint] =
+                    resurfaced || pins(roads, nodes, this.points[joint], &[way.road, previous]);
                 this.halves[joint] = this.halves[joint].max(half);
                 this.starts.push(joint);
             }
@@ -406,12 +485,23 @@ struct Corner {
 }
 
 impl Corner {
-    /// Направления звеньев и излом между ними; `None` — излома нет.
+    /// Направления звеньев и излом между ними; `None` — излома нет или
+    /// скруглять нечего.
+    ///
+    /// **Полный разворот (излом ровно π) не скругляется**: ось, ушедшая по
+    /// звену и вернувшаяся по нему же, — шип OSM (Москва СВ: way уходит на
+    /// 1.3 м от узла, соседний возвращается в тот же узел), и касательной дуги
+    /// у него нет. Считать её всё равно нельзя: `π/2` в `f32` чуть больше
+    /// настоящего, `tan` там отрицательный (−2.3·10⁷), вынос дуги выходил
+    /// отрицательным и на полмиллиарда метров, а сетка пар (`Pairs::new`)
+    /// раскладывала такое звено по ячейкам, пока не съедала память.
     fn bend(&self) -> Option<(Vec2, Vec2, f32)> {
         let incoming = (self.at - self.before).try_normalize()?;
         let outgoing = (self.after - self.at).try_normalize()?;
         let bend = incoming.angle_to(outgoing).abs();
-        (bend >= MIN_BEND).then_some((incoming, outgoing, bend))
+        (MIN_BEND..PI)
+            .contains(&bend)
+            .then_some((incoming, outgoing, bend))
     }
 
     /// Сколько звена от вершины берёт скругление радиуса `radius`: не больше

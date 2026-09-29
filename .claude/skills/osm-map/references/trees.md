@@ -96,6 +96,138 @@ stand, how density works, and which resources restyle them.
   `MapData::trees` holds the densest forest and the slider only **shows a prefix** of it —
   never a replant, which would reshuffle every position and make the whole forest jump on
   each step.
+- **The zoom caps the prefix too** (`trees.rs::TREE_LODS`, `TreeZoomBucket`, the
+  `map/zoom.rs` mechanism): up to 2 m/px nothing changes (the default view is 0.4), from
+  2 to 3.5 m/px the density is `min(slider, 3)`, beyond it `min(slider, 2)`. A 2–6 m crown
+  is 1–3 px at the full zoom-out, where the `Wood` fill under it carries the forest, and
+  every crown is an entity plus its share of the merged shadow mesh. Because it is the same
+  prefix, a crossing only drops the tail — standing crowns never move — and surveyed
+  trees (threshold 0) stay on every step. **`mesh_trees` builds every step at once** and
+  takes no bucket: everything it returns — crown entities, merged crown chunks, shadow
+  layers — carries the `TreeLodMask` of the steps that draw it. The crossing is **not** a
+  condition of the tree chain's `rebuilds_on` — it runs `stream_tree_crowns` (below) and
+  `show_tree_lod` (`switches_on`, on `TreeLodShown`), which only flips `Visibility`
+  (`set_if_neq`, `par_iter_mut`); the set, the conifer field, the tree-row band and
+  every mesh are left alone. The bucket reaches the build only through
+  `spawn_tree_meshes`, which spawns each piece visible or hidden for the current step.
+  - **Crown entities are streamed, not respawned at once and not kept hidden**
+    (`CrownStream`, `stream_tree_crowns`, `TreeLodShown`). The merged far chunks are
+    built once and only toggled, but the near step's entities are a different matter:
+    spawning 95 k of them on the crossing (Kaluga; Tula 16 k) was three or four heavy
+    frames, and the first fix — keep them spawned and hidden on the far steps — was
+    measured and rejected: an A/B of one binary (Kaluga, full zoom-out, paused, locked
+    screen) gave `PostUpdate` 9–17 ms without them against 23–24 ms with them hidden,
+    `main` 15–28 against 35–37 — every frame of the zoom-out paid for crowns nobody saw.
+    So `spawn_tree_meshes` returns the placements and handles as a `CrownStream`
+    (placements + the spawned entities as a **prefix** of them); on the way into the near
+    step `stream_tree_crowns` spawns `CROWN_SPAWN_BATCH` (4096) a frame, **hidden**, and
+    `TreeLodShown` — the step `show_tree_lod` shows, which only here lags
+    `TreeZoomBucket` — stays on the far step until the last batch is in, so the merged
+    crowns cover the ~24 frames (Kaluga; Tula 4) and nothing pops in piecemeal. On the
+    far steps the step is shown at once (crown entities hidden in that frame) and the
+    entities leave `CROWN_DESPAWN_BATCH` (16384) a frame. A world entry or a style
+    rebuild at the near step spawns them all at once, under the loader or the edit.
+    `crown_entities_stream_in_by_batches_and_leave_on_the_far_steps` pins it.
+    Side effect worth knowing: an `OffscreenShotEvent` that zooms from far to near
+    captures on its sixth frame, before Kaluga's 24 batches are in — such a shot shows
+    the merged crowns.
+  - **Merged crowns are split by density band too** (`detailed_bands`): a far step with a
+    lower cap hides the tail band's chunks instead of rebuilding. Bands run from the first
+    trees of the set, so the tail band's chunks sit **above** the head's in z and a
+    higher-numbered crown stays on top across bands as it does inside a chunk;
+    `CROWN_CHUNK_Z_STEP` is 1/256 so 3 bands × 63 chunks fit `Z_TREE..+1`
+    (`merged_crowns_are_split_by_density_band`).
+  - **Shadows by density band** (`step_counts`, `density_bands`, `TreeLodMask`,
+    `TreeLayer`): step `b` draws the prefix `counts[b]`, the counts do not grow from
+    near to far, so band `b` — trees `counts[b + 1]..counts[b]` — is drawn on steps
+    `0..=b`. `mesh_trees` builds one `tree_shadows` layer per band on every rebuild (all
+    steps at once, each on its own z, `TREE_SHADOW_Z_STEP` 1/1024 over `Z_TREE_SHADOW`),
+    spawned with its mask and a `Visibility` for the current step; `show_tree_lod`
+    flips them with `set_if_neq`. Before, the whole shadow mesh was rebuilt and uploaded
+    on every crossing — Tula 1.3–4.6 M vertices (~183 MB), Kaluga 10–15 M (~600 MB) — for
+    a prefix that differs only in its tail. Splitting the mesh changes nothing on screen:
+    every tree shadow is one colour at one alpha, and alpha-blending one colour is
+    order-independent, so overlaps darken exactly as they did inside one mesh.
+    `tree_shadows_are_built_once_for_every_zoom_step` pins it.
+  - **The far steps draw a thinned shadow** (`CrownVariant::far_shadow`,
+    `crown.rs::shadow_templates`): the same shadow, from the same rolled height, laid
+    over the outer ring thinned by the far crown's step (`far_ring_step`,
+    `len / FAR_CROWN_RING`, rounded down). The cotton ring (144–188) comes out at 32–37,
+    the conifer (32) and palm (48) rings are not thinned at all, so the conifer fan is
+    the very same one and its union is not run twice. So a density band seen by both
+    detail kinds gets two layers — full template for the `Full` steps, thin for the
+    `Merged` ones — each with its own mask. Measured by the round-2 prototype: Kaluga's
+    far shadow layer **14.9 M → 3.55 M vertices**, build 88 → 24 ms; area within ±10 % of
+    the full shadow (`the_far_shadow_is_a_thinned_copy_of_the_full_one`). From 2 m/px a
+    shadow is a couple of pixels, so the ring's scallops are invisible. Cost: the thin
+    layers are built and held alongside the full ones (≈ +¼ of the shadow vertices).
+  - **Shadows are chunked like the merged crowns** (`chunk_of`, `sorted_chunks`, the same
+    `CROWN_CHUNK` 1 km squares): every (band × template) layer is split into one mesh per
+    chunk holding a trunk, each on its own z. A whole-forest mesh is never culled, so at
+    the default view (0.4 m/px, a ~640 m frame) the GPU walked every shadow vertex of the
+    city; now the frustum drops the chunks outside the frame — roughly nine in ten.
+    **No seam**: a tree's shadow lies in its trunk's chunk only, so nothing is duplicated
+    across a border, and two neighbouring chunks' shadows overlap exactly as two shadows
+    inside one mesh did — one colour at one alpha, order-independent. At most
+    `2 × TREE_LODS.len()` kinds × 9 × 7 chunks fit `Z_TREE_SHADOW..+1` at
+    `TREE_SHADOW_Z_STEP` 1/1024 (`every_shadow_layer_of_the_map_fits_the_shadow_z_band`).
+    Cost: up to 5 kinds × 48 chunks = 240 shadow entities instead of 5 (Tula 34 chunks,
+    Kaluga 48), of which a step shows at most a third; a culled one costs a frustum test.
+- **Crown detail by zoom** (`TreeLod::detail`, `CrownDetail`) — the near step draws
+  `Full` crowns, an **entity per tree** over its variant's shared mesh; the two far steps
+  draw `Merged` crowns: **no entity per tree at all**, the crowns baked into
+  `tree_crowns` `LayerMesh`es, one per `CROWN_CHUNK` (1000 m) square of the map that
+  holds a trunk, through `surface::spawn_layers` like every other layer.
+  - **Why not merge the full crowns everywhere** — a full crown is ~1000 vertices
+    (cotton 950–1200, conifer ~360, palm ~500), because the outline and the band strokes
+    are ribbons with round joins; instanced, those vertices exist once per variant,
+    merged they exist once per *tree*: 95 k Kaluga crowns × ~1100 × 36 bytes is gigabytes.
+    So merging needs a light crown, and the light crown is only right where its detail is
+    invisible anyway.
+  - **The far crown** (`crown.rs::far_crown`, `CrownVariant::far`) is one fill: the
+    outer ring thinned by an even step of `len / FAR_CROWN_RING` (32), rounded **down** —
+    the cotton ring (144–188) comes out at 32–37, while the conifer (32) and palm (48)
+    rings are kept whole: their vertices alternate spike/notch, and a step of 2 cut every
+    spike at once (the palm lost 11 % of its area); grown by half the outline stroke (the full
+    crown's silhouette ends on the stroke's outer edge, not on the ring — pinned by
+    `the_far_crown_is_a_light_average_of_the_full_one` to ±10 % of the silhouette's
+    area), and painted with the full crown's **average colour** — foliage mixed toward
+    the ink by the share of the fill the strokes cover (`crown_builder` measures it,
+    `MeshBuilder::area_since`). From 2 m/px the strokes (12 % and 6 % of a 2–6 m
+    radius) are tenths of a pixel, so the average is what the eye got anyway.
+  - **Tint and ball light survive the merge**: the brightness slot is baked into the
+    vertex colour, and the crown-local coordinate rides `ATTRIBUTE_CROWN` (see the
+    canopy material below).
+  - **Draw order**: a chunk emits its crowns **in `TreeSet` order** (the order of the
+    set, so a crown with a higher index lies on top — the per-index order the entities
+    had before the draw-group z, without its `% 512` wrap), and triangle order inside one mesh *is* draw order. The
+    chunks each get their own z (`CROWN_CHUNK_Z_STEP` 1/256, ordered by the chunk's
+    place on the map — south row first, west to east), because crowns overlap across a
+    chunk seam and an equal z would hand their order to the `Transparent2d` sort — the
+    blinking trap of the shadows below. At most 9 × 7 chunks of each of the three density
+    bands fit `Z_TREE..Z_TREE + 1` (`every_chunk_of_the_map_fits_the_crown_z_band`).
+  - **Why 1000 m chunks**: from 2 m/px a 1600 px window is ≥ 3.2 km wide, almost half
+    the 7.6 km map; a 1 km chunk is a third of such a frame, so a panned view still culls
+    whole chunks, while the whole map is at most 8 × 6 = 48 draws (Tula 34, Kaluga 48)
+    against ~120 instanced groups before. Smaller chunks add draws at the full zoom-out,
+    where there is nothing to cull; larger ones stop culling at all. No other map layer
+    chunks — each is one mesh for the whole map — so this is the only chunk size on the
+    map.
+  - **What it bought** (no vsync, paused, window unlocked; medians of 8–12 one-second
+    samples): Kaluga at the full zoom-out **28.1–28.6 → 10.6–12.2 ms** a frame, entities
+    85.6 k → 21.2 k; Tula 29.5 k → 21.2 k entities, its frame time within the noise
+    (11–15 ms both ways — 8 k crowns were no longer its bottleneck). The bucket crossing
+    **into** a far step stops respawning entities: the hitch frame went 88–114 → 44–76 ms
+    on Tula and 633–906 → 371–573 ms on Kaluga (build 145–200 ms: 2.7 M merged vertices).
+    What is left of the Kaluga hitch is mostly the **tree shadow mesh** — 10–14 M
+    vertices for the whole forest, rebuilt and uploaded on every crossing — the next
+    candidate (a light far shadow template, the same move). Crossing into the near step
+    still respawned every crown (Kaluga ~750–800 ms, Tula ~130 ms). All three are gone
+    since: the shadows are built once per band (above), thinned on the far steps, the
+    merged far chunks stay in the world behind their masks, and the near step's crown
+    entities are streamed in and out in batches (`CrownStream`, above).
+  - **The draw-group z (`crown_z`) stays** — it is what batches the near step's entities
+    into ~120 draws; the far steps do not use it.
 - **The density ceiling is derived, not chosen** (`planting.rs`) — `TREE_MIN_SPACING` (6 m)
   caps how dense a forest can *physically* get: random placement with a hard-core exclusion
   saturates near `RSA_JAMMING_FRACTION / (π·(d/2)²)` trees per m² — one per ~52 m² at
@@ -155,14 +287,28 @@ stand, how density works, and which resources restyle them.
   silhouettes along the shadow (`drawConiferShadow`), unioned with `i_overlay` so the
   translucent copies never stack into double darkness. `TREE_VARIANTS` unit-radius crown meshes are reused
   across all trees; per tree — variant, quantized brightness tint and radius as
-  `Transform::scale`.
+  `Transform::scale` (on the near zoom step; the far steps merge, see **Crown detail by
+  zoom** below).
+  **A near-step crown's z is its draw group, not its index** (`trees.rs::crown_z`): every
+  (pool, variant, tint) group gets its own band of `1/128` above `Z_TREE`, and inside it
+  a 2⁻¹⁸ micro-step by the tree's rank in the group (so no two crowns share a z, the
+  blinking trap below). The reason is batching: `Transparent2d` sorts by z alone, the
+  visible-entity order before it is parallel and chunked, so only an equal z range puts
+  identical mesh + material next to each other, and only adjacent identical items batch
+  into one draw. With `index % 512` neighbours in z were nearly always different
+  variants — ~16 k draws on Tula at full zoom-out, ~120 now: 17.6 → 15.9 ms a frame on
+  Tula, 58.8 → 28.6 ms on Kaluga (no vsync, paused). The price: where two crowns of
+  different groups overlap, the group number decides which is on top.
   Geometry RNG is a deterministic Lehmer LCG (same family as tree planting).
   **Shadows are one merged mesh** (`tree_shadows`, like `building_shadows`), not an
   entity per tree: the silhouette template of each variant is baked into it with the
   tree's offset and radius. A blended `Mesh2d` lands in the sorted `Transparent2d`
   phase, and a thousand of them sharing one z alongside the pawn sprites lose a
   random one or two per frame — the tree shadow visibly blinks. One mesh, one phase
-  item, no blinking (and one draw call instead of hundreds).
+  item, no blinking (and one draw call instead of hundreds). It is now a few hundred
+  merged meshes at most — one per density band × shadow template × 1 km chunk (see
+  **The zoom caps the prefix too**) — each on its own z, which keeps the same guarantee:
+  the trap is many items on **one** z, not a few items on distinct ones.
 - **The canopy material — `CrownMaterial`** (`map/trees/canopy.rs`, shader
   `assets/shaders/crown.wgsl`, registered as a `Material2dPlugin` in `map/mod.rs`) —
   the crown is drawn by a `Material2d` of its own rather than by `ColorMaterial`, because
@@ -172,7 +318,10 @@ stand, how density works, and which resources restyle them.
   - **the ball**: the side facing `map::sun_light` is `LIT` 0.20 brighter and the far
     side darker, plus a `RIM` 0.10 falloff by the **square** of the radius. It reads the
     crown-**local** coordinate — the mesh is unit-radius, so that vector *is* the
-    direction from the trunk, and no attribute is needed;
+    direction from the trunk, and a crown entity needs no attribute for it. A merged far
+    chunk has world positions, so there it rides `meshing::ATTRIBUTE_CROWN`
+    (`MeshBuilder::with_crown_coords` / `push_crown`); `CrownMaterial::specialize` sees
+    the attribute in the mesh layout and sets `CROWN_LOCAL`, so one material draws both;
   - **the leaf ripple**: `fbm3` at a `LEAF_SCALE` 0.9 m wavelength by **world** position,
     `LEAF_AMP` 0.16 of shade, so two neighbouring trees of the same variant are not
     copies of each other — **up close only**. `visible` fades the top octave out between
@@ -191,7 +340,12 @@ stand, how density works, and which resources restyle them.
   The per-tree brightness slot moved from a grey `ColorMaterial` into the uniform's
   **`brightness`** (never `tint`: in this project that word is the hue shift, as in
   `SurfaceParams::tint` and the shader's own local), so there are exactly as many
-  materials as before (one per `tint_factors` slot).
+  materials as before (one per `tint_factors` slot) — for the crown entities. A merged
+  chunk bakes the factor into its **vertex colours** (`push_crown`: the shader's first
+  step is `color × brightness`, and a linear interpolation commutes with a constant, so
+  the pixel is the same) and is drawn by the one app-wide `CrownMaterialHandle` at
+  brightness 1 (`MaterialSpec::Crown`, created in `Startup` by `init_crown_material`,
+  its `light` rewritten by `rebuild_trees`, which the settled sun already triggers).
   **The ink is mixed toward the foliage** by `INK_FOLIAGE_MIX` 0.62 in `crown_mesh`:
   from the air a crown has no outline, it has a shaded edge. This is a code-level mix and
   not a new `details` default on purpose — that colour is persisted, so a new default

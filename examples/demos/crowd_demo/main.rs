@@ -448,7 +448,8 @@ pub(crate) fn spawn_camera(mut commands: Commands, config: Res<DemoConfig>) {
         }),
         Transform::from_translation(config.centre.extend(0.0))
             .with_scale(Vec3::splat(config.start_zoom)),
-        Msaa::Off,
+        // сглаживание кромок, как у камеры игры (`post::Antialias`)
+        Msaa::Sample4,
     ));
 }
 

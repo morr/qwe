@@ -17,6 +17,7 @@ pub(crate) mod grid;
 mod industry;
 mod meshing;
 pub mod osm;
+mod parallel;
 mod parking;
 mod pitch;
 mod rail;
@@ -107,6 +108,7 @@ pub use self::tram::TramStyle;
 // своей системе, потому что у неё карт не одна на мир, а по одной на пример.
 // Ступени зума идут следом: `mesh_fences` и `mesh_rails` берут ступень, а не
 // развёрнутую из таблицы ширину
+pub use self::cars::mesh_map_cars;
 pub use self::fences::{FenceZoomBucket, mesh_fences};
 pub use self::parking::ParkingLayout;
 pub use self::rail::{RailZoomBucket, mesh_rails};
@@ -141,6 +143,7 @@ impl Plugin for MapPlugin {
             .init_resource::<BuildingHeightMode>()
             .init_resource::<buildings::BuildingZoomBucket>()
             .init_resource::<cars::CarZoomBucket>()
+            .init_resource::<cars::CarPlacement>()
             .init_resource::<CarStyle>()
             .init_resource::<wagons::WagonZoomBucket>()
             .init_resource::<parking::ParkingLayout>()
@@ -153,6 +156,9 @@ impl Plugin for MapPlugin {
             .init_resource::<roads::paint::PaintZoomBucket>()
             .init_resource::<SurfaceStyle>()
             .init_resource::<rail::RailZoomBucket>()
+            .init_resource::<trees::TreeZoomBucket>()
+            .init_resource::<trees::CrownStream>()
+            .init_resource::<trees::TreeLodShown>()
             .init_resource::<tram::TramZoomBucket>()
             .init_resource::<TramStyle>()
             .init_resource::<IndustryStyle>()
@@ -205,6 +211,7 @@ impl Plugin for MapPlugin {
                         surface::init_surface_materials,
                         surface::init_flat_materials,
                         buildings::material::init_roof_material,
+                        trees::init_crown_material,
                     ),
                 )
                     .chain(),
@@ -222,12 +229,18 @@ impl Plugin for MapPlugin {
                     roads::shape::settle_road_shape,
                 ),
             )
-            // колея асфальта ложится по ширине полосы, с которой разобран
-            // мир (`roads::shape::lane_width`); материалы живут вне мира, так
-            // что после перезагрузки с другой шириной их надо перенастроить
+            // краска и колея асфальта ложатся по ширине полосы, с которой
+            // разобран мир: глобаль краски — из снимка карты, до сборки мира;
+            // материалы живут вне мира, так что после перезагрузки с другой
+            // шириной их надо перенастроить
             .add_systems(
                 OnEnter(AppState::Playing),
-                surface::retune_surface_materials,
+                (
+                    roads::shape::adopt_lane_width,
+                    surface::retune_surface_materials,
+                )
+                    .chain()
+                    .before(WorldInitSet::Navmesh),
             )
             .add_systems(
                 OnEnter(AppState::Playing),
@@ -246,6 +259,7 @@ impl Plugin for MapPlugin {
                     zoom::seed_zoom_bucket::<buildings::BuildingLods>,
                     spawn::spawn_map,
                     zoom::seed_zoom_bucket::<cars::CarLods>,
+                    cars::forget_parked_cars,
                     cars::rebuild_cars,
                     zoom::seed_zoom_bucket::<wagons::WagonLods>,
                     wagons::rebuild_wagons,
@@ -257,6 +271,7 @@ impl Plugin for MapPlugin {
                     zoom::seed_zoom_bucket::<tram::TramLods>,
                     tram::rebuild_tram,
                     spawn::rebuild_tree_row_band,
+                    zoom::seed_zoom_bucket::<trees::TreeLods>,
                     trees::rebuild_trees,
                 )
                     .chain()
@@ -272,19 +287,32 @@ impl Plugin for MapPlugin {
                 (
                     // состав набора и поле хвои — до крон: обе системы
                     // выходят сразу, если их вход не поехал, так что отдельных
-                    // условий на них не надо
+                    // условий на них не надо. Ступень зума крон считается
+                    // перед связкой, а её смена идёт своей системой следом:
+                    // связку она не трогает, кроны и тени только прячет
                     (
-                        trees::recompose_row_trees,
-                        trees::retune_conifer_field,
-                        spawn::rebuild_tree_row_band,
-                        trees::rebuild_trees,
+                        zoom::update_zoom_bucket::<trees::TreeLods>,
+                        (
+                            trees::recompose_row_trees,
+                            trees::retune_conifer_field,
+                            spawn::rebuild_tree_row_band,
+                            trees::rebuild_trees,
+                        )
+                            .chain()
+                            .run_if(trees::rebuilds_on()),
+                        // кроны-сущности досыпаются и убираются пачками, а
+                        // показанная ступень ждёт, пока встанут все
+                        trees::stream_tree_crowns,
+                        trees::show_tree_lod.run_if(trees::switches_on()),
                     )
                         .chain()
-                        .run_if(in_state(AppState::Playing))
-                        .run_if(trees::rebuilds_on()),
+                        .run_if(in_state(AppState::Playing)),
                     (
                         zoom::update_zoom_bucket::<buildings::BuildingLods>,
                         buildings::rebuild_buildings.run_if(buildings::rebuilds_on()),
+                        // ступень зума зданий не пересобирает слой, а прячет
+                        // оборудование кровли в шейдере
+                        buildings::material::show_roof_clutter,
                     )
                         .chain()
                         .run_if(in_state(AppState::Playing)),

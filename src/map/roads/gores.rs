@@ -22,14 +22,13 @@ use i_overlay::mesh::style::{LineCap, LineJoin, OutlineStyle};
 
 use super::junctions::node_key;
 use super::rings::{Ring, Rings};
-use super::{is_carriageway, lane_count};
-use crate::map::along::tip_of;
-use crate::map::along::{arclengths, place_on_path};
+use super::{is_carriageway, lane_count, smoothstep};
+use crate::map::along::{arclengths, densify, place_on_path, tip_of};
 use crate::map::meshing::{Break, MeshBuilder, min_area_rect};
 use crate::map::osm::model::{RoadLine, distance_to_segment, polyline_length, ring_bounds};
 use crate::map::shapes::{
     ARC, Contour, RING_EPSILON, Shape, contour_area, contour_bounds, is_ring, oriented,
-    point_in_shape, push_shape, ring_of, stroke,
+    point_in_shape, push_shape, ring_of, shape_area, stroke,
 };
 
 /// Радиус замыкания, м: клин между двумя полотнами ближе двух радиусов друг к
@@ -58,6 +57,16 @@ const MEDIAN_REACH: f32 = 8.0;
 const MEDIAN_REACH_STEP: f32 = 0.25;
 /// Зазор между торцом двойной линии и остриём штриховки, м.
 const MEDIAN_GORE_GAP: f32 = 0.6;
+/// Шаг проб, которыми осевая режется штриховкой ([`Gores::reach`]), м.
+const MEDIAN_PROBE_STEP: f32 = 0.5;
+/// Кусок осевой между двумя штриховками короче этого, м, не рисуется.
+const MEDIAN_RUN_MIN: f32 = 2.0;
+/// Островок, нигде не достигающий этой ширины, м, не штрихуется: в щепке
+/// шириной в метр обводка и штрихи сливаются в «лесенку», а зазор между
+/// половинами там — место двойной сплошной, и её [`Gores::reach`] больше
+/// не режет. Тула: щепка 25 × 1 м на подходе бульвара «Макси» к
+/// мини-кольцу (6641, 3156), где полотна сходятся почти параллельно.
+const GORE_MIN_WIDTH: f32 = 1.5;
 
 /// Улица так, как она нарисована, — что нужно островкам.
 pub(super) struct GoreRoad {
@@ -76,8 +85,14 @@ impl GoreRoad {
     /// точкам OSM: это свойство way, а не стиля рисования. Сглаживание кольцо
     /// замыкает (`smooth_pinned` идёт по циклу), так что дозамыкание —
     /// страховка на случай оси, пришедшей другим путём.
-    pub fn new(road: &RoadLine, drawn: &[Vec2]) -> Self {
+    ///
+    /// `leg` — нога Y-подхода (`Rings::leg_flow`): она односторонняя, путь —
+    /// по её потоку, и клин между двумя ногами находит веер ([`fans`]).
+    pub fn new(road: &RoadLine, drawn: &[Vec2], leg: Option<bool>) -> Self {
         let mut path = drawn.to_vec();
+        if leg == Some(false) {
+            path.reverse();
+        }
         if let (true, Some(first)) = (is_ring(&road.points), path.first().copied())
             && path
                 .last()
@@ -88,7 +103,7 @@ impl GoreRoad {
         Self {
             path,
             width: road.width,
-            oneway: road.oneway,
+            oneway: road.oneway || leg.is_some(),
             roundabout: road.is_roundabout(),
         }
     }
@@ -108,7 +123,14 @@ impl Gores {
     /// подхода, а подходы к кольцу пологие, и оно выходит немаленьким. Отличает
     /// его не площадь, а соседи: островок лежит **между двумя подходами**,
     /// скругление касается одного.
-    pub fn of(roads: &[GoreRoad]) -> Self {
+    ///
+    /// Остров кольца — это `islands`, замкнутые оси колец из дуг
+    /// (`rings::Ring::path`), и ось кольца одним way. Кольцо из дуг ни одной
+    /// замкнутой дорогой не приходит, и остров его из клина не вычитался: хорда
+    /// веера между двумя узлами кольца уходит за его внутреннюю кромку, если
+    /// дуга между ними крутая, и штрихованная линза ложилась на полосу у
+    /// острова (Орёл, витрина 01: хорда в 6 м от дуги при полуширине 3.8).
+    pub fn of(roads: &[GoreRoad], islands: &[&[Vec2]]) -> Self {
         let knots: Vec<Vec2> = roads
             .iter()
             .filter(|road| road.roundabout)
@@ -155,6 +177,9 @@ impl Gores {
             if ring {
                 solid.push(oriented(&road.path[1..], true));
             }
+        }
+        for island in islands.iter().filter(|island| is_ring(island)) {
+            solid.push(oriented(&island[1..], true));
         }
         // Доходит до клина улица **кромкой**, а не осью: у проспекта это
         // восемь метров, и по оси он в замыкание не попадал.
@@ -269,6 +294,7 @@ impl Gores {
                     .first()
                     .is_some_and(|outer| contour_area(outer) >= GORE_MIN_AREA)
             })
+            .filter(is_wide)
             .collect();
         let asphalt = bodies.outline(&OutlineStyle::new(ASPHALT_PAD).line_join(round));
         Self { asphalt, hatched }
@@ -283,7 +309,20 @@ impl Gores {
     pub fn add_splitters(&mut self, splitters: &[Splitter]) {
         for splitter in splitters {
             self.hatched.push(splitter.island.clone());
-            self.asphalt.push(splitter.flare.clone());
+            self.asphalt.extend(splitter.flare.iter().cloned());
+        }
+    }
+
+    /// Добавить штрихуемые клинья острых развилок (`corners::fork_gore`):
+    /// асфальт под ними уже лежит — это лента и нос развилки, — так что
+    /// штрихуется только контур. Клин, попавший на островок кольца, не
+    /// кладётся: там свой.
+    pub fn add_forks(&mut self, forks: &[Vec<Vec2>]) {
+        for fork in forks {
+            if fork.iter().any(|point| self.contains(*point)) {
+                continue;
+            }
+            self.hatched.push(vec![oriented(fork, true)]);
         }
     }
 
@@ -299,29 +338,51 @@ impl Gores {
             .any(|shape| point_in_shape(point, shape))
     }
 
-    /// Дотянуть осевую разделительной до островка, если он в пределах
-    /// [`MEDIAN_REACH`] по её ходу.
+    /// Осевая разделительной вне штриховки — куски, каждый дотянут до
+    /// островка, если он в пределах [`MEDIAN_REACH`] по её ходу.
     ///
-    /// Осевая кончается там, где половины перестают идти бок о бок, а клин
-    /// штриховки — там, где зазор между ними сходит на нет, и между остриём
-    /// клина и двойной линией оставалось метра три голого асфальта (отчёт
-    /// автора). На земле края островка **сходятся в** двойную сплошную.
-    pub fn reach(&self, midline: &mut Vec<Vec2>) {
+    /// Осевая есть, пока между половинами до трёх метров асфальта, клин —
+    /// пока их от 0.6 м: в промежутке обе есть разом, и двойная линия уезжала
+    /// внутрь штриховки (отчёт автора). Поэтому осевая режется штриховкой по
+    /// пробам [`MEDIAN_PROBE_STEP`] — **вся**, а не только с концов: у
+    /// длинного клина, где подход сходится с кольцом почти параллельно,
+    /// осевая проходила его насквозь и продолжалась за ним, ни один её конец
+    /// в клин не попадал, и сквозь штриховку шла двойная сплошная — белая
+    /// «лесенка» на бульваре «Макси» (разведка C2). Кусок короче
+    /// [`MEDIAN_RUN_MIN`] выбрасывается.
+    ///
+    /// Кончается осевая там, где половины перестают идти бок о бок, а клин —
+    /// там, где зазор между ними сходит на нет, и между остриём клина и
+    /// двойной линией оставалось метра три голого асфальта (отчёт автора). На
+    /// земле края островка **сходятся в** двойную сплошную — поэтому каждый
+    /// кусок дотягивается до клина с зазором [`MEDIAN_GORE_GAP`].
+    pub fn reach(&self, midline: &[Vec2]) -> Vec<Vec<Vec2>> {
         if self.hatched.is_empty() {
-            return;
+            return vec![midline.to_vec()];
         }
-        // осевая есть, пока между половинами до трёх метров асфальта, клин —
-        // пока их от 0.6 м: в промежутке обе есть разом, и двойная линия
-        // уезжала внутрь штриховки (отчёт автора). Концы, попавшие в клин,
-        // срезаются, и дотягивается осевая уже от чистого места
-        while midline.last().is_some_and(|point| self.contains(*point)) {
-            midline.pop();
+        let probes = densify(midline, MEDIAN_PROBE_STEP);
+        let inside: Vec<bool> = probes.iter().map(|point| self.contains(*point)).collect();
+        let mut runs: Vec<Vec<Vec2>> = if inside.contains(&true) {
+            let flagged: Vec<(Vec2, bool)> = probes.into_iter().zip(inside).collect();
+            flagged
+                .chunk_by(|a, b| a.1 == b.1)
+                .filter(|run| !run[0].1)
+                .map(|run| run.iter().map(|(point, _)| *point).collect::<Vec<Vec2>>())
+                .filter(|run| polyline_length(run) >= MEDIAN_RUN_MIN)
+                .collect()
+        } else {
+            // мимо штриховки — осевая как была, без догущённых вершин
+            vec![midline.to_vec()]
+        };
+        for run in &mut runs {
+            self.extend_to_gore(run);
         }
-        let inside = midline
-            .iter()
-            .take_while(|point| self.contains(**point))
-            .count();
-        midline.drain(..inside);
+        runs
+    }
+
+    /// Дотянуть оба конца куска осевой до штриховки по его ходу (см.
+    /// [`Gores::reach`]).
+    fn extend_to_gore(&self, midline: &mut Vec<Vec2>) {
         for end in [false, true] {
             let count = midline.len();
             if count < 2 {
@@ -394,6 +455,9 @@ const SPLITTER_LENGTH: std::ops::RangeInclusive<f32> = 6.0..=20.0;
 /// Полуширина основания — доля радиуса, в пределах, м.
 const SPLITTER_WIDTH_SHARE: f32 = 0.06;
 const SPLITTER_HALF_WIDTH: std::ops::RangeInclusive<f32> = 0.6..=1.5;
+/// Косинус угла, дальше которого подход у основания островка и на всей его
+/// длине не отходит от луча из центра кольца, — 35°.
+const SPLITTER_MIN_OUTWARD: f32 = 0.82;
 /// Звенья контура островка вдоль подхода.
 const SPLITTER_STEPS: usize = 8;
 
@@ -407,7 +471,7 @@ pub(super) struct Splitter {
     /// Штрихуемый контур — капля от основания у кольца к острию.
     pub island: Shape,
     /// Асфальт расширения подхода.
-    pub flare: Shape,
+    pub flare: Vec<Shape>,
     /// Разрыв краски и колеи подхода на длину островка.
     pub gap: Break,
 }
@@ -437,6 +501,8 @@ pub(super) fn splitters(
             || !is_carriageway(line)
             || lane_count(line) < 2
             || rings.of(road).is_some()
+            // нога Y-подхода — въезд или съезд, островок ей — веер
+            || rings.leg_flow(road).is_some()
         {
             continue;
         }
@@ -479,6 +545,16 @@ fn splitter(
     if length < *SPLITTER_LENGTH.start() {
         return None;
     }
+    // островок стоит на подходе, который уходит от кольца: ось, у основания
+    // идущая вдоль кольца, положила бы каплю на его полотно и загнула бы её
+    // крюком (Рязань, витрина 05 — подходы, заведённые в узел по касательной)
+    let (at_base, heading) = place_on_path(path, &along, base)?;
+    let at_tip = place_on_path(path, &along, base + length)?.0;
+    let outward = (at_base - ring.center).try_normalize()?;
+    let chord = (at_tip - at_base).try_normalize()?;
+    if heading.dot(outward) < SPLITTER_MIN_OUTWARD || chord.dot(outward) < SPLITTER_MIN_OUTWARD {
+        return None;
+    }
     let half = (SPLITTER_WIDTH_SHARE * radius)
         .clamp(*SPLITTER_HALF_WIDTH.start(), *SPLITTER_HALF_WIDTH.end());
     // полуширина островка: капля — полная у основания, в ноль к острию
@@ -486,44 +562,115 @@ fn splitter(
         let share = ((at - base) / length).clamp(0.0, 1.0);
         half * (1.0 - share).powf(0.8)
     };
-    let sample = |at: f32| {
-        let (point, direction) = place_on_path(path, &along, at)?;
-        Some((point, direction.perp()))
-    };
-    let mut left = Vec::new();
-    let mut right = Vec::new();
-    for step in 0..=SPLITTER_STEPS {
-        let at = base + length * step as f32 / SPLITTER_STEPS as f32;
-        let (point, normal) = sample(at)?;
-        left.push(point + normal * spread(at));
-        right.push(point - normal * spread(at));
-    }
-    right.pop();
-    right.reverse();
-    let island: Vec<Vec2> = left.into_iter().chain(right).collect();
-    // расширение — от кромки кольца до острия, полотно раздвинуто на островок
+    let island = sweep(path, &along, base..base + length, SPLITTER_STEPS, spread)
+        .into_iter()
+        .max_by(|a, b| shape_area(a).total_cmp(&shape_area(b)))?;
+    // расширение — от кромки кольца до острия, полотно раздвинуто на островок.
+    // От кромки до основания оно **растёт** из ширины полотна, а не стоит
+    // полной ширины сразу: торец во всю ширину — прямоугольный, и там, где
+    // ось подхода у кольца идёт вдоль него (Рязань, витрина 05), его углы
+    // вылезали за кромку кольца ступенями
     let edge = (ring_width / 2.0 - ASPHALT_PAD).max(0.0);
-    let mut sides = [Vec::new(), Vec::new()];
-    let steps = SPLITTER_STEPS * 2;
-    for step in 0..=steps {
-        let at = edge + (base + length - edge) * step as f32 / steps as f32;
-        let (point, normal) = sample(at)?;
-        let reach = width / 2.0 + if at < base { half } else { spread(at) };
-        sides[0].push(point + normal * reach);
-        sides[1].push(point - normal * reach);
-    }
-    sides[1].reverse();
-    let flare: Vec<Vec2> = sides.concat();
-    let middle = sample(base + length / 2.0)?.0;
+    let flare = sweep(
+        path,
+        &along,
+        edge..base + length,
+        SPLITTER_STEPS * 2,
+        |at| {
+            width / 2.0
+                + if at < base {
+                    half * smoothstep((at - edge) / (base - edge).max(f32::EPSILON))
+                } else {
+                    spread(at)
+                }
+        },
+    );
+    let middle = place_on_path(path, &along, base + length / 2.0)?.0;
     Some(Splitter {
         road,
-        island: vec![oriented(&island, true)],
-        flare: vec![oriented(&flare, true)],
+        island,
+        flare,
         gap: Break {
             at: middle,
             reach: length / 2.0 + SPLITTER_GAP,
         },
     })
+}
+
+/// Стороны круга, которым [`sweep`] скругляет излом пути.
+const SWEEP_JOIN_SIDES: usize = 16;
+
+/// Полоса вдоль `path` на дуговом отрезке `span` с полушириной `reach(at)`:
+/// объединение трапеций между станциями (их `steps` поровну плюс каждая
+/// вершина пути внутри отрезка) и кругов в вершинах.
+///
+/// Не два бока, сдвинутых по нормали звена, как было: на изломе пути
+/// соседние станции лежали на разных звеньях, и бок прыгал на
+/// `reach · sin(излом)` — у подходов к кольцам Рязани (витрина 05), чья ось
+/// у кольца круто заворачивает, кромка асфальта шла пилой с зубом в метр, а
+/// внутренний бок перехлёстывал сам себя. Трапеция лежит на одном звене и
+/// выпукла всегда, круг заполняет клин снаружи излома, а объединение
+/// (`NonZero`) снимает перехлёст внутри — это обводка переменной ширины с
+/// круглыми стыками.
+fn sweep(
+    path: &[Vec2],
+    along: &[f32],
+    span: std::ops::Range<f32>,
+    steps: usize,
+    reach: impl Fn(f32) -> f32,
+) -> Vec<Shape> {
+    let mut stations: Vec<f32> = (0..=steps)
+        .map(|step| span.start + (span.end - span.start) * step as f32 / steps as f32)
+        .collect();
+    let corners: Vec<f32> = along
+        .iter()
+        .copied()
+        .filter(|at| span.contains(at) && *at > span.start)
+        .collect();
+    stations.extend(&corners);
+    stations.sort_by(f32::total_cmp);
+    stations.dedup_by(|a, b| (*a - *b).abs() < 1e-3);
+    let mut pieces: Vec<Shape> = Vec::new();
+    for pair in stations.windows(2) {
+        let (from, to) = (pair[0], pair[1]);
+        let (Some((start, _)), Some((end, _)), Some((_, direction))) = (
+            place_on_path(path, along, from),
+            place_on_path(path, along, to),
+            place_on_path(path, along, (from + to) / 2.0),
+        ) else {
+            continue;
+        };
+        let normal = direction.perp();
+        let (near, far) = (reach(from), reach(to));
+        if near.max(far) <= 1e-3 {
+            continue;
+        }
+        let quad = [
+            start + normal * near,
+            end + normal * far,
+            end - normal * far,
+            start - normal * near,
+        ];
+        pieces.push(vec![oriented(&quad, true)]);
+    }
+    for at in corners {
+        let (Some((center, _)), radius) = (place_on_path(path, along, at), reach(at)) else {
+            continue;
+        };
+        if radius <= 1e-3 {
+            continue;
+        }
+        let circle: Vec<Vec2> = (0..SWEEP_JOIN_SIDES)
+            .map(|side| {
+                center
+                    + Vec2::from_angle(
+                        side as f32 * std::f32::consts::TAU / SWEEP_JOIN_SIDES as f32,
+                    ) * radius
+            })
+            .collect();
+        pieces.push(vec![oriented(&circle, true)]);
+    }
+    pieces.simplify_shape(FillRule::NonZero)
 }
 
 /// Самый длинный подход, чей веер ещё островок, м: дальше между въездом и
@@ -575,6 +722,16 @@ fn fans(roads: &[GoreRoad], at_ring: &impl Fn(Vec2) -> bool) -> Vec<Contour> {
     fans
 }
 
+/// Достигает ли островок где-нибудь ширины [`GORE_MIN_WIDTH`]: после сжатия
+/// на её половину от него что-то остаётся.
+fn is_wide(shape: &Shape) -> bool {
+    vec![shape.clone()]
+        .outline(&OutlineStyle::new(-GORE_MIN_WIDTH / 2.0).line_join(LineJoin::Round(ARC)))
+        .iter()
+        .filter_map(|shape| shape.first())
+        .any(|outer| contour_area(outer) > 0.0)
+}
+
 /// Куда дотягивается замыкание ленты: её габарит, выпущенный на полуширину
 /// полотна и на [`GORE_CLOSING`].
 fn closing_span(path: &[Vec2], width: f32) -> (Vec2, Vec2) {
@@ -601,4 +758,137 @@ fn head(points: impl Iterator<Item = Vec2>) -> Vec<Vec2> {
         path.push(point);
     }
     path
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::map::shapes::oriented;
+
+    /// Полоса вокруг пути с прямым изломом — одна фигура без пилы: всё, что
+    /// ближе полуширины к пути (снаружи излома тоже), внутри, и ни одна
+    /// вершина контура не дальше полуширины. Бока, сдвинутые по нормали звена,
+    /// срезали наружный угол хордой и перехлёстывали внутренний.
+    #[test]
+    fn a_sweep_round_a_sharp_bend_covers_the_band_without_teeth() {
+        let path = [Vec2::ZERO, Vec2::new(10.0, 0.0), Vec2::new(10.0, 20.0)];
+        let (along, _) = arclengths(&path);
+        let reach = 5.0;
+        let shapes = sweep(&path, &along, 2.0..25.0, 8, |_| reach);
+        assert_eq!(shapes.len(), 1, "{shapes:?}");
+        let shape = &shapes[0];
+        let distance = |point: Vec2| {
+            path.windows(2)
+                .map(|link| distance_to_segment(point, link[0], link[1]))
+                .fold(f32::INFINITY, f32::min)
+        };
+        for contour in shape {
+            for &[x, y] in contour {
+                let point = Vec2::new(x, y);
+                assert!(distance(point) <= reach + 0.01, "{point} за полосой");
+            }
+        }
+        let mut at = 2.5;
+        while at < 24.5 {
+            let (center, direction) = place_on_path(&path, &along, at).unwrap();
+            for step in -5..=5 {
+                let point = center + direction.perp() * (reach - 0.2) * step as f32 / 5.0;
+                assert!(point_in_shape(point, shape), "{point} не покрыт");
+            }
+            at += 0.5;
+        }
+        // наружный угол излома — скруглён, а не срезан хордой
+        let outer = Vec2::new(10.0, 0.0) + Vec2::new(1.0, -1.0).normalize() * (reach - 0.3);
+        assert!(point_in_shape(outer, shape), "угол срезан");
+    }
+
+    /// Кольцо из двух дуг и веер въезда и съезда к узлам на ±60°: хорда между
+    /// ними проходит глубоко по острову. Без острова кольца (`islands`)
+    /// штриховка ложилась за внутреннюю кромку кольца (Орёл, витрина 01), с
+    /// ним — только снаружи.
+    #[test]
+    fn a_fan_of_a_ring_of_arcs_stays_off_its_island() {
+        let circle: Vec<Vec2> = (0..=24)
+            .map(|step| Vec2::from_angle(step as f32 * std::f32::consts::TAU / 24.0) * 20.0)
+            .collect();
+        let arc = |points: &[Vec2]| GoreRoad {
+            path: points.to_vec(),
+            width: 8.0,
+            oneway: true,
+            roundabout: true,
+        };
+        let apex = Vec2::new(52.0, 0.0);
+        // подходы широкие: линза у острова касается обоих, как в Орле, где
+        // подход у кольца заведён по касательной
+        let approach = |path: Vec<Vec2>| GoreRoad {
+            path,
+            width: 10.0,
+            oneway: true,
+            roundabout: false,
+        };
+        let roads = [
+            arc(&circle[..=12]),
+            arc(&circle[12..]),
+            approach(vec![apex, circle[4]]),
+            approach(vec![circle[20], apex]),
+        ];
+        let island = Vec2::new(13.0, 0.0);
+        let outside = Vec2::new(30.0, 0.0);
+        let bare = Gores::of(&roads, &[]);
+        assert!(bare.contains(island), "без острова хорда кроет его");
+        let gores = Gores::of(&roads, &[&circle]);
+        assert!(!gores.contains(island), "штриховка на острове");
+        assert!(
+            gores.contains(outside),
+            "веер снаружи кольца не заштрихован"
+        );
+    }
+
+    /// Штриховка прямоугольником `min`–`max`.
+    fn hatched(min: Vec2, max: Vec2) -> Shape {
+        vec![oriented(
+            &[min, Vec2::new(max.x, min.y), max, Vec2::new(min.x, max.y)],
+            true,
+        )]
+    }
+
+    /// Осевая, проходящая клин насквозь, — два куска по обе стороны, каждый
+    /// дотянут до клина с зазором; внутрь штриховки не заходит ни один.
+    #[test]
+    fn a_midline_through_a_gore_is_cut_around_it() {
+        let gores = Gores {
+            asphalt: Vec::new(),
+            hatched: vec![hatched(Vec2::new(20.0, -2.0), Vec2::new(40.0, 2.0))],
+        };
+        let runs = gores.reach(&[Vec2::ZERO, Vec2::new(60.0, 0.0)]);
+        assert_eq!(runs.len(), 2, "{runs:?}");
+        for run in &runs {
+            assert!(run.iter().all(|point| !gores.contains(*point)), "{run:?}");
+        }
+        // с точностью до шага поиска клина
+        let near = |x: f32| (x - 20.0 + MEDIAN_GORE_GAP).abs() <= MEDIAN_REACH_STEP + 0.01;
+        let far = |x: f32| (x - 40.0 - MEDIAN_GORE_GAP).abs() <= MEDIAN_REACH_STEP + 0.01;
+        assert!(near(runs[0].last().unwrap().x), "{:?}", runs[0].last());
+        assert!(far(runs[1].first().unwrap().x), "{:?}", runs[1].first());
+    }
+
+    /// Мимо штриховки осевая остаётся как была — без догущённых вершин.
+    #[test]
+    fn a_midline_past_the_gores_is_left_alone() {
+        let gores = Gores {
+            asphalt: Vec::new(),
+            hatched: vec![hatched(Vec2::new(20.0, 10.0), Vec2::new(40.0, 14.0))],
+        };
+        let midline = [Vec2::ZERO, Vec2::new(60.0, 0.0)];
+        assert_eq!(gores.reach(&midline), vec![midline.to_vec()]);
+    }
+
+    /// Щепка шириной в метр не штрихуется, клин в три — штрихуется.
+    #[test]
+    fn a_sliver_is_too_narrow_to_hatch() {
+        let sliver = hatched(Vec2::ZERO, Vec2::new(25.0, 1.0));
+        let wedge = hatched(Vec2::ZERO, Vec2::new(25.0, 3.0));
+        assert!(!is_wide(&sliver));
+        assert!(is_wide(&wedge));
+    }
 }

@@ -8,7 +8,8 @@
 //! индекс домов всегда пуст, чтобы правило укладки читалось без неё.
 
 use super::*;
-use crate::map::osm::fixture::{self, street};
+use crate::map::osm::fixture::{self, footway, street};
+use crate::map::osm::model::point_in_area;
 use crate::map::osm::model::{Highway, KerbParking};
 use crate::map::roads::junctions::JUNCTION_MARGIN;
 
@@ -616,6 +617,48 @@ fn the_toggle_off_draws_nothing() {
     assert_eq!(report.vertices, 0);
 }
 
+/// Меш, собранный по потокам, — тот же байт в байт, что сборка подряд в один
+/// сборщик: сначала все тени, потом все кузова. Машин — на несколько кусков,
+/// всех типов и всех цветов палитры (краски кузова берутся из кеша палитры),
+/// и одна белая — цвет не из палитры.
+#[test]
+fn the_threaded_mesh_is_the_sequential_one() {
+    let _sun = crate::map::default_sun();
+    let mut rng = Lcg::new(7);
+    let mut cars: Vec<Car> = (0..BODY_CHUNK_MIN * 3 + 17)
+        .map(|_| Car {
+            at: Vec2::new(rng.range(0.0, 3000.0), rng.range(0.0, 2000.0)),
+            along: Vec2::from_angle(rng.range(0.0, std::f32::consts::TAU)),
+            color: body::color_from_share(rng.next_f32()),
+            shape: CarShape::from_share(rng.next_f32()),
+        })
+        .collect();
+    cars[5].color = Color::WHITE;
+    let bytes = |builder: MeshBuilder| {
+        let mesh = builder.build();
+        let mut bytes: Vec<u8> = Vec::new();
+        for (_, values) in mesh.attributes() {
+            bytes.extend_from_slice(values.get_bytes());
+        }
+        let indices: Vec<usize> = mesh.indices().expect("индексы").iter().collect();
+        (bytes, indices)
+    };
+    for detail in [CarDetail::Full, CarDetail::Silhouette, CarDetail::Block] {
+        let stretch = shadow::offset(1.0);
+        let mut sequential = MeshBuilder::default();
+        for car in &cars {
+            body::push_shadow(&mut sequential, car, stretch * car.shape.height(), detail);
+        }
+        for car in &cars {
+            body::push_body(&mut sequential, car, detail);
+        }
+        assert!(
+            bytes(mesh_bodies(&cars, detail)) == bytes(sequential),
+            "{detail:?}: меш по потокам разошёлся с последовательным"
+        );
+    }
+}
+
 #[test]
 fn the_far_bucket_draws_nothing() {
     let far = CarZoomBucket::for_zoom(f32::INFINITY);
@@ -687,4 +730,140 @@ fn the_row_clears_the_seam_taper_of_the_ribbon() {
     );
     assert!(cars.iter().any(|car| car.at.x > 190.0 && car.at.x < 200.0));
     assert!(cars.iter().any(|car| car.at.x > 266.0 && car.at.x < 290.0));
+}
+
+// Дворовые проезды (`yard.rs`): ряд, которого нет в OSM, — одна сторона,
+// краем на асфальте, только среди многоэтажек и никогда не в доме.
+
+/// Дом со стороной 20 м и высотой `height` с центром в `at`.
+fn house_at(at: Vec2, half: f32, height: f32) -> PolyArea {
+    PolyArea {
+        height: Some(height),
+        ..fixture::building(fixture::square(at, half), Vec::new())
+    }
+}
+
+/// Девятиэтажка далеко слева от проезда: квартал многоэтажный, места не
+/// занимает.
+fn tower_far() -> PolyArea {
+    house_at(Vec2::new(60.0, 40.0), 10.0, 27.0)
+}
+
+fn yard_map(roads: Vec<RoadLine>, buildings: Vec<PolyArea>) -> MapData {
+    MapData {
+        network: RoadNetwork::new(&roads),
+        roads,
+        buildings,
+        ..default()
+    }
+}
+
+/// Машины дворов — теми же вызовами, что у `mesh_cars`, при полной занятости.
+fn yard_cars(map: &MapData) -> Vec<Car> {
+    let drawn = Drawn::nodal(map, &straight());
+    yard::park_yards(
+        &map.roads,
+        drawn.nodes(),
+        &pockets::row_breaks(&map.roads, drawn.nodes(), drawn.tapers(), &map.road_nodes),
+        &drawn.axes(Axis::Nodal),
+        1.0,
+        &Districts::new(&map.buildings),
+        &yard::Blocked::new(map),
+    )
+}
+
+/// Центр и углы кузова.
+fn corners(car: &Car) -> [Vec2; 5] {
+    let along = car.along.normalize() * car.shape.length() / 2.0;
+    let across = car.along.normalize().perp() * car.shape.width() / 2.0;
+    [
+        car.at,
+        car.at + along + across,
+        car.at + along - across,
+        car.at - along + across,
+        car.at - along - across,
+    ]
+}
+
+fn drive() -> RoadLine {
+    street(vec![Vec2::new(0.0, 0.0), Vec2::new(120.0, 0.0)], 4.0)
+}
+
+#[test]
+fn a_yard_drive_among_towers_gets_a_row_on_its_right() {
+    let road = drive();
+    assert_eq!(road.highway, Highway::Service);
+    let map = yard_map(vec![road.clone()], vec![tower_far()]);
+    let cars = yard_cars(&map);
+    assert!(cars.len() >= 5, "{} машин", cars.len());
+    for car in &cars {
+        // правая сторона по ходу точек, край кузова — на асфальте
+        let offset = road.width / 2.0 + car.shape.width() / 2.0 - 0.6;
+        assert!(
+            (car.at.y + offset).abs() <= PARK_SLOP + 0.01,
+            "{:?} против {offset}",
+            car.at
+        );
+    }
+    // и те же машины выходят из слоя целиком
+    let (_, report) = mesh_cars(
+        near_bucket(),
+        CarStyle {
+            occupancy: 1.0,
+            ..default()
+        },
+        &Drawn::nodal(&map, &straight()),
+        &map,
+        &ParkingLayout::default(),
+    );
+    assert_eq!(report.cars, cars.len());
+}
+
+#[test]
+fn a_yard_row_never_stands_in_a_house() {
+    // дом в метре от края асфальта справа, x 50..70
+    let hugging = house_at(Vec2::new(60.0, -13.0), 10.0, 27.0);
+    let map = yard_map(vec![drive()], vec![tower_far(), hugging.clone()]);
+    let cars = yard_cars(&map);
+    assert!(!cars.is_empty());
+    for car in &cars {
+        assert!(
+            corners(car)
+                .iter()
+                .all(|&point| !point_in_area(point, &hugging)),
+            "машина в доме: {:?}",
+            car.at
+        );
+    }
+    assert!(cars.iter().all(|car| !(47.0..73.0).contains(&car.at.x)));
+}
+
+#[test]
+fn a_yard_row_keeps_off_a_footway_beside_it() {
+    let path = footway(vec![Vec2::new(0.0, -4.0), Vec2::new(120.0, -4.0)]);
+    let map = yard_map(vec![drive(), path.clone()], vec![tower_far()]);
+    for car in yard_cars(&map) {
+        for point in corners(&car) {
+            assert!(
+                distance_to_segment(point, path.points[0], path.points[1]) >= path.width / 2.0,
+                "машина на дорожке: {:?}",
+                car.at
+            );
+        }
+    }
+}
+
+#[test]
+fn no_yard_row_in_the_private_sector_or_on_a_lot() {
+    // одноэтажный частный сектор: ставят за забор, не у проезда
+    let cottage = house_at(Vec2::new(60.0, 40.0), 6.0, 3.0);
+    assert!(yard_cars(&yard_map(vec![drive()], vec![cottage])).is_empty());
+    // домов нет вовсе — не двор
+    assert!(yard_cars(&yard_map(vec![drive()], Vec::new())).is_empty());
+    // проезд стоянки — у неё свои места
+    let aisle = fixture::parking_aisle(drive().points);
+    assert!(yard_cars(&yard_map(vec![aisle], vec![tower_far()])).is_empty());
+    // короткий въезд
+    let stub = street(vec![Vec2::ZERO, Vec2::new(15.0, 0.0)], 4.0);
+    assert!(yard_cars(&yard_map(vec![stub], vec![tower_far()])).is_empty());
 }

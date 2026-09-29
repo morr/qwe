@@ -167,11 +167,18 @@ impl<'a> Grounds<'a> {
             if !ground.streets.iter().any(|street| street.kerb.is_some()) {
                 continue;
             }
-            let mut medians = on_lot(medians, ground);
-            for (midline, _) in &mut medians {
-                gores.reach(midline);
-            }
-            medians.retain(|(midline, _)| midline.len() >= 2);
+            // штриховка островка режет осевую на куски — каждый со своим
+            // расстоянием между осями
+            let medians: Vec<(Vec<Vec2>, f32)> = on_lot(medians, ground)
+                .into_iter()
+                .flat_map(|(midline, width)| {
+                    gores
+                        .reach(&midline)
+                        .into_iter()
+                        .map(move |run| (run, width))
+                })
+                .filter(|(midline, _)| midline.len() >= 2)
+                .collect();
             if style.markings {
                 for (midline, _) in &medians {
                     layers.lines.push_rails(
@@ -245,7 +252,7 @@ fn kerbs(ground: &Ground, medians: &[(Vec<Vec2>, f32)], gores: &Gores) -> Vec<Sh
 }
 
 /// Куски середин разделительных над площадкой — не короче [`MEDIAN_MIN`], с
-/// расстоянием между осями половин.
+/// шириной разделительной между кромками половин ([`Median::width`]).
 fn on_lot(medians: &[Median], ground: &Ground) -> Vec<(Vec<Vec2>, f32)> {
     let mut found = Vec::new();
     for median in medians {
@@ -253,7 +260,7 @@ fn on_lot(medians: &[Median], ground: &Ground) -> Vec<(Vec<Vec2>, f32)> {
         if low.cmpgt(ground.high).any() || high.cmplt(ground.low).any() {
             continue;
         }
-        let apart = median.apart();
+        let width = median.width();
         // по пробам, а не по вершинам: прямая середина — две точки, и обе
         // бывают за площадкой
         let probes: Vec<Vec2> = samples(median.midline())
@@ -264,7 +271,7 @@ fn on_lot(medians: &[Median], ground: &Ground) -> Vec<(Vec<Vec2>, f32)> {
             probes.chunk_by(|a, b| point_in_area(*a, ground.lot) == point_in_area(*b, ground.lot))
         {
             if point_in_area(run[0], ground.lot) && polyline_length(run) >= MEDIAN_MIN {
-                found.push((run.to_vec(), apart));
+                found.push((run.to_vec(), width));
             }
         }
     }

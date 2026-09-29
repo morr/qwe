@@ -118,6 +118,34 @@ fn nothing_of_a_fence_is_drawn_on_a_bridge_deck() {
     }
 }
 
+/// Сквозная решётка тени не отбрасывает: метровая решётка посреди проспекта
+/// (Советская в Туле) сплошной тенью ложилась на асфальт тёмным бруском.
+/// Линия остаётся, и ни одна вершина слоя не отходит от оси дальше
+/// полуширины ленты.
+#[test]
+fn a_railing_casts_no_shadow() {
+    let _sun = crate::map::default_sun();
+    let (from, to) = (Vec2::new(100.0, 100.0), Vec2::new(200.0, 100.0));
+    let railing = FenceLine {
+        kind: FenceKind::Railing,
+        ..fence_across(from, to)
+    };
+
+    let (layers, report) = mesh_fences(near_bucket(), &[railing], &[]);
+
+    assert!(report.vertices > 0, "решётка не нарисована вовсе");
+    let half = report.width / 2.0;
+    for point in layers[0].builder.positions_for_test() {
+        let off = distance_to_segment(Vec2::new(point[0], point[1]), from, to);
+        assert!(
+            off <= half + 0.01,
+            "тень решётки: {point:?}, {off} м от оси"
+        );
+    }
+    let (_, fence) = mesh_fences(near_bucket(), &[fence_across(from, to)], &[]);
+    assert!(fence.vertices > report.vertices, "у забора тень есть");
+}
+
 #[test]
 fn an_empty_map_builds_no_geometry() {
     let (layers, report) = mesh_fences(near_bucket(), &[], &[]);

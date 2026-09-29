@@ -25,6 +25,10 @@ cargo test -q --message-format=short 2>&1 || failed="$failed test"
 echo "== cargo clippy"
 cargo clippy --all-targets --message-format=short -- -D warnings 2>&1 || failed="$failed clippy"
 
+# Every rebuild leaves a full set of orphaned incremental .o files in
+# target/debug/deps (macOS unpacked debuginfo) — unpruned they reached 127 GB.
+tools/prune-target-objects.sh
+
 if [ "$#" -gt 0 ]; then
     echo "== rustfmt $*"
     RUSTFMT=~/.rustup/toolchains/nightly-aarch64-apple-darwin/bin/rustfmt \

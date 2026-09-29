@@ -29,6 +29,7 @@ use super::junctions::node_key;
 use super::network::RoadNodes;
 use super::turns::{LaneEnd, curve};
 use crate::map::along::nearest_on_path;
+use crate::map::osm::model::polyline_length;
 use crate::map::osm::{RoadClass, RoadLine};
 use crate::map::shapes::is_ring;
 
@@ -64,6 +65,11 @@ const APPROACH_LENGTH_SHARE: f32 = 0.6;
 const BEND_MIN_LENGTH: f32 = 4.0;
 /// Подход, приходящий в узел почти под нужным углом, не трогается, рад.
 const BEND_MIN_ANGLE: f32 = 5.0 * std::f32::consts::PI / 180.0;
+/// Двусторонний подход, приходящий в узел ближе к лучу из центра, не
+/// трогается, рад. Круче — ось OSM у кольца идёт вдоль него (картограф завёл
+/// её в узел по касательной, Рязань, витрина 05), и плоский торец ленты,
+/// поставленный поперёк такой оси, углом вылезал за кромку кольца.
+const TWO_WAY_BEND_MIN_ANGLE: f32 = 30.0 * std::f32::consts::PI / 180.0;
 /// Сколько подхода, м, остаётся прямым перед его общим узлом с кем-то ещё.
 const PIN_MARGIN: f32 = 1.0;
 /// Насколько кромки подхода и кольца могут разойтись, м, чтобы щель между
@@ -225,6 +231,8 @@ impl Ring {
 pub struct Rings {
     pub list: Vec<Ring>,
     of_road: Vec<Option<usize>>,
+    /// Ноги Y-подходов ([`y_legs`]): идёт ли поток ноги по порядку её точек.
+    legs: Vec<Option<bool>>,
     /// Асфальт между кольцом и улицей вдоль него, где их кромки только
     /// разошлись ([`webs_along`]): без него в щели серпом проступал тротуар.
     pub webs: Vec<Vec<Vec2>>,
@@ -238,6 +246,13 @@ impl Rings {
             .copied()
             .flatten()
             .map(|ring| &self.list[ring])
+    }
+
+    /// Нога ли дорога Y-подхода ([`y_legs`]) и куда по ней поток: `true` — по
+    /// порядку её точек. Двусторонний way рисуется такой ногой как
+    /// односторонний: въезд или съезд.
+    pub fn leg_flow(&self, road: usize) -> Option<bool> {
+        self.legs.get(road).copied().flatten()
     }
 }
 
@@ -257,45 +272,14 @@ pub fn reshape<'a>(
     nodes: &RoadNodes,
     paths: &mut [Cow<'a, [Vec2]>],
 ) -> Rings {
-    let mut rings = Rings {
-        list: Vec::new(),
-        of_road: vec![None; roads.len()],
-        webs: Vec::new(),
-    };
-    for chain in chains(roads) {
-        let Some(ring) = fit(roads, &chain, nodes) else {
-            continue;
-        };
-        let index = rings.list.len();
-        let mut path: Vec<Vec2> = Vec::new();
-        for &road in &chain {
-            let arc = ring.arc(&roads[road].points, nodes);
-            let skip = usize::from(!path.is_empty());
-            path.extend(arc.iter().skip(skip));
-            paths[road] = Cow::Owned(arc);
-            rings.of_road[road] = Some(index);
-        }
-        rings.list.push(Ring { path, ..ring });
-    }
-    // узлы колец — к ним приходят подходы
-    let mut pins: HashMap<(i32, i32), (usize, f32)> = HashMap::new();
-    for (index, ring) in rings.list.iter().enumerate() {
-        for &road in &ring.roads {
-            for &point in &roads[road].points {
-                pins.insert(node_key(point), (index, ring.param(point).0));
-            }
-        }
-    }
+    let (mut rings, pins) = fit_rings(roads, nodes, paths);
+    rings.legs = y_legs(roads, &rings, &pins, nodes, paths).0;
     // подходы
     for (index, road) in roads.iter().enumerate() {
-        if rings.of_road[index].is_some()
-            || !road.oneway
-            || road.class != RoadClass::Street
-            || road.carves_navmesh()
-            || paths[index].len() < 2
-        {
+        if rings.of_road[index].is_some() || !is_approach(road) || paths[index].len() < 2 {
             continue;
         }
+        let leg = rings.legs[index];
         let mut path = paths[index].to_vec();
         let mut bent = false;
         for entry in [true, false] {
@@ -307,17 +291,22 @@ pub fn reshape<'a>(
             let (travel, outward) = (ring.travel(t), ring.outward(t));
             let (sin, cos) = ENTRY_ANGLE.sin_cos();
             // въезд приходит в узел снаружи, съезд уходит из него наружу;
-            // съезд строится как въезд по развёрнутому подходу
-            let arrival = if entry {
-                travel * cos - outward * sin
-            } else {
-                -(travel * cos + outward * sin)
+            // съезд строится как въезд по развёрнутому подходу. Односторонний
+            // въезжает концом своих точек; нога Y-подхода — как её поток
+            // ([`y_legs`]). Двусторонний подход — и въезд, и съезд: он
+            // приходит в кольцо по лучу, а гнётся, только если ось OSM у узла
+            // идёт вдоль кольца ([`TWO_WAY_BEND_MIN_ANGLE`])
+            let flow = if road.oneway { Some(true) } else { leg };
+            let (arrival, min_angle) = match flow.map(|along| along == entry) {
+                None => (-outward, TWO_WAY_BEND_MIN_ANGLE),
+                Some(true) => (travel * cos - outward * sin, BEND_MIN_ANGLE),
+                Some(false) => (-(travel * cos + outward * sin), BEND_MIN_ANGLE),
             };
             if !entry {
                 path.reverse();
             }
             let reach = (APPROACH_SHARE * ring.mean_radius()).clamp(APPROACH_MIN, APPROACH_MAX);
-            if let Some(new) = bend_approach(&path, arrival, reach, nodes) {
+            if let Some(new) = bend_approach(&path, arrival, min_angle, reach, nodes) {
                 path = new;
                 bent = true;
             }
@@ -340,10 +329,7 @@ pub fn reshape<'a>(
         })
         .collect();
     for (index, road) in roads.iter().enumerate() {
-        if rings.of_road[index].is_some()
-            || road.class != RoadClass::Street
-            || road.carves_navmesh()
-        {
+        if rings.of_road[index].is_some() || !is_approach(road) {
             continue;
         }
         for (ring, &width) in rings.list.iter().zip(&widths) {
@@ -353,6 +339,50 @@ pub fn reshape<'a>(
         }
     }
     rings
+}
+
+/// Узлы колец: параметр на кольце каждой точки его дуг, по ключу узла, — к
+/// ним приходят подходы.
+type Pins = HashMap<(i32, i32), (usize, f32)>;
+
+/// Кольца `roads` без подходов: дуги собраны в петли, в петли вписаны
+/// фигуры, оси дуг в `paths` заменены их дугами. Общая часть
+/// [`reshape`] и выпрямления хвостов разбора ([`straighten_tails`]).
+fn fit_rings<'a>(
+    roads: &'a [RoadLine],
+    nodes: &RoadNodes,
+    paths: &mut [Cow<'a, [Vec2]>],
+) -> (Rings, Pins) {
+    let mut rings = Rings {
+        list: Vec::new(),
+        of_road: vec![None; roads.len()],
+        legs: vec![None; roads.len()],
+        webs: Vec::new(),
+    };
+    for chain in chains(roads) {
+        let Some(ring) = fit(roads, &chain, nodes) else {
+            continue;
+        };
+        let index = rings.list.len();
+        let mut path: Vec<Vec2> = Vec::new();
+        for &road in &chain {
+            let arc = ring.arc(&roads[road].points, nodes);
+            let skip = usize::from(!path.is_empty());
+            path.extend(arc.iter().skip(skip));
+            paths[road] = Cow::Owned(arc);
+            rings.of_road[road] = Some(index);
+        }
+        rings.list.push(Ring { path, ..ring });
+    }
+    let mut pins = Pins::new();
+    for (index, ring) in rings.list.iter().enumerate() {
+        for &road in &ring.roads {
+            for &point in &roads[road].points {
+                pins.insert(node_key(point), (index, ring.param(point).0));
+            }
+        }
+    }
+    (rings, pins)
 }
 
 /// Насколько улица должна идти вдоль кольца, чтобы щель между ними была
@@ -581,11 +611,253 @@ fn fit(roads: &[RoadLine], chain: &[usize], nodes: &RoadNodes) -> Option<Ring> {
     Some(ring)
 }
 
+/// Может ли дорога быть подходом к кольцу — гнуться в его узел.
+fn is_approach(road: &RoadLine) -> bool {
+    road.class == RoadClass::Street && !road.carves_navmesh()
+}
+
+/// Самая длинная нога Y-подхода, м: дальше между двумя дорогами уже квартал,
+/// а не островок (как `FAN_REACH` у веера, `roads/gores.rs`).
+const LEG_MAX: f32 = 55.0;
+/// Узлы двух ног на кольце ближе этого друг к другу, м, — один узел на
+/// двоих, а не вилка ([`y_legs`]).
+const LEG_APART_MIN: f32 = 1.0;
+
+/// Ноги Y-подходов: две двусторонние дороги, что выходят из одного узла и
+/// кончаются в двух **разных** узлах одного кольца. Так замаплены подходы к
+/// кольцам Рязани (витрина 05): каждый — «Y» из двух way по 15–25 м в узлы в
+/// двадцати метрах друг от друга. По смыслу это въезд и съезд, только без
+/// `oneway`: гнутые к лучу, как двусторонний подход, обе ноги заметали асфальтом
+/// весь треугольник между ними, а островок по правилу вставал на каждую и
+/// ложился на кольцо крюком. Нога рисуется односторонней: въезд — та, чей
+/// узел ниже по ходу кольца (въехавший поворачивает по ходу, и ноги не
+/// пересекаются), — гнётся в узел по касательной, а клин между ногами
+/// находит веер (`gores::fans`).
+///
+/// По дороге — идёт ли поток ноги по порядку её точек.
+///
+/// **Вторая нога бывает не своим way, а хвостом чужих** ([`tail_walk`]): у
+/// северного подхода Рязани 05 «Старая дорога» идёт через развилку дальше, а
+/// в другой узел кольца её доводит конец улицы, что приходит с севера. Ногой
+/// своим way там одна короткая дорога, и она рисовалась двусторонним
+/// подходом по лучу — полосой в 7.6 м, слитой с хвостом в одно широкое устье.
+/// Нога с хвостом — такая же: въезд или съезд в одну полосу по касательной;
+/// хвост рисуется как есть — он часть чужих улиц. Такие подходы
+/// возвращаются вторым списком: разбор выпрямляет их в обычный «Y»
+/// ([`straighten_tails`]), и до рисования доходят только те, что он оставил.
+fn y_legs(
+    roads: &[RoadLine],
+    rings: &Rings,
+    pins: &Pins,
+    nodes: &RoadNodes,
+    paths: &[Cow<[Vec2]>],
+) -> (Vec<Option<bool>>, Vec<Tail>) {
+    let mut legs = vec![None; roads.len()];
+    let mut tails = Vec::new();
+    // (ring, far node) → [(road, param at the ring, ring at the last point)]
+    let mut feet: HashMap<(usize, (i32, i32)), Vec<(usize, f32, bool)>> = HashMap::new();
+    for (index, road) in roads.iter().enumerate() {
+        let path: &[Vec2] = &paths[index];
+        if rings.of_road[index].is_some()
+            || road.oneway
+            || !is_approach(road)
+            || path.len() < 2
+            || polyline_length(path) > LEG_MAX
+        {
+            continue;
+        }
+        let (first, last) = (path[0], path[path.len() - 1]);
+        let at_ring = |point: Vec2| pins.get(&node_key(point)).copied();
+        let (ring, t, far, at_last) = match (at_ring(first), at_ring(last)) {
+            (Some((ring, t)), None) => (ring, t, last, false),
+            (None, Some((ring, t))) => (ring, t, first, true),
+            _ => continue,
+        };
+        feet.entry((ring, node_key(far)))
+            .or_default()
+            .push((index, t, at_last));
+    }
+    for ((ring_index, far), group) in feet {
+        let ring = &rings.list[ring_index];
+        let direction = if ring.ccw { 1.0 } else { -1.0 };
+        // узел `a` ниже по ходу `b` — `a` въезд: поток к кольцу
+        let forks = |t_a: f32, t_b: f32| -> Option<bool> {
+            let ahead = ((t_a - t_b) * direction).rem_euclid(TAU);
+            // один узел кольца на двоих — не вилка
+            let apart = ahead.min(TAU - ahead) * ring.mean_radius();
+            (apart >= LEG_APART_MIN).then_some(ahead < std::f32::consts::PI)
+        };
+        match group[..] {
+            [(a, t_a, a_last), (b, t_b, b_last)] => {
+                let Some(a_entry) = forks(t_a, t_b) else {
+                    continue;
+                };
+                legs[a] = Some(a_entry == a_last);
+                legs[b] = Some(!a_entry == b_last);
+            }
+            [(a, t_a, a_last)] => {
+                let foot = roads[a].points[if a_last { roads[a].points.len() - 1 } else { 0 }];
+                let Some(walk) = tail_walk(roads, rings, pins, nodes, a, far, foot) else {
+                    continue;
+                };
+                let t_b = walk.t;
+                // хвост — в тот же угол кольца, а не через полкольца
+                let ahead = ((t_a - t_b) * direction).rem_euclid(TAU);
+                let Some(a_entry) = forks(t_a, t_b).filter(|_| ahead.min(TAU - ahead) <= TAIL_ARC)
+                else {
+                    continue;
+                };
+                legs[a] = Some(a_entry == a_last);
+                tails.push(Tail {
+                    ring: ring_index,
+                    leg: a,
+                    leg_foot: foot,
+                    walk,
+                });
+            }
+            _ => {}
+        }
+    }
+    // порядок карты — не порядок её хеша
+    tails.sort_by_key(|tail| tail.leg);
+    (legs, tails)
+}
+
+/// Y-подход, вторая нога которого — хвост чужих улиц ([`y_legs`]).
+struct Tail {
+    ring: usize,
+    /// Нога своим way и её узел на кольце.
+    leg: usize,
+    leg_foot: Vec2,
+    walk: TailWalk,
+}
+
+/// Путь хвоста ([`tail_walk`]): развилка на первой улице, стык, где его
+/// подхватила вторая, и узел кольца, где вторая кончилась.
+struct TailWalk {
+    /// Параметр узла хвоста на кольце.
+    t: f32,
+    fork: Vec2,
+    /// Улица, что идёт через развилку дальше.
+    first: usize,
+    /// Узел первой улицы, с которого хвост идёт по второй.
+    joint: Vec2,
+    second: usize,
+    /// Узел кольца, где кончается вторая.
+    foot: Vec2,
+}
+
+/// Наибольший угол между узлами кольца двух ног, когда вторая — хвост чужих
+/// дорог ([`tail_walk`]), рад: четверть кольца. Дальше путь от развилки к
+/// кольцу — уже объезд, а не нога.
+const TAIL_ARC: f32 = std::f32::consts::FRAC_PI_2;
+
+/// Хвост Y-подхода ([`y_legs`]): путь от развилки `fork` по дорогам-подходам
+/// (кроме ноги `leg` и дуг колец) в **другой** узел того же кольца, что и
+/// `foot` — узел ноги, — не длиннее [`LEG_MAX`], по сырым точкам: первая
+/// улица идёт через развилку дальше, вторая, начатая на ней, кончается в
+/// кольце. Самый короткий такой путь; `None` — хвоста нет.
+fn tail_walk(
+    roads: &[RoadLine],
+    rings: &Rings,
+    pins: &Pins,
+    nodes: &RoadNodes,
+    leg: usize,
+    fork: (i32, i32),
+    foot: Vec2,
+) -> Option<TailWalk> {
+    let (ring, _) = *pins.get(&node_key(foot))?;
+    let usable =
+        |road: usize| road != leg && rings.of_road[road].is_none() && is_approach(&roads[road]);
+    let fork_point = roads[leg]
+        .points
+        .iter()
+        .copied()
+        .find(|point| node_key(*point) == fork)?;
+    // (длина, путь) самого короткого хвоста
+    let mut best: Option<(f32, TailWalk)> = None;
+    // (дорога, узел, первая дорога пути — у второй, пройдено). Первая — улица, что
+    // идёт **через** развилку дальше, а в кольцо хвост доводит вторая: улица,
+    // что сама уходит в кольцо, — соседний подход (площадь Мичурина, Рязань
+    // 04: такой «хвост» в узел за 23 и 38 м сужал широкий двусторонний
+    // подход в полосу и открывал клин голой земли)
+    let through = |road: usize| {
+        let points = &roads[road].points;
+        points.len() > 2
+            && points[1..points.len() - 1]
+                .iter()
+                .any(|point| node_key(*point) == fork)
+    };
+    let mut stack: Vec<(usize, Vec2, Option<usize>, f32)> = nodes
+        .roads_at(fork_point)
+        .iter()
+        .filter(|&&road| usable(road) && through(road))
+        .map(|&road| (road, fork_point, None, 0.0))
+        .collect();
+    while let Some((road, from, via, walked)) = stack.pop() {
+        let first = via.is_none();
+        let points = &roads[road].points;
+        let Some(at) = points
+            .iter()
+            .position(|point| node_key(*point) == node_key(from))
+        else {
+            continue;
+        };
+        for step in [1_isize, -1] {
+            let (mut length, mut previous) = (walked, from);
+            let mut index = at as isize + step;
+            while let Some(&point) = usize::try_from(index).ok().and_then(|i| points.get(i)) {
+                length += previous.distance(point);
+                if length > LEG_MAX {
+                    break;
+                }
+                if let Some(&(other, t)) = pins.get(&node_key(point)) {
+                    // узел кольца: свой другой, куда довела вторая улица, —
+                    // хвост; свой же, чужой или доведённый первой — тупик
+                    if let Some(first) = via
+                        && other == ring
+                        && node_key(point) != node_key(foot)
+                        && best.as_ref().is_none_or(|(shortest, _)| length < *shortest)
+                    {
+                        let walk = TailWalk {
+                            t,
+                            fork: fork_point,
+                            first,
+                            joint: from,
+                            second: road,
+                            foot: point,
+                        };
+                        best = Some((length, walk));
+                    }
+                    break;
+                }
+                // смена дороги — одна
+                if first {
+                    for &next in nodes.roads_at(point) {
+                        if next != road && usable(next) {
+                            stack.push((next, point, Some(road), length));
+                        }
+                    }
+                }
+                previous = point;
+                index += step;
+            }
+        }
+    }
+    best.map(|(_, walk)| walk)
+}
+
 /// Дуга подхода `path`, идущего **к** узлу кольца в его последней точке:
 /// последние `reach` метров заменяет кривая, касательная к подходу и
 /// приходящая в узел по `arrival`. `None` — подход и так приходит под нужным
 /// углом, или места под дугу нет: дальше по нему узел с кем-то ещё.
-fn bend_approach(path: &[Vec2], arrival: Vec2, reach: f32, nodes: &RoadNodes) -> Option<Vec<Vec2>> {
+fn bend_approach(
+    path: &[Vec2],
+    arrival: Vec2,
+    min_angle: f32,
+    reach: f32,
+    nodes: &RoadNodes,
+) -> Option<Vec<Vec2>> {
     let end = *path.last()?;
     // пройденное от торца до каждой вершины
     let mut back = vec![0.0; path.len()];
@@ -595,7 +867,7 @@ fn bend_approach(path: &[Vec2], arrival: Vec2, reach: f32, nodes: &RoadNodes) ->
     let length = back[0];
     let point_at = |distance: f32| point_back(path, &back, distance);
     let heading = (end - point_at(HEADING_BASE.min(length))).try_normalize()?;
-    if heading.angle_to(arrival).abs() < BEND_MIN_ANGLE {
+    if heading.angle_to(arrival).abs() < min_angle {
         return None;
     }
     let pinned = (1..path.len() - 1)
@@ -640,6 +912,9 @@ fn point_back(path: &[Vec2], back: &[f32], distance: f32) -> Vec2 {
     }
     path[0]
 }
+
+mod straighten;
+pub use straighten::{Straightened, straighten_tails};
 
 #[cfg(test)]
 mod tests;

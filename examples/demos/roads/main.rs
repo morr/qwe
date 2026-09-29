@@ -29,16 +29,17 @@
 //! Слои — те, что видны на перекрёстке: поверхности (со стоянками и их
 //! разметкой), дороги, дома, ограды, рельсы, деревья. Трамвай и промзона в игре
 //! по умолчанию выключены, вагоны стоят только на станционных путях — их здесь
-//! нет. **Машин нет нарочно**: витрина про полотно и узел, а ряд у бордюра
-//! закрывает ровно их — кромку, радиус примыкания, разметку у перекрёстка.
+//! нет. **Машин по умолчанию нет нарочно**: витрина про полотно и узел, а ряд
+//! у бордюра закрывает ровно их — кромку, радиус примыкания, разметку у
+//! перекрёстка; `ROADS_CARS=1` кладёт их, когда проверяется сам ряд.
 //! Ступени зума взяты ближние: три десятка окон по сотне метров — не город,
 //! экономить тут нечего.
 //!
 //! Пример не трогает конфиг игры: ни `PrefsPlugin`, ни `MapPlugin` — `City`,
 //! `RoadStyle` и `RoadShape` здесь обычные ресурсы с игровыми дефолтами.
 //! Ползунки формы доезжают до примеров после паузы (`settle_road_shape`), как
-//! в игре; ширина полосы уходит в глобаль разбора перед нарезкой, так что
-//! пример с другой шириной разобран заново, а не растянут.
+//! в игре; осевшая ширина полосы уходит в разбор аргументом (`ParseKnobs`),
+//! так что пример с другой шириной разобран заново, а не растянут.
 //!
 //! ```text
 //! cargo run --example roads
@@ -54,10 +55,12 @@
 //! `ROADS_DUMP=папка` — выгрузить туда каждый срез файлом (замороженный срез
 //! для `data/<город>/`);
 //! `ROADS_SHOT=путь.png` — снять витрину в текстуру (без панелей) и выйти;
+//! `ROADS_SHOT_SCALE=2` — снять её вдвое крупнее окна (тот же кадр, чётче);
 //! `ROADS_SAMPLE=N` ставит камеру на пример N (с единицы) крупным планом;
 //! `ROADS_CITY=<slug>` (`berlin`, `paris`…) открывает витрину на этом городе —
 //! для автоснимка не Тулы;
-//! `ROADS_NETWORK=1` открывает витрину с оверлеем сети (строка `Network` панели).
+//! `ROADS_NETWORK=1` открывает витрину с оверлеем сети (строка `Network` панели);
+//! `ROADS_CARS=1` кладёт в примеры и слой припаркованных машин.
 
 mod overlay;
 mod panel;
@@ -81,19 +84,19 @@ use qwe::map::buildings::material::{RoofMaterial, init_roof_material};
 use qwe::map::buildings::{
     BuildingPlan, BuildingZoomBucket, mesh_buildings, spawn_building_meshes,
 };
-use qwe::map::osm::parse::parse_response;
+use qwe::map::osm::parse::{ParseKnobs, parse_response};
 use qwe::map::surface::{
     LayerMesh, SurfaceMaterial, init_flat_materials, init_surface_materials,
     retune_surface_materials, retunes_on, spawn_layers,
 };
 use qwe::map::trees::{
     ConiferField, ConiferNoiseStyle, CrownMaterial, CrownParams, TreeMaterials, TreeRowStyle,
-    TreeStyle, mesh_trees, spawn_tree_meshes,
+    TreeStyle, TreeZoomBucket, init_crown_material, mesh_trees, spawn_tree_meshes,
 };
 use qwe::map::{
     BuildingHeightMode, FenceZoomBucket, GROUND_COLOR, MeshBuilder, PaintMaterial, ParkingLayout,
     RailZoomBucket, RoadPaintStyle, RoadShape, RoadShapeOnMap, RoadStyle, RoofStyle, SunOnMap,
-    SurfaceStyle, apply_sun, mesh_fences, mesh_rails, mesh_roads, mesh_surfaces,
+    SurfaceStyle, apply_sun, mesh_fences, mesh_map_cars, mesh_rails, mesh_roads, mesh_surfaces,
     mesh_tree_row_band, set_lane_width, settle_road_shape, spawn_road_meshes,
 };
 use qwe::ui::knob::AddKnobsExt;
@@ -103,6 +106,9 @@ use crate::overlay::NetworkOverlay;
 use crate::panel::{StatusLine, spawn_panel};
 use crate::samples::Sample;
 use crate::shot::{ShotRequest, auto_shot, request_shot};
+
+/// Переменная окружения, по которой витрина кладёт и слой машин.
+const CARS_ENV: &str = "ROADS_CARS";
 
 const WINDOW_WIDTH: f32 = 1500.0;
 const WINDOW_HEIGHT: f32 = 950.0;
@@ -212,7 +218,7 @@ fn main() {
                 spawn_camera,
                 // солнце — до кровельного материала: его юниформ `light`
                 // пишется один раз на всё приложение
-                (apply_sun, init_roof_material).chain(),
+                (apply_sun, (init_roof_material, init_crown_material)).chain(),
                 init_surface_materials,
                 init_flat_materials,
                 spawn_panel,
@@ -230,7 +236,7 @@ fn main() {
                 step_to_neighbour,
                 sync_city_label.run_if(resource_changed::<City>),
                 // форма — после паузы, как в игре; ширина полосы — в глобаль
-                // разбора, краски и колеи раньше, чем её прочтут материалы
+                // краски и колеи раньше, чем её прочтут материалы
                 settle_road_shape,
                 apply_lane_width.run_if(resource_changed::<RoadShapeOnMap>),
                 // краска и колея — юниформы, как в игре: слои не пересобираются
@@ -247,7 +253,10 @@ fn main() {
                 ),
                 build_next,
                 place_new,
-                auto_shot.run_if(resource_exists::<ShotRequest>),
+                // счёт кадров снимка идёт с кадра, когда собраны и сдвинуты все
+                // примеры: собираются они по одному на кадр, и на общем
+                // `SHOT_FRAME` поздние ещё не стояли в колонке
+                auto_shot.run_if(resource_exists::<ShotRequest>.and_then(gallery_ready)),
             )
                 .chain(),
         )
@@ -277,7 +286,8 @@ fn spawn_camera(mut commands: Commands) {
             far: 1000.0,
             ..OrthographicProjection::default_2d()
         }),
-        Msaa::Off,
+        // сглаживание кромок, как у камеры игры (`post::Antialias`)
+        Msaa::Sample4,
         // контроллер и всё движение — игровые: пределы зума, колесо к курсору,
         // WASD и протяжка в экранной скорости (`camera::key_pan`/`drag_pan`)
         pan_controller(1.0),
@@ -495,9 +505,9 @@ fn load_reference(path: &std::path::Path) -> Option<Image> {
     .ok()
 }
 
-/// Ширина полосы — в глобаль, которую читают разбор, краска и колея
-/// асфальта: игра пишет её перед потоком загрузки, витрина — перед разбором
-/// примеров, которые `reload` по этой же правке соберёт заново.
+/// Ширина полосы — в глобаль, которую читают краска и колея асфальта; разбор
+/// примеров получает её аргументом (`ParseKnobs`) из той же осевшей ручки, и
+/// `reload` по этой же правке соберёт их заново.
 fn apply_lane_width(shape: Res<RoadShapeOnMap>) {
     set_lane_width(shape.0.lane_width());
 }
@@ -525,7 +535,13 @@ fn build_next(
     let slot = gallery.slots[index];
     let started = std::time::Instant::now();
 
-    let map = parse_response(&sample.osm, *city);
+    // ширина полосы — осевшей ручки, как у игры; навтайл витрина не
+    // переключает, двери она не рисует
+    let knobs = ParseKnobs {
+        lane_width: road_shape.0.lane_width(),
+        ..ParseKnobs::default()
+    };
+    let map = parse_response(&sample.osm, *city, knobs);
     let parsed = started.elapsed();
 
     // Всякий слой режется окном примера (в игровых координатах — до сдвига):
@@ -541,7 +557,7 @@ fn build_next(
     };
 
     // раскладка стоянок — вход поверхностям: по ней рисуется разметка мест
-    let layout = ParkingLayout::new(&map.parking, &map.roads);
+    let layout = ParkingLayout::new(&map.parking, &map.roads, map.traffic_side);
     let (surfaces, _) = mesh_surfaces(&map, &layout);
     spawn_layers(
         &mut commands,
@@ -560,6 +576,19 @@ fn build_next(
         &materials.layers,
         (road_layers, road_report),
     );
+
+    // машины — по заказу: витрина про дороги, и ряд у бордюра закрывает то,
+    // на что она смотрит, но у дворов и карманов он и есть предмет проверки
+    if std::env::var_os(CARS_ENV).is_some() {
+        let (cars, _) = mesh_map_cars(&map, &road_shape.0, &layout);
+        spawn_layers(
+            &mut commands,
+            &mut meshes,
+            &materials.layers,
+            clip(cars),
+            SampleLayer,
+        );
+    }
 
     if overlay.visible {
         spawn_layers(
@@ -609,18 +638,23 @@ fn build_next(
         tree_style.noise_mix,
     );
     field.set_share(tree_style.conifer_share);
+    // ближняя ступень: витрина смотрит на перекрёсток вблизи
     let (mut trees, tree_report) =
         mesh_trees(&tree_style, &CrownParams::default(), &map.trees, &field);
-    // крона — сущность, а не часть слоя: её не режут, а оставляют по центру.
-    // Свес за окно — метры, до соседнего окна `GAP`
+    // на ближней ступени крона — сущность, а не часть слоя: её не режут, а
+    // оставляют по центру. Свес за окно — метры, до соседнего окна `GAP`.
+    // Слитые куски дальних ступеней (здесь их нет) режутся, как всякий слой
     trees
         .crowns
         .retain(|crown| crown.at.cmpge(window_min).all() && crown.at.cmple(window_max).all());
-    trees.shadows = clip(trees.shadows);
+    for layer in trees.merged.iter_mut().chain(&mut trees.shadows) {
+        layer.layer.builder.clip_to_rect(window_min, window_max);
+    }
     spawn_tree_meshes(
         &mut commands,
         &mut meshes,
         &mut materials,
+        TreeZoomBucket::at(0),
         (trees, tree_report),
     );
 
@@ -668,6 +702,12 @@ fn place_new(
         transform.translation += shift.extend(0.0);
         commands.entity(entity).insert(Placed);
     }
+}
+
+/// Витрина готова к снимку: все примеры собраны и сдвинуты на свои места.
+/// Пустой список (манифест не прочитан) тоже готов — снимается сообщение.
+fn gallery_ready(gallery: Res<Gallery>) -> bool {
+    gallery.built == gallery.samples.len() && gallery.pending_shift.is_none()
 }
 
 /// Подпись слева от окна: вид пересечения, полный адрес, игровые координаты,

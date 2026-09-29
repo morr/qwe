@@ -40,7 +40,6 @@ use bevy::math::Vec2;
 
 use self::cohorts::{cohort_of, entrance_count, equivalent_length, plan_sections};
 use self::index::{FootprintIndex, PassageIndex, RoadIndex, ring_is_ccw};
-use crate::grid::navtile_size;
 use crate::map::osm::model::{AreaKind, BuildingUse, MapData, PolyArea, is_big_box};
 use crate::rng::lcg_seeded_by;
 
@@ -95,15 +94,6 @@ impl DoorPitch {
 /// обязана проигрывать вдвое более далёкой, но обращённой к улице (на 90°
 /// штраф даёт 31 м).
 const ENTRANCE_FACING_PENALTY: f32 = 20.0;
-/// Насколько далеко от стены проверяется, свободно ли перед дверью — ровно
-/// навтайл ([`navtile_size`]): дверь имеет смысл только там, где перед ней
-/// есть куда встать, а меньше тайла свободного места навмеш всё равно не
-/// разрешит. Заодно этот же зазор съедает разнобой в координатах общей
-/// стены — соседние дома в OSM обводят по одному и тому же ряду точек редко.
-fn entrance_clearance() -> f32 {
-    navtile_size()
-}
-
 /// Насколько дверь держится от края арки, м. Проезд сквозь дом
 /// (`tunnel=building_passage`) выедает кусок стены целиком, и подъезда там не
 /// бывает — ни в самом проёме, ни впритык к нему: полотно двери с откосами
@@ -145,9 +135,12 @@ struct Facade {
 /// они идут первыми, а когорта лишь дописывает недостающее. Выбрасывается из них
 /// ровно одна разновидность — дверь, пришедшаяся на арку: стены в проёме нет, и
 /// полотна там не будет, как бы дверь ни была размечена ([`PassageIndex`]).
-pub fn generate_entrances(map: &mut MapData) -> usize {
+///
+/// `navtile` — размер навтайла, м (`ParseKnobs::navtile`): столько свободного
+/// места должно быть перед дверью ([`FootprintIndex::blocks_door`]).
+pub fn generate_entrances(map: &mut MapData, navtile: f32) -> usize {
     let roads = RoadIndex::build(&map.roads);
-    let footprints = FootprintIndex::build(&map.buildings);
+    let footprints = FootprintIndex::build(&map.buildings, navtile);
     // арки: проезд сквозь дом — это дыра в стене, а не место для подъезда
     let passages = PassageIndex::build(&map.roads);
 
@@ -221,9 +214,7 @@ fn fill_building(
     }
 
     let area = crate::map::osm::model::ring_area(ring);
-    let perimeter: f32 = (0..ring.len())
-        .map(|index| ring[index].distance(ring[(index + 1) % ring.len()]))
-        .sum();
+    let perimeter = crate::map::meshing::ring_perimeter(ring);
     let length = equivalent_length(area, perimeter);
     // один раз на дом: предикат считает площадь кольца, а спрашивают его трое
     let big_box = is_big_box(building);
@@ -470,8 +461,7 @@ fn place_along(
             }
             let blocked = match pass {
                 Pass::Walls(owner, footprints, passages) => {
-                    footprints.is_covered(point + facade.outward * entrance_clearance(), owner)
-                        || passages.blocks(point)
+                    footprints.blocks_door(point, facade.outward, owner) || passages.blocks(point)
                 }
                 Pass::LastResort(passages) => passages.blocks(point),
                 Pass::Forced => false,
@@ -494,7 +484,7 @@ fn place_along(
 #[derive(Clone, Copy)]
 enum Pass<'a> {
     /// Обычный: свой номер, индекс контуров и индекс арок. Точка проверяется
-    /// на [`entrance_clearance`] наружу, и место, накрытое чужим домом,
+    /// на навтайл наружу ([`FootprintIndex::blocks_door`]), и место, накрытое чужим домом,
     /// пропускается: стена, к которой сосед стоит вплотную, — глухая, дверь на
     /// ней смотрит в чужой фасад. И на [`ENTRANCE_ARCH_CLEARANCE`] от проезда
     /// сквозь дом — там стены нет вовсе. Занятая грань просто не отдаёт
@@ -574,7 +564,7 @@ fn through_doors(
         {
             continue;
         }
-        if footprints.is_covered(exit + outward * entrance_clearance(), index) {
+        if footprints.blocks_door(exit, outward, index) {
             continue;
         }
         // дворовый конец арки — та же дыра в стене, что и уличный, и

@@ -8,7 +8,7 @@
 
 use bevy::prelude::*;
 
-use crate::map::buildings::{self, BuildingHeightMode, BuildingZoomBucket};
+use crate::map::buildings::{self, BuildingHeightMode};
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::{AreaKind, MapData, PolyArea, TreeRow};
 use crate::map::parking;
@@ -35,8 +35,9 @@ pub const GROUND_COLOR: Color = Color::srgb(0.878, 0.865, 0.827);
 /// вытоптанная у подъездов и проездов, но трава. Прежние полтона от земли
 /// были осторожностью, а на снимке (#27) весь город из-за них лежал ровным
 /// бежевым листом, на котором расставлены дома. Зелень приглушённая, темнее
-/// газона и сильно темнее парка: двор — это не луг.
-const RESIDENTIAL_COLOR: Color = Color::srgb(0.427, 0.451, 0.376);
+/// газона и сильно темнее парка: двор — это не луг. Им же засеян газон
+/// широкой обочины (`roads.rs::VERGE_LAWN_COLOR`) — он и есть край двора.
+pub(crate) const RESIDENTIAL_COLOR: Color = Color::srgb(0.427, 0.451, 0.376);
 const INDUSTRIAL_COLOR: Color = Color::srgb(0.843, 0.843, 0.835);
 pub const PARK_COLOR: Color = Color::srgb(0.769, 0.878, 0.580);
 /// Лес внутри парка — темнее парковой подложки (osm-carto `#ADD19E`), под ним
@@ -128,7 +129,6 @@ pub fn spawn_map(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     materials: LayerMaterials,
-    building_bucket: Res<BuildingZoomBucket>,
     map: Res<MapData>,
     height_mode: Res<BuildingHeightMode>,
     road_style: Res<RoadStyle>,
@@ -143,7 +143,7 @@ pub fn spawn_map(
     // `surface meshing:`, ни в офлайн-замер, и «сколько стоит раскладка»
     // нечем ответить.
     let layout_started = std::time::Instant::now();
-    *parking_layout = parking::ParkingLayout::new(&map.parking, &map.roads);
+    *parking_layout = parking::ParkingLayout::new(&map.parking, &map.roads, map.traffic_side);
     info!(
         "parking layout: {} lots, {} stalls in {:.1?}",
         map.parking.len(),
@@ -171,11 +171,7 @@ pub fn spawn_map(
         roads::mesh_roads(&map, *road_style, road_shape.0),
     );
 
-    let plan = buildings::BuildingPlan {
-        mode: *height_mode,
-        bucket: *building_bucket,
-        shadows: true,
-    };
+    let plan = buildings::BuildingPlan::game(*height_mode);
     buildings::spawn_building_meshes(
         &mut commands,
         &mut meshes,
@@ -253,9 +249,12 @@ pub fn mesh_surfaces(
     // оба означала бы траву на бетонной площадке.
     let mut yards = MeshBuilder::with_surface_coords();
     let mut works = MeshBuilder::with_surface_coords();
-    for area in &map.landuse {
+    // и карманы земли (`parse/pockets.rs`) — травой квартала рядом или двора;
+    // карман у газона — лугом, ниже в слое газонов
+    for area in map.landuse.iter().chain(&map.pockets) {
         let (builder, color) = match area.kind {
             AreaKind::Industrial => (&mut works, INDUSTRIAL_COLOR),
+            AreaKind::Grass => continue,
             _ => (&mut yards, RESIDENTIAL_COLOR),
         };
         builder.push_polygon(&area.outer, &area.holes, color.to_linear());
@@ -275,6 +274,14 @@ pub fn mesh_surfaces(
     for area in &map.grass {
         push_area(&mut grass, area, GRASS_COLOR, &GRASS_RIM);
     }
+    // луг кармана — без каймы: он не газон, а продолжение газона обочины
+    for area in map
+        .pockets
+        .iter()
+        .filter(|area| area.kind == AreaKind::Grass)
+    {
+        grass.push_polygon(&area.outer, &area.holes, GRASS_COLOR.to_linear());
+    }
 
     let mut sand = MeshBuilder::with_surface_coords();
     for area in &map.sand {
@@ -291,7 +298,11 @@ pub fn mesh_surfaces(
     // вода — не каймой по контуру, как зелень: отмель у неё — расстояние до
     // ближайшего берега по всем полигонам сразу (`water::mesh_water_areas`)
     let water_started = std::time::Instant::now();
-    let water = mesh_water_areas(&map.water, &channels.gaps);
+    let water = mesh_water_areas(
+        &map.water,
+        &channels.gaps,
+        Rect::from_corners(Vec2::ZERO, MAP_SIZE),
+    );
     let water_took = water_started.elapsed();
 
     // стоянка — асфальт своим слоем, того же тона, что проезжая часть; по
@@ -385,7 +396,7 @@ pub fn measure_surfaces(map: &MapData) -> Vec<LayerCost> {
     // попадает в замер вовсе. Вершин у неё нет (она не меш), поэтому строка
     // печатается миллисекундами — ровно как `build`.
     let started = std::time::Instant::now();
-    let layout = parking::ParkingLayout::new(&map.parking, &map.roads);
+    let layout = parking::ParkingLayout::new(&map.parking, &map.roads, map.traffic_side);
     let layout_cost = LayerCost {
         name: "parking layout",
         vertices: 0,

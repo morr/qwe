@@ -14,7 +14,7 @@ use crate::map::roads::network::pairs::Pairs;
 use crate::map::roads::network::{RoadNetwork, RoadNodes};
 use crate::map::roads::node_paint::{CrossingMode, NodePaint, NodePaintStyle};
 use crate::map::roads::shape::{RoadShape, lane_width};
-use crate::map::roads::tapers::TAPER_PER_METER;
+use crate::map::roads::tapers::{TAPER_PER_METER, Tapers};
 
 /// Полотно в `lanes` полос: ширина — как из сечения.
 fn width(lanes: u8) -> f32 {
@@ -72,7 +72,7 @@ fn found(roads: &[RoadLine]) -> (Merges, RoadNetwork, Vec<Vec<Vec2>>) {
     let nodes = RoadNodes::new(roads);
     let network = RoadNetwork::new(roads);
     let mut pairs = Pairs::new(roads, &paths, RoadShape::default().median_gap(), &[]);
-    pairs.align(&mut paths, roads, &network, &nodes);
+    pairs.align(&mut paths, roads, &network, &nodes, &Tapers::default());
     let paths: Vec<Vec<Vec2>> = paths.into_iter().map(Cow::into_owned).collect();
     let drawn: Vec<&RoadLine> = roads.iter().collect();
     let merges = merges(&drawn, &paths, &nodes, &pairs, &network);

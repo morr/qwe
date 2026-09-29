@@ -79,6 +79,7 @@ use bevy::sprite::Anchor;
 use bevy::sprite_render::Material2dPlugin;
 use bevy::window::PrimaryWindow;
 use qwe::camera::{hovering_ui, zoom_to_cursor};
+use qwe::grid::DEFAULT_NAVTILE_SIZE;
 use qwe::map::buildings::material::{
     RoofKind, RoofLook, RoofMaterial, RoofMaterialHandle, WallKind, WallLook, init_roof_material,
     retune_roof_material,
@@ -538,7 +539,8 @@ fn spawn_camera(
             ..OrthographicProjection::default_2d()
         }),
         Transform::from_translation(centre.extend(0.0)).with_scale(Vec3::splat(zoom)),
-        Msaa::Off,
+        // сглаживание кромок, как у камеры игры (`post::Antialias`)
+        Msaa::Sample4,
         PanCamera {
             zoom_factor: zoom,
             min_zoom: zoom / 60.0,
@@ -796,7 +798,7 @@ impl HouseExt for PolyArea {
             buildings: vec![self],
             ..default()
         };
-        generate_entrances(&mut map);
+        generate_entrances(&mut map, DEFAULT_NAVTILE_SIZE);
         map.buildings.pop().expect("дом вернулся из генератора")
     }
 }

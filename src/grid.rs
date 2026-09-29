@@ -18,10 +18,12 @@ use crate::settings::MAP_SIZE;
 /// `navtile:` ([`NavtileBase`]) и читается через [`navtile_size`].
 pub const DEFAULT_NAVTILE_SIZE: f32 = 2.0;
 
-/// Текущий размер навтайла — process-global атомик, а не ресурс: его читают
-/// потоки без доступа к ECS (заливка navmesh в потоке загрузки, генерация
-/// входов там же). Пишется он только на главном потоке и только когда ни один
-/// из этих потоков не жив (`loading::sync_navtile_size` в начале `Loading`).
+/// Текущий размер навтайла — process-global атомик, а не ресурс: его читает
+/// поток без доступа к ECS (заливка navmesh в потоке загрузки). Разбор, где
+/// тот же размер задаёт зазор перед дверью, получает его аргументом
+/// (`ParseKnobs::navtile`) и атомик не читает. Пишется он только на главном
+/// потоке и только когда поток загрузки не жив (`loading::sync_navtile_size` в
+/// начале `Loading`).
 static NAVTILE_SIZE_BITS: AtomicU32 = AtomicU32::new(DEFAULT_NAVTILE_SIZE.to_bits());
 
 /// Текущий размер ячейки навигации, м.

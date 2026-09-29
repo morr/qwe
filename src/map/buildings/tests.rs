@@ -319,6 +319,28 @@ fn every_vertex_of_a_roofed_layer_carries_a_frame() {
     );
 }
 
+/// Оборудование кровли помечено отрицательным слотом материала — ровно его
+/// вершины и только они: по этой метке вершинный шейдер прячет его на дальней
+/// ступени зума (`material::show_roof_clutter`), не пересобирая слой, а
+/// фрагменту минус — тот же ноль, фактуры у оборудования нет.
+#[test]
+fn roof_clutter_vertices_carry_the_clutter_mark() {
+    let _sun = crate::map::default_sun();
+    let mut block = building(oblong(14.0, 40.0), Some(15.0), AreaKind::Building);
+    block.building_use = BuildingUse::Apartments;
+    let bare = extruded_mesh(std::slice::from_ref(&block), &[], detail(false));
+    let with_clutter = RoofDetail {
+        clutter: true,
+        ..detail(false)
+    };
+    let full = extruded_mesh(&[block], &[], with_clutter);
+    let frames = full.roof_coords_for_test().expect("roof coords");
+    let marked = frames.iter().filter(|frame| frame[2] < 0.0).count();
+    assert!(marked > 0, "у жилого дома нет оборудования");
+    assert_eq!(marked, full.vertex_count() - bare.vertex_count());
+    assert_eq!(unpack_material(-1.0).0, 0, "фрагменту метка — ноль");
+}
+
 #[test]
 fn gables_carry_frames_like_walls() {
     let _sun = crate::map::default_sun();

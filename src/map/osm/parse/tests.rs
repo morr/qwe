@@ -8,7 +8,7 @@ use crate::map::osm::fixture::{
 };
 use crate::map::osm::model::sidewalk_band;
 use crate::map::osm::model::{
-    BuildingUse, Colours, FenceKind, Highway, LaneTurn, PitchKind, RailKind, RoadAreaKind,
+    BuildingUse, Colours, FenceKind, Highway, LaneTurn, LotKind, PitchKind, RailKind, RoadAreaKind,
     RoadClass, RoadNodeKind, Sacred, SacredForm, ServiceTrack, StructureKind, WaterKind,
     distance_to_segment, is_big_box,
 };
@@ -19,9 +19,12 @@ use crate::settings::MAP_SIZE;
 
 /// Фикстуры строятся вокруг гео-центра Тулы — города по умолчанию.
 const CITY: City = City::Tula;
-/// Полуширина `highway=residential` без `lanes`, м: две полосы по классу,
-/// 2 × 3.3 + две кромки по 0.5 (`roads::network::sections`).
-const RESIDENTIAL_HALF: f32 = 3.8;
+/// Полуширина `highway=residential` без `lanes` при входах разбора `knobs`, м:
+/// две полосы по классу и две кромки (`roads::network::sections`) — при
+/// ширине полосы по умолчанию 2 × 3.3 + 2 × 0.5, полуширина 3.8.
+fn residential_half(knobs: ParseKnobs) -> f32 {
+    sections::section_width(Highway::Residential, 2, knobs.lane_width).expect("a street") / 2.0
+}
 
 /// Храм, чья вера досталась ему от города без размеченных храмов.
 const WESTERN_CHURCH: BuildingUse = BuildingUse::Church(Sacred {
@@ -396,11 +399,36 @@ fn a_parking_lot_is_its_own_layer_and_a_parking_house_stays_a_building() {
         .parse();
 
     assert_eq!(map.parking.len(), 1);
-    assert_eq!(map.parking[0].kind, AreaKind::Parking);
+    // 110 × 110 м — от `GROUND_MIN_AREA`, большая
+    assert_eq!(map.parking[0].kind, AreaKind::Parking(LotKind::Ground));
     assert_eq!(map.buildings.len(), 1);
     assert_eq!(map.parks.len(), 1);
     // в кварталы стоянка не падает: до ветки `landuse` дело не доходит
     assert!(map.landuse.is_empty());
+}
+
+/// Вид стоянки решает разбор: `parking=street_side` — карман вдоль улицы,
+/// прочая небольшая — двор, что бы ни стояло в `parking`.
+#[test]
+fn a_street_side_lot_is_kerbside_and_a_small_lot_is_a_yard() {
+    let map = Overpass::new(CITY)
+        .area(
+            &[("amenity", "parking"), ("parking", "street_side")],
+            rect(CENTER, CENTER + Vec2::new(40.0, 4.0)),
+        )
+        .area(
+            &[("amenity", "parking"), ("parking", "surface")],
+            square(CENTER + Vec2::new(0.0, 60.0), 10.0),
+        )
+        .parse();
+    let kinds: Vec<AreaKind> = map.parking.iter().map(|lot| lot.kind).collect();
+    assert_eq!(
+        kinds,
+        [
+            AreaKind::Parking(LotKind::Kerbside),
+            AreaKind::Parking(LotKind::Yard)
+        ]
+    );
 }
 
 #[test]
@@ -652,6 +680,15 @@ fn a_barrier_becomes_a_fence_but_the_city_wall_stays_a_wall() {
         .way(&[("barrier", "wall")], vec![sw, ne])
         .way(&[("barrier", "retaining_wall")], vec![sw, ne])
         .way(&[("barrier", "hedge")], vec![sw, ne])
+        // решётка — сквозная, смешанный с бетоном — сплошной
+        .way(
+            &[("barrier", "fence"), ("fence_type", "metal")],
+            vec![sw, ne],
+        )
+        .way(
+            &[("barrier", "fence"), ("fence_type", "barbed_wire;concrete")],
+            vec![sw, ne],
+        )
         .way(&[("barrier", "city_wall")], vec![sw, ne])
         // не линия и не ограда: калитка и бордюр
         .way(&[("barrier", "gate")], vec![sw, ne])
@@ -665,7 +702,9 @@ fn a_barrier_becomes_a_fence_but_the_city_wall_stays_a_wall() {
             FenceKind::Fence,
             FenceKind::Wall,
             FenceKind::Wall,
-            FenceKind::Hedge
+            FenceKind::Hedge,
+            FenceKind::Railing,
+            FenceKind::Fence,
         ]
     );
     assert_eq!(map.walls.len(), 1);
@@ -975,6 +1014,41 @@ fn a_bridge_and_an_arch_outrank_the_underground_rule() {
     );
 }
 
+/// Ширина дорожки — по тегу `width` (зажатому, с отбраковкой пометок), без
+/// него — по виду и покрытию; мостик держит ширину класса (Тула, витрина 19:
+/// тропинка `width=1 surface=mud` была 3.5-метровым бульваром).
+#[test]
+fn a_path_takes_its_width_from_the_tag_or_its_kind() {
+    let (sw, se, ..) = corners(HALF);
+    let width = |pairs: &[(&str, &str)]| {
+        Overpass::new(CITY)
+            .way(pairs, vec![sw, se])
+            .parse()
+            .roads
+            .remove(0)
+            .width
+    };
+    let footway = ("highway", "footway");
+    assert_eq!(width(&[footway, ("width", "1"), ("surface", "mud")]), 1.0);
+    assert_eq!(width(&[footway, ("width", "2.55")]), 2.55);
+    assert_eq!(width(&[footway, ("width", "0.5")]), 1.0, "зажата до метра");
+    assert_eq!(width(&[footway, ("width", "0")]), 3.0, "пометка — по виду");
+    assert_eq!(width(&[footway, ("width", "40")]), 3.0, "габарит площади");
+    assert_eq!(width(&[footway]), 3.0);
+    assert_eq!(width(&[footway, ("footway", "sidewalk")]), 2.5);
+    assert_eq!(width(&[footway, ("surface", "ground")]), 1.5);
+    assert_eq!(width(&[("highway", "path")]), 2.0);
+    assert_eq!(width(&[("highway", "path"), ("surface", "dirt")]), 1.5);
+    assert_eq!(width(&[("highway", "pedestrian")]), 5.0);
+    assert_eq!(width(&[("highway", "steps")]), 2.5);
+    assert_eq!(width(&[("highway", "track")]), 3.0);
+    assert_eq!(
+        width(&[footway, ("width", "1"), ("bridge", "yes")]),
+        3.5,
+        "мостик — коридор навмеша, его ширина — класса"
+    );
+}
+
 /// Односторонность, кольцо и число полос — то, по чему рисуется разметка.
 #[test]
 fn oneway_roundabout_and_lanes_reach_the_road() {
@@ -1009,6 +1083,10 @@ fn oneway_roundabout_and_lanes_reach_the_road() {
     );
     assert!(road(&[("junction", "circular")]).roundabout);
 
+    assert!(plain.lane_markings, "без тега разметку решает число полос");
+    assert!(!road(&[("lane_markings", "no")]).lane_markings);
+    assert!(road(&[("lane_markings", "yes")]).lane_markings);
+
     let four = road(&[("lanes", "4")]);
     assert_eq!(four.lanes, Some(4));
     assert!((four.width - 14.2).abs() < 1e-4, "{}", four.width);
@@ -1035,6 +1113,25 @@ fn oneway_roundabout_and_lanes_reach_the_road() {
         "одно направление без второго — не сумма"
     );
     assert_eq!(road(&[("lanes", "0")]).lanes, Some(2));
+
+    // деление по потокам: назад — `lanes:backward`, иначе `lanes` без
+    // `lanes:forward`; у общей средней полосы и у односторонней его нет
+    let backward = |pairs: &[(&str, &str)]| tagged_lanes_backward(&tags(pairs));
+    assert_eq!(backward(&[("lanes", "5"), ("lanes:forward", "3")]), Some(2));
+    assert_eq!(backward(&[("lanes:backward", "1")]), Some(1));
+    assert_eq!(backward(&[("lanes", "5")]), None);
+    assert_eq!(
+        backward(&[
+            ("lanes", "5"),
+            ("lanes:forward", "2"),
+            ("lanes:both_ways", "1")
+        ]),
+        None
+    );
+    assert_eq!(
+        backward(&[("lanes", "3"), ("lanes:forward", "2"), ("oneway", "yes")]),
+        None
+    );
 }
 
 /// `turn:lanes` — по направлению потока: у односторонней `oneway=-1` тег
@@ -1168,6 +1265,96 @@ fn an_untagged_street_takes_its_sidewalks_from_the_blocks_around() {
     assert_eq!(sides[4], [false; 2], "без домов вокруг — без полосы");
 }
 
+/// Покрытие дорожки: `surface` решает сам, без него — вид дорожки, а голый
+/// `footway` — по окружению: в парке тропинка, во дворе асфальт. Улица поля
+/// не получает — его читают только дорожки.
+#[test]
+fn a_footway_is_paved_by_its_tag_its_kind_or_the_greenery_around() {
+    let path = |y: f32| vec![CENTER + Vec2::new(-80.0, y), CENTER + Vec2::new(80.0, y)];
+    let map = Overpass::new(CITY)
+        .area(
+            &[("leisure", "park")],
+            rect(
+                CENTER + Vec2::new(-100.0, -50.0),
+                CENTER + Vec2::new(100.0, 50.0),
+            ),
+        )
+        // в парке
+        .way(&[("highway", "footway")], path(0.0))
+        .way(
+            &[("highway", "footway"), ("surface", "paving_stones")],
+            path(10.0),
+        )
+        .way(
+            &[("highway", "footway"), ("footway", "sidewalk")],
+            path(20.0),
+        )
+        // вне парка
+        .way(&[("highway", "footway")], path(200.0))
+        .way(&[("highway", "path")], path(210.0))
+        .way(
+            &[("highway", "footway"), ("surface", "ground")],
+            path(220.0),
+        )
+        .way(&[("highway", "steps")], path(230.0))
+        .way(&[("highway", "residential")], path(300.0))
+        .parse();
+    let found: Vec<Option<Pavement>> = map.roads.iter().map(|road| road.pavement).collect();
+    use Pavement::{Paved, Unpaved};
+    assert_eq!(
+        found,
+        [
+            Some(Unpaved),
+            Some(Paved),
+            Some(Paved),
+            Some(Paved),
+            Some(Unpaved),
+            Some(Unpaved),
+            Some(Paved),
+            None,
+        ]
+    );
+    assert!(map.roads[1].is_paved_path());
+    assert!(!map.roads[7].is_paved_path(), "улица — не дорожка");
+}
+
+/// Дорожка по газону между двумя мощёными — звено мощёной сети, а не
+/// тропинка: лучи сквера на острове кольца от аллеи к лестницам площадки
+/// ложились песком, лестницы торчали на нём обрубками (Тула, витрина 04, L7).
+#[test]
+fn a_footway_on_a_lawn_between_paved_paths_is_paved() {
+    let at = |x: f32, y: f32| CENTER + Vec2::new(x, y);
+    let map = Overpass::new(CITY)
+        .area(
+            &[("landuse", "grass")],
+            rect(at(-100.0, -100.0), at(100.0, 100.0)),
+        )
+        // аллея по краю газона — мощёная тегом
+        .way(
+            &[("highway", "footway"), ("surface", "asphalt")],
+            vec![at(-80.0, -60.0), at(0.0, -60.0), at(80.0, -60.0)],
+        )
+        // лестница у площадки — мощёная родом
+        .way(&[("highway", "steps")], vec![at(0.0, -10.0), at(0.0, -5.0)])
+        // от вершины аллеи до лестницы
+        .way(
+            &[("highway", "footway")],
+            vec![at(0.0, -60.0), at(0.0, -10.0)],
+        )
+        // от аллеи в никуда
+        .way(
+            &[("highway", "footway")],
+            vec![at(80.0, -60.0), at(80.0, 20.0)],
+        )
+        .parse();
+    let found: Vec<Option<Pavement>> = map.roads.iter().map(|road| road.pavement).collect();
+    use Pavement::{Paved, Unpaved};
+    assert_eq!(
+        found,
+        [Some(Paved), Some(Paved), Some(Paved), Some(Unpaved)]
+    );
+}
+
 /// Улицы для прямых вызовов [`infer_sidewalks`]: жилая без тега (`Inferred`
 /// у `fixture::street`) и её вариант с другим классом или тегом.
 fn inferred_street(highway: Highway) -> RoadLine {
@@ -1219,6 +1406,215 @@ fn infer_sidewalks_asks_only_inferred_residential_streets() {
     assert_eq!(roads[0].sidewalks, [SidewalkSide::Tagged; 2]);
     assert_eq!(roads[1].sidewalks, [SidewalkSide::Inferred; 2]);
     assert_eq!(roads[2].sidewalks, [SidewalkSide::None; 2]);
+}
+
+/// Мощёная дорожка вдоль оси `y`, как `footway=sidewalk` рядом с улицей.
+fn paved_footway(y: f32, from: f32, to: f32) -> RoadLine {
+    RoadLine {
+        pavement: Some(Pavement::Paved),
+        ..crate::map::osm::fixture::footway(vec![Vec2::new(from, y), Vec2::new(to, y)])
+    }
+}
+
+/// Отдельная мощёная дорожка осью в двух метрах за полосой справа (газон до
+/// её края — два метра без её полуширины) снимает полосу справа; левая
+/// сторона, где дорожки нет, остаётся.
+#[test]
+fn a_footway_along_the_kerb_takes_the_inferred_sidewalk_of_its_side() {
+    let street = inferred_street(Highway::Primary);
+    let edge = street.width / 2.0 + sidewalk_band(street.width);
+    let mut roads = vec![street, paved_footway(-(edge + 2.0), 0.0, 200.0)];
+    let report = verges::measure_footways_beside_streets(&mut roads);
+    assert_eq!((report.asked, report.dropped), (2, 1));
+    assert_eq!(
+        roads[0].sidewalks,
+        [SidewalkSide::Inferred, SidewalkSide::None]
+    );
+}
+
+/// Не отдаётся: тег, дорожка поперёк, дорожка на треть длины, грунтовая
+/// тропинка, дорожка за домом (дальше [`verges::SEPARATE_REACH`] за полосой) и
+/// дорожка у самой кромки — газона меньше [`SEPARATE_LAWN`] (Тула, витрины 15
+/// и 21: снятая полоса оставляла между бордюром и дорожкой щель земли).
+#[test]
+fn a_sidewalk_stays_unless_a_paved_footway_runs_beside_it() {
+    let street = inferred_street(Highway::Residential);
+    let edge = street.width / 2.0 + sidewalk_band(street.width);
+    let check = |mut roads: Vec<RoadLine>, expected: [SidewalkSide; 2]| {
+        verges::measure_footways_beside_streets(&mut roads);
+        assert_eq!(roads[0].sidewalks, expected);
+    };
+    // у кромки: ближний край дорожки в метре от бордюра
+    let close = paved_footway(0.0, 0.0, 200.0);
+    let close_axis = street.width / 2.0 + 1.0 + close.width / 2.0;
+    check(
+        vec![street.clone(), paved_footway(close_axis, 0.0, 200.0)],
+        [SidewalkSide::Inferred; 2],
+    );
+    let check = |mut roads: Vec<RoadLine>, expected: [SidewalkSide; 2]| {
+        verges::measure_footways_beside_streets(&mut roads);
+        assert_eq!(roads[0].sidewalks, expected);
+    };
+    let inferred = [SidewalkSide::Inferred; 2];
+    // тег ставил человек
+    let tagged = RoadLine {
+        sidewalks: [SidewalkSide::Tagged; 2],
+        ..street.clone()
+    };
+    check(
+        vec![tagged, paved_footway(edge + 1.0, 0.0, 200.0)],
+        [SidewalkSide::Tagged; 2],
+    );
+    // тот же газон в два метра — настоящий, полоса уходит
+    let lawn_axis = street.width / 2.0 + 2.0 + close.width / 2.0;
+    check(
+        vec![street.clone(), paved_footway(lawn_axis, 0.0, 200.0)],
+        [SidewalkSide::None, SidewalkSide::Inferred],
+    );
+    // поперёк
+    let across = RoadLine {
+        pavement: Some(Pavement::Paved),
+        ..crate::map::osm::fixture::footway(vec![Vec2::new(100.0, 2.0), Vec2::new(100.0, 30.0)])
+    };
+    check(vec![street.clone(), across], inferred);
+    // треть длины
+    check(
+        vec![street.clone(), paved_footway(edge + 1.0, 0.0, 66.0)],
+        inferred,
+    );
+    // грунтовая
+    let trail = RoadLine {
+        pavement: Some(Pavement::Unpaved),
+        ..paved_footway(edge + 1.0, 0.0, 200.0)
+    };
+    check(vec![street.clone(), trail], inferred);
+    // за домом
+    check(
+        vec![
+            street.clone(),
+            paved_footway(edge + verges::SEPARATE_REACH + 2.0, 0.0, 200.0),
+        ],
+        inferred,
+    );
+}
+
+/// Сторона с дорожкой вдоль — без полосы по тегу, отданная ей или с полосой —
+/// получает обочину от кромки до оси дорожки; сторона без дорожки — нет.
+#[test]
+fn a_side_left_to_a_footway_gets_a_verge_up_to_it() {
+    let street = inferred_street(Highway::Residential);
+    let half = street.width / 2.0;
+    let axis = half + 2.0 + paved_footway(0.0, 0.0, 1.0).width / 2.0;
+    // слева дорожка за газоном в два метра, справа — ничего
+    let mut roads = vec![street.clone(), paved_footway(axis, 0.0, 200.0)];
+    verges::measure_footways_beside_streets(&mut roads);
+    assert_eq!(roads[0].sidewalks[0], SidewalkSide::None);
+    assert!(
+        (roads[0].verges[0] - (axis - half)).abs() < 0.01,
+        "{:?}",
+        roads[0].verges
+    );
+    assert_eq!(roads[0].verges[1], 0.0);
+    // по тегу `sidewalk=separate`: полосы нет, дорожка у самой кромки
+    let separate = RoadLine {
+        sidewalks: [SidewalkSide::None, SidewalkSide::Tagged],
+        ..street.clone()
+    };
+    let close = half + 0.5;
+    let mut roads = vec![separate, paved_footway(close, 0.0, 200.0)];
+    verges::measure_footways_beside_streets(&mut roads);
+    assert!(
+        (roads[0].verges[0] - 0.5).abs() < 0.01,
+        "{:?}",
+        roads[0].verges
+    );
+    // полоса осталась — обочина под ней, до оси дорожки
+    let mut roads = vec![street, paved_footway(half + 1.0, 0.0, 200.0)];
+    verges::measure_footways_beside_streets(&mut roads);
+    assert_eq!(roads[0].sidewalks[0], SidewalkSide::Inferred);
+    assert!(
+        (roads[0].verges[0] - 1.0).abs() < 0.01,
+        "{:?}",
+        roads[0].verges
+    );
+    assert_eq!(roads[0].verges[1], 0.0);
+}
+
+/// Дорожка, уходящая от улицы, ведёт обочину за собой: у каждой пробы —
+/// своя ширина (`RoadLine::verge_at`), а не одна медиана на всю сторону.
+#[test]
+fn a_verge_follows_a_footway_drifting_away() {
+    let street = inferred_street(Highway::Residential);
+    let half = street.width / 2.0;
+    let drifting = RoadLine {
+        pavement: Some(Pavement::Paved),
+        ..crate::map::osm::fixture::footway(vec![
+            Vec2::new(0.0, half + 3.0),
+            Vec2::new(200.0, half + 9.0),
+        ])
+    };
+    let mut roads = vec![street, drifting];
+    verges::measure_footways_beside_streets(&mut roads);
+    let road = &roads[0];
+    assert!(road.verges[0] > 0.0);
+    let (near, far) = (road.verge_at(0, 10.0), road.verge_at(0, 190.0));
+    assert!((near - 3.3).abs() < 0.2, "у начала {near}");
+    assert!((far - 8.7).abs() < 0.2, "у конца {far}");
+    assert_eq!(road.verge_at(1, 100.0), 0.0, "справа дорожки нет");
+}
+
+/// Дорожка в 13 м от кромки: у двусторонней улицы до неё мостится обочина
+/// (Тула, Фрунзе), у половины разделённой — нет: так далеко по её внутренней
+/// стороне лежит уже встречная половина.
+#[test]
+fn a_two_way_street_reaches_a_farther_footway_than_a_half() {
+    let street = inferred_street(Highway::Residential);
+    let half = street.width / 2.0;
+    let axis = half + 13.0;
+    let mut roads = vec![street.clone(), paved_footway(axis, 0.0, 200.0)];
+    verges::measure_footways_beside_streets(&mut roads);
+    assert!(
+        (roads[0].verges[0] - 13.0).abs() < 0.01,
+        "{:?}",
+        roads[0].verges
+    );
+    assert_eq!(
+        roads[0].sidewalks[0],
+        SidewalkSide::Inferred,
+        "полоса остаётся"
+    );
+    let one_way = RoadLine {
+        oneway: true,
+        ..street
+    };
+    let mut roads = vec![one_way, paved_footway(axis, 0.0, 200.0)];
+    verges::measure_footways_beside_streets(&mut roads);
+    assert_eq!(roads[0].verges, [0.0; 2]);
+}
+
+/// Шаг разбора целиком: `footway=sidewalk` вдоль улицы без тега доходит до
+/// стороны улицы, по тегам OSM, как в Туле.
+#[test]
+fn a_mapped_sidewalk_beside_an_untagged_street_replaces_its_band() {
+    let (sw, se, ..) = corners(HALF);
+    let offset = Vec2::new(0.0, 11.0);
+    let map = Overpass::new(CITY)
+        .way(&[("highway", "primary"), ("lanes", "4")], vec![sw, se])
+        .way(
+            &[("highway", "footway"), ("footway", "sidewalk")],
+            vec![sw + offset, se + offset],
+        )
+        .parse();
+    let street = map
+        .roads
+        .iter()
+        .find(|road| road.highway == Highway::Primary)
+        .unwrap();
+    // `sw → se` идёт на восток: дорожка севернее — слева
+    assert_eq!(
+        street.sidewalks,
+        [SidewalkSide::None, SidewalkSide::Inferred]
+    );
 }
 
 /// Съезды развязок (`*_link`) — дороги своего класса, а не мусор словаря.
@@ -2439,7 +2835,9 @@ fn a_steeply_skewed_house_and_a_large_house_are_squared() {
 #[test]
 fn a_house_on_the_sidewalk_is_pulled_back_into_the_block() {
     // residential 7.6 м: полоса с тротуаром и зазором — 3.8 + 1.67 + 2 от оси
-    let reach = RESIDENTIAL_HALF + sidewalk_band(2.0 * RESIDENTIAL_HALF) + SIDEWALK_CLEARANCE;
+    let reach = residential_half(ParseKnobs::DEFAULT)
+        + sidewalk_band(2.0 * residential_half(ParseKnobs::DEFAULT))
+        + SIDEWALK_CLEARANCE;
     let street = vec![
         CENTER - Vec2::new(300.0, 0.0),
         CENTER + Vec2::new(300.0, 0.0),
@@ -2530,7 +2928,9 @@ fn a_house_on_the_sidewalk_is_pulled_back_into_the_block() {
 /// соседнее здание, укорачивается, пока между ними не останется зазор.
 #[test]
 fn a_pull_is_capped_and_stops_short_of_what_stands_behind() {
-    let reach = RESIDENTIAL_HALF + sidewalk_band(2.0 * RESIDENTIAL_HALF) + SIDEWALK_CLEARANCE;
+    let reach = residential_half(ParseKnobs::DEFAULT)
+        + sidewalk_band(2.0 * residential_half(ParseKnobs::DEFAULT))
+        + SIDEWALK_CLEARANCE;
     let street = vec![
         CENTER - Vec2::new(300.0, 0.0),
         CENTER + Vec2::new(300.0, 0.0),
@@ -2605,7 +3005,8 @@ fn a_pull_is_capped_and_stops_short_of_what_stands_behind() {
 #[test]
 fn a_block_edge_is_pulled_under_the_asphalt() {
     // residential 7.6 м: край полотна с тротуаром — 3.8 + 1.67 от оси
-    let edge = RESIDENTIAL_HALF + sidewalk_band(2.0 * RESIDENTIAL_HALF);
+    let edge = residential_half(ParseKnobs::DEFAULT)
+        + sidewalk_band(2.0 * residential_half(ParseKnobs::DEFAULT));
     let street = vec![
         CENTER - Vec2::new(400.0, 0.0),
         CENTER + Vec2::new(400.0, 0.0),
@@ -2698,11 +3099,12 @@ fn the_parse_reads_the_mapped_edge_for_blocks_and_the_verge_for_houses() {
     };
     let bare = top(&map.landuse[0].outer, 0.0);
     assert!(
-        (bare + RESIDENTIAL_HALF - LANDUSE_OVERLAP).abs() < 0.02,
+        (bare + residential_half(ParseKnobs::DEFAULT) - LANDUSE_OVERLAP).abs() < 0.02,
         "без тротуара квартал тянется к голой кромке: {bare}"
     );
     // тротуар слева (с севера), квартал справа — край всё равно с тротуаром
-    let edge = RESIDENTIAL_HALF + sidewalk_band(2.0 * RESIDENTIAL_HALF);
+    let edge = residential_half(ParseKnobs::DEFAULT)
+        + sidewalk_band(2.0 * residential_half(ParseKnobs::DEFAULT));
     let one_sided = top(&map.landuse[1].outer, 500.0);
     assert!(
         (one_sided + edge - LANDUSE_OVERLAP).abs() < 0.02,
@@ -2718,6 +3120,54 @@ fn the_parse_reads_the_mapped_edge_for_blocks_and_the_verge_for_houses() {
         (gap - reach).abs() < 0.1,
         "дом отодвинут от обочины по классу, `sidewalk=no` не в счёт: {gap}"
     );
+}
+
+/// Ширина полосы — вход разбора ([`ParseKnobs`]), а не глобаль: тест называет
+/// её сам, без мьютекса. Разбор с полосой на 0.3 м шире выводит двухполосное
+/// сечение на 0.6 м шире, проезд — тоже шире на свою одну полосу, и карта
+/// помнит, с какими входами разобрана.
+#[test]
+fn a_wider_lane_widens_the_section() {
+    let scene = Overpass::new(CITY)
+        .way(
+            &[("highway", "residential")],
+            vec![CENTER - Vec2::X * HALF, CENTER + Vec2::X * HALF],
+        )
+        .way(
+            &[("highway", "service")],
+            vec![
+                CENTER + Vec2::new(-HALF, 40.0),
+                CENTER + Vec2::new(HALF, 40.0),
+            ],
+        );
+    let wider = ParseKnobs {
+        lane_width: ParseKnobs::DEFAULT.lane_width + 0.3,
+        ..ParseKnobs::DEFAULT
+    };
+    let by_default = scene.parse();
+    let widened = scene.parse_with(wider);
+
+    let street = |map: &MapData| {
+        map.roads
+            .iter()
+            .find(|road| road.highway == Highway::Residential)
+            .unwrap()
+            .width
+    };
+    let drive = |map: &MapData| {
+        map.roads
+            .iter()
+            .find(|road| road.highway == Highway::Service)
+            .unwrap()
+            .width
+    };
+    assert!((street(&by_default) - 2.0 * residential_half(ParseKnobs::DEFAULT)).abs() < 1e-4);
+    assert!((street(&by_default) - 7.6).abs() < 1e-4);
+    assert!((street(&widened) - 2.0 * residential_half(wider)).abs() < 1e-4);
+    assert!((street(&widened) - street(&by_default) - 0.6).abs() < 1e-4);
+    assert!((drive(&widened) - drive(&by_default) - 0.3).abs() < 1e-4);
+    assert_eq!(by_default.knobs, ParseKnobs::DEFAULT);
+    assert_eq!(widened.knobs, wider);
 }
 
 /// Порядок [`finish_parse`]: сечения (шаг 0) раньше дотягивания кварталов
@@ -2765,7 +3215,8 @@ fn blocks_are_pulled_to_the_width_the_sections_gave() {
 /// отступает от перекрёстка по биссектрисе.
 #[test]
 fn a_block_corner_at_a_crossing_is_pulled_under_both_streets() {
-    let edge = RESIDENTIAL_HALF + sidewalk_band(2.0 * RESIDENTIAL_HALF);
+    let edge = residential_half(ParseKnobs::DEFAULT)
+        + sidewalk_band(2.0 * residential_half(ParseKnobs::DEFAULT));
     for gap in [3.0, 7.0] {
         let corner = edge + gap;
         let map = Overpass::new(CITY)
@@ -2811,7 +3262,8 @@ fn a_block_corner_at_a_crossing_is_pulled_under_both_streets() {
 /// дырки — тот же край двора, и подходить к полотну обязан он.
 #[test]
 fn a_street_in_a_courtyard_shrinks_the_hole_to_its_asphalt() {
-    let edge = RESIDENTIAL_HALF + sidewalk_band(2.0 * RESIDENTIAL_HALF);
+    let edge = residential_half(ParseKnobs::DEFAULT)
+        + sidewalk_band(2.0 * residential_half(ParseKnobs::DEFAULT));
     let map = Overpass::new(CITY)
         .way(
             &[("highway", "residential"), ("sidewalk", "both")],
@@ -3055,7 +3507,7 @@ fn finishing_the_parse_reports_what_each_pass_did() {
         );
 
     let (mut map, pending, _) = read(&scene);
-    let report = finish_parse(&mut map, &pending);
+    let report = finish_parse(&mut map, &pending, ParseKnobs::default());
 
     assert_eq!(report.drowned, 1);
     assert_eq!(report.squared, 1);
@@ -3091,7 +3543,9 @@ fn finishing_the_parse_reports_what_each_pass_did() {
 #[test]
 fn pulling_houses_off_the_sidewalks_runs_on_its_own() {
     // residential 7.6 м: полоса с тротуаром и зазором — 3.8 + 1.67 + 2 от оси
-    let reach = RESIDENTIAL_HALF + sidewalk_band(2.0 * RESIDENTIAL_HALF) + SIDEWALK_CLEARANCE;
+    let reach = residential_half(ParseKnobs::DEFAULT)
+        + sidewalk_band(2.0 * residential_half(ParseKnobs::DEFAULT))
+        + SIDEWALK_CLEARANCE;
     let on_sidewalk = rect(
         CENTER + Vec2::new(-20.0, 4.7),
         CENTER + Vec2::new(-8.0, 14.7),
@@ -3106,7 +3560,7 @@ fn pulling_houses_off_the_sidewalks_runs_on_its_own() {
                 CENTER - Vec2::new(300.0, 0.0),
                 CENTER + Vec2::new(300.0, 0.0),
             ],
-            2.0 * RESIDENTIAL_HALF,
+            2.0 * residential_half(ParseKnobs::DEFAULT),
         )],
         buildings: vec![
             building(on_sidewalk.clone(), Vec::new()),
@@ -3146,7 +3600,8 @@ fn pulling_houses_off_the_sidewalks_runs_on_its_own() {
 #[test]
 fn pulling_the_blocks_to_the_roads_runs_on_its_own() {
     // residential 7.6 м: край полотна с тротуаром — 3.8 + 1.67 от оси
-    let edge = RESIDENTIAL_HALF + sidewalk_band(2.0 * RESIDENTIAL_HALF);
+    let edge = residential_half(ParseKnobs::DEFAULT)
+        + sidewalk_band(2.0 * residential_half(ParseKnobs::DEFAULT));
     let block = |ring: Vec<Vec2>| PolyArea {
         kind: AreaKind::Residential,
         ..building(ring, Vec::new())
@@ -3165,7 +3620,7 @@ fn pulling_the_blocks_to_the_roads_runs_on_its_own() {
                 CENTER - Vec2::new(400.0, 0.0),
                 CENTER + Vec2::new(400.0, 0.0),
             ],
-            2.0 * RESIDENTIAL_HALF,
+            2.0 * residential_half(ParseKnobs::DEFAULT),
         )],
         landuse: vec![block(near), block(far.clone())],
         ..MapData::default()
@@ -3216,7 +3671,7 @@ fn a_block_drawn_to_the_kerb_is_tucked_under_its_sidewalk_footway() {
                 CENTER - Vec2::new(400.0, 0.0),
                 CENTER + Vec2::new(400.0, 0.0),
             ],
-            2.0 * RESIDENTIAL_HALF,
+            2.0 * residential_half(ParseKnobs::DEFAULT),
         )
     };
     // край квартала — в 5 м от оси улицы: в четверти метра над тротуаром
@@ -3244,17 +3699,32 @@ fn a_block_drawn_to_the_kerb_is_tucked_under_its_sidewalk_footway() {
     // а не под полосу несуществующего тротуара
     let pulled = top(vec![carriageway.clone()]);
     assert!(
-        (pulled + RESIDENTIAL_HALF - LANDUSE_OVERLAP).abs() < 0.02,
+        (pulled + residential_half(ParseKnobs::DEFAULT) - LANDUSE_OVERLAP).abs() < 0.02,
         "край не у бордюра: {pulled}"
     );
-    let tucked = top(vec![carriageway, footway.clone()]);
+    let tucked = top(vec![carriageway.clone(), footway.clone()]);
+    // до оси дорожки: край прямой между вершинами, дорожка гнётся
     assert!(
-        (tucked - (-7.0 + 1.75 - LANDUSE_OVERLAP)).abs() < 0.02,
+        (tucked + 7.0).abs() < 0.02,
         "край не ушёл под тротуар: {tucked}"
     );
     assert!(
-        (top(vec![footway]) + 5.0).abs() < 0.01,
+        (top(vec![footway.clone()]) + 5.0).abs() < 0.01,
         "без улицы край тронут"
+    );
+    // угол квартала лежит под другой дорожкой — переходом к улице: он уходит
+    // под тротуар вместе с краем, а не остаётся клином двора (Тула, витрина 21)
+    let crossing = RoadLine {
+        points: vec![
+            CENTER + Vec2::new(40.0, -30.0),
+            CENTER + Vec2::new(40.0, 0.0),
+        ],
+        ..footway.clone()
+    };
+    let cornered = top(vec![carriageway, footway, crossing]);
+    assert!(
+        (cornered + 7.0).abs() < 0.02,
+        "угол под переходом не ушёл под тротуар: {cornered}"
     );
 }
 
@@ -3267,7 +3737,11 @@ fn a_street_side_lot_reaches_the_kerb_across_the_sidewalk() {
     let sidewalk = sidewalk_band(8.0);
     let top = |street_side: bool| {
         let lot = PolyArea {
-            kind: AreaKind::Parking,
+            kind: AreaKind::Parking(if street_side {
+                LotKind::Kerbside
+            } else {
+                LotKind::Yard
+            }),
             ..building(
                 rect(
                     CENTER + Vec2::new(-20.0, -4.0 - sidewalk - 2.5),
@@ -3285,7 +3759,6 @@ fn a_street_side_lot_reaches_the_kerb_across_the_sidewalk() {
                 8.0,
             )],
             parking: vec![lot],
-            street_side_lots: if street_side { vec![0] } else { Vec::new() },
             ..MapData::default()
         };
         pull_areas_to_roads(&mut map);
@@ -3306,7 +3779,7 @@ fn a_street_side_lot_reaches_the_kerb_across_the_sidewalk() {
 fn a_street_side_lot_leaves_a_cross_street_sidewalk() {
     let sidewalk = sidewalk_band(8.0);
     let lot = PolyArea {
-        kind: AreaKind::Parking,
+        kind: AreaKind::Parking(LotKind::Kerbside),
         ..building(
             rect(
                 CENTER + Vec2::new(-20.0, -4.0 - sidewalk - 2.5),
@@ -3334,7 +3807,6 @@ fn a_street_side_lot_leaves_a_cross_street_sidewalk() {
             ),
         ],
         parking: vec![lot],
-        street_side_lots: vec![0],
         ..MapData::default()
     };
     pull_areas_to_roads(&mut map);
@@ -3349,15 +3821,49 @@ fn a_street_side_lot_leaves_a_cross_street_sidewalk() {
     );
 }
 
+/// Большая ли стоянка, решает **замощённый** контур, а не нарисованный: у
+/// площадки в 7800 м² за три метра от улицы полоса до тротуара — тоже её
+/// асфальт, и вместе с ней она большая.
+#[test]
+fn a_lot_paved_past_the_threshold_is_a_big_lot() {
+    let edge = residential_half(ParseKnobs::DEFAULT)
+        + sidewalk_band(2.0 * residential_half(ParseKnobs::DEFAULT));
+    let lot = PolyArea {
+        kind: AreaKind::Parking(LotKind::Yard),
+        ..building(
+            rect(
+                CENTER + Vec2::new(-50.0, -edge - 3.0 - 78.0),
+                CENTER + Vec2::new(50.0, -edge - 3.0),
+            ),
+            Vec::new(),
+        )
+    };
+    assert!(!crate::map::parking::is_ground(&lot));
+    let mut map = MapData {
+        roads: vec![street(
+            vec![
+                CENTER - Vec2::new(400.0, 0.0),
+                CENTER + Vec2::new(400.0, 0.0),
+            ],
+            2.0 * residential_half(ParseKnobs::DEFAULT),
+        )],
+        parking: vec![lot],
+        ..MapData::default()
+    };
+    pull_areas_to_roads(&mut map);
+    assert!(crate::map::parking::is_ground(&map.parking[0]));
+}
+
 /// Тем же проходом дотягивается и стоянка — но по своему правилу: её край
 /// пересекает проезд ряда, и вершина, стоящая на его полотне, обязана уехать к
 /// улице вместе с соседями. По правилу квартала («лежишь под лентой — тянуть
 /// некуда») она осталась бы на месте, и вдоль улицы вышла бы пила.
 #[test]
 fn a_lot_reaches_the_road_across_its_own_aisle() {
-    let edge = RESIDENTIAL_HALF + sidewalk_band(2.0 * RESIDENTIAL_HALF);
+    let edge = residential_half(ParseKnobs::DEFAULT)
+        + sidewalk_band(2.0 * residential_half(ParseKnobs::DEFAULT));
     let lot = PolyArea {
-        kind: AreaKind::Parking,
+        kind: AreaKind::Parking(LotKind::Yard),
         ..building(
             rect(
                 CENTER + Vec2::new(-40.0, -40.0),
@@ -3420,7 +3926,7 @@ fn a_lot_reaches_the_road_across_its_own_aisle() {
 #[test]
 fn the_pocket_between_two_aisle_stubs_is_paved() {
     let lot = PolyArea {
-        kind: AreaKind::Parking,
+        kind: AreaKind::Parking(LotKind::Yard),
         ..building(
             rect(
                 CENTER + Vec2::new(-40.0, -60.0),
@@ -3475,7 +3981,7 @@ fn the_pocket_between_two_aisle_stubs_is_paved() {
 fn a_notch_in_the_lot_is_not_paved() {
     let base = CENTER + Vec2::new(0.0, -60.0);
     let lot = PolyArea {
-        kind: AreaKind::Parking,
+        kind: AreaKind::Parking(LotKind::Yard),
         ..building(
             vec![
                 base + Vec2::new(-40.0, 0.0),
@@ -3513,7 +4019,7 @@ fn a_notch_in_the_lot_is_not_paved() {
 #[test]
 fn a_lot_steps_back_from_the_houses_on_it() {
     let lot = PolyArea {
-        kind: AreaKind::Parking,
+        kind: AreaKind::Parking(LotKind::Yard),
         ..building(
             rect(
                 CENTER + Vec2::new(-40.0, -40.0),
@@ -3573,7 +4079,7 @@ fn a_lot_steps_back_from_the_houses_on_it() {
 fn a_fenced_lot_stays_behind_its_fence() {
     let top = CENTER.y - 12.0;
     let lot = PolyArea {
-        kind: AreaKind::Parking,
+        kind: AreaKind::Parking(LotKind::Yard),
         ..building(
             rect(
                 CENTER + Vec2::new(-40.0, -40.0),
@@ -3619,7 +4125,7 @@ fn a_fenced_lot_stays_behind_its_fence() {
 fn a_lot_does_not_step_over_a_fence_it_was_not_standing_on() {
     let fence_y = CENTER.y - 16.0;
     let lot = PolyArea {
-        kind: AreaKind::Parking,
+        kind: AreaKind::Parking(LotKind::Yard),
         ..building(
             rect(
                 CENTER + Vec2::new(-40.0, -40.0),
@@ -3666,7 +4172,7 @@ fn a_fence_pocket_at_a_lot_end_leaves_no_asphalt_sliver() {
     // настоящие метры карты, сдвинутые к центру сцены
     let at = |x: f32, y: f32| CENTER + Vec2::new(x - 5818.0, y - 3240.0);
     let lot = PolyArea {
-        kind: AreaKind::Parking,
+        kind: AreaKind::Parking(LotKind::Yard),
         ..building(
             vec![
                 at(5775.27, 3192.40),
@@ -3919,4 +4425,310 @@ fn the_closest_pair_of_two_segments_is_none_only_when_they_cross() {
     .expect("отрезки на одной прямой не пересекаются");
     assert!(near_a.distance(b) < 1e-3, "{near_a} вместо конца отрезка");
     assert!(near_c.distance(CENTER + Vec2::new(14.0, 0.0)) < 1e-3);
+}
+
+/// Сцена кармана: квартал, чей северо-западный угол срезан диагональю, и две
+/// дорожки по его краям — вдоль верхнего и вдоль левого, сходящиеся над
+/// срезанным углом. Катет среза — `cut` м; между диагональю и дорожками
+/// остаётся треугольник земли. `rough` — левая дорожка грунтовая.
+fn pocket_scene(cut: f32, rough: bool) -> MapData {
+    let at = |x: f32, y: f32| CENTER + Vec2::new(x, y);
+    let path = |points: Vec<Vec2>, pavement: Pavement| RoadLine {
+        pavement: Some(pavement),
+        ..crate::map::osm::fixture::footway(points)
+    };
+    let left = if rough {
+        Pavement::Unpaved
+    } else {
+        Pavement::Paved
+    };
+    // край квартала — под дорожками: полоса дорожки кроет его на метр
+    let block = PolyArea {
+        kind: AreaKind::Residential,
+        ..building(
+            vec![
+                at(-1.0, -1.0 - cut),
+                at(-1.0, -80.0),
+                at(80.0, -80.0),
+                at(80.0, 1.0),
+                at(cut - 1.0, 1.0),
+            ],
+            Vec::new(),
+        )
+    };
+    MapData {
+        roads: vec![
+            path(vec![at(-2.0, 2.0), at(100.0, 2.0)], Pavement::Paved),
+            path(vec![at(-2.0, 2.0), at(-2.0, -100.0)], left),
+        ],
+        landuse: vec![block],
+        ..MapData::default()
+    }
+}
+
+/// Засеян ли точкой `(x, y)` от центра хоть один карман.
+fn sown_at(map: &MapData, x: f32, y: f32) -> bool {
+    map.pockets
+        .iter()
+        .any(|area| crate::map::osm::model::point_in_polygon(CENTER + Vec2::new(x, y), &area.outer))
+}
+
+/// Треугольник земли между срезанным углом квартала и двумя мощёными
+/// дорожками — карман: он засевается травой двора того же вида, и край его
+/// заходит под дорожки. Тула, витрина 02: квартал 164045103 не доходит до
+/// дорожки десяти метров.
+#[test]
+fn a_ground_pocket_between_a_block_and_two_footways_is_sown_as_yard() {
+    let mut map = pocket_scene(16.0, false);
+    let sown = pockets::fill_ground_pockets(&mut map);
+    assert_eq!(sown, 1, "карманов засеяно: {sown}");
+    // карман — не квартал: обочина спрашивает двор только у настоящих
+    assert_eq!(map.landuse.len(), 1);
+    let pocket = &map.pockets[0];
+    assert_eq!(pocket.kind, AreaKind::Residential);
+    assert!(sown_at(&map, 4.0, -4.0), "середина клина осталась землёй");
+    // заведён под дорожку: край кармана заходит за край её полосы (0.25 м)
+    let top = pocket
+        .outer
+        .iter()
+        .map(|point| point.y - CENTER.y)
+        .fold(f32::NEG_INFINITY, f32::max);
+    assert!(top > 0.5, "край кармана не под дорожкой: {top}");
+}
+
+/// Карман без квартала рядом засевается тоже — по правилу газона обочины:
+/// у замапленного газона или сквера лугом (`Grass`), у чего-то другого (тут
+/// стоянка) травой двора. Раньше без квартала его засеять было нечем, и
+/// бежевый параллелограмм оставался между газонами обочин (Калуга 01).
+#[test]
+fn a_pocket_with_no_block_beside_is_meadow_by_a_lawn_and_yard_elsewhere() {
+    let scene_beside = |kind: AreaKind, cut: f32| {
+        let mut map = pocket_scene(cut, false);
+        let mut area = map.landuse.pop().expect("квартал сцены");
+        area.kind = kind;
+        match kind {
+            AreaKind::Park => map.parks.push(area),
+            AreaKind::Grass => map.grass.push(area),
+            _ => map.parking.push(area),
+        }
+        map
+    };
+    let sown_beside = |kind: AreaKind| {
+        let mut map = scene_beside(kind, 16.0);
+        assert_eq!(pockets::fill_ground_pockets(&mut map), 1, "{kind:?}");
+        assert!(
+            sown_at(&map, 4.0, -4.0),
+            "середина клина у {kind:?} — землёй"
+        );
+        map.pockets[0].kind
+    };
+    assert_eq!(sown_beside(AreaKind::Park), AreaKind::Grass, "у сквера");
+    assert_eq!(sown_beside(AreaKind::Grass), AreaKind::Grass, "у газона");
+    assert_eq!(
+        sown_beside(AreaKind::Parking(LotKind::Yard)),
+        AreaKind::Residential,
+        "у стоянки"
+    );
+    // щель в несколько м² без соседа — не земля, а зазор плитки: не засевается,
+    // а у газона та же щель — лугом
+    let lot = AreaKind::Parking(LotKind::Yard);
+    assert_eq!(
+        pockets::fill_ground_pockets(&mut scene_beside(lot, 4.0)),
+        0,
+        "щель у стоянки"
+    );
+    assert_eq!(
+        pockets::fill_ground_pockets(&mut scene_beside(AreaKind::Grass, 4.0)),
+        1,
+        "щель у газона"
+    );
+}
+
+/// Что должно остаться землёй, остаётся: карман у грунтовой тропы (пустырь с
+/// тропинками), большой карман (площадка сама по себе) и дырка в самом
+/// квартале, у которой нет дороги на краю.
+#[test]
+fn a_pocket_by_a_dirt_path_a_large_one_and_a_hole_in_the_block_stay_ground() {
+    let mut rough = pocket_scene(16.0, true);
+    assert_eq!(pockets::fill_ground_pockets(&mut rough), 0, "у тропы");
+
+    // катет 40 м — 800 м² земли
+    let mut large = pocket_scene(40.0, false);
+    assert_eq!(pockets::fill_ground_pockets(&mut large), 0, "большой");
+
+    let mut holed = pocket_scene(0.0, false);
+    holed.landuse[0].holes = vec![rect(
+        CENTER + Vec2::new(30.0, -40.0),
+        CENTER + Vec2::new(36.0, -34.0),
+    )];
+    assert_eq!(
+        pockets::fill_ground_pockets(&mut holed),
+        0,
+        "дырка квартала засеяна"
+    );
+}
+
+/// Карман ищется плитками, и тот, что лёг на шов двух плиток, засевается
+/// ровно один раз: серединой он принадлежит одной из них.
+#[test]
+fn a_pocket_on_a_tile_seam_is_sown_once() {
+    // сдвиг сцены так, чтобы клин лёг поперёк границы плиток в 250 м
+    let seam = (CENTER / 250.0).ceil() * 250.0;
+    let shift = seam - (CENTER + Vec2::new(4.0, -4.0));
+    let mut map = pocket_scene(16.0, false);
+    for road in &mut map.roads {
+        road.points.iter_mut().for_each(|point| *point += shift);
+    }
+    map.landuse[0]
+        .outer
+        .iter_mut()
+        .for_each(|point| *point += shift);
+    assert_eq!(pockets::fill_ground_pockets(&mut map), 1);
+}
+
+/// Край квартала в обочине — между кромкой стороны без тротуара
+/// (`sidewalk=separate`) и дорожкой за ней — уходит к тому, что ближе: к
+/// дорожке — под неё, к кромке — под асфальт. Раньше он стоял «под полотном»
+/// по краю с тротуаром другой стороны и оставался в обочине, а обочина лежит
+/// под кварталом — угол двора торчал из плитки тёмным штрихом (Тула, витрина
+/// 15, угол Ленина и Советской).
+#[test]
+fn a_block_edge_in_the_verge_of_a_bare_side_goes_to_the_nearer_of_its_rims() {
+    // улица на восток: тротуар слева (с севера), справа — дорожка за обочиной
+    let scene = |edge: f32, footway: f32| {
+        let mut road = street(
+            vec![
+                CENTER - Vec2::new(400.0, 0.0),
+                CENTER + Vec2::new(400.0, 0.0),
+            ],
+            2.0 * residential_half(ParseKnobs::DEFAULT),
+        );
+        road.sidewalks = [SidewalkSide::Tagged, SidewalkSide::None];
+        let path = RoadLine {
+            pavement: Some(Pavement::Paved),
+            ..crate::map::osm::fixture::footway(vec![
+                CENTER + Vec2::new(-400.0, -footway),
+                CENTER + Vec2::new(400.0, -footway),
+            ])
+        };
+        let mut map = MapData {
+            roads: vec![road, path],
+            landuse: vec![PolyArea {
+                kind: AreaKind::Residential,
+                ..building(
+                    rect(
+                        CENTER + Vec2::new(-40.0, -40.0),
+                        CENTER + Vec2::new(40.0, -edge),
+                    ),
+                    Vec::new(),
+                )
+            }],
+            ..MapData::default()
+        };
+        pull_areas_to_roads(&mut map);
+        map.landuse[0]
+            .outer
+            .iter()
+            .map(|vertex| vertex.y - CENTER.y)
+            .fold(f32::NEG_INFINITY, f32::max)
+    };
+    // в 5 м от оси: за кромкой (3.8), но в полосе по карте (3.8 + 1.67), в
+    // 0.75 м от полосы дорожки — под дорожку
+    let tucked = scene(5.0, 7.5);
+    assert!(
+        (tucked + 7.5).abs() < 0.02,
+        "край остался в обочине: {tucked}"
+    );
+    // в 4.5 м — к кромке ближе, чем к дорожке в 9 м: под асфальт
+    let pulled = scene(4.5, 9.0);
+    assert!(
+        (pulled + residential_half(ParseKnobs::DEFAULT) - LANDUSE_OVERLAP).abs() < 0.02,
+        "край не дотянут до кромки: {pulled}"
+    );
+}
+
+/// Щепка двора на плитке обочины вырезается **площадью**, что бы ни решили
+/// вершины: угол квартала, оставшийся у кромки, пока соседи ушли под дорожку,
+/// давал щепку на плитке (Тула, витрина 15, развилка дорожек у Ленина, 15).
+/// Край выреза — кромка обочины без полуметра, под лентой дорожки. Широкая
+/// полоса двора до бордюра — газон по данным — остаётся; квартал, обочины не
+/// задевший, остаётся теми же кольцами; у широкой обочины вырезается только
+/// плитка у бордюра, газон под двором — та же трава.
+#[test]
+fn a_sliver_of_block_on_the_verge_tiles_is_cut_back_under_the_footway() {
+    let half = residential_half(ParseKnobs::DEFAULT);
+    // квартал ниже улицы — клином с углом `tip` метров от оси
+    let wedge = |tip: f32| {
+        vec![
+            CENTER + Vec2::new(-20.0, -40.0),
+            CENTER + Vec2::new(20.0, -40.0),
+            CENTER + Vec2::new(20.0, -10.0),
+            CENTER + Vec2::new(0.0, -tip),
+            CENTER + Vec2::new(-20.0, -10.0),
+        ]
+    };
+    // улица на восток, обочина `verge` справа (с юга)
+    let scene = |verge: f32, ring: Vec<Vec2>| {
+        let mut road = street(
+            vec![
+                CENTER - Vec2::new(400.0, 0.0),
+                CENTER + Vec2::new(400.0, 0.0),
+            ],
+            2.0 * half,
+        );
+        road.verges = [0.0, verge];
+        let block = PolyArea {
+            kind: AreaKind::Residential,
+            ..building(ring, Vec::new())
+        };
+        let mut map = MapData {
+            roads: vec![road],
+            landuse: vec![block.clone()],
+            ..MapData::default()
+        };
+        let cut = verges::cut_verges_from_blocks(&mut map);
+        (cut, block, map.landuse)
+    };
+    let top = |blocks: &[PolyArea]| {
+        blocks
+            .iter()
+            .flat_map(|block| &block.outer)
+            .map(|vertex| vertex.y - CENTER.y)
+            .fold(f32::NEG_INFINITY, f32::max)
+    };
+
+    // угол в метре за кромкой, обочина в 3 м: клин полтора метра высотой —
+    // щепка, срезан до 0.5 м от края обочины
+    let (cut, _, blocks) = scene(3.0, wedge(half + 1.0));
+    assert_eq!(cut, 1);
+    assert_eq!(blocks.len(), 1, "квартал развалился: {blocks:?}");
+    let edge = -(half + 3.0 - LANDUSE_OVERLAP);
+    assert!(
+        (top(&blocks) - edge).abs() < 0.02,
+        "двор на плитке обочины: верх {} при крае выреза {edge}",
+        top(&blocks)
+    );
+
+    // квартал до кромки полосой в 40 м: два метра двора на плитке — газон,
+    // не щепка, и остаётся
+    let (cut, block, blocks) = scene(
+        3.0,
+        rect(
+            CENTER + Vec2::new(-20.0, -40.0),
+            CENTER + Vec2::new(20.0, -(half + 0.5)),
+        ),
+    );
+    assert_eq!(cut, 0);
+    assert_eq!(blocks[0].outer, block.outer);
+
+    // угол за обочиной: квартал не тронут, кольца те же
+    let (cut, block, blocks) = scene(3.0, wedge(half + 3.0));
+    assert_eq!(cut, 0);
+    assert_eq!(blocks[0].outer, block.outer);
+
+    // обочина в 8 м — газон под плиткой у бордюра (0.5 м): угол в метре за
+    // кромкой лежит на газоне и остаётся
+    let (cut, block, blocks) = scene(8.0, wedge(half + 1.0));
+    assert_eq!(cut, 0);
+    assert_eq!(blocks[0].outer, block.outer);
 }

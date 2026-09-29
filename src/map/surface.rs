@@ -32,6 +32,7 @@ use crate::loading::AppState;
 use crate::map::buildings::material::{RoofMaterial, RoofMaterialHandle};
 use crate::map::meshing::{ATTRIBUTE_RIBBON, MeshBuilder};
 use crate::map::roads::paint::{PaintMaterial, PaintParams, PaintPass, RoadPaintStyle};
+use crate::map::trees::{CrownMaterial, CrownMaterialHandle};
 use crate::map::water::{WATER_SHORE_COLOR, WATER_SHORE_WIDTH};
 use crate::prefs::retuned;
 
@@ -148,10 +149,13 @@ pub enum SurfaceKind {
     /// Дорожка, тропа.
     Alley,
     Sidewalk,
+    /// Грунтовая и гравийная проезжая часть: пятна утрамбованной земли,
+    /// крупное зерно, россыпь камешков и колея, как у асфальта.
+    Unpaved,
 }
 
 impl SurfaceKind {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Ground,
         Self::Yard,
         Self::Park,
@@ -162,6 +166,7 @@ impl SurfaceKind {
         Self::Street,
         Self::Alley,
         Self::Sidewalk,
+        Self::Unpaved,
     ];
 
     /// Фактура вида при силе `texture` и колее асфальта `wear`.
@@ -269,6 +274,21 @@ impl SurfaceKind {
                 mottle_scale: 40.0,
                 grain_amp: 0.035,
                 grain_scale: 1.5,
+                ..flat
+            },
+            // грунтовка: пятна втрое сильнее асфальтовых и мельче шагом
+            // (лужи, подсыпка), зерно крупнее, тёмная россыпь щебня и та же
+            // колея — по грунту ездят теми же колёсами
+            Self::Unpaved => SurfaceParams {
+                tint: Vec4::new(0.04, 0.02, -0.03, 0.0),
+                mottle_amp: 0.09,
+                mottle_scale: 14.0,
+                grain_amp: 0.07,
+                grain_scale: 0.9,
+                speckle_amp: 0.06,
+                speckle_scale: 0.8,
+                speckle_threshold: 0.7,
+                wear,
                 ..flat
             },
         };
@@ -406,6 +426,7 @@ enum LayerMaterial {
     Surface(Handle<SurfaceMaterial>),
     Roof(Handle<RoofMaterial>),
     Paint(Handle<PaintMaterial>),
+    Crown(Handle<CrownMaterial>),
 }
 
 /// Чем красить слой — **описанием, а не хэндлом**.
@@ -433,6 +454,11 @@ pub enum MaterialSpec {
     /// или маска и наложение колеи узлов. Меш — полосы
     /// `MeshBuilder::push_paint_strip` в сборщике с координатами поверхности.
     Paint(PaintPass),
+    /// Материал крон (`map::trees::canopy`) — для слитых крон дальних ступеней
+    /// зума. Меш обязан быть собран через [`MeshBuilder::with_crown_coords`];
+    /// яркость дерева запечена в его вершины, так что материал один на всё
+    /// приложение.
+    Crown,
 }
 
 /// Собранный слой карты: меш плюс всё, что нужно знать, чтобы положить его в
@@ -517,6 +543,7 @@ fn spawn_layer(
         LayerMaterial::Surface(handle) => layer.insert(MeshMaterial2d(handle)),
         LayerMaterial::Roof(handle) => layer.insert(MeshMaterial2d(handle)),
         LayerMaterial::Paint(handle) => layer.insert(MeshMaterial2d(handle)),
+        LayerMaterial::Crown(handle) => layer.insert(MeshMaterial2d(handle)),
     };
 }
 
@@ -531,6 +558,7 @@ pub struct LayerMaterials<'w> {
     flats: Res<'w, FlatMaterials>,
     surfaces: Res<'w, SurfaceMaterials>,
     roof: Res<'w, RoofMaterialHandle>,
+    crown: Res<'w, CrownMaterialHandle>,
 }
 
 impl LayerMaterials<'_> {
@@ -544,6 +572,7 @@ impl LayerMaterials<'_> {
             MaterialSpec::Paint(pass) => {
                 LayerMaterial::Paint(self.surfaces.paints[pass as usize].clone())
             }
+            MaterialSpec::Crown => LayerMaterial::Crown(self.crown.handle()),
         }
     }
 }
@@ -655,7 +684,7 @@ mod tests {
     fn only_carriageways_wear() {
         for kind in SurfaceKind::ALL {
             let worn = kind.params(1.0, 0.075).wear > 0.0;
-            let carriageway = matches!(kind, SurfaceKind::Street);
+            let carriageway = matches!(kind, SurfaceKind::Street | SurfaceKind::Unpaved);
             assert_eq!(worn, carriageway, "{kind:?}");
         }
     }

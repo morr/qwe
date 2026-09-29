@@ -46,9 +46,9 @@ use bevy::shader::ShaderRef;
 use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey};
 
 use super::network::RoadNetwork;
-use super::node_paint::{Pocket, STOP_WIDTH, StopLine, ZEBRA_LENGTH, Zebra};
+use super::node_paint::{Pocket, STOP_WIDTH, StopLine, Throat, ZEBRA_LENGTH, Zebra};
 use super::shape::lane_width;
-use super::tapers::{self, Tapers};
+use super::tapers::{self, Taper, Tapers};
 use super::turns::{JunctionWear, LaneArrow};
 use super::{is_carriageway, lane_count, smoothstep};
 use crate::map::along::{arclengths, place_on_path};
@@ -87,6 +87,10 @@ const DOUBLE_OFFSET: f32 = (0.15 + LINE_WIDTH) / 2.0;
 /// Одно правило и для осевой улицы, и для осевой, заведённой от узла слияния
 /// ([`Painter::paint_merge_axis`]).
 const DOUBLE_AXIS_LANES: u8 = 4;
+/// Допуск, м, с которым линия раскладки считается у края кармана (за
+/// раскладкой узкого продолжения) и по сторону горла съезда: линия на самой
+/// границе — ещё не в кармане и не в горле.
+const LINE_SLACK: f32 = 0.05;
 /// Цвет краски — белый с лёгкой желтизной старой разметки; прозрачность —
 /// ручка «Paint» ([`RoadPaintStyle::paint`]), не цвет.
 const PAINT_COLOR: Color = Color::srgb(0.95, 0.95, 0.93);
@@ -209,13 +213,15 @@ enum LineKind {
 }
 
 /// Что узлы сказали линиям одной дороги (`roads/node_paint.rs`): где они
-/// рвутся (`cut`) и какие узлы дорога проходит насквозь (`solid`). Одной
-/// дороге его выдаёт `node_paint::PaintBreaks::of` — по-другому пара не
+/// рвутся (`cut`), какие узлы дорога проходит насквозь (`solid`) и где на
+/// кольце горла съездов (`throats` — рвут только линии со стороны съезда).
+/// Одной дороге его выдаёт `node_paint::PaintBreaks::of` — по-другому набор не
 /// собирается.
 #[derive(Clone, Copy, Default)]
 pub struct LineBreaks<'a> {
     pub cut: &'a [Break],
     pub solid: &'a [Break],
+    pub throats: &'a [Throat],
 }
 
 impl LineKind {
@@ -432,7 +438,17 @@ fn kept_frame(body: LaneFrame, narrow_lanes: u8, kept: f32) -> LaneFrame {
 
 /// Раскладка у шва клина `wedge` в раме way — по его форме: суженный на одну
 /// сторону — [`kept_frame`], симметричный — [`narrow_frame`].
+/// Узел, выставленный по осевой соседа ([`WedgeEnd::origin`]), берёт у шва
+/// раскладку соседа целиком, какой бы формы ни был клин: сетка стоит на его
+/// линиях, и прижатая к кромке раскладка ([`kept_frame`]) со сдвинутым узлом
+/// оставляла бы по полполосы у обеих кромок.
 fn wedge_frame(body: LaneFrame, wedge: WedgeEnd, end: bool) -> LaneFrame {
+    if let Some(origin) = wedge.origin {
+        return LaneFrame {
+            origin,
+            ..lane_frame(wedge.lanes)
+        };
+    }
     match wedge.kept {
         Some(kept) => kept_frame(body, wedge.lanes, kept),
         None => narrow_frame(body, wedge.lanes, end, wedge.drift),
@@ -483,13 +499,69 @@ pub fn street_stations(network: &RoadNetwork, paths: &[impl AsRef<[Vec2]>]) -> V
 
 /// Что лежит у торца way: клин длиной `length` от сечения соседа в `lanes`
 /// полос; `drift` — куда плывут линии ([`wedge_drift`]); `kept` — кромка,
-/// которую клин не трогает (`Taper::kept`), `None` у симметричного.
+/// которую клин не трогает (`Taper::kept`), `None` у симметричного;
+/// `origin` — узел сетки у шва, выставленный по осевой соседа
+/// ([`seam_origin`]), `None` — по правилу формы клина.
 #[derive(Clone, Copy, Debug)]
 pub struct WedgeEnd {
     pub length: f32,
     pub lanes: u8,
     pub drift: Option<f32>,
     pub kept: Option<f32>,
+    pub origin: Option<f32>,
+}
+
+impl WedgeEnd {
+    /// Клин длиной `length` у торца `end` дороги `road`, начатый с сечения
+    /// `narrow` по клину `taper`.
+    pub fn new(
+        road: &RoadLine,
+        narrow: &RoadLine,
+        taper: Taper,
+        end: bool,
+        length: f32,
+        side: TrafficSide,
+    ) -> Self {
+        Self {
+            length,
+            lanes: lane_count(narrow),
+            drift: wedge_drift(road, side),
+            kept: taper.kept(),
+            origin: seam_origin(road, narrow, end, side),
+        }
+    }
+}
+
+/// Узел сетки у шва клина в раме way `road` (у торца `end`) такой, чтобы
+/// **осевая шла через шов без скачка**: у шва она стоит там же, где осевая
+/// узкого соседа `narrow`, и на длине клина плавно уходит на своё место.
+/// Иначе у двусторонней, где у соседей разное деление потоков — Ростов,
+/// Текучёва: `lanes=5, lanes:forward=3` к шести полосам, 3 + 2 → 3 + 3, —
+/// осевая прыгала на полполосы: у пяти она на границе потоков, у шести —
+/// посреди полотна. Сосед, нарисованный навстречу, видит осевую зеркально.
+/// `None` — осевой нет у одного из двух или сдвиг больше полосы: тогда
+/// раскладку у шва решает форма клина ([`wedge_frame`]).
+pub fn seam_origin(
+    road: &RoadLine,
+    narrow: &RoadLine,
+    end: bool,
+    side: TrafficSide,
+) -> Option<f32> {
+    let lanes = lane_count(road);
+    let own = axis_offset(road, lanes, side)?;
+    let theirs = axis_offset(narrow, lane_count(narrow), side)?;
+    let (&first, &last) = (road.points.first()?, road.points.last()?);
+    let seam = if end { last } else { first };
+    let (&from, &to) = (narrow.points.first()?, narrow.points.last()?);
+    // сосед идёт по ходу way, если в шов приходит его конец (у начала way)
+    // или из шва выходит его начало (у конца)
+    let enters = to.distance(seam) < from.distance(seam);
+    let target = if enters != end { theirs } else { -theirs };
+    // сдвиг — целое число полуполос; округление держит узел ровно на сетке,
+    // иначе хвост в 1e-7 добавлял линию за кромкой (`ceil` в `Painter::paint`)
+    let half = lane_width() / 2.0;
+    let shift = ((target - own) / half).round() * half;
+    (shift.abs() <= lane_width() + 1e-3).then(|| lane_frame(lanes).origin + shift)
 }
 
 /// Раскладка way половины у узла слияния (`roads/merges.rs`): в узле —
@@ -597,15 +669,16 @@ pub fn wedge_ends(
 ) -> [Option<WedgeEnd>; 2] {
     let ends = tapers.at(road);
     let lengths = tapers::fit(polyline_length(path), ends.map(|end| end.map(|t| t.length)));
-    let drift = wedge_drift(drawn[road], side);
     [0, 1].map(|end| {
         let taper = ends[end]?;
-        Some(WedgeEnd {
-            length: lengths[end]?,
-            lanes: lane_count(drawn[taper.narrow]),
-            drift,
-            kept: taper.kept(),
-        })
+        Some(WedgeEnd::new(
+            drawn[road],
+            drawn[taper.narrow],
+            taper,
+            end == 1,
+            lengths[end]?,
+            side,
+        ))
     })
 }
 
@@ -698,13 +771,16 @@ impl Painter {
         LineBreaks {
             cut: breaks,
             solid: through,
+            throats,
         }: LineBreaks,
         wedges: [Option<WedgeEnd>; 2],
         pockets: [Option<Pocket>; 2],
         ramp: Option<MergeRamp>,
         station: Station,
     ) {
-        if !is_carriageway(road) {
+        // `lane_markings=no` — ни осевой, ни границ полос; краску узла
+        // (зебры, стоп-линии) это не трогает. По грунту линий не бывает
+        if !is_carriageway(road) || !road.lane_markings || road.is_unpaved_street() {
             return;
         }
         let lanes = lane_count(road);
@@ -716,6 +792,7 @@ impl Painter {
         // изломах «до разрыва» нужны и линиям кармана, и прочим
         let mut all = breaks.to_vec();
         all.extend(pockets.iter().flatten().map(|pocket| pocket.gap));
+        all.extend(throats.iter().map(|throat| throat.gap));
         let (mut path, mut along, to_break) = break_profile(points, closed, &all, 0.5);
         if path.len() < 2 {
             return;
@@ -780,19 +857,50 @@ impl Painter {
                 .filter(|&end| {
                     pockets[end].is_some_and(|pocket| {
                         let narrow = lane_frame(pocket.lanes);
-                        offset < narrow.low + 0.05 || offset > narrow.high - 0.05
+                        offset < narrow.low + LINE_SLACK || offset > narrow.high - LINE_SLACK
                     })
                 })
                 .map(|end| 1 << end)
                 .sum()
         };
+        // и горла съездов: бит 2 — горла слева по ходу пути, бит 3 — справа;
+        // линия в горле — строго по его сторону оси
+        let throat_bit = |side: f32| if side > 0.0 { 1 << 2 } else { 1 << 3 };
+        let in_throat = |offset: f32| -> usize {
+            throats
+                .iter()
+                .filter(|throat| offset * throat.side > LINE_SLACK)
+                .map(|throat| throat_bit(throat.side))
+                .fold(0, |mask, bit| mask | bit)
+        };
         let every = (0..2)
             .filter(|&end| pockets[end].is_some())
             .map(|end| 1 << end)
-            .sum::<usize>();
-        let mut profiles: [Option<Vec<f32>>; 4] = Default::default();
+            .sum::<usize>()
+            | throats
+                .iter()
+                .map(|throat| throat_bit(throat.side))
+                .fold(0, |mask, bit| mask | bit);
+        let mut profiles: [Option<Vec<f32>>; 16] = Default::default();
         profiles[every] = Some(to_break);
+        let profile = |mask: usize| {
+            let mut chosen = breaks.to_vec();
+            chosen.extend(
+                (0..2)
+                    .filter(|&end| mask & (1 << end) != 0)
+                    .filter_map(|end| pockets[end].map(|pocket| pocket.gap)),
+            );
+            chosen.extend(
+                throats
+                    .iter()
+                    .filter(|throat| mask & throat_bit(throat.side) != 0)
+                    .map(|throat| throat.gap),
+            );
+            break_distances(&path, closed, &chosen)
+        };
 
+        // осевая — граница потоков тела, на сетке его раскладки
+        let axis_at = axis_offset(road, lanes, self.side);
         let lowest = frames
             .iter()
             .map(|frame| (frame.low - frame.origin) / lane_width())
@@ -803,7 +911,7 @@ impl Painter {
             .fold(f32::NEG_INFINITY, f32::max);
         for k in lowest.floor() as i32..=highest.ceil() as i32 {
             let step = k as f32 * lane_width();
-            let axis = !road.oneway && lanes.is_multiple_of(2) && (body.origin + step).abs() < 1e-3;
+            let axis = axis_at.is_some_and(|at| (body.origin + step - at).abs() < 1e-3);
             let kind = match (axis, lanes >= DOUBLE_AXIS_LANES) {
                 (true, true) => LineKind::Double,
                 (true, false) => LineKind::Axis,
@@ -824,16 +932,20 @@ impl Painter {
                 .zip(&offsets)
                 .map(|((&point, &miter), &offset)| point + miter * offset)
                 .collect();
-            let mask = in_pocket(body.origin + step);
-            let to_break = profiles[mask].get_or_insert_with(|| {
-                let mut chosen = breaks.to_vec();
-                chosen.extend(
-                    (0..2)
-                        .filter(|&end| mask & (1 << end) != 0)
-                        .filter_map(|end| pockets[end].map(|pocket| pocket.gap)),
-                );
-                break_distances(&path, closed, &chosen)
-            });
+            let mask = in_pocket(body.origin + step) | in_throat(body.origin + step);
+            // сплошная подхода — только к разрывам узлов и карманов: горло
+            // съезда линию кольца рвёт, но кольцо пунктирное и перед ним
+            let approach_mask = mask & 0b11;
+            for key in [mask, approach_mask] {
+                if profiles[key].is_none() {
+                    profiles[key] = Some(profile(key));
+                }
+            }
+            let (Some(to_break), Some(approach_break)) =
+                (&profiles[mask], &profiles[approach_mask])
+            else {
+                unreachable!("профили посчитаны выше");
+            };
             let stations: Vec<PaintStation> = (0..path.len())
                 .map(|index| PaintStation {
                     along: street_along[index],
@@ -859,8 +971,9 @@ impl Painter {
             // полос, на выезде из узла пунктир сразу
             let (line, stations, solid) = match kind {
                 LineKind::Lane => {
-                    let forward = flows_forward(road, body.origin + step, self.side);
-                    let spans = approach_spans(&along, to_break, forward);
+                    let forward =
+                        flows_forward(road, body.origin + step, axis_at.unwrap_or(0.0), self.side);
+                    let spans = approach_spans(&along, approach_break, forward);
                     split_at_spans(line, stations, &along, &spans)
                 }
                 // осевая обслуживает оба потока: сплошная по обе стороны
@@ -1314,13 +1427,39 @@ fn insert_at(path: &mut Vec<Vec2>, along: &mut Vec<f32>, to_break: &mut Vec<f32>
 
 /// Едут ли полосы у линии со сдвигом `offset` от оси (плюс — влево по ходу
 /// точек) по ходу точек дороги. Односторонняя — вся по ходу (`oneway=-1`
-/// развёрнут парсом); у двусторонней по ходу — полосы своей стороны движения.
-fn flows_forward(road: &RoadLine, offset: f32, side: TrafficSide) -> bool {
+/// развёрнут парсом); у двусторонней по ходу — полосы своей стороны от
+/// осевой `axis` ([`axis_offset`]).
+fn flows_forward(road: &RoadLine, offset: f32, axis: f32, side: TrafficSide) -> bool {
     road.oneway
         || match side {
-            TrafficSide::Right => offset < 0.0,
-            TrafficSide::Left => offset > 0.0,
+            TrafficSide::Right => offset < axis,
+            TrafficSide::Left => offset > axis,
         }
+}
+
+/// Где осевая двусторонней дороги с `lanes` полосами: сдвиг от оси way в
+/// раме раскладки ([`lane_frame`], плюс — влево по ходу точек) — граница
+/// между потоками. Против хода точек — [`RoadLine::lanes_backward`] полос, а
+/// без тега поровну; лишнюю полосу нечётной берёт поток по ходу точек. Так у
+/// `lanes=5` осевая встаёт на границу полос, а не посреди средней, и её
+/// не было вовсе: чётность решала, есть ли осевая (Ростов, витрина 03 —
+/// Текучёва в пять полос одними пунктирами). `None` — осевой нет:
+/// односторонняя или одна полоса на оба потока.
+pub fn axis_offset(road: &RoadLine, lanes: u8, side: TrafficSide) -> Option<f32> {
+    if road.oneway || lanes < 2 {
+        return None;
+    }
+    let backward = road
+        .lanes_backward
+        .filter(|&backward| backward > 0 && backward < lanes)
+        .unwrap_or(lanes / 2);
+    let forward = f32::from(lanes - backward) * lane_width();
+    let half = f32::from(lanes) * lane_width() / 2.0;
+    // по ходу точек едут справа при правостороннем
+    Some(match side {
+        TrafficSide::Right => forward - half,
+        TrafficSide::Left => half - forward,
+    })
 }
 
 /// Отрезки длин пути, где линия полос сплошная: [`APPROACH`] до входа в

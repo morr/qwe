@@ -8,6 +8,9 @@ use bevy::ui_widgets::{Activate, Button};
 
 use crate::camera::Viewport;
 use crate::city::City;
+use crate::grid::NavtileBase;
+use crate::map::RoadShape;
+use crate::map::osm::parse::ParseKnobs;
 use crate::map::osm::{JobState, MapLoadJob, OVERPASS_MIRRORS, start_load_thread};
 use crate::movement::{
     PathfindingRequest, PathfindingTask, SimPosition, UrgentPath, wanderers_dispatched_at_zoom,
@@ -175,7 +178,7 @@ impl Plugin for LoadingPlugin {
                 OnEnter(AppState::Loading),
                 (
                     spawn_loader_ui,
-                    (sync_navtile_size, sync_lane_width, start_job).chain(),
+                    (sync_navtile_size, start_job).chain(),
                     reset_warmup,
                     warn_leftover_world_entities,
                 ),
@@ -196,30 +199,37 @@ impl Plugin for LoadingPlugin {
     }
 }
 
-fn start_job(mut commands: Commands, navmesh: Res<ArcNavmesh>, city: Res<City>) {
+fn start_job(
+    mut commands: Commands,
+    navmesh: Res<ArcNavmesh>,
+    city: Res<City>,
+    navtile: Res<NavtileBase>,
+    shape: Option<Res<RoadShape>>,
+) {
     let job = MapLoadJob::default();
-    start_load_thread(job.clone(), navmesh.0.clone(), *city);
+    let knobs = parse_knobs(&navtile, shape.as_deref());
+    start_load_thread(job.clone(), navmesh.0.clone(), *city, knobs);
     commands.insert_resource(job);
 }
 
-/// Единственная точка записи атомика размера навтайла — перед стартом потока
-/// загрузки, когда ни заливка, ни генерация входов ещё не живы. Покрывает и
-/// первый запуск (настройки восстановлены при сборке `App`, до расписаний),
-/// и каждую перезагрузку мира.
-fn sync_navtile_size(base: Res<crate::grid::NavtileBase>) {
-    crate::grid::set_navtile_size(base.size());
+/// Входы разбора — ручками, какими они стоят сейчас: размер навтайла и ширина
+/// полосы. Читается сама ручка ширины, а не осевшая `RoadShapeOnMap`: первый
+/// вход в `Loading` идёт раньше `Startup`, где та засевается, а ручку
+/// настройки кладут ещё при сборке `App`; к перезагрузке по ширине обе уже
+/// совпадают. Без ресурса (сцена без `MapPlugin`) — ширина по умолчанию.
+fn parse_knobs(navtile: &NavtileBase, shape: Option<&RoadShape>) -> ParseKnobs {
+    ParseKnobs {
+        navtile: navtile.size(),
+        lane_width: shape.map_or(ParseKnobs::default().lane_width, RoadShape::lane_width),
+    }
 }
 
-/// Ширина полосы — в глобаль, из которой её читают разбор и краска
-/// (`map::roads::shape`), по той же причине и в тот же момент, что размер
-/// навтайла. Читается сама ручка, а не осевшая `RoadShapeOnMap`: первый вход
-/// в `Loading` идёт раньше `Startup`, где та засевается, а ручку настройки
-/// кладут ещё при сборке `App`; к перезагрузке по ширине обе уже совпадают.
-/// Без ресурса (сцена без `MapPlugin`) глобаль остаётся дефолтом.
-fn sync_lane_width(shape: Option<Res<crate::map::RoadShape>>) {
-    if let Some(shape) = shape {
-        crate::map::set_lane_width(shape.lane_width());
-    }
+/// Единственная точка записи атомика размера навтайла — перед стартом потока
+/// загрузки, когда заливка ещё не жива (генерация входов получает размер
+/// аргументом, [`parse_knobs`]). Покрывает и первый запуск (настройки
+/// восстановлены при сборке `App`, до расписаний), и каждую перезагрузку мира.
+fn sync_navtile_size(base: Res<NavtileBase>) {
+    crate::grid::set_navtile_size(base.size());
 }
 
 fn spawn_loader_ui(mut commands: Commands) {
@@ -288,10 +298,13 @@ fn on_retry(
     job: Res<MapLoadJob>,
     navmesh: Res<ArcNavmesh>,
     city: Res<City>,
+    navtile: Res<NavtileBase>,
+    shape: Option<Res<RoadShape>>,
     mut buttons: Query<&mut Visibility, With<RetryButton>>,
 ) {
     *job.0.lock().unwrap() = JobState::Connecting { attempt: 1 };
-    start_load_thread(job.clone(), navmesh.0.clone(), *city);
+    let knobs = parse_knobs(&navtile, shape.as_deref());
+    start_load_thread(job.clone(), navmesh.0.clone(), *city, knobs);
     for mut visibility in &mut buttons {
         *visibility = Visibility::Hidden;
     }

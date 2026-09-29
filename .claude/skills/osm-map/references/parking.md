@@ -225,8 +225,9 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
   - **A big lot shows the road through it** — the author's later call, on ТРЦ «Макси»:
     hiding the roads is right for a yard and wrong for eight hectares, which came out as
     a field of hatching with no landmark in it, while 2GIS and Yandex draw the boulevard.
-    - **Big** is `parking::is_ground`, the outline at `GROUND_MIN_AREA` 8000 m² or more
-      (six lots in Tula). **Through** is `parking::is_through`: a `Street` that is not a
+    - **Big** is `LotKind::Ground` (`parking::is_ground` reads it), the **paved** outline
+      at `GROUND_MIN_AREA` 8000 m² or more — decided by the parse
+      (`parse/lots.rs::settled_kind`, `references/parse.md`); ten lots in Tula (v15). **Through** is `parking::is_through`: a `Street` that is not a
       `parking_aisle`, a bridge or a passage, and is **one-way, a roundabout or a
       carriageway**. That is the one thing tags say about it: the mall's boulevard is
       `highway=service` + `oneway=yes` with three mini-roundabouts, while the plain
@@ -289,11 +290,19 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
       lot's first try) two double lines lay on each other a few centimetres off — the
       author's report. The «Макси» boulevard is two `service` drives, which is why a
       `service` one-way is `pairable`. **At a gore** (`Gores::reach`, shared with the
-      paint layer) the ends of the midline lying inside the hatching are trimmed — the
-      median exists while the gap is under 3 m, the gore from 0.6 m up, so they overlap
-      — and the line is then carried on along its heading up to `MEDIAN_REACH` 8 m,
-      stopping `MEDIAN_GORE_GAP` 0.6 m short of the hatching: flush, its end fused with
-      the island's outline.
+      paint layer) the midline is **cut by the hatching** — the median exists while the
+      gap is under 3 m, the gore from 0.6 m up, so they overlap: probed every
+      `MEDIAN_PROBE_STEP` 0.5 m, it falls into runs outside the hatching (shorter than
+      `MEDIAN_RUN_MIN` 2 m dropped), and each run is carried on along its heading up to
+      `MEDIAN_REACH` 8 m, stopping `MEDIAN_GORE_GAP` 0.6 m short of the hatching: flush,
+      its end fused with the island's outline. Only the ends used to be trimmed, and a
+      long gore where the approach meets the ring almost parallel had the midline run
+      right through it, neither end inside — a double solid inside the hatching, a white
+      «ladder» on the «Макси» boulevard (scout C2). A midline that meets no hatching is
+      returned as it was, without the probes as vertices. `reach` therefore returns
+      `Vec<Vec<Vec2>>`: the lot keeps each run with the pair's `Median::width`, the paint layer
+      paints each run and hands its outermost two tips to the merges. Pinned by
+      `gores::tests`.
     - **Gores — the splitter islands at a roundabout** (`roads/gores.rs`, the author's
       ask: «как у Яндекса»). An approach in OSM is two one-way ways, entry and exit,
       fanning out to two nodes of the ring; the wedge between them and the ring is flat
@@ -312,8 +321,13 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
         ring vertex, taken for `ARM_REACH` 40 m from the ring — an avenue's carriageway
         runs for hundreds of metres and would hatch the whole median with its opposite.
       - **The wedge** is what a closing by `GORE_CLOSING` 6 m of the rings' and arms'
-        asphalt pulls shut, minus the asphalt of every street nearby and the island of a
-        small ring. The same closing fills the fillet on the **outer** side of an arm,
+        asphalt pulls shut, minus the asphalt of every street nearby and the **island of
+        the ring** — the axis polygon of a ring mapped as one closed way, and of every
+        ring chained from arcs (`rings::Ring::path`, handed in as `islands`). The second
+        used to be missing: no arc of a chained ring is a closed way, and where the arc
+        between an entry's and an exit's ring nodes is steep, the fan's chord runs past
+        the ring's inner edge — a hatched lens lay on the lane by the island (Орёл 01: the
+        chord 6 m off the arc against a 3.8 m half width). The same closing fills the fillet on the **outer** side of an arm,
         and arms meet a ring at a shallow angle, so that fillet is not small: what tells
         them apart is the neighbours, not the area — a gore **touches two arms**
         (`ARM_TOUCH`), a fillet one. `GORE_MIN_AREA` 12 m² on top.
@@ -332,6 +346,11 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
         and joined with them (`simplify_shape`, NonZero), so a wedge found both ways is
         one gore. Tula's other rings do not change: at 17 the arms run edge to edge
         into the node and the closing already had their fan; 04 east has no common node.
+        **The legs of a Y-approach count as an entry and an exit** (`Rings::leg_flow`,
+        **Roundabouts** in `roads.md`): `GoreRoad::new` makes such a two-way way one-way
+        and turns its path along its flow, so the fan between the two legs is found the
+        same way — Рязань 05, east and south-west
+        (`roads/tests.rs::a_y_approach_gets_one_island_between_its_legs`).
       - **The subtraction is one wedge's business.** The closing has already broken the
         city into separate shapes, and asphalt from the other end of town touches none of
         them, so the difference runs per closed shape against the clip contours whose
@@ -352,6 +371,13 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
         a hatching of the same weight and the island read as a smudge (04, 17); Yandex
         reads an island by its outline first.
         One shape for both (tried first) showed ground wherever the opening had cut.
+        **A sliver is not hatched**: an opened shape that nowhere reaches
+        `GORE_MIN_WIDTH` 1.5 m (`is_wide` — shrunk by half of it, nothing is left) keeps
+        its asphalt but gets no outline and no stripes, and the double solid runs
+        through the gap instead. In a metre-wide sliver the outline and the stripes
+        merged into a ladder with the double line inside it — Tula, a 25 × 1 m sliver on
+        the «Макси» boulevard's approach to the mini-ring (6641, 3156). The gores of
+        04 and 17 are several metres wide and do not change.
       - **The paint is the road paint layer's** (roads plan, stage 6): `Gores::islands`
         hands each hatched shape and the direction across its stripes to
         `Painter::paint_island`, which lays the outline as a closed paint strip
@@ -372,7 +398,29 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
         teardrop on its axis — from 1 m past the ring's kerb, `0.6 × radius` long (6–20 m),
         `0.06 × radius` half wide at the base (0.6–1.5 m) — hatched like a gore; the
         approach is widened around it by an asphalt flare so each lane keeps its width,
-        and its paint and ruts break over the island's length. Tula has none (its big
+        and its paint and ruts break over the island's length. Island and flare are one
+        construction, `gores::sweep`: a band of variable half-width along the approach's
+        drawn path — the union (`NonZero`) of a trapezoid per piece between stations
+        (evenly spaced **plus every path vertex inside the span**, so a piece never
+        straddles a bend) and a 16-sided disc at each vertex. Two sides offset along each
+        link's normal, which it replaced, jumped `reach · sin(bend)` at a bend and crossed
+        themselves on its inner side — a metre-deep saw on the kerb at Рязань's rings
+        (gallery sample 05), whose approaches run along the ring before they join it. The
+        flare also **grows** from the carriageway's half-width at the ring's kerb to the
+        full `half` at the island's base (a smoothstep), instead of starting full-width with
+        a square end whose corners stuck out of the ring kerb as steps.
+        `a_sweep_round_a_sharp_bend_covers_the_band_without_teeth` pins the sweep.
+        **An island stands only on an approach that leaves the ring**: the drawn
+        axis at the island's base and the chord from its base to its tip must both lie
+        within 35° of the ray from the ring's centre (`SPLITTER_MIN_OUTWARD`), or no
+        island and no flare. An approach mapped into its node *along* the ring put the
+        teardrop on the ring's carriageway and bent it into a hook (Рязань 05, three of
+        its four); most such approaches are straightened first by `rings::reshape`
+        (**Roundabouts** in `roads.md`), and what still runs along the ring gets none —
+        `roads/tests.rs::a_splitter_island_stays_off_the_ring_when_the_approach_comes_in_along_it`.
+        **A leg of a Y-approach gets none** — its island is the fan between it and the
+        other leg (above); a splitter on each leg was what bent two hooks into every
+        approach of Рязань 05. Tula has none (its big
         rings are fed by one-way fans, its two-way approaches are service drives);
         `roads/tests.rs::a_two_way_approach_gets_a_splitter_island` holds it.
     - `Z_PARKING_LINES` lies **above** both layers, so a stall bar is never covered.
@@ -486,6 +534,32 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
     nose per side, toward the street if `paved` finds it in front. The bar test follows
     (`push_markings`): it asks for `EDGE_MARGIN` beyond the bar **along the row** and for
     as much margin in depth as the stall itself has, or a pocket would get no paint.
+  - **Parallel rows** (`parallel_rows`) — a **kerbside lot** (`LotKind::Kerbside`) whose
+    thickness leaves less than `STALL_DEPTH_MIN` for a stall across it. That is most OSM
+    lay-bys: in Tula 42 of the 56 `parking=street_side` outlines are 1.6–5.1 m thick after
+    paving, and 30 of them had not one stall — the strip was a dark ribbon by the kerb
+    (the rest got the invented layout's cross stalls only where a bend widened the
+    outline). The cars stand **along the kerb**: a stall is `PARALLEL_LENGTH` 6 m down the
+    sides of the outline (the car row's own pitch — `cars::CAR_PITCH` is defined as this
+    constant, so the two cannot drift apart — room for a Gazelle), longest side
+    first, `PARALLEL_WIDTH` 2.2 m across in the corner test, centred on the strip —
+    across the strip by `strip_width`, the short side of the rectangle with the
+    outline's area and perimeter, since `2 · area / perimeter` reads a 4 × 60 m strip as
+    3.75 m and would push the row a quarter metre off centre. The opposite side's row
+    lands on the first and `Placed` drops it. `Stall::along` is the car's heading, along
+    the kerb, and it follows the **traffic of its side** (`TrafficSide`, now an argument
+    of `ParkingLayout::new`): the street is behind the strip edge where `paved` finds its
+    carriageway, and with right-hand traffic it is on the car's left. `Stall::parallel`
+    marks such a stall and `push_markings` skips it — the bars along its sides would lie
+    along the kerb and read as a lane edge. A **yard** strip that thin stays empty
+    (`a_strip_thinner_than_a_stall_gets_no_stalls`); only the lot OSM calls a lay-by is
+    read as one. Measured on v15 caches, stalls in kerbside lots / kerbside lots with
+    any stall / cars: Tula 359 → 518 / 24 → 47 of 56 / +92; Berlin 2376 → 6508 / 260 →
+    1307 of 3275 / +2222; Kaluga 579 → 744 / 36 → 60 of 63 / +75; Ryazan 678 → 906 /
+    36 → 54 of 59 / +112. The parking paint shrank a little (Tula 70 772 → 70 440
+    vertices): the cross stalls the invented layout used to put in those strips went.
+    Stalls of other lots moved by a handful (Berlin −4, Ryazan −7, Kaluga +1): a
+    neighbour paved over the same asphalt now meets the parallel row in `Placed`.
   - **Overlapping lots do not share stalls.** Two lots paved to one drive both hold the
     gap between them, and both layouts striped it — cars of two lots parked across each
     other (the mall's north-west lot and the two pockets along its drive). Lots are laid
@@ -626,7 +700,13 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
     The side order of a two-way street (`[-1, 1]`) does **not** depend on the driving side,
     because it decides the RNG stream: the traffic side turns a row, it never moves one
     (`the_traffic_side_turns_the_row_without_moving_it`).
-  - **Not cached, and that is measured, not assumed**: on Tula the `breaks` row
+  - **Cached per placement now, and that too is measured** — `cars::CarPlacement` keeps
+    the placed `Vec<Car>` (with the junction count) keyed on `(occupancy, RoadShape)`,
+    reset on world entry by `forget_parked_cars`; a zoom-bucket crossing is `mesh_parked`
+    alone. The skeleton under the placement was what made the old verdict below wrong:
+    `Drawn::nodal` alone is 25 ms on Tula and 49 on Kaluga, paid on every crossing of a car
+    threshold (and even past `CAR_MAX_ZOOM`, where the layer is hidden). The verdict that
+    stood here, kept for the numbers: **not cached, and that is measured, not assumed**: on Tula the `breaks` row
     (`pockets::row_breaks` since the bench took the game's breaks; the 1 ms was measured
     on the bare `marking_breaks`, see the rows below) is 1 ms against the 7 ms the layer costs at its far detail step and the 18 at
     its near one, and the layer itself is well under the building layer's 79 — a resource
@@ -711,9 +791,10 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
     .or_else(retuned::<SunOnMap>)`,
     one registration by the rule under **When a layer rebuilds** in `SKILL.md`; the settled
     `RoadShapeOnMap` is in there because the row is walked along the **same street axis**
-    the ribbon is drawn from and breaks at the same taper clearings: `rebuild_cars` builds
+    the ribbon is drawn from and breaks at the same taper clearings: the placement
+    (`park_all`, cached in `CarPlacement` until the occupancy or the shape moves) builds
     `roads::Drawn::nodal(map, shape)` — the prepared roads without the stitches and merges
-    the row has no use for — and `mesh_cars` takes its `Axis::Nodal` axes, its `tapers()`
+    the row has no use for — and takes its `Axis::Nodal` axes, its `tapers()`
     (`pockets::row_breaks`) and its `lots()`; the ribbon reads the very same values off its
     own `Drawn` (`references/roads.md`, **The drawn network**), so
     the curve tolerance and the taper move the cars with the asphalt
@@ -752,7 +833,14 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
     so examples read top-to-bottom as self-contained units. The auto-shot logic is shared in
     `examples/demos/gallery_shot.rs`: it holds the frame counts and the render-to-texture
     capture (a window surface shoots black on a locked screen), both debugged facts
-    (commits 21853a3, 4cbff7ff), and fixes apply there to all galleries at once.
+    (commits 21853a3, 4cbff7ff), and fixes apply there to all galleries at once. Every
+    gallery's `<VAR>` also reads `<VAR>_SCALE` (`ROADS_SHOT_SCALE=2`, `CAR_GALLERY_SHOT_SCALE=2`):
+    the image is the window's logical size × the scale, with the same `scale_factor` on
+    the `ImageRenderTarget`, so the frame holds what the window does, only sharper. That
+    scale once shot black, and not because of the locked screen: `Screenshot::image(handle)`
+    names the target with scale 1, `prepare_screenshots` swaps the output attachment keyed
+    by the **whole** target (scale included), and the camera drew past the swap. The shot
+    is therefore spawned as `Screenshot(RenderTarget::Image(<the camera's target>))`.
   - **The ninth cell is the stand** (`car_gallery/stand.rs`) — five body types × three
     detail steps, and it answers the other question: not *where* a row stands but *what*
     stands in it. Neither is readable off a street — the type falls out of the LCG and a van
@@ -773,12 +861,13 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
     once each — `breaks` 1 ms (measured on the bare `marking_breaks`, before the bench
     took the game's `pockets::row_breaks` with its tapers and crossings), `districts` 3 ms
     (the index) and `parking` 4 ms (`park_cars`) — so a rebuild was 26 ms at the near step
-    and 11 at the far one. **The bench now calls the door instead**: `measure_cars` times
-    `Drawn::nodal` as its `drawn` row (the nodes, axes, tapers and lot index the adapter
-    rebuilds every time), then runs `mesh_cars` once per detail step over a real
-    `ParkingLayout` — so a `cars *` row is a whole rebuild, breaks, districts, kerb row, lots
-    and mesh, and the `breaks` row is the first report's `breaks_took`. Re-measure before
-    quoting any number below against the new rows.
+    and 11 at the far one. **The bench follows the game's split**: `measure_cars` times
+    `Drawn::nodal` as its `drawn` row, the placement once as its `placement` row (breaks,
+    districts, kerb row, lots — `breaks` is its share on a row of its own), then
+    `mesh_parked` once per detail step over that placement — so a `cars *` row is exactly
+    what a zoom crossing costs, and a world load or an occupancy edit costs
+    `drawn` + `placement` + one `cars *`. Re-measure before quoting any number below
+    against the new rows.
     **The district multiplier paid for itself and then some**, measured before and after on
     one machine: 21 929 → 14 669 cars (−33 %), and the row went **45.7 → 36.1 ms** — the
     3 ms index and the one millisecond the queries added to `parking` against 8 ms of mesh
@@ -796,6 +885,29 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
     `references/buildings.md`) and above
     the rail layer's deepest bucket (673 k, 23 ms) — still a
     layer built once per rebuild that costs nothing per frame.
+    - **The bodies are built by threads** (`cars::mesh_bodies`, L10): the cars are cut into
+      one chunk per core (`available_parallelism`, no fewer than `BODY_CHUNK_MIN` 1024 cars
+      a chunk), each chunk lays its shadows and its bodies into two builders of its own,
+      and `MeshBuilder::concat` glues them back **in the old order** — all the chunks'
+      shadows, then all the chunks' bodies, indices shifted — so the mesh is the
+      single-thread one byte for byte (`cars/tests.rs::the_threaded_mesh_is_the_sequential_one`,
+      and a vertex/index hash of the layer on Tula, Kaluga and Berlin at all three steps).
+      The glue is threaded too: done in one thread it cost as much as the chunks
+      themselves (copying 50 MB and first-touching fresh pages, not arithmetic). The chunks
+      go through the map's one fan-out, `map/parallel.rs::in_parallel` (one chunk runs on
+      the calling thread with no spawn); the glue splits its slots by hand, since it writes
+      into disjoint `&mut` slices, which `in_parallel` does not hand out. The threads
+      are `std::thread::scope` rather than `ComputeTaskPool`, which the game gives a third
+      of the cores (`main.rs` hands half to A*): a crossing holds the frame anyway. Two
+      single-thread savings came with it — the body paints (body, roof, mirror in linear
+      space) are computed once per palette slot (`body::Paint`), not three `powf`-heavy
+      conversions per car, and the contours are arrays instead of a `Vec` per car.
+      Measured with `measure_cars` (`dev`, 10 cores, a `cars *` row is one zoom crossing;
+      three interleaved rounds of five runs, median of the round medians, on a machine
+      loaded by other builds — load average 15–50): Tula 26 952 cars Full 33.3 → 6.2 ms,
+      Silhouette 12.2 → 2.5, Block 6.5 → 1.4; Kaluga 23 250 cars Full 27.6 → 5.4,
+      Silhouette 11.1 → 2.2, Block 5.6 → 1.3; Berlin 34 563 cars Full 44.3 → 8.1,
+      Silhouette 15.5 → 3.7, Block 8.8 → 1.7. Vertices unchanged.
     - **The body outline goes through `MeshBuilder::push_convex`, not `push_polygon`**, and
       that is most of those milliseconds: `push_polygon` calls `earcutr`, which on a
       12-vertex contour costs several times the laying-out itself and runs twice per car
@@ -820,6 +932,44 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
     (`lot_seed`, its first point) exactly like a street. That curve is built from
     constants, not from `CarStyle::occupancy`: the slider is about the ragged kerb row, and the half-empty
     lot is a different observation.
+  - **Yard rows** (`cars/yard.rs`, `park_yards`, called by `mesh_cars` between the kerb
+    row and the lots) — the cars along `highway=service` drives, which `parkable` keeps
+    out of the kerb row and OSM never maps. Without them a courtyard of nine-storey slabs
+    was an empty grey loop on a lawn (scout C3) — the one thing that told the render from
+    an aerial photo. Generated, deterministic, seeded from the drive's first point like a
+    street:
+    - **which drives** (`is_yard_drive`): `Highway::Service`, not a `parking_aisle` (the lot
+      has its stalls), not a bridge, an arch or a ring, and at least `MIN_DRIVE_LENGTH`
+      20 m — a shorter one is a driveway to an entrance or a garage;
+    - **one side**, the right of the points: a 4 m drive with cars on both sides is not
+      passable, and which side does not matter as long as it is the same every build;
+    - **half on the lawn**: no kerb, so the body stands with `ON_ASPHALT` 0.6 m of its
+      width on the asphalt edge — offset `half + width/2 − 0.6` — and faces along the way;
+    - **only among flats**: the share is the district's storeys (`Districts::storeys_at`)
+      ramped from 0 at `LOW_STOREYS` 2 to 1 at `HIGH_STOREYS` 5, × `YARD_SHARE` 0.8 ×
+      `CarStyle::occupancy`; nothing where no house stands within 120 m. A private-house
+      quarter parks behind its fences, not along the lane;
+    - **every body probed** (`Blocked::fits` — centre and four corners inflated by
+      `CLEARANCE` 0.4 m): not inside a building, a lot, water or a pitch, not within the
+      drawn half-width (+ sidewalk band) of any other road. A yard drive runs 2–4 m from a
+      facade and along footpaths, and without the probe the row lay in the houses. Drives
+      meeting this one end-to-end (`RoadNodes::roads_at` on its ends, `service` only) are
+      not "other": OSM splits one drive into several ways, and the continuation's ribbon
+      would otherwise wipe the row out for a car length each side of the seam;
+    - breaks at junctions exactly as the kerb row does (`RowBreaks::of`, the same clear
+      test); the probe index (`Blocked`, a 40 m `Grid` of areas and road links) is built
+      once per car rebuild;
+    - **the occupancy roll comes before the probe**: the probe is the dearest step, and a
+      slot that stays empty — every slot of a private-sector lane, where the share is
+      zero — does not need it. Probing first cost the rebuild 3–6× more.
+    Tula (`map_meshing`, release): 20 532 → 26 838 cars, 1354k → 1771k vertices on the
+    near step, the whole rebuild 47 → 68 ms on the near step and 26 → 41 ms on the far
+    one (a rebuild runs on a zoom-bucket crossing or a style change, never per frame).
+    Pinned by
+    `a_yard_drive_among_towers_gets_a_row_on_its_right`, `a_yard_row_never_stands_in_a_house`,
+    `a_yard_row_keeps_off_a_footway_beside_it`, `no_yard_row_in_the_private_sector_or_on_a_lot`.
+    The roads gallery draws the car layer on request (`ROADS_CARS=1`,
+    `map::mesh_map_cars`) — that is how the yards are checked by eye.
   - **How densely a place parks at all is decided by the district** (`cars/district.rs`,
     `Districts`), and it multiplies **both** shares — the kerb row's `CarStyle::occupancy`
     and the lot's `lot_occupancy`. Until it existed the layer knew only the width of the
@@ -850,10 +1000,10 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
       nine-storey block in a quarter the cars treat as private sector.
     - **The index is a grid** of building centroids, `CELL` = `REACH`, each registered in
       every cell its radius touches, so a query reads one cell — the wagons' `Fan`
-      construction. Built **per rebuild**, not cached per world load, for the junction
-      breaks' reason: it is milliseconds on 7.6 k buildings against a layer that is
-      percentages of the building one (3 ms on Tula when `measure_cars` still printed it as
-      its own `districts` row; it now sits inside each `cars *` rebuild row).
+      construction. Built **per placement** (`park_all`), i.e. once per world load and per
+      occupancy or road-shape edit, not per zoom crossing — it is not kept after the
+      placement: milliseconds on 7.6 k buildings (3 ms on Tula when `measure_cars` still
+      printed it as its own `districts` row; it now sits inside the `placement` row).
     - **Along a street the reading is refreshed every `DISTRICT_STEP` 48 m**, not per place:
       a query per each of 22 k places would cost more than the whole layer, and a quarter
       does not change from car to car. Forty-eight metres is a couple of private plots or

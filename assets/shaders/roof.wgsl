@@ -42,6 +42,8 @@
 struct RoofParams {
     light: vec2<f32>,
     intensity: f32,
+    // 1 — оборудование кровли видно, 0 — схлопнуто в вершинном шейдере
+    clutter: f32,
 }
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: RoofParams;
@@ -119,6 +121,14 @@ fn vertex(vertex: Vertex) -> VertexOutput {
         vec4<f32>(vertex.position, 1.0),
     );
     out.position = mesh_functions::mesh2d_position_world_to_clip(world_position);
+    // Оборудование кровли несёт отрицательный слот материала
+    // (`meshing::MeshBuilder::set_clutter`). На дальних ступенях зума все его
+    // вершины уходят в одну точку за дальней плоскостью: треугольник вырожден
+    // и отсечён, фрагментов нет. Меш слоя при этом тот же — ни пересборки на
+    // пороге, ни второго меша, и painter's порядок домов не тронут.
+    if (vertex.roof.z < -0.5 && params.clutter < 0.5) {
+        out.position = vec4<f32>(0.0, 0.0, 2.0, 1.0);
+    }
     out.world_position = world_position.xy;
     out.color = vertex.color;
     out.roof = vertex.roof;

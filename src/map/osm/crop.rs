@@ -28,7 +28,9 @@
 
 use bevy::platform::collections::HashMap;
 
+use super::model::RoadClass;
 use super::overpass::{Element, GeoBounds, LatLon, Member, OverpassResponse};
+use super::parse::road_class;
 
 /// Теги границы, которые переживают резку: имя страны читает подпись
 /// витрины, `driving_side` — разбор.
@@ -165,9 +167,12 @@ impl<'a> Cropper<'a> {
                 kept.push(piece);
             }
         }
+        let joining = joining_roads(self, &kept_roads);
+        let along = footways_along(self, &kept_roads, &joining);
         kept.extend(
-            joining_roads(self, &kept_roads)
+            joining
                 .into_iter()
+                .chain(along)
                 .map(|index| self.elements[index].clone()),
         );
         OverpassResponse { elements: kept }
@@ -301,6 +306,97 @@ fn crop_relation(element: &Element, members: &[Member], window: GeoRect) -> Opti
             members: Some(cropped),
             ..element.clone()
         })
+}
+
+/// Дорожка ли это — то, что разбор читает как `RoadClass::Alley`. Спрашивает
+/// словарь разбора (`parse/tags.rs::road_class`), а не свой список: значение,
+/// добавленное туда, обрезка оставляет само.
+fn is_path(element: &Element) -> bool {
+    element.tags.get("highway").is_some_and(|highway| {
+        road_class(highway).is_some_and(|(_, class, _)| class == RoadClass::Alley)
+    })
+}
+/// Насколько далеко от оси оставленной улицы дорожка за окном ещё нужна, м:
+/// полуширина широкой улицы, полоса тротуара и дальняя обочина
+/// (`parse.rs::VERGE_REACH_TWO_WAY` 16 м) с запасом.
+const FOOTWAY_REACH: f64 = 32.0;
+
+/// Дорожки за окном вдоль оставленных улиц — не из `kept_roads` и не из
+/// `joining` (индексы по возрастанию).
+///
+/// Оставленная улица цела и тянется за окно на сотни метров, а разбор решает
+/// её тротуар и обочину по пробам **вдоль всей** улицы
+/// (`parse/verges.rs::measure_footways_beside_streets`: дорожка у 60 % проб). Без
+/// дорожек за окном доля не набиралась, и у Красноармейского в Туле
+/// (витрина 02) обочины не было вовсе — между бордюром и дорожкой лежал
+/// карман голой земли, которого в игре нет: витрина рисовала не то, что игра.
+fn footways_along(cropper: &Cropper, kept_roads: &[usize], joining: &[usize]) -> Vec<usize> {
+    let lat_metres = crate::settings::METERS_PER_DEG_LAT;
+    // звенья улиц (не дорожек) в окне и рамка каждого с запасом
+    let mut links: Vec<(Point, Point, GeoRect)> = Vec::new();
+    for &index in kept_roads {
+        let element = &cropper.elements[index];
+        let Some(geometry) = road_geometry(element).filter(|_| !is_path(element)) else {
+            continue;
+        };
+        let line = points(geometry);
+        for link in line.windows(2) {
+            let lon_metres = lat_metres * link[0].1.to_radians().cos();
+            let [lon, lat] = [FOOTWAY_REACH / lon_metres, FOOTWAY_REACH / lat_metres];
+            let frame = GeoRect {
+                west: link[0].0.min(link[1].0) - lon,
+                south: link[0].1.min(link[1].1) - lat,
+                east: link[0].0.max(link[1].0) + lon,
+                north: link[0].1.max(link[1].1) + lat,
+            };
+            links.push((link[0], link[1], frame));
+        }
+    }
+    if links.is_empty() {
+        return Vec::new();
+    }
+    let near = |at: Point, (a, b, frame): &(Point, Point, GeoRect)| {
+        if !frame.contains(at) {
+            return false;
+        }
+        // в метрах около звена
+        let lon_metres = lat_metres * a.1.to_radians().cos();
+        let metres = |p: Point| ((p.0 - a.0) * lon_metres, (p.1 - a.1) * lat_metres);
+        let (px, py) = metres(at);
+        let (bx, by) = metres(*b);
+        let length = bx * bx + by * by;
+        let t = if length > 0.0 {
+            ((px * bx + py * by) / length).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let (dx, dy) = (px - bx * t, py - by * t);
+        dx * dx + dy * dy <= FOOTWAY_REACH * FOOTWAY_REACH
+    };
+    cropper
+        .elements
+        .iter()
+        .enumerate()
+        .filter(|(index, element)| {
+            element.kind == "way"
+                && is_path(element)
+                && kept_roads.binary_search(index).is_err()
+                && joining.binary_search(index).is_err()
+        })
+        .filter(|(index, element)| {
+            let Some(frame) = &cropper.frames[*index] else {
+                return false;
+            };
+            let Some(geometry) = element.geometry.as_deref() else {
+                return false;
+            };
+            links
+                .iter()
+                .filter(|link| link.2.overlaps(frame))
+                .any(|link| geometry.iter().any(|at| near(point(at), link)))
+        })
+        .map(|(index, _)| index)
+        .collect()
 }
 
 /// Дороги за окном, делящие узел с дорогой в окне.
@@ -538,6 +634,21 @@ mod tests {
         let crossing = way(1, &[("highway", "residential")], &[(-1.0, 0.5), (2.0, 0.5)]);
         let far = way(2, &[("highway", "residential")], &[(3.0, 3.0), (4.0, 4.0)]);
         assert_eq!(ids(&crop(vec![crossing, far])), [1]);
+    }
+
+    /// Дорожка за окном вдоль оставленной улицы остаётся — по ней разбор
+    /// решает обочину улицы; дорожка дальше [`FOOTWAY_REACH`] — нет.
+    #[test]
+    fn a_footway_along_a_kept_street_is_kept_outside_the_window() {
+        let street = way(1, &[("highway", "primary")], &[(-1.0, 0.5), (5.0, 0.5)]);
+        // десять метров от оси — около 0.00009°
+        let along = way(
+            2,
+            &[("highway", "footway")],
+            &[(3.0, 0.50009), (4.0, 0.50009)],
+        );
+        let far = way(3, &[("highway", "footway")], &[(3.0, 0.6), (4.0, 0.6)]);
+        assert_eq!(ids(&crop(vec![street, along, far])), [1, 2]);
     }
 
     #[test]

@@ -55,12 +55,31 @@ const NO_RIBBON: [f32; 4] = [0.0; 4];
 pub const ATTRIBUTE_ROOF: MeshVertexAttribute =
     MeshVertexAttribute::new("Roof", 1_704_552_913, VertexFormat::Float32x4);
 
+/// Координата вершины внутри своей кроны единичного радиуса — для шейдера крон
+/// (`map::trees::canopy`), когда кроны слиты в один меш (дальние ступени зума,
+/// `trees::CrownDetail::Merged`). У кроны-сущности эта координата и есть позиция
+/// вершины в её собственном меше; в слитом меше позиция уже мировая, и
+/// освещению «шара» нужна координата отдельно.
+///
+/// Есть только у мешей, собранных через [`MeshBuilder::with_crown_coords`].
+/// Идентификатор — «высокий случайный», как и у [`ATTRIBUTE_RIBBON`].
+pub const ATTRIBUTE_CROWN: MeshVertexAttribute =
+    MeshVertexAttribute::new("Crown", 1_391_207_551, VertexFormat::Float32x2);
+
 /// Вершина без фактуры — кайма, оборудование кровли. Нулевой код материала
 /// гасит фактуру, и нулевые первые два числа тогда ни на что не влияют. Ни
 /// стена, ни фронтон сюда больше не входят: у обоих код из [`WallKind`].
 ///
 /// [`WallKind`]: crate::map::buildings::material::WallKind
 const NO_ROOF: [f32; 4] = [0.0; 4];
+
+/// Оборудование кровли: фактуры нет, как у [`NO_ROOF`] (фрагмент читает слот
+/// материала через `max(…, 0)`, и минус там — тот же ноль), а **знак** слота —
+/// метка для вершинного шейдера: на дальних ступенях зума он схлопывает такие
+/// треугольники в точку (`RoofParams::clutter`). Так оборудование снимается с
+/// карты без пересборки слоя зданий и без второго меша — и остаётся в том же
+/// painter's порядке, что и дома.
+const CLUTTER: [f32; 4] = [0.0, 0.0, -1.0, 0.0];
 
 /// Шаг упаковки в слоте материала: код лежит в остатке от деления на него, а
 /// частное — это **число этажей** стены (у кровли и у каймы ноль).
@@ -489,7 +508,7 @@ enum FanCoords {
     },
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct MeshBuilder {
     positions: Vec<[f32; 3]>,
     colors: Vec<[f32; 4]>,
@@ -513,6 +532,9 @@ pub struct MeshBuilder {
     /// Чем заполняется [`ATTRIBUTE_ROOF`] у геометрии, которая ляжет дальше
     /// ([`Self::set_roof`] / [`Self::set_wall`]); нули — без фактуры.
     frame: Frame,
+    /// `Some` — меш собирается для слитых крон и несёт [`ATTRIBUTE_CROWN`] на
+    /// каждой вершине.
+    crown: Option<Vec<[f32; 2]>>,
 }
 
 impl MeshBuilder {
@@ -532,6 +554,18 @@ impl MeshBuilder {
     pub fn with_roof_coords() -> Self {
         Self {
             roof: Some(Vec::new()),
+            ..Self::default()
+        }
+    }
+
+    /// Сборщик с координатами кроны ([`ATTRIBUTE_CROWN`]). Геометрия,
+    /// положенная в него напрямую, считается нарисованной в пространстве
+    /// кроны единичного радиуса — её координата кроны равна позиции: так
+    /// строится шаблон дальней кроны. Слитый меш набирается из шаблонов
+    /// через [`Self::push_crown`].
+    pub fn with_crown_coords() -> Self {
+        Self {
+            crown: Some(Vec::new()),
             ..Self::default()
         }
     }
@@ -591,6 +625,12 @@ impl MeshBuilder {
         self.frame = Frame::Same(roof.map_or(NO_ROOF, Roof::encode));
     }
 
+    /// Геометрия после этого вызова — оборудование кровли ([`CLUTTER`]): без
+    /// фактуры, и дальние ступени зума прячут её в шейдере.
+    pub fn set_clutter(&mut self) {
+        self.frame = Frame::Same(CLUTTER);
+    }
+
     /// Грань со своими ячейками (стена, гаражная лента), которой принадлежит
     /// геометрия после этого вызова: в отличие от кровли, рамка тут считается
     /// **у каждой вершины** по её месту в грани. `None` — рама вырождена,
@@ -612,6 +652,12 @@ impl MeshBuilder {
         self.ribbon.as_deref()
     }
 
+    /// Координаты кроны — тест проверяет по ним, что легло в атрибут.
+    #[cfg(test)]
+    pub fn crown_coords_for_test(&self) -> Option<&[[f32; 2]]> {
+        self.crown.as_deref()
+    }
+
     /// Рамки кровли — тест проверяет по ним, что легло в атрибут.
     #[cfg(test)]
     pub fn roof_coords_for_test(&self) -> Option<&[[f32; 4]]> {
@@ -626,6 +672,9 @@ impl MeshBuilder {
         }
         if let Some(frames) = &mut self.roof {
             frames.push(self.frame.at(position));
+        }
+        if let Some(local) = &mut self.crown {
+            local.push(position.to_array());
         }
     }
 
@@ -764,8 +813,74 @@ impl MeshBuilder {
                     .map(|point| frame.at(Vec2::new(point[0], point[1]))),
             );
         }
+        if let Some(local) = &mut self.crown {
+            // координата кроны — место в образце, до сдвига и масштаба
+            local.extend(template.positions.iter().map(|point| [point[0], point[1]]));
+        }
         self.indices
             .extend(template.indices.iter().map(|index| base + index));
+    }
+
+    /// Шаблон кроны единичного радиуса, приложенный к стволу `at` с радиусом
+    /// `radius`, со слотом яркости `brightness`, **запечённым в цвет вершин**:
+    /// у кроны-сущности этот множитель лежит в юниформе материала, а у слитого
+    /// меша материал один на все кроны. Шейдер умножает цвет вершины на
+    /// `brightness` первым же действием, и цвет по треугольнику интерполируется
+    /// линейно, так что запекание даёт тот же пиксель.
+    ///
+    /// Координата кроны ([`ATTRIBUTE_CROWN`]) берётся из образца, если он её
+    /// несёт, иначе — его позиция: образец нарисован в пространстве кроны.
+    pub fn push_crown(&mut self, template: &MeshBuilder, at: Vec2, radius: f32, brightness: f32) {
+        let base = self.positions.len() as u32;
+        self.positions.extend(
+            template
+                .positions
+                .iter()
+                .map(|point| [point[0] * radius + at.x, point[1] * radius + at.y, point[2]]),
+        );
+        self.colors.extend(
+            template
+                .colors
+                .iter()
+                .map(|&[r, g, b, a]| [r * brightness, g * brightness, b * brightness, a]),
+        );
+        if let Some(coords) = &mut self.ribbon {
+            coords.extend(std::iter::repeat_n(NO_RIBBON, template.positions.len()));
+        }
+        if let Some(frames) = &mut self.roof {
+            frames.extend(std::iter::repeat_n(NO_ROOF, template.positions.len()));
+        }
+        if let Some(local) = &mut self.crown {
+            match &template.crown {
+                Some(source) => local.extend_from_slice(source),
+                None => local.extend(template.positions.iter().map(|point| [point[0], point[1]])),
+            }
+        }
+        self.indices
+            .extend(template.indices.iter().map(|index| base + index));
+    }
+
+    /// Сколько индексов уже накоплено — отметка, от которой
+    /// [`Self::area_since`] считает площадь.
+    pub fn index_count(&self) -> usize {
+        self.indices.len()
+    }
+
+    /// Сумма площадей треугольников, положенных после отметки `first_index`
+    /// ([`Self::index_count`]). Перекрытия считаются дважды — это площадь
+    /// нарисованного, а не покрытого.
+    pub fn area_since(&self, first_index: usize) -> f32 {
+        let point = |index: u32| {
+            let [x, y, _] = self.positions[index as usize];
+            Vec2::new(x, y)
+        };
+        self.indices[first_index..]
+            .chunks_exact(3)
+            .map(|triangle| {
+                let (a, b, c) = (point(triangle[0]), point(triangle[1]), point(triangle[2]));
+                (b - a).perp_dot(c - a).abs() / 2.0
+            })
+            .sum()
     }
 
     /// Полилиния как цепочка квадов; каждый конец сегмента продлён на
@@ -1553,7 +1668,7 @@ impl MeshBuilder {
         let width = if outside {
             width
         } else {
-            width.min(RIM_THICKNESS_SHARE * area.abs() / perimeter(&path))
+            width.min(RIM_THICKNESS_SHARE * area.abs() / ring_perimeter(&path))
         };
         if width < MIN_RIM_WIDTH {
             return None;
@@ -1696,9 +1811,9 @@ impl MeshBuilder {
     /// дороги, целый дом на краю вырезки, квад земли во всю карту, — иначе
     /// ложится в окно соседа. Игре она не нужна: у неё карта одна.
     pub fn clip_to_rect(&mut self, min: Vec2, max: Vec2) {
-        /// Вершина со всем, что на ней едет: позиция (с z), цвет и две
-        /// необязательные четвёрки фактуры.
-        type Vertex = ([f32; 3], [f32; 4], [f32; 4], [f32; 4]);
+        /// Вершина со всем, что на ней едет: позиция (с z), цвет, две
+        /// необязательные четвёрки фактуры и необязательная координата кроны.
+        type Vertex = ([f32; 3], [f32; 4], [f32; 4], [f32; 4], [f32; 2]);
         fn mix<const N: usize>(a: [f32; N], b: [f32; N], t: f32) -> [f32; N] {
             std::array::from_fn(|i| a[i] + (b[i] - a[i]) * t)
         }
@@ -1710,6 +1825,7 @@ impl MeshBuilder {
                 self.colors[i],
                 self.ribbon.as_ref().map_or([0.0; 4], |ribbon| ribbon[i]),
                 self.roof.as_ref().map_or([0.0; 4], |roof| roof[i]),
+                self.crown.as_ref().map_or([0.0; 2], |crown| crown[i]),
             )
         };
         // сторона окна: ось, граница и с какой её стороны — «внутри»
@@ -1739,6 +1855,7 @@ impl MeshBuilder {
                             mix(a.1, b.1, t),
                             mix(a.2, b.2, t),
                             mix(a.3, b.3, t),
+                            mix(a.4, b.4, t),
                         ));
                     }
                 }
@@ -1766,7 +1883,119 @@ impl MeshBuilder {
         if let Some(roof) = &mut self.roof {
             *roof = kept.iter().map(|vertex| vertex.3).collect();
         }
+        if let Some(crown) = &mut self.crown {
+            *crown = kept.iter().map(|vertex| vertex.4).collect();
+        }
         self.indices = indices;
+    }
+
+    /// Склеить куски в один сборщик — ровно в том порядке, в каком их
+    /// геометрия легла бы в один сборщик подряд: индексы каждого куска
+    /// сдвигаются на вершины кусков перед ним, так что меш выходит тем же байт
+    /// в байт. Так собирается слой, чьи куски строятся по потокам
+    /// (`cars::mesh_bodies`).
+    ///
+    /// Копирование идёт **тоже по потокам** — по `groups` подряд идущих
+    /// кусков на поток, в заранее выделенные буферы: склейка в один поток
+    /// стоила на слое машин Калуги (полтора миллиона вершин, полсотни
+    /// мегабайт) столько же, сколько сама сборка кусков, — это копирование и
+    /// первое касание свежей памяти, а не арифметика. Буферы выделяются нулями
+    /// (`vec![0; n]` берёт у системы уже обнулённые страницы), так что первое
+    /// касание достаётся потокам.
+    ///
+    /// Только куски без фактуры (ни ленты, ни кровли, ни координат кроны):
+    /// склеивать их пока нечему, а атрибут, которого нет у одного из кусков,
+    /// лёг бы не на каждую вершину.
+    pub fn concat(parts: &[MeshBuilder], groups: usize) -> MeshBuilder {
+        assert!(
+            parts
+                .iter()
+                .all(|part| part.ribbon.is_none() && part.roof.is_none() && part.crown.is_none()),
+            "concat: куски с фактурой не склеиваются"
+        );
+        let vertices = parts.iter().map(|part| part.positions.len()).sum();
+        let index_count = parts.iter().map(|part| part.indices.len()).sum();
+        let mut positions = vec![[0.0; 3]; vertices];
+        let mut colors = vec![[0.0; 4]; vertices];
+        let mut indices = vec![0; index_count];
+
+        /// Куда ляжет один кусок: его доли трёх буферов и сдвиг индексов.
+        struct Slot<'a> {
+            part: &'a MeshBuilder,
+            positions: &'a mut [[f32; 3]],
+            colors: &'a mut [[f32; 4]],
+            indices: &'a mut [u32],
+            offset: u32,
+        }
+        let mut slots = Vec::with_capacity(parts.len());
+        let (mut positions_rest, mut colors_rest, mut indices_rest) = (
+            positions.as_mut_slice(),
+            colors.as_mut_slice(),
+            indices.as_mut_slice(),
+        );
+        let mut offset = 0u32;
+        for part in parts {
+            let count = part.positions.len();
+            let (to_positions, rest) = positions_rest.split_at_mut(count);
+            positions_rest = rest;
+            let (to_colors, rest) = colors_rest.split_at_mut(count);
+            colors_rest = rest;
+            let (to_indices, rest) = indices_rest.split_at_mut(part.indices.len());
+            indices_rest = rest;
+            slots.push(Slot {
+                part,
+                positions: to_positions,
+                colors: to_colors,
+                indices: to_indices,
+                offset,
+            });
+            offset += count as u32;
+        }
+        let copy = |slots: &mut [Slot]| {
+            for slot in slots {
+                slot.positions.copy_from_slice(&slot.part.positions);
+                slot.colors.copy_from_slice(&slot.part.colors);
+                for (to, from) in slot.indices.iter_mut().zip(&slot.part.indices) {
+                    *to = from + slot.offset;
+                }
+            }
+        };
+        let per_group = slots.len().div_ceil(groups.max(1)).max(1);
+        std::thread::scope(|scope| {
+            let mut chunks = slots.chunks_mut(per_group);
+            // первая группа — на вызывающем потоке: ему всё равно ждать
+            let first = chunks.next();
+            for chunk in chunks {
+                scope.spawn(move || copy(chunk));
+            }
+            if let Some(chunk) = first {
+                copy(chunk);
+            }
+        });
+        MeshBuilder {
+            positions,
+            colors,
+            indices,
+            skipped_polygons: parts.iter().map(|part| part.skipped_polygons).sum(),
+            ..MeshBuilder::default()
+        }
+    }
+
+    /// Зарезервировать место под `vertices` вершин и `indices` индексов —
+    /// когда объём геометрии известен заранее хотя бы оценкой.
+    pub fn reserve(&mut self, vertices: usize, indices: usize) {
+        self.positions.reserve(vertices);
+        self.colors.reserve(vertices);
+        self.indices.reserve(indices);
+        if let Some(ribbon) = &mut self.ribbon {
+            ribbon.reserve(vertices);
+        }
+        if let Some(roof) = &mut self.roof {
+            roof.reserve(vertices);
+        }
+        if let Some(crown) = &mut self.crown {
+            crown.reserve(vertices);
+        }
     }
 
     pub fn build(self) -> Mesh {
@@ -1781,6 +2010,9 @@ impl MeshBuilder {
         }
         if let Some(roof) = self.roof {
             mesh.insert_attribute(ATTRIBUTE_ROOF, roof);
+        }
+        if let Some(crown) = self.crown {
+            mesh.insert_attribute(ATTRIBUTE_CROWN, crown);
         }
         mesh.insert_indices(Indices::U32(self.indices));
         mesh
@@ -1847,8 +2079,10 @@ fn signed_area(ring: &[Vec2]) -> f32 {
         / 2.0
 }
 
-/// Периметр замкнутого контура.
-fn perimeter(ring: &[Vec2]) -> f32 {
+/// Периметр замкнутого кольца (последнее ребро — от конца к началу). Одна
+/// копия на всю карту: здесь, в чистой геометрии, потому что `meshing` не
+/// знает про OSM-модель, а модель, разбор и слои знают про `meshing`.
+pub(crate) fn ring_perimeter(ring: &[Vec2]) -> f32 {
     let count = ring.len();
     (0..count)
         .map(|index| ring[index].distance(ring[(index + 1) % count]))

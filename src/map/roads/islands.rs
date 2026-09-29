@@ -10,11 +10,21 @@
 //! - **контур островка** (`RoadAreaKind::Island`) — бордюрный островок по
 //!   контуру, тоже поверх;
 //! - **контур полотна** (`RoadAreaKind::Carriageway`) — асфальт под лентами:
-//!   площадь, карман, расширение, которых ось не описывает.
+//!   площадь, карман, расширение, которых ось не описывает;
+//! - **пешеходная площадь** (`RoadAreaKind::Walkway`: `area:highway=footway`,
+//!   `highway=pedestrian` + `area=yes`) — заливкой плиткой тротуара в его
+//!   слой. Без неё площадь `area:highway` была голой землёй, на которой
+//!   обрывался проезд (Тула, у Ленина), а `pedestrian` + `area=yes` — одним
+//!   кольцом ленты по контуру с землёй внутри (остров кольца у 2539 2393).
 //!
-//! Пешеходные площади (`Walkway`) не рисуются: их кроют тротуары и дорожки.
+//! **Замкнутая линия `highway=*` + `area=yes` лентой не кладётся**
+//! ([`RoadIslands::outlines`]): разбор отдаёт её и площадью, и линией (линия
+//! нужна прочим потребителям сети), а нарисованная лентой она — кольцо поверх
+//! заливки. Узнаётся по совпадению точек с контуром площади.
+//!
 //! В Туле островков нет вовсе (`references/osm-coverage.md`, «v15»), контуров
-//! полотна — дюжина дворовых; в Берлине, Париже и Нью-Йорке — сотни.
+//! полотна — дюжина дворовых, пешеходных площадей — 19; в Берлине, Париже и
+//! Нью-Йорке — сотни.
 
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
@@ -23,7 +33,7 @@ use super::junctions::node_key;
 use super::{is_carriageway, lane_count};
 use crate::map::along::{arclengths, nearest_on_path, place_on_path};
 use crate::map::osm::{MapData, RoadAreaKind, RoadLine, RoadNodeKind};
-use crate::map::shapes::{Shape, oriented};
+use crate::map::shapes::{Shape, is_ring, oriented};
 
 /// Длина островка-точки вдоль оси, м: зебра и по метру бордюра с каждой
 /// стороны.
@@ -34,11 +44,16 @@ const REFUGE_HALF_WIDTH: f32 = 0.9;
 const REFUGE_STEPS: usize = 8;
 
 /// Что рисуется из данных v15: бордюрные островки — в слой бордюра над
-/// асфальтом, контуры полотна — в асфальт улиц.
+/// асфальтом, контуры полотна — в асфальт улиц, пешеходные площади — в слой
+/// тротуаров.
 #[derive(Default)]
 pub(super) struct RoadIslands {
     pub kerbs: Vec<Shape>,
     pub carriageways: Vec<Shape>,
+    pub walkways: Vec<Shape>,
+    /// По дороге `drawn`: её ось — контур площади дороги (`highway=*` +
+    /// `area=yes`), и лентой она не кладётся.
+    pub outlines: Vec<bool>,
     /// Островков-точек, встало на улицу.
     pub refuges: usize,
 }
@@ -48,6 +63,8 @@ impl RoadIslands {
     /// `paths`.
     pub fn new(map: &MapData, drawn: &[&RoadLine], paths: &[impl AsRef<[Vec2]>]) -> Self {
         let mut islands = Self::default();
+        // площади по первой точке контура — чтобы узнать их линии
+        let mut areas: HashMap<(i32, i32), Vec<&[Vec2]>> = HashMap::new();
         for area in &map.road_areas {
             if area.outline.len() < 3 {
                 continue;
@@ -56,9 +73,28 @@ impl RoadIslands {
             match area.kind {
                 RoadAreaKind::Island => islands.kerbs.push(shape),
                 RoadAreaKind::Carriageway => islands.carriageways.push(shape),
-                RoadAreaKind::Walkway => {}
+                RoadAreaKind::Walkway => islands.walkways.push(shape),
+            }
+            if area.kind != RoadAreaKind::Island {
+                areas
+                    .entry(node_key(area.outline[0]))
+                    .or_default()
+                    .push(&area.outline);
             }
         }
+        islands.outlines = drawn
+            .iter()
+            .map(|road| {
+                let points = &road.points;
+                // замкнутая линия: последняя точка — первая, до неё — контур
+                let Some((_, open)) = points.split_last().filter(|_| is_ring(points)) else {
+                    return false;
+                };
+                areas
+                    .get(&node_key(open[0]))
+                    .is_some_and(|outlines| outlines.contains(&open))
+            })
+            .collect();
         // улица, на оси которой стоит узел: островок — только на
         // двусторонней, где ему есть место между встречными полосами
         let mut owners: HashMap<(i32, i32), usize> = HashMap::new();
@@ -208,6 +244,45 @@ mod tests {
         let islands = RoadIslands::new(&map, &[], &[] as &[Vec<Vec2>]);
         assert_eq!(islands.kerbs.len(), 1);
         assert_eq!(islands.carriageways.len(), 1);
+        assert_eq!(islands.walkways.len(), 1);
         assert_eq!(islands.refuges, 0);
+    }
+
+    /// Площадь `highway=pedestrian` + `area=yes` приходит и контуром, и
+    /// замкнутой линией; линия лентой не кладётся — иначе кольцо поверх
+    /// заливки (остров кольца в Туле). Замкнутая линия с другим контуром и
+    /// открытая линия по тем же точкам — обычные дороги.
+    #[test]
+    fn the_closed_line_of_an_area_is_its_outline_not_a_ribbon() {
+        let square = vec![
+            Vec2::ZERO,
+            Vec2::new(18.0, 0.0),
+            Vec2::new(18.0, 18.0),
+            Vec2::new(0.0, 18.0),
+        ];
+        let map = MapData {
+            road_areas: vec![RoadArea {
+                outline: square.clone(),
+                kind: RoadAreaKind::Walkway,
+            }],
+            ..MapData::default()
+        };
+        let closed = |points: &[Vec2]| {
+            let mut ring = points.to_vec();
+            ring.push(points[0]);
+            street(ring, 3.5)
+        };
+        let area_line = closed(&square);
+        let mut other = square.clone();
+        other[2] = Vec2::new(20.0, 20.0);
+        let other_ring = closed(&other);
+        let open = street(square.clone(), 3.5);
+        let roads = [&area_line, &other_ring, &open];
+        let paths: Vec<Vec<Vec2>> = roads.iter().map(|road| road.points.clone()).collect();
+
+        let islands = RoadIslands::new(&map, &roads, &paths);
+
+        assert_eq!(islands.outlines, [true, false, false]);
+        assert_eq!(islands.walkways.len(), 1);
     }
 }

@@ -15,7 +15,8 @@ one your change is about, not all of them**:
 
 - `references/parse.md` — the parse seam and every reading and finishing pass (heights,
   building use, retail box, churches, squaring, houses pulled off the sidewalks, blocks
-  and lots pulled to the roads), and how the parse is tested.
+  and lots pulled to the roads, ground pockets sown with grass), and how the parse is
+  tested.
 - `references/roads.md` — how a street is drawn: sidewalks, divided streets and their
   medians, lane markings and their breaks, the ribbon, junctions and the drawn network (stitches, kerb returns),
   `RoadStyle` and `RoadShape` (lane width, taper, curve tolerance, median gap, corner
@@ -151,7 +152,7 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   matches is the *sub-class within* a vector, which is exactly what the vector cannot say.
 - **PolyArea** — polygon with holes; rings are open (no repeated last point).
   `AreaKind: Building | Kremlin | Water | Park | Wood | Grass | Sand | Residential |
-  Industrial | Parking | Pitch(PitchKind)`. **Park** is the
+  Industrial | Parking(LotKind) | Pitch(PitchKind)`. **Park** is the
   light base fill; **Wood** (`natural=wood` / `landuse=forest`) are the darker stands
   *inside* it and the **only** areas that carry trees; **Grass** (lawns, meadows) and
   **Sand** (beaches) also sit above the park fill, lighter green / sandy. Everything
@@ -178,11 +179,19 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   Tula, cache v14: 355 in the bbox, 349 reach `MapData::parking` — five carry
   `building` and stay buildings, one is `parking=multi-storey` with no building on it.
   Recount with `tools/osm_audit/cache_audit.py` on the cache in `assets/osm/`.
+  A lot carries its **`LotKind`**, the parse's one answer to "what kind of lot": `Kerbside`
+  (`parking=street_side`, read off the tag in `area_kind` — paved up to the kerb),
+  `Ground` (a big lot: the **paved** outline ≥ `GROUND_MIN_AREA` 8000 m², settled at the
+  end of `parse/lots.rs::pave_lots`, so a lot the paving grew past the line is big and a
+  part a building cut off is judged by itself), `Yard` (the rest). The layout, the big
+  lot's kerb and the paving read it; none of them measures an area again. It replaced the
+  side list `MapData::street_side_lots` and a render-side `parking::is_ground` that the
+  parse imported. Tula v15: 56 kerbside, 10 big.
   **Pitch** (`leisure=pitch|track|playground|sports_centre|stadium`) is the fourth —
   `MapData::pitches`, a surface plus markings (see **Pitches** below). It is tried after
   parking and before the landuse blocks, but **after `park`/`garden`**: a park with a
-  pitch drawn on it stays a park, and the pitch arrives as its own way. Alone among the
-  area kinds it **carries a payload**, `PitchKind`, because the sport decides both the
+  pitch drawn on it stays a park, and the pitch arrives as its own way. It **carries a
+  payload** (the other one that does is `Parking(LotKind)`, below), `PitchKind`, because the sport decides both the
   colour and the marking and nothing else in the model has one — a field on `PolyArea`
   (the `building_use` pattern) would be meaningless for every other area kind and would
   touch all 33 literal constructions in the tests. Tula v10: 128 grounds in the bbox — 59
@@ -203,12 +212,15 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
 - **RoadLine** — centerline polyline + width **from its section**: lanes × the lane width
   knob (`RoadShape::lane_width`, 3.3 m by default; 0.3 m less on a service drive) + 0.5 m
   of edge each side, set by the first parse pass
-  (`map/roads/network/sections.rs`; footways keep 3.5 by class) — streets, sections and
+  (`map/roads/network/sections.rs`; a path's width is `parse/tags.rs::path_width` —
+  `references/parse.md`, **Path width**) — streets, sections and
   the tapers between them are in `references/roads.md`, **Streets, sections, tapers**.
   `highway: Highway` is the `highway` value (the five `*_link` are classes of their own);
   `Highway::is_street` — not a service drive, not a path — is what `roads::is_carriageway`
   asks, **not the width**. `RoadClass: Street | Alley` (alleys = footways, park paths;
-  different color and z). `bridge` and `passage` flags — the navmesh carves (see the navigation-deep
+  different color and z). `pavement: Option<Pavement>` splits the alleys: a **paved
+  path** is drawn in the sidewalk layer, an unpaved one stays sand (`references/parse.md`,
+  **Pavement of untagged footways**; `references/roads.md`, **Paved paths**). `bridge` and `passage` flags — the navmesh carves (see the navigation-deep
   skill); `bridge` also moves the road into the bridge deck layers (see **Bridge
   layers** below). Three more fields feed the **markings** and the parked cars: `oneway`
   (`oneway=yes|1|true|-1`; `reversible`/`alternating` are not one-way), `roundabout`
@@ -222,13 +234,18 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   without `lanes`, `lanes:forward` + `lanes:backward` (+ `lanes:both_ways` when tagged) — then **overwritten** by the
   section pass with the inferred count on every street and drive, so after the parse it
   is `None` on paths only). Coverage per city is in `references/osm-coverage.md` — Tula has `lanes` on 97 % of its
-  streets ≥ 8 m, the European cities on about half. `turns: [Vec<LaneTurn>; 2]` — the
+  streets ≥ 8 m, the European cities on about half. `lanes_backward: Option<u8>` — the
+  lanes of a two-way way against its points (`lanes:backward`, else `lanes −
+  lanes:forward`; none with a `lanes:both_ways` centre lane), settled by the section
+  pass; it places the axis (`references/roads.md`, **Markings**). `turns: [Vec<LaneTurn>; 2]` — the
   `turn:lanes` per direction of flow (`parse/tags.rs::tagged_turns`: a one-way road reads
   the plain tag or its flow's `:forward`/`:backward`, a two-way one only the directional
   ones; each lane left to right as `LaneTurn { left, through, right }`, `slight_`/`sharp_`
   folded into the turn, an unknown word — Tula has `throught` — into through). Only the
   turn paths and their lane arrows read it (`references/roads.md`, **Turn paths**);
-  Tula 62 ways. `sidewalks: [SidewalkSide; 2]` and `parking: [KerbParking; 2]` —
+  Tula 62 ways. `lane_markings: bool` — false only on `lane_markings=no`: the paint
+  layer draws no axis and no lane lines there (`references/roads.md`, **Lane count**);
+  Tula 11 ways. `sidewalks: [SidewalkSide; 2]` and `parking: [KerbParking; 2]` —
   `[left, right]` along the points, from `sidewalk=*` and `parking:*` (swapped with the
   points on `oneway=-1`); the sidewalk band and the kerb pockets read them
   (`references/roads.md`, **Sidewalks**, **Kerb pockets**). **`SidewalkSide`** is a
@@ -265,8 +282,10 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   lines. The **junction paint** (`roads/node_paint.rs`, `references/roads.md`) reads the
   crossings (zebras), signals and the stop / give-way signs (who breaks, stop lines);
   a turning circle on a dead end is a disc of asphalt (`references/roads.md`, **Turning
-  circles**); mini-roundabouts, islands and the `RoadArea` outlines are still drawn by
-  nothing — later stages of the roads plan consume them. `MapData::road_nodes` — a point on a way's axis with
+  circles**); islands and the `RoadArea` outlines are drawn by `roads/islands.rs`
+  (`references/roads.md`, **Safety islands and carriageway areas** — a walkway outline
+  is paving, and the closed line of an area is not laid as a ribbon); mini-roundabouts
+  are still drawn by nothing. `MapData::road_nodes` — a point on a way's axis with
   `RoadNodeKind`: `Crossing { signals, island, marked }` (`crossing=traffic_signals` /
   `crossing:signals=yes`; `crossing:island=yes` / `crossing=island`; `marked` is cleared
   only by an explicit `crossing=unmarked` or `crossing:markings=no` — Tula has 111 of 801
@@ -483,6 +502,12 @@ would say so.
   inflates the box by the reach it cares about, so any point the value has business with
   falls inside one of those cells. An error there returns a silently incomplete answer —
   which is exactly why it lives in one place now.
+  **A box that is not of this world is refused**: a non-finite corner is a
+  `debug_assert`, and a box over `MAX_INSERT_CELLS` (2²⁰ — 30 × 30 km at the smallest
+  30 m cell) is skipped with an `error!`. `as_ivec2` saturates a huge coordinate to
+  `i32::MAX`, so one broken axis point (Moscow NE's doubled-back spike, 4.9·10⁸ m) had the
+  double loop spread a single link over billions of cells — 12 GB and a load that never
+  finished. The skip is the net, not the fix; the fix is wherever the geometry broke.
 - **`insert_segment(from, to, pad, value)` is that insert for a link of a polyline**, and
   the box is the grid's arithmetic too: `from.min(to) - pad, from.max(to) + pad`. Twelve
   of the map's indexes wrote that line by hand — the doors (two of them), tree planting,
@@ -667,8 +692,9 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
   the tree-row band — over the `SurfaceMaterial` below. The parking **markings** are the
   exception that proves the rule: paint over asphalt, so that layer stays on the flat
   `ColorMaterial`. ~7000
-  buildings cost a handful of entities. Trees stay individual entities (see
-  `references/trees.md`).
+  buildings cost a handful of entities. Trees are individual entities on the near zoom
+  step and merged `tree_crowns` chunks on the far ones (see `references/trees.md`,
+  **Crown detail by zoom**).
 - **The layer seam** (`map/surface.rs`) — building a layer and putting it in the world
   are two things, and this is the line between them. A **converted** module offers one
   pure function, `mesh_<layer>(data, style) -> (Vec<LayerMesh>, <Layer>Report)`, and
@@ -686,7 +712,8 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     every layer of the map**, not a type per module. That is the point: a module read as
     `-> Vec<LayerMesh>` is read the same way as any neighbour. `name` is the entity's
     `Name` in the live world, i.e. what a BRP query looks it up by.
-  - **`MaterialSpec`** — `Flat` / `Blend` / `Surface(SurfaceKind)` / `Roof`. It **names** the
+  - **`MaterialSpec`** — `Flat` / `Blend` / `Surface(SurfaceKind)` / `Roof` / `Paint(PaintPass)`
+    / `Crown` (the one app-wide `CrownMaterialHandle`, for the merged far crowns). It **names** the
     material instead of carrying a `Handle`, and a handle is the only thing that would
     have dragged Bevy into the build: with a spec the build needs neither `Commands` nor
     `Assets`, so the game, a test and the offline bench call one and the same function.
@@ -772,7 +799,8 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     `fences/tests.rs::the_far_bucket_draws_nothing`, each asserting the log line itself.
   - **Converted — ten modules, eleven layer doors.** `fences`, `rail`, `tram`, `wagons`,
     `industry`, `cars`,
-    `roads` (18 layers, `mesh_roads` — eight of its own with the median lawn (the two
+    `roads` (19 layers, `mesh_roads` — nine of its own with the median lawn and the
+    unpaved streets (the two
     road/alley casings went in stage 8)
     `road_medians`, the eight paint layers of `roads/paint.rs` (the turn paths' wear mask
     and apply among them, and the roundabout islands' hatching above a lot's asphalt) and
@@ -792,28 +820,38 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     left".** The tree-row band lives in `spawn.rs` and is not
     `trees` — that mistake is what once made the list read "all ten" with `trees.rs`
     still spawning by hand.
-  - **`trees` is a scatter, and the seam takes a different shape there.** A crown is an
-    **entity per tree** — its own tint, its own micro-step of z, its own scale — so it
-    does not fit a `LayerMesh` at all, and `mesh_trees(style, params, planted, field)`
-    returns `TreeMeshes { pools, tints, crowns, shadows }` instead:
+  - **`trees` is a scatter, and the seam takes a different shape there.** On the near
+    zoom step a crown is an **entity per tree** — its own tint, its own micro-step of z,
+    its own scale — so it does not fit a `LayerMesh` at all, and `mesh_trees(style,
+    params, planted, field)` returns `TreeMeshes { pools, tints, crowns, merged,
+    shadows }` instead, **for every zoom step at once**: each piece carries the
+    `TreeLodMask` of the steps that draw it, and a step crossing only flips visibility
+    (`show_tree_lod`) — except the crown entities, which `spawn_tree_meshes` hands back
+    as a `CrownStream` to be spawned and despawned in batches (`stream_tree_crowns`). For the far steps (`CrownDetail::Merged`) **`merged`** carries
+    `TreeLayer`s — ordinary `LayerMesh`es, one `tree_crowns` chunk per `CROWN_CHUNK`
+    square and density band, `MaterialSpec::Crown` — so there the trees are a converted
+    layer like any other (`references/trees.md`, **Crown detail by zoom**):
     - **`pools`** — the crown meshes, `TREE_VARIANTS` of them per concrete shape (`Mixed`
       has two pools, every other shape one), as plain `Mesh` **values**. A
       `Handle<Mesh>` would be the world, which is exactly what `MaterialSpec` keeps out
       of a build; the adapter uploads the pool to `Assets` and nothing else changes.
-    - **`crowns`** — `CrownPlacement { at, radius, z, pool, variant, tint }`, one per
-      drawn tree. This is what the conversion actually bought: the density prefix
+    - **`crowns`** — `CrownPlacement { at, radius, z, shows, pool, variant, tint }`, one
+      per tree the near step draws. This is what the conversion actually bought: the density prefix
       (`TreeSet::visible_count`), the species resolve off the conifer field, the tint slot and the
       z micro-step were all inside a Bevy system and unreachable from a test.
-    - **`shadows`** — the one merged shadow mesh, an ordinary `LayerMesh` at
-      `Z_TREE_SHADOW`. Its colour moved **into the vertices** (`shadow_template` pushes
+    - **`shadows`** — the merged shadow meshes, one `TreeLayer` (a `LayerMesh` plus the
+      `TreeLodMask` of the zoom steps that draw it) per density band, shadow template
+      (full or thinned far) and `CROWN_CHUNK` square, built for every
+      step at once and only shown or hidden by a step crossing (`show_tree_lod`;
+      `references/trees.md`). Its colour moved **into the vertices** (`shadow_template` pushes
       `SHADOW_COLOR`) so the layer can be a plain `MaterialSpec::Blend`, the way every
       other shadow on the map already was; before that the layer allocated a coloured
       `ColorMaterial` on every rebuild. `tree_gallery` lays its own grid and therefore
       does not go through `spawn_tree_meshes`, but it had to follow the colour: its
       shadow material is now a blended white one.
     So `spawn_tree_meshes` is the adapter, and it is the **one** place on the map that
-    still writes `DespawnOnExit` by hand — for the crowns. Every merged layer gets it
-    from `spawn_layer`.
+    still writes `DespawnOnExit` by hand — for the near-step crown entities. Every merged
+    layer, the far crown chunks included, gets it from `spawn_layer`.
   - **`cars` is the one whose build is a layer rather than a mesh.** Every other
     `mesh_*` takes the data it draws; `mesh_cars(bucket, style, &Drawn, map, layout)`
     (`Drawn::nodal(map, shape)` — the prepared roads the row stands on, built by the adapter
@@ -830,10 +868,16 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     assembly those counters would count is exactly what did not run. That is the one
     shape of the rule above (**"The layer is not drawn" is a state of the report**); the
     four modules whose input counters are free print theirs beside the word.
-    **The bench calls the door, the gallery still assembles on its own**:
-    `measure_cars` is `Drawn::nodal` on its own row (`drawn`) and then `mesh_cars` once per
-    detail step — the `breaks` row comes off the first report's `breaks_took`, the `cars *`
-    rows are each step's whole rebuild, lots included (`ParkingLayout::new` is built for it,
+    **The game splits the door at the zoom crossing**: the assembly does not depend on
+    the bucket, so `rebuild_cars` keeps it in `cars::CarPlacement` (`park_all` →
+    `ParkedCars`, keyed on the occupancy and the `RoadShape`, reset on world entry by
+    `forget_parked_cars`) and a crossing costs `mesh_parked` — the bodies only;
+    `CarReport::placed` says which of the two a log line was. `mesh_cars` is still the
+    whole thing in one call, for the tests.
+    **The bench follows that split, the gallery still assembles on its own**:
+    `measure_cars` is `Drawn::nodal` on its own row (`drawn`), the placement once
+    (`placement`, with `breaks` as its share) and then `mesh_parked` once per detail step —
+    the `cars *` rows are exactly a zoom crossing (`ParkingLayout::new` is built for it,
     outside the timer: it is the layer's input, not its cost); `cars_mesh` is
     the gallery's one door and builds with neither lots nor districts on purpose. The
     steps the gallery repeats are the game's calls, not look-alikes: it breaks the row with
@@ -905,7 +949,7 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
   asset: the vertex colour is the base, and the fragment multiplies in noise sampled by
   **world position**, so two overlapping ribbons of one layer get the same pixel (the
   junction trick survives). Per `SurfaceKind` (`Ground | Yard | Park | Wood | Grass | Sand |
-  Water | Street | Alley | Sidewalk`) a `SurfaceParams` uniform: **mottle** (four
+  Water | Street | Alley | Sidewalk | Unpaved`) a `SurfaceParams` uniform: **mottle** (four
   octaves of value noise from `mottle_scale` down to an eighth of it, with a per-channel
   `tint` shift so a lawn goes yellow-green ↔ blue-green, not just light ↔ dark), **grain**
   (three octaves from `grain_scale` down to a quarter), **speckle** (a thresholded noise
@@ -972,8 +1016,10 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
   wagons' and the roof clutter's are a single threshold each, the paint's are its three
   zoom maxima) and names it with a marker type
   implementing `ZoomLods` (`RailLods`, `TramLods`, `FenceLods`, `CarLods`, `WagonLods`,
-  `BuildingLods`, `PaintLods` — empty enums handing over the `max_zoom`s; the paint's
-  bucket only flips `Visibility`, nothing is rebuilt — **Markings** in `roads.md`). `ZoomBucket<T>` is the
+  `BuildingLods`, `PaintLods`, `TreeLods` — empty enums handing over the `max_zoom`s; the
+  trees' table caps the density prefix, `references/trees.md`; the paint's
+  and the trees' buckets only flip `Visibility`, the buildings' only a roof-material
+  uniform — nothing is rebuilt — **Markings** in `roads.md`, `references/buildings.md`). `ZoomBucket<T>` is the
   resource with the current index for that table;
   `for_zoom` is the single selection rule (first bucket whose bound is above the zoom,
   a zoom on the bound goes up — `zoom/tests.rs`). Two generic systems:

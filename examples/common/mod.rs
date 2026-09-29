@@ -26,7 +26,8 @@ pub fn load_map(city: City) -> MapData {
             path.display()
         )
     });
-    parse::parse(&json, city).expect("failed to parse cached OSM json")
+    parse::parse(&json, city, parse::ParseKnobs::default())
+        .expect("failed to parse cached OSM json")
 }
 
 /// Сеточный navmesh — ровно как в игре, вместе с отсечением недостижимого от

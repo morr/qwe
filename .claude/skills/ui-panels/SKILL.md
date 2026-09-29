@@ -63,8 +63,21 @@ did not fit 1080 px and ran off the top of the screen.
   the knee runs `threshold × softness` both ways, so it starts at 0.99 and pure white lane
   markings (1.0) contribute nothing; 1.0 / 0.4 made everything above 0.6 glow and hazed the
   whole map. Tonemapping stays off on purpose: every built-in curve recolours the map
-  palette, and only the halo is wanted. `Msaa::Off` stays (`camera.rs`), and UI is drawn
-  after post-processing, so panels never bloom.
+  palette, and only the halo is wanted. UI is drawn after post-processing, so panels never
+  bloom.
+- **Antialias** (`post.rs::Antialias`, settings group `render`, key `antialias`, on by
+  default) — `Msaa::Sample4` on the user's camera (`camera.rs::spawn_camera`) and on the
+  offscreen-shot camera (`dev.rs`), both read the resource at spawn and
+  `post::apply_antialias` (`retuned`) writes every `Camera2d` on a toggle. It was `Msaa::Off`
+  (copied from zxc with no reason written down) and the ribbons of the map — asphalt, kerbs,
+  median noses, islands — stair-stepped on a close-up while the paint beside them is
+  smoothed by `paint.wgsl` itself. HDR + bloom + the four `Material2d`s work with it
+  unchanged (they specialise on the sample count themselves). **Cost is memory, not
+  frame time**: on a 4K window the multisampled HDR target and depth add about 400 MB;
+  the frame was measured in the `roads` gallery rendering offscreen at 7500×4750 (4× a 4K
+  window) — medians within a millisecond of each other, both at the 60 Hz pace. Hence
+  the toggle: the Debug tab's `Antialias` row (`4x` / `Off`, in World build under
+  `Camera start`). The galleries and `crowd_demo` run `Sample4` hard-wired.
 - **Sun section** (`ui/sun.rs`, Map tab) — two knobs on `map::SunStyle`, azimuth (0–355°,
   step 5) and elevation (15–80°, step 1). They are the most expensive knobs on the panel:
   a change rebuilds the building layers **including the shadow union**, the tree crowns,
@@ -449,7 +462,7 @@ did not fit 1080 px and ran off the top of the screen.
   the deletion is the retina trap — `ComputedNode::size` is in *physical* pixels, and
   `offset_below_brp_badge` still multiplies by `inverse_scale_factor`.
 - **Debug tab** (`ui/debug/`) — the overlay rows (grid / doors / move paths / noise field /
-  **Road network**), the `Camera start` and `Navtile` cyclers, and `reset`. **Road
+  **Road network**), the `Camera start`, `Antialias` and `Navtile` cyclers, and `reset`. **Road
   network** is `DebugRoadNetwork` (settings group `debug`, key `road_network`):
   `ui/debug/overlays.rs::sync_road_network_overlay` despawns the `RoadNetworkOverlayMarker`
   layer and, when on, spawns `map::mesh_network_overlay` through `surface::spawn_layers`

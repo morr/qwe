@@ -90,10 +90,56 @@ pub struct SpawnTestWalkerEvent {
 #[reflect(Component)]
 pub struct TestWalker;
 
+/// `QWE_PERF_NOVSYNC=1` — окно без vsync: кадр не упирается в 60 Гц дисплея,
+/// и `frame_time` в логе диагностики становится измеримым. Без переменной —
+/// обычный `AutoVsync`.
+pub fn perf_present_mode() -> bevy::window::PresentMode {
+    if std::env::var_os("QWE_PERF_NOVSYNC").is_some() {
+        bevy::window::PresentMode::AutoNoVsync
+    } else {
+        bevy::window::PresentMode::AutoVsync
+    }
+}
+
+/// `QWE_PERF_WINDOW=WxH` — логический размер окна при запуске (замер цены
+/// разрешения). Без переменной — 1920 × 1080.
+pub fn perf_window_resolution() -> bevy::window::WindowResolution {
+    let Ok(spec) = std::env::var("QWE_PERF_WINDOW") else {
+        return (1920, 1080).into();
+    };
+    let size = spec
+        .split_once('x')
+        .and_then(|(w, h)| Some((w.parse::<u32>().ok()?, h.parse::<u32>().ok()?)));
+    let Some(size) = size else {
+        panic!("QWE_PERF_WINDOW is not WxH: {spec:?}");
+    };
+    size.into()
+}
+
+/// Переключатели замеров из окружения, которые ставятся внутри приложения:
+///
+/// - `QWE_PERF_POP=<n>` — `n` людей вместо штатной популяции (цена спрайтов);
+/// - `QWE_PERF_RENDER_DIAG=1` — `RenderDiagnosticsPlugin`: CPU-время каждого
+///   прохода рендера (`render/<pass>/elapsed_cpu`) в логе диагностики.
+///
+/// Без переменных ничего не меняется.
+fn add_perf_toggles(app: &mut App) {
+    if let Ok(n) = std::env::var("QWE_PERF_POP") {
+        let n: usize = n
+            .parse()
+            .unwrap_or_else(|_| panic!("QWE_PERF_POP is not a number: {n:?}"));
+        app.insert_resource(crate::human::PopulationSize(n));
+    }
+    if std::env::var_os("QWE_PERF_RENDER_DIAG").is_some() {
+        app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
+    }
+}
+
 pub struct DevPlugin;
 
 impl Plugin for DevPlugin {
     fn build(&self, app: &mut App) {
+        add_perf_toggles(app);
         app.add_plugins((
             FrameTimeDiagnosticsPlugin::default(),
             LogDiagnosticsPlugin::default(),
@@ -169,6 +215,7 @@ fn on_offscreen_shot(
     // событие подряд не оставляло ни файла, ни строки в логе. Здесь фильтр
     // держит уже сам `&mut PanCamera`: он есть только у камеры пользователя
     camera: Single<(&mut Transform, &Projection, &mut PanCamera), With<Camera2d>>,
+    antialias: Res<crate::post::Antialias>,
 ) {
     let (mut transform, projection, mut controller) = camera.into_inner();
     let size = event
@@ -222,7 +269,8 @@ fn on_offscreen_shot(
         RenderTarget::Image(target.clone().into()),
         projection.clone(),
         Transform::from_translation(at.extend(0.0)).with_scale(Vec3::splat(zoom)),
-        Msaa::Off,
+        // снимок сглажен так же, как окно
+        antialias.msaa(),
         crate::post::camera_post_process(),
         OffscreenCamera {
             target,

@@ -592,12 +592,83 @@ pub(super) fn shadow_ring(outer: &[Vec2], params: &CrownParams) -> Vec<Vec2> {
 /// юниформом (`canopy::CrownUniform::brightness`), так зелень варьируется. Чернила
 /// контура и штрихов уведены к листве на [`INK_FOLIAGE_MIX`]: чистых чернил на
 /// карте больше нет.
+#[cfg(test)]
 pub(super) fn crown_mesh(
     geometry: &CrownGeometry,
     style: &TreeStyle,
     rng: &mut Lcg,
     params: &CrownParams,
 ) -> Mesh {
+    crown_builder(geometry, style, rng, params).0.build()
+}
+
+/// Сколько вершин контура примерно оставляет дальняя крона ([`far_crown`]).
+/// Облачный контур несёт 144–188 вершин и прореживается ровным шагом
+/// `len / 32` до 32–37; хвойный (32) и пальмовый (48) короче двух норм и
+/// остаются целыми — у них вершины чередуются остриё/впадина, и любой шаг
+/// срезал бы острия. На дальних ступенях, где крона — 1–6 px, это
+/// неотличимо от полного контура.
+const FAR_CROWN_RING: usize = 32;
+
+/// Дальняя крона — шаблон для слитых мешей дальних ступеней зума
+/// (`trees::CrownDetail::Merged`): одна заливка прореженного контура, без
+/// контура и колец. Штрих контура — 12 % радиуса, колец — 6 %: на 2 м/px и
+/// дальше это десятые доли пикселя, так что вместо геометрии в заливку
+/// запекается **средний цвет** кроны — листва, смешанная с чернилами в той
+/// доле площади, которую чернила занимают у полной кроны (`ink_share`).
+///
+/// Контур раздут на половину штриха контура: полная крона кончается не на
+/// своём кольце, а на внешнем краю обводки, и без этого лес дальней ступени
+/// выходил реже и светлее. Доля чернил тогда считается к площади раздутой
+/// заливки.
+///
+/// Меш полной кроны — около тысячи вершин; слитый из таких на весь лес
+/// весил бы гигабайты (95 тыс. крон Калуги × 1100 × 36 байт), дальняя —
+/// 32–48 вершин.
+pub(super) fn far_crown(
+    geometry: &CrownGeometry,
+    style: &TreeStyle,
+    params: &CrownParams,
+    ink_share: f32,
+) -> MeshBuilder {
+    // шаг вниз, а не вверх: кольцо короче двух норм не прореживается вовсе —
+    // у ели и пальмы вершины чередуются остриё/впадина, и шаг 2 срезал бы
+    // все острия разом
+    let step = far_ring_step(geometry.outer.len());
+    let grow = 1.0 + params.outline_stroke / 2.0;
+    let ring: Vec<Vec2> = geometry
+        .outer
+        .iter()
+        .step_by(step)
+        .map(|&point| point * grow)
+        .collect();
+    let foliage = style.foliage.to_linear();
+    let share = ink_share / (grow * grow);
+    let color = foliage.mix(&ink_color(style), share.clamp(0.0, 1.0));
+    let mut builder = MeshBuilder::with_crown_coords();
+    builder.push_polygon(&ring, &[], color);
+    builder
+}
+
+/// Чернила кроны: цвет «Crown details», уведённый к листве на
+/// [`INK_FOLIAGE_MIX`].
+fn ink_color(style: &TreeStyle) -> LinearRgba {
+    style
+        .details
+        .mix(&style.foliage, INK_FOLIAGE_MIX)
+        .to_linear()
+}
+
+/// Полная крона, ещё не собранная в `Mesh`, и доля её заливки, которую
+/// закрывают чернила контура и колец (площадь штрихов к площади заливки) —
+/// по ней красится [`far_crown`]. Перекрытия штрихов считаются дважды — для
+/// среднего цвета кроны в пару пикселей точнее и не надо.
+pub(super) fn crown_builder(
+    geometry: &CrownGeometry,
+    style: &TreeStyle,
+    rng: &mut Lcg,
+    params: &CrownParams,
+) -> (MeshBuilder, f32) {
     let mut builder = MeshBuilder::default();
     // Чернила смешиваются с листвой: на снимке у кроны нет обводки, у неё
     // есть **затенённый край**. Ручка «Crown details» остаётся ручкой — она
@@ -605,11 +676,10 @@ pub(super) fn crown_mesh(
     // больше нет, и полог перестаёт читаться клипартом. Отдельным дефолтом
     // этого было не сделать: цвет сохраняется в настройках, и у всех, кто
     // уже играл, в `settings.toml` лежат прежние чернила.
-    let ink = style
-        .details
-        .mix(&style.foliage, INK_FOLIAGE_MIX)
-        .to_linear();
+    let ink = ink_color(style);
     builder.push_polygon(&geometry.outer, &[], style.foliage.to_linear());
+    let fill_area = builder.area_since(0);
+    let ink_from = builder.index_count();
     builder.push_stroke(&geometry.outer, true, params.outline_stroke, ink);
 
     for (ring, weight) in &geometry.bands {
@@ -628,7 +698,12 @@ pub(super) fn crown_mesh(
             );
         }
     }
-    builder.build()
+    let ink_share = if fill_area > 0.0 {
+        builder.area_since(ink_from) / fill_area
+    } else {
+        0.0
+    };
+    (builder, ink_share)
 }
 
 /// Сборка дуг из отбора: `drawn[i]` — рисуется ли кусок кольца из `step`
@@ -753,36 +828,85 @@ pub(super) fn leaf_arcs(ring: &[Vec2], weight: f32, rng: &mut Lcg) -> Vec<Vec<Ve
 /// цвет лежал в отдельном `ColorMaterial`, который слой заводил себе на
 /// каждую пересборку; со швом слой красится общим `MaterialSpec::Blend`, и
 /// цвету больше негде быть.
+///
+/// Игра берёт шаблон вместе с дальним ([`shadow_templates`]); отдельно он
+/// нужен только тестам.
+#[cfg(test)]
 pub(super) fn shadow_template(
     geometry: &CrownGeometry,
     rng: &mut Lcg,
     params: &CrownParams,
 ) -> MeshBuilder {
-    let color = SHADOW_COLOR.to_linear();
+    shadow_templates(geometry, rng, params).0
+}
+
+/// Шаблон тени и его дальний вариант — **от одной разыгранной высоты**: тень
+/// дальней ступени обязана быть той же тенью, только с прореженным контуром.
+///
+/// Дальний (`trees::CrownDetail::Merged`, от 2 м/px) — силуэт по контуру,
+/// прореженному тем же шагом, что у дальней кроны ([`far_ring`]): облачный
+/// контур в 144–188 вершин сходится к 32–37, и на Калуге слой теней дальней
+/// ступени легчает вчетверо (14.9 → 3.55 млн вершин, сборка 88 → 24 мс).
+/// Контур ели (32) и пальмы (48) не прореживается вовсе — у ели тогда и веер
+/// тот же самый, и второй union по нему не считается.
+pub(super) fn shadow_templates(
+    geometry: &CrownGeometry,
+    rng: &mut Lcg,
+    params: &CrownParams,
+) -> (MeshBuilder, MeshBuilder) {
     // высоту разыгрывает вариант, а во сколько раз тень от неё длиннее —
     // солнце ([`sun_stretch`], у домов оно же растягивает зажим длины). Тип
     // тени при этом выбирает сама разыгранная высота, до растяжения: иначе на
     // 15° всякая крона разом получила бы длинную тень вместо сдвинутого
     // силуэта
     let height = params.shadow_height_base + params.shadow_height_spread * rng.gauss3();
+    let full = shadow_silhouette(geometry.shape, &geometry.outer, height, params);
+    let far = match far_ring(&geometry.outer) {
+        Some(thinned) => shadow_silhouette(geometry.shape, &thinned, height, params),
+        None => full.clone(),
+    };
+    (full, far)
+}
+
+/// Силуэт тени по контуру `outer` при разыгранной высоте `height`.
+fn shadow_silhouette(
+    shape: TreeShape,
+    outer: &[Vec2],
+    height: f32,
+    params: &CrownParams,
+) -> MeshBuilder {
+    let color = SHADOW_COLOR.to_linear();
     let mut builder = MeshBuilder::default();
-    match geometry.shape {
+    match shape {
         TreeShape::Conifer => {
-            for (outer, holes) in conifer_shadow(&geometry.outer, height) {
+            for (outer, holes) in conifer_shadow(outer, height) {
                 builder.push_polygon(&outer, &holes, color);
             }
         }
         _ if height > params.long_shadow_height => {
-            builder.push_polygon(&shadow_ring(&geometry.outer, params), &[], color);
+            builder.push_polygon(&shadow_ring(outer, params), &[], color);
         }
         // `drawSimpleShadow`: тот же силуэт, просто сдвинутый по тени
         _ => {
             let offset = shadow_dir() * height * sun_stretch();
-            let ring: Vec<Vec2> = geometry.outer.iter().map(|&p| p + offset).collect();
+            let ring: Vec<Vec2> = outer.iter().map(|&p| p + offset).collect();
             builder.push_polygon(&ring, &[], color);
         }
     }
     builder
+}
+
+/// Шаг, которым дальние ступени прореживают контур кроны ([`far_crown`],
+/// [`shadow_templates`]): ровный, `len / FAR_CROWN_RING`, округлённый вниз.
+fn far_ring_step(len: usize) -> usize {
+    (len / FAR_CROWN_RING).max(1)
+}
+
+/// Контур, прореженный шагом [`far_ring_step`]; `None` — прореживать нечего
+/// (шаг 1: ель, пальма).
+fn far_ring(outer: &[Vec2]) -> Option<Vec<Vec2>> {
+    let step = far_ring_step(outer.len());
+    (step > 1).then(|| outer.iter().step_by(step).copied().collect())
 }
 
 /// `drawConiferShadow`: тень ели — не растянутый силуэт, а **конус**.

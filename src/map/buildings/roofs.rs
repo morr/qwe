@@ -32,7 +32,7 @@
 use bevy::prelude::*;
 
 use super::shade_by_light;
-use crate::map::meshing::{merge_close_points, min_area_rect, miter_offsets};
+use crate::map::meshing::{merge_close_points, min_area_rect, miter_offsets, ring_perimeter};
 use crate::map::osm::model::{distance_to_segment, signed_ring_area};
 use crate::map::osm::{AreaKind, BuildingUse, PolyArea};
 
@@ -618,7 +618,8 @@ fn hip_plan(outer: &[Vec2]) -> Option<(Vec<Vec2>, f32)> {
     if ring.len() < 3 {
         return None;
     }
-    let inset = HIP_INSET.min(HIP_INSET_SHARE * signed_ring_area(&ring).abs() / perimeter(&ring));
+    let inset =
+        HIP_INSET.min(HIP_INSET_SHARE * signed_ring_area(&ring).abs() / ring_perimeter(&ring));
     (inset >= MIN_HIP_INSET).then_some((ring, inset))
 }
 
@@ -626,13 +627,6 @@ fn hip_plan(outer: &[Vec2]) -> Option<(Vec<Vec2>, f32)> {
 /// разложенный на вылет каймы, а не на половину ширины дома.
 fn hip_rise(inset: f32) -> f32 {
     (inset * ROOF_PITCH).min(ROOF_RISE_MAX)
-}
-
-/// Периметр замкнутого контура.
-fn perimeter(ring: &[Vec2]) -> f32 {
-    (0..ring.len())
-        .map(|index| ring[index].distance(ring[(index + 1) % ring.len()]))
-        .sum()
 }
 
 /// Дом из **скатной когорты**? Предикат гейтит не два ската, а скатную
