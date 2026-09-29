@@ -1424,7 +1424,7 @@ fn a_footway_along_the_kerb_takes_the_inferred_sidewalk_of_its_side() {
     let street = inferred_street(Highway::Primary);
     let edge = street.width / 2.0 + sidewalk_band(street.width);
     let mut roads = vec![street, paved_footway(-(edge + 2.0), 0.0, 200.0)];
-    let report = drop_sidewalks_beside_footways(&mut roads);
+    let report = verges::measure_footways_beside_streets(&mut roads);
     assert_eq!((report.asked, report.dropped), (2, 1));
     assert_eq!(
         roads[0].sidewalks,
@@ -1433,7 +1433,7 @@ fn a_footway_along_the_kerb_takes_the_inferred_sidewalk_of_its_side() {
 }
 
 /// Не отдаётся: тег, дорожка поперёк, дорожка на треть длины, грунтовая
-/// тропинка, дорожка за домом (дальше [`SEPARATE_REACH`] за полосой) и
+/// тропинка, дорожка за домом (дальше [`verges::SEPARATE_REACH`] за полосой) и
 /// дорожка у самой кромки — газона меньше [`SEPARATE_LAWN`] (Тула, витрины 15
 /// и 21: снятая полоса оставляла между бордюром и дорожкой щель земли).
 #[test]
@@ -1441,7 +1441,7 @@ fn a_sidewalk_stays_unless_a_paved_footway_runs_beside_it() {
     let street = inferred_street(Highway::Residential);
     let edge = street.width / 2.0 + sidewalk_band(street.width);
     let check = |mut roads: Vec<RoadLine>, expected: [SidewalkSide; 2]| {
-        drop_sidewalks_beside_footways(&mut roads);
+        verges::measure_footways_beside_streets(&mut roads);
         assert_eq!(roads[0].sidewalks, expected);
     };
     // у кромки: ближний край дорожки в метре от бордюра
@@ -1452,7 +1452,7 @@ fn a_sidewalk_stays_unless_a_paved_footway_runs_beside_it() {
         [SidewalkSide::Inferred; 2],
     );
     let check = |mut roads: Vec<RoadLine>, expected: [SidewalkSide; 2]| {
-        drop_sidewalks_beside_footways(&mut roads);
+        verges::measure_footways_beside_streets(&mut roads);
         assert_eq!(roads[0].sidewalks, expected);
     };
     let inferred = [SidewalkSide::Inferred; 2];
@@ -1492,7 +1492,7 @@ fn a_sidewalk_stays_unless_a_paved_footway_runs_beside_it() {
     check(
         vec![
             street.clone(),
-            paved_footway(edge + SEPARATE_REACH + 2.0, 0.0, 200.0),
+            paved_footway(edge + verges::SEPARATE_REACH + 2.0, 0.0, 200.0),
         ],
         inferred,
     );
@@ -1507,7 +1507,7 @@ fn a_side_left_to_a_footway_gets_a_verge_up_to_it() {
     let axis = half + 2.0 + paved_footway(0.0, 0.0, 1.0).width / 2.0;
     // слева дорожка за газоном в два метра, справа — ничего
     let mut roads = vec![street.clone(), paved_footway(axis, 0.0, 200.0)];
-    drop_sidewalks_beside_footways(&mut roads);
+    verges::measure_footways_beside_streets(&mut roads);
     assert_eq!(roads[0].sidewalks[0], SidewalkSide::None);
     assert!(
         (roads[0].verges[0] - (axis - half)).abs() < 0.01,
@@ -1522,7 +1522,7 @@ fn a_side_left_to_a_footway_gets_a_verge_up_to_it() {
     };
     let close = half + 0.5;
     let mut roads = vec![separate, paved_footway(close, 0.0, 200.0)];
-    drop_sidewalks_beside_footways(&mut roads);
+    verges::measure_footways_beside_streets(&mut roads);
     assert!(
         (roads[0].verges[0] - 0.5).abs() < 0.01,
         "{:?}",
@@ -1530,7 +1530,7 @@ fn a_side_left_to_a_footway_gets_a_verge_up_to_it() {
     );
     // полоса осталась — обочина под ней, до оси дорожки
     let mut roads = vec![street, paved_footway(half + 1.0, 0.0, 200.0)];
-    drop_sidewalks_beside_footways(&mut roads);
+    verges::measure_footways_beside_streets(&mut roads);
     assert_eq!(roads[0].sidewalks[0], SidewalkSide::Inferred);
     assert!(
         (roads[0].verges[0] - 1.0).abs() < 0.01,
@@ -1554,7 +1554,7 @@ fn a_verge_follows_a_footway_drifting_away() {
         ])
     };
     let mut roads = vec![street, drifting];
-    drop_sidewalks_beside_footways(&mut roads);
+    verges::measure_footways_beside_streets(&mut roads);
     let road = &roads[0];
     assert!(road.verges[0] > 0.0);
     let (near, far) = (road.verge_at(0, 10.0), road.verge_at(0, 190.0));
@@ -1572,7 +1572,7 @@ fn a_two_way_street_reaches_a_farther_footway_than_a_half() {
     let half = street.width / 2.0;
     let axis = half + 13.0;
     let mut roads = vec![street.clone(), paved_footway(axis, 0.0, 200.0)];
-    drop_sidewalks_beside_footways(&mut roads);
+    verges::measure_footways_beside_streets(&mut roads);
     assert!(
         (roads[0].verges[0] - 13.0).abs() < 0.01,
         "{:?}",
@@ -1588,7 +1588,7 @@ fn a_two_way_street_reaches_a_farther_footway_than_a_half() {
         ..street
     };
     let mut roads = vec![one_way, paved_footway(axis, 0.0, 200.0)];
-    drop_sidewalks_beside_footways(&mut roads);
+    verges::measure_footways_beside_streets(&mut roads);
     assert_eq!(roads[0].verges, [0.0; 2]);
 }
 

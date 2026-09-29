@@ -383,7 +383,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     average (`parse::infer_sidewalks`, the cars' district measure); and any carriageway
     loses an untagged side to a **separately mapped footway** — a paved path running
     alongside within a few metres of the band, behind a real lawn of at least 1.5 m
-    (`parse::drop_sidewalks_beside_footways`), since a band next to it was a second
+    (`parse/verges.rs::measure_footways_beside_streets`), since a band next to it was a second
     sidewalk with a strip of grass between, while a band taken from under a footway at
     the kerb left a slit of bare ground and holes at the corners. Any side of a paved
     street with such a footway alongside (up to 10 m past the kerb, 16 m on a two-way

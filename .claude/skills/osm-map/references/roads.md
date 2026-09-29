@@ -143,7 +143,7 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   the band there drew the rule zebras after it. Tula: see the `osm parse: N of M
   untagged residential streets left without sidewalks` line. And any carriageway —
   arterials included — gives an untagged side up to a **separately mapped paved footway**
-  running alongside it (`parse.rs::drop_sidewalks_beside_footways`, `parse.md`,
+  running alongside it (`parse/verges.rs::measure_footways_beside_streets`, `parse.md`,
   **Sidewalks left to a separate footway**): the band beside it was a second sidewalk —
   but only behind a real lawn (`SEPARATE_LAWN` 1.5 m to the footway's near edge); a
   footway at the kerb keeps the band under it. **Any side** of a paved street with such a

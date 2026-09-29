@@ -214,9 +214,7 @@ fn fill_building(
     }
 
     let area = crate::map::osm::model::ring_area(ring);
-    let perimeter: f32 = (0..ring.len())
-        .map(|index| ring[index].distance(ring[(index + 1) % ring.len()]))
-        .sum();
+    let perimeter = crate::map::meshing::ring_perimeter(ring);
     let length = equivalent_length(area, perimeter);
     // один раз на дом: предикат считает площадь кольца, а спрашивают его трое
     let big_box = is_big_box(building);

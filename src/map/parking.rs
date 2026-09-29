@@ -61,7 +61,7 @@
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
-use crate::map::meshing::MeshBuilder;
+use crate::map::meshing::{MeshBuilder, ring_perimeter};
 use crate::map::osm::model::{
     AreaKind, LotKind, PolyArea, RoadClass, RoadLine, TrafficSide, distance_to_segment,
     ring_bounds, signed_ring_area,
@@ -1192,14 +1192,7 @@ fn pocket_depth(area: &PolyArea) -> Option<f32> {
 
 /// Толщина полосы, `2 · площадь / периметр`: у длинной полосы это её ширина.
 fn thickness(ring: &[Vec2]) -> f32 {
-    2.0 * signed_ring_area(ring).abs() / perimeter(ring)
-}
-
-/// Периметр замкнутого кольца (последнее ребро — от конца к началу).
-fn perimeter(ring: &[Vec2]) -> f32 {
-    (0..ring.len())
-        .map(|index| ring[index].distance(ring[(index + 1) % ring.len()]))
-        .sum()
+    2.0 * signed_ring_area(ring).abs() / ring_perimeter(ring)
 }
 
 /// Ширина полосы — короткая сторона прямоугольника с той же площадью и тем же
@@ -1207,7 +1200,7 @@ fn perimeter(ring: &[Vec2]) -> f32 {
 /// вдоль бордюра встаёт по середине полосы, и на четверть метра мимо — это
 /// машина, торчащая из кармана.
 fn strip_width(ring: &[Vec2]) -> f32 {
-    let semi = perimeter(ring) / 2.0;
+    let semi = ring_perimeter(ring) / 2.0;
     let area = signed_ring_area(ring).abs();
     (semi - (semi * semi - 4.0 * area).max(0.0).sqrt()) / 2.0
 }

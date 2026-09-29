@@ -277,7 +277,7 @@ be called alone:
   the house pull and the block pull, so both push and pull against the sidewalk that is
   drawn. The rule itself — `roads.md`,
   **Sidewalks**; logged as `N of M untagged residential streets left without sidewalks`.
-- **Sidewalks left to a separate footway** (`parse.rs::drop_sidewalks_beside_footways`,
+- **Sidewalks left to a separate footway** (`parse/verges.rs::measure_footways_beside_streets`,
   right after the pavements pass, whose answer it reads) — OSM maps a sidewalk either as a
   `sidewalk*` tag or as its own `footway` along the kerb, and the street then should say
   `sidewalk=separate`. Often it does not: the south-east half of Lenina in Tula carries no

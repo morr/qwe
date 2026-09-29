@@ -9,7 +9,7 @@ use bevy::math::Vec2;
 use super::planting::plant_trees;
 use crate::city::City;
 use crate::grid::DEFAULT_NAVTILE_SIZE;
-use crate::map::along::{arclengths, densify, place_on_path};
+use crate::map::along::densify;
 use crate::map::cars::district::Districts;
 use crate::map::grid::Grid;
 use crate::map::osm::entrances::generate_entrances;
@@ -18,7 +18,7 @@ use crate::map::osm::model::{
     RailLine, RoadArea, RoadClass, RoadLine, RoadNode, Sacred, SacredForm, SidewalkSide, Structure,
     TrafficSide, TreeCompose, TreeNode, TreeRow, TreeRowLayout, WallLine, WaterLine,
     closest_on_segment, point_in_area, point_in_polygon, ring_area, ring_bounds, ring_vertex_mean,
-    sidewalk_band, signed_ring_area,
+    signed_ring_area,
 };
 use crate::map::osm::overpass::{Element, GeoBounds, LatLon, Member, OverpassResponse};
 use crate::map::roads::network::sections::{self, SectionReport};
@@ -214,7 +214,7 @@ struct PassReport {
     drowned: usize,
     sidewalks: InferredSidewalks,
     pavements: InferredPavements,
-    separate: SeparateSidewalks,
+    separate: verges::SeparateSidewalks,
     faiths_guessed: usize,
     entrances_found: usize,
     entrances_orphaned: usize,
@@ -376,7 +376,7 @@ impl std::fmt::Display for PassReport {
 ///    **Покрытие дорожек без тега** ([`infer_pavements`]) — там же, хотя
 ///    место ему любое: зелень, которую он спрашивает, дальше не двигается, а
 ///    читает решение только рендер.
-///    **Тротуар, отданный отдельной дорожке** ([`drop_sidewalks_beside_footways`]),
+///    **Тротуар, отданный отдельной дорожке** ([`verges::measure_footways_beside_streets`]),
 ///    — сразу за покрытием: он спрашивает, мощёная ли дорожка вдоль кромки, а
 ///    читают его, как и тротуар по застройке, шаги 5 и 6.
 /// 2. **Вера** — до дверей и до выпрямления: она собирает храм из частей
@@ -430,7 +430,7 @@ fn finish_parse(map: &mut MapData, pending: &Pending, knobs: ParseKnobs) -> Pass
             .storeys_at(point)
     });
     let pavements = infer_pavements(map);
-    let separate = drop_sidewalks_beside_footways(&mut map.roads);
+    let separate = verges::measure_footways_beside_streets(&mut map.roads);
     let faiths_guessed = resolve_faiths(&mut map.buildings);
     let entrances_orphaned = attach_entrances(map, entrances);
 
@@ -583,212 +583,6 @@ fn infer_sidewalks(
         asked: asked.len(),
         dropped,
     }
-}
-
-/// Шаг, с которым сторона улицы ищет вдоль себя отдельную дорожку, м.
-const SEPARATE_PROBE_STEP: f32 = 5.0;
-/// Как далеко за внешним краем полосы тротуара ещё лежит «её» дорожка, м: за
-/// газоном в пару метров, но не через дом.
-const SEPARATE_REACH: f32 = 4.0;
-/// Насколько дорожка может заходить на проезжую часть от кромки, м: `footway`
-/// бывает замаплен прямо по бордюру, и его ось тогда чуть внутри ленты.
-const SEPARATE_INSIDE: f32 = 1.0;
-/// Какой газон, м, должен лежать между кромкой проезжей части и ближним краем
-/// дорожки, чтобы полоса ушла. Ближе — полоса остаётся и лежит под дорожкой:
-/// снятая, она оставляла между бордюром и дорожкой щель земли в метр, а у
-/// угла — дыру до земли в рамке скруглений (Тула, витрины 15 и 21). На земле
-/// от бордюра до плитки — тоже тротуар.
-const SEPARATE_LAWN: f32 = 1.5;
-/// Как далеко от кромки ещё лежит дорожка, до которой мостится обочина
-/// ([`RoadLine::verges`]), м: дальше «её» полосы ([`SEPARATE_REACH`]) — у
-/// проспектов центра Тулы тротуар идёт за газоном в шесть-восемь метров, и
-/// голая земля между ними была дырой на весь квартал (витрина 02).
-const VERGE_REACH: f32 = 10.0;
-/// То же у двусторонней улицы, м: у Фрунзе в Туле (витрина 02) дорожка идёт
-/// в 8–15 м от кромки, и в 10 м её находила только половина проб — сторона
-/// оставалась без обочины, и между полосой тротуара и дорожкой лежала голая
-/// земля. У половины разделённой улицы дальше [`VERGE_REACH`] по внутренней
-/// стороне — уже дорожки за встречной половиной, и обочина мостила бы
-/// разделительную с чужим полотном.
-const VERGE_REACH_TWO_WAY: f32 = 16.0;
-/// Косинус угла, от которого дорожка считается идущей вдоль улицы.
-const SEPARATE_PARALLEL: f32 = 0.85;
-/// Косинус угла, от которого косое звено дорожки ещё ведёт профиль обочины
-/// ([`RoadLine::verge_profile`]), но не считается дорожкой вдоль: у угла
-/// перекрёстка тротуар заворачивает под 30–50° к улице, и обочина по
-/// параллельным звеньям обрывалась там, где он начинал уходить.
-const VERGE_SLANT: f32 = 0.5;
-/// Доля проб стороны, у которых нашлась дорожка, чтобы полоса ушла.
-const SEPARATE_SHARE: f32 = 0.6;
-/// Клетка индекса дорожек, м.
-const SEPARATE_CELL: f32 = 40.0;
-
-/// Что решил [`drop_sidewalks_beside_footways`]: сколько сторон без тега
-/// было спрошено и сколько из них отдано отдельной дорожке.
-#[derive(Debug, Default, Clone, Copy, PartialEq)]
-struct SeparateSidewalks {
-    asked: usize,
-    dropped: usize,
-    took: std::time::Duration,
-}
-
-impl std::fmt::Display for SeparateSidewalks {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let Self {
-            asked,
-            dropped,
-            took,
-        } = self;
-        write!(
-            f,
-            "osm parse: {dropped} of {asked} untagged sidewalk sides left to a separately mapped footway in {took:?}"
-        )
-    }
-}
-
-/// Тротуар без тега там, где его уже замапили отдельной дорожкой.
-///
-/// OSM рисует тротуар двумя способами: тегом `sidewalk*` на улице или
-/// отдельным `footway` (обычно `footway=sidewalk`) вдоль кромки — и тогда на
-/// улице ставят `sidewalk=separate`. Ставят не всегда: у юго-восточной
-/// половины Ленина в Туле тега нет вовсе, и полоса по правилу ложилась рядом с
-/// мощёной дорожкой в метре от неё — два параллельных тротуара со щелью травы
-/// на всю длину проспекта (разведка A1, примеры 01 и 02).
-///
-/// Сторона без тега ([`SidewalkSide::Inferred`]) у всякой проезжей части
-/// отдаётся дорожке, если на [`SEPARATE_SHARE`] проб вдоль неё (шаг
-/// [`SEPARATE_PROBE_STEP`]) с **этой** стороны идёт мощёная дорожка
-/// ([`RoadLine::is_paved_path`]) — параллельно ([`SEPARATE_PARALLEL`]), осью от
-/// [`SEPARATE_INSIDE`] внутри кромки до [`SEPARATE_REACH`] за внешним краем
-/// полосы, — и между кромкой и ближним краем дорожки (медиана по пробам) лежит
-/// газон не уже [`SEPARATE_LAWN`]. Грунтовая тропинка тротуаром не считается:
-/// песчаная лента вместо полосы была бы хуже дубля. Тег (`Tagged`) не
-/// трогается — его ставил человек.
-///
-/// Всякая сторона мощёной улицы с такой дорожкой вдоль (до [`VERGE_REACH`]
-/// от кромки, у двусторонней — до [`VERGE_REACH_TWO_WAY`]) получает **обочину** ([`RoadLine::verges`]) — от кромки до оси
-/// дорожки, с полосой тротуара или без: газон между ними рисуется газоном, а
-/// голая земля — плиткой (`roads.rs`, слой под зеленью).
-fn drop_sidewalks_beside_footways(roads: &mut [RoadLine]) -> SeparateSidewalks {
-    let started = std::time::Instant::now();
-    // звено дорожки и её полуширина
-    let mut links: Vec<(Vec2, Vec2, f32)> = Vec::new();
-    let mut index: Grid<u32> = Grid::new(SEPARATE_CELL);
-    for road in roads.iter().filter(|road| road.is_paved_path()) {
-        for pair in road.points.windows(2) {
-            index.insert_segment(pair[0], pair[1], 0.0, links.len() as u32);
-            links.push((pair[0], pair[1], road.width / 2.0));
-        }
-    }
-    let mut report = SeparateSidewalks::default();
-    if links.is_empty() {
-        return report;
-    }
-    for road in roads.iter_mut() {
-        let paved = !road.is_unpaved_street();
-        let asks = paved || road.sidewalks.contains(&SidewalkSide::Inferred);
-        if !road.is_carriageway() || !asks {
-            continue;
-        }
-        let half = road.width / 2.0;
-        let near = (half - SEPARATE_INSIDE).max(0.0);
-        let far = half + sidewalk_band(road.width) + SEPARATE_REACH;
-        // обочина тянется и к дорожке дальше «её» полосы
-        let verge_reach = if road.oneway {
-            VERGE_REACH
-        } else {
-            VERGE_REACH_TWO_WAY
-        };
-        let reach = far.max(half + verge_reach);
-        let (along, total) = arclengths(&road.points);
-        let mut probes = 0;
-        // по сторонам — ближайшая дорожка каждой пробы: ось и полуширина
-        let mut hits: [Vec<(f32, f32)>; 2] = [Vec::new(), Vec::new()];
-        // профиль обочины: где по точкам стояла проба и как далеко от неё
-        // дорожка — и косая, заворачивающая у угла
-        let mut places: [Vec<(f32, f32)>; 2] = [Vec::new(), Vec::new()];
-        let mut at = SEPARATE_PROBE_STEP / 2.0;
-        while at < total {
-            if let Some((point, direction)) = place_on_path(&road.points, &along, at) {
-                probes += 1;
-                let mut found: [Option<(f32, f32)>; 2] = [None; 2];
-                // косое звено — только профилю: у угла дорожка заворачивает
-                let mut slanted: [Option<f32>; 2] = [None; 2];
-                // повтор звена из соседней клетки безвреден — берётся ближайшее
-                for &link in index.near_each(point - reach, point + reach) {
-                    let (from, to, path_half) = links[link as usize];
-                    let heading = (to - from).normalize_or_zero();
-                    let parallel = heading.dot(direction).abs();
-                    if parallel < VERGE_SLANT {
-                        continue;
-                    }
-                    let offset = closest_on_segment(point, from, to) - point;
-                    let distance = offset.length();
-                    if (near..=reach).contains(&distance) {
-                        // `perp` смотрит влево по ходу точек — сторона 0
-                        let at_side = usize::from(offset.dot(direction.perp()) < 0.0);
-                        if parallel < SEPARATE_PARALLEL {
-                            let side = &mut slanted[at_side];
-                            if side.is_none_or(|nearest| distance < nearest) {
-                                *side = Some(distance);
-                            }
-                            continue;
-                        }
-                        let side = &mut found[at_side];
-                        if side.is_none_or(|(nearest, _)| distance < nearest) {
-                            *side = Some((distance, path_half));
-                        }
-                    }
-                }
-                for (((hits, places), found), slanted) in
-                    hits.iter_mut().zip(&mut places).zip(found).zip(slanted)
-                {
-                    if let Some(found) = found {
-                        hits.push(found);
-                    }
-                    if let Some(distance) = found.map(|(distance, _)| distance).or(slanted) {
-                        places.push((at, distance));
-                    }
-                }
-            }
-            at += SEPARATE_PROBE_STEP;
-        }
-        for (((side, verge), profile), (mut hits, places)) in road
-            .sidewalks
-            .iter_mut()
-            .zip(road.verges.iter_mut())
-            .zip(road.verge_profile.iter_mut())
-            .zip(hits.into_iter().zip(places))
-        {
-            let enough =
-                |count: usize| probes > 0 && count as f32 >= SEPARATE_SHARE * probes as f32;
-            if *side == SidewalkSide::Inferred {
-                report.asked += 1;
-                // газон до ближнего края дорожки — медиана по пробам «её» полосы
-                let mut lawns: Vec<f32> = hits
-                    .iter()
-                    .filter(|(at, _)| *at <= far)
-                    .map(|(at, path)| at - path - half)
-                    .collect();
-                lawns.sort_by(f32::total_cmp);
-                if enough(lawns.len()) && lawns[lawns.len() / 2] >= SEPARATE_LAWN {
-                    *side = SidewalkSide::None;
-                    report.dropped += 1;
-                }
-            }
-            if paved && enough(hits.len()) {
-                // до оси дорожки у каждой пробы — профиль, медиана — постоянная
-                *profile = places
-                    .iter()
-                    .map(|&(at, distance)| (at, (distance - half).max(0.0)))
-                    .collect();
-                hits.sort_by(|a, b| a.0.total_cmp(&b.0));
-                *verge = (hits[hits.len() / 2].0 - half).max(0.0);
-            }
-        }
-    }
-    report.took = started.elapsed();
-    report
 }
 
 /// Шаг, с которым дорожка без тега меряет, по зелени ли она идёт, м.

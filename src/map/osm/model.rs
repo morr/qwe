@@ -367,7 +367,7 @@ pub struct RoadLine {
     pub sidewalks: [SidewalkSide; 2],
     /// **Обочина** `[слева, справа]` по ходу точек, м: у стороны мощёной
     /// улицы, вдоль которой идёт отдельно замапленная мощёная дорожка, — от
-    /// кромки до её оси (`parse::drop_sidewalks_beside_footways`), с полосой
+    /// кромки до её оси (`parse/verges.rs::measure_footways_beside_streets`), с полосой
     /// тротуара или без; ноль — нет.
     /// Только рисунок: плитка под зеленью (`map::roads`), навмеш и дома её не
     /// читают.
@@ -1457,9 +1457,7 @@ pub fn is_fortress_tower(area: &PolyArea) -> bool {
     if area.kind != AreaKind::Kremlin || !area.holes.is_empty() || area.outer.len() < 3 {
         return false;
     }
-    let perimeter: f32 = (0..area.outer.len())
-        .map(|index| area.outer[index].distance(area.outer[(index + 1) % area.outer.len()]))
-        .sum();
+    let perimeter = crate::map::meshing::ring_perimeter(&area.outer);
     perimeter > 0.0
         && ring_area(&area.outer) / (perimeter * perimeter) >= FORTRESS_TOWER_COMPACTNESS_MIN
 }

@@ -1668,7 +1668,7 @@ impl MeshBuilder {
         let width = if outside {
             width
         } else {
-            width.min(RIM_THICKNESS_SHARE * area.abs() / perimeter(&path))
+            width.min(RIM_THICKNESS_SHARE * area.abs() / ring_perimeter(&path))
         };
         if width < MIN_RIM_WIDTH {
             return None;
@@ -2079,8 +2079,10 @@ fn signed_area(ring: &[Vec2]) -> f32 {
         / 2.0
 }
 
-/// Периметр замкнутого контура.
-fn perimeter(ring: &[Vec2]) -> f32 {
+/// Периметр замкнутого кольца (последнее ребро — от конца к началу). Одна
+/// копия на всю карту: здесь, в чистой геометрии, потому что `meshing` не
+/// знает про OSM-модель, а модель, разбор и слои знают про `meshing`.
+pub(crate) fn ring_perimeter(ring: &[Vec2]) -> f32 {
     let count = ring.len();
     (0..count)
         .map(|index| ring[index].distance(ring[(index + 1) % count]))

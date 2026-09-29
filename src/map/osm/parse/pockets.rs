@@ -44,7 +44,7 @@ use i_overlay::mesh::stroke::offset::StrokeOffset;
 use i_overlay::mesh::style::{LineCap, LineJoin, OutlineStyle, StrokeStyle};
 
 use super::LANDUSE_OVERLAP;
-use super::verges::verge_rings;
+use super::verges::{Cover, verge_rings};
 use crate::map::grid::Grid;
 use crate::map::osm::model::{
     AreaKind, BuildingUse, MapData, PolyArea, RoadClass, RoadLine, distance_to_segment, ring_area,
@@ -81,13 +81,6 @@ const MARGIN: f32 = 30.0;
 /// Звеньев дороги в одном куске обводки: кусок берётся в плитку по габариту,
 /// и длинная улица не тащит в каждую свои сотни метров.
 const RUN: usize = 16;
-
-/// Кусок покрытия: контуры `i_overlay` и габарит.
-struct Cover {
-    contours: Vec<Contour>,
-    low: Vec2,
-    high: Vec2,
-}
 
 /// Звено дороги для вопроса «касается ли карман полотна».
 #[derive(Clone, Copy)]
@@ -267,7 +260,7 @@ impl Scene {
             .near(low, high)
             .into_iter()
             .map(|index| &self.covers[index])
-            .filter(|cover| cover.low.cmple(high).all() && cover.high.cmpge(low).all())
+            .filter(|cover| cover.overlaps(low, high))
             .flat_map(|cover| cover.contours.iter().cloned())
             .collect();
         if contours.is_empty() {
@@ -354,20 +347,6 @@ impl Rim {
             .filter(|&(distance, _)| distance <= POCKET_NEAR)
             .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)))
             .map(|(_, index)| self.edges[index].2)
-    }
-}
-
-impl Cover {
-    fn of(contours: Vec<Contour>) -> Self {
-        let (low, high) = contours.iter().map(contour_bounds).fold(
-            (Vec2::INFINITY, Vec2::NEG_INFINITY),
-            |(low, high), (from, to)| (low.min(from), high.max(to)),
-        );
-        Self {
-            contours,
-            low,
-            high,
-        }
     }
 }
 
