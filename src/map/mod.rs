@@ -136,6 +136,11 @@ impl Plugin for MapPlugin {
             .add_plugins(Material2dPlugin::<buildings::material::RoofMaterial>::default())
             .add_plugins(Material2dPlugin::<trees::CrownMaterial>::default())
             .add_plugins(Material2dPlugin::<roads::paint::PaintMaterial>::default())
+            // сырой OSM — вход разбора (`loading::parse_knobs`); смена
+            // перезагружает мир (`city::raw_osm_moved`)
+            .init_resource::<osm::parse::RawOsm>()
+            .register_type::<osm::parse::RawOsm>()
+            .track_pref::<osm::parse::RawOsm>()
             .init_resource::<SunStyle>()
             .init_resource::<SunOnMap>()
             .init_resource::<TreeStyle>()

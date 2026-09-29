@@ -10,11 +10,11 @@ them, every tag reading and finishing pass in order, and how a tag rule is pinne
 ### The parse seam: reading the elements, then finishing
 
 `parse(json, city, knobs)` is two halves with a line between them, and the line is what
-makes a single pass reachable. **`ParseKnobs { lane_width, navtile }`** (`parse.rs`) are
+makes a single pass reachable. **`ParseKnobs { lane_width, navtile, raw }`** (`parse.rs`) are
 the parse's inputs that are not in the Overpass answer: the street lane width (the
-sections — and by the width the houses, blocks and lots move) and the navtile size (the
+sections — and by the width the houses, blocks and lots move), the navtile size (the
 door generator's clearance, one tile in front of a door, carried by
-`entrances::FootprintIndex`). **The parse reads no process global** — both used to be one
+`entrances::FootprintIndex`) and the **Raw OSM** level (below). **The parse reads no process global** — both used to be one
 (`shape::lane_width()`, `grid::navtile_size()`), which the parse read on its own, so
 `parse(json, city)` had two invisible inputs and a test could not name a lane width
 without a serial mutex (`cargo test` is multithreaded). `Default` is the knobs' defaults
@@ -57,6 +57,27 @@ a map built by hand in a test carries the defaults.
   comments out of eight and was written down whole nowhere; now it is one numbered list of
   ten steps (0–9) on that function, each step with its "why here", and a pass's own doc comment
   only points at its step number.
+- **Raw OSM** — `ParseKnobs::raw: RawOsm` (`Off` / `Parse` / `Draw`, a persisted
+  settings group `debug.raw_osm`, the Debug tab's `Raw OSM` row beside `Navtile`, the
+  gallery's `Raw OSM` row / `ROADS_RAW=parse|draw`). With any level on, `finish_parse`
+  skips: `rings::straighten_tails`; `sections::apply` — replaced by
+  **`sections::apply_raw`**, which still glues the network (the drawing and the network
+  overlay read it, and gluing changes no data) but infers no lanes: only a way with a
+  `lanes` tag gets the section width, the rest keep the class width `road_class` read, and
+  `lanes` stays `None` on them; `drop_buildings_in_water`; `infer_sidewalks`,
+  `infer_pavements`, `verges::measure_footways_beside_streets` — replaced by
+  `drop_untagged_sidewalks` (every `SidewalkSide::Inferred` becomes `None`: **a sidewalk
+  only where `sidewalk*` says so**); `resolve_faiths`; `square_skewed_houses`,
+  `pull_houses_off_sidewalks`, `pull_areas_to_roads` (and with it `pave_lots` and the
+  `LotKind::Ground` it settles — every lot stays what `area_kind` read);
+  `pockets::fill_ground_pockets`; `generate_entrances`. **`attach_entrances` stays** — a
+  mapped door is data. Planting runs (the tree nodes are data), and on the `Draw` level its
+  woods and rows are thrown away: no generated trees. The skipped passes report zeros, and
+  `PassReport` opens with an `osm parse: RAW OSM (…)` line so the zeros are not read as
+  "nothing to do". The world comes up on it: navmesh and spawn read roads and outlines, and
+  the gates only lose the plots whose doors were generated (live check, Tula).
+  Pinned by `raw_osm_skips_the_finishing_passes` and
+  `raw_osm_draw_plants_no_generated_trees`.
 - **The reports are values**, not the ten `eprintln!` that used to make up forty-five of
   `parse`'s hundred and twenty-five lines. `parse` prints both of them at the end of the
   load, as one contiguous block; a test compares the counters, which before meant reading

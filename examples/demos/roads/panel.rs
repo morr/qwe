@@ -13,6 +13,7 @@
 
 use bevy::prelude::*;
 use qwe::city::City;
+use qwe::map::osm::parse::RawOsm;
 use qwe::map::{CrossingMode, RoadPaintStyle, RoadShape, RoadStyle};
 use qwe::ui::knob::{CycleBinding, spawn_cycle_row, spawn_knob};
 use qwe::ui::{
@@ -43,6 +44,8 @@ fn on_off(value: bool) -> String {
     if value { "On" } else { "Off" }.to_string()
 }
 
+// восемь ресурсов, и каждый — строки панели
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_panel(
     mut commands: Commands,
     assets: Res<AssetServer>,
@@ -51,6 +54,7 @@ pub(crate) fn spawn_panel(
     style: Res<RoadStyle>,
     paint: Res<RoadPaintStyle>,
     overlay: Res<Overlays>,
+    raw: Res<RawOsm>,
 ) {
     let panel = commands
         .spawn((
@@ -190,6 +194,18 @@ pub(crate) fn spawn_panel(
         CycleBinding {
             cycle: |overlay: &mut Overlays| overlay.contours = !overlay.contours,
             text: |overlay| on_off(overlay.contours),
+        },
+    );
+    // и сама карта без наших достроек: Off → parse → parse+draw
+    spawn_cycle_row(
+        &mut commands,
+        panel,
+        "Raw OSM",
+        ROW_LEFT_PX,
+        &*raw,
+        CycleBinding {
+            cycle: |raw: &mut RawOsm| *raw = raw.next(),
+            text: |raw| raw.label().to_string(),
         },
     );
 

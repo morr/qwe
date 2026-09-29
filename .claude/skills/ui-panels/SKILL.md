@@ -462,7 +462,11 @@ did not fit 1080 px and ran off the top of the screen.
   the deletion is the retina trap — `ComputedNode::size` is in *physical* pixels, and
   `offset_below_brp_badge` still multiplies by `inverse_scale_factor`.
 - **Debug tab** (`ui/debug/`) — the overlay rows (grid / doors / move paths / noise field /
-  **Road network**), the `Camera start`, `Antialias` and `Navtile` cyclers, and `reset`. **Road
+  **Road network** / **OSM contours**), the `Camera start`, `Antialias`, `Navtile` and
+  **`Raw OSM`** cyclers, and `reset`. `Raw OSM` cycles `map::osm::parse::RawOsm`
+  (`Off` → `parse` → `parse+draw`, persisted `debug.raw_osm`, registered by `MapPlugin`);
+  it is a parse input, so it sits beside Navtile and reloads the world the same way
+  (`city::raw_osm_moved` compares it with `MapData::knobs.raw`). **Road
   network** is `DebugRoadNetwork` (settings group `debug`, key `road_network`):
   `ui/debug/overlays.rs::sync_road_network_overlay` despawns the `RoadNetworkOverlayMarker`
   layer and, when on, spawns `map::mesh_network_overlay` through `surface::spawn_layers`

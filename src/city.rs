@@ -15,6 +15,7 @@ use crate::grid::NavtileBase;
 use crate::loading::AppState;
 use crate::map::RoadShapeOnMap;
 use crate::map::osm::MapData;
+use crate::map::osm::parse::RawOsm;
 use crate::prefs::{TrackPrefExt, retuned};
 use crate::settings::MAP_SIZE;
 
@@ -246,7 +247,8 @@ impl Plugin for CityPlugin {
                     .run_if(
                         retuned::<City>
                             .or_else(retuned::<NavtileBase>)
-                            .or_else(lane_width_moved),
+                            .or_else(lane_width_moved)
+                            .or_else(raw_osm_moved),
                     ),
             );
     }
@@ -264,6 +266,15 @@ fn lane_width_moved(shape: Option<Res<RoadShapeOnMap>>, map: Option<Res<MapData>
     shape
         .zip(map)
         .is_some_and(|(shape, map)| shape.0.lane_width() != map.knobs.lane_width)
+}
+
+/// Режим сырого OSM (строка `Raw OSM` вкладки Debug) разошёлся с тем, с
+/// которым разобран мир: он — вход разбора, так что его смена — та же
+/// перезагрузка, что у навтайла. Сравнение со снимком разбора
+/// (`MapData::knobs`), а не окно `is_changed`, — по той же причине, что у
+/// [`lane_width_moved`]: переключение во время загрузки не теряется.
+fn raw_osm_moved(raw: Option<Res<RawOsm>>, map: Option<Res<MapData>>) -> bool {
+    raw.zip(map).is_some_and(|(raw, map)| *raw != map.knobs.raw)
 }
 
 /// Возврат в `Loading` под новый город, размер навтайла или ширину полосы.

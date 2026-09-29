@@ -22,7 +22,10 @@
 //!   `camera::CameraPositionMode`);
 //! - `Antialias` — сглаживание кромок карты (`4x` ⇄ `Off`, `post::Antialias`);
 //! - `Navtile` — сторона ячейки навигации (`grid::NavtileBase`, смена
-//!   перезагружает мир).
+//!   перезагружает мир);
+//! - `Raw OSM` — сырой OSM (`map::osm::parse::RawOsm`): `Off` → `parse`
+//!   (доводочные проходы разбора выключены) → `parse+draw` (и достройки
+//!   отрисовки); смена перезагружает мир.
 //!
 //! Замыкает вкладку `reset` — кнопка-действие, возвращающая ВСЕ настройки к
 //! умолчаниям (`prefs::ResetSettings`), включая мировые: если уведены город,
@@ -48,6 +51,7 @@ use bevy::prelude::*;
 use crate::camera::CameraPositionMode;
 use crate::grid::NavtileBase;
 use crate::loading::{AppState, WorldInitSet};
+use crate::map::osm::parse::RawOsm;
 use crate::map::trees::{ConiferNoiseStyle, TreeRowStyle, TreeStyle};
 use crate::movement::DrawMovePaths;
 use crate::navigation::PolymeshDebug;
@@ -118,6 +122,7 @@ impl Plugin for UiDebugTogglesPlugin {
             .add_knobs::<CameraPositionMode>()
             .add_knobs::<Antialias>()
             .add_knobs::<NavtileBase>()
+            .add_knobs::<RawOsm>()
             .init_resource::<DebugGrid>()
             .init_resource::<DebugNavmesh>()
             .init_resource::<DebugDoors>()
@@ -221,6 +226,7 @@ struct DebugValues<'w> {
     conifer_noise: Res<'w, DebugConiferNoise>,
     road_network: Res<'w, DebugRoadNetwork>,
     osm_contours: Res<'w, DebugOsmContours>,
+    raw_osm: Res<'w, RawOsm>,
 }
 
 fn build_debug_tab(mut commands: Commands, panes: Res<SettingsPanes>, values: DebugValues) {
@@ -343,6 +349,19 @@ fn build_debug_tab(mut commands: Commands, panes: Res<SettingsPanes>, values: De
         CycleBinding {
             cycle: |navtile: &mut NavtileBase| *navtile = navtile.next(),
             text: |navtile| navtile.label().to_string(),
+        },
+    );
+    // сырой OSM: Off → parse → parse+draw — наши достройки выключаются, мир
+    // перезагружается (`city::raw_osm_moved`): это вход разбора, как навтайл
+    spawn_cycle_row(
+        &mut commands,
+        world,
+        "Raw OSM",
+        ROW_LEFT_PX,
+        &*values.raw_osm,
+        CycleBinding {
+            cycle: |raw: &mut RawOsm| *raw = raw.next(),
+            text: |raw| raw.label().to_string(),
         },
     );
 

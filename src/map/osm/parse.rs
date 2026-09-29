@@ -5,6 +5,8 @@
 use std::collections::{HashMap, HashSet};
 
 use bevy::math::Vec2;
+use bevy::prelude::{Reflect, ReflectDefault, ReflectResource, Resource};
+use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use super::contours::OsmContours;
 use super::planting::plant_trees;
@@ -70,15 +72,91 @@ pub struct ParseKnobs {
     /// Размер навтайла, м (`NavtileBase::size`): зазор, который генератор
     /// дверей проверяет перед стеной (шаг 7).
     pub navtile: f32,
+    /// Режим **сырого OSM** ([`RawOsm`]): какие наши достройки выключены.
+    pub raw: RawOsm,
 }
 
 impl ParseKnobs {
-    /// Входы по умолчанию — дефолты обеих ручек (3.3 м, 2 м). Константой, а
-    /// не только [`Default`]: тест называет её там, где нужна константа.
+    /// Входы по умолчанию — дефолты ручек (3.3 м, 2 м, сырой OSM выключен).
+    /// Константой, а не только [`Default`]: тест называет её там, где нужна
+    /// константа.
     pub const DEFAULT: Self = Self {
         lane_width: LANE_WIDTH_DEFAULT,
         navtile: DEFAULT_NAVTILE_SIZE,
+        raw: RawOsm::Off,
     };
+}
+
+/// **Сырой OSM** — карта без наших достроек и правок данных, чтобы на кривом
+/// месте ответить «виноваты данные или наш разбор» за одно нажатие (строка
+/// `Raw OSM` секции World build вкладки Debug; витрина — `ROADS_RAW=parse|draw`).
+/// Меняет вход разбора, поэтому переключение перезагружает мир, как навтайл.
+///
+/// Два уровня:
+/// - [`RawOsm::Parse`] — [`finish_parse`] пропускает все доводочные проходы:
+///   выпрямление хвостов колец, вывод сечений (ширину по полосам получает только
+///   участок с тегом `lanes`), утопленников, достроенные тротуары и покрытие
+///   дорожек (тротуар остаётся только по тегу `sidewalk*`), веру храмов,
+///   выпрямление домиков, сдвиги домов, кварталов и стоянок, засев карманов,
+///   генерацию дверей. Размеченные двери (`attach_entrances`) остаются — это
+///   данные;
+/// - [`RawOsm::Draw`] — то же, и ещё выключены достройки отрисовки: дорога —
+///   простая лента по оси OSM без скруглений, склейки узлов, пар половин,
+///   разделительных, устьев, газонов обочин и разметки (`roads::mesh_raw_roads`);
+///   стоянка и площадка — своим полигоном без раскладки мест и разметки поля;
+///   ни машин, ни сгенерированных деревьев (лес и аллеи не сажаются, остаются
+///   только деревья-ноды OSM).
+#[derive(
+    Resource, Reflect, SettingsGroup, Clone, Copy, PartialEq, Eq, Debug, Default,
+)]
+#[reflect(Resource, SettingsGroup, Default)]
+#[settings_group(group = "debug", key = "raw_osm")]
+pub enum RawOsm {
+    #[default]
+    Off,
+    Parse,
+    Draw,
+}
+
+impl RawOsm {
+    pub const ALL: [Self; 3] = [Self::Off, Self::Parse, Self::Draw];
+
+    /// Пропускает ли разбор доводочные проходы — оба уровня.
+    pub fn skips_passes(self) -> bool {
+        self != Self::Off
+    }
+
+    /// Выключены ли достройки отрисовки — только второй уровень.
+    pub fn draws_raw(self) -> bool {
+        self == Self::Draw
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::Off => Self::Parse,
+            Self::Parse => Self::Draw,
+            Self::Draw => Self::Off,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::Parse => "parse",
+            Self::Draw => "parse+draw",
+        }
+    }
+
+    /// Уровень по слову (`off`, `parse`, `draw`) — для переменной окружения
+    /// витрины.
+    pub fn from_word(word: &str) -> Option<Self> {
+        match word.trim().to_ascii_lowercase().as_str() {
+            "off" | "0" | "" => Some(Self::Off),
+            "parse" | "1" => Some(Self::Parse),
+            "draw" | "2" => Some(Self::Draw),
+            _ => None,
+        }
+    }
 }
 
 impl Default for ParseKnobs {
@@ -222,6 +300,9 @@ struct PlantedReport {
 /// этого единственным способом узнать, сколько домов отодвинулось от
 /// тротуаров, было прочесть строку на stderr.
 struct PassReport {
+    /// Режим сырого OSM, с которым шёл разбор: не `Off` — счётчики пропущенных
+    /// проходов нулевые не потому, что делать было нечего.
+    raw: RawOsm,
     /// Y-подходов с хвостом, выпрямленных в обычный «Y»
     /// (`roads::rings::straighten_tails`).
     straightened: rings::Straightened,
@@ -254,6 +335,7 @@ impl std::fmt::Display for PassReport {
         // разбор по полям, а не `self.…`: в строке посадки шесть подстановок, и
         // по именам они читаются, а по позициям — только счётом
         let Self {
+            raw,
             straightened,
             sections,
             drowned,
@@ -276,6 +358,13 @@ impl std::fmt::Display for PassReport {
             planted,
             planting,
         } = self;
+        if raw.skips_passes() {
+            writeln!(
+                f,
+                "osm parse: RAW OSM ({}) — finishing passes skipped, only tagged sidewalks and mapped doors",
+                raw.label()
+            )?;
+        }
         let rings::Straightened { tails, elapsed } = straightened;
         writeln!(
             f,
@@ -431,49 +520,104 @@ impl std::fmt::Display for PassReport {
 ///
 /// Входы вне ответа Overpass — только `knobs`: ширину полосы берёт шаг 0,
 /// навтайл — шаг 7. Глобалей проходы не читают.
+///
+/// **Сырой OSM** (`knobs.raw`, [`RawOsm`]) пропускает все шаги, кроме
+/// размеченных дверей (шаг 3) и посадки (шаг 8); сеть улиц склеивается без
+/// вывода сечений (`sections::apply_raw`), а тротуар без тега снимается
+/// ([`drop_untagged_sidewalks`]). На втором уровне посадка оставляет только
+/// деревья-ноды OSM.
 fn finish_parse(map: &mut MapData, pending: &Pending, knobs: ParseKnobs) -> PassReport {
     map.knobs = knobs;
     let entrances = &pending.entrances;
-    let straightened = rings::straighten_tails(&mut map.roads);
-    let sections = sections::apply(map, knobs.lane_width);
-    let drowned = drop_buildings_in_water(map);
-    // мера квартала строится по домам, только если есть кого спросить
-    let districts = std::cell::OnceCell::new();
-    let sidewalks = infer_sidewalks(&mut map.roads, |point| {
-        districts
-            .get_or_init(|| Districts::new(&map.buildings))
-            .storeys_at(point)
-    });
-    let pavements = infer_pavements(map);
-    let separate = verges::measure_footways_beside_streets(&mut map.roads);
-    let faiths_guessed = resolve_faiths(&mut map.buildings);
+    // сырой OSM (`RawOsm`): доводочные проходы пропускаются все, кроме
+    // размеченных дверей — это данные, — и сборки сети улиц, которая ничего в
+    // данных не меняет. Пропущенный проход отчитывается нулями
+    let raw = knobs.raw.skips_passes();
+    let straightened = if raw {
+        Default::default()
+    } else {
+        rings::straighten_tails(&mut map.roads)
+    };
+    let sections = if raw {
+        sections::apply_raw(map, knobs.lane_width)
+    } else {
+        sections::apply(map, knobs.lane_width)
+    };
+    let drowned = if raw { 0 } else { drop_buildings_in_water(map) };
+    let (sidewalks, pavements, separate, faiths_guessed) = if raw {
+        // тротуар — только по тегу: достроенный без тега снимается
+        let dropped = drop_untagged_sidewalks(&mut map.roads);
+        (
+            InferredSidewalks {
+                asked: dropped,
+                dropped,
+            },
+            Default::default(),
+            Default::default(),
+            0,
+        )
+    } else {
+        // мера квартала строится по домам, только если есть кого спросить
+        let districts = std::cell::OnceCell::new();
+        let sidewalks = infer_sidewalks(&mut map.roads, |point| {
+            districts
+                .get_or_init(|| Districts::new(&map.buildings))
+                .storeys_at(point)
+        });
+        let pavements = infer_pavements(map);
+        let separate = verges::measure_footways_beside_streets(&mut map.roads);
+        let faiths_guessed = resolve_faiths(&mut map.buildings);
+        (sidewalks, pavements, separate, faiths_guessed)
+    };
     let entrances_orphaned = attach_entrances(map, entrances);
 
     let started = std::time::Instant::now();
-    let squared = square_skewed_houses(map);
+    let squared = if raw { 0 } else { square_skewed_houses(map) };
     let squaring = started.elapsed();
 
     let started = std::time::Instant::now();
-    let pulled = pull_houses_off_sidewalks(map);
+    let pulled = if raw {
+        PulledHouses::default()
+    } else {
+        pull_houses_off_sidewalks(map)
+    };
     let pulling = started.elapsed();
 
     let started = std::time::Instant::now();
-    let stretched = pull_areas_to_roads(map);
+    let stretched = if raw {
+        StretchedAreas::default()
+    } else {
+        pull_areas_to_roads(map)
+    };
     let stretching = started.elapsed();
 
     // после кварталов и стоянок: дотянутые, они уже покрывают свою землю
     let started = std::time::Instant::now();
-    let sown = pockets::fill_ground_pockets(map);
+    let sown = if raw {
+        0
+    } else {
+        pockets::fill_ground_pockets(map)
+    };
     let sowing = started.elapsed();
 
     // размеченных дверей в OSM единицы процентов — остальным дом получает свои
     // по замеру когорт, см. `entrances/`
     let started = std::time::Instant::now();
-    let generated = generate_entrances(map, knobs.navtile);
+    let generated = if raw {
+        0
+    } else {
+        generate_entrances(map, knobs.navtile)
+    };
     let generating = started.elapsed();
 
     let started = std::time::Instant::now();
-    let (standalone, woods, rows, asked) = plant_trees(map);
+    let (standalone, mut woods, mut rows, asked) = plant_trees(map);
+    // второй уровень: сгенерированных деревьев нет — лес и аллеи не
+    // сажаются, остаются деревья-ноды OSM
+    if knobs.raw.draws_raw() {
+        woods.clear();
+        rows = Default::default();
+    }
     let planting = started.elapsed();
     let planted = PlantedReport {
         woods: woods.len(),
@@ -490,6 +634,7 @@ fn finish_parse(map: &mut MapData, pending: &Pending, knobs: ParseKnobs) -> Pass
     map.compose_trees(TreeCompose::default());
 
     PassReport {
+        raw: knobs.raw,
         straightened,
         sections,
         drowned,
@@ -541,6 +686,20 @@ impl std::fmt::Display for InferredSidewalks {
             "osm parse: {dropped} of {asked} untagged residential streets left without sidewalks"
         )
     }
+}
+
+/// Сырой OSM ([`RawOsm`]): тротуар без тега — наша достройка, и он снимается
+/// со всех улиц; остаётся только тротуар по тегу `sidewalk*`. Возвращает, со
+/// скольких сторон он снят.
+fn drop_untagged_sidewalks(roads: &mut [RoadLine]) -> usize {
+    let mut dropped = 0;
+    for side in roads.iter_mut().flat_map(|road| road.sidewalks.iter_mut()) {
+        if *side == SidewalkSide::Inferred {
+            *side = SidewalkSide::None;
+            dropped += 1;
+        }
+    }
+    dropped
 }
 
 /// Тротуар жилой улицы без тега `sidewalk*` — по застройке вокруг.
@@ -1508,6 +1667,7 @@ fn pull_houses_off_sidewalks(map: &mut MapData) -> PulledHouses {
 }
 
 /// Итог [`pull_houses_off_sidewalks`].
+#[derive(Default)]
 struct PulledHouses {
     /// Сдвинуто домов, соседи по ряду включительно.
     moved: usize,

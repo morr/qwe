@@ -207,6 +207,54 @@ pub fn apply(map: &mut MapData, street_lane: f32) -> SectionReport {
     report
 }
 
+/// **Сырой OSM** (`parse::RawOsm`): сеть склеивается — её читают отрисовка и
+/// оверлей сети, а склейка ничего в данных не меняет, — но сечения не
+/// выводятся. Ширину по полосам получает только участок с тегом `lanes`;
+/// участок без тега остаётся при ширине класса, с которой его прочёл цикл
+/// разбора, и без числа полос: ни от соседа по улице, ни по классу, ни
+/// срезанных скачков. Число полос против хода, не сходящееся с общим, — не
+/// вывод, а битый тег, и снимается, как и в [`apply`].
+pub fn apply_raw(map: &mut MapData, street_lane: f32) -> SectionReport {
+    let started = std::time::Instant::now();
+    let network = RoadNetwork::new(&map.roads);
+    let mut report = SectionReport {
+        streets: network.streets.len(),
+        glued: network.glued(),
+        ..Default::default()
+    };
+    for road in &mut map.roads {
+        let Some(lanes) = road
+            .lanes
+            .filter(|_| lane_width(road.highway, street_lane).is_some())
+        else {
+            continue;
+        };
+        report.tagged += 1;
+        if let Some(width) = section_width(road.highway, lanes, street_lane) {
+            road.width = width;
+        }
+    }
+    drop_broken_splits(&mut map.roads);
+    map.network = network;
+    report.elapsed = started.elapsed();
+    report
+}
+
+/// Число полос против хода — только у двусторонней дороги и только строго
+/// внутри общего числа: прочее — битый тег.
+fn drop_broken_splits(roads: &mut [RoadLine]) {
+    for road in roads.iter_mut() {
+        let valid = !road.oneway
+            && road
+                .lanes
+                .zip(road.lanes_backward)
+                .is_some_and(|(lanes, back)| back > 0 && back < lanes);
+        if !valid {
+            road.lanes_backward = None;
+        }
+    }
+}
+
 /// Участкам без тега — число полос ближайшего по длине улицы участка с
 /// тегом. Расстояние — между серединами участков вдоль улицы. Возвращает,
 /// скольким участкам досталось.
@@ -254,16 +302,7 @@ fn fill_from_street(members: &[usize], roads: &[RoadLine], lanes: &mut [Option<u
 /// прыгала бы на полполосы (Ростов, Текучёва: `lanes=5, lanes:forward=3` и
 /// соседний кусок `lanes=6`, срезанный до пяти).
 fn settle_splits(network: &RoadNetwork, roads: &mut [RoadLine]) {
-    for road in roads.iter_mut() {
-        let valid = !road.oneway
-            && road
-                .lanes
-                .zip(road.lanes_backward)
-                .is_some_and(|(lanes, back)| back > 0 && back < lanes);
-        if !valid {
-            road.lanes_backward = None;
-        }
-    }
+    drop_broken_splits(roads);
     for street in &network.streets {
         // каждый участок и его середина вдоль улицы
         let mut run = 0.0;

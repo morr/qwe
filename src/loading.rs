@@ -10,7 +10,7 @@ use crate::camera::Viewport;
 use crate::city::City;
 use crate::grid::NavtileBase;
 use crate::map::RoadShape;
-use crate::map::osm::parse::ParseKnobs;
+use crate::map::osm::parse::{ParseKnobs, RawOsm};
 use crate::map::osm::{JobState, MapLoadJob, OVERPASS_MIRRORS, start_load_thread};
 use crate::movement::{
     PathfindingRequest, PathfindingTask, SimPosition, UrgentPath, wanderers_dispatched_at_zoom,
@@ -205,9 +205,10 @@ fn start_job(
     city: Res<City>,
     navtile: Res<NavtileBase>,
     shape: Option<Res<RoadShape>>,
+    raw: Option<Res<RawOsm>>,
 ) {
     let job = MapLoadJob::default();
-    let knobs = parse_knobs(&navtile, shape.as_deref());
+    let knobs = parse_knobs(&navtile, shape.as_deref(), raw.as_deref());
     start_load_thread(job.clone(), navmesh.0.clone(), *city, knobs);
     commands.insert_resource(job);
 }
@@ -217,10 +218,17 @@ fn start_job(
 /// вход в `Loading` идёт раньше `Startup`, где та засевается, а ручку
 /// настройки кладут ещё при сборке `App`; к перезагрузке по ширине обе уже
 /// совпадают. Без ресурса (сцена без `MapPlugin`) — ширина по умолчанию.
-fn parse_knobs(navtile: &NavtileBase, shape: Option<&RoadShape>) -> ParseKnobs {
+/// Режим сырого OSM (`RawOsm`, строка `Raw OSM` вкладки Debug) — так же: без
+/// ресурса выключен.
+fn parse_knobs(
+    navtile: &NavtileBase,
+    shape: Option<&RoadShape>,
+    raw: Option<&RawOsm>,
+) -> ParseKnobs {
     ParseKnobs {
         navtile: navtile.size(),
         lane_width: shape.map_or(ParseKnobs::default().lane_width, RoadShape::lane_width),
+        raw: raw.copied().unwrap_or_default(),
     }
 }
 
@@ -300,10 +308,11 @@ fn on_retry(
     city: Res<City>,
     navtile: Res<NavtileBase>,
     shape: Option<Res<RoadShape>>,
+    raw: Option<Res<RawOsm>>,
     mut buttons: Query<&mut Visibility, With<RetryButton>>,
 ) {
     *job.0.lock().unwrap() = JobState::Connecting { attempt: 1 };
-    let knobs = parse_knobs(&navtile, shape.as_deref());
+    let knobs = parse_knobs(&navtile, shape.as_deref(), raw.as_deref());
     start_load_thread(job.clone(), navmesh.0.clone(), *city, knobs);
     for mut visibility in &mut buttons {
         *visibility = Visibility::Hidden;

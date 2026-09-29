@@ -4732,3 +4732,71 @@ fn a_sliver_of_block_on_the_verge_tiles_is_cut_back_under_the_footway() {
     assert_eq!(cut, 0);
     assert_eq!(blocks[0].outer, block.outer);
 }
+
+/// Сцена сырого OSM: косой домик с размеченным входом, дом без входов и
+/// жилая улица без тегов `lanes` и `sidewalk*`.
+fn raw_scene(raw: RawOsm) -> MapData {
+    let (sw, se, ..) = corners(HALF);
+    Overpass::new(CITY)
+        .node(&[("entrance", "main")], skewed_house(CENTER)[1])
+        .area(&[("building", "house")], skewed_house(CENTER))
+        .area(
+            &[("building", "yes")],
+            square(CENTER + Vec2::new(0.0, 30.0), 8.0),
+        )
+        .way(&[("highway", "residential")], vec![sw, se])
+        .parse_with(ParseKnobs {
+            raw,
+            ..ParseKnobs::DEFAULT
+        })
+}
+
+/// **Сырой OSM** (`RawOsm::Parse`) пропускает доводочные проходы: косой
+/// домик остаётся косым, дом без размеченных входов — без дверей, у улицы без
+/// тега нет ни выведенных полос, ни достроенного тротуара. Размеченный вход —
+/// данные — остаётся. Без флага те же проходы идут.
+#[test]
+fn raw_osm_skips_the_finishing_passes() {
+    let cooked = raw_scene(RawOsm::Off);
+    let raw = raw_scene(RawOsm::Parse);
+
+    let squared = &cooked.buildings[0];
+    assert!(right_angles(&squared.outer), "без флага домик выпрямлен");
+    let skewed = &raw.buildings[0];
+    assert!(!right_angles(&skewed.outer), "сырой домик остаётся косым");
+    for (data, kept) in skewed_house(CENTER).iter().zip(&skewed.outer) {
+        assert!(data.distance(*kept) < 0.01, "вершина {data} уехала в {kept}");
+    }
+    assert_eq!(raw.buildings[0].entrances.len(), 1, "размеченный вход — данные");
+
+    assert!(!cooked.buildings[1].entrances.is_empty(), "без флага двери сочиняются");
+    assert!(raw.buildings[1].entrances.is_empty(), "сырой дом без сочинённых дверей");
+
+    assert_eq!(cooked.roads[0].lanes, Some(2), "без флага полосы по классу");
+    assert_eq!(raw.roads[0].lanes, None, "сырая улица без выведенных полос");
+    assert!(
+        raw.roads[0]
+            .sidewalks
+            .iter()
+            .all(|side| *side == SidewalkSide::None),
+        "тротуар без тега снят: {:?}",
+        raw.roads[0].sidewalks
+    );
+    // сеть склеивается и в сыром режиме: её читают отрисовка и оверлей
+    assert_eq!(raw.network.streets.len(), 1);
+    assert_eq!(raw.knobs.raw, RawOsm::Parse);
+}
+
+/// Второй уровень сырого OSM (`RawOsm::Draw`) не сажает сгенерированных
+/// деревьев — ни леса, ни аллей; первый уровень сажает, как без флага.
+#[test]
+fn raw_osm_draw_plants_no_generated_trees() {
+    let knobs = |raw| ParseKnobs {
+        raw,
+        ..ParseKnobs::DEFAULT
+    };
+    assert!(!wood_scene().parse_with(knobs(RawOsm::Parse)).wood_trees.is_empty());
+    let raw = wood_scene().parse_with(knobs(RawOsm::Draw));
+    assert!(raw.wood_trees.is_empty());
+    assert_eq!(raw.trees.len(), 0);
+}

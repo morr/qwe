@@ -508,9 +508,18 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   map (Debug → Overlays → `OSM contours`, gallery `Contours` / `ROADS_CONTOURS=1`). It
   answers the first question of every visual report in one frame: **the contour sits on
   the defect — the data; it does not — our processing**.
+- **Raw OSM** (`map/osm/parse.rs::RawOsm`, `ParseKnobs::raw`; Debug → World build →
+  `Raw OSM`, gallery `ROADS_RAW=parse|draw`) — the map with our own additions switched
+  off, to tell a data defect from a processing one. **`Parse`**: `finish_parse` skips every
+  finishing pass but the mapped doors — no straightened ring tails, no inferred sections
+  (only a `lanes`-tagged way gets its lane width; the network is still glued), no drowned
+  houses dropped, **only tagged sidewalks** (an `Inferred` side is dropped), no inferred
+  pavements, faiths, squared or pulled houses, pulled blocks and lots, sown pockets or
+  generated doors. **`Draw`**: that, plus no drawing additions — see the `osm-map` skill.
+  A parse input, so switching it **reloads the world** like the navtile.
 - **ParseKnobs** (`map/osm/parse.rs`) — the parse's inputs that are not in the Overpass
-  answer: `lane_width` (the street lane width the sections take) and `navtile` (the door
-  generator's clearance). `parse(json, city, knobs)` / `parse_response` take them as an
+  answer: `lane_width` (the street lane width the sections take), `navtile` (the door
+  generator's clearance) and `raw` (**Raw OSM**). `parse(json, city, knobs)` / `parse_response` take them as an
   argument and **the parse reads no process global**; `Default` is the knobs' defaults
   (3.3 m, 2 m). The load thread gets the settled knobs from `loading::start_job`. The map
   keeps a snapshot, **`MapData::knobs`** — what the world was parsed with: the lane-width

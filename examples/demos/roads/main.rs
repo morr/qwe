@@ -64,6 +64,8 @@
 //! `ROADS_NETWORK=1` открывает витрину с оверлеем сети (строка `Network` панели);
 //! `ROADS_CONTOURS=1` — с оверлеем контуров OSM (строка `Contours`): оси и
 //! контуры до доводочных проходов разбора поверх отрисовки;
+//! `ROADS_RAW=parse|draw` — сырой OSM (строка `Raw OSM`, `RawOsm`): без
+//! доводочных проходов разбора, а с `draw` — и без достроек отрисовки;
 //! `ROADS_CARS=1` кладёт в примеры и слой припаркованных машин.
 
 mod overlay;
@@ -88,7 +90,7 @@ use qwe::map::buildings::material::{RoofMaterial, init_roof_material};
 use qwe::map::buildings::{
     BuildingPlan, BuildingZoomBucket, mesh_buildings, spawn_building_meshes,
 };
-use qwe::map::osm::parse::{ParseKnobs, parse_response};
+use qwe::map::osm::parse::{ParseKnobs, RawOsm, parse_response};
 use qwe::map::surface::{
     LayerMesh, SurfaceMaterial, init_flat_materials, init_surface_materials,
     retune_surface_materials, retunes_on, spawn_layers,
@@ -210,11 +212,13 @@ fn main() {
         .init_resource::<SunOnMap>()
         .init_resource::<Gallery>()
         .init_resource::<Overlays>()
+        .insert_resource(start_raw())
         // подписи строк стиля ведёт кит — по разу на ресурс, как в игре
         .add_knobs::<RoadStyle>()
         .add_knobs::<RoadShape>()
         .add_knobs::<RoadPaintStyle>()
         .add_knobs::<Overlays>()
+        .add_knobs::<RawOsm>()
         .insert_resource(ClearColor(GROUND_COLOR))
         .add_systems(
             Startup,
@@ -253,6 +257,7 @@ fn main() {
                         .or_else(resource_changed::<RoadStyle>)
                         .or_else(resource_changed::<RoadShapeOnMap>)
                         .or_else(resource_changed::<Overlays>)
+                        .or_else(resource_changed::<RawOsm>)
                         .or_else(input_just_pressed(KeyCode::F5)),
                 ),
                 build_next,
@@ -265,6 +270,15 @@ fn main() {
                 .chain(),
         )
         .run();
+}
+
+/// Режим сырого OSM, с которым открывается витрина: `ROADS_RAW=parse|draw`,
+/// иначе выключен. Строка `Raw OSM` панели листает его дальше.
+fn start_raw() -> RawOsm {
+    std::env::var("ROADS_RAW")
+        .ok()
+        .and_then(|word| RawOsm::from_word(&word))
+        .unwrap_or_default()
 }
 
 /// Город, с которого открывается витрина: `ROADS_CITY`, иначе игровой
@@ -529,6 +543,7 @@ fn build_next(
     road_style: Res<RoadStyle>,
     road_shape: Res<RoadShapeOnMap>,
     overlay: Res<Overlays>,
+    raw: Res<RawOsm>,
     mut gallery: ResMut<Gallery>,
     mut status: Single<&mut Text, With<StatusLine>>,
 ) {
@@ -540,9 +555,10 @@ fn build_next(
     let started = std::time::Instant::now();
 
     // ширина полосы — осевшей ручки, как у игры; навтайл витрина не
-    // переключает, двери она не рисует
+    // переключает, двери она не рисует; сырой OSM — строки `Raw OSM`
     let knobs = ParseKnobs {
         lane_width: road_shape.0.lane_width(),
+        raw: *raw,
         ..ParseKnobs::default()
     };
     let map = parse_response(&sample.osm, *city, knobs);
