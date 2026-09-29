@@ -518,18 +518,19 @@ impl<'a> Fortresses<'a> {
     }
 }
 
-/// Жилые кварталы (`landuse=residential`) — чьей травой засеян газон
-/// широкой обочины ([`push_verges`]): у двора — травой двора, иначе лугом.
-struct Yards<'a> {
+/// Замапленные газоны и скверы (`MapData::parks`, `MapData::grass`) — рядом с
+/// ними газон широкой обочины ([`push_verges`]) засеян их лугом, а везде
+/// ещё — приглушённой травой двора.
+struct Meadows<'a> {
     areas: Vec<(&'a PolyArea, (Vec2, Vec2))>,
 }
 
-impl<'a> Yards<'a> {
-    fn of(landuse: &'a [PolyArea]) -> Self {
+impl<'a> Meadows<'a> {
+    fn of(parks: &'a [PolyArea], grass: &'a [PolyArea]) -> Self {
         Self {
-            areas: landuse
+            areas: parks
                 .iter()
-                .filter(|area| area.kind == AreaKind::Residential)
+                .chain(grass)
                 .map(|area| (area, ring_bounds(&area.outer)))
                 .collect(),
         }
@@ -541,9 +542,9 @@ impl<'a> Yards<'a> {
         })
     }
 
-    /// Лежит ли двор у обочины шириной `verge` по стороне `side` дороги
-    /// шириной `width` по `points`: пробы [`YARD_PROBES`] долей длины — на
-    /// середине обочины и на [`YARD_PROBE_BEYOND`] за ней. Двор в OSM то
+    /// Лежит ли газон у обочины шириной `verge` по стороне `side` дороги
+    /// шириной `width` по `points`: пробы [`MEADOW_PROBES`] долей длины — на
+    /// середине обочины и на [`MEADOW_PROBE_BEYOND`] за ней. Газон в OSM то
     /// доходит до бордюра, то кончается у дорожки, отсюда две глубины.
     fn beside(&self, points: &[Vec2], width: f32, side: usize, verge: f32) -> bool {
         if self.areas.is_empty() {
@@ -552,7 +553,7 @@ impl<'a> Yards<'a> {
         let (along, total) = crate::map::along::arclengths(points);
         // `perp` смотрит влево — сторона 0
         let sign = if side == 0 { 1.0 } else { -1.0 };
-        YARD_PROBES.iter().any(|share| {
+        MEADOW_PROBES.iter().any(|share| {
             let Some((at, direction)) =
                 crate::map::along::place_on_path(points, &along, total * share)
             else {
@@ -561,14 +562,14 @@ impl<'a> Yards<'a> {
             let normal = direction.perp() * sign;
             [
                 width / 2.0 + verge / 2.0,
-                width / 2.0 + verge + YARD_PROBE_BEYOND,
+                width / 2.0 + verge + MEADOW_PROBE_BEYOND,
             ]
             .into_iter()
             .any(|offset| self.covers(at + normal * offset))
         })
     }
 
-    /// Лежит ли двор под каким-нибудь углом контура `outline` или его
+    /// Лежит ли газон под каким-нибудь углом контура `outline` или его
     /// серединой — для газона угла ([`corners::KerbReturns::verge_lawns`]).
     fn under(&self, outline: &[Vec2]) -> bool {
         let centre = outline.iter().copied().sum::<Vec2>() / outline.len().max(1) as f32;
@@ -739,11 +740,12 @@ pub fn mesh_roads(
     let mut sidewalks = MeshBuilder::with_surface_coords();
     // обочины до отдельных тротуаров — под зеленью (`Z_ROAD_VERGE`)
     let mut verges = MeshBuilder::with_surface_coords();
-    // и газон широких обочин — под их плиткой (`Z_ROAD_VERGE_LAWN`): лугом,
-    // а у двора — травой двора (`Yards`)
+    // и газон широких обочин — под их плиткой: травой двора
+    // (`Z_ROAD_VERGE_YARD`), а у замапленного газона — его лугом
+    // (`Z_ROAD_VERGE_LAWN`, `Meadows`)
     let mut verge_lawns = MeshBuilder::with_surface_coords();
     let mut verge_yards = MeshBuilder::with_surface_coords();
-    let yards = Yards::of(&map.landuse);
+    let meadows = Meadows::of(&map.parks, &map.grass);
     let mut alleys = MeshBuilder::with_surface_coords();
     let mut streets = MeshBuilder::with_surface_coords();
     // грунтовые улицы — своим слоем под асфальтом (`Z_UNPAVED_ROAD`)
@@ -813,10 +815,10 @@ pub fn mesh_roads(
         verges.push_convex(outline, SIDEWALK_COLOR.to_linear());
     }
     for outline in &kerb_returns.verge_lawns {
-        if yards.under(outline) {
-            verge_yards.push_convex(outline, VERGE_YARD_COLOR.to_linear());
-        } else {
+        if meadows.under(outline) {
             verge_lawns.push_convex(outline, GRASS_COLOR.to_linear());
+        } else {
+            verge_yards.push_convex(outline, VERGE_YARD_COLOR.to_linear());
         }
     }
     // носы острых развилок идут по гнутым кромкам лент, и веер из острия
@@ -1226,7 +1228,7 @@ pub fn mesh_roads(
         }
         push_verges(
             [&mut verges, &mut verge_lawns, &mut verge_yards],
-            &yards,
+            &meadows,
             road,
             points,
             road.width,
@@ -1764,17 +1766,20 @@ const VERGE_STEP: f32 = 2.5;
 /// пятнадцать метров до дома «заливала улицу бетоном» (Фрунзе в Туле,
 /// районный кадр d2). Уже — плитка до дорожки, как у углов центра.
 const VERGE_PAVED_MAX: f32 = 4.0;
-/// Газон широкой обочины у двора — трава двора (`SurfaceKind::Yard`,
+/// Газон широкой обочины — приглушённая трава двора (`SurfaceKind::Yard`,
 /// слой `road_verge_yards`), а не луг разделительной: обочина у многоэтажки —
 /// край того же двора, и светлый луг (`GRASS_COLOR`) лежал вдоль улиц яркой
 /// лентой со швом на кромке квартала (районный кадр d2). Фактура по мировой
-/// позиции та же, что у двора, поэтому шва нет вовсе. Вне двора газон —
-/// лугом, как газоны OSM вокруг (Тула, 15: сквер с лугами на плитке).
+/// позиции та же, что у двора, поэтому шва нет вовсе. Спрашивать двор было
+/// мало: у площади, стоянки или голой земли за обочиной луг оставался
+/// салатовой лентой (восточная сторона Фрунзе, d2). Лугом газон ложится
+/// только у замапленного газона или сквера ([`Meadows`]) — как они сами
+/// (Тула, 15: сквер с лугами на плитке).
 const VERGE_YARD_COLOR: Color = RESIDENTIAL_COLOR;
-/// Доли длины дороги, на которых обочина спрашивает двор ([`Yards::beside`]).
-const YARD_PROBES: [f32; 3] = [0.25, 0.5, 0.75];
-/// Насколько за обочиной, м, ищется двор, который кончается у дорожки.
-const YARD_PROBE_BEYOND: f32 = 3.0;
+/// Доли длины дороги, на которых обочина спрашивает газон ([`Meadows::beside`]).
+const MEADOW_PROBES: [f32; 3] = [0.25, 0.5, 0.75];
+/// Насколько за обочиной, м, ищется газон, который кончается у дорожки.
+const MEADOW_PROBE_BEYOND: f32 = 3.0;
 /// На сколько обочина по месту заходит за торец своей улицы, м
 /// ([`push_verges`]): внахлёст с обочиной продолжения.
 const VERGE_END_OVERLAP: f32 = 0.3;
@@ -1804,12 +1809,13 @@ fn paved_verge(verge: f32) -> f32 {
 /// постоянная лента.
 ///
 /// Плитка — в `tiles` на ширину [`paved_verge`], газон — на всю обочину, где
-/// она шире [`VERGE_PAVED_MAX`]: в `yard_lawns` травой двора, если у этой
-/// стороны двор ([`Yards::beside`]), иначе в `meadows` лугом. Слои газона
-/// лежат под плиткой, и голой земли между кромкой и дорожкой не остаётся.
+/// она шире [`VERGE_PAVED_MAX`]: в `meadows` лугом, если у этой стороны
+/// замапленный газон ([`Meadows::beside`]), иначе в `yard_lawns` травой
+/// двора. Слои газона лежат под плиткой, и голой земли между кромкой и
+/// дорожкой не остаётся.
 fn push_verges(
     [tiles, meadows, yard_lawns]: [&mut MeshBuilder; 3],
-    yards: &Yards,
+    mapped: &Meadows,
     road: &RoadLine,
     points: &[Vec2],
     width: f32,
@@ -1822,15 +1828,15 @@ fn push_verges(
         if verge <= 0.0 {
             continue;
         }
-        // двор спрашивается, только когда газон вообще будет
+        // газон рядом спрашивается, только когда газон обочины вообще будет
         let widest = road.verge_profile[side]
             .iter()
             .fold(verge, |widest, &(_, width)| widest.max(width));
         let (lawns, lawn_color) =
-            if widest > VERGE_PAVED_MAX && yards.beside(points, width, side, verge) {
-                (&mut *yard_lawns, yard_color)
-            } else {
+            if widest > VERGE_PAVED_MAX && mapped.beside(points, width, side, verge) {
                 (&mut *meadows, grass_color)
+            } else {
+                (&mut *yard_lawns, yard_color)
             };
         // `miter_offsets` плюсом сдвигает влево — сторона 0
         let sign = if side == 0 { 1.0 } else { -1.0 };

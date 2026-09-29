@@ -720,9 +720,12 @@ be called alone:
     road bands go across threads through a counter (`in_parallel`) — a centre tile costs
     tens of times an outer one — and the results are put back in tile order.
   - **A pocket is not a block** (`MapData::pockets`, drawn in the block layer by
-    `spawn.rs`): pushed into `landuse` first, it made `roads.rs::Yards::beside` find a yard
-    beside every verge next to a sown sliver, and meadow verges along Фрунзе (district
-    frame d2) and Советская (d6) turned to yard grass.
+    `spawn.rs`): pushed into `landuse` first, it made the verge lawn's yard test of the
+    time (`roads.rs::Yards::beside`) find a yard beside every verge next to a sown
+    sliver, and meadow verges along Фрунзе (district frame d2) and Советская (d6) turned
+    to yard grass. The verge now asks the other way round — yard grass by default, a
+    meadow only beside `parks` / `grass` (`Meadows::beside`, `references/roads.md`,
+    **Sidewalks**) — so a pocket does not reach that choice at all.
   - Tula: **610 pockets, ~120–140 ms** at load (dev profile, a loaded machine;
     `map_meshing`), Oryol 431 / 84 ms. Pinned by
     `a_ground_pocket_between_a_block_and_two_footways_is_sown_as_yard`,

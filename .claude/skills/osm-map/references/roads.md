@@ -159,17 +159,21 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   `VERGE_PAVED_MAX` 4 m whole; wider, the tile narrows over `VERGE_PAVED_RAMP` 2 m of
   extra width down to a `VERGE_KERB` 0.5 m strip at the kerb, and the whole verge — body
   and end discs where the width is past 4 m — goes as grass under the tile, and **which
-  grass is the neighbour's**: beside a residential block (`Yards::beside` — `landuse=
-  residential` under the verge's middle or 3 m past it, probed at a quarter, half and
-  three quarters of the way) it is the yard itself (`RESIDENTIAL_COLOR`,
-  `SurfaceKind::Yard`, **`road_verge_yards` at `Z_ROAD_VERGE_YARD` 0.09**) — the noise is
-  by world position, so there is no seam at the block's edge; elsewhere a meadow
-  (`GRASS_COLOR`, `SurfaceKind::Grass`, **`road_verge_lawns` at `Z_ROAD_VERGE_LAWN`
-  0.08**), like the mapped lawns around it. One colour for both read wrong both ways: the
-  meadow lay as a bright ribbon along every street of the district frame d2, the yard
-  green lay heavy beside the meadows of Tula 15's square (roads plan №42). A corner
-  between two verges both wider than 4 m goes there too (`KerbReturns::verge_lawns`,
-  `Yards::under` — any vertex or the centre in a yard). **A corner with a lawn behind it
+  grass is the neighbour's**: by default the yard's muted grass (`RESIDENTIAL_COLOR`,
+  `SurfaceKind::Yard`, **`road_verge_yards` at `Z_ROAD_VERGE_YARD` 0.09**) — beside a
+  residential block the noise is by world position, so there is no seam at the block's
+  edge; a meadow (`GRASS_COLOR`, `SurfaceKind::Grass`, **`road_verge_lawns` at
+  `Z_ROAD_VERGE_LAWN` 0.08**) only beside a **mapped lawn or park** (`Meadows::beside` —
+  `MapData::parks` or `MapData::grass` under the verge's middle or 3 m past it, probed
+  at a quarter, half and three quarters of the way), like the lawns it continues. One
+  colour for both read wrong both ways: the meadow lay as a bright ribbon along every
+  street of the district frame d2, the yard green lay heavy beside the meadows of Tula
+  15's square (roads plan №42). Asking for the yard was not enough either — the verge
+  in front of a square, a lot or bare ground stayed a light-green ribbon on the district
+  (the east side of Фрунзе, d2; roads tails L1), hence the default is the yard grass
+  and the meadow is the exception. A corner between two verges both wider than 4 m
+  goes there too (`KerbReturns::verge_lawns`, `Meadows::under` — any vertex or the
+  centre on a mapped lawn). **A corner with a lawn behind it
   gets a kerb pad** (`corners.rs::kerb_pad`): tile `KERB_PAD_WIDTH` 3 m deep along the
   road fillet's own arc (same centre, `FilletArc`), running on `KERB_PAD_RUN` 4 m along
   each straight kerb, into `KerbReturns::verges` — the zebras land at the corner, and

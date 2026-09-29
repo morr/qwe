@@ -339,7 +339,7 @@ fn a_wide_verge_is_a_lawn_with_a_paved_kerb_strip() {
                 .map(|at| at[1] - 100.0)
                 .fold(0.0_f32, f32::max)
         };
-        [reach("road_verges"), reach("road_verge_lawns")]
+        [reach("road_verges"), reach("road_verge_yards")]
     };
     // улица 12 м: кромка в 6 м от оси
     let [tiles, lawn] = verged(3.0);
@@ -355,32 +355,51 @@ fn a_wide_verge_is_a_lawn_with_a_paved_kerb_strip() {
     assert!((lawn - 18.0).abs() < 0.05, "газон — до дорожки: {lawn}");
 }
 
-/// Газон широкой обочины у двора — травой двора, а не лугом: светлый луг
-/// лежал вдоль улиц спального района лентой со швом на кромке квартала
-/// (районный кадр d2). Вне двора — лугом, как газоны вокруг.
+/// Газон широкой обочины — приглушённой травой двора, а лугом только у
+/// замапленного газона или сквера: у двора светлый луг лежал лентой со швом
+/// на кромке квартала (районный кадр d2, №42), а у площади или голой земли
+/// за обочиной — салатовой лентой на районе (восточная сторона Фрунзе, L1).
 #[test]
-fn a_wide_verge_beside_a_yard_takes_the_yard_grass() {
-    let lawns = |yard: bool| {
+fn a_wide_verge_is_meadow_only_beside_a_mapped_lawn() {
+    // что лежит слева за обочиной: кончается в метре за дорожкой
+    let lawns = |beyond: Option<AreaKind>| {
         let mut map = one_street();
         map.roads[0].verges = [12.0, 0.0];
-        if yard {
-            // двор слева, кончается в метре за дорожкой
-            map.landuse.push(fixture::area(
-                AreaKind::Residential,
+        if let Some(kind) = beyond {
+            let area = fixture::area(
+                kind,
                 vec![
                     Vec2::new(50.0, 110.0),
                     Vec2::new(650.0, 110.0),
                     Vec2::new(650.0, 300.0),
                     Vec2::new(50.0, 300.0),
                 ],
-            ));
+            );
+            match kind {
+                AreaKind::Grass => map.grass.push(area),
+                AreaKind::Park => map.parks.push(area),
+                AreaKind::Parking(_) => map.parking.push(area),
+                _ => map.landuse.push(area),
+            }
         }
         let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
         ["road_verge_lawns", "road_verge_yards"]
             .map(|name| !layer(&layers, name).builder.is_empty())
     };
-    assert_eq!(lawns(true), [false, true], "у двора — травой двора");
-    assert_eq!(lawns(false), [true, false], "без двора — лугом");
+    let [meadow, yard] = [[true, false], [false, true]];
+    assert_eq!(lawns(Some(AreaKind::Grass)), meadow, "у газона — лугом");
+    assert_eq!(lawns(Some(AreaKind::Park)), meadow, "у сквера — лугом");
+    assert_eq!(
+        lawns(Some(AreaKind::Residential)),
+        yard,
+        "у двора — травой двора"
+    );
+    assert_eq!(
+        lawns(Some(AreaKind::Parking(LotKind::Yard))),
+        yard,
+        "у площади — травой двора"
+    );
+    assert_eq!(lawns(None), yard, "у голой земли — травой двора");
 }
 
 /// Угол, за которым газон обочин, — площадкой плитки вдоль бордюрной дуги:
@@ -924,7 +943,7 @@ fn a_ring_takes_its_verge_on_the_outer_side_only() {
     let mut map = roundabout_with_an_approach(true, true);
     map.roads[0].verges = [6.0, 6.0];
     let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
-    let radii: Vec<f32> = layer(&layers, "road_verge_lawns")
+    let radii: Vec<f32> = layer(&layers, "road_verge_yards")
         .builder
         .positions_for_test()
         .iter()
