@@ -988,6 +988,25 @@ pub fn mesh_roads(
     // открываются по базе — у перекрёстка, кто бы его ни вёл. Двойную
     // сплошную красит не он, а мы — по его списку
     let mut median_grass = MeshBuilder::with_surface_coords();
+    // что замыкает зазор впереди торца разделительной: проезжие части из
+    // узлов её половин рядом с торцом — связка, разворот
+    let closer = |halves: [usize; 2], tip: Vec2, heading: Vec2, reach: f32| {
+        let mut near: Vec<usize> = halves
+            .iter()
+            .flat_map(|&half| nodal[half].iter())
+            .filter(|point| point.distance(tip) <= 2.0 * reach && nodes.is_shared(**point))
+            .flat_map(|point| nodes.roads_at(*point).iter().copied())
+            .filter(|road| !halves.contains(road) && is_carriageway(drawn[*road]))
+            .collect();
+        near.sort_unstable();
+        near.dedup();
+        medians::closing_reach(
+            tip,
+            heading,
+            reach,
+            near.iter().map(|&road| ribbon[road].as_ref()),
+        )
+    };
     let median_drawing = medians::draw(
         prepared.pairs(),
         &medians::MedianInputs {
@@ -999,6 +1018,7 @@ pub fn mesh_roads(
             pure_merge: &|at| prepared.merges().is_pure_node(at),
             reach_gores: &|midline| gores.reach(midline),
             street_of: &street_of,
+            closer: &closer,
         },
         &mut streets,
         &mut sidewalks,

@@ -411,6 +411,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     end the lawn but cuts a **passage** through its grass, the zebra's length wide, over the
     island's paving; whatever lies between the inner kerbs
     and is not lawn — the wedge the nose rounds off, the stretch to the node — is asphalt,
+    and so is the **pocket** between a median's end and a link or U-turn that closes the
+    gap ahead of it with no junction on the way (`medians::end_caps`),
     and a double solid meeting a lawn of its pair runs straight up to its nose. A median a tram runs in, up to
     `TRAM_BED_MAX_GAP` 8 m, is a **tram bed** (`Median::carries_tram`, found in
     `Pairs::new` from the rails): each half is widened to the middle by an inner lane

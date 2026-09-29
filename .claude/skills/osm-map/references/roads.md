@@ -533,6 +533,26 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     the junction field (Kaluga 02). The margin matters: flush with the kerb the
     difference left hairlines of asphalt, which the roads layer (above the grass) drew
     as dashes along the kerb.
+  - **Pocket at a median end** (`medians::end_caps`, any median but a tram bed, which has
+    `bed_caps`) — a median ends where the pair's probes ran out, and when the gap ahead
+    is closed by another carriageway — a U-turn or a link between the halves — rather than
+    opened by a junction, the few metres between the median's end and that road were
+    nobody's: the sidewalks of three roads, a scrap of verge lawn and bare ground, a pale
+    four-sided stub of an island with a hairline crack of a way seam over it (Ryazan 03,
+    Вокзальная under the link above Первомайский, roads tails L2). Now an end with **no
+    break on its line** (the `reach_breaks` test, breaks behind the tip included — those
+    ends are opened by a junction) whose ray meets, within `MEDIAN_EXTEND` 12 m, the axis
+    of a carriageway from a node of either half near the tip (`MedianInputs::closer`,
+    `closing_reach` — the first axis crossed, so it never paves past a cross street into
+    the next median) gets a rectangle of asphalt from the inner kerbs, `CAP_WIDER` wider
+    on each side — `FILL_OVERLAP` 2.5 m under the halves, like the fill between the
+    kerbs; at 1 m the half's sidewalk band still lay under its ribbon there, and the
+    hairline of its way seam showed over it — up to that axis, minus the median's own
+    lawn kerb, into the `roads` layer before the ribbons. Rounding the stub into an island was
+    the alternative and was not taken: the island is a few metres of kerb between three
+    ribbons and reads as a crumb either way. Pinned by
+    `a_pocket_between_the_median_end_and_a_closing_link_is_asphalt` and
+    `the_closing_reach_is_the_first_axis_across_the_ray`.
   - **Tram bed** (`Median::carries_tram`, found in `Pairs::new(roads, paths,
     median_gap, rails)`) — a run whose gap is at most `TRAM_BED_MAX_GAP` 8 m and at
     least `TRAM_SHARE_MIN` half of whose probes have a `RailKind::Tram` link within

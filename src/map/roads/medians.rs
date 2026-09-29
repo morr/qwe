@@ -95,6 +95,11 @@ pub struct MedianInputs<'a> {
     pub reach_gores: &'a dyn Fn(&[Vec2]) -> Vec<Vec<Vec2>>,
     /// Улица сети, которой принадлежит половина (`RoadNetwork::street_of`).
     pub street_of: &'a dyn Fn(usize) -> Option<usize>,
+    /// Проезжая часть, что замыкает зазор впереди торца разделительной:
+    /// длина по лучу от торца по ходу до оси первой из тех, что сходятся в
+    /// узлы половин `[usize; 2]` и пересекают луч не дальше заданного, м
+    /// ([`closing_reach`]). Торец в кармане — [`end_caps`].
+    pub closer: &'a dyn Fn([usize; 2], Vec2, Vec2, f32) -> Option<f32>,
 }
 
 /// Что разделительные положили и что оставили вызывающему.
@@ -162,6 +167,15 @@ pub fn draw(
         // до перекрёстка — как линии полос, а не там, где кончились пробы
         let mut median = median.clone();
         reach_breaks(&mut median, &breaks);
+        // карман между торцом и дорогой, что замыкает зазор, — асфальтом;
+        // у полотна трамвая торцы свои ([`bed_caps`])
+        let caps = if median.carries_tram() {
+            Vec::new()
+        } else {
+            end_caps(&median, &breaks, &|tip, heading, reach| {
+                (inputs.closer)(median.roads(), tip, heading, reach)
+            })
+        };
         let pair = median.roads().map(|road| (inputs.street_of)(road));
         if median.is_paved() {
             // полотно — внутренние полосы половин до середины; узкая
@@ -196,6 +210,7 @@ pub fn draw(
                 // кладётся, когда известны носы газонов ([`reach_nose`])
                 lines.push((pair, runs, painted));
             }
+            push_caps(streets, caps, &[]);
             drawing.paved.push(median);
         } else {
             let mut breaks = breaks;
@@ -215,6 +230,7 @@ pub fn draw(
                 [&breaks, &crossings],
                 [SIDEWALK_COLOR, GRASS_COLOR, ROAD_COLOR].map(|color| color.to_linear()),
             );
+            push_caps(streets, caps, &kerbs);
             for point in kerbs.iter().flatten().flatten() {
                 drawing
                     .ends
@@ -412,6 +428,107 @@ fn reach_breaks(median: &mut Median, breaks: &[Break]) {
             median.extend(end, along);
         }
     }
+}
+
+/// Насколько асфальт кармана у торца шире внутренних кромок, м: заходит под
+/// ленты половин, как асфальт между кромками ([`FILL_OVERLAP`]). С метром из
+/// кармана под лентой половины оставался тротуар, и по нему светился
+/// волосок шва двух её ways ([`end_caps`]).
+const CAP_WIDER: f32 = FILL_OVERLAP;
+/// Карман короче этого, м, не кладётся: замыкающая дорога идёт по самому
+/// торцу, и её лента кроет его и так.
+const CAP_MIN: f32 = 0.1;
+
+/// Асфальт кармана у торцов разделительной: торец, у которого перекрёстка
+/// впереди нет (ни одного разрыва `breaks` на её ходу, как у
+/// [`reach_breaks`]), а зазор между половинами в [`MEDIAN_EXTEND`] впереди
+/// замыкает другая проезжая часть — разворот или связка между половинами.
+/// Разделительная кончалась, где кончились пробы пары, и между её торцом и
+/// связкой оставался обрубок — тротуары трёх дорог, клочок газона обочины и
+/// земля (Рязань, витрина 03: Вокзальная у связки над Первомайским). Здесь
+/// он — асфальт: прямоугольник от внутренних кромок у торца, шире них на
+/// [`CAP_WIDER`], до оси замыкающей, найденной `closer` по торцу, ходу и
+/// пределу поиска. Лента замыкающей ложится поверх него, ленты половин — по
+/// бокам.
+fn end_caps(
+    median: &Median,
+    breaks: &[Break],
+    closer: &dyn Fn(Vec2, Vec2, f32) -> Option<f32>,
+) -> Vec<Shape> {
+    let [first, second] = median.inner();
+    let mut caps = Vec::new();
+    for end in [false, true] {
+        let (Some((tip, heading)), Some(&a), Some(&b)) = (
+            tip_of(median.midline(), end),
+            if end { first.last() } else { first.first() },
+            if end { second.last() } else { second.first() },
+        ) else {
+            continue;
+        };
+        // перекрёсток на ходу торца — зазор открывает он, а не карман
+        let at_junction = breaks.iter().any(|gap| {
+            let along = (gap.at - tip).dot(heading);
+            let aside = (gap.at - tip - heading * along).length();
+            aside < gap.reach && along > -gap.reach && along - gap.reach < MEDIAN_EXTEND
+        });
+        if at_junction {
+            continue;
+        }
+        let Some(along) = closer(tip, heading, MEDIAN_EXTEND).filter(|&along| along > CAP_MIN)
+        else {
+            continue;
+        };
+        let wider = (a - b).normalize_or_zero() * CAP_WIDER;
+        let [a, b] = [a + wider, b - wider];
+        let [back, forward] = [heading * BED_OVERLAP, heading * along];
+        caps.push(vec![oriented(
+            &[a - back, b - back, b + forward, a + forward],
+            true,
+        )]);
+    }
+    caps
+}
+
+/// Асфальт карманов `caps` — в слой улиц, за вычетом бордюра газона `kerbs`
+/// той же разделительной: трава лежит под асфальтом, и карман съел бы нос.
+fn push_caps(streets: &mut MeshBuilder, caps: Vec<Shape>, kerbs: &[Shape]) {
+    if caps.is_empty() {
+        return;
+    }
+    streets.set_lanes(None);
+    let caps = if kerbs.is_empty() {
+        caps
+    } else {
+        caps.overlay(&kerbs.to_vec(), OverlayRule::Difference, FillRule::NonZero)
+    };
+    for cap in caps {
+        push_shape(streets, cap, ROAD_COLOR.to_linear());
+    }
+}
+
+/// Длина по лучу от `tip` по ходу `heading` до первого пересечения с одной
+/// из осей `paths`, не дальше `reach`, м.
+pub fn closing_reach<'p>(
+    tip: Vec2,
+    heading: Vec2,
+    reach: f32,
+    paths: impl IntoIterator<Item = &'p [Vec2]>,
+) -> Option<f32> {
+    let ray = heading * reach;
+    paths
+        .into_iter()
+        .flat_map(|path| path.windows(2))
+        .filter_map(|link| {
+            let side = link[1] - link[0];
+            let denominator = ray.perp_dot(side);
+            if denominator.abs() <= f32::EPSILON * reach * side.length() {
+                return None;
+            }
+            let t = (link[0] - tip).perp_dot(side) / denominator;
+            let u = (link[0] - tip).perp_dot(ray) / denominator;
+            ((0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u)).then_some(t * reach)
+        })
+        .min_by(f32::total_cmp)
 }
 
 /// Звено у торца середины короче этого, м, — огрызок шва: у стыка
@@ -943,6 +1060,7 @@ mod tests {
                 pure_merge: &|_| false,
                 reach_gores: &|midline| vec![midline.to_vec()],
                 street_of: &street_of,
+                closer: &|_, _, _, _| None,
             },
             &mut layers.streets,
             &mut layers.sidewalks,
@@ -1131,6 +1249,63 @@ mod tests {
             )]
         );
         assert_eq!(rest, vec![cut[1]]);
+    }
+
+    /// Луч от торца вверх: первая ось поперёк него — связка в 6 м; ось за
+    /// пределом поиска и параллельная лучу — не в счёт.
+    #[test]
+    fn the_closing_reach_is_the_first_axis_across_the_ray() {
+        let across = |y: f32| vec![Vec2::new(-5.0, y), Vec2::new(5.0, y)];
+        let parallel = vec![Vec2::new(3.0, 0.0), Vec2::new(3.0, 20.0)];
+        let paths = [across(9.0), across(6.0), parallel.clone()];
+        let found = closing_reach(Vec2::ZERO, Vec2::Y, 12.0, paths.iter().map(Vec::as_slice));
+        assert!((found.unwrap() - 6.0).abs() < 1e-4, "{found:?}");
+        let far = [across(15.0), parallel];
+        assert_eq!(
+            closing_reach(Vec2::ZERO, Vec2::Y, 12.0, far.iter().map(Vec::as_slice)),
+            None
+        );
+    }
+
+    /// Разделительная кончилась, где кончились пробы пары, а в 6 м впереди
+    /// зазор замыкает связка между половинами (Рязань, витрина 03, Вокзальная
+    /// над Первомайским): карман между торцом и связкой — асфальт, шире кромок
+    /// и до оси связки. Торец с перекрёстком на ходу — нет: зазор там
+    /// открывает перекрёсток.
+    #[test]
+    fn a_pocket_between_the_median_end_and_a_closing_link_is_asphalt() {
+        let at = |y: f32| vec![Vec2::new(0.0, y), Vec2::new(20.0, y)];
+        let median = Median::lawn_for_test(at(0.0), [at(-2.5), at(2.5)]);
+        // замыкает только впереди конца, не начала
+        let closer = |_: Vec2, heading: Vec2, _: f32| (heading.x > 0.0).then_some(6.0);
+        let caps = end_caps(&median, &[], &closer);
+        let [cap] = caps.as_slice() else {
+            panic!("один карман: {caps:?}");
+        };
+        for inside in [
+            Vec2::new(20.5, 0.0),
+            Vec2::new(25.9, 0.0),
+            Vec2::new(23.0, 2.4),
+            Vec2::new(23.0, -2.4 - CAP_WIDER),
+        ] {
+            assert!(point_in_shape(inside, cap), "{inside} вне кармана {cap:?}");
+        }
+        let beside = Vec2::new(23.0, 2.6 + CAP_WIDER);
+        for outside in [Vec2::new(26.5, 0.0), beside, Vec2::new(19.0, 0.0)] {
+            assert!(!point_in_shape(outside, cap), "{outside} в кармане {cap:?}");
+        }
+        // перекрёсток на ходу торца — кармана нет
+        let junction = Break {
+            at: Vec2::new(24.0, 0.0),
+            reach: 5.0,
+        };
+        assert!(end_caps(&median, &[junction], &closer).is_empty());
+        // разрыв сбоку, на оси чужой половины за кромкой — не перекрёсток торца
+        let aside = Break {
+            at: Vec2::new(21.0, 9.0),
+            reach: 5.0,
+        };
+        assert_eq!(end_caps(&median, &[aside], &closer).len(), 1);
     }
 
     /// Обрывок осевой между разрывом узла (он лежит на оси половины, в трёх
