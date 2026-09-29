@@ -500,6 +500,78 @@ fn a_widening_seam_of_the_own_half_meets_and_keeps_the_inner_kerb_straight() {
     }
 }
 
+#[test]
+fn a_gap_changing_at_a_taper_seam_changes_along_the_wedge_and_keeps_the_kerbs_straight() {
+    // своя половина — две полосы до x = 150, дальше четыре, ось OSM одна
+    // прямая; встречная — один way в две полосы. У узкой части между кромками
+    // газон в 6 м, у широкой — асфальт в 2.7: зазор меняется на том же шве,
+    // что и сечение (Тула, витрина 16)
+    let roads = vec![
+        half(vec![Vec2::ZERO, Vec2::new(150.0, 0.0)], 2),
+        half(vec![Vec2::new(150.0, 0.0), Vec2::new(400.0, 0.0)], 4),
+        half(vec![Vec2::new(400.0, 13.6), Vec2::new(0.0, 13.6)], 2),
+    ];
+    let (_, paths) = aligned(&roads);
+    let [narrow, wide] = [roads[0].width, roads[1].width];
+    let length = (wide - narrow) * TAPER_PER_METER;
+    // внешняя кромка своей половины (встречная — слева, по +y)
+    let outer = |x: f32| {
+        if x <= 150.0 {
+            y_at(&paths[0], x) - narrow / 2.0
+        } else {
+            let at = ((x - 150.0) / length).min(1.0);
+            y_at(&paths[1], x) - (narrow + (wide - narrow) * at) / 2.0
+        }
+    };
+    // до шва кромка прямая: зазор узкой части держится до самого узла
+    let straight = outer(120.0);
+    for x in [130.0, 140.0, 145.0, 149.0] {
+        assert!(
+            (outer(x) - straight).abs() < 0.05,
+            "у x = {x} кромка {}, а до шва {straight}: смена зазора ушла за узел",
+            outer(x)
+        );
+    }
+    // на клине — прямая от кромки у шва к кромке у его конца: смена зазора
+    // идёт вместе с клином, а не поперёк узла
+    let (from, to) = (outer(150.5), outer(150.0 + length));
+    for at in [10.0, 20.0, 30.0, 45.0, 60.0] {
+        let expected = from + (to - from) * (at - 0.5) / (length - 0.5);
+        let got = outer(150.0 + at);
+        assert!(
+            (got - expected).abs() < 0.05,
+            "в {at} м от шва кромка {got}, а по прямой {expected}: клин с надломом"
+        );
+    }
+}
+
+#[test]
+fn median_ends_meet_further_apart_at_a_seam_of_a_half_than_elsewhere() {
+    // две разделительные вдоль x, торцы в 6.5 м друг от друга: у чистого шва
+    // половины (Тула, витрина 16: газон до шва, асфальт после, 5.07 м) они
+    // сводятся, без шва рядом — нет (через перекрёсток, Орёл, витрина 04)
+    let median = |from: f32, to: f32| {
+        let line = |y: f32| vec![Vec2::new(from, y), Vec2::new(to, y)];
+        super::Median::lawn_for_test(line(0.0), [line(-2.0), line(2.0)])
+    };
+    let joined = |seams: &[Vec2]| {
+        let mut pairs = Pairs {
+            runs: Vec::new(),
+            medians: vec![median(0.0, 100.0), median(106.5, 200.0)],
+        };
+        pairs.join_ends(seams);
+        let first = pairs.medians[0].midline()[pairs.medians[0].midline().len() - 1];
+        let second = pairs.medians[1].midline()[0];
+        first.distance(second) < 0.01
+    };
+    assert!(joined(&[Vec2::new(104.0, -6.0)]), "у шва торцы не свелись");
+    assert!(!joined(&[]), "без шва торцы в 6.5 м свелись");
+    assert!(
+        !joined(&[Vec2::new(150.0, -6.0)]),
+        "шов далеко, а торцы свелись"
+    );
+}
+
 /// Высота ломаной `path`, идущей по x, в точке `x`.
 fn y_at(path: &[Vec2], x: f32) -> f32 {
     path.windows(2)

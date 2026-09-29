@@ -107,6 +107,14 @@ const PARTNER_SLACK: f32 = 0.5;
 /// Торцы соседних разделительных ближе этого, м, сводятся в одну точку
 /// ([`Pairs::join_ends`]).
 const JOIN_GAP: f32 = 5.0;
+/// У чистого шва половины (в узле только два её way) торцы сводятся и
+/// дальше — до стольких метров друг от друга и от шва, м. Газон, меряный по
+/// встречной половине, кончается в паре метров до шва своей, и у шва с клином,
+/// где зазор держится до узла ([`seam_blend`]), между его торцом и асфальтовой
+/// разделительной за швом выходило 5.07 м — дыра в землю (Тула, витрина 16).
+/// Поднять сам [`JOIN_GAP`] нельзя: на шестилучевом узле Орла (витрина 04)
+/// сошлись торцы разделительных через перекрёсток.
+const SEAM_JOIN_GAP: f32 = 8.0;
 /// За сколько метров до конца куска и до закреплённого узла разводка сходит
 /// на нет.
 pub const ALIGN_TRANSITION: f32 = 20.0;
@@ -640,6 +648,44 @@ impl Pairs {
                     .map(|run| run.gap)
             })
         };
+        // шов с клином: зазор меняется не поперёк узла, а по клину широкой
+        // стороны. Переход в `ALIGN_TRANSITION` поперёк узла ложился на тот же
+        // шов, что и клин, и внешняя кромка сперва шла внутрь со сменой
+        // зазора, потом наружу с клином — надлом ~0.2 м (Тула, витрина 16:
+        // газон разделительной кончается там же, где 2 полосы становятся 4)
+        let seam_wedge = |road: usize, end: bool| -> Option<SeamWedge> {
+            let points = &roads[road].points;
+            let node = if end {
+                points[points.len() - 1]
+            } else {
+                points[0]
+            };
+            let fitted = |road: usize, end: usize| {
+                let lengths = wedges.at(road).map(|taper| taper.map(|taper| taper.length));
+                tapers::fit(polyline_length(&paths[road]), lengths)[end]
+            };
+            if let Some(taper) = wedges.at(road)[usize::from(end)]
+                && continues(road, taper.narrow)
+            {
+                return fitted(road, usize::from(end)).map(SeamWedge::Wide);
+            }
+            nodes.roads_at(node).iter().find_map(|&other| {
+                if !continues(road, other) {
+                    return None;
+                }
+                let others = &roads[other].points;
+                (0..2).find_map(|other_end| {
+                    let at = if other_end == 1 {
+                        others[others.len() - 1]
+                    } else {
+                        others[0]
+                    };
+                    let taper = wedges.at(other)[other_end]?;
+                    (at == node && taper.narrow == road && fitted(other, other_end).is_some())
+                        .then_some(SeamWedge::Narrow)
+                })
+            })
+        };
         let mut aligned: Vec<(usize, Vec<Vec2>)> = Vec::new();
         let mut moved: Vec<(Vec2, Vec2)> = Vec::new();
         for (road, runs) in self.runs.iter().enumerate() {
@@ -648,6 +694,7 @@ impl Pairs {
             }
             let path = &paths[road];
             let ends = [continued(road, false), continued(road, true)];
+            let wedged = [seam_wedge(road, false), seam_wedge(road, true)];
             let (mut dense, along) = densify(path, ALIGN_STEP);
             let total = along[along.len() - 1];
             let foreign = |other: usize| other != road && !continues(road, other);
@@ -748,13 +795,14 @@ impl Pairs {
                     continue;
                 };
                 // через шов своей половины — к зазору продолжения: у самого
-                // узла обе стороны берут середину между своими зазорами
+                // узла обе стороны берут середину между своими зазорами; на
+                // шве с клином — по клину ([`seam_blend`])
                 let mut gap = span_gap(span, at);
                 if let (Some(before), true) = (ends[0], from == f32::NEG_INFINITY) {
-                    gap = blend(before, gap, at);
+                    gap = seam_blend(before, gap, at, wedged[0]);
                 }
                 if let (Some(after), true) = (ends[1], to == f32::INFINITY) {
-                    gap = blend(gap, after, at - total);
+                    gap = seam_blend(after, gap, total - at, wedged[1]);
                 }
                 // полуширины половин, обращённые друг к другу, — с клиньями
                 let partner_path = original[partner].as_deref().unwrap_or_default();
@@ -805,6 +853,28 @@ impl Pairs {
         for (from, to) in &mut moved {
             *to = place(*from);
         }
+        // чистые швы половин — где нарисованы: у них торцы разделительных
+        // сводятся дальше ([`SEAM_JOIN_GAP`])
+        let mut seams = Vec::new();
+        for (road, path) in &aligned {
+            let points = &roads[*road].points;
+            for (node, drawn) in [
+                (points[0], path[0]),
+                (points[points.len() - 1], path[path.len() - 1]),
+            ] {
+                let streets: Vec<usize> = nodes
+                    .roads_at(node)
+                    .iter()
+                    .copied()
+                    .filter(|&other| roads[other].class == RoadClass::Street)
+                    .collect();
+                if let [a, b] = streets[..]
+                    && continues(a, b)
+                {
+                    seams.push(drawn);
+                }
+            }
+        }
         for (road, path) in aligned {
             paths[road] = Cow::Owned(path);
         }
@@ -848,7 +918,7 @@ impl Pairs {
             thin(&mut median.inner[0]);
             thin(&mut median.inner[1]);
         }
-        self.join_ends();
+        self.join_ends(&seams);
         moved
     }
 
@@ -903,11 +973,20 @@ impl Pairs {
     /// Половина из двух ways — две пары кусков и две разделительные: одна
     /// кончается последней пробой до шва, другая начинается у шва с другой
     /// стороны, и между ними оставалась пара метров — дыра в двойной сплошной
-    /// и островок бордюра стоянки посреди бульвара «Макси».
-    fn join_ends(&mut self) {
+    /// и островок бордюра стоянки посреди бульвара «Макси». У чистого шва
+    /// половины (`seams` — где он нарисован) — до [`SEAM_JOIN_GAP`].
+    fn join_ends(&mut self, seams: &[Vec2]) {
         let tip = |median: &Median, end: bool| {
             let line = &median.midline;
             (line.len() >= 2).then(|| if end { line[line.len() - 1] } else { line[0] })
+        };
+        let joins_at = |at: Vec2, point: Vec2| {
+            let apart = point.distance(at);
+            apart < JOIN_GAP
+                || (apart < SEAM_JOIN_GAP
+                    && seams
+                        .iter()
+                        .any(|seam| seam.distance(at.midpoint(point)) < SEAM_JOIN_GAP))
         };
         let mut joins: Vec<(usize, bool, Vec2, [Vec2; 2])> = Vec::new();
         for (index, median) in self.medians.iter().enumerate() {
@@ -924,7 +1003,7 @@ impl Pairs {
                         [false, true].map(|other_end| (other, other_end, tip(median, other_end)))
                     })
                     .filter_map(|(other, other_end, point)| Some((other, other_end, point?)))
-                    .filter(|(.., point)| point.distance(at) < JOIN_GAP)
+                    .filter(|(.., point)| joins_at(at, *point))
                     .min_by(|a, b| a.2.distance(at).total_cmp(&b.2.distance(at)));
                 let Some((other, other_end, point)) = nearest else {
                     continue;
@@ -1246,6 +1325,32 @@ fn span_gap(span: &[PairRun], at: f32) -> f32 {
 /// знаком плюс): переход за [`ALIGN_TRANSITION`], на самом шве — середина.
 fn blend(before: f32, after: f32, beyond: f32) -> f32 {
     before + (after - before) * smoothstep(beyond / ALIGN_TRANSITION + 0.5)
+}
+
+/// Какая сторона шва половины несёт клин (`roads/tapers.rs`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum SeamWedge {
+    /// Этот way — широкий, клин длиной столько метров идёт от узла по нему.
+    Wide(f32),
+    /// Клин лежит на продолжении, этот way — узкий.
+    Narrow,
+}
+
+/// Зазор у шва половины в `beyond` м от узла внутрь своего way: `across` —
+/// зазор продолжения за узлом, `own` — свой. Без клина — [`blend`] поперёк
+/// узла. С клином переход ложится **на клин**: на узкой стороне зазор свой до
+/// самого узла, на широкой — от зазора узкой в узле к своему к концу клина,
+/// линейно, как и сам клин. Тогда обе кромки клина — прямые, а переход
+/// поперёк узла вместе с клином гнул внешнюю кромку сперва внутрь, потом
+/// наружу.
+fn seam_blend(across: f32, own: f32, beyond: f32, wedge: Option<SeamWedge>) -> f32 {
+    match wedge {
+        None => blend(across, own, beyond),
+        Some(SeamWedge::Wide(length)) => {
+            across + (own - across) * (beyond / length).clamp(0.0, 1.0)
+        }
+        Some(SeamWedge::Narrow) => own,
+    }
 }
 
 /// Что за кусок проб, чья цепочка длиной `span`, у половины длиной `total`.

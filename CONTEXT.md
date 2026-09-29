@@ -411,7 +411,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     it, where a kerb return needs a straight edge), so the ribbons and the parked
     cars stand on the aligned axis. The gap is kept between the **facing half widths**,
     tapered on a wedge that narrows the partner's side: the two ways of a half meet at
-    their seam and only the outer kerb of the wedge narrows. **Median** (`Median`, drawn by
+    their seam and only the outer kerb of the wedge narrows; where the gap itself changes
+    at such a seam, it changes along the wedge, not across the node, so the wedge's kerbs
+    stay straight. **Median** (`Median`, drawn by
     `roads/medians.rs` through one door, `medians::draw`, which lays the asphalt, the bed and
     the lawn and hands the double solids back for the painter rather than painting them) —
     what lies between the halves: up to the **median gap** (`RoadShape::median_gap`, 3 m by

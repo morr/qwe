@@ -438,6 +438,16 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     `RUN_BRIDGE` fix). The pair tests that align raw points could not see it;
     `a_seam_of_the_own_half_on_a_smoothed_axis_does_not_let_the_axes_go` runs
     `street_axes` with the default curve.
+    **At a seam with a taper the gap changes along the wedge, not across the node**
+    (`seam_blend`, `SeamWedge`): the narrow way keeps its own gap up to the node, the
+    wide one goes from the narrow one's gap at the node to its own at the end of the
+    fitted wedge, linearly, like the wedge itself — so both kerbs of the wedge are
+    straight lines. The `ALIGN_TRANSITION` blend centred on the node used to fall on the
+    same seam as the wedge, and where a lawn median ends at a change of section the
+    outer kerb first went in with the closing gap and then out with the wedge — a
+    0.2 m dogleg (Tula, gallery 16: Советская 2 → 4 lanes, the lawn of 4.8 m becoming a
+    0.8 m paved median; `a_gap_changing_at_a_taper_seam_changes_along_the_wedge_and_keeps_the_kerbs_straight`).
+    A seam without a taper keeps the centred blend.
     **The distance is measured with the half widths that face each other, and on a
     taper that is the tapered one** (`facing_half`, fed by `street_axes` with a
     `Tapers::new` over the roads as parsed — the same joints `Drawn` finds later): a
@@ -458,7 +468,15 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     the same way; the thinning is what took the stage from +130 k vertices and +50 ms
     down to +24 k and +18 ms. Ends of two medians closer than `pairs::JOIN_GAP` 5 m are
     drawn together (`join_ends`): a half of two ways is two runs, and the gap at the seam
-    was a hole in the double line and a kerb island on the «Макси» boulevard. For the same
+    was a hole in the double line and a kerb island on the «Макси» boulevard. **At a pure
+    seam of a half** (only its two ways among the streets at the node, drawn where the
+    alignment put it) the ends join up to `SEAM_JOIN_GAP` 8 m apart, with the seam within
+    8 m of their midpoint: a lawn measured along the partner half ends a few metres short
+    of the own half's seam, and once the gap stopped closing across a taper seam (above)
+    the lawn's tip and the paved median past the seam stood 5.07 m apart in sample 16 — a
+    hole to the ground between them. `JOIN_GAP` itself stays: raised to 6 m, it joined two
+    medians across the six-arm node of Oryol 04 and grew its asphalt
+    (`median_ends_meet_further_apart_at_a_seam_of_a_half_than_elsewhere`). For the same
     reason a half's sidewalk is not drawn in a gap shorter than `pairs::PAIR_SIDE_REACH`
     12 m between two runs on the same side (`Pairs::band_pieces`) — whatever the runs are,
     paved, lawn or tram bed: their medians are drawn tip to tip, and the sidewalk lay
