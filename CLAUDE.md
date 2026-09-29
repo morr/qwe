@@ -182,6 +182,19 @@ command whose build directory holds no fingerprints while the main checkout's `t
 does; when an empty one is the actual point (timing a cold build) say so with the literal
 `# cold-build` in the command.
 
+**`target/` leaks object files, and `tools/prune-target-objects.sh` is what bounds it.** On
+macOS the dev profile's debuginfo is `unpacked`: the DWARF stays in the codegen units'
+`.o` files, which rustc hard-links from its incremental session into `deps/` (and
+`examples/`) under a fresh per-session name. When the session is replaced the `deps/` link
+stays behind, so every rebuild of every qwe target — lib, unit tests, bin, each `tests/*.rs`,
+each example — left one more set: 77 506 such files, 127 GB of a 133 GB `deps/`, plus
+51 000 more (11 GB) in `examples/`, until the disk filled. The script deletes the
+single-linked ones — no session holds them any more, no binary's debug map points at them —
+and only in the incremental naming, so the registry crates' objects (their only debuginfo)
+are never touched. `tools/check.sh` runs it after every check; after a day of plain `cargo
+test` / `cargo run`, run it by hand (`tools/prune-target-objects.sh [target-dir]`). No
+`[profile]` change was needed, so nothing rebuilt: backtraces keep their line numbers.
+
 `dynamic_linking` is already enabled in `Cargo.toml` — never pass `--features bevy/dynamic_linking`.
 
 First `cargo run` downloads the OSM extract from Overpass into `assets/osm/` (gitignored
