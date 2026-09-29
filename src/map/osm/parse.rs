@@ -2533,6 +2533,10 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
             width,
             kind,
             service: service_track(&element.tags),
+            bridge: element
+                .tags
+                .get("bridge")
+                .is_some_and(|value| value != "no"),
         });
     }
 

@@ -172,6 +172,25 @@ fn parses_rails_and_drops_station_furniture() {
     assert!(map.buildings.is_empty());
 }
 
+/// Путь на мосту — путепровод (Орёл, 7245, 728: `bridge=yes`, `layer=1` над
+/// Р-119); `bridge=no` — явное «нет», как и отсутствие тега.
+#[test]
+fn a_track_on_a_bridge_is_marked_as_one() {
+    let (sw, se, ne, nw) = corners(HALF);
+    let map = Overpass::new(CITY)
+        .way(
+            &[("railway", "rail"), ("bridge", "yes"), ("layer", "1")],
+            vec![sw, ne],
+        )
+        .way(&[("railway", "rail"), ("bridge", "viaduct")], vec![se, nw])
+        .way(&[("railway", "rail"), ("bridge", "no")], vec![sw, se])
+        .way(&[("railway", "rail")], vec![nw, ne])
+        .parse();
+
+    let bridges: Vec<bool> = map.rails.iter().map(|rail| rail.bridge).collect();
+    assert_eq!(bridges, [true, true, false, false]);
+}
+
 #[test]
 fn service_tracks_are_the_siding_the_yard_and_the_spur() {
     let (sw, se, ne, nw) = corners(HALF);

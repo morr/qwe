@@ -215,6 +215,7 @@ pub fn rail(points: Vec<Vec2>, width: f32) -> RailLine {
         width,
         kind: RailKind::Active,
         service: None,
+        bridge: false,
     }
 }
 

@@ -299,7 +299,9 @@ be called alone:
   crosses: two `railway=rail` ways stop at the two kerbs and the crossing itself is not
   mapped (Tula, 2613 3122 → 3140, 18 m across a tertiary street; `level_crossing` nodes are
   not even in the query). Two **free** ends (no vertex of another track within 0.5 m — an
-  end on a switch is not a break) of tracks of the same `RailKind` (never a tram) are
+  end on a switch is not a break; the end of a track on a bridge, `RailLine::bridge`, is
+  never one — a track bridge does not cross at grade) of tracks of the same `RailKind`
+  (never a tram) are
   joined into one way when the gap is under `STITCH_GAP_MAX` 30 m, each end looks at the
   other within `STITCH_ANGLE_MAX` 12° (heading taken 8 m back, the last OSM link is noise)
   and the gap crosses the axis of an at-grade carriageway. Nearest pair first, one per

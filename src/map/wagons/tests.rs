@@ -17,6 +17,7 @@ fn track(service: Option<ServiceTrack>, origin: Vec2, length: f32) -> RailLine {
         width: 5.0,
         kind: RailKind::Active,
         service,
+        bridge: false,
     }
 }
 

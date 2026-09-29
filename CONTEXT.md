@@ -80,8 +80,9 @@ in `main.rs`.
   sidewalks (2.002) → lot lines (2.003) → road islands (2.0035) → parking markings
   (2.004) → pitches (2.005) →
   pitch markings → water (2.01) → waterways (2.02) → rail ballast (2.03) → rail ties →
-  rail steel → wagons (2.045) → bridge shadows (2.05) → bridge casings → bridges →
-  bridge paint (2.25) → tram (2.6) → cars → fences (2.75) → pipe shadows (2.76) →
+  level-crossing decks → rail steel → wagons (2.045) → bridge shadows (2.05) → bridge
+  casings → bridges → bridge paint (2.25) → track-bridge ballast, ties, steel (2.3) →
+  tram (2.6) → cars → fences (2.75) → pipe shadows (2.76) →
   pipes (2.77) → portal stain → corpses → portal → industry shadows (4.55) → buildings (5) →
   roof shadows (5.05) → industry walls (5.06) → industry tops (5.07) → units → souls (18)
   → tree shadows → trees (20). Four live in their
@@ -457,7 +458,14 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     way at parse (`parse/rails.rs`). A non-tram track is
     drawn as the **track** itself (`map/rail.rs`): ballast with a shoulder, ties across it
     and two steel rails on the gauge, thinned out by **rail zoom LOD** into a dashed
-    symbol darker than its ballast on the city-wide view. Tram is `map/tram.rs`, with its
+    symbol darker than its ballast on the city-wide view. A **track bridge**
+    (`RailLine::bridge`, any `bridge` but `no`) is a bridge like a street's — slab,
+    parapet and shadow in the road layer's bridge layers (`Bridges::push_track`), the track
+    in its own layers above the deck, never on the asphalt under it. A **level crossing**
+    — a ground track across a carriageway, **found by geometry**, not by tag — covers the
+    ballast and ties inside the road and its sidewalks with a light deck the rails run
+    over (`rail::mesh_level_crossings`, laid by the road layer along the street **as
+    drawn**, never along the OSM centerline). Tram is `map/tram.rs`, with its
     own LOD, and is drawn only while `TramStyle::visible`.
   - **WallLine** — `barrier=city_wall` (the kremlin), 3 m, impassable. **Drawn only where
     no fortress building stands on it** (`roads.rs::Fortresses`): Tula maps its wall as a

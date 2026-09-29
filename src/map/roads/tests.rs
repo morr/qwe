@@ -246,14 +246,15 @@ fn the_city_wall_ribbon_stays_off_fortress_buildings() {
 // телеметрия области жили внутри `spawn_roads` — 275 строк, взять которые из
 // теста было нечем: проверять можно было только хелперы под ними.
 
-/// Двадцать четыре дорожных слоя снизу вверх, ровно в том порядке, в каком
+/// Двадцать пять дорожных слоёв снизу вверх, ровно в том порядке, в каком
 /// они уходят в мир: газон островов колец и их трава без канта, газон широких
 /// обочин лугом и травой двора, двенадцать лент и восемь слоёв краски над своим асфальтом — колея
 /// траекторий узла (маска, потом наложение) ниже линий, островки колец над
 /// асфальтом стоянок. Грунтовки — под асфальтом улиц, обочины — под всей
 /// зеленью, их газон — под их плиткой, газон острова — под всем, его трава —
-/// над замапленной травой.
-const LAYERS: [&str; 24] = [
+/// над замапленной травой. Настил переездов (`rail_crossings`) — между
+/// шпалами и сталью путей, то есть над всей краской улиц и под мостами.
+const LAYERS: [&str; 25] = [
     "ring_islands",
     "road_verge_lawns",
     "road_verge_yards",
@@ -272,6 +273,7 @@ const LAYERS: [&str; 24] = [
     "lot_sidewalks",
     "lot_lines",
     paint::PAINT_ISLANDS,
+    "rail_crossings",
     "bridge_shadows",
     "bridge_casings",
     "bridges",
@@ -297,7 +299,7 @@ fn layer<'a>(layers: &'a [LayerMesh], name: &str) -> &'a LayerMesh {
 }
 
 #[test]
-fn a_street_builds_twenty_four_layers_bottom_up() {
+fn a_street_builds_twenty_five_layers_bottom_up() {
     let (layers, report) = mesh_roads(&one_street(), RoadStyle::default(), RoadShape::default());
 
     let names: Vec<&str> = layers.iter().map(|layer| layer.name).collect();
@@ -775,6 +777,34 @@ fn a_bridge_leaves_the_street_layers_for_the_deck_ones() {
     assert!(!layer(&layers, "bridges").builder.is_empty());
     // бордюр настила рисуется всегда, независимо от ручки канта
     assert!(!layer(&layers, "bridge_casings").builder.is_empty());
+}
+
+/// Переезд в одном уровне (R35) кладёт слой дорог — по улице как она
+/// нарисована; путь на мосту переезда не даёт, зато даёт путепровод: плиту,
+/// парапет и тень в мостовых слоях.
+#[test]
+fn a_track_across_a_street_is_a_level_crossing_unless_it_is_on_a_bridge() {
+    let with_track = |bridge: bool| {
+        let mut map = one_street();
+        let mut track = fixture::rail(vec![Vec2::new(300.0, 0.0), Vec2::new(300.0, 200.0)], 5.0);
+        track.bridge = bridge;
+        map.rails.push(track);
+        mesh_roads(&map, RoadStyle::default(), RoadShape::default())
+    };
+
+    let (layers, report) = with_track(false);
+    assert!(!layer(&layers, "rail_crossings").builder.is_empty());
+    assert_eq!(report.level_crossings, 1);
+    assert_eq!(report.track_bridges, 0);
+    assert!(layer(&layers, "bridges").builder.is_empty());
+
+    let (layers, report) = with_track(true);
+    assert!(layer(&layers, "rail_crossings").builder.is_empty());
+    assert_eq!(report.level_crossings, 0);
+    assert_eq!(report.track_bridges, 1);
+    for name in ["bridge_shadows", "bridge_casings", "bridges"] {
+        assert!(!layer(&layers, name).builder.is_empty(), "{name}");
+    }
 }
 
 /// Мощёная дорожка ложится плиткой в слой тротуаров, грунтовая и дорожка без

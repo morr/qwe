@@ -10,12 +10,13 @@ use bevy::prelude::*;
 use super::{ROAD_JOIN, RoadJoin, smoothstep};
 use crate::map::SHADOW_COLOR;
 use crate::map::along::densify;
-use crate::map::footprint::JOIN_EPSILON;
+use crate::map::footprint::{JOIN_EPSILON, bridge_curb_width};
 use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin, merge_close_points, miter_offsets};
 use crate::map::osm::model::{
     distance_to_segment, point_in_area, point_in_polygon, polyline_length, ring_bounds,
 };
-use crate::map::osm::{MapData, PolyArea, RoadLine};
+use crate::map::osm::{MapData, PolyArea, RailLine, RoadLine};
+use crate::map::rail::{deck_width, track_centerline};
 use crate::map::shadow;
 use crate::map::surface::{LayerMesh, MaterialSpec, SurfaceKind};
 use crate::settings::{Z_BRIDGE, Z_BRIDGE_CASING, Z_BRIDGE_SHADOW};
@@ -337,6 +338,56 @@ impl Bridges {
         }
     }
 
+    /// **Путепровод** — путь с `bridge=*` (`RailLine::bridge`): плита шириной
+    /// в подошву балласта, парапет по её краям и тень на то, над чем она
+    /// идёт, — в тех же трёх слоях, что у моста улицы, так что тень
+    /// объединяется с тенями соседних мостов, а пересборку по солнцу слой
+    /// дорог уже умеет. Балласт, шпалы и сталь поверх плиты кладёт
+    /// `map::rail` своими слоями над `Z_BRIDGE`.
+    ///
+    /// Упрощение против улиц одно: путь — **свой пролёт**, куски одного
+    /// путепровода в цепочку не склеиваются, и короткий пролёт тень
+    /// отбрасывает всегда, без пробы на то, что под ним. Путепровод в OSM —
+    /// как правило, один way на путь через весь пролёт (Орёл, 7245, 728: два
+    /// пути по 64 м над Р-119), а насыпь с `bridge=yes` у путей не размечают
+    /// так, как подходы к мостам улиц.
+    pub(super) fn push_track(&mut self, rail: &RailLine) {
+        let points = track_centerline(rail);
+        if points.len() < 2 {
+            return;
+        }
+        let deck = deck_width(rail);
+        push_bridge_curb(
+            &mut self.casings,
+            &points,
+            deck + 2.0 * bridge_curb_width(deck),
+            ROAD_JOIN,
+        );
+        // плита — в меш настилов улиц: фактура асфальта без колеи (рамы
+        // полос у неё нет), цвет — свой, бетонный
+        self.fills.set_lanes(None);
+        self.fills.push_ribbon(
+            &points,
+            false,
+            deck,
+            TRACK_DECK_COLOR.to_linear(),
+            RibbonJoin::Round,
+            RibbonCap::Butt,
+        );
+        let span = polyline_length(&points);
+        let lifted = BridgeSpan {
+            span,
+            from_start: 0.0,
+            from_end: 0.0,
+            casts: true,
+        };
+        self.shadows.push(ShadowBand {
+            path: bridge_shadow_path(&points, &lifted),
+            reach: deck / 2.0 + bridge_curb_width(deck),
+            penumbra: bridge_penumbra(span),
+        });
+    }
+
     /// Меш заливки настилов.
     pub(super) fn fills(&mut self) -> &mut MeshBuilder {
         &mut self.fills
@@ -522,8 +573,13 @@ const SPAN_TO_HEIGHT: f32 = 1.0 / 8.0;
 
 /// Бордюр моста — светлый бетонный парапет над серым настилом, общий для
 /// улиц и пешеходных мостиков. Толщины (и почему их диапазоны не
-/// пересекаются) — в `map::footprint`.
+/// пересекаются) — в `map::footprint`. Тот же парапет — у путепровода
+/// ([`Bridges::push_track`]).
 const BRIDGE_CURB_COLOR: Color = Color::srgb(0.80, 0.80, 0.79);
+
+/// Плита путепровода — бетон под балластом, темнее парапета: между ним и
+/// щебнем пути она видна узкой полосой с каждой стороны.
+const TRACK_DECK_COLOR: Color = Color::srgb(0.60, 0.59, 0.57);
 
 /// Теневая лента одного моста, готовая к укладке: путь, полуширина настила и
 /// ширина полутени на полном подъёме.

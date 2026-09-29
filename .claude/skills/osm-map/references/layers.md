@@ -193,8 +193,9 @@ The layers that are neither roads, parking, buildings nor trees. Each bullet is 
 - **Rail layers** (`map/rail.rs`, its own module with its own zoom LOD, like the tram's;
   it left `map/roads.rs` when it stopped being a line style) — the **track**, not a map
   symbol: a ballast prism, ties across it and two steel rails on the gauge. Three merged
-  meshes, `RailLayerTag`, all above `Z_ROAD` (2) so a track lies on its street at a level
-  crossing, and all **below `Z_BRIDGE_SHADOW` (2.05)** so a road bridge over the tracks
+  meshes for a ground track (plus the level-crossing deck between ties and steel, and three
+  more for a track on a bridge — both below), `RailLayerTag`, all above `Z_ROAD` (2) so a track lies on its street at a level
+  crossing, and the ground ones all **below `Z_BRIDGE_SHADOW` (2.05)** so a road bridge over the tracks
   covers them (Tula, 5896 4324: the track used to run over the deck — it sat at 2.4–2.55,
   above every bridge, for the tram's sake, and the tram has its own layer above the deck
   since): ballast `Z_RAIL` (2.03), ties `Z_RAIL_TIE` (2.035), steel `Z_RAIL_STEEL` (2.04)
@@ -275,6 +276,42 @@ The layers that are neither roads, parking, buildings nor trees. Each bullet is 
   - **`RailKind` is the palette**: `Active` is ballast grey-brown, creosote ties, bright
     steel; `Disused` is the same track overgrown — weedy ballast, grey ties, rust.
     `Tram` is skipped here, it has its own module.
+  - **Track bridges** (R35) — `RailLine::bridge` (`bridge=*` except `no`, read in
+    `parse_way`). Such a track is drawn in three layers of its own, `rail_bridge_ballast` /
+    `_ties` / `_steel` at `Z_RAIL_BRIDGE` 2.3 / 2.305 / 2.31 — above the street bridges'
+    deck (`Z_BRIDGE` 2.2) and paint, below the tram — and **without a shoulder** (the
+    ballast lies in the bridge's trough), its bed capped at `rail::deck_width` so a far
+    bucket's `min_bed` does not hang it over the parapet. The slab, parapet and shadow
+    under it are the road layer's (`roads.md`, **Bridge layers**). A bridge track never
+    forms a **level crossing**, is never a **rail gap** end (`parse/rails.rs::free_ends`),
+    and holds no **standing wagons** (they would lie under the slab at `Z_WAGON`). It does
+    keep its **car keepout** (`cars/rails.rs`): a car at `Z_CAR` would be drawn on top of
+    the slab, so the row under a track bridge is cleared the way a street bridge clears
+    the row beneath it.
+  - **Level crossings** (R35; `rail::mesh_level_crossings`, layer `rail_crossings` at
+    `Z_RAIL_CROSSING` 2.0375 — over the ties it hides, under the steel that runs over it).
+    Where the axis of a ground track crosses the axis of a road that can be crossed at
+    grade (`rail::crossable`: `RoadClass::Street` — streets *and* service drives — not a
+    bridge, not a passage), the ballast and ties inside the road and its sidewalks are
+    covered by a light concrete deck (`CROSSING_COLOR`) and the rails run on over it, the
+    way a tram's run over asphalt; past the kerb the track is ballast and ties again.
+    **Found by geometry, not by tag**: `railway=level_crossing` is not in the query, and
+    the v15 caches would give Tula one such node and Oryol none. The deck is the
+    **parallelogram** where the two straight bands of a link pair overlap — across the
+    track the ballast's foot (`deck_width`), across the road the drawn carriageway plus
+    each side's drawn sidewalk (`Drawn::sidewalk_on`) — so its ends follow the kerbs and an
+    oblique crossing leaves no ballast triangle on the asphalt. Below `CROSSING_MIN_SIN`
+    0.34 (~20°) the track runs *along* the road and gets no deck. Track links go into a
+    `Grid` (`CROSSING_CELL` 32 m) and the road links query it: one pass over the roads.
+    **The layer is the road layer's, not the rail's** (`mesh_roads` pushes it, tagged
+    `RoadLayerTag`, counted in `RoadReport::level_crossings`), because the road has to be
+    taken **as drawn** — `CrossedStreet` is the ribbon axis (`Axis::Ribbon`), and the OSM
+    centerline lies up to the curve tolerance (3 m) off it: the first version, on the OSM
+    axis inside `mesh_rails`, slid its deck off the asphalt onto the verge at Tula 2612
+    3130. The rail layer has no `RoadShape` and should not grow one; the road layer has it
+    and already rebuilds on it. The price: the deck stays on every zoom bucket, over the
+    dash sign too (on the last bucket the 9 m `min_bed` ballast sticks out of the 6.1 m
+    deck by ~1.5 m a side, about a pixel there).
 - **Tram** (`map/tram.rs`, its own module so a zoom-LOD step never rebuilds the
   road/rail meshes) — a thin blue line with perpendicular cross ties, the
   Yandex/2GIS convention; `TRAM_COLOR` is the only thing separating the two (Yandex dark

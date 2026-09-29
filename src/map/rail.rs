@@ -30,13 +30,16 @@ use std::borrow::Cow;
 
 use bevy::prelude::*;
 
+use crate::map::grid::Grid;
 use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin};
-use crate::map::osm::{MapData, RailKind, RailLine};
+use crate::map::osm::{MapData, RailKind, RailLine, RoadClass, RoadLine};
 use crate::map::smooth::{Smoothing, smooth_path};
 use crate::map::surface::{self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::prefs::retuned;
-use crate::settings::{Z_RAIL, Z_RAIL_STEEL, Z_RAIL_TIE};
+use crate::settings::{
+    Z_RAIL, Z_RAIL_BRIDGE, Z_RAIL_BRIDGE_STEEL, Z_RAIL_BRIDGE_TIE, Z_RAIL_STEEL, Z_RAIL_TIE,
+};
 
 /// Цвета одного вида пути. Действующий путь — щебень, креозотная шпала и
 /// накатанная до блеска головка рельса; заброшенный — тот же путь, заросший:
@@ -96,6 +99,32 @@ pub(crate) const SHOULDER_SCALE: f32 = 1.22;
 /// ширина ступени: осевая обязана остаться одной и той же на всех ступенях,
 /// иначе путь ёрзает относительно самого себя при переходе через порог зума.
 const RAIL_SMOOTH_WIDTH: f32 = 5.0;
+
+/// Осевая пути так, как её рисует этот слой. Её же берёт настил путепровода
+/// (`roads/bridges.rs`): мост обязан лечь ровно под свой путь.
+pub(crate) fn track_centerline(rail: &RailLine) -> Cow<'_, [Vec2]> {
+    smooth_path(&rail.points, RAIL_SMOOTH_WIDTH, RAIL_SMOOTHING)
+}
+
+/// Ширина настила под путём — подошва балластной призмы: на путепроводе
+/// откоса нет, и на его месте лежит плита моста (`roads/bridges.rs`); на
+/// переезде — светлый настил поверх щебня ([`mesh_level_crossings`]).
+pub(crate) fn deck_width(rail: &RailLine) -> f32 {
+    rail.width * SHOULDER_SCALE
+}
+
+/// Цвет настила переезда — светлые бетонные плиты между рельсами и вокруг
+/// них, светлее асфальта, на который они выходят: так переезд и читается
+/// сверху.
+const CROSSING_COLOR: Color = Color::srgb(0.69, 0.68, 0.65);
+
+/// Под каким наименьшим углом путь ещё **пересекает** дорогу, синус: при
+/// меньшем он идёт вдоль неё (подъездной путь по улице), и «переезд» по
+/// формуле растянулся бы на сотни метров асфальта.
+const CROSSING_MIN_SIN: f32 = 0.34;
+
+/// Ячейка сетки звеньев пути для поиска переездов, м.
+const CROSSING_CELL: f32 = 32.0;
 
 /// Стиль зафиксирован, без ручек панели (см. модульную прозу): осевая слегка
 /// сглажена, стыки круглые — ломаная OSM на повороте даёт балласту заметный
@@ -253,16 +282,20 @@ struct Track<'a> {
     points: Cow<'a, [Vec2]>,
     bed: f32,
     palette: &'static RailPalette,
+    /// Путь на путепроводе: свои слои над настилом моста, без откоса.
+    bridge: bool,
 }
 
 /// Что вышло из сборки путей — значением, а не только строкой в логе.
 ///
 /// `tracks` — сколько путей действительно нарисовано: трамвайные сюда не
-/// попадают, у них свой модуль. `elapsed` меряется внутри сборки, потому что
-/// время тратится там; печатает его адаптер.
+/// попадают, у них свой модуль; `bridges` — сколько из них на путепроводе.
+/// `elapsed` меряется внутри сборки, потому что время тратится там; печатает
+/// его адаптер.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct RailReport {
     pub tracks: usize,
+    pub bridges: usize,
     pub bucket: usize,
     pub vertices: usize,
     pub elapsed: std::time::Duration,
@@ -272,18 +305,26 @@ impl std::fmt::Display for RailReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self {
             tracks,
+            bridges,
             bucket,
             vertices,
             elapsed,
         } = self;
         write!(
             f,
-            "rail meshing: {tracks} tracks, {vertices} verts in {elapsed:?} (bucket {bucket})"
+            "rail meshing: {tracks} tracks ({bridges} on bridges), {vertices} verts in \
+             {elapsed:?} (bucket {bucket})"
         )
     }
 }
 
-/// Рельсовые слои текущей ступени зума: балласт, шпалы, сталь — снизу вверх.
+/// Рельсовые слои текущей ступени зума, снизу вверх: балласт, шпалы, сталь —
+/// и те же три слоя путей на путепроводах (`RailLine::bridge`), над настилом
+/// моста. Сам настил, парапет и тень путепровода кладёт слой мостов улиц
+/// (`roads/bridges.rs`): тень там объединяется с тенями мостов улиц, и
+/// пересборку по солнцу слой дорог уже умеет. Настил переездов — тоже слой
+/// дорог ([`mesh_level_crossings`]): ему нужна ось улицы так, как она
+/// нарисована.
 ///
 /// **Чистая функция и единственная дверь в слой.** Ни `Commands`, ни `Assets`:
 /// её зовёт и игра (через [`rebuild_rails`]), и тест. Три меша, а не один, по
@@ -303,28 +344,73 @@ pub fn mesh_rails(bucket: RailZoomBucket, rails: &[RailLine]) -> (Vec<LayerMesh>
                 RailKind::Active => &ACTIVE,
                 RailKind::Disused => &DISUSED,
             };
+            let bed = rail.width.max(lod.min_bed);
             Some(Track {
-                points: smooth_path(&rail.points, RAIL_SMOOTH_WIDTH, RAIL_SMOOTHING),
-                bed: rail.width.max(lod.min_bed),
+                points: track_centerline(rail),
+                // на мосту балласт не шире плиты под ним: дальние ступени
+                // раздувают его до пикселя, и он свисал бы за парапет
+                bed: if rail.bridge {
+                    bed.min(deck_width(rail))
+                } else {
+                    bed
+                },
                 palette,
+                bridge: rail.bridge,
             })
         })
         .collect();
+    let ground: Vec<&Track> = tracks.iter().filter(|track| !track.bridge).collect();
+    let decks: Vec<&Track> = tracks.iter().filter(|track| track.bridge).collect();
 
+    let [ballast, ties, steel] = push_tracks(&ground, lod, true);
+    let [bridge_ballast, bridge_ties, bridge_steel] = push_tracks(&decks, lod, false);
+
+    let layers: Vec<LayerMesh> = [
+        (ballast, Z_RAIL, "rail_ballast"),
+        (ties, Z_RAIL_TIE, "rail_ties"),
+        (steel, Z_RAIL_STEEL, "rail_steel"),
+        (bridge_ballast, Z_RAIL_BRIDGE, "rail_bridge_ballast"),
+        (bridge_ties, Z_RAIL_BRIDGE_TIE, "rail_bridge_ties"),
+        (bridge_steel, Z_RAIL_BRIDGE_STEEL, "rail_bridge_steel"),
+    ]
+    .into_iter()
+    // вершинные цвета — материал белый и плоский: фактура поверхностей пути
+    // ни к чему, он и так весь из щебня, шпал и стали
+    .map(|(builder, z, name)| LayerMesh::new(builder, z, name, MaterialSpec::Flat))
+    .collect();
+    let report = RailReport {
+        tracks: tracks.len(),
+        bridges: decks.len(),
+        bucket: bucket.index,
+        vertices: layers
+            .iter()
+            .map(|layer| layer.builder.vertex_count())
+            .sum(),
+        elapsed: started.elapsed(),
+    };
+    (layers, report)
+}
+
+/// Балласт, шпалы (или штрих) и сталь одной группы путей — трёх мешей, а не
+/// одного (см. модульную прозу). `shoulder` — класть ли откос призмы: у пути
+/// на путепроводе его нет, балласт лежит в корыте моста.
+fn push_tracks(tracks: &[&Track], lod: &RailLod, shoulder: bool) -> [MeshBuilder; 3] {
     let mut ballast = MeshBuilder::default();
-    for track in &tracks {
-        ballast.push_ribbon(
-            &track.points,
-            false,
-            track.bed * SHOULDER_SCALE,
-            track.palette.shoulder.to_linear(),
-            RAIL_JOIN,
-            RAIL_CAP,
-        );
+    if shoulder {
+        for track in tracks {
+            ballast.push_ribbon(
+                &track.points,
+                false,
+                track.bed * SHOULDER_SCALE,
+                track.palette.shoulder.to_linear(),
+                RAIL_JOIN,
+                RAIL_CAP,
+            );
+        }
     }
     // верх призмы — вторым проходом: плечо соседнего пути не должно ложиться
     // на балласт этого, иначе развязка расчерчивается тёмными полосами
-    for track in &tracks {
+    for track in tracks {
         ballast.push_ribbon(
             &track.points,
             false,
@@ -336,7 +422,7 @@ pub fn mesh_rails(bucket: RailZoomBucket, rails: &[RailLine]) -> (Vec<LayerMesh>
     }
 
     let mut ties = MeshBuilder::default();
-    for track in &tracks {
+    for track in tracks {
         if let Some(tie) = &lod.tie {
             ties.push_ticks(
                 &track.points,
@@ -359,7 +445,7 @@ pub fn mesh_rails(bucket: RailZoomBucket, rails: &[RailLine]) -> (Vec<LayerMesh>
     }
 
     let mut steel = MeshBuilder::default();
-    for track in &tracks {
+    for track in tracks {
         if let Some(rails_lod) = &lod.steel {
             steel.push_rails(
                 &track.points,
@@ -370,24 +456,133 @@ pub fn mesh_rails(bucket: RailZoomBucket, rails: &[RailLine]) -> (Vec<LayerMesh>
             );
         }
     }
+    [ballast, ties, steel]
+}
 
-    let report = RailReport {
-        tracks: tracks.len(),
-        bucket: bucket.index,
-        vertices: ballast.vertex_count() + ties.vertex_count() + steel.vertex_count(),
-        elapsed: started.elapsed(),
-    };
-    // вершинные цвета — материал белый и плоский: фактура поверхностей пути ни
-    // к чему, он и так весь из щебня, шпал и стали
-    let layers = [
-        (ballast, Z_RAIL, "rail_ballast"),
-        (ties, Z_RAIL_TIE, "rail_ties"),
-        (steel, Z_RAIL_STEEL, "rail_steel"),
-    ]
-    .into_iter()
-    .map(|(builder, z, name)| LayerMesh::new(builder, z, name, MaterialSpec::Flat))
-    .collect();
-    (layers, report)
+/// Дорога, которую путь может пересечь в одном уровне: проезжая часть любого
+/// класса — улица или проезд, — не на мосту и не в арке. Мост над путём
+/// путь не пересекает, а путепровод над дорогой сюда не попадает вовсе:
+/// переезды ищутся только у наземных путей.
+pub(crate) fn crossable(road: &RoadLine) -> bool {
+    road.class == RoadClass::Street && !road.bridge && !road.passage
+}
+
+/// Улица, которую путь может пересечь в одном уровне ([`crossable`]), — так,
+/// как она **нарисована**: ось ленты и полоса `[слева, справа]` по ходу
+/// точек (полпроезжей части плюс тротуар, если он рисуется с этой стороны).
+/// Не осевая OSM: ось улицы сглажена и сдвинута допуском кривой
+/// (`RoadShape::curve_tolerance`, до 3 м), и настил по осевой OSM съезжал с
+/// асфальта на обочину (Тула, 2612 3130).
+pub(crate) struct CrossedStreet<'a> {
+    pub axis: &'a [Vec2],
+    pub reach: [f32; 2],
+}
+
+/// **Переезды в одном уровне**: где осевая наземного пути пересекает осевую
+/// проезжей части, щебень и шпалы на ширине дороги с её тротуарами
+/// закрываются светлым настилом, а нитки идут поверх него, как трамвайные по
+/// асфальту. За кромкой дороги путь снова обычный — балласт и шпалы.
+///
+/// Тега для этого нет: `railway=level_crossing` в запросе не стоит, и даже
+/// скачай его — в кеше v15 у Тулы такой узел один, у Орла ни одного. Поэтому
+/// переезд ищется **геометрией**: пересечение звена пути со звеном дороги.
+/// Слой дороги (`layer`) не читается — путь на мосту уже отсеян
+/// (`RailLine::bridge`), дорога на мосту — тоже ([`crossable`]).
+///
+/// Настил — **параллелограмм** пересечения двух прямых полос: вдоль пути —
+/// подошва балласта ([`deck_width`]), поперёк — проезжая часть и тротуары по
+/// обе стороны, каждый своей ширины ([`CrossedStreet`]). Его торцы идут по
+/// кромкам дороги, а не поперёк пути, поэтому на косом переезде щебень не
+/// выглядывает на асфальт треугольником. При угле меньше
+/// [`CROSSING_MIN_SIN`] путь идёт вдоль дороги, а не через неё, и настила
+/// нет.
+///
+/// Кладёт его слой дорог (`map::roads`, слой `rail_crossings` на
+/// `Z_RAIL_CROSSING`): только там есть ось улицы так, как она нарисована,
+/// и пересборка по ручкам формы улиц. Путь от этого не зависит — ось пути
+/// та же [`track_centerline`], ширина — от OSM, не от ступени зума.
+///
+/// Возвращает меш и число переездов (пар звеньев).
+pub(crate) fn mesh_level_crossings(
+    rails: &[RailLine],
+    streets: &[CrossedStreet],
+) -> (MeshBuilder, usize) {
+    let mut builder = MeshBuilder::default();
+    let tracks: Vec<(Cow<[Vec2]>, f32)> = rails
+        .iter()
+        .filter(|rail| rail.kind != RailKind::Tram && !rail.bridge)
+        .map(|rail| (track_centerline(rail), deck_width(rail) / 2.0))
+        .collect();
+    if tracks.is_empty() {
+        return (builder, 0);
+    }
+    let mut links: Grid<(usize, usize)> = Grid::new(CROSSING_CELL);
+    for (track, (points, _)) in tracks.iter().enumerate() {
+        for (link, pair) in points.windows(2).enumerate() {
+            links.insert_segment(pair[0], pair[1], 0.0, (track, link));
+        }
+    }
+    let color = CROSSING_COLOR.to_linear();
+    let mut count = 0;
+    for street in streets {
+        for pair in street.axis.windows(2) {
+            let (from, to) = (pair[0], pair[1]);
+            for (track, link) in links.near(from.min(to), from.max(to)) {
+                let (points, half) = &tracks[track];
+                let Some(quad) = crossing_deck(
+                    [points[link], points[link + 1]],
+                    *half,
+                    [from, to],
+                    street.reach,
+                ) else {
+                    continue;
+                };
+                builder.push_polygon(&quad, &[], color);
+                count += 1;
+            }
+        }
+    }
+    (builder, count)
+}
+
+/// Параллелограмм настила одного переезда (см. [`mesh_level_crossings`]): звено
+/// пути с полушириной `half`, звено дороги с полосой `reach` `[слева,
+/// справа]`. `None` — звенья не пересекаются или идут почти вдоль.
+fn crossing_deck(
+    track: [Vec2; 2],
+    half: f32,
+    road: [Vec2; 2],
+    reach: [f32; 2],
+) -> Option<[Vec2; 4]> {
+    let along = (track[1] - track[0]).try_normalize()?;
+    let across = (road[1] - road[0]).try_normalize()?;
+    let sine = along.perp_dot(across);
+    if sine.abs() < CROSSING_MIN_SIN {
+        return None;
+    }
+    // пересечение осевых: параметр на каждом звене — внутри [0, 1]
+    let span = track[1] - track[0];
+    let reach_road = road[1] - road[0];
+    let denom = span.perp_dot(reach_road);
+    let offset = road[0] - track[0];
+    let t = offset.perp_dot(reach_road) / denom;
+    let u = offset.perp_dot(span) / denom;
+    if !(0.0..=1.0).contains(&t) || !(0.0..=1.0).contains(&u) {
+        return None;
+    }
+    let center = track[0] + span * t;
+    // угол настила — точка, где кромка пути (±half по нормали пути)
+    // встречает кромку дороги (+left / −right по нормали дороги)
+    let normals = Mat2::from_cols(along.perp(), across.perp()).transpose();
+    let inverse = normals.inverse();
+    let corner = |side: f32, edge: f32| center + inverse * Vec2::new(side * half, edge);
+    let [left, right] = reach;
+    Some([
+        corner(-1.0, -right),
+        corner(1.0, -right),
+        corner(1.0, left),
+        corner(-1.0, left),
+    ])
 }
 
 /// Офлайн-замер путевых слоёв — **по строке на ступень зума**, а не одной

@@ -247,6 +247,7 @@ OSM — это весь кооператив одним контуром, в Т�
 | `natural=tree_row` | 13 | 345 | 47 | 20 | 71 | 8 |
 | `railway` (все way) | 309 | 943 | 1422 | 1306 | 818 | 455 |
 | из них станционных (`service=siding\|yard\|spur`) | 162* | — | — | — | — | — |
+| из них на мосту (`bridge` ≠ `no`, → `RailLine::bridge`, v15; Орёл 30) | 14 | — | — | — | — | — |
 | `landuse=residential` (way+rel) | 264 | 6 | 413 | 364 | 12 | 45 |
 | `landuse=industrial\|garages` (way+rel) | 35 | 2 | 2 | 25 | 3 | 12 |
 | `amenity=parking` (way+rel) | 172 | 183 | **2234** | 272 | 771 | 238 |

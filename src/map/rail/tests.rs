@@ -341,12 +341,22 @@ fn near_bucket() -> RailZoomBucket {
 }
 
 #[test]
-fn a_track_builds_three_layers_bottom_up() {
+fn a_track_builds_its_layers_bottom_up() {
     let rails = [fixture::rail(straight_track(), NOMINAL_BED)];
     let (layers, report) = mesh_rails(near_bucket(), &rails);
 
     let names: Vec<&str> = layers.iter().map(|layer| layer.name).collect();
-    assert_eq!(names, ["rail_ballast", "rail_ties", "rail_steel"]);
+    assert_eq!(
+        names,
+        [
+            "rail_ballast",
+            "rail_ties",
+            "rail_steel",
+            "rail_bridge_ballast",
+            "rail_bridge_ties",
+            "rail_bridge_steel",
+        ]
+    );
 
     // три меша, а не один, ровно потому же, почему их три и в мире: шпала
     // обязана лежать выше **любого** балласта, иначе развязка расслаивается
@@ -412,4 +422,142 @@ fn the_far_bucket_drops_the_steel() {
         .find(|layer| layer.name == "rail_ballast")
         .expect("балласт рисуется на каждой ступени");
     assert!(!ballast.builder.is_empty());
+}
+
+fn layer<'a>(layers: &'a [LayerMesh], name: &str) -> &'a MeshBuilder {
+    &layers
+        .iter()
+        .find(|layer| layer.name == name)
+        .unwrap_or_else(|| panic!("слой {name} описан"))
+        .builder
+}
+
+// --- путепровод и переезд (R35) -------------------------------------------
+
+/// Путь на мосту ложится своими слоями над настилом моста, а не на землю
+/// под ним: иначе мост поверх дороги рисовался как путь, проложенный по
+/// асфальту (Орёл, 7245, 728).
+#[test]
+fn a_track_on_a_bridge_is_drawn_above_the_deck() {
+    let mut overpass = fixture::rail(straight_track(), NOMINAL_BED);
+    overpass.bridge = true;
+    let (layers, report) = mesh_rails(near_bucket(), &[overpass]);
+
+    for name in ["rail_ballast", "rail_ties", "rail_steel"] {
+        assert!(layer(&layers, name).is_empty(), "{name}: путь не на земле");
+    }
+    for name in [
+        "rail_bridge_ballast",
+        "rail_bridge_ties",
+        "rail_bridge_steel",
+    ] {
+        assert!(!layer(&layers, name).is_empty(), "{name}: путь на мосту");
+    }
+    let bridge_ballast = layers
+        .iter()
+        .find(|layer| layer.name == "rail_bridge_ballast")
+        .unwrap();
+    assert!(
+        bridge_ballast.z > crate::settings::Z_BRIDGE,
+        "путь над плитой"
+    );
+    // откоса на мосту нет: балласт в корыте не шире своего верха
+    assert!(half_extent(&bridge_ballast.builder) - 100.0 <= NOMINAL_BED / 2.0 + 1e-3);
+    assert_eq!(report.bridges, 1);
+}
+
+/// Ось улицы поперёк пути по x = 300 (путь идёт по y = 100).
+const ACROSS: [Vec2; 2] = [Vec2::new(300.0, 0.0), Vec2::new(300.0, 200.0)];
+
+/// Переезд: щебень и шпалы на ширине дороги закрыты настилом, и настил не
+/// выходит ни за подошву балласта, ни за дорогу с её тротуарами — у каждой
+/// стороны своя полоса.
+#[test]
+fn a_street_across_a_track_gets_a_crossing_deck() {
+    let rails = [fixture::rail(straight_track(), NOMINAL_BED)];
+    // слева по ходу оси (к −x) 4 м проезжей части и 2 м тротуара, справа — 4
+    let street = CrossedStreet {
+        axis: &ACROSS,
+        reach: [6.0, 4.0],
+    };
+    let (deck, count) = mesh_level_crossings(&rails, &[street]);
+
+    assert_eq!(count, 1);
+    let half = NOMINAL_BED * SHOULDER_SCALE / 2.0;
+    let xs: Vec<f32> = deck.positions_for_test().iter().map(|p| p[0]).collect();
+    for position in deck.positions_for_test() {
+        assert!((position[1] - 100.0).abs() <= half + 1e-3, "{position:?}");
+    }
+    let min = xs.iter().copied().fold(f32::INFINITY, f32::min);
+    let max = xs.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    assert!(
+        (min - 294.0).abs() < 1e-3,
+        "левая кромка с тротуаром: {min}"
+    );
+    assert!((max - 304.0).abs() < 1e-3, "правая кромка без него: {max}");
+}
+
+// настил переезда лежит между шпалами и нитками: рельсы идут поверх него
+const _: () = assert!(
+    Z_RAIL_TIE < crate::settings::Z_RAIL_CROSSING
+        && crate::settings::Z_RAIL_CROSSING < Z_RAIL_STEEL
+);
+
+/// Нет переезда там, где путь не пересекает улицу в одном уровне:
+/// путепровод над ней, трамвай (он на асфальте и так), улица вдоль пути и
+/// улица, до пути не доходящая. Мост улицы над путём и пешеходную дорожку
+/// отсеивает [`crossable`] до этой функции.
+#[test]
+fn no_crossing_deck_without_an_at_grade_crossing() {
+    let track = fixture::rail(straight_track(), NOMINAL_BED);
+    let mut overpass = track.clone();
+    overpass.bridge = true;
+    let mut tram = track.clone();
+    tram.kind = RailKind::Tram;
+    let alongside = [Vec2::new(150.0, 98.0), Vec2::new(550.0, 102.0)];
+    let short = [Vec2::new(300.0, 0.0), Vec2::new(300.0, 90.0)];
+
+    let cases: [(&str, RailLine, &[Vec2]); 4] = [
+        ("путепровод", overpass, &ACROSS),
+        ("трамвай", tram, &ACROSS),
+        ("вдоль пути", track.clone(), &alongside),
+        ("не доходит", track, &short),
+    ];
+    for (case, rail, axis) in cases {
+        let street = CrossedStreet {
+            axis,
+            reach: [4.0; 2],
+        };
+        let (deck, count) = mesh_level_crossings(&[rail], &[street]);
+        assert!(deck.is_empty(), "{case}");
+        assert_eq!(count, 0, "{case}");
+    }
+
+    let over_the_track = fixture::bridge(ACROSS.to_vec(), 8.0);
+    let mut footway = fixture::street(ACROSS.to_vec(), 8.0);
+    footway.class = crate::map::osm::RoadClass::Alley;
+    assert!(!crossable(&over_the_track), "мост улицы над путём");
+    assert!(!crossable(&footway), "дорожка");
+    assert!(crossable(&fixture::street(ACROSS.to_vec(), 5.0)), "проезд");
+}
+
+/// Косой переезд: торцы настила идут по кромкам дороги, а не поперёк пути —
+/// все его углы лежат на кромках.
+#[test]
+fn an_oblique_crossing_deck_follows_the_road_edges() {
+    let rails = [fixture::rail(straight_track(), NOMINAL_BED)];
+    let axis = [Vec2::new(250.0, 0.0), Vec2::new(350.0, 200.0)];
+    let street = CrossedStreet {
+        axis: &axis,
+        reach: [4.0; 2],
+    };
+    let (deck, _) = mesh_level_crossings(&rails, &[street]);
+
+    let along = (axis[1] - axis[0]).normalize();
+    assert!(!deck.is_empty());
+    for position in deck.positions_for_test() {
+        let offset = Vec2::new(position[0], position[1]) - axis[0];
+        let across = offset.perp_dot(along).abs();
+        assert!((across - 4.0).abs() < 1e-3, "{position:?}");
+    }
 }

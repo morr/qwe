@@ -2212,6 +2212,22 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   visible thing on the water. It sits **under** the deck and **over** what the bridge
   crosses — except what the z ladder draws above bridges: the rails (a tram on a bridge
   must stay visible), the tram line, wagons, parked cars, fences.
+  **A track bridge goes through the same three layers** (`Bridges::push_track`, R35 —
+  Oryol, 7245 728: two `railway=rail` ways with `bridge=yes`, `layer=1` over the Р-119,
+  drawn as ballast on the asphalt before): `mesh_roads` pushes every non-tram
+  `RailLine::bridge` after the streets — a concrete slab `TRACK_DECK_COLOR` as wide as
+  the ballast's foot (`rail::deck_width`, bed × `SHOULDER_SCALE`) on the track's own
+  smoothed axis (`rail::track_centerline`) into `bridges`, a parapet
+  `bridge_curb_width(deck)` a side into `bridge_casings`, and a shadow band into the
+  shadow union, so it merges with the street bridges' shadows and rebuilds on
+  `SunOnMap` with the rest of the road layers. The track itself (ballast without a
+  shoulder, ties, steel) is `map::rail`'s, in its own layers above `Z_BRIDGE` (layers.md,
+  **Rail layers**). One simplification against the streets: **each track way is its own
+  span** — no chain gluing, always casting, ramps at its two ends — because OSM maps a
+  track bridge as one way per track across the whole span; the chain logic stays the
+  streets'. A tram with `bridge` is skipped — it rides the street bridge. The same
+  road build also lays the **level-crossing decks** (`rail_crossings`, layers.md,
+  **Rail layers**) along the ribbon axes it has just drawn.
   Eight decisions in `map/roads/bridges.rs` (`Bridges`, `probe_underneath`, `bridge_height`,
   `bridge_shadow_path`, `bridge_penumbra`, `push_bridge_shadows`) make it read instead of
   lie, and every one of them was a bug report first:

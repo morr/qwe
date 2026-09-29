@@ -135,7 +135,11 @@ fn free_ends(rails: &[RailLine]) -> Vec<End> {
     let mut ends = Vec::new();
     for (rail, line) in rails.iter().enumerate() {
         let points = &line.points;
-        if line.kind == RailKind::Tram || points.len() < 2 || points[0] == points[points.len() - 1]
+        // путь на мосту через дорогу не переезжает: его разрыв — не переезд
+        if line.kind == RailKind::Tram
+            || line.bridge
+            || points.len() < 2
+            || points[0] == points[points.len() - 1]
         {
             continue;
         }

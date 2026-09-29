@@ -482,3 +482,31 @@ fn a_bridge_penumbra_never_lies_over_a_neighbours_core() {
     // наружные каймы пары остались: пропускается только погребённая
     assert!(faded > 0, "the pair lost its outer penumbra too");
 }
+
+/// Путепровод (R35, Орёл, 7245, 728): путь с `bridge=yes` над дорогой —
+/// мост, как у улицы: плита шириной в подошву балласта, парапет по её краям
+/// и тень. Раньше мостовых слоёв у пути не было вовсе, и он лежал на
+/// асфальте, как на переезде.
+#[test]
+fn a_track_bridge_gets_a_deck_a_parapet_and_a_shadow() {
+    let mut rail = fixture::rail(vec![Vec2::ZERO, Vec2::new(64.0, 0.0)], 5.0);
+    rail.bridge = true;
+    let mut bridges = Bridges::new(&MapData::default());
+    bridges.push_track(&rail);
+    let [shadows, casings, fills] = bridges.layers();
+
+    for layer in [&shadows, &casings, &fills] {
+        assert!(!layer.builder.is_empty(), "{}", layer.name);
+    }
+    let half = |builder: &MeshBuilder| {
+        builder
+            .positions_for_test()
+            .iter()
+            .map(|position| position[1].abs())
+            .fold(0.0_f32, f32::max)
+    };
+    let deck = deck_width(&rail);
+    assert!((half(&fills.builder) - deck / 2.0).abs() < 1e-3);
+    // парапет торчит из-под плиты с обеих сторон
+    assert!(half(&casings.builder) > deck / 2.0 + 0.5);
+}

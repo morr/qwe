@@ -69,7 +69,8 @@ use crate::map::meshing::{
 use crate::map::osm::model::{
     RoadAreaKind, RoadNodeKind, point_in_area, polyline_length, ring_bounds,
 };
-use crate::map::osm::{AreaKind, MapData, PolyArea, RoadClass, RoadLine, WallLine};
+use crate::map::osm::{AreaKind, MapData, PolyArea, RailKind, RoadClass, RoadLine, WallLine};
+use crate::map::rail::{CrossedStreet, crossable, mesh_level_crossings};
 use crate::map::shapes::{Shape, area_contours, is_ring, oriented, push_shape};
 use crate::map::smooth::{Smoothing, smooth_pinned};
 use crate::map::spawn::{GRASS_COLOR, RESIDENTIAL_COLOR};
@@ -78,8 +79,9 @@ use crate::map::surface::{
 };
 use crate::prefs::retuned;
 use crate::settings::{
-    Z_ALLEY, Z_BUILDING, Z_LOT_LINES, Z_LOT_SIDEWALK, Z_RING_GRASS, Z_RING_ISLAND, Z_ROAD,
-    Z_ROAD_MEDIAN, Z_ROAD_VERGE, Z_ROAD_VERGE_LAWN, Z_ROAD_VERGE_YARD, Z_SIDEWALK, Z_UNPAVED_ROAD,
+    Z_ALLEY, Z_BUILDING, Z_LOT_LINES, Z_LOT_SIDEWALK, Z_RAIL_CROSSING, Z_RING_GRASS, Z_RING_ISLAND,
+    Z_ROAD, Z_ROAD_MEDIAN, Z_ROAD_VERGE, Z_ROAD_VERGE_LAWN, Z_ROAD_VERGE_YARD, Z_SIDEWALK,
+    Z_UNPAVED_ROAD,
 };
 
 /// Проезжая часть — асфальт: серый, заметно темнее тротуара и земли. Белой
@@ -636,6 +638,10 @@ pub struct RoadReport {
     /// Мосты (`roads/bridges.rs`): мостовых ways, мостов-цепочек из них и
     /// мостов с тенью.
     pub bridges: BridgeReport,
+    /// Путепроводы (`Bridges::push_track`) и настилы переездов в одном уровне
+    /// (`rail::mesh_level_crossings`, пар звеньев путь × улица).
+    pub track_bridges: usize,
+    pub level_crossings: usize,
     /// Острова-крошки в треугольниках узлов, залитые асфальтом
     /// (`corners::small_islands`).
     pub islands: usize,
@@ -695,6 +701,8 @@ impl std::fmt::Display for RoadReport {
                     bridges,
                     casting,
                 },
+            track_bridges,
+            level_crossings,
             islands,
             gores,
             road_islands: [refuges, island_areas, carriageways, walkways],
@@ -715,7 +723,8 @@ impl std::fmt::Display for RoadReport {
              {crossings}, rings {rings} ({webs} webs), small islands {islands}, gores {gores}, safety islands {refuges} + {island_areas} areas, \
              carriageway areas {carriageways}, walkway areas {walkways}, tapers {tapers}, merges {merges} ({merge_edges} edges), medians {paved} paved + {lawns} \
              lawn (tram beds {beds}), tram bands {tram_bands}, smooth seams {seams}, tight corners {tight}, bridges {bridges} of \
-             {bridge_ways} ways ({casting} cast shadows); {network:?} of it before the \
+             {bridge_ways} ways ({casting} cast shadows), track bridges {track_bridges}, level \
+             crossings {level_crossings}; {network:?} of it before the \
              ribbons)",
             style.sidewalks, style.markings,
         )
@@ -1412,8 +1421,30 @@ pub fn mesh_roads_with_ruts(
         }
     }
 
+    // путепроводы: плита, парапет и тень — в тех же мостовых слоях; путь
+    // поверх плиты кладёт `map::rail`. Трамвай на мосту едет по мосту улицы
+    let mut track_bridges = 0;
+    for rail in map
+        .rails
+        .iter()
+        .filter(|rail| rail.bridge && rail.kind != RailKind::Tram)
+    {
+        bridges.push_track(rail);
+        track_bridges += 1;
+    }
     let bridge_count = bridges.count();
-
+    // переезды в одном уровне — по оси ленты и ширине улицы как рисуются,
+    // с тротуаром там, где он рисуется (`rail::mesh_level_crossings`)
+    let crossed: Vec<CrossedStreet> = (0..drawn.len())
+        .filter(|&index| crossable(drawn[index]))
+        .map(|index| CrossedStreet {
+            axis: &ribbon[index],
+            reach: [0, 1].map(|side| {
+                drawn[index].width / 2.0 + prepared.sidewalk_on(index, side).unwrap_or(0.0)
+            }),
+        })
+        .collect();
+    let (rail_crossings, level_crossings) = mesh_level_crossings(&map.rails, &crossed);
     let fortresses = Fortresses::of(&map.buildings);
     for wall in walls {
         for run in fortresses.bare_runs(&wall.points) {
@@ -1503,6 +1534,12 @@ pub fn mesh_roads_with_ruts(
             MaterialSpec::Flat,
         ),
         (wall_ribbons, Z_WALL, "walls", MaterialSpec::Flat),
+        (
+            rail_crossings,
+            Z_RAIL_CROSSING,
+            "rail_crossings",
+            MaterialSpec::Flat,
+        ),
     ]
     .into_iter()
     .map(|(builder, z, name, material)| LayerMesh::new(builder, z, name, material))
@@ -1534,6 +1571,8 @@ pub fn mesh_roads_with_ruts(
         noses: kerb_returns.noses.len(),
         drawn: prepared.stats(),
         bridges: bridge_count,
+        track_bridges,
+        level_crossings,
         gores: gores.count(),
         road_islands: [
             road_islands.refuges,
