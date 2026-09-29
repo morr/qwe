@@ -154,9 +154,10 @@ struct Arm<'d> {
     ///
     /// [`RoadLine::is_unpaved_street`]: crate::map::osm::RoadLine::is_unpaved_street
     unpaved: bool,
-    /// Полуширина слева и справа по ходу луча. Они разные у торца с клином
-    /// на одну сторону (`roads/tapers.rs`): сужаемая кромка в узле стоит на
-    /// полуширине узкого соседа, сохранённая — на своей.
+    /// Полуширина слева и справа по ходу луча. Они разные под клином на
+    /// одну сторону (`roads/tapers.rs`): сужаемая кромка в узле стоит между
+    /// полуширинами узкого соседа и своей — у шва на соседской, — а
+    /// сохранённая на своей.
     half: [f32; 2],
     /// Тротуар слева и справа по ходу луча: у половины разделённой улицы со
     /// стороны пары его нет.
@@ -173,10 +174,17 @@ struct Arm<'d> {
     crossed: f32,
     /// Дорога и её торец (`0` — начало, `1` — конец), если луч — торец пути.
     end: Option<(usize, usize)>,
-    /// Своя полуширина дороги — та, до которой клин у торца (`half` в узле
-    /// — по узкому соседу) расходится за `widening` метров.
+    /// Своя полуширина дороги.
     full: f32,
+    /// Полуширина каждой стороны, к которой кромка под клином приходит за
+    /// `widening` метров по лучу: своя — от шва, соседская — к шву; дальше
+    /// она держится ([`Arm::half_at`]).
+    reach: [f32; 2],
     widening: f32,
+    /// Наклон кромки каждой стороны в клине: на сколько она отходит от оси
+    /// на метр луча. Вне клина — ноль; скругление ставит дугу на эту,
+    /// наклонную, кромку ([`fillet_arc`]).
+    slope: [f32; 2],
     /// Узловая осевая дороги, вершина узла на ней и куда по ней идёт луч —
     /// из них [`Arm::trail`].
     path: &'d [Vec2],
@@ -228,7 +236,7 @@ impl Arm<'_> {
             return self.half[side];
         }
         let share = (along / self.widening).min(1.0);
-        self.half[side] + (self.full - self.half[side]) * share
+        self.half[side] + (self.reach[side] - self.half[side]) * share
     }
 }
 
@@ -318,11 +326,18 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
         let wedges = drawn.taper_ends(index);
         let [head, tail] = wedges.map(|wedge| wedge.map_or(0.0, |wedge| wedge.length));
         let total = polyline_length(path);
+        // клинья так, как их нарежет лента
+        let fitted = super::tapers::fit(total, [head, tail].map(Some));
         let closed = path[0] == path[path.len() - 1];
         let last = path.len() - 1;
         // вершины, которые оставит лента (`meshing::ribbon_vertices`): край
         // ленты прямой между ними, а не между вершинами оси
-        let drawn_vertices = ribbon_vertices(path, closed, ribbon_merge_distance(road.width));
+        let drawn_vertices = if closed || fitted == [None; 2] {
+            ribbon_vertices(path, closed, ribbon_merge_distance(road.width))
+        } else {
+            let ends = [0, 1].map(|end| Some((fitted[end]?, roads[wedges[end]?.narrow].width)));
+            wedged_vertices(path, total, ends, road.width)
+        };
         let mut along = 0.0;
         for (vertex, &node) in path.iter().enumerate() {
             if vertex > 0 {
@@ -415,40 +430,88 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                         break;
                     }
                 }
+                let at_end = !closed && (vertex == 0 || vertex == last);
+                // Клин, под которым стоит узел: у торца — свой, даже не
+                // легший; дальше — тот, на чьей длине узел лежит. Узел
+                // примыкания бывает и внутри клина (Тула, Сойфера у Фёдора
+                // Смирнова: в 14 м от шва на клине в 33 м) — там кромка уже
+                // не своя и не соседа, а посередине, и скругление, построенное
+                // на своей полуширине, стояло за кромкой, открывая клин
+                // тротуара в проезжей части. `(торец, клин, длина, от шва)`
+                let under = (!closed)
+                    .then(|| {
+                        [0, 1].into_iter().find_map(|end| {
+                            let wedge = wedges[end]?;
+                            let from_seam = if end == 0 { along } else { total - along };
+                            match fitted[end] {
+                                Some(length) if from_seam < length => {
+                                    Some((end, wedge, length, from_seam))
+                                }
+                                None if at_end && vertex == end * last => {
+                                    Some((end, wedge, 0.0, 0.0))
+                                }
+                                _ => None,
+                            }
+                        })
+                    })
+                    .flatten();
                 // Кромка прямая только до клина: дальше лента сужается, и
                 // касательная, заведённая в клин, торчала из-под него шипом
                 // асфальта и тротуара (пример 08, улица в 9 м с клином к
-                // однополосной).
+                // однополосной). В клине — до его конца или до шва.
                 if !closed {
-                    let body = if forward {
-                        total - tail - along
-                    } else {
-                        along - head
+                    let straight = match under {
+                        Some((end, _, length, from_seam)) if length > 0.0 => {
+                            if forward == (end == 0) {
+                                length - from_seam
+                            } else {
+                                from_seam
+                            }
+                        }
+                        _ if forward => total - tail - along,
+                        _ => along - head,
                     };
-                    run = run.min(body.max(0.0));
+                    run = run.min(straight.max(0.0));
                 }
-                let at_end = !closed && (vertex == 0 || vertex == last);
                 // стороны луча: слева по пути — слева по лучу вперёд и справа
                 // по лучу назад; тротуар — по тегу со своей стороны пути
                 let mut sides =
                     [0, 1].map(|at| drawn.sidewalk_on(index, usize::from((at == 0) != forward)));
-                // торец под клином: с сужаемых сторон кромка и тротуар в узле
-                // — узкого соседа, с сохранённой — свои
-                let mut half = [road.width / 2.0; 2];
+                // под клином: с сужаемых сторон кромка в узле — между узким
+                // соседом и своей, по месту на клине (у шва — соседа, и
+                // тротуар там тоже его), и идёт наклонно — от шва к своей
+                // полуширине, к шву — к соседской; с сохранённой — своя
+                let own = road.width / 2.0;
+                let (mut half, mut reach, mut slope) = ([own; 2], [own; 2], [0.0; 2]);
                 let mut widening = 0.0;
-                if let Some(wedge) = wedges[usize::from(vertex == last)].filter(|_| at_end) {
-                    // клин так, как его нарежет лента; не лёг — кромка сразу своя
-                    widening = super::tapers::fit(total, [head, tail].map(Some))
-                        [usize::from(vertex == last)]
-                    .unwrap_or(f32::MIN_POSITIVE);
+                if let Some((end, wedge, length, from_seam)) = under {
+                    let away = forward == (end == 0);
+                    // клин не лёг — кромка сразу своя
+                    widening = match (length > 0.0, away) {
+                        (false, _) => f32::MIN_POSITIVE,
+                        (true, true) => length - from_seam,
+                        (true, false) => from_seam,
+                    };
                     let narrow = roads[wedge.narrow];
+                    let narrow_half = narrow.width / 2.0;
+                    let share = if length > 0.0 {
+                        from_seam / length
+                    } else {
+                        0.0
+                    };
                     for (side, tapered) in wedge.sides.into_iter().enumerate() {
                         if !tapered {
                             continue;
                         }
                         let at = usize::from((side == 0) != forward);
-                        half[at] = narrow.width / 2.0;
-                        sides[at] = drawn.sidewalk_on(wedge.narrow, side);
+                        half[at] = narrow_half + (own - narrow_half) * share;
+                        reach[at] = if away { own } else { narrow_half };
+                        if length > 0.0 && widening > 0.0 {
+                            slope[at] = (reach[at] - half[at]) / widening;
+                        }
+                        if from_seam == 0.0 {
+                            sides[at] = drawn.sidewalk_on(wedge.narrow, side);
+                        }
                     }
                 }
                 // кусок пары кончается там, где пробы перестали её находить:
@@ -477,8 +540,10 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                     run,
                     crossed,
                     end: at_end.then_some((index, usize::from(vertex == last))),
-                    full: road.width / 2.0,
+                    full: own,
+                    reach,
                     widening,
+                    slope,
                     path,
                     vertex,
                     forward,
@@ -730,6 +795,60 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
         }
     }
     returns
+}
+
+/// Вершины разомкнутой оси `path` (длиной `total`), которые оставит лента
+/// дороги шириной `width` с клиньями `ends` (`[у начала, у конца]`: длина,
+/// как её нарежет лента, и ширина узкого соседа). Лента кладётся кусками
+/// (`roads.rs`, `tapers::split`): тело сливает точки на
+/// [`ribbon_merge_distance`] своей ширины, клин — на половине узкой
+/// полуширины (`MeshBuilder::push_taper_sided`) и от шва; каждый кусок — со
+/// своих концов. Вершина на стыке кусков остаётся.
+fn wedged_vertices(
+    path: &[Vec2],
+    total: f32,
+    ends: [Option<(f32, f32)>; 2],
+    width: f32,
+) -> Vec<bool> {
+    let (along, _) = arclengths(path);
+    let mut kept = vec![false; path.len()];
+    let [head, tail] = ends.map(|end| end.map_or(0.0, |(length, _)| length));
+    let mut pieces = vec![(head, total - tail, false, ribbon_merge_distance(width))];
+    if let Some((length, narrow)) = ends[0] {
+        pieces.push((0.0, length, false, narrow / 4.0));
+    }
+    if let Some((length, narrow)) = ends[1] {
+        pieces.push((total - length, total, true, narrow / 4.0));
+    }
+    for (from, to, reversed, distance) in pieces {
+        // точки куска и чьи они: вершина оси или точка разреза
+        let mut points: Vec<(Vec2, Option<usize>)> = Vec::new();
+        let place = |at: f32| place_on_path(path, &along, at).map(|(point, _)| point);
+        let vertex_at = |at: f32| along.iter().position(|&value| value == at);
+        match vertex_at(from) {
+            Some(index) => points.push((path[index], Some(index))),
+            None => points.extend(place(from).map(|point| (point, None))),
+        }
+        for (index, &at) in along.iter().enumerate() {
+            if at > from && at < to {
+                points.push((path[index], Some(index)));
+            }
+        }
+        match vertex_at(to) {
+            Some(index) => points.push((path[index], Some(index))),
+            None => points.extend(place(to).map(|point| (point, None))),
+        }
+        if reversed {
+            points.reverse();
+        }
+        let line: Vec<Vec2> = points.iter().map(|&(point, _)| point).collect();
+        for ((_, index), keep) in points.iter().zip(ribbon_vertices(&line, false, distance)) {
+            if let Some(index) = *index {
+                kept[index] |= keep;
+            }
+        }
+    }
+    kept
 }
 
 /// Узел ли это для группы лучей одного класса: три плеча и больше или два,
@@ -998,32 +1117,47 @@ fn fillet_arc(
     halves: (f32, f32),
     mut radius: f32,
 ) -> Option<FilletArc> {
-    let angle = ccw_angle(first, second);
+    // Края, смотрящие друг на друга: у первого слева, у второго справа, — по
+    // оси `u` с нормалью `n` и в клине наклонно: `e = u + n·наклон` на метр
+    // оси (`Arm::slope`). Без наклона дуга под клином садилась на прямую
+    // своей полуширины, мимо сужающейся кромки.
+    let (axis_first, axis_second) = (first.direction, second.direction);
+    let (normal_first, normal_second) = (axis_first.perp(), -axis_second.perp());
+    let edge_first = axis_first + normal_first * first.slope[0];
+    let edge_second = axis_second + normal_second * second.slope[1];
+    let (along_first, along_second) = (edge_first.normalize(), edge_second.normalize());
+    let angle = {
+        let angle = along_second.to_angle() - along_first.to_angle();
+        if angle <= 0.0 {
+            angle + 2.0 * PI
+        } else {
+            angle
+        }
+    };
     if !(MIN_ANGLE..=MAX_ANGLE).contains(&angle) {
         return None;
     }
-    let (along_first, along_second) = (first.direction, second.direction);
-    // края, смотрящие друг на друга: у первого слева, у второго справа
     let (side_first, side_second) = (along_first.perp(), -along_second.perp());
-    // угол, где встречаются края: halves.0·n₁ + t·u₁ = halves.1·n₂ + s·u₂
-    let rhs = side_second * halves.1 - side_first * halves.0;
-    let determinant = -along_first.perp_dot(along_second);
+    // угол, где встречаются края: halves.0·n₁ + t·e₁ = halves.1·n₂ + s·e₂, t и
+    // s — метры по оси
+    let rhs = normal_second * halves.1 - normal_first * halves.0;
+    let determinant = -edge_first.perp_dot(edge_second);
     if determinant.abs() < 1e-6 {
         return None;
     }
-    let t = rhs.perp_dot(-along_second) / determinant;
-    let s = along_first.perp_dot(rhs) / determinant;
+    let t = rhs.perp_dot(-edge_second) / determinant;
+    let s = edge_first.perp_dot(rhs) / determinant;
     if t < 0.0 || s < 0.0 {
         return None;
     }
-    let corner = node + side_first * halves.0 + along_first * t;
+    let corner = node + normal_first * halves.0 + edge_first * t;
 
     let half_angle = angle / 2.0;
     // касательная не длиннее прямого края ленты: за следующей вершиной край
     // уже повернул, и дуга легла бы мимо
     let tangent = (radius / half_angle.tan())
-        .min(first.run - t)
-        .min(second.run - s);
+        .min((first.run - t) * edge_first.length())
+        .min((second.run - s) * edge_second.length());
     if tangent <= 0.0 {
         return None;
     }
@@ -1762,6 +1896,82 @@ mod tests {
                 assert!(point.y <= 6.0 + 1e-3, "{point:?}");
             }
         }
+    }
+
+    /// Узкая улица 8 м переходит в широкую 11 м клином в 30 м, и в 20 м от шва
+    /// в широкую примыкает поперечная: кромка там — на 5.0 м от оси, между
+    /// соседской 4 и своей 5.5, и идёт наклонно (Тула, Сойфера у Фёдора
+    /// Смирнова).
+    fn junction_inside_a_taper() -> KerbReturns {
+        let map = map_of(&[
+            street(vec![Vec2::new(0.0, 60.0), Vec2::ZERO], 8.0),
+            street(
+                vec![Vec2::ZERO, Vec2::new(0.0, -20.0), Vec2::new(0.0, -80.0)],
+                11.0,
+            ),
+            street(vec![Vec2::new(0.0, -20.0), Vec2::new(40.0, -20.0)], 8.0),
+        ]);
+        let drawn = Drawn::for_test(&map).with_sidewalks(false).with_taper(
+            1,
+            0,
+            Taper {
+                length: 30.0,
+                narrow: 0,
+                sides: [true; 2],
+            },
+        );
+        kerb_returns(&drawn, 1.0)
+    }
+
+    /// Кромка клина широкой улицы: полуширина на `y` (от шва в 0 вниз).
+    fn wedge_edge(y: f32) -> f32 {
+        4.0 + 1.5 * (-y / 30.0).clamp(0.0, 1.0)
+    }
+
+    #[test]
+    fn a_junction_inside_a_taper_wedge_stands_on_the_wedge_edge() {
+        let found = junction_inside_a_taper();
+        let east: Vec<&Vec<Vec2>> = found
+            .roads
+            .iter()
+            .map(|(_, outline)| outline)
+            .filter(|outline| outline[0].x > 0.0)
+            .collect();
+        assert!(!east.is_empty());
+        for outline in east {
+            // угол — на наклонной кромке клина, чуть под лентой
+            let corner = outline[0];
+            assert!(
+                (corner.x - (wedge_edge(corner.y) - OVERLAP)).abs() < 0.05,
+                "{corner:?}"
+            );
+            // и касание дуги с широкой улицей — на ней же: из двух концов
+            // дуги тот, что дальше от оси поперечной
+            let ends = [outline[2], outline[outline.len() - 2]];
+            let on_wide = if (ends[0].y + 20.0).abs() > (ends[1].y + 20.0).abs() {
+                ends[0]
+            } else {
+                ends[1]
+            };
+            assert!(
+                (on_wide.x - wedge_edge(on_wide.y)).abs() < 0.02,
+                "{on_wide:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_arm_toward_the_seam_still_gets_its_corner() {
+        let found = junction_inside_a_taper();
+        // северо-восточный угол — между поперечной и лучом к шву
+        assert!(
+            found
+                .roads
+                .iter()
+                .any(|(_, outline)| outline[0].x > 0.0 && outline[0].y > -20.0),
+            "{:?}",
+            found.roads
+        );
     }
 
     #[test]

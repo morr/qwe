@@ -280,7 +280,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     junction only the kerb with no other carriageway arm on it narrows — an arm counts
     only if the step is no higher than its kerb radius (a 5 m drive does not hide a
     lane's step); the kerb returns
-    read that end at the narrow width. Drawing only.
+    read that end at the narrow width, and **any node under the wedge** (a side street
+    joining the wider way inside its taper) at the wedge's own width there, on the slanted
+    kerb. Drawing only.
   - **Street axis** (`map/roads/axis.rs`) — the drawn centerline of a whole street, not of
     a way: within the **curve tolerance** (`RoadShape::curve_tolerance`) the street is
     simplified and each bend becomes an arc (`Curve::of` — the three numbers off the one

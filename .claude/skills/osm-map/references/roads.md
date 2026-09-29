@@ -1859,7 +1859,20 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     run (past the next vertex the edge has turned) **nor into a taper** (`Drawn::taper_ends`
     — the run ends where the wedge begins, since the edge there is already
     closer to the axis; gallery 08's 9 m street tapering to one lane put two spikes of
-    asphalt and sidewalk out of its corners) — which is why the street axis keeps
+    asphalt and sidewalk out of its corners; lengths as the ribbon cuts them,
+    `tapers::fit`). **A node under the wedge** — a side street joining the wider way inside
+    its taper, not at its end (Сойфера at Фёдора Смирнова: 14 m from the seam on a 33 m
+    wedge, R3) — is read at the wedge's width there, `narrow + (own − narrow) · from
+    seam / length` on each narrowed side; the arm away from the seam runs straight to the
+    wedge's end and widens to its own half, the arm **toward** the seam runs to the seam
+    and narrows to the neighbour's (it used to get a run of zero, and no corner at all),
+    and both edges are **slanted** — `Arm::slope`, metres off the axis per metre of arm —
+    so `fillet_arc` meets them on the edge the wedge ribbon lays, not on a line of the
+    way's own half: that line stood half a metre off the kerb and the sidewalk under it
+    showed as a light wedge in the carriageway. Its vertices are the wedge ribbon's
+    (`wedged_vertices`: each piece of `tapers::split` merged from its own ends, a wedge at
+    `narrow width / 4` like `push_taper_sided`), or a crack opened along the slanted kerb.
+    The run clamp is why the street axis keeps
     `KERB_STRAIGHT` next to a pinned node and pins only on carriageway nodes, and the
     paired halves keep `PIN_STRAIGHT` 16 m unshifted there (**The street axis** above,
     **Paired halves**). The old `r ≤ 3.4 × the narrower sidewalk` cap is gone: the sidewalk
