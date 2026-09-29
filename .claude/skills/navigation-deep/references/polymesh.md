@@ -363,8 +363,10 @@ a search-node arena), like the immediate `NotFound` return (#150) — both now a
 the vendored master itself. What stays a **local `QWE:` patch** in `vendor/polyanya` (a
 `[patch.crates-io]` path dep) is `Mesh::get_path_on_layers` — the polled search honoring
 blocked layers with `Coords` ends, which upstream does not have — and **dedup from the
-first pop** (`SearchInstance::new`, `recording: true`). Upstream turns the dedup on only
-after 512 pops in a row without `f` rising, and on our chunk seams that detector never
+first pop** (`SearchInstance::new`, `recording: true`). The #151 rework gates the dedup
+on a stall detector (`STALL_LIMIT`: 512 pops in a row without `f` rising — the
+`stalled_pops`/`last_f` fields stay only to keep the upstream diff small and the test
+constructors in `lib.rs` compiling), and on our chunk seams that detector never
 fires: the rings are many and short, `f` rises between them and resets the counter.
 Belgorod, radius 0.2, a 2.6 km corridor of 3010 polygons: 111 647 of 133 317 pops were
 exact repeats, the budget ran out and the game panicked; with dedup always on it is 26 ms.
@@ -379,7 +381,8 @@ to the open polygon count (40 pops each, min 4096 polls — 10 was measured on t
 mesh and starved healthy long corridor routes, which converge at ×2; see
 `examples/audit/polymesh_budget_repro`), and an exhausted budget is a **panic in
 every build**, with both endpoints in the message: a diverging search must kill the
-game so the geometry (or the degenerate start/goal that caused it) gets fixed, not
+game so the geometry (or the degenerate start/goal, or the search spinning its own
+repeats — the Belgorod case above) gets fixed, not
 silently eat the async pool — live symptom of the silent version was demons frozen at
 the portal, an idle-looking pipeline and 400 %+ CPU. A one-way seam (`verify_seams`)
 panics in debug for the same reason. Third layer: `PathfindingTask` carries its spawn

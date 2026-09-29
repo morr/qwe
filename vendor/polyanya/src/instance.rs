@@ -24,6 +24,11 @@ use crate::{
 /// need to leave much more room than that. A mesh with fewer polygons than this uses its
 /// polygon count instead, so that a small mesh still gets there well inside the iteration
 /// limit `Mesh::path` searches under.
+///
+/// QWE: в поиске, который строит `SearchInstance::new`, не используется — там запись
+/// включена с первого извлечения (почему — комментарий у `recording`). Константа и
+/// счётчик оставлены ради тестовых конструкторов в `lib.rs` и ради малого диффа с
+/// upstream.
 const STALL_LIMIT: usize = 512;
 
 pub(crate) struct Root(Vec2);
@@ -1176,6 +1181,9 @@ impl<'m> SearchInstance<'m> {
     /// returned. `root_history` cannot stop it: it drops nodes that are strictly worse,
     /// and these are equal. Recording them is what ends the lap, and doing it only once a
     /// search looks stuck keeps it off the paths of every search that does not.
+    ///
+    /// QWE: у нас запись идёт с первого извлечения — «только когда поиск завис» на швах
+    /// чанков не наступало никогда (см. `recording` в `SearchInstance::new`).
     #[inline(always)]
     fn is_new(&mut self, node: &SearchNode) -> bool {
         self.seen_nodes.insert([
