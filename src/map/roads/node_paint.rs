@@ -127,6 +127,12 @@ const OVERLAP_SLACK: f32 = 0.2;
 const JOIN_PARALLEL: f32 = 0.95;
 const JOIN_OFFSET: f32 = 1.0;
 const JOIN_GAP: f32 = TRAM_BED_MAX_GAP + 2.0 * EDGE_INSET + OVERLAP_SLACK;
+/// Зебры по данным на разных проезжих частях, чьи торцы ближе этого, м, —
+/// одна планка ([`join_touching`]): порядка ширины самой зебры.
+const TOUCH_GAP: f32 = ZEBRA_LENGTH;
+/// Косинус наибольшего угла между планкой и общей хордой пары, чтобы она ещё
+/// продолжала другую, — 30°.
+const TOUCH_ALIGN: f32 = 0.866;
 /// Шаг сетки кластеров, м.
 const CLUSTER_CELL: f32 = 50.0;
 
@@ -270,6 +276,9 @@ pub struct NodePaint {
     /// Горла съездов на дорогах колец. Наружу — в [`PaintBreaks`].
     throats: Vec<Vec<Throat>>,
     pub zebras: Vec<Zebra>,
+    /// Дорога каждой зебры, пока они собираются: по ней [`join_touching`]
+    /// узнаёт половины на газоне.
+    zebra_roads: Vec<usize>,
     pub stop_lines: Vec<StopLine>,
     /// Кластеры из двух узлов и больше.
     pub clusters: usize,
@@ -809,7 +818,14 @@ impl NodePaint {
         for (road, breaks) in paint.breaks.iter_mut().enumerate() {
             bridge_short_runs(paths[road].as_ref(), breaks, narrowing[road]);
         }
-        paint.zebras = without_overlaps(std::mem::take(&mut paint.zebras));
+        let lawn = |a: usize, b: usize| {
+            partners(a)
+                .iter()
+                .any(|partner| partner.road == b && !partner.paved)
+        };
+        let roads = std::mem::take(&mut paint.zebra_roads);
+        let zebras = join_touching(std::mem::take(&mut paint.zebras), &roads, lawn);
+        paint.zebras = without_overlaps(zebras);
         paint
     }
 
@@ -1468,6 +1484,7 @@ impl NodePaint {
             {
                 zebra_of[plan_index] = Some(self.zebras.len());
                 self.zebras.push(found);
+                self.zebra_roads.push(arm.road);
             }
             if let Some((from, to)) = ring_line.filter(|_| stop.is_some()) {
                 // въезд кольцу уступает всегда, светофор — не уступает
@@ -1510,6 +1527,7 @@ impl NodePaint {
         for index in merged.into_iter().rev() {
             debug_assert!(index >= first_zebra);
             self.zebras.remove(index);
+            self.zebra_roads.remove(index);
         }
     }
 
@@ -1536,6 +1554,7 @@ impl NodePaint {
             return;
         };
         self.zebras.push(zebra);
+        self.zebra_roads.push(index);
         let mut reach = ZEBRA_LENGTH / 2.0;
         if style.stop_lines && crossing.signals {
             let offset = ZEBRA_LENGTH / 2.0 + STOP_GAP + STOP_WIDTH / 2.0;
@@ -1759,6 +1778,99 @@ fn join_zebras(a: &Zebra, b: &Zebra) -> Option<Zebra> {
         to: a.from + across * high,
         osm: a.osm || b.osm,
     })
+}
+
+/// Две зебры по данным на разных проезжих частях, чьи торцы почти касаются, —
+/// одной сплошной планкой через обе (roads list R21): переход OSM через обе
+/// половины Красноармейского у островка (Тула, 3122 3876) — по узлу на каждой
+/// половине, и каждая зебра вставала поперёк своей, со сдвигом, торец к торцу —
+/// ступенькой. Пара — два торца ближе [`TOUCH_GAP`], и обе планки смотрят
+/// вдоль общей хорды не круче [`TOUCH_ALIGN`]: не бок о бок вдоль улицы и не
+/// углом. Новая планка — от дальнего торца одной до дальнего торца другой,
+/// одним направлением. Половины пары на газоне ([`Partner::paved`]) остаются
+/// двумя зебрами, каждая до своей кромки, — `lawn(a, b)`. Пары жадно, по
+/// возрастанию зазора; каждая зебра — в одной паре.
+fn join_touching(
+    zebras: Vec<Zebra>,
+    roads: &[usize],
+    lawn: impl Fn(usize, usize) -> bool,
+) -> Vec<Zebra> {
+    debug_assert_eq!(zebras.len(), roads.len());
+    let mut near: Grid<usize> = Grid::new(CLUSTER_CELL);
+    for (index, zebra) in zebras.iter().enumerate().filter(|(_, zebra)| zebra.osm) {
+        near.insert_segment(zebra.from, zebra.to, TOUCH_GAP, index);
+    }
+    let mut pairs: Vec<(f32, usize, usize, Zebra)> = Vec::new();
+    for (a, zebra) in zebras.iter().enumerate().filter(|(_, zebra)| zebra.osm) {
+        let (min, max) = (zebra.from.min(zebra.to), zebra.from.max(zebra.to));
+        for b in near.near(min - TOUCH_GAP, max + TOUCH_GAP) {
+            if b <= a || roads[a] == roads[b] || lawn(roads[a], roads[b]) {
+                continue;
+            }
+            if let Some((gap, one)) = touching(zebra, &zebras[b]) {
+                pairs.push((gap, a, b, one));
+            }
+        }
+    }
+    pairs.sort_by(|x, y| x.0.total_cmp(&y.0).then((x.1, x.2).cmp(&(y.1, y.2))));
+    let mut taken = vec![false; zebras.len()];
+    let mut joined = Vec::new();
+    for (_, a, b, one) in pairs {
+        if taken[a] || taken[b] {
+            continue;
+        }
+        taken[a] = true;
+        taken[b] = true;
+        joined.push(one);
+    }
+    // сплошные — первыми: переход в узле шва стоит на обеих дорогах шва, и
+    // вторую такую же зебру снимет [`without_overlaps`], а не планку
+    joined
+        .into_iter()
+        .chain(
+            zebras
+                .into_iter()
+                .zip(taken)
+                .filter(|(_, taken)| !taken)
+                .map(|(zebra, _)| zebra),
+        )
+        .collect()
+}
+
+/// Зазор между ближними торцами двух зебр и планка от дальнего торца одной до
+/// дальнего другой — если они почти касаются и лежат вдоль этой планки.
+fn touching(a: &Zebra, b: &Zebra) -> Option<(f32, Zebra)> {
+    let (gap, far_a, far_b) = [(a.to, a.from), (a.from, a.to)]
+        .into_iter()
+        .flat_map(|(near_a, far_a)| {
+            [(b.from, b.to), (b.to, b.from)]
+                .map(|(near_b, far_b)| (near_a.distance(near_b), far_a, far_b))
+        })
+        .min_by(|x, y| x.0.total_cmp(&y.0))?;
+    if gap > TOUCH_GAP {
+        return None;
+    }
+    let chord = (far_b - far_a).try_normalize()?;
+    let aligned = |zebra: &Zebra| {
+        (zebra.to - zebra.from)
+            .try_normalize()
+            .is_some_and(|across| across.dot(chord).abs() >= TOUCH_ALIGN)
+    };
+    // ближние торцы — между дальними: планки идут друг за другом, а не
+    // одна поверх другой
+    let length = far_a.distance(far_b);
+    let beyond = |zebra: &Zebra| zebra.from.distance(zebra.to) >= length;
+    if !aligned(a) || !aligned(b) || beyond(a) || beyond(b) {
+        return None;
+    }
+    Some((
+        gap,
+        Zebra {
+            from: far_a,
+            to: far_b,
+            osm: true,
+        },
+    ))
 }
 
 /// Стоп-линия на длине `at` поперёк полос, едущих к узлу с плеча `dir`:

@@ -1609,7 +1609,19 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     stays, of two generated the first; a plank counts as inside another when a 9-point
     probe of its line falls within the other's box less `OVERLAP_SLACK` 0.2 m, so the
     halves of a divided street standing side by side keep both. The report's `zebras N`
-    is the count after it. An arm whose way ends less than `ARM_TAIL` 8 m past the paint is a
+    is the count after it. Just before it, **two OSM zebras on different carriageways
+    touching end to end become one plank** (`join_touching`, roads list R21): their nearest
+    ends within `TOUCH_GAP` (= `ZEBRA_LENGTH` 4 m), both planks within 30° of the chord
+    between their far ends (`TOUCH_ALIGN`, so not side by side along the street and not at
+    an angle), and not the two halves of a pair over a lawn (`Partner::paved`, read through
+    `NodePaint::zebra_roads`, the road of each zebra kept beside it) — the plank runs from
+    the far end of one to the far end of the other, one direction for both. The crossing
+    over both halves of Красноармейский by the island (Tula, 3122 3876: a node on each
+    half, one of them on a way seam, both mid-block) was two planks, each across its own
+    half, offset and touching end to end — a step. The joined planks go first, so the
+    duplicate zebra a seam node puts on both ways of the seam is what `without_overlaps`
+    drops, not the plank (`two_osm_zebras_touching_end_to_end_become_one_plank`). The
+    lines' breaks and the stop lines stay each half's own. An arm whose way ends less than `ARM_TAIL` 8 m past the paint is a
     link inside a complex junction and gets nothing. The paint break covers the edge to
     the outermost stroke plus `PAINT_CLEAR` 1 m (it was 0.5 with the metre-long fade, which
     ended the visible line about a metre out anyway; the cut is sharp now).

@@ -1255,3 +1255,64 @@ fn a_shallow_slip_off_a_wide_street_starts_its_line_past_that_street() {
         paint.lines().of(1).cut
     );
 }
+
+/// Переход OSM через обе половины улицы у островка — по узлу на каждой, и две
+/// зебры, каждая поперёк своей половины, почти касались торцами со сдвигом
+/// (Тула, Красноармейский у 3122 3876; roads list R21). Одна планка через обе:
+/// от дальнего торца одной до дальнего торца другой. Разошлись дальше ширины
+/// зебры — остаются две.
+#[test]
+fn two_osm_zebras_touching_end_to_end_become_one_plank() {
+    let paint_at = |drop: f32| {
+        // половины расходятся на 6° и друг друга не касаются
+        let upper_at = Vec2::new(100.0, 12.5);
+        let upper = RoadLine {
+            oneway: true,
+            ..road(
+                vec![Vec2::new(0.0, 12.5), upper_at, Vec2::new(200.0, 12.5)],
+                10.0,
+                Highway::Tertiary,
+                3,
+            )
+        };
+        let dir = Vec2::from_angle(6f32.to_radians());
+        let lower_at = Vec2::new(101.5, 1.0 - drop);
+        let lower = RoadLine {
+            oneway: true,
+            ..road(
+                vec![lower_at + dir * 12.0, lower_at, lower_at - dir * 12.0],
+                10.0,
+                Highway::Tertiary,
+                3,
+            )
+        };
+        let crossing = |pos| RoadNode {
+            pos,
+            kind: RoadNodeKind::Crossing {
+                signals: true,
+                island: false,
+                marked: true,
+            },
+        };
+        let paint = paint_of(
+            vec![upper, lower],
+            vec![crossing(upper_at), crossing(lower_at)],
+            EVERYTHING,
+        );
+        (paint.zebras, upper_at, lower_at, dir)
+    };
+    let (zebras, upper_at, lower_at, dir) = paint_at(0.0);
+    assert_eq!(zebras.len(), 1, "{zebras:?}");
+    let far_upper = upper_at + Vec2::Y * (5.0 - EDGE_INSET);
+    let far_lower = lower_at - dir.perp() * (5.0 - EDGE_INSET);
+    let plank = zebras[0];
+    let ends = [plank.from, plank.to];
+    for far in [far_upper, far_lower] {
+        assert!(
+            ends.iter().any(|end| end.distance(far) < 0.2),
+            "{far} is not an end of {plank:?}"
+        );
+    }
+    assert!(plank.osm);
+    assert_eq!(paint_at(6.0).0.len(), 2, "apart: two zebras");
+}
