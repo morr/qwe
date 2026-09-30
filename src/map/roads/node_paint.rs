@@ -909,8 +909,9 @@ impl NodePaint {
         let heading = |arm: &Arm| -> Vec2 {
             let walk = Walk::new(paths[arm.road].as_ref());
             let along = (walk.project(arm.at) + arm.dir * STAGGER_CHORD).clamp(0.0, walk.total);
-            walk.at(along)
-                .map_or(Vec2::ZERO, |(point, _)| (point - arm.at).normalize_or_zero())
+            walk.at(along).map_or(Vec2::ZERO, |(point, _)| {
+                (point - arm.at).normalize_or_zero()
+            })
         };
         let sign = |road: usize| -> Option<Sign> {
             drawn[road]
