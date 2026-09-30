@@ -226,8 +226,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     is smoothed and paired with its street and takes a **taper** at a ground/bridge seam
     like any seam, but is neither ringed nor stitched. At that seam every ribbon ends
     **square** — the deck, and the approach's sidewalk band and verge (`bridges::seam_ends`),
-    the band running into the deck curb over its last 4 m (`bridges::seam_curb_reach`), and
-    the tram band is one cover across it, cut by the deck head (`tram_band::split_cover`);
+    the band running into the deck curb over its last 4 m (`bridges::seam_curb_reach`) and
+    0.5 m under the deck, a street deck laying an asphalt apron 0.5 m back onto the
+    approach, and the tram band is one cover across it, cut by the deck head
+    (`tram_band::split_cover`); a merge axis leaves its continuation along the
+    continuation's painted tangent (`merges::LeadIn`);
     a **footbridge** mapped inside a street deck is moved out past its edge, the ground path
     following (`axis.rs::place_bridge_sidewalks`); a paired deck's median lies on the deck);
     `oneway`, `roundabout` (the `junction=roundabout|circular` tag — but the notion is

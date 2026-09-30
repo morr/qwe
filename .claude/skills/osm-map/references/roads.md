@@ -2441,6 +2441,23 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
         midline tip (the median's own double solid no longer breaks at a pure merge node, so
         the two meet), or a lawn kerb point less `NOSE_CLEARANCE` 1 m. With no median it
         stops where the halves' kerbs part (axes further apart than the two half widths).
+        **It leaves the continuation along its tangent** (`LeadIn::of`, S3): it starts at
+        the end of the continuation's *painted* axis (the node shifted by
+        `paint::axis_offset`) and heads along its last link, blending into the middles
+        by smoothstep over `AXIS_LEAD_BLEND` 12 m. From the bare node straight to the
+        middles it broke at the node by the angle between the continuation and the
+        halves' fork — 11° at the head of Oryol's Р-119 bridge (393016010, 6997 869),
+        the double solid kinked right on the deck seam.
+      - **A deck seam at the merge node** (the continuation on the other level, S3): the
+        halves leave the node at their own angle to the deck (Р-119: 1° and 20°), so a
+        dash lying on the node broke into two pieces with a hook. Each such half gets a
+        **quiet** break at the node (`seam_gaps` in `mesh_roads`, added to
+        `LineBreaks::cut` and `quiet`, so no solid approach before it): the deck's dash
+        ends at the deck head, the half's starts past the node. Its reach is
+        `SEAM_DASH_GAP` 1 m plus the continuation's half width × sin of the half's angle
+        to it — the ramp starts the half's outer line on the continuation's lane grid but
+        across the half's own axis, so at 20° it begins 1.1 m back under the deck, and a
+        bare 1 m break still left a hook right at the deck head.
       - **Asphalt up to the lawn's nose** (`nose_fill`): where the halves' kerbs have parted
         and the lawn has not begun, the ground between them was bare — a wedge before the
         nose at Рязанская (sample 26). The outline between the halves' axes, from the node
@@ -2734,6 +2751,20 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   deck in the seam node — on the band's own sides (`push_taper_sided`), per band piece of
   a paired half. Not under a section taper's wedge (that end is not the body's), not on a
   deck. Pinned by `an_approach_sidewalk_tapers_into_the_deck_curb`.
+  **A seam with a kink leaves no thread of ground** (S3): a square end stands across its
+  own axis, the deck's across the deck's, and at the head of Oryol's Р-119 bridge the
+  two were 1.2° apart — a 0.19 m thread of bare ground ran along the deck head from the
+  curb across the outer lane. Two lips close it from below: the approach's band runs
+  `BAND_SEAM_OVERLAP` 0.5 m under the deck, no wider than the curb's outer edge (the pin
+  `an_approach_sidewalk_ends_square_at_the_bridge_head` now allows that lip and nothing
+  beside the deck), and every street deck lays an **asphalt apron** `DECK_SEAM_APRON`
+  0.5 m deep and its own width back onto the approach, into `roads` under their paint,
+  at each seam end without a wedge — where the approach's asphalt is cut square (a
+  junction or a merge in the seam node) instead of its round cap reaching under the
+  deck — with the curb laid the same 0.5 m back in `bridge_casings`
+  (`Bridges::push_curb_lip`) where the deck has it on both sides (not a paired half).
+  Pinned by `an_approach_sidewalk_runs_under_a_kinked_deck_head` and
+  `no_ground_shows_between_a_kinked_approach_and_the_deck_head`.
   **A deck takes a taper** at a seam with a lane change like any seam
   (`tapers::takes_taper` excludes arches only): the fill runs through `tapers::split`, the
   wedges go into `Bridges::fills` with the lane frame, and the curb narrows with it

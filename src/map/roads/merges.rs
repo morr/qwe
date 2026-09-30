@@ -537,6 +537,43 @@ pub fn merge_ramps(
 
 /// Сколько метров от узла слияния ищется, где кончается разделительная, м.
 const AXIS_REACH: f32 = 60.0;
+/// На каком пути от узла осевая слияния уходит с касательной продолжения к
+/// серединам между половинами, м ([`merge_axis`]).
+const AXIS_LEAD_BLEND: f32 = 12.0;
+
+/// Где кончается нарисованная осевая продолжения слияния и куда она смотрит
+/// в этой точке — от продолжения в узел ([`merge_axis`]).
+#[derive(Clone, Copy, Debug)]
+pub struct LeadIn {
+    pub at: Vec2,
+    pub heading: Vec2,
+}
+
+impl LeadIn {
+    /// Торец осевой продолжения `merge.street`, нарисованного по `paths`, с
+    /// осевой в `offset` м от его оси (`paint::axis_offset`, плюс — влево по
+    /// ходу его точек).
+    pub fn of(merge: &Merge, paths: &[impl AsRef<[Vec2]>], offset: f32) -> Option<Self> {
+        let path = paths[merge.street].as_ref();
+        let last = path.len().checked_sub(1).filter(|&last| last > 0)?;
+        let (end, inner) = if merge.street_end == 0 {
+            (path[0], path[1])
+        } else {
+            (path[last], path[last - 1])
+        };
+        let heading = (end - inner).try_normalize()?;
+        // «влево по ходу точек» — у начала way это вправо от `heading`
+        let left = if merge.street_end == 0 {
+            -heading.perp()
+        } else {
+            heading.perp()
+        };
+        Some(Self {
+            at: end + left * offset,
+            heading,
+        })
+    }
+}
 /// Сколько асфальта осевая слияния оставляет до носа газона, м.
 const NOSE_CLEARANCE: f32 = 1.0;
 
@@ -645,12 +682,20 @@ const NOSE_FILL_NEAR: f32 = 10.0;
 /// газоном — с отступом (между половинами до носа лежит [`nose_fill`]). Без
 /// разделительной — не дальше, чем кромки половин сходятся: где они
 /// разошлись, между ними земля.
+///
+/// `lead` — где кончается нарисованная осевая продолжения и куда она там
+/// смотрит (в узел и дальше, `LeadIn`): осевая слияния начинается в этой точке
+/// и по этой касательной и первые [`AXIS_LEAD_BLEND`] м плавно (smoothstep)
+/// уходит к серединам. Из голого узла к серединам она ломалась в узле на угол
+/// между продолжением и развилкой половин — у моста Р-119 в Орле на 11°,
+/// двойная сплошная на шве настил/земля (S3).
 pub fn merge_axis(
     merge: &Merge,
     roads: &[&RoadLine],
     paths: &[impl AsRef<[Vec2]>],
     network: &RoadNetwork,
     ends: &[MedianEnd],
+    lead: Option<LeadIn>,
 ) -> Vec<Vec2> {
     let [first, second] = merge.halves;
     let own = from_node(first, true, AXIS_REACH, paths, network);
@@ -661,13 +706,19 @@ pub fn merge_axis(
         MedianEnd::Paved(at) => (at, 0.0),
         MedianEnd::Lawn(at) => (at, NOSE_CLEARANCE),
     });
-    let mut line = vec![merge.node];
+    let mut line = vec![lead.map_or(merge.node, |lead| lead.at)];
     let mut at = MERGE_STEP;
     while at <= AXIS_REACH {
         let (Some(a), Some(b)) = (along_path(&own, at), along_path(&theirs, at)) else {
             break;
         };
-        let middle = (a + b) / 2.0;
+        let middle = match lead {
+            Some(lead) => {
+                let ray = lead.at + lead.heading * at;
+                ((a + b) / 2.0).lerp(ray, 1.0 - smoothstep(at / AXIS_LEAD_BLEND))
+            }
+            None => (a + b) / 2.0,
+        };
         let last = line[line.len() - 1];
         match target {
             // миновали торец: дальше осевую ведёт разделительная

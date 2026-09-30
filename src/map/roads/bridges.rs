@@ -425,6 +425,27 @@ impl Bridges {
         });
     }
 
+    /// Губа бортика на подход: у торца настила в `tip`, откуда подход уходит
+    /// по `out`, — полоса бортика (от `half` до `reach` от оси, с обеих
+    /// сторон) на `depth` м назад. Бортик стоит поперёк оси настила, срезанный
+    /// прямо тротуар подхода — поперёк своей, и на изломе шва между ними
+    /// светилась нитка земли (S3).
+    pub(super) fn push_curb_lip(
+        &mut self,
+        tip: Vec2,
+        out: Vec2,
+        [half, reach]: [f32; 2],
+        depth: f32,
+    ) {
+        let (side, lip) = (out.perp(), out * depth);
+        let color = BRIDGE_CURB_COLOR.to_linear();
+        for sign in [1.0, -1.0] {
+            let (inner, outer) = (tip + side * sign * half, tip + side * sign * reach);
+            self.casings
+                .push_polygon(&[inner, outer, outer + lip, inner + lip], &[], color);
+        }
+    }
+
     /// Меш заливки настилов.
     pub(super) fn fills(&mut self) -> &mut MeshBuilder {
         &mut self.fills

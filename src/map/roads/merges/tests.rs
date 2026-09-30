@@ -397,7 +397,7 @@ fn the_merge_axis_runs_from_the_node_to_the_median_or_until_the_halves_part() {
     let drawn: Vec<&RoadLine> = roads.iter().collect();
     let merge = &merges.list[0];
     // разделительной нет — пока кромки половин не разошлись
-    let free = merge_axis(merge, &drawn, &paths, &network, &[]);
+    let free = merge_axis(merge, &drawn, &paths, &network, &[], None);
     assert_eq!(free[0], node());
     let tip = *free.last().unwrap();
     assert!(tip.x < node().x - 20.0 && tip.x > node().x - 40.0, "{tip}");
@@ -405,20 +405,47 @@ fn the_merge_axis_runs_from_the_node_to_the_median_or_until_the_halves_part() {
     assert!(free.iter().all(|point| (point.y - node().y).abs() < 0.5));
     // до носа газона — с отступом
     let nose = Vec2::new(node().x - 12.0, node().y);
-    let to_nose = merge_axis(merge, &drawn, &paths, &network, &[MedianEnd::Lawn(nose)]);
+    let to_nose = merge_axis(merge, &drawn, &paths, &network, &[MedianEnd::Lawn(nose)], None);
     let tip = *to_nose.last().unwrap();
     assert!((tip.x - (nose.x + 1.0)).abs() < 0.3, "{tip}");
     // нос дальше, чем кромки сходятся: до носа между половинами асфальт
     // (`nose_fill`), и осевая идёт до него
     let far = Vec2::new(node().x - 50.0, node().y);
-    let long = merge_axis(merge, &drawn, &paths, &network, &[MedianEnd::Lawn(far)]);
+    let long = merge_axis(merge, &drawn, &paths, &network, &[MedianEnd::Lawn(far)], None);
     assert!(
         (long.last().unwrap().x - (far.x + 1.0)).abs() < 0.3,
         "{long:?}"
     );
     // до асфальтовой середины — сквозь, и смыкается с её торцом
-    let paved = merge_axis(merge, &drawn, &paths, &network, &[MedianEnd::Paved(far)]);
+    let paved = merge_axis(merge, &drawn, &paths, &network, &[MedianEnd::Paved(far)], None);
     assert!(paved.last().unwrap().distance(far) < 0.01);
+}
+
+/// Продолжение подходит к узлу под углом к развилке половин (Орёл, конец
+/// моста Р-119, — 11°): осевая слияния начинается в торце его осевой и по
+/// её касательной, а к серединам уходит плавно — без излома в узле (S3).
+#[test]
+fn the_merge_axis_leaves_the_continuation_along_its_tangent() {
+    let slanted = primary(vec![node(), node() + Vec2::new(160.0, 30.0)], 4, false);
+    let roads = divided_into(slanted);
+    let (merges, network, paths) = found(&roads);
+    let drawn: Vec<&RoadLine> = roads.iter().collect();
+    let merge = &merges.list[0];
+    let lead = super::LeadIn::of(merge, &paths, 0.0).unwrap();
+    let axis = merge_axis(merge, &drawn, &paths, &network, &[], Some(lead));
+    assert!(axis[0].distance(lead.at) < 1e-3, "{:?}", axis[0]);
+    let first = (axis[1] - axis[0]).normalize();
+    let angle = first.angle_to(lead.heading).to_degrees().abs();
+    assert!(angle < 4.0, "the axis turns {angle}° at the node");
+    // и за смешением идёт по серединам, как без продолжения
+    let free = merge_axis(merge, &drawn, &paths, &network, &[], None);
+    let beyond = axis
+        .iter()
+        .zip(&free)
+        .skip(8)
+        .map(|(a, b)| a.distance(*b))
+        .fold(0.0, f32::max);
+    assert!(beyond < 0.05, "past the blend the axis is off the middle by {beyond} m");
 }
 
 /// Где кромки половин разошлись, а газон ещё не начался, между ними асфальт

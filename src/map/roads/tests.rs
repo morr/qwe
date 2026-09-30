@@ -1006,10 +1006,94 @@ fn an_approach_sidewalk_ends_square_at_the_bridge_head() {
         .iter()
         .map(|position| position[1] - head.y)
         .fold(f32::NEG_INFINITY, f32::max);
+    // за голову — только губа под настил (S3), и та не шире бортика: рядом с
+    // настилом полосы не видно
     assert!(
-        past < 1e-3,
-        "the approach sidewalk runs {past} m past the bridge head beside the deck"
+        past < BAND_SEAM_OVERLAP + 1e-3,
+        "the approach sidewalk runs {past} m past the bridge head"
     );
+    let curb = map.roads[1].curb_reach();
+    let beside = sidewalks
+        .iter()
+        .filter(|position| position[1] > head.y + 1e-3)
+        .map(|position| position[0].abs())
+        .fold(0.0, f32::max);
+    assert!(
+        beside < curb + 1e-3,
+        "past the head the sidewalk reaches {beside} m, beside the deck curb at {curb} m"
+    );
+}
+
+/// Асфальт подхода, срезанный в узле шва прямо (в узле примыкает третья
+/// улица), стоит поперёк своей оси, торец настила — поперёк своей: на изломе
+/// шва между ними светилась нитка земли наискось через полосы (S3, Орёл,
+/// конец моста Р-119, где в узле шва сходятся половины). Под торцом настила
+/// лежит фартук асфальта — нитки нет.
+#[test]
+fn no_ground_shows_between_a_kinked_approach_and_the_deck_head() {
+    let head = Vec2::new(0.0, 100.0);
+    let mut map = MapData::default();
+    let kink = 3.0f32.to_radians();
+    map.roads.push(fixture::street(
+        vec![head - Vec2::new(kink.sin(), kink.cos()) * 100.0, head],
+        14.2,
+    ));
+    map.roads
+        .push(fixture::bridge(vec![head, Vec2::new(0.0, 160.0)], 14.2));
+    map.roads
+        .push(fixture::street(vec![head, Vec2::new(-80.0, 100.0)], 7.6));
+    map.network = super::network::RoadNetwork::new(&map.roads);
+    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let covered = |at: Vec2| {
+        ["roads", "bridges"].iter().any(|name| {
+            layer(&layers, name).builder.triangles().any(|[a, b, c]| {
+                crate::map::osm::model::point_in_polygon(at, &[a, b, c])
+            })
+        })
+    };
+    for step in 0..=20 {
+        let x = -6.9 + 13.8 * step as f32 / 20.0;
+        let at = Vec2::new(x, head.y - 0.03);
+        assert!(covered(at), "bare ground at {at} behind the deck head");
+    }
+}
+
+/// Прямой торец полосы тротуара подхода стоит поперёк своей оси, торец
+/// настила — поперёк своей: на изломе шва между ними светилась нитка земли,
+/// наискось от кромки через крайнюю полосу (S3, Орёл, конец моста Р-119).
+/// Полоса заходит под настил губой — нитки нет.
+#[test]
+fn an_approach_sidewalk_runs_under_a_kinked_deck_head() {
+    let head = Vec2::new(0.0, 100.0);
+    let mut map = MapData::default();
+    // подход под 2° к мосту
+    let kink = 2.0f32.to_radians();
+    map.roads.push(fixture::street(
+        vec![head - Vec2::new(kink.sin(), kink.cos()) * 100.0, head],
+        14.2,
+    ));
+    map.roads
+        .push(fixture::bridge(vec![head, Vec2::new(0.0, 160.0)], 14.2));
+    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let sidewalks = &layer(&layers, "sidewalks").builder;
+    let deck = &layer(&layers, "bridges").builder;
+    let curb = map.roads[1].curb_reach();
+    // вдоль торца настила, от кромки его асфальта до кромки бортика
+    for step in 0..=10 {
+        let lateral = 7.1 + (curb - 7.1 - 0.1) * step as f32 / 10.0;
+        for x in [-lateral, lateral] {
+            let at = Vec2::new(x, head.y - 0.02);
+            let covered = |builder: &MeshBuilder| {
+                builder.triangles().any(|[a, b, c]| {
+                    crate::map::osm::model::point_in_polygon(at, &[a, b, c])
+                })
+            };
+            assert!(
+                covered(sidewalks) || covered(deck),
+                "bare ground at {at} behind the deck head"
+            );
+        }
+    }
 }
 
 /// Полоса тротуара подхода сходит у головы моста клином в бортик настила:

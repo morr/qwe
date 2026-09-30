@@ -1229,7 +1229,11 @@ pub fn build_roads(map: &MapData, style: RoadStyle, shape: RoadShape) -> RoadBui
             push_shape(&mut streets, shape, ROAD_COLOR.to_linear());
         }
         if style.markings {
-            let axis = merges::merge_axis(merge, &drawn, &ribbon, &map.network, &ends);
+            // из торца нарисованной осевой продолжения и по её касательной
+            let continuation = drawn[merge.street];
+            let offset = paint::axis_offset(continuation, lane_count(continuation), map.traffic_side);
+            let lead = merges::LeadIn::of(merge, &ribbon, offset.unwrap_or(0.0));
+            let axis = merges::merge_axis(merge, &drawn, &ribbon, &map.network, &ends, lead);
             painter.paint_merge_axis(&axis, lane_count(drawn[merge.street]));
         }
     }
@@ -1301,6 +1305,44 @@ pub fn build_roads(map: &MapData, style: RoadStyle, shape: RoadShape) -> RoadBui
     // подходами, клались лентами с прямыми торцами, и на кривизне торцы
     // соседних дуг расходились веером — по внешней кромке клинья-щели
     let mut ring_filled = vec![false; prepared.rings().list.len()];
+    // половины слияния, чьё продолжение — другого уровня (конец моста Р-119 в
+    // Орле, S3): из узла шва они уходят под своим углом к настилу, и штрих,
+    // легший на узел, ломался крючком. Тихий разрыв на [`SEAM_DASH_GAP`] —
+    // штрих кончается у торца настила и начинается снова за узлом
+    // Раскладка половины в узле — раскладка продолжения, но поперёк своей оси:
+    // крайняя линия под углом α к настилу начинается на полуширине × sin α
+    // под ним, и разрыв длиннее на столько же
+    let mut seam_gaps: Vec<Vec<Break>> = vec![Vec::new(); drawn.len()];
+    let heading_at = |road: usize, at: Vec2| {
+        let path: &[Vec2] = &ribbon[road];
+        let last = path.len().checked_sub(1)?;
+        let (tip, inner) = if path[0].distance(at) <= path[last].distance(at) {
+            (path[0], *path.get(1)?)
+        } else {
+            (path[last], path[last.checked_sub(1)?])
+        };
+        (inner - tip).try_normalize()
+    };
+    for merge in &prepared.merges().list {
+        let continuation = drawn[merge.street];
+        let Some(deck) = heading_at(merge.street, merge.node) else {
+            continue;
+        };
+        for &half in &merge.halves {
+            if drawn[half].bridge == continuation.bridge {
+                continue;
+            }
+            let Some(own) = heading_at(half, merge.node) else {
+                continue;
+            };
+            // `deck` — от узла в настил, `own` — от узла в половину
+            let sin = (-deck).perp_dot(own).abs();
+            seam_gaps[half].push(Break {
+                at: merge.node,
+                reach: SEAM_DASH_GAP + continuation.width / 2.0 * sin,
+            });
+        }
+    }
     for index in order {
         let road = drawn[index];
         // замкнутая линия площади (`highway=*` + `area=yes`) — контур
@@ -1338,10 +1380,24 @@ pub fn build_roads(map: &MapData, style: RoadStyle, shape: RoadShape) -> RoadBui
         if style.markings {
             let wedges =
                 paint::wedge_ends(points, prepared.tapers(), &drawn, index, map.traffic_side);
+            // у половины слияния на шве — тихий разрыв в узле (S3)
+            let base = paint_breaks.of(index);
+            let (cut, quiet): (Vec<Break>, Vec<Break>);
+            let line_breaks = if seam_gaps[index].is_empty() {
+                base
+            } else {
+                cut = [base.cut, &seam_gaps[index]].concat();
+                quiet = [base.quiet, &seam_gaps[index]].concat();
+                paint::LineBreaks {
+                    cut: &cut,
+                    quiet: &quiet,
+                    ..base
+                }
+            };
             painter.paint(
                 road,
                 points,
-                paint_breaks.of(index),
+                line_breaks,
                 wedges,
                 node_paint.pockets[index],
                 ramps[index],
@@ -1465,6 +1521,43 @@ pub fn build_roads(map: &MapData, style: RoadStyle, shape: RoadShape) -> RoadBui
             push_street_fill(fills, body, road.width, color.to_linear(), breaks, trimmed);
             fills.set_lanes(lanes);
             push_wedges(fills);
+            // фартук асфальта под торцом настила-улицы на шве, на подход: торец
+            // настила стоит поперёк своей оси, а срезанный прямо асфальт подхода
+            // — поперёк своей, и на изломе между ними светилась нитка земли
+            // наискось через полосы (S3, Орёл, конец моста Р-119). Лежит в слое
+            // улиц, под их краской
+            if road.class == RoadClass::Street && points.len() >= 2 {
+                let last = points.len() - 1;
+                for end in [0, 1] {
+                    let wedged = wedges.iter().any(|&(_, _, at_end)| usize::from(at_end) == end);
+                    if !seam[end] || wedged {
+                        continue;
+                    }
+                    let (tip, inner) = if end == 0 {
+                        (points[0], points[1])
+                    } else {
+                        (points[last], points[last - 1])
+                    };
+                    let Some(out) = (tip - inner).try_normalize() else {
+                        continue;
+                    };
+                    let (side, lip) = (out.perp() * road.width / 2.0, out * DECK_SEAM_APRON);
+                    streets.push_polygon(
+                        &[tip + side, tip - side, tip - side + lip, tip + side + lip],
+                        &[],
+                        ROAD_COLOR.to_linear(),
+                    );
+                    // и бортик — той же губой, где он по обе стороны
+                    if pieces.is_none() {
+                        bridges.push_curb_lip(
+                            tip,
+                            out,
+                            [road.width / 2.0, road.curb_reach()],
+                            DECK_SEAM_APRON,
+                        );
+                    }
+                }
+            }
             continue;
         }
 
@@ -2207,6 +2300,15 @@ fn push_sidewalk(
 /// Длина клина, которым полоса тротуара сходит в бортик настила на шве
 /// земля/мост ([`push_sidewalk_to_seams`]), м.
 const BAND_SEAM_TAPER: f32 = 4.0;
+/// На сколько полоса тротуара на шве земля/мост заходит под настил, м
+/// ([`push_sidewalk_to_seams`]): закрывает излом шва.
+const BAND_SEAM_OVERLAP: f32 = 0.5;
+/// Полудлина тихого разрыва линий полос у половины слияния в узле шва
+/// земля/мост, м (S3).
+const SEAM_DASH_GAP: f32 = 1.0;
+/// Насколько асфальтовый фартук под торцом настила-улицы заходит на подход,
+/// м (S3): закрывает излом шва, где асфальт подхода срезан прямо.
+const DECK_SEAM_APRON: f32 = 0.5;
 
 /// [`push_sidewalk`], у которого на торцах `seam_reach` (наружная кромка
 /// бортика настила от оси, `bridges::seam_curb_reach`) полоса последние
@@ -2230,7 +2332,7 @@ fn push_sidewalk_to_seams(
             .filter(|&reach| reach < band && total > 0.0)
             .map(|reach| (reach.max(width / 2.0), BAND_SEAM_TAPER.min(total / 2.0)))
     });
-    if pieces.is_none() && tapers == [None; 2] {
+    if pieces.is_none() && seam_reach == [None; 2] {
         return push_ribbon_trimmed(builder, body, 2.0 * band, color, ROAD_JOIN, trimmed);
     }
     let whole = [(0.0, total, [true, true])];
@@ -2287,6 +2389,47 @@ fn push_sidewalk_to_seams(
             color,
             [from > 0.0 || trimmed[0], to < total || trimmed[1]],
         );
+    }
+    // губа под настил: прямой торец полосы стоит поперёк своей оси, а торец
+    // настила — поперёк своей, и на изломе шва между ними светилась нитка
+    // земли — наискось от кромки через крайнюю полосу (S3, Орёл, мост Р-119:
+    // 1.2° на 8.7 м — 0.19 м). Губа лежит под бортиком: не шире его кромки
+    let last = body.len().saturating_sub(1);
+    if last == 0 {
+        return;
+    }
+    for (end, reach) in seam_reach.into_iter().enumerate() {
+        let Some(reach) = reach else { continue };
+        let covering = pieces.iter().find(|&&(from, to, _)| {
+            if end == 0 {
+                from <= 1e-3
+            } else {
+                to >= total - 1e-3
+            }
+        });
+        let Some(&(_, _, sides)) = covering else {
+            continue;
+        };
+        let (tip, inner) = if end == 0 {
+            (body[0], body[1])
+        } else {
+            (body[last], body[last - 1])
+        };
+        let Some(out) = (tip - inner).try_normalize() else {
+            continue;
+        };
+        // «влево» по ходу точек полосы
+        let left = if end == 0 { -out.perp() } else { out.perp() };
+        let half = |side: usize| {
+            if sides[side] {
+                reach.min(band).max(width / 2.0)
+            } else {
+                width / 2.0
+            }
+        };
+        let (a, b) = (tip + left * half(0), tip - left * half(1));
+        let lip = out * BAND_SEAM_OVERLAP;
+        builder.push_polygon(&[a, b, b + lip, a + lip], &[], color);
     }
 }
 
