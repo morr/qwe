@@ -113,6 +113,21 @@ const STAGGER_ALIGN: f32 = 0.766;
 /// Хорда направления плеча для крестовины вразбежку, м: первое звено OSM
 /// бывает в полметра.
 const STAGGER_CHORD: f32 = 10.0;
+/// Косинус, круче которого два плеча своей улицы (хорды на [`PASS_CHORD`]
+/// по нарисованному пути) не лежат на одной прямой: 15° —
+/// двусторонняя улица узел насквозь не проходит, её линии рвутся (R22,
+/// Путейская); односторонней нечем ломаться углом — осевой нет. Эхо
+/// `SHARED_MAX_BEND` оси (`axis.rs`): мельче — дрожание оси OSM, круче —
+/// поворот, который закреплённый узел дугой не скругляет, и осевая сплошной
+/// легла бы через узел углом.
+const PASS_ALIGN: f32 = 0.966;
+/// Хорда излома для [`PASS_ALIGN`], м: направление плеча от узла и хорды
+/// назад и вперёд от вершин пути под разрывом. Короткая, чтобы мерить угол,
+/// а не поворот: дуга оси (`ThroughBend` в `axis.rs`, радиус от 30 м)
+/// расходится на ней на единицы градусов, угол OSM — целиком. Хорда на
+/// [`STAGGER_CHORD`] от узла захватывала и дугу, и плавный поворот вторичной
+/// улицы рвался посреди дуги (Тула, 5325, 4424).
+const PASS_CHORD: f32 = 2.0;
 /// Кусок линий между двумя разрывами короче этого — не рисуется: одинокий
 /// штрих между узлом и зеброй читается мусором.
 pub(super) const MIN_RUN: f32 = 6.0;
@@ -929,6 +944,57 @@ impl NodePaint {
                 (point - arm.at).normalize_or_zero()
             })
         };
+        // куда нарисованная ось уходит от узла сразу за ним: хорда на
+        // [`PASS_CHORD`] от проекции узла на путь
+        let leaving = |arm: &Arm| -> Option<Vec2> {
+            let walk = Walk::new(paths[arm.road].as_ref());
+            let from = walk.project(arm.at);
+            let to = (from + arm.dir * PASS_CHORD).clamp(0.0, walk.total);
+            let (start, _) = walk.at(from)?;
+            let (end, _) = walk.at(to)?;
+            (end - start).try_normalize()
+        };
+        // излом нарисованной оси на плече до `reach` от узла: вершина пути,
+        // у которой хорды по [`PASS_CHORD`] назад и вперёд расходятся круче
+        // [`PASS_ALIGN`]. Дуга поворота расходится полого, угол — нет
+        let kinked = |arm: &Arm, reach: f32| {
+            let walk = Walk::new(paths[arm.road].as_ref());
+            let from = walk.project(arm.at);
+            let chord = |from: f32, to: f32| {
+                let (from, to) = (from.clamp(0.0, walk.total), to.clamp(0.0, walk.total));
+                let (start, _) = walk.at(from)?;
+                let (end, _) = walk.at(to)?;
+                (end - start).try_normalize()
+            };
+            walk.along.iter().any(|&at| {
+                let ahead = (at - from) * arm.dir;
+                ahead > 0.0
+                    && ahead <= reach
+                    && chord(at - PASS_CHORD, at)
+                        .zip(chord(at, at + PASS_CHORD))
+                        .is_some_and(|(back, on)| back.dot(on) < PASS_ALIGN)
+            })
+        };
+        // двусторонняя улица поворачивает в узле: среди её плеч нет пары на
+        // одной прямой в пределах [`PASS_ALIGN`], или ось ломается на плече
+        // под разрывом, до `reach`. Только двусторонняя — у неё осевая;
+        // половина разделённой улицы расходится от узла развилки полого, и её
+        // линии полос проходили насквозь (Тула, витрина 16)
+        let turns = |road: usize, reach: f32| {
+            let own: Vec<&Arm> = arms
+                .iter()
+                .filter(|arm| street(arm.road) == street(road))
+                .collect();
+            own.iter().all(|arm| !drawn[arm.road].oneway)
+                && (!own.iter().enumerate().any(|(index, arm)| {
+                    // направления не снять — не повод рвать: считается прямой
+                    own[index + 1..].iter().any(|other| {
+                        leaving(arm)
+                            .zip(leaving(other))
+                            .is_none_or(|(a, b)| a.dot(b) <= -PASS_ALIGN)
+                    })
+                }) || own.iter().any(|arm| kinked(arm, reach)))
+        };
         let sign = |road: usize| -> Option<Sign> {
             drawn[road]
                 .points
@@ -984,6 +1050,8 @@ impl NodePaint {
         let mut broken: BTreeMap<usize, f32> = BTreeMap::new();
         let mut reaches: BTreeMap<usize, f32> = BTreeMap::new();
         let mut leading: Vec<usize> = Vec::new();
+        // ведущие, чьи линии рвутся только из-за излома оси
+        let mut bent_roads: Vec<usize> = Vec::new();
         for (&road, list) in &visits {
             let others = others(road);
             let own = rank(road);
@@ -1038,13 +1106,22 @@ impl NodePaint {
                             let theirs = rank(other);
                             theirs > own || (theirs == own && passes(other))
                         }));
-            let yields = signalized || !leads;
             let widest = others
                 .iter()
                 .map(|&other| drawn[other].width / 2.0)
                 .fold(0.0_f32, f32::max);
             let reach = widest + JUNCTION_MARGIN;
             reaches.insert(road, reach);
+            // Ведёт, но не насквозь по линиям: двусторонняя, чья нарисованная
+            // ось в узле поворачивает круче [`PASS_ALIGN`], — осевая сплошной
+            // легла бы через узел углом, скруглить её там негде (Путейская у
+            // моста, Тула, 2638, 3153 — R22). Линии рвутся, приоритет
+            // остаётся: ни стоп-линии, ни зебры поперёк неё узел не зовёт
+            let bent = leads && !ring_road(road) && turns(road, reach);
+            if bent && !signalized {
+                bent_roads.push(road);
+            }
+            let yields = signalized || !leads || bent;
             let here: Vec<Vec2> = list.iter().map(|(_, at)| *at).collect();
             if leads {
                 leading.push(road);
@@ -1261,7 +1338,11 @@ impl NodePaint {
         let first = ZEBRA_SETBACK + ZEBRA_LENGTH / 2.0;
         let mut plans: Vec<ArmPlan> = Vec::new();
         for arm in &arms {
-            if !broken.contains_key(&arm.road) || drawn[arm.road].bridge {
+            // излом оси рвёт линии ведущей, но не зовёт краски поперёк неё
+            if !broken.contains_key(&arm.road)
+                || drawn[arm.road].bridge
+                || bent_roads.contains(&arm.road)
+            {
                 continue;
             }
             let walk = Walk::new(paths[arm.road].as_ref());

@@ -1481,14 +1481,30 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     zebra's solid approach on the exit lanes (roads list R12). Two joinings farther
     apart than the width stay two (Циолковского, 17 m). A **joining** street of any
     rank — one foreign arm at the node, a T, a slip — never cuts it (Ростов 03 stays
-    through; Путейская 2638 3153, a T where the through street bends, keeps its axis —
-    the bend itself is R22) — pinned by
+    through) — pinned by
     `a_crossing_of_any_class_breaks_the_primary_but_a_joining_street_does_not`. Signals
     aside, such a road **leads** the junction
     (`Junction::leading`), and so does a ring road (an arc of `on_ring` or a closed way —
     whether it passes or not, since OSM ends an arc at every entry) whatever the
     approaches' class — a ring has priority; an approach never leads a ring node. The leading road loses its asphalt breaks there
     (`NodePaint::asphalt`): the ruts run through, signals or not.
+    **A leading road whose drawn axis bends at the node leads with its lines broken**
+    (`bent`, roads list R22): a two-way road (every arm of its street two-way — a one-way
+    has no axis to show a corner, and a divided half fans out of its fork gently, gallery
+    sample 16) whose two arms do not leave the node on one line within `PASS_ALIGN` 15°
+    (the echo of `SHARED_MAX_BEND`), or whose drawn path has a **kink** under the break
+    (a vertex within `reach` of the node where the `PASS_CHORD` 2 m chords back and ahead
+    part by more than 15°). The chord is short on purpose: it reads a corner, not a turn —
+    an axis arc of `ThroughBend` (radius from 30 m) parts by a few degrees on 2 m, while a
+    10 m chord from the node read the arc too and cut a secondary in the middle of its
+    smooth bend (Tula, 5325 4424). Путейская (Tula, 2638 3153): the axis passes the pinned
+    node straight and turns 40° four metres past it, 12.5 m from a bridge end, where it has
+    no room for an arc, and the double solid ran through the T at that angle. Such a road
+    breaks like a yielding one (not `main through`), but it keeps its priority: no zebra and
+    no stop line across it (its arms get no `ArmPlan`), the side street still yields. Tula
+    counts 775 → 752 `main through`, stop lines and zebras unchanged; pinned by
+    `a_through_street_turning_at_a_t_node_breaks_its_lines` and
+    `a_slight_bend_or_a_one_way_turn_stays_through`.
   - **Zebras and stop lines on the arms that break**: an OSM crossing on the arm (a
     `Crossing { marked: true }` node on the road, between the node and
     `ARM_CROSSING_REACH` 35 m past the junction edge — measured from the edge, since a
@@ -1951,7 +1967,8 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
       a real turn put on one short arc on the far side broke the kerb (Oryol, gallery 04:
       44° next to 7°, 3 m of link), and in a C-bend the two stretches meet without the
       step anyway. A 24° T at Путейская (2638 3153, a pinned node 12.5 m from a bridge
-      end) stays a tight arc — rounding it needs the paint to leave the axis, not done. A bend
+      end) keeps its corner — the axis has no room for the arc there, and the paint breaks
+      at such a node instead (**Junction paint**, `bent`). A bend
       under `THROUGH_MIN_BEND` 4° stays a corner (the junction's asphalt covers it, and a
       stretch would only shorten the straight edge); one over `THROUGH_MAX_BEND` 50° is a
       turn, not a through street, and stays a corner as well. A Hermite curve through the

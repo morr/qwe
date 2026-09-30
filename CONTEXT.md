@@ -373,7 +373,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     A **stitch** (the network's pulled loose end) is a junction node like a shared one.
     The **leading road** of a junction — passing, and yielding by rank to nobody (a ring
     road always leads, even an arc that ends there; an approach never leads a ring node)
-    — keeps its asphalt ruts through it.
+    — keeps its asphalt ruts through it. A **bent** leading road — two-way, its drawn axis
+    turning at the node by more than 15° (between its arms, or a kink under the break) —
+    leads with its lines broken instead of through: the axis has no room for an arc there,
+    and the paint does not draw the corner; no zebra or stop line crosses it.
   - **Turn paths** (`map/roads/turns.rs`) — a lane-to-lane Bézier curve for every allowed
     maneuver through a junction (`turn:lanes` — `RoadLine::turns` — when it matches the
     lanes, else the rule: straight lane to lane, the near turn from the kerb lane, the far

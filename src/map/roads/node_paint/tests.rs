@@ -1316,3 +1316,69 @@ fn two_osm_zebras_touching_end_to_end_become_one_plank() {
     assert!(plank.osm);
     assert_eq!(paint_at(6.0).0.len(), 2, "apart: two zebras");
 }
+
+/// Улица, склеенная сетью из двух ways, поворачивает в Т-узле на `turn`
+/// градусов: `tertiary` с запада до [`NODE`], за ним 12.5 м под углом (как
+/// Путейская у моста, Тула, 2638, 3153, R22), жилая примыкает снизу.
+fn turning_tee(turn: f32, oneway: bool) -> NodePaint {
+    let west = RoadLine {
+        oneway,
+        ..road(vec![Vec2::ZERO, NODE], 8.0, Highway::Tertiary, 2)
+    };
+    let angle = turn.to_radians();
+    let east = RoadLine {
+        oneway,
+        ..road(
+            vec![NODE, NODE + Vec2::new(angle.cos(), angle.sin()) * 12.5],
+            8.0,
+            Highway::Tertiary,
+            2,
+        )
+    };
+    paint_of(vec![west, east, side()], Vec::new(), EVERYTHING)
+}
+
+/// Нарисованная ось, что поворачивает в узле круче [`PASS_ALIGN`], насквозь
+/// не проходит: осевая сплошной рисовалась бы через узел острым углом, а
+/// скруглить ось там негде. Она рвётся, как на крестовине (R22, Путейская).
+#[test]
+fn a_through_street_turning_at_a_t_node_breaks_its_lines() {
+    let paint = turning_tee(25.0, false);
+    for road in [0, 1] {
+        assert!(
+            !gaps(&paint, road).is_empty(),
+            "road {road}: {:?}",
+            paint.lines().of(road).cut
+        );
+        assert!(
+            paint.lines().of(road).solid.is_empty(),
+            "road {road}: {:?}",
+            paint.lines().of(road).solid
+        );
+    }
+    assert_eq!(paint.through, 0);
+    // приоритет у неё остаётся: стоп-линия — только у примыкания
+    assert_eq!(paint.stop_lines.len(), 1, "{:?}", paint.stop_lines);
+    assert_eq!(paint.junctions[0].leading.len(), 2);
+}
+
+/// Лёгкий излом в узле (8°, как у Дм. Ульянова) улицу насквозь пропускает, и
+/// односторонняя проходит даже поворачивая: осевой, что легла бы углом, у неё
+/// нет, а половина разделённой улицы расходится от развилки полого (Тула,
+/// витрина 16).
+#[test]
+fn a_slight_bend_or_a_one_way_turn_stays_through() {
+    for paint in [turning_tee(8.0, false), turning_tee(25.0, true)] {
+        assert!(gaps(&paint, 0).is_empty(), "{:?}", paint.lines().of(0).cut);
+        assert!(
+            paint
+                .lines()
+                .of(0)
+                .solid
+                .iter()
+                .any(|found| found.at == NODE && found.reach > 0.0),
+            "{:?}",
+            paint.lines().of(0).solid
+        );
+    }
+}
