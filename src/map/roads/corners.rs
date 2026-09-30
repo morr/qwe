@@ -910,7 +910,12 @@ fn is_junction(group: &[&Arm]) -> bool {
 
 /// Угол от луча `first` против часовой стрелки до луча `second`, (0, 2π].
 fn ccw_angle(first: &Arm, second: &Arm) -> f32 {
-    let angle = second.direction.to_angle() - first.direction.to_angle();
+    ccw_between(first.direction, second.direction)
+}
+
+/// Угол от направления `from` против часовой стрелки до `to`, (0, 2π].
+fn ccw_between(from: Vec2, to: Vec2) -> f32 {
+    let angle = to.to_angle() - from.to_angle();
     if angle <= 0.0 {
         angle + 2.0 * PI
     } else {
@@ -1205,16 +1210,11 @@ fn obtuse_corner(node: Vec2, first: &Arm, second: &Arm, halves: (f32, f32)) -> O
     let (from, to) = (on_first - centre, on_second - centre);
     let sweep = from.angle_to(to);
     let steps = arc_steps(radius, sweep.abs()).max(1);
-    let (wide_normal, wide_half) = if std::ptr::eq(wide, first) {
-        (n1, halves.0)
+    let wide_first = std::ptr::eq(wide, first);
+    let ((wide_normal, wide_half), (narrow_normal, narrow_half)) = if wide_first {
+        ((n1, halves.0), (n2, halves.1))
     } else {
-        (n2, halves.1)
-    };
-    let narrow_normal = if std::ptr::eq(wide, first) { n2 } else { n1 };
-    let narrow_half = if std::ptr::eq(wide, first) {
-        halves.1
-    } else {
-        halves.0
+        ((n2, halves.1), (n1, halves.0))
     };
     // торец широкого — под его лентой, кромка узкого — под своей
     let wide_end = node + wide_normal * (wide_half - OVERLAP) + wide.direction * OVERLAP;
@@ -1223,7 +1223,7 @@ fn obtuse_corner(node: Vec2, first: &Arm, second: &Arm, halves: (f32, f32)) -> O
         .map(|step| centre + Vec2::from_angle(sweep * step as f32 / steps as f32).rotate(from));
     let mut outline = Vec::with_capacity(steps + 5);
     outline.push(node + wide.direction * OUTER_OVERLAP);
-    if std::ptr::eq(wide, first) {
+    if wide_first {
         outline.push(wide_end);
         outline.extend(arc);
         outline.push(on_second - n2 * OVERLAP);
@@ -1443,14 +1443,7 @@ fn fillet_arc(
     let edge_first = axis_first + normal_first * first.slope[0];
     let edge_second = axis_second + normal_second * second.slope[1];
     let (along_first, along_second) = (edge_first.normalize(), edge_second.normalize());
-    let angle = {
-        let angle = along_second.to_angle() - along_first.to_angle();
-        if angle <= 0.0 {
-            angle + 2.0 * PI
-        } else {
-            angle
-        }
-    };
+    let angle = ccw_between(along_first, along_second);
     if !(MIN_ANGLE..=MAX_ANGLE).contains(&angle) {
         return None;
     }

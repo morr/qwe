@@ -2411,7 +2411,8 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   from the same road build as `RutLines`, never recomputed) / **OSM contours**
   (`DebugOsmContours`: the data before our passes, over the map) overlay rows, the
   `Camera start` and `Navtile` cyclers (global settings, deliberately not under a backend
-  section) and **`reset`** (`prefs::ResetSettings`). The navmesh overlay is **one merged
+  section), the **`Raw OSM`** cycler beside `Navtile` (**Raw OSM** above — a parse input,
+  so it reloads the world) and **`reset`** (`prefs::ResetSettings`). The navmesh overlay is **one merged
   mesh** (per-tile entities once cost 330 k); the noise overlay is one CPU-built texture
   sprite.
 - **Camera start view** (`camera.rs`) — `CameraPositionMode` (`reset | save`, persisted):

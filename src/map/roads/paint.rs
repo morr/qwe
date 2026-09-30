@@ -13,11 +13,15 @@
 //!   ровно между линиями и на клине;
 //! - **на клине крайняя полоса рождается**, остальные линии идут без сдвига:
 //!   раскладка плывёт от узкого сечения к широкому, границы расходятся вместе
-//!   с кромками, а линия, которой у узкого сечения не было, проявляется из
-//!   кромки. Смена чётности числа полос (две → три) сдвигает сетку на пол
+//!   с кромками, а линия, которой у узкого сечения не было, встаёт сразу
+//!   полной там, где её полоса набрала [`BIRTH_WIDTH`] ширины ([`births`]);
+//!   проявление из кромки ([`BIRTH_FADE`]) осталось только у клина слияния.
+//!   Смена чётности числа полос (две → три) сдвигает сетку на пол
 //!   полосы — это плавный уход линий на длине клина, новая полоса справа по
 //!   ходу клина. У односторонней улицы полосы прибавляются у одной кромки
-//!   ([`wedge_drift`]), и общие линии уходят на длине клина к другой;
+//!   ([`wedge_drift`]), и общие линии уходят на длине клина к другой. Осевая
+//!   на клине расширения — как у узкой части: одиночная, пока узкой части
+//!   мало полос для двойной сплошной, двойная — с конца клина;
 //! - **штрихи — по длине улицы**, а не way: фаза не рвётся на шве;
 //! - **у узла линия сплошная** за [`APPROACH`] до разрыва перекрёстка — у
 //!   линии полос только на подходе по ходу её полос, на выезде пунктир сразу
@@ -132,6 +136,9 @@ const BIRTH_SLACK: f32 = 1e-3;
 /// Шаг от вершины рождения к шву, м: звено между ними — растяжка
 /// прозрачности, и оно в два сантиметра.
 const BIRTH_EDGE: f32 = 0.02;
+/// Сколько делений пополам ищет порог [`BIRTH_WIDTH`] ([`births`]): доля
+/// клина до 2⁻²⁴ — точнее, чем держит `f32`.
+const BIRTH_BISECTIONS: u32 = 24;
 
 /// Свежесть краски, 0–1: прозрачность линий. Ручка «Paint» секции Roads.
 pub const PAINT_MIN: f32 = 0.0;
@@ -500,7 +507,7 @@ fn births(body: LaneFrame, seam: LaneFrame, length: f32) -> Vec<f32> {
             continue;
         }
         let (mut low, mut high) = (0.0_f32, 1.0_f32);
-        for _ in 0..24 {
+        for _ in 0..BIRTH_BISECTIONS {
             let middle = (low + high) / 2.0;
             if room(middle) >= need {
                 high = middle;
@@ -1346,35 +1353,20 @@ impl Painter {
         let (band, inside) = island_band(shape);
         // обводка — площадью: координата поперёк у неё ноль, и шейдер
         // линии кроет её целиком
-        for piece in &band {
-            let mut rings = piece.iter().map(ring_of);
-            let Some(outer) = rings.next() else {
-                continue;
-            };
-            let holes: Vec<Vec<Vec2>> = rings.collect();
-            self.islands.push_paint_area(
-                &outer,
-                &holes,
-                Vec2::ZERO,
-                NO_BREAK,
-                LineKind::Edge.code(),
-                color,
-            );
-        }
-        for piece in &inside {
-            let mut rings = piece.iter().map(ring_of);
-            let Some(outer) = rings.next() else {
-                continue;
-            };
-            let holes: Vec<Vec<Vec2>> = rings.collect();
-            self.islands.push_paint_area(
-                &outer,
-                &holes,
-                across,
-                NO_BREAK,
-                LineKind::Hatch.code(),
-                color,
-            );
+        let passes = [
+            (&band, Vec2::ZERO, LineKind::Edge),
+            (&inside, across, LineKind::Hatch),
+        ];
+        for (pieces, across, kind) in passes {
+            for piece in pieces {
+                let mut rings = piece.iter().map(ring_of);
+                let Some(outer) = rings.next() else {
+                    continue;
+                };
+                let holes: Vec<Vec<Vec2>> = rings.collect();
+                self.islands
+                    .push_paint_area(&outer, &holes, across, NO_BREAK, kind.code(), color);
+            }
         }
         self.lines += 1;
     }

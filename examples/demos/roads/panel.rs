@@ -44,7 +44,7 @@ fn on_off(value: bool) -> String {
     if value { "On" } else { "Off" }.to_string()
 }
 
-// восемь ресурсов, и каждый — строки панели
+// команды, шрифт и шесть ресурсов — каждый со своими строками панели
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_panel(
     mut commands: Commands,

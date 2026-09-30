@@ -159,10 +159,7 @@ impl Scraps {
                 .collect(),
         };
         for (from, to) in windows {
-            let mut ring: Vec<Vec2> = (from..=to)
-                .map(|index| path[index] + normals[index] * reach[index])
-                .collect();
-            ring.extend(path[from..=to].iter().rev());
+            let ring = band_ring(path, normals, reach, from, to);
             if ring.len() < 3 {
                 continue;
             }
@@ -180,11 +177,7 @@ impl Scraps {
     /// Мощёная полоса того же вида — плитка обочины: кусками встык.
     pub(super) fn push_paving_band(&mut self, path: &[Vec2], normals: &[Vec2], reach: &[f32]) {
         for (from, to) in chunks(path.len()) {
-            let mut ring: Vec<Vec2> = (from..=to)
-                .map(|index| path[index] + normals[index] * reach[index])
-                .collect();
-            ring.extend(path[from..=to].iter().rev());
-            self.push_paving(&ring);
+            self.push_paving(&band_ring(path, normals, reach, from, to));
         }
     }
 
@@ -235,6 +228,16 @@ impl Scraps {
         }
         scraps_among(lawn, subject, clip)
     }
+}
+
+/// Контур полосы вдоль точек `from..=to` ломаной `path`: наружная кромка на
+/// `reach` по `normals` туда, ось — обратно.
+fn band_ring(path: &[Vec2], normals: &[Vec2], reach: &[f32], from: usize, to: usize) -> Vec<Vec2> {
+    let mut ring: Vec<Vec2> = (from..=to)
+        .map(|index| path[index] + normals[index] * reach[index])
+        .collect();
+    ring.extend(path[from..=to].iter().rev());
+    ring
 }
 
 /// Окна `[от, до]` по `count` точкам встык, по [`CHUNK`] звеньев.

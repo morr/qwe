@@ -381,6 +381,14 @@ impl<'a> Walk<'a> {
             .flatten()
     }
 
+    /// Направление хорды пути от длины `from` к длине `to`; `None` — одна из
+    /// них не на пути или хорда вырождена.
+    fn chord(&self, from: f32, to: f32) -> Option<Vec2> {
+        let (start, _) = self.at(from)?;
+        let (end, _) = self.at(to)?;
+        (end - start).try_normalize()
+    }
+
     /// Что от отрезка длин `[a, b]` выходит за концы пути: конец и на
     /// сколько. [`Self::gap`] это обрезает — продолжение улицы за концом
     /// получает остаток ([`spill_over_ends`]).
@@ -958,10 +966,7 @@ impl NodePaint {
         let leaving = |arm: &Arm| -> Option<Vec2> {
             let walk = Walk::new(paths[arm.road].as_ref());
             let from = walk.project(arm.at);
-            let to = (from + arm.dir * PASS_CHORD).clamp(0.0, walk.total);
-            let (start, _) = walk.at(from)?;
-            let (end, _) = walk.at(to)?;
-            (end - start).try_normalize()
+            walk.chord(from, (from + arm.dir * PASS_CHORD).clamp(0.0, walk.total))
         };
         // излом нарисованной оси на плече до `reach` от узла: вершина пути,
         // у которой хорды по [`PASS_CHORD`] назад и вперёд расходятся круче
@@ -970,10 +975,7 @@ impl NodePaint {
             let walk = Walk::new(paths[arm.road].as_ref());
             let from = walk.project(arm.at);
             let chord = |from: f32, to: f32| {
-                let (from, to) = (from.clamp(0.0, walk.total), to.clamp(0.0, walk.total));
-                let (start, _) = walk.at(from)?;
-                let (end, _) = walk.at(to)?;
-                (end - start).try_normalize()
+                walk.chord(from.clamp(0.0, walk.total), to.clamp(0.0, walk.total))
             };
             walk.along.iter().any(|&at| {
                 let ahead = (at - from) * arm.dir;
@@ -1810,7 +1812,6 @@ fn zone(drawn: &[&RoadLine], node: &SharedNode) -> f32 {
         + CLUSTER_ZONE
 }
 
-/// Узлы, чьи зоны перекрываются, — кластерами, в порядке первого узла.
 /// Угол двух улиц: в узле кончаются торцами ровно две дороги разных улиц, и
 /// их нарисованные оси (хорды на [`PASS_CHORD`] — угол линий у самого узла)
 /// сходятся под углом от `corners::MIN_ANGLE` до `MAX_ANGLE` — тем же, под
@@ -1840,10 +1841,7 @@ fn is_corner(
         let walk = Walk::new(paths[visit.road].as_ref());
         let from = walk.project(node.at);
         let dir = if visit.vertex == 0 { 1.0 } else { -1.0 };
-        let to = (from + dir * PASS_CHORD).clamp(0.0, walk.total);
-        let (start, _) = walk.at(from)?;
-        let (end, _) = walk.at(to)?;
-        (end - start).try_normalize()
+        walk.chord(from, (from + dir * PASS_CHORD).clamp(0.0, walk.total))
     };
     let (Some(first), Some(second)) = (away(a), away(b)) else {
         return false;
@@ -1851,6 +1849,7 @@ fn is_corner(
     (MIN_ANGLE..=MAX_ANGLE).contains(&first.angle_to(second).abs())
 }
 
+/// Узлы, чьи зоны перекрываются, — кластерами, в порядке первого узла.
 fn clusters<'a>(drawn: &[&RoadLine], junctions: &[&'a SharedNode]) -> Vec<Vec<&'a SharedNode>> {
     let zones: Vec<f32> = junctions.iter().map(|node| zone(drawn, node)).collect();
     let mut grid: Grid<usize> = Grid::new(CLUSTER_CELL);

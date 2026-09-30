@@ -277,7 +277,8 @@ fn raw_osm_moved(raw: Option<Res<RawOsm>>, map: Option<Res<MapData>>) -> bool {
     raw.zip(map).is_some_and(|(raw, map)| *raw != map.knobs.raw)
 }
 
-/// Возврат в `Loading` под новый город, размер навтайла или ширину полосы.
+/// Возврат в `Loading` под новый город, размер навтайла, ширину полосы или
+/// режим сырого OSM.
 /// Гейт `in_state(Playing)` тут не только про UI: перезапускать загрузку поверх
 /// уже идущей — значит пустить два потока в один и тот же navmesh. Смена
 /// navtile по BRP во время `Loading` по той же причине не подхватывается на
