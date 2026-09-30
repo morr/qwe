@@ -56,7 +56,7 @@ use self::bridges::Bridges;
 pub use self::drawn::{Axis, Drawn, DrawnStats};
 pub use self::junctions::JunctionCounts;
 use self::network::RoadNodes;
-use self::network::pairs::BandPiece;
+use self::network::pairs::{BandPiece, Median};
 pub use self::node_paint::CrossingMode;
 use self::ruts::{LaneRuts, RutLines};
 use self::shape::{RoadShape, RoadShapeOnMap};
@@ -1077,13 +1077,15 @@ pub fn mesh_roads_with_ruts(
             reach_gores: &|midline| gores.reach(midline),
             street_of: &street_of,
             closer: &closer,
+            on_bridge: &|road| drawn[road].bridge,
         },
         &mut streets,
         &mut sidewalks,
         &mut median_grass,
+        bridges.fills(),
     );
-    for (midline, painted) in &median_drawing.painted {
-        painter.paint_median(midline, painted);
+    for (midline, painted, on_deck) in &median_drawing.painted {
+        painter.paint_median(midline, painted, *on_deck);
     }
     // за узлом слияния, до разделительной его пары: асфальт до носа газона —
     // под лентами половин — и осевая продолжения
@@ -1197,11 +1199,8 @@ pub fn mesh_roads_with_ruts(
         }
         // линии краски — по той же оси, разрывам и клиньям, что и асфальт
         if style.markings {
-            let wedges = if road.bridge {
-                [None; 2]
-            } else {
-                paint::wedge_ends(points, prepared.tapers(), &drawn, index, map.traffic_side)
-            };
+            let wedges =
+                paint::wedge_ends(points, prepared.tapers(), &drawn, index, map.traffic_side);
             painter.paint(
                 road,
                 points,
@@ -1211,21 +1210,6 @@ pub fn mesh_roads_with_ruts(
                 ramps[index],
                 stations[index],
             );
-        }
-        if road.bridge {
-            // бордюр и тень — мосту; заливка — здесь, в порядке улиц
-            bridges.push_deck(index, points, road);
-            let fills = bridges.fills();
-            fills.set_lanes(lanes);
-            push_street_fill(
-                fills,
-                points,
-                road.width,
-                color.to_linear(),
-                breaks,
-                [false; 2],
-            );
-            continue;
         }
         // клинья у швов со сменой сечения: торцы, срезанные под них, и сами
         // клинья от ширины узкого соседа (`roads/tapers.rs`)
@@ -1245,6 +1229,15 @@ pub fn mesh_roads_with_ruts(
             head.is_some() || (butt[0] && !stitched_end[0]),
             tail.is_some() || (butt[1] && !stitched_end[1]),
         ];
+        // торец на шве земля/мост (`bridges::seam_ends`) — прямой, как бортик
+        // настила: у настила — всё (R14), у подхода — полоса тротуара и
+        // обочина, чей полудиск светился по сторонам настила (R32). Асфальт
+        // подхода остаётся круглым: его торец под настилом, а на изломе шва
+        // закрывает щель между прямыми торцами
+        let seam = bridges::seam_ends(&drawn, prepared.nodes(), index);
+        let banded = [trimmed[0] || seam[0], trimmed[1] || seam[1]];
+        let trimmed = if road.bridge { banded } else { trimmed };
+        let butt = [butt[0] || seam[0], butt[1] || seam[1]];
         let wedges: Vec<(&[Vec2], tapers::Taper, bool)> =
             [(&head, ends[0], false), (&tail, ends[1], true)]
                 .into_iter()
@@ -1259,6 +1252,76 @@ pub fn mesh_roads_with_ruts(
                 to_break_beyond(body, width, breaks, end, 0.0),
             ]
         };
+        // асфальт клиньев: от сечения узкого соседа к своему, с раскладкой
+        // полос, плывущей так же, как линии краски на клине
+        let push_wedges = |fill: &mut MeshBuilder| {
+            for &(path, taper, end) in &wedges {
+                let narrow = drawn[taper.narrow];
+                let to_break = continued(path, road.width, breaks, end);
+                match lanes {
+                    Some(_) => {
+                        let wedge = paint::WedgeEnd::new(
+                            road,
+                            narrow,
+                            taper,
+                            end,
+                            polyline_length(path),
+                            map.traffic_side,
+                        );
+                        let [from, to] = paint::wedge_frames(lane_count(road), wedge, end);
+                        fill.set_lane_taper(Some(from), Some(to));
+                    }
+                    None => fill.set_lanes(None),
+                }
+                fill.push_taper_sided(
+                    path,
+                    wedge_halves(taper.sides, end, |_| [narrow.width / 2.0, road.width / 2.0]),
+                    to_break,
+                    color.to_linear(),
+                );
+            }
+        };
+        if road.bridge {
+            // бордюр и тень — мосту; заливка — здесь, в порядке улиц. Клин на
+            // шве земля/мост сужает настил вместе с бортиком (R30); торец,
+            // севший на подход, — прямой, как бортик (R14, `trimmed`).
+            // Бортика со стороны пары нет: между настилами-половинами лежит
+            // разделительная в слое настилов (`medians::draw`), и внутренние
+            // бортики светились бы по её краям разделителем, которого на
+            // подходе нет (R30) — куски, как у полосы тротуара
+            let curb = road.curb_reach() - road.width / 2.0;
+            let head_length = head.as_deref().map_or(0.0, polyline_length);
+            let pieces = prepared.pairs().band_pieces(
+                index,
+                [true; 2],
+                prepared.stitch_offset(index) - head_length,
+                polyline_length(body),
+            );
+            let total_length = polyline_length(points);
+            let curb_wedges: Vec<(&[Vec2], [[f32; 2]; 2])> = wedges
+                .iter()
+                .map(|&(path, taper, end)| {
+                    let narrow = drawn[taper.narrow].width / 2.0;
+                    let middle = wedge_middle(total_length, polyline_length(path), end);
+                    let paired = prepared
+                        .pairs()
+                        .beside(index, middle, 0.0)
+                        .map(|left| usize::from(!left));
+                    let halves = wedge_halves(taper.sides, end, |side| {
+                        let curb = if paired == Some(side) { 0.0 } else { curb };
+                        [narrow + curb, road.width / 2.0 + curb]
+                    });
+                    (path, halves)
+                })
+                .collect();
+            bridges.push_deck(index, points, body, pieces.as_deref(), &curb_wedges, road);
+            let fills = bridges.fills();
+            fills.set_lanes(lanes);
+            push_street_fill(fills, body, road.width, color.to_linear(), breaks, trimmed);
+            fills.set_lanes(lanes);
+            push_wedges(fills);
+            continue;
+        }
 
         // тротуар кольца — одной лентой на всё кольцо (`push_ring_edges`)
         let ring = prepared.rings().of(index);
@@ -1278,7 +1341,7 @@ pub fn mesh_roads_with_ruts(
                 [road.width, sidewalk],
                 pieces.as_deref(),
                 SIDEWALK_COLOR.to_linear(),
-                trimmed,
+                banded,
             );
             // клин тротуара — по сторонам, как у асфальта: с сужаемой стороны
             // от полосы узкого соседа (или его голой кромки, если тротуара у
@@ -1391,33 +1454,7 @@ pub fn mesh_roads_with_ruts(
             ),
         }
         fill.set_lanes(lanes);
-        for &(path, taper, end) in &wedges {
-            let narrow = drawn[taper.narrow];
-            let to_break = continued(path, road.width, breaks, end);
-            // раскладка плывёт от сечения соседа к своему — та же, что у
-            // линий краски на этом клине
-            match lanes {
-                Some(_) => {
-                    let wedge = paint::WedgeEnd::new(
-                        road,
-                        narrow,
-                        taper,
-                        end,
-                        polyline_length(path),
-                        map.traffic_side,
-                    );
-                    let [from, to] = paint::wedge_frames(lane_count(road), wedge, end);
-                    fill.set_lane_taper(Some(from), Some(to));
-                }
-                None => fill.set_lanes(None),
-            }
-            fill.push_taper_sided(
-                path,
-                wedge_halves(taper.sides, end, |_| [narrow.width / 2.0, road.width / 2.0]),
-                to_break,
-                color.to_linear(),
-            );
-        }
+        push_wedges(fill);
         if road.class == RoadClass::Street && !road.passage {
             grounds.push(road, points);
         }
@@ -1506,11 +1543,29 @@ pub fn mesh_roads_with_ruts(
     // по путям, уложенным по нарисованной улице (`roads/tram_lay.rs`), а не
     // по OSM: полоса обязана лежать под тем же рельсом, что рисует трамвай
     let tram_tracks = tram_lay::lay_tracks(&map.rails, &drawn, &nodal, &median_drawing.paved);
-    let tram_bands = tram_band::tram_bands(&tram_tracks.0, &drawn, &nodal, &median_drawing.paved);
+    // разделительная двух настилов лежит в слое настилов — и полоса над ней
+    // (R30: на Красном мосту полоса обрывалась прямоугольником на шве)
+    let (decked, grounded): (Vec<Median>, Vec<Median>) = median_drawing
+        .paved
+        .iter()
+        .cloned()
+        .partition(|median| median.roads().iter().all(|&road| drawn[road].bridge));
+    let mut tram_bands = tram_band::tram_bands(&tram_tracks.0, &drawn, &nodal, &grounded);
     streets.set_lanes(None);
     // одной фигурой, со щелями между полосами соседних путей заросшими
     for shape in tram_band::band_cover(&tram_bands) {
         push_shape(&mut streets, shape, TRAM_BAND_COLOR.to_linear());
+    }
+    if !decked.is_empty() {
+        let no_roads: [&RoadLine; 0] = [];
+        let no_paths: [&[Vec2]; 0] = [];
+        let on_decks = tram_band::tram_bands(&tram_tracks.0, &no_roads, &no_paths, &decked);
+        let fills = bridges.fills();
+        fills.set_lanes(None);
+        for shape in tram_band::band_cover(&on_decks) {
+            push_shape(fills, shape, TRAM_BAND_COLOR.to_linear());
+        }
+        tram_bands.extend(on_decks);
     }
     let mut lot_layers = grounds.layers(&style, &gores, &median_drawing.paved);
     for shape in &road_islands.kerbs {

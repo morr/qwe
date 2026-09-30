@@ -7,7 +7,9 @@
 
 use bevy::prelude::*;
 
-use super::{ROAD_JOIN, RoadJoin, smoothstep};
+use super::network::RoadNodes;
+use super::network::pairs::BandPiece;
+use super::{ROAD_JOIN, RoadJoin, push_sidewalk, smoothstep};
 use crate::map::SHADOW_COLOR;
 use crate::map::along::densify;
 use crate::map::footprint::{JOIN_EPSILON, bridge_curb_width};
@@ -318,21 +320,58 @@ impl Bridges {
     /// Бордюр и тень одного настила. Заливку с рамой полос и разрывами
     /// асфальта своей улицы кладёт вызывающий в [`Self::fills`] — так мост
     /// остаётся в порядке заливки улиц.
-    pub(super) fn push_deck(&mut self, road: usize, points: &[Vec2], line: &RoadLine) {
+    ///
+    /// `body` — настил без клиньев у торцов, `wedges` — клинья с полуширинами
+    /// бортика `[слева, справа]` × `[у узла шва, у тела]` (R30): бортик
+    /// сужается вместе с асфальтом, а не стоит полной ширины вокруг клина
+    /// светлой полосой. `pieces` — куски тела со сторонами бортика
+    /// (`Pairs::band_pieces`): со стороны пары его нет, `None` — с обеих
+    /// сторон на всём теле. Тень — по всему настилу `points`.
+    pub(super) fn push_deck(
+        &mut self,
+        road: usize,
+        points: &[Vec2],
+        body: &[Vec2],
+        pieces: Option<&[BandPiece]>,
+        wedges: &[(&[Vec2], [[f32; 2]; 2])],
+        line: &RoadLine,
+    ) {
         // бордюр настила — он и есть мост
-        push_bridge_curb(
-            &mut self.casings,
-            points,
-            2.0 * line.curb_reach(),
-            ROAD_JOIN,
-        );
+        match pieces {
+            None => push_bridge_curb(&mut self.casings, body, 2.0 * line.curb_reach(), ROAD_JOIN),
+            Some(pieces) => push_sidewalk(
+                &mut self.casings,
+                body,
+                [line.width, line.curb_reach() - line.width / 2.0],
+                Some(pieces),
+                BRIDGE_CURB_COLOR.to_linear(),
+                [true; 2],
+            ),
+        }
+        let color = BRIDGE_CURB_COLOR.to_linear();
+        for &(path, halves) in wedges {
+            self.casings
+                .push_taper_sided(path, halves, [0.0; 2], color);
+        }
         // Тень настила — тот же настил, сдвинутый по свету на высоту
         // моста. Ни один другой слой её не даёт: наземные тени считают
         // только дома, а мост через Упу — самая заметная вещь на воде.
         if let Some(deck) = self.span(road).copied().filter(|deck| deck.casts) {
+            // сторона без бортика где-нибудь — сторона пары: тень там — по
+            // кромку асфальта
+            let bare = |side: usize| {
+                pieces.is_some_and(|pieces| pieces.iter().any(|piece| !piece.2[side]))
+            };
+            let reach = [0, 1].map(|side| {
+                if bare(side) {
+                    line.width / 2.0
+                } else {
+                    line.curb_reach()
+                }
+            });
             self.shadows.push(ShadowBand {
                 path: bridge_shadow_path(points, &deck),
-                reach: line.curb_reach(),
+                reach,
                 penumbra: bridge_penumbra(deck.span),
             });
         }
@@ -383,7 +422,7 @@ impl Bridges {
         };
         self.shadows.push(ShadowBand {
             path: bridge_shadow_path(&points, &lifted),
-            reach: deck / 2.0 + bridge_curb_width(deck),
+            reach: [deck / 2.0 + bridge_curb_width(deck); 2],
             penumbra: bridge_penumbra(span),
         });
     }
@@ -425,6 +464,32 @@ impl Bridges {
             ),
         ]
     }
+}
+
+/// Торцы дороги `road`, `[начало, конец]`, стоящие **на шве земля/мост**: в
+/// узле торца есть дорога другого уровня — у настила подход, у подхода
+/// настил. Там ленты режутся прямо (`RibbonCap::Butt`), как бортик
+/// ([`push_bridge_curb`]). Полудиск торца настила ложился поверх асфальта
+/// подхода, а у мостика, прижатого к кромке моста, — светлым полукруглым
+/// вырезом на его краю (R14, Тула, голова моста 49777171); полудиск полосы
+/// тротуара подхода — светлым полукругом по сторонам настила, за его бортиком
+/// (R32, Орёл, путепровод 1-й Курской: «тротуар» рядом с мостом). Торец, где
+/// сходятся дороги одного уровня или не сходится никто, остаётся круглым:
+/// стык сплавляют скругления.
+///
+/// Узел ищется по точке OSM, а не по нарисованной оси: мостик вдоль моста
+/// сдвинут (`roads/axis.rs`), и его вершина уже не в узле.
+pub(super) fn seam_ends(roads: &[&RoadLine], nodes: &RoadNodes, road: usize) -> [bool; 2] {
+    let own = roads[road];
+    let (Some(&first), Some(&last)) = (own.points.first(), own.points.last()) else {
+        return [false; 2];
+    };
+    [first, last].map(|end| {
+        nodes
+            .roads_at(end)
+            .iter()
+            .any(|&other| other != road && roads[other].bridge != own.bridge)
+    })
 }
 
 /// Корень компоненты со сжатием пути.
@@ -581,11 +646,14 @@ const BRIDGE_CURB_COLOR: Color = Color::srgb(0.80, 0.80, 0.79);
 /// щебнем пути она видна узкой полосой с каждой стороны.
 const TRACK_DECK_COLOR: Color = Color::srgb(0.60, 0.59, 0.57);
 
-/// Теневая лента одного моста, готовая к укладке: путь, полуширина настила и
-/// ширина полутени на полном подъёме.
+/// Теневая лента одного моста, готовая к укладке: путь, полуширина настила с
+/// бортиком `[слева, справа]` по ходу пути и ширина полутени на полном
+/// подъёме. Стороны разные у настила-половины: со стороны пары бортика нет, и
+/// тень, отложенная на его ширину, ложилась у головы моста тёмной плашкой на
+/// асфальт между половинами (R30).
 struct ShadowBand {
     path: Vec<ShadowPoint>,
-    reach: f32,
+    reach: [f32; 2],
     penumbra: f32,
 }
 
@@ -780,10 +848,10 @@ fn shadow_edges(band: &ShadowBand) -> Vec<ShadowEdge> {
         .iter()
         .map(|point| {
             // единичную нормаль стыка растягивает своя полуширина
-            let half = band.reach + SHADOW_SPREAD * point.rise;
+            let [left, right] = band.reach.map(|reach| reach + SHADOW_SPREAD * point.rise);
             ShadowEdge {
-                left: point.at + point.normal * half,
-                right: point.at - point.normal * half,
+                left: point.at + point.normal * left,
+                right: point.at - point.normal * right,
                 normal: point.normal,
                 blur: band.penumbra * point.rise,
             }

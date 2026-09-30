@@ -357,7 +357,13 @@ be called alone:
   reads it — linear between probes, the end values past them, the constant median with
   no profile. Only the
   renderer reads it (**Sidewalks** in `roads.md`: sidewalk tile under the greens). At least `SEPARATE_SHARE` 60 % of the probes → the side becomes `None`. A
-  `Tagged` side is never touched. Before the house and block pulls like the other sidewalk
+  `Tagged` side is never touched. **A piecewise drop was tried and rejected** (R32): a side
+  with a footway along part of it losing the band only there left bare ground between
+  the kerb and the footway wherever the pass had set no verge (the verge is laid for a
+  side only past the share), a beige slit on Tula samples 16 and 23 — and on the reported
+  spot (Oryol, the approach to the 1-я Курская overpass) the footway lies on the band
+  anyway, closer than `SEPARATE_LAWN`; what read as a sidewalk beside the bridge was the
+  approach band's half-disc past the deck curb (`roads.md`, **Bridge layers**). Before the house and block pulls like the other sidewalk
   pass, so both work against what is drawn. The consequences are the ones `sidewalk=separate`
   already had: no band means no kerb pocket on an arterial side (`pockets::kerb_parking`)
   and no rule zebra there — the same as the tagged north-west half of Lenina. Tula v15:

@@ -221,8 +221,13 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     `RoadClass: Street | Alley`; `highway: Highway` (the `highway` value; `*_link` is a
     class of its own; `Highway::is_street` — not a service drive, not a path — is what
     makes a **carriageway**, not the width); `bridge` / `passage` flags (the navmesh carves by them —
-    `RoadLine::carves_navmesh` is the one predicate the drawers ask: a carve keeps its OSM
-    centerline, so it is neither smoothed, paired, ringed, tapered nor stitched);
+    `RoadLine::carves_navmesh` is the one predicate the drawers ask: an arch keeps its OSM
+    centerline, so it is neither smoothed, paired, ringed, tapered nor stitched; a bridge
+    is smoothed and paired with its street and takes a **taper** at a ground/bridge seam
+    like any seam, but is neither ringed nor stitched. At that seam every ribbon ends
+    **square** — the deck, and the approach's sidewalk band and verge (`bridges::seam_ends`);
+    a **footbridge** mapped inside a street deck is moved out past its edge, the ground path
+    following (`axis.rs::place_bridge_sidewalks`); a paired deck's median lies on the deck);
     `oneway`, `roundabout` (the `junction=roundabout|circular` tag — but the notion is
     `RoadLine::is_roundabout`, **tag or shape**: a closed one-way way is a ring too, and
     the mall's big ring carries no tag; a **Ring** (`roads/rings.rs`) is such ways chained

@@ -109,7 +109,11 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   lane markings, but the bridge branch of `mesh_roads` `continue`s into `Bridges::push_deck`
   + `Bridges::fills` *before* the sidewalk block — a deck gets no band ever, at any width or
   `RoadStyle::sidewalks`. It would hang a metre or three past the deck edge over the
-  water, and the deck already has its own kerb: `push_bridge_curb`, drawn unconditionally.
+  water, and the deck already has its own kerb: `push_bridge_curb`, drawn unconditionally
+  (except on the side of a paired deck, **Paired halves**). The approach's band ends
+  **square** at the bridge head (`bridges::seam_ends`), with its verge: its half-disc
+  showed past the deck curb on both sides as a sidewalk on the bridge (R32, Oryol,
+  the 1-я Курская overpass).
   The road fill went from osm-carto white to asphalt grey together with the
   markings: a white line on white is invisible, and on grey the street grid also stops
   merging with the courtyards. At a junction the band turns the corner on the kerb's own
@@ -382,7 +386,8 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   - **Finding** (`Pairs::new`, on the drawn axes of `axis::street_axes`, so once for the
     roads and once for the cars) — from every `PROBE_STEP` 2 m of a `pairable` road (a
     one-way `Street`-class way: a street **or a `service` drive** — the «Макси» boulevard
-    is two service drives — never a parking aisle, a ring, a bridge or an arch) the
+    is two service drives — never a parking aisle, a ring or an arch; a bridge is a half
+    like any, below) the
     nearest other one of the **same `Highway`** running **against** it (`PAIR_PARALLEL`
     0.9) and beside it (`PAIR_SKEW` 0.35) with `-PAIR_OVERLAP` 3.3 … `PAIR_MAX_GAP` 15 m
     between the kerbs. The overlap is a lane, not the lot's old 1 m: opposite halves never
@@ -473,7 +478,16 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     `excluded` rule keeps out only unpaired bridges and arches), and a footway bridge
     mapped beside it follows it (`follow_bridge_sidewalks`: every vertex takes the shift
     of the nearest deck point): bridge decks lie over the streets, and the footway deck
-    left at its OSM place put its tail over the moved approach as a pale tooth. At a node
+    left at its OSM place put its tail over the moved approach as a pale tooth. **The
+    median of two paired decks lies on the deck** (`medians::draw` pushes a paved median
+    or tram bed whose both halves are bridges into `Bridges::fills`, its double solid into
+    `bridge_paint_axes`, its tram band into the deck layer too, and each deck draws **no
+    curb on its paired side** — `push_deck` takes `Pairs::band_pieces` like a sidewalk
+    band — and casts its shadow there only to the asphalt edge, `ShadowBand::reach` being
+    per side, else the band lay as dark plates on the asphalt between the halves at the
+    head, where the median starts a few metres in): in the street layer the median lay under the bridge shadow as a dark slit edged
+    by the two inner curbs, a pale divider where the approach had a double line (R30,
+    Oryol, Красный мост). At a node
     where two halves meet (the mean above), both ends are put on **one tangent**
     (`align_seam_ends`, a vertex `SEAM_TAIL` 0.5 m in along the bisector): the ribbons
     end square to their own axis, and a 2° kink between a bridge and its approach showed
@@ -2526,7 +2540,27 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   (`bridge_casings`); the dark road/alley casings were removed in stage 8.
   Curb caps are always `Butt` (`push_bridge_curb`) — the deck ends
   in a square cut; a `Round` half-disc would poke a curb
-  tongue past the bridge end. The deck sits above `Z_ROAD` so an overpass covers the
+  tongue past the bridge end.
+  **At a ground/bridge seam every ribbon ends square** (`bridges::seam_ends`: a node where
+  a road of the other level ends or passes): the deck fill (R14 — its half-disc lay over
+  the approach's asphalt, and a footbridge's as a pale semicircle on the kerb line, Tula,
+  head of 49777171), and on the approach the sidewalk band and the verge (R32); the
+  approach's asphalt stays round — it is under the deck and closes the notch between two
+  square ends on a kink. A free deck end, or one meeting only decks, stays round.
+  **A deck takes a taper** at a seam with a lane change like any seam
+  (`tapers::takes_taper` excludes arches only): the fill runs through `tapers::split`, the
+  wedges go into `Bridges::fills` with the lane frame, and the curb narrows with it
+  (`push_deck`'s `wedges`, `push_taper_sided`) — before, the width jumped at the head,
+  covered by the deck's half-disc (R30, Oryol, Красный мост: 2 lanes on the ground, 3 on
+  the bridge). The price: in the wedge the drawn deck is narrower than the navmesh
+  corridor, which is carved by the OSM width.
+  **A footbridge mapped inside a street deck is moved out** (`axis.rs::
+  place_bridge_sidewalks`): a vertex of a footbridge running along a deck
+  (`FOOTBRIDGE_ALONG` 0.9) closer than `deck half + own half + own curb` goes out to that
+  distance, and its moved end nodes join the pairs' `moved` list, so the ground path at
+  the node follows with a fade (`Pairs::follow_moved_nodes`). Tula's 1506675090 lay 3.6 m
+  from the axis of a 3.8 m-half deck: half of it covered the carriageway edge, and its end
+  1.3 m past the head lay on the approach's asphalt as a pale rectangle (R14). The deck sits above `Z_ROAD` so an overpass covers the
   street it crosses and above `Z_RAIL` so a road bridge over the railway covers the
   track (**Rail layers** in `layers.md`), and below `Z_TRAM` so a tram on the bridge
   stays visible; curbs

@@ -944,6 +944,69 @@ fn deck_fill_carries_its_streets_lane_frame() {
     assert!(coords.iter().all(|c| c[3] == 0.0), "a footbridge got lanes");
 }
 
+/// Настил, продолжающий наземный подход, кончается у головы моста ровным
+/// срезом, как его бортик: полудиск торца ложился поверх асфальта подхода, а
+/// у мостика у кромки — светлым полукруглым вырезом на краю проезжей части
+/// (R14, Тула, 49777488 → мост 49777171 и тротуар 1506675089 → 1506675090).
+/// Свободный торец моста остаётся круглым.
+#[test]
+fn a_deck_landing_on_its_approach_ends_square() {
+    let head = Vec2::new(0.0, 100.0);
+    let mut map = MapData::default();
+    map.roads.push(fixture::street(
+        vec![Vec2::new(0.0, 0.0), head],
+        8.0,
+    ));
+    map.roads.push(fixture::bridge(vec![head, Vec2::new(0.0, 160.0)], 8.0));
+    // тротуар: наземный кусок и мостик — продолжением через свой узел
+    let foot = Vec2::new(30.0, 100.0);
+    map.roads.push(fixture::footway(vec![Vec2::new(30.0, 0.0), foot]));
+    map.roads.push(RoadLine {
+        class: RoadClass::Alley,
+        highway: Highway::Path,
+        ..fixture::bridge(vec![foot, Vec2::new(30.0, 160.0)], 3.0)
+    });
+    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let positions = layer(&layers, "bridges").builder.positions_for_test();
+    assert!(!positions.is_empty());
+    let behind = positions
+        .iter()
+        .map(|position| head.y - position[1])
+        .fold(f32::NEG_INFINITY, f32::max);
+    assert!(
+        behind < 1e-3,
+        "the deck fill runs {behind} m past the bridge head onto its approach"
+    );
+    // свободный конец — скруглён: заливка выходит за последнюю точку
+    let ahead = positions
+        .iter()
+        .map(|position| position[1] - 160.0)
+        .fold(f32::NEG_INFINITY, f32::max);
+    assert!(ahead > 1.0, "the free deck end lost its round cap ({ahead} m)");
+}
+
+/// Полоса тротуара подхода кончается на голове моста ровным срезом: её
+/// полудиск светился по сторонам настила за его бортиком, как тротуар на
+/// самом мосту (R32, Орёл, путепровод 1-й Курской).
+#[test]
+fn an_approach_sidewalk_ends_square_at_the_bridge_head() {
+    let head = Vec2::new(0.0, 100.0);
+    let mut map = MapData::default();
+    map.roads.push(fixture::street(vec![Vec2::new(0.0, 0.0), head], 14.2));
+    map.roads.push(fixture::bridge(vec![head, Vec2::new(0.0, 160.0)], 14.2));
+    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let sidewalks = layer(&layers, "sidewalks").builder.positions_for_test();
+    assert!(!sidewalks.is_empty());
+    let past = sidewalks
+        .iter()
+        .map(|position| position[1] - head.y)
+        .fold(f32::NEG_INFINITY, f32::max);
+    assert!(
+        past < 1e-3,
+        "the approach sidewalk runs {past} m past the bridge head beside the deck"
+    );
+}
+
 /// Мостик, замапленный внутри настила моста (Тула: 3.6 м от оси при
 /// полуширине 3.8), выносится к его кромке, а наземная дорожка, продолжающая
 /// его, идёт следом: иначе мостик полосой закрывал край проезжей части, а за
@@ -988,6 +1051,86 @@ fn a_footbridge_inside_the_deck_moves_to_its_edge() {
         footbridge[0]
     );
     assert_eq!(ground[0], Vec2::new(-20.0, 80.0), "the far end moved too");
+}
+
+/// Мощёная разделительная двух настилов-половин лежит в слое настилов: в слое
+/// улиц её закрывала тень моста, и между половинами шла тёмная щель с
+/// бортиками по краям — светлый разделитель вместо двойной сплошной подхода
+/// (R30).
+#[test]
+fn a_paved_median_between_two_decks_lies_on_the_deck() {
+    let mut map = MapData::default();
+    let half = |points: Vec<Vec2>| RoadLine {
+        highway: Highway::Primary,
+        oneway: true,
+        lanes: Some(2),
+        ..fixture::bridge(points, 7.6)
+    };
+    map.roads.push(half(vec![Vec2::new(-4.5, 0.0), Vec2::new(-4.5, 200.0)]));
+    map.roads.push(half(vec![Vec2::new(4.5, 200.0), Vec2::new(4.5, 0.0)]));
+    map.network = super::network::RoadNetwork::new(&map.roads);
+    let prepared = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
+    assert!(
+        prepared.pairs().medians().iter().any(|median| median.is_paved()),
+        "the two decks make no paved median"
+    );
+    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let middle = Vec2::new(0.0, 100.0);
+    assert!(
+        layer(&layers, "bridges").builder.covers_for_test(middle),
+        "the median between the decks is not on the deck"
+    );
+}
+
+/// На шве земля/мост со сменой числа полос настил берёт клин, как шов улицы:
+/// у головы моста он шириной в подход и расходится до своей, бортик сужается
+/// вместе с ним. Без клина ширина прыгала ступенькой ровно на голове, а шов
+/// закрывали полудиски торцов (R30, Красный мост в Орле: земля 2 полосы, мост
+/// 3).
+#[test]
+fn a_wider_deck_tapers_from_its_approach() {
+    let head = Vec2::new(0.0, 100.0);
+    let lanes = |lanes: u8| 3.3 * f32::from(lanes) + 1.0;
+    let mut map = MapData::default();
+    map.roads.push(RoadLine {
+        highway: Highway::Primary,
+        lanes: Some(2),
+        ..fixture::street(vec![Vec2::new(0.0, 0.0), head], lanes(2))
+    });
+    map.roads.push(RoadLine {
+        highway: Highway::Primary,
+        lanes: Some(3),
+        ..fixture::bridge(vec![head, Vec2::new(0.0, 200.0)], lanes(3))
+    });
+    map.network = super::network::RoadNetwork::new(&map.roads);
+    let prepared = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
+    assert!(
+        prepared.taper_ends(1)[0].is_some(),
+        "the deck takes no taper at its head"
+    );
+
+    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let near_head = |name: &str| -> f32 {
+        layer(&layers, name)
+            .builder
+            .positions_for_test()
+            .iter()
+            .filter(|position| (position[1] - head.y).abs() < 0.5)
+            .map(|position| position[0].abs())
+            .fold(0.0, f32::max)
+    };
+    let narrow = lanes(2) / 2.0;
+    let fill = near_head("bridges");
+    assert!(
+        (fill - narrow).abs() < 0.05,
+        "the deck starts {fill} m wide at its head, the approach is {narrow}"
+    );
+    let curb = map.roads[1].curb_reach() - map.roads[1].width / 2.0;
+    let casing = near_head("bridge_casings");
+    assert!(
+        casing < narrow + curb + 0.05,
+        "the curb stands {casing} m out at the head, past the tapered deck"
+    );
 }
 
 #[test]

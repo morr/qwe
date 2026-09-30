@@ -1029,7 +1029,7 @@ impl Painter {
     /// Двойная сплошная по середине асфальтовой разделительной парных половин
     /// (`roads/medians.rs`), с разрывами перекрёстков обеих половин `breaks`.
     /// У каждой половины своей осевой нет — она односторонняя.
-    pub fn paint_median(&mut self, midline: &[Vec2], breaks: &[Break]) {
+    pub fn paint_median(&mut self, midline: &[Vec2], breaks: &[Break], on_deck: bool) {
         let (path, along, to_break) = break_profile(midline, false, breaks, 0.5);
         if path.len() < 2 {
             return;
@@ -1043,7 +1043,13 @@ impl Painter {
                 alpha: 1.0,
             })
             .collect();
-        self.axes.push_paint_strip(
+        // разделительная двух настилов лежит в их слое — и краска над ним
+        let builder = if on_deck {
+            &mut self.bridge_axes
+        } else {
+            &mut self.axes
+        };
+        builder.push_paint_strip(
             &path,
             false,
             AXIS_STRIP,

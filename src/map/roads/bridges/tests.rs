@@ -20,7 +20,7 @@ fn band(points: &[Vec2], reach: f32) -> ShadowBand {
     let deck = lone(points);
     ShadowBand {
         path: bridge_shadow_path(points, &deck),
-        reach,
+        reach: [reach; 2],
         penumbra: bridge_penumbra(deck.span),
     }
 }
