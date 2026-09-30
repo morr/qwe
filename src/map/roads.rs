@@ -1288,12 +1288,12 @@ pub fn mesh_roads_with_ruts(
             // Бортика со стороны пары нет: между настилами-половинами лежит
             // разделительная в слое настилов (`medians::draw`), и внутренние
             // бортики светились бы по её краям разделителем, которого на
-            // подходе нет (R30) — куски, как у полосы тротуара
+            // подходе нет (R30) — куски, как у полосы тротуара, только по
+            // мощёной разделительной: над газоном бортик и есть край моста
             let curb = road.curb_reach() - road.width / 2.0;
             let head_length = head.as_deref().map_or(0.0, polyline_length);
-            let pieces = prepared.pairs().band_pieces(
+            let pieces = prepared.pairs().curb_pieces(
                 index,
-                [true; 2],
                 prepared.stitch_offset(index) - head_length,
                 polyline_length(body),
             );
@@ -1305,7 +1305,7 @@ pub fn mesh_roads_with_ruts(
                     let middle = wedge_middle(total_length, polyline_length(path), end);
                     let paired = prepared
                         .pairs()
-                        .beside(index, middle, 0.0)
+                        .beside_paved(index, middle, 0.0)
                         .map(|left| usize::from(!left));
                     let halves = wedge_halves(taper.sides, end, |side| {
                         let curb = if paired == Some(side) { 0.0 } else { curb };

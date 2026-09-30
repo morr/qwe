@@ -482,8 +482,9 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     median of two paired decks lies on the deck** (`medians::draw` pushes a paved median
     or tram bed whose both halves are bridges into `Bridges::fills`, its double solid into
     `bridge_paint_axes`, its tram band into the deck layer too, and each deck draws **no
-    curb on its paired side** — `push_deck` takes `Pairs::band_pieces` like a sidewalk
-    band — and casts its shadow there only to the asphalt edge, `ShadowBand::reach` being
+    curb on its paired side** where that median is paved — `push_deck` takes
+    `Pairs::curb_pieces`, the sidewalk band's pieces over paved runs only (over a lawn the
+    curb is the bridge's edge and stays: Tula's flyover halves, sample 20) — and casts its shadow there only to the asphalt edge, `ShadowBand::reach` being
     per side, else the band lay as dark plates on the asphalt between the halves at the
     head, where the median starts a few metres in): in the street layer the median lay under the bridge shadow as a dark slit edged
     by the two inner curbs, a pale divider where the approach had a double line (R30,

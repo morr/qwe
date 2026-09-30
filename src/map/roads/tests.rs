@@ -1082,6 +1082,35 @@ fn a_paved_median_between_two_decks_lies_on_the_deck() {
     );
 }
 
+/// Над газоном между настилами-половинами бортик со стороны пары остаётся:
+/// там он край моста, а не разделитель (Тула, витрина 20 — половины развязки
+/// в десятке метров друг от друга потеряли внутренний бортик).
+#[test]
+fn decks_parted_over_a_lawn_keep_their_inner_curbs() {
+    let mut map = MapData::default();
+    let half = |points: Vec<Vec2>| RoadLine {
+        highway: Highway::Primary,
+        oneway: true,
+        lanes: Some(2),
+        ..fixture::bridge(points, 7.6)
+    };
+    map.roads.push(half(vec![Vec2::new(-10.0, 0.0), Vec2::new(-10.0, 200.0)]));
+    map.roads.push(half(vec![Vec2::new(10.0, 200.0), Vec2::new(10.0, 0.0)]));
+    map.network = super::network::RoadNetwork::new(&map.roads);
+    let prepared = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
+    assert!(
+        prepared.pairs().medians().iter().any(|median| !median.is_paved()),
+        "the two decks make no lawn median"
+    );
+    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let curb = map.roads[0].curb_reach() - map.roads[0].width / 2.0;
+    let inner = Vec2::new(-10.0 + 3.8 + curb / 2.0, 100.0);
+    assert!(
+        layer(&layers, "bridge_casings").builder.covers_for_test(inner),
+        "the deck lost its inner curb over the lawn"
+    );
+}
+
 /// На шве земля/мост со сменой числа полос настил берёт клин, как шов улицы:
 /// у головы моста он шириной в подход и расходится до своей, бортик сужается
 /// вместе с ним. Без клина ширина прыгала ступенькой ровно на голове, а шов

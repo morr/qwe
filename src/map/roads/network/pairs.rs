@@ -1161,6 +1161,25 @@ impl Pairs {
     ) -> Option<Vec<BandPiece>> {
         band_pieces(&self.runs[road], sides, stitch, total)
     }
+
+    /// Куски бортика настила-половины: как [`Self::band_pieces`] с обеих
+    /// сторон, но сторону пары снимают только куски с **мощёной**
+    /// разделительной — она лежит на настиле (`medians::draw`). Между
+    /// настилами над газоном (половины развязки в Туле, витрина 20) бортик
+    /// остаётся: там его краем кончается мост.
+    pub fn curb_pieces(&self, road: usize, stitch: f32, total: f32) -> Option<Vec<BandPiece>> {
+        let paved: Vec<PairRun> = self.runs[road].iter().filter(|run| run.paved).copied().collect();
+        band_pieces(&paved, [true; 2], stitch, total)
+    }
+
+    /// [`Self::beside`] по кускам пары с мощёной разделительной.
+    pub fn beside_paved(&self, road: usize, at: f32, slack: f32) -> Option<bool> {
+        self.runs[road]
+            .iter()
+            .filter(|run| run.paved)
+            .find(|run| run.from - slack <= at && at <= run.to + slack)
+            .map(|run| run.left)
+    }
 }
 
 /// [`Pairs::band_pieces`] по кускам пары `runs` одной дороги.
