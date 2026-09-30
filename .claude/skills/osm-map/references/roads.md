@@ -1422,14 +1422,25 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     rival does not "pass" by street identity — OSM splits a cross street into two streets
     at a oneway change, and Петра Алексеева (Tula, 5968 1582) ran its dashes straight
     through a four-way crossing of equals because Макса Смирнова is one-way south of it
-    and two-way north. **A crossroads of tertiary rank or higher breaks the higher road
-    too** (`CROSSING_CUTS_RANK` 2 — the crossroads' rank is the lower of its two
-    streets): no road paints its lanes through the field of a real crossroads, and
-    before this a primary kept its solid line diagonally across a secondary pair (Орёл,
-    gallery sample 05 — Московская over Пушкина; the signals there stand 27–29 m out,
-    beyond the cluster zone). A residential crossroads does not cut a main road, and a
-    joining street of any rank never does (Ростов 03 stays through) — pinned by
-    `a_tertiary_crossing_breaks_the_primary_too_but_a_residential_one_does_not`. Signals
+    and two-way north. **A crossroads of any class breaks the higher road too**: no
+    road paints its lanes through the field of a real crossroads — a primary kept its
+    solid line diagonally across a secondary pair (Орёл, gallery sample 05 — Московская
+    over Пушкина; the signals there stand 27–29 m out, beyond the cluster zone), and a
+    six-lane tertiary ran its lane lines and its double solid axis across a residential
+    cross street (Tula, Лейтейзена × Сойфера 4468 3849, Фрунзе × Коминтерна, Лейтейзена
+    × Бр. Жабровых, Первомайская × Вересаева; roads list R5) — a double solid through
+    the node reads as «no left turn». Until R5 a residential crossroads left the main
+    road through (`CROSSING_CUTS_RANK`, tertiary, is gone). **A staggered crossroads is
+    one too**: two foreign arms from two nodes of the cluster, closer than the road's
+    own width and heading apart on one line (within `STAGGER_ALIGN` 40°, a 10 m chord)
+    — Вересаева reaches Первомайская as two ways at nodes 6.3 m apart, and the main
+    road ran through as at a joining; its 13 m piece to the next zebra then held that
+    zebra's solid approach on the exit lanes (roads list R12). Two joinings farther
+    apart than the width stay two (Циолковского, 17 m). A **joining** street of any
+    rank — one foreign arm at the node, a T, a slip — never cuts it (Ростов 03 stays
+    through; Путейская 2638 3153, a T where the through street bends, keeps its axis —
+    the bend itself is R22) — pinned by
+    `a_crossing_of_any_class_breaks_the_primary_but_a_joining_street_does_not`. Signals
     aside, such a road **leads** the junction
     (`Junction::leading`), and so does a ring road (an arc of `on_ring` or a closed way —
     whether it passes or not, since OSM ends an arc at every entry) whatever the

@@ -341,10 +341,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     gets no rule zebra, no stop line and no arrows; its lines break until they (not its
     whole section) leave the other roads' asphalt, so a branch peeling off a wider road at
     a sharp fork does not paint across that road's lanes. **Main through**: a road keeps its lines through a cluster unless it ends
-    there, is crossed by a road of its rank that also passes (or at a **crossroads** —
-    other streets bringing two arms to one node, however OSM splits them), is crossed at
-    a crossroads of at least tertiary rank (`CROSSING_CUTS_RANK` — a higher road loses
-    its lines there too; a residential crossroads and any **joining** street leave it
+    there, is crossed by a road of its rank that also passes, stands at a **crossroads** —
+    other streets bringing two arms to one node, however OSM splits them, or to two nodes
+    closer than the road's width on one line (staggered) — of any class
+    (a higher road loses its lines there too: a double solid through the node would
+    forbid the left turn; only a **joining** street, one foreign arm, leaves it
     through), meets a higher rank, or the
     cluster has signals; rank is the `highway` class, a stop / give-way sign on the arm
     lowers it. On every arm that breaks: a **zebra** (the OSM crossing on the arm, or one

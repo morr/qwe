@@ -17,8 +17,8 @@
 //!   рангом, либо примыкает дорога выше рангом. Ранг — класс `highway`, знак
 //!   `stop`/`give_way` на плече понижает его на полступени. Примыкание
 //!   второстепенной улицы линий главной не рвёт; крестовина — два плеча чужих
-//!   улиц в одном узле — рвёт равную, как и проходящая насквозь, а крестовина
-//!   не ниже `tertiary` ([`CROSSING_CUTS_RANK`]) — и старшую; половина
+//!   улиц в одном узле — рвёт всех, и старшую тоже, какого бы класса ни была
+//!   поперечная (осевая насквозь — запрет левого поворота); половина
 //!   разделённой улицы своей второй половине не соперник. Светофор в кластере
 //!   рвёт всех;
 //! - **зебра и стоп-линия на плече**, которое рвётся: зебра — по узлу
@@ -106,12 +106,13 @@ const RULE_ZEBRA_DATA_REACH: f32 = ARM_CROSSING_REACH;
 /// Ранг ([`class_rank`]) улицы, без которой в кластере зебры по правилу нет,
 /// если узел не под светофором: `tertiary`.
 const RULE_ZEBRA_RANK: u8 = 2;
-/// Ранг ([`class_rank`]) крестовины, которая рвёт линии и старшей дороги:
-/// `tertiary`. Через поле настоящего перекрёстка линий полос не кладут ни
-/// одной из дорог — в Орле (витрина 05) сплошная primary Московской шла
-/// наискось через полотно secondary-пары Пушкина. Жилая крестовина главную
-/// не рвёт: там её осевая через узел — обычное дело.
-const CROSSING_CUTS_RANK: u8 = 2;
+/// Косинус, под которым два чужих плеча из разных узлов кластера смотрят в
+/// противоположные стороны и считаются одной поперечной улицей — крестовиной
+/// вразбежку: 40° от прямой.
+const STAGGER_ALIGN: f32 = 0.766;
+/// Хорда направления плеча для крестовины вразбежку, м: первое звено OSM
+/// бывает в полметра.
+const STAGGER_CHORD: f32 = 10.0;
 /// Кусок линий между двумя разрывами короче этого — не рисуется: одинокий
 /// штрих между узлом и зеброй читается мусором.
 pub(super) const MIN_RUN: f32 = 6.0;
@@ -896,6 +897,13 @@ impl NodePaint {
             *continues.entry(street(arm.road)).or_default() += 1;
         }
         let passes = |road: usize| continues.get(&street(road)).copied().unwrap_or(0) >= 2;
+        // куда плечо уходит от узла: хорда на [`STAGGER_CHORD`] по его пути
+        let heading = |arm: &Arm| -> Vec2 {
+            let walk = Walk::new(paths[arm.road].as_ref());
+            let along = (walk.project(arm.at) + arm.dir * STAGGER_CHORD).clamp(0.0, walk.total);
+            walk.at(along)
+                .map_or(Vec2::ZERO, |(point, _)| (point - arm.at).normalize_or_zero())
+        };
         let sign = |road: usize| -> Option<Sign> {
             drawn[road]
                 .points
@@ -968,23 +976,25 @@ impl NodePaint {
                         .any(|&other| street(other) == street(arm.road))
                 })
                 .collect();
-            // ранг крестовины — младшей из двух её улиц; `None` — крестовины нет
-            let crossing = foreign
-                .iter()
-                .enumerate()
-                .flat_map(|(index, arm)| {
-                    foreign[index + 1..]
-                        .iter()
-                        .filter(|other| other.at.distance(arm.at) < JUNCTION_MARGIN)
-                        .map(|other| {
-                            class_rank(drawn[arm.road].highway)
-                                .min(class_rank(drawn[other.road].highway))
-                        })
+            // крестовина рвёт и старшую дорогу, какого бы ранга ни была
+            // поперечная: через поле перекрёстка на четыре стороны линий не
+            // кладут, а осевая насквозь — двойная сплошная поперёк проезда
+            // поперечной, запрет левого поворота (Тула, Лейтейзена × Сойфера,
+            // 4468, 3849 — tertiary на 6 полос через жилую). Не рвёт её только
+            // примыкание сбоку — одно чужое плечо в узле. Два чужих плеча,
+            // что смотрят в разные стороны на одной прямой, — крестовина и
+            // вразбежку, если между их узлами меньше ширины самой дороги:
+            // OSM сводит Вересаева к Первомайской двумя ways в двух узлах в
+            // 6 м (Тула, 3472, 2677). Щорса и переулок у Циолковского в 17 м
+            // — два примыкания
+            let crossed = foreign.iter().enumerate().any(|(index, arm)| {
+                foreign[index + 1..].iter().any(|other| {
+                    let apart = other.at.distance(arm.at);
+                    apart < JUNCTION_MARGIN
+                        || apart < drawn[road].width
+                            && heading(arm).dot(heading(other)) < -STAGGER_ALIGN
                 })
-                .max();
-            let crossed = crossing.is_some();
-            // крестовина не ниже `tertiary` рвёт и старшую дорогу
-            let cut = crossing.is_some_and(|rank| rank >= CROSSING_CUTS_RANK);
+            });
             // ведёт узел: проходит насквозь, и уступать некому — ни дороге
             // выше рангом, ни такой же проходящей или крестовине. Кольцо ведёт
             // всегда: у него приоритет, въезды ему уступают
@@ -998,10 +1008,10 @@ impl NodePaint {
             let leads = (passes(road) || ring_road(road))
                 && (drawn[road].is_roundabout()
                     || (!at_ring || ring_road(road))
-                        && !cut
+                        && !crossed
                         && !others.iter().any(|&other| {
                             let theirs = rank(other);
-                            theirs > own || (theirs == own && (passes(other) || crossed))
+                            theirs > own || (theirs == own && passes(other))
                         }));
             let yields = signalized || !leads;
             let widest = others

@@ -226,6 +226,44 @@ fn an_unpaved_arm_gets_no_paint() {
     assert!(paint.stop_lines.is_empty());
 }
 
+/// Крестовина вразбежку: поперечная жилая приходит двумя ways в два узла
+/// главной в 6 м друг от друга (Тула, Первомайская × Вересаева, R5) — это
+/// всё равно крестовина, линии главной рвутся. Два примыкания с разных
+/// сторон дальше ширины главной — нет (Циолковского, 17 м).
+#[test]
+fn a_staggered_crossing_breaks_the_main_road_but_distant_joinings_do_not() {
+    let paint_at = |apart: f32| {
+        let far = NODE + Vec2::new(apart, 0.0);
+        let main = road(
+            vec![Vec2::ZERO, NODE, far, Vec2::new(200.0, 0.0)],
+            12.0,
+            Highway::Secondary,
+            4,
+        );
+        let south = road(
+            vec![Vec2::new(90.0, -80.0), NODE],
+            8.0,
+            Highway::Residential,
+            2,
+        );
+        let north = road(
+            vec![far, far + Vec2::new(10.0, 80.0)],
+            8.0,
+            Highway::Residential,
+            2,
+        );
+        paint_of(vec![main, south, north], Vec::new(), EVERYTHING)
+    };
+    let staggered = paint_at(6.3);
+    assert!(
+        !gaps(&staggered, 0).is_empty(),
+        "{:?}",
+        staggered.lines().of(0).solid
+    );
+    let apart = paint_at(17.0);
+    assert!(gaps(&apart, 0).is_empty(), "{:?}", apart.lines().of(0).cut);
+}
+
 /// Размеченный переход OSM на одном плече улицы снимает зебру по правилу с
 /// другого её плеча: узел уже переходят по данным, и вторая зебра в двух
 /// десятках метров от первой — лишняя (Тула, витрина 12). Без перехода оба
@@ -244,7 +282,17 @@ fn an_osm_crossing_of_the_street_drops_the_rule_zebra_on_its_other_arm() {
         Vec::new(),
         EVERYTHING,
     );
-    assert_eq!(bare.zebras.len(), 2, "{:?}", bare.zebras);
+    // крестовина рвёт и tertiary, у её плеч свои зебры; считаем только
+    // зебры поперёк жилой — горизонтальные
+    let across_zebras = |paint: &NodePaint| -> Vec<Zebra> {
+        paint
+            .zebras
+            .iter()
+            .copied()
+            .filter(|zebra| (zebra.from.y - zebra.to.y).abs() < 0.1)
+            .collect()
+    };
+    assert_eq!(across_zebras(&bare).len(), 2, "{:?}", bare.zebras);
     let crossing = RoadNode {
         pos: at,
         kind: RoadNodeKind::Crossing {
@@ -258,8 +306,9 @@ fn an_osm_crossing_of_the_street_drops_the_rule_zebra_on_its_other_arm() {
         vec![crossing],
         EVERYTHING,
     );
-    assert_eq!(mapped.zebras.len(), 1, "{:?}", mapped.zebras);
-    let zebra = mapped.zebras[0];
+    let mapped_across = across_zebras(&mapped);
+    assert_eq!(mapped_across.len(), 1, "{:?}", mapped.zebras);
+    let zebra = mapped_across[0];
     assert!(
         (zebra.from.y + 20.0).abs() < 1.0,
         "зебра — по данным: {zebra:?}"
@@ -296,11 +345,12 @@ fn an_equal_crossing_breaks_both_and_paints_every_arm() {
     assert_eq!(paint.stop_lines.len(), 4);
 }
 
-/// Крестовина `tertiary` рвёт и старшую primary: через поле перекрёстка
-/// линий полос нет ни у одной из дорог (Орёл, витрина 05). Жилая крестовина
-/// и примыкание `tertiary` главную не рвут.
+/// Крестовина рвёт и старшую primary: через поле перекрёстка линий полос нет
+/// ни у одной из дорог (Орёл, витрина 05) — и жилая крестовина тоже, осевая
+/// насквозь была бы запретом левого поворота (Тула, Лейтейзена × Сойфера,
+/// R5). Примыкание сбоку, хоть и `tertiary`, главную не рвёт.
 #[test]
-fn a_tertiary_crossing_breaks_the_primary_too_but_a_residential_one_does_not() {
+fn a_crossing_of_any_class_breaks_the_primary_but_a_joining_street_does_not() {
     let across = |highway| {
         road(
             vec![Vec2::new(100.0, -100.0), NODE, Vec2::new(100.0, 100.0)],
@@ -327,8 +377,12 @@ fn a_tertiary_crossing_breaks_the_primary_too_but_a_residential_one_does_not() {
         Vec::new(),
         EVERYTHING,
     );
-    assert!(gaps(&quiet, 0).is_empty(), "{:?}", quiet.lines().of(0).cut);
-    assert_eq!(quiet.junctions[0].leading, vec![0]);
+    assert!(
+        !gaps(&quiet, 0).is_empty(),
+        "{:?}",
+        quiet.lines().of(0).solid
+    );
+    assert!(quiet.junctions[0].leading.is_empty());
 
     let side = road(
         vec![Vec2::new(100.0, -80.0), NODE],
