@@ -503,12 +503,7 @@ fn smooth_run(
             neighbours(q, kept.len(), closed)
                 .filter(|_| kept[q].pinned)
                 .and_then(|(before, after)| {
-                    through_bend(
-                        kept[before].at,
-                        kept[q].at,
-                        kept[after].at,
-                        curve.deviation,
-                    )
+                    through_bend(kept[before].at, kept[q].at, kept[after].at, curve.deviation)
                 })
         })
         .collect();
@@ -530,8 +525,7 @@ fn smooth_run(
             source: None,
             ..*vertex
         };
-        let Some(((before, after), bend)) =
-            neighbours(q, kept.len(), closed).zip(through[q])
+        let Some(((before, after), bend)) = neighbours(q, kept.len(), closed).zip(through[q])
         else {
             vertices.push(*vertex);
             continue;

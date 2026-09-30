@@ -628,9 +628,9 @@ fn a_zebra_is_whole_bars_centred_between_the_kerbs() {
     assert!((bars - bars.round()).abs() < 1e-3, "{bars} bars");
     // поля до кромок поровну
     let across: Vec<f32> = zebras.positions_for_test().iter().map(|p| p[1]).collect();
-    let (low, high) = across
-        .iter()
-        .fold((f32::MAX, f32::MIN), |(low, high), &y| (low.min(y), high.max(y)));
+    let (low, high) = across.iter().fold((f32::MAX, f32::MIN), |(low, high), &y| {
+        (low.min(y), high.max(y))
+    });
     assert!((low + high).abs() < 1e-3, "{low}..{high}");
     assert!(high <= 4.0 && high > 3.0, "{high}");
 }
