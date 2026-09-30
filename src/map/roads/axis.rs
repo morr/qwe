@@ -69,6 +69,11 @@ const KERB_STRAIGHT: f32 = 12.0;
 /// Насколько между кромками моста и пешеходного моста рядом может быть
 /// пусто, м, чтобы второй шёл вслед за первым ([`follow_bridge_sidewalks`]).
 const SIDEWALK_DECK_GAP: f32 = 3.0;
+/// Косинус угла между мостиком и настилом, при котором мостик идёт вдоль
+/// него и выносится к кромке ([`place_bridge_sidewalks`]).
+const FOOTBRIDGE_ALONG: f32 = 0.9;
+/// Мостик ближе этого к оси настила, м, не выносится: сторону не выбрать.
+const FOOTBRIDGE_ON_AXIS: f32 = 0.3;
 /// Излом мельче этого не скругляется, рад: дуга была бы в сантиметр.
 const MIN_BEND: f32 = 0.5 * PI / 180.0;
 
@@ -182,8 +187,9 @@ pub fn street_axes<'a>(
         .filter(|(index, road)| road.bridge && pairs.has_runs(*index))
         .map(|(index, _)| (index, paths[index].to_vec()))
         .collect();
-    let moved = pairs.align(&mut paths, roads, network, nodes, &wedges);
+    let mut moved = pairs.align(&mut paths, roads, network, nodes, &wedges);
     follow_bridge_sidewalks(roads, &mut paths, &decks);
+    moved.extend(place_bridge_sidewalks(roads, &mut paths, nodes));
     // узлы, уехавшие с половиной, находятся и по новому месту: скругления,
     // стежки и кольца ищут их по вершине нарисованной оси
     pairs.follow_moved_nodes(&mut paths, nodes, &moved);
@@ -249,6 +255,106 @@ fn follow_bridge_sidewalks(
             paths[index] = Cow::Owned(shifted);
         }
     }
+}
+
+/// Пешеходный мост, замапленный **внутри** настила моста улицы, выносится к
+/// его кромке: ось мостика — не ближе `полуширина настила + своя
+/// полуширина + свой бортик` от оси моста (R14, Тула: мостик 1506675090 в
+/// 3.6 м от оси моста 49777171 при его полуширине 3.8). Настилы лежат в одном
+/// слое, и мостик, наполовину на асфальте, закрывал край проезжей части
+/// светлой полосой, а за головой моста его торец лежал светлым
+/// прямоугольником на асфальте подхода. Бортик мостика — тоже за кромкой:
+/// торец мостика заходит за голову моста на асфальт подхода, и бортик,
+/// оставленный на асфальте, торчал там светлым зубцом; у кромки он ложится
+/// парапетом между проезжей частью и тротуаром.
+///
+/// Двигается только мостик **вдоль** настила (звенья почти параллельны,
+/// [`FOOTBRIDGE_ALONG`]) — переходящий настил поперёк на своём уровне
+/// остаётся на месте. Сдвиг **перетекает в наземную дорожку**, продолжающую
+/// мостик в его торце, и гаснет на ней (`Pairs::follow_moved_nodes`, тот же
+/// ход, что у узлов разводки пар): иначе торцы мостика и дорожки разошлись бы
+/// уступом. Возвращает сдвинутые узлы `(было, стало)`.
+fn place_bridge_sidewalks(
+    roads: &[RoadLine],
+    paths: &mut [Cow<[Vec2]>],
+    nodes: &RoadNodes,
+) -> Vec<(Vec2, Vec2)> {
+    let decks: Vec<usize> = roads
+        .iter()
+        .enumerate()
+        .filter(|(_, road)| road.bridge && road.class == RoadClass::Street)
+        .map(|(index, _)| index)
+        .collect();
+    let mut moved = Vec::new();
+    if decks.is_empty() {
+        return moved;
+    }
+    for (index, road) in roads.iter().enumerate() {
+        if !road.bridge || road.class != RoadClass::Alley || paths[index].len() < 2 {
+            continue;
+        }
+        let path = paths[index].to_vec();
+        let last = path.len() - 1;
+        let pushes: Vec<Vec2> = (0..path.len())
+            .map(|vertex| {
+                let along =
+                    (path[(vertex + 1).min(last)] - path[vertex.saturating_sub(1)]).normalize_or_zero();
+                decks
+                    .iter()
+                    .filter_map(|&deck| {
+                        let need = roads[deck].width / 2.0 + road.curb_reach();
+                        deck_push(&paths[deck], path[vertex], along, need)
+                    })
+                    .max_by(|a, b| a.length_squared().total_cmp(&b.length_squared()))
+                    .unwrap_or(Vec2::ZERO)
+            })
+            .collect();
+        if pushes.iter().all(|push| *push == Vec2::ZERO) {
+            continue;
+        }
+        let shifted: Vec<Vec2> = path.iter().zip(&pushes).map(|(point, push)| point + push).collect();
+        paths[index] = Cow::Owned(shifted);
+        // сдвинутый торец в общем узле: дороги узла идут за ним с угасанием
+        // (`Pairs::follow_moved_nodes`), а узел находится и по новому месту
+        for (vertex, node) in [(0, road.points[0]), (last, road.points[road.points.len() - 1])] {
+            let push = pushes[vertex];
+            if push != Vec2::ZERO && nodes.is_shared(node) {
+                moved.push((node, node + push));
+            }
+        }
+    }
+    moved
+}
+
+/// Насколько вынести точку `point` мостика, идущего по `along`, из настила
+/// `deck`, чтобы между осями было `need`: `None` — мостик не над настилом,
+/// идёт поперёк или стоит на самой оси (сторону не выбрать).
+fn deck_push(deck: &[Vec2], point: Vec2, along: Vec2, need: f32) -> Option<Vec2> {
+    let (near, tangent) = deck
+        .windows(2)
+        .filter_map(|link| {
+            let tangent = (link[1] - link[0]).normalize_or_zero();
+            (tangent != Vec2::ZERO).then(|| {
+                let t = (point - link[0]).dot(tangent).clamp(0.0, link[0].distance(link[1]));
+                (link[0] + tangent * t, tangent)
+            })
+        })
+        .min_by(|a, b| a.0.distance_squared(point).total_cmp(&b.0.distance_squared(point)))?;
+    if tangent.dot(along).abs() < FOOTBRIDGE_ALONG {
+        return None;
+    }
+    let offset = point - near;
+    // за торцом настила — не дальше собственной полуширины мостика: там его
+    // торец ещё лежит на голове моста
+    if offset.dot(tangent).abs() > need {
+        return None;
+    }
+    let normal = tangent.perp();
+    let lateral = offset.dot(normal);
+    if lateral.abs() < FOOTBRIDGE_ON_AXIS || lateral.abs() >= need {
+        return None;
+    }
+    Some(normal * (need * lateral.signum() - lateral))
 }
 
 /// Сшитая ломаная пробега: точки, полуширина и закреплённость в каждой

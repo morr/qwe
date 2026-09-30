@@ -944,6 +944,52 @@ fn deck_fill_carries_its_streets_lane_frame() {
     assert!(coords.iter().all(|c| c[3] == 0.0), "a footbridge got lanes");
 }
 
+/// Мостик, замапленный внутри настила моста (Тула: 3.6 м от оси при
+/// полуширине 3.8), выносится к его кромке, а наземная дорожка, продолжающая
+/// его, идёт следом: иначе мостик полосой закрывал край проезжей части, а за
+/// головой моста его торец лежал светлым прямоугольником на асфальте подхода
+/// (R14).
+#[test]
+fn a_footbridge_inside_the_deck_moves_to_its_edge() {
+    let mut map = MapData::default();
+    map.roads.push(fixture::street(
+        vec![Vec2::new(0.0, 0.0), Vec2::new(0.0, 100.0)],
+        7.6,
+    ));
+    map.roads.push(fixture::bridge(
+        vec![Vec2::new(0.0, 100.0), Vec2::new(0.0, 160.0)],
+        7.6,
+    ));
+    let foot = Vec2::new(-3.6, 101.0);
+    map.roads.push(fixture::footway(vec![Vec2::new(-20.0, 80.0), foot]));
+    map.roads.push(RoadLine {
+        class: RoadClass::Alley,
+        highway: Highway::Path,
+        ..fixture::bridge(vec![foot, Vec2::new(-3.6, 160.0)], 3.5)
+    });
+    map.network = super::network::RoadNetwork::new(&map.roads);
+    let prepared = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
+    // и бортик мостика — за кромкой: на подходе он торчал бы на асфальт
+    let need = 7.6 / 2.0 + map.roads[3].curb_reach();
+    let footbridge = prepared.axis(3, Axis::Nodal);
+    for point in footbridge {
+        assert!(
+            point.x <= -need + 1e-3,
+            "the footbridge stays {} m off the deck axis, inside its edge",
+            -point.x
+        );
+    }
+    // наземная дорожка сходится в тот же торец
+    let ground = prepared.axis(2, Axis::Nodal);
+    let joint = ground[ground.len() - 1];
+    assert!(
+        joint.distance(footbridge[0]) < 1e-3,
+        "the ground footway ends at {joint}, the footbridge starts at {}",
+        footbridge[0]
+    );
+    assert_eq!(ground[0], Vec2::new(-20.0, 80.0), "the far end moved too");
+}
+
 #[test]
 fn an_empty_map_still_describes_every_layer() {
     let (layers, report) = mesh_roads(
