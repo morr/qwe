@@ -93,6 +93,7 @@ fn bridge_shadow_path(points: &[Vec2], deck: &BridgeSpan) -> Vec<ShadowPoint> {
             };
             ShadowPoint {
                 at: point + offset * rise,
+                along: at,
                 rise,
                 normal: normals[index],
             }
@@ -326,17 +327,22 @@ impl Bridges {
     /// сужается вместе с асфальтом, а не стоит полной ширины вокруг клина
     /// светлой полосой. `pieces` — куски тела со сторонами бортика
     /// (`Pairs::band_pieces`): со стороны пары его нет, `None` — с обеих
-    /// сторон на всём теле. Тень — по всему настилу `points`.
+    /// сторон на всём теле; `head` — длина клина перед телом, м по `points`.
+    /// Тень — по всему настилу `points`, с полушириной куска в каждой точке
+    /// ([`deck_shadow_reach`]).
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn push_deck(
         &mut self,
         road: usize,
         points: &[Vec2],
         body: &[Vec2],
+        head: f32,
         pieces: Option<&[BandPiece]>,
         wedges: &[(&[Vec2], [[f32; 2]; 2])],
         line: &RoadLine,
     ) {
         // бордюр настила — он и есть мост
+        let color = BRIDGE_CURB_COLOR.to_linear();
         match pieces {
             None => push_bridge_curb(&mut self.casings, body, 2.0 * line.curb_reach(), ROAD_JOIN),
             Some(pieces) => push_sidewalk(
@@ -344,11 +350,10 @@ impl Bridges {
                 body,
                 [line.width, line.curb_reach() - line.width / 2.0],
                 Some(pieces),
-                BRIDGE_CURB_COLOR.to_linear(),
+                color,
                 [true; 2],
             ),
         }
-        let color = BRIDGE_CURB_COLOR.to_linear();
         for &(path, halves) in wedges {
             self.casings.push_taper_sided(path, halves, [0.0; 2], color);
         }
@@ -356,20 +361,13 @@ impl Bridges {
         // моста. Ни один другой слой её не даёт: наземные тени считают
         // только дома, а мост через Упу — самая заметная вещь на воде.
         if let Some(deck) = self.span(road).copied().filter(|deck| deck.casts) {
-            // сторона без бортика где-нибудь — сторона пары: тень там — по
-            // кромку асфальта
-            let bare = |side: usize| {
-                pieces.is_some_and(|pieces| pieces.iter().any(|piece| !piece.2[side]))
-            };
-            let reach = [0, 1].map(|side| {
-                if bare(side) {
-                    line.width / 2.0
-                } else {
-                    line.curb_reach()
-                }
-            });
+            let path = bridge_shadow_path(points, &deck);
+            let reach = path
+                .iter()
+                .map(|point| deck_shadow_reach(line, pieces, point.along - head))
+                .collect();
             self.shadows.push(ShadowBand {
-                path: bridge_shadow_path(points, &deck),
+                path,
                 reach,
                 penumbra: bridge_penumbra(deck.span),
             });
@@ -419,9 +417,10 @@ impl Bridges {
             from_end: 0.0,
             casts: true,
         };
+        let path = bridge_shadow_path(&points, &lifted);
         self.shadows.push(ShadowBand {
-            path: bridge_shadow_path(&points, &lifted),
-            reach: [deck / 2.0 + bridge_curb_width(deck); 2],
+            reach: vec![[deck / 2.0 + bridge_curb_width(deck); 2]; path.len()],
+            path,
             penumbra: bridge_penumbra(span),
         });
     }
@@ -600,8 +599,12 @@ impl<'a> Underneath<'a> {
 /// уезжает за торец на `полуширину × sin` этого наклона. На карте это тёмный
 /// язычок из-под конца бортика (у мостика через Упу — 0.75 м), с той стороны,
 /// куда светит солнце; с другой стороны торец на столько же подрезан.
+///
+/// `along` — где точка на осевой настила, м от её начала (до сдвига): по нему
+/// настил-половина берёт полуширину тени своего куска ([`deck_shadow_reach`]).
 struct ShadowPoint {
     at: Vec2,
+    along: f32,
     rise: f32,
     normal: Vec2,
 }
@@ -646,13 +649,15 @@ const BRIDGE_CURB_COLOR: Color = Color::srgb(0.80, 0.80, 0.79);
 const TRACK_DECK_COLOR: Color = Color::srgb(0.60, 0.59, 0.57);
 
 /// Теневая лента одного моста, готовая к укладке: путь, полуширина настила с
-/// бортиком `[слева, справа]` по ходу пути и ширина полутени на полном
-/// подъёме. Стороны разные у настила-половины: со стороны пары бортика нет, и
-/// тень, отложенная на его ширину, ложилась у головы моста тёмной плашкой на
-/// асфальт между половинами (R30).
+/// бортиком `[слева, справа]` по ходу пути — **в каждой точке пути своя** — и
+/// ширина полутени на полном подъёме. Стороны разные у настила-половины: со
+/// стороны пары бортика нет, и тень, отложенная на его ширину, ложилась у
+/// головы моста тёмной плашкой на асфальт между половинами (R30). А по точкам
+/// — потому что бортик пары снят только над мощёной разделительной: над
+/// газоном тот же настил его сохраняет, и под ним нужна тень.
 struct ShadowBand {
     path: Vec<ShadowPoint>,
-    reach: [f32; 2],
+    reach: Vec<[f32; 2]>,
     penumbra: f32,
 }
 
@@ -693,6 +698,32 @@ const PENUMBRA_MAX: f32 = 1.0;
 fn bridge_penumbra(span: f32) -> f32 {
     let length = shadow::length(bridge_height(span));
     (length * PENUMBRA_SHARE).clamp(PENUMBRA_MIN, PENUMBRA_MAX)
+}
+
+/// Полуширина тени настила `[слева, справа]` в точке `at`, м по его телу:
+/// сторона, с которой у ближайшего куска бортика нет (сторона пары над
+/// мощёной разделительной), — по кромку асфальта, иначе — по край бортика.
+/// Точки клиньев вне тела берут крайний кусок. Без кусков бортик с обеих
+/// сторон везде.
+fn deck_shadow_reach(line: &RoadLine, pieces: Option<&[BandPiece]>, at: f32) -> [f32; 2] {
+    let sides = pieces
+        .and_then(|pieces| {
+            pieces
+                .iter()
+                .min_by(|a, b| {
+                    let off = |piece: &&BandPiece| (piece.0 - at).max(at - piece.1).max(0.0);
+                    off(a).total_cmp(&off(b))
+                })
+                .map(|piece| piece.2)
+        })
+        .unwrap_or([true; 2]);
+    sides.map(|curbed| {
+        if curbed {
+            line.curb_reach()
+        } else {
+            line.width / 2.0
+        }
+    })
 }
 
 /// Тени всех мостов разом: **объединённые** ядра ([`ShadowBand`]) плюс мягкая
@@ -845,9 +876,10 @@ fn shadow_edges(band: &ShadowBand) -> Vec<ShadowEdge> {
     }
     band.path
         .iter()
-        .map(|point| {
+        .zip(&band.reach)
+        .map(|(point, reach)| {
             // единичную нормаль стыка растягивает своя полуширина
-            let [left, right] = band.reach.map(|reach| reach + SHADOW_SPREAD * point.rise);
+            let [left, right] = reach.map(|reach| reach + SHADOW_SPREAD * point.rise);
             ShadowEdge {
                 left: point.at + point.normal * left,
                 right: point.at - point.normal * right,

@@ -1450,7 +1450,15 @@ pub fn build_roads(map: &MapData, style: RoadStyle, shape: RoadShape) -> RoadBui
                     (path, halves)
                 })
                 .collect();
-            bridges.push_deck(index, points, body, pieces.as_deref(), &curb_wedges, road);
+            bridges.push_deck(
+                index,
+                points,
+                body,
+                head_length,
+                pieces.as_deref(),
+                &curb_wedges,
+                road,
+            );
             let fills = bridges.fills();
             fills.set_lanes(lanes);
             push_street_fill(fills, body, road.width, color.to_linear(), breaks, trimmed);

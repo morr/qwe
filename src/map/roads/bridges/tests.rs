@@ -18,9 +18,10 @@ fn lone(points: &[Vec2]) -> BridgeSpan {
 /// Готовая теневая лента одинокого моста.
 fn band(points: &[Vec2], reach: f32) -> ShadowBand {
     let deck = lone(points);
+    let path = bridge_shadow_path(points, &deck);
     ShadowBand {
-        path: bridge_shadow_path(points, &deck),
-        reach: [reach; 2],
+        reach: vec![[reach; 2]; path.len()],
+        path,
         penumbra: bridge_penumbra(deck.span),
     }
 }
@@ -216,6 +217,25 @@ fn the_penumbra_follows_the_span() {
     assert_eq!(bridge_penumbra(1.0), PENUMBRA_MIN);
     assert_eq!(bridge_penumbra(600.0), PENUMBRA_MAX);
     assert!((PENUMBRA_MIN..=PENUMBRA_MAX).contains(&short));
+}
+
+/// Настил-половина над смешанной разделительной: первые 20 м она мощёная
+/// (бортика справа нет), дальше газон (бортик есть). Тень справа — по кромку
+/// асфальта только над мощёным куском; над газоном под бортиком она остаётся,
+/// а не сужается по всей длине из-за одного куска без бортика (R30).
+#[test]
+fn a_half_deck_keeps_its_curb_shadow_over_the_lawn() {
+    let line = fixture::bridge(vec![on_x(0.0), on_x(40.0)], 12.0);
+    let pieces: [BandPiece; 2] = [(0.0, 20.0, [true, false]), (20.0, 40.0, [true, true])];
+    let (curb, bare) = (line.curb_reach(), line.width / 2.0);
+    let head = 3.0;
+    let reach = |along: f32| deck_shadow_reach(&line, Some(&pieces), along - head);
+    assert_eq!(reach(head + 10.0), [curb, bare], "over the paved median");
+    assert_eq!(reach(head + 30.0), [curb, curb], "over the lawn");
+    // клин перед телом берёт крайний кусок
+    assert_eq!(reach(1.0), [curb, bare], "the head wedge");
+    assert_eq!(reach(head + 45.0), [curb, curb], "the tail wedge");
+    assert_eq!(deck_shadow_reach(&line, None, 5.0), [curb; 2]);
 }
 
 /// Западный подход к мосту через Упу — это четыре way по 23–30 м с
