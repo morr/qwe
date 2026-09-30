@@ -362,7 +362,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     exit node to where the exit's section leaves the ring's asphalt — breaks the ring's
     lane lines on the exit's side of its axis (`node_paint::Throat`); the halves of a divided street share one zebra line — one
     plank across both over a paved median, one zebra each to its kerb over a lawn. A
-    marked crossing elsewhere is a zebra with a gap in the lines. A **pocket**: a wide
+    marked crossing elsewhere is a zebra with a gap in the lines. A zebra is drawn as
+    **whole bars** only, centred on the asphalt it crosses. A **pocket**: a wide
     arm's lines with no room on the narrower arm across the junction end at its edge.
     A **stitch** (the network's pulled loose end) is a junction node like a shared one.
     The **leading road** of a junction — passing, and yielding by rank to nobody (a ring

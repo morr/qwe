@@ -592,6 +592,49 @@ fn a_crossing_paints_a_zebra_and_stop_lines_across_the_arms() {
     assert!(paint_layer(&layers, PAINT_ZEBRAS).is_empty());
 }
 
+/// Звено зебры — только целиком, и звенья по середине проезжей части
+/// (roads list R2): на улице в 8 м планка в 7.4 м кончалась на 0.4 периода,
+/// и крайнее звено выходило клином в 0.15 м у кромки (Тула, Фёдора Смирнова).
+#[test]
+fn a_zebra_is_whole_bars_centred_between_the_kerbs() {
+    use crate::map::osm::model::{RoadNode, RoadNodeKind};
+    let at = Vec2::new(100.0, 0.0);
+    let mut map = map_of(vec![with_lanes(
+        RoadLine {
+            highway: Highway::Tertiary,
+            ..street(vec![Vec2::ZERO, at, Vec2::new(200.0, 0.0)], 8.0)
+        },
+        2,
+        false,
+    )]);
+    map.road_nodes.push(RoadNode {
+        pos: at,
+        kind: RoadNodeKind::Crossing {
+            signals: false,
+            island: false,
+            marked: true,
+        },
+    });
+    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    assert_eq!(report.junctions.zebras, [1, 1]);
+    let zebras = paint_layer(&layers, PAINT_ZEBRAS);
+    let coords = zebras.ribbon_coords_for_test().unwrap();
+    let (first, last) = coords.iter().fold((f32::MAX, f32::MIN), |(low, high), c| {
+        (low.min(c[1]), high.max(c[1]))
+    });
+    // первое звено — от самого торца, последнее кончается торцом
+    assert!((first - ZEBRA_FIRST_BAR).abs() < 1e-3, "{first}");
+    let bars = (last - first + ZEBRA_PERIOD - ZEBRA_BAR) / ZEBRA_PERIOD;
+    assert!((bars - bars.round()).abs() < 1e-3, "{bars} bars");
+    // поля до кромок поровну
+    let across: Vec<f32> = zebras.positions_for_test().iter().map(|p| p[1]).collect();
+    let (low, high) = across
+        .iter()
+        .fold((f32::MAX, f32::MIN), |(low, high), &y| (low.min(y), high.max(y)));
+    assert!((low + high).abs() < 1e-3, "{low}..{high}");
+    assert!(high <= 4.0 && high > 3.0, "{high}");
+}
+
 #[test]
 fn a_pocket_line_ends_at_the_junction_and_the_rest_run_through() {
     // четыре полосы переходят в две на примыкании жилой: крайние линии широкой

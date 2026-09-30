@@ -1055,7 +1055,22 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     lanes in the lane-line mesh (kind 3, dashed 0.6 / 0.6 m for give-way — kind 4); a
     zebra is **one quad** in its own mesh (kind 5) whose bars (1 m period, half filled)
     the shader draws by the coordinate across the road and fades by `visible()` into a
-    plain light plank — so a far zebra is a mean tone, not a flicker. For all three the
+    plain light plank — so a far zebra is a mean tone, not a flicker. **A zebra is whole
+    bars only** (`paint::whole_bars`, roads list R2): its ends step inward by
+    `ZEBRA_FIT_STEP` 5 cm until the cross-section there — both long edges of the 4 m plank
+    and its middle — lies on street asphalt (`paint::ZebraGround`: the triangles the
+    `roads` layer has already laid, `MeshBuilder::triangles`, indexed only near zebras;
+    a ribbon by its axis and half width was tried first and overstated the asphalt
+    wherever the ribbon is narrower than the road — a taper head, a merge ramp — so at
+    Болдина's fork the end bar still lay on the sidewalk. `Carriageway` road areas are
+    another mesh and are not probed), the span left takes as many whole bars as fit, and the
+    plank shrinks to exactly them, centred in the span; the shader's first bar starts at the
+    plank's end (`ZEBRA_FIRST_BAR`). Before, the plank ran kerb to kerb less 0.3 m and ended
+    on a fraction of the period — the last bar a sliver at the kerb (Фёдора Смирнова, 3396
+    3839) — and where the kerb ran slantwise across the plank at a fork, the end bar lay on
+    the sidewalk (Болдина, 2527 2470). The middle of a plank is not probed: a joined plank
+    crosses a paved median or an island as before. No bar fits — no zebra
+    (`a_zebra_is_whole_bars_centred_between_the_kerbs`). For all three the
     ribbon's arclength runs across the road and «across» runs along it; to-break is a
     constant `NO_BREAK`.
   - **Layers**: `road_paint_wear_mask` + `road_paint_wear` at `Z_ROAD_WEAR_MASK` /

@@ -1507,8 +1507,12 @@ pub fn mesh_roads_with_ruts(
     for shape in &lawn_scraps {
         push_shape(&mut verges, shape.clone(), SIDEWALK_COLOR.to_linear());
     }
+    // зебра — из целых звеньев на асфальте улиц, каким он уже лёг
+    let ground = paint::ZebraGround::new(&node_paint.zebras, streets.triangles());
     for zebra in &node_paint.zebras {
-        painter.paint_zebra(zebra);
+        if let Some(zebra) = paint::whole_bars(zebra, |point| ground.contains(point)) {
+            painter.paint_zebra(&zebra);
+        }
     }
     for line in &node_paint.stop_lines {
         painter.paint_stop_line(line);

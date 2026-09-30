@@ -1094,14 +1094,16 @@ impl Painter {
     }
 
     /// Зебра: плашка поперёк проезжей части, полосы по координате поперёк
-    /// дороги рисует шейдер — вдаль они гаснут в ровный светлый тон.
+    /// дороги рисует шейдер — вдаль они гаснут в ровный светлый тон. Первое
+    /// звено начинается у самого `from`: планка из целых звеньев
+    /// ([`whole_bars`]) ими и кончается.
     pub fn paint_zebra(&mut self, zebra: &Zebra) {
         let width = zebra.from.distance(zebra.to);
         self.zebras.push_paint_strip(
             &[zebra.from, zebra.to],
             false,
             ZEBRA_STRIP,
-            &transverse_stations(width),
+            &transverse_stations(ZEBRA_FIRST_BAR, width),
             LineKind::Zebra.code(),
             PAINT_COLOR.to_linear(),
         );
@@ -1119,7 +1121,7 @@ impl Painter {
             &[line.from, line.to],
             false,
             STOP_STRIP,
-            &transverse_stations(line.from.distance(line.to)),
+            &transverse_stations(0.0, line.from.distance(line.to)),
             kind.code(),
             PAINT_COLOR.to_linear(),
         );
@@ -1398,15 +1400,113 @@ impl Painter {
     }
 }
 
-/// Станции поперечной краски длиной `width`: длина идёт поперёк дороги, от
-/// одной кромки к другой, разрывов нет.
-fn transverse_stations(width: f32) -> [PaintStation; 2] {
-    [0.0, width].map(|along| PaintStation {
+/// Станции поперечной краски длиной `width` от длины `start`: длина идёт
+/// поперёк дороги, от одной кромки к другой, разрывов нет.
+fn transverse_stations(start: f32, width: f32) -> [PaintStation; 2] {
+    [start, start + width].map(|along| PaintStation {
         along,
         to_break: NO_BREAK,
         alpha: 1.0,
     })
 }
+
+/// Звено зебры поперёк дороги, м: полоса краски периода [`ZEBRA_PERIOD`].
+const ZEBRA_BAR: f32 = ZEBRA_PERIOD * ZEBRA_FILL;
+/// Длина по планке, с которой начинается первое звено: шейдер кладёт звенья
+/// серединой на `k · период + период / 2`.
+const ZEBRA_FIRST_BAR: f32 = (ZEBRA_PERIOD - ZEBRA_BAR) / 2.0;
+/// Шаг, которым торец зебры отступает от кромки внутрь, пока сечение звена
+/// не ляжет на асфальт целиком, м.
+const ZEBRA_FIT_STEP: f32 = 0.05;
+
+/// Зебра из **целых звеньев** (roads list R2): звено рисуется только
+/// целиком, лишнее не рисуется, а оставшиеся стоят по середине проезжей
+/// части с равными полями. Планка по ширине дороги кончалась на дробной доле
+/// периода, и крайнее звено выходило тонким клином у кромки (Тула, ул.
+/// Фёдора Смирнова, 3396 3839); у развилки, где кромка идёт наискось через
+/// четыре метра зебры, звено вылезало на тротуар (Болдина, 2527 2470).
+///
+/// Торцы планки отступают внутрь, пока сечение поперёк неё — оба края зебры
+/// вдоль дороги и середина — не ляжет на асфальт (`on_asphalt`) целиком,
+/// так что скос кромки учтён; в получившийся отрезок входит целое число
+/// звеньев, и он садится по его середине. Середину планки не проверяет:
+/// разделительную пары или островок она проходит, как проходила. `None` —
+/// не влезло ни одно звено.
+pub(super) fn whole_bars(zebra: &Zebra, on_asphalt: impl Fn(Vec2) -> bool) -> Option<Zebra> {
+    let width = zebra.from.distance(zebra.to);
+    let across = (zebra.to - zebra.from).try_normalize()?;
+    let along = across.perp() * (ZEBRA_LENGTH / 2.0);
+    let fits = |at: f32| {
+        let point = zebra.from + across * at;
+        [point - along, point, point + along]
+            .into_iter()
+            .all(&on_asphalt)
+    };
+    let middle = width / 2.0;
+    let mut low = 0.0;
+    while low < middle && !fits(low) {
+        low += ZEBRA_FIT_STEP;
+    }
+    let mut high = width;
+    while high > middle && !fits(high) {
+        high -= ZEBRA_FIT_STEP;
+    }
+    let span = high - low;
+    if span < ZEBRA_BAR {
+        return None;
+    }
+    let bars = ((span - ZEBRA_BAR) / ZEBRA_PERIOD).floor() + 1.0;
+    let used = (bars - 1.0) * ZEBRA_PERIOD + ZEBRA_BAR;
+    let from = zebra.from + across * (low + (span - used) / 2.0);
+    Some(Zebra {
+        from,
+        to: from + across * used,
+        ..*zebra
+    })
+}
+
+/// Проезжая часть под зеброй для [`whole_bars`]: лежит ли точка на асфальте
+/// улиц — в треугольниках уже собранного слоя `roads`. Не ленты по оси с
+/// полушириной: у торца под клин, у рампы слияния и у сведённого торца лента
+/// уже, чем полуширина дороги, и у развилки Болдиной звено по такой оценке
+/// ложилось на тротуар. Собирается только около зебр: треугольников в городе
+/// сотни тысяч, зебр — сотни.
+pub(super) struct ZebraGround {
+    triangles: Vec<[Vec2; 3]>,
+    near: Grid<usize>,
+}
+
+impl ZebraGround {
+    pub(super) fn new(zebras: &[Zebra], asphalt: impl IntoIterator<Item = [Vec2; 3]>) -> Self {
+        let mut at_zebras: Grid<()> = Grid::new(ZEBRA_GROUND_CELL);
+        for zebra in zebras {
+            at_zebras.insert_segment(zebra.from, zebra.to, ZEBRA_LENGTH, ());
+        }
+        let mut triangles = Vec::new();
+        let mut near = Grid::new(ZEBRA_GROUND_CELL);
+        for triangle in asphalt {
+            let [a, b, c] = triangle;
+            let (min, max) = (a.min(b).min(c), a.max(b).max(c));
+            if at_zebras.near_each(min, max).next().is_some() {
+                near.insert(min, max, triangles.len());
+                triangles.push(triangle);
+            }
+        }
+        Self { triangles, near }
+    }
+
+    pub(super) fn contains(&self, point: Vec2) -> bool {
+        self.near.at(point).iter().any(|&index| {
+            let [a, b, c] = self.triangles[index];
+            let sides =
+                [(a, b), (b, c), (c, a)].map(|(from, to)| (to - from).perp_dot(point - from));
+            sides.iter().all(|&side| side >= 0.0) || sides.iter().all(|&side| side <= 0.0)
+        })
+    }
+}
+
+/// Ячейка сетки [`ZebraGround`], м.
+const ZEBRA_GROUND_CELL: f32 = 24.0;
 
 /// Звено, внутри которого (строго) лежит длина дуги `at`, и доля `at` на нём.
 fn link_at(along: &[f32], at: f32) -> Option<(usize, f32)> {

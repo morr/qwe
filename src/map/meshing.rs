@@ -646,6 +646,17 @@ impl MeshBuilder {
         self.indices.is_empty()
     }
 
+    /// Накопленные треугольники в плоскости карты — тому, кто спрашивает, что
+    /// слой уже кроет (`roads::paint::ZebraGround`: асфальт под зеброй).
+    pub fn triangles(&self) -> impl Iterator<Item = [Vec2; 3]> + '_ {
+        self.indices.chunks_exact(3).map(|triangle| {
+            [0, 1, 2].map(|at| {
+                let [x, y, _] = self.positions[triangle[at] as usize];
+                Vec2::new(x, y)
+            })
+        })
+    }
+
     /// Координаты ленты — тест проверяет по ним, что легло в атрибут.
     #[cfg(test)]
     pub fn ribbon_coords_for_test(&self) -> Option<&[[f32; 4]]> {
