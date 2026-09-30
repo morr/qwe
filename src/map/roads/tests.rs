@@ -1334,6 +1334,48 @@ fn a_ring_takes_its_verge_on_the_outer_side_only() {
     );
 }
 
+/// Остров кольца, к которому не ведёт ни одна дорожка (R28, Белгород): по
+/// его кромке — тонкая линия бордюра, а не полоса тротуара, и тротуар
+/// подхода не заходит на остров полукругом своего торца. Дорожка, что
+/// кончается на острове, возвращает бордюру ширину полосы.
+#[test]
+fn an_island_no_path_reaches_gets_a_kerb_line_only() {
+    // внутренняя кромка полотна — в 12 − 4 м от центра
+    let inner = 12.0 - 4.0;
+    // ближе всех к центру — из вершин тротуаров, не закрытых газоном острова
+    let deepest = |map: &MapData| -> f32 {
+        let (layers, _) = mesh_roads(map, RoadStyle::default(), RoadShape::default());
+        let lawn = &layer(&layers, "road_medians").builder;
+        layer(&layers, "sidewalks")
+            .builder
+            .positions_for_test()
+            .iter()
+            .map(|at| Vec2::new(at[0], at[1]))
+            // дорожка на остров идёт по x = 0 в верхней половине — её плитка
+            // не в счёт
+            .filter(|at| at.y < 0.0 || at.x.abs() > 3.0)
+            .filter(|at| !lawn.covers_for_test(*at * 0.999))
+            .map(Vec2::length)
+            .fold(f32::INFINITY, f32::min)
+    };
+    let bare = roundabout_with_an_approach(true, true);
+    let reach = inner - deepest(&bare);
+    assert!(
+        (0.0..=RING_KERB_LINE + 0.05).contains(&reach),
+        "тротуар на острове без дорожек: {reach} м"
+    );
+    let mut reached = roundabout_with_an_approach(true, true);
+    reached.roads.push(fixture::footway(vec![
+        Vec2::new(0.0, 30.0),
+        Vec2::new(0.0, 2.0),
+    ]));
+    let reach = inner - deepest(&reached);
+    assert!(
+        (medians::MEDIAN_KERB - 0.05..=medians::MEDIAN_KERB + 0.05).contains(&reach),
+        "бордюр острова, куда ведёт дорожка: {reach} м"
+    );
+}
+
 /// Клин между въездом, съездом и кольцом — направляющий островок: асфальт со
 /// штриховкой, как рисует Яндекс, — и стоянка для этого не нужна.
 #[test]

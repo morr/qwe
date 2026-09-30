@@ -1308,8 +1308,24 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     fanned apart and left wedge slits along the outer kerb (Tula's primary ring, arcs of
     6 × 4 and 6 × 10 m between an entry and an exit — four slits in the frame). A closed
     fill has no ends. The sidewalk is drawn once per ring as a closed ribbon, **outside
-    only**, and the central island gets a `MEDIAN_KERB` 0.5 m kerb along the inner edge
-    instead of a sidewalk ring (`push_ring_edges`). **The island is a lawn**
+    only**, and the central island gets a kerb along the inner edge instead of a sidewalk
+    ring (`push_ring_edges`): a `MEDIAN_KERB` 0.5 m band when a path **ends on the
+    island** (`ring_island_reached` — an end of any `RoadClass::Alley` inside the ring's
+    closed axis, once per ring), else a thin `RING_KERB_LINE` 0.15 m line — nobody can
+    walk onto an island no path leads to, and its 0.5 m band read as a sidewalk ring
+    (R28, Belgorod, Чапаева × Кошарский, way 45246617). **The approaches' sidewalk bands
+    stop at the kerb**: a band reaches its node on the ring's axis, the approach comes in
+    along a tangent arc, and the band's end lay across the island as a crescent over the
+    lawn (three on that ring). Trimming the bands opened gaps between them and the
+    ring's outer sidewalk, so instead the part of each approach band beyond the island's
+    kerb (`ring_island_cover`: the closed axis shrunk by the ring's half width plus the
+    kerb, intersected with the bands exactly as `push_sidewalk` laid them — the same
+    body, width and round or butt ends, collected in the road loop — grown by
+    `ISLAND_COVER_PAD` 0.1 m) is laid again as grass in `road_medians`, over the
+    sidewalks (`an_island_no_path_reaches_gets_a_kerb_line_only`). Stroking the drawn
+    axis with round caps instead put bright lawn discs over the islands' own fills where
+    no band reached (Ryazan 01, 06).
+    Render only — the navmesh never read the kerb or the bands. **The island is a lawn**
     (`roads::ring_island_lawns`, layer `ring_islands` at `Z_RING_ISLAND` 0.05, roads plan
     №31): the ring's closed drawn axis filled with grass — the ring's asphalt covers the
     outer half, so the lawn shows up to the inner kerb. The mapped grass on an island is

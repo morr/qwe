@@ -68,7 +68,7 @@ use crate::map::meshing::{
     to_break_beyond,
 };
 use crate::map::osm::model::{
-    RoadAreaKind, RoadNodeKind, point_in_area, polyline_length, ring_bounds,
+    RoadAreaKind, RoadNodeKind, point_in_area, point_in_polygon, polyline_length, ring_bounds,
 };
 use crate::map::osm::{AreaKind, MapData, PolyArea, RailKind, RoadClass, RoadLine, WallLine};
 use crate::map::rail::{CrossedStreet, crossable, mesh_level_crossings};
@@ -335,14 +335,99 @@ fn leg_sections(
         .collect()
 }
 
+/// Бордюр острова кольца, к которому не ведёт ни одна дорожка, м: тонкая
+/// линия у кромки вместо полосы [`medians::MEDIAN_KERB`] (R28).
+const RING_KERB_LINE: f32 = 0.15;
+
+/// На сколько газон острова шире закрываемого им тротуара подхода, м.
+const ISLAND_COVER_PAD: f32 = 0.1;
+
+/// Дороги, что сходятся с кольцом в его узлах, — кроме самих дуг кольца.
+fn ring_approaches(ring: &rings::Ring, prepared: &Drawn) -> Vec<usize> {
+    let mut found: Vec<usize> = ring
+        .roads
+        .iter()
+        .flat_map(|&arc| prepared.road(arc).points.iter())
+        .flat_map(|point| prepared.nodes().roads_at(*point).iter().copied())
+        .filter(|road| !ring.roads.contains(road))
+        .collect();
+    found.sort_unstable();
+    found.dedup();
+    found
+}
+
+/// Куски полос `bands` (ось, ширина, торцы прямые — как их положил
+/// `push_sidewalk`) на острове кольца — за его осью, ужатой на `inset`
+/// (полуширина кольца и бордюр острова).
+fn ring_island_cover(
+    ring: &rings::Ring,
+    inset: f32,
+    bands: &[(Vec<Vec2>, f32, [bool; 2])],
+) -> Vec<Shape> {
+    use i_overlay::core::fill_rule::FillRule;
+    use i_overlay::core::overlay_rule::OverlayRule;
+    use i_overlay::float::single::SingleFloatOverlay;
+    use i_overlay::mesh::outline::offset::OutlineOffset;
+    use i_overlay::mesh::stroke::offset::StrokeOffset;
+    use i_overlay::mesh::style::{LineCap, LineJoin, OutlineStyle, StrokeStyle};
+
+    let path = &ring.path[..ring.path.len().saturating_sub(1)];
+    if path.len() < 3 || bands.is_empty() {
+        return Vec::new();
+    }
+    let island: Vec<Shape> = vec![vec![oriented(path, true)]]
+        .outline(&OutlineStyle::new(-inset).line_join(LineJoin::Round(crate::map::shapes::ARC)));
+    if island.is_empty() {
+        return Vec::new();
+    }
+    let (low, high) = ring_bounds(path);
+    let strips: Vec<crate::map::shapes::Contour> = bands
+        .iter()
+        .filter(|(axis, width, _)| {
+            let (from, to) = ring_bounds(axis);
+            (from - *width).cmple(high).all() && (to + *width).cmpge(low).all()
+        })
+        .flat_map(|(axis, width, butt)| {
+            let cap = |butt: bool| {
+                if butt {
+                    LineCap::Butt
+                } else {
+                    LineCap::Round(crate::map::shapes::ARC)
+                }
+            };
+            // на волосок шире полосы: иначе по краю заплатки светится её кромка
+            let style = StrokeStyle::new(*width + 2.0 * ISLAND_COVER_PAD)
+                .line_join(LineJoin::Round(crate::map::shapes::ARC))
+                .start_cap(cap(butt[0]))
+                .end_cap(cap(butt[1]));
+            let contour: crate::map::shapes::Contour = axis.iter().map(Vec2::to_array).collect();
+            contour.stroke(style, false).into_iter().flatten()
+        })
+        .collect();
+    island.overlay(&strips, OverlayRule::Intersect, FillRule::NonZero)
+}
+
+/// Ведёт ли к острову кольца дорожка — конец пешеходного пути внутри его
+/// замкнутой оси (`rings::Ring::path`). Раз на кольцо (R28).
+fn ring_island_reached(path: &[Vec2], roads: &[RoadLine]) -> bool {
+    let (low, high) = ring_bounds(path);
+    roads
+        .iter()
+        .filter(|road| road.class == RoadClass::Alley)
+        .flat_map(|road| [road.points.first(), road.points.last()])
+        .flatten()
+        .any(|end| end.cmpge(low).all() && end.cmple(high).all() && point_in_polygon(*end, path))
+}
+
 /// Тротуар кольца и бордюр его острова. Тротуар — только снаружи, лентой по
 /// всему кольцу сразу, без швов между дугами; внутри вместо тротуарного
-/// кольца — бордюр [`medians::MEDIAN_KERB`] по кромке острова, как у газона
-/// разделительной.
+/// кольца — бордюр шириной `kerb` по кромке острова: полосой
+/// [`medians::MEDIAN_KERB`], как у газона разделительной, если к острову
+/// ведёт дорожка, иначе тонкой линией ([`ring_island_reached`]).
 fn push_ring_edges(
     builder: &mut MeshBuilder,
     ring: &rings::Ring,
-    [width, sidewalk]: [f32; 2],
+    [width, sidewalk, kerb]: [f32; 3],
     color: LinearRgba,
 ) {
     let path = &ring.path[..ring.path.len() - 1];
@@ -367,7 +452,6 @@ fn push_ring_edges(
             RibbonCap::Butt,
         );
     }
-    let kerb = medians::MEDIAN_KERB;
     builder.push_ribbon(
         &shifted(-(width + kerb) / 2.0),
         true,
@@ -1154,6 +1238,9 @@ pub fn mesh_roads_with_ruts(
     for shape in &road_islands.walkways {
         push_shape(&mut sidewalks, shape.clone(), SIDEWALK_COLOR.to_linear());
     }
+    // на сколько ужат остров каждого кольца под газон поверх тротуаров
+    // подходов (ниже, после лент)
+    let mut island_insets: Vec<f32> = Vec::new();
     if style.sidewalks {
         for ring in &prepared.rings().list {
             let width = drawn[ring.roads[0]].width;
@@ -1162,14 +1249,30 @@ pub fn mesh_roads_with_ruts(
                 .iter()
                 .filter_map(|&road| prepared.sidewalk_drawn(road))
                 .fold(0.0, f32::max);
+            // к острову, куда не ведёт ни одна дорожка, пешеходу не попасть:
+            // вместо полосы тротуара — тонкая линия бордюра (R28)
+            let kerb = if ring_island_reached(&ring.path, roads) {
+                medians::MEDIAN_KERB
+            } else {
+                RING_KERB_LINE
+            };
             push_ring_edges(
                 &mut sidewalks,
                 ring,
-                [width, sidewalk],
+                [width, sidewalk, kerb],
                 SIDEWALK_COLOR.to_linear(),
             );
+            island_insets.push(width / 2.0 + kerb);
         }
     }
+    // подходы колец: их полосы тротуара копятся ниже для газона острова
+    let mut at_ring = vec![false; drawn.len()];
+    for ring in &prepared.rings().list {
+        for road in ring_approaches(ring, &prepared) {
+            at_ring[road] = true;
+        }
+    }
+    let mut approach_bands: Vec<(Vec<Vec2>, f32, [bool; 2])> = Vec::new();
     // асфальт кольца — одной замкнутой заливкой по его оси, на месте первой
     // его дуги в порядке заливки (R15): дуги, кончающиеся в узлах с
     // подходами, клались лентами с прямыми торцами, и на кривизне торцы
@@ -1354,6 +1457,9 @@ pub fn mesh_roads_with_ruts(
                 SIDEWALK_COLOR.to_linear(),
                 banded,
             );
+            if at_ring[index] {
+                approach_bands.push((body.to_vec(), band(road, sidewalk), banded));
+            }
             // клин тротуара — по сторонам, как у асфальта: с сужаемой стороны
             // от полосы узкого соседа (или его голой кромки, если тротуара у
             // него нет) к своей, с сохранённой — своя на всём клине; сторона
@@ -1620,6 +1726,17 @@ pub fn mesh_roads_with_ruts(
         })
         .collect();
     let (rail_crossings, level_crossings) = mesh_level_crossings(&map.rails, &crossed);
+    // Полоса тротуара подхода доходит до узла на оси кольца, а подход
+    // входит в кольцо по касательной — её торец ложился серпом на остров
+    // поверх газона (R28, Белгород: три наплыва на одном кольце). Что из этих
+    // полос попало за бордюр острова, закрывается газоном — в слое газона
+    // разделительных, над тротуарами; подрезать сами полосы — значит открыть
+    // щели между тротуаром подхода и тротуаром кольца снаружи
+    for (ring, inset) in prepared.rings().list.iter().zip(&island_insets) {
+        for shape in ring_island_cover(ring, *inset, &approach_bands) {
+            push_shape(&mut median_grass, shape, GRASS_COLOR.to_linear());
+        }
+    }
     let fortresses = Fortresses::of(&map.buildings);
     for wall in walls {
         for run in fortresses.bare_runs(&wall.points) {
