@@ -1215,3 +1215,43 @@ fn a_fork_branch_keeps_its_line_off_the_lanes_of_the_main_road() {
         paint.lines().of(2).cut
     );
 }
+
+/// Жилой съезд с оси шести полос под острым углом (Тула, Фрунзе, 3814, 4100,
+/// R6): его осевая выходит из асфальта главной лишь метров через сорок, и
+/// поиск кромки линий до [`EDGE_SEARCH`] её не находил — сплошная съезда шла
+/// наискось через полосы главной от самой полуширины соседа.
+#[test]
+fn a_shallow_slip_off_a_wide_street_starts_its_line_past_that_street() {
+    let heading = Vec2::from_angle(14f32.to_radians());
+    let paint = paint_of(
+        vec![
+            road(
+                vec![Vec2::ZERO, NODE, Vec2::new(200.0, 0.0)],
+                20.8,
+                Highway::Tertiary,
+                6,
+            ),
+            road(
+                vec![NODE, NODE + heading * 70.0],
+                7.6,
+                Highway::Residential,
+                2,
+            ),
+        ],
+        Vec::new(),
+        NodePaintStyle {
+            crossings: CrossingMode::Off,
+            stop_lines: true,
+        },
+    );
+    let beyond = gaps(&paint, 1)
+        .iter()
+        .map(|found| (found.at - NODE).length() + found.reach)
+        .fold(f32::MIN, f32::max);
+    // осевая съезда выходит из полуширины главной (10.4 м) в 43 м от узла
+    assert!(
+        beyond > 40.0,
+        "линия съезда с {beyond} м — в полосах главной: {:?}",
+        paint.lines().of(1).cut
+    );
+}

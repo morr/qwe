@@ -1534,7 +1534,12 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     the primary's lanes, crossing their line. The primary itself is not touched — its
     section's two side points clear the narrow branch at once, and the main road keeps
     its lines past the fork; the branch's line now starts past the primary's kerb
-    (`a_fork_branch_keeps_its_line_off_the_lanes_of_the_main_road`). The turn paths keep
+    (`a_fork_branch_keeps_its_line_off_the_lanes_of_the_main_road`). The lines' walk
+    goes out to `LINES_EDGE_SEARCH` 60 m, not the section's 25: a residential slip
+    mapped from the **axis** of Фрунзе's six lanes at 11° (Tula, 3814 4100, roads list
+    R6) takes about 36 m to get its axis out of them, and with the 25 m search its solid
+    ran diagonally across the northbound lanes from the break reach
+    (`a_shallow_slip_off_a_wide_street_starts_its_line_past_that_street`). The turn paths keep
     the arm's edge as it was. An **OSM crossing keeps its place** — it is measured
     from the reach as before: pushed past the new edge, it no longer fitted a short arm
     with its `ARM_TAIL` and was lost (gallery 04, south). **Not at a ring**: an approach
