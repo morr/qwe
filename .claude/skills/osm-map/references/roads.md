@@ -987,9 +987,21 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     way that starts with a left-only lane and does not end with a right-only one is a
     left-turn pocket, and the new lanes go to the far side instead. The axes in OSM run
     straight through such a seam, so the shared lines slide over the wedge by that shift
-    rather than stay put — the only way to keep the asphalt continuous. A line that the narrow section lacks
-    grows in from the kerb: its alpha is the distance to the nearer bound over
-    `BIRTH_FADE` (half a lane). The asphalt wedge runs seam → body, so for the tail wedge
+    rather than stay put — the only way to keep the asphalt continuous. **A line that the
+    narrow section lacks is not painted on the wedge until its lane has room** (R25, Tula,
+    Болдина 2 → 4): it starts **at full strength** where the distance to the nearer bound
+    reaches `BIRTH_WIDTH` 0.8 of a lane (`paint::births` finds the station by bisection on
+    the lerped frame, and the path gets a vertex there and another `BIRTH_EDGE` 2 cm
+    before it on the seam side, so the GPU's alpha ramp is two centimetres long). Before
+    it the line grew in from the kerb, its alpha the distance over `BIRTH_FADE` half a
+    lane — a fading dash that real markings never have; `BIRTH_FADE` stays only on a
+    merge ramp's frame (`roads/merges.rs`). **The axis on a widening wedge is the narrow
+    section's**: a 4-lane body's double solid (`DOUBLE_AXIS_LANES`) starts at the end of
+    a wedge from under four lanes, and over the wedge the axis is the single one, solid
+    or dashed by the approach rule — before, the double began at the seam with two lanes
+    beside it (`a_widening_paints_no_fading_lines_and_a_single_axis`). The markings were
+    not checked against Yandex/2GIS/ГОСТ Р 52289 (the card's step 1) — the default
+    decision of the card stands. The asphalt wedge runs seam → body, so for the tail wedge
     its frame is the mirror (`paint::wedge_frames`); `the_wedge_asphalt_and_the_wedge_paint_share_one_grid`
     pins that both land on one grid.
     **Between two two-way sections the axis leads** (`paint::seam_origin`, carried as

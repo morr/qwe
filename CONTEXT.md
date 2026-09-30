@@ -306,7 +306,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     `shape::lane_width()`). **One frame for the ruts and
     the lines** — the asphalt shader reads it from `ATTRIBUTE_RIBBON`, the paint layer
     builds its lines on it. On a taper it drifts from the narrow section's to the wide
-    one's: the outer lane is born from the wedge, and when the parity changes the grid
+    one's: the outer lane is born from the wedge — its line is not painted until the lane
+    has 0.8 of its width and then starts at full strength, and the axis over a widening
+    wedge stays the narrow section's (a double solid begins where the wedge ends) — and
+    when the parity changes the grid
     slides by half a lane over the taper, the new lane on the right of the taper's run. A
     **one-way** wedge adds its lanes at one kerb (`paint::wedge_drift`): the kerb of the
     traffic side, or the far one for a left-turn pocket by `turn:lanes`.

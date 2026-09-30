@@ -116,6 +116,16 @@ const AXIS_STRIP: f32 = 1.4;
 /// клина, набирает полную видимость: у самой кромки линии нет — новой полосы
 /// ещё нет.
 const BIRTH_FADE: f32 = 0.5;
+/// На клине расширения (R25) новая полоса не размечается, пока не наберёт
+/// эту долю ширины полосы: дальше её линия идёт сразу полной. Проявляющийся
+/// пунктир ([`BIRTH_FADE`]) в настоящей разметке не встречается; он остался
+/// только у клина слияния (`roads/merges.rs`).
+const BIRTH_WIDTH: f32 = 0.8;
+/// Допуск порога [`BIRTH_WIDTH`], м: вершина рождения стоит на нём самом.
+const BIRTH_SLACK: f32 = 1e-3;
+/// Шаг от вершины рождения к шву, м: звено между ними — растяжка
+/// прозрачности, и оно в два сантиметра.
+const BIRTH_EDGE: f32 = 0.02;
 
 /// Свежесть краски, 0–1: прозрачность линий. Ручка «Paint» секции Roads.
 pub const PAINT_MIN: f32 = 0.0;
@@ -435,6 +445,40 @@ fn kept_frame(body: LaneFrame, narrow_lanes: u8, kept: f32) -> LaneFrame {
             ..body
         }
     }
+}
+
+/// Где на клине длиной `length` рождаются линии (R25): метры от шва, где
+/// линия, которой у шва (раскладка `seam`) места нет, по пути к телу `body`
+/// впервые получает [`BIRTH_WIDTH`] полосы с обеих сторон. Раскладка между
+/// ними — линейная, место линии — минимум двух линейных, и порог ищется
+/// делением пополам.
+fn births(body: LaneFrame, seam: LaneFrame, length: f32) -> Vec<f32> {
+    let need = BIRTH_WIDTH * lane_width();
+    let lowest = ((seam.low - seam.origin).min(body.low - body.origin) / lane_width()).floor();
+    let highest = ((seam.high - seam.origin).max(body.high - body.origin) / lane_width()).ceil();
+    let mut found = Vec::new();
+    for k in lowest as i32..=highest as i32 {
+        let step = k as f32 * lane_width();
+        let room = |t: f32| {
+            let frame = seam.lerp(body, t);
+            let at = frame.origin + step;
+            (at - frame.low).min(frame.high - at)
+        };
+        if room(0.0) >= need - BIRTH_SLACK || room(1.0) < need - BIRTH_SLACK {
+            continue;
+        }
+        let (mut low, mut high) = (0.0_f32, 1.0_f32);
+        for _ in 0..24 {
+            let middle = (low + high) / 2.0;
+            if room(middle) >= need {
+                high = middle;
+            } else {
+                low = middle;
+            }
+        }
+        found.push(high * length);
+    }
+    found
 }
 
 /// Раскладка у шва клина `wedge` в раме way — по его форме: суженный на одну
@@ -819,6 +863,34 @@ impl Painter {
             }
         }
         let body = lane_frame(lanes);
+        // Рождение линии на клине (R25): вершина там, где новая полоса
+        // набрала [`BIRTH_WIDTH`], и вторая вплотную перед ней со стороны
+        // шва — линия встаёт сразу полной, без растяжки прозрачности по звену
+        if !closed {
+            for (index, wedge) in wedges.iter().enumerate() {
+                let Some(wedge) = *wedge else {
+                    continue;
+                };
+                let end = index == 1;
+                for at in births(body, wedge_frame(body, wedge, end), wedge.length) {
+                    let (at, before) = if end {
+                        (total - at, total - at + BIRTH_EDGE)
+                    } else {
+                        (at, at - BIRTH_EDGE)
+                    };
+                    if ramp.is_some_and(|ramp| ramp.frame_at(body, at).is_some()) {
+                        continue;
+                    }
+                    insert_at(&mut path, &mut along, &mut to_break, at);
+                    insert_at(&mut path, &mut along, &mut to_break, before);
+                }
+            }
+        }
+        // клин слияния — своя раскладка, и линии в ней проявляются, как прежде
+        let ramped: Vec<bool> = along
+            .iter()
+            .map(|&at| ramp.is_some_and(|ramp| ramp.frame_at(body, at).is_some()))
+            .collect();
         let frames: Vec<LaneFrame> = along
             .iter()
             .map(|&at| {
@@ -918,13 +990,43 @@ impl Painter {
                 (true, false) => LineKind::Axis,
                 (false, _) => LineKind::Lane,
             };
+            // На клине расширения осевая — как у узкой части (R25): двойная
+            // сплошная встаёт с конца клина, где полос уже столько, сколько
+            // ей нужно. Куски клина с узкой частью под [`DOUBLE_AXIS_LANES`]
+            let single: Vec<(f32, f32)> = if kind == LineKind::Double && !closed {
+                [(wedges[0], false), (wedges[1], true)]
+                    .into_iter()
+                    .filter_map(|(wedge, end)| {
+                        let wedge = wedge.filter(|wedge| wedge.lanes < DOUBLE_AXIS_LANES)?;
+                        Some(if end {
+                            (total - wedge.length, total)
+                        } else {
+                            (0.0, wedge.length)
+                        })
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let kind = if single.is_empty() {
+                kind
+            } else {
+                LineKind::Axis
+            };
             let offsets: Vec<f32> = frames.iter().map(|frame| frame.origin + step).collect();
             let alphas: Vec<f32> = frames
                 .iter()
                 .zip(&offsets)
-                .map(|(frame, &at)| {
-                    ((at - frame.low).min(frame.high - at) / (BIRTH_FADE * lane_width()))
-                        .clamp(0.0, 1.0)
+                .zip(&ramped)
+                .map(|((frame, &at), &ramped)| {
+                    let room = (at - frame.low).min(frame.high - at);
+                    if ramped {
+                        (room / (BIRTH_FADE * lane_width())).clamp(0.0, 1.0)
+                    } else if room >= BIRTH_WIDTH * lane_width() - BIRTH_SLACK {
+                        1.0
+                    } else {
+                        0.0
+                    }
                 })
                 .collect();
             let line: Vec<Vec2> = path
@@ -989,7 +1091,22 @@ impl Painter {
                     (line, stations, solid)
                 }
             };
-            let code = |solid: bool| match kind {
+            // двойная — звенья вне клиньев с одиночной осевой (`single`); по
+            // длине улицы на станциях — обратно в метры пути
+            let doubled: Vec<bool> = stations
+                .windows(2)
+                .map(|pair| {
+                    let middle = (pair[0].along + pair[1].along) / 2.0;
+                    let at = if reversed {
+                        start - middle
+                    } else {
+                        middle - start
+                    };
+                    !single.is_empty() && !single.iter().any(|&(from, to)| from <= at && at <= to)
+                })
+                .collect();
+            let code = |solid: bool, doubled: bool| match kind {
+                _ if doubled => LineKind::Double.code(),
                 LineKind::Lane if solid => LineKind::Solid.code(),
                 LineKind::Lane => LineKind::Dashed.code(),
                 LineKind::Axis if solid => LineKind::AxisSolid.code(),
@@ -1000,7 +1117,7 @@ impl Painter {
             let key = |index: usize| {
                 (index + 1 < line.len()
                     && stations[index].alpha.max(stations[index + 1].alpha) > 0.0)
-                    .then(|| solid[index])
+                    .then(|| (solid[index], doubled[index]))
             };
             let mut from: Option<usize> = None;
             for index in 0..line.len() {
@@ -1013,7 +1130,7 @@ impl Painter {
                         false,
                         half,
                         &stations[first..=index],
-                        code(solid[first]),
+                        code(solid[first], doubled[first]),
                         color,
                     );
                     self.lines += 1;

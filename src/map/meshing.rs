@@ -746,6 +746,13 @@ impl MeshBuilder {
         &self.colors
     }
 
+    /// Накопленный атрибут ленты ([`ATTRIBUTE_RIBBON`]) — тестам краски,
+    /// которым важен вид линии (код в `w`), а не только где она легла.
+    #[cfg(test)]
+    pub fn ribbon_for_test(&self) -> &[[f32; 4]] {
+        self.ribbon.as_deref().unwrap_or(&[])
+    }
+
     /// Полигон с дырками через earcut. Вырожденный/кривой — пропуск со
     /// счётчиком, один плохой контур OSM не должен ронять всю карту.
     pub fn push_polygon(&mut self, outer: &[Vec2], holes: &[Vec<Vec2>], color: LinearRgba) {

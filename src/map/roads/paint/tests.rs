@@ -408,6 +408,49 @@ fn a_wedge_adds_lanes_without_moving_the_axis() {
     }
 }
 
+/// Расширение 2 → 4 (R25, Тула, Болдина): новые полосы на клине не
+/// размечаются, пока не наберут ширину, и их линии встают сразу полными — ни
+/// одной вершины краски с прозрачностью между нулём и краской; осевая на
+/// клине одиночная, как у узкой части, двойная — с конца клина.
+#[test]
+fn a_widening_paints_no_fading_lines_and_a_single_axis() {
+    let (layers, wide) = seam_of([2, 4]);
+    for name in [PAINT_LANES, PAINT_AXES] {
+        let colors = paint_layer(&layers, name).colors_for_test();
+        let full = colors.iter().map(|color| color[3]).fold(0.0, f32::max);
+        assert!(full > 0.0, "{name}: нет краски");
+        let fading: Vec<f32> = colors
+            .iter()
+            .map(|color| color[3])
+            .filter(|&alpha| alpha > 1e-4 && alpha < full - 1e-4)
+            .collect();
+        assert!(
+            fading.is_empty(),
+            "{name}: проявляющиеся вершины {fading:?}"
+        );
+    }
+    let axes = paint_layer(&layers, PAINT_AXES);
+    let kinds_between = |from: f32, to: f32| -> Vec<f32> {
+        let mut kinds: Vec<f32> = axes
+            .positions_for_test()
+            .iter()
+            .zip(axes.ribbon_for_test())
+            .filter(|(at, _)| at[0] > from && at[0] < to)
+            .map(|(_, ribbon)| ribbon[3])
+            .collect();
+        kinds.sort_by(f32::total_cmp);
+        kinds.dedup();
+        kinds
+    };
+    let double = LineKind::Double.code();
+    assert!(
+        !kinds_between(200.5, wide - 0.5).contains(&double),
+        "двойная на клине: {:?}",
+        kinds_between(200.5, wide - 0.5)
+    );
+    assert_eq!(kinds_between(wide + 0.5, 390.0), vec![double]);
+}
+
 /// Две полосы в три: чётность сменилась, и линия уходит на полполосы плавно
 /// по длине клина, а вторая рождается у кромки.
 #[test]
