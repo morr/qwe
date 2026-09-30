@@ -40,7 +40,7 @@ a map built by hand in a test carries the defaults.
   are on the map already. `ReadReport` logs its size (`osm parse: N contour points kept
   for the OSM overlay in …`). The overlay `mesh_osm_contours` draws it — street axes
   magenta with a square on each vertex (an OSM node), paths cyan, other lines blue, area
-  rings yellow, flat material at z 29.5 over the network overlay — in the Debug tab
+  rings yellow, flat material at `Z_OSM_CONTOURS_OVERLAY` 29.5 over the network overlay — in the Debug tab
   (`OSM contours`) and in the roads gallery (`Contours`, `ROADS_CONTOURS=1`). It is the
   cheap half of the **raw OSM** question («data or our parse?»): no reload, one frame.
 - **`finish_parse(&mut MapData, &Pending, ParseKnobs) -> PassReport`** — the **nine** finishing passes
@@ -72,7 +72,9 @@ a map built by hand in a test carries the defaults.
   `LotKind::Ground` it settles — every lot stays what `area_kind` read);
   `pockets::fill_ground_pockets`; `generate_entrances`. **`attach_entrances` stays** — a
   mapped door is data. Planting runs (the tree nodes are data), and on the `Draw` level its
-  woods and rows are thrown away: no generated trees. The skipped passes report zeros, and
+  woods and rows are thrown away: no generated trees. The `Draw` level also stands no cars
+  and no wagons (`cars::park_on`, `wagons::mesh_wagons`) and draws roads raw
+  (`references/roads.md`). The skipped passes report zeros, and
   `PassReport` opens with an `osm parse: RAW OSM (…)` line so the zeros are not read as
   "nothing to do". The world comes up on it: navmesh and spawn read roads and outlines, and
   the gates only lose the plots whose doors were generated (live check, Tula).
@@ -304,9 +306,11 @@ be called alone:
   (never a tram) are
   joined into one way when the gap is under `STITCH_GAP_MAX` 30 m, each end looks at the
   other within `STITCH_ANGLE_MAX` 12° (heading taken 8 m back, the last OSM link is noise)
-  and the gap crosses the axis of an at-grade carriageway. Nearest pair first, one per
+  and the gap crosses the axis of a road the track can cross at grade — `rail::crossable`,
+  the level crossing's own predicate: a street or a service drive, not a bridge, not a
+  passage. Nearest pair first, one per
   loop, the first way hosts the joined points, `service` kept from either. Counted on the
-  v15 caches: Tula 1 (that pair), Kaluga 3 (abandoned track across streets), Oryol,
+  v15 caches, before service drives joined the predicate: Tula 1 (that pair), Kaluga 3 (abandoned track across streets), Oryol,
   Belgorod, Berlin, the four Moscows, Rostov, Ryazan 0; without the street condition Berlin
   alone would stitch 37 station stubs facing each other over a platform. Skipped in raw
   OSM; logged when non-zero.

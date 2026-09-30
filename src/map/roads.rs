@@ -281,11 +281,7 @@ fn ring_arcs(roads: &[RoadLine], rings: &rings::Rings) -> Vec<(usize, RoadLine)>
         .list
         .iter()
         .flat_map(|ring| {
-            let width = ring
-                .roads
-                .iter()
-                .map(|&road| roads[road].width)
-                .fold(0.0, f32::max);
+            let width = ring.width;
             let lanes = ring
                 .roads
                 .iter()
@@ -1136,12 +1132,13 @@ pub fn build_roads(map: &MapData, style: RoadStyle, shape: RoadShape) -> RoadBui
         .iter()
         .map(|zebra| (zebra.from, zebra.to))
         .collect();
-    let found_mouths = gores::clear_crossings(
-        found_mouths,
+    // зебра срезает только штриховку острия: асфальт устья под ней остаётся
+    let hatchable_mouths = gores::clear_crossings(
+        found_mouths.clone(),
         &crossings,
         node_paint::ZEBRA_LENGTH / 2.0 + MOUTH_CROSSING_GAP,
     );
-    gores.add_mouths(&found_mouths);
+    gores.add_mouths(&found_mouths, &hatchable_mouths);
     // три множества разрывов — каждому потребителю своё (`roads/junctions.rs`)
     let node_paint = junctions.node_paint();
     let asphalt = junctions.asphalt();
@@ -1265,7 +1262,7 @@ pub fn build_roads(map: &MapData, style: RoadStyle, shape: RoadShape) -> RoadBui
     let mut island_insets: Vec<f32> = Vec::new();
     if style.sidewalks {
         for ring in &prepared.rings().list {
-            let width = drawn[ring.roads[0]].width;
+            let width = ring.width;
             let sidewalk = ring
                 .roads
                 .iter()
@@ -1585,7 +1582,7 @@ pub fn build_roads(map: &MapData, style: RoadStyle, shape: RoadShape) -> RoadBui
                 push_street_fill(
                     fill,
                     &ring.path,
-                    road.width,
+                    ring.width,
                     color.to_linear(),
                     &breaks,
                     [false; 2],

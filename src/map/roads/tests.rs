@@ -2772,6 +2772,28 @@ fn a_ring_of_arcs_lays_one_closed_fill_without_seam_slits() {
             );
         }
     }
+    // одна ширина на всё кольцо — самой широкой дуги (lanes=3), и узкие
+    // дуги (lanes=2) залиты ею же, а не своей
+    let prepared = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
+    let ring = &prepared.rings().list[0];
+    assert!((ring.width - half * 2.0).abs() < 1e-3, "{}", ring.width);
+    let path = &ring.path;
+    let narrow = Vec2::new(2580.0, 2385.0);
+    let at = (1..path.len() - 1)
+        .min_by(|&a, &b| {
+            path[a]
+                .distance(narrow)
+                .total_cmp(&path[b].distance(narrow))
+        })
+        .unwrap();
+    let across = (path[at + 1] - path[at - 1]).normalize().perp();
+    for side in [-1.0, 1.0] {
+        let probe = path[at] + across * side * (half - 0.3);
+        assert!(
+            streets.covers_for_test(probe),
+            "узкая дуга уже кольца у {probe:?}"
+        );
+    }
 }
 
 /// Точка на круге радиуса `radius` под углом `degrees`.

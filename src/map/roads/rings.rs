@@ -94,6 +94,11 @@ pub struct Ring {
     /// Нарисованная ось кольца целиком, замкнутая: последняя точка равна
     /// первой.
     pub path: Vec<Vec2>,
+    /// Ширина кольца — наибольшая из ширин его дуг (R15): одна на всё
+    /// кольцо — сечение дуг (`roads.rs::ring_arcs`), замкнутую заливку,
+    /// кромку с тротуаром, клинья подходов (`gores.rs`) и перемычки. Перехода
+    /// ширины на стыке дуг нет: кольцо — одна лента шириной самой широкой дуги.
+    pub width: f32,
 }
 
 impl Ring {
@@ -323,24 +328,17 @@ pub fn reshape<'a>(
             paths[index] = Cow::Owned(path);
         }
     }
-    let widths: Vec<f32> = rings
-        .list
-        .iter()
-        .map(|ring| {
-            ring.roads
-                .iter()
-                .map(|&arc| roads[arc].width)
-                .fold(0.0, f32::max)
-        })
-        .collect();
     for (index, road) in roads.iter().enumerate() {
         if rings.of_road[index].is_some() || !is_approach(road) {
             continue;
         }
-        for (ring, &width) in rings.list.iter().zip(&widths) {
-            rings
-                .webs
-                .extend(webs_along(&paths[index], road.width / 2.0, ring, width));
+        for ring in &rings.list {
+            rings.webs.extend(webs_along(
+                &paths[index],
+                road.width / 2.0,
+                ring,
+                ring.width,
+            ));
         }
     }
     rings
@@ -588,6 +586,10 @@ fn fit(roads: &[RoadLine], chain: &[usize], nodes: &RoadNodes) -> Option<Ring> {
         ccw: area > 0.0,
         pins: Vec::new(),
         path: Vec::new(),
+        width: chain
+            .iter()
+            .map(|&road| roads[road].width)
+            .fold(0.0, f32::max),
     };
     let slack = FIT_SLACK.max(FIT_SHARE * radii.min_element());
     let off = outline.iter().any(|point| {

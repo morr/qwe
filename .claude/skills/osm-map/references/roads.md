@@ -485,7 +485,9 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     curb on its paired side** where that median is paved — `push_deck` takes
     `Pairs::curb_pieces`, the sidewalk band's pieces over paved runs only (over a lawn the
     curb is the bridge's edge and stays: Tula's flyover halves, sample 20) — and casts its shadow there only to the asphalt edge, `ShadowBand::reach` being
-    per side, else the band lay as dark plates on the asphalt between the halves at the
+    per side **and per point of the band** (`deck_shadow_reach`: the nearest curb piece
+    decides, so a half deck over a mixed median keeps the curb's shadow over the lawn
+    part), else the band lay as dark plates on the asphalt between the halves at the
     head, where the median starts a few metres in): in the street layer the median lay under the bridge shadow as a dark slit edged
     by the two inner curbs, a pale divider where the approach had a double line (R30,
     Oryol, Красный мост). At a node
@@ -729,7 +731,7 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     the axis stays. Off the asphalt the shift fades over `TRANSITION` 20 m; a gap under
     `BRIDGE_MAX` 40 m between two shifted pieces (a junction where the bed breaks) is
     crossed with the shift blended from one edge to the other; the result is thinned at
-    5 cm. `mesh_roads_with_ruts` returns them as `TramTracks` (one per tram track, map
+    5 cm. `build_roads` returns them as `RoadBuild::tram` (`TramTracks`, one per tram track, map
     order; `as_mapped` in the raw-OSM mode) — the tram band is laid over **them**, and
     `rebuild_roads` / `spawn_map` insert them as a resource the tram layer draws
     (`tram::rebuild_tram`, gated on `resource_changed::<TramTracks>` too, so a shape knob
@@ -929,7 +931,8 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     does not list it because it skips boundaries.
     Drawing only: navmesh, cars and parse see each way's width as is.
   - **The network overlay** — `map/roads/network/overlay.rs::mesh_network_overlay`
-    (re-exported `qwe::map::mesh_network_overlay`, z 29): every street in its own colour,
+    (re-exported `qwe::map::mesh_network_overlay`, `settings::Z_NETWORK_OVERLAY` 29 — the
+    three road overlays' rungs sit in `settings.rs` with their order asserted): every street in its own colour,
     the line thicker by the way's lanes, a white dot on every seam of a street. Shown by the
     game's Debug → Overlays **Road network** row (`DebugRoadNetwork`,
     `ui/debug/overlays.rs::sync_road_network_overlay`) and by the gallery's `Network` row
@@ -950,7 +953,8 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     layers by surface (asphalt, unpaved, sand paths, paved paths as sidewalk tiles), the
     `RoadArea` outlines as their own polygons, the fortress wall ribbon. A bridge is
     drawn in the street layer, without deck, curb or shadow. The same level empties the
-    car placement (`cars::park_on`) and drops the stall and pitch markings in
+    car placement (`cars::park_on`) and the standing wagons (`wagons::mesh_wagons`,
+    `WagonReport::hidden`), and drops the stall and pitch markings in
     `spawn::mesh_surfaces`; lots and pitches stay as their polygons. Buildings are drawn
     as always (their outline is already the data's — the parse level skipped squaring and
     pulling). Tula, one debug run's `road meshing:` lines: 161 k vertices in 6 ms, against
@@ -1301,7 +1305,14 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     gets none: that corner is a kerb return's.
   - **One section, one kerb.** All arcs are drawn at the widest arc's width and lanes
     (`roads::ring_arcs`), and the **asphalt is one closed fill along the ring's drawn
-    axis** (`Ring::path`, R15), laid in the fill order at the place of the ring's first
+    axis** (`Ring::path`, R15). The width is **one field, `Ring::width`** (the widest arc,
+    set where the ring is fitted), and every consumer reads it — the arcs' section, the
+    closed fill, the kerb and sidewalk (`push_ring_edges`), the approach splitters
+    (`gores::splitters`) and the webs; before, each took its own source (the first arc
+    in fill order, `ring.roads[0]`, a max of its own) and only agreed because `ring_arcs`
+    had already widened every arc. There is deliberately **no width transition** between
+    a 3-lane and a 2-lane arc: the ring is one ribbon at its widest arc's width (the
+    operator's call on R15's "smooth transition like R1"). The fill is laid in the fill order at the place of the ring's first
     arc, with the asphalt breaks of all its arcs and one rut record on the closed axis;
     the arcs lay no fill of their own (their paint, verges and ground stay per arc). An
     arc ending in a node with an approach is a junction arm, and as its own ribbon it
@@ -1491,7 +1502,12 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     cross street (Tula, Лейтейзена × Сойфера 4468 3849, Фрунзе × Коминтерна, Лейтейзена
     × Бр. Жабровых, Первомайская × Вересаева; roads list R5) — a double solid through
     the node reads as «no left turn». Until R5 a residential crossroads left the main
-    road through (`CROSSING_CUTS_RANK`, tertiary, is gone). **A staggered crossroads is
+    road through (`CROSSING_CUTS_RANK`, tertiary, is gone). A crossed main road does not
+    only break its lines, it **yields** — a deliberate choice, kept on review: `crossed`
+    drops its `leads`, so its own arms get stop lines and rule zebras, `Junction::leading`
+    is empty (it is no longer laid over the arms in `fill_order`) and `turns.rs` gives it
+    no through ruts. The bent through road of R22 is the other case: `bent_roads` breaks
+    its lines and keeps its priority. **A staggered crossroads is
     one too**: two foreign arms from two nodes of the cluster, closer than the road's
     own width and heading apart on one line (within `STAGGER_ALIGN` 40°, a 10 m chord)
     — Вересаева reaches Первомайская as two ways at nodes 6.3 m apart, and the main
@@ -2455,7 +2471,8 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     streets** above, and `road_verges`, **Sidewalks**), the wide verges' lawn as meadow
     and as yard grass (`road_verge_lawns`, `road_verge_yards`, **Sidewalks**), the ring islands' lawn and their
     grass without the rim (`ring_islands`, `ring_island_grass`, **Roundabouts**) + eight
-    paint layers. `bridge_casings`
+    paint layers — and **25** since R35 added the level-crossing decks (`rail_crossings`,
+    **Bridge layers** below; `roads/tests.rs::LAYERS`). `bridge_casings`
     stays — it is the bridge curb (**Bridge layers** below); `footprint::casing_width`
     stays for the tree-row band and the planting index.
   - **RoadShape** (`map/roads/shape.rs`, group `road_shape`; five sliders in the Roads
@@ -2777,7 +2794,7 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   `DebugRutLines`; gallery row `Ruts` / `ROADS_RUTS=1`) draws where both sources of wear
   lie: every lane's axis (orange) with its two wheel lines at `RUT_OFFSET` (pale orange) —
   the shader's ruts — and the junction turn curves and tails of `JunctionWear` (green) —
-  the paint layer's. The lines come out of the same build: `mesh_roads_with_ruts` records
+  the paint layer's. The lines come out of the same build: `build_roads` records
   each ribbon's axis and body `LaneFrame` where it calls `set_lanes`, and moves
   `turns.wear` in after `paint_turn_wear`; the game keeps them as the `RutLines`
   resource (`rebuild_roads`, `spawn_map`) and `ui/debug/overlays.rs::sync_rut_overlay`

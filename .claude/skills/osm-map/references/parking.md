@@ -410,10 +410,12 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
         (the street kerb returns, noses and bends, laid before the ribbons) already paves
         `MOUTH_PAVED_SHARE` half of it, probed every metre: that is plain junction
         asphalt, and a hatched islet in the middle of it (Tula, 5392, 4658) is not what
-        was missing. A zebra across the void's tip cuts it back (`clear_crossings`, the
-        zebra's axis grown by half `ZEBRA_LENGTH` plus `MOUTH_CROSSING_GAP` 0.5 m): the
-        hatching lay over the crossing's bars. Such a void gets the gore's asphalt and
-        hatching (`settle`, shared with `Gores::of`). Tula, Красноармейский at Площадь Московского вокзала
+        was missing. A zebra across the void's tip cuts its **hatching** back
+        (`clear_crossings`, the zebra's axis grown by half `ZEBRA_LENGTH` plus
+        `MOUTH_CROSSING_GAP` 0.5 m): the hatching lay over the crossing's bars. The
+        asphalt is not cut — `Gores::add_mouths` paves the whole void (`settle_asphalt`)
+        and hatches only the cleared shape (`settle_hatched`), or the strip under the
+        zebra was bare ground again. Both halves are `settle`'s, shared with `Gores::of`. Tula, Красноармейский at Площадь Московского вокзала
         (3114, 3877): the two halves part and a one-lane link closes the gap 25 m from
         where the median ends — too far for the median's end cap (`MEDIAN_EXTEND` 12 m) —
         and the triangle showed the bare ground, sidewalk-pale, with a pocket's patch on
@@ -744,7 +746,7 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
     - or it stands **alongside the solid approach** (`paint::APPROACH` 25 m past the
       break's reach — one number with the paint) closer than `SOLID_LINE_CLEARANCE` 3 m to
       it (ПДД 12.4 again). The line is `SolidLine::of(road)`: none on a one-lane street,
-      an unpaved one or `lane_markings=no`; `EDGE_WIDTH` + one lane from the kerb
+      an unpaved one or `lane_markings=no`; `sections::EDGE_WIDTH` 0.5 m + one lane from the kerb
       otherwise — the **axis** of a two-way street of 2–3 lanes, solid on both sides of
       the node, else a **lane line**, solid only on the approach side (`ahead ·
       kerb.heading > 0`). The gap is that distance minus `CURB_GAP` and the body width,
@@ -771,13 +773,15 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
     the tracks, and a station track crossing a street had the kerb row parked on its rails
     (Tula, 2605 3110). So the keepout is **one last step of `park_on`**, after the kerb
     rows, the yards and the lots alike: a car whose body comes closer than `RAIL_CAR_GAP`
-    2.5 m to the ballast shoulder (`rail::SHOULDER_SCALE` × the track's width / 2 — 3 m on a
+    2.5 m to the ballast shoulder (half of `rail::deck_width`, the ballast's foot — 3 m on a
     5 m mainline, so 5.5 m from the axis) is dropped. The body's reach toward the track is
     its half length × |cos| + half width × |sin| of its angle to the link (`CAR_HALF_LENGTH`
     2.7 / `CAR_HALF_WIDTH` 1.0, the largest silhouette), so a car across the track keeps
     farther back than one alongside it. Filtering rather than breaking the row keeps the
     RNG stream of every other car where it was. Trams keep no zone — they run on the
-    carriageway, and a zone would empty every tram street. A rail gap stitched at parse
+    carriageway, and a zone would empty every tram street. A track on a bridge keeps its
+    zone on purpose — a car at `Z_CAR` would be drawn over the slab (`layers.md`, **Track
+    bridges**; pinned by `a_track_on_a_bridge_keeps_its_zone`). A rail gap stitched at parse
     (`references/parse.md`) is a track like any other here.
   - **A one-way carriageway gets one row, on the kerb of the driving side**
     (`MapData::traffic_side`, see **Driving side** in `SKILL.md`; `TrafficSide::kerb`). With

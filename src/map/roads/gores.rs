@@ -301,11 +301,13 @@ impl Gores {
         Self { asphalt, hatched }
     }
 
-    /// Добавить устья ([`mouths`]): асфальт и штриховка — как у клина кольца.
-    pub fn add_mouths(&mut self, mouths: &[Shape]) {
-        let (asphalt, hatched) = settle(mouths);
-        self.asphalt.extend(asphalt);
-        self.hatched.extend(hatched);
+    /// Добавить устья ([`mouths`]): асфальт — по устьям целиком, штриховка —
+    /// как у клина кольца, но по `hatchable`, тем же устьям без полос зебр
+    /// ([`clear_crossings`]): переход срезает остриё штриховки, а не асфальт
+    /// под собой (R20).
+    pub fn add_mouths(&mut self, mouths: &[Shape], hatchable: &[Shape]) {
+        self.asphalt.extend(settle_asphalt(mouths));
+        self.hatched.extend(settle_hatched(hatchable));
     }
 
     pub fn count(&self) -> usize {
@@ -533,8 +535,7 @@ pub(super) fn splitters(
             if end {
                 from_ring.reverse();
             }
-            let ring_width = drawn[ring.roads[0]].width;
-            if let Some(splitter) = splitter(road, line.width, &from_ring, ring, ring_width) {
+            if let Some(splitter) = splitter(road, line.width, &from_ring, ring, ring.width) {
                 found.push(splitter);
             }
         }
@@ -736,19 +737,22 @@ fn fans(roads: &[GoreRoad], at_ring: &impl Fn(Vec2) -> bool) -> Vec<Contour> {
     fans
 }
 
-/// Достигает ли островок где-нибудь ширины [`GORE_MIN_WIDTH`]: после сжатия
-/// на её половину от него что-то остаётся.
 /// Клин — в асфальт и штриховку. Штрихуется клин **разомкнутый** — без
 /// остриёв и перемычек тоньше двух [`GORE_OPENING`], где полосе встать
 /// негде; асфальтом же заливается весь, с заходом под кромки полотен. Одной
 /// фигурой на оба дела он был сперва, и в срезанных размыканием местах между
 /// штриховкой и дорогой проглядывала земля (отчёт автора).
 fn settle(bodies: &[Shape]) -> (Vec<Shape>, Vec<Shape>) {
+    (settle_asphalt(bodies), settle_hatched(bodies))
+}
+
+/// Штрихуемая половина [`settle`]: клин, разомкнутый на [`GORE_OPENING`].
+fn settle_hatched(bodies: &[Shape]) -> Vec<Shape> {
     let round = LineJoin::Round(ARC);
-    let bodies = bodies.to_vec();
-    let hatched = bodies
+    bodies
+        .to_vec()
         .outline(&OutlineStyle::new(-GORE_OPENING).line_join(round.clone()))
-        .outline(&OutlineStyle::new(GORE_OPENING).line_join(round.clone()))
+        .outline(&OutlineStyle::new(GORE_OPENING).line_join(round))
         .into_iter()
         .filter(|shape| {
             shape
@@ -756,9 +760,14 @@ fn settle(bodies: &[Shape]) -> (Vec<Shape>, Vec<Shape>) {
                 .is_some_and(|outer| contour_area(outer) >= GORE_MIN_AREA)
         })
         .filter(is_wide)
-        .collect();
-    let asphalt = bodies.outline(&OutlineStyle::new(ASPHALT_PAD).line_join(round));
-    (asphalt, hatched)
+        .collect()
+}
+
+/// Асфальтовая половина [`settle`]: весь клин с заходом под кромки.
+fn settle_asphalt(bodies: &[Shape]) -> Vec<Shape> {
+    bodies
+        .to_vec()
+        .outline(&OutlineStyle::new(ASPHALT_PAD).line_join(LineJoin::Round(ARC)))
 }
 
 /// Устье больше этого, м², — уже квартал между улицами, а не пустота в узле.
@@ -961,6 +970,8 @@ fn paved_share(hole: &[Vec2], paved: &[&[Vec2]], grid: &crate::map::grid::Grid<u
     covered as f32 / inside as f32
 }
 
+/// Достигает ли островок где-нибудь ширины [`GORE_MIN_WIDTH`]: после сжатия
+/// на её половину от него что-то остаётся.
 fn is_wide(shape: &Shape) -> bool {
     vec![shape.clone()]
         .outline(&OutlineStyle::new(-GORE_MIN_WIDTH / 2.0).line_join(LineJoin::Round(ARC)))
@@ -977,7 +988,6 @@ fn closing_span(path: &[Vec2], width: f32) -> (Vec2, Vec2) {
     (low - pad, high + pad)
 }
 
-/// Начало ломаной — первые [`ARM_REACH`] метров.
 /// Как быстро должен сходиться зазор подхода, чтобы это был веер
 /// ([`fan_head`]): 0.5 м на 10 м, — и окно, на котором он меряется, м.
 const FAN_SLOPE: f32 = 0.05;
@@ -1050,6 +1060,7 @@ fn cut_head(points: &[Vec2], reach: f32) -> Vec<Vec2> {
     path
 }
 
+/// Начало ломаной — первые [`ARM_REACH`] метров.
 fn head(points: impl Iterator<Item = Vec2>) -> Vec<Vec2> {
     cut_head(&points.collect::<Vec<Vec2>>(), ARM_REACH)
 }
@@ -1242,6 +1253,20 @@ mod tests {
             let (_, right) = contour_bounds(&shape[0]);
             assert!(right.x <= tip_x - 2.5 + 0.01, "{right:?}");
         }
+        // срезана только штриховка: асфальт устья лежит и под зеброй
+        let mut gores = Gores::of(&[], &[]);
+        gores.add_mouths(&found, &cleared);
+        // у асфальта устья дыр нет: каждый контур — внешний
+        let paved = |point: Vec2| {
+            gores
+                .contours()
+                .any(|contour| point_in_shape(point, &vec![contour.clone()]))
+        };
+        let on_zebra = Vec2::new(tip_x - 1.0, 0.0);
+        assert!(paved(on_zebra), "под зеброй нет асфальта");
+        assert!(!gores.contains(on_zebra), "штриховка по зебре");
+        let deep = Vec2::new(20.0, 0.0);
+        assert!(paved(deep) && gores.contains(deep));
     }
 
     /// Веер подхода (R23): половины бульвара расходятся у кольца к разным
