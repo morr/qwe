@@ -1021,7 +1021,8 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     ordered ways and the axis paths): 2 m dash, 6 m gap (ГОСТ 1.5 in town — the gap three
     times the dash; the old 3 / 3 read as a picket fence on a multi-lane street at the
     gallery zoom, Yandex draws about 1 : 2.5), and the phase runs through a seam.
-  - **Solid near a junction**: the last `APPROACH` 25 m before a junction break — for a
+  - **Solid near a junction**: the last `APPROACH` 25 m before a junction break (not a
+    **quiet** one — a corner node's, `LineBreaks::quiet`, **Junction paint**) — for a
     **lane line only on the approach**, in the direction its lanes flow
     (`paint::flows_forward` by the line's side of the axis and `MapData::traffic_side`, a
     one-way road forward): leaving a junction a lane line is dashed at once (the author's
@@ -1449,6 +1450,23 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     of a cluster on one road get a bridging break between them, so no orphan dash is left
     between. The case it was written for is Tsiolkovsky street (Tula, 4703, 332), gallery
     sample 19: Shchorsa street and Tsiolkovsky lane join from opposite sides 17 m apart.
+  - **Corner nodes** (`is_corner`, roads list R22): two ways of **different streets**
+    ending end to end in one node are a seam to `is_junction`, and their lines met there
+    at an angle — Belgorod, 3171 3553, Пушкина (two-way) ends where Народный бульвар
+    (one-way) starts at 90°, the kerb rounded by `corners.rs` and the axis and the dashes
+    drawn into a right-angled corner. Such a node is a paint node too when the drawn
+    axes leave it (`PASS_CHORD` 2 m chords) at `corners::MIN_ANGLE`..`MAX_ANGLE`
+    (25°–155°, the angle at which `corners.rs` rounds the kerb there — one notion of a
+    corner for the kerb and the paint). Both streets pass nowhere there, so both break,
+    but a corner is not a crossroads: its breaks are **quiet** (`NodePaint::quiet`,
+    `LineBreaks::quiet` — no solid approach before them, `paint::Painter::paint` takes the
+    approach off the profile without them), and its arms get no `ArmPlan` — no zebra, no
+    stop line; an OSM crossing on the arm stays a mid-block zebra. The turn paths still
+    round the corner (Tula 6054 → 6112). The 2 m chord matters: a 10 m chord read the
+    smooth bend of two ways meeting mid-curve as a corner too, and the solid approaches
+    then ran round a plain street bend (Oryol, 4537 1208). A collinear seam is no corner
+    (`a_collinear_seam_of_two_streets_stays_unbroken`). Tula has 31 corner nodes, Oryol
+    56, Belgorod 37.
   - **Who breaks**: an **arm** is where a road leaves the cluster (a piece between two
     nodes of one cluster is inside it); a street **passes** a cluster when it has two arms
     there (a ring always passes). A road breaks its paint when the cluster is signalized

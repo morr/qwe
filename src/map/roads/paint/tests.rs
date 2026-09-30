@@ -932,6 +932,44 @@ fn the_axis_of_a_through_street_is_solid_at_a_side_street() {
     );
 }
 
+/// Угол двух улиц (R22, Белгород, Пушкина и Народный бульвар): осевые рвутся
+/// у него тихо — пунктир до самого разрыва, сплошной подхода нет: это не
+/// перекрёсток (что они рвутся — `node_paint::tests`).
+#[test]
+fn the_axis_stays_dashed_up_to_a_corner_of_two_streets() {
+    let west = with_lanes(
+        street(vec![Vec2::ZERO, Vec2::new(150.0, 0.0)], 7.6),
+        2,
+        false,
+    );
+    let mut north = with_lanes(
+        street(vec![Vec2::new(150.0, 0.0), Vec2::new(150.0, 150.0)], 7.6),
+        2,
+        false,
+    );
+    north.highway = Highway::Unclassified;
+    let map = map_of(vec![west, north]);
+    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let builder = paint_layer(&layers, PAINT_AXES);
+    let positions = builder.positions_for_test();
+    let ribbons = builder.ribbon_coords_for_test().unwrap();
+    let corner = Vec2::new(150.0, 0.0);
+    // вершины вида `kind` в 40 м от угла — на подходе к нему
+    let near_corner = |kind: LineKind| {
+        positions
+            .iter()
+            .zip(ribbons.iter())
+            .filter(|(at, ribbon)| {
+                ribbon[3] == kind.code() && Vec2::new(at[0], at[1]).distance(corner) < 40.0
+            })
+            .map(|(at, _)| Vec2::new(at[0], at[1]))
+            .collect::<Vec<Vec2>>()
+    };
+    assert!(!near_corner(LineKind::AxisDashed).is_empty());
+    let solid = near_corner(LineKind::AxisSolid);
+    assert!(solid.is_empty(), "{solid:?}");
+}
+
 /// Обводка островка (R27, Белгород — острая вершина; Орёл — наплывы и шов):
 /// краска островка не выходит за его контур ни на одной вершине — ни усиком
 /// у острия, ни наплывом на скруглённом углу, — а обводка и штриховка не

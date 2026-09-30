@@ -1362,6 +1362,70 @@ fn a_through_street_turning_at_a_t_node_breaks_its_lines() {
     assert_eq!(paint.junctions[0].leading.len(), 2);
 }
 
+/// Две улицы, что кончаются торцами в [`NODE`]: двусторонняя `highway` с
+/// запада и `unclassified` от узла под `angle` градусов к ней (Белгород,
+/// Пушкина и Народный бульвар, 3171, 3553, R22).
+fn corner(angle: f32, highway: Highway, oneway: bool) -> NodePaint {
+    let west = RoadLine {
+        sidewalks: [SidewalkSide::Tagged; 2],
+        ..road(vec![Vec2::ZERO, NODE], 8.0, highway, 2)
+    };
+    let turn = (180.0 - angle).to_radians();
+    // другой класс — сеть не склеит их в одну улицу и соосными
+    let north = RoadLine {
+        oneway,
+        sidewalks: [SidewalkSide::Tagged; 2],
+        ..road(
+            vec![NODE, NODE + Vec2::new(turn.cos(), turn.sin()) * 60.0],
+            8.0,
+            Highway::Unclassified,
+            2,
+        )
+    };
+    paint_of(vec![west, north], Vec::new(), EVERYTHING)
+}
+
+/// Угол двух улиц — узел краски: линии обеих рвутся до кромок, а не сходятся
+/// в узле углом, но ни зебры, ни стоп-линии угол не зовёт.
+#[test]
+fn two_streets_meeting_end_to_end_at_a_corner_break_their_lines() {
+    let paint = corner(90.0, Highway::Residential, true);
+    for road in [0, 1] {
+        assert!(
+            !gaps(&paint, road).is_empty(),
+            "road {road}: {:?}",
+            paint.lines().of(road).cut
+        );
+        // разрыв тихий: сплошной подхода перед углом нет
+        assert!(!paint.lines().of(road).quiet.is_empty(), "road {road}");
+    }
+    assert!(paint.stop_lines.is_empty(), "{:?}", paint.stop_lines);
+    assert!(paint.zebras.is_empty(), "{:?}", paint.zebras);
+}
+
+/// Угол `tertiary` с тротуарами по тегу — тоже без зебр и стоп-линий: улица
+/// не ниже `tertiary` зовёт их только на перекрёстке.
+#[test]
+fn a_corner_of_a_tertiary_street_gets_no_stop_line_or_zebra() {
+    let paint = corner(90.0, Highway::Tertiary, false);
+    assert!(!gaps(&paint, 0).is_empty(), "{:?}", paint.lines().of(0).cut);
+    assert!(paint.stop_lines.is_empty(), "{:?}", paint.stop_lines);
+    assert!(paint.zebras.is_empty(), "{:?}", paint.zebras);
+}
+
+/// Соосный шов двух улиц — не угол: линии идут через него.
+#[test]
+fn a_collinear_seam_of_two_streets_stays_unbroken() {
+    let paint = corner(175.0, Highway::Residential, false);
+    for road in [0, 1] {
+        assert!(
+            gaps(&paint, road).is_empty(),
+            "road {road}: {:?}",
+            paint.lines().of(road).cut
+        );
+    }
+}
+
 /// Лёгкий излом в узле (8°, как у Дм. Ульянова) улицу насквозь пропускает, и
 /// односторонняя проходит даже поворачивая: осевой, что легла бы углом, у неё
 /// нет, а половина разделённой улицы расходится от развилки полого (Тула,

@@ -52,6 +52,7 @@ use std::collections::BTreeMap;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
+use super::corners::{MAX_ANGLE, MIN_ANGLE};
 use super::drawn::{Axis, Drawn};
 use super::junctions::{JUNCTION_MARGIN, SharedNode, Visit, node_key};
 use super::network::pairs::TRAM_BED_MAX_GAP;
@@ -259,6 +260,7 @@ pub struct PaintBreaks<'a> {
     cut: &'a [Vec<Break>],
     solid: &'a [Vec<Break>],
     throats: &'a [Vec<Throat>],
+    quiet: &'a [Vec<Break>],
 }
 
 impl<'a> PaintBreaks<'a> {
@@ -267,6 +269,7 @@ impl<'a> PaintBreaks<'a> {
             cut: &self.cut[road],
             solid: &self.solid[road],
             throats: &self.throats[road],
+            quiet: &self.quiet[road],
         }
     }
 }
@@ -285,6 +288,9 @@ pub struct NodePaint {
     /// уступай она. Осевая у такого узла сплошная, как и перед разрывом
     /// (`Painter::paint`): через примыкание не обгоняют.
     solid: Vec<Vec<Break>>,
+    /// Тихие разрывы из `breaks` — у угла двух улиц ([`is_corner`]): линии
+    /// рвутся, но перед ними не сплошные. Наружу — в [`PaintBreaks`].
+    quiet: Vec<Vec<Break>>,
     pub junctions: Vec<Junction>,
     /// Карманы у торцов дорог `[начало, конец]`.
     pub pockets: Vec<[Option<Pocket>; 2]>,
@@ -600,6 +606,7 @@ impl NodePaint {
             cut: &self.breaks,
             solid: &self.solid,
             throats: &self.throats,
+            quiet: &self.quiet,
         }
     }
 
@@ -672,6 +679,7 @@ impl NodePaint {
             pockets: vec![[None; 2]; drawn.len()],
             throats: vec![Vec::new(); drawn.len()],
             solid: vec![Vec::new(); drawn.len()],
+            quiet: vec![Vec::new(); drawn.len()],
             ..Self::default()
         };
         let merged = |node: &SharedNode| {
@@ -705,10 +713,16 @@ impl NodePaint {
                 });
             }
         }
-        let junctions: Vec<&SharedNode> = nodes
-            .iter()
-            .filter(|node| node.is_junction() && merged(node).is_none())
-            .collect();
+        let street = |road: usize| {
+            map.network
+                .street_of(road)
+                .map_or(usize::MAX - road, |(street, _)| street)
+        };
+        // узел краски: перекрёсток или угол двух улиц, не чистое слияние
+        let painted = |node: &SharedNode| {
+            (node.is_junction() || is_corner(node, paths, &street)) && merged(node).is_none()
+        };
+        let junctions: Vec<&SharedNode> = nodes.iter().filter(|node| painted(node)).collect();
         let marks: HashMap<(i32, i32), RoadNodeKind> = map
             .road_nodes
             .iter()
@@ -718,11 +732,6 @@ impl NodePaint {
         for (index, node) in map.road_nodes.iter().enumerate() {
             near_marks.insert(node.pos, node.pos, index);
         }
-        let street = |road: usize| {
-            map.network
-                .street_of(road)
-                .map_or(usize::MAX - road, |(street, _)| street)
-        };
 
         // переходы по дорогам — на нарисованной оси
         let mut crossings: Vec<Vec<Crossing>> = vec![Vec::new(); drawn.len()];
@@ -740,7 +749,7 @@ impl NodePaint {
                 // ложится поперёк продолжения, как посреди улицы (Болдина у
                 // кольца, R16/R17)
                 let merge = merged(node);
-                if node.is_junction() && merge.is_none() {
+                if painted(node) {
                     continue;
                 }
                 for visit in &node.visits {
@@ -1043,6 +1052,10 @@ impl NodePaint {
             .keys()
             .any(|&road| class_rank(drawn[road].highway) >= RULE_ZEBRA_RANK);
         let at_ring = !ring_arms.is_empty() || visits.keys().any(|&road| on_ring(road));
+        // угол двух улиц ([`is_corner`]) — не перекрёсток: линии рвутся, но
+        // тихо ([`NodePaint::quiet`]), и ни зебру, ни стоп-линию, ни
+        // траектории угол сам не зовёт — уступать там некому
+        let corner = cluster.iter().all(|node| !node.is_junction());
         let rule_zebras = (signalized || major) && !at_ring;
         // дорога самого кольца: дуга (`roads/rings.rs`) или кольцо одним way
         let ring_road = |road: usize| on_ring(road) || is_closed(&drawn[road].points);
@@ -1135,6 +1148,7 @@ impl NodePaint {
                 continue;
             }
             broken.insert(road, reach);
+            let from = breaks.len();
             breaks.extend(here.iter().map(|&at| Break { at, reach }));
             // соседние узлы кластера на одной дороге — один разрыв
             for pair in here.windows(2) {
@@ -1142,6 +1156,15 @@ impl NodePaint {
                     at: (pair[0] + pair[1]) / 2.0,
                     reach: pair[0].distance(pair[1]) / 2.0,
                 });
+            }
+            if corner {
+                // и торец дороги в узле (разрыв нулевого вылета) — тоже тихий
+                let quiet = breaks
+                    .iter()
+                    .enumerate()
+                    .filter(|&(index, found)| index >= from || here.contains(&found.at))
+                    .map(|(_, found)| *found);
+                self.quiet[road].extend(quiet);
             }
         }
 
@@ -1338,10 +1361,12 @@ impl NodePaint {
         let first = ZEBRA_SETBACK + ZEBRA_LENGTH / 2.0;
         let mut plans: Vec<ArmPlan> = Vec::new();
         for arm in &arms {
-            // излом оси рвёт линии ведущей, но не зовёт краски поперёк неё
+            // излом оси рвёт линии ведущей, но не зовёт краски поперёк неё; угол
+            // двух улиц — ничьей
             if !broken.contains_key(&arm.road)
                 || drawn[arm.road].bridge
                 || bent_roads.contains(&arm.road)
+                || corner
             {
                 continue;
             }
@@ -1786,6 +1811,46 @@ fn zone(drawn: &[&RoadLine], node: &SharedNode) -> f32 {
 }
 
 /// Узлы, чьи зоны перекрываются, — кластерами, в порядке первого узла.
+/// Угол двух улиц: в узле кончаются торцами ровно две дороги разных улиц, и
+/// их нарисованные оси (хорды на [`PASS_CHORD`] — угол линий у самого узла)
+/// сходятся под углом от `corners::MIN_ANGLE` до `MAX_ANGLE` — тем же, под
+/// которым `corners.rs` скругляет там бордюр. [`SharedNode::is_junction`]
+/// такой узел считает швом, и линии обеих улиц сходились в нём углом
+/// (Белгород, Пушкина и Народный бульвар, 3171, 3553 — R22). Соосный шов и
+/// шов посреди плавного поворота (хорда на 10 м читала и его, Орёл, 4537,
+/// 1208) — не угол.
+fn is_corner(
+    node: &SharedNode,
+    paths: &[impl AsRef<[Vec2]>],
+    street: &impl Fn(usize) -> usize,
+) -> bool {
+    let [a, b] = node.visits.as_slice() else {
+        return false;
+    };
+    if a.road == b.road
+        || !a.end
+        || !b.end
+        || a.inner
+        || b.inner
+        || street(a.road) == street(b.road)
+    {
+        return false;
+    }
+    let away = |visit: &Visit| {
+        let walk = Walk::new(paths[visit.road].as_ref());
+        let from = walk.project(node.at);
+        let dir = if visit.vertex == 0 { 1.0 } else { -1.0 };
+        let to = (from + dir * PASS_CHORD).clamp(0.0, walk.total);
+        let (start, _) = walk.at(from)?;
+        let (end, _) = walk.at(to)?;
+        (end - start).try_normalize()
+    };
+    let (Some(first), Some(second)) = (away(a), away(b)) else {
+        return false;
+    };
+    (MIN_ANGLE..=MAX_ANGLE).contains(&first.angle_to(second).abs())
+}
+
 fn clusters<'a>(drawn: &[&RoadLine], junctions: &[&'a SharedNode]) -> Vec<Vec<&'a SharedNode>> {
     let zones: Vec<f32> = junctions.iter().map(|node| zone(drawn, node)).collect();
     let mut grid: Grid<usize> = Grid::new(CLUSTER_CELL);

@@ -232,6 +232,9 @@ enum LineKind {
 /// Что узлы сказали линиям одной дороги (`roads/node_paint.rs`): где они
 /// рвутся (`cut`), какие узлы дорога проходит насквозь (`solid`) и где на
 /// кольце горла съездов (`throats` — рвут только линии со стороны съезда).
+/// `quiet` — те из `cut`, перед которыми линия не сплошная: угол двух улиц
+/// (`node_paint::is_corner`) — не перекрёсток, перестраиваться перед ним не
+/// запрещено (R22).
 /// Одной дороге его выдаёт `node_paint::PaintBreaks::of` — по-другому набор не
 /// собирается.
 #[derive(Clone, Copy, Default)]
@@ -239,6 +242,7 @@ pub struct LineBreaks<'a> {
     pub cut: &'a [Break],
     pub solid: &'a [Break],
     pub throats: &'a [Throat],
+    pub quiet: &'a [Break],
 }
 
 impl LineKind {
@@ -845,6 +849,7 @@ impl Painter {
             cut: breaks,
             solid: through,
             throats,
+            quiet,
         }: LineBreaks,
         wedges: [Option<WedgeEnd>; 2],
         pockets: [Option<Pocket>; 2],
@@ -984,8 +989,15 @@ impl Painter {
                 .fold(0, |mask, bit| mask | bit);
         let mut profiles: [Option<Vec<f32>>; 16] = Default::default();
         profiles[every] = Some(to_break);
-        let profile = |mask: usize| {
-            let mut chosen = breaks.to_vec();
+        // `calm` — без тихих разрывов (`quiet`): по нему считается сплошная
+        // подхода; без тихих он совпадает с полным
+        let mut calm_profiles: [Option<Vec<f32>>; 16] = Default::default();
+        let profile = |mask: usize, calm: bool| {
+            let mut chosen: Vec<Break> = breaks
+                .iter()
+                .filter(|found| !calm || !quiet.contains(found))
+                .copied()
+                .collect();
             chosen.extend(
                 (0..2)
                     .filter(|&end| mask & (1 << end) != 0)
@@ -1069,11 +1081,19 @@ impl Painter {
             let approach_mask = mask & 0b11;
             for key in [mask, approach_mask] {
                 if profiles[key].is_none() {
-                    profiles[key] = Some(profile(key));
+                    profiles[key] = Some(profile(key, false));
+                }
+                if !quiet.is_empty() && calm_profiles[key].is_none() {
+                    calm_profiles[key] = Some(profile(key, true));
                 }
             }
-            let (Some(to_break), Some(approach_break)) =
-                (&profiles[mask], &profiles[approach_mask])
+            let calm = if quiet.is_empty() {
+                &profiles
+            } else {
+                &calm_profiles
+            };
+            let (Some(to_break), Some(calm_break), Some(approach_break)) =
+                (&profiles[mask], &calm[mask], &calm[approach_mask])
             else {
                 unreachable!("профили посчитаны выше");
             };
@@ -1110,7 +1130,7 @@ impl Painter {
                 // осевая обслуживает оба потока: сплошная по обе стороны
                 // разрыва — и у узла, который улица проходит насквозь
                 LineKind::Axis => {
-                    let mut spans = near_spans(&along, to_break, APPROACH);
+                    let mut spans = near_spans(&along, calm_break, APPROACH);
                     spans.extend(near_spans(&along, &to_through, APPROACH));
                     split_at_spans(line, stations, &along, &spans)
                 }

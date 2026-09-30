@@ -376,7 +376,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     — keeps its asphalt ruts through it. A **bent** leading road — two-way, its drawn axis
     turning at the node by more than 15° (between its arms, or a kink under the break) —
     leads with its lines broken instead of through: the axis has no room for an arc there,
-    and the paint does not draw the corner; no zebra or stop line crosses it.
+    and the paint does not draw the corner; no zebra or stop line crosses it. A **corner
+    node** — two ways of different streets ending end to end at 25°–155° (the angle at
+    which the kerb is rounded there) — is a paint node too: the lines of both break
+    there, **quietly** (no solid approach), with no zebra or stop line of its own.
   - **Turn paths** (`map/roads/turns.rs`) — a lane-to-lane Bézier curve for every allowed
     maneuver through a junction (`turn:lanes` — `RoadLine::turns` — when it matches the
     lanes, else the rule: straight lane to lane, the near turn from the kerb lane, the far
