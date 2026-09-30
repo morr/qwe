@@ -3,6 +3,7 @@ use crate::map::osm::fixture::street;
 use crate::map::osm::{Highway, MapData};
 use crate::map::roads::shape::RoadShape;
 use crate::map::roads::{CrossingMode, RoadStyle, mesh_roads};
+use crate::map::shapes::oriented;
 
 /// Меш слоя краски по имени.
 fn paint_layer<'a>(layers: &'a [LayerMesh], name: &str) -> &'a MeshBuilder {
@@ -928,5 +929,52 @@ fn the_axis_of_a_through_street_is_solid_at_a_side_street() {
             .iter()
             .all(|&x| !(low + 0.5..high - 0.5).contains(&x)),
         "{dashed:?}"
+    );
+}
+
+/// Обводка островка (R27, Белгород — острая вершина; Орёл — наплывы и шов):
+/// краска островка не выходит за его контур ни на одной вершине — ни усиком
+/// у острия, ни наплывом на скруглённом углу, — а обводка и штриховка не
+/// ложатся друг на друга: вместе они — ровно площадь островка.
+#[test]
+fn an_island_outline_stays_inside_and_does_not_overlap_the_hatching() {
+    // острый клин в 10° со скруглёнными размыканием углами, как у клина кольца
+    let tip = Vec2::ZERO;
+    let base = [Vec2::new(30.0, 2.6), Vec2::new(30.0, -2.6)];
+    let rounded: Vec<Shape> = vec![vec![oriented(&[tip, base[1], base[0]], true)]]
+        .outline(&OutlineStyle::new(-0.3).line_join(LineJoin::Round(0.3)))
+        .outline(&OutlineStyle::new(0.3).line_join(LineJoin::Round(0.3)));
+    let shape = rounded.first().expect("клин").clone();
+    let outer = ring_of(&shape[0]);
+
+    let mut painter = Painter::new(TrafficSide::Right);
+    painter.paint_island(&shape, Vec2::X);
+    let outside: Vec<[f32; 3]> = painter
+        .islands
+        .positions_for_test()
+        .iter()
+        .copied()
+        .filter(|at| {
+            let at = Vec2::new(at[0], at[1]);
+            !crate::map::osm::model::point_in_polygon(at, &outer)
+                && outer
+                    .iter()
+                    .zip(outer.iter().cycle().skip(1))
+                    .all(|(a, b)| crate::map::osm::model::distance_to_segment(at, *a, *b) > 1e-3)
+        })
+        .collect();
+    assert!(outside.is_empty(), "краска за контуром: {outside:?}");
+
+    // площадь фигуры за вычетом дырок
+    let net = |shape: &Shape| -> f32 {
+        let mut rings = shape.iter().map(crate::map::shapes::contour_area);
+        rings.next().unwrap_or(0.0) - rings.sum::<f32>()
+    };
+    let (band, inside) = island_band(&shape);
+    let parts: f32 = band.iter().chain(&inside).map(net).sum();
+    let whole = net(&shape);
+    assert!(
+        (parts - whole).abs() < 0.01 * whole,
+        "обводка и штриховка вместе {parts}, островок {whole}"
     );
 }

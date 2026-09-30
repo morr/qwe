@@ -51,6 +51,12 @@ use super::shape::lane_width;
 use super::tapers::{self, Taper, Tapers};
 use super::turns::{JunctionWear, LaneArrow};
 use super::{is_carriageway, lane_count, smoothstep};
+use i_overlay::core::fill_rule::FillRule;
+use i_overlay::core::overlay_rule::OverlayRule;
+use i_overlay::float::single::SingleFloatOverlay;
+use i_overlay::mesh::outline::offset::OutlineOffset;
+use i_overlay::mesh::style::{LineJoin, OutlineStyle};
+
 use crate::map::along::{arclengths, place_on_path};
 use crate::map::grid::Grid;
 use crate::map::meshing::{
@@ -262,8 +268,30 @@ impl LineKind {
 const HATCH_PERIOD: f32 = 1.6;
 const HATCH_WIDTH: f32 = 0.25;
 const EDGE_WIDTH: f32 = 0.3;
-/// Полуширина полосы под обводку островка, м.
-pub(super) const EDGE_STRIP: f32 = 0.6;
+/// Острейший угол, рад, до которого вершина внутренней кромки обводки
+/// островка ещё ставится острой (`LineJoin::Miter` у `i_overlay`).
+const EDGE_MITER: f32 = 0.05;
+
+/// Обводка островка и то, что внутри неё, — **площадями** (R27): обводка —
+/// кольцо между контуром и контуром, ужатым на [`EDGE_WIDTH`], штриховка —
+/// ужатый контур. Лентой вдоль контура обводка была прежде, и контур клина
+/// приходит из размыкания со скруглёнными углами — дуги радиусом 0.3 м по
+/// вершине на 9 см: полоса в 0.6 м полуширины перехлёстывала на них сама
+/// себя — наплывы шире линии на каждой вершине, шов двойной полупрозрачной
+/// краски, хвостик за угол, — а у острой вершины линия не сходилась в точку
+/// (усик назад). Ещё штриховка лежала на всём контуре, под обводкой, и
+/// краска там ложилась дважды. Площадь кромки ни с чем не перекрывается, и
+/// у острой вершины две линии обводки сливаются в клин и сходятся в точку.
+fn island_band(shape: &Shape) -> (Vec<Shape>, Vec<Shape>) {
+    let inside: Vec<Shape> =
+        shape.outline(&OutlineStyle::new(-EDGE_WIDTH).line_join(LineJoin::Miter(EDGE_MITER)));
+    let band = if inside.is_empty() {
+        vec![shape.clone()]
+    } else {
+        vec![shape.clone()].overlay(&inside, OverlayRule::Difference, FillRule::NonZero)
+    };
+    (band, inside)
+}
 
 /// Стрелка на полосе: длина, доля длины до отвода поворота, наконечник
 /// (длина и ширина основания), толщина стебля, вынос отвода вбок и вперёд, м;
@@ -1288,43 +1316,46 @@ impl Painter {
     }
 
     /// Островок у кольца (`roads/gores.rs`): обводка каждого контура и
-    /// штриховка заливкой — полосы идут поперёк `across`.
+    /// штриховка заливкой — полосы идут поперёк `across`. Обводка и
+    /// штриховка не перекрываются ([`island_band`]).
     pub(super) fn paint_island(&mut self, shape: &Shape, across: Vec2) {
         let color = PAINT_COLOR.to_linear();
-        let mut rings = shape.iter().map(ring_of);
-        let Some(outer) = rings.next() else {
+        if shape.is_empty() {
             return;
-        };
-        let holes: Vec<Vec<Vec2>> = rings.collect();
-        for contour in std::iter::once(&outer).chain(&holes) {
-            let mut closed = contour.clone();
-            closed.push(contour[0]);
-            let (along, _) = arclengths(&closed);
-            let stations: Vec<PaintStation> = along[..contour.len()]
-                .iter()
-                .map(|&along| PaintStation {
-                    along,
-                    to_break: NO_BREAK,
-                    alpha: 1.0,
-                })
-                .collect();
-            self.islands.push_paint_strip(
-                contour,
-                true,
-                EDGE_STRIP,
-                &stations,
+        }
+        let (band, inside) = island_band(shape);
+        // обводка — площадью: координата поперёк у неё ноль, и шейдер
+        // линии кроет её целиком
+        for piece in &band {
+            let mut rings = piece.iter().map(ring_of);
+            let Some(outer) = rings.next() else {
+                continue;
+            };
+            let holes: Vec<Vec<Vec2>> = rings.collect();
+            self.islands.push_paint_area(
+                &outer,
+                &holes,
+                Vec2::ZERO,
+                NO_BREAK,
                 LineKind::Edge.code(),
                 color,
             );
         }
-        self.islands.push_paint_area(
-            &outer,
-            &holes,
-            across,
-            NO_BREAK,
-            LineKind::Hatch.code(),
-            color,
-        );
+        for piece in &inside {
+            let mut rings = piece.iter().map(ring_of);
+            let Some(outer) = rings.next() else {
+                continue;
+            };
+            let holes: Vec<Vec<Vec2>> = rings.collect();
+            self.islands.push_paint_area(
+                &outer,
+                &holes,
+                across,
+                NO_BREAK,
+                LineKind::Hatch.code(),
+                color,
+            );
+        }
         self.lines += 1;
     }
 

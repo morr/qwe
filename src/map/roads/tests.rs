@@ -1344,15 +1344,17 @@ fn the_wedge_between_the_two_arms_of_a_roundabout_is_hatched() {
     for tagged in [true, false] {
         let map = roundabout_with_an_approach(tagged, true);
         let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
-        // клин — правее кольца, между подходами, у оси x
-        let wedged = |at: &&[f32; 3]| (17.0..40.0).contains(&at[0]) && at[1].abs() < 2.5;
-        let lines = layer(&layers, paint::PAINT_ISLANDS)
-            .builder
-            .positions_for_test();
+        // клин — правее кольца, между подходами, у оси x: краска его кроет
+        // (обводка и штриховка — площади, и вершины у них только на концах
+        // клина, так что спрашивается покрытие, а не вершины)
+        let islands = &layer(&layers, paint::PAINT_ISLANDS).builder;
         assert!(
-            lines.iter().any(|at| wedged(&at)),
+            [20.0, 28.0, 36.0]
+                .iter()
+                .all(|&x| islands.covers_for_test(Vec2::new(x, 0.0))),
             "клин не заштрихован ({tagged})"
         );
+        let lines = islands.positions_for_test();
         // и ничего не заштриховано с внешней стороны подходов
         assert!(lines.iter().all(|at| at[0] > 10.0 && at[1].abs() < 9.0));
     }
@@ -1379,8 +1381,7 @@ fn the_gore_is_paved_under_the_edges_of_both_arms() {
     ];
     let wedged = |at: &[f32; 3]| (14.0..50.0).contains(&at[0]) && at[1].abs() < 5.0;
     // кромка полотна — в 2.5 м от его оси, так что ближе неё лежит только то,
-    // что зашло **под** ленту; полоса под обводку штриховки вылезает из клина
-    // на `EDGE_STRIP` — место шейдеру, сама линия в ней тоньше
+    // что зашло **под** ленту
     let depth = |at: &[f32; 3]| {
         let at = Vec2::new(at[0], at[1]);
         arms.iter()
@@ -1402,8 +1403,8 @@ fn the_gore_is_paved_under_the_edges_of_both_arms() {
         asphalt < UNDER,
         "асфальт островка не зашёл под кромки полотен: {asphalt}"
     );
-    // ...а штриховка у́же его ровно на этот заход и на полотно не лезет
-    let hatching = hatching + paint::EDGE_STRIP;
+    // ...а штриховка у́же его ровно на этот заход и на полотно не лезет:
+    // обводка — площадь внутри клина, а не лента, вылезающая из него
     assert!(
         hatching.is_finite() && hatching > UNDER,
         "штриховка островка вылезла на полотно: {hatching}"

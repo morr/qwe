@@ -420,9 +420,20 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
         `a_void_hemmed_in_by_carriageways_is_a_mouth`.
       - **The paint is the road paint layer's** (roads plan, stage 6): `Gores::islands`
         hands each hatched shape and the direction across its stripes to
-        `Painter::paint_island`, which lays the outline as a closed paint strip
-        (`LineKind::Edge`) and the shape itself as a paint area (`LineKind::Hatch`,
-        `MeshBuilder::push_paint_area` — the ribbon attribute carries the world
+        `Painter::paint_island`, which lays the outline as a **band area** — the shape
+        minus the shape shrunk by `EDGE_WIDTH` 0.3 m (`paint::island_band`, miter joins),
+        drawn with `LineKind::Edge` at a zero coordinate across, i.e. full cover — and the
+        shrunk shape as the hatching. Until R27 the outline was a closed paint strip 0.6 m
+        half wide along the opened contour, whose corners are arcs of 0.3 m radius: the
+        strip overlapped itself at every vertex (blobs wider than the line, a seam of
+        doubled translucent paint, a tail past the corner — Orel, the fork by the bridge),
+        and at a 10° tip the line did not meet itself but turned back in a whisker
+        (Belgorod, Чапаева), while the hatching lay under the outline and doubled the paint
+        there. An area band cannot overlap itself, and at a sharp tip its two sides merge
+        into a solid point
+        (`an_island_outline_stays_inside_and_does_not_overlap_the_hatching`). The hatching
+        is a paint area too (`LineKind::Hatch`, `MeshBuilder::push_paint_area` — the
+        ribbon attribute carries the world
         coordinate across the stripes), and `paint.wgsl` draws the stripes and fades them
         into their mean share when they get finer than a few pixels, with the zebras'
         zoom (`PaintTag::Zebras`). Its own mesh, `road_paint_islands` at
