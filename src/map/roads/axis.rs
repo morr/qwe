@@ -15,10 +15,12 @@
 //! 3. **узел, где сходятся три дороги и больше, остаётся на месте**: по нему
 //!    находят друг друга скругления бордюров, разрывы разметки, стежки и
 //!    клинья. Сквозная пара проходит его прямым отрезком по биссектрисе
-//!    ([`through_pad`]), а излом уходит на две дуги по концам отрезка: край
+//!    ([`ThroughBend`]), а излом уходит на две дуги по концам отрезка: край
 //!    ленты у самого узла остаётся прямым, и скругление бордюра к боковому
 //!    плечу строится, как раньше. Излом круче [`THROUGH_MAX_BEND`] в таком узле
-//!    остаётся углом: это уже поворот, а не сквозная улица;
+//!    остаётся углом: это уже поворот, а не сквозная улица. Два таких узла,
+//!    чьи отрезки встретились бы посреди звена между ними, берут прямой само
+//!    это звено ([`shared_pad`]);
 //! 4. кривая режется обратно на ways **в ближайшей к узлу шва точке дуги**,
 //!    и каждый кусок получает порядок точек своего way.
 //!
@@ -74,6 +76,12 @@ const SIDEWALK_DECK_GAP: f32 = 3.0;
 const FOOTBRIDGE_ALONG: f32 = 0.9;
 /// Мостик ближе этого к оси настила, м, не выносится: сторону не выбрать.
 const FOOTBRIDGE_ON_AXIS: f32 = 0.3;
+/// Наибольший излом каждого из двух близких закреплённых узлов зигзагом, при
+/// котором они делят звено между собой ([`shared_pad`]), рад: это дрожание
+/// оси OSM (Дмитрия Ульянова — 7° и 9°), а не поворот. Круче — весь излом ушёл
+/// бы на одну короткую дугу по другую сторону: у Орла (витрина 04) 44° на
+/// звене в 3 м ломали бордюр.
+const SHARED_MAX_BEND: f32 = 15.0 * PI / 180.0;
 /// Излом мельче этого не скругляется, рад: дуга была бы в сантиметр.
 const MIN_BEND: f32 = 0.5 * PI / 180.0;
 
@@ -490,24 +498,60 @@ fn smooth_run(
 
     // закреплённый узел, который улица проходит насквозь, — прямой отрезок
     // по биссектрисе, а излом уходит на две дуги по его концам
+    let through: Vec<Option<ThroughBend>> = (0..kept.len())
+        .map(|q| {
+            neighbours(q, kept.len(), closed)
+                .filter(|_| kept[q].pinned)
+                .and_then(|(before, after)| {
+                    through_bend(
+                        kept[before].at,
+                        kept[q].at,
+                        kept[after].at,
+                        curve.deviation,
+                    )
+                })
+        })
+        .collect();
+    // два таких узла мелким зигзагом так близко, что их отрезки встретились
+    // бы посреди звена поперёк друг друга
+    let close = |q: usize, other: usize| match (through[q], through[other]) {
+        (Some(a), Some(b)) => {
+            a.turn != b.turn
+                && a.bend.max(b.bend) <= SHARED_MAX_BEND
+                && a.reach + b.reach > kept[q].at.distance(kept[other].at)
+        }
+        _ => false,
+    };
     let mut vertices: Vec<Vertex> = Vec::with_capacity(kept.len());
     for (q, vertex) in kept.iter().enumerate() {
-        let pad = neighbours(q, kept.len(), closed)
-            .filter(|_| vertex.pinned)
-            .and_then(|(before, after)| {
-                through_pad(kept[before].at, vertex.at, kept[after].at, curve.deviation)
-            });
-        match pad {
-            Some([start, end]) => {
-                let free = |at| Vertex {
-                    at,
-                    pinned: false,
-                    source: None,
-                    ..*vertex
-                };
+        let free = |at| Vertex {
+            at,
+            pinned: false,
+            source: None,
+            ..*vertex
+        };
+        let Some(((before, after), bend)) =
+            neighbours(q, kept.len(), closed).zip(through[q])
+        else {
+            vertices.push(*vertex);
+            continue;
+        };
+        let (at, deviation) = (vertex.at, curve.deviation);
+        match (close(q, before), close(q, after)) {
+            (false, false) => {
+                let [start, end] = bend.pad(at);
                 vertices.extend([free(start), *vertex, free(end)]);
             }
-            None => vertices.push(*vertex),
+            // закреплённый сосед рядом — до него звено и есть прямой отрезок
+            (true, false) => {
+                let end = shared_pad(kept[after].at, at, kept[before].at, bend.bend, deviation);
+                vertices.extend([Some(*vertex), end.map(free)].into_iter().flatten());
+            }
+            (false, true) => {
+                let start = shared_pad(kept[before].at, at, kept[after].at, bend.bend, deviation);
+                vertices.extend([start.map(free), Some(*vertex)].into_iter().flatten());
+            }
+            (true, true) => vertices.push(*vertex),
         }
     }
 
@@ -664,7 +708,7 @@ impl Corner {
 }
 
 /// Вершина упрощённой ломаной. `source` — её номер в сшитой ломаной; у концов
-/// прямого отрезка через узел ([`through_pad`]) его нет.
+/// прямого отрезка через узел ([`ThroughBend`], [`shared_pad`]) его нет.
 #[derive(Clone, Copy)]
 struct Vertex {
     at: Vec2,
@@ -684,26 +728,66 @@ fn neighbours(q: usize, count: usize, closed: bool) -> Option<(usize, usize)> {
     }
 }
 
-/// Концы прямого отрезка по биссектрисе, которым улица проходит закреплённый
-/// узел `at`: бордюр перекрёстка ([`corners`](super::corners)) скругляется
-/// только по прямому краю, и изогнутая у самого узла ось оставила бы его без
-/// скругления. Отрезок уводит ось от звеньев OSM не дальше
-/// `deviation` и берёт не больше половины каждого звена. `None` — излом
-/// мельче [`THROUGH_MIN_BEND`] (его кроет перекрёсток) или круче
+/// Излом закреплённого узла, который улица проходит прямым отрезком по
+/// биссектрисе ([`Self::pad`]): бордюр перекрёстка
+/// ([`corners`](super::corners)) скругляется только по прямому краю, и
+/// изогнутая у самого узла ось оставила бы его без скругления. Отрезок уводит
+/// ось от звеньев OSM не дальше `deviation` и берёт не больше половины каждого
+/// звена. Два закреплённых узла слишком близко друг к другу делят вместо этого
+/// звено между собой ([`shared_pad`]).
+#[derive(Clone, Copy)]
+struct ThroughBend {
+    /// Биссектриса излома — направление отрезка.
+    middle: Vec2,
+    bend: f32,
+    /// Куда поворачивает ось: знак `incoming × outgoing`.
+    turn: f32,
+    /// Сколько отрезок взял бы с каждой стороны узла, не зная длины звеньев:
+    /// не дальше `deviation` от звеньев OSM и не больше [`THROUGH_RUN`].
+    reach: f32,
+    /// Половина короче из двух звеньев к соседям: больше отрезок не берёт.
+    half: f32,
+}
+
+impl ThroughBend {
+    fn pad(self, at: Vec2) -> [Vec2; 2] {
+        let reach = self.reach.min(self.half);
+        [at - self.middle * reach, at + self.middle * reach]
+    }
+}
+
+/// Излом в узле `at` между соседями, если его проходят прямым отрезком;
+/// `None` — мельче [`THROUGH_MIN_BEND`] (его кроет перекрёсток) или круче
 /// [`THROUGH_MAX_BEND`] (это поворот): тогда узел остаётся углом.
-fn through_pad(before: Vec2, at: Vec2, after: Vec2, deviation: f32) -> Option<[Vec2; 2]> {
+fn through_bend(before: Vec2, at: Vec2, after: Vec2, deviation: f32) -> Option<ThroughBend> {
     let incoming = (at - before).try_normalize()?;
     let outgoing = (after - at).try_normalize()?;
     let bend = incoming.angle_to(outgoing).abs();
     if !(THROUGH_MIN_BEND..=THROUGH_MAX_BEND).contains(&bend) {
         return None;
     }
-    let middle = (incoming + outgoing).normalize();
-    let reach = (deviation / (bend / 2.0).sin())
+    Some(ThroughBend {
+        middle: (incoming + outgoing).normalize(),
+        bend,
+        turn: incoming.perp_dot(outgoing).signum(),
+        reach: (deviation / (bend / 2.0).sin()).min(THROUGH_RUN),
+        half: at.distance(before).min(at.distance(after)) / 2.0,
+    })
+}
+
+/// Прямой отрезок закреплённого узла `at`, чей закреплённый сосед `near` так
+/// близко, что их отрезки по своим биссектрисам встретились бы посреди звена
+/// между ними: концы двух отрезков расходились там поперёк, и ось делала
+/// ступеньку (Тула, ул. Дмитрия Ульянова у 3381 3691, два подъезда в 9 м друг
+/// от друга; roads list R22). Прямая у обоих — само звено OSM между ними, а
+/// излом узла уходит на дугу по другую его сторону: конец отрезка — звено,
+/// продолженное за узел к `far`, не дальше `deviation` от звена к `far`.
+fn shared_pad(far: Vec2, at: Vec2, near: Vec2, bend: f32, deviation: f32) -> Option<Vec2> {
+    let along = (at - near).try_normalize()?;
+    let reach = (deviation / bend.sin())
         .min(THROUGH_RUN)
-        .min(at.distance(before) / 2.0)
-        .min(at.distance(after) / 2.0);
-    Some([at - middle * reach, at + middle * reach])
+        .min(at.distance(far) / 2.0);
+    Some(at + along * reach)
 }
 
 #[cfg(test)]

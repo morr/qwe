@@ -1881,8 +1881,22 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
       the 20.8 m street across the divided avenue: 7 m of straight edge, a 2 m corner). Tula:
       smooth seams 285 → 367, tight corners 274 → 145.
       The street passes it along a **straight stretch on the bisector**
-      (`through_pad`, up to `THROUGH_RUN` 24 m each way, at most 2 m off the links, at
-      most half of each), and the bend goes to two arcs at the stretch's ends. A bend
+      (`ThroughBend::pad`, up to `THROUGH_RUN` 24 m each way, at most 2 m off the links, at
+      most half of each), and the bend goes to two arcs at the stretch's ends. **Two such
+      nodes in a zigzag whose stretches would meet in the middle of the link between them**
+      (bends turning opposite ways, each at most `SHARED_MAX_BEND` 15°, `reach` of both,
+      not yet cut to the link, summing past its length) share that link as
+      the straight instead (`shared_pad`): each node's stretch runs on along the link past
+      the node, `deviation / sin(bend)` long, and its bend goes to one arc on the far side.
+      On their own bisectors the two stretches ended at the link's midpoint half a metre
+      apart across it, and the axis stepped there — Дмитрия Ульянова at 3381 3691, two
+      driveways 9 m apart and a 7°/9° zigzag in the data: the double solid broke twice and
+      a dash across the step bent into a hook (roads list R22,
+      `two_pinned_nodes_close_together_share_their_link_as_the_straight`). Only jitter:
+      a real turn put on one short arc on the far side broke the kerb (Oryol, gallery 04:
+      44° next to 7°, 3 m of link), and in a C-bend the two stretches meet without the
+      step anyway. A 24° T at Путейская (2638 3153, a pinned node 12.5 m from a bridge
+      end) stays a tight arc — rounding it needs the paint to leave the axis, not done. A bend
       under `THROUGH_MIN_BEND` 4° stays a corner (the junction's asphalt covers it, and a
       stretch would only shorten the straight edge); one over `THROUGH_MAX_BEND` 50° is a
       turn, not a through street, and stays a corner as well. A Hermite curve through the

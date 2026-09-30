@@ -194,6 +194,45 @@ fn bridges_and_arches_keep_the_old_centerline() {
     );
 }
 
+/// Два закреплённых узла в девяти метрах друг от друга, и в каждом ось OSM
+/// ломается на 7–9° в разные стороны (Тула, ул. Дмитрия Ульянова у 3381 3691,
+/// подъезды с двух сторон со сдвигом; roads list R22). Прямой отрезок каждого
+/// узла шёл по своей биссектрисе и брал по половине звена между ними — концы
+/// двух отрезков сходились посреди звена в 0.6 м друг от друга поперёк, и ось
+/// делала там ступеньку: разметка ломалась дважды, штрих гнулся крючком.
+#[test]
+fn two_pinned_nodes_close_together_share_their_link_as_the_straight() {
+    let south = Vec2::new(3381.3, 3686.5);
+    let north = Vec2::new(3381.0, 3695.3);
+    let roads = vec![
+        street(vec![Vec2::new(3375.2, 3622.3), south], 22.0),
+        street(vec![south, north], 22.0),
+        street(
+            vec![north, Vec2::new(3382.0, 3704.0), Vec2::new(3385.6, 3747.3)],
+            22.0,
+        ),
+        // подъезды: один слева у южного узла, другой справа у северного
+        street(vec![south, Vec2::new(3340.0, 3688.0)], 5.0),
+        street(vec![north, Vec2::new(3420.0, 3694.0)], 5.0),
+    ];
+    let paths = axes(&roads, 3.0);
+    assert_eq!(paths[1], vec![south, north], "the link between the nodes");
+    for (a, b) in [(&paths[0], &paths[1]), (&paths[1], &paths[2])] {
+        assert!(
+            kink(a, b) < SAMPLE_TURN,
+            "{}° between {a:?} and {b:?}",
+            kink(a, b).to_degrees()
+        );
+    }
+    for path in &paths[..3] {
+        assert!(
+            sharpest(path) < SAMPLE_TURN,
+            "{}° on {path:?}",
+            sharpest(path).to_degrees()
+        );
+    }
+}
+
 #[test]
 fn smoothing_off_is_the_osm_centerline() {
     let roads = vec![street(
