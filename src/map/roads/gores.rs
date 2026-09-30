@@ -18,14 +18,17 @@ use i_overlay::core::overlay_rule::OverlayRule;
 use i_overlay::float::simplify::SimplifyShape;
 use i_overlay::float::single::SingleFloatOverlay;
 use i_overlay::mesh::outline::offset::OutlineOffset;
-use i_overlay::mesh::style::{LineCap, LineJoin, OutlineStyle};
+use i_overlay::mesh::stroke::offset::StrokeOffset;
+use i_overlay::mesh::style::{LineCap, LineJoin, OutlineStyle, StrokeStyle};
 
 use super::junctions::node_key;
 use super::rings::{Ring, Rings};
 use super::{is_carriageway, lane_count, smoothstep};
 use crate::map::along::{arclengths, densify, place_on_path, tip_of};
 use crate::map::meshing::{Break, MeshBuilder, min_area_rect};
-use crate::map::osm::model::{RoadLine, distance_to_segment, polyline_length, ring_bounds};
+use crate::map::osm::model::{
+    RoadLine, distance_to_segment, point_in_polygon, polyline_length, ring_bounds,
+};
 use crate::map::shapes::{
     ARC, Contour, RING_EPSILON, Shape, contour_area, contour_bounds, is_ring, oriented,
     point_in_shape, push_shape, ring_of, shape_area, stroke,
@@ -280,24 +283,15 @@ impl Gores {
                         >= 2
             })
             .collect();
-        // штрихуется клин **разомкнутый** — без остриёв и перемычек тоньше
-        // двух [`GORE_OPENING`], где полосе встать негде; асфальтом же
-        // заливается весь, с заходом под кромки полотен. Одной фигурой на оба
-        // дела он был сперва, и в срезанных размыканием местах между
-        // штриховкой и дорогой проглядывала земля (отчёт автора)
-        let hatched = bodies
-            .outline(&OutlineStyle::new(-GORE_OPENING).line_join(round.clone()))
-            .outline(&OutlineStyle::new(GORE_OPENING).line_join(round.clone()))
-            .into_iter()
-            .filter(|shape| {
-                shape
-                    .first()
-                    .is_some_and(|outer| contour_area(outer) >= GORE_MIN_AREA)
-            })
-            .filter(is_wide)
-            .collect();
-        let asphalt = bodies.outline(&OutlineStyle::new(ASPHALT_PAD).line_join(round));
+        let (asphalt, hatched) = settle(&bodies);
         Self { asphalt, hatched }
+    }
+
+    /// Добавить устья ([`mouths`]): асфальт и штриховка — как у клина кольца.
+    pub fn add_mouths(&mut self, mouths: &[Shape]) {
+        let (asphalt, hatched) = settle(mouths);
+        self.asphalt.extend(asphalt);
+        self.hatched.extend(hatched);
     }
 
     pub fn count(&self) -> usize {
@@ -329,6 +323,12 @@ impl Gores {
     /// Контуры островков — тому, кто вычитает их из своего (бордюр стоянки).
     pub fn contours(&self) -> impl Iterator<Item = &Contour> {
         self.asphalt.iter().flatten()
+    }
+
+    /// Контуры островков вместе со штриховкой — у клина развилки асфальта
+    /// своего нет, одна штриховка ([`Self::add_forks`]).
+    pub fn outlines(&self) -> impl Iterator<Item = &Contour> {
+        self.asphalt.iter().chain(&self.hatched).flatten()
     }
 
     /// Лежит ли точка на штриховке островка.
@@ -724,6 +724,190 @@ fn fans(roads: &[GoreRoad], at_ring: &impl Fn(Vec2) -> bool) -> Vec<Contour> {
 
 /// Достигает ли островок где-нибудь ширины [`GORE_MIN_WIDTH`]: после сжатия
 /// на её половину от него что-то остаётся.
+/// Клин — в асфальт и штриховку. Штрихуется клин **разомкнутый** — без
+/// остриёв и перемычек тоньше двух [`GORE_OPENING`], где полосе встать
+/// негде; асфальтом же заливается весь, с заходом под кромки полотен. Одной
+/// фигурой на оба дела он был сперва, и в срезанных размыканием местах между
+/// штриховкой и дорогой проглядывала земля (отчёт автора).
+fn settle(bodies: &[Shape]) -> (Vec<Shape>, Vec<Shape>) {
+    let round = LineJoin::Round(ARC);
+    let bodies = bodies.to_vec();
+    let hatched = bodies
+        .outline(&OutlineStyle::new(-GORE_OPENING).line_join(round.clone()))
+        .outline(&OutlineStyle::new(GORE_OPENING).line_join(round.clone()))
+        .into_iter()
+        .filter(|shape| {
+            shape
+                .first()
+                .is_some_and(|outer| contour_area(outer) >= GORE_MIN_AREA)
+        })
+        .filter(is_wide)
+        .collect();
+    let asphalt = bodies.outline(&OutlineStyle::new(ASPHALT_PAD).line_join(round));
+    (asphalt, hatched)
+}
+
+/// Устье больше этого, м², — уже квартал между улицами, а не пустота в узле.
+const MOUTH_MAX_AREA: f32 = 250.0;
+/// Насколько глубоко в пустоте, м, вершина дорожки или проба середины пары
+/// делают её не устьем: переход, что срезает остриё островка (Тула, R20 —
+/// зебра по кончику треугольника), проходит у самой кромки.
+const MOUTH_POINT_DEPTH: f32 = 1.0;
+/// Пустота, которую асфальт узла уже замостил на эту долю, — асфальт
+/// перекрёстка, а не устье: островок посреди него не нужен.
+const MOUTH_PAVED_SHARE: f32 = 0.5;
+/// Шаг проб этой доли, м.
+const MOUTH_PAVED_PROBE: f32 = 1.0;
+/// Допуск, с которым оси спрямляются перед объединением лент устьев, м.
+const MOUTH_SIMPLIFY: f32 = 0.5;
+/// Размыкание дыры, м: перемычка у́же двух таких делит её на куски.
+const MOUTH_OPENING: f32 = 0.75;
+/// Шаг сетки, которой вершины и контуры занятого ищут устья рядом, м.
+const MOUTH_CELL: f32 = 32.0;
+
+/// Устья (R20): пустоты, которые **со всех сторон зажаты проезжими частями**
+/// — дыры объединения лент `carriageways` (ось и ширина) площадью от
+/// [`GORE_MIN_AREA`] до [`MOUTH_MAX_AREA`]. В устье разделённой улицы, где
+/// половины расходятся, а зазор замыкает связка, такая пустота — на земле
+/// направляющий островок краской; у нас в ней оставалась голая земля цвета
+/// тротуара (Тула, Красноармейский у площади Московского вокзала).
+///
+/// Не устье — пустота, где что-то **замаплено**: вершина контура `taken`
+/// (дом, газон, стоянка, остров кольца, островок узла) внутри неё или её
+/// вершина внутри контура, точка `points` (вершина дорожки — у островка
+/// с тротуаром; проба середины пары — там газон разделительной) внутри неё.
+pub(super) fn mouths(
+    carriageways: &[(&[Vec2], f32)],
+    taken: &[&[Vec2]],
+    points: &[Vec2],
+    paved: &[&[Vec2]],
+) -> Vec<Shape> {
+    // стыки фаской и квадратные торцы: цена объединения — число точек, а
+    // скругление — десяток точек на стык (как у карманов разбора)
+    let style = StrokeStyle::new(1.0)
+        .line_join(LineJoin::Bevel)
+        .start_cap(LineCap::Square)
+        .end_cap(LineCap::Square);
+    let mut ribbons: Vec<Contour> = Vec::new();
+    for (path, width) in carriageways {
+        if path.len() >= 2 {
+            let ring = is_ring(path);
+            let path = &path[usize::from(ring)..];
+            // и нарисованная ось — гладкая, с вершиной на каждые полметра
+            // дуги: спрямлённая на [`MOUTH_SIMPLIFY`], она вдесятеро короче
+            let points: Contour =
+                crate::map::along::simplify(path, ring, MOUTH_SIMPLIFY, |_| false)
+                    .into_iter()
+                    .map(|index| path[index].to_array())
+                    .collect();
+            let style = StrokeStyle {
+                width: *width,
+                ..style.clone()
+            };
+            ribbons.extend(points.stroke(style, ring).into_iter().flatten());
+        }
+    }
+    let mut holes: Vec<Vec<Vec2>> = ribbons
+        .simplify_shape(FillRule::NonZero)
+        .into_iter()
+        .flat_map(|shape| shape.into_iter().skip(1))
+        .filter(|hole| (GORE_MIN_AREA..=2.0 * MOUTH_MAX_AREA).contains(&contour_area(hole)))
+        .map(|hole| vec![oriented(&ring_of(&hole), true)])
+        .collect::<Vec<Shape>>()
+        // щель между половинами, что идут вплотную, — та же дыра, что и
+        // устье, из которого они расходятся: размыкание отделяет одно от
+        // другого, а щель остаётся разделительной пары
+        .outline(&OutlineStyle::new(-MOUTH_OPENING).line_join(LineJoin::Round(ARC)))
+        .outline(&OutlineStyle::new(MOUTH_OPENING).line_join(LineJoin::Round(ARC)))
+        .into_iter()
+        .filter_map(|shape| shape.into_iter().next())
+        .filter(|hole| (GORE_MIN_AREA..=MOUTH_MAX_AREA).contains(&contour_area(hole)))
+        .map(|hole| ring_of(&hole))
+        .collect();
+    if holes.is_empty() {
+        return Vec::new();
+    }
+    let mut grid = crate::map::grid::Grid::new(MOUTH_CELL);
+    for (index, hole) in holes.iter().enumerate() {
+        let (low, high) = ring_bounds(hole);
+        grid.insert(low, high, index);
+    }
+    let mut kept = vec![true; holes.len()];
+    for point in points {
+        for &index in grid.at(*point) {
+            let hole = &holes[index];
+            if kept[index]
+                && point_in_polygon(*point, hole)
+                && hole
+                    .iter()
+                    .zip(hole.iter().cycle().skip(1))
+                    .all(|(a, b)| distance_to_segment(*point, *a, *b) >= MOUTH_POINT_DEPTH)
+            {
+                kept[index] = false;
+            }
+        }
+    }
+    for ring in taken {
+        let (low, high) = ring_bounds(ring);
+        for index in grid.near(low, high) {
+            let hole = &holes[index];
+            if kept[index]
+                && (ring.iter().any(|point| point_in_polygon(*point, hole))
+                    || hole.iter().any(|point| point_in_polygon(*point, ring)))
+            {
+                kept[index] = false;
+            }
+        }
+    }
+    let mut paved_grid = crate::map::grid::Grid::new(MOUTH_CELL);
+    for (index, outline) in paved.iter().enumerate() {
+        let (low, high) = ring_bounds(outline);
+        paved_grid.insert(low, high, index);
+    }
+    for (index, hole) in holes.iter().enumerate() {
+        if kept[index] && paved_share(hole, paved, &paved_grid) >= MOUTH_PAVED_SHARE {
+            kept[index] = false;
+        }
+    }
+    let mut index = 0;
+    holes.retain(|_| {
+        index += 1;
+        kept[index - 1]
+    });
+    holes
+        .iter()
+        .map(|hole| vec![oriented(hole, true)])
+        .collect()
+}
+
+/// Доля пустоты `hole`, которую уже мостит асфальт узла `paved` (скругления
+/// и носы — они ложатся до лент): по пробам через [`MOUTH_PAVED_PROBE`].
+fn paved_share(hole: &[Vec2], paved: &[&[Vec2]], grid: &crate::map::grid::Grid<usize>) -> f32 {
+    let (low, high) = ring_bounds(hole);
+    let near = grid.near(low, high);
+    let (mut inside, mut covered) = (0usize, 0usize);
+    let steps = ((high - low) / MOUTH_PAVED_PROBE).ceil().as_uvec2();
+    for i in 0..=steps.x {
+        for j in 0..=steps.y {
+            let probe = low + Vec2::new(i as f32, j as f32) * MOUTH_PAVED_PROBE;
+            if !point_in_polygon(probe, hole) {
+                continue;
+            }
+            inside += 1;
+            if near
+                .iter()
+                .any(|&index| point_in_polygon(probe, paved[index]))
+            {
+                covered += 1;
+            }
+        }
+    }
+    if inside == 0 {
+        return 0.0;
+    }
+    covered as f32 / inside as f32
+}
+
 fn is_wide(shape: &Shape) -> bool {
     vec![shape.clone()]
         .outline(&OutlineStyle::new(-GORE_MIN_WIDTH / 2.0).line_join(LineJoin::Round(ARC)))
@@ -890,5 +1074,54 @@ mod tests {
         let wedge = hatched(Vec2::ZERO, Vec2::new(25.0, 3.0));
         assert!(!is_wide(&sliver));
         assert!(is_wide(&wedge));
+    }
+
+    /// Устье (R20, Тула, Красноармейский): две половины расходятся из
+    /// общего полотна, и зазор между ними замыкает связка — пустота в
+    /// треугольнике, зажатая проезжими частями, — устье. С вершиной дорожки
+    /// в глубине — островок с тротуаром, а не устье; с дорожкой, срезающей
+    /// кончик у кромки, — всё ещё устье.
+    #[test]
+    fn a_void_hemmed_in_by_carriageways_is_a_mouth() {
+        // половины идут вплотную (оси в 6 м при ширине 6) от x = 40 и дальше,
+        // к x = 0 расходятся до 18 м по осям; связка — поперёк у x = 0
+        let upper = [
+            Vec2::new(100.0, 3.0),
+            Vec2::new(40.0, 3.0),
+            Vec2::new(0.0, 9.0),
+        ];
+        let lower = [
+            Vec2::new(100.0, -3.0),
+            Vec2::new(40.0, -3.0),
+            Vec2::new(0.0, -9.0),
+        ];
+        let link = [Vec2::new(0.0, 12.0), Vec2::new(0.0, -12.0)];
+        let roads: Vec<(&[Vec2], f32)> = vec![(&upper, 6.0), (&lower, 6.0), (&link, 6.0)];
+        let found = mouths(&roads, &[], &[], &[]);
+        assert_eq!(found.len(), 1, "{found:?}");
+        let area = shape_area(&found[0]);
+        assert!((GORE_MIN_AREA..=MOUTH_MAX_AREA).contains(&area), "{area}");
+        // глубоко внутри — дорожка: островок
+        assert!(mouths(&roads, &[], &[Vec2::new(12.0, 0.0)], &[]).is_empty());
+        // у самой кромки острия — переход по кончику: устье остаётся
+        let (low, high) = contour_bounds(&found[0][0]);
+        let tip = Vec2::new(high.x - 0.2, (low.y + high.y) / 2.0);
+        assert_eq!(mouths(&roads, &[], &[tip], &[]).len(), 1);
+        // замапленный газон в пустоте — не устье
+        let lawn = [
+            Vec2::new(8.0, -2.0),
+            Vec2::new(14.0, -2.0),
+            Vec2::new(14.0, 2.0),
+            Vec2::new(8.0, 2.0),
+        ];
+        assert!(mouths(&roads, &[&lawn], &[], &[]).is_empty());
+        // пустота, которую асфальт узла уже замостил, — асфальт, не устье
+        let paved = [
+            Vec2::new(0.0, -12.0),
+            Vec2::new(45.0, -12.0),
+            Vec2::new(45.0, 12.0),
+            Vec2::new(0.0, 12.0),
+        ];
+        assert!(mouths(&roads, &[], &[], &[&paved]).is_empty());
     }
 }

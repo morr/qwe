@@ -378,6 +378,32 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
         merged into a ladder with the double line inside it — Tula, a 25 × 1 m sliver on
         the «Макси» boulevard's approach to the mini-ring (6641, 3156). The gores of
         04 and 17 are several metres wide and do not change.
+      - **A mouth is hatched too** (`gores::mouths` → `Gores::add_mouths`, R20): a void
+        **hemmed in on every side by carriageways** — a hole of the union of the one-way
+        carriageways and the carriageways meeting them at a node (all of them costs three
+        times as much, and a hole between two-way streets is a block or a node triangle,
+        `corners::small_islands`), their drawn axes simplified by `MOUTH_SIMPLIFY` 0.5 m
+        and stroked with bevel joins and square caps, opened by
+        `MOUTH_OPENING` 0.75 m (the hairline between halves running side by side is the
+        same hole as the mouth they part from) and kept from `GORE_MIN_AREA` to
+        `MOUTH_MAX_AREA` 250 m² — unless something is **mapped** there: a building, water,
+        green, a lot, a pitch, a road area, a ring island, a node-triangle island, a gore
+        already found, a fork gore's hatching included (`Gores::outlines`; a vertex of its
+        outline inside, or one of the hole's inside it), or a footway vertex or a pair's
+        midline probe (`MOUTH_MEDIAN_PROBE` 2 m) deeper than `MOUTH_POINT_DEPTH` 1 m — a
+        crossing clipping the tip stays out of it — and unless the node's own asphalt
+        (the street kerb returns, noses and bends, laid before the ribbons) already paves
+        `MOUTH_PAVED_SHARE` half of it, probed every metre: that is plain junction
+        asphalt, and a hatched islet in the middle of it (Tula, 5392, 4658) is not what
+        was missing. Such a void gets the gore's asphalt and hatching (`settle`, shared
+        with `Gores::of`). Tula, Красноармейский at Площадь Московского вокзала
+        (3114, 3877): the two halves part and a one-lane link closes the gap 25 m from
+        where the median ends — too far for the median's end cap (`MEDIAN_EXTEND` 12 m) —
+        and the triangle showed the bare ground, sidewalk-pale, with a pocket's patch on
+        it. Tula has two mouths — that one and a grass pocket between drives at
+        (5977, 3011); the build costs ~20 ms of the road layer (`dev` build, 767
+        carriageways in the union — the whole road network would be three times that).
+        `a_void_hemmed_in_by_carriageways_is_a_mouth`.
       - **The paint is the road paint layer's** (roads plan, stage 6): `Gores::islands`
         hands each hatched shape and the direction across its stripes to
         `Painter::paint_island`, which lays the outline as a closed paint strip

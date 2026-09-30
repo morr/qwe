@@ -1365,7 +1365,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   ring to that node (`gores::fans`), less the ring's asphalt and its island (a ring
   chained from arcs too — `Ring::path`). The whole
   wedge is asphalt, the wedge without its thin tips is what gets hatched — by the road
-  paint layer's shader (`road_paint_islands`), which fades it with zoom. A **splitter**
+  paint layer's shader (`road_paint_islands`), which fades it with zoom. A **mouth**
+  (`gores::mouths`) is the same island where no ring is: a void hemmed in on every
+  side by carriageways (the halves of a divided street parting, a link closing the
+  gap), with nothing mapped in it, up to 250 m². A **splitter**
   (`gores::splitters`) is the same island set **by rule** on an approach mapped as one
   two-way way, where there is no fan and so no wedge — only where that approach leaves
   the ring along its ray, never on one running along the ring. A **fork gore**
