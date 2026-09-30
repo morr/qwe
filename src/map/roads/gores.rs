@@ -796,12 +796,13 @@ pub(super) fn mouths(
     points: &[Vec2],
     paved: &[&[Vec2]],
 ) -> Vec<Shape> {
-    // стыки фаской и квадратные торцы: цена объединения — число точек, а
-    // скругление — десяток точек на стык (как у карманов разбора)
+    // стыки фаской: цена объединения — число точек, а скругление — десяток
+    // точек на стык (как у карманов разбора). Торцы круглые, как у лент:
+    // квадратный торец полотна на шве way выступал ступенькой в устье
     let style = StrokeStyle::new(1.0)
         .line_join(LineJoin::Bevel)
-        .start_cap(LineCap::Square)
-        .end_cap(LineCap::Square);
+        .start_cap(LineCap::Round(ARC))
+        .end_cap(LineCap::Round(ARC));
     let mut ribbons: Vec<Contour> = Vec::new();
     for (path, width) in carriageways {
         if path.len() >= 2 {
@@ -892,6 +893,44 @@ pub(super) fn mouths(
         .iter()
         .map(|hole| vec![oriented(hole, true)])
         .collect()
+}
+
+/// Устья без полос переходов `crossings` (ось зебры поперёк дороги), каждая
+/// раздута на `half` по дороге: остриё устья отступает от зебры, а не
+/// штрихуется поверх её полос.
+pub(super) fn clear_crossings(
+    mouths: Vec<Shape>,
+    crossings: &[(Vec2, Vec2)],
+    half: f32,
+) -> Vec<Shape> {
+    if mouths.is_empty() || crossings.is_empty() {
+        return mouths;
+    }
+    let mut kept = Vec::new();
+    for mouth in mouths {
+        let Some((low, high)) = mouth.first().map(contour_bounds) else {
+            continue;
+        };
+        let bands: Vec<Contour> = crossings
+            .iter()
+            .filter(|(from, to)| {
+                (from.min(*to) - half).cmple(high).all() && (from.max(*to) + half).cmpge(low).all()
+            })
+            .filter_map(|(from, to)| {
+                let across = (*to - *from).try_normalize()?.perp() * half;
+                Some(oriented(
+                    &[*from - across, *to - across, *to + across, *from + across],
+                    true,
+                ))
+            })
+            .collect();
+        if bands.is_empty() {
+            kept.push(mouth);
+            continue;
+        }
+        kept.extend(vec![mouth].overlay(&bands, OverlayRule::Difference, FillRule::NonZero));
+    }
+    kept
 }
 
 /// Доля пустоты `hole`, которую уже мостит асфальт узла `paved` (скругления
@@ -1194,6 +1233,15 @@ mod tests {
             Vec2::new(0.0, 12.0),
         ];
         assert!(mouths(&roads, &[], &[], &[&paved]).is_empty());
+        // зебра поперёк острия: устье отступает от неё
+        let tip_x = high.x;
+        let crossing = (Vec2::new(tip_x, -12.0), Vec2::new(tip_x, 12.0));
+        let cleared = clear_crossings(found.clone(), &[crossing], 2.5);
+        assert!(!cleared.is_empty());
+        for shape in &cleared {
+            let (_, right) = contour_bounds(&shape[0]);
+            assert!(right.x <= tip_x - 2.5 + 0.01, "{right:?}");
+        }
     }
 
     /// Веер подхода (R23): половины бульвара расходятся у кольца к разным

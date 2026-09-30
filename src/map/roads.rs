@@ -1119,6 +1119,19 @@ pub fn mesh_roads_with_ruts(
         &gores,
         &kerb_returns,
     );
+    // остриё устья, на которое легла зебра, отступает от неё: штриховка по
+    // переходу ложилась поверх его полос (Тула, R20)
+    let crossings: Vec<(Vec2, Vec2)> = junctions
+        .node_paint()
+        .zebras
+        .iter()
+        .map(|zebra| (zebra.from, zebra.to))
+        .collect();
+    let found_mouths = gores::clear_crossings(
+        found_mouths,
+        &crossings,
+        node_paint::ZEBRA_LENGTH / 2.0 + MOUTH_CROSSING_GAP,
+    );
     gores.add_mouths(&found_mouths);
     // три множества разрывов — каждому потребителю своё (`roads/junctions.rs`)
     let node_paint = junctions.node_paint();
@@ -2190,6 +2203,8 @@ fn push_sidewalk(
 /// Шаг проб середины пары, м: проба внутри пустоты — это разделительная пары
 /// (газон или асфальт с двойной сплошной), а не устье.
 const MOUTH_MEDIAN_PROBE: f32 = 2.0;
+/// Зазор между зеброй и остриём устья, м.
+const MOUTH_CROSSING_GAP: f32 = 0.5;
 
 /// Устья (`gores::mouths`, R20): ленты проезжих частей такими, как они
 /// нарисованы, — и всё, что делает пустоту между ними не устьем: замапленные

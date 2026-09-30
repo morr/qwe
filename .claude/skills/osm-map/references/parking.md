@@ -397,7 +397,8 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
         carriageways and the carriageways meeting them at a node (all of them costs three
         times as much, and a hole between two-way streets is a block or a node triangle,
         `corners::small_islands`), their drawn axes simplified by `MOUTH_SIMPLIFY` 0.5 m
-        and stroked with bevel joins and square caps, opened by
+        and stroked with bevel joins and round caps (a square cap at a way seam stood
+        into the mouth as a step), opened by
         `MOUTH_OPENING` 0.75 m (the hairline between halves running side by side is the
         same hole as the mouth they part from) and kept from `GORE_MIN_AREA` to
         `MOUTH_MAX_AREA` 250 m² — unless something is **mapped** there: a building, water,
@@ -409,8 +410,10 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
         (the street kerb returns, noses and bends, laid before the ribbons) already paves
         `MOUTH_PAVED_SHARE` half of it, probed every metre: that is plain junction
         asphalt, and a hatched islet in the middle of it (Tula, 5392, 4658) is not what
-        was missing. Such a void gets the gore's asphalt and hatching (`settle`, shared
-        with `Gores::of`). Tula, Красноармейский at Площадь Московского вокзала
+        was missing. A zebra across the void's tip cuts it back (`clear_crossings`, the
+        zebra's axis grown by half `ZEBRA_LENGTH` plus `MOUTH_CROSSING_GAP` 0.5 m): the
+        hatching lay over the crossing's bars. Such a void gets the gore's asphalt and
+        hatching (`settle`, shared with `Gores::of`). Tula, Красноармейский at Площадь Московского вокзала
         (3114, 3877): the two halves part and a one-lane link closes the gap 25 m from
         where the median ends — too far for the median's end cap (`MEDIAN_EXTEND` 12 m) —
         and the triangle showed the bare ground, sidewalk-pale, with a pocket's patch on
