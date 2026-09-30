@@ -7,6 +7,10 @@
 //!
 //! Трамвай в зону не входит: он идёт по проезжей части, и зона вокруг него
 //! сняла бы ряды со всех трамвайных улиц.
+//!
+//! Путь на мосту (`RailLine::bridge`) зону держит, хотя он в воздухе: машина
+//! (`Z_CAR`) рисуется поверх плиты путепровода (`Z_RAIL_BRIDGE`), и ряд под
+//! ним снимается так же, как под мостом улицы.
 
 use bevy::math::Vec2;
 
@@ -14,7 +18,7 @@ use super::body::Car;
 use crate::map::grid::Grid;
 use crate::map::osm::model::closest_on_segment;
 use crate::map::osm::{RailKind, RailLine};
-use crate::map::rail::SHOULDER_SCALE;
+use crate::map::rail::deck_width;
 
 /// Зазор между кузовом и кромкой балластного плеча, м. С плечом
 /// магистрального пути (5 м × 1.22 / 2 ≈ 3 м) кузов стоит не ближе 5.5 м от
@@ -36,7 +40,7 @@ impl RailKeepout {
     pub fn new(rails: &[RailLine]) -> Self {
         let mut links = Grid::new(CELL);
         for rail in rails.iter().filter(|rail| rail.kind != RailKind::Tram) {
-            let reach = rail.width * SHOULDER_SCALE / 2.0 + RAIL_CAR_GAP;
+            let reach = deck_width(rail) / 2.0 + RAIL_CAR_GAP;
             for pair in rail.points.windows(2) {
                 links.insert_segment(
                     pair[0],
@@ -109,5 +113,12 @@ mod tests {
         let mut tram = fixture::rail(vec![Vec2::new(0.0, -50.0), Vec2::new(0.0, 50.0)], 1.2);
         tram.kind = RailKind::Tram;
         assert!(!RailKeepout::new(&[tram]).blocks(&car(Vec2::ZERO, Vec2::X)));
+    }
+
+    #[test]
+    fn a_track_on_a_bridge_keeps_its_zone() {
+        let mut bridge = fixture::rail(vec![Vec2::new(0.0, -50.0), Vec2::new(0.0, 50.0)], 5.0);
+        bridge.bridge = true;
+        assert!(RailKeepout::new(&[bridge]).blocks(&car(Vec2::ZERO, Vec2::X)));
     }
 }

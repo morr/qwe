@@ -18,10 +18,12 @@
 //!   точке в [`HEADING_REACH`] позади) отклоняется от направления на другой
 //!   конец не больше чем на [`STITCH_ANGLE_MAX`] градусов;
 //! - отрезок между концами пересекает осевую проезжей части в одном уровне —
-//!   не мост и не арка. Без дороги разрыв остаётся: тупик у платформы или
-//!   упор перед воротами — не переезд.
+//!   улицы или проезда, не мост и не арка (`map::rail::crossable`: то же
+//!   правило кладёт настил переезда). Без дороги разрыв остаётся: тупик у
+//!   платформы или упор перед воротами — не переезд.
 //!
-//! Замер по шести с лишним городам кеша (скрипт в отчёте пачки 5a): Тула — 1
+//! Замер по шести с лишним городам кеша (скрипт в отчёте пачки 5a, ещё без
+//! проездов в условии дороги): Тула — 1
 //! (та самая пара), Калуга — 3 (заброшенные пути через улицы), Орёл, Белгород,
 //! Берлин, Москва, Ростов, Рязань — 0. Без условия дороги кандидатов было бы
 //! в Берлине 37: концы путей у тупиков станции, которые смотрят друг на друга
@@ -32,6 +34,7 @@ use bevy::math::Vec2;
 use crate::map::footprint::segments_cross;
 use crate::map::grid::Grid;
 use crate::map::osm::{MapData, RailKind, RailLine};
+use crate::map::rail::crossable;
 
 /// Самый длинный разрыв, который ещё сшивается, м: двухполосная улица с
 /// тротуарами — 15–20 м, четырёхполосная — под 30.
@@ -187,16 +190,14 @@ fn point_behind(points: &[Vec2], last: bool) -> Vec2 {
     previous
 }
 
-/// Пересекает ли отрезок `a→b` осевую проезжей части в одном уровне.
+/// Пересекает ли отрезок `a→b` осевую дороги, которую путь может пересечь в
+/// одном уровне, — то же правило, что у настила переезда ([`crossable`]).
 fn crosses_street(map: &MapData, a: Vec2, b: Vec2) -> bool {
-    map.roads
-        .iter()
-        .filter(|road| road.is_carriageway() && !road.bridge)
-        .any(|road| {
-            road.points
-                .windows(2)
-                .any(|link| segments_cross(a, b, link[0], link[1]))
-        })
+    map.roads.iter().filter(|road| crossable(road)).any(|road| {
+        road.points
+            .windows(2)
+            .any(|link| segments_cross(a, b, link[0], link[1]))
+    })
 }
 
 /// Путь `a.rail` продолжается путём `b.rail` через разрыв; второй удаляется.
@@ -271,6 +272,14 @@ mod tests {
         let mut map = crossing(18.0, 0.0);
         map.roads[0].bridge = true;
         assert_eq!(stitch_rail_gaps(&mut map), 0);
+    }
+
+    #[test]
+    fn a_service_drive_in_the_gap_is_a_level_crossing() {
+        let mut map = crossing(18.0, 0.0);
+        // уже 7 м — фикстура делает дворовый проезд
+        map.roads[0] = fixture::street(vec![Vec2::new(-60.0, 0.0), Vec2::new(60.0, 0.0)], 5.0);
+        assert_eq!(stitch_rail_gaps(&mut map), 1);
     }
 
     #[test]

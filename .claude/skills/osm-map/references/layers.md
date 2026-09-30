@@ -292,7 +292,8 @@ The layers that are neither roads, parking, buildings nor trees. Each bullet is 
     `Z_RAIL_CROSSING` 2.0375 — over the ties it hides, under the steel that runs over it).
     Where the axis of a ground track crosses the axis of a road that can be crossed at
     grade (`rail::crossable`: `RoadClass::Street` — streets *and* service drives — not a
-    bridge, not a passage), the ballast and ties inside the road and its sidewalks are
+    bridge, not a passage — the same predicate the **rail gap** stitch asks, so a spur
+    broken at a yard drive is stitched across it where the deck would lie), the ballast and ties inside the road and its sidewalks are
     covered by a light concrete deck (`CROSSING_COLOR`) and the rails run on over it, the
     way a tram's run over asphalt; past the kerb the track is ballast and ties again.
     **Found by geometry, not by tag**: `railway=level_crossing` is not in the query, and
@@ -497,8 +498,11 @@ The layers that are neither roads, parking, buildings nor trees. Each bullet is 
     of it. `Z_WAGON` 2.045 — above the rail steel (a wagon stands *on* the rail),
     below the bridges, like the track under it.
   - **No style resource, unlike the cars.** The layer is decoration and still has no
-    `visible`: it comes off by `WagonZoomBucket` alone. That is a difference from
-    `map/cars/` the summary used to deny.
+    `visible`: it comes off by `WagonZoomBucket` — and by **raw OSM's drawing level**
+    (`RawOsm::Draw`, `references/parse.md`), since a rake is our placement, not data:
+    `mesh_wagons` takes the `RawOsm` and reports the layer `hidden`, the cars' rule
+    (`raw_osm_draw_stands_no_wagons`). That is a difference from `map/cars/` the
+    summary used to deny.
   - **No `QUERY_VERSION` bump**: `out geom` returns every tag of the element, so `service`
     has been sitting in every cache since v4.
 - **Fences** (`map/fences.rs`) — `barrier=fence|wall|retaining_wall|hedge`, added in
