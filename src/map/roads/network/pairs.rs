@@ -904,7 +904,11 @@ impl Pairs {
         roads: &[RoadLine],
         wedges: &Tapers,
     ) {
-        for median in self.medians.iter_mut().filter(|median| median.roads.contains(&half)) {
+        for median in self
+            .medians
+            .iter_mut()
+            .filter(|median| median.roads.contains(&half))
+        {
             lay_median(median, paths, roads, wedges);
         }
     }
@@ -924,9 +928,15 @@ impl Pairs {
     ) {
         for side in 0..2 {
             let (road, partner) = (halves[side], halves[1 - side]);
-            if self.runs[road].iter().any(|run| run.partner == partner && {
-                let near = if at_end[side] { totals[side] - run.to } else { run.from };
-                near <= RUN_BRIDGE
+            if self.runs[road].iter().any(|run| {
+                run.partner == partner && {
+                    let near = if at_end[side] {
+                        totals[side] - run.to
+                    } else {
+                        run.from
+                    };
+                    near <= RUN_BRIDGE
+                }
             }) {
                 continue;
             }
@@ -946,7 +956,10 @@ impl Pairs {
                 tram: false,
             };
             let runs = &mut self.runs[road];
-            let at = runs.iter().position(|other| other.from > from).unwrap_or(runs.len());
+            let at = runs
+                .iter()
+                .position(|other| other.from > from)
+                .unwrap_or(runs.len());
             runs.insert(at, run);
         }
     }
@@ -1188,7 +1201,11 @@ impl Pairs {
     /// настилами над газоном (половины развязки в Туле, витрина 20) бортик
     /// остаётся: там его краем кончается мост.
     pub fn curb_pieces(&self, road: usize, stitch: f32, total: f32) -> Option<Vec<BandPiece>> {
-        let paved: Vec<PairRun> = self.runs[road].iter().filter(|run| run.paved).copied().collect();
+        let paved: Vec<PairRun> = self.runs[road]
+            .iter()
+            .filter(|run| run.paved)
+            .copied()
+            .collect();
         band_pieces(&paved, [true; 2], stitch, total)
     }
 

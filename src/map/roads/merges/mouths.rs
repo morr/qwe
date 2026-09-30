@@ -84,7 +84,9 @@ pub fn split_mouths(
                 continue;
             };
             for next in [vertex.wrapping_sub(1), vertex + 1] {
-                if let Some(direction) = path.get(next).and_then(|&point| (point - node).try_normalize())
+                if let Some(direction) = path
+                    .get(next)
+                    .and_then(|&point| (point - node).try_normalize())
                 {
                     arms.push((other, vertex, next, direction));
                 }

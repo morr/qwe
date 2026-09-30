@@ -953,14 +953,14 @@ fn deck_fill_carries_its_streets_lane_frame() {
 fn a_deck_landing_on_its_approach_ends_square() {
     let head = Vec2::new(0.0, 100.0);
     let mut map = MapData::default();
-    map.roads.push(fixture::street(
-        vec![Vec2::new(0.0, 0.0), head],
-        8.0,
-    ));
-    map.roads.push(fixture::bridge(vec![head, Vec2::new(0.0, 160.0)], 8.0));
+    map.roads
+        .push(fixture::street(vec![Vec2::new(0.0, 0.0), head], 8.0));
+    map.roads
+        .push(fixture::bridge(vec![head, Vec2::new(0.0, 160.0)], 8.0));
     // тротуар: наземный кусок и мостик — продолжением через свой узел
     let foot = Vec2::new(30.0, 100.0);
-    map.roads.push(fixture::footway(vec![Vec2::new(30.0, 0.0), foot]));
+    map.roads
+        .push(fixture::footway(vec![Vec2::new(30.0, 0.0), foot]));
     map.roads.push(RoadLine {
         class: RoadClass::Alley,
         highway: Highway::Path,
@@ -982,7 +982,10 @@ fn a_deck_landing_on_its_approach_ends_square() {
         .iter()
         .map(|position| position[1] - 160.0)
         .fold(f32::NEG_INFINITY, f32::max);
-    assert!(ahead > 1.0, "the free deck end lost its round cap ({ahead} m)");
+    assert!(
+        ahead > 1.0,
+        "the free deck end lost its round cap ({ahead} m)"
+    );
 }
 
 /// Полоса тротуара подхода кончается на голове моста ровным срезом: её
@@ -992,8 +995,10 @@ fn a_deck_landing_on_its_approach_ends_square() {
 fn an_approach_sidewalk_ends_square_at_the_bridge_head() {
     let head = Vec2::new(0.0, 100.0);
     let mut map = MapData::default();
-    map.roads.push(fixture::street(vec![Vec2::new(0.0, 0.0), head], 14.2));
-    map.roads.push(fixture::bridge(vec![head, Vec2::new(0.0, 160.0)], 14.2));
+    map.roads
+        .push(fixture::street(vec![Vec2::new(0.0, 0.0), head], 14.2));
+    map.roads
+        .push(fixture::bridge(vec![head, Vec2::new(0.0, 160.0)], 14.2));
     let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
     let sidewalks = layer(&layers, "sidewalks").builder.positions_for_test();
     assert!(!sidewalks.is_empty());
@@ -1024,7 +1029,8 @@ fn a_footbridge_inside_the_deck_moves_to_its_edge() {
         7.6,
     ));
     let foot = Vec2::new(-3.6, 101.0);
-    map.roads.push(fixture::footway(vec![Vec2::new(-20.0, 80.0), foot]));
+    map.roads
+        .push(fixture::footway(vec![Vec2::new(-20.0, 80.0), foot]));
     map.roads.push(RoadLine {
         class: RoadClass::Alley,
         highway: Highway::Path,
@@ -1066,12 +1072,18 @@ fn a_paved_median_between_two_decks_lies_on_the_deck() {
         lanes: Some(2),
         ..fixture::bridge(points, 7.6)
     };
-    map.roads.push(half(vec![Vec2::new(-4.5, 0.0), Vec2::new(-4.5, 200.0)]));
-    map.roads.push(half(vec![Vec2::new(4.5, 200.0), Vec2::new(4.5, 0.0)]));
+    map.roads
+        .push(half(vec![Vec2::new(-4.5, 0.0), Vec2::new(-4.5, 200.0)]));
+    map.roads
+        .push(half(vec![Vec2::new(4.5, 200.0), Vec2::new(4.5, 0.0)]));
     map.network = super::network::RoadNetwork::new(&map.roads);
     let prepared = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
     assert!(
-        prepared.pairs().medians().iter().any(|median| median.is_paved()),
+        prepared
+            .pairs()
+            .medians()
+            .iter()
+            .any(|median| median.is_paved()),
         "the two decks make no paved median"
     );
     let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
@@ -1094,19 +1106,27 @@ fn decks_parted_over_a_lawn_keep_their_inner_curbs() {
         lanes: Some(2),
         ..fixture::bridge(points, 7.6)
     };
-    map.roads.push(half(vec![Vec2::new(-10.0, 0.0), Vec2::new(-10.0, 200.0)]));
-    map.roads.push(half(vec![Vec2::new(10.0, 200.0), Vec2::new(10.0, 0.0)]));
+    map.roads
+        .push(half(vec![Vec2::new(-10.0, 0.0), Vec2::new(-10.0, 200.0)]));
+    map.roads
+        .push(half(vec![Vec2::new(10.0, 200.0), Vec2::new(10.0, 0.0)]));
     map.network = super::network::RoadNetwork::new(&map.roads);
     let prepared = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
     assert!(
-        prepared.pairs().medians().iter().any(|median| !median.is_paved()),
+        prepared
+            .pairs()
+            .medians()
+            .iter()
+            .any(|median| !median.is_paved()),
         "the two decks make no lawn median"
     );
     let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
     let curb = map.roads[0].curb_reach() - map.roads[0].width / 2.0;
     let inner = Vec2::new(-10.0 + 3.8 + curb / 2.0, 100.0);
     assert!(
-        layer(&layers, "bridge_casings").builder.covers_for_test(inner),
+        layer(&layers, "bridge_casings")
+            .builder
+            .covers_for_test(inner),
         "the deck lost its inner curb over the lawn"
     );
 }

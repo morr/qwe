@@ -190,11 +190,7 @@ pub fn draw(
         let pair = median.roads().map(|road| (inputs.street_of)(road));
         if median.is_paved() {
             let on_deck = median.roads().iter().all(|&road| (inputs.on_bridge)(road));
-            let fill: &mut MeshBuilder = if on_deck {
-                &mut *decks
-            } else {
-                &mut *streets
-            };
+            let fill: &mut MeshBuilder = if on_deck { &mut *decks } else { &mut *streets };
             // полотно — внутренние полосы половин до середины; узкая
             // разделительная — полосой асфальта во всю свою ширину
             if median.carries_tram() {

@@ -350,8 +350,7 @@ impl Bridges {
         }
         let color = BRIDGE_CURB_COLOR.to_linear();
         for &(path, halves) in wedges {
-            self.casings
-                .push_taper_sided(path, halves, [0.0; 2], color);
+            self.casings.push_taper_sided(path, halves, [0.0; 2], color);
         }
         // Тень настила — тот же настил, сдвинутый по свету на высоту
         // моста. Ни один другой слой её не даёт: наземные тени считают

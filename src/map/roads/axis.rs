@@ -35,12 +35,12 @@ use std::f32::consts::PI;
 
 use bevy::prelude::*;
 
-use super::{centerline, merges};
 use super::network::pairs::{Pairs, pairable};
 use super::network::{self, RoadNetwork, RoadNodes, StreetWay};
 use super::rings::{self, Rings};
 use super::shape::RoadShape;
 use super::tapers::Tapers;
+use super::{centerline, merges};
 use crate::map::along::{nearest_on_path, simplify};
 use crate::map::meshing::arc_steps;
 use crate::map::osm::model::RailLine;
@@ -300,8 +300,8 @@ fn place_bridge_sidewalks(
         let last = path.len() - 1;
         let pushes: Vec<Vec2> = (0..path.len())
             .map(|vertex| {
-                let along =
-                    (path[(vertex + 1).min(last)] - path[vertex.saturating_sub(1)]).normalize_or_zero();
+                let along = (path[(vertex + 1).min(last)] - path[vertex.saturating_sub(1)])
+                    .normalize_or_zero();
                 decks
                     .iter()
                     .filter_map(|&deck| {
@@ -315,11 +315,18 @@ fn place_bridge_sidewalks(
         if pushes.iter().all(|push| *push == Vec2::ZERO) {
             continue;
         }
-        let shifted: Vec<Vec2> = path.iter().zip(&pushes).map(|(point, push)| point + push).collect();
+        let shifted: Vec<Vec2> = path
+            .iter()
+            .zip(&pushes)
+            .map(|(point, push)| point + push)
+            .collect();
         paths[index] = Cow::Owned(shifted);
         // сдвинутый торец в общем узле: дороги узла идут за ним с угасанием
         // (`Pairs::follow_moved_nodes`), а узел находится и по новому месту
-        for (vertex, node) in [(0, road.points[0]), (last, road.points[road.points.len() - 1])] {
+        for (vertex, node) in [
+            (0, road.points[0]),
+            (last, road.points[road.points.len() - 1]),
+        ] {
             let push = pushes[vertex];
             if push != Vec2::ZERO && nodes.is_shared(node) {
                 moved.push((node, node + push));
@@ -338,11 +345,16 @@ fn deck_push(deck: &[Vec2], point: Vec2, along: Vec2, need: f32) -> Option<Vec2>
         .filter_map(|link| {
             let tangent = (link[1] - link[0]).normalize_or_zero();
             (tangent != Vec2::ZERO).then(|| {
-                let t = (point - link[0]).dot(tangent).clamp(0.0, link[0].distance(link[1]));
+                let t = (point - link[0])
+                    .dot(tangent)
+                    .clamp(0.0, link[0].distance(link[1]));
                 (link[0] + tangent * t, tangent)
             })
         })
-        .min_by(|a, b| a.0.distance_squared(point).total_cmp(&b.0.distance_squared(point)))?;
+        .min_by(|a, b| {
+            a.0.distance_squared(point)
+                .total_cmp(&b.0.distance_squared(point))
+        })?;
     if tangent.dot(along).abs() < FOOTBRIDGE_ALONG {
         return None;
     }

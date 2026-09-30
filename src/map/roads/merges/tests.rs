@@ -258,7 +258,10 @@ fn halves_merging_at_a_crossing_reach_it_side_by_side() {
     let [into_end, out_start] = [into[into.len() - 1], out[0]];
     // торцы — на оси поперечной, по сторонам оси продолжения
     for (end, side) in [(into_end, -1.0), (out_start, 1.0)] {
-        assert!((end.x - node().x).abs() < 1e-3, "{end} is off the cross street");
+        assert!(
+            (end.x - node().x).abs() < 1e-3,
+            "{end} is off the cross street"
+        );
         let lateral = (end.y - node().y) * side;
         assert!(
             (lateral - offset).abs() < 0.05,
@@ -276,7 +279,10 @@ fn halves_merging_at_a_crossing_reach_it_side_by_side() {
             );
         }
     }
-    assert!(drawn.merges().list.is_empty(), "the crossing is still a merge");
+    assert!(
+        drawn.merges().list.is_empty(),
+        "the crossing is still a merge"
+    );
     // пара до самого устья: половины — пара друг другу
     assert!(drawn.pairs().is_paired(0, 1) && drawn.pairs().is_paired(1, 0));
 }
