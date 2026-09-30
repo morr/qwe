@@ -113,8 +113,10 @@ const NODE_SLACK: f32 = 0.1;
 /// одной пары, одна въезжает, другая выезжает, обе уходят от узла в одну
 /// сторону, а двусторонний way того же `Highway` — в обратную. Класс сверяется
 /// без связки ([`Highway::family`]): въезд и выезд `primary_link` от конца
-/// проспекта primary — его развилка (Белгород, Победы, R34). Мосты и арки
-/// (`carves_navmesh`) не участвуют.
+/// проспекта primary — его развилка (Белгород, Победы, R34). Половины — не
+/// мосты и не арки (`carves_navmesh`); продолжением бывает мост — ветки
+/// сходятся на его торце (R16), у пары только в чистом узле, — но не арка: она
+/// держит ось OSM и ничем не сглаживается.
 ///
 /// Пара — по улицам (`network`), а не по way у узла ([`Pairs::is_paired`] —
 /// по кускам пар дороги): OSM режет половину у узла на короткие ways в 16–22 м, и на
@@ -147,7 +149,7 @@ pub fn merges(
         };
         // продолжение: двусторонний way того же класса в обратную сторону; им
         // бывает и мост (Орёл, Р-119 у кольца, R16) — ветки сходятся на его
-        // торце
+        // торце; арка — нет
         let street_for = |partner: usize| {
             let out = away(paths[partner].as_ref(), false);
             let mean = (into + out).normalize_or_zero();
@@ -155,6 +157,7 @@ pub fn merges(
                 let candidate = roads[other];
                 let path = paths[other].as_ref();
                 if candidate.oneway
+                    || candidate.passage
                     || candidate.highway.family() != road.highway.family()
                     || path.len() < 2
                 {
@@ -199,7 +202,7 @@ pub fn merges(
                 .any(|&road| roads[road].is_unpaved_street());
             let pure = pure_with(other, street);
             let accepted = if is_pair {
-                !roads[street].carves_navmesh() || pure
+                !roads[street].bridge || pure
             } else {
                 !unpaved && pure
             };

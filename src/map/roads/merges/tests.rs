@@ -562,6 +562,21 @@ fn a_fork_at_a_bridge_head_is_a_merge() {
 }
 
 #[test]
+fn an_arch_is_no_continuation_of_a_fork_or_a_pair() {
+    // арка держит ось OSM — ни пары, ни клина слияния на её кромках
+    let arch = || RoadLine {
+        passage: true,
+        ..fork_street()
+    };
+    assert!(found(&fork(arch(), &[])).0.list.is_empty());
+    let arch_east = RoadLine {
+        passage: true,
+        ..two_way_east()
+    };
+    assert!(found(&divided_into(arch_east)).0.list.is_empty());
+}
+
+#[test]
 fn a_oneway_grid_corner_is_not_a_fork() {
     // угол сетки: односторонняя въезжает с запада, другая уходит на север —
     // между ветками 90°, это перекрёсток
