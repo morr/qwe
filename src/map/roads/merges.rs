@@ -717,5 +717,8 @@ fn resample(path: &[Vec2], length: f32) -> (Vec<Vec2>, Vec<f32>) {
     (points, along)
 }
 
+mod mouths;
+pub use mouths::split_mouths;
+
 #[cfg(test)]
 mod tests;

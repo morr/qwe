@@ -1771,7 +1771,12 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     width difference. The paint runs through a **pure** merge (no other carriageway at
     the node): no breaks there, each half's lane frame ramps into its side of the
     continuation's, and the continuation's axis runs back between the halves to the
-    median. Tula has 5; the node at Советская × Коминтерна is **not** one
+    median. A merge **at a crossing** (another carriageway through the node) is drawn as
+    the **pair up to the crossing** instead (`merges/mouths.rs::split_mouths`): each
+    half reaches the cross street parallel, at `continuation half − own half` off the
+    pair's axis, and ends on the cross street's axis at a drawn node of its own, so the
+    crossing is an ordinary divided street at a junction — no merge wedge, the halves'
+    zebras in one line. Tula has 5; the node at Советская × Коминтерна is **not** one
     (all four ways there are one-way: the pair turns and goes on). A **Y-fork** — a
     two-way way splitting into an entry and an exit with no pair between them — is a
     merge too when its node is pure and nothing there is unpaved: each branch continues

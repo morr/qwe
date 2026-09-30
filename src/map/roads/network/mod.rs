@@ -126,6 +126,15 @@ impl RoadNodes {
             self.shared.entry(node_key(to)).or_insert(roads);
         }
     }
+
+    /// Нарисованный узел `at`, которого в OSM нет, — общий для `roads`:
+    /// устье половины, разведённое с узла нечистого слияния на поперечную
+    /// улицу (`merges::split_mouths`).
+    pub fn insert(&mut self, at: Vec2, mut roads: Vec<usize>) {
+        roads.sort_unstable();
+        roads.dedup();
+        self.shared.insert(node_key(at), roads);
+    }
 }
 
 /// Стежки по дорогам: `ends[i]` — точка, которую надо добавить перед началом и

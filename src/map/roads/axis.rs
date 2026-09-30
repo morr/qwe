@@ -35,7 +35,7 @@ use std::f32::consts::PI;
 
 use bevy::prelude::*;
 
-use super::centerline;
+use super::{centerline, merges};
 use super::network::pairs::{Pairs, pairable};
 use super::network::{self, RoadNetwork, RoadNodes, StreetWay};
 use super::rings::{self, Rings};
@@ -196,6 +196,9 @@ pub fn street_axes<'a>(
     for (from, to) in moved {
         nodes.alias(from, to);
     }
+    // нечистое слияние — пара до перекрёстка: половины параллельно, торцы на
+    // поперечной улице (`merges/mouths.rs`, R33)
+    merges::split_mouths(roads, &mut paths, nodes, &mut pairs, network, &wedges);
     // кольца — эллипсом, подходы к ним — по касательной; после разводки пар:
     // половины подхода гнутся у самого кольца, где пара уже разошлась
     let rings = if curve.is_some() {

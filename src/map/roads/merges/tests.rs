@@ -7,7 +7,7 @@ use crate::map::meshing::LaneFrame;
 use crate::map::osm::fixture::street;
 use crate::map::osm::{Highway, MapData, RoadLine, RoadNode, RoadNodeKind};
 use crate::map::roads::corners::kerb_returns;
-use crate::map::roads::drawn::Drawn;
+use crate::map::roads::drawn::{Axis, Drawn};
 use crate::map::roads::is_carriageway;
 use crate::map::roads::junctions::marking_breaks;
 use crate::map::roads::network::pairs::Pairs;
@@ -226,6 +226,59 @@ fn a_street_crossing_the_node_makes_the_merge_a_junction_for_paint() {
     assert_eq!(merges.list.len(), 1);
     assert!(!merges.list[0].pure);
     assert!(!merges.is_pure_node(node()));
+}
+
+/// Нечистое слияние — пара до перекрёстка (R33, Белгород, Попова ×
+/// Павлова): половины доходят до поперечной улицы параллельно, каждая на
+/// своей стороне устья продолжения, в `полуширина продолжения − своя` от его
+/// оси, торцом на оси поперечной — своим узлом; клина слияния нет.
+#[test]
+fn halves_merging_at_a_crossing_reach_it_side_by_side() {
+    let mut roads = divided_into(two_way_east());
+    roads.push(RoadLine {
+        highway: Highway::Residential,
+        ..street(
+            vec![
+                node() - Vec2::new(0.0, 80.0),
+                node(),
+                node() + Vec2::new(0.0, 80.0),
+            ],
+            8.0,
+        )
+    });
+    let map = MapData {
+        network: RoadNetwork::new(&roads),
+        roads,
+        ..default()
+    };
+    let drawn = Drawn::for_test(&map);
+    let offset = (width(4) - width(HALF_LANES)) / 2.0;
+    let into = drawn.axis(0, Axis::Nodal);
+    let out = drawn.axis(1, Axis::Nodal);
+    let [into_end, out_start] = [into[into.len() - 1], out[0]];
+    // торцы — на оси поперечной, по сторонам оси продолжения
+    for (end, side) in [(into_end, -1.0), (out_start, 1.0)] {
+        assert!((end.x - node().x).abs() < 1e-3, "{end} is off the cross street");
+        let lateral = (end.y - node().y) * side;
+        assert!(
+            (lateral - offset).abs() < 0.05,
+            "the half ends {lateral} m off the continuation axis, not {offset}"
+        );
+    }
+    // и не сходятся к узлу: у самого устья ось не ближе сдвига
+    for (path, side) in [(into, -1.0), (out, 1.0)] {
+        for point in path.iter().filter(|point| node().x - point.x < 12.0) {
+            let lateral = (point.y - node().y) * side;
+            assert!(
+                lateral > offset - 0.05,
+                "{} m before the crossing the half is {lateral} m off the axis, under {offset}",
+                node().x - point.x
+            );
+        }
+    }
+    assert!(drawn.merges().list.is_empty(), "the crossing is still a merge");
+    // пара до самого устья: половины — пара друг другу
+    assert!(drawn.pairs().is_paired(0, 1) && drawn.pairs().is_paired(1, 0));
 }
 
 #[test]

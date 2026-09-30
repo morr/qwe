@@ -887,48 +887,68 @@ impl Pairs {
             paths[road] = Cow::Owned(path);
         }
         for median in &mut self.medians {
-            let [first, second] = median.roads;
-            let (path, partner) = (paths[first].as_ref(), paths[second].as_ref());
-            let totals = [polyline_length(path), polyline_length(partner)];
-            median.midline.clear();
-            median.inner = [Vec::new(), Vec::new()];
-            let partner_along = arclengths(partner).0;
-            for (along, at, heading) in samples(path)
-                .into_iter()
-                .filter(|(along, ..)| median.from <= *along && *along <= median.to)
-            {
-                let Some((near, near_along)) = nearest_on_path(partner, at) else {
-                    continue;
-                };
-                let across = (near - at).normalize_or_zero();
-                let half_first = facing(first, along, totals[0], heading.perp_dot(across) > 0.0);
-                let second_left = place_on_path(partner, &partner_along, near_along)
-                    .is_some_and(|(_, heading)| heading.perp_dot(at - near) > 0.0);
-                let half_second = facing(second, near_along, totals[1], second_left);
-                median.midline.push(at.midpoint(near));
-                median.inner[0].push(at + across * half_first);
-                median.inner[1].push(near - across * half_second);
-            }
-            // вершина остаётся, если она нужна хоть одной из трёх линий
-            let mut kept = vec![false; median.midline.len()];
-            for line in [&median.midline, &median.inner[0], &median.inner[1]] {
-                for index in simplify(line, false, SIMPLIFY_TOLERANCE, |_| false) {
-                    kept[index] = true;
-                }
-            }
-            let thin = |line: &mut Vec<Vec2>| {
-                let mut index = 0;
-                line.retain(|_| {
-                    index += 1;
-                    kept[index - 1]
-                });
-            };
-            thin(&mut median.midline);
-            thin(&mut median.inner[0]);
-            thin(&mut median.inner[1]);
+            lay_median(median, paths, roads, wedges);
         }
         self.join_ends(&seams);
         moved
+    }
+
+    /// Разделительные половины `half` — заново по нарисованным осям `paths`:
+    /// ось половины сдвинута после разводки (устье пары на перекрёстке,
+    /// `merges::split_mouths`), и середина, положенная по старой оси, шла
+    /// двойной сплошной поперёк полос.
+    pub fn relay_medians(
+        &mut self,
+        half: usize,
+        paths: &[Cow<[Vec2]>],
+        roads: &[RoadLine],
+        wedges: &Tapers,
+    ) {
+        for median in self.medians.iter_mut().filter(|median| median.roads.contains(&half)) {
+            lay_median(median, paths, roads, wedges);
+        }
+    }
+
+    /// Устье пары на перекрёстке (`merges::split_mouths`): половины `halves`
+    /// идут рядом последние `lengths` метров до узла — у торца `at_end`
+    /// (конец пути, иначе начало), пара слева, если `left`. Кусок пары там —
+    /// тот же, что нашли бы пробы, если бы OSM не сводил оси в узел: без
+    /// тротуара между половинами, зебры обеих в одну линию.
+    pub fn join_mouth(
+        &mut self,
+        halves: [usize; 2],
+        lengths: [f32; 2],
+        totals: [f32; 2],
+        at_end: [bool; 2],
+        left: [bool; 2],
+    ) {
+        for side in 0..2 {
+            let (road, partner) = (halves[side], halves[1 - side]);
+            if self.runs[road].iter().any(|run| run.partner == partner && {
+                let near = if at_end[side] { totals[side] - run.to } else { run.from };
+                near <= RUN_BRIDGE
+            }) {
+                continue;
+            }
+            let length = lengths[side].min(totals[side]);
+            let (from, to) = if at_end[side] {
+                (totals[side] - length, totals[side])
+            } else {
+                (0.0, length)
+            };
+            let run = PairRun {
+                from,
+                to,
+                partner,
+                left: left[side],
+                gap: 0.0,
+                paved: true,
+                tram: false,
+            };
+            let runs = &mut self.runs[road];
+            let at = runs.iter().position(|other| other.from > from).unwrap_or(runs.len());
+            runs.insert(at, run);
+        }
     }
 
     /// Дороги узлов, уехавших с половиной ([`Self::align`]), идут следом:
@@ -1480,6 +1500,53 @@ fn beside(
 /// со стороны пары (`left` — пара слева по ходу way): у клина, сужающего эту
 /// сторону, — суженная, как её рисует клин (от узкого соседа у шва к своей
 /// ширине на длине клина, `tapers::fit`); иначе — половина ширины.
+/// Середина и внутренние кромки разделительной `median` по нарисованным осям
+/// её половин `paths` — с клиньями `wedges` ([`facing_half`]).
+fn lay_median(median: &mut Median, paths: &[Cow<[Vec2]>], roads: &[RoadLine], wedges: &Tapers) {
+    let facing = |road: usize, at: f32, total: f32, left: bool| {
+        facing_half(roads, wedges, road, at, total, left)
+    };
+    let [first, second] = median.roads;
+    let (path, partner) = (paths[first].as_ref(), paths[second].as_ref());
+    let totals = [polyline_length(path), polyline_length(partner)];
+    median.midline.clear();
+    median.inner = [Vec::new(), Vec::new()];
+    let partner_along = arclengths(partner).0;
+    for (along, at, heading) in samples(path)
+        .into_iter()
+        .filter(|(along, ..)| median.from <= *along && *along <= median.to)
+    {
+        let Some((near, near_along)) = nearest_on_path(partner, at) else {
+            continue;
+        };
+        let across = (near - at).normalize_or_zero();
+        let half_first = facing(first, along, totals[0], heading.perp_dot(across) > 0.0);
+        let second_left = place_on_path(partner, &partner_along, near_along)
+            .is_some_and(|(_, heading)| heading.perp_dot(at - near) > 0.0);
+        let half_second = facing(second, near_along, totals[1], second_left);
+        median.midline.push(at.midpoint(near));
+        median.inner[0].push(at + across * half_first);
+        median.inner[1].push(near - across * half_second);
+    }
+    // вершина остаётся, если она нужна хоть одной из трёх линий
+    let mut kept = vec![false; median.midline.len()];
+    for line in [&median.midline, &median.inner[0], &median.inner[1]] {
+        for index in simplify(line, false, SIMPLIFY_TOLERANCE, |_| false) {
+            kept[index] = true;
+        }
+    }
+    let thin = |line: &mut Vec<Vec2>| {
+        let mut index = 0;
+        line.retain(|_| {
+            index += 1;
+            kept[index - 1]
+        });
+    };
+    thin(&mut median.midline);
+    thin(&mut median.inner[0]);
+    thin(&mut median.inner[1]);
+}
+
 fn facing_half(
     roads: &[RoadLine],
     wedges: &Tapers,

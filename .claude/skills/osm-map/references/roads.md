@@ -2210,6 +2210,27 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     other 13 are forks and one-way couplets that `Pairs` does not pair, so no median is
     drawn there either. One is on a tram bed (Демидовская Плотина × Карла Маркса, 3 + 3
     lanes into 4, gallery sample 25), sample 26 is a bare one (Рязанская).
+    - **At a crossing the pair goes up to the crossing** (R33, Belgorod, Попова ×
+      Павлова, gallery sample 1): an impure merge — a carriageway through the node besides
+      the three — is taken apart right after the pair alignment (`axis::street_axes` →
+      `merges/mouths.rs::split_mouths`, over `merges()` on the aligned axes). Each half's
+      end moves to a **mouth** on the arm of the cross street on its side: `continuation
+      half − own half` off the pair's axis (the bisector of the halves' 20 m chords, not
+      the continuation — that one may meet the pair at an angle, and halves forced parallel
+      to it bent past the straight run), on the cross street's axis, where a vertex is
+      inserted and `RoadNodes::insert` makes it a node of the half and the cross street.
+      The half's axis is pushed **outward only**, up to that offset, for `MOUTH_STRAIGHT`
+      16 m from the node and fading over `MOUTH_FADE` 20 m (densified at 2 m). The halves
+      are then **paired up to the mouths** (`Pairs::join_mouth`, a run of zero gap — no
+      sidewalk between them; their zebras in one cluster, lined up — on Belgorod's sample
+      still two planks a metre apart, not one) and their medians are relaid
+      on the moved axes (`Pairs::relay_medians`; the old midline crossed the lanes). The
+      node is no merge any more — no wedge, no ramp, no nose; the three nodes (two mouths,
+      the continuation's) fall into one paint cluster. Only drawn axes: the navmesh and
+      the parse keep OSM. Skipped when the offset is under `MOUTH_MIN_OFFSET` 0.5 m or no
+      cross arm lies within 60° of the half's side. Before: the east half (201967599, a kink
+      10 m off the node) swelled into the node with the merge wedge along its kinked axis,
+      and the OSM zebra lay on the west half only.
     - **Not a junction.** `kerb_returns` asks `Drawn::is_merged(road, end)`: the merge's three arms
       give each other no square ends and no fillet or outer corner — a node whose class
       group is only merge arms is skipped altogether, so all three ribbons end round, as a
