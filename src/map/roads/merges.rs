@@ -111,7 +111,9 @@ const NODE_SLACK: f32 = 0.1;
 
 /// Слияния по **нарисованным** осям `paths`: в узле кончаются две половины
 /// одной пары, одна въезжает, другая выезжает, обе уходят от узла в одну
-/// сторону, а двусторонний way того же `Highway` — в обратную. Мосты и арки
+/// сторону, а двусторонний way того же `Highway` — в обратную. Класс сверяется
+/// без связки ([`Highway::family`]): въезд и выезд `primary_link` от конца
+/// проспекта primary — его развилка (Белгород, Победы, R34). Мосты и арки
 /// (`carves_navmesh`) не участвуют.
 ///
 /// Пара — по улицам (`network`), а не по way у узла ([`Pairs::is_paired`] —
@@ -152,7 +154,10 @@ pub fn merges(
             at_node.iter().copied().find_map(|other| {
                 let candidate = roads[other];
                 let path = paths[other].as_ref();
-                if candidate.oneway || candidate.highway != road.highway || path.len() < 2 {
+                if candidate.oneway
+                    || candidate.highway.family() != road.highway.family()
+                    || path.len() < 2
+                {
                     return None;
                 }
                 let end = if path[0] == node {
@@ -175,7 +180,7 @@ pub fn merges(
             if other == half
                 || !roads[other].oneway
                 || roads[other].carves_navmesh()
-                || roads[other].highway != road.highway
+                || roads[other].highway.family() != road.highway.family()
                 || path.len() < 2
                 || path[0] != node
             {

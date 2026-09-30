@@ -306,6 +306,20 @@ impl Highway {
                 | Self::TertiaryLink
         )
     }
+
+    /// Класс без связки: `X_link` → `X`, остальные как есть. Съезды от конца
+    /// проспекта — связки его класса, и развилка на них — развилка той же
+    /// дороги (Белгород, Победы, R34).
+    pub fn family(self) -> Self {
+        match self {
+            Self::MotorwayLink => Self::Motorway,
+            Self::TrunkLink => Self::Trunk,
+            Self::PrimaryLink => Self::Primary,
+            Self::SecondaryLink => Self::Secondary,
+            Self::TertiaryLink => Self::Tertiary,
+            other => other,
+        }
+    }
 }
 
 /// Дорога: осевая полилиния и ширина, выведенная из сечения

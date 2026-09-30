@@ -2201,7 +2201,11 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     where a divided street becomes an ordinary one: a one-way half ends there flowing
     **in**, its pair partner starts there flowing **out**, both leave the node within 40°
     of each other (`MERGE_ALIGN`, a 20 m chord — OSM's first link may be half a metre),
-    and a **two-way** way of the same `Highway` ends there leaving it the other way.
+    and a **two-way** way of the same `Highway` ends there leaving it the other way —
+    compared by `Highway::family`, which folds `X_link` into `X`: the entry and exit
+    `primary_link` off the end of a two-way primary are its fork (Belgorod, Победы at
+    4304 2360, gallery belgorod 02, roads list R34 — it was drawn as a crossroads with a
+    zebra, a stop line and the entry lane running into the hatched island's solid).
     Bridges and arches take no part as halves; the continuation may be a bridge when the
     node is pure. **A Y-fork is a merge without a pair** (R16): a two-way way splitting
     into an entry and an exit that `Pairs` never pairs (the branches part at once —

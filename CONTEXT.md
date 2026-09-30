@@ -1780,7 +1780,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     zebras in one line. Tula has 5; the node at Советская × Коминтерна is **not** one
     (all four ways there are one-way: the pair turns and goes on). A **Y-fork** — a
     two-way way splitting into an entry and an exit with no pair between them — is a
-    merge too when its node is pure and nothing there is unpaved: each branch continues
+    merge too when its node is pure and nothing there is unpaved (a class and its
+    `_link` count as one — `Highway::family`): each branch continues
     its half of the carriageway and the island opens between them.
   - **Stitch** — a straight render-only segment appended to a **loose end** (a way end
     with no other road at its node that could carry it) up to the centreline of the

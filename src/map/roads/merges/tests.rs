@@ -531,6 +531,24 @@ fn a_two_way_splitting_into_two_oneways_is_a_fork_merge() {
     }
 }
 
+/// Белгород, Победы (R34): от конца двусторонней primary расходятся въезд и
+/// выезд `primary_link` — развилка той же дороги, а не перекрёсток.
+#[test]
+fn links_of_the_street_class_fork_off_it_as_a_merge() {
+    let mut roads = fork(fork_street(), &[]);
+    for branch in &mut roads[..2] {
+        branch.highway = Highway::PrimaryLink;
+    }
+    let (merges, _, _) = found(&roads);
+    assert_eq!(merges.list.len(), 1, "{:?}", merges.list);
+    assert!(merges.list[0].pure);
+    // связка чужого класса — не своя
+    for branch in &mut roads[..2] {
+        branch.highway = Highway::SecondaryLink;
+    }
+    assert!(found(&roads).0.list.is_empty());
+}
+
 #[test]
 fn a_fork_at_a_bridge_head_is_a_merge() {
     // Орёл, Р-119: двусторонний мост делится на въезд и съезд на своём торце
