@@ -4605,6 +4605,45 @@ fn a_pocket_on_a_tile_seam_is_sown_once() {
     assert_eq!(pockets::fill_ground_pockets(&mut map), 1);
 }
 
+/// Остров кольца — не карман: газон острова (`roads.rs::ring_island_lawns`)
+/// кроет его целиком, и трава двора, засеянная в дырку покрытия, лежала на
+/// нём тёмным рваным пятном (Белгород, кольцо Чапаева × Кошарский, R28/S4).
+/// Та же петля без хода по кольцу — не кольцо, и земля в ней засевается.
+#[test]
+fn a_ring_island_is_not_a_ground_pocket() {
+    let scene = |roundabout: bool| {
+        let points: Vec<Vec2> = (0..=24)
+            .map(|step| {
+                let angle = std::f32::consts::TAU * (step % 24) as f32 / 24.0;
+                CENTER + 15.0 * Vec2::from_angle(angle)
+            })
+            .collect();
+        let ring = RoadLine {
+            oneway: roundabout,
+            roundabout,
+            ..street(points, 8.0)
+        };
+        MapData {
+            roads: vec![ring],
+            ..MapData::default()
+        }
+    };
+    let mut loop_road = scene(false);
+    assert_eq!(
+        pockets::fill_ground_pockets(&mut loop_road),
+        1,
+        "земля в петле"
+    );
+    assert!(sown_at(&loop_road, 0.0, 0.0));
+
+    let mut ring = scene(true);
+    assert_eq!(
+        pockets::fill_ground_pockets(&mut ring),
+        0,
+        "остров кольца засеян"
+    );
+}
+
 /// Край квартала в обочине — между кромкой стороны без тротуара
 /// (`sidewalk=separate`) и дорожкой за ней — уходит к тому, что ближе: к
 /// дорожке — под неё, к кромке — под асфальт. Раньше он стоял «под полотном»

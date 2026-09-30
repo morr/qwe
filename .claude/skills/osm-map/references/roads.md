@@ -1344,7 +1344,9 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     usually smaller than the drawn island and left a ring of pale ground round it (Orel
     01 and 02). The layer sits right over the bare ground, **under** everything mapped
     on the island — grass, a park, a block, a square, water, a house stay themselves,
-    and only the ground turns to lawn. Over the grass it would also hide the faint rim
+    and only the ground turns to lawn — which is why the parse's ground pockets take
+    the island as a cover (`rings::islands`, `references/parse.md`): a pocket sown there
+    is yard grass over this lawn. Over the grass it would also hide the faint rim
     of the grass polygon (visible in Ryazan 04 as a circle in the lawn), but it repainted
     an island park as lawn too (Kaluga 05) — tried and rejected. **The rim goes by a
     second layer instead** (`roads::ring_island_grass`, layer `ring_island_grass` at

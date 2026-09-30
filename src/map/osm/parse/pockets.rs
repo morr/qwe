@@ -50,6 +50,7 @@ use crate::map::osm::model::{
     AreaKind, BuildingUse, MapData, PolyArea, RoadClass, RoadLine, distance_to_segment, ring_area,
 };
 use crate::map::parallel::in_parallel;
+use crate::map::roads::rings::islands as ring_islands;
 use crate::map::shapes::{Contour, Shape, area_contours, contour_bounds, oriented, ring_of};
 
 /// Больше этого, м², дырка покрытия — уже не карман, а площадка: пустырь,
@@ -213,6 +214,10 @@ impl Scene {
             if area.outer.len() >= 3 {
                 covers.push(Cover::of(area_contours(area)));
             }
+        }
+        // остров кольца кроется газоном целиком (`roads.rs::ring_island_lawns`)
+        for island in ring_islands(&map.roads) {
+            covers.push(Cover::of(vec![oriented(&island, true)]));
         }
         covers.retain(|cover| !cover.contours.is_empty());
 

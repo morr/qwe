@@ -660,6 +660,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   lives beside `landuse`, so a verge next to it does not turn to yard grass. What stays
   ground stays: a waste plot with trails (a dirt path on its rim), anything larger (a
   plot of its own), a hole cut into a block by its own multipolygon (no road on its rim).
+  A **ring island** is not a pocket: its raw loop (`roads::rings::islands`, the loops the
+  render fits a figure into) is one of the covers, since the island's lawn already covers
+  it whole.
   The covers err on the safe side: the block lies below everything drawn, so grass sown
   under a sidewalk or a house is never seen — houses are left out of the union for that
   reason. Render-only, like the block pull.

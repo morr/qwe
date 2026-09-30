@@ -513,10 +513,51 @@ fn chains(roads: &[RoadLine]) -> Vec<Vec<usize>> {
     chains
 }
 
+/// Острова колец по сырым осям OSM — замкнутые петли тех же дуг, в которые
+/// [`reshape`] впишет фигуру, а `roads.rs::ring_island_lawns` зальёт газоном.
+/// Их спрашивает разбор (`parse/pockets.rs`): остров кроется газоном
+/// целиком, и карман земли в нём засевать нечем — он лёг бы на газон тёмным
+/// рваным пятном травы двора (Белгород, кольцо Чапаева × Кошарский, R28).
+/// Кольцо открытое — без повторённой первой точки, как у `PolyArea`.
+pub fn islands(roads: &[RoadLine]) -> Vec<Vec<Vec2>> {
+    chains(roads)
+        .into_iter()
+        .filter_map(|chain| figure(roads, &chain))
+        .map(|(_, mut outline)| {
+            if is_ring(&outline) {
+                outline.pop();
+            }
+            outline
+        })
+        .collect()
+}
+
+/// Вписать фигуру в петлю `chain` и найти её узлы.
+fn fit(roads: &[RoadLine], chain: &[usize], nodes: &RoadNodes) -> Option<Ring> {
+    let (mut ring, _) = figure(roads, chain)?;
+    // узлы: общие вершины и концы открытых дуг (они общие с соседней дугой)
+    let mut pins: Vec<(f32, f32)> = Vec::new();
+    for &road in chain {
+        let points = &roads[road].points;
+        let open = !is_ring(points);
+        for (index, &point) in points.iter().enumerate() {
+            let end = index == 0 || index == points.len() - 1;
+            if (open && end) || nodes.is_shared(point) {
+                pins.push(ring.param(point));
+            }
+        }
+    }
+    pins.sort_by(|a, b| a.0.total_cmp(&b.0));
+    pins.dedup_by(|a, b| (a.0 - b.0).abs() < 1e-4);
+    ring.pins = pins;
+    Some(ring)
+}
+
 /// Вписать фигуру в петлю `chain`: центр и оси — по моментам петли,
 /// выбранной равномерно по длине, полуоси — наименьшими квадратами в осях.
-/// `None` — петля не кольцо.
-fn fit(roads: &[RoadLine], chain: &[usize], nodes: &RoadNodes) -> Option<Ring> {
+/// Кольцо — ещё без узлов — и петля по сырым точкам; `None` — петля не
+/// кольцо.
+fn figure(roads: &[RoadLine], chain: &[usize]) -> Option<(Ring, Vec<Vec2>)> {
     let mut outline: Vec<Vec2> = Vec::new();
     for &road in chain {
         let skip = usize::from(!outline.is_empty());
@@ -578,7 +619,7 @@ fn fit(roads: &[RoadLine], chain: &[usize], nodes: &RoadNodes) -> Option<Ring> {
         .windows(2)
         .map(|link| link[0].perp_dot(link[1]))
         .sum();
-    let mut ring = Ring {
+    let ring = Ring {
         roads: chain.to_vec(),
         center,
         axis,
@@ -600,22 +641,7 @@ fn fit(roads: &[RoadLine], chain: &[usize], nodes: &RoadNodes) -> Option<Ring> {
     if off {
         return None;
     }
-    // узлы: общие вершины и концы открытых дуг (они общие с соседней дугой)
-    let mut pins: Vec<(f32, f32)> = Vec::new();
-    for &road in chain {
-        let points = &roads[road].points;
-        let open = !is_ring(points);
-        for (index, &point) in points.iter().enumerate() {
-            let end = index == 0 || index == points.len() - 1;
-            if (open && end) || nodes.is_shared(point) {
-                pins.push(ring.param(point));
-            }
-        }
-    }
-    pins.sort_by(|a, b| a.0.total_cmp(&b.0));
-    pins.dedup_by(|a, b| (a.0 - b.0).abs() < 1e-4);
-    ring.pins = pins;
-    Some(ring)
+    Some((ring, outline))
 }
 
 /// Может ли дорога быть подходом к кольцу — гнуться в его узел.

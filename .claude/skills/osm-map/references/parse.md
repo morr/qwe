@@ -795,8 +795,18 @@ be called alone:
     **bevel joins and square caps** (a round join is a dozen points, and the union's price
     is points: round → bevel took the whole pass from 229 to ~120 ms on Tula); each
     verge side (`RoadLine::verge_at`) as a band from the axis to the kerb plus the verge,
-    every `VERGE_STEP` 5 m (the profile's own probe step); and the outlines of blocks,
-    parks, woods, grass, sand, water, lots and pitches. **Houses are left out**: a hole
+    every `VERGE_STEP` 5 m (the profile's own probe step); the outlines of blocks,
+    parks, woods, grass, sand, water, lots and pitches; and **every ring island** — the
+    raw loop of a roundabout (`roads::rings::islands`: the same chains of arcs and the
+    same figure test `rings::reshape` fits, so exactly the islands the render fills with
+    `ring_island_lawns`). The island is lawn whole, and its interior was a hole of the
+    union that touches the ring's band: sown as yard grass, it lay over the lawn as a
+    dark ragged blot almost the size of the island (Belgorod, Чапаева × Кошарский,
+    2102,3211, R28/S4). A loop the figure test rejects (a long road round a square) gets
+    no lawn and stays an ordinary cover-less interior. Belgorod 1140 → 1132 pockets (eight
+    islands, the ring at 1848,5379 among them), Tula 1222 unchanged, the pass's time
+    within noise (~112 ms, dev, `map_meshing`). Pinned by
+    `a_ring_island_is_not_a_ground_pocket`. **Houses are left out**: a hole
     that runs under a house only gets grass under the house.
   - **A hole is sown** when it is at most `POCKET_AREA_MAX` 400 m² (above that it is a
     plot of its own — a waste plot, a building site), touches
