@@ -104,8 +104,8 @@ impl ParseKnobs {
 ///   простая лента по оси OSM без скруглений, склейки узлов, пар половин,
 ///   разделительных, устьев, газонов обочин и разметки (`roads::mesh_raw_roads`);
 ///   стоянка и площадка — своим полигоном без раскладки мест и разметки поля;
-///   ни машин, ни сгенерированных деревьев (лес и аллеи не сажаются, остаются
-///   только деревья-ноды OSM).
+///   ни машин, ни стоящих вагонов (`wagons::mesh_wagons`), ни сгенерированных
+///   деревьев (лес и аллеи не сажаются, остаются только деревья-ноды OSM).
 #[derive(Resource, Reflect, SettingsGroup, Clone, Copy, PartialEq, Eq, Debug, Default)]
 #[reflect(Resource, SettingsGroup, Default)]
 #[settings_group(group = "debug", key = "raw_osm")]
@@ -2512,6 +2512,11 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
     if points.len() < 2 {
         return;
     }
+    // `bridge=*`, кроме `no`, — одно правило для пути и для дороги
+    let bridge = element
+        .tags
+        .get("bridge")
+        .is_some_and(|value| value != "no");
 
     // Площадь дороги — первой и без `return`: `highway=*` + `area=yes` обязан
     // дойти и до дорожной ветки, где он был линией и до v15
@@ -2533,10 +2538,7 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
             width,
             kind,
             service: service_track(&element.tags),
-            bridge: element
-                .tags
-                .get("bridge")
-                .is_some_and(|value| value != "no"),
+            bridge,
         });
     }
 
@@ -2605,10 +2607,6 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
         if is_road_underground(&element.tags) {
             return;
         }
-        let bridge = element
-            .tags
-            .get("bridge")
-            .is_some_and(|value| value != "no");
         let passage = is_building_passage(&element.tags);
         // ширина дорожки — по тегу и виду; мостик и арка остаются при
         // ширине класса: их лента — коридор, который режет навмеш, и узкий

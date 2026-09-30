@@ -189,7 +189,7 @@ fn the_wagon_bucket_ends_at_its_cutoff() {
 #[test]
 fn a_yard_builds_one_blended_layer() {
     let rails = yards(Some(ServiceTrack::Siding), 600.0);
-    let (layers, report) = mesh_wagons(WagonZoomBucket::for_zoom(MIN_ZOOM), &rails);
+    let (layers, report) = mesh_wagons(WagonZoomBucket::for_zoom(MIN_ZOOM), RawOsm::Off, &rails);
 
     assert_eq!(layers.len(), 1, "тени и кузова идут одним мешем");
     assert_eq!(layers[0].name, "wagons");
@@ -205,7 +205,7 @@ fn a_yard_builds_one_blended_layer() {
 #[test]
 fn the_report_counts_the_wagons_that_stood() {
     let rails = yards(Some(ServiceTrack::Siding), 600.0);
-    let (_, report) = mesh_wagons(WagonZoomBucket::for_zoom(MIN_ZOOM), &rails);
+    let (_, report) = mesh_wagons(WagonZoomBucket::for_zoom(MIN_ZOOM), RawOsm::Off, &rails);
 
     assert_eq!(report.standing, stable_wagons(&rails).len());
 }
@@ -215,9 +215,28 @@ fn the_report_counts_the_wagons_that_stood() {
 #[test]
 fn the_far_bucket_builds_an_empty_layer() {
     let rails = yards(Some(ServiceTrack::Siding), 600.0);
-    let (layers, _) = mesh_wagons(WagonZoomBucket::for_zoom(MAX_ZOOM), &rails);
+    let (layers, _) = mesh_wagons(WagonZoomBucket::for_zoom(MAX_ZOOM), RawOsm::Off, &rails);
 
     assert_eq!(layers.len(), 1);
     assert_eq!(layers[0].name, "wagons");
     assert!(layers[0].builder.is_empty());
+}
+
+/// Сырой OSM второго уровня (`RawOsm::Draw`) снимает вагоны и на ближней
+/// ступени: расстановка — наша достройка, а не данные, ровно как машины.
+/// Первый уровень (`Parse`) отрисовку не трогает — вагоны стоят.
+#[test]
+fn raw_osm_draw_stands_no_wagons() {
+    let rails = yards(Some(ServiceTrack::Siding), 600.0);
+    let near = WagonZoomBucket::for_zoom(MIN_ZOOM);
+
+    let (layers, report) = mesh_wagons(near, RawOsm::Draw, &rails);
+    assert!(layers[0].builder.is_empty());
+    assert!(report.hidden);
+    assert_eq!(report.standing, 0);
+    assert_eq!(report.to_string(), "wagons: hidden");
+
+    let (_, parse) = mesh_wagons(near, RawOsm::Parse, &rails);
+    assert!(!parse.hidden);
+    assert_eq!(parse.standing, stable_wagons(&rails).len());
 }

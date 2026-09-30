@@ -4,7 +4,8 @@
 //! половина площади любого узла занята стоящими вагонами, и без них горловина
 //! читается как схема, а не как фотография. Приём тот же, что с машинами
 //! ([`super::cars`]), но слой проще: ручек стиля у него нет, и снимается он
-//! только ступенью зума.
+//! только ступенью зума — и сырым OSM второго уровня (`RawOsm::Draw`): вагоны
+//! наша достройка, а не данные.
 //!
 //! Вагоны ставятся **только на служебные пути** (`service=siding|yard|spur`):
 //! на главном ходу состав либо идёт, либо его там нет.
@@ -28,6 +29,7 @@ use crate::map::along::{arclengths, place_on_path};
 use crate::map::grid::Grid;
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::model::distance_to_segment;
+use crate::map::osm::parse::RawOsm;
 use crate::map::osm::{MapData, RailKind, RailLine, ServiceTrack};
 use crate::map::seed::{Lcg, seed_from_point};
 use crate::map::shadow;
@@ -144,7 +146,7 @@ pub fn rebuild_wagons(
     for entity in &existing {
         commands.entity(entity).despawn();
     }
-    let (layers, report) = mesh_wagons(*bucket, &map.rails);
+    let (layers, report) = mesh_wagons(*bucket, map.knobs.raw, &map.rails);
     spawn_layers(
         &mut commands,
         &mut meshes,
@@ -170,7 +172,8 @@ pub fn rebuild_wagons(
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct WagonReport {
     pub standing: usize,
-    /// Дальняя ступень зума: слой описан и пуст, расстановка не шла.
+    /// Дальняя ступень зума или сырой OSM второго уровня: слой описан и пуст,
+    /// расстановка не шла.
     pub hidden: bool,
     pub vertices: usize,
     pub elapsed: std::time::Duration,
@@ -201,9 +204,17 @@ impl std::fmt::Display for WagonReport {
 /// просто пропадает — 13.9-метровый кузов на 2 м/px это те же ~7 экранных
 /// пикселей, на которых уже сняты машины. Говорит она об этом
 /// [`WagonReport::hidden`], а не нулём в `standing`.
-pub fn mesh_wagons(bucket: WagonZoomBucket, rails: &[RailLine]) -> (Vec<LayerMesh>, WagonReport) {
+///
+/// Так же снимает слой **сырой OSM** второго уровня ([`RawOsm::draws_raw`]):
+/// веер и сцепы — наша расстановка, в данных вагонов нет, ровно как машин
+/// (`cars::park_on`).
+pub fn mesh_wagons(
+    bucket: WagonZoomBucket,
+    raw: RawOsm,
+    rails: &[RailLine],
+) -> (Vec<LayerMesh>, WagonReport) {
     let started = std::time::Instant::now();
-    let hidden = bucket.index > 0;
+    let hidden = bucket.index > 0 || raw.draws_raw();
     let wagons = if hidden {
         Vec::new()
     } else {
