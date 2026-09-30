@@ -141,10 +141,12 @@ impl Gores {
             .collect();
         let at_ring = |point: Vec2| knots.iter().any(|knot| knot.distance(point) <= ARM_SNAP);
         // подход — кусок одностороннего полотна от кольца на [`ARM_REACH`]
+        let mut owners: Vec<usize> = Vec::new();
         let arms: Vec<(Vec<Vec2>, f32)> = roads
             .iter()
-            .filter(|road| road.oneway && !road.roundabout)
-            .flat_map(|road| {
+            .enumerate()
+            .filter(|(_, road)| road.oneway && !road.roundabout)
+            .flat_map(|(index, road)| {
                 let mut arms = Vec::new();
                 if road.path.first().is_some_and(|point| at_ring(*point)) {
                     arms.push((head(road.path.iter().copied()), road.width));
@@ -152,6 +154,7 @@ impl Gores {
                 if road.path.last().is_some_and(|point| at_ring(*point)) {
                     arms.push((head(road.path.iter().rev().copied()), road.width));
                 }
+                owners.extend(arms.iter().map(|_| index));
                 arms
             })
             .collect();
@@ -167,9 +170,20 @@ impl Gores {
         // полуширину и на само замыкание. Дальше этого прямоугольника клина
         // нет — ни искать его там, ни вычитать из него нечего.
         let mut reach: Vec<(Vec2, Vec2)> = Vec::new();
-        for (path, width) in &arms {
-            network.extend(stroke(path, *width, LineCap::Round(ARC), is_ring(path)));
-            reach.push(closing_span(path, *width));
+        for ((path, width), owner) in arms.iter().zip(&owners) {
+            // в замыкание идёт только веер подхода — там, где зазор до
+            // соседнего подхода ещё сходится (R23)
+            let others: Vec<&[Vec2]> = owners
+                .iter()
+                .filter(|other| *other != owner)
+                .map(|&other| roads[other].path.as_slice())
+                .collect();
+            let path = fan_head(path, &others);
+            if path.len() < 2 {
+                continue;
+            }
+            network.extend(stroke(&path, *width, LineCap::Round(ARC), is_ring(&path)));
+            reach.push(closing_span(&path, *width));
         }
         let mut solid: Vec<Contour> = Vec::new();
         for road in roads.iter().filter(|road| road.roundabout) {
@@ -925,10 +939,63 @@ fn closing_span(path: &[Vec2], width: f32) -> (Vec2, Vec2) {
 }
 
 /// Начало ломаной — первые [`ARM_REACH`] метров.
-fn head(points: impl Iterator<Item = Vec2>) -> Vec<Vec2> {
+/// Как быстро должен сходиться зазор подхода, чтобы это был веер
+/// ([`fan_head`]): 0.5 м на 10 м, — и окно, на котором он меряется, м.
+const FAN_SLOPE: f32 = 0.05;
+const FAN_WINDOW: f32 = 2.0;
+/// Шаг проб зазора вдоль подхода, м.
+const FAN_PROBE: f32 = 1.0;
+/// Дальше этого, м, соседний подход зазора не даёт: проба его не видит.
+const FAN_GAP_MAX: f32 = 2.0 * ARM_REACH;
+
+/// Веер подхода `arm` (путь от кольца): его голова до места, где зазор до
+/// ближайшего из `others` перестаёт сходиться — конец последнего окна
+/// [`FAN_WINDOW`], на котором он сходится быстрее [`FAN_SLOPE`].
+///
+/// Прежде в замыкание шли все [`ARM_REACH`] 40 м подхода, и вид зависел от
+/// порогов, а не от дороги (R23): бульвар через стоянку «Макси» — пара
+/// половин в 5.2 м по осям между двумя мини-кольцами в 88 м друг от друга, —
+/// и 40 м от каждого кольца почти смыкались: узкая штриховка шла от кольца до
+/// кольца, а с другой стороны зазор был у́же `GORE_MIN_WIDTH`, и там от кольца
+/// шла двойная сплошная. Настоящий веер — где половины расходятся к разным
+/// узлам кольца, и зазор растёт; на параллельном участке он постоянен, и там
+/// место двойной сплошной пары.
+fn fan_head(arm: &[Vec2], others: &[&[Vec2]]) -> Vec<Vec2> {
+    let (along, _) = arclengths(arm);
+    let length = along.last().copied().unwrap_or(0.0);
+    let (low, high) = ring_bounds(arm);
+    let near: Vec<&[Vec2]> = others
+        .iter()
+        .filter(|other| {
+            let (from, to) = ring_bounds(other);
+            (low - FAN_GAP_MAX).cmple(to).all() && (high + FAN_GAP_MAX).cmpge(from).all()
+        })
+        .copied()
+        .collect();
+    let steps = (length / FAN_PROBE).floor() as usize;
+    let gaps: Vec<f32> = (0..=steps)
+        .map(|step| {
+            let at =
+                place_on_path(arm, &along, step as f32 * FAN_PROBE).map_or(arm[0], |(at, _)| at);
+            near.iter()
+                .flat_map(|other| other.windows(2))
+                .map(|link| distance_to_segment(at, link[0], link[1]))
+                .fold(FAN_GAP_MAX, f32::min)
+        })
+        .collect();
+    let window = (FAN_WINDOW / FAN_PROBE).round() as usize;
+    let end = (0..gaps.len().saturating_sub(window))
+        .filter(|&step| gaps[step] - gaps[step + window] >= FAN_SLOPE * FAN_WINDOW)
+        .map(|step| (step + window) as f32 * FAN_PROBE)
+        .fold(0.0, f32::max);
+    cut_head(arm, end.min(length))
+}
+
+/// Голова ломаной длиной `reach`.
+fn cut_head(points: &[Vec2], reach: f32) -> Vec<Vec2> {
     let mut path: Vec<Vec2> = Vec::new();
-    let mut left = ARM_REACH;
-    for point in points {
+    let mut left = reach;
+    for &point in points {
         let Some(last) = path.last().copied() else {
             path.push(point);
             continue;
@@ -942,6 +1009,10 @@ fn head(points: impl Iterator<Item = Vec2>) -> Vec<Vec2> {
         path.push(point);
     }
     path
+}
+
+fn head(points: impl Iterator<Item = Vec2>) -> Vec<Vec2> {
+    cut_head(&points.collect::<Vec<Vec2>>(), ARM_REACH)
 }
 
 #[cfg(test)]
@@ -1123,5 +1194,33 @@ mod tests {
             Vec2::new(0.0, 12.0),
         ];
         assert!(mouths(&roads, &[], &[], &[&paved]).is_empty());
+    }
+
+    /// Веер подхода (R23): половины бульвара расходятся у кольца к разным
+    /// его узлам, а дальше идут бок о бок — в замыкание идёт только веер, до
+    /// места, где зазор перестаёт сходиться. Настоящий веер, где зазор
+    /// сходится на всей длине, остаётся целым.
+    #[test]
+    fn only_the_fan_of_an_approach_goes_into_the_closing() {
+        // от кольца (x = 0) зазор по осям сходится с 12 м до 5.2 за 10 м,
+        // дальше постоянный
+        let arm = [
+            Vec2::new(0.0, 6.0),
+            Vec2::new(10.0, 2.6),
+            Vec2::new(40.0, 2.6),
+        ];
+        let other = [
+            Vec2::new(0.0, -6.0),
+            Vec2::new(10.0, -2.6),
+            Vec2::new(40.0, -2.6),
+        ];
+        let head = fan_head(&arm, &[&other]);
+        let reach = polyline_length(&head);
+        assert!((9.0..=13.0).contains(&reach), "{reach}");
+        // веер на всю длину: зазор сходится с 30 м до нуля за 40
+        let arm = [Vec2::new(0.0, 15.0), Vec2::new(40.0, 0.0)];
+        let other = [Vec2::new(0.0, -15.0), Vec2::new(40.0, 0.0)];
+        let reach = polyline_length(&fan_head(&arm, &[&other]));
+        assert!(reach > 38.0, "{reach}");
     }
 }

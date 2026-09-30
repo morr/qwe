@@ -320,6 +320,20 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
       - **An arm** is a one-way, non-ring street with an end within `ARM_SNAP` 1 m of a
         ring vertex, taken for `ARM_REACH` 40 m from the ring — an avenue's carriageway
         runs for hundreds of metres and would hatch the whole median with its opposite.
+        **Only its fan goes into the closing** (`gores::fan_head`, R23): the gap from the
+        arm to the nearest other arm's road is probed every `FAN_PROBE` 1 m from the
+        ring, and the arm is cut at the end of the last `FAN_WINDOW` 2 m over which the
+        gap narrows faster than `FAN_SLOPE` 0.05 (0.5 m per 10 m) — where the halves stop
+        parting and run side by side. Before, the look hung on the two thresholds and not
+        on the road: on the «Макси» boulevard (two `service` halves 5.2 m apart between
+        mini-rings 88 m apart) the 40 m from each ring almost met and a long narrow hatch
+        ran ring to ring (6693, 3145) and 40 m past the east ring, while west of the west
+        ring the gap was under `GORE_MIN_WIDTH` and the double solid ran from the ring —
+        now it is the double solid all along the parallel stretch, and the tail of the
+        big ring's south-east gore got ~4 m shorter. The arm is still whole for the
+        "touches two arms" tests; only the closing network and its reach are cut. A real
+        fan (04, 17, Ryazan 05) narrows the whole way and keeps its length
+        (`only_the_fan_of_an_approach_goes_into_the_closing`).
       - **The wedge** is what a closing by `GORE_CLOSING` 6 m of the rings' and arms'
         asphalt pulls shut, minus the asphalt of every street nearby and the **island of
         the ring** — the axis polygon of a ring mapped as one closed way, and of every
