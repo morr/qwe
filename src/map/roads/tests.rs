@@ -1071,6 +1071,69 @@ fn a_footbridge_beside_a_deck_gets_a_slit_apron() {
     assert!(!covered(&far, "bridges", Vec2::new(-12.0, 130.0)));
 }
 
+/// Мостик, вынесенный из настила к его кромке (R14), тянет за собой дорожку,
+/// и та, возвращаясь на своё место, расходится с полосой тротуара подхода
+/// клином голой земли (S5, Тула, Одоевский путепровод, 2411 3020): щели на
+/// настиле нет — бортики внахлёст, — а клин на земле мостится. И дорожка у
+/// головы расширяется в мостик: без клина её торец стоял уступом внутри его
+/// бортика.
+#[test]
+fn a_moved_footbridges_path_meets_the_band_without_a_wedge() {
+    let mut map = MapData::default();
+    map.roads.push(fixture::street(
+        vec![Vec2::new(0.0, 0.0), Vec2::new(0.0, 100.0)],
+        7.6,
+    ));
+    map.roads.push(fixture::bridge(
+        vec![Vec2::new(0.0, 100.0), Vec2::new(0.0, 160.0)],
+        7.6,
+    ));
+    let foot = Vec2::new(-3.6, 100.0);
+    map.roads.push(RoadLine {
+        pavement: Some(Pavement::Paved),
+        ..fixture::footway(vec![Vec2::new(-12.0, 40.0), foot])
+    });
+    map.roads.push(RoadLine {
+        class: RoadClass::Alley,
+        highway: Highway::Path,
+        ..fixture::bridge(vec![foot, Vec2::new(-3.6, 160.0)], 3.5)
+    });
+    map.network = super::network::RoadNetwork::new(&map.roads);
+    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let covered = |name: &str, at: Vec2| {
+        layer(&layers, name).builder.triangles().any(|[a, b, c]| {
+            crate::map::osm::model::point_in_polygon(at, &[a, b, c])
+        })
+    };
+    // от асфальта подхода до оси дорожки — ни пятна голой земли
+    let prepared = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
+    let path = prepared.axis(2, Axis::Ribbon);
+    let axis_at = |y: f32| {
+        path.windows(2).find_map(|pair| {
+            let (a, b) = (pair[0], pair[1]);
+            ((a.y - y) * (b.y - y) <= 0.0 && a.y != b.y)
+                .then(|| a.x + (b.x - a.x) * (y - a.y) / (b.y - a.y))
+        })
+    };
+    for y in [86.0, 90.0, 94.0, 98.0] {
+        let axis = axis_at(y).expect("the path reaches the head");
+        let mut x = -3.9;
+        while x > axis {
+            let at = Vec2::new(x, y);
+            assert!(
+                covered("roads", at) || covered("sidewalks", at),
+                "bare ground at {at} between the band and the path (axis at {axis})"
+            );
+            x -= 0.1;
+        }
+    }
+    // клин дорожки в мостик: у головы — до кромки его бортика
+    let reach = map.roads[3].curb_reach();
+    let axis = prepared.axis(3, Axis::Nodal)[0].x;
+    let at = Vec2::new(axis - reach + 0.1, 99.9);
+    assert!(covered("sidewalks", at), "the path stops short of its footbridge's curb at {at}");
+}
+
 /// Асфальт подхода, срезанный в узле шва прямо (в узле примыкает третья
 /// улица), стоит поперёк своей оси, торец настила — поперёк своей: на изломе
 /// шва между ними светилась нитка земли наискось через полосы (S3, Орёл,

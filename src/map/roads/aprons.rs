@@ -36,8 +36,9 @@ pub(super) const SLIT_MAX: f32 = 3.0;
 const ALONG_MIN: f32 = 0.9;
 /// Шаг проб вдоль мостика и дорожки, м.
 const STEP: f32 = 1.0;
-/// Как далеко от головы моста фартук идёт по земле, м.
-const GROUND_REACH: f32 = 30.0;
+/// Как далеко от головы моста фартук идёт по земле, м: игла у 1-й Курской
+/// и клин у Одоевского путепровода — метров по девять.
+const GROUND_REACH: f32 = 15.0;
 /// Щель уже этого, м, — стык, а не щель.
 const CLOSED: f32 = 0.02;
 /// На сколько фартук на земле заходит за голову под настил, м.
@@ -79,13 +80,19 @@ pub(super) fn slit_aprons(
             let inner = drawn[deck].curb_reach();
             let outer = drawn[foot].curb_reach();
             let fill = drawn[foot].width / 2.0;
+            // вдоль настила ли мостик вообще — вплоть до вынесенного к его
+            // кромке (бортики внахлёст, щели нет, а на земле клин есть: S5)
+            let alongside = !beside(path, &ribbon[deck], |_, distance| {
+                (distance - inner - outer <= SLIT_MAX).then_some([inner, inner])
+            })
+            .is_empty();
+            if !alongside {
+                continue;
+            }
             let runs = beside(path, &ribbon[deck], |_, distance| {
                 let clear = distance - inner - outer;
                 (clear > CLOSED && clear <= SLIT_MAX).then_some([inner, distance - fill])
             });
-            if runs.is_empty() {
-                continue;
-            }
             aprons.decks.extend(runs.into_iter().map(|(_, ring)| (foot, ring)));
             // и на земле — у обоих торцов мостика, что стоят на шве
             for end in [0, 1] {
@@ -144,9 +151,12 @@ fn ground_apron(
     let street_path: &[Vec2] = &ribbon[street];
     let half = drawn[path_road].width / 2.0;
     let asphalt = drawn[street].width / 2.0;
+    // внахлёст с полосой (у самой головы, пока дорожка идёт за вынесенным
+    // мостиком) — тоже фартук: он под ними, и клин за нахлёстом начинается
+    // сразу от головы
     let mut runs = beside(&path, street_path, |side, distance| {
         let clear = distance - prepared.band_half(street, side) - half;
-        (clear > CLOSED && clear <= SLIT_MAX).then_some([asphalt, distance - half])
+        (clear <= SLIT_MAX).then_some([asphalt, (distance - half).max(asphalt)])
     });
     // только кусок от самой головы: дальше промежуток — уже газон обочины
     let (start, _) = runs.first()?;

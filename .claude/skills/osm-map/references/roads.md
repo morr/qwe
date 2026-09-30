@@ -2786,11 +2786,22 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   slit is impassable anyway. **On the ground** the same: the path leading onto that
   footbridge and the sidewalk band of the street leading onto the deck converge at the
   head and left a lawn needle between them (the north head of 1-я Курская); from each
-  footbridge end at a seam, the path is probed back up to 30 m and, while the gap to the
+  footbridge end at a seam, the path is probed back up to 15 m and, while the gap to the
   street's band (`Drawn::band_half`) stays under `SLIT_MAX`, paved from the street's
   asphalt edge to the path's edge in the path's layer and colour, with a 1 m lip under
   the deck apron (their square ends stand across different axes). Only the run that
-  starts at the head. Pinned by `a_footbridge_beside_a_deck_gets_a_slit_apron`.
+  starts at the head; an overlap with the band counts as part of it (the apron lies
+  under both), so a footbridge **moved out** to the deck's edge — curbs overlapping, no
+  slit on the deck — still gets the ground wedge closed where its path parts from the
+  band (S5, Tula, the Одоевский путепровод at 2411 3020: the path follows the moved
+  footbridge and fades back, a ~9 m wedge of bare ground opened). Pinned by
+  `a_footbridge_beside_a_deck_gets_a_slit_apron` and
+  `a_moved_footbridges_path_meets_the_band_without_a_wedge`.
+  **A path widens into its footbridge** (`push_path_flare`, S5): the footbridge is
+  3.5 m plus a 0.8 m curb a side, the path onto it 2–3 m, so at the head the path's
+  square end stood as a step inside the footbridge's curb on both sides. Over its last
+  `PATH_SEAM_FLARE` 3 m the path widens to the footbridge's curb reach and runs a
+  0.5 m lip under it.
   **A footbridge mapped inside a street deck is moved out** (`axis.rs::
   place_bridge_sidewalks`): a vertex of a footbridge running along a deck
   (`FOOTBRIDGE_ALONG` 0.9) closer than `deck half + own half + own curb` goes out to that
