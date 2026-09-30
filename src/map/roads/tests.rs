@@ -1024,6 +1024,53 @@ fn an_approach_sidewalk_ends_square_at_the_bridge_head() {
     );
 }
 
+/// Мостик, замапленный своим way в паре метров от настила (Орёл, мост 1-й
+/// Курской: 2.15 м между бортиками), — щель между ними закрыта фартуком в
+/// слое настилов, а её продолжение на земле, между полосой тротуара подхода и
+/// дорожкой на мостик, — плиткой (S2). Мостик в шести метрах — отдельный
+/// мост, фартука нет.
+#[test]
+fn a_footbridge_beside_a_deck_gets_a_slit_apron() {
+    let covered = |layers: &[LayerMesh], name: &str, at: Vec2| {
+        layer(layers, name).builder.triangles().any(|[a, b, c]| {
+            crate::map::osm::model::point_in_polygon(at, &[a, b, c])
+        })
+    };
+    let scene = |x: f32| {
+        let mut map = MapData::default();
+        map.roads.push(fixture::street(
+            vec![Vec2::new(0.0, 0.0), Vec2::new(0.0, 100.0)],
+            14.2,
+        ));
+        map.roads.push(fixture::bridge(
+            vec![Vec2::new(0.0, 100.0), Vec2::new(0.0, 160.0)],
+            14.2,
+        ));
+        map.roads.push(RoadLine {
+            pavement: Some(Pavement::Paved),
+            ..fixture::footway(vec![Vec2::new(x, 40.0), Vec2::new(x, 100.0)])
+        });
+        map.roads.push(RoadLine {
+            class: RoadClass::Alley,
+            highway: Highway::Path,
+            ..fixture::bridge(vec![Vec2::new(x, 100.0), Vec2::new(x, 160.0)], 3.5)
+        });
+        map.network = super::network::RoadNetwork::new(&map.roads);
+        mesh_roads(&map, RoadStyle::default(), RoadShape::default()).0
+    };
+    let near = scene(-13.5);
+    assert!(
+        covered(&near, "bridges", Vec2::new(-10.0, 130.0)),
+        "the slit between the deck curb and the footbridge is open"
+    );
+    assert!(
+        covered(&near, "sidewalks", Vec2::new(-11.0, 95.0)),
+        "the ground between the approach sidewalk and the path is open"
+    );
+    let far = scene(-17.0);
+    assert!(!covered(&far, "bridges", Vec2::new(-12.0, 130.0)));
+}
+
 /// Асфальт подхода, срезанный в узле шва прямо (в узле примыкает третья
 /// улица), стоит поперёк своей оси, торец настила — поперёк своей: на изломе
 /// шва между ними светилась нитка земли наискось через полосы (S3, Орёл,

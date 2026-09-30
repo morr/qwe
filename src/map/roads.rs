@@ -1708,6 +1708,30 @@ pub fn build_roads(map: &MapData, style: RoadStyle, shape: RoadShape) -> RoadBui
             grounds.push(road, points);
         }
     }
+    // фартуки мостиков, замапленных рядом с настилом (`roads/aprons.rs`, S2):
+    // щель между бортиками — плиткой мостика в слое настилов, её
+    // продолжение на земле до головы — в слое дорожки
+    let path_color = |road: &RoadLine| {
+        if road.is_paved_path() {
+            SIDEWALK_COLOR
+        } else {
+            ALLEY_COLOR
+        }
+    };
+    let slit = aprons::slit_aprons(&drawn, &ribbon, &prepared);
+    let fills = bridges.fills();
+    fills.set_lanes(None);
+    for (foot, ring) in &slit.decks {
+        fills.push_polygon(ring, &[], path_color(drawn[*foot]).to_linear());
+    }
+    for (path, ring) in &slit.ground {
+        let layer = if drawn[*path].is_paved_path() {
+            &mut sidewalks
+        } else {
+            &mut alleys
+        };
+        layer.push_polygon(ring, &[], path_color(drawn[*path]).to_linear());
+    }
     // Лоскуты газона обочин, замкнутые мощением, — плиткой поверх газона
     // (`roads/scraps.rs`): слой обочин лежит над слоями газона. Мощение, которым
     // они замкнуты, собирается только у газонов, которые спрашиваются: улиц и
@@ -2921,6 +2945,7 @@ pub(super) mod junctions;
 /// Открыт наружу для [`map::cars`](crate::map::cars): ряд машин стоит на той
 /// же оси, что и лента.
 pub(super) mod axis;
+mod aprons;
 mod bridges;
 mod corners;
 mod drawn;

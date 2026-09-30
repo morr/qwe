@@ -2772,6 +2772,25 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   covered by the deck's half-disc (R30, Oryol, Красный мост: 2 lanes on the ground, 3 on
   the bridge). The price: in the wedge the drawn deck is narrower than the navmesh
   corridor, which is carved by the OSM width.
+  **A footbridge mapped beside a street deck gets a slit apron** (`roads/aprons.rs`,
+  S2, R32): OSM draws a bridge's pavement as its own `bridge=yes` way some metres off
+  the carriageway — the 1-я Курская bridge in Oryol (88463507, 14.2 m) has its
+  footbridges 375888718/719 13.5 m off the axis, 2.15 m between the two curbs — and
+  through that slit the tracks under the bridge showed. `slit_aprons` probes every
+  footbridge each metre against the street decks (box prefilter, `ALONG_MIN` 0.9, the
+  foot of the perpendicular on a link, never past a deck end), and where the clear gap
+  between the deck curb and the footbridge's curb is 0.02–`SLIT_MAX` 3 m it lays the
+  strip from the deck curb's outer edge to the footbridge's fill edge into
+  `Bridges::fills` in the footbridge's colour (its inner curb goes under it): one
+  pavement attached to the bridge. Render only — the curb stays the navmesh's edge, the
+  slit is impassable anyway. **On the ground** the same: the path leading onto that
+  footbridge and the sidewalk band of the street leading onto the deck converge at the
+  head and left a lawn needle between them (the north head of 1-я Курская); from each
+  footbridge end at a seam, the path is probed back up to 30 m and, while the gap to the
+  street's band (`Drawn::band_half`) stays under `SLIT_MAX`, paved from the street's
+  asphalt edge to the path's edge in the path's layer and colour, with a 1 m lip under
+  the deck apron (their square ends stand across different axes). Only the run that
+  starts at the head. Pinned by `a_footbridge_beside_a_deck_gets_a_slit_apron`.
   **A footbridge mapped inside a street deck is moved out** (`axis.rs::
   place_bridge_sidewalks`): a vertex of a footbridge running along a deck
   (`FOOTBRIDGE_ALONG` 0.9) closer than `deck half + own half + own curb` goes out to that

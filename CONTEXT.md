@@ -232,7 +232,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     (`tram_band::split_cover`); a merge axis leaves its continuation along the
     continuation's painted tangent (`merges::LeadIn`);
     a **footbridge** mapped inside a street deck is moved out past its edge, the ground path
-    following (`axis.rs::place_bridge_sidewalks`); a paired deck's median lies on the deck);
+    following (`axis.rs::place_bridge_sidewalks`), and one mapped beside it within 3 m gets
+    a **slit apron** — the gap paved in the footbridge's colour on the deck and, back from
+    the head, between the paths on the ground (`roads/aprons.rs`; render only, the curb
+    stays the navmesh's edge); a paired deck's median lies on the deck);
     `oneway`, `roundabout` (the `junction=roundabout|circular` tag — but the notion is
     `RoadLine::is_roundabout`, **tag or shape**: a closed one-way way is a ring too, and
     the mall's big ring carries no tag; a **Ring** (`roads/rings.rs`) is such ways chained
