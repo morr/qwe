@@ -1012,6 +1012,40 @@ fn an_approach_sidewalk_ends_square_at_the_bridge_head() {
     );
 }
 
+/// Полоса тротуара подхода сходит у головы моста клином в бортик настила:
+/// полоса шире бортика по построению, и её прямой торец стоял уступом наружу
+/// от бортика (S1, Орёл, Красный мост; S5, Тула, Одоевский путепровод). Дальше
+/// клина полоса — во всю ширину.
+#[test]
+fn an_approach_sidewalk_tapers_into_the_deck_curb() {
+    let head = Vec2::new(0.0, 100.0);
+    let mut map = MapData::default();
+    map.roads
+        .push(fixture::street(vec![Vec2::new(0.0, 0.0), head], 14.2));
+    map.roads
+        .push(fixture::bridge(vec![head, Vec2::new(0.0, 160.0)], 14.2));
+    let curb = map.roads[1].curb_reach();
+    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let sidewalks = layer(&layers, "sidewalks").builder.positions_for_test();
+    let reach_near = |from: f32, to: f32| {
+        sidewalks
+            .iter()
+            .filter(|position| (from..=to).contains(&(position[1] - head.y)))
+            .map(|position| position[0].abs())
+            .fold(0.0, f32::max)
+    };
+    let at_head = reach_near(-0.05, 0.05);
+    assert!(
+        (at_head - curb).abs() < 0.05,
+        "at the head the sidewalk reaches {at_head} m, the deck curb {curb} m"
+    );
+    let band = reach_near(-60.0, -BAND_SEAM_TAPER - 0.1);
+    assert!(
+        band > curb + 0.3,
+        "past the taper the band keeps its width: {band} m"
+    );
+}
+
 /// Мостик, замапленный внутри настила моста (Тула: 3.6 м от оси при
 /// полуширине 3.8), выносится к его кромке, а наземная дорожка, продолжающая
 /// его, идёт следом: иначе мостик полосой закрывал край проезжей части, а за

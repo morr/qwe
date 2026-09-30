@@ -56,7 +56,7 @@ use self::bridges::Bridges;
 pub use self::drawn::{Axis, Drawn, DrawnStats};
 pub use self::junctions::JunctionCounts;
 use self::network::RoadNodes;
-use self::network::pairs::{BandPiece, Median};
+use self::network::pairs::BandPiece;
 pub use self::node_paint::CrossingMode;
 use self::ruts::{LaneRuts, RutLines};
 use self::shape::{RoadShape, RoadShapeOnMap};
@@ -100,6 +100,10 @@ pub const ROAD_COLOR: Color = Color::srgb(0.545, 0.545, 0.55);
 /// [`ROAD_COLOR`] едва заметно, как на Яндексе, — трамвайная полоса читается
 /// цветом, а не разметкой.
 pub const TRAM_BAND_COLOR: Color = Color::srgb(0.59, 0.59, 0.595);
+/// На сколько контур разделительной двух настилов шире её самой, когда он
+/// режет полосу над рельсами (`tram_band::deck_cuts`), м: кромки половин
+/// лежат ровно на её краю, и без запаса вдоль них оставались нитки.
+const DECK_CUT_SLACK: f32 = 0.2;
 const ALLEY_COLOR: Color = Color::srgb(0.914, 0.875, 0.769);
 /// Грунтовая улица — серо-бурый утрамбованный щебень: светлее асфальта на
 /// ступень и теплее его, темнее песчаной тропинки, чтобы проезжая часть
@@ -1476,13 +1480,21 @@ pub fn build_roads(map: &MapData, style: RoadStyle, shape: RoadShape) -> RoadBui
             let head_length = head.as_deref().map_or(0.0, polyline_length);
             let stitch = prepared.stitch_offset(index) - head_length;
             let pieces = prepared.pairs().band_pieces(index, sides, stitch, total);
-            push_sidewalk(
+            // на шве земля/мост полоса сходит клином в бортик настила; торец
+            // под клином сечения — не шов тела
+            let curb_reach = bridges::seam_curb_reach(&drawn, prepared.nodes(), index);
+            let seam_reach = [
+                curb_reach[0].filter(|_| head.is_none()),
+                curb_reach[1].filter(|_| tail.is_none()),
+            ];
+            push_sidewalk_to_seams(
                 &mut sidewalks,
                 body,
                 [road.width, sidewalk],
                 pieces.as_deref(),
                 SIDEWALK_COLOR.to_linear(),
                 banded,
+                seam_reach,
             );
             if at_ring[index] {
                 approach_bands.push((body.to_vec(), band(road, sidewalk), banded));
@@ -1691,29 +1703,35 @@ pub fn build_roads(map: &MapData, style: RoadStyle, shape: RoadShape) -> RoadBui
     // по путям, уложенным по нарисованной улице (`roads/tram_lay.rs`), а не
     // по OSM: полоса обязана лежать под тем же рельсом, что рисует трамвай
     let tram_tracks = tram_lay::lay_tracks(&map.rails, &drawn, &nodal, &median_drawing.paved);
-    // разделительная двух настилов лежит в слое настилов — и полоса над ней
-    // (R30: на Красном мосту полоса обрывалась прямоугольником на шве)
-    let (decked, grounded): (Vec<Median>, Vec<Median>) = median_drawing
+    // одним покрытием через шов земля/мост, со щелями между полосами соседних
+    // путей заросшими, — и разрезанным торцами настилов, что несут полосу:
+    // на настиле она лежит в его слое (S1, S2: два покрытия порознь на шве
+    // наезжали друг на друга со сдвигом, у моста без разделительной полоса
+    // обрывалась у голов косым параллелограммом)
+    let tram_bands = tram_band::tram_bands(&tram_tracks.0, &drawn, &nodal, &median_drawing.paved);
+    let street_decks = drawn
+        .iter()
+        .enumerate()
+        .filter(|(_, road)| road.bridge && road.class == RoadClass::Street && !road.passage)
+        .map(|(index, road)| (ribbon[index].as_ref(), 2.0 * road.curb_reach()));
+    // разделительная двух настилов лежит в слое настилов (R30) — и полоса
+    // над ней; ровно по её ширине: внутренние полосы половин режут их настилы
+    let median_decks = median_drawing
         .paved
         .iter()
-        .cloned()
-        .partition(|median| median.roads().iter().all(|&road| drawn[road].bridge));
-    let mut tram_bands = tram_band::tram_bands(&tram_tracks.0, &drawn, &nodal, &grounded);
+        .filter(|median| median.roads().iter().all(|&road| drawn[road].bridge))
+        .map(|median| (median.midline(), median.width() + DECK_CUT_SLACK));
+    let cuts = tram_band::deck_cuts(&tram_bands, street_decks.chain(median_decks));
+    let [on_ground, on_decks] =
+        tram_band::split_cover(tram_band::band_cover(&tram_bands), &cuts);
     streets.set_lanes(None);
-    // одной фигурой, со щелями между полосами соседних путей заросшими
-    for shape in tram_band::band_cover(&tram_bands) {
+    for shape in on_ground {
         push_shape(&mut streets, shape, TRAM_BAND_COLOR.to_linear());
     }
-    if !decked.is_empty() {
-        let no_roads: [&RoadLine; 0] = [];
-        let no_paths: [&[Vec2]; 0] = [];
-        let on_decks = tram_band::tram_bands(&tram_tracks.0, &no_roads, &no_paths, &decked);
-        let fills = bridges.fills();
-        fills.set_lanes(None);
-        for shape in tram_band::band_cover(&on_decks) {
-            push_shape(fills, shape, TRAM_BAND_COLOR.to_linear());
-        }
-        tram_bands.extend(on_decks);
+    let fills = bridges.fills();
+    fills.set_lanes(None);
+    for shape in on_decks {
+        push_shape(fills, shape, TRAM_BAND_COLOR.to_linear());
     }
     let mut lot_layers = grounds.layers(&style, &gores, &median_drawing.paved);
     for shape in &road_islands.kerbs {
@@ -2178,50 +2196,133 @@ fn wedge_middle(length: f32, wedge: f32, end: bool) -> f32 {
 fn push_sidewalk(
     builder: &mut MeshBuilder,
     body: &[Vec2],
-    [width, sidewalk]: [f32; 2],
+    widths: [f32; 2],
     pieces: Option<&[BandPiece]>,
     color: LinearRgba,
     trimmed: [bool; 2],
 ) {
-    let Some(pieces) = pieces else {
-        return push_ribbon_trimmed(
-            builder,
-            body,
-            width + 2.0 * sidewalk,
-            color,
-            ROAD_JOIN,
-            trimmed,
-        );
-    };
+    push_sidewalk_to_seams(builder, body, widths, pieces, color, trimmed, [None; 2]);
+}
+
+/// Длина клина, которым полоса тротуара сходит в бортик настила на шве
+/// земля/мост ([`push_sidewalk_to_seams`]), м.
+const BAND_SEAM_TAPER: f32 = 4.0;
+
+/// [`push_sidewalk`], у которого на торцах `seam_reach` (наружная кромка
+/// бортика настила от оси, `bridges::seam_curb_reach`) полоса последние
+/// [`BAND_SEAM_TAPER`] м сходит клином к этой кромке: полоса шире бортика по
+/// построению, и её прямой торец у головы моста стоял уступом (S1, S5).
+fn push_sidewalk_to_seams(
+    builder: &mut MeshBuilder,
+    body: &[Vec2],
+    [width, sidewalk]: [f32; 2],
+    pieces: Option<&[BandPiece]>,
+    color: LinearRgba,
+    trimmed: [bool; 2],
+    seam_reach: [Option<f32>; 2],
+) {
+    let band = width / 2.0 + sidewalk;
     let total = polyline_length(body);
-    for &(from, to, [left, right]) in pieces {
-        let points = tapers::cut(body, from, to);
-        let trims = [from > 0.0 || trimmed[0], to < total || trimmed[1]];
-        // полоса с одной стороны — лента на полтротуара в её сторону:
-        // `miter_offsets` плюсом сдвигает влево
-        let shift = match (left, right) {
-            (true, true) => {
-                push_ribbon_trimmed(
-                    builder,
-                    &points,
-                    width + 2.0 * sidewalk,
-                    color,
-                    ROAD_JOIN,
-                    trims,
-                );
+    // клин — только где кромка бортика ближе кромки полосы, и не длиннее
+    // половины дороги с каждого конца
+    let tapers = seam_reach.map(|reach| {
+        reach
+            .filter(|&reach| reach < band && total > 0.0)
+            .map(|reach| (reach.max(width / 2.0), BAND_SEAM_TAPER.min(total / 2.0)))
+    });
+    if pieces.is_none() && tapers == [None; 2] {
+        return push_ribbon_trimmed(builder, body, 2.0 * band, color, ROAD_JOIN, trimmed);
+    }
+    let whole = [(0.0, total, [true, true])];
+    let pieces = pieces.unwrap_or(&whole);
+    let lead = tapers[0].map_or(0.0, |(_, length)| length);
+    let tail = total - tapers[1].map_or(0.0, |(_, length)| length);
+    // полуширина полосы с тротуаром в точке `at` клина
+    let half_at = |at: f32| match (tapers[0], tapers[1]) {
+        (Some((reach, length)), _) if at < lead => reach + (band - reach) * at / length,
+        (_, Some((reach, length))) if at > tail => reach + (band - reach) * (total - at) / length,
+        _ => band,
+    };
+    for &(from, to, sides) in pieces {
+        for (start, end) in [(from, to.min(lead)), (from.max(tail), to)] {
+            if end - start <= f32::EPSILON || sides == [false; 2] {
                 continue;
             }
-            (true, false) => sidewalk / 2.0,
-            (false, true) => -sidewalk / 2.0,
-            (false, false) => continue,
-        };
-        let shifted: Vec<Vec2> = points
-            .iter()
-            .zip(miter_offsets(&points, false, shift))
-            .map(|(point, offset)| *point + offset)
-            .collect();
-        push_ribbon_trimmed(builder, &shifted, width + sidewalk, color, ROAD_JOIN, trims);
+            // контуром, а не `push_taper_sided`: тот сливает точки ближе
+            // полуширины, и клин в 4 м при полосе в 10 м схлопывался в точку
+            let path = tapers::cut(body, start, end);
+            let (along, _) = crate::map::along::arclengths(&path);
+            let miters = miter_offsets(&path, false, 1.0);
+            let side_half = |side: usize, at: f32| {
+                if sides[side] {
+                    half_at(start + at)
+                } else {
+                    width / 2.0
+                }
+            };
+            let mut outline: Vec<Vec2> = path
+                .iter()
+                .zip(&miters)
+                .zip(&along)
+                .map(|((point, miter), &at)| *point + *miter * side_half(0, at))
+                .collect();
+            outline.extend(
+                path.iter()
+                    .zip(&miters)
+                    .zip(&along)
+                    .rev()
+                    .map(|((point, miter), &at)| *point - *miter * side_half(1, at)),
+            );
+            builder.push_polygon(&outline, &[], color);
+        }
+        let (from, to) = (from.max(lead), to.min(tail));
+        if to - from <= f32::EPSILON {
+            continue;
+        }
+        push_band_piece(
+            builder,
+            body,
+            [width, sidewalk],
+            (from, to, sides),
+            color,
+            [from > 0.0 || trimmed[0], to < total || trimmed[1]],
+        );
     }
+}
+
+/// Кусок `piece` полосы тротуара — с обеих сторон или со своей.
+fn push_band_piece(
+    builder: &mut MeshBuilder,
+    body: &[Vec2],
+    [width, sidewalk]: [f32; 2],
+    (from, to, [left, right]): BandPiece,
+    color: LinearRgba,
+    trims: [bool; 2],
+) {
+    let points = tapers::cut(body, from, to);
+    // полоса с одной стороны — лента на полтротуара в её сторону:
+    // `miter_offsets` плюсом сдвигает влево
+    let shift = match (left, right) {
+        (true, true) => {
+            return push_ribbon_trimmed(
+                builder,
+                &points,
+                width + 2.0 * sidewalk,
+                color,
+                ROAD_JOIN,
+                trims,
+            );
+        }
+        (true, false) => sidewalk / 2.0,
+        (false, true) => -sidewalk / 2.0,
+        (false, false) => return,
+    };
+    let shifted: Vec<Vec2> = points
+        .iter()
+        .zip(miter_offsets(&points, false, shift))
+        .map(|(point, offset)| *point + offset)
+        .collect();
+    push_ribbon_trimmed(builder, &shifted, width + sidewalk, color, ROAD_JOIN, trims);
 }
 
 /// Шаг проб середины пары, м: проба внутри пустоты — это разделительная пары

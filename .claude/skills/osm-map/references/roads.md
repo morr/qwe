@@ -481,7 +481,8 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     left at its OSM place put its tail over the moved approach as a pale tooth. **The
     median of two paired decks lies on the deck** (`medians::draw` pushes a paved median
     or tram bed whose both halves are bridges into `Bridges::fills`, its double solid into
-    `bridge_paint_axes`, its tram band into the deck layer too, and each deck draws **no
+    `bridge_paint_axes`, its share of the one tram band cover into the deck layer too
+    (**Tram band**, `split_cover`), and each deck draws **no
     curb on its paired side** where that median is paved — `push_deck` takes
     `Pairs::curb_pieces`, the sidewalk band's pieces over paved runs only (over a lawn the
     curb is the bridge's edge and stays: Tula's flyover halves, sample 20) — and casts its shadow there only to the asphalt edge, `ShadowBand::reach` being
@@ -741,8 +742,8 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     `ROAD_COLOR` lighter by about 8 %) `TRAM_BAND_WIDTH` 3.3 m wide along every tram
     track that lies **under a street's asphalt**: on a bed and on a single street with
     the tram down its axis alike (21.5 km of Tula), the way Yandex fills it. A track is
-    probed every 2 m against a `Grid` of the drawn street links (no bridges, no arches)
-    and of the paved medians; a probe is covered when a link runs **along** it
+    probed every 2 m against a `Grid` of the drawn street links (street decks included,
+    no arches) and of the paved medians; a probe is covered when a link runs **along** it
     (`ALONG_MIN` cos 0.8 — a tram crossing a street is a level crossing, not a lane),
     the foot falls on the link (±`LINK_SLACK` 1 m) and the strip fits inside that
     asphalt (`EDGE_SLACK` 0.6 m). An uncovered stretch between two covered probes of one
@@ -762,7 +763,19 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     the plain asphalt left between a turning track and the straight one, between two
     tracks' pieces cut at different probes, read as dark holes in the light band (sample
     5, the author's report); the closing cost nothing measurable (roads 172.1 → 172.7 ms,
-    1.7 k fewer vertices). `RoadReport::tram_bands` counts the pieces. Only the
+    1.7 k fewer vertices). **The cover is one across a ground/bridge seam and is cut by
+    the decks that carry it** (S1, S2): `deck_cuts` strokes, butt-ended, every street
+    deck (`2 × curb_reach`) and every paved median of two decks (its width + 0.2 m, so
+    the halves' inner lanes are cut by their own decks) along which a band piece runs
+    (`ALONG_MIN` — an overpass across the tram cuts nothing, or the ground band under it
+    would be lifted over it), and `split_cover` intersects / subtracts them: the ground
+    part goes into `roads`, the deck part into `Bridges::fills`, and one line — the deck
+    head — cuts both. Built apart before (the deck band from the decked medians only, no
+    street deck at all), the two covers overlapped on Oryol's Красный мост with a
+    shift, and the deck cover's closing ran ~1.4 m back over the approach, hiding the
+    end of its double solid under `Z_BRIDGE` — the «step» of the double solid; on the
+    1-я Курская bridge (a street deck, no median) the band stopped at both heads as a
+    slanted pale parallelogram over the double solid. `RoadReport::tram_bands` counts the pieces. Only the
     streets whose box touches a cell of a tram link are indexed, and a covered run is
     thinned back by Douglas–Peucker at 5 cm — one vertex per 2 m probe cost 65 k
     vertices on Tula. **Cost** (`map_meshing`, Tula, dev): road meshing 171 → ~178 ms,
@@ -2712,6 +2725,15 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   head of 49777171), and on the approach the sidewalk band and the verge (R32); the
   approach's asphalt stays round — it is under the deck and closes the notch between two
   square ends on a kink. A free deck end, or one meeting only decks, stays round.
+  **The approach's sidewalk band runs into the deck curb** (`push_sidewalk_to_seams`,
+  S1, S5): the band (22 %, 1.2–3 m) is wider than the curb (12 %, 0.8–2 m) by
+  construction, so its square end stood as a step outward of the curb — Tula, the head
+  of the Одоевский путепровод (2424 3014). Over its last `BAND_SEAM_TAPER` 4 m (at most
+  half the road) the band's outer edge now narrows to the deck curb's outer edge,
+  `bridges::seam_curb_reach` — the approach's half width plus the widest curb of a street
+  deck in the seam node — on the band's own sides (`push_taper_sided`), per band piece of
+  a paired half. Not under a section taper's wedge (that end is not the body's), not on a
+  deck. Pinned by `an_approach_sidewalk_tapers_into_the_deck_curb`.
   **A deck takes a taper** at a seam with a lane change like any seam
   (`tapers::takes_taper` excludes arches only): the fill runs through `tapers::split`, the
   wedges go into `Bridges::fills` with the lane frame, and the curb narrows with it

@@ -17,7 +17,7 @@ use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin, merge_close_points
 use crate::map::osm::model::{
     distance_to_segment, point_in_area, point_in_polygon, polyline_length, ring_bounds,
 };
-use crate::map::osm::{MapData, PolyArea, RailLine, RoadLine};
+use crate::map::osm::{MapData, PolyArea, RailLine, RoadClass, RoadLine};
 use crate::map::rail::{deck_width, track_centerline};
 use crate::map::shadow;
 use crate::map::surface::{LayerMesh, MaterialSpec, SurfaceKind};
@@ -487,6 +487,37 @@ pub(super) fn seam_ends(roads: &[&RoadLine], nodes: &RoadNodes, road: usize) -> 
             .roads_at(end)
             .iter()
             .any(|&other| other != road && roads[other].bridge != own.bridge)
+    })
+}
+
+/// Наружная кромка бортика настила-улицы на каждом торце наземной дороги
+/// `road`, стоящем на шве ([`seam_ends`]), — от **её** оси, м: её полуширина
+/// плюс ширина бортика этого настила. Туда сходит клином полоса её тротуара
+/// (`push_sidewalk`): полоса шире бортика по построению
+/// (`footprint::bridge_curb_width`), и её прямой торец у головы моста стоял
+/// уступом, наружу от бортика (S1, S5). Настилов в узле несколько — берётся
+/// самый широкий бортик; у настила и у торца без настила-улицы — `None`.
+pub(super) fn seam_curb_reach(
+    roads: &[&RoadLine],
+    nodes: &RoadNodes,
+    road: usize,
+) -> [Option<f32>; 2] {
+    let own = roads[road];
+    let (Some(&first), Some(&last)) = (own.points.first(), own.points.last()) else {
+        return [None; 2];
+    };
+    if own.bridge {
+        return [None; 2];
+    }
+    [first, last].map(|end| {
+        nodes
+            .roads_at(end)
+            .iter()
+            .map(|&other| roads[other])
+            .filter(|deck| deck.bridge && deck.class == RoadClass::Street)
+            .map(|deck| deck.curb_reach() - deck.width / 2.0)
+            .reduce(f32::max)
+            .map(|curb| own.width / 2.0 + curb)
     })
 }
 

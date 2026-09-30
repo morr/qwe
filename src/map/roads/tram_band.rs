@@ -11,12 +11,22 @@
 //! идёт улица **вдоль** пути ([`ALONG_MIN`]) и полоса целиком ложится на её
 //! ленту — или проба на мощёной разделительной пары. Трамвай, пересекающий
 //! улицу поперёк, полосы не даёт: это переезд, а не полоса. Куски вне
-//! асфальта (своё полотно, парки, мосты) не рисуются, кусок короче
-//! [`MIN_RUN`] — тоже.
+//! асфальта (своё полотно, парки) не рисуются, кусок короче [`MIN_RUN`] —
+//! тоже.
+//!
+//! **Настил улицы — тоже асфальт** (S1, S2): покрытие считается одно через
+//! шов земля/мост и режется настилами, что несут полосу ([`split_cover`]), —
+//! наземная часть ложится в слой улиц, настильная в слой настилов. Пока
+//! полосы на настиле и на земле строились порознь, их покрытия на шве
+//! наезжали друг на друга со сдвигом (Красный мост в Орле), а у моста без
+//! разделительной полоса обрывалась у голов косым светлым параллелограммом
+//! (1-я Курская). Линия разреза одна на обе части — ни щели, ни нахлёста.
 
 use bevy::prelude::*;
 use i_overlay::core::fill_rule::FillRule;
+use i_overlay::core::overlay_rule::OverlayRule;
 use i_overlay::float::simplify::SimplifyShape;
+use i_overlay::float::single::SingleFloatOverlay;
 use i_overlay::mesh::outline::offset::OutlineOffset;
 use i_overlay::mesh::style::{LineCap, LineJoin, OutlineStyle};
 
@@ -80,7 +90,7 @@ pub fn tram_bands(
     let mut links: Grid<(Vec2, Vec2, f32)> = Grid::new(CELL);
     for (road, path) in roads.iter().zip(paths) {
         let path = path.as_ref();
-        if road.class != RoadClass::Street || road.bridge || road.passage || path.is_empty() {
+        if road.class != RoadClass::Street || road.passage || path.is_empty() {
             continue;
         }
         let half = road.width / 2.0;
@@ -213,6 +223,66 @@ pub fn band_cover(bands: &[Vec<Vec2>]) -> Vec<Shape> {
     merged.outline(&OutlineStyle::new(-reach).line_join(LineJoin::Round(ARC)))
 }
 
+/// Контуры настилов `decks` (ось, как она нарисована, и ширина обводки, м),
+/// по которым **вдоль** идёт полоса `bands`, — с прямыми торцами на их
+/// головах: линия разреза покрытия ([`split_cover`]). Настил путепровода над
+/// трамваем, идущим поперёк, полосы не несёт — и не режет её: иначе кусок
+/// наземной полосы под ним лёг бы в слой настилов поверх путепровода.
+pub fn deck_cuts<'a>(
+    bands: &[Vec<Vec2>],
+    decks: impl IntoIterator<Item = (&'a [Vec2], f32)>,
+) -> Vec<Contour> {
+    let links: Vec<(Vec2, Vec2)> = bands
+        .iter()
+        .flat_map(|band| band.windows(2).map(|pair| (pair[0], pair[1])))
+        .collect();
+    if links.is_empty() {
+        return Vec::new();
+    }
+    let mut cuts = Vec::new();
+    for (path, width) in decks {
+        if path.len() < 2 {
+            continue;
+        }
+        let half = width / 2.0;
+        let (low, high) = path.iter().fold((path[0], path[0]), |(low, high), &point| {
+            (low.min(point), high.max(point))
+        });
+        let (low, high) = (low - half, high + half);
+        let carries = links.iter().any(|&(from, to)| {
+            let middle = (from + to) / 2.0;
+            let Some(heading) = (to - from).try_normalize() else {
+                return false;
+            };
+            middle.cmpge(low).all()
+                && middle.cmple(high).all()
+                && path.windows(2).any(|pair| {
+                    (pair[1] - pair[0]).try_normalize().is_some_and(|along| {
+                        along.dot(heading).abs() >= ALONG_MIN
+                            && distance_to_segment(middle, pair[0], pair[1]) <= half
+                    })
+                })
+        });
+        if carries {
+            cuts.extend(stroke(path, width, LineCap::Butt, false));
+        }
+    }
+    cuts
+}
+
+/// Покрытие `cover`, разрезанное контурами настилов `cuts` ([`deck_cuts`]):
+/// `[на земле, на настилах]`. Обе части режет одна и та же линия — торец
+/// настила, — так что на шве они сходятся встык.
+pub fn split_cover(cover: Vec<Shape>, cuts: &[Contour]) -> [Vec<Shape>; 2] {
+    if cuts.is_empty() || cover.is_empty() {
+        return [cover, Vec::new()];
+    }
+    let clip: Vec<Shape> = cuts.iter().map(|cut| vec![cut.clone()]).collect();
+    let on_decks = cover.overlay(&clip, OverlayRule::Intersect, FillRule::NonZero);
+    let on_ground = cover.overlay(&clip, OverlayRule::Difference, FillRule::NonZero);
+    [on_ground, on_decks]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -283,6 +353,54 @@ mod tests {
         let roads = [&west, &east];
         let paths: Vec<_> = roads.iter().map(|road| road.points.clone()).collect();
         assert_eq!(tram_bands(&[track], &roads, &paths, &[]).len(), 2);
+    }
+
+    /// Путь идёт с улицы на её мост: покрытие одно через шов, и разрезано
+    /// торцом настила — наземная часть кончается, а настильная начинается
+    /// ровно на голове, и вместе они — всё покрытие, без щели и нахлёста
+    /// (S1, Красный мост в Орле; S2, мост 1-й Курской).
+    #[test]
+    fn the_band_cover_is_one_shape_cut_at_the_deck_head() {
+        use crate::map::shapes::{contour_bounds, shape_area};
+        let head = Vec2::new(100.0, 0.0);
+        let street = fixture::street(vec![Vec2::ZERO, head], 14.0);
+        let deck = fixture::bridge(vec![head, Vec2::new(200.0, 0.0)], 14.0);
+        let paths = [street.points.clone(), deck.points.clone()];
+        let track = tram(vec![Vec2::new(-50.0, 1.5), Vec2::new(250.0, 1.5)]);
+        let bands = tram_bands(&[track], &[&street, &deck], &paths, &[]);
+        assert_eq!(bands.len(), 1, "one band across the seam: {bands:?}");
+        let cover = band_cover(&bands);
+        let whole: f32 = cover.iter().map(shape_area).sum();
+        let cuts = deck_cuts(&bands, [(paths[1].as_slice(), 18.0)]);
+        let [ground, decked] = split_cover(cover, &cuts);
+        let area = |shapes: &[Shape]| shapes.iter().map(shape_area).sum::<f32>();
+        assert!(
+            (area(&ground) + area(&decked) - whole).abs() < 0.05,
+            "{} + {} != {whole}",
+            area(&ground),
+            area(&decked)
+        );
+        let bounds = |shapes: &[Shape]| {
+            shapes
+                .iter()
+                .map(|shape| contour_bounds(&shape[0]))
+                .fold((Vec2::INFINITY, Vec2::NEG_INFINITY), |(low, high), (a, b)| {
+                    (low.min(a), high.max(b))
+                })
+        };
+        let (_, ground_high) = bounds(&ground);
+        let (decked_low, _) = bounds(&decked);
+        assert!((ground_high.x - head.x).abs() < 0.01, "{ground_high}");
+        assert!((decked_low.x - head.x).abs() < 0.01, "{decked_low}");
+    }
+
+    /// Настил путепровода над трамваем, идущим поперёк, полосу не режет:
+    /// кусок наземной полосы под ним лёг бы в слой настилов поверх него.
+    #[test]
+    fn an_overpass_across_the_band_does_not_cut_it() {
+        let band = vec![vec![Vec2::new(0.0, 0.0), Vec2::new(100.0, 0.0)]];
+        let across = [Vec2::new(50.0, -40.0), Vec2::new(50.0, 40.0)];
+        assert!(deck_cuts(&band, [(across.as_slice(), 18.0)]).is_empty());
     }
 
     #[test]
