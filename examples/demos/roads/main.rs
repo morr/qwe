@@ -105,9 +105,9 @@ use qwe::map::trees::{
 };
 use qwe::map::{
     BuildingHeightMode, FenceZoomBucket, GROUND_COLOR, MeshBuilder, PaintMaterial, ParkingLayout,
-    RailZoomBucket, RoadPaintStyle, RoadShape, RoadShapeOnMap, RoadStyle, RoofStyle, SunOnMap,
-    SurfaceStyle, TramStyle, TramZoomBucket, apply_sun, mesh_fences, mesh_map_cars, mesh_rails,
-    mesh_roads_with_ruts, mesh_surfaces, mesh_tram, mesh_tree_row_band, set_lane_width,
+    RailZoomBucket, RoadBuild, RoadPaintStyle, RoadShape, RoadShapeOnMap, RoadStyle, RoofStyle,
+    SunOnMap, SurfaceStyle, TramStyle, TramZoomBucket, apply_sun, build_roads, mesh_fences,
+    mesh_map_cars, mesh_rails, mesh_surfaces, mesh_tram, mesh_tree_row_band, set_lane_width,
     settle_road_shape, spawn_road_meshes,
 };
 use qwe::ui::knob::AddKnobsExt;
@@ -594,8 +594,12 @@ fn build_next(
         SampleLayer,
     );
 
-    let (road_layers, road_report, ruts, tram_tracks) =
-        mesh_roads_with_ruts(&map, *road_style, road_shape.0);
+    let RoadBuild {
+        layers: road_layers,
+        report: road_report,
+        ruts,
+        tram: tram_tracks,
+    } = build_roads(&map, *road_style, road_shape.0);
     let road_layers = clip(road_layers);
     let road_line = road_report.to_string();
     spawn_road_meshes(

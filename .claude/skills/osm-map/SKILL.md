@@ -813,13 +813,16 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     ready `LayerMaterial`) survives only as the primitive `spawn_layers` is built on.
     The two counts are different numbers and both are worth having: the converted modules
     give eleven doors against ten modules — `spawn.rs` carries two (`mesh_surfaces`,
-    `mesh_tree_row_band`); `grep 'pub fn mesh_' src/map/` gives fourteen, the three
+    `mesh_tree_row_band`); `grep 'pub fn mesh_' src/map/` gives eighteen, the seven
     extra being no layer doors of their own — `water.rs`'s `mesh_water_areas` /
-    `mesh_water_lines`, called from `mesh_surfaces`, and the Debug tab's
-    `mesh_network_overlay` (`roads/network/overlay.rs`) — plus, since, the other two
-    Debug overlays `mesh_rut_overlay` (`roads/ruts.rs`) and `mesh_osm_contours`
-    (`osm/contours.rs`) and `mesh_roads_with_ruts`, the roads door that also hands out
-    the rut lines. **Count the modules when asking "is anything
+    `mesh_water_lines`, called from `mesh_surfaces`; `cars`' `mesh_parked` (the bodies
+    over a ready placement) and `mesh_map_cars` (the `roads` gallery's door); the three
+    Debug overlays `mesh_network_overlay` (`roads/network/overlay.rs`),
+    `mesh_rut_overlay` (`roads/ruts.rs`) and `mesh_osm_contours` (`osm/contours.rs`).
+    Beside them stands `roads::build_roads`, the roads build whole: `mesh_roads`'
+    layers and report plus the rut lines and the tram tracks of the same pass, as one
+    named `RoadBuild` — the door the game takes (`rebuild_roads`, `spawn_map`).
+    **Count the modules when asking "is anything
     left".** The tree-row band lives in `spawn.rs` and is not
     `trees` — that mistake is what once made the list read "all ten" with `trees.rs`
     still spawning by hand.

@@ -14,9 +14,8 @@ use crate::map::MeshBuilder;
 use crate::map::meshing::{RibbonCap, RibbonJoin};
 use crate::map::osm::MapData;
 use crate::map::surface::{LayerMesh, MaterialSpec};
+use crate::settings::Z_NETWORK_OVERLAY;
 
-/// Поверх зданий и крон.
-const Z_NETWORK: f32 = 29.0;
 /// Толщина линии улицы: основа и прибавка на полосу, м.
 const LINE_BASE: f32 = 0.6;
 const LINE_PER_LANE: f32 = 0.5;
@@ -65,7 +64,12 @@ pub fn mesh_network_overlay(map: &MapData) -> LayerMesh {
             .collect();
         builder.push_polygon(&disc, &[], seam);
     }
-    LayerMesh::new(builder, Z_NETWORK, "road_network", MaterialSpec::Flat)
+    LayerMesh::new(
+        builder,
+        Z_NETWORK_OVERLAY,
+        "road_network",
+        MaterialSpec::Flat,
+    )
 }
 
 #[cfg(test)]

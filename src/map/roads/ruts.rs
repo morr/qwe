@@ -10,7 +10,7 @@
 //!    `Painter::paint_turn_wear`. Оверлей — сами кривые и хвосты.
 //!
 //! Линии собирает **тот же проход**, что кладёт асфальт и краску
-//! (`roads::mesh_roads_with_ruts`), — отсюда они и берутся, а не
+//! (`roads::build_roads`), — отсюда они и берутся, а не
 //! пересчитываются: оверлей показывает ровно то, по чему колея легла.
 //!
 //! Упрощение, о котором надо знать: на клине между сечениями и на рампе
@@ -24,9 +24,8 @@ use super::paint::RUT_OFFSET;
 use crate::map::MeshBuilder;
 use crate::map::meshing::{LaneFrame, RibbonCap, RibbonJoin, miter_offsets};
 use crate::map::surface::{LayerMesh, MaterialSpec};
+use crate::settings::Z_RUT_OVERLAY;
 
-/// Над оверлеем сети (29) и контуров OSM (29.5).
-const Z_RUTS: f32 = 29.7;
 /// Толщина оси полосы, м.
 const LANE_AXIS_WIDTH: f32 = 0.2;
 /// Толщина линии колеса, м.
@@ -121,7 +120,7 @@ pub fn mesh_rut_overlay(ruts: &RutLines, lane_width: f32) -> LayerMesh {
     for tail in &ruts.tails {
         line(tail, TURN_WIDTH, TURN_TAIL_COLOR);
     }
-    LayerMesh::new(builder, Z_RUTS, "rut_lines", MaterialSpec::Blend)
+    LayerMesh::new(builder, Z_RUT_OVERLAY, "rut_lines", MaterialSpec::Blend)
 }
 
 #[cfg(test)]

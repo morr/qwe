@@ -164,17 +164,16 @@ pub fn spawn_map(
     // причиной пересобирать, а её пока нет.
     spawn_layers(&mut commands, &mut meshes, &materials, surfaces, ());
 
-    let (road_layers, road_report, ruts, tram) =
-        roads::mesh_roads_with_ruts(&map, *road_style, road_shape.0);
+    let road_build = roads::build_roads(&map, *road_style, road_shape.0);
     // линии колеи — ресурсом, для оверлея колеи вкладки Debug; пути трамвая
     // по нарисованной улице — слою трамвая (`tram::rebuild_tram`, следом)
-    commands.insert_resource(ruts);
-    commands.insert_resource(tram);
+    commands.insert_resource(road_build.ruts);
+    commands.insert_resource(road_build.tram);
     roads::spawn_road_meshes(
         &mut commands,
         &mut meshes,
         &materials,
-        (road_layers, road_report),
+        (road_build.layers, road_build.report),
     );
 
     let plan = buildings::BuildingPlan::game(*height_mode);
@@ -324,8 +323,8 @@ pub fn mesh_surfaces(
     // раскладки мест и разметки поля (`osm::parse::RawOsm`)
     let raw = map.knobs.raw.draws_raw();
     let mut parking_lines = MeshBuilder::default();
-    for (area, stalls) in map.parking.iter().zip(&parking_layout.0) {
-        if !raw {
+    if !raw {
+        for (area, stalls) in map.parking.iter().zip(&parking_layout.0) {
             parking::push_markings(&mut parking_lines, area, stalls);
         }
     }
@@ -340,8 +339,10 @@ pub fn mesh_surfaces(
         push_area(&mut pitches, area, pitch::color(kind), &PITCH_RIM);
     }
     let mut pitch_lines = MeshBuilder::default();
-    for area in map.pitches.iter().filter(|_| !raw) {
-        pitch::push_markings(&mut pitch_lines, area);
+    if !raw {
+        for area in &map.pitches {
+            pitch::push_markings(&mut pitch_lines, area);
+        }
     }
 
     let ribbons_started = std::time::Instant::now();

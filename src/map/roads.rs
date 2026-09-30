@@ -836,8 +836,21 @@ pub fn mesh_roads(
     style: RoadStyle,
     shape: RoadShape,
 ) -> (Vec<LayerMesh>, RoadReport) {
-    let (layers, report, ..) = mesh_roads_with_ruts(map, style, shape);
+    let RoadBuild { layers, report, .. } = build_roads(map, style, shape);
     (layers, report)
+}
+
+/// Всё, что выходит из одной сборки дорожной области ([`build_roads`]):
+/// слои и отчёт — то же, что отдаёт [`mesh_roads`], — и два побочных
+/// результата того же прохода, которые игра кладёт ресурсами.
+pub struct RoadBuild {
+    pub layers: Vec<LayerMesh>,
+    pub report: RoadReport,
+    /// Линии колеи: по ним строится оверлей колеи (`roads/ruts.rs`).
+    pub ruts: RutLines,
+    /// Трамвайные пути по нарисованной улице: их читает слой трамвая
+    /// (`map/tram.rs`).
+    pub tram: TramTracks,
 }
 
 /// [`mesh_roads`] и заодно **линии колеи** ([`RutLines`]) — оси полос с
@@ -850,21 +863,17 @@ pub fn mesh_roads(
 /// Тем же проходом — и **трамвайные пути по нарисованной улице**
 /// ([`TramTracks`], `roads/tram_lay.rs`): по ним лежит светлая полоса над
 /// рельсами здесь же, а ресурсом их читает слой трамвая (`map/tram.rs`).
-pub fn mesh_roads_with_ruts(
-    map: &MapData,
-    style: RoadStyle,
-    shape: RoadShape,
-) -> (Vec<LayerMesh>, RoadReport, RutLines, TramTracks) {
+pub fn build_roads(map: &MapData, style: RoadStyle, shape: RoadShape) -> RoadBuild {
     // сырой OSM, второй уровень: ни одной достройки отрисовки — и колеи нет,
     // и пути трамвая лежат, где их провёл картограф
     if map.knobs.raw.draws_raw() {
         let (layers, report) = mesh_raw_roads(map, style);
-        return (
+        return RoadBuild {
             layers,
             report,
-            RutLines::default(),
-            TramTracks::as_mapped(&map.rails),
-        );
+            ruts: RutLines::default(),
+            tram: TramTracks::as_mapped(&map.rails),
+        };
     }
     let started = std::time::Instant::now();
     let (roads, walls): (&[RoadLine], &[WallLine]) = (&map.roads, &map.walls);
@@ -1894,7 +1903,12 @@ pub fn mesh_roads_with_ruts(
         network: network_time,
         elapsed: started.elapsed(),
     };
-    (layers, report, ruts, tram_tracks)
+    RoadBuild {
+        layers,
+        report,
+        ruts,
+        tram: tram_tracks,
+    }
 }
 
 /// Дорожные слои **сырого OSM** (`RawOsm::Draw`): каждый way — простая лента
@@ -2043,7 +2057,12 @@ pub fn rebuild_roads(
     for entity in &existing {
         commands.entity(entity).despawn();
     }
-    let (layers, report, ruts, tram) = mesh_roads_with_ruts(&map, *style, shape.0);
+    let RoadBuild {
+        layers,
+        report,
+        ruts,
+        tram,
+    } = build_roads(&map, *style, shape.0);
     // линии колеи — ресурсом: по нему строится оверлей колеи; пути трамвая —
     // по ним пересобирается слой трамвая
     commands.insert_resource(ruts);

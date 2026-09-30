@@ -117,7 +117,7 @@ pub use self::fences::{FenceZoomBucket, mesh_fences};
 pub use self::parking::ParkingLayout;
 pub use self::rail::{RailZoomBucket, mesh_rails};
 pub use self::roads::tram_lay::TramTracks;
-pub use self::roads::{mesh_roads, mesh_roads_with_ruts, spawn_road_meshes};
+pub use self::roads::{RoadBuild, build_roads, mesh_roads, spawn_road_meshes};
 pub use self::spawn::{mesh_surfaces, mesh_tree_row_band};
 pub use self::tram::{TramZoomBucket, mesh_tram};
 pub use self::trees::{ConiferField, ConiferNoiseStyle, TreeRowStyle, TreeShape, TreeStyle};

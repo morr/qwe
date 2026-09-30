@@ -2206,8 +2206,12 @@ fn tram_tracks_in_a_bed_lie_symmetric_about_the_drawn_middle() {
             ..fixture::rail(vec![Vec2::new(0.0, track), Vec2::new(520.0, track)], 1.2)
         });
     }
-    let (layers, report, _, tracks) =
-        mesh_roads_with_ruts(&map, RoadStyle::default(), RoadShape::default());
+    let RoadBuild {
+        layers,
+        report,
+        tram: tracks,
+        ..
+    } = build_roads(&map, RoadStyle::default(), RoadShape::default());
     assert_eq!(report.drawn.medians, [1, 0, 1]);
     assert_eq!(tracks.0.len(), 2);
     let half = tram_lay::TRACK_SPACING / 2.0;

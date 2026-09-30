@@ -595,6 +595,14 @@ pub const Z_TREE_SHADOW: f32 = 19.0;
 /// Дебаг-слой поля хвои — поверх всего: он объясняет именно кроны, значит
 /// обязан их накрывать, иначе лес под ним не сопоставить с пятнами шума.
 pub const Z_CONIFER_NOISE_OVERLAY: f32 = 21.0;
+/// Оверлей сети (Debug → `Road network`, `roads/network/overlay.rs`) — поверх
+/// зданий и крон.
+pub const Z_NETWORK_OVERLAY: f32 = 29.0;
+/// Оверлей контуров OSM (`osm/contours.rs`) — над оверлеем сети: когда горят
+/// оба, тонкая линия данных читается поверх толстой линии улицы.
+pub const Z_OSM_CONTOURS_OVERLAY: f32 = 29.5;
+/// Оверлей линий колеи (`roads/ruts.rs`) — над обоими.
+pub const Z_RUT_OVERLAY: f32 = 29.7;
 
 // Порядок слоёв — один инвариант, разложенный на два десятка отдельных чисел.
 // До этих проверок он держался только на прозе в комментариях выше, и один раз
@@ -701,6 +709,10 @@ const _: () = {
     assert!(Z_TREE_SHADOW < Z_TREE);
     // дебаг-слой хвои накрывает кроны, которые объясняет
     assert!(Z_TREE < Z_CONIFER_NOISE_OVERLAY);
+    // оверлеи дорог — над всем, что объясняют: сеть → контуры OSM → колея
+    assert!(Z_CONIFER_NOISE_OVERLAY < Z_NETWORK_OVERLAY);
+    assert!(Z_NETWORK_OVERLAY < Z_OSM_CONTOURS_OVERLAY);
+    assert!(Z_OSM_CONTOURS_OVERLAY < Z_RUT_OVERLAY);
 };
 
 // --- Деревья (кроны в стиле Watabou, см. .claude/skills/osm-map/references/tree-algo.md) ---

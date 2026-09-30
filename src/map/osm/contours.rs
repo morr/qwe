@@ -21,10 +21,8 @@ use crate::map::MeshBuilder;
 use crate::map::meshing::{RibbonCap, RibbonJoin};
 use crate::map::osm::model::{MapData, PolyArea, RoadClass};
 use crate::map::surface::{LayerMesh, MaterialSpec};
+use crate::settings::Z_OSM_CONTOURS_OVERLAY;
 
-/// Над оверлеем сети (`roads/network/overlay.rs`, 29): когда горят оба,
-/// тонкая линия данных читается поверх толстой линии улицы.
-const Z_CONTOURS: f32 = 29.5;
 /// Толщина оси улицы, м — тоньше самой узкой ленты разметки не нужно: линия
 /// должна лечь по кромке и не закрыть её.
 const STREET_LINE: f32 = 0.35;
@@ -161,7 +159,12 @@ pub fn mesh_osm_contours(contours: &OsmContours) -> LayerMesh {
             builder.push_rect(point - half, point + half, color);
         }
     }
-    LayerMesh::new(builder, Z_CONTOURS, "osm_contours", MaterialSpec::Flat)
+    LayerMesh::new(
+        builder,
+        Z_OSM_CONTOURS_OVERLAY,
+        "osm_contours",
+        MaterialSpec::Flat,
+    )
 }
 
 #[cfg(test)]
