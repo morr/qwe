@@ -2767,6 +2767,14 @@ const MEADOW_PROBE_BEYOND: f32 = 3.0;
 const VERGE_END_OVERLAP: f32 = 0.3;
 /// Полоса плитки у бордюра перед газоном широкой обочины, м.
 const VERGE_KERB: f32 = 0.5;
+/// На сколько обочина заходит за ось своей дорожки, м ([`push_verges`]).
+/// Профиль обочины снят разбором по **сырым** осям улицы и дорожки, а лента
+/// ляжет по сглаженным: у Орджоникидзе (Орёл, у Ляшко) сглаженная ось улицы
+/// ушла от сырой на 1.7 м, и край плитки, стоявший на оси дорожки, отошёл от
+/// её ленты (полуширина 1.5 м) — вдоль дорожки светилась нить земли в
+/// десяток сантиметров (S6). Под дорожкой край не виден, а за кварталом
+/// плитка лежит под ним (`Z_ROAD_VERGE` < `Z_LANDUSE`).
+const VERGE_UNDER_PATH: f32 = 0.5;
 /// Самый короткий кусок обочины по месту одного рода — газон или плитка —
 /// между кусками другого, м ([`verge_runs`]): короче — он того же рода, что
 /// соседи. Профиль, колеблющийся у [`VERGE_PAVED_MAX`], резал плитку зубцами.
@@ -2925,16 +2933,27 @@ fn push_verges(
                 [false; 2],
             );
         };
+        // до дорожки — и под неё на [`VERGE_UNDER_PATH`]; полоса у бордюра
+        // перед газоном — своей шириной
+        let under = |verge: f32| {
+            let paved = paved_verge(verge);
+            if paved < verge {
+                paved
+            } else {
+                verge + VERGE_UNDER_PATH
+            }
+        };
         if road.verge_profile[side].is_empty() || points.len() < 2 {
-            ribbon(tiles, points, paved_verge(verge), tile_color);
+            ribbon(tiles, points, under(verge), tile_color);
             // лоскутам — те же полосы от оси за кромку, по точкам через шаг
             let dense = crate::map::along::densify(points, VERGE_STEP);
             let normals = miter_offsets(&dense, false, sign);
             let reach = |verge: f32| vec![width / 2.0 + verge; dense.len()];
-            scraps.push_paving_band(&dense, &normals, &reach(paved_verge(verge)));
+            scraps.push_paving_band(&dense, &normals, &reach(under(verge)));
             if verge > VERGE_PAVED_MAX {
-                ribbon(lawns, points, verge, lawn_color);
-                scraps.push_lawn_band(&dense, &normals, &reach(verge), ends);
+                let lawn = verge + VERGE_UNDER_PATH;
+                ribbon(lawns, points, lawn, lawn_color);
+                scraps.push_lawn_band(&dense, &normals, &reach(lawn), ends);
             }
             continue;
         }
@@ -2972,7 +2991,17 @@ fn push_verges(
         let paved: Vec<f32> = widths
             .iter()
             .zip(&lawns_at)
-            .map(|(&verge, &lawn)| if lawn { VERGE_KERB.min(verge) } else { verge })
+            .map(|(&verge, &lawn)| {
+                if lawn {
+                    VERGE_KERB.min(verge)
+                } else {
+                    verge + VERGE_UNDER_PATH
+                }
+            })
+            .collect();
+        let widths: Vec<f32> = widths
+            .iter()
+            .map(|verge| verge + VERGE_UNDER_PATH)
             .collect();
         tiles.push_polygon(&band(&mut paved.iter().copied()), &[], tile_color);
         let reach = |widths: &[f32]| -> Vec<f32> {

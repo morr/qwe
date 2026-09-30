@@ -140,6 +140,19 @@ const BIRTH_EDGE: f32 = 0.02;
 /// клина до 2⁻²⁴ — точнее, чем держит `f32`.
 const BIRTH_BISECTIONS: u32 = 24;
 
+/// На каких последних метрах перед краем разрыва, м, изгиб пути — крючок
+/// конца линии ([`hook_breaks`]).
+const HOOK_REACH: f32 = 3.0;
+/// Поворот пути от этого, рад, за [`HOOK_REACH`] до края разрыва — крючок:
+/// линия кончается там, где начала гнуться. У Орджоникидзе (Орёл, у Ляшко)
+/// сглаженная ось на последних двух метрах перед узлом гнётся на 17° к нему,
+/// и двойная сплошная с линией полос кончались загибом вбок (S6). Дуга
+/// улицы поворачивает на столько за три метра только при радиусе меньше
+/// семнадцати.
+const HOOK_BEND: f32 = 10.0 * std::f32::consts::PI / 180.0;
+/// От этого поворота, рад, звено крючка уже отошло от прямой.
+const HOOK_START: f32 = 2.0 * std::f32::consts::PI / 180.0;
+
 /// Свежесть краски, 0–1: прозрачность линий. Ручка «Paint» секции Roads.
 pub const PAINT_MIN: f32 = 0.0;
 pub const PAINT_MAX: f32 = 1.0;
@@ -878,10 +891,43 @@ impl Painter {
         let mut all = breaks.to_vec();
         all.extend(pockets.iter().flatten().map(|pocket| pocket.gap));
         all.extend(throats.iter().map(|throat| throat.gap));
-        let (mut path, mut along, to_break) = break_profile(points, closed, &all, 0.5);
+        let (mut path, mut along, mut to_break) = break_profile(points, closed, &all, 0.5);
         if path.len() < 2 {
             return;
         }
+        // крючки на концах линий у разрывов узлов — разрыв до излома; тихий
+        // разрыв продлевается тихим (сплошной подхода у угла нет и так)
+        let (hooked, hooked_quiet): (Vec<Break>, Vec<Break>);
+        let (breaks, quiet) = {
+            let hooks = if closed {
+                Vec::new()
+            } else {
+                hook_breaks(&path, &along, &break_distances(&path, false, breaks))
+            };
+            if hooks.is_empty() {
+                (breaks, quiet)
+            } else {
+                let calm: Vec<Break> = breaks
+                    .iter()
+                    .filter(|found| !quiet.contains(found))
+                    .copied()
+                    .collect();
+                let calm_hooks = hook_breaks(&path, &along, &break_distances(&path, false, &calm));
+                hooked_quiet = quiet
+                    .iter()
+                    .copied()
+                    .chain(hooks.iter().copied().filter(|hook| {
+                        !calm_hooks
+                            .iter()
+                            .any(|calm| calm.at.distance(hook.at) < HOOK_OVERLAP)
+                    }))
+                    .collect();
+                hooked = [breaks, &hooks].concat();
+                all.extend(&hooks);
+                (path, along, to_break) = break_profile(points, closed, &all, 0.5);
+                (&hooked[..], &hooked_quiet[..])
+            }
+        };
         let mut to_break = to_break;
         let total = along[along.len() - 1];
         // вершины на концах клиньев: раскладка ломается там, и GPU должен
@@ -1667,6 +1713,87 @@ impl ZebraGround {
 
 /// Ячейка сетки [`ZebraGround`], м.
 const ZEBRA_GROUND_CELL: f32 = 24.0;
+
+/// Крючки на концах линий: разрыв, продлённый назад до начала изгиба пути.
+/// Край разрыва — ноль «до разрыва» `to_break` на звене пути `path` (длины
+/// дуги `along`). Звено края повёрнуто от звена в [`HOOK_REACH`] перед ним со
+/// стороны видимой линии больше чем на [`HOOK_BEND`] — конец загнут вбок, и
+/// линия кончается в самой дальней от края вершине этих метров, где путь
+/// отошёл от прямой больше [`HOOK_START`]: разрыв от неё до края, внахлёст с
+/// найденным (`meshing::break_profile` сливает перекрытые). Сглаженная ось
+/// перед узлом, где улица поворачивает к продолжению, и давала такие загибы.
+/// Замкнутый путь сюда не приходит: у кольца линии по кругу и должны.
+fn hook_breaks(path: &[Vec2], along: &[f32], to_break: &[f32]) -> Vec<Break> {
+    let links = path.len().saturating_sub(1);
+    let direction = |link: usize| (path[link + 1] - path[link]).normalize_or_zero();
+    // звено, на котором лежит длина дуги `at`
+    let link_at = |at: f32| (0..links).find(|&link| along[link] <= at && at <= along[link + 1]);
+    let turn = |from: Vec2, to: Vec2| from.angle_to(to).abs();
+    let mut hooks = Vec::new();
+    for link in 0..links {
+        let (near, far) = (to_break[link], to_break[link + 1]);
+        // край разрыва на звене: видимая линия с одной стороны нуля
+        let visible_before = near > 0.0 && far <= 0.0;
+        let visible_after = near <= 0.0 && far > 0.0;
+        if !visible_before && !visible_after {
+            continue;
+        }
+        let edge = along[link] + (along[link + 1] - along[link]) * near / (near - far);
+        // линия до изгиба — звено в [`HOOK_REACH`] от края; конец — звено края
+        let back = if visible_before {
+            edge - HOOK_REACH
+        } else {
+            edge + HOOK_REACH
+        };
+        let Some(body) = link_at(back) else {
+            continue;
+        };
+        let (straight, end) = (direction(body), direction(link));
+        if straight == Vec2::ZERO || end == Vec2::ZERO || turn(straight, end) <= HOOK_BEND {
+            continue;
+        }
+        // крючок: линия кончается там, где начала отходить от прямой
+        let bent = (0..path.len()).filter(|&vertex| {
+            let (away, after) = if visible_before {
+                (edge - along[vertex], vertex < links)
+            } else {
+                (along[vertex] - edge, vertex > 0)
+            };
+            let leaving = if visible_before {
+                after.then(|| direction(vertex))
+            } else {
+                after.then(|| direction(vertex - 1))
+            };
+            away > 0.0
+                && away < HOOK_REACH
+                && leaving.is_some_and(|leaving| turn(straight, leaving) > HOOK_START)
+        });
+        let farthest = if visible_before {
+            bent.min_by(|&a, &b| along[a].total_cmp(&along[b]))
+        } else {
+            bent.max_by(|&a, &b| along[a].total_cmp(&along[b]))
+        };
+        let Some(vertex) = farthest else {
+            continue;
+        };
+        let (from, to) = if visible_before {
+            (along[vertex], edge)
+        } else {
+            (edge, along[vertex])
+        };
+        let Some((at, _)) = place_on_path(path, along, (from + to) / 2.0) else {
+            continue;
+        };
+        hooks.push(Break {
+            at,
+            reach: (to - from) / 2.0 + HOOK_OVERLAP,
+        });
+    }
+    hooks
+}
+
+/// Нахлёст разрыва крючка ([`hook_breaks`]) с найденным разрывом, м.
+const HOOK_OVERLAP: f32 = 0.05;
 
 /// Звено, внутри которого (строго) лежит длина дуги `at`, и доля `at` на нём.
 fn link_at(along: &[f32], at: f32) -> Option<(usize, f32)> {

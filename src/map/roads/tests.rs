@@ -343,10 +343,10 @@ fn a_wide_verge_is_a_lawn_with_a_paved_kerb_strip() {
         };
         [reach("road_verges"), reach("road_verge_yards")]
     };
-    // улица 12 м: кромка в 6 м от оси
+    // улица 12 м: кромка в 6 м от оси; до дорожки — и под неё
     let [tiles, lawn] = verged(3.0);
     assert!(
-        (tiles - 9.0).abs() < 0.05 && lawn == 0.0,
+        (tiles - (9.0 + VERGE_UNDER_PATH)).abs() < 0.05 && lawn == 0.0,
         "узкая: {tiles} / {lawn}"
     );
     let [tiles, lawn] = verged(12.0);
@@ -354,7 +354,10 @@ fn a_wide_verge_is_a_lawn_with_a_paved_kerb_strip() {
         (tiles - (6.0 + VERGE_KERB)).abs() < 0.05,
         "плитка широкой — полосой у бордюра: {tiles}"
     );
-    assert!((lawn - 18.0).abs() < 0.05, "газон — до дорожки: {lawn}");
+    assert!(
+        (lawn - (18.0 + VERGE_UNDER_PATH)).abs() < 0.05,
+        "газон — до дорожки: {lawn}"
+    );
 }
 
 /// Обочина по месту переходит от плитки к газону швом поперёк улицы, а не
@@ -559,6 +562,36 @@ fn a_verge_by_place_overlaps_past_its_street_end() {
         (reach - (100.0 - VERGE_END_OVERLAP)).abs() < 0.01,
         "обочина начинается у x = {reach}"
     );
+}
+
+/// Обочина заходит под свою дорожку на [`VERGE_UNDER_PATH`]: профиль снят по
+/// сырым осям, а ленты легли по сглаженным, и край плитки, стоявший ровно на
+/// оси дорожки, отходил от её ленты — вдоль дорожки светилась нить земли
+/// (S6, Орёл, Орджоникидзе у Ляшко).
+#[test]
+fn a_verge_reaches_under_its_path() {
+    for (verge, kerb) in [(3.0, "plain"), (6.0, "lawn")] {
+        let mut map = one_street();
+        map.roads[0].verges = [verge, 0.0];
+        let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+        let name = if kerb == "lawn" {
+            "road_verge_yards"
+        } else {
+            "road_verges"
+        };
+        let edge = 106.0 + verge;
+        let fill = &layer(&layers, name).builder;
+        assert!(
+            fill.covers_for_test(Vec2::new(300.0, edge + VERGE_UNDER_PATH - 0.1)),
+            "{kerb}: край обочины не заходит под дорожку"
+        );
+        assert!(!fill.covers_for_test(Vec2::new(300.0, edge + VERGE_UNDER_PATH + 0.1)));
+        // и по месту — так же
+        map.roads[0].verge_profile = [vec![(0.0, verge), (500.0, verge)], Vec::new()];
+        let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+        let fill = &layer(&layers, name).builder;
+        assert!(fill.covers_for_test(Vec2::new(300.0, edge + VERGE_UNDER_PATH - 0.1)));
+    }
 }
 
 #[test]

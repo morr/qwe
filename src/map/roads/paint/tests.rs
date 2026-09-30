@@ -1016,3 +1016,49 @@ fn an_island_outline_stays_inside_and_does_not_overlap_the_hatching() {
         "обводка и штриховка вместе {parts}, островок {whole}"
     );
 }
+
+/// Линия не кончается крючком (S6, Орёл, Орджоникидзе у Ляшко): сглаженная
+/// ось перед узлом гнётся к продолжению, и последние полметра двойной
+/// сплошной и линии полос уходили вбок. Излом ближе [`HOOK_REACH`] к краю
+/// разрыва — линия кончается в нём.
+#[test]
+fn a_line_cut_at_a_break_ends_without_a_hook() {
+    // прямо до x = 51, дальше — под 20° вбок; разрыв у конца кроет последние
+    // 6.5 м, и край его — в 0.95 м за изломом
+    let bent = Vec2::from_angle(-20.0_f32.to_radians());
+    let kink = Vec2::new(51.0, 0.0);
+    let end = kink + bent * 7.45;
+    let points = vec![Vec2::ZERO, kink, kink + bent * 2.0, end];
+    let road = with_lanes(street(points.clone(), 14.2), 4, false);
+    let cut = [Break {
+        at: end,
+        reach: 6.5,
+    }];
+    let mut painter = Painter::new(TrafficSide::Right);
+    painter.paint(
+        &road,
+        &points,
+        LineBreaks {
+            cut: &cut,
+            ..LineBreaks::default()
+        },
+        [None; 2],
+        [None; 2],
+        None,
+        Station {
+            start: 0.0,
+            reversed: false,
+        },
+    );
+    for builder in [&painter.lanes, &painter.axes] {
+        let coords = builder.ribbon_coords_for_test().unwrap();
+        assert!(coords.iter().any(|ribbon| ribbon[2] > 0.0), "линии нет");
+        for ribbon in coords {
+            let [_, along, to_break, _] = *ribbon;
+            assert!(
+                along < kink.x - 0.01 || to_break <= 0.0,
+                "линия видна за изломом: {along} м, до разрыва {to_break}"
+            );
+        }
+    }
+}

@@ -336,7 +336,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     unless the split says otherwise), so a five-lane street has one too, and across a
     taper between two two-way sections the axis starts on the narrow one's and drifts to
     its own over the wedge (`paint::seam_origin`) instead of jumping half a lane; a street tagged `lane_markings=no` gets neither axis nor lane
-    lines. Two meshes per level (lane lines, axes) plus the zebras, streets at
+    lines. A line never ends in a **hook**: a path turning over 10° in the last 3 m
+    before a gap edge ends the line where it began to turn. Two meshes per level (lane lines, axes) plus the zebras, streets at
     `Z_ROAD_PAINT` and bridges at `Z_BRIDGE_PAINT`; `PaintLods` hides the lane lines and
     stop lines past 0.4 m/px, the zebras past 0.6 and the axes past 0.9 without a rebuild.
     `RoadPaintStyle` (panel knobs Paint, Wear and Turn wear) is uniforms only.
@@ -421,7 +422,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     street with such a footway alongside (up to 10 m past the kerb, 16 m on a two-way
     street), band or no band, carries a **verge** (`RoadLine::verges`, kerb to the
     footway's axis — and **by place**, `RoadLine::verge_profile` / `verge_at`, following a
-    footway that drifts away or turns at the corner): sidewalk tile
+    footway that drifts away or turns at the corner, and half a metre under it — the
+    ribbons lie on smoothed axes, the profile was measured on raw ones): sidewalk tile
     drawn under every green (`road_verges`, its corners by the kerb returns), so a
     mapped lawn stays a lawn and bare ground there is paved; a verge wider than 4 m is a
     **lawn** under a narrow tile strip at the kerb (tile and lawn change by a seam across

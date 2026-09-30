@@ -181,6 +181,16 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   stay — the node's corner is there), and at each change inserts a vertex pair
   `VERGE_SEAM` 0.05 m either side of where the verge passes 4 m, so the tile ends in a
   seam across the street. Pinned by `a_verge_turns_from_tiles_to_lawn_across_the_street`.
+  **The verge reaches under its footway** by `VERGE_UNDER_PATH` 0.5 m past the axis — the
+  tile of a narrow verge and the lawn of a wide one (the kerb strip keeps its width): the
+  profile is measured on the **raw** axes of the street and the footway, the ribbons lie
+  on the smoothed ones, and at Орджоникидзе by Ляшко (Oryol, 6131 4114, roads list S6)
+  the street's smoothed axis ran 1.7 m off its raw one before the node — the tile edge
+  stood on the footway's raw axis 1.6 m from its drawn axis, past the 1.5 m of its
+  half-width, and a thread of ground a decimetre wide ran along the footway (read as a
+  stroke of paint on the tiles). Under the footway the edge is not seen, and past a
+  block the tile lies under it anyway (`Z_ROAD_VERGE` < `Z_LANDUSE`). Pinned by
+  `a_verge_reaches_under_its_path`.
   The whole verge — body
   and end discs where the width is past 4 m — goes as grass under the tile, and **which
   grass is the neighbour's**: by default the yard's muted grass (`RESIDENTIAL_COLOR`,
@@ -1160,6 +1170,19 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   breaks at all gets `along + FAR_FROM_BREAKS` (dashes need a growing coordinate). The
   `Square` join falls back to `push_polyline`, which knows only the ends — roads never take
   it any more (`ROAD_JOIN` is `Round`); only the tree-row band's own Joins row can.
+  **A line does not end in a hook** (`paint::hook_breaks`, roads list S6): where the
+  path's link at a gap edge is turned over `HOOK_BEND` 10° from its link `HOOK_REACH`
+  3 m back on the visible side, the end of every line bends sideways — Орджоникидзе by
+  Ляшко (Oryol, 6138 4125): the smoothed axis turns 17° toward the continuation over
+  the last two metres before the node, and the double solid and the lane line ended in a
+  crook. The line then ends at the farthest vertex of those metres where the path left
+  the straight by over `HOOK_START` 2°; a street's arc turns that much over 3 m only
+  below a 17 m radius. `Painter::paint` finds such edges on the profile of the cut
+  breaks alone (a pocket or a throat gap is some lines' only), adds a break from that
+  vertex to the edge (`HOOK_OVERLAP` 5 cm into the found gap, which `break_profile`
+  merges) and re-cuts the path. A hook of a **quiet** break is quiet too — found on the
+  profile without the quiet breaks it is not, and it gets no solid approach. A ring's
+  closed lines are left alone. Pinned by `a_line_cut_at_a_break_ends_without_a_hook`.
 - **Ribbon** — a constant-width band along a polyline (`MeshBuilder::push_ribbon`), how
   every road, alley and kremlin wall is drawn. The `roads::push_ribbon` **wrapper** over
   it exists only to map a `RoadJoin` (for roads the constant `ROAD_JOIN` = `Round` since
