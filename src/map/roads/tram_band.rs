@@ -381,12 +381,10 @@ mod tests {
             area(&decked)
         );
         let bounds = |shapes: &[Shape]| {
-            shapes
-                .iter()
-                .map(|shape| contour_bounds(&shape[0]))
-                .fold((Vec2::INFINITY, Vec2::NEG_INFINITY), |(low, high), (a, b)| {
-                    (low.min(a), high.max(b))
-                })
+            shapes.iter().map(|shape| contour_bounds(&shape[0])).fold(
+                (Vec2::INFINITY, Vec2::NEG_INFINITY),
+                |(low, high), (a, b)| (low.min(a), high.max(b)),
+            )
         };
         let (_, ground_high) = bounds(&ground);
         let (decked_low, _) = bounds(&decked);

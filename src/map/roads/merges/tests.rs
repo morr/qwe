@@ -405,19 +405,40 @@ fn the_merge_axis_runs_from_the_node_to_the_median_or_until_the_halves_part() {
     assert!(free.iter().all(|point| (point.y - node().y).abs() < 0.5));
     // до носа газона — с отступом
     let nose = Vec2::new(node().x - 12.0, node().y);
-    let to_nose = merge_axis(merge, &drawn, &paths, &network, &[MedianEnd::Lawn(nose)], None);
+    let to_nose = merge_axis(
+        merge,
+        &drawn,
+        &paths,
+        &network,
+        &[MedianEnd::Lawn(nose)],
+        None,
+    );
     let tip = *to_nose.last().unwrap();
     assert!((tip.x - (nose.x + 1.0)).abs() < 0.3, "{tip}");
     // нос дальше, чем кромки сходятся: до носа между половинами асфальт
     // (`nose_fill`), и осевая идёт до него
     let far = Vec2::new(node().x - 50.0, node().y);
-    let long = merge_axis(merge, &drawn, &paths, &network, &[MedianEnd::Lawn(far)], None);
+    let long = merge_axis(
+        merge,
+        &drawn,
+        &paths,
+        &network,
+        &[MedianEnd::Lawn(far)],
+        None,
+    );
     assert!(
         (long.last().unwrap().x - (far.x + 1.0)).abs() < 0.3,
         "{long:?}"
     );
     // до асфальтовой середины — сквозь, и смыкается с её торцом
-    let paved = merge_axis(merge, &drawn, &paths, &network, &[MedianEnd::Paved(far)], None);
+    let paved = merge_axis(
+        merge,
+        &drawn,
+        &paths,
+        &network,
+        &[MedianEnd::Paved(far)],
+        None,
+    );
     assert!(paved.last().unwrap().distance(far) < 0.01);
 }
 
@@ -445,7 +466,10 @@ fn the_merge_axis_leaves_the_continuation_along_its_tangent() {
         .skip(8)
         .map(|(a, b)| a.distance(*b))
         .fold(0.0, f32::max);
-    assert!(beyond < 0.05, "past the blend the axis is off the middle by {beyond} m");
+    assert!(
+        beyond < 0.05,
+        "past the blend the axis is off the middle by {beyond} m"
+    );
 }
 
 /// Где кромки половин разошлись, а газон ещё не начался, между ними асфальт

@@ -1231,7 +1231,8 @@ pub fn build_roads(map: &MapData, style: RoadStyle, shape: RoadShape) -> RoadBui
         if style.markings {
             // из торца нарисованной осевой продолжения и по её касательной
             let continuation = drawn[merge.street];
-            let offset = paint::axis_offset(continuation, lane_count(continuation), map.traffic_side);
+            let offset =
+                paint::axis_offset(continuation, lane_count(continuation), map.traffic_side);
             let lead = merges::LeadIn::of(merge, &ribbon, offset.unwrap_or(0.0));
             let axis = merges::merge_axis(merge, &drawn, &ribbon, &map.network, &ends, lead);
             painter.paint_merge_axis(&axis, lane_count(drawn[merge.street]));
@@ -1529,7 +1530,9 @@ pub fn build_roads(map: &MapData, style: RoadStyle, shape: RoadShape) -> RoadBui
             if road.class == RoadClass::Street && points.len() >= 2 {
                 let last = points.len() - 1;
                 for end in [0, 1] {
-                    let wedged = wedges.iter().any(|&(_, _, at_end)| usize::from(at_end) == end);
+                    let wedged = wedges
+                        .iter()
+                        .any(|&(_, _, at_end)| usize::from(at_end) == end);
                     if !seam[end] || wedged {
                         continue;
                     }
@@ -1709,7 +1712,13 @@ pub fn build_roads(map: &MapData, style: RoadStyle, shape: RoadShape) -> RoadBui
             let reach = footbridge_reach(&drawn, prepared.nodes(), index);
             for (end, reach) in reach.into_iter().enumerate() {
                 if let Some(reach) = reach.filter(|&reach| reach > road.width / 2.0) {
-                    push_path_flare(fill, points, end, [road.width / 2.0, reach], color.to_linear());
+                    push_path_flare(
+                        fill,
+                        points,
+                        end,
+                        [road.width / 2.0, reach],
+                        color.to_linear(),
+                    );
                 }
             }
         }
@@ -1848,8 +1857,7 @@ pub fn build_roads(map: &MapData, style: RoadStyle, shape: RoadShape) -> RoadBui
         .filter(|median| median.roads().iter().all(|&road| drawn[road].bridge))
         .map(|median| (median.midline(), median.width() + DECK_CUT_SLACK));
     let cuts = tram_band::deck_cuts(&tram_bands, street_decks.chain(median_decks));
-    let [on_ground, on_decks] =
-        tram_band::split_cover(tram_band::band_cover(&tram_bands), &cuts);
+    let [on_ground, on_decks] = tram_band::split_cover(tram_band::band_cover(&tram_bands), &cuts);
     streets.set_lanes(None);
     for shape in on_ground {
         push_shape(&mut streets, shape, TRAM_BAND_COLOR.to_linear());
@@ -3033,10 +3041,10 @@ fn centerline<'a>(road: &'a RoadLine, smoothing: Smoothing, nodes: &RoadNodes) -
 /// восстановления узлов по общим нодам заводить незачем.
 pub(super) mod junctions;
 
+mod aprons;
 /// Открыт наружу для [`map::cars`](crate::map::cars): ряд машин стоит на той
 /// же оси, что и лента.
 pub(super) mod axis;
-mod aprons;
 mod bridges;
 mod corners;
 mod drawn;

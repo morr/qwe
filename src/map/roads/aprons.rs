@@ -93,7 +93,9 @@ pub(super) fn slit_aprons(
                 let clear = distance - inner - outer;
                 (clear > CLOSED && clear <= SLIT_MAX).then_some([inner, distance - fill])
             });
-            aprons.decks.extend(runs.into_iter().map(|(_, ring)| (foot, ring)));
+            aprons
+                .decks
+                .extend(runs.into_iter().map(|(_, ring)| (foot, ring)));
             // и на земле — у обоих торцов мостика, что стоят на шве
             for end in [0, 1] {
                 if let Some(ring) = ground_apron(drawn, ribbon, prepared, foot, deck, end) {
@@ -118,7 +120,12 @@ fn ground_apron(
 ) -> Option<(usize, Vec<Vec2>)> {
     let osm_end = |road: usize, end: usize| {
         let points = &drawn[road].points;
-        if end == 0 { points.first() } else { points.last() }.copied()
+        if end == 0 {
+            points.first()
+        } else {
+            points.last()
+        }
+        .copied()
     };
     let node = osm_end(foot, end)?;
     let path_road = prepared
@@ -126,7 +133,9 @@ fn ground_apron(
         .roads_at(node)
         .iter()
         .copied()
-        .find(|&other| other != foot && !drawn[other].bridge && drawn[other].class == RoadClass::Alley)?;
+        .find(|&other| {
+            other != foot && !drawn[other].bridge && drawn[other].class == RoadClass::Alley
+        })?;
     // улица у торца настила, ближнего к этому торцу мостика
     let deck_node = [0, 1]
         .into_iter()

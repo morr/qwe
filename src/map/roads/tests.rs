@@ -1032,9 +1032,10 @@ fn an_approach_sidewalk_ends_square_at_the_bridge_head() {
 #[test]
 fn a_footbridge_beside_a_deck_gets_a_slit_apron() {
     let covered = |layers: &[LayerMesh], name: &str, at: Vec2| {
-        layer(layers, name).builder.triangles().any(|[a, b, c]| {
-            crate::map::osm::model::point_in_polygon(at, &[a, b, c])
-        })
+        layer(layers, name)
+            .builder
+            .triangles()
+            .any(|[a, b, c]| crate::map::osm::model::point_in_polygon(at, &[a, b, c]))
     };
     let scene = |x: f32| {
         let mut map = MapData::default();
@@ -1101,9 +1102,10 @@ fn a_moved_footbridges_path_meets_the_band_without_a_wedge() {
     map.network = super::network::RoadNetwork::new(&map.roads);
     let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
     let covered = |name: &str, at: Vec2| {
-        layer(&layers, name).builder.triangles().any(|[a, b, c]| {
-            crate::map::osm::model::point_in_polygon(at, &[a, b, c])
-        })
+        layer(&layers, name)
+            .builder
+            .triangles()
+            .any(|[a, b, c]| crate::map::osm::model::point_in_polygon(at, &[a, b, c]))
     };
     // от асфальта подхода до оси дорожки — ни пятна голой земли
     let prepared = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
@@ -1131,7 +1133,10 @@ fn a_moved_footbridges_path_meets_the_band_without_a_wedge() {
     let reach = map.roads[3].curb_reach();
     let axis = prepared.axis(3, Axis::Nodal)[0].x;
     let at = Vec2::new(axis - reach + 0.1, 99.9);
-    assert!(covered("sidewalks", at), "the path stops short of its footbridge's curb at {at}");
+    assert!(
+        covered("sidewalks", at),
+        "the path stops short of its footbridge's curb at {at}"
+    );
 }
 
 /// Асфальт подхода, срезанный в узле шва прямо (в узле примыкает третья
@@ -1156,9 +1161,10 @@ fn no_ground_shows_between_a_kinked_approach_and_the_deck_head() {
     let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
     let covered = |at: Vec2| {
         ["roads", "bridges"].iter().any(|name| {
-            layer(&layers, name).builder.triangles().any(|[a, b, c]| {
-                crate::map::osm::model::point_in_polygon(at, &[a, b, c])
-            })
+            layer(&layers, name)
+                .builder
+                .triangles()
+                .any(|[a, b, c]| crate::map::osm::model::point_in_polygon(at, &[a, b, c]))
         })
     };
     for step in 0..=20 {
@@ -1194,9 +1200,9 @@ fn an_approach_sidewalk_runs_under_a_kinked_deck_head() {
         for x in [-lateral, lateral] {
             let at = Vec2::new(x, head.y - 0.02);
             let covered = |builder: &MeshBuilder| {
-                builder.triangles().any(|[a, b, c]| {
-                    crate::map::osm::model::point_in_polygon(at, &[a, b, c])
-                })
+                builder
+                    .triangles()
+                    .any(|[a, b, c]| crate::map::osm::model::point_in_polygon(at, &[a, b, c]))
             };
             assert!(
                 covered(sidewalks) || covered(deck),
