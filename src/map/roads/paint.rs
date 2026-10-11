@@ -928,7 +928,6 @@ impl Painter {
                 (&hooked[..], &hooked_quiet[..])
             }
         };
-        let mut to_break = to_break;
         let total = along[along.len() - 1];
         // вершины на концах клиньев: раскладка ломается там, и GPU должен
         // интерполировать её по прямой с обеих сторон
