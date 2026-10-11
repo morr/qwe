@@ -3659,3 +3659,127 @@ fn raw_osm_draw_lays_a_bare_ribbon_per_way() {
     assert!(road.iter().all(|at| (99.99..=600.01).contains(&at[0])));
     assert_eq!(report.kerb_returns, 0);
 }
+
+// DIAG-TEMP: `QWE_DIAG_JSON=<срез> QWE_DIAG_CITY=oryol QWE_DIAG=x,y,r QWE_DIAG_PROBES="x,y;x,y"`
+#[test]
+#[ignore]
+fn diag_window() {
+    use crate::city::City;
+    use crate::map::osm::overpass::OverpassResponse;
+    use crate::map::osm::parse::{ParseKnobs, parse_response};
+    let path = std::env::var("QWE_DIAG_JSON").unwrap();
+    let city = match std::env::var("QWE_DIAG_CITY").unwrap().as_str() {
+        "oryol" => City::Oryol,
+        _ => City::Tula,
+    };
+    let osm: OverpassResponse =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let map = parse_response(&osm, city, ParseKnobs::default());
+    if let Ok(spec) = std::env::var("QWE_DIAG") {
+        let v: Vec<f32> = spec.split(',').filter_map(|s| s.parse().ok()).collect();
+        let (at, r) = (Vec2::new(v[0], v[1]), v[2]);
+        let prepared = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
+        for i in 0..prepared.len() {
+            let d = prepared.road(i);
+            let line = prepared.axis(i, Axis::Ribbon);
+            if line.iter().any(|p| p.distance(at) < r) {
+                eprintln!(
+                    "DIAG road {i} hw={:?} class={:?} w={} oneway={} lanes={:?} bw={:?} osm={:?}\n    ribbon={:?}",
+                    d.highway,
+                    d.class,
+                    d.width,
+                    d.oneway,
+                    d.lanes,
+                    d.lanes_backward,
+                    d.points,
+                    line
+                );
+                eprintln!("DIAG   verges={:?} profile={:?}", d.verges, d.verge_profile);
+            }
+        }
+        let returns = super::corners::kerb_returns(&prepared, 1.0);
+        let near = |outline: &Vec<Vec2>| outline.iter().any(|p| p.distance(at) < r);
+        for (class, o) in returns.roads.iter().filter(|(_, o)| near(o)) {
+            eprintln!("DIAG kr roads {class:?} {o:?}");
+        }
+        for (fill, o) in returns.bends.iter().filter(|(_, o)| near(o)) {
+            eprintln!("DIAG kr bend {fill:?} {o:?}");
+        }
+        for (fill, o) in returns.noses.iter().filter(|(_, o)| near(o)) {
+            eprintln!("DIAG kr nose {fill:?} {o:?}");
+        }
+        for o in returns.fork_gores.iter().filter(|o| near(o)) {
+            eprintln!("DIAG kr gore {o:?}");
+        }
+        for o in returns.sidewalks.iter().filter(|o| near(o)) {
+            eprintln!("DIAG kr sidewalk {o:?}");
+        }
+        for o in returns.verges.iter().filter(|o| near(o)) {
+            eprintln!("DIAG kr verge {o:?}");
+        }
+        for i in 0..prepared.len() {
+            let b = returns.butt(i);
+            if b != [false; 2]
+                && prepared
+                    .axis(i, Axis::Ribbon)
+                    .iter()
+                    .any(|p| p.distance(at) < r)
+            {
+                eprintln!("DIAG butt road {i} {b:?}");
+            }
+        }
+    }
+    let (mut layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    eprintln!("DIAG report {report}");
+    let layout =
+        crate::map::parking::ParkingLayout::new(&map.parking, &map.roads, map.traffic_side);
+    layers.extend(crate::map::spawn::mesh_surfaces(&map, &layout).0);
+    if let Ok(spec) = std::env::var("QWE_DIAG_COLUMN") {
+        let v: Vec<f32> = spec.split(',').map(|s| s.parse().unwrap()).collect();
+        let (from, to, step) = (Vec2::new(v[0], v[1]), Vec2::new(v[2], v[3]), v[4]);
+        let count = (from.distance(to) / step) as usize;
+        for i in 0..=count {
+            let at = from.lerp(to, i as f32 / count.max(1) as f32);
+            let mut top: Vec<(f32, &str)> = layers
+                .iter()
+                .filter(|layer| {
+                    layer
+                        .builder
+                        .triangles()
+                        .any(|[a, b, c]| crate::map::osm::model::point_in_polygon(at, &[a, b, c]))
+                })
+                .map(|layer| (layer.z, layer.name))
+                .collect();
+            top.sort_by(|a, b| b.0.total_cmp(&a.0));
+            top.truncate(3);
+            eprintln!("PROBE col {at} {top:?}");
+        }
+    }
+    let spec = std::env::var("QWE_DIAG_PROBES").unwrap_or_default();
+    for probe in spec.split(';').filter(|s| !s.is_empty()) {
+        let v: Vec<f32> = probe.split(',').map(|s| s.parse().unwrap()).collect();
+        let at = Vec2::new(v[0], v[1]);
+        let only = std::env::var("QWE_DIAG_LAYER").unwrap_or_default();
+        for layer in layers.iter().filter(|l| l.name.contains(only.as_str())) {
+            let pos = layer.builder.positions_for_test();
+            let coords = layer.builder.ribbon_coords_for_test();
+            let col = layer.builder.colors_for_test();
+            for [a, b, c] in layer.builder.triangles() {
+                if crate::map::osm::model::point_in_polygon(at, &[a, b, c]) {
+                    let info: Vec<_> = [a, b, c]
+                        .iter()
+                        .map(|p| {
+                            let i = pos.iter().position(|q| Vec2::new(q[0], q[1]) == *p);
+                            (
+                                *p,
+                                i.and_then(|i| coords.map(|c| c[i])),
+                                i.map(|i| col[i][3]),
+                            )
+                        })
+                        .collect();
+                    eprintln!("PROBE {at} {} {:?}", layer.name, info);
+                }
+            }
+        }
+    }
+}
