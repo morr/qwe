@@ -1,0 +1,56 @@
+{
+  "hooks": {
+    "enabled": true,
+    "events": {
+      "PreToolUse": [
+        {
+          "matcher": "Edit|Write",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/require-skill.sh"
+            }
+          ]
+        },
+        {
+          "matcher": "Bash",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-bash.sh"
+            }
+          ]
+        }
+      ],
+      "PostToolUse": [
+        {
+          "matcher": "Skill",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/record-skill.sh"
+            }
+          ]
+        },
+        {
+          "matcher": "EnterWorktree|Skill",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/worktree-drift.sh"
+            }
+          ]
+        },
+        {
+          "matcher": "EnterWorktree",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/seed-worktree-target.sh"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
