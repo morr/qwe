@@ -35,3 +35,6 @@ assets/osm/
 # python bytecode from tools/
 __pycache__/
 osm_counts.json
+
+# zcode session plans
+/.zcode/plans
