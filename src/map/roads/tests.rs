@@ -2636,6 +2636,55 @@ fn a_one_sided_street_turns_its_sidewalk_only_on_its_side() {
     assert_eq!([report.kerb_returns, report.sidewalk_returns], [4, 2]);
 }
 
+/// Стороны наружного угла лежат на **торцевых кромках лент**: прямой торец
+/// идёт поперёк исходного крайнего звена оси ([`meshing::butt_direction`]),
+/// а направление луча смотрит на первую вершину ленты после слияния, — у
+/// улицы, разрезанной в узле с лёгким изломом, те расходятся, и веер по
+/// направлению луча оставлял между собой и торцами клиновидную щель поперёк
+/// асфальта (Тула, Фрунзе у съезда, N1).
+#[test]
+fn an_outer_corner_sides_lie_on_the_ribbon_butt_edges() {
+    use crate::map::meshing::butt_direction;
+    // улица ЮЮВ—ССВ, разрезанная в узле; у северного way первая вершина
+    // через 1.5 м — общая с коротким проездом (пин оси), лента же сливает
+    // её (четверть ширины 2 м), и направление луча — уже на следующую
+    // вершину; съезд примыкает с ССЗ, узел — перекрёсток
+    let node = Vec2::new(300.0, 100.0);
+    let near = node + Vec2::from_angle(72.6_f32.to_radians()) * 1.5;
+    let far = near + Vec2::from_angle(75.0_f32.to_radians()) * 20.0;
+    let across = near + Vec2::new(-6.0, 6.0);
+    let map = with_network(vec![
+        fixture::street(
+            vec![node + Vec2::from_angle(251.8_f32.to_radians()) * 20.0, node],
+            8.0,
+        ),
+        fixture::street(vec![node, near, far], 8.0),
+        fixture::street(
+            vec![node + Vec2::from_angle(160.0_f32.to_radians()) * 15.0, node],
+            8.0,
+        ),
+        fixture::street(vec![across, near], 5.0),
+    ]);
+    let prepared = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
+    let returns = corners::kerb_returns(&prepared, 1.0);
+    // торец северного way: кромка веера на нём — вторая сторона веера
+    // (справа по ходу луча), узел, полуширина и нахлёст вдоль торцевого звена
+    let axis = prepared.axis(1, Axis::Ribbon);
+    let butt = butt_direction(axis, false).expect("у оси есть крайнее звено");
+    let expected = node - butt.perp() * 4.0 + butt * corners::OUTER_OVERLAP;
+    let found = returns
+        .roads
+        .iter()
+        .flat_map(|(_, outline)| outline)
+        .any(|point| point.distance(expected) < 0.02);
+    assert!(
+        found,
+        "стороны веера — по торцевым кромкам: вершины {expected} нет ни в \
+         одном {:?}",
+        returns.roads
+    );
+}
+
 /// Полотно шире [`network::pairs::TRAM_BED_MAX_GAP`] — обособленное, на
 /// траве: газон остаётся.
 #[test]

@@ -54,7 +54,9 @@ use super::drawn::{Axis, Drawn};
 use super::junctions::node_key;
 use super::network::pairs::PROBE_STEP;
 use crate::map::along::{arclengths, nearest_on_path, place_on_path};
-use crate::map::meshing::{arc_steps, miter_offsets, ribbon_merge_distance, ribbon_vertices};
+use crate::map::meshing::{
+    arc_steps, butt_direction, miter_offsets, ribbon_merge_distance, ribbon_vertices,
+};
 use crate::map::osm::model::{closest_on_segment, polyline_length, ring_area};
 use crate::map::osm::{Highway, RoadClass, RoadLine};
 
@@ -148,13 +150,15 @@ const MIN_ARM: f32 = 0.5;
 const STRAIGHT_TOLERANCE: f32 = 0.15;
 /// На сколько прямые стороны скругления заходят под ленты дорог, м.
 const OVERLAP: f32 = 0.05;
-/// То же у наружного угла ([`outer_corner`]), м: его стороны — по лучам
-/// узловой оси, а прямой торец ленты — по её собственному концевому звену,
-/// и на почти прямом стыке двух way одной улицы они расходятся на градус.
-/// На восьми метрах полосы тротуара это полтора десятка сантиметров, и
-/// пяти сантиметров нахлёста не хватало — через тротуар шла нить (Орёл,
+/// То же у наружного угла ([`outer_corner`]), м. Сторона по торцевому лучу
+/// лежит на кромке ленты-торца (`Arm::butt`), и пяти сантиметров хватило бы;
+/// но у сквозного луча торца нет — его сторона идёт по направлению луча, а
+/// край ленты у узла на сглаженном изгибе уже повернул; и тротуарный веер
+/// считается по тем же лучам, а его полоса шире бордюрной. Градус между
+/// стороной и краем на восьми метрах полосы — полтора десятка сантиметров,
+/// и пяти сантиметров нахлёста не хватало — через тротуар шла нить (Орёл,
 /// витрина 04, север).
-const OUTER_OVERLAP: f32 = 0.3;
+pub(super) const OUTER_OVERLAP: f32 = 0.3;
 
 /// Одна дорога, выходящая из узла.
 struct Arm<'d> {
@@ -193,6 +197,13 @@ struct Arm<'d> {
     crossed: f32,
     /// Дорога и её торец (`0` — начало, `1` — конец), если луч — торец пути.
     end: Option<(usize, usize)>,
+    /// Направление исходного крайнего звена оси у торца, от узла в луч
+    /// ([`meshing::butt_direction`]): прямой торец ленты идёт поперёк него,
+    /// и по нему строится сторона наружного угла ([`outer_corner`]) — по
+    /// направлению луча (`direction`, на вершину ленты после слияния) она
+    /// отходила от торцевой кромки, и между ними оставалась щель. Только у
+    /// торцевого луча; у сквозного торца нет.
+    butt: Option<Vec2>,
     /// Своя полуширина дороги.
     full: f32,
     /// Полуширина каждой стороны, к которой кромка под клином приходит за
@@ -562,6 +573,14 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                     run,
                     crossed,
                     end: at_end.then_some((index, usize::from(vertex == last))),
+                    butt: at_end
+                        .then(|| {
+                            // у конца ось кончается в узле: звено смотрит на
+                            // узел, лучу нужно от него
+                            butt_direction(path, vertex == last)
+                                .map(|dir| if vertex == last { -dir } else { dir })
+                        })
+                        .flatten(),
                     full: own,
                     reach,
                     widening,
@@ -989,25 +1008,33 @@ fn radius_of(class: RoadClass, highway: Highway) -> f32 {
 /// просвет между ними шире развёрнутого: веер от узла с радиусом от одной
 /// полуширины к другой — то, что раньше давали круглые торцы лент. Первая
 /// вершина — центр веера, чуть позади узла, стороны заходят под торцы лент
-/// на [`OVERLAP`].
+/// на [`OUTER_OVERLAP`]. Стороны — по **торцевым кромкам лент**
+/// ([`Arm::butt`]): прямой торец идёт поперёк исходного крайнего звена оси,
+/// а направление луча смотрит на вершину ленты после слияния, — на стыке
+/// двух way одной улицы с изломом те расходятся, и веер по лучу оставлял
+/// между собой и торцами клиновидную щель поперёк асфальта (Тула, Фрунзе у
+/// съезда, N1). Просвет меряется по-прежнему по лучам узловой оси: порог
+/// [`MIN_OUTER`] стоит на шуме округления оси, а не торцов.
 fn outer_corner(node: Vec2, first: &Arm, second: &Arm, halves: (f32, f32)) -> Option<Vec<Vec2>> {
     let angle = ccw_angle(first, second);
     if angle <= PI + MIN_OUTER {
         return None;
     }
     let sweep = angle - PI;
-    let from = first.direction.perp();
+    let from_dir = first.butt.unwrap_or(first.direction);
+    let to_dir = second.butt.unwrap_or(second.direction);
+    let from = from_dir.perp();
     let steps = arc_steps(halves.0.max(halves.1), sweep).max(1);
     let middle = Vec2::from_angle(sweep / 2.0).rotate(from);
     let mut outline = Vec::with_capacity(steps + 2);
     outline.push(node - middle * OUTER_OVERLAP);
-    outline.push(node + from * halves.0 + first.direction * OUTER_OVERLAP);
+    outline.push(node + from * halves.0 + from_dir * OUTER_OVERLAP);
     for step in 1..steps {
         let share = step as f32 / steps as f32;
         let radius = halves.0 + (halves.1 - halves.0) * share;
         outline.push(node + Vec2::from_angle(sweep * share).rotate(from) * radius);
     }
-    outline.push(node - second.direction.perp() * halves.1 + second.direction * OUTER_OVERLAP);
+    outline.push(node - to_dir.perp() * halves.1 + to_dir * OUTER_OVERLAP);
     Some(outline)
 }
 
@@ -2619,6 +2646,61 @@ mod tests {
                 .fork_gores
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn a_nose_and_its_gore_keep_to_a_kerb_narrowed_by_a_far_taper() {
+        // Тула, устье съезда с Фрунзе (S7): широкая улица сужена клином к
+        // дальнему узкому продолжению, острое плечо уходит рядом. Нос по
+        // номинальной полуширине вставал за настоящее расхождение кромок, и
+        // штрихуемый клин ложился на плитку обочины мимо сузившейся кромки
+        let mut through = street(vec![Vec2::ZERO, Vec2::new(70.0, 0.0)], 14.0);
+        through.highway = Highway::Secondary;
+        through.lanes = Some(2);
+        let mut next = street(vec![Vec2::new(70.0, 0.0), Vec2::new(130.0, 0.0)], 8.0);
+        next.highway = Highway::Secondary;
+        next.lanes = Some(1);
+        let mut west = street(vec![Vec2::new(-100.0, 0.0), Vec2::ZERO], 14.0);
+        west.highway = Highway::Secondary;
+        west.lanes = Some(2);
+        let mut branch = street(
+            vec![Vec2::ZERO, Vec2::from_angle(15_f32.to_radians()).rotate(Vec2::X) * 120.0],
+            8.0,
+        );
+        branch.highway = Highway::Tertiary;
+        branch.lanes = Some(1);
+        let roads = vec![west, through, next, branch];
+        let map = MapData {
+            network: crate::map::roads::network::RoadNetwork::new(&roads),
+            roads: roads.clone(),
+            ..default()
+        };
+        let found = kerb_returns(
+            &Drawn::new(
+                &map,
+                &crate::map::roads::RoadStyle::default(),
+                &crate::map::roads::shape::RoadShape::default(),
+            ),
+            1.0,
+        );
+        assert_eq!(found.fork_gores.len(), 1, "{:?}", found.fork_gores);
+        // клин лежит на асфальте, каким его положила лента: в клине сечений
+        // (14 → 8 на длине 0.45 пути, от x = 38.5) кромка сквозной уже
+        // номинальной полуширины
+        let laid_half = |x: f32| 7.0 - 3.0 * ((x - 38.5) / 31.5).clamp(0.0, 1.0);
+        assert!(
+            found.fork_gores[0].iter().any(|point| point.x > 38.5),
+            "клин доходит до клина сечений: {:?}",
+            found.fork_gores
+        );
+        for point in &found.fork_gores[0] {
+            let on_branch =
+                crate::map::footprint::distance_to_polyline(*point, &roads[3].points) <= 4.0 + 0.1;
+            assert!(
+                on_branch || point.y.abs() <= laid_half(point.x) + 0.1,
+                "{point:?} вне сузившейся кромки"
+            );
+        }
     }
 
     #[test]

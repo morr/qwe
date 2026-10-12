@@ -2178,9 +2178,21 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
       a wedge between the two butt ends on the side away from the crossing road, and at the
       old 1° threshold it showed as a light hairline. Tula: outer corners 960 → 1632,
       117 → 202 on sidewalks; the road build did not move (125.6 ms). The fan's straight
-      sides reach `OUTER_OVERLAP` 0.3 m (not `OVERLAP`) into the butt ends: they follow the
-      nodal axis's arms while a butt end follows the ribbon's own last link, and a degree
-      between the two is fifteen centimetres at the far edge of a sidewalk band. **In the
+      sides follow the **butt edges of the ribbons** (`Arm::butt` — the direction of the
+      axis's own end link, the same one `meshing::butt_normal` cuts the cap across), not
+      the arms' directions: an arm direction aims at the first vertex the ribbon kept,
+      and on a street split into two ways at a kinked node the two part by degrees — a
+      fan built on the arm direction stood turned from the cap edge, and between the two
+      a wedge slit crossed the whole carriageway, the verge tile showing through the
+      asphalt and the layer below through the lawn (Tula, Фрунзе by the exit, 3812.7
+      4094.4, roads list N1; the two slits, one per cap, read as one thin line through
+      the node). The >180° test stays on the arm directions — `MIN_OUTER` judges the
+      drawn axis's kink, not the caps'. Where an arm has no butt end the side falls back
+      to the arm direction, which is what still keeps the `OUTER_OVERLAP` 0.3 m reach
+      (not `OVERLAP`): the through arm's side runs along the nodal chord while the
+      ribbon edge on a smoothed bend has already turned, and the sidewalk fan — computed
+      on the same arms, on a wider band — a degree between it and the edge is fifteen
+      centimetres at the band's far side. **In the
       sidewalk layer the fan is also laid between exactly two banded arms** when both are
       way ends and the streets at the node make a junction — a street split into two ways
       where a drive without a sidewalk joins it: its band ends are butt (the street node is

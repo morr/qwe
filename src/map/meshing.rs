@@ -2580,11 +2580,13 @@ pub fn ribbon_merge_distance(width: f32) -> f32 {
     width / 4.0
 }
 
-/// Нормаль прямого торца: поперёк **исходного** крайнего звена `points`, а не
-/// звена после слияния точек. Два куска, разрезанных на одном звене, так
-/// встают торцами друг к другу без клиновидной щели, даже если у каждого
-/// слияние выпрямило конец по-своему. Звено короче сантиметра не в счёт.
-fn butt_normal(points: &[Vec2], end: bool) -> Option<Vec2> {
+/// Направление **исходного** крайнего звена `points` у торца `end` — а не
+/// звена после слияния точек: у начала — от него вглубь ломаной, у конца —
+/// на него (перпендикуляр к нему, [`butt_normal`], в обоих случаях смотрит
+/// влево по ходу). Два куска, разрезанные на одном звене, так встают торцами
+/// друг к другу без клиновидной щели, даже если у каждого слияние выпрямило
+/// конец по-своему. Звено короче сантиметра не в счёт.
+pub(crate) fn butt_direction(points: &[Vec2], end: bool) -> Option<Vec2> {
     let away = |tip: Vec2, point: &&Vec2| point.distance(tip) > 0.01;
     let direction = if end {
         let tip = *points.last()?;
@@ -2593,7 +2595,13 @@ fn butt_normal(points: &[Vec2], end: bool) -> Option<Vec2> {
         let tip = *points.first()?;
         *points.iter().find(|point| away(tip, point))? - tip
     };
-    direction.try_normalize().map(Vec2::perp)
+    direction.try_normalize()
+}
+
+/// Нормаль прямого торца: поперёк исходного крайнего звена
+/// ([`butt_direction`]).
+fn butt_normal(points: &[Vec2], end: bool) -> Option<Vec2> {
+    butt_direction(points, end).map(Vec2::perp)
 }
 
 /// Сколько хорд нужно дуге радиуса `radius` на `sweep` радиан, чтобы стрелка
