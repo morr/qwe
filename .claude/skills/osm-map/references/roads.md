@@ -1763,6 +1763,19 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   - **Mid-block crossings**: every marked OSM crossing on a carriageway not taken by an
     arm is a zebra with a gap in the lines around it, and stop lines on both approaches
     if it is signalized. A crossing inside a break already there is skipped.
+  - **The plank cuts other carriageways too** (`breaks_across_zebras`, roads list N6):
+    the gap a zebra gets was its own road's only, and where another carriageway's
+    section (its axis ± half width) passes through the plank rectangle inflated by
+    `PAINT_CLEAR` — the branches of a Y-merge at a node the crossing stands a few
+    metres from (Tula, Y-развилка у кольца, 2552.8 2318.9) — their first dashes ran
+    straight over the plank as short oblique stubs. Every such carriageway gets a gap
+    over the interval its section spends inside; the ordinary short-runs pass closes
+    what is left of a line under `MIN_RUN` after that. Arm planks do not reach the
+    other arms' asphalt — they stand a metre past the arm's edge, and `PAINT_CLEAR` is
+    exactly that margin — and a bridge is never cut (its asphalt is another layer).
+    The pass runs before the zebras are joined and thinned: a plank later removed
+    lies inside the kept one to `OVERLAP_SLACK`, a joined one covers both, and
+    `PAINT_CLEAR` swallows the difference.
   - **Pocket**: when a street passes without breaking and its arm on the far side has
     fewer lanes, the lines of the wide arm that lie outside the narrow one's lane frame
     end at the junction edge (`Pocket`, one extra break for those lines only —

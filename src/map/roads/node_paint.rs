@@ -844,6 +844,14 @@ impl NodePaint {
         }
         let junction_keys: Vec<(i32, i32)> =
             junctions.iter().map(|node| node_key(node.at)).collect();
+        // планка зебры — поперёк всех, чьё полотно через неё идёт
+        breaks_across_zebras(
+            drawn,
+            paths,
+            &paint.zebras,
+            &paint.zebra_roads,
+            &mut paint.breaks,
+        );
         let spills = std::mem::take(&mut paint.spills);
         spill_over_ends(drawn, paths, &junction_keys, &spills, &mut paint.breaks);
         let narrowing = narrowing_ends(drawn, paths);
@@ -1683,6 +1691,129 @@ impl NodePaint {
         let (from, to) = (center - reach - PAINT_CLEAR, center + reach + PAINT_CLEAR);
         self.breaks[index].extend(walk.gap(from, to));
         self.spills.extend(walk.spills(from, to));
+    }
+}
+
+/// Ячейка сетки планок ([`breaks_across_zebras`]), м.
+const ZEBRA_PLANK_CELL: f32 = 24.0;
+/// Полуширина самой широкой улицы с запасом, м: на столько планка в сетке
+/// раздувается, чтобы ссылка звена любой дороги нашла её (запрос раздувается
+/// на полуширину дороги и [`PAINT_CLEAR`]).
+const WIDEST_HALF: f32 = 16.0;
+
+/// Планка зебры режет и **чужие** линии: разрыв получает только своя дорога
+/// (`paint_crossing`, планка плеча), и сквозь полотно другой проезжей части,
+/// чьё сечение через планку идёт, тянулись первые штрихи её пунктира — у
+/// Y-слияния двух односторонних в двустороннюю зебра стояла в метрах от узла,
+/// и ветки начинались короткими косыми обрывками прямо от неё (Тула,
+/// Y-развилка у кольца, N6). Каждой проезжей части, чьё сечение (ось ±
+/// полуширина) заходит в прямоугольник планки с запасом [`PAINT_CLEAR`], —
+/// разрыв на этом интервале; короткие куски после него закрывает общий проход
+/// [`bridge_short_runs`]. Плечи своего узла не задеваются: планка плеча и так
+/// стоит за кромкой ([`ArmPlan`]), в метре чужого асфальта, и [`PAINT_CLEAR`]
+/// до неё не дотягивает. Мост не режется: его асфальт — другой слой, и
+/// на нём линии свои. Зебры здесь ещё не слиты в одну планку и не
+/// прорежены: продублированная лежит в другой с точностью до
+/// [`OVERLAP_SLACK`], слитая накрывает обе — с запасом [`PAINT_CLEAR`]
+/// разницы нет.
+fn breaks_across_zebras(
+    drawn: &[&RoadLine],
+    paths: &[impl AsRef<[Vec2]>],
+    zebras: &[Zebra],
+    zebra_roads: &[usize],
+    breaks: &mut [Vec<Break>],
+) {
+    if zebras.is_empty() {
+        return;
+    }
+    let reach = ZEBRA_LENGTH / 2.0 + PAINT_CLEAR;
+    let mut planks: Grid<usize> = Grid::new(ZEBRA_PLANK_CELL);
+    for (index, zebra) in zebras.iter().enumerate() {
+        planks.insert_segment(zebra.from, zebra.to, reach + WIDEST_HALF, index);
+    }
+    for (road, path) in paths.iter().enumerate() {
+        let path = path.as_ref();
+        if path.len() < 2 || !is_carriageway(drawn[road]) || drawn[road].bridge {
+            continue;
+        }
+        let half = drawn[road].width / 2.0;
+        let (along, _) = arclengths(path);
+        let mut spans: Vec<(f32, f32)> = Vec::new();
+        for link in 0..path.len() - 1 {
+            let (a, b) = (path[link], path[link + 1]);
+            let d = b - a;
+            let len = d.length();
+            if len <= 0.0 {
+                continue;
+            }
+            let (min, max) = (a.min(b), a.max(b));
+            let pad = half + PAINT_CLEAR;
+            if planks
+                .near_each(min - Vec2::splat(pad), max + Vec2::splat(pad))
+                .next()
+                .is_none()
+            {
+                continue;
+            }
+            let normal = (d / len).perp();
+            for &index in planks.near_each(min - Vec2::splat(pad), max + Vec2::splat(pad)) {
+                let zebra = &zebras[index];
+                if zebra_roads.get(index) == Some(&road) {
+                    continue;
+                }
+                // сечение дороги (ось ± полуширина поперёк её хода) входит в
+                // прямоугольник планки с запасом: по каждой оси планки —
+                // |t·d·axis + (a−центр)·axis| ≤ полуразмер + [`PAINT_CLEAR`]
+                // + полуширина·|нормаль звена·axis|, интервал по t
+                let u = match (zebra.to - zebra.from).try_normalize() {
+                    Some(u) => u,
+                    None => continue,
+                };
+                let centre = (zebra.from + zebra.to) / 2.0;
+                let axes = [
+                    (u, zebra.from.distance(zebra.to) / 2.0 + PAINT_CLEAR),
+                    (u.perp(), ZEBRA_LENGTH / 2.0 + PAINT_CLEAR),
+                ];
+                let mut span = (0.0_f32, 1.0_f32);
+                for (axis, limit) in axes {
+                    let limit = limit + half * normal.dot(axis).abs();
+                    let offset = (a - centre).dot(axis);
+                    let run = d.dot(axis);
+                    let bound = (span.0, span.1);
+                    span = if run.abs() < 1e-6 {
+                        (offset.abs() <= limit).then_some(bound).unwrap_or((1.0, 0.0))
+                    } else {
+                        let mut low = (-limit - offset) / run;
+                        let mut high = (limit - offset) / run;
+                        if low > high {
+                            std::mem::swap(&mut low, &mut high);
+                        }
+                        (bound.0.max(low), bound.1.min(high))
+                    };
+                    if span.0 >= span.1 {
+                        break;
+                    }
+                }
+                if span.0 < span.1 {
+                    spans.push((along[link] + span.0 * len, along[link] + span.1 * len));
+                }
+            }
+        }
+        if spans.is_empty() {
+            continue;
+        }
+        spans.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let walk = Walk::new(path);
+        let mut merged: Vec<(f32, f32)> = Vec::with_capacity(spans.len());
+        for &(low, high) in &spans {
+            match merged.last_mut() {
+                Some(last) if low <= last.1 + 0.1 => last.1 = last.1.max(high),
+                _ => merged.push((low, high)),
+            }
+        }
+        for (low, high) in merged {
+            breaks[road].extend(walk.gap(low, high));
+        }
     }
 }
 

@@ -2685,6 +2685,90 @@ fn an_outer_corner_sides_lie_on_the_ribbon_butt_edges() {
     );
 }
 
+/// Планка зебры рвёт и **чужие** линии: разрыв получала только своя дорога,
+/// и у Y-слияния двух односторонних в двустороннюю (Тула, у кольца, N6) ветки
+/// начинались короткими косыми обрывками прямо на планке, стоящей в метрах
+/// от узла слияния. Углы веток и главной — как у той развилки: въезд уходит
+/// из узла на 121°, выезд на 72°, главная на 283°; переход стоит в узле
+/// слияния, и зебра вытягивается на продолжение в 3 м от узла
+#[test]
+fn a_zebra_plank_cuts_the_lines_of_crossing_carriageways() {
+    use crate::map::osm::model::{RoadNode, RoadNodeKind};
+    let one_way = |points: Vec<Vec2>| RoadLine {
+        oneway: true,
+        lanes: Some(2),
+        highway: Highway::Primary,
+        ..fixture::street(points, 7.6)
+    };
+    let mut map = with_network(vec![
+        RoadLine {
+            highway: Highway::Primary,
+            lanes: Some(4),
+            ..fixture::street(vec![Vec2::new(18.0, -77.9), Vec2::new(0.0, 0.0)], 14.2)
+        },
+        one_way(vec![Vec2::new(-17.2, 28.5), Vec2::new(0.0, 0.0)]),
+        one_way(vec![Vec2::new(0.0, 0.0), Vec2::new(12.4, 38.0)]),
+    ]);
+    map.road_nodes.push(RoadNode {
+        pos: Vec2::new(0.0, 0.0),
+        kind: RoadNodeKind::Crossing {
+            signals: false,
+            island: false,
+            marked: true,
+        },
+    });
+    let drawn = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
+    let junctions = junctions::Junctions::new(
+        &drawn,
+        &map,
+        &[],
+        node_paint::NodePaintStyle {
+            crossings: CrossingMode::Osm,
+            stop_lines: false,
+        },
+    );
+    let paint = junctions.node_paint();
+    // своя дорога планку режет
+    let own = paint.lines().of(0).cut.len();
+    assert!(own > 0, "у главной с зеброй разрыва нет");
+    // узел веток — слияние: разрывов асфальта в узле нет (тупиковой с нулевой
+    // досягаемостью на другом конце — можно), линии веток идут сквозь, и рвать
+    // их могло только полотно главной через планку
+    for road in [1, 2] {
+        let axis = drawn.axis(road, Axis::Ribbon);
+        assert!(
+            !paint.asphalt().of(road).iter().any(|found| {
+                found.reach > 0.0 && found.at.distance(Vec2::ZERO) < 10.0
+            }),
+            "узел ветки {road} — слияние, разрыва асфальта в нём быть не должно"
+        );
+        // разрыв от планки: недалеко от неё, короткий (узловой был бы в
+        // полуширины главной) — и накрывает планку интервалом. Планка в узле
+        // слияния вытягивается на продолжение: центр в 3 м от узла по главной
+        let plank = Vec2::new(0.67, -2.92);
+        let cut = paint
+            .lines()
+            .of(road)
+            .cut
+            .iter()
+            .find(|found| found.reach < 5.0 && found.at.distance(plank) < 12.0)
+            .unwrap_or_else(|| {
+                panic!(
+                    "у ветки {road} нет разрыва на планке: cuts {:?}",
+                    paint.lines().of(road).cut
+                )
+            });
+        let along = |point: Vec2| crate::map::along::nearest_on_path(axis, point).unwrap().1;
+        let plank_along = along(plank);
+        let cut_along = along(cut.at);
+        assert!(
+            cut_along - cut.reach <= plank_along + 0.05
+                && plank_along <= cut_along + cut.reach + 0.05,
+            "разрыв ветки {road} не накрывает планку: {cut:?}, планка на {plank_along}"
+        );
+    }
+}
+
 /// Полотно шире [`network::pairs::TRAM_BED_MAX_GAP`] — обособленное, на
 /// траве: газон остаётся.
 #[test]

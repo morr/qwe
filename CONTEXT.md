@@ -378,8 +378,13 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     lane lines on the exit's side of its axis (`node_paint::Throat`); the halves of a divided street share one zebra line — one
     plank across both over a paved median, one zebra each to its kerb over a lawn. A
     marked crossing elsewhere is a zebra with a gap in the lines; two OSM zebras on
-    different carriageways touching end to end are one plank across both. A zebra is drawn as
-    **whole bars** only, centred on the asphalt it crosses. A **pocket**: a wide
+    different carriageways touching end to end are one plank across both. **The plank
+    cuts every carriageway whose section passes through it**, not only its own road (a
+    Y-merge's branches a few metres from the crossing ran their first dashes over the
+    plank). A zebra is drawn as
+    **whole bars** only, centred on the asphalt it crosses, and a stop line is trimmed
+    to the same laid asphalt (a bridge deck's line is not — its asphalt is another
+    layer). A **pocket**: a wide
     arm's lines with no room on the narrower arm across the junction end at its edge.
     A **stitch** (the network's pulled loose end) is a junction node like a shared one.
     The **leading road** of a junction — passing, and yielding by rank to nobody (a ring
