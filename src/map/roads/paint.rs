@@ -1620,9 +1620,9 @@ const ZEBRA_BAR: f32 = ZEBRA_PERIOD * ZEBRA_FILL;
 /// Длина по планке, с которой начинается первое звено: шейдер кладёт звенья
 /// серединой на `k · период + период / 2`.
 const ZEBRA_FIRST_BAR: f32 = (ZEBRA_PERIOD - ZEBRA_BAR) / 2.0;
-/// Шаг, которым торец зебры отступает от кромки внутрь, пока сечение звена
-/// не ляжет на асфальт целиком, м.
-const ZEBRA_FIT_STEP: f32 = 0.05;
+/// Шаг, которым торец поперечной краски отступает от кромки внутрь, пока
+/// сечение не ляжет на асфальт целиком, м.
+const FIT_STEP: f32 = 0.05;
 
 /// Зебра из **целых звеньев** (roads list R2): звено рисуется только
 /// целиком, лишнее не рисуется, а оставшиеся стоят по середине проезжей
@@ -1650,11 +1650,11 @@ pub(super) fn whole_bars(zebra: &Zebra, on_asphalt: impl Fn(Vec2) -> bool) -> Op
     let middle = width / 2.0;
     let mut low = 0.0;
     while low < middle && !fits(low) {
-        low += ZEBRA_FIT_STEP;
+        low += FIT_STEP;
     }
     let mut high = width;
     while high > middle && !fits(high) {
-        high -= ZEBRA_FIT_STEP;
+        high -= FIT_STEP;
     }
     let span = high - low;
     if span < ZEBRA_BAR {
@@ -1670,29 +1670,37 @@ pub(super) fn whole_bars(zebra: &Zebra, on_asphalt: impl Fn(Vec2) -> bool) -> Op
     })
 }
 
-/// Проезжая часть под зеброй для [`whole_bars`]: лежит ли точка на асфальте
-/// улиц — в треугольниках уже собранного слоя `roads`. Не ленты по оси с
-/// полушириной: у торца под клин, у рампы слияния и у сведённого торца лента
-/// уже, чем полуширина дороги, и у развилки Болдиной звено по такой оценке
-/// ложилось на тротуар. Собирается только около зебр: треугольников в городе
-/// сотни тысяч, зебр — сотни.
-pub(super) struct ZebraGround {
+/// Проезжая часть под поперечной краской для [`whole_bars`] и
+/// [`trim_stop_line`]: лежит ли точка на асфальте улиц — в треугольниках уже
+/// собранного слоя `roads`. Не ленты по оси с полушириной: у торца под клин,
+/// у рампы слияния и у сведённого торца лента уже, чем полуширина дороги, и
+/// у развилки Болдиной звено по такой оценке ложилось на тротуар. Собирается
+/// только около мест краски: треугольников в городе сотни тысяч, зебр и
+/// стоп-линий — сотни.
+pub(super) struct PaintGround {
     triangles: Vec<[Vec2; 3]>,
     near: Grid<usize>,
 }
 
-impl ZebraGround {
-    pub(super) fn new(zebras: &[Zebra], asphalt: impl IntoIterator<Item = [Vec2; 3]>) -> Self {
-        let mut at_zebras: Grid<()> = Grid::new(ZEBRA_GROUND_CELL);
+impl PaintGround {
+    pub(super) fn new(
+        zebras: &[Zebra],
+        stops: &[StopLine],
+        asphalt: impl IntoIterator<Item = [Vec2; 3]>,
+    ) -> Self {
+        let mut at_paint: Grid<()> = Grid::new(GROUND_CELL);
         for zebra in zebras {
-            at_zebras.insert_segment(zebra.from, zebra.to, ZEBRA_LENGTH, ());
+            at_paint.insert_segment(zebra.from, zebra.to, ZEBRA_LENGTH, ());
+        }
+        for line in stops {
+            at_paint.insert_segment(line.from, line.to, STOP_WIDTH, ());
         }
         let mut triangles = Vec::new();
-        let mut near = Grid::new(ZEBRA_GROUND_CELL);
+        let mut near = Grid::new(GROUND_CELL);
         for triangle in asphalt {
             let [a, b, c] = triangle;
             let (min, max) = (a.min(b).min(c), a.max(b).max(c));
-            if at_zebras.near_each(min, max).next().is_some() {
+            if at_paint.near_each(min, max).next().is_some() {
                 near.insert(min, max, triangles.len());
                 triangles.push(triangle);
             }
@@ -1710,8 +1718,48 @@ impl ZebraGround {
     }
 }
 
-/// Ячейка сетки [`ZebraGround`], м.
-const ZEBRA_GROUND_CELL: f32 = 24.0;
+/// Ячейка сетки [`PaintGround`], м.
+const GROUND_CELL: f32 = 24.0;
+
+/// Стоп-линия, обрезанная по асфальту улиц: торцы отступают внутрь, пока
+/// сечение — край полосы и её середина — не ляжет на асфальт целиком. У устья
+/// съезда кромка главной улицы стоит наискось, и линия до полуширины дороги
+/// ложилась на плитку обочины, мимо кромки (Тула, S7). Линия, чья середина
+/// не на асфальте улиц, не трогается: настил моста — асфальт другого слоя,
+/// и на нём линия своя. `None` — короче полосы не осталось.
+pub(super) fn trim_stop_line(
+    line: &StopLine,
+    on_asphalt: impl Fn(Vec2) -> bool,
+) -> Option<StopLine> {
+    let span = line.to - line.from;
+    let across = span.try_normalize()?;
+    let along = across.perp() * (STOP_WIDTH / 2.0);
+    let fits = |at: f32| {
+        let point = line.from + across * at;
+        [point - along, point, point + along].into_iter().all(&on_asphalt)
+    };
+    let width = span.length();
+    let middle = width / 2.0;
+    if !fits(middle) {
+        return Some(*line);
+    }
+    let mut low = 0.0;
+    while low < middle && !fits(low) {
+        low += FIT_STEP;
+    }
+    let mut high = width;
+    while high > middle && !fits(high) {
+        high -= FIT_STEP;
+    }
+    if high - low < STOP_WIDTH {
+        return None;
+    }
+    Some(StopLine {
+        from: line.from + across * low,
+        to: line.from + across * high,
+        ..*line
+    })
+}
 
 /// Крючки на концах линий: разрыв, продлённый назад до начала изгиба пути.
 /// Край разрыва — ноль «до разрыва» `to_break` на звене пути `path` (длины

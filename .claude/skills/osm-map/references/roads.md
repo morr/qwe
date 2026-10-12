@@ -1097,9 +1097,10 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     the shader draws by the coordinate across the road and fades by `visible()` into a
     plain light plank — so a far zebra is a mean tone, not a flicker. **A zebra is whole
     bars only** (`paint::whole_bars`, roads list R2): its ends step inward by
-    `ZEBRA_FIT_STEP` 5 cm until the cross-section there — both long edges of the 4 m plank
-    and its middle — lies on street asphalt (`paint::ZebraGround`: the triangles the
-    `roads` layer has already laid, `MeshBuilder::triangles`, indexed only near zebras;
+    `FIT_STEP` 5 cm until the cross-section there — both long edges of the 4 m plank
+    and its middle — lies on street asphalt (`paint::PaintGround`: the triangles the
+    `roads` layer has already laid, `MeshBuilder::triangles`, indexed only near the
+    planks and the stop lines;
     a ribbon by its axis and half width was tried first and overstated the asphalt
     wherever the ribbon is narrower than the road — a taper head, a merge ramp — so at
     Болдина's fork the end bar still lay on the sidewalk. `Carriageway` road areas are
@@ -1110,7 +1111,15 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     3839) — and where the kerb ran slantwise across the plank at a fork, the end bar lay on
     the sidewalk (Болдина, 2527 2470). The middle of a plank is not probed: a joined plank
     crosses a paved median or an island as before. No bar fits — no zebra
-    (`a_zebra_is_whole_bars_centred_between_the_kerbs`). For all three the
+    (`a_zebra_is_whole_bars_centred_between_the_kerbs`). **A stop line is trimmed to the
+    same asphalt** (`paint::trim_stop_line`, roads list S7): its ends step inward by the
+    same `FIT_STEP` until the cross-section — the line's edges and its middle — lies on
+    the street asphalt, because at the mouth of an exit the kerb of the main street
+    stands slantwise in a section taper, and the line to the nominal half width lay a
+    couple of metres past it on the verge tile (Тула, устье съезда с Фрунзе, 3821 4143).
+    A line whose middle is off the street asphalt is not touched — a bridge deck's
+    asphalt is another layer, and the line's own is with it; a `Carriageway` area *is*
+    street asphalt and keeps the line whole. Nothing left — no line. For all three the
     ribbon's arclength runs across the road and «across» runs along it; to-break is a
     constant `NO_BREAK`.
   - **Layers**: `road_paint_wear_mask` + `road_paint_wear` at `Z_ROAD_WEAR_MASK` /
@@ -1610,7 +1619,9 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     `STOP_GAP` 1 m behind the zebra (or 1 m past the edge without one), across the lanes
     **coming to the node** — axis to kerb on the traffic side (`MapData::traffic_side`)
     for a two-way road, the full width for a one-way one that flows toward the node, none
-    on a one-way arm leaving it. A `give_way` sign without signals makes it dashed. **A
+    on a one-way arm leaving it. **The line is trimmed to the laid asphalt**
+    (`paint::trim_stop_line` — **Transverse paint** above, roads list S7). A `give_way`
+    sign without signals makes it dashed. **A
     stop line needs room for a queue behind it**: at least `STOP_QUEUE_ROOM` 10 m (two
     cars) of free road from its back to whichever comes first upstream — the asphalt of
     the next junction node on the road (its node point less the half width of its widest
@@ -2212,7 +2223,11 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
       `NOSE_REACH` 100 m, built only for a nose), not on the arms' first directions: the
       tip lies 30–60 m from the node, where a ring exit or a curving branch has long left
       the straight line. `NOSE_STEP` 0.5 m stations along the first arm: its edge (with
-      the taper — `Arm::half_at`, linear over the fitted wedge the ribbon lays), the nearest
+      the taper — `Arm::half_at`, linear over the fitted wedge the ribbon lays: the one
+      under the node, and one further along the arm — a wedge whose seam lies tens of
+      metres out narrows the kerb long before the nose zone, and on the nominal half
+      width the nose stood past the real parting of the edges, its hatched gore on the
+      verge tile (Tula, устье съезда с Фрунзе, roads list S7)), the nearest
       point of the second axis (searched in a `NOSE_WINDOW` of links around the previous
       hit) and the gap between the edges; the tip is the last station where they still
       crossed, the centre starts in the middle of the first gap of two radii and is then

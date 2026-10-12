@@ -1798,15 +1798,19 @@ pub fn build_roads(map: &MapData, style: RoadStyle, shape: RoadShape) -> RoadBui
     for shape in &lawn_scraps {
         push_shape(&mut verges, shape.clone(), SIDEWALK_COLOR.to_linear());
     }
-    // зебра — из целых звеньев на асфальте улиц, каким он уже лёг
-    let ground = paint::ZebraGround::new(&node_paint.zebras, streets.triangles());
+    // зебра — из целых звеньев на асфальте улиц, каким он уже лёг; стоп-линия
+    // обрезается по тому же асфальту: у устья съезда её конец ложился на
+    // плитку обочины мимо наискось стоящей кромки (S7)
+    let ground = paint::PaintGround::new(&node_paint.zebras, &node_paint.stop_lines, streets.triangles());
     for zebra in &node_paint.zebras {
         if let Some(zebra) = paint::whole_bars(zebra, |point| ground.contains(point)) {
             painter.paint_zebra(&zebra);
         }
     }
     for line in &node_paint.stop_lines {
-        painter.paint_stop_line(line);
+        if let Some(line) = paint::trim_stop_line(line, |point| ground.contains(point)) {
+            painter.paint_stop_line(&line);
+        }
     }
     // колея траекторий — всегда, как колея полос
     painter.paint_turn_wear(&turns.wear);

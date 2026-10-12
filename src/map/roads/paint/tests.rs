@@ -679,6 +679,60 @@ fn a_zebra_is_whole_bars_centred_between_the_kerbs() {
     assert!(high <= 4.0 && high > 3.0, "{high}");
 }
 
+/// Стоп-линия держится кромки, **суженной клином сечений** (roads list S7):
+/// у широкого way с клином к узкому продолжению кромка у перехода ближе оси,
+/// и линия до номинальной полуширины ложилась на плитку обочины, мимо кромки.
+/// Сцена: третья улица 14 м с клином к 8 м у узла, где primaries примыкает —
+/// главная уступает и получает зебру со стоп-линией внутри клина
+#[test]
+fn a_stop_line_keeps_to_the_kerb_narrowed_by_a_taper() {
+    use crate::map::osm::model::{RoadNode, RoadNodeKind};
+    let mut through = with_lanes(street(vec![Vec2::ZERO, Vec2::new(40.0, 0.0)], 14.0), 2, false);
+    through.highway = Highway::Tertiary;
+    let mut next = with_lanes(
+        street(vec![Vec2::new(40.0, 0.0), Vec2::new(100.0, 0.0)], 8.0),
+        1,
+        false,
+    );
+    next.highway = Highway::Tertiary;
+    let mut side = with_lanes(street(vec![Vec2::new(40.0, -60.0), Vec2::new(40.0, 0.0)], 14.0), 2, false);
+    side.highway = Highway::Primary;
+    let mut map = map_of(vec![through, next, side]);
+    map.road_nodes.push(RoadNode {
+        pos: Vec2::new(40.0, 0.0),
+        kind: RoadNodeKind::Crossing {
+            signals: false,
+            island: false,
+            marked: true,
+        },
+    });
+    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    assert!(report.junctions.stop_lines > 0, "{report}");
+    // клин у шва 14 → 8: длина 60, не больше 0.45 пути, — от x = 22 до 40;
+    // примыкание с юга кроет северную кромку, сужается южная:
+    // laid_half(x) = 7 − 3·(x − 22)/18. Стоп-линия западного плеча стоит в
+    // x ≈ 28–32 — внутри клина
+    let laid_half = |x: f32| 7.0 - 3.0 * ((x - 22.0) / 18.0).clamp(0.0, 1.0);
+    let builder = paint_layer(&layers, PAINT_LANES);
+    let coords = builder.ribbon_coords_for_test().unwrap();
+    let stops: Vec<_> = coords
+        .iter()
+        .zip(builder.positions_for_test())
+        .filter(|(coords, position)| {
+            coords[3] == LineKind::Stop.code() && (22.0..40.0).contains(&position[0])
+        })
+        .map(|(_, position)| position)
+        .collect();
+    assert!(!stops.is_empty(), "стоп-линии внутри клина в меше линий");
+    for position in stops {
+        assert!(
+            position[1].abs() <= laid_half(position[0]) + 0.6 + 0.05,
+            "{:?} за суженной кромкой",
+            position
+        );
+    }
+}
+
 #[test]
 fn a_pocket_line_ends_at_the_junction_and_the_rest_run_through() {
     // четыре полосы переходят в две на примыкании жилой: крайние линии широкой

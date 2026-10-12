@@ -647,7 +647,8 @@ impl MeshBuilder {
     }
 
     /// Накопленные треугольники в плоскости карты — тому, кто спрашивает, что
-    /// слой уже кроет (`roads::paint::ZebraGround`: асфальт под зеброй).
+    /// слой уже кроет (`roads::paint::PaintGround`: асфальт под зеброй и
+    /// стоп-линией).
     pub fn triangles(&self) -> impl Iterator<Item = [Vec2; 3]> + '_ {
         self.indices.chunks_exact(3).map(|triangle| {
             [0, 1, 2].map(|at| {

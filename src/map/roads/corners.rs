@@ -204,6 +204,8 @@ struct Arm<'d> {
     /// отходила от торцевой кромки, и между ними оставалась щель. Только у
     /// торцевого луча; у сквозного торца нет.
     butt: Option<Vec2>,
+    /// Клин дальше по лучу ([`FarTaper`]), если он есть.
+    far: Option<FarTaper>,
     /// Своя полуширина дороги.
     full: f32,
     /// Полуширина каждой стороны, к которой кромка под клином приходит за
@@ -260,14 +262,41 @@ impl Arm<'_> {
 
     /// Полуширина стороны `side` в `along` метрах от узла по лучу: в клине
     /// кромка расходится линейно, как её кладёт лента
-    /// (`MeshBuilder::push_taper_sided`).
+    /// (`MeshBuilder::push_taper_sided`); за узлом — сужается дальним клином
+    /// ([`FarTaper`], [`Arm::far`]).
     fn half_at(&self, side: usize, along: f32) -> f32 {
-        if self.widening <= 0.0 {
-            return self.half[side];
+        let mut half = if self.widening <= 0.0 {
+            self.half[side]
+        } else {
+            let share = (along / self.widening).min(1.0);
+            self.half[side] + (self.reach[side] - self.half[side]) * share
+        };
+        if let Some(far) = self.far
+            && far.sides[side]
+            && along > far.start
+        {
+            let share = ((along - far.start) / far.length).min(1.0);
+            half += (far.half - half) * share;
         }
-        let share = (along / self.widening).min(1.0);
-        self.half[side] + (self.reach[side] - self.half[side]) * share
+        half
     }
+}
+
+/// Клин дальше по лучу: узел вне его, но кромка за узлом сужается к дальнему
+/// шву way. Нос ищет кромки по [`Arm::trail`] за десятки метров от узла, и по
+/// номинальной полуширине луча вставал мимо настоящего расхождения кромок —
+/// штрихуемый клин ложился на плитку обочины (Тула, устье съезда с Фрунзе,
+/// S7).
+#[derive(Clone, Copy)]
+struct FarTaper {
+    /// Сколько метров от узла до начала клина.
+    start: f32,
+    /// Длина клина — обрезанная, как её положила лента (`tapers::fit`).
+    length: f32,
+    /// Полуширина узкого соседа.
+    half: f32,
+    /// Какие стороны луча ([`Arm::half`] — слева, справа) клин сужает.
+    sides: [bool; 2],
 }
 
 /// Слой, в который ложится нос ([`KerbReturns::noses`]).
@@ -560,6 +589,25 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                     verge[usize::from((side == 0) != forward)] =
                         (width > 0.0).then(|| road.verge_at(side, along * scale));
                 }
+                // клин дальше по лучу: узел вне его (под узлом — `under`, и
+                // клин перед узлом она же), кромка за узлом сужается к
+                // дальнему шву way. Стороны клина — по ходу точек way, лучу —
+                // по его ходу
+                let far = (!closed).then(|| {
+                    let end = usize::from(forward);
+                    let wedge = wedges[end]?;
+                    let length = fitted[end]?;
+                    let to_seam = if forward { total - along } else { along };
+                    (to_seam > length).then(|| FarTaper {
+                        start: to_seam - length,
+                        length,
+                        half: roads[wedge.narrow].width / 2.0,
+                        sides: [
+                            wedge.sides[usize::from(!forward)],
+                            wedge.sides[usize::from(forward)],
+                        ],
+                    })
+                });
                 entry.1.push(Arm {
                     class: road.class,
                     highway: road.highway,
@@ -581,6 +629,7 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                                 .map(|dir| if vertex == last { -dir } else { dir })
                         })
                         .flatten(),
+                    far: far.flatten(),
                     full: own,
                     reach,
                     widening,
