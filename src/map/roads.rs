@@ -1801,7 +1801,11 @@ pub fn build_roads(map: &MapData, style: RoadStyle, shape: RoadShape) -> RoadBui
     // зебра — из целых звеньев на асфальте улиц, каким он уже лёг; стоп-линия
     // обрезается по тому же асфальту: у устья съезда её конец ложился на
     // плитку обочины мимо наискось стоящей кромки (S7)
-    let ground = paint::PaintGround::new(&node_paint.zebras, &node_paint.stop_lines, streets.triangles());
+    let ground = paint::PaintGround::new(
+        &node_paint.zebras,
+        &node_paint.stop_lines,
+        streets.triangles(),
+    );
     for zebra in &node_paint.zebras {
         if let Some(zebra) = paint::whole_bars(zebra, |point| ground.contains(point)) {
             painter.paint_zebra(&zebra);

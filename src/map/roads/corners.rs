@@ -2713,7 +2713,10 @@ mod tests {
         west.highway = Highway::Secondary;
         west.lanes = Some(2);
         let mut branch = street(
-            vec![Vec2::ZERO, Vec2::from_angle(15_f32.to_radians()).rotate(Vec2::X) * 120.0],
+            vec![
+                Vec2::ZERO,
+                Vec2::from_angle(15_f32.to_radians()).rotate(Vec2::X) * 120.0,
+            ],
             8.0,
         );
         branch.highway = Highway::Tertiary;

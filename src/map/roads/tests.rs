@@ -2737,9 +2737,11 @@ fn a_zebra_plank_cuts_the_lines_of_crossing_carriageways() {
     for road in [1, 2] {
         let axis = drawn.axis(road, Axis::Ribbon);
         assert!(
-            !paint.asphalt().of(road).iter().any(|found| {
-                found.reach > 0.0 && found.at.distance(Vec2::ZERO) < 10.0
-            }),
+            !paint
+                .asphalt()
+                .of(road)
+                .iter()
+                .any(|found| { found.reach > 0.0 && found.at.distance(Vec2::ZERO) < 10.0 }),
             "узел ветки {road} — слияние, разрыва асфальта в нём быть не должно"
         );
         // разрыв от планки: недалеко от неё, короткий (узловой был бы в

@@ -1736,7 +1736,9 @@ pub(super) fn trim_stop_line(
     let along = across.perp() * (STOP_WIDTH / 2.0);
     let fits = |at: f32| {
         let point = line.from + across * at;
-        [point - along, point, point + along].into_iter().all(&on_asphalt)
+        [point - along, point, point + along]
+            .into_iter()
+            .all(&on_asphalt)
     };
     let width = span.length();
     let middle = width / 2.0;

@@ -687,7 +687,11 @@ fn a_zebra_is_whole_bars_centred_between_the_kerbs() {
 #[test]
 fn a_stop_line_keeps_to_the_kerb_narrowed_by_a_taper() {
     use crate::map::osm::model::{RoadNode, RoadNodeKind};
-    let mut through = with_lanes(street(vec![Vec2::ZERO, Vec2::new(40.0, 0.0)], 14.0), 2, false);
+    let mut through = with_lanes(
+        street(vec![Vec2::ZERO, Vec2::new(40.0, 0.0)], 14.0),
+        2,
+        false,
+    );
     through.highway = Highway::Tertiary;
     let mut next = with_lanes(
         street(vec![Vec2::new(40.0, 0.0), Vec2::new(100.0, 0.0)], 8.0),
@@ -695,7 +699,11 @@ fn a_stop_line_keeps_to_the_kerb_narrowed_by_a_taper() {
         false,
     );
     next.highway = Highway::Tertiary;
-    let mut side = with_lanes(street(vec![Vec2::new(40.0, -60.0), Vec2::new(40.0, 0.0)], 14.0), 2, false);
+    let mut side = with_lanes(
+        street(vec![Vec2::new(40.0, -60.0), Vec2::new(40.0, 0.0)], 14.0),
+        2,
+        false,
+    );
     side.highway = Highway::Primary;
     let mut map = map_of(vec![through, next, side]);
     map.road_nodes.push(RoadNode {

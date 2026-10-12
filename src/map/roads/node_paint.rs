@@ -1781,7 +1781,11 @@ fn breaks_across_zebras(
                     let run = d.dot(axis);
                     let bound = (span.0, span.1);
                     span = if run.abs() < 1e-6 {
-                        (offset.abs() <= limit).then_some(bound).unwrap_or((1.0, 0.0))
+                        if offset.abs() <= limit {
+                            bound
+                        } else {
+                            (1.0, 0.0)
+                        }
                     } else {
                         let mut low = (-limit - offset) / run;
                         let mut high = (limit - offset) / run;
