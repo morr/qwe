@@ -2267,8 +2267,13 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
       edges: both arms' `Arm::trail` (cut to `BEND_REACH` 40 m) offset by the half widths,
       the corner is their first crossing, and the centre starts on the bisector of the
       two edges' first directions and is **settled** `BEND_SETTLE` 8 times to stand one
-      radius off both polylines (the nose's trick); a foot at the corner or at the end of
-      the reach, or an arc off an edge by more than `BEND_FIT` 5 cm, gives nothing. The
+      radius off both polylines (the nose's trick); when a foot lands past the end of its
+      kerb — the pocket is shallower than the class radius (Путейская × Демонстрации,
+      N4: the through stretch kept 3.2 m of straight kerb where Демонстрации met it
+      6.3 m out, and a 6 m arc's tangent reached past the end of the 7.4 m kerb) — the
+      radius shrinks by 0.8 down to `MIN_RADIUS` 0.5 until both feet sit inside, the way
+      `fillet_arc` shrinks its tangent under a short run; a foot at the corner, or an arc
+      off an edge by more than `BEND_FIT` 5 cm even at the floor, gives nothing. The
       outline — corner, the first edge to the foot, the arc, the second edge back — is
       concave where a ring's edge bulges into the corner, so it is triangulated whole
       (`bends`, pushed with the noses). Its sides go `BEND_OVERLAP` 0.3 m under the
@@ -2282,7 +2287,10 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
       meets the ring at ~30° — a 6 m bend there poured asphalt twenty metres into the
       island's gore. Across the gallery the bends round every ring entry that had square
       corners (Ryazan 01/04/05/06, Oryol 02, Rostov 06, Kaluga 03) and a few city corners
-      whose run a smoothed bend had cut (Tula 05, 15, 18, 27); Tula 04, 17 and Belgorod
+      whose run a smoothed bend had cut (Tula 05, 15, 18, 27), and now the corner past a
+      through stretch whose end arcs ate the straight edge (Путейская × Демонстрации,
+      N4 — the corner had been open ground sown with grass down to the carriageway);
+      Tula 04, 17 and Belgorod
       01–02 did not move, Tula 20 by a handful of pixels. Tula: 464 bends (`bends` in the
       `road meshing:` line); `kerb_returns` itself did not move past the noise (a trail
       and two offsets only where the fillet failed).

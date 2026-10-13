@@ -1166,25 +1166,41 @@ fn bend(first: &Arm, second: &Arm, halves: (f32, f32), radius: f32) -> Option<Ve
     if half_angle < MIN_ANGLE / 2.0 {
         return None;
     }
-    let mut centre =
-        corner + (along_first + along_second).try_normalize()? * (radius / half_angle.sin());
-    for _ in 0..BEND_SETTLE {
-        let (first_foot, _) = nearest_on_path(&first_chain, centre)?;
-        let (second_foot, _) = nearest_on_path(&second_chain, centre)?;
-        let (away_first, away_second) = (centre - first_foot, centre - second_foot);
-        centre += away_first.normalize_or_zero() * (radius - away_first.length())
-            + away_second.normalize_or_zero() * (radius - away_second.length());
-    }
-    let (first_foot, first_cut) = nearest_on_path(&first_chain, centre)?;
-    let (second_foot, second_cut) = nearest_on_path(&second_chain, centre)?;
-    let (_, first_total) = arclengths(&first_chain);
-    let (_, second_total) = arclengths(&second_chain);
     // касание — на кромках за углом и до конца поиска, дуга — в радиус
-    let touches = |foot: Vec2, cut: f32, total: f32| {
+    let touches = |centre: Vec2, foot: Vec2, cut: f32, total: f32, radius: f32| {
         cut > OVERLAP && cut < total - OVERLAP && (centre.distance(foot) - radius).abs() < BEND_FIT
     };
-    if !touches(first_foot, first_cut, first_total)
-        || !touches(second_foot, second_cut, second_total)
+    // Класс-радиус может не лечь в карман: за углом кромка скоро кончается, и
+    // касательная садится за её конец (Путейская × Демонстрации, Тула: прямой
+    // край плеча кончается дугой сквозного отрезка за 3.2 м от узла, и до
+    // конца кромки за углом краёв — 7 м, касательной шестиметровой дуги — 7.6).
+    // Радиус сжимается, пока обе касательные не сядут на кромки, — как в
+    // [`fillet_arc`] сжимается касательная под прямым краем.
+    let bisector = (along_first + along_second).try_normalize()?;
+    let (_, first_total) = arclengths(&first_chain);
+    let (_, second_total) = arclengths(&second_chain);
+    let mut radius = radius;
+    let (centre, first_foot, first_cut, second_foot, second_cut) = loop {
+        let mut centre = corner + bisector * (radius / half_angle.sin());
+        for _ in 0..BEND_SETTLE {
+            let (first_foot, _) = nearest_on_path(&first_chain, centre)?;
+            let (second_foot, _) = nearest_on_path(&second_chain, centre)?;
+            let (away_first, away_second) = (centre - first_foot, centre - second_foot);
+            centre += away_first.normalize_or_zero() * (radius - away_first.length())
+                + away_second.normalize_or_zero() * (radius - away_second.length());
+        }
+        let (first_foot, first_cut) = nearest_on_path(&first_chain, centre)?;
+        let (second_foot, second_cut) = nearest_on_path(&second_chain, centre)?;
+        let inside = |cut: f32, total: f32| cut > OVERLAP && cut < total - OVERLAP;
+        if (inside(first_cut, first_total) && inside(second_cut, second_total))
+            || radius <= MIN_RADIUS
+        {
+            break (centre, first_foot, first_cut, second_foot, second_cut);
+        }
+        radius *= 0.8;
+    };
+    if !touches(centre, first_foot, first_cut, first_total, radius)
+        || !touches(centre, second_foot, second_cut, second_total, radius)
     {
         return None;
     }
@@ -1935,8 +1951,10 @@ fn rounded<'d>(drawn: &'d Drawn, index: usize) -> Option<&'d [Vec2]> {
 #[cfg(test)]
 mod tests {
     use super::super::network::pairs::PairRun;
+    use super::super::shape::RoadShape;
     use super::super::tapers::Taper;
     use super::*;
+    use crate::map::RoadStyle;
     use crate::map::osm::fixture::street;
     use crate::map::osm::model::point_in_polygon;
     use crate::map::osm::{MapData, RoadLine};
@@ -2859,6 +2877,55 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_corner_past_a_bent_arm_gets_a_curved_kerb_return() {
+        // Сквозная улица поворачивает в узле примыкания, и прямой край её
+        // плеча кончается дугой сквозного отрезка задолго до угла краёв
+        // (Путейская × Демонстрации, Тула: край 3.2 м, угол краёв 6.3 м от
+        // узла). Прямое скругление не ложится, гнутому класс-радиус не
+        // помещается в карман — угол оставался открытой землёй у проезжей.
+        let through = street(
+            vec![
+                Vec2::new(5.0, 9.2),
+                Vec2::ZERO,
+                Vec2::new(-6.2, -6.0),
+                Vec2::new(-12.4, -12.0),
+            ],
+            7.6,
+        );
+        let side = street(vec![Vec2::ZERO, Vec2::new(40.0, -6.0)], 7.6);
+        // ось со сглаживанием (`for_test` рисует без него): прямой отрезок
+        // через узел короче угла краёв
+        let map = map_of(&[through, side]);
+        let drawn = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
+        let found = kerb_returns(&drawn, 1.0);
+        // южный угол — прямым скруглением, северо-восточный — гнутым: дуга
+        // асфальта и поворот тротуара за ней
+        assert_eq!(found.roads.len(), 1, "{:?}", found.roads);
+        assert_eq!(
+            found
+                .bends
+                .iter()
+                .map(|(fill, _)| *fill)
+                .collect::<Vec<_>>(),
+            [Fill::Road(RoadClass::Street), Fill::Sidewalk],
+            "{:?}",
+            found.bends
+        );
+        // северо-восточный угол закрыт: у контура есть точки за кромками
+        assert!(
+            found
+                .roads
+                .iter()
+                .map(|(_, outline)| outline)
+                .chain(found.bends.iter().map(|(_, outline)| outline))
+                .any(|outline| outline.iter().any(|point| point.y > 3.0 && point.x > 5.0)),
+            "{:?} {:?}",
+            found.roads,
+            found.bends
+        );
     }
 
     #[test]

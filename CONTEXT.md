@@ -1780,9 +1780,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     of the **same centre** — the radius smaller by exactly the sidewalk width, so a
     constant band follows the kerb round the corner. A radius under the sidewalk width
     leaves that corner square, as it is on the ground. Where an arm's edge runs straight
-    for less than the tangent — a ring arc, drawn in chords of a couple of metres — the
+    for less than the tangent — a ring arc, drawn in chords of a couple of metres, or a
+    straight edge cut short by a through stretch's own end arcs — the
     corner is a **bend** (`corners::bend`, `KerbReturns::bends`): the same arc seated on
-    the **curved** edges (the arms' axes offset by the half widths), 60°–155° apart only
+    the **curved** edges (the arms' axes offset by the half widths), its radius shrinking
+    below the class table until both tangents sit on the kerbs, 60°–155° apart only
     (sharper is a nose's, or a ring's gore); triangulated whole. Two arms 155°–178° apart
     at a junction whose widths differ get the **wide kerb's wedge** instead
     (`corners::obtuse_corner`): the wide arm's edge carried on past its square end into
