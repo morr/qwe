@@ -170,7 +170,14 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   sidewalk-carrying arms where at least one side has a verge, a fillet by the verge at
   the node (`verge_at` there; the band where there is none) with the arc at the kerb radius less the **narrower** of the
   two — by the wider, as the band corners do, it left a wedge of ground along the
-  narrower. **A wide verge is a lawn** (`paved_verge`): tile covers a verge up to
+  narrower. **The corner arcs facing the sidewalk and the lawn are cut finer than the
+  ribbon arcs** (`KERB_ARC_SUBDIVISION` 3 — the `fillet` of the verge and sidewalk
+  corners, and the kerb pad's own arc; the road corner keeps the ribbon step, its edge
+  runs under the asphalt, roads list N7): at the ribbon's own `ARC_TOLERANCE` step a
+  corner arc ran to half a dozen chords turning 12–17° on each other, and those joints
+  are what the eye follows — the sidewalk band's edge against the lawn read as a broken
+  line of 4–5 segments (Фёдора Смирнова × Красноармейский, Tula). A third of the step
+  turns each joint by 4–6° (`kerb_return_arcs_turn_smoothly_at_the_lawn`). **A wide verge is a lawn** (`paved_verge`): tile covers a verge up to
   `VERGE_PAVED_MAX` 4 m whole; wider, only a `VERGE_KERB` 0.5 m strip at the kerb —
   **a step, not a ramp**. The tile used to narrow over 2 m of extra width, and where a
   footway leaves the street slowly its edge ran obliquely across the whole verge: a

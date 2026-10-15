@@ -729,7 +729,8 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                 let round = if mixed {
                     None
                 } else {
-                    fillet(node, first, second, halves, radius)
+                    // кромка дуги уходит под асфальт — общий шаг, стыков нет
+                    fillet(node, first, second, halves, radius, 1)
                 };
                 // прямая кромка короче касательной — дуга на гнутые кромки
                 if round.is_none()
@@ -826,9 +827,10 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                 // она уходила от бордюра, и вдоль узкой оставался клин земли
                 let halves = (first.half[0] + a, second.half[1] + b);
                 let radius = kerb_radius(first, second) * scale - a.min(b);
-                if let Some(outline) = fillet(node, first, second, halves, radius)
-                    .or_else(|| obtuse_corner(node, first, second, halves))
-                    .or_else(|| outer_corner(node, first, second, halves))
+                if let Some(outline) =
+                    fillet(node, first, second, halves, radius, KERB_ARC_SUBDIVISION)
+                        .or_else(|| obtuse_corner(node, first, second, halves))
+                        .or_else(|| outer_corner(node, first, second, halves))
                 {
                     if a.min(b) > VERGE_PAVED_MAX {
                         returns.verge_lawns.push(outline);
@@ -883,7 +885,8 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
             // радиус оставляет асфальтовый клин внутри тротуарного
             let halves = (first.half[0] + a, second.half[1] + b);
             let radius = kerb_radius(first, second) * scale - a.max(b);
-            if let Some(outline) = fillet(node, first, second, halves, radius) {
+            if let Some(outline) = fillet(node, first, second, halves, radius, KERB_ARC_SUBDIVISION)
+            {
                 returns.sidewalks.push(outline);
             } else if let Some(outline) = bend(first, second, halves, radius) {
                 returns.bends.push((Fill::Sidewalk, outline));
@@ -1087,17 +1090,28 @@ fn outer_corner(node: Vec2, first: &Arm, second: &Arm, halves: (f32, f32)) -> Op
     Some(outline)
 }
 
+/// Во сколько раз дуга скругления режется мельче общего шага
+/// ([`arc_steps`]) у фигур, чьи кромки выходят на тротуар и газон: стыки
+/// кусков общего шага (12–17° на угол) читались гранями «ломаной» кромки
+/// тротуара и газона (Тула, Фёдора Смирнова × Красноармейский, 3399 3835).
+/// Втрое — излом 4–6°. Дуге дорожной группы этого не нужно: её кромка идёт
+/// под асфальт, и стыков не видно.
+const KERB_ARC_SUBDIVISION: usize = 3;
+
 /// Скругление угла от луча `first` против часовой стрелки до луча `second`:
 /// `halves` — полуширины полос, по краям которых сходится угол, `radius` —
-/// радиус дуги в этом углу.
+/// радиус дуги в этом углу, `subdivision` — во сколько раз мельче общего
+/// шага режется дуга ([`KERB_ARC_SUBDIVISION`], `1` — общий шаг).
 fn fillet(
     node: Vec2,
     first: &Arm,
     second: &Arm,
     halves: (f32, f32),
     radius: f32,
+    subdivision: usize,
 ) -> Option<Vec<Vec2>> {
-    let arc = fillet_arc(node, first, second, halves, radius)?;
+    let mut arc = fillet_arc(node, first, second, halves, radius)?;
+    arc.steps *= subdivision;
     // прямые стороны заходят под ленты на `OVERLAP`: сторона, совпадающая с
     // краем ленты, но не делящая с ней вершин, растеризуется с пропусками —
     // по краю проезда шла пунктирная щель со светлым тротуаром под ней
@@ -1386,9 +1400,12 @@ fn kerb_pad(
     halves: (f32, f32),
     radius: f32,
 ) -> Vec<Vec<Vec2>> {
-    let Some(arc) = fillet_arc(node, first, second, halves, radius) else {
+    let Some(mut arc) = fillet_arc(node, first, second, halves, radius) else {
         return Vec::new();
     };
+    // обе кромки кольца идут по газону во весь рост полосы — дуга тоже
+    // режется мельче общего шага ([`KERB_ARC_SUBDIVISION`])
+    arc.steps *= KERB_ARC_SUBDIVISION;
     // Ширина площадки у каждого луча — не шире его полосы тротуара, если
     // она есть: площадка в 3 м за тротуаром в 2.5 выходила в газон уступом
     // в полметра у конца хвоста и у начала дуги (Тула, Фёдора Смирнова у
@@ -3004,6 +3021,96 @@ mod tests {
                 .roads
                 .iter()
                 .any(|(_, outline)| point_in_polygon(wedge, outline))
+        );
+    }
+
+    /// Кромка тротуара и газона за скруглением не ломается на стыках кусков
+    /// дуги: дуги бордюрных поворотов режутся в [`KERB_ARC_SUBDIVISION`] раз
+    /// мельче общего шага, иначе 6 хорд общего шага выходили на кромку
+    /// гранями с изломами в 12–17° (Тула, Фёдора Смирнова ×
+    /// Красноармейский, 3399 3835).
+    #[test]
+    fn kerb_return_arcs_turn_smoothly_at_the_lawn() {
+        // юго-восточный угол того перекрёстка: Фёдора Смирнова с газонной
+        // обочиной 8.3 м на север, Красноармейский со своей узкой на восток,
+        // переулок на запад, проспект на юг
+        let mut smirnova = street(
+            vec![
+                Vec2::new(-13.5, 104.1),
+                Vec2::new(-1.8, 12.3),
+                Vec2::new(-1.1, 6.5),
+                Vec2::ZERO,
+            ],
+            10.9,
+        );
+        smirnova.highway = Highway::Secondary;
+        smirnova.verges = [8.3, 0.0];
+
+        let mut east = street(
+            vec![
+                Vec2::ZERO,
+                Vec2::new(23.4, -3.4),
+                Vec2::new(26.0, -3.8),
+                Vec2::new(58.4, -8.5),
+                Vec2::new(107.1, -15.7),
+            ],
+            10.9,
+        );
+        east.highway = Highway::Primary;
+        east.oneway = true;
+
+        let mut west = street(
+            vec![Vec2::new(-102.1, 19.9), Vec2::new(-19.2, 4.0), Vec2::ZERO],
+            10.9,
+        );
+        west.highway = Highway::Tertiary;
+
+        let mut south = street(
+            vec![Vec2::ZERO, Vec2::new(-1.4, -9.5), Vec2::new(-2.8, -21.0)],
+            20.8,
+        );
+        south.highway = Highway::Primary;
+
+        let map = map_of(&[smirnova, east, west, south]);
+        let found = kerb_returns(
+            &Drawn::new(&map, &RoadStyle::default(), &RoadShape::default()),
+            1.0,
+        );
+        // у контуров тротуаров излом между соседними звеньями дуги — не
+        // грань. Звено дуги короче прямого края полосы и длиннее
+        // пятисантиметровых заходов под ленты; излом круче 45° — это угол
+        // самой фигуры (кончик линзы, смычка), а не стык кусков, и не
+        // меряется
+        let mut joints = 0;
+        let mut worst = 0.0_f32;
+        for outline in &found.sidewalks {
+            let edges: Vec<_> = outline
+                .windows(2)
+                .map(|pair| (pair[0].distance(pair[1]), pair[1] - pair[0]))
+                .collect();
+            for pair in edges.windows(2) {
+                let (a, b) = (pair[0].0, pair[1].0);
+                if !(0.3..=3.0).contains(&a) || !(0.3..=3.0).contains(&b) {
+                    continue;
+                }
+                let turn = pair[0]
+                    .1
+                    .perp_dot(pair[1].1)
+                    .atan2(pair[0].1.dot(pair[1].1));
+                let turn = turn.abs().to_degrees();
+                if turn <= 45.0 {
+                    joints += 1;
+                    worst = worst.max(turn);
+                }
+            }
+        }
+        assert!(
+            joints >= 6,
+            "дуги не нашлись: {joints} стыков коротких звеньев"
+        );
+        assert!(
+            worst <= 10.0,
+            "кромка ломается на стыках кусков дуги: {worst:.1}°"
         );
     }
 }
