@@ -171,13 +171,18 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   the node (`verge_at` there; the band where there is none) with the arc at the kerb radius less the **narrower** of the
   two — by the wider, as the band corners do, it left a wedge of ground along the
   narrower. **The corner arcs facing the sidewalk and the lawn are cut finer than the
-  ribbon arcs** (`KERB_ARC_SUBDIVISION` 3 — the `fillet` of the verge and sidewalk
-  corners, and the kerb pad's own arc; the road corner keeps the ribbon step, its edge
-  runs under the asphalt, roads list N7): at the ribbon's own `ARC_TOLERANCE` step a
+  ribbon arcs** (`KERB_ARC_SUBDIVISION` 3 — the `fillet` of the verge, sidewalk **and
+  road** corners, the kerb pad's own arc, and the `bend` of a corner a bent edge
+  refuses the straight fillet at): at the ribbon's own `ARC_TOLERANCE` step a
   corner arc ran to half a dozen chords turning 12–17° on each other, and those joints
   are what the eye follows — the sidewalk band's edge against the lawn read as a broken
-  line of 4–5 segments (Фёдора Смирнова × Красноармейский, Tula). A third of the step
-  turns each joint by 4–6° (`kerb_return_arcs_turn_smoothly_at_the_lawn`). **A wide verge is a lawn** (`paved_verge`): tile covers a verge up to
+  line of 4–5 segments (Фёдора Смирнова × Красноармейский, Tula). The road corner needs
+  it just the same: at an ordinary crossing the corner piece's arc **is** the kerb line
+  between the two streets' straight edges — the ribbons end at the node on straight
+  butts and nothing else covers the corner — so its joints read as facets on the kerb
+  itself (N7, the same corner; the "runs under the asphalt" claim was wrong there). A third of the step
+  turns each joint by 4–6° (`kerb_return_arcs_turn_smoothly_at_the_lawn`,
+  `a_road_corner_arc_is_cut_at_the_kerb_step`). **A wide verge is a lawn** (`paved_verge`): tile covers a verge up to
   `VERGE_PAVED_MAX` 4 m whole; wider, only a `VERGE_KERB` 0.5 m strip at the kerb —
   **a step, not a ramp**. The tile used to narrow over 2 m of extra width, and where a
   footway leaves the street slowly its edge ran obliquely across the whole verge: a
@@ -483,7 +488,15 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     and a half (the author's report after the seam fix). A node moved by two halves —
     a half's end and its continuation's start — is put at the **mean** of the two moves,
     so both drawn ends stay one vertex (apart, they missed each other by 5–8 cm and the
-    node was lost). A **continuation** is a way of the same street *or* the coaxial way
+    node was lost). **The axes are snapshotted before any move**: a short street spanning
+    two moved nodes (Фёдора Смирнова between two Красноармейский junctions, 9.6 m) has
+    each end placed by its own node, and the second node's fading tail, walking a *live*
+    axis, met the first node's *new* place — not yet registered (`RoadNodes::alias` runs
+    after) — and dragged that end ~4 cm sideways, out of the node's key cell. The road
+    left the node (`RoadNodes::is_shared` is an exact cell), the junction stopped seeing
+    it, and the 20.8 m street kept a round cap sticking out past the kerb arc (N7);
+    `follow_moved_nodes` now walks copies of all axes taken up front
+    (`a_short_street_between_two_moved_nodes_keeps_both_node_vertices`). A **continuation** is a way of the same street *or* the coaxial way
     past the end (`RoadNodes::next_way`): at a crossing the network's street ends
     (Красноармейский is tertiary up to the node and primary past it) while the half goes
     on, and a fade on both sides narrowed the avenue at every crossing. **A bridge is a

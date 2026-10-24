@@ -3819,7 +3819,7 @@ fn diag_window() {
             let line = prepared.axis(i, Axis::Ribbon);
             if line.iter().any(|p| p.distance(at) < r) {
                 eprintln!(
-                    "DIAG road {i} hw={:?} class={:?} w={} oneway={} lanes={:?} bw={:?} osm={:?}\n    ribbon={:?}",
+                    "DIAG road {i} hw={:?} class={:?} w={} oneway={} lanes={:?} bw={:?} osm={:?}\n    ribbon={:?}\n    nodal={:?}",
                     d.highway,
                     d.class,
                     d.width,
@@ -3827,12 +3827,33 @@ fn diag_window() {
                     d.lanes,
                     d.lanes_backward,
                     d.points,
-                    line
+                    line,
+                    prepared.axis(i, crate::map::roads::Axis::Nodal)
                 );
                 eprintln!("DIAG   verges={:?} profile={:?}", d.verges, d.verge_profile);
             }
         }
         let returns = super::corners::kerb_returns(&prepared, 1.0);
+        for (index, merge) in prepared.merges().list.iter().enumerate() {
+            if merge.node.distance(at) < r * 2.0 {
+                eprintln!(
+                    "DIAG merge {index} node={:?} halves={:?} street={} street_end={} pure={}",
+                    merge.node, merge.halves, merge.street, merge.street_end, merge.pure
+                );
+            }
+        }
+        for i in 0..prepared.len() {
+            if prepared
+                .axis(i, crate::map::roads::Axis::Ribbon)
+                .iter()
+                .any(|p| p.distance(at) < r)
+            {
+                eprintln!(
+                    "DIAG is_merged road {i} = {:?}",
+                    [prepared.is_merged(i, 0), prepared.is_merged(i, 1)]
+                );
+            }
+        }
         let near = |outline: &Vec<Vec2>| outline.iter().any(|p| p.distance(at) < r);
         for (class, o) in returns.roads.iter().filter(|(_, o)| near(o)) {
             eprintln!("DIAG kr roads {class:?} {o:?}");
@@ -3863,12 +3884,45 @@ fn diag_window() {
                 eprintln!("DIAG butt road {i} {b:?}");
             }
         }
+        let nodes = prepared.nodes();
+        for i in 0..prepared.len() {
+            if prepared
+                .axis(i, Axis::Ribbon)
+                .iter()
+                .any(|p| p.distance(at) < r)
+            {
+                let nodal = prepared.axis(i, crate::map::roads::Axis::Nodal);
+                let shared = [0, nodal.len() - 1]
+                    .map(|v| (nodes.is_shared(nodal[v]), nodes.roads_at(nodal[v]).to_vec()));
+                eprintln!(
+                    "DIAG ends road {i} stitched={:?} at={:?} offset={} shared={shared:?}",
+                    prepared.stitched_end(i),
+                    prepared.stitches().ends[i],
+                    prepared.stitch_offset(i),
+                );
+            }
+        }
     }
     let (mut layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
     eprintln!("DIAG report {report}");
     let layout =
         crate::map::parking::ParkingLayout::new(&map.parking, &map.roads, map.traffic_side);
     layers.extend(crate::map::spawn::mesh_surfaces(&map, &layout).0);
+    if let Ok(spec) = std::env::var("QWE_DIAG_MESH") {
+        let v: Vec<f32> = spec.split(',').filter_map(|s| s.parse().ok()).collect();
+        let (at, r) = (Vec2::new(v[0], v[1]), v[2]);
+        for layer in &layers {
+            let pos = layer.builder.positions_for_test();
+            let near: Vec<Vec2> = pos
+                .iter()
+                .map(|p| Vec2::new(p[0], p[1]))
+                .filter(|p| p.distance(at) < r)
+                .collect();
+            if !near.is_empty() {
+                eprintln!("DIAG mesh {} {} {near:?}", layer.name, near.len());
+            }
+        }
+    }
     if let Ok(spec) = std::env::var("QWE_DIAG_COLUMN") {
         let v: Vec<f32> = spec.split(',').map(|s| s.parse().unwrap()).collect();
         let (from, to, step) = (Vec2::new(v[0], v[1]), Vec2::new(v[2], v[3]), v[4]);

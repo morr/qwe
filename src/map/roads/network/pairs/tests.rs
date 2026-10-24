@@ -211,6 +211,44 @@ fn halves_laid_over_each_other_are_pushed_apart() {
 }
 
 #[test]
+fn a_short_street_between_two_moved_nodes_keeps_both_node_vertices() {
+    // Тула, Фёдора Смирнова у Красноармейского: улица в 9.6 м между двумя
+    // узлами, уехавшими с половинами. Второй узел ставит свой торец на
+    // место, и его гаснущий хвост доходил до торца, уже поставленного
+    // первым: узел там ещё не зарегистрирован (`RoadNodes::alias` позже),
+    // и хвост сдвигал вершину на сантиметры в сторону — дорога выпадала из
+    // узла, теряла плечо, и её круглый торец выходил за дугу бордюра
+    let a = Vec2::new(0.0, 0.0);
+    let b = Vec2::new(1.4, -9.5);
+    let roads = vec![
+        street(vec![a, b], 20.8),
+        street(vec![Vec2::new(-8.0, 0.5), a], 10.9),
+        street(vec![b, Vec2::new(-8.0, -10.0)], 10.9),
+    ];
+    let nodes = RoadNodes::new(&roads);
+    let mut paths: Vec<Cow<[Vec2]>> = roads
+        .iter()
+        .map(|road| Cow::Borrowed(road.points.as_slice()))
+        .collect();
+    let pairs = Pairs::new(&roads, &paths, median_gap(), &[]);
+    let moved = [
+        (a, a + Vec2::new(0.15, 0.9)),
+        (b, b + Vec2::new(-0.15, 0.9)),
+    ];
+    pairs.follow_moved_nodes(&mut paths, &nodes, &moved);
+    assert_eq!(
+        paths[0][0],
+        a + Vec2::new(0.15, 0.9),
+        "торец стоит в узле A, не сдвинут хвостом узла B"
+    );
+    assert_eq!(
+        paths[0][1],
+        b + Vec2::new(-0.15, 0.9),
+        "второй торец — в узле B"
+    );
+}
+
+#[test]
 fn a_node_shared_with_a_side_street_moves_with_the_half_and_the_street_follows() {
     // выезд из двора посреди куска. Прежде узел был закреплён, и у каждого
     // выезда ось возвращалась к OSM: кромка Красноармейского гуляла на

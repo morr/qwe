@@ -323,6 +323,30 @@ $b res set IndustryStyle .visible true            # промзона: цилин
 $b res set SurfaceStyle .texture 0.0              # фактура поверхностей: 0 — плоские заливки
 ```
 
+### Which layer draws a glitch — hide them one by one
+
+A visual glitch (a jagged edge, a wrong colour) is identified by **elimination**:
+hide one map layer at a time and reshoot — the layer whose disappearance removes
+the glitch is the culprit. The style toggles above cover only some layers (the
+verge tile, verge lawns/yards, medians have no toggle at all), so go through
+`Visibility` on the layer entity itself:
+
+```bash
+$b q Mesh2d Name --limit 2000 2>/dev/null | grep '"Name": "road_\|"Name": "sidewalks"'
+#   4294946172 {"Name": "road_verges"}   ← entity id of the layer ("sidewalks", "alleys",
+#                                          "roads", "road_verge_yards", "road_medians", … —
+#                                          the names are the LayerMesh names, see CLAUDE.md's
+#                                          spawn-site table)
+$b insert 4294946172 '{"bevy_camera::visibility::Visibility": "Hidden"}'
+$b shot        # the short name "Visibility" is NOT resolved — the full path is required
+```
+
+Restore with the same insert of `"Visible"` (or just quit — the world rebuilds on
+restart anyway). One layer per shot, always against the same `cam` framing; compare
+crops, not full frames. This found the N7 road defect in three shots after an hour
+of pixel arithmetic had failed: the facets belonged to the `roads` entity, which no
+style toggle reaches.
+
 Hotkey equivalents in the app: `R` restart, `G` gizmos (doors + movepath), `N` the
 navigation overlay of whichever backend is selected, `M` movepath, `Space` pause,
 `=`/`-` speed. The bottom-left button row has the layer toggles, the **Navigation**

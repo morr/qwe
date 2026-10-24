@@ -729,8 +729,12 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                 let round = if mixed {
                     None
                 } else {
-                    // кромка дуги уходит под асфальт — общий шаг, стыков нет
-                    fillet(node, first, second, halves, radius, 1)
+                    // у обычного перекрёстка кромка дуги — сама линия бордюра
+                    // между прямыми краями двух улиц: ленты заканчиваются у узла
+                    // прямыми торцами, и кроме куска угол не кроет никто. Общий
+                    // шаг читался гранями (Тула, Фёдора Смирнова ×
+                    // Красноармейский, 3399 3835)
+                    fillet(node, first, second, halves, radius, KERB_ARC_SUBDIVISION)
                 };
                 // прямая кромка короче касательной — дуга на гнутые кромки
                 if round.is_none()
@@ -1091,11 +1095,12 @@ fn outer_corner(node: Vec2, first: &Arm, second: &Arm, halves: (f32, f32)) -> Op
 }
 
 /// Во сколько раз дуга скругления режется мельче общего шага
-/// ([`arc_steps`]) у фигур, чьи кромки выходят на тротуар и газон: стыки
-/// кусков общего шага (12–17° на угол) читались гранями «ломаной» кромки
-/// тротуара и газона (Тула, Фёдора Смирнова × Красноармейский, 3399 3835).
-/// Втрое — излом 4–6°. Дуге дорожной группы этого не нужно: её кромка идёт
-/// под асфальт, и стыков не видно.
+/// ([`arc_steps`]) у всех угловых кусков: стыки кусков общего шага
+/// (12–17° на угол) читались гранями «ломаной» кромки тротуара и газона
+/// (Тула, Фёдора Смирнова × Красноармейский, 3399 3835). Втрое — излом
+/// 4–6°. Это верно и для дорожной группы: у обычного перекрёстка её дуга —
+/// сама линия бордюра (ленты заканчиваются у узла прямыми торцами), и её
+/// стыки видны так же.
 const KERB_ARC_SUBDIVISION: usize = 3;
 
 /// Скругление угла от луча `first` против часовой стрелки до луча `second`:
@@ -1240,7 +1245,9 @@ fn bend(first: &Arm, second: &Arm, halves: (f32, f32), radius: f32) -> Option<Ve
     outline.push(first_foot + inward(first_foot));
     let (from, to) = (first_foot - centre, second_foot - centre);
     let sweep = from.angle_to(to);
-    let steps = arc_steps(radius, sweep.abs()).max(1);
+    // тот же мелкий шаг, что у прямого скругления: кромка гнутого куска —
+    // бордюр или кромка дорожки, стыки общего шага читаются гранями
+    let steps = arc_steps(radius, sweep.abs()).max(1) * KERB_ARC_SUBDIVISION;
     outline
         .extend((0..=steps).map(|step| {
             centre + Vec2::from_angle(sweep * step as f32 / steps as f32).rotate(from)
@@ -2039,6 +2046,23 @@ mod tests {
             for point in &outline[2..outline.len() - 1] {
                 let radius = point.distance(centre);
                 assert!((radius - STREET_RADIUS).abs() < 1e-2, "{radius}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_road_corner_arc_is_cut_at_the_kerb_step() {
+        // Дорожная группа резала дугу общим шагом: у обычного перекрёстка её
+        // кромка — сама линия бордюра между прямыми краями двух улиц, и стыки
+        // хорд общего шага (~13° на угол 6 м) читались гранями (Тула, Фёдора
+        // Смирнова × Красноармейский, 3399 3835).
+        for (_, outline) in returns_of(&crossing()) {
+            for triple in outline[2..outline.len() - 1].windows(3) {
+                let incoming = (triple[1] - triple[0]).normalize();
+                let outgoing = (triple[2] - triple[1]).normalize();
+                let turn = incoming.angle_to(outgoing).abs().to_degrees();
+                // втрое мельче общего шага: ~4° на радиусе 6 м
+                assert!(turn < 6.0, "стык дуги {turn:.1}°: {outline:?}");
             }
         }
     }

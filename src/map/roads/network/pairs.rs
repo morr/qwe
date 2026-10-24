@@ -968,12 +968,22 @@ impl Pairs {
     /// вершина узла — туда же, куда половина, соседние вершины — с затуханием
     /// на [`FOLLOW_FADE`], до следующего узла. Разводимые половины
     /// сдвинуты своей разводкой и не трогаются.
+    ///
+    /// Оси снимаются до сдвига: короткая улица между двумя уехавшими узлами
+    /// ставит свои торцы на оба новых места, и второй сдвиг по живой оси
+    /// находил у торца уже новое место первого узла — узел там ещё не
+    /// зарегистрирован ([`RoadNodes::alias`] позже), гаснущий хвост доходил
+    /// до торца и сдвигал его на сантиметры в сторону. Дорога выпадала из
+    /// узла ([`RoadNodes::is_shared`] — точная ячейка), теряла плечо, и её
+    /// круглый торец выходил за дугу бордюра (Тула, Фёдора Смирнова у
+    /// Красноармейского).
     pub fn follow_moved_nodes(
         &self,
         paths: &mut [Cow<[Vec2]>],
         nodes: &RoadNodes,
         moved: &[(Vec2, Vec2)],
     ) {
+        let originals: Vec<Vec<Vec2>> = paths.iter().map(|path| path.to_vec()).collect();
         let mut seen = HashSet::new();
         for &(from, to) in moved {
             let key = node_key(from);
@@ -985,11 +995,10 @@ impl Pairs {
                 if !self.runs[road].is_empty() {
                     continue;
                 }
-                let Some(vertex) = paths[road].iter().position(|point| node_key(*point) == key)
-                else {
+                let original = &originals[road];
+                let Some(vertex) = original.iter().position(|point| node_key(*point) == key) else {
                     continue;
                 };
-                let original = paths[road].to_vec();
                 let points = paths[road].to_mut();
                 points[vertex] = to;
                 let after = (vertex + 1..original.len()).collect::<Vec<_>>();
