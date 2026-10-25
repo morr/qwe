@@ -236,13 +236,15 @@ pub(super) fn measure_footways_beside_streets(roads: &mut [RoadLine]) -> Separat
                 // проба в чужом следе — устье перекрёстка: параллельную
                 // дорожку через устье не мерять (косую — можно: это дорожка,
                 // заворачивающая за угол, она и есть кромка обочины)
-                let in_footprint = street_index
-                    .near_each(point - reach, point + reach)
-                    .any(|&street| {
-                        let (from, to, street_reach, owner) = streets[street as usize];
-                        owner != road_index
-                            && closest_on_segment(point, from, to).distance(point) <= street_reach
-                    });
+                let in_footprint =
+                    street_index
+                        .near_each(point - reach, point + reach)
+                        .any(|&street| {
+                            let (from, to, street_reach, owner) = streets[street as usize];
+                            owner != road_index
+                                && closest_on_segment(point, from, to).distance(point)
+                                    <= street_reach
+                        });
                 let mut found: [Option<(f32, f32)>; 2] = [None; 2];
                 // косое звено — только профилю: у угла дорожка заворачивает
                 let mut slanted: [Option<f32>; 2] = [None; 2];

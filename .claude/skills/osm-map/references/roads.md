@@ -2197,7 +2197,11 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     — the run ends where the wedge begins, since the edge there is already
     closer to the axis; gallery 08's 9 m street tapering to one lane put two spikes of
     asphalt and sidewalk out of its corners; lengths as the ribbon cuts them,
-    `tapers::fit`). **A node under the wedge** — a side street joining the wider way inside
+    `tapers::fit`) — **by the fitted length**: a raw seam wedge can outgrow the road
+    itself (132 m of wedge on a 60 m drive), and a cap by the raw length went negative
+    and wiped the arm's run to zero, so the mouth corner was not built and the node's
+    asphalt spiked through the tile band (Тула, съезд с Фрунзе в стоянку, N2;
+    `a_taper_longer_than_the_road_keeps_the_mouth_corner`). **A node under the wedge** — a side street joining the wider way inside
     its taper, not at its end (Сойфера at Фёдора Смирнова: 14 m from the seam on a 33 m
     wedge, R3) — is read at the wedge's width there, `narrow + (own − narrow) · from
     seam / length` on each narrowed side; the arm away from the seam runs straight to the

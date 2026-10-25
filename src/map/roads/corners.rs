@@ -520,7 +520,12 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                 // Кромка прямая только до клина: дальше лента сужается, и
                 // касательная, заведённая в клин, торчала из-под него шипом
                 // асфальта и тротуара (пример 08, улица в 9 м с клином к
-                // однополосной). В клине — до его конца или до шва.
+                // однополосной). В клине — до его конца или до шва. Длина
+                // клина — подогнанная: сырая бывает длиннее самой дороги, и
+                // капа по ней обнуляла прямой пробег всех лучей дороги —
+                // углам у узлов не хватало кромки, и асфальтовый угол устья
+                // торчал шипом (Тула, съезд с Фрунзе в стоянку, N2).
+                let [head_fitted, tail_fitted] = fitted.map(|length| length.unwrap_or(0.0));
                 if !closed {
                     let straight = match under {
                         Some((end, _, length, from_seam)) if length > 0.0 => {
@@ -530,8 +535,8 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                                 from_seam
                             }
                         }
-                        _ if forward => total - tail - along,
-                        _ => along - head,
+                        _ if forward => total - tail_fitted - along,
+                        _ => along - head_fitted,
                     };
                     run = run.min(straight.max(0.0));
                 }
@@ -2366,14 +2371,16 @@ mod tests {
         assert!((right_angle_radius(&paved[0].1) - STREET_RADIUS).abs() < 1e-2);
     }
 
-    /// Поперечная в 20 м с клином на дальнем конце в 14 м: кромка прямая
-    /// только 6 м от узла, и дуга дальше не заходит — в клине лента уже, и
-    /// касательная торчала из-под него шипом (витрина 08).
+    /// Поперечная в 12 м с клином на дальнем конце в 14 м: подогнанная длина
+    /// клина — 5.4 м (доля пути), кромка прямая только 6.6 м от узла, и дуга
+    /// дальше не заходит — в клине лента уже, и касательная торчала из-под
+    /// него шипом (витрина 08). Капа по сырой длине здесь держала бы кромку
+    /// на 12 − 14 < 0 — вовсе без пробега.
     #[test]
     fn a_taper_on_the_arm_limits_the_radius() {
         let map = map_of(&[
             east_west(),
-            street(vec![Vec2::ZERO, Vec2::new(0.0, 20.0)], 8.0),
+            street(vec![Vec2::ZERO, Vec2::new(0.0, 12.0)], 8.0),
         ]);
         let drawn = Drawn::for_test(&map).with_sidewalks(false).with_taper(
             1,
@@ -2388,9 +2395,40 @@ mod tests {
         assert!(!found.roads.is_empty());
         for (_, outline) in &found.roads {
             for point in outline {
-                assert!(point.y <= 6.0 + 1e-3, "{point:?}");
+                assert!(point.y <= 6.6 + 1e-3, "{point:?}");
             }
         }
+    }
+
+    /// Клин длиннее дороги: сырая длина клина бывает больше пути, и капа
+    /// прямого пробега по ней уходила в минус — все лучи дороги вставали
+    /// с нулевым пробегом, дорожный угол у устья переулка не строился,
+    /// и асфальт торчал шипом в чужой угол (Тула, съезд с Фрунзе
+    /// в стоянку, N2). Капа — по подогнанной длине клина.
+    #[test]
+    fn a_taper_longer_than_the_road_keeps_the_mouth_corner() {
+        let map = map_of(&[
+            street(vec![Vec2::ZERO, Vec2::new(30.0, 0.0)], 8.0),
+            street(vec![Vec2::ZERO, Vec2::new(0.0, -20.0)], 4.0),
+        ]);
+        let drawn = Drawn::for_test(&map).with_sidewalks(false).with_taper(
+            0,
+            1,
+            Taper {
+                length: 80.0,
+                narrow: 1,
+                sides: [true; 2],
+            },
+        );
+        let found = kerb_returns(&drawn, 1.0);
+        // дуга устья в квадранте между улицей и переездом. Без подогнанной
+        // капы пробег луча улицы нулевой, дуга проваливается в bend, и среди
+        // дорожных углов остаётся только веер противоположного квадранта
+        let mouth = found
+            .roads
+            .iter()
+            .any(|(_, outline)| outline.iter().any(|point| point.x > 1.5 && point.y < -5.0));
+        assert!(mouth, "{:?}", found.roads);
     }
 
     /// Узкая улица 8 м переходит в широкую 11 м клином в 30 м, и в 20 м от шва
