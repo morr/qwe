@@ -1105,6 +1105,50 @@ fn a_footbridge_beside_a_deck_gets_a_slit_apron() {
     assert!(!covered(&far, "bridges", Vec2::new(-12.0, 130.0)));
 }
 
+/// Мостик, идущий берегом улицы без настила (R32, Орёл, 1-я Курская): берег
+/// моста длиннее настила, и вдоль подхода читалась тройка «тротуар, щель
+/// грунта, мостик». Щель между полосой тротуара улицы и настилом мостика
+/// мостится плиткой; мостик в шести метрах — отдельный мост, фартука нет.
+#[test]
+fn a_footbridge_along_a_street_approach_gets_a_tile_apron() {
+    let covered = |layers: &[LayerMesh], at: Vec2| {
+        layer(layers, "sidewalks")
+            .builder
+            .triangles()
+            .any(|[a, b, c]| crate::map::osm::model::point_in_polygon(at, &[a, b, c]))
+    };
+    let scene = |x: f32| {
+        let mut map = MapData::default();
+        map.roads.push(fixture::street(
+            vec![Vec2::new(0.0, 0.0), Vec2::new(0.0, 100.0)],
+            14.2,
+        ));
+        map.roads.push(fixture::bridge(
+            vec![Vec2::new(0.0, 100.0), Vec2::new(0.0, 160.0)],
+            14.2,
+        ));
+        // мостик начинается задолго до настила — берегом, вдоль улицы
+        map.roads.push(RoadLine {
+            class: RoadClass::Alley,
+            highway: Highway::Path,
+            pavement: Some(Pavement::Paved),
+            ..fixture::bridge(vec![Vec2::new(x, -20.0), Vec2::new(x, 160.0)], 3.5)
+        });
+        map.network = super::network::RoadNetwork::new(&map.roads);
+        mesh_roads(&map, RoadStyle::default(), RoadShape::default()).0
+    };
+    let near = scene(-13.5);
+    let strip = [-11.5, -10.5, -9.5, -8.5]
+        .iter()
+        .any(|&x| covered(&near, Vec2::new(x, 80.0)));
+    assert!(strip, "щель между тротуаром подхода и мостиком не закрыта");
+    let far = scene(-17.0);
+    assert!(
+        !covered(&far, Vec2::new(-13.0, 80.0)),
+        "далеко — без фартука"
+    );
+}
+
 /// Мостик, вынесенный из настила к его кромке (R14), тянет за собой дорожку,
 /// и та, возвращаясь на своё место, расходится с полосой тротуара подхода
 /// клином голой земли (S5, Тула, Одоевский путепровод, 2411 3020): щели на

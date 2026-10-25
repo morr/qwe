@@ -2910,9 +2910,17 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   under both), so a footbridge **moved out** to the deck's edge — curbs overlapping, no
   slit on the deck — still gets the ground wedge closed where its path parts from the
   band (S5, Tula, the Одоевский путепровод at 2411 3020: the path follows the moved
-  footbridge and fades back, a ~9 m wedge of bare ground opened). Pinned by
-  `a_footbridge_beside_a_deck_gets_a_slit_apron` and
-  `a_moved_footbridges_path_meets_the_band_without_a_wedge`.
+  footbridge and fades back, a ~9 m wedge of bare ground opened). **Beside a street on
+  the ground, without a deck** (R32, the 1-я Курская residue): the bridge's bank is
+  longer than the deck, and along the approach the footbridge ran beside the street
+  itself — the triple «sidewalk, strip of bare ground, footbridge» read along the whole
+  approach; the footbridge is probed the same way against every non-bridge street
+  ribbon, and the gap from the street's band edge (`Drawn::band_half`) to the
+  footbridge's fill edge, up to `SLIT_MAX`, is paved in the path's layer and colour.
+  Pinned by
+  `a_footbridge_beside_a_deck_gets_a_slit_apron`,
+  `a_moved_footbridges_path_meets_the_band_without_a_wedge` and
+  `a_footbridge_along_a_street_approach_gets_a_tile_apron`.
   **A path widens into its footbridge** (`push_path_flare`, S5): the footbridge is
   3.5 m plus a 0.8 m curb a side, the path onto it 2–3 m, so at the head the path's
   square end stood as a step inside the footbridge's curb on both sides. Over its last

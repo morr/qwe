@@ -67,6 +67,20 @@ pub(super) fn slit_aprons(
         .iter()
         .map(|&index| bounds(&ribbon[index], drawn[index].curb_reach() + SLIT_MAX + 4.0))
         .collect();
+    // улицы на земле: у мостика, идущего берегом без настила, щель между
+    // тротуаром улицы и им (R32) — берег моста длиннее настила, и тройка
+    // «тротуар, щель грунта, мостик» читалась вдоль всего подхода
+    let streets: Vec<(usize, (Vec2, Vec2))> = (0..drawn.len())
+        .filter(|&index| {
+            !drawn[index].bridge
+                && drawn[index].class == RoadClass::Street
+                && ribbon[index].len() >= 2
+        })
+        .map(|index| {
+            let pad = drawn[index].curb_reach() + SLIT_MAX + drawn[index].width / 2.0 + 4.0;
+            (index, bounds(&ribbon[index], pad))
+        })
+        .collect();
     for foot in (0..drawn.len()).filter(|&index| is_footbridge(drawn[index])) {
         let path: &[Vec2] = &ribbon[foot];
         if path.len() < 2 {
@@ -102,6 +116,23 @@ pub(super) fn slit_aprons(
                     aprons.ground.push(ring);
                 }
             }
+        }
+        // берегом, без настила: щель между тротуаром улицы и мостиком —
+        // плиткой (в слое дорожки, цвет мостика), от кромки её полосы до
+        // кромки настила мостика (R32)
+        let fill = drawn[foot].width / 2.0;
+        for &(street, (street_low, street_high)) in &streets {
+            if high.cmplt(street_low).any() || low.cmpgt(street_high).any() {
+                continue;
+            }
+            let runs = beside(path, &ribbon[street], |side, distance| {
+                let band = prepared.band_half(street, side);
+                let clear = distance - band - fill;
+                (clear > CLOSED && clear <= SLIT_MAX).then_some([band, distance - fill])
+            });
+            aprons
+                .ground
+                .extend(runs.into_iter().map(|(_, ring)| (foot, ring)));
         }
     }
     aprons
