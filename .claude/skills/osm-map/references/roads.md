@@ -193,6 +193,14 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   stay — the node's corner is there), and at each change inserts a vertex pair
   `VERGE_SEAM` 0.05 m either side of where the verge passes 4 m, so the tile ends in a
   seam across the street. Pinned by `a_verge_turns_from_tiles_to_lawn_across_the_street`.
+  **A probe inside a crossing measures nothing**: the verge profile is probed every 5 m,
+  and a probe standing in another carriageway's footprint (its asphalt + sidewalk band)
+  is a junction mouth — a parallel footway found from there lies *across* the mouth, and
+  the profile it fed ballooned over it (Tula, Pervomayskaya at Veresaeva: 1.9 → 7.6 m on
+  the last probes), throwing the verge lawn past the crossing in a capped tongue into the
+  neighbour block. Parallel hits at such probes are dropped; slanted ones stay — they are
+  the footway wrapping the corner, the verge's own edge
+  (`a_probe_inside_a_crossing_footprint_does_not_measure_across_it`).
   **The verge reaches under its footway** by `VERGE_UNDER_PATH` 0.5 m past the axis — the
   tile of a narrow verge and the lawn of a wide one (the kerb strip keeps its width): the
   profile is measured on the **raw** axes of the street and the footway, the ribbons lie

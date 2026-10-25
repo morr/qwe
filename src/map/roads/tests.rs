@@ -3873,6 +3873,9 @@ fn diag_window() {
         for o in returns.verges.iter().filter(|o| near(o)) {
             eprintln!("DIAG kr verge {o:?}");
         }
+        for o in returns.verge_lawns.iter().filter(|o| near(o)) {
+            eprintln!("DIAG kr lawn {o:?}");
+        }
         for i in 0..prepared.len() {
             let b = returns.butt(i);
             if b != [false; 2]

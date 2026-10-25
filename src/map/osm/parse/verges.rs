@@ -188,7 +188,25 @@ pub(super) fn measure_footways_beside_streets(roads: &mut [RoadLine]) -> Separat
     if links.is_empty() {
         return report;
     }
-    for road in roads.iter_mut() {
+    // следы проезжих частей — асфальт с полосой тротуара: проба внутри чужого
+    // следа стоит в устье перекрёстка, и мерянная оттуда «дорожка вдоль» —
+    // за устьем, на той же стороне, но уже через перекрёсток. Профиль от неё
+    // раздувался на устье, и газон обочины выходил за перекрёсток языком в
+    // чужой квартал (Тула, Первомайская у Вересаева: 1.9 → 7.6 м на последних
+    // пробах)
+    let mut streets: Vec<(Vec2, Vec2, f32, usize)> = Vec::new();
+    let mut street_index: Grid<u32> = Grid::new(SEPARATE_CELL);
+    for (owner, road) in roads.iter().enumerate() {
+        if !road.is_carriageway() {
+            continue;
+        }
+        let reach = road.width / 2.0 + sidewalk_band(road.width);
+        for pair in road.points.windows(2) {
+            street_index.insert_segment(pair[0], pair[1], reach, streets.len() as u32);
+            streets.push((pair[0], pair[1], reach, owner));
+        }
+    }
+    for (road_index, road) in roads.iter_mut().enumerate() {
         let paved = !road.is_unpaved_street();
         let asks = paved || road.sidewalks.contains(&SidewalkSide::Inferred);
         if !road.is_carriageway() || !asks {
@@ -215,6 +233,16 @@ pub(super) fn measure_footways_beside_streets(roads: &mut [RoadLine]) -> Separat
         while at < total {
             if let Some((point, direction)) = place_on_path(&road.points, &along, at) {
                 probes += 1;
+                // проба в чужом следе — устье перекрёстка: параллельную
+                // дорожку через устье не мерять (косую — можно: это дорожка,
+                // заворачивающая за угол, она и есть кромка обочины)
+                let in_footprint = street_index
+                    .near_each(point - reach, point + reach)
+                    .any(|&street| {
+                        let (from, to, street_reach, owner) = streets[street as usize];
+                        owner != road_index
+                            && closest_on_segment(point, from, to).distance(point) <= street_reach
+                    });
                 let mut found: [Option<(f32, f32)>; 2] = [None; 2];
                 // косое звено — только профилю: у угла дорожка заворачивает
                 let mut slanted: [Option<f32>; 2] = [None; 2];
@@ -236,6 +264,9 @@ pub(super) fn measure_footways_beside_streets(roads: &mut [RoadLine]) -> Separat
                             if side.is_none_or(|nearest| distance < nearest) {
                                 *side = Some(distance);
                             }
+                            continue;
+                        }
+                        if in_footprint {
                             continue;
                         }
                         let side = &mut found[at_side];

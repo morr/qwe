@@ -1517,6 +1517,38 @@ fn a_sidewalk_stays_unless_a_paved_footway_runs_beside_it() {
     );
 }
 
+/// Проба обочины, вставшая в след перекрёстка, не меряет через устье: за ним
+/// параллельная дорожка той же стороны тянула профиль обочины через
+/// перекрёсток, и газон обочины выходил за устье языком в чужой квартал
+/// (Тула, Первомайская у Вересаева: профиль у конца прыгал с 1.9 до 7.6 м).
+#[test]
+fn a_probe_inside_a_crossing_footprint_does_not_measure_across_it() {
+    // улица вдоль x; дорожка у кромки до x = 80, перекрёсток на x = 90,
+    // за устьем — параллельная дорожка той же стороны в 11 м от оси
+    let street = street(vec![Vec2::ZERO, Vec2::new(95.0, 0.0)], 8.0);
+    let crossing = crate::map::osm::fixture::street(
+        vec![Vec2::new(90.0, 15.0), Vec2::new(90.0, -15.0)],
+        20.0,
+    );
+    let mut roads = vec![
+        street,
+        crossing,
+        paved_footway(-6.0, 0.0, 80.0),
+        paved_footway(-11.0, 85.0, 95.0),
+    ];
+    verges::measure_footways_beside_streets(&mut roads);
+    let profile = &roads[0].verge_profile[1];
+    assert!(
+        profile.iter().all(|&(_, verge)| verge < 5.0),
+        "профиль через устье: {profile:?}"
+    );
+    assert!(
+        roads[0].verge_at(1, 90.0) < 5.0,
+        "обочина на устье {:?}",
+        roads[0].verge_profile
+    );
+}
+
 /// Сторона с дорожкой вдоль — без полосы по тегу, отданная ей или с полосой —
 /// получает обочину от кромки до оси дорожки; сторона без дорожки — нет.
 #[test]
@@ -4561,6 +4593,43 @@ fn a_pocket_with_no_block_beside_is_meadow_by_a_lawn_and_yard_elsewhere() {
         1,
         "щель у газона"
     );
+}
+
+/// Щель между кромкой мощёной дорожки и полигоном сквера — карман: она
+/// замкнута покрытиями с обеих сторон и засевается лугом. У СЗ угла
+/// Оружейной × Энгельса такая полоса в полметра между кромкой велодорожки и
+/// забором парка светилась тёмной линией голой земли (R37-02).
+#[test]
+fn a_slit_between_a_paved_path_and_the_park_edge_is_sown_as_meadow() {
+    let at = |x: f32, y: f32| CENTER + Vec2::new(x, y);
+    let mut map = MapData {
+        roads: vec![RoadLine {
+            pavement: Some(Pavement::Paved),
+            sidewalks: [SidewalkSide::None; 2],
+            ..crate::map::osm::fixture::footway(vec![at(0.0, -20.0), at(0.0, 20.0)])
+        }],
+        ..MapData::default()
+    };
+    // сквер за дорожкой с зазором 0.4 м; планки на концах замыкают щель
+    // внахлёст с обеими сторонами — иначе щель протекает в открытый мир
+    let mut park = |points: Vec<Vec2>| {
+        map.parks.push(PolyArea {
+            kind: AreaKind::Park,
+            ..building(points, Vec::new())
+        })
+    };
+    park(vec![
+        at(2.15, -15.0),
+        at(30.0, -15.0),
+        at(30.0, 15.0),
+        at(2.15, 15.0),
+    ]);
+    park(vec![at(0.0, 15.0), at(2.6, 15.0), at(2.6, 18.0), at(0.0, 18.0)]);
+    park(vec![at(0.0, -18.0), at(2.6, -18.0), at(2.6, -15.0), at(0.0, -15.0)]);
+    let sown = pockets::fill_ground_pockets(&mut map);
+    assert_eq!(sown, 1, "карманов засеяно: {sown}");
+    assert_eq!(map.pockets[0].kind, AreaKind::Grass, "у сквера — лугом");
+    assert!(sown_at(&map, 1.95, 0.0), "щель осталась землёй");
 }
 
 /// Что должно остаться землёй, остаётся: карман у грунтовой тропы (пустырь с
