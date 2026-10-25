@@ -3950,6 +3950,30 @@ fn diag_window() {
             }
         }
     }
+    if let Ok(spec) = std::env::var("QWE_DIAG_RING") {
+        let v: Vec<f32> = spec.split(',').filter_map(|s| s.parse().ok()).collect();
+        let (at, r) = (Vec2::new(v[0], v[1]), v[2]);
+        let near = |ring: &[Vec2]| ring.iter().any(|p| p.distance(at) < r);
+        let layers: [(&str, &Vec<crate::map::osm::model::PolyArea>); 10] = [
+            ("buildings", &map.buildings),
+            ("water", &map.water),
+            ("parks", &map.parks),
+            ("woods", &map.woods),
+            ("grass", &map.grass),
+            ("sand", &map.sand),
+            ("landuse", &map.landuse),
+            ("parking", &map.parking),
+            ("pitches", &map.pitches),
+            ("pockets", &map.pockets),
+        ];
+        for (name, areas) in layers {
+            for (i, area) in areas.iter().enumerate() {
+                if near(&area.outer) {
+                    eprintln!("DIAG ring {name}[{i}] kind={:?} outer={area:?}", area.kind);
+                }
+            }
+        }
+    }
     let (mut layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
     eprintln!("DIAG report {report}");
     let layout =

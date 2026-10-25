@@ -2497,7 +2497,7 @@ const RING_SLIVER: f32 = 0.05;
 /// p → q → p (OSM любит самокасания контуров) сворачиваются в одну точку.
 /// Игла сама не видна, но кайма площадки рисует обе её стороны — светлый
 /// шов «V» поверх газона обочины (Тула, сквер у Сойфера, N8).
-fn collapse_slivers(ring: &[Vec2]) -> Vec<Vec2> {
+pub(super) fn collapse_slivers(ring: &[Vec2]) -> Vec<Vec2> {
     let mut clean: Vec<Vec2> = Vec::with_capacity(ring.len());
     for &point in ring {
         if clean

@@ -19,7 +19,9 @@
 //! ([`POCKET_AREA_MAX`]), засевается травой (`MapData::pockets`) — какой,
 //! решает сосед ([`Scene::grass_near`]): у квартала — травой того же
 //! квартала (рисуется его слоем), у замапленного газона или сквера — лугом,
-//! а без них — травой двора. Это правило газона широкой обочины
+//! вливающимся в ту зелень ([`merge_into_green`]: сеяться рядом — значит
+//! лечь на её кайму полосой и оставить видимый шов по краю посева), а без
+//! них — травой двора. Это правило газона широкой обочины
 //! (`roads.rs::Meadows`): луг — только у замапленной зелени, по умолчанию —
 //! двор. Без квартала рядом карман оставался землёй — бежевый параллелограмм
 //! между газонами обочин у кольца Калуги 01.
@@ -133,32 +135,44 @@ struct Scene {
     /// кромку ленты издалека, а не с краю.
     apron_grid: Grid<usize>,
     /// Рёбра колец кварталов: `(от, до, вид квартала)`.
-    blocks: Rim,
-    /// Рёбра колец замапленной зелени (`parks`, `grass`) — вид всегда
-    /// `Grass`: у газона и у сквера карман засевается одним лугом, как
-    /// газон обочины рядом с ними.
-    meadows: Rim,
+    blocks: Rim<AreaKind>,
+    /// Рёбра колец замапленной зелени (`parks`, `grass`) с номером зелени:
+    /// у газона и у сквера карман вливается в неё одним лугом, как газон
+    /// обочины рядом с ними.
+    meadows: Rim<Green>,
     /// Внешние края той же зелени — фартук зелени (`green_aprons`).
     meadow_edges: Vec<(Vec2, Vec2)>,
 }
 
 /// Рёбра колец площадей одного рода с индексом по [`Grid`]: у какого кольца
-/// карман и какой травой он тогда засевается.
-struct Rim {
-    edges: Vec<(Vec2, Vec2, AreaKind)>,
+/// карман и что с ним тогда делать.
+struct Rim<T> {
+    edges: Vec<(Vec2, Vec2, T)>,
     grid: Grid<usize>,
 }
 
+/// Замапленная зелень (`parks`, `grass`), в которую вливается карман-луг.
+#[derive(Clone, Copy)]
+struct Green {
+    park: bool,
+    index: usize,
+}
+
 /// Карман, найденный в плитке: кольцо, уже заведённое под соседей, и вид
-/// травы, которой он засевается.
+/// травы, которой он засевается. `absorb` — зелень, в которую карман вливается
+/// вместо отдельного посева ([`merge_into_green`]).
 struct Pocket {
     outer: Vec<Vec2>,
     kind: AreaKind,
+    absorb: Option<Green>,
 }
 
 /// Засеять карманы земли травой ([`Scene::grass_near`]): каждый — площадью
 /// в `MapData::pockets` (не в `landuse`: карман — не квартал, и обочина
 /// рядом с ним двор не спрашивает). Возвращает, сколько.
+///
+/// Карман-луг, касающийся своей зелени, в неё вливается ([`merge_into_green`])
+/// — по порядку плиток, так что и это не зависит от числа потоков.
 ///
 /// Плитки друг от друга не зависят и считаются по потокам, как стоянки
 /// (`lots::pave_lots`); порядок результата — порядок плиток, так что он не
@@ -173,7 +187,15 @@ pub(super) fn fill_ground_pockets(map: &mut MapData) -> usize {
     pockets.extend(scene.green_aprons());
     drop(scene);
     let sown = pockets.len();
-    for Pocket { outer, kind } in pockets {
+    for Pocket {
+        outer,
+        kind,
+        absorb,
+    } in pockets
+    {
+        if absorb.is_some_and(|green| merge_into_green(map, green, &outer)) {
+            continue;
+        }
         map.pockets.push(PolyArea {
             outer,
             holes: Vec::new(),
@@ -186,6 +208,47 @@ pub(super) fn fill_ground_pockets(map: &mut MapData) -> usize {
         });
     }
     sown
+}
+
+/// Влить карман `pocket` (уже заведённый под соседей) в замапленную зелень:
+/// их объединение становится её внешним кольцом. `false` — карман зелени не
+/// касался (`Rim::near` ответил про неё по вершине в четырёх метрах, а расти
+/// до неё карману не хватило своих полметра): сеется отдельной площадкой,
+/// как раньше.
+///
+/// Карман-луг, посеянный рядом с газоном, лёг бы на его кайму полосой в
+/// полметра ([`LANDUSE_OVERLAP`]), и там, где посев кончался, срезанная кайма
+/// читалась швом — две светлые линии сходящимся клином (Тула, сквер у
+/// Сойфера, N8). Влившийся карман растит зелень целиком, и кайма остаётся
+/// только по внешнему краю — против квартала и дороги.
+fn merge_into_green(map: &mut MapData, green: Green, pocket: &[Vec2]) -> bool {
+    let areas = if green.park {
+        &mut map.parks
+    } else {
+        &mut map.grass
+    };
+    let Some(area) = areas.get_mut(green.index) else {
+        return false;
+    };
+    let joined: Vec<Shape> = vec![
+        vec![oriented(&area.outer, true)],
+        vec![oriented(pocket, true)],
+    ]
+    .simplify_shape(FillRule::NonZero);
+    let [shape] = joined.as_slice() else {
+        return false;
+    };
+    let Some(outer) = shape.first() else {
+        return false;
+    };
+    area.outer = super::collapse_slivers(&ring_of(outer));
+    area.holes = shape
+        .iter()
+        .skip(1)
+        .map(|hole| super::collapse_slivers(&ring_of(hole)))
+        .collect();
+    area.holes.retain(|hole| hole.len() >= 3);
+    true
 }
 
 /// Плитки, которых касается хоть одно звено дороги (с запасом [`MARGIN`]:
@@ -288,22 +351,34 @@ impl Scene {
             meadows: Rim::of(
                 map.parks
                     .iter()
-                    .chain(&map.grass)
-                    .map(|area| (area, AreaKind::Grass)),
+                    .enumerate()
+                    .map(|(index, area)| (area, Green { park: true, index }))
+                    .chain(
+                        map.grass
+                            .iter()
+                            .enumerate()
+                            .map(|(index, area)| (area, Green { park: false, index })),
+                    ),
             ),
             meadow_edges,
         }
     }
 
-    /// Какой травой засевается карман `ring` площадью `area`: квартала рядом,
-    /// иначе лугом у замапленного газона или сквера, иначе — травой двора
-    /// (`Residential`), как газон обочины (`roads.rs::Meadows`). Карман без
-    /// соседа меньше [`LONE_POCKET_MIN`] не засевается вовсе.
-    fn grass_near(&self, ring: &[Vec2], area: f32) -> Option<AreaKind> {
+    /// Какой травой засевается карман `ring` площадью `area` и куда он
+    /// вливается: квартала рядом, иначе лугом у замапленного газона или
+    /// сквера — в ту зелень, к чьему кольцу ближе всего подошёл, — иначе
+    /// травой двора (`Residential`), как газон обочины (`roads.rs::Meadows`).
+    /// Карман без соседа меньше [`LONE_POCKET_MIN`] не засевается вовсе.
+    fn grass_near(&self, ring: &[Vec2], area: f32) -> Option<(AreaKind, Option<Green>)> {
         self.blocks
             .near(ring)
-            .or_else(|| self.meadows.near(ring))
-            .or((area >= LONE_POCKET_MIN).then_some(AreaKind::Residential))
+            .map(|kind| (kind, None))
+            .or_else(|| {
+                self.meadows
+                    .near(ring)
+                    .map(|green| (AreaKind::Grass, Some(green)))
+            })
+            .or_else(|| (area >= LONE_POCKET_MIN).then_some((AreaKind::Residential, None)))
     }
 
     /// Карманы, чей габарит серединой в плитке `tile`.
@@ -344,7 +419,7 @@ impl Scene {
             if !self.on_road(&ring, false) || self.on_road(&ring, true) {
                 continue;
             }
-            let Some(kind) = self.grass_near(&ring, area) else {
+            let Some((kind, absorb)) = self.grass_near(&ring, area) else {
                 continue;
             };
             // край заводится под соседей: лента рисуется по сглаженной оси, а
@@ -357,6 +432,7 @@ impl Scene {
             pockets.push(Pocket {
                 outer: ring_of(outer),
                 kind,
+                absorb,
             });
         }
         pockets
@@ -446,30 +522,31 @@ fn close_apron(run: &mut Vec<(Vec2, Vec2)>, aprons: &mut Vec<Pocket>) {
         aprons.push(Pocket {
             outer,
             kind: AreaKind::Grass,
+            absorb: None,
         });
     }
     run.clear();
 }
 
-impl Rim {
-    fn of<'a>(areas: impl Iterator<Item = (&'a PolyArea, AreaKind)>) -> Self {
+impl<T: Copy> Rim<T> {
+    fn of<'a>(areas: impl Iterator<Item = (&'a PolyArea, T)>) -> Self {
         let mut edges = Vec::new();
         let mut grid = Grid::new(MARGIN);
-        for (area, kind) in areas {
+        for (area, tag) in areas {
             for ring in std::iter::once(&area.outer).chain(&area.holes) {
                 for (index, &from) in ring.iter().enumerate() {
                     let to = ring[(index + 1) % ring.len()];
                     grid.insert_segment(from, to, POCKET_NEAR, edges.len());
-                    edges.push((from, to, kind));
+                    edges.push((from, to, tag));
                 }
             }
         }
         Self { edges, grid }
     }
 
-    /// Вид площади, к кольцу которой ближе всего подходит карман, — если
+    /// Тег площади, к кольцу которой ближе всего подходит карман, — если
     /// ближе [`POCKET_NEAR`]; при равенстве — раньше заведённой.
-    fn near(&self, ring: &[Vec2]) -> Option<AreaKind> {
+    fn near(&self, ring: &[Vec2]) -> Option<T> {
         ring.iter()
             .flat_map(|&point| {
                 self.grid.at(point).iter().map(move |&index| {

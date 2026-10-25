@@ -671,7 +671,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   touching a paved road, touching no dirt path and no larger than `POCKET_AREA_MAX`
   400 m² is sown with grass (grown 0.5 m under its neighbours) by the verge lawn's rule:
   within `POCKET_NEAR` 4 m of a block — that block's grass, in the block layer; else of a
-  mapped park or lawn — the meadow (`Grass`, lawn layer, no rim); else the yard grass
+  mapped park or lawn — the meadow, **merged into that very green** (its ring grows by the
+  union; sown beside it, the pocket covered the green's rim kaima and the cut kaima read
+  as a V seam — Tula, the square by Soifer, N8); else the yard grass
   (the parallelogram by the Kaluga 01 ring), from `LONE_POCKET_MIN` 10 m² up — a smaller
   lone hole is a gap in the paving and stays ground. A pocket is **not a block**: it
   lives beside `landuse`, so a verge next to it does not turn to yard grass. What stays

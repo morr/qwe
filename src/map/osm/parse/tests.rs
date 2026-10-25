@@ -4575,9 +4575,11 @@ fn a_ground_pocket_between_a_block_and_two_footways_is_sown_as_yard() {
 }
 
 /// Карман без квартала рядом засевается тоже — по правилу газона обочины:
-/// у замапленного газона или сквера лугом (`Grass`), у чего-то другого (тут
-/// стоянка) травой двора. Раньше без квартала его засеять было нечем, и
-/// бежевый параллелограмм оставался между газонами обочин (Калуга 01).
+/// у замапленного газона или сквера он вливается в зелень (см.
+/// `a_meadow_pocket_touching_a_lawn_is_merged_into_it`), у чего-то другого
+/// (тут стоянка) сеется травой двора. Раньше без квартала его засеять было
+/// нечем, и бежевый параллелограмм оставался между газонами обочин
+/// (Калуга 01).
 #[test]
 fn a_pocket_with_no_block_beside_is_meadow_by_a_lawn_and_yard_elsewhere() {
     let scene_beside = |kind: AreaKind, cut: f32| {
@@ -4591,39 +4593,93 @@ fn a_pocket_with_no_block_beside_is_meadow_by_a_lawn_and_yard_elsewhere() {
         }
         map
     };
-    let sown_beside = |kind: AreaKind| {
+    // у зелени клин вливается в неё: середина клина — внутри зелени, не
+    // отдельным карманом
+    let merged_beside = |kind: AreaKind| {
         let mut map = scene_beside(kind, 16.0);
-        // у зелени фартук подшивает и края у дорожек — считать можно только
-        // «хоть один»: сам клин — первым, замкнутым карманом
+        pockets::fill_ground_pockets(&mut map);
+        let green = if matches!(kind, AreaKind::Park) {
+            &map.parks[0]
+        } else {
+            &map.grass[0]
+        };
         assert!(
-            pockets::fill_ground_pockets(&mut map) >= 1,
-            "у {kind:?} не засеяно ничего"
+            crate::map::osm::model::point_in_polygon(CENTER + Vec2::new(4.0, -4.0), &green.outer),
+            "середина клина у {kind:?} не влилась в зелень"
         );
         assert!(
-            sown_at(&map, 4.0, -4.0),
-            "середина клина у {kind:?} — землёй"
+            !sown_at(&map, 4.0, -4.0),
+            "клин у {kind:?} сеется поверх зелени"
         );
-        map.pockets[0].kind
     };
-    assert_eq!(sown_beside(AreaKind::Park), AreaKind::Grass, "у сквера");
-    assert_eq!(sown_beside(AreaKind::Grass), AreaKind::Grass, "у газона");
+    merged_beside(AreaKind::Park);
+    merged_beside(AreaKind::Grass);
+    let mut by_lot = scene_beside(AreaKind::Parking(LotKind::Yard), 16.0);
+    assert!(
+        pockets::fill_ground_pockets(&mut by_lot) >= 1,
+        "у стоянки не засеяно ничего"
+    );
+    assert!(
+        sown_at(&by_lot, 4.0, -4.0),
+        "середина клина у стоянки — землёй"
+    );
     assert_eq!(
-        sown_beside(AreaKind::Parking(LotKind::Yard)),
+        by_lot.pockets[0].kind,
         AreaKind::Residential,
-        "у стоянки"
+        "у стоянки — травой двора"
     );
     // щель в несколько м² без соседа — не земля, а зазор плитки: не засевается,
-    // а у газона та же щель — лугом (и фартуком — края у дорожек)
+    // а у газона та же щель вливается в него
     let lot = AreaKind::Parking(LotKind::Yard);
     assert_eq!(
         pockets::fill_ground_pockets(&mut scene_beside(lot, 4.0)),
         0,
         "щель у стоянки"
     );
+    let mut slit = scene_beside(AreaKind::Grass, 4.0);
+    pockets::fill_ground_pockets(&mut slit);
     assert!(
-        pockets::fill_ground_pockets(&mut scene_beside(AreaKind::Grass, 4.0)) >= 1,
-        "щель у газона"
+        crate::map::osm::model::point_in_polygon(
+            CENTER + Vec2::new(1.0, -1.0),
+            &slit.grass[0].outer
+        ),
+        "щель у газона не влилась в него"
     );
+}
+
+/// Карман-луг, касающийся той самой зелени, у которой засевается, вливается в
+/// неё одним полигоном, а не сеется отдельной площадкой поверх её каймы:
+/// засеянный рядом, он кроет кайму газона полосой в полметра, и там, где
+/// кончается, срезанная кайма читается швом «V» (Тула, сквер у Сойфера, N8 —
+/// два кармана-луга вдоль клина газона). Влившийся карман растит газон до
+/// кромки дорожек, и кайма у газона остаётся только по внешнему краю.
+#[test]
+fn a_meadow_pocket_touching_a_lawn_is_merged_into_it() {
+    let mut map = pocket_scene(16.0, false);
+    let mut area = map.landuse.pop().expect("квартал сцены");
+    area.kind = AreaKind::Grass;
+    map.grass.push(area);
+    let sown = pockets::fill_ground_pockets(&mut map);
+    assert!(
+        !sown_at(&map, 4.0, -4.0),
+        "клин у газона сеется отдельной площадкой ({sown} засеяно)"
+    );
+    let lawn = &map.grass[0];
+    let inside = |x: f32, y: f32| {
+        crate::map::osm::model::point_in_polygon(CENTER + Vec2::new(x, y), &lawn.outer)
+    };
+    assert!(inside(4.0, -4.0), "клин не влился в газон");
+    assert!(
+        !inside(30.0, 30.0),
+        "газон вырос за пределы бывшего клина и своей земли"
+    );
+    // газон дошёл до дорожек: его край заводится под полосу дорожки
+    let top = lawn
+        .outer
+        .iter()
+        .map(|point| point.y - CENTER.y)
+        .fold(f32::NEG_INFINITY, f32::max);
+    assert!(top > 0.5, "край газона не под дорожкой: {top}");
 }
 
 /// Щель между кромкой мощёной дорожки и краем сквера — фартук зелени:

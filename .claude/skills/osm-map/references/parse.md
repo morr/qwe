@@ -819,7 +819,16 @@ be called alone:
     block's edge often lies *under* the footway, and the wedge beyond touches the footway,
     not the block); else one within 4 m of a mapped **park or lawn** (`parks`, `grass`)
     gives `Grass` — the meadow, drawn without a rim in the lawn layer, as the verge beside
-    them (`roads.rs::Meadows`); else `Residential`, the yard grass every other verge lawn
+    them (`roads.rs::Meadows`) — and **merges into that very green** (`merge_into_green`):
+    the grown hole and the green's ring are unioned, and the result replaces the green.
+    Sown beside it, the pocket lay on the green's rim kaima with its half-metre growth,
+    and where the sowing ended the cut kaima read as a seam — two light lines converging
+    in a V down the wedge of the square by Soifer (Tula, N8); the merged green's kaima
+    stays only along its true outer edge, against the block and the road. The merge goes
+    to the one green whose ring the nearest pocket vertex answers for (`Rim::near`, parks
+    before lawns); a pocket whose nearest vertex stands farther from the ring than the
+    growth reaches (`LANDUSE_OVERLAP`) stays a separate sowing — the union would come out
+    two shapes, and that is the test. else `Residential`, the yard grass every other verge lawn
     is — but only from `LONE_POCKET_MIN` 10 m² up: a smaller lone hole is a gap between
     paving bands (a sidewalk corner at a crossing, Oryol 03), where yard grass lay on the
     tiles as a dark stain and bare ground nearly matches them. (A green pocket in the
@@ -830,6 +839,7 @@ be called alone:
     between the verge lawns by the Kaluga 01 ring — and the tiles were those touched by a
     block; now they are those touched by a road link (± `MARGIN`), since the road is what
     every pocket has.
+    Pinned by `a_meadow_pocket_touching_a_lawn_is_merged_into_it`.
   - **A green apron** (`Scene::green_aprons`, R37-02) — the same question's second half,
     for strips that are never holes: a band of bare ground between a mapped green's
     **outer** edge and the kerb of a paved **path** band (`RoadClass::Alley` only), up
@@ -863,9 +873,12 @@ be called alone:
   - Tula: **1220 pockets, ~112 ms** at load (dev profile, `map_meshing`) since the
     pockets with no block beside them are sown too — 610 in ~120–140 ms before, on a
     loaded machine, Oryol 431 / 84 ms then. Most of the new ones lie under what is drawn
-    anyway (the Kaluga 01 and Tula 02 gallery frames did not change by a pixel). Pinned by
+    anyway (the Kaluga 01 and Tula 02 gallery frames did not change by a pixel). The
+    merges into greens cost one `i_overlay` union each and came to +3 ms on Tula's pass
+    (123.6 → 127.1 ms). Pinned by
     `a_ground_pocket_between_a_block_and_two_footways_is_sown_as_yard`,
     `a_pocket_with_no_block_beside_is_meadow_by_a_lawn_and_yard_elsewhere`,
+    `a_meadow_pocket_touching_a_lawn_is_merged_into_it`,
     `a_pocket_by_a_dirt_path_a_large_one_and_a_hole_in_the_block_stay_ground`,
     `a_pocket_on_a_tile_seam_is_sown_once`.
 - **Ring assembly** (`parse.rs::assemble_rings`) — multipolygon relation members joined
