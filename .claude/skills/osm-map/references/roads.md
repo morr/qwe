@@ -1141,7 +1141,14 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     Болдина's fork the end bar still lay on the sidewalk. `Carriageway` road areas are
     another mesh and are not probed), the span left takes as many whole bars as fit, and the
     plank shrinks to exactly them, centred in the span; the shader's first bar starts at the
-    plank's end (`ZEBRA_FIRST_BAR`). Before, the plank ran kerb to kerb less 0.3 m and ended
+    plank's end (`ZEBRA_FIRST_BAR`). **The ends grow outward first** (R37-03): at a mouth the
+    kerb — the corner fan — and on a width wedge the asphalt run wider than the road's nominal
+    half width, and the plank, cut to that half width, stopped a bar or more short of the real
+    kerb (Фёдора Смирнова × Красноармейский, the Болдина ring's approaches, 1–3 m); the ends
+    now step outward while the whole end section stays on asphalt, up to `ZEBRA_REACH` 3 m —
+    past that it is the junction's field, not the crossing's carriageway — and then retreat
+    inward as before, so a plank either reaches the kerb or misses it by less than one bar.
+    Before, the plank ran kerb to kerb less 0.3 m and ended
     on a fraction of the period — the last bar a sliver at the kerb (Фёдора Смирнова, 3396
     3839) — and where the kerb ran slantwise across the plank at a fork, the end bar lay on
     the sidewalk (Болдина, 2527 2470). The middle of a plank is not probed: a joined plank

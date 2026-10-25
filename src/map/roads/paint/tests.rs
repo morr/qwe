@@ -670,13 +670,43 @@ fn a_zebra_is_whole_bars_centred_between_the_kerbs() {
     assert!((first - ZEBRA_FIRST_BAR).abs() < 1e-3, "{first}");
     let bars = (last - first + ZEBRA_PERIOD - ZEBRA_BAR) / ZEBRA_PERIOD;
     assert!((bars - bars.round()).abs() < 1e-3, "{bars} bars");
-    // поля до кромок поровну
+    // поля до кромок поровну — с точностью шага подгонки: торец, доросший до
+    // самой кромки, ловит её на шаг раньше или позже
     let across: Vec<f32> = zebras.positions_for_test().iter().map(|p| p[1]).collect();
     let (low, high) = across.iter().fold((f32::MAX, f32::MIN), |(low, high), &y| {
         (low.min(y), high.max(y))
     });
-    assert!((low + high).abs() < 1e-3, "{low}..{high}");
+    assert!((low + high).abs() <= 2.0 * FIT_STEP, "{low}..{high}");
     assert!(high <= 4.0 && high > 3.0, "{high}");
+}
+
+/// Зебра у устья дорастает торцами до настоящей кромки (R37-03): веер угла
+/// и клин ширины делают асфальт шире номинальной полуширины дороги, и планка
+/// не доставала до кромки по звену и больше — торцы растут наружу, пока
+/// сечение на асфальте, и планка кончается ближе звена к кромке. Прямое
+/// испытание [`whole_bars`]: проезжая часть 8 м с раструбом до 13 м.
+#[test]
+fn a_zebra_grows_to_the_flared_kerb_of_a_mouth() {
+    use crate::map::roads::node_paint::Zebra;
+    // дорога вдоль x: полуширина 4 м, у сечения зебры (x = 0) кромка
+    // расходится веером до 6,5 м
+    let half = |x: f32| 4.0 + 2.5 * ((x + 3.0) / 6.0).clamp(0.0, 1.0);
+    let on_asphalt = |point: Vec2| point.y.abs() <= half(point.x);
+    let zebra = Zebra {
+        from: Vec2::new(0.0, -3.7),
+        to: Vec2::new(0.0, 3.7),
+        osm: false,
+    };
+    let grown = whole_bars(&zebra, on_asphalt).expect("звенья влезли");
+    let span = grown.from.distance(grown.to);
+    // звенья — целые, торец видимого — ближе звена от кромки: связывающая
+    // кромка здесь — сечение у дальнего края планки (x = −2)
+    let miss = half(-2.0) - span / 2.0;
+    assert!(
+        miss < ZEBRA_PERIOD,
+        "планка не достаёт до кромки на {miss:.2} м: {grown:?}"
+    );
+    assert!(span > 3.7 * 2.0, "планка не доросла: {span:.2} м");
 }
 
 /// Стоп-линия держится кромки, **суженной клином сечений** (roads list S7):
