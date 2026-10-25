@@ -935,7 +935,14 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     is higher than the corner beside it: on either side of a 5 m drive (radius 2.5) the
     kerb of Болдина stood 3.3 m apart where 2 lanes became 4 (Tula, gallery 22); a
     street's 6 m or an avenue's 10 m corner swallows a lane's step. Such a side is free,
-    and it narrows. A second test was tried and dropped — a slanting arm covers only the
+    and it narrows. **A bent joint with an obtuse continuation narrows nothing** (R37-04):
+    a joint of the pair that leaves the node at more than `PASS_ALIGN` 15° is a fork, not
+    a continuation, and when the wide way is carried on at an obtuse angle
+    (`MAX_ANGLE` 155°–180°) by *another* road of the node — Одоевский путепровод ×
+    Демонстрации, Tula, 160° — the taper ate a lane off the mouth and halved the axis
+    into a single tail; the obtuse corner's wide-kerb wedges close the step instead, so
+    the taper stands down. Without an obtuse continuation the bent joint tapers as
+    before (Крестовоздвиженская into Союзная, gallery 28). A second test was tried and dropped — a slanting arm covers only the
     foot of the step's wall (`half / |cos|` of its angle to the axis): it freed the side at
     Orel's wide T (gallery 03), where the short way's wedge came out steeper than the step
     it replaced. A crossing covers both sides — no taper, the
@@ -1639,7 +1646,10 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     `STOP_GAP` 1 m behind the zebra (or 1 m past the edge without one), across the lanes
     **coming to the node** — axis to kerb on the traffic side (`MapData::traffic_side`)
     for a two-way road, the full width for a one-way one that flows toward the node, none
-    on a one-way arm leaving it. **The line is trimmed to the laid asphalt**
+    on a one-way arm leaving it. **With a zebra on the arm the line is parallel to its
+    plank** (`stop_line_at`'s `align`, R37-04): both are measured off the same axis but at
+    their own stations, and on a bent mouth they parted by an angle — the line takes the
+    plank's direction and keeps its own setback. **The line is trimmed to the laid asphalt**
     (`paint::trim_stop_line` — **Transverse paint** above, roads list S7). A `give_way`
     sign without signals makes it dashed. **A
     stop line needs room for a queue behind it**: at least `STOP_QUEUE_ROOM` 10 m (two

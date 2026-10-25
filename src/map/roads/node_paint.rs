@@ -121,7 +121,7 @@ const STAGGER_CHORD: f32 = 10.0;
 /// `SHARED_MAX_BEND` оси (`axis.rs`): мельче — дрожание оси OSM, круче —
 /// поворот, который закреплённый узел дугой не скругляет, и осевая сплошной
 /// легла бы через узел углом.
-const PASS_ALIGN: f32 = 0.966;
+pub(in crate::map::roads) const PASS_ALIGN: f32 = 0.966;
 /// Хорда излома для [`PASS_ALIGN`], м: направление плеча от узла и хорды
 /// назад и вперёд от вершин пути под разрывом. Короткая, чтобы мерить угол,
 /// а не поворот: дуга оси (`ThroughBend` в `axis.rs`, радиус от 30 м)
@@ -1611,6 +1611,10 @@ impl NodePaint {
                 });
             } else if let Some(at) = stop {
                 let yields = !signalized && sign(arm.road) == Some(Sign::GiveWay);
+                // линия параллельна планке зебры этого плеча
+                let parallel = zebra
+                    .and_then(|(center, _)| walk.at(center))
+                    .map(|(_, direction)| direction);
                 self.stop_lines.extend(stop_line_at(
                     &walk,
                     road,
@@ -1618,6 +1622,7 @@ impl NodePaint {
                     dir,
                     map.traffic_side,
                     yields,
+                    parallel,
                 ));
             }
             // линии рвутся от узла: кромка по асфальту бывает дальше
@@ -1674,6 +1679,7 @@ impl NodePaint {
         let mut reach = ZEBRA_LENGTH / 2.0;
         if style.stop_lines && crossing.signals {
             let offset = ZEBRA_LENGTH / 2.0 + STOP_GAP + STOP_WIDTH / 2.0;
+            let parallel = walk.at(center).map(|(_, direction)| direction);
             for dir in [-1.0, 1.0] {
                 if incoming(road, dir) {
                     self.stop_lines.extend(stop_line_at(
@@ -1683,6 +1689,7 @@ impl NodePaint {
                         dir,
                         side,
                         false,
+                        parallel,
                     ));
                 }
             }
@@ -2155,7 +2162,9 @@ fn touching(a: &Zebra, b: &Zebra) -> Option<(f32, Zebra)> {
 
 /// Стоп-линия на длине `at` поперёк полос, едущих к узлу с плеча `dir`:
 /// у двусторонней — от оси до кромки по стороне движения, у односторонней —
-/// во всю ширину.
+/// во всю ширину. Со зеброй на плече (`align` — направление её планки) линия
+/// той параллельна: обе меряет одна ось, но на своих станциях, и на изгибе
+/// устья они расходились углом (Одоевский путепровод, R37-04).
 fn stop_line_at(
     walk: &Walk,
     road: &RoadLine,
@@ -2163,8 +2172,10 @@ fn stop_line_at(
     dir: f32,
     side: TrafficSide,
     yields: bool,
+    align: Option<Vec2>,
 ) -> Option<StopLine> {
-    let (point, direction) = walk.at(at)?;
+    let (point, along) = walk.at(at)?;
+    let direction = align.unwrap_or(along);
     let travel = -direction * dir;
     let right = Vec2::new(travel.y, -travel.x);
     let kerb = match side {

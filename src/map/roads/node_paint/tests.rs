@@ -63,6 +63,36 @@ fn gaps(paint: &NodePaint, road: usize) -> Vec<Break> {
         .collect()
 }
 
+/// Стоп-линия со зеброй на плече параллельна её планке: обе мерит одна ось,
+/// но на своих станциях, и на изгибе плеча у узла они расходились углом
+/// (Одоевский путепровод, R37-04).
+#[test]
+fn a_stop_line_is_parallel_to_its_zebra_on_a_bent_arm() {
+    // примыкание с изломом в девяти метрах от узла — между станциями зебры
+    // (8 м от кромки) и стоп-линии (11 м)
+    let kinked = road(
+        vec![Vec2::new(100.0, -80.0), Vec2::new(89.0, -9.5), NODE],
+        8.0,
+        Highway::Residential,
+        2,
+    );
+    let paint = paint_of(
+        vec![through(Highway::Tertiary), kinked],
+        Vec::new(),
+        EVERYTHING,
+    );
+    assert_eq!(paint.zebras.len(), 1);
+    assert_eq!(paint.stop_lines.len(), 1);
+    let zebra = (paint.zebras[0].to - paint.zebras[0].from).normalize_or_zero();
+    let line = (paint.stop_lines[0].to - paint.stop_lines[0].from).normalize_or_zero();
+    let tilt = zebra.dot(line).abs();
+    assert!(
+        tilt > 0.99985,
+        "стоп-линия от планки на {:.1}°",
+        tilt.acos().to_degrees()
+    );
+}
+
 #[test]
 fn a_minor_street_does_not_break_the_main_one() {
     let paint = paint_of(

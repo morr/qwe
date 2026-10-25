@@ -15,7 +15,13 @@
 //! улица кончалась, и узкая шла дальше. Закрывает сторону только примыкание,
 //! у которого радиус бордюра (`corners::road_radius`) не меньше уступа: по
 //! сторонам проезда в 5 м кромка на полосу разной высоты читалась зубом, и
-//! такая сторона сужается тоже. С сохранённой стороны кромка идёт
+//! такая сторона сужается тоже. И только пока стык соосен: изогнутый стык
+//! пары — не «одна дорога продолжается», и когда широкую продолжает под
+//! тупым углом (155–180°) другая дорога узла, клин не кладётся вовсе —
+//! устье доходит полной шириной, а перепад закрывают широкие клинья кромок
+//! (`corners::obtuse_corner`); без тупого продолжения изогнутый стык клин
+//! берёт как раньше (Крестовоздвиженская в Союзную, витрина 28). С
+//! сохранённой стороны кромка идёт
 //! полной ширины до самого узла, как раньше; скругления считают тот торец по
 //! полуширине его стороны: сужаемой — по узкому соседу. У крестовины, где
 //! примыкания с обеих сторон, клина нет вовсе — ступень тонет в узле. Дорожка
@@ -27,9 +33,10 @@
 
 use bevy::prelude::*;
 
-use super::corners::road_radius;
+use super::corners::{MAX_ANGLE, road_radius};
 use super::junctions::node_key;
 use super::network::{RoadNetwork, RoadNodes, arm_direction};
+use super::node_paint::PASS_ALIGN;
 use crate::map::meshing::Break;
 use crate::map::osm::model::polyline_length;
 use crate::map::osm::{RoadClass, RoadLine};
@@ -115,6 +122,30 @@ impl Tapers {
             } else {
                 (b.road, b.reversed, a.road)
             };
+            // Изогнутый стык пары на перекрёстке — не «одна дорога
+            // продолжается», и клин на нём съедал устье: широкая дорога
+            // сужалась к перекрёстку на полосу, двоя осевую (Одоевский
+            // путепровод × Демонстрации, R37-04). Сужения нет, когда широкую
+            // продолжает под тупым углом (155–180°, углы широкого клина
+            // кромки, `corners::obtuse_corner`) другая дорога узла — перепад
+            // закроют её клинья; без тупого продолжения изогнутый стык
+            // клин берёт как раньше (Крестовоздвиженская в Союзную,
+            // витрина 28), а соосный — всегда.
+            let away_first = arm_direction(&first.points, !a.reversed);
+            let away_second = arm_direction(&second.points, b.reversed);
+            let away = |road: usize| {
+                if road == a.road {
+                    away_first
+                } else {
+                    away_second
+                }
+            };
+            if let (Some(away_wide), Some(away_narrow)) = (away(wide), away(narrow))
+                && -away_wide.dot(away_narrow) < PASS_ALIGN
+                && continues_obtusely(drawn, nodes, node, away_wide, a.road, b.road)
+            {
+                continue;
+            }
             let sides = free_sides(drawn, nodes, node, wide, end, narrow);
             if sides == [false; 2] {
                 continue;
@@ -246,6 +277,39 @@ fn free_sides(
     free
 }
 
+/// Продолжается ли дорога с направлением `away` от узла в другую дорогу узла
+/// (не пару стыка `skip`): их плечи расходятся под тупым углом, от
+/// [`MAX_ANGLE`] — угла широкого клина кромки, который закрывает перепад
+/// ширин на таком продолжении (`corners::obtuse_corner`). Лучи чужих дорог —
+/// по всем их вершинам в узле: сквозная даёт два.
+fn continues_obtusely(
+    drawn: &[&RoadLine],
+    nodes: &RoadNodes,
+    node: Vec2,
+    away: Vec2,
+    skip_a: usize,
+    skip_b: usize,
+) -> bool {
+    let key = node_key(node);
+    let obtuse = MAX_ANGLE.cos();
+    nodes.roads_at(node).iter().any(|&other| {
+        if other == skip_a || other == skip_b || drawn[other].class != RoadClass::Street {
+            return false;
+        }
+        let points = &drawn[other].points;
+        points.iter().enumerate().any(|(vertex, point)| {
+            node_key(*point) == key
+                && [
+                    arm_direction(&points[vertex..], false),
+                    arm_direction(&points[..=vertex], true),
+                ]
+                .into_iter()
+                .flatten()
+                .any(|direction| away.dot(direction) <= obtuse)
+        })
+    })
+}
+
 /// Нарисованный путь, разрезанный под клинья: `(клин у начала, середина, клин
 /// у конца)`. Оба клина смотрят **от узла шва** — от узкого конца к широкому.
 /// Длина клина обрезается до [`TAPER_MAX_SHARE`] пути; клин короче
@@ -359,6 +423,46 @@ mod tests {
         let nodes = RoadNodes::new(&roads);
         let drawn: Vec<&RoadLine> = roads.iter().collect();
         Tapers::new(&drawn, &network, &nodes, TAPER_PER_METER)
+    }
+
+    #[test]
+    fn a_bent_joint_at_a_junction_keeps_the_wide_width() {
+        // широкая уходит с узла под 25°; `continues` добавляет тупик другого
+        // класса, продолжающий её под тупым углом 160°, примыкание сверху
+        // делает узел перекрёстком
+        let bent = |continues: bool| {
+            let mut roads = vec![
+                street(vec![Vec2::new(0.0, 0.0), Vec2::new(100.0, 0.0)], 8.0),
+                street(
+                    vec![
+                        Vec2::new(100.0, 0.0),
+                        Vec2::new(100.0 + 95.0 * f32::cos(0.436), 95.0 * f32::sin(0.436)),
+                    ],
+                    14.2,
+                ),
+                street(vec![Vec2::new(100.0, 0.0), Vec2::new(100.0, 80.0)], 8.0),
+            ];
+            let lanes = [2u8, 4, 2, 2];
+            if continues {
+                // другой класс — стык не крадёт, одна дорога под 160° к широкой
+                let mut obtuse = street(vec![Vec2::new(100.0, 0.0), Vec2::new(5.4, -8.3)], 8.0);
+                obtuse.highway = crate::map::osm::Highway::Tertiary;
+                roads.push(obtuse);
+            }
+            for (road, lanes) in roads.iter_mut().zip(lanes) {
+                road.lanes = Some(lanes);
+            }
+            let network = RoadNetwork::new(&roads);
+            let nodes = RoadNodes::new(&roads);
+            let drawn: Vec<&RoadLine> = roads.iter().collect();
+            Tapers::new(&drawn, &network, &nodes, TAPER_PER_METER)
+        };
+        // изогнутый стык с тупым продолжением — широкая доходит до устья
+        // своей шириной (Одоевский путепровод × Демонстрации, R37-04)
+        assert_eq!(bent(true).count, 0);
+        // без тупого продолжения изогнутый стык клин берёт как раньше
+        // (Крестовоздвиженская в Союзную, витрина 28)
+        assert_eq!(bent(false).count, 1);
     }
 
     #[test]
