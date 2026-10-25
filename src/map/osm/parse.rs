@@ -2490,7 +2490,46 @@ fn as_ring(points: &[Vec2]) -> Option<Vec<Vec2>> {
     Some(points[..points.len() - 1].to_vec())
 }
 
-fn push_area(map: &mut MapData, area: PolyArea) {
+/// Повторы и возвраты точек кольца ближе этого — игла, м.
+const RING_SLIVER: f32 = 0.05;
+
+/// Кольцо без вырожденных игл: подряд идущие повторы точки и возвраты
+/// p → q → p (OSM любит самокасания контуров) сворачиваются в одну точку.
+/// Игла сама не видна, но кайма площадки рисует обе её стороны — светлый
+/// шов «V» поверх газона обочины (Тула, сквер у Сойфера, N8).
+fn collapse_slivers(ring: &[Vec2]) -> Vec<Vec2> {
+    let mut clean: Vec<Vec2> = Vec::with_capacity(ring.len());
+    for &point in ring {
+        if clean
+            .last()
+            .is_some_and(|last| last.distance(point) < RING_SLIVER)
+        {
+            continue;
+        }
+        // возврат в пред-предыдущую точку: вершина-игла между двумя копиями
+        if clean.len() >= 2 && clean[clean.len() - 2].distance(point) < RING_SLIVER {
+            clean.pop();
+            continue;
+        }
+        clean.push(point);
+    }
+    // смыкание: кольцо идёт по кругу, последний и первый — та же точка
+    while clean.len() > 1 && clean[0].distance(*clean.last().expect("len > 1")) < RING_SLIVER {
+        clean.pop();
+    }
+    clean
+}
+
+fn push_area(map: &mut MapData, mut area: PolyArea) {
+    area.outer = collapse_slivers(&area.outer);
+    area.holes = area
+        .holes
+        .iter()
+        .map(|hole| collapse_slivers(hole))
+        .collect();
+    if area.outer.len() < 3 {
+        return;
+    }
     match area.kind {
         AreaKind::Building | AreaKind::Kremlin => map.buildings.push(area),
         AreaKind::Water => map.water.push(area),

@@ -871,6 +871,15 @@ be called alone:
 - **Ring assembly** (`parse.rs::assemble_rings`) — multipolygon relation members joined
   end-to-end (ε = 0.01 m) into closed rings; chains broken by the bbox edge are
   force-closed if ≥ 3 points. Inner rings become holes of the outer containing them.
+- **Every area ring is cleaned of needles** (`parse.rs::collapse_slivers` in `push_area`,
+  the one choke point every parsed area flows through): consecutive repeats and
+  p → q → p backtracks closer than `RING_SLIVER` 0.05 m collapse to one point. OSM
+  contours like to touch themselves, and a zero-width needle is invisible as a fill but
+  the area's rim band draws both its sides — a bright V of two thin lines over whatever
+  the area lies on (Тула, the lawn of a verge under the square grass needle, N8;
+  `a_needle_in_an_area_ring_is_collapsed`). Only local needles collapse: a self-touching
+  ring whose halves meet far from the touching vertex still needs the door snapped at
+  the assembly step.
 
 ## Testing the parse
 

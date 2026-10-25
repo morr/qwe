@@ -472,6 +472,35 @@ fn an_underground_car_park_is_not_asphalt_over_the_lawn() {
     assert!(map.landuse.is_empty());
 }
 
+/// Игла в кольце площадки — возврат p → q → p — сворачивается при разборе.
+/// Самокасание оставалось в полигоне, и кайма газона рисовала обе стороны
+/// иглы: светлый шов «V» поверх газона обочины (Тула, сквер у Сойфера, N8).
+#[test]
+fn a_needle_in_an_area_ring_is_collapsed() {
+    let map = Overpass::new(CITY)
+        .area(
+            &[("landuse", "grass")],
+            vec![
+                CENTER + Vec2::new(-20.0, -15.0),
+                CENTER + Vec2::new(20.0, -15.0),
+                CENTER + Vec2::new(20.0, 15.0),
+                CENTER + Vec2::new(0.0, 15.0),
+                CENTER + Vec2::new(0.0, 3.0),
+                CENTER + Vec2::new(0.0, 15.0),
+                CENTER + Vec2::new(-20.0, 15.0),
+            ],
+        )
+        .parse();
+    assert_eq!(map.grass.len(), 1);
+    let outer = &map.grass[0].outer;
+    let needle = outer
+        .iter()
+        .any(|p| Vec2::new(p[0], p[1]).distance(CENTER + Vec2::new(0.0, 3.0)) < 1.0);
+    assert!(!needle, "игла осталась в кольце: {outer:?}");
+    // четыре угла плюс основание иглы, схлопнувшееся в одну точку на кромке
+    assert_eq!(outer.len(), 5, "{outer:?}");
+}
+
 /// Цилиндры промзоны приезжают и нодой, и way. Way с `building=yes` при этом
 /// становится **только** цилиндром: труба, размеченная как здание, — тот же
 /// самый объект, и коробка под кругом была бы им обоим сразу.
