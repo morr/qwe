@@ -1526,10 +1526,8 @@ fn a_probe_inside_a_crossing_footprint_does_not_measure_across_it() {
     // улица вдоль x; дорожка у кромки до x = 80, перекрёсток на x = 90,
     // за устьем — параллельная дорожка той же стороны в 11 м от оси
     let street = street(vec![Vec2::ZERO, Vec2::new(95.0, 0.0)], 8.0);
-    let crossing = crate::map::osm::fixture::street(
-        vec![Vec2::new(90.0, 15.0), Vec2::new(90.0, -15.0)],
-        20.0,
-    );
+    let crossing =
+        crate::map::osm::fixture::street(vec![Vec2::new(90.0, 15.0), Vec2::new(90.0, -15.0)], 20.0);
     let mut roads = vec![
         street,
         crossing,
@@ -4566,7 +4564,12 @@ fn a_pocket_with_no_block_beside_is_meadow_by_a_lawn_and_yard_elsewhere() {
     };
     let sown_beside = |kind: AreaKind| {
         let mut map = scene_beside(kind, 16.0);
-        assert_eq!(pockets::fill_ground_pockets(&mut map), 1, "{kind:?}");
+        // у зелени фартук подшивает и края у дорожек — считать можно только
+        // «хоть один»: сам клин — первым, замкнутым карманом
+        assert!(
+            pockets::fill_ground_pockets(&mut map) >= 1,
+            "у {kind:?} не засеяно ничего"
+        );
         assert!(
             sown_at(&map, 4.0, -4.0),
             "середина клина у {kind:?} — землёй"
@@ -4581,55 +4584,67 @@ fn a_pocket_with_no_block_beside_is_meadow_by_a_lawn_and_yard_elsewhere() {
         "у стоянки"
     );
     // щель в несколько м² без соседа — не земля, а зазор плитки: не засевается,
-    // а у газона та же щель — лугом
+    // а у газона та же щель — лугом (и фартуком — края у дорожек)
     let lot = AreaKind::Parking(LotKind::Yard);
     assert_eq!(
         pockets::fill_ground_pockets(&mut scene_beside(lot, 4.0)),
         0,
         "щель у стоянки"
     );
-    assert_eq!(
-        pockets::fill_ground_pockets(&mut scene_beside(AreaKind::Grass, 4.0)),
-        1,
+    assert!(
+        pockets::fill_ground_pockets(&mut scene_beside(AreaKind::Grass, 4.0)) >= 1,
         "щель у газона"
     );
 }
 
-/// Щель между кромкой мощёной дорожки и полигоном сквера — карман: она
-/// замкнута покрытиями с обеих сторон и засевается лугом. У СЗ угла
-/// Оружейной × Энгельса такая полоса в полметра между кромкой велодорожки и
-/// забором парка светилась тёмной линией голой земли (R37-02).
+/// Щель между кромкой мощёной дорожки и краем сквера — фартук зелени:
+/// полоса голой земли не шире пары метров засевается лугом от края зелени
+/// до кромки ленты, замкнута она или протекает на концах. У СЗ угла
+/// Оружейной × Энгельса такая полоса между
+/// велодорожкой и забором парка светилась тёмной линией голой земли
+/// (R37-02): на концах она протекает, и замкнутым карманом её не видно.
 #[test]
 fn a_slit_between_a_paved_path_and_the_park_edge_is_sown_as_meadow() {
     let at = |x: f32, y: f32| CENTER + Vec2::new(x, y);
-    let mut map = MapData {
-        roads: vec![RoadLine {
-            pavement: Some(Pavement::Paved),
-            sidewalks: [SidewalkSide::None; 2],
-            ..crate::map::osm::fixture::footway(vec![at(0.0, -20.0), at(0.0, 20.0)])
-        }],
-        ..MapData::default()
+    let scene = |gap: f32, rough: bool| {
+        let mut road = crate::map::osm::fixture::footway(vec![at(0.0, -40.0), at(0.0, 40.0)]);
+        road.sidewalks = [SidewalkSide::None; 2];
+        road.pavement = Some(if rough {
+            Pavement::Unpaved
+        } else {
+            Pavement::Paved
+        });
+        // сквер за дорожкой в `gap` метрах от кромки (полудорожка 1.75 м)
+        MapData {
+            roads: vec![road],
+            parks: vec![PolyArea {
+                kind: AreaKind::Park,
+                ..building(
+                    vec![
+                        at(1.75 + gap, -20.0),
+                        at(30.0, -20.0),
+                        at(30.0, 20.0),
+                        at(1.75 + gap, 20.0),
+                    ],
+                    Vec::new(),
+                )
+            }],
+            ..MapData::default()
+        }
     };
-    // сквер за дорожкой с зазором 0.4 м; планки на концах замыкают щель
-    // внахлёст с обеими сторонами — иначе щель протекает в открытый мир
-    let mut park = |points: Vec<Vec2>| {
-        map.parks.push(PolyArea {
-            kind: AreaKind::Park,
-            ..building(points, Vec::new())
-        })
-    };
-    park(vec![
-        at(2.15, -15.0),
-        at(30.0, -15.0),
-        at(30.0, 15.0),
-        at(2.15, 15.0),
-    ]);
-    park(vec![at(0.0, 15.0), at(2.6, 15.0), at(2.6, 18.0), at(0.0, 18.0)]);
-    park(vec![at(0.0, -18.0), at(2.6, -18.0), at(2.6, -15.0), at(0.0, -15.0)]);
+    let mut map = scene(0.4, false);
     let sown = pockets::fill_ground_pockets(&mut map);
-    assert_eq!(sown, 1, "карманов засеяно: {sown}");
-    assert_eq!(map.pockets[0].kind, AreaKind::Grass, "у сквера — лугом");
+    assert!(sown >= 1, "карманов засеяно: {sown}");
+    assert!(
+        map.pockets.iter().all(|area| area.kind == AreaKind::Grass),
+        "у сквера — лугом: {:?}",
+        map.pockets.iter().map(|area| area.kind).collect::<Vec<_>>()
+    );
     assert!(sown_at(&map, 1.95, 0.0), "щель осталась землёй");
+    // широкая полоса — уже не щель, а граница; у грунтовой тропы зелени
+    // не подшивают
+    assert_eq!(pockets::fill_ground_pockets(&mut scene(4.0, false)), 0);
+    assert_eq!(pockets::fill_ground_pockets(&mut scene(0.4, true)), 0);
 }
 
 /// Что должно остаться землёй, остаётся: карман у грунтовой тропы (пустырь с

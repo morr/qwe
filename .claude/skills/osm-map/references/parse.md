@@ -830,6 +830,20 @@ be called alone:
     between the verge lawns by the Kaluga 01 ring — and the tiles were those touched by a
     block; now they are those touched by a road link (± `MARGIN`), since the road is what
     every pocket has.
+  - **A green apron** (`Scene::green_aprons`, R37-02) — the same question's second half,
+    for strips that are never holes: a band of bare ground between a mapped green's
+    **outer** edge and the kerb of a paved **path** band (`RoadClass::Alley` only), up
+    to `GREEN_GAP_MAX` 2.5 m wide, is sown meadow from the green's edge to the very
+    kerb. The cycleway along Tula's Центральный парк runs parallel to the park's edge a
+    couple of metres off, and the strip between them showed as a dark line of bare
+    ground (Оружейная × Энгельса, 3557,1089): at its ends such a strip *leaks* into the
+    open, so "what is enclosed" cannot see it. Streets are not asked: the strip along
+    them is their own verge lawn's to draw, and an apron would lie on it in the
+    meadow's colour (Tula measured ~3000 of them before the restriction). The green's
+    edge is probed every `APRON_STEP` 1 m, the kerb is the nearest paved path link's,
+    and a jump of the kerb over `APRON_BREAK` 3 m (the probe switched paths) breaks the
+    strip. A dirt path gets no apron — ground by it is a waste plot, as for a pocket.
+    Pinned by `a_slit_between_a_paved_path_and_the_park_edge_is_sown_as_meadow`.
   - **Why the errors are safe**: the block layer lies below everything drawn on it, so a
     cover the parse misses only makes a hole bigger (a missed fill) or puts grass under
     something drawn (unseen); a cover the parse invents only closes a hole that is then
