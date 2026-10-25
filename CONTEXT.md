@@ -652,7 +652,13 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   (`sandwiched`): stalls do not belong on the road a lot is entered from, while a drive
   inside the lot is its own asphalt. The edge goes `LANDUSE_OVERLAP` under a road band
   **and nowhere else** — grown on every side, a piece stepped out half a metre along its
-  free edge too, a jog wherever it met the lot's own edge. **Apron** — last, the lot steps
+  free edge too, a jog wherever it met the lot's own edge. **A fill thinner than
+  `THIN_FILL_HALF_WIDTH` 2.25 m is trimmed** (a morphological opening, before the pieces
+  are split): the closing's sliver in the corner between two bands — the collar at a
+  drive's mouth, 2.3 m at the base and gone to the tip over the street's drawn tiles
+  (Tula ≈3827,4093, N9) — and the thin tongue along a kerb (Tula ≈4454,3855, N3) read as
+  asphalt butts over foreign paving; a `street_side` pocket is exempt, reaching the kerb
+  across the sidewalk is its contract. **Apron** — last, the lot steps
   back `BUILDING_APRON` 1 m from **every** house, of any size: outlines are drawn
   overlapping a house or flush with it, and stalls stood in the wall; a booth in the
   middle of a lot gets its island, and a house across a lot cuts it into several lots

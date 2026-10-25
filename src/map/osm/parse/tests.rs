@@ -4053,6 +4053,46 @@ fn the_pocket_between_two_aisle_stubs_is_paved() {
     }
 }
 
+/// Заливка тоньше остаточной полосы — не асфальт: зазор в 1.1 м между кромкой
+/// площадки и полотном улицы замыкание наливает языком вдоль всей кромки, и
+/// читается он обрубком асфальта поверх чужой плитки (Тула, ≈4454,3855 — язык
+/// 1.1 м у торца стоянки, N3; там же семья — воротник 2.3→0 м у устья
+/// проезда, N9). Честная полоса шире — растёт целиком.
+#[test]
+fn a_fill_thinner_than_the_remnant_stays_unpaved() {
+    let half = residential_half(ParseKnobs::DEFAULT);
+    let edge = half + sidewalk_band(2.0 * half);
+    // кромка площадки в 1.1 м за полотном улицы (ось на нуле)
+    let lot = PolyArea {
+        kind: AreaKind::Parking(LotKind::Yard),
+        ..building(
+            rect(
+                CENTER + Vec2::new(0.0, -edge - 1.1),
+                CENTER + Vec2::new(40.0, -30.0),
+            ),
+            Vec::new(),
+        )
+    };
+    let mut map = MapData {
+        roads: vec![street(
+            vec![
+                CENTER - Vec2::new(400.0, 0.0),
+                CENTER + Vec2::new(400.0, 0.0),
+            ],
+            8.0,
+        )],
+        parking: vec![lot],
+        ..MapData::default()
+    };
+
+    pull_areas_to_roads(&mut map);
+    let tongue = CENTER + Vec2::new(20.0, -edge - 0.5);
+    assert!(
+        !point_in_area(tongue, &map.parking[0]),
+        "язык в 1.1 м у кромки налит асфальтом",
+    );
+}
+
 /// Выемка в самом контуре дороги не касается и асфальтом не становится: так
 /// Г-образная стоянка не закрашивает газон в своём углу.
 #[test]

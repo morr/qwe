@@ -740,6 +740,21 @@ be called alone:
       tested: a thin strip between the outline and the band is exactly what the closing is
       for. Tula: 63 cut remnants go, 7 of them under 1 m² and 14 over 5; the step costs
       ~6 ms more (119 → 126 ms, `dev`, same run).
+    - **The fill as a whole goes through an opening** (`THIN_FILL_HALF_WIDTH` 1.125, so
+      anything that cannot hold a 2.25 m band is cut) — the same sliver question as the
+      remnant rule above, but **before the pieces are split**, because the sliver may be
+      glued to an honest piece and no per-piece filter sees it (six per-piece filters died
+      on the N2/N9 collar before this). The closing's sliver in the corner between two
+      bands — the **collar** at a drive's mouth (Tula ≈3827,4093: 0.5 × 5 m of lot asphalt
+      across the street's drawn tiles, tip 0.8 m past the kerb; the drive-loophole of
+      `between` let it through, since its vertices stand on the drive band) — and the
+      thin **tongue** along a kerb (Tula ≈4454,3855: 1.1 m × 4.5 m at the lot's north-west
+      tip, hairpin-slitted) both read as asphalt butts over foreign paving. The honest
+      lot-to-road strips are wider and live; a `street_side` pocket is **exempt** —
+      reaching the kerb across the sidewalk is its contract
+      (`a_street_side_lot_reaches_the_kerb_across_the_sidewalk`). Tula: 12 lots stopped
+      growing (their whole growth was thin fill), the pass's time did not move
+      (119.9 → 121.2 ms). Pinned by `a_fill_thinner_than_the_remnant_stays_unpaved`.
     - **The piece thresholds are only as good as `ring_area`**, and until the shoelace
       was taken from the ring's first vertex (`model::signed_ring_area`) they were not:
       in map metres `x · y` reaches 2·10⁷, where an `f32` step is 2, so a 0.07 m² crumb at
