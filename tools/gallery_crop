@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+"""Crop ROADS_SHOTS frames to the gallery sample window.
+
+    tools/gallery_crop <manifest.json> [--out DIR]
+
+A scale-2 gallery frame (3000x1900, the 1500x950 window) carries the sample
+window at offset +866+36, size 1820x1820 — measured against the review pages'
+close-ups, which this crop reproduces so new pairs line up with the old ones.
+A frame of any other size rescales the window proportionally: the framing
+itself depends only on the logical window, so a different --scale keeps the
+crop's place. `--out DIR` writes crops there under the raw names; the default
+is a *_crop.png beside each raw frame.
+"""
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+
+BASE_W, BASE_H = 3000, 1900
+CROP_W, CROP_H, OFF_X, OFF_Y = 1820, 1820, 866, 36
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    parser.add_argument("manifest", help="a ROADS_SHOTS json (the gallery also reads it)")
+    parser.add_argument("--out", help="directory for the crops (default: *_crop.png beside each frame)")
+    args = parser.parse_args()
+
+    entries = json.load(open(args.manifest))
+    if args.out:
+        os.makedirs(args.out, exist_ok=True)
+    failed = False
+    for entry in entries:
+        src = entry["path"]
+        if not os.path.exists(src):
+            print(f"crop: MISSING {src}")
+            failed = True
+            continue
+        probe = subprocess.run(
+            ["magick", "identify", "-format", "%w %h", src],
+            capture_output=True, text=True,
+        )
+        if probe.returncode != 0:
+            print(f"crop: NOT AN IMAGE {src}")
+            failed = True
+            continue
+        w, h = (int(x) for x in probe.stdout.split())
+        k = w / BASE_W
+        geo = f"{round(CROP_W * k)}x{round(CROP_H * k)}+{round(OFF_X * k)}+{round(OFF_Y * k)}"
+        if args.out:
+            dst = os.path.join(args.out, os.path.basename(src))
+        else:
+            root, ext = os.path.splitext(src)
+            dst = f"{root}_crop{ext}"
+        result = subprocess.run(["magick", src, "-crop", geo, "+repage", dst])
+        ok = result.returncode == 0
+        failed |= not ok
+        print(f"crop: {'ok' if ok else 'FAIL'} {dst} ({w}x{h} -> {geo})")
+    sys.exit(1 if failed else 0)
+
+
+if __name__ == "__main__":
+    main()

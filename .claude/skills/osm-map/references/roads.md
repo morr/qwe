@@ -3260,6 +3260,17 @@ place to look at a road-network defect end to end:
   be five relaunches. The live-app alternative for a single frame is
   `brp shot-at` on the running game (`.claude/live-app-project.md`, "Live shot or
   the batch gallery").
+- **Frames across revisions — `tools/gallery_batch <tasks-file>`**: lines of
+  `rev|city|env|manifest` (env like `ROADS_CARS=full` or `-`), one gallery run per
+  line — the review rounds' before/after collector ("было" on each fix commit's
+  parent, one revision's entries grouped into one manifest). It keeps its own
+  seeded worktree (`.claude/worktrees/gallery-batch`, target cloned from the main
+  checkout — never a shared `CARGO_TARGET_DIR`), recovers from build dirt on
+  checkout, and crops every frame with `tools/gallery_crop`: the
+  1820×1820+866+36 sample-window crop of a scale-2 frame, measured against the
+  review pages' close-ups so new pairs line up with old ones (other frame sizes
+  rescale proportionally). Progress lands in `<tasks-dir>/progress.log`; run it
+  in the background — it is minutes per revision.
 - **Captions are always drawn**, even where they run under the panel or off the screen.
   A `hide_captions_under_panel` system once hid a caption whose left edge reached the
   panel, and it was removed at the user's request: on zooming in the whole caption

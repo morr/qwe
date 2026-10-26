@@ -248,8 +248,13 @@ an hour on relaunches:
   seconds per extra frame, not 100).
 
 Rule of thumb: one frame → live; N frames of the same windows → one `ROADS_SHOTS` run;
-something only the gallery draws → the gallery. The full gallery environment reference
-lives in the osm-map skill (`references/roads.md`, "The junction gallery").
+something only the gallery draws → the gallery. **Frames across revisions** (a review
+round's before/after pairs, "было" at each fix commit's parent) →
+`tools/gallery_batch <tasks-file>`: lines of `rev|city|env|manifest`, its own seeded
+worktree per CLAUDE.md, one gallery run per line, `tools/gallery_crop` over every frame
+afterwards (the 1820×1820+866+36 sample-window crop the review pages use). The full
+gallery environment reference lives in the osm-map skill (`references/roads.md`,
+"The junction gallery").
 
 ## Camera
 

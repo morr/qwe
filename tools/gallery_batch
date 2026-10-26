@@ -1,0 +1,88 @@
+#!/bin/bash
+# Batch gallery runs across revisions — the before/after frame collector.
+#
+#   tools/gallery_batch <tasks-file> [--keep]
+#
+# One run per line:   <rev>|<city>|<env-or-->|<manifest>
+#   rev      git revision, detached ("было" frames: the fix commit's parent)
+#   city     ROADS_CITY slug (tula, oryel, …)
+#   env      extra env for the run ("ROADS_CARS=full ROADS_TRAM=1"), or `-`
+#   manifest ROADS_SHOTS json: [{"path":…,"at":[x,y],"half":…,"scale":…}, …]
+#
+# Its own worktree (.claude/worktrees/gallery-batch, target/ seeded once from
+# the main checkout — never share CARGO_TARGET_DIR between checkouts, CLAUDE.md
+# "Running cargo"): per line a detached checkout, one `cargo run --example
+# roads` over the manifest, then tools/gallery_crop over every frame. Progress
+# appends to <tasks-dir>/progress.log, each run's output lands in
+# <tasks-dir>/logs/. A batch costs minutes per revision — run it in the
+# background and read progress.log, not the stdout. --keep leaves the worktree
+# in place (default: removed; the seed is a ~20 s copy-on-write clone).
+#
+# The manifest grouping is the caller's win: entries sharing a revision and
+# city go into ONE line/manifest — one build+boot per revision, seconds per
+# frame (a relaunch per frame was the ~100 s-per-frame world this replaces).
+
+set -u
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+WT="$ROOT/.claude/worktrees/gallery-batch"
+KEEP=no
+
+for arg in "$@"; do
+  case "$arg" in
+    --keep) KEEP=yes ;;
+    -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
+    *) TASKS="$arg" ;;
+  esac
+done
+if [ -z "${TASKS:-}" ] || [ ! -f "$TASKS" ]; then
+  echo "usage: tools/gallery_batch <tasks-file> [--keep]  (lines: rev|city|env|manifest)" >&2
+  exit 2
+fi
+
+OUT="$(cd "$(dirname "$TASKS")" && pwd)"
+LOGS="$OUT/logs"
+mkdir -p "$LOGS"
+PROGRESS="$OUT/progress.log"
+
+log() { echo "[$1] $(date +%H:%M:%S) $2" >>"$PROGRESS"; }
+
+if [ ! -d "$WT" ]; then
+  git -C "$ROOT" worktree add --detach "$WT" HEAD >>"$PROGRESS" 2>&1 || exit 1
+  "$ROOT/tools/seed-worktree-target.sh" "$WT/target" >>"$PROGRESS" 2>&1 || exit 1
+fi
+
+n=0
+while IFS='|' read -r rev city envs manifest; do
+  case "$rev" in ''|'#'*) continue ;; esac
+  n=$((n + 1))
+  run_log="$LOGS/run_${n}_${rev}.log"
+
+  cur="$(git -C "$WT" rev-parse --short=8 HEAD 2>/dev/null || true)"
+  if [ "$cur" != "$rev" ]; then
+    if ! git -C "$WT" checkout --detach "$rev" >>"$run_log" 2>&1; then
+      # build dirt (patched examples, settings) — restore tracked files once
+      git -C "$WT" checkout -- . >>"$run_log" 2>&1
+      if ! git -C "$WT" checkout --detach "$rev" >>"$run_log" 2>&1; then
+        log "$n" "CHECKOUT FAILED $rev (skipped)"
+        continue
+      fi
+    fi
+  fi
+
+  log "$n" "run $rev $city env=[$envs] $(basename "$manifest")"
+  if [ "$envs" = "-" ]; then
+    (cd "$WT" && ROADS_CITY="$city" ROADS_SHOTS="$manifest" cargo run --example roads) >>"$run_log" 2>&1
+  else
+    (cd "$WT" && env $envs ROADS_CITY="$city" ROADS_SHOTS="$manifest" cargo run --example roads) >>"$run_log" 2>&1
+  fi
+  log "$n" "run rc=$?"
+  python3 "$ROOT/tools/gallery_crop" "$manifest" >>"$PROGRESS" 2>&1
+done <"$TASKS"
+
+if [ "$KEEP" = yes ]; then
+  log "$n" "ALL DONE ($n runs), worktree kept: $WT"
+else
+  git -C "$ROOT" worktree remove --force "$WT" >>"$PROGRESS" 2>&1
+  log "$n" "ALL DONE ($n runs), worktree removed"
+fi
