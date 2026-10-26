@@ -711,7 +711,12 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
   - **`LayerMesh`** — `{ builder, z, name, material: MaterialSpec }`, **one type for
     every layer of the map**, not a type per module. That is the point: a module read as
     `-> Vec<LayerMesh>` is read the same way as any neighbour. `name` is the entity's
-    `Name` in the live world, i.e. what a BRP query looks it up by.
+    `Name` in the live world, i.e. what a BRP query looks it up by; `spawn_layer` also
+    puts the **`MapLayer`** marker on every layer entity — the selection
+    `brp layers` / `brp hide` / `brp probe` work from, so a layer is found by name
+    without dumping the world's `Mesh2d`s (`.claude/live-app-project.md`, "Which layer
+    draws a glitch"). The near-step tree crowns (`CrownStream`, entity per tree) are not
+    layer meshes and carry no marker.
   - **`MaterialSpec`** — `Flat` / `Blend` / `Surface(SurfaceKind)` / `Roof` / `Paint(PaintPass)`
     / `Crown` (the one app-wide `CrownMaterialHandle`, for the merged far crowns). It **names** the
     material instead of carrying a `Handle`, and a handle is the only thing that would

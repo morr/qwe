@@ -218,6 +218,39 @@ until magick identify gsk.png >/dev/null 2>&1; do sleep 0.2; done
 
 The loop body sleeps: `do :; done` spins a core, and this machine is usually compiling.
 
+**`brp shot-at` wraps the whole ritual** — stale file removed, event sent with
+`at`/`zoom`/`path`, the file waited on until it settles, the `.small.png` copy written:
+
+```bash
+$b shot-at 2300 1900 0.4 gsk.png      # zoom is metres per frame pixel
+$b shot-at 3827 4093 0.05 n9.png --scale 2   # same frame, twice the pixels
+```
+
+Use it instead of retyping the three lines; the manual form above is what it does and what
+to fall back to when the wrapper's assumptions are in the way.
+
+## Live shot or the batch gallery — which road to a frame
+
+Two ways exist to get a png of the map, and picking the wrong one is how a session burns
+an hour on relaunches:
+
+- **The live app** (`BRP_PORT=15703 cargo run`, then `cam` / `shot-at` / `probe` /
+  `hide`) — the world loads in ~2 s, every frame is a second, and hiding layers or probing
+  points costs one call. **This is the default** for looking at anything, and the only way
+  to ask the world questions (counts, telemetry, layers).
+- **The roads gallery batch** (`ROADS_SHOT`/`ROADS_AT` … `cargo run --example roads`) —
+  a fresh process per run: cargo check + link + window + cache read + crop + parse + mesh
+  ≈ **100 s measured**, and a change of any parameter (a coordinate, `SCALE`) is a full
+  relaunch. It exists for frames the live app cannot give: the gallery's own sample
+  framing, its captions, `ROADS_RAW`/`ROADS_CONTOURS` overlays — and for before/after
+  pairs of a fix, where **`ROADS_SHOTS=<manifest.json>` shoots the whole list in one
+  run** (`[{"path":"n9_before.png","at":[3827,4093],"half":20,"scale":2}, …]` — a few
+  seconds per extra frame, not 100).
+
+Rule of thumb: one frame → live; N frames of the same windows → one `ROADS_SHOTS` run;
+something only the gallery draws → the gallery. The full gallery environment reference
+lives in the osm-map skill (`references/roads.md`, "The junction gallery").
+
 ## Camera
 
 - `brp cam <x> <y>` moves the camera and sticks — coordinates are map metres, the map is
@@ -262,7 +295,9 @@ reloads the world), `RoadPaintStyle` (uniforms — nothing rebuilds), `CarStyle`
 `TramStyle`, `IndustryStyle`, `SurfaceStyle`,
 `DrawMovePaths`, `DebugGrid`, `DebugNavmesh`, `DebugDoors`, `DebugRoadNetwork`, `PolymeshDebug`,
 `NavtileBase`, `CameraPositionMode`, `SavedCameraView`,
-`WorldSeed`, `Determinism`, `SimTick`, `RestartPending`.
+`WorldSeed`, `Determinism`, `SimTick`, `RestartPending`, `LayerProbe` (the last layer-probe
+report, written by `ProbeLayersEvent` — both `dev.rs`, driven by `brp probe`); the map's
+layer entities are found by the `MapLayer` marker (`brp layers`, also `dev.rs`'s probe).
 
 No PRNG state is stored anywhere to look at: a pawn carries `PawnId` +
 `WanderIndex` (both registered), and its stream is re-derived from those plus
@@ -323,29 +358,30 @@ $b res set IndustryStyle .visible true            # промзона: цилин
 $b res set SurfaceStyle .texture 0.0              # фактура поверхностей: 0 — плоские заливки
 ```
 
-### Which layer draws a glitch — hide them one by one
+### Which layer draws a glitch — `layers` / `probe` / `hide`
 
-A visual glitch (a jagged edge, a wrong colour) is identified by **elimination**:
-hide one map layer at a time and reshoot — the layer whose disappearance removes
-the glitch is the culprit. The style toggles above cover only some layers (the
-verge tile, verge lawns/yards, medians have no toggle at all), so go through
-`Visibility` on the layer entity itself:
+A visual glitch (a jagged edge, a wrong colour) is identified in three moves, each one
+`brp` call. Every layer the map spawns carries the `MapLayer` marker (`surface.rs`), which
+is what makes the first two possible without dumping entities:
 
 ```bash
-$b q Mesh2d Name --limit 2000 2>/dev/null | grep '"Name": "road_\|"Name": "sidewalks"'
-#   4294946172 {"Name": "road_verges"}   ← entity id of the layer ("sidewalks", "alleys",
-#                                          "roads", "road_verge_yards", "road_medians", … —
-#                                          the names are the LayerMesh names, see CLAUDE.md's
-#                                          spawn-site table)
-$b insert 4294946172 '{"bevy_camera::visibility::Visibility": "Hidden"}'
-$b shot        # the short name "Visibility" is NOT resolved — the full path is required
+$b probe 3827 4093          # what covers the point: layers top-first, with z,
+                            #   covering triangles and the nearest vertices
+$b layers road              # the id table: name, entity, z (top of the stack first)
+$b hide road_paint_lanes    # elimination: exact name, or every substring match
+$b shot-at 3827 4093 0.05   # reshoot the same framing, compare crops
 ```
 
-Restore with the same insert of `"Visible"` (or just quit — the world rebuilds on
-restart anyway). One layer per shot, always against the same `cam` framing; compare
-crops, not full frames. This found the N7 road defect in three shots after an hour
-of pixel arithmetic had failed: the facets belonged to the `roads` entity, which no
-style toggle reaches.
+`probe` is the first call to make: it answers "which layers are over this pixel and at what
+z" in one request (`ProbeLayersEvent` → the `LayerProbe` resource, `dev.rs`), replacing the
+hour-long pixel arithmetic a hunt used to spend before this existed. `hide` + reshoot is
+the confirmation step — the layer whose disappearance removes the glitch is the culprit;
+`show <name>` brings it back, and a restart rebuilds the world anyway. Restore with the
+same insert of `"Visible"` is history: `show` does it.
+
+The layers with no style toggle at all (verge tile, verge lawns/yards, medians) hide the
+same way — every spawned layer is in `layers`, not only the toggleable ones. Names are the
+`LayerMesh` names, the same the spawn-site table in CLAUDE.md lists.
 
 Hotkey equivalents in the app: `R` restart, `G` gizmos (doors + movepath), `N` the
 navigation overlay of whichever backend is selected, `M` movepath, `Space` pause,
