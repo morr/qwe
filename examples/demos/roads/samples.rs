@@ -153,7 +153,7 @@ struct Manifest {
 }
 
 #[derive(Deserialize)]
-struct ManifestSample {
+pub(crate) struct ManifestSample {
     /// Имя примера: по нему лежат снимок Яндекса `<name>.yandex.png` и, если
     /// есть, замороженный срез `<name>.json`.
     name: String,
@@ -225,9 +225,10 @@ fn data_dir() -> PathBuf {
 }
 
 /// Примеры города: манифест с диска, срезы — из кеша города (или
-/// замороженные файлы, где они есть). `Err` — причина словами: её показывает
-/// витрина.
-pub(crate) fn load(city: City) -> Result<Vec<Sample>, String> {
+/// замороженные файлы, где они есть). `window` — разовое окно вместо всей
+/// колонки (переменная `ROADS_AT` или кадр списка `ROADS_SHOTS`). `Err` —
+/// причина словами: её показывает витрина.
+pub(crate) fn load(city: City, window: Option<ManifestSample>) -> Result<Vec<Sample>, String> {
     let manifest_path = data_dir().join(format!("{}.json", city.slug()));
     let text = std::fs::read_to_string(&manifest_path).map_err(|_| {
         format!(
@@ -239,8 +240,13 @@ pub(crate) fn load(city: City) -> Result<Vec<Sample>, String> {
     let mut manifest: Manifest = serde_json::from_str(&text)
         .map_err(|error| format!("{}: {error}", manifest_path.display()))?;
     // разовое окно вместо манифеста — снять место из отчёта, не добавляя
-    // пример в обход критериев выше
-    if let Some(window) = window_from_env()? {
+    // пример в обход критериев выше: окно кадра списка (`ROADS_SHOTS`), а нет
+    // его — переменная `ROADS_AT`
+    let window = match window {
+        Some(window) => Some(window),
+        None => window_from_env()?,
+    };
+    if let Some(window) = window {
         manifest.samples = vec![window];
     }
     let bounds = GeoBounds::for_city(city);
@@ -312,11 +318,24 @@ pub(crate) fn load(city: City) -> Result<Vec<Sample>, String> {
         .collect()
 }
 
+/// Разовое окно вокруг точки в метрах карты: так звучат переменная `ROADS_AT`
+/// и кадр списка `ROADS_SHOTS` для манифеста примеров — его критерии про типы
+/// пересечений, а не про места. `half` — полуразмер окна, м.
+pub(crate) fn one_off(at: [f32; 2], half: f32) -> ManifestSample {
+    ManifestSample {
+        name: format!("at_{:.0}_{:.0}", at[0], at[1]),
+        title: format!("Окно {:.0}, {:.0}", at[0], at[1]),
+        note: "разовое окно".to_string(),
+        geo: None,
+        at: Some(at),
+        half,
+    }
+}
+
 /// `ROADS_AT=x,y[,half]` — одно окно вокруг точки в метрах карты (полуразмер
 /// по умолчанию [`AT_HALF`]) вместо всей колонки манифеста. Для снимка места
 /// из отчёта или карточки: «до/после» одного и того же окна, данные против
-/// разбора (`ROADS_CONTOURS`, `ROADS_RAW`). В манифест такое окно не пишется —
-/// его критерии про типы пересечений, а не про места.
+/// разбора (`ROADS_CONTOURS`, `ROADS_RAW`).
 fn window_from_env() -> Result<Option<ManifestSample>, String> {
     let Ok(value) = std::env::var(AT_ENV) else {
         return Ok(None);
@@ -331,20 +350,13 @@ fn window_from_env() -> Result<Option<ManifestSample>, String> {
         [x, y, half] => ([*x, *y], *half),
         _ => return Err(format!("{AT_ENV}={value}: ждём x,y или x,y,half")),
     };
-    Ok(Some(ManifestSample {
-        name: format!("at_{:.0}_{:.0}", at[0], at[1]),
-        title: format!("Окно {:.0}, {:.0}", at[0], at[1]),
-        note: format!("разовое окно {AT_ENV}"),
-        geo: None,
-        at: Some(at),
-        half,
-    }))
+    Ok(Some(one_off(at, half)))
 }
 
 /// Переменная окружения разового окна ([`window_from_env`]).
-const AT_ENV: &str = "ROADS_AT";
+pub(crate) const AT_ENV: &str = "ROADS_AT";
 /// Полуразмер разового окна по умолчанию, м.
-const AT_HALF: f32 = 40.0;
+pub(crate) const AT_HALF: f32 = 40.0;
 
 fn frozen_path(folder: &Path, name: &str) -> PathBuf {
     folder.join(format!("{name}.json"))

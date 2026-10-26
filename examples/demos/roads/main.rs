@@ -56,6 +56,11 @@
 //! для `data/<город>/`);
 //! `ROADS_SHOT=путь.png` — снять витрину в текстуру (без панелей) и выйти;
 //! `ROADS_SHOT_SCALE=2` — снять её вдвое крупнее окна (тот же кадр, чётче);
+//! `ROADS_SHOTS=манифест.json` — список кадров за один запуск:
+//! `[{"path":"….png","at":[x,y],"half":30,"scale":2}, …]` (`half` по умолчанию
+//! 40, `scale` — 1); окна строятся по одному, каждое снимается крупным планом —
+//! «до/после» обхода без перезапуска на каждый кадр (запуск стоит ~100 с,
+//! кадр списка — пару секунд);
 //! `ROADS_SAMPLE=N` ставит камеру на пример N (с единицы) крупным планом;
 //! `ROADS_AT=x,y[,half]` — вместо колонки одно окно вокруг точки в метрах
 //! карты (полуразмер по умолчанию 40 м): место из отчёта, не пример манифеста;
@@ -112,11 +117,12 @@ use qwe::map::{
 };
 use qwe::ui::knob::AddKnobsExt;
 use qwe::ui::{PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET, sync_city_label};
+use serde::Deserialize;
 
 use crate::overlay::Overlays;
 use crate::panel::{StatusLine, spawn_panel};
 use crate::samples::Sample;
-use crate::shot::{ShotRequest, auto_shot, request_shot};
+use crate::shot::{ShotFrameDone, ShotHold, ShotRequest, auto_shot, request_shot};
 
 /// Переменная окружения, по которой витрина кладёт и слой машин.
 const CARS_ENV: &str = "ROADS_CARS";
@@ -181,6 +187,105 @@ impl Gallery {
     }
 }
 
+/// Переменная окружения списка кадров ([`ShotList`]).
+const SHOTS_ENV: &str = "ROADS_SHOTS";
+
+/// Один кадр манифеста [`ShotList`]: где стоит окно и куда положить снимок.
+/// `at` — метры карты (игровые координаты карточки или отчёта), `half` по
+/// умолчанию [`samples::AT_HALF`], `scale` — 1.
+#[derive(Deserialize)]
+struct ShotEntry {
+    path: String,
+    at: [f32; 2],
+    half: Option<f32>,
+    scale: Option<f32>,
+}
+
+/// Список кадров одного запуска ([`read_shot_list`]): `index` — окно, которое
+/// строит `reload` прямо сейчас; правка `index` (`on_shot_frame_done`) и есть
+/// сигнал пересборки для следующего кадра.
+#[derive(Resource)]
+struct ShotList {
+    entries: Vec<ShotEntry>,
+    index: usize,
+}
+
+impl ShotList {
+    /// Окно текущего кадра; `None` — список исчерпан.
+    fn entry(&self) -> Option<&ShotEntry> {
+        self.entries.get(self.index)
+    }
+}
+
+/// Прочитать манифест списка кадров и поставить маркер «не выходить после
+/// первого снимка» ([`ShotHold`]). Ошибки — панией: запуск, не снявший ни
+/// одного кадра из-за опечатки в манифесте, должен падать loudly, а не
+/// закрываться «успешно» с пустой папкой.
+fn read_shot_list(mut commands: Commands) {
+    let Ok(manifest) = std::env::var(SHOTS_ENV) else {
+        return;
+    };
+    assert!(
+        std::env::var_os("ROADS_SHOT").is_none(),
+        "{SHOTS_ENV} и ROADS_SHOT вместе не задаются — список или один кадр"
+    );
+    let text = std::fs::read_to_string(&manifest)
+        .unwrap_or_else(|error| panic!("{SHOTS_ENV}={manifest}: {error}"));
+    let entries: Vec<ShotEntry> = serde_json::from_str(&text)
+        .unwrap_or_else(|error| panic!("{SHOTS_ENV}={manifest}: {error}"));
+    assert!(!entries.is_empty(), "{SHOTS_ENV}={manifest}: список пуст");
+    info!("roads: {} кадров из {manifest}", entries.len());
+    commands.insert_resource(ShotList { entries, index: 0 });
+    commands.insert_resource(ShotHold);
+}
+
+/// Кадр записан — окно списка вперёд, заказ снимка долой. Правка `index`
+/// зажигает `resource_changed::<ShotList>` — следующей пересборкой `reload`
+/// возьмёт новое окно; за исчерпанным списком (`entry() == None`) `reload`
+/// уходит, ничего не трогая, а выход заказывает [`drive_shot_list`].
+fn on_shot_frame_done(
+    _event: On<ShotFrameDone>,
+    mut commands: Commands,
+    mut list: ResMut<ShotList>,
+) {
+    commands.remove_resource::<ShotRequest>();
+    list.index += 1;
+    let left = list.entries.len().saturating_sub(list.index);
+    info!("roads: кадр записан, осталось {left}");
+}
+
+/// Двигатель списка: окно кадра построено и готово — заказать снимок; список
+/// исчерпан — выйти. Пересборку окна делает `reload` по правке `index`, сам
+/// снимок — общий цикл `auto_shot`.
+fn drive_shot_list(
+    mut commands: Commands,
+    mut exit: MessageWriter<AppExit>,
+    list: Option<Res<ShotList>>,
+    request: Option<Res<ShotRequest>>,
+    gallery: Res<Gallery>,
+) {
+    let Some(list) = list else {
+        return;
+    };
+    let Some(entry) = list.entry() else {
+        exit.write(AppExit::Success);
+        return;
+    };
+    if request.is_some() || !gallery_is_ready(&gallery) {
+        return; // снимок в цикле или окно ещё строится
+    }
+    info!(
+        "roads: кадр {} из {} — {}",
+        list.index + 1,
+        list.entries.len(),
+        entry.path
+    );
+    commands.insert_resource(ShotRequest::new(
+        entry.path.clone(),
+        entry.scale.unwrap_or(1.0),
+    ));
+}
+
 fn main() {
     App::new()
         .add_plugins(
@@ -238,8 +343,10 @@ fn main() {
                 init_flat_materials,
                 spawn_panel,
                 request_shot("ROADS_SHOT"),
+                read_shot_list,
             ),
         )
+        .add_observer(on_shot_frame_done)
         .add_systems(
             Update,
             (
@@ -258,13 +365,16 @@ fn main() {
                 retune_surface_materials
                     .run_if(retunes_on().or_else(resource_changed::<RoadShapeOnMap>)),
                 // на первом кадре оба ресурса числятся изменёнными — первая
-                // сборка идёт той же дорогой, что и всякая следующая
+                // сборка идёт той же дорогой, что и всякая следующая. Список
+                // кадров приезжает той же правкой: `index` двинулся — окно
+                // следующего кадра
                 reload.run_if(
                     resource_changed::<City>
                         .or_else(resource_changed::<RoadStyle>)
                         .or_else(resource_changed::<RoadShapeOnMap>)
                         .or_else(resource_changed::<Overlays>)
                         .or_else(resource_changed::<RawOsm>)
+                        .or_else(resource_changed::<ShotList>)
                         .or_else(input_just_pressed(KeyCode::F5)),
                 ),
                 build_next,
@@ -273,6 +383,7 @@ fn main() {
                 // примеры: собираются они по одному на кадр, и на общем
                 // `SHOT_FRAME` поздние ещё не стояли в колонке
                 auto_shot.run_if(resource_exists::<ShotRequest>.and_then(gallery_ready)),
+                drive_shot_list,
             )
                 .chain(),
         )
@@ -405,13 +516,28 @@ fn reload(
     placed: Query<Entity, With<Placed>>,
     window: Single<&Window, With<PrimaryWindow>>,
     mut camera: Single<(&mut Transform, &mut PanCamera)>,
+    list: Option<Res<ShotList>>,
 ) {
+    // окно кадра списка — вместо разового окна и колонки манифеста. Список
+    // исчерпан — пересобирать нечего: выход уже заказан (`drive_shot_list`)
+    let list_window = list.as_ref().is_some_and(|list| list.entry().is_some());
+    let forced = match &list {
+        Some(list) => match list.entry() {
+            Some(entry) => Some(samples::one_off(
+                entry.at,
+                entry.half.unwrap_or(samples::AT_HALF),
+            )),
+            None => return,
+        },
+        None => None,
+    };
+
     for entity in &placed {
         commands.entity(entity).despawn();
     }
     *gallery = Gallery::default();
 
-    match samples::load(*city) {
+    match samples::load(*city, forced) {
         Ok(samples) => gallery.samples = samples,
         Err(reason) => {
             status.0 = reason.clone();
@@ -469,16 +595,23 @@ fn reload(
         ));
     }
 
-    // стиль дорог камеру не трогает: сравнивать стыки надо на том же месте
-    if city.is_changed() {
+    // камеру переставляют смена города и новое окно списка кадров; правка
+    // стиля камеру не трогает: сравнивать стыки надо на том же месте. Окно
+    // списка всегда крупным планом — оно и построено ради кадра
+    let reframing = city.is_changed()
+        || list
+            .as_ref()
+            .is_some_and(|list| list.is_changed() && list.entry().is_some());
+    if reframing {
         let requested = std::env::var("ROADS_SAMPLE")
             .ok()
             .and_then(|value| value.parse::<usize>().ok())
             .filter(|number| (1..=gallery.samples.len()).contains(number));
+        let close_up = requested.is_some() || list_window;
         frame_sample(
             &gallery,
             requested.map_or(0, |number| number - 1),
-            requested.is_some(),
+            close_up,
             &window,
             &mut camera,
         );
@@ -787,6 +920,12 @@ fn place_new(
 /// Витрина готова к снимку: все примеры собраны и сдвинуты на свои места.
 /// Пустой список (манифест не прочитан) тоже готов — снимается сообщение.
 fn gallery_ready(gallery: Res<Gallery>) -> bool {
+    gallery_is_ready(&gallery)
+}
+
+/// Чистая половина [`gallery_ready`]: ей пользуется и [`drive_shot_list`], у
+/// которого `Gallery` уже в руках.
+fn gallery_is_ready(gallery: &Gallery) -> bool {
     gallery.built == gallery.samples.len() && gallery.pending_shift.is_none()
 }
 

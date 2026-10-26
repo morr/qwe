@@ -52,6 +52,26 @@ pub(crate) struct ShotRequest {
     scale: f32,
 }
 
+impl ShotRequest {
+    /// Заказ конкретного кадра — списком витрины, а не переменной окружения
+    /// (`request_shot`).
+    pub(crate) fn new(path: String, scale: f32) -> Self {
+        Self { path, scale }
+    }
+}
+
+/// Маркер «после кадра выхода не выходить»: кадрами управляет список витрины
+/// (ловит [`ShotFrameDone`]), а выход — дело её последнего кадра. Нет маркера —
+/// прежнее поведение: один снимок и `AppExit`.
+#[derive(Resource)]
+pub(crate) struct ShotHold;
+
+/// Кадр выхода отработан: снимок записан, вспомогательные кадры дорисованы.
+/// Витрина со списком кадров ловит это, чтобы переставить окно и заказать
+/// следующий снимок тем же циклом [`auto_shot`].
+#[derive(Event)]
+pub(crate) struct ShotFrameDone;
+
 /// Цель, в которую камера рисует для снимка, — вместе с масштабом: снимок
 /// обязан назвать ту же самую цель, см. шапку модуля.
 #[derive(Resource)]
@@ -63,7 +83,7 @@ pub(crate) fn request_shot(var: &'static str) -> impl Fn(Commands) {
     move |mut commands: Commands| {
         if let Ok(path) = std::env::var(var) {
             let scale = shot_scale(std::env::var(format!("{var}_SCALE")).ok().as_deref());
-            commands.insert_resource(ShotRequest { path, scale });
+            commands.insert_resource(ShotRequest::new(path, scale));
         }
     }
 }
@@ -79,6 +99,11 @@ fn shot_scale(value: Option<&str>) -> f32 {
 
 /// Снимок витрины и выход — единственный способ посмотреть на неё из сессии:
 /// BRP у примера нет.
+///
+/// Со [`ShotHold`] кадр выхода не завершает процесс, а оповещает
+/// [`ShotFrameDone`] — витрина со списком кадров переставляет окно и кладёт
+/// следующий [`ShotRequest`], и цикл начинается заново (счётчик кадров
+/// обнуляется на каждом заново вставленном запросе).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn auto_shot(
     mut commands: Commands,
@@ -89,7 +114,14 @@ pub(crate) fn auto_shot(
     cameras: Query<Entity, With<Camera2d>>,
     target: Option<Res<ShotTarget>>,
     request: Res<ShotRequest>,
+    hold: Option<Res<ShotHold>>,
 ) {
+    // новый заказ — новый отсчёт: у списка кадров каждый снимок считает свои
+    // кадры прогрева и выхода с нуля (первый `insert_resource` тоже «added»,
+    // так что одиночному снимку обнуление ничего не меняет)
+    if request.is_added() {
+        *frame = 0;
+    }
     *frame += 1;
     if *frame == SHOT_RETARGET_FRAME {
         // логический размер окна × масштаб снимка. Не физический размер окна:
@@ -133,7 +165,11 @@ pub(crate) fn auto_shot(
             .observe(save_to_disk(request.path.clone()));
     }
     if *frame == SHOT_EXIT_FRAME {
-        exit.write(AppExit::Success);
+        if hold.is_some() {
+            commands.trigger(ShotFrameDone);
+        } else {
+            exit.write(AppExit::Success);
+        }
     }
 }
 
