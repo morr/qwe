@@ -450,7 +450,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     as paving for the question). Scraps tile over in `road_verges`, ground-green scraps in
     `sidewalks` — the one tile layer above the grass — since a green pocket in the middle of
     the paving does not happen on the ground; a piece open into the big lawn (a mouth fang)
-    stays grass, and mapped greens that are not narrow strips are never asked. The decision per side
+    stays grass, while a wedge-sized green piece may stay open to its own pocket edge (8 m —
+    the pocket's loose outline, not the lawn running on), and mapped greens that are not
+    narrow strips are never asked. The decision per side
     is a **`SidewalkSide`** on the `RoadLine`: `Tagged`, `Inferred` (no tag, kept by the
     rule) or `None`.
   - **Paired halves** (`map/roads/network/pairs.rs`, `Pairs`) — a divided street as OSM
@@ -1711,6 +1713,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   rail, tram, wagons, industry, cars, roads, all of `spawn.rs`, buildings and trees.
   `MaterialSpec` has four variants, the last of them `Roof`, added with the module that
   needed it. Two modules return more than a `Vec<LayerMesh>`, each for its own reason.
+  Every spawned layer entity also carries the **`MapLayer`** marker — what
+  `brp layers` / `hide` / `probe` select by, so a layer is found by name without
+  dumping the world's meshes (near-step tree crowns are entities, not layers, and
+  carry none).
   **`buildings` returns two lists** (`BuildingMeshes { layers, shadows }`), because its
   shadows carry their own tag and their own rebuild schedule; a tag is what the
   *adapter* despawns by, so it stays outside `LayerMesh`. **`trees` is a scatter, not a
@@ -2488,6 +2494,9 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   **`With<PanCamera>`** — a bare `Single<…, With<Camera2d>>` then matches two entities and
   is skipped silently.
   `SpawnTestWalkerEvent` for A/B path checks; frame-time diagnostics.
+  **`ProbeLayersEvent` → `LayerProbe`** (`brp probe x y [r]`): what the map draws at a
+  point — layers over it top-first with z, covering triangles and the nearest vertices —
+  as one query, replacing hide-and-reshoot elimination and in-session temporary probes.
 - **BRP** — `RemoteHttpPlugin` on port 15702; drive it via the `live-app` skill's `brp`
   script only.
 

@@ -302,8 +302,11 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   live there, not in a verge strip; their scraps go into `sidewalks` in tile colour —
   the one tile layer above the grass (`Z_GRASS`), where an overlap with the
   neighbouring tile of the same material renders identically. A wide yard or a strip
-  with no paving at its vertices is not a candidate, and a piece open into the big lawn
-  stays grass as before. The errors are safe
+  with no paving at its vertices is not a candidate; the enclosure metre keeps its
+  meaning for a verge lawn — past its edge the lawn really runs on — but a pocket's own
+  edge is not the lawn running on, it is the pocket's loose outline sticking out past
+  the drawn tiles, so a wedge-sized green piece (up to `SCRAP_WEDGE_AREA_MAX`) may stay
+  open to it over `GREEN_OPENING_MAX` 8 m and still tile. The errors are safe
   one way: paving not counted only leaves a piece open to the lawn's edge, and it stays
   lawn; a band is taken **per side** (`band_half`), not by the wider one, because
   over-counted paving is what could fake a small enclosed piece. Parks and woods are
@@ -1049,6 +1052,21 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     replaces the manifest column with a single window around that point
     (`samples.rs::window_from_env`), so a report's place can be shot before/after without
     adding a sample in breach of the manifest's criteria; `ROADS_SAMPLE=1` frames it.
+    A tour of several such windows in one run is `ROADS_SHOTS` (see the gallery
+    section below).
+- **Chasing a road defect — the probe ladder, before any temporary code.** Every hunt
+  used to reinvent its own diagnostics (env-gated dumps, `QWE_NO_*` render flags,
+  in-session mesh probes — written, rebuilt per flag, removed). The built-in ladder
+  (`dev.rs`, `.claude/live-app-project.md` "Which layer draws a glitch") replaces most
+  of it, in this order: `brp probe x y` (which layers cover the point, their z, the
+  nearest vertices) → `brp layers` + `brp hide <name>` + `shot-at` (elimination) →
+  `tools/osm_near --verts` (the OSM truth under the metres). Only when the question is
+  inside one algorithm — a value mid-computation, a branch that maybe never fires —
+  write a temporary probe, and then: gate it on an env var **beside the code it reads**
+  (`ROADS_DIAG_PAIR`-style), log one line per run (not a dump), and remove it with its
+  test in the same change that closes the defect. A red-green test over the pure
+  build (`mesh_roads` and friends) usually pins the mechanism better than the probe
+  that found it — the probe answers "what", the test holds "always".
 - **Markings — the paint layer** (`map/roads/paint.rs`, shader `assets/shaders/paint.wgsl`).
   The lane lines are **geometry off the street axis**, not a pattern of the asphalt
   shader any more. Until stage 3 of the roads plan the asphalt shader drew them from the
@@ -3229,6 +3247,19 @@ place to look at a road-network defect end to end:
   logical size — the same frame, sharper; `ROADS_SAMPLE=N` frames sample N,
   `ROADS_CITY=<slug>` opens the gallery on that city (the automatic shot of a city other
   than Tula).
+- **A list of frames in one run — `ROADS_SHOTS=manifest.json`**: an array of
+  `{"path": "….png", "at": [x, y], "half": 30, "scale": 2}` (`half` defaults to
+  40, `scale` to 1; `at` is map metres — the card's or report's coordinates). Each
+  frame becomes a one-off window (`samples::one_off`), built and shot close-up in
+  turn: `read_shot_list` plants the list, `reload` rebuilds the window on every
+  `index` change, `auto_shot` shoots it, and `on_shot_frame_done` advances to the
+  next entry — the shared `gallery_shot.rs` gained `ShotHold` (don't exit after the
+  frame) and `ShotFrameDone` (tell the gallery the frame is written) for exactly
+  this. A run costs ~100 s (cargo + window + cache + crop), every extra frame a
+  couple of seconds — that is the point: a before/after tour of five spots used to
+  be five relaunches. The live-app alternative for a single frame is
+  `brp shot-at` on the running game (`.claude/live-app-project.md`, "Live shot or
+  the batch gallery").
 - **Captions are always drawn**, even where they run under the panel or off the screen.
   A `hide_captions_under_panel` system once hid a caption whose left edge reached the
   panel, and it was removed at the user's request: on zooming in the whole caption

@@ -71,6 +71,10 @@ const GREEN_WIDTH_MAX: f32 = 10.0;
 /// этого к нарисованной плитке или бордюру, м. Точечный опрос вместо
 /// сплошного: у внутренней зелени мощения рядом нет вовсе.
 const GREEN_BITE: f32 = 2.0;
+/// Открытость клинового куска зелени своему кольцу, м: край кармана — не
+/// продолжение газона наружу (под мощением его и не видно), но и не повод
+/// мостить длинный двор; клину до [`SCRAP_WEDGE_AREA_MAX`] хватает.
+const GREEN_OPENING_MAX: f32 = 8.0;
 /// На сколько лоскут заводится под мощение вокруг, м: остаток считался по
 /// осям без сглаживания лент, и шов не должен светиться нитью газона.
 const SCRAP_OVERLAP: f32 = 0.2;
@@ -303,7 +307,7 @@ impl Scraps {
             if clip.is_empty() {
                 return Vec::new();
             }
-            scraps_among(ring, &[], subject, clip)
+            scraps_among(ring, &[], true, subject, clip)
         })
         .into_iter()
         .flatten()
@@ -415,7 +419,7 @@ impl Scraps {
         if clip.is_empty() {
             return Vec::new();
         }
-        scraps_among(&lawn.ring, &lawn.cuts, subject, clip)
+        scraps_among(&lawn.ring, &lawn.cuts, false, subject, clip)
     }
 }
 
@@ -493,6 +497,7 @@ impl Bites {
 fn scraps_among(
     outline: &[Vec2],
     cuts: &[[Vec2; 2]],
+    green: bool,
     subject: Vec<Contour>,
     clip: Vec<Contour>,
 ) -> Vec<Shape> {
@@ -530,7 +535,16 @@ fn scraps_among(
                 .sum();
             // до среза куска полосы — газон идёт дальше
             let cut = edges().any(|(from, to)| on_cut((from + to) / 2.0));
-            small && open <= SCRAP_OPENING && !cut
+            // у клинового куска зелени открытость — собственный край кармана,
+            // под мощением его не видно: для куска до [`SCRAP_WEDGE_AREA_MAX`]
+            // она не длиннее [`GREEN_OPENING_MAX`]
+            let open_max =
+                if green && area <= SCRAP_WEDGE_AREA_MAX {
+                    GREEN_OPENING_MAX
+                } else {
+                    SCRAP_OPENING
+                };
+            small && open <= open_max && !cut
         })
         .flat_map(|shape| {
             vec![shape].outline(&OutlineStyle::new(SCRAP_OVERLAP).line_join(LineJoin::Bevel))
