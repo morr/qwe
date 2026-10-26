@@ -461,6 +461,16 @@ pub enum MaterialSpec {
     Crown,
 }
 
+/// Метка всего, что кладёт [`spawn_layer`], — по одному merged-мешу на слой
+/// карты. Выборка `With<MapLayer>` — это список слоёв живого мира без дампа
+/// всех `Mesh2d` (ближняя ступень крон — пятнадцать тысяч сущностей): её читают
+/// пробы и списки слоёв сессии (`brp layers` / `brp probe` / `brp hide`,
+/// `dev.rs::on_probe_layers`). Отдельные кроны ближней ступени
+/// (`trees::CrownStream`) метки не несут — они не слои-меши.
+#[derive(Component, Reflect)]
+#[reflect(Component)]
+pub struct MapLayer;
+
 /// Собранный слой карты: меш плюс всё, что нужно знать, чтобы положить его в
 /// мир, — рунга z, имя и вид материала.
 ///
@@ -533,6 +543,7 @@ fn spawn_layer(
     }
     let mut layer = commands.spawn((
         tag,
+        MapLayer,
         Mesh2d(meshes.add(builder.build())),
         Transform::from_xyz(0.0, 0.0, z),
         DespawnOnExit(AppState::Playing),

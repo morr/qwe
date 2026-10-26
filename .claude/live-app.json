@@ -16,5 +16,17 @@
   "smoke": {
     "types": ["Human", "Demon", "CorpseTag", "Portal"],
     "speed": 10
+  },
+  "offscreen": {
+    "event": "OffscreenShotEvent",
+    "path": "offscreen.png",
+    "size": [1568, 980]
+  },
+  "layers": {
+    "marker": "MapLayer"
+  },
+  "probe": {
+    "event": "ProbeLayersEvent",
+    "resource": "LayerProbe"
   }
 }

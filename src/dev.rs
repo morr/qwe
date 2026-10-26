@@ -11,8 +11,10 @@
 
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::RenderTarget;
+use bevy::camera::primitives::Aabb;
 use bevy::camera_controller::pan_camera::PanCamera;
 use bevy::diagnostic::{FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin};
+use bevy::ecs::system::SystemParam;
 use bevy::image::Image;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
@@ -20,6 +22,13 @@ use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 
 use crate::grid::world_to_tile;
 use crate::loading::AppState;
+use crate::map::buildings::{BuildingHeightMode, BuildingPlan, mesh_buildings};
+use crate::map::osm::MapData;
+use crate::map::surface::MapLayer;
+use crate::map::{
+    FenceZoomBucket, ParkingLayout, RailZoomBucket, RoadShapeOnMap, RoadStyle, build_roads,
+    mesh_fences, mesh_rails, mesh_surfaces,
+};
 use crate::movement::Movable;
 use crate::settings::unit_z;
 
@@ -90,6 +99,240 @@ pub struct SpawnTestWalkerEvent {
 #[reflect(Component)]
 pub struct TestWalker;
 
+/// Проба слоёв: что карты нарисовано в точке. Ответ — [`LayerProbe`], один
+/// ресурс на последнюю пробу, читается по BRP (`brp probe`).
+///
+/// Это «какой слой рисует глитч» одним запросом вместо часа eliminations:
+/// скрытий-пересниманий и временных проб, вписываемых в исходник на время
+/// дефекта. Обсервер выполняется синхронно внутри BRP-вызова
+/// (`world.trigger_event` зовёт `World::trigger`), так что ответ готов к
+/// моменту, когда `brp probe` читает ресурс.
+#[derive(Event, Reflect, Debug, Default)]
+#[reflect(Event, Default)]
+pub struct ProbeLayersEvent {
+    /// Точка в метрах карты.
+    pub at: Vec2,
+    /// Радиус поиска ближайших вершин, м; `None` — [`PROBE_RADIUS`].
+    pub radius: Option<f32>,
+}
+
+/// Ответ последней [`ProbeLayersEvent`]: слои под точкой, верхние первыми, с
+/// числом накрывающих точку треугольников и ближайшими вершинами.
+#[derive(Resource, Reflect, Debug, Default)]
+#[reflect(Resource, Default)]
+pub struct LayerProbe {
+    pub report: String,
+}
+
+/// Радиус поиска ближайших вершин по умолчанию, м.
+const PROBE_RADIUS: f32 = 2.0;
+/// Сколько ближайших вершин показывать на слой.
+const PROBE_NEAREST: usize = 3;
+/// Порог «на ребре — считаем внутри», м²: знаковый тест с нулём на ребре
+/// выкидывает точку, стоящую ровно на кромке, — как раз то место, из-за
+/// которого пробу и делают.
+const PROBE_EDGE: f32 = 1e-6;
+
+/// Точка в треугольнике; лежащая на ребре — внутри.
+fn in_triangle(a: Vec2, b: Vec2, c: Vec2, p: Vec2) -> bool {
+    if (b - a).perp_dot(c - a).abs() <= f32::EPSILON {
+        return false; // вырожденный
+    }
+    let d = [
+        (b - a).perp_dot(p - a),
+        (c - b).perp_dot(p - b),
+        (a - c).perp_dot(p - c),
+    ];
+    d.iter().all(|v| *v >= -PROBE_EDGE) || d.iter().all(|v| *v <= PROBE_EDGE)
+}
+
+/// Одна строка отчёта пробы: слой с точной геометрией ([`on_probe_layers`]).
+struct ProbeRow {
+    name: &'static str,
+    z: f32,
+    covering: usize,
+    triangles: usize,
+    vertices: usize,
+    nearest: Vec<(f32, Vec2)>,
+    /// Сущность живого мира с этим именем — чтобы `brp hide` не искал её
+    /// вручную; `None` — слоя сейчас нет в мире (пересборка на другой ступени).
+    entity: Option<Entity>,
+    hidden: bool,
+}
+
+/// Входы пересборки слоёв для пробы: те же ресурсы, что читают адаптеры
+/// (`roads::rebuild_roads`, `rail::rebuild_rails`…), одним параметром — идиома
+/// `map::surface::LayerMaterials`.
+#[derive(SystemParam)]
+struct ProbeSources<'w> {
+    map: Res<'w, MapData>,
+    road_style: Res<'w, RoadStyle>,
+    road_shape: Res<'w, RoadShapeOnMap>,
+    rail_bucket: Res<'w, RailZoomBucket>,
+    fence_bucket: Res<'w, FenceZoomBucket>,
+    height_mode: Res<'w, BuildingHeightMode>,
+}
+
+fn on_probe_layers(
+    event: On<ProbeLayersEvent>,
+    mut probe: ResMut<LayerProbe>,
+    sources: ProbeSources,
+    layers: Query<(Entity, &Name, &Aabb, &Transform, &Visibility), With<MapLayer>>,
+) {
+    let ProbeSources {
+        map,
+        road_style,
+        road_shape,
+        rail_bucket,
+        fence_bucket,
+        height_mode,
+    } = sources;
+    let at = event.at;
+    let radius = event.radius.unwrap_or(PROBE_RADIUS).max(0.0);
+    let started = std::time::Instant::now();
+
+    // Живой мир: z, скрытость и габариты (Aabb) посаженных слоёв. Вершин у
+    // живых мешей в главном мире нет — слои собираются с RenderAssetUsages::
+    // RENDER_WORLD и после извлечения в рендер пусты, поэтому точная геометрия
+    // ниже пересобирается теми же чистыми `mesh_*`, что зовут адаптеры; Aabb
+    // остаётся, потому что считается при спавне, до извлечения.
+    let mut live: Vec<(Entity, &str, f32, bool, bool)> = Vec::new();
+    for (entity, name, aabb, transform, visibility) in &layers {
+        let (min, max) = (aabb.min(), aabb.max());
+        let covers = at.x >= min.x && at.x <= max.x && at.y >= min.y && at.y <= max.y;
+        live.push((
+            entity,
+            name.as_str(),
+            transform.translation.z,
+            *visibility == Visibility::Hidden,
+            covers,
+        ));
+    }
+
+    // Пересборка: те же входы, что у адаптеров пересборки. Кроны не входят —
+    // они рассыпаются в сущности (куски — уже слои живого мира выше).
+    let layout = ParkingLayout::new(&map.parking, &map.roads, map.traffic_side);
+    let (surfaces, _) = mesh_surfaces(&map, &layout);
+    let roads = build_roads(&map, *road_style, road_shape.0).layers;
+    let (rails, _) = mesh_rails(*rail_bucket, &map.rails);
+    let (fences, _) = mesh_fences(*fence_bucket, &map.fences, &map.roads);
+    let (buildings, _) =
+        mesh_buildings(BuildingPlan::game(*height_mode), &map.buildings, &map.roads);
+    // имена всего пересобранного: слой из этого набора в хвост отчёта не
+    // попадает — его геометрию уже спросили точно, далеко она или рядом
+    let rebuilt: std::collections::BTreeSet<&str> = surfaces
+        .iter()
+        .chain(&roads)
+        .chain(&rails)
+        .chain(&fences)
+        .chain(&buildings.layers)
+        .chain(&buildings.shadows)
+        .map(|layer| layer.name)
+        .collect();
+
+    let mut rows: Vec<ProbeRow> = surfaces
+        .iter()
+        .chain(&roads)
+        .chain(&rails)
+        .chain(&fences)
+        .chain(&buildings.layers)
+        .chain(&buildings.shadows)
+        .map(|layer| {
+            let covering = layer
+                .builder
+                .triangles()
+                .filter(|[a, b, c]| in_triangle(*a, *b, *c, at))
+                .count();
+            let nearest = layer
+                .builder
+                .nearest_vertices(at, radius, PROBE_NEAREST)
+                .into_iter()
+                .map(|(d2, p)| (d2.sqrt(), p))
+                .collect();
+            // одноимённый слой живого мира — оттуда сущность для `brp hide`
+            // и его скрытость
+            let (entity, hidden) = live
+                .iter()
+                .find(|(_, name, _, _, _)| *name == layer.name)
+                .map_or((None, false), |(entity, _, _, hidden, _)| {
+                    (Some(*entity), *hidden)
+                });
+            ProbeRow {
+                name: layer.name,
+                z: layer.z,
+                triangles: layer.builder.triangles().count(),
+                vertices: layer.builder.vertex_count(),
+                covering,
+                nearest,
+                entity,
+                hidden,
+            }
+        })
+        .filter(|row| row.covering > 0 || !row.nearest.is_empty())
+        .collect();
+    rows.sort_by(|a, b| b.z.total_cmp(&a.z));
+
+    let mut report = format!(
+        "probe at {:.1}, {:.1} radius {:.1} — {} слоёв с геометрией рядом, {:.1?} на пересборку\n",
+        at.x,
+        at.y,
+        radius,
+        rows.len(),
+        started.elapsed()
+    );
+    for row in &rows {
+        let nearest = row
+            .nearest
+            .iter()
+            .map(|(d, p)| format!("({:.1},{:.1}) {:.2} м", p.x, p.y, d))
+            .collect::<Vec<_>>()
+            .join("; ");
+        let entity = row
+            .entity
+            .map_or_else(|| "-".to_string(), |e| e.index().to_string());
+        report.push_str(&format!(
+            "  z {:7.3}  {:>8}  {:<22} tris {}/{}  verts {}  near {}{}\n",
+            row.z,
+            entity,
+            row.name,
+            row.covering,
+            row.triangles,
+            row.vertices,
+            nearest,
+            if row.hidden { "  [hidden]" } else { "" }
+        ));
+    }
+
+    // Слои вне пересборки, чей габарит накрывает точку (кроны, их тени — всё,
+    // что рассыпается в сущности): свернуть по имени, чтобы 200 кусков не
+    // занимали отчёт
+    let mut by_name: std::collections::BTreeMap<&str, (usize, f32, f32, bool)> =
+        std::collections::BTreeMap::new();
+    for (_, name, z, hidden, covers) in &live {
+        if !covers || rebuilt.contains(name) {
+            continue;
+        }
+        let entry = by_name.entry(name).or_insert((0, *z, *z, *hidden));
+        entry.0 += 1;
+        entry.1 = entry.1.max(*z);
+        entry.2 = entry.2.min(*z);
+        entry.3 |= *hidden;
+    }
+    for (name, (count, top, bottom, hidden)) in by_name {
+        let span = if (top - bottom).abs() > f32::EPSILON {
+            format!("z {top:.3}–{bottom:.3}")
+        } else {
+            format!("z {top:.3}")
+        };
+        report.push_str(&format!(
+            "  {span:>15}  {name} ×{count} — по габариту; точной геометрии нет (вне пересборки){}\n",
+            if hidden { "  [hidden]" } else { "" }
+        ));
+    }
+    info!("{}", report.trim_end());
+    probe.report = report;
+}
+
 /// `QWE_PERF_NOVSYNC=1` — окно без vsync: кадр не упирается в 60 Гц дисплея,
 /// и `frame_time` в логе диагностики становится измеримым. Без переменной —
 /// обычный `AutoVsync`.
@@ -148,9 +391,13 @@ impl Plugin for DevPlugin {
         .register_type::<OffscreenShotEvent>()
         .register_type::<SpawnTestWalkerEvent>()
         .register_type::<TestWalker>()
+        .register_type::<ProbeLayersEvent>()
+        .register_type::<LayerProbe>()
+        .init_resource::<LayerProbe>()
         .add_observer(on_take_screenshot)
         .add_observer(on_offscreen_shot)
         .add_observer(on_spawn_test_walker)
+        .add_observer(on_probe_layers)
         .add_systems(Update, capture_offscreen)
         .add_systems(
             Update,

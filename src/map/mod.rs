@@ -180,6 +180,8 @@ impl Plugin for MapPlugin {
             .init_resource::<IndustryStyle>()
             .register_type::<SunStyle>()
             .register_type::<SunOnMap>()
+            // метка слоёв: по ней их выбирают `brp layers`/`probe`/`hide`
+            .register_type::<surface::MapLayer>()
             .register_type::<TreeStyle>()
             .register_type::<TreeRowStyle>()
             .register_type::<ConiferNoiseStyle>()

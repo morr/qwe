@@ -658,6 +658,26 @@ impl MeshBuilder {
         })
     }
 
+    /// Ближайшие к точке вершины — не дальше `radius`, ближними первыми, не
+    /// больше `limit`. Пробе слоёв (`dev.rs::on_probe_layers`): вершины у точки
+    /// говорят, где край слоя, когда треугольники точку уже не накрывают.
+    /// Координаты слоя — мировые (адаптер сажает его с тождественным xy), так
+    /// что точки сравниваются напрямую.
+    pub fn nearest_vertices(&self, at: Vec2, radius: f32, limit: usize) -> Vec<(f32, Vec2)> {
+        let mut hits: Vec<(f32, Vec2)> = self
+            .positions
+            .iter()
+            .filter_map(|&[x, y, _]| {
+                let point = Vec2::new(x, y);
+                let d2 = point.distance_squared(at);
+                (d2 <= radius * radius).then_some((d2, point))
+            })
+            .collect();
+        hits.sort_by(|a, b| a.0.total_cmp(&b.0));
+        hits.truncate(limit);
+        hits
+    }
+
     /// Координаты ленты — тест проверяет по ним, что легло в атрибут.
     #[cfg(test)]
     pub fn ribbon_coords_for_test(&self) -> Option<&[[f32; 4]]> {
