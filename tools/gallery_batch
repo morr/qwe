@@ -15,8 +15,13 @@
 # roads` over the manifest, then tools/gallery_crop over every frame. Progress
 # appends to <tasks-dir>/progress.log, each run's output lands in
 # <tasks-dir>/logs/. A batch costs minutes per revision — run it in the
-# background and read progress.log, not the stdout. --keep leaves the worktree
-# in place (default: removed; the seed is a ~20 s copy-on-write clone).
+# background and WAIT ON THE FILE, NEVER ON A CLOCK: a `sleep 300` poll idles
+# minutes past every frame (a real session burned five-minute sleeps on this
+# exact driver while frames arrived every ~90 s). Wake on the Nth frame with
+#   until [ "$(grep -c 'crop: ok' <tasks-dir>/progress.log)" -ge N ]; do sleep 10; done
+# and on the end of the batch with `until grep -q 'ALL DONE' …`. --keep leaves
+# the worktree in place (default: removed; the seed is a ~20 s copy-on-write
+# clone).
 #
 # The manifest grouping is the caller's win: entries sharing a revision and
 # city go into ONE line/manifest — one build+boot per revision, seconds per

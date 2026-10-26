@@ -3270,7 +3270,13 @@ place to look at a road-network defect end to end:
   1820×1820+866+36 sample-window crop of a scale-2 frame, measured against the
   review pages' close-ups so new pairs line up with old ones (other frame sizes
   rescale proportionally). Progress lands in `<tasks-dir>/progress.log`; run it
-  in the background — it is minutes per revision.
+  in the background — it is minutes per revision. **Wait on the file, not on a
+  clock**: one review session polled this driver with `sleep 300` and idled
+  five minutes past every frame while they arrived each ~90 s. The event-driven
+  shape is `until [ "$(grep -c 'crop: ok' <dir>/progress.log)" -ge N ]; do
+  sleep 10; done` (wake on the Nth frame — then upload/edit the artifact while
+  the batch continues), and `until grep -q 'ALL DONE' <dir>/progress.log` for
+  the end.
 - **Captions are always drawn**, even where they run under the panel or off the screen.
   A `hide_captions_under_panel` system once hid a caption whose left edge reached the
   panel, and it was removed at the user's request: on zooming in the whole caption
