@@ -39,9 +39,15 @@
 //! полутора-двух метрах, и между ними светилась полоса голой земли —
 //! тёмной линией вдоль кромки (Оружейная × Энгельса, R37-02): на концах
 //! такая полоса протекает, и «что замкнуто нарисованным» её не видит.
-//! Улицам зелень не подшивается — полосу вдоль них рисует газон обочины, и
-//! фартук лёг бы на него чужим цветом; грунтовой тропе — потому что земля
-//! у неё пустырь, как и у кармана.
+//! Улице зелень подшивается к тротуарной ленте — но только там, где её
+//! собственный газон обочины полосы не закрывает (по месту,
+//! [`RoadLine::verge_at`]): полоса начинается у края того, что улица
+//! рисует сама — ленты или газона обочины, кто дальше, — и фартук не
+//! ложится на чужой цвет (Тула, сквер у Сойфера: полоса земли 1 × 7 м у
+//! тротуарной ленты улицы Фёдора Смирнова, N8b). Кромку зелени фартук
+//! спрашивает после вливания карманов: влитый растит зелень к самой ленте,
+//! и полоса открыта именно от выращенной кромки. Грунтовой тропе — потому
+//! что земля у неё пустырь, как и у кармана.
 //!
 //! Ошибиться в «покрытом» не страшно в одну сторону: квартал лежит **ниже**
 //! всего, что на нём нарисовано (`Z_LANDUSE`), так что трава, подложенная
@@ -119,14 +125,23 @@ struct Link {
     reach: f32,
     /// Грунтовая тропа или улица: карман у неё — не двор.
     rough: bool,
-    /// Дорожка (`RoadClass::Alley`): только к ней подшивается фартук зелени —
-    /// полосу вдоль улицы рисует её собственный газон обочины, и фартук лёг
-    /// бы на него чужим цветом.
+    /// Дорожка (`RoadClass::Alley`): фартук зелени подшивается к краю её
+    /// полотна всегда.
     alley: bool,
+    /// Улица ([`RoadLine::is_carriageway`]): фартук зелени подшивается и к её
+    /// тротуарной ленте — сама улица (копия: фартук шьётся, когда `MapData`
+    /// уже снова меняется) в [`Scene::streets`], а обочина читается по месту
+    /// (`RoadLine::verge_at`). Здесь — индекс улицы и метров по её точкам от
+    /// начала до `from`.
+    street: Option<(u32, f32)>,
 }
 
-/// Всё, что нужно проходу, собранное один раз на карту.
+/// Всё, что нужно проходу, собранное один раз на карту. Сцена владеет своими
+/// данными целиком, поэтому живёт и дальше вливания карманов — фартук зелени
+/// спрашивает кромку, которую влитые карманы уже вырастили.
 struct Scene {
+    /// Улицы для фартука зелени ([`Link::street`]): обочины по месту.
+    streets: Vec<RoadLine>,
     covers: Vec<Cover>,
     cover_grid: Grid<usize>,
     links: Vec<Link>,
@@ -140,8 +155,6 @@ struct Scene {
     /// у газона и у сквера карман вливается в неё одним лугом, как газон
     /// обочины рядом с ними.
     meadows: Rim<Green>,
-    /// Внешние края той же зелени — фартук зелени (`green_aprons`).
-    meadow_edges: Vec<(Vec2, Vec2)>,
 }
 
 /// Рёбра колец площадей одного рода с индексом по [`Grid`]: у какого кольца
@@ -172,7 +185,10 @@ struct Pocket {
 /// рядом с ним двор не спрашивает). Возвращает, сколько.
 ///
 /// Карман-луг, касающийся своей зелени, в неё вливается ([`merge_into_green`])
-/// — по порядку плиток, так что и это не зависит от числа потоков.
+/// — по порядку плиток, так что и это не зависит от числа потоков. Фартук
+/// зелени (`green_aprons`) шьётся после вливания, по кромке, которую влитые
+/// карманы уже вырастили: полоса у ленты улицы открыта именно от неё
+/// (сквер Сойфера, N8b), и спрашивать прежнюю — значит оставить полосу.
 ///
 /// Плитки друг от друга не зависят и считаются по потокам, как стоянки
 /// (`lots::pave_lots`); порядок результата — порядок плиток, так что он не
@@ -180,12 +196,10 @@ struct Pocket {
 pub(super) fn fill_ground_pockets(map: &mut MapData) -> usize {
     let scene = Scene::of(map);
     let tiles = tiles_of(&map.roads);
-    let mut pockets: Vec<Pocket> = in_parallel(&tiles, |&tile| scene.pockets(tile))
+    let pockets: Vec<Pocket> = in_parallel(&tiles, |&tile| scene.pockets(tile))
         .into_iter()
         .flatten()
         .collect();
-    pockets.extend(scene.green_aprons());
-    drop(scene);
     let sown = pockets.len();
     for Pocket {
         outer,
@@ -207,7 +221,36 @@ pub(super) fn fill_ground_pockets(map: &mut MapData) -> usize {
             colours: Default::default(),
         });
     }
-    sown
+    // кромка зелени, выращенной вливанием, — по ней шьётся фартук
+    let edges: Vec<(Vec2, Vec2)> = map
+        .parks
+        .iter()
+        .chain(&map.grass)
+        .flat_map(|area| {
+            let ring = &area.outer;
+            (0..ring.len()).map(move |index| (ring[index], ring[(index + 1) % ring.len()]))
+        })
+        .collect();
+    let aprons = scene.green_aprons(&edges);
+    let grown = aprons.len();
+    for Pocket {
+        outer,
+        kind,
+        absorb: _,
+    } in aprons
+    {
+        map.pockets.push(PolyArea {
+            outer,
+            holes: Vec::new(),
+            kind,
+            building_use: BuildingUse::Other,
+            height: None,
+            storeys: None,
+            entrances: Vec::new(),
+            colours: Default::default(),
+        });
+    }
+    sown + grown
 }
 
 /// Влить карман `pocket` (уже заведённый под соседей) в замапленную зелень:
@@ -286,11 +329,19 @@ impl Scene {
             .flatten()
             .collect();
         let mut links: Vec<Link> = Vec::new();
-        for road in roads {
+        // улицы для фартука зелени — копии: сцена живёт дальше вливания
+        // карманов, когда `map` снова меняется
+        let mut streets: Vec<RoadLine> = Vec::new();
+        for road in roads.iter() {
             let reach = road.sidewalk().mapped_edge(road.width / 2.0);
             let rough = road.is_unpaved_street()
                 || (road.class == RoadClass::Alley && !road.is_paved_path());
             let alley = road.class == RoadClass::Alley;
+            let street = (!rough && road.is_carriageway()).then(|| {
+                streets.push((**road).clone());
+                (streets.len() - 1) as u32
+            });
+            let mut at = 0.0;
             for pair in road.points.windows(2) {
                 links.push(Link {
                     from: pair[0],
@@ -298,7 +349,9 @@ impl Scene {
                     reach,
                     rough,
                     alley,
+                    street: street.map(|street| (street, at)),
                 });
+                at += pair[0].distance(pair[1]);
             }
         }
         let areas = [
@@ -332,16 +385,8 @@ impl Scene {
             link_grid.insert_segment(link.from, link.to, link.reach + TOUCH, index);
             apron_grid.insert_segment(link.from, link.to, link.reach + GREEN_GAP_MAX, index);
         }
-        let meadow_edges = map
-            .parks
-            .iter()
-            .chain(&map.grass)
-            .flat_map(|area| {
-                let ring = &area.outer;
-                (0..ring.len()).map(move |index| (ring[index], ring[(index + 1) % ring.len()]))
-            })
-            .collect();
         Self {
+            streets,
             covers,
             cover_grid,
             links,
@@ -360,7 +405,6 @@ impl Scene {
                             .map(|(index, area)| (area, Green { park: false, index })),
                     ),
             ),
-            meadow_edges,
         }
     }
 
@@ -450,15 +494,18 @@ impl Scene {
     }
 
     /// Фартук зелени: полосы голой земли не шире [`GREEN_GAP_MAX`] между
-    /// внешним краем замапленной зелени и кромкой мощёной дорожной ленты —
-    /// лугом, от края зелени до самой кромки. Пробы идут по краю зелени
+    /// внешним краем замапленной зелени и кромкой мощёной ленты — дорожки
+    /// или улицы ([`band_edge`]) — лугом, от края зелени до самой кромки.
+    /// Край — тот, что зелень имеет **после вливания карманов**: влитый
+    /// карман растит её до самой ленты, и полоса улицы открыта именно от
+    /// выращенной кромки (сквер Сойфера, N8b). Пробы идут по краю зелени
     /// каждые [`APRON_STEP`] м; смена ближайшей дороги рвёт полосу
     /// ([`APRON_BREAK`]). Грунтовой тропе зелень не подшивается: земля у
     /// неё — пустырь, как у кармана.
-    fn green_aprons(&self) -> Vec<Pocket> {
+    fn green_aprons(&self, edges: &[(Vec2, Vec2)]) -> Vec<Pocket> {
         let mut aprons = Vec::new();
         let mut run: Vec<(Vec2, Vec2)> = Vec::new();
-        for &(from, to) in &self.meadow_edges {
+        for &(from, to) in edges {
             let length = from.distance(to);
             let steps = (length / APRON_STEP).ceil() as usize;
             for step in 0..=steps {
@@ -484,32 +531,58 @@ impl Scene {
         aprons
     }
 
-    /// Кромка мощёной ленты дорожки (`RoadClass::Alley`) для пробы края
-    /// зелени `point`: ближайшее звено не дальше [`GREEN_GAP_MAX`] от его
-    /// кромки — точка на этой кромке по направлению к пробе. `None` — проба
-    /// на ленте, вплотную к ней или дальше предела; улицы не спрашиваются:
-    /// полосу вдоль них рисует газон обочины.
+    /// Кромка мощёной ленты для пробы края зелени `point`: у дорожки
+    /// (`RoadClass::Alley`) — внешний край полотна, у улицы — тротуарная
+    /// лента, а дальше её газон обочины, если он шире. Полоса голой земли
+    /// начинается у края того, что улица рисует сама, и вопрос фартука —
+    /// не «есть ли у неё обочина», а «доходит ли этот край до кромки
+    /// зелени» ([`GREEN_GAP_MAX`]): недошедшее — залив. Точка на этом краю
+    /// по направлению к пробе; `None` — проба на ленте, вплотную к ней или
+    /// дальше предела; у проезда без тротуарной ленты края нет. Грунтовой
+    /// тропе зелень не подшивается: земля у неё — пустырь, как у кармана.
     fn band_edge(&self, point: Vec2) -> Option<Vec2> {
-        let (index, distance) = self
+        let (index, _, reach) = self
             .apron_grid
             .at(point)
             .iter()
             .filter_map(|&index| {
                 let link = self.links[index];
-                if link.rough || !link.alley {
+                if link.rough {
                     return None;
                 }
                 let distance = distance_to_segment(point, link.from, link.to);
-                (distance <= link.reach + GREEN_GAP_MAX).then_some((index, distance))
+                // что граничит с полосой: лента или газон обочины, кто дальше
+                let reach = match link.street {
+                    Some((road, at)) => {
+                        let road = &self.streets[road as usize];
+                        let nearest = closest_on_segment(point, link.from, link.to);
+                        // проба за торцом улицы: квадратный торец её покрытия —
+                        // фикция охвата (лента у узла подрезана рисунком), краем
+                        // для фартука быть не может; полосу там закрывает лента
+                        // той дороги, вдоль которой идёт зелень
+                        if nearest == link.from || nearest == link.to {
+                            return None;
+                        }
+                        let heading = (link.to - link.from).normalize_or_zero();
+                        // `perp` — влево по ходу точек, сторона 0
+                        let side = usize::from((point - nearest).dot(heading.perp()) <= 0.0);
+                        let along = at + nearest.distance(link.from);
+                        link.reach
+                            .max(road.width / 2.0 + road.verge_at(side, along))
+                    }
+                    None if link.alley => link.reach,
+                    None => return None,
+                };
+                let gap = distance - reach;
+                ((TOUCH..=GREEN_GAP_MAX).contains(&gap)).then_some((index, gap, reach))
             })
+            // чей край ближе подошёл к зелени, тот и закрывает полосу —
+            // дальше его края голой земли не остаётся
             .min_by(|a, b| a.1.total_cmp(&b.1))?;
         let link = self.links[index];
         let nearest = closest_on_segment(point, link.from, link.to);
-        let gap = distance - link.reach;
-        (TOUCH..=GREEN_GAP_MAX).contains(&gap).then(|| {
-            let towards = (point - nearest).try_normalize().unwrap_or_default();
-            nearest + towards * link.reach
-        })
+        let towards = (point - nearest).try_normalize().unwrap_or_default();
+        Some(nearest + towards * reach)
     }
 }
 

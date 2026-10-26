@@ -857,18 +857,38 @@ be called alone:
     Pinned by `a_meadow_pocket_touching_a_lawn_is_merged_into_it`.
   - **A green apron** (`Scene::green_aprons`, R37-02) — the same question's second half,
     for strips that are never holes: a band of bare ground between a mapped green's
-    **outer** edge and the kerb of a paved **path** band (`RoadClass::Alley` only), up
-    to `GREEN_GAP_MAX` 2.5 m wide, is sown meadow from the green's edge to the very
-    kerb. The cycleway along Tula's Центральный парк runs parallel to the park's edge a
-    couple of metres off, and the strip between them showed as a dark line of bare
-    ground (Оружейная × Энгельса, 3557,1089): at its ends such a strip *leaks* into the
-    open, so "what is enclosed" cannot see it. Streets are not asked: the strip along
-    them is their own verge lawn's to draw, and an apron would lie on it in the
-    meadow's colour (Tula measured ~3000 of them before the restriction). The green's
-    edge is probed every `APRON_STEP` 1 m, the kerb is the nearest paved path link's,
-    and a jump of the kerb over `APRON_BREAK` 3 m (the probe switched paths) breaks the
-    strip. A dirt path gets no apron — ground by it is a waste plot, as for a pocket.
-    Pinned by `a_slit_between_a_paved_path_and_the_park_edge_is_sown_as_meadow`.
+    **outer** edge and the kerb of a paved band, up to `GREEN_GAP_MAX` 2.5 m wide, is
+    sown meadow from the green's edge to the very kerb. The cycleway along Tula's
+    Центральный парк runs parallel to the park's edge a couple of metres off, and the
+    strip between them showed as a dark line of bare ground (Оружейная × Энгельса,
+    3557,1089): at its ends such a strip *leaks* into the open, so "what is enclosed"
+    cannot see it. The band belongs to a paved **path** (`RoadClass::Alley`, kerb = the
+    band's edge) or to a **street** — and a street's own verge decides: the strip along
+    it starts at the edge of what the street draws itself, its sidewalk band or its
+    verge lawn, whichever reaches further (`Link::street` carries the street and its
+    arclength; `RoadLine::verge_at` is asked at the probe's side and place), so the
+    apron is sewn to the band only where that edge falls short of the green's edge —
+    the question is "does a covering verge lawn reach the strip", not "is there a
+    verge": the square by Soifer (Tula, N8b) left a 1 × 7 m strip of bare ground
+    between its lawn and улица Фёдора Смирнова's sidewalk band, open into the crossing
+    at the south end — a spill the enclosure question cannot see, with a verge measured
+    on the street's next segment but never reaching the strip. Asking streets without
+    the verge gate measured ~3000 aprons lying on their own verge lawns' colour (the
+    restriction's reason); a service drive has no sidewalk band and is not asked. The
+    apron asks the green's edge **after** the merges: a merged pocket grows the green
+    toward the band, and the strip is open from the grown edge — the pre-merge edge at
+    Soifer stood past `GREEN_GAP_MAX`, and an apron sewn against it would have left the
+    strip — so the `Scene` owns its street copies and outlives the merge loop. A street
+    candidate whose probe projects past the link's end is dropped: the square cap of
+    the cover is an enclosure fiction (the drawn band is trimmed at the node), and an
+    apron sewn to it left a notch of bare ground at Soifer where the crossing street's
+    cap edge pointed into the strip. The
+    green's edge is probed every `APRON_STEP` 1 m, the kerb is the nearest qualifying
+    link's, and a jump of the kerb over `APRON_BREAK` 3 m (the probe switched roads)
+    breaks the strip. A dirt path gets no apron — ground by it is a waste plot, as for
+    a pocket. Pinned by `a_slit_between_a_paved_path_and_the_park_edge_is_sown_as_meadow`,
+    `a_strip_by_a_street_band_is_sown_where_no_verge_lawn_covers_it` and
+    `a_green_apron_follows_the_lawn_edge_a_merged_pocket_grew`.
   - **Why the errors are safe**: the block layer lies below everything drawn on it, so a
     cover the parse misses only makes a hole bigger (a missed fill) or puts grass under
     something drawn (unseen); a cover the parse invents only closes a hole that is then
