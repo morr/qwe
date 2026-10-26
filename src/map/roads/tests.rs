@@ -4043,3 +4043,198 @@ fn diag_window() {
         }
     }
 }
+
+/// У перекрёстка двух разделённых улиц пара половины наезжает на половину
+/// чужой улицы, идущую рядом: на стыке кусков зазор переезжает с одного на
+/// другой, переход тянет ось через перекрёсток, и прямая улица ныряет вбок и
+/// возвращается, а узел перекрёстка уезжает с места (Тула, Октябрьская у
+/// Максима Горького). Узел с чужой проезжей держит ось: оба куска сходят на
+/// нет каждый на своей стороне, не доехав до перекрёстка.
+#[test]
+fn the_pair_gap_change_waits_out_the_crossing_street() {
+    let mut map = MapData::default();
+    // сквозная половина проспекта, ось x = 12; вершина (12, 150) — узел
+    // перекрёстка
+    let mut avenue = fixture::street(
+        vec![
+            Vec2::new(12.0, 0.0),
+            Vec2::new(12.0, 150.0),
+            Vec2::new(12.0, 300.0),
+        ],
+        10.9,
+    );
+    avenue.oneway = true;
+    map.roads.push(avenue);
+    // её встречная половина — севернее перекрёстка, кромки почти встык
+    let mut north = fixture::street(vec![Vec2::new(1.0, 300.0), Vec2::new(1.0, 150.0)], 10.9);
+    north.oneway = true;
+    map.roads.push(north);
+    // поперечная улица: от встречной половины через узел перекрёстка
+    map.roads.push(fixture::street(
+        vec![
+            Vec2::new(1.0, 150.0),
+            Vec2::new(12.0, 150.0),
+            Vec2::new(26.0, 150.0),
+        ],
+        10.9,
+    ));
+    // половина чужой улицы, идущая рядом южнее перекрёстка (зазор 3.1),
+    // продолжение той же цепочки
+    let mut across = fixture::street(vec![Vec2::new(26.0, 150.0), Vec2::new(26.0, 0.0)], 10.9);
+    across.oneway = true;
+    map.roads.push(across);
+    let prepared = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
+    // зазор пары переезжает с куска на кусок за перекрёстком: у самого
+    // перекрёстка ось стоит на точках OSM
+    let drawn = prepared.axis(0, Axis::Ribbon);
+    let dip = drawn
+        .iter()
+        .filter(|p| (130.0..170.0).contains(&p.y))
+        .map(|p| (p.x - 12.0).abs())
+        .fold(0.0_f32, f32::max);
+    assert!(
+        dip < 0.4,
+        "ось у перекрёстка ушла с OSM на {dip:.2} м: переход зазора пары \
+         протащило через перекрёсток"
+    );
+}
+
+// DIAG-TEMP: `QWE_DIAG_JSON=<срез> QWE_DIAG_CITY=tula` — улицы, прямые в OSM,
+// чья нарисованная ось дрожит вбок: профиль бокового смещения (шаг 2 м) после
+// вычитания скользящего среднего (±24 м) — зигзаг и ступени видны, плавный
+// съезд и дуга скругления нет. Печатает и позиции швов ways улицы.
+#[test]
+#[ignore]
+fn diag_straight_zigzag() {
+    use crate::city::City;
+    use crate::map::osm::overpass::OverpassResponse;
+    use crate::map::osm::parse::{ParseKnobs, parse_response};
+    let path = std::env::var("QWE_DIAG_JSON").unwrap();
+    let city = match std::env::var("QWE_DIAG_CITY").unwrap().as_str() {
+        "oryol" => City::Oryol,
+        _ => City::Tula,
+    };
+    let osm: OverpassResponse =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let map = parse_response(&osm, city, ParseKnobs::default());
+    let prepared = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
+    let (min_len, step) = (120.0, 2.0);
+    let mut hits = 0;
+    for i in 0..prepared.len() {
+        let road = prepared.road(i);
+        if road.class != RoadClass::Street || prepared.on_ring(i) {
+            continue;
+        }
+        let raw = &road.points;
+        if raw.len() < 3 {
+            continue;
+        }
+        let (a, b) = (raw[0], raw[raw.len() - 1]);
+        let len = a.distance(b);
+        if len < min_len {
+            continue;
+        }
+        let normal = ((b - a) / len).perp();
+        let osm_dev = raw
+            .iter()
+            .map(|p| (p - a).dot(normal).abs())
+            .fold(0.0_f32, f32::max);
+        if osm_dev > 1.5 {
+            continue;
+        }
+        let paired = prepared.pairs().has_runs(i);
+        let drawn = prepared.axis(i, Axis::Ribbon);
+        let (arcs, total) = crate::map::along::arclengths(drawn);
+        let mut offs: Vec<f32> = Vec::new();
+        let mut s = 0.0;
+        while s <= total {
+            if let Some((p, _)) = crate::map::along::place_on_path(drawn, &arcs, s) {
+                offs.push((p - a).dot(normal));
+            }
+            s += step;
+        }
+        // доли одного знака в средней трети; зигзаг — их не меньше трёх
+        let (lo_s, hi_s) = (total * 0.2, total * 0.8);
+        let mut lobes: Vec<(f32, f32, f32, f32)> = Vec::new(); // (start, end, sum, count)
+        for (k, &off) in offs.iter().enumerate() {
+            let at = k as f32 * step;
+            if at < lo_s || at > hi_s {
+                continue;
+            }
+            match lobes.last_mut() {
+                Some(last) if last.2.signum() == off.signum() => {
+                    last.1 = at;
+                    last.2 += off;
+                    last.3 += 1.0;
+                }
+                _ => lobes.push((at, at, off, 1.0)),
+            }
+        }
+        let zig: Vec<(f32, f32, f32)> = lobes
+            .iter()
+            .copied()
+            .filter(|(from, to, sum, count)| sum.abs() >= 0.25 * count && to - from >= 4.0)
+            .map(|(from, to, sum, count)| (from, to, sum / count))
+            .collect();
+        if zig.len() < 3 {
+            continue;
+        }
+        hits += 1;
+        eprintln!(
+            "DIAG-ZZ road {i} len={len:.0} axis={total:.0} osm_dev={osm_dev:.2} lobes={} paired={} hw={:?} w={:.1}",
+            zig.len(),
+            paired,
+            road.highway,
+            road.width
+        );
+        eprintln!(
+            "    zig {:?}",
+            zig.iter()
+                .map(|(a, b, m)| format!("{a:.0}-{b:.0}:{m:+.2}"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+        eprintln!("    start {a:?} end {b:?}");
+        if paired {
+            for partner in prepared.pairs().partners(i) {
+                eprintln!("    partner road={} paved={}", partner.road, partner.paved);
+            }
+        }
+        // вершины нарисованной оси и сырые точки OSM в окне самой глубокой
+        // доли: (метр по оси | вбок от хорды) — видно, где ломается ось
+        let (win_from, win_to) = (
+            zig.iter().map(|z| z.0).fold(f32::MAX, f32::min) - 40.0,
+            zig.iter().map(|z| z.1).fold(0.0_f32, f32::max) + 40.0,
+        );
+        let (arcs_v, _) = crate::map::along::arclengths(drawn);
+        let near: Vec<String> = drawn
+            .iter()
+            .enumerate()
+            .filter(|(k, _)| arcs_v[*k] >= win_from && arcs_v[*k] <= win_to)
+            .map(|(k, p)| {
+                format!(
+                    "{:.0}s({:.1},{:.1}):{:+.2}",
+                    arcs_v[k],
+                    p.x,
+                    p.y,
+                    (p - a).dot(normal)
+                )
+            })
+            .collect();
+        eprintln!("    drawn {}", near.join(" "));
+        let raws: Vec<String> = raw
+            .iter()
+            .map(|p| format!("({:.1},{:.1}):{:+.2}", p.x, p.y, (p - a).dot(normal)))
+            .collect();
+        eprintln!("    osm {}", raws.join(" "));
+        eprintln!(
+            "    offs {:?}",
+            offs.iter()
+                .enumerate()
+                .map(|(k, o)| format!("{}:{o:+.2}", k as f32 * step))
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+    }
+    eprintln!("DIAG-ZZ hits={hits}");
+}
