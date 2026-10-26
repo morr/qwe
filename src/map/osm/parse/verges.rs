@@ -33,6 +33,7 @@ use crate::map::osm::model::{
     MapData, PolyArea, RoadLine, SidewalkSide, closest_on_segment, ring_area, sidewalk_band,
 };
 use crate::map::parallel::in_parallel;
+use crate::map::roads::network::RoadNetwork;
 use crate::map::roads::paved_verge;
 use crate::map::shapes::{Contour, area_contours, contour_bounds, oriented, ring_of};
 
@@ -173,8 +174,20 @@ impl std::fmt::Display for SeparateSidewalks {
 /// от кромки, у двусторонней — до [`VERGE_REACH_TWO_WAY`]) получает **обочину** ([`RoadLine::verges`]) — от кромки до оси
 /// дорожки, с полосой тротуара или без: газон между ними рисуется газоном, а
 /// голая земля — плиткой (`roads.rs`, слой под зеленью).
-pub(super) fn measure_footways_beside_streets(roads: &mut [RoadLine]) -> SeparateSidewalks {
+///
+/// Сеть улиц `network` решает, чей след для пробы чужой: устье перекрёстка —
+/// след **чужой улицы**, а стык собственных звеньев много-way улицы — тот же
+/// асфальт, проба на нём меряет дорожку как на любом прочем месте.
+pub(super) fn measure_footways_beside_streets(
+    roads: &mut [RoadLine],
+    network: &RoadNetwork,
+) -> SeparateSidewalks {
     let started = std::time::Instant::now();
+    // DIAG-TEMP S-1: `QWE_DIAG_VERGE_SEAM=1` — подавленные пробы и пробы на
+    // швах собственной улицы, с итогом прохода
+    let diag_seam = std::env::var("QWE_DIAG_VERGE_SEAM").is_ok();
+    let mut diag_suppressed = 0;
+    let mut diag_own_seam = 0;
     // звено дорожки и её полуширина
     let mut links: Vec<(Vec2, Vec2, f32)> = Vec::new();
     let mut index: Grid<u32> = Grid::new(SEPARATE_CELL);
@@ -193,7 +206,11 @@ pub(super) fn measure_footways_beside_streets(roads: &mut [RoadLine]) -> Separat
     // за устьем, на той же стороне, но уже через перекрёсток. Профиль от неё
     // раздувался на устье, и газон обочины выходил за перекрёсток языком в
     // чужой квартал (Тула, Первомайская у Вересаева: 1.9 → 7.6 м на последних
-    // пробах)
+    // пробах). Чужой здесь — **улица** сети улиц, а не way: улица, собранная
+    // из нескольких way, у стыка собственных звеньев стоит в следе своего
+    // продолжения, и подавление по way ронило обочину целых звеньев — у
+    // Фрунзе в Туле три звена кряду стояли без обочины при соседе с газоном
+    // в 15 м
     let mut streets: Vec<(Vec2, Vec2, f32, usize)> = Vec::new();
     let mut street_index: Grid<u32> = Grid::new(SEPARATE_CELL);
     for (owner, road) in roads.iter().enumerate() {
@@ -222,6 +239,9 @@ pub(super) fn measure_footways_beside_streets(roads: &mut [RoadLine]) -> Separat
             VERGE_REACH_TWO_WAY
         };
         let reach = far.max(half + verge_reach);
+        // улица пробы: след соседнего звена своей улицы накрывает её так же,
+        // как собственный асфальт, — шов, а не устье
+        let mine = network.street_of(road_index).map(|(street, _)| street);
         let (along, total) = arclengths(&road.points);
         let mut probes = 0;
         // по сторонам — ближайшая дорожка каждой пробы: ось и полуширина
@@ -242,9 +262,29 @@ pub(super) fn measure_footways_beside_streets(roads: &mut [RoadLine]) -> Separat
                         .any(|&street| {
                             let (from, to, street_reach, owner) = streets[street as usize];
                             owner != road_index
+                                && network.street_of(owner).map(|(street, _)| street) != mine
                                 && closest_on_segment(point, from, to).distance(point)
                                     <= street_reach
                         });
+                if in_footprint {
+                    diag_suppressed += 1;
+                } else if diag_seam
+                    // шов собственной улицы — не устье (S-1): накрыта только
+                    // соседними звеньями своей улицы
+                    && street_index.near_each(point - reach, point + reach).any(|&street| {
+                        let (from, to, street_reach, owner) = streets[street as usize];
+                        owner != road_index
+                            && network.street_of(owner).map(|(street, _)| street) == mine
+                            && closest_on_segment(point, from, to).distance(point) <= street_reach
+                    })
+                {
+                    diag_own_seam += 1;
+                    eprintln!(
+                        "DIAG verge seam road={road_index} street={mine:?} at={at:.1} \
+                         point=({:.1}, {:.1})",
+                        point.x, point.y,
+                    );
+                }
                 let mut found: [Option<(f32, f32)>; 2] = [None; 2];
                 // косое звено — только профилю: у угла дорожка заворачивает
                 let mut slanted: [Option<f32>; 2] = [None; 2];
@@ -325,6 +365,13 @@ pub(super) fn measure_footways_beside_streets(roads: &mut [RoadLine]) -> Separat
         }
     }
     report.took = started.elapsed();
+    if diag_seam {
+        eprintln!(
+            "DIAG verge seam total: {diag_suppressed} suppressed at foreign mouths, \
+             {diag_own_seam} on the own street's seams; separate sidewalks {} of {} in {:?}",
+            report.dropped, report.asked, report.took
+        );
+    }
     report
 }
 

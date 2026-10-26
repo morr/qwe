@@ -201,6 +201,13 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   neighbour block. Parallel hits at such probes are dropped; slanted ones stay — they are
   the footway wrapping the corner, the verge's own edge
   (`a_probe_inside_a_crossing_footprint_does_not_measure_across_it`).
+  **Foreign here means a street of the road network, not a way** (`RoadNetwork::street_of`,
+  built before the pass): a street glued from several ways stands, at the seam of its own
+  links, in the footprint of its own continuation — the same as standing in its own
+  asphalt — and suppressing by way there took the probes away from the seam links until
+  they fell under the `SEPARATE_SHARE` 60 % bar and lost the verge whole (Tula, Фрунзе:
+  three links in a row had no verge beside a neighbour link with a 15 m lawn;
+  `a_probe_on_a_seam_of_its_own_street_measures_the_footway`).
   **The verge reaches under its footway** by `VERGE_UNDER_PATH` 0.5 m past the axis — the
   tile of a narrow verge and the lawn of a wide one (the kerb strip keeps its width): the
   profile is measured on the **raw** axes of the street and the footway, the ribbons lie

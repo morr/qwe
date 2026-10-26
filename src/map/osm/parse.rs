@@ -471,7 +471,9 @@ impl std::fmt::Display for PassReport {
 ///
 /// 0. **Улицы и сечения** (`map::roads::network::sections`) — самыми первыми:
 ///    ширина дороги выводится из числа полос, а её читают шаги 5 и 6 (тротуар
-///    отодвигает дома, край дороги притягивает кварталы и стоянки). Домов этот
+///    отодвигает дома, край дороги притягивает кварталы и стоянки). Сеть улиц
+///    читает и тротуар, отданный отдельной дорожке (шаг 1), — чей след для
+///    пробы чужой. Домов этот
 ///    шаг не касается, так что ставить его раньше утопленников ничему не мешает.
 ///    Ещё раньше, прямо перед ним, **выпрямляются Y-подходы к кольцам**
 ///    (`map::roads::rings::straighten_tails`): проход двигает узлы и режет way,
@@ -578,7 +580,7 @@ fn finish_parse(map: &mut MapData, pending: &Pending, knobs: ParseKnobs) -> Pass
                 .storeys_at(point)
         });
         let pavements = infer_pavements(map);
-        let separate = verges::measure_footways_beside_streets(&mut map.roads);
+        let separate = verges::measure_footways_beside_streets(&mut map.roads, &map.network);
         let faiths_guessed = resolve_faiths(&mut map.buildings);
         (sidewalks, pavements, separate, faiths_guessed)
     };
