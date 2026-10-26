@@ -377,6 +377,14 @@ impl KerbReturns {
 pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
     let roads = drawn.roads();
     let nodes = drawn.nodes();
+    // QWE_DIAG_KERB=x,y[,r] — трассировка правил узла вокруг точки: лучи
+    // каждого класса и вердикт каждой пары (fillet/bend/obtuse/nose/outer/
+    // ничего). Для устьев, где дуги не видно, а по углу должна быть
+    // (Одоевский путепровод, R37-04/3)
+    let diag_kerb = std::env::var("QWE_DIAG_KERB").ok().and_then(|spec| {
+        let v: Vec<f32> = spec.split(',').filter_map(|s| s.parse().ok()).collect();
+        (v.len() >= 2).then(|| (Vec2::new(v[0], v[1]), *v.get(2).unwrap_or(&10.0)))
+    });
     let mut arms: HashMap<(i32, i32), (Vec2, Vec<Arm>)> = HashMap::new();
     for (index, &road) in roads.iter().enumerate() {
         let Some(path) = rounded(drawn, index) else {
@@ -397,7 +405,7 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
         let drawn_vertices = if closed || fitted == [None; 2] {
             ribbon_vertices(path, closed, ribbon_merge_distance(road.width))
         } else {
-            let ends = [0, 1].map(|end| Some((fitted[end]?, roads[wedges[end]?.narrow].width)));
+            let ends = [0, 1].map(|end| Some((fitted[end]?, roads[wedges[end]?.seam].width)));
             wedged_vertices(path, total, ends, road.width)
         };
         let mut along = 0.0;
@@ -559,8 +567,8 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                         (true, true) => length - from_seam,
                         (true, false) => from_seam,
                     };
-                    let narrow = roads[wedge.narrow];
-                    let narrow_half = narrow.width / 2.0;
+                    let seam = roads[wedge.seam];
+                    let seam_half = seam.width / 2.0;
                     let share = if length > 0.0 {
                         from_seam / length
                     } else {
@@ -571,13 +579,13 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                             continue;
                         }
                         let at = usize::from((side == 0) != forward);
-                        half[at] = narrow_half + (own - narrow_half) * share;
-                        reach[at] = if away { own } else { narrow_half };
+                        half[at] = seam_half + (own - seam_half) * share;
+                        reach[at] = if away { own } else { seam_half };
                         if length > 0.0 && widening > 0.0 {
                             slope[at] = (reach[at] - half[at]) / widening;
                         }
                         if from_seam == 0.0 {
-                            sides[at] = drawn.sidewalk_on(wedge.narrow, side);
+                            sides[at] = drawn.sidewalk_on(wedge.seam, side);
                         }
                     }
                 }
@@ -606,7 +614,7 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                     (to_seam > length).then(|| FarTaper {
                         start: to_seam - length,
                         length,
-                        half: roads[wedge.narrow].width / 2.0,
+                        half: roads[wedge.seam].width / 2.0,
                         sides: [
                             wedge.sides[usize::from(!forward)],
                             wedge.sides[usize::from(forward)],
@@ -663,6 +671,28 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
             continue;
         }
         found.sort_by(|a, b| a.direction.to_angle().total_cmp(&b.direction.to_angle()));
+        let trace_kerb = diag_kerb.is_some_and(|(at, r)| node.distance(at) < r);
+        if trace_kerb {
+            for arm in &found {
+                eprintln!(
+                    "KERB {node:?} arm dir={:.1}° class={:?} hw={:?} half=({:.2},{:.2}) \
+                     full={:.2} run={:.1} end={:?} butt={} slope=({:.2},{:.2}) far={} ring={}",
+                    arm.direction.to_angle().to_degrees(),
+                    arm.class,
+                    arm.highway,
+                    arm.half[0],
+                    arm.half[1],
+                    arm.full,
+                    arm.run,
+                    arm.end,
+                    arm.butt.is_some(),
+                    arm.slope[0],
+                    arm.slope[1],
+                    arm.far.is_some(),
+                    arm.ring,
+                );
+            }
+        }
         for class in [RoadClass::Street, RoadClass::Alley] {
             let group: Vec<&Arm> = found.iter().filter(|arm| arm.class == class).collect();
             // Асфальт, продолженный грунтовкой, обрывается поперёк: круглый
@@ -714,6 +744,20 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                 }
                 let radius = kerb_radius(first, second) * scale;
                 let halves = (first.half[0], second.half[1]);
+                if trace_kerb {
+                    eprintln!(
+                        "KERB   pair {:.1}° -> {:.1}° ccw={:.1}° halves=({:.2},{:.2}) \
+                         radius={:.1} mixed={} nose={}",
+                        first.direction.to_angle().to_degrees(),
+                        second.direction.to_angle().to_degrees(),
+                        ccw_angle(first, second).to_degrees(),
+                        halves.0,
+                        halves.1,
+                        radius,
+                        first.unpaved != second.unpaved,
+                        is_nose(first, second),
+                    );
+                }
                 // угол у мощёной дорожки — плиткой, в слое тротуаров: песчаное
                 // скругление на стыке двух плиточных аллей читалось бы пятном
                 let paved = first.paved || second.paved;
@@ -747,6 +791,9 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                     && let Some(outline) = bend(first, second, halves, radius)
                 {
                     returns.bends.push((fill, outline));
+                    if trace_kerb {
+                        eprintln!("KERB   verdict bend");
+                    }
                     continue;
                 }
                 // тупой угол со сменой ширины — клин широкой кромки
@@ -776,17 +823,28 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                             returns.noses.push((fill, found.outline));
                             returns.fork_gores.extend(found.gore);
                         }
+                        if trace_kerb {
+                            eprintln!("KERB   verdict nose");
+                        }
                         continue;
                     }
                     None => match outer_corner(node, first, second, halves) {
                         Some(outline) => (outline, true),
-                        None => continue,
+                        None => {
+                            if trace_kerb {
+                                eprintln!("KERB   verdict none");
+                            }
+                            continue;
+                        }
                     },
                 };
                 match fill {
                     Fill::Sidewalk => returns.sidewalks.push(outline),
                     Fill::Unpaved => returns.unpaved.push(outline),
                     Fill::Road(class) => returns.roads.push((class, outline)),
+                }
+                if trace_kerb {
+                    eprintln!("KERB   verdict round={} outer={}", !outer, outer);
                 }
                 returns.outer[usize::from(paved)] += usize::from(outer);
             }
@@ -1564,10 +1622,17 @@ fn fillet_arc(
     let edge_first = axis_first + normal_first * first.slope[0];
     let edge_second = axis_second + normal_second * second.slope[1];
     let (along_first, along_second) = (edge_first.normalize(), edge_second.normalize());
-    let angle = ccw_between(along_first, along_second);
-    if !(MIN_ANGLE..=MAX_ANGLE).contains(&angle) {
+    // ворота — по углу между осями, а не между краями: он и есть угол
+    // перекрёстка, и его держат все правила узла (`bend`, `obtuse_corner`).
+    // У кромки под клином край уходит от оси на atan(slope), и на устье
+    // встречного клина — кромки равной ширины у узла, оси под 147°, — край
+    // показывал 155°: ворота тупого клина, который сам откажет по наклону, и
+    // угол оставался без куска (Одоевский путепровод, R37-04/3). Форма дуги —
+    // по краям, как и раньше.
+    if !(MIN_ANGLE..=MAX_ANGLE).contains(&ccw_angle(first, second)) {
         return None;
     }
+    let angle = ccw_between(along_first, along_second);
     let (side_first, side_second) = (along_first.perp(), -along_second.perp());
     // угол, где встречаются края: halves.0·n₁ + t·e₁ = halves.1·n₂ + s·e₂, t и
     // s — метры по оси
@@ -2387,7 +2452,7 @@ mod tests {
             1,
             Taper {
                 length: 14.0,
-                narrow: 0,
+                seam: 0,
                 sides: [true; 2],
             },
         );
@@ -2416,7 +2481,7 @@ mod tests {
             1,
             Taper {
                 length: 80.0,
-                narrow: 1,
+                seam: 1,
                 sides: [true; 2],
             },
         );
@@ -2449,7 +2514,7 @@ mod tests {
             0,
             Taper {
                 length: 30.0,
-                narrow: 0,
+                seam: 0,
                 sides: [true; 2],
             },
         );

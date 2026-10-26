@@ -678,7 +678,7 @@ impl Pairs {
                 tapers::fit(polyline_length(&paths[road]), lengths)[end]
             };
             if let Some(taper) = wedges.at(road)[usize::from(end)]
-                && continues(road, taper.narrow)
+                && continues(road, taper.seam)
             {
                 return fitted(road, usize::from(end)).map(SeamWedge::Wide);
             }
@@ -694,7 +694,7 @@ impl Pairs {
                         others[0]
                     };
                     let taper = wedges.at(other)[other_end]?;
-                    (at == node && taper.narrow == road && fitted(other, other_end).is_some())
+                    (at == node && taper.seam == road && fitted(other, other_end).is_some())
                         .then_some(SeamWedge::Narrow)
                 })
             })
@@ -1623,9 +1623,11 @@ fn facing_half(
         }
         let from_node = if end == 0 { at } else { total - at };
         if from_node < length {
-            let narrow = roads[taper.narrow].width.min(width);
+            // сечение шва у сужающего клина уже своего — встречный (шире
+            // своего) здесь не учитывается: минимум его и не заметит
+            let seam = roads[taper.seam].width.min(width);
             let share = (from_node / length).max(0.0);
-            half = half.min((narrow + (width - narrow) * share) / 2.0);
+            half = half.min((seam + (width - seam) * share) / 2.0);
         }
     }
     half

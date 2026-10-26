@@ -17,10 +17,13 @@
 //! сторонам проезда в 5 м кромка на полосу разной высоты читалась зубом, и
 //! такая сторона сужается тоже. И только пока стык соосен: изогнутый стык
 //! пары — не «одна дорога продолжается», и когда широкую продолжает под
-//! тупым углом (155–180°) другая дорога узла, клин не кладётся вовсе —
-//! устье доходит полной шириной, а перепад закрывают широкие клинья кромок
-//! (`corners::obtuse_corner`); без тупого продолжения изогнутый стык клин
-//! берёт как раньше (Крестовоздвиженская в Союзную, витрина 28). С
+//! тупым углом (155–180°) другая дорога узла, сужающего клина на паре нет
+//! вовсе — вместо него устье растёт к узлу **встречными клиньями**:
+//! узкий шва и тупой продолжатель начинают у шва с сечения широкой и
+//! расходятся к своим, и кромки устья смыкаются дугами угловых правил
+//! (Одоевский путепровод × Демонстрации, R37-04/3); без тупого продолжения
+//! изогнутый стык клин берёт как раньше (Крестовоздвиженская в Союзную,
+//! витрина 28). С
 //! сохранённой стороны кромка идёт
 //! полной ширины до самого узла, как раньше; скругления считают тот торец по
 //! полуширине его стороны: сужаемой — по узкому соседу. У крестовины, где
@@ -55,12 +58,15 @@ const TAPER_MIN_LENGTH: f32 = 1.0;
 const TAPER_MAX_SHARE: f32 = 0.45;
 
 /// Клин у одного торца way: длина по разнице ширин (до обрезки по длине
-/// нарисованного пути), дорога, с ширины которой он начинается, и стороны
-/// `[слева, справа]` по ходу точек way, которые он сужает (хотя бы одна).
+/// нарисованного пути), дорога, с чьего сечения он начинается у шва
+/// (`seam`), и стороны `[слева, справа]` по ходу точек way, которые он ведёт
+/// от сечения шва к своим полуширинам (хотя бы одна). Сечение у шва двояко:
+/// у сужающего клина оно у узкого соседя — широкая дорога сужается к шву; у
+/// встречного — у широкого соседа: дорога растёт к узлу до его ширины.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Taper {
     pub length: f32,
-    pub narrow: usize,
+    pub seam: usize,
     pub sides: [bool; 2],
 }
 
@@ -123,14 +129,17 @@ impl Tapers {
                 (b.road, b.reversed, a.road)
             };
             // Изогнутый стык пары на перекрёстке — не «одна дорога
-            // продолжается», и клин на нём съедал устье: широкая дорога
-            // сужалась к перекрёстку на полосу, двоя осевую (Одоевский
+            // продолжается», и сужающий клин на нём съедал устье: широкая
+            // дорога сужалась к перекрёстку на полосу, двоя осевую (Одоевский
             // путепровод × Демонстрации, R37-04). Сужения нет, когда широкую
             // продолжает под тупым углом (155–180°, углы широкого клина
-            // кромки, `corners::obtuse_corner`) другая дорога узла — перепад
-            // закроют её клинья; без тупого продолжения изогнутый стык
-            // клин берёт как раньше (Крестовоздвиженская в Союзную,
-            // витрина 28), а соосный — всегда.
+            // кромки, `corners::obtuse_corner`) другая дорога узла: устье не
+            // обрывается и не сужается, а растёт к узлу встречными клиньями —
+            // узкий шва и тупой продолжатель начинают у шва с сечения широкой
+            // и расходятся к своим, и кромки устья смыкаются дугами угловых
+            // правил. Без тупого продолжения изогнутый стык клин берёт как
+            // раньше (Крестовоздвиженская в Союзную, витрина 28), а соосный —
+            // всегда.
             let away_first = arm_direction(&first.points, !a.reversed);
             let away_second = arm_direction(&second.points, b.reversed);
             let away = |road: usize| {
@@ -142,8 +151,12 @@ impl Tapers {
             };
             if let (Some(away_wide), Some(away_narrow)) = (away(wide), away(narrow))
                 && -away_wide.dot(away_narrow) < PASS_ALIGN
-                && continues_obtusely(drawn, nodes, node, away_wide, a.road, b.road)
+                && let Some((continuer, _)) =
+                    obtuse_continuation(drawn, nodes, node, away_wide, a.road, b.road)
             {
+                for road in [narrow, continuer] {
+                    widen_mouth(&mut tapers, drawn, node, wide, away_wide, road, per_meter);
+                }
                 continue;
             }
             let sides = free_sides(drawn, nodes, node, wide, end, narrow);
@@ -152,7 +165,7 @@ impl Tapers {
             }
             tapers.ends[wide][usize::from(end)] = Some(Taper {
                 length: step * per_meter,
-                narrow,
+                seam: narrow,
                 sides,
             });
             tapers.count += 1;
@@ -278,40 +291,95 @@ fn free_sides(
 }
 
 /// Продолжается ли дорога с направлением `away` от узла в другую дорогу узла
-/// (не пару стыка `skip`): их плечи расходятся под тупым углом, от
+/// (не пару стыка `skip`) — и какая: их плечи расходятся под тупым углом, от
 /// [`MAX_ANGLE`] — угла широкого клина кромки, который закрывает перепад
 /// ширин на таком продолжении (`corners::obtuse_corner`). Лучи чужих дорог —
-/// по всем их вершинам в узле: сквозная даёт два.
-fn continues_obtusely(
+/// по всем их вершинам в узле: сквозная даёт два. Возвращается дорога и её
+/// луч, продолжающий `away`.
+fn obtuse_continuation(
     drawn: &[&RoadLine],
     nodes: &RoadNodes,
     node: Vec2,
     away: Vec2,
     skip_a: usize,
     skip_b: usize,
-) -> bool {
+) -> Option<(usize, Vec2)> {
     let key = node_key(node);
     let obtuse = MAX_ANGLE.cos();
-    nodes.roads_at(node).iter().any(|&other| {
+    nodes.roads_at(node).iter().find_map(|&other| {
         if other == skip_a || other == skip_b || drawn[other].class != RoadClass::Street {
-            return false;
+            return None;
         }
         let points = &drawn[other].points;
-        points.iter().enumerate().any(|(vertex, point)| {
-            node_key(*point) == key
-                && [
-                    arm_direction(&points[vertex..], false),
-                    arm_direction(&points[..=vertex], true),
-                ]
-                .into_iter()
-                .flatten()
-                .any(|direction| away.dot(direction) <= obtuse)
+        points.iter().enumerate().find_map(|(vertex, point)| {
+            if node_key(*point) != key {
+                return None;
+            }
+            [
+                arm_direction(&points[vertex..], false),
+                arm_direction(&points[..=vertex], true),
+            ]
+            .into_iter()
+            .flatten()
+            .find(|direction| away.dot(*direction) <= obtuse)
+            .map(|direction| (other, direction))
         })
     })
 }
 
+/// Встречный клин устья: дорога `road`, подходящая к `node` торцом, начинает
+/// у шва с сечения широкой `wide` (`away_wide` — её луч из узла) и на длине
+/// клина расходится к своим полуширинам — со стороны, обращённой к широкой:
+/// вторая сторона смотрит от устья, и её кромка — угол чужой пары (нос,
+/// дуга примыкания). Дорога, проходящая узел насквозь, клина не берёт: у неё
+/// нет торца в этом узле.
+fn widen_mouth(
+    tapers: &mut Tapers,
+    drawn: &[&RoadLine],
+    node: Vec2,
+    wide: usize,
+    away_wide: Vec2,
+    road: usize,
+    per_meter: f32,
+) {
+    if !takes_taper(drawn[road]) {
+        return;
+    }
+    let key = node_key(node);
+    let points = &drawn[road].points;
+    let last = points.len() - 1;
+    let Some(end) = [0usize, 1]
+        .into_iter()
+        .find(|&end| node_key(points[end * last]) == key)
+    else {
+        return;
+    };
+    let step = drawn[wide].width - drawn[road].width;
+    if step < TAPER_MIN_STEP {
+        return;
+    }
+    let Some(away_road) = arm_direction(points, end == 1) else {
+        return;
+    };
+    // широкая слева от луча дороги — когда их векторное произведение
+    // положительно; слева от луча — слева по ходу way у его начала и справа
+    // у конца (как стороны в `free_sides`)
+    let left_of_way = (away_road.perp_dot(away_wide) > 0.0) != (end == 1);
+    let sides = [left_of_way, !left_of_way];
+    if tapers.ends[road][end].is_none() {
+        tapers.count += 1;
+    }
+    tapers.ends[road][end] = Some(Taper {
+        length: step * per_meter,
+        seam: wide,
+        sides,
+    });
+}
+
 /// Нарисованный путь, разрезанный под клинья: `(клин у начала, середина, клин
-/// у конца)`. Оба клина смотрят **от узла шва** — от узкого конца к широкому.
+/// у конца)`. Оба клина смотрят **от узла шва** — от сечения шва к своим
+/// полуширинам (у сужающего клина сечение шва уже своего, у встречного —
+/// шире).
 /// Длина клина обрезается до [`TAPER_MAX_SHARE`] пути; клин короче
 /// [`TAPER_MIN_LENGTH`] не кладётся, и его конец остаётся в середине.
 pub fn split(path: &[Vec2], lengths: [Option<f32>; 2]) -> [Option<Vec<Vec2>>; 3] {
@@ -398,7 +466,7 @@ mod tests {
         let [start, end] = tapers.at(1);
         assert_eq!(end, None);
         let start = start.unwrap();
-        assert_eq!(start.narrow, 0);
+        assert_eq!(start.seam, 0);
         assert!((start.length - 62.0).abs() < 1e-3);
     }
 
@@ -425,44 +493,60 @@ mod tests {
         Tapers::new(&drawn, &network, &nodes, TAPER_PER_METER)
     }
 
+    /// Шов 8 → 14.2 м в узле (100, 0) с примыканием сверху и, когда
+    /// `continues`, — тупым (160°) продолжателем широкой другого класса.
+    fn bent_mouth(continues: bool) -> Tapers {
+        let mut roads = vec![
+            street(vec![Vec2::new(0.0, 0.0), Vec2::new(100.0, 0.0)], 8.0),
+            street(
+                vec![
+                    Vec2::new(100.0, 0.0),
+                    Vec2::new(100.0 + 95.0 * f32::cos(0.436), 95.0 * f32::sin(0.436)),
+                ],
+                14.2,
+            ),
+            street(vec![Vec2::new(100.0, 0.0), Vec2::new(100.0, 80.0)], 8.0),
+        ];
+        let lanes = [2u8, 4, 2, 2];
+        if continues {
+            // другой класс — стык не крадёт, одна дорога под 160° к широкой
+            let mut obtuse = street(vec![Vec2::new(100.0, 0.0), Vec2::new(5.4, -8.3)], 8.0);
+            obtuse.highway = crate::map::osm::Highway::Tertiary;
+            roads.push(obtuse);
+        }
+        for (road, lanes) in roads.iter_mut().zip(lanes) {
+            road.lanes = Some(lanes);
+        }
+        let network = RoadNetwork::new(&roads);
+        let nodes = RoadNodes::new(&roads);
+        let drawn: Vec<&RoadLine> = roads.iter().collect();
+        Tapers::new(&drawn, &network, &nodes, TAPER_PER_METER)
+    }
+
     #[test]
     fn a_bent_joint_at_a_junction_keeps_the_wide_width() {
-        // широкая уходит с узла под 25°; `continues` добавляет тупик другого
-        // класса, продолжающий её под тупым углом 160°, примыкание сверху
-        // делает узел перекрёстком
-        let bent = |continues: bool| {
-            let mut roads = vec![
-                street(vec![Vec2::new(0.0, 0.0), Vec2::new(100.0, 0.0)], 8.0),
-                street(
-                    vec![
-                        Vec2::new(100.0, 0.0),
-                        Vec2::new(100.0 + 95.0 * f32::cos(0.436), 95.0 * f32::sin(0.436)),
-                    ],
-                    14.2,
-                ),
-                street(vec![Vec2::new(100.0, 0.0), Vec2::new(100.0, 80.0)], 8.0),
-            ];
-            let lanes = [2u8, 4, 2, 2];
-            if continues {
-                // другой класс — стык не крадёт, одна дорога под 160° к широкой
-                let mut obtuse = street(vec![Vec2::new(100.0, 0.0), Vec2::new(5.4, -8.3)], 8.0);
-                obtuse.highway = crate::map::osm::Highway::Tertiary;
-                roads.push(obtuse);
-            }
-            for (road, lanes) in roads.iter_mut().zip(lanes) {
-                road.lanes = Some(lanes);
-            }
-            let network = RoadNetwork::new(&roads);
-            let nodes = RoadNodes::new(&roads);
-            let drawn: Vec<&RoadLine> = roads.iter().collect();
-            Tapers::new(&drawn, &network, &nodes, TAPER_PER_METER)
-        };
-        // изогнутый стык с тупым продолжением — широкая доходит до устья
-        // своей шириной (Одоевский путепровод × Демонстрации, R37-04)
-        assert_eq!(bent(true).count, 0);
         // без тупого продолжения изогнутый стык клин берёт как раньше
         // (Крестовоздвиженская в Союзную, витрина 28)
-        assert_eq!(bent(false).count, 1);
+        assert_eq!(bent_mouth(false).count, 1);
+        // с тупым продолжением клина на широкой нет: она доходит до устья
+        // своей шириной (Одоевский путепровод × Демонстрации, R37-04), а устье
+        // закрывают встречные клинья соседей
+        assert_eq!(bent_mouth(true).at(1), [None, None]);
+    }
+
+    #[test]
+    fn an_obtuse_mouth_widens_its_neighbours_to_the_wide_road() {
+        let tapers = bent_mouth(true);
+        // узкий шва растёт к узлу: у шва — сечение широкой, к телу — своё,
+        // со стороны, обращённой к широкой
+        let link = tapers.at(0)[1].unwrap();
+        assert_eq!(link.seam, 1);
+        assert!((link.length - 62.0).abs() < 1e-3);
+        assert_eq!(link.sides, [true, false]);
+        // тупой продолжатель — тем же встречным клином со своей стороны
+        let mouth = tapers.at(3)[0].unwrap();
+        assert_eq!(mouth.seam, 1);
+        assert_eq!(mouth.sides, [false, true]);
     }
 
     #[test]
@@ -477,7 +561,7 @@ mod tests {
         let start = tapers.at(1)[0].unwrap();
         assert_eq!(start.sides, [false, true]);
         assert_eq!(start.kept(), Some(1.0));
-        assert_eq!(start.narrow, 0);
+        assert_eq!(start.seam, 0);
     }
 
     #[test]
@@ -528,7 +612,7 @@ mod tests {
         let tapers = Tapers::new(&drawn, &network, &nodes, TAPER_PER_METER);
         assert_eq!(tapers.count, 1);
         let start = tapers.at(1)[0].unwrap();
-        assert_eq!(start.narrow, 0);
+        assert_eq!(start.seam, 0);
         assert_eq!(start.sides, [true; 2]);
     }
 

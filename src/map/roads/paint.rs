@@ -610,10 +610,11 @@ pub struct WedgeEnd {
 
 impl WedgeEnd {
     /// Клин длиной `length` у торца `end` дороги `road`, начатый с сечения
-    /// `narrow` по клину `taper`.
+    /// `seam` по клину `taper` — у сужающего клина сечение соседа уже своего,
+    /// у встречного шире.
     pub fn new(
         road: &RoadLine,
-        narrow: &RoadLine,
+        seam: &RoadLine,
         taper: Taper,
         end: bool,
         length: f32,
@@ -621,38 +622,34 @@ impl WedgeEnd {
     ) -> Self {
         Self {
             length,
-            lanes: lane_count(narrow),
+            lanes: lane_count(seam),
             drift: wedge_drift(road, side),
             kept: taper.kept(),
-            origin: seam_origin(road, narrow, end, side),
+            origin: seam_origin(road, seam, end, side),
         }
     }
 }
 
 /// Узел сетки у шва клина в раме way `road` (у торца `end`) такой, чтобы
 /// **осевая шла через шов без скачка**: у шва она стоит там же, где осевая
-/// узкого соседа `narrow`, и на длине клина плавно уходит на своё место.
+/// соседа `seam` (у сужающего клина — узкого, у встречного — широкого), и на
+/// длине клина плавно уходит на своё место.
 /// Иначе у двусторонней, где у соседей разное деление потоков — Ростов,
 /// Текучёва: `lanes=5, lanes:forward=3` к шести полосам, 3 + 2 → 3 + 3, —
 /// осевая прыгала на полполосы: у пяти она на границе потоков, у шести —
 /// посреди полотна. Сосед, нарисованный навстречу, видит осевую зеркально.
 /// `None` — осевой нет у одного из двух или сдвиг больше полосы: тогда
 /// раскладку у шва решает форма клина ([`wedge_frame`]).
-pub fn seam_origin(
-    road: &RoadLine,
-    narrow: &RoadLine,
-    end: bool,
-    side: TrafficSide,
-) -> Option<f32> {
+pub fn seam_origin(road: &RoadLine, seam: &RoadLine, end: bool, side: TrafficSide) -> Option<f32> {
     let lanes = lane_count(road);
     let own = axis_offset(road, lanes, side)?;
-    let theirs = axis_offset(narrow, lane_count(narrow), side)?;
+    let theirs = axis_offset(seam, lane_count(seam), side)?;
     let (&first, &last) = (road.points.first()?, road.points.last()?);
-    let seam = if end { last } else { first };
-    let (&from, &to) = (narrow.points.first()?, narrow.points.last()?);
+    let seam_at = if end { last } else { first };
+    let (&from, &to) = (seam.points.first()?, seam.points.last()?);
     // сосед идёт по ходу way, если в шов приходит его конец (у начала way)
     // или из шва выходит его начало (у конца)
-    let enters = to.distance(seam) < from.distance(seam);
+    let enters = to.distance(seam_at) < from.distance(seam_at);
     let target = if enters != end { theirs } else { -theirs };
     // сдвиг — целое число полуполос; округление держит узел ровно на сетке,
     // иначе хвост в 1e-7 добавлял линию за кромкой (`ceil` в `Painter::paint`)
@@ -770,7 +767,7 @@ pub fn wedge_ends(
         let taper = ends[end]?;
         Some(WedgeEnd::new(
             drawn[road],
-            drawn[taper.narrow],
+            drawn[taper.seam],
             taper,
             end == 1,
             lengths[end]?,

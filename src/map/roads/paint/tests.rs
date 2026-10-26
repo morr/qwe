@@ -495,7 +495,7 @@ fn the_axis_runs_through_a_seam_of_different_splits() {
         // начинается там же, где кончилась осевая пяти
         let taper = Taper {
             length: 33.0,
-            narrow: 0,
+            seam: 0,
             sides: [true; 2],
         };
         let wedge = WedgeEnd::new(&wide, &narrow, taper, false, 33.0, TrafficSide::Right);

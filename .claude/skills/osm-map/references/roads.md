@@ -951,7 +951,8 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     length, since both ends may taper; under 1 m no taper). The cut end gets a **butt** cap
     (`push_ribbon_trimmed`, `push_street_fill`'s `trimmed`) — a round cap of the full width
     would bulge out of the taper — and the piece is laid by `MeshBuilder::push_taper`: a
-    strip whose width runs linearly from the narrow way's to its own, joined by bisector
+    strip whose width runs linearly from the seam way's to its own (the seam way is the
+    narrow neighbour for a narrowing taper, the wide one for a counter-taper), joined by bisector
     vertices, with ribbon coords scaled to the local half width, so the lane lines fan out
     with the edges (proper lane geometry through a change of count is the paint stage's).
     **The two butt ends at the cut must meet exactly**, and two things used to break it,
@@ -981,27 +982,40 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     is higher than the corner beside it: on either side of a 5 m drive (radius 2.5) the
     kerb of Болдина stood 3.3 m apart where 2 lanes became 4 (Tula, gallery 22); a
     street's 6 m or an avenue's 10 m corner swallows a lane's step. Such a side is free,
-    and it narrows. **A bent joint with an obtuse continuation narrows nothing** (R37-04):
-    a joint of the pair that leaves the node at more than `PASS_ALIGN` 15° is a fork, not
-    a continuation, and when the wide way is carried on at an obtuse angle
-    (`MAX_ANGLE` 155°–180°) by *another* road of the node — Одоевский путепровод ×
-    Демонстрации, Tula, 160° — the taper ate a lane off the mouth and halved the axis
-    into a single tail; the obtuse corner's wide-kerb wedges close the step instead, so
-    the taper stands down. Without an obtuse continuation the bent joint tapers as
-    before (Крестовоздвиженская into Союзная, gallery 28). A second test was tried and dropped — a slanting arm covers only the
+    and it narrows. **A bent joint with an obtuse continuation grows the mouth instead
+    of narrowing it** (R37-04): a joint of the pair that leaves the node at more than
+    `PASS_ALIGN` 15° is a fork, not a continuation, and when the wide way is carried on
+    at an obtuse angle (`MAX_ANGLE` 155°–180°) by *another* road of the node — Одоевский
+    путепровод × Демонстрации, Tula — the narrowing taper ate a lane off the mouth and
+    halved the axis into a single tail, and standing it down (b1e65e87) left the wide
+    kerb a straight butt at full width (R37-04/3). So the seam's narrow way **and** the
+    obtuse continuer each take a **counter-taper** (`tapers::widen_mouth`): they start at
+    the seam with the wide way's section and shed to their own over the taper length,
+    only on the side facing the wide way (the other side belongs to a different corner —
+    a nose, a joining arc). `Taper::seam` names the road whose section stands at the
+    seam — the narrow neighbour for a narrowing taper, the wide one for a counter-taper;
+    the ribbon (`push_wedges`), the lane paint (`WedgeEnd`), the kerb arms and the pairs
+    (`SeamWedge`) all read it that one way. With the kerbs meeting at the node at the
+    wide way's width, the corner rules close the mouth in arcs — and `fillet_arc` gates
+    on the angle **between the arms**, not between the sloped kerb edges: under a taper
+    the edge drifts off the axis by atan(slope), and the mouth's corner (axes 147.6°)
+    showed an edge angle of 155.3° — the obtuse wedge's gate, which itself refuses a
+    sloped kerb, leaving the corner without a piece. Without an obtuse continuation the
+    bent joint tapers as before (Крестовоздвиженская into Союзную, gallery 28). A
+    second test was tried and dropped — a slanting arm covers only the
     foot of the step's wall (`half / |cos|` of its angle to the axis): it freed the side at
     Orel's wide T (gallery 03), where the short way's wedge came out steeper than the step
     it replaced. A crossing covers both sides — no taper, the
     step sinks in the node. `Taper::kept` names the untouched kerb (`+1` left) for the
-    paint: on a one-sided wedge the narrow section's lanes hug that kerb
+    paint: on a one-sided wedge the seam section's lanes hug that kerb
     (`paint::kept_frame` — the body's grid with the far bound pulled in by the missing
     lanes; the symmetric wedge keeps `narrow_frame` and its drift), and the new lanes are
     born at the narrowing kerb with the kerb itself. The mesher lays it with
     `push_taper_sided` (half widths `[[left from, left to], [right …]]` in the wedge path's
     frame — `roads::wedge_halves` swaps the sides for a tail wedge, whose path runs against
     the way); `push_taper` is the symmetric case of it. **The kerb returns read the
-    tapered end at the narrow width**: an `Arm` carries `half: [left, right]`, and at an
-    end vertex with a taper the tapered sides take the narrow road's half width and
+    tapered end at the seam way's width**: an `Arm` carries `half: [left, right]`, and at
+    an end vertex with a taper the tapered sides take the seam way's half width and
     sidewalk (`Drawn::taper_ends` hands `kerb_returns` the `Taper` itself) — the fillet
     then meets the wedge edge at the wedge's own 2–3° slant instead of floating a metre off
     it, which is what the pure-seam rule was protecting against.

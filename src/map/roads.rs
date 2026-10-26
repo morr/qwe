@@ -1448,17 +1448,18 @@ pub fn build_roads(map: &MapData, style: RoadStyle, shape: RoadShape) -> RoadBui
                 to_break_beyond(body, width, breaks, end, 0.0),
             ]
         };
-        // асфальт клиньев: от сечения узкого соседа к своему, с раскладкой
-        // полос, плывущей так же, как линии краски на клине
+        // асфальт клиньев: от сечения шва к своему (у сужающего сечение шва —
+        // узкого соседа, у встречного — широкого), с раскладкой полос,
+        // плывущей так же, как линии краски на клине
         let push_wedges = |fill: &mut MeshBuilder| {
             for &(path, taper, end) in &wedges {
-                let narrow = drawn[taper.narrow];
+                let seam = drawn[taper.seam];
                 let to_break = continued(path, road.width, breaks, end);
                 match lanes {
                     Some(_) => {
                         let wedge = paint::WedgeEnd::new(
                             road,
-                            narrow,
+                            seam,
                             taper,
                             end,
                             polyline_length(path),
@@ -1471,7 +1472,7 @@ pub fn build_roads(map: &MapData, style: RoadStyle, shape: RoadShape) -> RoadBui
                 }
                 fill.push_taper_sided(
                     path,
-                    wedge_halves(taper.sides, end, |_| [narrow.width / 2.0, road.width / 2.0]),
+                    wedge_halves(taper.sides, end, |_| [seam.width / 2.0, road.width / 2.0]),
                     to_break,
                     color.to_linear(),
                 );
@@ -1497,7 +1498,7 @@ pub fn build_roads(map: &MapData, style: RoadStyle, shape: RoadShape) -> RoadBui
             let curb_wedges: Vec<(&[Vec2], [[f32; 2]; 2])> = wedges
                 .iter()
                 .map(|&(path, taper, end)| {
-                    let narrow = drawn[taper.narrow].width / 2.0;
+                    let seam_half = drawn[taper.seam].width / 2.0;
                     let middle = wedge_middle(total_length, polyline_length(path), end);
                     let paired = prepared
                         .pairs()
@@ -1505,7 +1506,7 @@ pub fn build_roads(map: &MapData, style: RoadStyle, shape: RoadShape) -> RoadBui
                         .map(|left| usize::from(!left));
                     let halves = wedge_halves(taper.sides, end, |side| {
                         let curb = if paired == Some(side) { 0.0 } else { curb };
-                        [narrow + curb, road.width / 2.0 + curb]
+                        [seam_half + curb, road.width / 2.0 + curb]
                     });
                     (path, halves)
                 })
@@ -1612,10 +1613,10 @@ pub fn build_roads(map: &MapData, style: RoadStyle, shape: RoadShape) -> RoadBui
                     .map(|left| usize::from(!left));
                 let halves = wedge_halves(taper.sides, end, |side| {
                     if paired == Some(side) {
-                        [drawn[taper.narrow].width / 2.0, road.width / 2.0]
+                        [drawn[taper.seam].width / 2.0, road.width / 2.0]
                     } else {
                         [
-                            prepared.band_half(taper.narrow, side),
+                            prepared.band_half(taper.seam, side),
                             prepared.band_half(index, side),
                         ]
                     }
