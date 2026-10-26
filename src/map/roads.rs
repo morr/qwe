@@ -1257,6 +1257,8 @@ pub fn build_roads(map: &MapData, style: RoadStyle, shape: RoadShape) -> RoadBui
     // площадь — асфальтом улиц до лент, под ними (порядок пуша в слое —
     // порядок отрисовки); островок — бордюром поверх асфальта и краски, ниже
     let road_islands = islands::RoadIslands::new(map, &drawn, &ribbon);
+    // где чужое мощение врезается в полосы газона — лоскутам (`roads/scraps.rs`)
+    let road_bites = scraps::Bites::of(prepared.nodes(), &prepared.roads());
     streets.set_lanes(None);
     for shape in &road_islands.carriageways {
         push_shape(&mut streets, shape.clone(), ROAD_COLOR.to_linear());
@@ -1637,12 +1639,24 @@ pub fn build_roads(map: &MapData, style: RoadStyle, shape: RoadShape) -> RoadBui
             // остров — слева по ходу против часовой стрелки
             verged[usize::from(!ring.ccw)] = 0.0;
         }
+        // укусы считаются только там, где обочина вообще будет: вопрос к
+        // общим узлам на каждое звено каждой дороги не нужен
+        let bites = if verged[0] > 0.0 || verged[1] > 0.0 {
+            points[1..points.len().saturating_sub(1)]
+                .iter()
+                .filter(|&point| road_bites.bite(index, *point))
+                .copied()
+                .collect()
+        } else {
+            Vec::new()
+        };
         push_verges(
             [&mut verges, &mut verge_lawns, &mut verge_yards],
             &meadows,
             road,
             points,
             butt,
+            &bites,
             verged,
             &mut scraps,
         );
@@ -1762,6 +1776,12 @@ pub fn build_roads(map: &MapData, style: RoadStyle, shape: RoadShape) -> RoadBui
             corners::Fill::Road(RoadClass::Street) | corners::Fill::Sidewalk
         )
     };
+    // и горки: асфальт или штриховка направляющего островка — не газон,
+    // и кончик островка под горкой оставался клином травы (R37-01, витрина 14)
+    let gore_outlines: Vec<Vec<Vec2>> = gores
+        .outlines()
+        .map(|contour| contour.iter().map(|&point| point.into()).collect())
+        .collect();
     for outline in kerb_returns
         .roads
         .iter()
@@ -1769,6 +1789,10 @@ pub fn build_roads(map: &MapData, style: RoadStyle, shape: RoadShape) -> RoadBui
         .map(|(_, outline)| outline)
         .chain(&kerb_returns.sidewalks)
         .chain(&kerb_returns.verges)
+        // и горки: асфальт или штриховка направляющего островка — не газон,
+        // и кончик островка под горкой оставался клином травы
+        // (R37-01, витрина 14)
+        .chain(&gore_outlines)
         .chain(
             kerb_returns
                 .noses
@@ -1793,10 +1817,24 @@ pub fn build_roads(map: &MapData, style: RoadStyle, shape: RoadShape) -> RoadBui
             scraps.push_band(&ribbon[index], halves);
         }
     }
+    // Зелень земли — карманы разбора и замапленный газон: у клиньев два
+    // владельца (`roads/scraps.rs`). Спрашивается после мощения — врезание в
+    // неё видно по нарисованному; кладётся в слой тротуаров: слой обочин
+    // лежит ПОД зеленью (Z_ROAD_VERGE < Z_GRASS), и плитка клина осталась бы
+    // под травой, а тротуары — над (Z_SIDEWALK), и перекрытие с соседней
+    // плиткой того же материала не видно
+    for area in map.pockets.iter().chain(&map.grass) {
+        scraps.push_green(area.outer.clone());
+    }
+    let green_scraps = scraps.find_green();
     let lawn_scraps = scraps.find();
     verges.set_lanes(None);
     for shape in &lawn_scraps {
         push_shape(&mut verges, shape.clone(), SIDEWALK_COLOR.to_linear());
+    }
+    sidewalks.set_lanes(None);
+    for shape in &green_scraps {
+        push_shape(&mut sidewalks, shape.clone(), SIDEWALK_COLOR.to_linear());
     }
     // зебра — из целых звеньев на асфальте улиц, каким он уже лёг; стоп-линия
     // обрезается по тому же асфальту: у устья съезда её конец ложился на
@@ -2049,7 +2087,7 @@ pub fn build_roads(map: &MapData, style: RoadStyle, shape: RoadShape) -> RoadBui
         bends: kerb_returns.bends.len(),
         outer_corners: kerb_returns.outer,
         noses: kerb_returns.noses.len(),
-        lawn_scraps: lawn_scraps.len(),
+        lawn_scraps: lawn_scraps.len() + green_scraps.len(),
         drawn: prepared.stats(),
         bridges: bridge_count,
         track_bridges,
@@ -2887,7 +2925,9 @@ fn verge_runs(dense: &[Vec2], along: &[f32], widths: &[f32]) -> (Vec<Vec2>, Vec<
 /// оси до кромки плюс обочина, круглыми торцами. `verges` — какие стороны
 /// рисуются ([`Drawn::verges_drawn`]). Газон и плитка уходят ещё и в `scraps`
 /// (`roads/scraps.rs`); `ends` — какие торцы `[начало, конец]` кончаются в
-/// узле (`KerbReturns::butt`): лоскуты ищутся только у них. Обочина по месту
+/// узле (`KerbReturns::butt`): лоскуты ищутся только у них; `bites` — вершины
+/// ([`scraps::Bites`]), где чужое мощение врезается в полосу газона в
+/// середине улицы, — там окно своё. Обочина по месту
 /// ([`RoadLine::verge_at`]) — полосой переменной ширины от оси до края, и у
 /// каждого торца — круг торцевой ширины: торцом она доходит до угла узла, как
 /// постоянная лента.
@@ -2897,12 +2937,14 @@ fn verge_runs(dense: &[Vec2], along: &[f32], widths: &[f32]) -> (Vec<Vec2>, Vec<
 /// замапленный газон ([`Meadows::beside`]), иначе в `yard_lawns` травой
 /// двора. Слои газона лежат под плиткой, и голой земли между кромкой и
 /// дорожкой не остаётся.
+#[allow(clippy::too_many_arguments)]
 fn push_verges(
     [tiles, meadows, yard_lawns]: [&mut MeshBuilder; 3],
     mapped: &Meadows,
     road: &RoadLine,
     points: &[Vec2],
     ends: [bool; 2],
+    bites: &[Vec2],
     verges: [f32; 2],
     scraps: &mut scraps::Scraps,
 ) {
@@ -2961,7 +3003,7 @@ fn push_verges(
             if verge > VERGE_PAVED_MAX {
                 let lawn = verge + VERGE_UNDER_PATH;
                 ribbon(lawns, points, lawn, lawn_color);
-                scraps.push_lawn_band(&dense, &normals, &reach(lawn), ends);
+                scraps.push_lawn_band(&dense, &normals, &reach(lawn), ends, bites);
             }
             continue;
         }
@@ -3018,7 +3060,7 @@ fn push_verges(
         scraps.push_paving_band(&dense, &normals, &reach(&paved));
         if lawns_at.iter().any(|&lawn| lawn) {
             lawns.push_polygon(&band(&mut widths.iter().copied()), &[], lawn_color);
-            scraps.push_lawn_band(&dense, &normals, &reach(&widths), ends);
+            scraps.push_lawn_band(&dense, &normals, &reach(&widths), ends, bites);
         }
     }
 }

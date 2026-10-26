@@ -3974,6 +3974,137 @@ fn diag_window() {
             }
         }
     }
+    // DIAG-TEMP R37-01: та же кормилка лоскутов, что в mesh_roads, — окна
+    // газонов и найденные куски у точки: `QWE_DIAG_SCRAPS=x,y,r`,
+    // `QWE_DIAG_SCRAPS_FIND=1` добавляет вычитание мощения и куски
+    if let Ok(spec) = std::env::var("QWE_DIAG_SCRAPS") {
+        let v: Vec<f32> = spec.split(',').filter_map(|s| s.parse().ok()).collect();
+        let (at, r) = (Vec2::new(v[0], v[1]), v[2]);
+        let style = RoadStyle::default();
+        let shape = RoadShape::default();
+        let prepared = Drawn::new(&map, &style, &shape);
+        let ribbon: Vec<Vec<Vec2>> = (0..prepared.len())
+            .map(|i| prepared.axis(i, Axis::Ribbon).to_vec())
+            .collect();
+        let returns = super::corners::kerb_returns(&prepared, shape.corner_radius());
+        let meadows = super::Meadows::of(&map.parks, &map.grass);
+        let mut scraps = super::scraps::Scraps::default();
+        for outline in &returns.verge_lawns {
+            scraps.push_lawn(outline.clone());
+        }
+        let mut tiles = MeshBuilder::with_surface_coords();
+        let mut lawns = MeshBuilder::with_surface_coords();
+        let mut yards = MeshBuilder::with_surface_coords();
+        let road_bites = super::scraps::Bites::of(prepared.nodes(), &prepared.roads());
+        for index in 0..prepared.len() {
+            let road = prepared.road(index);
+            let mut verged = prepared.verges_drawn(index);
+            if let Some(ring) = prepared
+                .rings()
+                .index_of(index)
+                .and_then(|i| prepared.rings().list.get(i))
+            {
+                verged[usize::from(!ring.ccw)] = 0.0;
+            }
+            let bites = if verged[0] > 0.0 || verged[1] > 0.0 {
+                ribbon[index][1..ribbon[index].len().saturating_sub(1)]
+                    .iter()
+                    .filter(|&point| road_bites.bite(index, *point))
+                    .copied()
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            super::push_verges(
+                [&mut tiles, &mut lawns, &mut yards],
+                &meadows,
+                road,
+                &ribbon[index],
+                returns.butt(index),
+                &bites,
+                verged,
+                &mut scraps,
+            );
+        }
+        for (index, (ring, cuts)) in scraps.lawns().enumerate() {
+            let near = ring
+                .iter()
+                .chain(cuts.iter().flat_map(|cut| cut.iter()))
+                .any(|p| p.distance(at) < r);
+            if near {
+                eprintln!("DIAG lawn window {index} ring={ring:?} cuts={cuts:?}");
+            }
+        }
+        if std::env::var("QWE_DIAG_SCRAPS_FIND").is_ok() {
+            let paved_fill = |fill: &super::corners::Fill| {
+                matches!(
+                    fill,
+                    super::corners::Fill::Road(crate::map::osm::RoadClass::Street)
+                        | super::corners::Fill::Sidewalk
+                )
+            };
+            for outline in returns
+                .roads
+                .iter()
+                .filter(|(class, _)| *class == crate::map::osm::RoadClass::Street)
+                .map(|(_, outline)| outline)
+                .chain(&returns.sidewalks)
+                .chain(&returns.verges)
+                .chain(&returns.fork_gores)
+                .chain(
+                    returns
+                        .noses
+                        .iter()
+                        .chain(&returns.bends)
+                        .filter(|(fill, _)| paved_fill(fill))
+                        .map(|(_, outline)| outline),
+                )
+            {
+                if scraps.near_lawn(outline, 0.0) {
+                    scraps.push_paving(outline);
+                }
+            }
+            for (index, axis) in ribbon.iter().enumerate() {
+                let road = prepared.road(index);
+                let paved = !road.is_unpaved_street()
+                    && (road.class == crate::map::osm::RoadClass::Street || road.is_paved_path());
+                if !paved || road.bridge {
+                    continue;
+                }
+                let halves = [0, 1].map(|side| prepared.band_half(index, side));
+                if scraps.near_lawn(axis, halves[0].max(halves[1])) {
+                    scraps.push_band(axis, halves);
+                }
+            }
+            for area in map.pockets.iter().chain(&map.grass) {
+                scraps.push_green(area.outer.clone());
+            }
+            if std::env::var("QWE_DIAG_SCRAPS_ALL").is_ok() {
+                for (ring, area, avg, open, tip) in scraps.debug_pieces() {
+                    let Some(&near) = ring.iter().find(|p| p.distance(at) < r) else {
+                        continue;
+                    };
+                    eprintln!(
+                        "DIAG piece at {near} area={area:.1} avg={avg:.2} open={open:.1} tip={tip} ring={ring:?}"
+                    );
+                }
+            }
+            for shape in scraps.find_green() {
+                let ring = crate::map::shapes::ring_of(&shape[0]);
+                let Some(&tip) = ring.iter().find(|p| p.distance(at) < r) else {
+                    continue;
+                };
+                eprintln!("DIAG green scrap at {tip} ring={ring:?}");
+            }
+            for shape in scraps.find() {
+                let ring = crate::map::shapes::ring_of(&shape[0]);
+                let Some(&tip) = ring.iter().find(|p| p.distance(at) < r) else {
+                    continue;
+                };
+                eprintln!("DIAG scrap at {tip} ring={ring:?}");
+            }
+        }
+    }
     let (mut layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
     eprintln!("DIAG report {report}");
     let layout =

@@ -29,16 +29,19 @@
 //! (`Drawn::band_half`), а не по большей из них.
 
 use bevy::math::Vec2;
+use bevy::platform::collections::HashMap;
 use i_overlay::core::fill_rule::FillRule;
 use i_overlay::core::overlay_rule::OverlayRule;
 use i_overlay::float::single::SingleFloatOverlay;
 use i_overlay::mesh::outline::offset::OutlineOffset;
 use i_overlay::mesh::style::{LineJoin, OutlineStyle};
 
+use super::junctions::node_key;
 use crate::map::grid::Grid;
 use crate::map::meshing::{miter_offsets, ring_perimeter};
-use crate::map::osm::model::{distance_to_segment, ring_bounds};
+use crate::map::osm::model::{RoadLine, distance_to_segment, ring_bounds};
 use crate::map::parallel::in_parallel;
+use crate::map::roads::network::RoadNodes;
 use crate::map::shapes::{Contour, Shape, contour_area, contour_bounds, oriented, ring_of};
 
 /// Не больше этого, м², замкнутый кусок газона — лоскут: карман у угла
@@ -47,6 +50,27 @@ const SCRAP_AREA_MAX: f32 = 10.0;
 /// Уже этого в среднем (две площади на периметр), м, замкнутый кусок —
 /// щепка, какой бы длины ни был: Орёл — меньше метра на десять.
 const SCRAP_WIDTH_MAX: f32 = 1.5;
+/// Не больше этого, м², замкнутый кусок — клин: он берётся не средней
+/// шириной, а остриём, и бывает шире щепки при той же площади (серп между
+/// срезом съезда и проезжей, витрина 15, — около двадцати).
+const SCRAP_WEDGE_AREA_MAX: f32 = 25.0;
+/// Угол острия, °, ниже которого кусок — клин: длинные стороны сходятся, и
+/// ширина падает к нулю не в среднем, а у самого острия.
+const SCRAP_TIP_ANGLE: f32 = 20.0;
+/// Ребро острия не короче этого, м: углы наломанной обводки — не остриё.
+const SCRAP_TIP_EDGE: f32 = 1.0;
+/// Кусок зелени земли — карман разбора или замапленный газон — кандидат,
+/// только если он уже этого, м²: большему клину взяться неоткуда, а вопрос
+/// к мощению стоит одной разностью на кусок.
+const GREEN_AREA_MAX: f32 = 500.0;
+/// Кусок зелени земли кандидат, только если он уже этого в среднем (две
+/// площади на периметр), м, — узкая полоса: островок вилки (витрина 14) —
+/// около восьми, двор целиком — далеко за ней.
+const GREEN_WIDTH_MAX: f32 = 10.0;
+/// И только если мощение в него врезается: какая-то вершина куска ближе
+/// этого к нарисованной плитке или бордюру, м. Точечный опрос вместо
+/// сплошного: у внутренней зелени мощения рядом нет вовсе.
+const GREEN_BITE: f32 = 2.0;
 /// На сколько лоскут заводится под мощение вокруг, м: остаток считался по
 /// осям без сглаживания лент, и шов не должен светиться нитью газона.
 const SCRAP_OVERLAP: f32 = 0.2;
@@ -67,12 +91,20 @@ const CHUNK: usize = 16;
 /// метров от угла. Лоскут Орла — щепка в десять метров, кончающаяся у
 /// перехода в пятнадцати от узла.
 const END_REACH: usize = 10;
+/// Звеньев в обе стороны от вершины, где чужое мощение врезается в полосу
+/// газона ([`Scraps::push_lawn_band`]): те же 2.5 м на звено — пятнадцать
+/// метров от устья; клин у Сойфера лежит в двенадцати от него (R37-01).
+const WEDGE_REACH: usize = 6;
 
-/// Газоны обочин и всё мощёное рядом с ними — то, из чего ищутся лоскуты
-/// ([`Scraps::find`]). Копится по ходу укладки лент.
+/// Газоны обочин, зелень земли и всё мощёное рядом с ними — то, из чего
+/// ищутся лоскуты ([`Scraps::find`], [`Scraps::find_green`]). Копится по ходу
+/// укладки лент; мощение — раньше зелени: ей надо видеть врезание.
 #[derive(Default)]
 pub(super) struct Scraps {
     lawns: Vec<Lawn>,
+    /// Зелень земли — карманы разбора и замапленный газон — кольцами
+    /// ([`Scraps::push_green`]); срезов у неё нет: кусок сам себе полоса.
+    green: Vec<Vec<Vec2>>,
     /// Мощёные контуры `i_overlay` с габаритами и сеткой по ним.
     contours: Vec<(Contour, Vec2, Vec2)>,
     grid: Option<Grid<usize>>,
@@ -140,17 +172,21 @@ impl Scraps {
     /// срезом поперёк, и только те, что кончаются в узле (`ends`, `[начало,
     /// конец]`): у шва двух way одной улицы газон идёт дальше газоном
     /// продолжения. Длинная полоса целиком тянула бы в разность всё мощение
-    /// вдоль себя, а кусков в тысячи раз больше, чем лоскутов.
+    /// вдоль себя, а кусков в тысячи раз больше, чем лоскутов. Второе
+    /// исключение — **укусы** (`bites`, вершины из [`Bites`]): там чужое
+    /// мощение врезается в полосу и отгораживает клин, — окно на
+    /// [`WEDGE_REACH`] точек в обе стороны, перекрывающиеся слитно (R37-01).
     pub(super) fn push_lawn_band(
         &mut self,
         path: &[Vec2],
         normals: &[Vec2],
         reach: &[f32],
         ends: [bool; 2],
+        bites: &[Vec2],
     ) {
         let last = path.len().saturating_sub(1);
         let edge = |index: usize| [path[index] + normals[index] * reach[index], path[index]];
-        let windows = match ends {
+        let mut windows: Vec<(usize, usize)> = match ends {
             [false, false] => Vec::new(),
             _ if last <= 2 * END_REACH => vec![(0, last)],
             [head, tail] => [(head, (0, END_REACH)), (tail, (last - END_REACH, last))]
@@ -158,6 +194,23 @@ impl Scraps {
                 .filter_map(|(end, window)| end.then_some(window))
                 .collect(),
         };
+        let mut run: Option<(usize, usize)> = None;
+        for index in (1..last).filter(|index| bites.contains(&path[*index])) {
+            let window = (
+                index.saturating_sub(WEDGE_REACH),
+                (index + WEDGE_REACH).min(last),
+            );
+            match &mut run {
+                Some((_, to)) if window.0 <= *to + 1 => *to = window.1,
+                _ => {
+                    if let Some(merged) = run.take() {
+                        windows.push(merged);
+                    }
+                    run = Some(window);
+                }
+            }
+        }
+        windows.extend(run);
         for (from, to) in windows {
             let ring = band_ring(path, normals, reach, from, to);
             if ring.len() < 3 {
@@ -196,6 +249,15 @@ impl Scraps {
         }
     }
 
+    /// Кольца и срезы всех газонов — окно спрашивания каждого; диагнозу
+    /// (`tests.rs::diag_window`).
+    #[cfg(test)]
+    pub(super) fn lawns(&self) -> impl Iterator<Item = (&[Vec2], &[[Vec2; 2]])> {
+        self.lawns
+            .iter()
+            .map(|lawn| (&lawn.ring[..], &lawn.cuts[..]))
+    }
+
     /// Лоскуты всех газонов — фигуры, заведённые под мощение на
     /// [`SCRAP_OVERLAP`], в порядке газонов. Газоны друг от друга не зависят и
     /// считаются по потокам.
@@ -204,6 +266,133 @@ impl Scraps {
             .into_iter()
             .flatten()
             .collect()
+    }
+
+    /// Кусок зелени земли — карман разбора (`MapData::pockets`) или
+    /// замапленный газон (`MapData::grass`). Клин между полосами мощения
+    /// лежит не только в газоне обочины (R37-01: клин у Сойфера — карман,
+    /// кончик островка на вилке — замапленный газон, серп витрины 15 —
+    /// карман), и спрашивается он у зелени так же, как у газона. Сплошной
+    /// опрос всей зелени города стоил бы тех же ~80 мс, что опрос каждые
+    /// 40 м ([`END_REACH`]), поэтому кусок — кандидат, только если он форма
+    /// клина: узкая полоса ([`GREEN_AREA_MAX`], [`GREEN_WIDTH_MAX`]), в
+    /// которую мощение врезается ([`GREEN_BITE`]).
+    pub(super) fn push_green(&mut self, ring: Vec<Vec2>) {
+        if ring.len() < 3 {
+            return;
+        }
+        let area = contour_area(&oriented(&ring, true));
+        let perimeter = ring_perimeter(&ring);
+        if area > GREEN_AREA_MAX
+            || perimeter <= 0.0
+            || 2.0 * area / perimeter > GREEN_WIDTH_MAX
+            || !self.bitten(&ring)
+        {
+            return;
+        }
+        self.green.push(ring);
+    }
+
+    /// Лоскуты зелени земли — тот же вопрос к нарисованному, что у газонов
+    /// обочин ([`Scraps::find`]).
+    pub(super) fn find_green(&self) -> Vec<Shape> {
+        in_parallel(&self.green, |ring| {
+            let subject = vec![oriented(ring, true)];
+            let (low, high) = contour_bounds(&subject[0]);
+            let clip = self.near(low, high);
+            if clip.is_empty() {
+                return Vec::new();
+            }
+            scraps_among(ring, &[], subject, clip)
+        })
+        .into_iter()
+        .flatten()
+        .collect()
+    }
+
+    /// DIAG-TEMP: все остатки всех газонов с метриками фильтра — (кольцо,
+    /// м², средняя ширина, открытость, клин) — диагнозу (`tests.rs`).
+    #[cfg(test)]
+    pub(super) fn debug_pieces(&self) -> Vec<(Vec<Vec2>, f32, f32, f32, bool)> {
+        let lawns: Vec<(Vec<Vec2>, Vec<[Vec2; 2]>)> = self
+            .lawns
+            .iter()
+            .map(|lawn| (lawn.ring.clone(), lawn.cuts.clone()))
+            .chain(self.green.iter().map(|ring| (ring.clone(), Vec::new())))
+            .collect();
+        in_parallel(&lawns, |(ring, cuts)| {
+            let subject = vec![oriented(ring, true)];
+            let (low, high) = contour_bounds(&subject[0]);
+            let clip = self.near(low, high);
+            if clip.is_empty() {
+                return Vec::new();
+            }
+            let outline = ring.clone();
+            let cuts = cuts.clone();
+            subject
+                .overlay(&clip, OverlayRule::Difference, FillRule::NonZero)
+                .into_iter()
+                .filter_map(move |shape| {
+                    let outer = shape.first()?;
+                    let ring = ring_of(outer);
+                    let area =
+                        contour_area(outer) - shape[1..].iter().map(contour_area).sum::<f32>();
+                    let perimeter = ring_perimeter(&ring);
+                    let avg = if perimeter > 0.0 {
+                        2.0 * area / perimeter
+                    } else {
+                        0.0
+                    };
+                    let on = |point: Vec2| {
+                        (0..outline.len()).any(|index| {
+                            distance_to_segment(
+                                point,
+                                outline[index],
+                                outline[(index + 1) % outline.len()],
+                            ) < ON_EDGE
+                        })
+                    };
+                    let on_cut = |point: Vec2| {
+                        cuts.iter()
+                            .any(|&[from, to]| distance_to_segment(point, from, to) < ON_EDGE)
+                    };
+                    let open: f32 = (0..ring.len())
+                        .map(|index| (ring[index], ring[(index + 1) % ring.len()]))
+                        .filter(|&(from, to)| on((from + to) / 2.0) && on(from) && on(to))
+                        .map(|(from, to)| from.distance(to))
+                        .sum();
+                    let cut = (0..ring.len())
+                        .map(|index| (ring[index], ring[(index + 1) % ring.len()]))
+                        .any(|(from, to)| on_cut((from + to) / 2.0));
+                    let tip = tapers_to_tip(&ring) && !cut;
+                    Some((ring, area, avg, open, tip))
+                })
+                .collect()
+        })
+        .into_iter()
+        .flatten()
+        .collect()
+    }
+
+    /// Врезается ли мощение в кусок зелени: какая-то его вершина лежит ближе
+    /// [`GREEN_BITE`] к нарисованному мощению.
+    fn bitten(&self, ring: &[Vec2]) -> bool {
+        let Some(grid) = &self.grid else {
+            return false;
+        };
+        ring.iter().any(|&vertex| {
+            grid.near_each(vertex - GREEN_BITE, vertex + GREEN_BITE)
+                .any(|&index| {
+                    let (contour, ..) = &self.contours[index];
+                    (0..contour.len()).any(|edge| {
+                        distance_to_segment(
+                            vertex,
+                            contour[edge].into(),
+                            contour[(edge + 1) % contour.len()].into(),
+                        ) < GREEN_BITE
+                    })
+                })
+        })
     }
 
     fn near(&self, low: Vec2, high: Vec2) -> Vec<Contour> {
@@ -226,7 +415,7 @@ impl Scraps {
         if clip.is_empty() {
             return Vec::new();
         }
-        scraps_among(lawn, subject, clip)
+        scraps_among(&lawn.ring, &lawn.cuts, subject, clip)
     }
 }
 
@@ -240,6 +429,23 @@ fn band_ring(path: &[Vec2], normals: &[Vec2], reach: &[f32], from: usize, to: us
     ring
 }
 
+/// Сужается ли контур к острию: есть вершина, у которой оба ребра длинные
+/// ([`SCRAP_TIP_EDGE`]) и сходятся под углом не шире [`SCRAP_TIP_ANGLE`] —
+/// ширина куска падает там к нулю, а не в среднем по куску (R37-01).
+fn tapers_to_tip(ring: &[Vec2]) -> bool {
+    (0..ring.len()).any(|index| {
+        let (prev, at, next) = (
+            ring[(index + ring.len() - 1) % ring.len()],
+            ring[index],
+            ring[(index + 1) % ring.len()],
+        );
+        let (into, outof) = (prev - at, next - at);
+        into.length() >= SCRAP_TIP_EDGE
+            && outof.length() >= SCRAP_TIP_EDGE
+            && into.perp_dot(outof).abs().atan2(into.dot(outof)) <= SCRAP_TIP_ANGLE.to_radians()
+    })
+}
+
 /// Окна `[от, до]` по `count` точкам встык, по [`CHUNK`] звеньев.
 fn chunks(count: usize) -> Vec<(usize, usize)> {
     let last = count.saturating_sub(1);
@@ -249,8 +455,47 @@ fn chunks(count: usize) -> Vec<(usize, usize)> {
         .collect()
 }
 
-fn scraps_among(lawn: &Lawn, subject: Vec<Contour>, clip: Vec<Contour>) -> Vec<Shape> {
-    let outline = &lawn.ring;
+/// Общие узлы, в которых чужая дорога кончается, — места, где её мощение
+/// врезается в полосу газона дороги, прошедшей через узел насквозь
+/// (R37-01: устье проезда, срез съезда). Узел, в котором кончается
+/// продолжение самой этой улицы, — шов двух way: там газон идёт дальше, и
+/// окно не нужно, как и у торцов ([`Scraps::push_lawn_band`], `ends`).
+pub(super) struct Bites {
+    ends: HashMap<(i32, i32), Vec<Option<usize>>>,
+}
+
+impl Bites {
+    pub(super) fn of(nodes: &RoadNodes, roads: &[&RoadLine]) -> Self {
+        let mut ends: HashMap<(i32, i32), Vec<Option<usize>>> = HashMap::new();
+        for (index, road) in roads.iter().enumerate() {
+            for (end, point) in [(0, road.points.first()), (1, road.points.last())] {
+                let Some(&point) = point else {
+                    continue;
+                };
+                if !nodes.is_shared(point) {
+                    continue;
+                }
+                let continues = nodes.next_way(index, end).map(|(road, _)| road);
+                ends.entry(node_key(point)).or_default().push(continues);
+            }
+        }
+        Self { ends }
+    }
+
+    /// Врезается ли чужое мощение в полосу дороги `road` в узле `point`.
+    pub(super) fn bite(&self, road: usize, point: Vec2) -> bool {
+        self.ends
+            .get(&node_key(point))
+            .is_some_and(|list| list.iter().any(|&continues| continues != Some(road)))
+    }
+}
+
+fn scraps_among(
+    outline: &[Vec2],
+    cuts: &[[Vec2; 2]],
+    subject: Vec<Contour>,
+    clip: Vec<Contour>,
+) -> Vec<Shape> {
     let on_lawn = |point: Vec2| {
         (0..outline.len()).any(|index| {
             let next = outline[(index + 1) % outline.len()];
@@ -258,8 +503,7 @@ fn scraps_among(lawn: &Lawn, subject: Vec<Contour>, clip: Vec<Contour>) -> Vec<S
         })
     };
     let on_cut = |point: Vec2| {
-        lawn.cuts
-            .iter()
+        cuts.iter()
             .any(|&[from, to]| distance_to_segment(point, from, to) < ON_EDGE)
     };
     subject
@@ -273,7 +517,9 @@ fn scraps_among(lawn: &Lawn, subject: Vec<Contour>, clip: Vec<Contour>) -> Vec<S
             let area = contour_area(outer) - shape[1..].iter().map(contour_area).sum::<f32>();
             let perimeter = ring_perimeter(&ring);
             let small = area <= SCRAP_AREA_MAX
-                || (perimeter > 0.0 && 2.0 * area / perimeter <= SCRAP_WIDTH_MAX);
+                || (perimeter > 0.0 && 2.0 * area / perimeter <= SCRAP_WIDTH_MAX)
+                // клин: тонкий у острия, а не в среднем (R37-01)
+                || (area <= SCRAP_WEDGE_AREA_MAX && tapers_to_tip(&ring));
             // замкнут: на краю газона (ребро серединой и обоими концами на
             // нём) — не больше щели [`SCRAP_OPENING`]
             let edges =
@@ -348,5 +594,111 @@ mod tests {
         assert!(scraps_with_hole((Vec2::new(10.0, 0.5), Vec2::new(15.0, 5.5))).is_empty());
         // малый, но выходит к краю газона на два метра: там газон продолжается
         assert!(scraps_with_hole((Vec2::new(10.0, 4.0), Vec2::new(12.0, 8.0))).is_empty());
+    }
+
+    /// Газон 40 × 8 м, закрытый мощением целиком, кроме треугольной дырки
+    /// `(10, 2), (22.25, 2), (10, 6)` — клин, зажатый плиткой с трёх сторон.
+    fn scraps_with_wedge_hole() -> Vec<Shape> {
+        let mut scraps = Scraps::default();
+        scraps.push_lawn(rect(Vec2::ZERO, Vec2::new(40.0, 8.0)));
+        // три полосы мощения вокруг клина: низ, лево и наискось по гипотенузе
+        scraps.push_paving(&rect(Vec2::new(-1.0, -1.0), Vec2::new(41.0, 2.0)));
+        scraps.push_paving(&rect(Vec2::new(-1.0, 2.0), Vec2::new(10.0, 9.0)));
+        scraps.push_paving(&[
+            Vec2::new(10.0, 6.0),
+            Vec2::new(22.25, 2.0),
+            Vec2::new(41.0, -4.2),
+            Vec2::new(41.0, 9.0),
+            Vec2::new(9.0, 9.0),
+        ]);
+        scraps.find()
+    }
+
+    #[test]
+    fn a_remainder_tapering_to_a_tip_is_a_scrap_beyond_the_average() {
+        // клин 24.5 м²: площадь и средняя ширина (1.68) за порогами, но
+        // длинные стороны сходятся под углом в 18° — остриё, и мощению такой
+        // кусок оставлять не на что (R37-01)
+        assert_eq!(scraps_with_wedge_hole().len(), 1);
+    }
+
+    /// Кусок зелени земли — полоса 40 × 3 м между плиткой снизу и сверху, с
+    /// наискось врезавшейся полосой мощения у `x = 18` и закрытым левым
+    /// торцом. Мощение кладётся раньше зелени: ей видно врезание.
+    fn green_with_bite() -> Scraps {
+        let mut scraps = Scraps::default();
+        scraps.push_paving(&rect(Vec2::new(-1.0, -1.0), Vec2::new(41.0, 0.5)));
+        scraps.push_paving(&rect(Vec2::new(-1.0, 2.5), Vec2::new(41.0, 4.0)));
+        scraps.push_paving(&rect(Vec2::new(-1.0, -1.0), Vec2::new(6.0, 4.0)));
+        scraps.push_paving(&[
+            Vec2::new(18.0, -1.0),
+            Vec2::new(19.5, -1.0),
+            Vec2::new(8.0, 4.0),
+            Vec2::new(6.5, 4.0),
+        ]);
+        scraps.push_green(rect(Vec2::ZERO, Vec2::new(40.0, 3.0)));
+        scraps
+    }
+
+    #[test]
+    fn a_ground_green_wedge_bitten_by_paving_is_a_scrap() {
+        // клин у Сойфера (N3): карман земли между полосами мощения, сужающийся
+        // к устью, — мостится, хоть и не газон обочины (R37-01); кусок справа
+        // от вреза шире порога клина (41 м²) и остаётся травой
+        let found = green_with_bite().find_green();
+        assert_eq!(found.len(), 1, "мостится клин слева от вреза");
+        let (low, high) = contour_bounds(&found[0][0]);
+        assert!(high.x < 20.0, "клин — левее вреза: {low} {high}");
+    }
+
+    #[test]
+    fn a_green_piece_open_to_the_lawn_stays_grass() {
+        // клык у устья (витрина 12): длинная сторона куска открыта в большой
+        // газон — замкнутым клином он не бывает, что за форма у остатка ни будь
+        let mut scraps = Scraps::default();
+        scraps.push_paving(&rect(Vec2::new(-1.0, -1.0), Vec2::new(41.0, 0.5)));
+        scraps.push_green(rect(Vec2::ZERO, Vec2::new(40.0, 3.0)));
+        assert!(scraps.find_green().is_empty());
+    }
+
+    #[test]
+    fn a_fat_green_remainder_is_not_asked_into_a_scrap() {
+        // двор целиком — не узкая полоса: и кандидатом клина не бывает
+        let mut scraps = Scraps::default();
+        scraps.push_paving(&rect(Vec2::new(-1.0, -1.0), Vec2::new(41.0, 0.5)));
+        scraps.push_green(rect(Vec2::ZERO, Vec2::new(40.0, 10.0)));
+        assert!(scraps.find_green().is_empty());
+    }
+
+    #[test]
+    fn a_wedge_bitten_mid_strip_is_asked_at_the_bite() {
+        // проезд врезается в полосу газона в середине улицы: клин между его
+        // срезом и полосой у бордюра мостится, хоть правило и спрашивало
+        // раньше одни концы полос у узлов (R37-01)
+        let path: Vec<Vec2> = (0..=16)
+            .map(|index| Vec2::new(index as f32 * 2.5, 0.0))
+            .collect();
+        let normals = vec![Vec2::Y; path.len()];
+        let reach = vec![6.0; path.len()];
+        let mut with_bite = Scraps::default();
+        with_bite.push_paving(&rect(Vec2::new(-1.0, -1.0), Vec2::new(41.0, 2.0)));
+        with_bite.push_paving(&rect(Vec2::new(-1.0, 5.0), Vec2::new(41.0, 7.0)));
+        // врез наискось и его завод вдоль полосы, справа — закрытый торец
+        with_bite.push_paving(&[
+            Vec2::new(24.0, -1.0),
+            Vec2::new(25.5, -1.0),
+            Vec2::new(21.5, 7.0),
+            Vec2::new(20.0, 7.0),
+        ]);
+        with_bite.push_paving(&rect(Vec2::new(20.0, -1.0), Vec2::new(34.0, 3.5)));
+        with_bite.push_paving(&rect(Vec2::new(33.0, -1.0), Vec2::new(35.0, 7.0)));
+        with_bite.push_lawn_band(&path, &normals, &reach, [false; 2], &[path[10]]);
+        assert_eq!(with_bite.find().len(), 1, "клин у вреза мостится");
+        // а без укуса то же место не спрашивается вовсе — окно даёт укус
+        let mut without = Scraps::default();
+        without.push_paving(&rect(Vec2::new(-1.0, -1.0), Vec2::new(41.0, 2.0)));
+        without.push_paving(&rect(Vec2::new(-1.0, 5.0), Vec2::new(41.0, 7.0)));
+        without.push_lawn_band(&path, &normals, &reach, [false; 2], &[]);
+        assert!(without.find().is_empty());
     }
 }

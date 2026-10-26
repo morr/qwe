@@ -265,31 +265,59 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   runs on into the next way's lawn) — `END_REACH` 10 points, 25 m from the end, the
   whole band when it is shorter than two of those, with the transverse edge where the
   piece is cut off the band kept as a **cut**: a piece reaching a cut runs on into the
-  lawn and is never a scrap. Scraps are made at corners (the pad, the crosswalk, the
-  footway turning to it); mid-block the lawn is a strip open along its length, and asking
-  every 40 m of it cost ~80 ms on Tula (6091 pieces, 1.5 M clip points). A scrap
-  mid-block (a footway kinking against the kerb between two drives) is therefore left as
+  lawn and is never a scrap. **A bite is asked the same way** (R37-01): an interior
+  vertex of the street where another road *ends* on a shared node (`Bites` keeps the
+  shared end nodes with their continuations; a continuation of the same street is a
+  seam, not a bite) — the window opens `WEDGE_REACH` 6 points (15 m) to both sides,
+  overlapping bites merge into one, both edges cuts. That is where a driveway mouth or
+  a slip cut pinches the strip mid-block (Soyfera's wedge lies 12 m from the mouth);
+  asking every 40 m of the strip cost ~80 ms on Tula (6091 pieces, 1.5 M clip points),
+  and a scrap mid-block without a bite (a footway kinking against the kerb between two
+  drives) is therefore left as
   it was. The paving is gathered **after** the ribbons and only near a lawn piece
   (`Scraps::near_lawn`, a grid of the pieces' boxes): pushing every street band and
-  every corner of the city cost ~10 ms more than the difference itself. A piece of the
+  every corner of the city cost ~10 ms more than the difference itself — the gore
+  outlines (`Gores::outlines`, asphalt and hatched mounts alike) feed it too: a mount is
+  not lawn, and the tip of a fork island under its hatch stayed a wedge of grass
+  (R37-01, sample 14). A piece of the
   remainder is a **scrap** when it is small — `SCRAP_AREA_MAX` 10 m², or thinner than
-  `SCRAP_WIDTH_MAX` 1.5 m on average (twice the area over the perimeter) — and
+  `SCRAP_WIDTH_MAX` 1.5 m on average (twice the area over the perimeter), or a **wedge**:
+  `SCRAP_WEDGE_AREA_MAX` 25 m² tapering to a tip, two edges of `SCRAP_TIP_EDGE` 1 m
+  meeting under `SCRAP_TIP_ANGLE` 20° — and
   **enclosed**: at most `SCRAP_OPENING` 1 m of its boundary lies on the lawn polygon's
   own edge (an edge counts when its middle and both ends are within 2 cm of it). Past
   that edge the lawn goes on — the next street's verge, the corner lawn, a block over
-  it — and a piece open to it is a strip of the same lawn, left alone. Oryol's sliver
+  it — and a piece open to it is a strip of the same lawn, left alone (a mouth fang,
+  sample 12: openness 6.2 m — and the thresholds that would take it would take the
+  intended corner lawns). Oryol's sliver
   touches its edge at its tip over 0.7 m (a block lies beyond), hence the metre. A scrap
   grows `SCRAP_OVERLAP` 0.2 m (bevel) under the paving around it — the paving was taken
   on the unsmoothed band offsets — and goes into `road_verges` in tile colour; that
-  layer lies above both lawn layers, so nothing else changes order. The errors are safe
+  layer lies above both lawn layers, so nothing else changes order. **Ground green is
+  asked too** (R37-01): a parse pocket or a mapped grass polygon is itself a candidate
+  when it is a narrow strip — `GREEN_AREA_MAX` 500 m², `GREEN_WIDTH_MAX` 10 m on
+  average — with a vertex within `GREEN_BITE` 2 m of the drawn paving
+  (`Scraps::push_green`, fed after the paving so the bite is seen). The wedge of a
+  courtyard pocket pinched between tiles (Soyfera, sample N3) and the fork island's tip
+  live there, not in a verge strip; their scraps go into `sidewalks` in tile colour —
+  the one tile layer above the grass (`Z_GRASS`), where an overlap with the
+  neighbouring tile of the same material renders identically. A wide yard or a strip
+  with no paving at its vertices is not a candidate, and a piece open into the big lawn
+  stays grass as before. The errors are safe
   one way: paving not counted only leaves a piece open to the lawn's edge, and it stays
   lawn; a band is taken **per side** (`band_half`), not by the wider one, because
-  over-counted paving is what could fake a small enclosed piece. Mapped greens (`parks`,
-  `grass`) are never asked — a real small lawn in a square is a polygon of its own, not
-  a verge. Tula: 1078 lawn pieces asked, **142 scraps** (`lawn scraps` in the `road
-  meshing:` line); the road build 314 → 350 ms (`map_meshing`, dev, five alternating
-  runs), ~22 ms of it the differences across threads (176 ms on one), ~6 ms the paving.
-  Pinned by `a_lawn_scrap_enclosed_by_paving_is_tiled` and `scraps::tests`.
+  over-counted paving is what could fake a small enclosed piece. Parks and woods are
+  never asked — a real lawn in a square is a polygon of its own, not a verge. Tula:
+  **192 scraps** against 95 before (R37-01; `lawn scraps` in the `road meshing:` line);
+  the road build 438 → 477 ms (`map_meshing`, dev, alternating runs) — the bites'
+  windows, the green pieces and the gore outlines together, half of the ~80 ms the
+  continuous survey cost.
+  Pinned by `a_lawn_scrap_enclosed_by_paving_is_tiled`,
+  `a_remainder_tapering_to_a_tip_is_a_scrap_beyond_the_average`,
+  `a_ground_green_wedge_bitten_by_paving_is_a_scrap`,
+  `a_green_piece_open_to_the_lawn_stays_grass`,
+  `a_fat_green_remainder_is_not_asked_into_a_scrap`,
+  `a_wedge_bitten_mid_strip_is_asked_at_the_bite` and `scraps::tests`.
   In a microdistrict (Фрунзе in Tula, the district frame d2)
   the tile laid from the kerb to a footway fifteen metres off made the street read as
   poured concrete; there it is a lawn with the footway on it, as in any Soviet yard,
