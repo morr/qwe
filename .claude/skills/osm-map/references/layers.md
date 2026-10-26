@@ -281,7 +281,15 @@ The layers that are neither roads, parking, buildings nor trees. Each bullet is 
     `_ties` / `_steel` at `Z_RAIL_BRIDGE` 2.3 / 2.305 / 2.31 — above the street bridges'
     deck (`Z_BRIDGE` 2.2) and paint, below the tram — and **without a shoulder** (the
     ballast lies in the bridge's trough), its bed capped at `rail::deck_width` so a far
-    bucket's `min_bed` does not hang it over the parapet. The slab, parapet and shadow
+    bucket's `min_bed` does not hang it over the parapet. **The bridge ballast ends with
+    the trough** (`RibbonCap::Butt` in `push_tracks`): a ground track's ballast keeps the
+    round cap — a track dying mid-city ends rounded, not sheared — but a round cap on the
+    bridge layers swung a half-disc of 2.3-m ballast past the bridge end onto the ground
+    continuation, burying its ties and steel (2.03–2.04) for ~2.4 m at every seam; a five-way
+    bridge showed the gap at both ends of all its tracks (Tula, 2371 3088). The slab and
+    parapet edges of a *neighbouring* deck now stay visible where they overhang the
+    neighbour's ramp past the seam — that is the decks' real outline, the cap used to
+    paint over it. The slab, parapet and shadow
     under it are the road layer's (`roads.md`, **Bridge layers**). A bridge track never
     forms a **level crossing**, is never a **rail gap** end (`parse/rails.rs::free_ends`),
     and holds no **standing wagons** (they would lie under the slab at `Z_WAGON`). It does

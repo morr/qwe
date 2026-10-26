@@ -363,8 +363,9 @@ pub fn mesh_rails(bucket: RailZoomBucket, rails: &[RailLine]) -> (Vec<LayerMesh>
     let ground: Vec<&Track> = tracks.iter().filter(|track| !track.bridge).collect();
     let decks: Vec<&Track> = tracks.iter().filter(|track| track.bridge).collect();
 
-    let [ballast, ties, steel] = push_tracks(&ground, lod, true);
-    let [bridge_ballast, bridge_ties, bridge_steel] = push_tracks(&decks, lod, false);
+    let [ballast, ties, steel] = push_tracks(&ground, lod, true, RAIL_CAP);
+    let [bridge_ballast, bridge_ties, bridge_steel] =
+        push_tracks(&decks, lod, false, RibbonCap::Butt);
 
     let layers: Vec<LayerMesh> = [
         (ballast, Z_RAIL, "rail_ballast"),
@@ -394,8 +395,21 @@ pub fn mesh_rails(bucket: RailZoomBucket, rails: &[RailLine]) -> (Vec<LayerMesh>
 
 /// Балласт, шпалы (или штрих) и сталь одной группы путей — трёх мешей, а не
 /// одного (см. модульную прозу). `shoulder` — класть ли откос призмы: у пути
-/// на путепроводе его нет, балласт лежит в корыте моста.
-fn push_tracks(tracks: &[&Track], lod: &RailLod, shoulder: bool) -> [MeshBuilder; 3] {
+/// на путепроводе его нет, балласт лежит в корыте моста. `ballast_cap` — чем
+/// кончается балласт: у наземных путей полудиском ([`RAIL_CAP`]), у
+/// путепровода — прямым срезом вместе с корытом плиты.
+///
+/// Полудиск на z [`Z_RAIL_BRIDGE`] вылезал за торец моста на наземное
+/// продолжение пути и погребал под собой его шпалы и сталь
+/// ([`Z_RAIL`]…[`Z_RAIL_STEEL`]) — у обоих швов моста сталь пропадала на
+/// пару метров (Тула, 2371, 3088). Наземному пути полудиск нужен: путь,
+/// обрывающийся посреди города, кончается скруглением, а не обрубком.
+fn push_tracks(
+    tracks: &[&Track],
+    lod: &RailLod,
+    shoulder: bool,
+    ballast_cap: RibbonCap,
+) -> [MeshBuilder; 3] {
     let mut ballast = MeshBuilder::default();
     if shoulder {
         for track in tracks {
@@ -418,7 +432,7 @@ fn push_tracks(tracks: &[&Track], lod: &RailLod, shoulder: bool) -> [MeshBuilder
             track.bed,
             track.palette.ballast.to_linear(),
             RAIL_JOIN,
-            RAIL_CAP,
+            ballast_cap,
         );
     }
 

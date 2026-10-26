@@ -434,6 +434,36 @@ fn layer<'a>(layers: &'a [LayerMesh], name: &str) -> &'a MeshBuilder {
 
 // --- путепровод и переезд (R35) -------------------------------------------
 
+/// Балласт путепровода кончается у торцов моста — вылезающий за торец
+/// полудиск круглого торца (2.5 м балласта на z 2.3) ложится на наземное
+/// продолжение пути и погребает под собой его шпалы и сталь (z 2.03–2.04):
+/// у обоих швов моста сталь пропадает на несколько метров (Тула, 2371, 3088 —
+/// пять мостовых way подряд, арка Воронки). На мосту балласт лежит в корыте
+/// плиты, и корыто кончается вместе с настилом.
+#[test]
+fn a_bridge_ballast_stops_at_the_bridge_ends() {
+    let ground = fixture::rail(
+        vec![Vec2::new(0.0, 0.0), Vec2::new(100.0, 0.0)],
+        NOMINAL_BED,
+    );
+    let mut deck = fixture::rail(
+        vec![Vec2::new(100.0, 0.0), Vec2::new(130.0, 0.0)],
+        NOMINAL_BED,
+    );
+    deck.bridge = true;
+    let (layers, _) = mesh_rails(near_bucket(), &[ground, deck]);
+
+    let ballast = layer(&layers, "rail_bridge_ballast");
+    assert!(!ballast.is_empty());
+    for position in ballast.positions_for_test() {
+        assert!(
+            (-1e-3..=130.0 + 1e-3).contains(&position[0]),
+            "ballast vertex at x = {} — за торцом моста",
+            position[0]
+        );
+    }
+}
+
 /// Путь на мосту ложится своими слоями над настилом моста, а не на землю
 /// под ним: иначе мост поверх дороги рисовался как путь, проложенный по
 /// асфальту (Орёл, 7245, 728).
