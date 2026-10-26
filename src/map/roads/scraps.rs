@@ -538,12 +538,11 @@ fn scraps_among(
             // у клинового куска зелени открытость — собственный край кармана,
             // под мощением его не видно: для куска до [`SCRAP_WEDGE_AREA_MAX`]
             // она не длиннее [`GREEN_OPENING_MAX`]
-            let open_max =
-                if green && area <= SCRAP_WEDGE_AREA_MAX {
-                    GREEN_OPENING_MAX
-                } else {
-                    SCRAP_OPENING
-                };
+            let open_max = if green && area <= SCRAP_WEDGE_AREA_MAX {
+                GREEN_OPENING_MAX
+            } else {
+                SCRAP_OPENING
+            };
             small && open <= open_max && !cut
         })
         .flat_map(|shape| {
