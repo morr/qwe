@@ -26,8 +26,8 @@ use crate::map::buildings::{BuildingHeightMode, BuildingPlan, mesh_buildings};
 use crate::map::osm::MapData;
 use crate::map::surface::MapLayer;
 use crate::map::{
-    FenceZoomBucket, ParkingLayout, RailZoomBucket, RoadShapeOnMap, RoadStyle, build_roads,
-    mesh_fences, mesh_rails, mesh_surfaces,
+    FenceZoomBucket, ParkingLayout, RailZoomBucket, RoadShapeOnMap, RoadStyle, VergeZoomBucket,
+    build_roads, mesh_fences, mesh_rails, mesh_surfaces,
 };
 use crate::movement::Movable;
 use crate::settings::unit_z;
@@ -168,6 +168,7 @@ struct ProbeSources<'w> {
     map: Res<'w, MapData>,
     road_style: Res<'w, RoadStyle>,
     road_shape: Res<'w, RoadShapeOnMap>,
+    verge_bucket: Res<'w, VergeZoomBucket>,
     rail_bucket: Res<'w, RailZoomBucket>,
     fence_bucket: Res<'w, FenceZoomBucket>,
     height_mode: Res<'w, BuildingHeightMode>,
@@ -183,6 +184,7 @@ fn on_probe_layers(
         map,
         road_style,
         road_shape,
+        verge_bucket,
         rail_bucket,
         fence_bucket,
         height_mode,
@@ -213,7 +215,7 @@ fn on_probe_layers(
     // они рассыпаются в сущности (куски — уже слои живого мира выше).
     let layout = ParkingLayout::new(&map.parking, &map.roads, map.traffic_side);
     let (surfaces, _) = mesh_surfaces(&map, &layout);
-    let roads = build_roads(&map, *road_style, road_shape.0).layers;
+    let roads = build_roads(&map, *road_style, road_shape.0, *verge_bucket).layers;
     let (rails, _) = mesh_rails(*rail_bucket, &map.rails);
     let (fences, _) = mesh_fences(*fence_bucket, &map.fences, &map.roads);
     let (buildings, _) =

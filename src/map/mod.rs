@@ -117,7 +117,9 @@ pub use self::fences::{FenceZoomBucket, mesh_fences};
 pub use self::parking::ParkingLayout;
 pub use self::rail::{RailZoomBucket, mesh_rails};
 pub use self::roads::tram_lay::TramTracks;
-pub use self::roads::{RoadBuild, build_roads, mesh_roads, spawn_road_meshes};
+pub use self::roads::{
+    RoadBuild, VergeLods, VergeZoomBucket, build_roads, mesh_roads, spawn_road_meshes,
+};
 pub use self::spawn::{mesh_surfaces, mesh_tree_row_band};
 pub use self::tram::{TramZoomBucket, mesh_tram};
 pub use self::trees::{ConiferField, ConiferNoiseStyle, TreeRowStyle, TreeShape, TreeStyle};
@@ -170,6 +172,7 @@ impl Plugin for MapPlugin {
             .init_resource::<RoadShapeOnMap>()
             .init_resource::<RoadPaintStyle>()
             .init_resource::<roads::paint::PaintZoomBucket>()
+            .init_resource::<roads::VergeZoomBucket>()
             .init_resource::<SurfaceStyle>()
             .init_resource::<rail::RailZoomBucket>()
             .init_resource::<trees::TreeZoomBucket>()
@@ -275,6 +278,9 @@ impl Plugin for MapPlugin {
                     trees::recompose_row_trees,
                     trees::build_conifer_field,
                     zoom::seed_zoom_bucket::<buildings::BuildingLods>,
+                    // обочины входят в дорожные слои, которые собирает сам
+                    // `spawn_map`, — их ступень сеется до него
+                    zoom::seed_zoom_bucket::<roads::VergeLods>,
                     spawn::spawn_map,
                     zoom::seed_zoom_bucket::<cars::CarLods>,
                     cars::forget_parked_cars,
@@ -334,9 +340,17 @@ impl Plugin for MapPlugin {
                     )
                         .chain()
                         .run_if(in_state(AppState::Playing)),
-                    roads::rebuild_roads
-                        .run_if(in_state(AppState::Playing))
-                        .run_if(roads::rebuilds_on()),
+                    // ступень обочин считается раньше пересборки: смена
+                    // ступени — одна из причин `roads::rebuilds_on`, как
+                    // стиль и форма
+                    (
+                        zoom::update_zoom_bucket::<roads::VergeLods>,
+                        roads::rebuild_roads
+                            .run_if(in_state(AppState::Playing))
+                            .run_if(roads::rebuilds_on()),
+                    )
+                        .chain()
+                        .run_if(in_state(AppState::Playing)),
                     // три слоя со своими таблицами зума, одной группой: у
                     // каждого ступень считается своим `update_zoom_bucket`, и
                     // пересборка идёт следом

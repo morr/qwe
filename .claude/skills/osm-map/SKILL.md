@@ -1025,9 +1025,10 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
 - **Zoom buckets** (`map/zoom.rs`) — the one mechanism behind every zoom LOD. Each
   layer keeps its own table (`RAIL_LODS`, `TRAM_LODS`, `FENCE_LODS`; the cars', the
   wagons' and the roof clutter's are a single threshold each, the paint's are its three
-  zoom maxima) and names it with a marker type
+  zoom maxima, the road verges' is one bound — wide verges drop off it, **Verges** in
+  `roads.md`) and names it with a marker type
   implementing `ZoomLods` (`RailLods`, `TramLods`, `FenceLods`, `CarLods`, `WagonLods`,
-  `BuildingLods`, `PaintLods`, `TreeLods` — empty enums handing over the `max_zoom`s; the
+  `BuildingLods`, `PaintLods`, `VergeLods`, `TreeLods` — empty enums handing over the `max_zoom`s; the
   trees' table caps the density prefix, `references/trees.md`; the paint's
   and the trees' buckets only flip `Visibility`, the buildings' only a roof-material
   uniform — nothing is rebuilt — **Markings** in `roads.md`, `references/buildings.md`). `ZoomBucket<T>` is the

@@ -409,6 +409,16 @@ pub struct RoadLine {
 }
 
 impl RoadLine {
+    /// Самая широкая проба обочины стороны: [`Self::verges`] против всех проб
+    /// [`Self::verge_profile`] — по ней ступень зума решает, рисуется ли
+    /// сторона вовсе: всплеск профиля выше медианы значит то же, что
+    /// постоянная широкая обочина.
+    pub fn verge_widest(&self, side: usize) -> f32 {
+        self.verge_profile[side]
+            .iter()
+            .fold(self.verges[side], |widest, &(_, width)| widest.max(width))
+    }
+
     /// Обочина стороны `side` в `along` метрах по точкам: по
     /// [`Self::verge_profile`] — между пробами по прямой, за крайними — как у
     /// крайней; без профиля — постоянная [`Self::verges`]; ноль — обочины нет.

@@ -2044,6 +2044,7 @@ fn rounded<'d>(drawn: &'d Drawn, index: usize) -> Option<&'d [Vec2]> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::VergeZoomBucket;
     use super::super::network::pairs::PairRun;
     use super::super::shape::RoadShape;
     use super::super::tapers::Taper;
@@ -2894,6 +2895,7 @@ mod tests {
                 &map,
                 &crate::map::roads::RoadStyle::default(),
                 &crate::map::roads::shape::RoadShape::default(),
+                VergeZoomBucket::for_zoom(0.0),
             ),
             1.0,
         );
@@ -3043,7 +3045,12 @@ mod tests {
         // ось со сглаживанием (`for_test` рисует без него): прямой отрезок
         // через узел короче угла краёв
         let map = map_of(&[through, side]);
-        let drawn = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
+        let drawn = Drawn::new(
+            &map,
+            &RoadStyle::default(),
+            &RoadShape::default(),
+            VergeZoomBucket::for_zoom(0.0),
+        );
         let found = kerb_returns(&drawn, 1.0);
         // южный угол — прямым скруглением, северо-восточный — гнутым: дуга
         // асфальта и поворот тротуара за ней
@@ -3200,7 +3207,12 @@ mod tests {
 
         let map = map_of(&[smirnova, east, west, south]);
         let found = kerb_returns(
-            &Drawn::new(&map, &RoadStyle::default(), &RoadShape::default()),
+            &Drawn::new(
+                &map,
+                &RoadStyle::default(),
+                &RoadShape::default(),
+                VergeZoomBucket::for_zoom(0.0),
+            ),
             1.0,
         );
         // у контуров тротуаров излом между соседними звеньями дуги — не

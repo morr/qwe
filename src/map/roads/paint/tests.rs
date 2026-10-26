@@ -2,7 +2,7 @@ use super::*;
 use crate::map::osm::fixture::street;
 use crate::map::osm::{Highway, MapData};
 use crate::map::roads::shape::RoadShape;
-use crate::map::roads::{CrossingMode, RoadStyle, mesh_roads};
+use crate::map::roads::{CrossingMode, RoadStyle, VergeZoomBucket, mesh_roads};
 use crate::map::shapes::oriented;
 
 /// Меш слоя краски по имени.
@@ -52,7 +52,12 @@ fn a_two_lane_street_gets_one_axis_and_no_lane_lines() {
         2,
         false,
     )]);
-    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, report) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert!(paint_layer(&layers, PAINT_LANES).is_empty());
     assert_eq!(line_offsets(&layers, PAINT_AXES, 0.0), vec![0.0]);
     // осевая — пунктир на перегоне и сплошная у тупиков по концам: три куска
@@ -71,7 +76,12 @@ fn four_lanes_get_a_double_axis_and_a_lane_line_each_way() {
         4,
         false,
     )]);
-    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, _) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert_eq!(line_offsets(&layers, PAINT_AXES, 0.0), vec![0.0]);
     let axes = paint_layer(&layers, PAINT_AXES)
         .ribbon_coords_for_test()
@@ -104,6 +114,7 @@ fn five_two_way_lanes_get_a_double_axis_between_the_flows() {
             &map_of(vec![road]),
             RoadStyle::default(),
             RoadShape::default(),
+            VergeZoomBucket::for_zoom(0.0),
         );
         let axes = line_offsets(&layers, PAINT_AXES, 100.0);
         let lanes = line_offsets(&layers, PAINT_LANES, 100.0);
@@ -149,7 +160,12 @@ fn a_one_way_street_has_no_axis() {
         3,
         true,
     )]);
-    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, _) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert!(paint_layer(&layers, PAINT_AXES).is_empty());
     // три полосы — две линии, по сетке от полполосы
     let lanes = line_offsets(&layers, PAINT_LANES, 0.0);
@@ -165,7 +181,12 @@ fn markings_off_paint_nothing() {
         markings: false,
         ..RoadStyle::default()
     };
-    let (layers, report) = mesh_roads(&map, style, RoadShape::default());
+    let (layers, report) = mesh_roads(
+        &map,
+        style,
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     for name in [
         PAINT_LANES,
         PAINT_AXES,
@@ -193,6 +214,7 @@ fn a_street_without_lane_markings_paints_no_lines() {
         &map_of(vec![road]),
         RoadStyle::default(),
         RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
     );
     assert!(paint_layer(&layers, PAINT_LANES).is_empty());
     assert!(paint_layer(&layers, PAINT_AXES).is_empty());
@@ -207,6 +229,7 @@ fn a_bridge_paints_into_its_own_layer() {
         &map_of(vec![road]),
         RoadStyle::default(),
         RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
     );
     assert!(paint_layer(&layers, PAINT_AXES).is_empty());
     assert!(!paint_layer(&layers, BRIDGE_PAINT_AXES).is_empty());
@@ -388,7 +411,12 @@ fn seam_of(lanes: [u8; 2]) -> (Vec<LayerMesh>, f32) {
             false,
         ),
     ];
-    let (layers, report) = mesh_roads(&map_of(roads), RoadStyle::default(), RoadShape::default());
+    let (layers, report) = mesh_roads(
+        &map_of(roads),
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert_eq!(report.drawn.tapers, 1);
     let taper = (width(lanes[1]) - width(lanes[0])) * tapers::TAPER_PER_METER;
     (layers, 200.0 + taper)
@@ -508,6 +536,7 @@ fn the_axis_runs_through_a_seam_of_different_splits() {
             &map_of(vec![narrow, wide]),
             RoadStyle::default(),
             RoadShape::default(),
+            VergeZoomBucket::for_zoom(0.0),
         );
         assert_eq!(report.drawn.tapers, 1);
         let at_seam = line_offsets(&layers, PAINT_AXES, 200.0);
@@ -599,7 +628,12 @@ fn a_crossing_paints_a_zebra_and_stop_lines_across_the_arms() {
             false,
         ),
     ]);
-    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, report) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert_eq!(report.junctions.zebras, [4, 0]);
     assert_eq!(report.junctions.stop_lines, 4);
     let zebras = paint_layer(&layers, PAINT_ZEBRAS);
@@ -630,6 +664,7 @@ fn a_crossing_paints_a_zebra_and_stop_lines_across_the_arms() {
             ..RoadStyle::default()
         },
         RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
     );
     assert_eq!(report.junctions.zebras, [0, 0]);
     assert_eq!(report.junctions.stop_lines, 0);
@@ -659,7 +694,12 @@ fn a_zebra_is_whole_bars_centred_between_the_kerbs() {
             marked: true,
         },
     });
-    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, report) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert_eq!(report.junctions.zebras, [1, 1]);
     let zebras = paint_layer(&layers, PAINT_ZEBRAS);
     let coords = zebras.ribbon_coords_for_test().unwrap();
@@ -744,7 +784,12 @@ fn a_stop_line_keeps_to_the_kerb_narrowed_by_a_taper() {
             marked: true,
         },
     });
-    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, report) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert!(report.junctions.stop_lines > 0, "{report}");
     // клин у шва 14 → 8: длина 60, не больше 0.45 пути, — от x = 22 до 40;
     // примыкание с юга кроет северную кромку, сужается южная:
@@ -785,6 +830,7 @@ fn a_pocket_line_ends_at_the_junction_and_the_rest_run_through() {
         &map_of(vec![wide, narrow, side]),
         RoadStyle::default(),
         RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
     );
     assert_eq!(report.junctions.pockets, 1);
     // у самого узла: линия полос в кармане уже погашена, осевая — нет
@@ -985,7 +1031,12 @@ fn the_axis_of_a_through_street_is_solid_at_a_side_street() {
         false,
     );
     let map = map_of(vec![main, side]);
-    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, _) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     let builder = paint_layer(&layers, PAINT_AXES);
     let positions = builder.positions_for_test();
     let ribbons = builder.ribbon_coords_for_test().unwrap();
@@ -1041,7 +1092,12 @@ fn the_axis_stays_dashed_up_to_a_corner_of_two_streets() {
     );
     north.highway = Highway::Unclassified;
     let map = map_of(vec![west, north]);
-    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, _) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     let builder = paint_layer(&layers, PAINT_AXES);
     let positions = builder.positions_for_test();
     let ribbons = builder.ribbon_coords_for_test().unwrap();

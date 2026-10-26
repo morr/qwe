@@ -300,7 +300,12 @@ fn layer<'a>(layers: &'a [LayerMesh], name: &str) -> &'a LayerMesh {
 
 #[test]
 fn a_street_builds_twenty_five_layers_bottom_up() {
-    let (layers, report) = mesh_roads(&one_street(), RoadStyle::default(), RoadShape::default());
+    let (layers, report) = mesh_roads(
+        &one_street(),
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
 
     let names: Vec<&str> = layers.iter().map(|layer| layer.name).collect();
     assert_eq!(names, LAYERS);
@@ -332,7 +337,12 @@ fn a_wide_verge_is_a_lawn_with_a_paved_kerb_strip() {
     let verged = |verge: f32| {
         let mut map = one_street();
         map.roads[0].verges = [verge, 0.0];
-        let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+        let (layers, _) = mesh_roads(
+            &map,
+            RoadStyle::default(),
+            RoadShape::default(),
+            VergeZoomBucket::for_zoom(0.0),
+        );
         let reach = |name: &str| {
             layer(&layers, name)
                 .builder
@@ -360,6 +370,100 @@ fn a_wide_verge_is_a_lawn_with_a_paved_kerb_strip() {
     );
 }
 
+/// На средней и дальней ступени зума ([`VergeLods`], от `VERGE_ZOOM_MAX`)
+/// широкая обочина не рисуется вовсе — ни плиткой у бордюра, ни своим
+/// газоном: полоса в 5–11 м приглушённой травы двора рядом с проезжей
+/// читалась как второе полотно улицы (Первомайская у парка в Туле, NEW-1).
+/// Узкая рисуется и там, а на ближней ступени рисуется всё, как раньше.
+#[test]
+fn a_wide_verge_is_not_drawn_past_the_near_zoom_step() {
+    let reach = |layers: &[LayerMesh], name: &str| {
+        layer(layers, name)
+            .builder
+            .positions_for_test()
+            .iter()
+            .map(|at| at[1] - 100.0)
+            .fold(0.0_f32, f32::max)
+    };
+    let mut map = one_street();
+    map.roads[0].verges = [12.0, 0.0];
+    let far = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(VERGE_ZOOM_MAX),
+    );
+    for name in ["road_verges", "road_verge_yards", "road_verge_lawns"] {
+        assert_eq!(reach(&far.0, name), 0.0, "{name} на средней ступени пуст");
+    }
+    // ближняя — как раньше: полоса плитки у бордюра, газон до дорожки
+    let near = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
+    assert!(
+        (reach(&near.0, "road_verges") - (6.0 + VERGE_KERB)).abs() < 0.05,
+        "плитка у бордюра: {}",
+        reach(&near.0, "road_verges")
+    );
+    assert!(
+        (reach(&near.0, "road_verge_yards") - (18.0 + VERGE_UNDER_PATH)).abs() < 0.05,
+        "газон до дорожки: {}",
+        reach(&near.0, "road_verge_yards")
+    );
+
+    // узкая обочина мостится и на средней ступени: две полосы плитки у
+    // кромки — тротуар, не второе полотно
+    let mut narrow = one_street();
+    narrow.roads[0].verges = [3.0, 0.0];
+    let far_narrow = mesh_roads(
+        &narrow,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(VERGE_ZOOM_MAX),
+    );
+    assert!(
+        (reach(&far_narrow.0, "road_verges") - (9.0 + VERGE_UNDER_PATH)).abs() < 0.05,
+        "узкая на средней ступени — плиткой до дорожки: {}",
+        reach(&far_narrow.0, "road_verges")
+    );
+
+    // и заливка у угла между широкими обочинами — тоже: лента стороны не
+    // рисуется, и её угол не остаётся пятном плитки у дуги
+    let mut corner = MapData::default();
+    for points in [
+        vec![
+            Vec2::new(100.0, 100.0),
+            Vec2::new(300.0, 100.0),
+            Vec2::new(500.0, 100.0),
+        ],
+        vec![
+            Vec2::new(300.0, -100.0),
+            Vec2::new(300.0, 100.0),
+            Vec2::new(300.0, 300.0),
+        ],
+    ] {
+        corner.roads.push(RoadLine {
+            sidewalks: [SidewalkSide::None; 2],
+            verges: [12.0; 2],
+            ..fixture::street(points, 12.0)
+        });
+    }
+    let far_corner = mesh_roads(
+        &corner,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(VERGE_ZOOM_MAX),
+    );
+    assert_eq!(
+        reach(&far_corner.0, "road_verges"),
+        0.0,
+        "у угла нет плитки обочины"
+    );
+}
+
 /// Обочина по месту переходит от плитки к газону швом поперёк улицы, а не
 /// косой кромкой плитки через всю обочину, и короткий провал профиля ниже
 /// 4 м не вырезает в газоне зуб плитки (Орёл, витрина 03, L7).
@@ -369,7 +473,12 @@ fn a_verge_turns_from_tiles_to_lawn_across_the_street() {
         let mut map = one_street();
         map.roads[0].verges = [6.0, 0.0];
         map.roads[0].verge_profile = [profile, Vec::new()];
-        let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+        let (layers, _) = mesh_roads(
+            &map,
+            RoadStyle::default(),
+            RoadShape::default(),
+            VergeZoomBucket::for_zoom(0.0),
+        );
         // точки кромки плитки за бордюром (кромка — в 6 м от оси): (x, вылет)
         let reach: Vec<(f32, f32)> = layer(&layers, "road_verges")
             .builder
@@ -448,7 +557,12 @@ fn a_wide_verge_is_meadow_only_beside_a_mapped_lawn() {
                 _ => map.landuse.push(area),
             }
         }
-        let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+        let (layers, _) = mesh_roads(
+            &map,
+            RoadStyle::default(),
+            RoadShape::default(),
+            VergeZoomBucket::for_zoom(0.0),
+        );
         ["road_verge_lawns", "road_verge_yards"]
             .map(|name| !layer(&layers, name).builder.is_empty())
     };
@@ -491,7 +605,12 @@ fn a_corner_between_wide_verges_is_paved_along_the_kerb() {
             ..fixture::street(points, 12.0)
         });
     }
-    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, _) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     // в четверти за углом кромок (306, 106): дальше полосы у бордюра от
     // обеих кромок, но ближе газона
     let pad = layer(&layers, "road_verges")
@@ -535,7 +654,12 @@ fn a_lawn_scrap_enclosed_by_paving_is_tiled() {
         map.roads
             .push(paved(vec![Vec2::new(x, 106.0), Vec2::new(x, 112.0)]));
     }
-    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, report) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     let tiles = &layer(&layers, "road_verges").builder;
     assert!(
         tiles.covers_for_test(Vec2::new(122.25, 108.5)),
@@ -555,7 +679,12 @@ fn a_verge_by_place_overlaps_past_its_street_end() {
     let mut map = one_street();
     map.roads[0].verges = [3.0, 0.0];
     map.roads[0].verge_profile = [vec![(0.0, 3.0), (500.0, 3.0)], Vec::new()];
-    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, _) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     let tiles = layer(&layers, "road_verges").builder.positions_for_test();
     let reach = tiles.iter().map(|at| at[0]).fold(f32::INFINITY, f32::min);
     assert!(
@@ -573,7 +702,12 @@ fn a_verge_reaches_under_its_path() {
     for (verge, kerb) in [(3.0, "plain"), (6.0, "lawn")] {
         let mut map = one_street();
         map.roads[0].verges = [verge, 0.0];
-        let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+        let (layers, _) = mesh_roads(
+            &map,
+            RoadStyle::default(),
+            RoadShape::default(),
+            VergeZoomBucket::for_zoom(0.0),
+        );
         let name = if kerb == "lawn" {
             "road_verge_yards"
         } else {
@@ -588,7 +722,12 @@ fn a_verge_reaches_under_its_path() {
         assert!(!fill.covers_for_test(Vec2::new(300.0, edge + VERGE_UNDER_PATH + 0.1)));
         // и по месту — так же
         map.roads[0].verge_profile = [vec![(0.0, verge), (500.0, verge)], Vec::new()];
-        let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+        let (layers, _) = mesh_roads(
+            &map,
+            RoadStyle::default(),
+            RoadShape::default(),
+            VergeZoomBucket::for_zoom(0.0),
+        );
         let fill = &layer(&layers, name).builder;
         assert!(fill.covers_for_test(Vec2::new(300.0, edge + VERGE_UNDER_PATH - 0.1)));
     }
@@ -596,7 +735,12 @@ fn a_verge_reaches_under_its_path() {
 
 #[test]
 fn only_the_bridge_shadow_is_blended() {
-    let (layers, _) = mesh_roads(&one_street(), RoadStyle::default(), RoadShape::default());
+    let (layers, _) = mesh_roads(
+        &one_street(),
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
 
     // фактурный материал — у всего, что асфальт, тротуар или дорожка;
     // блендинг — ровно у полупрозрачной тени настила
@@ -630,7 +774,12 @@ fn only_the_bridge_shadow_is_blended() {
 fn the_shape_knobs_move_the_geometry() {
     let map = a_tee();
     let verts = |shape: RoadShape| {
-        let (layers, report) = mesh_roads(&map, RoadStyle::default(), shape);
+        let (layers, report) = mesh_roads(
+            &map,
+            RoadStyle::default(),
+            shape,
+            VergeZoomBucket::for_zoom(0.0),
+        );
         (layer(&layers, "roads").builder.vertex_count(), report)
     };
     let (_, base) = verts(RoadShape::default());
@@ -654,7 +803,12 @@ fn the_sidewalk_knob_fills_the_sidewalk_layer() {
             sidewalks,
             ..RoadStyle::default()
         };
-        let (layers, _) = mesh_roads(&map, style, RoadShape::default());
+        let (layers, _) = mesh_roads(
+            &map,
+            style,
+            RoadShape::default(),
+            VergeZoomBucket::for_zoom(0.0),
+        );
         layer(&layers, "sidewalks").builder.vertex_count()
     };
 
@@ -687,10 +841,15 @@ fn junctions_with(map: &MapData, markings: bool) -> usize {
         markings,
         ..RoadStyle::default()
     };
-    mesh_roads(map, style, RoadShape::default())
-        .1
-        .junctions
-        .count
+    mesh_roads(
+        map,
+        style,
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    )
+    .1
+    .junctions
+    .count
 }
 
 #[test]
@@ -733,6 +892,7 @@ fn an_unpaved_street_draws_in_its_own_layer_without_lines() {
         &unpave(a_tee(), &[0, 1]),
         RoadStyle::default(),
         RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
     );
     assert!(layer(&layers, "roads").builder.is_empty());
     assert!(!layer(&layers, "unpaved_roads").builder.is_empty());
@@ -743,6 +903,7 @@ fn an_unpaved_street_draws_in_its_own_layer_without_lines() {
         &unpave(a_tee(), &[1]),
         RoadStyle::default(),
         RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
     );
     assert!(!layer(&mixed, "roads").builder.is_empty());
     assert!(!layer(&mixed, "unpaved_roads").builder.is_empty());
@@ -757,7 +918,12 @@ fn an_asphalt_street_stops_at_the_edge_of_the_dirt_road_it_meets() {
     map.roads[0].pavement = Some(Pavement::Unpaved);
     map.roads[0].sidewalks = [SidewalkSide::None; 2];
     map.roads[1].sidewalks = [SidewalkSide::None; 2];
-    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, _) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     let asphalt = layer(&layers, "roads").builder.positions_for_test();
     assert!(!asphalt.is_empty());
     // грунтовка по y = 100 шириной 12 — кромка на 106
@@ -777,7 +943,12 @@ fn a_dirt_road_enters_the_asphalt_without_kerb_returns() {
     for road in &mut map.roads {
         road.sidewalks = [SidewalkSide::None; 2];
     }
-    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, _) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     // асфальт по y = 100 шириной 12 — кромка на 106
     let asphalt = layer(&layers, "roads").builder.positions_for_test();
     let highest = asphalt
@@ -819,7 +990,12 @@ fn asphalt_turning_into_dirt_ends_square() {
     for road in &mut map.roads {
         road.sidewalks = [SidewalkSide::None; 2];
     }
-    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, _) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     let reach = |name: &str, fold: fn(f32, f32) -> f32, from: f32| {
         let positions = layer(&layers, name).builder.positions_for_test();
         assert!(!positions.is_empty(), "{name}");
@@ -846,7 +1022,12 @@ fn a_bridge_leaves_the_street_layers_for_the_deck_ones() {
         vec![Vec2::new(100.0, 100.0), Vec2::new(600.0, 100.0)],
         12.0,
     ));
-    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, _) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
 
     // настил уходит из уличных слоёв в мостовые целиком, и тротуара у него нет
     // никогда: полоса свисала бы с настила над водой
@@ -867,7 +1048,12 @@ fn a_track_across_a_street_is_a_level_crossing_unless_it_is_on_a_bridge() {
         let mut track = fixture::rail(vec![Vec2::new(300.0, 0.0), Vec2::new(300.0, 200.0)], 5.0);
         track.bridge = bridge;
         map.rails.push(track);
-        mesh_roads(&map, RoadStyle::default(), RoadShape::default())
+        mesh_roads(
+            &map,
+            RoadStyle::default(),
+            RoadShape::default(),
+            VergeZoomBucket::for_zoom(0.0),
+        )
     };
 
     let (layers, report) = with_track(false);
@@ -906,7 +1092,12 @@ fn a_paved_path_is_drawn_in_the_sidewalk_layer() {
                 ..road(points, 3.5, false)
             });
         }
-        let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+        let (layers, _) = mesh_roads(
+            &map,
+            RoadStyle::default(),
+            RoadShape::default(),
+            VergeZoomBucket::for_zoom(0.0),
+        );
         [
             layer(&layers, "alleys").builder.vertex_count(),
             layer(&layers, "sidewalks").builder.vertex_count(),
@@ -944,7 +1135,12 @@ fn deck_fill_carries_its_streets_lane_frame() {
         vec![Vec2::new(350.0, 100.0), Vec2::new(350.0, 400.0)],
         8.0,
     ));
-    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, _) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     let coords = layer(&layers, "bridges")
         .builder
         .ribbon_coords_for_test()
@@ -968,7 +1164,12 @@ fn deck_fill_carries_its_streets_lane_frame() {
         class: RoadClass::Alley,
         ..fixture::bridge(vec![Vec2::new(0.0, 0.0), Vec2::new(0.0, 40.0)], 3.0)
     });
-    let (layers, _) = mesh_roads(&footbridge, RoadStyle::default(), RoadShape::default());
+    let (layers, _) = mesh_roads(
+        &footbridge,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     let coords = layer(&layers, "bridges")
         .builder
         .ribbon_coords_for_test()
@@ -999,7 +1200,12 @@ fn a_deck_landing_on_its_approach_ends_square() {
         highway: Highway::Path,
         ..fixture::bridge(vec![foot, Vec2::new(30.0, 160.0)], 3.0)
     });
-    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, _) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     let positions = layer(&layers, "bridges").builder.positions_for_test();
     assert!(!positions.is_empty());
     let behind = positions
@@ -1032,7 +1238,12 @@ fn an_approach_sidewalk_ends_square_at_the_bridge_head() {
         .push(fixture::street(vec![Vec2::new(0.0, 0.0), head], 14.2));
     map.roads
         .push(fixture::bridge(vec![head, Vec2::new(0.0, 160.0)], 14.2));
-    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, _) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     let sidewalks = layer(&layers, "sidewalks").builder.positions_for_test();
     assert!(!sidewalks.is_empty());
     let past = sidewalks
@@ -1090,7 +1301,13 @@ fn a_footbridge_beside_a_deck_gets_a_slit_apron() {
             ..fixture::bridge(vec![Vec2::new(x, 100.0), Vec2::new(x, 160.0)], 3.5)
         });
         map.network = super::network::RoadNetwork::new(&map.roads);
-        mesh_roads(&map, RoadStyle::default(), RoadShape::default()).0
+        mesh_roads(
+            &map,
+            RoadStyle::default(),
+            RoadShape::default(),
+            VergeZoomBucket::for_zoom(0.0),
+        )
+        .0
     };
     let near = scene(-13.5);
     assert!(
@@ -1135,7 +1352,13 @@ fn a_footbridge_along_a_street_approach_gets_a_tile_apron() {
             ..fixture::bridge(vec![Vec2::new(x, -20.0), Vec2::new(x, 160.0)], 3.5)
         });
         map.network = super::network::RoadNetwork::new(&map.roads);
-        mesh_roads(&map, RoadStyle::default(), RoadShape::default()).0
+        mesh_roads(
+            &map,
+            RoadStyle::default(),
+            RoadShape::default(),
+            VergeZoomBucket::for_zoom(0.0),
+        )
+        .0
     };
     let near = scene(-13.5);
     let strip = [-11.5, -10.5, -9.5, -8.5]
@@ -1177,7 +1400,12 @@ fn a_moved_footbridges_path_meets_the_band_without_a_wedge() {
         ..fixture::bridge(vec![foot, Vec2::new(-3.6, 160.0)], 3.5)
     });
     map.network = super::network::RoadNetwork::new(&map.roads);
-    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, _) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     let covered = |name: &str, at: Vec2| {
         layer(&layers, name)
             .builder
@@ -1185,7 +1413,12 @@ fn a_moved_footbridges_path_meets_the_band_without_a_wedge() {
             .any(|[a, b, c]| crate::map::osm::model::point_in_polygon(at, &[a, b, c]))
     };
     // от асфальта подхода до оси дорожки — ни пятна голой земли
-    let prepared = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
+    let prepared = Drawn::new(
+        &map,
+        &RoadStyle::default(),
+        &RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     let path = prepared.axis(2, Axis::Ribbon);
     let axis_at = |y: f32| {
         path.windows(2).find_map(|pair| {
@@ -1235,7 +1468,12 @@ fn no_ground_shows_between_a_kinked_approach_and_the_deck_head() {
     map.roads
         .push(fixture::street(vec![head, Vec2::new(-80.0, 100.0)], 7.6));
     map.network = super::network::RoadNetwork::new(&map.roads);
-    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, _) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     let covered = |at: Vec2| {
         ["roads", "bridges"].iter().any(|name| {
             layer(&layers, name)
@@ -1267,7 +1505,12 @@ fn an_approach_sidewalk_runs_under_a_kinked_deck_head() {
     ));
     map.roads
         .push(fixture::bridge(vec![head, Vec2::new(0.0, 160.0)], 14.2));
-    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, _) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     let sidewalks = &layer(&layers, "sidewalks").builder;
     let deck = &layer(&layers, "bridges").builder;
     let curb = map.roads[1].curb_reach();
@@ -1302,7 +1545,12 @@ fn an_approach_sidewalk_tapers_into_the_deck_curb() {
     map.roads
         .push(fixture::bridge(vec![head, Vec2::new(0.0, 160.0)], 14.2));
     let curb = map.roads[1].curb_reach();
-    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, _) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     let sidewalks = layer(&layers, "sidewalks").builder.positions_for_test();
     let reach_near = |from: f32, to: f32| {
         sidewalks
@@ -1348,7 +1596,12 @@ fn a_footbridge_inside_the_deck_moves_to_its_edge() {
         ..fixture::bridge(vec![foot, Vec2::new(-3.6, 160.0)], 3.5)
     });
     map.network = super::network::RoadNetwork::new(&map.roads);
-    let prepared = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
+    let prepared = Drawn::new(
+        &map,
+        &RoadStyle::default(),
+        &RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     // и бортик мостика — за кромкой: на подходе он торчал бы на асфальт
     let need = 7.6 / 2.0 + map.roads[3].curb_reach();
     let footbridge = prepared.axis(3, Axis::Nodal);
@@ -1388,7 +1641,12 @@ fn a_paved_median_between_two_decks_lies_on_the_deck() {
     map.roads
         .push(half(vec![Vec2::new(4.5, 200.0), Vec2::new(4.5, 0.0)]));
     map.network = super::network::RoadNetwork::new(&map.roads);
-    let prepared = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
+    let prepared = Drawn::new(
+        &map,
+        &RoadStyle::default(),
+        &RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert!(
         prepared
             .pairs()
@@ -1397,7 +1655,12 @@ fn a_paved_median_between_two_decks_lies_on_the_deck() {
             .any(|median| median.is_paved()),
         "the two decks make no paved median"
     );
-    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, _) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     let middle = Vec2::new(0.0, 100.0);
     assert!(
         layer(&layers, "bridges").builder.covers_for_test(middle),
@@ -1422,7 +1685,12 @@ fn decks_parted_over_a_lawn_keep_their_inner_curbs() {
     map.roads
         .push(half(vec![Vec2::new(10.0, 200.0), Vec2::new(10.0, 0.0)]));
     map.network = super::network::RoadNetwork::new(&map.roads);
-    let prepared = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
+    let prepared = Drawn::new(
+        &map,
+        &RoadStyle::default(),
+        &RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert!(
         prepared
             .pairs()
@@ -1431,7 +1699,12 @@ fn decks_parted_over_a_lawn_keep_their_inner_curbs() {
             .any(|median| !median.is_paved()),
         "the two decks make no lawn median"
     );
-    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, _) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     let curb = map.roads[0].curb_reach() - map.roads[0].width / 2.0;
     let inner = Vec2::new(-10.0 + 3.8 + curb / 2.0, 100.0);
     assert!(
@@ -1463,13 +1736,23 @@ fn a_wider_deck_tapers_from_its_approach() {
         ..fixture::bridge(vec![head, Vec2::new(0.0, 200.0)], lanes(3))
     });
     map.network = super::network::RoadNetwork::new(&map.roads);
-    let prepared = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
+    let prepared = Drawn::new(
+        &map,
+        &RoadStyle::default(),
+        &RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert!(
         prepared.taper_ends(1)[0].is_some(),
         "the deck takes no taper at its head"
     );
 
-    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, _) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     let near_head = |name: &str| -> f32 {
         layer(&layers, name)
             .builder
@@ -1499,6 +1782,7 @@ fn an_empty_map_still_describes_every_layer() {
         &MapData::default(),
         RoadStyle::default(),
         RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
     );
 
     assert_eq!(layers.len(), LAYERS.len());
@@ -1555,6 +1839,7 @@ fn a_road_through_a_big_lot_is_drawn_over_it_with_a_kerb() {
         &ground_with_roads(100.0),
         RoadStyle::default(),
         RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
     );
 
     // бордюр — только у сквозной дороги и только у площадки: за её контур он
@@ -1588,6 +1873,7 @@ fn a_small_lot_still_hides_every_road_on_it() {
         &ground_with_roads(60.0),
         RoadStyle::default(),
         RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
     );
     assert!(layer(&layers, "lot_sidewalks").builder.is_empty());
     assert!(layer(&layers, "lot_lines").builder.is_empty());
@@ -1627,7 +1913,12 @@ fn roundabout_with_an_approach(tagged: bool, oneway: bool) -> MapData {
 fn a_ring_takes_its_verge_on_the_outer_side_only() {
     let mut map = roundabout_with_an_approach(true, true);
     map.roads[0].verges = [6.0, 6.0];
-    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, _) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     let radii: Vec<f32> = layer(&layers, "road_verge_yards")
         .builder
         .positions_for_test()
@@ -1655,7 +1946,12 @@ fn an_island_no_path_reaches_gets_a_kerb_line_only() {
     let inner = 12.0 - 4.0;
     // ближе всех к центру — из вершин тротуаров, не закрытых газоном острова
     let deepest = |map: &MapData| -> f32 {
-        let (layers, _) = mesh_roads(map, RoadStyle::default(), RoadShape::default());
+        let (layers, _) = mesh_roads(
+            map,
+            RoadStyle::default(),
+            RoadShape::default(),
+            VergeZoomBucket::for_zoom(0.0),
+        );
         let lawn = &layer(&layers, "road_medians").builder;
         layer(&layers, "sidewalks")
             .builder
@@ -1696,7 +1992,12 @@ fn the_wedge_between_the_two_arms_of_a_roundabout_is_hatched() {
     // находились вовсе
     for tagged in [true, false] {
         let map = roundabout_with_an_approach(tagged, true);
-        let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+        let (layers, _) = mesh_roads(
+            &map,
+            RoadStyle::default(),
+            RoadShape::default(),
+            VergeZoomBucket::for_zoom(0.0),
+        );
         // клин — правее кольца, между подходами, у оси x: краска его кроет
         // (обводка и штриховка — площади, и вершины у них только на концах
         // клина, так что спрашивается покрытие, а не вершины)
@@ -1721,7 +2022,12 @@ fn the_wedge_between_the_two_arms_of_a_roundabout_is_hatched() {
 #[test]
 fn the_gore_is_paved_under_the_edges_of_both_arms() {
     let map = roundabout_with_an_approach(true, true);
-    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, report) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert_eq!(report.gores, 1, "островок у кольца один");
 
     // клин целиком: от кромки кольца (радиус 16 м) до острия, где полотна
@@ -1786,7 +2092,12 @@ fn a_wide_fan_is_hatched_up_to_the_ring() {
     });
     map.roads.push(arm(circle[5]));
     map.roads.push(arm(circle[19]));
-    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, report) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert_eq!(report.gores, 1, "{report}");
     let lines = layer(&layers, paint::PAINT_ISLANDS)
         .builder
@@ -1817,7 +2128,12 @@ fn a_two_way_approach_gets_a_splitter_island() {
     });
     map.roads
         .push(fixture::street(vec![circle[0], Vec2::new(90.0, 0.0)], 7.6));
-    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, report) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert_eq!(report.drawn.rings[0], 1);
     assert_eq!(report.gores, 1, "островок на подходе один");
     // капля — на оси подхода за кромкой кольца (25 + 4 м), не дальше острия
@@ -1861,7 +2177,12 @@ fn a_splitter_island_stays_off_the_ring_when_the_approach_comes_in_along_it() {
         vec![Vec2::new(31.0, 70.0), Vec2::new(31.0, 16.0), circle[0]],
         7.6,
     ));
-    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, _) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     let island = layer(&layers, paint::PAINT_ISLANDS)
         .builder
         .positions_for_test();
@@ -1891,7 +2212,12 @@ fn a_y_approach_gets_one_island_between_its_legs() {
     let apex = Vec2::new(0.0, 62.0);
     map.roads.push(fixture::street(vec![apex, circle[4]], 7.6));
     map.roads.push(fixture::street(vec![circle[8], apex], 7.6));
-    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, _) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     let island: Vec<Vec2> = layer(&layers, paint::PAINT_ISLANDS)
         .builder
         .positions_for_test()
@@ -1912,7 +2238,12 @@ fn a_y_approach_gets_one_island_between_its_legs() {
         "островок не между ногами: {island:?}"
     );
     // нога — въезд или съезд, в одну полосу
-    let drawn = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
+    let drawn = Drawn::new(
+        &map,
+        &RoadStyle::default(),
+        &RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     for leg in [1, 2] {
         assert!(drawn.road(leg).width < map.roads[leg].width);
         assert_eq!(drawn.road(leg).lanes, Some(1));
@@ -1926,7 +2257,12 @@ fn a_y_approach_gets_one_island_between_its_legs() {
 fn a_roundabout_island_is_a_lawn_under_everything() {
     use crate::settings::{Z_GROUND, Z_LANDUSE, Z_ROAD_VERGE};
     let map = roundabout_with_an_approach(true, true);
-    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, _) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     let lawn = layer(&layers, "ring_islands");
     assert!(lawn.z > Z_GROUND && lawn.z < Z_ROAD_VERGE.min(Z_LANDUSE));
     let positions = lawn.builder.positions_for_test();
@@ -1942,6 +2278,7 @@ fn a_roundabout_island_is_a_lawn_under_everything() {
         &roundabout_with_an_approach(false, false),
         RoadStyle::default(),
         RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
     );
     assert!(layer(&layers, "ring_islands").builder.is_empty());
 }
@@ -1970,7 +2307,12 @@ fn a_roundabout_island_covers_the_rim_of_its_mapped_grass() {
         kind: AreaKind::Park,
         ..fixture::building(square(5.0), Vec::new())
     });
-    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, _) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     let grass = layer(&layers, "ring_island_grass");
     assert!(grass.z > Z_GRASS && grass.z < Z_SAND);
     let positions = grass.builder.positions_for_test();
@@ -1988,6 +2330,7 @@ fn a_roundabout_island_covers_the_rim_of_its_mapped_grass() {
         },
         RoadStyle::default(),
         RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
     );
     assert!(
         layer(&layers, "ring_island_grass").builder.is_empty(),
@@ -1998,7 +2341,12 @@ fn a_roundabout_island_covers_the_rim_of_its_mapped_grass() {
 #[test]
 fn a_two_way_loop_without_the_tag_is_not_a_roundabout() {
     let map = roundabout_with_an_approach(false, false);
-    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, _) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert!(layer(&layers, paint::PAINT_ISLANDS).builder.is_empty());
 }
 
@@ -2012,6 +2360,7 @@ fn the_markings_knob_takes_the_hatching_off() {
         &roundabout_with_an_approach(true, true),
         style,
         RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
     );
     assert!(layer(&layers, paint::PAINT_ISLANDS).builder.is_empty());
 }
@@ -2030,7 +2379,12 @@ fn two_carriageways_side_by_side_get_a_double_line_and_no_kerb_between() {
             5.0,
         )
     });
-    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, report) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert_eq!(report.drawn.medians, [1, 0, 0]);
 
     let lines = &layer(&layers, "lot_lines").builder;
@@ -2063,7 +2417,12 @@ fn the_sidewalk_knob_takes_the_kerb_off_the_lot_road_too() {
         sidewalks: false,
         ..RoadStyle::default()
     };
-    let (layers, _) = mesh_roads(&ground_with_roads(100.0), style, RoadShape::default());
+    let (layers, _) = mesh_roads(
+        &ground_with_roads(100.0),
+        style,
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert!(layer(&layers, "lot_sidewalks").builder.is_empty());
 }
 
@@ -2080,10 +2439,15 @@ fn rule_zebras_do_not_follow_the_sidewalk_knob() {
             sidewalks,
             ..RoadStyle::default()
         };
-        mesh_roads(&map, style, RoadShape::default())
-            .1
-            .junctions
-            .zebras[0]
+        mesh_roads(
+            &map,
+            style,
+            RoadShape::default(),
+            VergeZoomBucket::for_zoom(0.0),
+        )
+        .1
+        .junctions
+        .zebras[0]
     };
 
     assert!(zebras(true) > 0, "у тройника есть зебра по правилу");
@@ -2118,7 +2482,12 @@ fn divided_avenue(gap: f32) -> (MapData, f32) {
 #[test]
 fn paired_halves_share_a_paved_median_and_keep_sidewalks_outside() {
     let (map, apart) = divided_avenue(0.6);
-    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, report) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert_eq!(report.drawn.medians, [1, 0, 0]);
     let middle = 100.0 + apart / 2.0;
     // двойная сплошная — по середине между половинами
@@ -2166,7 +2535,12 @@ fn the_sidewalk_tag_picks_the_side() {
                 SidewalkSide::None
             }
         });
-        let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+        let (layers, _) = mesh_roads(
+            &map,
+            RoadStyle::default(),
+            RoadShape::default(),
+            VergeZoomBucket::for_zoom(0.0),
+        );
         layer(&layers, "sidewalks")
             .builder
             .positions_for_test()
@@ -2191,7 +2565,12 @@ fn a_primary_gets_pockets_in_its_sidewalks() {
     let mut map = one_street();
     map.roads[0].highway = Highway::Primary;
     map.roads[0].parking = [KerbParking::Pocket; 2];
-    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, report) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert_eq!(report.kerb_pockets, 2);
     let edge = 100.0 + 6.0 + pockets::POCKET_WIDTH;
     let roads = layer(&layers, "roads").builder.positions_for_test();
@@ -2208,7 +2587,12 @@ fn a_turning_circle_widens_the_dead_end() {
         pos: Vec2::new(600.0, 100.0),
         kind: RoadNodeKind::TurningCircle,
     });
-    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, report) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert_eq!(report.turning_circles, 1);
     let radius = turning_radius(12.0);
     assert!(radius > 6.0);
@@ -2238,7 +2622,12 @@ fn the_double_line_reaches_the_junction_like_the_lane_lines() {
         ],
         12.0,
     ));
-    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, _) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     let nearest_before = |name: &str| {
         layer(&layers, name)
             .builder
@@ -2271,7 +2660,12 @@ fn a_street_into_one_half_does_not_open_the_median() {
         vec![Vec2::new(300.0, 40.0), Vec2::new(300.0, 100.0)],
         7.6,
     ));
-    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, report) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert!(report.junctions.count > 0, "узел у ближней половины есть");
     let axes = &layer(&layers, paint::PAINT_AXES).builder;
     let positions = axes.positions_for_test();
@@ -2293,7 +2687,12 @@ fn a_street_into_one_half_does_not_open_the_median() {
 #[test]
 fn a_wide_gap_between_halves_is_a_lawn_with_a_kerb() {
     let (map, apart) = divided_avenue(8.0);
-    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, report) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert_eq!(report.drawn.medians, [0, 1, 0]);
     let inner = (3.0 * 3.3 + 1.0) / 2.0;
     let grass = layer(&layers, "road_medians").builder.positions_for_test();
@@ -2333,7 +2732,12 @@ fn a_lawn_starts_at_its_nose_past_a_crossing() {
     map.roads[1]
         .points
         .insert(1, Vec2::new(300.0, 100.0 + apart));
-    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, _) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     let grass = layer(&layers, "road_medians").builder.positions_for_test();
     let nearest = grass
         .iter()
@@ -2391,7 +2795,12 @@ fn island_zebra_avenue() -> (MapData, f32) {
 #[test]
 fn island_zebras_cut_a_passage_through_the_lawn_instead_of_dropping_it() {
     let (map, apart) = island_zebra_avenue();
-    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, _) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     let grass = layer(&layers, "road_medians").builder.positions_for_test();
     // трава подходит к проходу вплотную с обеих сторон, а не носом за
     // десять метров до разрыва краски
@@ -2438,7 +2847,12 @@ fn a_tram_between_halves_widens_both_halves_to_the_middle() {
             ..fixture::rail(vec![Vec2::new(80.0, track), Vec2::new(520.0, track)], 1.2)
         });
     }
-    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, report) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert_eq!(report.drawn.medians, [1, 0, 1]);
     assert_eq!(report.tram_bands, 2, "полоса над каждым путём");
     assert!(
@@ -2522,7 +2936,12 @@ fn tram_tracks_in_a_bed_lie_symmetric_about_the_drawn_middle() {
         report,
         tram: tracks,
         ..
-    } = build_roads(&map, RoadStyle::default(), RoadShape::default());
+    } = build_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert_eq!(report.drawn.medians, [1, 0, 1]);
     assert_eq!(tracks.0.len(), 2);
     let half = tram_lay::TRACK_SPACING / 2.0;
@@ -2571,7 +2990,12 @@ fn tram_tracks_in_a_bed_lie_symmetric_about_the_drawn_middle() {
 #[test]
 fn a_tram_bed_ends_in_asphalt_up_to_the_nose_of_the_lawn() {
     let (map, apart) = tram_bed_then_lawn();
-    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, report) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert_eq!(report.drawn.medians, [1, 1, 1], "полотно и газон");
     let inner = (3.0 * 3.3 + 1.0) / 2.0;
     let gap = |at: &&[f32; 3]| at[1] > 100.0 + inner + 0.1 && at[1] < 100.0 + apart - inner - 0.1;
@@ -2623,7 +3047,12 @@ fn tram_bed_then_lawn() -> (MapData, f32) {
 
 /// Вершины слоёв, которых касается цикл разделительных, и число линий краски.
 fn median_loop_counts(map: &MapData) -> (Vec<usize>, usize) {
-    let (layers, report) = mesh_roads(map, RoadStyle::default(), RoadShape::default());
+    let (layers, report) = mesh_roads(
+        map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     let counts = ["roads", "sidewalks", "road_medians", paint::PAINT_AXES]
         .map(|name| layer(&layers, name).builder.vertex_count())
         .to_vec();
@@ -2650,7 +3079,12 @@ fn a_pocket_on_the_side_without_a_sidewalk_pushes_no_sidewalk() {
     map.roads[0].highway = Highway::Primary;
     map.roads[0].parking = [KerbParking::Pocket; 2];
     map.roads[0].sidewalks = [SidewalkSide::Tagged, SidewalkSide::None];
-    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, report) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert_eq!(report.kerb_pockets, 2);
     let edge = 6.0 + pockets::POCKET_WIDTH;
     let roads = layer(&layers, "roads").builder.positions_for_test();
@@ -2675,7 +3109,12 @@ fn a_one_sided_street_turns_its_sidewalk_only_on_its_side() {
         fixture::street(vec![Vec2::new(300.0, 0.0), Vec2::new(300.0, 100.0)], 8.0),
         fixture::street(vec![Vec2::new(300.0, 100.0), Vec2::new(300.0, 200.0)], 8.0),
     ]);
-    let (_, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (_, report) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     // четыре угла асфальта, а тротуар поворачивает только на северных
     assert_eq!([report.kerb_returns, report.sidewalk_returns], [4, 2]);
 }
@@ -2709,7 +3148,12 @@ fn an_outer_corner_sides_lie_on_the_ribbon_butt_edges() {
         ),
         fixture::street(vec![across, near], 5.0),
     ]);
-    let prepared = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
+    let prepared = Drawn::new(
+        &map,
+        &RoadStyle::default(),
+        &RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     let returns = corners::kerb_returns(&prepared, 1.0);
     // торец северного way: кромка веера на нём — вторая сторона веера
     // (справа по ходу луча), узел, полуширина и нахлёст вдоль торцевого звена
@@ -2761,7 +3205,12 @@ fn a_zebra_plank_cuts_the_lines_of_crossing_carriageways() {
             marked: true,
         },
     });
-    let drawn = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
+    let drawn = Drawn::new(
+        &map,
+        &RoadStyle::default(),
+        &RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     let junctions = junctions::Junctions::new(
         &drawn,
         &map,
@@ -2825,7 +3274,12 @@ fn a_tram_on_a_wide_median_keeps_the_lawn() {
         kind: RailKind::Tram,
         ..fixture::rail(vec![Vec2::new(80.0, middle), Vec2::new(520.0, middle)], 1.2)
     });
-    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, report) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert_eq!(report.drawn.medians, [0, 1, 0]);
     assert_eq!(report.tram_bands, 0, "путь в траве — без полосы");
     assert!(!layer(&layers, "road_medians").builder.is_empty());
@@ -2856,7 +3310,12 @@ fn an_arm_is_filled_before_its_leader_even_when_it_leads_elsewhere() {
 
 /// Отчёт без часов: два прогона одной карты обязаны совпасть до поля.
 fn timeless(map: &MapData) -> RoadReport {
-    let (_, mut report) = mesh_roads(map, RoadStyle::default(), RoadShape::default());
+    let (_, mut report) = mesh_roads(
+        map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     report.network = Default::default();
     report.elapsed = Default::default();
     report
@@ -2966,7 +3425,12 @@ fn a_ring_of_two_arcs() -> MapData {
 #[test]
 fn one_shared_node_pass_feeds_both_base_and_paint() {
     for map in [a_driveway(), a_ring_of_two_arcs()] {
-        let drawn = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
+        let drawn = Drawn::new(
+            &map,
+            &RoadStyle::default(),
+            &RoadShape::default(),
+            VergeZoomBucket::for_zoom(0.0),
+        );
         assert_eq!(drawn.stats().crossings, 1, "подмена легла");
         let every = junctions::shared_nodes(&map.roads, pockets::is_row_participant);
         assert_eq!(
@@ -2994,7 +3458,12 @@ fn row_breaks_ignore_stitches_but_paint_breaks_do_not() {
         fixture::street(vec![Vec2::ZERO, Vec2::new(100.0, 0.0)], 12.0),
         fixture::street(vec![Vec2::new(50.0, -60.0), Vec2::new(50.0, -9.0)], 8.0),
     ]);
-    let drawn = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
+    let drawn = Drawn::new(
+        &map,
+        &RoadStyle::default(),
+        &RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert_eq!(drawn.stats().stitches, 1);
     let junctions = junctions::Junctions::new(
         &drawn,
@@ -3065,7 +3534,12 @@ fn a_ring_entry_yields_on_the_ring_edge() {
         road.highway = Highway::Tertiary;
     }
     let map = with_network(map.roads);
-    let drawn = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
+    let drawn = Drawn::new(
+        &map,
+        &RoadStyle::default(),
+        &RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     let junctions = junctions::Junctions::new(
         &drawn,
         &map,
@@ -3201,7 +3675,12 @@ fn a_ring_of_arcs_lays_one_closed_fill_without_seam_slits() {
         false,
     ));
     let map = with_network(roads);
-    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, report) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert_eq!(report.drawn.rings[0], 1, "шесть дуг — одно кольцо");
     let streets = &layer(&layers, "roads").builder;
     // внешняя кромка кольца у обоих узлов — асфальт сплошь, до трёх
@@ -3220,7 +3699,12 @@ fn a_ring_of_arcs_lays_one_closed_fill_without_seam_slits() {
     }
     // одна ширина на всё кольцо — самой широкой дуги (lanes=3), и узкие
     // дуги (lanes=2) залиты ею же, а не своей
-    let prepared = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
+    let prepared = Drawn::new(
+        &map,
+        &RoadStyle::default(),
+        &RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     let ring = &prepared.rings().list[0];
     assert!((ring.width - half * 2.0).abs() < 1e-3, "{}", ring.width);
     let path = &ring.path;
@@ -3263,7 +3747,12 @@ fn a_ring_exit_breaks_the_outer_ring_line_across_its_throat() {
             polar(90.0, -40.0),
         ]
     });
-    let drawn = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
+    let drawn = Drawn::new(
+        &map,
+        &RoadStyle::default(),
+        &RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     let junctions = junctions::Junctions::new(
         &drawn,
         &map,
@@ -3285,7 +3774,12 @@ fn a_ring_exit_breaks_the_outer_ring_line_across_its_throat() {
 
     // краска: в середине горла наружная линия (r + 1.65) погашена,
     // внутренняя (r − 1.65) — нет
-    let (layers, _) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, _) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     let lanes = &layer(&layers, paint::PAINT_LANES).builder;
     let middle = throat.gap.at.to_angle();
     // середина горла — его доля в полдлины вокруг точки разрыва
@@ -3333,7 +3827,12 @@ fn a_long_tangential_ring_entry_yields_and_keeps_its_lines_off_the_ring() {
             circle[0],
         ]
     });
-    let drawn = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
+    let drawn = Drawn::new(
+        &map,
+        &RoadStyle::default(),
+        &RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     let junctions = junctions::Junctions::new(
         &drawn,
         &map,
@@ -3464,7 +3963,12 @@ fn tram_band_follows_the_nodal_axis() {
         kind: RailKind::Tram,
         ..fixture::rail(vec![Vec2::new(50.0, -70.0), Vec2::new(50.0, 20.0)], 1.2)
     });
-    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, report) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert_eq!(report.drawn.stitches, 1);
     assert_eq!(report.tram_bands, 1);
     let band = vertices_of(&layers, "roads", TRAM_BAND_COLOR);
@@ -3496,14 +4000,24 @@ fn a_crossing_piece_between_two_halves_carries_no_sidewalk() {
         (with_network(roads), apart)
     };
     let (map, _) = crossed(0.6);
-    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, report) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert_eq!(report.drawn.medians, [1, 0, 0]);
     assert_eq!(report.drawn.crossings, 0);
     assert_eq!(report.junctions.count, 2);
     let mut untagged = map.roads.clone();
     untagged[3].sidewalks = [SidewalkSide::None; 2];
     let untagged = with_network(untagged);
-    let (bare, _) = mesh_roads(&untagged, RoadStyle::default(), RoadShape::default());
+    let (bare, _) = mesh_roads(
+        &untagged,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     for (tagged, untagged) in layers.iter().zip(&bare) {
         assert_eq!(tagged.name, untagged.name);
         let (with, without) = (
@@ -3537,7 +4051,12 @@ fn a_crossing_piece_between_two_halves_carries_no_sidewalk() {
     // и без пары тот же кусок его несёт: половины дальше 40 м друг от друга —
     // не пара, и куску между ними тротуар положен
     let (far, _) = crossed(60.0);
-    let (layers, report) = mesh_roads(&far, RoadStyle::default(), RoadShape::default());
+    let (layers, report) = mesh_roads(
+        &far,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert_eq!(report.drawn.medians, [0, 0, 0]);
     let sidewalks = layer(&layers, "sidewalks").builder.positions_for_test();
     assert!(
@@ -3565,7 +4084,12 @@ fn a_one_sided_sidewalk_wedge_keeps_the_bare_kerb_on_the_untagged_side() {
         street(vec![Vec2::ZERO, Vec2::new(200.0, 0.0)], 2),
         wide,
     ]);
-    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, report) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert_eq!(report.drawn.tapers, 1);
     let sidewalks = layer(&layers, "sidewalks").builder.positions_for_test();
     let (wide_half, wide_band) = (14.2 / 2.0, sidewalk_band(14.2));
@@ -3629,7 +4153,12 @@ fn to_break_where(layers: &[LayerMesh], name: &str, keep: impl Fn(&[f32; 3]) -> 
 #[test]
 fn the_median_base_keeps_the_break_a_leading_road_lost() {
     let (map, apart) = an_avenue_crossed_by_a_street();
-    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, report) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert_eq!(report.drawn.medians, [1, 0, 0]);
     assert_eq!(report.junctions.leading, 2, "узел ведут обе половины");
     let middle = 100.0 + apart / 2.0;
@@ -3669,7 +4198,12 @@ fn a_splitter_gap_reaches_both_asphalt_and_paint() {
     });
     map.roads
         .push(fixture::street(vec![circle[0], Vec2::new(90.0, 0.0)], 7.6));
-    let (layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (layers, report) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert_eq!(report.gores, 1);
     let island = layer(&layers, paint::PAINT_ISLANDS)
         .builder
@@ -3822,13 +4356,23 @@ fn raw_osm_draw_lays_a_bare_ribbon_per_way() {
     };
 
     let cooked = one_street();
-    let (layers, _) = mesh_roads(&cooked, RoadStyle::default(), RoadShape::default());
+    let (layers, _) = mesh_roads(
+        &cooked,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert!(vertices(&layers, "sidewalks") > 0);
     assert!(paint(&layers) > 0);
 
     let mut raw = one_street();
     raw.knobs.raw = RawOsm::Draw;
-    let (layers, report) = mesh_roads(&raw, RoadStyle::default(), RoadShape::default());
+    let (layers, report) = mesh_roads(
+        &raw,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert_eq!(vertices(&layers, "sidewalks"), 0);
     assert_eq!(paint(&layers), 0);
     // одна лента по полуширине от оси, с прямыми торцами ровно в концах way
@@ -3857,7 +4401,12 @@ fn diag_window() {
     if let Ok(spec) = std::env::var("QWE_DIAG") {
         let v: Vec<f32> = spec.split(',').filter_map(|s| s.parse().ok()).collect();
         let (at, r) = (Vec2::new(v[0], v[1]), v[2]);
-        let prepared = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
+        let prepared = Drawn::new(
+            &map,
+            &RoadStyle::default(),
+            &RoadShape::default(),
+            VergeZoomBucket::for_zoom(0.0),
+        );
         for i in 0..prepared.len() {
             let d = prepared.road(i);
             let line = prepared.axis(i, Axis::Ribbon);
@@ -3982,7 +4531,7 @@ fn diag_window() {
         let (at, r) = (Vec2::new(v[0], v[1]), v[2]);
         let style = RoadStyle::default();
         let shape = RoadShape::default();
-        let prepared = Drawn::new(&map, &style, &shape);
+        let prepared = Drawn::new(&map, &style, &shape, VergeZoomBucket::for_zoom(0.0));
         let ribbon: Vec<Vec<Vec2>> = (0..prepared.len())
             .map(|i| prepared.axis(i, Axis::Ribbon).to_vec())
             .collect();
@@ -4105,7 +4654,12 @@ fn diag_window() {
             }
         }
     }
-    let (mut layers, report) = mesh_roads(&map, RoadStyle::default(), RoadShape::default());
+    let (mut layers, report) = mesh_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     eprintln!("DIAG report {report}");
     let layout =
         crate::map::parking::ParkingLayout::new(&map.parking, &map.roads, map.traffic_side);
@@ -4214,7 +4768,12 @@ fn the_pair_gap_change_waits_out_the_crossing_street() {
     let mut across = fixture::street(vec![Vec2::new(26.0, 150.0), Vec2::new(26.0, 0.0)], 10.9);
     across.oneway = true;
     map.roads.push(across);
-    let prepared = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
+    let prepared = Drawn::new(
+        &map,
+        &RoadStyle::default(),
+        &RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     // зазор пары переезжает с куска на кусок за перекрёстком: у самого
     // перекрёстка ось стоит на точках OSM
     let drawn = prepared.axis(0, Axis::Ribbon);
@@ -4248,7 +4807,12 @@ fn diag_straight_zigzag() {
     let osm: OverpassResponse =
         serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     let map = parse_response(&osm, city, ParseKnobs::default());
-    let prepared = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
+    let prepared = Drawn::new(
+        &map,
+        &RoadStyle::default(),
+        &RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     let (min_len, step) = (120.0, 2.0);
     let mut hits = 0;
     for i in 0..prepared.len() {

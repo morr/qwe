@@ -193,6 +193,26 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   stay — the node's corner is there), and at each change inserts a vertex pair
   `VERGE_SEAM` 0.05 m either side of where the verge passes 4 m, so the tile ends in a
   seam across the street. Pinned by `a_verge_turns_from_tiles_to_lawn_across_the_street`.
+  **A verge wider than `VERGE_MID_MAX` 5 m is not drawn at all from
+  `VERGE_ZOOM_MAX` 2.0 m/px** (`VergeLods`, `VergeZoomBucket`, NEW-1b): tile,
+  kerb strip, lawn and yard — the whole side. A 5–11 m band of the yard's muted
+  grass beside the carriageway read at that zoom as a second carriageway (Tula,
+  Первомайская by the park — the NEW-1 «double Pervomayskaya» card was exactly
+  this), and what remains in its place is the lawn or earth underneath: the
+  park fill, the block's yard, ground. The gate is one place,
+  `Drawn::verges_drawn` — the single answer the ribbon (`push_verges`), the
+  kerb returns and the pads all read — so a dropped side's corner fillets and
+  pads vanish with it. The 5 m line is its own, not `VERGE_PAVED_MAX`: up to
+  4 m the tile still runs whole at mid zoom (two tile strips at the kerb read
+  as a sidewalk, not a carriageway), and 4–5 m keeps the near treatment; the
+  width is the side's widest probe (`RoadLine::verge_widest`), so a profile
+  spilling above 5 m drops the side whole. The zoom bound is the crowns' near
+  edge (`trees::TREE_LODS`) — a 2–6 m crown is 1–3 px there, and a verge band
+  of the same width stops reading as a street detail. The crossing **rebuilds
+  the road layers** (`rebuilds_on` gained `retuned::<VergeZoomBucket>` — the
+  verge ribbons are baked into the shared layer meshes, there is nothing to
+  flip), and the bucket is seeded at world entry before `spawn_map` builds
+  them. Pinned by `a_wide_verge_is_not_drawn_past_the_near_zoom_step`.
   **A probe inside a crossing measures nothing**: the verge profile is probed every 5 m,
   and a probe standing in another carriageway's footprint (its asphalt + sidewalk band)
   is a junction mouth — a parallel footway found from there lies *across* the mouth, and

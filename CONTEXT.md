@@ -435,7 +435,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     the street, never a slanted edge; a run under 10 m folds into its neighbours) — the
     yard's muted grass by default
     (`road_verge_yards`), a meadow only beside a mapped lawn or park (`road_verge_lawns`) — and
-    a corner behind such a lawn is a **kerb pad** of tile along the kerb arc, where the
+    from 2 m/px up (`VergeLods`, the crowns' near bound) a verge wider than 5 m is not drawn at
+    all — tile, lawn and corners — because a band that wide read as a second carriageway; what
+    remains is the lawn or earth underneath. A
+    corner behind such a lawn is a **kerb pad** of tile along the kerb arc, where the
     zebras land — no wider than the arm's sidewalk band where it has one, so the lawn's
     edge does not step. What the pad, a crossing path and a footway pressed against the kerb
     leave of such a lawn is a **lawn scrap** (`map/roads/scraps.rs`): a piece of verge

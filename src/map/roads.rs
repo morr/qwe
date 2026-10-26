@@ -78,6 +78,7 @@ use crate::map::spawn::{GRASS_COLOR, RESIDENTIAL_COLOR};
 use crate::map::surface::{
     self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec, SurfaceKind, spawn_layers,
 };
+use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::prefs::retuned;
 use crate::settings::{
     Z_ALLEY, Z_BUILDING, Z_LOT_LINES, Z_LOT_SIDEWALK, Z_RAIL_CROSSING, Z_RING_GRASS, Z_RING_ISLAND,
@@ -831,12 +832,15 @@ impl std::fmt::Display for RoadReport {
 /// её зовёт и игра (через [`rebuild_roads`] и `spawn_map`), и тест. Это самый
 /// крупный модуль шва, и он же самый показательный: восемнадцать слоёв, четыре
 /// вида материала и вся телеметрия области — всё уезжает через один возврат.
+/// `verge` — ступень зума обочин ([`VergeLods`]): по правилу шва ступень, а
+/// не развёрнутое из таблицы значение.
 pub fn mesh_roads(
     map: &MapData,
     style: RoadStyle,
     shape: RoadShape,
+    verge: VergeZoomBucket,
 ) -> (Vec<LayerMesh>, RoadReport) {
-    let RoadBuild { layers, report, .. } = build_roads(map, style, shape);
+    let RoadBuild { layers, report, .. } = build_roads(map, style, shape, verge);
     (layers, report)
 }
 
@@ -863,7 +867,12 @@ pub struct RoadBuild {
 /// Тем же проходом — и **трамвайные пути по нарисованной улице**
 /// ([`TramTracks`], `roads/tram_lay.rs`): по ним лежит светлая полоса над
 /// рельсами здесь же, а ресурсом их читает слой трамвая (`map/tram.rs`).
-pub fn build_roads(map: &MapData, style: RoadStyle, shape: RoadShape) -> RoadBuild {
+pub fn build_roads(
+    map: &MapData,
+    style: RoadStyle,
+    shape: RoadShape,
+    verge: VergeZoomBucket,
+) -> RoadBuild {
     // сырой OSM, второй уровень: ни одной достройки отрисовки — и колеи нет,
     // и пути трамвая лежат, где их провёл картограф
     if map.knobs.raw.draws_raw() {
@@ -903,8 +912,9 @@ pub fn build_roads(map: &MapData, style: RoadStyle, shape: RoadShape) -> RoadBui
 
     // Дороги так, как они рисуются (`roads/drawn.rs`): переезд через тротуар —
     // асфальтом проезда, а не песочной дорожкой, дуга кольца — сечением всего
-    // кольца; узлы, оси улиц, стежки, клинья и слияния — там же.
-    let prepared = Drawn::new(map, &style, &shape);
+    // кольца; узлы, оси улиц, стежки, клинья и слияния — там же. Ступень зума
+    // обочин — с собой: «какие обочины рисуются» — вопрос той же подготовки
+    let prepared = Drawn::new(map, &style, &shape, verge);
     let nodes = prepared.nodes();
     let drawn = prepared.roads();
     // узловые оси — скругления, слияния, карманы, станции штрихов, полотно
@@ -2218,7 +2228,12 @@ fn mesh_raw_roads(map: &MapData, style: RoadStyle) -> (Vec<LayerMesh>, RoadRepor
 /// дорожные слои мерились только строкой `road meshing:` из живого приложения,
 /// то есть ровно тем способом, который на macOS врёт (App Nap).
 pub fn measure_roads(map: &MapData) -> Vec<LayerCost> {
-    let (layers, report) = mesh_roads(map, RoadStyle::default(), RoadShape::default());
+    let (layers, report) = mesh_roads(
+        map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     // счётчики сети (стыки, скругления, островки) в строках слоёв не видны —
     // та же строка, что пишет в лог игра
     eprintln!("{report}");
@@ -2236,6 +2251,11 @@ pub fn measure_roads(map: &MapData) -> Vec<LayerCost> {
 /// Осевшим (`SunOnMap`), а не ползунком (`SunStyle`): на шкале семьдесят
 /// делений, и каждое стоило бы полной пересборки девяти слоёв.
 ///
+/// `VergeZoomBucket` — потому, что **лента обочины и её газон запечены в те
+/// же общие меши** (`road_verges`/`road_verge_lawns`/`road_verge_yards`):
+/// на средней ступени широкая обочина не рисуется вовсе, и прятать нечего —
+/// только пересобрать.
+///
 /// **Условие одно, регистрация одна.** Две копии одной системы в одном
 /// расписании могут сработать в одном кадре обе, и слой заспавнится дважды:
 /// деспавн второй копии идёт по данным, снятым до применения команд первой.
@@ -2245,16 +2265,20 @@ pub fn rebuilds_on() -> impl SystemCondition<()> {
     retuned::<RoadStyle>
         .or_else(retuned::<RoadShapeOnMap>)
         .or_else(retuned::<SunOnMap>)
+        .or_else(retuned::<VergeZoomBucket>)
 }
 
 /// Пересборка дорожных слоёв после переключения стиля из UI или BRP: деспавн
 /// старых слоёв и повторный спавн из той же `MapData`.
+// входы — те же ресурсы, что читает сборка; сводить их в тип ради линта нечего
+#[allow(clippy::too_many_arguments)]
 pub fn rebuild_roads(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     materials: LayerMaterials,
     style: Res<RoadStyle>,
     shape: Res<RoadShapeOnMap>,
+    verge: Res<VergeZoomBucket>,
     map: Res<MapData>,
     existing: Query<Entity, With<RoadLayerTag>>,
 ) {
@@ -2266,7 +2290,7 @@ pub fn rebuild_roads(
         report,
         ruts,
         tram,
-    } = build_roads(&map, *style, shape.0);
+    } = build_roads(&map, *style, shape.0, *verge);
     // линии колеи — ресурсом: по нему строится оверлей колеи; пути трамвая —
     // по ним пересобирается слой трамвая
     commands.insert_resource(ruts);
@@ -2795,6 +2819,19 @@ const VERGE_STEP: f32 = 2.5;
 /// пятнадцать метров до дома «заливала улицу бетоном» (Фрунзе в Туле,
 /// районный кадр d2). Уже — плитка до дорожки, как у углов центра.
 const VERGE_PAVED_MAX: f32 = 4.0;
+
+/// Обочина шире этого, м, — на средней и дальней ступени зума
+/// ([`VergeLods`]) не рисуется вовсе: ни плиткой у бордюра, ни своим
+/// газоном (`road_verge_lawns`/`road_verge_yards`), — остаётся газон или
+/// земля, лежащие под ними. Полоса в 5–11 м приглушённой травы двора
+/// рядом с проезжей читалась как второе полотно улицы (Первомайская у
+/// парка в Туле, NEW-1: «двойная Первомайская»). На ближней ступени
+/// рисуется всё, как раньше. Порог между «узкой» и «широкой» здесь свой,
+/// не [`VERGE_PAVED_MAX`]: до 4 м — плитка целиком и на среднем зуме
+/// (две полосы плитки у кромки — тротуар, не полотно), 4–5 м — как на
+/// ближней, полоса у бордюра с газоном.
+const VERGE_MID_MAX: f32 = 5.0;
+
 /// Газон широкой обочины — приглушённая трава двора (`SurfaceKind::Yard`,
 /// слой `road_verge_yards`), а не луг разделительной: обочина у многоэтажки —
 /// край того же двора, и светлый луг (`GRASS_COLOR`) лежал вдоль улиц яркой
@@ -2829,6 +2866,37 @@ const VERGE_RUN_MIN: f32 = 10.0;
 /// Полуширина шва между плиткой и газоном вдоль обочины, м: плитка кончается
 /// поперёк улицы, а не косой.
 const VERGE_SEAM: f32 = 0.05;
+
+/// Ступени зума обочин: до [`VERGE_ZOOM_MAX`] — ближняя, обочины рисуются
+/// как рассчитаны; дальше — широкие ([`VERGE_MID_MAX`]) не рисуются. Порог
+/// совпадает с ближней границей крон (`trees::TREE_LODS`): крона в 2–6 м на
+/// этом зуме — 1–3 px, и обочинная полоса той же ширины читается уже не
+/// деталью улицы, а полотном рядом с ней.
+pub enum VergeLods {}
+
+impl ZoomLods for VergeLods {
+    fn max_zooms() -> impl Iterator<Item = f32> {
+        [VERGE_ZOOM_MAX, f32::INFINITY].into_iter()
+    }
+}
+
+/// Верхняя (исключающая) граница ближней ступени обочин, м на логический
+/// пиксель — как у крон ([`VergeLods`]).
+const VERGE_ZOOM_MAX: f32 = 2.0;
+
+/// Текущая ступень [`VergeLods`]; на её пересечении дорожные слои
+/// пересобираются (`rebuilds_on`), потому что лента обочины и её газон
+/// запечены в общие меши слоёв.
+pub type VergeZoomBucket = ZoomBucket<VergeLods>;
+
+impl VergeZoomBucket {
+    /// Рисуются ли на этой ступени широкие обочины ([`VERGE_MID_MAX`]) —
+    /// вопрос одной таблицы, и лента с углами спрашивает его здесь, а не
+    /// своим индексом.
+    pub fn draws_wide_verges(self) -> bool {
+        self.index == 0
+    }
+}
 
 /// Сколько обочины шириной `verge` мостится плиткой от кромки: узкая —
 /// целиком, широкая — полосой [`VERGE_KERB`] у бордюра, а газон под ней
@@ -2958,9 +3026,7 @@ fn push_verges(
             continue;
         }
         // газон рядом спрашивается, только когда газон обочины вообще будет
-        let widest = road.verge_profile[side]
-            .iter()
-            .fold(verge, |widest, &(_, width)| widest.max(width));
+        let widest = road.verge_widest(side);
         let (lawns, lawn_color) =
             if widest > VERGE_PAVED_MAX && mapped.beside(points, width, side, verge) {
                 (&mut *meadows, grass_color)

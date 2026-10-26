@@ -20,7 +20,7 @@ use super::pockets::KerbLots;
 use super::rings::Rings;
 use super::shape::RoadShape;
 use super::tapers::{Taper, Tapers};
-use super::{RoadStyle, leg_sections, ring_arcs};
+use super::{RoadStyle, VERGE_MID_MAX, VergeZoomBucket, leg_sections, ring_arcs};
 use crate::map::osm::{MapData, RoadClass, RoadLine};
 
 /// Какую ось берёт потребитель — решение вынесено из порядка `let` в тип.
@@ -71,6 +71,9 @@ pub struct Drawn<'m> {
     across_median: Vec<bool>,
     /// Ручка «Sidewalks»: рисуется ли тротуар вовсе ([`Self::sidewalk_drawn`]).
     sidewalks: bool,
+    /// Ступень зума обочин (`roads::VergeLods`): на средней и дальней широкая
+    /// обочина не рисуется ([`Self::verges_drawn`]).
+    verge_step: VergeZoomBucket,
     /// Дорога — дуга кольца (`roads/rings.rs`), по индексу.
     on_ring: Vec<bool>,
     /// Стоянки, перед которыми карман не нужен (`roads/pockets.rs`).
@@ -103,8 +106,14 @@ pub struct DrawnStats {
 impl<'m> Drawn<'m> {
     /// Дороги для ленты: узловой каркас плюс стежки, слияния и куски в
     /// проёме пары. `style` — ручка тротуаров: стежок меряется до края
-    /// тротуара, если он рисуется.
-    pub fn new(map: &'m MapData, style: &RoadStyle, shape: &RoadShape) -> Self {
+    /// тротуара, если он рисуется. `verge_step` — ступень зума обочин:
+    /// «какие обочины рисуются» — вопрос той же подготовки.
+    pub fn new(
+        map: &'m MapData,
+        style: &RoadStyle,
+        shape: &RoadShape,
+        verge_step: VergeZoomBucket,
+    ) -> Self {
         let nodal = Self::nodal(map, shape);
         let roads = nodal.roads();
         let (paths, nodes, pairs) = (&nodal.axes.paths, &nodal.nodes, &nodal.axes.pairs);
@@ -138,6 +147,7 @@ impl<'m> Drawn<'m> {
             merges,
             across_median,
             sidewalks: style.sidewalks,
+            verge_step,
             ..nodal
         }
     }
@@ -194,12 +204,16 @@ impl<'m> Drawn<'m> {
             merges: Merges::default(),
             across_median: vec![false; count],
             sidewalks: false,
+            // каркас для ряда машин: обочин он не спрашивает, ступень —
+            // ближняя, как у нарисованной улицы
+            verge_step: VergeZoomBucket::for_zoom(0.0),
             lots: KerbLots::new(&map.parking),
         }
     }
 
     /// Каркас теста: оси по точкам OSM (без сглаживания), тротуары
-    /// рисуются. Без сети карты клиньев и слияний нет — их кладёт сам тест
+    /// рисуются, ступень обочин — ближняя. Без сети карты клиньев и
+    /// слияний нет — их кладёт сам тест
     /// ([`Self::with_taper`], [`Self::with_pairs`], [`Self::with_ring`]).
     #[cfg(test)]
     pub fn for_test(map: &'m MapData) -> Self {
@@ -207,7 +221,12 @@ impl<'m> Drawn<'m> {
             curve_tolerance: 0.0,
             ..default()
         };
-        Self::new(map, &RoadStyle::default(), &shape)
+        Self::new(
+            map,
+            &RoadStyle::default(),
+            &shape,
+            VergeZoomBucket::for_zoom(0.0),
+        )
     }
 
     /// Ручка тротуаров теста.
@@ -363,12 +382,25 @@ impl<'m> Drawn<'m> {
     }
 
     /// Обочины дороги до отдельных тротуаров (`RoadLine::verges`), если
-    /// тротуары рисуются; кусок в проёме пары — без них.
+    /// тротуары рисуются; кусок в проёме пары — без них. На средней и
+    /// дальней ступени зума ([`VergeZoomBucket`]) широкая обочина
+    /// (шире `VERGE_MID_MAX`) не рисуется вовсе — ни лентой, ни углом,
+    /// ни лоскутами: остаётся газон или земля, лежащие под ней. Один
+    /// ответ и для ленты (`push_verges`), и для скругления в узле
+    /// (`corners::kerb_returns`), поэтому ступень живёт здесь.
     pub fn verges_drawn(&self, index: usize) -> [f32; 2] {
         if !self.sidewalks || self.across_median[index] {
             return [0.0; 2];
         }
-        self.roads[index].verges
+        let mut verges = self.roads[index].verges;
+        if !self.verge_step.draws_wide_verges() {
+            for (side, verge) in verges.iter_mut().enumerate() {
+                if self.roads[index].verge_widest(side) > VERGE_MID_MAX {
+                    *verge = 0.0;
+                }
+            }
+        }
+        verges
     }
 
     /// Тротуар, который у дороги есть **на карте**
@@ -434,7 +466,12 @@ mod tests {
             fixture::street(vec![Vec2::ZERO, Vec2::new(100.0, 0.0)], 12.0),
             fixture::street(vec![Vec2::new(50.0, 0.0), Vec2::new(50.0, 80.0)], 8.0),
         ]);
-        let drawn = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
+        let drawn = Drawn::new(
+            &map,
+            &RoadStyle::default(),
+            &RoadShape::default(),
+            VergeZoomBucket::for_zoom(0.0),
+        );
         assert_eq!(drawn.len(), 2);
         assert_eq!(drawn.roads().len(), 2);
         assert_eq!(drawn.axes(Axis::Nodal).len(), 2);
@@ -460,7 +497,12 @@ mod tests {
             footway,
             fixture::street(vec![Vec2::new(50.0, -18.0), Vec2::new(50.0, -60.0)], 5.0),
         ]);
-        let drawn = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
+        let drawn = Drawn::new(
+            &map,
+            &RoadStyle::default(),
+            &RoadShape::default(),
+            VergeZoomBucket::for_zoom(0.0),
+        );
         assert_eq!(drawn.stats().crossings, 1);
         assert_eq!(drawn.road(2).class, RoadClass::Street);
         assert_eq!(drawn.road(2).width, 5.0);
@@ -481,7 +523,12 @@ mod tests {
             fixture::street(vec![Vec2::ZERO, Vec2::new(100.0, 0.0)], 12.0),
             fixture::street(vec![Vec2::new(50.0, -60.0), Vec2::new(50.0, -9.0)], 5.0),
         ]);
-        let drawn = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
+        let drawn = Drawn::new(
+            &map,
+            &RoadStyle::default(),
+            &RoadShape::default(),
+            VergeZoomBucket::for_zoom(0.0),
+        );
         assert_eq!(drawn.stats().stitches, 1);
         assert_eq!(drawn.stitched_end(0), [false; 2]);
         assert_eq!(drawn.stitched_end(1), [false, true]);

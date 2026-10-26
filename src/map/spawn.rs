@@ -133,6 +133,7 @@ pub fn spawn_map(
     height_mode: Res<BuildingHeightMode>,
     road_style: Res<RoadStyle>,
     road_shape: Res<RoadShapeOnMap>,
+    verge: Res<roads::VergeZoomBucket>,
     mut parking_layout: ResMut<parking::ParkingLayout>,
 ) {
     // Раскладка стоянок — вход сборки, а не её выход: по ней рисуется и
@@ -164,7 +165,7 @@ pub fn spawn_map(
     // причиной пересобирать, а её пока нет.
     spawn_layers(&mut commands, &mut meshes, &materials, surfaces, ());
 
-    let road_build = roads::build_roads(&map, *road_style, road_shape.0);
+    let road_build = roads::build_roads(&map, *road_style, road_shape.0, *verge);
     // линии колеи — ресурсом, для оверлея колеи вкладки Debug; пути трамвая
     // по нарисованной улице — слою трамвая (`tram::rebuild_tram`, следом)
     commands.insert_resource(road_build.ruts);
