@@ -1,0 +1,43 @@
+#!/usr/bin/env python3
+"""Geo coordinates (lat, lon) -> map metres, in the projection of the cached extract.
+
+    tools/geo2map 54.1919 37.6079          # where is this on the qwe map?
+    tools/geo2map --city tula 54.19 37.60
+
+The same metres `brp cam`, `SimPosition`, the HUD camera line and `tools/osm_near`
+use — the projection is lifted from `tools/osm_near` (which mirrors
+`map/osm/overpass.rs::GeoBounds::project`), with the centre and the map size taken
+from the cache file name. Use it instead of re-deriving `111320 * cos(lat)` in a
+python one-liner every session.
+"""
+
+import argparse
+import importlib.machinery
+import importlib.util
+import os
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+# `osm_near` has no .py suffix, so importlib cannot infer its loader — hand it
+# one, and the projection lives in a single place
+_loader = importlib.machinery.SourceFileLoader("osm_near", os.path.join(HERE, "osm_near"))
+_spec = importlib.util.spec_from_loader("osm_near", _loader)
+osm_near = importlib.util.module_from_spec(_spec)
+_loader.exec_module(osm_near)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    parser.add_argument("lat", type=float)
+    parser.add_argument("lon", type=float)
+    parser.add_argument("--city", help="cache file prefix, e.g. tula")
+    args = parser.parse_args()
+
+    path = osm_near.cache_file(args.city)
+    project = osm_near.projector(path)
+    x, y = project({"lat": args.lat, "lon": args.lon})
+    print(f"{args.lat:.6f}, {args.lon:.6f} -> {x:.1f}, {y:.1f}  ({os.path.basename(path)})")
+
+
+if __name__ == "__main__":
+    main()
