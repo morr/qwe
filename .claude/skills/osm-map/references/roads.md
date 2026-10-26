@@ -2897,7 +2897,7 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   the carriageway — the 1-я Курская bridge in Oryol (88463507, 14.2 m) has its
   footbridges 375888718/719 13.5 m off the axis, 2.15 m between the two curbs — and
   through that slit the tracks under the bridge showed. `slit_aprons` probes every
-  footbridge each metre against the street decks (box prefilter, `ALONG_MIN` 0.9, the
+  footbridge each metre against the street decks (box prefilter, `FOOTBRIDGE_ALONG` 0.9, the
   foot of the perpendicular on a link, never past a deck end), and where the clear gap
   between the deck curb and the footbridge's curb is 0.02–`SLIT_MAX` 3 m it lays the
   strip from the deck curb's outer edge to the footbridge's fill edge into

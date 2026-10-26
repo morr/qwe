@@ -25,15 +25,13 @@ use std::borrow::Cow;
 use bevy::prelude::*;
 
 use super::drawn::Drawn;
+use super::footbridge::{is_footbridge, is_street_deck, runs_along};
 use crate::map::along::densify;
 use crate::map::osm::model::polyline_length;
 use crate::map::osm::{RoadClass, RoadLine};
 
 /// Щель шире этого, м, — не щель, а земля между двумя мостами.
 pub(super) const SLIT_MAX: f32 = 3.0;
-/// Косинус угла между мостиком и настилом, при котором мостик идёт вдоль
-/// (как у `axis.rs::FOOTBRIDGE_ALONG`).
-const ALONG_MIN: f32 = 0.9;
 /// Шаг проб вдоль мостика и дорожки, м.
 const STEP: f32 = 1.0;
 /// Как далеко от головы моста фартук идёт по земле, м: игла у 1-й Курской
@@ -276,7 +274,7 @@ fn foot_on(path: &[Vec2], point: Vec2, heading: Vec2) -> Option<(Vec2, Vec2, usi
         let Some(direction) = link.try_normalize() else {
             continue;
         };
-        if direction.dot(heading).abs() < ALONG_MIN {
+        if !runs_along(direction, heading) {
             continue;
         }
         let t = (point - pair[0]).dot(direction);
@@ -296,14 +294,6 @@ fn foot_on(path: &[Vec2], point: Vec2, heading: Vec2) -> Option<(Vec2, Vec2, usi
         best = Some((distance, foot, normal, side));
     }
     best.map(|(_, foot, normal, side)| (foot, normal, side))
-}
-
-fn is_street_deck(road: &RoadLine) -> bool {
-    road.bridge && road.class == RoadClass::Street && !road.passage
-}
-
-fn is_footbridge(road: &RoadLine) -> bool {
-    road.bridge && road.class == RoadClass::Alley && !road.passage
 }
 
 fn bounds(path: &[Vec2], pad: f32) -> (Vec2, Vec2) {

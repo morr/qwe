@@ -37,6 +37,7 @@ use std::f32::consts::PI;
 
 use bevy::prelude::*;
 
+use super::footbridge::runs_along;
 use super::network::pairs::{Pairs, pairable};
 use super::network::{self, RoadNetwork, RoadNodes, StreetWay};
 use super::rings::{self, Rings};
@@ -71,9 +72,6 @@ const KERB_STRAIGHT: f32 = 12.0;
 /// Насколько между кромками моста и пешеходного моста рядом может быть
 /// пусто, м, чтобы второй шёл вслед за первым ([`follow_bridge_sidewalks`]).
 const SIDEWALK_DECK_GAP: f32 = 3.0;
-/// Косинус угла между мостиком и настилом, при котором мостик идёт вдоль
-/// него и выносится к кромке ([`place_bridge_sidewalks`]).
-const FOOTBRIDGE_ALONG: f32 = 0.9;
 /// Мостик ближе этого к оси настила, м, не выносится: сторону не выбрать.
 const FOOTBRIDGE_ON_AXIS: f32 = 0.3;
 /// Наибольший излом каждого из двух близких закреплённых узлов зигзагом, при
@@ -231,6 +229,10 @@ pub fn street_axes<'a>(
 /// светлым зубцом, а на самом мосту закрывал край проезжей части
 /// (Красноармейский над каналом). Наземный тротуар и так тонет в полосе
 /// улицы — его не трогает.
+///
+/// Мостик здесь узнают по классу и мосту — грубее общего
+/// [`is_footbridge`](super::footbridge::is_footbridge): арка (`passage`) не
+/// отсечена, и сузить фильтр значило бы сменить поведение сдвига.
 fn follow_bridge_sidewalks(
     roads: &[RoadLine],
     paths: &mut [Cow<[Vec2]>],
@@ -280,11 +282,16 @@ fn follow_bridge_sidewalks(
 /// парапетом между проезжей частью и тротуаром.
 ///
 /// Двигается только мостик **вдоль** настила (звенья почти параллельны,
-/// [`FOOTBRIDGE_ALONG`]) — переходящий настил поперёк на своём уровне
-/// остаётся на месте. Сдвиг **перетекает в наземную дорожку**, продолжающую
-/// мостик в его торце, и гаснет на ней (`Pairs::follow_moved_nodes`, тот же
-/// ход, что у узлов разводки пар): иначе торцы мостика и дорожки разошлись бы
-/// уступом. Возвращает сдвинутые узлы `(было, стало)`.
+/// [`FOOTBRIDGE_ALONG`](super::footbridge::FOOTBRIDGE_ALONG)) — переходящий
+/// настил поперёк на своём уровне остаётся на месте. Сдвиг **перетекает в
+/// наземную дорожку**, продолжающую мостик в его торце, и гаснет на ней
+/// (`Pairs::follow_moved_nodes`, тот же ход, что у узлов разводки пар):
+/// иначе торцы мостика и дорожки разошлись бы уступом. Возвращает сдвинутые
+/// узлы `(было, стало)`.
+///
+/// Мостик и настил здесь узнают по классу и мосту — грубее общего
+/// [`is_footbridge`](super::footbridge::is_footbridge): арка (`passage`) не
+/// отсечена, и сузить фильтр значило бы сменить поведение выноса.
 fn place_bridge_sidewalks(
     roads: &[RoadLine],
     paths: &mut [Cow<[Vec2]>],
@@ -363,7 +370,7 @@ fn deck_push(deck: &[Vec2], point: Vec2, along: Vec2, need: f32) -> Option<Vec2>
             a.0.distance_squared(point)
                 .total_cmp(&b.0.distance_squared(point))
         })?;
-    if tangent.dot(along).abs() < FOOTBRIDGE_ALONG {
+    if !runs_along(tangent, along) {
         return None;
     }
     let offset = point - near;

@@ -3085,6 +3085,7 @@ pub(super) mod axis;
 mod bridges;
 mod corners;
 mod drawn;
+mod footbridge;
 mod gores;
 mod islands;
 mod lots;
