@@ -653,7 +653,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   inside the lot is its own asphalt. The edge goes `LANDUSE_OVERLAP` under a road band
   **and nowhere else** — grown on every side, a piece stepped out half a metre along its
   free edge too, a jog wherever it met the lot's own edge. **A fill thinner than
-  `THIN_FILL_HALF_WIDTH` 2.25 m is trimmed** (a morphological opening, before the pieces
+  `THIN_FILL_HALF_WIDTH` 1.125 m is trimmed** (a morphological opening, before the pieces
   are split): the closing's sliver in the corner between two bands — the collar at a
   drive's mouth, 2.3 m at the base and gone to the tip over the street's drawn tiles
   (Tula ≈3827,4093, N9) — and the thin tongue along a kerb (Tula ≈4454,3855, N3) read as
