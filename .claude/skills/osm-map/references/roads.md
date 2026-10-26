@@ -311,8 +311,8 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   lawn; a band is taken **per side** (`band_half`), not by the wider one, because
   over-counted paving is what could fake a small enclosed piece. Parks and woods are
   never asked — a real lawn in a square is a polygon of its own, not a verge. Tula:
-  **192 scraps** against 95 before (R37-01; `lawn scraps` in the `road meshing:` line);
-  the road build 438 → 477 ms (`map_meshing`, dev, alternating runs) — the bites'
+  **766 scraps** against 95 before (R37-01; `lawn scraps` in the `road meshing:` line);
+  the road build 438 → 476 ms (`map_meshing`, dev, alternating runs) — the bites'
   windows, the green pieces and the gore outlines together, half of the ~80 ms the
   continuous survey cost.
   Pinned by `a_lawn_scrap_enclosed_by_paving_is_tiled`,
