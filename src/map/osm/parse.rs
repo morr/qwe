@@ -586,13 +586,13 @@ fn finish_parse(map: &mut MapData, pending: &Pending, knobs: ParseKnobs) -> Pass
             0,
         )
     } else {
-        // мера квартала строится по домам, только если есть кого спросить
-        let districts = std::cell::OnceCell::new();
-        let sidewalks = infer_sidewalks(&mut map.roads, |point| {
-            districts
-                .get_or_init(|| Districts::new(&map.buildings))
-                .storeys_at(point)
-        });
+        // мера квартала — явный вход прохода: один `Districts` на все его
+        // вопросы «сколько вокруг этажей», построенный по домам, оставшимся
+        // после утопленников (утонувший дом в неё входить не должен)
+        let sidewalks = {
+            let districts = Districts::new(&map.buildings);
+            infer_sidewalks(&mut map.roads, &districts)
+        };
         let pavements = infer_pavements(map);
         let separate = verges::measure_footways_beside_streets(&mut map.roads, &map.network);
         let faiths_guessed = resolve_faiths(&mut map.buildings);
@@ -764,14 +764,11 @@ fn drop_untagged_sidewalks(roads: &mut [RoadLine]) -> usize {
 /// улице полосу уже снял [`untagged_sidewalks`].
 ///
 /// Кого спрашивать, говорит сама дорога: тротуар без тега —
-/// [`SidewalkSide::Inferred`], и только такой здесь может быть снят. Меру
-/// застройки проход не строит, а получает (`storeys_at` — этажность квартала
-/// у точки, `None` — вокруг пусто), так что его можно проверить без единого
-/// дома.
-fn infer_sidewalks(
-    roads: &mut [RoadLine],
-    storeys_at: impl Fn(Vec2) -> Option<f32>,
-) -> InferredSidewalks {
+/// [`SidewalkSide::Inferred`], и только такой здесь может быть снят. Мера
+/// застройки — явный вход: [`Districts`] строится в [`finish_parse`] один раз
+/// по всем домам (`storeys_at` — этажность квартала у точки, `None` — вокруг
+/// пусто), и тест строит его прямо из домов сцены, без карты.
+fn infer_sidewalks(roads: &mut [RoadLine], districts: &Districts) -> InferredSidewalks {
     let asked: Vec<usize> = roads
         .iter()
         .enumerate()
@@ -789,7 +786,7 @@ fn infer_sidewalks(
         let road = &mut roads[index];
         let storeys: Vec<f32> = densify(&road.points, SIDEWALK_PROBE_STEP)
             .into_iter()
-            .filter_map(&storeys_at)
+            .filter_map(|point| districts.storeys_at(point))
             .collect();
         let mean = storeys.iter().sum::<f32>() / storeys.len().max(1) as f32;
         if storeys.is_empty() || mean < SIDEWALK_STOREYS_MIN {

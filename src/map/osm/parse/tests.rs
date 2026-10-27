@@ -14,7 +14,7 @@ use crate::map::osm::planting::{
     TREE_CROWN_REACH, TREE_MIN_SPACING, TREE_SHORE_CLEARANCE, TREE_WALL_CLEARANCE, near_area_edge,
 };
 use crate::map::roads::network::RoadNetwork;
-use crate::settings::MAP_SIZE;
+use crate::settings::{MAP_SIZE, STOREY_HEIGHT};
 
 /// Фикстуры строятся вокруг гео-центра Тулы — города по умолчанию.
 const CITY: City = City::Tula;
@@ -1411,26 +1411,37 @@ fn inferred_street(highway: Highway) -> RoadLine {
     }
 }
 
+/// Дом со **своей** высотой посреди улицы: мера [`Districts`] читает высоту
+/// тем же `height_or_default`, что и слой машин, так что тег снимает тест с
+/// зависимости от вывода этажей. Высота `N` этажей — `N × STOREY_HEIGHT`.
+fn district_house(storeys: f32) -> Vec<PolyArea> {
+    vec![PolyArea {
+        height: Some(storeys * STOREY_HEIGHT),
+        ..building(square(Vec2::new(100.0, 0.0), 10.0), Vec::new())
+    }]
+}
+
 /// Застройка ниже городской снимает тротуар без тега, городская оставляет —
-/// мера приходит снаружи, ни одного дома не нужно.
+/// мера строится прямо из домов сцены, без карты.
 #[test]
 fn infer_sidewalks_drops_the_band_only_among_low_blocks() {
     let mut roads = vec![inferred_street(Highway::Residential)];
-    let low = infer_sidewalks(&mut roads, |_| Some(2.0));
+    let low = infer_sidewalks(&mut roads, &Districts::new(&district_house(2.0)));
     assert_eq!((low.asked, low.dropped), (1, 1));
     assert_eq!(roads[0].sidewalks, [SidewalkSide::None; 2]);
 
     let mut roads = vec![inferred_street(Highway::Unclassified)];
-    let tall = infer_sidewalks(&mut roads, |_| Some(SIDEWALK_STOREYS_MIN));
+    let tall =
+        infer_sidewalks(&mut roads, &Districts::new(&district_house(SIDEWALK_STOREYS_MIN)));
     assert_eq!((tall.asked, tall.dropped), (1, 0));
     assert_eq!(roads[0].sidewalks, [SidewalkSide::Inferred; 2]);
 }
 
-/// Пусто вокруг — тоже обочина: ни одной пробы с этажностью.
+/// Пусто вокруг — тоже обочина: мера ни разу не отвечает этажностью.
 #[test]
 fn infer_sidewalks_drops_the_band_where_nothing_stands_around() {
     let mut roads = vec![inferred_street(Highway::LivingStreet)];
-    let empty = infer_sidewalks(&mut roads, |_| None);
+    let empty = infer_sidewalks(&mut roads, &Districts::new(&[]));
     assert_eq!((empty.asked, empty.dropped), (1, 1));
     assert_eq!(roads[0].sidewalks, [SidewalkSide::None; 2]);
 }
@@ -1448,7 +1459,7 @@ fn infer_sidewalks_asks_only_inferred_residential_streets() {
         ..inferred_street(Highway::Residential)
     };
     let mut roads = vec![tagged, inferred_street(Highway::Tertiary), unpaved];
-    let report = infer_sidewalks(&mut roads, |_| None);
+    let report = infer_sidewalks(&mut roads, &Districts::new(&[]));
     assert_eq!((report.asked, report.dropped), (0, 0));
     assert_eq!(roads[0].sidewalks, [SidewalkSide::Tagged; 2]);
     assert_eq!(roads[1].sidewalks, [SidewalkSide::Inferred; 2]);
