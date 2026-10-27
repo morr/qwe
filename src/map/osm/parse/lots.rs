@@ -775,22 +775,14 @@ fn holes_area(shape: &Shape) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::map::osm::fixture::{building, fence, rect, street};
-    use crate::map::osm::model::{Highway, SidewalkSide, sidewalk_band};
+    use crate::map::osm::fixture::{building, fence, rect, residential_half, street};
+    use crate::map::osm::model::{SidewalkSide, sidewalk_band};
     use crate::map::osm::parse::ParseKnobs;
-    use crate::map::roads::network::sections;
     use crate::settings::MAP_SIZE;
 
     /// Центр карты, как у фикстур разбора: сцены собираются вокруг него, и в
     /// тех же метрах пишутся проверки.
     const CENTER: Vec2 = Vec2::new(MAP_SIZE.x / 2.0, MAP_SIZE.y / 2.0);
-
-    /// Полуширина `highway=residential` без `lanes` при входах разбора `knobs`,
-    /// м: две полосы по классу и две кромки — 2 × 3.3 + 2 × 0.5, полуширина
-    /// 3.8 (дубль вспомогательной функции тестов разбора).
-    fn residential_half(knobs: ParseKnobs) -> f32 {
-        sections::section_width(Highway::Residential, 2, knobs.lane_width).expect("a street") / 2.0
-    }
 
     /// Прогон прохода на сцене из дорог, домов, заборов и стоянок: зелень и
     /// вода — пустые срезы, их сцены мощения не строят. Сцену без домов и

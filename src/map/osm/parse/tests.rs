@@ -3,7 +3,9 @@ use super::*;
 // весь конвейер — от JSON Overpass до `map.trees`
 use super::lots::PavedLots;
 use super::tags::{building_height, colour, parse_measure};
-use crate::map::osm::fixture::{Overpass, building, closed, rect, square, street, water_area};
+use crate::map::osm::fixture::{
+    Overpass, building, closed, rect, residential_half, square, street, water_area,
+};
 use crate::map::osm::model::sidewalk_band;
 use crate::map::osm::model::{
     BuildingUse, Colours, Faith, FenceKind, Highway, LaneTurn, LotKind, Pavement, PitchKind,
@@ -18,12 +20,6 @@ use crate::settings::{MAP_SIZE, STOREY_HEIGHT};
 
 /// Фикстуры строятся вокруг гео-центра Тулы — города по умолчанию.
 const CITY: City = City::Tula;
-/// Полуширина `highway=residential` без `lanes` при входах разбора `knobs`, м:
-/// две полосы по классу и две кромки (`roads::network::sections`) — при
-/// ширине полосы по умолчанию 2 × 3.3 + 2 × 0.5, полуширина 3.8.
-fn residential_half(knobs: ParseKnobs) -> f32 {
-    sections::section_width(Highway::Residential, 2, knobs.lane_width).expect("a street") / 2.0
-}
 
 /// Храм, чья вера досталась ему от города без размеченных храмов.
 const WESTERN_CHURCH: BuildingUse = BuildingUse::Church(Sacred {

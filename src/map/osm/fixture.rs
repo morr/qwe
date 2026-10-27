@@ -34,7 +34,9 @@ use super::model::{
     RoadClass, RoadLine, SidewalkSide, WallLine, WaterKind, WaterLine,
 };
 use super::overpass::GeoBounds;
+use super::parse::ParseKnobs;
 use crate::city::City;
+use crate::map::roads::network::sections;
 use crate::settings::MAP_SIZE;
 
 pub fn rect(min: Vec2, max: Vec2) -> Vec<Vec2> {
@@ -247,6 +249,14 @@ pub fn street(points: Vec<Vec2>, width: f32) -> RoadLine {
         parking: Default::default(),
         pavement: None,
     }
+}
+
+/// Полуширина `highway=residential` без `lanes` при входах разбора `knobs`, м:
+/// две полосы по классу и две кромки (`roads::network::sections`) — при
+/// ширине полосы по умолчанию 2 × 3.3 + 2 × 0.5, полуширина 3.8. Общая для
+/// тестов разбора (`parse/tests.rs`) и тестов мощения (`parse/lots.rs`).
+pub fn residential_half(knobs: ParseKnobs) -> f32 {
+    sections::section_width(Highway::Residential, 2, knobs.lane_width).expect("a street") / 2.0
 }
 
 /// Проезд стоянки — служебная дорога 5 м с флагом `parking_aisle`: по нему

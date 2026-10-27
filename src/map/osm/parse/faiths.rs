@@ -325,14 +325,10 @@ mod tests {
             "по большинству города угадан ровно один храм"
         );
 
-        let sacred = |building: &PolyArea| match building.building_use {
-            BuildingUse::Church(sacred) => sacred,
-            other => panic!("не храм: {other:?}"),
-        };
         let (cathedral, drum, lone) = (
-            sacred(&buildings[0]),
-            sacred(&buildings[1]),
-            sacred(&buildings[2]),
+            sacred_of(&buildings[0]),
+            sacred_of(&buildings[1]),
+            sacred_of(&buildings[2]),
         );
         assert_ne!(cathedral.complex, 0, "посев храма не проставлен");
         assert_eq!(drum.faith, Faith::Orthodox, "барабан не взял веру собора");
