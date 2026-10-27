@@ -69,7 +69,9 @@ use crate::map::grid::Grid;
 use crate::map::meshing::{
     MeshBuilder, arc_steps, butt_direction, miter_offsets, ribbon_merge_distance, ribbon_vertices,
 };
-use crate::map::osm::model::{closest_on_segment, point_in_area, polyline_length, ring_area};
+use crate::map::osm::model::{
+    closest_on_segment, point_in_area, polyline_length, ring_area, ring_bounds,
+};
 use crate::map::osm::{Highway, PolyArea, RoadClass, RoadLine};
 use crate::map::spawn::GRASS_COLOR;
 
@@ -1401,18 +1403,7 @@ struct YardBounds<'a> {
 impl<'a> YardBounds<'a> {
     fn of(yards: impl IntoIterator<Item = &'a PolyArea>) -> Self {
         let yards: Vec<&PolyArea> = yards.into_iter().collect();
-        let boxes: Vec<(Vec2, Vec2)> = yards
-            .iter()
-            .map(|yard| {
-                let mut min = Vec2::splat(f32::MAX);
-                let mut max = Vec2::splat(f32::MIN);
-                for point in &yard.outer {
-                    min = min.min(*point);
-                    max = max.max(*point);
-                }
-                (min, max)
-            })
-            .collect();
+        let boxes: Vec<(Vec2, Vec2)> = yards.iter().map(|yard| ring_bounds(&yard.outer)).collect();
         let mut grid = Grid::new(YARD_CELL);
         for (index, (min, max)) in boxes.iter().enumerate() {
             grid.insert(*min, *max, index);

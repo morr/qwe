@@ -22,7 +22,9 @@ use super::tapers::{self, Tapers};
 use crate::map::along::{arclengths, nearest_on_path, place_on_path};
 use crate::map::grid::Grid;
 use crate::map::meshing::{Break, miter_offsets};
-use crate::map::osm::model::{Highway, KerbParking, distance_to_area, polyline_length};
+use crate::map::osm::model::{
+    Highway, KerbParking, distance_to_area, polyline_length, ring_bounds,
+};
 use crate::map::osm::{PolyArea, RoadLine, RoadNode, RoadNodeKind, TrafficSide};
 use crate::map::seed::{Lcg, seed_from_point};
 
@@ -67,8 +69,7 @@ impl<'a> KerbLots<'a> {
     pub fn new(areas: &'a [PolyArea]) -> Self {
         let mut grid = Grid::new(LOT_CELL);
         for (index, area) in areas.iter().enumerate() {
-            let min = area.outer.iter().copied().fold(Vec2::MAX, Vec2::min);
-            let max = area.outer.iter().copied().fold(Vec2::MIN, Vec2::max);
+            let (min, max) = ring_bounds(&area.outer);
             if min.cmple(max).all() {
                 grid.insert(min - LOT_REACH, max + LOT_REACH, index);
             }

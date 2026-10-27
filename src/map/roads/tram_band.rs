@@ -33,7 +33,9 @@ use i_overlay::mesh::style::{LineCap, LineJoin, OutlineStyle};
 use super::network::pairs::Median;
 use crate::map::along::simplify;
 use crate::map::grid::Grid;
-use crate::map::osm::model::{RailKind, RailLine, distance_to_segment, polyline_length};
+use crate::map::osm::model::{
+    RailKind, RailLine, distance_to_segment, polyline_length, ring_bounds,
+};
 use crate::map::osm::{RoadClass, RoadLine};
 use crate::map::shapes::{ARC, Contour, Shape, stroke};
 
@@ -94,9 +96,7 @@ pub fn tram_bands(
             continue;
         }
         let half = road.width / 2.0;
-        let (low, high) = path.iter().fold((path[0], path[0]), |(low, high), &point| {
-            (low.min(point), high.max(point))
-        });
+        let (low, high) = ring_bounds(path);
         if tracks.near_each(low - half, high + half).next().is_none() {
             continue;
         }
@@ -245,9 +245,7 @@ pub fn deck_cuts<'a>(
             continue;
         }
         let half = width / 2.0;
-        let (low, high) = path.iter().fold((path[0], path[0]), |(low, high), &point| {
-            (low.min(point), high.max(point))
-        });
+        let (low, high) = ring_bounds(path);
         let (low, high) = (low - half, high + half);
         let carries = links.iter().any(|&(from, to)| {
             let middle = (from + to) / 2.0;

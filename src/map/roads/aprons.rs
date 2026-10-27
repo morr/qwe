@@ -27,7 +27,7 @@ use bevy::prelude::*;
 use super::drawn::Drawn;
 use super::footbridge::{is_footbridge, is_street_deck, runs_along};
 use crate::map::along::densify;
-use crate::map::osm::model::polyline_length;
+use crate::map::osm::model::{polyline_length, ring_bounds};
 use crate::map::osm::{RoadClass, RoadLine};
 
 /// Щель шире этого, м, — не щель, а земля между двумя мостами.
@@ -297,8 +297,6 @@ fn foot_on(path: &[Vec2], point: Vec2, heading: Vec2) -> Option<(Vec2, Vec2, usi
 }
 
 fn bounds(path: &[Vec2], pad: f32) -> (Vec2, Vec2) {
-    let (low, high) = path.iter().fold((path[0], path[0]), |(low, high), &point| {
-        (low.min(point), high.max(point))
-    });
+    let (low, high) = ring_bounds(path);
     (low - pad, high + pad)
 }
