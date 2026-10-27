@@ -298,9 +298,15 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     junction only the kerb with no other carriageway arm on it narrows — an arm counts
     only if the step is no higher than its kerb radius (a 5 m drive does not hide a
     lane's step); the kerb returns
-    read that end at the narrow width, and **any node under the wedge** (a side street
+    read that end at the seam way's width (`Taper::seam` — the road whose section stands
+    at the seam: the narrow way for a narrowing taper, the wide one for a
+    **counter-taper**), and **any node under the wedge** (a side street
     joining the wider way inside its taper) at the wedge's own width there, on the slanted
-    kerb. Drawing only.
+    kerb. A bent joint whose wide way is carried on at an obtuse angle by another road of
+    the node **grows the mouth** instead of narrowing it (`tapers::widen_mouth`): the
+    seam's narrow way and the obtuse continuer each take a counter-taper, starting at the
+    seam with the wide way's section and shedding to their own over the taper length.
+    Drawing only.
   - **Street axis** (`map/roads/axis.rs`) — the drawn centerline of a whole street, not of
     a way: within the **curve tolerance** (`RoadShape::curve_tolerance`) the street is
     simplified and each bend becomes an arc (`Curve::of` — the three numbers off the one
@@ -701,7 +707,13 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   plot of its own), a hole cut into a block by its own multipolygon (no road on its rim).
   A **ring island** is not a pocket: its raw loop (`roads::rings::islands`, the loops the
   render fits a figure into) is one of the covers, since the island's lawn already covers
-  it whole.
+  it whole. A **green apron** (`Scene::green_aprons`) asks the same question of strips
+  that are never holes — at its ends such a strip leaks into the open, which the
+  enclosure above cannot see: a band of bare ground up to `GREEN_GAP_MAX` 2.5 m wide
+  between a mapped green's outer edge and the kerb of a paved band is sown meadow from
+  the green's edge to the very kerb, a street's own verge deciding first — the apron is
+  sewn only where the edge of what the street draws itself (its sidewalk band or its
+  verge lawn, whichever reaches further) falls short of the green's.
   The covers err on the safe side: the block lies below everything drawn, so grass sown
   under a sidewalk or a house is never seen — houses are left out of the union for that
   reason. Render-only, like the block pull.
