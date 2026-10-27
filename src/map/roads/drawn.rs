@@ -560,31 +560,11 @@ mod tests {
         assert_eq!(nodal.axis(1, Axis::Nodal), nodal.axis(1, Axis::Ribbon));
     }
 
-    /// Разделённый проспект вдоль x (`roads/tests.rs::divided_avenue`): две
-    /// встречные половины в три полосы, `gap` метров между кромками, с
-    /// вершинами при x = 300. Возвращает дороги и расстояние между осями.
+    /// Проспект [`fixture::divided_avenue`] со средней вершиной при x = 300:
+    /// поперечной улице (`crossed_avenue`) нужна общая нода, чем примыкать
+    /// к половинам.
     fn avenue(gap: f32) -> (Vec<RoadLine>, f32) {
-        let width = 3.0 * 3.3 + 1.0;
-        let apart = width + gap;
-        let half = |points: Vec<Vec2>| RoadLine {
-            highway: crate::map::osm::Highway::Primary,
-            oneway: true,
-            lanes: Some(3),
-            ..fixture::street(points, width)
-        };
-        let roads = vec![
-            half(vec![
-                Vec2::new(100.0, 100.0),
-                Vec2::new(300.0, 100.0),
-                Vec2::new(500.0, 100.0),
-            ]),
-            half(vec![
-                Vec2::new(500.0, 100.0 + apart),
-                Vec2::new(300.0, 100.0 + apart),
-                Vec2::new(100.0, 100.0 + apart),
-            ]),
-        ];
-        (roads, apart)
+        fixture::divided_avenue(gap, Some(300.0))
     }
 
     /// Тот же проспект с поперечной улицей из трёх way при x = 300: подход

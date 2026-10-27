@@ -319,6 +319,38 @@ pub fn footway(points: Vec<Vec2>) -> RoadLine {
     }
 }
 
+/// Разделённый проспект вдоль x: две встречные половины в три полосы
+/// (`primary`, `oneway`, `lanes=3`) на осях y = 100 и y = 100 + apart,
+/// от x = 100 до x = 500, `gap` метров между кромками. Возвращает
+/// половины и расстояние между осями; в карту их собирает сам тест —
+/// с сетью улиц (`roads/medians.rs`) или без неё, «собранной тестом
+/// руками» (`roads/tests.rs`, [`MapData::network`]). `mid_x` — средняя
+/// вершина каждой половины: поперечной улице нужна общая нода, чем
+/// примыкать (`roads/drawn.rs::crossed_avenue`); без неё звено прямое.
+///
+/// Общая для тестов слоёв дороги, разделительных и пар половин; до неё
+/// половины собирались вручную в трёх местах, и ширина полотна — три
+/// полосы и две кромки, `3 · 3.3 + 1` — совпадала только случайно.
+pub fn divided_avenue(gap: f32, mid_x: Option<f32>) -> (Vec<RoadLine>, f32) {
+    let width = 3.0 * 3.3 + 1.0;
+    let apart = width + gap;
+    let half = |y: f32| {
+        let mut points = vec![Vec2::new(100.0, y), Vec2::new(500.0, y)];
+        if let Some(x) = mid_x {
+            points.insert(1, Vec2::new(x, y));
+        }
+        RoadLine {
+            highway: Highway::Primary,
+            oneway: true,
+            lanes: Some(3),
+            ..street(points, width)
+        }
+    };
+    let mut westbound = half(100.0 + apart);
+    westbound.points.reverse();
+    (vec![half(100.0), westbound], apart)
+}
+
 /// Полустрона двора [`crowded_yard`], м.
 const YARD_HALF: f32 = 60.0;
 

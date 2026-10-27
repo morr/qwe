@@ -1004,31 +1004,17 @@ fn lawn_outlines(median: &Median, breaks: &[Break]) -> Vec<(Vec<[f32; 2]>, f32)>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::map::osm::{Highway, MapData, RoadLine, fixture};
+    use crate::map::osm::{MapData, fixture};
     use crate::map::roads::Drawn;
     use crate::map::roads::junctions::Junctions;
     use crate::map::roads::network::RoadNetwork;
     use crate::map::roads::node_paint::{CrossingMode, NodePaintStyle};
     use crate::map::shapes::shape_area;
 
-    /// Разделённый проспект вдоль x (`roads/tests.rs::divided_avenue`): две
-    /// встречные половины в три полосы, `gap` метров между кромками.
+    /// Проспект [`fixture::divided_avenue`] с настоящей сетью улиц:
+    /// разделительному нужен `street_of` из [`RoadNetwork`].
     fn avenue(gap: f32) -> MapData {
-        let width = 3.0 * 3.3 + 1.0;
-        let apart = width + gap;
-        let half = |points: Vec<Vec2>| RoadLine {
-            highway: Highway::Primary,
-            oneway: true,
-            lanes: Some(3),
-            ..fixture::street(points, width)
-        };
-        let roads = vec![
-            half(vec![Vec2::new(100.0, 100.0), Vec2::new(500.0, 100.0)]),
-            half(vec![
-                Vec2::new(500.0, 100.0 + apart),
-                Vec2::new(100.0, 100.0 + apart),
-            ]),
-        ];
+        let (roads, _) = fixture::divided_avenue(gap, None);
         MapData {
             network: RoadNetwork::new(&roads),
             roads,

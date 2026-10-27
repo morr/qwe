@@ -2458,25 +2458,12 @@ fn rule_zebras_do_not_follow_the_sidewalk_knob() {
     );
 }
 
-/// Разделённый проспект вдоль x: две встречные половины в три полосы с
-/// `gap` метров между кромками. Возвращает карту и расстояние между осями.
+/// Разделённый проспект (`fixture::divided_avenue`) картой **без сети** —
+/// «собранной тестом руками» ([`MapData::network`]): слоям дороги сеть не
+/// нужна. Возвращает карту и расстояние между осями.
 fn divided_avenue(gap: f32) -> (MapData, f32) {
-    let width = 3.0 * 3.3 + 1.0;
-    let apart = width + gap;
-    let half = |points: Vec<Vec2>| RoadLine {
-        highway: Highway::Primary,
-        oneway: true,
-        lanes: Some(3),
-        ..fixture::street(points, width)
-    };
-    let mut map = MapData::default();
-    map.roads
-        .push(half(vec![Vec2::new(100.0, 100.0), Vec2::new(500.0, 100.0)]));
-    map.roads.push(half(vec![
-        Vec2::new(500.0, 100.0 + apart),
-        Vec2::new(100.0, 100.0 + apart),
-    ]));
-    (map, apart)
+    let (roads, apart) = fixture::divided_avenue(gap, None);
+    (MapData { roads, ..default() }, apart)
 }
 
 #[test]
