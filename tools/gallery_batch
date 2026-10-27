@@ -78,9 +78,9 @@ while IFS='|' read -r rev city envs manifest || [ -n "$rev" ]; do
       # build dirt (patched examples, settings) — restore tracked files once
       git -C "$WT" checkout -- . >>"$run_log" 2>&1
       if ! git -C "$WT" checkout --detach "$rev" >>"$run_log" 2>&1; then
-      log "$n" "CHECKOUT FAILED $rev (skipped)"
-      fail=$((fail + 1))
-      continue
+        log "$n" "CHECKOUT FAILED $rev (skipped)"
+        fail=$((fail + 1))
+        continue
       fi
     fi
   fi
