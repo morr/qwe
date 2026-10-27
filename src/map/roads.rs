@@ -1757,9 +1757,6 @@ pub fn build_roads(
     for outline in kerb_returns
         .paving()
         .flat()
-        // и горки: асфальт или штриховка направляющего островка — не газон,
-        // и кончик островка под горкой оставался клином травы
-        // (R37-01, витрина 14)
         .chain(gore_outlines.iter().map(Vec::as_slice))
         .chain(kerb_returns.paving().curved())
     {
