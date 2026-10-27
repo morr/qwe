@@ -210,16 +210,7 @@ pub(super) fn fill_ground_pockets(map: &mut MapData) -> usize {
         if absorb.is_some_and(|green| merge_into_green(map, green, &outer)) {
             continue;
         }
-        map.pockets.push(PolyArea {
-            outer,
-            holes: Vec::new(),
-            kind,
-            building_use: BuildingUse::Other,
-            height: None,
-            storeys: None,
-            entrances: Vec::new(),
-            colours: Default::default(),
-        });
+        map.pockets.push(sown_area(outer, kind));
     }
     // кромка зелени, выращенной вливанием, — по ней шьётся фартук
     let edges: Vec<(Vec2, Vec2)> = map
@@ -233,24 +224,25 @@ pub(super) fn fill_ground_pockets(map: &mut MapData) -> usize {
         .collect();
     let aprons = scene.green_aprons(&edges);
     let grown = aprons.len();
-    for Pocket {
-        outer,
-        kind,
-        absorb: _,
-    } in aprons
-    {
-        map.pockets.push(PolyArea {
-            outer,
-            holes: Vec::new(),
-            kind,
-            building_use: BuildingUse::Other,
-            height: None,
-            storeys: None,
-            entrances: Vec::new(),
-            colours: Default::default(),
-        });
+    for Pocket { outer, kind, .. } in aprons {
+        map.pockets.push(sown_area(outer, kind));
     }
     sown + grown
+}
+
+/// Посев площадкой в `MapData::pockets`: без дырок, дверей и высоты — кольцо
+/// и вид травы, ничего лишнего у посева нет.
+fn sown_area(outer: Vec<Vec2>, kind: AreaKind) -> PolyArea {
+    PolyArea {
+        outer,
+        holes: Vec::new(),
+        kind,
+        building_use: BuildingUse::Other,
+        height: None,
+        storeys: None,
+        entrances: Vec::new(),
+        colours: Default::default(),
+    }
 }
 
 /// Влить карман `pocket` (уже заведённый под соседей) в замапленную зелень:
