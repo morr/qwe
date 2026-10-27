@@ -883,6 +883,8 @@ pub fn build_roads(
             tram: TramTracks::as_mapped(&map.rails),
         };
     }
+    // ── Слои и накопители ── куда кладут фазы ниже: строители слоёв,
+    // мосты, стоянки, краска и колея
     let started = std::time::Instant::now();
     let (roads, walls): (&[RoadLine], &[WallLine]) = (&map.roads, &map.walls);
     let mut painter = paint::Painter::new(map.traffic_side);
@@ -909,6 +911,7 @@ pub fn build_roads(
     // (`roads/lots.rs`)
     let mut grounds = lots::Grounds::of(map);
 
+    // ── Нарисованная сеть ──
     // Дороги так, как они рисуются (`roads/drawn.rs`): переезд через тротуар —
     // асфальтом проезда, а не песочной дорожкой, дуга кольца — сечением всего
     // кольца; узлы, оси улиц, стежки, клинья и слияния — там же. Ступень зума
@@ -925,6 +928,7 @@ pub fn build_roads(
     // скругление, а не наоборот, и разметка остаётся целой.
     let kerb_returns = corners::kerb_returns(&prepared, shape.corner_radius());
     let islands = corners::small_islands(&prepared);
+    // ── Узлы и скругления ──
     // Узлы (`roads/junctions.rs`), стежки среди них: базовые разрывы
     // асфальта, краска узлов, разрывы ряда у бордюра — одним значением. По
     // ним рвётся краска и гаснет колея асфальта — колея есть и с выключенной
@@ -962,6 +966,7 @@ pub fn build_roads(
         &meadows,
         &mut scraps,
     );
+    // ── Кромки слияний ──
     // кромки половин, сходящиеся к кромкам продолжения, — тоже до лент
     let mut merge_edges = 0;
     for merge in &prepared.merges().list {
@@ -981,6 +986,7 @@ pub fn build_roads(
             merge_edges += 1;
         }
     }
+    // ── Карманы у бордюра ──
     // карманы — по тому же ответу и тем же разрывам, что ряд машин
     // (`map::cars`): асфальт за кромкой и тротуар, отодвинутый за него
     let kerbsides = pockets::all_kerbsides(
@@ -1018,6 +1024,7 @@ pub fn build_roads(
             }
         }
     }
+    // ── Разворотные площадки ──
     // разворотные площадки в тупиках (`highway=turning_circle`); тупик без
     // тега кончается круглым торцом ленты и так
     let mut turning_circles = 0;
@@ -1051,6 +1058,7 @@ pub fn build_roads(
         }
         turning_circles += 1;
     }
+    // ── Оси лент, траектории и порядок заливки ──
     // оси ленты, со стежками — до дороги, до которой OSM торец не довёл:
     // асфальт, краска, траектории, острова
     let ribbon = prepared.axes(Axis::Ribbon);
@@ -1066,6 +1074,7 @@ pub fn build_roads(
     let leading = junctions.leading();
     let widths: Vec<f32> = drawn.iter().map(|road| road.width).collect();
     let order = fill_order(&widths, &leading, junctions.node_paint().junctions());
+    // ── Направляющие островки, кольца и устья ──
     // направляющие островки у колец (`roads/gores.rs`) — до лент: к ним
     // дотягиваются двойные сплошные разделительных
     let gore_roads: Vec<gores::GoreRoad> = order
@@ -1125,6 +1134,7 @@ pub fn build_roads(
         node_paint::ZEBRA_LENGTH / 2.0 + MOUTH_CROSSING_GAP,
     );
     gores.add_mouths(&found_mouths, &hatchable_mouths);
+    // ── Разрывы узлов и рампы слияний ──
     // три множества разрывов — каждому потребителю своё (`roads/junctions.rs`)
     let node_paint = junctions.node_paint();
     let marks = node_paint.marks();
@@ -1139,6 +1149,7 @@ pub fn build_roads(
             ramps[road] = Some(ramp);
         }
     }
+    // ── Разделительные парных половин ──
     // где у пары половин кончается разделительная — осевая слияния доходит
     // до неё: торцы асфальтовой середины и носы газона, по улицам половин
     let street_of = |road: usize| map.network.street_of(road).map(|(street, _)| street);
@@ -1228,6 +1239,7 @@ pub fn build_roads(
     }
     let network_time = started.elapsed();
 
+    // ── Площади и островки до лент ──
     // щель между подходом и кольцом — асфальтом, под лентами
     for web in &prepared.rings().webs {
         streets.push_polygon(web, &[], ROAD_COLOR.to_linear());
@@ -1251,6 +1263,7 @@ pub fn build_roads(
     for shape in &road_islands.walkways {
         push_shape(&mut sidewalks, shape.clone(), SIDEWALK_COLOR.to_linear());
     }
+    // ── Тротуары колец ──
     // на сколько ужат остров каждого кольца под газон поверх тротуаров
     // подходов (ниже, после лент)
     let mut island_insets: Vec<f32> = Vec::new();
@@ -1286,6 +1299,7 @@ pub fn build_roads(
         }
     }
     let mut approach_bands: Vec<(Vec<Vec2>, f32, [bool; 2])> = Vec::new();
+    // ── Заливка колец и швы настилов ──
     // асфальт кольца — одной замкнутой заливкой по его оси, на месте первой
     // его дуги в порядке заливки (R15): дуги, кончающиеся в узлах с
     // подходами, клались лентами с прямыми торцами, и на кривизне торцы
@@ -1329,6 +1343,8 @@ pub fn build_roads(
             });
         }
     }
+    // ── Ленты ── главный проход по улицам в порядке заливки: асфальт,
+    // тротуары, обочины, краска, клинья и мосты — улица за улицей
     for index in order {
         let road = drawn[index];
         // замкнутая линия площади (`highway=*` + `area=yes`) — контур
@@ -1724,6 +1740,7 @@ pub fn build_roads(
             grounds.push(road, points);
         }
     }
+    // ── Фартуки мостиков ──
     // фартуки мостиков, замапленных рядом с настилом (`roads/aprons.rs`, S2):
     // щель между бортиками — плиткой мостика в слое настилов, её
     // продолжение на земле до головы — в слое дорожки
@@ -1748,6 +1765,7 @@ pub fn build_roads(
         };
         layer.push_polygon(ring, &[], path_color(drawn[*path]).to_linear());
     }
+    // ── Лоскуты ──
     // Лоскуты газона обочин, замкнутые мощением, — плиткой поверх газона
     // (`roads/scraps.rs`): слой обочин лежит над слоями газона. Мощение, которым
     // они замкнуты, собирается только у газонов, которые спрашиваются: улиц и
@@ -1800,6 +1818,7 @@ pub fn build_roads(
     for shape in &green_scraps {
         push_shape(&mut sidewalks, shape.clone(), SIDEWALK_COLOR.to_linear());
     }
+    // ── Краска узлов и колея траекторий ──
     // зебра — из целых звеньев на асфальте улиц, каким он уже лёг; стоп-линия
     // обрезается по тому же асфальту: у устья съезда её конец ложился на
     // плитку обочины мимо наискось стоящей кромки (S7)
@@ -1834,6 +1853,7 @@ pub fn build_roads(
             }
         }
     }
+    // ── Поверх асфальта: островки, трамвай, стоянки ──
     // направляющие островки у колец: асфальт — в слой улиц, поверх тротуаров,
     // разметка — в слой краски, своим мешем выше асфальта стоянок
     // (`roads/gores.rs`)
@@ -1887,6 +1907,7 @@ pub fn build_roads(
         }
     }
 
+    // ── Путепроводы и переезды ──
     // путепроводы: плита, парапет и тень — в тех же мостовых слоях; путь
     // поверх плиты кладёт `map::rail`. Трамвай на мосту едет по мосту улицы
     let mut track_bridges = 0;
@@ -1911,6 +1932,7 @@ pub fn build_roads(
         })
         .collect();
     let (rail_crossings, level_crossings) = mesh_level_crossings(&map.rails, &crossed);
+    // ── Газон островов колец ──
     // Полоса тротуара подхода доходит до узла на оси кольца, а подход
     // входит в кольцо по касательной — её торец ложился серпом на остров
     // поверх газона (R28, Белгород: три наплыва на одном кольце). Что из этих
@@ -1922,6 +1944,7 @@ pub fn build_roads(
             push_shape(&mut median_grass, shape, GRASS_COLOR.to_linear());
         }
     }
+    // ── Лента крепостной стены ──
     let fortresses = Fortresses::of(&map.buildings);
     for wall in walls {
         for run in fortresses.bare_runs(&wall.points) {
@@ -1935,6 +1958,7 @@ pub fn build_roads(
         }
     }
 
+    // ── Сборка слоёв и отчёт ──
     // асфальт, тротуар и дорожка — фактурные, лента стены — плоская; три
     // мостовых слоя со своими высотами и материалами отдаёт `Bridges`
     let mut layers: Vec<LayerMesh> = [
