@@ -14,6 +14,22 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
 
 ## Rendering
 
+- **The phases of `build_roads`** — the build's own order, named by the section banners in
+  its body (`// ── name ──`); a hand-rolled block with a narrow input is a nested phase
+  function (the block of phase bodies just before the assembly), while wiring over the
+  whole build's shared state — the ribbons loop above all — stays a section under its
+  banner. Raw OSM returns early; then, before the ribbons: the drawn network (`Drawn`,
+  nodal axes, paint stations, kerb returns, small islands) → junctions and kerb returns
+  (`Junctions::new`, `KerbReturns::lay`) → merge edges → kerb pockets → turning circles →
+  ribbon axes, turn paths and the fill order → gores, ring islands and mouths → the
+  junction break views and merge ramps → the medians of paired halves (the report's
+  `network` time ends here) → road areas and safety islands → the rings' sidewalk bands
+  and seam dash gaps. The **ribbons** — the main pass street by street in fill order:
+  asphalt, sidewalk bands, verges, paint, tapers, bridge decks. After them: slit aprons
+  → lawn scraps (paving, then green) → junction paint and turn wear → above the asphalt:
+  the gores' asphalt, the tram band, the lot layers → track bridges and level crossings
+  → the rings' island grass → the fortress wall ribbon → the layer assembly, z-sorted,
+  and the report.
 - **Sidewalks** (`map/roads.rs`, `sidewalks` layer at `Z_SIDEWALK` 1.6, `SurfaceKind::
   Sidewalk`, light concrete `SIDEWALK_COLOR` over the asphalt-grey `ROAD_COLOR` — the
   brightness step between them is what reads as the kerb) — a **carriageway**
