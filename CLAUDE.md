@@ -134,7 +134,10 @@ The user's screenshots are screen regions from a macOS utility, not game capture
 position is printed **in the picture**: the last line of the top-right telemetry panel,
 `zoom/x/y cursor_x/cursor_y`, in map metres. Read it with `tools/shot_coords <png> [px py]`
 (the png path is the `[Image: source: …]` line), then list what is there with
-`tools/osm_near x y [radius]`. **Never take the position from `brp cam`**: that is where
+`tools/osm_near x y [radius]`. A geo coordinate from outside the map — a note, a
+tracker point — projects into the same metres with `tools/geo2map <lat> <lon>`; it
+lifts the projection from `osm_near`, so no session re-derives it by hand.
+**Never take the position from `brp cam`**: that is where
 the live camera is now, not where the shot was taken. Details are in
 `.claude/live-app-project.md` ("Where a screenshot was taken") and in `osm-map`.
 
