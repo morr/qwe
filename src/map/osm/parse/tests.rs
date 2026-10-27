@@ -6,9 +6,9 @@ use super::tags::{building_height, colour, parse_measure};
 use crate::map::osm::fixture::{Overpass, building, closed, rect, square, street, water_area};
 use crate::map::osm::model::sidewalk_band;
 use crate::map::osm::model::{
-    BuildingUse, Colours, FenceKind, Highway, LaneTurn, LotKind, PitchKind, RailKind, RoadAreaKind,
-    RoadClass, RoadNodeKind, Sacred, SacredForm, ServiceTrack, StructureKind, WaterKind,
-    distance_to_segment, is_big_box,
+    BuildingUse, Colours, Faith, FenceKind, Highway, LaneTurn, LotKind, Pavement, PitchKind,
+    RailKind, RoadAreaKind, RoadClass, RoadNodeKind, Sacred, SacredForm, ServiceTrack,
+    StructureKind, WaterKind, distance_to_segment, is_big_box,
 };
 use crate::map::osm::planting::{
     TREE_CROWN_REACH, TREE_MIN_SPACING, TREE_SHORE_CLEARANCE, TREE_WALL_CLEARANCE, near_area_edge,
@@ -3852,61 +3852,6 @@ fn a_block_drawn_to_the_kerb_is_tucked_under_its_sidewalk_footway() {
     assert!(
         (cornered + 7.0).abs() < 0.02,
         "угол под переходом не ушёл под тротуар: {cornered}"
-    );
-}
-
-/// Сборка храмов — в одиночку, на трёх контурах: барабан внутри собора берёт
-/// его веру и его посев, а одинокая церковь без разметки — веру большинства
-/// города, и она же одна и попадает в счётчик угаданных.
-#[test]
-fn resolving_the_faiths_runs_on_its_own() {
-    let church = |ring: Vec<Vec2>, faith: Faith, form: SacredForm| PolyArea {
-        building_use: BuildingUse::Church(Sacred {
-            faith,
-            form,
-            complex: 0,
-            floor_dm: 0,
-        }),
-        ..building(ring, Vec::new())
-    };
-    let mut buildings = vec![
-        church(square(CENTER, 20.0), Faith::Orthodox, SacredForm::Nave),
-        // барабан стоит в контуре собора и своей веры не имеет
-        church(square(CENTER, 5.0), Faith::Unknown, SacredForm::Dome),
-        // а эта церковь стоит сама по себе, и веры у неё тоже нет
-        church(
-            square(CENTER + Vec2::new(500.0, 0.0), 15.0),
-            Faith::Unknown,
-            SacredForm::Nave,
-        ),
-    ];
-
-    assert_eq!(
-        resolve_faiths(&mut buildings),
-        1,
-        "по большинству города угадан ровно один храм"
-    );
-
-    let sacred = |building: &PolyArea| match building.building_use {
-        BuildingUse::Church(sacred) => sacred,
-        other => panic!("не храм: {other:?}"),
-    };
-    let (cathedral, drum, lone) = (
-        sacred(&buildings[0]),
-        sacred(&buildings[1]),
-        sacred(&buildings[2]),
-    );
-    assert_ne!(cathedral.complex, 0, "посев храма не проставлен");
-    assert_eq!(drum.faith, Faith::Orthodox, "барабан не взял веру собора");
-    assert_eq!(drum.complex, cathedral.complex, "и красится сам по себе");
-    assert_eq!(
-        lone.faith,
-        Faith::Orthodox,
-        "одинокая церковь не взяла веру большинства"
-    );
-    assert_ne!(
-        lone.complex, cathedral.complex,
-        "чужой храм красится посевом собора"
     );
 }
 

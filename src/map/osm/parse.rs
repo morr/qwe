@@ -17,8 +17,8 @@ use crate::map::cars::district::Districts;
 use crate::map::grid::Grid;
 use crate::map::osm::entrances::generate_entrances;
 use crate::map::osm::model::{
-    AreaKind, BuildingUse, Faith, FenceLine, Highway, MapData, Pavement, PipeLine, PolyArea,
-    RailLine, RoadArea, RoadClass, RoadLine, RoadNode, Sacred, SacredForm, SidewalkSide, Structure,
+    AreaKind, BuildingUse, FenceLine, Highway, MapData, PipeLine, PolyArea,
+    RailLine, RoadArea, RoadClass, RoadLine, RoadNode, SidewalkSide, Structure,
     TrafficSide, TreeCompose, TreeNode, TreeRow, TreeRowLayout, WallLine, WaterLine,
     closest_on_segment, point_in_area, point_in_polygon, ring_area, ring_bounds, ring_vertex_mean,
     signed_ring_area,
@@ -27,7 +27,6 @@ use crate::map::osm::overpass::{Element, GeoBounds, LatLon, Member, OverpassResp
 use crate::map::roads::network::sections::{self, SectionReport};
 use crate::map::roads::rings;
 use crate::map::roads::shape::LANE_WIDTH_DEFAULT;
-use crate::map::seed::seed_from_point;
 
 /// Ширина стены Кремля, м.
 const WALL_WIDTH: f32 = 3.0;
@@ -309,7 +308,7 @@ struct PassReport {
     /// Пар путей, сшитых через дорогу (`rails::stitch_rail_gaps`).
     stitched_rails: usize,
     sidewalks: InferredSidewalks,
-    pavements: InferredPavements,
+    pavements: pavements::InferredPavements,
     separate: verges::SeparateSidewalks,
     faiths_guessed: usize,
     entrances_found: usize,
@@ -501,14 +500,14 @@ impl std::fmt::Display for PassReport {
 ///    — этажность застройки вокруг, и утонувший дом в неё входить не должен;
 ///    а читают решение шаги 5 и 6 (дом отъезжает только от нарисованного
 ///    тротуара, квартал дотягивается под него же).
-///    **Покрытие дорожек без тега** ([`infer_pavements`]) — там же, хотя
+///    **Покрытие дорожек без тега** ([`pavements::infer_pavements`]) — там же, хотя
 ///    место ему любое: зелень, которую он спрашивает, дальше не двигается, а
 ///    читает решение только рендер.
 ///    **Тротуар, отданный отдельной дорожке** ([`verges::measure_footways_beside_streets`]),
 ///    — сразу за покрытием: он спрашивает, мощёная ли дорожка вдоль кромки, а
 ///    читают его, как и тротуар по застройке, шаги 5 и 6.
 /// 2. **Вера** — до дверей и до выпрямления: она собирает храм из частей
-///    (`resolve_faiths` зовёт `absorb_annexes` внутри себя), а часть,
+///    (`faiths::resolve_faiths` зовёт `absorb_annexes` внутри себя), а часть,
 ///    ставшая приделом, дальше читается иначе.
 /// 3. **Разметанные двери** прикладываются к контурам, пока те ещё сырые: у
 ///    входа координата **ноды**, а не вершины, и ищется он по тому же
@@ -593,9 +592,9 @@ fn finish_parse(map: &mut MapData, pending: &Pending, knobs: ParseKnobs) -> Pass
             let districts = Districts::new(&map.buildings);
             infer_sidewalks(&mut map.roads, &districts)
         };
-        let pavements = infer_pavements(map);
+        let pavements = pavements::infer_pavements(pavements::InferPavementsCtx::of(map));
         let separate = verges::measure_footways_beside_streets(&mut map.roads, &map.network);
-        let faiths_guessed = resolve_faiths(&mut map.buildings);
+        let faiths_guessed = faiths::resolve_faiths(faiths::ResolveFaithsCtx::of(map));
         (sidewalks, pavements, separate, faiths_guessed)
     };
     let entrances_orphaned = attach_entrances(map, entrances);
@@ -800,130 +799,6 @@ fn infer_sidewalks(roads: &mut [RoadLine], districts: &Districts) -> InferredSid
     }
 }
 
-/// Шаг, с которым дорожка без тега меряет, по зелени ли она идёт, м.
-const PAVEMENT_PROBE_STEP: f32 = 10.0;
-/// Клетка индекса зелени для [`infer_pavements`], м: парк — сотни метров,
-/// сквер — десятки.
-const GREEN_CELL: f32 = 100.0;
-
-/// Что решил [`infer_pavements`]: сколько дорожек без покрытия было спрошено,
-/// сколько из них ушли по зелени в тропинки и сколько остались мощёными,
-/// потому что оба их конца на мощёных дорожках.
-#[derive(Debug, Default, Clone, Copy, PartialEq)]
-struct InferredPavements {
-    asked: usize,
-    unpaved: usize,
-    between_paved: usize,
-}
-
-impl std::fmt::Display for InferredPavements {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let Self {
-            asked,
-            unpaved,
-            between_paved,
-        } = self;
-        write!(
-            f,
-            "osm parse: {unpaved} of {asked} untagged footways run through greenery and stay \
-             unpaved, {between_paved} more are paved between paved paths"
-        )
-    }
-}
-
-/// Покрытие дорожки без тега `surface` — по тому, где она идёт.
-///
-/// Мощёную дорожку долго рисовали песчаной тропинкой, как и всякую: в центре
-/// города тротуар из плитки (`footway=sidewalk, surface=paving_stones`)
-/// ложился песчаной лентой рядом с бетонной полосой тротуара улицы, а сетка
-/// аллей сквера из плитки — пляжем (разведка C1). Теги решают больше половины
-/// дорожек ([`tagged_pavement`]); остаётся голый `footway` без `surface`, и
-/// его решает **середина пути по длине**: больше половины проб по парку, лесу
-/// или газону — тропинка, иначе — асфальт двора и улицы. По тегам в Туле и в
-/// парке мощёных больше, но всё мощёное там и размечено; молчащий `footway`
-/// в сквере — чаще протоптанная дорожка. **Кроме звена между мощёными**:
-/// дорожка по зелени, оба конца которой — точки мощёных дорожек (тег, род —
-/// лестница, площадь — или сама решённая мощёной), тоже мощёная. Один проход,
-/// без цепочек: звено, стоящее на другом таком звене, остаётся тропинкой.
-///
-/// Детерминировано: пробы — функция точек пути, индекс зелени — её контуров.
-fn infer_pavements(map: &mut MapData) -> InferredPavements {
-    let MapData {
-        roads,
-        parks,
-        woods,
-        grass,
-        ..
-    } = map;
-    let asked: Vec<usize> = roads
-        .iter()
-        .enumerate()
-        .filter(|(_, road)| road.class == RoadClass::Alley && road.pavement.is_none())
-        .map(|(index, _)| index)
-        .collect();
-    if asked.is_empty() {
-        return InferredPavements::default();
-    }
-    let green: Vec<&PolyArea> = parks
-        .iter()
-        .chain(woods.iter())
-        .chain(grass.iter())
-        .collect();
-    let mut index: Grid<usize> = Grid::new(GREEN_CELL);
-    for (at, area) in green.iter().enumerate() {
-        let (min, max) = ring_bounds(&area.outer);
-        index.insert(min, max, at);
-    }
-    let in_green = |point: Vec2| {
-        index
-            .at(point)
-            .iter()
-            .any(|&at| point_in_area(point, green[at]))
-    };
-    let mut unpaved = 0;
-    for &at in &asked {
-        let road = &mut roads[at];
-        let probes = densify(&road.points, PAVEMENT_PROBE_STEP);
-        let inside = probes.iter().filter(|point| in_green(**point)).count();
-        road.pavement = Some(if 2 * inside > probes.len() {
-            unpaved += 1;
-            Pavement::Unpaved
-        } else {
-            Pavement::Paved
-        });
-    }
-    // Дорожка по газону, оба конца которой стоят на мощёных, — звено мощёной
-    // сети, а не тропинка: лучи сквера от кольцевой аллеи к лестницам
-    // центральной площадки ложились песком, и лестницы торчали на нём
-    // мощёными обрубками с круглыми торцами (Тула, остров кольца, витрина 04)
-    let paved_joints: HashSet<(i32, i32)> = roads
-        .iter()
-        .filter(|road| road.is_paved_path())
-        .flat_map(|road| road.points.iter().map(|&point| vertex_key(point)))
-        .collect();
-    let mut between_paved = 0;
-    for &at in &asked {
-        let road = &mut roads[at];
-        let (Some(&first), Some(&last)) = (road.points.first(), road.points.last()) else {
-            continue;
-        };
-        if road.pavement == Some(Pavement::Unpaved)
-            && vertex_key(first) != vertex_key(last)
-            && paved_joints.contains(&vertex_key(first))
-            && paved_joints.contains(&vertex_key(last))
-        {
-            road.pavement = Some(Pavement::Paved);
-            unpaved -= 1;
-            between_paved += 1;
-        }
-    }
-    InferredPavements {
-        asked: asked.len(),
-        unpaved,
-        between_paved,
-    }
-}
-
 /// Дома, целиком стоящие в воде, выбрасываются. В OSM это плавучие рестораны и
 /// дебаркадеры (`HMS Belfast` в Лондоне, `Café Barge` в Париже), а в Туле —
 /// одинокий сарай посреди Верхнего пруда. Навмеш заливает воду непроходимой,
@@ -961,252 +836,6 @@ fn drop_buildings_in_water(map: &mut MapData) -> usize {
         })
     });
     before - buildings.len()
-}
-
-/// Как далеко от храма ещё стоит его часть — колокольня рядом, придел, м.
-const CHURCH_PART_REACH: f32 = 30.0;
-
-/// Храмы собираются из частей: у каждой — свой **храм** ([`Sacred::complex`])
-/// и вера. Возвращает, скольким храмам веру пришлось взять у города.
-///
-/// OSM рисует собор то одним контуром, то общим контуром и частями
-/// (`building:part`, барабаны с `roof:shape=onion`, колокольня рядом), и у
-/// частей своих тегов почти нет. В Туле так размечен Успенский собор кремля:
-/// вера — на общем контуре, а три главы и колокольня — отдельными контурами
-/// без неё, и каждая часть выбирала себе цвет сама — розовый барабан рядом с
-/// белым и бирюзовая глава рядом с золотой.
-///
-/// * **Хозяин части** — самый крупный из храмов крупнее неё, в контуре
-///   которого стоит её центр, а если такого нет — ближайший из них не дальше
-///   [`CHURCH_PART_REACH`] (колокольня стоит рядом, а не внутри). Храм без
-///   хозяина — сам себе храм. Хозяин берётся цепочкой до верха: колокольня,
-///   чей ближайший крупный сосед — часть собора, принадлежит собору.
-/// * **Посев храма** — от первой вершины верхнего хозяина: им красятся все части.
-/// * **Вера** — своя, если размечена; иначе ближайшего по цепочке хозяина с
-///   размеченной; иначе большинства храмов
-///   города: христианский храм без деноминации в Туле православный, а в Берлине
-///   кирха. При равенстве, и в городе без единого размеченного храма, —
-///   [`Faith::Western`], самый распространённый в OSM вид церкви.
-fn resolve_faiths(buildings: &mut [PolyArea]) -> usize {
-    struct Church {
-        index: usize,
-        faith: Faith,
-        area: f32,
-        center: Vec2,
-        bounds: (Vec2, Vec2),
-    }
-    let churches: Vec<Church> = buildings
-        .iter()
-        .enumerate()
-        .filter_map(|(index, building)| match building.building_use {
-            BuildingUse::Church(sacred) => {
-                let bounds = ring_bounds(&building.outer);
-                Some(Church {
-                    index,
-                    faith: sacred.faith,
-                    area: ring_area(&building.outer),
-                    center: (bounds.0 + bounds.1) * 0.5,
-                    bounds,
-                })
-            }
-            _ => None,
-        })
-        .collect();
-
-    let (orthodox, western) = churches
-        .iter()
-        .fold((0, 0), |(o, w), church| match church.faith {
-            Faith::Orthodox => (o + 1, w),
-            Faith::Western => (o, w + 1),
-            _ => (o, w),
-        });
-    let majority = if orthodox > western {
-        Faith::Orthodox
-    } else {
-        Faith::Western
-    };
-
-    // хозяин — по снимку до записи: часть не должна стать хозяином по
-    // собственной, только что выданной вере
-    let hosts: Vec<Option<usize>> = churches
-        .iter()
-        .map(|part| {
-            let larger = churches
-                .iter()
-                .enumerate()
-                .filter(|(_, other)| other.index != part.index && other.area > part.area);
-            let inside = larger
-                .clone()
-                .filter(|(_, other)| {
-                    part.center.cmpge(other.bounds.0).all()
-                        && part.center.cmple(other.bounds.1).all()
-                        && point_in_polygon(part.center, &buildings[other.index].outer)
-                })
-                .max_by(|a, b| a.1.area.total_cmp(&b.1.area));
-            inside.map(|(at, _)| at).or_else(|| {
-                larger
-                    .map(|(at, other)| {
-                        let nearest = part.center.clamp(other.bounds.0, other.bounds.1);
-                        (at, nearest.distance(part.center))
-                    })
-                    .filter(|(_, distance)| *distance <= CHURCH_PART_REACH)
-                    .min_by(|a, b| a.1.total_cmp(&b.1))
-                    .map(|(at, _)| at)
-            })
-        })
-        .collect();
-
-    // хозяин цепочкой: колокольня, ближе всего стоящая к части собора, берёт
-    // посев и веру у собора, а не у части. Цепочка конечна — площадь хозяина
-    // строго растёт
-    let chain = |from: usize| std::iter::successors(Some(from), |&at| hosts[at]);
-    let mut guessed = 0;
-    for (at, church) in churches.iter().enumerate() {
-        let faith = match chain(at)
-            .map(|up| churches[up].faith)
-            .find(|faith| *faith != Faith::Unknown)
-        {
-            Some(faith) => faith,
-            None => {
-                guessed += 1;
-                majority
-            }
-        };
-        let root = chain(at).last().unwrap_or(at);
-        let anchor = churches[root].index;
-        let complex = seed_from_point(buildings[anchor].outer.first().copied().unwrap_or_default());
-        if let BuildingUse::Church(sacred) = &mut buildings[church.index].building_use {
-            sacred.faith = faith;
-            sacred.complex = complex;
-        }
-    }
-
-    absorb_annexes(buildings);
-    guessed
-}
-
-/// Во сколько раз пристройка может быть крупнее храма, на котором лежит. Музей
-/// оружия в Богоявленском соборе крупнее собора в 1.35 раза — это тот же дом,
-/// размеченный вторым контуром; квартал с домовой церковью во дворе крупнее
-/// в десятки раз, и храмом он не становится.
-const ANNEX_AREA_RATIO: f32 = 2.5;
-/// Какую долю своего пятна контур обязан делить с храмом, чтобы стать
-/// пристройкой, когда ни один из двух центров не лежит в другом. Алтарная
-/// часть Богоявленского собора (20 × 24 м) заходит в собор на половину, а её
-/// центр — за его стеной. Дом, лишь примыкающий к храму общей стеной, делит с
-/// ним ноль площади и остаётся домом.
-const ANNEX_OVERLAP_SHARE: f32 = 0.25;
-
-/// Площадь пересечения двух колец, м².
-fn overlap_area(a: &[Vec2], b: &[Vec2]) -> f32 {
-    use i_overlay::core::fill_rule::FillRule;
-    use i_overlay::core::overlay_rule::OverlayRule;
-    use i_overlay::float::single::SingleFloatOverlay;
-
-    let ring = |points: &[Vec2]| -> Vec<[f32; 2]> {
-        let mut ring: Vec<[f32; 2]> = points.iter().map(|p| [p.x, p.y]).collect();
-        // i_overlay ждёт единую закрутку, OSM её не гарантирует
-        if signed_ring_area(points) < 0.0 {
-            ring.reverse();
-        }
-        ring
-    };
-    let (a, b) = (vec![ring(a)], vec![ring(b)]);
-    a.overlay(&b, OverlayRule::Intersect, FillRule::NonZero)
-        .iter()
-        .flat_map(|shape| shape.iter().enumerate())
-        .map(|(index, contour)| {
-            let points: Vec<Vec2> = contour.iter().map(|p| Vec2::new(p[0], p[1])).collect();
-            // первый контур фигуры — внешний, остальные — дыры
-            let area = ring_area(&points);
-            if index == 0 { area } else { -area }
-        })
-        .sum()
-}
-
-/// Контуры без назначения, лежащие **на храме**, становятся его пристройками
-/// ([`SacredForm::Annex`]): вера и посев храма, храмовые стены и кровля, своих
-/// глав нет.
-///
-/// OSM рисует храм и тем, чем он стал: в Тульском кремле поверх Богоявленского
-/// собора лежит контур «музей оружия» (`building=yes`, три этажа), а рядом —
-/// пристройка без тегов, и оба рисовались жилыми коробками с окнами, из-за
-/// которых торчали главы собора. Признак пристройки — взаимное наложение:
-/// центр контура в храме, центр храма в контуре или общая с храмом доля пятна
-/// не меньше [`ANNEX_OVERLAP_SHARE`], при площади не больше
-/// [`ANNEX_AREA_RATIO`] храма. Храм, к которому она прирастает, — самый крупный
-/// из подходящих.
-fn absorb_annexes(buildings: &mut [PolyArea]) {
-    // Раунды — потому что пристройка прирастает и к пристройке: алтарная часть
-    // Богоявленского собора лежит на контуре музея, а с самим собором делит
-    // меньше четверти своего пятна. Отдельно стоящий дом ни с чем не
-    // перекрывается, так что цепочка сквозь квартал не растёт.
-    for _ in 0..ANNEX_ROUNDS {
-        if absorb_round(buildings) == 0 {
-            break;
-        }
-    }
-}
-
-/// Сколько раундов прирастания пристроек, не больше.
-const ANNEX_ROUNDS: usize = 3;
-
-/// Один раунд [`absorb_annexes`]: хозяева — все храмы и пристройки на его
-/// начало. Возвращает, сколько контуров стало пристройками.
-fn absorb_round(buildings: &mut [PolyArea]) -> usize {
-    let candidates: Vec<(usize, (Vec2, Vec2), f32)> = buildings
-        .iter()
-        .enumerate()
-        .filter(|(_, building)| matches!(building.building_use, BuildingUse::Church(_)))
-        .map(|(index, building)| {
-            (
-                index,
-                ring_bounds(&building.outer),
-                ring_area(&building.outer),
-            )
-        })
-        .collect();
-    if candidates.is_empty() {
-        return 0;
-    }
-    let mut absorbed = 0;
-    for index in 0..buildings.len() {
-        let building = &buildings[index];
-        // только контур без назначения (`building=yes`, `building:part`): дом,
-        // школа или магазин с названным классом храмом не становятся, как бы
-        // ни лежали
-        if building.kind != AreaKind::Building || building.building_use != BuildingUse::Other {
-            continue;
-        }
-        let bounds = ring_bounds(&building.outer);
-        let center = (bounds.0 + bounds.1) * 0.5;
-        let area = ring_area(&building.outer);
-        let host = candidates
-            .iter()
-            .filter(|(church, (lo, hi), church_area)| {
-                let overlap = bounds.0.cmple(*hi).all() && bounds.1.cmpge(*lo).all();
-                overlap
-                    && area <= church_area * ANNEX_AREA_RATIO
-                    && (point_in_polygon(center, &buildings[*church].outer)
-                        || point_in_polygon((*lo + *hi) * 0.5, &building.outer)
-                        || overlap_area(&building.outer, &buildings[*church].outer)
-                            >= area * ANNEX_OVERLAP_SHARE)
-            })
-            .max_by(|a, b| a.2.total_cmp(&b.2));
-        let Some(&(church, ..)) = host else {
-            continue;
-        };
-        let BuildingUse::Church(sacred) = buildings[church].building_use else {
-            continue;
-        };
-        buildings[index].building_use = BuildingUse::Church(Sacred {
-            form: SacredForm::Annex,
-            floor_dm: 0,
-            ..sacred
-        });
-        absorbed += 1;
-    }
-    absorbed
 }
 
 /// Нода `entrance=*` → позиция на карте. Не вход или значение из
@@ -2880,7 +2509,9 @@ fn assemble_rings(
     rings
 }
 
+mod faiths;
 mod lots;
+mod pavements;
 mod pockets;
 mod rails;
 mod tags;
