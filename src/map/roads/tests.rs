@@ -3160,16 +3160,15 @@ fn an_outer_corner_sides_lie_on_the_ribbon_butt_edges() {
     let axis = prepared.axis(1, Axis::Ribbon);
     let butt = butt_direction(axis, false).expect("у оси есть крайнее звено");
     let expected = node - butt.perp() * 4.0 + butt * corners::OUTER_OVERLAP;
-    let found = returns
-        .roads
+    let streets: Vec<&[Vec2]> = returns.streets().outlines().collect();
+    let found = streets
         .iter()
-        .flat_map(|(_, outline)| outline)
+        .flat_map(|outline| outline.iter())
         .any(|point| point.distance(expected) < 0.02);
     assert!(
         found,
         "стороны веера — по торцевым кромкам: вершины {expected} нет ни в \
-         одном {:?}",
-        returns.roads
+         одном {streets:?}"
     );
 }
 
@@ -4453,28 +4452,7 @@ fn diag_window() {
                 );
             }
         }
-        let near = |outline: &Vec<Vec2>| outline.iter().any(|p| p.distance(at) < r);
-        for (class, o) in returns.roads.iter().filter(|(_, o)| near(o)) {
-            eprintln!("DIAG kr roads {class:?} {o:?}");
-        }
-        for (fill, o) in returns.bends.iter().filter(|(_, o)| near(o)) {
-            eprintln!("DIAG kr bend {fill:?} {o:?}");
-        }
-        for (fill, o) in returns.noses.iter().filter(|(_, o)| near(o)) {
-            eprintln!("DIAG kr nose {fill:?} {o:?}");
-        }
-        for o in returns.fork_gores.iter().filter(|o| near(o)) {
-            eprintln!("DIAG kr gore {o:?}");
-        }
-        for o in returns.sidewalks.iter().filter(|o| near(o)) {
-            eprintln!("DIAG kr sidewalk {o:?}");
-        }
-        for o in returns.verges.iter().filter(|o| near(o)) {
-            eprintln!("DIAG kr verge {o:?}");
-        }
-        for o in returns.verge_lawns.iter().filter(|o| near(o)) {
-            eprintln!("DIAG kr lawn {o:?}");
-        }
+        returns.dump_near(at, r);
         for i in 0..prepared.len() {
             let b = returns.butt(i);
             if b != [false; 2]
@@ -4544,12 +4522,30 @@ fn diag_window() {
         let returns = super::corners::kerb_returns(&prepared, shape.corner_radius());
         let meadows = super::Meadows::of(&map.parks, &map.grass);
         let mut scraps = super::scraps::Scraps::default();
-        for outline in &returns.verge_lawns {
-            scraps.push_lawn(outline.clone());
-        }
+        // окна газонов и асфальт узлов — тем же укладщиком, что и в
+        // mesh_roads (`KerbReturns::lay`); билдеры слоёв выбрасываются,
+        // важен вклад в лоскуты
+        let mut streets = MeshBuilder::with_surface_coords();
+        let mut alleys = MeshBuilder::with_surface_coords();
+        let mut unpaved = MeshBuilder::with_surface_coords();
+        let mut sidewalk = MeshBuilder::with_surface_coords();
+        let mut verge = MeshBuilder::with_surface_coords();
         let mut tiles = MeshBuilder::with_surface_coords();
         let mut lawns = MeshBuilder::with_surface_coords();
         let mut yards = MeshBuilder::with_surface_coords();
+        returns.lay(
+            super::corners::KerbLayers {
+                streets: &mut streets,
+                alleys: &mut alleys,
+                unpaved: &mut unpaved,
+                sidewalks: &mut sidewalk,
+                verges: &mut verge,
+                lawns: &mut lawns,
+                yards: &mut yards,
+            },
+            &meadows,
+            &mut scraps,
+        );
         let road_bites = super::scraps::Bites::of(prepared.nodes(), &prepared.roads());
         for index in 0..prepared.len() {
             let road = prepared.road(index);
@@ -4591,29 +4587,13 @@ fn diag_window() {
             }
         }
         if std::env::var("QWE_DIAG_SCRAPS_FIND").is_ok() {
-            let paved_fill = |fill: &super::corners::Fill| {
-                matches!(
-                    fill,
-                    super::corners::Fill::Road(crate::map::osm::RoadClass::Street)
-                        | super::corners::Fill::Sidewalk
-                )
-            };
+            // плоское мощение, клинья развилок, мощёные носы и дуги — тем же
+            // порядком, что в mesh_roads
             for outline in returns
-                .roads
-                .iter()
-                .filter(|(class, _)| *class == crate::map::osm::RoadClass::Street)
-                .map(|(_, outline)| outline)
-                .chain(&returns.sidewalks)
-                .chain(&returns.verges)
-                .chain(&returns.fork_gores)
-                .chain(
-                    returns
-                        .noses
-                        .iter()
-                        .chain(&returns.bends)
-                        .filter(|(fill, _)| paved_fill(fill))
-                        .map(|(_, outline)| outline),
-                )
+                .paving()
+                .flat()
+                .chain(returns.fork_gores().iter().map(Vec::as_slice))
+                .chain(returns.paving().curved())
             {
                 if scraps.near_lawn(outline, 0.0) {
                     scraps.push_paving(outline);

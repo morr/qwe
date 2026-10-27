@@ -332,49 +332,50 @@ pub enum Fill {
 
 /// Асфальт всех узлов. Укладка — методом модуля ([`Self::lay`]): порядок
 /// слоёв — инвариант `corners`, а не вызывающего. Читатели геометрии берут
-/// представления ([`Self::paving`], [`Self::streets`]); поля открыты только
-/// внутрь `roads` — отчёту сборки и тестам, ждущим своей очереди.
+/// представления ([`Self::paving`], [`Self::streets`]), счётчики —
+/// [`Self::counts`], клинья развилок — [`Self::fork_gores`]; поля закрыты
+/// внутрь модуля и его тестов.
 #[derive(Default)]
 pub struct KerbReturns {
     /// Носы острых развилок ([`NOSE_SHARE`]) и слой каждого. Нос не выпукл и
     /// веером не кладётся: его стороны идут по кромкам лент, а они у острой
     /// развилки гнутые, — контур триангулируется целиком.
-    pub(super) noses: Vec<(Fill, Vec<Vec2>)>,
+    noses: Vec<(Fill, Vec<Vec2>)>,
     /// Изогнутые скругления ([`bend`]) и слой каждого: у кольца и гнутого
     /// подхода кромка кривая, контур не выпукл — триангулируется целиком.
-    pub(super) bends: Vec<(Fill, Vec<Vec2>)>,
+    bends: Vec<(Fill, Vec<Vec2>)>,
     /// Штрихуемые клинья перед носами острых развилок улиц ([`fork_gore`]):
     /// контур от острия клина до дуги носа — слою островков
     /// (`roads/gores.rs`).
-    pub(super) fork_gores: Vec<Vec<Vec2>>,
+    fork_gores: Vec<Vec<Vec2>>,
     /// Контур и класс дорог, в чей слой заливки он ляжет: скругления и
     /// наружные углы. Каждый — веер из первой вершины.
-    pub(super) roads: Vec<(RoadClass, Vec<Vec2>)>,
+    roads: Vec<(RoadClass, Vec<Vec2>)>,
     /// Скругления между двумя грунтовыми улицами — в их слое, так же.
-    pub(super) unpaved: Vec<Vec<Vec2>>,
+    unpaved: Vec<Vec<Vec2>>,
     /// Контуры в слое тротуаров, так же: углы полос тротуара и скругления
     /// узлов с мощёной дорожкой.
-    pub(super) sidewalks: Vec<Vec<Vec2>>,
+    sidewalks: Vec<Vec<Vec2>>,
     /// Наезды плитки на дворе у слияний мощёных дорожек ([`tile_overlaps`]):
     /// полоса вдоль кромки луча, за которой двор. Рисуются в слое тротуаров
     /// рядом с `sidewalks`, но лоскуты газона (`roads/scraps.rs`) ими не
     /// кормятся: наезд — сам починка, а не мощение, замыкающее лоскут.
-    pub(super) overlaps: Vec<Vec<Vec2>>,
+    overlaps: Vec<Vec<Vec2>>,
     /// Контуры в слое обочин (`road_verges`), так же: углы, где с одной
     /// стороны или с обеих вместо полосы тротуара обочина.
-    pub(super) verges: Vec<Vec<Vec2>>,
+    verges: Vec<Vec<Vec2>>,
     /// Те же углы между двумя **широкими** обочинами — газоном
     /// (`road_verge_lawns` или `road_verge_yards`), как и сами обочины: плиткой угол во все
     /// пятнадцать метров до дорожек был площадью посреди двора.
-    pub(super) verge_lawns: Vec<Vec<Vec2>>,
+    verge_lawns: Vec<Vec<Vec2>>,
     /// Сколько из `roads` и `sidewalks` — наружные углы, а не скругления.
-    pub(super) outer: [usize; 2],
+    outer: [usize; 2],
     /// Торцы, кончающиеся в узле, по дорогам: `[начало, конец]` — ленты с
     /// таким торцом кладутся с прямым, а не круглым.
-    pub(super) butt: Vec<[bool; 2]>,
+    butt: Vec<[bool; 2]>,
     /// На сколько метров не доходит до узла заливка торца `[начало, конец]`:
     /// у асфальтовой улицы, упёршейся в грунтовку, — полуширина грунтовки.
-    pub(super) setback: Vec<[f32; 2]>,
+    setback: Vec<[f32; 2]>,
 }
 
 /// Слои, в которые [`KerbReturns::lay`] кладёт асфальт узлов: по билдеру на
@@ -500,6 +501,72 @@ impl KerbReturns {
             bends: &self.bends,
         }
     }
+
+    /// Что скругления насчитали — для отчёта сборки (`roads::RoadReport`):
+    /// группы в счётчиках, наружные углы — отдельно от скруглений.
+    pub(super) fn counts(&self) -> KerbCounts {
+        KerbCounts {
+            kerb_returns: self.roads.len() + self.unpaved.len() - self.outer[0],
+            sidewalk_returns: self.sidewalks.len() - self.outer[1],
+            tile_overlaps: self.overlaps.len(),
+            bends: self.bends.len(),
+            outer_corners: self.outer,
+            noses: self.noses.len(),
+        }
+    }
+
+    /// Штрихуемые клинья перед носами острых развилок улиц ([`fork_gore`])
+    /// — `gores::Gores::add_forks`: асфальт под клином уже лежит (лента и
+    /// нос развилки), штрихуется только контур.
+    pub(super) fn fork_gores(&self) -> &[Vec<Vec2>] {
+        &self.fork_gores
+    }
+
+    /// Что скругления насчитали вокруг точки — диагностике тестов
+    /// (`roads/tests.rs`, `QWE_DIAG`): группы как есть, по строке на контур.
+    #[cfg(test)]
+    pub(super) fn dump_near(&self, at: Vec2, reach: f32) {
+        let near = |outline: &Vec<Vec2>| outline.iter().any(|p| p.distance(at) < reach);
+        for (class, outline) in self.roads.iter().filter(|(_, outline)| near(outline)) {
+            eprintln!("DIAG kr roads {class:?} {outline:?}");
+        }
+        for (fill, outline) in self.bends.iter().filter(|(_, outline)| near(outline)) {
+            eprintln!("DIAG kr bend {fill:?} {outline:?}");
+        }
+        for (fill, outline) in self.noses.iter().filter(|(_, outline)| near(outline)) {
+            eprintln!("DIAG kr nose {fill:?} {outline:?}");
+        }
+        for outline in self.fork_gores.iter().filter(|outline| near(outline)) {
+            eprintln!("DIAG kr gore {outline:?}");
+        }
+        for outline in self.sidewalks.iter().filter(|outline| near(outline)) {
+            eprintln!("DIAG kr sidewalk {outline:?}");
+        }
+        for outline in self.verges.iter().filter(|outline| near(outline)) {
+            eprintln!("DIAG kr verge {outline:?}");
+        }
+        for outline in self.verge_lawns.iter().filter(|outline| near(outline)) {
+            eprintln!("DIAG kr lawn {outline:?}");
+        }
+    }
+}
+
+/// Что скругления насчитали — поля `RoadReport` о них (`roads.rs`):
+/// скругления без наружных углов, наезды плитки, носы, дуги, наружные углы.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub(super) struct KerbCounts {
+    /// Скругления асфальта улиц и грунтовых — без наружных углов.
+    pub(super) kerb_returns: usize,
+    /// Скругления тротуаров — без наружных углов.
+    pub(super) sidewalk_returns: usize,
+    /// Наезды плитки на дворе у слияний мощёных дорожек.
+    pub(super) tile_overlaps: usize,
+    /// Изогнутые скругления — у колец и гнутых подходов.
+    pub(super) bends: usize,
+    /// Наружные углы — асфальт улиц и тротуар.
+    pub(super) outer_corners: [usize; 2],
+    /// Носы острых развилок, всех слоёв.
+    pub(super) noses: usize,
 }
 
 /// Мощение вокруг лоскутов газона — представление [`KerbReturns`] для

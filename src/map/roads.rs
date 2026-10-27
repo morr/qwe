@@ -1098,7 +1098,7 @@ pub fn build_roads(
     junctions.add_splitters(&splitters);
     gores.add_splitters(&splitters);
     // клинья перед носами острых развилок улиц (`corners::fork_gore`)
-    gores.add_forks(&kerb_returns.fork_gores);
+    gores.add_forks(kerb_returns.fork_gores());
     // пустоты, зажатые проезжими частями, где ничего не замаплено (R20)
     let found_mouths = mouths(
         map,
@@ -2031,6 +2031,8 @@ pub fn build_roads(
         .iter()
         .map(|layer| layer.builder.vertex_count())
         .sum();
+    // что скругления насчитали — поля отчёта о них (`corners.rs`)
+    let kerbs = kerb_returns.counts();
     // краска — сразу над своим асфальтом: улиц над улицами, мостов над
     // настилом; сортировка устойчива, прочие слои порядка не меняют
     layers.extend(paint_layers);
@@ -2045,12 +2047,12 @@ pub fn build_roads(
         turning_circles,
         turns: turns.maneuvers,
         arrows: if style.arrows { turns.arrows.len() } else { 0 },
-        kerb_returns: kerb_returns.roads.len() + kerb_returns.unpaved.len() - kerb_returns.outer[0],
-        sidewalk_returns: kerb_returns.sidewalks.len() - kerb_returns.outer[1],
-        tile_overlaps: kerb_returns.overlaps.len(),
-        bends: kerb_returns.bends.len(),
-        outer_corners: kerb_returns.outer,
-        noses: kerb_returns.noses.len(),
+        kerb_returns: kerbs.kerb_returns,
+        sidewalk_returns: kerbs.sidewalk_returns,
+        tile_overlaps: kerbs.tile_overlaps,
+        bends: kerbs.bends,
+        outer_corners: kerbs.outer_corners,
+        noses: kerbs.noses,
         lawn_scraps: lawn_scraps.len() + green_scraps.len(),
         drawn: prepared.stats(),
         bridges: bridge_count,
