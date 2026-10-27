@@ -183,11 +183,6 @@ pub(super) fn measure_footways_beside_streets(
     network: &RoadNetwork,
 ) -> SeparateSidewalks {
     let started = std::time::Instant::now();
-    // DIAG-TEMP S-1: `QWE_DIAG_VERGE_SEAM=1` — подавленные пробы и пробы на
-    // швах собственной улицы, с итогом прохода
-    let diag_seam = std::env::var("QWE_DIAG_VERGE_SEAM").is_ok();
-    let mut diag_suppressed = 0;
-    let mut diag_own_seam = 0;
     // звено дорожки и её полуширина
     let mut links: Vec<(Vec2, Vec2, f32)> = Vec::new();
     let mut index: Grid<u32> = Grid::new(SEPARATE_CELL);
@@ -266,25 +261,6 @@ pub(super) fn measure_footways_beside_streets(
                                 && closest_on_segment(point, from, to).distance(point)
                                     <= street_reach
                         });
-                if in_footprint {
-                    diag_suppressed += 1;
-                } else if diag_seam
-                    // шов собственной улицы — не устье (S-1): накрыта только
-                    // соседними звеньями своей улицы
-                    && street_index.near_each(point - reach, point + reach).any(|&street| {
-                        let (from, to, street_reach, owner) = streets[street as usize];
-                        owner != road_index
-                            && network.street_of(owner).map(|(street, _)| street) == mine
-                            && closest_on_segment(point, from, to).distance(point) <= street_reach
-                    })
-                {
-                    diag_own_seam += 1;
-                    eprintln!(
-                        "DIAG verge seam road={road_index} street={mine:?} at={at:.1} \
-                         point=({:.1}, {:.1})",
-                        point.x, point.y,
-                    );
-                }
                 let mut found: [Option<(f32, f32)>; 2] = [None; 2];
                 // косое звено — только профилю: у угла дорожка заворачивает
                 let mut slanted: [Option<f32>; 2] = [None; 2];
@@ -365,13 +341,6 @@ pub(super) fn measure_footways_beside_streets(
         }
     }
     report.took = started.elapsed();
-    if diag_seam {
-        eprintln!(
-            "DIAG verge seam total: {diag_suppressed} suppressed at foreign mouths, \
-             {diag_own_seam} on the own street's seams; separate sidewalks {} of {} in {:?}",
-            report.dropped, report.asked, report.took
-        );
-    }
     report
 }
 
