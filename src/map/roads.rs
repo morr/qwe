@@ -952,53 +952,21 @@ pub fn build_roads(
     // газоны обочин и мощение вокруг них — для лоскутов (`roads/scraps.rs`):
     // угол газона — газон, мощение собирается после лент
     let mut scraps = scraps::Scraps::default();
-    for outline in &kerb_returns.verge_lawns {
-        scraps.push_lawn(outline.clone());
-    }
-    for (class, outline) in &kerb_returns.roads {
-        let (builder, color) = match class {
-            RoadClass::Street => (&mut streets, ROAD_COLOR),
-            RoadClass::Alley => (&mut alleys, ALLEY_COLOR),
-        };
-        // Скругление не выпукло, но веер из его первой вершины — угла краёв —
-        // верен: дуга между точками касания и есть та часть окружности, что
-        // видна из угла. `earcutr` на восьми тысячах таких фигур стоил бы
-        // больше самой укладки.
-        builder.push_convex(outline, color.to_linear());
-    }
-    for outline in &kerb_returns.unpaved {
-        unpaved.push_convex(outline, UNPAVED_ROAD_COLOR.to_linear());
-    }
-    // и тот же угол в слое тротуаров: полоса поворачивает за бордюром
-    for outline in &kerb_returns.sidewalks {
-        sidewalks.push_convex(outline, SIDEWALK_COLOR.to_linear());
-    }
-    // и наезды плитки на дворе у слияний мощёных дорожек — тем же слоем
-    for outline in &kerb_returns.overlaps {
-        sidewalks.push_convex(outline, SIDEWALK_COLOR.to_linear());
-    }
-    // и в слое обочин — где вместо полосы обочина до отдельной дорожки
-    for outline in &kerb_returns.verges {
-        verges.push_convex(outline, SIDEWALK_COLOR.to_linear());
-    }
-    for outline in &kerb_returns.verge_lawns {
-        if meadows.under(outline) {
-            verge_lawns.push_convex(outline, GRASS_COLOR.to_linear());
-        } else {
-            verge_yards.push_convex(outline, VERGE_YARD_COLOR.to_linear());
-        }
-    }
-    // носы острых развилок идут по гнутым кромкам лент, и веер из острия
-    // их не покрыл бы — триангуляция целиком; носов в городе сотни
-    for (fill, outline) in kerb_returns.noses.iter().chain(&kerb_returns.bends) {
-        let (builder, color) = match fill {
-            corners::Fill::Road(RoadClass::Street) => (&mut streets, ROAD_COLOR),
-            corners::Fill::Road(RoadClass::Alley) => (&mut alleys, ALLEY_COLOR),
-            corners::Fill::Unpaved => (&mut unpaved, UNPAVED_ROAD_COLOR),
-            corners::Fill::Sidewalk => (&mut sidewalks, SIDEWALK_COLOR),
-        };
-        builder.push_polygon(outline, &[], color.to_linear());
-    }
+    // асфальт узлов — в свои слои; порядок укладки — инвариант `corners`
+    // (`KerbReturns::lay`), а не этого вызывающего
+    kerb_returns.lay(
+        corners::KerbLayers {
+            streets: &mut streets,
+            alleys: &mut alleys,
+            unpaved: &mut unpaved,
+            sidewalks: &mut sidewalks,
+            verges: &mut verges,
+            lawns: &mut verge_lawns,
+            yards: &mut verge_yards,
+        },
+        &meadows,
+        &mut scraps,
+    );
     // кромки половин, сходящиеся к кромкам продолжения, — тоже до лент
     let mut merge_edges = 0;
     for merge in &prepared.merges().list {
@@ -1796,7 +1764,7 @@ pub fn build_roads(
         )
     };
     // и горки: асфальт или штриховка направляющего островка — не газон,
-    // и кончик островка под горкой оставался клином травы (R37-01, витрина 14)
+    // и кончик островка под горкой оставался клинем травы (R37-01, витрина 14)
     let gore_outlines: Vec<Vec<Vec2>> = gores
         .outlines()
         .map(|contour| contour.iter().map(|&point| point.into()).collect())
