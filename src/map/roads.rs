@@ -1628,80 +1628,29 @@ pub fn build_roads(
     );
     let lawn_scraps = lay_green_scraps(map, &mut scraps, &mut verges, &mut sidewalks);
     // ── Краска узлов и колея траекторий ──
-    // зебра — из целых звеньев на асфальте улиц, каким он уже лёг; стоп-линия
-    // обрезается по тому же асфальту: у устья съезда её конец ложился на
-    // плитку обочины мимо наискось стоящей кромки (S7)
-    let ground = paint::PaintGround::new(marks.zebras(), marks.stop_lines(), streets.triangles());
-    for zebra in marks.zebras() {
-        if let Some(zebra) = paint::whole_bars(zebra, |point| ground.contains(point)) {
-            painter.paint_zebra(&zebra);
-        }
-    }
-    for line in marks.stop_lines() {
-        if let Some(line) = paint::trim_stop_line(line, |point| ground.contains(point)) {
-            painter.paint_stop_line(&line);
-        }
-    }
-    // колея траекторий — всегда, как колея полос
-    painter.paint_turn_wear(&turns.wear);
-    // те же кривые и хвосты — оверлею колеи, без пересчёта
-    for junction in turns.wear {
-        ruts.curves.extend(junction.curves);
-        ruts.tails.extend(junction.tails);
-    }
-    // стрелки на полосах подходов — краска, своим тумблером
-    if style.arrows {
-        let marks = paint::ArrowMarks::new(marks.zebras(), marks.stop_lines());
-        for arrow in &turns.arrows {
-            let setback = paint::Painter::arrow_setback(arrow, &marks);
-            painter.paint_arrow(arrow, setback);
-            // и второй ряд дальше от узла, где полоса это позволяет
-            let breaks = paint_breaks.of(arrow.road).cut;
-            if let Some(repeat) = paint::Painter::repeat_setback(arrow, setback, &marks, breaks) {
-                painter.paint_arrow(arrow, repeat);
-            }
-        }
-    }
+    paint_junction_marks(
+        marks,
+        &streets,
+        &mut painter,
+        &turns,
+        &mut ruts,
+        paint_breaks,
+        style,
+    );
     // ── Поверх асфальта: островки, трамвай, стоянки ──
     // направляющие островки у колец: асфальт — в слой улиц, поверх тротуаров,
     // разметка — в слой краски, своим мешем выше асфальта стоянок
     // (`roads/gores.rs`)
     gores.push_asphalt(&mut streets, ROAD_COLOR.to_linear());
-    // светлая полоса над рельсами (`roads/tram_band.rs`) — поверх всего
-    // асфальта улиц: порядок пуша в слое — порядок отрисовки, а краска лежит
-    // своим слоем выше
-    // по путям, уложенным по нарисованной улице (`roads/tram_lay.rs`), а не
-    // по OSM: полоса обязана лежать под тем же рельсом, что рисует трамвай
-    let tram_tracks = tram_lay::lay_tracks(&map.rails, &drawn, &nodal, &median_drawing.paved);
-    // одним покрытием через шов земля/мост, со щелями между полосами соседних
-    // путей заросшими, — и разрезанным торцами настилов, что несут полосу:
-    // на настиле она лежит в его слое (S1, S2: два покрытия порознь на шве
-    // наезжали друг на друга со сдвигом, у моста без разделительной полоса
-    // обрывалась у голов косым параллелограммом)
-    let tram_bands = tram_band::tram_bands(&tram_tracks.0, &drawn, &nodal, &median_drawing.paved);
-    let street_decks = drawn
-        .iter()
-        .enumerate()
-        .filter(|(_, road)| road.bridge && road.class == RoadClass::Street && !road.passage)
-        .map(|(index, road)| (ribbon[index].as_ref(), 2.0 * road.curb_reach()));
-    // разделительная двух настилов лежит в слое настилов (R30) — и полоса
-    // над ней; ровно по её ширине: внутренние полосы половин режут их настилы
-    let median_decks = median_drawing
-        .paved
-        .iter()
-        .filter(|median| median.roads().iter().all(|&road| drawn[road].bridge))
-        .map(|median| (median.midline(), median.width() + DECK_CUT_SLACK));
-    let cuts = tram_band::deck_cuts(&tram_bands, street_decks.chain(median_decks));
-    let [on_ground, on_decks] = tram_band::split_cover(tram_band::band_cover(&tram_bands), &cuts);
-    streets.set_lanes(None);
-    for shape in on_ground {
-        push_shape(&mut streets, shape, TRAM_BAND_COLOR.to_linear());
-    }
-    let fills = bridges.fills();
-    fills.set_lanes(None);
-    for shape in on_decks {
-        push_shape(fills, shape, TRAM_BAND_COLOR.to_linear());
-    }
+    let (tram_tracks, tram_bands) = lay_tram_bands(
+        map,
+        &drawn,
+        &nodal,
+        &ribbon,
+        &median_drawing,
+        &mut bridges,
+        &mut streets,
+    );
     let mut lot_layers = grounds.layers(&style, &gores, &median_drawing.paved);
     for shape in &road_islands.kerbs {
         push_shape(
@@ -2083,6 +2032,102 @@ pub fn build_roads(
         lawn_scraps.len() + green_scraps.len()
     }
 
+    // Краска узлов и колея траекторий: зебра — из целых звеньев на асфальте
+    // улиц, каким он уже лёг; стоп-линия обрезается по тому же асфальту: у
+    // устья съезда её конец ложился на плитку обочины мимо наискось стоящей
+    // кромки (S7)
+    fn paint_junction_marks(
+        marks: node_paint::PaintMarks<'_>,
+        streets: &MeshBuilder,
+        painter: &mut paint::Painter,
+        turns: &turns::Turns,
+        ruts: &mut RutLines,
+        paint_breaks: node_paint::PaintBreaks<'_>,
+        style: RoadStyle,
+    ) {
+        let ground =
+            paint::PaintGround::new(marks.zebras(), marks.stop_lines(), streets.triangles());
+        for zebra in marks.zebras() {
+            if let Some(zebra) = paint::whole_bars(zebra, |point| ground.contains(point)) {
+                painter.paint_zebra(&zebra);
+            }
+        }
+        for line in marks.stop_lines() {
+            if let Some(line) = paint::trim_stop_line(line, |point| ground.contains(point)) {
+                painter.paint_stop_line(&line);
+            }
+        }
+        // колея траекторий — всегда, как колея полос
+        painter.paint_turn_wear(&turns.wear);
+        // те же кривые и хвосты — оверлею колеи, без пересчёта
+        for junction in &turns.wear {
+            ruts.curves.extend(junction.curves.iter().cloned());
+            ruts.tails.extend(junction.tails.iter().copied());
+        }
+        // стрелки на полосах подходов — краска, своим тумблером
+        if style.arrows {
+            let marks = paint::ArrowMarks::new(marks.zebras(), marks.stop_lines());
+            for arrow in &turns.arrows {
+                let setback = paint::Painter::arrow_setback(arrow, &marks);
+                painter.paint_arrow(arrow, setback);
+                // и второй ряд дальше от узла, где полоса это позволяет
+                let breaks = paint_breaks.of(arrow.road).cut;
+                if let Some(repeat) = paint::Painter::repeat_setback(arrow, setback, &marks, breaks)
+                {
+                    painter.paint_arrow(arrow, repeat);
+                }
+            }
+        }
+    }
+
+    // Светлая полоса над рельсами (`roads/tram_band.rs`) — поверх всего
+    // асфальта улиц: порядок пуша в слое — порядок отрисовки, а краска лежит
+    // своим слоем выше. По путям, уложенным по нарисованной улице
+    // (`roads/tram_lay.rs`), а не по OSM: полоса обязана лежать под тем же
+    // рельсом, что рисует трамвай. Одним покрытием через шов земля/мост, со
+    // щелями между полосами соседних путей заросшими, — и разрезанным
+    // торцами настилов, что несут полосу: на настиле она лежит в его слое
+    // (S1, S2: два покрытия порознь на шве наезжали друг на друга со
+    // сдвигом, у моста без разделительной полоса обрывалась у голов косым
+    // параллелограммом)
+    fn lay_tram_bands(
+        map: &MapData,
+        drawn: &[&RoadLine],
+        nodal: &[Cow<'_, [Vec2]>],
+        ribbon: &[Cow<'_, [Vec2]>],
+        medians: &medians::MedianDrawing,
+        bridges: &mut Bridges,
+        streets: &mut MeshBuilder,
+    ) -> (TramTracks, usize) {
+        let tram_tracks = tram_lay::lay_tracks(&map.rails, drawn, nodal, &medians.paved);
+        let tram_bands = tram_band::tram_bands(&tram_tracks.0, drawn, nodal, &medians.paved);
+        let street_decks = drawn
+            .iter()
+            .enumerate()
+            .filter(|(_, road)| road.bridge && road.class == RoadClass::Street && !road.passage)
+            .map(|(index, road)| (ribbon[index].as_ref(), 2.0 * road.curb_reach()));
+        // разделительная двух настилов лежит в слое настилов (R30) — и полоса
+        // над ней; ровно по её ширине: внутренние полосы половин режут их настилы
+        let median_decks = medians
+            .paved
+            .iter()
+            .filter(|median| median.roads().iter().all(|&road| drawn[road].bridge))
+            .map(|median| (median.midline(), median.width() + DECK_CUT_SLACK));
+        let cuts = tram_band::deck_cuts(&tram_bands, street_decks.chain(median_decks));
+        let [on_ground, on_decks] =
+            tram_band::split_cover(tram_band::band_cover(&tram_bands), &cuts);
+        streets.set_lanes(None);
+        for shape in on_ground {
+            push_shape(streets, shape, TRAM_BAND_COLOR.to_linear());
+        }
+        let fills = bridges.fills();
+        fills.set_lanes(None);
+        for shape in on_decks {
+            push_shape(fills, shape, TRAM_BAND_COLOR.to_linear());
+        }
+        (tram_tracks, tram_bands.len())
+    }
+
     // ── Сборка слоёв и отчёт ──
     // асфальт, тротуар и дорожка — фактурные, лента стены — плоская; три
     // мостовых слоя со своими высотами и материалами отдаёт `Bridges`
@@ -2213,7 +2258,7 @@ pub fn build_roads(
         ],
         merge_edges,
         islands: islands.len(),
-        tram_bands: tram_bands.len(),
+        tram_bands,
         vertices: layers.iter().map(|l| l.builder.vertex_count()).sum(),
         network: network_time,
         elapsed: started.elapsed(),
