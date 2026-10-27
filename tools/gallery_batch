@@ -21,7 +21,8 @@
 #   until [ "$(grep -c 'crop: ok' <tasks-dir>/progress.log)" -ge N ]; do sleep 10; done
 # and on the end of the batch with `until grep -q 'ALL DONE' …`. --keep leaves
 # the worktree in place (default: removed; the seed is a ~20 s copy-on-write
-# clone).
+# clone). Non-zero exit if any run failed its checkout or its boot — the count
+# is in the ALL DONE line of progress.log.
 #
 # The manifest grouping is the caller's win: entries sharing a revision and
 # city go into ONE line/manifest — one build+boot per revision, seconds per
@@ -58,10 +59,12 @@ if [ ! -d "$WT" ]; then
 fi
 
 n=0
+fail=0
 while IFS='|' read -r rev city envs manifest; do
   case "$rev" in ''|'#'*) continue ;; esac
   n=$((n + 1))
-  run_log="$LOGS/run_${n}_${rev}.log"
+  # a slashed rev (a branch name) is fine for git but not for a log file name
+  run_log="$LOGS/run_${n}_$(printf '%s' "$rev" | tr '/' '_').log"
 
   cur="$(git -C "$WT" rev-parse --short=8 HEAD 2>/dev/null || true)"
   if [ "$cur" != "$rev" ]; then
@@ -69,25 +72,35 @@ while IFS='|' read -r rev city envs manifest; do
       # build dirt (patched examples, settings) — restore tracked files once
       git -C "$WT" checkout -- . >>"$run_log" 2>&1
       if ! git -C "$WT" checkout --detach "$rev" >>"$run_log" 2>&1; then
-        log "$n" "CHECKOUT FAILED $rev (skipped)"
-        continue
+      log "$n" "CHECKOUT FAILED $rev (skipped)"
+      fail=$((fail + 1))
+      continue
       fi
     fi
   fi
 
   log "$n" "run $rev $city env=[$envs] $(basename "$manifest")"
+  # the gallery writes frames at the manifest paths but never mkdirs them
+  python3 - "$manifest" <<'PY' >>"$PROGRESS" 2>&1
+import json, os, sys
+for shot in json.load(open(sys.argv[1])):
+    os.makedirs(os.path.dirname(shot["path"]) or ".", exist_ok=True)
+PY
   if [ "$envs" = "-" ]; then
     (cd "$WT" && ROADS_CITY="$city" ROADS_SHOTS="$manifest" cargo run --example roads) >>"$run_log" 2>&1
   else
     (cd "$WT" && env $envs ROADS_CITY="$city" ROADS_SHOTS="$manifest" cargo run --example roads) >>"$run_log" 2>&1
   fi
-  log "$n" "run rc=$?"
+  rc=$?
+  log "$n" "run rc=$rc"
+  if [ "$rc" -ne 0 ]; then fail=$((fail + 1)); fi
   python3 "$ROOT/tools/gallery_crop" "$manifest" >>"$PROGRESS" 2>&1
 done <"$TASKS"
 
 if [ "$KEEP" = yes ]; then
-  log "$n" "ALL DONE ($n runs), worktree kept: $WT"
+  log "$n" "ALL DONE ($n runs, $fail failed), worktree kept: $WT"
 else
   git -C "$ROOT" worktree remove --force "$WT" >>"$PROGRESS" 2>&1
-  log "$n" "ALL DONE ($n runs), worktree removed"
+  log "$n" "ALL DONE ($n runs, $fail failed), worktree removed"
 fi
+[ "$fail" -eq 0 ] || exit 1
