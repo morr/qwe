@@ -262,7 +262,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     `pavement: Option<Pavement>` (`Paved | Unpaved`) — a **paved path**
     (`RoadLine::is_paved_path`) is drawn in the sidewalk layer in its colour, an unpaved
     one is the sand trail of the alley layer; `surface` or the path's kind decides, and
-    a bare `footway` takes the greenery around it (`parse::infer_pavements`) — unless both
+    a bare `footway` takes the greenery around it (`parse::pavements::infer_pavements`)
+    — unless both
     its ends stand on paved paths, which keeps it a paved link of that network. On a street
     only the `surface` tag sets it: an **unpaved street** (`RoadLine::is_unpaved_street`,
     `surface=unpaved|gravel|ground|dirt|compacted|…`) is drawn in its own layer
@@ -339,9 +340,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     passes through — **main through** below), and the axis of a two-way street of 4+ lanes
     as a double solid — the axis being the **border between the flows**
     (`paint::axis_offset`: an odd count gives its extra lane to the flow along the points
-    unless the split says otherwise), so a five-lane street has one too, and across a
-    taper between two two-way sections the axis starts on the narrow one's and drifts to
-    its own over the wedge (`paint::seam_origin`) instead of jumping half a lane; a street tagged `lane_markings=no` gets neither axis nor lane
+unless the split says otherwise), so a five-lane street has one too, and across a
+taper between two two-way sections the axis starts on the seam way's — the road whose
+section the wedge begins from: the narrow neighbour on a narrowing wedge, the wide one
+on a counter-taper (`Taper::seam`) — and drifts to its own over the wedge
+(`paint::seam_origin`) instead of jumping half a lane; a street tagged `lane_markings=no` gets neither axis nor lane
     lines. A line never ends in a **hook**: a path turning over 10° in the last 3 m
     before a gap edge ends the line where it began to turn. Two meshes per level (lane lines, axes) plus the zebras, streets at
     `Z_ROAD_PAINT` and bridges at `Z_BRIDGE_PAINT`; `PaintLods` hides the lane lines and
@@ -765,7 +768,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   (Tula's arms museum mapped over the Epiphany cathedral). `Sacred::floor_dm` is where a part
   **starts** (`min_height`, or `building:min_level` × 3 m): a cupola drum standing on its
   cathedral's roof. `Unknown` does not survive
-  the parse: **`parse::resolve_faiths`** gives a part the faith of the church it belongs to
+  the parse: **`parse::faiths::resolve_faiths`** gives a part the faith of the church it belongs to
   (the largest church holding it, or the nearest within 30 m), and anything else the city's
   majority (ties → `Western`). The same pass fills **`Sacred::complex`** — the seed of the
   whole church, so a cathedral and its drums and bell tower share one palette.

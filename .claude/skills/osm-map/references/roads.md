@@ -643,8 +643,13 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     `PAIR_MIN / 2` inside a chain is a sliver at a seam and is dropped) — a 16 m way at a
     seam of the opposite half saw 7.4 m of each of its two ways, neither piece reached
     `PAIR_MIN`, and the half went unpaired into the bridge. **Pinned** is now only a node
-    the other road cannot follow to: one with another aligned half, a ring or a bridge
-    (a street or a drive — a footway pins nothing, as on **The street axis**). Next to
+    the other road cannot follow to: one with another aligned half, a ring, a bridge or
+    arch, or a foreign carriageway street passing straight through the crossing — on it
+    lie the crossing's kerb rounds and zebras, and the half kerbs stay at their OSM
+    place while the pair's gap passes from piece to piece (without the hold the
+    transition dragged the axis across the crossing and took its node along with the
+    half; Tula, Октябрьская у Максима Горького). A butt-end side street still moves with
+    the half; a street or a drive — a footway pins nothing, as on **The street axis**. Next to
     such a node the axis is not moved at all for `PIN_STRAIGHT` 16 m and the fade begins beyond it: a
     kerb return is laid only on a straight edge, and a 10 m return to a crossing avenue
     needs its half width plus the tangent (stage 5 — before it the fade bent the edge from
@@ -1201,11 +1206,12 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     its frame is the mirror (`paint::wedge_frames`); `the_wedge_asphalt_and_the_wedge_paint_share_one_grid`
     pins that both land on one grid.
     **Between two two-way sections the axis leads** (`paint::seam_origin`, carried as
-    `WedgeEnd::origin`, roads plan №30): the seam frame is the narrow neighbour's own
-    frame (`lane_frame(narrow)`, whatever the wedge's shape) with its node placed so that
-    the wide way's axis line lands on the neighbour's axis — in the wide way's frame,
-    mirrored when the neighbour is drawn against it — and the lerp then carries the axis
-    to its own place over the wedge. Without it a seam of different splits jumped:
+    `WedgeEnd::origin`, roads plan №30): the seam frame is the seam way's own frame
+    (`lane_frame(seam)`, whatever the wedge's shape — the narrow neighbour on a
+    narrowing wedge, the wide one on a counter-taper, `Taper::seam`) with its node
+    placed so that the wedge way's axis line lands on the seam way's axis — in the
+    wedge way's frame, mirrored when the seam way is drawn against it — and the lerp
+    then carries the axis to its own place over the wedge. Without it a seam of different splits jumped:
     Текучёва in Rostov (gallery 03), `lanes=5, lanes:forward=3` into six lanes, has the
     five-lane axis on the flow border half a lane off the middle and the six-lane one in
     the middle, and the kept frame of that T-junction wedge put the whole grid half a
