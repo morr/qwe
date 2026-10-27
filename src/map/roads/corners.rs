@@ -990,7 +990,7 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                     // прямыми торцами, и кроме куска угол не кроет никто. Общий
                     // шаг читался гранями (Тула, Фёдора Смирнова ×
                     // Красноармейский, 3399 3835)
-                    fillet(node, first, second, halves, radius, KERB_ARC_SUBDIVISION)
+                    fillet(node, first, second, halves, radius)
                 };
                 // прямая кромка короче касательной — дуга на гнутые кромки
                 if round.is_none()
@@ -1117,10 +1117,9 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                 // она уходила от бордюра, и вдоль узкой оставался клин земли
                 let halves = (first.half[0] + a, second.half[1] + b);
                 let radius = kerb_radius(first, second) * scale - a.min(b);
-                if let Some(outline) =
-                    fillet(node, first, second, halves, radius, KERB_ARC_SUBDIVISION)
-                        .or_else(|| obtuse_corner(node, first, second, halves))
-                        .or_else(|| outer_corner(node, first, second, halves))
+                if let Some(outline) = fillet(node, first, second, halves, radius)
+                    .or_else(|| obtuse_corner(node, first, second, halves))
+                    .or_else(|| outer_corner(node, first, second, halves))
                 {
                     if a.min(b) > VERGE_PAVED_MAX {
                         returns.verge_lawns.push(outline);
@@ -1175,8 +1174,7 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
             // радиус оставляет асфальтовый клин внутри тротуарного
             let halves = (first.half[0] + a, second.half[1] + b);
             let radius = kerb_radius(first, second) * scale - a.max(b);
-            if let Some(outline) = fillet(node, first, second, halves, radius, KERB_ARC_SUBDIVISION)
-            {
+            if let Some(outline) = fillet(node, first, second, halves, radius) {
                 returns.sidewalks.push(outline);
             } else if let Some(outline) = bend(first, second, halves, radius) {
                 returns.bends.push((Fill::Sidewalk, outline));
@@ -1496,18 +1494,17 @@ const KERB_ARC_SUBDIVISION: usize = 3;
 
 /// Скругление угла от луча `first` против часовой стрелки до луча `second`:
 /// `halves` — полуширины полос, по краям которых сходится угол, `radius` —
-/// радиус дуги в этом углу, `subdivision` — во сколько раз мельче общего
-/// шага режется дуга ([`KERB_ARC_SUBDIVISION`], `1` — общий шаг).
+/// радиус дуги в этом углу. Дуга режется в [`KERB_ARC_SUBDIVISION`] раз
+/// мельче общего шага.
 fn fillet(
     node: Vec2,
     first: &Arm,
     second: &Arm,
     halves: (f32, f32),
     radius: f32,
-    subdivision: usize,
 ) -> Option<Vec<Vec2>> {
     let mut arc = fillet_arc(node, first, second, halves, radius)?;
-    arc.steps *= subdivision;
+    arc.steps *= KERB_ARC_SUBDIVISION;
     // прямые стороны заходят под ленты на `OVERLAP`: сторона, совпадающая с
     // краем ленты, но не делящая с ней вершин, растеризуется с пропусками —
     // по краю проезда шла пунктирная щель со светлым тротуаром под ней
