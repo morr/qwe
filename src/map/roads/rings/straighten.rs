@@ -75,6 +75,11 @@ pub fn straighten_tails(roads: &mut Vec<RoadLine>) -> Straightened {
         }
         apply(roads, &plan);
         touched.extend(roads_of);
+        // перестали существовать и сама развилка со стыком: их вершины у
+        // каждой дороги через них переписаны в `to`, и второй план через тот
+        // же узел не нашёл бы своей вершины — узел «переехал» целиком
+        moved.insert(node_key(plan.fork));
+        moved.insert(node_key(plan.joint));
         moved.insert(node_key(plan.to));
         done += 1;
     }
