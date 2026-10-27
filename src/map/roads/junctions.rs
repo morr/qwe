@@ -73,6 +73,16 @@ impl SharedNode {
                 && self.visits.len() == 2
                 && self.visits.iter().all(|visit| visit.end))
     }
+
+    /// Все проходы — одной дорогой: её торец здесь — тупик, а прочие
+    /// вершины — просто изломы. Такое [`Self::is_junction`] зовёт не
+    /// перекрёстком — и не швом: правило узла живёт здесь и в `is_junction`,
+    /// не у потребителя.
+    pub fn is_one_road(&self) -> bool {
+        self.visits
+            .iter()
+            .all(|visit| visit.road == self.visits[0].road)
+    }
 }
 
 /// Узлы участвующих дорог по совпадению координат, в порядке ключа — от
@@ -278,7 +288,7 @@ pub(super) fn breaks_over(nodes: &[SharedNode], roads: &[RoadLine]) -> MarkingBr
         if !node.is_junction() {
             // одна дорога: её торец — тупик, прочие вершины — просто изломы;
             // у шва двух way торцов нет вовсе
-            if visits.iter().all(|visit| visit.road == visits[0].road) {
+            if node.is_one_road() {
                 for visit in visits.iter().filter(|visit| visit.end) {
                     breaks[visit.road].push(Break { at, reach: 0.0 });
                 }
