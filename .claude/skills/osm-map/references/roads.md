@@ -3241,7 +3241,9 @@ arms, a drive into a street, a street that narrows, a sharp bend, a dead end —
 its full address and **game coordinates** in a caption to the left of its window.
 Ryazan, Kaluga, Oryol and Rostov have columns of their own (`ROADS_CITY=<slug>`, six
 samples each with a Yandex reference, plus Ryazan's `07_signals_across_pair` without
-one — the stop lines' queue room): the types Tula lacks or draws differently —
+one — the stop lines' queue room — and Kaluga's `07_gravel_tee` and
+`08_asphalt_to_gravel`, also without one — a dirt road entering asphalt end-on and
+asphalt turning into gravel): the types Tula lacks or draws differently —
 Rostov's one-way grid, crossings of two divided avenues, a T into a six-lane two-way
 street, unpaved and gravel private-sector crossings, rings of every size (a three-lane
 primary, two rings side by side, a narrow ring round a square, a park ring, an oval one,
@@ -3290,13 +3292,15 @@ place to look at a road-network defect end to end:
   shot and of a frozen file), title, what to look at, window centre as **lat/lon** (map
   metres move with `MAP_SIZE`) and the visible `half`. Adding one: find the node
   (`tools/osm_near`), put `"at": [x, y]` in the manifest instead of `geo`, start the
-  gallery — it logs the `geo` to write in its place. Tula and **Berlin** have manifests;
-  another city shows "no samples yet". Berlin is there for the sections: `lanes` is on
-  about half of its streets (Tula: 97 %), so its five samples — Moritzplatz ring, an
-  untagged residential cross, an untagged tertiary × tagged street, Unter den Linden ×
-  Friedrichstraße, Rosenthaler Platz — show the lane count inferred by class next to the
-  tagged one. Its extract is 109 MB; the first run downloads it through the game loader.
-- **Cost**: reading and deserializing Tula's 18 MB cache and cutting fifteen windows —
+  gallery — it logs the `geo` to write in its place. Every city with a column has a
+  manifest; any other city shows "no samples yet". Berlin is there for the sections:
+  `lanes` is on about half of its streets (Tula: 97 %), so five of its samples —
+  Moritzplatz ring, an untagged residential cross, an untagged tertiary × tagged
+  street, Unter den Linden × Friedrichstraße, Rosenthaler Platz — show the lane count
+  inferred by class next to the tagged one; the sixth, `06_taper_on_a_bend`, is
+  Leipziger Straße's taper on a bend. Its extract is 109 MB; the first run downloads it
+  through the game loader.
+- **Cost**: reading and deserializing Tula's 18 MB cache and cutting twenty-eight windows —
   see the `roads: extract … read in …` log line; the cut itself is milliseconds behind a
   per-element bounding-box prefilter and a node → roads index for `joining_roads`.
 - **What the cut does — and a way is never clipped.** Every way touching the window is
