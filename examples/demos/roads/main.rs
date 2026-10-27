@@ -393,20 +393,44 @@ fn main() {
 /// Режим сырого OSM, с которым открывается витрина: `ROADS_RAW=parse|draw`,
 /// иначе выключен. Строка `Raw OSM` панели листает его дальше.
 fn start_raw() -> RawOsm {
-    std::env::var("ROADS_RAW")
-        .ok()
-        .and_then(|word| RawOsm::from_word(&word))
-        .unwrap_or_default()
+    raw_from_value(std::env::var("ROADS_RAW").ok().as_deref())
+}
+
+/// Уровень сырого OSM по значению `ROADS_RAW`: переменной нет — выключен,
+/// нераспознанное слово — паникой, по правилу опечатки манифеста
+/// ([`read_shot_list`]): запуск должен падать loudly, а не снимать кадры
+/// «успешно» без заказанного режима.
+fn raw_from_value(value: Option<&str>) -> RawOsm {
+    let Some(word) = value else {
+        return RawOsm::default();
+    };
+    RawOsm::from_word(word).unwrap_or_else(|| panic!("ROADS_RAW={word}: ожидалось off|parse|draw"))
 }
 
 /// Город, с которого открывается витрина: `ROADS_CITY`, иначе игровой
 /// дефолт.
 fn start_city() -> City {
-    let requested = std::env::var("ROADS_CITY").ok();
+    city_from_slug(std::env::var("ROADS_CITY").ok().as_deref())
+}
+
+/// Город по значению `ROADS_CITY`: переменной нет — игровой дефолт,
+/// неизвестный slug — паникой, по правилу опечатки манифеста
+/// ([`read_shot_list`]): автоснимок не Тулы должен падать loudly на
+/// опечатке, а не снимать Тулу «успешно».
+fn city_from_slug(requested: Option<&str>) -> City {
+    let Some(slug) = requested else {
+        return City::default();
+    };
     City::ALL
         .into_iter()
-        .find(|city| requested.as_deref() == Some(city.slug()))
-        .unwrap_or_default()
+        .find(|city| slug == city.slug())
+        .unwrap_or_else(|| {
+            let known = City::ALL.map(City::slug);
+            panic!(
+                "ROADS_CITY={slug}: такого города нет (доступны: {})",
+                known.join(", ")
+            )
+        })
 }
 
 /// Полоса окна, занятая панелью: отступ от края, сама панель и такой же зазор.
@@ -993,5 +1017,27 @@ fn caption_font(assets: &AssetServer, size: f32) -> TextFont {
         font: assets.load::<Font>(fonts::REGULAR).into(),
         font_size: FontSize::Px(size),
         ..default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Опечатка в `ROADS_CITY` — паника, а не тихо открытая Тула: переменная
+    /// ведёт автоснимок, а он обязан падать loudly на опечатке.
+    #[test]
+    fn a_misspelled_city_slug_panics_instead_of_silently_opening_tula() {
+        assert_eq!(city_from_slug(Some("berlin")), City::Berlin);
+        assert_eq!(city_from_slug(None), City::default());
+        assert!(std::panic::catch_unwind(|| city_from_slug(Some("berln"))).is_err());
+    }
+
+    /// Опечатка в `ROADS_RAW` — паника, а не тихо выключенный режим.
+    #[test]
+    fn a_misspelled_raw_word_panics_instead_of_silently_turning_it_off() {
+        assert_eq!(raw_from_value(Some("parse")), RawOsm::Parse);
+        assert_eq!(raw_from_value(None), RawOsm::Off);
+        assert!(std::panic::catch_unwind(|| raw_from_value(Some("pars"))).is_err());
     }
 }
