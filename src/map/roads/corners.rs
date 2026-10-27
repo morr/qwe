@@ -649,14 +649,6 @@ impl<'a> KerbStreets<'a> {
 pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
     let roads = drawn.roads();
     let nodes = drawn.nodes();
-    // QWE_DIAG_KERB=x,y[,r] — трассировка правил узла вокруг точки: лучи
-    // каждого класса и вердикт каждой пары (fillet/bend/obtuse/nose/outer/
-    // ничего). Для устьев, где дуги не видно, а по углу должна быть
-    // (Одоевский путепровод, R37-04/3)
-    let diag_kerb = std::env::var("QWE_DIAG_KERB").ok().and_then(|spec| {
-        let v: Vec<f32> = spec.split(',').filter_map(|s| s.parse().ok()).collect();
-        (v.len() >= 2).then(|| (Vec2::new(v[0], v[1]), *v.get(2).unwrap_or(&10.0)))
-    });
     let mut arms: HashMap<(i32, i32), (Vec2, Vec<Arm>)> = HashMap::new();
     for (index, &road) in roads.iter().enumerate() {
         let Some(path) = rounded(drawn, index) else {
@@ -945,28 +937,6 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
             continue;
         }
         found.sort_by(|a, b| a.direction.to_angle().total_cmp(&b.direction.to_angle()));
-        let trace_kerb = diag_kerb.is_some_and(|(at, r)| node.distance(at) < r);
-        if trace_kerb {
-            for arm in &found {
-                eprintln!(
-                    "KERB {node:?} arm dir={:.1}° class={:?} hw={:?} half=({:.2},{:.2}) \
-                     full={:.2} run={:.1} end={:?} butt={} slope=({:.2},{:.2}) far={} ring={}",
-                    arm.direction.to_angle().to_degrees(),
-                    arm.class,
-                    arm.highway,
-                    arm.half[0],
-                    arm.half[1],
-                    arm.full,
-                    arm.run,
-                    arm.end,
-                    arm.butt.is_some(),
-                    arm.slope[0],
-                    arm.slope[1],
-                    arm.far.is_some(),
-                    arm.ring,
-                );
-            }
-        }
         for class in [RoadClass::Street, RoadClass::Alley] {
             let group: Vec<&Arm> = found.iter().filter(|arm| arm.class == class).collect();
             // Асфальт, продолженный грунтовкой, обрывается поперёк: круглый
@@ -1018,20 +988,6 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                 }
                 let radius = kerb_radius(first, second) * scale;
                 let halves = (first.half[0], second.half[1]);
-                if trace_kerb {
-                    eprintln!(
-                        "KERB   pair {:.1}° -> {:.1}° ccw={:.1}° halves=({:.2},{:.2}) \
-                         radius={:.1} mixed={} nose={}",
-                        first.direction.to_angle().to_degrees(),
-                        second.direction.to_angle().to_degrees(),
-                        ccw_angle(first, second).to_degrees(),
-                        halves.0,
-                        halves.1,
-                        radius,
-                        first.unpaved != second.unpaved,
-                        is_nose(first, second),
-                    );
-                }
                 // угол у мощёной дорожки — плиткой, в слое тротуаров: песчаное
                 // скругление на стыке двух плиточных аллей читалось бы пятном
                 let paved = first.paved || second.paved;
@@ -1065,9 +1021,6 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                     && let Some(outline) = bend(first, second, halves, radius)
                 {
                     returns.bends.push((fill, outline));
-                    if trace_kerb {
-                        eprintln!("KERB   verdict bend");
-                    }
                     continue;
                 }
                 // тупой угол со сменой ширины — клин широкой кромки
@@ -1097,28 +1050,17 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                             returns.noses.push((fill, found.outline));
                             returns.fork_gores.extend(found.gore);
                         }
-                        if trace_kerb {
-                            eprintln!("KERB   verdict nose");
-                        }
                         continue;
                     }
                     None => match outer_corner(node, first, second, halves) {
                         Some(outline) => (outline, true),
-                        None => {
-                            if trace_kerb {
-                                eprintln!("KERB   verdict none");
-                            }
-                            continue;
-                        }
+                        None => continue,
                     },
                 };
                 match fill {
                     Fill::Sidewalk => returns.sidewalks.push(outline),
                     Fill::Unpaved => returns.unpaved.push(outline),
                     Fill::Road(class) => returns.roads.push((class, outline)),
-                }
-                if trace_kerb {
-                    eprintln!("KERB   verdict round={} outer={}", !outer, outer);
                 }
                 returns.outer[usize::from(paved)] += usize::from(outer);
             }
