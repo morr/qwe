@@ -1431,8 +1431,10 @@ fn infer_sidewalks_drops_the_band_only_among_low_blocks() {
     assert_eq!(roads[0].sidewalks, [SidewalkSide::None; 2]);
 
     let mut roads = vec![inferred_street(Highway::Unclassified)];
-    let tall =
-        infer_sidewalks(&mut roads, &Districts::new(&district_house(SIDEWALK_STOREYS_MIN)));
+    let tall = infer_sidewalks(
+        &mut roads,
+        &Districts::new(&district_house(SIDEWALK_STOREYS_MIN)),
+    );
     assert_eq!((tall.asked, tall.dropped), (1, 0));
     assert_eq!(roads[0].sidewalks, [SidewalkSide::Inferred; 2]);
 }
@@ -2169,7 +2171,7 @@ fn building_use_comes_from_the_building_tag_or_amenity_outside_the_vocabulary() 
             // значение вне словаря отдаёт слово `amenity` так же, как `yes`
             BuildingUse::Public,
             // вера не размечена ни у одного храма города — западная
-            // (`parse::resolve_faiths`)
+            // (`parse::faiths::resolve_faiths`)
             WESTERN_CHURCH,
             // `building=*` со смыслом сильнее `amenity`
             WESTERN_CHURCH,

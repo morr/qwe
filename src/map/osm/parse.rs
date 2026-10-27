@@ -17,11 +17,10 @@ use crate::map::cars::district::Districts;
 use crate::map::grid::Grid;
 use crate::map::osm::entrances::generate_entrances;
 use crate::map::osm::model::{
-    AreaKind, BuildingUse, FenceLine, Highway, MapData, PipeLine, PolyArea,
-    RailLine, RoadArea, RoadClass, RoadLine, RoadNode, SidewalkSide, Structure,
-    TrafficSide, TreeCompose, TreeNode, TreeRow, TreeRowLayout, WallLine, WaterLine,
-    closest_on_segment, point_in_area, point_in_polygon, ring_area, ring_bounds, ring_vertex_mean,
-    signed_ring_area,
+    AreaKind, BuildingUse, FenceLine, Highway, MapData, PipeLine, PolyArea, RailLine, RoadArea,
+    RoadClass, RoadLine, RoadNode, SidewalkSide, Structure, TrafficSide, TreeCompose, TreeNode,
+    TreeRow, TreeRowLayout, WallLine, WaterLine, closest_on_segment, point_in_area,
+    point_in_polygon, ring_bounds, ring_vertex_mean, signed_ring_area,
 };
 use crate::map::osm::overpass::{Element, GeoBounds, LatLon, Member, OverpassResponse};
 use crate::map::roads::network::sections::{self, SectionReport};
