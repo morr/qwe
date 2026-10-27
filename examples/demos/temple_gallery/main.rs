@@ -205,6 +205,8 @@ fn spawn_camera(mut commands: Commands, window: Single<&Window>) {
             ..OrthographicProjection::default_2d()
         }),
         Transform::from_translation(center.extend(100.0)),
+        // сглаживание кромок, как у камеры игры (`post::Antialias`)
+        Msaa::Sample4,
         PanCamera::default(),
     ));
 }
