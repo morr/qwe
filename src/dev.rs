@@ -160,6 +160,16 @@ struct ProbeRow {
     hidden: bool,
 }
 
+/// Слой живого мира, как он нужен отчёту пробы: сущность, имя, z, скрытость
+/// и то, накрывает ли габарит (`Aabb`) точку пробы.
+struct LiveLayer<'a> {
+    entity: Entity,
+    name: &'a str,
+    z: f32,
+    hidden: bool,
+    covers: bool,
+}
+
 /// Входы пересборки слоёв для пробы: те же ресурсы, что читают адаптеры
 /// (`roads::rebuild_roads`, `rail::rebuild_rails`…), одним параметром — идиома
 /// `map::surface::LayerMaterials`.
@@ -198,17 +208,17 @@ fn on_probe_layers(
     // RENDER_WORLD и после извлечения в рендер пусты, поэтому точная геометрия
     // ниже пересобирается теми же чистыми `mesh_*`, что зовут адаптеры; Aabb
     // остаётся, потому что считается при спавне, до извлечения.
-    let mut live: Vec<(Entity, &str, f32, bool, bool)> = Vec::new();
+    let mut live: Vec<LiveLayer> = Vec::new();
     for (entity, name, aabb, transform, visibility) in &layers {
         let (min, max) = (aabb.min(), aabb.max());
         let covers = at.x >= min.x && at.x <= max.x && at.y >= min.y && at.y <= max.y;
-        live.push((
+        live.push(LiveLayer {
             entity,
-            name.as_str(),
-            transform.translation.z,
-            *visibility == Visibility::Hidden,
+            name: name.as_str(),
+            z: transform.translation.z,
+            hidden: *visibility == Visibility::Hidden,
             covers,
-        ));
+        });
     }
 
     // Пересборка: те же входы, что у адаптеров пересборки. Кроны не входят —
@@ -255,9 +265,9 @@ fn on_probe_layers(
             // и его скрытость
             let (entity, hidden) = live
                 .iter()
-                .find(|(_, name, _, _, _)| *name == layer.name)
-                .map_or((None, false), |(entity, _, _, hidden, _)| {
-                    (Some(*entity), *hidden)
+                .find(|live_layer| live_layer.name == layer.name)
+                .map_or((None, false), |live_layer| {
+                    (Some(live_layer.entity), live_layer.hidden)
                 });
             ProbeRow {
                 name: layer.name,
@@ -310,15 +320,20 @@ fn on_probe_layers(
     // занимали отчёт
     let mut by_name: std::collections::BTreeMap<&str, (usize, f32, f32, bool)> =
         std::collections::BTreeMap::new();
-    for (_, name, z, hidden, covers) in &live {
-        if !covers || rebuilt.contains(name) {
+    for live_layer in &live {
+        if !live_layer.covers || rebuilt.contains(live_layer.name) {
             continue;
         }
-        let entry = by_name.entry(name).or_insert((0, *z, *z, *hidden));
+        let entry = by_name.entry(live_layer.name).or_insert((
+            0,
+            live_layer.z,
+            live_layer.z,
+            live_layer.hidden,
+        ));
         entry.0 += 1;
-        entry.1 = entry.1.max(*z);
-        entry.2 = entry.2.min(*z);
-        entry.3 |= *hidden;
+        entry.1 = entry.1.max(live_layer.z);
+        entry.2 = entry.2.min(live_layer.z);
+        entry.3 |= live_layer.hidden;
     }
     for (name, (count, top, bottom, hidden)) in by_name {
         let span = if (top - bottom).abs() > f32::EPSILON {
