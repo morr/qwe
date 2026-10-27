@@ -576,16 +576,16 @@ fn crossing_deck(
         return None;
     }
     // пересечение осевых: параметр на каждом звене — внутри [0, 1]
-    let span = track[1] - track[0];
-    let reach_road = road[1] - road[0];
-    let denom = span.perp_dot(reach_road);
+    let track_span = track[1] - track[0];
+    let road_span = road[1] - road[0];
+    let denom = track_span.perp_dot(road_span);
     let offset = road[0] - track[0];
-    let t = offset.perp_dot(reach_road) / denom;
-    let u = offset.perp_dot(span) / denom;
+    let t = offset.perp_dot(road_span) / denom;
+    let u = offset.perp_dot(track_span) / denom;
     if !(0.0..=1.0).contains(&t) || !(0.0..=1.0).contains(&u) {
         return None;
     }
-    let center = track[0] + span * t;
+    let center = track[0] + track_span * t;
     // угол настила — точка, где кромка пути (±half по нормали пути)
     // встречает кромку дороги (+left / −right по нормали дороги)
     let normals = Mat2::from_cols(along.perp(), across.perp()).transpose();
