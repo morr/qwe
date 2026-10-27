@@ -2,6 +2,7 @@
 //! → `Playing`. Мир (карта, навигация, население) строится в
 //! `OnEnter(Playing)`, когда `MapData` уже вставлена.
 
+use bevy::ecs::system::SystemParam;
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::ui_widgets::{Activate, Button};
@@ -203,38 +204,45 @@ fn start_job(
     mut commands: Commands,
     navmesh: Res<ArcNavmesh>,
     city: Res<City>,
-    navtile: Res<NavtileBase>,
-    shape: Option<Res<RoadShape>>,
-    raw: Option<Res<RawOsm>>,
+    inputs: ParseInputs,
 ) {
     let job = MapLoadJob::default();
-    let knobs = parse_knobs(&navtile, shape.as_deref(), raw.as_deref());
-    start_load_thread(job.clone(), navmesh.0.clone(), *city, knobs);
+    start_load_thread(job.clone(), navmesh.0.clone(), *city, inputs.knobs());
     commands.insert_resource(job);
 }
 
-/// Входы разбора — ручками, какими они стоят сейчас: размер навтайла и ширина
-/// полосы. Читается сама ручка ширины, а не осевшая `RoadShapeOnMap`: первый
-/// вход в `Loading` идёт раньше `Startup`, где та засевается, а ручку
-/// настройки кладут ещё при сборке `App`; к перезагрузке по ширине обе уже
-/// совпадают. Без ресурса (сцена без `MapPlugin`) — ширина по умолчанию.
-/// Режим сырого OSM (`RawOsm`, строка `Raw OSM` вкладки Debug) — так же: без
-/// ресурса выключен.
-fn parse_knobs(
-    navtile: &NavtileBase,
-    shape: Option<&RoadShape>,
-    raw: Option<&RawOsm>,
-) -> ParseKnobs {
-    ParseKnobs {
-        navtile: navtile.size(),
-        lane_width: shape.map_or(ParseKnobs::default().lane_width, RoadShape::lane_width),
-        raw: raw.copied().unwrap_or_default(),
+/// Входы разбора — ручками, какими они стоят сейчас: размер навтайла, ширина
+/// полосы и режим сырого OSM. Одним `SystemParam`, а не тремя ресурсами в
+/// каждом из двух стартов потока (`start_job`, `on_retry`) — идиома
+/// `ui/debug/mod.rs::DebugValues`. Ширина полосы читается самой ручкой, а не
+/// осевшей `RoadShapeOnMap`: первый вход в `Loading` идёт раньше `Startup`,
+/// где та засевается, а ручку настройки кладут ещё при сборке `App`; к
+/// перезагрузке по ширине обе уже совпадают. Без ресурса (сцена без
+/// `MapPlugin`, мира ещё нет) — ширина по умолчанию, сырой OSM выключен.
+#[derive(SystemParam)]
+struct ParseInputs<'w> {
+    navtile: Res<'w, NavtileBase>,
+    shape: Option<Res<'w, RoadShape>>,
+    raw: Option<Res<'w, RawOsm>>,
+}
+
+impl ParseInputs<'_> {
+    /// Снимок ручек для потока загрузки.
+    fn knobs(&self) -> ParseKnobs {
+        ParseKnobs {
+            navtile: self.navtile.size(),
+            lane_width: self
+                .shape
+                .as_deref()
+                .map_or(ParseKnobs::default().lane_width, RoadShape::lane_width),
+            raw: self.raw.as_deref().copied().unwrap_or_default(),
+        }
     }
 }
 
 /// Единственная точка записи атомика размера навтайла — перед стартом потока
 /// загрузки, когда заливка ещё не жива (генерация входов получает размер
-/// аргументом, [`parse_knobs`]). Покрывает и первый запуск (настройки
+/// аргументом, `ParseInputs::knobs`). Покрывает и первый запуск (настройки
 /// восстановлены при сборке `App`, до расписаний), и каждую перезагрузку мира.
 fn sync_navtile_size(base: Res<NavtileBase>) {
     crate::grid::set_navtile_size(base.size());
@@ -301,21 +309,16 @@ fn spawn_loader_ui(mut commands: Commands) {
 }
 
 /// Кнопка Retry: сброс состояния и новый поток загрузки.
-// входы разбора — три ручки, и каждая своим ресурсом, как у `start_job`
-#[allow(clippy::too_many_arguments)]
 fn on_retry(
     _activate: On<Activate>,
     job: Res<MapLoadJob>,
     navmesh: Res<ArcNavmesh>,
     city: Res<City>,
-    navtile: Res<NavtileBase>,
-    shape: Option<Res<RoadShape>>,
-    raw: Option<Res<RawOsm>>,
+    inputs: ParseInputs,
     mut buttons: Query<&mut Visibility, With<RetryButton>>,
 ) {
     *job.0.lock().unwrap() = JobState::Connecting { attempt: 1 };
-    let knobs = parse_knobs(&navtile, shape.as_deref(), raw.as_deref());
-    start_load_thread(job.clone(), navmesh.0.clone(), *city, knobs);
+    start_load_thread(job.clone(), navmesh.0.clone(), *city, inputs.knobs());
     for mut visibility in &mut buttons {
         *visibility = Visibility::Hidden;
     }
