@@ -48,6 +48,25 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   paved goes with it (`corners::Arm::paved` → `KerbReturns::sidewalks`, counted in
   `outer[1]`): a sand fillet in the corner of two tiled alleys read as a stain. Pinned by
   `roads/tests.rs::a_paved_path_is_drawn_in_the_sidewalk_layer`.
+  **Tile overlaps** (`corners::tile_overlaps` → `KerbReturns::overlaps`, counted in
+  `RoadReport::tile_overlaps`): at a merge of two or more paved paths, a yard wedge can
+  enter point-first into the seam between the arm edges — the sectors between the arms
+  are closed by the kerb rules, but the strip of yard (or bare earth before it) along an
+  edge outside them is closed by nothing (R37-01, example 15: the pocket yard between the
+  through-path 389384739 and its two upper arms at Tula ≈5439,3139). The overlap is a
+  tile strip along each free edge of the node — `TILE_OVERLAP_WIDTH` 3 m beyond the edge,
+  `TILE_OVERLAP_REACH` 5 m along it from the node, tucked under the ribbon by
+  `OUTER_OVERLAP` — laid into the sidewalk layer, in `mesh_roads`, but **not fed to the
+  lawn scraps**: the overlap is itself the fix, not paving that encloses a scrap. An edge
+  is free when no other arm leaves into it within `TILE_OVERLAP_OCCUPIED` 80° (such a
+  corner is already closed by a fillet, nose or fan), and the strip is laid only when a
+  yard is probed inside it — a grid of six probes along × across the strip (`YardBounds`,
+  a `Grid` over the bounding boxes, cell `YARD_CELL` 32 m; the yards are
+  `MapData::landuse` **and** `MapData::pockets`, both drawn as yard by
+  `spawn::mesh_surfaces`). Without a yard in reach there is no overlap — the ribbons do
+  not swell. Pinned by
+  `corners.rs::a_tile_overlap_covers_the_yard_wedge_at_a_paved_merge`. Tula: 4099
+  overlaps for ≈ +19 ms of road meshing.
   **Unpaved streets** (`RoadLine::is_unpaved_street` — a `Street` whose `surface` is
   `unpaved|gravel|fine_gravel|pebblestone|ground|dirt|earth|mud|sand|grass|compacted|…`,
   the same vocabulary as the paths, `tags.rs::surface_pavement`) are the private sector's

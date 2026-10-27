@@ -714,6 +714,9 @@ pub struct RoadReport {
     pub arrows: usize,
     pub kerb_returns: usize,
     pub sidewalk_returns: usize,
+    /// Наезды плитки на дворе у слияний мощёных дорожек
+    /// (`corners::tile_overlaps`).
+    pub tile_overlaps: usize,
     /// Наружные углы узлов (`roads/corners.rs`): асфальт и тротуар.
     pub outer_corners: [usize; 2],
     /// Носы острых развилок (`roads/corners.rs`), всех слоёв.
@@ -772,6 +775,7 @@ impl std::fmt::Display for RoadReport {
             arrows,
             kerb_returns,
             sidewalk_returns,
+            tile_overlaps,
             outer_corners: [outer, outer_sidewalks],
             noses,
             bends,
@@ -810,7 +814,7 @@ impl std::fmt::Display for RoadReport {
              junctions {junctions} ({clusters} clusters, main through {through}), zebras \
              {zebras} ({osm_zebras} from OSM), stop lines {stop_lines}, pockets {pockets}, \
              turn paths {turns}, arrows {arrows}, leading roads {leading}, kerb returns {kerb_returns} + \
-             {sidewalk_returns} on sidewalks, outer corners {outer} + {outer_sidewalks} on \
+             {sidewalk_returns} on sidewalks, tile overlaps {tile_overlaps}, outer corners {outer} + {outer_sidewalks} on \
              sidewalks, noses {noses}, bends {bends}, lawn scraps {lawn_scraps}, stitches {stitches}, kerb pockets {kerb_pockets}, turning circles {turning_circles}, driveway crossings \
              {crossings}, rings {rings} ({webs} webs), small islands {islands}, gores {gores}, safety islands {refuges} + {island_areas} areas, \
              carriageway areas {carriageways}, walkway areas {walkways}, tapers {tapers}, merges {merges} ({merge_edges} edges), medians {paved} paved + {lawns} \
@@ -967,6 +971,10 @@ pub fn build_roads(
     }
     // и тот же угол в слое тротуаров: полоса поворачивает за бордюром
     for outline in &kerb_returns.sidewalks {
+        sidewalks.push_convex(outline, SIDEWALK_COLOR.to_linear());
+    }
+    // и наезды плитки на дворе у слияний мощёных дорожек — тем же слоем
+    for outline in &kerb_returns.overlaps {
         sidewalks.push_convex(outline, SIDEWALK_COLOR.to_linear());
     }
     // и в слое обочин — где вместо полосы обочина до отдельной дорожки
@@ -2095,6 +2103,7 @@ pub fn build_roads(
         arrows: if style.arrows { turns.arrows.len() } else { 0 },
         kerb_returns: kerb_returns.roads.len() + kerb_returns.unpaved.len() - kerb_returns.outer[0],
         sidewalk_returns: kerb_returns.sidewalks.len() - kerb_returns.outer[1],
+        tile_overlaps: kerb_returns.overlaps.len(),
         bends: kerb_returns.bends.len(),
         outer_corners: kerb_returns.outer,
         noses: kerb_returns.noses.len(),

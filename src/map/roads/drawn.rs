@@ -21,7 +21,7 @@ use super::rings::Rings;
 use super::shape::RoadShape;
 use super::tapers::{Taper, Tapers};
 use super::{RoadStyle, VERGE_MID_MAX, VergeZoomBucket, leg_sections, ring_arcs};
-use crate::map::osm::{MapData, RoadClass, RoadLine};
+use crate::map::osm::{MapData, PolyArea, RoadClass, RoadLine};
 
 /// Какую ось берёт потребитель — решение вынесено из порядка `let` в тип.
 ///
@@ -78,6 +78,12 @@ pub struct Drawn<'m> {
     on_ring: Vec<bool>,
     /// Стоянки, перед которыми карман не нужен (`roads/pockets.rs`).
     lots: KerbLots<'m>,
+    /// Дворы кварталов (`MapData::landuse`) — проба «двор вплотную к кромке»
+    /// для наезда плитки на слияниях мощёных дорожек (`roads/corners.rs`).
+    yards: &'m [PolyArea],
+    /// Карманы разбора (`MapData::pockets`) — рисуются двором и газоном
+    /// (`spawn::mesh_surfaces`), и наезд спрашивает их вместе с дворами.
+    pockets: &'m [PolyArea],
 }
 
 /// Что подготовка нашла — вложенное поле `RoadReport::drawn`; строку лога
@@ -208,6 +214,8 @@ impl<'m> Drawn<'m> {
             // ближняя, как у нарисованной улицы
             verge_step: VergeZoomBucket::for_zoom(0.0),
             lots: KerbLots::new(&map.parking),
+            yards: &map.landuse,
+            pockets: &map.pockets,
         }
     }
 
@@ -283,6 +291,14 @@ impl<'m> Drawn<'m> {
     /// пар ([`RoadNodes::alias`]).
     pub fn nodes(&self) -> &RoadNodes {
         &self.nodes
+    }
+
+    /// Дворы кварталов (`MapData::landuse`) и карманы разбора
+    /// (`MapData::pockets`) — рисуются двором (`spawn::mesh_surfaces`);
+    /// проба «двор вплотную к кромке» у наезда плитки (`corners.rs`) спрашивает
+    /// их вместе.
+    pub fn yards(&self) -> impl Iterator<Item = &PolyArea> + '_ {
+        self.yards.iter().chain(self.pockets)
     }
 
     /// Ось дороги — какую, говорит потребитель.

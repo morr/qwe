@@ -54,11 +54,12 @@ use super::drawn::{Axis, Drawn};
 use super::junctions::node_key;
 use super::network::pairs::PROBE_STEP;
 use crate::map::along::{arclengths, nearest_on_path, place_on_path};
+use crate::map::grid::Grid;
 use crate::map::meshing::{
     arc_steps, butt_direction, miter_offsets, ribbon_merge_distance, ribbon_vertices,
 };
-use crate::map::osm::model::{closest_on_segment, polyline_length, ring_area};
-use crate::map::osm::{Highway, RoadClass, RoadLine};
+use crate::map::osm::model::{closest_on_segment, point_in_area, polyline_length, ring_area};
+use crate::map::osm::{Highway, PolyArea, RoadClass, RoadLine};
 
 /// Радиус бордюра по классу дороги, м; у пары берётся меньший. Между
 /// проспектами (`trunk`…`secondary` и их съезды) — 10 м, с улицей
@@ -159,6 +160,16 @@ const OVERLAP: f32 = 0.05;
 /// и пяти сантиметров нахлёста не хватало — через тротуар шла нить (Орёл,
 /// витрина 04, север).
 pub(super) const OUTER_OVERLAP: f32 = 0.3;
+
+/// Наезд плитки на дворе у слияния мощёных дорожек ([`tile_overlaps`]):
+/// ширина полосы за кромкой луча, м.
+const TILE_OVERLAP_WIDTH: f32 = 3.0;
+/// Тот же наезд: длина полосы вдоль кромки от узла, м.
+const TILE_OVERLAP_REACH: f32 = 5.0;
+/// Сторона луча занята и наезда на ней нет, если другой луч узла уходит в
+/// неё ближе этого угла (рад): такой угол узла закрыт скруглением, носом
+/// или веером, и полоса двора вдоль кромки не в щели, а снаружи угла.
+const TILE_OVERLAP_OCCUPIED: f32 = 80.0_f32.to_radians();
 
 /// Одна дорога, выходящая из узла.
 struct Arm<'d> {
@@ -329,6 +340,11 @@ pub struct KerbReturns {
     /// Контуры в слое тротуаров, так же: углы полос тротуара и скругления
     /// узлов с мощёной дорожкой.
     pub sidewalks: Vec<Vec<Vec2>>,
+    /// Наезды плитки на дворе у слияний мощёных дорожек ([`tile_overlaps`]):
+    /// полоса вдоль кромки луча, за которой двор. Рисуются в слое тротуаров
+    /// рядом с `sidewalks`, но лоскуты газона (`roads/scraps.rs`) ими не
+    /// кормятся: наезд — сам починка, а не мощение, замыкающее лоскут.
+    pub overlaps: Vec<Vec<Vec2>>,
     /// Контуры в слое обочин (`road_verges`), так же: углы, где с одной
     /// стороны или с обеих вместо полосы тротуара обочина.
     pub verges: Vec<Vec<Vec2>>,
@@ -666,6 +682,8 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
     };
     // между двумя плечами слияния нет ни угла, ни скругления
     let merge_pair = |first: &Arm, second: &Arm| is_merged(first) && is_merged(second);
+    // рамки дворов — для проб наезда плитки у каждого узла ниже
+    let yards = YardBounds::of(drawn.yards());
     for (node, mut found) in arms.into_values() {
         if found.len() < 2 {
             continue;
@@ -867,6 +885,22 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                     }
                 }
             }
+        }
+        // Наезд плитки на дворе у слияния мощёных дорожек (R37-01, пример 15):
+        // две плиточные полосы (например, переход через улицу и дорожка двора)
+        // сходятся в узле, а клин двора квартала входит остриём в щель между
+        // их кромками — секторы между лучами закрывают скругления, но полосу
+        // двора вдоль кромки снаружи не закрывает ничто. Наезд — полоса плитки
+        // вдоль кромки каждого луча, за которой вплотную двор: кромки
+        // «наезжают» на него у стыка, и шов смыкается. Сторона, где другой
+        // луч ближе [`TILE_OVERLAP_OCCUPIED`], занята угловыми правилами и не
+        // трогается; без двора вплотную наезда нет — полосы не раздулись.
+        let tiled: Vec<&Arm> = found
+            .iter()
+            .filter(|arm| arm.class == RoadClass::Alley && arm.paved)
+            .collect();
+        if tiled.len() >= 2 && !tiled.iter().all(|arm| is_merged(arm)) {
+            returns.overlaps.extend(tile_overlaps(node, &tiled, &yards));
         }
         // Угол, где хоть с одной стороны вместо полосы тротуара обочина до
         // отдельной дорожки, — той же дугой, но в слой обочин под зеленью:
@@ -1155,6 +1189,111 @@ fn outer_corner(node: Vec2, first: &Arm, second: &Arm, halves: (f32, f32)) -> Op
     }
     outline.push(node - to_dir.perp() * halves.1 + to_dir * OUTER_OVERLAP);
     Some(outline)
+}
+
+/// Дворы с рамками по сетке — префильтр точной пробы [`point_in_area`]:
+/// узлов слияний в городе тысячи, и пробирать каждый полигон двора — даже
+/// рамкой — не нужно: точка спрашивает свою ячейку, и только дворы, чья
+/// рамка её касается, идут в точный тест.
+struct YardBounds<'a> {
+    /// Квадрат двора в метрах: проба уходит от узла не дальше пары шагов
+    /// наезда, и ячейка в пару десятков метров держит списки короткими.
+    grid: Grid<usize>,
+    yards: Vec<&'a PolyArea>,
+}
+
+impl<'a> YardBounds<'a> {
+    fn of(yards: impl IntoIterator<Item = &'a PolyArea>) -> Self {
+        let yards: Vec<&PolyArea> = yards.into_iter().collect();
+        let boxes: Vec<(Vec2, Vec2)> = yards
+            .iter()
+            .map(|yard| {
+                let mut min = Vec2::splat(f32::MAX);
+                let mut max = Vec2::splat(f32::MIN);
+                for point in &yard.outer {
+                    min = min.min(*point);
+                    max = max.max(*point);
+                }
+                (min, max)
+            })
+            .collect();
+        let mut grid = Grid::new(YARD_CELL);
+        for (index, (min, max)) in boxes.iter().enumerate() {
+            grid.insert(*min, *max, index);
+        }
+        Self { grid, yards }
+    }
+
+    /// Двор под точкой — по ячейке сетки, с рамкой как префильтром точного
+    /// теста.
+    fn any_yard(&self, at: Vec2) -> bool {
+        self.grid
+            .at(at)
+            .iter()
+            .any(|&index| point_in_area(at, self.yards[index]))
+    }
+}
+
+/// Ячейка сетки дворов [`YardBounds`], м.
+const YARD_CELL: f32 = 32.0;
+
+/// Наезд плитки на дворе у слияния мощёных дорожек ([`KerbReturns`], вызов в
+/// [`kerb_returns`]): для каждой стороны каждого луча — полоса плитки
+/// [`TILE_OVERLAP_WIDTH`] на [`TILE_OVERLAP_REACH`] вдоль кромки от узла,
+/// если за кромкой вплотную двор (`Drawn::yards`) и сторона не занята другим
+/// лучом ([`TILE_OVERLAP_OCCUPIED`]). Внутренняя сторона заходит под ленту на
+/// [`OUTER_OVERLAP`], как у наружного угла; контур — выпуклый
+/// четырёхугольник, как и прочие куски слоя тротуаров.
+fn tile_overlaps(node: Vec2, group: &[&Arm], bounds: &YardBounds) -> Vec<Vec<Vec2>> {
+    let mut found = Vec::new();
+    for (own, arm) in group.iter().enumerate() {
+        for (side, normal) in [arm.direction.perp(), -arm.direction.perp()]
+            .into_iter()
+            .enumerate()
+        {
+            // сторона занята: в неё уходит другой луч узла — угол здесь
+            // закрыт скруглением, носом или веером
+            let occupied = group.iter().enumerate().any(|(other, rest)| {
+                other != own && normal.dot(rest.direction) >= TILE_OVERLAP_OCCUPIED.cos()
+            });
+            if occupied {
+                continue;
+            }
+            // двор где-то в полосе наезда за кромкой — не только вплотную:
+            // между кромкой и двором бывает голая земля, и наезд закрывает её
+            // вместе с краем двора. Пробы — сеткой (вдоль кромки × от кромки),
+            // по рамкам дворов из [`YardBounds`]
+            let yard_in_band = |along: f32, off: f32| {
+                let at = node + arm.direction * along + normal * (arm.half[side] + off);
+                bounds.any_yard(at)
+            };
+            if ![
+                (0.4, 0.5),
+                (0.4, 1.0),
+                (0.6, 1.25),
+                (0.85, 0.5),
+                (0.85, 1.0),
+                (0.85, 1.25),
+            ]
+            .into_iter()
+            .any(|(share_along, share_off)| {
+                yard_in_band(
+                    TILE_OVERLAP_REACH * share_along,
+                    TILE_OVERLAP_WIDTH * share_off,
+                )
+            }) {
+                continue;
+            }
+            let far = arm.direction * TILE_OVERLAP_REACH;
+            found.push(vec![
+                node + normal * (arm.half[side] - OUTER_OVERLAP),
+                node + normal * (arm.half[side] + TILE_OVERLAP_WIDTH),
+                node + far + normal * (arm.half[side] + TILE_OVERLAP_WIDTH),
+                node + far + normal * (arm.half[side] - OUTER_OVERLAP),
+            ]);
+        }
+    }
+    found
 }
 
 /// Во сколько раз дуга скругления режется мельче общего шага
@@ -2070,6 +2209,60 @@ mod tests {
     fn walked_returns_of(roads: &[RoadLine], sidewalks: bool) -> KerbReturns {
         let map = map_of(roads);
         kerb_returns(&Drawn::for_test(&map).with_sidewalks(sidewalks), 1.0)
+    }
+
+    /// Мощёная дорожка 3.5 м — как [`fixture::footway`], но с покрытием:
+    /// наезд плитки спрашивает именно мощёные.
+    fn paved_path(points: Vec<Vec2>) -> RoadLine {
+        RoadLine {
+            pavement: Some(crate::map::osm::model::Pavement::Paved),
+            ..crate::map::osm::fixture::footway(points)
+        }
+    }
+
+    /// Слияние трёх мощёных дорожек: сквозная запад–восток и примыкающая
+    /// сверху, двор — клином под кромкой восточной ветви. Наезд
+    /// ([`tile_overlaps`]) закрывает клин полосой плитки вдоль кромки.
+    #[test]
+    fn a_tile_overlap_covers_the_yard_wedge_at_a_paved_merge() {
+        let roads = [
+            paved_path(vec![
+                Vec2::new(-50.0, 0.0),
+                Vec2::ZERO,
+                Vec2::new(50.0, 0.0),
+            ]),
+            paved_path(vec![Vec2::new(0.0, 50.0), Vec2::ZERO]),
+        ];
+        let mut map = map_of(&roads);
+        map.landuse = vec![crate::map::osm::fixture::area(
+            crate::map::osm::model::AreaKind::Residential,
+            vec![
+                Vec2::new(0.5, -1.8),
+                Vec2::new(12.0, -2.5),
+                Vec2::new(2.0, -9.0),
+            ],
+        )];
+        let found = kerb_returns(&Drawn::for_test(&map).with_sidewalks(false), 1.0);
+        // наезд один и накрывает щель двора: полосу за кромкой восточной
+        // ветви; скругления туда не доходят
+        let wedge = Vec2::new(TILE_OVERLAP_REACH * 0.5, -(1.75 + TILE_OVERLAP_WIDTH * 0.5));
+        let overlaps: Vec<&Vec<Vec2>> = found
+            .overlaps
+            .iter()
+            .filter(|outline| point_in_polygon(wedge, outline))
+            .collect();
+        assert_eq!(overlaps.len(), 1, "наезд один и накрывает щель двора");
+        let outline = overlaps[0];
+        // от кромки (с заходом под ленту) на ширину наезда, длиной REACH
+        assert!(outline.contains(&Vec2::new(0.0, -(1.75 - OUTER_OVERLAP))));
+        assert!(outline.contains(&Vec2::new(0.0, -(1.75 + TILE_OVERLAP_WIDTH))));
+        assert!(outline.contains(&Vec2::new(TILE_OVERLAP_REACH, -(1.75 + TILE_OVERLAP_WIDTH))));
+        assert!(outline.contains(&Vec2::new(TILE_OVERLAP_REACH, -(1.75 - OUTER_OVERLAP))));
+        // без двора наезда нет: обе кромки улицы свободны, полосы не
+        // раздулись
+        let bare = kerb_returns(&Drawn::for_test(&map_of(&roads)).with_sidewalks(false), 1.0);
+        assert!(bare.overlaps.is_empty());
+        assert_eq!(bare.sidewalks.len(), found.sidewalks.len());
     }
 
     /// Тротуар улицы 8 м — как его считает `osm::model::sidewalk_band`.
