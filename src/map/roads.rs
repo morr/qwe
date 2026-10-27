@@ -1608,83 +1608,25 @@ pub fn build_roads(
         }
     }
     // ── Фартуки мостиков ──
-    // фартуки мостиков, замапленных рядом с настилом (`roads/aprons.rs`, S2):
-    // щель между бортиками — плиткой мостика в слое настилов, её
-    // продолжение на земле до головы — в слое дорожки
-    let path_color = |road: &RoadLine| {
-        if road.is_paved_path() {
-            SIDEWALK_COLOR
-        } else {
-            ALLEY_COLOR
-        }
-    };
-    let slit = aprons::slit_aprons(&drawn, &ribbon, &prepared);
-    let fills = bridges.fills();
-    fills.set_lanes(None);
-    for (foot, ring) in &slit.decks {
-        fills.push_polygon(ring, &[], path_color(drawn[*foot]).to_linear());
-    }
-    for (path, ring) in &slit.ground {
-        let layer = if drawn[*path].is_paved_path() {
-            &mut sidewalks
-        } else {
-            &mut alleys
-        };
-        layer.push_polygon(ring, &[], path_color(drawn[*path]).to_linear());
-    }
+    lay_slit_aprons(
+        &drawn,
+        &ribbon,
+        &prepared,
+        &mut bridges,
+        &mut sidewalks,
+        &mut alleys,
+    );
     // ── Лоскуты ──
-    // Лоскуты газона обочин, замкнутые мощением, — плиткой поверх газона
-    // (`roads/scraps.rs`): слой обочин лежит над слоями газона. Мощение, которым
-    // они замкнуты, собирается только у газонов, которые спрашиваются: улиц и
-    // углов в городе десятки тысяч, а концов газона у узлов — тысяча.
-    // Мощение узлов — представлением `KerbReturns::paving`: скругления
-    // улиц, тротуары, обочины и мощёные носы с дугами; наезды плитки — нет.
-    // и горки: асфальт или штриховка направляющего островка — не газон,
-    // и кончик островка под горкой оставался клинем травы (R37-01, витрина 14)
-    let gore_outlines: Vec<Vec<Vec2>> = gores
-        .outlines()
-        .map(|contour| contour.iter().map(|&point| point.into()).collect())
-        .collect();
-    for outline in kerb_returns
-        .paving()
-        .flat()
-        .chain(gore_outlines.iter().map(Vec::as_slice))
-        .chain(kerb_returns.paving().curved())
-    {
-        if scraps.near_lawn(outline, 0.0) {
-            scraps.push_paving(outline);
-        }
-    }
-    for (index, road) in drawn.iter().enumerate() {
-        let paved =
-            !road.is_unpaved_street() && (road.class == RoadClass::Street || road.is_paved_path());
-        if !paved || road.bridge || road_islands.outlines[index] {
-            continue;
-        }
-        let halves = [0, 1].map(|side| prepared.band_half(index, side));
-        if scraps.near_lawn(&ribbon[index], halves[0].max(halves[1])) {
-            scraps.push_band(&ribbon[index], halves);
-        }
-    }
-    // Зелень земли — карманы разбора и замапленный газон: у клиньев два
-    // владельца (`roads/scraps.rs`). Спрашивается после мощения — врезание в
-    // неё видно по нарисованному; кладётся в слой тротуаров: слой обочин
-    // лежит ПОД зеленью (Z_ROAD_VERGE < Z_GRASS), и плитка клина осталась бы
-    // под травой, а тротуары — над (Z_SIDEWALK), и перекрытие с соседней
-    // плиткой того же материала не видно
-    for area in map.pockets.iter().chain(&map.grass) {
-        scraps.push_green(area.outer.clone());
-    }
-    let green_scraps = scraps.find_green();
-    let lawn_scraps = scraps.find();
-    verges.set_lanes(None);
-    for shape in &lawn_scraps {
-        push_shape(&mut verges, shape.clone(), SIDEWALK_COLOR.to_linear());
-    }
-    sidewalks.set_lanes(None);
-    for shape in &green_scraps {
-        push_shape(&mut sidewalks, shape.clone(), SIDEWALK_COLOR.to_linear());
-    }
+    pave_scraps(
+        &kerb_returns,
+        &gores,
+        &drawn,
+        &prepared,
+        &ribbon,
+        &road_islands,
+        &mut scraps,
+    );
+    let lawn_scraps = lay_green_scraps(map, &mut scraps, &mut verges, &mut sidewalks);
     // ── Краска узлов и колея траекторий ──
     // зебра — из целых звеньев на асфальте улиц, каким он уже лёг; стоп-линия
     // обрезается по тому же асфальту: у устья съезда её конец ложился на
@@ -2035,6 +1977,112 @@ pub fn build_roads(
         seam_gaps
     }
 
+    // Фартуки мостиков, замапленных рядом с настилом (`roads/aprons.rs`, S2):
+    // щель между бортиками — плиткой мостика в слое настилов, её
+    // продолжение на земле до головы — в слое дорожки
+    fn lay_slit_aprons(
+        drawn: &[&RoadLine],
+        ribbon: &[Cow<'_, [Vec2]>],
+        prepared: &Drawn,
+        bridges: &mut Bridges,
+        sidewalks: &mut MeshBuilder,
+        alleys: &mut MeshBuilder,
+    ) {
+        let path_color = |road: &RoadLine| {
+            if road.is_paved_path() {
+                SIDEWALK_COLOR
+            } else {
+                ALLEY_COLOR
+            }
+        };
+        let slit = aprons::slit_aprons(drawn, ribbon, prepared);
+        let fills = bridges.fills();
+        fills.set_lanes(None);
+        for (foot, ring) in &slit.decks {
+            fills.push_polygon(ring, &[], path_color(drawn[*foot]).to_linear());
+        }
+        for (path, ring) in &slit.ground {
+            let layer = if drawn[*path].is_paved_path() {
+                &mut *sidewalks
+            } else {
+                &mut *alleys
+            };
+            layer.push_polygon(ring, &[], path_color(drawn[*path]).to_linear());
+        }
+    }
+
+    // Лоскуты газона обочин, замкнутые мощением, — плиткой поверх газона
+    // (`roads/scraps.rs`): слой обочин лежит над слоями газона. Мощение, которым
+    // они замкнуты, собирается только у газонов, которые спрашиваются: улиц и
+    // углов в городе десятки тысяч, а концов газона у узлов — тысяча.
+    // Мощение узлов — представлением `KerbReturns::paving`: скругления
+    // улиц, тротуары, обочины и мощёные носы с дугами; наезды плитки — нет.
+    // и горки: асфальт или штриховка направляющего островка — не газон,
+    // и кончик островка под горкой оставался клином травы (R37-01, витрина 14)
+    fn pave_scraps(
+        kerb_returns: &corners::KerbReturns,
+        gores: &gores::Gores,
+        drawn: &[&RoadLine],
+        prepared: &Drawn,
+        ribbon: &[Cow<'_, [Vec2]>],
+        road_islands: &islands::RoadIslands,
+        scraps: &mut scraps::Scraps,
+    ) {
+        let gore_outlines: Vec<Vec<Vec2>> = gores
+            .outlines()
+            .map(|contour| contour.iter().map(|&point| point.into()).collect())
+            .collect();
+        for outline in kerb_returns
+            .paving()
+            .flat()
+            .chain(gore_outlines.iter().map(Vec::as_slice))
+            .chain(kerb_returns.paving().curved())
+        {
+            if scraps.near_lawn(outline, 0.0) {
+                scraps.push_paving(outline);
+            }
+        }
+        for (index, road) in drawn.iter().enumerate() {
+            let paved = !road.is_unpaved_street()
+                && (road.class == RoadClass::Street || road.is_paved_path());
+            if !paved || road.bridge || road_islands.outlines[index] {
+                continue;
+            }
+            let halves = [0, 1].map(|side| prepared.band_half(index, side));
+            if scraps.near_lawn(&ribbon[index], halves[0].max(halves[1])) {
+                scraps.push_band(&ribbon[index], halves);
+            }
+        }
+    }
+
+    // Зелень земли — карманы разбора и замапленный газон: у клиньев два
+    // владельца (`roads/scraps.rs`). Спрашивается после мощения — врезание в
+    // неё видно по нарисованному; кладётся в слой тротуаров: слой обочин
+    // лежит ПОД зеленью (Z_ROAD_VERGE < Z_GRASS), и плитка клина осталась бы
+    // под травой, а тротуары — над (Z_SIDEWALK), и перекрытие с соседней
+    // плиткой того же материала не видно
+    fn lay_green_scraps(
+        map: &MapData,
+        scraps: &mut scraps::Scraps,
+        verges: &mut MeshBuilder,
+        sidewalks: &mut MeshBuilder,
+    ) -> usize {
+        for area in map.pockets.iter().chain(&map.grass) {
+            scraps.push_green(area.outer.clone());
+        }
+        let green_scraps = scraps.find_green();
+        let lawn_scraps = scraps.find();
+        verges.set_lanes(None);
+        for shape in &lawn_scraps {
+            push_shape(verges, shape.clone(), SIDEWALK_COLOR.to_linear());
+        }
+        sidewalks.set_lanes(None);
+        for shape in &green_scraps {
+            push_shape(sidewalks, shape.clone(), SIDEWALK_COLOR.to_linear());
+        }
+        lawn_scraps.len() + green_scraps.len()
+    }
+
     // ── Сборка слоёв и отчёт ──
     // асфальт, тротуар и дорожка — фактурные, лента стены — плоская; три
     // мостовых слоя со своими высотами и материалами отдаёт `Bridges`
@@ -2151,7 +2199,7 @@ pub fn build_roads(
         bends: kerbs.bends,
         outer_corners: kerbs.outer_corners,
         noses: kerbs.noses,
-        lawn_scraps: lawn_scraps.len() + green_scraps.len(),
+        lawn_scraps,
         drawn: prepared.stats(),
         bridges: bridge_count,
         track_bridges,
