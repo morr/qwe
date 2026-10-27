@@ -34,8 +34,9 @@ use i_overlay::mesh::style::{LineCap, LineJoin, OutlineStyle};
 use super::{LANDUSE_OVERLAP, SIDEWALK_CELL};
 use crate::map::grid::Grid;
 use crate::map::osm::model::{
-    AreaKind, LotKind, MapData, PolyArea, RoadClass, distance_to_area, distance_to_outline,
-    distance_to_segment, point_in_area, point_in_polygon, ring_area, ring_bounds, signed_ring_area,
+    AreaKind, FenceLine, LotKind, MapData, PolyArea, RoadClass, RoadLine, distance_to_area,
+    distance_to_outline, distance_to_segment, point_in_area, point_in_polygon, ring_area,
+    ring_bounds, signed_ring_area,
 };
 use crate::map::parallel::in_parallel;
 use crate::map::shapes::{
@@ -147,6 +148,52 @@ struct Around<'a> {
     fence_grid: Grid<usize>,
 }
 
+/// Контекст прохода мощения: всё, что проход читает, — ссылками, и
+/// единственное, что он пишет, — стоянки. Узкий проход не получает
+/// `&mut MapData` целиком: список полей и есть договор с картой — чего здесь
+/// нет, того проход не касается, — и тест строит его руками, без карты.
+/// `MapData` нужен только мосту [`PaveLotsCtx::of`].
+pub(super) struct PaveLotsCtx<'a> {
+    roads: &'a [RoadLine],
+    buildings: &'a [PolyArea],
+    parks: &'a [PolyArea],
+    woods: &'a [PolyArea],
+    grass: &'a [PolyArea],
+    sand: &'a [PolyArea],
+    water: &'a [PolyArea],
+    fences: &'a [FenceLine],
+    parking: &'a mut Vec<PolyArea>,
+}
+
+impl<'a> PaveLotsCtx<'a> {
+    /// Собрать контекст с карты — мост между швом и его вызывающим.
+    pub(super) fn of(map: &'a mut MapData) -> Self {
+        let MapData {
+            roads,
+            buildings,
+            parks,
+            woods,
+            grass,
+            sand,
+            water,
+            fences,
+            parking,
+            ..
+        } = map;
+        Self {
+            roads,
+            buildings,
+            parks,
+            woods,
+            grass,
+            sand,
+            water,
+            fences,
+            parking,
+        }
+    }
+}
+
 /// Что проход сделал со стоянками карты — два разных события, и счёт им
 /// раздельный: [`PavedLots::grown`] — площадка дотянулась до дороги
 /// ([`Around::grown`]), [`PavedLots::trimmed`] — дотягиваться было не до чего, и
@@ -168,25 +215,25 @@ struct Paved {
     parts: Vec<Rings>,
 }
 
-/// Дотянуть все стоянки карты до дорог. Возвращает, скольких площадок это
-/// коснулось, по событиям ([`PavedLots`]). Заодно решается, какая стоянка
-/// большая ([`LotKind::Ground`]): по замощённому контуру, тому, что рисуется.
+/// Дотянуть все стоянки до дорог — по контексту [`PaveLotsCtx`], а не по карте
+/// целиком. Возвращает, скольких площадок это коснулось, по событиям
+/// ([`PavedLots`]). Заодно решается, какая стоянка большая
+/// ([`LotKind::Ground`]): по замощённому контуру, тому, что рисуется.
 ///
 /// Площадки друг от друга не зависят и считаются **по потокам**: на каждую
 /// уходит с полдюжины булевых операций `i_overlay`, у которых цена — не
 /// геометрия, а сам вызов (≈ 0.3 мс на площадке в четыре вершины), и на 349
 /// площадках Тулы это полсекунды в один поток. Результаты — в порядке
 /// площадок ([`in_parallel`]), так что от числа потоков ничего не зависит.
-pub(super) fn pave_lots(map: &mut MapData) -> PavedLots {
-    let around = Around::of(map);
-    let results: Vec<Option<Paved>> = in_parallel(&map.parking, |lot| around.paved(lot));
-    drop(around);
+pub(super) fn pave_lots(ctx: PaveLotsCtx<'_>) -> PavedLots {
+    let around = Around::of(&ctx);
+    let results: Vec<Option<Paved>> = in_parallel(&*ctx.parking, |lot| around.paved(lot));
 
     let mut paved = PavedLots::default();
     // дом поперёк площадки режет её надвое: первая часть остаётся на месте
     // площадки, остальные встают в конец списка такими же стоянками
     let mut parts: Vec<PolyArea> = Vec::new();
-    for (lot, result) in map.parking.iter_mut().zip(results) {
+    for (lot, result) in ctx.parking.iter_mut().zip(results) {
         let Some(Paved {
             grown,
             parts: rings,
@@ -211,8 +258,8 @@ pub(super) fn pave_lots(map: &mut MapData) -> PavedLots {
             ..lot.clone()
         }));
     }
-    map.parking.extend(parts);
-    for lot in &mut map.parking {
+    ctx.parking.extend(parts);
+    for lot in ctx.parking.iter_mut() {
         lot.kind = AreaKind::Parking(settled_kind(lot));
     }
     paved
@@ -236,10 +283,10 @@ fn is_big(ring: &[Vec2]) -> bool {
 }
 
 impl<'a> Around<'a> {
-    fn of(map: &'a MapData) -> Self {
+    fn of(ctx: &PaveLotsCtx<'a>) -> Self {
         // дорожки не в счёт: асфальт стоянки сходится с асфальтом, а тропинка
         // вдоль кромки — не то, с чего на неё въезжают
-        let links: Vec<RoadLink> = map
+        let links: Vec<RoadLink> = ctx
             .roads
             .iter()
             .filter(|road| road.class == RoadClass::Street && !road.bridge && !road.passage)
@@ -263,12 +310,12 @@ impl<'a> Around<'a> {
             road_grid.insert_segment(link.from, link.to, pad, index);
         }
 
-        let keep: Vec<&PolyArea> = map
+        let keep: Vec<&PolyArea> = ctx
             .buildings
             .iter()
             .filter(|area| ring_area(&area.outer) >= KEEP_BUILDING_AREA)
             .chain(
-                [&map.parks, &map.woods, &map.grass, &map.sand, &map.water]
+                [ctx.parks, ctx.woods, ctx.grass, ctx.sand, ctx.water]
                     .into_iter()
                     .flatten(),
             )
@@ -279,11 +326,11 @@ impl<'a> Around<'a> {
             keep_grid.insert(low, high, index);
         }
         let mut building_grid: Grid<usize> = Grid::new(SIDEWALK_CELL);
-        for (index, area) in map.buildings.iter().enumerate() {
+        for (index, area) in ctx.buildings.iter().enumerate() {
             let (low, high) = ring_bounds(&area.outer);
             building_grid.insert(low - BUILDING_APRON, high + BUILDING_APRON, index);
         }
-        let fences: Vec<(Vec2, Vec2)> = map
+        let fences: Vec<(Vec2, Vec2)> = ctx
             .fences
             .iter()
             .flat_map(|fence| fence.points.windows(2).map(|pair| (pair[0], pair[1])))
@@ -297,7 +344,7 @@ impl<'a> Around<'a> {
             road_grid,
             keep,
             keep_grid,
-            buildings: &map.buildings,
+            buildings: ctx.buildings,
             building_grid,
             fences,
             fence_grid,

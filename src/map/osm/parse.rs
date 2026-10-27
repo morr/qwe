@@ -1864,7 +1864,7 @@ fn pull_areas_to_roads(map: &mut MapData) -> StretchedAreas {
     let started = std::time::Instant::now();
     stretched.cut = verges::cut_verges_from_blocks(map);
     stretched.cutting = started.elapsed();
-    stretched.lots = lots::pave_lots(map);
+    stretched.lots = lots::pave_lots(lots::PaveLotsCtx::of(map));
     stretched
 }
 
