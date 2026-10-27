@@ -32,7 +32,7 @@ use bevy::prelude::*;
 
 use super::drawn::{Axis, Drawn};
 use super::lane_count;
-use super::node_paint::{Junction, JunctionArm};
+use super::node_paint::{Junction, JunctionArm, PaintJunctions};
 use super::paint::{axis_offset, lane_frame};
 use super::shape::lane_width;
 use super::tapers;
@@ -129,15 +129,16 @@ struct ArmLanes {
 }
 
 impl Turns {
-    /// Траектории по узлам `junctions` подготовленных дорог `prepared`
-    /// (`roads/drawn.rs`), по оси ленты (`Axis::Ribbon`). Дуга кольца
-    /// (`Drawn::on_ring`, `roads/rings.rs`) стрелок по правилу не получает.
-    pub fn new(prepared: &Drawn, junctions: &[Junction], side: TrafficSide) -> Self {
+    /// Траектории по узлам `junctions` ([`NodePaint::junctions`])
+    /// подготовленных дорог `prepared` (`roads/drawn.rs`), по оси ленты
+    /// (`Axis::Ribbon`). Дуга кольца (`Drawn::on_ring`, `roads/rings.rs`)
+    /// стрелок по правилу не получает.
+    pub fn new(prepared: &Drawn, junctions: PaintJunctions<'_>, side: TrafficSide) -> Self {
         let mut turns = Self::default();
         let drawn = prepared.roads();
         let paths = prepared.axes(Axis::Ribbon);
         let on_ring = |road: usize| prepared.on_ring(road);
-        for junction in junctions {
+        for junction in junctions.iter() {
             turns.junction(&drawn, &paths, junction, side, &on_ring);
         }
         turns

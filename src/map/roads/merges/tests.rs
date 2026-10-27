@@ -134,7 +134,11 @@ fn a_merge_node_gets_no_square_ends_and_no_outer_corners() {
     for road in 0..3 {
         assert_eq!(merge.butt(road), [false; 2], "{road}");
     }
-    assert!(merge.roads.is_empty(), "{:?}", merge.roads);
+    assert!(
+        merge.streets().outlines().next().is_none(),
+        "слияние — не перекрёсток: {:?}",
+        merge.streets().outlines().collect::<Vec<_>>()
+    );
 }
 
 #[test]
@@ -318,8 +322,8 @@ fn a_pure_merge_node_breaks_no_line_and_holds_the_axis_solid() {
         assert!(!at_node(lines.cut), "{road}");
         assert!(at_node(lines.solid), "{road}");
     }
-    assert!(merged.zebras.is_empty() && merged.stop_lines.is_empty());
-    assert!(merged.junctions.is_empty());
+    assert!(merged.marks().zebras().is_empty() && merged.marks().stop_lines().is_empty());
+    assert!(merged.junctions().is_empty());
 }
 
 #[test]
@@ -665,8 +669,8 @@ fn a_pure_fork_gets_no_rule_zebra_or_stop_line() {
             stop_lines: true,
         },
     );
-    assert!(paint.zebras.is_empty() && paint.stop_lines.is_empty());
-    assert!(paint.junctions.is_empty());
+    assert!(paint.marks().zebras().is_empty() && paint.marks().stop_lines().is_empty());
+    assert!(paint.junctions().is_empty());
     // переход OSM в узле развилки (Болдина, R17) — одна зебра поперёк
     // продолжения, целиком на нём
     let mut map = map;
@@ -689,8 +693,9 @@ fn a_pure_fork_gets_no_rule_zebra_or_stop_line() {
             stop_lines: true,
         },
     );
-    assert_eq!(paint.zebras.len(), 1, "{:?}", paint.zebras);
-    let zebra = paint.zebras[0];
+    let zebras = paint.marks().zebras();
+    assert_eq!(zebras.len(), 1, "{zebras:?}");
+    let zebra = zebras[0];
     let middle = (zebra.from + zebra.to) / 2.0;
     assert!(zebra.osm && middle.y < -1.0, "{zebra:?}");
 }

@@ -3287,7 +3287,7 @@ fn a_tram_on_a_wide_median_keeps_the_lawn() {
 
 #[test]
 fn an_arm_is_filled_before_its_leader_even_when_it_leads_elsewhere() {
-    use node_paint::{Junction, JunctionArm};
+    use node_paint::{Junction, JunctionArm, PaintJunctions};
     // 0 — главная, ведёт узел; 1 — примыкание шире неё, что само ведёт
     // другой узел дальше: по одному ключу «ведущие последними, узкие раньше»
     // оно ложилось бы на главную
@@ -3303,9 +3303,15 @@ fn an_arm_is_filled_before_its_leader_even_when_it_leads_elsewhere() {
         arms: vec![arm(0), arm(0), arm(1)],
         leading: vec![0],
     }];
-    assert_eq!(fill_order(&widths, &leading, &junctions), vec![2, 1, 0]);
+    assert_eq!(
+        fill_order(&widths, &leading, PaintJunctions::of(&junctions)),
+        vec![2, 1, 0]
+    );
     // без узла — прежний ключ
-    assert_eq!(fill_order(&widths, &leading, &[]), vec![2, 0, 1]);
+    assert_eq!(
+        fill_order(&widths, &leading, PaintJunctions::of(&[])),
+        vec![2, 0, 1]
+    );
 }
 
 /// Отчёт без часов: два прогона одной карты обязаны совпасть до поля.
@@ -3549,7 +3555,7 @@ fn a_ring_entry_yields_on_the_ring_edge() {
             stop_lines: true,
         },
     );
-    let lines = &junctions.node_paint().stop_lines;
+    let lines = junctions.node_paint().marks().stop_lines();
     assert_eq!(lines.len(), 1, "{lines:?}");
     let line = lines[0];
     assert!(line.yields, "въезд кольцу уступает");
@@ -3842,7 +3848,7 @@ fn a_long_tangential_ring_entry_yields_and_keeps_its_lines_off_the_ring() {
             stop_lines: true,
         },
     );
-    let lines = &junctions.node_paint().stop_lines;
+    let lines = junctions.node_paint().marks().stop_lines();
     assert_eq!(lines.len(), 1, "{lines:?}");
     assert!(lines[0].yields, "въезд кольцу уступает");
     // каждая точка оси въезда в асфальте кольца — в разрыве его линий

@@ -45,7 +45,7 @@ fn turns_of(roads: Vec<RoadLine>, side: TrafficSide) -> (Turns, NodePaint) {
             stop_lines: false,
         },
     );
-    let turns = Turns::new(&drawn, &paint.junctions, side);
+    let turns = Turns::new(&drawn, paint.junctions(), side);
     (turns, paint)
 }
 
@@ -69,8 +69,9 @@ fn the_main_road_keeps_its_ruts_and_turns_get_curves() {
         vec![through(Highway::Tertiary), side(Highway::Residential)],
         TrafficSide::Right,
     );
-    assert_eq!(paint.junctions.len(), 1);
-    assert_eq!(paint.junctions[0].leading, vec![0], "главная ведёт узел");
+    let junctions: Vec<_> = paint.junctions().iter().collect();
+    assert_eq!(junctions.len(), 1);
+    assert_eq!(junctions[0].leading, vec![0], "главная ведёт узел");
     assert!(
         paint.asphalt().of(0).iter().all(|found| found.at != NODE),
         "колея главной идёт сквозь: {:?}",
@@ -105,7 +106,13 @@ fn equal_streets_cross_each_other_by_curves() {
         vec![through(Highway::Residential), cross],
         TrafficSide::Right,
     );
-    assert!(paint.junctions[0].leading.is_empty(), "ведущей нет");
+    assert!(
+        paint
+            .junctions()
+            .iter()
+            .all(|junction| junction.leading.is_empty()),
+        "ведущей нет"
+    );
     // четыре прямо, четыре направо и четыре налево
     assert_eq!(turns.maneuvers, 12);
 }

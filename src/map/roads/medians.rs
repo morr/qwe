@@ -79,7 +79,7 @@ pub struct MedianInputs<'a> {
     /// Разрывы краски половин: зебра поперёк обеих и стоп-линии рвут и
     /// двойную сплошную, и газон.
     pub paint: PaintBreaks<'a>,
-    /// Зебры узлов (`NodePaint::zebras`): через газон — проходом
+    /// Зебры узлов (`NodePaint::marks`): через газон — проходом
     /// ([`split_zebras`]), а не разрывом.
     pub zebras: &'a [Zebra],
     /// Полуширина половины, м, как она рисуется: оси половин лежат на неё
@@ -1063,7 +1063,7 @@ mod tests {
             &MedianInputs {
                 base: junctions.median_base(),
                 paint: junctions.paint(),
-                zebras: &junctions.node_paint().zebras,
+                zebras: junctions.node_paint().marks().zebras(),
                 half: &|road| drawn.road(road).width / 2.0,
                 markings,
                 pure_merge: &|_| false,

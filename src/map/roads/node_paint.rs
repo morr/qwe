@@ -274,6 +274,85 @@ impl<'a> PaintBreaks<'a> {
     }
 }
 
+/// Узлы-кластеры для траекторий манёвров (`roads/turns.rs`) и порядка
+/// заливки (`roads::fill_order`): у кластера — его плечи и ведущие.
+/// Представление [`NodePaint`], наружу — из [`NodePaint::junctions`].
+#[derive(Clone, Copy)]
+pub struct PaintJunctions<'a>(&'a [Junction]);
+
+impl<'a> PaintJunctions<'a> {
+    /// Кластеры, как их обходит укладка.
+    pub fn iter(self) -> impl Iterator<Item = &'a Junction> {
+        self.0.iter()
+    }
+
+    /// Пуст ли список — узлов-кластеров нет.
+    #[cfg(test)]
+    pub fn is_empty(self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Узлы теста — готовым списком кластеров.
+    #[cfg(test)]
+    pub(super) fn of(junctions: &'a [Junction]) -> Self {
+        Self(junctions)
+    }
+}
+
+/// Карманы краски у торцов дорог: у торца, за которым продолжение улицы
+/// уже́, линиям широкой дороги, которым у узкой места нет, кончаться в узле
+/// некуда — они гаснут в разрыве кармана, а не висят посреди перекрёстка.
+/// Представление [`NodePaint`], наружу — из [`NodePaint::pockets`].
+#[derive(Clone, Copy)]
+pub struct PaintPockets<'a>(&'a [[Option<Pocket>; 2]]);
+
+impl<'a> PaintPockets<'a> {
+    /// Карманы дороги `road` — `[начало, конец]`.
+    pub fn of(&self, road: usize) -> [Option<Pocket>; 2] {
+        self.0[road]
+    }
+}
+
+/// Поперечная краска узлов — зебры и стоп-линии: то, что кладётся поперёк
+/// улицы, а не вдоль её линий. Зебра ложится целыми планками по асфальту
+/// улиц, стоп-линия режется по нему же (`paint::PaintGround`), стрелки
+/// встают за ними (`paint::ArrowMarks`), разделительные пропускают через
+/// газон переходы (`medians::MedianInputs`). Представление [`NodePaint`],
+/// наружу — из [`NodePaint::marks`].
+#[derive(Clone, Copy)]
+pub struct PaintMarks<'a> {
+    zebras: &'a [Zebra],
+    stop_lines: &'a [StopLine],
+}
+
+impl<'a> PaintMarks<'a> {
+    /// Зебры — на плечах узлов и переходах посреди квартала.
+    pub fn zebras(self) -> &'a [Zebra] {
+        self.zebras
+    }
+
+    /// Стоп-линии — на встречных узлу полосах.
+    pub fn stop_lines(self) -> &'a [StopLine] {
+        self.stop_lines
+    }
+}
+
+/// Что краска узлов насчитала — в `JunctionCounts` (`roads/junctions.rs`):
+/// кластеры, проходы насквозь, зебры (все и из них по OSM), стоп-линии,
+/// карманы.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub(super) struct PaintCounts {
+    /// Кластеров сближенных узлов — из двух узлов и больше.
+    pub(super) clusters: usize,
+    /// Узлов, где главная прошла насквозь.
+    pub(super) through: usize,
+    /// Зебры: все и из них по OSM.
+    pub(super) zebras: [usize; 2],
+    pub(super) stop_lines: usize,
+    /// Карманы краски у торцов дорог.
+    pub(super) pockets: usize,
+}
+
 /// Краска узлов карты.
 #[derive(Default)]
 pub struct NodePaint {
@@ -291,20 +370,25 @@ pub struct NodePaint {
     /// Тихие разрывы из `breaks` — у угла двух улиц ([`is_corner`]): линии
     /// рвутся, но перед ними не сплошные. Наружу — в [`PaintBreaks`].
     quiet: Vec<Vec<Break>>,
-    pub junctions: Vec<Junction>,
-    /// Карманы у торцов дорог `[начало, конец]`.
-    pub pockets: Vec<[Option<Pocket>; 2]>,
+    /// Узлы-кластеры для траекторий и порядка заливки. Наружу — только как
+    /// [`PaintJunctions`] ([`Self::junctions`]).
+    junctions: Vec<Junction>,
+    /// Карманы у торцов дорог `[начало, конец]`. Наружу — только как
+    /// [`PaintPockets`] ([`Self::pockets`]).
+    pockets: Vec<[Option<Pocket>; 2]>,
     /// Горла съездов на дорогах колец. Наружу — в [`PaintBreaks`].
     throats: Vec<Vec<Throat>>,
-    pub zebras: Vec<Zebra>,
+    /// Зебры. Наружу — только как [`PaintMarks`] ([`Self::marks`]).
+    zebras: Vec<Zebra>,
     /// Дорога каждой зебры, пока они собираются: по ней [`join_touching`]
     /// узнаёт половины на газоне.
     zebra_roads: Vec<usize>,
-    pub stop_lines: Vec<StopLine>,
-    /// Кластеры из двух узлов и больше.
-    pub clusters: usize,
-    /// Узлы, где главная прошла насквозь.
-    pub through: usize,
+    /// Стоп-линии. Наружу — в [`PaintMarks`].
+    stop_lines: Vec<StopLine>,
+    /// Кластеры из двух узлов и больше — в [`Self::counts`].
+    clusters: usize,
+    /// Узлы, где главная прошла насквозь — в [`Self::counts`].
+    through: usize,
     /// Разрывы краски, обрезанные концом пути: конец и остаток — его
     /// получает продолжение улицы за ним ([`spill_over_ends`]).
     spills: Vec<(Vec2, f32)>,
@@ -615,6 +699,40 @@ impl NodePaint {
             solid: &self.solid,
             throats: &self.throats,
             quiet: &self.quiet,
+        }
+    }
+
+    /// Узлы-кластеры — траекториям манёвров (`roads/turns.rs`) и порядку
+    /// заливки (`roads::fill_order`).
+    pub fn junctions(&self) -> PaintJunctions<'_> {
+        PaintJunctions(&self.junctions)
+    }
+
+    /// Карманы краски у торцов дорог — линиям (`Painter::paint`).
+    pub fn pockets(&self) -> PaintPockets<'_> {
+        PaintPockets(&self.pockets)
+    }
+
+    /// Поперечная краска узлов — зебры и стоп-линии.
+    pub fn marks(&self) -> PaintMarks<'_> {
+        PaintMarks {
+            zebras: &self.zebras,
+            stop_lines: &self.stop_lines,
+        }
+    }
+
+    /// Что краска узлов насчитала — в `JunctionCounts`
+    /// (`roads/junctions.rs`).
+    pub(super) fn counts(&self) -> PaintCounts {
+        PaintCounts {
+            clusters: self.clusters,
+            through: self.through,
+            zebras: [
+                self.zebras.len(),
+                self.zebras.iter().filter(|zebra| zebra.osm).count(),
+            ],
+            stop_lines: self.stop_lines.len(),
+            pockets: self.pockets.iter().flatten().flatten().count(),
         }
     }
 

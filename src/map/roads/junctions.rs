@@ -387,7 +387,7 @@ impl Junctions {
     /// идёт через узел, и примыкание шире неё не должно её закрыть.
     pub fn leading(&self) -> Vec<bool> {
         let mut leading = vec![false; self.base.breaks.len()];
-        for junction in &self.paint.junctions {
+        for junction in self.paint.junctions().iter() {
             for &road in &junction.leading {
                 leading[road] = true;
             }
@@ -397,18 +397,15 @@ impl Junctions {
 
     /// Что узлы насчитали — вложенное поле `RoadReport::junctions`.
     pub fn counts(&self) -> JunctionCounts {
-        let paint = &self.paint;
+        let paint = self.paint.counts();
         JunctionCounts {
             count: self.base.junctions,
             clusters: paint.clusters,
             through: paint.through,
             leading: self.leading().into_iter().filter(|&lead| lead).count(),
-            zebras: [
-                paint.zebras.len(),
-                paint.zebras.iter().filter(|zebra| zebra.osm).count(),
-            ],
-            stop_lines: paint.stop_lines.len(),
-            pockets: paint.pockets.iter().flatten().flatten().count(),
+            zebras: paint.zebras,
+            stop_lines: paint.stop_lines,
+            pockets: paint.pockets,
         }
     }
 
@@ -430,9 +427,10 @@ impl Junctions {
         self.paint.lines()
     }
 
-    /// Что краска кладёт на узлах — карманы у торцов, зебры, стоп-линии — и
-    /// сами узлы-кластеры с их плечами и ведущими (траектории, порядок
-    /// заливки).
+    /// Что краска кладёт на узлах — разрывы, карманы, зебры, стоп-линии и
+    /// сами узлы-кластеры с их плечами и ведущими — представлениями:
+    /// [`Self::asphalt`], [`Self::paint`], [`NodePaint::pockets`],
+    /// [`NodePaint::marks`], [`NodePaint::junctions`].
     pub fn node_paint(&self) -> &NodePaint {
         &self.paint
     }
