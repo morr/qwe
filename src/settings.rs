@@ -620,7 +620,9 @@ const _: () = {
     assert!(Z_RING_ISLAND < Z_LANDUSE);
     assert!(Z_GRASS < Z_RING_GRASS);
     assert!(Z_RING_GRASS < Z_SAND);
-    // газон широкой обочины — под её плиткой, оба — под кварталами
+    // газон широкой обочины — под её плиткой, плитка — над голой землёй,
+    // оба — под кварталами
+    assert!(Z_GROUND < Z_ROAD_VERGE);
     assert!(Z_ROAD_VERGE_LAWN < Z_ROAD_VERGE_YARD);
     assert!(Z_ROAD_VERGE_YARD < Z_ROAD_VERGE);
     assert!(Z_ROAD_VERGE < Z_LANDUSE);
@@ -670,6 +672,9 @@ const _: () = {
     // кроет пути. Снизу вверх: балласт → шпалы → нитки → вагон на них
     assert!(Z_WATERWAY < Z_RAIL);
     assert!(Z_RAIL < Z_RAIL_TIE);
+    // настил переезда — над шпалами и балластом, под нитками, которые по нему
+    assert!(Z_RAIL_TIE < Z_RAIL_CROSSING);
+    assert!(Z_RAIL_CROSSING < Z_RAIL_STEEL);
     assert!(Z_RAIL_TIE < Z_RAIL_STEEL);
     assert!(Z_RAIL_STEEL < Z_WAGON);
     assert!(Z_WAGON < Z_BRIDGE_SHADOW);
@@ -681,6 +686,12 @@ const _: () = {
     assert!(Z_ROAD < Z_BRIDGE_CASING);
     assert!(Z_BRIDGE < Z_BRIDGE_PAINT);
     assert!(Z_BRIDGE_PAINT < Z_TRAM);
+    // путь на путепроводе — своей лестницей балласт → шпалы → нитки над
+    // настилом моста, под трамваем
+    assert!(Z_BRIDGE < Z_RAIL_BRIDGE);
+    assert!(Z_RAIL_BRIDGE < Z_RAIL_BRIDGE_TIE);
+    assert!(Z_RAIL_BRIDGE_TIE < Z_RAIL_BRIDGE_STEEL);
+    assert!(Z_RAIL_BRIDGE_STEEL < Z_TRAM);
     // машина — выше трамвая: стоит на асфальте поверх путей
     assert!(Z_TRAM < Z_CAR);
     // забор стоит на земле — над машиной, но под опорами теплотрассы
