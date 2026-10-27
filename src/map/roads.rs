@@ -967,97 +967,27 @@ pub fn build_roads(
         &mut scraps,
     );
     // ── Кромки слияний ──
-    // кромки половин, сходящиеся к кромкам продолжения, — тоже до лент
-    let mut merge_edges = 0;
-    for merge in &prepared.merges().list {
-        let bands = merges::merge_bands(
-            merge,
-            &drawn,
-            &nodal,
-            &map.network,
-            |road, side| prepared.sidewalk_on(road, side),
-            shape.taper(),
-        );
-        for band in bands {
-            streets.push_polygon(&band.asphalt, &[], ROAD_COLOR.to_linear());
-            if let Some(outline) = &band.sidewalk {
-                sidewalks.push_polygon(outline, &[], SIDEWALK_COLOR.to_linear());
-            }
-            merge_edges += 1;
-        }
-    }
+    let merge_edges = lay_merge_edges(
+        map,
+        &prepared,
+        &drawn,
+        &nodal,
+        shape.taper(),
+        &mut streets,
+        &mut sidewalks,
+    );
     // ── Карманы у бордюра ──
-    // карманы — по тому же ответу и тем же разрывам, что ряд машин
-    // (`map::cars`): асфальт за кромкой и тротуар, отодвинутый за него
-    let kerbsides = pockets::all_kerbsides(
-        roads,
+    let kerb_pockets = lay_kerb_pockets(
+        map,
         nodes,
         &nodal,
         junctions.row(),
-        map.traffic_side,
-        prepared.lots(),
+        &prepared,
+        &mut streets,
+        &mut sidewalks,
     );
-    let mut kerb_pockets = 0;
-    for (index, road) in roads.iter().enumerate() {
-        let half = road.width / 2.0;
-        for kerbside in &kerbsides[index] {
-            let sidewalk = prepared.sidewalk_on(index, usize::from(kerbside.side < 0.0));
-            for pocket in &kerbside.pockets {
-                let outline = |outer: f32| {
-                    pockets::outline(
-                        &nodal[index],
-                        pocket,
-                        kerbside.side,
-                        [half - POCKET_OVERLAP, outer],
-                    )
-                };
-                let edge = half + pockets::POCKET_WIDTH;
-                streets.push_polygon(&outline(edge), &[], ROAD_COLOR.to_linear());
-                if let Some(sidewalk) = sidewalk {
-                    sidewalks.push_polygon(
-                        &outline(edge + sidewalk),
-                        &[],
-                        SIDEWALK_COLOR.to_linear(),
-                    );
-                }
-                kerb_pockets += 1;
-            }
-        }
-    }
     // ── Разворотные площадки ──
-    // разворотные площадки в тупиках (`highway=turning_circle`); тупик без
-    // тега кончается круглым торцом ленты и так
-    let mut turning_circles = 0;
-    for node in &map.road_nodes {
-        if node.kind != RoadNodeKind::TurningCircle || nodes.is_shared(node.pos) {
-            continue;
-        }
-        let Some(index) = roads.iter().position(|road| {
-            road.class == RoadClass::Street
-                && !road.carves_navmesh()
-                && [road.points.first(), road.points.last()]
-                    .into_iter()
-                    .flatten()
-                    .any(|end| end.distance(node.pos) < JOIN_EPSILON)
-        }) else {
-            continue;
-        };
-        let road = prepared.road(index);
-        let radius = turning_radius(road.width);
-        let disc = |radius: f32| -> Vec<Vec2> {
-            (0..TURNING_CIRCLE_SIDES)
-                .map(|step| {
-                    let angle = std::f32::consts::TAU * step as f32 / TURNING_CIRCLE_SIDES as f32;
-                    node.pos + Vec2::from_angle(angle) * radius
-                })
-                .collect()
-        };
-        streets.push_convex(&disc(radius), ROAD_COLOR.to_linear());
-        if let Some(sidewalk) = prepared.sidewalk_drawn(index) {
-            sidewalks.push_convex(&disc(radius + sidewalk), SIDEWALK_COLOR.to_linear());
-        }
-        turning_circles += 1;
-    }
+    let turning_circles = lay_turning_circles(map, nodes, &prepared, &mut streets, &mut sidewalks);
     // ── Оси лент, траектории и порядок заливки ──
     // оси ленты, со стежками — до дороги, до которой OSM торец не довёл:
     // асфальт, краска, траектории, острова
@@ -1956,6 +1886,134 @@ pub fn build_roads(
                 ROAD_JOIN,
             );
         }
+    }
+
+    // ── Тела вынесенных фаз ── непрерывные куски того же прохода, в порядке
+    // вызова; их имена и ход — в баннерах наверху
+
+    // Кромки слияний: кромки половин, сходящиеся к кромкам продолжения, —
+    // тоже до лент
+    fn lay_merge_edges(
+        map: &MapData,
+        prepared: &Drawn,
+        drawn: &[&RoadLine],
+        nodal: &[Cow<'_, [Vec2]>],
+        taper: f32,
+        streets: &mut MeshBuilder,
+        sidewalks: &mut MeshBuilder,
+    ) -> usize {
+        let mut merge_edges = 0;
+        for merge in &prepared.merges().list {
+            let bands = merges::merge_bands(
+                merge,
+                drawn,
+                nodal,
+                &map.network,
+                |road, side| prepared.sidewalk_on(road, side),
+                taper,
+            );
+            for band in bands {
+                streets.push_polygon(&band.asphalt, &[], ROAD_COLOR.to_linear());
+                if let Some(outline) = &band.sidewalk {
+                    sidewalks.push_polygon(outline, &[], SIDEWALK_COLOR.to_linear());
+                }
+                merge_edges += 1;
+            }
+        }
+        merge_edges
+    }
+
+    // Карманы у бордюра — по тому же ответу и тем же разрывам, что ряд машин
+    // (`map::cars`): асфальт за кромкой и тротуар, отодвинутый за него
+    fn lay_kerb_pockets(
+        map: &MapData,
+        nodes: &RoadNodes,
+        nodal: &[Cow<'_, [Vec2]>],
+        breaks: &pockets::RowBreaks,
+        prepared: &Drawn,
+        streets: &mut MeshBuilder,
+        sidewalks: &mut MeshBuilder,
+    ) -> usize {
+        let kerbsides = pockets::all_kerbsides(
+            &map.roads,
+            nodes,
+            nodal,
+            breaks,
+            map.traffic_side,
+            prepared.lots(),
+        );
+        let mut kerb_pockets = 0;
+        for (index, road) in map.roads.iter().enumerate() {
+            let half = road.width / 2.0;
+            for kerbside in &kerbsides[index] {
+                let sidewalk = prepared.sidewalk_on(index, usize::from(kerbside.side < 0.0));
+                for pocket in &kerbside.pockets {
+                    let outline = |outer: f32| {
+                        pockets::outline(
+                            &nodal[index],
+                            pocket,
+                            kerbside.side,
+                            [half - POCKET_OVERLAP, outer],
+                        )
+                    };
+                    let edge = half + pockets::POCKET_WIDTH;
+                    streets.push_polygon(&outline(edge), &[], ROAD_COLOR.to_linear());
+                    if let Some(sidewalk) = sidewalk {
+                        sidewalks.push_polygon(
+                            &outline(edge + sidewalk),
+                            &[],
+                            SIDEWALK_COLOR.to_linear(),
+                        );
+                    }
+                    kerb_pockets += 1;
+                }
+            }
+        }
+        kerb_pockets
+    }
+
+    // Разворотные площадки в тупиках (`highway=turning_circle`); тупик без
+    // тега кончается круглым торцом ленты и так
+    fn lay_turning_circles(
+        map: &MapData,
+        nodes: &RoadNodes,
+        prepared: &Drawn,
+        streets: &mut MeshBuilder,
+        sidewalks: &mut MeshBuilder,
+    ) -> usize {
+        let mut turning_circles = 0;
+        for node in &map.road_nodes {
+            if node.kind != RoadNodeKind::TurningCircle || nodes.is_shared(node.pos) {
+                continue;
+            }
+            let Some(index) = map.roads.iter().position(|road| {
+                road.class == RoadClass::Street
+                    && !road.carves_navmesh()
+                    && [road.points.first(), road.points.last()]
+                        .into_iter()
+                        .flatten()
+                        .any(|end| end.distance(node.pos) < JOIN_EPSILON)
+            }) else {
+                continue;
+            };
+            let road = prepared.road(index);
+            let radius = turning_radius(road.width);
+            let disc = |radius: f32| -> Vec<Vec2> {
+                (0..TURNING_CIRCLE_SIDES)
+                    .map(|step| {
+                        let angle =
+                            std::f32::consts::TAU * step as f32 / TURNING_CIRCLE_SIDES as f32;
+                        node.pos + Vec2::from_angle(angle) * radius
+                    })
+                    .collect()
+            };
+            streets.push_convex(&disc(radius), ROAD_COLOR.to_linear());
+            if let Some(sidewalk) = prepared.sidewalk_drawn(index) {
+                sidewalks.push_convex(&disc(radius + sidewalk), SIDEWALK_COLOR.to_linear());
+            }
+            turning_circles += 1;
+        }
+        turning_circles
     }
 
     // ── Сборка слоёв и отчёт ──
