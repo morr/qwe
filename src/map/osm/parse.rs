@@ -320,6 +320,11 @@ struct PassReport {
     pulling: std::time::Duration,
     stretched: StretchedAreas,
     stretching: std::time::Duration,
+    /// Замощённые стоянки (`lots::pave_lots`) — своё поле, а не часть
+    /// [`StretchedAreas`]: у прохода свой вызов в шаге 6 и свой договор с
+    /// картой.
+    lots: lots::PavedLots,
+    paving: std::time::Duration,
     /// Карманов земли у дорог, засеянных травой
     /// (`pockets::fill_ground_pockets`).
     sown: usize,
@@ -352,6 +357,8 @@ impl std::fmt::Display for PassReport {
             pulling,
             stretched,
             stretching,
+            lots,
+            paving,
             sown,
             sowing,
             generated,
@@ -420,11 +427,15 @@ impl std::fmt::Display for PassReport {
             blocks,
             cut,
             cutting,
-            lots: lots::PavedLots { grown, trimmed },
         } = stretched;
         writeln!(
             f,
-            "osm parse: {blocks} block vertices pulled to the drawn road edge, {cut} blocks cut off the verges (in {cutting:?}), {grown} parking lots paved up to their roads, {trimmed} only stepped back from the houses on them, in {stretching:?}"
+            "osm parse: {blocks} block vertices pulled to the drawn road edge, {cut} blocks cut off the verges, in {stretching:?} (the verge cut alone: {cutting:?})"
+        )?;
+        let lots::PavedLots { grown, trimmed } = lots;
+        writeln!(
+            f,
+            "osm parse: {grown} parking lots paved up to their roads, {trimmed} only stepped back from the houses on them, in {paving:?}"
         )?;
         writeln!(
             f,
@@ -514,7 +525,10 @@ impl std::fmt::Display for PassReport {
 ///    Стоит здесь, потому что дома к этому моменту уже на своих местах, а
 ///    контуры стоянок — **после** выпрямления домиков (шаг 4): `vertex_uses`
 ///    считает общие вершины по сырым контурам стоянок, и дотянутый край не
-///    должен менять то, какие дома выпрямились.
+///    должен менять то, какие дома выпрямились. Шаг — две строки: кварталы
+///    (`pull_areas_to_roads`), а сразу за ними стоянки (`lots::pave_lots`) —
+///    другим контекстом: узкий проход получает [`lots::PaveLotsCtx`] со
+///    ссылками на то, что читает, а не `&mut MapData` целиком.
 /// 7. **Генерация дверей** — по уже окончательным контурам: дверь ставится по
 ///    стене того дома, который останется на карте.
 /// 8. **Посадка деревьев** — тоже по окончательным контурам: дерево обходит
@@ -606,6 +620,18 @@ fn finish_parse(map: &mut MapData, pending: &Pending, knobs: ParseKnobs) -> Pass
     };
     let stretching = started.elapsed();
 
+    // стоянки — второй строкой того же шага 6, сразу за кварталами и их
+    // обочинами: дотянутые кварталы уже покрывают свою землю. Данные —
+    // контекстом (`PaveLotsCtx`), а не картой целиком: узкий проход получает
+    // ссылку на то, что читает
+    let started = std::time::Instant::now();
+    let lots = if raw {
+        lots::PavedLots::default()
+    } else {
+        lots::pave_lots(lots::PaveLotsCtx::of(map))
+    };
+    let paving = started.elapsed();
+
     // после кварталов и стоянок: дотянутые, они уже покрывают свою землю
     let started = std::time::Instant::now();
     let sown = if raw {
@@ -666,6 +692,8 @@ fn finish_parse(map: &mut MapData, pending: &Pending, knobs: ParseKnobs) -> Pass
         pulling,
         stretched,
         stretching,
+        lots,
+        paving,
         sown,
         sowing,
         generated,
@@ -1782,7 +1810,7 @@ impl EdgeKind {
 
 /// Квартал (`landuse`), край которого не доходит до дороги считаные метры,
 /// **дотягивается под полотно**. Возвращает [`StretchedAreas`] — сдвинутые
-/// вершины кварталов и замощённые стоянки.
+/// вершины кварталов.
 ///
 /// Ширина улицы в модели — константа класса, тротуар добавляет рендер, а
 /// границу квартала в OSM рисуют по красным линиям или по заборам участков,
@@ -1806,11 +1834,12 @@ impl EdgeKind {
 /// дом — это не край двора.
 ///
 /// **Стоянки дотягиваются тем же шагом разбора, но другой конструкцией**
-/// ([`lots::pave_lots`]): пустырь между краем площадки и проездом вдоль неё —
-/// то же самое, что полоска земли между двором и тротуаром, только шире, и
-/// закрывается он не сдвигом вершин, а замыканием площадки с полотнами дорог.
-/// Повершинное правило у стоянок было и снято: точки контура уезжали порознь,
-/// и край выходил зубцами и иглами.
+/// ([`lots::pave_lots`], вызван отдельной строкой `finish_parse` сразу за этим
+/// проходом): пустырь между краем площадки и проездом вдоль неё — то же самое,
+/// что полоска земли между двором и тротуаром, только шире, и закрывается он
+/// не сдвигом вершин, а замыканием площадки с полотнами дорог. Повершинное
+/// правило у стоянок было и снято: точки контура уезжали порознь, и край
+/// выходил зубцами и иглами.
 fn pull_areas_to_roads(map: &mut MapData) -> StretchedAreas {
     // `reach` — внешний край нарисованного полотна от оси
     let mut edges: Vec<Edge> = Vec::new();
@@ -1864,17 +1893,12 @@ fn pull_areas_to_roads(map: &mut MapData) -> StretchedAreas {
     let started = std::time::Instant::now();
     stretched.cut = verges::cut_verges_from_blocks(map);
     stretched.cutting = started.elapsed();
-    stretched.lots = lots::pave_lots(lots::PaveLotsCtx::of(map));
     stretched
 }
 
-/// Что дотянул проход: вершин у кварталов и **площадок** у стоянок — стоянка
-/// растёт полигоном ([`lots::pave_lots`]), и вершины у неё считать нечего.
-///
-/// У стоянок это **два числа, а не одно** ([`lots::PavedLots`]): проход и
-/// дотягивает площадку до дороги, и отодвигает её от домов, — а второе бывает
-/// без первого, и площадка, которую всего лишь обрезала отмостка, «доросшей до
-/// своих дорог» не была.
+/// Что дотянул проход: вершин у кварталов — **площадки** у стоянок
+/// ([`lots::pave_lots`], второй строкой того же шага `finish_parse`) растут
+/// полигоном, и вершины у них считать нечего.
 #[derive(Default)]
 struct StretchedAreas {
     blocks: usize,
@@ -1882,7 +1906,6 @@ struct StretchedAreas {
     cut: usize,
     /// Сколько длился вырез — доля общего времени прохода.
     cutting: std::time::Duration,
-    lots: lots::PavedLots,
 }
 
 /// Кольцо квартала с дотянутыми к дорогам вершинами.
