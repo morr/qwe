@@ -12,7 +12,7 @@ use crate::camera::Viewport;
 use crate::grid::{grid_size, navtile_size};
 use crate::loading::AppState;
 use crate::map::osm::MapData;
-use crate::map::surface::{LayerMaterials, spawn_layers};
+use crate::map::surface::{LayerMaterials, LayerMesh, spawn_layers};
 use crate::map::{
     ConiferField, RutLines, lane_width, mesh_network_overlay, mesh_osm_contours, mesh_rut_overlay,
 };
@@ -25,6 +25,29 @@ pub(super) struct NavmeshOverlayMarker;
 /// Слой оверлея сети улиц (`map::mesh_network_overlay`).
 #[derive(Component, Clone, Copy)]
 pub(super) struct RoadNetworkOverlayMarker;
+
+/// Переложить оверлей под тумблер: прежние сущности маркера убрать, новый
+/// слой положить, если тумблер включён. Общая форма трёх оверлеев дороги
+/// (сеть, колея, контуры OSM), кладущихся через `spawn_layers` — он же
+/// ставит слою `DespawnOnExit`. Слой строится лениво: при выключенном
+/// тумблере ничего не собирается. Заливка navmesh и поле хвои под эту форму
+/// не подходят — те собирают меш и текстуру сами.
+fn respawn_overlay<M: Component + Clone>(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &LayerMaterials,
+    show: bool,
+    build: impl FnOnce() -> LayerMesh,
+    marker: M,
+    overlay: &Query<Entity, With<M>>,
+) {
+    for entity in overlay.iter() {
+        commands.entity(entity).despawn();
+    }
+    if show {
+        spawn_layers(commands, meshes, materials, [build()], marker);
+    }
+}
 
 /// Спавн/despawn оверлея сети улиц: улица каждая своим цветом, толщина по
 /// числу полос, точка на каждом шве ways. Сеть — ресурс загрузки мира
@@ -39,18 +62,15 @@ pub(super) fn sync_road_network_overlay(
     materials: LayerMaterials,
     overlay: Query<Entity, With<RoadNetworkOverlayMarker>>,
 ) {
-    for entity in &overlay {
-        commands.entity(entity).despawn();
-    }
-    if show.0 {
-        spawn_layers(
-            &mut commands,
-            &mut meshes,
-            &materials,
-            [mesh_network_overlay(&map)],
-            RoadNetworkOverlayMarker,
-        );
-    }
+    respawn_overlay(
+        &mut commands,
+        &mut meshes,
+        &materials,
+        show.0,
+        || mesh_network_overlay(&map),
+        RoadNetworkOverlayMarker,
+        &overlay,
+    );
 }
 
 /// Слой оверлея линий колеи (`map::mesh_rut_overlay`).
@@ -70,18 +90,15 @@ pub(super) fn sync_rut_overlay(
     materials: LayerMaterials,
     overlay: Query<Entity, With<RutOverlayMarker>>,
 ) {
-    for entity in &overlay {
-        commands.entity(entity).despawn();
-    }
-    if show.0 {
-        spawn_layers(
-            &mut commands,
-            &mut meshes,
-            &materials,
-            [mesh_rut_overlay(&ruts, lane_width())],
-            RutOverlayMarker,
-        );
-    }
+    respawn_overlay(
+        &mut commands,
+        &mut meshes,
+        &materials,
+        show.0,
+        || mesh_rut_overlay(&ruts, lane_width()),
+        RutOverlayMarker,
+        &overlay,
+    );
 }
 
 /// Слой оверлея контуров OSM (`map::mesh_osm_contours`).
@@ -100,25 +117,24 @@ pub(super) fn sync_osm_contours_overlay(
     materials: LayerMaterials,
     overlay: Query<Entity, With<OsmContoursOverlayMarker>>,
 ) {
-    for entity in &overlay {
-        commands.entity(entity).despawn();
-    }
-    if show.0 {
-        let started = std::time::Instant::now();
-        let layer = mesh_osm_contours(&map.osm_contours);
-        info!(
-            "osm contours overlay: {} verts in {:?}",
-            layer.builder.vertex_count(),
-            started.elapsed()
-        );
-        spawn_layers(
-            &mut commands,
-            &mut meshes,
-            &materials,
-            [layer],
-            OsmContoursOverlayMarker,
-        );
-    }
+    respawn_overlay(
+        &mut commands,
+        &mut meshes,
+        &materials,
+        show.0,
+        || {
+            let started = std::time::Instant::now();
+            let layer = mesh_osm_contours(&map.osm_contours);
+            info!(
+                "osm contours overlay: {} verts in {:?}",
+                layer.builder.vertex_count(),
+                started.elapsed()
+            );
+            layer
+        },
+        OsmContoursOverlayMarker,
+        &overlay,
+    );
 }
 
 /// Слой поля хвои и то, под что он нарисован: порог и поколение поля.
