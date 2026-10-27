@@ -572,8 +572,13 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   **before** the skewed houses are squared, and `vertex_uses` is deliberately computed
   **twice**, because the outlines move between its two readers. A narrow pass takes a
   **pass context** instead of `&mut MapData` — a struct of references to exactly what it
-  reads and the one field it writes (`lots::PaveLotsCtx` is the pilot; the wide passes
-  stay on the whole map). Detail in the `osm-map` skill.
+  reads and the one field it writes, living in its own `parse/` module with the tests
+  beside it (`lots::PaveLotsCtx`, `pavements::InferPavementsCtx`,
+  `faiths::ResolveFaithsCtx`). A pass that follows ten fields or more stays on the whole
+  map — its footprint is the map itself (`sections::apply`, `compose_trees`, the squaring,
+  the house pull, the block pull, the ground pockets). The district measure is an explicit
+  input: `finish_parse` builds `Districts` once and hands it to `infer_sidewalks`. Detail
+  in the `osm-map` skill.
 - **OSM contours** (`map/osm/contours.rs`, `MapData::osm_contours`) — the map's geometry
   as the element loop read it, **before any finishing pass**: road axes (streets and
   paths apart), the other lines, every area ring and hole. A copy of points taken at the
