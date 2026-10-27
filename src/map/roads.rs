@@ -70,7 +70,7 @@ use crate::map::meshing::{
 use crate::map::osm::model::{
     RoadAreaKind, RoadNodeKind, point_in_area, point_in_polygon, polyline_length, ring_bounds,
 };
-use crate::map::osm::{AreaKind, MapData, PolyArea, RailKind, RoadClass, RoadLine, WallLine};
+use crate::map::osm::{AreaKind, MapData, PolyArea, RailKind, RoadClass, RoadLine};
 use crate::map::rail::{CrossedStreet, crossable, mesh_level_crossings};
 use crate::map::shapes::{Shape, area_contours, is_ring, oriented, push_shape};
 use crate::map::smooth::{Smoothing, smooth_pinned};
@@ -886,7 +886,7 @@ pub fn build_roads(
     // ── Слои и накопители ── куда кладут фазы ниже: строители слоёв,
     // мосты, стоянки, краска и колея
     let started = std::time::Instant::now();
-    let (roads, walls): (&[RoadLine], &[WallLine]) = (&map.roads, &map.walls);
+    let roads: &[RoadLine] = &map.roads;
     let mut painter = paint::Painter::new(map.traffic_side);
     let mut ruts = RutLines::default();
 
@@ -1691,30 +1691,14 @@ pub fn build_roads(
         .collect();
     let (rail_crossings, level_crossings) = mesh_level_crossings(&map.rails, &crossed);
     // ── Газон островов колец ──
-    // Полоса тротуара подхода доходит до узла на оси кольца, а подход
-    // входит в кольцо по касательной — её торец ложился серпом на остров
-    // поверх газона (R28, Белгород: три наплыва на одном кольце). Что из этих
-    // полос попало за бордюр острова, закрывается газоном — в слое газона
-    // разделительных, над тротуарами; подрезать сами полосы — значит открыть
-    // щели между тротуаром подхода и тротуаром кольца снаружи
-    for (ring, inset) in prepared.rings().list.iter().zip(&island_insets) {
-        for shape in ring_island_cover(ring, *inset, &approach_bands) {
-            push_shape(&mut median_grass, shape, GRASS_COLOR.to_linear());
-        }
-    }
+    cover_ring_islands(
+        &prepared,
+        &island_insets,
+        &approach_bands,
+        &mut median_grass,
+    );
     // ── Лента крепостной стены ──
-    let fortresses = Fortresses::of(&map.buildings);
-    for wall in walls {
-        for run in fortresses.bare_runs(&wall.points) {
-            push_ribbon(
-                &mut wall_ribbons,
-                &run,
-                wall.width,
-                WALL_COLOR.to_linear(),
-                ROAD_JOIN,
-            );
-        }
-    }
+    lay_wall_ribbons(map, &mut wall_ribbons);
 
     // ── Тела вынесенных фаз ── непрерывные куски того же прохода, в порядке
     // вызова; их имена и ход — в баннерах наверху
@@ -2126,6 +2110,43 @@ pub fn build_roads(
             push_shape(fills, shape, TRAM_BAND_COLOR.to_linear());
         }
         (tram_tracks, tram_bands.len())
+    }
+
+    // Газон островов колец: полоса тротуара подхода доходит до узла на оси
+    // кольца, а подход входит в кольцо по касательной — её торец ложился
+    // серпом на остров поверх газона (R28, Белгород: три наплыва на одном
+    // кольце). Что из этих полос попало за бордюр острова, закрывается
+    // газоном — в слое газона разделительных, над тротуарами; подрезать сами
+    // полосы — значит открыть щели между тротуаром подхода и тротуаром
+    // кольца снаружи
+    fn cover_ring_islands(
+        prepared: &Drawn,
+        island_insets: &[f32],
+        approach_bands: &[(Vec<Vec2>, f32, [bool; 2])],
+        median_grass: &mut MeshBuilder,
+    ) {
+        for (ring, inset) in prepared.rings().list.iter().zip(island_insets) {
+            for shape in ring_island_cover(ring, *inset, approach_bands) {
+                push_shape(median_grass, shape, GRASS_COLOR.to_linear());
+            }
+        }
+    }
+
+    // Лента крепостной стены — только там, где под ней нет зданий самой
+    // крепости (`Fortresses::bare_runs`)
+    fn lay_wall_ribbons(map: &MapData, wall_ribbons: &mut MeshBuilder) {
+        let fortresses = Fortresses::of(&map.buildings);
+        for wall in &map.walls {
+            for run in fortresses.bare_runs(&wall.points) {
+                push_ribbon(
+                    wall_ribbons,
+                    &run,
+                    wall.width,
+                    WALL_COLOR.to_linear(),
+                    ROAD_JOIN,
+                );
+            }
+        }
     }
 
     // ── Сборка слоёв и отчёт ──
