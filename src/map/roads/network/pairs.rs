@@ -842,7 +842,9 @@ impl Pairs {
                     gap = seam_blend(after, gap, total - at, wedged[1]);
                 }
                 // полуширины половин, обращённые друг к другу, — с клиньями
-                let partner_path = original[partner].as_deref().unwrap_or_default();
+                let partner_path = original[partner]
+                    .as_deref()
+                    .expect("ось пары сохранена до разводки");
                 let partner_left =
                     place_on_path(partner_path, &original_along[partner], near_along)
                         .is_some_and(|(_, heading)| heading.perp_dot(*point - near) > 0.0);
