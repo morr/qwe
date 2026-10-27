@@ -57,6 +57,14 @@ a map built by hand in a test carries the defaults.
   comments out of eight and was written down whole nowhere; now it is one numbered list of
   ten steps (0–9) on that function, each step with its "why here", and a pass's own doc comment
   only points at its step number.
+- **A narrow pass takes a pass context, not the whole map** (`parse/lots.rs::PaveLotsCtx`,
+  the pilot): `pave_lots(PaveLotsCtx)` — a struct of shared references to exactly what the
+  pass reads (`roads`, `buildings`, `parks`, `woods`, `grass`, `sand`, `water`, `fences`)
+  and the one `&mut` it writes (`parking`). The field list is the pass's contract with the
+  map — what is not in it is not touched — and a test builds it by hand, empty slices
+  standing for the inputs its scene has none of. `PaveLotsCtx::of(&mut MapData)` is the
+  bridge `finish_parse` calls it through; the wide passes (`sections::apply`,
+  `compose_trees`) stay on `&mut MapData`.
 - **Raw OSM** — `ParseKnobs::raw: RawOsm` (`Off` / `Parse` / `Draw`, a persisted
   settings group `debug.raw_osm`, the Debug tab's `Raw OSM` row beside `Navtile`, the
   gallery's `Raw OSM` row / `ROADS_RAW=parse|draw`). With any level on, `finish_parse`
@@ -68,8 +76,9 @@ a map built by hand in a test carries the defaults.
   `infer_pavements`, `verges::measure_footways_beside_streets` — replaced by
   `drop_untagged_sidewalks` (every `SidewalkSide::Inferred` becomes `None`: **a sidewalk
   only where `sidewalk*` says so**); `resolve_faiths`; `square_skewed_houses`,
-  `pull_houses_off_sidewalks`, `pull_areas_to_roads` (and with it `pave_lots` and the
-  `LotKind::Ground` it settles — every lot stays what `area_kind` read);
+  `pull_houses_off_sidewalks`, `pull_areas_to_roads` and, as its own line of the same
+  step, `pave_lots` (with the `LotKind::Ground` it settles — every lot stays what
+  `area_kind` read);
   `pockets::fill_ground_pockets`; `generate_entrances`. **`attach_entrances` stays** — a
   mapped door is data. Planting runs (the tree nodes are data), and on the `Draw` level its
   woods and rows are thrown away: no generated trees. The `Draw` level also stands no cars
@@ -645,8 +654,10 @@ be called alone:
     arch through a house is not the edge of a yard. Everything else that is drawn does,
     alleys included — a footpath with a seam of ground beside it reads the same way.
   - **The parking lots reach their roads in the same step, by a different construction**
-    — `parse/lots.rs::pave_lots`, a **polygon closing**, called at the end of
-    `pull_areas_to_roads`.
+    — `parse/lots.rs::pave_lots`, a **polygon closing**, its own line of step 6 right
+    after `pull_areas_to_roads` (it used to be that function's last act) and the pilot
+    of the **pass context**: it takes `PaveLotsCtx` — references to the eight fields it
+    reads and the one `parking` it writes — not `&mut MapData`.
     - **The vertex pull was here first and was removed** (`Stretch::Lot`, `Untouched`,
       `untangled`, `PARKING_GAP_MAX` 12 m, `PARKING_STEP` 3 m). Each point of the outline
       looked for its own road — the farthest one outside within the limit — and

@@ -570,8 +570,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   reason, on that function. Both halves report as values (`ReadReport` /
   `PassReport`); `parse` prints them. Two order invariants: the mapped doors are attached
   **before** the skewed houses are squared, and `vertex_uses` is deliberately computed
-  **twice**, because the outlines move between its two readers. Detail in the `osm-map`
-  skill.
+  **twice**, because the outlines move between its two readers. A narrow pass takes a
+  **pass context** instead of `&mut MapData` — a struct of references to exactly what it
+  reads and the one field it writes (`lots::PaveLotsCtx` is the pilot; the wide passes
+  stay on the whole map). Detail in the `osm-map` skill.
 - **OSM contours** (`map/osm/contours.rs`, `MapData::osm_contours`) — the map's geometry
   as the element loop read it, **before any finishing pass**: road axes (streets and
   paths apart), the other lines, every area ring and hole. A copy of points taken at the
