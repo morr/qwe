@@ -61,7 +61,7 @@
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
-use crate::map::meshing::{MeshBuilder, ring_perimeter};
+use crate::map::meshing::{MeshBuilder, equivalent_width, ring_perimeter};
 use crate::map::osm::model::{
     AreaKind, LotKind, PolyArea, RoadClass, RoadLine, TrafficSide, distance_to_segment,
     ring_bounds, signed_ring_area,
@@ -1196,13 +1196,12 @@ fn thickness(ring: &[Vec2]) -> f32 {
 }
 
 /// Ширина полосы — короткая сторона прямоугольника с той же площадью и тем же
-/// периметром. [`thickness`] её занижает на торцах (у 4 × 60 м — 3.75), а ряд
+/// периметром ([`crate::map::meshing::equivalent_width`]). [`thickness`] её
+/// занижает на торцах (у 4 × 60 м — 3.75), а ряд
 /// вдоль бордюра встаёт по середине полосы, и на четверть метра мимо — это
 /// машина, торчащая из кармана.
 fn strip_width(ring: &[Vec2]) -> f32 {
-    let semi = ring_perimeter(ring) / 2.0;
-    let area = signed_ring_area(ring).abs();
-    (semi - (semi * semi - 4.0 * area).max(0.0).sqrt()) / 2.0
+    equivalent_width(ring_perimeter(ring), signed_ring_area(ring).abs())
 }
 
 /// Ряд **вдоль бордюра** — в кармане вдоль улицы ([`LotKind::Kerbside`]),

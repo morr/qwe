@@ -896,7 +896,9 @@ pub(super) fn is_deep_hull(building: &PolyArea) -> bool {
 }
 
 /// Короткая сторона прямоугольника с той же площадью и тем же периметром, что у
-/// плана: корень `w² − (P/2)·w + A = 0`.
+/// плана: корень `w² − (P/2)·w + A = 0`. Площадь — за вычетом дворов, периметр —
+/// с их контурами; сам корень считает общая с шириной парковочной полосы
+/// [`crate::map::meshing::equivalent_width`].
 fn equivalent_width(building: &PolyArea) -> f32 {
     let area = footprint_area(building)
         - building
@@ -904,19 +906,13 @@ fn equivalent_width(building: &PolyArea) -> f32 {
             .iter()
             .map(|hole| crate::map::osm::model::signed_ring_area(hole).abs())
             .sum::<f32>();
-    let half = (ring_perimeter(&building.outer)
+    let perimeter = ring_perimeter(&building.outer)
         + building
             .holes
             .iter()
             .map(|hole| ring_perimeter(hole))
-            .sum::<f32>())
-        / 2.0;
-    let discriminant = half * half - 4.0 * area;
-    if discriminant > 0.0 {
-        (half - discriminant.sqrt()) / 2.0
-    } else {
-        half / 2.0
-    }
+            .sum::<f32>();
+    crate::map::meshing::equivalent_width(perimeter, area)
 }
 
 /// Таблицы материалов стен — по десять слотов, чтобы читались как проценты,
