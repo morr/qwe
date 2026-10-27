@@ -6,15 +6,15 @@ use super::tags::{building_height, colour, parse_measure};
 use crate::map::osm::fixture::{Overpass, building, closed, rect, square, street, water_area};
 use crate::map::osm::model::sidewalk_band;
 use crate::map::osm::model::{
-    BuildingUse, Colours, FenceKind, Highway, LaneTurn, LotKind, PitchKind, RailKind, RoadAreaKind,
-    RoadClass, RoadNodeKind, Sacred, SacredForm, ServiceTrack, StructureKind, WaterKind,
-    distance_to_segment, is_big_box,
+    BuildingUse, Colours, Faith, FenceKind, Highway, LaneTurn, LotKind, Pavement, PitchKind,
+    RailKind, RoadAreaKind, RoadClass, RoadNodeKind, Sacred, SacredForm, ServiceTrack,
+    StructureKind, WaterKind, distance_to_segment, is_big_box,
 };
 use crate::map::osm::planting::{
     TREE_CROWN_REACH, TREE_MIN_SPACING, TREE_SHORE_CLEARANCE, TREE_WALL_CLEARANCE, near_area_edge,
 };
 use crate::map::roads::network::RoadNetwork;
-use crate::settings::MAP_SIZE;
+use crate::settings::{MAP_SIZE, STOREY_HEIGHT};
 
 /// Фикстуры строятся вокруг гео-центра Тулы — города по умолчанию.
 const CITY: City = City::Tula;
@@ -1411,26 +1411,39 @@ fn inferred_street(highway: Highway) -> RoadLine {
     }
 }
 
+/// Дом со **своей** высотой посреди улицы: мера [`Districts`] читает высоту
+/// тем же `height_or_default`, что и слой машин, так что тег снимает тест с
+/// зависимости от вывода этажей. Высота `N` этажей — `N × STOREY_HEIGHT`.
+fn district_house(storeys: f32) -> Vec<PolyArea> {
+    vec![PolyArea {
+        height: Some(storeys * STOREY_HEIGHT),
+        ..building(square(Vec2::new(100.0, 0.0), 10.0), Vec::new())
+    }]
+}
+
 /// Застройка ниже городской снимает тротуар без тега, городская оставляет —
-/// мера приходит снаружи, ни одного дома не нужно.
+/// мера строится прямо из домов сцены, без карты.
 #[test]
 fn infer_sidewalks_drops_the_band_only_among_low_blocks() {
     let mut roads = vec![inferred_street(Highway::Residential)];
-    let low = infer_sidewalks(&mut roads, |_| Some(2.0));
+    let low = infer_sidewalks(&mut roads, &Districts::new(&district_house(2.0)));
     assert_eq!((low.asked, low.dropped), (1, 1));
     assert_eq!(roads[0].sidewalks, [SidewalkSide::None; 2]);
 
     let mut roads = vec![inferred_street(Highway::Unclassified)];
-    let tall = infer_sidewalks(&mut roads, |_| Some(SIDEWALK_STOREYS_MIN));
+    let tall = infer_sidewalks(
+        &mut roads,
+        &Districts::new(&district_house(SIDEWALK_STOREYS_MIN)),
+    );
     assert_eq!((tall.asked, tall.dropped), (1, 0));
     assert_eq!(roads[0].sidewalks, [SidewalkSide::Inferred; 2]);
 }
 
-/// Пусто вокруг — тоже обочина: ни одной пробы с этажностью.
+/// Пусто вокруг — тоже обочина: мера ни разу не отвечает этажностью.
 #[test]
 fn infer_sidewalks_drops_the_band_where_nothing_stands_around() {
     let mut roads = vec![inferred_street(Highway::LivingStreet)];
-    let empty = infer_sidewalks(&mut roads, |_| None);
+    let empty = infer_sidewalks(&mut roads, &Districts::new(&[]));
     assert_eq!((empty.asked, empty.dropped), (1, 1));
     assert_eq!(roads[0].sidewalks, [SidewalkSide::None; 2]);
 }
@@ -1448,7 +1461,7 @@ fn infer_sidewalks_asks_only_inferred_residential_streets() {
         ..inferred_street(Highway::Residential)
     };
     let mut roads = vec![tagged, inferred_street(Highway::Tertiary), unpaved];
-    let report = infer_sidewalks(&mut roads, |_| None);
+    let report = infer_sidewalks(&mut roads, &Districts::new(&[]));
     assert_eq!((report.asked, report.dropped), (0, 0));
     assert_eq!(roads[0].sidewalks, [SidewalkSide::Tagged; 2]);
     assert_eq!(roads[1].sidewalks, [SidewalkSide::Inferred; 2]);
@@ -2158,7 +2171,7 @@ fn building_use_comes_from_the_building_tag_or_amenity_outside_the_vocabulary() 
             // значение вне словаря отдаёт слово `amenity` так же, как `yes`
             BuildingUse::Public,
             // вера не размечена ни у одного храма города — западная
-            // (`parse::resolve_faiths`)
+            // (`parse::faiths::resolve_faiths`)
             WESTERN_CHURCH,
             // `building=*` со смыслом сильнее `amenity`
             WESTERN_CHURCH,
@@ -3841,61 +3854,6 @@ fn a_block_drawn_to_the_kerb_is_tucked_under_its_sidewalk_footway() {
     assert!(
         (cornered + 7.0).abs() < 0.02,
         "угол под переходом не ушёл под тротуар: {cornered}"
-    );
-}
-
-/// Сборка храмов — в одиночку, на трёх контурах: барабан внутри собора берёт
-/// его веру и его посев, а одинокая церковь без разметки — веру большинства
-/// города, и она же одна и попадает в счётчик угаданных.
-#[test]
-fn resolving_the_faiths_runs_on_its_own() {
-    let church = |ring: Vec<Vec2>, faith: Faith, form: SacredForm| PolyArea {
-        building_use: BuildingUse::Church(Sacred {
-            faith,
-            form,
-            complex: 0,
-            floor_dm: 0,
-        }),
-        ..building(ring, Vec::new())
-    };
-    let mut buildings = vec![
-        church(square(CENTER, 20.0), Faith::Orthodox, SacredForm::Nave),
-        // барабан стоит в контуре собора и своей веры не имеет
-        church(square(CENTER, 5.0), Faith::Unknown, SacredForm::Dome),
-        // а эта церковь стоит сама по себе, и веры у неё тоже нет
-        church(
-            square(CENTER + Vec2::new(500.0, 0.0), 15.0),
-            Faith::Unknown,
-            SacredForm::Nave,
-        ),
-    ];
-
-    assert_eq!(
-        resolve_faiths(&mut buildings),
-        1,
-        "по большинству города угадан ровно один храм"
-    );
-
-    let sacred = |building: &PolyArea| match building.building_use {
-        BuildingUse::Church(sacred) => sacred,
-        other => panic!("не храм: {other:?}"),
-    };
-    let (cathedral, drum, lone) = (
-        sacred(&buildings[0]),
-        sacred(&buildings[1]),
-        sacred(&buildings[2]),
-    );
-    assert_ne!(cathedral.complex, 0, "посев храма не проставлен");
-    assert_eq!(drum.faith, Faith::Orthodox, "барабан не взял веру собора");
-    assert_eq!(drum.complex, cathedral.complex, "и красится сам по себе");
-    assert_eq!(
-        lone.faith,
-        Faith::Orthodox,
-        "одинокая церковь не взяла веру большинства"
-    );
-    assert_ne!(
-        lone.complex, cathedral.complex,
-        "чужой храм красится посевом собора"
     );
 }
 

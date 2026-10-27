@@ -229,7 +229,7 @@ fn part_floor(tags: &HashMap<String, String>) -> f32 {
 /// `building`: мечеть и синагога называют себя тегом здания чаще, чем
 /// религией. Христианский храм без деноминации остаётся [`Faith::Unknown`] —
 /// в Туле это православный храм, в Берлине кирха, и решает за него город
-/// (`parse::resolve_faiths`), а не словарь.
+/// (`parse::faiths::resolve_faiths`), а не словарь.
 fn faith(tags: &HashMap<String, String>) -> Faith {
     let denomination = tags.get("denomination").map(String::as_str);
     match tags.get("religion").map(String::as_str) {

@@ -62,9 +62,19 @@ a map built by hand in a test carries the defaults.
   pass reads (`roads`, `buildings`, `parks`, `woods`, `grass`, `sand`, `water`, `fences`)
   and the one `&mut` it writes (`parking`). The field list is the pass's contract with the
   map — what is not in it is not touched — and a test builds it by hand, empty slices
-  standing for the inputs its scene has none of. `PaveLotsCtx::of(&mut MapData)` is the
-  bridge `finish_parse` calls it through; the wide passes (`sections::apply`,
-  `compose_trees`) stay on `&mut MapData`.
+  standing for the inputs its scene has none of. `<Pass>Ctx::of(&mut MapData)` is the
+  bridge `finish_parse` calls it through. The same shape carry `parse/pavements.rs`
+  (`InferPavementsCtx`: roads in and out, three green layers in) and `parse/faiths.rs`
+  (`ResolveFaithsCtx`: buildings, the one field it both reads and writes) — a converted
+  pass lives in its own `parse/` module with its tests beside it. A pass that follows
+  **ten fields or more** stays on `&mut MapData` — its footprint is the map itself
+  (`sections::apply`, `compose_trees`, `square_skewed_houses` and
+  `pull_houses_off_sidewalks` — ten and eleven fields through `vertex_uses`/`Obstacles` —
+  `pull_areas_to_roads`, `pockets::fill_ground_pockets`).
+- **The district measure is an explicit input.** `finish_parse` builds
+  `cars::district::Districts` once, over the buildings left after the drowned pass, and
+  hands it to `infer_sidewalks(&mut roads, &Districts)` — no lazy `OnceCell`, no reader
+  rebuilding it; the parse is the one place outside the cars layer that asks it.
 - **Raw OSM** — `ParseKnobs::raw: RawOsm` (`Off` / `Parse` / `Draw`, a persisted
   settings group `debug.raw_osm`, the Debug tab's `Raw OSM` row beside `Navtile`, the
   gallery's `Raw OSM` row / `ROADS_RAW=parse|draw`). With any level on, `finish_parse`
@@ -248,7 +258,8 @@ be called alone:
     8–11 m, `SHOP_HEIGHTS` 4.5–6.5), deliberately — «Верный» and ТЦ «Перспектива» carry no
     `building:levels` at all, and a box standing next to an identical box must not come out
     half as tall for want of a tag.
-- **Places of worship** (`parse/tags.rs::faith`, `sacred_form`; `parse.rs::resolve_faiths`)
+- **Places of worship** (`parse/tags.rs::faith`, `sacred_form`;
+  `parse/faiths.rs::resolve_faiths`)
   — `BuildingUse::Church(Sacred { faith, form })`. `building=bell_tower|campanile|minaret`
   and `tower:type=bell_tower|minaret` are churches too (`form: Tower`); a part with
   `roof:shape=onion|dome` is `form: Dome` — the only reading of `roof:shape` in the parse.
@@ -330,10 +341,10 @@ be called alone:
   `SIDEWALK_STOREYS_MIN` 3 storeys (`cars::district::Districts::storeys_at`, probed every
   `SIDEWALK_PROBE_STEP` 40 m; nothing around counts as low) and loses it to `[None; 2]`
   otherwise; an unpaved one lost it already in `tags.rs::untagged_sidewalks`. The pass is
-  `infer_sidewalks(&mut roads, storeys_at)` — it **takes** the measure instead of building
-  it, so `finish_parse` builds `Districts` lazily (only if a street is asked) and three
-  tests call it with a closure and not a single building
-  (`infer_sidewalks_drops_the_band_only_among_low_blocks` and its two neighbours). Before
+  `infer_sidewalks(&mut roads, &Districts)` — the measure is its explicit input
+  (see the seam above), and the three tests build the `Districts` straight from
+  the scene's houses (`infer_sidewalks_drops_the_band_only_among_low_blocks`
+  and its two neighbours). Before
   the house pull and the block pull, so both push and pull against the sidewalk that is
   drawn. The rule itself — `roads.md`,
   **Sidewalks**; logged as `N of M untagged residential streets left without sidewalks`.
@@ -392,9 +403,10 @@ be called alone:
   `parse/tests.rs::a_footway_along_the_kerb_takes_the_inferred_sidewalk_of_its_side`,
   `a_sidewalk_stays_unless_a_paved_footway_runs_beside_it` and, through the whole parse,
   `a_mapped_sidewalk_beside_an_untagged_street_replaces_its_band`.
-- **Pavement of untagged footways** (`parse.rs::infer_pavements`, beside the sidewalks
-  pass; its place is free — the greenery it reads never moves and only the renderer reads
-  the answer). `RoadLine::pavement` leaves `parse_way` from `tags.rs::tagged_pavement`:
+- **Pavement of untagged footways** (`parse/pavements.rs::infer_pavements`, beside the
+  sidewalks pass; its place is free — the greenery it reads never moves and only the
+  renderer reads the answer). `RoadLine::pavement` leaves `parse_way` from
+  `tags.rs::tagged_pavement`:
   `surface` decides (`asphalt|paving_stones|concrete|sett|paved|metal|wood|…` → `Paved`,
   the `untagged_sidewalks` dirt list plus `woodchips|grass_paver` → `Unpaved` — the two
   share `surface_pavement`); without it the kind does — `footway=sidewalk|crossing`,
