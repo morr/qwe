@@ -1813,7 +1813,12 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     at a junction whose widths differ get the **wide kerb's wedge** instead
     (`corners::obtuse_corner`): the wide arm's edge carried on past its square end into
     the narrow arm's edge by one gentle arc, where a straight cut and a wedge of ground
-    used to be.
+    used to be. All of it comes out as one `KerbReturns` value **laid by the module
+    itself** (`KerbReturns::lay`): the layer order — lawn scraps first, then street,
+    dirt, sidewalk (with tile overlaps) and verge fills, then the noses and bends whole —
+    is `corners`' invariant, and `build_roads` only hands it the builders; geometry
+    readers take typed views (`paving()`, `streets()`), and the fields are closed to the
+    roads subtree.
   - **Nose** (`map/roads/corners.rs::nose`) — the rounded tip of the island between two
     arms of a **sharp fork**: under 25°, or under 60° where the kerb return did not fit.
     Not a fillet (its tangent would run tens of metres) but an arc of a small radius

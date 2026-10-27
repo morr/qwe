@@ -2348,6 +2348,21 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     asphalt one (**Unpaved streets** above). Bridges and passages give no arms
     (their paths go in as `None`). The radii are scaled by `RoadShape::corner_radius`
     (0.5–2, `kerb_returns(..., scale)`).
+    **The output is one `KerbReturns` value, and the module lays it itself**
+    (`KerbReturns::lay`, taking a `KerbLayers` of the seven layer builders, `Meadows`
+    and the lawn `Scraps`): the order — lawn scraps first (paving around them is what
+    cuts them), then the fanned fills street/alley → dirt → sidewalks with tile overlaps
+    → verges → wide-verge lawns, then the noses and bends triangulated whole — used to
+    live in `build_roads`' hand-rolled loops and is `corners`' invariant now; the
+    fork gores (`fork_gores`) alone are laid at their own call site, into the hatch
+    (`Gores::add_forks`), because `Gores` is built from the drawn order after it.
+    Geometry readers take typed views instead of fields: `paving()` (what cuts the lawn
+    scraps — street asphalt, sidewalks, verges, paved noses and bends; **tile overlaps
+    are not paving**, they are the repair itself; split into `flat()` and `curved()` so
+    the caller chains its own gore outlines between them and the insertion order of
+    `Scraps` keeps), and `streets()` (street-class asphalt only, for the gore mouths).
+    The fields are data still, but `pub(super)`: the report's counts and the tests read
+    them inside the roads subtree, and wave 2 converts the tests and closes them.
     - **An arm that ends in a junction ends square** (`KerbReturns::butt`, stage 5). A
       junction here is a class group of three arms or more, or of two meeting at an angle
       (25°–155° either side); two nearly collinear ends are one road continued and keep
