@@ -43,6 +43,13 @@
 //! нет. Асфальтовый клин при этом всегда лежит на тротуарном: дуги
 //! концентричны, и касательные у них общие, так что клин между краями дорог и
 //! бордюрной дугой — внутри клина между краями тротуаров и тротуарной.
+//!
+//! **Порядок укладки слоёв — инвариант этого модуля** ([`KerbReturns::lay`]),
+//! а не вызывающего: углы газонов уходят лоскутам раньше всего мощения,
+//! скругления ложатся веером в свои слои — улицы, грунтовые улицы, тротуары
+//! с наездами плитки, обочины, газоны широких обочин, — и последними носы и
+//! дуги, триангуляцией целиком. Клинья перед носами улиц (`fork_gore`)
+//! укладываются отдельно, слоем штриховки островков (`roads/gores.rs`).
 
 use std::f32::consts::PI;
 
@@ -53,13 +60,18 @@ use super::VERGE_PAVED_MAX;
 use super::drawn::{Axis, Drawn};
 use super::junctions::node_key;
 use super::network::pairs::PROBE_STEP;
+use super::scraps::Scraps;
+use super::{
+    ALLEY_COLOR, Meadows, ROAD_COLOR, SIDEWALK_COLOR, UNPAVED_ROAD_COLOR, VERGE_YARD_COLOR,
+};
 use crate::map::along::{arclengths, nearest_on_path, place_on_path};
 use crate::map::grid::Grid;
 use crate::map::meshing::{
-    arc_steps, butt_direction, miter_offsets, ribbon_merge_distance, ribbon_vertices,
+    MeshBuilder, arc_steps, butt_direction, miter_offsets, ribbon_merge_distance, ribbon_vertices,
 };
 use crate::map::osm::model::{closest_on_segment, point_in_area, polyline_length, ring_area};
 use crate::map::osm::{Highway, PolyArea, RoadClass, RoadLine};
+use crate::map::spawn::GRASS_COLOR;
 
 /// Радиус бордюра по классу дороги, м; у пары берётся меньший. Между
 /// проспектами (`trunk`…`secondary` и их съезды) — 10 м, с улицей
@@ -318,48 +330,71 @@ pub enum Fill {
     Sidewalk,
 }
 
-/// Асфальт всех узлов.
+/// Асфальт всех узлов. Укладка — методом модуля ([`Self::lay`]): порядок
+/// слоёв — инвариант `corners`, а не вызывающего. Читатели геометрии берут
+/// представления ([`Self::paving`], [`Self::streets`]); поля открыты только
+/// внутрь `roads` — отчёту сборки и тестам, ждущим своей очереди.
 #[derive(Default)]
 pub struct KerbReturns {
     /// Носы острых развилок ([`NOSE_SHARE`]) и слой каждого. Нос не выпукл и
     /// веером не кладётся: его стороны идут по кромкам лент, а они у острой
     /// развилки гнутые, — контур триангулируется целиком.
-    pub noses: Vec<(Fill, Vec<Vec2>)>,
+    pub(super) noses: Vec<(Fill, Vec<Vec2>)>,
     /// Изогнутые скругления ([`bend`]) и слой каждого: у кольца и гнутого
     /// подхода кромка кривая, контур не выпукл — триангулируется целиком.
-    pub bends: Vec<(Fill, Vec<Vec2>)>,
+    pub(super) bends: Vec<(Fill, Vec<Vec2>)>,
     /// Штрихуемые клинья перед носами острых развилок улиц ([`fork_gore`]):
     /// контур от острия клина до дуги носа — слою островков
     /// (`roads/gores.rs`).
-    pub fork_gores: Vec<Vec<Vec2>>,
+    pub(super) fork_gores: Vec<Vec<Vec2>>,
     /// Контур и класс дорог, в чей слой заливки он ляжет: скругления и
     /// наружные углы. Каждый — веер из первой вершины.
-    pub roads: Vec<(RoadClass, Vec<Vec2>)>,
+    pub(super) roads: Vec<(RoadClass, Vec<Vec2>)>,
     /// Скругления между двумя грунтовыми улицами — в их слое, так же.
-    pub unpaved: Vec<Vec<Vec2>>,
+    pub(super) unpaved: Vec<Vec<Vec2>>,
     /// Контуры в слое тротуаров, так же: углы полос тротуара и скругления
     /// узлов с мощёной дорожкой.
-    pub sidewalks: Vec<Vec<Vec2>>,
+    pub(super) sidewalks: Vec<Vec<Vec2>>,
     /// Наезды плитки на дворе у слияний мощёных дорожек ([`tile_overlaps`]):
     /// полоса вдоль кромки луча, за которой двор. Рисуются в слое тротуаров
     /// рядом с `sidewalks`, но лоскуты газона (`roads/scraps.rs`) ими не
     /// кормятся: наезд — сам починка, а не мощение, замыкающее лоскут.
-    pub overlaps: Vec<Vec<Vec2>>,
+    pub(super) overlaps: Vec<Vec<Vec2>>,
     /// Контуры в слое обочин (`road_verges`), так же: углы, где с одной
     /// стороны или с обеих вместо полосы тротуара обочина.
-    pub verges: Vec<Vec<Vec2>>,
+    pub(super) verges: Vec<Vec<Vec2>>,
     /// Те же углы между двумя **широкими** обочинами — газоном
     /// (`road_verge_lawns` или `road_verge_yards`), как и сами обочины: плиткой угол во все
     /// пятнадцать метров до дорожек был площадью посреди двора.
-    pub verge_lawns: Vec<Vec<Vec2>>,
+    pub(super) verge_lawns: Vec<Vec<Vec2>>,
     /// Сколько из `roads` и `sidewalks` — наружные углы, а не скругления.
-    pub outer: [usize; 2],
+    pub(super) outer: [usize; 2],
     /// Торцы, кончающиеся в узле, по дорогам: `[начало, конец]` — ленты с
     /// таким торцом кладутся с прямым, а не круглым.
-    pub butt: Vec<[bool; 2]>,
+    pub(super) butt: Vec<[bool; 2]>,
     /// На сколько метров не доходит до узла заливка торца `[начало, конец]`:
     /// у асфальтовой улицы, упёршейся в грунтовку, — полуширина грунтовки.
-    pub setback: Vec<[f32; 2]>,
+    pub(super) setback: Vec<[f32; 2]>,
+}
+
+/// Слои, в которые [`KerbReturns::lay`] кладёт асфальт узлов: по билдеру на
+/// слой `build_roads`. Именованная связка, а не массив: слоёв семь, и по
+/// индексу не прочесть, какой где.
+pub(super) struct KerbLayers<'a> {
+    /// Асфальт улиц (`roads`).
+    pub(super) streets: &'a mut MeshBuilder,
+    /// Песок аллей (`alleys`).
+    pub(super) alleys: &'a mut MeshBuilder,
+    /// Грунтовые улицы (`unpaved_roads`).
+    pub(super) unpaved: &'a mut MeshBuilder,
+    /// Плитка тротуаров (`sidewalks`).
+    pub(super) sidewalks: &'a mut MeshBuilder,
+    /// Обочины до отдельных тротуаров (`road_verges`).
+    pub(super) verges: &'a mut MeshBuilder,
+    /// Газон широких обочин у замапленного газона (`road_verge_lawns`).
+    pub(super) lawns: &'a mut MeshBuilder,
+    /// Газон широких обочин травой двора (`road_verge_yards`).
+    pub(super) yards: &'a mut MeshBuilder,
 }
 
 impl KerbReturns {
@@ -371,6 +406,160 @@ impl KerbReturns {
     /// Недоход заливки дороги `road` до узла у каждого торца, м.
     pub fn setback(&self, road: usize) -> [f32; 2] {
         self.setback.get(road).copied().unwrap_or_default()
+    }
+
+    /// Укладка асфальта узлов в слои `layers` — порядок здесь, в модуле:
+    /// сначала углы газонов уходят лоскутам (`scraps`) — мощение вокруг
+    /// режет их потом, — затем скругления ложатся веером в свои слои (улицы,
+    /// грунтовые улицы, тротуары с наездами плитки, обочины, газоны широких
+    /// обочин), и последними носы и дуги, триангуляцией целиком. Ленты дорог
+    /// кладутся поверх скруглений (`build_roads`), и этот порядок — половина
+    /// той картинки. `meadows` решает, каким газоном ляжет угол широкой
+    /// обочины: лугом у замапленного газона, травой двора — везде ещё.
+    pub(super) fn lay(&self, layers: KerbLayers<'_>, meadows: &Meadows, scraps: &mut Scraps) {
+        let KerbLayers {
+            streets,
+            alleys,
+            unpaved,
+            sidewalks,
+            verges,
+            lawns,
+            yards,
+        } = layers;
+        // углы газонов — лоскутам до всего мощения: лоскут режется по мощению
+        for outline in &self.verge_lawns {
+            scraps.push_lawn(outline.clone());
+        }
+        for (class, outline) in &self.roads {
+            let (builder, color) = match class {
+                RoadClass::Street => (&mut *streets, ROAD_COLOR),
+                RoadClass::Alley => (&mut *alleys, ALLEY_COLOR),
+            };
+            // Скругление не выпукло, но веер из его первой вершины — угла краёв —
+            // верен: дуга между точками касания и есть та часть окружности, что
+            // видна из угла. `earcutr` на восьми тысячах таких фигур стоил бы
+            // больше самой укладки.
+            builder.push_convex(outline, color.to_linear());
+        }
+        for outline in &self.unpaved {
+            unpaved.push_convex(outline, UNPAVED_ROAD_COLOR.to_linear());
+        }
+        // и тот же угол в слое тротуаров: полоса поворачивает за бордюром
+        for outline in &self.sidewalks {
+            sidewalks.push_convex(outline, SIDEWALK_COLOR.to_linear());
+        }
+        // и наезды плитки на дворе у слияний мощёных дорожек — тем же слоем
+        for outline in &self.overlaps {
+            sidewalks.push_convex(outline, SIDEWALK_COLOR.to_linear());
+        }
+        // и в слое обочин — где вместо полосы обочина до отдельной дорожки
+        for outline in &self.verges {
+            verges.push_convex(outline, SIDEWALK_COLOR.to_linear());
+        }
+        for outline in &self.verge_lawns {
+            if meadows.under(outline) {
+                lawns.push_convex(outline, GRASS_COLOR.to_linear());
+            } else {
+                yards.push_convex(outline, VERGE_YARD_COLOR.to_linear());
+            }
+        }
+        // носы острых развилок идут по гнутым кромкам лент, и веер из острия
+        // их не покрыл бы — триангуляция целиком; носов в городе сотни
+        for (fill, outline) in self.noses.iter().chain(&self.bends) {
+            let (builder, color) = match fill {
+                Fill::Road(RoadClass::Street) => (&mut *streets, ROAD_COLOR),
+                Fill::Road(RoadClass::Alley) => (&mut *alleys, ALLEY_COLOR),
+                Fill::Unpaved => (&mut *unpaved, UNPAVED_ROAD_COLOR),
+                Fill::Sidewalk => (&mut *sidewalks, SIDEWALK_COLOR),
+            };
+            builder.push_polygon(outline, &[], color.to_linear());
+        }
+    }
+
+    /// Асфальт узлов, которым режутся лоскуты газона (`roads/scraps.rs`):
+    /// улицы, тротуары, обочины и мощёные носы с дугами. Наружу — из
+    /// [`Self::paving`]. Наезды плитки ([`Self::overlaps`]) сюда не входят:
+    /// наезд — сам починка, а не мощение, замыкающее лоскут.
+    pub(super) fn paving(&self) -> KerbPaving<'_> {
+        KerbPaving {
+            roads: &self.roads,
+            sidewalks: &self.sidewalks,
+            verges: &self.verges,
+            noses: &self.noses,
+            bends: &self.bends,
+        }
+    }
+
+    /// Асфальт улиц узлов — скругления и носы в слое улиц: пустота, которую
+    /// он уже замостил, — просто асфальт перекрёстка, а не пустое устье
+    /// (горла штриховки, `gores::mouths`). Наружу — из [`Self::streets`].
+    pub(super) fn streets(&self) -> KerbStreets<'_> {
+        KerbStreets {
+            roads: &self.roads,
+            noses: &self.noses,
+            bends: &self.bends,
+        }
+    }
+}
+
+/// Мощение вокруг лоскутов газона — представление [`KerbReturns`] для
+/// `roads/scraps.rs`: контуры, коими лоскут режется. Плоские группы и носы с
+/// дугами раздельны — между ними вызывающий кладёт своё мощение (горки), и
+/// порядок вклада в `Scraps` сохраняется.
+#[derive(Clone, Copy)]
+pub(super) struct KerbPaving<'a> {
+    /// Скругления улиц и аллей; мощение — только улицы.
+    roads: &'a [(RoadClass, Vec<Vec2>)],
+    sidewalks: &'a [Vec<Vec2>],
+    verges: &'a [Vec<Vec2>],
+    noses: &'a [(Fill, Vec<Vec2>)],
+    bends: &'a [(Fill, Vec<Vec2>)],
+}
+
+impl<'a> KerbPaving<'a> {
+    /// Плоское мощение: скругления улиц, тротуары, обочины — веером.
+    pub(super) fn flat(self) -> impl Iterator<Item = &'a [Vec2]> {
+        self.roads
+            .iter()
+            .filter(|(class, _)| *class == RoadClass::Street)
+            .map(|(_, outline)| outline.as_slice())
+            .chain(self.sidewalks.iter().map(Vec::as_slice))
+            .chain(self.verges.iter().map(Vec::as_slice))
+    }
+
+    /// Мощёные носы и дуги — улиц и тротуаров: грунт и аллеи лоскут не режут.
+    pub(super) fn curved(self) -> impl Iterator<Item = &'a [Vec2]> {
+        [self.noses, self.bends]
+            .into_iter()
+            .flatten()
+            .filter(|(fill, _)| matches!(fill, Fill::Road(RoadClass::Street) | Fill::Sidewalk))
+            .map(|(_, outline)| outline.as_slice())
+    }
+}
+
+/// Асфальт улиц узлов — представление [`KerbReturns`] для горл штриховки
+/// (`gores::mouths`): только слой улиц, без тротуаров и грунтовых.
+#[derive(Clone, Copy)]
+pub(super) struct KerbStreets<'a> {
+    roads: &'a [(RoadClass, Vec<Vec2>)],
+    noses: &'a [(Fill, Vec<Vec2>)],
+    bends: &'a [(Fill, Vec<Vec2>)],
+}
+
+impl<'a> KerbStreets<'a> {
+    /// Контуры асфальта улиц: скругления, носы и дуги.
+    pub(super) fn outlines(self) -> impl Iterator<Item = &'a [Vec2]> {
+        self.roads
+            .iter()
+            .filter(|(class, _)| *class == RoadClass::Street)
+            .map(|(_, outline)| outline.as_slice())
+            .chain(
+                [self.noses, self.bends]
+                    .into_iter()
+                    .flatten()
+                    .filter(|(fill, _)| matches!(fill, Fill::Road(RoadClass::Street)))
+                    .map(|(_, outline)| outline.as_slice()),
+            )
     }
 }
 
@@ -3444,5 +3633,157 @@ mod tests {
             worst <= 10.0,
             "кромка ломается на стыках кусков дуги: {worst:.1}°"
         );
+    }
+
+    /// Контур-квадрат от `at` стороной `side` — свой для каждой группы,
+    /// чтобы представления различались срезами.
+    fn square(at: Vec2, side: f32) -> Vec<Vec2> {
+        vec![
+            at,
+            at + Vec2::new(side, 0.0),
+            at + Vec2::new(side, side),
+            at + Vec2::new(0.0, side),
+        ]
+    }
+
+    /// `KerbReturns` с одной фигурой в каждой группе, разложенной по углам.
+    fn every_group() -> KerbReturns {
+        KerbReturns {
+            roads: vec![
+                (RoadClass::Street, square(Vec2::ZERO, 2.0)),
+                (RoadClass::Alley, square(Vec2::new(10.0, 0.0), 2.0)),
+            ],
+            unpaved: vec![square(Vec2::new(20.0, 0.0), 2.0)],
+            sidewalks: vec![square(Vec2::new(30.0, 0.0), 2.0)],
+            overlaps: vec![square(Vec2::new(40.0, 0.0), 2.0)],
+            verges: vec![square(Vec2::new(50.0, 0.0), 2.0)],
+            verge_lawns: vec![square(Vec2::new(60.0, 0.0), 2.0)],
+            noses: vec![
+                (
+                    Fill::Road(RoadClass::Street),
+                    square(Vec2::new(70.0, 0.0), 2.0),
+                ),
+                (Fill::Unpaved, square(Vec2::new(80.0, 0.0), 2.0)),
+            ],
+            bends: vec![(Fill::Sidewalk, square(Vec2::new(90.0, 0.0), 2.0))],
+            ..default()
+        }
+    }
+
+    /// Семь свежих билдеров слоёв — как в `build_roads`.
+    fn seven_builders() -> [MeshBuilder; 7] {
+        std::array::from_fn(|_| MeshBuilder::with_surface_coords())
+    }
+
+    /// Уложить `returns` по свежим билдерам — `[улицы, аллеи, грунт,
+    /// тротуары, обочины, луга, дворы]`.
+    fn laid(returns: &KerbReturns, meadows: &Meadows, scraps: &mut Scraps) -> [MeshBuilder; 7] {
+        let mut builders = seven_builders();
+        let [streets, alleys, unpaved, sidewalks, verges, lawns, yards] = &mut builders;
+        returns.lay(
+            KerbLayers {
+                streets,
+                alleys,
+                unpaved,
+                sidewalks,
+                verges,
+                lawns,
+                yards,
+            },
+            meadows,
+            scraps,
+        );
+        builders
+    }
+
+    #[test]
+    fn lay_routes_each_kerb_group_to_its_layer() {
+        let mut scraps = Scraps::default();
+        // Meadows пуст: газон любого угла — травой двора
+        let [streets, alleys, unpaved, sidewalks, verges, lawns, yards] =
+            laid(&every_group(), &Meadows::of(&[], &[]), &mut scraps);
+        // плоские группы: улицы и аллеи по классу, грунт, тротуары с
+        // наездом, обочины, газон двора; слой луга пуст — Meadows пуст
+        assert!(streets.vertex_count() > 0, "скругление улицы не легло");
+        assert!(alleys.vertex_count() > 0, "скругление аллеи не легло");
+        assert!(unpaved.vertex_count() > 0, "скругление грунтовки не легло");
+        assert!(sidewalks.vertex_count() > 0, "тротуар с наездом не легли");
+        assert!(verges.vertex_count() > 0, "обочина не легла");
+        assert!(yards.vertex_count() > 0, "газон двора не лёг");
+        assert_eq!(lawns.vertex_count(), 0, "без лугов газон ушёл в луг");
+        // угол газона — лоскутам, до всего мощения
+        assert!(
+            scraps.near_lawn(&square(Vec2::new(60.0, 0.0), 2.0), 0.0),
+            "угол газона не ушёл в лоскуты"
+        );
+        // нос улицы и дуга тротуара легли в те же слои поверх плоских групп:
+        // без них слои тоньше
+        let mut bare = every_group();
+        bare.noses.clear();
+        bare.bends.clear();
+        let mut no_scraps = Scraps::default();
+        let [bare_streets, _, _, bare_sidewalks, ..] =
+            laid(&bare, &Meadows::of(&[], &[]), &mut no_scraps);
+        assert!(
+            streets.vertex_count() > bare_streets.vertex_count(),
+            "нос улицы не лёг в слой улиц"
+        );
+        assert!(
+            sidewalks.vertex_count() > bare_sidewalks.vertex_count(),
+            "дуга тротуара не легла в слой тротуаров"
+        );
+    }
+
+    #[test]
+    fn a_meadow_lawn_takes_the_lawn_layer_over_the_yard() {
+        let meadow = crate::map::osm::fixture::area(
+            crate::map::osm::model::AreaKind::Park,
+            square(Vec2::new(59.0, -1.0), 4.0),
+        );
+        let mut scraps = Scraps::default();
+        let [.., lawns, yards] = laid(&every_group(), &Meadows::of(&[meadow], &[]), &mut scraps);
+        assert!(lawns.vertex_count() > 0, "угол у луга не стал лугом");
+        assert_eq!(yards.vertex_count(), 0, "у луга угол остался двором");
+    }
+
+    #[test]
+    fn paving_cuts_lawns_with_street_asphalt_but_not_tile_overlaps() {
+        let returns = every_group();
+        let flat: Vec<&[Vec2]> = returns.paving().flat().collect();
+        assert_eq!(
+            flat,
+            vec![
+                returns.roads[0].1.as_slice(),
+                returns.sidewalks[0].as_slice(),
+                returns.verges[0].as_slice(),
+            ],
+            "плоское мощение: улица, тротуар, обочина"
+        );
+        let curved: Vec<&[Vec2]> = returns.paving().curved().collect();
+        assert_eq!(
+            curved,
+            vec![returns.noses[0].1.as_slice(), returns.bends[0].1.as_slice()],
+            "из гнутых мощёны только улица и тротуар"
+        );
+        // наезд плитки — не мощение, аллея и грунт — тоже: их контуров нет
+        let overlap = returns.overlaps[0].as_slice();
+        let alley = returns.roads[1].1.as_slice();
+        let dirt = returns.noses[1].1.as_slice();
+        assert!(!flat.contains(&overlap) && !curved.contains(&overlap));
+        assert!(!flat.contains(&alley) && !curved.contains(&alley));
+        assert!(!flat.contains(&dirt) && !curved.contains(&dirt));
+    }
+
+    #[test]
+    fn streets_view_yields_only_street_class_asphalt() {
+        let returns = every_group();
+        let found: Vec<&[Vec2]> = returns.streets().outlines().collect();
+        assert_eq!(
+            found,
+            vec![returns.roads[0].1.as_slice(), returns.noses[0].1.as_slice()],
+            "асфальт улиц — скругление и нос, без аллеи, грунта и тротуара"
+        );
+        let sidewalk_bend = returns.bends[0].1.as_slice();
+        assert!(!found.contains(&sidewalk_bend));
     }
 }
