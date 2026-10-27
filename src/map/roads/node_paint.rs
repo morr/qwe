@@ -348,6 +348,7 @@ pub(super) struct PaintCounts {
     pub(super) through: usize,
     /// Зебры: все и из них по OSM.
     pub(super) zebras: [usize; 2],
+    /// Стоп-линии — на встречных узлу полосах.
     pub(super) stop_lines: usize,
     /// Карманы краски у торцов дорог.
     pub(super) pockets: usize,

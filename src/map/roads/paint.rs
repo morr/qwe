@@ -905,19 +905,22 @@ impl Painter {
             if hooks.is_empty() {
                 (breaks, quiet)
             } else {
-                let calm: Vec<Break> = breaks
+                // разрывы минус тихие: крючок, найденный и без тихих, —
+                // громкий; крючок, который даёт только тихий разрыв, — тихий
+                let unquiet: Vec<Break> = breaks
                     .iter()
                     .filter(|found| !quiet.contains(found))
                     .copied()
                     .collect();
-                let calm_hooks = hook_breaks(&path, &along, &break_distances(&path, false, &calm));
+                let unquiet_hooks =
+                    hook_breaks(&path, &along, &break_distances(&path, false, &unquiet));
                 hooked_quiet = quiet
                     .iter()
                     .copied()
                     .chain(hooks.iter().copied().filter(|hook| {
-                        !calm_hooks
+                        !unquiet_hooks
                             .iter()
-                            .any(|calm| calm.at.distance(hook.at) < HOOK_OVERLAP)
+                            .any(|found| found.at.distance(hook.at) < HOOK_OVERLAP)
                     }))
                     .collect();
                 hooked = [breaks, &hooks].concat();

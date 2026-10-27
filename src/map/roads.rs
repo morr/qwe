@@ -348,14 +348,23 @@ fn ring_approaches(ring: &rings::Ring, prepared: &Drawn) -> Vec<usize> {
     found
 }
 
-/// Куски полос `bands` (ось, ширина, торцы прямые — как их положил
-/// `push_sidewalk`) на острове кольца — за его осью, ужатой на `inset`
-/// (полуширина кольца и бордюр острова).
-fn ring_island_cover(
-    ring: &rings::Ring,
-    inset: f32,
-    bands: &[(Vec<Vec2>, f32, [bool; 2])],
-) -> Vec<Shape> {
+/// Полоса тротуара подхода, подошедшая к кольцу: ось тела, ширина (улица с
+/// двумя тротуарами) и какие торцы легли прямыми — срезаны клином, закрыты
+/// узлом или пришиты к бортику настила. Копится в проходе лент, а
+/// [`ring_island_cover`] кроет газоном то из них, что зашло на остров.
+struct ApproachBand {
+    /// Ось тела полосы.
+    axis: Vec<Vec2>,
+    /// Ширина: улица и два тротуара.
+    width: f32,
+    /// Какие торцы прямые — сшитые с соседним куском, а не круглые.
+    butt: [bool; 2],
+}
+
+/// Куски полос `bands` ([`ApproachBand`], как их положил `push_sidewalk`)
+/// на острове кольца — за его осью, ужатой на `inset` (полуширина кольца и
+/// бордюр острова).
+fn ring_island_cover(ring: &rings::Ring, inset: f32, bands: &[ApproachBand]) -> Vec<Shape> {
     use i_overlay::core::fill_rule::FillRule;
     use i_overlay::core::overlay_rule::OverlayRule;
     use i_overlay::float::single::SingleFloatOverlay;
@@ -375,11 +384,11 @@ fn ring_island_cover(
     let (low, high) = ring_bounds(path);
     let strips: Vec<crate::map::shapes::Contour> = bands
         .iter()
-        .filter(|(axis, width, _)| {
-            let (from, to) = ring_bounds(axis);
-            (from - *width).cmple(high).all() && (to + *width).cmpge(low).all()
+        .filter(|band| {
+            let (from, to) = ring_bounds(&band.axis);
+            (from - band.width).cmple(high).all() && (to + band.width).cmpge(low).all()
         })
-        .flat_map(|(axis, width, butt)| {
+        .flat_map(|band| {
             let cap = |butt: bool| {
                 if butt {
                     LineCap::Butt
@@ -388,11 +397,12 @@ fn ring_island_cover(
                 }
             };
             // на волосок шире полосы: иначе по краю заплатки светится её кромка
-            let style = StrokeStyle::new(*width + 2.0 * ISLAND_COVER_PAD)
+            let style = StrokeStyle::new(band.width + 2.0 * ISLAND_COVER_PAD)
                 .line_join(LineJoin::Round(crate::map::shapes::ARC))
-                .start_cap(cap(butt[0]))
-                .end_cap(cap(butt[1]));
-            let contour: crate::map::shapes::Contour = axis.iter().map(Vec2::to_array).collect();
+                .start_cap(cap(band.butt[0]))
+                .end_cap(cap(band.butt[1]));
+            let contour: crate::map::shapes::Contour =
+                band.axis.iter().map(Vec2::to_array).collect();
             contour.stroke(style, false).into_iter().flatten()
         })
         .collect();
@@ -1208,7 +1218,7 @@ pub fn build_roads(
             at_ring[road] = true;
         }
     }
-    let mut approach_bands: Vec<(Vec<Vec2>, f32, [bool; 2])> = Vec::new();
+    let mut approach_bands: Vec<ApproachBand> = Vec::new();
     // ── Заливка колец и швы настилов ──
     // асфальт кольца — одной замкнутой заливкой по его оси, на месте первой
     // его дуги в порядке заливки (R15): дуги, кончающиеся в узлах с
@@ -1468,7 +1478,11 @@ pub fn build_roads(
                 seam_reach,
             );
             if at_ring[index] {
-                approach_bands.push((body.to_vec(), band(road, sidewalk), banded));
+                approach_bands.push(ApproachBand {
+                    axis: body.to_vec(),
+                    width: band(road, sidewalk),
+                    butt: banded,
+                });
             }
             // клин тротуара — по сторонам, как у асфальта: с сужаемой стороны
             // от полосы узкого соседа (или его голой кромки, если тротуара у
@@ -2056,13 +2070,14 @@ pub fn build_roads(
         }
         // стрелки на полосах подходов — краска, своим тумблером
         if style.arrows {
-            let marks = paint::ArrowMarks::new(marks.zebras(), marks.stop_lines());
+            let arrow_marks = paint::ArrowMarks::new(marks.zebras(), marks.stop_lines());
             for arrow in &turns.arrows {
-                let setback = paint::Painter::arrow_setback(arrow, &marks);
+                let setback = paint::Painter::arrow_setback(arrow, &arrow_marks);
                 painter.paint_arrow(arrow, setback);
                 // и второй ряд дальше от узла, где полоса это позволяет
                 let breaks = paint_breaks.of(arrow.road).cut;
-                if let Some(repeat) = paint::Painter::repeat_setback(arrow, setback, &marks, breaks)
+                if let Some(repeat) =
+                    paint::Painter::repeat_setback(arrow, setback, &arrow_marks, breaks)
                 {
                     painter.paint_arrow(arrow, repeat);
                 }
@@ -2128,7 +2143,7 @@ pub fn build_roads(
     fn cover_ring_islands(
         prepared: &Drawn,
         island_insets: &[f32],
-        approach_bands: &[(Vec<Vec2>, f32, [bool; 2])],
+        approach_bands: &[ApproachBand],
         median_grass: &mut MeshBuilder,
     ) {
         for (ring, inset) in prepared.rings().list.iter().zip(island_insets) {
