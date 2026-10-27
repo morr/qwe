@@ -38,9 +38,13 @@
 //! | `F12` | снимок в `blood_gallery.png` |
 //!
 //! `BLOOD_GALLERY_SHOT=<путь> cargo run --example blood_gallery` — снять
-//! витрину самой и закрыться.
+//! витрину самой и закрыться. Снимок — общий цикл `gallery_shot.rs`: в
+//! текстуру, а не с окна, поэтому заблокированный экран и перекрытое окно
+//! снимку не мешают; отсчёт кадров не начинается, пока лужи не растеклись.
 
-use bevy::app::AppExit;
+#[path = "../gallery_shot.rs"]
+mod shot;
+
 use bevy::camera_controller::pan_camera::{PanCamera, PanCameraPlugin};
 use bevy::feathers::constants::fonts;
 use bevy::input::common_conditions::input_just_pressed;
@@ -50,12 +54,14 @@ use bevy::sprite::Anchor;
 use bevy::window::PrimaryWindow;
 use qwe::camera::{hovering_ui, zoom_to_cursor};
 use qwe::human::{
-    Attire, BloodLook, BloodPool, BloodSpatter, CORPSE_SPAN, CorpsePose, blood_pool, blood_spatter,
-    spread_blood, to_corpse,
+    Attire, BloodLook, BloodPool, BloodSpatter, BloodSpread, CORPSE_SPAN, CorpsePose, blood_pool,
+    blood_spatter, spread_blood, to_corpse,
 };
 use qwe::map::{GROUND_COLOR, PARK_COLOR, WOOD_COLOR};
 use qwe::settings::{HUMAN_MIN_PX, HUMAN_SIZE, Z_CORPSE};
 use qwe::silhouette::{Glyph, Silhouette, SilhouettePlugin, Silhouettes, blood};
+
+use crate::shot::{ShotRequest, auto_shot, request_shot};
 
 const WINDOW_WIDTH: f32 = 1500.0;
 const WINDOW_HEIGHT: f32 = 900.0;
@@ -88,13 +94,6 @@ const LABEL_COLOR: Color = Color::srgb(0.16, 0.17, 0.20);
 const VIEW_MARGIN: f32 = 1.18;
 /// Куда `F12` кладёт снимок витрины.
 const SHOT_PATH: &str = "blood_gallery.png";
-/// Переменная окружения автоснимка: витрина снимает себя сама и закрывается —
-/// так её видно не только человеку за экраном.
-const SHOT_ENV: &str = "BLOOD_GALLERY_SHOT";
-/// Когда снимать и когда закрываться, секунд от старта. Первое — с запасом на
-/// растекание луж (в игре оно длится 1,6 с), второе — на запись файла.
-const SHOT_AT: f32 = 2.5;
-const SHOT_QUIT_AT: f32 = 4.0;
 /// Поза, под которую положены клетки полос атласа: одна на все, чтобы
 /// смещение лужи к груди сдвинуло полосу целиком, а не разъехалось по клеткам.
 const BAND_POSE: CorpsePose = CorpsePose {
@@ -193,7 +192,14 @@ fn main() {
         .init_resource::<Show>()
         .init_resource::<Roll>()
         .insert_resource(ClearColor(Ground::default().color()))
-        .add_systems(Startup, (spawn_camera, spawn_labels))
+        .add_systems(
+            Startup,
+            (
+                spawn_camera,
+                spawn_labels,
+                request_shot("BLOOD_GALLERY_SHOT"),
+            ),
+        )
         .add_systems(
             Update,
             (
@@ -203,7 +209,7 @@ fn main() {
                 toggle_spatters.run_if(input_just_pressed(KeyCode::KeyS)),
                 toggle_captions.run_if(input_just_pressed(KeyCode::KeyL)),
                 shoot.run_if(input_just_pressed(KeyCode::F12)),
-                auto_shot,
+                auto_shot.run_if(resource_exists::<ShotRequest>.and_then(gallery_ready)),
                 zoom_to_cursor.run_if(not(hovering_ui)),
                 // сетка строится здесь же, а не в `Startup`: на первом кадре
                 // ресурс считается только что добавленным, и условие пускает
@@ -439,36 +445,24 @@ fn toggle_captions(mut show: ResMut<Show>) {
     show.captions = !show.captions;
 }
 
-fn shoot(commands: Commands) {
-    save_shot(commands, SHOT_PATH.to_string());
-}
-
-/// Автоснимок: снимает по часам и закрывает окно. Без `BLOOD_GALLERY_SHOT`
-/// ничего не делает — витрина остаётся у человека в руках.
-fn auto_shot(
-    time: Res<Time>,
-    commands: Commands,
-    mut elapsed: Local<f32>,
-    mut shot: Local<bool>,
-    mut quit: MessageWriter<AppExit>,
-) {
-    let Ok(path) = std::env::var(SHOT_ENV) else {
-        return;
-    };
-    *elapsed += time.delta_secs();
-    if !*shot && *elapsed >= SHOT_AT {
-        *shot = true;
-        save_shot(commands, path);
-    } else if *elapsed >= SHOT_QUIT_AT {
-        quit.write(AppExit::Success);
-    }
-}
-
-fn save_shot(mut commands: Commands, path: String) {
-    info!("saving the gallery to {path}");
+/// Снимок по `F12` — с поверхности окна: его делает человек перед экраном, и
+/// снимает он то, что видит.
+fn shoot(mut commands: Commands) {
+    info!("saving the gallery to {SHOT_PATH}");
     commands
         .spawn(Screenshot::primary_window())
-        .observe(save_to_disk(path));
+        .observe(save_to_disk(SHOT_PATH));
+}
+
+/// Витрина готова к автоснимку: поле тел собрано и лужи растеклись. Тот же
+/// приём, что `gallery_ready` дорожной витрины: пока идёт растекание (1,6 с),
+/// счёт кадров `auto_shot` стоит — иначе кадр снял бы лужи раньше полного
+/// размера.
+fn gallery_ready(
+    field: Query<(), With<GalleryTag>>,
+    spreading: Query<(), With<BloodSpread>>,
+) -> bool {
+    !field.is_empty() && spreading.is_empty()
 }
 
 /// Тумблеры применяются одной системой: сущности пересобираются броском, и
