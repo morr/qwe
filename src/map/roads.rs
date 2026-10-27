@@ -1194,33 +1194,7 @@ pub fn build_roads(
         push_shape(&mut sidewalks, shape.clone(), SIDEWALK_COLOR.to_linear());
     }
     // ── Тротуары колец ──
-    // на сколько ужат остров каждого кольца под газон поверх тротуаров
-    // подходов (ниже, после лент)
-    let mut island_insets: Vec<f32> = Vec::new();
-    if style.sidewalks {
-        for ring in &prepared.rings().list {
-            let width = ring.width;
-            let sidewalk = ring
-                .roads
-                .iter()
-                .filter_map(|&road| prepared.sidewalk_drawn(road))
-                .fold(0.0, f32::max);
-            // к острову, куда не ведёт ни одна дорожка, пешеходу не попасть:
-            // вместо полосы тротуара — тонкая линия бордюра (R28)
-            let kerb = if ring_island_reached(&ring.path, roads) {
-                medians::MEDIAN_KERB
-            } else {
-                RING_KERB_LINE
-            };
-            push_ring_edges(
-                &mut sidewalks,
-                ring,
-                [width, sidewalk, kerb],
-                SIDEWALK_COLOR.to_linear(),
-            );
-            island_insets.push(width / 2.0 + kerb);
-        }
-    }
+    let island_insets = lay_ring_island_bands(&prepared, roads, style, &mut sidewalks);
     // подходы колец: их полосы тротуара копятся ниже для газона острова
     let mut at_ring = vec![false; drawn.len()];
     for ring in &prepared.rings().list {
@@ -1235,44 +1209,7 @@ pub fn build_roads(
     // подходами, клались лентами с прямыми торцами, и на кривизне торцы
     // соседних дуг расходились веером — по внешней кромке клинья-щели
     let mut ring_filled = vec![false; prepared.rings().list.len()];
-    // половины слияния, чьё продолжение — другого уровня (конец моста Р-119 в
-    // Орле, S3): из узла шва они уходят под своим углом к настилу, и штрих,
-    // легший на узел, ломался крючком. Тихий разрыв на [`SEAM_DASH_GAP`] —
-    // штрих кончается у торца настила и начинается снова за узлом
-    // Раскладка половины в узле — раскладка продолжения, но поперёк своей оси:
-    // крайняя линия под углом α к настилу начинается на полуширине × sin α
-    // под ним, и разрыв длиннее на столько же
-    let mut seam_gaps: Vec<Vec<Break>> = vec![Vec::new(); drawn.len()];
-    let heading_at = |road: usize, at: Vec2| {
-        let path: &[Vec2] = &ribbon[road];
-        let last = path.len().checked_sub(1)?;
-        let (tip, inner) = if path[0].distance(at) <= path[last].distance(at) {
-            (path[0], *path.get(1)?)
-        } else {
-            (path[last], path[last.checked_sub(1)?])
-        };
-        (inner - tip).try_normalize()
-    };
-    for merge in &prepared.merges().list {
-        let continuation = drawn[merge.street];
-        let Some(deck) = heading_at(merge.street, merge.node) else {
-            continue;
-        };
-        for &half in &merge.halves {
-            if drawn[half].bridge == continuation.bridge {
-                continue;
-            }
-            let Some(own) = heading_at(half, merge.node) else {
-                continue;
-            };
-            // `deck` — от узла в настил, `own` — от узла в половину
-            let sin = (-deck).perp_dot(own).abs();
-            seam_gaps[half].push(Break {
-                at: merge.node,
-                reach: SEAM_DASH_GAP + continuation.width / 2.0 * sin,
-            });
-        }
-    }
+    let seam_gaps = seam_dash_gaps(&prepared, &drawn, &ribbon);
     // ── Ленты ── главный проход по улицам в порядке заливки: асфальт,
     // тротуары, обочины, краска, клинья и мосты — улица за улицей
     for index in order {
@@ -2014,6 +1951,88 @@ pub fn build_roads(
             turning_circles += 1;
         }
         turning_circles
+    }
+
+    // Тротуары колец: на сколько ужат остров каждого кольца под газон
+    // поверх тротуаров подходов (ниже, после лент)
+    fn lay_ring_island_bands(
+        prepared: &Drawn,
+        roads: &[RoadLine],
+        style: RoadStyle,
+        sidewalks: &mut MeshBuilder,
+    ) -> Vec<f32> {
+        let mut island_insets: Vec<f32> = Vec::new();
+        if style.sidewalks {
+            for ring in &prepared.rings().list {
+                let width = ring.width;
+                let sidewalk = ring
+                    .roads
+                    .iter()
+                    .filter_map(|&road| prepared.sidewalk_drawn(road))
+                    .fold(0.0, f32::max);
+                // к острову, куда не ведёт ни одна дорожка, пешеходу не попасть:
+                // вместо полосы тротуара — тонкая линия бордюра (R28)
+                let kerb = if ring_island_reached(&ring.path, roads) {
+                    medians::MEDIAN_KERB
+                } else {
+                    RING_KERB_LINE
+                };
+                push_ring_edges(
+                    sidewalks,
+                    ring,
+                    [width, sidewalk, kerb],
+                    SIDEWALK_COLOR.to_linear(),
+                );
+                island_insets.push(width / 2.0 + kerb);
+            }
+        }
+        island_insets
+    }
+
+    // Швы настилов: половины слияния, чьё продолжение — другого уровня
+    // (конец моста Р-119 в Орле, S3): из узла шва они уходят под своим углом
+    // к настилу, и штрих, легший на узел, ломался крючком. Тихий разрыв на
+    // [`SEAM_DASH_GAP`] — штрих кончается у торца настила и начинается снова
+    // за узлом. Раскладка половины в узле — раскладка продолжения, но
+    // поперёк своей оси: крайняя линия под углом α к настилу начинается на
+    // полуширине × sin α под ним, и разрыв длиннее на столько же
+    fn seam_dash_gaps(
+        prepared: &Drawn,
+        drawn: &[&RoadLine],
+        ribbon: &[Cow<'_, [Vec2]>],
+    ) -> Vec<Vec<Break>> {
+        let mut seam_gaps: Vec<Vec<Break>> = vec![Vec::new(); drawn.len()];
+        let heading_at = |road: usize, at: Vec2| {
+            let path: &[Vec2] = &ribbon[road];
+            let last = path.len().checked_sub(1)?;
+            let (tip, inner) = if path[0].distance(at) <= path[last].distance(at) {
+                (path[0], *path.get(1)?)
+            } else {
+                (path[last], path[last.checked_sub(1)?])
+            };
+            (inner - tip).try_normalize()
+        };
+        for merge in &prepared.merges().list {
+            let continuation = drawn[merge.street];
+            let Some(deck) = heading_at(merge.street, merge.node) else {
+                continue;
+            };
+            for &half in &merge.halves {
+                if drawn[half].bridge == continuation.bridge {
+                    continue;
+                }
+                let Some(own) = heading_at(half, merge.node) else {
+                    continue;
+                };
+                // `deck` — от узла в настил, `own` — от узла в половину
+                let sin = (-deck).perp_dot(own).abs();
+                seam_gaps[half].push(Break {
+                    at: merge.node,
+                    reach: SEAM_DASH_GAP + continuation.width / 2.0 * sin,
+                });
+            }
+        }
+        seam_gaps
     }
 
     // ── Сборка слоёв и отчёт ──
