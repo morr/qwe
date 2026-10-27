@@ -54,7 +54,8 @@ use super::node_paint::{Pocket, STOP_WIDTH, StopLine, Throat, ZEBRA_LENGTH, Zebr
 use super::shape::lane_width;
 use super::tapers::{self, Taper, Tapers};
 use super::turns::{JunctionWear, LaneArrow};
-use super::{is_carriageway, lane_count, smoothstep};
+use super::{is_carriageway, lane_count};
+use crate::ease::smoothstep;
 use i_overlay::core::fill_rule::FillRule;
 use i_overlay::core::overlay_rule::OverlayRule;
 use i_overlay::float::single::SingleFloatOverlay;

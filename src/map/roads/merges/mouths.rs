@@ -22,14 +22,15 @@ use std::borrow::Cow;
 use bevy::prelude::*;
 
 use super::{away, merges};
+use crate::ease::smoothstep;
 use crate::map::along::densify;
 use crate::map::osm::RoadLine;
 use crate::map::osm::model::polyline_length;
+use crate::map::roads::is_carriageway;
 use crate::map::roads::junctions::node_key;
 use crate::map::roads::network::pairs::Pairs;
 use crate::map::roads::network::{RoadNetwork, RoadNodes};
 use crate::map::roads::tapers::Tapers;
-use crate::map::roads::{is_carriageway, smoothstep};
 
 /// Сдвиг устья меньше этого, м, не разводится: половины и так у кромок.
 const MOUTH_MIN_OFFSET: f32 = 0.5;

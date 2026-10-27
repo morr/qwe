@@ -23,7 +23,8 @@ use i_overlay::mesh::style::{LineCap, LineJoin, OutlineStyle, StrokeStyle};
 
 use super::junctions::node_key;
 use super::rings::{Ring, Rings};
-use super::{is_carriageway, lane_count, smoothstep};
+use super::{is_carriageway, lane_count};
+use crate::ease::smoothstep;
 use crate::map::along::{arclengths, densify, place_on_path, tip_of};
 use crate::map::meshing::{Break, MeshBuilder, min_area_rect};
 use crate::map::osm::model::{

@@ -68,12 +68,12 @@ use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 
 use super::{RoadNetwork, RoadNodes};
+use crate::ease::smoothstep;
 use crate::map::along::{arclengths, nearest_on_path, place_on_path, simplify, tip_of};
 use crate::map::grid::Grid;
 use crate::map::osm::model::{RailKind, RailLine, distance_to_segment, polyline_length};
 use crate::map::osm::{RoadClass, RoadLine};
 use crate::map::roads::junctions::node_key;
-use crate::map::roads::smoothstep;
 use crate::map::roads::tapers::{self, Tapers};
 
 /// Шаг, которым ось ощупывается на соседа, м.

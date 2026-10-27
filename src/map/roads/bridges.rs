@@ -9,7 +9,8 @@ use bevy::prelude::*;
 
 use super::network::RoadNodes;
 use super::network::pairs::BandPiece;
-use super::{ROAD_JOIN, RoadJoin, push_sidewalk, smoothstep};
+use super::{ROAD_JOIN, RoadJoin, push_sidewalk};
+use crate::ease::smoothstep;
 use crate::map::SHADOW_COLOR;
 use crate::map::along::densify;
 use crate::map::footprint::{JOIN_EPSILON, bridge_curb_width};

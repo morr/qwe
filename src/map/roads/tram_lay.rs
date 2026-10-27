@@ -30,7 +30,7 @@
 use bevy::prelude::*;
 
 use super::network::pairs::Median;
-use super::smoothstep;
+use crate::ease::smoothstep;
 use crate::map::along::{arclengths, densify, nearest_on_path, simplify};
 use crate::map::grid::Grid;
 use crate::map::osm::model::{RailKind, RailLine, closest_on_segment};
