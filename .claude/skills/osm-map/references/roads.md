@@ -3356,7 +3356,8 @@ place to look at a road-network defect end to end:
   game's own `qwe::ui::spawn_city_select`, full panel width), a
   **Roads** header (the five `RoadShape` sliders from `qwe::ui::shape_knobs` + Sidewalks),
   a **Road paint** header (Markings, Paint, Crossings, Stop lines, Arrows, Wear, Turn wear)
-  and the Network row; a change rebuilds every sample. The gallery settles `RoadShape`
+  and four data rows after it — `Network`, `Ruts`, `Contours` and `Raw OSM`; a change
+  rebuilds every sample. The gallery settles `RoadShape`
   like the game, hands the settled lane width to `parse_response` in `ParseKnobs` and sets
   the paint's lane-width global (`apply_lane_width`) before re-parsing its samples. `ROADS_SHOT=path.png` takes a frame and exits — counting the shared
   `gallery_shot.rs` frames only from the frame every sample is built and placed

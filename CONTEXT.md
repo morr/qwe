@@ -72,9 +72,11 @@ in `main.rs`.
   corner → (0,0), f64 math, `MAP_SIZE`-sized bbox derived from the center, with
   `METERS_PER_DEG_LAT` in `settings.rs` — that one belongs to the projection, not to a
   city.
-- **Z-layers** — constants in `settings.rs`, bottom to top: ground → landuse works →
-  landuse yards → parks → woods → tree-row band casing → tree-row band → grass → sand →
-  alleys (1.5) → sidewalks (1.6) → road medians (1.7) → roads (2.0) → road wear mask
+- **Z-layers** — constants in `settings.rs`, bottom to top: ground → ring islands
+  (0.05) → verge lawns (0.08) → verge yards (0.09) → verges (0.1) → landuse works →
+  landuse yards → parks → woods → tree-row band casing → tree-row band → grass → ring
+  island grass (0.65) → sand → alleys (1.5) → sidewalks (1.6) → road medians (1.7) →
+  unpaved roads (1.8) → roads (2.0) → road wear mask
   (2.0002) → road wear (2.0003) → road paint (2.0005) →
   parking (2.001) → lot
   sidewalks (2.002) → lot lines (2.003) → road islands (2.0035) → parking markings

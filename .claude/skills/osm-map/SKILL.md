@@ -804,13 +804,17 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     `fences/tests.rs::the_far_bucket_draws_nothing`, each asserting the log line itself.
   - **Converted — ten modules, eleven layer doors.** `fences`, `rail`, `tram`, `wagons`,
     `industry`, `cars`,
-    `roads` (19 layers, `mesh_roads` — nine of its own with the median lawn and the
-    unpaved streets (the two
-    road/alley casings went in stage 8)
-    `road_medians`, the eight paint layers of `roads/paint.rs` (the turn paths' wear mask
-    and apply among them, and the roundabout islands' hatching above a lot's asphalt) and
-    the two over a big lot,
-    `roads/lots.rs`), all of `spawn.rs` (the 13 surface and paint layers
+    `roads` (25 layers, `mesh_roads` — fourteen named of its own (the ring islands' lawn
+    `ring_islands` and its mapped grass `ring_island_grass`, the verge band drawn under
+    every green `road_verges` and the wide verges' meadow and yard grass
+    `road_verge_lawns`/`road_verge_yards`, `alleys`, `sidewalks`, the median lawn
+    `road_medians` and the unpaved streets `unpaved_roads`, `roads` (the two road/alley
+    casings went in stage 8), the two over a big lot `lot_sidewalks` + `lot_lines`
+    (`roads/lots.rs`), `walls`, the level-crossing decks `rail_crossings`) plus the three
+    bridge layers of `roads/bridges.rs` (`bridge_shadows`/`bridge_casings`/`bridges`) and
+    the eight paint layers of `roads/paint.rs` (the turn paths' wear mask and apply among
+    them, and the roundabout islands' hatching above a lot's asphalt)),
+    all of `spawn.rs` (the 13 surface and paint layers
     as `mesh_surfaces(map, parking_layout) -> (Vec<LayerMesh>, SurfaceReport)` — the
     parking layout arrives ready, because the car rows are drawn off the same one — plus
     the tree-row band, its **second** door), `buildings` and `trees`.
