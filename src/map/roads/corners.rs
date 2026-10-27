@@ -3659,7 +3659,10 @@ mod tests {
             verges: vec![square(Vec2::new(50.0, 0.0), 2.0)],
             verge_lawns: vec![square(Vec2::new(60.0, 0.0), 2.0)],
             noses: vec![
-                (Fill::Road(RoadClass::Street), square(Vec2::new(70.0, 0.0), 2.0)),
+                (
+                    Fill::Road(RoadClass::Street),
+                    square(Vec2::new(70.0, 0.0), 2.0),
+                ),
                 (Fill::Unpaved, square(Vec2::new(80.0, 0.0), 2.0)),
             ],
             bends: vec![(Fill::Sidewalk, square(Vec2::new(90.0, 0.0), 2.0))],
@@ -3738,11 +3741,7 @@ mod tests {
             square(Vec2::new(59.0, -1.0), 4.0),
         );
         let mut scraps = Scraps::default();
-        let [.., lawns, yards] = laid(
-            &every_group(),
-            &Meadows::of(&[meadow], &[]),
-            &mut scraps,
-        );
+        let [.., lawns, yards] = laid(&every_group(), &Meadows::of(&[meadow], &[]), &mut scraps);
         assert!(lawns.vertex_count() > 0, "угол у луга не стал лугом");
         assert_eq!(yards.vertex_count(), 0, "у луга угол остался двором");
     }
