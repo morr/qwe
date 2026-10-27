@@ -1053,8 +1053,8 @@ roads → `pave_lots`** in `parse.md`); everything here reads the outline it pro
       meeting this one end-to-end (`RoadNodes::roads_at` on its ends, `service` only) are
       not "other": OSM splits one drive into several ways, and the continuation's ribbon
       would otherwise wipe the row out for a car length each side of the seam;
-    - breaks at junctions exactly as the kerb row does (`RowBreaks::of`, the same clear
-      test); the probe index (`Blocked`, a 40 m `Grid` of areas and road links) is built
+    - breaks at junctions exactly as the kerb row does (`RowBreaks::of`, the one
+      `cars::clear_of_break` test both rows call); the probe index (`Blocked`, a 40 m `Grid` of areas and road links) is built
       once per car rebuild;
     - **the occupancy roll comes before the probe**: the probe is the dearest step, and a
       slot that stays empty — every slot of a private-sector lane, where the share is

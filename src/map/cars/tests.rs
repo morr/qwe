@@ -761,6 +761,40 @@ fn the_far_bucket_draws_nothing() {
     assert_eq!(report.cars, 0);
 }
 
+/// Сырой OSM второго уровня (`RawOsm::Draw`) снимает машины и на ближней
+/// ступени: ряд — наша достройка, а не данные, ровно как вагоны
+/// (`wagons::mesh_wagons`), и слой снимается состоянием отчёта, а не нулём в
+/// счётчике — «cars: hidden», а не «cars: 0 parked». Первый уровень (`Parse`)
+/// отрисовку не трогает — ряд стоит.
+#[test]
+fn raw_osm_draw_stands_no_cars() {
+    let mut map = city();
+    map.knobs.raw = RawOsm::Draw;
+    let (layers, report) = mesh_cars(
+        near_bucket(),
+        CarStyle::default(),
+        &Drawn::nodal(&map, &straight()),
+        &map,
+        &ParkingLayout::default(),
+    );
+
+    assert!(layers.is_empty());
+    assert_eq!(report.detail, None);
+    assert_eq!(report.cars, 0);
+    assert_eq!(report.to_string(), "cars: hidden");
+
+    map.knobs.raw = RawOsm::Parse;
+    let (_, parse) = mesh_cars(
+        near_bucket(),
+        CarStyle::default(),
+        &Drawn::nodal(&map, &straight()),
+        &map,
+        &ParkingLayout::default(),
+    );
+    assert_eq!(parse.detail, Some(CarDetail::Full));
+    assert!(parse.cars > 0);
+}
+
 /// Ряд рвётся на клине между сечениями улицы там же, где лента: на широком
 /// way от шва до конца клина (66 м на 6.6 м разницы) и ещё на просвет от
 /// узла машин нет; узкий way стоит до шва.

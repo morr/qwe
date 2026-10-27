@@ -36,6 +36,7 @@ use crate::map::SunOnMap;
 use crate::map::along::{arclengths, place_on_path};
 use crate::map::meshing::{Break, MeshBuilder};
 use crate::map::osm::model::{distance_to_segment, ring_vertex_mean};
+use crate::map::osm::parse::RawOsm;
 use crate::map::osm::{MapData, PolyArea, RoadLine, TrafficSide};
 use crate::map::parallel::{self, in_parallel};
 use crate::map::parking::{ParkingLayout, Stall};
@@ -221,11 +222,11 @@ pub fn detail_for(bucket: usize) -> Option<CarDetail> {
 }
 
 /// Подробность, с которой слой рисуется при этой ступени и этих настройках;
-/// `None` — слоя нет (тумблер снят или зум за последней ступенью). Одно
-/// условие на адаптер, дверь слоя и меш кузовов: снятый слой не расставляет
-/// ничего.
-fn shown_detail(bucket: CarZoomBucket, style: CarStyle) -> Option<CarDetail> {
-    detail_for(bucket.index).filter(|_| style.visible)
+/// `None` — слоя нет (тумблер снят, зум за последней ступенью или сырой OSM
+/// второго уровня: машины — наша достройка, в данных их нет). Одно условие
+/// на адаптер, дверь слоя и меш кузовов: снятый слой не расставляет ничего.
+fn shown_detail(bucket: CarZoomBucket, style: CarStyle, raw: RawOsm) -> Option<CarDetail> {
+    detail_for(bucket.index).filter(|_| style.visible && !raw.draws_raw())
 }
 
 /// Замер слоя машин без мира — для офлайн-бенча, по той же причине, что и
@@ -280,7 +281,13 @@ pub fn measure_cars(map: &MapData) -> (usize, Vec<LayerCost>) {
     // меш кузовов на каждой ступени — ровно то, что стоит пересборка слоя на
     // пересечении порога зума
     for (name, step) in [("cars full", 0), ("cars silhouette", 1), ("cars block", 2)] {
-        let (_, report) = mesh_parked(CarZoomBucket::at(step), CarStyle::default(), &parked, false);
+        let (_, report) = mesh_parked(
+            CarZoomBucket::at(step),
+            CarStyle::default(),
+            map.knobs.raw,
+            &parked,
+            false,
+        );
         costs.push(LayerCost {
             name,
             vertices: report.vertices,
@@ -327,12 +334,12 @@ pub fn rebuild_cars(
         commands.entity(entity).despawn();
     }
     // снятый слой не расставляет ничего — ни каркаса, ни разрывов
-    let placed = if shown_detail(*bucket, *style).is_some() {
+    let placed = if shown_detail(*bucket, *style, map.knobs.raw).is_some() {
         placement.refresh(*style, road_shape.0, &map, &layout)
     } else {
         false
     };
-    let (layers, report) = mesh_parked(*bucket, *style, &placement.parked, placed);
+    let (layers, report) = mesh_parked(*bucket, *style, map.knobs.raw, &placement.parked, placed);
     spawn_layers(&mut commands, &mut meshes, &materials, layers, CarLayerTag);
     info!("{report}");
 }
@@ -468,8 +475,9 @@ pub fn forget_parked_cars(mut placement: ResMut<CarPlacement>) {
 /// Что вышло из сборки слоя машин — значением, а не только строкой в логе.
 ///
 /// `detail` — ступень подробности кузова, и `None` в ней значит «слоя нет»:
-/// зум ушёл за последнюю ступень или выключен тумблер. Остальные счётчики тогда
-/// нули, и это не заглушка: сборка в таком случае действительно не идёт.
+/// зум ушёл за последнюю ступень, выключен тумблер или включён сырой OSM
+/// второго уровня. Остальные счётчики тогда нули, и это не заглушка: сборка
+/// в таком случае действительно не идёт.
 ///
 /// `elapsed` меряется внутри сборки, потому что время тратится там; печатает его
 /// адаптер — `info!` на macOS ещё и меряет не то, потому что App Nap решает, как
@@ -523,9 +531,10 @@ impl std::fmt::Display for CarReport {
 /// вдоль улиц, заполнение стоянок и меш кузовов с тенями.
 ///
 /// **Чистая функция и единственная дверь в слой.** Ни `Commands`, ни `Assets`:
-/// её зовёт и игра (через [`rebuild_cars`]), и тест. Выключенный тумблер и
-/// ушедший за последнюю ступень зум — это пустой список слоёв, а не ранний выход
-/// у вызывающего: деспавн в адаптере безусловен, и второй дороги, на которой
+/// её зовёт и игра (через [`rebuild_cars`]), и тест. Выключенный тумблер,
+/// ушедший за последнюю ступень зум и сырой OSM второго уровня — это пустой
+/// список слоёв, а не ранний выход у вызывающего: деспавн в адаптере
+/// безусловен, и второй дороги, на которой
 /// можно его забыть, нет. Сборка при этом не идёт вовсе — ни разрывов, ни
 /// расстановки: снятый слой не должен стоить дороже, чем стоил ранний возврат.
 ///
@@ -539,23 +548,28 @@ pub fn mesh_cars(
     map: &MapData,
     layout: &ParkingLayout,
 ) -> (Vec<LayerMesh>, CarReport) {
-    if shown_detail(bucket, style).is_none() {
-        return mesh_parked(bucket, style, &ParkedCars::default(), false);
+    let raw = map.knobs.raw;
+    if shown_detail(bucket, style, raw).is_none() {
+        return mesh_parked(bucket, style, raw, &ParkedCars::default(), false);
     }
     let parked = park_on(style, drawn, map, layout, std::time::Instant::now());
-    mesh_parked(bucket, style, &parked, true)
+    mesh_parked(bucket, style, raw, &parked, true)
 }
 
 /// Меш кузовов по готовой расстановке — то, что стоит пересечение порога
-/// зума, когда расстановка взята из [`CarPlacement`]. `placed` — расставлены
-/// ли машины этой же сборкой: тогда в отчёт идёт и её время.
+/// зума, когда расстановка взята из [`CarPlacement`]. `raw` — сырой OSM:
+/// второй уровень снимает слой, как тумблер и дальняя ступень, — состоянием
+/// отчёта (`detail: None`, строка `cars: hidden`), а не нулём в счётчике.
+/// `placed` — расставлены ли машины этой же сборкой: тогда в отчёт идёт и её
+/// время.
 pub fn mesh_parked(
     bucket: CarZoomBucket,
     style: CarStyle,
+    raw: RawOsm,
     parked: &ParkedCars,
     placed: bool,
 ) -> (Vec<LayerMesh>, CarReport) {
-    let Some(detail) = shown_detail(bucket, style) else {
+    let Some(detail) = shown_detail(bucket, style, raw) else {
         return (
             Vec::new(),
             CarReport {
@@ -927,6 +941,27 @@ struct Kerb<'a> {
     stand: &'a Kerbside,
 }
 
+/// Место `place` чисто от разрыва ряда `junction` — один тест на ряд улицы
+/// ([`park_along`]) и ряд дворового проезда (`yard::park_drive`), которым
+/// [`RowBreaks::of`] назначает одни и те же разрывы. Расстояние — вдоль
+/// улицы и от кузова, а не от центра машины: поперёк место отнесено к
+/// бордюру, и по прямой до узла выходило больше, чем вдоль. Вторая
+/// дизъюнкция — запас по прямой [`BREAK_BEND_SLACK_HALF_WIDTHS`]: на изломе
+/// узел за поворотом проецируется на звено коротко, и без запаса он
+/// вычёркивал бы места на всей длине прямой до него.
+fn clear_of_break(
+    junction: &Break,
+    place: Vec2,
+    direction: Vec2,
+    shape: CarShape,
+    half_road: f32,
+) -> bool {
+    (place - junction.at).dot(direction).abs() - shape.length() / 2.0
+        >= junction.reach + JUNCTION_CLEARANCE
+        || place.distance(junction.at)
+            > junction.reach + JUNCTION_CLEARANCE + half_road * BREAK_BEND_SLACK_HALF_WIDTHS
+}
+
 /// Ряд вдоль одной стороны: шагом [`CAR_PITCH`] по **всей** ломаной улицы, со
 /// сдвигом от кромки поперёк и с пропусками. `half_road` — полуширина
 /// проезжей части, от которой ряд и отступает: отступ считается по габариту
@@ -984,15 +1019,6 @@ fn park_along(
         let offset =
             half_road + if pocket { POCKET_WIDTH } else { 0.0 } - CURB_GAP - shape.width() / 2.0;
         let place = point + across * offset;
-        // до разрыва — вдоль улицы и от кузова, а не от центра машины: поперёк
-        // место отнесено к бордюру, и по прямой до узла выходило больше, чем
-        // вдоль
-        let clear = |junction: &Break| {
-            (place - junction.at).dot(direction).abs() - shape.length() / 2.0
-                >= junction.reach + JUNCTION_CLEARANCE
-                || place.distance(junction.at)
-                    > junction.reach + JUNCTION_CLEARANCE + half_road * BREAK_BEND_SLACK_HALF_WIDTHS
-        };
         // перекрёсток проезжих частей: кузов — не ближе
         // [`CROSSED_EDGE_CLEARANCE`] к кромке пересекаемой, и не вдоль
         // сплошной подхода, если до неё меньше [`SOLID_LINE_CLEARANCE`]
@@ -1018,7 +1044,10 @@ fn park_along(
                 || place.distance(junction.at) > keep + half_road * BREAK_BEND_SLACK_HALF_WIDTHS
         };
         if !(pocket || kerb.stand.lane)
-            || !clearings.junctions.iter().all(clear)
+            || !clearings
+                .junctions
+                .iter()
+                .all(|junction| clear_of_break(junction, place, direction, shape, half_road))
             || !clearings.crossed.iter().all(clear_of_crossing)
             || clearings.decks.iter().any(|deck| deck.covers(place))
         {

@@ -28,10 +28,7 @@ use bevy::math::{Rot2, Vec2};
 
 use super::body::{self, Car, CarShape};
 use super::district::Districts;
-use super::{
-    BREAK_BEND_SLACK_HALF_WIDTHS, CAR_PITCH, DISTRICT_STEP, END_MARGIN, JUNCTION_CLEARANCE,
-    PARK_SKEW_DEGREES, PARK_SLOP,
-};
+use super::{CAR_PITCH, DISTRICT_STEP, END_MARGIN, PARK_SKEW_DEGREES, PARK_SLOP, clear_of_break};
 use crate::map::along::{arclengths, place_on_path};
 use crate::map::grid::Grid;
 use crate::map::meshing::Break;
@@ -244,13 +241,10 @@ fn park_drive(
         // правая сторона по ходу точек; машина — краем на асфальте
         let across = -direction.perp();
         let place = point + across * (half_road + shape.width() / 2.0 - ON_ASPHALT);
-        let clear = |junction: &Break| {
-            (place - junction.at).dot(direction).abs() - shape.length() / 2.0
-                >= junction.reach + JUNCTION_CLEARANCE
-                || place.distance(junction.at)
-                    > junction.reach + JUNCTION_CLEARANCE + half_road * BREAK_BEND_SLACK_HALF_WIDTHS
-        };
-        if !junctions.iter().all(clear) {
+        if !junctions
+            .iter()
+            .all(|junction| clear_of_break(junction, place, direction, shape, half_road))
+        {
             continue;
         }
         if last.is_some_and(|(previous, previous_length)| {
