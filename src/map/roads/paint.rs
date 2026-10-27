@@ -354,6 +354,19 @@ struct Mark {
     half: f32,
 }
 
+impl Mark {
+    /// Где отрезок пересекает ось полосы — прямую через `at` вдоль `forward`:
+    /// расстояние вдоль `forward` от `at` до пересечения. `None` — отрезок
+    /// лежит по одну сторону оси или вдоль неё.
+    fn crossing_along(&self, at: Vec2, forward: Vec2) -> Option<f32> {
+        let [a, b] = [self.from, self.to].map(|point| forward.perp_dot(point - at));
+        (a * b <= 0.0 && a != b).then(|| {
+            let crossing = self.from.lerp(self.to, a / (a - b));
+            (at - crossing).dot(forward)
+        })
+    }
+}
+
 impl ArrowMarks {
     pub(super) fn new(zebras: &[Zebra], stops: &[StopLine]) -> Self {
         let marks: Vec<Mark> = zebras
@@ -1426,16 +1439,12 @@ impl Painter {
         let reach = Vec2::splat(ARROW_MARK_REACH);
         let mut farthest: f32 = 0.0;
         for index in marks.grid.near(arrow.at - reach, arrow.at + reach) {
-            let Mark { from, to, half } = marks.marks[index];
-            // где отрезок разметки пересекает ось полосы
-            let [a, b] = [from, to].map(|point| forward.perp_dot(point - arrow.at));
-            if a * b > 0.0 || a == b {
+            let mark = marks.marks[index];
+            let Some(behind) = mark.crossing_along(arrow.at, forward) else {
                 continue;
-            }
-            let crossing = from.lerp(to, a / (a - b));
-            let behind = (arrow.at - crossing).dot(forward);
+            };
             if (-ARROW_LENGTH..=ARROW_MARK_REACH).contains(&behind) {
-                farthest = farthest.max(behind + half);
+                farthest = farthest.max(behind + mark.half);
             }
         }
         farthest + ARROW_SETBACK
@@ -1479,13 +1488,9 @@ impl Painter {
             .near(arrow.at - reach, arrow.at + reach)
             .into_iter()
             .any(|index| {
-                let Mark { from, to, .. } = marks.marks[index];
-                let [a, b] = [from, to].map(|point| forward.perp_dot(point - arrow.at));
-                if a * b > 0.0 || a == b {
-                    return false;
-                }
-                let crossing = from.lerp(to, a / (a - b));
-                span.contains(&(arrow.at - crossing).dot(forward))
+                marks.marks[index]
+                    .crossing_along(arrow.at, forward)
+                    .is_some_and(|behind| span.contains(&behind))
             });
         (!blocked).then_some(repeat)
     }
@@ -1810,7 +1815,7 @@ fn hook_breaks(path: &[Vec2], along: &[f32], to_break: &[f32]) -> Vec<Break> {
         if !visible_before && !visible_after {
             continue;
         }
-        let edge = along[link] + (along[link + 1] - along[link]) * near / (near - far);
+        let edge = zero_at(along, link, near, far);
         // линия до изгиба — звено в [`HOOK_REACH`] от края; конец — звено края
         let back = if visible_before {
             edge - HOOK_REACH
@@ -1876,6 +1881,13 @@ fn link_at(along: &[f32], at: f32) -> Option<(usize, f32)> {
         index,
         (at - along[index]) / (along[index + 1] - along[index]),
     ))
+}
+
+/// Где на звене `index` линейная между вершинами величина — `a` в первой, `b`
+/// во второй — проходит через ноль: длина дуги нулевой точки. Вызывающий
+/// гарантирует, что `a` и `b` разных знаков.
+fn zero_at(along: &[f32], index: usize, a: f32, b: f32) -> f32 {
+    along[index] + (along[index + 1] - along[index]) * a / (a - b)
 }
 
 /// Вершина на длине дуги `at` — вместе с интерполированным «до разрыва».
@@ -1945,7 +1957,7 @@ fn approach_spans(along: &[f32], to_break: &[f32], forward: bool) -> Vec<(f32, f
         if !entering && !leaving {
             continue;
         }
-        let edge = along[index] + (along[index + 1] - along[index]) * a / (a - b);
+        let edge = zero_at(along, index, a, b);
         spans.push(if forward {
             (edge - APPROACH, edge)
         } else {
@@ -1965,7 +1977,7 @@ fn near_spans(along: &[f32], distance: &[f32], within: f32) -> Vec<(f32, f32)> {
         if (a < 0.0) == (b < 0.0) {
             continue;
         }
-        let edge = along[index] + (along[index + 1] - along[index]) * a / (a - b);
+        let edge = zero_at(along, index, a, b);
         match from.take() {
             Some(start) => spans.push((start, edge)),
             None => from = Some(edge),
