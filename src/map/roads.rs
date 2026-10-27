@@ -1755,14 +1755,8 @@ pub fn build_roads(
     // (`roads/scraps.rs`): слой обочин лежит над слоями газона. Мощение, которым
     // они замкнуты, собирается только у газонов, которые спрашиваются: улиц и
     // углов в городе десятки тысяч, а концов газона у узлов — тысяча.
-    // Скругления, площадки и носы узлов — мощение, грунт — нет; полотно — с
-    // тротуаром по сторонам
-    let paved_fill = |fill: &corners::Fill| {
-        matches!(
-            fill,
-            corners::Fill::Road(RoadClass::Street) | corners::Fill::Sidewalk
-        )
-    };
+    // Мощение узлов — представлением `KerbReturns::paving`: скругления
+    // улиц, тротуары, обочины и мощёные носы с дугами; наезды плитки — нет.
     // и горки: асфальт или штриховка направляющего островка — не газон,
     // и кончик островка под горкой оставался клинем травы (R37-01, витрина 14)
     let gore_outlines: Vec<Vec<Vec2>> = gores
@@ -1770,24 +1764,13 @@ pub fn build_roads(
         .map(|contour| contour.iter().map(|&point| point.into()).collect())
         .collect();
     for outline in kerb_returns
-        .roads
-        .iter()
-        .filter(|(class, _)| *class == RoadClass::Street)
-        .map(|(_, outline)| outline)
-        .chain(&kerb_returns.sidewalks)
-        .chain(&kerb_returns.verges)
+        .paving()
+        .flat()
         // и горки: асфальт или штриховка направляющего островка — не газон,
         // и кончик островка под горкой оставался клином травы
         // (R37-01, витрина 14)
-        .chain(&gore_outlines)
-        .chain(
-            kerb_returns
-                .noses
-                .iter()
-                .chain(&kerb_returns.bends)
-                .filter(|(fill, _)| paved_fill(fill))
-                .map(|(_, outline)| outline),
-        )
+        .chain(gore_outlines.iter().map(Vec::as_slice))
+        .chain(kerb_returns.paving().curved())
     {
         if scraps.near_lawn(outline, 0.0) {
             scraps.push_paving(outline);
@@ -2710,21 +2693,9 @@ fn mouths(
             }))
             .collect();
     // асфальт узлов, что ложится до лент: пустота, которую он уже замостил,
-    // — просто асфальт перекрёстка, а не пустое устье
-    let paved: Vec<&[Vec2]> = kerb_returns
-        .roads
-        .iter()
-        .filter(|(class, _)| *class == RoadClass::Street)
-        .map(|(_, outline)| outline.as_slice())
-        .chain(
-            kerb_returns
-                .noses
-                .iter()
-                .chain(&kerb_returns.bends)
-                .filter(|(fill, _)| matches!(fill, corners::Fill::Road(RoadClass::Street)))
-                .map(|(_, outline)| outline.as_slice()),
-        )
-        .collect();
+    // — просто асфальт перекрёстка, а не пустое устье; представлением
+    // `KerbReturns::streets` — только слой улиц
+    let paved: Vec<&[Vec2]> = kerb_returns.streets().outlines().collect();
     gores::mouths(&carriageways, &taken, &points, &paved)
 }
 
