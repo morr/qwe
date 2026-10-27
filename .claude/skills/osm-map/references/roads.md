@@ -1605,9 +1605,13 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   the cars). The two views are built by `NodePaint` (`asphalt()`, `lines()`), which owns
   the vectors; `RowBreaks` is an owned value that **only `pockets::row_breaks` /
   `row_breaks_over` produce** — a `MarkingBreaks` cannot be passed off as one, which is
-  what keeps `all_kerbsides` and `park_cars` off the base. What the paint *draws* — the
-  pockets at way ends, the zebras, the stop lines, and the `Junction` clusters the turn
-  paths and the fill order read — is `node_paint()`. Pinned by
+  what keeps `all_kerbsides` and `park_cars` off the base. What the paint *draws* leaves
+  through `node_paint()` as views of its own, exactly like the breaks — the pockets at
+  way ends (`pockets()` → `PaintPockets`, `of(road)`), the zebras with the stop lines
+  (`marks()` → `PaintMarks`, what `paint::PaintGround` / `ArrowMarks` and the medians
+  read), and the `Junction` clusters the turn paths and the fill order read
+  (`junctions()` → `PaintJunctions`, `Turns::new` takes it whole) — so `NodePaint` owns
+  all of its vectors and no field leaves the module. Pinned by
   `tests.rs::row_breaks_ignore_stitches_but_paint_breaks_do_not`: a stitched side street
   is a junction for the base and the paint and a dead end for the row. Its counters are
   one value as well, `counts() -> JunctionCounts` (junctions, clusters, main through,
@@ -2004,7 +2008,7 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     signalized crossings with islands). The report counts `safety islands N + A areas,
     carriageway areas C, walkway areas W`.
 - **Turn paths** (`map/roads/turns.rs`, `Turns::new(&Drawn, junctions, side)` over
-  `NodePaint::junctions`, on the ribbon axes) — the
+  `NodePaint::junctions()`, on the ribbon axes) — the
   wear a junction gets from traffic crossing it. The lane ruts fade in a junction gap (a
   car crossing a junction is not in a lane), so without these the middle of every node was
   bare asphalt, and a real one is polished lighter than its approaches.
@@ -2354,15 +2358,16 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     cuts them), then the fanned fills street/alley → dirt → sidewalks with tile overlaps
     → verges → wide-verge lawns, then the noses and bends triangulated whole — used to
     live in `build_roads`' hand-rolled loops and is `corners`' invariant now; the
-    fork gores (`fork_gores`) alone are laid at their own call site, into the hatch
+    fork gores (`fork_gores()`) alone are laid at their own call site, into the hatch
     (`Gores::add_forks`), because `Gores` is built from the drawn order after it.
     Geometry readers take typed views instead of fields: `paving()` (what cuts the lawn
     scraps — street asphalt, sidewalks, verges, paved noses and bends; **tile overlaps
     are not paving**, they are the repair itself; split into `flat()` and `curved()` so
     the caller chains its own gore outlines between them and the insertion order of
     `Scraps` keeps), and `streets()` (street-class asphalt only, for the gore mouths).
-    The fields are data still, but `pub(super)`: the report's counts and the tests read
-    them inside the roads subtree, and wave 2 converts the tests and closes them.
+    The report's counters come from `counts()` (`KerbCounts`: roundings without outer
+    corners, tile overlaps, noses, bends, outer corners) — and the fields are closed
+    inside the module, read directly by nothing but its own tests.
     - **An arm that ends in a junction ends square** (`KerbReturns::butt`, stage 5). A
       junction here is a class group of three arms or more, or of two meeting at an angle
       (25°–155° either side); two nearly collinear ends are one road continued and keep

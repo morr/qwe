@@ -396,6 +396,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     node** — two ways of different streets ending end to end at 25°–155° (the angle at
     which the kerb is rounded there) — is a paint node too: the lines of both break
     there, **quietly** (no solid approach), with no zebra or stop line of its own.
+    Every output of the node paint leaves as a typed view of its own — the breaks
+    (`lines()`, `asphalt()`), the clusters with their arms and leaders for the turn paths
+    and the fill order (`junctions()`), the pockets (`pockets()`), the zebras with the
+    stop lines (`marks()`) — and the fields are closed inside `node_paint`.
   - **Turn paths** (`map/roads/turns.rs`) — a lane-to-lane Bézier curve for every allowed
     maneuver through a junction (`turn:lanes` — `RoadLine::turns` — when it matches the
     lanes, else the rule: straight lane to lane, the near turn from the kerb lane, the far
@@ -1819,8 +1823,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     itself** (`KerbReturns::lay`): the layer order — lawn scraps first, then street,
     dirt, sidewalk (with tile overlaps) and verge fills, then the noses and bends whole —
     is `corners`' invariant, and `build_roads` only hands it the builders; geometry
-    readers take typed views (`paving()`, `streets()`), and the fields are closed to the
-    roads subtree.
+    readers take typed views (`paving()`, `streets()`), the report its counters
+    (`counts()`), the hatch its fork wedges (`fork_gores()`), and the fields are closed
+    inside the module.
   - **Nose** (`map/roads/corners.rs::nose`) — the rounded tip of the island between two
     arms of a **sharp fork**: under 25°, or under 60° where the kerb return did not fit.
     Not a fillet (its tangent would run tens of metres) but an arc of a small radius
