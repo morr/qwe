@@ -345,9 +345,7 @@ impl Plugin for MapPlugin {
                     // стиль и форма
                     (
                         zoom::update_zoom_bucket::<roads::VergeLods>,
-                        roads::rebuild_roads
-                            .run_if(in_state(AppState::Playing))
-                            .run_if(roads::rebuilds_on()),
+                        roads::rebuild_roads.run_if(roads::rebuilds_on()),
                     )
                         .chain()
                         .run_if(in_state(AppState::Playing)),
