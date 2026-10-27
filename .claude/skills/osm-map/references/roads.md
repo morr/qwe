@@ -305,8 +305,9 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   (`Scraps::near_lawn`, a grid of the pieces' boxes): pushing every street band and
   every corner of the city cost ~10 ms more than the difference itself — the gore
   outlines (`Gores::outlines`, asphalt and hatched mounts alike) feed it too: a mount is
-  not lawn, and the tip of a fork island under its hatch stayed a wedge of grass
-  (R37-01, sample 14). A piece of the
+  not lawn. At a fork the mount **adjoins** the island tip without crossing it, so the
+  subtraction severs nothing there — the tip is taken by the tail threshold below, not
+  by the mount's outline (R37-01, sample 14). A piece of the
   remainder is a **scrap** when it is small — `SCRAP_AREA_MAX` 10 m², or thinner than
   `SCRAP_WIDTH_MAX` 1.5 m on average (twice the area over the perimeter), or a **wedge**:
   `SCRAP_WEDGE_AREA_MAX` 25 m² tapering to a tip, two edges of `SCRAP_TIP_EDGE` 1 m
@@ -333,7 +334,17 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   meaning for a verge lawn — past its edge the lawn really runs on — but a pocket's own
   edge is not the lawn running on, it is the pocket's loose outline sticking out past
   the drawn tiles, so a wedge-sized green piece (up to `SCRAP_WEDGE_AREA_MAX`) may stay
-  open to it over `GREEN_OPENING_MAX` 8 m and still tile. The errors are safe
+  open to it over `GREEN_OPENING_MAX` 8 m and still tile. **A green wedge-tail is tiled
+  whole** (R37-01, sample 14): the fork island's tip — a mapped grass wedge 37 m long,
+  8.6 m at the severed base, tapering to a 13° point, 149 m² — is one remainder that no
+  threshold took; the gore and the pavements *adjoin* it without crossing, so nothing
+  was severed off it. A tail is recognized by shape, not area: up to
+  `GREEN_TAIL_AREA_MAX` 160 m², tapering to a tip, at most `GREEN_WIDTH_MAX` on average,
+  and **severed** — at least `TAIL_BASE_MIN` 2 m of its boundary is drawn paving, so a
+  lawn that paving merely grazes at a corner stays grass. For a tail the openness metre
+  is not asked at all: its open sides are its own converging flanks, and a mouth fang
+  (sample 12) is a blunt strip without a tip — the taper is what keeps it grass. The
+  errors are safe
   one way: paving not counted only leaves a piece open to the lawn's edge, and it stays
   lawn; a band is taken **per side** (`band_half`), not by the wider one, because
   over-counted paving is what could fake a small enclosed piece. Parks and woods are
@@ -346,6 +357,7 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   `a_remainder_tapering_to_a_tip_is_a_scrap_beyond_the_average`,
   `a_ground_green_wedge_bitten_by_paving_is_a_scrap`,
   `a_green_piece_open_to_the_lawn_stays_grass`,
+  `a_green_island_tail_tapering_along_is_paved_whole`,
   `a_fat_green_remainder_is_not_asked_into_a_scrap`,
   `a_wedge_bitten_mid_strip_is_asked_at_the_bite` and `scraps::tests`.
   In a microdistrict (Фрунзе in Tula, the district frame d2)
