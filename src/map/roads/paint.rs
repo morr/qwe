@@ -1627,6 +1627,24 @@ const FIT_STEP: f32 = 0.05;
 /// не проезжая часть перехода.
 const ZEBRA_REACH: f32 = 3.0;
 
+/// Сечение поперечной краски на длине `at` от её начала вдоль `across`:
+/// середина и оба края — по `half` поперёк — лежат на асфальте
+/// ([`whole_bars`], [`trim_stop_line`]).
+fn cross_section_fits(
+    from: Vec2,
+    across: Vec2,
+    half: f32,
+    on_asphalt: impl Fn(Vec2) -> bool,
+) -> impl Fn(f32) -> bool {
+    let along = across.perp() * half;
+    move |at| {
+        let point = from + across * at;
+        [point - along, point, point + along]
+            .into_iter()
+            .all(&on_asphalt)
+    }
+}
+
 /// Зебра из **целых звеньев** (roads list R2): звено рисуется только
 /// целиком, лишнее не рисуется, а оставшиеся стоят по середине проезжей
 /// части с равными полями. Планка по ширине дороги кончалась на дробной доле
@@ -1646,13 +1664,7 @@ const ZEBRA_REACH: f32 = 3.0;
 pub(super) fn whole_bars(zebra: &Zebra, on_asphalt: impl Fn(Vec2) -> bool) -> Option<Zebra> {
     let width = zebra.from.distance(zebra.to);
     let across = (zebra.to - zebra.from).try_normalize()?;
-    let along = across.perp() * (ZEBRA_LENGTH / 2.0);
-    let fits = |at: f32| {
-        let point = zebra.from + across * at;
-        [point - along, point, point + along]
-            .into_iter()
-            .all(&on_asphalt)
-    };
+    let fits = cross_section_fits(zebra.from, across, ZEBRA_LENGTH / 2.0, on_asphalt);
     let middle = width / 2.0;
     let mut low = 0.0;
     while low > -ZEBRA_REACH && fits(low - FIT_STEP) {
@@ -1745,13 +1757,7 @@ pub(super) fn trim_stop_line(
 ) -> Option<StopLine> {
     let span = line.to - line.from;
     let across = span.try_normalize()?;
-    let along = across.perp() * (STOP_WIDTH / 2.0);
-    let fits = |at: f32| {
-        let point = line.from + across * at;
-        [point - along, point, point + along]
-            .into_iter()
-            .all(&on_asphalt)
-    };
+    let fits = cross_section_fits(line.from, across, STOP_WIDTH / 2.0, on_asphalt);
     let width = span.length();
     let middle = width / 2.0;
     if !fits(middle) {
@@ -1787,8 +1793,10 @@ pub(super) fn trim_stop_line(
 fn hook_breaks(path: &[Vec2], along: &[f32], to_break: &[f32]) -> Vec<Break> {
     let links = path.len().saturating_sub(1);
     let direction = |link: usize| (path[link + 1] - path[link]).normalize_or_zero();
-    // звено, на котором лежит длина дуги `at`
-    let link_at = |at: f32| (0..links).find(|&link| along[link] <= at && at <= along[link + 1]);
+    // звено, на котором лежит длина дуги `at`, считая концы звеньев — не как
+    // [`link_at`], которая ищет строго внутри
+    let link_containing =
+        |at: f32| (0..links).find(|&link| along[link] <= at && at <= along[link + 1]);
     let turn = |from: Vec2, to: Vec2| from.angle_to(to).abs();
     let mut hooks = Vec::new();
     for link in 0..links {
@@ -1806,7 +1814,7 @@ fn hook_breaks(path: &[Vec2], along: &[f32], to_break: &[f32]) -> Vec<Break> {
         } else {
             edge + HOOK_REACH
         };
-        let Some(body) = link_at(back) else {
+        let Some(body) = link_containing(back) else {
             continue;
         };
         let (straight, end) = (direction(body), direction(link));
