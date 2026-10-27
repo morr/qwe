@@ -468,7 +468,11 @@ fn road_lanes(road: &RoadLine) -> Option<LaneFrame> {
 /// торцом — квадрат без колеи посреди перекрёстка (Тула, 5968, 1582).
 /// Топологическая сортировка с приоритетом по прежнему ключу; на цикле
 /// (две дороги ведут узлы друг друга) берётся первая по ключу.
-fn fill_order(widths: &[f32], leading: &[bool], junctions: &[node_paint::Junction]) -> Vec<usize> {
+fn fill_order(
+    widths: &[f32],
+    leading: &[bool],
+    junctions: node_paint::PaintJunctions<'_>,
+) -> Vec<usize> {
     use std::collections::BTreeSet;
     let mut by_key: Vec<usize> = (0..widths.len()).collect();
     by_key.sort_by(|&a, &b| {
@@ -483,7 +487,7 @@ fn fill_order(widths: &[f32], leading: &[bool], junctions: &[node_paint::Junctio
     // ребро «плечо → ведущая»: плечо ложится раньше
     let mut after: Vec<Vec<usize>> = vec![Vec::new(); widths.len()];
     let mut before = vec![0usize; widths.len()];
-    for junction in junctions {
+    for junction in junctions.iter() {
         let mut arms: Vec<usize> = junction.arms.iter().map(|arm| arm.road).collect();
         arms.sort_unstable();
         arms.dedup();
@@ -1053,7 +1057,7 @@ pub fn build_roads(
     // траектории манёвров (`roads/turns.rs`) — колея в узле
     let turns = turns::Turns::new(
         &prepared,
-        &junctions.node_paint().junctions,
+        junctions.node_paint().junctions(),
         map.traffic_side,
     );
     // Широкие улицы поверх узких — см. доку модуля; ведущая узла — поверх
@@ -1061,7 +1065,7 @@ pub fn build_roads(
     // закрыть.
     let leading = junctions.leading();
     let widths: Vec<f32> = drawn.iter().map(|road| road.width).collect();
-    let order = fill_order(&widths, &leading, &junctions.node_paint().junctions);
+    let order = fill_order(&widths, &leading, junctions.node_paint().junctions());
     // направляющие островки у колец (`roads/gores.rs`) — до лент: к ним
     // дотягиваются двойные сплошные разделительных
     let gore_roads: Vec<gores::GoreRoad> = order
@@ -1094,7 +1098,7 @@ pub fn build_roads(
     junctions.add_splitters(&splitters);
     gores.add_splitters(&splitters);
     // клинья перед носами острых развилок улиц (`corners::fork_gore`)
-    gores.add_forks(&kerb_returns.fork_gores);
+    gores.add_forks(kerb_returns.fork_gores());
     // пустоты, зажатые проезжими частями, где ничего не замаплено (R20)
     let found_mouths = mouths(
         map,
@@ -1109,7 +1113,8 @@ pub fn build_roads(
     // переходу ложилась поверх его полос (Тула, R20)
     let crossings: Vec<(Vec2, Vec2)> = junctions
         .node_paint()
-        .zebras
+        .marks()
+        .zebras()
         .iter()
         .map(|zebra| (zebra.from, zebra.to))
         .collect();
@@ -1122,6 +1127,7 @@ pub fn build_roads(
     gores.add_mouths(&found_mouths, &hatchable_mouths);
     // три множества разрывов — каждому потребителю своё (`roads/junctions.rs`)
     let node_paint = junctions.node_paint();
+    let marks = node_paint.marks();
     let asphalt = junctions.asphalt();
     let paint_breaks = junctions.paint();
     // каркасы половин у слияний сводятся в каркас продолжения
@@ -1165,7 +1171,7 @@ pub fn build_roads(
         &medians::MedianInputs {
             base: junctions.median_base(),
             paint: paint_breaks,
-            zebras: &node_paint.zebras,
+            zebras: marks.zebras(),
             half: &|road| prepared.road(road).width / 2.0,
             markings: style.markings,
             pure_merge: &|at| prepared.merges().is_pure_node(at),
@@ -1379,7 +1385,7 @@ pub fn build_roads(
                 points,
                 line_breaks,
                 wedges,
-                node_paint.pockets[index],
+                node_paint.pockets().of(index),
                 ramps[index],
                 stations[index],
             );
@@ -1797,17 +1803,13 @@ pub fn build_roads(
     // зебра — из целых звеньев на асфальте улиц, каким он уже лёг; стоп-линия
     // обрезается по тому же асфальту: у устья съезда её конец ложился на
     // плитку обочины мимо наискось стоящей кромки (S7)
-    let ground = paint::PaintGround::new(
-        &node_paint.zebras,
-        &node_paint.stop_lines,
-        streets.triangles(),
-    );
-    for zebra in &node_paint.zebras {
+    let ground = paint::PaintGround::new(marks.zebras(), marks.stop_lines(), streets.triangles());
+    for zebra in marks.zebras() {
         if let Some(zebra) = paint::whole_bars(zebra, |point| ground.contains(point)) {
             painter.paint_zebra(&zebra);
         }
     }
-    for line in &node_paint.stop_lines {
+    for line in marks.stop_lines() {
         if let Some(line) = paint::trim_stop_line(line, |point| ground.contains(point)) {
             painter.paint_stop_line(&line);
         }
@@ -1821,7 +1823,7 @@ pub fn build_roads(
     }
     // стрелки на полосах подходов — краска, своим тумблером
     if style.arrows {
-        let marks = paint::ArrowMarks::new(&node_paint.zebras, &node_paint.stop_lines);
+        let marks = paint::ArrowMarks::new(marks.zebras(), marks.stop_lines());
         for arrow in &turns.arrows {
             let setback = paint::Painter::arrow_setback(arrow, &marks);
             painter.paint_arrow(arrow, setback);
@@ -2026,6 +2028,8 @@ pub fn build_roads(
         .iter()
         .map(|layer| layer.builder.vertex_count())
         .sum();
+    // что скругления насчитали — поля отчёта о них (`corners.rs`)
+    let kerbs = kerb_returns.counts();
     // краска — сразу над своим асфальтом: улиц над улицами, мостов над
     // настилом; сортировка устойчива, прочие слои порядка не меняют
     layers.extend(paint_layers);
@@ -2040,12 +2044,12 @@ pub fn build_roads(
         turning_circles,
         turns: turns.maneuvers,
         arrows: if style.arrows { turns.arrows.len() } else { 0 },
-        kerb_returns: kerb_returns.roads.len() + kerb_returns.unpaved.len() - kerb_returns.outer[0],
-        sidewalk_returns: kerb_returns.sidewalks.len() - kerb_returns.outer[1],
-        tile_overlaps: kerb_returns.overlaps.len(),
-        bends: kerb_returns.bends.len(),
-        outer_corners: kerb_returns.outer,
-        noses: kerb_returns.noses.len(),
+        kerb_returns: kerbs.kerb_returns,
+        sidewalk_returns: kerbs.sidewalk_returns,
+        tile_overlaps: kerbs.tile_overlaps,
+        bends: kerbs.bends,
+        outer_corners: kerbs.outer_corners,
+        noses: kerbs.noses,
         lawn_scraps: lawn_scraps.len() + green_scraps.len(),
         drawn: prepared.stats(),
         bridges: bridge_count,
