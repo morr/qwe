@@ -39,13 +39,18 @@ pub struct RailKeepout {
 impl RailKeepout {
     pub fn new(rails: &[RailLine]) -> Self {
         let mut links = Grid::new(CELL);
+        // Худший вынос кузова, каким его спрашивает `blocks`, — не полудлина,
+        // а диагональ (~20° к звену): полудлина и полуширина вместе. Рамка
+        // звена надувается на него: pad меньше запроса оставил бы сетке тихую
+        // неполноту ответа (`Grid::at`).
+        let worst_extent = CAR_HALF_LENGTH.hypot(CAR_HALF_WIDTH);
         for rail in rails.iter().filter(|rail| rail.kind != RailKind::Tram) {
             let reach = deck_width(rail) / 2.0 + RAIL_CAR_GAP;
             for pair in rail.points.windows(2) {
                 links.insert_segment(
                     pair[0],
                     pair[1],
-                    reach + CAR_HALF_LENGTH,
+                    reach + worst_extent,
                     (pair[0], pair[1], reach),
                 );
             }
@@ -106,6 +111,23 @@ mod tests {
         // вдоль пути на том же расстоянии — только полуширину
         assert!(!keepout.blocks(&car(Vec2::new(7.5, 0.0), Vec2::Y)));
         assert!(!keepout.blocks(&car(Vec2::new(9.0, 0.0), Vec2::X)));
+    }
+
+    #[test]
+    fn a_car_at_the_worst_diagonal_is_blocked_beyond_the_half_length() {
+        // Худший вынос кузова — диагональ к звену, √(2.7² + 1²) ≈ 2.88 м, а не
+        // полудлина 2.7: рамка звена в индексе надувается на худший вынос.
+        // Путь смещён так, что кромка рамки с одной полудлиной легла бы в 9 см
+        // перед границей ячейки, а машина под худшим углом стоит за границей,
+        // в полосе между полудлиной и диагональю, — с pad по полудлине её
+        // ячейка звена не находила вовсе.
+        let rail_at = |x: f32| fixture::rail(vec![Vec2::new(x, -50.0), Vec2::new(x, 50.0)], 5.0);
+        let reach = deck_width(&rail_at(0.0)) / 2.0 + RAIL_CAR_GAP;
+        let track_x = CELL - 0.09 - (reach + CAR_HALF_LENGTH);
+        let keepout = RailKeepout::new(&[rail_at(track_x)]);
+        // худший угол: полудлина и полуширина в равной доле выноса
+        let along = Vec2::new(CAR_HALF_LENGTH, CAR_HALF_WIDTH).normalize();
+        assert!(keepout.blocks(&car(Vec2::new(CELL + 0.005, 0.0), along)));
     }
 
     #[test]
