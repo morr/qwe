@@ -36,7 +36,7 @@ pub const GROUND_COLOR: Color = Color::srgb(0.878, 0.865, 0.827);
 /// были осторожностью, а на снимке (#27) весь город из-за них лежал ровным
 /// бежевым листом, на котором расставлены дома. Зелень приглушённая, темнее
 /// газона и сильно темнее парка: двор — это не луг. Им же засеян газон
-/// широкой обочины (`roads.rs::VERGE_LAWN_COLOR`) — он и есть край двора.
+/// широкой обочины (`roads.rs::VERGE_YARD_COLOR`) — он и есть край двора.
 pub(crate) const RESIDENTIAL_COLOR: Color = Color::srgb(0.427, 0.451, 0.376);
 const INDUSTRIAL_COLOR: Color = Color::srgb(0.843, 0.843, 0.835);
 pub const PARK_COLOR: Color = Color::srgb(0.769, 0.878, 0.580);
