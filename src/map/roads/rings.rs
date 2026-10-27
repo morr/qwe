@@ -29,7 +29,7 @@ use super::junctions::node_key;
 use super::network::RoadNodes;
 use super::turns::{LaneEnd, curve};
 use crate::map::along::nearest_on_path;
-use crate::map::osm::model::polyline_length;
+use crate::map::osm::model::{polyline_length, ring_bounds};
 use crate::map::osm::{RoadClass, RoadLine};
 use crate::map::shapes::is_ring;
 
@@ -403,11 +403,8 @@ const WEB_ALONG: f32 = 0.7;
 fn webs_along(path: &[Vec2], half: f32, ring: &Ring, ring_width: f32) -> Vec<Vec<Vec2>> {
     let touch = half + ring_width / 2.0;
     let reach = touch + WEB_GAP;
-    let (low, high) = ring.path.iter().fold(
-        (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY)),
-        |(low, high), &point| (low.min(point), high.max(point)),
-    );
-    let (low, high) = (low - reach, high + reach);
+    let (min, max) = ring_bounds(&ring.path);
+    let (low, high) = (min - reach, max + reach);
     let mut webs = Vec::new();
     let mut near: Vec<Vec2> = Vec::new();
     let mut far: Vec<Vec2> = Vec::new();

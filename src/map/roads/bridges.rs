@@ -597,10 +597,7 @@ struct Underneath<'a> {
 impl<'a> Underneath<'a> {
     fn new(map: &'a MapData) -> Self {
         let bounds = |points: &[Vec2], margin: f32| {
-            let (min, max) = points.iter().fold(
-                (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY)),
-                |(min, max), point| (min.min(*point), max.max(*point)),
-            );
+            let (min, max) = ring_bounds(points);
             Rect::from_corners(min - margin, max + margin)
         };
         let channels = map
