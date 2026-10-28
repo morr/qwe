@@ -184,6 +184,12 @@ const TILE_OVERLAP_REACH: f32 = 5.0;
 /// неё ближе этого угла (рад): такой угол узла закрыт скруглением, носом
 /// или веером, и полоса двора вдоль кромки не в щели, а снаружи угла.
 const TILE_OVERLAP_OCCUPIED: f32 = 80.0_f32.to_radians();
+/// Тот же наезд: расстояние от узла, на котором щель ещё не началась. Наезд
+/// закрывает щель, раскрывающуюся **от узла** — за кромкой у самого узла
+/// двора нет (голая земля или встречная лента), дальше — двор. Двор,
+/// стоящий вплотную к кромке у узла, — не щель, и наезд ложился бы на газон
+/// прямоугольной плитой (Тула, Первомайская × проспект Ленина).
+const TILE_OVERLAP_MOUTH: f32 = 0.25;
 
 /// Одна дорога, выходящая из узла.
 struct Arm<'d> {
@@ -965,7 +971,24 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
             if !is_junction(&group) || group.iter().all(|arm| is_merged(arm)) {
                 continue;
             }
+            // Прямой срез плеча аллеи оправдан только там, где рядом ляжет
+            // уголковый кусок — то есть у самого плеча нет встречного и хоть
+            // один сосед тоже кончается (пару проходных лучей кусок не
+            // получает, см. пропуск ниже). Иначе срезу ничем не прикрыться, и
+            // у слияния дорожек он торчал клином и ступенькой на стыке лент
+            // разной ширины (Тула, Фрунзе × Красноармейский). Круглая шапка
+            // ложится на соседние ленты — тот же слой, тот же цвет, — и
+            // слияние читается пересечением полос.
+            let squared = |arm: &Arm| {
+                !continues(&group, arm)
+                    && group
+                        .iter()
+                        .any(|other| !std::ptr::eq(*other, arm) && !continues(&group, other))
+            };
             for arm in &group {
+                if class == RoadClass::Alley && !squared(arm) {
+                    continue;
+                }
                 if let Some((road, end)) = arm.end.filter(|_| !is_merged(arm)) {
                     returns.butt[road][end] = true;
                 }
@@ -1490,6 +1513,15 @@ fn tile_overlaps(node: Vec2, group: &[&Arm], bounds: &YardBounds) -> Vec<Vec<Vec
                 let at = node + arm.direction * along + normal * (arm.half[side] + off);
                 bounds.any_yard(at)
             };
+            // у устья полосы двора быть не должно: щель раскрывается от узла
+            // (голая земля, дальше двор). Двор вплотную к кромке у узла —
+            // не щель, и полоса ложилась бы плитой на газон
+            if [TILE_OVERLAP_WIDTH * 0.5, TILE_OVERLAP_WIDTH]
+                .into_iter()
+                .any(|off| yard_in_band(TILE_OVERLAP_MOUTH, off))
+            {
+                continue;
+            }
             if ![
                 (0.4, 0.5),
                 (0.4, 1.0),
@@ -2575,6 +2607,89 @@ mod tests {
             found.roads[0].0,
             RoadClass::Alley,
             "смешанная пара — песком"
+        );
+    }
+
+    /// Слияние дорожек, разрезанных OSM в узле: у южного и северного плеча
+    /// есть встречный луч, у зебры, входящей в их слияние, все соседи
+    /// проходные — уголковые куски их пар пропущены, срезу нечем прикрыться,
+    /// и ленты кончаются круглыми шапками: у слияния срез торчал клином и
+    /// ступенькой на стыке лент разной ширины (Тула, Фрунзе ×
+    /// Красноармейский). У L-поворота двух кончающихся дорожек кусок ляжет —
+    /// торцы остаются прямыми.
+    #[test]
+    fn a_path_arm_with_an_opposite_keeps_its_round_cap() {
+        let merge = [
+            paved_path(vec![
+                Vec2::new(-50.0, 0.0),
+                Vec2::ZERO,
+                Vec2::new(50.0, 0.0),
+            ]),
+            paved_path(vec![Vec2::new(0.0, -50.0), Vec2::ZERO]),
+            paved_path(vec![Vec2::ZERO, Vec2::new(0.0, 50.0)]),
+        ];
+        let found = kerb_returns(&Drawn::for_test(&map_of(&merge)).with_sidewalks(false), 1.0);
+        assert!(!found.butt(1)[1], "у южного плеча есть встречный — шапка");
+        assert!(
+            !found.butt(2)[0],
+            "у северного плеча есть встречный — шапка"
+        );
+
+        // зебра входит в слияние двух продолжающихся дорожек: соседей без
+        // встречного у неё нет, куска не будет и у неё — шапка
+        let joined = [
+            paved_path(vec![Vec2::new(50.0, 0.0), Vec2::ZERO]),
+            paved_path(vec![Vec2::new(0.0, -50.0), Vec2::ZERO]),
+            paved_path(vec![Vec2::ZERO, Vec2::new(0.0, 50.0)]),
+        ];
+        let found = kerb_returns(
+            &Drawn::for_test(&map_of(&joined)).with_sidewalks(false),
+            1.0,
+        );
+        assert!(!found.butt(0)[0], "у зебры все соседи проходные — шапка");
+
+        let corner = [
+            paved_path(vec![Vec2::new(-50.0, 0.0), Vec2::ZERO]),
+            paved_path(vec![Vec2::ZERO, Vec2::new(0.0, 50.0)]),
+        ];
+        let found = kerb_returns(
+            &Drawn::for_test(&map_of(&corner)).with_sidewalks(false),
+            1.0,
+        );
+        assert!(
+            found.butt(0)[1] && found.butt(1)[0],
+            "L-поворот без встречных — прямые торцы"
+        );
+    }
+
+    /// Двор, подступивший к кромке у самого узла, — не щель: наезд закрывает
+    /// щель, раскрывающуюся от узла (голая земля, дальше двор), а здесь лёг
+    /// бы прямоугольной плитой на газон (Тула, Первомайская × проспект
+    /// Ленина — угол двора у перехода).
+    #[test]
+    fn no_tile_overlap_where_the_yard_touches_the_node() {
+        let roads = [
+            paved_path(vec![
+                Vec2::new(-50.0, 0.0),
+                Vec2::ZERO,
+                Vec2::new(50.0, 0.0),
+            ]),
+            paved_path(vec![Vec2::new(0.0, 50.0), Vec2::ZERO]),
+        ];
+        let mut map = map_of(&roads);
+        map.landuse = vec![crate::map::osm::fixture::area(
+            crate::map::osm::model::AreaKind::Residential,
+            vec![
+                Vec2::new(0.0, -1.8),
+                Vec2::new(12.0, -2.5),
+                Vec2::new(8.0, -9.0),
+                Vec2::new(0.0, -9.0),
+            ],
+        )];
+        let found = kerb_returns(&Drawn::for_test(&map).with_sidewalks(false), 1.0);
+        assert!(
+            found.overlaps.is_empty(),
+            "двор у самой кромки у узла — наезда нет"
         );
     }
 

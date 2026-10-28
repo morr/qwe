@@ -1859,7 +1859,10 @@ on a counter-taper (`Taper::seam`) — and drifts to its own over the wedge
   - **Junction** (for the drawn asphalt, `map/roads/corners.rs`) — a node's class group
     of three arms or more, or two meeting at an angle. An arm that **ends** there ends
     **square** on the node (`KerbReturns::butt`) instead of with a round cap, which stuck
-    out past a narrower road's far edge; between two neighbour arms more than 180° apart
+    out past a narrower road's far edge — unless it is a path arm whose cut no corner
+    piece would cover (continuing through the node, or with every neighbour continuing):
+    it keeps the round cap, which lies on the neighbouring ribbons. Between two neighbour
+    arms more than 180° apart
     the **outer corner** is a fan from the node, what the round caps used to give. A
     crossing street's piece between the two halves of a divided street lies in the
     median opening and carries no sidewalk.
