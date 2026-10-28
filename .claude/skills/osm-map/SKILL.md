@@ -21,8 +21,11 @@ one your change is about, not all of them**:
   medians, lane markings and their breaks, the ribbon, junctions and the drawn network (stitches, kerb returns),
   `RoadStyle` and `RoadShape` (lane width, taper, curve tolerance, median gap, corner
   radius), bridge layers, asphalt wear; the junction gallery `examples/demos/roads`.
-- `references/parking.md` — the parking layout and the big lot (its kerb, the medians,
-  the gores at a roundabout), and the parked cars.
+- `references/parking-layout.md` — the parking layout (stalls, aisles, the lot outline
+  and its parse).
+- `references/parking-big-lot.md` — the big lot: its kerb and the gores at a roundabout
+  (the owner of the gore law).
+- `references/parking-parked-cars.md` — the parked cars (`map/cars/`).
 - `references/layers.md` — water (rims, shoal, waterways), the yard, pitches, rails,
   tram, industry, standing wagons, fences.
 - `references/osm-coverage.md` — the **tag coverage audit** (in Russian): which OSM
@@ -33,9 +36,12 @@ one your change is about, not all of them**:
   in the same change.
 - `references/entrances.md` — the door generator: the measured statistics behind the
   cohort table, the pitch law, blocked walls, determinism.
-- `references/buildings.md` — how a house is drawn: the height modes and their shadow
-  sweeps, temples and the fortress, inferred storeys, the roof and wall material with its
-  shader, the roof clutter, the arches.
+- `references/buildings-heights.md` — how a house is drawn: the height modes and their
+  shadow sweeps, inferred storeys.
+- `references/buildings-landmarks.md` — temples and the fortress, the arches.
+- `references/buildings-material.md` — the roof and wall material with its shader.
+- `references/buildings-clutter.md` — what stands on a roof.
+- `references/buildings-garages.md` — the garage rows.
 - `references/trees.md` — planting (woods, standalone, rows, density/thresholds) and
   rendering (crowns, TreeStyle/TreeRowStyle, conifer stands).
 - `references/tree-algo.md` — the watabou Village Generator crown algorithm (in
@@ -692,7 +698,7 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
   rail and wall layers go
   over a single white `ColorMaterial`; every layer carrying a roof (`building_roofs`, and
   in 2.5D `building_extruded`, walls included) over the `RoofMaterial` of **Roof
-  material** (`references/buildings.md`); the **surfaces** — ground, area fills, water, road and
+  material** (`references/buildings-material.md`); the **surfaces** — ground, area fills, water, road and
   alley fills, sidewalks, parking asphalt (as `SurfaceKind::Street` — it *is* asphalt),
   the tree-row band — over the `SurfaceMaterial` below. The parking **markings** are the
   exception that proves the rule: paint over asphalt, so that layer stays on the flat
@@ -1024,12 +1030,15 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
     driveway crossings, stitches, **Kerb returns**), **RoadStyle and RoadShape**,
     **Bridge layers**,
     **Asphalt wear**, and **The junction gallery** (`examples/demos/roads`).
-  - `references/parking.md` — **Parking** (the layout, aisles, pockets, **A big lot shows
-    the road through it** with the lot kerb, the medians and the **gores**) and
+  - `references/parking-layout.md` — **Parking** (the layout, aisles, pockets);
+    `references/parking-big-lot.md` — **A big lot shows the road through it** (the lot
+    kerb, the medians and the **gores**); `references/parking-parked-cars.md` —
     **Parked cars** (rows, junction breaks, districts, bodies, `CarStyle`).
   - `references/layers.md` — **Rims**, **Shoal**, **Waterways**, **The yard**,
     **Pitches**, **Rail layers**, **Tram**, **Industry**, **Standing wagons**, **Fences**.
-  - `references/buildings.md` and `references/trees.md` — **Buildings** (below) and the
+  - `references/buildings-heights.md` and its siblings (`buildings-landmarks.md`,
+    `buildings-material.md`, `buildings-clutter.md`, `buildings-garages.md`) and
+    `references/trees.md` — **Buildings** (below) and the
     trees.
 - **Zoom buckets** (`map/zoom.rs`) — the one mechanism behind every zoom LOD. Each
   layer keeps its own table (`RAIL_LODS`, `TRAM_LODS`, `FENCE_LODS`; the cars', the
@@ -1040,7 +1049,7 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
   `BuildingLods`, `PaintLods`, `VergeLods`, `TreeLods` — empty enums handing over the `max_zoom`s; the
   trees' table caps the density prefix, `references/trees.md`; the paint's
   and the trees' buckets only flip `Visibility`, the buildings' only a roof-material
-  uniform — nothing is rebuilt — **Markings** in `roads.md`, `references/buildings.md`). `ZoomBucket<T>` is the
+  uniform — nothing is rebuilt — **Markings** in `roads.md`, `references/buildings-material.md`). `ZoomBucket<T>` is the
   resource with the current index for that table;
   `for_zoom` is the single selection rule (first bucket whose bound is above the zoom,
   a zoom on the bound goes up — `zoom/tests.rs`). Two generic systems:
@@ -1068,7 +1077,7 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
   one cycling row) — `Facade`, `Shadows`, `ShadowsTint`, `Extrusion`,
   `ExtrusionShadowsTint` (the default); any change reruns `rebuild_buildings` (despawn
   `BuildingLayerTag` layers, respawn from the unchanged `MapData::buildings`).
-  **The mechanism, the measurements and the rationale are in `references/buildings.md`**:
-  the height modes and their shadow sweeps, temples and the fortress, inferred storeys,
-  the roof and wall material with its shader and its two galleries, the roof clutter, the
-  arches.
+  **The mechanism, the measurements and the rationale are in the `references/buildings-*.md`
+  files**: heights (the height modes, their shadow sweeps and inferred storeys), landmarks
+  (temples and the fortress, the arches), material (the roof and wall material with its
+  shader and its two galleries), clutter (what stands on a roof), garages (the rows).
