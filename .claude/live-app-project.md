@@ -68,7 +68,11 @@ them the app is unchanged:
   same frame across runs;
 - `QWE_PERF_POP=<n>` — `n` humans instead of the stock population;
 - `QWE_PERF_RENDER_DIAG=1` — `RenderDiagnosticsPlugin`: CPU time of every render pass
-  (`render/<pass>/elapsed_cpu`) in the diagnostics log.
+  (`render/<pass>/elapsed_cpu`) in the diagnostics log;
+- `QWE_PERF_FRAME_SPIKES=<ms>` — every frame longer than the threshold logs
+  `frame spike: 43.2 ms (zoom 1.83, frame N)` (`Time<Real>`, so it works paused): the
+  per-frame jerk detector the one-second `frame_time` averages hide. The zoom in the
+  line ties the spike to the zoom-LOD threshold the wheel crossed that frame.
 
 ## Ready markers in the log
 
