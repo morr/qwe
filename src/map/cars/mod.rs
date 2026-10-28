@@ -472,6 +472,26 @@ pub fn forget_parked_cars(mut placement: ResMut<CarPlacement>) {
     *placement = CarPlacement::default();
 }
 
+/// Прогрев расстановки на входе в мир. [`rebuild_cars`] расставляет только
+/// когда слой виден: мир, открытый за порогом машин (общий план), оставил бы
+/// кеш пустым, и первый зум внутрь платил бы расстановку целиком — на Туле
+/// ~78 мс посреди жеста. Ключ кеша — занятость и форма дорог, ступени зума в
+/// нём нет, так что считать расстановку можно и при скрытом слое; цена
+/// прогрева падает в загрузку. Сырому OSM (`RawOsm`) машины не нужны вовсе —
+/// там и прогрев не считается.
+pub fn warm_car_placement(
+    style: Res<CarStyle>,
+    road_shape: Res<RoadShapeOnMap>,
+    map: Res<MapData>,
+    layout: Res<ParkingLayout>,
+    mut placement: ResMut<CarPlacement>,
+) {
+    if map.knobs.raw.draws_raw() {
+        return;
+    }
+    placement.refresh(*style, road_shape.0, &map, &layout);
+}
+
 /// Что вышло из сборки слоя машин — значением, а не только строкой в логе.
 ///
 /// `detail` — ступень подробности кузова, и `None` в ней значит «слоя нет»:
