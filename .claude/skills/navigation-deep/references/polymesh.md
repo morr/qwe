@@ -305,13 +305,8 @@ target picked by tile passability can land inside an inflated obstacle, and poly
 only snaps endpoints within `search_delta * (search_steps - 1)` (0.1 m by default). The cost of that
 choice is visible in the speed panel as `answers: N/frame, X % failed` — a pawn whose
 own position is off-mesh fails *every* repath and stands still, so the number is worth
-watching. It is computed from **two** diagnostics, `pathfinding/answered` and
-`pathfinding/failed`, both written every frame including zeros, and shown as the ratio
-of their averages: a percentage computed per frame and then averaged would count
-frames instead of answers (a lone late failure makes its frame read 100 %) and would
-freeze on its last value the moment answers stop. The denominator is on screen for the
-same reason: 100 % of 0.7 answers a frame is a trickle of hopeless repaths, not a dead
-navmesh.
+watching. How that percentage is computed — the dispatcher's `AnswerTally`
+(`references/pipeline.md`).
 
 Coasting and the demon lunge's `line_of_sight` stay **grid** tests: they are cheap
 guards against walking into a wall, not path searches.
@@ -330,15 +325,8 @@ One knob exists only because the default fails at city scale, measured on Tula
   centre clears the polygon by a centimetre. **96 % of requests failed** with the
   default against 3.5 % on the grid; at 0.75 m it is **0.6 %**.
 
-**The in-flight cap is not a polymesh knob.** There is one limit for both backends,
-`MAX_PATHFINDING_IN_FLIGHT` = 1024 in `movement/pathfinding.rs`, sized for the dispatcher's
-demand at 30×; no `MAX_POLYMESH_PATHFINDING_IN_FLIGHT` exists. A separate, lower polymesh
-cap did exist and was deleted once it had been raised to the grid's value: a cap does not
-bound the memory of a diverging search — one query explodes, not their number — while a low
-one stalled the world, a couple of heavy searches holding almost every slot and the
-dispatcher handing out nothing to anyone. The mesh search's memory is bounded by its step
-budget (`polymesh/path.rs::SEARCH_POPS_PER_POLYGON`), the slots by that one cap; the full
-rationale lives in the constant's own doc comment.
+**The in-flight cap is not a polymesh knob** — there is one limit for both backends;
+its rationale lives with the dispatcher (`references/pipeline.md`).
 
 The same arithmetic sets the **ceiling of the agent radius slider**
 (`POLYMESH_AGENT_RADIUS_MAX` = 0.6, range 0.2–0.6): the tolerance rescues a goal that
