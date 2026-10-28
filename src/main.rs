@@ -7,46 +7,8 @@ use qwe::{
     portal, post, prefs, restart, rng, silhouette, sim_time, spatial, telemetry, ui,
 };
 
-/// Порт BRP: `BRP_PORT` из окружения, иначе дефолтный 15702. `None` — порт занят
-/// чужим экземпляром, BRP у этого запуска не будет.
-///
-/// Порт из окружения нужен, чтобы экземпляр агента (`BRP_PORT=15703 cargo run`)
-/// не дрался за порт с тем, который пользователь держит открытым. Занятость
-/// проверяется здесь, до старта, потому что `bevy_remote` спавнит сервер через
-/// `.detach()` и ошибку bind не видит никто: второй экземпляр молча остаётся без
-/// BRP, а клиент получает ответы от первого — и это выглядит как «изменение не
-/// сработало», а не как «я разговариваю с чужим приложением».
-///
-/// Явно заданный порт при этом обязателен: если он занят, запуск падает, а не
-/// продолжается без BRP. Дефолтный порт — только предупреждение, чтобы второе
-/// окно, открытое руками, всё-таки запускалось.
-fn brp_port() -> Option<u16> {
-    let requested = std::env::var("BRP_PORT").ok();
-    let port = match &requested {
-        Some(value) => value
-            .parse()
-            .unwrap_or_else(|_| panic!("BRP_PORT is not a port number: {value:?}")),
-        None => bevy::remote::http::DEFAULT_PORT,
-    };
-    match std::net::TcpListener::bind(("127.0.0.1", port)) {
-        // Сокет закрывается сразу, bind'ит его уже сам RemoteHttpPlugin
-        Ok(_) => Some(port),
-        Err(err) if requested.is_some() => {
-            panic!(
-                "BRP port {port} is busy ({err}) — another qwe already holds it; pick a free BRP_PORT"
-            )
-        }
-        Err(err) => {
-            eprintln!(
-                "qwe: BRP port {port} is busy ({err}) — remote protocol off for this instance"
-            );
-            None
-        }
-    }
-}
-
 fn main() {
-    let port = brp_port();
+    let port = dev::brp_port();
     let mut app = App::new();
     app.insert_resource(ClearColor(Color::srgb(0.72, 0.71, 0.68)))
         .add_plugins(

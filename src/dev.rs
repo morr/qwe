@@ -23,11 +23,12 @@ use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use crate::grid::world_to_tile;
 use crate::loading::AppState;
 use crate::map::buildings::{BuildingHeightMode, BuildingPlan, mesh_buildings};
+use crate::map::inspect::{InspectIndex, InspectOrigin};
 use crate::map::osm::MapData;
 use crate::map::surface::MapLayer;
 use crate::map::{
-    FenceZoomBucket, ParkingLayout, RailZoomBucket, RoadShapeOnMap, RoadStyle, VergeZoomBucket,
-    build_roads, mesh_fences, mesh_rails, mesh_surfaces,
+    FenceZoomBucket, ParkingLayout, RailZoomBucket, RoadShapeOnMap, RoadStyle, TreeStyle,
+    VergeZoomBucket, build_roads, mesh_fences, mesh_rails, mesh_surfaces,
 };
 use crate::movement::Movable;
 use crate::settings::unit_z;
@@ -188,6 +189,9 @@ fn on_probe_layers(
     event: On<ProbeLayersEvent>,
     mut probe: ResMut<LayerProbe>,
     sources: ProbeSources,
+    index: Res<InspectIndex>,
+    origin: Res<InspectOrigin>,
+    trees: Res<TreeStyle>,
     layers: Query<(Entity, &Name, &Aabb, &Transform, &Visibility), With<MapLayer>>,
 ) {
     let ProbeSources {
@@ -207,11 +211,17 @@ fn on_probe_layers(
     // живых мешей в главном мире нет — слои собираются с RenderAssetUsages::
     // RENDER_WORLD и после извлечения в рендер пусты, поэтому точная геометрия
     // ниже пересобирается теми же чистыми `mesh_*`, что зовут адаптеры; Aabb
-    // остаётся, потому что считается при спавне, до извлечения.
+    // остаётся, потому что считается при спавне, до извлечения. Габариты стоят
+    // в мировых метрах, точка пришла в метрах карты: витрина `roads` ставит
+    // [`InspectOrigin`], у игры он ноль.
+    let world_at = at + origin.0;
     let mut live: Vec<LiveLayer> = Vec::new();
     for (entity, name, aabb, transform, visibility) in &layers {
         let (min, max) = (aabb.min(), aabb.max());
-        let covers = at.x >= min.x && at.x <= max.x && at.y >= min.y && at.y <= max.y;
+        let covers = world_at.x >= min.x
+            && world_at.x <= max.x
+            && world_at.y >= min.y
+            && world_at.y <= max.y;
         live.push(LiveLayer {
             entity,
             name: name.as_str(),
@@ -315,6 +325,19 @@ fn on_probe_layers(
         ));
     }
 
+    // Семантический индекс (`map/inspect.rs`): признаки объектов в точке —
+    // то, что панель инспектора (`ui/inspector.rs`) показывает на каждом
+    // движении курсора. Дёшево: одна ячейка сетки, без пересборки. Слой
+    // отвечает «какой меш рисует пиксель», индекс — «что это по данным».
+    let hits = index.hits(&map, trees.density, at);
+    report.push_str(&format!(
+        "features at the point (semantic index): {}\n",
+        hits.len()
+    ));
+    for hit in &hits {
+        report.push_str(&format!("  z {:6.3}  {}\n", hit.z, hit.label));
+    }
+
     // Слои вне пересборки, чей габарит накрывает точку (кроны, их тени — всё,
     // что рассыпается в сущности): свернуть по имени, чтобы 200 кусков не
     // занимали отчёт
@@ -348,6 +371,45 @@ fn on_probe_layers(
     }
     info!("{}", report.trim_end());
     probe.report = report;
+}
+
+/// Порт BRP: `BRP_PORT` из окружения, иначе дефолтный 15702. `None` — порт
+/// занят чужим экземпляром, BRP у этого запуска не будет.
+///
+/// Порт из окружения нужен, чтобы экземпляр агента (`BRP_PORT=15703 cargo run`)
+/// не дрался за порт с тем, который пользователь держит открытым. Занятость
+/// проверяется до старта, потому что `bevy_remote` спавнит сервер через
+/// `.detach()` и ошибку bind не видит никто: второй экземпляр молча остаётся
+/// без BRP, а клиент получает ответы от первого — и это выглядит как
+/// «изменение не сработало», а не как «я разговариваю с чужим приложением».
+///
+/// Явно заданный порт при этом обязателен: если он занят, запуск падает, а не
+/// продолжается без BRP. Дефолтный порт — только предупреждение, чтобы второе
+/// окно, открытое руками, всё-таки запускалось. Игре и витрине `roads` он
+/// нужен поровну.
+pub fn brp_port() -> Option<u16> {
+    let requested = std::env::var("BRP_PORT").ok();
+    let port = match &requested {
+        Some(value) => value
+            .parse()
+            .unwrap_or_else(|_| panic!("BRP_PORT is not a port number: {value:?}")),
+        None => bevy::remote::http::DEFAULT_PORT,
+    };
+    match std::net::TcpListener::bind(("127.0.0.1", port)) {
+        // Сокет закрывается сразу, bind'ит его уже сам RemoteHttpPlugin
+        Ok(_) => Some(port),
+        Err(err) if requested.is_some() => {
+            panic!(
+                "BRP port {port} is busy ({err}) — another instance already holds it; pick a free BRP_PORT"
+            )
+        }
+        Err(err) => {
+            eprintln!(
+                "qwe: BRP port {port} is busy ({err}) — remote protocol off for this instance"
+            );
+            None
+        }
+    }
 }
 
 /// `QWE_PERF_NOVSYNC=1` — окно без vsync: кадр не упирается в 60 Гц дисплея,
