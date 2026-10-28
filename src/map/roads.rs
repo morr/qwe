@@ -137,7 +137,7 @@ const TWOWAY_METERS_PER_LANE_PAIR: f32 = 7.0;
 const ONEWAY_METERS_PER_LANE: f32 = 4.5;
 
 /// Стены Кремля поверх зданий.
-const Z_WALL: f32 = Z_BUILDING + 0.1;
+pub(crate) const Z_WALL: f32 = Z_BUILDING + 0.1;
 
 /// Чем закрыт излом ленты дороги.
 #[derive(Reflect, Clone, Copy, PartialEq, Eq, Debug, Default)]

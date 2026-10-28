@@ -15,6 +15,7 @@ pub mod footprint;
 // `LayerMaterial` в приватные
 pub(crate) mod grid;
 mod industry;
+pub mod inspect;
 mod meshing;
 pub mod osm;
 mod parallel;
@@ -138,6 +139,11 @@ pub struct MapPlugin;
 
 impl Plugin for MapPlugin {
     fn build(&self, app: &mut App) {
+        // семантический индекс пробы точки (`inspect`): сдвиг, ресурс,
+        // пересборка по смене `MapData` — та же проводка нужна витрине
+        // `roads`, у которой своего `MapPlugin` нет. Отдельным стейтментом,
+        // чтобы не перестраивать рифмету цепочку ниже
+        app.add_plugins(inspect::InspectPlugin);
         app.add_plugins(Material2dPlugin::<surface::SurfaceMaterial>::default())
             .add_plugins(Material2dPlugin::<buildings::material::RoofMaterial>::default())
             .add_plugins(Material2dPlugin::<trees::CrownMaterial>::default())
