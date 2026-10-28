@@ -861,7 +861,7 @@ fn turn_wear_lies_in_both_passes_and_its_tails_fade() {
         tails: vec![[Vec2::new(15.0, 0.0), Vec2::new(20.0, 0.0)]],
     };
     let mut painter = Painter::default();
-    painter.paint_turn_wear(&[junction]);
+    painter.paint_turn_wear(&[junction], |_| true);
     let (mask, wear) = (&painter.wear_mask, &painter.wear);
     assert!(!wear.is_empty());
     assert_eq!(mask.positions_for_test(), wear.positions_for_test());
@@ -1209,4 +1209,34 @@ fn a_line_cut_at_a_break_ends_without_a_hook() {
             );
         }
     }
+}
+
+#[test]
+fn wear_stops_at_the_kerb() {
+    // колея идёт вдоль x и упирается в кромку x = 0: остаётся кусок внутри
+    // асфальта, торец прямой, снаружи звеньев нет
+    let pieces = Painter::asphalt_pieces(
+        &[
+            Vec2::new(-4.0, 0.0),
+            Vec2::new(-1.0, 0.0),
+            Vec2::new(1.0, 0.0),
+            Vec2::new(4.0, 0.0),
+        ],
+        &|point| point.x < 0.0,
+    );
+    assert_eq!(
+        pieces,
+        vec![vec![Vec2::new(-4.0, 0.0), Vec2::new(-1.0, 0.0)]]
+    );
+}
+
+#[test]
+fn a_wear_segment_whose_rut_leaves_the_asphalt_is_dropped() {
+    // центр звена ещё на асфальте, а боковая колея уже за кромкой y = 0.5:
+    // звено не рисуется — полоса колеи шире её оси (Тула, Фрунзе ×
+    // Красноармейский: колея поворота перелезала кромку на плитку)
+    let pieces = Painter::asphalt_pieces(&[Vec2::new(0.0, 0.0), Vec2::new(4.0, 0.0)], &|point| {
+        point.y < 0.5
+    });
+    assert!(pieces.is_empty());
 }

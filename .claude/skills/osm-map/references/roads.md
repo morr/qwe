@@ -2113,6 +2113,21 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
     (428 per junction with shared tails) and 1.1 M vertices; the two passes cost what the
     strips cost — 121 ms against 112 before stage 5в, 108 k vertices per mesh. What the mask cannot see is the asphalt's own ruts: a turn rut crossing
     the leading road's lane rut still adds to it.
+  - **The wear stays on the asphalt** (`Painter::asphalt_pieces`): `paint_turn_wear`
+    takes an asphalt test of its own — `PaintGround::under_wear`, the streets'
+    triangles kept near the wear links themselves (`new`'s filter with the curves
+    in place of the paint marks; a junction without paint still has wear, and the
+    clip has to see the asphalt under it, while a ground over **all** the triangles
+    is the whole street mesh and costs a third of a second on Tula) — and cuts
+    each curve and tail into the pieces that lie on it: a
+    link survives only when the asphalt holds both its ends **and both ruts
+    beside them** (the normal × `RUT_OFFSET`), so the strip ends square at the
+    kerb. Unclipped, the outer rut of a tight turn crossed the kerb return onto
+    the sidewalk tile and read as a pale diagonal band along the kerb,
+    narrowing to a wedge with a dark triangle at its tip (Tula, Фрунзе ×
+    Красноармейский, the south-west corner of the mouth). Pinned by
+    `paint/tests.rs::wear_stops_at_the_kerb` and
+    `::a_wear_segment_whose_rut_leaves_the_asphalt_is_dropped`.
   - **No guide dashes**: the 1.7 marking of a far turn was built from the same curves and
     dropped at the author's call — dashed arcs across the junction read as clutter.
   - **Lane arrows** (stage 7, `Turns::arrows`, `LaneArrow`) — per incoming lane its

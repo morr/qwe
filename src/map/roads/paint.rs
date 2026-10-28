@@ -1367,13 +1367,27 @@ impl Painter {
     /// ([`PaintPass`]): маска оставляет в каждом пикселе **наибольшую** колею
     /// из всех, наложение светлит асфальт на неё один раз, сколько бы полос
     /// там ни легло.
-    pub(super) fn paint_turn_wear(&mut self, junctions: &[JunctionWear]) {
+    ///
+    /// Рисуется только по асфальту (`asphalt_pieces`): у острого угла
+    /// поворота полоса доставала кромку краем и перелезала бордюрную дугу
+    /// на плитку тротуара — светлая полоса вдоль кромки сужалась клином и
+    /// кончалась тёмным треугольником у дальнего края ленты (Тула, Фрунзе ×
+    /// Красноармейский, юго-западный угол рта).
+    pub(super) fn paint_turn_wear(
+        &mut self,
+        junctions: &[JunctionWear],
+        on_asphalt: impl Fn(Vec2) -> bool,
+    ) {
         for junction in junctions {
             for curve in &junction.curves {
-                self.push_wear(curve, |_| 1.0);
+                for piece in Self::asphalt_pieces(curve, &on_asphalt) {
+                    self.push_wear(&piece, |_| 1.0);
+                }
             }
             for tail in &junction.tails {
-                self.push_wear(tail, |share| 1.0 - share);
+                for piece in Self::asphalt_pieces(tail, &on_asphalt) {
+                    self.push_wear(&piece, |share| 1.0 - share);
+                }
             }
         }
     }
@@ -1399,6 +1413,35 @@ impl Painter {
                 PAINT_COLOR.to_linear(),
             );
         }
+    }
+
+    /// Куски полилинии колеи, целиком лежащие на асфальте (`on_asphalt`).
+    /// Звено остаётся, когда асфальт стоит под обоими его концами и под обеими
+    /// колеями по сторонам (нормаль звена на [`RUT_OFFSET`]): краем полосы
+    /// колея перелезала кромку поворота на плитку тротуара. Торец у кромки
+    /// прямой — как у стоп-линии, обрезанной тем же асфальтом.
+    fn asphalt_pieces(line: &[Vec2], on_asphalt: &impl Fn(Vec2) -> bool) -> Vec<Vec<Vec2>> {
+        let mut pieces = Vec::new();
+        let mut current: Vec<Vec2> = Vec::new();
+        for window in line.windows(2) {
+            let (from, to) = (window[0], window[1]);
+            let ruts = (to - from).normalize_or_zero().perp() * RUT_OFFSET;
+            let inside = [Vec2::ZERO, ruts, -ruts]
+                .into_iter()
+                .all(|offset| on_asphalt(from + offset) && on_asphalt(to + offset));
+            if inside {
+                if current.is_empty() {
+                    current.push(from);
+                }
+                current.push(to);
+            } else if !current.is_empty() {
+                pieces.push(std::mem::take(&mut current));
+            }
+        }
+        if !current.is_empty() {
+            pieces.push(current);
+        }
+        pieces
     }
 
     /// Островок у кольца (`roads/gores.rs`): обводка каждого контура и
@@ -1727,8 +1770,55 @@ impl PaintGround {
         for line in stops {
             at_paint.insert_segment(line.from, line.to, STOP_WIDTH, ());
         }
+        Self::filtered(at_paint, asphalt)
+    }
+
+    /// Асфальт под колеёй траекторий: не весь (полный — это весь меш улиц,
+    /// дорого), а треугольники у звеньев кривых и хвостов, с запасом на
+    /// боковые колеи ([`RUT_OFFSET`]) — тот же отбор, что у зебр и
+    /// стоп-линий, только «краска» здесь сама колея. Узел без зебры колею
+    /// всё равно несёт, и её клип обязан видеть асфальт под ней.
+    pub(super) fn under_wear(
+        junctions: &[JunctionWear],
+        asphalt: impl IntoIterator<Item = [Vec2; 3]>,
+    ) -> Self {
+        // ячейка мельче `GROUND_CELL`: у колеи ячейку делят сотни
+        // треугольников развязки, и каждый из шести запросов звена
+        // перебирает их все — на Туле это были десятки миллисекунд
+        let cell = 8.0;
+        let reach = RUT_OFFSET + 1.0;
+        let mut at_wear: Grid<()> = Grid::new(cell);
+        for junction in junctions {
+            // бокс кривой целиком, а не по звену: запросы клипа — точки у
+            // звеньев, бокс с запасом накрывает их все, а вставок в сеть
+            // в двадцать раз меньше
+            for line in &junction.curves {
+                let mut min = line[0];
+                let mut max = line[0];
+                for point in &line[1..] {
+                    min = min.min(*point);
+                    max = max.max(*point);
+                }
+                at_wear.insert(min - reach, max + reach, ());
+            }
+            for &[from, to] in &junction.tails {
+                at_wear.insert(from.min(to) - reach, from.max(to) + reach, ());
+            }
+        }
+        Self::filtered_in(cell, at_wear, asphalt)
+    }
+
+    fn filtered(at_paint: Grid<()>, asphalt: impl IntoIterator<Item = [Vec2; 3]>) -> Self {
+        Self::filtered_in(GROUND_CELL, at_paint, asphalt)
+    }
+
+    fn filtered_in(
+        cell: f32,
+        at_paint: Grid<()>,
+        asphalt: impl IntoIterator<Item = [Vec2; 3]>,
+    ) -> Self {
         let mut triangles = Vec::new();
-        let mut near = Grid::new(GROUND_CELL);
+        let mut near = Grid::new(cell);
         for triangle in asphalt {
             let [a, b, c] = triangle;
             let (min, max) = (a.min(b).min(c), a.max(b).max(c));

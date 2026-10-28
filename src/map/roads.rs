@@ -2054,6 +2054,9 @@ pub fn build_roads(
     ) {
         let ground =
             paint::PaintGround::new(marks.zebras(), marks.stop_lines(), streets.triangles());
+        // колея режется по асфальту под ней — узлы без зебр и стоп-линий
+        // колею тоже несут, и `ground` (асфальт только у краски) её не видит
+        let asphalt = paint::PaintGround::under_wear(&turns.wear, streets.triangles());
         for zebra in marks.zebras() {
             if let Some(zebra) = paint::whole_bars(zebra, |point| ground.contains(point)) {
                 painter.paint_zebra(&zebra);
@@ -2064,8 +2067,9 @@ pub fn build_roads(
                 painter.paint_stop_line(&line);
             }
         }
-        // колея траекторий — всегда, как колея полос
-        painter.paint_turn_wear(&turns.wear);
+        // колея траекторий — всегда, как колея полос; только по асфальту:
+        // у кромки поворота её полоса перелезала бордюрную дугу на плитку
+        painter.paint_turn_wear(&turns.wear, |point| asphalt.contains(point));
         // те же кривые и хвосты — оверлею колеи, без пересчёта
         for junction in &turns.wear {
             ruts.curves.extend(junction.curves.iter().cloned());
