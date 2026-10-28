@@ -231,6 +231,22 @@ fn two_pinned_nodes_close_together_share_their_link_as_the_straight() {
             sharpest(path).to_degrees()
         );
     }
+    // продолжение отрезка за пару берёт лишь столько, сколько нужно узлу
+    // прямого края, — раньше оно брало весь deviation/sin(bend) и на почти
+    // прямой улице уводило ось от хорды на 2.5 м: дорога виляла у подъездов
+    let mut osm = roads[0].points.clone();
+    for road in &roads[1..3] {
+        osm.extend_from_slice(&road.points[1..]);
+    }
+    for path in &paths[..3] {
+        for &point in path.iter() {
+            let off = distance_to_path(point, &osm);
+            assert!(
+                off < 1.5,
+                "the axis ran {off:.2} m off the OSM line at {point}"
+            );
+        }
+    }
 }
 
 #[test]

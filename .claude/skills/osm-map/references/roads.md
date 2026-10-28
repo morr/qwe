@@ -2280,11 +2280,14 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
       (bends turning opposite ways, each at most `SHARED_MAX_BEND` 15°, `reach` of both,
       not yet cut to the link, summing past its length) share that link as
       the straight instead (`shared_pad`): each node's stretch runs on along the link past
-      the node, `deviation / sin(bend)` long, and its bend goes to one arc on the far side.
-      On their own bisectors the two stretches ended at the link's midpoint half a metre
-      apart across it, and the axis stepped there — Дмитрия Ульянова at 3381 3691, two
-      driveways 9 m apart and a 7°/9° zigzag in the data: the double solid broke twice and
-      a dash across the step bent into a hook (roads list R22,
+      the node just far enough to leave the node `KERB_STRAIGHT` of straight edge together
+      with half the shared link (never less than the end arc needs at half-width), and its
+      bend goes to one arc on the far side. The first cut ran the stretch on
+      `deviation / sin(bend)` long — 16 m on a 7° bend — and on a near-straight street the
+      two stretches swung the axis metres off the chord in opposite directions just before
+      and after the pair: an OSM-straight road read as a snake. Дмитрия Ульянова at 3381
+      3691, two driveways 9 m apart and a 7°/9° zigzag in the data: the double solid broke
+      twice and a dash across the step bent into a hook (roads list R22,
       `two_pinned_nodes_close_together_share_their_link_as_the_straight`). Only jitter:
       a real turn put on one short arc on the far side broke the kerb (Oryol, gallery 04:
       44° next to 7°, 3 m of link), and in a C-bend the two stretches meet without the

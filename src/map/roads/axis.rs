@@ -545,11 +545,25 @@ fn smooth_run(
             }
             // закреплённый сосед рядом — до него звено и есть прямой отрезок
             (true, false) => {
-                let end = shared_pad(kept[after].at, at, kept[before].at, bend.bend, deviation);
+                let end = shared_pad(
+                    kept[after].at,
+                    at,
+                    kept[before].at,
+                    bend.bend,
+                    deviation,
+                    vertex.half,
+                );
                 vertices.extend([Some(*vertex), end.map(free)].into_iter().flatten());
             }
             (false, true) => {
-                let start = shared_pad(kept[before].at, at, kept[after].at, bend.bend, deviation);
+                let start = shared_pad(
+                    kept[before].at,
+                    at,
+                    kept[after].at,
+                    bend.bend,
+                    deviation,
+                    vertex.half,
+                );
                 vertices.extend([start.map(free), Some(*vertex)].into_iter().flatten());
             }
             (true, true) => vertices.push(*vertex),
@@ -783,11 +797,27 @@ fn through_bend(before: Vec2, at: Vec2, after: Vec2, deviation: f32) -> Option<T
 /// от друга; roads list R22). Прямая у обоих — само звено OSM между ними, а
 /// излом узла уходит на дугу по другую его сторону: конец отрезка — звено,
 /// продолженное за узел к `far`, не дальше `deviation` от звена к `far`.
-fn shared_pad(far: Vec2, at: Vec2, near: Vec2, bend: f32, deviation: f32) -> Option<Vec2> {
+///
+/// Продолжение за пару берёт ровно столько, сколько нужно узлу прямого края:
+/// с половиной звена до соседа оно даёт [`KERB_STRAIGHT`], и не меньше, чем
+/// дуга на конце отрезка берёт при радиусе в полуширину. Прежняя длина —
+/// весь `deviation/sin(bend)` — на почти прямой улице тянула ось от хорды
+/// на метры по обе стороны пары, и прямая улица виляла (Тула, Дмитрия
+/// Ульянова: продолжение 16 м при изломе 7° давало ±2.5 м).
+fn shared_pad(
+    far: Vec2,
+    at: Vec2,
+    near: Vec2,
+    bend: f32,
+    deviation: f32,
+    half: f32,
+) -> Option<Vec2> {
     let along = (at - near).try_normalize()?;
+    let least = half * (bend / 2.0).tan();
     let reach = (deviation / bend.sin())
         .min(THROUGH_RUN)
-        .min(at.distance(far) / 2.0);
+        .min(at.distance(far) / 2.0)
+        .min((KERB_STRAIGHT - at.distance(near) / 2.0).max(least));
     Some(at + along * reach)
 }
 
