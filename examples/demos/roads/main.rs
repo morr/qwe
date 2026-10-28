@@ -76,6 +76,13 @@
 //! `ROADS_CARS=1` кладёт в примеры и слой припаркованных машин (`full` — на
 //! каждое разрешённое место, число — своя занятость ряда);
 //! `ROADS_TRAM=1` — и слой трамвая (в игре он выключен по умолчанию).
+//!
+//! Витрина слушает BRP на порту из `BRP_PORT` (как игра, `dev::brp_port`):
+//! `brp probe <x> <y>` отвечает и слоями в точке, и признаками
+//! (`features at the point (semantic index)`); инспектор точки — панель в
+//! правом верхнем углу — показывает то же под курсором. Координаты — метры
+//! **карты показанного примера**, не сдвинутой колонки: панель и проба
+//! вычитают сдвиг примера (`InspectOrigin`), и ответ понимает `tools/osm_near`.
 
 mod overlay;
 mod panel;
@@ -89,16 +96,19 @@ use bevy::feathers::constants::fonts;
 use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
 use bevy::input::common_conditions::input_just_pressed;
 use bevy::prelude::*;
+use bevy::remote::http::RemoteHttpPlugin;
 use bevy::sprite::Anchor;
 use bevy::sprite_render::Material2dPlugin;
 use bevy::text::TextBounds;
 use bevy::window::PrimaryWindow;
 use qwe::camera::{drag_pan, hovering_ui, key_pan, pan_controller, zoom_to_cursor};
 use qwe::city::City;
+use qwe::dev::DevPlugin;
 use qwe::map::buildings::material::{RoofMaterial, init_roof_material};
 use qwe::map::buildings::{
     BuildingPlan, BuildingZoomBucket, mesh_buildings, spawn_building_meshes,
 };
+use qwe::map::inspect::{InspectOrigin, InspectPlugin};
 use qwe::map::osm::parse::{ParseKnobs, RawOsm, parse_response};
 use qwe::map::surface::{
     LayerMesh, SurfaceMaterial, init_flat_materials, init_surface_materials,
@@ -116,7 +126,7 @@ use qwe::map::{
     set_lane_width, settle_road_shape, spawn_road_meshes,
 };
 use qwe::ui::knob::AddKnobsExt;
-use qwe::ui::{PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET, sync_city_label};
+use qwe::ui::{PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET, UiInspectorPlugin, sync_city_label};
 use serde::Deserialize;
 
 use crate::overlay::Overlays;
@@ -176,6 +186,10 @@ struct Gallery {
     /// Сдвиг для мешей, заспавненных в этом кадре: из игровых координат
     /// примера — в его место в колонке.
     pending_shift: Option<Vec2>,
+    /// Какой пример показан ([`frame_sample`]): по нему [`sync_framed_map`]
+    /// держит ресурс `MapData` — индекс инспектора и проба слоёв говорят про
+    /// **показанный** срез, а не про последний построенный.
+    framed: Option<usize>,
 }
 
 impl Gallery {
@@ -288,109 +302,138 @@ fn drive_shot_list(
 }
 
 fn main() {
-    App::new()
-        .add_plugins(
-            DefaultPlugins
-                .set(WindowPlugin {
-                    primary_window: Some(Window {
-                        title: "qwe roads — типовые пересечения: данные OSM → рендер".to_string(),
-                        resolution: (WINDOW_WIDTH as u32, WINDOW_HEIGHT as u32).into(),
-                        ..default()
-                    }),
-                    ..default()
-                })
-                .set(bevy::log::LogPlugin {
-                    // `roads=info` — свои строки витрины: цена чтения кеша и
-                    // `geo` примера, добавленного по `at`
-                    level: bevy::log::Level::INFO,
-                    filter: "warn,qwe=warn,roads=info".to_string(),
+    // тот же контракт, что у игры (`src/main.rs`): свой порт из BRP_PORT,
+    // занятый явно заданный валит запуск
+    let port = qwe::dev::brp_port();
+    let mut app = App::new();
+    app.add_plugins(
+        DefaultPlugins
+            .set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "qwe roads — типовые пересечения: данные OSM → рендер".to_string(),
+                    resolution: (WINDOW_WIDTH as u32, WINDOW_HEIGHT as u32).into(),
                     ..default()
                 }),
-        )
-        .add_plugins(PanCameraPlugin)
-        .add_plugins(Material2dPlugin::<SurfaceMaterial>::default())
-        .add_plugins(Material2dPlugin::<PaintMaterial>::default())
-        .add_plugins(Material2dPlugin::<RoofMaterial>::default())
-        .add_plugins(Material2dPlugin::<CrownMaterial>::default())
-        .add_plugins(qwe::ui::PanelWidgetsPlugin)
-        .add_plugins(qwe::ui::QuitOnEscPlugin)
-        .add_plugins(qwe::ui::AgentBadgePlugin)
-        .insert_resource(start_city())
-        .init_resource::<RoadStyle>()
-        .init_resource::<RoadShape>()
-        .init_resource::<RoadShapeOnMap>()
-        .init_resource::<RoadPaintStyle>()
-        .init_resource::<RoofStyle>()
-        .init_resource::<SurfaceStyle>()
-        .init_resource::<SunOnMap>()
-        .init_resource::<Gallery>()
-        .init_resource::<Overlays>()
-        .insert_resource(start_raw())
-        // подписи строк стиля ведёт кит — по разу на ресурс, как в игре
-        .add_knobs::<RoadStyle>()
-        .add_knobs::<RoadShape>()
-        .add_knobs::<RoadPaintStyle>()
-        .add_knobs::<Overlays>()
-        .add_knobs::<RawOsm>()
-        .insert_resource(ClearColor(GROUND_COLOR))
-        .add_systems(
-            Startup,
-            (
-                spawn_camera,
-                // солнце — до кровельного материала: его юниформ `light`
-                // пишется один раз на всё приложение
-                (apply_sun, (init_roof_material, init_crown_material)).chain(),
-                init_surface_materials,
-                init_flat_materials,
-                spawn_panel,
-                request_shot("ROADS_SHOT"),
-                read_shot_list,
+                ..default()
+            })
+            .set(bevy::log::LogPlugin {
+                // `roads=info` — свои строки витрины: цена чтения кеша и
+                // `geo` примера, добавленного по `at`
+                level: bevy::log::Level::INFO,
+                filter: "warn,qwe=warn,roads=info".to_string(),
+                ..default()
+            }),
+    )
+    .add_plugins(PanCameraPlugin)
+    .add_plugins(Material2dPlugin::<SurfaceMaterial>::default())
+    .add_plugins(Material2dPlugin::<PaintMaterial>::default())
+    .add_plugins(Material2dPlugin::<RoofMaterial>::default())
+    .add_plugins(Material2dPlugin::<CrownMaterial>::default())
+    .add_plugins(qwe::ui::PanelWidgetsPlugin)
+    .add_plugins(qwe::ui::QuitOnEscPlugin)
+    .add_plugins(qwe::ui::AgentBadgePlugin)
+    // инспектор точки: панель под курсором и семантический индекс
+    // (`map/inspect.rs`); `DevPlugin` даёт пробу слоёв по BRP
+    .add_plugins((InspectPlugin, DevPlugin, UiInspectorPlugin::standalone()))
+    .insert_resource(start_city())
+    .init_resource::<RoadStyle>()
+    .init_resource::<RoadShape>()
+    .init_resource::<RoadShapeOnMap>()
+    .init_resource::<RoadPaintStyle>()
+    .init_resource::<RoofStyle>()
+    .init_resource::<SurfaceStyle>()
+    .init_resource::<SunOnMap>()
+    .init_resource::<Gallery>()
+    .init_resource::<Overlays>()
+    // входы пробы слоёв (`dev.rs::on_probe_layers`), которых у игры ставит
+    // `MapPlugin`: ступени — те, что витрина и рисует (ближние)
+    .init_resource::<TreeStyle>()
+    .insert_resource(BuildingHeightMode::default())
+    .insert_resource(RailZoomBucket::at(0))
+    .insert_resource(FenceZoomBucket::at(0))
+    .insert_resource(VergeZoomBucket::for_zoom(0.0))
+    .insert_resource(start_raw())
+    // подписи строк стиля ведёт кит — по разу на ресурс, как в игре
+    .add_knobs::<RoadStyle>()
+    .add_knobs::<RoadShape>()
+    .add_knobs::<RoadPaintStyle>()
+    .add_knobs::<Overlays>()
+    .add_knobs::<RawOsm>()
+    .insert_resource(ClearColor(GROUND_COLOR))
+    .add_systems(
+        Startup,
+        (
+            spawn_camera,
+            // солнце — до кровельного материала: его юниформ `light`
+            // пишется один раз на всё приложение
+            (apply_sun, (init_roof_material, init_crown_material)).chain(),
+            init_surface_materials,
+            init_flat_materials,
+            spawn_panel,
+            request_shot("ROADS_SHOT"),
+            read_shot_list,
+        ),
+    )
+    .add_observer(on_shot_frame_done)
+    .add_systems(
+        Update,
+        (
+            // колесо над панелью принадлежит панели: тот же гейт, что у
+            // игры, — ввод, адресованный UI, в мир не идёт
+            zoom_to_cursor.run_if(not(hovering_ui)),
+            // протяжка решает «камера или панель» сама, в кадре нажатия
+            (drag_pan, key_pan),
+            step_to_neighbour,
+            sync_city_label.run_if(resource_changed::<City>),
+            // форма — после паузы, как в игре; ширина полосы — в глобаль
+            // краски и колеи раньше, чем её прочтут материалы
+            settle_road_shape,
+            apply_lane_width.run_if(resource_changed::<RoadShapeOnMap>),
+            // краска и колея — юниформы, как в игре: слои не пересобираются
+            retune_surface_materials
+                .run_if(retunes_on().or_else(resource_changed::<RoadShapeOnMap>)),
+            // на первом кадре оба ресурса числятся изменёнными — первая
+            // сборка идёт той же дорогой, что и всякая следующая. Список
+            // кадров приезжает той же правкой: `index` двинулся — окно
+            // следующего кадра
+            reload.run_if(
+                resource_changed::<City>
+                    .or_else(resource_changed::<RoadStyle>)
+                    .or_else(resource_changed::<RoadShapeOnMap>)
+                    .or_else(resource_changed::<Overlays>)
+                    .or_else(resource_changed::<RawOsm>)
+                    // список есть только под ROADS_SHOTS, resource_changed
+                    // падает на отсутствии ресурса
+                    .or_else(resource_exists_and_changed::<ShotList>)
+                    .or_else(input_just_pressed(KeyCode::F5)),
             ),
+            build_next,
+            place_new,
+            sync_framed_map,
+            // счёт кадров снимка идёт с кадра, когда собраны и сдвинуты все
+            // примеры: собираются они по одному на кадр, и на общем
+            // `SHOT_FRAME` поздние ещё не стояли в колонке
+            auto_shot.run_if(resource_exists::<ShotRequest>.and_then(gallery_ready)),
+            drive_shot_list,
         )
-        .add_observer(on_shot_frame_done)
-        .add_systems(
-            Update,
-            (
-                // колесо над панелью принадлежит панели: тот же гейт, что у
-                // игры, — ввод, адресованный UI, в мир не идёт
-                zoom_to_cursor.run_if(not(hovering_ui)),
-                // протяжка решает «камера или панель» сама, в кадре нажатия
-                (drag_pan, key_pan),
-                step_to_neighbour,
-                sync_city_label.run_if(resource_changed::<City>),
-                // форма — после паузы, как в игре; ширина полосы — в глобаль
-                // краски и колеи раньше, чем её прочтут материалы
-                settle_road_shape,
-                apply_lane_width.run_if(resource_changed::<RoadShapeOnMap>),
-                // краска и колея — юниформы, как в игре: слои не пересобираются
-                retune_surface_materials
-                    .run_if(retunes_on().or_else(resource_changed::<RoadShapeOnMap>)),
-                // на первом кадре оба ресурса числятся изменёнными — первая
-                // сборка идёт той же дорогой, что и всякая следующая. Список
-                // кадров приезжает той же правкой: `index` двинулся — окно
-                // следующего кадра
-                reload.run_if(
-                    resource_changed::<City>
-                        .or_else(resource_changed::<RoadStyle>)
-                        .or_else(resource_changed::<RoadShapeOnMap>)
-                        .or_else(resource_changed::<Overlays>)
-                        .or_else(resource_changed::<RawOsm>)
-                        // список есть только под ROADS_SHOTS, resource_changed
-                        // падает на отсутствии ресурса
-                        .or_else(resource_exists_and_changed::<ShotList>)
-                        .or_else(input_just_pressed(KeyCode::F5)),
-                ),
-                build_next,
-                place_new,
-                // счёт кадров снимка идёт с кадра, когда собраны и сдвинуты все
-                // примеры: собираются они по одному на кадр, и на общем
-                // `SHOT_FRAME` поздние ещё не стояли в колонке
-                auto_shot.run_if(resource_exists::<ShotRequest>.and_then(gallery_ready)),
-                drive_shot_list,
-            )
-                .chain(),
-        )
-        .run();
+            .chain(),
+    );
+
+    // BRP — по тому же порту, что у игры; занятый явно заданный порт валит
+    // запуск (см. `dev::brp_port`). `RemotePlugin` до `RemoteHttpPlugin`:
+    // первый держит `BrpSender`, без него HTTP-сервер падает на первом кадре
+    if let Some(port) = port {
+        app.add_plugins((
+            bevy::remote::RemotePlugin::default(),
+            RemoteHttpPlugin::default().with_port(port),
+        ));
+    }
+    // Порт в окружении задаёт только агент — такой запуск помечен в углу экрана
+    if std::env::var_os("BRP_PORT").is_some() {
+        app.insert_resource(qwe::ui::AgentBrpSession);
+    }
+
+    app.run();
 }
 
 /// Режим сырого OSM, с которым открывается витрина: `ROADS_RAW=parse|draw`,
@@ -458,17 +501,22 @@ fn spawn_camera(mut commands: Commands) {
 }
 
 /// Камера на пример: окно с подписью по ширине свободной части экрана — или,
-/// крупным планом, одно окно по высоте.
+/// крупным планом, одно окно по высоте. Заодно ставит сдвиг [`InspectOrigin`]:
+/// панель инспектора и `brp probe` говорят в метрах карты примера, как их
+/// понимает `tools/osm_near`.
 fn frame_sample(
-    gallery: &Gallery,
+    gallery: &mut Gallery,
     index: usize,
     close_up: bool,
     window: &Window,
     camera: &mut (Mut<Transform>, Mut<PanCamera>),
+    commands: &mut Commands,
 ) {
     let Some(slot) = gallery.slots.get(index) else {
         return;
     };
+    gallery.framed = Some(index);
+    commands.insert_resource(InspectOrigin(*slot - gallery.samples[index].at));
     let viewport_width = window.width() - panel_span();
     let (centre, zoom) = if close_up {
         let half = gallery.samples[index].half;
@@ -499,9 +547,10 @@ fn frame_sample(
 /// `↑`/`↓` — к соседнему примеру: колонка длинная, а панорамой её листать долго.
 fn step_to_neighbour(
     keys: Res<ButtonInput<KeyCode>>,
-    gallery: Res<Gallery>,
+    mut gallery: ResMut<Gallery>,
     window: Single<&Window, With<PrimaryWindow>>,
     mut camera: Single<(&mut Transform, &mut PanCamera)>,
+    mut commands: Commands,
 ) {
     let step = match (
         keys.just_pressed(KeyCode::ArrowDown),
@@ -522,7 +571,14 @@ fn step_to_neighbour(
         return;
     };
     let next = (current as i32 + step).clamp(0, gallery.slots.len() as i32 - 1) as usize;
-    frame_sample(&gallery, next, false, &window, &mut camera);
+    frame_sample(
+        &mut gallery,
+        next,
+        false,
+        &window,
+        &mut camera,
+        &mut commands,
+    );
 }
 
 /// Пересборка витрины: убрать всё положенное, перечитать примеры города с
@@ -636,11 +692,12 @@ fn reload(
             .filter(|number| (1..=gallery.samples.len()).contains(number));
         let close_up = requested.is_some() || list_window;
         frame_sample(
-            &gallery,
+            &mut gallery,
             requested.map_or(0, |number| number - 1),
             close_up,
             &window,
             &mut camera,
+            &mut commands,
         );
     }
 }
@@ -930,6 +987,39 @@ fn build_next(
     gallery.pending_shift = Some(shift);
     gallery.built += 1;
     status.0 = format!("собрано {} из {}", gallery.built, gallery.samples.len());
+}
+
+/// Карта **показанного** примера — ресурсом: по ней живёт семантический индекс
+/// инспектора (`InspectPlugin`) и пересборка слоёв пробы
+/// (`dev.rs::on_probe_layers`). Примеры строит [`build_next`] по одному на
+/// кадр, а показан — тот, кого выставил [`frame_sample`]; перепарс по смене
+/// показанного — десятки миллисекунд, сама навигация дороже. Без этой системы
+/// в ресурсе оставалась бы карта последнего **построенного** примера, и проба
+/// проверяла бы чужое место.
+fn sync_framed_map(
+    mut commands: Commands,
+    gallery: Res<Gallery>,
+    city: Res<City>,
+    road_shape: Res<RoadShapeOnMap>,
+    raw: Res<RawOsm>,
+    mut synced: Local<Option<usize>>,
+) {
+    if gallery.framed == *synced {
+        return;
+    }
+    *synced = gallery.framed;
+    let Some(index) = gallery.framed else {
+        return;
+    };
+    let Some(sample) = gallery.samples.get(index) else {
+        return;
+    };
+    let knobs = ParseKnobs {
+        lane_width: road_shape.0.lane_width(),
+        raw: *raw,
+        ..ParseKnobs::default()
+    };
+    commands.insert_resource(parse_response(&sample.osm, *city, knobs));
 }
 
 /// Сдвиг только что заспавненных слоёв примера на его место в колонке. Ловит
