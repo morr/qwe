@@ -397,6 +397,19 @@ The layers with no style toggle at all (verge tile, verge lawns/yards, medians) 
 same way — every spawned layer is in `layers`, not only the toggleable ones. Names are the
 `LayerMesh` names, the same the spawn-site table in CLAUDE.md lists.
 
+**Chasing a road defect — the probe ladder, before any temporary code.** Every hunt used
+to reinvent its own diagnostics (env-gated dumps, `QWE_NO_*` render flags, in-session mesh
+probes — written, rebuilt per flag, removed). The built-in ladder (`dev.rs`, above)
+replaces most of it, in this order: `probe x y` (which layers cover the point, their z,
+the nearest vertices) → `layers` + `hide <name>` + `shot-at` (elimination) →
+`tools/osm_near --verts` (the OSM truth under the metres). Only when the question is
+inside one algorithm — a value mid-computation, a branch that maybe never fires — write a
+temporary probe, and then: gate it on an env var **beside the code it reads**
+(`ROADS_DIAG_PAIR`-style), log one line per run (not a dump), and remove it with its test
+in the same change that closes the defect. A red-green test over the pure build
+(`mesh_roads` and friends) usually pins the mechanism better than the probe that found it
+— the probe answers "what", the test holds "always".
+
 Hotkey equivalents in the app: `R` restart, `G` gizmos (doors + movepath), `N` the
 navigation overlay of whichever backend is selected, `M` movepath, `Space` pause,
 `=`/`-` speed. The bottom-left button row has the layer toggles, the **Navigation**
