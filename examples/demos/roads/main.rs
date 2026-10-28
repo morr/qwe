@@ -240,7 +240,8 @@ fn read_shot_list(mut commands: Commands) {
 }
 
 /// Кадр записан — окно списка вперёд, заказ снимка долой. Правка `index`
-/// зажигает `resource_changed::<ShotList>` — следующей пересборкой `reload`
+/// зажигает `resource_exists_and_changed::<ShotList>` — следующей пересборкой
+/// `reload`
 /// возьмёт новое окно; за исчерпанным списком (`entry() == None`) `reload`
 /// уходит, ничего не трогая, а выход заказывает [`drive_shot_list`].
 fn on_shot_frame_done(
@@ -374,7 +375,9 @@ fn main() {
                         .or_else(resource_changed::<RoadShapeOnMap>)
                         .or_else(resource_changed::<Overlays>)
                         .or_else(resource_changed::<RawOsm>)
-                        .or_else(resource_changed::<ShotList>)
+                        // список есть только под ROADS_SHOTS, resource_changed
+                        // падает на отсутствии ресурса
+                        .or_else(resource_exists_and_changed::<ShotList>)
                         .or_else(input_just_pressed(KeyCode::F5)),
                 ),
                 build_next,
