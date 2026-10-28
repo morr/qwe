@@ -275,7 +275,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     dirt road stops at its kerb (`KerbReturns::setback`); a dirt road meets asphalt with
     no kerb return between them — the asphalt runs straight past its mouth (split into two
     ways there, its seam's kink is closed by an outer corner in asphalt), and a street
-    turning from one surface to the other ends square; an untagged street is asphalt.
+    turning from one surface to the other ends square; an untagged street is asphalt. A
+surface change along a way (asphalt ↔ dirt) **pins** the seam (`axis.rs::Run::stitch`,
+`resurfaced`) — it holds like a seam another street joins.
   - **Street** (**RoadNetwork**, `MapData::network`, `map/roads/network/streets.rs`) — ways
     glued end to end through their seams: at a node the **most collinear pair of ends of
     one `Highway` class** (bend under 50°, one-way flow running through) continues one
@@ -2032,7 +2034,8 @@ on a counter-taper (`Taper::seam`) — and drifts to its own over the wedge
 ## Navigation
 
 Summary; the mechanism and the measurements — **navigation-deep skill** (polymesh in
-`references/polymesh.md`, separation & slots in `references/crowd.md`).
+`references/polymesh.md`, grid fill in `references/grid-fill.md`, dispatcher & backends in
+`references/pipeline.md`, separation & slots in `references/crowd.md`).
 
 - **Navmesh** (`navigation/navmesh.rs` — the type, its storage and the world↔tile
   conversions; the work on it is split by role into `navmesh/{raster,fill,gates,reach}.rs`)
