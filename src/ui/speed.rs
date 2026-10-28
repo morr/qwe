@@ -1,14 +1,14 @@
 //! Панель телеметрии в правом верхнем углу (порт
 //! `zxc/src/ui/simulation_state.rs`, без игровой даты): первая строка — часы
 //! симуляции (`SimClock`), сколько мир уже прожил, вторая — диагностика
-//! pathfinding (порт заголовка `zxc/src/ui/debug/info.rs`), третья — зум и
-//! позиция камеры плюс точка под курсором.
+//! pathfinding (порт заголовка `zxc/src/ui/debug/info.rs`). Строка камеры с
+//! точкой под курсором живёт теперь в инспекторе точки под этой панелью
+//! (`ui/inspector.rs`).
 //!
 //! Скорость времени вынесена левее панели в отдельную кнопку: она не только
 //! показывает `SimSpeed`, но и крутит лесенку кликом.
 
 use bevy::app::PropagateOver;
-use bevy::camera_controller::pan_camera::PanCamera;
 use bevy::diagnostic::{DiagnosticsStore, EntityCountDiagnosticsPlugin};
 use bevy::feathers::constants::{fonts, size};
 use bevy::feathers::controls::ButtonVariant;
@@ -19,9 +19,7 @@ use bevy::picking::pointer::PointerButton;
 use bevy::prelude::*;
 use bevy::text::FontWeight;
 use bevy::ui_widgets::Activate;
-use bevy::window::PrimaryWindow;
 
-use crate::camera::cursor_offset;
 use crate::diagnostics::{
     PATHFINDING_ANSWERED, PATHFINDING_DURATION_MS, PATHFINDING_FAILED, PATHFINDING_IN_FLIGHT,
     PATHFINDING_QUEUED, SIM_TICK_MS, SIM_WAIT_MS, SIM_WAIT_PEAK_MS,
@@ -33,7 +31,9 @@ use crate::ui::{
 };
 
 /// Ширина панели телеметрии; от неё же отсчитывается место кнопки скорости.
-const PANEL_WIDTH_PX: f32 = 470.0;
+/// Инспектор точки (`ui/inspector.rs`) берёт ту же ширину, чтобы две панели
+/// правого угла читались как одна связка.
+pub(crate) const PANEL_WIDTH_PX: f32 = 470.0;
 /// Зазор между кнопкой скорости и левым краем панели.
 const SPEED_BUTTON_GAP_PX: f32 = 6.0;
 /// Ширина кнопки скорости: хватает на самое длинное значение
@@ -48,8 +48,10 @@ struct ClockTextMarker;
 #[derive(Component, Default)]
 struct PathfindingTextMarker;
 
+/// Корень телеметрии: инспектор точки (`ui/inspector.rs`) ставит себя
+/// вплотную под панель по её измеренной высоте.
 #[derive(Component, Default)]
-struct CameraTextMarker;
+pub(crate) struct TelemetryPanel;
 
 /// Кнопка скорости — адресует и подсветку, и подпись значения.
 #[derive(Component, Default)]
@@ -70,7 +72,6 @@ impl Plugin for UiSpeedPlugin {
                     update_clock_text,
                     update_speed_button,
                     update_pathfinding_text,
-                    update_camera_text,
                 ),
             );
     }
@@ -102,6 +103,7 @@ fn render_speed_ui(mut commands: Commands, clock: Res<SimClock>, assets: Res<Ass
         },
         panel_background(),
         GameUiRoot,
+        TelemetryPanel,
         Visibility::Hidden,
         Name::new("speed_ui"),
         // моноширинный и покрупнее: часы и счётчики меняются каждый кадр, и на
@@ -130,11 +132,6 @@ fn render_speed_ui(mut commands: Commands, clock: Res<SimClock>, assets: Res<Ass
                 Text::default(),
                 ThemeTextColor(tokens::TEXT_DIM),
                 PathfindingTextMarker,
-            ),
-            (
-                Text::default(),
-                ThemeTextColor(tokens::TEXT_DIM),
-                CameraTextMarker,
             ),
         ],
     ));
@@ -303,47 +300,6 @@ fn update_pathfinding_text(
     // само число одинаковое
     text.into_inner().set_if_neq(Text(format!(
         "pathfinding: {in_flight:>4.0} in flight, {queued:>5.0} queued, {duration_ms:>5.2} ms avg\nanswers: {answered:>6.1}/frame, {failed:>5.1}% failed\nentities: {entities:>6.0}, tick {tick_ms:>5.2} + {wait_ms:>5.2} ms wait (pk {peak_ms:>5.2})"
-    )));
-}
-
-/// Где стоит камера и насколько приближена. Строка нужна не игроку, а чтению
-/// скриншота со стороны: по ней видно, какой кусок карты в кадре, без запроса
-/// к живому миру по BRP.
-///
-/// Формат `0.410/2374/2703 2510/2880` — сначала камера как `zoom/x/y` (порядок
-/// пермалинка slippy-карт), через пробел — точка под курсором как `x/y`.
-///
-/// Координаты — мировые метры от юго-западного угла карты, та же система, в
-/// которой лежат `SimPosition` и `Transform` юнитов; камерные — центр экрана.
-/// Зум — метры на экранный пиксель, как их держит `PanCamera::zoom_factor`:
-/// меньше — ближе. Три знака, а не два: по зуму `tools/shot_coords` переводит
-/// пиксели скриншота в метры, и на близком зуме (0.05) второй знак давал
-/// ошибку в 10 %.
-///
-/// Курсор вне окна координат не даёт — вместо чисел прочерки, чтобы строка не
-/// теряла хвост и не выглядела обрезанной.
-fn update_camera_text(
-    text: Single<&mut Text, With<CameraTextMarker>>,
-    camera: Single<(&Transform, &PanCamera), With<Camera2d>>,
-    window: Single<&Window, With<PrimaryWindow>>,
-) {
-    let (transform, controller) = *camera;
-    let center = transform.translation.truncate();
-    let zoom = controller.zoom_factor;
-
-    let cursor = match window.cursor_position() {
-        Some(cursor) => {
-            let world = center + cursor_offset(&window, cursor) * zoom;
-            format!("{:.0}/{:.0}", world.x, world.y)
-        }
-        None => "-/-".to_string(),
-    };
-
-    // строка последняя в панели, поэтому ширины полей не выравниваем: сдвигать
-    // её «пляской» цифр нечему
-    text.into_inner().set_if_neq(Text(format!(
-        "{zoom:.3}/{:.0}/{:.0} {cursor}",
-        center.x, center.y
     )));
 }
 

@@ -21,6 +21,7 @@ mod buildings;
 mod city;
 mod debug;
 mod hotkeys;
+mod inspector;
 // `pub` ради витрин (`examples/demos/*_gallery/`): их ручки привязаны к полю
 // ресурса ровно так же, как ручки панелей игры, и повторять у себя протяжку,
 // синхронизацию и подпись им незачем
@@ -58,6 +59,9 @@ use bevy::ui_widgets::Activate;
 // поднимает рядом с `QuitOnEscPlugin`, `BelowBrpBadge` вешает на плашку в углу
 pub use self::brp::{AgentBadgePlugin, AgentBrpSession, BelowBrpBadge};
 pub use self::debug::{DebugConiferNoise, DebugDoors, DebugGrid, DebugNavmesh};
+// инспектор точки — игре и витрине `roads`: координаты под курсором и список
+// признаков карты там нужны одни и те же
+pub use self::inspector::UiInspectorPlugin;
 // `pub` по той же причине, что и `slider`: демо расталкивания зовёт киты
 // панелей и потому обязано поднять их виджеты само
 pub use self::theme::PanelWidgetsPlugin;
@@ -485,6 +489,7 @@ impl Plugin for UiPlugin {
             shell::UiShellPlugin,
             speed::UiSpeedPlugin,
             stats::UiStatsPlugin,
+            inspector::UiInspectorPlugin::game(),
             debug::UiDebugTogglesPlugin,
             trees::UiTreeStylePlugin,
             tree_rows::UiTreeRowStylePlugin,
@@ -499,9 +504,13 @@ impl Plugin for UiPlugin {
                 surfaces::UiSurfaceStylePlugin,
                 sun::UiSunStylePlugin,
             ),
-            city::UiCityPlugin,
-            hotkeys::UiHotkeysPlugin,
-            brp::UiBrpBadgePlugin,
+            // кортеж `Plugins` кончается на пятнадцати — хвостовой триплет
+            // вложен, как и секции облика карты выше
+            (
+                city::UiCityPlugin,
+                hotkeys::UiHotkeysPlugin,
+                brp::UiBrpBadgePlugin,
+            ),
         ))
         .add_systems(Update, apply_panel_font)
         .add_systems(
