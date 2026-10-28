@@ -172,7 +172,7 @@ struct LiveLayer<'a> {
 }
 
 /// Входы пересборки слоёв для пробы: те же ресурсы, что читают адаптеры
-/// (`roads::rebuild_roads`, `rail::rebuild_rails`…), одним параметром — идиома
+/// (`roads::rebuild_roads`, `rail::build_rails`…), одним параметром — идиома
 /// `map::surface::LayerMaterials`.
 #[derive(SystemParam)]
 struct ProbeSources<'w> {

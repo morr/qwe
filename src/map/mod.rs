@@ -119,7 +119,8 @@ pub use self::parking::ParkingLayout;
 pub use self::rail::{RailZoomBucket, mesh_rails};
 pub use self::roads::tram_lay::TramTracks;
 pub use self::roads::{
-    RoadBuild, VergeLods, VergeZoomBucket, build_roads, mesh_roads, spawn_road_meshes,
+    RoadBuild, VergeLods, VergeZoomBucket, build_other_road_step, build_roads, mesh_roads,
+    spawn_road_meshes,
 };
 pub use self::spawn::{mesh_surfaces, mesh_tree_row_band};
 pub use self::tram::{TramZoomBucket, mesh_tram};
@@ -276,33 +277,48 @@ impl Plugin for MapPlugin {
                 // уже собранному набору и до крон. Сами кроны спавнит
                 // `rebuild_trees` — в свежем мире деспавнить ему нечего, а спавн
                 // из одного места избавляет `spawn_map` от стиля деревьев и поля
-                // хвои разом. Рельсы и трамвай спавнят `rebuild_rails` /
-                // `rebuild_tram` по той же причине: ступень зума остаётся их
-                // личным делом. Ступень перед сборкой ставится по камере, а
-                // камера на стартовый вид — тоже в `Spawn`, отсюда `after`
+                // хвои разом. Рельсы (`build_rails` — все ступени сразу) и
+                // трамвай (`rebuild_tram`) спавнятся здесь же по той причине:
+                // их ступень зума — их личное дело. Ступень перед сборкой
+                // ставится по камере, а камера на стартовый вид — тоже в
+                // `Spawn`, отсюда `after`
                 (
-                    trees::recompose_row_trees,
-                    trees::build_conifer_field,
-                    zoom::seed_zoom_bucket::<buildings::BuildingLods>,
-                    // обочины входят в дорожные слои, которые собирает сам
-                    // `spawn_map`, — их ступень сеется до него
-                    zoom::seed_zoom_bucket::<roads::VergeLods>,
-                    spawn::spawn_map,
-                    zoom::seed_zoom_bucket::<cars::CarLods>,
-                    cars::forget_parked_cars,
-                    cars::rebuild_cars,
-                    zoom::seed_zoom_bucket::<wagons::WagonLods>,
-                    wagons::rebuild_wagons,
-                    zoom::seed_zoom_bucket::<fences::FenceLods>,
-                    fences::rebuild_fences,
-                    industry::rebuild_industry,
-                    zoom::seed_zoom_bucket::<rail::RailLods>,
-                    rail::rebuild_rails,
-                    zoom::seed_zoom_bucket::<tram::TramLods>,
-                    tram::rebuild_tram,
-                    spawn::rebuild_tree_row_band,
-                    zoom::seed_zoom_bucket::<trees::TreeLods>,
-                    trees::rebuild_trees,
+                    (
+                        trees::recompose_row_trees,
+                        trees::build_conifer_field,
+                        zoom::seed_zoom_bucket::<buildings::BuildingLods>,
+                        // обочины входят в дорожные слои, которые собирает сам
+                        // `spawn_map`, — их ступень сеется до него
+                        zoom::seed_zoom_bucket::<roads::VergeLods>,
+                        spawn::spawn_map,
+                        // вторая ступень обочины — рядом с первой, скрытой:
+                        // порог зума переключает им видимость
+                        // (`show_road_steps`), а не пересобирает дорогу
+                        roads::build_other_road_step,
+                        zoom::seed_zoom_bucket::<cars::CarLods>,
+                        cars::forget_parked_cars,
+                        cars::warm_car_placement,
+                        cars::rebuild_cars,
+                    )
+                        .chain(),
+                    (
+                        zoom::seed_zoom_bucket::<wagons::WagonLods>,
+                        wagons::rebuild_wagons,
+                        zoom::seed_zoom_bucket::<fences::FenceLods>,
+                        fences::rebuild_fences,
+                        industry::rebuild_industry,
+                        zoom::seed_zoom_bucket::<rail::RailLods>,
+                        // все ступени рельсов собираются разом: пересечение
+                        // порога переключает видимость (`show_lod_layers`), а
+                        // не пересобирает слой
+                        rail::build_rails,
+                        zoom::seed_zoom_bucket::<tram::TramLods>,
+                        tram::rebuild_tram,
+                        spawn::rebuild_tree_row_band,
+                        zoom::seed_zoom_bucket::<trees::TreeLods>,
+                        trees::rebuild_trees,
+                    )
+                        .chain(),
                 )
                     .chain()
                     .in_set(WorldInitSet::Spawn)
@@ -346,12 +362,14 @@ impl Plugin for MapPlugin {
                     )
                         .chain()
                         .run_if(in_state(AppState::Playing)),
-                    // ступень обочин считается раньше пересборки: смена
-                    // ступени — одна из причин `roads::rebuilds_on`, как
-                    // стиль и форма
+                    // ступень обочин считается раньше пересборки: стиль и
+                    // форма собирают текущую ступень, а смена ступени зума
+                    // (`show_road_steps`, следом) только перекрашивает слои —
+                    // обе ступени лежат в мире заранее
                     (
                         zoom::update_zoom_bucket::<roads::VergeLods>,
                         roads::rebuild_roads.run_if(roads::rebuilds_on()),
+                        roads::show_road_steps,
                     )
                         .chain()
                         .run_if(in_state(AppState::Playing)),
@@ -387,12 +405,13 @@ impl Plugin for MapPlugin {
                     buildings::material::retune_roof_material
                         .run_if(buildings::material::retunes_on()),
                     // ступень зума считается каждый кадр (одно чтение камеры и
-                    // сравнение), но пересборку запускает только её фактическая
-                    // смена. Таблицы у путей и трамвая свои, и пороги в них не
-                    // совпадают, поэтому и ступени считаются порознь
+                    // сравнение). Таблицы у путей и трамвая свои, и пороги в
+                    // них не совпадают, поэтому и ступени считаются порознь.
+                    // У путей пересборок больше нет вовсе: собраны все ступени
+                    // (`build_rails`), порог переключает видимость
                     (
                         zoom::update_zoom_bucket::<rail::RailLods>,
-                        rail::rebuild_rails.run_if(rail::rebuilds_on()),
+                        zoom::show_lod_layers::<rail::RailLods, With<rail::RailLayerTag>>,
                     )
                         .chain()
                         .run_if(in_state(AppState::Playing)),

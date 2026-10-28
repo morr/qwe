@@ -1043,7 +1043,7 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
   uniform — nothing is rebuilt — **Markings** in `roads.md`, `references/buildings.md`). `ZoomBucket<T>` is the
   resource with the current index for that table;
   `for_zoom` is the single selection rule (first bucket whose bound is above the zoom,
-  a zoom on the bound goes up — `zoom/tests.rs`). Two generic systems:
+  a zoom on the bound goes up — `zoom/tests.rs`). Three generic systems:
   `update_zoom_bucket::<T>` each Update via `set_if_neq`, so the `retuned`-gated
   `rebuild_*` runs only on a threshold crossing; and `seed_zoom_bucket::<T>` on world
   entry — in the `WorldInitSet::Spawn` chain right before the layer's first `rebuild_*`
@@ -1054,6 +1054,26 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
   resource happened to hold; the first build then went by the wrong bucket and the
   first Update redid it — for rails up to 23 ms / 673 k vertices. The bucket is not
   persisted (the camera dictates it), and `Default` is the farthest, cheapest bucket.
+  **A crossing itself costs what the layer decides to make it cost**, and the
+  expensive layers decided to make it nothing: the rails (`rail::build_rails`) and
+  the road verges (`spawn_map` + `roads::build_other_road_step`) build **every**
+  step of their table once at world entry, each layer tagged
+  `zoom::LodStep(index)`, only the camera's step visible — a crossing flips
+  `Visibility` (`zoom::show_lod_layers`, idempotent, every frame) and pays no
+  rebuild. That is where a near crossing used to cost the frame: rail 30–70 ms,
+  the verge step a full `rebuild_roads` of 380–480 ms. The price is load time
+  (the sum of all steps, ~90 ms rails + ~400 ms the second road step on Tula)
+  and GPU memory for the hidden steps. The roads' style/sun/shape rebuild still
+  builds **one** step and despawns the other — the first crossing after it
+  rebuilds the missing step in `roads::show_road_steps`, so a style change pays
+  the second build once, on the next crossing, not eagerly. The cheap ladders
+  (tram, cars past the placement cache, fences, wagons) still rebuild per
+  crossing — their builds cost 1–15 ms, under or about one frame, and
+  precomputing them would buy load time and memory for nothing. The paint has no
+  `LodStep`: its geometry does not depend on the verge step (identical vertex
+  counts in both builds' reports), so it is spawned once by whichever build ran
+  for the current step and `show_paint` owns its visibility alone — the reason
+  `show_road_steps` filters `Without<paint::PaintTag>`.
 - **Buildings** (`map/buildings/`) — the layer set a house is drawn as, and the largest
   subject of this section; the detail lives in its own reference. Which file builds what:
   `mod.rs` picks the layers and builds them (`mesh_buildings`, `rebuild_buildings`,

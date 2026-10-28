@@ -175,6 +175,8 @@ pub fn spawn_map(
         &mut meshes,
         &materials,
         (road_build.layers, road_build.report),
+        verge.index,
+        true,
     );
 
     let plan = buildings::BuildingPlan::game(*height_mode);
