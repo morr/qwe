@@ -59,12 +59,17 @@ tools/osm_near <x> <y> 30 --key building --verts   # + vertices in metres, for m
 tools/osm_near --id 179102449          # one element: all tags, every vertex
 ```
 
-**Position comes from the screenshot's HUD** (the last line of the top-right panel,
-`zoom/x/y cx/cy`), never from `brp cam` — the live camera has moved since the picture was
-taken. The user's screenshots are arbitrary screen regions from a macOS utility;
-`shot_coords` handles those (the panel is its ruler) as long as the panel is in the crop.
-Details and caveats (window size, zoom precision) — `.claude/live-app-project.md`,
-"Where a screenshot was taken". `osm_near` reads the newest `assets/osm/<city>_*.json` and
+**Position comes from the screenshot's HUD** (the first line of the top-right **point
+inspector** panel, `zoom/x/y cx/cy` — the panel under the telemetry, `ui/inspector.rs`),
+never from `brp cam` — the live camera has moved since the picture was taken. The user's
+screenshots are arbitrary screen regions from a macOS utility; `shot_coords` handles those
+(the panel is its ruler) as long as the panel is in the crop. Details and caveats (window
+size, zoom precision) — `.claude/live-app-project.md`, "Where a screenshot was taken". In
+the **live app** the same question is one call: `brp probe <x> <y>` — its report lists the
+drawn layers *and*, in the `features at the point (semantic index)` section, the map
+features under the point (`road residential 8.0 m, sidewalks`, `building apartments,
+12 m`, `waterway stream 2.5 m`…); the inspector panel shows the same list live under the
+cursor. `osm_near` reads the newest `assets/osm/<city>_*.json` and
 projects with the centre and size from its name, i.e. the same metres as `SimPosition` and
 `brp cam`; to confirm the pick live, `brp cam x y` then `brp shot`.
 

@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """World coordinates of a qwe screenshot, read off the HUD printed in it.
 
-The telemetry panel (top-right, `ui/speed.rs::update_camera_text`) ends with a line
-`zoom/x/y cx/cy`: the camera centre in map metres, metres per logical pixel, and the
-point under the cursor (`-/-` when the cursor is outside the window). That line is the
-only record of where *that* frame was taken — `brp cam` answers where the camera is
-*now*, and the user has usually moved it since.
+The point inspector panel (top-right, directly under the telemetry —
+`ui/inspector.rs::update_camera_text`) begins with a line `zoom/x/y cx/cy`: the camera
+centre in map metres, metres per logical pixel, and the point under the cursor (`-/-`
+when the cursor is outside the window). That line is the only record of where *that*
+frame was taken — `brp cam` answers where the camera is *now*, and the user has usually
+moved it since.
 
     tools/shot_coords <png>                  # camera, cursor, the frame's extent in metres
     tools/shot_coords <png> 812 430 [x y …]  # + those image pixels in map metres
@@ -33,12 +34,16 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # wrong warning and nothing else; change it with that constant.
 MAP_W, MAP_H = 7600.0, 5700.0
 
-# The panel's geometry in logical px (`ui/speed.rs`: edge offset 8, width 470, padding
-# 16/10, FiraMono at SMALL_FONT), measured on a 3840×2160 capture at scale factor 2.
-# Changing the panel means re-measuring these: `tesseract <shot> - --psm 11 tsv`.
+# The panel's geometry in logical px (the point inspector panel, `ui/inspector.rs`:
+# edge offset 8, telemetry's own width 470, padding 16/10, FiraMono at SMALL_FONT).
+# Measured on a 3840×2160 run at scale factor 2 — CHAR_ADVANCE off the text node's
+# content size, the rest off `brp get <camera-text-node> ComputedNode UiGlobalTransform`
+# (the node's translation is its *center*, in physical px) plus ~2.5 px of glyph ink.
+# Changing the panel means re-measuring these: `tesseract <shot> - --psm 11 tsv`, or the
+# same BRP read when the screen is occluded and captures come out black.
 CHAR_ADVANCE = 7.2  # FiraMono 12 px
 TEXT_LEFT_FROM_RIGHT = 461.5  # left ink edge of every panel line → window's right edge
-CAMERA_LINE_TOP = 93.0  # top ink edge of the camera line → window's top edge
+CAMERA_LINE_TOP = 117.0  # top ink edge of the camera line → window's top edge
 # Monospace columns of the fixed words in the lines above, counted from the line start
 # (`update_pathfinding_text`'s format string: every number is right-padded to a fixed width,
 # so these never move). The ruler is the longest start → word distance that got read.
@@ -124,8 +129,9 @@ def main():
     camera = next((w for w in boxes if CAMERA.search(w["text"])), None)
     if not camera:
         sys.exit(
-            f"no `zoom/x/y` word found in {args.png} — is the telemetry panel (top-right) "
-            "in the picture? If it is, crop it (`magick <png> -crop WxH+X+Y +repage`) and Read"
+            f"no `zoom/x/y` word found in {args.png} — is the point inspector panel "
+            "(top-right, under the telemetry) in the picture? If it is, crop it "
+            "(`magick <png> -crop WxH+X+Y +repage`) and Read"
         )
     lead, frac, cam_x, cam_y = CAMERA.search(camera["text"]).groups()
     # the zoom's leading zero is the glyph OCR misreads most

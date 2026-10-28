@@ -2460,13 +2460,22 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   (`pointer_over_ui` over `HoverMap`) and holds that verdict until release; `zoom_to_cursor`
   runs under `not(hovering_ui)`. The rule and the idiom — **CLAUDE.md**.
 - **Two layers.** **HUD**, always on screen: run counters (`ui/stats.rs`), telemetry +
-  **Speed button** (`ui/speed.rs`), the **City** select bottom centre (`ui/city.rs`), hotkey
-  help (`ui/hotkeys.rs`), the agent **BRP** badge (`ui/brp.rs`). And **one settings panel**
+  **Speed button** (`ui/speed.rs`), the **point inspector** (`ui/inspector.rs`, below the
+  telemetry), the **City** select bottom centre (`ui/city.rs`), hotkey help
+  (`ui/hotkeys.rs`), the agent **BRP** badge (`ui/brp.rs`). And **one settings panel**
   with four tabs (`ui/shell.rs`): **Map**, **Nav**, **Sim**, **Debug**. `Tab` (or the `-`/`+`
   button, or a click on the open tab) collapses it to the tab strip; the open tab and the
   collapsed flag are a persisted settings group (`UiShellState`). **Section order inside a
   tab is `SectionSlot`'s declaration order** (`sort_sections`), because the sections are
   spawned by one system per section plugin.
+- **Point inspector** (`ui/inspector.rs`) — the HUD panel under the telemetry: the camera
+  line `zoom/x/y cx/cy` (moved here from the telemetry, read from screenshots by
+  `tools/shot_coords`) and the live list of what the map draws under the cursor, from the
+  **semantic index** (`map/inspect.rs::InspectIndex` — a `Grid` over the `MapData`
+  features, built once per load, rebuilt when `MapData` changes; a hit carries the feature
+  label and the z of the layer it draws in, top layer first). `InspectOrigin` — the
+  world→map shift: zero in the game, the shown sample's shift in the roads gallery, so the
+  panel and the probe speak map metres everywhere (`tools/osm_near` reads them directly).
 - **Knob** (`ui/knob.rs`) — a panel row **bound to one field of one resource**, in two
   shapes: `spawn_knob` (slider) and `spawn_cycle_row` (button that cycles a value).
   `app.add_knobs::<R>()` registers the drag observer and the label/thumb sync **once per
@@ -2537,6 +2546,10 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   **`ProbeLayersEvent` → `LayerProbe`** (`brp probe x y [r]`): what the map draws at a
   point — layers over it top-first with z, covering triangles and the nearest vertices —
   as one query, replacing hide-and-reshoot elimination and in-session temporary probes.
+  The report ends with the **semantic index** section (the same hits the point inspector
+  shows live): features of `MapData` at the point with their layer z — the answer to
+  "what *is* this" beside the layers' "which mesh draws it". Works in the roads gallery
+  too (it inserts `MapData` and the probe's input resources itself).
 - **BRP** — `RemoteHttpPlugin` on port 15702; drive it via the `live-app` skill's `brp`
   script only.
 

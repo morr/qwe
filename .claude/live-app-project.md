@@ -138,10 +138,12 @@ wins; a black png means exactly that, not a broken renderer.
 
 ### Where a screenshot was taken — read the HUD, not the live camera
 
-The telemetry panel (top-right) ends with the **camera line** `0.110/2374/2703 2510/2880`:
-`zoom/x/y` of the camera — metres per logical pixel, then the frame centre in map metres —
-and, after a space, the map point under the cursor (`-/-` when the cursor is outside the
-window). It exists so a screenshot carries its own position (`ui/speed.rs::update_camera_text`).
+The **point inspector panel** (top-right, directly under the telemetry) begins with the
+**camera line** `0.110/2374/2703 2510/2880`: `zoom/x/y` of the camera — metres per logical
+pixel, then the frame centre in map metres — and, after a space, the map point under the
+cursor (`-/-` when the cursor is outside the window). It exists so a screenshot carries its
+own position (`ui/inspector.rs::update_camera_text`; the line moved here from the telemetry,
+which keeps only clock and pathfinding).
 
 **For a screenshot the user pasted, this line is the answer, and `brp cam` is not.** The
 live camera is where the user is looking *now*; by the time the question is typed it has
@@ -379,8 +381,15 @@ $b shot-at 3827 4093 0.05   # reshoot the same framing, compare crops
 
 `probe` is the first call to make: it answers "which layers are over this pixel and at what
 z" in one request (`ProbeLayersEvent` → the `LayerProbe` resource, `dev.rs`), replacing the
-hour-long pixel arithmetic a hunt used to spend before this existed. `hide` + reshoot is
-the confirmation step — the layer whose disappearance removes the glitch is the culprit;
+hour-long pixel arithmetic a hunt used to spend before this existed. The report ends with
+the **`features at the point (semantic index)`** section — what `MapData` puts at the point
+(`road residential 8.0 m, sidewalks`, `building apartments, 12 m`, `tree`, `waterway
+stream 2.5 m`, `parking lot kerbside`…), top layer first: the answer to "what *is* this",
+not just which mesh draws it. The same list lives in the **point inspector panel** (top
+right, under the telemetry) and updates with the cursor — a screenshot of it answers both
+questions at once. Coordinates are map metres; in the roads gallery they are the sample's
+own map metres (the panel and probe subtract the sample's column shift). `hide` + reshoot
+is the confirmation step — the layer whose disappearance removes the glitch is the culprit;
 `show <name>` brings it back, and a restart rebuilds the world anyway. Restore with the
 same insert of `"Visible"` is history: `show` does it.
 
