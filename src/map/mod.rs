@@ -185,6 +185,7 @@ impl Plugin for MapPlugin {
             .init_resource::<trees::TreeZoomBucket>()
             .init_resource::<trees::CrownStream>()
             .init_resource::<trees::TreeLodShown>()
+            .init_resource::<trees::LayerWarmup>()
             .init_resource::<tram::TramZoomBucket>()
             .init_resource::<TramStyle>()
             .init_resource::<IndustryStyle>()
@@ -317,6 +318,10 @@ impl Plugin for MapPlugin {
                         spawn::rebuild_tree_row_band,
                         zoom::seed_zoom_bucket::<trees::TreeLods>,
                         trees::rebuild_trees,
+                        // прогрев слитых кусков и теней: первая их подготовка
+                        // рендером уходит под экран загрузки, а не в первый
+                        // кадр пересечения порога (`trees::warm_layers`)
+                        trees::begin_layer_warmup,
                     )
                         .chain(),
                 )
@@ -350,6 +355,9 @@ impl Plugin for MapPlugin {
                         // показанная ступень ждёт, пока встанут все
                         trees::stream_tree_crowns,
                         trees::show_tree_lod.run_if(trees::switches_on()),
+                        // прогрев слоёв дерева: два кадра на входе в мир,
+                        // дальше выходит сразу
+                        trees::warm_layers,
                     )
                         .chain()
                         .run_if(in_state(AppState::Playing)),

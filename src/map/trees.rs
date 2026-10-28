@@ -35,7 +35,7 @@ use crate::map::osm::model::TreeSet;
 use crate::map::osm::{MapData, TreeCompose, TreeRowLayout, TreeRowPlacement};
 use crate::map::roads::RoadJoin;
 use crate::map::smooth::Smoothing;
-use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
+use crate::map::surface::{LayerMaterials, LayerMesh, MapLayer, MaterialSpec, spawn_layers};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::prefs::retuned;
 use crate::settings::{TREE_VARIANTS, Z_TREE, Z_TREE_SHADOW};
@@ -973,7 +973,8 @@ impl CrownStream {
     }
 
     /// Поставить следующие `batch` крон; видимость — по ступени `shown`.
-    fn spawn_next(&mut self, commands: &mut Commands, batch: usize, shown: usize) {
+    /// Возвращает, сколько встало.
+    fn spawn_next(&mut self, commands: &mut Commands, batch: usize, shown: usize) -> usize {
         let from = self.entities.len();
         let to = self.placements.len().min(from.saturating_add(batch));
         for crown in &self.placements[from..to] {
@@ -992,14 +993,18 @@ impl CrownStream {
                 .id();
             self.entities.push(entity);
         }
+        to - from
     }
 
-    /// Убрать из мира до `batch` последних стоящих крон.
-    fn despawn_last(&mut self, commands: &mut Commands, batch: usize) {
+    /// Убрать из мира до `batch` последних стоящих крон. Возвращает, сколько
+    /// ушло.
+    fn despawn_last(&mut self, commands: &mut Commands, batch: usize) -> usize {
         let keep = self.entities.len().saturating_sub(batch);
+        let removed = self.entities.len() - keep;
         for entity in self.entities.drain(keep..) {
             commands.entity(entity).despawn();
         }
+        removed
     }
 }
 
@@ -1024,8 +1029,14 @@ pub fn stream_tree_crowns(
         } else {
             // пока досыпаются — видна прежняя ступень, новые кроны спрятаны
             let showing = shown.0;
-            stream.spawn_next(&mut commands, CROWN_SPAWN_BATCH, showing);
+            let added = stream.spawn_next(&mut commands, CROWN_SPAWN_BATCH, showing);
+            debug!(
+                "crown stream: +{added} = {} of {} standing",
+                stream.entities.len(),
+                stream.placements.len()
+            );
             if stream.complete() {
+                debug!("crown stream: complete, showing step {}", bucket.index);
                 shown.set_if_neq(TreeLodShown(bucket.index));
             }
         }
@@ -1034,7 +1045,8 @@ pub fn stream_tree_crowns(
         // же кадре, а уходят из мира пачками в следующих
         shown.set_if_neq(TreeLodShown(bucket.index));
         if !stream.entities.is_empty() {
-            stream.despawn_last(&mut commands, CROWN_DESPAWN_BATCH);
+            let removed = stream.despawn_last(&mut commands, CROWN_DESPAWN_BATCH);
+            debug!("crown stream: -{removed} = {} left", stream.entities.len());
         }
     }
 }
@@ -1177,6 +1189,46 @@ pub fn show_tree_lod(shown: Res<TreeLodShown>, mut masked: Query<(&TreeLodMask, 
 /// Когда менять видимость деревьев — одно условие, одна регистрация.
 pub fn switches_on() -> impl SystemCondition<()> {
     IntoSystem::into_system(retuned::<TreeLodShown>)
+}
+
+/// Сколько кадров прогрева слоёв осталось; ноль — прогрева нет.
+#[derive(Resource, Default)]
+pub(crate) struct LayerWarmup(u32);
+
+/// Начать прогрев слоёв деревьев — в цепочке входа в мир, следом за
+/// [`rebuild_trees`], который их заспавнил.
+pub(crate) fn begin_layer_warmup(mut warmup: ResMut<LayerWarmup>) {
+    warmup.0 = 2;
+}
+
+/// Прогрев слитых кусков крон и слоёв теней на входе в мир. Спрятанный при
+/// спавне слой рендерится впервые только на первом пересечении порога зума,
+/// и тот кадр платит его первую подготовку рендером — на Туле раз на мир
+/// 0.9–10 с замирания (замер 10.2026: первый переход 2.0 наружу после
+/// открытия на ближней ступени — 8 кадров по 275–2949 мс; второе то же
+/// пересечение — в пределах обычной бури). Один кадр показывает всё, второй
+/// возвращает видимость по маске — цена уходит под экран загрузки; дальше
+/// система выходит сразу. Прогрев ведут только слои-слои ([`MapLayer`]):
+/// кроны-сущности при входе на ближнюю ступень и так встают видимыми, а на
+/// дальней показываются стримингом, чьи кадры дёшевы (замер: 4 пачки за
+/// ~180 мс).
+pub(crate) fn warm_layers(
+    mut warmup: ResMut<LayerWarmup>,
+    shown: Res<TreeLodShown>,
+    mut masked: Query<(&TreeLodMask, &mut Visibility), With<MapLayer>>,
+) {
+    if warmup.0 == 0 {
+        return;
+    }
+    warmup.0 -= 1;
+    let warm = warmup.0 == 1;
+    masked.par_iter_mut().for_each(|(shows, mut visibility)| {
+        visibility.set_if_neq(if warm {
+            Visibility::Visible
+        } else {
+            shows.visibility(shown.0)
+        });
+    });
 }
 
 /// Пересборка деревьев после правки стиля из UI: деспавн старых сущностей и
