@@ -487,11 +487,33 @@ pub fn size_fresh_silhouettes(
     }
 }
 
-/// Полный проход по всем силуэтам — только на смену зума: тысячи записей в
-/// `Sprite` за щелчок колеса, а не за кадр.
+/// Сколько силуэтов переписывает [`resize_silhouettes_on_zoom`] за один кадр
+/// смены зума. Полная переписка (Тула: 20 тысяч спрайтов) ложилась целиком на
+/// кадр щелчка колеса и стоила ему 25–75 мс — рывок зума (замер 10.2026:
+/// свип зума 4.5→0.05 при штатной популяции — сотни кадров ≥25 мс, при 2000
+/// людей — вдвое меньше); окно растягивает переписку на несколько кадров.
+const RESIZE_BATCH: usize = 2048;
+
+/// Допуск переписки, в экранных пикселях: размер, уехавший меньше чем на это,
+/// не переписывается — запись того же значения всё равно помечает спрайт
+/// изменённым и гонит его через bounds, extract и фазы рендера. На ближнем
+/// зуме (до `min_px` экранного пикселя) пол не активен, размер равен телу, и
+/// переписки нет вовсе; на дальнем щелчок колеса уезжает на ~3 % пола, то
+/// есть на доли пикселя, и окно платит записью, только когда накопился
+/// полпикселя.
+const RESIZE_TOLERANCE_PX: f32 = 0.5;
+
+/// Размеры силуэтов под зум — окном по [`RESIZE_BATCH`] силуэтов за кадр
+/// смены зума, и только те, чей размер уехал дальше [`RESIZE_TOLERANCE_PX`].
+/// Курсор в `Local` идёт по запросу кольцом: за `total / RESIZE_BATCH` кадров
+/// смены зума переписываются все. Пешка, переписанный с устаревшего зума, до
+/// своего хода стоит с размером, отличающимся от точного меньше чем на
+/// `RESIZE_TOLERANCE_PX` экранного пикселя — у лежащих на полу это те же
+/// экранные пиксели, у тел без пола размер и так не меняется.
 pub fn resize_silhouettes_on_zoom(
     camera: Option<Single<&Transform, (With<Camera2d>, With<PanCamera>)>>,
     mut last_zoom: Local<f32>,
+    mut window: Local<usize>,
     mut all: Query<(&Silhouette, &mut Sprite)>,
 ) {
     let Some(zoom) = camera_zoom(camera) else {
@@ -501,9 +523,23 @@ pub fn resize_silhouettes_on_zoom(
         return;
     }
     *last_zoom = zoom;
-    for (silhouette, mut sprite) in &mut all {
-        sprite.custom_size = Some(silhouette.drawn_size(zoom));
+    let total = all.iter().len();
+    if total == 0 {
+        return;
     }
+    let from = (*window).min(total);
+    let tolerance = zoom * RESIZE_TOLERANCE_PX;
+    for (silhouette, mut sprite) in all.iter_mut().skip(from).take(RESIZE_BATCH) {
+        let size = silhouette.drawn_size(zoom);
+        let stale = match sprite.custom_size {
+            Some(current) => (current - size).abs().max_element() > tolerance,
+            None => true,
+        };
+        if stale {
+            sprite.custom_size = Some(size);
+        }
+    }
+    *window = (from + RESIZE_BATCH) % total;
 }
 
 #[cfg(test)]
