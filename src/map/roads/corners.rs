@@ -988,11 +988,24 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
                 if merge_pair(first, second) {
                     continue;
                 }
+                // Дорожка проходит узел насквозь — у луча есть встречный: крест
+                // или устье примыкания, и ленты аллей на узлах не режутся, так
+                // что угол и так кроется самим стыком. Кусок был бы заплаткой
+                // поверх стыка — ступени, клинья, швы (Тула, Первомайская ×
+                // проспект Ленина). Остаётся угол двух лучей, кончающихся в
+                // узле, — L-поворот, развилка, — там правда есть вырез.
+                if class == RoadClass::Alley
+                    && (continues(&group, first) || continues(&group, second))
+                {
+                    continue;
+                }
                 let radius = kerb_radius(first, second) * scale;
                 let halves = (first.half[0], second.half[1]);
-                // угол у мощёной дорожки — плиткой, в слое тротуаров: песчаное
-                // скругление на стыке двух плиточных аллей читалось бы пятном
-                let paved = first.paved || second.paved;
+                // угол двух мощёных дорожек — плиткой, в слое тротуаров:
+                // песчаное скругление на стыке двух плиточных аллей читалось бы
+                // пятном. Одна мощёная, вторая грунтовая — песком под мощёной
+                // лентой, как у улиц грунтовка под асфальтом
+                let paved = first.paved && second.paved;
                 // угол двух грунтовок — грунтом; грунтовки с асфальтом сюда
                 // доходит только наружным или носом — тоже грунтом
                 let fill = if paved {
@@ -1099,7 +1112,18 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
             .iter()
             .filter(|arm| arm.class == RoadClass::Alley && arm.paved)
             .collect();
-        if tiled.len() >= 2 && !tiled.iter().all(|arm| is_merged(arm)) {
+        // проходной узел — крест дорожек — наездов не просит: полосы легли бы
+        // поверх стыка кромок прямоугольниками, а не поверх щели слияния
+        // (Тула, Первомайская × проспект Ленина). У примыкания или слияния
+        // хоть один луч в узле кончается — там щель у двора настоящая
+        let alleys: Vec<&Arm> = found
+            .iter()
+            .filter(|arm| arm.class == RoadClass::Alley)
+            .collect();
+        if tiled.len() >= 2
+            && !tiled.iter().all(|arm| is_merged(arm))
+            && !alleys.iter().all(|arm| continues(&alleys, arm))
+        {
             returns.overlaps.extend(tile_overlaps(node, &tiled, &yards));
         }
         // Угол, где хоть с одной стороны вместо полосы тротуара обочина до
@@ -1260,6 +1284,16 @@ fn wedged_vertices(
         }
     }
     kept
+}
+
+/// Луч проходит узел насквозь: в группе есть встречный ему луч — направления
+/// расходятся от прямого не дальше [`MAX_ANGLE`]. Не по [`Arm::end`]: OSM режет
+/// дорожку на два way прямо в узле креста, и оба «кончаются», хотя дорога идёт
+/// насквозь. Соосный шов двух way одной дорожки — тоже продолжение.
+fn continues(group: &[&Arm], arm: &Arm) -> bool {
+    group.iter().any(|other| {
+        !std::ptr::eq(*other, arm) && arm.direction.angle_to(other.direction).abs() >= MAX_ANGLE
+    })
 }
 
 /// Узел ли это для группы лучей одного класса: три плеча и больше или два,
@@ -1430,7 +1464,9 @@ const YARD_CELL: f32 = 32.0;
 /// если за кромкой вплотную двор (`Drawn::yards`) и сторона не занята другим
 /// лучом ([`TILE_OVERLAP_OCCUPIED`]). Внутренняя сторона заходит под ленту на
 /// [`OUTER_OVERLAP`], как у наружного угла; контур — выпуклый
-/// четырёхугольник, как и прочие куски слоя тротуаров.
+/// четырёхугольник, как и прочие куски слоя тротуаров. Проходной узел — крест,
+/// где каждый луч со встречным ([`continues`]) — отсечён вызывающим: там нет
+/// щели, которую полоса закрывала бы.
 fn tile_overlaps(node: Vec2, group: &[&Arm], bounds: &YardBounds) -> Vec<Vec<Vec2>> {
     let mut found = Vec::new();
     for (own, arm) in group.iter().enumerate() {
@@ -2449,6 +2485,97 @@ mod tests {
         let bare = kerb_returns(&Drawn::for_test(&map_of(&roads)).with_sidewalks(false), 1.0);
         assert!(bare.overlaps.is_empty());
         assert_eq!(bare.sidewalks.len(), found.sidewalks.len());
+    }
+
+    /// Сумма угловых кусков узла по всем слоям: проверка «ни одного куска» —
+    /// это проверка её нуля.
+    fn corner_pieces(found: &KerbReturns) -> usize {
+        found.sidewalks.len() + found.roads.len() + found.bends.len() + found.noses.len()
+    }
+
+    /// Крест двух мощёных дорожек: оба луча проходят узел насквозь, ленты
+    /// аллей на узлах не режутся, и стык кроют они сами — ни уголков, ни
+    /// наездов (Тула, Первомайская × проспект Ленина).
+    #[test]
+    fn a_crossing_of_paved_paths_draws_no_corner_pieces() {
+        let roads = [
+            paved_path(vec![
+                Vec2::new(-50.0, 0.0),
+                Vec2::ZERO,
+                Vec2::new(50.0, 0.0),
+            ]),
+            paved_path(vec![
+                Vec2::new(0.0, -50.0),
+                Vec2::ZERO,
+                Vec2::new(0.0, 50.0),
+            ]),
+        ];
+        let found = kerb_returns(&Drawn::for_test(&map_of(&roads)).with_sidewalks(false), 1.0);
+        assert_eq!(corner_pieces(&found), 0);
+        assert!(found.overlaps.is_empty());
+    }
+
+    /// Тот же крест из четырёх ways, разбитых в узле: каждый луч «кончается»
+    /// ([`Arm::end`]), но продолжение видно по встречному лучу — кусков
+    /// по-прежнему нет.
+    #[test]
+    fn a_crossing_of_split_paths_still_draws_nothing() {
+        let roads = [
+            paved_path(vec![Vec2::new(-50.0, 0.0), Vec2::ZERO]),
+            paved_path(vec![Vec2::ZERO, Vec2::new(50.0, 0.0)]),
+            paved_path(vec![Vec2::new(0.0, -50.0), Vec2::ZERO]),
+            paved_path(vec![Vec2::ZERO, Vec2::new(0.0, 50.0)]),
+        ];
+        let found = kerb_returns(&Drawn::for_test(&map_of(&roads)).with_sidewalks(false), 1.0);
+        assert_eq!(corner_pieces(&found), 0);
+        assert!(found.overlaps.is_empty());
+    }
+
+    /// Примыкание дорожки к сквозной (Т): устье кроют ленты, уголков нет, а
+    /// наезд у двора остаётся — щель между кромкой и двором настоящая.
+    #[test]
+    fn a_path_joining_a_through_path_draws_no_corner_pieces() {
+        let roads = [
+            paved_path(vec![
+                Vec2::new(-50.0, 0.0),
+                Vec2::ZERO,
+                Vec2::new(50.0, 0.0),
+            ]),
+            paved_path(vec![Vec2::new(0.0, 50.0), Vec2::ZERO]),
+        ];
+        let found = kerb_returns(&Drawn::for_test(&map_of(&roads)).with_sidewalks(false), 1.0);
+        assert_eq!(corner_pieces(&found), 0);
+    }
+
+    /// L-угол из двух кончающихся дорожек — вырез у торцов настоящий, кусок
+    /// рисуется: у двух мощёных — плиткой в слой тротуаров, у мощёной с
+    /// грунтовой — песком в слой аллей (плиточное пятно на грунтовой читалось
+    /// бы пятном).
+    #[test]
+    fn an_l_of_two_ending_paths_keeps_one_corner() {
+        let paved = [
+            paved_path(vec![Vec2::new(-50.0, 0.0), Vec2::ZERO]),
+            paved_path(vec![Vec2::ZERO, Vec2::new(0.0, 50.0)]),
+        ];
+        let found = kerb_returns(&Drawn::for_test(&map_of(&paved)).with_sidewalks(false), 1.0);
+        // пара из двух лучей обходит круг в обе стороны: филет изнутри и
+        // наружный веер
+        assert_eq!(corner_pieces(&found), 2);
+        assert_eq!(found.sidewalks.len(), 2, "обе мощёные — плиткой");
+
+        let mixed = [
+            paved_path(vec![Vec2::new(-50.0, 0.0), Vec2::ZERO]),
+            crate::map::osm::fixture::footway(vec![Vec2::ZERO, Vec2::new(0.0, 50.0)]),
+        ];
+        let found = kerb_returns(&Drawn::for_test(&map_of(&mixed)).with_sidewalks(false), 1.0);
+        assert_eq!(corner_pieces(&found), 2);
+        assert!(found.sidewalks.is_empty(), "смешанная пара — не плиткой");
+        assert_eq!(found.roads.len(), 2);
+        assert_eq!(
+            found.roads[0].0,
+            RoadClass::Alley,
+            "смешанная пара — песком"
+        );
     }
 
     /// Тротуар улицы 8 м — как его считает `osm::model::sidewalk_band`.

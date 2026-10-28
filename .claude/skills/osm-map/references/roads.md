@@ -60,10 +60,21 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   alleys reading as a beach (scout C1, Frunze street and the Kremlin garden). In the
   sidewalk layer a mapped pavement merges with the band instead of sitting beside it in
   another colour. The fill slot is picked **after** the street's own band in the loop — a
-  borrow, not a rule. A junction's kerb return between two arms of which **either** is
+  borrow, not a rule. A junction's kerb return between two arms of which **both** are
   paved goes with it (`corners::Arm::paved` → `KerbReturns::sidewalks`, counted in
-  `outer[1]`): a sand fillet in the corner of two tiled alleys read as a stain. Pinned by
-  `roads/tests.rs::a_paved_path_is_drawn_in_the_sidewalk_layer`.
+  `outer[1]`): a sand fillet in the corner of two tiled alleys read as a stain; a pair
+  with one paved and one dirt arm fills sand, under the paved ribbon, the way an
+  unpaved street fills under asphalt. **Alley corner pieces exist only between arms
+  that end at the node** — an L of two ways, a fork: there the butt ends leave a real
+  notch. Where an arm *continues* through the node (`corners::continues` — the group
+  holds an opposite arm within `MAX_ANGLE` of straight; OSM splits a path into two ways
+  right at a crossing, so `Arm::end` proves nothing) no piece is drawn for its pairs:
+  alley ribbons are not cut at junction nodes (the asphalt breaks are carriageways
+  only), so at a crossing or a join mouth the ribbons cover the corner themselves and
+  the piece was a patch on top of the seam — steps, wedges, hairline joints (Tula,
+  Первомайская × проспект Ленина). Pinned by
+  `roads/tests.rs::a_paved_path_is_drawn_in_the_sidewalk_layer` and the three
+  crossing/join/L tests in `corners.rs`.
   **Tile overlaps** (`corners::tile_overlaps` → `KerbReturns::overlaps`, counted in
   `RoadReport::tile_overlaps`): at a merge of two or more paved paths, a yard wedge can
   enter point-first into the seam between the arm edges — the sectors between the arms
@@ -80,7 +91,9 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   a `Grid` over the bounding boxes, cell `YARD_CELL` 32 m; the yards are
   `MapData::landuse` **and** `MapData::pockets`, both drawn as yard by
   `spawn::mesh_surfaces`). Without a yard in reach there is no overlap — the ribbons do
-  not swell. Pinned by
+  not swell — and a **through node** (every alley arm has its opposite, `continues`) is
+  skipped whole: a crossing has no seam for the strip to close, and the strips landed on
+  the crossing as bare rectangles. Pinned by
   `corners.rs::a_tile_overlap_covers_the_yard_wedge_at_a_paved_merge`. Tula: 4099
   overlaps for ≈ +19 ms of road meshing.
   **Unpaved streets** (`RoadLine::is_unpaved_street` — a `Street` whose `surface` is
