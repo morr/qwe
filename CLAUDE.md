@@ -253,6 +253,30 @@ Then **give a verdict**: the cost is negligible and stays; the cost is real and 
 the optimisation; or the cost is real, here is what it buys, and it is the user's call.
 Never report "probably fine" without either the reasoning or the numbers behind it.
 
+## Context discipline for long sessions
+
+Context grows ~1–1.4K tokens per turn and is re-read from cache by every following turn —
+one measured session grew its context to 570K over 409 turns and burned 114.6M tokens,
+99.6% of them cache re-reads. Three rules keep a session cheap:
+
+- **A file over ~30K characters is read in full once.** The repeat offenders here are
+  `src/map/roads/node_paint.rs` (116K), `src/map/roads/corners.rs` (154K),
+  `src/map/roads/tests.rs` (172K) and `.claude/skills/osm-map/references/roads.md`
+  (261K) — in that measured session each was read 11–13 times. After the first full
+  read, return to them with `Read offset`/`limit` or `Grep` with an anchor; a second
+  full read is a phase change (before committing, after a compaction), not a refresh.
+  `docs/context-diet-plan.md` tracks the split of the oversized files themselves.
+- **A long autonomous agent gets a worktree of its own and a NOTES.md.** Parallel
+  sessions in the main checkout turn every commit into staging surgery (`git apply
+  --cached` of hand-cut patches); `EnterWorktree` seeds `target/` by itself, so the
+  worktree is nearly free. The agent keeps its decisions and per-task status in
+  `NOTES.md` in the worktree — after a compaction, re-reading 5K of notes replaces
+  holding 500K of context. One agent — one item of the work list; a list is a loop of
+  agents with a short handoff each, not one marathon runner.
+- **Compact at the boundaries.** Finishing one road fix (its commits landed, check.sh
+  is green) in a long session → `/compact` before the next, or spawn the next one
+  fresh. Never carry a finished task's context into the next task.
+
 ## Cargo Features & Dependencies
 
 `bevy` is pulled in with `default-features = false` — only `2d`, `ui`, `dynamic_linking`,
