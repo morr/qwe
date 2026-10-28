@@ -738,7 +738,8 @@ on a counter-taper (`Taper::seam`) — and drifts to its own over the wedge
   reads an aerial photo: a long thin box (≥ 35 m by ≤ 18 m) is a panel section (5 / 9 / 12
   storeys), a compact large one (≥ 500 m², sides within 1.7) a tower (mostly 9), a small
   one (≤ 300 m²) an old low building (2–4, over 300 m²: the area test comes first, so a
-  long thin shed stays low), and industrial / commercial / church footprints are measured
+  long thin shed stays low), everything else large a generic block of **2–5 storeys**, and
+  industrial / commercial / church footprints are measured
   in **metres of span** rather than storeys. A **private house** — `building=house`, or an
   untagged box up to 250 m² (the pitched-cohort border, one for roof, walls and height) —
   has walls of **one storey** in 8 of 10 (3–3.4 m; its attic lives in the pitched roof),
