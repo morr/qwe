@@ -86,11 +86,15 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
   `OUTER_OVERLAP` — laid into the sidewalk layer, in `mesh_roads`, but **not fed to the
   lawn scraps**: the overlap is itself the fix, not paving that encloses a scrap. An edge
   is free when no other arm leaves into it within `TILE_OVERLAP_OCCUPIED` 80° (such a
-  corner is already closed by a fillet, nose or fan), and the strip is laid only when a
-  yard is probed inside it — a grid of six probes along × across the strip (`YardBounds`,
-  a `Grid` over the bounding boxes, cell `YARD_CELL` 32 m; the yards are
-  `MapData::landuse` **and** `MapData::pockets`, both drawn as yard by
-  `spawn::mesh_surfaces`). The gap must also **open from the node**: right past the edge
+  corner is already closed by a fillet, nose or fan), and the strip is laid only when
+  the yard behind the edge runs deep enough for it — two probes at the strip's far end
+  (0.4 · reach, half and full width) must both find yard (`YardBounds`, a `Grid` over
+  the bounding boxes, cell `YARD_CELL` 32 m; the yards are `MapData::landuse` **and**
+  `MapData::pockets`, both drawn as yard by `spawn::mesh_surfaces`): a wedge entering
+  point-first shallower than the strip widens further out, and the near half of the
+  strip lay on the green corner of the merge as a slab (Tula, Первомайская × проспект
+  Ленина, west corner: the land pocket's wedge into the merge of the zebra, the yard
+  path and the sidewalk). The gap must also **open from the node**: right past the edge
   at the strip's mouth (`TILE_OVERLAP_MOUTH` 25 cm) there is no yard — bare earth or the
   oncoming ribbon — the yard starts further out. A yard pressed against the edge right at
   the node is no gap, and the strip lay on the lawn as a rectangular slab (Tula,
@@ -2420,7 +2424,13 @@ at a roundabout are written up under **Parking → A big lot shows the road thro
       stood out as a wedge and a step between ribbons of different widths (Tula, Фрунзе ×
       Красноармейский, the zebra into a continuing sidewalk); the arm keeps its round cap,
       which lies on the neighbouring ribbons — same layer, same colour — so the merge reads
-      as bands crossing. Streets keep the square cut: the crossing street's asphalt covers
+      as bands crossing — **unless the cap pokes past them**: an ending arm wider than a
+      band it lands on (an arm in the cap's half-plane, ahead of the node) is cut square
+      anyway, for the half-disc of the cap sticks out past the narrower band's far edge —
+      a grey wedge on the grass and the zebra's first pale stripe lying on the neighbour
+      band (Tula, showcase 02 north-west: three way-ends in one node, the zebra the widest;
+      Первомайская × проспект Ленина, south: the zebra wider than the bending sidewalk).
+      Streets keep the square cut: the crossing street's asphalt covers
       the seam.
       A round cap of a wide road ending on a narrow one stuck out past the narrow one's far
       edge as a half-disc — the blob at the bottom of sample 6 is what that looked like.

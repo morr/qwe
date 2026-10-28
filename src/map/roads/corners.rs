@@ -978,12 +978,26 @@ pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
             // у слияния дорожек он торчал клином и ступенькой на стыке лент
             // разной ширины (Тула, Фрунзе × Красноармейский). Круглая шапка
             // ложится на соседние ленты — тот же слой, тот же цвет, — и
-            // слияние читается пересечением полос.
+            // слияние читается пересечением полос. Исключение — широкий
+            // торец: полудиск шапки радиусом в полуширину луча ложится на
+            // узел поверх чужих лент, и там, где чужая лента уже, он
+            // выступает за её кромку — клин на газоне и светлая плита
+            // первого штриха зебры на соседней ленте (Тула, витрина 02:
+            // зебра шире тротуаров в узле; Первомайская × проспект Ленина,
+            // юг: зебра шире изгибаемого тротуара). Срез кладёт торец в
+            // плоскость узла — выступать нечему, а узкие соседи закрыты
+            // своими лентами.
             let squared = |arm: &Arm| {
-                !continues(&group, arm)
-                    && group
-                        .iter()
-                        .any(|other| !std::ptr::eq(*other, arm) && !continues(&group, other))
+                arm.end.is_some()
+                    && group.iter().any(|other| {
+                        !std::ptr::eq(*other, arm)
+                            && -arm.direction.dot(other.direction) > 0.0
+                            && other.half[0].min(other.half[1]) < arm.half[0].max(arm.half[1])
+                    })
+                    || (!continues(&group, arm)
+                        && group
+                            .iter()
+                            .any(|other| !std::ptr::eq(*other, arm) && !continues(&group, other)))
             };
             for arm in &group {
                 if class == RoadClass::Alley && !squared(arm) {
@@ -1484,12 +1498,14 @@ const YARD_CELL: f32 = 32.0;
 /// Наезд плитки на дворе у слияния мощёных дорожек ([`KerbReturns`], вызов в
 /// [`kerb_returns`]): для каждой стороны каждого луча — полоса плитки
 /// [`TILE_OVERLAP_WIDTH`] на [`TILE_OVERLAP_REACH`] вдоль кромки от узла,
-/// если за кромкой вплотную двор (`Drawn::yards`) и сторона не занята другим
-/// лучом ([`TILE_OVERLAP_OCCUPIED`]). Внутренняя сторона заходит под ленту на
-/// [`OUTER_OVERLAP`], как у наружного угла; контур — выпуклый
-/// четырёхугольник, как и прочие куски слоя тротуаров. Проходной узел — крест,
-/// где каждый луч со встречным ([`continues`]) — отсечён вызывающим: там нет
-/// щели, которую полоса закрывала бы.
+/// если за кромкой двор (`Drawn::yards`) — у устья полосы его нет, а у
+/// ближнего конца он уходит от кромки вглубь на ширину полосы, не остриём
+/// клина, — и сторона не занята другим лучом ([`TILE_OVERLAP_OCCUPIED`]).
+/// Внутренняя сторона заходит под ленту на [`OUTER_OVERLAP`], как у
+/// наружного угла; контур — выпуклый четырёхугольник, как и прочие куски
+/// слоя тротуаров. Проходной узел — крест, где каждый луч со встречным
+/// ([`continues`]) — отсечён вызывающим: там нет щели, которую полоса
+/// закрывала бы.
 fn tile_overlaps(node: Vec2, group: &[&Arm], bounds: &YardBounds) -> Vec<Vec<Vec2>> {
     let mut found = Vec::new();
     for (own, arm) in group.iter().enumerate() {
@@ -1522,21 +1538,20 @@ fn tile_overlaps(node: Vec2, group: &[&Arm], bounds: &YardBounds) -> Vec<Vec<Vec
             {
                 continue;
             }
-            if ![
-                (0.4, 0.5),
-                (0.4, 1.0),
-                (0.6, 1.25),
-                (0.85, 0.5),
-                (0.85, 1.0),
-                (0.85, 1.25),
-            ]
-            .into_iter()
-            .any(|(share_along, share_off)| {
-                yard_in_band(
-                    TILE_OVERLAP_REACH * share_along,
-                    TILE_OVERLAP_WIDTH * share_off,
-                )
-            }) {
+            // двор у ближнего конца наезда должен уходить от кромки на ширину
+            // полосы: клин, вошедший в кромку остриём глубиной меньше полосы,
+            // раскрывается дальше — и ближняя половина полосы ложилась бы на
+            // газонный угол слияния плитой (Тула, Первомайская × проспект
+            // Ленина, западный угол)
+            if ![(0.4, 0.5), (0.4, 1.0)]
+                .into_iter()
+                .all(|(share_along, share_off)| {
+                    yard_in_band(
+                        TILE_OVERLAP_REACH * share_along,
+                        TILE_OVERLAP_WIDTH * share_off,
+                    )
+                })
+            {
                 continue;
             }
             let far = arm.direction * TILE_OVERLAP_REACH;
@@ -2662,6 +2677,54 @@ mod tests {
         );
     }
 
+    /// Мощёная дорожка заданной ширины — как `paved_path`, но ширина своя:
+    /// широкая зебра против узкого тротуара.
+    fn paved_path_wide(points: Vec<Vec2>, width: f32) -> RoadLine {
+        RoadLine {
+            class: RoadClass::Alley,
+            highway: Highway::Path,
+            pavement: Some(crate::map::osm::model::Pavement::Paved),
+            ..crate::map::osm::fixture::street(points, width)
+        }
+    }
+
+    /// Широкое плечо, кончающееся в узле поверх чужой узкой ленты: полудиск
+    /// шапки радиусом в свою полуширину ложится на ленту и выступает за её
+    /// кромку клином на газоне (Тула, Первомайская × проспект Ленина, юг —
+    /// зебра шире изгибаемого тротуара; витрина 02, СЗ — зебра шире тротуаров).
+    /// Торец режется прямо, в плоскость узла.
+    #[test]
+    fn a_wider_ending_path_is_cut_square_at_the_node() {
+        // изгибаемый узкий тротуар (запад–юг–запад → восток) и широкая зебра
+        // с северо-запада, идущая вдоль его восточной половины
+        let bent = paved_path_wide(
+            vec![Vec2::new(-40.0, -30.0), Vec2::ZERO, Vec2::new(40.0, -20.0)],
+            2.5,
+        );
+        let zebra = paved_path_wide(vec![Vec2::new(-30.0, 20.0), Vec2::ZERO], 4.0);
+        let found = kerb_returns(
+            &Drawn::for_test(&map_of(&[bent, zebra])).with_sidewalks(false),
+            1.0,
+        );
+        assert!(found.butt(1)[1], "широкий торец в узел — срез");
+    }
+
+    /// То же в узле из трёх торцов (витрина 02, СЗ): широкая зебра режется
+    /// прямо, узкие тротуары оставляют круглые шапки — их накрывают ленты
+    /// друг друга и зебры.
+    #[test]
+    fn at_a_node_of_three_ends_only_the_widest_gets_a_square_cut() {
+        let roads = [
+            paved_path_wide(vec![Vec2::new(-4.5, -9.0), Vec2::ZERO], 2.5),
+            paved_path_wide(vec![Vec2::ZERO, Vec2::new(3.0, 10.75)], 2.5),
+            paved_path_wide(vec![Vec2::ZERO, Vec2::new(40.0, -9.0)], 3.0),
+        ];
+        let found = kerb_returns(&Drawn::for_test(&map_of(&roads)).with_sidewalks(false), 1.0);
+        assert!(found.butt(2)[0], "широкая зебра — срез");
+        assert!(!found.butt(0)[1], "узкий тротуар — шапка");
+        assert!(!found.butt(1)[0], "узкий тротуар — шапка");
+    }
+
     /// Двор, подступивший к кромке у самого узла, — не щель: наезд закрывает
     /// щель, раскрывающуюся от узла (голая земля, дальше двор), а здесь лёг
     /// бы прямоугольной плитой на газон (Тула, Первомайская × проспект
@@ -2691,6 +2754,34 @@ mod tests {
             found.overlaps.is_empty(),
             "двор у самой кромки у узла — наезда нет"
         );
+    }
+
+    /// Клин двора, вошедший в кромку остриём мельче ширины наезда: у ближнего
+    /// конца полосы двор от кромки не уходит вглубь, угол слияния — газонный,
+    /// и полоса ложилась бы на него плитой (Тула, Первомайская × проспект
+    /// Ленина, западный угол: клин кармана земли — в угол слияния зебры,
+    /// двор-дорожки и тротуара).
+    #[test]
+    fn no_tile_overlap_where_the_yard_wedge_is_shallower_than_the_strip() {
+        let roads = [
+            paved_path(vec![
+                Vec2::new(-50.0, 0.0),
+                Vec2::ZERO,
+                Vec2::new(50.0, 0.0),
+            ]),
+            paved_path(vec![Vec2::new(0.0, 50.0), Vec2::ZERO]),
+        ];
+        let mut map = map_of(&roads);
+        map.landuse = vec![crate::map::osm::fixture::area(
+            crate::map::osm::model::AreaKind::Residential,
+            vec![
+                Vec2::new(0.5, -1.8),
+                Vec2::new(12.0, -2.5),
+                Vec2::new(4.0, -6.0),
+            ],
+        )];
+        let found = kerb_returns(&Drawn::for_test(&map).with_sidewalks(false), 1.0);
+        assert!(found.overlaps.is_empty(), "клин мельче полосы — наезда нет");
     }
 
     /// Тротуар улицы 8 м — как его считает `osm::model::sidewalk_band`.
