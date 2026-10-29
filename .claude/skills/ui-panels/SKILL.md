@@ -53,7 +53,7 @@ panel** with four tabs (`ui/shell.rs`).
   be forgotten, and sorting a slotless one to the top would show that mistake as a
   mysteriously first panel body. `UiBuildSet` chains `Shell → Sections → Sort`.
 - **Bloom** (`post.rs::camera_post_process`) — the bundle `camera.rs` adds to the camera:
-  `Hdr`, `Tonemapping::None`, `DebandDither::Disabled` and `Bloom::NATURAL` at
+  `Hdr`, `Tonemapping::Linear`, `DebandDither::Disabled` and `Bloom::NATURAL` at
   `BLOOM_INTENSITY` 0.25 — 0.4 reads as haze now that every demon carries a halo and
   every death a spark — `Additive` composite. What is brighter than 1.0 draws itself so:
   the portal vortex and its rim (`portal.rs`), the demon halo (~1.4 after alpha,
@@ -62,14 +62,16 @@ panel** with four tabs (`ui/shell.rs`).
   `threshold × softness` both ways, so it starts at 0.99 and pure white lane markings
   (1.0) contribute nothing; a 1.0 threshold made everything above 0.6 glow and hazed the
   whole map. Tonemapping stays off on purpose: every built-in curve recolours the map
-  palette, and only the halo is wanted. UI is drawn after post-processing, so panels
-  never bloom.
+  palette, and only the halo is wanted. That is `Tonemapping::Linear`, not `None`: since
+  Bevy 0.20 `None` is a full passthrough that also drops the negative-channel clamp, and
+  an additive bloom wants the clamp. `Linear` is what `None` used to be. UI is drawn
+  after post-processing, so panels never bloom.
 - **Antialias** (`post.rs::Antialias`, settings group `render`, key `antialias`, on by
   default) — `Msaa::Sample4` on the user's camera (`camera.rs::spawn_camera`) and on the
   offscreen-shot camera (`dev.rs`), both read the resource at spawn and
   `post::apply_antialias` (`retuned`) writes every `Camera2d` on a toggle. Default on
   because without it the map's ribbons — asphalt, kerbs, median noses, islands —
-  stair-step on a close-up, while the paint beside them is smoothed by `paint.wgsl`
+  stair-step on a close-up, while the paint beside them is smoothed by `paint.wesl`
   itself. HDR + bloom + the four `Material2d`s work with it unchanged (they specialise
   on the sample count themselves). **Cost is memory, not frame time**: on a 4K window
   the multisampled HDR target and depth add about 400 MB; the frame was measured in the

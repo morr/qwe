@@ -15,28 +15,22 @@
 // (`meshing::ATTRIBUTE_ROOF`): швы ковра и рёбра фальца идут вдоль стен, а не
 // по странам света, и при этом два треугольника одной крыши красятся
 // согласованно без развёртки. Октавы гасятся по размеру пикселя (`fwidth`)
-// общим `visible` из `shaders/noise.wgsl`: короткая волна исчезает, а не муарит.
+// общим `visible` из `noise.wesl`: короткая волна исчезает, а не муарит.
 //
 // Посев дома (`ATTRIBUTE_ROOF.w`) несёт два смысла: фазу фактуры и **возраст**
 // кровли (`roof_age`) — от него зависит, сколько на битуме заплат и насколько
 // всякая кровля выгорела. Без возраста все битумные дома квартала носили ровно
 // одну плотность латок.
 
-#import bevy_sprite::{
-    mesh2d_functions as mesh_functions,
-    mesh2d_view_bindings::view,
-}
-#import "shaders/noise.wgsl"::{hash21, value_noise, visible, fbm3, stripes}
+import bevy_sprite_render::mesh2d::{functions as mesh_functions, view_bindings::view};
+import super::noise::{hash21, value_noise, visible, fbm3, stripes};
 
-#ifdef TONEMAP_IN_SHADER
-#import bevy_core_pipeline::tonemapping
-#endif
-#ifdef SRGB_OUTPUT
-#import bevy_render::color_operations::linear_to_srgb
-#endif
-#ifdef OKLAB_OUTPUT
-#import bevy_render::color_operations::linear_rgb_to_oklab
-#endif
+@if(TONEMAP_IN_SHADER)
+import bevy_core_pipeline::tonemapping;
+@if(SRGB_OUTPUT)
+import bevy_render::color_operations::linear_to_srgb;
+@if(OKLAB_OUTPUT)
+import bevy_render::color_operations::linear_rgb_to_oklab;
 
 // Зеркало `material::RoofParams` — порядок полей обязан совпадать.
 struct RoofParams {
@@ -46,7 +40,7 @@ struct RoofParams {
     clutter: f32,
 }
 
-@group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: RoofParams;
+@group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> params: RoofParams;
 
 // Коды материалов — **один словарь на кровлю, гаражную ленту и стену**,
 // зеркало `material::RoofKind::code` и `material::WallKind::code`. Ноль это
@@ -970,14 +964,11 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     var output_color = vec4<f32>(rgb, 1.0);
-#ifdef TONEMAP_IN_SHADER
+@if(TONEMAP_IN_SHADER)
     output_color = tonemapping::tone_mapping(output_color, view.color_grading);
-#endif
-#ifdef SRGB_OUTPUT
+@if(SRGB_OUTPUT)
     output_color = vec4(linear_to_srgb(output_color.rgb), output_color.a);
-#endif
-#ifdef OKLAB_OUTPUT
+@if(OKLAB_OUTPUT)
     output_color = vec4(linear_rgb_to_oklab(output_color.rgb), output_color.a);
-#endif
     return output_color;
 }

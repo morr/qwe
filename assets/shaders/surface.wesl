@@ -8,24 +8,21 @@
 //
 // Все октавы шума гасятся по размеру пикселя (`fwidth` мировой координаты):
 // короткая волна не сэмплируется, а исчезает (общий `visible` из
-// `shaders/noise.wgsl`, там же и порог), иначе на отдалении зерно
+// `noise.wesl`, там же и порог), иначе на отдалении зерно
 // превращается в муар и мерцает при движении камеры.
 
-#import bevy_sprite::{
-    mesh2d_functions as mesh_functions,
-    mesh2d_view_bindings::{view, globals},
-}
-#import "shaders/noise.wgsl"::{value_noise, visible, fbm3, fbm4}
+import bevy_sprite_render::mesh2d::{
+    functions as mesh_functions,
+    view_bindings::{view, globals},
+};
+import super::noise::{value_noise, visible, fbm3, fbm4};
 
-#ifdef TONEMAP_IN_SHADER
-#import bevy_core_pipeline::tonemapping
-#endif
-#ifdef SRGB_OUTPUT
-#import bevy_render::color_operations::linear_to_srgb
-#endif
-#ifdef OKLAB_OUTPUT
-#import bevy_render::color_operations::linear_rgb_to_oklab
-#endif
+@if(TONEMAP_IN_SHADER)
+import bevy_core_pipeline::tonemapping;
+@if(SRGB_OUTPUT)
+import bevy_render::color_operations::linear_to_srgb;
+@if(OKLAB_OUTPUT)
+import bevy_render::color_operations::linear_rgb_to_oklab;
 
 // Зеркало `surface::SurfaceParams` — порядок полей обязан совпадать.
 struct SurfaceParams {
@@ -51,7 +48,7 @@ struct SurfaceParams {
     rut_sigma: f32,
 }
 
-@group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: SurfaceParams;
+@group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> params: SurfaceParams;
 
 struct Vertex {
     @builtin(instance_index) instance_index: u32,
@@ -187,14 +184,11 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // слой непрозрачный: вода, дороги и зелень — сплошные заливки
     var output_color = vec4<f32>(rgb, 1.0);
-#ifdef TONEMAP_IN_SHADER
+@if(TONEMAP_IN_SHADER)
     output_color = tonemapping::tone_mapping(output_color, view.color_grading);
-#endif
-#ifdef SRGB_OUTPUT
+@if(SRGB_OUTPUT)
     output_color = vec4(linear_to_srgb(output_color.rgb), output_color.a);
-#endif
-#ifdef OKLAB_OUTPUT
+@if(OKLAB_OUTPUT)
     output_color = vec4(linear_rgb_to_oklab(output_color.rgb), output_color.a);
-#endif
     return output_color;
 }

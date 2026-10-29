@@ -1,6 +1,6 @@
 # Roads — the hub
 
-Detail behind `map/roads.rs`, `map/roads/*` and the street half of `surface.wgsl`.
+Detail behind `map/roads.rs`, `map/roads/*` and the street half of `surface.wesl`.
 `SKILL.md` keeps what every layer shares — the layer seam, the surface material and its
 `Ribbon` attribute, the shadow rules, zoom buckets — and the `RoadLine` model; the big
 lot's kerb, the boulevard's double line over the lot and the gores at a roundabout are in

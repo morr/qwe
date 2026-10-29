@@ -184,7 +184,7 @@ so a test yard that spawns pawns or runs the kill observer must `init_resource` 
 
 ## Portal
 
-`portal.rs` + `assets/shaders/portal.wgsl` — a `Mesh2d` quad with `PortalMaterial`
+`portal.rs` + `assets/shaders/portal.wesl` — a `Mesh2d` quad with `PortalMaterial`
 (`Material2d`): a three-armed log-spiral vortex with fbm turbulence computed per pixel
 from `globals.time`. No spritesheet, no frames, no `Update` system — the nine-frame 160 px
 sheet it replaced read as pixel mush stretched over 36 m, and nobody is going to repaint

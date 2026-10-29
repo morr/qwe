@@ -405,13 +405,13 @@ extraction; re-attempting it means going through the curb pin tests
   contributes nothing and one longer than 4 px contributes fully — the noise is centred, so
   a faded octave shifts no brightness, and zooming out makes a surface smoother, never
   brighter or shimmering. That rule is **not this shader's own**: the shared library
-  `assets/shaders/noise.wgsl` holds all six helpers — `hash21`, `value_noise`, `visible`,
-  `fbm4` (four octaves), `fbm3` (three) and `stripes` — and each shader imports by path
-  only the names it calls (`#import "shaders/noise.wgsl"::{value_noise, visible, fbm3,
-  fbm4}` here — the hash reaches it inside `value_noise`; `roof.wgsl` takes its own
-  subset, `crown.wgsl` only `fbm3`), so a rule that must not drift is kept in one place.
+  `assets/shaders/noise.wesl` holds all six helpers — `hash21`, `value_noise`, `visible`,
+  `fbm4` (four octaves), `fbm3` (three) and `stripes` — and each shader imports only
+  the names it calls (`import super::noise::{value_noise, visible, fbm3, fbm4};` here —
+  the hash reaches it inside `value_noise`; `roof.wesl` takes its own
+  subset, `crown.wesl` only `fbm3`), so a rule that must not drift is kept in one place.
   **Only what more than one shader calls moves there**: `dash_distance` (lane dashes)
-  lives in `paint.wgsl` and `band` (the drive between garage rows) in `roof.wgsl`,
+  lives in `paint.wesl` and `band` (the drive between garage rows) in `roof.wesl`,
   each with a single consumer — a helper calling the library is not itself a reason to
   move it into the library. The surface material itself — the per-`SurfaceKind` noise
   params, the `Ribbon` attribute, the dropped sprite grain — is in
@@ -494,7 +494,7 @@ extraction; re-attempting it means going through the curb pin tests
   `spawn_building_meshes`), `layers.rs` the facade band, the roofs and the 2.5D walls,
   `shadows.rs` the two shadow layers, `roofs.rs` the pitched and the landmark roofs,
   `temples.rs` + `fortress.rs` the churches and the kremlin, `heights.rs` the storeys
-  inferred where OSM carries no height, `material.rs` (shader `assets/shaders/roof.wgsl`)
+  inferred where OSM carries no height, `material.rs` (shader `assets/shaders/roof.wesl`)
   the roof and wall material, `clutter.rs` what stands on a roof, `garages.rs` the garage
   rows, `arches.rs` the passage openings, `order.rs` the painter's order the whole thing
   is drawn in. Which of the layers exist at all is **`BuildingHeightMode`** (resource,

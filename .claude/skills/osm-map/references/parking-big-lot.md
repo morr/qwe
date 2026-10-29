@@ -192,7 +192,7 @@ roundabout in the city and the lot only subtracts it from its kerb.
   merge into a solid point
   (`an_island_outline_stays_inside_and_does_not_overlap_the_hatching`). The hatching
   is a paint area too (`LineKind::Hatch`, `MeshBuilder::push_paint_area` — the ribbon
-  attribute carries the world coordinate across the stripes), and `paint.wgsl` draws
+  attribute carries the world coordinate across the stripes), and `paint.wesl` draws
   the stripes and fades them into their mean share when they get finer than a few
   pixels, with the zebras' zoom (`PaintTag::Zebras`). Its own mesh,
   `road_paint_islands` at `Z_ROAD_ISLANDS` 2.0035: above a lot's asphalt and its

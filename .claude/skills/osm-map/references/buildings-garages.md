@@ -95,7 +95,7 @@ no spread). `CONTEXT.md` carries the **Garage rows** glossary entry.
     A fixed metre pitch phased to one end — what this was
     first — leaves a sliver of a bay at the other.
     **`BAY` and `ROW_PITCH` are targets, not divisors**, exactly as `PANEL_WIDTH` is on a
-    wall, and neither number is mirrored in `roof.wgsl` any more: the shader is handed
+    wall, and neither number is mirrored in `roof.wesl` any more: the shader is handed
     cells and takes `fract` of them.
   - **What is drawn**: a seam on every bay boundary — the only thing that survives to
     city zoom, and the thing that makes the ribbon a comb — plus ±10 % of paint tone per
@@ -115,7 +115,7 @@ no spread). `CONTEXT.md` carries the **Garage rows** glossary entry.
     (`garage_shade`): it has no roof age, and the one thing it still reads in metres is
     the rust, which lives on the roof rather than in the run's cells.
   - **The wall of a run is the ribbon's other half** (`WallKind::GarageDoors`,
-    `layers::wall_of_run`, `roof.wgsl::gate_of`) — and it has to be, because from the
+    `layers::wall_of_run`, `roof.wesl::gate_of`) — and it has to be, because from the
     south a ГСК is *read by its gates* the way it is read from above by its comb.
     The cell of that wall is the **bay** rather than the 3.2 m panel
     (`layers::cell_width`), so a gate stands under its own roof seam; a gate is

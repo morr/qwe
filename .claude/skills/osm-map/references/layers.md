@@ -64,7 +64,7 @@ The layers that are neither roads, parking, buildings nor trees. Each bullet is 
   - **The mouth.** The channel ribbon has its own **shore** — the same distance field as
     the **Shoal** (`WATER_SHORE_COLOR`, `WATER_SHORE_WIDTH` 6 m, unclamped, so a 2.5 m
     stream is pale across its whole width like a narrow arm) — laid in
-    `surface.wgsl` by the ribbon's `across`, since a ribbon has no ring to offset. That is
+    `surface.wesl` by the ribbon's `across`, since a ribbon has no ring to offset. That is
     not enough on its own: an OSM channel typically runs on **inside** the area water it
     flows into (a river's own centreline lies inside its `riverbank`), and there its light edges would be two shoal
     lines across deep water, while its deep middle cut the shoal with

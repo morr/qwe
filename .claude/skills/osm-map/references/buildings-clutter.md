@@ -104,7 +104,7 @@ glossary entries.
     (`BuildingPlan::game`), `push_items` marks every clutter vertex by a **negative**
     material slot (`MeshBuilder::set_clutter`, `[0, 0, -1, 0]`; the fragment reads the
     slot through `max(…, 0)`, so it is still "no texture"), and on the far step
-    `material::show_roof_clutter` sets `RoofParams::clutter` to 0, on which `roof.wgsl`'s
+    `material::show_roof_clutter` sets `RoofParams::clutter` to 0, on which `roof.wesl`'s
     vertex stage sends those vertices to one point past the far plane — degenerate,
     clipped, no fragments. It runs every frame (one asset read and a compare; it writes
     only on a crossing), so the unflagged `seed_zoom_bucket` needs no second call.

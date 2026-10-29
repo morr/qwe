@@ -317,7 +317,7 @@ stand, how density works, and which resources restyle them.
   **The zoom caps the prefix too**) — each on its own z, which keeps the same guarantee:
   the trap is many items on **one** z, not a few items on distinct ones.
 - **The canopy material — `CrownMaterial`** (`map/trees/canopy.rs`, shader
-  `assets/shaders/crown.wgsl`, registered as a `Material2dPlugin` in `map/mod.rs`) —
+  `assets/shaders/crown.wesl`, registered as a `Material2dPlugin` in `map/mod.rs`) —
   the crown is drawn by a `Material2d` of its own rather than by `ColorMaterial`, because
   a flat fill is what made it read as clip art. The geometry is untouched (watabou draws
   the right *silhouette*); what the shader adds is what a canopy has from above and a
