@@ -1,13 +1,19 @@
+use super::super::Meadows;
 use super::super::VergeZoomBucket;
+use super::super::drawn::Drawn;
 use super::super::network::pairs::PairRun;
+use super::super::scraps::Scraps;
 use super::super::shape::RoadShape;
 use super::super::tapers::Taper;
+use super::gather::Fill;
 use super::*;
 use crate::map::RoadStyle;
+use crate::map::meshing::MeshBuilder;
 use crate::map::osm::Highway;
 use crate::map::osm::fixture::street;
 use crate::map::osm::model::point_in_polygon;
-use crate::map::osm::{MapData, RoadLine};
+use crate::map::osm::{MapData, RoadClass, RoadLine};
+use bevy::prelude::*;
 
 fn returns_of(roads: &[RoadLine]) -> Vec<(RoadClass, Vec<Vec2>)> {
     walked_returns_of(roads, false).roads
