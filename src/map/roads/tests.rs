@@ -1,5 +1,6 @@
 use super::drawn::centerline;
 use super::network::pairs::Pairs;
+use super::ribbons::{BAND_SEAM_OVERLAP, BAND_SEAM_TAPER, push_sidewalk};
 use super::*;
 use crate::map::footprint::casing_width;
 use crate::map::meshing::distance_to_path;

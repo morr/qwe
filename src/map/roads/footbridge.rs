@@ -8,8 +8,8 @@
 
 use bevy::prelude::*;
 
-use super::BAND_SEAM_OVERLAP;
 use super::network::RoadNodes;
+use super::ribbons::BAND_SEAM_OVERLAP;
 use super::tapers;
 use crate::map::meshing::{MeshBuilder, miter_offsets};
 use crate::map::osm::model::polyline_length;
