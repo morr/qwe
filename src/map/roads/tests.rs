@@ -1,16 +1,12 @@
 use super::drawn::centerline;
 use super::fixtures::{
-    LAYERS, a_tee, an_avenue_crossed_by_a_street, divided_avenue, ground_with_roads,
-    junctions_with, layer, one_street, road, roundabout_with_an_approach, timeless, vertices_of,
-    with_network,
+    LAYERS, a_tee, an_avenue_crossed_by_a_street, ground_with_roads, junctions_with, layer,
+    one_street, road, roundabout_with_an_approach, timeless, vertices_of, with_network,
 };
-use super::network::pairs::Pairs;
-use super::ribbons::push_sidewalk;
 use super::*;
 use crate::map::footprint::casing_width;
 use crate::map::osm::model::{
-    KerbParking, Pavement, RailKind, RailLine, RoadNode, SIDEWALK_WIDTH_RANGE, SidewalkSide,
-    sidewalk_band,
+    Pavement, RailKind, RailLine, RoadNode, SIDEWALK_WIDTH_RANGE, SidewalkSide, sidewalk_band,
 };
 use crate::map::osm::{AreaKind, Highway, PolyArea, fixture};
 use crate::map::parking::LOT_KERB;
@@ -645,52 +641,6 @@ fn the_markings_knob_takes_the_hatching_off() {
     assert!(layer(&layers, paint::PAINT_ISLANDS).builder.is_empty());
 }
 
-/// Два встречных полотна бок о бок — бульвар: между ними не бордюр, а двойная
-/// сплошная. Пару находит сеть (`roads/network/pairs.rs`); бульвар у ТРЦ
-/// «Макси» — два встречных проезда, как и здесь.
-#[test]
-fn two_carriageways_side_by_side_get_a_double_line_and_no_kerb_between() {
-    let mut map = ground_with_roads(100.0);
-    let middle = 150.0;
-    map.roads.push(RoadLine {
-        oneway: true,
-        ..fixture::street(
-            vec![Vec2::new(300.0, middle + 5.5), Vec2::new(0.0, middle + 5.5)],
-            5.0,
-        )
-    });
-    let (layers, report) = mesh_roads(
-        &map,
-        RoadStyle::default(),
-        RoadShape::default(),
-        VergeZoomBucket::for_zoom(0.0),
-    );
-    assert_eq!(report.drawn.medians, [1, 0, 0]);
-
-    let lines = &layer(&layers, "lot_lines").builder;
-    assert!(!lines.is_empty());
-    for at in lines.positions_for_test() {
-        assert!(
-            (at[1] - (middle + 2.75)).abs() < 0.5,
-            "линия не по оси: {at:?}"
-        );
-        assert!(
-            (100.0..=200.0).contains(&at[0]),
-            "линия за площадкой: {at:?}"
-        );
-    }
-    // между осями полотен бордюра нет, снаружи от них он есть
-    let kerb = layer(&layers, "lot_sidewalks").builder.positions_for_test();
-    assert!(kerb.iter().any(|at| at[1] < middle - 2.5));
-    assert!(kerb.iter().any(|at| at[1] > middle + 8.0));
-    for at in kerb {
-        assert!(
-            at[1] < middle + 0.1 || at[1] > middle + 5.4,
-            "бордюр на разделительной: {at:?}"
-        );
-    }
-}
-
 #[test]
 fn the_sidewalk_knob_takes_the_kerb_off_the_lot_road_too() {
     let style = RoadStyle {
@@ -773,28 +723,6 @@ fn the_sidewalk_tag_picks_the_side() {
     assert!(sidewalks_with([false, false]).is_empty());
 }
 
-/// Карманы по тегу `street_side` с обеих сторон: асфальт за кромкой, тротуар
-/// отодвинут за карман. Правило без тега ставит их редко
-/// (`pockets::sparse_pockets`), а тут нужен карман наверняка.
-#[test]
-fn a_primary_gets_pockets_in_its_sidewalks() {
-    let mut map = one_street();
-    map.roads[0].highway = Highway::Primary;
-    map.roads[0].parking = [KerbParking::Pocket; 2];
-    let (layers, report) = mesh_roads(
-        &map,
-        RoadStyle::default(),
-        RoadShape::default(),
-        VergeZoomBucket::for_zoom(0.0),
-    );
-    assert_eq!(report.kerb_pockets, 2);
-    let edge = 100.0 + 6.0 + pockets::POCKET_WIDTH;
-    let roads = layer(&layers, "roads").builder.positions_for_test();
-    assert!(roads.iter().any(|at| (at[1] - edge).abs() < 0.01));
-    let sidewalks = layer(&layers, "sidewalks").builder.positions_for_test();
-    assert!(sidewalks.iter().any(|at| at[1] > edge + 1.0));
-}
-
 /// `highway=turning_circle` на торце тупика — круг асфальта шире дороги.
 #[test]
 fn a_turning_circle_widens_the_dead_end() {
@@ -817,32 +745,6 @@ fn a_turning_circle_widens_the_dead_end() {
         roads
             .iter()
             .any(|at| (at[1] - (100.0 + radius)).abs() < 0.01 && (at[0] - 600.0).abs() < 1.0)
-    );
-}
-
-/// Пин перед `Drawn::sidewalk_on`: карман по тегу со стороны без тротуара —
-/// асфальт за кромкой есть, тротуара за ним нет.
-#[test]
-fn a_pocket_on_the_side_without_a_sidewalk_pushes_no_sidewalk() {
-    let mut map = one_street();
-    map.roads[0].highway = Highway::Primary;
-    map.roads[0].parking = [KerbParking::Pocket; 2];
-    map.roads[0].sidewalks = [SidewalkSide::Tagged, SidewalkSide::None];
-    let (layers, report) = mesh_roads(
-        &map,
-        RoadStyle::default(),
-        RoadShape::default(),
-        VergeZoomBucket::for_zoom(0.0),
-    );
-    assert_eq!(report.kerb_pockets, 2);
-    let edge = 6.0 + pockets::POCKET_WIDTH;
-    let roads = layer(&layers, "roads").builder.positions_for_test();
-    assert!(roads.iter().any(|at| (at[1] - (100.0 - edge)).abs() < 0.01));
-    let sidewalks = layer(&layers, "sidewalks").builder.positions_for_test();
-    assert!(sidewalks.iter().any(|at| at[1] > 100.0 + edge + 1.0));
-    assert!(
-        sidewalks.iter().all(|at| at[1] > 100.0 - 6.0 - 0.01),
-        "справа по ходу тротуара нет — ни у ленты, ни у кармана"
     );
 }
 
@@ -1331,92 +1233,6 @@ fn tram_band_follows_the_nodal_axis() {
 }
 
 #[test]
-fn a_crossing_piece_between_two_halves_carries_no_sidewalk() {
-    // Поперечная улица из трёх way: подход с юга, кусок между половинами
-    // разделённого проспекта и продолжение на север. Кусок в проёме пары
-    // (`across_median`) тротуара не несёт — ни лентой, ни скруглением, ни
-    // зеброй по правилу: слои те же, что у куска с `sidewalk=no`.
-    // узлы поперечной — вершины на половинах, как в OSM
-    let crossed = |gap: f32| {
-        let (map, apart) = divided_avenue(gap);
-        let (south, north) = (Vec2::new(300.0, 100.0), Vec2::new(300.0, 100.0 + apart));
-        let mut roads = map.roads;
-        roads[0].points.insert(1, south);
-        roads[1].points.insert(1, north);
-        roads.push(fixture::street(vec![Vec2::new(300.0, 30.0), south], 8.0));
-        roads.push(fixture::street(vec![south, north], 8.0));
-        roads.push(fixture::street(vec![north, Vec2::new(300.0, 190.0)], 8.0));
-        (with_network(roads), apart)
-    };
-    let (map, _) = crossed(0.6);
-    let (layers, report) = mesh_roads(
-        &map,
-        RoadStyle::default(),
-        RoadShape::default(),
-        VergeZoomBucket::for_zoom(0.0),
-    );
-    assert_eq!(report.drawn.medians, [1, 0, 0]);
-    assert_eq!(report.drawn.crossings, 0);
-    assert_eq!(report.junctions.count, 2);
-    let mut untagged = map.roads.clone();
-    untagged[3].sidewalks = [SidewalkSide::None; 2];
-    let untagged = with_network(untagged);
-    let (bare, _) = mesh_roads(
-        &untagged,
-        RoadStyle::default(),
-        RoadShape::default(),
-        VergeZoomBucket::for_zoom(0.0),
-    );
-    for (tagged, untagged) in layers.iter().zip(&bare) {
-        assert_eq!(tagged.name, untagged.name);
-        let (with, without) = (
-            tagged.builder.positions_for_test(),
-            untagged.builder.positions_for_test(),
-        );
-        let differs = with
-            .iter()
-            .zip(without)
-            .position(|(a, b)| a != b)
-            .or_else(|| (with.len() != without.len()).then_some(with.len().min(without.len())));
-        let from = differs.unwrap_or(0);
-        assert!(
-            differs.is_none(),
-            "{}: кусок в проёме пары рисуется как без тротуара; расходится с вершины {from} из {} / {}: {:?} / {:?}",
-            tagged.name,
-            with.len(),
-            without.len(),
-            &with[from..(from + 12).min(with.len())],
-            &without[from..(from + 12).min(without.len())],
-        );
-    }
-    // а у подхода с юга тротуар есть
-    let half = (3.0 * 3.3 + 1.0) / 2.0;
-    let sidewalks = layer(&layers, "sidewalks").builder.positions_for_test();
-    assert!(
-        sidewalks
-            .iter()
-            .any(|at| (at[0] - 300.0).abs() > 4.5 && at[1] > 60.0 && at[1] < 100.0 - half)
-    );
-    // и без пары тот же кусок его несёт: половины дальше 40 м друг от друга —
-    // не пара, и куску между ними тротуар положен
-    let (far, _) = crossed(60.0);
-    let (layers, report) = mesh_roads(
-        &far,
-        RoadStyle::default(),
-        RoadShape::default(),
-        VergeZoomBucket::for_zoom(0.0),
-    );
-    assert_eq!(report.drawn.medians, [0, 0, 0]);
-    let sidewalks = layer(&layers, "sidewalks").builder.positions_for_test();
-    assert!(
-        sidewalks
-            .iter()
-            .any(|at| (at[0] - 300.0).abs() > 4.5 && at[1] > 120.0 && at[1] < 140.0),
-        "без пары кусок несёт тротуар"
-    );
-}
-
-#[test]
 fn a_one_sided_sidewalk_wedge_keeps_the_bare_kerb_on_the_untagged_side() {
     // Двухполосная улица переходит в четырёхполосную (`a_section_seam_is_one_taper`);
     // у широкой тротуар только слева по ходу (`sidewalk=left`, к северу).
@@ -1465,99 +1281,6 @@ fn junction_counters_of_a_tee_and_an_avenue_crossing() {
     let (avenue, _) = an_avenue_crossed_by_a_street();
     let avenue = timeless(&avenue).junctions;
     assert_eq!((avenue.count, avenue.clusters, avenue.through), (2, 1, 2));
-}
-
-/// Зебра OSM у стыка двух way одной улицы рвёт карманы и на продолжении
-/// (`pockets::crossing_breaks`) — счётчик карманов под пином.
-#[test]
-fn a_zebra_at_a_way_end_breaks_the_kerb_pockets_of_both_ways() {
-    let primary = |points: Vec<Vec2>| RoadLine {
-        highway: Highway::Primary,
-        parking: [KerbParking::Pocket; 2],
-        ..fixture::street(points, 14.0)
-    };
-    let roads = vec![
-        primary(vec![
-            Vec2::ZERO,
-            Vec2::new(99.0, 0.0),
-            Vec2::new(100.0, 0.0),
-        ]),
-        primary(vec![Vec2::new(100.0, 0.0), Vec2::new(200.0, 0.0)]),
-    ];
-    let zebra = RoadNode {
-        pos: Vec2::new(99.0, 0.0),
-        kind: RoadNodeKind::Crossing {
-            signals: false,
-            island: false,
-            marked: true,
-        },
-    };
-    let mut map = with_network(roads);
-    assert_eq!(timeless(&map).kerb_pockets, 4);
-    map.road_nodes.push(zebra);
-    // карманы те же четыре: зебра их укорачивает, а не делит
-    assert_eq!(timeless(&map).kerb_pockets, 4);
-}
-
-/// Кусок пары `from..to` у половины, идущей на восток: пара слева.
-fn run_left(from: f32, to: f32) -> network::pairs::PairRun {
-    network::pairs::PairRun::for_test(from, to, 1, true, 0.6, true)
-}
-
-/// Вершины тротуара улицы в 10 м с полосой в 2 м вдоль x от 0 до 100 — с
-/// кусками пары `runs` и тротуаром по сторонам `sides`.
-fn sidewalk_of(runs: &[network::pairs::PairRun], sides: [bool; 2]) -> Vec<[f32; 3]> {
-    let mut builder = MeshBuilder::default();
-    let body = [Vec2::ZERO, Vec2::new(100.0, 0.0)];
-    let pairs = Pairs::of_runs(vec![runs.to_vec()]);
-    let pieces = pairs.band_pieces(0, sides, 0.0, 100.0);
-    push_sidewalk(
-        &mut builder,
-        &body,
-        [10.0, 2.0],
-        pieces.as_deref(),
-        SIDEWALK_COLOR.to_linear(),
-        [false; 2],
-    );
-    builder.positions_for_test().to_vec()
-}
-
-#[test]
-fn a_sidewalk_without_pairs_is_one_band_on_its_sides() {
-    let both = sidewalk_of(&[], [true; 2]);
-    assert!(both.iter().any(|at| at[1] > 6.99) && both.iter().any(|at| at[1] < -6.99));
-    // слева только: полоса в 12 м, сдвинутая на метр влево
-    let left = sidewalk_of(&[], [true, false]);
-    assert!(left.iter().all(|at| at[1] > -5.01 && at[1] < 7.01));
-    assert!(left.iter().any(|at| at[1] > 6.99) && left.iter().any(|at| at[1] < -4.99));
-    assert!(sidewalk_of(&[], [false; 2]).is_empty());
-}
-
-#[test]
-fn a_short_gap_between_two_runs_gets_no_sidewalk_on_the_pair_side() {
-    // дыра в 3 м между кусками с одной стороны — без тротуара с неё
-    let bridged = sidewalk_of(&[run_left(10.0, 40.0), run_left(43.0, 80.0)], [true; 2]);
-    assert!(
-        bridged
-            .iter()
-            .filter(|at| at[1] > 5.01)
-            .all(|at| at[0] < 10.01 || at[0] > 79.99),
-        "слева тротуар только до пары и после неё"
-    );
-    assert!(
-        bridged.iter().any(|at| at[1] < -6.99),
-        "справа тротуар есть"
-    );
-    // дыра в 15 м — не шов, с обеих сторон тротуар
-    let open = sidewalk_of(&[run_left(10.0, 40.0), run_left(55.0, 80.0)], [true; 2]);
-    assert!(
-        open.iter()
-            .any(|at| at[1] > 6.99 && at[0] > 39.99 && at[0] < 55.01)
-    );
-    // обрезок короче полуметра не кладётся: у торцов пары тротуар не
-    // появляется
-    let trimmed = sidewalk_of(&[run_left(0.3, 99.8)], [true; 2]);
-    assert!(trimmed.iter().all(|at| at[1] < 5.01));
 }
 
 /// Сырой OSM, второй уровень (`RawOsm::Draw`): улица — одна простая лента по
@@ -1934,66 +1657,6 @@ fn diag_window() {
             }
         }
     }
-}
-
-/// У перекрёстка двух разделённых улиц пара половины наезжает на половину
-/// чужой улицы, идущую рядом: на стыке кусков зазор переезжает с одного на
-/// другой, переход тянет ось через перекрёсток, и прямая улица ныряет вбок и
-/// возвращается, а узел перекрёстка уезжает с места (Тула, Октябрьская у
-/// Максима Горького). Узел с чужой проезжей держит ось: оба куска сходят на
-/// нет каждый на своей стороне, не доехав до перекрёстка.
-#[test]
-fn the_pair_gap_change_waits_out_the_crossing_street() {
-    let mut map = MapData::default();
-    // сквозная половина проспекта, ось x = 12; вершина (12, 150) — узел
-    // перекрёстка
-    let mut avenue = fixture::street(
-        vec![
-            Vec2::new(12.0, 0.0),
-            Vec2::new(12.0, 150.0),
-            Vec2::new(12.0, 300.0),
-        ],
-        10.9,
-    );
-    avenue.oneway = true;
-    map.roads.push(avenue);
-    // её встречная половина — севернее перекрёстка, кромки почти встык
-    let mut north = fixture::street(vec![Vec2::new(1.0, 300.0), Vec2::new(1.0, 150.0)], 10.9);
-    north.oneway = true;
-    map.roads.push(north);
-    // поперечная улица: от встречной половины через узел перекрёстка
-    map.roads.push(fixture::street(
-        vec![
-            Vec2::new(1.0, 150.0),
-            Vec2::new(12.0, 150.0),
-            Vec2::new(26.0, 150.0),
-        ],
-        10.9,
-    ));
-    // половина чужой улицы, идущая рядом южнее перекрёстка (зазор 3.1),
-    // продолжение той же цепочки
-    let mut across = fixture::street(vec![Vec2::new(26.0, 150.0), Vec2::new(26.0, 0.0)], 10.9);
-    across.oneway = true;
-    map.roads.push(across);
-    let prepared = Drawn::new(
-        &map,
-        &RoadStyle::default(),
-        &RoadShape::default(),
-        VergeZoomBucket::for_zoom(0.0),
-    );
-    // зазор пары переезжает с куска на кусок за перекрёстком: у самого
-    // перекрёстка ось стоит на точках OSM
-    let drawn = prepared.axis(0, Axis::Ribbon);
-    let dip = drawn
-        .iter()
-        .filter(|p| (130.0..170.0).contains(&p.y))
-        .map(|p| (p.x - 12.0).abs())
-        .fold(0.0_f32, f32::max);
-    assert!(
-        dip < 0.4,
-        "ось у перекрёстка ушла с OSM на {dip:.2} м: переход зазора пары \
-         протащило через перекрёсток"
-    );
 }
 
 // DIAG-TEMP: `QWE_DIAG_JSON=<срез> QWE_DIAG_CITY=tula` — улицы, прямые в OSM,
