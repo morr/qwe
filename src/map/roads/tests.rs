@@ -1,4 +1,9 @@
 use super::drawn::centerline;
+use super::fixtures::{
+    LAYERS, a_tee, an_avenue_crossed_by_a_street, divided_avenue, ground_with_roads,
+    junctions_with, layer, one_street, polar, road, roundabout_with_an_approach, timeless,
+    to_break_where, vertices_of, with_network,
+};
 use super::network::pairs::Pairs;
 use super::ribbons::{BAND_SEAM_OVERLAP, BAND_SEAM_TAPER, push_sidewalk};
 use super::verges::{
@@ -14,14 +19,6 @@ use crate::map::osm::model::{
 use crate::map::osm::{AreaKind, Highway, LotKind, PolyArea, fixture};
 use crate::map::parking::LOT_KERB;
 use crate::map::smooth::Smoothing;
-
-fn road(points: Vec<Vec2>, width: f32, passage: bool) -> RoadLine {
-    RoadLine {
-        class: RoadClass::Alley,
-        passage,
-        ..fixture::street(points, width)
-    }
-}
 
 #[test]
 fn passage_roads_are_not_smoothed() {
@@ -251,58 +248,6 @@ fn the_city_wall_ribbon_stays_off_fortress_buildings() {
 // Тесты на `mesh_roads`. До шва девять слоёв, три вида материала и вся
 // телеметрия области жили внутри `spawn_roads` — 275 строк, взять которые из
 // теста было нечем: проверять можно было только хелперы под ними.
-
-/// Двадцать пять дорожных слоёв снизу вверх, ровно в том порядке, в каком
-/// они уходят в мир: газон островов колец и их трава без канта, газон широких
-/// обочин лугом и травой двора, двенадцать лент и восемь слоёв краски над своим асфальтом — колея
-/// траекторий узла (маска, потом наложение) ниже линий, островки колец над
-/// асфальтом стоянок. Грунтовки — под асфальтом улиц, обочины — под всей
-/// зеленью, их газон — под их плиткой, газон острова — под всем, его трава —
-/// над замапленной травой. Настил переездов (`rail_crossings`) — между
-/// шпалами и сталью путей, то есть над всей краской улиц и под мостами.
-const LAYERS: [&str; 25] = [
-    "ring_islands",
-    "road_verge_lawns",
-    "road_verge_yards",
-    "road_verges",
-    "ring_island_grass",
-    "alleys",
-    "sidewalks",
-    "road_medians",
-    "unpaved_roads",
-    "roads",
-    paint::PAINT_WEAR_MASK,
-    paint::PAINT_WEAR,
-    paint::PAINT_ZEBRAS,
-    paint::PAINT_LANES,
-    paint::PAINT_AXES,
-    "lot_sidewalks",
-    "lot_lines",
-    paint::PAINT_ISLANDS,
-    "rail_crossings",
-    "bridge_shadows",
-    "bridge_casings",
-    "bridges",
-    paint::BRIDGE_PAINT_LANES,
-    paint::BRIDGE_PAINT_AXES,
-    "walls",
-];
-
-fn one_street() -> MapData {
-    let mut map = MapData::default();
-    map.roads.push(fixture::street(
-        vec![Vec2::new(100.0, 100.0), Vec2::new(600.0, 100.0)],
-        12.0,
-    ));
-    map
-}
-
-fn layer<'a>(layers: &'a [LayerMesh], name: &str) -> &'a LayerMesh {
-    layers
-        .iter()
-        .find(|layer| layer.name == name)
-        .unwrap_or_else(|| panic!("слой {name} описан на любом стиле"))
-}
 
 #[test]
 fn a_street_builds_twenty_five_layers_bottom_up() {
@@ -820,42 +765,6 @@ fn the_sidewalk_knob_fills_the_sidewalk_layer() {
 
     assert_eq!(sidewalk_verts(false), 0);
     assert!(sidewalk_verts(true) > 0);
-}
-
-/// Улица с вершиной посередине и вторая, выходящая из неё **этой же** точкой:
-/// у Overpass нет id нод, и перекрёсток восстанавливается по совпадению
-/// координат, так что общая вершина обязана быть у обеих.
-fn a_tee() -> MapData {
-    let mut map = MapData::default();
-    map.roads.push(fixture::street(
-        vec![
-            Vec2::new(100.0, 100.0),
-            Vec2::new(350.0, 100.0),
-            Vec2::new(600.0, 100.0),
-        ],
-        12.0,
-    ));
-    map.roads.push(fixture::street(
-        vec![Vec2::new(350.0, 100.0), Vec2::new(350.0, 400.0)],
-        10.0,
-    ));
-    map
-}
-
-fn junctions_with(map: &MapData, markings: bool) -> usize {
-    let style = RoadStyle {
-        markings,
-        ..RoadStyle::default()
-    };
-    mesh_roads(
-        map,
-        style,
-        RoadShape::default(),
-        VergeZoomBucket::for_zoom(0.0),
-    )
-    .1
-    .junctions
-    .count
 }
 
 #[test]
@@ -1796,40 +1705,6 @@ fn an_empty_map_still_describes_every_layer() {
     assert_eq!(report.vertices, 0);
 }
 
-/// Большая стоянка с дорогой сквозь неё: `through` — односторонняя, уходит за
-/// оба края площадки; проезд ряда лежит внутри целиком.
-fn ground_with_roads(lot_side: f32) -> MapData {
-    let mut map = MapData::default();
-    // вид решает разбор по площади: 100 × 100 — большая, 60 × 60 — двор
-    let kind = if lot_side * lot_side >= 8000.0 {
-        LotKind::Ground
-    } else {
-        LotKind::Yard
-    };
-    map.parking.push(fixture::area(
-        AreaKind::Parking(kind),
-        vec![
-            Vec2::new(100.0, 100.0),
-            Vec2::new(100.0 + lot_side, 100.0),
-            Vec2::new(100.0 + lot_side, 100.0 + lot_side),
-            Vec2::new(100.0, 100.0 + lot_side),
-        ],
-    ));
-    let middle = 100.0 + lot_side / 2.0;
-    map.roads.push(RoadLine {
-        oneway: true,
-        ..fixture::street(
-            vec![Vec2::new(0.0, middle), Vec2::new(200.0 + lot_side, middle)],
-            5.0,
-        )
-    });
-    map.roads.push(fixture::parking_aisle(vec![
-        Vec2::new(middle, 110.0),
-        Vec2::new(middle, 90.0 + lot_side),
-    ]));
-    map
-}
-
 fn extent_x(builder: &MeshBuilder) -> (f32, f32) {
     builder
         .positions_for_test()
@@ -1883,33 +1758,6 @@ fn a_small_lot_still_hides_every_road_on_it() {
     );
     assert!(layer(&layers, "lot_sidewalks").builder.is_empty());
     assert!(layer(&layers, "lot_lines").builder.is_empty());
-}
-
-/// Кольцо радиусом 12 м в начале координат и два односторонних подхода к нему,
-/// сходящиеся в одну дорогу в полусотне метров, — въезд и съезд одной улицы.
-///
-/// `tagged` — несёт ли кольцо `junction=roundabout`, `oneway` — одностороннее ли
-/// оно: кольцо без тега в OSM обычное дело.
-fn roundabout_with_an_approach(tagged: bool, oneway: bool) -> MapData {
-    let circle: Vec<Vec2> = (0..=24)
-        .map(|step| Vec2::from_angle(step as f32 * std::f32::consts::TAU / 24.0) * 12.0)
-        .collect();
-    let arm = |turn: f32, side: f32| RoadLine {
-        oneway: true,
-        ..fixture::street(
-            vec![circle[(24.0 + turn) as usize % 24], Vec2::new(55.0, side)],
-            5.0,
-        )
-    };
-    let mut map = MapData::default();
-    map.roads.push(RoadLine {
-        oneway,
-        roundabout: tagged,
-        ..fixture::street(circle.clone(), 8.0)
-    });
-    map.roads.push(arm(2.0, 1.5));
-    map.roads.push(arm(-2.0, -1.5));
-    map
 }
 
 /// Обочина у дуги кольца — только снаружи: внутри остров и его газон, а
@@ -2462,14 +2310,6 @@ fn rule_zebras_do_not_follow_the_sidewalk_knob() {
         zebras(true),
         "ручка тротуаров зебру не трогает"
     );
-}
-
-/// Разделённый проспект (`fixture::divided_avenue`) картой **без сети** —
-/// «собранной тестом руками» ([`MapData::network`]): слоям дороги сеть не
-/// нужна. Возвращает карту и расстояние между осями.
-fn divided_avenue(gap: f32) -> (MapData, f32) {
-    let (roads, apart) = fixture::divided_avenue(gap, None);
-    (MapData { roads, ..default() }, apart)
 }
 
 #[test]
@@ -3306,27 +3146,6 @@ fn an_arm_is_filled_before_its_leader_even_when_it_leads_elsewhere() {
     );
 }
 
-/// Отчёт без часов: два прогона одной карты обязаны совпасть до поля.
-fn timeless(map: &MapData) -> RoadReport {
-    let (_, mut report) = mesh_roads(
-        map,
-        RoadStyle::default(),
-        RoadShape::default(),
-        VergeZoomBucket::for_zoom(0.0),
-    );
-    report.network = Default::default();
-    report.elapsed = Default::default();
-    report
-}
-
-fn with_network(roads: Vec<RoadLine>) -> MapData {
-    MapData {
-        network: network::RoadNetwork::new(&roads),
-        roads,
-        ..default()
-    }
-}
-
 /// Въезд с улицы через тротуар, как его размечает OSM: проезд — дорожка
 /// поперёк тротуара — снова проезд. Дорожка — `2`.
 fn a_driveway() -> MapData {
@@ -3724,11 +3543,6 @@ fn a_ring_of_arcs_lays_one_closed_fill_without_seam_slits() {
     }
 }
 
-/// Точка на круге радиуса `radius` под углом `degrees`.
-fn polar(radius: f32, degrees: f32) -> Vec2 {
-    Vec2::from_angle(degrees.to_radians()) * radius
-}
-
 /// Горло съезда: съезд уходит с кольца по касательной, и от узла до места,
 /// где его сечение вышло из асфальта кольца, линия наружной полосы кольца
 /// рвётся, а внутренняя идёт насквозь. Пунктир наружной шёл поперёк горла
@@ -3933,19 +3747,6 @@ fn a_divided_street_merging_into_a_two_way_one_is_one_merge() {
     assert_eq!(timeless(&map), report, "отчёт повторяется до поля");
 }
 
-/// Вершины слоя цвета `color` — `[x, y]`.
-fn vertices_of(layers: &[LayerMesh], name: &str, color: Color) -> Vec<[f32; 2]> {
-    let builder = &layer(layers, name).builder;
-    let wanted = color.to_linear().to_f32_array();
-    builder
-        .positions_for_test()
-        .iter()
-        .zip(builder.colors_for_test())
-        .filter(|(_, color)| **color == wanted)
-        .map(|(at, _)| [at[0], at[1]])
-        .collect()
-}
-
 #[test]
 fn tram_band_follows_the_nodal_axis() {
     // Проезд кончается в трёх метрах за кромкой тротуара улицы и пришит к
@@ -4104,43 +3905,6 @@ fn a_one_sided_sidewalk_wedge_keeps_the_bare_kerb_on_the_untagged_side() {
         .map(|at| at[1])
         .fold(f32::MIN, f32::max);
     assert!((top - (wide_half + wide_band)).abs() < 0.05, "{top}");
-}
-
-/// Проспект из двух половин, поперечная жилая пересекает обе: узлы — вершины
-/// на половинах, как в OSM.
-fn an_avenue_crossed_by_a_street() -> (MapData, f32) {
-    let (mut map, apart) = divided_avenue(0.6);
-    let (south, north) = (Vec2::new(300.0, 100.0), Vec2::new(300.0, 100.0 + apart));
-    map.roads[0].points.insert(1, south);
-    map.roads[1].points.insert(1, north);
-    map.roads.push(fixture::street(
-        vec![
-            Vec2::new(300.0, 30.0),
-            south,
-            north,
-            Vec2::new(300.0, 190.0),
-        ],
-        8.0,
-    ));
-    (with_network(map.roads), apart)
-}
-
-/// «До разрыва» (`ATTRIBUTE_RIBBON`) у вершин слоя `name`, что прошли
-/// фильтр; полигоны (нули) не в счёт. У асфальта это второе число, у полосы
-/// краски — третье (`MeshBuilder::push_paint_strip`).
-fn to_break_where(layers: &[LayerMesh], name: &str, keep: impl Fn(&[f32; 3]) -> bool) -> Vec<f32> {
-    let builder = &layer(layers, name).builder;
-    let slot = if name == "roads" { 1 } else { 2 };
-    let coords = builder
-        .ribbon_coords_for_test()
-        .expect("лента с координатами");
-    builder
-        .positions_for_test()
-        .iter()
-        .zip(coords)
-        .filter(|(at, coord)| **coord != [0.0; 4] && keep(at))
-        .map(|(_, coord)| coord[slot])
-        .collect()
 }
 
 /// Разделительная открывается по **базовым** разрывам (`marking_breaks`), а
