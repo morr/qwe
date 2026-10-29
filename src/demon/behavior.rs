@@ -1,7 +1,7 @@
 //! Стейт-машина демона: Wander / Chase / Devour.
 
 use bevy::prelude::*;
-use rand::Rng;
+use rand::RngExt;
 
 use crate::demon::claims::ChaseClaims;
 use crate::demon::components::{

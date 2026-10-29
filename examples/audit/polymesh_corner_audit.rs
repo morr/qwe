@@ -18,7 +18,7 @@ mod common;
 
 use bevy::math::{IVec2, Vec2};
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 
 use qwe::city::City;
 use qwe::grid::{tile_center, world_to_tile};

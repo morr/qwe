@@ -1,7 +1,7 @@
 //! Стейт-машина человека: Wander / Flee, спасение за краем карты.
 
 use bevy::prelude::*;
-use rand::Rng;
+use rand::RngExt;
 
 use crate::demon::{ChaseTarget, Demon};
 use crate::grid::world_to_tile;

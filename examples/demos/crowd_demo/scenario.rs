@@ -18,7 +18,7 @@ use qwe::movement::{
 use qwe::navigation::{ArcNavmesh, Pathfinder, PolyNavmesh, PolymeshDebug, find_path_polymesh};
 use qwe::rng::{PawnId, RngDomain, WanderIndex, decision_stream, stream};
 use qwe::settings::{HUMAN_SIZE, HUMAN_WALK_SPEED, unit_z};
-use rand::Rng;
+use rand::RngExt;
 
 use crate::DemoConfig;
 use crate::metrics::{LastSample, PathMisses, PawnWindow, ProgressSample, WindowOrigin};

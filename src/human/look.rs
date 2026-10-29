@@ -17,7 +17,7 @@
 use std::f32::consts::TAU;
 
 use bevy::prelude::*;
-use rand::Rng;
+use rand::RngExt;
 
 use super::components::{Attire, HumanFleeTag};
 use crate::rng::splitmix64;
@@ -43,7 +43,7 @@ const ATTIRE_LIGHTNESS: std::ops::Range<f32> = 0.30..0.55;
 /// городские значения, а значит — сойдутся ли мерки «до» и «после» у замера,
 /// к цвету отношения не имеющего. Счёт держит тест
 /// `attire_spends_exactly_three_draws`.
-pub(super) fn roll_attire(rng: &mut impl Rng) -> Attire {
+pub(super) fn roll_attire(rng: &mut impl RngExt) -> Attire {
     Attire(Color::hsl(
         rng.random_range(ATTIRE_HUE),
         rng.random_range(ATTIRE_SATURATION),

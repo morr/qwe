@@ -17,7 +17,7 @@ use bevy::input_focus::tab_navigation::TabIndex;
 use bevy::prelude::*;
 use bevy::text::{EditableText, TextCursorStyle, TextEdit};
 use bevy::ui_widgets::Activate;
-use rand::Rng;
+use rand::RngExt;
 
 use super::knob::{AddKnobsExt, CycleBinding, SliderBinding, spawn_cycle_row, spawn_knob};
 use super::rows::{ROW_LEFT_PX, on_off};
