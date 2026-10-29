@@ -11,7 +11,7 @@ use crate::map::osm::model::{
     KerbParking, Pavement, RailKind, RailLine, RoadNode, SIDEWALK_WIDTH_RANGE, SidewalkSide,
     sidewalk_band,
 };
-use crate::map::osm::{Highway, LotKind, fixture};
+use crate::map::osm::{AreaKind, Highway, LotKind, PolyArea, fixture};
 use crate::map::parking::LOT_KERB;
 use crate::map::smooth::Smoothing;
 

@@ -5,11 +5,11 @@
 
 use bevy::prelude::*;
 
-use super::Meadows;
 use super::ROAD_JOIN;
 use super::SIDEWALK_COLOR;
 use super::ribbons::push_ribbon_trimmed;
 use super::scraps;
+use super::walls::Meadows;
 use crate::map::meshing::{MeshBuilder, miter_offsets};
 use crate::map::osm::RoadLine;
 use crate::map::osm::model::polyline_length;
