@@ -606,6 +606,10 @@ pub const Z_NETWORK_OVERLAY: f32 = 29.0;
 pub const Z_OSM_CONTOURS_OVERLAY: f32 = 29.5;
 /// Оверлей линий колеи (`roads/ruts.rs`) — над обоими.
 pub const Z_RUT_OVERLAY: f32 = 29.7;
+/// Подсветка элемента под курсором (`ui/inspector.rs`, галочка highlight) —
+/// над всеми дебаг-оверлеями: она показывает **форму** верхнего элемента
+/// пробы, и накрывать её не должен ни один из них.
+pub const Z_INSPECTOR_HIGHLIGHT: f32 = 29.8;
 
 // Порядок слоёв — один инвариант, разложенный на два десятка отдельных чисел.
 // До этих проверок он держался только на прозе в комментариях выше, и один раз
@@ -729,6 +733,8 @@ const _: () = {
     assert!(Z_CONIFER_NOISE_OVERLAY < Z_NETWORK_OVERLAY);
     assert!(Z_NETWORK_OVERLAY < Z_OSM_CONTOURS_OVERLAY);
     assert!(Z_OSM_CONTOURS_OVERLAY < Z_RUT_OVERLAY);
+    // подсветка инспектора — над всеми оверлеями, она объясняет саму пробу
+    assert!(Z_RUT_OVERLAY < Z_INSPECTOR_HIGHLIGHT);
 };
 
 // --- Деревья (кроны в стиле Watabou, см. .claude/skills/osm-map/references/tree-algo.md) ---

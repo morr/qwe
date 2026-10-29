@@ -24,9 +24,13 @@ use bevy::window::PrimaryWindow;
 
 use super::speed::{PANEL_WIDTH_PX, TelemetryPanel};
 use crate::camera::cursor_offset;
-use crate::map::inspect::{InspectIndex, InspectOrigin, format_hits};
+use crate::map::inspect::{
+    FeatureRef, InspectIndex, InspectOrigin, feature_shape, format_hits, mesh_feature,
+};
 use crate::map::osm::MapData;
+use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
 use crate::map::{RoadStyle, TreeStyle};
+use crate::settings::Z_INSPECTOR_HIGHLIGHT;
 use crate::ui::{GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, panel_background};
 
 /// Зазор между телеметрией и этой панелью, px.
@@ -42,6 +46,26 @@ struct InspectorCameraText;
 
 #[derive(Component, Default)]
 struct InspectorHitsText;
+
+/// Слой подсветки элемента под курсором — помеченные сущности убирает
+/// [`sync_inspector_highlight`].
+#[derive(Component, Clone, Copy)]
+struct InspectorHighlightMarker;
+
+/// Галочка «highlight» панели инспектора: подсвечивать элемент под курсором
+/// на карте прозрачно-жёлтым.
+///
+/// Сессионная, и это осознанное исключение из «каждый UI-ресурс —
+/// `SettingsGroup`»: подсветка — инструмент отладки на один присест, а не
+/// предпочтение игрока, — в `settings.toml` ей места нет, поэтому ни группы,
+/// ни `track_pref`. `Reflect` нужен, чтобы верификация ставила её по BRP до
+/// появления UI.
+#[derive(Resource, Debug, Default, Reflect)]
+#[reflect(Resource, Default)]
+pub struct InspectorHighlight(pub bool);
+
+/// Прозрачно-жёлтый подсветки — элемент читается сквозь слой.
+const HIGHLIGHT_COLOR: Color = Color::srgba(1.0, 1.0, 0.0, 0.3);
 
 /// Корень панели — по нему [`position_below_telemetry`] ставит панель вплотную
 /// под телеметрию.
@@ -72,20 +96,23 @@ impl UiInspectorPlugin {
 impl Plugin for UiInspectorPlugin {
     fn build(&self, app: &mut App) {
         let standalone = self.standalone;
-        app.add_systems(
-            Startup,
-            move |commands: Commands, assets: Res<AssetServer>| {
-                render_inspector_ui(commands, assets, standalone);
-            },
-        )
-        .add_systems(
-            Update,
-            (
-                position_below_telemetry,
-                update_camera_text,
-                update_inspector_hits,
-            ),
-        );
+        app.init_resource::<InspectorHighlight>()
+            .register_type::<InspectorHighlight>()
+            .add_systems(
+                Startup,
+                move |commands: Commands, assets: Res<AssetServer>| {
+                    render_inspector_ui(commands, assets, standalone);
+                },
+            )
+            .add_systems(
+                Update,
+                (
+                    position_below_telemetry,
+                    update_camera_text,
+                    update_inspector_hits,
+                    sync_inspector_highlight,
+                ),
+            );
     }
 }
 
@@ -262,4 +289,99 @@ fn update_inspector_hits(
         format_hits(&hits, INSPECTOR_MAX_LINES)
     };
     text.into_inner().set_if_neq(Text(body));
+}
+
+/// Входы слоя подсветки одним параметром — идиома `LayerMaterials`: у системы
+/// их девять, и clippy считает их за лишние.
+#[derive(SystemParam)]
+struct HighlightLayer<'w, 's> {
+    commands: Commands<'w, 's>,
+    meshes: ResMut<'w, Assets<Mesh>>,
+    materials: LayerMaterials<'w>,
+    overlay: Query<'w, 's, Entity, With<InspectorHighlightMarker>>,
+}
+
+/// Слой подсветки элемента под курсором (галочка `InspectorHighlight`): форма
+/// верхней не-ground находки — [`feature_shape`] + [`mesh_feature`], положенные
+/// паттерном оверлеев (`ui/debug/overlays.rs::respawn_overlay`): прежние
+/// сущности маркера убрать, новый слой — если есть что показывать.
+/// `spawn_layers` ставит слою `DespawnOnExit`. Despawn из `Update` через
+/// команды здесь законен, как и у оверлеев: убираются только свои меченые
+/// сущности.
+///
+/// Пересборка — только при смене верхнего элемента (сравнение с прошлым): пока
+/// курсор ходит по одному зданию, слой не трогается. Этап 4 вынесет общий
+/// расчёт находок в ресурс `InspectorHitsState`; до того система считает их
+/// сама — запрос дешёвый, пересборка по-прежнему редкая.
+fn sync_inspector_highlight(
+    enabled: Res<InspectorHighlight>,
+    camera: Single<(&Transform, &PanCamera), With<Camera2d>>,
+    window: Single<&Window, With<PrimaryWindow>>,
+    inputs: InspectorInputs,
+    layer: HighlightLayer,
+    mut drawn: Local<Option<FeatureRef>>,
+) {
+    // типовой кадр: галочка выключена и слоя нет — работы ноль
+    if !enabled.0 && drawn.is_none() {
+        return;
+    }
+    let InspectorInputs {
+        map,
+        index,
+        origin,
+        trees,
+        roads,
+    } = inputs;
+    let top = match (enabled.0, window.cursor_position(), map.as_deref()) {
+        (true, Some(cursor), Some(map)) if index.is_built() => {
+            let (transform, controller) = camera.into_inner();
+            let point = transform.translation.truncate()
+                + cursor_offset(&window, cursor) * controller.zoom_factor
+                - origin.0;
+            index
+                .hits(map, trees.density, &roads, point)
+                .into_iter()
+                .map(|hit| hit.feature)
+                .find(|feature| *feature != FeatureRef::Ground)
+        }
+        _ => None,
+    };
+    if *drawn == top {
+        return;
+    }
+    let HighlightLayer {
+        mut commands,
+        mut meshes,
+        materials,
+        overlay,
+    } = layer;
+    for entity in overlay.iter() {
+        commands.entity(entity).despawn();
+    }
+    *drawn = top;
+    let Some(feature) = top else {
+        return;
+    };
+    let Some(map) = map else {
+        return;
+    };
+    let Some(shapes) = feature_shape(&map, &roads, feature) else {
+        return;
+    };
+    let builder = mesh_feature(&shapes, HIGHLIGHT_COLOR.to_linear());
+    if builder.is_empty() {
+        return;
+    }
+    spawn_layers(
+        &mut commands,
+        &mut meshes,
+        &materials,
+        [LayerMesh::new(
+            builder,
+            Z_INSPECTOR_HIGHLIGHT,
+            "inspector_highlight",
+            MaterialSpec::Blend,
+        )],
+        InspectorHighlightMarker,
+    );
 }
