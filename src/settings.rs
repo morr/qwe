@@ -574,6 +574,9 @@ pub const Z_BUILDING: f32 = 5.0;
 pub const Z_INDUSTRY_SHADOW: f32 = 4.55;
 pub const Z_INDUSTRY_WALL: f32 = 5.06;
 pub const Z_INDUSTRY: f32 = 5.07;
+/// Лента крепостной стены (`map/roads/walls.rs`) — поверх зданий: кремлёвская
+/// стена читается поверх башен, а не между ними.
+pub const Z_WALL: f32 = Z_BUILDING + 0.1;
 /// Насколько z юнита падает на метр к северу (кто ниже — тот ближе).
 pub const Y_SORT_FACTOR: f32 = 0.002;
 /// Юниты: z = `Z_UNIT_BASE - y * Y_SORT_FACTOR`.
@@ -708,6 +711,8 @@ const _: () = {
     assert!(Z_INDUSTRY_SHADOW < Z_BUILDING);
     assert!(Z_BUILDING < Z_INDUSTRY_WALL);
     assert!(Z_INDUSTRY_WALL < Z_INDUSTRY);
+    // лента крепостной стены — над зданиями и цилиндрами промзоны, под юнитами
+    assert!(Z_INDUSTRY < Z_WALL);
     // Тот самый инвариант, который прозой не удержался (см. `Z_UNIT_BASE`).
     // Теперь база из него и выводится, так что проверка стережёт уже не её, а
     // будущую правку: сменится `Y_SORT_FACTOR`, `Z_BUILDING` или размер карты —

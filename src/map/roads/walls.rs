@@ -7,10 +7,6 @@ use bevy::prelude::*;
 use super::verges::{MEADOW_PROBE_BEYOND, MEADOW_PROBES};
 use crate::map::osm::model::{point_in_area, polyline_length, ring_bounds};
 use crate::map::osm::{AreaKind, PolyArea};
-use crate::settings::Z_BUILDING;
-
-/// Стены Кремля поверх зданий.
-pub(crate) const Z_WALL: f32 = Z_BUILDING + 0.1;
 
 /// Шаг, с которым осевая крепостной стены проверяется на «стоит ли тут
 /// здание стены», м.

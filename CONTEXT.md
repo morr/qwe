@@ -86,10 +86,10 @@ in `main.rs`.
   casings → bridges → bridge paint (2.25) → track-bridge ballast, ties, steel (2.3) →
   tram (2.6) → cars → fences (2.75) → pipe shadows (2.76) →
   pipes (2.77) → portal stain → corpses → portal → industry shadows (4.55) → buildings (5) →
-  roof shadows (5.05) → industry walls (5.06) → industry tops (5.07) → units → souls (18)
-  → tree shadows → trees (20). Four live in their
+  roof shadows (5.05) → industry walls (5.06) → industry tops (5.07) → walls (5.1) → units →
+  souls (18) → tree shadows → trees (20). Three live in their
   own modules: `Z_BUILDING_SHADOW` 4.5, `Z_FACADE` 4.9, `Z_ROOF_SHADOW` 5.05
-  (`map/buildings/mod.rs`), `Z_WALL` 5.1 (`map/roads.rs`). Units are y-sorted:
+  (`map/buildings/mod.rs`). Units are y-sorted:
   `unit_z(y) = Z_UNIT_BASE − y · Y_SORT_FACTOR` (10 − y·0.002). **Invariant: the unit z
   range must stay above buildings (5) for any y ≤ MAP_SIZE.y** — a bigger map once sank
   northern units under roads. **Invariant: a road lies over water only as a bridge** —

@@ -23,11 +23,10 @@ use crate::map::osm::model::{
     AreaKind, BuildingUse, FenceKind, Highway, MapData, PitchKind, PolyArea, RailKind,
     RoadAreaKind, RoadClass, RoadLine, RoadNodeKind, SidewalkSide, StructureKind, point_in_polygon,
 };
-use crate::map::roads::Z_WALL;
 use crate::settings::{
     Z_ALLEY, Z_BRIDGE, Z_BUILDING, Z_FENCE, Z_GRASS, Z_GROUND, Z_INDUSTRY, Z_LANDUSE,
     Z_LANDUSE_YARD, Z_PARK, Z_PARKING, Z_PIPE, Z_PITCH, Z_POND, Z_RAIL, Z_ROAD, Z_ROAD_ISLANDS,
-    Z_ROAD_PAINT, Z_SAND, Z_SIDEWALK, Z_TRAM, Z_TREE, Z_UNPAVED_ROAD, Z_WATERWAY, Z_WOOD,
+    Z_ROAD_PAINT, Z_SAND, Z_SIDEWALK, Z_TRAM, Z_TREE, Z_UNPAVED_ROAD, Z_WALL, Z_WATERWAY, Z_WOOD,
 };
 
 /// Сторона ячейки индекса, м.
