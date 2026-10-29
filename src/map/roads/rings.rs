@@ -1046,9 +1046,9 @@ pub(super) fn ring_island_cover(ring: &Ring, inset: f32, bands: &[ApproachBand])
     use i_overlay::core::fill_rule::FillRule;
     use i_overlay::core::overlay_rule::OverlayRule;
     use i_overlay::float::single::SingleFloatOverlay;
-    use i_overlay::mesh::outline::offset::OutlineOffset;
-    use i_overlay::mesh::stroke::offset::StrokeOffset;
-    use i_overlay::mesh::style::{LineCap, LineJoin, OutlineStyle, StrokeStyle};
+    use i_overlay::mesh::float::outline::offset::OutlineOffset;
+    use i_overlay::mesh::float::stroke::offset::StrokeOffset;
+    use i_overlay::mesh::float::style::{LineCap, LineJoin, OutlineStyle, StrokeStyle};
 
     let path = &ring.path[..ring.path.len().saturating_sub(1)];
     if path.len() < 3 || bands.is_empty() {

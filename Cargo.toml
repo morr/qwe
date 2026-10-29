@@ -115,7 +115,7 @@ bevy = { version = "0.19", default-features = false, features = [
 ] }
 bevy_northstar = "0.7"
 earcutr = "0.5"
-i_overlay = "7"
+i_overlay = "9"
 # симплекс-шум под поле хвойных массивов (src/map/trees/conifer.rs)
 noise = "0.9"
 pathfinding = "4"

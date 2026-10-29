@@ -102,8 +102,8 @@ pub fn mesh_water_areas(areas: &[PolyArea], gaps: &[Vec<Vec2>], within: Rect) ->
     use i_overlay::core::fill_rule::FillRule;
     use i_overlay::core::overlay_rule::OverlayRule;
     use i_overlay::float::single::SingleFloatOverlay;
-    use i_overlay::mesh::outline::offset::OutlineOffset;
-    use i_overlay::mesh::style::{LineJoin, OutlineStyle};
+    use i_overlay::mesh::float::outline::offset::OutlineOffset;
+    use i_overlay::mesh::float::style::{LineJoin, OutlineStyle};
 
     let mut builder = MeshBuilder::with_surface_coords();
     // NonZero сливает, только если обход согласован: внешние кольца против

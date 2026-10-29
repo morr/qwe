@@ -17,9 +17,9 @@ use i_overlay::core::fill_rule::FillRule;
 use i_overlay::core::overlay_rule::OverlayRule;
 use i_overlay::float::simplify::SimplifyShape;
 use i_overlay::float::single::SingleFloatOverlay;
-use i_overlay::mesh::outline::offset::OutlineOffset;
-use i_overlay::mesh::stroke::offset::StrokeOffset;
-use i_overlay::mesh::style::{LineCap, LineJoin, OutlineStyle, StrokeStyle};
+use i_overlay::mesh::float::outline::offset::OutlineOffset;
+use i_overlay::mesh::float::stroke::offset::StrokeOffset;
+use i_overlay::mesh::float::style::{LineCap, LineJoin, OutlineStyle, StrokeStyle};
 
 use super::junctions::node_key;
 use super::rings::{Ring, Rings};
