@@ -23,6 +23,8 @@ use super::shape::RoadShape;
 use super::tapers::{Taper, Tapers};
 use super::{RoadStyle, VERGE_MID_MAX, VergeZoomBucket};
 use crate::map::osm::{MapData, PolyArea, RoadClass, RoadLine};
+use crate::map::shapes::is_ring;
+use crate::map::smooth::{Smoothing, smooth_pinned};
 
 /// Какую ось берёт потребитель — решение вынесено из порядка `let` в тип.
 ///
@@ -460,6 +462,36 @@ impl<'m> Drawn<'m> {
             rings: [self.axes.rings.list.len(), self.axes.rings.webs.len()],
         }
     }
+}
+
+/// Осевая дороги вне улицы: моста, арки, дорожки (улицы идут по
+/// [`axis::street_axes`]). Без сглаживания — прямо точки OSM, без
+/// копирования. Арки (`passage`) не сглаживаются никогда: их концы приколоты к
+/// вершинам контура здания, по ним `arches::arch_openings` ищет проём в стене.
+///
+/// **Общие узлы с другими дорогами тоже не сглаживаются** ([`RoadNodes`]): на
+/// узле кончается поперечная улица и сходятся лучи скругления бордюра
+/// (`roads/corners.rs`). Сдвинь хорда сквозную дорогу с узла — торец
+/// поперечной повис бы в метре от её асфальта или вылез за дальний край.
+///
+/// **Замкнутый way сглаживается по циклу**, так что нарисованная ось кольца
+/// остаётся кольцом: её потом и рисуют замкнутой лентой ([`super::push_ribbon`],
+/// [`super::push_street_fill`]).
+pub(super) fn centerline<'a>(
+    road: &'a RoadLine,
+    smoothing: Smoothing,
+    nodes: &RoadNodes,
+) -> Cow<'a, [Vec2]> {
+    if road.passage {
+        return Cow::Borrowed(&road.points);
+    }
+    smooth_pinned(
+        &road.points,
+        road.width,
+        smoothing,
+        is_ring(&road.points),
+        |point| nodes.is_shared(point),
+    )
 }
 
 #[cfg(test)]

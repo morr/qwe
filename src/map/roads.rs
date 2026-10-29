@@ -29,7 +29,7 @@
 //! (`bridge`/`passage`-прорезы), арки, посадка деревьев и генератор дверей.
 //! Chaikin-сглаживание работает на копии и только ради картинки; само правило
 //! живёт в `map/smooth.rs` — его читают ещё пять слоёв, — а здесь остаётся
-//! [`centerline`], дорожная обёртка над ним с её двумя закреплениями.
+//! [`drawn::centerline`], дорожная обёртка над ним с её двумя закреплениями.
 //!
 //! Улица — это не одна лента, а три слоя: **тротуар** (`Z_SIDEWALK`, светлая
 //! полоса шире проезжей части на полосу [`RoadLine::sidewalk`] с каждой стороны), кант и
@@ -79,7 +79,6 @@ use crate::map::osm::model::{
 use crate::map::osm::{AreaKind, MapData, PolyArea, RailKind, RoadClass, RoadLine};
 use crate::map::rail::{CrossedStreet, crossable, mesh_level_crossings};
 use crate::map::shapes::{is_ring, push_shape};
-use crate::map::smooth::{Smoothing, smooth_pinned};
 use crate::map::spawn::{GRASS_COLOR, RESIDENTIAL_COLOR};
 use crate::map::surface::{
     self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec, SurfaceKind, spawn_layers,
@@ -3045,32 +3044,6 @@ fn push_verges(
             scraps.push_lawn_band(&dense, &normals, &reach(&widths), ends, bites);
         }
     }
-}
-
-/// Осевая дороги вне улицы: моста, арки, дорожки (улицы идут по
-/// [`axis::street_axes`]). Без сглаживания — прямо точки OSM, без
-/// копирования. Арки (`passage`) не сглаживаются никогда: их концы приколоты к
-/// вершинам контура здания, по ним `arches::arch_openings` ищет проём в стене.
-///
-/// **Общие узлы с другими дорогами тоже не сглаживаются** ([`RoadNodes`]): на
-/// узле кончается поперечная улица и сходятся лучи скругления бордюра
-/// (`roads/corners.rs`). Сдвинь хорда сквозную дорогу с узла — торец
-/// поперечной повис бы в метре от её асфальта или вылез за дальний край.
-///
-/// **Замкнутый way сглаживается по циклу**, так что нарисованная ось кольца
-/// остаётся кольцом: её потом и рисуют замкнутой лентой ([`push_ribbon`],
-/// [`push_street_fill`]).
-fn centerline<'a>(road: &'a RoadLine, smoothing: Smoothing, nodes: &RoadNodes) -> Cow<'a, [Vec2]> {
-    if road.passage {
-        return Cow::Borrowed(&road.points);
-    }
-    smooth_pinned(
-        &road.points,
-        road.width,
-        smoothing,
-        is_ring(&road.points),
-        |point| nodes.is_shared(point),
-    )
 }
 
 /// Открыт наружу для [`map::cars`](crate::map::cars): ряд машин обязан

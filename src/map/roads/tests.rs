@@ -1,3 +1,4 @@
+use super::drawn::centerline;
 use super::network::pairs::Pairs;
 use super::*;
 use crate::map::footprint::casing_width;
@@ -8,6 +9,7 @@ use crate::map::osm::model::{
 };
 use crate::map::osm::{Highway, LotKind, fixture};
 use crate::map::parking::LOT_KERB;
+use crate::map::smooth::Smoothing;
 
 fn road(points: Vec<Vec2>, width: f32, passage: bool) -> RoadLine {
     RoadLine {

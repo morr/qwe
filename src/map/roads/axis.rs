@@ -37,13 +37,14 @@ use std::f32::consts::PI;
 
 use bevy::prelude::*;
 
+use super::drawn::centerline;
 use super::footbridge::runs_along;
+use super::merges;
 use super::network::pairs::{Pairs, pairable};
 use super::network::{self, RoadNetwork, RoadNodes, StreetWay};
 use super::rings::{self, Rings};
 use super::shape::RoadShape;
 use super::tapers::Tapers;
-use super::{centerline, merges};
 use crate::map::along::{nearest_on_path, simplify};
 use crate::map::meshing::arc_steps;
 use crate::map::osm::model::RailLine;
