@@ -3,8 +3,8 @@ use std::time::Instant;
 use std::{collections::HashSet, fmt, future::Future, task::Poll};
 
 use crate::{
-    instance::{InstanceStep, SearchInstance, U32Layer},
     Coords, Mesh, Path,
+    instance::{InstanceStep, SearchInstance, U32Layer},
 };
 
 /// A future that will resolve to a [`Option<Path>`].
@@ -66,9 +66,7 @@ impl Future for FuturePath<'_> {
             if starting_polygons.is_empty() {
                 return Poll::Ready(None);
             }
-            let ending_polygons = self
-                .mesh
-                .candidate_polygons(self.to, &self.blocked_layers);
+            let ending_polygons = self.mesh.candidate_polygons(self.to, &self.blocked_layers);
             if ending_polygons.is_empty() {
                 return Poll::Ready(None);
             }
@@ -96,18 +94,12 @@ impl Future for FuturePath<'_> {
             {
                 #[cfg(feature = "stats")]
                 {
-                    if self.mesh.scenarios.get() == 0 {
-                        eprintln!(
-                        "index;micros;successor_calls;generated;pushed;popped;pruned_post_pop;length",
-                    );
-                    }
                     eprintln!(
                         "{};{};0;0;0;0;0;{}",
-                        self.mesh.scenarios.get(),
+                        self.mesh.scenarios.next(),
                         start.elapsed().as_secs_f32() * 1_000_000.0,
                         self.from.position().distance(self.to.position()),
                     );
-                    self.mesh.scenarios.set(self.mesh.scenarios.get() + 1);
                 }
                 return Poll::Ready(Some(Path {
                     length: self.from.position().distance(self.to.position()),

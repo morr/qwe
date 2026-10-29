@@ -8,11 +8,11 @@ use std::collections::{BinaryHeap, HashSet};
 use std::time::Instant;
 
 use glam::Vec2;
-use hashbrown::{hash_map::Entry, HashMap};
+use hashbrown::{HashMap, hash_map::Entry};
 
 use crate::{
-    helpers::{heuristic, line_intersect_segment, turning_point, Vec2Helper},
-    Layer, Mesh, Path, PathArenaNode, Polygon, SearchNode, PRECISION,
+    Layer, Mesh, PRECISION, Path, PathArenaNode, Polygon, SearchNode,
+    helpers::{Vec2Helper, heuristic, line_intersect_segment, turning_point},
 };
 
 /// A run of this many pops without `f` going up is taken as the search going in circles,
@@ -25,7 +25,7 @@ use crate::{
 /// polygon count instead, so that a small mesh still gets there well inside the iteration
 /// limit `Mesh::path` searches under.
 ///
-/// QWE: в поиске, который строит `SearchInstance::new`, не используется — там запись
+/// QWE: в поиске, который строит `SearchInstance::setup`, не используется — там запись
 /// включена с первого извлечения (почему — комментарий у `recording`). Константа и
 /// счётчик оставлены ради тестовых конструкторов в `lib.rs` и ради малого диффа с
 /// upstream.
@@ -436,14 +436,9 @@ impl<'m> SearchInstance<'m> {
             if self.is_goal(next.polygon_to) {
                 #[cfg(feature = "stats")]
                 {
-                    if self.mesh.scenarios.get() == 0 {
-                        eprintln!(
-                        "index;micros;successor_calls;generated;pushed;popped;pruned_post_pop;length",
-                    );
-                    }
                     eprintln!(
                         "{};{};{};{};{};{};{};{}",
-                        self.mesh.scenarios.get(),
+                        self.mesh.scenarios.next(),
                         self.start.elapsed().as_secs_f32() * 1_000_000.0,
                         self.successors_called,
                         self.nodes_generated,
@@ -452,7 +447,6 @@ impl<'m> SearchInstance<'m> {
                         self.nodes_pruned_post_pop,
                         next.distance_start_to_root + next.heuristic,
                     );
-                    self.mesh.scenarios.set(self.mesh.scenarios.get() + 1);
                 }
                 // Reconstruct path and polygons from arena
                 let (mut path, path_through_polygons) = self.reconstruct_path(next.arena_parent);
@@ -1183,7 +1177,7 @@ impl<'m> SearchInstance<'m> {
     /// search looks stuck keeps it off the paths of every search that does not.
     ///
     /// QWE: у нас запись идёт с первого извлечения — «только когда поиск завис» на швах
-    /// чанков не наступало никогда (см. `recording` в `SearchInstance::new`).
+    /// чанков не наступало никогда (см. `recording` в `SearchInstance::setup`).
     #[inline(always)]
     fn is_new(&mut self, node: &SearchNode) -> bool {
         self.seen_nodes.insert([
