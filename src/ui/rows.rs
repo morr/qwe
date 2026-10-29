@@ -68,7 +68,7 @@ pub(super) fn spawn_value_row<M>(
     left_px: f32,
     value_marker: impl Bundle,
     value: String,
-    on_activate: impl IntoObserverSystem<Activate, (), M>,
+    on_activate: impl IntoObserverSystem<Activate, M>,
 ) -> Entity {
     let padding = UiRect {
         right: px(8.),

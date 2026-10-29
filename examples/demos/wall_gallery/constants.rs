@@ -20,7 +20,7 @@
 
 /// Текст шейдера, вшитый в витрину при сборке. Кровля и стена живут в одном
 /// файле — делит их заголовок раздела.
-const SHADER_SOURCE: &str = include_str!("../../../assets/shaders/roof.wgsl");
+const SHADER_SOURCE: &str = include_str!("../../../assets/shaders/roof.wesl");
 
 /// Исходник правил облицовки — оттуда же и тем же способом.
 const LAYERS_SOURCE: &str = include_str!("../../../src/map/buildings/layers.rs");

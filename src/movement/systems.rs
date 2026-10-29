@@ -233,7 +233,7 @@ pub fn interpolate_movable_transforms(
 /// `SimPosition` инициализируется из `Transform`: позицию при спавне задают
 /// трансформом.
 pub fn on_movable_added_init_sim_position(
-    event: On<Add, Movable>,
+    event: On<Add<Movable>>,
     mut query: Query<(&Transform, &mut SimPosition, &mut PreviousSimPosition)>,
 ) {
     let Ok((transform, mut sim_position, mut previous)) = query.get_mut(event.entity) else {

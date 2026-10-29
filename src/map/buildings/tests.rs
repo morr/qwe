@@ -174,12 +174,12 @@ fn the_brand_band_is_lit_like_the_wall_under_it_at_any_winding() {
 
 /// Фриз — непрозрачный квад поверх стены, и лечь он обязан **над** лентой
 /// витражного стекла, а лента стоит внутри своей ячейки
-/// (`roof.wgsl::BIG_BOX_WINDOW_HIGH`, 0.70 яруса). Мерился он долей всей стены,
+/// (`roof.wesl::BIG_BOX_WINDOW_HIGH`, 0.70 яруса). Мерился он долей всей стены,
 /// и у коробки выше одного яруса лента верхнего яруса уходила под него целиком.
 #[test]
 fn the_brand_band_stays_above_the_glass_ribbon_at_any_number_of_tiers() {
     let _sun = crate::map::default_sun();
-    // верх ленты внутри ячейки — `roof.wgsl::BIG_BOX_WINDOW_HIGH`
+    // верх ленты внутри ячейки — `roof.wesl::BIG_BOX_WINDOW_HIGH`
     let ribbon_top = 0.70;
     // 5.5 м на ярус (`BIG_BOX_TIER`): 8 м — один, 9.5 — два, 17 — три
     for (height, storeys) in [(8.0, 1.0), (9.5, 2.0), (17.0, 3.0)] {

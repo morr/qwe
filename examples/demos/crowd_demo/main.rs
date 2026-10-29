@@ -84,7 +84,7 @@ mod scenario;
 use bevy::camera_controller::pan_camera::PanCamera;
 use bevy::diagnostic::{Diagnostic, RegisterDiagnostic};
 use bevy::input::common_conditions::input_just_pressed;
-use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};
+use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollPixelsPerLine};
 use bevy::prelude::*;
 use qwe::camera::hovering_ui;
 use qwe::city::MAP_CENTER_PORTAL_POS;
@@ -540,12 +540,10 @@ pub(crate) fn step_speed_keys(
 pub(crate) fn zoom_camera(
     config: Res<DemoConfig>,
     scroll: Res<AccumulatedMouseScroll>,
+    pixels_per_line: Res<MouseScrollPixelsPerLine>,
     mut camera: Query<&mut Transform, With<Camera2d>>,
 ) {
-    let lines = match scroll.unit {
-        MouseScrollUnit::Line => scroll.delta.y,
-        MouseScrollUnit::Pixel => scroll.delta.y / MouseScrollUnit::SCROLL_UNIT_CONVERSION_FACTOR,
-    };
+    let lines = scroll.to_lines(&pixels_per_line).delta.y;
     if lines == 0.0 {
         return;
     }

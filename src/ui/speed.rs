@@ -203,7 +203,7 @@ fn render_speed_button(mut commands: Commands, time: Res<Time<Virtual>>, speed: 
         ],
     );
     // `Activate` намеренно пустой — см. док функции; шаг лесенки решает
-    // наблюдатель `Pointer<Click>` ниже, он один знает, какая кнопка нажата
+    // наблюдатель клика ниже, он один знает, какая кнопка нажата
     let button = spawn_panel_button_with(
         &mut commands,
         panel,
@@ -215,7 +215,7 @@ fn render_speed_button(mut commands: Commands, time: Res<Time<Virtual>>, speed: 
     commands
         .entity(button)
         .observe(
-            |click: On<Pointer<Click>>, mut speed: ResMut<SimSpeed>| match click.button {
+            |click: On<PointerClick>, mut speed: ResMut<SimSpeed>| match click.button {
                 PointerButton::Primary => speed.requested = cycle_time_scale(speed.requested),
                 PointerButton::Secondary => speed.requested = previous_time_scale(speed.requested),
                 PointerButton::Middle => {}

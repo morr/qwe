@@ -444,7 +444,7 @@ fn spawn_row<M>(
     style: RowStyle,
     value_marker: NavValueLabel,
     value: String,
-    on_activate: impl IntoObserverSystem<Activate, (), M>,
+    on_activate: impl IntoObserverSystem<Activate, M>,
 ) -> Entity {
     let left = match style {
         RowStyle::Backend => ROW_LEFT_PX,

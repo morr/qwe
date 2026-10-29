@@ -60,7 +60,7 @@ pub(super) fn human_body(silhouettes: &Silhouettes, attire: &Attire) -> (Sprite,
 }
 
 /// Паника надета — человек в тоне паники.
-pub fn on_panic_tint(event: On<Add, HumanFleeTag>, mut sprites: Query<&mut Sprite>) {
+pub fn on_panic_tint(event: On<Add<HumanFleeTag>>, mut sprites: Query<&mut Sprite>) {
     if let Ok(mut sprite) = sprites.get_mut(event.entity) {
         sprite.color = PANIC_COLOR;
     }
@@ -68,7 +68,7 @@ pub fn on_panic_tint(event: On<Add, HumanFleeTag>, mut sprites: Query<&mut Sprit
 
 /// Паника снята — человек снова в своей одежде. Срабатывает и на трупе, и на
 /// despawn: `to_corpse` красит тело уже после, а исчезающему всё равно.
-pub fn on_calm_tint(event: On<Remove, HumanFleeTag>, mut sprites: Query<(&Attire, &mut Sprite)>) {
+pub fn on_calm_tint(event: On<Remove<HumanFleeTag>>, mut sprites: Query<(&Attire, &mut Sprite)>) {
     if let Ok((attire, mut sprite)) = sprites.get_mut(event.entity) {
         sprite.color = attire.0;
     }

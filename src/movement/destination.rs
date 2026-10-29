@@ -680,7 +680,7 @@ pub fn assign_destination_slots(
 /// Покрывает побег за край карты, рестарт и смену города
 /// (`DespawnOnExit(AppState::Playing)`), а также раздевание трупа.
 pub fn on_destination_claim_removed(
-    event: On<Remove, DestinationClaim>,
+    event: On<Remove<DestinationClaim>>,
     mut claims: ResMut<DestinationClaims>,
     claimed: Query<&DestinationClaim>,
 ) {

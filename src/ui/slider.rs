@@ -44,7 +44,7 @@ pub fn spawn_slider_row<M>(
     row: SliderRow,
     value_label_marker: impl Bundle,
     slider_marker: impl Bundle,
-    on_change: impl IntoObserverSystem<ValueChange<f32>, (), M>,
+    on_change: impl IntoObserverSystem<ValueChange<f32>, M>,
 ) -> Entity {
     let SliderRow {
         label,
@@ -80,7 +80,9 @@ pub fn spawn_slider_row<M>(
 
     let slider = commands
         .spawn_scene(bsn! {
-            @FeathersSlider { @value: {value}, @min: {min}, @max: {max} }
+            @FeathersSlider { @min: {min}, @max: {max} }
+            // начальное значение в 0.20 — компонент, а не поле сцены
+            SliderValue({value})
             // клик по полосе ставит значение туда, куда ткнули: у feathers по
             // умолчанию `Drag`, то есть клик мимо бегунка не делает ничего
             Slider { track_click: TrackClick::Snap }
