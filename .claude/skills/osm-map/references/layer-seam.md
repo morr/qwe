@@ -235,7 +235,7 @@ belongs to.
   `rebuild_industry` listed twice. So conditions are summed with `or_else` rather
   than split across registrations, and the rule now has a single place to live
   instead of the three comments that used to repeat it.
-- `rail::rebuilds_on` goes through `IntoSystem::into_system` because a bare
+- `trees::switches_on` goes through `IntoSystem::into_system` because a bare
   function-condition carries its own type marker; the other layers' `or_else` erases
   it. That is the only oddity in the shape.
 - **A full layer registry was considered and rejected.** Declaring a layer as data —
