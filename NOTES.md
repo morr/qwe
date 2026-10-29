@@ -128,3 +128,20 @@ it, recover the block from `git show HEAD:<file>`; guard-bash denies a whole
 command if any part pipes cargo — run the python patch and the check as
 separate calls.
 ## Stage d — #[ignore] diagnostics fate
+
+Left as is. Both are DIAG-TEMP harnesses driven by env vars (QWE_DIAG_JSON=...
+in roads/tests.rs and roads/drawn/tests.rs) — author tooling, not rot. The
+plan's recommendation stands: only the author decides.
+
+## Rebase and merge — DONE via squash
+
+master crossed the branch with bevy 0.20 / i_overlay 9 / rand 0.10 and doc
+retargets (13 overlapping files). A per-commit rebase would resolve the same
+API conflicts 35 times, so the branch was squashed onto master instead:
+- improve-architecture-sizes-pre-rebase keeps all 35 original commits;
+- improve-architecture-sizes = master 09d8bec0 + one squash commit (8ee63d30)
+  + the API port (80486a4e: i_overlay mesh paths moved under mesh::float,
+  Material2d::specialize takes the pipeline);
+- check.sh OK after a cold 0.20 build: 1490 passed + 3 ignored, and the bare
+  test names are identical to master's own list (1545 = 1545), so the squash
+  lost nothing from master's new inspector and osm-id tests.
