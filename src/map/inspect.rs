@@ -14,19 +14,32 @@
 //! **признаки**: то, что выводится из `MapData`, — без краски, теней и
 //! зум-LOD; дерево видно по порогу плотности ([`TreeSet::visible_count`]),
 //! а труб-кульвертов, которые не рисуются, в ответе нет вовсе.
+//!
+//! Полосы, дорисованные дорогой (тротуар, обочина), индекс мерит от OSM-осевой
+//! по закону ширины модели — и потому отвечает за **модель**, а не за рисунок.
+//! Нарисованный тротуар сглажен и у узлов срезан скруглениями; переезды через
+//! тротуар (driveway crossings), кусок в проёме пары половин (`across_median`)
+//! и стежки индекс не знает; зум-LOD обочин (`VergeZoomBucket`) ему тоже не
+//! виден — как и LOD оград. Точный арбитр по нарисованному — та же проба
+//! слоёв; привязать полосы к геометрии строителей дорог
+//! (`map::roads::Drawn`) — следующий шаг, этой задачей сознательно не
+//! сделанный: граница «индекс отвечает моделью, проба — рисунком».
 
 use bevy::prelude::*;
 
+use crate::map::RoadStyle;
 use crate::map::footprint::{FENCE_BAND_WIDTH, distance_to_polyline};
 use crate::map::grid::Grid;
 use crate::map::osm::model::{
     AreaKind, BuildingUse, FenceKind, Highway, MapData, PitchKind, PolyArea, RailKind,
-    RoadAreaKind, RoadClass, RoadLine, RoadNodeKind, SidewalkSide, StructureKind, point_in_polygon,
+    RoadAreaKind, RoadClass, RoadLine, RoadNodeKind, SidewalkSide, StructureKind,
+    closest_on_segment, point_in_polygon,
 };
 use crate::settings::{
     Z_ALLEY, Z_BRIDGE, Z_BUILDING, Z_FENCE, Z_GRASS, Z_GROUND, Z_INDUSTRY, Z_LANDUSE,
     Z_LANDUSE_YARD, Z_PARK, Z_PARKING, Z_PIPE, Z_PITCH, Z_POND, Z_RAIL, Z_ROAD, Z_ROAD_ISLANDS,
-    Z_ROAD_PAINT, Z_SAND, Z_SIDEWALK, Z_TRAM, Z_TREE, Z_UNPAVED_ROAD, Z_WALL, Z_WATERWAY, Z_WOOD,
+    Z_ROAD_PAINT, Z_ROAD_VERGE, Z_SAND, Z_SIDEWALK, Z_TRAM, Z_TREE, Z_UNPAVED_ROAD, Z_WALL,
+    Z_WATERWAY, Z_WOOD,
 };
 
 /// Сторона ячейки индекса, м.
@@ -36,10 +49,47 @@ const CELL: f32 = 64.0;
 const NODE_REACH: f32 = 4.0;
 
 /// Одна находка пробы: подпись признака и z слоя, где он рисуется.
+///
+/// `src` — откуда находка: признак данных или полоса, дорисованная дорогой
+/// (у генератов подпись несёт суффикс `(auto, …)`). `id` — OSM id
+/// элемента-источника, печать ведёт его хвостом `#…`; `None` — находка без
+/// своего элемента (земля, посаженное дерево, карта, собранная тестом).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Hit {
     pub z: f32,
     pub label: String,
+    pub src: HitSource,
+    pub id: Option<u64>,
+}
+
+/// Откуда находка.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HitSource {
+    /// Признак из данных выгрузки.
+    Osm,
+    /// Полоса, дорисованная дорогой разбором, — с причиной постановки.
+    Generated(HitReason),
+}
+
+/// Причина, по которой разбор дорисовал полосу.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HitReason {
+    /// Тротуар по тегу `sidewalk=*`.
+    Tagged,
+    /// Тротуар по правдоподобию (`parse::infer_sidewalks`). Обочина тоже
+    /// несёт его: тега у обочины нет, её меряет разбор (`parse/verges.rs`),
+    /// — но в подписи обочины причина не различается, там короткое
+    /// `verge (auto)`.
+    Inferred,
+}
+
+impl HitReason {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Tagged => "tagged",
+            Self::Inferred => "inferred",
+        }
+    }
 }
 
 /// Откуда площадная находка — по вектору [`MapData`]; вектор даёт слой, а
@@ -163,21 +213,19 @@ impl InspectIndex {
             index.areas.insert(min, max, AreaSrc::RoadArea(i as u32));
         }
 
-        let mut push_line = |src: LineSrc, points: &[Vec2], width: f32| {
+        let mut push_line = |src: LineSrc, points: &[Vec2], pad: f32| {
             if points.len() < 2 {
                 return;
             }
             for pair in points.windows(2) {
-                index
-                    .lines
-                    .insert_segment(pair[0], pair[1], width / 2.0, src);
+                index.lines.insert_segment(pair[0], pair[1], pad, src);
             }
         };
         for (i, road) in map.roads.iter().enumerate() {
-            push_line(LineSrc::Road(i as u32), &road.points, road.width);
+            push_line(LineSrc::Road(i as u32), &road.points, road_reach(road));
         }
         for (i, rail) in map.rails.iter().enumerate() {
-            push_line(LineSrc::Rail(i as u32), &rail.points, rail.width);
+            push_line(LineSrc::Rail(i as u32), &rail.points, rail.width / 2.0);
         }
         // труб-кульверт не рисует никто — в ответе пробы ему не место
         for (i, line) in map
@@ -186,17 +234,21 @@ impl InspectIndex {
             .enumerate()
             .filter(|(_, l)| !l.tunnel)
         {
-            push_line(LineSrc::Waterway(i as u32), &line.points, line.width);
+            push_line(LineSrc::Waterway(i as u32), &line.points, line.width / 2.0);
         }
         for (i, pipe) in map.pipes.iter().enumerate() {
-            push_line(LineSrc::Pipe(i as u32), &pipe.points, pipe.width);
+            push_line(LineSrc::Pipe(i as u32), &pipe.points, pipe.width / 2.0);
         }
         for (i, wall) in map.walls.iter().enumerate() {
-            push_line(LineSrc::Wall(i as u32), &wall.points, wall.width);
+            push_line(LineSrc::Wall(i as u32), &wall.points, wall.width / 2.0);
         }
         // физическая толщина ограды, не экранная: зум-LOD индекс не видит
         for (i, fence) in map.fences.iter().enumerate() {
-            push_line(LineSrc::Fence(i as u32), &fence.points, FENCE_BAND_WIDTH);
+            push_line(
+                LineSrc::Fence(i as u32),
+                &fence.points,
+                FENCE_BAND_WIDTH / 2.0,
+            );
         }
 
         let mut push_point = |src: PointSrc, at: Vec2, radius: f32| {
@@ -223,8 +275,10 @@ impl InspectIndex {
 
     /// Что нарисовано в точке: находки сверху вниз по слою, одинаковые
     /// схлопнуты. `tree_density` — [`TreeStyle::density`]: дерево видно, пока
-    /// его ранг меньше префикса плотности.
-    pub fn hits(&self, map: &MapData, tree_density: f32, at: Vec2) -> Vec<Hit> {
+    /// его ранг меньше префикса плотности. `roads` — [`RoadStyle`]: ручка
+    /// «Sidewalks» прячет выведенные полосы так же, как у рисунка
+    /// (`Drawn::verges_drawn` без ручки возвращает нули).
+    pub fn hits(&self, map: &MapData, tree_density: f32, roads: &RoadStyle, at: Vec2) -> Vec<Hit> {
         if !self.built {
             return Vec::new();
         }
@@ -232,35 +286,37 @@ impl InspectIndex {
         let mut hits = vec![Hit {
             z: Z_GROUND,
             label: "ground".to_string(),
+            src: HitSource::Osm,
+            id: None,
         }];
         let inside = |area: &PolyArea| {
             point_in_polygon(at, &area.outer)
                 && !area.holes.iter().any(|hole| point_in_polygon(at, hole))
         };
         for &src in self.areas.at(at) {
-            let (z, label) = match src {
+            let (z, label, id) = match src {
                 AreaSrc::Building(i) => match map.buildings.get(i as usize) {
-                    Some(area) if inside(area) => (Z_BUILDING, building_label(area)),
+                    Some(area) if inside(area) => (Z_BUILDING, building_label(area), area.osm_id),
                     _ => continue,
                 },
                 AreaSrc::Water(i) => match map.water.get(i as usize) {
-                    Some(area) if inside(area) => (Z_POND, "water".to_string()),
+                    Some(area) if inside(area) => (Z_POND, "water".to_string(), area.osm_id),
                     _ => continue,
                 },
                 AreaSrc::Park(i) => match map.parks.get(i as usize) {
-                    Some(area) if inside(area) => (Z_PARK, "park".to_string()),
+                    Some(area) if inside(area) => (Z_PARK, "park".to_string(), area.osm_id),
                     _ => continue,
                 },
                 AreaSrc::Wood(i) => match map.woods.get(i as usize) {
-                    Some(area) if inside(area) => (Z_WOOD, "wood".to_string()),
+                    Some(area) if inside(area) => (Z_WOOD, "wood".to_string(), area.osm_id),
                     _ => continue,
                 },
                 AreaSrc::Grass(i) => match map.grass.get(i as usize) {
-                    Some(area) if inside(area) => (Z_GRASS, "grass".to_string()),
+                    Some(area) if inside(area) => (Z_GRASS, "grass".to_string(), area.osm_id),
                     _ => continue,
                 },
                 AreaSrc::Sand(i) => match map.sand.get(i as usize) {
-                    Some(area) if inside(area) => (Z_SAND, "sand".to_string()),
+                    Some(area) if inside(area) => (Z_SAND, "sand".to_string(), area.osm_id),
                     _ => continue,
                 },
                 AreaSrc::Landuse(i) => match map.landuse.get(i as usize) {
@@ -270,6 +326,7 @@ impl InspectIndex {
                             _ => Z_LANDUSE_YARD,
                         },
                         format!("landuse {}", lower(area.kind)),
+                        area.osm_id,
                     ),
                     _ => continue,
                 },
@@ -280,6 +337,7 @@ impl InspectIndex {
                             _ => Z_LANDUSE_YARD,
                         },
                         format!("pocket {}", lower(area.kind)),
+                        area.osm_id,
                     ),
                     _ => continue,
                 },
@@ -288,12 +346,16 @@ impl InspectIndex {
                         let AreaKind::Parking(kind) = area.kind else {
                             continue;
                         };
-                        (Z_PARKING, format!("parking lot {}", lower(kind)))
+                        (
+                            Z_PARKING,
+                            format!("parking lot {}", lower(kind)),
+                            area.osm_id,
+                        )
                     }
                     _ => continue,
                 },
                 AreaSrc::Pitch(i) => match map.pitches.get(i as usize) {
-                    Some(area) if inside(area) => (Z_PITCH, pitch_label(area.kind)),
+                    Some(area) if inside(area) => (Z_PITCH, pitch_label(area.kind), area.osm_id),
                     _ => continue,
                 },
                 AreaSrc::RoadArea(i) => match map.road_areas.get(i as usize) {
@@ -308,20 +370,24 @@ impl InspectIndex {
                             RoadAreaKind::Walkway => "walkway".to_string(),
                             RoadAreaKind::Island => "traffic island".to_string(),
                         },
+                        area.osm_id,
                     ),
                     _ => continue,
                 },
             };
-            hits.push(Hit { z, label });
+            hits.push(Hit {
+                z,
+                label,
+                src: HitSource::Osm,
+                id,
+            });
         }
         for &src in self.lines.at(at) {
             let hit = match src {
-                LineSrc::Road(i) => map.roads.get(i as usize).and_then(|road| {
-                    (distance_to_polyline(at, &road.points) <= road.width / 2.0).then(|| Hit {
-                        z: road_z(road),
-                        label: road_label(road),
-                    })
-                }),
+                LineSrc::Road(i) => map
+                    .roads
+                    .get(i as usize)
+                    .and_then(|road| road_hit(road, roads, at)),
                 LineSrc::Rail(i) => map.rails.get(i as usize).and_then(|rail| {
                     (distance_to_polyline(at, &rail.points) <= rail.width / 2.0).then(|| Hit {
                         z: match rail.kind {
@@ -333,24 +399,32 @@ impl InspectIndex {
                             RailKind::Disused => "disused rail".to_string(),
                             RailKind::Active => "rail".to_string(),
                         },
+                        src: HitSource::Osm,
+                        id: rail.osm_id,
                     })
                 }),
                 LineSrc::Waterway(i) => map.water_lines.get(i as usize).and_then(|line| {
                     (distance_to_polyline(at, &line.points) <= line.width / 2.0).then(|| Hit {
                         z: Z_WATERWAY,
                         label: format!("waterway {} {:.1} m", lower(line.kind), line.width),
+                        src: HitSource::Osm,
+                        id: line.osm_id,
                     })
                 }),
                 LineSrc::Pipe(i) => map.pipes.get(i as usize).and_then(|pipe| {
                     (distance_to_polyline(at, &pipe.points) <= pipe.width / 2.0).then(|| Hit {
                         z: Z_PIPE,
                         label: "heating pipe".to_string(),
+                        src: HitSource::Osm,
+                        id: pipe.osm_id,
                     })
                 }),
                 LineSrc::Wall(i) => map.walls.get(i as usize).and_then(|wall| {
                     (distance_to_polyline(at, &wall.points) <= wall.width / 2.0).then(|| Hit {
                         z: Z_WALL,
                         label: "city wall".to_string(),
+                        src: HitSource::Osm,
+                        id: wall.osm_id,
                     })
                 }),
                 LineSrc::Fence(i) => map.fences.get(i as usize).and_then(|fence| {
@@ -363,6 +437,8 @@ impl InspectIndex {
                                 FenceKind::Hedge => "hedge".to_string(),
                                 FenceKind::Railing => "railing".to_string(),
                             },
+                            src: HitSource::Osm,
+                            id: fence.osm_id,
                         }
                     })
                 }),
@@ -377,6 +453,8 @@ impl InspectIndex {
                     (at.distance(node.pos) <= NODE_REACH).then(|| Hit {
                         z: Z_ROAD_PAINT,
                         label: node_label(node.kind),
+                        src: HitSource::Osm,
+                        id: node.osm_id,
                     })
                 }),
                 PointSrc::Structure(i) => map.structures.get(i as usize).and_then(|structure| {
@@ -387,6 +465,8 @@ impl InspectIndex {
                             structure_label(structure.kind),
                             structure.height
                         ),
+                        src: HitSource::Osm,
+                        id: structure.osm_id,
                     })
                 }),
             };
@@ -406,6 +486,8 @@ impl InspectIndex {
                 hits.push(Hit {
                     z: Z_TREE,
                     label: "tree".to_string(),
+                    src: HitSource::Osm,
+                    id: None,
                 });
             }
         }
@@ -442,14 +524,20 @@ impl Plugin for InspectPlugin {
 
 /// Одна находка строкой `z  label` — колонка z и отступ общие у обоих
 /// выходов индекса: панели ([`format_hits`]) и отчёта пробы (`dev.rs`),
-/// чтобы один и тот же признак читался в них одинаково.
+/// чтобы один и тот же признак читался в них одинаково. У находки с OSM id
+/// элемента-источника подпись ведёт хвостом `#id` — теги элемента показывает
+/// `tools/osm_near --id <id>`.
 pub fn hit_line(hit: &Hit) -> String {
-    format!("z {:6.3}  {}", hit.z, hit.label)
+    match hit.id {
+        Some(id) => format!("z {:6.3}  {} #{id}", hit.z, hit.label),
+        None => format!("z {:6.3}  {}", hit.z, hit.label),
+    }
 }
 
 /// Строки пробы для панели инспектора и отчёта `brp probe`: одна находка —
-/// строка `z  label`, самый верхний слой первым. Строк больше `cap` — хвост
-/// `+N more`.
+/// строка `z  label`, самый верхний слой первым. У находки с OSM id
+/// элемента-источника подпись ведёт хвостом `#id` — теги элемента показывает
+/// `tools/osm_near --id <id>`. Строк больше `cap` — хвост `+N more`.
 pub fn format_hits(hits: &[Hit], cap: usize) -> String {
     let mut out = String::new();
     for hit in hits.iter().take(cap) {
@@ -486,6 +574,88 @@ fn lower<T: std::fmt::Debug>(value: T) -> String {
     format!("{value:?}").to_lowercase()
 }
 
+/// Находка дороги в точке: полотно, а за ним полосы, которые дорога
+/// дорисовывает, — тротуар и обочина. Полосы мерятся от OSM-осевой по закону
+/// ширины модели ([`RoadLine::sidewalk`], [`RoadLine::verges`]); сторона —
+/// по знаку к ближайшему отрезку осевой. Ручка [`RoadStyle::sidewalks`]
+/// убирает обе полосы, как и у рисунка (`Drawn::verges_drawn`).
+fn road_hit(road: &RoadLine, style: &RoadStyle, at: Vec2) -> Option<Hit> {
+    let (dist, left) = distance_and_side(at, &road.points);
+    let half = road.width / 2.0;
+    if dist <= half {
+        return Some(Hit {
+            z: road_z(road),
+            label: road_label(road),
+            src: HitSource::Osm,
+            id: road.osm_id,
+        });
+    }
+    if !style.sidewalks {
+        return None;
+    }
+    let profile = road.sidewalk();
+    let band = profile.band()?;
+    let side = usize::from(!left);
+    if profile.on(side).is_some() && dist <= half + band {
+        // on(side) — Some, значит сторона либо Tagged, либо Inferred
+        let reason = if road.sidewalks[side] == SidewalkSide::Tagged {
+            HitReason::Tagged
+        } else {
+            HitReason::Inferred
+        };
+        return Some(Hit {
+            z: Z_SIDEWALK,
+            label: format!("sidewalk (auto, {})", reason.as_str()),
+            src: HitSource::Generated(reason),
+            id: road.osm_id,
+        });
+    }
+    if road.verges[side] > 0.0 && dist <= half + band + road.verges[side] {
+        return Some(Hit {
+            z: Z_ROAD_VERGE,
+            label: "verge (auto)".to_string(),
+            src: HitSource::Generated(HitReason::Inferred),
+            id: road.osm_id,
+        });
+    }
+    None
+}
+
+/// Досягаемость дороги в индексе: полотно плюс полосы, которые она
+/// дорисовывает, — тротуар и обочина (обе стороны сразу: индекс строится
+/// один раз, ручка «Sidewalks» может быть перевёрнута позже). Pad сетки
+/// обязан накрыть самый дальний ответ, иначе внешний край полос у соседней
+/// ячейки отвечал бы пусто.
+fn road_reach(road: &RoadLine) -> f32 {
+    road.width / 2.0
+        + road
+            .sidewalk()
+            .band()
+            .map(|band| band + road.verges[0].max(road.verges[1]))
+            .unwrap_or(0.0)
+}
+
+/// Расстояние от точки до ломаной и сторона ближайшего отрезка: `false` —
+/// слева по ходу точек (сторона 0 модели), `true` — справа. Один проход
+/// вместо двух: расстояние — то же, что у `distance_to_polyline`, сторона —
+/// у отрезка, который его дал. Смещение меряется от отрезка к точке, и
+/// `perp` смотрит влево по ходу — точка слева даёт плюс (та же сторона 0,
+/// что у `parse/verges.rs`, там смещение развёрнуто). Равные отрезки —
+/// к первому.
+fn distance_and_side(point: Vec2, points: &[Vec2]) -> (f32, bool) {
+    let mut best = (f32::INFINITY, false);
+    for segment in points.windows(2) {
+        let closest = closest_on_segment(point, segment[0], segment[1]);
+        let dist = closest.distance(point);
+        if dist < best.0 {
+            let direction = (segment[1] - segment[0]).normalize_or_zero();
+            let left = (point - closest).dot(direction.perp()) >= 0.0;
+            best = (dist, left);
+        }
+    }
+    best
+}
+
 /// Слой дороги: настил улицы, аллеи или грунтовой улицы, у моста — мостовой.
 fn road_z(road: &RoadLine) -> f32 {
     if road.bridge {
@@ -499,8 +669,9 @@ fn road_z(road: &RoadLine) -> f32 {
 }
 
 /// Подпись дороги: класс `highway` и ширина — то, по чему признак ищут в
-/// данных; мост и тротуары — флагами, точную полосу тротуара индекс не
-/// считает (это геометрия сборки дорог).
+/// данных; мост и тротуары — флагами. Полоса тротуара под точкой отвечает
+/// отдельной находкой (`sidewalk (auto, …)`) — по закону ширины модели;
+/// точная нарисованная геометрия остаётся делом сборки дорог.
 fn road_label(road: &RoadLine) -> String {
     let mut label = match road.class {
         RoadClass::Street => {
@@ -629,7 +800,12 @@ fn structure_label(kind: StructureKind) -> String {
 mod tests {
     use super::*;
     use crate::map::osm::fixture;
-    use crate::map::osm::model::{TreeSet, WaterKind, WaterLine};
+    use crate::map::osm::model::{RoadArea, RoadAreaKind, TreeSet, WaterKind, WaterLine};
+
+    /// Запрос с дефолтным стилем дорог — все выведенные полосы отвечают.
+    fn query(index: &InspectIndex, map: &MapData, tree_density: f32, at: Vec2) -> Vec<Hit> {
+        index.hits(map, tree_density, &RoadStyle::default(), at)
+    }
 
     #[test]
     fn a_point_inside_the_feature_hits_it() {
@@ -647,7 +823,7 @@ mod tests {
         let index = InspectIndex::rebuild(&map);
 
         // внутри здания и внутри полотна дороги: здание сверху, земля снизу
-        let hits = index.hits(&map, 0.0, Vec2::new(100.0, 102.0));
+        let hits = query(&index, &map, 0.0, Vec2::new(100.0, 102.0));
         let labels: Vec<&str> = hits.iter().map(|hit| hit.label.as_str()).collect();
         assert_eq!(
             labels,
@@ -655,8 +831,14 @@ mod tests {
         );
         assert!(hits[0].z > hits[1].z && hits[1].z > hits[2].z);
 
-        // внутри здания, но вне полотна: дороги в ответе нет
-        let hits = index.hits(&map, 0.0, Vec2::new(100.0, 107.0));
+        // внутри здания, но за краем полос тротуара: дороги в ответе нет
+        let (_, sidewalk_edge, _) = band_edges(0.0);
+        let hits = query(
+            &index,
+            &map,
+            0.0,
+            Vec2::new(100.0, 100.0 + sidewalk_edge + 0.1),
+        );
         let labels: Vec<&str> = hits.iter().map(|hit| hit.label.as_str()).collect();
         assert_eq!(labels, vec!["building", "ground"]);
     }
@@ -671,7 +853,7 @@ mod tests {
             ..default()
         };
         let index = InspectIndex::rebuild(&map);
-        let hits = index.hits(&map, 0.0, Vec2::new(200.0, 200.0));
+        let hits = query(&index, &map, 0.0, Vec2::new(200.0, 200.0));
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].label, "ground");
     }
@@ -690,7 +872,7 @@ mod tests {
             ..default()
         };
         let index = InspectIndex::rebuild(&map);
-        let hits = index.hits(&map, 0.0, Vec2::new(100.0, 100.0));
+        let hits = query(&index, &map, 0.0, Vec2::new(100.0, 100.0));
         let labels: Vec<&str> = hits.iter().map(|hit| hit.label.as_str()).collect();
         // сквозь дыру здания видна вода под ним
         assert_eq!(labels, vec!["water", "ground"]);
@@ -706,7 +888,7 @@ mod tests {
             ..default()
         };
         let index = InspectIndex::rebuild(&map);
-        let hits = index.hits(&map, 0.0, Vec2::new(30.0, 50.0));
+        let hits = query(&index, &map, 0.0, Vec2::new(30.0, 50.0));
         assert_eq!(hits.len(), 2);
         assert_eq!(hits[0].label, "road residential 8.0 m, bridge, sidewalks");
         assert_eq!(hits[0].z, Z_BRIDGE);
@@ -721,11 +903,12 @@ mod tests {
                 width: 2.5,
                 kind: WaterKind::Stream,
                 tunnel: true,
+                osm_id: None,
             }],
             ..default()
         };
         let index = InspectIndex::rebuild(&map);
-        let hits = index.hits(&map, 0.0, Vec2::new(25.0, 0.0));
+        let hits = query(&index, &map, 0.0, Vec2::new(25.0, 0.0));
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].label, "ground");
     }
@@ -738,11 +921,12 @@ mod tests {
                 width: 2.5,
                 kind: WaterKind::Stream,
                 tunnel: false,
+                osm_id: None,
             }],
             ..default()
         };
         let index = InspectIndex::rebuild(&map);
-        let hits = index.hits(&map, 0.0, Vec2::new(25.0, 0.5));
+        let hits = query(&index, &map, 0.0, Vec2::new(25.0, 0.5));
         assert_eq!(hits[0].label, "waterway stream 2.5 m");
     }
 
@@ -758,16 +942,18 @@ mod tests {
         let index = InspectIndex::rebuild(&map);
 
         // порог 0.7 выше плотности 0.5 — дерева в ответе нет
-        let hits = index.hits(&map, 0.5, Vec2::new(120.0, 100.0));
+        let hits = query(&index, &map, 0.5, Vec2::new(120.0, 100.0));
         assert_eq!(
             hits,
             vec![Hit {
                 z: Z_GROUND,
-                label: "ground".into()
+                label: "ground".into(),
+                src: HitSource::Osm,
+                id: None,
             }]
         );
         // при плотности 0.8 видно уже всё
-        let hits = index.hits(&map, 0.8, Vec2::new(120.0, 100.0));
+        let hits = query(&index, &map, 0.8, Vec2::new(120.0, 100.0));
         assert_eq!(hits[0].label, "tree");
     }
 
@@ -787,15 +973,292 @@ mod tests {
             ..default()
         };
         let index = InspectIndex::rebuild(&map);
-        let hits = index.hits(&map, 0.0, Vec2::new(100.0, 100.0));
+        let hits = query(&index, &map, 0.0, Vec2::new(100.0, 100.0));
         assert_eq!(hits.len(), 2);
         assert_eq!(hits[0].label, "grass");
+    }
+
+    /// Улица вдоль x на оси `y`: ширина 8, тротуар и обочина по аргументам.
+    fn banded_street(y: f32, verges: [f32; 2], sidewalks: [SidewalkSide; 2]) -> RoadLine {
+        RoadLine {
+            verges,
+            sidewalks,
+            ..fixture::street(vec![Vec2::new(0.0, y), Vec2::new(1000.0, y)], 8.0)
+        }
+    }
+
+    /// Кромки полос такой улицы — расстояния от оси, м: полотно, край
+    /// тротуара, край обочины.
+    fn band_edges(verge: f32) -> (f32, f32, f32) {
+        let half = 4.0;
+        let band = crate::map::osm::model::sidewalk_band(8.0);
+        (half, half + band, half + band + verge)
+    }
+
+    #[test]
+    fn a_sidewalk_band_answers_inside_itself_and_not_beyond() {
+        let map = MapData {
+            roads: vec![banded_street(70.0, [0.0; 2], [SidewalkSide::Inferred; 2])],
+            ..default()
+        };
+        let index = InspectIndex::rebuild(&map);
+        let (_, sidewalk_edge, _) = band_edges(0.0);
+
+        // внутри полосы — тротуар дорисован дорогой, слой тротуаров
+        let hits = query(
+            &index,
+            &map,
+            0.0,
+            Vec2::new(500.0, 70.0 + sidewalk_edge - 0.1),
+        );
+        let sidewalks: Vec<&Hit> = hits
+            .iter()
+            .filter(|hit| hit.label.starts_with("sidewalk"))
+            .collect();
+        assert_eq!(sidewalks.len(), 1);
+        assert_eq!(sidewalks[0].label, "sidewalk (auto, inferred)");
+        assert_eq!(sidewalks[0].z, Z_SIDEWALK);
+
+        // за краем полосы ответа нет — дороги под точкой тоже
+        let hits = query(
+            &index,
+            &map,
+            0.0,
+            Vec2::new(500.0, 70.0 + sidewalk_edge + 0.1),
+        );
+        assert!(hits.iter().all(|hit| hit.label == "ground"));
+    }
+
+    #[test]
+    fn a_one_sided_sidewalk_answers_only_on_its_side() {
+        // тротуар по тегу слева (по ходу точек — +y), справа снят разбором:
+        // сторона None находки не даёт вовсе
+        let map = MapData {
+            roads: vec![banded_street(
+                70.0,
+                [0.0; 2],
+                [SidewalkSide::Tagged, SidewalkSide::None],
+            )],
+            ..default()
+        };
+        let index = InspectIndex::rebuild(&map);
+        let (_, sidewalk_edge, _) = band_edges(0.0);
+        let offset = sidewalk_edge - 0.1;
+
+        let hits = query(&index, &map, 0.0, Vec2::new(500.0, 70.0 + offset));
+        assert_eq!(hits[0].label, "sidewalk (auto, tagged)");
+        let hits = query(&index, &map, 0.0, Vec2::new(500.0, 70.0 - offset));
+        assert!(hits.iter().all(|hit| hit.label == "ground"));
+    }
+
+    #[test]
+    fn tagged_and_inferred_sides_label_their_reason() {
+        let map = MapData {
+            roads: vec![
+                banded_street(70.0, [0.0; 2], [SidewalkSide::Tagged; 2]),
+                banded_street(500.0, [0.0; 2], [SidewalkSide::Inferred; 2]),
+            ],
+            ..default()
+        };
+        let index = InspectIndex::rebuild(&map);
+        let (_, sidewalk_edge, _) = band_edges(0.0);
+
+        let hits = query(
+            &index,
+            &map,
+            0.0,
+            Vec2::new(500.0, 70.0 + sidewalk_edge - 0.1),
+        );
+        assert!(
+            hits.iter()
+                .any(|hit| hit.label == "sidewalk (auto, tagged)")
+        );
+        let hits = query(
+            &index,
+            &map,
+            0.0,
+            Vec2::new(500.0, 500.0 + sidewalk_edge - 0.1),
+        );
+        assert!(
+            hits.iter()
+                .any(|hit| hit.label == "sidewalk (auto, inferred)")
+        );
+    }
+
+    #[test]
+    fn the_sidewalks_knob_hides_the_generated_bands() {
+        let map = MapData {
+            roads: vec![banded_street(70.0, [0.0; 2], [SidewalkSide::Inferred; 2])],
+            ..default()
+        };
+        let index = InspectIndex::rebuild(&map);
+        let (_, sidewalk_edge, _) = band_edges(0.0);
+        let style = RoadStyle {
+            sidewalks: false,
+            ..RoadStyle::default()
+        };
+
+        let hits = index.hits(
+            &map,
+            0.0,
+            &style,
+            Vec2::new(500.0, 70.0 + sidewalk_edge - 0.1),
+        );
+        assert!(hits.iter().all(|hit| hit.label == "ground"));
+    }
+
+    #[test]
+    fn a_verge_band_answers_up_to_its_outer_edge() {
+        let map = MapData {
+            roads: vec![banded_street(70.0, [2.0; 2], [SidewalkSide::Inferred; 2])],
+            ..default()
+        };
+        let index = InspectIndex::rebuild(&map);
+        let (_, _, verge_edge) = band_edges(2.0);
+
+        // за краем тротуара — обочина, подпись без причины
+        let hits = query(&index, &map, 0.0, Vec2::new(500.0, 70.0 + verge_edge - 0.1));
+        assert_eq!(hits[0].label, "verge (auto)");
+        assert_eq!(hits[0].z, Z_ROAD_VERGE);
+        assert_eq!(hits[0].src, HitSource::Generated(HitReason::Inferred));
+
+        // за внешним краем обочины ответа нет
+        let hits = query(&index, &map, 0.0, Vec2::new(500.0, 70.0 + verge_edge + 0.1));
+        assert!(hits.iter().all(|hit| hit.label == "ground"));
+    }
+
+    #[test]
+    fn the_outer_edge_of_a_long_verge_is_found_across_the_cell_line() {
+        // полнота сетки после роста pad: обочина шириной 2 м у дороги на
+        // y = 70 дотягивается до y = 62.3 — за границу ячейки 64, которую
+        // прежний pad (width/2 = 4) не задевал вовсе
+        let map = MapData {
+            roads: vec![banded_street(70.0, [2.0; 2], [SidewalkSide::Inferred; 2])],
+            ..default()
+        };
+        let index = InspectIndex::rebuild(&map);
+        let (_, _, verge_edge) = band_edges(2.0);
+
+        let hits = query(
+            &index,
+            &map,
+            0.0,
+            Vec2::new(500.0, 70.0 - verge_edge + 0.01),
+        );
+        assert!(hits.iter().any(|hit| hit.label == "verge (auto)"));
+    }
+
+    #[test]
+    fn an_osm_walkway_and_a_generated_sidewalk_are_two_rows() {
+        let map = MapData {
+            roads: vec![banded_street(70.0, [0.0; 2], [SidewalkSide::Inferred; 2])],
+            road_areas: vec![RoadArea {
+                outline: fixture::rect(Vec2::new(495.0, 72.0), Vec2::new(510.0, 80.0)),
+                kind: RoadAreaKind::Walkway,
+                osm_id: None,
+            }],
+            ..default()
+        };
+        let index = InspectIndex::rebuild(&map);
+        let (_, sidewalk_edge, _) = band_edges(0.0);
+
+        // OSM-площадь дорожки и дорисованный тротуар — разные находки,
+        // пусть и на одном слое
+        let hits = query(
+            &index,
+            &map,
+            0.0,
+            Vec2::new(500.0, 70.0 + sidewalk_edge - 0.5),
+        );
+        let labels: Vec<&str> = hits.iter().map(|hit| hit.label.as_str()).collect();
+        assert!(labels.contains(&"walkway"));
+        assert!(labels.contains(&"sidewalk (auto, inferred)"));
+    }
+
+    #[test]
+    fn identical_bands_of_two_roads_collapse() {
+        // две улицы в девяти метрах: точка посередине лежит в полосе тротуара
+        // обеих — одинаковые находки на одном слое схлопываются в одну
+        let map = MapData {
+            roads: vec![
+                banded_street(65.5, [0.0; 2], [SidewalkSide::Inferred; 2]),
+                banded_street(74.5, [0.0; 2], [SidewalkSide::Inferred; 2]),
+            ],
+            ..default()
+        };
+        let index = InspectIndex::rebuild(&map);
+
+        let hits = query(&index, &map, 0.0, Vec2::new(500.0, 70.0));
+        let sidewalks = hits
+            .iter()
+            .filter(|hit| hit.label.starts_with("sidewalk"))
+            .count();
+        assert_eq!(sidewalks, 1);
+    }
+
+    #[test]
+    fn the_osm_id_prints_as_a_tail() {
+        let hits = vec![
+            Hit {
+                z: 1.0,
+                label: "road residential 8.0 m".into(),
+                src: HitSource::Osm,
+                id: Some(179102449),
+            },
+            Hit {
+                z: 0.0,
+                label: "ground".into(),
+                src: HitSource::Osm,
+                id: None,
+            },
+        ];
+        let text = format_hits(&hits, 12);
+        assert!(text.contains("road residential 8.0 m #179102449"));
+        // у находки без элемента хвоста нет
+        assert!(text.ends_with("ground"));
+    }
+
+    #[test]
+    fn a_parsed_feature_carries_its_osm_id() {
+        // улица с тротуаром по тегу: и находка полотна, и дорисованная полоса
+        // наследуют way id своей дороги
+        let overpass = fixture::Overpass::new(crate::city::City::Tula).way(
+            &[("highway", "residential"), ("sidewalk", "both")],
+            vec![Vec2::new(1000.0, 1400.0), Vec2::new(1400.0, 1400.0)],
+        );
+        let map = overpass.parse();
+        let index = InspectIndex::rebuild(&map);
+
+        let road = &map.roads[0];
+        assert_eq!(road.osm_id, Some(1));
+
+        let hits = query(&index, &map, 0.0, Vec2::new(1200.0, 1400.0));
+        let road_hit = hits
+            .iter()
+            .find(|hit| hit.label.starts_with("road "))
+            .expect("the way is a road hit");
+        assert_eq!(road_hit.id, Some(1));
+
+        let half = road.width / 2.0;
+        let band = road.sidewalk().band().expect("tagged sidewalk");
+        let hits = query(
+            &index,
+            &map,
+            0.0,
+            Vec2::new(1200.0, 1400.0 + half + band - 0.1),
+        );
+        let sidewalk = hits
+            .iter()
+            .find(|hit| hit.label.starts_with("sidewalk"))
+            .expect("the band is a hit");
+        assert_eq!(sidewalk.id, Some(1));
+        assert_eq!(sidewalk.src, HitSource::Generated(HitReason::Tagged));
     }
 
     #[test]
     fn an_unbuilt_index_answers_nothing() {
         let map = MapData::default();
-        let hits = InspectIndex::default().hits(&map, 0.0, Vec2::ZERO);
+        let hits = query(&InspectIndex::default(), &map, 0.0, Vec2::ZERO);
         assert!(hits.is_empty());
     }
 
@@ -805,6 +1268,8 @@ mod tests {
             .map(|i| Hit {
                 z: i as f32,
                 label: format!("x{i}"),
+                src: HitSource::Osm,
+                id: None,
             })
             .collect();
         assert_eq!(format_hits(&hits, 12).lines().count(), 5);

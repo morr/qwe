@@ -24,9 +24,9 @@ use bevy::window::PrimaryWindow;
 
 use super::speed::{PANEL_WIDTH_PX, TelemetryPanel};
 use crate::camera::cursor_offset;
-use crate::map::TreeStyle;
 use crate::map::inspect::{InspectIndex, InspectOrigin, format_hits};
 use crate::map::osm::MapData;
+use crate::map::{RoadStyle, TreeStyle};
 use crate::ui::{GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, panel_background};
 
 /// Зазор между телеметрией и этой панелью, px.
@@ -211,6 +211,7 @@ struct InspectorInputs<'w> {
     index: Res<'w, InspectIndex>,
     origin: Res<'w, InspectOrigin>,
     trees: Res<'w, TreeStyle>,
+    roads: Res<'w, RoadStyle>,
 }
 
 /// Список находок под курсором — из семантического индекса
@@ -229,6 +230,7 @@ fn update_inspector_hits(
         index,
         origin,
         trees,
+        roads,
     } = inputs;
     let Some(map) = map.as_deref() else {
         return;
@@ -241,14 +243,16 @@ fn update_inspector_hits(
     let point = transform.translation.truncate()
         + cursor_offset(&window, cursor) * controller.zoom_factor
         - origin.0;
-    let inputs_fresh = index.is_changed() || origin.is_changed();
+    // ручка Sidewalks тоже вход: её переворот меняет список без движения
+    // курсора и без пересборки индекса
+    let inputs_fresh = index.is_changed() || origin.is_changed() || roads.is_changed();
     if !inputs_fresh && last.distance(point) < INSPECTOR_QUERY_STEP {
         return;
     }
     *last = point;
 
     let hits = if index.is_built() {
-        index.hits(map, trees.density, point)
+        index.hits(map, trees.density, &roads, point)
     } else {
         Vec::new()
     };

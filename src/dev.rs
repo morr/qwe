@@ -329,7 +329,7 @@ fn on_probe_layers(
     // то, что панель инспектора (`ui/inspector.rs`) показывает на каждом
     // движении курсора. Дёшево: одна ячейка сетки, без пересборки. Слой
     // отвечает «какой меш рисует пиксель», индекс — «что это по данным».
-    let hits = index.hits(&map, trees.density, at);
+    let hits = index.hits(&map, trees.density, &road_style, at);
     report.push_str(&format!(
         "features at the point (semantic index): {}\n",
         hits.len()

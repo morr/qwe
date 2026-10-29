@@ -91,7 +91,14 @@ the **live app** the same question is one call: `brp probe <x> <y>` — its repo
 drawn layers *and*, in the `features at the point (semantic index)` section, the map
 features under the point (`road residential 8.0 m, sidewalks`, `building apartments,
 12 m`, `waterway stream 2.5 m`…); the inspector panel shows the same list live under the
-cursor. `osm_near` reads the newest `assets/osm/<city>_*.json` and
+cursor. The semantic list answers for the **model**: beside the tagged features it
+carries the bands a road draws itself — `sidewalk (auto, tagged)` / `sidewalk (auto,
+inferred)` (why the parse put the sidewalk there) and `verge (auto)` — measured off the
+OSM axis by the width law, so smoothing, kerb returns and driveway crossings are not
+in them; for the drawn geometry `brp probe`'s layer section is the arbiter. Every
+feature that came out of the extract carries its OSM id as a tail `#id` on the line —
+the tags are one call away: `tools/osm_near --id <id>`. `osm_near` reads the newest
+`assets/osm/<city>_*.json` and
 projects with the centre and size from its name, i.e. the same metres as `SimPosition` and
 `brp cam`; to confirm the pick live, `brp cam x y` then `brp shot`.
 

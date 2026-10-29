@@ -2477,9 +2477,18 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   `tools/shot_coords`) and the live list of what the map draws under the cursor, from the
   **semantic index** (`map/inspect.rs::InspectIndex` — a `Grid` over the `MapData`
   features, built once per load, rebuilt when `MapData` changes; a hit carries the feature
-  label and the z of the layer it draws in, top layer first). `InspectOrigin` — the
-  world→map shift: zero in the game, the shown sample's shift in the roads gallery, so the
-  panel and the probe speak map metres everywhere (`tools/osm_near` reads them directly).
+  label, the z of the layer it draws in, its source and its OSM id, top layer first).
+  Besides the data features the index answers the **bands a road draws itself** — the
+  sidewalk and the verge, measured off the OSM axis by the model's width law
+  (`RoadLine::sidewalk`, `RoadLine::verges`), gated by the `RoadStyle::sidewalks` knob;
+  their labels carry the suffix `(auto, tagged)` / `(auto, inferred)` — the reason the
+  parse put the sidewalk there — and a bare `(auto)` for the verge. A hit with an OSM id
+  prints the tail `#id`: `tools/osm_near --id <id>` shows the element's tags. The index
+  speaks for the **model**, not the drawing: smoothing, kerb returns, driveway crossings
+  and pair-median gaps are the road builders' geometry — the exact arbiter there is
+  `brp probe`. `InspectOrigin` — the world→map shift: zero in the game, the shown
+  sample's shift in the roads gallery, so the panel and the probe speak map metres
+  everywhere (`tools/osm_near` reads them directly).
 - **Knob** (`ui/knob.rs`) — a panel row **bound to one field of one resource**, in two
   shapes: `spawn_knob` (slider) and `spawn_cycle_row` (button that cycles a value).
   `app.add_knobs::<R>()` registers the drag observer and the label/thumb sync **once per

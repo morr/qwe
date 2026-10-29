@@ -124,7 +124,15 @@ panel** with four tabs (`ui/shell.rs`).
   skips the system and the panel stands at the screen edge). Two FiraMono lines: the
   **camera line** `zoom/x/y cx/cy` and the **hits list** — what the map draws under the
   cursor, recomputed when the point moves over `INSPECTOR_QUERY_STEP` (0.5 m) or the
-  semantic index is rebuilt.
+  semantic index is rebuilt. Each hit prints `z  label`; the label dictionary: data
+  features speak for themselves (`road residential 8.0 m, sidewalks`), a band the road
+  drew itself carries the `(auto, …)` suffix — `sidewalk (auto, tagged)` (the sidewalk
+  came from a `sidewalk=*` tag) / `sidewalk (auto, inferred)` (the parse inferred it) /
+  `verge (auto)` (the verge to a separately mapped footway; no reason shown) — and a hit
+  that came out of the extract ends with its OSM id, `#179102449` (the tags are one
+  `tools/osm_near --id <id>` away). The two knobs the list follows: `TreeStyle::density`
+  (the tree prefix) and `RoadStyle::sidewalks` (turning it off removes both auto bands,
+  as it does from the drawing).
   Two modes: `UiInspectorPlugin::game()` (a `GameUiRoot` — hidden until
   `PlayPhase::Live`, hidden on city switch) and `UiInspectorPlugin::standalone()` (the
   roads gallery: visible from the first frame, states don't exist there). `tools/shot_coords`

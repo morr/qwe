@@ -392,7 +392,14 @@ hour-long pixel arithmetic a hunt used to spend before this existed. The report 
 the **`features at the point (semantic index)`** section — what `MapData` puts at the point
 (`road residential 8.0 m, sidewalks`, `building apartments, 12 m`, `tree`, `waterway
 stream 2.5 m`, `parking lot kerbside`…), top layer first: the answer to "what *is* this",
-not just which mesh draws it. The same list lives in the **point inspector panel** (top
+not just which mesh draws it. The section carries the model's answer in full now: a band
+the road drew itself is a hit of its own — `sidewalk (auto, tagged)` / `sidewalk (auto,
+inferred)` for the two reasons the parse puts a sidewalk there, `verge (auto)` for the
+verge (the tile/lawn/yard split and the zoom LOD of the drawing are not in it — the index
+speaks for the model, the layer section above for the drawn geometry) — and every hit
+that came out of the extract ends with its OSM id, `#179102449`: `tools/osm_near --id
+179102449` prints that element's tags and vertices. Generated bands inherit the road's
+way id. The same list lives in the **point inspector panel** (top
 right, under the telemetry) and updates with the cursor — a screenshot of it answers both
 questions at once. Coordinates are map metres; in the roads gallery they are the sample's
 own map metres (the panel and probe subtract the sample's column shift). `hide` + reshoot
