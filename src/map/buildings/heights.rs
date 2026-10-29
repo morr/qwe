@@ -236,6 +236,7 @@ mod tests {
             storeys: None,
             entrances: Vec::new(),
             colours: Default::default(),
+            osm_id: None,
         }
     }
 

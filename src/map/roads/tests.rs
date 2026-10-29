@@ -692,6 +692,7 @@ fn a_turning_circle_widens_the_dead_end() {
     map.road_nodes.push(RoadNode {
         pos: Vec2::new(600.0, 100.0),
         kind: RoadNodeKind::TurningCircle,
+        osm_id: None,
     });
     let (layers, report) = mesh_roads(
         &map,
@@ -816,6 +817,7 @@ fn a_zebra_plank_cuts_the_lines_of_crossing_carriageways() {
             island: false,
             marked: true,
         },
+        osm_id: None,
     });
     let drawn = Drawn::new(
         &map,

@@ -401,6 +401,7 @@ fn a_zebra_at_a_way_end_spills_onto_the_next_way() {
             island: false,
             marked: true,
         },
+        osm_id: None,
     };
     let found = crossing_breaks(&roads, &RoadNodes::new(&roads), &[zebra]);
     assert_eq!(
@@ -443,6 +444,7 @@ fn a_zebra_at_a_way_end_spills_only_onto_the_continuation() {
             island: false,
             marked: true,
         },
+        osm_id: None,
     };
     let spilled: Vec<usize> = crossing_breaks(&roads, &RoadNodes::new(&roads), &[zebra])
         .into_iter()
@@ -523,6 +525,7 @@ fn a_zebra_at_a_way_end_breaks_the_kerb_pockets_of_both_ways() {
             island: false,
             marked: true,
         },
+        osm_id: None,
     };
     let mut map = with_network(roads);
     assert_eq!(timeless(&map).kerb_pockets, 4);

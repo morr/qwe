@@ -766,6 +766,7 @@ fn house(centre: Vec2, half: Vec2, rotation: Rot2, courtyard: f32) -> PolyArea {
         storeys: None,
         entrances: Vec::new(),
         colours: Colours::default(),
+        osm_id: None,
     }
 }
 

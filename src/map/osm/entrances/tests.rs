@@ -18,6 +18,7 @@ fn building(outer: Vec<Vec2>, height: Option<f32>) -> PolyArea {
         storeys: None,
         entrances: Vec::new(),
         colours: Default::default(),
+        osm_id: None,
     }
 }
 

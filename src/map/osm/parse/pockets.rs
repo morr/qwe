@@ -242,6 +242,7 @@ fn sown_area(outer: Vec<Vec2>, kind: AreaKind) -> PolyArea {
         storeys: None,
         entrances: Vec::new(),
         colours: Default::default(),
+        osm_id: None,
     }
 }
 

@@ -221,6 +221,10 @@ pub struct PolyArea {
     /// решает узнаваемость, а палитра по посеву красила золотые главы
     /// кремлёвского собора серебром.
     pub colours: Colours,
+    /// OSM id элемента выгрузки; `None` — сгенерировано разбором или карта
+    /// собрана тестом. Проба точки (`map/inspect.rs`) печатает его хвостом
+    /// `#id` — от находки к тегам ведёт `tools/osm_near --id`.
+    pub osm_id: Option<u64>,
 }
 
 impl PolyArea {
@@ -406,6 +410,10 @@ pub struct RoadLine {
     /// рисуется грунтом без разметки, без тега — асфальтом; `None` у
     /// дорожки, собранной тестом руками, рисуется тропинкой, как до поля.
     pub pavement: Option<Pavement>,
+    /// OSM id элемента выгрузки; `None` — сгенерировано разбором или карта
+    /// собрана тестом. Проба точки (`map/inspect.rs`) печатает его хвостом
+    /// `#id` — от находки к тегам ведёт `tools/osm_near --id`.
+    pub osm_id: Option<u64>,
 }
 
 impl RoadLine {
@@ -681,6 +689,10 @@ pub struct RailLine {
     /// настил с бортами и тенью над тем, что под ним (`map::rail`), — и
     /// переезда на нём не бывает.
     pub bridge: bool,
+    /// OSM id элемента выгрузки; `None` — сгенерировано разбором или карта
+    /// собрана тестом. Проба точки (`map/inspect.rs`) печатает его хвостом
+    /// `#id` — от находки к тегам ведёт `tools/osm_near --id`.
+    pub osm_id: Option<u64>,
 }
 
 /// Класс служебного пути — значение `service` из белого списка.
@@ -699,6 +711,10 @@ pub enum ServiceTrack {
 pub struct WallLine {
     pub points: Vec<Vec2>,
     pub width: f32,
+    /// OSM id элемента выгрузки; `None` — сгенерировано разбором или карта
+    /// собрана тестом. Проба точки (`map/inspect.rs`) печатает его хвостом
+    /// `#id` — от находки к тегам ведёт `tools/osm_near --id`.
+    pub osm_id: Option<u64>,
 }
 
 /// Что за ограда — она же способ отрисовки (`map::fences`).
@@ -732,6 +748,10 @@ pub struct FenceLine {
     /// ограда отрезала от города участок с дверями
     /// (`Navmesh::open_sealed_fences`). После разбора пусто.
     pub gates: Vec<Vec2>,
+    /// OSM id элемента выгрузки; `None` — сгенерировано разбором или карта
+    /// собрана тестом. Проба точки (`map/inspect.rs`) печатает его хвостом
+    /// `#id` — от находки к тегам ведёт `tools/osm_near --id`.
+    pub osm_id: Option<u64>,
 }
 
 /// Род промышленного сооружения — он же радиус и высота по умолчанию, когда в
@@ -766,6 +786,10 @@ pub struct Structure {
     pub radius: f32,
     pub height: f32,
     pub kind: StructureKind,
+    /// OSM id элемента выгрузки; `None` — сгенерировано разбором или карта
+    /// собрана тестом. Проба точки (`map/inspect.rs`) печатает его хвостом
+    /// `#id` — от находки к тегам ведёт `tools/osm_near --id`.
+    pub osm_id: Option<u64>,
 }
 
 /// Надземный трубопровод — теплотрасса на опорах.
@@ -780,6 +804,10 @@ pub struct PipeLine {
     /// Ширина связки, м: `count` труб в пучке — теплотрассу тянут парой
     /// (подача и обратка), реже четвёркой.
     pub width: f32,
+    /// OSM id элемента выгрузки; `None` — сгенерировано разбором или карта
+    /// собрана тестом. Проба точки (`map/inspect.rs`) печатает его хвостом
+    /// `#id` — от находки к тегам ведёт `tools/osm_near --id`.
+    pub osm_id: Option<u64>,
 }
 
 /// Род водотока — он же ширина по умолчанию, когда в данных нет `width`.
@@ -814,6 +842,10 @@ pub struct WaterLine {
     /// человек проходит поверху) и **не рисуется вовсе**: под землёй воды не
     /// видно, а карта и так показывает разрыв русла между порталами.
     pub tunnel: bool,
+    /// OSM id элемента выгрузки; `None` — сгенерировано разбором или карта
+    /// собрана тестом. Проба точки (`map/inspect.rs`) печатает его хвостом
+    /// `#id` — от находки к тегам ведёт `tools/osm_near --id`.
+    pub osm_id: Option<u64>,
 }
 
 /// Допуск склейки концов двух ways: узел у них общий, и обе проекции считаны из
@@ -882,6 +914,10 @@ pub struct TreeNode {
 pub struct RoadNode {
     pub pos: Vec2,
     pub kind: RoadNodeKind,
+    /// OSM id элемента выгрузки; `None` — сгенерировано разбором или карта
+    /// собрана тестом. Проба точки (`map/inspect.rs`) печатает его хвостом
+    /// `#id` — от находки к тегам ведёт `tools/osm_near --id`.
+    pub osm_id: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -921,6 +957,10 @@ pub struct RoadArea {
     /// Открытое кольцо (без повтора первой точки).
     pub outline: Vec<Vec2>,
     pub kind: RoadAreaKind,
+    /// OSM id элемента выгрузки; `None` — сгенерировано разбором или карта
+    /// собрана тестом. Проба точки (`map/inspect.rs`) печатает его хвостом
+    /// `#id` — от находки к тегам ведёт `tools/osm_near --id`.
+    pub osm_id: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1675,6 +1715,7 @@ mod tests {
             storeys: None,
             entrances: Vec::new(),
             colours: Colours::default(),
+            osm_id: None,
         };
         assert!(point_in_area(Vec2::new(2.0, 2.0), &area));
         assert!(!point_in_area(Vec2::new(5.0, 5.0), &area));
@@ -1706,6 +1747,7 @@ mod tests {
             storeys,
             entrances: Vec::new(),
             colours: Colours::default(),
+            osm_id: None,
         };
 
         assert!(is_big_box(&retail(None, None)));
@@ -1785,6 +1827,7 @@ mod tests {
             storeys: None,
             entrances: Vec::new(),
             colours: Colours::default(),
+            osm_id: None,
         };
         // длинная сторона — верхняя, от (30, 4) к (0, 4)
         let lot = area(vec![

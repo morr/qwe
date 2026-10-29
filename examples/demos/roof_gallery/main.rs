@@ -727,6 +727,7 @@ fn material_house(cell: &Cell, rotation: Rot2, tuning: &Tuning) -> PolyArea {
         storeys: None,
         entrances: Vec::new(),
         colours: Colours::default(),
+        osm_id: None,
     }
 }
 

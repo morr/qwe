@@ -693,6 +693,7 @@ fn a_zebra_is_whole_bars_centred_between_the_kerbs() {
             island: false,
             marked: true,
         },
+        osm_id: None,
     });
     let (layers, report) = mesh_roads(
         &map,
@@ -783,6 +784,7 @@ fn a_stop_line_keeps_to_the_kerb_narrowed_by_a_taper() {
             island: false,
             marked: true,
         },
+        osm_id: None,
     });
     let (layers, report) = mesh_roads(
         &map,

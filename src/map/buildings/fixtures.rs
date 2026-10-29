@@ -75,6 +75,7 @@ pub(super) fn building(outer: Vec<Vec2>, height: Option<f32>, kind: AreaKind) ->
         storeys: None,
         entrances: Vec::new(),
         colours: Colours::default(),
+        osm_id: None,
     }
 }
 

@@ -553,6 +553,7 @@ fn island_zebra_avenue() -> (MapData, f32) {
                 island: true,
                 marked: true,
             },
+            osm_id: None,
         });
     }
     (map, apart)

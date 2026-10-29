@@ -190,6 +190,7 @@ pub fn area(kind: AreaKind, outer: Vec<Vec2>) -> PolyArea {
         storeys: None,
         entrances: vec![],
         colours: Default::default(),
+        osm_id: None,
     }
 }
 
@@ -218,6 +219,7 @@ pub fn rail(points: Vec<Vec2>, width: f32) -> RailLine {
         kind: RailKind::Active,
         service: None,
         bridge: false,
+        osm_id: None,
     }
 }
 
@@ -248,6 +250,7 @@ pub fn street(points: Vec<Vec2>, width: f32) -> RoadLine {
         verge_profile: Default::default(),
         parking: Default::default(),
         pavement: None,
+        osm_id: None,
     }
 }
 
@@ -288,6 +291,7 @@ pub fn stream(points: Vec<Vec2>, width: f32) -> WaterLine {
         width,
         kind: WaterKind::Stream,
         tunnel: false,
+        osm_id: None,
     }
 }
 
@@ -299,7 +303,11 @@ pub fn culvert(points: Vec<Vec2>, width: f32) -> WaterLine {
 }
 
 pub fn wall(points: Vec<Vec2>, width: f32) -> WallLine {
-    WallLine { points, width }
+    WallLine {
+        points,
+        width,
+        osm_id: None,
+    }
 }
 
 pub fn fence(points: Vec<Vec2>) -> FenceLine {
@@ -307,6 +315,7 @@ pub fn fence(points: Vec<Vec2>) -> FenceLine {
         points,
         kind: FenceKind::Fence,
         gates: Vec::new(),
+        osm_id: None,
     }
 }
 

@@ -681,6 +681,7 @@ fn a_pure_fork_gets_no_rule_zebra_or_stop_line() {
             island: false,
             marked: true,
         },
+        osm_id: None,
     });
     let drawn = Drawn::for_test(&map);
     let paint = NodePaint::for_test(

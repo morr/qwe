@@ -720,6 +720,7 @@ mod tests {
             storeys: None,
             entrances: Vec::new(),
             colours: Default::default(),
+            osm_id: None,
         }
     }
 
@@ -786,6 +787,7 @@ mod tests {
             storeys: None,
             entrances: Vec::new(),
             colours: Default::default(),
+            osm_id: None,
         };
         let runs = garage_runs(&[bent]);
         let run = &runs[&0];
@@ -840,6 +842,7 @@ mod tests {
             storeys: None,
             entrances: Vec::new(),
             colours: Default::default(),
+            osm_id: None,
         };
         let whole = ring_area(&comb.outer);
         let runs = garage_runs(&[comb]);
@@ -879,6 +882,7 @@ mod tests {
             storeys: None,
             entrances: Vec::new(),
             colours: Default::default(),
+            osm_id: None,
         };
         let whole = ring_area(&comb.outer);
         let runs = garage_runs(&[comb]);
@@ -1050,6 +1054,7 @@ mod tests {
             storeys: None,
             entrances: Vec::new(),
             colours: Default::default(),
+            osm_id: None,
         };
         // вторая лента сдвинута поперёк на проезд и вдоль на половину длины —
         // так их осевые рамки и перекрываются

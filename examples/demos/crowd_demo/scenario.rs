@@ -341,6 +341,7 @@ pub(crate) fn spawn_wall(
             band + Vec2::new(size.x / 2.0, 0.0),
         ],
         width: thickness,
+        osm_id: None,
     });
 
     {

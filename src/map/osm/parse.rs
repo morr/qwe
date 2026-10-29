@@ -759,6 +759,7 @@ fn parse_structure_node(element: &Element, bounds: &GeoBounds) -> Option<Structu
         radius: structure_radius(&element.tags).unwrap_or(radius),
         height: structure_height(&element.tags).unwrap_or(height),
         kind,
+        osm_id: Some(element.id),
     })
 }
 
@@ -781,6 +782,7 @@ fn parse_structure_way(element: &Element, points: &[Vec2]) -> Option<Structure> 
         radius: spread.max(f32::EPSILON),
         height: structure_height(&element.tags).unwrap_or(height),
         kind,
+        osm_id: Some(element.id),
     })
 }
 
@@ -790,6 +792,7 @@ fn parse_road_node(element: &Element, bounds: &GeoBounds) -> Option<RoadNode> {
     Some(RoadNode {
         kind: road_node_kind(&element.tags)?,
         pos: bounds.project(element.lat?, element.lon?),
+        osm_id: Some(element.id),
     })
 }
 
@@ -995,7 +998,11 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
     if let Some(kind) = road_area_kind(&element.tags)
         && let Some(outline) = as_ring(&points)
     {
-        map.road_areas.push(RoadArea { outline, kind });
+        map.road_areas.push(RoadArea {
+            outline,
+            kind,
+            osm_id: Some(element.id),
+        });
     }
 
     // Рельсы проверяются до дорог и **не** прерывают разбор: трамвайный путь в
@@ -1011,6 +1018,7 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
             kind,
             service: service_track(&element.tags),
             bridge,
+            osm_id: Some(element.id),
         });
     }
 
@@ -1023,6 +1031,7 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
         map.pipes.push(PipeLine {
             points: points.clone(),
             width,
+            osm_id: Some(element.id),
         });
     }
 
@@ -1048,6 +1057,7 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
             width: water_width(&element.tags).unwrap_or(default_width),
             kind,
             tunnel: is_underground(&element.tags),
+            osm_id: Some(element.id),
         });
     }
 
@@ -1063,6 +1073,7 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
             points: points.clone(),
             kind,
             gates: Vec::new(),
+            osm_id: Some(element.id),
         });
     }
 
@@ -1116,6 +1127,7 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
             verge_profile: Default::default(),
             parking: tagged_parking(&element.tags),
             pavement: tagged_pavement(&element.tags),
+            osm_id: Some(element.id),
         });
         return;
     }
@@ -1124,6 +1136,7 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
         map.walls.push(WallLine {
             points,
             width: WALL_WIDTH,
+            osm_id: Some(element.id),
         });
         return;
     }
@@ -1160,6 +1173,7 @@ fn parse_way(element: &Element, bounds: &GeoBounds, map: &mut MapData) {
             storeys: area_storeys(kind, &element.tags),
             entrances: Vec::new(),
             colours: area_colours(kind, &element.tags),
+            osm_id: Some(element.id),
         },
     );
 }
@@ -1234,6 +1248,7 @@ fn parse_relation(
                 storeys,
                 entrances: Vec::new(),
                 colours,
+                osm_id: Some(element.id),
             },
         );
     }

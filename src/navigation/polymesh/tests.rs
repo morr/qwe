@@ -24,6 +24,7 @@ fn input_with(roads: Vec<RoadLine>) -> PolymeshInput {
             width: 4.0,
             kind: WaterKind::Stream,
             tunnel: false,
+            osm_id: None,
         }],
         walls: vec![],
         fences: vec![],
@@ -75,6 +76,7 @@ fn a_route_crosses_chunks_through_the_only_gap_in_a_wall() {
         let mut walls = vec![WallLine {
             points: vec![Vec2::new(x, 0.0), Vec2::new(x, 1500.0)],
             width: 6.0,
+            osm_id: None,
         }];
         // верхний кусок стены начинается выше прохода — или вплотную,
         // если прохода нет
@@ -84,6 +86,7 @@ fn a_route_crosses_chunks_through_the_only_gap_in_a_wall() {
                 Vec2::new(x, MAP_SIZE.y),
             ],
             width: 6.0,
+            osm_id: None,
         });
         PolymeshInput {
             buildings: vec![],

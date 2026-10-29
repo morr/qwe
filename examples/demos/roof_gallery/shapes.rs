@@ -121,6 +121,7 @@ fn house(ring: Vec<Vec2>, height: f32) -> PolyArea {
         storeys: None,
         entrances: Vec::new(),
         colours: Colours::default(),
+        osm_id: None,
     }
 }
 

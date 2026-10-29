@@ -7,6 +7,7 @@ fn structure(kind: StructureKind, radius: f32, height: f32) -> Structure {
         radius,
         height,
         kind,
+        osm_id: None,
     }
 }
 

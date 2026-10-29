@@ -144,6 +144,7 @@ fn two_residential_streets_get_no_rule_zebra_unless_signalized() {
     let stop = RoadNode {
         pos: NODE + Vec2::new(0.0, -6.0),
         kind: RoadNodeKind::Stop,
+        osm_id: None,
     };
     // знак стоит на вершине примыкания — так его и ищет `sign`
     let signed_side = road(
@@ -162,6 +163,7 @@ fn two_residential_streets_get_no_rule_zebra_unless_signalized() {
     let signals = RoadNode {
         pos: NODE,
         kind: RoadNodeKind::TrafficSignals,
+        osm_id: None,
     };
     let lit = paint_of(
         vec![through(Highway::Residential), side()],
@@ -229,6 +231,7 @@ fn an_unpaved_arm_gets_no_paint() {
     let give_way = RoadNode {
         pos: Vec2::new(100.0, -6.0),
         kind: RoadNodeKind::GiveWay,
+        osm_id: None,
     };
     let side = RoadLine {
         pavement: Some(crate::map::osm::model::Pavement::Unpaved),
@@ -246,6 +249,7 @@ fn an_unpaved_arm_gets_no_paint() {
             island: false,
             marked: true,
         },
+        osm_id: None,
     };
     let paint = paint_of(
         vec![through(Highway::Tertiary), side],
@@ -330,6 +334,7 @@ fn an_osm_crossing_of_the_street_drops_the_rule_zebra_on_its_other_arm() {
             island: false,
             marked: true,
         },
+        osm_id: None,
     };
     let mapped = paint_of(
         vec![through(Highway::Tertiary), across],
@@ -560,6 +565,7 @@ fn signals_break_the_main_street_too() {
         vec![RoadNode {
             pos: NODE,
             kind: RoadNodeKind::TrafficSignals,
+            osm_id: None,
         }],
         EVERYTHING,
     );
@@ -596,6 +602,7 @@ fn a_signalled_t_crosses_the_walked_arm_even_without_a_second_walked_street() {
     let signalled = paint(vec![RoadNode {
         pos: NODE,
         kind: RoadNodeKind::TrafficSignals,
+        osm_id: None,
     }]);
     assert_eq!(signalled.zebras.len(), 1, "{:?}", signalled.zebras);
     let zebra = signalled.zebras[0];
@@ -690,6 +697,7 @@ fn an_osm_crossing_mid_block_is_a_zebra_with_a_gap() {
                 island: false,
                 marked: true,
             },
+            osm_id: None,
         }],
         EVERYTHING,
     );
@@ -718,6 +726,7 @@ fn an_unmarked_crossing_or_crossings_off_paint_no_zebra() {
             island: false,
             marked,
         },
+        osm_id: None,
     };
     let unmarked = paint_of(vec![road.clone()], vec![crossing(false)], EVERYTHING);
     assert!(unmarked.zebras.is_empty());
@@ -750,6 +759,7 @@ fn an_osm_crossing_on_the_arm_replaces_the_generated_zebra() {
                 island: false,
                 marked: true,
             },
+            osm_id: None,
         }],
         EVERYTHING,
     );
@@ -787,6 +797,7 @@ fn a_give_way_sign_makes_the_stop_line_dashed() {
         vec![RoadNode {
             pos: Vec2::new(100.0, -80.0),
             kind: RoadNodeKind::GiveWay,
+            osm_id: None,
         }],
         EVERYTHING,
     );
@@ -805,6 +816,7 @@ fn a_give_way_sign_makes_the_stop_line_dashed() {
         vec![RoadNode {
             pos: near,
             kind: RoadNodeKind::GiveWay,
+            osm_id: None,
         }],
         EVERYTHING,
     );
@@ -919,6 +931,7 @@ fn divided_street_crossing_apart(paved: bool, apart: f32) -> NodePaint {
             island: false,
             marked: true,
         },
+        osm_id: None,
     };
     let mut map = MapData {
         roads: vec![
@@ -1009,6 +1022,7 @@ fn signals_across_a_pair(apart: f32) -> NodePaint {
     let signals = |pos: Vec2| RoadNode {
         pos,
         kind: RoadNodeKind::TrafficSignals,
+        osm_id: None,
     };
     let mut map = MapData {
         roads: vec![
@@ -1037,6 +1051,7 @@ fn signals_across_a_pair(apart: f32) -> NodePaint {
                     island: false,
                     marked: true,
                 },
+                osm_id: None,
             },
         ],
         ..default()
@@ -1223,6 +1238,7 @@ fn a_fork_branch_keeps_its_line_off_the_lanes_of_the_main_road() {
         vec![RoadNode {
             pos: NODE,
             kind: RoadNodeKind::TrafficSignals,
+            osm_id: None,
         }],
         NodePaintStyle {
             crossings: CrossingMode::Off,
@@ -1323,6 +1339,7 @@ fn two_osm_zebras_touching_end_to_end_become_one_plank() {
                 island: false,
                 marked: true,
             },
+            osm_id: None,
         };
         let paint = paint_of(
             vec![upper, lower],

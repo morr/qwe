@@ -206,6 +206,7 @@ mod tests {
                     island: true,
                     marked: true,
                 },
+                osm_id: None,
             }],
             ..MapData::default()
         };
@@ -232,6 +233,7 @@ mod tests {
             road_nodes: vec![RoadNode {
                 pos: Vec2::new(50.0, 0.0),
                 kind,
+                osm_id: None,
             }],
             ..MapData::default()
         };
@@ -258,6 +260,7 @@ mod tests {
         let area = |kind| RoadArea {
             outline: square.clone(),
             kind,
+            osm_id: None,
         };
         let map = MapData {
             road_areas: vec![
@@ -290,6 +293,7 @@ mod tests {
             road_areas: vec![RoadArea {
                 outline: square.clone(),
                 kind: RoadAreaKind::Walkway,
+                osm_id: None,
             }],
             ..MapData::default()
         };

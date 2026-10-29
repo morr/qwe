@@ -18,6 +18,7 @@ fn track(service: Option<ServiceTrack>, origin: Vec2, length: f32) -> RailLine {
         kind: RailKind::Active,
         service,
         bridge: false,
+        osm_id: None,
     }
 }
 
