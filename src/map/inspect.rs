@@ -54,12 +54,50 @@ const NODE_REACH: f32 = 4.0;
 /// (у генератов подпись несёт суффикс `(auto, …)`). `id` — OSM id
 /// элемента-источника, печать ведёт его хвостом `#…`; `None` — находка без
 /// своего элемента (земля, посаженное дерево, карта, собранная тестом).
+/// `feature` — адрес элемента в [`MapData`] для подсветки формы
+/// ([`feature_shape`]).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Hit {
     pub z: f32,
     pub label: String,
     pub src: HitSource,
     pub id: Option<u64>,
+    pub feature: FeatureRef,
+}
+
+/// Ссылка находки на свой элемент карты — индекс в векторе [`MapData`].
+/// Потребитель один: подсветка элемента под курсором (`ui/inspector.rs`)
+/// строит по ней форму ([`feature_shape`]) и отличает верхнюю находку от
+/// той, что была под курсором мгновение назад.
+///
+/// Полосы-генераты ссылаются на свою дорогу и сторону (сторона 0 — слева по
+/// ходу точек, как у [`RoadLine::sidewalk`]); дерево — рангом в наборе
+/// (`MapData::trees`). Земля подсветки не имеет.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FeatureRef {
+    Building(u32),
+    Water(u32),
+    Park(u32),
+    Wood(u32),
+    Grass(u32),
+    Sand(u32),
+    Landuse(u32),
+    Pocket(u32),
+    Parking(u32),
+    Pitch(u32),
+    RoadArea(u32),
+    Road(u32),
+    Rail(u32),
+    Waterway(u32),
+    Pipe(u32),
+    Wall(u32),
+    Fence(u32),
+    RoadNode(u32),
+    Structure(u32),
+    Tree(u32),
+    SidewalkBand { road: u32, side: u8 },
+    VergeBand { road: u32, side: u8 },
+    Ground,
 }
 
 /// Откуда находка.
@@ -288,6 +326,7 @@ impl InspectIndex {
             label: "ground".to_string(),
             src: HitSource::Osm,
             id: None,
+            feature: FeatureRef::Ground,
         }];
         let inside = |area: &PolyArea| {
             point_in_polygon(at, &area.outer)
@@ -380,6 +419,7 @@ impl InspectIndex {
                 label,
                 src: HitSource::Osm,
                 id,
+                feature: area_feature(src),
             });
         }
         for &src in self.lines.at(at) {
@@ -387,7 +427,7 @@ impl InspectIndex {
                 LineSrc::Road(i) => map
                     .roads
                     .get(i as usize)
-                    .and_then(|road| road_hit(road, roads, at)),
+                    .and_then(|road| road_hit(i, road, roads, at)),
                 LineSrc::Rail(i) => map.rails.get(i as usize).and_then(|rail| {
                     (distance_to_polyline(at, &rail.points) <= rail.width / 2.0).then(|| Hit {
                         z: match rail.kind {
@@ -401,6 +441,7 @@ impl InspectIndex {
                         },
                         src: HitSource::Osm,
                         id: rail.osm_id,
+                        feature: FeatureRef::Rail(i),
                     })
                 }),
                 LineSrc::Waterway(i) => map.water_lines.get(i as usize).and_then(|line| {
@@ -409,6 +450,7 @@ impl InspectIndex {
                         label: format!("waterway {} {:.1} m", lower(line.kind), line.width),
                         src: HitSource::Osm,
                         id: line.osm_id,
+                        feature: FeatureRef::Waterway(i),
                     })
                 }),
                 LineSrc::Pipe(i) => map.pipes.get(i as usize).and_then(|pipe| {
@@ -417,6 +459,7 @@ impl InspectIndex {
                         label: "heating pipe".to_string(),
                         src: HitSource::Osm,
                         id: pipe.osm_id,
+                        feature: FeatureRef::Pipe(i),
                     })
                 }),
                 LineSrc::Wall(i) => map.walls.get(i as usize).and_then(|wall| {
@@ -425,6 +468,7 @@ impl InspectIndex {
                         label: "city wall".to_string(),
                         src: HitSource::Osm,
                         id: wall.osm_id,
+                        feature: FeatureRef::Wall(i),
                     })
                 }),
                 LineSrc::Fence(i) => map.fences.get(i as usize).and_then(|fence| {
@@ -439,6 +483,7 @@ impl InspectIndex {
                             },
                             src: HitSource::Osm,
                             id: fence.osm_id,
+                            feature: FeatureRef::Fence(i),
                         }
                     })
                 }),
@@ -455,6 +500,7 @@ impl InspectIndex {
                         label: node_label(node.kind),
                         src: HitSource::Osm,
                         id: node.osm_id,
+                        feature: FeatureRef::RoadNode(i),
                     })
                 }),
                 PointSrc::Structure(i) => map.structures.get(i as usize).and_then(|structure| {
@@ -467,6 +513,7 @@ impl InspectIndex {
                         ),
                         src: HitSource::Osm,
                         id: structure.osm_id,
+                        feature: FeatureRef::Structure(i),
                     })
                 }),
             };
@@ -488,6 +535,7 @@ impl InspectIndex {
                     label: "tree".to_string(),
                     src: HitSource::Osm,
                     id: None,
+                    feature: FeatureRef::Tree(rank),
                 });
             }
         }
@@ -579,7 +627,7 @@ fn lower<T: std::fmt::Debug>(value: T) -> String {
 /// ширины модели ([`RoadLine::sidewalk`], [`RoadLine::verges`]); сторона —
 /// по знаку к ближайшему отрезку осевой. Ручка [`RoadStyle::sidewalks`]
 /// убирает обе полосы, как и у рисунка (`Drawn::verges_drawn`).
-fn road_hit(road: &RoadLine, style: &RoadStyle, at: Vec2) -> Option<Hit> {
+fn road_hit(road_index: u32, road: &RoadLine, style: &RoadStyle, at: Vec2) -> Option<Hit> {
     let (dist, left) = distance_and_side(at, &road.points);
     let half = road.width / 2.0;
     if dist <= half {
@@ -588,6 +636,7 @@ fn road_hit(road: &RoadLine, style: &RoadStyle, at: Vec2) -> Option<Hit> {
             label: road_label(road),
             src: HitSource::Osm,
             id: road.osm_id,
+            feature: FeatureRef::Road(road_index),
         });
     }
     if !style.sidewalks {
@@ -608,6 +657,10 @@ fn road_hit(road: &RoadLine, style: &RoadStyle, at: Vec2) -> Option<Hit> {
             label: format!("sidewalk (auto, {})", reason.as_str()),
             src: HitSource::Generated(reason),
             id: road.osm_id,
+            feature: FeatureRef::SidewalkBand {
+                road: road_index,
+                side: side as u8,
+            },
         });
     }
     if road.verges[side] > 0.0 && dist <= half + band + road.verges[side] {
@@ -616,9 +669,31 @@ fn road_hit(road: &RoadLine, style: &RoadStyle, at: Vec2) -> Option<Hit> {
             label: "verge (auto)".to_string(),
             src: HitSource::Generated(HitReason::Inferred),
             id: road.osm_id,
+            feature: FeatureRef::VergeBand {
+                road: road_index,
+                side: side as u8,
+            },
         });
     }
     None
+}
+
+/// Ссылка площадной находки на свой элемент — тот же индекс, что у источника
+/// в индексе: вектор-слой и позиция в нём.
+fn area_feature(src: AreaSrc) -> FeatureRef {
+    match src {
+        AreaSrc::Building(i) => FeatureRef::Building(i),
+        AreaSrc::Water(i) => FeatureRef::Water(i),
+        AreaSrc::Park(i) => FeatureRef::Park(i),
+        AreaSrc::Wood(i) => FeatureRef::Wood(i),
+        AreaSrc::Grass(i) => FeatureRef::Grass(i),
+        AreaSrc::Sand(i) => FeatureRef::Sand(i),
+        AreaSrc::Landuse(i) => FeatureRef::Landuse(i),
+        AreaSrc::Pocket(i) => FeatureRef::Pocket(i),
+        AreaSrc::Parking(i) => FeatureRef::Parking(i),
+        AreaSrc::Pitch(i) => FeatureRef::Pitch(i),
+        AreaSrc::RoadArea(i) => FeatureRef::RoadArea(i),
+    }
 }
 
 /// Досягаемость дороги в индексе: полотно плюс полосы, которые она
@@ -950,6 +1025,7 @@ mod tests {
                 label: "ground".into(),
                 src: HitSource::Osm,
                 id: None,
+                feature: FeatureRef::Ground,
             }]
         );
         // при плотности 0.8 видно уже всё
@@ -1204,12 +1280,14 @@ mod tests {
                 label: "road residential 8.0 m".into(),
                 src: HitSource::Osm,
                 id: Some(179102449),
+                feature: FeatureRef::Road(0),
             },
             Hit {
                 z: 0.0,
                 label: "ground".into(),
                 src: HitSource::Osm,
                 id: None,
+                feature: FeatureRef::Ground,
             },
         ];
         let text = format_hits(&hits, 12);
@@ -1256,6 +1334,53 @@ mod tests {
     }
 
     #[test]
+    fn every_hit_carries_its_feature_reference() {
+        let map = MapData {
+            buildings: vec![fixture::building(
+                fixture::square(Vec2::new(100.0, 100.0), 10.0),
+                vec![],
+            )],
+            roads: vec![banded_street(70.0, [2.0; 2], [SidewalkSide::Tagged; 2])],
+            water: vec![fixture::water_area(
+                fixture::square(Vec2::new(200.0, 200.0), 10.0),
+                vec![],
+            )],
+            trees: TreeSet::of([(Vec2::new(300.0, 100.0), 4.0, 0.0)]),
+            ..default()
+        };
+        let index = InspectIndex::rebuild(&map);
+        let (half, sidewalk_edge, verge_edge) = band_edges(2.0);
+        let feature = |at: Vec2| {
+            query(&index, &map, 0.5, at)
+                .into_iter()
+                .next()
+                .map(|hit| hit.feature)
+        };
+
+        // полосы-генераты ссылаются на свою дорогу и сторону (0 — слева, +y)
+        assert_eq!(
+            feature(Vec2::new(500.0, 70.0 + sidewalk_edge - 0.1)),
+            Some(FeatureRef::SidewalkBand { road: 0, side: 0 })
+        );
+        assert_eq!(
+            feature(Vec2::new(500.0, 70.0 + verge_edge - 0.1)),
+            Some(FeatureRef::VergeBand { road: 0, side: 0 })
+        );
+        // полотно, здание, вода, дерево, земля — адреса своих элементов
+        assert_eq!(
+            feature(Vec2::new(500.0, 70.0 + half - 0.1)),
+            Some(FeatureRef::Road(0))
+        );
+        assert_eq!(
+            feature(Vec2::new(100.0, 102.0)),
+            Some(FeatureRef::Building(0))
+        );
+        assert_eq!(feature(Vec2::new(200.0, 200.0)), Some(FeatureRef::Water(0)));
+        assert_eq!(feature(Vec2::new(300.0, 100.0)), Some(FeatureRef::Tree(0)));
+        assert_eq!(feature(Vec2::new(1000.0, 1000.0)), Some(FeatureRef::Ground));
+    }
+
+    #[test]
     fn an_unbuilt_index_answers_nothing() {
         let map = MapData::default();
         let hits = query(&InspectIndex::default(), &map, 0.0, Vec2::ZERO);
@@ -1270,6 +1395,7 @@ mod tests {
                 label: format!("x{i}"),
                 src: HitSource::Osm,
                 id: None,
+                feature: FeatureRef::Ground,
             })
             .collect();
         assert_eq!(format_hits(&hits, 12).lines().count(), 5);
