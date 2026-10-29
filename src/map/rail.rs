@@ -35,8 +35,7 @@ use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin};
 use crate::map::osm::{MapData, RailKind, RailLine, RoadClass, RoadLine};
 use crate::map::smooth::{Smoothing, smooth_path};
 use crate::map::surface::{self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
-use crate::map::zoom::{ZoomBucket, ZoomLods};
-use crate::prefs::retuned;
+use crate::map::zoom::{LodStep, ZoomBucket, ZoomLods};
 use crate::settings::{
     Z_RAIL, Z_RAIL_BRIDGE, Z_RAIL_BRIDGE_STEEL, Z_RAIL_BRIDGE_TIE, Z_RAIL_STEEL, Z_RAIL_TIE,
 };
@@ -265,8 +264,9 @@ impl ZoomLods for RailLods {
     }
 }
 
-/// Текущая ступень [`RAIL_LODS`]; пересечение порога пересобирает рельсовые
-/// слои ([`rebuild_rails`]).
+/// Текущая ступень [`RAIL_LODS`]; у пути она только выбирает, какой из
+/// заранее собранных наборов слоёв виден ([`build_rails`] собирает все сразу,
+/// [`zoom::show_lod_layers`] переключает видимость).
 pub type RailZoomBucket = ZoomBucket<RailLods>;
 
 /// Рельсовый слой карты — чтобы пересборка знала, что деспавнить.
@@ -328,7 +328,7 @@ impl std::fmt::Display for RailReport {
 /// нарисована.
 ///
 /// **Чистая функция и единственная дверь в слой.** Ни `Commands`, ни `Assets`:
-/// её зовёт и игра (через [`rebuild_rails`]), и тест. Три меша, а не один, по
+/// её зовёт и игра (через [`build_rails`]), и тест. Три меша, а не один, по
 /// той же причине, по которой они три и в мире: копланарная геометрия
 /// z-файтит, и шпала обязана лежать выше **любого** балласта, иначе развязка
 /// нескольких путей расслаивается.
@@ -615,33 +615,39 @@ pub fn measure_rails(rails: &[RailLine]) -> Vec<(usize, Vec<LayerCost>)> {
         .collect()
 }
 
-/// Когда пересобирать путевые слои. Только ступень зума: у пути нет ни ручек
-/// стиля (`RoadStyle` его не касается), ни теней, так что солнце ему
-/// безразлично — единственное, что меняет рисунок, это порог зума.
+/// Сборка всех ступеней [`RAIL_LODS`] одним поднятием: меши каждой ступени
+/// лежат в мире рядом (скрытые, кроме ступени камеры), и пересечение порога
+/// зума стоит переключение видимости ([`zoom::show_lod_layers`]), а не
+/// пересборку — ближняя ступень стоила кадру до 70 мс, средняя 30.
 ///
-/// **Условие одно, регистрация одна** (см. `roads::rebuilds_on`).
-pub fn rebuilds_on() -> impl SystemCondition<()> {
-    // через `into_system`, потому что у голой функции-условия свой маркер
-    // типа; у остальных слоёв его стирает `or_else`, а здесь складывать нечего
-    IntoSystem::into_system(retuned::<RailZoomBucket>)
-}
-
-/// Пересборка рельсовых слоёв при смене ступени зума — дорожные и трамвайный
-/// слои не трогаются.
-pub fn rebuild_rails(
+/// Вход в мир — единственная причина собирать слой: у пути нет ни ручек
+/// стиля (`RoadStyle` его не касается), ни теней, так что солнце ему
+/// безразлично, а мир поднимается свежим (`DespawnOnExit`) — деспавнить
+/// здесь нечего. Цена прекомпиляции — сумма всех ступеней (~90 мс на Туле),
+/// и платится она в загрузке, где кадр никто не считает.
+pub fn build_rails(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     materials: LayerMaterials,
     bucket: Res<RailZoomBucket>,
     map: Res<MapData>,
-    existing: Query<Entity, With<RailLayerTag>>,
 ) {
-    for entity in &existing {
-        commands.entity(entity).despawn();
+    for index in 0..RAIL_LODS.len() {
+        let (layers, report) = mesh_rails(RailZoomBucket::at(index), &map.rails);
+        let visible = if index == bucket.index {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+        spawn_layers(
+            &mut commands,
+            &mut meshes,
+            &materials,
+            layers,
+            (RailLayerTag, LodStep(index), visible),
+        );
+        info!("{report}");
     }
-    let (layers, report) = mesh_rails(*bucket, &map.rails);
-    spawn_layers(&mut commands, &mut meshes, &materials, layers, RailLayerTag);
-    info!("{report}");
 }
 
 #[cfg(test)]

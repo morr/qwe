@@ -360,7 +360,9 @@ schedule, not by luck: the spawner sits `.before(SimSet::SpatialRebuild)` and in
 `SimPipeline::BothModes` (`demon/mod.rs`). The `Live`-only rule is not covered by the
 warmup hold — that pause belongs to `sim_time` and space unpauses it — which is why the
 `WorldStarted` reset is matched on the precondition **no demon may be alive when a run
-starts** (`demon::on_world_started` says so).
+starts** (`demon::on_world_started` says so). A `DemonSpawnPause` (0.5–3 s staging)
+existed and was removed on request; staging an entrance again means a new component,
+not reviving that one.
 
 ## Telemetry
 

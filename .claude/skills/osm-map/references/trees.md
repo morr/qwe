@@ -128,6 +128,13 @@ stand, how density works, and which resources restyle them.
     entities leave `CROWN_DESPAWN_BATCH` (16384) a frame. A world entry or a style
     rebuild at the near step spawns them all at once, under the loader or the edit.
     `crown_entities_stream_in_by_batches_and_leave_on_the_far_steps` pins it.
+    The **merged chunks and shadow layers are warmed at world entry** (`begin_layer_warmup`
+    + `warm_layers`, two frames): a layer spawned hidden renders for the first time only
+    on its first threshold crossing, and that frame paid the render's first preparation
+    of ~3.5 M vertices — measured once per world at 0.9–10 s of frozen frames (a world
+    opened on the near step, first crossing of 2.0 outward); the second identical
+    crossing was clean. One warm frame shows every `MapLayer` of the trees, the second
+    restores the mask visibility — the price lands under the loader.
     Side effect worth knowing: an `OffscreenShotEvent` that zooms from far to near
     captures on its sixth frame, before Kaluga's 24 batches are in — such a shot shows
     the merged crowns.

@@ -172,7 +172,7 @@ struct LiveLayer<'a> {
 }
 
 /// Входы пересборки слоёв для пробы: те же ресурсы, что читают адаптеры
-/// (`roads::rebuild_roads`, `rail::rebuild_rails`…), одним параметром — идиома
+/// (`roads::rebuild_roads`, `rail::build_rails`…), одним параметром — идиома
 /// `map::surface::LayerMaterials`.
 #[derive(SystemParam)]
 struct ProbeSources<'w> {
@@ -442,7 +442,11 @@ pub fn perf_window_resolution() -> bevy::window::WindowResolution {
 ///
 /// - `QWE_PERF_POP=<n>` — `n` людей вместо штатной популяции (цена спрайтов);
 /// - `QWE_PERF_RENDER_DIAG=1` — `RenderDiagnosticsPlugin`: CPU-время каждого
-///   прохода рендера (`render/<pass>/elapsed_cpu`) в логе диагностики.
+///   прохода рендера (`render/<pass>/elapsed_cpu`) в логе диагностики;
+/// - `QWE_PERF_FRAME_SPIKES=<ms>` — кадр длиннее порога печатает строку
+///   `frame spike: 43.2 ms (zoom 1.83, frame 247)`: детектор рывков зума, которых
+///   секундные средние `frame_time` не показывают. Реальное время кадра
+///   ([`Time<Real>`]), не виртуальное: на паузе виртуальное стоит на нуле.
 ///
 /// Без переменных ничего не меняется.
 fn add_perf_toggles(app: &mut App) {
@@ -454,6 +458,36 @@ fn add_perf_toggles(app: &mut App) {
     }
     if std::env::var_os("QWE_PERF_RENDER_DIAG").is_some() {
         app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
+    }
+    if let Ok(ms) = std::env::var("QWE_PERF_FRAME_SPIKES") {
+        let ms: f32 = ms
+            .parse()
+            .unwrap_or_else(|_| panic!("QWE_PERF_FRAME_SPIKES is not a number: {ms:?}"));
+        app.insert_resource(FrameSpikeThreshold(ms));
+        app.add_systems(Last, log_frame_spikes.run_if(in_state(AppState::Playing)));
+    }
+}
+
+/// Порог `QWE_PERF_FRAME_SPIKES`, в мс длины кадра.
+#[derive(Resource)]
+struct FrameSpikeThreshold(f32);
+
+/// Каждый кадр длиннее порога — строка в лог с его длиной и зумом камеры:
+/// зум в той же строке привязывает пик к порогу зум-LOD, через который
+/// прошло в этом кадре колесо.
+fn log_frame_spikes(
+    time: Res<Time<Real>>,
+    camera: Single<&PanCamera, With<Camera2d>>,
+    threshold: Res<FrameSpikeThreshold>,
+    mut frames: Local<u64>,
+) {
+    *frames += 1;
+    let ms = time.delta_secs() * 1000.0;
+    if ms >= threshold.0 {
+        info!(
+            "frame spike: {ms:.1} ms (zoom {:.2}, frame {})",
+            camera.zoom_factor, *frames
+        );
     }
 }
 

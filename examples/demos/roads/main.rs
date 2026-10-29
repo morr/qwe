@@ -811,17 +811,15 @@ fn build_next(
         SampleLayer,
     );
 
+    // ближняя ступень обочин — витрина смотрит на детали улицы, дальняя ей
+    // не нужна; её ступень и стоит в тегах слоёв (`zoom::LodStep`)
+    let verge = VergeZoomBucket::for_zoom(0.0);
     let RoadBuild {
         layers: road_layers,
         report: road_report,
         ruts,
         tram: tram_tracks,
-    } = build_roads(
-        &map,
-        *road_style,
-        road_shape.0,
-        VergeZoomBucket::for_zoom(0.0),
-    );
+    } = build_roads(&map, *road_style, road_shape.0, verge);
     let road_layers = clip(road_layers);
     let road_line = road_report.to_string();
     spawn_road_meshes(
@@ -829,6 +827,9 @@ fn build_next(
         &mut meshes,
         &materials.layers,
         (road_layers, road_report),
+        verge.index,
+        true,
+        true,
     );
 
     // машины — по заказу: витрина про дороги, и ряд у бордюра закрывает то,
