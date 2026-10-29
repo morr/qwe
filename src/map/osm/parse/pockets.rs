@@ -666,3 +666,6 @@ fn verge_covers(road: &RoadLine, covers: &mut Vec<Cover>) {
         covers.push(Cover::of(vec![oriented(&ring, true)]));
     }
 }
+
+#[cfg(test)]
+mod tests;
