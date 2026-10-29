@@ -56,6 +56,7 @@ use self::bridges::Bridges;
 pub use self::drawn::{Axis, Drawn, DrawnStats};
 use self::footbridge::{footbridge_reach, push_path_flare};
 pub use self::junctions::JunctionCounts;
+use self::junctions::{MOUTH_CROSSING_GAP, mouths};
 use self::network::RoadNodes;
 use self::network::pairs::BandPiece;
 pub use self::node_paint::CrossingMode;
@@ -2722,83 +2723,6 @@ fn push_band_piece(
         .map(|(point, offset)| *point + offset)
         .collect();
     push_ribbon_trimmed(builder, &shifted, width + sidewalk, color, ROAD_JOIN, trims);
-}
-
-/// Шаг проб середины пары, м: проба внутри пустоты — это разделительная пары
-/// (газон или асфальт с двойной сплошной), а не устье.
-const MOUTH_MEDIAN_PROBE: f32 = 2.0;
-/// Зазор между зеброй и остриём устья, м.
-const MOUTH_CROSSING_GAP: f32 = 0.5;
-
-/// Устья (`gores::mouths`, R20): ленты проезжих частей такими, как они
-/// нарисованы, — и всё, что делает пустоту между ними не устьем: замапленные
-/// площади (дома, вода, зелень, стоянки, площадки, площади дорог), острова
-/// колец, островки трёх узлов (их асфальт — `corners::small_islands`),
-/// островки, уже найденные у колец и развилок, вершины дорожек и пробы
-/// середин пар.
-fn mouths(
-    map: &MapData,
-    prepared: &Drawn,
-    ribbon: &[std::borrow::Cow<'_, [Vec2]>],
-    islands: &[Vec<Vec2>],
-    ring_islands: &[&[Vec2]],
-    gores: &gores::Gores,
-    kerb_returns: &corners::KerbReturns,
-) -> Vec<crate::map::shapes::Shape> {
-    // Устье — там, где расходятся половины разделённой улицы, поэтому в
-    // объединение идут односторонние проезжие части и те, что сходятся с ними
-    // в узлах: всё полотно города втрое дороже, а дыры между двусторонними
-    // улицами — кварталы или островки трёх узлов (`corners::small_islands`)
-    let lanes = |index: usize| {
-        let road = prepared.road(index);
-        is_carriageway(road) && !road.carves_navmesh()
-    };
-    let mut chosen = vec![false; prepared.len()];
-    for index in (0..prepared.len()).filter(|&index| lanes(index) && prepared.road(index).oneway) {
-        chosen[index] = true;
-        for point in &prepared.road(index).points {
-            for &other in prepared.nodes().roads_at(*point) {
-                chosen[other] |= lanes(other);
-            }
-        }
-    }
-    let carriageways: Vec<(&[Vec2], f32)> = (0..prepared.len())
-        .filter(|&index| chosen[index])
-        .map(|index| (ribbon[index].as_ref(), prepared.road(index).width))
-        .collect();
-    let gore_rings: Vec<Vec<Vec2>> = gores.outlines().map(crate::map::shapes::ring_of).collect();
-    let taken: Vec<&[Vec2]> = [
-        &map.buildings,
-        &map.water,
-        &map.parks,
-        &map.woods,
-        &map.grass,
-        &map.sand,
-        &map.parking,
-        &map.pitches,
-    ]
-    .into_iter()
-    .flatten()
-    .map(|area| area.outer.as_slice())
-    .chain(map.road_areas.iter().map(|area| area.outline.as_slice()))
-    .chain(ring_islands.iter().copied())
-    .chain(islands.iter().map(Vec::as_slice))
-    .chain(gore_rings.iter().map(Vec::as_slice))
-    .collect();
-    let points: Vec<Vec2> =
-        map.roads
-            .iter()
-            .filter(|road| road.class == RoadClass::Alley)
-            .flat_map(|road| road.points.iter().copied())
-            .chain(prepared.pairs().medians().iter().flat_map(|median| {
-                crate::map::along::densify(median.midline(), MOUTH_MEDIAN_PROBE)
-            }))
-            .collect();
-    // асфальт узлов, что ложится до лент: пустота, которую он уже замостил,
-    // — просто асфальт перекрёстка, а не пустое устье; представлением
-    // `KerbReturns::streets` — только слой улиц
-    let paved: Vec<&[Vec2]> = kerb_returns.streets().outlines().collect();
-    gores::mouths(&carriageways, &taken, &points, &paved)
 }
 
 /// Шаг вершин обочины по месту ([`RoadLine::verge_profile`]), м: пробы
