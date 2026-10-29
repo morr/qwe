@@ -133,6 +133,17 @@ panel** with four tabs (`ui/shell.rs`).
   `tools/osm_near --id <id>` away). The two knobs the list follows: `TreeStyle::density`
   (the tree prefix) and `RoadStyle::sidewalks` (turning it off removes both auto bands,
   as it does from the drawing).
+  The list is **one node per hit** (`sync_hits_rows` recreates them when
+  `InspectorHitsState` changes; ≤ `INSPECTOR_MAX_LINES` rows + a `+N more` tail; empty —
+  a bare `-`). The top **non-ground** hit's row carries a translucent-yellow
+  `BackgroundColor` — the same element whose shape the **highlight checkbox** draws on
+  the map (`InspectorHighlight`, a resource the checkbox's `ValueChange` observer writes
+  and `sync_highlight_checked` mirrors back onto `Checked`, so a BRP write moves the
+  widget too; the layer itself is `sync_inspector_highlight`, the
+  `respawn_overlay` pattern at `Z_INSPECTOR_HIGHLIGHT`, rebuilt only when the top
+  feature changes). **`InspectorHighlight` is the documented exception to "every UI
+  resource is a `SettingsGroup`"**: a session-only debug aid, deliberately not
+  persisted — do not "fix" it by adding a group or a `track_pref`.
   Two modes: `UiInspectorPlugin::game()` (a `GameUiRoot` — hidden until
   `PlayPhase::Live`, hidden on city switch) and `UiInspectorPlugin::standalone()` (the
   roads gallery: visible from the first frame, states don't exist there). `tools/shot_coords`

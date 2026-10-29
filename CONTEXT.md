@@ -2489,6 +2489,13 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   `brp probe`. `InspectOrigin` — the world→map shift: zero in the game, the shown
   sample's shift in the roads gallery, so the panel and the probe speak map metres
   everywhere (`tools/osm_near` reads them directly).
+  The hits list renders **line by line** (≤12 rows + a `+N more` tail), and the
+  **highlight checkbox** turns on the `InspectorHighlight` layer: the shape of the top
+  non-ground hit (`map/inspect.rs::feature_shape`, same widths as the hit law) drawn as
+  one translucent-yellow merged mesh at `Z_INSPECTOR_HIGHLIGHT`, rebuilt only when the
+  top feature changes, and the same hit's row gets a yellow background. The checkbox is
+  a **documented exception** to "every UI resource is a `SettingsGroup`": it is a
+  session-only debug aid, deliberately untracked.
 - **Knob** (`ui/knob.rs`) — a panel row **bound to one field of one resource**, in two
   shapes: `spawn_knob` (slider) and `spawn_cycle_row` (button that cycles a value).
   `app.add_knobs::<R>()` registers the drag observer and the label/thumb sync **once per

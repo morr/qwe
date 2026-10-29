@@ -308,7 +308,8 @@ through `RoadShapeOnMap` after 0.35 s of quiet — `settle_road_shape`; `.lane_w
 reloads the world), `RoadPaintStyle` (uniforms — nothing rebuilds), `CarStyle`,
 `TramStyle`, `IndustryStyle`, `SurfaceStyle`,
 `DrawMovePaths`, `DebugGrid`, `DebugNavmesh`, `DebugDoors`, `DebugRoadNetwork`, `PolymeshDebug`,
-`NavtileBase`, `CameraPositionMode`, `SavedCameraView`,
+`NavtileBase`, `CameraPositionMode`, `SavedCameraView`, `InspectorHighlight` (the point
+inspector's highlight checkbox, session-only — no settings group),
 `WorldSeed`, `Determinism`, `SimTick`, `RestartPending`, `LayerProbe` (the last layer-probe
 report, written by `ProbeLayersEvent` — both `dev.rs`, driven by `brp probe`); the map's
 layer entities are found by the `MapLayer` marker (`brp layers`, also `dev.rs`'s probe).
@@ -401,7 +402,10 @@ that came out of the extract ends with its OSM id, `#179102449`: `tools/osm_near
 179102449` prints that element's tags and vertices. Generated bands inherit the road's
 way id. The same list lives in the **point inspector panel** (top
 right, under the telemetry) and updates with the cursor — a screenshot of it answers both
-questions at once. Coordinates are map metres; in the roads gallery they are the sample's
+questions at once. The panel's **highlight checkbox** (`InspectorHighlight`, BRP-writable)
+draws the top non-ground hit's whole shape (`inspector_highlight` layer, translucent
+yellow, above every debug overlay) and highlights its row — with it on, one screenshot
+carries the element's form in the frame, no `shot-at` framing arithmetic needed. Coordinates are map metres; in the roads gallery they are the sample's
 own map metres (the panel and probe subtract the sample's column shift). `hide` + reshoot
 is the confirmation step — the layer whose disappearance removes the glitch is the culprit;
 `show <name>` brings it back, and a restart rebuilds the world anyway. Restore with the
