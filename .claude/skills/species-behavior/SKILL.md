@@ -5,8 +5,9 @@ description: Use when working on pawn behaviour in qwe — the human and demon d
 
 # Species behaviour — deep detail
 
-Detail behind `src/human/`, `src/demon/`, `src/silhouette/`, `src/portal.rs`,
-`src/movement/wander.rs` and `src/spatial.rs`.
+Detail behind `src/human/`, `src/demon/`, `src/movement/wander.rs` and `src/spatial.rs`;
+the drawing half of a pawn — `src/silhouette/`, `src/portal.rs`, the looks — lives in
+`references/look.md`.
 `CONTEXT.md` names the states and the invariants; this file is the mechanism behind them and
 the measured reason each rung sits where it does.
 
@@ -18,53 +19,31 @@ Neighbouring skills: pathfinding, separation and destination slots are `navigati
 (`references/crowd.md` for the crowd lab); the RNG stream every decision draws from is
 `determinism`.
 
+## References
+
+- **`references/look.md`** — how a pawn is drawn: the silhouette atlas and its glyphs, the
+  corpse pose and tint, the panic tint, the demon's halo, blood (pool, spatter, growth),
+  the screen-size floor and the two LOD systems, and the portal vortex with its stain.
+
 ## The fixed step
 
 **SimSet** (`spatial.rs`, `FixedUpdate`, gated on `Playing`): `SpatialRebuild →
-DemonBehavior → HumanBehavior`. **Demons act before humans so a kill lands before `escape`**
-— a human is never counted both killed and escaped in one tick.
+DemonBehavior → HumanBehavior`; `SimPosition` / `PreviousSimPosition`, the pinned order
+around them and the reason demons act first are `CONTEXT.md`'s. The one lesson that lives
+here: **the demon spawner sits before `SimSet::SpatialRebuild` for the edge** — the edge is
+what puts a sync point between the spawn commands and the grid rebuild, so a demon is in
+the grid on the tick it is born. With no edge the flush landed on either side of the
+rebuild depending on the executor.
 
-**SimPosition / PreviousSimPosition** — simulation-space positions; `Transform` is
-interpolated between them in `RunFixedMainLoop` (after the fixed loop). Systems mutate
-`SimPosition`, **never `Transform.translation.xy`** directly.
-
-Fixed-step order is explicit and load-bearing:
-
-- `snapshot_previous_sim_positions` **before** `SimSet::SpatialRebuild`;
-- the demon spawner (`spawn_initial_burst`, `tick_spawner`) **before**
-  `SimSet::SpatialRebuild` — the edge is what puts a sync point between the spawn commands
-  and the grid rebuild, so a demon is in the grid on the tick it is born. With no edge the
-  flush landed on either side of the rebuild depending on the executor;
-- `move_moving_entities` **after** `SimSet::HumanBehavior` — behavior may move `SimPosition`
-  itself (the demon lunge), and a snapshot taken after that would flatten one tick of
-  interpolation.
-
-**Movable** — `{speed, path: VecDeque<Vec2>, state, last_direction}` with `MovableState:
-Idle | Pathfinding(goal) | Moving(goal) | PathfindingError(goal)`. The path is a
-**world-space polyline in metres**, not a tile list — the goal alone stays a tile
-(`navigation-deep`, `references/polymesh.md`); `last_direction` is the heading of the last
-step and is what a pawn coasts along when the path runs out before the reply does
-(`navigation-deep` — coasting). `to_pathfinding` queues the search and keeps the current
-path (repath on the move — `navigation-deep`); `to_idle` is the only transition that stops
-movement — and it also cancels an undispatched `PathfindingRequest` (with its
-`RequestedAt`), so a human calming down does not leave a flee search to be computed and
-thrown away.
+**Movable** — the state machine and its transitions are `CONTEXT.md`'s. What lives here:
+`to_idle` cancelling an undispatched `PathfindingRequest` (with its `RequestedAt`) is what
+keeps a human calming down from leaving a flee search to be computed and thrown away.
 
 ## Spatial grids
 
-**`SpatialGrid<T>`** — a uniform grid per marker type (`Demon`, `Human`), **60 m cells**
-(≥ the largest search radius, so a radius query is a 3×3 cell walk).
-
-Cells hold **entities only** — a candidate's position is read live from `SimPosition` through
-the `pos_of` closure every query takes; storing `Vec2` in cells would go stale by up to a
-cell size. API: `nearest_in_range_where` / `for_each_in_cells_around` / `for_each_in_rect` /
-`any_in_cells_around`.
-
-**A tie in distance is broken by `PawnId`, not by traversal order** — `order_of`, a second
-closure the search calls *only* on exact equality, so the key never costs anything on the
-common path. Ties are rare (5 in 3.84 M searches over five simulated minutes on Tula), but
-the alternative rule is "whoever the cell walk reached last", i.e. the history of spawns and
-deaths. The ordering doctrine is `movement/order.rs`; why it matters is `determinism`.
+**`SpatialGrid<T>`** — a uniform grid per marker type (`Demon`, `Human`), **60 m cells**;
+cells hold **entities only**, positions read live from `SimPosition` through the `pos_of`
+closure every query takes — storing `Vec2` in cells would go stale by up to a cell size.
 
 **The human grid is incremental, the demon grid is rebuilt.**
 
@@ -76,18 +55,21 @@ deaths. The ordering doctrine is `movement/order.rs`; why it matters is `determi
 - Demons (~100): a full rebuild per tick (`rebuild_demon_grid`) is cheaper than bookkeeping,
   and the lunge moves demon `SimPosition` outside the mover system anyway.
 
+**A tie in distance is broken by `PawnId`, not by traversal order** — `order_of`, a second
+closure the search calls *only* on exact equality, so the key never costs anything on the
+common path. Ties are rare (5 in 3.84 M searches over five simulated minutes on Tula), but
+the alternative rule is "whoever the cell walk reached last", i.e. the history of spawns and
+deaths. The ordering doctrine is `movement/order.rs`; why it matters is `determinism`.
+
 ## The decision ladder
 
 `human/decide.rs`, `demon/decide.rs`. A species' rules live in a **pure** `decide(&…Sense,
-…) -> …Action`: plain values in, one enum variant out, no `Commands`, no queries, tested
-without an `App`.
-
-(`Entity` appears in exactly one place — `demon::decide::Victim`, so the ladder can *name*
-the victim it picked; the rule's point, no world and no queries, is intact.)
-
-`behavior.rs` only **applies** the answer — swap tags, queue a path request, trigger the kill
-event — so the *order* of the rungs, which is half of what these rules are, is readable in
-one place instead of spread over `continue`s.
+…) -> …Action`, and `behavior.rs` only **applies** the answer — swap tags, queue a path
+request, trigger the kill event — so the *order* of the rungs, which is half of what these
+rules are, is readable in one place instead of spread over `continue`s. The shape is
+`CONTEXT.md`'s. (`Entity` appears in exactly one place — `demon::decide::Victim`, so the
+ladder can *name* the victim it picked; the rule's point, no world and no queries, is
+intact.)
 
 Three things deliberately stay outside `decide`:
 
@@ -106,20 +88,14 @@ Three things deliberately stay outside `decide`:
 
 ## The wander skeleton
 
-`movement/wander.rs` — the *order* of one target-picking step, shared by both species:
-
-`ready_to_pick` (the state guard) → the species' own policy → `point_in_cone` /
-`clamp_to_map` → `request_wander_path` (sift + `to_pathfinding`) → `heading_towards`.
-
-Only **where** a pawn wants to go is per-species; the rest was written twice, and the
-sift-then-request tail four times. The chase repath (`demon/behavior.rs`) now goes through
-`request_wander_path` too; the flee repath (`human/behavior.rs`) is the one hand-written copy
-left. The skeleton deliberately does **not** open the `SimRng`
-— the species does, in its own place, or the decision stream would advance on pawns that
-took no decision this tick. `WANDER_MAP_MARGIN` is the one map inset, in `settings.rs`; it
-used to be declared in both species files. For the human that policy is
-`human/systems.rs::choose_target` — a pure function of `(map, rng, position, heading, ban,
-is_first_wander)`; the demon's is the two lines around `away` in its own system.
+`movement/wander.rs` — the *order* of one target-picking step, shared by both species (the
+chain is `CONTEXT.md`'s). Only **where** a pawn wants to go is per-species — for the human
+that policy is `human/systems.rs::choose_target`, a pure function; the demon's is the two
+lines around `away` in its own system. The skeleton deliberately does **not** open the
+`SimRng` — the species does, in its own place, or the decision stream would advance on
+pawns that took no decision this tick. The chase repath (`demon/behavior.rs`) goes through
+`request_wander_path` too; the flee repath (`human/behavior.rs`) is the one hand-written
+copy left. `WANDER_MAP_MARGIN` is the one map inset, in `settings.rs`.
 
 ## Human
 
@@ -128,29 +104,23 @@ States in `human/behavior.rs`, rules in `human/decide.rs`: **Wander** ⇄ **Flee
 
 ### Population size
 
-**`PopulationSize`** (`human/components.rs`) — the count `spawn_population` settles. No
-knob and deliberately not a `settings.rs` constant: the constant `HUMAN_COUNT` is its
-`Default`, and the resource exists so a headless scene can run 64 pawns instead of 20 000.
+**`PopulationSize`** (`human/components.rs`) — the count `spawn_population` settles; the
+resource exists so a headless scene can run 64 pawns instead of 20 000 (the whole shape is
+`CONTEXT.md`'s). The two readers stay in step by a type, not by discipline: both take the
+**`PopulationSpawn`** `SystemParam` (`human/systems.rs` — navmesh, `HumanStyle`, `WorldSeed`,
+`PopulationSize`, `Silhouettes`) and call its `spawn`, so neither can read a different set.
 
-- **Two readers, and they must stay in step**: `spawn_humans` (`WorldInitSet::Spawn`) and
-  `restart::on_restart`. A restart respawns the same number, which is what lets
-  `a_restart_replays_the_run` compare two runs of one size. Staying in step is held by a
-  type rather than by discipline: both take the **`PopulationSpawn`** `SystemParam`
-  (`human/systems.rs` — navmesh, `HumanStyle`, `WorldSeed`, `PopulationSize`,
-  `Silhouettes`) and call its `spawn`, so neither can read a different set.
-- `HumanPlugin` only `init_resource`s it. **An app that wants another size inserts it
-  after `add_plugins`** — `determinism::replay::replay_app` does exactly that, and
-  swapping the two lines would silently put 20 000 humans back into the replay test.
+- **An app that wants another size inserts it after `add_plugins`** —
+  `determinism::replay::replay_app` does exactly that, and swapping the two lines would
+  silently put 20 000 humans back into the replay test.
 - Demo stands do not use it: they call `spawn_population` directly (`crowd_demo`) because
   `HumanPlugin` would settle the whole city.
-- It is the right-hand side of the telemetry invariant at the end of this file.
 
 ### Wander
 
-**`WanderPause` is drawn per arrival, not stood at every one.** `roll_wander_pause`
-(`human/systems.rs`) hands `HUMAN_WANDER_PAUSE_SHARE` (20 %) of arrivals the 2–10 s
-`HUMAN_WANDER_PAUSE` and `Duration::ZERO` to the rest — they pick the next target the same
-frame. A target is a point of the passer-by's route, not the errand he went out for.
+**`WanderPause` is drawn per arrival, not stood at every one** — `roll_wander_pause`
+(`human/systems.rs`), the share and the 2–10 s range are `CONTEXT.md`'s. A target is a
+point of the passer-by's route, not the errand he went out for.
 
 - **The roll goes on the target, not on the human.** A permanently hurrying fifth of the
   population would be two sorts of pedestrian instead of one who sometimes stops.
@@ -160,82 +130,45 @@ frame. A target is a point of the passer-by's route, not the errand he went out 
 - **A zero pause costs no step**: a `Timer` in `Once` mode is finished on its first `tick`
   (`elapsed >= duration`), so "no pause" needs no separate state. Zero at spawn is the same
   mechanism — every human walks from the first frame.
-- Measured on live Tula: **3383 of 16979 humans carrying a non-zero `WanderPause`, 19.9 %
-  against the 20 % asked for.**
 
 Unconditional in exactly one place: **calm-down** (`FleeAction::CalmDown`,
 `human/behavior.rs`) always stands the full 2–10 s, no share roll.
 
-Then the target:
-
-- **80 % — a building errand** anywhere in the city. These are the long routes and the real
-  pathfinding load.
-- **20 % — a stroll** 20–40 m nearby.
-
-The one exception is the first target after calming down from panic (see **PanicRecoil**).
-
-**WanderHeading** — the direction a human is walking, kept between walks. Every next target
-is picked inside a `WANDER_CONE` (±60°) around it; a building errand samples
-`WANDER_BUILDING_TRIES` (8) random buildings and takes the first inside the cone. Without
-the heading each pick was uniformly random and pawns wobbled in place. `flee` rewrites it to
-the away-vector on every repath, so a calmed human resumes facing away from the demon rather
-than on its stale pre-panic course.
+**WanderHeading** — the direction a human is walking, kept between walks (`CONTEXT.md`).
+Every next target is picked inside a `WANDER_CONE` (±60°) around it; a building errand
+samples `WANDER_BUILDING_TRIES` (8) random buildings and takes the first inside the cone.
 
 **`HumanFirstWanderTag`** — the very first target after spawn is always the *near* stroll,
-never a building errand; dropped when that target is picked. All 20 000 humans queue their
-first path in the same frame: **with errands first the on-screen pawns took 3.9 s to route,
-with strolls first — 0.15 s.** `PanicRecoil` overrides it.
+never a building errand; dropped when that target is picked. `PanicRecoil` overrides it.
 
-**Pace** — a human's personal speed multiplier, rolled once at spawn and stored
-**normalized** (−1…+1); effective speed is `base × (1 + Pace × HumanStyle::spread)`, applied
+**Pace** — a human's personal speed multiplier (the normalized storage and the 35 % ceiling
+are `CONTEXT.md`'s); effective speed is `base × (1 + Pace × HumanStyle::spread)`, applied
 to *both* bases (walk and flee). Every writer of a human's `Movable::speed` goes through
 `Pace::speed`: the spawn (`spawn_population`), the **Speed spread** slider
 (`sync_human_pace`), and both sides of the Wander ⇄ Flee transition — `panic` on the way in,
-`FleeAction::CalmDown` on the way out.
+`FleeAction::CalmDown` on the way out. It is a component, not something derived from
+`Movable::speed` — that field is overwritten on every Wander ⇄ Flee transition.
 
-- Normalized storage is what makes the **Speed spread** slider widen/narrow the ordering the
-  crowd already rolled instead of re-dealing it.
-- A component, not something derived from `Movable::speed` — that field is overwritten on
-  every Wander ⇄ Flee transition.
-- Ceiling 35 % is derived: above it the fastest humans outrun the slowest demon setting.
-- `sync_human_pace` applies slider moves, picking the base off `Has<HumanFleeTag>`. Its gate
-  is `systems::spread_changed` — a `Local`-backed compare of `HumanStyle::spread`, not
-  `resource_changed::<HumanStyle>`: the resource also carries `body_radius` (a slider on the
-  Nav tab), and gating on the whole resource re-tuned all 20 000 humans on every 0.01 m step
-  of a radius drag.
+`sync_human_pace` applies slider moves, picking the base off `Has<HumanFleeTag>`. Its gate
+is `systems::spread_changed` — a `Local`-backed compare of `HumanStyle::spread`, not
+`resource_changed::<HumanStyle>`: the resource also carries `body_radius` (a slider on the
+Nav tab), and gating on the whole resource re-tuned all 20 000 humans on every 0.01 m step
+of a radius drag.
 
 ### Flee
 
-Enter when a demon is within `HUMAN_PANIC_RADIUS` (60 m). **The first repath happens on the
-panic tick itself** — `panic` inserts `FleeRepath` already due (`Timer::almost_finish`), so
-`flee`, chained right after it, takes the decision rung on that same tick; otherwise a
-walking human (`Moving`, so no `needs_path`) would keep its stroll path at flee speed for up
-to 1.2 s. Then repath every 0.7–1.2 s, stepping 40–60 m away from the nearest demon.
-Calm-down at ×1.5 radius hysteresis (`RADIUS_HYSTERESIS`).
+The panic radius, the repath period, the hysteresis, the inverted `panic` check and the
+flee fan are `CONTEXT.md`'s. What lives here:
 
-**The Wander → Flee check (`panic`) is inverted**: each demon collects neighbours from the
-human grid instead of every wanderer polling the demon grid, so its cost tracks the crowd
-near demons, not the city population.
-
-**The exact nearest-demon search runs only on a fleeing human's decision ticks** — between
-them it only checks demon-grid *cell occupancy* (`any_in_cells_around`). The every-tick
-exact search used to cost 40 % of the sim tick.
-
-**Flee fan** — a non-chased fleeing human rotates its away-vector by a deterministic
-per-entity angle (±0.6 rad) so crowds spread instead of forming a column. Actively chased
-humans flee straight.
-
-A fleeing human carries **`UrgentPath`** (it comes and goes with `HumanFleeTag`) — the
-dispatcher's "may not wait for the camera" marker; see `navigation-deep`.
-
-**Panic tint** (`human/look.rs`) — the same tag drives the colour: `On<Add, HumanFleeTag>`
-paints the sprite `PANIC_COLOR` (amber, one for all — the front of panic is a spreading
-stain, not confetti), `On<Remove, HumanFleeTag>` restores the human's own `Attire`. Two
-observers on transitions, no per-frame system over 20 000 sprites. The remove observer
-also fires on the corpse transition (harmless: `to_corpse` paints the body afterwards)
-and on despawn. `Attire` itself is the three spawn draws of the decision stream, now from
-a cool muted palette — the draw *count* is what must not change, since `Pace` and the
-heading follow in the same stream.
+- **The first repath happens on the panic tick itself** — `panic` inserts `FleeRepath`
+  already due (`Timer::almost_finish`), so `flee`, chained right after it, takes the decision
+  rung on that same tick; otherwise a walking human (`Moving`, so no `needs_path`) would
+  keep its stroll path at flee speed for up to 1.2 s.
+- **The exact nearest-demon search runs only on a fleeing human's decision ticks** — between
+  them it only checks demon-grid *cell occupancy* (`any_in_cells_around`). The every-tick
+  exact search used to cost 40 % of the sim tick.
+- A fleeing human carries **`UrgentPath`** (it comes and goes with `HumanFleeTag`) — the
+  dispatcher's "may not wait for the camera" marker; see `navigation-deep`.
 
 **Escape** — a fleeing human within `ESCAPE_MARGIN` of the map border despawns,
 `telemetry.escaped += 1`. It is a despawn inside `FixedUpdate`, where the chained `SimSet`s
@@ -243,101 +176,60 @@ give it a sync point (see CLAUDE.md, "Where a mass despawn may happen").
 
 ### PanicRecoil
 
-A unit vector *toward* the demon, written on **every flee repath** (`FleeAction::Flee { ban
-}`) and **never queried live**: `pick_wander_targets` must stay off the demon grid, and by
-calm-down the demon is already >90 m away.
+The vector, the two filters (`RECOIL_CONE` ±45°, `RECOIL_MIN_ERRAND` 90 m), the
+never-a-stroll rule and the no-buildings exception are `CONTEXT.md`'s. What lives here:
 
-It is born in `human::decide`, where the demon's position is an input — the calm-down branch
-fires *because* the search found nobody, so it has nothing to build a ban from and leaves the
-stored one alone. Since the first repath now lands on the panic tick, a fleeing human
-practically always carries a ban; the no-ban state survives only as the initial one, before
-a human has ever panicked (the old code synthesised it from a stale stroll course, pointing
-at nothing).
-
-While it is on, the next target must be an errand clearing two filters in
-`pick_building_ahead`:
-
-- not within `RECOIL_CONE` (±45°) of the recoil vector;
-- not closer than `RECOIL_MIN_ERRAND` (90 m) — a nearby building just outside the cone
-  reproduces the short walk being ruled out.
-
-Rejected candidates are dropped **before** the "best-aligned of the 8" fallback, which used
-to hand back a building nearly 180° from the heading — straight at the demon. Nothing
-acceptable → re-roll next frame (**never a stroll**); dropped at the first successful pick.
-
-**The one exception — a map with no buildings** (`MapData::buildings` empty: `MapData::default()`
-in tests and demo scenes; all seven shipped cities have thousands). `to_building` is then false
-even under a ban, so the pick falls through to the 20–40 m stroll, checked against `RECOIL_CONE`
-only — **`RECOIL_MIN_ERRAND` is not applied on that path at all** (no stroll could clear 90 m
-anyway), and the cone is tested **after** `clamp_to_map`, which turns the direction around at
-the map edge.
-
-**Why it is stored rather than synthesised.** It used to be built at the calm-down site as
-the negated `WanderHeading`, which dragged the **flee fan** in with it: ±0.6 rad (34°) of the
-±45° cone spent before the ~13° of staleness — over budget on the comments' own numbers, and
-silently broken by any widening of the fan. Taking the ban **before** the fan is applied
-removes the coupling outright: the two angles no longer have to be compared at all.
+- **Why it is stored rather than synthesised.** It used to be built at the calm-down site as
+  the negated `WanderHeading`, which dragged the **flee fan** in with it: ±0.6 rad (34°) of
+  the ±45° cone spent before the ~13° of staleness — over budget on the comments' own
+  numbers, and silently broken by any widening of the fan. Taking the ban **before** the fan
+  is applied removes the coupling outright: the two angles no longer have to be compared at
+  all.
+- It is born in `human::decide`, where the demon's position is an input — the calm-down
+  branch fires *because* the search found nobody, so it has nothing to build a ban from and
+  leaves the stored one alone. Since the first repath lands on the panic tick, a fleeing
+  human practically always carries a ban; the no-ban state survives only as the initial
+  one, before a human has ever panicked.
+- Rejected candidates are dropped **before** the "best-aligned of the 8" fallback, which
+  used to hand back a building nearly 180° from the heading — straight at the demon;
+  nothing acceptable → re-roll next frame, dropped at the first successful pick.
+- On the no-buildings fallback stroll the cone is tested **after** `clamp_to_map`, which
+  turns the direction around at the map edge.
 
 ### Corpse
 
-**`CorpseTag`** — a killed human: behavior/movement components removed, the body drawn as
-a **lying human figure** at `Z_CORPSE` — one of the four corpse glyphs of the silhouette
-atlas (`silhouette/figure.rs`: sprawled, prone, curled, crumpled), in one of
-`CORPSE_HEADINGS` (16) directions, mirrored or not, all chosen from the `Entity` bits
-through a splitmix hash (`human/look.rs::corpse_pose`) — cosmetics, so it stays out of
-the decision stream. The tint is the human's own `Attire` drained (`corpse_tint`: half
-the saturation, half the lightness), written by `lay_down`, an entity command queued
-*after* the tag removal so the calm-down observer restoring the attire cannot overwrite
-it. Under the chest hang **two blood children** — see *Blood* below. The body's own
-`Silhouette`
-is rewritten to the `CORPSE_SPAN` cell (`HUMAN_MIN_PX` floor), which is how the size
-lands on the sprite next frame. Not in the human spatial grid (the grid filters on
-`Human`).
-
 The transition is **`human::to_corpse`**, one entry point, and it is where a corpse is
-defined — the kill observer in `demon/` only reports that it happened. Each module takes back
-its own components: `to_corpse` drops the human behaviour and calls
+defined — the kill observer in `demon/` only reports that it happened. `to_corpse` calls
 **`movement::strip_movement`**, which drops the movement footprint via
-`remove_with_requires::<Movable>` (so `Movable`'s `#[require]` stays the single record of what
-a movable entity drags along) plus the runtime pieces `#[require]` cannot reach — request,
-tick stamp, retire deadline, destination claim, `UrgentPath`.
+`remove_with_requires::<Movable>` (so `Movable`'s `#[require]` stays the single record of
+what a movable entity drags along) plus the runtime pieces `#[require]` cannot reach —
+request, tick stamp, retire deadline, destination claim, `UrgentPath`.
 
-Deliberately kept on the body: `PawnId` / `WanderIndex` (a pawn's identity, useful in debug)
-and `Pace` / `WanderHeading` (the spawn roll — unreadable without `Movable`).
+Deliberately kept on the body: `PawnId` / `WanderIndex` (a pawn's identity, useful in
+debug) and `Pace` / `WanderHeading` (the spawn roll — unreadable without `Movable`).
+
+The drawn half — pose, tint, the blood children — is `references/look.md`; the summary is
+`CONTEXT.md`'s **Corpse look** entry.
 
 ## Demon
 
 States in `demon/behavior.rs`, rules in `demon/decide.rs`: **Wander** (target biased away
 from the portal) → **Chase** → **Devour** → Wander. A demon carries `UrgentPath` always,
 and `movement::BodyScale::DEMON` — its body is the one thing movement would otherwise have
-to infer from the species.
-
-**Look** (`demon/look.rs`) — the `Ember` glyph of the silhouette atlas (seven spikes, a
-bright core), tinted by `demon_tint`: a five-shade ring from crimson to orange so demons
-born in a row stay apart. Under the body a **halo** — a child entity (`DemonHalo`, the
-`Halo` glyph, `HALO_RATIO` 3 bodies wide, local z −0.01): it inherits the devour pulse
-through the parent's scale, is despawned with the parent (despawn is recursive, so it
-carries no `DespawnOnExit` of its own), and y-sorting draws a neighbouring human *over*
-it. `spawn_demon` gets the atlas through `DemonBirth`.
+to infer from the species. The look — the `Ember` glyph and the halo — is
+`references/look.md`.
 
 ### Wander
 
 **A point in the `DEMON_WANDER_CONE` (1.3 rad half-angle, ≈75°) around the away-from-portal
-vector, `DEMON_WANDER_RANGE` (40–120 m) out** — `pick_wander_targets` (`demon/systems.rs`)
-builds the course as `(sim_position − portal_pos).normalize_or(<random angle>)` and hands it
-to `point_in_cone`. "Away from the portal" is the whole of the species' policy; everything
-around it is the shared skeleton. At the map edge `clamp_to_map` turns the direction inward —
-that is all the system's comment about the border means; there is no separate border rule.
-
-Against the human's stroll (60° half-angle, 20–40 m): a wider cone and a walk two to three
-times longer, and **no errand branch at all** — a demon never picks a building, so the 80/20
-roll and `pick_building_ahead` are human-only.
-
-**No `WanderPause` analogue and no `WanderHeading`.** The demon takes its next target on the
-very tick `Movable::to_idle` hands `NeedsWanderTarget` back, so it never stands between
-walks; and its course is recomputed from the portal on every pick instead of being kept, so
-`heading_towards` — the skeleton's last step — is never called for a demon.
-`WanderIndex::ready()` at spawn puts the first target on the demon's first tick.
+vector, `DEMON_WANDER_RANGE` (40–120 m) out** — the policy is `CONTEXT.md`'s. At the map
+edge `clamp_to_map` turns the direction inward — that is all there is to the border, there
+is no separate border rule. Against the human's stroll (60° half-angle, 20–40 m): a wider
+cone and a walk two to three times longer, and **no errand branch at all** — a demon never
+picks a building, so the 80/20 roll and `pick_building_ahead` are human-only. No
+`WanderPause` analogue and no `WanderHeading` — the next target is taken the very tick
+`Movable::to_idle` hands `NeedsWanderTarget` back. `WanderIndex::ready()` at spawn puts the
+first target on the demon's first tick.
 
 **Three draws from the decision stream on every pick, in this order: fallback angle → cone
 rotation → distance.** The first is the argument of `normalize_or`, which takes a *value*,
@@ -354,10 +246,10 @@ slot** — `acquire_targets` walks the *human* grid (`nearest_in_range_where` wi
 queued behind them. A demon takes aggro on the first tick it exists, the initial burst
 included.
 
-**Give up past ×1.5 that radius (67.5 m)** — `RADIUS_HYSTERESIS`, the same enter/exit pattern
-as the human's calm-down. It is the **first rung of `decide`** after the dead-target check:
-checked before the kill, the lunge and the repath gate, so a demon dragged out of the ring
-leaves on that same tick, and `GaveUp` is the one exit that frees its claim slot.
+**Give up past ×1.5 that radius** — `RADIUS_HYSTERESIS`, the same enter/exit pattern as the
+human's calm-down. It is the **first rung of `decide`** after the dead-target check: checked
+before the kill, the lunge and the repath gate, so a demon dragged out of the ring leaves on
+that same tick, and `GaveUp` is the one exit that frees its claim slot.
 
 The two species' radii are not symmetric, and the ordering is worth holding: a human panics
 at `HUMAN_PANIC_RADIUS` (60 m), a demon acquires at 45 m, so the demon almost always starts
@@ -367,19 +259,16 @@ its chase on an already-fleeing target.
 
 **Max 2 chasers per target**, counted by `ChaseClaims` (`demon/claims.rs`) — a value rebuilt
 each tick from the `ChaseTarget`s of the demons in the query; **there is no standing claim
-between ticks**.
-
-Which exits from a chase free a slot is `ChaseAction::releases_claim`, and the rule is
-asymmetric: only **GaveUp** releases, because after `Kill` and `LostTarget` the victim is gone
-and nobody will claim it anyway. A **switch** moves one slot instead, with
-`ChaseClaims::transfer` — the operation that replaced the `release` + `claim` pair the
-exhaustive match could not see.
+between ticks**. Only **GaveUp** releases a slot, because after `Kill` and `LostTarget` the
+victim is gone and nobody will claim it anyway; a **switch** moves one slot instead, with
+`ChaseClaims::transfer`.
 
 ### Repath and the switch rung
 
-Repath throttle 0.4 s (`DEMON_CHASE_REPATH`), and on that same tick the demon may **switch** target — **a rung of
-the ladder, not a tail after it**: the search is a lazy sense (`better_victim`) that `decide`
-asks only on the repath rung, and the answer is `ChaseAction::Switch { to: Victim }`.
+Repath throttle 0.4 s (`DEMON_CHASE_REPATH`), and on that same tick the demon may **switch**
+target — **a rung of the ladder, not a tail after it**: the search is a lazy sense
+(`better_victim`) that `decide` asks only on the repath rung, and the answer is
+`ChaseAction::Switch { to: Victim }`.
 
 - Sharing its target: it takes any *unclaimed* human no farther than **×1.5** its current
   distance — this is what breaks up a pincer.
@@ -390,14 +279,15 @@ asks only on the repath rung, and the answer is `ChaseAction::Switch { to: Victi
 
 **These three live in `demon/decide.rs`, not `settings.rs`, on purpose.**
 `MAX_CHASERS_PER_TARGET`, `SWITCH_DISTANCE_FACTOR`, `CLOSER_SWITCH_FACTOR` are rules of the
-ladder — same placement as `FLEE_STEP`/`FLEE_SPREAD` in `human/decide.rs`, while the metres the
-ladder consumes (`DEMON_AGGRO_RADIUS`, `DEMON_LUNGE_RANGE`, `KILL_DISTANCE`,
+ladder — same placement as `FLEE_STEP`/`FLEE_SPREAD` in `human/decide.rs`, while the metres
+the ladder consumes (`DEMON_AGGRO_RADIUS`, `DEMON_LUNGE_RANGE`, `KILL_DISTANCE`,
 `RADIUS_HYSTERESIS`) do come from `settings.rs`. What moves to `settings.rs` is a constant
-more than one owner reads — both species declaring it (`WANDER_MAP_MARGIN`, commit
-`432eabf`), or a knob the panel and the model share. A knob's own `_MIN`/`_MAX`/`_STEP`
-range is *not* such a constant: it bounds its resource's field — the panel only renders it —
-so it belongs beside that resource. `HumanStyle` and `DemonStyle` do not clamp on read; their
-ranges are the declaration of what the field may hold, not a guard on it. Don't relocate anything here to "comply" with the tuning-constants rule.
+more than one owner reads — both species declaring it (`WANDER_MAP_MARGIN`), or a knob the
+panel and the model share. A knob's own `_MIN`/`_MAX`/`_STEP` range is *not* such a
+constant: it bounds its resource's field — the panel only renders it — so it belongs beside
+that resource. `HumanStyle` and `DemonStyle` do not clamp on read; their ranges are the
+declaration of what the field may hold, not a guard on it. Don't relocate anything here to
+"comply" with the tuning-constants rule.
 
 **A chaser with no first path yet skips the repath tick and waits.** Repathing cancels the
 in-flight search, and whenever the pipeline answers slower than the victim changes tiles the
@@ -406,17 +296,16 @@ coasting covers the repath gaps and cancelling becomes safe.
 
 **The throttle clock runs only on the rungs the ladder reaches.** `chase` *asks*
 `ChaseRepath` (`remaining() <= time.delta()`) and ticks it on `Hold`, `Repath` and `Switch`
-only — `Lunge` and the wait freeze it, and nothing else in the code ticks it. For the wait
-that is the point: the timer is inserted fresh at Wander → Chase, so the first path gets a
-whole throttle period of walking instead of being repathed away the tick after it lands.
-After a **lunge** the freeze delays nothing — the lunge's `to_idle` empties the path and an
-answer arriving meanwhile is dropped (`accept_answer` accepts only in `Pathfinding`), so on
-the tick the lunge is cancelled the demon is `Idle`, `needs_first_path` holds, and the
-repath/switch rung fires whatever the timer says. What survives is the throttle's *phase*:
-that repath advances the frozen remainder rather than a fresh period, so the **next** repath —
-and with it the next chance to switch victim — may come one tick later instead of
-`DEMON_CHASE_REPATH` later. The throttle is a floor between *timer-driven* repaths, not
-between repaths.
+only — `Lunge` and the wait freeze it, and nothing else in the code ticks it. The timer is
+inserted fresh at Wander → Chase, so the first path gets a whole throttle period of walking
+instead of being repathed away the tick after it lands. After a **lunge** the freeze delays
+nothing — the lunge's `to_idle` empties the path and an answer arriving meanwhile is dropped
+(`accept_answer` accepts only in `Pathfinding`), so on the tick the lunge is cancelled the
+demon is `Idle`, `needs_first_path` holds, and the repath/switch rung fires whatever the
+timer says. What survives is the throttle's *phase*: that repath advances the frozen
+remainder rather than a fresh period, so the **next** repath — and with it the next chance
+to switch victim — may come one tick later instead of `DEMON_CHASE_REPATH` later. The
+throttle is a floor between *timer-driven* repaths, not between repaths.
 
 ### Lunge, kill, devour
 
@@ -425,258 +314,57 @@ path and steps `SimPosition` straight at the target at its speed plus `DemonStyl
 Without it a chase never converts: a tile path aims at the tile *center* while the victim
 keeps moving inside it, and the last ~1.4 m is never closed. A lunging demon carries
 **`DemonLungeTag`** (set/cleared in `chase`); `draw_lunge_paths` draws its arrow at the
-victim's live position. Lunging demons are exempt from separation.
+victim's live position.
 
-**Kill** at `KILL_DISTANCE` triggers `DemonCaughtHumanEvent` (observer); a `killed_this_tick`
-HashSet dedupes double kills within one command flush. The observer also **releases a
-soul** (`human/soul.rs::release_soul`) at the victim's `SimPosition` — a golden HDR spark
-(`SoulMote`) that `rise_souls` (FixedUpdate, after `SimSet::HumanBehavior`) lifts 6 m over
-1.4 s of sim time and despawns; the visible side of `Telemetry::killed`. It reads
-`Res<Silhouettes>`, so a test yard that adds the observer must `init_resource` it. The
-mote is **not** the `Souls { earned, spent }` currency of `ROADMAP.md` — that is a
-separate concept, a resource this same observer will increment next to `Telemetry::killed`;
-`SoulMote` counts nothing.
+**Kill** at `KILL_DISTANCE` triggers `DemonCaughtHumanEvent` (observer); a
+`killed_this_tick` HashSet dedupes double kills within one command flush. The observer also
+**releases a soul** at the victim's `SimPosition` — the visible side of `Telemetry::killed`;
+the spark is `CONTEXT.md`'s **Soul** entry.
 
 **What each exit from a chase strips is one list plus one exception.** The list is
 `ChaseComponents` (`demon/components.rs`) — the four chase components, removed whole by
 both exits. The kill observer removes `PathfindingTask` / `PathfindingRequest` on top,
 because an answer landing in Devour would `to_moving` the demon off the corpse; it may,
 because it calls `Movable::to_idle` first. `back_to_wander` touches no `Movable`, so it
-must **not** cancel the search: a demon left in `MovableState::Pathfinding` with no
-request and no `NeedsWanderTarget` never wanders again.
+must **not** cancel the search: a demon left in `MovableState::Pathfinding` with no request
+and no `NeedsWanderTarget` never wanders again.
 
 **Devour** — pause `DEMON_DEVOUR_PAUSE` (1.5–2 s) with a sine **pulse** ×1 →
 `DEVOUR_PULSE_MAX_SCALE` (1.5) over `DEVOUR_PULSE_PERIOD` (0.5 s), scale reset on exit.
-All four numbers live in `settings.rs`, none inline in `demon/behavior.rs`.
-
-The pause is rolled **in the kill observer, from the demon's own decision stream** — so a
-kill advances the killer's `WanderIndex` by one, the only such advance outside a
-decide-driven system. It stays deterministic because the observer is reached from `chase`'s
-command flush inside the same `FixedUpdate` tick; moving the trigger to `Update`, or rolling
-the pause from a shared generator, breaks replay (`determinism`).
+All four numbers live in `settings.rs`, none inline in `demon/behavior.rs`. The pause is
+rolled **in the kill observer, from the demon's own decision stream** — so a kill advances
+the killer's `WanderIndex` by one, the only such advance outside a decide-driven system. It
+stays deterministic because the observer is reached from `chase`'s command flush inside the
+same `FixedUpdate` tick; moving the trigger to `Update`, or rolling the pause from a shared
+generator, breaks replay (`determinism`).
 
 ### Speed
 
-**`DEMON_SPEED`** — one base for every state, `HUMAN_FLEE_SPEED × 1.35` (true of the *average*
-human since `Pace`).
-
-**Do not reintroduce per-state demon speeds.** The only multipliers are the two user ones:
-`DemonStyle::speed` (whole demon) and `DemonStyle::lunge` (lunge phase only — applied at the
-one line in `chase` that steps `SimPosition`, never written into `Movable::speed`).
-`Movable::speed` is written once, at spawn; `sync_demon_speed` applies slider moves
-(`resource_changed`).
+**`DEMON_SPEED`** — one base for every state, `HUMAN_FLEE_SPEED × 1.35` (true of the
+*average* human since `Pace`); **no per-state demon speeds** — the rule is `CONTEXT.md`'s.
+The `DemonStyle::lunge` multiplier is applied at the one line in `chase` that steps
+`SimPosition`, never written into `Movable::speed`. `Movable::speed` is written once, at
+spawn; `sync_demon_speed` applies slider moves (`resource_changed`).
 
 ### The spawner
 
-**`DemonSpawner`** — initial burst at the portal rim, then one demon per interval up to the
-cap. Runs in `FixedUpdate` so a restart re-fires the burst for free. Cap and interval live in
-**`DemonStyle { cap, interval, speed, lunge }`** (sliders of the Sim tab's Demon section,
-persisted); `DEMON_CAP` / `DEMON_SPAWN_INTERVAL` are only its `Default`.
-
-- The burst is capped too (`DEMON_INITIAL_BURST.min(cap)`, fanned over the reduced count).
-- Lowering the cap never despawns demons already out.
-- The timer's period is re-synced inside `tick_spawner`, because restart and city switch
-  rebuild `DemonSpawner` whole.
+**`DemonSpawner`** — the burst, the interval, the cap in **`DemonStyle { cap, interval,
+speed, lunge }`** (sliders of the Sim tab's Demon section, persisted; `DEMON_CAP` /
+`DEMON_SPAWN_INTERVAL` are only its `Default`) and the `PlayPhase::Live` invariant are
+`CONTEXT.md`'s. The burst is capped too (`DEMON_INITIAL_BURST.min(cap)`, fanned over the
+reduced count), and the timer's period is re-synced inside `tick_spawner`, because restart
+and city switch rebuild `DemonSpawner` whole.
 
 **A demon acts from the first tick it exists**, the initial burst included — held by the
 schedule, not by luck: the spawner sits `.before(SimSet::SpatialRebuild)` and in
-`SimPipeline::BothModes` (`demon/mod.rs`). A
-`DemonSpawnPause` (0.5–3 s staging) existed and was removed on request; staging an entrance
-again means a new component, not reviving that one.
-
-**The spawner runs only in `PlayPhase::Live`, and that is an invariant, not a detail.** It
-hands out `PawnId`s from a counter that `WorldStarted` — announced on entering `Live` —
-resets to zero, so a burst fired before the announcement gets its numbers dealt a second
-time. Two demons then share a `PawnId`, which breaks both the pawn's RNG stream and the
-deterministic dispatcher's queue key (it died on a duplicate key ~30 ticks in). Relying on
-"warmup keeps the world paused" was not enough — that pause belongs to `sim_time` and space
-unpauses it. Matching precondition on the reset: **no demon may be alive when a run starts**
-(`demon::on_world_started` says so).
-
-## Look: the silhouette atlas and the portal
-
-`silhouette/` and `portal.rs` are the drawing half of a pawn. `CONTEXT.md`'s **Look**
-section names the terms and the two invariants; the mechanism and the measurements are
-here. There are no art assets and no artist: every shape is a formula, every colour a
-constant beside its draw call — the per-species tints (`Attire`, `demon_tint`,
-`corpse_tint`, the halo, the soul) are described in the Human and Demon sections above.
-The camera's bloom, which is what makes the HDR colours here glow, is the **ui-panels
-skill** (`post.rs::camera_post_process`, the bundle `camera.rs` puts on the camera).
-
-### The atlas
-
-**One image for all `Glyph::COUNT` glyphs** — `CELL_PX` (128) per cell, one row, so
-27 × 128 today — built once per process by `SilhouettePlugin` (`main.rs`) in `Startup`
-(`build_atlas`): glyphs depend on neither the city nor the run, so neither a restart nor
-a city switch rebuilds it, and the `Handle`s outlive every world. It logs a
-`silhouette atlas: …` line with its own size and timing.
-
-**The number of glyphs costs nothing per frame** — which is why the blood families are
-ten variants each and not four. A cell is rasterised once at startup, a pawn picks its
-glyph once at spawn, and the batch is still one texture; what grows is the build time and
-the texture (a cell is 128 × 128 × 4 B ≈ 64 KB on mip 0, ~87 KB with its mips).
-
-One image and not one per species **because sprites batch by texture**: humans, corpses
-and demons interleave in y-sorted z, so a second texture would cut the batch at every
-demon.
-
-- **Cell 128 px, not 64** — at the closest zoom (0.05 m/px) a corpse cell is ~75 logical
-  px, 150 physical on a retina display; at 64 the figure's limbs blur.
-- **Signed distance with a one-pixel edge** (`EDGE_PX`): `texel()` returns *(shade,
-  alpha)* per texel, where shade is a multiplier on the sprite colour — so one glyph
-  serves every tint, and a pawn's colour never touches the texture.
-- **Transparent texels carry the edge colour, not black**, or linear filtering would mix
-  a black rim into the outline.
-- **The mip chain is computed here**, 2×2 averaging down to 1×1 (`downsample`), and the
-  image is sampled **linearly** even though the app runs on
-  `ImagePlugin::default_nearest()`: a silhouette is a smooth figure, not pixel art, and a
-  2–4 px dot off a 128 px texture sparkles at every step of a pawn without mips.
-- **`Glyph`** — three lone shapes: `Disc` (human), `Ember` (demon: seven spikes, a bright
-  core), `Halo` (the demon halo, the soul spark, the portal stain — any glow); and three
-  **families that carry a variant number** — `Pool(i)`, `Spatter(i)` (blood) and
-  `Corpse(i)` (the four poses). A family's cells sit **consecutively in atlas order**, and
-  the cell index is **`Glyph::cell()`**, not the discriminant — that is what lets a family
-  grow from four variants to ten without twenty new names. Take a variant through
-  `Glyph::pool` / `spatter` / `corpse`, which reduce mod the family size; `Glyph::all()`
-  walks the atlas in cell order, `Glyph::COUNT` is its length.
-  `Glyph::pool_anchor` gives the chest of a pose in cell coordinates (−1…1), the
-  centre for every other glyph. `Silhouettes::sprite(glyph, color, size)` is the only way
-  to make a pawn sprite; `set_glyph` swaps a live sprite onto another glyph of the same
-  atlas (a human becoming a corpse).
-- **`Capsule`** (`silhouette/mod.rs`) — the shared drawing primitive: two circles and
-  their hull, signed distance plus a bounding circle for culling. Both the corpse
-  skeleton and every blood lobe and drop are built from it.
-- **The corpse figure** (`silhouette/figure.rs`) — head, torso, arms and legs as capsules
-  on a skeleton given **in heights** (1 = standing height), joints as angles off the body
-  axis: head towards +x, feet towards −x, the left side +y. Limbs are drawn 1.5–2× thicker
-  than anatomy on purpose — an honest 0.05-height arm is a fraction of a pixel at crowd
-  zoom, and the body has to read as a *pose*, not as wire. All four poses share one square
-  `CELL_SPAN` (1.4 heights) cell, because the sprite rotates to any angle and a rectangular
-  cell would win nothing.
-- **Look at it with your eyes**: `SILHOUETTE_DUMP=/tmp/atlas.png cargo test dump_atlas --
-  --ignored` writes mip 0 to a PNG (transparency reads better on a grey background).
-
-### Blood
-
-`silhouette/blood.rs` draws it, `human/look.rs` spawns and grows it. What a corpse leaves
-on the ground is **two children, not one**, because they are two events:
-
-- **`BloodPool`** — the stain that *runs out from under the body*: a small core plus 5–8
-  discs set on an **ellipse** of its own stretch and tilt (`POOL_STRETCH` up to 1.35 —
-  blood runs downhill, and a round stain is a blot, not a pool; on the eye the stretch
-  separates the variants more than anything else), all welded by a smooth minimum
-  (`POOL_WELD` 0.14 — a hard union reads as a heap of pancakes), a crenellated rim (three
-  harmonics, 0.028–0.010 of the half-cell) and 2–4 tapering **rivulets** with a sideways
-  sway at the knee. A rivulet is given by **where it ends** (`POOL_RIVULET_REACH`
-  0.58–0.78), not by its length: given a length it drowned inside the pool, whose lobes
-  already reach 0.5–0.8, and only a two-pixel stub stuck out. Cell `POOL_RATIO` 0.75 of
-  `CORPSE_SPAN`, z −0.02.
-- **`BloodSpatter`** — the cast-off fan, thrown at one axis: 34–56 drops whose distance is
-  biased towards the body (`u^1.6`), the fan widening and the drops shrinking with
-  distance, one in seven fat (`SPATTER_FAT`), each drawn out into a **comma whose narrow
-  tail points along the flight**, plus 3–7 thrown back and 2–5 fat satellites at the
-  pool's edge. Cell `SPATTER_RATIO` 1.35 of `CORPSE_SPAN`, z −0.03 (under the pool: the
-  drops fell first).
-
-  **The tail is measured in the drop's own radii**, and that is the one number this fan
-  lives or dies by: given in cell units it made a small far drop a needle ten calibres
-  long, and the whole spatter read as rake marks. Sixteen big drops read as spilt grain,
-  too — many small ones are what reads as blood.
-
-**Why not one sprite.** A single glyph would have to either grow its drops with the pool
-(drops do not grow) or give up the growth, and its cell would have to cover the fan's
-reach, costing the pool half its atlas resolution. One extra entity per corpse buys both.
-
-**Thickness is the whole colour model.** `Stain::texel` turns *how deep inside the
-contour* a texel sits into `depth` — **by the square root**, full at `DEPTH` 0.032 of the
-half-cell — and from it into **alpha** (`FILM` 0.70 at the rim → 1.0 deep) and **shade**
-(`CORE_SHADE` 0.55 deep → 1.0 at the rim). One formula for a pool and a drop: a small drop
-is thin *because it is small*, which is also true of real blood. The root and the small
-`DEPTH` are what keep that from going too far — with a linear ramp over 0.075 a drop of
-two hundredths never reached half depth and the whole fan came out pink.
-
-Two traps, both paid for once:
-
-- **`shade` is read as sRGB** (the atlas is `Rgba8UnormSrgb`), so 0.55 is ≈0.26 of the
-  light — a value picked as a linear fraction comes out near black.
-- **transparency belongs to the glyph, not to the sprite colour.** `BLOOD_ALPHA` is 1.0
-  and the `BLOOD_HUE` / `BLOOD_SATURATION` / `BLOOD_LIGHTNESS` triple's job is only to say
-  *what colour thin blood is*. A translucent colour
-  was tried first: on the pavement (linear 0.74 against blood's 0.3) even an eighth of the
-  ground bleaching through turned the pool brown.
-
-**Per-corpse variety** (`human/look.rs::blood_look`) — the pool glyph, the spatter glyph,
-a spin for each (`BLOOD_SPINS` 64 steps, on top of the body's own rotation), a size
-(0.80–1.20) and a tint (hue +0–12°, lightness ×0.78–1.14), all sliced out of
-`splitmix64(entity ^ BLOOD_SALT)` at non-overlapping bit offsets. The salt is the point:
-hashed with the pose's own bits, pose and pool would walk in step and four pairs would
-become visible long before forty.
-
-**Growth** (`spread_blood`, `Update`, `SimPipeline::BothModes`) — the pool opens from
-`SPREAD_START` 0.30 to full over `SPREAD_SECS` 1.6 s of *virtual* time, ease-out, by
-writing `Silhouette::body` (never `custom_size` — that belongs to `silhouette`), and
-`BloodSpread` is **removed on arrival**, so the pass costs the last second and a half of
-kills rather than every corpse on the map. Ordered `.before(size_fresh_silhouettes)` so
-the new size reaches the sprite in the same frame.
-
-**Look at it with your eyes**: `cargo run --example blood_gallery` — every pool and every
-spatter side by side, then a field of bodies built by the real `to_corpse`, on three
-grounds. `BLOOD_GALLERY_SHOT=<path>` makes it screenshot itself and quit.
-
-### The screen-size floor and the two LOD systems
-
-`Silhouette { body, min_px }` — the body in metres plus the floor in logical px on the
-body's *smaller* side. `drawn_size(zoom)` (zoom = metres per logical px, i.e. the camera
-`Transform`'s scale) stretches the body proportionally until its smaller side reaches
-`zoom * min_px`, and never shrinks it below the body. Without the floor a 1 m human is
-0.2 px at city zoom and disappears: `HUMAN_MIN_PX` 2 keeps the crowd a grain,
-`DEMON_MIN_PX` 5 keeps a demon a findable point (its halo, 3 bodies wide, 15 px),
-`SOUL_MIN_PX` 3 keeps a 1.4 s spark visible.
-
-**`Sprite::custom_size` belongs to this module**, and to three writers inside it:
-`Silhouettes::sprite` sets the body at spawn, and from then on the size is owned by two
-chained `Update` systems. Nothing outside `silhouette/` writes the `custom_size` of an
-entity that carries a `Silhouette` — a look system that wants a different size rewrites
-the component, not the sprite. The two:
-
-- **`size_fresh_silhouettes`** — every frame, but `Changed<Silhouette>` only. A spawn or a
-  corpse rewrite gets its size in the frame it appears, instead of waiting for the first
-  wheel click.
-- **`resize_silhouettes_on_zoom`** — every silhouette, but only when the zoom actually
-  changed (`Local<f32>` holds the last one). Thousands of sprite writes per wheel click,
-  not per frame.
-
-Both ask for the **user's** camera — `With<Camera2d>` *and* `With<PanCamera>`, because a
-`dev::OffscreenShotEvent` puts a second `Camera2d` in the world for three frames and a
-`Single` matching two entities is skipped without a word. Both return early when there is
-no such camera, which is the same contract as the atlas:
-without a renderer (replay, tests) `Silhouettes` stays `None`, `sprite()` hands back a
-plain square `Sprite`, and **that is not an error**. `HumanPlugin` / `DemonPlugin` /
-`PortalPlugin` only `init_resource::<Silhouettes>()`; `SilhouettePlugin` is what fills it,
-so a test yard that spawns pawns or runs the kill observer must `init_resource` it too.
-
-### Portal
-
-`portal.rs` + `assets/shaders/portal.wgsl` — a `Mesh2d` quad with `PortalMaterial`
-(`Material2d`): a three-armed log-spiral vortex with fbm turbulence computed per pixel
-from `globals.time`. No spritesheet, no frames, no `Update` system — the nine-frame 160 px
-sheet it replaced read as pixel mush stretched over 36 m, and nobody is going to repaint
-it. The Rust `PortalUniform`'s layout must stay in step with `PortalUniform` in the WGSL.
-The arms and the rim are **HDR** (`PORTAL_RIM`, > 1.0) so the camera's bloom catches them;
-the core is near-black violet. Violet because nothing else on the map is: red is demons,
-amber is panic, blue is water and tram. Under it the **stain** of scorched ground — the
-`Halo` glyph, `STAIN_RATIO` 2.6 portal diameters, at `Z_PORTAL_STAIN`: above roads (the
-junction under the portal is charred), below corpses (bodies stay visible on it).
-`PortalPos` itself — the hint, the snap to a passable tile — is `navigation-deep`.
+`SimPipeline::BothModes` (`demon/mod.rs`). The `Live`-only rule is not covered by the
+warmup hold — that pause belongs to `sim_time` and space unpauses it — which is why the
+`WorldStarted` reset is matched on the precondition **no demon may be alive when a run
+starts** (`demon::on_world_started` says so).
 
 ## Telemetry
 
 `{killed, escaped}`, BRP-readable; `killed` is what the **Souls reaped** HUD counter shows
 (`ui/stats.rs`, first in the left column, outside the settings tabs — panel internals live
 in the **ui-panels skill**). The Sim tab's **World** section is a different thing: seed and
-determinism row, no telemetry.
-
-**Invariant (check paused): `killed + escaped + alive == PopulationSize`** — the number the
-spawn read, not the constant. In the game it is the default `HUMAN_COUNT`; in a replay run
-it is whatever `replay_app` was given (`tests/determinism.rs` uses 64). At high sim speed
-BRP reads are skewed — pause before asserting.
+determinism row, no telemetry. The invariant and the check-paused rule are `CONTEXT.md`'s.
