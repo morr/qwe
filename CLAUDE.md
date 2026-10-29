@@ -260,8 +260,9 @@ one measured session grew its context to 570K over 409 turns and burned 114.6M t
 99.6% of them cache re-reads. Three rules keep a session cheap:
 
 - **A file over ~30K characters is read in full once.** The repeat offenders here are
-  `src/map/roads/node_paint.rs` (125K), `src/map/roads/paint.rs` (115K) and
-  `src/map/roads/network/pairs.rs` (90K) — in the session that sized this list the
+  `src/map/meshing.rs` (137K), `src/map/roads/node_paint.rs` (125K),
+  `src/map/roads/paint.rs` (115K) and `src/map/roads/network/pairs.rs` (90K) — in the
+  session that sized this list the
   predecessors (`corners.rs`, `roads/tests.rs`, `references/roads.md`, since split)
   were each read 11–13 times. After the first full
   read, return to them with `Read offset`/`limit` or `Grep` with an anchor; a second
