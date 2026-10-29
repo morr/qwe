@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use rand::Rng;
+use rand::RngExt;
 
 use crate::grid::tile_center;
 use crate::human::components::{
@@ -247,7 +247,7 @@ pub fn sync_human_pace(
 /// списка входов, именно поэтому: размеченных в OSM входов на город сотни
 /// (Тула — 491 на 7723 дома), и адресуйся пешки прямо к ним, двадцать тысяч
 /// человек ходили бы по одним и тем же дверям.
-fn building_target(building: &PolyArea, rng: &mut impl Rng) -> Vec2 {
+fn building_target(building: &PolyArea, rng: &mut impl RngExt) -> Vec2 {
     let points = if building.entrances.is_empty() {
         &building.outer
     } else {
@@ -268,7 +268,7 @@ fn building_target(building: &PolyArea, rng: &mut impl Rng) -> Vec2 {
 /// отсеялась — `None`, вызывающий перебросит на следующем кадре.
 fn pick_building_ahead(
     map: &MapData,
-    rng: &mut impl Rng,
+    rng: &mut impl RngExt,
     position: Vec2,
     heading: Vec2,
     ban: Option<Vec2>,
@@ -369,7 +369,7 @@ fn choose_target(
 ///
 /// Нулевая пауза срабатывает сразу: `Timer` в `Once` считает себя истёкшим при
 /// первом же `tick`, если `elapsed >= duration`.
-fn roll_wander_pause(rng: &mut impl Rng) -> std::time::Duration {
+fn roll_wander_pause(rng: &mut impl RngExt) -> std::time::Duration {
     if rng.random_range(0.0..1.0) >= HUMAN_WANDER_PAUSE_SHARE {
         return std::time::Duration::ZERO;
     }

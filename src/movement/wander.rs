@@ -54,7 +54,7 @@ pub fn point_in_cone(
     half_angle: f32,
     range: (f32, f32),
 ) -> Vec2 {
-    use rand::Rng;
+    use rand::RngExt;
 
     let turn = rng.random_range(-half_angle..half_angle);
     let direction = Vec2::from_angle(turn).rotate(heading);

@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 use bevy::math::{IVec2, Vec2};
 use bevy_northstar::prelude::OrdinalGrid;
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 
 use qwe::city::City;
 use qwe::grid::{tile_center, world_to_tile};

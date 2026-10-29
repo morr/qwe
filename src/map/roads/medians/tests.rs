@@ -835,10 +835,10 @@ fn median_loop_counts(map: &MapData) -> (Vec<usize>, usize) {
 #[test]
 fn the_median_loop_lays_the_same_vertices() {
     let (map, _) = tram_bed_then_lawn();
-    assert_eq!(median_loop_counts(&map), (vec![207, 172, 24, 6], 9));
+    assert_eq!(median_loop_counts(&map), (vec![217, 176, 28, 6], 9));
     // газон, прорезанный проходами по двум зебрам
     let map = island_zebra_avenue().0;
-    assert_eq!(median_loop_counts(&map), (vec![128, 104, 32, 0], 16));
+    assert_eq!(median_loop_counts(&map), (vec![132, 108, 36, 0], 16));
 }
 
 /// Полотно шире [`network::pairs::TRAM_BED_MAX_GAP`] — обособленное, на

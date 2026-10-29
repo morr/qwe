@@ -14,8 +14,8 @@
 //! ссылались друг на друга по кругу — хотя ни одно из имён не про стоянку.
 
 use bevy::prelude::*;
-use i_overlay::mesh::stroke::offset::StrokeOffset;
-use i_overlay::mesh::style::{LineCap, LineJoin, StrokeStyle};
+use i_overlay::mesh::float::stroke::offset::StrokeOffset;
+use i_overlay::mesh::float::style::{LineCap, LineJoin, StrokeStyle};
 
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::model::{PolyArea, point_in_polygon, ring_area, signed_ring_area};
