@@ -2,7 +2,7 @@
 //! длина клина между сечениями, допуск оси, зазор разделительной и радиус
 //! скругления бордюра.
 //!
-//! Свой ресурс, а не поля [`RoadStyle`](super::RoadStyle): три цены
+//! Свой ресурс, а не поля [`RoadStyle`]: три цены
 //! пересборки — три ресурса. `RoadPaintStyle` — юниформы, протяжка не стоит
 //! ничего; `RoadStyle` — тумблеры слоёв, одна пересборка на клик; здесь —
 //! ползунки, у которых каждое деление пересобирало бы оси, пары, узлы и ряд
@@ -26,6 +26,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
+use super::node_paint::CrossingMode;
+use crate::map::meshing::{RibbonCap, RibbonJoin};
 use crate::map::osm::MapData;
 
 /// Ширина полосы улицы, м. Проезд уже на столько же, на сколько дефолтная
@@ -161,6 +163,97 @@ pub fn set_lane_width(width: f32) {
 /// разбор вывел ширину дорог, даже если ручку тронули, пока мир грузился.
 pub fn adopt_lane_width(map: Res<MapData>) {
     set_lane_width(map.knobs.lane_width);
+}
+
+/// Чем закрыт излом ленты дороги.
+#[derive(Reflect, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum RoadJoin {
+    /// Статус-кво до сглаживания: свой квад на сегмент, оба конца продлены на
+    /// полуширины. Оставлен, чтобы можно было сравнить с прежней картинкой.
+    Square,
+    /// Сведение по биссектрисе с ограничением длины стыка.
+    Miter,
+    /// Дуга на внешней стороне излома + полудиск на торце — вид osm-carto.
+    #[default]
+    Round,
+}
+
+impl RoadJoin {
+    pub const ALL: [Self; 3] = [Self::Square, Self::Miter, Self::Round];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Square => "Square",
+            Self::Miter => "Miter",
+            Self::Round => "Round",
+        }
+    }
+
+    /// Излом и торец ленты `MeshBuilder`. `None` — `Square`: ленты у него нет
+    /// вовсе, это `push_polyline` с продлёнными торцами. Одна таблица на всех,
+    /// кто кладёт ленту дороги ([`super::push_ribbon`], [`ROAD_RIBBON`]) —
+    /// разойдясь, они дали бы двум слоям одной улицы разные торцы.
+    pub(super) const fn ribbon_shape(self) -> Option<(RibbonJoin, RibbonCap)> {
+        match self {
+            Self::Square => None,
+            Self::Miter => Some((RibbonJoin::Miter, RibbonCap::Butt)),
+            Self::Round => Some((RibbonJoin::Round, RibbonCap::Round)),
+        }
+    }
+}
+
+/// Стык и торец дорожной ленты. Выбора больше нет: углы и стыки узлов строит
+/// полигон узла (`roads/corners.rs`), и `Square` держали только для сравнения
+/// со старой картинкой. Сам [`RoadJoin`] остаётся ручкой полосы посадки
+/// аллей (`TreeRowStyle`).
+pub const ROAD_JOIN: RoadJoin = RoadJoin::Round;
+
+/// [`ROAD_JOIN`] как излом и торец ленты `MeshBuilder`, развёрнутый на
+/// компиляции: у дорожной ленты стык всегда лента, и ветки «`Square` — это
+/// `push_polyline`» у заливки проезжей части нет.
+pub(super) const ROAD_RIBBON: (RibbonJoin, RibbonCap) = match ROAD_JOIN.ribbon_shape() {
+    Some(shape) => shape,
+    None => panic!("ROAD_JOIN is not a ribbon join"),
+};
+
+/// Тумблеры дорожных слоёв; переключаются панелью (секции Roads и Road paint)
+/// и BRP, сохраняются в настройках между запусками. Правка пересобирает
+/// дорожные слои ([`super::rebuild_roads`]).
+///
+/// Прежние `join`, `smoothing` и `casing` ушли: стык строит полигон узла,
+/// сглаживание стало допуском в метрах ([`RoadShape::curve_tolerance`]), а
+/// тёмный кант — картографический приём, который с бордюром и тротуаром не
+/// нужен. Их ключи в `settings.toml` с другой ветки читаются и молча
+/// пропускаются: `bevy_settings` применяет только поля, которые у типа есть.
+#[derive(Resource, Reflect, SettingsGroup, Clone, Copy, PartialEq, Debug)]
+#[reflect(Resource, SettingsGroup, Default)]
+#[settings_group(group = "roads")]
+pub struct RoadStyle {
+    /// Серая полоса тротуара вдоль улиц (не проездов) отдельным слоем под
+    /// всеми лентами.
+    pub sidewalks: bool,
+    /// Разметка полос на проезжей части улиц — линия на каждой границе полос,
+    /// с разрывами на перекрёстках; слой краски (`roads/paint.rs`). Колея
+    /// асфальта от неё не зависит — у неё своя ручка (`RoadPaintStyle`).
+    pub markings: bool,
+    /// Зебры на плечах узлов и на переходах (`roads/node_paint.rs`).
+    pub crossings: CrossingMode,
+    /// Стоп-линии на плечах, что уступают, и у регулируемых переходов.
+    pub stop_lines: bool,
+    /// Стрелки на полосах подходов к узлу (`roads/turns.rs`).
+    pub arrows: bool,
+}
+
+impl Default for RoadStyle {
+    fn default() -> Self {
+        Self {
+            sidewalks: true,
+            markings: true,
+            crossings: CrossingMode::default(),
+            stop_lines: true,
+            arrows: false,
+        }
+    }
 }
 
 #[cfg(test)]
