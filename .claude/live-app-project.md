@@ -411,8 +411,8 @@ replaces most of it, in this order: `probe x y` (which layers cover the point, t
 the nearest vertices) → `layers` + `hide <name>` + `shot-at` (elimination) →
 `tools/osm_near --verts` (the OSM truth under the metres). Only when the question is
 inside one algorithm — a value mid-computation, a branch that maybe never fires — write a
-temporary probe, and then: gate it on an env var **beside the code it reads**
-(`ROADS_DIAG_PAIR`-style), log one line per run (not a dump), and remove it with its test
+temporary probe, and then: gate it on an env var **beside the code it reads** (named after
+the pass it gates), log one line per run (not a dump), and remove it with its test
 in the same change that closes the defect. A red-green test over the pure build
 (`mesh_roads` and friends) usually pins the mechanism better than the probe that found it
 — the probe answers "what", the test holds "always".

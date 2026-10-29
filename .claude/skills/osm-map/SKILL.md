@@ -129,7 +129,8 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   `out geom` — a country's border geometry is megabytes.
   `is_in` needs areas, which not every mirror builds; an empty answer leaves
   `MapData::traffic_side` at `TrafficSide::Right` and logs it (`parse.rs::driving_side`,
-  the innermost `admin_level` wins).- **Mirrors** — `OVERPASS_URLS` in `download.rs` is tried in order (`maps.mail.ru` →
+  the innermost `admin_level` wins).
+- **Mirrors** — `OVERPASS_URLS` in `download.rs` is tried in order (`maps.mail.ru` →
   `overpass-api.de` → `kumi.systems` → `private.coffee`). The VK/Mail.ru instance leads:
   full planet, current data, and the nearest pipe from here. On dense cities those answer
   504 "server too busy", or worse, a **200 with an HTML error page** — hence the
