@@ -11,21 +11,24 @@
 //! Карман по тегу идёт вдоль всей стороны way между перекрёстками, по правилу
 //! — редкий и короткий ([`sparse_pockets`]).
 
+use std::borrow::Cow;
+
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
-use super::is_carriageway;
+use super::drawn::Drawn;
 use super::junctions::{self, MarkingBreaks, node_key};
 use super::network::RoadNodes;
 use super::node_paint::ZEBRA_LENGTH;
 use super::tapers::{self, Tapers};
+use super::{ROAD_COLOR, SIDEWALK_COLOR, is_carriageway};
 use crate::map::along::{arclengths, nearest_on_path, place_on_path};
 use crate::map::grid::Grid;
-use crate::map::meshing::{Break, miter_offsets};
+use crate::map::meshing::{Break, MeshBuilder, miter_offsets};
 use crate::map::osm::model::{
     Highway, KerbParking, distance_to_area, polyline_length, ring_bounds,
 };
-use crate::map::osm::{PolyArea, RoadLine, RoadNode, RoadNodeKind, TrafficSide};
+use crate::map::osm::{MapData, PolyArea, RoadLine, RoadNode, RoadNodeKind, TrafficSide};
 use crate::map::seed::{Lcg, seed_from_point};
 
 /// Ширина кармана за кромкой проезжей части, м: машина при параллельной
@@ -33,6 +36,9 @@ use crate::map::seed::{Lcg, seed_from_point};
 pub const POCKET_WIDTH: f32 = 2.5;
 /// Длина скоса на торце кармана, м.
 pub const POCKET_TAPER: f32 = 6.0;
+/// На сколько асфальт кармана стоянки заходит под кромку ленты, м: встык
+/// между ними светилась бы щель.
+const POCKET_OVERLAP: f32 = 0.05;
 /// Отступ кармана от перекрёстка сверх его разрыва, м: у перехода и угла
 /// кармана не делают. Шесть — скос начинается за зеброй по правилу, что
 /// стоит от кромки узла на метр и тянется на четыре (`roads::node_paint`).
@@ -640,6 +646,55 @@ pub fn outline(path: &[Vec2], pocket: &Pocket, side: f32, [inner, outer]: [f32; 
     let mut contour = edge(pocket.from, pocket.to, inner);
     contour.extend(edge(full_from, full_to, outer).into_iter().rev());
     contour
+}
+
+/// Карманы у бордюра — по тому же ответу и тем же разрывам, что ряд машин
+/// (`map::cars`): асфальт за кромкой и тротуар, отодвинутый за него
+pub(super) fn lay_kerb_pockets(
+    map: &MapData,
+    nodes: &RoadNodes,
+    nodal: &[Cow<'_, [Vec2]>],
+    breaks: &RowBreaks,
+    prepared: &Drawn,
+    streets: &mut MeshBuilder,
+    sidewalks: &mut MeshBuilder,
+) -> usize {
+    let kerbsides = all_kerbsides(
+        &map.roads,
+        nodes,
+        nodal,
+        breaks,
+        map.traffic_side,
+        prepared.lots(),
+    );
+    let mut kerb_pockets = 0;
+    for (index, road) in map.roads.iter().enumerate() {
+        let half = road.width / 2.0;
+        for kerbside in &kerbsides[index] {
+            let sidewalk = prepared.sidewalk_on(index, usize::from(kerbside.side < 0.0));
+            for pocket in &kerbside.pockets {
+                let outline = |outer: f32| {
+                    self::outline(
+                        &nodal[index],
+                        pocket,
+                        kerbside.side,
+                        [half - POCKET_OVERLAP, outer],
+                    )
+                };
+                let edge = half + POCKET_WIDTH;
+                streets.push_polygon(&outline(edge), &[], ROAD_COLOR.to_linear());
+                if let Some(sidewalk) = sidewalk {
+                    sidewalks.push_polygon(
+                        &outline(edge + sidewalk),
+                        &[],
+                        SIDEWALK_COLOR.to_linear(),
+                    );
+                }
+                kerb_pockets += 1;
+            }
+        }
+    }
+    kerb_pockets
 }
 
 #[cfg(test)]

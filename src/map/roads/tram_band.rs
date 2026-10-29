@@ -22,6 +22,8 @@
 //! разделительной полоса обрывалась у голов косым светлым параллелограммом
 //! (1-я Курская). Линия разреза одна на обе части — ни щели, ни нахлёста.
 
+use std::borrow::Cow;
+
 use bevy::prelude::*;
 use i_overlay::core::fill_rule::FillRule;
 use i_overlay::core::overlay_rule::OverlayRule;
@@ -30,14 +32,24 @@ use i_overlay::float::single::SingleFloatOverlay;
 use i_overlay::mesh::float::outline::offset::OutlineOffset;
 use i_overlay::mesh::float::style::{LineCap, LineJoin, OutlineStyle};
 
+use super::TRAM_BAND_COLOR;
+use super::bridges::Bridges;
+use super::medians::MedianDrawing;
 use super::network::pairs::Median;
+use super::tram_lay::{TramTracks, lay_tracks};
 use crate::map::along::simplify;
 use crate::map::grid::Grid;
+use crate::map::meshing::MeshBuilder;
 use crate::map::osm::model::{
     RailKind, RailLine, distance_to_segment, polyline_length, ring_bounds,
 };
-use crate::map::osm::{RoadClass, RoadLine};
-use crate::map::shapes::{ARC, Contour, Shape, stroke};
+use crate::map::osm::{MapData, RoadClass, RoadLine};
+use crate::map::shapes::{ARC, Contour, Shape, push_shape, stroke};
+
+/// На сколько контур разделительной двух настилов шире её самой, когда он
+/// режет полосу над рельсами ([`deck_cuts`]), м: кромки половин
+/// лежат ровно на её краю, и без запаса вдоль них оставались нитки.
+const DECK_CUT_SLACK: f32 = 0.2;
 
 /// Ширина полосы над одним путём, м: полоса движения. Два пути в 3–4 м друг
 /// от друга сливаются в одну полосу — нахлёст в одном слое не виден.
@@ -279,6 +291,53 @@ pub fn split_cover(cover: Vec<Shape>, cuts: &[Contour]) -> [Vec<Shape>; 2] {
     let on_decks = cover.overlay(&clip, OverlayRule::Intersect, FillRule::NonZero);
     let on_ground = cover.overlay(&clip, OverlayRule::Difference, FillRule::NonZero);
     [on_ground, on_decks]
+}
+
+/// Светлая полоса над рельсами — поверх всего
+/// асфальта улиц: порядок пуша в слое — порядок отрисовки, а краска лежит
+/// своим слоем выше. По путям, уложенным по нарисованной улице
+/// (`roads/tram_lay.rs`), а не по OSM: полоса обязана лежать под тем же
+/// рельсом, что рисует трамвай. Одним покрытием через шов земля/мост, со
+/// щелями между полосами соседних путей заросшими, — и разрезанным
+/// торцами настилов, что несут полосу: на настиле она лежит в его слое
+/// (S1, S2: два покрытия порознь на шве наезжали друг на друга со
+/// сдвигом, у моста без разделительной полоса обрывалась у голов косым
+/// параллелограммом)
+pub(super) fn lay_tram_bands(
+    map: &MapData,
+    drawn: &[&RoadLine],
+    nodal: &[Cow<'_, [Vec2]>],
+    ribbon: &[Cow<'_, [Vec2]>],
+    medians: &MedianDrawing,
+    bridges: &mut Bridges,
+    streets: &mut MeshBuilder,
+) -> (TramTracks, usize) {
+    let tram_tracks = lay_tracks(&map.rails, drawn, nodal, &medians.paved);
+    let tram_bands = tram_bands(&tram_tracks.0, drawn, nodal, &medians.paved);
+    let street_decks = drawn
+        .iter()
+        .enumerate()
+        .filter(|(_, road)| road.bridge && road.class == RoadClass::Street && !road.passage)
+        .map(|(index, road)| (ribbon[index].as_ref(), 2.0 * road.curb_reach()));
+    // разделительная двух настилов лежит в слое настилов (R30) — и полоса
+    // над ней; ровно по её ширине: внутренние полосы половин режут их настилы
+    let median_decks = medians
+        .paved
+        .iter()
+        .filter(|median| median.roads().iter().all(|&road| drawn[road].bridge))
+        .map(|median| (median.midline(), median.width() + DECK_CUT_SLACK));
+    let cuts = deck_cuts(&tram_bands, street_decks.chain(median_decks));
+    let [on_ground, on_decks] = split_cover(band_cover(&tram_bands), &cuts);
+    streets.set_lanes(None);
+    for shape in on_ground {
+        push_shape(streets, shape, TRAM_BAND_COLOR.to_linear());
+    }
+    let fills = bridges.fills();
+    fills.set_lanes(None);
+    for shape in on_decks {
+        push_shape(fills, shape, TRAM_BAND_COLOR.to_linear());
+    }
+    (tram_tracks, tram_bands.len())
 }
 
 #[cfg(test)]

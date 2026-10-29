@@ -7,6 +7,7 @@ use bevy::prelude::*;
 
 use super::ROAD_JOIN;
 use super::SIDEWALK_COLOR;
+use super::drawn::Drawn;
 use super::ribbons::push_ribbon_trimmed;
 use super::scraps;
 use super::walls::Meadows;
@@ -213,6 +214,19 @@ fn verge_runs(dense: &[Vec2], along: &[f32], widths: &[f32]) -> (Vec<Vec2>, Vec<
 /// замапленный газон ([`Meadows::beside`]), иначе в `yard_lawns` травой
 /// двора. Слои газона лежат под плиткой, и голой земли между кромкой и
 /// дорожкой не остаётся.
+/// Обочина до отдельного тротуара — с какой стороны и сколько рисуется
+/// (`prepared.verges_drawn`); у дуги кольца — только снаружи: внутри остров
+/// и его газон, а снаружи между тротуаром кольца и дорожкой вдоль него
+/// оставалась голая земля (Калуга, витрина 01, СВ)
+pub(super) fn street_verged(prepared: &Drawn, index: usize, ring_ccw: Option<bool>) -> [f32; 2] {
+    let mut verged = prepared.verges_drawn(index);
+    if let Some(ccw) = ring_ccw {
+        // остров — слева по ходу против часовой стрелки
+        verged[usize::from(!ccw)] = 0.0;
+    }
+    verged
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn push_verges(
     [tiles, meadows, yard_lawns]: [&mut MeshBuilder; 3],

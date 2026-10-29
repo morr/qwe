@@ -4,12 +4,14 @@
 //! `crate::map::osm::fixture`; здесь — то, чем тест разбора собирает сцену
 //! и зовёт один проход, без JSON и без остальных шагов конвейера.
 
+use std::collections::HashMap;
+
 use bevy::math::Vec2;
 
 use super::{Pending, ReadReport, read_elements};
 use crate::city::City;
-use crate::map::osm::fixture::{Overpass, closed, square};
-use crate::map::osm::model::MapData;
+use crate::map::osm::fixture::{Overpass, closed, square, street};
+use crate::map::osm::model::{Highway, MapData, Pavement, RoadLine};
 use crate::map::osm::overpass::{GeoBounds, OverpassResponse};
 use crate::settings::MAP_SIZE;
 
@@ -90,4 +92,29 @@ pub(super) fn read(scene: &Overpass) -> (MapData, Pending, ReadReport) {
     let response: OverpassResponse =
         serde_json::from_str(&scene.json()).expect("фикстура строит валидный JSON");
     read_elements(&response, &GeoBounds::for_city(CITY))
+}
+
+/// Словарь тегов теста — `&[(&str, &str)]` в `HashMap`.
+pub(super) fn tags(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+    pairs
+        .iter()
+        .map(|(key, value)| (key.to_string(), value.to_string()))
+        .collect()
+}
+
+/// Улицы для прямых вызовов [`infer_sidewalks`]: жилая без тега (`Inferred`
+/// у `fixture::street`) и её вариант с другим классом или тегом.
+pub(super) fn inferred_street(highway: Highway) -> RoadLine {
+    RoadLine {
+        highway,
+        ..street(vec![Vec2::ZERO, Vec2::new(200.0, 0.0)], 8.0)
+    }
+}
+
+/// Мощёная дорожка вдоль оси `y`, как `footway=sidewalk` рядом с улицей.
+pub(super) fn paved_footway(y: f32, from: f32, to: f32) -> RoadLine {
+    RoadLine {
+        pavement: Some(Pavement::Paved),
+        ..crate::map::osm::fixture::footway(vec![Vec2::new(from, y), Vec2::new(to, y)])
+    }
 }

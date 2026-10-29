@@ -1,9 +1,21 @@
 use super::*;
+use i_overlay::mesh::outline::offset::OutlineOffset;
+use i_overlay::mesh::style::{LineJoin, OutlineStyle};
+
+use super::frames::{mirrored, narrow_frame, wedge_drift, wedge_frame};
+use super::ground::{FIT_STEP, ZEBRA_BAR};
+use super::painter::{ZEBRA_FIRST_BAR, island_band};
+use super::spans::{approach_spans, near_spans, split_at_spans};
+use crate::map::meshing::{MeshBuilder, PaintStation};
 use crate::map::osm::fixture::street;
+use crate::map::osm::model::LaneTurn;
 use crate::map::osm::{Highway, MapData};
 use crate::map::roads::shape::RoadShape;
+use crate::map::roads::tapers::{self, Taper};
+use crate::map::roads::turns::{JunctionWear, LaneArrow};
 use crate::map::roads::{CrossingMode, RoadStyle, VergeZoomBucket, mesh_roads};
-use crate::map::shapes::oriented;
+use crate::map::shapes::{Shape, oriented, ring_of};
+use crate::map::surface::{LayerMesh, MaterialSpec};
 
 /// Меш слоя краски по имени.
 fn paint_layer<'a>(layers: &'a [LayerMesh], name: &str) -> &'a MeshBuilder {

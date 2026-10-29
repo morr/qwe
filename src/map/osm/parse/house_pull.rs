@@ -494,3 +494,6 @@ pub(super) fn closest_between_segments(a: Vec2, b: Vec2, c: Vec2, d: Vec2) -> Op
             .total_cmp(&y.0.distance_squared(y.1))
     })
 }
+
+#[cfg(test)]
+mod tests;

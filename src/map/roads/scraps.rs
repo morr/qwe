@@ -30,6 +30,8 @@
 //! остаётся газоном, как был. Поэтому полотно берётся по сторонам
 //! (`Drawn::band_half`), а не по большей из них.
 
+use std::borrow::Cow;
+
 use bevy::math::Vec2;
 use bevy::platform::collections::HashMap;
 use i_overlay::core::fill_rule::FillRule;
@@ -38,13 +40,21 @@ use i_overlay::float::single::SingleFloatOverlay;
 use i_overlay::mesh::float::outline::offset::OutlineOffset;
 use i_overlay::mesh::float::style::{LineJoin, OutlineStyle};
 
+use super::SIDEWALK_COLOR;
+use super::corners::KerbReturns;
+use super::drawn::Drawn;
+use super::gores::Gores;
+use super::islands::RoadIslands;
 use super::junctions::node_key;
 use crate::map::grid::Grid;
-use crate::map::meshing::{miter_offsets, ring_perimeter};
+use crate::map::meshing::{MeshBuilder, miter_offsets, ring_perimeter};
 use crate::map::osm::model::{RoadLine, distance_to_segment, ring_bounds};
+use crate::map::osm::{MapData, RoadClass};
 use crate::map::parallel::in_parallel;
 use crate::map::roads::network::RoadNodes;
-use crate::map::shapes::{Contour, Shape, contour_area, contour_bounds, oriented, ring_of};
+use crate::map::shapes::{
+    Contour, Shape, contour_area, contour_bounds, oriented, push_shape, ring_of,
+};
 
 /// Не больше этого, м², замкнутый кусок газона — лоскут: карман у угла
 /// Халтурина и Гоголевской — около девяти.
@@ -507,6 +517,20 @@ impl Bites {
             .get(&node_key(point))
             .is_some_and(|list| list.iter().any(|&continues| continues != Some(road)))
     }
+
+    /// Укусы на внутренних вершинах полосы `points` дороги `index` — но
+    /// только там, где обочина вообще будет (`wanted`): вопрос к общим
+    /// узлам на каждое звено каждой дороги не нужен
+    pub(super) fn on_points(&self, index: usize, points: &[Vec2], wanted: bool) -> Vec<Vec2> {
+        if !wanted {
+            return Vec::new();
+        }
+        points[1..points.len().saturating_sub(1)]
+            .iter()
+            .filter(|&point| self.bite(index, *point))
+            .copied()
+            .collect()
+    }
 }
 
 fn scraps_among(
@@ -579,6 +603,78 @@ fn scraps_among(
             vec![shape].outline(&OutlineStyle::new(SCRAP_OVERLAP).line_join(LineJoin::Bevel))
         })
         .collect()
+}
+
+/// Лоскуты газона обочин, замкнутые мощением, — плиткой поверх газона:
+/// слой обочин лежит над слоями газона. Мощение, которым
+/// они замкнуты, собирается только у газонов, которые спрашиваются: улиц и
+/// углов в городе десятки тысяч, а концов газона у узлов — тысяча.
+/// Мощение узлов — представлением `KerbReturns::paving`: скругления
+/// улиц, тротуары, обочины и мощёные носы с дугами; наезды плитки — нет.
+/// и горки: асфальт или штриховка направляющего островка — не газон,
+/// и кончик островка под горкой оставался клином травы (R37-01, витрина 14)
+pub(super) fn pave_scraps(
+    kerb_returns: &KerbReturns,
+    gores: &Gores,
+    drawn: &[&RoadLine],
+    prepared: &Drawn,
+    ribbon: &[Cow<'_, [Vec2]>],
+    road_islands: &RoadIslands,
+    scraps: &mut Scraps,
+) {
+    let gore_outlines: Vec<Vec<Vec2>> = gores
+        .outlines()
+        .map(|contour| contour.iter().map(|&point| point.into()).collect())
+        .collect();
+    for outline in kerb_returns
+        .paving()
+        .flat()
+        .chain(gore_outlines.iter().map(Vec::as_slice))
+        .chain(kerb_returns.paving().curved())
+    {
+        if scraps.near_lawn(outline, 0.0) {
+            scraps.push_paving(outline);
+        }
+    }
+    for (index, road) in drawn.iter().enumerate() {
+        let paved =
+            !road.is_unpaved_street() && (road.class == RoadClass::Street || road.is_paved_path());
+        if !paved || road.bridge || road_islands.outlines[index] {
+            continue;
+        }
+        let halves = [0, 1].map(|side| prepared.band_half(index, side));
+        if scraps.near_lawn(&ribbon[index], halves[0].max(halves[1])) {
+            scraps.push_band(&ribbon[index], halves);
+        }
+    }
+}
+
+/// Зелень земли — карманы разбора и замапленный газон: у клиньев два
+/// владельца. Спрашивается после мощения — врезание в
+/// неё видно по нарисованному; кладётся в слой тротуаров: слой обочин
+/// лежит ПОД зеленью (Z_ROAD_VERGE < Z_GRASS), и плитка клина осталась бы
+/// под травой, а тротуары — над (Z_SIDEWALK), и перекрытие с соседней
+/// плиткой того же материала не видно
+pub(super) fn lay_green_scraps(
+    map: &MapData,
+    scraps: &mut Scraps,
+    verges: &mut MeshBuilder,
+    sidewalks: &mut MeshBuilder,
+) -> usize {
+    for area in map.pockets.iter().chain(&map.grass) {
+        scraps.push_green(area.outer.clone());
+    }
+    let green_scraps = scraps.find_green();
+    let lawn_scraps = scraps.find();
+    verges.set_lanes(None);
+    for shape in &lawn_scraps {
+        push_shape(verges, shape.clone(), SIDEWALK_COLOR.to_linear());
+    }
+    sidewalks.set_lanes(None);
+    for shape in &green_scraps {
+        push_shape(sidewalks, shape.clone(), SIDEWALK_COLOR.to_linear());
+    }
+    lawn_scraps.len() + green_scraps.len()
 }
 
 #[cfg(test)]

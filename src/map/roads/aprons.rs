@@ -24,9 +24,12 @@ use std::borrow::Cow;
 
 use bevy::prelude::*;
 
+use super::bridges::Bridges;
 use super::drawn::Drawn;
 use super::footbridge::{is_footbridge, is_street_deck, runs_along};
+use super::{ALLEY_COLOR, SIDEWALK_COLOR};
 use crate::map::along::densify;
+use crate::map::meshing::MeshBuilder;
 use crate::map::osm::model::{polyline_length, ring_bounds};
 use crate::map::osm::{RoadClass, RoadLine};
 
@@ -299,4 +302,38 @@ fn foot_on(path: &[Vec2], point: Vec2, heading: Vec2) -> Option<(Vec2, Vec2, usi
 fn bounds(path: &[Vec2], pad: f32) -> (Vec2, Vec2) {
     let (low, high) = ring_bounds(path);
     (low - pad, high + pad)
+}
+
+/// Фартуки мостиков, замапленных рядом с настилом (S2):
+/// щель между бортиками — плиткой мостика в слое настилов, её
+/// продолжение на земле до головы — в слое дорожки
+pub(super) fn lay_slit_aprons(
+    drawn: &[&RoadLine],
+    ribbon: &[Cow<'_, [Vec2]>],
+    prepared: &Drawn,
+    bridges: &mut Bridges,
+    sidewalks: &mut MeshBuilder,
+    alleys: &mut MeshBuilder,
+) {
+    let path_color = |road: &RoadLine| {
+        if road.is_paved_path() {
+            SIDEWALK_COLOR
+        } else {
+            ALLEY_COLOR
+        }
+    };
+    let slit = slit_aprons(drawn, ribbon, prepared);
+    let fills = bridges.fills();
+    fills.set_lanes(None);
+    for (foot, ring) in &slit.decks {
+        fills.push_polygon(ring, &[], path_color(drawn[*foot]).to_linear());
+    }
+    for (path, ring) in &slit.ground {
+        let layer = if drawn[*path].is_paved_path() {
+            &mut *sidewalks
+        } else {
+            &mut *alleys
+        };
+        layer.push_polygon(ring, &[], path_color(drawn[*path]).to_linear());
+    }
 }

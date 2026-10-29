@@ -86,10 +86,10 @@ in `main.rs`.
   casings → bridges → bridge paint (2.25) → track-bridge ballast, ties, steel (2.3) →
   tram (2.6) → cars → fences (2.75) → pipe shadows (2.76) →
   pipes (2.77) → portal stain → corpses → portal → industry shadows (4.55) → buildings (5) →
-  roof shadows (5.05) → industry walls (5.06) → industry tops (5.07) → walls (5.1) → units →
-  souls (18) → tree shadows → trees (20). Three live in their
+  roof shadows (5.05) → industry walls (5.06) → industry tops (5.07) → units → souls (18)
+  → tree shadows → trees (20). Four live in their
   own modules: `Z_BUILDING_SHADOW` 4.5, `Z_FACADE` 4.9, `Z_ROOF_SHADOW` 5.05
-  (`map/buildings/mod.rs`). Units are y-sorted:
+  (`map/buildings/mod.rs`), `Z_WALL` 5.1 (`map/roads.rs`). Units are y-sorted:
   `unit_z(y) = Z_UNIT_BASE − y · Y_SORT_FACTOR` (10 − y·0.002). **Invariant: the unit z
   range must stay above buildings (5) for any y ≤ MAP_SIZE.y** — a bigger map once sank
   northern units under roads. **Invariant: a road lies over water only as a bridge** —
@@ -157,1880 +157,613 @@ Summary; the mechanism — **osm-map skill** (entrance statistics in
 audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-algo.md`).
 
 - **Overpass** — the Overpass API, queried once per city with `[out:json]` + `out geom`;
-  bbox is `MAP_SIZE` around the `City` geo center. Mirrors in `OVERPASS_URLS` are tried in
+  bbox is `MAP_SIZE` around the `City` geo center; mirrors in `OVERPASS_URLS` tried in
   order. **Bump `QUERY_VERSION` in `overpass.rs` whenever the query gains tags**
   (currently 15), or existing caches keep serving extracts that lack them.
 - **Driving side** (`TrafficSide: Right | Left`, `MapData::traffic_side`) — the
-  `driving_side` tag of the country boundary the map's centre lies in, asked by `is_in` as a
-  second `out tags` output (the tag is not on roads). No answer means `Right`. Read only by
-  the parked cars.
+  `driving_side` tag of the country boundary the map's centre lies in (`is_in`, a second
+  `out tags` output). No answer means `Right`.
 - **Cache** — `assets/osm/{slug}_{lat}_{lon}_{w}x{h}_v{QUERY_VERSION}.json` (gitignored);
-  the parameters live in the file name, so changing them invalidates it. Written only after
-  a successful parse; the second launch never touches the network. `prune_stale_caches()`
-  keeps exactly one current file per city. The junction gallery reads the same file
-  (`download::city_extract`) and cuts its samples out of it (**crop**, `map/osm/crop.rs`),
-  so a query bump reaches the gallery by itself.
-- **Overpass fixture** (`map/osm/fixture.rs::Overpass`) — a scene given in **map metres**,
-  turned into an Overpass response and fed through the real `parse`, so a test states its
-  scene in the same numbers it later asserts on. **Add a tag case here, not another
-  literal.**
-- **MapData** (`map/osm/model.rs`) — the parsed map resource, resident after spawn:
+  written only after a successful parse, and **exactly one current file per city**
+  (`prune_stale_caches()`). The junction gallery reads the same file, so a query bump
+  reaches it by itself.
+- **Overpass fixture** (`map/osm/fixture.rs::Overpass`) — a test scene stated in **map
+  metres** and fed through the real `parse`. **Add a tag case here, not another literal.**
+- **MapData** (`map/osm/model.rs`) — the parsed map resource, resident after spawn. The
+  per-field catalog — provenance, consumers, invariants — is the **osm-map skill**,
+  `references/model.md`.
   - **The nine `Vec<PolyArea>` and `AreaKind` are not the same fact twice** — the vector
     says which *layer* an area is drawn in, the kind says which *member of that layer* it
-    is, and three vectors hold more than one member. Reviewed as an architecture candidate
-    and closed as a non-finding; the argument and its numbers are in the **osm-map skill**.
+    is, and three vectors hold more than one member.
   - **PolyArea** — polygon with holes, rings open. `AreaKind: Building | Kremlin | Water |
     Park | Wood | Grass | Sand | Residential | Industrial | Parking | Pitch(PitchKind)`;
-    **only Wood carries trees**; `colours: Colours` are the **tagged colours** —
-    `building:colour` / `roof:colour` as sRGB bytes (`tags::colour`: hex as is, a CSS name
-    as the map's own paint), read so far only by churches (**Crown** below);
-    Residential/Industrial are the `landuse` **blocks** — the fill under everything else,
-    no effect on navigation or planting. **A residential block is drawn as a yard**: a
-    muted green, its own layer with its own `SurfaceKind::Yard` texture (patchier than
-    grass: bare ground by the doors), because between the houses there is grass, and the
-    older half-tone-off-the-ground fill was what made the whole city read as one beige
-    sheet with buildings placed on it. Industrial keeps the cold grey.
-    **Parking** (`amenity=parking`,
-    `MapData::parking`) is asphalt with marked stalls — see **Parking lots** below; its
-    **lot kind** (`AreaKind::Parking(LotKind)`) is the parse's answer, read and never
-    re-derived downstream: `Kerbside` (`parking=street_side`), `Ground` (a big lot), `Yard`;
-    `area_kind` tries it after the greens and **before** `landuse`, so a multi-storey car
-    park (`building` + `amenity=parking`) stays a building — and a lot whose asphalt is
-    not on the ground (`parking=underground|multi-storey|rooftop`) is no area at all.
-    **Pitch** (`leisure=*`, `MapData::pitches`) is a sports or children's ground — see
-    **Pitches** below; the `PitchKind` rides inside the `AreaKind` value, since nothing
-    but a pitch has one. Buildings carry
-    `height: Option<f32>`, `storeys: Option<f32>` (`building:levels` as the tag says —
-    what tells a four-storey mall from a two-level retail box of the same height),
-    `entrances: Vec<Vec2>` and `building_use: BuildingUse`.
-  - **RoadNode** / **RoadArea** — what OSM says about a junction beyond its lines:
-    `MapData::road_nodes` (crossings with `signals` / `island` / `marked`, traffic
-    signals, stop, give-way, mini-roundabouts, turning circles, island points) and
-    `MapData::road_areas` (closed carriageway / walkway / island outlines from
-    `area:highway`, `highway` + `area=yes`, `traffic_calming=island`). The junction
-    paint reads the crossings, signals and stop / give-way signs, the kerb pockets and
-    the parked cars break at the marked crossings, a turning circle on a dead end is a
-    disc of asphalt; an island point or a crossing with an island on a two-way street is
-    a **safety island** — a kerbed lens over the asphalt and its paint — and so is an
-    `Island` outline, a `Carriageway` outline is asphalt under the ribbons, a `Walkway`
-    outline is paving in the sidewalks layer, and the closed line an area also arrives as
-    (`highway=*` + `area=yes`) is not laid as a ribbon (`roads/islands.rs`);
-    mini-roundabouts are parsed and kept for later stages.
-  - **RoadLine** — centerline + width **from its section** (a path's width is its
-    `width` tag, clamped 1–8 m, or its kind and surface — `tags.rs::path_width`, 1.5 m
-    trail to 5 m pedestrian street; footbridges and arches keep the class 3.5, their band
-    is a navmesh corridor);
-    `RoadClass: Street | Alley`; `highway: Highway` (the `highway` value; `*_link` is a
-    class of its own; `Highway::is_street` — not a service drive, not a path — is what
-    makes a **carriageway**, not the width); `bridge` / `passage` flags (the navmesh carves by them —
-    `RoadLine::carves_navmesh` is the one predicate the drawers ask: an arch keeps its OSM
-    centerline, so it is neither smoothed, paired, ringed, tapered nor stitched; a bridge
-    is smoothed and paired with its street and takes a **taper** at a ground/bridge seam
-    like any seam, but is neither ringed nor stitched. At that seam every ribbon ends
-    **square** — the deck, and the approach's sidewalk band and verge (`bridges::seam_ends`),
-    the band running into the deck curb over its last 4 m (`bridges::seam_curb_reach`) and
-    0.5 m under the deck, a street deck laying an asphalt apron 0.5 m back onto the
-    approach, and the tram band is one cover across it, cut by the deck head
-    (`tram_band::split_cover`); a merge axis leaves its continuation along the
-    continuation's painted tangent (`merges::LeadIn`);
-    a **footbridge** mapped inside a street deck is moved out past its edge, the ground path
-    following (`axis.rs::place_bridge_sidewalks`), and one mapped beside it within 3 m gets
-    a **slit apron** — the gap paved in the footbridge's colour on the deck and, back from
-    the head, between the paths on the ground (`roads/aprons.rs`; render only, the curb
-    stays the navmesh's edge) — the ground part for a moved-out footbridge too; a path
-    onto a footbridge widens into its curbs over its last 3 m; a paired deck's median
-    lies on the deck);
-    `oneway`, `roundabout` (the `junction=roundabout|circular` tag — but the notion is
-    `RoadLine::is_roundabout`, **tag or shape**: a closed one-way way is a ring too, and
-    the mall's big ring carries no tag; a **Ring** (`roads/rings.rs`) is such ways chained
-    into a loop and drawn as one smooth ellipse through its nodes, one section for all
-    arcs, its asphalt **one closed fill** along the whole loop (no arc ends, so no slits
-    where arcs meet at approach nodes), a kerb round its island — a thin line when no path
-    ends on the island, a kerb band when one does — and a lawn over it (`ring_islands`, right over the
-    ground, under whatever is mapped on the island; the island's mapped grass laid once
-    more over the grass, `ring_island_grass`, so its rim does not show in the lawn),
-    approaches entering by a tangent arc (a two-way one,
-    mapped into its node along the ring, by an arc along the ray; the two **legs** of a
-    **Y-approach** — two short two-way ways from one node into two nodes of one ring,
-    or one such way whose fork reaches another node of the ring along a **tail** of
-    other streets, `Rings::leg_flow` — as a one-lane entry and exit; a tail Y is
-    **straightened** by the parse before the sections, `rings::straighten_tails`: fork
-    and tail joint merge into one node off the ring and the tail's end becomes a leg of
-    its own, so what reaches the drawing is an ordinary Y), and a **web**
-    (`Rings::webs`) — asphalt filling the slit between the ring and a street running
-    along it outside, where their kerbs have only just parted) and
-    `lanes: Option<u8>` (the section's lane count, below); `parking_aisle`
-    (`service=parking_aisle`) — read by the stall layout only, see **Parking lots** below;
-    `pavement: Option<Pavement>` (`Paved | Unpaved`) — a **paved path**
-    (`RoadLine::is_paved_path`) is drawn in the sidewalk layer in its colour, an unpaved
-    one is the sand trail of the alley layer; `surface` or the path's kind decides, and
-    a bare `footway` takes the greenery around it (`parse::pavements::infer_pavements`)
-    — unless both
-    its ends stand on paved paths, which keeps it a paved link of that network. On a street
-    only the `surface` tag sets it: an **unpaved street** (`RoadLine::is_unpaved_street`,
-    `surface=unpaved|gravel|ground|dirt|compacted|…`) is drawn in its own layer
-    `unpaved_roads` (`Z_UNPAVED_ROAD` 1.8, under the asphalt, `SurfaceKind::Unpaved`) with
-    no paint at all — no lane lines, zebras or stop lines — and two dirt roads meet with a
-    small corner (`DIRT_RADIUS` 3 m, not a street's 6 m kerb arc); an asphalt street ending at a
-    dirt road stops at its kerb (`KerbReturns::setback`); a dirt road meets asphalt with
-    no kerb return between them — the asphalt runs straight past its mouth (split into two
-    ways there, its seam's kink is closed by an outer corner in asphalt), and a street
-    turning from one surface to the other ends square; an untagged street is asphalt. A
-surface change along a way (asphalt ↔ dirt) **pins** the seam (`axis.rs::Run::stitch`,
-`resurfaced`) — it holds like a seam another street joins.
-  - **Street** (**RoadNetwork**, `MapData::network`, `map/roads/network/streets.rs`) — ways
-    glued end to end through their seams: at a node the **most collinear pair of ends of
-    one `Highway` class** (bend under 50°, one-way flow running through) continues one
+    **only Wood carries trees**; `colours` are the **tagged colours** (`building:colour` /
+    `roof:colour`), read so far only by churches (**Crown** below). Residential/Industrial
+    are the `landuse` **blocks** — the fill under everything else, no effect on navigation
+    or planting; **a residential block is drawn as a yard**, industrial keeps the cold
+    grey. **Parking** is asphalt with marked stalls (**Parking lots** below); its **lot
+    kind** is the parse's answer, read and never re-derived (`Kerbside` | `Ground` |
+    `Yard`; a lot whose asphalt is not on the ground is no area at all). **Pitch** — a
+    sports or children's ground (**Pitches** below). Buildings carry `height`, `storeys`,
+    `entrances: Vec<Vec2>` and `building_use`.
+  - **RoadNode** / **RoadArea** — the v15 junction vocabulary (`MapData::road_nodes`,
+    `road_areas`): crossings, signals, stop / give-way, mini-roundabouts, turning
+    circles, island points; closed carriageway / walkway / island outlines from
+    `area:highway`, `highway` + `area=yes`, `traffic_calming=island`. A crossing or an
+    island point on a two-way street is a **safety island** — a kerbed lens over the
+    asphalt and its paint — and the closed line an area also arrives as is **not laid as
+    a ribbon** (`roads/islands.rs`).
+  - **RoadLine** — centerline + width **from its section** (`tags.rs::path_width` for a
+    path; footbridges and arches keep the class 3.5, their band is a navmesh corridor);
+    `RoadClass: Street | Alley`; `highway: Highway` — **`Highway::is_street` is what makes
+    a carriageway, not the width**; `bridge` / `passage` flags. **`carves_navmesh` is the
+    one predicate the drawers ask**: an arch keeps its OSM centerline (neither smoothed,
+    paired, ringed, tapered nor stitched); a bridge is smoothed and paired and takes a
+    **taper** at a ground/bridge seam like any seam — **and at that seam every ribbon ends
+    square** (deck, approach sidewalk band and verge, apron; `bridges::seam_ends`); a
+    **footbridge** mapped inside a street deck is moved out past its edge, one mapped
+    beside it within 3 m gets a **slit apron** (`roads/aprons.rs`, render only — the curb
+    stays the navmesh's edge); a path onto a footbridge widens into its curbs; a paired
+    deck's median lies on the deck.
+    `oneway`, `roundabout` — the notion is **`RoadLine::is_roundabout`, tag or shape**: a
+    closed one-way way is a ring too. A **Ring** (`roads/rings.rs`) is such ways chained
+    into a loop and drawn as one smooth ellipse through its nodes, **one section for all
+    arcs, its asphalt one closed fill** along the whole loop, a kerb round its island and
+    a lawn over it; approaches enter by a tangent arc; a **Y-tail is straightened by the
+    parse** (`rings::straighten_tails`, before the sections); a **web** (`Rings::webs`) is
+    asphalt filling the slit between the ring and a street running along it outside.
+    `lanes: Option<u8>` — the section's count, below; `parking_aisle` is read by the stall
+    layout only (see **Parking lots** below); `pavement: Option<Pavement>` — a **paved
+    path** is drawn in the sidewalk layer, an unpaved one the sand trail of the alley
+    layer. On a street only the `surface` tag sets it: an **unpaved street** has its own
+    layer `unpaved_roads` under the asphalt, **no paint at all**, and two dirt roads meet
+    with a small corner; a street ending at a dirt road stops at its kerb
+    (`KerbReturns::setback`). A surface change along a way **pins the seam**
+    (`axis.rs::Run::stitch`, `resurfaced`) — it holds like a seam another street joins.
+  - **Street** (**RoadNetwork**, `MapData::network`) — ways glued end to end through their
+    seams: the **most collinear pair of ends of one `Highway` class** continues one
     street. Rings and closed ways are streets of one way; paths are in none.
-  - **Section** (`map/roads/network/sections.rs`, first pass of `finish_parse`) — how many
-    lanes a way has: `lanes` (or `lanes:forward` + `lanes:backward`, plus
-    `lanes:both_ways` when tagged), else the nearest
-    tagged way of its street, else a default by class (a one-way `tertiary` as many as a
-    two-way one, a ring of radius ≥ 30 m at least two); a lone jump shorter than 60 m
-    (2→4→2) is cut to its neighbours. The width follows: lanes × the **lane width** (a
-    `RoadShape` knob, 3.3 m by default; 0.3 m less on a service drive) + a 0.5 m edge each
-    side. A two-way way also carries its **split** between the flows
-    (`RoadLine::lanes_backward`, from `lanes:backward` or `lanes − lanes:forward`,
-    settled against the final count and handed on along the street). **The only roads stage that moves the model** — the
-    parse passes after it read the width.
-  - **Taper** (`map/roads/tapers.rs`) — where a way ends and another goes on from the node
-    collinearly (a seam of one street, or a **continuation** across streets —
-    `RoadNetwork::continuations`, the same pairing without the class and one-way tests;
-    per way end the two are one answer, `RoadNodes::next_way` — the way that goes on
-    past that end, never the side way of a tee)
-    with a different width, the wider one starts at the narrower's width and widens over
-    `RoadShape::taper` (10 by default) metres per metre of difference. Per side: at a
-    junction only the kerb with no other carriageway arm on it narrows — an arm counts
-    only if the step is no higher than its kerb radius (a 5 m drive does not hide a
-    lane's step); the kerb returns
-    read that end at the seam way's width (`Taper::seam` — the road whose section stands
-    at the seam: the narrow way for a narrowing taper, the wide one for a
-    **counter-taper**), and **any node under the wedge** (a side street
-    joining the wider way inside its taper) at the wedge's own width there, on the slanted
-    kerb. A bent joint whose wide way is carried on at an obtuse angle by another road of
-    the node **grows the mouth** instead of narrowing it (`tapers::widen_mouth`): the
-    seam's narrow way and the obtuse continuer each take a counter-taper, starting at the
-    seam with the wide way's section and shedding to their own over the taper length.
-    Drawing only.
+  - **Section** (`map/roads/network/sections.rs`, first pass of `finish_parse`) — the lane
+    count (from `lanes`, else the nearest tagged way of its street, else a default by
+    class) and the width that follows: lanes × the **lane width** (a `RoadShape` knob,
+    3.3 m) + a 0.5 m edge each side; a lone short jump is cut to its neighbours; a
+    two-way way carries its **split** between the flows. **The only roads stage that
+    moves the model** — the parse passes after it read the width.
+  - **Taper** (`map/roads/tapers.rs`) — where the way goes on with a different width, the
+    wider one starts at the narrower's width and widens over `RoadShape::taper` metres
+    per metre of difference; per side only the kerb with no other carriageway arm
+    narrows; **any node under the wedge reads the wedge's width there**; an obtuse
+    continuer **grows the mouth** instead (`tapers::widen_mouth`). Drawing only.
   - **Street axis** (`map/roads/axis.rs`) — the drawn centerline of a whole street, not of
-    a way: within the **curve tolerance** (`RoadShape::curve_tolerance`) the street is
-    simplified and each bend becomes an arc (`Curve::of` — the three numbers off the one
-    knob; the radius at least half the width); at 0 the axis stays on the OSM points.
-    The curve is cut
-    back into its ways at the seams. A node shared with a third road stays exactly in
-    place, and the street passes it along a straight stretch on the bisector. Bridges,
-    arches and paths keep the per-way Chaikin `centerline`. The ribbon, the sidewalk band
-    and the parked cars all stand on it. Drawing only.
-  - **Lane frame** (`meshing::LaneFrame`, `roads/paint.rs::lane_frame`) — where a
-    carriageway's lanes lie across its axis: a grid node `origin` (on the axis for an even
-    lane count, half a lane off it for an odd one) and the carriageway bounds `low..high`;
-    lane boundaries sit at `origin + k · lane width` (the one lane width of the city,
-    `shape::lane_width()`). **One frame for the ruts and
-    the lines** — the asphalt shader reads it from `ATTRIBUTE_RIBBON`, the paint layer
-    builds its lines on it. On a taper it drifts from the narrow section's to the wide
-    one's: the outer lane is born from the wedge — its line is not painted until the lane
-    has 0.8 of its width and then starts at full strength, and the axis over a widening
-    wedge stays the narrow section's (a double solid begins where the wedge ends) — and
-    when the parity changes the grid
-    slides by half a lane over the taper, the new lane on the right of the taper's run. A
-    **one-way** wedge adds its lanes at one kerb (`paint::wedge_drift`): the kerb of the
-    traffic side, or the far one for a left-turn pocket by `turn:lanes`.
-  - **Paint layer** (`map/roads/paint.rs`, shader `paint.wesl`) — the lane lines as
-    **geometry** off the street axis, not a pattern of the asphalt shader: one strip wider
-    than the line per line, the shader draws the line (1.3 px floor), its dashes **by the
-    street's arclength** (2 m dash, 6 m gap; the phase does not restart at a seam), a lane
-    line solid for the last 25 m of its **approach** to a junction break (dashed at once on
-    the exit; an axis is solid both ways, and also 25 m either side of a node its street
-    passes through — **main through** below), and the axis of a two-way street of 4+ lanes
-    as a double solid — the axis being the **border between the flows**
-    (`paint::axis_offset`: an odd count gives its extra lane to the flow along the points
-unless the split says otherwise), so a five-lane street has one too, and across a
-taper between two two-way sections the axis starts on the seam way's — the road whose
-section the wedge begins from: the narrow neighbour on a narrowing wedge, the wide one
-on a counter-taper (`Taper::seam`) — and drifts to its own over the wedge
-(`paint::seam_origin`) instead of jumping half a lane; a street tagged `lane_markings=no` gets neither axis nor lane
-    lines. A line never ends in a **hook**: a path turning over 10° in the last 3 m
-    before a gap edge ends the line where it began to turn. Two meshes per level (lane lines, axes) plus the zebras, streets at
-    `Z_ROAD_PAINT` and bridges at `Z_BRIDGE_PAINT`; `PaintLods` hides the lane lines and
-    stop lines past 0.4 m/px, the zebras past 0.6 and the axes past 0.9 without a rebuild.
-    `RoadPaintStyle` (panel knobs Paint, Wear and Turn wear) is uniforms only.
+    a way: within the **curve tolerance** the street is simplified and each bend becomes
+    an arc; a node shared with a third road stays exactly in place. Bridges, arches and
+    paths keep the per-way Chaikin `centerline`. **The ribbon, the sidewalk band and the
+    parked cars all stand on it.** Drawing only.
+  - **Lane frame** (`meshing::LaneFrame`) — where a carriageway's lanes lie across its
+    axis: a grid node `origin` and the bounds `low..high`, boundaries at
+    `origin + k · lane width` (the one lane width of the city). **One frame for the ruts
+    and the lines.** On a taper it drifts from the narrow section's to the wide one's,
+    and when the parity changes the grid slides by half a lane over the taper; a
+    **one-way** wedge adds its lanes at one kerb (`paint::wedge_drift`).
+  - **Paint layer** (`map/roads/paint.rs`, shader `paint.wgsl`) — the lane lines as
+    **geometry** off the street axis, not a pattern of the asphalt shader: dashes **by
+    the street's arclength** (the phase does not restart at a seam), a lane line solid
+    for the last 25 m of its **approach** to a junction break, the axis of a two-way
+    street of 4+ lanes as a double solid — **the axis is the border between the flows**;
+    across a taper it starts on the seam way's frame and drifts over the wedge. **A line
+    never ends in a hook.** `PaintLods` hides the paint past its zoom maxima without a
+    rebuild; `RoadPaintStyle` is uniforms only. Detail — `roads-markings.md`.
   - **Junction paint** (`map/roads/node_paint.rs`) — where the paint layer breaks at a
-    junction and what it draws there, on its own breaks rather than the asphalt ones
-    (those stay for the ruts and the medians). **Junction cluster**: junction nodes whose
-    zones (widest half width + 6 m) overlap are one junction — one set of arms, one break
-    per road. **Arm edge**: where the arm's cross-section leaves the other roads'
-    asphalt, paved node-triangle islands included (at least half the widest other road
-    + 1 m from the node; at a ring — just that) — rule zebras, stop lines and the turn
-    paths measure from it, the lines of a breaking arm break at least up to it (a short
-    stub of a median's double solid past a break is closed too), OSM crossings keep
-    their place; a street that has a marked OSM
-    crossing within 35 m of the node gets no rule zebra on any of its arms. A **link** — an arm that never
-    leaves the junction's asphalt, the throat of a complex junction (a fork's triangle) —
-    gets no rule zebra, no stop line and no arrows; its lines break until they (not its
-    whole section) leave the other roads' asphalt, so a branch peeling off a wider road at
-    a sharp fork does not paint across that road's lanes. **Main through**: a road keeps its lines through a cluster unless it ends
-    there, is crossed by a road of its rank that also passes, stands at a **crossroads** —
-    other streets bringing two arms to one node, however OSM splits them, or to two nodes
-    closer than the road's width on one line (staggered) — of any class
-    (a higher road loses its lines there too: a double solid through the node would
-    forbid the left turn; only a **joining** street, one foreign arm, leaves it
-    through), meets a higher rank, or the
-    cluster has signals; rank is the `highway` class, a stop / give-way sign on the arm
-    lowers it. On every arm that breaks: a **zebra** (the OSM crossing on the arm, or one
-    generated past the junction edge where two streets with sidewalks (by tag, not the
-    Sidewalks toggle) meet — or, in a signalized cluster, on an arm with a sidewalk on
-    both sides by its tags — one of them at least tertiary or the cluster signalized, and
-    no ring in it — `RoadStyle::crossings`) and a **stop line** (where a zebra, signals,
-    a sign or a tertiary+ street call for it) across the lanes
-    coming in (dashed for give-way —
-    `RoadStyle::stop_lines`); at a **ring entry** the line is a give-way line **along the
-    ring's edge**, between where its two ends leave the ring's asphalt (searched up to
-    60 m — a tangential entry runs along the ring that long), and a ring road
-    itself never gets one; a **ring exit's throat** — the stretch of the ring from the
-    exit node to where the exit's section leaves the ring's asphalt — breaks the ring's
-    lane lines on the exit's side of its axis (`node_paint::Throat`); the halves of a divided street share one zebra line — one
-    plank across both over a paved median, one zebra each to its kerb over a lawn. A
-    marked crossing elsewhere is a zebra with a gap in the lines; two OSM zebras on
-    different carriageways touching end to end are one plank across both. **The plank
-    cuts every carriageway whose section passes through it**, not only its own road (a
-    Y-merge's branches a few metres from the crossing ran their first dashes over the
-    plank). A zebra is drawn as
-    **whole bars** only, centred on the asphalt it crosses, and a stop line is trimmed
-    to the same laid asphalt (a bridge deck's line is not — its asphalt is another
-    layer). A **pocket**: a wide
-    arm's lines with no room on the narrower arm across the junction end at its edge.
-    A **stitch** (the network's pulled loose end) is a junction node like a shared one.
-    The **leading road** of a junction — passing, and yielding by rank to nobody (a ring
-    road always leads, even an arc that ends there; an approach never leads a ring node)
-    — keeps its asphalt ruts through it. A **bent** leading road — two-way, its drawn axis
-    turning at the node by more than 15° (between its arms, or a kink under the break) —
-    leads with its lines broken instead of through: the axis has no room for an arc there,
-    and the paint does not draw the corner; no zebra or stop line crosses it. A **corner
-    node** — two ways of different streets ending end to end at 25°–155° (the angle at
-    which the kerb is rounded there) — is a paint node too: the lines of both break
-    there, **quietly** (no solid approach), with no zebra or stop line of its own.
-    Every output of the node paint leaves as a typed view of its own — the breaks
-    (`lines()`, `asphalt()`), the clusters with their arms and leaders for the turn paths
-    and the fill order (`junctions()`), the pockets (`pockets()`), the zebras with the
-    stop lines (`marks()`) — and the fields are closed inside `node_paint`.
-  - **Turn paths** (`map/roads/turns.rs`) — a lane-to-lane Bézier curve for every allowed
-    maneuver through a junction (`turn:lanes` — `RoadLine::turns` — when it matches the
-    lanes, else the rule: straight lane to lane, the near turn from the kerb lane, the far
-    one from the inner lane), with 5 m tails into both lanes. Drawn as **turn wear**, two
-    faint ruts under the lines (knob Turn wear), **like a shadow**: where ruts overlap
-    the pixel takes the strongest of them, not their sum — a mask pass keeps the maximum
-    in the frame's alpha, an apply pass brightens by it once (`roads::paint::PaintPass`).
-    Straight along the leading road is left to its asphalt ruts. The same maneuvers give
-    the **lane arrows** — paint on each approach lane, by `turn:lanes` or, without the
-    tag, by the rule on a 2+ lane approach; near zoom only; toggle `RoadStyle::arrows`.
+    junction and what it draws there, **on its own breaks rather than the asphalt ones**.
+    Overlapping junction zones form one **cluster**; the **arm edge** — where the arm's
+    cross-section leaves the other roads' asphalt — is what zebras, stop lines and turn
+    paths measure from; a **link** (an arm that never leaves the junction's asphalt) gets
+    no rule paint; **main through** decides who keeps its lines through a cluster (ends
+    there, a crossroads, a higher rank, or signals break it); on every breaking arm a
+    **zebra** and a **stop line** by rule or OSM; **the plank cuts every carriageway whose
+    section passes through it**; a zebra is drawn as **whole bars** only. Every output
+    leaves as a typed view of its own; the fields are closed inside `node_paint`. Detail —
+    `roads-junction-paint.md`.
+  - **Turn paths** (`map/roads/turns.rs`) — a lane-to-lane Bézier for every allowed
+    maneuver (`turn:lanes`, else the rule), with 5 m tails; drawn as **turn wear**, two
+    faint ruts **like a shadow** — where ruts overlap the pixel takes the strongest, not
+    their sum. The same maneuvers give the **lane arrows** (toggle `RoadStyle::arrows`).
+    Detail — `roads-bridges-wear.md` (**Turn paths**).
   - **Kerb pocket** (`map/roads/pockets.rs`) — a parking bay cut into the sidewalk beside
     the carriageway, where the parked cars stand: by `parking:<side>=street_side`, or by
-    rule on trunk/primary/secondary (cars do not stand on an arterial's lane) — there as
-    rare short bays, seeded by the street, not a block-long run; never along a lot's
-    **frontage** — the stretch of kerb with a parking lot of **any** `LotKind` within a
-    sidewalk and a verge of it (`pockets::KerbLots::frontage`): the cars go to the lot, and
-    a bay in front of it reads as a spare lane. One answer
-    (`pockets::all_kerbsides`) for the ribbon and for `map::cars`; a pocket ends in a
-    taper everywhere except at a way end the next way carries it on from. `sidewalk=*` likewise
-    decides which sides carry a sidewalk band; an **untagged** street has none on an
-    unpaved surface, and a residential, unclassified or living street has them only among
-    blocks of 3+ storeys on
-    average (`parse::infer_sidewalks`, the cars' district measure); and any carriageway
-    loses an untagged side to a **separately mapped footway** — a paved path running
-    alongside within a few metres of the band, behind a real lawn of at least 1.5 m
-    (`parse/verges.rs::measure_footways_beside_streets`), since a band next to it was a second
-    sidewalk with a strip of grass between, while a band taken from under a footway at
-    the kerb left a slit of bare ground and holes at the corners. Any side of a paved
-    street with such a footway alongside (up to 10 m past the kerb, 16 m on a two-way
-    street), band or no band, carries a **verge** (`RoadLine::verges`, kerb to the
-    footway's axis — and **by place**, `RoadLine::verge_profile` / `verge_at`, following a
-    footway that drifts away or turns at the corner, and half a metre under it — the
-    ribbons lie on smoothed axes, the profile was measured on raw ones): sidewalk tile
-    drawn under every green (`road_verges`, its corners by the kerb returns), so a
-    mapped lawn stays a lawn and bare ground there is paved; a verge wider than 4 m is a
-    **lawn** under a narrow tile strip at the kerb (tile and lawn change by a seam across
-    the street, never a slanted edge; a run under 10 m folds into its neighbours) — the
-    yard's muted grass by default
-    (`road_verge_yards`), a meadow only beside a mapped lawn or park (`road_verge_lawns`) — and
-    from 2 m/px up (`VergeLods`, the crowns' near bound) a verge wider than 5 m is not drawn at
-    all — tile, lawn and corners — because a band that wide read as a second carriageway; what
-    remains is the lawn or earth underneath. A
-    corner behind such a lawn is a **kerb pad** of tile along the kerb arc, where the
-    zebras land — no wider than the arm's sidewalk band where it has one, so the lawn's
-    edge does not step. What the pad, a crossing path and a footway pressed against the kerb
-    leave of such a lawn is a **lawn scrap** (`map/roads/scraps.rs`): a piece of verge
-    lawn within 25 m of the verge's end at a node, or within 15 m of a **bite** — an interior
-    vertex of the street where another road ends into it (a seam continues the same street,
-    so it is no bite) — enclosed by paving (at most 1 m of it on the lawn's own edge), and no
-    larger than 10 m², thinner than 1.5 m on average, or a **wedge**: up to 25 m² tapering to
-    a tip, two long edges meeting under 20°. The same question is asked of **ground green** —
-    a parse pocket or a mapped grass polygon that is itself a narrow strip (up to 500 m²,
-    10 m on average) with a vertex within 2 m of the drawn paving: the wedge of a courtyard
-    pocket pinched between tiles, the tip of a fork island under its hatched gore (gores count
-    as paving for the question). Scraps tile over in `road_verges`, ground-green scraps in
-    `sidewalks` — the one tile layer above the grass — since a green pocket in the middle of
-    the paving does not happen on the ground; a piece open into the big lawn (a mouth fang)
-    stays grass, while a wedge-sized green piece may stay open to its own pocket edge (8 m —
-    the pocket's loose outline, not the lawn running on), and mapped greens that are not
-    narrow strips are never asked. The decision per side
-    is a **`SidewalkSide`** on the `RoadLine`: `Tagged`, `Inferred` (no tag, kept by the
-    rule) or `None`.
+    rule on trunk/primary/secondary; **never along a lot's frontage**. One answer
+    (`pockets::all_kerbsides`) for the ribbon and for `map::cars`. Detail —
+    `roads-sidewalks.md` (**Kerb pockets**).
+  - **Sidewalk sides** — `sidewalk=*` decides which sides carry a sidewalk band; an
+    **untagged** street has none on an unpaved surface, and a residential-class street
+    has them only among blocks of 3+ storeys on average (`parse::infer_sidewalks`); any
+    carriageway loses an untagged side to a **separately mapped footway** beside it.
+    A side with such a footway alongside carries a **verge** (`RoadLine::verges`,
+    **by place** — `verge_profile` follows a footway that drifts or turns): sidewalk tile
+    under every green; a verge wider than 4 m is a **lawn** under a narrow tile strip at
+    the kerb — yard grass by default, a meadow only beside a mapped lawn or park — and
+    from 2 m/px (`VergeLods`) a verge wider than 5 m is not drawn at all. A corner behind
+    the lawn is a **kerb pad** of tile along the kerb arc. What the pad, a crossing path
+    and a footway pressed to the kerb leave of the lawn is a **lawn scrap**
+    (`roads/scraps.rs`): a small piece of verge lawn enclosed by paving, tiled over in
+    `road_verges`; the same question asked of **ground green** lays its scraps in
+    `sidewalks`. The per-side decision is a **`SidewalkSide`** tristate on the `RoadLine`:
+    `Tagged`, `Inferred`, `None`. Detail — `roads-sidewalks.md`.
   - **Paired halves** (`map/roads/network/pairs.rs`, `Pairs`) — a divided street as OSM
-    draws it: two opposite one-way ways of one class side by side (a street or a
-    `service` drive, never a parking aisle), up to `PAIR_MAX_GAP` 15 m between the kerbs,
-    beside each other for `PAIR_MIN` 8 m — or, for a short way continuing a half that
-    has a pair, for most of its length; a probe keeps its partner way while it is about
-    as near as the nearest (`PARTNER_SLACK`), so a seam of the opposite half does not
-    split the pair. Found once, by `axis::street_axes`, on the drawn axes, and **aligned** there: the
-    halves are set at the run's median gap (paved no narrower than `PAVED_MIN_GAP`
-    0.5 m) from the midpoint between them, fading out over `ALIGN_TRANSITION` 20 m at a
-    run's end and at a node shared with another carriageway (untouched for 16 m next to
-    it, where a kerb return needs a straight edge), so the ribbons and the parked
-    cars stand on the aligned axis. The gap is kept between the **facing half widths**,
-    tapered on a wedge that narrows the partner's side: the two ways of a half meet at
-    their seam and only the outer kerb of the wedge narrows; where the gap itself changes
-    at such a seam, it changes along the wedge, not across the node, so the wedge's kerbs
-    stay straight. **Median** (`Median`, drawn by
-    `roads/medians.rs` through one door, `medians::draw`, which lays the asphalt, the bed and
-    the lawn and hands the double solids back for the painter rather than painting them) —
-    what lies between the halves: up to the **median gap** (`RoadShape::median_gap`, 3 m by
-    default) asphalt under both ribbons with
-    a double solid down the middle (the paint layer), wider a lawn with a kerb and a
-    rounded nose (`road_medians`, `Z_ROAD_MEDIAN`) from break to break, cut on a
-    densified midline rather than on the OSM vertices; a zebra across both halves does not
-    end the lawn but cuts a **passage** through its grass, the zebra's length wide, over the
-    island's paving; whatever lies between the inner kerbs
-    and is not lawn — the wedge the nose rounds off, the stretch to the node — is asphalt,
-    and so is the **pocket** between a median's end and a link or U-turn that closes the
-    gap ahead of it with no junction on the way (`medians::end_caps`),
-    and a double solid meeting a lawn of its pair runs straight up to its nose. A median a tram runs in, up to
-    `TRAM_BED_MAX_GAP` 8 m, is a **tram bed** (`Median::carries_tram`, found in
-    `Pairs::new` from the rails): each half is widened to the middle by an inner lane
-    without marking — asphalt from inner kerb to inner kerb, square-ended, the double
-    solid between the tracks; the outer kerb does not move. A **tram band** is the
-    lighter asphalt along a tram track wherever it lies under a street's asphalt
-    (`roads/tram_band.rs`) — how the tram lane reads, on a bed and on a single street
-    alike. Both lie along the **laid tracks** (`roads/tram_lay.rs`, `TramTracks`), not
-    the OSM ones: on a bed a track stands `TRACK_SPACING`/2 off the drawn middle, on
-    its side of the other track; along a single street it moves with the street's drawn
-    axis; off the asphalt it is where OSM put it, the shift fading over 20 m. A half has **no sidewalk on its
-    paired side**. The median opens only at a break of **both** halves facing each
-    other (a crossing street, a U-turn, a zebra); a street into one half does not open
-    it. Drawing only: `RoadLine::points` do not move. What a half differs by is asked of
-    `Pairs` — `beside` (is the pair next to this length, and on the left), `partners`,
-    `is_paired`, `across_median` (a cross-street piece in the median's gap),
-    `band_pieces` (the sidewalk band without the pair side), `has_runs` — not read off its
-    runs: the fields of `PairRun`, `Median` and `Pairs` are closed to `network/*`; a median
-    is read through `midline()` / `inner()` / `roads()` / `gap()` / `width()` and carried to
-    the junction by `Median::extend`.
-    Underground road is dropped (`is_road_underground`) — a **separate** predicate from
-    `is_underground`, because the risk is asymmetric: an extra ribbon is cosmetic, an extra
-    deletion is a hole in the navmesh.
+    draws it: two opposite one-way ways of one class side by side, up to `PAIR_MAX_GAP`
+    between the kerbs. Found once, by `axis::street_axes`, and **aligned** there — the
+    halves are set at the run's median gap from the midpoint, fading out at a run's end
+    and at a foreign node — so the ribbons and the parked cars stand on the aligned axis.
+    **A half has no sidewalk on its paired side.** Drawing only: `RoadLine::points` do
+    not move; a half's answers are asked of `Pairs` (`beside`, `partners`, `is_paired`,
+    `across_median`, `band_pieces`), the fields are closed to `network/*`.
+  - **Median** (`roads/medians.rs`, one door `medians::draw`) — what lies between the
+    halves: up to the **median gap** (`RoadShape::median_gap`) asphalt under both ribbons
+    with a double solid, wider a lawn with a kerb and a rounded nose; a zebra across both
+    halves cuts a **passage** through the lawn, not an end to it. A median a tram runs
+    in is a **tram bed** (`Median::carries_tram`): each half widened by an inner lane
+    without marking, the double solid between the tracks. A **tram band** is the lighter
+    asphalt along a tram track under a street (`roads/tram_band.rs`); both lie along the
+    **laid tracks** (`roads/tram_lay.rs`, `TramTracks`), not the OSM ones. The median
+    opens only at a break of **both** halves facing each other. Detail —
+    `roads-pairs-medians.md`.
   - **RailLine** — `railway=*` centerline; `RailKind: Active | Tram | Disused` *is* the
-    drawing style; underground track is dropped. The rail branch of `parse_way` runs before
-    `highway` and falls through — a way can be both street and track. A **rail gap** — two
-    tracks broken at the two kerbs of a street, the crossing unmapped — is stitched into one
-    way at parse (`parse/rails.rs`). A non-tram track is
-    drawn as the **track** itself (`map/rail.rs`): ballast with a shoulder, ties across it
-    and two steel rails on the gauge, thinned out by **rail zoom LOD** into a dashed
-    symbol darker than its ballast on the city-wide view. A **track bridge**
-    (`RailLine::bridge`, any `bridge` but `no`) is a bridge like a street's — slab,
-    parapet and shadow in the road layer's bridge layers (`Bridges::push_track`), the track
-    in its own layers above the deck, never on the asphalt under it. A **level crossing**
-    — a ground track across a carriageway, **found by geometry**, not by tag — covers the
-    ballast and ties inside the road and its sidewalks with a light deck the rails run
-    over (`rail::mesh_level_crossings`, laid by the road layer along the street **as
-    drawn**, never along the OSM centerline). Tram is `map/tram.rs`, with its
-    own LOD, and is drawn only while `TramStyle::visible` — along the laid tracks the
-    road build hands it (`TramTracks`), never `MapData::rails` as they are.
+    drawing style; underground track is dropped. The rail branch of `parse_way` runs
+    before `highway` and **falls through** — a way can be both street and track. A
+    **rail gap** (a track broken at a street's kerbs) is stitched at parse. Non-tram
+    track is `map/rail.rs` (ballast, ties, steel, a zoom LOD); a **track bridge** rides
+    the road layer's bridge layers; a **level crossing** is found **by geometry**, not by
+    tag, and laid along the street **as drawn**. Tram is `map/tram.rs`, drawn only while
+    `TramStyle::visible`, along the laid tracks.
   - **WallLine** — `barrier=city_wall` (the kremlin), 3 m, impassable. **Drawn only where
-    no fortress building stands on it** (`roads/walls.rs::Fortresses`): Tula maps its wall as a
-    `building=wall` and its towers as buildings too, and the ribbon over them read as a
-    dark-orange outline. The navmesh still blocks the whole line.
-  - **FenceLine** — a plot boundary: `FenceKind: Fence | Railing | Wall | Hedge` from
-    `barrier=fence|wall|retaining_wall|hedge` (`retaining_wall` is a `Wall`; a `fence`
-    whose `fence_type` is all see-through — metal bars, mesh, wire — is a `Railing`,
-    drawn without a shadow), plus the
-    **default gates** the load adds (`gates`). Drawn by `map/fences.rs`; **impassable in
-    the navmesh with gaps** (`FENCE_BAND_WIDTH` 0.3 m — the physical thickness, not the
-    zoom-grown drawn width; see **Fence gap** under Navigation). The branch falls through,
-    so a way that is both a fence and something else becomes both.
-  - **WaterLine** — a *linear* watercourse (`river` 8 m → `ditch` 1.5 m), falling through
-    `highway` like rails. `tunnel: bool` marks a **culvert**: not drawn, and the only
-    watercourse kind that does **not** block the navmesh. Drawn (`map/water.rs`) only
-    **outside area water**: the axis is cut at every water outline, and a cut end — a
-    **mouth** — reaches `WATER_SHORE_WIDTH` (6 m) past the bank so the channel's own shore
-    fades out exactly as the polygon's does. A stretch cut at **both** ends is not a
-    channel on land but a **water gap** — OSM cuts `riverbank` at a bridge, and the river
-    runs on between the two polygons: its band goes into the area water's union
-    (`split_channels` → `mesh_water_areas`) and the ribbon layer does not draw it at all,
-    so neither does the ribbon repaint the polygons it reaches into nor does the polygon's
-    artificial edge across the river lay a shoal along itself. Tula: one, the Упа under
-    the bridge at (6157, 3397). Render-only; the navmesh still blocks the whole channel
-    band.
-  - **TreeRow** / **TreeNode** — `natural=tree_row` avenues and single surveyed
-    `natural=tree` trees, with optional `spacing`/`radius` from tags.
-  - **trees** (`TreeSet`) — what the renderer reads; `compose_trees` merges forest +
-    avenues of the selected layout, `composed_for` caches which. A position and its
-    appearance threshold are **one value**: both arrays are private and enter through one
-    `push` that takes them together, so they cannot drift apart in length or order. The
-    **prefix rule** lives on the type too — the density slider shows the beginning of the
-    set, not a filter, so a step up only ever adds trees and never moves the standing ones
-    (`visible(density)`, `visible_count(density)`).
+    no fortress building stands on it** (`roads.rs::Fortresses`); the navmesh still
+    blocks the whole line.
+  - **FenceLine** — a plot boundary: `FenceKind: Fence | Railing | Wall | Hedge`, plus
+    the **default gates** the load adds. **Impassable in the navmesh with gaps**
+    (`FENCE_BAND_WIDTH` is the physical thickness, not the drawn width — see **Fence
+    gap** under Navigation). The parse branch falls through.
+  - **WaterLine** — a *linear* watercourse; `tunnel: bool` marks a **culvert**: not
+    drawn, and the only watercourse kind that does **not** block the navmesh. Drawn only
+    **outside area water**; a stretch cut at **both** ends is a **water gap** — its band
+    goes into the area water's union, and the ribbon layer does not draw it at all.
+    Render-only; the navmesh blocks the whole channel band.
+  - **TreeRow / TreeNode** — `natural=tree_row` avenues and single surveyed trees, with
+    optional `spacing`/`radius` from tags.
+  - **trees** (`TreeSet`) — what the renderer reads; a position and its appearance
+    threshold are **one value** (they enter through one `push` and cannot drift apart).
+    **The prefix rule**: the density slider shows the beginning of the set, not a filter —
+    a step up only ever adds trees and never moves the standing ones.
 - **The parse seam** (`map/osm/parse.rs`) — reading the elements and finishing the map are
   two things, and either half is callable alone. **`read_elements`** runs the Overpass
-  element loop and stops: what comes out is raw, with houses still in the water, churches
-  without a faith, skewed outlines, no doors and no trees. **`finish_parse`** runs the
-  nine finishing passes (the street sections first) and closes by composing the trees
-  for the default layout, **and
-  that order is their interface** — all ten steps written down whole, with each step's
-  reason, on that function. Both halves report as values (`ReadReport` /
-  `PassReport`); `parse` prints them. Two order invariants: the mapped doors are attached
-  **before** the skewed houses are squared, and `vertex_uses` is deliberately computed
-  **twice**, because the outlines move between its two readers. A narrow pass takes a
-  **pass context** instead of `&mut MapData` — a struct of references to exactly what it
-  reads and the one field it writes, living in its own `parse/` module with the tests
-  beside it (`lots::PaveLotsCtx`, `pavements::InferPavementsCtx`,
-  `faiths::ResolveFaithsCtx`). A pass that follows ten fields or more stays on the whole
-  map — its footprint is the map itself (`sections::apply`, `compose_trees`, the squaring,
-  the house pull, the block pull, the ground pockets). The district measure is an explicit
-  input: `finish_parse` builds `Districts` once and hands it to `infer_sidewalks`. Detail
-  in the `osm-map` skill.
-- **OSM contours** (`map/osm/contours.rs`, `MapData::osm_contours`) — the map's geometry
-  as the element loop read it, **before any finishing pass**: road axes (streets and
-  paths apart), the other lines, every area ring and hole. A copy of points taken at the
-  end of `read_elements`; drawn by `mesh_osm_contours` as thin lines over the processed
-  map (Debug → Overlays → `OSM contours`, gallery `Contours` / `ROADS_CONTOURS=1`). It
-  answers the first question of every visual report in one frame: **the contour sits on
-  the defect — the data; it does not — our processing**.
-- **Raw OSM** (`map/osm/parse.rs::RawOsm`, `ParseKnobs::raw`; Debug → World build →
-  `Raw OSM`, gallery `ROADS_RAW=parse|draw`) — the map with our own additions switched
-  off, to tell a data defect from a processing one. **`Parse`**: `finish_parse` skips every
-  finishing pass but the mapped doors — no straightened ring tails, no inferred sections
-  (only a `lanes`-tagged way gets its lane width; the network is still glued), no drowned
-  houses dropped, **only tagged sidewalks** (an `Inferred` side is dropped), no inferred
-  pavements, faiths, squared or pulled houses, pulled blocks and lots, sown pockets or
-  generated doors. **`Draw`**: that, plus no drawing additions — see the `osm-map` skill.
-  A parse input, so switching it **reloads the world** like the navtile.
+  element loop and stops; **`finish_parse`** runs the finishing passes (the street
+  sections first), **and that order is their interface** — all steps written down whole
+  on that function. Both halves report as values; `parse` prints them. Order invariants:
+  mapped doors attach **before** skewed houses are squared, and `vertex_uses` is
+  deliberately computed **twice** (the outlines move between its two readers). A narrow
+  pass takes a **pass context** instead of `&mut MapData`; a pass that follows ten fields
+  or more stays on the whole map. Detail — `parse-seam.md`.
+- **OSM contours** (`map/osm/contours.rs`) — the map's geometry as the element loop read
+  it, **before any finishing pass**, drawn as an overlay. **The contour sits on the
+  defect — the data; it does not — our processing.**
+- **Raw OSM** (`parse.rs::RawOsm`, `ParseKnobs::raw`) — the map with our own additions
+  switched off, to tell a data defect from a processing one: **`Parse`** skips every
+  finishing pass but the mapped doors; **`Draw`** adds no drawing additions on top. A
+  parse input, so switching it **reloads the world**.
 - **ParseKnobs** (`map/osm/parse.rs`) — the parse's inputs that are not in the Overpass
-  answer: `lane_width` (the street lane width the sections take), `navtile` (the door
-  generator's clearance) and `raw` (**Raw OSM**). `parse(json, city, knobs)` / `parse_response` take them as an
-  argument and **the parse reads no process global**; `Default` is the knobs' defaults
-  (3.3 m, 2 m). The load thread gets the settled knobs from `loading::start_job`. The map
-  keeps a snapshot, **`MapData::knobs`** — what the world was parsed with: the lane-width
-  reload compares the settled knob with it, and the paint's global is written from it on
-  entering the world.
+  answer: `lane_width`, `navtile`, `raw`. `parse` **reads no process global**; the map
+  keeps a snapshot (`MapData::knobs`) — what the world was parsed with, what the
+  lane-width reload compares against.
 - **Building height** (`parse/tags.rs::building_height`) — metres from `height` or
-  `building:levels` × 3 m; outside 2–600 m counts as no tag. `None` is normal, and common:
-  coverage varies wildly by city (NY 97 % … Tula 31 % … Tokyo 5 %) and is logged on load.
-- **Squared house** (`parse/squaring.rs::square_skewed_houses`) — a small house (≤ 250 m², a
-  `building=house` ≤ 400 m²) traced in OSM as a skewed quad or a skewed **L** (six vertices,
-  one reflex corner; worst corner 2°–35° off square) is replaced at parse by a rectangle of
-  the same centroid and area, or by a right-angled L; not when a vertex is shared with
-  another building, a line, or one of the three area layers whose **edge is drawn**
-  (`parking`, `pitches`, `water`) — the fills a house merely lies on top of, `landuse`
-  among them, do not count. Everything downstream — navmesh, doors, roof, render seed —
-  sees the straightened outline.
-- **Pulled-back house** (`parse/house_pull.rs::pull_houses_off_sidewalks`) — a building whose outline
-  reaches into a street's **verge edge** (half the width + the sidewalk band by class + 2 m,
-  the `sidewalk=*` tag not read — see **Sidewalk profile**) is moved at parse, whole and
-  with its doors, straight away from the street, by at most 6 m — and its **row** with
-  it: neighbours on the same side of the same street standing on the same line take the
-  same shift, so the facade line stays straight. A house needing more than 6 m is moved by 6 m on its own, outside any row. A shift that would bring the
-  house within 0.5 m of something it stood farther from — another building, a road or rail
-  edge, a wall, fence, pipe, watercourse, water body, industrial cylinder — is shortened
-  (¾, ½, ¼), and dropped if even ¼ does. Not when the street runs through it, a vertex is
-  shared, or it is a church or a fortress. Like a squared house, everything downstream sees
-  the moved outline.
-- **Block pulled to the road** (`parse/block_pull.rs::pull_areas_to_roads`) — the other half of the
-  same mismatch: a `landuse` block's edge is traced along the plot line while the road's
-  width is a class constant, so between the yard and the drawn sidewalk a strip of bare
-  ground is left over (a quarter of Tula's block vertices are within 5 m of the drawn edge).
-  A vertex closer than that to the road's edge is pulled **under** the asphalt (0.5 m in),
-  and an edge longer than 8 m beside a road is split first so a bend cannot leave a gap
-  mid-edge. The block lies below everything drawn on it, so what goes under the road is
-  invisible. **Green only grows**: the vertex moves only when the move leads outward from
-  the fill, read locally off the ring's own signed area — so a street running through a
-  block does not shrink it, while a street in a courtyard pulls the hole's edge in.
-  The one inward move: an edge between a sidewalk mapped as a footway and the street
-  beyond it goes to the footway's axis — a corner lying under the crossing path the
-  sidewalk meets included — since the strip up to the kerb is paving, not yard.
-  **A vertex in the bare side's verge**: the mapped edge is one for both sides, so on a
-  street with a sidewalk on one side only a vertex beyond the kerb of the *other* side —
-  in its verge, which is drawn *under* the blocks — counted as «under the road» and
-  stayed, and the yard stuck out of the verge's tiles as a dark stroke (Tula, gallery 15).
-  It goes to the nearer drawn rim instead: under the footway (tucked) or 0.5 m under the
-  kerb. **Slivers left on the verge tiles are then cut out by area** (`parse/verges.rs`):
-  vertices decide one by one and the edge between two of them is straight, so a sliver of
-  yard could still lie on the tiles (Tula 15, the footways' fork by Ленина, 15); a block
-  loses the **thin** pieces (mean width under 1 m) of its overlap with the paved strip of
-  every verge — axis to the tile's rim less 0.5 m, i.e. up to under the footway — and one
-  cut in two becomes two blocks. A wide overlap stays: a block drawn to the kerb is a lawn
-  between kerb and sidewalk by the data. Render-only in effect: `landuse` touches neither
-  the navmesh nor planting.
-  **Lot paved to its roads** — a parking lot reaches its roads in the same parse step, but
-  **as a polygon, not vertex by vertex** (`parse/lots.rs::pave_lots`). The vertex pull was
-  tried first and removed: neighbouring points moved by different amounts, and a big lot
-  (Tula, ТРЦ «Макси») came out with teeth of ground at every aisle stub, needles of
-  asphalt and unfilled wedges. Now the lot and the road bands beside it are **closed**
-  (offset out by a radius and back in: `CLOSING_RADIUS` 7 m, so a gap under 14 m — a stall
-  row with its aisle — is asphalt; `GROUND_CLOSING_RADIUS` 12 m on a *big lot*), and of
-  what the closing added only the pieces lying **between the lot and a road** are kept — a
-  notch in the outline touches no road, a wedge between two streets touches no lot. A
-  road's band is its carriageway plus the sidewalks it draws; a **kerbside lot**
-  (`parking=street_side`, `LotKind::Kerbside`) takes the carriageway alone, so it
-  is paved up to the kerb, cut into the sidewalk rather than standing behind it. A
-  drive without a sidewalk counts as the lot's side. Buildings of `KEEP_BUILDING_AREA`
-  100 m² or more, greenery, water and **fences** (a band of `FENCE_HALF` 0.75 m either
-  side) are subtracted from the added pieces, and a piece cut off from the lot by one is
-  dropped — that is how a fenced lot stays behind its railing. The road band itself is
-  **not** part of the lot, except a drive with the lot's asphalt on **both** sides of it
-  (`sandwiched`): stalls do not belong on the road a lot is entered from, while a drive
-  inside the lot is its own asphalt. The edge goes `LANDUSE_OVERLAP` under a road band
-  **and nowhere else** — grown on every side, a piece stepped out half a metre along its
-  free edge too, a jog wherever it met the lot's own edge. **A fill thinner than
-  `THIN_FILL_HALF_WIDTH` 1.125 m is trimmed** (a morphological opening, before the pieces
-  are split): the closing's sliver in the corner between two bands — the collar at a
-  drive's mouth, 2.3 m at the base and gone to the tip over the street's drawn tiles
-  (Tula ≈3827,4093, N9) — and the thin tongue along a kerb (Tula ≈4454,3855, N3) read as
-  asphalt butts over foreign paving; a `street_side` pocket is exempt, reaching the kerb
-  across the sidewalk is its contract. **Apron** — last, the lot steps
-  back `BUILDING_APRON` 1 m from **every** house, of any size: outlines are drawn
-  overlapping a house or flush with it, and stalls stood in the wall; a booth in the
-  middle of a lot gets its island, and a house across a lot cuts it into several lots
-  (parts under `MIN_LOT_PART` 30 m² go). **The pass reports the two events apart**
-  (`PavedLots { grown, trimmed }`): the apron meets a lot with no road within reach too,
-  so «paved up to its roads» and «merely stepped back from the houses on it» are two
-  different things and are counted as two. Lots are independent and are paved **across
-  threads** — the cost is the `i_overlay` calls per lot, not the geometry.
+  `building:levels` × 3 m; outside 2–600 m counts as no tag. `None` is normal and
+  common (coverage varies wildly by city, logged on load).
+- **Squared house** (`parse.rs::square_skewed_houses`) — a small skewed-quad or skewed-L
+  house is replaced at parse by a rectangle of the same centroid and area, or a
+  right-angled L; not when a vertex is shared with another building, a line, or one of
+  the three area layers whose **edge is drawn**. Everything downstream sees the
+  straightened outline.
+- **Pulled-back house** (`parse.rs::pull_houses_off_sidewalks`) — a building whose
+  outline reaches into a street's **verge edge** is moved at parse, whole and with its
+  doors, straight away from the street, by at most 6 m — **its row with it**, so the
+  facade line stays straight; a shift that would crowd something is shortened or
+  dropped. Not for churches, fortresses, shared vertices, or a street through the house.
+- **Block pulled to the road** (`parse.rs::pull_areas_to_roads`) — a `landuse` block's
+  edge traced along the plot line leaves bare ground against the drawn sidewalk; a
+  vertex near the road's edge is pulled **under** the asphalt, **green only grows**
+  (the move must lead outward from the fill), and slivers left on the verge tiles are
+  then **cut out by area** (`parse/verges.rs`). Render-only in effect.
+- **Lot paved to its roads** (`parse/lots.rs::pave_lots`) — a parking lot reaches its
+  roads **as a polygon, not vertex by vertex**: lot and road bands are **closed** and
+  only the pieces lying **between the lot and a road** are kept; buildings, greenery,
+  water and fences are subtracted; **a fill thinner than `THIN_FILL_HALF_WIDTH` is
+  trimmed**; last, the lot steps back an **apron** from every house. **The pass reports
+  the two events apart** (`PavedLots { grown, trimmed }`). Lots are paved **across
+  threads**. Detail — `parse-geometry.md`.
 - **Ground pocket** (`parse/pockets.rs::fill_ground_pockets`, `MapData::pockets`) — a
-  scrap of bare ground **enclosed** by what is drawn — road bands with their sidewalks,
-  verges, blocks, greens, water, lots, pitches — that no tag describes: the triangle
-  between two footways and a block cut short of them (Tula, gallery 02), the wedge where a
-  verge ends at a footway turning away (Oryol, 03). The vertex pull cannot close it: the
-  wedge's corner stands on the footways' junction, where the block has no vertex. It is a
-  **hole of the union** of those covers, found per 400 m tile across threads; a hole
-  touching a paved road, touching no dirt path and no larger than `POCKET_AREA_MAX`
-  400 m² is sown with grass (grown 0.5 m under its neighbours) by the verge lawn's rule:
-  within `POCKET_NEAR` 4 m of a block — that block's grass, in the block layer; else of a
-  mapped park or lawn — the meadow, **merged into that very green** (its ring grows by the
-  union; sown beside it, the pocket covered the green's rim kaima and the cut kaima read
-  as a V seam — Tula, the square by Soifer, N8); else the yard grass
-  (the parallelogram by the Kaluga 01 ring), from `LONE_POCKET_MIN` 10 m² up — a smaller
-  lone hole is a gap in the paving and stays ground. A pocket is **not a block**: it
-  lives beside `landuse`, so a verge next to it does not turn to yard grass. What stays
-  ground stays: a waste plot with trails (a dirt path on its rim), anything larger (a
-  plot of its own), a hole cut into a block by its own multipolygon (no road on its rim).
-  A **ring island** is not a pocket: its raw loop (`roads::rings::islands`, the loops the
-  render fits a figure into) is one of the covers, since the island's lawn already covers
-  it whole. A **green apron** (`Scene::green_aprons`) asks the same question of strips
-  that are never holes — at its ends such a strip leaks into the open, which the
-  enclosure above cannot see: a band of bare ground up to `GREEN_GAP_MAX` 2.5 m wide
-  between a mapped green's outer edge and the kerb of a paved band is sown meadow from
-  the green's edge to the very kerb, a street's own verge deciding first — the apron is
-  sewn only where the edge of what the street draws itself (its sidewalk band or its
-  verge lawn, whichever reaches further) falls short of the green's.
-  The covers err on the safe side: the block lies below everything drawn, so grass sown
-  under a sidewalk or a house is never seen — houses are left out of the union for that
-  reason. Render-only, like the block pull.
+  scrap of bare ground **enclosed** by what is drawn that no tag describes: a **hole of
+  the union** of the covers, found per tile; a hole touching a paved road, touching no
+  dirt path and small enough is sown with grass — beside a block that block's grass, else
+  a mapped meadow **merged into that very green**, else the yard grass. **A pocket is not
+  a block** — a verge next to it does not turn to yard grass. A **green apron**
+  (`Scene::green_aprons`) asks the same question of strips that are never holes. Detail —
+  `parse-geometry.md`.
 - **Inferred storeys** (`map/buildings/heights.rs`) — what a building without a `height`
-  tag is drawn as, and it is **the shape of the footprint that decides**, the way an eye
-  reads an aerial photo: a long thin box (≥ 35 m by ≤ 18 m) is a panel section (5 / 9 / 12
-  storeys), a compact large one (≥ 500 m², sides within 1.7) a tower (mostly 9), a small
-  one (≤ 300 m²) an old low building (2–4, over 300 m²: the area test comes first, so a
-  long thin shed stays low), everything else large a generic block of **2–5 storeys**, and
-  industrial / commercial / church footprints are measured
-  in **metres of span** rather than storeys. A **private house** — `building=house`, or an
-  untagged box up to 250 m² (the pitched-cohort border, one for roof, walls and height) —
-  has walls of **one storey** in 8 of 10 (3–3.4 m; its attic lives in the pitched roof),
-  two in the rest; a yard shed (≤ 40 m²) is 2.4–3 m.
-  A **public** building (school, clinic, office — `BuildingUse::Public`) is measured in
-  storeys, 2–5, but by its use and not by its shape: the use is asked first, so a large
-  squarish school never comes out a tower.
-  A **retail** building is measured by its own size instead (**Retail box** below): a big
-  box is a shell of 8–11 m, a corner shop a 4.5–6.5 m pavilion.
-  The slot inside each group comes
-  from the building's own seed — the one that already picks its **Roof material** — so it
-  is stable across rebuilds and modes. The tag always wins. Before this the whole 69 %
-  took one of three numbers (3 / 6 / 15 m) and Tula's height distribution was median 15 m,
-  p90 15 m; it is now median 3 m, p90 15 m — the median is the one-storey private house,
-  which is what most of the untagged 68 % turns out to be — and the mix is printed in the
-  `building meshing:` log line.
+  tag is drawn as: **the shape of the footprint decides**, the way an eye reads an
+  aerial photo (a long thin box a panel section, a compact large one a tower, a small
+  one an old low building, the rest a generic block; industrial/commercial/church
+  footprints are measured in **metres of span**). The slot inside each group comes from
+  the building's own **seed** — stable across rebuilds and modes. **The tag always
+  wins.** Detail — `buildings-heights.md`.
 - **Building use** (`parse/tags.rs::building_use`) — the **drawing class** of a building,
-  `BuildingUse: House | Apartments | Commercial | Retail | Industrial | Garage | GarageBlock |
-  Church(Sacred) | Public | Other`, from `building=*` and — whenever that value is outside the
-  vocabulary (`yes` above all) **or is the generic `commercial`** — from `shop=*` (see
-  **Retail box** below), and then, when neither has spoken, from `amenity=*` on the same
-  outline.
-  **`Sacred { faith, form }`** rides inside `Church`, the `Pitch(PitchKind)` pattern:
-  **`Faith: Orthodox | Western | Muslim | Jewish | Eastern | Unknown`** from `religion` +
-  `denomination` (or the building tag — `mosque`, `synagogue`), and **`SacredForm: Nave |
-  Tower | Dome | Annex`** — a bell tower or minaret (`tower:type`), a drum under a cupola
-  (`roof:shape=onion|dome`, the one place `roof:shape` is read), and an **annex**: a
-  building without a use class (`building=yes`, `building:part`) lying **on** a church —
-  either centre inside the other, or a quarter of its footprint shared, at most 2.5× the
-  church — which takes the church's faith, walls and roof and grows no crown of its own
-  (Tula's arms museum mapped over the Epiphany cathedral). `Sacred::floor_dm` is where a part
-  **starts** (`min_height`, or `building:min_level` × 3 m): a cupola drum standing on its
-  cathedral's roof. `Unknown` does not survive
-  the parse: **`parse::faiths::resolve_faiths`** gives a part the faith of the church it belongs to
-  (the largest church holding it, or the nearest within 30 m), and anything else the city's
-  majority (ties → `Western`). The same pass fills **`Sacred::complex`** — the seed of the
-  whole church, so a cathedral and its drums and bell tower share one palette.
-  **Fortress** — `AreaKind::Kremlin` is told not only by `historic=citywalls|castle|…` but by
-  `building=wall` ≥ 6 m and `man_made=tower` + `tower:type=defensive` (Tula carries no
-  `historic` at all); a compact footprint is a **fortress tower**, a thin one a wall
-  (`model::is_fortress_tower`). Tower and wall sections are ordered by the ordinary pairwise
-  draw order, nothing forced: a section abutting a tower on the camera side lies over it.
-  **`garages` (plural) is its own class**:
-  OSM maps a whole cooperative as one outline that way (Tula's largest is 255 × 51 m), and
-  it is drawn as rows of boxes, not as one shed — see **Garage rows**. Each class
-  owns a (roof, wall) colour pair in `map/buildings/`; the Kremlin is coloured by `AreaKind`
-  and ignores it. Not the bastion kind of `ROADMAP.md` — that is a separate concept.
+  `BuildingUse: House | Apartments | Commercial | Retail | Industrial | Garage |
+  GarageBlock | Church(Sacred) | Public | Other`, from `building=*`, then `shop=*`, then
+  `amenity=*`. **`Sacred { faith, form }`** rides inside `Church`: **`Faith`** from
+  `religion` + `denomination` (`Unknown` does not survive the parse —
+  `parse::faiths::resolve_faiths` gives a part the faith of its church, anything else the
+  city's majority), **`SacredForm: Nave | Tower | Dome | Annex`**. **Fortress** —
+  `AreaKind::Kremlin` is told also by `building=wall` ≥ 6 m and `man_made=tower` +
+  `tower:type=defensive` (Tula carries no `historic` at all). **`garages` (plural) is its
+  own class** — drawn as rows of boxes (**Garage rows** below). Each class owns a
+  (roof, wall) colour pair in `map/buildings/`. Detail — `parse-buildings.md`.
 - **Retail box** (`BuildingUse::Retail`, `model::is_big_box`) — a building that **is** a
-  shop, split from `Commercial` (which keeps offices, kiosks and pavilions) because an
-  office and a hypermarket share nothing from the air. Read from
-  `building=retail|supermarket|mall|department_store|shop` (`shop` is OSM's plain synonym
-  of `retail`) and, under `building=yes`, from a
-  **big-format `shop=*`** whitelist (`mall`, `supermarket`, `department_store`,
-  `wholesale`, `doityourself`, `hardware`, `trade`, `garden_centre`, `furniture`, `car`;
-  a bakery or a convenience store stands in somebody else's house and is not one). Half of
-  Tula's malls carry the class only there — ТРЦ «Макси» is `building=yes` + `shop=mall`,
-  64 257 m².
-  **Size, storeys and height decide as much as the class**, and `is_big_box` (footprint ≥
-  `BIG_BOX_AREA_MIN` 1200 m², `PolyArea::storeys` ≤ `BIG_BOX_MAX_LEVELS` 3 and height ≤
-  `BIG_BOX_MAX_HEIGHT` 17 m — any of the three refuses) is the one predicate
-  that says it — a giant box and a corner
-  shop look nothing alike, and OSM never marks the difference. The area threshold is a chosen
-  line through a continuous distribution rather than a gap in it (Tula: 24 of 90 `Retail`
-  outlines are at or above it, and its nearest neighbours are 1198 and 1265 m²). **The
-  storey count is what tells a mall from a box**, and it is why `PolyArea` carries
-  `building:levels` at all: a four- or five-storey mall is measured in dwelling storeys and
-  lands at 12–15 m, a real two-level box stands at 12.5 m, and no ceiling in metres runs
-  between them. The height ceiling — three trading levels plus the shell, the same threshold
-  written in metres — answers for the building whose storeys nobody mapped, where `height` is
-  the only thing said at all. Of Tula's 24, **15 are big boxes**: the nine with
-  `building:levels ≥ 4` are not, from ТРЦ «Гостиный двор» (6) down to a `shop=supermarket`
-  on a nine-storey block («Пятёрочка»), and they get a shopfront and the ordinary door pitch
-  instead of the cassette, the tier and the entrance groups. The
-  measurement is in `references/osm-coverage.md`. What the predicate
-  decides: the **height** (a trading level is `BIG_BOX_LEVEL_HEIGHT` 4.5 m rather than a
-  3 m dwelling storey, plus `BIG_BOX_SHELL_EXTRA` 3.5 m of technical floor and parapet, and
-  only while the storeys stay within `BIG_BOX_MIN_LEVELS` 1 … `BIG_BOX_MAX_LEVELS` 3 and
-  that shell under the same `BIG_BOX_MAX_HEIGHT` — above the threshold `shop=*` on a
-  nine-storey block is a shop on its ground floor, below the floor a `levels=0` is abandoned
-  tagging and the height is inferred rather than read as the shell's own 3.5 m); the
-  **roof** (light membrane / bitumen / gravel, plus the **skylight
-  grid** and the **roof plant** below); and the **wall** — `WallKind::BigBox`, a blind
-  composite-cassette facade on a 7 m bay and a 5.5 m tier, with a **brand band**
-  (`layers::push_brand_band`) along the top of every drawn wall in the building's
-  `building:colour`, else a chain palette. A corner shop keeps a shopfront, a house window
-  and an ordinary flat roof.
-- **Skylight grid** and **roof plant** (`map/buildings/clutter.rs`) — what a big box's roof
-  carries and nothing else does: a **regular lattice** of 2.8 m skylights at a 13 m pitch
-  (a target, stretched on a giant roof so the whole of it keeps a grid, capped at 300 nodes)
-  plus a **row** of 2–5 air-handling units, and the vent cap raised from 10
-  to 26. This is the deliberate exception to "a cell grid places a feature, it never *is*
-  the feature" — real skylights stand on the frame's columns, by the ruler, exactly as a
-  garage run's bay seams do.
-- **Roofing** (`map/buildings/roofs.rs::roofing`) — the *shape* of a roof, **inferred**,
-  not read (`roof:shape` is rare). The private sector is **gabled**, so the **gable roof**
-  (`GableRoof`, everything with a piece of wall above the eaves) comes in five
-  **`GableForm`s**: a plain **gable** (two slopes, ridge along the long axis of the
-  minimum-area bounding rectangle; needs an outline that nearly fills that rectangle and
-  touches its corners), a **half-hip** (the top of each gable cut by a small slope), a
-  **gambrel** (a steep lower and a shallow upper slope — the attic storey), a **lean-to**
-  (one slope — a yard shed, `SHED_FOOTPRINT_MAX` 40 m²) and a **cross gable** over an L, T
-  or П outline (cut into rectangles; the largest is the main body, every other piece a
-  **wing** whose ridge runs into its neighbour's slope to a valley, or continues its ridge
-  from its end). A plain gable may carry one **dormer** (`DormerFace`, 2.5D only). The form
-  of a rectangular house is its seed (gable 8 / gambrel 1 / half-hip 1 in 10). A **hip** — a
-  slope quad per outline edge, built by pushing the outline inward on miter offsets, with the
-  leftover interior as the ridge plane — is now the rare case: 3 in 100 large houses
-  (≥ 120 m²) and whatever outline no gable form fits. Everything else is **flat** — a real
-  flat roof with its material and its clutter. Courtyard buildings stay flat. The mix is
-  printed in the `building meshing:` log line (`roofs:`). A **tent** (`TentRoof`, faces to
-  one apex) is one more kind and no house ever gets it: a church and a fortress are
-  *assigned* their roof (**`LandmarkRoof`** — `temples::roof_form` by faith,
-  `fortress::roof_form`: tent on a tower, flat walkway on a wall), stepping down where the
-  outline refuses.
-  **`RoofShape`** is the same kinds as an *input* (every `GableForm` and `Dormer` included):
-  the city never asks for one, `roof_gallery` does, to stand one outline under all of them —
-  and a refusal there stays
-  a refusal instead of being swapped for another shape the way `roofing` swaps it.
-  **`shape_facts`** hands out the numbers the choice is made from (rectangle fill, the
-  gable's worst corner overhang, hip inset, either ridge rise) so the gallery prints them
-  rather than restating them.
-  Detail in the `osm-map` skill.
-- **Roof material** (`map/buildings/material.rs`) — what a roof is *covered with*, and
-  therefore what colour it is: `RoofKind: Bitumen | Gravel | Seam | Corrugated | Tile |
-  Membrane`, picked deterministically from `BuildingUse` (+ footprint size for the untagged
-  half) and a **seed hashed from the building's first vertex**, as the door generator is
-  seeded. (`GarageRow` and `GarageBlock` are two more variants outside that choice, and
-  outside `ALL` with it: they are picked by the *geometry* of a run of garages rather than
-  by use — see **Garage rows** below.)
-  The colour comes from that material's own palette — **the per-use *roof* colours
-  are gone**, and the per-use *wall* colours with them: a wall is picked the same way a
-  roof is (**`WallKind`**, below) — and the texture from
-  **`RoofMaterial`** (`assets/shaders/roof.wesl`) reading the **`Roof` attribute**
-  (`meshing::ATTRIBUTE_ROOF` = `[…, …, material code, seed]`, where the first two numbers
-  mean what the code says they mean: a roof's **long axis**, one value for the whole
-  building, or the face's own **cell coordinates**, different at every vertex — a wall's
-  panel and storey, a garage ribbon's bay and row; see `WallFrame` below; the code is **one
-  dictionary for all of them** — `0` is *no texture* and by now only roof clutter, which
-  rides in the same mesh, `1…6` are the roofings above, `7…8` the two garage runs,
-  `9…15` the wall claddings of `WallKind` and `16` a door leaf, a gable carrying its
-  wall's code as the top of
-  the end wall under it). **Roof age** is the
-  second thing that seed carries
-  (`roof.wesl::roof_age`, hashed from it, no attribute of its own): one number per
-  building that sets how many repair patches its bitumen carries (a young roof almost
-  none, an old one a patch per second cell), how much water stands on it, and — on every
-  **roofing** material — how faded and dirty it is. A wall has no age: it never reaches
-  that common pass (below).
-  Every flat roof of the city, in both flat modes and 2.5D, is laid by one call —
-  **`push_flat_roof`**, a bare fill. A soft flat roof used to get a **parapet** on top of
-  it, a 0.7 m inset band lit by the **Sun**; that is gone, because it is the same
-  construction as a hip's slopes and only narrower — from the air every panel block wore a
-  small hip, and a real hip could not be told from a flat roof.
-  **A wall is the same mechanism turned on the walls, and its coordinates are the wall's
-  own** (`meshing::WallFrame`, `layers::wall_frame`). A wall in 2.5D is a **parallelogram** —
-  base edge `a→b`, sides along the lean — and the builder writes, at every one of its
-  vertices, where that vertex sits in it: **the panel number and the storey**, counted in
-  cells rather than metres. The counts are whole (a wall's length over a 3.2 m target panel,
-  its height over a 3 m storey, both rounded, at least one), and that is the whole point:
-  the edge panel is never cut, the top storey ends exactly at the eaves, a balcony sitting
-  inside its cell cannot reach the wall's edge, and at a corner both walls end on a whole
-  panel and a whole storey, so their seams meet. A global metre grid — what this was first —
-  knows none of that and cut panels and balconies wherever a wall happened to end.
-  The shader therefore needs no metres, no storey height and no lean: it takes `fract` of
-  what the vertex carries, and reads the foreshortening off `fwidth` of the same number.
-  **What it draws in those cells is the wall's own `WallKind`** — `Panel | Brick | Plaster |
-  Shopfront | Shed | BigBox`, picked exactly the way a roofing is (a ten-slot table per
-  `BuildingUse`, the slot by the building's seed), plus `GarageDoors`, which no table
-  reaches: it is picked by the **geometry of a garage run**, like that run's roofing — see
-  **Garage rows**, and `Sacred`, which a `Church` always gets (below). Otherwise **height is
-  consulted first**: anything under
-  `LOW_RISE_STOREYS` (4) that the tag has not already settled (`House`, `Garage`,
-  `Industrial` keep their own tables, `Retail` its size, `Church` its `Sacred`) drops into
-  the low-rise table, because a low
-  building is neither a panel block nor a curtain wall. A **deep hull** — an untagged
-  (`Other`) building whose plan is deeper than housing, over `DEEP_HULL_MIN` 30 m both by its
-  bounding span and by the wing width of its equivalent rectangle — is not housing either:
-  shed or plaster, never panel or brick, so never a balcony. `BigBox` is the one cladding whose
-  cell is neither the 3.2 m panel nor the 3 m storey — a 7 m cassette bay by a 5.5 m
-  trading tier — and the one that carries a **brand band** as geometry over it (**Retail
-  box**). The cladding decides three things at
-  once — what lies *between* the openings (floor seams and panel joints, brick courses,
-  bare plaster, a spandrel band, corrugation ribs), what the **openings** are (a wide
-  two-sash window per panel, a narrower brick one, a small house window, a full-panel
-  glazing strip, a high shed ribbon), and whether the wall has **balconies** at all.
-  **Both ends of a wall are their own case, and a cell carries exactly one opening.** The
-  **ground floor** takes no balcony — a shopfront is lower and taller there than the strip
-  above it — and stands on a dark **plinth** band.
-  **A door is not drawn by the shader's own dice: it comes as geometry, from the data**
-  (`layers::push_doors` over `PolyArea::entrances`, code `16`) — a **patch** over the cells
-  the leaf touches, marked `WallMark::Solid` so no window peeks out beside it, plus the
-  **leaf** itself on the entrance point, in a frame of its own that maps the opening to
-  `[0, 1]²` (`WallFrame::opening`). Its metres are chosen on the CPU by cladding
-  (`layers::door_size` — a подъезд, a house door, shop leaves, a shed gate), so the shader
-  needs no scale of its own. **An arch gets the same patch** (`arches::WallCells`): the
-  opening keeps the road's own width — the navmesh is carved by it — and the whole cells
-  it bites into are laid `Solid` around it, since the shader draws a window in the middle
-  of a cell knowing nothing about the hole. Above the last storey the wall keeps a **cornice**
-  (`meshing::PARAPET_CELLS`, 0.15 of a cell) — plain wall with no openings and nothing drawn
-  in it, because what the top of a wall needs is *room*, not a stripe. The room is
-  geometric: the frame runs the storey coordinate to `storeys + PARAPET_CELLS`, and the
-  invariant it protects is that **storey boundaries stay whole**, not that the wall ends on
-  one. Knowing where the top *is* needs the storey count, and that rides in the **material
-  slot** next to the code (`meshing::STOREY_STRIDE` 32: code in the remainder, storeys in
-  the quotient, zero on a roof).
-  **`WallKind::Sacred`** is a church's wall: a 6 m **tier** instead of a storey, a 4 m cell,
-  and one tall **arched** window per cell — never a dwelling window. A **fortress** wall is
-  brick marked `WallMark::Solid` everywhere: no window, no door.
-- **Crown** (`map/buildings/temples.rs`) — what stands **above a church's roof**, laid out on
-  the plan's minimum-area rectangle with the long axis turned east: onion cupolas on drums
-  (one on a chapel, five on a large Orthodox church by seed) and a bell tower at the west end
-  of a "ship"; a spire tower at a Western church's west front; a hemisphere dome and corner
-  minarets on a mosque; a low dome on a large synagogue. **A bell tower is tiers**
-  (`Crown::Tower { tiers, top }`): one to three, each narrower and lower than the one below
-  with a white cornice between, belfry arches on the top one, then a `TowerTop` — a tent, or a
-  lantern with a thin spire (Orthodox by seed, Western always) — and the Orthodox cap onion.
-  A **standalone bell tower** (`is_standalone_tower`: an Orthodox or Western `Tower` outline)
-  is **boxless** — the whole building is that crown from the ground, its OSM height is the
-  height *with* the spire, its outline is the ground storey with the porches and the shaft
-  above is clamped to `SHAFT_SIDE_MAX` — and the church it belongs to grows no ship tower of
-  its own (`Sanctuary::towered`). A cupola is a **stack of
-  slices** shaded by the surface normal and stretched up (`ONION_STRETCH`) against the 2.5D
-  compression, so it reads as an onion, not a ball, on a drum with a cornice ring; crowns cast
-  ground shadow to their real top (`Sanctuary::shadow_casters` → `ShadowSweeps`). **Colours
-  come from the tags first** — `tagged_wall` / `tagged_roof` / `tagged_dome` over
-  `PolyArea::colours`, a `roof:colour` on a `Dome` part being the cupola's — and from the
-  church's seed otherwise. **A crown stands on its church, whole**
-  — that rectangle describes the porches and the apse along with the church, so a tower or a
-  cupola cluster laid flush with its end hung over the ground. A tower takes the church's own
-  **west projection** — the porch or narthex, cut out by `Plan::west_piece` — so that its
-  walls are the church's walls carried up and there is no junction to draw; failing that it
-  is moved inward along the axis, narrowed and nudged across it (`Plan::west_tower`). A cupola
-  is seated on the roof's **platform**, not the outline — `Plan::dome_seat` probes at
-  `roofs::landmark_inset` from the edge, since a hip's platform is pulled in by the slope's
-  overhang. **`Sanctuary`** is the city's churches
-  assembled: a **raised part** (a `Dome` part with a floor, or a drum on another church) is
-  drawn as a drum from its floor with a cupola — **no box from the ground** — and a church
-  whose cupolas are mapped as parts grows none of its own; `Sanctuary::boxless` is that
-  raised part or a standalone bell tower, and the layers draw neither walls, roof, box
-  shadow nor neighbours' roof shadows on it. **Crowns are laid after every
-  building of the layer**, not per house: a church is overlapping outlines, and an annex laid
-  after its cathedral hid the cupolas' base. Roof shadows are not cast between parts of one
-  church. A fortress wall carries **merlons**
-  (`clutter::merlons`, zoom-gated like all clutter). Verified in `temple_gallery`.
-  A **balcony** is a stack of bands, not a box — the slab's shadow on the wall, the bright
-  slab edge, the parapet, and above it either glazing or an open recess in shade — laid out
-  by the **period of a section**, not by a per-column draw: two filled **columns** out of
-  every four to six, the period and its phase taken from the wall's own seed, so they come
-  out in columns the whole height of the wall and in a repeating step along it, as they do
-  on a real block (a brick wall keeps the period and fills one column of it).
-  **A window is the only thing here that replaces the surface
-  colour instead of correcting it**: the wall hands the fragment three numbers, not one
-  brightness — shade, how much glass, and how much of that glass is sky.
-  **Who gets balconies is decided on the CPU** (`layers::balconies_fit`): only a panel or
-  brick wall, never a `building=house` whatever its cladding, never under four storeys,
-  never on a wall narrower than three panels (that threshold cuts off a **step in the
-  outline**, not an end wall) and **never on a gable end** — a wall standing across the long
-  axis of the building's plan (`layers::plan_long_axis` over `roofs::min_area_rect`, only
-  where the plan is half again longer than it is wide, since a squarish tower has no end).
-  The shader cannot make any of that call: it knows
-  neither the building's use nor how many storeys the wall has in total, and least of all
-  what the building's other walls are. That verdict and
-  one more travel as the **seed's own value** (`WallFrame::marked`, `WallMark`): `[0, 1)` is
-  a wall with balconies, `(-2, -1]` one without, and `(-4, -3]` a wall with **no openings**
-  at all (`Solid`) — three things at once, the **gable** (which continues the wall's pattern
-  through the eaves, that being why it takes the wall's frame at all, but where a window
-  would be cut by the slope) and the two patches of one construction, **under a door** and
-  **around an arch**.
-  A wall **returns before
-  the common roof pass**: two `stripes` and one hash per wall pixel, no roof age and no roof
-  weathering, so a wall's base colour is still the flat fill of before and only its own seams
-  darken — near the cheap path code `0` gave the walls before they had a code of their own.
-  Strength — `RoofStyle::texture` (Buildings section, persisted), 0 = the flat fills of
-  before. **A roof is now darker than the walls under it**, deliberately: that is the
-  relation an aerial photo has, and the older "roof lighter than wall" rule is retired
-  with the per-use roof palette. Every material and every palette side by side, with a
-  house per colour from a 30 m block down
-  to an 8 m shed, and above them every *shape* over five outlines:
-  `cargo run --example roof_gallery` — whose houses are drawn by **`push_house`**, the
-  per-building body of the 2.5D layer, walls included, because a roof shape does not read
-  without them. Detail in the `osm-map` skill.
-- **Garage rows** (`map/buildings/garages.rs`) — a cooperative drawn as **rows of boxes**,
-  not as twenty little houses and not as one giant shed. Garage footprints whose
-  **outlines** come within `JOIN_GAP` (2 m) of each other are stitched into a **run**
-  (union-find over a spatial hash, the bounding boxes only a prefilter — measuring the gap
-  between boxes instead joined ten parallel ribbons of one ГСК across their drives, and a
-  run whose axis is 7° off its ribbons' puts every seam askew to their walls). A run hands
-  every one of its members **one seed** —
-  the shared seed is the whole trick: with it the roofs stop being separately coloured
-  and separately ribbed.
-
-  **The geometry, though, belongs to the piece, not to the run** (`GarageRect`): each
-  outline is **cut into near-rectangular pieces** (`split_rings`), and the axis, the cell
-  grid and a share of the roof are each piece's own. An outline is cut at a **reflex
-  vertex, along its own wall** (a chord to the nearest edge, never an infinite line —
-  that would shred a comb into strips joined by zero-width bridges), and only while the
-  piece fills its `min_area_rect` worse than `RECT_FILL` 0.90 and a cut improves it. The
-  pieces tile the outline exactly, so the roof is laid one piece at a time and nothing has
-  to be clipped or glued. This is what an L-shaped ГСК needs: its own `min_area_rect` is
-  80 % empty, so one axis for the whole letter stood askew to the walls of both wings, its
-  aisles ran across the letter, and the ribbon/cooperative thresholds were measured on a
-  rectangle that was mostly air.
-
-  **A piece whose own shape does not read as a garage is answered by whether the outline
-  was cut.** An uncut one is a 3 × 6 box in a stitched ribbon: it reads as a ribbon only
-  together with its neighbours, so it takes their grid — that is what a run is for, and
-  its own long axis would run *across* the ribbon it stands in. An offcut of a cut outline
-  — a four-metre tooth of a comb, a wedge beside a wing — gets **no garage drawn on it at
-  all** (`GarageRect::plain`): no bay comb on its roof, no gates on its walls, just
-  corrugated sheet in the run's own colour. There is nowhere to get an axis for a
-  near-square scrap, and a borrowed one turns its comb across its own walls and cuts the
-  end gates in half. A piece that does read as a garage is then one of two things:
-  - a **ribbon** (`RoofKind::GarageRow`) — at least `ROW_MIN_LENGTH` 12 m long and
-    `ROW_MIN_ASPECT` 2.2 times longer than wide. The shader draws a **seam on every bay
-    boundary**, with its own paint tone inside each bay;
-  - a **cooperative** (`RoofKind::GarageBlock`) — a `BuildingUse::GarageBlock` piece at
-    least `BLOCK_MIN_WIDTH` 14 m wide and `BLOCK_MIN_AREA` 400 m² in area, i.e. wide
-    enough to hold rows *and* aisles. It gets the same bay seams plus a **darkened aisle
-    on every row boundary**. The aisle is shading, not a hole cut in the roof — cutting it
-    for real would mean a boolean on the outline and would disagree with the walls and the
-    shadow.
-
-  Whether the *run* is a garage at all is still decided for the group as a whole (a
-  stitched ribbon of plain boxes reads as a ribbon only together) **or** by any one of its
-  pieces (a letter Г reads only by its wings).
-
-  **The wall of a run is the same thing said from the side** — cladding
-  `WallKind::GarageDoors` (`layers::wall_of_run`): a **gate in every cell**, the cell being
-  the bay rather than the 3.2 m panel, so a gate stands under its own roof seam. It is as
-  wide as a car and nearly as tall as the wall, starts at the ground, and has no window and
-  no balcony beside it; the OSM-entrance leaf is skipped there, the gates already being
-  every door this building has. Without it a ribbon wore the ordinary tables — a 75 m ГСК
-  came out a brick apartment wall with two rows of windows and three подъезд doors.
-  **Gates go only on the walls running along their piece's axis** (`layers::garage_cells`):
-  you drive in from the drive, and the cross wall is a party wall. The end is measured in
-  the piece's **rows** instead of its bays and marked `WallMark::Solid`, i.e. no openings
-  at all. Nothing could say this before the cut: cladding is chosen for a whole
-  building, so a gate stood on the 8 m end too, two of them meeting at the corner.
-
-  **A garage wall is measured by its piece's bay, not by the constant `BAY`**, so a gate
-  stands under its own roof seam by construction rather than by coincidence: the wall of a
-  piece is as long as the piece, so the same pitch from the same corner gives the same
-  boundaries. The *phase* is deliberately not taken from the piece — the wall still holds
-  a whole number of cells that end on its own corners, as every other wall does, because a
-  wall sitting on the piece's phase begins and ends mid-cell and its end gates come out
-  sliced in half. For the same reason the visible walls of a cut outline are taken **piece
-  by piece** (`layers::garage_walls`, the chord itself excluded — it is inside the
-  building): a chord cuts an outline edge in two, and one wall cannot carry two pieces'
-  grids.
-
-  **The grid is the piece's own, in whole cells** — the same construction as a wall's
-  (`WallFrame::run`, `layers::garage_frame`): the bay is the piece's length over
-  `floor(length / BAY 3.9 m — the widest car the game draws plus its open doors and a
-  pier)` and the row its width over `floor(width / ROW_PITCH 18 m =
-  two 6 m rows back to back + a 6 m drive)`, so a seam lands on both ends of the ribbon and
-  an aisle on both edges of the blob, and no bay is left cut at a end.
-  **Down, not to the nearest**: rounding up makes the bay *narrower* than the measure —
-  by a third at a length just over one and a half bays, 2.6 m instead of 3.9 — and neither
-  a car nor the gate drawn above it fits such a cell. The remainder is spread evenly over
-  **all** the bays of that piece rather than left to the end one; a row of identical gates
-  is what a ГСК is read by. The metres stay on
-  the CPU: the shader takes `fract` of what the vertex carries, so `roof.wesl` mirrors no
-  pitch at all. No new
-  geometry either way — the same `ATTRIBUTE_ROOF` carrying different values. Clutter is
-  refused on both (no penthouse, no vent, no chimney).
-- **Roof shadows** (`map/buildings/shadows.rs::roof_shadow_builder`, `Z_ROOF_SHADOW` 5.05)
-  — the one place the shadow model used to lie outright. The ground shadow layer sits
-  **under** every building layer, so a nine-storey block did not darken the five-storey
-  roof beside it. This second, small layer sits **over** them and carries exactly the
-  missing piece: for each building, its **taller** neighbours' shadow sweeps clipped to
-  its own footprint — merged, not stacked, so two shadows on one roof are not double
-  darkness. **A pitched roof takes none** (`is_pitched` targets are skipped): the patch is
-  flat and slid off the slopes, so a tall block no longer darkens the private houses beside
-  it — its ground shadow still lies under them.
-  A neighbour casts only if it is `SHADOW_MIN_DROP` (3 m) taller; in 2.5D the
-  result is lifted by the target's own `Lean`, so it lands on the roof as drawn — and the
-  **drawn bodies** of the neighbours 2.5D paints *after* the target (later in
-  `order::draw_order`, not by the base key under it — the order is built **once** per
-  layer build and passed to the extrusion mesh and to this layer alike)
-  are then subtracted from it: the layer is flat and above every building layer, while
-  depth is painter's order *inside one mesh*, so without that a far roof's shadow would
-  darken the body of the nearer building that hides that roof. Filled
-  hard, no `PENUMBRA_WIDTH` band — part of the intersection contour is the cut along the
-  roof outline, not the shadow's edge, and a feathered band there would ring every roof.
-  It rides `BuildingShadowTag` with the ground shadows, so the two rebuild and despawn
-  together. Detail in the `osm-map` skill.
-- **Roof clutter** (`map/buildings/clutter.rs`) — what stands *on* the roof: a lift
-  penthouse, ventilation shafts, air-conditioning units, the skylight ribbons of an
-  industrial shed, a chimney on a pitched ridge. Each is a small oblique box with its own
-  **opaque** shadow (a translucent one could not blend inside the opaque building layer),
-  placed by a Park–Miller LCG seeded from the same building seed the roof material uses,
-  and every candidate is rejected unless all four corners fall inside the footprint —
-  the placement frame is a rectangle, an L-shaped building is not — **and unless the
-  place is free**: the roll knows nothing of what already stands there, so without that
-  second test a shaft sat on a penthouse. Which items a roof
-  gets follows its **material**, not the building use: soft flat roofs carry the
-  penthouse and the shafts, corrugated sheds the skylights, a gable roof with a ridge a
-  chimney (a lean-to has no ridge).
-  **The clutter is the only thing zoom changes about buildings** —
-  `BuildingZoomBucket` (`ROOF_CLUTTER_MAX_ZOOM` 0.5 m/px) hides it once a metre stops
-  being worth two pixels — not by a rebuild: the clutter vertices carry a negative
-  material slot and the roof shader's vertex stage collapses them
-  (`material::show_roof_clutter`), so the painter's order of the houses is untouched.
+  shop, split from `Commercial`. **Size, storeys and height decide as much as the
+  class**: `is_big_box` (footprint ≥ 1200 m², ≤ 3 storeys, height ≤ 17 m) is the one
+  predicate — **the storey count is what tells a mall from a box**. What it decides: the
+  **height** (a trading level is 4.5 m), the **roof** (membrane, the skylight grid, the
+  roof plant) and the **wall** (`WallKind::BigBox`, a cassette facade with a **brand
+  band** in the building's tagged colour). A corner shop keeps a shopfront and an
+  ordinary flat roof. Detail — `parse-buildings.md`, `buildings-material.md`.
+- **Skylight grid** and **roof plant** (`map/buildings/clutter.rs`) — what a big box's
+  roof carries and nothing else does: a **regular lattice** of skylights plus a **row**
+  of air-handling units — **the deliberate exception to "a cell grid places a feature,
+  it never *is* the feature"**: real skylights stand on the frame's columns, by the
+  ruler.
+- **Roofing** (`map/buildings/roofs.rs::roofing`) — the *shape* of a roof,
+  **inferred**, not read. The private sector is **gabled** — five **`GableForm`s**
+  (gable, half-hip, gambrel, lean-to, cross gable), a dormer, the **hip** now the rare
+  case; everything else is **flat**. A **tent** is assigned, never chosen: a church and
+  a fortress take their **`LandmarkRoof`** by faith and kind. **`RoofShape`** is the same
+  kinds as an *input* — only `roof_gallery` asks for one, and a refusal there stays a
+  refusal. **`shape_facts`** hands out the numbers the choice is made from. Detail —
+  `buildings-heights.md`, `buildings-landmarks.md`.
+- **Roof material** (`map/buildings/material.rs`) — what a roof is *covered with*:
+  `RoofKind`, picked deterministically from `BuildingUse` (+ footprint size) and a
+  **seed hashed from the building's first vertex**. The colour comes from the material's
+  own palette — **the per-use roof and wall colours are gone**: a wall is picked the
+  same way (**`WallKind`**, its own ten-slot table per use, plus `GarageDoors` by
+  geometry and `Sacred` for a church). Texture from **`RoofMaterial`** (shader
+  `roof.wgsl`) reading the **`Roof` attribute** — **one code dictionary for all of it**
+  (`0` no texture, roofings, garage runs, wall claddings, a door leaf). **Roof age** is
+  the second thing the seed carries (patch count, water, fading) — **a wall has no age**
+  (it returns before the common roof pass). **A wall's coordinates are the wall's own**
+  (`meshing::WallFrame`): the vertex carries its **panel and storey in whole cells**, so
+  edges never cut a panel and corner seams meet — the shader takes `fract` and needs no
+  metres. The cladding decides the seams, the **openings** and whether there are
+  **balconies**; **who gets balconies is decided on the CPU** and rides the seed's value
+  (`WallFrame::marked`). **A door is not drawn by the shader's dice: it comes as
+  geometry, from the data** — a patch plus the leaf (`layers::push_doors`); **an arch
+  gets the same patch**. Above the last storey the wall keeps a **cornice** of plain
+  cells. **A roof is darker than the walls under it, deliberately.** Detail —
+  `buildings-material.md`.
+- **Crown** (`map/buildings/temples.rs`) — what stands **above a church's roof** (cupolas
+  on drums, a bell tower — **tiers** — a spire, a dome, minarets). **A standalone bell
+  tower is boxless** — the whole building is that crown from the ground. Colours come
+  from the tags first, the church's seed otherwise. **A crown stands on its church,
+  whole** — the tower takes the church's own west projection, a cupola sits on the roof's
+  platform, not the outline. **`Sanctuary`** is the city's churches assembled; a raised
+  part is **boxless** too. **Crowns are laid after every building of the layer**, not per
+  house. A fortress wall carries **merlons**. A **balcony** is a stack of bands laid out
+  by the **period of a section**, not per column; **a window is the only thing here that
+  replaces the surface colour**. Detail — `buildings-landmarks.md`, `buildings-material.md`.
+- **Garage rows** (`map/buildings/garages.rs`) — a cooperative drawn as **rows of
+  boxes**. Outlines within 2 m are stitched into a **run**; **every member takes one
+  shared seed** — but **the geometry belongs to the piece, not the run** (`GarageRect`):
+  each outline is **cut into near-rectangular pieces** at a reflex vertex, and the axis,
+  the cell grid and the roof are each piece's own. A piece that reads as a garage is a
+  **ribbon** (`RoofKind::GarageRow`, a seam on every bay boundary) or a **cooperative**
+  (`GarageBlock`, bay seams plus a darkened aisle per row boundary — shading, not a
+  hole). **The wall of a run says the same from the side** (`WallKind::GarageDoors`): a
+  **gate in every cell**, only on the walls running along the piece's axis. **The grid
+  is the piece's own, in whole cells, rounded down** — the remainder spread evenly over
+  all the bays. Detail — `buildings-garages.md`.
+- **Roof shadows** (`map/buildings/shadows.rs::roof_shadow_builder`) — the layer that
+  carries each building its **taller neighbours' shadow sweeps clipped to its own
+  footprint** (merged, not stacked), sitting **over** the building layers the ground
+  shadow sits under. **A pitched roof takes none**; a neighbour casts only if it is 3 m
+  taller; the drawn bodies of the neighbours are subtracted. Detail — `buildings-heights.md`.
+- **Roof clutter** (`map/buildings/clutter.rs`) — what stands *on* the roof, each item a
+  small oblique box with its own **opaque** shadow, placed by the building's seed, every
+  candidate rejected unless all four corners fall inside the footprint **and the place is
+  free**. Which items follow the **material**, not the use. **The clutter is the only
+  thing zoom changes about buildings** — a negative material slot collapsed in the
+  vertex stage, no rebuild.
 - **Lean** (`map/buildings/mod.rs`, `Lean`) — which way the *top* of a building is
-  displaced, and the second thing (with the sun) that a 2.5D building answers to. One
-  oblique skew for every building, which is what a **satellite** frame looks like: 5 km of
-  city seen from 500 km up spans fractions of a degree, so the parallax is constant (an
-  orthomosaic has none at all). `Lean` is a **per-building value** (metres of displacement
-  per drawn metre of height, held as a vector) and carries the **base key of the draw
-  order** with it: **the far end of the skew is written first**, because the top of a far
-  building is displaced onto a near one. That key only settles what nothing else does —
-  who covers whom is decided **pair by pair** (`map/buildings/order.rs::draw_order`,
-  `osm-map` skill), because one number per building cannot say that an L-shaped house has
-  one wing in front of its neighbour and the other behind it. The same question is asked
-  once more **inside** a house (`order.rs::wall_order`): its visible walls all share one
-  lift, so each is a band of constant thickness over its base, and two of them meet on
-  screen wherever the facade steps — the far one is laid first, where walking the ring laid
-  it last and let a stepped-back section cover the wall in front of it.
-  **The sun is independent of it** — the lean is the camera,
-  the shadow is the light. A radial lean away from the nadir — the signature of an
-  *aircraft* frame — was tried and taken back out: the nadir is the centre of the **map**,
-  not of the frame, so with a camera that pans the fan is only visible around the centre,
-  and following the camera is out of reach while the layer is rebuilt on the CPU (tens of
-  milliseconds). It belongs with a move of the skew into the vertex shader.
+  displaced: **one oblique skew for every building**, which is what a **satellite**
+  frame looks like. It carries the **base key of the draw order** (the far end written
+  first); who covers whom is decided **pair by pair** (`order.rs::draw_order`), and once
+  more **inside** a house (`wall_order`). **The sun is independent of it** — the lean is
+  the camera, the shadow is the light. Detail — `buildings-heights.md`.
 - **Sun** (`map/sun.rs`, `SunStyle`) — one light for the whole map, as **two knobs**:
-  **azimuth** (clockwise from north; the default 300° puts the shadow down-right at 30°,
-  the old `SHADOW_DIR` exactly) and **elevation** (default 59°, the summer noon of Tula's
-  latitude — the hour a city is photographed from the air), from which
-  **`shadow_length_scale()` = cot(elevation) = 0.60** metres of shadow per metre of height
-  and **`sun_stretch()`** — the same number relative to that default, which is what every
-  length calibrated at 59° is multiplied by (the buildings' `SHADOW_LENGTH_RANGE`, the
-  crowns' shadow heights). Section *Sun*, persisted, and the same two knobs stand in
-  `roof_gallery`. **It is read through a process global**, not a `Res`, for the
-  same reason the navtile size is (`grid::navtile_size`): `shade_by_light`, the shadow
-  sweep, the roof clutter and the cars are pure functions deep inside mesh building. What
-  the global holds is the ready shadow vector and cotangent, not the two angles: it is read
-  hundreds of thousands of times per layer build, and `sin`/`cos` from under an atomic are
-  not hoisted out of a loop. **In the app only `apply_sun` writes it** (an offline tool with
-  no app and no schedule — the `map_meshing` bench — writes through `map::apply_sun_style`,
-  the plain function `apply_sun` itself calls) — once in `Startup` after
-  `seed_sun` (so that `init_roof_material`, which bakes the light into the roof material's
-  uniform for the life of the process, reads the *saved* sun and not the compile-time one),
-  and then every frame in `PreUpdate`. That makes the global readable on the main thread in
-  `Startup` after that pair and between `PreUpdate` and the end of `Update`, and nowhere
-  else (a reader in `PostUpdate`, in the render world or on a worker thread must take
-  **`SunOnMap`** as a resource instead).
+  **azimuth** (default 300°) and **elevation** (default 59°, the summer noon of Tula's
+  latitude), from which **`shadow_length_scale()` = cot(elevation)** and **`sun_stretch()`**
+  — what every length calibrated at 59° is multiplied by. **It is read through a process
+  global**, not a `Res` (the readers are pure functions deep inside mesh building); what
+  the global holds is the ready shadow vector and cotangent, not the angles. **In the app
+  only `apply_sun` writes it** — once in `Startup` after `seed_sun`, then every frame in
+  `PreUpdate`; everywhere else a reader takes **`SunOnMap`** as a resource.
 - **`SunOnMap`** — the sun the map is *built* with, as against `SunStyle`, the sun on the
-  slider. `settle_sun` moves one into the other after `SUN_SETTLE` (0.35 s) of quiet, and
-  it is `SunOnMap` that both the global and every rebuild follow (`retuned::<SunOnMap>`:
-  building layers with their shadows, tree crowns, cars, wagons, fences, the industry
-  layers, the road layers (the bridge shadow is baked into that mesh), the roof
-  material's `light`
-  uniform) and that the settings file is written from. One division of the slider costs a
-  full building rebuild with its shadow union, so a drag across the scale would otherwise
-  be seventy of them.
-- **Soft shadow** (`map/buildings/shadows.rs::shadow_builder`) — a building's shadow is no
-  longer a hard silhouette: every contour of the union carries a **1 m band fading to zero
-  alpha** (`PENUMBRA_WIDTH` — the photographic soft edge, which comes from the frame's
-  resolution and the sky's fill light, not from the sun's angular size, and is therefore
-  chosen by look), outward from the outer ring and into the gap from a hole. Its width is
-  **tapered per vertex by `penumbra()` = the band direction projected on `shadow_dir()`**: a
-  shadow meets its own building hard and blurs with distance, so the contact edge gets no
-  band at all, the far edge the full metre, and a lateral edge grows from one to the other.
-  Untapered, the metre also ran along the contact contour and left a soft dark blot on the
-  sunlit side of every convex corner — the building came out ringed exactly like the
-  **contact skirt** that was taken back out of the union. What goes into
-  the union is still the silhouette sweeps and nothing else — and those sweeps are
-  **built once per layer build** (`shadows.rs::ShadowSweeps`) and handed to both shadow
-  layers: the ground one reads them flat, the roof one grouped by building. Both layers, the
-  sweeps and the silhouette **chains** they are swept from live in
-  `map/buildings/shadows.rs`; `layers.rs` keeps the facades, the roofs and the extrusion,
-  and with them `silhouette_edges` — the per-edge silhouette, which is about walls, not
-  shadow. Both shadow layers —
-  ground and roof — carry **`BuildingShadowTag`** rather than `BuildingLayerTag` and are
-  rebuilt only when the height mode or the sun changes: together they are the most
-  expensive thing the building layers build, and they do not depend on the roof-clutter
-  zoom bucket.
+  slider. `settle_sun` moves one into the other after 0.35 s of quiet, and it is
+  `SunOnMap` that both the global and every rebuild follow — one division of the slider
+  would otherwise cost a full building rebuild with its shadow union per step.
+- **Soft shadow** (`map/buildings/shadows.rs::shadow_builder`) — every contour of the
+  shadow union carries a **penumbra band fading to zero alpha**, **tapered per vertex by
+  `penumbra()`**: a shadow meets its own building hard and blurs with distance — the
+  contact edge gets no band at all. What goes into the union is still the silhouette
+  sweeps, **built once per layer build** (`ShadowSweeps`) and handed to both shadow
+  layers. Both carry **`BuildingShadowTag`**, not `BuildingLayerTag` — they rebuild only
+  when the height mode or the sun changes.
 - **Map seed** (`map/seed.rs`) — one Park–Miller LCG (`Lcg`) and one point hash
-  (`seed_from_point`) shared by everything the map *layers* scatter: crowns, roof clutter,
-  the roof material, parked cars, standing wagons. `Lcg::next_f32` is `[0, 1)` by a clamp,
-  not by arithmetic — the `u32 / 2³¹−1` division rounds up to exactly `1.0` on 63 of the
-  generator's states — and **`Lcg::range` is half-open only almost**: `from + t·(to − from)`
-  still rounds to `to` itself on a long range, so a caller that needs strict half-openness
-  clamps at the call site, the way the wagon rake does. **The seed is the object's own
-  reference point** — the first vertex of a footprint, the first point of a street — never
-  its index in the extract, so a zoom rebuild, a height-mode switch and a restart move
-  nothing. The parse stage (doors, tree planting) keeps its own point-seeded
-  `rng::lcg_seeded_by`.
-- **Arclength walk** (`map/along.rs`) — `arclengths` + `place_on_path`, the one walk along a
-  polyline's **whole** length, shared by every layer that places objects along linear
-  geometry (parked cars, standing wagons) the way `map/seed.rs` shares the RNG. The defect
-  it exists against is a per-link `points.windows(2)` walk: a city polyline's link is
-  routinely shorter than two end margins, so such a walk drops the link whole, resets the
-  step at every vertex and keeps a margin clear of every interior bend. Curvature stays the
-  caller's problem — checked by **world** distance to the last object placed, never by the
-  arc coordinate. Both edges of `[0, total]` are **inside**: the walk hits the end exactly,
-  and a refusal there would drop the last object of a row. A repeated vertex does not eat a
-  place either — coinciding vertices are one point, and the direction comes from the nearest
-  link that has length; `None` is left only for a polyline with no length at all.
-  `densify` lives beside it — a polyline refined to a step, original vertices kept exactly
-  (the bridge shadow's rise and the parse's storey probes read it; the pair alignment keeps
-  its own copy, whose arclengths come off the OSM links — summing the refined steps
-  instead moves the halves by the last bits, and the drawn medians with them).
-- **Shape vocabulary** (`map/shapes.rs`) — the one dialect of `i_overlay` on the map, shared
-  by the parse's lot paving, the big lot's kerb and the gores the way `map/seed.rs` shares
-  the RNG: `Contour` / `Shape`, the offset rounding `ARC`, the ring tolerance `RING_EPSILON`
-  with `is_ring`, `oriented` / `area_contours` (the CCW-outer, CW-hole winding NonZero
-  needs), `contour_area` / `shape_area` / `contour_bounds`, `ring_of`, `point_in_shape`,
-  `stroke` and `push_shape`. The defect it exists against is a second copy of the set,
-  which is also what tied `roads/lots.rs` and `roads/gores.rs` into a circle of imports.
-  `stroke` takes «closed ring» as an **argument**: the roads stroke a ring without caps,
-  the parse strokes its road pieces open whatever shape they come out.
-- **Entrances** — real `entrance=*` nodes are attached to building outlines by exact vertex
-  lookup; coverage is thin everywhere, so `map/osm/entrances/` **generates** doors for the
-  ~98 % of buildings without one. Doors face the street, and **how a building is doored is
-  a property of the building, not of the module** (`DoorPitch`): a dwelling is counted in
-  *подъезды* by its **length** at a measured pitch (`ENTRANCE_SPACING` 25 m, floor
-  `ENTRANCE_MIN_SPACING` 12 m), a **retail box** (`is_big_box`) has no подъезды at all but
-  **entrance groups**, counted by its **perimeter** at `BIG_BOX_ENTRANCE_SPACING` 55 m with
-  a floor of `BIG_BOX_MIN_SPACING` 45 m — the box has doors on every side, so its
-  equivalent length would count one facade of four, and the wide floor is what spreads the
-  groups round the outline instead of heaping them in the corner nearest the street.
-  Walls a neighbour stands against get none, an edge under `ENTRANCE_MIN_FACADE` (6 m) is
-  a step in the outline rather than a facade and gets none either, **a door never stands in
-  an arch** (`PassageIndex`: a `passage` road eats the wall whole, so the opening plus
-  `ENTRANCE_ARCH_CLEARANCE` (3 m) is out for the street door, for its courtyard twin and for
-  a door **mapped in OSM** alike — and for the last-resort pass too, which drops every other
-  rule but this one; only a building whose every candidate point is in an arch gets a door
-  there anyway),
-  and the result is deterministic per building (LCG seeded by its first vertex). **A residential building is counted by its plan and
-  height as well** (`plan_sections`, a floor under the cohort): 300 m² of plan per подъезд
-  at nine storeys, scaled by `sqrt(storeys / 9)` — length alone left a nine-storey
-  32 × 32 m block, a hundred flats, with one door, and a volume-linear count would charge
-  for the height twice, since a подъезд is a stack whose own capacity grows with it. It
-  stands down for anything that is not housing, for anything without a height or under
-  `SECTION_MIN_HEIGHT` (12 m), and for a **свечка** — a compact 45 m+
-  tower, where one lobby for the whole building is normal. **Real doors are never moved — the
-  one dropped is a door in an arch, where there is no wall to hang it on — and a
-  half-mapped building is topped up**: one mapped `entrance` used to make the generator skip
-  the building whole, and a London block a quarter of a kilometre long kept its single door.
-  A mapper marking one подъезд and stopping is exactly what the cohort measurement already
-  guards against with its "two doors or more" threshold; the generation now guards against it
-  too, real doors going in first and the cohort adding only what is missing.
-  **A section's подъезд is through** (`through_doors`): a `building=apartments`/`yes`
-  outline at least `THROUGH_MIN_LENGTH` (40 m) long gets the courtyard half of every door,
-  found by a ray inward that must exit `THROUGH_DEPTH_RANGE` (8–20 m) away on a wall facing
-  back. It is the same подъезд, not another one, so the cohort count does not grow — but the
-  **point count does**: the courtyard leaf is an element of `PolyArea::entrances` in its own
-  right, and nothing in the model tells the two halves apart, so a wander target is drawn
-  from it like any other door, the `doors` gizmo circles it, `layers::push_doors` hangs a
-  leaf on the wall for it, and `generate_entrances` counts these **twins** as a term of their
-  own (inside the `N generated`, with a line saying how many of that N are courtyard halves).
-  The depth ceiling is what keeps a **свечка**, a compact new tower with one entrance, from
-  growing a second door on its back.
-- **Trees** (`map/osm/planting.rs`) — planted **only inside Wood polygons** plus standalone
-  surveyed trees and `tree_row` avenues; deterministic LCGs seeded by geometry. **Planting
-  runs once at the density ceiling**; the density slider shows a monotone *prefix*
-  (`TreeSet::visible`), never a replant. The ceiling (`TREE_DENSITY_MAX` 6.5×) is derived
-  from `TREE_MIN_SPACING` (6 m) saturation, not chosen. Health check — the `osm parse: N
-  trees planted of M asked …` log line. **Crown geometry** is all in `CrownParams`
-  (`map/trees/crown.rs`), built by `crown_variant`; **the city is drawn with
-  `CrownParams::default()`**, whose `seed` picks the **crown set** (the city: **set 5**) —
-  a whole `TREE_VARIANTS` of silhouettes at once, since **a single variant cannot be
-  re-rolled**. Every crown side by side, knobs live: `cargo run --example tree_gallery`.
-  **The crown is coloured by a material of its own**, **`CrownMaterial`**
-  (`map/trees/canopy.rs`, shader `crown.wesl`), not by a flat fill: the side facing the
-  sun is lighter, the far side darker with a falloff by radius, and a leaf ripple by
-  world position keeps two neighbouring trees of one variant from being copies. The ink
-  of the outline and the hatching is mixed toward the foliage (`INK_FOLIAGE_MIX`) — from
-  the air a crown has no outline, it has a shaded edge. **Crown detail follows the zoom
-  step** (`CrownDetail`): near, a full crown is an entity per tree over its variant's
-  shared mesh; far (from 2 m/px), the crowns are light fills in the full crown's average
-  colour, **merged into `tree_crowns` chunks** of `CROWN_CHUNK` (1 km) — no entity per
-  tree, each chunk on its own z, crowns inside a chunk drawn in `TreeSet` order. **The
-  trees are built once for every zoom step**: crown entities, merged crown chunks and
-  `tree_shadows` layers are split by **density band** (the trees between two steps'
-  prefixes) and each carries a `TreeLodMask` of the steps that draw it; a step crossing
-  (`show_tree_lod`) only flips `Visibility` — no rebuild. The near step's crown entities
-  are **streamed** (`CrownStream`): spawned in batches, hidden, on the way in — the shown
-  step (`TreeLodShown`) waits for the last batch — and despawned in batches on the far
-  steps, where hidden entities would cost every frame. Detail in the `osm-map` skill's
-  `references/trees.md`.
-- **Pitches** (`map/pitch.rs`) — sports and children's grounds (`leisure=pitch|track|
-  playground|sports_centre|stadium`), `Z_PITCH` 2.005 with the markings at 2.006 —
-  **over every road ribbon** and parking, under water: OSM runs yard footways across a
-  field, and on a photo the field is whole. What a
-  courtyard is *made of* on a photo: a green football field with white lines, a blue
-  basketball box, the rust-orange oval of a running track, the sandy patch of a
-  playground. `PitchKind: Soccer | Hard | Track | Playground | Ground` decides the
-  surface colour; the kind comes from `leisure`, then `sport`, then `surface` (a nameless
-  yard pitch is a hard court more often than a lawn). **Only `Soccer` and `Hard` get
-  markings** — perimeter, centre line, centre circle, and penalty boxes on a field over
-  `PENALTY_MIN_LENGTH` (45 m) — drawn in the `min_area_rect` frame and only when the
-  outline fills that frame to `RECT_FILL_MIN` (0.85, the same number the gable roof uses)
-  and is over `MIN_AREA` 150 m²: on an L-shaped patch the centre line would run over the
-  lawn. Tula: 128 in the bbox, 118 reach `MapData::pitches` — the rest carry `building=*`
-  as well and stay buildings.
-- **Parking lots** (`map/parking.rs`) — an `AreaKind::Parking` area is asphalt
-  (`Z_PARKING` 2.001, **over every road ribbon and sidewalk**, under pitches and water)
-  with its **stalls drawn on it** (`Z_PARKING_LINES` 2.004, a flat
-  material, no procedural texture on top of paint). `stalls_beside(area, aisles, through,
-  drives)` lays them out
-  under one law: **a car has to be able to drive to every stall.** Where the lot is
-  driven is drawn in OSM — **`service=parking_aisle`** (`RoadLine::parking_aisle`), the
-  only thing the layout reads out of the road network. `aisle_rows` then lays stalls
-  **by the pocket between neighbouring aisles**: a pair of rows back to back down its
-  middle, noses out, the remainder split between the two sides as the drive. The stall's
-  **depth is a field, not a constant** — the pocket sets it, clamped to
-  `STALL_DEPTH_MIN` 4.8 m, so the drive keeps at least `PAIR_AISLE` 5 m. Counting a
-  fixed offset off each centreline instead needs 16.4 m between aisles: the mall lot
-  spaces them 16–19 and was fine, the hospital lot spaces them 14.8 and lost every
-  second row, and a lot striped one row per aisle is not how anyone parks.
-  The lane grid is **continued by its own step out to the outline**, and a row spans the
-  lot, not the aisle: aisles stop short of the edge in OSM, so without it two sides of
-  the lot carried a broad band of bare asphalt while the other two were stalls to the
-  kerb. No invented `ROW_BLOCK` along an aisle-driven row, but the block break OSM does
-  draw is honoured: OSM draws a cross drive as a **gap** — one lane's aisle cut into two
-  collinear runs with an aisle-wide gap between them — and a gap repeated in at least a
-  second lane is kept clear across every row (`cross_drives_of`). Tula's mall lot carries
-  exactly one such drive, visible in 21 of its 37 lanes, 5.1–6.0 m wide. `Placed` (a grid
-  of placed stalls and a separating-axis test) keeps a cross aisle from striping over
-  the main rows. Tula's mall lot carries 50 aisles, 44 along the long axis and 6 across.
-  A lot with no aisle in it gets an **invented** layout (`generated_rows`) — rows along
-  the **longest side of the outline** (not the long axis of `min_area_rect`: on a lot
-  pulled to the road that axis swings off the side the lot reads by).
-  Across (`row_bands`) that is `row — aisle — pair of rows
-  back to back — aisle — pair`: the row at the edge takes its aisle from behind, each pair
-  has one on either side, and a pair's second row is dropped where the lot ends right
-  behind it — its back is in the neighbouring row and its nose in the kerb. Which way a
-  row faces is read off those gaps (`row_noses`), one answer per row and not one per lot,
-  or the first row of every pair stands nose to the second one's back. Along
-  (`row_places`) it is that a row does not run the length of the lot: every `ROW_BLOCK`
-  50 m a `AISLE`-wide cross drive breaks it, in line across all the rows, so a big lot
-  reads as blocks of stalls with drives between them instead of one field of hatching.
-  `STALL_WIDTH` 2.6 × `STALL_DEPTH` 5.2, `AISLE` 6.0, `EDGE_MARGIN` 1.2. The paint is a bar
-  to the left of each stall (neighbours coincide) plus a **closing** one where a run
-  begins — at a cross aisle, or the block's edge stall reads as open.
-  That "left" makes the **order of the list load-bearing**: a row has to be emitted along
-  `-perp(Stall::along)`, which is why the far side of an aisle is laid out back to front.
-  **A bar is drawn only where a stall would fit on its other side** (`fits_with` at
-  `EDGE_MARGIN`): a bar divides two stalls, and at the end of a row it divided a stall
-  from the kerb — a line nobody paints, reading as a stroke into nothing. Asking merely
-  for asphalt half a stall past it was not enough, since the wedge beyond the last stall
-  of a skewed kerb is still asphalt.
-  Three rules decide **which stalls exist at all**, each answering the same picture. Two
-  hold for any stall on either layout: it must sit in a run of at least `MIN_ROW_RUN` 2
-  stalls (the one stall a row shrinks to at a wedge takes its bars with it), and it must
-  have asphalt in front of its nose to drive off (`reachable`, probed at both front
-  corners — the continued lane grid otherwise puts a row whose drive is already outside
-  the lot; a lot striped **one row wide** is the exception, entered from the street and
-  never asked). The third is a rule of the **aisle-driven** row, where the aisle comes
-  from OSM and is tied to the outline in no way: it must clear the outline by
-  `EDGE_MARGIN` rather than merely fall inside (four corners, `fits_with`). The invented
-  layout gets that clearance from its own grid, which is inset by `EDGE_MARGIN` from the
-  bounding box on all four sides, and asks only that the stall fall inside whole
-  (`fits`) — demanding clearance to the outline there deletes a wall-side row of a skewed
-  lot outright instead of shifting it (measured: −13.1 % of stalls over Tula's 277 yard
-  lots, 16 of them emptied; cache 7600 × 5700, v14).
-  So an L-shaped lot gets nothing in the notch; a lot under `MIN_AREA`
-  (120 m²) gets no markings at all — a yard for four cars is not striped, though its
-  stalls stay and cars stand on them. **The markings and the cars read the same
-  `ParkingLayout`** — the layout computed once per world load, not per rebuild — or a
-  car would stand across its own line.
-  The lot lying over the roads is what hides the OSM aisles, entries and footways
-  running into it: its own outline clips every ribbon exactly, and the lot's asphalt
-  *is* the aisle. A road hidden under the lot still leaves no gap in the rows — the
-  layout reads an aisle as a **direction**, never as a ribbon to keep clear. **The lot's asphalt is the road's** — `PARKING_COLOR` *is*
-  `roads::ROAD_COLOR`, on the same `SurfaceKind::Street` material, so a lot lying over
-  its street reads as one surface; a tone of its own drew a patch at every lot. For the
-  same reason the lot has **no rim**, unlike the greenery, sand and pitches: a kerb band along its
-  outline was a gradient across each drive running into it.
-  **And the outline reaches the road it is entered from** — the parse paves it there
-  (**Lot paved to its roads** above), so the strip of ground between the lot and its
-  perimeter drive, which read as light pockets between the aisles crossing it, is asphalt
-  like the rest of the lot; where the paved strip is wide enough the layout stripes it too.
-  **Big lot** (`LotKind::Ground`: the **paved** outline ≥ `GROUND_MIN_AREA` 8000 m², settled
-  by `parse/lots.rs::pave_lots`; `parking::is_ground` reads it) — the one kind of
-  lot that does **not** hide every road on it. A **through road** (`parking::is_through`: a
-  street that is one-way, a roundabout or a carriageway, and not a `parking_aisle` — at
-  ТРЦ «Макси» the boulevard with its three mini-roundabouts; the other big lots of Tula
-  carry only untagged two-way aisles) is shown on the lot's asphalt by `roads/lots.rs`,
-  and by its **kerb** alone — the asphalt is the lot's own tone and is not laid twice.
-  The kerb (`lot_sidewalks`, `Z_LOT_SIDEWALK` 2.002, `SidewalkProfile::kerb` — the band
-  by class, `parking::LOT_KERB` on a drive) is a
-  **polygon, not ribbons**: the through roads' bands with their kerbs and the islands of
-  the roundabouts, minus the asphalt of every street on the lot (an aisle cuts its
-  **mouth**, so along the boulevard the kerb comes out as islands at the row ends) and
-  the **gores**, within the outline grown by `KERB_OVERHANG` 2 m (so it meets the
-  sidewalk of the street it is entered from without a jog), opened by `KERB_OPENING`.
-  As ribbons, each road's asphalt lay over every other road's kerb and chopped it to
-  ragged scraps at the roundabouts. A paved **median** of paired halves (above) gets no
-  kerb on the lot but its **double solid line** again in `lot_lines` (`Z_LOT_LINES`
-  2.003, flat paint) — the street paint layer lies under the lot's asphalt; the lot takes
-  the stretch of the network's median over it and does not look for pairs itself. At a
-  gore the line is cut by the hatching and each piece stops `MEDIAN_GORE_GAP` 0.6 m
-  short of it (`Gores::reach`, shared with the paint layer); a gore that nowhere reaches
-  `GORE_MIN_WIDTH` 1.5 m is not hatched at all — the double solid runs through it. **Gore** (`roads/gores.rs`) — the
-  splitter island at a roundabout: the wedge between the entry arm, the exit arm and the
-  ring is **asphalt with diagonal hatching**, not a triangle of sidewalk or kerb. A
-  property of the network at a ring, not of a lot: computed for every roundabout
-  (`RoadLine::is_roundabout`), a wedge counting only if it touches **two arms**, and an
-  arm closing only over its **fan** — while the gap to its neighbour still narrows faster
-  than 0.5 m per 10 m; where the halves run side by side it is the pair's double solid,
-  not hatching (`gores::fan_head`); the
-  **fan** of an entry and an exit (the legs of a Y-approach among them) meeting in one
-  node within 55 m is taken whole, from the
-  ring to that node (`gores::fans`), less the ring's asphalt and its island (a ring
-  chained from arcs too — `Ring::path`). The whole
-  wedge is asphalt, the wedge without its thin tips is what gets hatched — by the road
-  paint layer's shader (`road_paint_islands`), which fades it with zoom; the outline is an
-  **area** (the shape minus itself shrunk by the line width), never a strip along the
-  contour, so it cannot overlap itself or the hatching. A **mouth** (`gores::mouths`) is
-  the same island where no ring is: a void hemmed in on every side by carriageways
-  (the halves of a divided street parting, a link closing the gap), with nothing mapped
-  in it, up to 250 m². A **splitter**
-  (`gores::splitters`) is the same island set **by rule** on an approach mapped as one
-  two-way way, where there is no fan and so no wedge — only where that approach leaves
-  the ring along its ray, never on one running along the ring. A **fork gore**
-  (`corners::fork_gore`) is the same hatching ahead of the nose of a sharp fork of two
-  streets away from a ring: it starts where the narrower street's axis has left the wider
-  one's carriageway and widens to the nose, so the two ribbons' overlap is no longer
-  one long tongue of plain asphalt. **Closedness of
-  a way is read off the raw OSM points, never off the drawn path** — a style knob must not
-  decide whether a way is a ring. No stall stands under
-  a through road or its kerb (`Surroundings::cover`). A small lot hides its roads as
-  before.
-  Six more rules of the layout: **a pair of rows is a rectangle** (`Frame::push_pair`) —
-  whose ground it is is asked once, at the pair's centre, and an overhang of up to
-  `PAIR_OVERHANG` 2 stalls with no partner behind is trimmed; **aisle fields** (`fields_of`) — aisles of a second
-  direction (`FIELD_MIN_LANES` 3 lanes or more; the mall's east wing, 40° off the main
-  grid) are striped along themselves, and the ground belongs to the field whose aisle run
-  is nearest (`Frame::territory`); **aisle blocks** (`blocks_of`) — within one direction,
-  aisles on the two sides of a through road are separate ways and do not line up, so each
-  block keeps its **own lane grid**: in one shared grid a southern lane split a northern
-  pocket, and a single row stood where a pair belongs; a **pocket** (`pocket_depth`: a one-row strip along a
-  street, read off `2·area/perimeter`) gets its row along the **sides of the outline**
-  with only `STRIP_MARGIN` 0.2 m to the kerb, nose to the street; a **kerbside lot too thin
-  for that** (`LotKind::Kerbside` under `STALL_DEPTH_MIN` across — most OSM lay-bys) gets a
-  **parallel row** (`parallel_rows`): cars along the kerb, `PARALLEL_LENGTH` 6 m apiece down
-  the middle of the strip, facing the traffic of their side, and no paint
-  (`Stall::parallel`); a yard strip that thin stays empty; **asphalt in front of a
-  nose is also a street's band beside the lot** (`Surroundings::paved`), not only the lot;
-  and **overlapping lots do not share stalls** — neighbours paved to one drive overlap in
-  the gap between them, so `ParkingLayout::new` lays lots out from the largest down and
-  drops a stall that lands on one already standing. Point tests go through `Outline`, an
-  index of the ring's edges by horizontal bands — a paved outline carries hundreds of
-  vertices on its fillets.
-  Render-only. Tula, cache v14: 349 lots parsed, 355 once the apron has cut some of them in parts.
-- **Asphalt wear** (`surface.wesl`, `SurfaceParams::wear`) — an asphalt road on a photo is
-  never one tone. **Wheel ruts** in the **lane frame**, so they follow the lane and not
-  the compass (a polished band 0.85 m either side of each lane's middle — the track of a
-  car — measured with `fract` of the lane index on the grid the paint lines stand on, so
-  every lane gets its own pair and a taper's ruts stay between its lines),
-  **zero-mean** so a marked street is on average the same tone as an unmarked drive
-  running into it. **Kerb dirt was removed**: a drive joins a street with no junction
-  gap, and the street's dark kerb band ran across every drive mouth.
-  **Repair patches were tried here and removed.** A 6 m world cell whose hash cleared a
-  threshold was darkened whole — which is a chequerboard aligned to the compass, not a
-  patch: the edge is the cell boundary, two chosen neighbours fuse into a right-angled
-  block, and on a diagonal street the stack of squares steps across the lane. It is the
-  very construction `repair_patch` on the roofs was rewritten to stop doing (**A cell grid
-  places a feature, it never *is* the feature**), and it read as badly on asphalt. Don't
-  reintroduce a per-cell fill; a patch has to be a jittered shape inside its cell, in the
-  lane's own frame.
-  The ruts **fade out in a junction gap** by the same `to_break` the lane dashes use,
-  over 5 m: a crossing has no lane to polish a rut down, and without the gate the two
-  streets drew their ruts straight through each other.
-  Wear rides the **lane frame** (`roads::road_lanes`): every carriageway gets one, a
-  one-lane street included, whatever `RoadStyle.markings` says — the amplitude is its own
-  knob (**Wear**, `RoadPaintStyle::wear`). A drive, a path and any areal fill of the same
-  `SurfaceKind::Street` material (the parking lot among them, which carries no ribbon at
-  all) have no frame and stay flat.
-- **Industry** (`map/industry.rs`) — what gives an industrial belt away from the air is
-  not the sheds (those are the same boxes as everywhere) but **round spots and their
-  shadows**, and the overhead heating main. `MapData::structures` holds the cylinders
-  (`man_made=storage_tank|silo|chimney|water_tower|gasometer`, `Structure`: centre,
-  radius, height, kind) — each drawn as three layers the way a house is: the shadow (the
-  **sweep** of its disc along the light, not a shifted disc — a cylinder is solid from
-  the ground up), the visible wall (the **near** half — the one turned away from the same
-  `Lean` the houses use, since the top leans away from the camera — one quad per facet
-  shaded by `shade_by_light`, which is what makes it read round instead of faceted) and the top with a darker rim. A chimney is a 2.5 m circle nobody
-  would notice and a 36 m shadow everybody does. `MapData::pipes` holds the overhead
-  pipelines (`man_made=pipeline`, `PipeLine`) — a line and its shadow, but on 3 m
-  trestles, so it steps over everything standing on the ground rather than stopping at
-  it. **Only an explicitly above-ground pipeline is kept** (`location=
-  overground|overhead|bridge`) — the inverse of the rail and waterway rule, because an
-  untagged pipeline in OSM is buried. Neither touches the navmesh, like the trees.
-  **`IndustryStyle::visible` is the whole style surface, and it is off by default** —
-  the `Industry` row of the Buildings section, the tram's arrangement exactly: its own
-  resource, so a toggle rebuilds this layer and nothing else.
-  Tula: 8 chimneys, 2 water towers, 22 pipelines (1.2 km); Berlin has 2846
-  cylinders.
-- **Standing wagons** (`map/wagons.rs`) — a station throat with empty rails reads as a
-  diagram; half the area of a real one is taken by standing stock. Same trick as the
-  parked cars, aimed at where they stand: wagons go **only on service track**
-  (`RailLine::service: Option<ServiceTrack>`, from `service=siding|yard|spur` —
-  `crossover` is a link between running lines and nobody parks on it), never on the
-  running line, where a train is either moving or absent. **Service track is not yet a
-  station**, and density follows the place: a station is a **fan** — the number of other
-  active tracks within `FAN_REACH` 12 m of a rake's middle — and each rake stands with the
-  share `FAN_FILL` gives that width (0 / 1 / 2 / 3+ neighbours: 1.4 % / 7 % / 28 % / 52.5 %),
-  halved on a `Spur`. A park fills, a lone spur to a plant stays almost empty. They stand in **rakes** — several coupled 13.9 × 3.1 m cars
-  with `COUPLED_GAP` 0.9 m between them, then an empty stretch of 12–90 m; an even row at
-  a fixed pitch would read as a fence. The rakes are stepped along the **whole track's**
-  arclength (**Arclength walk** above), so the end margin is kept clear of the track's ends
-  — where the switch is — and not of every bend in it. A 3.8 m body throws a long shadow by the same
-  `shadow_length_scale()` as everything else. Decoration only, like the cars, but with no
-  style knobs of its own: the layer comes off by zoom alone. They have a zoom bucket of
-  their own (`WAGON_MAX_ZOOM` 2.0 — a wagon is three times a car's length, and
-  2.0 m/px leaves it the same ~7 screen pixels at which a car is already dropped, so the
-  yards survive 2.5× further out than the rows) at `Z_WAGON` 2.045, above the steel and,
-  like the track, below the bridges. **No
-  `QUERY_VERSION` bump was needed**: `out geom` already carries every tag of the element,
-  so `service` was in the cache all along.
+  (`seed_from_point`) shared by everything the map *layers* scatter. **The seed is the
+  object's own reference point** — its first vertex — never its index in the extract, so
+  a zoom rebuild, a height-mode switch and a restart move nothing. The parse stage keeps
+  its own point-seeded `rng::lcg_seeded_by`.
+- **Arclength walk** (`map/along.rs`) — `arclengths` + `place_on_path`, the one walk along
+  a polyline's **whole** length, shared by every layer that places objects along linear
+  geometry; the defect it exists against is a per-link walk that drops short links and
+  resets at every vertex. **Both edges of `[0, total]` are inside.** `densify` lives
+  beside it — original vertices kept exactly; the pair alignment keeps its own copy whose
+  arclengths come off the OSM links.
+- **Shape vocabulary** (`map/shapes.rs`) — the one dialect of `i_overlay` on the map:
+  `Contour` / `Shape`, `ARC`, `RING_EPSILON` with `is_ring`, `oriented` / `area_contours`
+  (the CCW-outer, CW-hole winding NonZero needs), the area helpers, `stroke` and
+  `push_shape`. **`stroke` takes «closed ring» as an argument**: a road ring is stroked
+  closed, the parse strokes its road pieces open whatever shape they come out.
+- **Entrances** — real `entrance=*` nodes attach by exact vertex lookup; coverage is
+  thin, so `map/osm/entrances/` **generates** doors for the rest. **How a building is
+  doored is a property of the building** (`DoorPitch`): a dwelling by its **length** at a
+  measured pitch, a **retail box** by its **perimeter** with wide floors — entrance
+  groups; walls a neighbour stands against get none, **a door never stands in an arch**,
+  and the result is deterministic per building. **Real doors are never moved** (an arch
+  door is the one dropped) **and a half-mapped building is topped up**. A **section's
+  подъезд is through** — the courtyard half added as its own `entrances` element, the
+  cohort count unchanged. Detail — `entrances.md`.
+- **Trees** (`map/osm/planting.rs`) — planted **only inside Wood polygons** plus
+  standalone trees and avenues; deterministic LCGs seeded by geometry. **Planting runs
+  once at the density ceiling**; the slider shows a monotone **prefix**. **Crown
+  geometry** is all in `CrownParams` (`map/trees/crown.rs`); **the city is drawn with
+  `CrownParams::default()`**, whose seed picks the **crown set**. **The crown is coloured
+  by a material of its own** (`CrownMaterial`, shader `crown.wgsl`). **Crown detail
+  follows the zoom step**: near, an entity per tree; far, light fills **merged into
+  chunks** — and **the trees are built once for every zoom step**, split by density band,
+  a crossing flipping `Visibility` only. The near step's crown entities are **streamed**
+  (`CrownStream`). Detail — `trees.md`, `tree-algo.md`.
+- **Pitches** (`map/pitch.rs`) — sports and children's grounds, **over every road ribbon**
+  and parking, under water: OSM runs yard footways across a field, and on a photo the
+  field is whole. `PitchKind` decides the surface colour; **only `Soccer` and `Hard` get
+  markings**, and only when the outline fills its `min_area_rect` frame.
+- **Parking lots** (`map/parking.rs`) — an `AreaKind::Parking` area is asphalt (**over
+  every road ribbon and sidewalk**, under pitches and water) with its **stalls drawn on
+  it** in flat paint. `stalls_beside` lays them out under one law: **a car has to be able
+  to drive to every stall.** Where the lot is driven OSM draws — **`service=parking_aisle`**,
+  the only thing the layout reads out of the road network; stalls go **by the pocket
+  between neighbouring aisles**, the stall's **depth is a field, not a constant**. A lot
+  with no aisle gets an **invented** layout: rows along the **longest side of the
+  outline**, `row — aisle — pair` across and `ROW_BLOCK` cross drives along. Three rules
+  decide **which stalls exist at all**: a run of at least two, asphalt in front of the
+  nose (**reachable**), and — on an aisle-driven row — clearance to the outline. **The
+  markings and the cars read the same `ParkingLayout`** — computed once per world load,
+  not per rebuild. **The lot's asphalt is the road's** (`PARKING_COLOR` *is*
+  `roads::ROAD_COLOR`, same `SurfaceKind::Street`), so the lot has **no rim**; its
+  outline clips every ribbon exactly. A lot under `MIN_AREA` gets no markings.
+  Detail — `parking-layout.md`.
+  **Big lot** (`LotKind::Ground`, ≥ 8000 m² paved) — the one kind that does **not** hide
+  every road on it: a **through road** is shown by its **kerb** alone — **a polygon, not
+  ribbons** (`roads/lots.rs`) — and a paved **median** gets its double solid again in
+  `lot_lines`. **No stall stands under a through road or its kerb.** Detail —
+  `parking-big-lot.md`.
+  **Gore** (`roads/gores.rs`) — the splitter island at a roundabout: the wedge between
+  entry, exit and ring is **asphalt with diagonal hatching**, not a triangle of sidewalk.
+  A property of the network at every ring: a wedge counts only if it touches **two
+  arms**, an arm closing only over its **fan**; the whole wedge is asphalt, the wedge
+  without its thin tips is what gets hatched — the outline is an **area**, never a strip
+  along the contour, so it cannot overlap itself. A **mouth** is the same island where no
+  ring is; a **splitter** — the same island **by rule** on a two-way approach that leaves
+  the ring along its ray; a **fork gore** — the same hatching ahead of the nose of a
+  sharp fork away from a ring. **Closedness of a way is read off the raw OSM points,
+  never off the drawn path** — a style knob must not decide whether a way is a ring.
+  Detail — `parking-big-lot.md`, `roads-merges.md`.
+- **Asphalt wear** (`surface.wgsl`, `SurfaceParams::wear`) — an asphalt road on a photo
+  is never one tone. **Wheel ruts in the lane frame**, so they follow the lane and not
+  the compass, **zero-mean**; **kerb dirt was removed**; **repair patches were tried here
+  and removed** — a per-cell fill is a chequerboard aligned to the compass; **don't
+  reintroduce one**. The ruts **fade out in a junction gap**. Wear rides the **lane
+  frame**: every carriageway gets one, whatever `RoadStyle.markings` says; the amplitude
+  is its own knob. Detail — `roads-bridges-wear.md` (**Asphalt wear**).
+- **Industry** (`map/industry.rs`) — what gives an industrial belt away from the air:
+  **round spots and their shadows** (`MapData::structures`, cylinders — shadow as a
+  **sweep**, the visible wall the **near** half, the top with a darker rim) and the
+  overhead **pipelines** (`MapData::pipes`) — **only an explicitly above-ground pipeline
+  is kept** (the inverse of the rail and waterway rule: an untagged pipeline is buried).
+  Neither touches the navmesh. **`IndustryStyle::visible` is the whole style surface, off
+  by default** — a toggle rebuilds this layer and nothing else.
+- **Standing wagons** (`map/wagons.rs`) — wagons go **only on service track** (from
+  `service=siding|yard|spur`), never on the running line; density follows the place — a
+  station is a **fan** of neighbouring tracks and each rake takes the share that width
+  gives. They stand in **rakes** with empty stretches between, stepped along the **whole
+  track's arclength**. Decoration only, **no style knobs** — the layer comes off by zoom
+  alone.
 - **Fences** (`map/fences.rs`) — `barrier=fence|wall|retaining_wall|hedge` as a line and,
-  more to the point, **its shadow**: from above a fence is a quarter-metre hair, and what
-  actually carries it on a photo is the dark band running out from under it. In a
-  private-house district that grid of plot boundaries is the texture of the whole district,
-  and without it the houses stand in an open field. The shadow is a **sweep** (the
-  Minkowski sum of the ribbon with the light segment, `meshing::sweep_convex` over each
-  link and joint — the cars' construction) and the sweeps of all fences are **unioned**,
-  unlike the cars': plot fences stand back to back, and at a low sun their translucent
-  shadows would stack. `FenceLine` is **not** a `WallLine` with a flag: the kremlin wall is
-  impassable end to end, a fence has gaps — roads through it and default gates (see
-  **Fence gap** and **Default gate** under Navigation) — and **a gap is drawn as a gap**:
-  the line and the shadow are laid from `footprint::fence_pieces`, the fence minus the
-  same gap discs the navmesh opens — **and minus what a bridge deck covers**
-  (`footprint::BridgeDecks`, the drawn deck with its curb as a capsule), which is the one
-  place the drawn fence and the blocking one part: the layer lies above the bridges, so a
-  fence running under a span was drawn on top of it. The **shadow** is cut there too, and by
-  a boolean difference rather than by the piece — a sweep reaches the deck sideways, from
-  under the cap of the piece that ended at the curb — and both cuts keep a reserve for what
-  is drawn wider than what is cut (the cap, the soft band). The parse branch **falls through**
-  (a way tagged both a barrier and something else must become both). The drawn width
-  **grows as you zoom out** (`FENCE_LODS`, the tram's trick, aiming at ~1.5 screen px) and
-  the layer disappears entirely past 0.9 m/px, where the grid of plots turns to dirt. The
-  shadow lives on the map's own sun, so the layer rebuilds on the zoom bucket and on
-  `SunOnMap`, never on the slider. Tula: 429 lines — 356 fences, 72 walls (one of them a
-  retaining wall), 1 hedge.
-- **Bridge shadow** (`map/roads/bridges.rs`, `Z_BRIDGE_SHADOW` 2.05) — a bridge deck throws the
-  same shadow every other object does: its own band, offset through
-  `shadow_length_scale()` by the deck height, drawn under the bridge and over whatever it
-  crosses — except what the z ladder draws above bridges (tram, cars, fences); rails and
-  wagons sit below the shadow, so a deck shades the track it spans. The invariants, all in `map/roads/bridges.rs` (mechanism and Tula measurements — the
-  `osm-map` skill):
-  **a bridge is a chain of ways, not one way** (`Bridges`, `BridgeSpan`) — ways glued
-  **end to end** at `JOIN_EPSILON` (never `ways_joined`, which would fuse bridges that
-  merely cross); what is glued is the *arithmetic* — the **span** (the whole chain's
-  length) and the distance to the nearest **free end** — never the geometry;
-  **height follows the span** (`SPAN_TO_HEIGHT` 1/8, capped at `BRIDGE_HEIGHT` 6 m),
-  because a shadow reads as height and `bridge=yes` also marks things that span nothing;
-  **a span under `SHORT_SPAN` (35 m) casts only over a gap** — water or rail, never a
-  road (`probe_underneath`, asked once of the whole chain);
-  **the offset tapers to zero at the free ends** (`RAMP_SHARE` 0.25 of the span, at most
-  `RAMP_MAX` 25 m) and stays up at an internal joint, and **is clamped by the span left
-  ahead**, so the shadow never reaches past the deck's end; the centerline is densified
-  to `SHADOW_STEP` (2 m) first, since the ramp lives in the vertices;
-  **the band's cross-section stands across the deck, not across the offset path**
-  (`ShadowPoint::normal`, mitered before the offset) — mitering the displaced path skews
-  the butt end and pokes a tongue of shadow past the abutment;
-  the band is **`SHADOW_SPREAD` (1 m) wider than the deck** on each side, tapering with
-  the same rise; **the edge is soft** — `PENUMBRA_SHARE` (0.3) of the shadow's own length
-  clamped between the car's 0.35 m and the house's 1 m, tapering with the rise;
-  the **cores of all bridges are unioned** (`i_overlay`, NonZero), the penumbra is laid
-  per bridge before the union (its width needs the rise the union throws away), so
-  neighbouring penumbras may overlap.
-- **Parked cars** (`map/cars/`) — a row of cars along every **carriageway**: the same
-  `roads::is_carriageway` that decides where a sidewalk and lane markings go (so a
-  `residential` street at 8 m parks at the kerb and a `service` drive at 5 m does not — it
-  gets a **yard row** instead, below), minus bridges
-  and roundabouts. The pitch is walked along the **whole street's arclength** (**Arclength
-  walk** above), not segment
-  by segment, and the row **breaks where the kerb pockets do** (`pockets::row_breaks` —
-  junctions, service drives, marked OSM crossings and section tapers — plus
-  `JUNCTION_CLEARANCE` 6 m measured from the car's body; at a junction of carriageways also
-  `CROSSED_EDGE_CLEARANCE` 10 m from the crossed carriageway's edge and nowhere alongside
-  the 25 m solid approach closer than 3 m to it, ПДД 12.4) rather than at the ends of an OSM way,
-  and wherever it passes under or butts into a **bridge deck** (`BridgeDeck` — no shared
-  node, so no junction, and `Z_CAR` would draw the car on the deck).
-  A **one-way** carriageway gets a single row, on the kerb of the **driving side** — which is
-  what stops the two halves of a divided avenue from parking a column down their median, and
-  is why `oneway=-1` is now normalized at parse by reversing the way. Every car **faces the
-  traffic of its own kerb**: along the way on the driving-side kerb, against it on the other.
-  Bodies at a 6 m pitch,
-  45 % of the places taken so the row comes out ragged, half a metre in from the kerb, in a
-  ten-slot palette in the shares a photo of a Russian city shows — white / silver / grey two
-  fifths, black a fifth, the rest coloured — and each turned and shifted a little, because
-  nobody parks by a ruler. Cars also **fill the lots** — `fill_lots` takes the stalls above
-  and occupies a share that **falls with the lot's size** (`lot_occupancy`: 50 % on a
-  yard of ≤ 20 stalls down to 12 % from 400, by the log of the stall count) — a full mall
-  lot reads as a dealership. **Yard rows** (`cars/yard.rs`) are the one place cars stand
-  along a `service` drive: data OSM does not carry, generated per drive from its first
-  point — one row on the right of the points, the body on the asphalt edge by `ON_ASPHALT`
-  and the rest on the lawn, only among multi-storey housing (0 at ≤ 2 storeys, full from 5,
-  × `YARD_SHARE` of the occupancy slider), never on a parking aisle or a drive under 20 m,
-  and every body **probed** (`yard::Blocked`) against buildings, lots, water, pitches and
-  other roads' drawn width — a drive has no kerb to keep a row off a facade.
-  **How densely either of them parks is decided by the district** (`cars/district.rs`,
-  `Districts`): the **area-weighted mean height** of the buildings within 120 m, in storeys,
-  multiplies both shares — ×0.25 at ≤ 2 storeys (a private-house quarter parks its cars in
-  its own yards, and on the street there are singles), ×1.15 from 5 (a microdistrict has
-  nowhere else to put them), linearly between, and exactly ×1 where there is nothing to
-  read. Weighted by footprint, not counted by building: twenty garages must not outvote the
-  slab their cars belong to. The reading is refreshed every 48 m along a street, so a street
-  leaving the private sector for a microdistrict changes density where the city changes, not
-  where the OSM way ends. Without it half of Tula was parked to microdistrict norms — 98.7
-  of its 188 km of parkable street and 46 of its 159 lots are low-rise.
-  **A car is not a rectangle** (`cars/body.rs`): a rounded silhouette with a dark cabin
-  across it — windscreen, roof, backlight — plus mirrors, and its size and the layout of
-  that cabin come from its **body type** (`CarShape`: sedan, hatchback, wagon, crossover,
-  van, in the shares a Russian yard shows). Each casts its own shadow, and it is the
-  buildings' shadow in miniature: the silhouette **swept** by the light — the hull of the
-  outline and the outline moved by `shadow_length_scale()` × the type's own height — so it
-  lies under the car and runs out from beneath it instead of standing apart from it, with a
-  `SHADOW_BLUR` (0.35 m) soft edge tapered by `direction · shadow_dir()` exactly as
-  `shadow::penumbra` tapers: hard where it meets the car, full width at the far
-  end, and no soft ring around the car (that ring is the retired contact skirt). Shadows of
-  neighbouring cars are **not** unioned — at the default sun the sweep is a metre against
-  the six of `CAR_PITCH`. **Decoration only** — cars are in no navmesh and no simulation, and pawns
-  walk through them, deliberately: a parked row along every street would eat the pavements
-  the whole crowd walks on. One merged blended mesh at `Z_CAR` (2.7), seeded per street or
-  per lot, and
-  a zoom bucket of its own (`CarZoomBucket`) that drops **detail** before it drops the
-  layer: `CarDetail::Full` → `Silhouette` → `Block` (the plain rectangle) → nothing at all
-  past `CAR_MAX_ZOOM` (0.8 m/px), where a car stops being worth six pixels. Tula: 14 669
-  cars along the kerbs, plus 1 994 in the lots, at 968 k verts / 18 ms of mesh on the near
-  step against 146 k / 3 ms on the far one,
-  plus the 1 ms of junction breaks, 3 ms of the district index and 4 ms of parking every
-  step pays alike
-  (`measure_cars` — `examples/bench/map_meshing` — now times the `Drawn::nodal` skeleton
-  and the placement on rows of their own, and each detail step as the mesh a zoom crossing
-  costs; the numbers here predate that and are the kerb row alone). The placement is
-  cached between crossings (`CarPlacement`, keyed on occupancy + road shape): a crossing
-  re-meshes the bodies and nothing else. The district multiplier is what
-  the last of those numbers moved: on one machine 21 929 → 14 669 cars and 45.7 → 36.1 ms,
-  the index costing 3 ms against 8 ms of mesh no longer laid. Every
-  street shape the row broke on, and every body type on all three detail steps, side by
-  side: `cargo run --example car_gallery`.
+  more to the point, **its shadow** — in a private-house district the grid of plot
+  boundaries is the texture of the whole district. The shadow is a **sweep**, and the
+  sweeps of all fences are **unioned** (translucent shadows must not stack). **A gap is
+  drawn as a gap** — the line and the shadow are laid from `footprint::fence_pieces`, the
+  fence minus the same gap discs the navmesh opens, **and minus what a bridge deck
+  covers** (`footprint::BridgeDecks`) — the one place the drawn fence and the blocking
+  one part. The drawn width **grows as you zoom out** (`FENCE_LODS`); the layer
+  disappears past 0.9 m/px. Detail — `layers.md`.
+- **Bridge shadow** (`map/roads/bridges.rs`, `Z_BRIDGE_SHADOW` 2.05) — a bridge deck
+  throws the same shadow every other object does, drawn under the bridge and over
+  whatever it crosses — except what the z ladder draws above bridges. The invariants,
+  all in `map/roads/bridges.rs`: **a bridge is a chain of ways, not one way** (what is
+  glued is the *arithmetic* — the span and the distance to a free end — never the
+  geometry); **height follows the span**; **a span under 35 m casts only over a gap**
+  (water or rail, never a road); **the offset tapers to zero at the free ends** and is
+  clamped by the span left ahead; **the band's cross-section stands across the deck, not
+  across the offset path**; the band is 1 m wider than the deck; **the edge is soft**;
+  **the cores of all bridges are unioned**, the penumbra laid per bridge before the
+  union. Detail — `roads-bridges-wear.md` (**Bridge layers**).
+- **Parked cars** (`map/cars/`) — a row of cars along every **carriageway** (the same
+  `is_carriageway` that decides sidewalks and markings), minus bridges and roundabouts.
+  The pitch is walked along the **whole street's arclength**; the row **breaks where the
+  kerb pockets do** (`pockets::row_breaks`) and under a bridge deck. A **one-way**
+  carriageway gets a single row on the driving side (`oneway=-1` is normalized at parse
+  by reversing the way); **every car faces the traffic of its own kerb**. Cars also
+  **fill the lots** — occupancy **falls with the lot's size**. **Yard rows** are the one
+  place cars stand along a `service` drive, only among multi-storey housing, every body
+  **probed**. **How densely either parks is decided by the district** (`Districts`): the
+  area-weighted mean height within 120 m multiplies both shares. **A car is not a
+  rectangle** (`cars/body.rs`): a rounded silhouette with a cabin, by **body type**; each
+  casts its own swept shadow, **not unioned** with neighbours'. **Decoration only** — in
+  no navmesh and no simulation, deliberately. One merged mesh, a zoom bucket dropping
+  **detail** before the layer. Detail — `parking-parked-cars.md`.
 - **The shadow rules** (`map/shadow.rs`) — seven layers cast a shadow (buildings, fences,
   cars, wagons, industry, bridges, roof clutter) and three things are common to all of
-  them, none of which used to be written in one place. **`length(height)`** is where
-  `shadow_length_scale()` lives — the expression `shadow_dir() * height *
-  shadow_length_scale()` used to appear in ten; the skill's rule *"a shadow length written
-  without `sun_stretch()` is a bug in the making"* stops being something to remember and
-  becomes a call. **`offset(height)`** is the same as a vector; the shadow **starts under
-  the object** and flows out from under it, which is the mistake cars, fences and the
-  bridge each made in turn — the wagons keep the translated quad deliberately, as the
-  cheap case. **`penumbra(direction)`** is the soft-edge share — zero where
-  the shadow meets what casts it, full at the far end — written three times before, once
-  named and twice as a closure. **`push_union`** is the eighteen lines that were
-  duplicated verbatim between fences and buildings: union the sweeps (`i_overlay`,
-  NonZero, so a translucent layer never doubles on itself) and lay the tapered band.
-  **The crowns are the eighth caster and stay outside it** (`trees/crown.rs`): a crown's
-  shadow length is a drawn length of its own, not an object height through
-  `shadow_length_scale()`, and it rides `sun_stretch()` where it is written.
-  **The light stays a process global** (`map/sun.rs`) on purpose: making it an argument
-  would thread a parameter through every `mesh_*`, and the global is what lets one build
-  run on the load thread, in a test and in the offline bench. The price is stated — a test
-  with lit geometry takes the `default_sun()` / `sun_at()` guard and serialises on a mutex.
-- **The uniform grid** (`map/grid.rs::Grid<T>`) — the one spatial index of the map:
-  doors, tree planting, the parse's sidewalk pull / landuse blocks / shift obstacles,
-  water outlines, road stitches, fence gaps, street edges, standing stock, garage runs,
-  house draw order, building shadows, car districts, bridge bands.
-  **The cell size belongs to the grid**
-  (`Grid::new(size)`), so an insert and a query cannot disagree about it; it stays an
-  argument because the number is about the domain, not the grid. `insert(min, max, value)`
-  puts the value in **every cell its box touches**, which is what makes a one-cell
-  `at(point)` complete rather than approximate — the caller inflates the box by the reach
-  it cares about. `near(min, max)` is **sorted and deduped**, and that is an invariant,
-  not a convenience: the `HashMap` iteration order must not reach the geometry. `near_each`
-  is the raw form — for values that are not `Ord`, and for a caller that needs the traversal
-  order and the duplicates exactly as the hand-rolled loop gave them; `pairs()` the candidate
-  enumeration inside a cell, `cell_of` the escape hatch for the one caller that walks cells
-  in rings.
-  **`spatial.rs` is a different animal** and stays outside: a dense `Vec` over the whole
-  map with a reverse entity→cell index, moved one entity at a time each tick.
-  **`planting::Occupied` stays outside too**, on the opposite convention: a bare point goes
-  in, the asker carries the radius, and a query walks the 3×3 neighbourhood.
+  them. **`length(height)`** is where `shadow_length_scale()` lives; **`offset(height)`**
+  is that length as a vector — **the shadow starts under the object** and flows out from
+  under it; **`penumbra(direction)`** is the soft-edge share — zero where the shadow meets
+  what casts it, full at the far end. **`push_union`** unions the sweeps (NonZero, so a
+  translucent layer never doubles on itself) and lays the tapered band. **The crowns are
+  the eighth caster and stay outside it** — a crown's shadow length is a drawn length of
+  its own. **The light stays a process global** on purpose: it is what lets one build run
+  on the load thread, in a test and in the offline bench.
+- **The uniform grid** (`map/grid.rs::Grid<T>`) — the one spatial index of the map.
+  **The cell size belongs to the grid** (`Grid::new(size)`); `insert` puts the value in
+  **every cell its box touches**, which is what makes a one-cell `at(point)` complete
+  rather than approximate. `near` is **sorted and deduped** — an invariant, not a
+  convenience: `HashMap` iteration order must not reach the geometry. `near_each` is the
+  raw form; `pairs()` the candidate enumeration; `cell_of` the escape hatch for the one
+  ring-walking caller. **`spatial.rs` is a different animal** and stays outside; so does
+  `planting::Occupied`, on the opposite convention.
 - **Footprint bands** (`map/footprint.rs`) — the strips linear geometry occupies on the
-  ground, as **(centerline, width, role)** values (`deck_band` / `curb_bands` /
-  `passage_band` / `channel_band` / `wall.band()`) plus the width policy. One construction,
-  three consumers: the grid fill rasterizes, the mesh build outlines, the renderer draws its
-  own smoothed copy. **A drawn band and a blocking band match by construction, not by
-  discipline.**
-- **Merged meshes** (`map/meshing.rs`, `map/spawn.rs`, `map/roads.rs`, `map/rail.rs`,
-  `map/tram.rs`, `map/buildings/`) —
-  one merged `Mesh2d` per layer: earcut triangulation, per-vertex colors over one white
-  `ColorMaterial` (facades, shadows, bridge curbs, rails, walls), the **surface material** below
-  (everything that is ground) or the **roof material** above (every layer that carries a
-  roof — in 2.5D that is the walls' layer too); ~7000 buildings cost a handful of entities. Trees are
-  individual entities on the near zoom step only; on the far steps their crowns, and on
-  every step their **shadows**, are merged meshes cut by density band and 1 km chunk
-  (**Trees** above). Building shadows are one merged mesh.
+  ground, as **(centerline, width, role)** values plus the width policy. One
+  construction, three consumers: the grid fill rasterizes, the mesh build outlines, the
+  renderer draws its own smoothed copy. **A drawn band and a blocking band match by
+  construction, not by discipline.**
+- **Merged meshes** — one merged `Mesh2d` per layer: earcut triangulation, per-vertex
+  colors over the flat `ColorMaterial` or the **surface** / **roof** materials;
+  ~7000 buildings cost a handful of entities. Trees are individual entities on the near
+  zoom step only; their far crowns and all their shadows are merged meshes cut by density
+  band and 1 km chunk. Building shadows are one merged mesh.
 - **The layer seam** — building a layer and putting it in the world are two things, and
   the line between them is `map/surface.rs`. A converted module offers **one pure
-  function**, `mesh_<layer>(data, style) -> (Vec<LayerMesh>, <Layer>Report)`: no
-  `Commands`, no `Assets`, so the game, a test and the offline bench all call it —
-  the same call, not three paths. **`LayerMesh`** is one type for every layer of the map
-  (builder + z rung + `Name` string + `MaterialSpec`); **`MaterialSpec`** (`Flat` /
-  `Blend` / `Surface(SurfaceKind)`) names the material instead of carrying a `Handle`,
-  which is the only thing that would have dragged Bevy into the build. The report carries
-  the counters the `info!` line used to be made of, as a value a test can assert on. The
-  system is then a thin adapter: despawn the old tag, call `mesh_*`, hand the list to
-  `surface::spawn_layers`, print the report. **Every layer module is on it** — fences,
-  rail, tram, wagons, industry, cars, roads, all of `spawn.rs`, buildings and trees.
-  `MaterialSpec` has four variants, the last of them `Roof`, added with the module that
-  needed it. Two modules return more than a `Vec<LayerMesh>`, each for its own reason.
-  Every spawned layer entity also carries the **`MapLayer`** marker — what
-  `brp layers` / `hide` / `probe` select by, so a layer is found by name without
-  dumping the world's meshes (near-step tree crowns are entities, not layers, and
-  carry none).
-  **`buildings` returns two lists** (`BuildingMeshes { layers, shadows }`), because its
-  shadows carry their own tag and their own rebuild schedule; a tag is what the
-  *adapter* despawns by, so it stays outside `LayerMesh`. **`trees` is a scatter, not a
-  merged mesh** on the near zoom step — there a crown is an entity per tree (own tint,
-  own z), so `mesh_trees`
-  returns `TreeMeshes { pools, tints, crowns, merged, shadows }`: the crown pool as plain
-  `Mesh` values (a `Handle` is the world, exactly what `MaterialSpec` keeps out of a
-  build), the placements, and the far chunks and shadows as masked `LayerMesh`es. Its adapter uploads the pool, spawns
-  the entities of the placements (at once, or streamed in batches by `CrownStream`) and
-  hands the far chunks and the shadows to `spawn_layers` — so the merged layers
-  of the map all get their `DespawnOnExit` from `spawn_layer`, and the tree crowns are
-  the one scatter that writes its own, in one place. The two
-  flat `ColorMaterial`s `MaterialSpec` names live in **`FlatMaterials`**, a `Startup`
-  resource beside `SurfaceMaterials` — an unconverted module allocated its own on
-  every rebuild, and the last of those went with the conversion — and both reach an
-  adapter as one **`LayerMaterials`** system param.
-  **A zoom cutoff and a visibility toggle belong in the build, not in the system**: an
-  invisible tram or a far-bucket fence is an empty layer list, so the despawn in the
-  adapter is unconditional and there is no second path that could skip it. **"Not drawn"
-  is then a state of the report, never a zero in a counter** — `hidden` (or
-  `CarReport::detail = None`, `FenceReport::width = 0`) prints `<layer>: hidden`, and the
-  counters keep saying what came in, so a hidden layer never reads as an empty city.
-  **And when a layer rebuilds is the layer's own business** — `rebuilds_on()`, a run
-  condition beside its `rebuild_*`; `map/mod.rs` only wires it. The reason a gate lists
-  what it lists is a fact about the layer (`roads` carries `SunOnMap` because the bridge
-  shadow is baked into its mesh), and it now sits where that layer is edited. **One
-  condition, one registration**: two copies of a system in one schedule can both fire in
-  a frame and spawn the layer twice, so conditions are summed with `or_else`, never split
-  across registrations. **What a condition gates is a rebuild, and a rebuild may be a
-  chain**: `trees::rebuilds_on()` gates all four of `recompose_row_trees`,
-  `retune_conifer_field`, `spawn::rebuild_tree_row_band` and `rebuild_trees`, so the
-  tree-row band — which lives in `spawn.rs` and is not `trees` — is the one `rebuild_*`
-  with no `rebuilds_on()` of its own, and its doc comment says where the condition is.
-  **Ribbon**
-  (`push_ribbon`) — constant-width band along a polyline with join/cap knobs. A **closed
-  way is drawn as a closed ribbon** (`RibbonShape::closed`, taken from the path itself):
-  a ring has no ends, so it gets no caps and its seam gets an ordinary join fan, while
-  «до разрыва» is measured **around the circle**. Drawn open, a ring laid two `Round` caps
-  on its own asphalt, each with the ribbon frame **frozen** at the end's direction — a
-  disc of shifted lane dashes and ruts at the seam. **Junction
-  geometry is not computed as a union** — ribbons overlap in one opaque layer, an arm
-  ending in a junction ends **square** on the node, and the kerb returns and outer
-  corners (below) fill the rest; **keep the road layer opaque, and its colour a function of
-  world position only** (a flat colour or the surface shader, never a per-way tint). What
-  *is* computed are **junction nodes** (`map/roads/junctions.rs`): a node shared by two or
-  more carriageways, found by coordinate match on a 5 cm grid — Overpass gives no node ids,
-  but a shared node projects to the same point on every way. They feed the markings.
-  Four render-only fixes sit on the same node match (`map/roads/network/mod.rs`,
-  `RoadNodes` — every node shared by two roads of any class), and none of them touches
-  `RoadLine::points`, the navmesh or doors (the parked cars stand on the drawn street
-  axis, like the ribbon):
+  function**, `mesh_<layer>(data, style) -> (Vec<LayerMesh>, Report)`: no `Commands`, no
+  `Assets`, so the game, a test and the offline bench all call one and the same function.
+  **`LayerMesh`** is one type for every layer of the map; **`MaterialSpec`** **names** the
+  material instead of carrying a `Handle` — the only thing that would have dragged Bevy
+  into the build. Every spawned layer entity carries the **`MapLayer`** marker — what
+  `brp layers` / `hide` / `probe` select by. Two modules return more than a
+  `Vec<LayerMesh>`: **`buildings`** (shadows carry their own tag) and **`trees`** (a
+  scatter, not a merged mesh, on the near step). **A zoom cutoff and a visibility toggle
+  belong in the build, not in the system**: **"not drawn" is a state of the report, never
+  a zero in a counter.** **When a layer rebuilds is the layer's own business** —
+  `rebuilds_on()` beside its `rebuild_*`; **one condition, one registration** (two copies
+  in one schedule can both fire and spawn the layer twice — conditions are summed with
+  `or_else`). Detail — `layer-seam.md`.
+  **Ribbon** (`push_ribbon`) — constant-width band along a polyline with join/cap knobs;
+  **a closed way is drawn as a closed ribbon** (`RibbonShape::closed`, taken from the
+  path itself): a ring has no ends, so no caps. **Junction geometry is not computed as a
+  union** — ribbons overlap in one opaque layer, an arm ending in a junction ends
+  **square** on the node, and the kerb returns and outer corners fill the rest; **keep
+  the road layer opaque, and its colour a function of world position only**. What *is*
+  computed are **junction nodes** — a node shared by two or more carriageways, found by
+  coordinate match on a 5 cm grid; they feed the markings.
   - **Drawn** (`map/roads/drawn.rs`) — the **prepared roads**: the map's roads as they
-    are drawn (driveway crossings as asphalt, ring arcs at the ring's section), their
-    shared nodes and street axes, stitches, tapers and merges, built once per
-    `mesh_roads` and indexed by `map.roads`; the fields are closed, consumers ask
-    (`sidewalk_drawn`, per side `sidewalk_on` / `band_half`, `taper_ends`, …; the pair side — through
-    `pairs()`). The OSM roads stay
-    beside it in `MapData` — node keys and the base marking breaks read those. Not the
-    same thing as the stitches' `DrawnEdges`.
-  - **Axis** (`Drawn::axis(i, Axis)`) — **which of a road's axes a consumer takes**, named
-    in the type rather than implied by which local it happened to read: `Nodal` — after
-    smoothing, before stitches; its ends are OSM points, so a node still keys on them
-    (kerb returns, merges, kerb pockets, dash stations, tram bands, the car row); `Ribbon`
-    — with the stitches (asphalt, paint, turn paths, islands, the merge nose). The OSM
-    points are the third axis and stay on `RoadLine::points`.
-  - **Pinned nodes** — Chaikin smoothing never cuts a shared node, so a side street
-    still ends exactly on the through road's drawn centreline. The street axis pins only
-    nodes shared with another **carriageway** (street or drive): a footway crossing
-    ends under the asphalt and pins nothing.
-  - **Kerb return** (`map/roads/corners.rs`) — the rounded corner between two
-    neighbouring arms of a shared node of **one class** (street–street, alley–alley):
-    the concave wedge between the two facing ribbon edges and an arc tangent to both,
-    pushed into that class's fill layer *before* any ribbon, so every ribbon (and its
-    markings) lies over it. The radius goes by the **minor class of the pair**
-    (`kerb_radius`: avenue, street, drive, footway — the table is **Kerb returns** in
-    `roads-corners.md`) — capped only by the straight run of each arm, which carries on through
-    vertices lying on the same line; neighbouring arms 25°–155° apart only. The
-    whole table is scaled by `RoadShape::corner_radius` (1.0 by default). **The sidewalk
-    turns with it**: the same wedge, laid in the
-    sidewalk layer between the arms that carry one on the facing sides (a paired half has
-    none on its partner's side), on the band edges (half width + sidewalk) and on an arc
-    of the **same centre** — the radius smaller by exactly the sidewalk width, so a
-    constant band follows the kerb round the corner. A radius under the sidewalk width
-    leaves that corner square, as it is on the ground. Where an arm's edge runs straight
-    for less than the tangent — a ring arc, drawn in chords of a couple of metres, or a
-    straight edge cut short by a through stretch's own end arcs — the
-    corner is a **bend** (`corners::bend`, `KerbReturns::bends`): the same arc seated on
-    the **curved** edges (the arms' axes offset by the half widths), its radius shrinking
-    below the class table until both tangents sit on the kerbs, 60°–155° apart only
-    (sharper is a nose's, or a ring's gore); triangulated whole. Two arms 155°–178° apart
-    at a junction whose widths differ get the **wide kerb's wedge** instead
-    (`corners::obtuse_corner`): the wide arm's edge carried on past its square end into
-    the narrow arm's edge by one gentle arc, where a straight cut and a wedge of ground
-    used to be. All of it comes out as one `KerbReturns` value **laid by the module
-    itself** (`KerbReturns::lay`): the layer order — lawn scraps first, then street,
-    dirt, sidewalk (with tile overlaps) and verge fills, then the noses and bends whole —
-    is `corners`' invariant, and `build_roads` only hands it the builders; geometry
-    readers take typed views (`paving()`, `streets()`), the report its counters
-    (`counts()`), the hatch its fork wedges (`fork_gores()`), and the fields are closed
-    inside the module.
-  - **Nose** (`map/roads/corners/nose.rs::nose`) — the rounded tip of the island between two
-    arms of a **sharp fork**: under 25°, or under 60° where the kerb return did not fit.
-    Not a fillet (its tangent would run tens of metres) but an arc of a small radius
-    (1.5 m on streets, less with a drive or a footway) where the two edges have parted by
-    two radii, found by walking the arms' **axes** rather than their first directions,
-    since the tip lies tens of metres out where a ring exit already curves. The asphalt
-    from the tip to the arc goes into the class's fill, the sidewalk band gets a nose of
-    its own; both are triangulated whole, not fanned (`KerbReturns::noses`).
-  - **Junction** (for the drawn asphalt, `map/roads/corners.rs`) — a node's class group
-    of three arms or more, or two meeting at an angle. An arm that **ends** there ends
-    **square** on the node (`KerbReturns::butt`) instead of with a round cap, which stuck
-    out past a narrower road's far edge — unless it is a path arm whose cut no corner
-    piece would cover (continuing through the node, or with every neighbour continuing):
-    it keeps the round cap, which lies on the neighbouring ribbons. Between two neighbour
-    arms more than 180° apart
-    the **outer corner** is a fan from the node, what the round caps used to give. A
-    crossing street's piece between the two halves of a divided street lies in the
-    median opening and carries no sidewalk.
+    are drawn, their shared nodes and street axes, stitches, tapers and merges, built
+    once per `mesh_roads`; the fields are closed, consumers ask. The OSM roads stay
+    beside it in `MapData`.
+  - **Axis** (`Drawn::axis(i, Axis)`) — **which of a road's axes a consumer takes**,
+    named in the type: `Nodal` (after smoothing, before stitches; ends are OSM points) or
+    `Ribbon` (with the stitches). The OSM points are the third axis and stay on
+    `RoadLine::points`.
+  - **Pinned nodes** — Chaikin smoothing never cuts a shared node; the street axis pins
+    only nodes shared with another **carriageway**.
+  - **Kerb return** (`map/roads/corners.rs`) — the rounded corner between two arms of a
+    shared node of **one class**, pushed into that class's fill layer **before** any
+    ribbon. The radius goes by the **minor class of the pair**, scaled by
+    `RoadShape::corner_radius`. **The sidewalk turns with it** — the same wedge on the
+    band edges, on an arc of the **same centre**, the radius smaller by exactly the
+    sidewalk width. A corner on curved edges is a **bend**; two arms 155°–178° apart at
+    different widths get the **wide kerb's wedge** instead. All of it comes out as one
+    `KerbReturns` value **laid by the module itself** (`KerbReturns::lay`) — **the layer
+    order is `corners`' invariant**, and the fields are closed inside the module. Detail —
+    `roads-corners.md`.
+  - **Nose** (`corners.rs::nose`) — the rounded tip of the island between two arms of a
+    **sharp fork**: an arc of a small radius where the two edges have parted by two
+    radii, found by walking the arms' **axes**.
+  - **Junction** (for the drawn asphalt) — a node's class group of three arms or more,
+    or two meeting at an angle: an arm that **ends** there ends **square** on the node,
+    unless it is a path arm whose cut no corner piece would cover; between two neighbour
+    arms more than 180° apart the **outer corner** is a fan from the node.
   - **Merge** (`map/roads/merges.rs`) — a node where both halves of one pair end on a
-    two-way way of their `Highway`, the halves leaving it one way and the street the
-    other: a divided street turning into an ordinary one. It is **not a junction** —
-    its three arms give each other no square ends and no corners — and each half's outer
-    kerb runs into the continuation's kerb on its side over a **merge wedge**, asphalt
-    (and sidewalk beyond it) outside the half's ribbon, as long as a taper of the same
-    width difference. The paint runs through a **pure** merge (no other carriageway at
-    the node): no breaks there, each half's lane frame ramps into its side of the
-    continuation's, and the continuation's axis runs back between the halves to the
-    median. A merge **at a crossing** (another carriageway through the node) is drawn as
-    the **pair up to the crossing** instead (`merges/mouths.rs::split_mouths`): each
-    half reaches the cross street parallel, at `continuation half − own half` off the
-    pair's axis, and ends on the cross street's axis at a drawn node of its own, so the
-    crossing is an ordinary divided street at a junction — no merge wedge, the halves'
-    zebras in one line. Tula has 5; the node at Советская × Коминтерна is **not** one
-    (all four ways there are one-way: the pair turns and goes on). A **Y-fork** — a
-    two-way way splitting into an entry and an exit with no pair between them — is a
-    merge too when its node is pure and nothing there is unpaved (a class and its
-    `_link` count as one — `Highway::family`): each branch continues
-    its half of the carriageway and the island opens between them.
-  - **Stitch** — a straight render-only segment appended to a **loose end** (a way end
-    with no other road at its node that could carry it) up to the centreline of the
-    nearest road **ahead** of it (within 60° of its heading), when that road's drawn edge —
-    the outer edge of its sidewalk, if it has one — is at most `STITCH_MAX_GAP` 6 m away
-    and the segment crosses no building or water. A street
-    is carried only by a street — a drive ending on a footway still hangs, since the sand
-    ribbon lies under the asphalt; a footway is carried by anything.
+    two-way way of their `Highway`. It is **not a junction** — no square ends, no
+    corners — and each half's outer kerb runs into the continuation's kerb over a **merge
+    wedge**. The paint runs through a **pure** merge; a merge **at a crossing** is drawn
+    as the **pair up to the crossing** instead (`merges/mouths.rs::split_mouths`). A
+    **Y-fork** is a merge too when its node is pure. Detail — `roads-merges.md`.
+  - **Stitch** — a straight render-only segment appended to a **loose end** up to the
+    centreline of the nearest road ahead, when that road's drawn edge is at most
+    `STITCH_MAX_GAP` away and the segment crosses no building or water. A street is
+    carried only by a street; a footway is carried by anything.
   - **Driveway crossing** — a footway way under 20 m both of whose ends are **ends of
-    streets**: how OSM maps a drive crossing the pavement (drive, `footway` across the
-    pavement, drive again). It is drawn as asphalt at the narrower drive's width. A
-    crosswalk is not one: its ends lie on pavement footways.
-  Tula: 15101 kerb returns plus 2268 on the sidewalks, 1632 + 202 outer corners, 89
-  stitches, 9 driveway crossings, in the `road meshing:` line.
-- **Surface material** (`map/surface.rs`, `assets/shaders/surface.wesl`) — the ground,
-  the area layers, water and the road fills are drawn by **`SurfaceMaterial`** instead of
-  `ColorMaterial`: the vertex colour stays the base, the shader multiplies in procedural
-  noise by **world position** (large mottle with a warm/cool tint shift, fine grain, grass
-  speckle, drifting ripple on water) — no textures, no assets, and identical in any two
-  overlapping ribbons. **Every octave fades by pixel size** (`fwidth`), so nothing shimmers
-  when zoomed out — that rule, and the hash/noise/octave/stripe helpers around it, live in
-  **`assets/shaders/noise.wesl`** and are imported by all three map shaders (`surface.wesl`,
-  `roof.wesl` and the crown's `crown.wesl`; the portal's vortex keeps its own hash and
-  uncentred noise). One material per **`SurfaceKind`** (`SurfaceMaterials`, built once at
-  startup);
-  **`SurfaceStyle::texture`** (panel *Surfaces*, persisted) scales all amplitudes,
-  0 = the old flat fills, and retunes uniforms without rebuilding a mesh. A mesh for it is
-  built with **`MeshBuilder::with_surface_coords`** — the **`Ribbon` attribute**
-  in metres: `[across, to-break, half width, 0]` on a ribbon without lanes (the water's
-  shoal reads it), `[across, to-break, low, high]` measured from the lane grid node on a
-  carriageway with a **lane frame** (*to-break* = signed distance to the nearest
-  **marking break**, negative inside a gap), zeros on polygons. The paint layer rides the
-  same attribute with its own meaning. This shader grain is what the map has instead of a **ground
-  grain sprite** — a map-sized tiled noise sprite, proposed and then dropped in the merge
-  that brought the building look; there is no `map/grain.rs`, and none is wanted.
-- **Rims** (`map/spawn.rs::push_area`, `MeshBuilder::push_inset_band`) — every area
-  polygon carries a gradient band along its contour, holes included: park / grass / wood /
-  sand an edge a few percent darker (2–3 m). Same
-  mesh as the fill, pushed after it (opaque 2D depth is `GreaterEqual`, so later wins —
-  no z-slot). **Width is clamped to 0.6 × area / perimeter** of the outer ring, so a thin
+    streets**: drawn as asphalt at the narrower drive's width. A crosswalk is not one.
+- **Surface material** (`map/surface.rs`, shader `surface.wgsl`) — the ground, the area
+  layers, water and the road fills are drawn by **`SurfaceMaterial`**: the vertex colour
+  stays the base, the shader multiplies in procedural noise **by world position** —
+  identical in any two overlapping ribbons. **Every octave fades by pixel size**, so
+  nothing shimmers — that rule lives in **`assets/shaders/noise.wgsl`** and is imported
+  by all three map shaders. One material per **`SurfaceKind`**; **`SurfaceStyle::texture`**
+  scales amplitudes and retunes uniforms without rebuilding. A mesh for it is built with
+  **`MeshBuilder::with_surface_coords`** — the **`Ribbon` attribute** in metres, zeros on
+  polygons.
+- **Rims** (`map/spawn.rs::push_area`) — every area polygon carries a gradient band along
+  its contour, holes included. **Width is clamped to 0.6 × area / perimeter**, so a thin
   median strip never bleeds its rim onto the road.
-- **Shoal** (`map/water.rs::mesh_water_areas`) — water has **no rim**: its lighter
-  shore is a **distance field to the nearest bank**, `WATER_SHORE_COLOR` on the bank to
-  `WATER_COLOR` at `WATER_SHORE_WIDTH` (6 m), over all water polygons **unioned** first.
-  A narrow arm stays shallow across its whole width, and two polygons of one river meeting
-  at a border get no shoal along it. Two polygons that **do not** meet — a `riverbank` cut
-  at a bridge — are joined by the band of the channel between them (**water gap**, above),
-  which enters the same union. A **waterway ribbon** carries the same field on its
-  edges from the shader (`surface.wesl`, by the ribbon's `across`), so the shoal turns
-  from a pond into its channel without a seam.
-- **Sidewalk profile** (`osm/model.rs`, `RoadLine::sidewalk() -> SidewalkProfile`) — one
-  answer to "what sidewalk does this road have" for the parse and the renderer: the sides
-  (from the **`SidewalkSide`** tristate) and the **band by class** (`sidewalk_band`, on a
-  carriageway — a bridge included — and on nothing else). **Derived from the current
-  `width`, never stored** (the renderer's driveway-crossing and ring-arc clones change the
-  width). Three edges come off it, and they are three on purpose: the **mapped edge**
-  (half width + the band if at least one side has a sidewalk — the blocks and the lots are
-  pulled to it), the **verge edge** (half width + the band by class + a clearance, tag not
-  read — the houses are pushed off it) and the **kerb edge** (half width + the band, or
-  `LOT_KERB` on a drive — a lot's stalls stand clear of it). Every edge is one reach for
-  both sides, a one-sided `sidewalk=right` included.
-- **Sidewalks & markings** (`map/roads.rs`) — a **carriageway** (`is_carriageway`: a
-  `Street` whose `Highway::is_street`, not a passage — by class, never by width; bridges
-  included) is asphalt grey (`ROAD_COLOR`, a neutral mid grey — the
-  weathered asphalt of an aerial photo, not the pale blue-grey of a 2GIS map) and gets a
-  light **sidewalk band** at
-  `Z_SIDEWALK` 1.6 — under the street ribbon (a crossing street's fill covers it) and
-  **over the alley one**, so a footway running into the street stops at the
-  band instead of drawing a sand ribbon across it — width by class (`sidewalk_band`, 22 %,
-  1.2–3 m per side; the **Sidewalk profile** above) — **never a bridge deck**,
-  which leaves for its own layers before the band is pushed and has its curb instead.
-  At a junction the band **turns the corner on the kerb's own arc** — the sidewalk half
-  of the **kerb return** above.
-  A carriageway also gets white lane lines — the **Paint layer** above: geometry off the
-  street axis, not the asphalt shader (a bridge's at `Z_BRIDGE_PAINT`), one line per
-  boundary of the **Lane frame**, the count from the way's **Section** (a ring takes one
-  section for all its arcs). Where the lines stop at a junction and what is painted
-  there is **Junction paint** above, on its own breaks; the asphalt keeps its
-  **marking breaks** (`junctions::marking_breaks`: each carriageway's ruts stop half the
-  widest other road + `JUNCTION_MARGIN` 1 m short of a junction node, a dead end is a
-  break of reach 0) for the ruts and the medians. **Junctions**
-  (`junctions::Junctions`) owns the marking breaks, the junction paint and the kerb
-  row's breaks in one value, and with them the **five sets of breaks** a road carries,
-  none of which may be merged into another — **each consumer takes its own set as a
-  type of its own**, so a swap is a compile error, not a quiet regression: the **base**
-  (`median_base()` — the medians open on it, nobody rewrites it), the **asphalt**
-  (`AsphaltBreaks` — the base minus a leading road's: the fill and its ruts), the paint
-  **cut** and **solid** (`PaintBreaks`, one road's pair being `paint::LineBreaks`, the
-  only thing `Painter::paint` accepts), and the **row** (`pockets::RowBreaks` — no
-  stitches, but service drives, taper clearings and OSM zebras; kerb pockets and parked
-  cars, and only `pockets::row_breaks` makes one). Wider fills
-  are pushed after narrower ones, and a junction's **leading road** after all of its
-  arms, so a junction shows the main road's ruts rather than the side street's stub. Sidewalks and markings are
-  `RoadStyle` knobs, on by default.
-- **Style resources** — each is BRP-writable, persisted, and a change rebuilds only its own
-  layers from the unchanged `MapData`: **RoadStyle** (the sidewalks / markings / stop
-  lines / arrows toggles and the three-way `crossings` — `CrossingMode`; the ribbon join is the constant `ROAD_JOIN` =
-  `Round`, and the dark road casings are gone — the bridge curb is the one road casing left),
-  **RoadShape** (`map/roads/shape.rs`, the road's *geometry* knobs — lane width, taper,
-  curve tolerance, median gap, corner radius; ranges beside it, clamped on read). The map
-  follows **RoadShapeOnMap**, the copy that settles 0.35 s after the last slider step
-  (the `SunOnMap` idea); the lane width is read by the parse, so a settled new lane width
-  is a **world reload** (same city, camera kept) and reaches the load thread as an
-  argument (**ParseKnobs**); the process global `shape::lane_width()` is left to the paint,
-  the turn paths and the ruts' uniform, and is written from `MapData::knobs` on entering
-  the world. Any smoothing works on a *copy*,
-  since `RoadLine::points`/`width` are load-bearing for navmesh, arches, planting and
-  entrances; the Chaikin rule is **`Smoothing`** in `map/smooth.rs`, shared by six layers,
-  not a road's own. `RoadPaintStyle` (Paint, Wear, Turn wear) is uniforms only. Then
-  **BuildingHeightMode**,
-  **TreeStyle**, **TreeRowStyle**, **ConiferNoiseStyle**, **SurfaceStyle** and
-  **RoofStyle** (the last two: uniforms only, no rebuild). **`CrownParams` is deliberately not one of them** — a plain struct, no BRP,
-  no prefs; only the `tree_gallery` example varies it. **Bridge / rail / tram layers** have
-  their own z-slots and primitives (`push_dashes`, `push_ticks`, `push_rails`). Rail and
-  tram answer to **no style resource** for their *geometry* — it is a function of the camera
-  zoom (a **zoom bucket** each — `ZoomBucket<T>` over the layer's own LOD table,
-  `map/zoom.rs`; seeded from the camera on world entry, then recomputed every frame), so a
-  smoothing knob that moved the centerline would slide the track against its own ballast.
-  The tram's one resource is **TramStyle** — `visible` alone, **off** by default (the blue
-  line lies on the carriageway and at city zoom reads as another street layer), the `Tram`
-  row of the Roads section (the track runs on the carriageway, so it is read with the roads);
-  a change goes through `rebuild_tram`, so toggling the tram never remeshes the roads.
-  **CarStyle** sits in the same section for the same reason and with the same shape —
-  `visible` (**on** by default) and `occupancy` (the share of parking places taken, 0.45),
-  the `Cars` and `Occupancy` rows; a change goes through `rebuild_cars` alone.
-  **IndustryStyle** is the third of that kind — `visible` alone, **off** by default, the
-  `Industry` row of the **Buildings** section (a cylinder stands on the ground and leans
-  with the houses, so it is read with them); a change goes through `rebuild_industry`
-  alone.
-- **map_meshing** (`examples/bench/map_meshing.rs`) — offline measurement of the layer build,
-  `cargo run --example map_meshing -- [city slug]`: vertices and milliseconds per
-  building layer for every height mode × roof-clutter bucket, plus the car layer, the
-  surfaces, the roads and the rail and tram layers at every zoom bucket — straight
-  from the Overpass cache with **no window and no GPU**. `measure_layers` and
-  `measure_cars` repeat the steps of their build on purpose, to give each a row of its
-  own; the other four (`measure_surfaces`, `measure_roads`, `measure_rails`,
-  `measure_tram`) have no build of their own at all — each calls the game's `mesh_*` and
-  lays its layers out through `surface::layer_costs`, which is what the seam bought.
-  The missing window is the point: macOS App Nap slows an invisible or minimised
-  one, so the `building meshing:` log line is trustworthy only while the screen is awake —
-  and absolute numbers still follow the machine's power state, which is why a run is
-  compared with a run, never with the log. Run it after touching a building or car layer
-  builder.
+- **Shoal** (`map/water.rs::mesh_water_areas`) — water has **no rim**: its lighter shore
+  is a **distance field to the nearest bank**, over all water polygons **unioned** first.
+  A **waterway ribbon** carries the same field on its edges from the shader.
+- **Sidewalk profile** (`osm/model.rs`, `RoadLine::sidewalk()`) — one answer to "what
+  sidewalk does this road have" for the parse and the renderer: the sides (the
+  **`SidewalkSide`** tristate) and the **band by class**. **Derived from the current
+  `width`, never stored** (the renderer's clones change the width). Three edges come off
+  it, three on purpose: the **mapped edge** (blocks and lots pulled to it), the **verge
+  edge** (houses pushed off it) and the **kerb edge** (a lot's stalls clear of it).
+- **Sidewalks & markings** (`map/roads.rs`) — a **carriageway** (by class, never by
+  width) is asphalt grey and gets a light **sidewalk band** at `Z_SIDEWALK` — under the
+  street ribbon, **over the alley one**; **never a bridge deck**, which has its curb
+  instead. Lane lines are the **Paint layer** above; where they stop is **Junction
+  paint**. **Junctions** (`junctions::Junctions`) owns the marking breaks, the junction
+  paint and the kerb row's breaks in one value — **the five sets of breaks a road
+  carries, none merged into another; each consumer takes its own set as a type of its
+  own**, so a swap is a compile error: the **base**, the **asphalt**, the paint **cut**
+  and **solid**, and the **row** (`pockets::RowBreaks`). Wider fills are pushed after
+  narrower ones, and a junction's **leading road** after all of its arms.
+- **Style resources** — each is BRP-writable, persisted, and a change rebuilds only its
+  own layers from the unchanged `MapData`: **RoadStyle**, **RoadShape** (`map/roads/shape.rs`,
+  ranges beside it, clamped on read; the map follows **RoadShapeOnMap**, the copy that
+  settles 0.35 s after the last slider step; **a settled new lane width is a world
+  reload** — the parse reads it). **Any smoothing works on a *copy*** — `RoadLine::points`
+  are load-bearing for navmesh, arches, planting and entrances. Then
+  **BuildingHeightMode**, **TreeStyle**, **TreeRowStyle**, **ConiferNoiseStyle**,
+  **SurfaceStyle** and **RoofStyle** (the last two: uniforms only, no rebuild).
+  **`CrownParams` is deliberately not one of them.** Rail and tram answer to **no style
+  resource** for their *geometry* — it is a function of the camera zoom (a **zoom
+  bucket** each), so a smoothing knob that moved the centerline would slide the track
+  against its own ballast. **TramStyle**, **CarStyle**, **IndustryStyle** — `visible`
+  (± occupancy for cars) alone, each toggling its own rebuild and nothing else.
+- **map_meshing** (`examples/bench/map_meshing.rs`) — offline measurement of the layer
+  build, **from the Overpass cache with no window and no GPU** — that is the point: macOS
+  App Nap slows an invisible window, and absolute numbers follow the machine's power
+  state, so **a run is compared with a run, never with the log**. Run it after touching a
+  building or car layer builder.
 
 ## Navigation
 
@@ -2437,7 +1170,7 @@ its draw call.
 - **Demon look** (`demon/look.rs`) — the `Ember` glyph in a five-shade crimson → orange
   ring (`demon_tint`) plus a **halo**: a child entity (`DemonHalo`, the `Halo` glyph,
   three bodies wide, z −0.01) that inherits the devour pulse and dies with its parent.
-- **Portal** (`portal.rs`, `assets/shaders/portal.wesl`) — a `Mesh2d` quad with a
+- **Portal** (`portal.rs`, `assets/shaders/portal.wgsl`) — a `Mesh2d` quad with a
   `PortalMaterial` (`Material2d`): a log-spiral vortex computed per pixel from
   `globals.time` — no spritesheet, no frames. Violet on purpose: red is demons, amber is
   panic, blue is water and tram. Its rim is **HDR** (> 1.0) so it blooms; under it a
@@ -2477,25 +1210,9 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   `tools/shot_coords`) and the live list of what the map draws under the cursor, from the
   **semantic index** (`map/inspect.rs::InspectIndex` — a `Grid` over the `MapData`
   features, built once per load, rebuilt when `MapData` changes; a hit carries the feature
-  label, the z of the layer it draws in, its source and its OSM id, top layer first).
-  Besides the data features the index answers the **bands a road draws itself** — the
-  sidewalk and the verge, measured off the OSM axis by the model's width law
-  (`RoadLine::sidewalk`, `RoadLine::verges`), gated by the `RoadStyle::sidewalks` knob;
-  their labels carry the suffix `(auto, tagged)` / `(auto, inferred)` — the reason the
-  parse put the sidewalk there — and a bare `(auto)` for the verge. A hit with an OSM id
-  prints the tail `#id`: `tools/osm_near --id <id>` shows the element's tags. The index
-  speaks for the **model**, not the drawing: smoothing, kerb returns, driveway crossings
-  and pair-median gaps are the road builders' geometry — the exact arbiter there is
-  `brp probe`. `InspectOrigin` — the world→map shift: zero in the game, the shown
-  sample's shift in the roads gallery, so the panel and the probe speak map metres
-  everywhere (`tools/osm_near` reads them directly).
-  The hits list renders **line by line** (≤12 rows + a `+N more` tail), and the
-  **highlight checkbox** turns on the `InspectorHighlight` layer: the shape of the top
-  non-ground hit (`map/inspect.rs::feature_shape`, same widths as the hit law) drawn as
-  one translucent-yellow merged mesh at `Z_INSPECTOR_HIGHLIGHT`, rebuilt only when the
-  top feature changes, and the same hit's row gets a yellow background. The checkbox is
-  a **documented exception** to "every UI resource is a `SettingsGroup`": it is a
-  session-only debug aid, deliberately untracked.
+  label and the z of the layer it draws in, top layer first). `InspectOrigin` — the
+  world→map shift: zero in the game, the shown sample's shift in the roads gallery, so the
+  panel and the probe speak map metres everywhere (`tools/osm_near` reads them directly).
 - **Knob** (`ui/knob.rs`) — a panel row **bound to one field of one resource**, in two
   shapes: `spawn_knob` (slider) and `spawn_cycle_row` (button that cycles a value).
   `app.add_knobs::<R>()` registers the drag observer and the label/thumb sync **once per

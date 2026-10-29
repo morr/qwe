@@ -26,16 +26,20 @@
 //! полотна — дюжина дворовых, пешеходных площадей — 19; в Берлине, Париже и
 //! Нью-Йорке — сотни.
 
+use std::borrow::Cow;
+
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
 use super::ROAD_RIBBON;
+use super::drawn::Drawn;
 use super::junctions::node_key;
-use super::{is_carriageway, lane_count};
+use super::scraps;
+use super::{ROAD_COLOR, SIDEWALK_COLOR, is_carriageway, lane_count};
 use crate::map::along::{arclengths, nearest_on_path, place_on_path};
 use crate::map::meshing::{Break, MeshBuilder, RibbonBreaks, RibbonCap, RibbonShape};
 use crate::map::osm::{MapData, RoadAreaKind, RoadLine, RoadNodeKind};
-use crate::map::shapes::{Shape, is_ring, oriented};
+use crate::map::shapes::{Shape, is_ring, oriented, push_shape};
 
 /// Длина островка-точки вдоль оси, м: зебра и по метру бордюра с каждой
 /// стороны.
@@ -176,6 +180,46 @@ pub(super) fn push_street_fill(
             breaks: RibbonBreaks::At(breaks),
         },
     );
+}
+
+/// Площади и островки до лент. Щель между подходом и кольцом — асфальтом,
+/// под лентами; остров-крошка в треугольнике узлов — тоже.
+/// Островки безопасности и площади полотна из данных:
+/// площадь — асфальтом улиц до лент, под ними (порядок пуша в слое —
+/// порядок отрисовки); островок — бордюром поверх асфальта и краски, ниже;
+/// пешеходная площадь — плиткой тротуара, как мощёная дорожка. Вместе с
+/// островками отдаёт укусы мощения в полосы газона — лоскутам
+/// (`roads/scraps.rs`)
+pub(super) fn lay_areas(
+    map: &MapData,
+    prepared: &Drawn,
+    drawn: &[&RoadLine],
+    ribbon: &[Cow<'_, [Vec2]>],
+    islands: &[Vec<Vec2>],
+    streets: &mut MeshBuilder,
+    sidewalks: &mut MeshBuilder,
+) -> (RoadIslands, scraps::Bites) {
+    // щель между подходом и кольцом — асфальтом, под лентами
+    for web in &prepared.rings().webs {
+        streets.push_polygon(web, &[], ROAD_COLOR.to_linear());
+    }
+    // остров-крошка в треугольнике узлов — тоже
+    for island in islands {
+        streets.push_polygon(island, &[], ROAD_COLOR.to_linear());
+    }
+    let road_islands = RoadIslands::new(map, drawn, ribbon);
+    // где чужое мощение врезается в полосы газона — лоскутам (`roads/scraps.rs`)
+    let road_bites = scraps::Bites::of(prepared.nodes(), &prepared.roads());
+    streets.set_lanes(None);
+    for shape in &road_islands.carriageways {
+        push_shape(streets, shape.clone(), ROAD_COLOR.to_linear());
+    }
+    // пешеходная площадь — плиткой тротуара, как мощёная дорожка
+    sidewalks.set_lanes(None);
+    for shape in &road_islands.walkways {
+        push_shape(sidewalks, shape.clone(), SIDEWALK_COLOR.to_linear());
+    }
+    (road_islands, road_bites)
 }
 
 #[cfg(test)]

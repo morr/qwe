@@ -37,12 +37,16 @@
 use bevy::prelude::*;
 
 use super::corners::{MAX_ANGLE, road_radius};
+use super::drawn::Drawn;
 use super::junctions::node_key;
+use super::lane_count;
 use super::network::{RoadNetwork, RoadNodes, arm_direction};
 use super::node_paint::PASS_ALIGN;
-use crate::map::meshing::Break;
+use super::paint::{WedgeEnd, wedge_frames};
+use super::ribbons::{wedge_halves, wedge_middle};
+use crate::map::meshing::{Break, LaneFrame, MeshBuilder, to_break_beyond};
 use crate::map::osm::model::polyline_length;
-use crate::map::osm::{RoadClass, RoadLine};
+use crate::map::osm::{RoadClass, RoadLine, TrafficSide};
 
 /// Длина клина на метр разницы ширин по умолчанию, м: полоса в 3.3 м
 /// появляется за 33 м — как отгон уширения на городской улице. В игре — ручка
@@ -433,6 +437,107 @@ pub(super) fn cut(path: &[Vec2], from: f32, to: f32) -> Vec<Vec2> {
         piece.push(at(to.min(end)));
     }
     piece
+}
+
+/// Клинья улицы: пары «срезанный путь, клин, торец» из головного и хвостового
+/// клиньев, у кого они есть
+pub(super) fn wedge_run<'a>(
+    head: &'a Option<Vec<Vec2>>,
+    tail: &'a Option<Vec<Vec2>>,
+    ends: [Option<Taper>; 2],
+) -> Vec<(&'a [Vec2], Taper, bool)> {
+    [(head, ends[0], false), (tail, ends[1], true)]
+        .into_iter()
+        .filter_map(|(path, taper, end)| Some((path.as_deref()?, taper?, end)))
+        .collect()
+}
+
+/// Асфальт клиньев: от сечения шва к своему (у сужающего сечение шва —
+/// узкого соседа, у встречного — широкого), с раскладкой полос,
+/// плывущей так же, как линии краски на клине
+#[allow(clippy::too_many_arguments)]
+pub(super) fn push_asphalt(
+    fill: &mut MeshBuilder,
+    wedges: &[(&[Vec2], Taper, bool)],
+    drawn: &[&RoadLine],
+    road: &RoadLine,
+    body: &[Vec2],
+    breaks: &[Break],
+    lanes: Option<LaneFrame>,
+    color: LinearRgba,
+    traffic_side: TrafficSide,
+) {
+    for &(path, taper, end) in wedges {
+        let seam = drawn[taper.seam];
+        // «до разрыва» клина — продолжение срезанной ленты за её торцом: от
+        // узла шва до стыка с лентой, чтобы штрихи шли через стык без сдвига
+        let length = polyline_length(path);
+        let to_break = [
+            to_break_beyond(body, road.width, breaks, end, length),
+            to_break_beyond(body, road.width, breaks, end, 0.0),
+        ];
+        match lanes {
+            Some(_) => {
+                let wedge = WedgeEnd::new(road, seam, taper, end, length, traffic_side);
+                let [from, to] = wedge_frames(lane_count(road), wedge, end);
+                fill.set_lane_taper(Some(from), Some(to));
+            }
+            None => fill.set_lanes(None),
+        }
+        fill.push_taper_sided(
+            path,
+            wedge_halves(taper.sides, end, |_| [seam.width / 2.0, road.width / 2.0]),
+            to_break,
+            color,
+        );
+    }
+}
+
+/// Клин тротуара — по сторонам, как у асфальта: с сужаемой стороны
+/// от полосы узкого соседа (или его голой кромки, если тротуара у
+/// него нет) к своей, с сохранённой — своя на всём клине; сторона
+/// без тротуара по тегу — голая кромка (`Drawn::band_half`); и
+/// сторона пары у клина половины: там асфальт до разделительной, а
+/// тротуар светился за сужаемой кромкой узким языком (пример 16)
+#[allow(clippy::too_many_arguments)]
+pub(super) fn push_sidewalks(
+    fill: &mut MeshBuilder,
+    wedges: &[(&[Vec2], Taper, bool)],
+    drawn: &[&RoadLine],
+    prepared: &Drawn,
+    index: usize,
+    points: &[Vec2],
+    road: &RoadLine,
+    body: &[Vec2],
+    sidewalk: f32,
+    color: LinearRgba,
+) {
+    let total_length = polyline_length(points);
+    for &(path, taper, end) in wedges {
+        let middle = wedge_middle(total_length, polyline_length(path), end);
+        let paired = prepared
+            .pairs()
+            .beside(index, middle, 0.0)
+            .map(|left| usize::from(!left));
+        let halves = wedge_halves(taper.sides, end, |side| {
+            if paired == Some(side) {
+                [drawn[taper.seam].width / 2.0, road.width / 2.0]
+            } else {
+                [
+                    prepared.band_half(taper.seam, side),
+                    prepared.band_half(index, side),
+                ]
+            }
+        });
+        // «до разрыва» клина — продолжение срезанной полосы за её торцом
+        let width = road.width + 2.0 * sidewalk;
+        let length = polyline_length(path);
+        let to_break = [
+            to_break_beyond(body, width, &[], end, length),
+            to_break_beyond(body, width, &[], end, 0.0),
+        ];
+        fill.push_taper_sided(path, halves, to_break, color);
+    }
 }
 
 #[cfg(test)]

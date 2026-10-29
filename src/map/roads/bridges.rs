@@ -5,17 +5,23 @@
 //! настила кладёт `mesh_roads` в порядке заливки улиц — с рамой полос и
 //! разрывами асфальта своей улицы.
 
+use std::borrow::Cow;
+
 use bevy::prelude::*;
 
+use super::drawn::Drawn;
 use super::network::RoadNodes;
 use super::network::pairs::BandPiece;
-use super::ribbons::push_sidewalk;
-use super::{ROAD_JOIN, RoadJoin};
+use super::ribbons::{DECK_SEAM_APRON, SEAM_DASH_GAP, push_sidewalk};
+use super::tapers::Taper;
+use super::{ROAD_COLOR, ROAD_JOIN, RoadJoin};
 use crate::ease::smoothstep;
 use crate::map::SHADOW_COLOR;
 use crate::map::along::densify;
 use crate::map::footprint::{JOIN_EPSILON, bridge_curb_width};
-use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin, merge_close_points, miter_offsets};
+use crate::map::meshing::{
+    Break, MeshBuilder, RibbonCap, RibbonJoin, merge_close_points, miter_offsets,
+};
 use crate::map::osm::model::{
     distance_to_segment, point_in_area, point_in_polygon, polyline_length, ring_bounds,
 };
@@ -449,6 +455,58 @@ impl Bridges {
         }
     }
 
+    /// Фартук асфальта под торцом настила-улицы на шве, на подход: торец
+    /// настила стоит поперёк своей оси, а срезанный прямо асфальт подхода
+    /// — поперёк своей, и на изломе между ними светилась нитка земли
+    /// наискось через полосы (S3, Орёл, конец моста Р-119). Лежит в слое
+    /// улиц, под их краской.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn push_seam_aprons(
+        &mut self,
+        streets: &mut MeshBuilder,
+        wedges: &[(&[Vec2], Taper, bool)],
+        seam: [bool; 2],
+        points: &[Vec2],
+        road: &RoadLine,
+        pieces: Option<&[BandPiece]>,
+    ) {
+        if road.class != RoadClass::Street || points.len() < 2 {
+            return;
+        }
+        let last = points.len() - 1;
+        for end in [0, 1] {
+            let wedged = wedges
+                .iter()
+                .any(|&(_, _, at_end)| usize::from(at_end) == end);
+            if !seam[end] || wedged {
+                continue;
+            }
+            let (tip, inner) = if end == 0 {
+                (points[0], points[1])
+            } else {
+                (points[last], points[last - 1])
+            };
+            let Some(out) = (tip - inner).try_normalize() else {
+                continue;
+            };
+            let (side, lip) = (out.perp() * road.width / 2.0, out * DECK_SEAM_APRON);
+            streets.push_polygon(
+                &[tip + side, tip - side, tip - side + lip, tip + side + lip],
+                &[],
+                ROAD_COLOR.to_linear(),
+            );
+            // и бортик — той же губой, где он по обе стороны
+            if pieces.is_none() {
+                self.push_curb_lip(
+                    tip,
+                    out,
+                    [road.width / 2.0, road.curb_reach()],
+                    DECK_SEAM_APRON,
+                );
+            }
+        }
+    }
+
     /// Меш заливки настилов.
     pub(super) fn fills(&mut self) -> &mut MeshBuilder {
         &mut self.fills
@@ -543,6 +601,52 @@ pub(super) fn seam_curb_reach(
             .reduce(f32::max)
             .map(|curb| own.width / 2.0 + curb)
     })
+}
+
+/// Швы настилов: половины слияния, чьё продолжение — другого уровня
+/// (конец моста Р-119 в Орле, S3): из узла шва они уходят под своим углом
+/// к настилу, и штрих, легший на узел, ломался крючком. Тихий разрыв на
+/// [`SEAM_DASH_GAP`] — штрих кончается у торца настила и начинается снова
+/// за узлом. Раскладка половины в узле — раскладка продолжения, но
+/// поперёк своей оси: крайняя линия под углом α к настилу начинается на
+/// полуширине × sin α под ним, и разрыв длиннее на столько же
+pub(super) fn seam_dash_gaps(
+    prepared: &Drawn,
+    drawn: &[&RoadLine],
+    ribbon: &[Cow<'_, [Vec2]>],
+) -> Vec<Vec<Break>> {
+    let mut seam_gaps: Vec<Vec<Break>> = vec![Vec::new(); drawn.len()];
+    let heading_at = |road: usize, at: Vec2| {
+        let path: &[Vec2] = &ribbon[road];
+        let last = path.len().checked_sub(1)?;
+        let (tip, inner) = if path[0].distance(at) <= path[last].distance(at) {
+            (path[0], *path.get(1)?)
+        } else {
+            (path[last], path[last.checked_sub(1)?])
+        };
+        (inner - tip).try_normalize()
+    };
+    for merge in &prepared.merges().list {
+        let continuation = drawn[merge.street];
+        let Some(deck) = heading_at(merge.street, merge.node) else {
+            continue;
+        };
+        for &half in &merge.halves {
+            if drawn[half].bridge == continuation.bridge {
+                continue;
+            }
+            let Some(own) = heading_at(half, merge.node) else {
+                continue;
+            };
+            // `deck` — от узла в настил, `own` — от узла в половину
+            let sin = (-deck).perp_dot(own).abs();
+            seam_gaps[half].push(Break {
+                at: merge.node,
+                reach: SEAM_DASH_GAP + continuation.width / 2.0 * sin,
+            });
+        }
+    }
+    seam_gaps
 }
 
 /// Корень компоненты со сжатием пути.

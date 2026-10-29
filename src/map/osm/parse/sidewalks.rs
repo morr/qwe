@@ -102,3 +102,6 @@ pub(super) fn infer_sidewalks(roads: &mut [RoadLine], districts: &Districts) -> 
         dropped,
     }
 }
+
+#[cfg(test)]
+mod tests;

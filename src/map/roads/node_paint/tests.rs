@@ -1,9 +1,11 @@
+use super::cluster::STOP_GAP;
+use super::zebras::without_overlaps;
 use super::*;
 use crate::map::osm::fixture::street;
-use crate::map::osm::{RoadNode, SidewalkSide};
+use crate::map::osm::{Highway, RoadNode, SidewalkSide};
 use crate::map::roads::junctions::marking_breaks;
 use crate::map::roads::network::RoadNetwork;
-use crate::map::roads::network::pairs::PairRun;
+use crate::map::roads::network::pairs::{PairRun, TRAM_BED_MAX_GAP};
 
 const NODE: Vec2 = Vec2::new(100.0, 0.0);
 

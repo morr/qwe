@@ -25,10 +25,13 @@ use std::f32::consts::TAU;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
+use super::SIDEWALK_COLOR;
 use super::drawn::Drawn;
 use super::junctions::node_key;
+use super::medians::MEDIAN_KERB;
 use super::network;
 use super::network::RoadNodes;
+use super::shape::RoadStyle;
 use super::turns::{LaneEnd, curve};
 use crate::map::along::nearest_on_path;
 use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin, miter_offsets};
@@ -1204,6 +1207,73 @@ pub(super) fn ring_island_grass(rings: &[&[Vec2]], grass: &[PolyArea]) -> MeshBu
 
 mod straighten;
 pub use straighten::{Straightened, straighten_tails};
+
+/// Тротуары колец: на сколько ужат остров каждого кольца под газон
+/// поверх тротуаров подходов (ниже, после лент)
+pub(super) fn lay_ring_island_bands(
+    prepared: &Drawn,
+    roads: &[RoadLine],
+    style: RoadStyle,
+    sidewalks: &mut MeshBuilder,
+) -> Vec<f32> {
+    let mut island_insets: Vec<f32> = Vec::new();
+    if style.sidewalks {
+        for ring in &prepared.rings().list {
+            let width = ring.width;
+            let sidewalk = ring
+                .roads
+                .iter()
+                .filter_map(|&road| prepared.sidewalk_drawn(road))
+                .fold(0.0, f32::max);
+            // к острову, куда не ведёт ни одна дорожка, пешеходу не попасть:
+            // вместо полосы тротуара — тонкая линия бордюра (R28)
+            let kerb = if ring_island_reached(&ring.path, roads) {
+                MEDIAN_KERB
+            } else {
+                RING_KERB_LINE
+            };
+            push_ring_edges(
+                sidewalks,
+                ring,
+                [width, sidewalk, kerb],
+                SIDEWALK_COLOR.to_linear(),
+            );
+            island_insets.push(width / 2.0 + kerb);
+        }
+    }
+    island_insets
+}
+
+/// Газон островов колец: полоса тротуара подхода доходит до узла на оси
+/// кольца, а подход входит в кольцо по касательной — её торец ложился
+/// серпом на остров поверх газона (R28, Белгород: три наплыва на одном
+/// кольце). Что из этих полос попало за бордюр острова, закрывается
+/// газоном — в слое газона разделительных, над тротуарами; подрезать сами
+/// полосы — значит открыть щели между тротуаром подхода и тротуаром
+/// кольца снаружи
+pub(super) fn cover_ring_islands(
+    prepared: &Drawn,
+    island_insets: &[f32],
+    approach_bands: &[ApproachBand],
+    median_grass: &mut MeshBuilder,
+) {
+    for (ring, inset) in prepared.rings().list.iter().zip(island_insets) {
+        for shape in ring_island_cover(ring, *inset, approach_bands) {
+            push_shape(median_grass, shape, GRASS_COLOR.to_linear());
+        }
+    }
+}
+
+/// Подходы колец: их полосы тротуара копятся ниже для газона острова
+pub(super) fn approach_flags(prepared: &Drawn, roads: usize) -> Vec<bool> {
+    let mut at_ring = vec![false; roads];
+    for ring in &prepared.rings().list {
+        for road in ring_approaches(ring, prepared) {
+            at_ring[road] = true;
+        }
+    }
+    at_ring
+}
 
 #[cfg(test)]
 mod tests;

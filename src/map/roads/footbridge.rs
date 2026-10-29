@@ -8,6 +8,7 @@
 
 use bevy::prelude::*;
 
+use super::drawn::Drawn;
 use super::network::RoadNodes;
 use super::ribbons::BAND_SEAM_OVERLAP;
 use super::tapers;
@@ -25,6 +26,33 @@ pub(super) fn is_footbridge(road: &RoadLine) -> bool {
 /// Аркой (`passage`) не считается, по той же причине.
 pub(super) fn is_street_deck(road: &RoadLine) -> bool {
     road.bridge && road.class == RoadClass::Street && !road.passage
+}
+
+/// Дорожка на мостик расширяется в него клином (S5)
+pub(super) fn lay_flares(
+    fill: &mut MeshBuilder,
+    drawn: &[&RoadLine],
+    prepared: &Drawn,
+    road: &RoadLine,
+    points: &[Vec2],
+    index: usize,
+    color: Color,
+) {
+    if road.class != RoadClass::Alley || road.passage {
+        return;
+    }
+    let reach = footbridge_reach(drawn, prepared.nodes(), index);
+    for (end, reach) in reach.into_iter().enumerate() {
+        if let Some(reach) = reach.filter(|&reach| reach > road.width / 2.0) {
+            push_path_flare(
+                fill,
+                points,
+                end,
+                [road.width / 2.0, reach],
+                color.to_linear(),
+            );
+        }
+    }
 }
 
 /// Косинус угла между мостиком и настилом, при котором мостик идёт вдоль

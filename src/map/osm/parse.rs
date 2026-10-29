@@ -1345,12 +1345,6 @@ use self::squaring::square_skewed_houses;
 // Радиусы, по которым `tests` ходит в корень через `use super::*`: у корня
 // самого их больше нет, и без этих строчек тестовая сборка их не увидит.
 #[cfg(test)]
-use self::house_pull::{SIDEWALK_CLEARANCE, SIDEWALK_SHIFT_MAX, closest_between_segments};
-#[cfg(test)]
-use self::sidewalks::SIDEWALK_STOREYS_MIN;
-#[cfg(test)]
-use self::squaring::{ELL_AREA_DRIFT, fit_ell, fit_rectangle, ring_area_centroid};
+use self::house_pull::SIDEWALK_CLEARANCE;
 #[cfg(test)]
 use crate::map::osm::model::SidewalkSide;
-#[cfg(test)]
-use crate::map::osm::model::signed_ring_area;

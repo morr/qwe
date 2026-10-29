@@ -20,13 +20,16 @@ use bevy::prelude::*;
 use super::corners;
 use super::drawn::Drawn;
 use super::gores;
-use super::gores::Splitter;
+use super::gores::splitters::Splitter;
 use super::is_carriageway;
+use super::network::RoadNodes;
 use super::network::StitchTarget;
 use super::node_paint::{AsphaltBreaks, NodePaint, NodePaintStyle, PaintBreaks};
 use super::pockets::{self, RowBreaks};
-use crate::map::meshing::Break;
-use crate::map::osm::{MapData, RoadClass, RoadLine};
+use super::{ROAD_COLOR, SIDEWALK_COLOR};
+use crate::map::footprint::JOIN_EPSILON;
+use crate::map::meshing::{Break, MeshBuilder};
+use crate::map::osm::{MapData, RoadClass, RoadLine, RoadNodeKind};
 
 /// Шаг квантования координат узла, м. Одна нода OSM даёт одну и ту же точку
 /// на всех своих ways, квантование лишь страхует от округления.
@@ -537,7 +540,64 @@ pub(super) fn mouths(
     // — просто асфальт перекрёстка, а не пустое устье; представлением
     // `KerbReturns::streets` — только слой улиц
     let paved: Vec<&[Vec2]> = kerb_returns.streets().outlines().collect();
-    gores::mouths(&carriageways, &taken, &points, &paved)
+    gores::mouths::mouths(&carriageways, &taken, &points, &paved)
+}
+
+/// Граней у круга разворотной площадки.
+const TURNING_CIRCLE_SIDES: usize = 32;
+/// Радиус разворотной площадки по отношению к полуширине дороги и его
+/// пределы, м: легковой машине на развороте нужно метров шесть, мусоровозу —
+/// десять, а площадка шире дороги, которая к ней ведёт, раза в два.
+const TURNING_CIRCLE_SCALE: f32 = 2.2;
+const TURNING_CIRCLE_RADIUS: std::ops::RangeInclusive<f32> = 6.0..=10.0;
+
+/// Радиус разворотной площадки в тупике дороги шириной `width`, м.
+pub(super) fn turning_radius(width: f32) -> f32 {
+    (width / 2.0 * TURNING_CIRCLE_SCALE)
+        .clamp(*TURNING_CIRCLE_RADIUS.start(), *TURNING_CIRCLE_RADIUS.end())
+}
+
+/// Разворотные площадки в тупиках (`highway=turning_circle`); тупик без
+/// тега кончается круглым торцом ленты и так
+pub(super) fn lay_turning_circles(
+    map: &MapData,
+    nodes: &RoadNodes,
+    prepared: &Drawn,
+    streets: &mut MeshBuilder,
+    sidewalks: &mut MeshBuilder,
+) -> usize {
+    let mut turning_circles = 0;
+    for node in &map.road_nodes {
+        if node.kind != RoadNodeKind::TurningCircle || nodes.is_shared(node.pos) {
+            continue;
+        }
+        let Some(index) = map.roads.iter().position(|road| {
+            road.class == RoadClass::Street
+                && !road.carves_navmesh()
+                && [road.points.first(), road.points.last()]
+                    .into_iter()
+                    .flatten()
+                    .any(|end| end.distance(node.pos) < JOIN_EPSILON)
+        }) else {
+            continue;
+        };
+        let road = prepared.road(index);
+        let radius = turning_radius(road.width);
+        let disc = |radius: f32| -> Vec<Vec2> {
+            (0..TURNING_CIRCLE_SIDES)
+                .map(|step| {
+                    let angle = std::f32::consts::TAU * step as f32 / TURNING_CIRCLE_SIDES as f32;
+                    node.pos + Vec2::from_angle(angle) * radius
+                })
+                .collect()
+        };
+        streets.push_convex(&disc(radius), ROAD_COLOR.to_linear());
+        if let Some(sidewalk) = prepared.sidewalk_drawn(index) {
+            sidewalks.push_convex(&disc(radius + sidewalk), SIDEWALK_COLOR.to_linear());
+        }
+        turning_circles += 1;
+    }
+    turning_circles
 }
 
 #[cfg(test)]

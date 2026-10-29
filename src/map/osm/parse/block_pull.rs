@@ -402,3 +402,6 @@ fn pull_corner(point: Vec2, first: Vec2, outward: Vec2, roads: &Edges) -> Option
         .min_by(|a, b| a.0.total_cmp(&b.0))
         .map(|(_, shift)| point + shift)
 }
+
+#[cfg(test)]
+mod tests;

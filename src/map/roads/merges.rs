@@ -20,20 +20,23 @@
 //!
 //! Только картинка: `RoadLine` и оси не меняются.
 
+use std::borrow::Cow;
+
 use bevy::prelude::*;
 use i_overlay::core::fill_rule::FillRule;
 use i_overlay::core::overlay_rule::OverlayRule;
 use i_overlay::float::single::SingleFloatOverlay;
 
+use super::drawn::Drawn;
 use super::network::pairs::Pairs;
 use super::network::{RoadNetwork, RoadNodes};
 use super::paint::{MergeRamp, lane_frame};
 use super::shape::lane_width;
-use super::{is_carriageway, lane_count};
+use super::{ROAD_COLOR, SIDEWALK_COLOR, is_carriageway, lane_count};
 use crate::ease::smoothstep;
-use crate::map::meshing::{LaneFrame, miter_offsets};
-use crate::map::osm::RoadLine;
+use crate::map::meshing::{LaneFrame, MeshBuilder, miter_offsets};
 use crate::map::osm::model::{point_at_arc_length, polyline_length};
+use crate::map::osm::{MapData, RoadLine};
 use crate::map::shapes::{Shape, oriented};
 
 /// Косинус угла, в котором обе половины уходят от узла в одну сторону, а
@@ -433,6 +436,56 @@ pub fn merge_bands(
         });
     }
     bands
+}
+
+/// Кромки слияний: кромки половин, сходящиеся к кромкам продолжения, —
+/// тоже до лент
+pub(super) fn lay_merge_edges(
+    map: &MapData,
+    prepared: &Drawn,
+    drawn: &[&RoadLine],
+    nodal: &[Cow<'_, [Vec2]>],
+    taper: f32,
+    streets: &mut MeshBuilder,
+    sidewalks: &mut MeshBuilder,
+) -> usize {
+    let mut merge_edges = 0;
+    for merge in &prepared.merges().list {
+        let bands = merge_bands(
+            merge,
+            drawn,
+            nodal,
+            &map.network,
+            |road, side| prepared.sidewalk_on(road, side),
+            taper,
+        );
+        for band in bands {
+            streets.push_polygon(&band.asphalt, &[], ROAD_COLOR.to_linear());
+            if let Some(outline) = &band.sidewalk {
+                sidewalks.push_polygon(outline, &[], SIDEWALK_COLOR.to_linear());
+            }
+            merge_edges += 1;
+        }
+    }
+    merge_edges
+}
+
+/// Каркасы половин у слияний сводятся в каркас продолжения — по той же
+/// нарисованной оси, что и линии краски
+pub(super) fn ramps(
+    merges: &[Merge],
+    drawn: &[&RoadLine],
+    ribbon: &[Cow<'_, [Vec2]>],
+    network: &RoadNetwork,
+    taper: f32,
+) -> Vec<Option<MergeRamp>> {
+    let mut ramps: Vec<Option<MergeRamp>> = vec![None; drawn.len()];
+    for merge in merges {
+        for (road, ramp) in merge_ramps(merge, drawn, ribbon, network, taper) {
+            ramps[road] = Some(ramp);
+        }
+    }
+    ramps
 }
 
 /// Лежит ли пара `partner` (её узел — конец, если `partner_at_end`) слева от

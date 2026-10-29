@@ -4,9 +4,16 @@
 
 use bevy::prelude::*;
 
+use super::ribbons::push_ribbon;
 use super::verges::{MEADOW_PROBE_BEYOND, MEADOW_PROBES};
+use super::{ROAD_JOIN, WALL_COLOR};
+use crate::map::meshing::MeshBuilder;
 use crate::map::osm::model::{point_in_area, polyline_length, ring_bounds};
-use crate::map::osm::{AreaKind, PolyArea};
+use crate::map::osm::{AreaKind, MapData, PolyArea};
+use crate::settings::Z_BUILDING;
+
+/// Стены Кремля поверх зданий.
+pub(crate) const Z_WALL: f32 = Z_BUILDING + 0.1;
 
 /// Шаг, с которым осевая крепостной стены проверяется на «стоит ли тут
 /// здание стены», м.
@@ -161,3 +168,20 @@ impl<'a> Meadows<'a> {
 /// сорока метров, так что настоящий неразмеченный кусок стены под порог не
 /// попадает.
 const WALL_STUB_MAX: f32 = 40.0;
+
+/// Лента крепостной стены — только там, где под ней нет зданий самой
+/// крепости (`Fortresses::bare_runs`)
+pub(super) fn lay_wall_ribbons(map: &MapData, wall_ribbons: &mut MeshBuilder) {
+    let fortresses = Fortresses::of(&map.buildings);
+    for wall in &map.walls {
+        for run in fortresses.bare_runs(&wall.points) {
+            push_ribbon(
+                wall_ribbons,
+                &run,
+                wall.width,
+                WALL_COLOR.to_linear(),
+                ROAD_JOIN,
+            );
+        }
+    }
+}

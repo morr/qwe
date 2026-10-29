@@ -245,3 +245,6 @@ pub(super) fn ring_area_centroid(ring: &[Vec2]) -> Vec2 {
     }
     sum / (3.0 * twice_area)
 }
+
+#[cfg(test)]
+mod tests;

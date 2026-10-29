@@ -509,3 +509,6 @@ fn is_sliver(shape: &[Contour]) -> bool {
     let perimeter = ring_perimeter(&ring_of(outer));
     perimeter > 0.0 && 2.0 * net_area(shape) / perimeter < SLIVER_WIDTH_MAX
 }
+
+#[cfg(test)]
+mod tests;
