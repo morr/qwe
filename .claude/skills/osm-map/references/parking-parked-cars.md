@@ -151,7 +151,12 @@ are filled from are laid out in `parking-layout.md`; the big lot's kerb and gore
 
 - **Cached per placement** — `cars::CarPlacement` keeps the placed `Vec<Car>` (with
   the junction count) keyed on `(occupancy, RoadShape)`, reset on world entry by
-  `forget_parked_cars`; a zoom-bucket crossing is `mesh_parked` alone. The skeleton
+  `forget_parked_cars`; a zoom-bucket crossing is `mesh_parked` alone. World entry
+  also **warms** the placement (`warm_car_placement`, right after the reset): a
+  world opened past the cars' zoom threshold would otherwise leave the cache empty
+  and pay the whole placement on the first zoom-in (~78 ms on Tula, mid-gesture);
+  the key holds no zoom step, so the placement can be computed over a hidden layer,
+  and the cost rides the load. Raw OSM skips the warm-up — it draws no cars. The skeleton
   under the placement is what a crossing still pays for: `Drawn::nodal` alone is
   25 ms on Tula and 49 on Kaluga, paid on every crossing of a car threshold (and even
   past `CAR_MAX_ZOOM`, where the layer is hidden). The rows come from

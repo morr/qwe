@@ -141,6 +141,15 @@ place to look at a road-network defect end to end:
   be five relaunches. The live-app alternative for a single frame is
   `brp shot-at` on the running game (`.claude/live-app-project.md`, "Live shot or
   the batch gallery").
+- **The gallery answers `brp probe`**: it listens on the same `BRP_PORT` contract as
+  the game (`dev::brp_port`; `RemotePlugin` is added before `RemoteHttpPlugin`, or the
+  HTTP server panics on the missing `BrpSender`), and the point inspector panel (top
+  right, `UiInspectorPlugin::standalone()`) shows the same list under the cursor.
+  Coordinates are the **shown sample's own map metres**, not the shifted column's:
+  `InspectOrigin` carries the framed sample's column shift, and `sync_framed_map`
+  re-parses that sample (~40 ms) into the `MapData` resource, so the semantic index
+  answers for the sample on screen rather than the last one built — and
+  `tools/osm_near` reads the metres directly.
 - **Frames across revisions — `tools/gallery_batch <tasks-file>`**: lines of
   `rev|city|env|manifest` (env like `ROADS_CARS=full` or `-`), one gallery run per
   line — the review rounds' before/after collector ("было" on each fix commit's
