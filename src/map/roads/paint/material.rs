@@ -9,7 +9,7 @@ use bevy::render::render_resource::{
     RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
 };
 use bevy::shader::ShaderRef;
-use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey};
+use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey, Material2dPipeline};
 
 use super::{
     APPROACH, AXIS_ZOOM_MAX, DASH, DOUBLE_OFFSET, EDGE_WIDTH, FADE_FROM, GAP, HATCH_PERIOD,
@@ -184,6 +184,7 @@ impl Material2d for PaintMaterial {
     /// `ATTRIBUTE_RIBBON`. Проходы колеи — свой шейдерный вариант и своё
     /// смешивание ([`PaintPass`]).
     fn specialize(
+        _pipeline: &Material2dPipeline,
         descriptor: &mut RenderPipelineDescriptor,
         layout: &MeshVertexBufferLayoutRef,
         key: Material2dKey<Self>,

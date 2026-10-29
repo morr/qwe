@@ -1,6 +1,6 @@
 use super::*;
-use i_overlay::mesh::outline::offset::OutlineOffset;
-use i_overlay::mesh::style::{LineJoin, OutlineStyle};
+use i_overlay::mesh::float::outline::offset::OutlineOffset;
+use i_overlay::mesh::float::style::{LineJoin, OutlineStyle};
 
 use super::frames::{mirrored, narrow_frame, wedge_drift, wedge_frame};
 use super::ground::{FIT_STEP, ZEBRA_BAR};
