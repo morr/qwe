@@ -15,23 +15,26 @@
 use bevy::camera_controller::pan_camera::PanCamera;
 use bevy::ecs::system::SystemParam;
 use bevy::feathers::constants::{fonts, size};
+use bevy::feathers::controls::FeathersCheckbox;
 use bevy::feathers::font_styles::InheritableFont;
-use bevy::feathers::theme::ThemeTextColor;
+use bevy::feathers::theme::{ThemeTextColor, ThemedText};
 use bevy::feathers::tokens;
 use bevy::prelude::*;
 use bevy::text::FontWeight;
+use bevy::ui::Checked;
+use bevy::ui_widgets::ValueChange;
 use bevy::window::PrimaryWindow;
 
 use super::speed::{PANEL_WIDTH_PX, TelemetryPanel};
 use crate::camera::cursor_offset;
 use crate::map::inspect::{
-    FeatureRef, InspectIndex, InspectOrigin, feature_shape, format_hits, mesh_feature,
+    FeatureRef, Hit, InspectIndex, InspectOrigin, feature_shape, hit_line, mesh_feature,
 };
 use crate::map::osm::MapData;
 use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
 use crate::map::{RoadStyle, TreeStyle};
 use crate::settings::Z_INSPECTOR_HIGHLIGHT;
-use crate::ui::{GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, panel_background};
+use crate::ui::{GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, panel_background, ui_column};
 
 /// Зазор между телеметрией и этой панелью, px.
 const INSPECTOR_GAP_PX: f32 = 6.0;
@@ -44,13 +47,34 @@ const INSPECTOR_QUERY_STEP: f32 = 0.5;
 #[derive(Component, Default)]
 struct InspectorCameraText;
 
+/// Контейнер списка находок — строки спавнит и убирает [`sync_hits_rows`].
 #[derive(Component, Default)]
-struct InspectorHitsText;
+struct InspectorHitsList;
+
+/// Одна строка находки; все такие убираются при пересчёте списка.
+#[derive(Component)]
+struct InspectorHitRow;
+
+/// Галочка highlight — по ней [`sync_highlight_checked`] ставит и снимает
+/// `Checked`.
+#[derive(Component, Default)]
+struct InspectorHighlightCheckbox;
 
 /// Слой подсветки элемента под курсором — помеченные сущности убирает
 /// [`sync_inspector_highlight`].
 #[derive(Component, Clone, Copy)]
 struct InspectorHighlightMarker;
+
+/// Находки под курсором и сама точка — то, что насчитало
+/// [`update_inspector_hits`]. Читатели — строки списка ([`sync_hits_rows`])
+/// и слой подсветки ([`sync_inspector_highlight`]): расчёт один, читателей
+/// двое. `point` в `INFINITY` — курсора нет; следующая точка всегда дальше
+/// шага, так что список пересчитается, как только курсор вернётся.
+#[derive(Resource, Default)]
+struct InspectorHitsState {
+    point: Vec2,
+    hits: Vec<Hit>,
+}
 
 /// Галочка «highlight» панели инспектора: подсвечивать элемент под курсором
 /// на карте прозрачно-жёлтым.
@@ -66,6 +90,8 @@ pub struct InspectorHighlight(pub bool);
 
 /// Прозрачно-жёлтый подсветки — элемент читается сквозь слой.
 const HIGHLIGHT_COLOR: Color = Color::srgba(1.0, 1.0, 0.0, 0.3);
+/// Фон выделенной строки списка — тот же жёлтый, чуть гуще слоя.
+const HIGHLIGHT_ROW_BG: Color = Color::srgba(1.0, 1.0, 0.0, 0.18);
 
 /// Корень панели — по нему [`position_below_telemetry`] ставит панель вплотную
 /// под телеметрию.
@@ -97,6 +123,7 @@ impl Plugin for UiInspectorPlugin {
     fn build(&self, app: &mut App) {
         let standalone = self.standalone;
         app.init_resource::<InspectorHighlight>()
+            .init_resource::<InspectorHitsState>()
             .register_type::<InspectorHighlight>()
             .add_systems(
                 Startup,
@@ -110,6 +137,8 @@ impl Plugin for UiInspectorPlugin {
                     position_below_telemetry,
                     update_camera_text,
                     update_inspector_hits,
+                    sync_hits_rows,
+                    sync_highlight_checked,
                     sync_inspector_highlight,
                 ),
             );
@@ -118,56 +147,83 @@ impl Plugin for UiInspectorPlugin {
 
 fn render_inspector_ui(mut commands: Commands, assets: Res<AssetServer>, standalone: bool) {
     let mono: Handle<Font> = assets.load(fonts::MONO);
-    commands.spawn((
-        Node {
-            position_type: PositionType::Absolute,
-            // под телеметрией: точную высоту ставит position_below_telemetry,
-            // здесь стартовое значение до первого измерения
-            top: px(UI_SCREEN_EDGE_PX_OFFSET),
-            right: px(UI_SCREEN_EDGE_PX_OFFSET),
-            display: Display::Flex,
-            flex_direction: FlexDirection::Column,
-            row_gap: px(3.),
-            // ширина телеметрии: две панели одной ширины читаются как одна связка
-            width: px(PANEL_WIDTH_PX),
-            padding: UiRect {
-                top: px(10.),
-                right: px(16.),
-                bottom: px(10.),
-                left: px(16.),
+    let root = commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                // под телеметрией: точную высоту ставит position_below_telemetry,
+                // здесь стартовое значение до первого измерения
+                top: px(UI_SCREEN_EDGE_PX_OFFSET),
+                right: px(UI_SCREEN_EDGE_PX_OFFSET),
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                row_gap: px(3.),
+                // ширина телеметрии: две панели одной ширины читаются как одна связка
+                width: px(PANEL_WIDTH_PX),
+                padding: UiRect {
+                    top: px(10.),
+                    right: px(16.),
+                    bottom: px(10.),
+                    left: px(16.),
+                },
+                ..default()
             },
-            ..default()
-        },
-        panel_background(),
-        GameUiRoot,
-        InspectorRoot,
-        // в игре панель показывает show_game_ui (`ui/mod.rs`), у витрины
-        // состояний нет — видна сразу
-        if standalone {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        },
-        Name::new("inspector_ui"),
-        // моноширинный: колонки строки камеры и находок не пляшут
-        InheritableFont {
-            font: mono,
-            font_size: size::SMALL_FONT,
-            weight: FontWeight::NORMAL,
-        },
-        children![
-            (
-                Text::default(),
-                ThemeTextColor(tokens::TEXT_MAIN),
-                InspectorCameraText,
-            ),
-            (
-                Text::default(),
-                ThemeTextColor(tokens::TEXT_DIM),
-                InspectorHitsText,
-            ),
-        ],
-    ));
+            panel_background(),
+            GameUiRoot,
+            InspectorRoot,
+            // в игре панель показывает show_game_ui (`ui/mod.rs`), у витрины
+            // состояний нет — видна сразу
+            if standalone {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            },
+            Name::new("inspector_ui"),
+            // моноширинный: колонки строки камеры и находок не пляшут
+            InheritableFont {
+                font: mono.clone(),
+                font_size: size::SMALL_FONT,
+                weight: FontWeight::NORMAL,
+            },
+            children![
+                (
+                    Text::default(),
+                    ThemeTextColor(tokens::TEXT_MAIN),
+                    InspectorCameraText,
+                ),
+                // строки находок спавнит sync_hits_rows; контейнер несёт
+                // ThemedText — без него цепочка моно-шрифта до строк не доходит
+                (
+                    ui_column(1.0),
+                    ThemeTextColor(tokens::TEXT_DIM),
+                    InspectorHitsList,
+                ),
+            ],
+        ))
+        .id();
+    // чекбокс подсветки: клик пишет ресурс, Checked ведёт
+    // sync_highlight_checked — и клик, и BRP-запись идут через одно место.
+    // Шрифт патчится на сцену виджета, как в китах (rows.rs): перо панели —
+    // тот же моно, размер — размер панели.
+    let checkbox = commands
+        .spawn_scene(bsn! {
+            @FeathersCheckbox {
+                @caption: bsn! { Text("highlight") ThemedText }
+            }
+            InheritableFont {
+                font: {mono},
+                font_size: {size::SMALL_FONT},
+                weight: FontWeight::NORMAL,
+            }
+        })
+        .observe(
+            |change: On<ValueChange<bool>>, mut highlight: ResMut<InspectorHighlight>| {
+                highlight.0 = change.value;
+            },
+        )
+        .insert(InspectorHighlightCheckbox)
+        .id();
+    commands.entity(root).add_child(checkbox);
 }
 
 /// Панель встаёт вплотную под телеметрию: её высота меняется вместе с
@@ -244,13 +300,14 @@ struct InspectorInputs<'w> {
 /// Список находок под курсором — из семантического индекса
 /// (`map/inspect.rs::InspectIndex`), сверху самый верхний слой. Пересчёт —
 /// при сдвиге точки больше [`INSPECTOR_QUERY_STEP`], при пересборке индекса
-/// (новая карта, новый пример витрины) и при сдвиге витрины.
+/// (новая карта, новый пример витрины) и при сдвиге витрины. Результат
+/// пишется в `InspectorHitsState`, откуда его берут строки списка
+/// ([`sync_hits_rows`]) и слой подсветки ([`sync_inspector_highlight`]).
 fn update_inspector_hits(
-    text: Single<&mut Text, With<InspectorHitsText>>,
+    mut state: ResMut<InspectorHitsState>,
     camera: Single<(&Transform, &PanCamera), With<Camera2d>>,
     window: Single<&Window, With<PrimaryWindow>>,
     inputs: InspectorInputs,
-    mut last: Local<Vec2>,
 ) {
     let InspectorInputs {
         map,
@@ -263,7 +320,10 @@ fn update_inspector_hits(
         return;
     };
     let Some(cursor) = window.cursor_position() else {
-        text.into_inner().set_if_neq(Text("-".to_string()));
+        // прочерк вместо чисел: курсора нет, следующая точка — всегда дальше
+        // шага (INFINITY), так что список пересчитается на её возврат
+        state.point = Vec2::INFINITY;
+        state.hits.clear();
         return;
     };
     let (transform, controller) = camera.into_inner();
@@ -273,22 +333,101 @@ fn update_inspector_hits(
     // ручка Sidewalks тоже вход: её переворот меняет список без движения
     // курсора и без пересборки индекса
     let inputs_fresh = index.is_changed() || origin.is_changed() || roads.is_changed();
-    if !inputs_fresh && last.distance(point) < INSPECTOR_QUERY_STEP {
+    if !inputs_fresh && state.point.distance(point) < INSPECTOR_QUERY_STEP {
         return;
     }
-    *last = point;
-
-    let hits = if index.is_built() {
+    state.point = point;
+    state.hits = if index.is_built() {
         index.hits(map, trees.density, &roads, point)
     } else {
         Vec::new()
     };
-    let body = if hits.is_empty() {
-        "-".to_string()
-    } else {
-        format_hits(&hits, INSPECTOR_MAX_LINES)
-    };
-    text.into_inner().set_if_neq(Text(body));
+}
+
+/// Строки находок — построчно, до [`INSPECTOR_MAX_LINES`] узлов и хвост
+/// `+N more`; верхняя не-ground строка несёт жёлтый фон — тот элемент, чью
+/// форму рисует слой подсветки. Пусто (курсора нет, карта не разобрана) —
+/// прочерк. Строки пересоздаются на каждую смену `InspectorHitsState`:
+/// их ≤13, спавн узлов дешевле сравнения содержимого.
+fn sync_hits_rows(
+    mut commands: Commands,
+    state: Res<InspectorHitsState>,
+    list: Single<Entity, With<InspectorHitsList>>,
+    rows: Query<Entity, With<InspectorHitRow>>,
+) {
+    if !state.is_changed() {
+        return;
+    }
+    for row in rows.iter() {
+        commands.entity(row).despawn();
+    }
+    let list = list.into_inner();
+    if state.hits.is_empty() {
+        spawn_hit_row(&mut commands, list, "-".to_string(), false);
+        return;
+    }
+    // та же находка, чью форму показывает слой подсветки, — построчный список
+    // выделяет её строку
+    let top = state
+        .hits
+        .iter()
+        .map(|hit| hit.feature)
+        .find(|feature| *feature != FeatureRef::Ground);
+    for hit in state.hits.iter().take(INSPECTOR_MAX_LINES) {
+        let highlighted = Some(hit.feature) == top;
+        spawn_hit_row(&mut commands, list, hit_line(hit), highlighted);
+    }
+    if state.hits.len() > INSPECTOR_MAX_LINES {
+        spawn_hit_row(
+            &mut commands,
+            list,
+            format!("+{} more", state.hits.len() - INSPECTOR_MAX_LINES),
+            false,
+        );
+    }
+}
+
+/// Строка списка: свои `Node` + `Text` на одном узле — контейнер списка уже
+/// несёт `ThemedText`, так что цепочка моно-шрифта не рвётся.
+fn spawn_hit_row(commands: &mut Commands, parent: Entity, text: String, highlighted: bool) {
+    let mut row = commands.spawn((
+        Node {
+            padding: UiRect {
+                left: px(4.),
+                right: px(4.),
+                ..default()
+            },
+            ..default()
+        },
+        Text::new(text),
+        ThemedText,
+        ThemeTextColor(tokens::TEXT_DIM),
+        InspectorHitRow,
+    ));
+    if highlighted {
+        row.insert(BackgroundColor(HIGHLIGHT_ROW_BG));
+    }
+    let row = row.id();
+    commands.entity(parent).add_child(row);
+}
+
+/// `Checked` галочки ведёт ресурс: клик пишет его обсёрвером, BRP — напрямую,
+/// система приводит виджет к ресурсу в обе стороны.
+fn sync_highlight_checked(
+    enabled: Res<InspectorHighlight>,
+    checkbox: Query<Entity, With<InspectorHighlightCheckbox>>,
+    mut commands: Commands,
+) {
+    if !enabled.is_changed() {
+        return;
+    }
+    for entity in checkbox.iter() {
+        if enabled.0 {
+            commands.entity(entity).insert_if_new(Checked);
+        } else {
+            commands.entity(entity).remove::<Checked>();
+        }
+    }
 }
 
 /// Входы слоя подсветки одним параметром — идиома `LayerMaterials`: у системы
@@ -309,15 +448,14 @@ struct HighlightLayer<'w, 's> {
 /// команды здесь законен, как и у оверлеев: убираются только свои меченые
 /// сущности.
 ///
+/// Находки приходят готовые из `InspectorHitsState` — расчёт один на панель.
 /// Пересборка — только при смене верхнего элемента (сравнение с прошлым): пока
-/// курсор ходит по одному зданию, слой не трогается. Этап 4 вынесет общий
-/// расчёт находок в ресурс `InspectorHitsState`; до того система считает их
-/// сама — запрос дешёвый, пересборка по-прежнему редкая.
+/// курсор ходит по одному зданию, слой не трогается.
 fn sync_inspector_highlight(
     enabled: Res<InspectorHighlight>,
-    camera: Single<(&Transform, &PanCamera), With<Camera2d>>,
-    window: Single<&Window, With<PrimaryWindow>>,
-    inputs: InspectorInputs,
+    state: Res<InspectorHitsState>,
+    map: Option<Res<MapData>>,
+    roads: Res<RoadStyle>,
     layer: HighlightLayer,
     mut drawn: Local<Option<FeatureRef>>,
 ) {
@@ -325,26 +463,14 @@ fn sync_inspector_highlight(
     if !enabled.0 && drawn.is_none() {
         return;
     }
-    let InspectorInputs {
-        map,
-        index,
-        origin,
-        trees,
-        roads,
-    } = inputs;
-    let top = match (enabled.0, window.cursor_position(), map.as_deref()) {
-        (true, Some(cursor), Some(map)) if index.is_built() => {
-            let (transform, controller) = camera.into_inner();
-            let point = transform.translation.truncate()
-                + cursor_offset(&window, cursor) * controller.zoom_factor
-                - origin.0;
-            index
-                .hits(map, trees.density, &roads, point)
-                .into_iter()
-                .map(|hit| hit.feature)
-                .find(|feature| *feature != FeatureRef::Ground)
-        }
-        _ => None,
+    let top = if enabled.0 {
+        state
+            .hits
+            .iter()
+            .map(|hit| hit.feature)
+            .find(|feature| *feature != FeatureRef::Ground)
+    } else {
+        None
     };
     if *drawn == top {
         return;
