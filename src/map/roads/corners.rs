@@ -53,14 +53,12 @@
 
 use std::f32::consts::PI;
 
-use super::VERGE_PAVED_MAX;
 use super::drawn::Drawn;
 use super::junctions::node_key;
 use super::network::pairs::PROBE_STEP;
 use super::scraps::Scraps;
-use super::{
-    ALLEY_COLOR, Meadows, ROAD_COLOR, SIDEWALK_COLOR, UNPAVED_ROAD_COLOR, VERGE_YARD_COLOR,
-};
+use super::verges::{VERGE_PAVED_MAX, VERGE_YARD_COLOR};
+use super::{ALLEY_COLOR, Meadows, ROAD_COLOR, SIDEWALK_COLOR, UNPAVED_ROAD_COLOR};
 use crate::map::meshing::MeshBuilder;
 use crate::map::roads::tapers;
 
