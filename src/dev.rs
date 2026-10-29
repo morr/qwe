@@ -23,7 +23,7 @@ use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 use crate::grid::world_to_tile;
 use crate::loading::AppState;
 use crate::map::buildings::{BuildingHeightMode, BuildingPlan, mesh_buildings};
-use crate::map::inspect::{InspectIndex, InspectOrigin};
+use crate::map::inspect::{InspectIndex, InspectOrigin, hit_line};
 use crate::map::osm::MapData;
 use crate::map::surface::MapLayer;
 use crate::map::{
@@ -335,7 +335,7 @@ fn on_probe_layers(
         hits.len()
     ));
     for hit in &hits {
-        report.push_str(&format!("  z {:6.3}  {}\n", hit.z, hit.label));
+        report.push_str(&format!("  {}\n", hit_line(hit)));
     }
 
     // Слои вне пересборки, чей габарит накрывает точку (кроны, их тени — всё,

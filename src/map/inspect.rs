@@ -440,13 +440,21 @@ impl Plugin for InspectPlugin {
     }
 }
 
+/// Одна находка строкой `z  label` — колонка z и отступ общие у обоих
+/// выходов индекса: панели ([`format_hits`]) и отчёта пробы (`dev.rs`),
+/// чтобы один и тот же признак читался в них одинаково.
+pub fn hit_line(hit: &Hit) -> String {
+    format!("z {:6.3}  {}", hit.z, hit.label)
+}
+
 /// Строки пробы для панели инспектора и отчёта `brp probe`: одна находка —
 /// строка `z  label`, самый верхний слой первым. Строк больше `cap` — хвост
 /// `+N more`.
 pub fn format_hits(hits: &[Hit], cap: usize) -> String {
     let mut out = String::new();
     for hit in hits.iter().take(cap) {
-        out.push_str(&format!("z {:6.3}  {}\n", hit.z, hit.label));
+        out.push_str(&hit_line(hit));
+        out.push('\n');
     }
     if hits.len() > cap {
         out.push_str(&format!("+{} more\n", hits.len() - cap));
