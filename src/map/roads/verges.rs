@@ -338,3 +338,6 @@ pub(super) fn push_verges(
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
