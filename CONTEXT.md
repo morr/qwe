@@ -335,7 +335,7 @@ surface change along a way (asphalt ↔ dirt) **pins** the seam (`axis.rs::Run::
     slides by half a lane over the taper, the new lane on the right of the taper's run. A
     **one-way** wedge adds its lanes at one kerb (`paint::wedge_drift`): the kerb of the
     traffic side, or the far one for a left-turn pocket by `turn:lanes`.
-  - **Paint layer** (`map/roads/paint.rs`, shader `paint.wgsl`) — the lane lines as
+  - **Paint layer** (`map/roads/paint.rs`, shader `paint.wesl`) — the lane lines as
     **geometry** off the street axis, not a pattern of the asphalt shader: one strip wider
     than the line per line, the shader draws the line (1.3 px floor), its dashes **by the
     street's arclength** (2 m dash, 6 m gap; the phase does not restart at a seam), a lane
@@ -872,7 +872,7 @@ on a counter-taper (`Taper::seam`) — and drifts to its own over the wedge
   The colour comes from that material's own palette — **the per-use *roof* colours
   are gone**, and the per-use *wall* colours with them: a wall is picked the same way a
   roof is (**`WallKind`**, below) — and the texture from
-  **`RoofMaterial`** (`assets/shaders/roof.wgsl`) reading the **`Roof` attribute**
+  **`RoofMaterial`** (`assets/shaders/roof.wesl`) reading the **`Roof` attribute**
   (`meshing::ATTRIBUTE_ROOF` = `[…, …, material code, seed]`, where the first two numbers
   mean what the code says they mean: a roof's **long axis**, one value for the whole
   building, or the face's own **cell coordinates**, different at every vertex — a wall's
@@ -883,7 +883,7 @@ on a counter-taper (`Taper::seam`) — and drifts to its own over the wedge
   wall's code as the top of
   the end wall under it). **Roof age** is the
   second thing that seed carries
-  (`roof.wgsl::roof_age`, hashed from it, no attribute of its own): one number per
+  (`roof.wesl::roof_age`, hashed from it, no attribute of its own): one number per
   building that sets how many repair patches its bitumen carries (a young roof almost
   none, an old one a patch per second cell), how much water stands on it, and — on every
   **roofing** material — how faded and dirty it is. A wall has no age: it never reaches
@@ -1101,7 +1101,7 @@ on a counter-taper (`Taper::seam`) — and drifts to its own over the wedge
   a car nor the gate drawn above it fits such a cell. The remainder is spread evenly over
   **all** the bays of that piece rather than left to the end one; a row of identical gates
   is what a ГСК is read by. The metres stay on
-  the CPU: the shader takes `fract` of what the vertex carries, so `roof.wgsl` mirrors no
+  the CPU: the shader takes `fract` of what the vertex carries, so `roof.wesl` mirrors no
   pitch at all. No new
   geometry either way — the same `ATTRIBUTE_ROOF` carrying different values. Clutter is
   refused on both (no penthouse, no vent, no chimney).
@@ -1305,7 +1305,7 @@ on a counter-taper (`Taper::seam`) — and drifts to its own over the wedge
   a whole `TREE_VARIANTS` of silhouettes at once, since **a single variant cannot be
   re-rolled**. Every crown side by side, knobs live: `cargo run --example tree_gallery`.
   **The crown is coloured by a material of its own**, **`CrownMaterial`**
-  (`map/trees/canopy.rs`, shader `crown.wgsl`), not by a flat fill: the side facing the
+  (`map/trees/canopy.rs`, shader `crown.wesl`), not by a flat fill: the side facing the
   sun is lighter, the far side darker with a falloff by radius, and a leaf ripple by
   world position keeps two neighbouring trees of one variant from being copies. The ink
   of the outline and the hatching is mixed toward the foliage (`INK_FOLIAGE_MIX`) — from
@@ -1488,7 +1488,7 @@ on a counter-taper (`Taper::seam`) — and drifts to its own over the wedge
   index of the ring's edges by horizontal bands — a paved outline carries hundreds of
   vertices on its fillets.
   Render-only. Tula, cache v14: 349 lots parsed, 355 once the apron has cut some of them in parts.
-- **Asphalt wear** (`surface.wgsl`, `SurfaceParams::wear`) — an asphalt road on a photo is
+- **Asphalt wear** (`surface.wesl`, `SurfaceParams::wear`) — an asphalt road on a photo is
   never one tone. **Wheel ruts** in the **lane frame**, so they follow the lane and not
   the compass (a polished band 0.85 m either side of each lane's middle — the track of a
   car — measured with `fract` of the lane index on the grid the paint lines stand on, so
@@ -1902,15 +1902,15 @@ on a counter-taper (`Taper::seam`) — and drifts to its own over the wedge
     crosswalk is not one: its ends lie on pavement footways.
   Tula: 15101 kerb returns plus 2268 on the sidewalks, 1632 + 202 outer corners, 89
   stitches, 9 driveway crossings, in the `road meshing:` line.
-- **Surface material** (`map/surface.rs`, `assets/shaders/surface.wgsl`) — the ground,
+- **Surface material** (`map/surface.rs`, `assets/shaders/surface.wesl`) — the ground,
   the area layers, water and the road fills are drawn by **`SurfaceMaterial`** instead of
   `ColorMaterial`: the vertex colour stays the base, the shader multiplies in procedural
   noise by **world position** (large mottle with a warm/cool tint shift, fine grain, grass
   speckle, drifting ripple on water) — no textures, no assets, and identical in any two
   overlapping ribbons. **Every octave fades by pixel size** (`fwidth`), so nothing shimmers
   when zoomed out — that rule, and the hash/noise/octave/stripe helpers around it, live in
-  **`assets/shaders/noise.wgsl`** and are imported by all three map shaders (`surface.wgsl`,
-  `roof.wgsl` and the crown's `crown.wgsl`; the portal's vortex keeps its own hash and
+  **`assets/shaders/noise.wesl`** and are imported by all three map shaders (`surface.wesl`,
+  `roof.wesl` and the crown's `crown.wesl`; the portal's vortex keeps its own hash and
   uncentred noise). One material per **`SurfaceKind`** (`SurfaceMaterials`, built once at
   startup);
   **`SurfaceStyle::texture`** (panel *Surfaces*, persisted) scales all amplitudes,
@@ -1936,7 +1936,7 @@ on a counter-taper (`Taper::seam`) — and drifts to its own over the wedge
   at a border get no shoal along it. Two polygons that **do not** meet — a `riverbank` cut
   at a bridge — are joined by the band of the channel between them (**water gap**, above),
   which enters the same union. A **waterway ribbon** carries the same field on its
-  edges from the shader (`surface.wgsl`, by the ribbon's `across`), so the shoal turns
+  edges from the shader (`surface.wesl`, by the ribbon's `across`), so the shoal turns
   from a pond into its channel without a seam.
 - **Sidewalk profile** (`osm/model.rs`, `RoadLine::sidewalk() -> SidewalkProfile`) — one
   answer to "what sidewalk does this road have" for the parse and the renderer: the sides
@@ -2437,7 +2437,7 @@ its draw call.
 - **Demon look** (`demon/look.rs`) — the `Ember` glyph in a five-shade crimson → orange
   ring (`demon_tint`) plus a **halo**: a child entity (`DemonHalo`, the `Halo` glyph,
   three bodies wide, z −0.01) that inherits the devour pulse and dies with its parent.
-- **Portal** (`portal.rs`, `assets/shaders/portal.wgsl`) — a `Mesh2d` quad with a
+- **Portal** (`portal.rs`, `assets/shaders/portal.wesl`) — a `Mesh2d` quad with a
   `PortalMaterial` (`Material2d`): a log-spiral vortex computed per pixel from
   `globals.time` — no spritesheet, no frames. Violet on purpose: red is demons, amber is
   panic, blue is water and tram. Its rim is **HDR** (> 1.0) so it blooms; under it a

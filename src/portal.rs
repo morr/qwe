@@ -1,4 +1,4 @@
-//! Портал: вихрь, посчитанный в шейдере (`assets/shaders/portal.wgsl`), и
+//! Портал: вихрь, посчитанный в шейдере (`assets/shaders/portal.wesl`), и
 //! выжженное пятно под ним. Присутствует с начала сцены.
 //!
 //! Спрайтшит на девять кадров ушёл: со 160 px на 36 м он читался пиксельной
@@ -17,7 +17,7 @@ use crate::loading::{AppState, WorldInitSet};
 use crate::settings::{PORTAL_DIAMETER, Z_PORTAL, Z_PORTAL_STAIN};
 use crate::silhouette::{Glyph, Silhouettes};
 
-const SHADER_PATH: &str = "shaders/portal.wgsl";
+const SHADER_PATH: &str = "shaders/portal.wesl";
 /// Ядро вихря: почти чёрное с фиолетовым отливом.
 const PORTAL_CORE: LinearRgba = LinearRgba::new(0.02, 0.0, 0.05, 1.0);
 /// Рукава и ободок: пурпур ярче 1.0 — HDR, светится через bloom. Фиолетовый

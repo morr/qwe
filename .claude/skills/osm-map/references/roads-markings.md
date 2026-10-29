@@ -5,7 +5,7 @@ side of the paint (zebras, stop lines, who breaks) is `roads-junction-paint.md`
 (**Junction paint**), the turn wear and arrows `roads-bridges-wear.md` (**Turn paths**),
 the asphalt the lines lie on `roads-bridges-wear.md` (**Asphalt wear**).
 
-- **Markings — the paint layer** (`map/roads/paint.rs`, shader `assets/shaders/paint.wgsl`).
+- **Markings — the paint layer** (`map/roads/paint.rs`, shader `assets/shaders/paint.wesl`).
   The lane lines are **geometry off the street axis**, not a pattern of the asphalt
   shader any more. The asphalt shader used to draw them from the
   ribbon's own width — `round((across + half width) / lane width)`, lanes split evenly

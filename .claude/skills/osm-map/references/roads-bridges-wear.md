@@ -3,7 +3,7 @@
 The three bridge layers and their shadows, the wear that keeps asphalt from being one
 flat tone (lane ruts, turn paths, the rut overlay), and the lane arrows. Code:
 `map/roads/bridges.rs`, `roads/aprons.rs`, `roads/footbridge.rs`, `roads/turns.rs`,
-`surface.wgsl`, `roads/ruts.rs`. The hub is `roads.md`; the lane frame the wear rides
+`surface.wesl`, `roads/ruts.rs`. The hub is `roads.md`; the lane frame the wear rides
 on is `roads-markings.md` (**Markings**), the leading roads whose ruts run through are
 `roads-junction-paint.md` (**Junction paint**).
 
@@ -58,7 +58,7 @@ on is `roads-markings.md` (**Markings**), the leading roads whose ruts run throu
       what is left in a pixel is `1 −` the **largest** rut of all the strips there;
     - `road_paint_wear` at `Z_ROAD_WEAR` returns 1 and blends `colour × Dst +
       dst × (1 − Dst alpha)` — the pixel times `1 + rut`, the multiplicative rut of
-      `surface.wgsl`, so **Turn wear** (`RoadPaintStyle::turn_wear`, 0–8 %, 3.5) reads in
+      `surface.wesl`, so **Turn wear** (`RoadPaintStyle::turn_wear`, 0–8 %, 3.5) reads in
       the same percent as Wear — and writes alpha 1 back. A second strip over the same
       pixel then reads alpha 1 and changes nothing.
     The mask mesh sits below the apply mesh, and the transparent phase draws them whole in
@@ -387,7 +387,7 @@ on is `roads-markings.md` (**Markings**), the leading roads whose ruts run throu
   `BridgeReport` on `RoadReport::bridges` — ways, bridges (chains) and the ones casting
   a shadow. The width of the curb comes from `footprint::bridge_curb_width` through
   `RoadLine::curb_reach` and stays in `footprint` — it is the seam with the navmesh.
-- **Asphalt wear** (`surface.wgsl`, `SurfaceParams::wear`, on `SurfaceKind::Street` only)
+- **Asphalt wear** (`surface.wesl`, `SurfaceParams::wear`, on `SurfaceKind::Street` only)
   — what keeps a road from being one flat tone, in the **lane frame** so it follows the
   lane rather than the compass: **wheel ruts** — a polished band `RUT_OFFSET` 0.85 m
   either side of each lane's middle (a car's track is 1.5 m), `RUT_SIGMA` 0.32 m wide

@@ -23,7 +23,7 @@
 //! настройка; `TAU` приходится исключать по имени.
 
 /// Текст шейдера кровель, вшитый в витрину при сборке.
-const SHADER_SOURCE: &str = include_str!("../../../assets/shaders/roof.wgsl");
+const SHADER_SOURCE: &str = include_str!("../../../assets/shaders/roof.wesl");
 
 /// Исходник форм крыш — оттуда же и тем же способом.
 const ROOFS_SOURCE: &str = include_str!("../../../src/map/buildings/roofs.rs");

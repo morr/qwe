@@ -1,6 +1,6 @@
 //! Фактура поверхностей карты: земля, зелень, песок, вода, асфальт и тротуар
 //! рисуются одним материалом [`SurfaceMaterial`] (шейдер
-//! `assets/shaders/surface.wgsl`) вместо плоского `ColorMaterial`.
+//! `assets/shaders/surface.wesl`) вместо плоского `ColorMaterial`.
 //!
 //! Базовый цвет по-прежнему вершинный — слитые меши слоёв собираются как и
 //! раньше; шейдер кладёт поверх него процедурный шум по **мировым**
@@ -26,7 +26,7 @@ use bevy::render::render_resource::{
 };
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use bevy::shader::ShaderRef;
-use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey};
+use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey, Material2dPipeline};
 
 use crate::loading::AppState;
 use crate::map::buildings::material::{RoofMaterial, RoofMaterialHandle};
@@ -36,7 +36,7 @@ use crate::map::trees::{CrownMaterial, CrownMaterialHandle};
 use crate::map::water::{WATER_SHORE_COLOR, WATER_SHORE_WIDTH};
 use crate::prefs::retuned;
 
-const SHADER_PATH: &str = "shaders/surface.wgsl";
+const SHADER_PATH: &str = "shaders/surface.wesl";
 
 /// Дефолт и границы ползунка Texture ([`SurfaceStyle::texture`]) — общий
 /// множитель амплитуд шума поверхностей: 0 — плоские заливки, какими они были
@@ -56,7 +56,7 @@ const _: () = {
 };
 
 /// Параметры фактуры — юниформ шейдера. Зеркало `SurfaceParams` в
-/// `surface.wgsl`: порядок полей обязан совпадать.
+/// `surface.wesl`: порядок полей обязан совпадать.
 #[derive(ShaderType, Clone, Copy, Debug, PartialEq)]
 pub struct SurfaceParams {
     /// Сдвиг тона по крупному шуму, множитель на канал: положительный шум
@@ -325,6 +325,7 @@ impl Material2d for SurfaceMaterial {
     /// него этим материалом не нарисовать, и это намеренно: собирать слой для
     /// него надо через `MeshBuilder::with_surface_coords`.
     fn specialize(
+        _pipeline: &Material2dPipeline,
         descriptor: &mut RenderPipelineDescriptor,
         layout: &MeshVertexBufferLayoutRef,
         _key: Material2dKey<Self>,

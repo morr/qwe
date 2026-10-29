@@ -92,7 +92,7 @@ pub fn panel_background() -> ThemeBackgroundColor {
 
 /// Подложка блока внутри панели — строка-счётчик, блок ползунка, шапка группы.
 pub fn panel_block_background() -> ThemeBackgroundColor {
-    ThemeBackgroundColor(tokens::GROUP_BODY_BG)
+    ThemeBackgroundColor(tokens::GROUP_BG)
 }
 
 /// Тип объектов мира, чьё число стоит в заголовке панели (см.
@@ -223,7 +223,7 @@ pub fn spawn_panel_button_with<M>(
     marker: impl Bundle,
     caption: impl Bundle,
     is_active: bool,
-    on_activate: impl IntoObserverSystem<Activate, (), M>,
+    on_activate: impl IntoObserverSystem<Activate, M>,
 ) -> Entity {
     let variant = button_variant(is_active);
     let button = commands
@@ -420,7 +420,7 @@ pub fn spawn_panel_button<M>(
     marker: impl Bundle,
     label: &str,
     is_active: bool,
-    on_activate: impl IntoObserverSystem<Activate, (), M>,
+    on_activate: impl IntoObserverSystem<Activate, M>,
 ) -> Entity {
     spawn_panel_button_with(
         commands,

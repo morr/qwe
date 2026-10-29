@@ -14,10 +14,10 @@
 //! `camera::pointer_over_ui`, и карта перестала бы ловить мышь целиком.
 
 use bevy::camera::Hdr;
-use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
 use bevy::picking::Pickable;
 use bevy::post_process::bloom::{Bloom, BloomCompositeMode, BloomPrefilter};
 use bevy::prelude::*;
+use bevy::render::view::{DebandDither, Tonemapping};
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use bevy::ui::{ColorStop, GlobalZIndex};
 
@@ -45,10 +45,16 @@ const VIGNETTE_START_PERCENT: f32 = 55.0;
 
 /// Компоненты камеры, включающие bloom. Спавн камеры — в `camera.rs`;
 /// здесь только то, что относится к пост-обработке.
+///
+/// Тонемаппинг выключен нарочно: каждая библиотечная кривая перекрашивает
+/// палитру карты, и нужен только ореол. С 0.20 `Tonemapping::None` — полный
+/// passthrough без clamp'а отрицательных каналов (с аддитивным bloom это
+/// путь к артефактам), поэтому стоит `Linear`: никакой кривой, но clamp и
+/// прочий конвейер на месте — то, чем `None` был в 0.19.
 pub fn camera_post_process() -> impl Bundle {
     (
         Hdr,
-        Tonemapping::None,
+        Tonemapping::Linear,
         DebandDither::Disabled,
         Bloom {
             intensity: BLOOM_INTENSITY,
@@ -65,7 +71,7 @@ pub fn camera_post_process() -> impl Bundle {
 /// Сглаживание кромок — строка `Antialias` вкладки Debug. Кромки лент карты
 /// (асфальт, тротуар, газон, островки, носы медиан) — голая геометрия, и без
 /// MSAA на крупном плане они идут лесенкой, тогда как краска рядом
-/// сглажена своим шейдером (`paint.wgsl`). `Msaa::Sample4` берёт четыре
+/// сглажена своим шейдером (`paint.wesl`). `Msaa::Sample4` берёт четыре
 /// выборки на пиксель только на кромках треугольников, заливка по-прежнему
 /// шейдится раз на пиксель.
 ///

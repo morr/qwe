@@ -6,7 +6,7 @@ codes `7…8`, the `WallFrame::run` grid), `buildings-landmarks.md` (the `Sacred
 exceptions). `CONTEXT.md` carries the **Roof material** glossary entry and the code
 dictionary.
 
-- **Roof material** (`buildings/material.rs`, shader `assets/shaders/roof.wgsl`) — what
+- **Roof material** (`buildings/material.rs`, shader `assets/shaders/roof.wesl`) — what
   the roof is *covered with*. The goal is the aerial photo: from above, a roof is a
   **material** first (rolled bitumen with its seams and repair patches, gravel ballast,
   standing-seam metal, corrugated sheet, tile, PVC membrane) and a colour second, and the
@@ -60,12 +60,12 @@ dictionary.
     `u`)** — the first version had the corrugation along the ridge, and water would have
     run along the rib rather than down it. Rib lighting is scaled by
     `|axis · light|`, so ribs pointing at the sun neither highlight nor shade. Every
-    octave and every stripe grid fades by `visible(wavelength, px)`, the `noise.wgsl`
+    octave and every stripe grid fades by `visible(wavelength, px)`, the `noise.wesl`
     rule, so nothing moirés when zoomed out; at the city zoom the texture is simply gone
     and only the material's colour is left. The noise helpers come from
-    **`assets/shaders/noise.wgsl`** — its full set is named under **Surface material**
-    in `SKILL.md` — and this shader imports by path the subset it calls
-    (`#import "shaders/noise.wgsl"::{hash21, value_noise, visible, fbm3, stripes}`);
+    **`assets/shaders/noise.wesl`** — its full set is named under **Surface material**
+    in `SKILL.md` — and this shader imports the subset it calls
+    (`import super::noise::{hash21, value_noise, visible, fbm3, stripes};`);
     the `visible` rule in particular must not drift between the shaders that import it.
   - **The wall is the same mechanism on its own coordinates and its own codes**
     (`layers.rs::wall_frame`, `meshing::WallFrame` — the same frame the garage ribbon
@@ -366,7 +366,7 @@ dictionary.
     **Two things about it are measured in somebody else's system, and both were got wrong
     once**, so they are stated here. Its **height is a tier, not a share of the wall**
     (`WallCells::storey`): the glass ribbon it must sit above lives inside a *cell* of the
-    shader's grid (`roof.wgsl::BIG_BOX_WINDOW_HIGH` 0.70 of a tier), and a share of the
+    shader's grid (`roof.wesl::BIG_BOX_WINDOW_HIGH` 0.70 of a tier), and a share of the
     whole wall equals a share of a tier only on a one-tier box — on a two-tier one such a
     band lay over the top tier's ribbon completely. And its **normal is the wall's own**
     (`layers::wall_normal`, the helper `wall_colors` takes too): OSM does not normalise a
@@ -395,7 +395,7 @@ dictionary.
     pattern does not.
     The garage bay in `buildings-garages.md` is the deliberate exception — there the seam
     grid *is* the feature, because a row of doors really is one.
-  - **Roof age** (`roof.wgsl::roof_age`) — one number per building in [0, 1), **hashed from
+  - **Roof age** (`roof.wesl::roof_age`) — one number per building in [0, 1), **hashed from
     the same seed** the texture phase rides on, and with a fixed patch share that was the
     missing half of the patch fix: a minority of cells carried a patch, but *the same*
     minority on every bitumen roof, so the whole district read as re-roofed and repaired in
@@ -450,12 +450,12 @@ dictionary.
     - every house goes through **`push_house`**, the per-building body of the extrusion
       layer, and every shape number comes from `roofs::shape_facts` — the gallery may not
       roll its own geometry or restate a threshold;
-    - the tuning constants it prints are **parsed out of `roof.wgsl` and `roofs.rs` by
+    - the tuning constants it prints are **parsed out of `roof.wesl` and `roofs.rs` by
       `constants.rs`** (`include_str!`, lines of the form `const NAME: f32 = …;`) rather
       than mirrored as Rust numbers: a mirror would drift on the first edit and the gallery
       would then lie about exactly what it is opened for. They are text, not knobs: the
       numbers live in the code.
-    - **`roof.wgsl` holds two textures, and the two galleries split it by the section
+    - **`roof.wesl` holds two textures, and the two galleries split it by the section
       banner** (`─── стена`): the roof gallery parses everything **before** it, the wall
       gallery everything **after**. A name list would have to be extended on every new
       constant; the banner sits exactly where the meaning changes. Both halves are pinned by

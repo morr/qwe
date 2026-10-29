@@ -1,5 +1,5 @@
 //! Материал кровли: чем крыша покрыта, какого она от этого цвета и какую
-//! фактуру кладёт поверх шейдер `assets/shaders/roof.wgsl`.
+//! фактуру кладёт поверх шейдер `assets/shaders/roof.wesl`.
 //!
 //! До этого крыша была заливкой по назначению здания плюс ±3 % по индексу в
 //! массиве, и с воздуха квартал читался как выкройка. На снимке же кровля —
@@ -35,7 +35,7 @@ use bevy::render::render_resource::{
 };
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use bevy::shader::ShaderRef;
-use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey};
+use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey, Material2dPipeline};
 
 use super::garages::GarageRun;
 // Пятно, ниже которого `building=yes` считается частным домом, — та же
@@ -50,7 +50,7 @@ use crate::map::seed::seed_from_point;
 use crate::map::{SunOnMap, sun_light};
 use crate::prefs::retuned;
 
-const SHADER_PATH: &str = "shaders/roof.wgsl";
+const SHADER_PATH: &str = "shaders/roof.wesl";
 
 /// Дефолт и границы ползунка Texture секции Buildings
 /// ([`RoofStyle::texture`]) — множитель амплитуд фактуры крыш: 0 — плоская
@@ -112,7 +112,7 @@ impl RoofKind {
     /// Код для [`ATTRIBUTE_ROOF`]; `0` — вершина без фактуры.
     ///
     /// Код **позиционный** — номер варианта плюс единица, — а его зеркало это
-    /// набор констант `roof.wgsl` (`BITUMEN = 1u` … `GARAGE_BLOCK = 8u`,
+    /// набор констант `roof.wesl` (`BITUMEN = 1u` … `GARAGE_BLOCK = 8u`,
     /// дальше стены). Значит, вариант можно только дописать в конец: вставка в
     /// середину молча сдвинет коды всех, кто ниже, и шейдер начнёт класть
     /// чужую фактуру. Коды стен ([`WallKind::code`]) идут следом за последним
@@ -165,7 +165,7 @@ impl RoofKind {
 /// этой стене балконы.
 ///
 /// Коды продолжают кровельные — один словарь в одном числе атрибута, — а
-/// зеркало обоих половин лежит в `roof.wgsl` (`PANEL = 9u` … `SACRED = 16u`,
+/// зеркало обоих половин лежит в `roof.wesl` (`PANEL = 9u` … `SACRED = 16u`,
 /// за ними `DOOR = 17u`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum WallKind {
@@ -230,7 +230,7 @@ impl WallKind {
     /// Код для [`ATTRIBUTE_ROOF`]: продолжение кровельного словаря, поэтому
     /// он **выводится** из числа кровельных кодов ([`RoofKind::CODES`]), а не
     /// пишется числом. Дописанная кровля сдвинет коды стен — и это правильно:
-    /// зеркало в `roof.wgsl` одно на весь словарь и правится целиком.
+    /// зеркало в `roof.wesl` одно на весь словарь и правится целиком.
     pub const fn code(self) -> u32 {
         RoofKind::CODES + 1 + self as u32
     }
@@ -574,7 +574,7 @@ impl RoofLook {
     ///
     /// Посев несёт **два** независимых смысла, и оба выводит из него шейдер:
     /// фазу швов (чтобы ковры соседних домов не выстроились в одну линию) и
-    /// **возраст** кровли (`roof.wgsl::roof_age` — хеш от посева: сколько на
+    /// **возраст** кровли (`roof.wesl::roof_age` — хеш от посева: сколько на
     /// битуме заплат, сколько на ней луж, насколько она выгорела). Отдельного
     /// числа под возраст нет намеренно: на каждой вершине слоя зданий это ещё
     /// четыре байта, а корреляция двух узоров одного дома глазом не видна.
@@ -1092,7 +1092,7 @@ pub(super) fn look_seed(building: &PolyArea) -> u32 {
 }
 
 /// Параметры фактуры кровель — юниформ шейдера. Зеркало `RoofParams` в
-/// `roof.wgsl`: порядок полей обязан совпадать.
+/// `roof.wesl`: порядок полей обязан совпадать.
 #[derive(ShaderType, Clone, Copy, Debug, PartialEq)]
 pub struct RoofParams {
     /// Направление **на солнце** в плане (`map::sun_light`): по нему рёбра
@@ -1134,6 +1134,7 @@ impl Material2d for RoofMaterial {
     /// него этим материалом не нарисовать, и это намеренно: собирать слой для
     /// него надо через `MeshBuilder::with_roof_coords`.
     fn specialize(
+        _pipeline: &Material2dPipeline,
         descriptor: &mut RenderPipelineDescriptor,
         layout: &MeshVertexBufferLayoutRef,
         _key: Material2dKey<Self>,

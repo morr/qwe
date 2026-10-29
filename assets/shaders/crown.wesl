@@ -13,25 +13,19 @@
 // локальная координата приходит атрибутом — `CROWN_LOCAL` ставит
 // `canopy::CrownMaterial::specialize`, увидев его в меше.
 //
-// Шум общий: `fbm3` берётся из библиотеки `shaders/noise.wgsl` — та же рябь и
+// Шум общий: `fbm3` берётся из библиотеки `noise.wesl` — та же рябь и
 // то же гашение по размеру пикселя, что у поверхностей и кровель (`visible`
 // вызывается внутри неё, отдельного импорта не требует).
 
-#import bevy_sprite::{
-    mesh2d_functions as mesh_functions,
-    mesh2d_view_bindings::view,
-}
-#import "shaders/noise.wgsl"::{fbm3}
+import bevy_sprite_render::mesh2d::{functions as mesh_functions, view_bindings::view};
+import super::noise::fbm3;
 
-#ifdef TONEMAP_IN_SHADER
-#import bevy_core_pipeline::tonemapping
-#endif
-#ifdef SRGB_OUTPUT
-#import bevy_render::color_operations::linear_to_srgb
-#endif
-#ifdef OKLAB_OUTPUT
-#import bevy_render::color_operations::linear_rgb_to_oklab
-#endif
+@if(TONEMAP_IN_SHADER)
+import bevy_core_pipeline::tonemapping;
+@if(SRGB_OUTPUT)
+import bevy_render::color_operations::linear_to_srgb;
+@if(OKLAB_OUTPUT)
+import bevy_render::color_operations::linear_rgb_to_oklab;
 
 // Зеркало `canopy::CrownUniform` — порядок полей обязан совпадать.
 struct CrownUniform {
@@ -42,7 +36,7 @@ struct CrownUniform {
     shading: f32,
 }
 
-@group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: CrownUniform;
+@group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> params: CrownUniform;
 
 // Насколько освещённая сторона кроны светлее средней, а теневая темнее.
 // Шар, а не диск: к краю тени добавляется падение по радиусу.
@@ -56,11 +50,10 @@ struct Vertex {
     @builtin(instance_index) instance_index: u32,
     @location(0) position: vec3<f32>,
     @location(1) color: vec4<f32>,
-#ifdef CROWN_LOCAL
     // слитый меш дальних крон: позиция уже мировая, координата внутри кроны
     // едет отдельным атрибутом (`meshing::ATTRIBUTE_CROWN`)
+    @if(CROWN_LOCAL)
     @location(2) local: vec2<f32>,
-#endif
 }
 
 struct VertexOutput {
@@ -83,11 +76,10 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     out.position = mesh_functions::mesh2d_position_world_to_clip(world_position);
     out.world_position = world_position.xy;
     out.color = vertex.color;
-#ifdef CROWN_LOCAL
+    @if(CROWN_LOCAL)
     out.local = vertex.local;
-#else
+    @else
     out.local = vertex.position.xy;
-#endif
     return out;
 }
 
@@ -112,14 +104,11 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     rgb = rgb * (1.0 + params.shading * (vec3<f32>(shade) + tint));
 
     var output_color = vec4<f32>(rgb, in.color.a);
-#ifdef TONEMAP_IN_SHADER
+@if(TONEMAP_IN_SHADER)
     output_color = tonemapping::tone_mapping(output_color, view.color_grading);
-#endif
-#ifdef SRGB_OUTPUT
+@if(SRGB_OUTPUT)
     output_color = vec4(linear_to_srgb(output_color.rgb), output_color.a);
-#endif
-#ifdef OKLAB_OUTPUT
+@if(OKLAB_OUTPUT)
     output_color = vec4(linear_rgb_to_oklab(output_color.rgb), output_color.a);
-#endif
     return output_color;
 }

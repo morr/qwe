@@ -5,7 +5,7 @@
 // (`src/portal.rs`); яркость рукавов задаётся выше 1.0 намеренно — это HDR под
 // bloom камеры (`src/post.rs`), без него они просто выбелятся.
 
-#import bevy_sprite::{mesh2d_vertex_output::VertexOutput, mesh2d_view_bindings::globals}
+import bevy_sprite_render::mesh2d::{vertex_output::VertexOutput, view_bindings::globals};
 
 struct PortalUniform {
     // цвет ядра: почти чёрный
@@ -16,7 +16,7 @@ struct PortalUniform {
     params: vec4<f32>,
 }
 
-@group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> portal: PortalUniform;
+@group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> portal: PortalUniform;
 
 fn hash21(p: vec2<f32>) -> f32 {
     var q = fract(p * vec2<f32>(123.34, 456.21));

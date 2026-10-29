@@ -9,7 +9,7 @@
 //! - **раскладка полос одна** ([`LaneFrame`]): узел сетки полос и границы
 //!   проезжей части поперёк оси. Границы полос — `origin + k ·`
 //!   [`lane_width`]. По этой же раскладке кладёт колею шейдер асфальта
-//!   (`surface.wgsl`, атрибут `meshing::ATTRIBUTE_RIBBON`), так что колея идёт
+//!   (`surface.wesl`, атрибут `meshing::ATTRIBUTE_RIBBON`), так что колея идёт
 //!   ровно между линиями и на клине;
 //! - **на клине крайняя полоса рождается**, остальные линии идут без сдвига:
 //!   раскладка плывёт от узкого сечения к широкому, границы расходятся вместе
@@ -32,7 +32,7 @@
 //!   осевой нет.
 //!
 //! Линию с полом в 1.3 px, её штрихи, сглаженный край и гашение по зуму рисует
-//! шейдер краски (`assets/shaders/paint.wgsl`); геометрия — полоса шире линии
+//! шейдер краски (`assets/shaders/paint.wesl`); геометрия — полоса шире линии
 //! под каждую ([`MeshBuilder::push_paint_strip`]). Полосы двух видов — линии
 //! полос и осевые — лежат разными мешами: дальше [`LANE_ZOOM_MAX`] линии
 //! полос не видны, дальше [`AXIS_ZOOM_MAX`] — и осевые, и их меш прячется
@@ -47,7 +47,7 @@ use bevy::render::render_resource::{
 };
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use bevy::shader::ShaderRef;
-use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey};
+use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey, Material2dPipeline};
 
 use super::network::RoadNetwork;
 use super::node_paint::{Pocket, STOP_WIDTH, StopLine, Throat, ZEBRA_LENGTH, Zebra};
@@ -77,7 +77,7 @@ use crate::settings::{
     Z_BRIDGE_PAINT, Z_ROAD_ISLANDS, Z_ROAD_PAINT, Z_ROAD_WEAR, Z_ROAD_WEAR_MASK,
 };
 
-const SHADER_PATH: &str = "shaders/paint.wgsl";
+const SHADER_PATH: &str = "shaders/paint.wesl";
 
 /// Ширина линии, м — как у настоящей (10–15 см). На экране не тоньше 1.3 px:
 /// тоньше мерцает при сдвиге камеры, и шейдер её расширяет.
@@ -178,9 +178,9 @@ pub const TURN_WEAR_STEP: f32 = 0.005;
 pub struct RoadPaintStyle {
     /// Непрозрачность линий: свежая краска — 1, стёртая — к нулю.
     pub paint: f32,
-    /// Амплитуда колеи (`surface.wgsl`).
+    /// Амплитуда колеи (`surface.wesl`).
     pub wear: f32,
-    /// Амплитуда колеи траекторий узла — слой износа (`paint.wgsl`).
+    /// Амплитуда колеи траекторий узла — слой износа (`paint.wesl`).
     pub turn_wear: f32,
 }
 
@@ -406,8 +406,8 @@ const YIELD_GAP: f32 = 0.6;
 /// (`visible()` по периоду), дальше и плашка — мелочь.
 pub const ZEBRA_ZOOM_MAX: f32 = 0.6;
 /// Профиль колеи, м: смещение колеса от середины полосы и ширина колеи (σ).
-/// Один на колею полос (`surface.wgsl`, через `surface::SurfaceParams`) и
-/// колею траекторий (`paint.wgsl`, через [`PaintParams`]).
+/// Один на колею полос (`surface.wesl`, через `surface::SurfaceParams`) и
+/// колею траекторий (`paint.wesl`, через [`PaintParams`]).
 pub(crate) const RUT_OFFSET: f32 = 0.85;
 pub(crate) const RUT_SIGMA: f32 = 0.32;
 /// Полуширина полосы под колею траектории, м: обе колеи с краями в 3σ.
@@ -2148,7 +2148,7 @@ pub fn show_paint(bucket: Res<PaintZoomBucket>, mut layers: Query<(&PaintTag, &m
     }
 }
 
-/// Юниформ шейдера краски. Зеркало `PaintParams` в `paint.wgsl`: порядок
+/// Юниформ шейдера краски. Зеркало `PaintParams` в `paint.wesl`: порядок
 /// полей обязан совпадать.
 #[derive(ShaderType, Clone, Copy, Debug, PartialEq)]
 pub struct PaintParams {
@@ -2219,7 +2219,7 @@ impl PaintParams {
 /// - [`Self::WearMask`] пишет только альфу, операцией `Min`, значение
 ///   `1 − колея`: в пикселе остаётся **наибольшая** колея из всех полос;
 /// - [`Self::Wear`] умножает цвет на `2 − альфа`, то есть на `1 + колея` —
-///   ту же колею, что множитель `surface.wgsl`, — и возвращает альфу в
+///   ту же колею, что множитель `surface.wesl`, — и возвращает альфу в
 ///   единицу. Повторное наложение там, где полосы перекрылись, видит
 ///   единицу и цвета не меняет.
 ///
@@ -2277,6 +2277,7 @@ impl Material2d for PaintMaterial {
     /// `ATTRIBUTE_RIBBON`. Проходы колеи — свой шейдерный вариант и своё
     /// смешивание ([`PaintPass`]).
     fn specialize(
+        _pipeline: &Material2dPipeline,
         descriptor: &mut RenderPipelineDescriptor,
         layout: &MeshVertexBufferLayoutRef,
         key: Material2dKey<Self>,

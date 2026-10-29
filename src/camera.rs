@@ -1,7 +1,8 @@
 use bevy::app::AppExit;
 use bevy::camera_controller::pan_camera::{MousePanSettings, PanCamera, PanCameraPlugin};
-use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};
+use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollPixelsPerLine};
 use bevy::picking::hover::HoverMap;
+use bevy::picking::pointer::PointerButton;
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SaveSettingsSync, SettingsGroup};
 use bevy::window::PrimaryWindow;
@@ -291,7 +292,7 @@ pub fn pan_controller(zoom_factor: f32) -> PanCamera {
         // bevy_pancam в zxc) и не зависит от масштаба ретины
         mouse_pan_settings: MousePanSettings {
             enabled: false,
-            button: MouseButton::Left,
+            button: PointerButton::Primary,
         },
         ..default()
     }
@@ -571,12 +572,10 @@ impl Viewport {
 pub fn zoom_to_cursor(
     window: Single<&Window, With<PrimaryWindow>>,
     scroll: Res<AccumulatedMouseScroll>,
+    pixels_per_line: Res<MouseScrollPixelsPerLine>,
     mut query: Query<(&mut Transform, &mut PanCamera), With<Camera>>,
 ) {
-    let lines = match scroll.unit {
-        MouseScrollUnit::Line => scroll.delta.y,
-        MouseScrollUnit::Pixel => scroll.delta.y / MouseScrollUnit::SCROLL_UNIT_CONVERSION_FACTOR,
-    };
+    let lines = scroll.to_lines(&pixels_per_line).delta.y;
     if lines == 0.0 {
         return;
     }

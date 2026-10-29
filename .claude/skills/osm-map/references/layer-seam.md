@@ -265,11 +265,11 @@ drawn, the adapter says where it goes.
 
 ## Surface material
 
-`map/surface.rs`, shader `assets/shaders/surface.wgsl`, a `Material2d` with its own
+`map/surface.rs`, shader `assets/shaders/surface.wesl`, a `Material2d` with its own
 vertex + fragment stage — procedural texture without a single asset: the vertex colour
 is the base, and the fragment multiplies in noise sampled by **world position**, so two
 overlapping ribbons of one layer get the same pixel (the junction trick survives). The
-zoom rule (`visible(wavelength, px)`) and the shared `assets/shaders/noise.wgsl`
+zoom rule (`visible(wavelength, px)`) and the shared `assets/shaders/noise.wesl`
 library are in SKILL.md, **The noise rule**.
 
 Per `SurfaceKind` (`Ground | Yard | Park | Wood | Grass | Sand | Water | Street |
@@ -287,7 +287,7 @@ Alley | Sidewalk | Unpaved`) a `SurfaceParams` uniform:
 - the **wear** block (Street — wheel ruts on the lane frame; a bridge deck is the same
   kind and carries its street's ruts, a footbridge in the same mesh has no lane frame
   and stays bare). The lane **lines** are not this shader's any more: they are the
-  paint layer (`roads/paint.rs`, `paint.wgsl`, `references/roads.md`).
+  paint layer (`roads/paint.rs`, `paint.wesl`, `references/roads.md`).
 
 Materials are built once (`SurfaceMaterials`, `Startup`) and
 shared by every city; `SurfaceStyle::texture` (section **Surfaces**, `ui/surfaces.rs`,

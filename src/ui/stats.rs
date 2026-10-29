@@ -16,7 +16,7 @@ use bevy::input_focus::InputFocus;
 use bevy::input_focus::tab_navigation::TabIndex;
 use bevy::prelude::*;
 use bevy::text::{EditableText, TextCursorStyle, TextEdit};
-use bevy::ui_widgets::Activate;
+use bevy::ui_widgets::{Activate, TextInput};
 use rand::RngExt;
 
 use super::knob::{AddKnobsExt, CycleBinding, SliderBinding, spawn_cycle_row, spawn_knob};
@@ -132,6 +132,9 @@ fn spawn_seed_row(commands: &mut Commands, seed: u64) -> Entity {
     let field = commands
         .spawn((
             SeedField,
+            // в 0.20 рабочее поле ввода — это `TextInput` (наблюдатели и
+            // клавиатура), а `EditableText` — только состояние текста
+            TextInput,
             EditableText {
                 // видимая ширина текста чуть у́же ноды — под её padding
                 visible_width: Some(86.),

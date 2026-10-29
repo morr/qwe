@@ -10,7 +10,7 @@
 //! Цвет виджету задаёт не константа, а **дизайн-токен**: контрол носит
 //! `ThemeBackgroundColor(tokens::BUTTON_BG)`, а какой это цвет — решает ресурс
 //! `UiTheme`. Значит и собственные плашки панелей красятся токенами
-//! (`tokens::PANE_BODY_BG`, `tokens::GROUP_BODY_BG`), а не своими цветами: иначе
+//! (`tokens::PANE_BODY_BG`, `tokens::GROUP_BG`), а не своими цветами: иначе
 //! смена темы перекрасила бы половину экрана и оставила вторую. Правка альфы в
 //! одном месте — прямое следствие: прозрачной становится вся игровая плашка,
 //! где бы она ни стояла.
@@ -25,9 +25,25 @@
 //! | инертная строка | `InteractionDisabled` |
 
 use bevy::feathers::dark_theme::create_dark_theme;
-use bevy::feathers::theme::{ThemeProps, UiTheme};
+use bevy::feathers::theme::{SemanticToken, ThemeProps, UiTheme};
 use bevy::feathers::{FeathersCorePlugin, palette, tokens};
 use bevy::prelude::*;
+
+/// Заместить цвет токена в теме. В 0.20 цвет живёт на **семантическом**
+/// уровне (`semantic_base`), и у большинства токенов семантика общая с
+/// другими (`PANE_HEADER_TEXT` и `TEXT_MAIN` сидят на `TEXT_DEFAULT`) —
+/// красим семантику, как это делает сама библиотека. Отдельный семантический
+/// токен (имя произвольное) нужен там, где наш цвет обязан остаться частным:
+/// гасить `TEXT_ON_ACCENT` целиком нельзя — это цвет надписей на Primary-кнопках.
+fn set_token(
+    props: &mut ThemeProps,
+    token: bevy::feathers::theme::ThemeToken,
+    semantic: SemanticToken,
+    color: Color,
+) {
+    props.token_assignments.insert(token, semantic.clone());
+    props.semantic_base.insert(semantic, color);
+}
 
 /// Цвет всех игровых плашек — почти чёрный, чтобы светлая карта под ним не
 /// поднимала текст. Прозрачность добавляют токены ниже; сам цвет один на все
@@ -56,40 +72,73 @@ const MUTED_TEXT: Color = Color::oklcha(0.90, 0.0015, 286.3, 1.0);
 /// Тёмная тема feathers с игровыми поправками (см. [`PanelWidgetsPlugin`]).
 fn create_panel_theme() -> ThemeProps {
     let mut props = create_dark_theme();
+    use tokens::semantic;
 
     // --- плашки: полупрозрачные, потому что лежат поверх карты ---
-    for (token, alpha) in [
-        (tokens::PANE_BODY_BG, PANEL_ALPHA),
-        (tokens::SUBPANE_BODY_BG, PANEL_ALPHA),
-        (tokens::PANE_HEADER_BG, HEADER_ALPHA),
-        (tokens::SUBPANE_HEADER_BG, HEADER_ALPHA),
-        (tokens::GROUP_BODY_BG, BLOCK_ALPHA),
-        (tokens::GROUP_HEADER_BG, BLOCK_ALPHA),
-    ] {
-        props.color.insert(token, UI_COLOR.with_alpha(alpha));
-    }
+    set_token(
+        &mut props,
+        tokens::PANE_BODY_BG,
+        semantic::SURFACE_PANE_BODY,
+        UI_COLOR.with_alpha(PANEL_ALPHA),
+    );
+    set_token(
+        &mut props,
+        tokens::SUBPANE_BODY_BG,
+        semantic::SURFACE_SUBPANE_BODY,
+        UI_COLOR.with_alpha(PANEL_ALPHA),
+    );
+    set_token(
+        &mut props,
+        tokens::PANE_HEADER_BG,
+        semantic::SURFACE_PANE_HEADER,
+        UI_COLOR.with_alpha(HEADER_ALPHA),
+    );
+    set_token(
+        &mut props,
+        tokens::SUBPANE_HEADER_BG,
+        semantic::SURFACE_SUBPANE_HEADER,
+        UI_COLOR.with_alpha(HEADER_ALPHA),
+    );
+    set_token(
+        &mut props,
+        tokens::GROUP_BG,
+        semantic::SURFACE_GROUP,
+        UI_COLOR.with_alpha(BLOCK_ALPHA),
+    );
 
     // --- текст: обе роли ярче библиотечных ---
     // Панель полупрозрачна, и то, что под подписью, — не ровный серый фон
     // инспектора, а город: белые дома, зелёные парки, светлый асфальт. Текст
-    // держит читаемость сам.
-    props.color.insert(tokens::TEXT_MAIN, palette::WHITE);
-    props.color.insert(tokens::TEXT_DIM, MUTED_TEXT);
-    // заголовок секции отличается от строк под ним только цветом: жирного
-    // начертания у подписи нет (шрифт спускается сверху одним `InheritableFont`,
-    // и своё `TextFont` распространение перетёрло бы), поэтому белый против
-    // приглушённого — единственное, чем заголовок себя объявляет
-    props.color.insert(tokens::PANE_HEADER_TEXT, palette::WHITE);
+    // держит читаемость сам. `TEXT_DEFAULT` — это и `TEXT_MAIN`, и заголовки
+    // секций (`PANE_HEADER_TEXT`): белый против приглушённого — единственное,
+    // чем заголовок себя объявляет.
+    set_token(
+        &mut props,
+        tokens::TEXT_MAIN,
+        semantic::TEXT_DEFAULT,
+        palette::WHITE,
+    );
+    set_token(&mut props, tokens::TEXT_DIM, semantic::TEXT_DIM, MUTED_TEXT);
 
     // Ползунок рисует своё значение внутри полосы — голым числом, без единиц.
     // «0.9» вместо «0.90 m» и «0.1» вместо «10%» на панели не сообщают ничего,
     // поэтому число там пишет кит (`ui/slider.rs`), а собственное feathers
     // гасится прозрачным цветом: погасить текст можно только его цветом —
     // маркер `SliderValueText` приватный, а формат зашит в `update_slider_pos`.
-    props.color.insert(tokens::SLIDER_TEXT, Color::NONE);
-    props
-        .color
-        .insert(tokens::SLIDER_TEXT_DISABLED, Color::NONE);
+    // В 0.20 токены ползунка сидят на общих семантиках (`TEXT_ON_ACCENT` и
+    // `TEXT_DISABLED`), поэтому им выдаются собственные.
+    set_token(
+        &mut props,
+        tokens::SLIDER_TEXT,
+        SemanticToken::new_static("qwe.slider.text"),
+        Color::NONE,
+    );
+    set_token(
+        &mut props,
+        tokens::SLIDER_TEXT_DISABLED,
+        SemanticToken::new_static("qwe.slider.text.disabled"),
+        Color::NONE,
+    );
     props
 }
 

@@ -7,21 +7,15 @@
 // подход к узлу, двойную сплошную и гашение с зумом. Так линия не мерцает при
 // сдвиге камеры, а на дальнем плане гаснет, а не рвётся на отдельные пиксели.
 
-#import bevy_sprite::{
-    mesh2d_functions as mesh_functions,
-    mesh2d_view_bindings::view,
-}
-#import "shaders/noise.wgsl"::{visible, stripes}
+import bevy_sprite_render::mesh2d::{functions as mesh_functions, view_bindings::view};
+import super::noise::{visible, stripes};
 
-#ifdef TONEMAP_IN_SHADER
-#import bevy_core_pipeline::tonemapping
-#endif
-#ifdef SRGB_OUTPUT
-#import bevy_render::color_operations::linear_to_srgb
-#endif
-#ifdef OKLAB_OUTPUT
-#import bevy_render::color_operations::linear_rgb_to_oklab
-#endif
+@if(TONEMAP_IN_SHADER)
+import bevy_core_pipeline::tonemapping;
+@if(SRGB_OUTPUT)
+import bevy_render::color_operations::linear_to_srgb;
+@if(OKLAB_OUTPUT)
+import bevy_render::color_operations::linear_rgb_to_oklab;
 
 // Зеркало `roads::paint::PaintParams` — порядок полей обязан совпадать.
 struct PaintParams {
@@ -50,7 +44,7 @@ struct PaintParams {
     edge_width: f32,
 }
 
-@group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> params: PaintParams;
+@group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> params: PaintParams;
 
 struct Vertex {
     @builtin(instance_index) instance_index: u32,
@@ -111,12 +105,12 @@ fn line_cover(d: f32, width: f32, px: f32) -> f32 {
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
-#ifdef WEAR_APPLY
+@if(WEAR_APPLY) {
     // наложение колеи (`roads::paint::PaintPass::Wear`): смешивание берёт
     // цвет кадра × (единица + (1 − альфа маски)) и возвращает альфу в
     // единицу — от шейдера нужна только единица
     return vec4<f32>(1.0);
-#else
+} @else {
     let p = in.world_position;
     let px = max(max(fwidth(p.x), fwidth(p.y)), 1e-4);
     let across = in.ribbon.x;
@@ -124,9 +118,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let to_break = in.ribbon.z;
     let kind = u32(round(in.ribbon.w));
 
-#ifdef WEAR_MASK
+@if(WEAR_MASK) {
     // маска колеи (`PaintPass::WearMask`): две колеи по сторонам кривой,
-    // профиль колеи полос (`surface.wgsl`), сила в альфе вершины (хвост сходит
+    // профиль колеи полос (`surface.wesl`), сила в альфе вершины (хвост сходит
     // в ноль). Пишется `1 − колея` в альфу кадра операцией `min` — остаётся
     // наибольшая колея из всех полос. Гаснет по шагу полосы, как колея
     // асфальта, и к порогу осевых, где меш прячется
@@ -135,7 +129,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let far = 1.0 - smoothstep(params.axis_zoom * params.fade_from, params.axis_zoom, px);
     let wear = params.turn_wear * in.color.a * rut * visible(params.lane_width, px) * far;
     return vec4<f32>(0.0, 0.0, 0.0, 1.0 - wear);
-#else
+} @else {
     var cover = 0.0;
     if kind == 7u {
         // штриховка островка: заливка контура, полосы — по координате поперёк
@@ -222,16 +216,13 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let alpha = cover * in.color.a * params.paint;
     var output_color = vec4<f32>(in.color.rgb, alpha);
-#ifdef TONEMAP_IN_SHADER
+@if(TONEMAP_IN_SHADER)
     output_color = tonemapping::tone_mapping(output_color, view.color_grading);
-#endif
-#ifdef SRGB_OUTPUT
+@if(SRGB_OUTPUT)
     output_color = vec4(linear_to_srgb(output_color.rgb), output_color.a);
-#endif
-#ifdef OKLAB_OUTPUT
+@if(OKLAB_OUTPUT)
     output_color = vec4(linear_rgb_to_oklab(output_color.rgb), output_color.a);
-#endif
     return output_color;
-#endif
-#endif
+}
+}
 }

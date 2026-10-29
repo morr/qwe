@@ -5,7 +5,7 @@
 //! это, а плоская заливка: с воздуха полог — шар, у которого одна сторона к
 //! солнцу, другая в собственной тени, и весь он в ряби отдельных ветвей.
 //!
-//! Считается всё в шейдере (`assets/shaders/crown.wgsl`), потому что меша на
+//! Считается всё в шейдере (`assets/shaders/crown.wesl`), потому что меша на
 //! дерево нет: их несколько на весь город, и каждый повторён тысячами
 //! трансформов. Освещение берётся из **локальной** координаты (меш единичного
 //! радиуса, так что это сразу направление от ствола), рябь — из **мировой**,
@@ -24,13 +24,13 @@ use bevy::render::render_resource::{
     AsBindGroup, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
 };
 use bevy::shader::ShaderRef;
-use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey};
+use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey, Material2dPipeline};
 
 use crate::map::meshing::ATTRIBUTE_CROWN;
 use crate::map::sun_light;
 use crate::settings::CROWN_SHADING;
 
-const SHADER_PATH: &str = "shaders/crown.wgsl";
+const SHADER_PATH: &str = "shaders/crown.wesl";
 
 /// Юниформ кроны — зеркало `CrownUniform` в шейдере: порядок полей обязан
 /// совпадать.
@@ -84,6 +84,7 @@ impl Material2d for CrownMaterial {
     }
 
     fn specialize(
+        _pipeline: &Material2dPipeline,
         descriptor: &mut RenderPipelineDescriptor,
         layout: &MeshVertexBufferLayoutRef,
         _key: Material2dKey<Self>,

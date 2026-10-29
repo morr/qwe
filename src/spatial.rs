@@ -325,7 +325,7 @@ fn rebuild_demon_grid(
 /// `SimPosition` в момент срабатывания observer'а ещё дефолтный, его заполняет
 /// observer добавления `Movable` из того же `Transform`.
 fn on_human_added(
-    event: On<Add, Human>,
+    event: On<Add<Human>>,
     mut grid: ResMut<SpatialGrid<Human>>,
     query: Query<&Transform>,
 ) {
@@ -337,7 +337,7 @@ fn on_human_added(
 /// `On<Remove>` срабатывает и при despawn, так что одна пара observers
 /// покрывает весь жизненный цикл: смерть (снятие `Human` при убийстве),
 /// escape, рестарт по R, смену города.
-fn on_human_removed(event: On<Remove, Human>, mut grid: ResMut<SpatialGrid<Human>>) {
+fn on_human_removed(event: On<Remove<Human>>, mut grid: ResMut<SpatialGrid<Human>>) {
     grid.remove(event.entity);
 }
 
