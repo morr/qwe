@@ -41,7 +41,7 @@ passes are `parse-buildings.md`.
   condition is load-bearing: without it, station stubs facing each other over a platform
   get stitched (Berlin alone would stitch 37). Skipped in raw
   OSM; logged when non-zero.
-- **Sidewalks of untagged streets** (`parse.rs::infer_sidewalks`, right after the drowned
+- **Sidewalks of untagged streets** (`parse/sidewalks.rs::infer_sidewalks`, right after the drowned
   buildings, which must not count) — a residential / unclassified / living street with no
   `sidewalk*` key (`SidewalkSide::Inferred` — the tristate is the whole "who is asked")
   keeps its band only where the blocks along it average at least
@@ -122,7 +122,7 @@ passes are `parse-buildings.md`.
   `a_footway_on_a_lawn_between_paved_paths_is_paved` and
   `parse/tests.rs::a_footway_is_paved_by_its_tag_its_kind_or_the_greenery_around`. How
   it is drawn — `roads.md`, **Paved paths**.
-- **Blocks pulled to the roads** (`parse.rs::pull_areas_to_roads`, step 6) — the same mismatch
+- **Blocks pulled to the roads** (`parse/block_pull.rs::pull_areas_to_roads`, step 6) — the same mismatch
   as the house pull, read from the other side. The road's width is a class constant and its sidewalk is the
   renderer's, while a `landuse` block is traced along the red line or the plot fences, so
   between the yard and the drawn sidewalk a strip of bare ground is left showing. On a
@@ -179,7 +179,7 @@ passes are `parse-buildings.md`.
     its neighbours went under it, and the edge between them stuck out as a wedge of yard.
     A vertex under a
     carriageway is still left alone — under what is **drawn** of it, though.
-    **A vertex in the bare side's verge** (`parse.rs::in_bare_verge`, `Edge::gap`): the
+    **A vertex in the bare side's verge** (`parse/block_pull.rs::in_bare_verge`, `Edge::gap`): the
     mapped edge is one for both sides, so beside a street with a sidewalk on one side
     only, a vertex beyond the kerb of the side without one (`sidewalk=separate|no`, the
     `Edge::bare` flag) but within the other side's band counted as «under the road» and
@@ -200,7 +200,7 @@ passes are `parse-buildings.md`.
     its neighbours go under the footway, and a sliver of yard stays on the tiles. So the
     block is asked as an area: it is
     intersected (`i_overlay`, NonZero) with the **paved strip** of every verge — from
-    the street's axis to `paved_verge(verge_at)` past the kerb (`roads.rs::paved_verge`,
+    the street's axis to `paved_verge(verge_at)` past the kerb (`roads/verges.rs::paved_verge`,
     the drawing's own rule, now `pub(crate)`), less `VERGE_CUT_INSET` 0.5 m: the verge's
     rim is the footway's axis, so a cut edge lies under the footway ribbon, and the half
     metre absorbs the smoothing of the drawn axis. Of that intersection only the **thin**
@@ -391,7 +391,7 @@ passes are `parse-buildings.md`.
     block's edge often lies *under* the footway, and the wedge beyond touches the footway,
     not the block); else one within 4 m of a mapped **park or lawn** (`parks`, `grass`)
     gives `Grass` — the meadow, drawn without a rim in the lawn layer, as the verge beside
-    them (`roads.rs::Meadows`) — and **merges into that very green** (`merge_into_green`):
+    them (`roads/walls.rs::Meadows`) — and **merges into that very green** (`merge_into_green`):
     the grown hole and the green's ring are unioned, and the result replaces the green.
     Sown beside it, the pocket lay on the green's rim kaima with its half-metre growth,
     and where the sowing ended the cut kaima read as a seam — two light lines converging

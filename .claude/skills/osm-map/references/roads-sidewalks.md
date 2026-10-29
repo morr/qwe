@@ -150,7 +150,7 @@ on the paired side themselves (`roads-pairs-medians.md`, **Paired halves**).
   **storeys of the blocks** along it (`cars::district::Districts::storeys_at`, the very
   measure that thins the parked row, probed every 40 m) are at least
   `SIDEWALK_STOREYS_MIN` 3 — the private sector and an empty field get a kerb with no
-  band (`parse.rs::infer_sidewalks`, right after the drowned buildings, so the house
+  band (`parse/sidewalks.rs::infer_sidewalks`, right after the drowned buildings, so the house
   pull and the block pull already read the decision); trunk…tertiary and the links keep
   both (silence means "yes" in a city centre and "no" among private houses). And any
   carriageway — arterials included — gives an untagged side up to a **separately mapped

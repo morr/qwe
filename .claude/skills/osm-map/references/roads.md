@@ -62,8 +62,8 @@ The bold titles are the section names the other references point at
 Cross-subject facts, one line each: the **fill order** (narrow first, leaders last, per
 junction) is an invariant of the ribbon pass — mechanics in `roads-junctions.md`;
 the layer z's (`Z_SIDEWALK` 1.6 … `Z_BRIDGE` 2.2) are named in their owning subjects,
-the shared seam in `SKILL.md`; `RoadJoin`/`Smoothing` constants and the tree-row band's
-own rows stay in `SKILL.md`.
+the shared seam in `SKILL.md`; `RoadJoin`/`ROAD_JOIN` live in `roads/shape.rs` (beside
+`RoadStyle`), `Smoothing` in `map/smooth.rs`.
 
 - **Chasing a road defect** — the probe ladder for road layers lives in the live-app
   debugging skill (`.claude/live-app-project.md`, "Which layer draws a glitch"):

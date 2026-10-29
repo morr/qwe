@@ -141,7 +141,7 @@ pass order, how a parse is tested — is `parse-seam.md`; the geometry passes ar
   nearest host up the chain that has one; the rest take the
   city majority (Orthodox vs Western, ties → Western). `Sacred::floor_dm` is `min_height`,
   else `building:min_level` × 3 m (`tags.rs::part_floor`).
-  **Annexes** (`parse.rs::absorb_annexes`, same pass, after hosting): a `BuildingUse::Other`
+  **Annexes** (`parse/faiths.rs::absorb_annexes`, same pass, after hosting): a `BuildingUse::Other`
   building of `AreaKind::Building` that lies on a church **or an annex** — its centre in the
   host, the host's centre in it, or `ANNEX_OVERLAP_SHARE` 25 % of its own footprint
   shared (`overlap_area`, an `i_overlay` intersect) — at most `ANNEX_AREA_RATIO` 2.5× the
@@ -163,7 +163,7 @@ pass order, how a parse is tested — is `parse-seam.md`; the geometry passes ar
   navmesh floods water impassable, so their doors are unreachable anyway and the box
   standing on the pond reads as a render bug. One vertex on land is enough to survive —
   piers and embankment houses stay. Logged on stderr when non-zero.
-- **Squared houses** (`parse.rs::square_skewed_houses`, step 4) — a small house outlined as a
+- **Squared houses** (`parse/squaring.rs::square_skewed_houses`, step 4) — a small house outlined as a
   **skewed quad** is replaced by a rectangle. The private sector is traced by eye off
   imagery, and a rectangular house comes out a rhombus: in 2.5D its ends stand askew to its
   front and no gable fits it. Taken: a
@@ -203,7 +203,7 @@ pass order, how a parse is tested — is `parse-seam.md`; the geometry passes ar
   `parse-seam.md`) and before door
   generation and tree planting. The price: the render seed is the first vertex, so a squared house rolls
   its material and inferred storeys anew.
-- **Houses pulled off the sidewalks** (`parse.rs::pull_houses_off_sidewalks`, step 5) — the street's
+- **Houses pulled off the sidewalks** (`parse/house_pull.rs::pull_houses_off_sidewalks`, step 5) — the street's
   width is a class constant and the sidewalk is added by the renderer
   (`RoadLine::sidewalk()`, the band by class), so an old house standing at the kerb in OSM came out with its
   wall on the drawn sidewalk and, in 2.5D, its roof on the asphalt. The game does not

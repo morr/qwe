@@ -544,7 +544,7 @@ on a counter-taper (`Taper::seam`) — and drifts to its own over the wedge
     own LOD, and is drawn only while `TramStyle::visible` — along the laid tracks the
     road build hands it (`TramTracks`), never `MapData::rails` as they are.
   - **WallLine** — `barrier=city_wall` (the kremlin), 3 m, impassable. **Drawn only where
-    no fortress building stands on it** (`roads.rs::Fortresses`): Tula maps its wall as a
+    no fortress building stands on it** (`roads/walls.rs::Fortresses`): Tula maps its wall as a
     `building=wall` and its towers as buildings too, and the ribbon over them read as a
     dark-orange outline. The navmesh still blocks the whole line.
   - **FenceLine** — a plot boundary: `FenceKind: Fence | Railing | Wall | Hedge` from
@@ -623,7 +623,7 @@ on a counter-taper (`Taper::seam`) — and drifts to its own over the wedge
 - **Building height** (`parse/tags.rs::building_height`) — metres from `height` or
   `building:levels` × 3 m; outside 2–600 m counts as no tag. `None` is normal, and common:
   coverage varies wildly by city (NY 97 % … Tula 31 % … Tokyo 5 %) and is logged on load.
-- **Squared house** (`parse.rs::square_skewed_houses`) — a small house (≤ 250 m², a
+- **Squared house** (`parse/squaring.rs::square_skewed_houses`) — a small house (≤ 250 m², a
   `building=house` ≤ 400 m²) traced in OSM as a skewed quad or a skewed **L** (six vertices,
   one reflex corner; worst corner 2°–35° off square) is replaced at parse by a rectangle of
   the same centroid and area, or by a right-angled L; not when a vertex is shared with
@@ -631,7 +631,7 @@ on a counter-taper (`Taper::seam`) — and drifts to its own over the wedge
   (`parking`, `pitches`, `water`) — the fills a house merely lies on top of, `landuse`
   among them, do not count. Everything downstream — navmesh, doors, roof, render seed —
   sees the straightened outline.
-- **Pulled-back house** (`parse.rs::pull_houses_off_sidewalks`) — a building whose outline
+- **Pulled-back house** (`parse/house_pull.rs::pull_houses_off_sidewalks`) — a building whose outline
   reaches into a street's **verge edge** (half the width + the sidewalk band by class + 2 m,
   the `sidewalk=*` tag not read — see **Sidewalk profile**) is moved at parse, whole and
   with its doors, straight away from the street, by at most 6 m — and its **row** with
@@ -642,7 +642,7 @@ on a counter-taper (`Taper::seam`) — and drifts to its own over the wedge
   (¾, ½, ¼), and dropped if even ¼ does. Not when the street runs through it, a vertex is
   shared, or it is a church or a fortress. Like a squared house, everything downstream sees
   the moved outline.
-- **Block pulled to the road** (`parse.rs::pull_areas_to_roads`) — the other half of the
+- **Block pulled to the road** (`parse/block_pull.rs::pull_areas_to_roads`) — the other half of the
   same mismatch: a `landuse` block's edge is traced along the plot line while the road's
   width is a class constant, so between the yard and the drawn sidewalk a strip of bare
   ground is left over (a quarter of Tula's block vertices are within 5 m of the drawn edge).
@@ -1851,7 +1851,7 @@ on a counter-taper (`Taper::seam`) — and drifts to its own over the wedge
     readers take typed views (`paving()`, `streets()`), the report its counters
     (`counts()`), the hatch its fork wedges (`fork_gores()`), and the fields are closed
     inside the module.
-  - **Nose** (`map/roads/corners.rs::nose`) — the rounded tip of the island between two
+  - **Nose** (`map/roads/corners/nose.rs::nose`) — the rounded tip of the island between two
     arms of a **sharp fork**: under 25°, or under 60° where the kerb return did not fit.
     Not a fillet (its tangent would run tens of metres) but an arc of a small radius
     (1.5 m on streets, less with a drive or a footway) where the two edges have parted by

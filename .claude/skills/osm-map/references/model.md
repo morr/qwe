@@ -215,7 +215,7 @@ touch the navmesh** — see the navigation-deep skill.
 ## WallLine
 
 `barrier=city_wall` (the Tula kremlin), 3 m wide, kremlin red, impassable. **The ribbon
-is drawn only off fortress buildings** (`roads.rs::Fortresses`, the axis probed every
+is drawn only off fortress buildings** (`roads/walls.rs::Fortresses`, the axis probed every
 `WALL_PROBE_STEP` 2 m against `AreaKind::Kremlin` outlines): Tula also maps the wall as
 `building=wall` (relation 13342793, 12.7 m) and each tower as a building, and the ribbon
 laid over the lifted 2.5D wall read as a dark-orange outline and as red rings over the
