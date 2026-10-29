@@ -12,21 +12,26 @@ in `CONTEXT.md`; the "UI input must not reach the game world" rule itself is in
 **Changing that mechanism is changing this file, in the same change** — a new kit, a moved
 row, a retired widget. The term still goes to `CONTEXT.md`; the detail lives only here.
 
+## References
+
+- [`references/panels.md`](references/panels.md) — the per-tab bodies: every section's
+  rows, ranges and wiring for **Map** (Trees / Tree rows / Buildings / Roads / Road
+  paint / Surfaces / Sun / Noise), **Nav** (the one UI for both pathfinding backends,
+  the crowd groups, the polymesh overlay's drawing laws), **Sim** (World / Demon /
+  Human) and **Debug** (the overlay rows, `Raw OSM`, `Navtile`, `reset`).
+
 ## Layout
 
 The UI is two layers over the map: a **HUD** that is always on screen, and **one settings
-panel** with four tabs (`ui/shell.rs`). Before this there were eight panels stacked into two
-bottom columns whose `bottom` had to be computed from measured heights; the right column
-did not fit 1080 px and ran off the top of the screen.
+panel** with four tabs (`ui/shell.rs`).
 
 - **`ui/shell.rs`** — the shell. `SettingsTab { Map, Nav, Sim, Debug }` — **declaration
-  order is strip order**; `UiShellState { tab, collapsed }` is a persisted settings group
-  (`group = "ui"`), so the open tab survives a restart and `ResetSettings` puts it back to
-  `Map`, expanded. `SettingsPanes` hands every panel the entity of its tab (`pane`) and the
-  left column (`column`, for HUD blocks above the panel).
-  Three ways to collapse to the bare tab strip: the `-`/`+` button, a click on the open tab
-  (`on_tab_click`, a pure function with tests), and **`Tab`** — free precisely because
-  `TabNavigationPlugin` is deliberately not installed (see the theme note below), and gated
+  order is strip order**; the open tab and the collapsed flag are a persisted settings
+  group (`UiShellState`, `group = "ui"`). `SettingsPanes` hands every panel the entity of
+  its tab (`pane`) and the left column (`column`, for HUD blocks above the panel).
+  It collapses to the bare tab strip three ways: the `-`/`+` button, a click on the open
+  tab (`on_tab_click`, a pure function with tests), and **`Tab`** — free precisely because
+  `TabNavigationPlugin` is deliberately not installed (see the theme note below), gated
   on `typing_in_text_input` like every other hotkey.
   The left column is `top`/`bottom`-anchored so the body has a ceiling to scroll against,
   and carries **`Pickable::IGNORE`**: it is taller than its content, and an invisible
@@ -35,281 +40,111 @@ did not fit 1080 px and ran off the top of the screen.
   propagate, so a subtree that must be transparent carries it on **every** node (the hotkey
   help does: plaque, rows and both labels, `ui/hotkeys.rs`).
   Wheel over the panel scrolls the body (`Overflow::scroll_y` + a `Scroll` entity event
-  ported from bevy's `scroll_and_overflow` example; `clamp_scroll` is the tested part) —
-  and `camera.rs::zoom_to_cursor` now runs under `not(hovering_ui)`, so it no longer zooms
-  the map through the panel. That gate is a fix in its own right: it was missing before the
-  panel could scroll at all.
+  ported from bevy's `scroll_and_overflow` example; `clamp_scroll` is the tested part).
 - **Sections.** A panel asks for `spawn_section(commands, pane, slot, header, name)` — a
   column with a header band — or `spawn_block` for one without a header (the Nav tab, whose
   headers *are* rows: `Algo`, the `Separation` toggle, the `Slots` label). The returned
-  entity is the parent it hands to the kits, so panel bodies did not change when they moved
-  into tabs. **`SectionSlot`'s declaration order is the order inside a tab**
+  entity is the parent it hands to the kits. **`SectionSlot`'s declaration order is the
+  order inside a tab**
   (`sort_sections`, one pass at the end of `Startup`): the sections are spawned by one
-  system per section plugin, and system order inside `UiBuildSet::Sections` is unspecified —
-  without the enum the Map tab came out shuffled on every run. A section that arrives
-  **without** a `SectionSlot` sorts **last** (`slot_order`) and is named in a `warn!`: the
-  enum exists so a section's place cannot be forgotten, and sorting a slotless one to the
-  top would show that mistake as a mysteriously first panel body. `UiBuildSet` chains
-  `Shell → Sections → Sort`.
+  system per section plugin, and system order inside `UiBuildSet::Sections` is
+  unspecified. A section that arrives **without** a `SectionSlot` sorts **last**
+  (`slot_order`) and is named in a `warn!` — the enum exists so a section's place cannot
+  be forgotten, and sorting a slotless one to the top would show that mistake as a
+  mysteriously first panel body. `UiBuildSet` chains `Shell → Sections → Sort`.
 - **Bloom** (`post.rs::camera_post_process`) — the bundle `camera.rs` adds to the camera:
   `Hdr`, `Tonemapping::None`, `DebandDither::Disabled` and `Bloom::NATURAL` at
-  `BLOOM_INTENSITY` 0.25 (bevy's "natural" 0.15 is for dark scenes and is lost over a
-  bright map; 0.4 was right while the portal was the only source, and reads as haze once
-  every demon carries a halo and every death a spark), `Additive` composite. What is
-  brighter than 1.0 draws itself so: the portal vortex and its rim (`portal.rs`), the
-  demon halo (~1.4 after alpha, `demon/look.rs`) and the soul spark (`human/soul.rs`) —
-  nothing on the map is. The prefilter is `BLOOM_THRESHOLD` 1.1 /
-  `BLOOM_THRESHOLD_SOFTNESS` 0.1 —
-  the knee runs `threshold × softness` both ways, so it starts at 0.99 and pure white lane
-  markings (1.0) contribute nothing; 1.0 / 0.4 made everything above 0.6 glow and hazed the
+  `BLOOM_INTENSITY` 0.25 — 0.4 reads as haze now that every demon carries a halo and
+  every death a spark — `Additive` composite. What is brighter than 1.0 draws itself so:
+  the portal vortex and its rim (`portal.rs`), the demon halo (~1.4 after alpha,
+  `demon/look.rs`) and the soul spark (`human/soul.rs`) — nothing on the map is. The
+  prefilter is `BLOOM_THRESHOLD` 1.1 / `BLOOM_THRESHOLD_SOFTNESS` 0.1 — the knee runs
+  `threshold × softness` both ways, so it starts at 0.99 and pure white lane markings
+  (1.0) contribute nothing; a 1.0 threshold made everything above 0.6 glow and hazed the
   whole map. Tonemapping stays off on purpose: every built-in curve recolours the map
-  palette, and only the halo is wanted. UI is drawn after post-processing, so panels never
-  bloom.
+  palette, and only the halo is wanted. UI is drawn after post-processing, so panels
+  never bloom.
 - **Antialias** (`post.rs::Antialias`, settings group `render`, key `antialias`, on by
   default) — `Msaa::Sample4` on the user's camera (`camera.rs::spawn_camera`) and on the
   offscreen-shot camera (`dev.rs`), both read the resource at spawn and
-  `post::apply_antialias` (`retuned`) writes every `Camera2d` on a toggle. It was `Msaa::Off`
-  (copied from zxc with no reason written down) and the ribbons of the map — asphalt, kerbs,
-  median noses, islands — stair-stepped on a close-up while the paint beside them is
-  smoothed by `paint.wgsl` itself. HDR + bloom + the four `Material2d`s work with it
-  unchanged (they specialise on the sample count themselves). **Cost is memory, not
-  frame time**: on a 4K window the multisampled HDR target and depth add about 400 MB;
-  the frame was measured in the `roads` gallery rendering offscreen at 7500×4750 (4× a 4K
-  window) — medians within a millisecond of each other, both at the 60 Hz pace. Hence
-  the toggle: the Debug tab's `Antialias` row (`4x` / `Off`, in World build under
-  `Camera start`). The galleries and `crowd_demo` run `Sample4` hard-wired.
-- **Sun section** (`ui/sun.rs`, Map tab) — two knobs on `map::SunStyle`, azimuth (0–355°,
-  step 5) and elevation (15–80°, step 1). They are the most expensive knobs on the panel:
-  a change rebuilds the building layers **including the shadow union**, the tree crowns,
-  the car layer and the roof material's uniform, because every one of those bakes the light
-  into vertex colours or geometry — 77–86 ms on Tula for the buildings alone. So the steps
-  are coarse, and the section is the one place where **the knob's resource is not what the
-  map follows**: the rows write `SunStyle` like any other kit rows, and `map::sun::settle_sun`
-  copies it into `SunOnMap` after 0.35 s of quiet, which is what every rebuild is gated on.
-  Nothing in `ui/` knows about that — the debounce sits between the setting and the map, not
-  inside the panel, precisely so a section stays a section.
-  The azimuth top is 355 and not 360 because 360° is the same sun as 0° — a scale with equal
-  ends gives 73 positions for 72 directions and sticks instead of turning through zero. The
-  elevation floor is 15°, not 0: `cot 5°` is 11 metres of shadow per metre of height, and
-  every building would blanket its block; a value from outside the scale (an older
-  `settings.toml`, a BRP write) is clamped on the read, in `SunStyle::elevation()`.
-  The same two knobs stand in the `roof_gallery` example, over the same globals.
+  `post::apply_antialias` (`retuned`) writes every `Camera2d` on a toggle. Default on
+  because without it the map's ribbons — asphalt, kerbs, median noses, islands —
+  stair-step on a close-up, while the paint beside them is smoothed by `paint.wgsl`
+  itself. HDR + bloom + the four `Material2d`s work with it unchanged (they specialise
+  on the sample count themselves). **Cost is memory, not frame time**: on a 4K window
+  the multisampled HDR target and depth add about 400 MB; the frame was measured in the
+  `roads` gallery rendering offscreen at 7500×4750 (4× a 4K window) — medians within a
+  millisecond of each other, both at the 60 Hz pace. Hence the toggle: the Debug tab's
+  `Antialias` row (`4x` / `Off`, in World build under `Camera start`). The galleries and
+  `crowd_demo` run `Sample4` hard-wired.
+- **Expensive-knob debounce** — the one place a panel is decoupled from what the map
+  follows. **Sun** (`ui/sun.rs`) and the Roads shape sliders write their knob resource
+  like any other kit row, but the map follows a **settled copy**: `map::sun::settle_sun`
+  copies `SunStyle` into `SunOnMap`, `settle_road_shape` copies `RoadShape` into
+  `RoadShapeOnMap`, each after **0.35 s of quiet** — a rebuild per drag step would cost
+  hundreds of ms. Nothing in `ui/` knows about that: the debounce sits between the
+  setting and the map, not inside the panel, precisely so a section stays a section.
+  Ranges and per-knob rules — `references/panels.md`.
 - **Vignette** (`post.rs::spawn_vignette`) — a full-screen `Node` with a radial
   `BackgroundGradient` (transparent to 55% of the far-corner radius, black at
   `VIGNETTE_ALPHA` 0.22 in the corners). `GlobalZIndex(-1)` keeps it under every panel,
   `Pickable::IGNORE` keeps it out of `HoverMap` — without that it would be "a UI node
   under the cursor" everywhere and `pointer_over_ui` would hand the whole map to the UI.
   Not a `GameUiRoot`: it is not hidden with the game UI and survives the city switch. The
-  opaque loader root (z 0) covers it while `Loading` — the vignette frames the map, not the
-  loader. Spawned once at `Startup`.
+  opaque loader root (z 0) covers it while `Loading` — the vignette frames the map, not
+  the loader. Spawned once at `Startup`.
 
-## Panels
+## HUD
 
-- **HUD counters** (`ui/stats.rs`) — Pawns (`With<Human>`, i.e. alive: the component is
+- **Counters** (`ui/stats.rs`) — Pawns (`With<Human>`, i.e. alive: the component is
   stripped on death), Demons, Souls reaped (`Telemetry::killed`), first in the left column,
   **outside** the tabs: they are watched continuously, and putting them behind a tab choice
   would mean watching the simulation through a keyhole. The counters use `iter().len()`,
   not `count()`: with a purely archetypal filter `QueryIter` is an `ExactSizeIterator`, so
   the length is a sum over archetypes rather than a walk over 20 000 entities every frame.
   In agent runs the red **BRP badge** (`ui/brp.rs`) owns that corner, and
-  `offset_below_brp_badge` measures it and pushes every `BelowBrpBadge` node below — the
-  game's left column, a demo's top-left plaque — `ComputedNode::size` is in *physical* px,
-  so multiply by `inverse_scale_factor` or the offset doubles on a retina screen. The game
-  marks an agent run by `BRP_PORT` (`main.rs`); a demo has no port, so its
-  `AgentBadgePlugin` also takes `CLAUDECODE`, which Claude Code sets on every process of
-  its session.
-- **Telemetry panel** (`ui/speed.rs`) — top-right: sim clock, pathfinding in-flight /
-  avg ms, entity count. Fixed width + right-padded digits (no jitter) — which only
-  works in a monospace face, so this root brings its **own** `InheritableFont` (FiraMono).
-  `apply_panel_font` therefore skips roots that already have one (`Without<InheritableFont>`);
-  without that filter it overwrote FiraMono with FiraSans on the first frame and the columns
-  wobbled. Its fixed columns of the pathfinding lines are one half of the ruler
-  `tools/shot_coords` works from — changing the panel's geometry, font or any of these
-  format strings means re-measuring the constants at the top of that script in the same
-  change.
-- **Point inspector** (`ui/inspector.rs`) — the HUD panel directly **below the telemetry**
+  `offset_below_brp_badge` measures it and pushes every `BelowBrpBadge` node below —
+  `ComputedNode::size` is in *physical* px, so multiply by `inverse_scale_factor` or the
+  offset doubles on a retina screen. The game marks an agent run by `BRP_PORT` (`main.rs`);
+  a demo has no port, so its `AgentBadgePlugin` also takes `CLAUDECODE`, which Claude Code
+  sets on every process of its session.
+- **Telemetry** (`ui/speed.rs`) — top-right: sim clock, pathfinding in-flight / avg ms,
+  entity count. Fixed width + right-padded digits (no jitter) — which only works in a
+  monospace face, so this root brings its **own** `InheritableFont` (FiraMono);
+  `apply_panel_font` therefore skips roots that already have one
+  (`Without<InheritableFont>`). Its fixed columns of the pathfinding lines are one half
+  of the ruler `tools/shot_coords` works from — changing the panel's geometry, font or
+  any of these format strings means re-measuring the constants at the top of that script
+  in the same change.
+- **Point inspector** (`ui/inspector.rs`) — directly **below the telemetry**
   (`position_below_telemetry` measures the telemetry's `ComputedNode` and sets `top`, the
   `offset_below_brp_badge` idiom; in the roads gallery there is no telemetry, `Single`
-  skips the system and the panel stands at the screen edge). Two lines of text, FiraMono
-  like the telemetry, the telemetry's own width: the **camera line** `zoom/x/y cx/cy`
-  (moved here from the telemetry; `update_camera_text`) and the **hits list** — what the
-  map draws under the cursor, recomputed when the point moves over
-  `INSPECTOR_QUERY_STEP` (0.5 m) or the semantic index is rebuilt. The hits come from
-  `map/inspect.rs::InspectIndex` through `InspectOrigin` (zero in the game — the shown
-  sample's shift in the roads gallery, so both the panel and `brp probe` speak map
-  metres). `tools/shot_coords` reads the camera line; its geometry constants belong to
-  **this** panel now. Two modes: `UiInspectorPlugin::game()` (a `GameUiRoot` — hidden
-  until `PlayPhase::Live`, hidden on city switch) and `UiInspectorPlugin::standalone()`
-  (the roads gallery: visible from the first frame, states don't exist there).
-- **Speed button** (`ui/speed.rs`) — left of that panel, a `Speed <value>` row-button.
+  skips the system and the panel stands at the screen edge). Two FiraMono lines: the
+  **camera line** `zoom/x/y cx/cy` and the **hits list** — what the map draws under the
+  cursor, recomputed when the point moves over `INSPECTOR_QUERY_STEP` (0.5 m) or the
+  semantic index is rebuilt.
+  Two modes: `UiInspectorPlugin::game()` (a `GameUiRoot` — hidden until
+  `PlayPhase::Live`, hidden on city switch) and `UiInspectorPlugin::standalone()` (the
+  roads gallery: visible from the first frame, states don't exist there). `tools/shot_coords`
+  reads the camera line; its geometry constants belong to **this** panel now.
+- **Speed button** (`ui/speed.rs`) — left of the telemetry, a `Speed <value>` row-button.
   Left click walks the ladder up and wraps to 1x from its top step (`MAX_SIM_SPEED`), right
   click steps down; `Primary` while paused. It reads `Pointer<Click>` itself instead of
   `Activate`, which fires for *any* mouse button and would make one right click move both
   ways.
-- **Sim tab** (`ui/stats.rs`) — three sections. **World**: `Deterministic` and the `Seed`
-  field + `new`. **Demon**: the four `DemonStyle` knobs — **Max demons** (0…500, step 5),
-  **Spawn every** (0.1…10 s, step 0.1), **Speed** (100…200%, step 5) and **Lunge boost**
-  (+0…+100%, step 5); both percent rows print as percent, a bare `1.3` on the panel says
-  nothing. **Human**: **Speed spread** (0…35%, step 5) — printed with a sign because it is a
-  half-width, and a bare `15%` would read as "everyone 15% faster". The sign is the ASCII
-  `+/-`, not `±`: the built-in font is a narrow subset and draws anything outside ASCII as
-  an empty box. **Body radius** stood here and the crowd knobs in World until all six moved
-  into the Nav tab's crowd groups — they are about movement.
-- **Map tab** — Trees → Tree rows → Buildings → Roads → Road paint → Surfaces → Sun →
-  Noise.
-  **Buildings** (`ui/buildings.rs`): the `Height` cycler on `BuildingHeightMode`, the
-  `Roof texture` knob on `RoofStyle` (a uniform, so the drag rebuilds nothing) and
-  **Industry** — `IndustryStyle::visible`, **off** by default, the section's one row of a
-  foreign resource, exactly the shape `Tram` has in Roads and for the same reason: a
-  `BuildingHeightMode` case would remesh every building layer on a toggle whose only
-  effect is one merged mesh (`map::industry::rebuild_industry`). It is read with the
-  buildings because a cylinder stands on the ground and leans by the houses' own lift.
-  **Roads** (`ui/roads.rs`): the shape of the road first — five sliders on `RoadShape`
-  (`map/roads/shape.rs`): **Lane width** (2.75–3.75 m, printed `3.30 m`), **Taper**
-  (5–20, `10x`), **Curve tolerance** (0–5 m, `3.0 m`, `OSM` at 0), **Median gap**
-  (1–6 m, `3.0 m`), **Corner radius** (0.5–2, `1.0x`). The table is `pub fn
-  shape_knobs()`, re-exported as `qwe::ui::shape_knobs` and shared with the roads gallery.
-  A drag writes `RoadShape` on every step but the map follows **`RoadShapeOnMap`**, the
-  copy `settle_road_shape` makes after 0.35 s of quiet (the Sun section's trick): a
-  rebuild of axes, pairs, nodes and the car row per step would cost hundreds of ms. Lane
-  width, once settled, **reloads the world** (`city::reload_world` on `lane_width_moved` —
-  the parse reads it). Then **Sidewalks** (a `RoadStyle` toggle). The old Joins,
-  Smoothing and Casing rows went with the fields (stage 8).
-  **Road paint** (`ui/road_paint.rs`, `SectionSlot::RoadPaint` right after `Roads`, a
-  `panel_title` header with no count): what lies as paint on the asphalt. Four
-  `RoadStyle` toggles — **Markings**, **Crossings** (`CrossingMode`: `Off` / `OSM` /
-  `OSM + gen`), **Stop lines**, **Arrows** (the lane arrows, their own field now, off by default) — each
-  rebuilding the road layers; interleaved with three `RoadPaintStyle` sliders: **Paint**
-  (the paint layer's opacity, 0–100 %, step 5), **Wear** (the asphalt rut amplitude,
-  0–15 %, step 0.5, printed with one decimal) and **Turn wear** (the junction turn paths'
-  rut amplitude, `map/roads/turns.rs`, 0–8 %, step 0.5, same print). The three are one
-  table, `pub fn paint_knobs()`, re-exported as `qwe::ui::paint_knobs` and shared with the
-  roads gallery like `shape_knobs` — an array the caller destructures, not loops over,
-  because the `RoadStyle` toggles stand between its rows. Their own resource
-  because all three are material uniforms (`surface::retune_surface_materials`) and a
-  drag rebuilds nothing. A section of its own rather than the tail of Roads: with the
-  shape sliders Roads would have grown to fifteen rows, and paint and shape are tuned
-  apart — one by the junction's picture, the other by the street's. The roads gallery's
-  panel mirrors both (a "Roads" and a "Road paint" header). Back in Roads, after
-  Sidewalks: **Tram**, a cycle row of another resource again
-  (`TramStyle::visible`, off by default). The
-  tram sits here because its track runs on the carriageway, and it is deliberately not a
-  `RoadStyle` field: that would remesh every road layer on a toggle whose only effect is one
-  merged mesh (`map::tram::rebuild_tram`). Under it, the second foreign resource in the
-  section — so `add_knobs` is registered four times over (`RoadShape`, `RoadStyle`,
-  `TramStyle`, `CarStyle`): **Cars** and **Occupancy** on
-  `CarStyle` — a toggle (on by default) and a
-  slider (0–100 %, step 5, printed as a percent), for the same reason and with the
-  same shape, rebuilding only `map::cars::rebuild_cars`. Its drag needs no debounce, and
-  that is measured: the knob kit quantizes to the step, so a full-scale drag is 20 rebuilds
-  of 4–7 ms each on Tula, not 400 — well under the ~30 ms at which
-  `camera::track_camera_view`'s treatment would be called for. The **Occupancy** row is
-  `Display::None`d while `Cars` reads `Off` (`sync_occupancy_row_visibility`, the Noise
-  idiom — an unconditional `Update` system and a compare, no `resource_changed` window to
-  miss on the first frame): with no row on the map there is nothing to tune, and a drag
-  would still mark `CarStyle`, run `rebuild_cars` into its early return and rewrite
-  `settings.toml` with nothing to show for it. The `Cars` row stays — it is what brings
-  the layer back. **Surfaces** (`ui/surfaces.rs`): one knob, **Texture**
-  (`SurfaceStyle::texture`, 0–150 %), the strength of the procedural surface shader; it
-  rewrites material uniforms, so a drag costs nothing and rebuilds no mesh. A header
-  without a count (`panel_title`), like Noise: the texture lies on the whole map.
-  **Trees** (`ui/trees.rs`): shape / foliage / crown details / color variance, one button
-  per row cycling through a fixed palette (`bevy_ui` has no text input, so hex fields became
-  cycles), plus **slider rows** — **density** over `TREE_DENSITY_MIN..MAX`, **conifer share**
-  over `TREE_CONIFER_SHARE_MIN..MAX` and **noise mix** over `TREE_NOISE_MIX_MIN..MAX`. The
-  kit's drag observer quantizes to the step and writes `TreeStyle` only when the step
-  actually changes, so one drag rebuilds the crowns a handful of times, not once per pixel.
-  The conifer-share and mix rows are `Display::None`d outside `TreeShape::Mixed`
-  (`sync_mixed_row_visibility`) — they mean nothing for the other shapes. Also settable over
-  BRP: `res set TreeStyle .shape '"Conifer"'`.
-  **Noise** (`ui/noise.rs`): the conifer-field fbm knobs (`ConiferNoiseStyle`: wavelength /
-  octaves / lacunarity / persistence). In the Map tab, not Debug: the field decides where
-  conifer stands land, so it is the look of the map, tuned next to Trees whose conifer share
-  it distributes. Its first row is `Show` — the **same** `DebugConiferNoise` the Debug tab's
-  overlay row carries, because tuning the field without the overlay is blind and sending the
-  user to another tab for the switch would leave the section without one. The knobs (not the
-  section) are `Display::None`d while the overlay is off. Noise *mix* is deliberately not
-  here: it is a gameplay look knob, so it sits in Trees.
-- **Nav tab** (`ui/navigation/` — `mod.rs` the rows, `knobs.rs` the crowd knobs,
-  `overlay.rs` the polymesh overlay) — one block, **one UI for both pathfinding backends**.
-  The top row **`Algo`** cycles `Navmesh` ⇄ `Polymesh`: pawns always walk one of the two, so
-  it is a choice, not two toggles that could both read `Off` while the grid quietly served
-  every request. Its single source of truth is `PolymeshDebug::enabled`, which defaults to
-  `Polymesh` — and which the `Separation` row below follows, since separation does not run
-  on the grid backend (see the navigation-deep skill): picking `Navmesh` here greys that row
-  out the way determinism does. Under it stand the settings **of the selected backend only**
-  — the other set is `Display::None`d out of the layout (`sync_section_visibility`), because
-  an agent radius means nothing while pawns walk tiles, and a grid search algorithm means
-  nothing while they walk the mesh:
-  - `Navmesh` → **`Pathfind`** (`PathfindingAlgorithm`, cycles A*/Dijkstra/Fringe/BFS/
-    HPA*/Theta*), **`Show`** (the grid fill overlay, `DebugNavmesh`);
-  - `Polymesh` → **`Show`** (mesh overlay, draws nothing else), **`Chunks`** (default on)
-    — the chunk hierarchy: it switches the *build* between layered and one flat layer
-    (`POLYMESH_FLAT_CHUNK_METERS`) and therefore triggers a rebuild, and it is what puts the grid
-    on the overlay; one toggle for both halves on purpose, since a grid drawn over a
-    search that does not use it is a picture of something untrue — and an **agent
-    radius** slider (`POLYMESH_AGENT_RADIUS_MIN..MAX`, step 0.1 m) inflating obstacles at
-    triangulation time.
-  The radius minimum is deliberately non-zero (0.2 m) now that pawns
-  walk the mesh, and it is read through `PolymeshDebug::radius()`, which clamps — the
-  minimum was raised after the setting was already being persisted, so an older prefs
-  file holds 0.0. The overlay is one merged mesh at z 5.3 (above the grid navmesh fill
-  at 5.2):
-  **blocked contours filled** in the *same* red as `sync_navmesh_overlay`, then **all
-  polygon edges** of the built mesh stroked over it (shared edges deduped, so a
-  translucent seam is never double-painted). Same colour is the point — the two layers
-  paint the same claim, and only an identical fill makes their accuracy comparable by
-  eye; with a non-zero agent radius the gap between fill and edges *is* the inflation.
-  The chunk-grid boundaries go on top of the mesh edges — dark, half-transparent, and the
-  same 0.4 m stroke width as an edge, since the grid is a partition drawn over the
-  geometry, not another layer of world. They are drawn unconditionally from the built
-  grid, which is 1×1 (no lines) for a flat mesh — the overlay states what the search
-  actually walks, not what the toggle asks for.
-  Below the backend settings sit two **groups**, `Separation` and `Slots` (`KnobGroup` —
-  a plain enum, no resource and no component: it only sorts the knobs under their
-  headers), holding every knob about how pawns get past each other and how they divide up
-  end points. They live here rather than in World because both are about movement; World
-  is the run (seed, determinism, counters), and the crowd knobs only ever sat there
-  because the mechanism is species-independent. **Both groups are always expanded** —
-  crowd knobs are tuned together, and hiding half of them would mean clicking back and
-  forth mid-tuning; hiding is for what the current settings make irrelevant (the
-  unselected backend's rows above), and these two always run. The `Separation` header
-  *is* the toggle, exactly like `Algo`: `on`/`off` on the right, dimmed and inert (no
-  hover highlight either) under determinism and on the grid backend
-  (`separation_allowed_by_mode`), and its **knobs disappear** whenever separation is not
-  running — determinism, the grid backend, or its own `off` — since there is nothing to
-  tune while the mechanism never starts, the same rule that removes the unselected
-  backend's rows. The header row stays: it *is* the toggle that brings separation back,
-  and hiding it would lock you out. Their initial `Display` is set at spawn rather than
-  left to `sync_separation_knob_visibility`, which runs under `resource_changed` and so
-  does nothing on the first frame — with separation off at startup the sliders would have
-  hung there until something else changed.
-  Slots have no toggle — they run in both modes always —
-  so `Slots` is a plain label, spawned without `Button` or an observer. Under the headers:
-  **`Pass squeeze`**, **`Left share`** / **`Body radius`**, **`Slot search`**.
-  Body radius is here despite living on `HumanStyle`: it sets both the rest
-  distance and the slot side, so tuning wants it beside the other crowd knobs, not half a
-  screen away in Human. All four are knob-kit rows, and each binds its **own** resource
-  (`SeparationLab`, `HumanStyle`, `SlotSearch`) — the `Knob` enum that used to
-  cover the group had to carry them all in one `SystemParam` for every drag.
-  (`SlotLab` stays a demo-stand resource: the `Regroup` row that bound it was dropped
-  together with the game-side `regroup_onto_slots`, which the wander invariant —
-  every settled pawn carries `NeedsWanderTarget` — made unreachable in the game.)
-  Nested *slider* rows are indented by `indent_slider_row`, which
-  patches the padding the shared `ui/slider.rs` kit knows nothing about; without it a
-  section's slider sat left of that same section's button rows — `Agent radius` had been
-  sitting unindented since it was added.
-  Cache key (build generation + radius bits) lives on the overlay marker, the
-  conifer-overlay idiom; chunks are absent from it because flipping them moves the
-  generation. The two overlays can no longer collide — two red fills over one map read as
-  a single layer at double alpha, and each is now drawn **only while its backend is the
-  selected one** (`sync_navmesh_overlay` returns early when `polymesh.enabled`), so the
-  mutual-exclusion system that used to push the toggles apart is gone.
+- **City select** (`ui/city.rs`) — one `FeathersMenu` (button + `FeathersMenuPopup` +
+  `FeathersMenuItem` per city), not a button per city: exactly one is ever chosen — that
+  is a select, and a row of buttons grew with each new city. The popup flips itself above
+  the button when there is no room below. `sync_city_label` keeps the button caption on
+  the `City` resource, which `reset` and BRP also write. The select itself is
+  `pub fn spawn_city_select(commands, parent, city, width)`, re-exported with
+  `sync_city_label` from `qwe::ui`: the roads gallery puts the same select on its own
+  panel and registers the label sync itself.
 
 ## Shared kits & layout
 
-- **Widgets and theme** (`ui/theme.rs`) — the controls are first-party `bevy_feathers`
-  (grey buttons, blue `Primary`, 4 px rounded corners, FiraSans); the theme is
+- **Widgets and theme** (`ui/theme.rs`) — the controls are first-party `bevy_feathers`;
+  the theme is
   `create_dark_theme()` with **colour overrides only**. **`PanelWidgetsPlugin`** installs
   `FeathersCorePlugin` plus `UiTheme`; it is a plugin of its own rather than two lines in
   `UiPlugin` because the crowd demo calls the same kits and cannot bring up `UiPlugin`.
@@ -323,9 +158,7 @@ did not fit 1080 px and ran off the top of the screen.
   - **Everything that is not a widget is coloured by the same tokens.** Panel backings are
     `panel_background()` (`tokens::PANE_BODY_BG`) and `panel_block_background()`
     (`GROUP_BODY_BG`), labels are `row_label` (`TEXT_DIM`) and `row_value` (`TEXT_MAIN`),
-    titles `PANE_HEADER_TEXT`. Hand-written colours (`ui_color`, `UiOpacity`,
-    `TOGGLE_ACTIVE_COLOR`, `ROW_LABEL_COLOR`, `DIMMED_VALUE`) are gone: half the screen
-    following the theme and half not is worse than either.
+    titles `PANE_HEADER_TEXT`.
   - **The plaques are translucent, and the text carries the legibility.** One near-black
     `UI_COLOR` at three alphas — `PANEL_ALPHA` .72 (pane body), .85 (header strip), .50
     (nested block) — so the city stays visible under the panel; `TEXT_MAIN` is white and
@@ -344,73 +177,54 @@ did not fit 1080 px and ran off the top of the screen.
     value rows printing `On`/`Off`), and not the city, which is a `FeathersMenu` popup with
     no variant at all. Panels never paint backgrounds; feathers does hover, press and
     disabled itself, in a `Changed`-filtered `PreUpdate` system.
-  - **The font is feathers' 14 px** (`PANEL_FONT` = `size::MEDIUM_FONT`). It was 12 while
-    the panels stood in two columns from screen edge to screen edge; with one tabbed panel
-    the reason is gone, and a caption you have to peer at is worse than two extra pixels.
-    One `apply_panel_font` system puts `InheritableFont` on every `GameUiRoot` — except
-    roots that brought their own (`Without<InheritableFont>`, i.e. the monospace telemetry),
-    which it used to overwrite on the first frame. The kits patch the same size onto the
-    widgets (which carry an `InheritableFont` of their own and would otherwise win).
+  - **The font is feathers' 14 px** (`PANEL_FONT` = `size::MEDIUM_FONT`). One
+    `apply_panel_font` system puts `InheritableFont` on every `GameUiRoot` — except
+    roots that brought their own (`Without<InheritableFont>`, i.e. the monospace
+    telemetry). The kits patch the same size onto the widgets (which carry an
+    `InheritableFont` of their own and would otherwise win).
   - **A container *between a font source and a label* comes from `ui_node` / `ui_row` /
     `ui_column`, never from a bare `Node`.** Font propagation runs
     `HierarchyPropagatePlugin::<TextFont, With<ThemedText>>`, and the traversal *stops* at
     the first entity without `ThemedText` — a wrapper between a root and its labels that
-    lacks the marker leaves everything below at the default 20 px. That was not
-    hypothetical: the World counters sat at 20 px in a different face for days, because the
-    marker was something to remember rather than something a constructor brought.
-    **The source itself is not such a container**: `InheritableFont` is
+    lacks the marker leaves everything below at the default 20 px. **The source itself is
+    not such a container**: `InheritableFont` is
     `#[require(ThemedText, PropagateOver::<TextFont>)]`, so a root that brings its own font
     (the monospace telemetry) or is handed one by `apply_panel_font` (every `GameUiRoot`)
     carries the marker already and *starts* the chain instead of standing in it — which is
     why the roots of `ui/hotkeys.rs`, `ui/speed.rs` and `ui/city.rs` are bare `Node`s and
-    are right to be. Nor is a `Node` patched onto a widget's own `bsn!` scene (`ui/rows.rs`,
-    `ui/city.rs`, `ui/slider.rs` — the widget brings the font, and the slider adds a bare
-    `ThemedText` because `FeathersSlider` does not) or a `Node` bundled with the very text
-    it lays out (the `flex_grow: 1.` spacers). `warn_broken_font_chain` (debug builds,
-    `Added<Text>`, after `apply_panel_font`) is the arbiter: it walks the chain, names the
-    offending node in the log, and stays silent in exactly the cases above.
+    are right to be. Nor is a `Node` patched onto a widget's own `bsn!` scene
+    (`ui/rows.rs`, `ui/city.rs`, `ui/slider.rs` — the slider adds a bare `ThemedText`
+    because `FeathersSlider` does not) or a `Node` bundled with the very text it lays out
+    (the `flex_grow: 1.` spacers). `warn_broken_font_chain`
+    (debug builds, `Added<Text>`, after `apply_panel_font`) is the arbiter: it walks the
+    chain, names the offending node in the log, and stays silent in exactly the cases
+    above.
   `spawn_panel_button(commands, parent, marker, label, is_active, on_activate)` is the kit;
   `spawn_panel_button_with` takes the caption as a bundle instead of a string, for the
   two-text cycler rows. The caption is spawned as a child rather than passed as the scene's
   `@caption` because it comes from runtime strings.
-- **City select** (`ui/city.rs`) — one `FeathersMenu` (button + `FeathersMenuPopup` +
-  `FeathersMenuItem` per city), not a button per city: at seven cities the row already took
-  a third of the bottom edge and grew with each new city, and exactly one is ever chosen —
-  that is a select. The popup flips itself above the button when there is no room below.
-  `sync_city_label` keeps the button caption on the `City` resource, which `reset` and BRP
-  also write. The select itself is `pub fn spawn_city_select(commands, parent, city,
-  width)`, re-exported with `sync_city_label` from `qwe::ui`: the roads gallery puts the
-  same select on its own panel (full width there, a pinned 140 px in the game) and
-  registers the label sync itself.
 - **Knob kit** (`ui/knob.rs`) — what panels actually call. A knob is a slider row bound
   to one field of one resource: `spawn_knob(commands, panel, label, &*resource, binding)`
   where `SliderBinding<R> { get, set, range, text }` is four function pointers, and
-  `app.add_knobs::<R>()` registers the sync **once per resource** — not per knob, per
-  panel or per field. Every panel used to hand-write the same drag observer (quantize,
-  compare, write the field) and the same sync system (labels + `retarget` the thumbs):
-  thirteen observers and eight systems that differed only in which field of which
-  resource they touched. Two shapes worth knowing: an integer knob is `get: |r| r.n as
-  f32` / `set: |r, v| r.n = v as u32` with an integer step (`Max demons`, `Octaves`), and
-  a percent knob keeps the resource in 0..1 while `text` multiplies by 100 (`Speed`,
-  `Conifer share`). `Knobbed` is just an alias for `Resource<Mutability = Mutable>` —
-  `ResMut` needs it and repeating the bound in six signatures reads worse.
-  `SliderBinding` implements `Clone`/`Copy` by hand: `derive` would demand `R: Copy`,
-  which no resource is. `add_knobs::<R>()` is **idempotent** (it remembers registered
-  `TypeId`s in `RegisteredKnobs`): one resource is knobbed from two panels at once —
-  `HumanStyle` is `Speed spread` in Human *and* `Body radius` in Navigation — and each
-  panel must register what it uses rather than assume its neighbour did, which is the
-  mirror-of-a-list habit this whole change removes. Without the memo the second call
-  would simply add a second copy of both systems.
-  **The module is `pub`, and the four galleries call it** (`examples/demos/*_gallery/`).
-  Each keeps a `ParamSpec { label, group, binding }` table of its own — the label and the
+  `app.add_knobs::<R>()` registers the drag observer and the sync **once per resource** —
+  not per knob, per panel or per field. Two shapes worth knowing: an integer knob is
+  `get: |r| r.n as f32` / `set: |r, v| r.n = v as u32` with an integer step, and a
+  percent knob keeps the resource in 0..1 while `text` multiplies by 100. `Knobbed` is
+  just an alias for `Resource<Mutability = Mutable>` — `ResMut` needs it and repeating
+  the bound in six signatures reads worse. `SliderBinding` implements `Clone`/`Copy` by
+  hand: `derive` would demand `R: Copy`, which no resource is. `add_knobs::<R>()` is
+  **idempotent** (it remembers registered `TypeId`s in `RegisteredKnobs`): one resource
+  is knobbed from two panels at once — `HumanStyle` is `Speed spread` in Human *and*
+  `Body radius` in Navigation — and each panel must register what it uses rather than
+  assume its neighbour did. Without the memo the second call would simply add a second
+  copy of both systems.
+  **The module is `pub`, and the demo galleries call it** (`examples/demos/*`): each
+  keeps a `ParamSpec { label, group, binding }` table of its own — the label and the
   group header are the gallery's, the binding is the kit's — and its `main.rs` registers
-  `add_knobs::<Tuning>()` beside `init_resource::<Tuning>()`. That is what retired four
-  word-for-word copies of a `ParamSlider(usize)` / `ParamValue(usize)` pair, an
-  `on_param_change`, a `sync_param_rows` and a `write_value`: the number on the slider
-  was an index into the gallery's own `specs()`, i.e. the kit's binding written out by
-  hand. A gallery still owns its **reset** button, which the kit has no notion of, and
-  `tree_gallery` compares it knob by knob through `binding.get` rather than by `!=` on
-  the whole `Tuning` — `CrownParams` is not `PartialEq`.
+  `add_knobs::<Tuning>()` beside `init_resource::<Tuning>()`. A gallery still owns its
+  **reset** button, which the kit has no notion of, and `tree_gallery` compares it knob
+  by knob through `binding.get` rather than by `!=` on the whole `Tuning` —
+  `CrownParams` is not `PartialEq`.
 - **Slider kit** (`ui/slider.rs`) — the layer under the knob kit, and the one `crowd_demo`
   calls directly, since its fifteen knobs interleave three resources in one `const` slice
   that also feeds the presets: `spawn_slider_row` (label + value text +
@@ -422,15 +236,40 @@ did not fit 1080 px and ran off the top of the screen.
   `add_knobs::<R>()` once per resource, from each panel's own plugin, it `retarget`s every
   entity carrying `SliderBinding<R>`. A caller that drives demo-local state instead of a
   resource writes that loop itself.
+- **Cycle rows** — the button half of the knob kit, for the values `bevy_ui` has no input
+  field for: `spawn_cycle_row(.., CycleBinding { cycle, text })` where `cycle` advances the
+  field by itself. Deliberately not "next item of `ALL`": what cycles is enums, plain
+  bools, colour palettes and step tables alike, and forcing them through one list would
+  need a type per kind. Registered by the same `add_knobs::<R>()` as the sliders.
+  `CycleBinding` is *not* a component — the click observer captures it, and the sync only
+  needs it on the label. The rows that stay hand-written are the Nav tab's
+  (`NavValueLabel`): their text is computed from **several** resources at once
+  (`Backend` from `PolymeshDebug`, `Separation` from determinism + backend + style),
+  which a binding to one resource cannot express.
+- **Value-row kit** (`ui/rows.rs`) — the layer under cycle rows, and what the Navigation
+  panel calls directly: `spawn_value_row` (grey label left, white value right, click on an
+  observer), `row_color`, `next_in`, `on_off`. A row is a `FeathersButton` too, but with
+  its own scene rather than `spawn_panel_button_with`'s: it spans the panel, its left
+  padding carries the nesting indent, and its label stretches to push the value right.
+  What the two share is the colour, and that comes from the theme. A row whose click
+  currently does nothing gets first-party **`bevy::ui::InteractionDisabled`** from its
+  panel, which both stops the highlight and swallows `Activate` — promising a reaction
+  the click will not deliver is worse than not highlighting. There is no dimmed-disabled
+  colour of our own: feathers simply stops repainting the row, so it keeps its *resting*
+  colour — an inert row should look ordinary and merely not react.
+- **Printing text**: a value that prints with a sign keeps the ASCII `+/-`, not `±` —
+  the built-in font is a narrow subset and draws anything outside ASCII as an empty box.
+- **Absolute nodes are the exception.** Inside a tab ordinary flex stacks the sections,
+  and a section that hides itself (`Display::None`) is collapsed by the same flex; the
+  only absolutely anchored nodes left are HUD ones (the left column, the panel, the
+  hotkey help, the city select).
 - **A demo scene that calls the kits brings the theme *and* the font itself.**
   `PanelWidgetsPlugin` exists for the first half (it is a plugin of its own precisely so an
   example can raise it without `UiPlugin`), but it installs only feathers and the theme:
   `apply_panel_font` lives in `UiPlugin`, which no example can raise. Without an
   `InheritableFont` on the scene's own plaque every label falls back to bevy's default
-  20 px face, the slider rows grow out of the panel and the value text wraps — which is
-  exactly what `crowd_demo` looked like after the feathers port. This holds whichever kit
-  the scene calls — a gallery on the knob kit needs the plaque and the font just as much.
-  So a demo plaque is
+  20 px face, the slider rows grow out of the panel and the value text wraps. So a demo
+  plaque is
   `ui_node(…)` + `panel_background()` + its own `InheritableFont { fonts::REGULAR,
   PANEL_FONT }` (`crowd_demo/panel.rs::panel_font`, `tree_gallery/panel.rs::spawn_panel`),
   its group headers `panel_block_background()` + `panel_title`, its labels `row_label` /
@@ -443,75 +282,6 @@ did not fit 1080 px and ran off the top of the screen.
   **`qwe::ui::AgentBadgePlugin`** — the game's red BRP badge, shown when Claude Code
   launched the window — and the scene's top-left plaque carries `qwe::ui::BelowBrpBadge`
   so the badge does not cover it.
-- **Cycle rows** — the button half of the knob kit, for the values `bevy_ui` has no input
-  field for: `spawn_cycle_row(.., CycleBinding { cycle, text })` where `cycle` advances the
-  field by itself. Deliberately not "next item of `ALL`": what cycles is enums, plain
-  bools, colour palettes and step tables alike, and forcing them through one list would
-  need a type per kind. Registered by the same `add_knobs::<R>()` as the sliders.
-  `CycleBinding` is *not* a component — the click observer captures it, and the sync only
-  needs it on the label. The rows that stay hand-written are the Nav tab's
-  (`NavValueLabel`): their text is computed from **several** resources at once (`Backend`
-  from `PolymeshDebug`, `Separation` from determinism + backend + style), which a binding
-  to one resource cannot express — that enum is the right tool there, not a leftover.
-- **Value-row kit** (`ui/rows.rs`) — the layer under cycle rows, and what the Navigation
-  panel calls directly: `spawn_value_row` (grey label left, white value right, click on an
-  observer), `row_color`, `next_in`, `on_off`. A row is a `FeathersButton` too, but with its
-  own scene rather than `spawn_panel_button_with`'s: it spans the panel, its left padding
-  carries the nesting indent, and its label stretches to push the value right. What the two
-  share is the colour, and that comes from the theme. There is no highlight system left —
-  feathers paints hover and press itself. A row whose click currently does nothing gets
-  first-party **`bevy::ui::InteractionDisabled`** from its panel, which both stops the
-  highlight and swallows `Activate` — promising a reaction the click will not deliver is
-  worse than not highlighting. There is no dimmed-disabled colour of our own: feathers simply
-  stops repainting the row, so it keeps its *resting* colour — an inert row should look
-  ordinary and merely not react. The only carrier
-  today is the Separation toggle under **Deterministic** or grid navigation.
-- **The bottom columns are gone.** `stack_bottom_columns`, `column_bottom`, `Stacked`,
-  `UiRightColumn` / `UiLeftColumn` / `UiPanelGapBelow`, `panel_node`, `right_panel` /
-  `left_panel` and the four column-arithmetic tests were deleted with the tabs: inside a
-  tab ordinary flex stacks the sections, and a section that hides itself
-  (`Display::None`) is collapsed by the same flex. Only two absolute nodes are left, both
-  HUD: the hotkey help (bottom right) and the city select (bottom centre). What survived
-  the deletion is the retina trap — `ComputedNode::size` is in *physical* pixels, and
-  `offset_below_brp_badge` still multiplies by `inverse_scale_factor`.
-- **Debug tab** (`ui/debug/`) — the overlay rows (grid / doors / move paths / noise field /
-  **Road network** / **Rut lines** / **OSM contours**), the `Camera start`, `Antialias`, `Navtile` and
-  **`Raw OSM`** cyclers, and `reset`. `Raw OSM` cycles `map::osm::parse::RawOsm`
-  (`Off` → `parse` → `parse+draw`, persisted `debug.raw_osm`, registered by `MapPlugin`);
-  it is a parse input, so it sits beside Navtile and reloads the world the same way
-  (`city::raw_osm_moved` compares it with `MapData::knobs.raw`). **Road
-  network** is `DebugRoadNetwork` (settings group `debug`, key `road_network`):
-  `ui/debug/overlays.rs::sync_road_network_overlay` despawns the `RoadNetworkOverlayMarker`
-  layer and, when on, spawns `map::mesh_network_overlay` through `surface::spawn_layers`
-  (which is where its `DespawnOnExit` comes from) — on the toggle and on
-  `OnEnter(Playing)`, never on a shape knob: the network is the parse's and the knobs do
-  not move it. Each street its own colour, line width by lanes, a white dot on each seam.
-  **Rut lines** (`DebugRutLines`, key `rut_lines`, right under Road network) is the same
-  shape again, with one difference: its source is the `RutLines` resource the road build
-  writes on every rebuild, so `sync_rut_overlay` runs on the toggle **or** on
-  `resource_changed::<RutLines>` (no `OnEnter` entry — world entry writes the resource
-  too), and a shape knob moves it (osm-map `references/roads.md`, **Asphalt wear**).
-  **OSM contours** (`DebugOsmContours`, key `osm_contours`, under Rut lines) is
-  the same shape over another layer: `sync_osm_contours_overlay` spawns
-  `map::mesh_osm_contours(&map.osm_contours)` — the parse's snapshot of the geometry
-  before its finishing passes (osm-map `references/parse.md`) — on the toggle and on world
-  entry only, and logs its vertex count and build time. All of them are knob-kit rows
-  (`spawn_cycle_row` + `add_knobs::<R>()`) now, which is why `DebugToggleButton`,
-  `CyclerButton`, `cycler_state`, `sync_toggle_buttons`, `sync_cycler_buttons` and
-  `sync_cycler_labels` are gone: the kit already keeps a label on its resource. The old row
-  of bare buttons (`grid`, `doors`, `camera:`) had no value text at all, so it needed a
-  green fill to say "on" and "at its default" — a row that prints `Off` or `save` says it
-  outright, and the colour became a second, weaker channel for the same claim.
-  **`reset`** (`prefs::ResetSettings`) stays an action **button**, not a row: it has no state
-  of its own to print — every settings group goes back to its `Default`, world settings
-  included, so an off-baseline city / seed / navtile / determinism reloads the map on the
-  click. Navtile is in this tab and not under `Navmesh` because the world is *always* built
-  in tiles of that size — the passability fill, the unreachable prune, the portal snap, the
-  entrance generation — whichever backend the pawns then walk; hiding it with the grid
-  settings would call a global setting a local one. The navmesh overlay this module still
-  owns is **one merged mesh** — per-tile entities once cost 330 k entities; the noise overlay
-  is one sprite with a CPU-built texture (see the osm-map skill's `references/trees.md`,
-  Conifer stands).
 
 ## Camera start view
 
@@ -555,9 +325,8 @@ did not fit 1080 px and ran off the top of the screen.
 
   **`prefs::ResetSettings`** is a `Command`, and it too is a registration rather than a
   list: it walks the type registry, keeps whatever carries `ReflectSettingsGroup`, and
-  writes back that type's `ReflectDefault` — both of which every group already registers
-  through `#[reflect(Resource, SettingsGroup, Default)]`. A new tunable is therefore
-  resettable the day it is declared, and there is no second place to forget it. Two details
+  writes back that type's `ReflectDefault` — both registered by
+  `#[reflect(Resource, SettingsGroup, Default)]`. Two details
   that are correctness, not polish: a group **already at its default is skipped**, because
   merely taking a `Mut` marks the resource changed and `retuned` would then order a crown /
   road / building / polymesh rebuild for nothing; and the command queues
@@ -568,10 +337,10 @@ did not fit 1080 px and ran off the top of the screen.
 
   **Persisting is a registration, not a list**: `app.track_pref::<T>()` next to the
   resource's own `init_resource` adds a one-line system that queues
-  `SaveSettingsSync::IfChanged` when `T` changes. It replaced a 20-branch `or_else`
-  chain inside `prefs.rs` — a mirror of a list maintained elsewhere, and it had lost
-  `RoadStyle`, whose edits only reached the disk if some *other* tracked resource
-  happened to change in the same frame. Deliberately untracked: `SavedCameraView`
+  `SaveSettingsSync::IfChanged` when `T` changes. A hand-maintained mirror of the tracked
+  list had already lost `RoadStyle`, whose edits only reached the disk if some *other*
+  tracked resource happened to change in the same frame. Deliberately untracked:
+  `SavedCameraView`
   (changes every frame of a camera drag; `camera::track_camera_view` debounces it and
   saves by hand). `IfChanged` re-checks the whole file's change ticks itself, so two
   resources changing in one frame still cost one write.
@@ -584,24 +353,11 @@ did not fit 1080 px and ran off the top of the screen.
   determinism restart request use it; do not hand-roll
   `resource_changed::<T>.and_then(not(resource_added::<T>))` again.
 - **dev.rs** — `TakeScreenshotEvent` (BRP-triggerable) → `screenshot.png` (gitignored);
-  **`OffscreenShotEvent`** → a second camera rendering into an offscreen texture, so a
-  covered or locked screen no longer means a black png (details in
-  `.claude/live-app-project.md`). Four consequences for this layer. **The main camera
-  carries `IsDefaultUiCamera`** — it *names* the UI's camera instead of leaving it to
-  bevy's fallback, which takes the highest-order camera **targeting the primary window**
-  (`bevy_ui/src/ui_node.rs::DefaultUiCamera::get`). The offscreen camera targets an image,
-  so that filter drops it before any order is compared and it was never a candidate: the
-  marker is a statement of intent against a future second *window* camera, **not** what
-  keeps the panels out of the shot. **What keeps them out is being UI at all** — and that
-  takes the **vignette** (`post.rs`) with them, so an offscreen png has lighter corners
-  than the window; do not read that as a broken vignette. **And for the few frames of a
-  shot there are two `Camera2d`s**, so a query for the user's camera must carry
-  `With<PanCamera>` — a bare `Single<…, With<Camera2d>>` matches both and its system is
-  skipped without a word (`ui/debug/overlays.rs::render_doors` among them). **A shot with
-  its own zoom moves the user camera's zoom** (`Transform::scale` *and*
-  `PanCamera::zoom_factor`) for those frames and puts it back afterwards: the zoom-LOD
-  layers hold one mesh for every view and read their step from that camera, so a far shot
-  would otherwise show the near-zoom detail.
+  **`OffscreenShotEvent`** → a second camera rendering into an offscreen texture (what it
+  means for shots — UI and vignette out, the second `Camera2d`, the borrowed zoom — is in
+  CONTEXT.md; details in `.claude/live-app-project.md`). One law this layer adds: bevy's
+  fallback UI camera is the highest-order camera **targeting the primary window**
+  (`bevy_ui/src/ui_node.rs::DefaultUiCamera::get`) — that is why the main camera's
+  `IsDefaultUiCamera` is a statement of intent against a future second *window* camera,
+  and why the image-targeting offscreen camera was never a candidate for the fallback.
   `SpawnTestWalkerEvent` for A/B path checks; frame-time diagnostics.
-- **BRP** — `RemoteHttpPlugin` on port 15702; drive it via the `live-app` skill's `brp`
-  script only.
