@@ -1293,6 +1293,8 @@ fn assemble_rings(
 
 mod block_pull;
 mod faiths;
+#[cfg(test)]
+mod fixtures;
 mod house_pull;
 mod lots;
 mod pavements;

@@ -1,6 +1,10 @@
 use super::*;
 // посадка деревьев переехала в соседний модуль, но проверяется она через
 // весь конвейер — от JSON Overpass до `map.trees`
+use super::fixtures::{
+    CENTER, CITY, HALF, WOOD_HALF, corners, fixture, read, right_angles, skewed_house, tree_row,
+    wood_scene,
+};
 use super::lots::PavedLots;
 use super::tags::{building_height, colour, parse_measure};
 use crate::map::osm::fixture::{
@@ -16,10 +20,7 @@ use crate::map::osm::planting::{
     TREE_CROWN_REACH, TREE_MIN_SPACING, TREE_SHORE_CLEARANCE, TREE_WALL_CLEARANCE, near_area_edge,
 };
 use crate::map::roads::network::RoadNetwork;
-use crate::settings::{MAP_SIZE, STOREY_HEIGHT};
-
-/// Фикстуры строятся вокруг гео-центра Тулы — города по умолчанию.
-const CITY: City = City::Tula;
+use crate::settings::STOREY_HEIGHT;
 
 /// Храм, чья вера досталась ему от города без размеченных храмов.
 const WESTERN_CHURCH: BuildingUse = BuildingUse::Church(Sacred {
@@ -28,52 +29,6 @@ const WESTERN_CHURCH: BuildingUse = BuildingUse::Church(Sacred {
     complex: 0,
     floor_dm: 0,
 });
-
-/// Центр карты: сцены собираются вокруг него, и в тех же метрах пишутся
-/// проверки — фикстуре незачем говорить в градусах.
-const CENTER: Vec2 = Vec2::new(MAP_SIZE.x / 2.0, MAP_SIZE.y / 2.0);
-
-/// Половина стороны обычной сцены: дом, пруд, отрезок дороги.
-const HALF: f32 = 55.0;
-/// Половина стороны лесной сцены — посадке нужно место.
-const WOOD_HALF: f32 = 110.0;
-
-/// Углы квадратной сцены вокруг центра карты: юго-западный, юго-восточный,
-/// северо-восточный, северо-западный.
-fn corners(half: f32) -> (Vec2, Vec2, Vec2, Vec2) {
-    let (min, max) = (CENTER - Vec2::splat(half), CENTER + Vec2::splat(half));
-    (min, Vec2::new(max.x, min.y), max, Vec2::new(min.x, max.y))
-}
-
-/// Мини-ответ Overpass: way-здание, дорога-мост, relation-вода из двух
-/// половинок с дыркой-островом.
-fn fixture() -> Overpass {
-    let (sw, se, ne, nw) = corners(HALF);
-    Overpass::new(CITY)
-        .area(&[("building", "yes")], square(CENTER, HALF))
-        .way(&[("highway", "secondary"), ("bridge", "yes")], vec![sw, ne])
-        .way(&[("highway", "proposed")], vec![sw, ne])
-        .relation(
-            &[("natural", "water")],
-            &[
-                ("outer", vec![sw, se, ne]),
-                ("outer", vec![ne, nw, sw]),
-                ("inner", closed(square(CENTER, HALF / 4.0))),
-            ],
-        )
-}
-
-/// Лес во всю сцену — фон тестов посадки: деревья растут только в лесных
-/// полигонах, поэтому каждое правило проверяется как вычитание из него.
-fn wood_scene() -> Overpass {
-    Overpass::new(CITY).area(&[("natural", "wood")], square(CENTER, WOOD_HALF))
-}
-
-/// Ряд деревьев поперёк сцены — общее начало тестов `natural=tree_row`.
-fn tree_row(tags: &[(&str, &str)]) -> MapData {
-    let (sw, se, ..) = corners(HALF);
-    Overpass::new(CITY).way(tags, vec![sw, se]).parse()
-}
 
 #[test]
 fn parses_building_road_and_multipolygon() {
@@ -2655,29 +2610,6 @@ fn a_fortress_is_told_by_its_wall_and_its_defensive_towers() {
     );
 }
 
-/// Ромб частного дома из Тулы (way 968419942, углы 79°–100°) вокруг `at`.
-fn skewed_house(at: Vec2) -> Vec<Vec2> {
-    [
-        Vec2::new(412.56, 3158.32),
-        Vec2::new(426.85, 3167.85),
-        Vec2::new(420.76, 3178.18),
-        Vec2::new(407.79, 3169.97),
-    ]
-    .map(|point| point - Vec2::new(416.99, 3168.58) + at)
-    .to_vec()
-}
-
-fn right_angles(ring: &[Vec2]) -> bool {
-    (0..ring.len()).all(|index| {
-        let (prev, at, next) = (
-            ring[(index + ring.len() - 1) % ring.len()],
-            ring[index],
-            ring[(index + 1) % ring.len()],
-        );
-        (prev - at).normalize().dot((next - at).normalize()).abs() < 0.01
-    })
-}
-
 /// Косо обведённый маленький дом выпрямляется в прямоугольник той же площади
 /// на том же месте, и вход с его вершины переезжает на угол прямоугольника.
 #[test]
@@ -3475,13 +3407,6 @@ fn tagged_colours_reach_the_building() {
 // не делал: `parse` была одним телом на сто двадцать пять строк, у стадии не
 // было имени, и каждый тест шёл через `Overpass::…parse()`, адресуя дома по их
 // месту в фикстуре.
-
-/// Сырая карта из сцены — ровно то, что отдаёт элементный цикл, без доводки.
-fn read(scene: &Overpass) -> (MapData, Pending, ReadReport) {
-    let response: OverpassResponse =
-        serde_json::from_str(&scene.json()).expect("фикстура строит валидный JSON");
-    read_elements(&response, &GeoBounds::for_city(CITY))
-}
 
 /// Чтение элементов ничего не доводит: дом посреди пруда из него выходит
 /// живым, и топит его отдельный проход.
