@@ -23,10 +23,17 @@ one your change is about, not all of them**:
   ring assembly).
 - `references/model.md` — the **MapData field catalog**: per type, every field's parse
   provenance, consumers and the invariants it carries.
-- `references/roads.md` — how a street is drawn: sidewalks, divided streets and their
-  medians, lane markings and their breaks, the ribbon, junctions and the drawn network (stitches, kerb returns),
-  `RoadStyle` and `RoadShape` (lane width, taper, curve tolerance, median gap, corner
-  radius), bridge layers, asphalt wear; the junction gallery `examples/demos/roads`.
+- `references/roads.md` — the roads hub: the phases of `build_roads` and the index to the
+  subject files, each one subject — `roads-sidewalks.md` (sidewalks, verges, kerb
+  pockets), `roads-pairs-medians.md` (divided streets and their medians, the tram band),
+  `roads-streets-network.md` (streets, sections, tapers, the street axis, the ribbon,
+  stitches), `roads-markings.md` (lane markings and their breaks), `roads-junctions.md`
+  (the break sets, driveway crossings, turning circles, safety islands),
+  `roads-junction-paint.md` (zebras, stop lines, who breaks), `roads-corners.md` (kerb
+  returns), `roads-rings.md` (roundabouts), `roads-merges.md` (merges),
+  `roads-bridges-wear.md` (bridge layers, asphalt wear, turn paths), `roads-gallery.md`
+  (the junction gallery `examples/demos/roads`). `RoadStyle`/`RoadShape` ranges live in
+  `CONTEXT.md`, the hub keeps the roads-side residue.
 - `references/parking-layout.md` — the parking layout (stalls, aisles, the lot outline
   and its parse).
 - `references/parking-big-lot.md` — the big lot: its kerb and the gores at a roundabout
@@ -138,7 +145,7 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   and cuts its windows out of it with `map/osm/crop.rs`, which then go through
   `parse::parse_response` — the `parse` door for an already deserialized answer. So a
   query bump reaches the gallery with no step of its own; details in
-  `references/roads.md`, **The junction gallery**.
+  `references/roads-gallery.md`.
 - **One file per city** — every load first runs `prune_stale_caches()`: anything under a
   known city slug that is not that city's current `cache_path` is deleted. That is what
   retires extracts left by an old geo center, `MAP_SIZE` or `QUERY_VERSION` — tens of MB
@@ -411,12 +418,19 @@ extraction; re-attempting it means going through the curb pin tests
 - **The layers themselves are in the references**, one file per subject, so a session
   reads only its own. A cross-reference «**X** below/above» inside any of them names a
   bullet by its bold title; this list says which file holds it.
-  - `references/roads.md` — **Sidewalks**, **Paired halves** (the median: asphalt and
-    double solid, or a lawn with a kerb), **Markings** (with **Breaks** and
-    `lane_count`), **Ribbon**, **Junctions**, **The drawn network** (pinned nodes,
-    driveway crossings, stitches, **Kerb returns**), **RoadStyle and RoadShape**,
-    **Bridge layers**,
-    **Asphalt wear**, and **The junction gallery** (`examples/demos/roads`).
+  - `references/roads.md` — the roads hub and its subject files:
+    `roads-sidewalks.md` — **Sidewalks** and **Kerb pockets** (the verges, the paved
+    and unpaved streets, the lawn scraps); `roads-pairs-medians.md` — **Paired halves**
+    (the median: asphalt and double solid, or a lawn with a kerb, the tram bed and
+    band); `roads-streets-network.md` — **Streets, sections, tapers**, the **Ribbon**,
+    **The drawn network** (pinned nodes, stitches, **The street axis**); `roads-markings.md`
+    — **Markings** (with **Breaks** and `lane_count`); `roads-junctions.md` —
+    **Junctions**, **Driveway crossings**, **Turning circles**, **Safety islands**;
+    `roads-junction-paint.md` — **Junction paint**; `roads-corners.md` — **Kerb
+    returns**; `roads-rings.md` — **Roundabouts**; `roads-merges.md` — **Merges**;
+    `roads-bridges-wear.md` — **Bridge layers**, **Asphalt wear**, **Turn paths**;
+    `roads-gallery.md` — **The junction gallery** (`examples/demos/roads`); the hub
+    itself holds **RoadStyle and RoadShape**.
   - `references/parking-layout.md` — **Parking** (the layout, aisles, pockets);
     `references/parking-big-lot.md` — **A big lot shows the road through it** (the lot
     kerb, the medians and the **gores**); `references/parking-parked-cars.md` —
@@ -431,12 +445,13 @@ extraction; re-attempting it means going through the curb pin tests
   layer keeps its own table (`RAIL_LODS`, `TRAM_LODS`, `FENCE_LODS`; the cars', the
   wagons' and the roof clutter's are a single threshold each, the paint's are its three
   zoom maxima, the road verges' is one bound — wide verges drop off it, `VERGE_ZOOM_MAX`
-  in `roads.md`) and names it with a marker type
+  in `roads-sidewalks.md`) and names it with a marker type
   implementing `ZoomLods` (`RailLods`, `TramLods`, `FenceLods`, `CarLods`, `WagonLods`,
   `BuildingLods`, `PaintLods`, `VergeLods`, `TreeLods` — empty enums handing over the `max_zoom`s; the
   trees' table caps the density prefix, `references/trees.md`; the paint's
   and the trees' buckets only flip `Visibility`, the buildings' only a roof-material
-  uniform — nothing is rebuilt — **Markings** in `roads.md`, `references/buildings-material.md`). `ZoomBucket<T>` is the
+  uniform — nothing is rebuilt — **Markings** in `roads-markings.md`,
+  `references/buildings-material.md`). `ZoomBucket<T>` is the
   resource with the current index for that table;
   `for_zoom` is the single selection rule (first bucket whose bound is above the zoom,
   a zoom on the bound goes up — `zoom/tests.rs`). Three generic systems:

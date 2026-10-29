@@ -1826,7 +1826,7 @@ on a counter-taper (`Taper::seam`) — and drifts to its own over the wedge
     pushed into that class's fill layer *before* any ribbon, so every ribbon (and its
     markings) lies over it. The radius goes by the **minor class of the pair**
     (`kerb_radius`: avenue, street, drive, footway — the table is **Kerb returns** in
-    `roads.md`) — capped only by the straight run of each arm, which carries on through
+    `roads-corners.md`) — capped only by the straight run of each arm, which carries on through
     vertices lying on the same line; neighbouring arms 25°–155° apart only. The
     whole table is scaled by `RoadShape::corner_radius` (1.0 by default). **The sidewalk
     turns with it**: the same wedge, laid in the
