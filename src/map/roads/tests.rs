@@ -3381,7 +3381,7 @@ fn a_ring_arc_base_break_reaches_by_the_osm_width() {
         &mut nodes,
         &RoadShape::default(),
     );
-    let arcs = ring_arcs(&map.roads, &axes.rings);
+    let arcs = rings::ring_arcs(&map.roads, &axes.rings);
     assert_eq!(arcs.len(), 1);
     assert_eq!(arcs[0].0, 0);
     assert_eq!(arcs[0].1.width, 12.0);

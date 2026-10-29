@@ -18,9 +18,10 @@ use super::network::pairs::Pairs;
 use super::network::{self, RoadNodes, Stitches};
 use super::pockets::KerbLots;
 use super::rings::Rings;
+use super::rings::{leg_sections, ring_arcs};
 use super::shape::RoadShape;
 use super::tapers::{Taper, Tapers};
-use super::{RoadStyle, VERGE_MID_MAX, VergeZoomBucket, leg_sections, ring_arcs};
+use super::{RoadStyle, VERGE_MID_MAX, VergeZoomBucket};
 use crate::map::osm::{MapData, PolyArea, RoadClass, RoadLine};
 
 /// Какую ось берёт потребитель — решение вынесено из порядка `let` в тип.
