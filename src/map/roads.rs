@@ -55,6 +55,7 @@ pub use self::bridges::BridgeReport;
 use self::bridges::Bridges;
 pub use self::drawn::{Axis, Drawn, DrawnStats};
 use self::footbridge::{footbridge_reach, push_path_flare};
+use self::islands::push_street_fill;
 pub use self::junctions::JunctionCounts;
 use self::junctions::{MOUTH_CROSSING_GAP, mouths};
 use self::network::RoadNodes;
@@ -70,8 +71,7 @@ use self::tram_lay::TramTracks;
 use crate::map::SunOnMap;
 use crate::map::footprint::JOIN_EPSILON;
 use crate::map::meshing::{
-    Break, LaneFrame, MeshBuilder, RibbonBreaks, RibbonCap, RibbonJoin, RibbonShape, miter_offsets,
-    to_break_beyond,
+    Break, LaneFrame, MeshBuilder, RibbonCap, RibbonJoin, miter_offsets, to_break_beyond,
 };
 use crate::map::osm::model::{
     RoadAreaKind, RoadNodeKind, point_in_area, polyline_length, ring_bounds,
@@ -3045,30 +3045,6 @@ fn push_verges(
             scraps.push_lawn_band(&dense, &normals, &reach(&widths), ends, bites);
         }
     }
-}
-
-/// Заливка проезжей части — лента [`ROAD_RIBBON`] с разрывами разметки по
-/// перекрёсткам. Срезанный под клин торец — как у [`push_ribbon_trimmed`].
-fn push_street_fill(
-    builder: &mut MeshBuilder,
-    points: &[Vec2],
-    width: f32,
-    color: LinearRgba,
-    breaks: &[Break],
-    trimmed: [bool; 2],
-) {
-    let (join, cap) = ROAD_RIBBON;
-    builder.push_ribbon_shaped(
-        points,
-        width,
-        color,
-        RibbonShape {
-            closed: is_ring(points),
-            join,
-            caps: trimmed.map(|trimmed| if trimmed { RibbonCap::Butt } else { cap }),
-            breaks: RibbonBreaks::At(breaks),
-        },
-    );
 }
 
 /// Осевая дороги вне улицы: моста, арки, дорожки (улицы идут по

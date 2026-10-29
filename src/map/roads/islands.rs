@@ -29,9 +29,11 @@
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
+use super::ROAD_RIBBON;
 use super::junctions::node_key;
 use super::{is_carriageway, lane_count};
 use crate::map::along::{arclengths, nearest_on_path, place_on_path};
+use crate::map::meshing::{Break, MeshBuilder, RibbonBreaks, RibbonCap, RibbonShape};
 use crate::map::osm::{MapData, RoadAreaKind, RoadLine, RoadNodeKind};
 use crate::map::shapes::{Shape, is_ring, oriented};
 
@@ -150,6 +152,30 @@ fn refuge_at(path: &[Vec2], at: Vec2) -> Option<Vec<[f32; 2]>> {
     right.reverse();
     let ring: Vec<Vec2> = left.into_iter().chain(right).collect();
     Some(oriented(&ring, true))
+}
+
+/// Заливка проезжей части — лента [`ROAD_RIBBON`] с разрывами разметки по
+/// перекрёсткам. Срезанный под клин торец — как у `push_ribbon_trimmed`.
+pub(super) fn push_street_fill(
+    builder: &mut MeshBuilder,
+    points: &[Vec2],
+    width: f32,
+    color: LinearRgba,
+    breaks: &[Break],
+    trimmed: [bool; 2],
+) {
+    let (join, cap) = ROAD_RIBBON;
+    builder.push_ribbon_shaped(
+        points,
+        width,
+        color,
+        RibbonShape {
+            closed: is_ring(points),
+            join,
+            caps: trimmed.map(|trimmed| if trimmed { RibbonCap::Butt } else { cap }),
+            breaks: RibbonBreaks::At(breaks),
+        },
+    );
 }
 
 #[cfg(test)]
