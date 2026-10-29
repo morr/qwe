@@ -132,7 +132,7 @@ are filled from are laid out in `parking-layout.md`; the big lot's kerb and gore
   empty every tram street. A track on a bridge keeps its zone on purpose — a car at
   `Z_CAR` would be drawn over the slab (`layers.md`, **Track bridges**; pinned by
   `a_track_on_a_bridge_keeps_its_zone`). A rail gap stitched at parse
-  (`references/parse.md`) is a track like any other here.
+  (`references/parse-geometry.md`, **Rail gaps**) is a track like any other here.
 - **A one-way carriageway gets one row, on the kerb of the driving side**
   (`MapData::traffic_side`, see **Driving side** in `SKILL.md`;
   `TrafficSide::kerb`). With right-hand traffic, each half of a divided avenue has

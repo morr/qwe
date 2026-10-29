@@ -3,7 +3,7 @@
 Detail behind `map/parking.rs` — how stalls, aisles and lot shapes are laid out. The
 big lot's kerb and the gores live in `parking-big-lot.md`; the cars that fill the
 stalls in `parking-parked-cars.md`. The lot outline reaching its road is a parse pass
-(**Blocks pulled to the roads → `pave_lots`** in `parse.md`); everything here reads
+(**Blocks pulled to the roads → `pave_lots`** in `parse-geometry.md`); everything here reads
 the outline it produced.
 
 ## Parking

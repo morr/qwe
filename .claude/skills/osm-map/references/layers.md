@@ -449,7 +449,7 @@ The layers that are neither roads, parking, buildings nor trees. Each bullet is 
     below the bridges, like the track under it.
   - **No style resource, unlike the cars.** The layer is decoration and still has no
     `visible`: it comes off by `WagonZoomBucket` — and by **raw OSM's drawing level**
-    (`RawOsm::Draw`, `references/parse.md`), since a rake is our placement, not data:
+    (`RawOsm::Draw`, `references/parse-seam.md`), since a rake is our placement, not data:
     `mesh_wagons` takes the `RawOsm` and reports the layer `hidden`, the cars' rule
     (`raw_osm_draw_stands_no_wagons`).
   - **No `QUERY_VERSION` bump**: `out geom` returns every tag of the element, so `service`
@@ -525,7 +525,7 @@ The layers that are neither roads, parking, buildings nor trees. Each bullet is 
     opposite case and sits lower, where its own `return` is what is wanted.
   - **The shadow is cast by the map's own sun**, so `rebuild_fences` is gated on
     `retuned::<FenceZoomBucket>.or_else(retuned::<SunOnMap>)` — the general Sun rule
-    (**The slider is not the map's sun**, under **Height modes** in `buildings.md`), not an
+    (**The slider is not the map's sun**, under **Height modes** in `buildings-heights.md`), not an
     exception to it. Heights are constants of the kind (`FENCE_HEIGHT` 2 m,
     `HEDGE_HEIGHT` 1.4 m) run through the same `shadow_dir()` / `shadow_length_scale()`
     the buildings and the cars use.

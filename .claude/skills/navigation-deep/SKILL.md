@@ -35,7 +35,7 @@ inspection.
 **The live value is a process-global atomic**, read by `grid::navtile_size()`: the
 background navmesh fill has no ECS access. The parse, where the same size is the door
 generator's clearance, does **not** read it — it gets `ParseKnobs::navtile` as an
-argument (osm-map `references/parse.md`). It is written only in
+argument (osm-map `references/parse-seam.md`). It is written only in
 `OnEnter(Loading)`, before the load thread starts.
 
 Grid size is derived as `MAP_SIZE / navtile_size()` (3800 × 2850 tiles at 2 m). **A filled

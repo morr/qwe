@@ -8,8 +8,8 @@ ribbon primitive, junctions and the drawn network (pinned nodes, driveway crossi
 stitches, kerb returns), `RoadStyle`, the bridge layers, asphalt wear, the junction
 gallery `examples/demos/roads`, and **Paired halves**. The big lot's kerb, the
 boulevard's double line over the lot and the gores at a roundabout are in
-`parking.md` (**A big lot shows the road through it**); the parse passes that read a
-road's width are in `parse.md`.
+`parking-big-lot.md` (**A big lot shows the road through it**); the parse passes that read a
+road's width are in `parse-geometry.md`.
 
 ## Rendering
 
@@ -42,7 +42,7 @@ road's width are in `parse.md`.
   crossing a street still reaches the asphalt, because a **driveway crossing**
   (`network::driveway_crossings`) is redrawn as a `Street` and a footway that is not one
   is simply covered by the carriageway at 2.0 as before.
-  **Paved paths** (`RoadLine::is_paved_path`, `pavement` from `parse.md`, **Pavement of
+  **Paved paths** (`RoadLine::is_paved_path`, `pavement` from `parse-geometry.md`, **Pavement of
   untagged footways**) are not alleys in the drawing: `mesh_roads` lays them **in the
   sidewalk layer** (1.6) in `SIDEWALK_COLOR`; the alley layer keeps only the unpaved sand
   trails and paths nobody decided (a test's hand-built `None`) — a mapped pavement
@@ -174,7 +174,7 @@ road's width are in `parse.md`.
   both (silence means "yes" in a city centre and "no" among private houses). And any
   carriageway — arterials included — gives an untagged side up to a **separately mapped
   paved footway** running alongside it (`parse/verges.rs::measure_footways_beside_streets`,
-  `parse.md`, **Sidewalks left to a separate footway**): the band beside it was a second
+  `parse-geometry.md`, **Sidewalks left to a separate footway**): the band beside it was a second
   sidewalk — but only behind a real lawn (`SEPARATE_LAWN` 1.5 m to the footway's near
   edge); a footway at the kerb keeps the band under it. **Any side** of a paved street
   with such a footway alongside — up to `VERGE_REACH` 10 m past the kerb (16 m on a
@@ -386,7 +386,8 @@ road's width are in `parse.md`.
   would go stale on them. It answers `band()` (by class, tag ignored), `on(side)`,
   `any()` (at least one side — `sidewalk=no|separate` on both gives `None`), `both()`,
   `sides()`, and the three edges the parse reads — **mapped edge**, **verge edge**,
-  **kerb edge** (`references/parse.md`, **Houses pulled off the sidewalks** and **Blocks
+  **kerb edge** (`references/parse-buildings.md`, **Houses pulled off the sidewalks**;
+  `references/parse-geometry.md`, **Blocks
   pulled to the roads**). Every edge is one reach per road on both sides, even for a
   one-sided `sidewalk=right`; a per-side edge would change the map, so it is not here.
   The renderer's sidewalk is that profile under the Sidewalks toggle (`Drawn::sidewalk_drawn`,
@@ -446,8 +447,8 @@ road's width are in `parse.md`.
   pocket read as an extra lane wherever no cars stood in it, and real bays are a few
   cars long; OSM's own bays arrive as tags or as separate `amenity=parking` +
   `parking=street_side` outlines, which reach the parking layer
-  (`references/parking.md`) and are paved up to the kerb, cut
-  into the sidewalk (`parse.md`, **kerbside lot** in `pave_lots`).
+  (`references/parking-layout.md`) and are paved up to the kerb, cut
+  into the sidewalk (`parse-geometry.md`, **kerbside lot** in `pave_lots`).
   **No pocket beside a parking lot** (`pockets::KerbLots`, over `MapData::parking`): the
   kerb is probed every `LOT_STEP` 2 m at the pocket's outer edge, and a probe inside a
   lot or within `LOT_REACH` 6 m of its outline (a sidewalk and a verge) marks that
@@ -909,7 +910,7 @@ road's width are in `parse.md`.
     reload** (**RoadStyle and RoadShape** below). **It is the one roads stage that moves the model**: the
     width is read by the passes after it (houses off the sidewalks, blocks and lots pulled
     to the roads), and then by bridge curbs, the navmesh's bridge corridors and the cars.
-    Paths take theirs from the parse (`parse.md`, **Path width**). The gallery parses each cut window on its own, so
+    Paths take theirs from the parse (`parse-geometry.md`, **Path width**). The gallery parses each cut window on its own, so
     a street there is inferred from the window's ways only.
   - **Tapers** (`tapers::Tapers`, built **once** per `mesh_roads` by `roads::Drawn` over
     the roads as drawn — the ribbon, the paint wedges and the kerb pockets' row breaks
@@ -1011,11 +1012,11 @@ road's width are in `parse.md`.
     `ui/debug/overlays.rs::sync_road_network_overlay`) and by the gallery's `Network` row
     (or `ROADS_NETWORK=1`; `examples/demos/roads/overlay.rs` keeps only the toggles).
   - **The OSM contours overlay** — `map/osm/contours.rs::mesh_osm_contours` (z 29.5): the
-    geometry before the finishing passes over the drawn map (`references/parse.md`, the
-    parse seam). Gallery row `Contours` / `ROADS_CONTOURS=1`, game Debug → Overlays
+    geometry before the finishing passes over the drawn map (`references/parse-seam.md`,
+    the parse seam). Gallery row `Contours` / `ROADS_CONTOURS=1`, game Debug → Overlays
     **OSM contours**. **Every visual road report starts here**: the magenta axis and its
     node squares lying on the defect say "data", lying off it say "our parse or drawing".
-  - **Raw OSM, drawing level** (`RawOsm::Draw`, `references/parse.md`; gallery
+  - **Raw OSM, drawing level** (`RawOsm::Draw`, `references/parse-seam.md`; gallery
     `ROADS_RAW=draw`) — `mesh_roads` hands over to **`mesh_raw_roads`**, a separate
     build rather than switches inside the full one (its passes are interwoven, and half
     of them off would draw a picture neither the data nor the game has): every way one
@@ -1187,7 +1188,7 @@ road's width are in `parse.md`.
     as it did when the asphalt shader drew them), `road_paint_islands` at
     `Z_ROAD_ISLANDS` 2.0035 (the hatched gores and splitter islands — above a lot's
     asphalt and its double line; hidden with the zebras, `PaintTag::Zebras`; **Parking**
-    in `parking.md`), and `bridge_paint_lanes` +
+    in `parking-big-lot.md`), and `bridge_paint_lanes` +
     `bridge_paint_axes` at `Z_BRIDGE_PAINT` (a street's paint under an overpass must not
     lie over the deck). Material `PaintMaterial` (blend), its handle in
     `SurfaceMaterials` next to the surface ones, `MaterialSpec::Paint`.
@@ -1327,7 +1328,7 @@ road's width are in `parse.md`.
     along the ring. Its butt end is square to the last link, and square to an axis
     running along the ring that end lay across the kerb and stuck out of it as a step on
     both sides; the island rule reads the bent axis
-    (**Splitters by rule** in `parking.md`). A radial arm is left as it is
+    (**Splitters by rule** in `parking-big-lot.md`). A radial arm is left as it is
     (`a_two_way_approach_along_the_ring_is_bent_into_it_across`).
     **A Y-approach is not two two-way arms** (`rings::y_legs`, `Rings::leg_flow`): two
     two-way ways, each at most `LEG_MAX` 55 m, that leave one node and end in two
@@ -1340,7 +1341,7 @@ road's width are in `parse.md`.
     (`roads.rs::leg_sections`, a `Drawn` substitute like `ring_arcs`: `section_width` of
     one lane, `lanes` 1) — two two-way ribbons covered the whole wedge and left the
     island no room — and its wedge is the fan's (**The fan is taken whole** in
-    `parking.md`). **The other leg may be a tail of other streets** (`rings::tail_walk`):
+    `parking-big-lot.md`). **The other leg may be a tail of other streets** (`rings::tail_walk`):
     a lone way (group of one in `y_legs`) is still a leg when
     a walk from its far node along approach streets (not itself, not ring arcs; at most
     one change of street; within `LEG_MAX`) reaches **another** node of the same ring
@@ -1430,7 +1431,7 @@ road's width are in `parse.md`.
     usually smaller than the drawn island and left a ring of pale ground round it. The layer sits right over the bare ground, **under** everything mapped
     on the island — grass, a park, a block, a square, water, a house stay themselves,
     and only the ground turns to lawn — which is why the parse's ground pockets take
-    the island as a cover (`rings::islands`, `references/parse.md`): a pocket sown there
+    the island as a cover (`rings::islands`, `references/parse-geometry.md`): a pocket sown there
     is yard grass over this lawn. Over the grass it would also hide the faint rim
     of the grass polygon, but it repainted an island park as lawn too — tried and
     rejected. **The rim goes by a second layer instead** (`roads::ring_island_grass`,
@@ -2546,7 +2547,7 @@ road's width are in `parse.md`.
     `cars::rebuilds_on` reads `RoadShapeOnMap` instead of `RoadStyle`.
   - **Lane width is a world reload** (**Sections** — the parse reads it), not a rebuild:
     the parse gets it as an **argument** (`ParseKnobs::lane_width`, built by
-    `loading.rs::start_job`, `parse.md`, the parse seam). The paint and the ruts still
+    `loading.rs::start_job`, `parse-seam.md`, the parse seam). The paint and the ruts still
     read a process global — `shape::lane_width()` / `set_lane_width()`, an `AtomicU32`:
     threading it through five pure-function interfaces for one number would widen them
     all. The map keeps what it was parsed with, `MapData::knobs`, the one source both

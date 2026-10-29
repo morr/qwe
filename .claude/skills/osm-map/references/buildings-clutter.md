@@ -20,7 +20,7 @@ glossary entries.
     chimney (the ridge used to be read back out of the first slope, which stopped being
     `[eave, eave, ridge, ridge]` once half-hips and gambrels existed).
   - **A big box's roof is a different roof** (`model::is_big_box` — the footprint, the
-    storey count **and** the height ceiling, **Retail box** in `parse.md`), and this is the one place the size distinction is worth
+    storey count **and** the height ceiling, **Retail box** in `parse-buildings.md`), and this is the one place the size distinction is worth
     the most: from directly above, the roof *is* the hypermarket. Three additions, none of
     which a corner shop gets:
     - **The skylight grid** (`push_skylight_grid`) — `GRID_SKYLIGHT_SIDE` 2.8 m squares on

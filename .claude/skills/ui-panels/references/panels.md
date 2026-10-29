@@ -224,7 +224,7 @@ channel for the same claim.
 - **OSM contours** (`DebugOsmContours`, key `osm_contours`, under Rut lines) — the
   same shape over another layer: `sync_osm_contours_overlay` spawns
   `map::mesh_osm_contours(&map.osm_contours)` — the parse's snapshot of the geometry
-  before its finishing passes (osm-map `references/parse.md`) — on the toggle and on
+  before its finishing passes (osm-map `references/parse-seam.md`) — on the toggle and on
   world entry only, and logs its vertex count and build time.
 - **`reset`** (`prefs::ResetSettings`) stays an action **button**, not a row: it has
   no state of its own to print — every settings group goes back to its `Default`,

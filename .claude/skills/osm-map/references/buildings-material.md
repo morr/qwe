@@ -359,7 +359,7 @@ dictionary.
     blue, orange, i.e. Магнит / Лента / Леруа / Глобус / Макси; a sixth, magenta, was
     dropped on the first look at the frame, since no chain here is that colour. **This is
     the first place outside the temples that reads `building:colour`**, which is why the
-    note under **Tagged colours** in `parse.md` now names two readers and not one; the
+    note under **Tagged colours** in `parse-buildings.md` now names two readers and not one; the
     private sector still does not read them.
     Pushed **after** its own wall and **before** the door, so the frieze lies on the facade
     and the entrance lies on the frieze.

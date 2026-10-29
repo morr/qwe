@@ -3,7 +3,7 @@
 Detail behind `map/roads/lots.rs` and `map/roads/gores.rs`. **This file owns the gore
 law** — the road subjects point here. The lot layout itself is `parking-layout.md`;
 the outline the lot reads is a parse pass (**Blocks pulled to the roads → `pave_lots`**
-in `parse.md`).
+in `parse-geometry.md`).
 
 ## Big and through
 
@@ -13,7 +13,7 @@ in `parse.md`).
   (`parking-layout.md`).
 - **Big** is `LotKind::Ground` (`parking::is_ground` reads it), the **paved** outline
   at `GROUND_MIN_AREA` 8000 m² or more — decided by the parse
-  (`parse/lots.rs::settled_kind`, `references/parse.md`). **Through** is
+  (`parse/lots.rs::settled_kind`, `references/parse-geometry.md`). **Through** is
   `parking::is_through`: a `Street` that is not a `parking_aisle`, a bridge or a
   passage, and is **one-way, a roundabout or a carriageway**. That is the one thing
   tags say about it: the mall's boulevard is `highway=service` + `oneway=yes`, while

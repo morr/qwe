@@ -366,7 +366,7 @@ retail); this file carries what it does not.
     hypermarket is one tall trading floor whatever its plan looks like. The big-box numbers
     are deliberately the same ones `parse::building_height` assembles out of
     `building:levels` — a box next to an identical box must not come out half as tall
-    for want of a tag. The class and the threshold are in `parse.md`, **Retail box**.
+    for want of a tag. The class and the threshold are in `parse-buildings.md`, **Retail box**.
   - **The slot inside a group is the building's own seed** — the same
     `material::building_seed` that picks the roofing material, so heights survive a mode
     switch, a sun rebuild and a restart, and two identical footprints in different places
