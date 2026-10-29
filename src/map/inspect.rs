@@ -26,7 +26,9 @@
 //! сделанный: граница «индекс отвечает моделью, проба — рисунком».
 
 use bevy::prelude::*;
+use i_overlay::mesh::float::style::LineCap;
 
+use crate::map::MeshBuilder;
 use crate::map::RoadStyle;
 use crate::map::footprint::{FENCE_BAND_WIDTH, distance_to_polyline};
 use crate::map::grid::Grid;
@@ -35,6 +37,7 @@ use crate::map::osm::model::{
     RoadAreaKind, RoadClass, RoadLine, RoadNodeKind, SidewalkSide, StructureKind,
     closest_on_segment, point_in_polygon,
 };
+use crate::map::shapes::{is_ring, ring_of, stroke};
 use crate::settings::{
     Z_ALLEY, Z_BRIDGE, Z_BUILDING, Z_FENCE, Z_GRASS, Z_GROUND, Z_INDUSTRY, Z_LANDUSE,
     Z_LANDUSE_YARD, Z_PARK, Z_PARKING, Z_PIPE, Z_PITCH, Z_POND, Z_RAIL, Z_ROAD, Z_ROAD_ISLANDS,
@@ -871,6 +874,188 @@ fn structure_label(kind: StructureKind) -> String {
     }
 }
 
+/// Форма одного полигонального куска элемента: внешнее кольцо и дырки.
+///
+/// Кусков у элемента бывает много — обводка ломаной распадается на кольца,
+/// полосы-генераты кладутся квадом на отрезок осевой, — поэтому
+/// [`feature_shape`] отвечает списком.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FeatureShape {
+    pub outer: Vec<Vec2>,
+    pub holes: Vec<Vec<Vec2>>,
+}
+
+/// Форма элемента пробы для подсветки: что рисовать прозрачно-жёлтым, когда
+/// в панели инспектора включена галочка highlight (`ui/inspector.rs`). Чистая
+/// функция над [`MapData`]: площади — контуром с дырками, линии — обводкой на
+/// своей полной ширине (`shapes::stroke`), полосы-генераты — квадом на отрезок
+/// осевой между двумя офсетами, узлы и деревья — дисками.
+///
+/// Ширины те же, что у зоны срабатывания находки ([`InspectIndex::hits`]):
+/// форма накрывает ровно то, на что находка отвечает. Дерево видит ту же
+/// плотность, что и находка, — [`InspectIndex::hits`] отвечает деревом, только
+/// пока его ранг в префиксе плотности. Две приблизительности здесь — свойства
+/// самого индекса, не формы: полоса стыкуется пер-сегментно, без скруглений
+/// (в изгибе осевой стык квадов чуть уже зоны), а зум-LOD обочин не виден ни
+/// тому, ни другому.
+pub fn feature_shape(
+    map: &MapData,
+    roads: &RoadStyle,
+    feature: FeatureRef,
+) -> Option<Vec<FeatureShape>> {
+    match feature {
+        FeatureRef::Building(i) => area_shape(map.buildings.get(i as usize)?),
+        FeatureRef::Water(i) => area_shape(map.water.get(i as usize)?),
+        FeatureRef::Park(i) => area_shape(map.parks.get(i as usize)?),
+        FeatureRef::Wood(i) => area_shape(map.woods.get(i as usize)?),
+        FeatureRef::Grass(i) => area_shape(map.grass.get(i as usize)?),
+        FeatureRef::Sand(i) => area_shape(map.sand.get(i as usize)?),
+        FeatureRef::Landuse(i) => area_shape(map.landuse.get(i as usize)?),
+        FeatureRef::Pocket(i) => area_shape(map.pockets.get(i as usize)?),
+        FeatureRef::Parking(i) => area_shape(map.parking.get(i as usize)?),
+        FeatureRef::Pitch(i) => area_shape(map.pitches.get(i as usize)?),
+        FeatureRef::RoadArea(i) => {
+            let area = map.road_areas.get(i as usize)?;
+            Some(vec![FeatureShape {
+                outer: area.outline.clone(),
+                holes: vec![],
+            }])
+        }
+        FeatureRef::Road(i) => {
+            let road = map.roads.get(i as usize)?;
+            Some(stroke_shapes(&road.points, road.width))
+        }
+        FeatureRef::Rail(i) => {
+            let rail = map.rails.get(i as usize)?;
+            Some(stroke_shapes(&rail.points, rail.width))
+        }
+        FeatureRef::Waterway(i) => {
+            let line = map.water_lines.get(i as usize)?;
+            Some(stroke_shapes(&line.points, line.width))
+        }
+        FeatureRef::Pipe(i) => {
+            let pipe = map.pipes.get(i as usize)?;
+            Some(stroke_shapes(&pipe.points, pipe.width))
+        }
+        FeatureRef::Wall(i) => {
+            let wall = map.walls.get(i as usize)?;
+            Some(stroke_shapes(&wall.points, wall.width))
+        }
+        FeatureRef::Fence(i) => {
+            let fence = map.fences.get(i as usize)?;
+            Some(stroke_shapes(&fence.points, FENCE_BAND_WIDTH))
+        }
+        FeatureRef::SidewalkBand { road: i, side } => {
+            let road = map.roads.get(i as usize)?;
+            let profile = road.sidewalk();
+            let band = profile.band()?;
+            let side = side as usize;
+            (roads.sidewalks && profile.on(side).is_some()).then(|| {
+                let half = road.width / 2.0;
+                band_shapes(&road.points, half, half + band, side as u8)
+            })
+        }
+        FeatureRef::VergeBand { road: i, side } => {
+            let road = map.roads.get(i as usize)?;
+            let profile = road.sidewalk();
+            let band = profile.band()?;
+            let side = side as usize;
+            (roads.sidewalks && road.verges[side] > 0.0).then(|| {
+                let half = road.width / 2.0;
+                band_shapes(
+                    &road.points,
+                    half + band,
+                    half + band + road.verges[side],
+                    side as u8,
+                )
+            })
+        }
+        FeatureRef::RoadNode(i) => {
+            let node = map.road_nodes.get(i as usize)?;
+            Some(vec![disk(node.pos, NODE_REACH)])
+        }
+        FeatureRef::Structure(i) => {
+            let structure = map.structures.get(i as usize)?;
+            Some(vec![disk(structure.at, structure.radius)])
+        }
+        FeatureRef::Tree(rank) => {
+            let (pos, radius) = map.trees.positions().get(rank as usize)?;
+            Some(vec![disk(*pos, *radius)])
+        }
+        FeatureRef::Ground => None,
+    }
+}
+
+/// Меш подсветки: все куски формы одним цветом. Полигон с дырками идёт в
+/// `earcut` целиком — двор внутри дома остаётся неподсвеченным.
+pub fn mesh_feature(shapes: &[FeatureShape], color: LinearRgba) -> MeshBuilder {
+    let mut builder = MeshBuilder::default();
+    for shape in shapes {
+        builder.push_polygon(&shape.outer, &shape.holes, color);
+    }
+    builder
+}
+
+/// Площадь — своя геометрия как есть.
+fn area_shape(area: &PolyArea) -> Option<Vec<FeatureShape>> {
+    (!area.outer.is_empty()).then(|| {
+        vec![FeatureShape {
+            outer: area.outer.clone(),
+            holes: area.holes.clone(),
+        }]
+    })
+}
+
+/// Обводка ломаной на полной ширине: список колец, какие дала обводка
+/// (самопересечения и кольца распадаются на куски).
+fn stroke_shapes(points: &[Vec2], width: f32) -> Vec<FeatureShape> {
+    stroke(points, width, LineCap::Butt, is_ring(points))
+        .into_iter()
+        .map(|contour| FeatureShape {
+            outer: ring_of(&contour),
+            holes: vec![],
+        })
+        .collect()
+}
+
+/// Полоса вдоль оси на одной стороне: квад на каждый отрезок, без сглаживания
+/// и скруглений — та же зона, по которой находка мерит расстояние до осевой.
+fn band_shapes(points: &[Vec2], inner: f32, outer: f32, side: u8) -> Vec<FeatureShape> {
+    points
+        .windows(2)
+        .filter_map(|segment| {
+            let direction = (segment[1] - segment[0]).normalize_or_zero();
+            if direction == Vec2::ZERO {
+                return None;
+            }
+            let perp = direction.perp();
+            let perp = if side == 0 { perp } else { -perp };
+            Some(FeatureShape {
+                outer: vec![
+                    segment[0] + perp * inner,
+                    segment[1] + perp * inner,
+                    segment[1] + perp * outer,
+                    segment[0] + perp * outer,
+                ],
+                holes: vec![],
+            })
+        })
+        .collect()
+}
+
+/// Диск многоугольником из 24 граней — подсветка узла, цилиндра, кроны.
+fn disk(center: Vec2, radius: f32) -> FeatureShape {
+    let sides = 24;
+    FeatureShape {
+        outer: (0..sides)
+            .map(|i| {
+                center + Vec2::from_angle(i as f32 / sides as f32 * std::f32::consts::TAU) * radius
+            })
+            .collect(),
+        holes: vec![],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1378,6 +1563,94 @@ mod tests {
         assert_eq!(feature(Vec2::new(200.0, 200.0)), Some(FeatureRef::Water(0)));
         assert_eq!(feature(Vec2::new(300.0, 100.0)), Some(FeatureRef::Tree(0)));
         assert_eq!(feature(Vec2::new(1000.0, 1000.0)), Some(FeatureRef::Ground));
+    }
+
+    #[test]
+    fn a_band_shape_lies_on_its_side_only() {
+        // тротуар слева (side 0, +y), справа снят — форма есть только слева
+        let map = MapData {
+            roads: vec![banded_street(
+                70.0,
+                [0.0; 2],
+                [SidewalkSide::Tagged, SidewalkSide::None],
+            )],
+            ..default()
+        };
+        let style = RoadStyle::default();
+        let (half, sidewalk_edge, _) = band_edges(0.0);
+
+        let shapes = feature_shape(&map, &style, FeatureRef::SidewalkBand { road: 0, side: 0 })
+            .expect("the left side has a sidewalk");
+        let dy: Vec<f32> = shapes[0].outer.iter().map(|point| point.y - 70.0).collect();
+        assert!(
+            dy.iter()
+                .all(|&d| d >= half - 1e-4 && d <= sidewalk_edge + 1e-4)
+        );
+
+        assert!(
+            feature_shape(&map, &style, FeatureRef::SidewalkBand { road: 0, side: 1 }).is_none(),
+            "the right side has no sidewalk"
+        );
+    }
+
+    #[test]
+    fn a_building_shape_carries_its_hole() {
+        let map = MapData {
+            buildings: vec![fixture::building(
+                fixture::square(Vec2::new(100.0, 100.0), 10.0),
+                vec![fixture::square(Vec2::new(100.0, 100.0), 4.0)],
+            )],
+            ..default()
+        };
+
+        let shapes = feature_shape(&map, &RoadStyle::default(), FeatureRef::Building(0))
+            .expect("the building has a shape");
+        assert_eq!(shapes.len(), 1);
+        assert_eq!(
+            shapes[0].outer,
+            fixture::square(Vec2::new(100.0, 100.0), 10.0)
+        );
+        assert_eq!(
+            shapes[0].holes,
+            vec![fixture::square(Vec2::new(100.0, 100.0), 4.0)]
+        );
+    }
+
+    #[test]
+    fn the_band_shape_covers_what_the_hit_answers() {
+        // зона формы совпадает с зоной срабатывания находки: точка внутри
+        // полосы и в форме, и в находке; за кромкой — ни там, ни там
+        let map = MapData {
+            roads: vec![banded_street(70.0, [0.0; 2], [SidewalkSide::Tagged; 2])],
+            ..default()
+        };
+        let index = InspectIndex::rebuild(&map);
+        let style = RoadStyle::default();
+        let (half, sidewalk_edge, _) = band_edges(0.0);
+        let shapes = feature_shape(&map, &style, FeatureRef::SidewalkBand { road: 0, side: 0 })
+            .expect("the sidewalk band has a shape");
+        assert_eq!(shapes.len(), 1, "one segment, one quad");
+        let contains =
+            |at: Vec2| point_in_polygon(at, &shapes[0].outer) && shapes[0].holes.is_empty();
+
+        let probe = |at: Vec2| {
+            query(&index, &map, 0.0, at)
+                .into_iter()
+                .next()
+                .map(|hit| hit.label.starts_with("sidewalk"))
+                .unwrap_or(false)
+        };
+        // полотно — находка дороги, в форме полосы точки нет
+        let at = Vec2::new(500.0, 70.0 + half - 0.1);
+        assert!(!probe(at) && !contains(at));
+        // внутри полосы — и находка, и форма
+        let at = Vec2::new(500.0, 70.0 + half + 0.05);
+        assert!(probe(at) && contains(at));
+        let at = Vec2::new(500.0, 70.0 + sidewalk_edge - 0.05);
+        assert!(probe(at) && contains(at));
+        // за внешней кромкой — ни находки, ни формы
+        let at = Vec2::new(500.0, 70.0 + sidewalk_edge + 0.1);
+        assert!(!probe(at) && !contains(at));
     }
 
     #[test]
