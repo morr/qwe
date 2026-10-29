@@ -1,0 +1,334 @@
+# MapData — the field catalog
+
+The per-type field detail behind the one-line-per-type map in SKILL.md: what each field
+means, where the parse fills it from, who reads it. Per-city counts live in
+`references/osm-coverage.md`.
+
+## The nine `Vec<PolyArea>` are not `AreaKind` written twice
+
+This has been reviewed and closed once — do not re-open it as "the same fact encoded
+twice". The vector says which **layer** an area is drawn in; the kind says which
+**member of that layer** it is, and three of the nine hold more than one member:
+
+- `buildings` holds `Building` **and** `Kremlin`, and the difference is read in nine
+  production places — the wall ribbon (`roads::Fortresses`), the fortress roofs and
+  merlons, the brick cladding, the tint ramp;
+- `landuse` holds `Residential` **and** `Industrial`, which are two surface textures
+  (yard grass against trodden works ground);
+- `Pitch(PitchKind)` carries a **payload** — the sport — that a vector cannot hold at
+  all.
+
+Collapsing them into one filtered vector would therefore lose nothing of the kind (it
+would all still be needed) and would add a pass over tens of thousands of areas per
+layer. The `match` in `parse::push_area` (one arm per vector) is a dispatch that exists
+**once**; it is not repeated on the read side — what `spawn::mesh_surfaces` matches is
+the *sub-class within* a vector, which is exactly what the vector cannot say.
+
+## PolyArea
+
+Polygon with holes; rings are open (no repeated last point). `AreaKind: Building |
+Kremlin | Water | Park | Wood | Grass | Sand | Residential | Industrial |
+Parking(LotKind) | Pitch(PitchKind)`.
+
+- **Park** is the light base fill; **Wood** (`natural=wood` / `landuse=forest`) are the
+  darker stands *inside* it and the **only** areas that carry trees; **Grass** (lawns,
+  meadows) and **Sand** (beaches) also sit above the park fill, lighter green / sandy.
+  Everything but Wood stays open ground — that is what makes the open half of a park
+  read as a field, the way it does on OSM.
+- **Residential** (`landuse=residential`) and **Industrial**
+  (`landuse=industrial|garages`) are the *blocks* — `MapData::landuse`, **two** merged
+  layers between the ground mesh and the parks — `landuse_works` at `Z_LANDUSE` (0.25)
+  in the earth colour, `landuse_yards` a hair above it at `Z_LANDUSE_YARD` (0.26) in the
+  muted green (see `references/layers.md`, **The yard**). The hair is not cosmetic: they
+  are two opaque meshes with different materials, the two tags do overlap in OSM, and at
+  an equal depth the phase queue would decide which fill wins rather than the map.
+  `area_kind` tries them **last**: any green tag on the same polygon wins. They touch
+  neither the navmesh nor tree planting.
+- **Parking** (`amenity=parking`) is the third non-green class — `MapData::parking`,
+  asphalt with stalls painted on it (see `references/parking-layout.md`). It is tried
+  after the greens and **before** the landuse blocks, but the branch is reached only for
+  a polygon that is not a building at all: a multi-storey car park carries `building`
+  *and* `amenity=parking`, and it must stay a building — and a lot whose asphalt is
+  **not on the ground** is dropped by `parking=*` instead (`HIDDEN_PARKING`:
+  `underground`, `multi-storey`, `rooftop`) — an underground car park is its own outline
+  under a yard or a park, with no `building` on it, and drawing it striped would put
+  asphalt on the lawn. Recount with `tools/osm_audit/cache_audit.py` on the cache in
+  `assets/osm/`.
+- A lot carries its **`LotKind`**, the parse's one answer to "what kind of lot":
+  `Kerbside` (`parking=street_side`, read off the tag in `area_kind` — paved up to the
+  kerb), `Ground` (a big lot: the **paved** outline ≥ `GROUND_MIN_AREA` 8000 m², settled
+  at the end of `parse/lots.rs::pave_lots`, so a lot the paving grew past the line is
+  big and a part a building cut off is judged by itself), `Yard` (the rest). The layout,
+  the big lot's kerb and the paving read it; none of them measures an area again. It
+  replaced the side list `MapData::street_side_lots` and a render-side
+  `parking::is_ground` that the parse imported.
+- **Pitch** (`leisure=pitch|track|playground|sports_centre|stadium`) is the fourth —
+  `MapData::pitches`, a surface plus markings (see `references/layers.md`,
+  **Pitches**). It is tried after parking and before the landuse blocks, but **after
+  `park`/`garden`**: a park with a pitch drawn on it stays a park, and the pitch arrives
+  as its own way. It **carries a payload** (the other one that does is
+  `Parking(LotKind)`), `PitchKind`, because the sport decides both the colour and the
+  marking and nothing else in the model has one — a field on `PolyArea` (the
+  `building_use` pattern) would be meaningless for every other area kind and would touch
+  all 33 literal constructions in the tests.
+- `height: Option<f32>` — metres, buildings only (`None` on water/parks even if the tag
+  is there). See `references/parse-buildings.md`.
+- `storeys: Option<f32>` — `building:levels` as the tag says (`area_storeys`), buildings
+  only, **without** `roof:levels`, which by S3DB describes the roof and not the floors;
+  the height alone cannot be asked how many floors a building has — a four-storey mall
+  and a two-level retail box are both about twelve metres — and `is_big_box` is what
+  reads it. Not to be confused with the *inferred* storeys of `buildings/heights.rs`,
+  which invent a height where OSM is silent.
+- `building_use: BuildingUse` — the drawing class (`Other` on everything that is not a
+  building), see `references/parse-buildings.md`.
+- `entrances: Vec<Vec2>` — the OSM doors on this building's outline, empty for most
+  buildings; see `references/entrances.md`.
+
+## RoadLine
+
+Centerline polyline + width **from its section**: lanes × the lane width knob
+(`RoadShape::lane_width`, 3.3 m by default; 0.3 m less on a service drive) + 0.5 m of
+edge each side, set by the first parse pass (`map/roads/network/sections.rs`; a path's
+width is `parse/tags.rs::path_width` — `references/parse-geometry.md`, **Path
+width**) — streets, sections and the tapers between them are in
+`references/roads.md`, **Streets, sections, tapers**.
+
+- `highway: Highway` — the `highway` value (the five `*_link` are classes of their own);
+  `Highway::is_street` — not a service drive, not a path — is what
+  `roads::is_carriageway` asks, **not the width**.
+- `RoadClass: Street | Alley` — alleys = footways, park paths; different color and z.
+- `pavement: Option<Pavement>` — splits the alleys: a **paved path** is drawn in the
+  sidewalk layer, an unpaved one stays sand (`references/parse-geometry.md`, **Pavement
+  of untagged footways**; `references/roads.md`, **Paved paths**).
+- `bridge` and `passage` flags — the navmesh carves (see the navigation-deep skill);
+  `bridge` also moves the road into the bridge deck layers (see `references/roads.md`,
+  **Bridge layers**).
+- Three more fields feed the **markings** and the parked cars:
+  - `oneway` (`oneway=yes|1|true|-1`; `reversible`/`alternating` are not one-way);
+  - `roundabout` — the `junction=roundabout|circular` tag, implies `oneway` — but
+    **nothing asks the field directly**, they ask `RoadLine::is_roundabout`: tag **or**
+    shape, a closed one-way way being a ring too. In the Tula cache the two never
+    coincide — 12 tagged ways, none of them closed, against 7 closed one-way ways, the
+    mall's big ring among them — so a consumer reading the bare field is a consumer that
+    misses every untagged ring.
+  - `lanes: Option<u8>` — the `lanes` tag through `parse_measure`, floored, 1–8; `2;3`
+    reads as 2, `0` and `12` as no tag; without `lanes`, `lanes:forward` +
+    `lanes:backward` (+ `lanes:both_ways` when tagged) — then **overwritten** by the
+    section pass with the inferred count on every street and drive, so after the parse
+    it is `None` on paths only. Coverage per city is in `references/osm-coverage.md`.
+- `lanes_backward: Option<u8>` — the lanes of a two-way way against its points
+  (`lanes:backward`, else `lanes − lanes:forward`; none with a `lanes:both_ways` centre
+  lane), settled by the section pass; it places the axis (`references/roads.md`,
+  **Markings**).
+- `turns: [Vec<LaneTurn>; 2]` — the `turn:lanes` per direction of flow
+  (`parse/tags.rs::tagged_turns`: a one-way road reads the plain tag or its flow's
+  `:forward`/`:backward`, a two-way one only the directional ones; each lane left to
+  right as `LaneTurn { left, through, right }`, `slight_`/`sharp_` folded into the
+  turn, an unknown word — Tula has `throught` — into through). Only the turn paths and
+  their lane arrows read it (`references/roads.md`, **Turn paths**).
+- `lane_markings: bool` — false only on `lane_markings=no`: the paint layer draws no
+  axis and no lane lines there (`references/roads.md`, **Lane count**).
+- `sidewalks: [SidewalkSide; 2]` and `parking: [KerbParking; 2]` — `[left, right]` along
+  the points, from `sidewalk=*` and `parking:*` (swapped with the points on
+  `oneway=-1`); the sidewalk band and the kerb pockets read them
+  (`references/roads.md`, **Sidewalks**, **Kerb pockets**). **`SidewalkSide`** is a
+  tristate — `Tagged` (by `sidewalk*`), `Inferred` (no tag: a paved street the blocks
+  around did not take it from), `None` (whatever took it: the tag, an unpaved surface,
+  the blocks) — so a present side still says after the parse where it came from, and
+  `Inferred` is what `parse::infer_sidewalks` asks; `references/parse-geometry.md`,
+  **Sidewalks of untagged streets**.
+
+**The direction of a one-way way is load-bearing now**, and it did not use to be: the
+cars park on one side of it, the right-hand kerb, so `oneway=-1` — "the traffic runs
+against the order of the points" — is **normalized at parse by reversing the way**
+(`parse_way`, `is_oneway_backward`). One notion of "which way this street runs" instead
+of two, and nothing downstream has to remember the tag. It is not free: a street's seed
+is `seed::seed_from_point` of its **first** point, so such a way is seeded differently
+and its row stands elsewhere than it did — deterministic and reproducible, just not
+identical. Only the highway branch reverses; the rail and waterway branches of the same
+way ran earlier and keep the original order.
+
+**Underground road is dropped** (`parse/tags.rs::is_road_underground`) — the same rule
+rails and watercourses have always had, and it was simply missing on the highway branch:
+metro concourses and stairs came out as ordinary alleys drawn over the city (per-city
+counts in `references/osm-coverage.md`). It is a **separate predicate** from
+`is_underground`, and the reason is that **the risk is asymmetric here**: an extra
+ribbon is cosmetic, an extra deletion is a hole in the navmesh, because roads are
+exactly what carves it. So the rule stands down wherever the tag may not be describing
+the road — a `bridge` or an arch (`is_building_passage`), both of which exist at walking
+level by the very role that carves the navmesh, and `tunnel=culvert`, which belongs to
+the *stream* piped under the street (and for that stream it must keep meaning
+"underground", or the pipe walls off the navmesh). All three exclusions are pinned by
+tests.
+
+## RoadNode / RoadArea (v15)
+
+What the data says about a junction beyond its lines. The **junction paint**
+(`roads/node_paint.rs`, `references/roads.md`) reads the crossings (zebras), signals and
+the stop / give-way signs (who breaks, stop lines); a turning circle on a dead end is a
+disc of asphalt (`references/roads.md`, **Turning circles**); islands and the
+`RoadArea` outlines are drawn by `roads/islands.rs` (`references/roads.md`, **Safety
+islands and carriageway areas** — a walkway outline is paving, and the closed line of an
+area is not laid as a ribbon); mini-roundabouts are still drawn by nothing.
+
+- `MapData::road_nodes` — a point on a way's axis with `RoadNodeKind`: `Crossing {
+  signals, island, marked }` (`crossing=traffic_signals` / `crossing:signals=yes`;
+  `crossing:island=yes` / `crossing=island`; `marked` is cleared only by an explicit
+  `crossing=unmarked` or `crossing:markings=no` — plausibility wants a zebra where the
+  tags say nothing), `TrafficSignals`, `Stop`, `GiveWay`, `MiniRoundabout`,
+  `TurningCircle` (both `turning_circle` and `turning_loop`), `Island`
+  (`traffic_calming=island` as a node). `parse/tags.rs::road_node_kind` is a whitelist,
+  the `rail_class` reason: `highway=bus_stop|street_lamp` sit on nodes too.
+- `MapData::road_areas` — a closed outline with `RoadAreaKind`: `Carriageway` /
+  `Walkway` by the **road class** its tag names, read by the same `road_class` as a line
+  (`area:highway=<class>`, or `highway=<class>` + `area=yes`), `Island` for
+  `traffic_calming=island` / `area:highway=traffic_island`; a value outside the road
+  vocabulary (`emergency`, `platform`) is skipped. The branch is the **first** in
+  `parse_way` and falls through: `highway` + `area=yes` still arrives as a `RoadLine`
+  as it did before v15, and whether the square should stop being a line is the consuming
+  stage's call, not the parse's.
+
+## RailLine
+
+`railway=*` centerline + width by value (`rail` 5 → `light_rail` / `narrow_gauge` /
+`subway` 4 → the disused values 3.5 → `tram` 1.2). `RailKind: Active | Tram | Disused` —
+the kind *is* the drawing style, not a label: **Tram** is a thin line with cross ties
+(see `references/layers.md`, **Tram** — its width from parse is ignored, the zoom LOD
+picks it), **Disused** (`abandoned` / `disused` / `razed` / `dismantled`) is the
+`Active` track overgrown — same construction, weedy palette. A tram runs *on* the
+carriageway, so a gauge-wide ballast would cover its own street; `Active` and `Disused`
+get one (see `references/layers.md`, **Rail layers** — the parsed width is the bed).
+
+`parse/tags.rs::rail_class` is a **whitelist**, so the station vocabulary (`platform`,
+`station`, `switch`, `signal`, `construction`, …) never becomes a line. The rail branch
+in `parse_way` runs *before* the highway branch and deliberately **falls through**: an
+OSM way is routinely tagged both `railway=tram` and `highway=*`, and such a way is both
+a street and a track.
+
+**Underground track is dropped** (`parse/tags.rs::is_underground`) — a metro tunnel or a
+sunken through-line is invisible from above. Both markers are needed, neither alone
+suffices: of Tula's three underground ways two carry `tunnel=yes` *and* `layer=-1`, the
+third only `layer=-1`. `tunnel=no` is an explicit no, and elevated track (`layer` ≥ 0,
+no tunnel) still draws — that is what keeps an elevated subway on the map. **Rails never
+touch the navmesh** — see the navigation-deep skill.
+
+## WallLine
+
+`barrier=city_wall` (the Tula kremlin), 3 m wide, kremlin red, impassable. **The ribbon
+is drawn only off fortress buildings** (`roads.rs::Fortresses`, the axis probed every
+`WALL_PROBE_STEP` 2 m against `AreaKind::Kremlin` outlines): Tula also maps the wall as
+`building=wall` (relation 13342793, 12.7 m) and each tower as a building, and the ribbon
+laid over the lifted 2.5D wall read as a dark-orange outline and as red rings over the
+towers. A leftover piece under `WALL_STUB_MAX` 40 m is dropped too, but only on a line
+that was cut at all: the axis and the outlines drift apart by 15–30 m pieces at Tula's
+corner towers. Navmesh untouched.
+
+## FenceLine
+
+A plot boundary: `points` + `FenceKind: Fence | Wall | Hedge`, from
+`parse/tags.rs::fence_kind` (`barrier=fence` → `Fence`, `wall|retaining_wall` → `Wall`,
+`hedge` → `Hedge`). `MapData::fences`, drawn by `map/fences.rs`
+(`references/layers.md`, **Fences**). **It blocks the navmesh, with gaps**:
+`FenceLine::band` is the physical `FENCE_BAND_WIDTH` 0.3 m, and `footprint::fence_gaps`
+opens it where a road passes through — including a **loose end dropped a few metres
+short of it and aimed at it**, the very gap the drawn network closes with a stitch, so
+the stitched asphalt never runs through an uncut fence; `gates` holds the **default
+gates** the load thread adds — empty after parse. Both are the navigation-deep skill's
+(**Fences block, with gaps**).
+
+## Structure
+
+An industrial cylinder: `man_made=storage_tank|silo|chimney|water_tower|gasometer` as
+centre + radius + height + kind (`StructureKind`). A **whitelist**, for `rail_class`'s
+reason and more so: `man_made` is OSM's most mixed key (`surveillance`,
+`street_cabinet`, `works`, even `bridge` as an outline), and only those five read as a
+round spot from the air.
+
+Comes from a node **and** from a way: a node has no outline, so its radius is the
+`diameter`/`width` tag or the kind's default (`structure_size` — 2.5 m and 60 m for a
+chimney, 8 × 12 for a tank, 20 × 30 for a gasometer); a way's radius is the **mean
+distance from the vertex mean**, which is exact on the near-circular ring OSM actually
+draws and overestimates a rectangular silo block by √2. The way branch **returns** — the
+opposite of the pipeline one below — because a chimney tagged `building=yes` is *the
+same object*, and falling through would put a box under the circle; it also keeps doors
+and the navmesh off it, which a chimney has no use for. Height comes from `height` only
+(`structure_height`): a chimney has no storeys, so `building:levels` is not consulted.
+
+## PipeLine
+
+An overhead heating main: `man_made=pipeline` centerline + bundle width from `count`
+(`pipe_width`, 0.7 m per pipe clamped 0.9–4 m). **The above-ground test is inverted**
+relative to rails and waterways: there underground has to be proven (`is_underground`),
+here *above* ground does — `location=overground|overhead|bridge` and nothing else. An
+untagged pipeline in OSM is buried, and drawing a silver line across the city over a
+buried pipe is a bigger lie than losing a trestle whose tag somebody forgot. The branch
+**falls through** like the rail and tree-row ones: a pipeline crossing a street on a
+trestle is one way carrying both tags.
+
+## WaterLine
+
+A *linear* watercourse: `waterway=river` 8 m → `canal` (and `weir`) 6/4 m →
+`stream|brook` 2.5 m → `ditch|drain` 1.5 m, water blue, one merged ribbon at
+`Z_WATERWAY` (see `references/layers.md`, **Waterways**). Widths are drawing widths, not
+hydrology: OSM draws as a line what is too narrow for a polygon, so a `river` line is
+narrower than the Упа (which is an area). A plausible `width` tag (`WATER_WIDTH_RANGE`,
+0.5..50 m) overrides the class default.
+
+`parse/tags.rs::water_class` is a **whitelist** for the same reason `rail_class` is:
+`waterway=*` also carries `riverbank` (that one is an area, and `area_kind` claims it),
+`dam`, `dock`, `lock_gate`, `waterfall`. Like the rail and tree-row branches, the
+waterway branch in `parse_way` runs before `highway` and **falls through** — a culverted
+stream under a street shares its way with `highway=*`.
+
+**`tunnel: bool`** (`parse/tags.rs::is_underground`, the same test that drops subway
+track) marks a piped section: it is **not drawn at all** and, alone among watercourses,
+**does not block the navmesh** — the water runs under the ground and a pawn walks over
+it, so there is nothing to see and nothing to cross. Everything else about waterways
+*does* block; see the navigation-deep skill.
+
+A **culvert portal** — the node where an open way ends against the end of a piped one
+(`model::water_line_caps`) — is where the channel is cut **flat**. Everywhere else an
+open end is capped with a half-disk of half the channel width, because OSM splits one
+channel into several ways and the two caps meeting in a shared node fuse the joint; past
+a portal there is no more water, and the half-disk would jut into dry land and (the grid
+fill measures the same distance-to-segment) plug the culvert mouth with a semicircle of
+blocked tiles. One rule, both layers: `water::mesh_water_lines` and
+`Navmesh::fill_from_mapdata`. The **mouth** — where the drawing cuts the channel at an
+area-water outline — is the opposite case: render-only, and the grid keeps its caps (the
+polygon blocks those tiles anyway).
+
+## TreeRow
+
+`natural=tree_row`: an avenue's centerline polyline plus what the data itself knows
+about the planting — `spacing: Option<f32>` (from `spacing`, or the row length spread
+over `count` / `tree:count`) and `radius: Option<f32>` (half `diameter_crown`). Both are
+rare, semi-standard tags, so almost every row is `None`/`None` and falls back to the
+density slider. Like the rail branch, the `tree_row` branch in `parse_way` runs before
+`highway` and **falls through**.
+
+## TreeNode
+
+`natural=tree` node: a single surveyed tree, position plus `radius: Option<f32>` (half
+`diameter_crown`, same parse as on rows). Raw input for `planting::plant_standalone`;
+see `references/trees.md`.
+
+## wood_trees / row_trees_kept / row_trees_slid
+
+`(pos, radius, appears_at)`, each sorted by threshold: the forest (with standalone
+surveyed trees at threshold 0 in front), and the avenues under each placement policy.
+Raw material, not what the renderer reads.
+
+## trees (`TreeSet`)
+
+What the renderer reads: `MapData::compose_trees` merges the forest with the avenues of
+the selected policy (a merge, not a sort — both inputs are already ordered).
+`composed_for` records which policy it was built for; it lives on `MapData` rather than
+in a system `Local` precisely because a city switch replaces the whole resource, and a
+`Local` would survive it and skip the rebuild.
+
+The set is **one value**, not the two `pub` arrays it used to be: positions and
+thresholds are private, the only door in is `TreeSet::push`, which takes a position and
+its threshold together, so "same length, same order" can no longer be broken from
+outside. The **prefix rule** lives on it too — `visible(density)` /
+`visible_count(density)` return the beginning of the set, never a filter, so a step up
+the density slider only adds trees and never moves the standing ones.
