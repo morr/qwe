@@ -4,6 +4,7 @@ use super::super::shape::RoadShape;
 use super::super::tapers::Taper;
 use super::*;
 use crate::map::RoadStyle;
+use crate::map::osm::Highway;
 use crate::map::osm::fixture::street;
 use crate::map::osm::model::point_in_polygon;
 use crate::map::osm::{MapData, RoadLine};
