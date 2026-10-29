@@ -444,7 +444,7 @@ pub fn perf_window_resolution() -> bevy::window::WindowResolution {
 /// - `QWE_PERF_RENDER_DIAG=1` — `RenderDiagnosticsPlugin`: CPU-время каждого
 ///   прохода рендера (`render/<pass>/elapsed_cpu`) в логе диагностики;
 /// - `QWE_PERF_FRAME_SPIKES=<ms>` — кадр длиннее порога печатает строку
-///   `frame spike: 43.2 ms (zoom 1.83)`: детектор рывков зума, которых
+///   `frame spike: 43.2 ms (zoom 1.83, frame 247)`: детектор рывков зума, которых
 ///   секундные средние `frame_time` не показывают. Реальное время кадра
 ///   ([`Time<Real>`]), не виртуальное: на паузе виртуальное стоит на нуле.
 ///

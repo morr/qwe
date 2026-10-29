@@ -940,7 +940,7 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
       `rebuild_industry` listed twice. So conditions are summed with `or_else` rather
       than split across registrations, and the rule now has a single place to live
       instead of the three comments that used to repeat it.
-    - `rail::rebuilds_on` goes through `IntoSystem::into_system` because a bare
+    - `trees::switches_on` goes through `IntoSystem::into_system` because a bare
       function-condition carries its own type marker; the other layers' `or_else` erases
       it. That is the only oddity in the shape.
     - **A full layer registry was considered and rejected.** Declaring a layer as data —
@@ -1045,7 +1045,9 @@ through the curb pin tests (`navmesh/fill/tests.rs`) and the parity tests.
   `for_zoom` is the single selection rule (first bucket whose bound is above the zoom,
   a zoom on the bound goes up — `zoom/tests.rs`). Three generic systems:
   `update_zoom_bucket::<T>` each Update via `set_if_neq`, so the `retuned`-gated
-  `rebuild_*` runs only on a threshold crossing; and `seed_zoom_bucket::<T>` on world
+  `rebuild_*` runs only on a threshold crossing; `show_lod_layers::<T, F>` every
+  frame, flipping the visibility of the prebuilt steps (the crossing paragraph
+  below); and `seed_zoom_bucket::<T>` on world
   entry — in the `WorldInitSet::Spawn` chain right before the layer's first `rebuild_*`
   and after `camera::place_camera_on_world_ready` (hence that system is `pub(crate)`),
   written without change detection so the build that follows stays the only one. The

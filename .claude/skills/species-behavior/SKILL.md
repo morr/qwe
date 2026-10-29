@@ -652,8 +652,9 @@ the component, not the sprite. The two:
   (measured 10.2026: they were not the zoom-jerk driver — the frame jitter of the same
   magnitude happens without them — but they were pure waste, and the full 20 k rewrite
   did land on one frame). The whole set catches up within `total / RESIZE_BATCH`
-  zoom-change frames; a stale silhouette stands at most half a pixel off the exact
-  floor size.
+  zoom-change frames; the tolerance holds a silhouette within half a pixel of the exact
+  size at the moment of its check — one whose turn has not come in this lap stands at
+  its last write and can sit past the tolerance until it.
 
 Both ask for the **user's** camera — `With<Camera2d>` *and* `With<PanCamera>`, because a
 `dev::OffscreenShotEvent` puts a second `Camera2d` in the world for three frames and a
