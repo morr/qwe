@@ -2499,6 +2499,7 @@ pub fn rebuild_roads(
         (layers, report),
         verge.index,
         true,
+        true,
     );
 }
 
@@ -2534,6 +2535,7 @@ pub fn build_other_road_step(
             (layers, report),
             step,
             false,
+            false,
         );
     }
 }
@@ -2546,11 +2548,12 @@ pub fn build_other_road_step(
 /// Вторая половина — достройка: после пересборки по стилю/солнцу
 /// (`rebuild_roads`) в мире живёт только текущая ступень, и первое же
 /// пересечение порога собирает недостающую здесь же — раз на смену стиля, как
-/// раньше было на каждое пересечение. На входе в мир обе ступени уже собраны
-/// (`spawn_map` + `build_other_road_step`), так что в норме система ничего не
-/// строит. Побочным выходом сборки тут пренебрегаем: линии колеи и пути
-/// трамвая от ступени обочины не зависят, а ресурсами их записала сборка
-/// текущей ступени.
+/// раньше было на каждое пересечение. Краску достройка не переспавнивает
+/// (`spawn_road_meshes`): она уже стоит от пересборки. На входе в мир обе
+/// ступени уже собраны (`spawn_map` + `build_other_road_step`), так что в
+/// норме система ничего не строит. Побочным выходом сборки тут пренебрегаем:
+/// линии колеи и пути трамвая от ступени обочины не зависят, а ресурсами их
+/// записала сборка текущей ступени.
 #[allow(clippy::too_many_arguments)]
 pub fn show_road_steps(
     mut commands: Commands,
@@ -2560,10 +2563,14 @@ pub fn show_road_steps(
     style: Res<RoadStyle>,
     shape: Res<RoadShapeOnMap>,
     map: Res<MapData>,
+    mut present: Local<Vec<bool>>,
     mut layers: Query<(&LodStep, &mut Visibility), (With<RoadLayerTag>, Without<paint::PaintTag>)>,
 ) {
     let steps = VergeLods::max_zooms().count();
-    let mut present = vec![false; steps];
+    // повторно используемый буфер: система работает каждый кадр, и новая
+    // аллокация на каждом запуске была бы платой из чеклиста производительности
+    present.clear();
+    present.resize(steps, false);
     for (step, mut visibility) in &mut layers {
         if step.0 < steps {
             present[step.0] = true;
@@ -2592,6 +2599,7 @@ pub fn show_road_steps(
             (layers, report),
             step,
             step == verge.index,
+            false,
         );
     }
 }
@@ -2604,10 +2612,14 @@ pub fn show_road_steps(
 /// `step` — ступень обочины, под которую собраны слои: обе ступени лежат в
 /// мире сразу (`build_other_road_step` достраивает не текущую), скрытые, и
 /// пересечение порога переключает видимость (`show_road_steps`), а не
-/// пересобирает дорогу. `visible` — виден ли этот шаг при спавне; краска
-/// (`PaintTag`) спавнится только видимым сборкам: её геометрия от ступени
+/// пересобирает дорогу. `visible` — виден ли этот шаг при спавне.
+///
+/// `spawn_paint` — спавнить ли краску (`PaintTag`): её геометрия от ступени
 /// обочины не зависит (в отчётах обеих ступеней одни и те же 6121 линия и
-/// 280865 вершин), второй экземпляр дал бы двойную покраску и лишние вершины.
+/// 280865 вершин), и второй экземпляр дал бы двойную покраску и лишние
+/// вершины. Краску спавнят только сборки, которые отвечают за неё в мире, —
+/// вход в мир и полная пересборка; достройка недостающей ступени
+/// (`show_road_steps`) нет: краска уже стоит от пересборки по стилю.
 pub fn spawn_road_meshes(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -2615,6 +2627,7 @@ pub fn spawn_road_meshes(
     (layers, report): (Vec<LayerMesh>, RoadReport),
     step: usize,
     visible: bool,
+    spawn_paint: bool,
 ) {
     // меши краски несут ещё и свой вид — по нему их прячет ступень зума
     // (`paint::show_paint`)
@@ -2633,7 +2646,7 @@ pub fn spawn_road_meshes(
         rest,
         (RoadLayerTag, LodStep(step), visibility),
     );
-    if visible {
+    if spawn_paint {
         for layer in paint {
             let Some(tag) = paint::PaintTag::of(layer.name) else {
                 continue;
@@ -3193,9 +3206,9 @@ impl ZoomLods for VergeLods {
 /// пиксель — как у крон ([`VergeLods`]).
 const VERGE_ZOOM_MAX: f32 = 2.0;
 
-/// Текущая ступень [`VergeLods`]; на её пересечении дорожные слои
-/// пересобираются (`rebuilds_on`), потому что лента обочины и её газон
-/// запечены в общие меши слоёв.
+/// Текущая ступень [`VergeLods`]; её пересечение переключает видимость между
+/// двумя заранее собранными наборами слоёв ([`show_road_steps`]), а не
+/// пересобирает дорогу — в [`rebuilds_on`] ступень не входит.
 pub type VergeZoomBucket = ZoomBucket<VergeLods>;
 
 impl VergeZoomBucket {

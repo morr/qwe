@@ -829,6 +829,7 @@ fn build_next(
         (road_layers, road_report),
         verge.index,
         true,
+        true,
     );
 
     // машины — по заказу: витрина про дороги, и ряд у бордюра закрывает то,
