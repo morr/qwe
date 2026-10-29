@@ -54,6 +54,7 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 pub use self::bridges::BridgeReport;
 use self::bridges::Bridges;
 pub use self::drawn::{Axis, Drawn, DrawnStats};
+use self::footbridge::{footbridge_reach, push_path_flare};
 pub use self::junctions::JunctionCounts;
 use self::network::RoadNodes;
 use self::network::pairs::BandPiece;
@@ -2686,88 +2687,6 @@ fn push_sidewalk_to_seams(
         let lip = out * BAND_SEAM_OVERLAP;
         builder.push_polygon(&[a, b, b + lip, a + lip], &[], color);
     }
-}
-
-/// Длина клина, которым дорожка расширяется в свой мостик, м
-/// ([`push_path_flare`]).
-const PATH_SEAM_FLARE: f32 = 3.0;
-
-/// Кромка бортика мостика (`bridge` + `RoadClass::Alley`) на каждом торце
-/// наземной дорожки `road`, если мостик продолжает её в узле торца, — от оси,
-/// м (`RoadLine::curb_reach`).
-fn footbridge_reach(roads: &[&RoadLine], nodes: &RoadNodes, road: usize) -> [Option<f32>; 2] {
-    let own = roads[road];
-    let (Some(&first), Some(&last)) = (own.points.first(), own.points.last()) else {
-        return [None; 2];
-    };
-    if own.bridge {
-        return [None; 2];
-    }
-    [first, last].map(|end| {
-        nodes
-            .roads_at(end)
-            .iter()
-            .map(|&other| roads[other])
-            .filter(|foot| foot.bridge && foot.class == RoadClass::Alley)
-            .map(RoadLine::curb_reach)
-            .reduce(f32::max)
-    })
-}
-
-/// Клин, которым дорожка по `points` у торца `end` расширяется от своей
-/// полуширины к кромке бортика мостика (`halves`) на последних
-/// [`PATH_SEAM_FLARE`] м, и губа под мостик на [`BAND_SEAM_OVERLAP`]: мостик
-/// в 3.5 м с бортиками по 0.8 м шире дорожки в 2–3 м, и её прямой торец стоял
-/// у головы уступом внутри его бортика (S5, Тула, Одоевский путепровод).
-fn push_path_flare(
-    builder: &mut MeshBuilder,
-    points: &[Vec2],
-    end: usize,
-    [own, reach]: [f32; 2],
-    color: LinearRgba,
-) {
-    let total = polyline_length(points);
-    if points.len() < 2 || total <= 0.0 {
-        return;
-    }
-    let length = PATH_SEAM_FLARE.min(total / 2.0);
-    let path = if end == 0 {
-        let mut path = tapers::cut(points, 0.0, length);
-        path.reverse();
-        path
-    } else {
-        tapers::cut(points, total - length, total)
-    };
-    // по `path` — к торцу: полуширина растёт от своей к кромке бортика
-    let Some(out) = path
-        .last()
-        .zip(path.len().checked_sub(2).and_then(|index| path.get(index)))
-        .and_then(|(tip, inner)| (*tip - *inner).try_normalize())
-    else {
-        return;
-    };
-    let (along, span) = crate::map::along::arclengths(&path);
-    let miters = miter_offsets(&path, false, 1.0);
-    let half = |at: f32| own + (reach - own) * at / span.max(f32::EPSILON);
-    let tip = path[path.len() - 1];
-    let lip = out * BAND_SEAM_OVERLAP;
-    let left: Vec<Vec2> = path
-        .iter()
-        .zip(&miters)
-        .zip(&along)
-        .map(|((point, miter), &at)| *point + *miter * half(at))
-        .collect();
-    let mut outline = left;
-    outline.push(tip + out.perp() * reach + lip);
-    outline.push(tip - out.perp() * reach + lip);
-    outline.extend(
-        path.iter()
-            .zip(&miters)
-            .zip(&along)
-            .rev()
-            .map(|((point, miter), &at)| *point - *miter * half(at)),
-    );
-    builder.push_polygon(&outline, &[], color);
 }
 
 /// Кусок `piece` полосы тротуара — с обеих сторон или со своей.
