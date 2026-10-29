@@ -13,10 +13,14 @@ the grid, the shapes, the shadow rules, the layer seam, the surface material, zo
 buckets. The mechanisms live in nine deep dives next to it, read on demand — **read the
 one your change is about, not all of them**:
 
-- `references/parse.md` — the parse seam and every reading and finishing pass (heights,
-  building use, retail box, churches, squaring, houses pulled off the sidewalks, blocks
-  and lots pulled to the roads, ground pockets sown with grass), and how the parse is
-  tested.
+- `references/parse-seam.md` — the parse seam (`ParseKnobs`, `read_elements` /
+  `finish_parse`, pass contexts) and **Testing the parse**; the entry point of parse work.
+- `references/parse-buildings.md` — the building readings and finishing passes (heights,
+  building use, retail box, churches, the fortress, drowned buildings, squaring, houses
+  pulled off the sidewalks).
+- `references/parse-geometry.md` — the geometry passes (path width, rail gaps, the three
+  sidewalk/pavement passes, blocks pulled to the roads with the lot paving, ground pockets,
+  ring assembly).
 - `references/roads.md` — how a street is drawn: sidewalks, divided streets and their
   medians, lane markings and their breaks, the ribbon, junctions and the drawn network (stitches, kerb returns),
   `RoadStyle` and `RoadShape` (lane width, taper, curve tolerance, median gap, corner
@@ -224,13 +228,13 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   knob (`RoadShape::lane_width`, 3.3 m by default; 0.3 m less on a service drive) + 0.5 m
   of edge each side, set by the first parse pass
   (`map/roads/network/sections.rs`; a path's width is `parse/tags.rs::path_width` —
-  `references/parse.md`, **Path width**) — streets, sections and
+  `references/parse-geometry.md`, **Path width**) — streets, sections and
   the tapers between them are in `references/roads.md`, **Streets, sections, tapers**.
   `highway: Highway` is the `highway` value (the five `*_link` are classes of their own);
   `Highway::is_street` — not a service drive, not a path — is what `roads::is_carriageway`
   asks, **not the width**. `RoadClass: Street | Alley` (alleys = footways, park paths;
   different color and z). `pavement: Option<Pavement>` splits the alleys: a **paved
-  path** is drawn in the sidewalk layer, an unpaved one stays sand (`references/parse.md`,
+  path** is drawn in the sidewalk layer, an unpaved one stays sand (`references/parse-geometry.md`,
   **Pavement of untagged footways**; `references/roads.md`, **Paved paths**). `bridge` and `passage` flags — the navmesh carves (see the navigation-deep
   skill); `bridge` also moves the road into the bridge deck layers (see **Bridge
   layers** below). Three more fields feed the **markings** and the parked cars: `oneway`
@@ -263,7 +267,7 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
   tristate — `Tagged` (by `sidewalk*`), `Inferred` (no tag: a paved street the blocks
   around did not take it from), `None` (whatever took it: the tag, an unpaved surface,
   the blocks) — so a present side still says after the parse where it came from, and
-  `Inferred` is what `parse::infer_sidewalks` asks; `references/parse.md`, **Sidewalks
+  `Inferred` is what `parse::infer_sidewalks` asks; `references/parse-geometry.md`, **Sidewalks
   of untagged streets**.
   **The direction of a one-way way is load-bearing now**, and it did not use to be: the
   cars park on one side of it, the right-hand kerb, so `oneway=-1` — "the traffic runs
@@ -429,12 +433,14 @@ projects with the centre and size from its name, i.e. the same metres as `SimPos
 
 ## Parsing details
 
-In `references/parse.md`: the parse seam (`read_elements` / `finish_parse` and why the
-order of the passes is their interface), every reading and finishing pass — building
-height and use, the retail box, places of worship, the fortress, drowned buildings,
-squared houses, houses pulled off the sidewalks, blocks pulled to the roads with the lot
-paving (`pave_lots`), ring assembly — and **Testing the parse** (`fixture.rs::Overpass`,
-the three routes a case can take).
+In the `references/parse-*.md` files: `parse-seam.md` — the parse seam (`read_elements` /
+`finish_parse` and why the
+order of the passes is their interface) and **Testing the parse** (`fixture.rs::Overpass`,
+the three routes a case can take); `parse-buildings.md` — building height and use, the
+retail box, places of worship, the fortress, drowned buildings, squared houses, houses
+pulled off the sidewalks; `parse-geometry.md` — path width, rail gaps, the sidewalk and
+pavement passes, blocks pulled to the roads with the lot paving (`pave_lots`), ground
+pockets, ring assembly.
 
 ## The shadow rules — `map/shadow.rs`
 
