@@ -456,7 +456,7 @@ on the paired side themselves (`roads-pairs-medians.md`, **Paired halves**).
   The **semantic index** is the third reader
   (`pockets::kerb_pocket_outlines`): the same `row_breaks` + `all_kerbsides` on the same
   nodal axis (`Drawn::nodal`, as the cars build it) and the same `outline` formula, so a
-  hover on the pocket names it — `parking pocket (auto, tagged)` by the tag, `(auto)`
+  hover on the pocket names it — `parking pocket (auto, tagged)` by the tag, `(auto, inferred)`
   by the rule — and the highlight draws the stored polygon (`map/inspect.rs`,
   `FeatureRef::KerbPocket`). It is the one model answer computed on the drawn axis, and
   the expensive one: on Tula the outlines are ~45 ms of the index's ~55 ms, which is why

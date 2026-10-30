@@ -1214,7 +1214,7 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   hit carries the feature label and the z of the layer it draws in, top layer first; bare
   ground is **not** a hit —
   an empty list reads `-`). **Kerb parking pockets answer too** — `parking pocket
-  (auto, tagged)` by the `parking:<side>` tag, `(auto)` by the sparse rule: they exist
+  (auto, tagged)` by the `parking:<side>` tag, `(auto, inferred)` by the sparse rule: they exist
   only as drawn geometry, so the index rebuilds their polygons on the nodal axis
   (`roads::pockets::kerb_pocket_outlines`, the same lift as the parked cars) and stores
   them itself — the one model answer computed on the drawn axis. **Cmd cycles the

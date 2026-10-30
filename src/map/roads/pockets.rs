@@ -733,10 +733,10 @@ pub fn kerb_pocket_outlines(map: &MapData, shape: &RoadShape) -> Vec<KerbPocketO
     for (index, road) in map.roads.iter().enumerate() {
         let half = road.width / 2.0;
         for kerbside in &kerbsides[index] {
-            let tagged = matches!(
-                kerb_parking(road, usize::from(kerbside.side < 0.0)),
-                KerbParking::Pocket
-            );
+            // тег или правило различает только само поле: `kerb_parking`
+            // даёт `Pocket` в обоих случаях, а карманы есть только у `Pocket`
+            let side = usize::from(kerbside.side < 0.0);
+            let tagged = road.parking[side] != KerbParking::Untagged;
             for pocket in &kerbside.pockets {
                 let contour = self::outline(
                     &nodal[index],

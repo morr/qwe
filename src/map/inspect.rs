@@ -1381,6 +1381,17 @@ mod tests {
         }
     }
 
+    /// Улица с карманом у бордюра по правилу — магистраль с тротуаром, но
+    /// без тега `parking:<side>`: карманы кладёт правило (`sparse_pockets`)
+    /// по ГПСЧ от первой точки, редкие и короткие, не вдоль всей стороны.
+    fn rule_pocket_street(y: f32) -> RoadLine {
+        RoadLine {
+            parking: [KerbParking::Untagged; 2],
+            highway: Highway::Secondary,
+            ..fixture::street(vec![Vec2::new(0.0, y), Vec2::new(200.0, y)], 8.0)
+        }
+    }
+
     /// Кромки полос такой улицы — расстояния от оси, м: полотно, край
     /// тротуара, край обочины.
     fn band_edges(verge: f32) -> (f32, f32, f32) {
@@ -1407,6 +1418,36 @@ mod tests {
             .find(|hit| hit.label.starts_with("parking pocket"))
             .unwrap_or_else(|| panic!("кармана нет в ответе: {hits:?}"));
         assert!(pocket.label.contains("tagged"), "{}", pocket.label);
+
+        // подсветка рисует тот же полигон, на который находка отвечает
+        let shapes = feature_shape(&index, &map, &RoadStyle::default(), pocket.feature)
+            .unwrap_or_else(|| panic!("у кармана нет формы"));
+        assert!(point_in_polygon(point, &shapes[0].outer));
+    }
+
+    /// Карман по правилу — та же находка с подсветкой, но подпись без
+    /// «tagged»: тега `parking:<side>` у улицы нет, причину вывело правило.
+    /// Где именно встал карман, решает ГПСЧ правила, — точка запроса
+    /// берётся из того же контура, а не с потолка.
+    #[test]
+    fn a_rule_pocket_answers_without_the_tagged_mark() {
+        let map = MapData {
+            roads: vec![rule_pocket_street(70.0)],
+            ..default()
+        };
+        let outlines = kerb_pocket_outlines(&map, &RoadShape::default());
+        let Some(outline) = outlines.first() else {
+            panic!("правило не положило карман на улицу");
+        };
+        let point = outline.contour.iter().sum::<Vec2>() / outline.contour.len() as f32;
+
+        let index = InspectIndex::rebuild(&map, &RoadShape::default());
+        let hits = query(&index, &map, 0.0, point);
+        let pocket = hits
+            .iter()
+            .find(|hit| hit.label.starts_with("parking pocket"))
+            .unwrap_or_else(|| panic!("кармана нет в ответе: {hits:?}"));
+        assert_eq!(pocket.label, "parking pocket (auto, inferred)");
 
         // подсветка рисует тот же полигон, на который находка отвечает
         let shapes = feature_shape(&index, &map, &RoadStyle::default(), pocket.feature)
