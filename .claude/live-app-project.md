@@ -403,10 +403,14 @@ that came out of the extract ends with its OSM id, `#179102449`: `tools/osm_near
 way id. The same list lives in the **point inspector panel** (top
 right, under the telemetry) and updates with the cursor — a screenshot of it answers both
 questions at once. The panel's **highlight checkbox** (`InspectorHighlight`, BRP-writable)
-draws the top non-ground hit's whole shape (`inspector_highlight` layer, translucent
-yellow, above every debug overlay) and highlights its row — with it on, one screenshot
-carries the element's form in the frame, no `shot-at` framing arithmetic needed. Coordinates are map metres; in the roads gallery they are the sample's
-own map metres (the panel and probe subtract the sample's column shift). `hide` + reshoot
+draws the selected hit's whole shape (`inspector_highlight` layer, translucent
+yellow, above every debug overlay) and highlights its row — **Cmd cycles the selection**
+through the hits under the cursor (1 → 2 → 3 → 1); with it on, one screenshot
+carries the element's form in the frame, no `shot-at` framing arithmetic needed; the
+layer is clipped to the sample's viewport, so a highlight for an object bigger than the
+window stops at its frame. Coordinates are map metres; in the roads gallery they are the
+current sample's own map metres — the viewport under the cursor, else the framed one
+(panel and probe subtract the same `InspectOrigin` shift). `hide` + reshoot
 is the confirmation step — the layer whose disappearance removes the glitch is the culprit;
 `show <name>` brings it back, and a restart rebuilds the world anyway. Restore with the
 same insert of `"Visible"` is history: `show` does it.

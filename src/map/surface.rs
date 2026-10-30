@@ -486,6 +486,7 @@ pub struct MapLayer;
 pub struct LayerMesh {
     pub builder: MeshBuilder,
     pub z: f32,
+    pub offset: Vec2,
     pub name: &'static str,
     pub material: MaterialSpec,
 }
@@ -495,9 +496,19 @@ impl LayerMesh {
         Self {
             builder,
             z,
+            offset: Vec2::ZERO,
             name,
             material,
         }
+    }
+
+    /// Сдвиг слоя в мире по xy — «мир = карта + сдвиг». Слои карты стоят в
+    /// координатах карты и сдвига не несут; его ставит тот, кто рисует
+    /// map-space слой в сдвинутом мире (витрина `roads`, её
+    /// `map/inspect.rs::InspectOrigin`).
+    pub fn offset(mut self, offset: Vec2) -> Self {
+        self.offset = offset;
+        self
     }
 }
 
@@ -533,29 +544,27 @@ pub fn init_flat_materials(mut commands: Commands, mut materials: ResMut<Assets<
 fn spawn_layer(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
-    builder: MeshBuilder,
-    z: f32,
-    name: &'static str,
+    layer: LayerMesh,
     material: LayerMaterial,
     tag: impl Bundle,
 ) {
-    if builder.is_empty() {
+    if layer.builder.is_empty() {
         return;
     }
-    let mut layer = commands.spawn((
+    let mut entity = commands.spawn((
         tag,
         MapLayer,
-        Mesh2d(meshes.add(builder.build())),
-        Transform::from_xyz(0.0, 0.0, z),
+        Mesh2d(meshes.add(layer.builder.build())),
+        Transform::from_xyz(layer.offset.x, layer.offset.y, layer.z),
         DespawnOnExit(AppState::Playing),
-        Name::new(name),
+        Name::new(layer.name),
     ));
     match material {
-        LayerMaterial::Flat(handle) => layer.insert(MeshMaterial2d(handle)),
-        LayerMaterial::Surface(handle) => layer.insert(MeshMaterial2d(handle)),
-        LayerMaterial::Roof(handle) => layer.insert(MeshMaterial2d(handle)),
-        LayerMaterial::Paint(handle) => layer.insert(MeshMaterial2d(handle)),
-        LayerMaterial::Crown(handle) => layer.insert(MeshMaterial2d(handle)),
+        LayerMaterial::Flat(handle) => entity.insert(MeshMaterial2d(handle)),
+        LayerMaterial::Surface(handle) => entity.insert(MeshMaterial2d(handle)),
+        LayerMaterial::Roof(handle) => entity.insert(MeshMaterial2d(handle)),
+        LayerMaterial::Paint(handle) => entity.insert(MeshMaterial2d(handle)),
+        LayerMaterial::Crown(handle) => entity.insert(MeshMaterial2d(handle)),
     };
 }
 
@@ -604,15 +613,7 @@ pub fn spawn_layers(
 ) {
     for layer in layers {
         let material = materials.resolve(layer.material);
-        spawn_layer(
-            commands,
-            meshes,
-            layer.builder,
-            layer.z,
-            layer.name,
-            material,
-            tag.clone(),
-        );
+        spawn_layer(commands, meshes, layer, material, tag.clone());
     }
 }
 

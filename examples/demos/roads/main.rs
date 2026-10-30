@@ -80,9 +80,13 @@
 //! Витрина слушает BRP на порту из `BRP_PORT` (как игра, `dev::brp_port`):
 //! `brp probe <x> <y>` отвечает и слоями в точке, и признаками
 //! (`features at the point (semantic index)`); инспектор точки — панель в
-//! правом верхнем углу — показывает то же под курсором. Координаты — метры
-//! **карты показанного примера**, не сдвинутой колонки: панель и проба
-//! вычитают сдвиг примера (`InspectOrigin`), и ответ понимает `tools/osm_near`.
+//! правом верхнем углу — показывает то же под курсором. Каждый пример — свой
+//! viewport, и координаты — метры **карты того примера, чей viewport под
+//! курсором** (`sync_hover_viewport` ведёт `InspectOrigin` и
+//! `InspectViewport`), а когда курсор между окнами — показанного: и панель,
+//! и проба вычитают один и тот же сдвиг, и ответ понимает `tools/osm_near`.
+//! Панель видна, только пока курсор внутри чьего-то окна; подсветка
+//! выделяемого рисуется в границах своего окна, даже если объект больше.
 
 mod overlay;
 mod panel;
@@ -101,6 +105,7 @@ use bevy::sprite::Anchor;
 use bevy::sprite_render::Material2dPlugin;
 use bevy::text::TextBounds;
 use bevy::window::PrimaryWindow;
+use qwe::camera::cursor_offset;
 use qwe::camera::{drag_pan, hovering_ui, key_pan, pan_controller, zoom_to_cursor};
 use qwe::city::City;
 use qwe::dev::DevPlugin;
@@ -108,7 +113,7 @@ use qwe::map::buildings::material::{RoofMaterial, init_roof_material};
 use qwe::map::buildings::{
     BuildingPlan, BuildingZoomBucket, mesh_buildings, spawn_building_meshes,
 };
-use qwe::map::inspect::{InspectOrigin, InspectPlugin};
+use qwe::map::inspect::{InspectOrigin, InspectPlugin, InspectViewport};
 use qwe::map::osm::parse::{ParseKnobs, RawOsm, parse_response};
 use qwe::map::surface::{
     LayerMesh, SurfaceMaterial, init_flat_materials, init_surface_materials,
@@ -126,7 +131,10 @@ use qwe::map::{
     set_lane_width, settle_road_shape, spawn_road_meshes,
 };
 use qwe::ui::knob::AddKnobsExt;
-use qwe::ui::{PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET, UiInspectorPlugin, sync_city_label};
+use qwe::ui::{
+    InspectorHighlightMarker, PANEL_WIDTH_PX, UI_SCREEN_EDGE_PX_OFFSET, UiInspectorPlugin,
+    sync_city_label,
+};
 use serde::Deserialize;
 
 use crate::overlay::Overlays;
@@ -186,10 +194,13 @@ struct Gallery {
     /// Сдвиг для мешей, заспавненных в этом кадре: из игровых координат
     /// примера — в его место в колонке.
     pending_shift: Option<Vec2>,
-    /// Какой пример показан ([`frame_sample`]): по нему [`sync_framed_map`]
-    /// держит ресурс `MapData` — индекс инспектора и проба слоёв говорят про
-    /// **показанный** срез, а не про последний построенный.
+    /// Какой пример показан ([`frame_sample`]): камера стоит на его окне,
+    /// проба слоёв при пустом курсоре говорит его метрами.
     framed: Option<usize>,
+    /// Какой пример под курсором ([`sync_hover_viewport`]): его viewport —
+    /// панель инспектора с её координатами и подсветкой; `None` — курсор
+    /// между окнами, панель спрятана, «текущий» пример — показанный.
+    hovered: Option<usize>,
 }
 
 impl Gallery {
@@ -409,7 +420,8 @@ fn main() {
             ),
             build_next,
             place_new,
-            sync_framed_map,
+            sync_hover_viewport,
+            sync_current_map,
             // счёт кадров снимка идёт с кадра, когда собраны и сдвинуты все
             // примеры: собираются они по одному на кадр, и на общем
             // `SHOT_FRAME` поздние ещё не стояли в колонке
@@ -501,22 +513,19 @@ fn spawn_camera(mut commands: Commands) {
 }
 
 /// Камера на пример: окно с подписью по ширине свободной части экрана — или,
-/// крупным планом, одно окно по высоте. Заодно ставит сдвиг [`InspectOrigin`]:
-/// панель инспектора и `brp probe` говорят в метрах карты примера, как их
-/// понимает `tools/osm_near`.
+/// крупным планом, одно окно по высоте. Сдвиг [`InspectOrigin`] не ставит:
+/// его ведёт [`sync_hover_viewport`] — под курсором, иначе этот пример.
 fn frame_sample(
     gallery: &mut Gallery,
     index: usize,
     close_up: bool,
     window: &Window,
     camera: &mut (Mut<Transform>, Mut<PanCamera>),
-    commands: &mut Commands,
 ) {
     let Some(slot) = gallery.slots.get(index) else {
         return;
     };
     gallery.framed = Some(index);
-    commands.insert_resource(InspectOrigin(*slot - gallery.samples[index].at));
     let viewport_width = window.width() - panel_span();
     let (centre, zoom) = if close_up {
         let half = gallery.samples[index].half;
@@ -550,7 +559,6 @@ fn step_to_neighbour(
     mut gallery: ResMut<Gallery>,
     window: Single<&Window, With<PrimaryWindow>>,
     mut camera: Single<(&mut Transform, &mut PanCamera)>,
-    mut commands: Commands,
 ) {
     let step = match (
         keys.just_pressed(KeyCode::ArrowDown),
@@ -571,14 +579,7 @@ fn step_to_neighbour(
         return;
     };
     let next = (current as i32 + step).clamp(0, gallery.slots.len() as i32 - 1) as usize;
-    frame_sample(
-        &mut gallery,
-        next,
-        false,
-        &window,
-        &mut camera,
-        &mut commands,
-    );
+    frame_sample(&mut gallery, next, false, &window, &mut camera);
 }
 
 /// Пересборка витрины: убрать всё положенное, перечитать примеры города с
@@ -697,7 +698,6 @@ fn reload(
             close_up,
             &window,
             &mut camera,
-            &mut commands,
         );
     }
 }
@@ -990,14 +990,68 @@ fn build_next(
     status.0 = format!("собрано {} из {}", gallery.built, gallery.samples.len());
 }
 
-/// Карта **показанного** примера — ресурсом: по ней живёт семантический индекс
+/// Viewport под курсором — каждый пример своё окно (`slot ± half`), и панель
+/// инспектора с подсветкой живут в координатах того, чьё окно под курсором.
+/// Курсор внутри окна: [`InspectOrigin`] получает сдвиг **его** карты,
+/// [`InspectViewport`] — само окно; курсор между окнами: панель спрятана
+/// ([`InspectViewport::Outside`]), а сдвиг остаётся у показанного примера —
+/// проба (`brp probe`) и без курсора говорит метрами того, что в кадре.
+/// Пишет и `Gallery::hovered` — по нему [`sync_current_map`] держит `MapData`
+/// текущего примера. Изменения ресурсами, не каждый кадр: панель пересчитывает
+/// находки на каждую смену сдвига.
+fn sync_hover_viewport(
+    mut gallery: ResMut<Gallery>,
+    window: Single<&Window, With<PrimaryWindow>>,
+    camera: Single<(&Transform, &PanCamera), With<Camera2d>>,
+    mut commands: Commands,
+    origin: Res<InspectOrigin>,
+    viewport: Res<InspectViewport>,
+) {
+    let hovered = window
+        .cursor_position()
+        .map(|cursor| {
+            let (transform, controller) = camera.into_inner();
+            let world = transform.translation.truncate()
+                + cursor_offset(&window, cursor) * controller.zoom_factor;
+            gallery
+                .samples
+                .iter()
+                .zip(&gallery.slots)
+                .position(|(sample, slot)| {
+                    Rect::from_corners(*slot - sample.half, *slot + sample.half).contains(world)
+                })
+        })
+        .unwrap_or(None);
+    gallery.hovered = hovered;
+
+    let current = hovered.or(gallery.framed);
+    let shift = current.map_or(Vec2::ZERO, |index| {
+        gallery.slots[index] - gallery.samples[index].at
+    });
+    if origin.0 != shift {
+        commands.insert_resource(InspectOrigin(shift));
+    }
+    let next = hovered.map_or(InspectViewport::Outside, |index| {
+        let sample = &gallery.samples[index];
+        InspectViewport::Inside(Rect::from_corners(
+            sample.at - sample.half,
+            sample.at + sample.half,
+        ))
+    });
+    if *viewport != next {
+        commands.insert_resource(next);
+    }
+}
+
+/// Карта **текущего** примера — ресурсом: по ней живёт семантический индекс
 /// инспектора (`InspectPlugin`) и пересборка слоёв пробы
-/// (`dev.rs::on_probe_layers`). Примеры строит [`build_next`] по одному на
-/// кадр, а показан — тот, кого выставил [`frame_sample`]; перепарс по смене
-/// показанного — десятки миллисекунд, сама навигация дороже. Без этой системы
-/// в ресурсе оставалась бы карта последнего **построенного** примера, и проба
+/// (`dev.rs::on_probe_layers`). Текущий — тот, чей viewport под курсором
+/// ([`sync_hover_viewport`]), иначе показанный ([`frame_sample`]); примеры
+/// строит [`build_next`] по одному на кадр. Перепарс по смене текущего —
+/// десятки миллисекунд, сама навигация дороже. Без этой системы в ресурсе
+/// оставалась бы карта последнего **построенного** примера, и проба
 /// проверяла бы чужое место.
-fn sync_framed_map(
+fn sync_current_map(
     mut commands: Commands,
     gallery: Res<Gallery>,
     city: Res<City>,
@@ -1005,11 +1059,12 @@ fn sync_framed_map(
     raw: Res<RawOsm>,
     mut synced: Local<Option<usize>>,
 ) {
-    if gallery.framed == *synced {
+    let current = gallery.hovered.or(gallery.framed);
+    if current == *synced {
         return;
     }
-    *synced = gallery.framed;
-    let Some(index) = gallery.framed else {
+    *synced = current;
+    let Some(index) = current else {
         return;
     };
     let Some(sample) = gallery.samples.get(index) else {
@@ -1025,11 +1080,20 @@ fn sync_framed_map(
 
 /// Сдвиг только что заспавненных слоёв примера на его место в колонке. Ловит
 /// всякий новый меш без метки [`Placed`] — поэтому своё (рамки) витрина кладёт
-/// уже с меткой, а примеры собирает по одному на кадр.
+/// уже с меткой, а примеры собирает по одному на кадр. Слой подсветки
+/// инспектора мимо: пакетный сдвиг одноразовый и позже спавна слоя, слой
+/// ставит себя сам через [`InspectOrigin`].
 fn place_new(
     mut commands: Commands,
     mut gallery: ResMut<Gallery>,
-    mut fresh: Query<(Entity, &mut Transform), (Added<Mesh2d>, Without<Placed>)>,
+    mut fresh: Query<
+        (Entity, &mut Transform),
+        (
+            Added<Mesh2d>,
+            Without<Placed>,
+            Without<InspectorHighlightMarker>,
+        ),
+    >,
 ) {
     let Some(shift) = gallery.pending_shift.take() else {
         return;

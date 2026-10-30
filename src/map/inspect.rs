@@ -39,10 +39,9 @@ use crate::map::osm::model::{
 };
 use crate::map::shapes::{is_ring, ring_of, stroke};
 use crate::settings::{
-    Z_ALLEY, Z_BRIDGE, Z_BUILDING, Z_FENCE, Z_GRASS, Z_GROUND, Z_INDUSTRY, Z_LANDUSE,
-    Z_LANDUSE_YARD, Z_PARK, Z_PARKING, Z_PIPE, Z_PITCH, Z_POND, Z_RAIL, Z_ROAD, Z_ROAD_ISLANDS,
-    Z_ROAD_PAINT, Z_ROAD_VERGE, Z_SAND, Z_SIDEWALK, Z_TRAM, Z_TREE, Z_UNPAVED_ROAD, Z_WALL,
-    Z_WATERWAY, Z_WOOD,
+    Z_ALLEY, Z_BRIDGE, Z_BUILDING, Z_FENCE, Z_GRASS, Z_INDUSTRY, Z_LANDUSE, Z_LANDUSE_YARD, Z_PARK,
+    Z_PARKING, Z_PIPE, Z_PITCH, Z_POND, Z_RAIL, Z_ROAD, Z_ROAD_ISLANDS, Z_ROAD_PAINT, Z_ROAD_VERGE,
+    Z_SAND, Z_SIDEWALK, Z_TRAM, Z_TREE, Z_UNPAVED_ROAD, Z_WALL, Z_WATERWAY, Z_WOOD,
 };
 
 /// Сторона ячейки индекса, м.
@@ -56,7 +55,7 @@ const NODE_REACH: f32 = 4.0;
 /// `src` — откуда находка: признак данных или полоса, дорисованная дорогой
 /// (у генератов подпись несёт суффикс `(auto, …)`). `id` — OSM id
 /// элемента-источника, печать ведёт его хвостом `#…`; `None` — находка без
-/// своего элемента (земля, посаженное дерево, карта, собранная тестом).
+/// своего элемента (посаженное дерево, карта, собранная тестом).
 /// `feature` — адрес элемента в [`MapData`] для подсветки формы
 /// ([`feature_shape`]).
 #[derive(Debug, Clone, PartialEq)]
@@ -75,7 +74,7 @@ pub struct Hit {
 ///
 /// Полосы-генераты ссылаются на свою дорогу и сторону (сторона 0 — слева по
 /// ходу точек, как у [`RoadLine::sidewalk`]); дерево — рангом в наборе
-/// (`MapData::trees`). Земля подсветки не имеет.
+/// (`MapData::trees`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FeatureRef {
     Building(u32),
@@ -100,7 +99,6 @@ pub enum FeatureRef {
     Tree(u32),
     SidewalkBand { road: u32, side: u8 },
     VergeBand { road: u32, side: u8 },
-    Ground,
 }
 
 /// Откуда находка.
@@ -323,14 +321,8 @@ impl InspectIndex {
         if !self.built {
             return Vec::new();
         }
-        // земля — квад на всю карту: накрыт всегда
-        let mut hits = vec![Hit {
-            z: Z_GROUND,
-            label: "ground".to_string(),
-            src: HitSource::Osm,
-            id: None,
-            feature: FeatureRef::Ground,
-        }];
+        // пустого фона в ответе нет: земля под всем — не находка
+        let mut hits = Vec::new();
         let inside = |area: &PolyArea| {
             point_in_polygon(at, &area.outer)
                 && !area.holes.iter().any(|hole| point_in_polygon(at, hole))
@@ -550,11 +542,49 @@ impl InspectIndex {
 }
 
 /// Сдвиг мира относительно карты: `world = map + origin`. У игры ноль; витрина
-/// `roads` ставит сдвиг показанного примера (`slot - at`), чтобы панель
-/// инспектора и проба говорили в метрах карты — тем же языком, что
-/// `tools/osm_near`.
+/// `roads` каждый кадр ставит сдвиг **текущего** примера — того, чей viewport
+/// под курсором, а когда курсор между окнами, — показанного (`frame_sample`
+/// витрины): панель инспектора, слой подсветки и проба говорят в метрах карты
+/// одного и того же среза — тем же языком, что `tools/osm_near`.
 #[derive(Resource, Debug, Default, Clone, Copy)]
 pub struct InspectOrigin(pub Vec2);
+
+/// Окно просмотра курсора — viewport примера витрины метрами карты. Игра
+/// рассечённых окон не знает: вся карта и есть окно ([`InspectViewport::Whole`]).
+///
+/// Пишет витрина каждый кадр (по курсору и колонке примеров), читают панель
+/// инспектора (видимость, гейт попаданий) и слой подсветки (клип по окну —
+/// подсветка не выходит за пределы viewport, даже если сам объект больше).
+#[derive(Resource, Debug, Default, Clone, Copy, PartialEq)]
+pub enum InspectViewport {
+    /// Курсор внутри окна примера: окно метрами карты.
+    Inside(Rect),
+    /// Курсор между окнами (или над подписью): панели нет, подсветки нет.
+    #[default]
+    Outside,
+    /// Игра: окон нет, вся карта — одно окно.
+    Whole,
+}
+
+impl InspectViewport {
+    /// Точка карты внутри окна просмотра.
+    pub fn contains(&self, map_point: Vec2) -> bool {
+        match self {
+            Self::Inside(window) => window.contains(map_point),
+            Self::Whole => true,
+            Self::Outside => false,
+        }
+    }
+
+    /// Чем резать подсветку (`MeshBuilder::clip_to_rect`): окно просмотра,
+    /// метрами карты. `None` — не резать: у игры подсветке резать нечего.
+    pub fn clip(&self) -> Option<Rect> {
+        match self {
+            Self::Inside(window) => Some(*window),
+            Self::Whole | Self::Outside => None,
+        }
+    }
+}
 
 /// Проводка индекса приложению: сдвиг, сам индекс и пересборка по смене
 /// `MapData`. Игра берёт её из `MapPlugin`; витрина `roads`, у которой своего
@@ -564,6 +594,7 @@ pub struct InspectPlugin;
 impl Plugin for InspectPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<InspectOrigin>()
+            .init_resource::<InspectViewport>()
             .init_resource::<InspectIndex>()
             .add_systems(
                 Update,
@@ -982,7 +1013,6 @@ pub fn feature_shape(
             let (pos, radius) = map.trees.positions().get(rank as usize)?;
             Some(vec![disk(*pos, *radius)])
         }
-        FeatureRef::Ground => None,
     }
 }
 
@@ -1082,14 +1112,14 @@ mod tests {
         };
         let index = InspectIndex::rebuild(&map);
 
-        // внутри здания и внутри полотна дороги: здание сверху, земля снизу
+        // внутри здания и внутри полотна дороги: здание сверху
         let hits = query(&index, &map, 0.0, Vec2::new(100.0, 102.0));
         let labels: Vec<&str> = hits.iter().map(|hit| hit.label.as_str()).collect();
         assert_eq!(
             labels,
-            vec!["building", "road residential 8.0 m, sidewalks", "ground"]
+            vec!["building", "road residential 8.0 m, sidewalks"]
         );
-        assert!(hits[0].z > hits[1].z && hits[1].z > hits[2].z);
+        assert!(hits[0].z > hits[1].z);
 
         // внутри здания, но за краем полос тротуара: дороги в ответе нет
         let (_, sidewalk_edge, _) = band_edges(0.0);
@@ -1100,11 +1130,11 @@ mod tests {
             Vec2::new(100.0, 100.0 + sidewalk_edge + 0.1),
         );
         let labels: Vec<&str> = hits.iter().map(|hit| hit.label.as_str()).collect();
-        assert_eq!(labels, vec!["building", "ground"]);
+        assert_eq!(labels, vec!["building"]);
     }
 
     #[test]
-    fn a_point_outside_every_feature_is_ground() {
+    fn a_point_outside_every_feature_hits_nothing() {
         let map = MapData {
             buildings: vec![fixture::building(
                 fixture::square(Vec2::new(100.0, 100.0), 10.0),
@@ -1114,8 +1144,7 @@ mod tests {
         };
         let index = InspectIndex::rebuild(&map);
         let hits = query(&index, &map, 0.0, Vec2::new(200.0, 200.0));
-        assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].label, "ground");
+        assert!(hits.is_empty());
     }
 
     #[test]
@@ -1135,7 +1164,7 @@ mod tests {
         let hits = query(&index, &map, 0.0, Vec2::new(100.0, 100.0));
         let labels: Vec<&str> = hits.iter().map(|hit| hit.label.as_str()).collect();
         // сквозь дыру здания видна вода под ним
-        assert_eq!(labels, vec!["water", "ground"]);
+        assert_eq!(labels, vec!["water"]);
     }
 
     #[test]
@@ -1149,7 +1178,7 @@ mod tests {
         };
         let index = InspectIndex::rebuild(&map);
         let hits = query(&index, &map, 0.0, Vec2::new(30.0, 50.0));
-        assert_eq!(hits.len(), 2);
+        assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].label, "road residential 8.0 m, bridge, sidewalks");
         assert_eq!(hits[0].z, Z_BRIDGE);
     }
@@ -1169,8 +1198,7 @@ mod tests {
         };
         let index = InspectIndex::rebuild(&map);
         let hits = query(&index, &map, 0.0, Vec2::new(25.0, 0.0));
-        assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].label, "ground");
+        assert!(hits.is_empty());
     }
 
     #[test]
@@ -1203,16 +1231,7 @@ mod tests {
 
         // порог 0.7 выше плотности 0.5 — дерева в ответе нет
         let hits = query(&index, &map, 0.5, Vec2::new(120.0, 100.0));
-        assert_eq!(
-            hits,
-            vec![Hit {
-                z: Z_GROUND,
-                label: "ground".into(),
-                src: HitSource::Osm,
-                id: None,
-                feature: FeatureRef::Ground,
-            }]
-        );
+        assert!(hits.is_empty());
         // при плотности 0.8 видно уже всё
         let hits = query(&index, &map, 0.8, Vec2::new(120.0, 100.0));
         assert_eq!(hits[0].label, "tree");
@@ -1235,7 +1254,8 @@ mod tests {
         };
         let index = InspectIndex::rebuild(&map);
         let hits = query(&index, &map, 0.0, Vec2::new(100.0, 100.0));
-        assert_eq!(hits.len(), 2);
+        // две травы одного места — одна находка, земля фоном не считается
+        assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].label, "grass");
     }
 
@@ -1287,7 +1307,7 @@ mod tests {
             0.0,
             Vec2::new(500.0, 70.0 + sidewalk_edge + 0.1),
         );
-        assert!(hits.iter().all(|hit| hit.label == "ground"));
+        assert!(hits.is_empty());
     }
 
     #[test]
@@ -1309,7 +1329,7 @@ mod tests {
         let hits = query(&index, &map, 0.0, Vec2::new(500.0, 70.0 + offset));
         assert_eq!(hits[0].label, "sidewalk (auto, tagged)");
         let hits = query(&index, &map, 0.0, Vec2::new(500.0, 70.0 - offset));
-        assert!(hits.iter().all(|hit| hit.label == "ground"));
+        assert!(hits.is_empty());
     }
 
     #[test]
@@ -1365,7 +1385,7 @@ mod tests {
             &style,
             Vec2::new(500.0, 70.0 + sidewalk_edge - 0.1),
         );
-        assert!(hits.iter().all(|hit| hit.label == "ground"));
+        assert!(hits.is_empty());
     }
 
     #[test]
@@ -1385,7 +1405,7 @@ mod tests {
 
         // за внешним краем обочины ответа нет
         let hits = query(&index, &map, 0.0, Vec2::new(500.0, 70.0 + verge_edge + 0.1));
-        assert!(hits.iter().all(|hit| hit.label == "ground"));
+        assert!(hits.is_empty());
     }
 
     #[test]
@@ -1469,16 +1489,16 @@ mod tests {
             },
             Hit {
                 z: 0.0,
-                label: "ground".into(),
+                label: "tree".into(),
                 src: HitSource::Osm,
                 id: None,
-                feature: FeatureRef::Ground,
+                feature: FeatureRef::Tree(0),
             },
         ];
         let text = format_hits(&hits, 12);
         assert!(text.contains("road residential 8.0 m #179102449"));
         // у находки без элемента хвоста нет
-        assert!(text.ends_with("ground"));
+        assert!(text.ends_with("tree"));
     }
 
     #[test]
@@ -1551,7 +1571,7 @@ mod tests {
             feature(Vec2::new(500.0, 70.0 + verge_edge - 0.1)),
             Some(FeatureRef::VergeBand { road: 0, side: 0 })
         );
-        // полотно, здание, вода, дерево, земля — адреса своих элементов
+        // полотно, здание, вода, дерево — адреса своих элементов
         assert_eq!(
             feature(Vec2::new(500.0, 70.0 + half - 0.1)),
             Some(FeatureRef::Road(0))
@@ -1562,7 +1582,7 @@ mod tests {
         );
         assert_eq!(feature(Vec2::new(200.0, 200.0)), Some(FeatureRef::Water(0)));
         assert_eq!(feature(Vec2::new(300.0, 100.0)), Some(FeatureRef::Tree(0)));
-        assert_eq!(feature(Vec2::new(1000.0, 1000.0)), Some(FeatureRef::Ground));
+        assert_eq!(feature(Vec2::new(1000.0, 1000.0)), None);
     }
 
     #[test]
@@ -1668,7 +1688,7 @@ mod tests {
                 label: format!("x{i}"),
                 src: HitSource::Osm,
                 id: None,
-                feature: FeatureRef::Ground,
+                feature: FeatureRef::Tree(0),
             })
             .collect();
         assert_eq!(format_hits(&hits, 12).lines().count(), 5);

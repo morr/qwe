@@ -104,7 +104,12 @@ place to look at a road-network defect end to end:
 - **Game coordinates are real**: a sample is projected with its city's `GeoBounds`, and is
   moved into the column by shifting the spawned entities (`place_new`, by `Added<Mesh2d>`),
   which is why samples are built one per frame and why the game's spawn doors are called
-  as they are. The address is read from the sample itself (`name` of the highways through
+  as they are. **The inspector highlight layer is the exception**: it spawns after the
+  build batch, so `place_new` never sees it — it places itself at
+  `map + InspectOrigin` (`LayerMesh::offset`), is clipped to the sample's window
+  (`InspectViewport::clip`), and `place_new` skips it by
+  `InspectorHighlightMarker` so a build-frame coincidence cannot double the shift.
+  The address is read from the sample itself (`name` of the highways through
   the centre, the country off the boundary relation).
 - **The reference beside each window is a Yandex Maps screenshot of the same extent** —
   `data/<city>/<name>.yandex.png`, drawn to the right of the render at the same size
@@ -145,11 +150,13 @@ place to look at a road-network defect end to end:
   the game (`dev::brp_port`; `RemotePlugin` is added before `RemoteHttpPlugin`, or the
   HTTP server panics on the missing `BrpSender`), and the point inspector panel (top
   right, `UiInspectorPlugin::standalone()`) shows the same list under the cursor.
-  Coordinates are the **shown sample's own map metres**, not the shifted column's:
-  `InspectOrigin` carries the framed sample's column shift, and `sync_framed_map`
-  re-parses that sample (~40 ms) into the `MapData` resource, so the semantic index
-  answers for the sample on screen rather than the last one built — and
-  `tools/osm_near` reads the metres directly.
+  Coordinates are the **current sample's own map metres**, not the shifted column's:
+  every sample is its own viewport, `sync_hover_viewport` finds the one under the
+  cursor and writes `InspectOrigin` (its shift, else the framed sample's) and
+  `InspectViewport` (the window — the panel is visible only inside one), and
+  `sync_current_map` re-parses that sample (~40 ms per crossing) into the `MapData`
+  resource, so the semantic index answers for the sample under the cursor rather than
+  the last one built — and `tools/osm_near` reads the metres directly.
 - **Frames across revisions — `tools/gallery_batch <tasks-file>`**: lines of
   `rev|city|env|manifest` (env like `ROADS_CARS=full` or `-`), one gallery run per
   line — the review rounds' before/after collector ("было" on each fix commit's

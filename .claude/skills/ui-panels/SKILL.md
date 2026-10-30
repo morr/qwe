@@ -135,18 +135,40 @@ panel** with four tabs (`ui/shell.rs`).
   as it does from the drawing).
   The list is **one node per hit** (`sync_hits_rows` recreates them when
   `InspectorHitsState` changes; ≤ `INSPECTOR_MAX_LINES` rows + a `+N more` tail; empty —
-  a bare `-`). The top **non-ground** hit's row carries a translucent-yellow
+  a bare `-`; the list has no `ground` row — bare ground is not a feature). **Cmd cycles
+  the selection** through the hits under the cursor (`cycle_inspector_selection`, top →
+  next → … → top; any hit recompute resets it to the top) — the **selected** hit's row
+  carries a translucent-yellow
   `BackgroundColor` — the same element whose shape the **highlight checkbox** draws on
   the map (`InspectorHighlight`, a resource the checkbox's `ValueChange` observer writes
   and `sync_highlight_checked` mirrors back onto `Checked`, so a BRP write moves the
   widget too; the layer itself is `sync_inspector_highlight`, the
-  `respawn_overlay` pattern at `Z_INSPECTOR_HIGHLIGHT`, rebuilt only when the top
-  feature changes). **`InspectorHighlight` is the documented exception to "every UI
+  `respawn_overlay` pattern at `Z_INSPECTOR_HIGHLIGHT`, rebuilt only when the
+  selection changes or the gallery's `InspectOrigin`/`InspectViewport` move).
+  **The layer is placed at `map + InspectOrigin`** (`LayerMesh::offset`) — the
+  inverse of the panel's own world→map subtraction — **and clipped to the
+  viewport** (`InspectViewport::clip`): it never spills out of a sample window,
+  even when the object is bigger. In the roads gallery the one-shot batch shift
+  `place_new` therefore skips the layer by the public `InspectorHighlightMarker`
+  (every other mesh it catches must be shifted; this one carries its shift
+  already). **`InspectorHighlight` is the documented exception to "every UI
   resource is a `SettingsGroup`"**: a session-only debug aid, deliberately not
-  persisted — do not "fix" it by adding a group or a `track_pref`.
+  persisted — do not "fix" it by adding a group or a `track_pref`. The roads
+  gallery starts with it **on** (`standalone()` inserts the resource as `true`):
+  the checkbox sits at the screen edge, outside every sample viewport where the
+  panel shows, so there is no way to click it there.
   Two modes: `UiInspectorPlugin::game()` (a `GameUiRoot` — hidden until
   `PlayPhase::Live`, hidden on city switch) and `UiInspectorPlugin::standalone()` (the
-  roads gallery: visible from the first frame, states don't exist there). `tools/shot_coords`
+  roads gallery: states don't exist there, and the panel is visible only while the
+  cursor is inside a sample viewport — each sample is its own viewport with its own
+  map metres). The per-frame wiring is the gallery's (`examples/demos/roads`):
+  `sync_hover_viewport` finds the viewport under the cursor and writes
+  `InspectOrigin` (its shift, else the framed sample's — `brp probe` speaks the
+  same metres) and `InspectViewport` (`Inside` the window / `Outside` between
+  windows / `Whole` is the game's "no windows"); `sync_current_map` re-parses the
+  hovered sample's `MapData` (~40 ms per crossing) so the semantic index answers
+  for what is under the cursor; `sync_inspector_visibility` hides the panel
+  outside. `tools/shot_coords`
   reads the camera line; its geometry constants belong to **this** panel now.
 - **Speed button** (`ui/speed.rs`) — left of the telemetry, a `Speed <value>` row-button.
   Left click walks the ladder up and wraps to 1x from its top step (`MAX_SIM_SPEED`), right

@@ -28,7 +28,8 @@ use bevy::window::PrimaryWindow;
 use super::speed::{PANEL_WIDTH_PX, TelemetryPanel};
 use crate::camera::cursor_offset;
 use crate::map::inspect::{
-    FeatureRef, Hit, InspectIndex, InspectOrigin, feature_shape, hit_line, mesh_feature,
+    FeatureRef, Hit, InspectIndex, InspectOrigin, InspectViewport, feature_shape, hit_line,
+    mesh_feature,
 };
 use crate::map::osm::MapData;
 use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
@@ -61,19 +62,25 @@ struct InspectorHitRow;
 struct InspectorHighlightCheckbox;
 
 /// Слой подсветки элемента под курсором — помеченные сущности убирает
-/// [`sync_inspector_highlight`].
+/// [`sync_inspector_highlight`]. Публичен ради витрины `roads`: её пакетный
+/// сдвиг свежих мешей (`place_new`) пропускает слой по этому маркеру — слой
+/// стоит в мире сам, через `InspectOrigin` (`LayerMesh::offset`).
 #[derive(Component, Clone, Copy)]
-struct InspectorHighlightMarker;
+pub struct InspectorHighlightMarker;
 
 /// Находки под курсором и сама точка — то, что насчитало
 /// [`update_inspector_hits`]. Читатели — строки списка ([`sync_hits_rows`])
 /// и слой подсветки ([`sync_inspector_highlight`]): расчёт один, читателей
-/// двое. `point` в `INFINITY` — курсора нет; следующая точка всегда дальше
-/// шага, так что список пересчитается, как только курсор вернётся.
+/// двое. `point` в `INFINITY` — курсора нет или он вне окна просмотра
+/// витрины; следующая точка всегда дальше шага, так что список пересчитается,
+/// как только курсор вернётся. `selected` — какая находка выбрана (Cmd
+/// листает, [`cycle_inspector_selection`]): жёлтым в списке и на карте стоит
+/// она, не обязательно верхняя; пересчёт находок сбрасывает выбор на верхнюю.
 #[derive(Resource, Default)]
 struct InspectorHitsState {
     point: Vec2,
     hits: Vec<Hit>,
+    selected: usize,
 }
 
 /// Галочка «highlight» панели инспектора: подсвечивать элемент под курсором
@@ -124,8 +131,14 @@ impl Plugin for UiInspectorPlugin {
         let standalone = self.standalone;
         app.init_resource::<InspectorHighlight>()
             .init_resource::<InspectorHitsState>()
-            .register_type::<InspectorHighlight>()
-            .add_systems(
+            .register_type::<InspectorHighlight>();
+        if standalone {
+            // витрина рождается с включённой подсветкой: галочка стоит у края
+            // экрана — вне всяких viewport примеров, где панель спрятана, — и
+            // кликнуть её в витрине неоткуда
+            app.insert_resource(InspectorHighlight(true));
+        }
+        app.add_systems(
                 Startup,
                 move |commands: Commands, assets: Res<AssetServer>| {
                     render_inspector_ui(commands, assets, standalone);
@@ -137,7 +150,9 @@ impl Plugin for UiInspectorPlugin {
                     position_below_telemetry,
                     update_camera_text,
                     update_inspector_hits,
+                    sync_inspector_visibility,
                     sync_hits_rows,
+                    cycle_inspector_selection.run_if(cmd_just_pressed),
                     sync_highlight_checked,
                     sync_inspector_highlight,
                 ),
@@ -293,6 +308,7 @@ struct InspectorInputs<'w> {
     map: Option<Res<'w, MapData>>,
     index: Res<'w, InspectIndex>,
     origin: Res<'w, InspectOrigin>,
+    viewport: Res<'w, InspectViewport>,
     trees: Res<'w, TreeStyle>,
     roads: Res<'w, RoadStyle>,
 }
@@ -300,8 +316,10 @@ struct InspectorInputs<'w> {
 /// Список находок под курсором — из семантического индекса
 /// (`map/inspect.rs::InspectIndex`), сверху самый верхний слой. Пересчёт —
 /// при сдвиге точки больше [`INSPECTOR_QUERY_STEP`], при пересборке индекса
-/// (новая карта, новый пример витрины) и при сдвиге витрины. Результат
-/// пишется в `InspectorHitsState`, откуда его берут строки списка
+/// (новая карта, новый пример витрины), при сдвиге витрины и при смене окна
+/// просмотра. Курсор вне окна просмотра (витрина, [`InspectViewport::Outside`])
+/// находок не даёт: панель в это время спрятана ([`sync_inspector_visibility`]).
+/// Результат пишется в `InspectorHitsState`, откуда его берут строки списка
 /// ([`sync_hits_rows`]) и слой подсветки ([`sync_inspector_highlight`]).
 fn update_inspector_hits(
     mut state: ResMut<InspectorHitsState>,
@@ -313,6 +331,7 @@ fn update_inspector_hits(
         map,
         index,
         origin,
+        viewport,
         trees,
         roads,
     } = inputs;
@@ -324,19 +343,28 @@ fn update_inspector_hits(
         // шага (INFINITY), так что список пересчитается на её возврат
         state.point = Vec2::INFINITY;
         state.hits.clear();
+        state.selected = 0;
         return;
     };
     let (transform, controller) = camera.into_inner();
     let point = transform.translation.truncate()
         + cursor_offset(&window, cursor) * controller.zoom_factor
         - origin.0;
+    if !viewport.contains(point) {
+        state.point = Vec2::INFINITY;
+        state.hits.clear();
+        state.selected = 0;
+        return;
+    }
     // ручка Sidewalks тоже вход: её переворот меняет список без движения
     // курсора и без пересборки индекса
-    let inputs_fresh = index.is_changed() || origin.is_changed() || roads.is_changed();
+    let inputs_fresh =
+        index.is_changed() || origin.is_changed() || viewport.is_changed() || roads.is_changed();
     if !inputs_fresh && state.point.distance(point) < INSPECTOR_QUERY_STEP {
         return;
     }
     state.point = point;
+    state.selected = 0;
     state.hits = if index.is_built() {
         index.hits(map, trees.density, &roads, point)
     } else {
@@ -344,11 +372,49 @@ fn update_inspector_hits(
     };
 }
 
+/// Cmd нажат — листать выбор находок. Обе клавиши Command.
+fn cmd_just_pressed(keys: Res<ButtonInput<KeyCode>>) -> bool {
+    keys.just_pressed(KeyCode::SuperLeft) || keys.just_pressed(KeyCode::SuperRight)
+}
+
+/// Cmd листает выбор по находкам под курсором: верхняя → следующая → … →
+/// снова верхняя. Выбрана одна находка и для строки списка, и для слоя
+/// подсветки ([`sync_inspector_highlight`]) — жёлтым стоит то, что цикл
+/// выбрал, а не обязательно верхнее. Пересчёт находок (курсор ушёл дальше
+/// шага, список сменился) сбрасывает выбор, и цикл ведёт по новому списку.
+fn cycle_inspector_selection(mut state: ResMut<InspectorHitsState>) {
+    if state.hits.is_empty() {
+        return;
+    }
+    state.selected = (state.selected + 1) % state.hits.len();
+}
+
+/// Панель видна, только пока курсор внутри окна просмотра — гейт уже посчитан
+/// в `InspectorHitsState::point` (`INFINITY` — вне). Игра окон не знает
+/// ([`InspectViewport::Whole`]) — система молчит, панелью ведут `GameUiRoot`
+/// и `show_game_ui`.
+fn sync_inspector_visibility(
+    viewport: Res<InspectViewport>,
+    state: Res<InspectorHitsState>,
+    mut root: Single<&mut Visibility, With<InspectorRoot>>,
+) {
+    if matches!(*viewport, InspectViewport::Whole) {
+        return;
+    }
+    let shown = state.point.is_finite();
+    root.set_if_neq(if shown {
+        Visibility::Inherited
+    } else {
+        Visibility::Hidden
+    });
+}
+
 /// Строки находок — построчно, до [`INSPECTOR_MAX_LINES`] узлов и хвост
-/// `+N more`; верхняя не-ground строка несёт жёлтый фон — тот элемент, чью
-/// форму рисует слой подсветки. Пусто (курсора нет, карта не разобрана) —
-/// прочерк. Строки пересоздаются на каждую смену `InspectorHitsState`:
-/// их ≤13, спавн узлов дешевле сравнения содержимого.
+/// `+N more`; выбранная строка (Cmd листает, [`cycle_inspector_selection`])
+/// несёт жёлтый фон — тот элемент, чью форму рисует слой подсветки. Пусто
+/// (курсора нет, карта не разобрана) — прочерк. Строки пересоздаются на
+/// каждую смену `InspectorHitsState`: их ≤13, спавн узлов дешевле сравнения
+/// содержимого.
 fn sync_hits_rows(
     mut commands: Commands,
     state: Res<InspectorHitsState>,
@@ -366,15 +432,8 @@ fn sync_hits_rows(
         spawn_hit_row(&mut commands, list, "-".to_string(), false);
         return;
     }
-    // та же находка, чью форму показывает слой подсветки, — построчный список
-    // выделяет её строку
-    let top = state
-        .hits
-        .iter()
-        .map(|hit| hit.feature)
-        .find(|feature| *feature != FeatureRef::Ground);
-    for hit in state.hits.iter().take(INSPECTOR_MAX_LINES) {
-        let highlighted = Some(hit.feature) == top;
+    for (ordinal, hit) in state.hits.iter().enumerate().take(INSPECTOR_MAX_LINES) {
+        let highlighted = ordinal == state.selected;
         spawn_hit_row(&mut commands, list, hit_line(hit), highlighted);
     }
     if state.hits.len() > INSPECTOR_MAX_LINES {
@@ -437,6 +496,8 @@ struct HighlightLayer<'w, 's> {
     commands: Commands<'w, 's>,
     meshes: ResMut<'w, Assets<Mesh>>,
     materials: LayerMaterials<'w>,
+    origin: Res<'w, InspectOrigin>,
+    viewport: Res<'w, InspectViewport>,
     overlay: Query<'w, 's, Entity, With<InspectorHighlightMarker>>,
 }
 
@@ -449,8 +510,14 @@ struct HighlightLayer<'w, 's> {
 /// сущности.
 ///
 /// Находки приходят готовые из `InspectorHitsState` — расчёт один на панель.
-/// Пересборка — только при смене верхнего элемента (сравнение с прошлым): пока
-/// курсор ходит по одному зданию, слой не трогается.
+/// Рисуется **выбранная** находка (Cmd листает, [`cycle_inspector_selection`]),
+/// не обязательно верхняя. Пересборка — при смене выбора: пока курсор ходит
+/// по одному зданию, слой не трогается. Смена сдвига или окна просмотра
+/// (`InspectOrigin`, `InspectViewport` — витрина показала другой пример или
+/// увела курсор) — тоже пересборка: слой стоит в мире на «карта + сдвиг», и
+/// на новом сдвиге старый стоит не там; в окно другого примера слой не должен
+/// вылезти и потому режется им ([`InspectViewport::clip`]), даже если сам
+/// объект больше окна.
 fn sync_inspector_highlight(
     enabled: Res<InspectorHighlight>,
     state: Res<InspectorHitsState>,
@@ -459,33 +526,31 @@ fn sync_inspector_highlight(
     layer: HighlightLayer,
     mut drawn: Local<Option<FeatureRef>>,
 ) {
-    // типовой кадр: галочка выключена и слоя нет — работы ноль
-    if !enabled.0 && drawn.is_none() {
-        return;
-    }
-    let top = if enabled.0 {
-        state
-            .hits
-            .iter()
-            .map(|hit| hit.feature)
-            .find(|feature| *feature != FeatureRef::Ground)
-    } else {
-        None
-    };
-    if *drawn == top {
-        return;
-    }
     let HighlightLayer {
         mut commands,
         mut meshes,
         materials,
+        origin,
+        viewport,
         overlay,
     } = layer;
+    // типовой кадр: галочка выключена и слоя нет — работы ноль
+    if !enabled.0 && drawn.is_none() {
+        return;
+    }
+    let selected = if enabled.0 {
+        state.hits.get(state.selected).map(|hit| hit.feature)
+    } else {
+        None
+    };
+    if *drawn == selected && !origin.is_changed() && !viewport.is_changed() {
+        return;
+    }
     for entity in overlay.iter() {
         commands.entity(entity).despawn();
     }
-    *drawn = top;
-    let Some(feature) = top else {
+    *drawn = selected;
+    let Some(feature) = selected else {
         return;
     };
     let Some(map) = map else {
@@ -494,7 +559,10 @@ fn sync_inspector_highlight(
     let Some(shapes) = feature_shape(&map, &roads, feature) else {
         return;
     };
-    let builder = mesh_feature(&shapes, HIGHLIGHT_COLOR.to_linear());
+    let mut builder = mesh_feature(&shapes, HIGHLIGHT_COLOR.to_linear());
+    if let Some(window) = viewport.clip() {
+        builder.clip_to_rect(window.min, window.max);
+    }
     if builder.is_empty() {
         return;
     }
@@ -507,7 +575,8 @@ fn sync_inspector_highlight(
             Z_INSPECTOR_HIGHLIGHT,
             "inspector_highlight",
             MaterialSpec::Blend,
-        )],
+        )
+        .offset(origin.0)],
         InspectorHighlightMarker,
     );
 }

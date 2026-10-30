@@ -1210,9 +1210,20 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   `tools/shot_coords`) and the live list of what the map draws under the cursor, from the
   **semantic index** (`map/inspect.rs::InspectIndex` — a `Grid` over the `MapData`
   features, built once per load, rebuilt when `MapData` changes; a hit carries the feature
-  label and the z of the layer it draws in, top layer first). `InspectOrigin` — the
-  world→map shift: zero in the game, the shown sample's shift in the roads gallery, so the
-  panel and the probe speak map metres everywhere (`tools/osm_near` reads them directly).
+  label and the z of the layer it draws in, top layer first; bare ground is **not** a hit —
+  an empty list reads `-`). **Cmd cycles the selection** through the hits under the cursor
+  (1 → 2 → 3 → 1; a recompute resets it to the top) — the selected hit's row and, with the
+  highlight checkbox on, the map layer both follow it. `InspectOrigin` — the
+  world→map shift: zero in the game, in the roads gallery the shift of the **current**
+  sample — the one whose viewport the cursor is in, else the framed one — so the panel,
+  the highlight and `brp probe` all speak the current sample's map metres (`tools/osm_near`
+  reads them directly). **`InspectViewport`** (`map/inspect.rs`) is the cursor's viewport,
+  written every frame beside the origin: `Inside` (the window in map metres — the panel is
+  visible only while the cursor is inside it), `Outside` (between windows), `Whole` (the
+  game: the whole map is one window). The **highlight layer** goes the opposite way of the
+  panel — drawn at `map + InspectOrigin` (`LayerMesh::offset`) — and is clipped to the
+  viewport (`InspectViewport::clip`): it never spills out of a sample window, even when
+  the object is bigger.
 - **Knob** (`ui/knob.rs`) — a panel row **bound to one field of one resource**, in two
   shapes: `spawn_knob` (slider) and `spawn_cycle_row` (button that cycles a value).
   `app.add_knobs::<R>()` registers the drag observer and the label/thumb sync **once per

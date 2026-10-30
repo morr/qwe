@@ -60,8 +60,9 @@ use bevy::ui_widgets::Activate;
 pub use self::brp::{AgentBadgePlugin, AgentBrpSession, BelowBrpBadge};
 pub use self::debug::{DebugConiferNoise, DebugDoors, DebugGrid, DebugNavmesh};
 // инспектор точки — игре и витрине `roads`: координаты под курсором и список
-// признаков карты там нужны одни и те же
-pub use self::inspector::UiInspectorPlugin;
+// признаков карты там нужны одни и те же; маркер слоя подсветки витрине нужен
+// как исключение из её пакетного сдвига мешей
+pub use self::inspector::{InspectorHighlightMarker, UiInspectorPlugin};
 // `pub` по той же причине, что и `slider`: демо расталкивания зовёт киты
 // панелей и потому обязано поднять их виджеты само
 pub use self::theme::PanelWidgetsPlugin;
