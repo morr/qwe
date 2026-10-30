@@ -387,10 +387,14 @@ extraction; re-attempting it means going through the curb pin tests
   callers, not the number of tags**: without the door `spawn.rs` would have to know the
   layer's tag and the "spawn, then `info!`" order. A module with one caller (the surfaces)
   needs none.
-  - **`LayerMesh`** — `{ builder, z, name, material: MaterialSpec }`, **one type for
+  - **`LayerMesh`** — `{ builder, z, offset, name, material: MaterialSpec }`, **one type for
     every layer of the map**, not a type per module. That is the point: a module read as
     `-> Vec<LayerMesh>` is read the same way as any neighbour. `name` is the entity's
-    `Name` in the live world, i.e. what a BRP query looks it up by; `spawn_layer` also
+    `Name` in the live world, i.e. what a BRP query looks it up by. `offset` is the
+    layer's xy shift in the world — world = map + shift: map layers stand in map
+    coordinates and carry `Vec2::ZERO`, and whoever draws a map-space layer in a
+    shifted world sets it (`LayerMesh::offset`, the roads gallery's
+    `map/inspect.rs::InspectOrigin`). `spawn_layer` also
     puts the **`MapLayer`** marker on every layer entity — the selection
     `brp layers` / `brp hide` / `brp probe` work from, so a layer is found by name
     without dumping the world's `Mesh2d`s (`.claude/live-app-project.md`, "Which layer
