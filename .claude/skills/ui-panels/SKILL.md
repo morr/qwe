@@ -132,7 +132,10 @@ panel** with four tabs (`ui/shell.rs`).
   that came out of the extract ends with its OSM id, `#179102449` (the tags are one
   `tools/osm_near --id <id>` away). The two knobs the list follows: `TreeStyle::density`
   (the tree prefix) and `RoadStyle::sidewalks` (turning it off removes both auto bands,
-  as it does from the drawing).
+  as it does from the drawing). **A cursor over any UI panel stops being a map point**
+  (`update_inspector_hits` and `update_camera_text` gate on
+  `camera.rs::pointer_over_ui`, the same `HoverMap` test as the camera drag): the
+  camera line reads `-/-`, the hits clear, the highlight despawns.
   The list is **one node per hit** (`sync_hits_rows` recreates them when
   `InspectorHitsState` changes; ≤ `INSPECTOR_MAX_LINES` rows + a `+N more` tail; empty —
   a bare `-`; the list has no `ground` row — bare ground is not a feature). **Cmd cycles
@@ -142,7 +145,8 @@ panel** with four tabs (`ui/shell.rs`).
   `BackgroundColor` — the same element whose shape the **highlight checkbox** draws on
   the map (`InspectorHighlight`, a resource the checkbox's `ValueChange` observer writes
   and `sync_highlight_checked` mirrors back onto `Checked`, so a BRP write moves the
-  widget too; the layer itself is `sync_inspector_highlight`, the
+  widget too; **on from launch** — `Default` is `true`, in the game as in the gallery;
+  the layer itself is `sync_inspector_highlight`, the
   `respawn_overlay` pattern at `Z_INSPECTOR_HIGHLIGHT`, rebuilt only when the
   selection changes or the gallery's `InspectOrigin`/`InspectViewport` move).
   **The layer is placed at `map + InspectOrigin`** (`LayerMesh::offset`) — the

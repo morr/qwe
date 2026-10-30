@@ -546,7 +546,7 @@ impl InspectIndex {
 /// под курсором, а когда курсор между окнами, — показанного (`frame_sample`
 /// витрины): панель инспектора, слой подсветки и проба говорят в метрах карты
 /// одного и того же среза — тем же языком, что `tools/osm_near`.
-#[derive(Resource, Debug, Default, Clone, Copy)]
+#[derive(Resource, Debug, Default, Clone, Copy, PartialEq)]
 pub struct InspectOrigin(pub Vec2);
 
 /// Окно просмотра курсора — viewport примера витрины метрами карты. Игра
@@ -560,9 +560,11 @@ pub enum InspectViewport {
     /// Курсор внутри окна примера: окно метрами карты.
     Inside(Rect),
     /// Курсор между окнами (или над подписью): панели нет, подсветки нет.
-    #[default]
     Outside,
-    /// Игра: окон нет, вся карта — одно окно.
+    /// Игра: окон нет, вся карта — одно окно. Дефолт: игра ресурс не пишет
+    /// никогда, и «снаружи» по умолчанию гасил бы ей попадания и панель, а
+    /// «внутри» требовал бы окна, которого у игры нет.
+    #[default]
     Whole,
 }
 
@@ -1695,5 +1697,13 @@ mod tests {
         let capped = format_hits(&hits, 3);
         assert_eq!(capped.lines().count(), 4);
         assert!(capped.ends_with("+2 more"));
+    }
+
+    /// Дефолт окна просмотра — игра (`Whole`), не витрина: игра ресурс не
+    /// пишет, и «снаружи» по умолчанию прятал бы ей панель инспектора и гасил
+    /// попадания с первого кадра.
+    #[test]
+    fn the_default_viewport_is_the_whole_map() {
+        assert_eq!(InspectViewport::default(), InspectViewport::Whole);
     }
 }

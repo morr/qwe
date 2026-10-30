@@ -152,8 +152,10 @@ place to look at a road-network defect end to end:
   right, `UiInspectorPlugin::standalone()`) shows the same list under the cursor.
   Coordinates are the **current sample's own map metres**, not the shifted column's:
   every sample is its own viewport, `sync_hover_viewport` finds the one under the
-  cursor and writes `InspectOrigin` (its shift, else the framed sample's) and
-  `InspectViewport` (the window — the panel is visible only inside one), and
+  cursor (`pointer_over_ui` first — a cursor over a panel is not a map point, it
+  counts as between windows) and writes `InspectOrigin` (its shift, else the framed
+  sample's) and `InspectViewport` (the window — the panel is visible only inside
+  one), and
   `sync_current_map` re-parses that sample (~40 ms per crossing) into the `MapData`
   resource, so the semantic index answers for the sample under the cursor rather than
   the last one built — and `tools/osm_near` reads the metres directly.

@@ -1205,7 +1205,8 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   collapsed flag are a persisted settings group (`UiShellState`). **Section order inside a
   tab is `SectionSlot`'s declaration order** (`sort_sections`), because the sections are
   spawned by one system per section plugin.
-- **Point inspector** (`ui/inspector.rs`) — the HUD panel under the telemetry: the camera
+- **Point inspector** (`ui/inspector.rs`) — the HUD panel under the telemetry (**cursor
+  ui** in the author's requests is this panel plus its highlight layer): the camera
   line `zoom/x/y cx/cy` (moved here from the telemetry, read from screenshots by
   `tools/shot_coords`) and the live list of what the map draws under the cursor, from the
   **semantic index** (`map/inspect.rs::InspectIndex` — a `Grid` over the `MapData`
@@ -1213,17 +1214,21 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   label and the z of the layer it draws in, top layer first; bare ground is **not** a hit —
   an empty list reads `-`). **Cmd cycles the selection** through the hits under the cursor
   (1 → 2 → 3 → 1; a recompute resets it to the top) — the selected hit's row and, with the
-  highlight checkbox on, the map layer both follow it. `InspectOrigin` — the
+  highlight checkbox on (it is **on from launch**, game and gallery alike — session-only,
+  `InspectorHighlight`), the map layer both follow it. `InspectOrigin` — the
   world→map shift: zero in the game, in the roads gallery the shift of the **current**
   sample — the one whose viewport the cursor is in, else the framed one — so the panel,
   the highlight and `brp probe` all speak the current sample's map metres (`tools/osm_near`
-  reads them directly). **`InspectViewport`** (`map/inspect.rs`) is the cursor's viewport,
+  reads them directly). **`InspectViewport`** (`map/inspect.rs`, default `Whole`) is the cursor's viewport,
   written every frame beside the origin: `Inside` (the window in map metres — the panel is
   visible only while the cursor is inside it), `Outside` (between windows), `Whole` (the
   game: the whole map is one window). The **highlight layer** goes the opposite way of the
   panel — drawn at `map + InspectOrigin` (`LayerMesh::offset`) — and is clipped to the
   viewport (`InspectViewport::clip`): it never spills out of a sample window, even when
-  the object is bigger.
+  the object is bigger. **A cursor over any UI panel stops being a map point**: the
+  camera line reads `-/-`, the hits clear and the highlight despawns — the same
+  `pointer_over_ui` gate the camera drag uses, because the world under a panel is not
+  what the user is aiming at.
 - **Knob** (`ui/knob.rs`) — a panel row **bound to one field of one resource**, in two
   shapes: `spawn_knob` (slider) and `spawn_cycle_row` (button that cycles a value).
   `app.add_knobs::<R>()` registers the drag observer and the label/thumb sync **once per

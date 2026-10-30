@@ -142,10 +142,11 @@ wins; a black png means exactly that, not a broken renderer.
 
 ### Where a screenshot was taken — read the HUD, not the live camera
 
-The **point inspector panel** (top-right, directly under the telemetry) begins with the
+The **point inspector panel** (top-right, directly under the telemetry; the author's
+requests call it **cursor ui**) begins with the
 **camera line** `0.110/2374/2703 2510/2880`: `zoom/x/y` of the camera — metres per logical
 pixel, then the frame centre in map metres — and, after a space, the map point under the
-cursor (`-/-` when the cursor is outside the window). It exists so a screenshot carries its
+cursor (`-/-` when the cursor is outside the window **or over any UI panel**). It exists so a screenshot carries its
 own position (`ui/inspector.rs::update_camera_text`; the line moved here from the telemetry,
 which keeps only clock and pathfinding).
 
@@ -309,7 +310,7 @@ reloads the world), `RoadPaintStyle` (uniforms — nothing rebuilds), `CarStyle`
 `TramStyle`, `IndustryStyle`, `SurfaceStyle`,
 `DrawMovePaths`, `DebugGrid`, `DebugNavmesh`, `DebugDoors`, `DebugRoadNetwork`, `PolymeshDebug`,
 `NavtileBase`, `CameraPositionMode`, `SavedCameraView`, `InspectorHighlight` (the point
-inspector's highlight checkbox, session-only — no settings group),
+inspector's highlight checkbox — on from launch, session-only — no settings group),
 `WorldSeed`, `Determinism`, `SimTick`, `RestartPending`, `LayerProbe` (the last layer-probe
 report, written by `ProbeLayersEvent` — both `dev.rs`, driven by `brp probe`); the map's
 layer entities are found by the `MapLayer` marker (`brp layers`, also `dev.rs`'s probe).

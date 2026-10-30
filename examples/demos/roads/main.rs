@@ -99,14 +99,16 @@ use bevy::camera_controller::pan_camera::{PanCamera, PanCameraPlugin};
 use bevy::feathers::constants::fonts;
 use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
 use bevy::input::common_conditions::input_just_pressed;
+use bevy::picking::hover::HoverMap;
 use bevy::prelude::*;
 use bevy::remote::http::RemoteHttpPlugin;
 use bevy::sprite::Anchor;
 use bevy::sprite_render::Material2dPlugin;
 use bevy::text::TextBounds;
 use bevy::window::PrimaryWindow;
-use qwe::camera::cursor_offset;
-use qwe::camera::{drag_pan, hovering_ui, key_pan, pan_controller, zoom_to_cursor};
+use qwe::camera::{
+    cursor_offset, drag_pan, hovering_ui, key_pan, pan_controller, pointer_over_ui, zoom_to_cursor,
+};
 use qwe::city::City;
 use qwe::dev::DevPlugin;
 use qwe::map::buildings::material::{RoofMaterial, init_roof_material};
@@ -993,7 +995,8 @@ fn build_next(
 /// Viewport под курсором — каждый пример своё окно (`slot ± half`), и панель
 /// инспектора с подсветкой живут в координатах того, чьё окно под курсором.
 /// Курсор внутри окна: [`InspectOrigin`] получает сдвиг **его** карты,
-/// [`InspectViewport`] — само окно; курсор между окнами: панель спрятана
+/// [`InspectViewport`] — само окно; курсор между окнами или над панелью
+/// (`camera.rs::pointer_over_ui` — мир под UI не ищется): панель спрятана
 /// ([`InspectViewport::Outside`]), а сдвиг остаётся у показанного примера —
 /// проба (`brp probe`) и без курсора говорит метрами того, что в кадре.
 /// Пишет и `Gallery::hovered` — по нему [`sync_current_map`] держит `MapData`
@@ -1003,13 +1006,16 @@ fn sync_hover_viewport(
     mut gallery: ResMut<Gallery>,
     window: Single<&Window, With<PrimaryWindow>>,
     camera: Single<(&Transform, &PanCamera), With<Camera2d>>,
-    mut commands: Commands,
-    origin: Res<InspectOrigin>,
-    viewport: Res<InspectViewport>,
+    hover_map: Res<HoverMap>,
+    ui_nodes: Query<(), With<Node>>,
+    mut origin: ResMut<InspectOrigin>,
+    mut viewport: ResMut<InspectViewport>,
 ) {
-    let hovered = window
-        .cursor_position()
-        .map(|cursor| {
+    let over_ui = pointer_over_ui(&hover_map, &ui_nodes);
+    let hovered = if over_ui {
+        None
+    } else {
+        window.cursor_position().and_then(|cursor| {
             let (transform, controller) = camera.into_inner();
             let world = transform.translation.truncate()
                 + cursor_offset(&window, cursor) * controller.zoom_factor;
@@ -1021,16 +1027,14 @@ fn sync_hover_viewport(
                     Rect::from_corners(*slot - sample.half, *slot + sample.half).contains(world)
                 })
         })
-        .unwrap_or(None);
+    };
     gallery.hovered = hovered;
 
     let current = hovered.or(gallery.framed);
     let shift = current.map_or(Vec2::ZERO, |index| {
         gallery.slots[index] - gallery.samples[index].at
     });
-    if origin.0 != shift {
-        commands.insert_resource(InspectOrigin(shift));
-    }
+    origin.set_if_neq(InspectOrigin(shift));
     let next = hovered.map_or(InspectViewport::Outside, |index| {
         let sample = &gallery.samples[index];
         InspectViewport::Inside(Rect::from_corners(
@@ -1038,9 +1042,7 @@ fn sync_hover_viewport(
             sample.at + sample.half,
         ))
     });
-    if *viewport != next {
-        commands.insert_resource(next);
-    }
+    viewport.set_if_neq(next);
 }
 
 /// Карта **текущего** примера — ресурсом: по ней живёт семантический индекс

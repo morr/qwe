@@ -19,6 +19,7 @@ use bevy::feathers::controls::FeathersCheckbox;
 use bevy::feathers::font_styles::InheritableFont;
 use bevy::feathers::theme::{ThemeTextColor, ThemedText};
 use bevy::feathers::tokens;
+use bevy::picking::hover::HoverMap;
 use bevy::prelude::*;
 use bevy::text::FontWeight;
 use bevy::ui::Checked;
@@ -26,7 +27,7 @@ use bevy::ui_widgets::ValueChange;
 use bevy::window::PrimaryWindow;
 
 use super::speed::{PANEL_WIDTH_PX, TelemetryPanel};
-use crate::camera::cursor_offset;
+use crate::camera::{cursor_offset, pointer_over_ui};
 use crate::map::inspect::{
     FeatureRef, Hit, InspectIndex, InspectOrigin, InspectViewport, feature_shape, hit_line,
     mesh_feature,
@@ -84,16 +85,25 @@ struct InspectorHitsState {
 }
 
 /// Галочка «highlight» панели инспектора: подсвечивать элемент под курсором
-/// на карте прозрачно-жёлтым.
+/// на карте прозрачно-жёлтым. Включена с запуска — и в игре, и в витрине:
+/// галочка стоит у края экрана, вне всяких viewport примеров витрины, где
+/// панель спрятана, — кликнуть её в витрине неоткуда, а в игре панель без
+/// подсветки теряет половину смысла. Выключается галочкой на присест.
 ///
 /// Сессионная, и это осознанное исключение из «каждый UI-ресурс —
 /// `SettingsGroup`»: подсветка — инструмент отладки на один присест, а не
 /// предпочтение игрока, — в `settings.toml` ей места нет, поэтому ни группы,
 /// ни `track_pref`. `Reflect` нужен, чтобы верификация ставила её по BRP до
 /// появления UI.
-#[derive(Resource, Debug, Default, Reflect)]
+#[derive(Resource, Debug, Reflect)]
 #[reflect(Resource, Default)]
 pub struct InspectorHighlight(pub bool);
+
+impl Default for InspectorHighlight {
+    fn default() -> Self {
+        Self(true)
+    }
+}
 
 /// Прозрачно-жёлтый подсветки — элемент читается сквозь слой.
 const HIGHLIGHT_COLOR: Color = Color::srgba(1.0, 1.0, 0.0, 0.3);
@@ -132,31 +142,25 @@ impl Plugin for UiInspectorPlugin {
         app.init_resource::<InspectorHighlight>()
             .init_resource::<InspectorHitsState>()
             .register_type::<InspectorHighlight>();
-        if standalone {
-            // витрина рождается с включённой подсветкой: галочка стоит у края
-            // экрана — вне всяких viewport примеров, где панель спрятана, — и
-            // кликнуть её в витрине неоткуда
-            app.insert_resource(InspectorHighlight(true));
-        }
         app.add_systems(
-                Startup,
-                move |commands: Commands, assets: Res<AssetServer>| {
-                    render_inspector_ui(commands, assets, standalone);
-                },
-            )
-            .add_systems(
-                Update,
-                (
-                    position_below_telemetry,
-                    update_camera_text,
-                    update_inspector_hits,
-                    sync_inspector_visibility,
-                    sync_hits_rows,
-                    cycle_inspector_selection.run_if(cmd_just_pressed),
-                    sync_highlight_checked,
-                    sync_inspector_highlight,
-                ),
-            );
+            Startup,
+            move |commands: Commands, assets: Res<AssetServer>| {
+                render_inspector_ui(commands, assets, standalone);
+            },
+        )
+        .add_systems(
+            Update,
+            (
+                position_below_telemetry,
+                update_camera_text,
+                update_inspector_hits,
+                sync_inspector_visibility,
+                sync_hits_rows,
+                cycle_inspector_selection.run_if(cmd_just_pressed),
+                sync_highlight_checked,
+                sync_inspector_highlight,
+            ),
+        );
     }
 }
 
@@ -272,11 +276,15 @@ fn position_below_telemetry(
 /// и на близком зуме (0.05) второй знак давал ошибку в 10 %.
 ///
 /// Курсор вне окна координат не даёт — вместо чисел прочерк, чтобы строка не
-/// теряла хвост и не выглядела обрезанной.
+/// теряла хвост и не выглядела обрезанной. Над UI-панелью — тоже прочерк:
+/// точка под панелью миру не адресуется, и читать её координаты — то же, что
+/// панорамировать карту сквозь панель.
 fn update_camera_text(
     text: Single<&mut Text, With<InspectorCameraText>>,
     camera: Single<(&Transform, &PanCamera), With<Camera2d>>,
     window: Single<&Window, With<PrimaryWindow>>,
+    hover_map: Res<HoverMap>,
+    ui_nodes: Query<(), With<Node>>,
     origin: Res<InspectOrigin>,
 ) {
     let (transform, controller) = camera.into_inner();
@@ -284,11 +292,11 @@ fn update_camera_text(
     let zoom = controller.zoom_factor;
 
     let cursor = match window.cursor_position() {
-        Some(cursor) => {
+        Some(cursor) if !pointer_over_ui(&hover_map, &ui_nodes) => {
             let world = world_center + cursor_offset(&window, cursor) * zoom - origin.0;
             format!("{:.0}/{:.0}", world.x, world.y)
         }
-        None => "-/-".to_string(),
+        _ => "-/-".to_string(),
     };
 
     text.into_inner().set_if_neq(Text(format!(
@@ -318,13 +326,17 @@ struct InspectorInputs<'w> {
 /// при сдвиге точки больше [`INSPECTOR_QUERY_STEP`], при пересборке индекса
 /// (новая карта, новый пример витрины), при сдвиге витрины и при смене окна
 /// просмотра. Курсор вне окна просмотра (витрина, [`InspectViewport::Outside`])
-/// находок не даёт: панель в это время спрятана ([`sync_inspector_visibility`]).
-/// Результат пишется в `InspectorHitsState`, откуда его берут строки списка
-/// ([`sync_hits_rows`]) и слой подсветки ([`sync_inspector_highlight`]).
+/// или над UI-панелью находок не даёт — мир под панелью не ищется, как и не
+/// панорамируется сквозь неё (`camera.rs::pointer_over_ui`); в витрине панель
+/// в это время спрятана ([`sync_inspector_visibility`]). Результат пишется в
+/// `InspectorHitsState`, откуда его берут строки списка ([`sync_hits_rows`]) и
+/// слой подсветки ([`sync_inspector_highlight`]).
 fn update_inspector_hits(
     mut state: ResMut<InspectorHitsState>,
     camera: Single<(&Transform, &PanCamera), With<Camera2d>>,
     window: Single<&Window, With<PrimaryWindow>>,
+    hover_map: Res<HoverMap>,
+    ui_nodes: Query<(), With<Node>>,
     inputs: InspectorInputs,
 ) {
     let InspectorInputs {
@@ -338,9 +350,11 @@ fn update_inspector_hits(
     let Some(map) = map.as_deref() else {
         return;
     };
-    let Some(cursor) = window.cursor_position() else {
-        // прочерк вместо чисел: курсора нет, следующая точка — всегда дальше
-        // шага (INFINITY), так что список пересчитается на её возврат
+    let over_ui = pointer_over_ui(&hover_map, &ui_nodes);
+    let Some(cursor) = window.cursor_position().filter(|_| !over_ui) else {
+        // прочерк вместо чисел: курсора нет (или он над панелью — это не
+        // точка карты), следующая точка — всегда дальше шага (INFINITY), так
+        // что список пересчитается на её возврат
         state.point = Vec2::INFINITY;
         state.hits.clear();
         state.selected = 0;

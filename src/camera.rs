@@ -662,8 +662,9 @@ pub fn hovering_ui(hover_map: Res<HoverMap>, ui_nodes: Query<(), With<Node>>) ->
 }
 
 /// Курсор над каким-нибудь узлом `bevy_ui` (идиома из `zxc/src/input.rs`):
-/// `HoverMap` собирает UI-пикинг, мировой ввод под панелью обрабатывать нельзя.
-fn pointer_over_ui(hover_map: &HoverMap, ui_nodes: &Query<(), With<Node>>) -> bool {
+/// `HoverMap` собирает UI-пикинг, мировой ввод под панелью обрабатывать
+/// нельзя. Читают `drag_pan`, `hovering_ui`, инспектор точки и витрина дорог.
+pub fn pointer_over_ui(hover_map: &HoverMap, ui_nodes: &Query<(), With<Node>>) -> bool {
     hover_map
         .values()
         .flat_map(|pointer| pointer.keys())
