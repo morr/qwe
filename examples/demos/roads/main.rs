@@ -107,7 +107,7 @@ use bevy::sprite_render::Material2dPlugin;
 use bevy::text::TextBounds;
 use bevy::window::PrimaryWindow;
 use qwe::camera::{
-    cursor_offset, drag_pan, hovering_ui, key_pan, pan_controller, pointer_over_ui, zoom_to_cursor,
+    cursor_world, drag_pan, hovering_ui, key_pan, pan_controller, pointer_over_ui, zoom_to_cursor,
 };
 use qwe::city::City;
 use qwe::dev::DevPlugin;
@@ -1017,8 +1017,7 @@ fn sync_hover_viewport(
     } else {
         window.cursor_position().and_then(|cursor| {
             let (transform, controller) = camera.into_inner();
-            let world = transform.translation.truncate()
-                + cursor_offset(&window, cursor) * controller.zoom_factor;
+            let world = cursor_world(&window, cursor, transform, controller.zoom_factor);
             gallery
                 .samples
                 .iter()

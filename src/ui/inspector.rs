@@ -27,7 +27,7 @@ use bevy::ui_widgets::ValueChange;
 use bevy::window::PrimaryWindow;
 
 use super::speed::{PANEL_WIDTH_PX, TelemetryPanel};
-use crate::camera::{cursor_offset, pointer_over_ui};
+use crate::camera::{cursor_world, pointer_over_ui};
 use crate::map::inspect::{
     FeatureRef, Hit, InspectIndex, InspectOrigin, InspectViewport, feature_shape, hit_line,
     mesh_feature,
@@ -293,7 +293,7 @@ fn update_camera_text(
 
     let cursor = match window.cursor_position() {
         Some(cursor) if !pointer_over_ui(&hover_map, &ui_nodes) => {
-            let world = world_center + cursor_offset(&window, cursor) * zoom - origin.0;
+            let world = cursor_world(&window, cursor, transform, zoom) - origin.0;
             format!("{:.0}/{:.0}", world.x, world.y)
         }
         _ => "-/-".to_string(),
@@ -361,9 +361,7 @@ fn update_inspector_hits(
         return;
     };
     let (transform, controller) = camera.into_inner();
-    let point = transform.translation.truncate()
-        + cursor_offset(&window, cursor) * controller.zoom_factor
-        - origin.0;
+    let point = cursor_world(&window, cursor, transform, controller.zoom_factor) - origin.0;
     if !viewport.contains(point) {
         state.point = Vec2::INFINITY;
         state.hits.clear();
