@@ -381,8 +381,10 @@ on the paired side themselves (`roads-pairs-medians.md`, **Paired halves**).
   house pull still keeps its clearance
   on a side the tag took the sidewalk from — a verge instead of a sidewalk there.
 - **Kerb pockets** (`map/roads/pockets.rs`) — where parked cars stand along a
-  street, one answer for the ribbon and for `map::cars` (a second answer would put a car
-  beside its pocket, on the sidewalk). `RoadLine::parking` `[left, right]` is
+  street, one answer for the ribbon, for `map::cars` and for the semantic index
+  (a second answer would put a car
+  beside its pocket, on the sidewalk, and leave the inspector panel silent under a
+  cursor standing on the pocket). `RoadLine::parking` `[left, right]` is
   `parse/tags.rs::tagged_parking` over `parking:<side>|both` (2022 scheme):
   `street_side` → `KerbParking::Pocket`, `lane|on_kerb|half_on_kerb|shoulder|yes` →
   `Lane`, `no|separate` → `No`, and `parking:<side>:restriction=no_stopping|no_parking|
@@ -413,7 +415,6 @@ on the paired side themselves (`roads-pairs-medians.md`, **Paired halves**).
   right-angle seam (pinned `pockets/tests.rs::a_kerb_pocket_stops_at_a_t_junction_side_way`,
   `a_zebra_at_a_way_end_spills_only_onto_the_continuation`,
   `a_kerb_pocket_does_not_turn_a_right_angle_way_end`).
-  The pieces linked by open
   ends form a chain and `POCKET_MIN` is measured on the chain, not per way; a piece whose
   tapers outgrow it goes (a taper is not carried across a way end), and the pass repeats
   until nothing changes — per way, a short open piece was dropped while its neighbour
@@ -452,3 +453,11 @@ on the paired side themselves (`roads-pairs-medians.md`, **Paired halves**).
   2.5 m pocket would eat it). A car on a pocket side stands at `half + POCKET_WIDTH` from
   the axis where its arclength falls in a pocket's full part, nowhere else unless the
   side also parks on the lane; `kerb pockets N` in the report.
+  The **semantic index** is the third reader
+  (`pockets::kerb_pocket_outlines`): the same `row_breaks` + `all_kerbsides` on the same
+  nodal axis (`Drawn::nodal`, as the cars build it) and the same `outline` formula, so a
+  hover on the pocket names it — `parking pocket (auto, tagged)` by the tag, `(auto)`
+  by the rule — and the highlight draws the stored polygon (`map/inspect.rs`,
+  `FeatureRef::KerbPocket`). It is the one model answer computed on the drawn axis, and
+  the expensive one: on Tula the outlines are ~45 ms of the index's ~55 ms, which is why
+  the index rebuilds on the road shape too (`shape.taper` feeds the axis).

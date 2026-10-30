@@ -132,7 +132,10 @@ panel** with four tabs (`ui/shell.rs`).
   that came out of the extract ends with its OSM id, `#179102449` (the tags are one
   `tools/osm_near --id <id>` away). The two knobs the list follows: `TreeStyle::density`
   (the tree prefix) and `RoadStyle::sidewalks` (turning it off removes both auto bands,
-  as it does from the drawing). **A cursor over any UI panel stops being a map point**
+  as it does from the drawing). **A kerb parking pocket answers as `parking pocket
+  (auto, tagged)`** (`parking:<side>` tag) or `parking pocket (auto)` (the sparse rule)
+  — the pocket exists only as drawn geometry, so the index stores its polygon itself
+  and rebuilds with the road shape. **A cursor over any UI panel stops being a map point**
   (`update_inspector_hits` and `update_camera_text` gate on
   `camera.rs::pointer_over_ui`, the same `HoverMap` test as the camera drag): the
   camera line reads `-/-`, the hits clear, the highlight despawns.

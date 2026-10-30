@@ -510,6 +510,7 @@ struct HighlightLayer<'w, 's> {
     commands: Commands<'w, 's>,
     meshes: ResMut<'w, Assets<Mesh>>,
     materials: LayerMaterials<'w>,
+    index: Res<'w, InspectIndex>,
     origin: Res<'w, InspectOrigin>,
     viewport: Res<'w, InspectViewport>,
     overlay: Query<'w, 's, Entity, With<InspectorHighlightMarker>>,
@@ -544,6 +545,7 @@ fn sync_inspector_highlight(
         mut commands,
         mut meshes,
         materials,
+        index,
         origin,
         viewport,
         overlay,
@@ -570,7 +572,7 @@ fn sync_inspector_highlight(
     let Some(map) = map else {
         return;
     };
-    let Some(shapes) = feature_shape(&map, &roads, feature) else {
+    let Some(shapes) = feature_shape(&index, &map, &roads, feature) else {
         return;
     };
     let mut builder = mesh_feature(&shapes, HIGHLIGHT_COLOR.to_linear());

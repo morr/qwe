@@ -1,9 +1,11 @@
 //! Стоянка вдоль улицы: где машины встают у бордюра на проезжей части, где —
 //! в **карман** (асфальт за кромкой, врезанный в тротуар), а где их нет.
 //!
-//! Один ответ на двух читателей: лента асфальта (`map::roads`) кладёт по нему
-//! карман, ряд машин (`map::cars`) — ставит в него машины. Пока ответов было
-//! бы два, машина вставала бы мимо кармана на тротуар.
+//! Один ответ на трёх читателей: лента асфальта (`map::roads`) кладёт по нему
+//! карман, ряд машин (`map::cars`) — ставит в него машины, семантический
+//! индекс (`map::inspect`) отвечает им панели инспектора. Пока ответов
+//! больше одного, машина вставала бы мимо кармана на тротуар, а панель —
+//! молчать под курсором, стоящим на кармане.
 //!
 //! Тег — `parking:<side>` ([`KerbParking`]); без тега — правило
 //! ([`kerb_parking`]): на магистрали (trunk, primary, secondary) на полосе не
@@ -16,10 +18,11 @@ use std::borrow::Cow;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
-use super::drawn::Drawn;
+use super::drawn::{Axis, Drawn};
 use super::junctions::{self, MarkingBreaks, node_key};
 use super::network::RoadNodes;
 use super::node_paint::ZEBRA_LENGTH;
+use super::shape::RoadShape;
 use super::tapers::{self, Tapers};
 use super::{ROAD_COLOR, SIDEWALK_COLOR, is_carriageway};
 use crate::map::along::{arclengths, nearest_on_path, place_on_path};
@@ -695,6 +698,61 @@ pub(super) fn lay_kerb_pockets(
         }
     }
     kerb_pockets
+}
+
+/// Контур кармана для семантического индекса (`map::inspect`) с дорогой-хозяином
+/// и признаком тега. Ответ тот же, что у ленты и ряда машин — [`all_kerbsides`]
+/// по тем же разрывам ([`row_breaks`]) на той же узловой оси ([`Drawn::nodal`],
+/// как у машин); контур — тот же, что у асфальта кармана в
+/// [`lay_kerb_pockets`], по модельной ширине улицы.
+///
+/// Отдельный вход, а не возврат [`lay_kerb_pockets`]: индекс собирается по
+/// [`MapData`] без мира и без меш-билдеров, ленте нужны и те и другие.
+/// Решения общие — тег и правило стоят в [`all_kerbsides`].
+pub struct KerbPocketOutline {
+    pub contour: Vec<Vec2>,
+    /// Дорога, чей карман: OSM id находки — её.
+    pub road: usize,
+    /// Карман по тегу `parking:<side>` (иначе — по правилу).
+    pub tagged: bool,
+}
+
+pub fn kerb_pocket_outlines(map: &MapData, shape: &RoadShape) -> Vec<KerbPocketOutline> {
+    let drawn = Drawn::nodal(map, shape);
+    let breaks = row_breaks(&map.roads, drawn.nodes(), drawn.tapers(), &map.road_nodes);
+    let nodal = drawn.axes(Axis::Nodal);
+    let kerbsides = all_kerbsides(
+        &map.roads,
+        drawn.nodes(),
+        &nodal,
+        &breaks,
+        map.traffic_side,
+        drawn.lots(),
+    );
+    let mut outlines = Vec::new();
+    for (index, road) in map.roads.iter().enumerate() {
+        let half = road.width / 2.0;
+        for kerbside in &kerbsides[index] {
+            let tagged = matches!(
+                kerb_parking(road, usize::from(kerbside.side < 0.0)),
+                KerbParking::Pocket
+            );
+            for pocket in &kerbside.pockets {
+                let contour = self::outline(
+                    &nodal[index],
+                    pocket,
+                    kerbside.side,
+                    [half - POCKET_OVERLAP, half + POCKET_WIDTH],
+                );
+                outlines.push(KerbPocketOutline {
+                    contour,
+                    road: index,
+                    tagged,
+                });
+            }
+        }
+    }
+    outlines
 }
 
 #[cfg(test)]

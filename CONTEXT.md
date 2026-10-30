@@ -1210,9 +1210,15 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   line `zoom/x/y cx/cy` (moved here from the telemetry, read from screenshots by
   `tools/shot_coords`) and the live list of what the map draws under the cursor, from the
   **semantic index** (`map/inspect.rs::InspectIndex` — a `Grid` over the `MapData`
-  features, built once per load, rebuilt when `MapData` changes; a hit carries the feature
-  label and the z of the layer it draws in, top layer first; bare ground is **not** a hit —
-  an empty list reads `-`). **Cmd cycles the selection** through the hits under the cursor
+  features, built once per load, rebuilt when `MapData` **or the road shape** changes; a
+  hit carries the feature label and the z of the layer it draws in, top layer first; bare
+  ground is **not** a hit —
+  an empty list reads `-`). **Kerb parking pockets answer too** — `parking pocket
+  (auto, tagged)` by the `parking:<side>` tag, `(auto)` by the sparse rule: they exist
+  only as drawn geometry, so the index rebuilds their polygons on the nodal axis
+  (`roads::pockets::kerb_pocket_outlines`, the same lift as the parked cars) and stores
+  them itself — the one model answer computed on the drawn axis. **Cmd cycles the
+  selection** through the hits under the cursor
   (1 → 2 → 3 → 1; a recompute resets it to the top) — the selected hit's row and, with the
   highlight checkbox on (it is **on from launch**, game and gallery alike — session-only,
   `InspectorHighlight`), the map layer both follow it. `InspectOrigin` — the
