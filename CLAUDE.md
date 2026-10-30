@@ -4,13 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Required Reading
 
-**`CONTEXT.md` — load it before touching any domain or simulation code.** It is the
+**`CONTEXT.md` — load its Reading map plus the section for the area you touch, before
+touching any domain or simulation code.** It is the
 domain glossary: what a navtile, flee fan, chase claim, bridge corridor, or prune pass
 *is*, which invariants hold (fill order, z-ranges, SimSet ordering, telemetry math), and
-where each concept lives. Use its terms verbatim in code, commits, and test names.
-It is deliberately kept slim — terms and invariants only; the mechanisms and
-measurements behind them live in the seven **domain skills** below, and each summary
-entry points at its skill.
+where each concept lives. The sections are independent glossaries — the Reading map at
+the top names them; reading the file whole is a phase change, not the default load.
 
 **A change to the domain model is a change to the agent-facing docs, in two tiers, both
 in the same change.** The paragraph above is written from the reader's side; this is the
@@ -260,9 +259,11 @@ one measured session grew its context to 570K over 409 turns and burned 114.6M t
 99.6% of them cache re-reads. Three rules keep a session cheap:
 
 - **A file over ~30K characters is read in full once.** The repeat offenders here are
-  `src/map/meshing.rs` (137K), `src/map/roads/node_paint.rs` (125K),
-  `src/map/roads/paint.rs` (115K) and `src/map/roads/network/pairs.rs` (90K) — in the
-  session that sized this list the
+  `src/map/roads.rs` (87K), `src/map/buildings/temples.rs` (87K),
+  `src/map/buildings/layers.rs` (82K) and `src/map/osm/parse.rs` (67K); `meshing.rs`,
+  `parking.rs`, `osm/model.rs` and `inspect.rs` joined the split pattern in October 2026
+  (parent `foo.rs` keeps the interface and re-exports, subjects live in `foo/`). In the
+  session that sized this rule the
   predecessors (`corners.rs`, `roads/tests.rs`, `references/roads.md`, since split)
   were each read 11–13 times. After the first full
   read, return to them with `Read offset`/`limit` or `Grep` with an anchor; a second

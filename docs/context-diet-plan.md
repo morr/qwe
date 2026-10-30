@@ -6,6 +6,19 @@ refactor plan — what splits into what, in which order, with which migration of
 cross-references — is written by the agent that executes this work, starting from
 this list.
 
+## Status — 2026-10-30
+
+Executed since the inventory was written: the roads/parse/reference splits and the
+first CONTEXT.md slimming (8ee63d30); the skills water pass with osm-map and
+ui-panels SKILL.md back under the 30K one-Read line (f55e9652, 419c58d3); the module
+splits of `osm/model.rs` (b6386635), `parking.rs` (4bab1cdc), `meshing.rs`
+(dde7d19e) and `inspect.rs` (71d92498) into the `foo.rs` + `foo/` subject pattern;
+and a Reading map at the top of CONTEXT.md (load the map + the touched section, not
+the file). Remaining above the ~40K line: `src/map/roads.rs` (87K), the buildings
+cluster (`temples.rs` 87K, `layers.rs` 82K, `tests.rs` 78K, `roofs.rs` 73K), and the
+~60–67K band (`osm/parse.rs`, `settings.rs`, `trees.rs`, `cars/mod.rs`,
+`buildings/{material,clutter,garages}.rs`, `roads/corners/gather.rs`).
+
 ## Why: the measured cost model
 
 One autonomous session (roads work, S1–S7 list, 2026-10-11/12) grew its context from

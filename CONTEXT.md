@@ -18,6 +18,23 @@ derivation or a war story is telling you it belongs in a skill.** When a change 
 concept, update the summary here and the detail in the skill **in the same change** — a
 stale glossary is worse than none.
 
+## Reading map
+
+The sections are independent glossaries; the load mandate ("before touching any domain or
+simulation code") is **this map plus the one section your work touches** — the rest is
+read on demand, and reading the file whole is a phase change, not the default load.
+
+- **Project shape** · **Coordinates & units** — what QWE is; metres, origin, map size.
+- **App lifecycle** — app states, the warmup hold, restart, the city switch.
+- **OSM map pipeline** — half this file: the parse seam, the map model, roads,
+  buildings, parking, trees, the merged-mesh layers.
+- **Navigation** — the navtile, the navmesh fill, pathfinding backends, the crowd.
+- **Determinism** — the seed, the RNG streams, identity, the frozen replay.
+- **Simulation** — the two decision ladders, wander/flee/chase/devour, the portal.
+- **Look** — how pawns are drawn: silhouettes, LODs, the vortex.
+- **UI & debug** — panels, HUD, camera, the speed regulator.
+- **Naming conventions** · **Cross-references** — the closing lists.
+
 ## Project shape
 
 **QWE** is a 2D real-time simulation prototype: a **demon invasion of the Tula city
