@@ -100,8 +100,7 @@ The layers that are neither roads, parking, buildings nor trees. Each bullet is 
     is water on both sides of it.
   - **Render-only.** The navmesh blocks the polygon and the whole channel band as before;
     the caps rule it shares with the drawing (`water_line_caps`) is untouched.
-  - Cost: one pass per open channel at load — the `waterways` field of `SurfaceReport`,
-    printed inside the one `surface meshing:` line.
+  - Cost: one pass per open channel at load — the `waterways` field of `SurfaceReport`.
 
 ## Ground
 
@@ -136,10 +135,7 @@ The layers that are neither roads, parking, buildings nor trees. Each bullet is 
     over the roads too, one hair lower (see **Parking**), so where a lot and a pitch
     overlap the pitch wins.
   - **The kind is decided in three steps** (`parse/tags.rs::pitch_kind`), because `sport`
-    is often missing on a pitch: `leisure` first (`track` → `Track`,
-    `playground` → `Playground`, `sports_centre`/`stadium` → `Ground`), then `sport` on a
-    `pitch` (soccer/rugby/athletics/… → `Soccer`, everything else → `Hard`), then
-    `surface` (`grass`/`dirt` → `Soccer`, `sand` → `Playground`, else `Hard`). The last
+    is often missing on a pitch: `leisure` first, then `sport`, then `surface`. The last
     fallback is `Hard` on purpose: a nameless yard pitch in a Russian city is an asphalt
     box far more often than a lawn.
   - **Colour by kind**, not by tag: the football green is more saturated than a lawn's,
@@ -308,10 +304,9 @@ The layers that are neither roads, parking, buildings nor trees. Each bullet is 
   width (targeting ~1.8 screen px, so the line neither fattens close up nor vanishes far
   out) and tie length/thickness/spacing (on-screen tie spacing never drops below ~10 px);
   the farthest bucket drops ties entirely, as 2GIS does at city scale. `TramZoomBucket`
-  is `ZoomBucket<TramLods>` (see **Zoom buckets** in `SKILL.md`), so `rebuild_tram` fires only
-  on an actual threshold crossing, never per frame. The tram centerline is smoothed with a
-  fixed `TRAM_SMOOTH_WIDTH` (1.2 m) clamp rather than the bucket's line width, so the
-  path itself is identical across buckets and LOD switches don't wiggle the track.
+  is `ZoomBucket<TramLods>` (see **Zoom buckets** in `SKILL.md`). The tram centerline is
+  smoothed with a fixed `TRAM_SMOOTH_WIDTH` (1.2 m) clamp rather than the bucket's line
+  width — the rail's reason: identical across buckets, no wiggle on a switch.
   `RailLine::width` from parse is ignored for trams.
   **The tracks are the laid ones, not `MapData::rails`**: `rebuild_tram` reads the
   `TramTracks` resource the road build writes — on a tram bed symmetric about the drawn
@@ -339,10 +334,8 @@ The layers that are neither roads, parking, buildings nor trees. Each bullet is 
     `BuildingHeightMode` case, so a toggle rebuilds this layer instead of remeshing every
     building layer. Off, because a city carries a dozen cylinders standing on its edges
     while a chimney's shadow runs fifty metres — at the city zoom that is a dark streak
-    from nothing visible. The invisible case goes through the same rebuild — despawn the
-    old layer, build no new one — so there is no second path that could forget the
-    despawn. It is read with the buildings and not with the roads because a cylinder
-    stands on the ground and leans by the very `drawn_lift` a house does.
+    from nothing visible. It is read with the buildings and not with the roads because
+    a cylinder stands on the ground and leans by the very `drawn_lift` a house does.
   - **"Like a house" is literal, and shared in code**: the cylinder's shadow is drawn in
     exactly the three modes a house's is (`BuildingHeightMode::casts_shadows()` — the
     mode list lives there once and both layers ask it; in `Facade` and `Extrusion` a
@@ -402,7 +395,7 @@ The layers that are neither roads, parking, buildings nor trees. Each bullet is 
     Stock on the running line is either moving or absent.
     `crossover` is deliberately out of the whitelist — it links two running lines.
     **`RailKind::Active` on top of that**: a `Disused` track is taken up and a `Tram` one
-    belongs to its own module, so neither holds stock (`a_disused_track_stands_empty`).
+    belongs to its own module, so neither holds stock.
   - **But service track is not a station, and density follows the place.** One rate on
     every service track stands wagons far too densely — many where the trains stand, at
     stations, almost none on an ordinary track — and the tag cannot say it: a spur to
@@ -418,8 +411,7 @@ The layers that are neither roads, parking, buildings nor trees. Each bullet is 
     rakes along a track does not depend on which of them stood.
     **The index is a grid**, `FAN_CELL` 32 m, each segment registered in every cell its box
     inflated by `FAN_REACH` touches, so a query reads one cell; it is rebuilt with the layer,
-    queried once per rake. Pinned by `a_lone_track_stands_almost_empty`,
-    `a_spur_stands_thinner_than_a_siding`, `the_fan_counts_other_stock_tracks_within_reach`.
+    queried once per rake.
     **Rejected: `railway=station` / `landuse=railway`** — neither is in the query (a
     `QUERY_VERSION` bump), and a station node does not say where the station ends.
   - **Rakes, not rows**: `RAKE_MIN..=RAKE_MAX` (3–16) cars coupled at `COUPLED_GAP` 0.9 m,
@@ -439,7 +431,6 @@ The layers that are neither roads, parking, buildings nor trees. Each bullet is 
     every vertex on top of that. Curvature is
     handled the cars' way — a place closer than `WAGON_LENGTH` to the last wagon **placed**
     is skipped, measured in world distance, since a 13.9 m body has a rigid wheelbase.
-    Pinned by `short_links_carry_the_same_rakes`.
   - **The shadow is the point**: a 3.8 m body against a 13.9 × 3.1 m footprint throws its
     shadow by the same `shadow_length_scale()` as the buildings — 3.8 × 0.6 ≈ 2.3 m under
     the default 59° sun, half a wagon's length once the sun drops to 30° and a whole one at
@@ -453,8 +444,7 @@ The layers that are neither roads, parking, buildings nor trees. Each bullet is 
   - **No style resource, unlike the cars.** The layer is decoration and still has no
     `visible`: it comes off by `WagonZoomBucket` — and by **raw OSM's drawing level**
     (`RawOsm::Draw`, `references/parse-seam.md`), since a rake is our placement, not data:
-    `mesh_wagons` takes the `RawOsm` and reports the layer `hidden`, the cars' rule
-    (`raw_osm_draw_stands_no_wagons`).
+    `mesh_wagons` takes the `RawOsm` and reports the layer `hidden`, the cars' rule.
   - **No `QUERY_VERSION` bump**: `out geom` returns every tag of the element, so `service`
     has been sitting in every cache since v4.
 - **Fences** (`map/fences.rs`) — `barrier=fence|wall|retaining_wall|hedge`, added in
@@ -501,10 +491,8 @@ The layers that are neither roads, parking, buildings nor trees. Each bullet is 
       line — the drawn edge of the bridge.
     - **Navigation is untouched**: `fence_gaps` still skips bridges (a span runs over the
       fence, not through it), so the pawn's fence and the polygonal mesh's fence are the
-      same as before — only the picture is shorter. Pinned by
-      `fences/tests.rs::
-      nothing_of_a_fence_is_drawn_on_a_bridge_deck`: **no vertex of the layer**, line,
-      shadow or penumbra, lies within `curb_reach` of a bridge centreline.
+        same as before — only the picture is shorter. **No vertex of the layer**, line,
+        shadow or penumbra, lies within `curb_reach` of a bridge centreline.
     - Cost: a grid of bridge segments (`GAP_CELL` 32 m) built once per rebuild beside
       the `fence_gaps` pass already paid there, and one
       cell lookup per fence link.
@@ -518,13 +506,11 @@ The layers that are neither roads, parking, buildings nor trees. Each bullet is 
     and `city_wall`, which the branch above already took.
   - **The branch falls through**, like the rail and tree-row ones: a way in OSM routinely
     carries `barrier=fence` alongside another feature's tags, and it has to become both —
-    a `return` there loses whole blocks to the fence branch
-    (`a_fenced_block_becomes_both_a_fence_and_a_quarter`).
+    a `return` there loses whole blocks to the fence branch.
   - **And it stands *above* the road branch**, beside the rail, tree-row and waterway
     ones — the road branch does `return`, and a fence mapped along a path rides the very
-    same way as its `highway=*`; below the
-    road branch that `return` ate the fence whole; pinned by
-    `a_fenced_path_becomes_both_an_alley_and_a_fence`. The industry cylinder is the
+    same way as its `highway=*`; below the road branch that `return` ate the fence whole.
+    The industry cylinder is the
     opposite case and sits lower, where its own `return` is what is wanted.
   - **The shadow is cast by the map's own sun**, so `rebuild_fences` is gated on
     `retuned::<FenceZoomBucket>.or_else(retuned::<SunOnMap>)` — the general Sun rule
@@ -555,5 +541,5 @@ The layers that are neither roads, parking, buildings nor trees. Each bullet is 
     `barbed_wire;concrete` stays a solid `Fence`). It is drawn as a grey-metal line and
     skipped by `push_shadows`. The case that brought it: a metre-high `metal` median
     railing swept a solid 2 m shadow onto the asphalt and read as a dark bar between the
-    carriageways (`fences/tests.rs::a_railing_casts_no_shadow`). Navigation does not look at the kind — the band is the
+    carriageways. Navigation does not look at the kind — the band is the
     same 0.3 m.

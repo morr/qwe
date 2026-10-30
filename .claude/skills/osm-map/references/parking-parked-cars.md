@@ -268,7 +268,7 @@ are filled from are laid out in `parking-layout.md`; the big lot's kerb and gore
   `cars::rebuilds_on()`,
   `retuned::<CarZoomBucket>.or_else(retuned::<CarStyle>).or_else(retuned::<RoadShapeOnMap>)
   .or_else(retuned::<SunOnMap>)`, one registration by the rule under **When a layer
-  rebuilds** in `SKILL.md`; the settled `RoadShapeOnMap` is in there because the row
+  rebuilds** in `layer-seam.md`; the settled `RoadShapeOnMap` is in there because the row
   is walked along the **same street axis** the ribbon is drawn from and breaks at the
   same taper clearings: the placement (`park_all`, cached in `CarPlacement` until the
   occupancy or the shape moves) builds `roads::Drawn::nodal(map, shape)` — the

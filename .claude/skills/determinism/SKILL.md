@@ -210,45 +210,31 @@ carries the world gate along with the mode branch.
 
 ### Retire tick
 
-`RetireAt`, `PATHFINDING_RETIRE_TICKS = 8`. The deadline is stamped **at dispatch**, not
-when the request was filed: a request that leaves the queue on tick `D` is applied on
-exactly `D + 8`, whether or not the search finished; if it did not,
-`apply_pathfinding_results` waits on it (`block_on`).
-
-`D` is not `RequestedAt` — before dispatch the request waits in the FIFO queue, and **a
-long queue is the normal state of this mode** (see the dispatch rate below), so end-to-end
-"filed → applied" latency is queue wait + 8 and differs per request. Both halves are
-functions of integer state, so the tick each pawn starts moving on is the same in every
-replay — that is the guarantee, not a constant latency. Measuring from `RequestedAt`
-instead would put the deadline of a queued request in the past, and `block_on` would then
-wait out the whole search on the next tick.
-
-**That wait *is* the mechanism** — it removes "when did the OS get around to it" from the
-simulation. Eight ticks ≈ 125 ms at 1×, which is what live mode's `request → dispatch →
-task → collect` pipeline already costs, so pawn behavior after dispatch is unchanged.
-
-It does **not** set throughput — the dispatch rate below does; K only buys a batch wall time
-before its join, and pays in path staleness. **The constant must not scale with `SimSpeed`**
-— that is user input and may not influence replayed content.
+`RetireAt` — the answer deadline of this mode: stamped at dispatch (the tick the request
+leaves the queue, not the tick it was filed) and honoured by `apply_pathfinding_results`
+`PATHFINDING_RETIRE_TICKS = 8` ticks later, waiting on the search (`block_on`) if it has
+not finished. Why the deadline counts from dispatch and not from `RequestedAt`, the
+125 ms ≈ live-pipeline parity at 1×, throughput belonging to the dispatch rate rather than
+this constant, and why it must not scale with `SimSpeed` — that is the rustdoc of
+`PATHFINDING_RETIRE_TICKS` in `src/settings.rs`.
 
 ### Dispatch rate
 
-`PATHFINDING_WANDER_UNITS_PER_TICK = 128`, `PATHFINDING_URGENT_UNITS_PER_TICK = 64` — how
-much leaves the queue each tick, measured in *predicted search cost*, not in requests.
+`PATHFINDING_WANDER_UNITS_PER_TICK = 128`, `PATHFINDING_URGENT_UNITS_PER_TICK = 64` —
+how much leaves the queue each tick, in units of *predicted search cost*
+(`PATHFINDING_UNIT_TILES`). Why the unit is cost rather than requests, the integer-metric
+rule, and the ~35 ms-per-tick pool budget the rates are derived from live in the rustdoc
+of those constants in `src/settings.rs`.
 
-A request costs `1 + chebyshev_tiles / PATHFINDING_UNIT_TILES`, an **integer**: a float sum
-would depend on iteration order. Measured, a stroll and a cross-city errand differ 20×, so a
-budget in requests cannot fit both. The rate is derived from what the pool chews per tick
-(~35 ms of CPU).
+**Never reuse `MAX_*_IN_FLIGHT` here** — those are the live mode's concurrent-search cap
+behind the visibility gate; this dispatcher has no gate and ignores them entirely (the
+rustdoc of `MAX_PATHFINDING_IN_FLIGHT`, and the doc of
+`movement::pathfinding::dispatch_pathfinding_requests_deterministic`).
 
-**Never reuse `MAX_*_IN_FLIGHT` here** — those cap *concurrent* searches behind the
-visibility gate; with no gate the same number once meant 65 000 searches per real second and
-2.6 fps.
-
-With the rate, the errand wave drains over ~30 virtual seconds at 60 fps; **a long queue is
-the normal state of this mode**. At 30× the mode settles around 2–5× — by design, and the
-failure rate is visible for the same reason (the sample is the whole map, not the easy
-on-screen subset). Watch `answers: N/frame, X % failed` on the speed panel.
+**A long queue is the normal state of this mode.** At 30× it settles around 2–5× — by
+design; and the failure rate then reads worse than live because the sample is the whole
+map, not the easy on-screen subset. Watch `answers: N/frame, X % failed` on the speed
+panel.
 
 ### The FIFO key
 

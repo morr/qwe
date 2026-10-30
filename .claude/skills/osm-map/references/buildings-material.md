@@ -13,12 +13,12 @@ dictionary.
   old per-`BuildingUse` roof colour plus a ±3 % tint by list index made a district read as
   a dress pattern.
   - **The pick** (`roof_look`) — a **seed hashed from the building's first vertex**
-    (three xorshift-multiply rounds over the centimetre coordinates; the door generator
+    (the door generator
     is seeded from the same point, so both survive a rebuild and neither depends on the
     order of `MapData::buildings`) chooses a slot in a **ten-slot table per
-    `BuildingUse`** — ten slots so a table reads as percentages: `House` is 5 tile / 2
-    seam / 2 corrugated / 1 bitumen, `Apartments` 7 bitumen, `Industrial` 5 corrugated,
-    and so on. `Church` takes its material and palette from its faith
+    `BuildingUse`** (the `*_ROOFS` tables in `material.rs`) — ten slots so a table reads
+    as percentages: `House` is 5 tile / 2 seam / 2 corrugated / 1 bitumen.
+    `Church` takes its material and palette from its faith
     (`temples::roof_kind` / `roof_palette` — Orthodox seam metal, Western and Eastern tile,
     mosque gravel), the Kremlin from `fortress` (seam on a tower, gravel on the wall's
     walkway), and `Other` — half the city — splits by
@@ -64,17 +64,15 @@ dictionary.
     rule, so nothing moirés when zoomed out; at the city zoom the texture is simply gone
     and only the material's colour is left. The noise helpers come from
     **`assets/shaders/noise.wesl`** — its full set is named under **Surface material**
-    in `SKILL.md` — and this shader imports the subset it calls
-    (`import super::noise::{hash21, value_noise, visible, fbm3, stripes};`);
-    the `visible` rule in particular must not drift between the shaders that import it.
+    in `SKILL.md` — and this shader imports only the subset it calls; the `visible` rule
+    in particular must not drift between the shaders that import it.
   - **The wall is the same mechanism on its own coordinates and its own codes**
     (`layers.rs::wall_frame`, `meshing::WallFrame` — the same frame the garage ribbon
     in `buildings-garages.md` is measured in). A 2.5D wall is a **parallelogram** —
     base edge `a→b`, side edges along the lean — and what the builder writes into
     `ATTRIBUTE_ROOF` at each of its vertices is where that vertex stands *in it*: **the panel
     number along the base and the storey up the lean**. Both linear in the point, so each is
-    one dot product (the frame holds the rows of the inverted `[base, lean]` basis, already
-    scaled by the counts), and the attribute is therefore **interpolated, not flat** — a
+    one dot product, and the attribute is therefore **interpolated, not flat** — a
     roof's own numbers are equal on all three vertices of any triangle, so nothing changes
     for it.
     - **The counts are whole**: `round(wall length / PANEL_WIDTH 3.2 m)` panels and
@@ -101,26 +99,24 @@ dictionary.
       `ALL` and would otherwise have been overwritten by the claddings — and `DOOR_CODE`
       derives from `WallKind::CODES` the same way, so a new roofing shifts the wall codes,
       a new cladding shifts the door, and the shader's mirror is edited whole).
-      Eight claddings —
-      `Panel | Brick | Plaster | Shopfront | Shed | BigBox | GarageDoors | Sacred` — because panel seams with
-      balconies are
+      Eight claddings, because panel
+      seams with balconies are
       exactly **one** kind of building, and while the wall was one, a garage and a church
       wore them too. Six of them are chosen by the tables below; `Sacred` by the class
       alone (every `Church`, before any table); **`GarageDoors` is chosen
       by geometry**, like the garage runs on the roof — `layers::wall_of_run` puts it on
       every box of a run and nothing else can reach it, which is why
       `every_cladding_reaches_the_city` skips it.
-    - **The pick** (`material::wall_look`) is `roof_look`'s twin — a ten-slot table per
-      `BuildingUse`, the slot from the building's seed, the colour from the material's own
-      palette plus ±3 % — with one difference: **height is consulted before the tag.**
+    - **The pick** (`material::wall_look`) is `roof_look`'s twin — same table, seed and
+      palette mechanics — with one difference: **height is consulted before the tag.**
       Anything under `LOW_RISE_STOREYS` (4) that is not already `House`, `Garage`, `Church`,
       `Industrial` or `Retail` (which is settled by its size) drops into `LOW_RISE_WALLS`,
       because a low building is neither a panel block nor a curtain wall whatever OSM calls
       it — and the retail exception is only about the curtain wall: neither trade table
       carries a panel. **A hull deeper than housing is not housing**: a `BuildingUse::Other`
       (`building=yes` and the like — no apartments/residential tag) whose plan is deeper than
-      `DEEP_HULL_MIN` 30 m (`material::is_deep_hull`) takes `DEEP_HULL_WALLS` — shed 7,
-      plaster 3, no panel and no brick, so no balcony either (`balcony_house` asks the
+      `DEEP_HULL_MIN` 30 m (`material::is_deep_hull`) takes `DEEP_HULL_WALLS` — no panel and
+      no brick, so no balcony either (`balcony_house` asks the
       cladding) — before the low-rise arm, since a one-storey 100 m hull is a warehouse, not
       a cottage. A residential section is 12–18 m deep, a point tower up to ~25. Depth is
       read **twice and both must pass**: the short side of `min_area_rect`, and the short
@@ -130,8 +126,8 @@ dictionary.
       catches long 20–29 m slabs. The roof is
       not moved: `kind_of` still covers a large `Other` with `APARTMENTS_ROOFS`.
       The seed is read from **other bytes**
-      than the roof's (`>> 4`, `>> 12`, `>> 20` against the roof's raw, `>> 8`, `>> 16`):
-      the two materials must be independent, or every panel block would also be under one
+      than the roof's: the two materials must be independent, or every panel block would
+      also be under one
       bitumen. Kremlin is brick (every wall `WallMark::Solid` — no window, and `push_doors`
       skips it), `Church` is `WallKind::Sacred` coloured by faith — the same two exceptions
       the roof has, in the same order.
@@ -293,8 +289,8 @@ dictionary.
       The axis is computed **once per building and only when the building could carry
       balconies at all** (`balcony_house` — material, use, storeys), because `min_area_rect`
       is quadratic in the ring's vertices; it rides to each wall in `WallSpan::long_axis`.
-      The end is marked `WallMark::Blank`, not `Solid` — it keeps its windows, since a blank
-      wall and a windowless one are not the same thing (the bullet below).
+      The end is marked `WallMark::Blank`, not `Solid` — it keeps its windows (the
+      `WallMark` bullet below).
     - **The verdict travels as the seed's own value**, not its sign: `WallMark`
       (`WallFrame::marked`) encodes `[0, 1)` balconies, `(-2, -1]` blank, `(-4, -3]` solid.
       Three states are needed because *blank* and *solid* are not the same thing — a blank
@@ -373,9 +369,8 @@ dictionary.
     ring's winding, so the raw right-hand perpendicular points into the building on half of
     them — written out a second time inside the band, it painted the lit face dark and the
     shaded one light.
-    Its wall palette is deliberately quiet (`BIG_BOX_WALL_COLORS`: three near-whites, a
-    cool grey and one anthracite) — the band is the colour of the building, and a bright
-    cassette under it would fight it.
+    Its wall palette (`BIG_BOX_WALL_COLORS`) is deliberately quiet — the band is the colour
+    of the building, and a bright cassette under it would fight it.
   - **A cell grid places a feature, it never *is* the feature** (`repair_patch`). The
     bitumen patch started as `hash21(floor(uv / 6))` — a shade of its own for every 6 m
     cell — and that is not repair patches but a **chequerboard across the whole roof**:
@@ -408,10 +403,10 @@ dictionary.
     not one of them**: it returns from `roof_shade` before the age is ever hashed (see the
     wall bullet above), so a wall carries neither an age nor the common pass.
     It gets **no vertex attribute of its own**:
-    the seed is already a per-building random number the shader hashes several ways
-    (`seed·17`, `seed·11`, `seed·37`), the correlation between two patterns of one building
-    is not visible, and a fifth float would cost four bytes on every vertex of the building
-    layer. The consequence for the gallery: its `Seed` knob rolls the age too — that is how
+    the seed is already a per-building random number the shader hashes several ways,
+    and the correlation between two patterns of one building is not visible (the
+    per-vertex cost is the `STOREY_STRIDE` bullet's argument). The consequence for the
+    gallery: its `Seed` knob rolls the age too — that is how
     a new roof is compared against an old one there.
   - **There is no parapet, and putting one back needs a different construction.** A soft
     flat roof (bitumen / gravel / membrane, the old `RoofKind::has_parapet`) used to get a
@@ -426,13 +421,11 @@ dictionary.
     shaded by a plan normal cannot say that. `MeshBuilder::push_inset_band_with` (the
     per-edge-colour sibling of `push_inset_band`) survives as a primitive; nothing in the
     building layers uses it any more.
-  - **One call lays every flat roof** — `layers.rs::push_flat_roof(builder, look, outer,
-    holes, color)`: set the roof frame, fill the contour with its courtyards. Both callers
-    use it — the flat modes with the real contour, 2.5D with the contour already lifted
-    onto the walls. It is `pub(super)` now: the gallery reaches the same geometry through
-    `push_house`, one level up. Slopes stay outside it: a gable
-    roof is computed by the caller, which needs the same `GableRoof` for the gables it
-    draws *with the walls*, before the roof.
+  - **One call lays every flat roof** — `layers.rs::push_flat_roof`: both callers use it
+    (the flat modes with the real contour, 2.5D with the contour already lifted onto the
+    walls), and it is `pub(super)` now, so the gallery reaches the same geometry through
+    `push_house`, one level up. Slopes stay outside it: a gable roof needs the same
+    `GableRoof` for the gables it draws *with the walls*, before the roof.
   - **A roof is now darker than the walls under it.** That inverts the old "roof lighter
     than wall, so the wall reads as a band under it" rule, which is retired: on a photo a
     dark bitumen roof over light panel walls is the normal relation, and the 2.5D box is

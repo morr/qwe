@@ -124,8 +124,8 @@ on is `roads-markings.md` (**Markings**), the leading roads whose ruts run throu
   own (the flat white one would eat the vertex alpha). Nothing else produced it, because
   the ground shadow layer only knows buildings, and a bridge over the river is the most
   visible thing on the water. It sits **under** the deck and **over** what the bridge
-  crosses — except what the z ladder draws above bridges: the rails (a tram on a bridge
-  must stay visible), the tram line, wagons, parked cars, fences.
+  crosses — except what the z ladder draws above bridges: the rails, the tram line, wagons,
+  parked cars, fences.
   **A track bridge goes through the same three layers** (`Bridges::push_track` —
   two `railway=rail` ways with `bridge=yes`, `layer=1` drawn as ballast on the asphalt
   before): `mesh_roads` pushes every non-tram
@@ -292,9 +292,9 @@ on is `roads-markings.md` (**Markings**), the leading roads whose ruts run throu
   on the approach the sidewalk band and the verge; the
   approach's asphalt stays round — it is under the deck and closes the notch between two
   square ends on a kink. A free deck end, or one meeting only decks, stays round.
-  **The approach's sidewalk band runs into the deck curb** (`roads/ribbons.rs::push_sidewalk_to_seams`): the
-  band (22 %, 1.2–3 m) is wider than the curb (12 %, 0.8–2 m) by
-  construction, so its square end stood as a step outward of the curb. Over its last
+  **The approach's sidewalk band runs into the deck curb** (`roads/ribbons.rs::push_sidewalk_to_seams`): the band
+  (22 %, 1.2–3 m) is wider than the curb by construction, so its square end stood as a
+  step outward of the curb. Over its last
   `BAND_SEAM_TAPER` 4 m (at most
   half the road) the band's outer edge now narrows to the deck curb's outer edge,
   `bridges::seam_curb_reach` — the approach's half width plus the widest curb of a street
@@ -349,10 +349,7 @@ on is `roads-markings.md` (**Markings**), the leading roads whose ruts run throu
   approach; the footbridge is probed the same way against every non-bridge street
   ribbon, and the gap from the street's band edge (`Drawn::band_half`) to the
   footbridge's fill edge, up to `SLIT_MAX`, is paved in the path's layer and colour.
-  Pinned by
-  `roads/bridges/tests.rs::a_footbridge_beside_a_deck_gets_a_slit_apron`,
-  `a_moved_footbridges_path_meets_the_band_without_a_wedge` and
-  `a_footbridge_along_a_street_approach_gets_a_tile_apron`.
+  Pinned by the footbridge apron tests in `roads/bridges/tests.rs`.
   **A path widens into its footbridge** (`roads/footbridge.rs::push_path_flare`): the footbridge is
   3.5 m plus a 0.8 m curb a side, the path onto it 2–3 m, so at the head the path's
   square end stood as a step inside the footbridge's curb on both sides. Over its last

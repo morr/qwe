@@ -31,13 +31,12 @@ stand, how density works, and which resources restyle them.
   `TreeRowPlacement::Keep`. Every standalone tree gets
   `appears_at = 0` (a surveyed tree is visible at any density), radius from
   `diameter_crown` or rolled in the forest range from an LCG seeded by the node's own
-  coordinates. They ride in front of `wood_trees`, so everything downstream — crowns,
-  shadows, conifer field, density prefix — needs no new code.
+  coordinates. They ride in front of `wood_trees`, so everything downstream needs no
+  new code.
 - **Tree rows** (`planting.rs::plant_rows`) — avenues from `natural=tree_row`, walked
-  along the polyline instead of sampled inside a polygon. Everything downstream is
-  untouched: row trees land in the same `MapData::trees`, so crowns, the merged shadow
-  layer, the conifer field and the density prefix apply to them without a line of new
-  rendering code.
+  along the polyline instead of sampled inside a polygon. Row trees land in the same
+  `MapData::trees`, so everything downstream — crowns, the merged shadow layer, the
+  conifer field, the density prefix — applies without a line of new rendering code.
   - **A row carries a green band under it** (`spawn.rs::mesh_tree_row_band`, spawned by
     `spawn.rs::rebuild_tree_row_band`) — a ribbon
     of `TREE_ROW_BAND_WIDTH` (10 m) in `WOOD_COLOR` at `Z_TREE_ROW_BAND`. On the map an
@@ -106,8 +105,8 @@ stand, how density works, and which resources restyle them.
   takes no bucket: everything it returns — crown entities, merged crown chunks, shadow
   layers — carries the `TreeLodMask` of the steps that draw it. The crossing is **not** a
   condition of the tree chain's `rebuilds_on` — it runs `stream_tree_crowns` (below) and
-  `show_tree_lod` (`switches_on`, on `TreeLodShown`), which only flips `Visibility`
-  (`set_if_neq`, `par_iter_mut`); the set, the conifer field, the tree-row band and
+  `show_tree_lod` (`switches_on`, on `TreeLodShown`), which only flips `Visibility`;
+  the set, the conifer field, the tree-row band and
   every mesh are left alone. The bucket reaches the build only through
   `spawn_tree_meshes`, which spawns each piece visible or hidden for the current step.
   - **Crown entities are streamed, not respawned at once and not kept hidden**
@@ -127,7 +126,6 @@ stand, how density works, and which resources restyle them.
     far steps the step is shown at once (crown entities hidden in that frame) and the
     entities leave `CROWN_DESPAWN_BATCH` (16384) a frame. A world entry or a style
     rebuild at the near step spawns them all at once, under the loader or the edit.
-    `crown_entities_stream_in_by_batches_and_leave_on_the_far_steps` pins it.
     The **merged chunks and shadow layers are warmed at world entry** (`begin_layer_warmup`
     + `warm_layers`, two frames): a layer spawned hidden renders for the first time only
     on its first threshold crossing, and that frame paid the render's first preparation
@@ -142,8 +140,7 @@ stand, how density works, and which resources restyle them.
     lower cap hides the tail band's chunks instead of rebuilding. Bands run from the first
     trees of the set, so the tail band's chunks sit **above** the head's in z and a
     higher-numbered crown stays on top across bands as it does inside a chunk;
-    `CROWN_CHUNK_Z_STEP` is 1/256 so 3 bands × 63 chunks fit `Z_TREE..+1`
-    (`merged_crowns_are_split_by_density_band`).
+    `CROWN_CHUNK_Z_STEP` is 1/256 so 3 bands × 63 chunks fit `Z_TREE..+1`.
   - **Shadows by density band** (`step_counts`, `density_bands`, `TreeLodMask`,
     `TreeLayer`): step `b` draws the prefix `counts[b]`, the counts do not grow from
     near to far, so band `b` — trees `counts[b + 1]..counts[b]` — is drawn on steps
@@ -155,17 +152,15 @@ stand, how density works, and which resources restyle them.
     a prefix that differs only in its tail. Splitting the mesh changes nothing on screen:
     every tree shadow is one colour at one alpha, and alpha-blending one colour is
     order-independent, so overlaps darken exactly as they did inside one mesh.
-    `tree_shadows_are_built_once_for_every_zoom_step` pins it.
-  - **The far steps draw a thinned shadow** (`CrownVariant::far_shadow`,
-    `crown.rs::shadow_templates`): the same shadow, from the same rolled height, laid
-    over the outer ring thinned by the far crown's step (`far_ring_step`,
-    `len / FAR_CROWN_RING`, rounded down). The cotton ring (144–188) comes out at 32–37,
-    the conifer (32) and palm (48) rings are not thinned at all, so the conifer fan is
-    the very same one and its union is not run twice. So a density band seen by both
-    detail kinds gets two layers — full template for the `Full` steps, thin for the
-    `Merged` ones — each with its own mask. Measured by the round-2 prototype: Kaluga's
-    far shadow layer **14.9 M → 3.55 M vertices**, build 88 → 24 ms; area within ±10 % of
-    the full shadow (`the_far_shadow_is_a_thinned_copy_of_the_full_one`). From 2 m/px a
+- **The far steps draw a thinned shadow** (`CrownVariant::far_shadow`,
+  `crown.rs::shadow_templates`): the same shadow, from the same rolled height, laid
+  over the far crown's thinned outer ring (`far_ring_step`, **The far crown** below) —
+  the conifer's ring is untouched, so the fan template is the very same one and its
+  union is not run twice. So a density band seen by both
+  detail kinds gets two layers — full template for the `Full` steps, thin for the
+  `Merged` ones — each with its own mask. Measured by the round-2 prototype: Kaluga's
+  far shadow layer **14.9 M → 3.55 M vertices**, build 88 → 24 ms; area within ±10 % of
+  the full shadow. From 2 m/px a
     shadow is a couple of pixels, so the ring's scallops are invisible. Cost: the thin
     layers are built and held alongside the full ones (≈ +¼ of the shadow vertices).
   - **Shadows are chunked like the merged crowns** (`chunk_of`, `sorted_chunks`, the same
@@ -174,11 +169,10 @@ stand, how density works, and which resources restyle them.
     the default view (0.4 m/px, a ~640 m frame) the GPU walked every shadow vertex of the
     city; now the frustum drops the chunks outside the frame — roughly nine in ten.
     **No seam**: a tree's shadow lies in its trunk's chunk only, so nothing is duplicated
-    across a border, and two neighbouring chunks' shadows overlap exactly as two shadows
-    inside one mesh did — one colour at one alpha, order-independent. At most
+    across a border (overlaps across it darken exactly as inside one mesh — the band
+    bullet above). At most
     `2 × TREE_LODS.len()` kinds × 9 × 7 chunks fit `Z_TREE_SHADOW..+1` at
-    `TREE_SHADOW_Z_STEP` 1/1024 (`every_shadow_layer_of_the_map_fits_the_shadow_z_band`).
-    Cost: up to 5 kinds × 48 chunks = 240 shadow entities instead of 5 (Tula 34 chunks,
+    `TREE_SHADOW_Z_STEP` 1/1024. Cost: up to 5 kinds × 48 chunks = 240 shadow entities instead of 5 (Tula 34 chunks,
     Kaluga 48), of which a step shows at most a third; a culled one costs a frustum test.
 - **Crown detail by zoom** (`TreeLod::detail`, `CrownDetail`) — the near step draws
   `Full` crowns, an **entity per tree** over its variant's shared mesh; the two far steps
@@ -196,15 +190,13 @@ stand, how density works, and which resources restyle them.
     the cotton ring (144–188) comes out at 32–37, while the conifer (32) and palm (48)
     rings are kept whole: their vertices alternate spike/notch, and a step of 2 cut every
     spike at once (the palm lost 11 % of its area); grown by half the outline stroke (the full
-    crown's silhouette ends on the stroke's outer edge, not on the ring — pinned by
-    `the_far_crown_is_a_light_average_of_the_full_one` to ±10 % of the silhouette's
-    area), and painted with the full crown's **average colour** — foliage mixed toward
+    crown's silhouette ends on the stroke's outer edge, not on the ring — to ±10 % of
+    the silhouette's area), and painted with the full crown's **average colour** — foliage mixed toward
     the ink by the share of the fill the strokes cover (`crown_builder` measures it,
     `MeshBuilder::area_since`). From 2 m/px the strokes (12 % and 6 % of a 2–6 m
     radius) are tenths of a pixel, so the average is what the eye got anyway.
-  - **Tint and ball light survive the merge**: the brightness slot is baked into the
-    vertex colour, and the crown-local coordinate rides `ATTRIBUTE_CROWN` (see the
-    canopy material below).
+- **Tint and ball light survive the merge** — brightness in the vertex colours, the
+  crown-local coordinate on `ATTRIBUTE_CROWN` (the canopy material below).
   - **Draw order**: a chunk emits its crowns **in `TreeSet` order** (the order of the
     set, so a crown with a higher index lies on top — the per-index order the entities
     had before the draw-group z, without its `% 512` wrap), and triangle order inside one mesh *is* draw order. The
@@ -212,7 +204,7 @@ stand, how density works, and which resources restyle them.
     place on the map — south row first, west to east), because crowns overlap across a
     chunk seam and an equal z would hand their order to the `Transparent2d` sort — the
     blinking trap of the shadows below. At most 9 × 7 chunks of each of the three density
-    bands fit `Z_TREE..Z_TREE + 1` (`every_chunk_of_the_map_fits_the_crown_z_band`).
+    bands fit `Z_TREE..Z_TREE + 1`.
   - **Why 1000 m chunks**: from 2 m/px a 1600 px window is ≥ 3.2 km wide, almost half
     the 7.6 km map; a 1 km chunk is a third of such a frame, so a panned view still culls
     whole chunks, while the whole map is at most 8 × 6 = 48 draws (Tula 34, Kaluga 48)
@@ -251,8 +243,7 @@ stand, how density works, and which resources restyle them.
   exactly its own share at any density, *including* woods that hit saturation and never
   filled their ask. Row trees carry their own threshold (see **Tree rows**), and a row
   whose spacing came from OSM carries `0` — it stands whole at every step of the slider.
-  `TreeSet::visible_count` is then a `partition_point` (and `visible(density)` hands back
-  that prefix) — thinning is
+  `TreeSet::visible_count` is a `partition_point` — thinning is
   monotone (a step up only adds trees) and exact, where the earlier hash-share thinning
   drifted ~20% sparse at 1× because it divided by the nominal ceiling the map never reached.
 - **Asked vs planted** — the log line
@@ -441,14 +432,13 @@ grows an axis (a new shape, a new shadow kind), the gallery shows it without a l
 its own, so the axis must be added there rather than in the example.
 
 Its left panel drives **`CrownParams`** — every knob the crown geometry has, live:
-base-polygon vertices, radius jitter, lobe (the "size" of the bump over an edge, and
-because both `bloat` and `Spiker` grow their bump as the square root of edge/lobe, a
-*smaller* lobe gives a *puffier* outline), band lift/scale/shade weight, the two stroke
-widths, the spike floor, the five shadow numbers and the variant seed. `CrownParams`
-lives in `crown.rs`; **its `Default` is field-for-field the constants the city is drawn
-with**, which is what lets the whole `map::trees` test suite keep pinning the game
-without a single changed expectation. The game itself passes `CrownParams::default()`
-and grows no panel for them.
+base vertices, jitter, lobe (the "size" of the bump over an edge, and because both
+`bloat` and `Spiker` grow their bump as the square root of edge/lobe, a *smaller* lobe
+gives a *puffier* outline), bands, strokes, spike floor, shadow numbers, seed.
+`CrownParams` lives in `crown.rs`; **its `Default` is field-for-field the constants the
+city is drawn with**, which is what lets the whole `map::trees` test suite keep pinning
+the game without a single changed expectation. The game itself passes
+`CrownParams::default()` and grows no panel for them.
 
 The panel carries one knob that is **not** `CrownParams` and **not** the game's value:
 "Variance" in the `Цвет` group is `TreeStyle::variance`, and the gallery starts it at
@@ -480,9 +470,8 @@ so it carries the scene without the UI panel.
 
 Two things the panel had to borrow from the game rather than invent, and both are the
 kind of thing that silently looks wrong: the widget kit (`qwe::ui::knob` over
-`qwe::ui::slider` — the rows are `spawn_knob` with a `SliderBinding<Tuning>` per knob, so
-the drag observer and the slider sync are the game's; plus `spawn_panel_button`,
-`panel_background`, section-header blocks, `PANEL_WIDTH_PX`), and
+`qwe::ui::slider` — the rows are `spawn_knob` with a `SliderBinding<Tuning>` per knob,
+so the drag observer and the slider sync are the game's), and
 the **font** — `apply_panel_font` lives in `UiPlugin`, which an example does not load, so
 the panel inserts `InheritableFont` (feathers' Fira Sans + `PANEL_FONT`) on its own root.
 Without it every label falls back to bevy's built-in font, which carries no Cyrillic and
