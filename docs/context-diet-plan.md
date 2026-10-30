@@ -14,10 +14,40 @@ ui-panels SKILL.md back under the 30K one-Read line (f55e9652, 419c58d3); the mo
 splits of `osm/model.rs` (b6386635), `parking.rs` (4bab1cdc), `meshing.rs`
 (dde7d19e) and `inspect.rs` (71d92498) into the `foo.rs` + `foo/` subject pattern;
 and a Reading map at the top of CONTEXT.md (load the map + the touched section, not
-the file). Remaining above the ~40K line: `src/map/roads.rs` (87K), the buildings
-cluster (`temples.rs` 87K, `layers.rs` 82K, `tests.rs` 78K, `roofs.rs` 73K), and the
-~60–67K band (`osm/parse.rs`, `settings.rs`, `trees.rs`, `cars/mod.rs`,
-`buildings/{material,clutter,garages}.rs`, `roads/corners/gather.rs`).
+the file). Remaining above the ~40K line — every file across `src/**`,
+`examples/**` and `.claude/skills/**`, measured `wc -c` on 2026-10-30, not a
+top selection:
+
+- 60K+ (15): `roads.rs` 86.8K, `buildings/temples.rs` 86.5K,
+  `buildings/layers.rs` 82.1K, `buildings/tests.rs` 78.4K, `settings.rs` 74.9K,
+  `roads/corners/tests.rs` 72.9K, `buildings/roofs.rs` 72.6K, `trees.rs` 69.2K,
+  `buildings/material.rs` 68.3K, `cars/mod.rs` 67.6K, `osm/parse.rs` 67.3K,
+  `meshing.rs` 64.2K, `buildings/clutter.rs` 63.6K, `roads/corners/gather.rs`
+  62.3K, `roads/node_paint/cluster.rs` 60.2K.
+- 50–60K (15): `roads/rings.rs` 59.7K, `roads/bridges.rs` 59.5K,
+  `buildings/garages.rs` 59.5K, `roads/medians.rs` 58.0K,
+  `examples/demos/roads/main.rs` 57.3K, `trees/tests.rs` 57.1K,
+  `roads/tests.rs` 57.1K, `footprint.rs` 56.3K, `meshing/ribbon.rs` 55.6K,
+  `roads/node_paint/tests.rs` 55.3K, `roads/bridges/tests.rs` 55.3K,
+  `trees/crown.rs` 54.8K, `sim_time.rs` 53.8K, `roads/paint/tests.rs` 51.7K,
+  `roads/gores.rs` 50.3K.
+- 40–50K (20): `osm/parse/tags.rs` 48.9K, `roads/rings/tests.rs` 48.6K,
+  `roads/scraps.rs` 48.1K, `roads/paint/painter.rs` 45.4K, `meshing/tests.rs`
+  44.6K, `roads/network/pairs/tests.rs` 43.7K,
+  `examples/demos/roof_gallery/main.rs` 43.7K, the `osm-map` reference
+  `layers.md` 43.5K, `camera.rs` 43.4K, `roads/node_paint.rs` 43.3K,
+  `parking.rs` 42.9K, `osm/parse/lots.rs` 42.8K,
+  `navigation/polymesh/stitch.rs` 42.6K, `examples/demos/wall_gallery/main.rs`
+  42.1K, `movement/destination.rs` 42.0K, `roads/axis.rs` 41.8K,
+  `movement/pathfinding.rs` 40.5K, `examples/demos/crowd_demo/metrics.rs`
+  40.5K, `roads/network/pairs.rs` 40.2K, `human/systems.rs` 40.0K.
+
+`CONTEXT.md` (110.4K whole-file) stays out of this list by design: the Reading
+map above is its fix, and the success criterion measures it by section, not by
+whole file. One section is itself still over that line: «OSM map pipeline»
+(50.5K), which the reading map still makes a map session load whole. Splitting
+it is next-phase work — the cut line is a glossary design decision, not a blind
+split.
 
 ## Why: the measured cost model
 
