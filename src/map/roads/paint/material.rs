@@ -1,4 +1,4 @@
-//! Материал слоя краски: шейдер `paint.wgsl`, юниформы, два прохода колеи
+//! Материал слоя краски: шейдер `paint.wesl`, юниформы, два прохода колеи
 //! и гашение по зуму.
 
 use bevy::mesh::MeshVertexBufferLayoutRef;
@@ -21,7 +21,7 @@ use crate::map::roads::node_paint::{STOP_WIDTH, ZEBRA_LENGTH};
 use crate::map::roads::shape::lane_width;
 use crate::map::zoom::{ZoomBucket, ZoomLods};
 
-const SHADER_PATH: &str = "shaders/paint.wgsl";
+const SHADER_PATH: &str = "shaders/paint.wesl";
 
 /// Ступени слоя краски: до [`LANE_ZOOM_MAX`] — всё, до [`ZEBRA_ZOOM_MAX`] —
 /// осевые и зебры, до [`AXIS_ZOOM_MAX`] — осевые, дальше — ничего.
@@ -55,7 +55,7 @@ pub fn show_paint(bucket: Res<PaintZoomBucket>, mut layers: Query<(&PaintTag, &m
     }
 }
 
-/// Юниформ шейдера краски. Зеркало `PaintParams` в `paint.wgsl`: порядок
+/// Юниформ шейдера краски. Зеркало `PaintParams` в `paint.wesl`: порядок
 /// полей обязан совпадать.
 #[derive(ShaderType, Clone, Copy, Debug, PartialEq)]
 pub struct PaintParams {

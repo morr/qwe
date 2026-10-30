@@ -245,7 +245,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     and the lines.** On a taper it drifts from the narrow section's to the wide one's,
     and when the parity changes the grid slides by half a lane over the taper; a
     **one-way** wedge adds its lanes at one kerb (`paint::wedge_drift`).
-  - **Paint layer** (`map/roads/paint.rs`, shader `paint.wgsl`) — the lane lines as
+  - **Paint layer** (`map/roads/paint.rs`, shader `paint.wesl`) — the lane lines as
     **geometry** off the street axis, not a pattern of the asphalt shader: dashes **by
     the street's arclength** (the phase does not restart at a seam), a lane line solid
     for the last 25 m of its **approach** to a junction break, the axis of a two-way
@@ -431,7 +431,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   own palette — **the per-use roof and wall colours are gone**: a wall is picked the
   same way (**`WallKind`**, its own ten-slot table per use, plus `GarageDoors` by
   geometry and `Sacred` for a church). Texture from **`RoofMaterial`** (shader
-  `roof.wgsl`) reading the **`Roof` attribute** — **one code dictionary for all of it**
+  `roof.wesl`) reading the **`Roof` attribute** — **one code dictionary for all of it**
   (`0` no texture, roofings, garage runs, wall claddings, a door leaf). **Roof age** is
   the second thing the seed carries (patch count, water, fading) — **a wall has no age**
   (it returns before the common roof pass). **A wall's coordinates are the wall's own**
@@ -531,7 +531,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   once at the density ceiling**; the slider shows a monotone **prefix**. **Crown
   geometry** is all in `CrownParams` (`map/trees/crown.rs`); **the city is drawn with
   `CrownParams::default()`**, whose seed picks the **crown set**. **The crown is coloured
-  by a material of its own** (`CrownMaterial`, shader `crown.wgsl`). **Crown detail
+  by a material of its own** (`CrownMaterial`, shader `crown.wesl`). **Crown detail
   follows the zoom step**: near, an entity per tree; far, light fills **merged into
   chunks** — and **the trees are built once for every zoom step**, split by density band,
   a crossing flipping `Visibility` only. The near step's crown entities are **streamed**
@@ -571,7 +571,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   sharp fork away from a ring. **Closedness of a way is read off the raw OSM points,
   never off the drawn path** — a style knob must not decide whether a way is a ring.
   Detail — `parking-big-lot.md`, `roads-merges.md`.
-- **Asphalt wear** (`surface.wgsl`, `SurfaceParams::wear`) — an asphalt road on a photo
+- **Asphalt wear** (`surface.wesl`, `SurfaceParams::wear`) — an asphalt road on a photo
   is never one tone. **Wheel ruts in the lane frame**, so they follow the lane and not
   the compass, **zero-mean**; **kerb dirt was removed**; **repair patches were tried here
   and removed** — a per-cell fill is a chequerboard aligned to the compass; **don't
@@ -715,11 +715,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     carried only by a street; a footway is carried by anything.
   - **Driveway crossing** — a footway way under 20 m both of whose ends are **ends of
     streets**: drawn as asphalt at the narrower drive's width. A crosswalk is not one.
-- **Surface material** (`map/surface.rs`, shader `surface.wgsl`) — the ground, the area
+- **Surface material** (`map/surface.rs`, shader `surface.wesl`) — the ground, the area
   layers, water and the road fills are drawn by **`SurfaceMaterial`**: the vertex colour
   stays the base, the shader multiplies in procedural noise **by world position** —
   identical in any two overlapping ribbons. **Every octave fades by pixel size**, so
-  nothing shimmers — that rule lives in **`assets/shaders/noise.wgsl`** and is imported
+  nothing shimmers — that rule lives in **`assets/shaders/noise.wesl`** and is imported
   by all three map shaders. One material per **`SurfaceKind`**; **`SurfaceStyle::texture`**
   scales amplitudes and retunes uniforms without rebuilding. A mesh for it is built with
   **`MeshBuilder::with_surface_coords`** — the **`Ribbon` attribute** in metres, zeros on
@@ -1170,7 +1170,7 @@ its draw call.
 - **Demon look** (`demon/look.rs`) — the `Ember` glyph in a five-shade crimson → orange
   ring (`demon_tint`) plus a **halo**: a child entity (`DemonHalo`, the `Halo` glyph,
   three bodies wide, z −0.01) that inherits the devour pulse and dies with its parent.
-- **Portal** (`portal.rs`, `assets/shaders/portal.wgsl`) — a `Mesh2d` quad with a
+- **Portal** (`portal.rs`, `assets/shaders/portal.wesl`) — a `Mesh2d` quad with a
   `PortalMaterial` (`Material2d`): a log-spiral vortex computed per pixel from
   `globals.time` — no spritesheet, no frames. Violet on purpose: red is demons, amber is
   panic, blue is water and tram. Its rim is **HDR** (> 1.0) so it blooms; under it a

@@ -32,7 +32,7 @@
 //!   осевой нет.
 //!
 //! Линию с полом в 1.3 px, её штрихи, сглаженный край и гашение по зуму рисует
-//! шейдер краски (`assets/shaders/paint.wgsl`); геометрия — полоса шире линии
+//! шейдер краски (`assets/shaders/paint.wesl`); геометрия — полоса шире линии
 //! под каждую ([`MeshBuilder::push_paint_strip`]). Полосы двух видов — линии
 //! полос и осевые — лежат разными мешами: дальше [`LANE_ZOOM_MAX`] линии
 //! полос не видны, дальше [`AXIS_ZOOM_MAX`] — и осевые, и их меш прячется
@@ -142,7 +142,7 @@ pub struct RoadPaintStyle {
     pub paint: f32,
     /// Амплитуда колеи (`surface.wgsl`).
     pub wear: f32,
-    /// Амплитуда колеи траекторий узла — слой износа (`paint.wgsl`).
+    /// Амплитуда колеи траекторий узла — слой износа (`paint.wesl`).
     pub turn_wear: f32,
 }
 
@@ -339,7 +339,7 @@ const YIELD_GAP: f32 = 0.6;
 pub const ZEBRA_ZOOM_MAX: f32 = 0.6;
 /// Профиль колеи, м: смещение колеса от середины полосы и ширина колеи (σ).
 /// Один на колею полос (`surface.wgsl`, через `surface::SurfaceParams`) и
-/// колею траекторий (`paint.wgsl`, через [`PaintParams`]).
+/// колею траекторий (`paint.wesl`, через [`PaintParams`]).
 pub(crate) const RUT_OFFSET: f32 = 0.85;
 pub(crate) const RUT_SIGMA: f32 = 0.32;
 

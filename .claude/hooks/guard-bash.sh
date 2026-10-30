@@ -191,7 +191,7 @@ $(printf '%s' "$cmd" | grep -oE '[A-Za-z0-9_./-]+\.(rs|wgsl|md|toml)')"
       .claude/worktrees/*/*) target="${target#.claude/worktrees/*/}" ;;
     esac
     case "$target" in
-      src/*.rs|tests/*.rs|examples/*.rs|benches/*.rs|assets/*.wgsl|*.md|Cargo.toml)
+      src/*.rs|tests/*.rs|examples/*.rs|benches/*.rs|assets/*.wesl|assets/*.wgsl|*.md|Cargo.toml)
         reason="Edit and Write are how source files change here — never a script that rewrites one (CLAUDE.md, \"Editing files — use Edit, not a Python script\"). This command writes \`$target\`: a \`str.replace()\` that matches nothing is a silent no-op, and a file rewritten from Bash also skips the domain-skill gate, which only watches Edit|Write. Grep the anchor, Read a window around it, then Edit against a line you have just seen. If this really is a mechanical sweep across many call sites — the one case a script wins — say so by putting the literal \`# mechanical-sweep\` in the command, assert on every replacement, and \`git diff\` afterwards."
         break ;;
     esac
