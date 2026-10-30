@@ -145,7 +145,7 @@ on the paired side themselves (`roads-pairs-medians.md`, **Paired halves**).
   `None` where there is no band — whatever took it. **Untagged** (no
   `sidewalk*` key at all — `tagged_sidewalks` returns `None`) is decided by the street and
   what stands around it, not taken as "both": an unpaved `surface`
-  (`gravel|unpaved|ground|dirt|compacted|…`, `parse/tags.rs::untagged_sidewalks`) never has
+  (`parse/tags.rs::untagged_sidewalks`) never has
   one; a residential / unclassified / living street keeps both only where the mean
   **storeys of the blocks** along it (`cars::district::Districts::storeys_at`, the very
   measure that thins the parked row, probed every 40 m) are at least
@@ -342,13 +342,7 @@ on the paired side themselves (`roads-pairs-medians.md`, **Paired halves**).
   over-counted paving is what could fake a small enclosed piece. Parks and woods are
   never asked — a real lawn in a square is a polygon of its own, not a verge. (The
   ends-and-bites windows together cost about half of what the continuous survey did.)
-  Pinned by `a_lawn_scrap_enclosed_by_paving_is_tiled`,
-  `a_remainder_tapering_to_a_tip_is_a_scrap_beyond_the_average`,
-  `a_ground_green_wedge_bitten_by_paving_is_a_scrap`,
-  `a_green_piece_open_to_the_lawn_stays_grass`,
-  `a_green_island_tail_tapering_along_is_paved_whole`,
-  `a_fat_green_remainder_is_not_asked_into_a_scrap`,
-  `a_wedge_bitten_mid_strip_is_asked_at_the_bite` and `scraps::tests`.
+  Pinned by the scraps tests in `roads/scraps.rs` and `roads/verges/tests.rs`.
   In a microdistrict
   the tile laid from the kerb to a footway fifteen metres off made the street read as
   poured concrete; there it is a lawn with the footway on it, as in any Soviet yard,
@@ -361,21 +355,20 @@ on the paired side themselves (`roads-pairs-medians.md`, **Paired halves**).
   Render-only: the navmesh and the house pull never read it.
   **One profile for the parse and the renderer**: `RoadLine::sidewalk()` →
   `SidewalkProfile` (`osm/model.rs`) — the sides as bools plus the **band by class**
-  (`sidewalk_band`, 22 % of the width, 1.2–3 m; `Some` on a carriageway, a bridge
-  included, `None` on a drive or a path). It is **derived, never stored**: the driveway
+  (`sidewalk_band`; `Some` on a carriageway, a bridge included, `None` on a drive
+  or a path). It is **derived, never stored**: the driveway
   crossings and the ring arcs are clones of a way with another `width`, and a stored band
-  would go stale on them. It answers `band()` (by class, tag ignored), `on(side)`,
-  `any()` (at least one side — `sidewalk=no|separate` on both gives `None`), `both()`,
-  `sides()`, and the three edges the parse reads — **mapped edge**, **verge edge**,
+  would go stale on them. The accessors (`band()`, `on(side)`,
+  `any()`, `both()`, `sides()`) are thin — `band()` answers by class, the tag ignored.
+  The parse reads the three edges — **mapped edge**, **verge edge**,
   **kerb edge** (`references/parse-buildings.md`, **Houses pulled off the sidewalks**;
   `references/parse-geometry.md`, **Blocks
   pulled to the roads**). Every edge is one reach per road on both sides, even for a
   one-sided `sidewalk=right`; a per-side edge would change the map, so it is not here.
   The renderer's sidewalk is that profile under the Sidewalks toggle (`Drawn::sidewalk_drawn`,
-  and per side `sidewalk_on` / `band_half` through `sides()` / `on(side)`).
-  The drawn sidewalk is `None` when neither side has one; `push_sidewalk` lays a one-sided
-  band the paired-half way (width plus one sidewalk, shifted half a sidewalk to its side)
-  and ANDs the tag with the pair runs; the kerb returns drop the arc on a missing side;
+  and per side `sidewalk_on` / `band_half`). The drawn sidewalk is
+  `None` when neither side has one; `push_sidewalk` lays a one-sided band the paired-half
+  way and ANDs the tag with the pair runs; the kerb returns drop the arc on a missing side;
   a taper's sidewalk wedge is laid per side, and a side without a sidewalk is the bare
   half (**Streets, sections, tapers** in `roads-streets-network.md` — a one-sided street gets it too). The parse's
   house pull still keeps its clearance
@@ -412,9 +405,7 @@ on the paired side themselves (`roads-pairs-medians.md`, **Paired halves**).
   (`RoadNetwork::continuations`) — computed from the roads alone, so the car gallery,
   which has no network, gets it too. It must not be *any* way ending in the node: on a
   tee that picked the side way when it came first by index, and a pocket ran round a
-  right-angle seam (pinned `pockets/tests.rs::a_kerb_pocket_stops_at_a_t_junction_side_way`,
-  `a_zebra_at_a_way_end_spills_only_onto_the_continuation`,
-  `a_kerb_pocket_does_not_turn_a_right_angle_way_end`).
+  right-angle seam (pinned by the seam tests in `pockets/tests.rs`).
   The pieces linked by open
   ends form a chain and `POCKET_MIN` is measured on the chain, not per way; a piece whose
   tapers outgrow it goes (a taper is not carried across a way end), and the pass repeats
