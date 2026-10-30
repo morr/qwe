@@ -141,7 +141,7 @@ on the paired side themselves (`roads-pairs-medians.md`, **Paired halves**).
   the points (`parse/tags.rs::tagged_sidewalks` — `both|left|right|no|none|separate`,
   refined by `sidewalk:both|left|right`; `no` and `separate` mean no band, a separate
   footway draws itself; `oneway=-1` swaps them with the points). Each side is a
-  **`SidewalkSide`** (`osm/model.rs`): `Tagged` from the tag, `Inferred` without one,
+  **`SidewalkSide`** (`osm/model/roads.rs`): `Tagged` from the tag, `Inferred` without one,
   `None` where there is no band — whatever took it. **Untagged** (no
   `sidewalk*` key at all — `tagged_sidewalks` returns `None`) is decided by the street and
   what stands around it, not taken as "both": an unpaved `surface`
@@ -354,7 +354,7 @@ on the paired side themselves (`roads-pairs-medians.md`, **Paired halves**).
   the arc's end discs lie under its own asphalt.
   Render-only: the navmesh and the house pull never read it.
   **One profile for the parse and the renderer**: `RoadLine::sidewalk()` →
-  `SidewalkProfile` (`osm/model.rs`) — the sides as bools plus the **band by class**
+  `SidewalkProfile` (`osm/model/roads.rs`) — the sides as bools plus the **band by class**
   (`sidewalk_band`; `Some` on a carriageway, a bridge included, `None` on a drive
   or a path). It is **derived, never stored**: the driveway
   crossings and the ring arcs are clones of a way with another `width`, and a stored band

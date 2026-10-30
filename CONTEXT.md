@@ -747,7 +747,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
 - **Shoal** (`map/water.rs::mesh_water_areas`) — water has **no rim**: its lighter shore
   is a **distance field to the nearest bank**, over all water polygons **unioned** first.
   A **waterway ribbon** carries the same field on its edges from the shader.
-- **Sidewalk profile** (`osm/model.rs`, `RoadLine::sidewalk()`) — one answer to "what
+- **Sidewalk profile** (`osm/model/roads.rs`, `RoadLine::sidewalk()`) — one answer to "what
   sidewalk does this road have" for the parse and the renderer: the sides (the
   **`SidewalkSide`** tristate) and the **band by class**. **Derived from the current
   `width`, never stored** (the renderer's clones change the width). Three edges come off

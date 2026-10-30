@@ -306,10 +306,10 @@ going through the curb pin tests
   ladder worth a row per step, the trees (a crown pool plus a scatter, ~15 k entities)
   want a different row shape — a row for any of them is a `measure_*` plus a `row(...)`
   line in the bench.
-- **Merged meshes** (`map/meshing.rs` — `MeshBuilder`, атрибуты и типы-кадры — плюс
-  субъекты `map/meshing/{ribbon,paint,geometry}.rs` — ленты/каймы, штрихи краски,
-  свободная геометрия — и `map/spawn.rs`; the per-layer geometry lives in
-  the layer's own module) — **one merged `Mesh2d` per layer**: `MeshBuilder`
+- **Merged meshes** (`map/meshing.rs` — `MeshBuilder` and its frame types, plus
+  subjects `map/meshing/{ribbon,paint,geometry}.rs` (strokes and ribbons, paint
+  strips, free geometry) and `map/spawn.rs`; per-layer geometry lives in the
+  layer's own module) — **one merged `Mesh2d` per layer**: `MeshBuilder`
   triangulates polygons via `earcutr` (holes supported, degenerate contours skipped +
   counted) and emits per-vertex colors. Which layers ride the flat `ColorMaterial`, the
   roof material or the surface material is in `CONTEXT.md`; the parking **markings** are

@@ -152,15 +152,15 @@ stand, how density works, and which resources restyle them.
     a prefix that differs only in its tail. Splitting the mesh changes nothing on screen:
     every tree shadow is one colour at one alpha, and alpha-blending one colour is
     order-independent, so overlaps darken exactly as they did inside one mesh.
-- **The far steps draw a thinned shadow** (`CrownVariant::far_shadow`,
-  `crown.rs::shadow_templates`): the same shadow, from the same rolled height, laid
-  over the far crown's thinned outer ring (`far_ring_step`, **The far crown** below) —
-  the conifer's ring is untouched, so the fan template is the very same one and its
-  union is not run twice. So a density band seen by both
-  detail kinds gets two layers — full template for the `Full` steps, thin for the
-  `Merged` ones — each with its own mask. Measured by the round-2 prototype: Kaluga's
-  far shadow layer **14.9 M → 3.55 M vertices**, build 88 → 24 ms; area within ±10 % of
-  the full shadow. From 2 m/px a
+  - **The far steps draw a thinned shadow** (`CrownVariant::far_shadow`,
+    `crown.rs::shadow_templates`): the same shadow, from the same rolled height, laid
+    over the far crown's thinned outer ring (`far_ring_step`, **The far crown** below) —
+    the conifer's ring is untouched, so the fan template is the very same one and its
+    union is not run twice. So a density band seen by both
+    detail kinds gets two layers — full template for the `Full` steps, thin for the
+    `Merged` ones — each with its own mask. Measured by the round-2 prototype: Kaluga's
+    far shadow layer **14.9 M → 3.55 M vertices**, build 88 → 24 ms; area within ±10 % of
+    the full shadow. From 2 m/px a
     shadow is a couple of pixels, so the ring's scallops are invisible. Cost: the thin
     layers are built and held alongside the full ones (≈ +¼ of the shadow vertices).
   - **Shadows are chunked like the merged crowns** (`chunk_of`, `sorted_chunks`, the same
@@ -195,8 +195,8 @@ stand, how density works, and which resources restyle them.
     the ink by the share of the fill the strokes cover (`crown_builder` measures it,
     `MeshBuilder::area_since`). From 2 m/px the strokes (12 % and 6 % of a 2–6 m
     radius) are tenths of a pixel, so the average is what the eye got anyway.
-- **Tint and ball light survive the merge** — brightness in the vertex colours, the
-  crown-local coordinate on `ATTRIBUTE_CROWN` (the canopy material below).
+  - **Tint and ball light survive the merge** — brightness in the vertex colours, the
+    crown-local coordinate on `ATTRIBUTE_CROWN` (the canopy material below).
   - **Draw order**: a chunk emits its crowns **in `TreeSet` order** (the order of the
     set, so a crown with a higher index lies on top — the per-index order the entities
     had before the draw-group z, without its `% 512` wrap), and triangle order inside one mesh *is* draw order. The
@@ -365,7 +365,7 @@ stand, how density works, and which resources restyle them.
   on/off — removes both the row trees and the green band), `placement`
   (`TreeRowPlacement`), `osm_spacing`, and the band's `join` / `smoothing` / `casing`
   (see Tree rows above). Which sources end up in `MapData::trees` is captured by
-  **`TreeCompose`** (layout + woods/rows/standalone flags, `model.rs`) — the value stored
+  **`TreeCompose`** (layout + woods/rows/standalone flags, `model/trees.rs`) — the value stored
   in `composed_for`, so `recompose_row_trees` re-merges only when the composition
   actually changed. Crown look is inherited from `TreeStyle`.
 - **Conifer stands / conifer field** (`map/trees/conifer.rs`, `ConiferField` resource) —
