@@ -415,6 +415,7 @@ on the paired side themselves (`roads-pairs-medians.md`, **Paired halves**).
   right-angle seam (pinned `pockets/tests.rs::a_kerb_pocket_stops_at_a_t_junction_side_way`,
   `a_zebra_at_a_way_end_spills_only_onto_the_continuation`,
   `a_kerb_pocket_does_not_turn_a_right_angle_way_end`).
+  The pieces linked by open
   ends form a chain and `POCKET_MIN` is measured on the chain, not per way; a piece whose
   tapers outgrow it goes (a taper is not carried across a way end), and the pass repeats
   until nothing changes — per way, a short open piece was dropped while its neighbour
