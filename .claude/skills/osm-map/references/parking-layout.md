@@ -1,8 +1,12 @@
 # Parking lot layout
 
 Detail behind `map/parking.rs` — how stalls, aisles and lot shapes are laid out. The
-big lot's kerb and the gores live in `parking-big-lot.md`; the cars that fill the
-stalls in `parking-parked-cars.md`. The lot outline reaching its road is a parse pass
+module is a parent plus subjects: the parent holds the constants, the stall model,
+`Outline`/`Surroundings`, the placement grid and the paint; the aisle-based layout
+lives in `map/parking/aisles.rs`, the invented layout in `map/parking/generated.rs`,
+the tests in `map/parking/tests.rs`. The big lot's kerb and the gores live in
+`parking-big-lot.md`; the cars that fill the stalls in `parking-parked-cars.md`. The
+lot outline reaching its road is a parse pass
 (**Blocks pulled to the roads → `pave_lots`** in `parse-geometry.md`); everything here reads
 the outline it produced.
 
