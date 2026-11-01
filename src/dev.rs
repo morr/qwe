@@ -491,6 +491,30 @@ fn log_frame_spikes(
     }
 }
 
+/// Курсор агента, ведущего приложение через BRP (skill `live-app`): позиция в
+/// логических px, зажимается до сброса `active = false` и читается вместо окна
+/// через [`cursor_position`]. Пишет её `brp hover` / `brp click`.
+///
+/// Отдельный ресурс, а не запись в `Window::physical_cursor_position`, потому
+/// что `bevy_winit` считает изменение поля программной просьбой двинуть
+/// **настоящий** курсор (`set_cursor_position`) — виртуальная мышь агента не
+/// должна таскать мышь пользователя по столу.
+#[derive(Resource, Reflect, Debug, Default)]
+#[reflect(Resource)]
+pub struct VirtualCursor {
+    pub active: bool,
+    pub pos: Vec2,
+}
+
+/// Позиция курсора в логических px: виртуальная ([`VirtualCursor`]), если
+/// агент её задал, иначе реальная из окна.
+pub fn cursor_position(window: &Window, virtual_cursor: &VirtualCursor) -> Option<Vec2> {
+    virtual_cursor
+        .active
+        .then_some(virtual_cursor.pos)
+        .or_else(|| window.cursor_position())
+}
+
 pub struct DevPlugin;
 
 impl Plugin for DevPlugin {
@@ -506,7 +530,9 @@ impl Plugin for DevPlugin {
         .register_type::<TestWalker>()
         .register_type::<ProbeLayersEvent>()
         .register_type::<LayerProbe>()
+        .register_type::<VirtualCursor>()
         .init_resource::<LayerProbe>()
+        .init_resource::<VirtualCursor>()
         .add_observer(on_take_screenshot)
         .add_observer(on_offscreen_shot)
         .add_observer(on_spawn_test_walker)

@@ -184,6 +184,8 @@ fn main() {
         .add_plugins(qwe::ui::PanelWidgetsPlugin)
         .add_plugins(qwe::ui::QuitOnEscPlugin)
         .add_plugins(qwe::ui::AgentBadgePlugin)
+        // требует `zoom_to_cursor`
+        .init_resource::<qwe::dev::VirtualCursor>()
         .init_resource::<View>()
         .init_resource::<Tuning>()
         // подписи и бегунки ручек ведёт кит — по разу на ресурс, как в игре

@@ -28,6 +28,7 @@ use bevy::window::PrimaryWindow;
 
 use super::speed::{PANEL_WIDTH_PX, TelemetryPanel};
 use crate::camera::{cursor_world, pointer_over_ui};
+use crate::dev::{VirtualCursor, cursor_position};
 use crate::map::inspect::{
     FeatureRef, Hit, InspectIndex, InspectOrigin, InspectViewport, feature_shape, hit_line,
     mesh_feature,
@@ -141,6 +142,7 @@ impl Plugin for UiInspectorPlugin {
         let standalone = self.standalone;
         app.init_resource::<InspectorHighlight>()
             .init_resource::<InspectorHitsState>()
+            .init_resource::<VirtualCursor>()
             .register_type::<InspectorHighlight>();
         app.add_systems(
             Startup,
@@ -284,6 +286,7 @@ fn update_camera_text(
     text: Single<&mut Text, With<InspectorCameraText>>,
     camera: Single<(&Transform, &PanCamera), With<Camera2d>>,
     window: Single<&Window, With<PrimaryWindow>>,
+    virtual_cursor: Res<VirtualCursor>,
     hover_map: Res<HoverMap>,
     ui_nodes: Query<(), With<Node>>,
     origin: Res<InspectOrigin>,
@@ -292,7 +295,7 @@ fn update_camera_text(
     let world_center = transform.translation.truncate();
     let zoom = controller.zoom_factor;
 
-    let cursor = match window.cursor_position() {
+    let cursor = match cursor_position(&window, &virtual_cursor) {
         Some(cursor) if !pointer_over_ui(&hover_map, &ui_nodes) => {
             let world = cursor_world(&window, cursor, transform, zoom) - origin.0;
             format!("{:.0}/{:.0}", world.x, world.y)
@@ -336,6 +339,7 @@ fn update_inspector_hits(
     mut state: ResMut<InspectorHitsState>,
     camera: Single<(&Transform, &PanCamera), With<Camera2d>>,
     window: Single<&Window, With<PrimaryWindow>>,
+    virtual_cursor: Res<VirtualCursor>,
     hover_map: Res<HoverMap>,
     ui_nodes: Query<(), With<Node>>,
     inputs: InspectorInputs,
@@ -352,7 +356,7 @@ fn update_inspector_hits(
         return;
     };
     let over_ui = pointer_over_ui(&hover_map, &ui_nodes);
-    let Some(cursor) = window.cursor_position().filter(|_| !over_ui) else {
+    let Some(cursor) = cursor_position(&window, &virtual_cursor).filter(|_| !over_ui) else {
         // прочерк вместо чисел: курсора нет (или он над панелью — это не
         // точка карты), следующая точка — всегда дальше шага (INFINITY), так
         // что список пересчитается на её возврат

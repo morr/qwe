@@ -188,6 +188,8 @@ fn main() {
         .add_plugins(qwe::ui::PanelWidgetsPlugin)
         .add_plugins(qwe::ui::QuitOnEscPlugin)
         .add_plugins(qwe::ui::AgentBadgePlugin)
+        // требует `zoom_to_cursor`
+        .init_resource::<qwe::dev::VirtualCursor>()
         .init_resource::<Ground>()
         .init_resource::<Show>()
         .init_resource::<Roll>()

@@ -8,6 +8,7 @@ use bevy::settings::{ReflectSettingsGroup, SaveSettingsSync, SettingsGroup};
 use bevy::window::PrimaryWindow;
 
 use crate::city::City;
+use crate::dev::{VirtualCursor, cursor_position};
 use crate::loading::{AppState, WorldInitSet};
 use crate::portal::PortalPos;
 use crate::prefs::TrackPrefExt;
@@ -171,6 +172,7 @@ impl Plugin for CameraPlugin {
         app.add_plugins(PanCameraPlugin)
             .init_resource::<CameraPositionMode>()
             .init_resource::<SavedCameraView>()
+            .init_resource::<VirtualCursor>()
             .register_type::<CameraPositionMode>()
             .register_type::<SavedCameraView>()
             // `SavedCameraView` не отслеживается: он меняется каждый кадр
@@ -581,6 +583,7 @@ impl Viewport {
 /// из констант модуля, поэтому у витрины свой диапазон.
 pub fn zoom_to_cursor(
     window: Single<&Window, With<PrimaryWindow>>,
+    virtual_cursor: Res<VirtualCursor>,
     scroll: Res<AccumulatedMouseScroll>,
     pixels_per_line: Res<MouseScrollPixelsPerLine>,
     mut query: Query<(&mut Transform, &mut PanCamera), With<Camera>>,
@@ -600,7 +603,7 @@ pub fn zoom_to_cursor(
         return;
     }
 
-    if let Some(cursor) = window.cursor_position() {
+    if let Some(cursor) = cursor_position(&window, &virtual_cursor) {
         let offset = cursor_offset(&window, cursor);
         let world_under_cursor = transform.translation.truncate() + offset * old_zoom;
         let translation = world_under_cursor - offset * new_zoom;
@@ -686,6 +689,7 @@ pub fn pointer_over_ui(hover_map: &HoverMap, ui_nodes: &Query<(), With<Node>>) -
 /// скорость, как это делал экранный `delta` у PanCamera).
 pub fn drag_pan(
     window: Single<&Window, With<PrimaryWindow>>,
+    virtual_cursor: Res<VirtualCursor>,
     buttons: Res<ButtonInput<MouseButton>>,
     hover_map: Res<HoverMap>,
     ui_nodes: Query<(), With<Node>>,
@@ -696,7 +700,7 @@ pub fn drag_pan(
         *drag = DragPan::Idle;
         return;
     }
-    let Some(cursor) = window.cursor_position() else {
+    let Some(cursor) = cursor_position(&window, &virtual_cursor) else {
         return;
     };
     if matches!(*drag, DragPan::Idle) {

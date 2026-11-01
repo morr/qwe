@@ -286,6 +286,17 @@ $b cam                                          # read the resulting zoom back
 
   Negative `y` zooms out. Range is clamped to `0.05 … 4.5`.
 
+- **`hover` / `click` steer a virtual cursor and never move the real mouse.**
+  The position lands in the `VirtualCursor` resource (`src/dev.rs`, written over
+  `world.insert_resources`), which `zoom_to_cursor`, `drag_pan` and the point
+  inspector read ahead of `Window::cursor_position()`; picking and `ButtonInput`
+  get the two message channels (the channel note in the `brp` script explains
+  the split). The position is sticky — it holds until the next `hover`, so a
+  `MouseWheel` message after it anchors to it. `$b hover off` hands the cursor
+  back to the real mouse. Writing `Window.physical_cursor_position` by hand (the
+  pre-`VirtualCursor` way) makes `bevy_winit` warp the **real** cursor to the
+  same spot — don't.
+
 - Portal hint for Tula is `3284, 2969`; other cities put it at the map centre
   (`3800, 2850`) unless `city.rs` says otherwise.
 
@@ -301,7 +312,8 @@ corpse, a child entity), `Silhouette`, `SoulMote`
 (kill sparks, alive ~1.4 sim-seconds each), `PawnId`, `WanderIndex`, `NeedsWanderTarget`,
 `RequestedAt`, `RetireAt`.
 
-Resources — `City`, `SimSpeed`, `Telemetry`, `PortalPos`, `PathfindingAlgorithm`,
+Resources — `City`, `SimSpeed`, `Telemetry`, `VirtualCursor` (the agent's
+virtual cursor, written by `brp hover` / `click`), `PortalPos`, `PathfindingAlgorithm`,
 `DemonStyle`, `DemonSpawner`, `HumanStyle`, `SeparationStyle`,
 `BuildingHeightMode`, `TreeStyle` / `TreeShape`, `TreeRowStyle`, `ConiferNoiseStyle`,
 `RoadStyle`, `RoadShape` / `RoadShapeOnMap` (a write to `RoadShape` reaches the map
