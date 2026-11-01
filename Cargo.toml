@@ -65,6 +65,10 @@ name = "navmesh_probe"
 path = "examples/audit/navmesh_probe.rs"
 
 [[example]]
+name = "pocket_probe"
+path = "examples/audit/pocket_probe.rs"
+
+[[example]]
 name = "fence_prune_audit"
 path = "examples/audit/fence_prune_audit.rs"
 
