@@ -140,6 +140,18 @@ lifts the projection from `osm_near`, so no session re-derives it by hand.
 the live camera is now, not where the shot was taken. Details are in
 `.claude/live-app-project.md` ("Where a screenshot was taken") and in `osm-map`.
 
+**A translucent yellow shape over the map is the cursor UI pointing, not a map layer.**
+When the shot has an element highlighted by the point inspector's `highlight` checkbox
+(a translucent yellow shape on the map, its row picked in the hits list), that
+highlighted feature **is the subject of the question**: the user selected it on purpose.
+`tools/shot_coords` reads the hits list together with the camera line and marks the
+picked row — identify the feature by its line (`z … label #id`; `#id` goes to
+`tools/osm_near --id`) and investigate **that feature** — why it is there, why it looks
+or lies the way it does. The highlight overlay itself (`inspector_highlight`, drawn
+above every map layer at `Z_INSPECTOR_HIGHLIGHT`) is not part of the question: never
+spend the session explaining how the highlight works when the user is asking about the
+highlighted thing.
+
 ## Build & Development Commands
 
 ```bash

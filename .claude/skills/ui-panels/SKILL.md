@@ -138,7 +138,16 @@ panel** with four tabs (`ui/shell.rs`).
   where the checkbox sits at the screen edge outside every sample viewport and cannot be
   clicked; the layer itself is `sync_inspector_highlight`, the `respawn_overlay` pattern
   at `Z_INSPECTOR_HIGHLIGHT`, rebuilt only when the selection changes or the gallery's
-  `InspectOrigin`/`InspectViewport` move). **The layer is placed at `map +
+  `InspectOrigin`/`InspectViewport` move). **A highlight in a user screenshot is the
+  user's pointer, not the subject of the question**: a shot with a translucent yellow
+  shape on it means the feature was selected on purpose — identify it by its row in the
+  hits list (`z … label #id`) and investigate **that feature** (why it is there, why it
+  looks the way it does); the highlight overlay itself needs no explanation, and since
+  it draws above every map layer it also shows outlines the map itself hides under
+  roads and paint. `tools/shot_coords` OCRs the hits list too — the `z <depth> …` line
+  shapes in `hit_line`/`format_hits` and the `HIGHLIGHT_ROW_BG` tint are what that
+  reader keys on, so changing either means re-checking the tool in the same change.
+  **The layer is placed at `map +
   InspectOrigin`** (`LayerMesh::offset`) — the inverse of the panel's own world→map
   subtraction — **and clipped to the viewport** (`InspectViewport::clip`): it never
   spills out of a sample window, even when the object is bigger. In the roads gallery

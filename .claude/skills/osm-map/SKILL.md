@@ -87,6 +87,13 @@ carries the auto bands a road draws itself, measured off the OSM axis by the wid
 geometry `brp probe`'s layer section is the arbiter. The label dictionary (including
 the `#id` tail and its `tools/osm_near --id <id>` follow-up) is in `ui-panels`, the
 inspector panel's skill.
+**A translucent yellow shape in the shot is the inspector's highlight — the user's
+pointer, not a map layer and not the question.** `tools/shot_coords` reads the hits
+list together with the camera line and marks the row the user picked: the question is
+about **that feature** — why it is there, why it looks or lies the way it does. The
+overlay draws at `Z_INSPECTOR_HIGHLIGHT`, above every map layer, so it also outlines
+parts the map itself hides under roads and paint — judge the feature on the map beneath
+the overlay.
 `osm_near` reads the newest
 `assets/osm/<city>_*.json` and
 projects with the centre and size from its name, i.e. the same metres as `SimPosition` and
