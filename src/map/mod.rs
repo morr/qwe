@@ -119,8 +119,8 @@ pub use self::parking::ParkingLayout;
 pub use self::rail::{RailZoomBucket, mesh_rails};
 pub use self::roads::tram_lay::TramTracks;
 pub use self::roads::{
-    RoadBuild, VergeLods, VergeZoomBucket, build_other_road_step, build_roads, mesh_roads,
-    spawn_road_meshes,
+    RoadBuild, VergeLods, VergeZoomBucket, build_other_road_step, build_roads,
+    corner_paving_contours, mesh_roads, spawn_road_meshes,
 };
 pub use self::spawn::{mesh_surfaces, mesh_tree_row_band};
 pub use self::tram::{TramZoomBucket, mesh_tram};

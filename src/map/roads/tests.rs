@@ -1356,3 +1356,23 @@ fn diag_window() {
         }
     }
 }
+
+/// Мощение углов для покрытия карманов (`osm/parse/pockets.rs`): на
+/// перекрёстке оно есть — скругления не выводятся из полос покрытия, и без
+/// этого прохода щель карманов ложилась бы поверх нарисованного вентиля
+/// (Свободы × Первомайская: карман засевался на асфальте горла).
+#[test]
+fn corner_paving_contours_carry_the_drawn_fans() {
+    let contours = corner_paving_contours(&a_tee());
+    assert!(
+        !contours.is_empty(),
+        "на перекрёстке нет контуров скруглений"
+    );
+    // узел тройника (350, 100): скругление ищется рядом с ним, а не где-то
+    let near_node = contours.iter().any(|outline| {
+        outline
+            .iter()
+            .any(|point| point.distance(Vec2::new(350.0, 100.0)) < 30.0)
+    });
+    assert!(near_node, "контуры скруглений не у узла перекрёстка");
+}

@@ -37,6 +37,33 @@ fn main() {
     });
     let map = common::load_map(city);
 
+    // распределение посева по видам и площадям — смена закона покрытия видна
+    // на всём городе, а не только у пробы
+    let mut kinds: std::collections::BTreeMap<&str, usize> = Default::default();
+    for area in &map.pockets {
+        *kinds.entry(format!("{:?}", area.kind).leak()).or_default() += 1;
+    }
+    println!("== pocket kinds: {kinds:?}");
+    let mut areas: Vec<f32> = map
+        .pockets
+        .iter()
+        .map(|a| signed_area(&a.outer).abs())
+        .collect();
+    areas.sort_by(f32::total_cmp);
+    if let (Some(first), Some(median), Some(last)) =
+        (areas.first(), areas.get(areas.len() / 2), areas.last())
+    {
+        println!("== pocket areas: min {first:.2}, median {median:.2}, max {last:.2} m^2");
+    }
+
+    let started = std::time::Instant::now();
+    let contours = qwe::map::corner_paving_contours(&map);
+    println!(
+        "== corner paving: {} contours in {:.1} ms",
+        contours.len(),
+        started.elapsed().as_secs_f32() * 1e3
+    );
+
     let bounds_of = |outer: &[Vec2]| {
         (
             outer.iter().fold(Vec2::MAX, |a, &b| a.min(b)),

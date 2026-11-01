@@ -397,12 +397,16 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   threads**. Detail — `parse-geometry.md`.
 - **Ground pocket** (`parse/pockets.rs::fill_ground_pockets`, `MapData::pockets`) — a
   scrap of bare ground **enclosed** by what is drawn that no tag describes: a **hole of
-  the union** of the covers, found per tile; a hole touching a paved road, touching no
-  dirt path and small enough is sown with grass — beside a block that block's grass, else
-  a mapped meadow **merged into that very green**, else the yard grass. **A pocket is not
-  a block** — a verge next to it does not turn to yard grass. A **green apron**
-  (`Scene::green_aprons`) asks the same question of strips that are never holes. Detail —
-  `parse-geometry.md`.
+  the union** of the covers — the road bands and verges, the areas, **and the drawn
+  corner fans** (`map/roads.rs::corner_paving_contours`, so a junction mouth's coverage
+  follows the kerb the game actually draws) — found per tile; a hole touching a paved
+  road, touching no dirt path and small enough is sown with grass — beside a block that
+  block's grass, else a mapped meadow **merged into that very green**, else the yard
+  grass; **in a junction mouth** (the ring touches a drawn kerb return) the block does
+  not win — the corner is the verge's edge, and the verge's own colour law decides.
+  **A pocket is not a block** — a verge next to it does not turn to yard grass. A
+  **green apron** (`Scene::green_aprons`) asks the same question of strips that are
+  never holes. Detail — `parse-geometry.md`.
 - **Inferred storeys** (`map/buildings/heights.rs`) — what a building without a `height`
   tag is drawn as: **the shape of the footprint decides**, the way an eye reads an
   aerial photo (a long thin box a panel section, a compact large one a tower, a small

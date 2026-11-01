@@ -434,3 +434,63 @@ fn a_ring_island_is_not_a_ground_pocket() {
         "остров кольца засеян"
     );
 }
+
+/// В горле перекрёстка квартал не выигрывает: карман, чьё кольцо касается
+/// нарисованного скругления (`map/roads.rs::corner_paving_contours`), сеется
+/// по закону газона обочины — лугом у замапленной зелени, хотя квартал ближе.
+/// Свободы × Первомайская: угол улиц красился двором квартала поверх
+/// обочинной картины угла.
+#[test]
+fn a_mouth_pocket_follows_the_verge_law_not_the_block() {
+    let at = CENTER;
+    let roads = vec![
+        crate::map::osm::fixture::street(
+            vec![at + Vec2::new(-60.0, 0.0), at, at + Vec2::new(60.0, 0.0)],
+            8.0,
+        ),
+        crate::map::osm::fixture::street(vec![at, at + Vec2::new(0.0, 60.0)], 8.0),
+    ];
+    // кольцо будущего кармана — лента вдоль первого звена нарисованного
+    // скругления: к нему и к зелени, и к кварталу подведены края
+    let ring = {
+        let scene = pockets::Scene::of(&MapData {
+            roads: roads.clone(),
+            ..MapData::default()
+        });
+        let fan = scene
+            .corner_paving
+            .first()
+            .expect("перекрёсток дал скругление")
+            .clone();
+        let normal = (fan[1] - fan[0]).perp().normalize_or_zero();
+        vec![fan[0], fan[1], fan[1] + normal, fan[0] + normal]
+    };
+    let near_ring = |offset: f32, kind| {
+        let normal = (ring[1] - ring[0]).perp().normalize_or_zero();
+        PolyArea {
+            kind,
+            ..building(
+                ring.iter().map(|point| *point + normal * offset).collect(),
+                Vec::new(),
+            )
+        }
+    };
+    let map = MapData {
+        roads,
+        grass: vec![near_ring(1.0, AreaKind::Grass)],
+        landuse: vec![near_ring(2.0, AreaKind::Residential)],
+        ..MapData::default()
+    };
+    let scene = pockets::Scene::of(&map);
+    assert!(scene.in_mouth(&ring), "кольцо на скруглении — горло");
+    let (kind, absorb) = scene
+        .grass_near(&ring, 5.0, true)
+        .expect("зелень рядом — карман сеется");
+    assert_eq!(kind, AreaKind::Grass, "в горле газон обочины, не двор");
+    assert!(absorb.is_some(), "карман-луг вливается в зелень");
+    let (kind, absorb) = scene
+        .grass_near(&ring, 5.0, false)
+        .expect("вне горла сосед есть");
+    assert_eq!(kind, AreaKind::Residential, "вне горла квартал выигрывает");
+    assert!(absorb.is_none());
+}

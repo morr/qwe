@@ -387,6 +387,27 @@ impl std::fmt::Display for RoadReport {
 /// возврат.
 /// `verge` — ступень зума обочин ([`VergeLods`]): по правилу шва ступень, а
 /// не развёрнутое из таблицы значение.
+/// Нарисованное мощение углов контурами — для покрытия карманов парсa
+/// (`osm/parse/pockets.rs`): скругления улиц, тротуаров и обочин, мощёные
+/// носы и дуги ([`corners::KerbReturns::paving`]). Полосы покрытия карманов
+/// меряются от осевых и скруглений не знают, поэтому в горлах перекрёстков
+/// щель покрытия ложится поверх нарисованного мощения, и карман засевается
+/// там, где на карте асфальт (Свободы × Первомайская). Стиль и форма —
+/// дефолтные: карманы считаются раньше, чем мир узнаёт ручки стиля, а
+/// покрытие и так аппроксимация рисунка. Возвращает копии колец.
+pub fn corner_paving_contours(map: &MapData) -> Vec<Vec<Vec2>> {
+    let style = RoadStyle::default();
+    let shape = RoadShape::default();
+    let drawn = Drawn::new(map, &style, &shape, VergeZoomBucket::for_zoom(0.0));
+    let returns = corners::kerb_returns(&drawn, shape.corner_radius());
+    let paving = returns.paving();
+    paving
+        .flat()
+        .chain(paving.curved())
+        .map(<[Vec2]>::to_vec)
+        .collect()
+}
+
 pub fn mesh_roads(
     map: &MapData,
     style: RoadStyle,

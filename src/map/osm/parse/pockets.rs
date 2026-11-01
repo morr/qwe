@@ -13,7 +13,12 @@
 //!
 //! Здесь недостаток данных закрывается **одним вопросом к картине целиком**:
 //! что из земли **замкнуто** нарисованным — полотнами дорог с тротуарами,
-//! обочинами, кварталами, зеленью, водой, стоянками, площадками. Дырка их
+//! обочинами, кварталами, зеленью, водой, стоянками, площадками и
+//! нарисованными скруглениями углов в горлах перекрёстков
+//! ([`crate::map::roads::corner_paving_contours`]; полосы от осевых
+//! скруглений не знают, и без них щель покрытия ложилась бы поверх
+//! нарисованного вентиля — Свободы × Первомайская: карман засевался на
+//! асфальте горла). Дырка их
 //! объединения — это и есть карман: вокруг него всё покрыто, и ни один тег
 //! его не описал. Карман, который касается мощёной дороги и мал
 //! ([`POCKET_AREA_MAX`]), засевается травой (`MapData::pockets`) — какой,
@@ -24,7 +29,10 @@
 //! них — травой двора. Это правило газона широкой обочины
 //! (`roads.rs::Meadows`): луг — только у замапленной зелени, по умолчанию —
 //! двор. Без квартала рядом карман оставался землёй — бежевый параллелограмм
-//! между газонами обочин у кольца Калуги 01.
+//! между газонами обочин у кольца Калуги 01. В **горле перекрёстка** — кольцо
+//! касается нарисованного скругления ([`Scene::in_mouth`]) — квартал не
+//! выигрывает: угол улиц — край обочины, а не двор, и цвет выбирает закон
+//! газона обочины без квартального соседа.
 //!
 //! Что должно остаться землёй, остаётся ею: карман у грунтовой тропы — не
 //! двор (пустырь с тропинками, как юго-запад Орла, 03), большой — это уже
@@ -73,6 +81,9 @@ use crate::map::osm::model::{
 use crate::map::parallel::in_parallel;
 use crate::map::roads::rings::islands as ring_islands;
 use crate::map::shapes::{Contour, Shape, area_contours, contour_bounds, oriented, ring_of};
+
+use crate::map::footprint::distance_to_polyline;
+use crate::map::roads::corner_paving_contours;
 
 /// Больше этого, м², дырка покрытия — уже не карман, а площадка: пустырь,
 /// стройка, двор без тега. Клин Тулы 02 — около 150 м², параллелограмм у
@@ -155,6 +166,12 @@ struct Scene {
     /// у газона и у сквера карман вливается в неё одним лугом, как газон
     /// обочины рядом с ними.
     meadows: Rim<Green>,
+    /// Нарисованное мощение углов (`map/roads.rs::corner_paving_contours`) —
+    /// скругления в горлах перекрёстков так, как их кладёт отрисовка. В
+    /// покрытии (см. `Scene::of`) — чтобы щель совпадала с рисунком; здесь же
+    /// по касанию кольца отвечается вопрос «горло ли это перекрёстка».
+    corner_paving: Vec<Vec<Vec2>>,
+    corner_grid: Grid<usize>,
 }
 
 /// Рёбра колец площадей одного рода с индексом по [`Grid`]: у какого кольца
@@ -366,6 +383,14 @@ impl Scene {
         for island in ring_islands(&map.roads) {
             covers.push(Cover::of(vec![oriented(&island, true)]));
         }
+        // нарисованные углы — тот же перекрёсток, что и полосы выше, но так,
+        // как его рисует отрисовка: скругления не выводятся из осевых, и без
+        // них щель покрытия ложилась бы поверх нарисованного мощения, а
+        // карман засевался бы на асфальте (Свободы × Первомайская)
+        let corner_paving = corner_paving_contours(map);
+        for outline in &corner_paving {
+            covers.push(Cover::of(vec![oriented(outline, true)]));
+        }
         covers.retain(|cover| !cover.contours.is_empty());
 
         let mut cover_grid = Grid::new(TILE);
@@ -377,6 +402,12 @@ impl Scene {
         for (index, link) in links.iter().enumerate() {
             link_grid.insert_segment(link.from, link.to, link.reach + TOUCH, index);
             apron_grid.insert_segment(link.from, link.to, link.reach + GREEN_GAP_MAX, index);
+        }
+        let mut corner_grid = Grid::new(MARGIN);
+        for (index, outline) in corner_paving.iter().enumerate() {
+            for pair in outline.windows(2) {
+                corner_grid.insert_segment(pair[0], pair[1], TOUCH, index);
+            }
         }
         Self {
             streets,
@@ -398,6 +429,8 @@ impl Scene {
                             .map(|(index, area)| (area, Green { park: false, index })),
                     ),
             ),
+            corner_paving,
+            corner_grid,
         }
     }
 
@@ -406,9 +439,17 @@ impl Scene {
     /// сквера — в ту зелень, к чьему кольцу ближе всего подошёл, — иначе
     /// травой двора (`Residential`), как газон обочины (`roads.rs::Meadows`).
     /// Карман без соседа меньше [`LONE_POCKET_MIN`] не засевается вовсе.
-    fn grass_near(&self, ring: &[Vec2], area: f32) -> Option<(AreaKind, Option<Green>)> {
-        self.blocks
-            .near(ring)
+    /// В горле перекрёстка (`mouth` — кольцо касается нарисованного
+    /// скругления) квартал не выигрывает: угол улиц — край обочины, а не двор,
+    /// и цвет выбирает закон газона обочины — лугом у зелени, иначе двора.
+    fn grass_near(
+        &self,
+        ring: &[Vec2],
+        area: f32,
+        mouth: bool,
+    ) -> Option<(AreaKind, Option<Green>)> {
+        let block = if mouth { None } else { self.blocks.near(ring) };
+        block
             .map(|kind| (kind, None))
             .or_else(|| {
                 self.meadows
@@ -416,6 +457,17 @@ impl Scene {
                     .map(|green| (AreaKind::Grass, Some(green)))
             })
             .or_else(|| (area >= LONE_POCKET_MIN).then_some((AreaKind::Residential, None)))
+    }
+
+    /// Горло ли это перекрёстка: кольцо кармана (сырое, до завода под
+    /// соседей) касается нарисованного скругления.
+    fn in_mouth(&self, ring: &[Vec2]) -> bool {
+        ring.iter().any(|point| {
+            self.corner_grid
+                .at(*point)
+                .iter()
+                .any(|&index| distance_to_polyline(*point, &self.corner_paving[index]) <= TOUCH)
+        })
     }
 
     /// Карманы, чей габарит серединой в плитке `tile`.
@@ -456,7 +508,7 @@ impl Scene {
             if !self.on_road(&ring, false) || self.on_road(&ring, true) {
                 continue;
             }
-            let Some((kind, absorb)) = self.grass_near(&ring, area) else {
+            let Some((kind, absorb)) = self.grass_near(&ring, area, self.in_mouth(&ring)) else {
                 continue;
             };
             // край заводится под соседей: лента рисуется по сглаженной оси, а

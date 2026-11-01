@@ -380,6 +380,15 @@ passes are `parse-buildings.md`.
     no lawn and stays an ordinary cover-less interior. Pinned by
     `a_ring_island_is_not_a_ground_pocket`. **Houses are left out**: a hole
     that runs under a house only gets grass under the house.
+    **The drawn corner fans are covers too**
+    (`map/roads.rs::corner_paving_contours` — the street/sidewalk/verge returns and the
+    paved noses and bends of `KerbReturns::paving`, at the default style): the bands are
+    measured off the axes and know nothing of the roundings, so without them the
+    coverage's gap fell over the drawn fan and a pocket was sown on the mouth's asphalt
+    (Свободы × Первомайская). They cost one extra `Drawn::new` + `kerb_returns` per load
+    (~70 ms on Tula, inside the pass's own `osm parse:` line) and split the former
+    bridge holes at junctions into pieces whose rims follow the drawn kerb. Pinned by
+    `corner_paving_contours_carry_the_drawn_fans` (roads).
   - **A hole is sown** when it is at most `POCKET_AREA_MAX` 400 m² (above that it is a
     plot of its own — a waste plot, a building site), touches
     a paved road's band (`TOUCH` 0.25 m — a hole cut into a block by its own
@@ -410,6 +419,12 @@ passes are `parse-buildings.md`.
     are those touched by a road link (± `MARGIN`), since the road is what
     every pocket has.
     Pinned by `a_meadow_pocket_touching_a_lawn_is_merged_into_it`.
+    **In a junction mouth the block does not win**: a raw ring touching a drawn corner
+    fan (`Scene::in_mouth`, the same contours as above, within `TOUCH`) is the street
+    corner's edge, not the block's yard — `grass_near` skips the block there and asks
+    the verge lawn's rule alone (meadow, else yard), exactly how
+    `roads.rs::Meadows` colours the verge beside it. Pinned by
+    `a_mouth_pocket_follows_the_verge_law_not_the_block`.
   - **A green apron** (`Scene::green_aprons`) — the same question's second half,
     for strips that are never holes: a band of bare ground between a mapped green's
     **outer** edge and the kerb of a paved band, up to `GREEN_GAP_MAX` 2.5 m wide, is
