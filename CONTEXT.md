@@ -305,7 +305,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     (`roads/scraps.rs`): a small piece of verge lawn enclosed by paving, tiled over in
     `road_verges`; the same question asked of **ground green** lays its scraps in
     `sidewalks`. The per-side decision is a **`SidewalkSide`** tristate on the `RoadLine`:
-    `Tagged`, `Inferred`, `None`. Detail — `roads-sidewalks.md`.
+    `Tagged`, `Inferred`, `None`. The whole drawn composition of the verge — tile, lawn,
+    yard, scraps, the corner pieces of `corners` — is collected by the road build into
+    **`DrawnPieces`** (`DrawnPiece`, `PieceKind`), and the semantic index answers the
+    verge zone with those pieces, not with a model band. Detail — `roads-sidewalks.md`.
   - **Paired halves** (`map/roads/network/pairs.rs`, `Pairs`) — a divided street as OSM
     draws it: two opposite one-way ways of one class side by side, up to `PAIR_MAX_GAP`
     between the kerbs. Found once, by `axis::street_axes`, and **aligned** there — the
@@ -1231,7 +1234,10 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   line `zoom/x/y cx/cy` (moved here from the telemetry, read from screenshots by
   `tools/shot_coords`) and the live list of what the map draws under the cursor, from the
   **semantic index** (`map/inspect.rs::InspectIndex` — a `Grid` over the `MapData`
-  features, built once per load, rebuilt when `MapData` **or the road shape** changes; a
+  features **plus the drawn road pieces** (`roads::DrawnPieces`: the verge's tile/lawn/
+  yard composition, paving scraps, junction corner pieces — collected by every road
+  build, so a hit answers exactly what is drawn, verge zone included), built once per
+  load, rebuilt when `MapData`, the road shape **or the drawn pieces** change; a
   hit carries the feature label and the z of the layer it draws in, top layer first; bare
   ground is **not** a hit —
   an empty list reads `-`). **Kerb parking pockets answer too** — `parking pocket
@@ -1327,7 +1333,8 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   point — layers over it top-first with z, covering triangles and the nearest vertices —
   as one query, replacing hide-and-reshoot elimination and in-session temporary probes.
   The report ends with the **semantic index** section (the same hits the point inspector
-  shows live): features of `MapData` at the point with their layer z — the answer to
+  shows live): features of `MapData` at the point **and the drawn road pieces** — the
+  verge's tile/lawn/yard, scraps, junction corners — with their layer z — the answer to
   "what *is* this" beside the layers' "which mesh draws it". Works in the roads gallery
   too (it inserts `MapData` and the probe's input resources itself).
 - **BRP** — `RemoteHttpPlugin` on port 15702; drive it via the `live-app` skill's `brp`

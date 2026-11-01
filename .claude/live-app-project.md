@@ -45,6 +45,19 @@ $b alive     # alive: qwe 0.1.0 on http://127.0.0.1:15703/ (pid 40321) — pid m
 $b procs     # both copies, with their ports and start times
 ```
 
+**A refused connection is an instruction to launch, not to go offline.** When the
+question is about a specific place on the map — a screenshot the user sent, a
+suspicious frame — and no app answers on either port, do not fall back to reading
+code and sampling screenshot pixels by hand: launch your own copy on 15703 (the
+command above; a minute on a warm `target/`), `brp cam x y` to bring it to the
+place, `brp probe` for the layers and features there, `brp shot` to compare against
+the screenshot. One session met `ConnectionRefusedError` on both ports, declared it
+would answer "from the code and the screenshot", and then spent the better part of
+an hour hand-building the layer map `brp probe` answers in one call. The offline
+path (`examples/audit/pocket_probe.rs` and the other audit examples) is for
+questions about the *parse algorithm itself* — the geometry before it becomes
+layers — not for finding out which layers a point sits on.
+
 Never `pkill -f target/debug/qwe` and never `brp quit` on 15702 — that kills the
 user's session. Stop your own instance with `TaskStop`.
 
@@ -408,16 +421,20 @@ the **`features at the point (semantic index)`** section — what `MapData` puts
 stream 2.5 m`, `parking lot kerbside`…), top layer first: the answer to "what *is* this",
 not just which mesh draws it. The section carries the model's answer in full now: a band
 the road drew itself is a hit of its own — `sidewalk (auto, tagged)` / `sidewalk (auto,
-inferred)` for the two reasons the parse puts a sidewalk there, `verge (auto)` for the
-verge (the tile/lawn/yard split and the zoom LOD of the drawing are not in it — the index
-speaks for the model, the layer section above for the drawn geometry) — and every hit
+inferred)` for the two reasons the parse puts a sidewalk there — and every hit
 that came out of the extract ends with its OSM id, `#179102449`: `tools/osm_near --id
 179102449` prints that element's tags and vertices. Generated bands inherit the road's
-way id. The same list lives in the **point inspector panel** (top
+way id. **The verge zone answers with the drawn pieces** (`roads::DrawnPieces`,
+collected by every road build): `verge paving (auto)` / `verge lawn (auto)` /
+`verge yard (auto)`, `paving scrap (auto)`, `road corner (auto)`, `sidewalk corner
+(auto)` — a hit per drawn contour, highlight included, so a pale patch at a crossing
+mouth is selectable as the paved verge run it is; the pieces inherit the owner road's
+way id, junction pieces carry none. The same list lives in the **point inspector panel** (top
 right, under the telemetry) and updates with the cursor — a screenshot of it answers both
 questions at once. The panel's **highlight checkbox** (`InspectorHighlight`, BRP-writable)
 draws the selected hit's whole shape (`inspector_highlight` layer, translucent
-yellow, above every debug overlay) and highlights its row — **Cmd cycles the selection**
+yellow, above every debug overlay) and highlights its row — **`]`/`[` cycle the
+selection** (`]` next, `[` previous)
 through the hits under the cursor (1 → 2 → 3 → 1); with it on, one screenshot
 carries the element's form in the frame, no `shot-at` framing arithmetic needed; the
 layer is clipped to the sample's viewport, so a highlight for an object bigger than the

@@ -197,6 +197,12 @@ on the paired side themselves (`roads-pairs-medians.md`, **Paired halves**).
   at each change inserts a vertex pair `VERGE_SEAM` 0.05 m either side of where the
   verge passes 4 m, so the tile ends in a seam across the street. Pinned by
   `a_verge_turns_from_tiles_to_lawn_across_the_street`.
+  **At a crossing mouth the run under the path is tile whole**: where the footway
+  ribbon presses to the kerb the profile dips under `VERGE_PAVED_MAX`, `verge_runs`
+  makes a short paved run of it, and the tile reaches past the ribbon — the pale patch
+  beside a crossing path is that run, drawn by the same law as any narrow verge, not a
+  seam (the diag harness `roads/tests.rs::diag_window`, `QWE_DIAG_SCRAPS`, answers it
+  in one run).
   **A verge wider than `VERGE_MID_MAX` 5 m is not drawn at all from
   `VERGE_ZOOM_MAX` 2.0 m/px** (`VergeLods`, `VergeZoomBucket`): tile,
   kerb strip, lawn and yard — the whole side. A 5–11 m band of the yard's muted
@@ -343,6 +349,17 @@ on the paired side themselves (`roads-pairs-medians.md`, **Paired halves**).
   never asked — a real lawn in a square is a polygon of its own, not a verge. (The
   ends-and-bites windows together cost about half of what the continuous survey did.)
   Pinned by the scraps tests in `roads/scraps.rs` and `roads/verges/tests.rs`.
+  **The whole drawn composition feeds the semantic index**: `build_roads` collects every
+  logical piece it lays — the tile/lawn/yard bands of `push_verges` (clipped to the
+  visible strip past the kerb, the under-road part is not a hit), the scraps of
+  `lay_green_scraps`, the corner pieces of `KerbReturns::lay` — into
+  `DrawnPieces` (`DrawnPiece`, `PieceKind`), a resource beside `RutLines` and
+  `TramTracks`. The index (`map/inspect.rs`) answers the verge zone with these pieces —
+  `verge paving (auto)` / `verge lawn (auto)` / `verge yard (auto)`, plus `paving scrap
+  (auto)`, `road corner (auto)`, `sidewalk corner (auto)` — instead of a model band: the
+  highlight draws the exact contour on the map, and a pale patch at a crossing mouth is
+  selectable as the paved run it is. The resource changes with every road rebuild
+  (style, shape, verge zoom step), and the index rebuilds on it.
   In a microdistrict
   the tile laid from the kerb to a footway fifteen metres off made the street read as
   poured concrete; there it is a lawn with the footway on it, as in any Soviet yard,

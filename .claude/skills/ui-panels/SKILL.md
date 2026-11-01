@@ -115,15 +115,24 @@ panel** with four tabs (`ui/shell.rs`).
   (**this file is its single owner**; `osm-map` points here): data features speak for
   themselves (`road residential 8.0 m, sidewalks`), a band the road drew itself carries
   the `(auto, …)` suffix — `sidewalk (auto, tagged)` (the sidewalk came from a
-  `sidewalk=*` tag) / `sidewalk (auto, inferred)` (the parse inferred it) / `verge
-  (auto)` (the verge to a separately mapped footway; no reason shown) — and a hit that
+  `sidewalk=*` tag) / `sidewalk (auto, inferred)` (the parse inferred it) — and a hit that
   came out of the extract ends with its OSM id, `#179102449` (the tags are one
-  `tools/osm_near --id <id>` away). **A kerb parking pocket answers as `parking pocket
+  `tools/osm_near --id <id>` away). **The verge zone answers with the drawn pieces**
+  (`roads::DrawnPieces`, collected by every road build): `verge paving (auto)` (the
+  tile of the verge — the kerb strip, kerb pads, verge corner fillets, re-tiled lawn
+  scraps; this is what a pale patch at a crossing mouth is), `verge lawn (auto)` (the
+  meadow of a wide verge beside a mapped lawn), `verge yard (auto)` (yard grass — the
+  default), plus `paving scrap (auto)` (a tiled wedge inside ground green),
+  `road corner (auto)` and `sidewalk corner (auto)` (the junction corner pieces of
+  `corners`) — the model `verge (auto)` band hit is gone, replaced by these: the
+  highlight draws the exact contour that is on the map. The piece hits inherit the
+  owner road's OSM id; junction pieces carry none. **A kerb parking pocket answers as
+  `parking pocket
   (auto, tagged)`** (`parking:<side>` tag) or `parking pocket (auto)` (the sparse rule)
   — the pocket exists only as drawn geometry, so the index stores its polygon itself and
   rebuilds with the road shape. The two knobs the list follows: `TreeStyle::density`
-  (the tree prefix) and `RoadStyle::sidewalks` (turning it off removes both auto bands,
-  as it does from the drawing). **A cursor over any UI panel stops being a map point**
+  (the tree prefix) and `RoadStyle::sidewalks` (turning it off removes the auto bands
+  and the verge pieces, as it does from the drawing). **A cursor over any UI panel stops being a map point**
   (`update_inspector_hits` and `update_camera_text` gate on
   `camera.rs::pointer_over_ui`): the camera line reads `-/-`, the hits
   clear, the highlight despawns. The list is **one node per hit** (`sync_hits_rows`; ≤
@@ -142,8 +151,12 @@ panel** with four tabs (`ui/shell.rs`).
   user's pointer, not the subject of the question**: a shot with a translucent yellow
   shape on it means the feature was selected on purpose — identify it by its row in the
   hits list (`z … label #id`) and investigate **that feature** (why it is there, why it
-  looks the way it does); the highlight overlay itself needs no explanation, and since
-  it draws above every map layer it also shows outlines the map itself hides under
+  looks the way it does) — but the picked row is the **entry point, not the verdict on
+  the culprit**: an artifact is a visual defect that lives at the feature's seams with
+  the layers under it as often as inside the feature, so the rows below the picked one
+  are part of the question too; the highlight overlay itself needs no explanation, and
+  since it
+  draws above every map layer it also shows outlines the map itself hides under
   roads and paint. `tools/shot_coords` OCRs the hits list too — the `z <depth> …` line
   shapes in `hit_line`/`format_hits` and the `HIGHLIGHT_ROW_BG` tint are what that
   reader keys on, so changing either means re-checking the tool in the same change.

@@ -88,7 +88,13 @@ from the street axis (`roads-streets-network.md`, **The street axis**).
   `Scraps` keeps), and `streets()` (street-class asphalt only, for the gore mouths).
   The report's counters come from `counts()` (`KerbCounts`: roundings without outer
   corners, tile overlaps, noses, bends, outer corners) — and the fields are closed
-  inside the module, read directly by nothing but its own tests.
+  inside the module, read directly by nothing but its own tests. **`lay` also feeds the
+  semantic index**: every piece it pushes — corner fills by class, the dirt arcs, the
+  sidewalk turns and tile overlaps, the verge corner fillets and pads, the corner
+  lawns/yards, noses and bends — is collected into `DrawnPieces` as `road corner (auto)`
+  / `sidewalk corner (auto)` / `verge paving (auto)` / `verge lawn (auto)` /
+  `verge yard (auto)`, with no owner road (a corner belongs to the junction, not to one
+  way), so the point inspector highlights the exact corner piece.
   - **An arm that ends in a junction ends square** (`KerbReturns::butt`). A
     junction here is a class group of three arms or more, or of two meeting at an angle
     (25°–155° either side); two nearly collinear ends are one road continued and keep
