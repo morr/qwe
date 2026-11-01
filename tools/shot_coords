@@ -23,7 +23,7 @@ window's logical size; it is asked from a running app over BRP and else taken as
 
 The hits list under the camera line — the inspector's answer to "what is this" — is read
 by the same OCR: one `z <depth> <label> [#<osm id>]` line per drawn layer under the
-cursor. The row the user picked (Right Shift cycles; it carries the translucent-yellow row
+cursor. The row the user picked (`]`/`[` cycle; it carries the translucent-yellow row
 background, `ui/inspector.rs::HIGHLIGHT_ROW_BG`) is the user's pointer when they send a
 screenshot with a highlighted element: that hit — not the highlight overlay — is the
 subject. Its `#id` goes straight into the printed `osm_near --id` hint.
