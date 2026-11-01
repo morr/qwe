@@ -167,9 +167,11 @@ pub fn spawn_map(
 
     let road_build = roads::build_roads(&map, *road_style, road_shape.0, *verge);
     // линии колеи — ресурсом, для оверлея колеи вкладки Debug; пути трамвая
-    // по нарисованной улице — слою трамвая (`tram::rebuild_tram`, следом)
+    // по нарисованной улице — слою трамвая (`tram::rebuild_tram`, следом);
+    // отрисованные куски — семантическому индексу (`map/inspect.rs`)
     commands.insert_resource(road_build.ruts);
     commands.insert_resource(road_build.tram);
+    commands.insert_resource(roads::DrawnPieces(road_build.pieces));
     roads::spawn_road_meshes(
         &mut commands,
         &mut meshes,

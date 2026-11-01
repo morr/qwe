@@ -419,7 +419,7 @@ pub fn mesh_roads(
 }
 
 /// Всё, что выходит из одной сборки дорожной области ([`build_roads`]):
-/// слои и отчёт — то же, что отдаёт [`mesh_roads`], — и два побочных
+/// слои и отчёт — то же, что отдаёт [`mesh_roads`], — и три побочных
 /// результата того же прохода, которые игра кладёт ресурсами.
 pub struct RoadBuild {
     pub layers: Vec<LayerMesh>,
@@ -429,7 +429,56 @@ pub struct RoadBuild {
     /// Трамвайные пути по нарисованной улице: их читает слой трамвая
     /// (`map/tram.rs`).
     pub tram: TramTracks,
+    /// Отрисованные куски: их читает семантический индекс
+    /// (`map/inspect.rs`), чтобы находка отвечала ровно тем, что нарисовано.
+    pub pieces: Vec<DrawnPiece>,
 }
+
+/// Вид отрисованного куска дороги: из него берутся подпись и слой находки
+/// ([`DrawnPiece::z`] пишется рядом при сборке, из константы того же слоя).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PieceKind {
+    /// Плитка обочины: бордюрная полоса, площадки у бордюра и скругления
+    /// углов, замостенные лоскуты — всё, что лежит в слое `road_verges`.
+    VergePaving,
+    /// Луг широкой обочины у замапленного газона (слой `road_verge_lawns`).
+    VergeLawn,
+    /// Трава двора на широкой обочине (слой `road_verge_yards`).
+    VergeYard,
+    /// Замостенный клин в зелени земли: карман разбора или замапленный
+    /// газон, чей клин конвейер лоскутов замостил (слой тротуаров).
+    PavingScrap,
+    /// Асфальтовый кусок узла: внешние углы, заливки скруглений, носы и
+    /// дуги — то, что лежит за полосами полотна (`corners`).
+    RoadCorner,
+    /// Тротуарный кусок узла: поворот полосы за бордюром и наезды плитки.
+    SidewalkCorner,
+}
+
+/// Отрисованный кусок дороги: контур с дырками, вид, дорога-владелец и слой
+/// (z), в котором кусок лежит. Собирается тем же проходом [`build_roads`],
+/// что и рисует слои, — каждым логическим куском (полоса обочины на ран,
+/// лоскут, кусок узла), а не посегментными квадрами меша. Читается
+/// семантическим индексом (`map/inspect.rs`): находка отвечает ровно тем,
+/// что нарисовано, и подсветка ведёт контур куска.
+#[derive(Clone)]
+pub struct DrawnPiece {
+    pub contour: Vec<Vec2>,
+    pub holes: Vec<Vec<Vec2>>,
+    pub kind: PieceKind,
+    /// Индекс дороги-владельца в `MapData::roads`: его OSM id ведёт хвост
+    /// находки. У узловых кусков (`corners`) владельца нет — угол принадлежит
+    /// перекрёстку, а не одной дороге.
+    pub road: Option<u32>,
+    /// Слой куска: z находки, та же константа, что у слоя при спавне.
+    pub z: f32,
+}
+
+/// Побочный выход сборки дорожной области: все отрисованные куски. Ресурс
+/// рядом с [`RutLines`] и [`TramTracks`]; по его смене перестраивается
+/// семантический индекс.
+#[derive(Resource, Default)]
+pub struct DrawnPieces(pub Vec<DrawnPiece>);
 
 /// [`mesh_roads`] и заодно **линии колеи** ([`RutLines`]) — оси полос с
 /// раскладкой, по которой легла колея асфальта, и траектории узлов, по которым
@@ -462,6 +511,7 @@ pub fn build_roads(
             report,
             ruts: RutLines::default(),
             tram: TramTracks::as_mapped(&map.rails),
+            pieces: Vec::new(),
         };
     }
     // ── Слои и накопители ── куда кладут фазы ниже: строители слоёв,
@@ -532,6 +582,9 @@ pub fn build_roads(
     // газоны обочин и мощение вокруг них — для лоскутов (`roads/scraps.rs`):
     // угол газона — газон, мощение собирается после лент
     let mut scraps = scraps::Scraps::default();
+    // отрисованные куски — тем же проходом: каждый логический кусок обочины,
+    // лоскут и узловой кусок запоминается для семантического индекса
+    let mut pieces: Vec<DrawnPiece> = Vec::new();
     // асфальт узлов — в свои слои; порядок укладки — инвариант `corners`
     // (`KerbReturns::lay`), а не этого вызывающего
     kerb_returns.lay(
@@ -546,6 +599,7 @@ pub fn build_roads(
         },
         &meadows,
         &mut scraps,
+        &mut pieces,
     );
     // ── Кромки слияний ──
     let merge_edges = merges::lay_merge_edges(
@@ -985,12 +1039,14 @@ pub fn build_roads(
         push_verges(
             [&mut verges, &mut verge_lawns, &mut verge_yards],
             &meadows,
+            index as u32,
             road,
             points,
             butt,
             &bites,
             verged,
             &mut scraps,
+            &mut pieces,
         );
         // слой заливки берётся после полосы тротуара: мощёная дорожка
         // ложится в тот же слой, а полоса выше брала его сама
@@ -1088,7 +1144,8 @@ pub fn build_roads(
         &road_islands,
         &mut scraps,
     );
-    let lawn_scraps = scraps::lay_green_scraps(map, &mut scraps, &mut verges, &mut sidewalks);
+    let lawn_scraps =
+        scraps::lay_green_scraps(map, &mut scraps, &mut verges, &mut sidewalks, &mut pieces);
     // ── Краска узлов и колея траекторий ──
     node_paint::paint_junction_marks(
         marks,
@@ -1305,6 +1362,7 @@ pub fn build_roads(
         report,
         ruts,
         tram: tram_tracks,
+        pieces,
     }
 }
 
@@ -1475,11 +1533,14 @@ pub fn rebuild_roads(
         report,
         ruts,
         tram,
+        pieces,
     } = build_roads(&map, *style, shape.0, *verge);
     // линии колеи — ресурсом: по нему строится оверлей колеи; пути трамвая —
-    // по ним пересобирается слой трамвая
+    // по ним пересобирается слой трамвая; отрисованные куски — по ним
+    // отвечает семантический индекс
     commands.insert_resource(ruts);
     commands.insert_resource(tram);
+    commands.insert_resource(DrawnPieces(pieces));
     spawn_road_meshes(
         &mut commands,
         &mut meshes,

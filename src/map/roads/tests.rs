@@ -1175,6 +1175,7 @@ fn diag_window() {
         let mut tiles = MeshBuilder::with_surface_coords();
         let mut lawns = MeshBuilder::with_surface_coords();
         let mut yards = MeshBuilder::with_surface_coords();
+        let mut pieces = Vec::new();
         returns.lay(
             super::corners::KerbLayers {
                 streets: &mut streets,
@@ -1187,6 +1188,7 @@ fn diag_window() {
             },
             &meadows,
             &mut scraps,
+            &mut pieces,
         );
         let road_bites = super::scraps::Bites::of(prepared.nodes(), &prepared.roads());
         for index in 0..prepared.len() {
@@ -1211,12 +1213,14 @@ fn diag_window() {
             super::push_verges(
                 [&mut tiles, &mut lawns, &mut yards],
                 &meadows,
+                index as u32,
                 road,
                 &ribbon[index],
                 returns.butt(index),
                 &bites,
                 verged,
                 &mut scraps,
+                &mut pieces,
             );
         }
         for (index, (ring, cuts)) in scraps.lawns().enumerate() {
@@ -1266,14 +1270,14 @@ fn diag_window() {
                     );
                 }
             }
-            for shape in scraps.find_green() {
+            for (shape, _) in scraps.find_green() {
                 let ring = crate::map::shapes::ring_of(&shape[0]);
                 let Some(&tip) = ring.iter().find(|p| p.distance(at) < r) else {
                     continue;
                 };
                 eprintln!("DIAG green scrap at {tip} ring={ring:?}");
             }
-            for shape in scraps.find() {
+            for (shape, _) in scraps.find() {
                 let ring = crate::map::shapes::ring_of(&shape[0]);
                 let Some(&tip) = ring.iter().find(|p| p.distance(at) < r) else {
                     continue;

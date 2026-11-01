@@ -7,7 +7,11 @@ use crate::map::along::{arclengths, place_on_path};
 use crate::map::meshing::{butt_direction, ribbon_merge_distance, ribbon_vertices};
 use crate::map::osm::RoadClass;
 use crate::map::osm::model::polyline_length;
+use crate::map::roads::{DrawnPiece, PieceKind};
 use crate::map::spawn::GRASS_COLOR;
+use crate::settings::{
+    Z_ALLEY, Z_ROAD, Z_ROAD_VERGE, Z_ROAD_VERGE_LAWN, Z_ROAD_VERGE_YARD, Z_SIDEWALK, Z_UNPAVED_ROAD,
+};
 
 use super::{
     ALLEY_COLOR, Arm, Drawn, FarTaper, KERB_PAD_RUN, KerbLayers, MAX_ANGLE, MIN_ANGLE, MIN_ARM,
@@ -23,6 +27,18 @@ pub enum Fill {
     Road(RoadClass),
     Unpaved,
     Sidewalk,
+}
+
+/// Кусок для находки из контура угла: внешнее кольцо без дырок и без
+/// владельца — угол принадлежит перекрёстку, а не одной дороге.
+fn piece_contour(outline: &[Vec2], kind: PieceKind, road: Option<u32>, z: f32) -> DrawnPiece {
+    DrawnPiece {
+        contour: outline.to_vec(),
+        holes: Vec::new(),
+        kind,
+        road,
+        z,
+    }
 }
 
 /// Асфальт всех узлов. Укладка — методом модуля ([`Self::lay`]): порядок
@@ -97,6 +113,7 @@ impl KerbReturns {
         layers: KerbLayers<'_>,
         meadows: &Meadows,
         scraps: &mut Scraps,
+        pieces: &mut Vec<DrawnPiece>,
     ) {
         let KerbLayers {
             streets,
@@ -121,27 +138,68 @@ impl KerbReturns {
             // видна из угла. `earcutr` на восьми тысячах таких фигур стоил бы
             // больше самой укладки.
             builder.push_convex(outline, color.to_linear());
+            let z = match class {
+                RoadClass::Street => Z_ROAD,
+                RoadClass::Alley => Z_ALLEY,
+            };
+            pieces.push(piece_contour(outline, PieceKind::RoadCorner, None, z));
         }
         for outline in &self.unpaved {
             unpaved.push_convex(outline, UNPAVED_ROAD_COLOR.to_linear());
+            pieces.push(piece_contour(
+                outline,
+                PieceKind::RoadCorner,
+                None,
+                Z_UNPAVED_ROAD,
+            ));
         }
         // и тот же угол в слое тротуаров: полоса поворачивает за бордюром
         for outline in &self.sidewalks {
             sidewalks.push_convex(outline, SIDEWALK_COLOR.to_linear());
+            pieces.push(piece_contour(
+                outline,
+                PieceKind::SidewalkCorner,
+                None,
+                Z_SIDEWALK,
+            ));
         }
         // и наезды плитки на дворе у слияний мощёных дорожек — тем же слоем
         for outline in &self.overlaps {
             sidewalks.push_convex(outline, SIDEWALK_COLOR.to_linear());
+            pieces.push(piece_contour(
+                outline,
+                PieceKind::SidewalkCorner,
+                None,
+                Z_SIDEWALK,
+            ));
         }
         // и в слое обочин — где вместо полосы обочина до отдельной дорожки
         for outline in &self.verges {
             verges.push_convex(outline, SIDEWALK_COLOR.to_linear());
+            pieces.push(piece_contour(
+                outline,
+                PieceKind::VergePaving,
+                None,
+                Z_ROAD_VERGE,
+            ));
         }
         for outline in &self.verge_lawns {
             if meadows.under(outline) {
                 lawns.push_convex(outline, GRASS_COLOR.to_linear());
+                pieces.push(piece_contour(
+                    outline,
+                    PieceKind::VergeLawn,
+                    None,
+                    Z_ROAD_VERGE_LAWN,
+                ));
             } else {
                 yards.push_convex(outline, VERGE_YARD_COLOR.to_linear());
+                pieces.push(piece_contour(
+                    outline,
+                    PieceKind::VergeYard,
+                    None,
+                    Z_ROAD_VERGE_YARD,
+                ));
             }
         }
         // носы острых развилок идут по гнутым кромкам лент, и веер из острия
@@ -154,6 +212,13 @@ impl KerbReturns {
                 Fill::Sidewalk => (&mut *sidewalks, SIDEWALK_COLOR),
             };
             builder.push_polygon(outline, &[], color.to_linear());
+            let (kind, z) = match fill {
+                Fill::Road(RoadClass::Street) => (PieceKind::RoadCorner, Z_ROAD),
+                Fill::Road(RoadClass::Alley) => (PieceKind::RoadCorner, Z_ALLEY),
+                Fill::Unpaved => (PieceKind::RoadCorner, Z_UNPAVED_ROAD),
+                Fill::Sidewalk => (PieceKind::SidewalkCorner, Z_SIDEWALK),
+            };
+            pieces.push(piece_contour(outline, kind, None, z));
         }
     }
 

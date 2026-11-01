@@ -93,6 +93,7 @@ pub use self::roads::network::overlay::mesh_network_overlay;
 // оверлей контуров OSM — строке Debug игры и строке `Contours` витрины `roads`
 pub use self::osm::contours::mesh_osm_contours;
 // оверлей линий колеи — строке `Rut lines` вкладки Debug и строке `Ruts` витрины
+pub use self::roads::DrawnPieces;
 pub use self::roads::ruts::{RutLines, mesh_rut_overlay};
 // `smooth_path` со `Smoothing` — витрине машин (`car_gallery` кладёт асфальт
 // под ряд по сглаженной осевой) и панели аллей (`TreeRowStyle::smoothing`)
@@ -106,7 +107,7 @@ pub use self::sun::{
 };
 #[cfg(test)]
 pub(crate) use self::sun::{default_sun, sun_at};
-pub use self::surface::{LayerCost, SurfaceStyle};
+pub use self::surface::{LayerCost, LayerMesh, SurfaceStyle};
 pub use self::tram::TramStyle;
 // Двери слоёв наружу — витрине `examples/demos/roads`: она ведёт вырезку OSM
 // через тот же `parse` и те же `mesh_*`/`spawn_*`, что и игра, а собирает их в
@@ -157,6 +158,9 @@ impl Plugin for MapPlugin {
             .init_resource::<RutLines>()
             // пути трамвая по нарисованной улице — тем же проходом
             .init_resource::<TramTracks>()
+            // отрисованные куски дорог — тем же проходом; их читает
+            // семантический индекс (`map/inspect.rs`)
+            .init_resource::<roads::DrawnPieces>()
             .register_type::<osm::parse::RawOsm>()
             .track_pref::<osm::parse::RawOsm>()
             .init_resource::<SunStyle>()

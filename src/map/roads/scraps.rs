@@ -46,6 +46,7 @@ use super::drawn::Drawn;
 use super::gores::Gores;
 use super::islands::RoadIslands;
 use super::junctions::node_key;
+use super::{DrawnPiece, PieceKind};
 use crate::map::grid::Grid;
 use crate::map::meshing::{MeshBuilder, miter_offsets, ring_perimeter};
 use crate::map::osm::model::{RoadLine, distance_to_segment, ring_bounds};
@@ -55,6 +56,7 @@ use crate::map::roads::network::RoadNodes;
 use crate::map::shapes::{
     Contour, Shape, contour_area, contour_bounds, oriented, push_shape, ring_of,
 };
+use crate::settings::{Z_ROAD_VERGE, Z_SIDEWALK};
 
 /// Не больше этого, м², замкнутый кусок газона — лоскут: карман у угла
 /// Халтурина и Гоголевской — около девяти.
@@ -141,12 +143,14 @@ pub(super) struct Scraps {
     lawn_grid: Option<Grid<usize>>,
 }
 
-/// Газон — или кусок полосы газона ([`Scraps::push_lawn_band`]): контур и
-/// **срезы** — рёбра, по которым он отрезан от остальной полосы. За срезом
-/// газон продолжается, и кусок, дошедший до среза, лоскутом не бывает.
+/// Газон — или кусок полосы газона ([`Scraps::push_lawn_band`]): контур,
+/// **срезы** — рёбра, по которым он отрезан от остальной полосы, — и дорога-
+/// владелец, чей OSM id ведёт хвост находки лоскута. За срезом газон
+/// продолжается, и кусок, дошедший до среза, лоскутом не бывает.
 struct Lawn {
     ring: Vec<Vec2>,
     cuts: Vec<[Vec2; 2]>,
+    road: Option<u32>,
 }
 
 impl Scraps {
@@ -156,6 +160,7 @@ impl Scraps {
             self.lawns.push(Lawn {
                 ring,
                 cuts: Vec::new(),
+                road: None,
             });
         }
     }
@@ -207,6 +212,7 @@ impl Scraps {
     /// [`WEDGE_REACH`] точек в обе стороны, перекрывающиеся слитно (R37-01).
     pub(super) fn push_lawn_band(
         &mut self,
+        road: u32,
         path: &[Vec2],
         normals: &[Vec2],
         reach: &[f32],
@@ -252,6 +258,7 @@ impl Scraps {
             self.lawns.push(Lawn {
                 ring,
                 cuts: cuts.into_iter().flatten().collect(),
+                road: Some(road),
             });
         }
     }
@@ -288,9 +295,9 @@ impl Scraps {
     }
 
     /// Лоскуты всех газонов — фигуры, заведённые под мощение на
-    /// [`SCRAP_OVERLAP`], в порядке газонов. Газоны друг от друга не зависят и
-    /// считаются по потокам.
-    pub(super) fn find(&self) -> Vec<Shape> {
+    /// [`SCRAP_OVERLAP`], с дорогой-владельцем газона, в порядке газонов.
+    /// Газоны друг от друга не зависят и считаются по потокам.
+    pub(super) fn find(&self) -> Vec<(Shape, Option<u32>)> {
         in_parallel(&self.lawns, |lawn| self.scraps_of(lawn))
             .into_iter()
             .flatten()
@@ -323,8 +330,9 @@ impl Scraps {
     }
 
     /// Лоскуты зелени земли — тот же вопрос к нарисованному, что у газонов
-    /// обочин ([`Scraps::find`]).
-    pub(super) fn find_green(&self) -> Vec<Shape> {
+    /// обочин ([`Scraps::find`]); владельца у зелени земли нет — карман или
+    /// замапленный газон не дорога.
+    pub(super) fn find_green(&self) -> Vec<(Shape, Option<u32>)> {
         in_parallel(&self.green, |ring| {
             let subject = vec![oriented(ring, true)];
             let (low, high) = contour_bounds(&subject[0]);
@@ -333,6 +341,9 @@ impl Scraps {
                 return Vec::new();
             }
             scraps_among(ring, &[], true, subject, clip)
+                .into_iter()
+                .map(|shape| (shape, None))
+                .collect::<Vec<_>>()
         })
         .into_iter()
         .flatten()
@@ -436,8 +447,9 @@ impl Scraps {
             .collect()
     }
 
-    /// Лоскуты одного газона: его остаток за мощением, замкнутый и малый.
-    fn scraps_of(&self, lawn: &Lawn) -> Vec<Shape> {
+    /// Лоскуты одного газона: его остаток за мощением, замкнутый и малый,
+    /// с владельцем газона.
+    fn scraps_of(&self, lawn: &Lawn) -> Vec<(Shape, Option<u32>)> {
         let subject = vec![oriented(&lawn.ring, true)];
         let (low, high) = contour_bounds(&subject[0]);
         let clip = self.near(low, high);
@@ -445,6 +457,9 @@ impl Scraps {
             return Vec::new();
         }
         scraps_among(&lawn.ring, &lawn.cuts, false, subject, clip)
+            .into_iter()
+            .map(|shape| (shape, lawn.road))
+            .collect()
     }
 }
 
@@ -660,6 +675,7 @@ pub(super) fn lay_green_scraps(
     scraps: &mut Scraps,
     verges: &mut MeshBuilder,
     sidewalks: &mut MeshBuilder,
+    pieces: &mut Vec<DrawnPiece>,
 ) -> usize {
     for area in map.pockets.iter().chain(&map.grass) {
         scraps.push_green(area.outer.clone());
@@ -667,14 +683,45 @@ pub(super) fn lay_green_scraps(
     let green_scraps = scraps.find_green();
     let lawn_scraps = scraps.find();
     verges.set_lanes(None);
-    for shape in &lawn_scraps {
+    for (shape, road) in &lawn_scraps {
         push_shape(verges, shape.clone(), SIDEWALK_COLOR.to_linear());
+        // замостенный лоскут газона — кусок слоя обочин
+        pieces.push(shape_piece(
+            shape,
+            PieceKind::VergePaving,
+            *road,
+            Z_ROAD_VERGE,
+        ));
     }
     sidewalks.set_lanes(None);
-    for shape in &green_scraps {
+    for (shape, road) in &green_scraps {
         push_shape(sidewalks, shape.clone(), SIDEWALK_COLOR.to_linear());
+        // замостенный клин зелени земли — кусок слоя тротуаров
+        pieces.push(shape_piece(
+            shape,
+            PieceKind::PavingScrap,
+            *road,
+            Z_SIDEWALK,
+        ));
     }
     lawn_scraps.len() + green_scraps.len()
+}
+
+/// Отрисованный кусок из фигуры `i_overlay`: внешнее кольцо и дырки как есть.
+fn shape_piece(shape: &Shape, kind: PieceKind, road: Option<u32>, z: f32) -> DrawnPiece {
+    let to_vec2 = |contour: &Contour| {
+        contour
+            .iter()
+            .map(|point| Vec2::from_array(*point))
+            .collect::<Vec<Vec2>>()
+    };
+    DrawnPiece {
+        contour: to_vec2(shape.first().expect("лоскут не бывает без внешнего кольца")),
+        holes: shape[1..].iter().map(to_vec2).collect(),
+        kind,
+        road,
+        z,
+    }
 }
 
 #[cfg(test)]
@@ -708,7 +755,7 @@ mod tests {
                 scraps.push_paving(&rect(from, to));
             }
         }
-        scraps.find()
+        scraps.find().into_iter().map(|(shape, _)| shape).collect()
     }
 
     #[test]
@@ -750,7 +797,7 @@ mod tests {
             Vec2::new(41.0, 9.0),
             Vec2::new(9.0, 9.0),
         ]);
-        scraps.find()
+        scraps.find().into_iter().map(|(shape, _)| shape).collect()
     }
 
     #[test]
@@ -786,7 +833,7 @@ mod tests {
         // от вреза шире порога клина (41 м²) и остаётся травой
         let found = green_with_bite().find_green();
         assert_eq!(found.len(), 1, "мостится клин слева от вреза");
-        let (low, high) = contour_bounds(&found[0][0]);
+        let (low, high) = contour_bounds(&found[0].0[0]);
         assert!(high.x < 20.0, "клин — левее вреза: {low} {high}");
     }
 
@@ -831,13 +878,13 @@ mod tests {
         ]);
         with_bite.push_paving(&rect(Vec2::new(20.0, -1.0), Vec2::new(34.0, 3.5)));
         with_bite.push_paving(&rect(Vec2::new(33.0, -1.0), Vec2::new(35.0, 7.0)));
-        with_bite.push_lawn_band(&path, &normals, &reach, [false; 2], &[path[10]]);
+        with_bite.push_lawn_band(0, &path, &normals, &reach, [false; 2], &[path[10]]);
         assert_eq!(with_bite.find().len(), 1, "клин у вреза мостится");
         // а без укуса то же место не спрашивается вовсе — окно даёт укус
         let mut without = Scraps::default();
         without.push_paving(&rect(Vec2::new(-1.0, -1.0), Vec2::new(41.0, 2.0)));
         without.push_paving(&rect(Vec2::new(-1.0, 5.0), Vec2::new(41.0, 7.0)));
-        without.push_lawn_band(&path, &normals, &reach, [false; 2], &[]);
+        without.push_lawn_band(0, &path, &normals, &reach, [false; 2], &[]);
         assert!(without.find().is_empty());
     }
 
@@ -868,7 +915,7 @@ mod tests {
         scraps.push_green(island.clone());
         let found = scraps.find_green();
         assert_eq!(found.len(), 1, "клин-хвост мостится целиком");
-        let (low, high) = contour_bounds(&found[0][0]);
+        let (low, high) = contour_bounds(&found[0].0[0]);
         assert!(
             low.y > 1.0 && (high.y - 36.9).abs() < 1.0,
             "хвост — от среза основания до острия: {low} {high}"

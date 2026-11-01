@@ -2,7 +2,7 @@ use super::super::fixtures::{layer, one_street};
 use super::*;
 use crate::map::osm::model::{Pavement, SidewalkSide};
 use crate::map::osm::{AreaKind, LotKind, MapData, RoadLine, fixture};
-use crate::map::roads::{RoadShape, RoadStyle, mesh_roads};
+use crate::map::roads::{RoadShape, RoadStyle, build_roads, mesh_roads};
 use crate::map::surface::LayerMesh;
 
 /// Обочина до дорожки: узкая — плиткой целиком, широкая — газоном до
@@ -410,5 +410,46 @@ fn a_verge_reaches_under_its_path() {
         );
         let fill = &layer(&layers, name).builder;
         assert!(fill.covers_for_test(Vec2::new(300.0, edge + VERGE_UNDER_PATH - 0.1)));
+    }
+}
+
+/// Полосы обочины собираются в находки ([`DrawnPiece`]): у широкой обочины —
+/// плитка у бордюра и трава двора, обе на своей стороне, в своём слое, с
+/// улицей-владельцем. Именно этими кусками инспектору отвечает
+/// [`crate::map::inspect::InspectIndex`], так что вид куска обязан следовать
+/// за слоем, куда легла лента.
+#[test]
+fn the_drawn_verge_bands_are_collected_as_pieces() {
+    let mut map = one_street();
+    map.roads[0].verges = [12.0, 0.0];
+    let build = build_roads(
+        &map,
+        RoadStyle::default(),
+        RoadShape::default(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
+    assert!(build.pieces.iter().all(|piece| piece.road == Some(0)));
+    let kinds: Vec<_> = build.pieces.iter().map(|piece| piece.kind).collect();
+    assert!(
+        kinds.contains(&PieceKind::VergePaving),
+        "плитка у бордюра: {kinds:?}"
+    );
+    assert!(
+        kinds.contains(&PieceKind::VergeYard),
+        "без замапленных лугов газон — травой двора: {kinds:?}"
+    );
+    for piece in &build.pieces {
+        let z = match piece.kind {
+            PieceKind::VergePaving => Z_ROAD_VERGE,
+            PieceKind::VergeLawn => Z_ROAD_VERGE_LAWN,
+            PieceKind::VergeYard => Z_ROAD_VERGE_YARD,
+            _ => continue,
+        };
+        assert_eq!(piece.z, z, "кусок {:?} — в своём слое", piece.kind);
+        assert!(
+            piece.contour.iter().all(|at| at.y >= 100.0),
+            "кусок {:?} — на своей стороне, улица идёт на +x",
+            piece.kind
+        );
     }
 }

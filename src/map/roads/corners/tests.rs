@@ -1559,6 +1559,7 @@ fn seven_builders() -> [MeshBuilder; 7] {
 fn laid(returns: &KerbReturns, meadows: &Meadows, scraps: &mut Scraps) -> [MeshBuilder; 7] {
     let mut builders = seven_builders();
     let [streets, alleys, unpaved, sidewalks, verges, lawns, yards] = &mut builders;
+    let mut pieces = Vec::new();
     returns.lay(
         KerbLayers {
             streets,
@@ -1571,6 +1572,7 @@ fn laid(returns: &KerbReturns, meadows: &Meadows, scraps: &mut Scraps) -> [MeshB
         },
         meadows,
         scraps,
+        &mut pieces,
     );
     builders
 }

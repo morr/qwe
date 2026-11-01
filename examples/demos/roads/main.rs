@@ -126,11 +126,11 @@ use qwe::map::trees::{
     TreeStyle, TreeZoomBucket, init_crown_material, mesh_trees, spawn_tree_meshes,
 };
 use qwe::map::{
-    BuildingHeightMode, FenceZoomBucket, GROUND_COLOR, MeshBuilder, PaintMaterial, ParkingLayout,
-    RailZoomBucket, RoadBuild, RoadPaintStyle, RoadShape, RoadShapeOnMap, RoadStyle, RoofStyle,
-    SunOnMap, SurfaceStyle, TramStyle, TramZoomBucket, VergeZoomBucket, apply_sun, build_roads,
-    mesh_fences, mesh_map_cars, mesh_rails, mesh_surfaces, mesh_tram, mesh_tree_row_band,
-    set_lane_width, settle_road_shape, spawn_road_meshes,
+    BuildingHeightMode, DrawnPieces, FenceZoomBucket, GROUND_COLOR, MeshBuilder, PaintMaterial,
+    ParkingLayout, RailZoomBucket, RoadBuild, RoadPaintStyle, RoadShape, RoadShapeOnMap, RoadStyle,
+    RoofStyle, SunOnMap, SurfaceStyle, TramStyle, TramZoomBucket, VergeZoomBucket, apply_sun,
+    build_roads, mesh_fences, mesh_map_cars, mesh_rails, mesh_surfaces, mesh_tram,
+    mesh_tree_row_band, set_lane_width, settle_road_shape, spawn_road_meshes,
 };
 use qwe::ui::knob::AddKnobsExt;
 use qwe::ui::{
@@ -821,7 +821,11 @@ fn build_next(
         report: road_report,
         ruts,
         tram: tram_tracks,
+        pieces: road_pieces,
     } = build_roads(&map, *road_style, road_shape.0, verge);
+    // отрисованные куски — ресурсом: семантический индекс витрины отвечает
+    // ими так же, как в игре
+    commands.insert_resource(DrawnPieces(road_pieces));
     let road_layers = clip(road_layers);
     let road_line = road_report.to_string();
     spawn_road_meshes(

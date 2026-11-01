@@ -11,12 +11,14 @@ use super::drawn::Drawn;
 use super::ribbons::push_ribbon_trimmed;
 use super::scraps;
 use super::walls::Meadows;
+use super::{DrawnPiece, PieceKind};
 use crate::map::meshing::{MeshBuilder, miter_offsets};
 use crate::map::osm::RoadLine;
 use crate::map::osm::model::polyline_length;
 use crate::map::spawn::GRASS_COLOR;
 use crate::map::spawn::RESIDENTIAL_COLOR;
 use crate::map::zoom::{ZoomBucket, ZoomLods};
+use crate::settings::{Z_ROAD_VERGE, Z_ROAD_VERGE_LAWN, Z_ROAD_VERGE_YARD};
 
 /// Шаг вершин обочины по месту ([`RoadLine::verge_profile`]), м: пробы
 /// стоят через пять.
@@ -231,12 +233,14 @@ pub(super) fn street_verged(prepared: &Drawn, index: usize, ring_ccw: Option<boo
 pub(super) fn push_verges(
     [tiles, meadows, yard_lawns]: [&mut MeshBuilder; 3],
     mapped: &Meadows,
+    road_index: u32,
     road: &RoadLine,
     points: &[Vec2],
     ends: [bool; 2],
     bites: &[Vec2],
     verges: [f32; 2],
     scraps: &mut scraps::Scraps,
+    pieces: &mut Vec<DrawnPiece>,
 ) {
     let width = road.width;
     let [tile_color, grass_color, yard_color] =
@@ -248,12 +252,19 @@ pub(super) fn push_verges(
         }
         // газон рядом спрашивается, только когда газон обочины вообще будет
         let widest = road.verge_widest(side);
-        let (lawns, lawn_color) =
-            if widest > VERGE_PAVED_MAX && mapped.beside(points, width, side, verge) {
-                (&mut *meadows, grass_color)
-            } else {
-                (&mut *yard_lawns, yard_color)
-            };
+        let on_lawn = widest > VERGE_PAVED_MAX && mapped.beside(points, width, side, verge);
+        let (lawns, lawn_color) = if on_lawn {
+            (&mut *meadows, grass_color)
+        } else {
+            (&mut *yard_lawns, yard_color)
+        };
+        // находка следует за лентой: луг ложится в `road_verge_lawns`,
+        // трава двора — в `road_verge_yards`
+        let (lawn_kind, lawn_z) = if on_lawn {
+            (PieceKind::VergeLawn, Z_ROAD_VERGE_LAWN)
+        } else {
+            (PieceKind::VergeYard, Z_ROAD_VERGE_YARD)
+        };
         // `miter_offsets` плюсом сдвигает влево — сторона 0
         let sign = if side == 0 { 1.0 } else { -1.0 };
         let ribbon = |builder: &mut MeshBuilder, path: &[Vec2], verge: f32, color: LinearRgba| {
@@ -288,10 +299,35 @@ pub(super) fn push_verges(
             let normals = miter_offsets(&dense, false, sign);
             let reach = |verge: f32| vec![width / 2.0 + verge; dense.len()];
             scraps.push_paving_band(&dense, &normals, &reach(under(verge)));
+            // находке — видимая полоса: от кромки полотна до внешней кромки
+            // плитки; под дорогой кусок не виден, и находке он не нужен
+            let count = points.len();
+            let point_normals = miter_offsets(points, false, sign);
+            push_band_piece(
+                pieces,
+                points,
+                &point_normals,
+                &vec![width / 2.0; count],
+                &vec![width / 2.0 + under(verge); count],
+                PieceKind::VergePaving,
+                road_index,
+                Z_ROAD_VERGE,
+            );
             if verge > VERGE_PAVED_MAX {
                 let lawn = verge + VERGE_UNDER_PATH;
                 ribbon(lawns, points, lawn, lawn_color);
-                scraps.push_lawn_band(&dense, &normals, &reach(lawn), ends, bites);
+                scraps.push_lawn_band(road_index, &dense, &normals, &reach(lawn), ends, bites);
+                // видимый газон начинается за кромкой плитки
+                push_band_piece(
+                    pieces,
+                    points,
+                    &point_normals,
+                    &vec![width / 2.0 + under(verge); count],
+                    &vec![width / 2.0 + lawn; count],
+                    lawn_kind,
+                    road_index,
+                    lawn_z,
+                );
             }
             continue;
         }
@@ -342,14 +378,84 @@ pub(super) fn push_verges(
             .map(|verge| verge + VERGE_UNDER_PATH)
             .collect();
         tiles.push_polygon(&band(&mut paved.iter().copied()), &[], tile_color);
+        push_band_piece(
+            pieces,
+            &dense,
+            &normals,
+            &vec![width / 2.0; dense.len()],
+            &paved
+                .iter()
+                .map(|verge| width / 2.0 + verge)
+                .collect::<Vec<f32>>(),
+            PieceKind::VergePaving,
+            road_index,
+            Z_ROAD_VERGE,
+        );
         let reach = |widths: &[f32]| -> Vec<f32> {
             widths.iter().map(|verge| width / 2.0 + verge).collect()
         };
         scraps.push_paving_band(&dense, &normals, &reach(&paved));
         if lawns_at.iter().any(|&lawn| lawn) {
             lawns.push_polygon(&band(&mut widths.iter().copied()), &[], lawn_color);
-            scraps.push_lawn_band(&dense, &normals, &reach(&widths), ends, bites);
+            scraps.push_lawn_band(road_index, &dense, &normals, &reach(&widths), ends, bites);
+            // видимый газон — от внешней кромки плитки до внешней кромки
+            // газона: между ними полоса целиком газонная
+            push_band_piece(
+                pieces,
+                &dense,
+                &normals,
+                &paved
+                    .iter()
+                    .map(|verge| width / 2.0 + verge)
+                    .collect::<Vec<f32>>(),
+                &widths
+                    .iter()
+                    .map(|verge| width / 2.0 + verge)
+                    .collect::<Vec<f32>>(),
+                lawn_kind,
+                road_index,
+                lawn_z,
+            );
         }
+    }
+}
+
+/// Видимая полоса куска обочины для находки: между внутренней и внешней
+/// кромками по `normals` (единичные сдвиги в сторону обочины) вдоль `path`.
+/// Рисуется лента от оси, под дорогой кусок не виден, — находке полоса
+/// режется от кромки полотна.
+#[allow(clippy::too_many_arguments)]
+fn push_band_piece(
+    pieces: &mut Vec<DrawnPiece>,
+    path: &[Vec2],
+    normals: &[Vec2],
+    inner: &[f32],
+    outer: &[f32],
+    kind: PieceKind,
+    road: u32,
+    z: f32,
+) {
+    let mut contour: Vec<Vec2> = path
+        .iter()
+        .zip(normals)
+        .zip(outer)
+        .map(|((&point, &normal), &distance)| point + normal * distance)
+        .collect();
+    contour.extend(
+        path.iter()
+            .zip(normals)
+            .zip(inner)
+            .map(|((&point, &normal), &distance)| point + normal * distance)
+            .rev(),
+    );
+    if contour.len() >= 3 {
+        pieces.push(DrawnPiece {
+            contour,
+            holes: Vec::new(),
+            kind,
+            road: Some(road),
+            z,
+        });
     }
 }
 
