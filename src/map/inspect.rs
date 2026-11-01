@@ -43,6 +43,7 @@ use crate::map::osm::model::{
     AreaKind, FenceKind, MapData, PolyArea, RailKind, RoadAreaKind, RoadLine, point_in_polygon,
 };
 use crate::map::roads::pockets::kerb_pocket_outlines;
+use crate::map::roads::{DrawnPiece, DrawnPieces, PieceKind};
 use crate::settings::{
     Z_BUILDING, Z_FENCE, Z_GRASS, Z_INDUSTRY, Z_LANDUSE, Z_LANDUSE_YARD, Z_PARK, Z_PARKING, Z_PIPE,
     Z_PITCH, Z_POND, Z_RAIL, Z_ROAD, Z_ROAD_ISLANDS, Z_ROAD_PAINT, Z_SAND, Z_SIDEWALK, Z_TRAM,
@@ -52,13 +53,15 @@ use crate::settings::{
 #[cfg(test)]
 use crate::map::osm::model::{Highway, SidewalkSide};
 #[cfg(test)]
-use crate::settings::{Z_BRIDGE, Z_ROAD_VERGE};
+use crate::settings::Z_BRIDGE;
 
 mod labels;
 mod shapes;
 
-use self::labels::{building_label, lower, node_label, pitch_label, road_hit, structure_label};
-pub use self::labels::{format_hits, hit_line};
+use self::labels::{
+    building_label, lower, node_label, piece_label, pitch_label, road_hit, structure_label,
+};
+pub use self::labels::{captured_line, format_hits, hit_line};
 pub use self::shapes::{FeatureShape, feature_shape, mesh_feature};
 
 /// Сторона ячейки индекса, м.
@@ -122,10 +125,10 @@ pub enum FeatureRef {
         road: u32,
         side: u8,
     },
-    VergeBand {
-        road: u32,
-        side: u8,
-    },
+    /// Отрисованный кусок дороги — по номеру в индексе
+    /// ([`InspectIndex::pieces`]): состав обочины, лоскуты и куски узлов в
+    /// [`MapData`] не живут, их рисует проход сборки дорог.
+    Piece(u32),
 }
 
 /// Откуда находка.
@@ -216,6 +219,10 @@ pub struct InspectIndex {
     /// Карманы у бордюра со своими полигонами; сетка хранит номер в векторе.
     kerb_pockets: Vec<KerbPocket>,
     kerb_pocket_grid: Grid<u32>,
+    /// Отрисованные куски дорог (`roads::DrawnPiece`): состав обочины,
+    /// лоскуты, куски узлов; сетка хранит номер в векторе.
+    pieces: Vec<DrawnPiece>,
+    piece_grid: Grid<u32>,
     built: bool,
 }
 
@@ -234,6 +241,8 @@ impl InspectIndex {
             trees: Grid::new(CELL),
             kerb_pockets: Vec::new(),
             kerb_pocket_grid: Grid::new(CELL),
+            pieces: Vec::new(),
+            piece_grid: Grid::new(CELL),
             built: false,
         }
     }
@@ -254,7 +263,12 @@ impl InspectIndex {
     /// узловой оси — той же, по которой карман рисуется; форма влияет на ось,
     /// поэтому индекс перестраивается и по ней. Дороже прочих проходов —
     /// подъём каркаса дорог, у машин тот же.
-    pub fn rebuild(map: &MapData, shape: &RoadShape) -> InspectIndex {
+    ///
+    /// Отрисованные куски дорог — пятый проход: их рисует проход сборки
+    /// (`roads::build_roads`), в [`MapData`] они не живут. Ресурс
+    /// `DrawnPieces` меняется при каждой пересборке дорог — стиль, форма,
+    /// ступень обочины, — и индекс перестраивается по нему же.
+    pub fn rebuild(map: &MapData, shape: &RoadShape, pieces: &[DrawnPiece]) -> InspectIndex {
         let mut index = InspectIndex::empty();
         let mut push_area = |src: AreaSrc, area: &PolyArea| {
             if area.outer.is_empty() {
@@ -376,6 +390,14 @@ impl InspectIndex {
             index.kerb_pockets.len(),
             pocket_started.elapsed()
         );
+        for (i, piece) in pieces.iter().enumerate() {
+            if piece.contour.is_empty() {
+                continue;
+            }
+            let (min, max) = bounds(&piece.contour);
+            index.piece_grid.insert(min, max, i as u32);
+        }
+        index.pieces = pieces.to_vec();
         index.built = true;
         index
     }
@@ -625,6 +647,37 @@ impl InspectIndex {
                 feature: FeatureRef::KerbPocket(i),
             });
         }
+        // отрисованные куски: ручка «Sidewalks» прячет состав обочины так же,
+        // как у рисунка (`Drawn::verges_drawn` без ручки возвращает нули);
+        // лоскуты и куски узлов от неё не зависят
+        for &i in self.piece_grid.at(at) {
+            let Some(piece) = self.pieces.get(i as usize) else {
+                continue;
+            };
+            if matches!(
+                piece.kind,
+                PieceKind::VergePaving | PieceKind::VergeLawn | PieceKind::VergeYard
+            ) && !roads.sidewalks
+            {
+                continue;
+            }
+            if !point_in_polygon(at, &piece.contour) {
+                continue;
+            }
+            if piece.holes.iter().any(|hole| point_in_polygon(at, hole)) {
+                continue;
+            }
+            hits.push(Hit {
+                z: piece.z,
+                label: piece_label(piece.kind),
+                src: HitSource::Generated(HitReason::Inferred),
+                id: piece
+                    .road
+                    .and_then(|road| map.roads.get(road as usize))
+                    .and_then(|road| road.osm_id),
+                feature: FeatureRef::Piece(i),
+            });
+        }
         // сверху вниз; одинаковые подписи на одном слое — одна находка
         hits.sort_by(|a, b| b.z.total_cmp(&a.z).then_with(|| a.label.cmp(&b.label)));
         hits.dedup_by(|a, b| a.z == b.z && a.label == b.label);
@@ -691,24 +744,30 @@ impl Plugin for InspectPlugin {
             .init_resource::<InspectIndex>()
             .add_systems(
                 Update,
-                rebuild_index.run_if(resource_exists::<MapData>.and_then(
-                    resource_changed::<MapData>.or_else(resource_changed::<RoadShapeOnMap>),
-                )),
+                rebuild_index.run_if(
+                    resource_exists::<MapData>.and_then(
+                        resource_changed::<MapData>
+                            .or_else(resource_changed::<RoadShapeOnMap>)
+                            .or_else(resource_changed::<DrawnPieces>),
+                    ),
+                ),
             );
     }
 }
 
-/// Пересобрать индекс по [`MapData`]. Ресурс меняется только при вставке
-/// разобранной карты и при пересборке набора деревьев (`compose_trees`).
-/// Форма дорог — второй повод: узловая ось, по которой стоят карманы у
-/// бордюра, зависит от неё.
+/// Пересобрать индекс по [`MapData`] и отрисованным кускам. Ресурс карты
+/// меняется только при вставке разобранной карты и при пересборке набора
+/// деревьев (`compose_trees`). Форма дорог — второй повод: узловая ось, по
+/// которой стоят карманы у бордюра, зависит от неё. Куски — третий: их
+/// записывает каждая пересборка дорог (стиль, форма, ступень обочины).
 pub fn rebuild_index(
     map: Res<MapData>,
     shape: Res<RoadShapeOnMap>,
+    pieces: Res<DrawnPieces>,
     mut index: ResMut<InspectIndex>,
 ) {
     let started = std::time::Instant::now();
-    *index = InspectIndex::rebuild(&map, &shape.0);
+    *index = InspectIndex::rebuild(&map, &shape.0, &pieces.0);
     info!("inspect index: rebuilt in {:.1?}", started.elapsed());
 }
 
@@ -740,18 +799,14 @@ fn area_feature(src: AreaSrc) -> FeatureRef {
     }
 }
 
-/// Досягаемость дороги в индексе: полотно плюс полосы, которые она
-/// дорисовывает, — тротуар и обочина (обе стороны сразу: индекс строится
-/// один раз, ручка «Sidewalks» может быть перевёрнута позже). Pad сетки
-/// обязан накрыть самый дальний ответ, иначе внешний край полос у соседней
-/// ячейки отвечал бы пусто.
+/// Досягаемость дороги в индексе: полотно плюс полоса тротуара, которую она
+/// дорисовывает (обе стороны сразу: индекс строится один раз, ручка
+/// «Sidewalks» может быть перевёрнута позже). Состав обочины за тротуаром
+/// отвечают отрисованные куски со своей сеткой, дорога туда не дотягивается.
+/// Pad сетки обязан накрыть самый дальний ответ, иначе внешний край полос у
+/// соседней ячейки отвечал бы пусто.
 fn road_reach(road: &RoadLine) -> f32 {
-    road.width / 2.0
-        + road
-            .sidewalk()
-            .band()
-            .map(|band| band + road.verges[0].max(road.verges[1]))
-            .unwrap_or(0.0)
+    road.width / 2.0 + road.sidewalk().band().unwrap_or(0.0)
 }
 
 #[cfg(test)]

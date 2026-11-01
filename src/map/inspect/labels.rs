@@ -11,7 +11,8 @@ use crate::map::osm::model::{
     AreaKind, BuildingUse, Highway, PitchKind, PolyArea, RoadClass, RoadLine, RoadNodeKind,
     SidewalkSide, StructureKind, closest_on_segment,
 };
-use crate::settings::{Z_ALLEY, Z_BRIDGE, Z_ROAD, Z_ROAD_VERGE, Z_SIDEWALK, Z_UNPAVED_ROAD};
+use crate::map::roads::PieceKind;
+use crate::settings::{Z_ALLEY, Z_BRIDGE, Z_ROAD, Z_SIDEWALK, Z_UNPAVED_ROAD};
 
 use super::{FeatureRef, Hit, HitReason, HitSource};
 
@@ -24,6 +25,18 @@ pub fn hit_line(hit: &Hit) -> String {
     match hit.id {
         Some(id) => format!("z {:6.3}  {} #{id}", hit.z, hit.label),
         None => format!("z {:6.3}  {}", hit.z, hit.label),
+    }
+}
+
+/// Захваченная находка (клавиша `\` панели инспектора) строкой: колонки те же,
+/// что у [`hit_line`], но ведёт `c` вместо `z` — `tools/shot_coords` собирает
+/// под строкой камеры только `z …` строки, так что захват в его ответе с
+/// находками под курсором не смешается и в конкурсе выбранной строки не
+/// участвует.
+pub fn captured_line(hit: &Hit) -> String {
+    match hit.id {
+        Some(id) => format!("c {:6.3}  {} #{id}", hit.z, hit.label),
+        None => format!("c {:6.3}  {}", hit.z, hit.label),
     }
 }
 
@@ -49,11 +62,12 @@ pub(super) fn lower<T: std::fmt::Debug>(value: T) -> String {
     format!("{value:?}").to_lowercase()
 }
 
-/// Находка дороги в точке: полотно, а за ним полосы, которые дорога
-/// дорисовывает, — тротуар и обочина. Полосы мерятся от OSM-осевой по закону
-/// ширины модели ([`RoadLine::sidewalk`], [`RoadLine::verges`]); сторона —
-/// по знаку к ближайшему отрезку осевой. Ручка [`RoadStyle::sidewalks`]
-/// убирает обе полосы, как и у рисунка (`Drawn::verges_drawn`).
+/// Находка дороги в точке: полотно, а за ним полоса тротуара, которую дорога
+/// дорисовывает. Полоса мерится от OSM-осевой по закону ширины модели
+/// ([`RoadLine::sidewalk`]); сторона — по знаку к ближайшему отрезку осевой.
+/// Ручка [`RoadStyle::sidewalks`] убирает полосу, как и у рисунка
+/// (`Drawn::verges_drawn`). Состав обочины за тротуаром отвечают
+/// отрисованные куски (`FeatureRef::Piece`), не дорога.
 pub(super) fn road_hit(
     road_index: u32,
     road: &RoadLine,
@@ -95,19 +109,21 @@ pub(super) fn road_hit(
             },
         });
     }
-    if road.verges[side] > 0.0 && dist <= half + band + road.verges[side] {
-        return Some(Hit {
-            z: Z_ROAD_VERGE,
-            label: "verge (auto)".to_string(),
-            src: HitSource::Generated(HitReason::Inferred),
-            id: road.osm_id,
-            feature: FeatureRef::VergeBand {
-                road: road_index,
-                side: side as u8,
-            },
-        });
-    }
     None
+}
+
+/// Подпись отрисованного куска дороги: состав обочины, лоскут или кусок
+/// узла — то, что проход сборки дорог рисует поверх модели.
+pub(super) fn piece_label(kind: PieceKind) -> String {
+    match kind {
+        PieceKind::VergePaving => "verge paving (auto)",
+        PieceKind::VergeLawn => "verge lawn (auto)",
+        PieceKind::VergeYard => "verge yard (auto)",
+        PieceKind::PavingScrap => "paving scrap (auto)",
+        PieceKind::RoadCorner => "road corner (auto)",
+        PieceKind::SidewalkCorner => "sidewalk corner (auto)",
+    }
+    .to_string()
 }
 
 /// Расстояние от точки до ломаной и сторона ближайшего отрезка: `false` —

@@ -1,6 +1,8 @@
 use super::*;
 use crate::map::osm::fixture;
 use crate::map::osm::model::{KerbParking, RoadArea, RoadAreaKind, TreeSet, WaterKind, WaterLine};
+use crate::map::roads::{DrawnPiece, PieceKind};
+use crate::settings::Z_ROAD_VERGE_YARD;
 
 /// Запрос с дефолтным стилем дорог — все выведенные полосы отвечают.
 fn query(index: &InspectIndex, map: &MapData, tree_density: f32, at: Vec2) -> Vec<Hit> {
@@ -20,7 +22,7 @@ fn a_point_inside_the_feature_hits_it() {
         )],
         ..default()
     };
-    let index = InspectIndex::rebuild(&map, &RoadShape::default());
+    let index = InspectIndex::rebuild(&map, &RoadShape::default(), &[]);
 
     // внутри здания и внутри полотна дороги: здание сверху
     let hits = query(&index, &map, 0.0, Vec2::new(100.0, 102.0));
@@ -52,7 +54,7 @@ fn a_point_outside_every_feature_hits_nothing() {
         )],
         ..default()
     };
-    let index = InspectIndex::rebuild(&map, &RoadShape::default());
+    let index = InspectIndex::rebuild(&map, &RoadShape::default(), &[]);
     let hits = query(&index, &map, 0.0, Vec2::new(200.0, 200.0));
     assert!(hits.is_empty());
 }
@@ -70,7 +72,7 @@ fn a_hole_punches_the_answer_through() {
         )],
         ..default()
     };
-    let index = InspectIndex::rebuild(&map, &RoadShape::default());
+    let index = InspectIndex::rebuild(&map, &RoadShape::default(), &[]);
     let hits = query(&index, &map, 0.0, Vec2::new(100.0, 100.0));
     let labels: Vec<&str> = hits.iter().map(|hit| hit.label.as_str()).collect();
     // сквозь дыру здания видна вода под ним
@@ -86,7 +88,7 @@ fn a_bridge_road_answers_as_a_bridge_layer() {
         )],
         ..default()
     };
-    let index = InspectIndex::rebuild(&map, &RoadShape::default());
+    let index = InspectIndex::rebuild(&map, &RoadShape::default(), &[]);
     let hits = query(&index, &map, 0.0, Vec2::new(30.0, 50.0));
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].label, "road residential 8.0 m, bridge, sidewalks");
@@ -106,7 +108,7 @@ fn a_culvert_is_not_drawn_so_it_is_not_a_hit() {
         }],
         ..default()
     };
-    let index = InspectIndex::rebuild(&map, &RoadShape::default());
+    let index = InspectIndex::rebuild(&map, &RoadShape::default(), &[]);
     let hits = query(&index, &map, 0.0, Vec2::new(25.0, 0.0));
     assert!(hits.is_empty());
 }
@@ -123,7 +125,7 @@ fn an_open_waterway_is_a_hit() {
         }],
         ..default()
     };
-    let index = InspectIndex::rebuild(&map, &RoadShape::default());
+    let index = InspectIndex::rebuild(&map, &RoadShape::default(), &[]);
     let hits = query(&index, &map, 0.0, Vec2::new(25.0, 0.5));
     assert_eq!(hits[0].label, "waterway stream 2.5 m");
 }
@@ -137,7 +139,7 @@ fn trees_answer_by_the_density_prefix() {
         ]),
         ..default()
     };
-    let index = InspectIndex::rebuild(&map, &RoadShape::default());
+    let index = InspectIndex::rebuild(&map, &RoadShape::default(), &[]);
 
     // порог 0.7 выше плотности 0.5 — дерева в ответе нет
     let hits = query(&index, &map, 0.5, Vec2::new(120.0, 100.0));
@@ -162,7 +164,7 @@ fn duplicates_of_one_kind_collapse() {
         ],
         ..default()
     };
-    let index = InspectIndex::rebuild(&map, &RoadShape::default());
+    let index = InspectIndex::rebuild(&map, &RoadShape::default(), &[]);
     let hits = query(&index, &map, 0.0, Vec2::new(100.0, 100.0));
     // две травы одного места — одна находка, земля фоном не считается
     assert_eq!(hits.len(), 1);
@@ -205,6 +207,24 @@ fn band_edges(verge: f32) -> (f32, f32, f32) {
     (half, half + band, half + band + verge)
 }
 
+/// Прямоугольный кусок обочины для тестов сетки кусков: полоса от кромки
+/// тротуара (`y0`) до внешнего края (`y1`) на стороне 0 дороги `road`
+/// (улица тестов лежит на y = 70, сторона 0 — +y).
+fn verge_piece(x0: f32, x1: f32, y0: f32, y1: f32, road: u32) -> DrawnPiece {
+    DrawnPiece {
+        contour: vec![
+            Vec2::new(x0, 70.0 + y0),
+            Vec2::new(x1, 70.0 + y0),
+            Vec2::new(x1, 70.0 + y1),
+            Vec2::new(x0, 70.0 + y1),
+        ],
+        holes: vec![],
+        kind: PieceKind::VergeYard,
+        road: Some(road),
+        z: Z_ROAD_VERGE_YARD,
+    }
+}
+
 /// Карман у бордюра — находка индекса и подсвечивается: контура в
 /// `MapData` нет, его вывел закон стоянки по тегу `parking:<side>`.
 #[test]
@@ -213,7 +233,7 @@ fn a_kerb_pocket_answers_as_a_hit_and_highlights() {
         roads: vec![pocket_street(70.0)],
         ..default()
     };
-    let index = InspectIndex::rebuild(&map, &RoadShape::default());
+    let index = InspectIndex::rebuild(&map, &RoadShape::default(), &[]);
 
     // середина кармана: за кромкой полотна, внутри его полной ширины
     let point = Vec2::new(100.0, 75.0);
@@ -246,7 +266,7 @@ fn a_rule_pocket_answers_without_the_tagged_mark() {
     };
     let point = outline.contour.iter().sum::<Vec2>() / outline.contour.len() as f32;
 
-    let index = InspectIndex::rebuild(&map, &RoadShape::default());
+    let index = InspectIndex::rebuild(&map, &RoadShape::default(), &[]);
     let hits = query(&index, &map, 0.0, point);
     let pocket = hits
         .iter()
@@ -266,7 +286,7 @@ fn a_sidewalk_band_answers_inside_itself_and_not_beyond() {
         roads: vec![banded_street(70.0, [0.0; 2], [SidewalkSide::Inferred; 2])],
         ..default()
     };
-    let index = InspectIndex::rebuild(&map, &RoadShape::default());
+    let index = InspectIndex::rebuild(&map, &RoadShape::default(), &[]);
     let (_, sidewalk_edge, _) = band_edges(0.0);
 
     // внутри полосы — тротуар дорисован дорогой, слой тротуаров
@@ -306,7 +326,7 @@ fn a_one_sided_sidewalk_answers_only_on_its_side() {
         )],
         ..default()
     };
-    let index = InspectIndex::rebuild(&map, &RoadShape::default());
+    let index = InspectIndex::rebuild(&map, &RoadShape::default(), &[]);
     let (_, sidewalk_edge, _) = band_edges(0.0);
     let offset = sidewalk_edge - 0.1;
 
@@ -325,7 +345,7 @@ fn tagged_and_inferred_sides_label_their_reason() {
         ],
         ..default()
     };
-    let index = InspectIndex::rebuild(&map, &RoadShape::default());
+    let index = InspectIndex::rebuild(&map, &RoadShape::default(), &[]);
     let (_, sidewalk_edge, _) = band_edges(0.0);
 
     let hits = query(
@@ -356,7 +376,7 @@ fn the_sidewalks_knob_hides_the_generated_bands() {
         roads: vec![banded_street(70.0, [0.0; 2], [SidewalkSide::Inferred; 2])],
         ..default()
     };
-    let index = InspectIndex::rebuild(&map, &RoadShape::default());
+    let index = InspectIndex::rebuild(&map, &RoadShape::default(), &[]);
     let (_, sidewalk_edge, _) = band_edges(0.0);
     let style = RoadStyle {
         sidewalks: false,
@@ -373,36 +393,49 @@ fn the_sidewalks_knob_hides_the_generated_bands() {
 }
 
 #[test]
-fn a_verge_band_answers_up_to_its_outer_edge() {
+fn a_verge_piece_answers_up_to_its_outer_edge() {
     let map = MapData {
         roads: vec![banded_street(70.0, [2.0; 2], [SidewalkSide::Inferred; 2])],
         ..default()
     };
-    let index = InspectIndex::rebuild(&map, &RoadShape::default());
-    let (_, _, verge_edge) = band_edges(2.0);
+    let (_, sidewalk_edge, verge_edge) = band_edges(2.0);
+    let piece = verge_piece(490.0, 510.0, sidewalk_edge, verge_edge, 0);
+    let index = InspectIndex::rebuild(&map, &RoadShape::default(), &[piece]);
 
-    // за краем тротуара — обочина, подпись без причины
+    // за краем тротуара — нарисованная полоса обочины, ответ ведёт кусок
     let hits = query(&index, &map, 0.0, Vec2::new(500.0, 70.0 + verge_edge - 0.1));
-    assert_eq!(hits[0].label, "verge (auto)");
-    assert_eq!(hits[0].z, Z_ROAD_VERGE);
+    assert_eq!(hits[0].label, "verge yard (auto)");
+    assert_eq!(hits[0].z, Z_ROAD_VERGE_YARD);
     assert_eq!(hits[0].src, HitSource::Generated(HitReason::Inferred));
 
-    // за внешним краем обочины ответа нет
+    // за внешним краем куска ответа нет
     let hits = query(&index, &map, 0.0, Vec2::new(500.0, 70.0 + verge_edge + 0.1));
     assert!(hits.is_empty());
 }
 
 #[test]
-fn the_outer_edge_of_a_long_verge_is_found_across_the_cell_line() {
-    // полнота сетки после роста pad: обочина шириной 2 м у дороги на
-    // y = 70 дотягивается до y = 62.3 — за границу ячейки 64, которую
-    // прежний pad (width/2 = 4) не задевал вовсе
+fn the_outer_edge_of_a_long_piece_is_found_across_the_cell_line() {
+    // полнота сетки кусков: полоса вставляется по своим габаритам и
+    // дотягивается до y = 62.3 — за границу ячейки 64, которую прежний
+    // pad дорог (width/2 = 4) не задевал вовсе
     let map = MapData {
         roads: vec![banded_street(70.0, [2.0; 2], [SidewalkSide::Inferred; 2])],
         ..default()
     };
-    let index = InspectIndex::rebuild(&map, &RoadShape::default());
-    let (_, _, verge_edge) = band_edges(2.0);
+    let (_, sidewalk_edge, verge_edge) = band_edges(2.0);
+    let piece = DrawnPiece {
+        contour: vec![
+            Vec2::new(490.0, 70.0 - verge_edge),
+            Vec2::new(510.0, 70.0 - verge_edge),
+            Vec2::new(510.0, 70.0 - sidewalk_edge),
+            Vec2::new(490.0, 70.0 - sidewalk_edge),
+        ],
+        holes: vec![],
+        kind: PieceKind::VergeYard,
+        road: Some(0),
+        z: Z_ROAD_VERGE_YARD,
+    };
+    let index = InspectIndex::rebuild(&map, &RoadShape::default(), &[piece]);
 
     let hits = query(
         &index,
@@ -410,7 +443,7 @@ fn the_outer_edge_of_a_long_verge_is_found_across_the_cell_line() {
         0.0,
         Vec2::new(500.0, 70.0 - verge_edge + 0.01),
     );
-    assert!(hits.iter().any(|hit| hit.label == "verge (auto)"));
+    assert!(hits.iter().any(|hit| hit.label == "verge yard (auto)"));
 }
 
 #[test]
@@ -424,7 +457,7 @@ fn an_osm_walkway_and_a_generated_sidewalk_are_two_rows() {
         }],
         ..default()
     };
-    let index = InspectIndex::rebuild(&map, &RoadShape::default());
+    let index = InspectIndex::rebuild(&map, &RoadShape::default(), &[]);
     let (_, sidewalk_edge, _) = band_edges(0.0);
 
     // OSM-площадь дорожки и дорисованный тротуар — разные находки,
@@ -451,7 +484,7 @@ fn identical_bands_of_two_roads_collapse() {
         ],
         ..default()
     };
-    let index = InspectIndex::rebuild(&map, &RoadShape::default());
+    let index = InspectIndex::rebuild(&map, &RoadShape::default(), &[]);
 
     let hits = query(&index, &map, 0.0, Vec2::new(500.0, 70.0));
     let sidewalks = hits
@@ -494,7 +527,7 @@ fn a_parsed_feature_carries_its_osm_id() {
         vec![Vec2::new(1000.0, 1400.0), Vec2::new(1400.0, 1400.0)],
     );
     let map = overpass.parse();
-    let index = InspectIndex::rebuild(&map, &RoadShape::default());
+    let index = InspectIndex::rebuild(&map, &RoadShape::default(), &[]);
 
     let road = &map.roads[0];
     assert_eq!(road.osm_id, Some(1));
@@ -537,7 +570,7 @@ fn every_hit_carries_its_feature_reference() {
         trees: TreeSet::of([(Vec2::new(300.0, 100.0), 4.0, 0.0)]),
         ..default()
     };
-    let index = InspectIndex::rebuild(&map, &RoadShape::default());
+    let index = InspectIndex::rebuild(&map, &RoadShape::default(), &[]);
     let (half, sidewalk_edge, verge_edge) = band_edges(2.0);
     let feature = |at: Vec2| {
         query(&index, &map, 0.5, at)
@@ -551,9 +584,26 @@ fn every_hit_carries_its_feature_reference() {
         feature(Vec2::new(500.0, 70.0 + sidewalk_edge - 0.1)),
         Some(FeatureRef::SidewalkBand { road: 0, side: 0 })
     );
-    assert_eq!(
-        feature(Vec2::new(500.0, 70.0 + verge_edge - 0.1)),
-        Some(FeatureRef::VergeBand { road: 0, side: 0 })
+    // состав обочины отвечают отрисованные куски; в этом индексе их нет
+    assert_eq!(feature(Vec2::new(500.0, 70.0 + verge_edge - 0.1)), None);
+    // а с куском — находка ведёт кусок, и подсветка накрывает точку
+    let piece_at = Vec2::new(500.0, 70.0 + verge_edge - 0.5);
+    let piece = verge_piece(490.0, 510.0, sidewalk_edge, verge_edge, 0);
+    let index = InspectIndex::rebuild(&map, &RoadShape::default(), &[piece]);
+    let hits = query(&index, &map, 0.5, piece_at);
+    let piece_hit = hits
+        .iter()
+        .find(|hit| hit.label == "verge yard (auto)")
+        .expect("the drawn piece is a hit");
+    assert_eq!(piece_hit.feature, FeatureRef::Piece(0));
+    assert_eq!(piece_hit.id, map.roads[0].osm_id);
+    assert_eq!(piece_hit.z, Z_ROAD_VERGE_YARD);
+    let shapes = feature_shape(&index, &map, &RoadStyle::default(), piece_hit.feature)
+        .expect("the piece has a shape");
+    assert!(
+        shapes
+            .iter()
+            .all(|shape| point_in_polygon(piece_at, &shape.outer))
     );
     // полотно, здание, вода, дерево — адреса своих элементов
     assert_eq!(
@@ -581,7 +631,7 @@ fn a_band_shape_lies_on_its_side_only() {
         ..default()
     };
     let style = RoadStyle::default();
-    let index = InspectIndex::rebuild(&map, &RoadShape::default());
+    let index = InspectIndex::rebuild(&map, &RoadShape::default(), &[]);
     let (half, sidewalk_edge, _) = band_edges(0.0);
 
     let shapes = feature_shape(
@@ -619,7 +669,7 @@ fn a_building_shape_carries_its_hole() {
         ..default()
     };
 
-    let index = InspectIndex::rebuild(&map, &RoadShape::default());
+    let index = InspectIndex::rebuild(&map, &RoadShape::default(), &[]);
     let shapes = feature_shape(&index, &map, &RoadStyle::default(), FeatureRef::Building(0))
         .expect("the building has a shape");
     assert_eq!(shapes.len(), 1);
@@ -641,7 +691,7 @@ fn the_band_shape_covers_what_the_hit_answers() {
         roads: vec![banded_street(70.0, [0.0; 2], [SidewalkSide::Tagged; 2])],
         ..default()
     };
-    let index = InspectIndex::rebuild(&map, &RoadShape::default());
+    let index = InspectIndex::rebuild(&map, &RoadShape::default(), &[]);
     let style = RoadStyle::default();
     let (half, sidewalk_edge, _) = band_edges(0.0);
     let shapes = feature_shape(

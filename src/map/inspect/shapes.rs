@@ -96,21 +96,6 @@ pub fn feature_shape(
                 band_shapes(&road.points, half, half + band, side as u8)
             })
         }
-        FeatureRef::VergeBand { road: i, side } => {
-            let road = map.roads.get(i as usize)?;
-            let profile = road.sidewalk();
-            let band = profile.band()?;
-            let side = side as usize;
-            (roads.sidewalks && road.verges[side] > 0.0).then(|| {
-                let half = road.width / 2.0;
-                band_shapes(
-                    &road.points,
-                    half + band,
-                    half + band + road.verges[side],
-                    side as u8,
-                )
-            })
-        }
         FeatureRef::RoadNode(i) => {
             let node = map.road_nodes.get(i as usize)?;
             Some(vec![disk(node.pos, NODE_REACH)])
@@ -129,6 +114,15 @@ pub fn feature_shape(
                 outer: pocket.outline.clone(),
                 holes: vec![],
             }])
+        }
+        FeatureRef::Piece(i) => {
+            let piece = index.pieces.get(i as usize)?;
+            (!piece.contour.is_empty()).then(|| {
+                vec![FeatureShape {
+                    outer: piece.contour.clone(),
+                    holes: piece.holes.clone(),
+                }]
+            })
         }
     }
 }
