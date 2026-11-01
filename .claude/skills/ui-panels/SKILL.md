@@ -128,8 +128,8 @@ panel** with four tabs (`ui/shell.rs`).
   `camera.rs::pointer_over_ui`): the camera line reads `-/-`, the hits
   clear, the highlight despawns. The list is **one node per hit** (`sync_hits_rows`; ≤
   `INSPECTOR_MAX_LINES` rows + a `+N more` tail; empty — a bare `-`; no `ground` row —
-  bare ground is not a feature). **Cmd cycles the selection** through the hits under
-  the cursor (top → next → … → top; any hit recompute resets it
+  bare ground is not a feature). **`]`/`[` cycle the selection** — `]` next, `[`
+  previous, both wrapping (any hit recompute resets it
   to the top) — the **selected** hit's row carries a translucent-yellow
   `BackgroundColor` — the same element whose shape the **highlight checkbox** draws on
   the map (`InspectorHighlight`, a resource the checkbox's `ValueChange` observer writes

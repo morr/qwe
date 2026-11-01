@@ -75,8 +75,9 @@ pub struct InspectorHighlightMarker;
 /// и слой подсветки ([`sync_inspector_highlight`]): расчёт один, читателей
 /// двое. `point` в `INFINITY` — курсора нет или он вне окна просмотра
 /// витрины; следующая точка всегда дальше шага, так что список пересчитается,
-/// как только курсор вернётся. `selected` — какая находка выбрана (Cmd
-/// листает, [`cycle_inspector_selection`]): жёлтым в списке и на карте стоит
+/// как только курсор вернётся. `selected` — какая находка выбрана (листают
+/// скобки: `]` вперёд, `[` назад — [`cycle_inspector_selection_next`] и
+/// [`cycle_inspector_selection_prev`]): жёлтым в списке и на карте стоит
 /// она, не обязательно верхняя; пересчёт находок сбрасывает выбор на верхнюю.
 #[derive(Resource, Default)]
 struct InspectorHitsState {
@@ -158,7 +159,8 @@ impl Plugin for UiInspectorPlugin {
                 update_inspector_hits,
                 sync_inspector_visibility,
                 sync_hits_rows,
-                cycle_inspector_selection.run_if(cmd_just_pressed),
+                cycle_inspector_selection_next.run_if(bracket_forward_pressed),
+                cycle_inspector_selection_prev.run_if(bracket_backward_pressed),
                 sync_highlight_checked,
                 sync_inspector_highlight,
             ),
@@ -389,21 +391,36 @@ fn update_inspector_hits(
     };
 }
 
-/// Cmd нажат — листать выбор находок. Обе клавиши Command.
-fn cmd_just_pressed(keys: Res<ButtonInput<KeyCode>>) -> bool {
-    keys.just_pressed(KeyCode::SuperLeft) || keys.just_pressed(KeyCode::SuperRight)
+/// Скобки листают выбор находок: `]` — вперёд, `[` — назад.
+fn bracket_forward_pressed(keys: Res<ButtonInput<KeyCode>>) -> bool {
+    keys.just_pressed(KeyCode::BracketRight)
 }
 
-/// Cmd листает выбор по находкам под курсором: верхняя → следующая → … →
+/// См. [`bracket_forward_pressed`].
+fn bracket_backward_pressed(keys: Res<ButtonInput<KeyCode>>) -> bool {
+    keys.just_pressed(KeyCode::BracketLeft)
+}
+
+/// `]` листает выбор по находкам под курсором вперёд: верхняя → следующая → … →
 /// снова верхняя. Выбрана одна находка и для строки списка, и для слоя
 /// подсветки ([`sync_inspector_highlight`]) — жёлтым стоит то, что цикл
 /// выбрал, а не обязательно верхнее. Пересчёт находок (курсор ушёл дальше
 /// шага, список сменился) сбрасывает выбор, и цикл ведёт по новому списку.
-fn cycle_inspector_selection(mut state: ResMut<InspectorHitsState>) {
+/// Назад, с тем же заворотом, листает [`cycle_inspector_selection_prev`].
+fn cycle_inspector_selection_next(mut state: ResMut<InspectorHitsState>) {
     if state.hits.is_empty() {
         return;
     }
     state.selected = (state.selected + 1) % state.hits.len();
+}
+
+/// `[` листает выбор назад — зеркально [`cycle_inspector_selection_next`]:
+/// верхняя → последняя.
+fn cycle_inspector_selection_prev(mut state: ResMut<InspectorHitsState>) {
+    if state.hits.is_empty() {
+        return;
+    }
+    state.selected = (state.selected + state.hits.len() - 1) % state.hits.len();
 }
 
 /// Панель видна, только пока курсор внутри окна просмотра — гейт уже посчитан
@@ -427,7 +444,7 @@ fn sync_inspector_visibility(
 }
 
 /// Строки находок — построчно, до [`INSPECTOR_MAX_LINES`] узлов и хвост
-/// `+N more`; выбранная строка (Cmd листает, [`cycle_inspector_selection`])
+/// `+N more`; выбранная строка (листают скобки `]`/`[`)
 /// несёт жёлтый фон — тот элемент, чью форму рисует слой подсветки. Пусто
 /// (курсора нет, карта не разобрана) — прочерк. Строки пересоздаются на
 /// каждую смену `InspectorHitsState`: их ≤13, спавн узлов дешевле сравнения
@@ -520,7 +537,7 @@ struct HighlightLayer<'w, 's> {
 }
 
 /// Слой подсветки элемента под курсором (галочка `InspectorHighlight`): форма
-/// выбранной находки (Cmd листает, [`cycle_inspector_selection`]) —
+/// выбранной находки (листают скобки `]`/`[`) —
 /// [`feature_shape`] + [`mesh_feature`], положенные паттерном оверлеев
 /// (`ui/debug/overlays.rs::respawn_overlay`): прежние сущности маркера убрать,
 /// новый слой — если есть что показывать.
@@ -529,7 +546,7 @@ struct HighlightLayer<'w, 's> {
 /// сущности.
 ///
 /// Находки приходят готовые из `InspectorHitsState` — расчёт один на панель.
-/// Рисуется **выбранная** находка (Cmd листает, [`cycle_inspector_selection`]),
+/// Рисуется **выбранная** находка (листают скобки `]`/`[`),
 /// не обязательно верхняя. Пересборка — при смене выбора: пока курсор ходит
 /// по одному зданию, слой не трогается. Смена сдвига или окна просмотра
 /// (`InspectOrigin`, `InspectViewport` — витрина показала другой пример или

@@ -1238,9 +1238,9 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   (auto, tagged)` by the `parking:<side>` tag, `(auto, inferred)` by the sparse rule: they exist
   only as drawn geometry, so the index rebuilds their polygons on the nodal axis
   (`roads::pockets::kerb_pocket_outlines`, the same lift as the parked cars) and stores
-  them itself — the one model answer computed on the drawn axis. **Cmd cycles the
-  selection** through the hits under the cursor
-  (1 → 2 → 3 → 1; a recompute resets it to the top) — the selected hit's row and, with the
+  them itself — the one model answer computed on the drawn axis. **`]`/`[` cycle the
+  selection** through the hits under the cursor — `]` forward, `[` backward, both
+  wrapping (a recompute resets it to the top) — the selected hit's row and, with the
   highlight checkbox on (it is **on from launch**, game and gallery alike — session-only,
   `InspectorHighlight`), the map layer both follow it. `InspectOrigin` — the
   world→map shift: zero in the game, in the roads gallery the shift of the **current**
