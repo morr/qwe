@@ -1,5 +1,6 @@
 //! Проба кармана земли: какой `MapData::pockets` полигон лежит под точкой,
-//! чьим покрытием он замкнут и как его край прошёл по стыкам кусков полос.
+//! чьим покрытием он замкнут, какие дорожные слои нарисованы над точкой
+//! (z-стек) и как его край прошёл по стыкам кусков полос.
 //!
 //! ```text
 //! cargo run --example pocket_probe -- x y [city]
@@ -142,24 +143,65 @@ fn main() {
     std::fs::write(&path, svg).expect("write svg");
     println!("== svg at {}", path.display());
 
-    let drawn = draw_layers(&map, at);
+    // нарисованные дорожные слои — один вызов `mesh_roads` (тот же, что в игре)
+    // на z-стек, svg-вырезку и офлайн-рендер
+    let started = std::time::Instant::now();
+    let (layers, _report) = qwe::map::mesh_roads(
+        &map,
+        Default::default(),
+        Default::default(),
+        qwe::map::VergeZoomBucket::for_zoom(0.05),
+    );
+    println!(
+        "== road layers: {} in {:.1} ms",
+        layers.len(),
+        started.elapsed().as_secs_f32() * 1e3
+    );
+
+    // офлайн-аналог `brp probe`'s layer section: какие слои стоят в точке,
+    // верхний первым. Кварталы, карманы и зелень — не дорожные слои, они
+    // печатаются выше своими секциями
+    let mut stack: Vec<(f32, &str)> = layers
+        .iter()
+        .filter(|layer| {
+            layer
+                .builder
+                .triangles()
+                .any(|triangle| covers(triangle, at + layer.offset))
+        })
+        .map(|layer| (layer.z, layer.name))
+        .collect();
+    stack.sort_by(|a, b| b.0.total_cmp(&a.0));
+    println!("== drawn road layers under {at:.1} (top of the z stack first)");
+    if stack.is_empty() {
+        println!("   nothing — the point is off every drawn road layer");
+    }
+    for (z, name) in &stack {
+        println!("   z {z:6.3}  {name}");
+    }
+
+    let drawn = draw_layers(&map, &layers, at);
     let path = std::env::temp_dir().join("pocket_drawn.svg");
     std::fs::write(&path, drawn).expect("write svg");
     println!("== drawn layers at {}", path.display());
 
-    render_drawn(&map, at);
+    render_drawn(&map, &layers, at);
+}
+
+/// Лежит ли точка в треугольнике (включая край): один знак у трёх косых
+/// произведений — ориентация треугольника не важна.
+fn covers(triangle: [Vec2; 3], point: Vec2) -> bool {
+    let [a, b, c] = triangle;
+    let (ab, bc, ca) = (b - a, c - b, a - c);
+    let (ap, bp, cp) = (point - a, point - b, point - c);
+    let (s1, s2, s3) = (ab.perp().dot(ap), bc.perp().dot(bp), ca.perp().dot(cp));
+    (s1 >= 0.0 && s2 >= 0.0 && s3 >= 0.0) || (s1 <= 0.0 && s2 <= 0.0 && s3 <= 0.0)
 }
 
 /// Офлайн-рендер нарисованных дорожных слоёв: сетка точек, верхний по z слой
 /// побеждает — цвет по имени слоя. Контур кармана и красная точка — поверх.
 /// Пишет ppm рядом с svg; картинка отвечает «что именно видно на карте».
-fn render_drawn(map: &qwe::map::osm::MapData, at: Vec2) {
-    let (layers, _report) = qwe::map::mesh_roads(
-        map,
-        Default::default(),
-        Default::default(),
-        qwe::map::VergeZoomBucket::for_zoom(0.05),
-    );
+fn render_drawn(map: &qwe::map::osm::MapData, layers: &[qwe::map::LayerMesh], at: Vec2) {
     let half = 9.0_f32;
     let size = 540; // 60 px на метр
     let named: &[(&str, [u8; 3])] = &[
@@ -274,16 +316,10 @@ fn signed_area(ring: &[Vec2]) -> f32 {
         / 2.0
 }
 
-/// Нарисованные дорожные слои (`mesh_roads` — тот же вызов, что и в игре)
-/// возле точки, в порядке z, поверх — контуры карманов. Цвет — по имени слоя,
-/// легенда печатается в stdout.
-fn draw_layers(map: &qwe::map::osm::MapData, at: Vec2) -> String {
-    let (layers, _report) = qwe::map::mesh_roads(
-        map,
-        Default::default(),
-        Default::default(),
-        qwe::map::VergeZoomBucket::for_zoom(0.05),
-    );
+/// Нарисованные дорожные слои (построены в `main` тем же `mesh_roads`, что
+/// зовёт игра) возле точки, в порядке z, поверх — контуры карманов. Цвет — по
+/// имени слоя, легенда печатается в stdout.
+fn draw_layers(map: &qwe::map::osm::MapData, layers: &[qwe::map::LayerMesh], at: Vec2) -> String {
     let (low, high) = (at - Vec2::splat(9.0), at + Vec2::splat(9.0));
     let in_window = |points: &[Vec2]| {
         points
@@ -310,12 +346,12 @@ fn draw_layers(map: &qwe::map::osm::MapData, at: Vec2) -> String {
         high.y - low.y
     ));
     let mut names: Vec<&str> = Vec::new();
-    for layer in &layers {
+    for layer in layers {
         if !names.contains(&layer.name) {
             names.push(layer.name);
         }
     }
-    for layer in &layers {
+    for layer in layers {
         let color = named
             .iter()
             .find(|(name, _)| *name == layer.name)

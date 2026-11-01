@@ -43,7 +43,7 @@ Skills hold the detail; this file holds the map. Load them — don't reconstruct
 | `sim_time.rs` (incl. the regulator's own constants, which live there now) | `sim-speed` |
 | `ui/*`, `camera.rs`, `post.rs`, `prefs.rs`, `dev.rs` | `ui-panels` |
 | `examples/demos/*` — a gallery also takes the skill of what it draws (`*_gallery` and `roads` → `osm-map`, `blood_gallery` → `species-behavior`, `crowd_demo` → `navigation-deep`) | `ui-panels` |
-| `examples/{audit,bench}/*` — by subject: `polymesh_*`, `navmesh_probe`, `pathfinding_bench`, `polymesh_bench` → `navigation-deep`; `map_meshing` → `osm-map` | — |
+| `examples/{audit,bench}/*` — by subject: `polymesh_*`, `navmesh_probe`, `pathfinding_bench`, `polymesh_bench` → `navigation-deep`; `map_meshing`, `pocket_probe` → `osm-map` | — |
 
 - **`CONTEXT.md` names the terms; the domain skills carry the mechanism behind them** — that is why they are in this table rather than in the glossary.
 - **`src/settings.rs` has no domain skill on purpose, and that is a decision, not a gap.** What is left in it is by definition what more than one owner reads — the shared z-stack, the projection scale, the numbers two modules both need — so no single domain owns the file; a constant that *does* have one owner belongs beside that owner and is gated by that owner's row (see "Code Conventions"). Editing it needs `bevy` and the skill of whatever module the change is really about.
@@ -151,6 +151,14 @@ or lies the way it does. The highlight overlay itself (`inspector_highlight`, dr
 above every map layer at `Z_INSPECTOR_HIGHLIGHT`) is not part of the question: never
 spend the session explaining how the highlight works when the user is asking about the
 highlighted thing.
+**But the picked row is the entry point, not the verdict on the culprit.** What the
+user calls an artifact is a *visual defect* — a seam, a kink, a wrong-coloured patch —
+and it lives where the highlighted feature meets the layers under it at least as often
+as inside the feature itself (one session explained the picked `pocket residential`
+triangle in full while the complaint was about the crooked road *beneath* it). Read the
+rows below the picked one too, in z order — the layers the feature sits on — and make
+the answer's first sentence name what you take the artifact to be, so a wrong reading
+dies in one user reply instead of after an investigation built on it.
 
 ## Build & Development Commands
 

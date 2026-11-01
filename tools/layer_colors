@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+"""Map a colour to the layer colour constant it matches.
+
+Every flat fill of the map is a `const …_COLOR: Color = Color::srgb(…)` /
+`srgba(…)` literal somewhere under `src/`, so a strange-coloured patch on a
+screenshot can be named by its pixels. With no arguments the tool prints every
+constant it found (name, file, sRGB 0–255); with three numbers it prints the
+closest constants; with a png and a pixel it samples the pixel first:
+
+    tools/layer_colors
+    tools/layer_colors 209 208 204
+    tools/layer_colors shot.png 2090 1260
+
+The match is nearest-by-RGB, top three: on screen the post vignette, the wear and
+paint layers and every translucent layer above (shadows, the inspector highlight)
+shift and blend the base fill, so an exact hit is not promised — the shortlist,
+read against the z stack (`brp probe`, or `pocket_probe` offline), is the answer.
+"""
+
+import os
+import re
+import subprocess
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# `const SIDEWALK_COLOR: Color = Color::srgb(0.82, 0.815, 0.80)` and the srgba
+# form with its alpha; the components are f32 literals in 0..1
+CONST = re.compile(
+    r"const\s+([A-Z0-9_]*COLOR[A-Z0-9_]*)\s*:\s*Color\s*=\s*Color::srgba?\("
+    r"\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)"
+)
+
+
+def collect():
+    """Every colour constant under src/, as (name, file, (r, g, b), alpha)."""
+    found = []
+    for dirpath, _, files in os.walk(os.path.join(ROOT, "src")):
+        for name in sorted(files):
+            if not name.endswith(".rs"):
+                continue
+            path = os.path.join(dirpath, name)
+            text = open(path, encoding="utf-8").read()
+            for match in CONST.finditer(text):
+                r, g, b = (round(float(match.group(i)) * 255) for i in (2, 3, 4))
+                alpha = 1.0 if match.group(5) is None else float(match.group(5))
+                found.append((match.group(1), path, (r, g, b), alpha))
+    found.sort(key=lambda row: (row[1], row[0]))
+    return found
+
+
+def pixel(png, x, y):
+    """One pixel as (r, g, b), 0–255 — the same magick one-shot as shot_coords."""
+    out = subprocess.run(
+        ["magick", png, "-format", f"%[pixel:p{{{x:.0f},{y:.0f}}}]", "info:"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    channels = [float(v) for v in re.findall(r"[\d.]+", out)][:3]
+    if len(channels) < 3:
+        sys.exit(f"no pixel at {x:.0f},{y:.0f} in {png}")
+    return tuple(int(c) for c in channels)
+
+
+def report(found, sample):
+    """The three nearest constants to the sample, with the RGB distance."""
+    print(f"sample {sample[0]} {sample[1]} {sample[2]}  "
+          f"#{sample[0]:02x}{sample[1]:02x}{sample[2]:02x}")
+    ranked = sorted(
+        found,
+        key=lambda row: sum((a - b) ** 2 for a, b in zip(row[2], sample)),
+    )
+    for name, path, rgb, alpha in ranked[:3]:
+        distance = round(sum((a - b) ** 2 for a, b in zip(rgb, sample)) ** 0.5)
+        note = "" if alpha == 1.0 else f"  (translucent, a={alpha:g})"
+        relative = os.path.relpath(path, ROOT)
+        print(f"  {name:<28} d={distance:<3} {relative}  "
+              f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}{note}")
+    print("nearest by RGB; the vignette and layers above shift what you sample —"
+          " read this against the z stack at the point")
+
+
+def main():
+    args = sys.argv[1:]
+    found = collect()
+    if not found:
+        sys.exit("no `…_COLOR: Color` constants found under src/ — parser drift?")
+    if not args:
+        for name, path, rgb, alpha in found:
+            note = "" if alpha == 1.0 else f"  (translucent, a={alpha:g})"
+            relative = os.path.relpath(path, ROOT)
+            print(f"{name:<32} {rgb[0]:>3} {rgb[1]:>3} {rgb[2]:>3}   "
+                  f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}  {relative}{note}")
+        print(f"{len(found)} constants under src/ — the map's flat fills")
+        return
+    if len(args) == 3 and all(a.lstrip(".").isdigit() or a.isdigit() for a in args[:3]) \
+            and not os.path.exists(args[0]):
+        report(found, tuple(int(round(float(a))) for a in args[:3]))
+        return
+    if len(args) == 3:
+        png, x, y = args[0], float(args[1]), float(args[2])
+        if not os.path.exists(png):
+            sys.exit(f"no such file: {png}")
+        report(found, pixel(png, x, y))
+        return
+    sys.exit(__doc__)
+
+
+if __name__ == "__main__":
+    main()

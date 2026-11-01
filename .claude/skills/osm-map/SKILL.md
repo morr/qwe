@@ -90,7 +90,11 @@ inspector panel's skill.
 **A translucent yellow shape in the shot is the inspector's highlight — the user's
 pointer, not a map layer and not the question.** `tools/shot_coords` reads the hits
 list together with the camera line and marks the row the user picked: the question is
-about **that feature** — why it is there, why it looks or lies the way it does. The
+about **that feature** — why it is there, why it looks or lies the way it does. **But
+the picked row is the entry point, not the verdict on the culprit**: an artifact is a
+*visual defect* — a seam, a kink, a wrong-coloured patch — and it lives where the
+feature meets the layers under it as often as inside the feature itself, so read the
+rows below the picked one too, in z order. The
 overlay draws at `Z_INSPECTOR_HIGHLIGHT`, above every map layer, so it also outlines
 parts the map itself hides under roads and paint — judge the feature on the map beneath
 the overlay.
@@ -98,6 +102,14 @@ the overlay.
 `assets/osm/<city>_*.json` and
 projects with the centre and size from its name, i.e. the same metres as `SimPosition` and
 `brp cam`; to confirm the pick live, `brp cam x y` then `brp shot`.
+**With no app running, the same questions are answered offline:**
+`cargo run --example pocket_probe -- x y [city]` prints the ground pockets, the
+coverage bands and the **drawn road layers' z stack** at a point, plus a z-ordered
+render of what `mesh_roads` draws with a layer legend — the drawn-geometry arbiter
+when BRP is not an option. `tools/layer_colors [r g b | png px py]` maps a colour —
+typed in or sampled from a screenshot pixel — to the layer colour constants it matches
+(`ROAD_COLOR`, `SIDEWALK_COLOR`, …), which names the layer a strange-coloured patch on
+a screenshot belongs to.
 
 ## Download & cache
 
