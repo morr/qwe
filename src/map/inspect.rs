@@ -63,8 +63,10 @@ mod shapes;
 use self::labels::{
     building_label, lower, node_label, piece_label, pitch_label, road_hit, structure_label,
 };
-pub use self::labels::{captured_line, format_hits, hit_line};
-pub use self::shapes::{FeatureShape, feature_shape, mesh_feature};
+pub use self::labels::{format_hits, hit_line, pinned_line};
+pub use self::shapes::{
+    FeatureShape, PinnedFill, feature_shape, mesh_feature, mesh_pins, pin_stripe,
+};
 
 /// Сторона ячейки индекса, м.
 const CELL: f32 = 64.0;

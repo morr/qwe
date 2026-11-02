@@ -91,7 +91,10 @@ rest of the drawn geometry `brp probe`'s layer section is the arbiter. The label
 the `#id` tail and its `tools/osm_near --id <id>` follow-up) is in `ui-panels`, the
 inspector panel's skill.
 **A translucent yellow shape in the shot is the inspector's highlight — the user's
-pointer, not a map layer and not the question.** `tools/shot_coords` reads the hits
+pointer, not a map layer and not the question.** (A **non-yellow** translucent shape —
+orange, green, magenta — is a **pinned** highlight instead: `\` in the cursor ui
+pinned it, so it outlives the cursor and its colour names the pin's row in the
+panel; same reading as the yellow one.) `tools/shot_coords` reads the hits
 list together with the camera line and marks the row the user picked: the question is
 about **that feature** — why it is there, why it looks or lies the way it does. **But
 the picked row is the entry point, not the verdict on the culprit**: an artifact is a

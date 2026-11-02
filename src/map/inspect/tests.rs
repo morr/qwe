@@ -509,6 +509,27 @@ fn the_osm_id_prints_as_a_tail() {
 }
 
 #[test]
+fn a_pin_prints_with_a_p_lead() {
+    // строка пина — колонки hit_line, но ведёт `p`: OCR `tools/shot_coords`
+    // собирает только `z …` строки, пин с находками под курсором не путается
+    let hit = Hit {
+        z: 1.0,
+        label: "road residential 8.0 m".into(),
+        src: HitSource::Osm,
+        id: Some(179102449),
+        feature: FeatureRef::Road(0),
+    };
+    let line = pinned_line(&hit);
+    assert!(line.starts_with("p "));
+    assert!(!line.starts_with('z'));
+    assert!(line.ends_with("road residential 8.0 m #179102449"));
+    assert_eq!(
+        line.strip_prefix("p").map(str::trim_start),
+        hit_line(&hit).strip_prefix("z").map(str::trim_start)
+    );
+}
+
+#[test]
 fn a_parsed_feature_carries_its_osm_id() {
     // улица с тротуаром по тегу: и находка полотна, и дорисованная полоса
     // наследуют way id своей дороги

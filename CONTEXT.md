@@ -1253,7 +1253,24 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   selection** through the hits under the cursor — `]` forward, `[` backward, both
   wrapping (a recompute resets it to the top) — the selected hit's row and, with the
   highlight checkbox on (it is **on from launch**, game and gallery alike — session-only,
-  `InspectorHighlight`), the map layer both follow it. `InspectOrigin` — the
+  `InspectorHighlight`), the map layer both follow it. **`\` pins the selected
+  hit** (highlight checkbox only — pin is part of the highlight; `\` on the same
+  selection un-pins, **Backspace clears all pins**): it keeps a highlight of its own
+  **after the cursor leaves** — a six-colour palette, orange first, the
+  hover yellow not in it (a pin keeps its colour for life: un-pinning frees it
+  for the next pin, survivors never recolour) — and the panel lists the pins under
+  the hits list as an
+  indent, a rule and one `p …` line per pin tinted its colour (the `p` lead keeps
+  `tools/shot_coords` from mixing pins into the live hits); **hovering a pinned
+  element hatches it yellow + its pin colour** instead of the plain yellow fill.
+  Overlapping pins mesh
+  into **one layer** with a **45° hatch** over the overlaps (screen-relative, stripes
+  from the bottom-left to the top-right, a **zoom-adaptive width** — `pin_stripe`
+  targets 14 logical px), its stripes alternating the pair's colours; each pin
+  carries its **own dense border** (`PIN_BORDER_ALPHA` 0.85, `stripe * 0.25` wide,
+  along its full contour), so an intersection reads as the borders crossing; a
+  `MapData` change (city switch, gallery sample crossing) clears all
+  pins. `InspectOrigin` — the
   world→map shift: zero in the game, in the roads gallery the shift of the **current**
   sample — the one whose viewport the cursor is in, else the framed one — so the panel,
   the highlight and `brp probe` all speak the current sample's map metres (`tools/osm_near`

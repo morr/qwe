@@ -137,7 +137,7 @@ Two rules:
 
 ## A screenshot from the user — where on the map is it?
 
-The user's screenshots are screen regions from a macOS utility, not game captures. The map
+The user's screenshots are screen regions from a macOS utility, not game pins. The map
 position is printed **in the picture**: the last line of the top-right telemetry panel,
 `zoom/x/y cursor_x/cursor_y`, in map metres. Read it with `tools/shot_coords <png> [px py]`
 (the png path is the `[Image: source: …]` line), then list what is there with
@@ -152,6 +152,9 @@ the live camera is now, not where the shot was taken. Details are in
 When the shot has an element highlighted by the point inspector's `highlight` checkbox
 (a translucent yellow shape on the map, its row picked in the hits list), that
 highlighted feature **is the subject of the question**: the user selected it on purpose.
+(A translucent **non-yellow** shape — orange, green, magenta — is a **pinned**
+highlight, `\`-pinned in the cursor UI, listed under the hits list after a divider; the
+same reading applies, and its colour matches its `c …` row.)
 `tools/shot_coords` reads the hits list together with the camera line and marks the
 picked row — identify the feature by its line (`z … label #id`; `#id` goes to
 `tools/osm_near --id`) and investigate **that feature** — why it is there, why it looks
@@ -423,7 +426,7 @@ step when adding one):
 
 Not world entities, and deliberately without the component: the cameras — the main one
 (`camera.rs`) and the offscreen-shot camera (`dev.rs::on_offscreen_shot`, which despawns
-itself a frame after the capture) — the UI panels (`ui/*`, hidden/shown via `GameUiRoot`),
+itself a frame after the pin) — the UI panels (`ui/*`, hidden/shown via `GameUiRoot`),
 the loader screen (`loading.rs`, has its own despawn on `PlayPhase::Live`), the vignette
 node (`post.rs`, a UI node that lives across cities).
 

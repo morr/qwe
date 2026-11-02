@@ -28,15 +28,15 @@ pub fn hit_line(hit: &Hit) -> String {
     }
 }
 
-/// Захваченная находка (клавиша `\` панели инспектора) строкой: колонки те же,
-/// что у [`hit_line`], но ведёт `c` вместо `z` — `tools/shot_coords` собирает
-/// под строкой камеры только `z …` строки, так что захват в его ответе с
+/// Запиненная находка (клавиша `\` панели инспектора) строкой: колонки те же,
+/// что у [`hit_line`], но ведёт `p` вместо `z` — `tools/shot_coords` собирает
+/// под строкой камеры только `z …` строки, так что пин в его ответе с
 /// находками под курсором не смешается и в конкурсе выбранной строки не
 /// участвует.
-pub fn captured_line(hit: &Hit) -> String {
+pub fn pinned_line(hit: &Hit) -> String {
     match hit.id {
-        Some(id) => format!("c {:6.3}  {} #{id}", hit.z, hit.label),
-        None => format!("c {:6.3}  {}", hit.z, hit.label),
+        Some(id) => format!("p {:6.3}  {} #{id}", hit.z, hit.label),
+        None => format!("p {:6.3}  {}", hit.z, hit.label),
     }
 }
 

@@ -30,8 +30,8 @@ use super::speed::{PANEL_WIDTH_PX, TelemetryPanel};
 use crate::camera::{cursor_world, pointer_over_ui};
 use crate::dev::{VirtualCursor, cursor_position};
 use crate::map::inspect::{
-    FeatureRef, Hit, InspectIndex, InspectOrigin, InspectViewport, feature_shape, hit_line,
-    mesh_feature,
+    FeatureRef, Hit, InspectIndex, InspectOrigin, InspectViewport, PinnedFill, feature_shape,
+    hit_line, mesh_feature, mesh_pins, pin_stripe, pinned_line,
 };
 use crate::map::osm::MapData;
 use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
@@ -57,6 +57,24 @@ struct InspectorHitsList;
 /// Одна строка находки; все такие убираются при пересчёте списка.
 #[derive(Component)]
 struct InspectorHitRow;
+
+/// Контейнер блока пинов — черту и строки пинов спавнит и убирает
+/// [`sync_pinned_rows`]; видимость всего блока ведёт
+/// [`sync_pinned_visibility`].
+#[derive(Component, Default)]
+struct InspectorPinnedList;
+
+/// Черта-разделитель и строка пина; всё это убирается при пересборке
+/// блока.
+#[derive(Component)]
+struct InspectorPinnedRow;
+
+/// Слой запиненного элемента на карте — помеченные сущности убирает
+/// [`sync_pinned_highlights`]. Живёт всегда рядом с
+/// [`InspectorHighlightMarker`] (тот держит контракт витрины `roads`:
+/// `place_new` слой не сдвигает), различает их для своих систем.
+#[derive(Component, Clone, Copy)]
+struct InspectorPinnedMarker;
 
 /// Галочка highlight — по ней [`sync_highlight_checked`] ставит и снимает
 /// `Checked`.
@@ -112,6 +130,64 @@ const HIGHLIGHT_COLOR: Color = Color::srgba(1.0, 1.0, 0.0, 0.3);
 /// Фон выделенной строки списка — тот же жёлтый, чуть гуще слоя.
 const HIGHLIGHT_ROW_BG: Color = Color::srgba(1.0, 1.0, 0.0, 0.18);
 
+/// Запиненная находка: находка и её цвет. Цвет закрепляется за пином на всю
+/// его жизнь — снятие другого пина перекраски не трогает (см. [`free_color`]).
+struct PinnedHit {
+    hit: Hit,
+    color: usize,
+}
+
+/// Запиненные находки (клавиша `\`). Сессионные, как и `InspectorHighlight`:
+/// пин — инструмент той же подсветки. Стираются сменой `MapData`
+/// (см. [`sync_pinned_highlights`]) и Backspace.
+#[derive(Resource, Default)]
+struct InspectorPinned(Vec<PinnedHit>);
+
+/// Палитра пинов: каждый запиненный элемент красится своим цветом — слой
+/// на карте и фон его строки в панели одним цветом, — чтобы по скриншоту было
+/// видно, какой подсвеченный элемент какой строке принадлежит. Цвет
+/// закрепляется за пином на всю его жизнь: снятие пина не перекрашивает
+/// остальные, а освободившийся цвет достаётся следующему пину
+/// ([`free_color`]). Жёлтого в палитре нет: он у подсветки под курсором.
+/// Пинов больше палитры — цвета замыкаются по модулю, два пина могут
+/// совпасть.
+const PIN_COLORS: [Color; 6] = [
+    Color::srgba(1.0, 0.5, 0.0, 0.3),    // orange
+    Color::srgba(0.15, 0.85, 0.15, 0.3), // green
+    Color::srgba(0.1, 0.9, 1.0, 0.3),    // cyan
+    Color::srgba(0.25, 0.45, 1.0, 0.3),  // blue
+    Color::srgba(1.0, 0.15, 0.9, 0.3),   // magenta
+    Color::srgba(1.0, 0.12, 0.12, 0.3),  // red
+];
+
+/// Цвет пина по его закреплённому индексу.
+fn pinned_color(color_index: usize) -> Color {
+    PIN_COLORS[color_index % PIN_COLORS.len()]
+}
+
+/// Наименьший свободный цвет: снятый пин отдаёт свой цвет следующему,
+/// живые пины цветов не меняют.
+fn free_color(pinned: &[PinnedHit]) -> usize {
+    let mut color = 0;
+    while pinned.iter().any(|p| p.color == color) {
+        color += 1;
+    }
+    color
+}
+
+/// Фон строки пина в панели — цвет её слоя, гуще, как
+/// [`HIGHLIGHT_ROW_BG`] против [`HIGHLIGHT_COLOR`].
+fn pinned_row_bg(color: Color) -> Color {
+    let color = color.to_srgba();
+    Color::srgba(color.red, color.green, color.blue, 0.18)
+}
+
+/// Отступ между списком находок и блоком пинов, px.
+const PIN_GAP_PX: f32 = 8.0;
+/// Черта между списком находок и пинами — нейтральная, чтобы не спорить ни
+/// с жёлтым выбором, ни с цветами пинов.
+const PIN_RULE_COLOR: Color = Color::srgba(1.0, 1.0, 1.0, 0.22);
+
 /// Корень панели — по нему [`position_below_telemetry`] ставит панель вплотную
 /// под телеметрию.
 #[derive(Component, Default)]
@@ -143,6 +219,7 @@ impl Plugin for UiInspectorPlugin {
         let standalone = self.standalone;
         app.init_resource::<InspectorHighlight>()
             .init_resource::<InspectorHitsState>()
+            .init_resource::<InspectorPinned>()
             .init_resource::<VirtualCursor>()
             .register_type::<InspectorHighlight>();
         app.add_systems(
@@ -161,7 +238,12 @@ impl Plugin for UiInspectorPlugin {
                 sync_hits_rows,
                 cycle_inspector_selection_next.run_if(bracket_forward_pressed),
                 cycle_inspector_selection_prev.run_if(bracket_backward_pressed),
+                pin_inspector_selection.run_if(backslash_pressed),
+                clear_inspector_pins.run_if(backspace_pressed),
                 sync_highlight_checked,
+                sync_pinned_rows,
+                sync_pinned_visibility,
+                sync_pinned_highlights,
                 sync_inspector_highlight,
             ),
         );
@@ -220,6 +302,24 @@ fn render_inspector_ui(mut commands: Commands, assets: Res<AssetServer>, standal
                     ui_column(1.0),
                     ThemeTextColor(tokens::TEXT_DIM),
                     InspectorHitsList,
+                ),
+                // блок пинов (`\`): отступ, черта, строки пинов — их
+                // спавнит sync_pinned_rows, видимость ведёт
+                // sync_pinned_visibility; пока пинов нет, блок скрыт
+                (
+                    Node {
+                        display: Display::None,
+                        flex_direction: FlexDirection::Column,
+                        row_gap: px(2.),
+                        margin: UiRect {
+                            top: px(PIN_GAP_PX),
+                            ..default()
+                        },
+                        ..default()
+                    },
+                    ThemedText,
+                    ThemeTextColor(tokens::TEXT_DIM),
+                    InspectorPinnedList,
                 ),
             ],
         ))
@@ -423,6 +523,53 @@ fn cycle_inspector_selection_prev(mut state: ResMut<InspectorHitsState>) {
     state.selected = (state.selected + state.hits.len() - 1) % state.hits.len();
 }
 
+/// `\` — клавиша пина ([`pin_inspector_selection`]).
+fn backslash_pressed(keys: Res<ButtonInput<KeyCode>>) -> bool {
+    keys.just_pressed(KeyCode::Backslash)
+}
+
+/// Backspace — клавиша сброса пинов ([`clear_inspector_pins`]).
+fn backspace_pressed(keys: Res<ButtonInput<KeyCode>>) -> bool {
+    keys.just_pressed(KeyCode::Backspace)
+}
+
+/// `\` запинивает выбранную находку и снимает пин с неё же: тоггл по
+/// адресу элемента ([`FeatureRef`]) — один и тот же элемент в списке и в
+/// пинах совпадает. Работает только с включённой галочкой highlight:
+/// пин — часть подсветки, без неё панель пины не показывает и клавиша
+/// молчит. Пока пинов нет и элемент не выбран, нажатие ничего не делает.
+fn pin_inspector_selection(
+    enabled: Res<InspectorHighlight>,
+    state: Res<InspectorHitsState>,
+    mut pinned: ResMut<InspectorPinned>,
+) {
+    if !enabled.0 {
+        return;
+    }
+    let Some(hit) = state.hits.get(state.selected) else {
+        return;
+    };
+    if let Some(at) = pinned.0.iter().position(|c| c.hit.feature == hit.feature) {
+        pinned.0.remove(at);
+    } else {
+        let color = free_color(&pinned.0);
+        pinned.0.push(PinnedHit {
+            hit: hit.clone(),
+            color,
+        });
+    }
+}
+
+/// Backspace стирает все пины разом — сброс не про элемент, выбор не нужен.
+/// Тоже только с включённой галочкой highlight: без неё пины не видны, и
+/// сброс «невидимого» только удивил бы при включении.
+fn clear_inspector_pins(enabled: Res<InspectorHighlight>, mut pinned: ResMut<InspectorPinned>) {
+    if !enabled.0 || pinned.0.is_empty() {
+        return;
+    }
+    pinned.0.clear();
+}
+
 /// Панель видна, только пока курсор внутри окна просмотра — гейт уже посчитан
 /// в `InspectorHitsState::point` (`INFINITY` — вне). Игра окон не знает
 /// ([`InspectViewport::Whole`]) — система молчит, панелью ведут `GameUiRoot`
@@ -504,6 +651,78 @@ fn spawn_hit_row(commands: &mut Commands, parent: Entity, text: String, highligh
     commands.entity(parent).add_child(row);
 }
 
+/// Блок пинов: черта-разделитель, затем по строке на пин — той же
+/// геометрии, что строки находок, с фоном своего цвета ([`PIN_COLORS`]).
+/// Строки ведут `p` вместо `z` ([`pinned_line`]): `tools/shot_coords`
+/// собирает только `z …` строки, так что пин не смешается с находками под
+/// курсором и не станет «выбранной строкой» его отчёта.
+fn sync_pinned_rows(
+    mut commands: Commands,
+    pinned: Res<InspectorPinned>,
+    list: Single<Entity, With<InspectorPinnedList>>,
+    rows: Query<Entity, With<InspectorPinnedRow>>,
+) {
+    if !pinned.is_changed() {
+        return;
+    }
+    for row in rows.iter() {
+        commands.entity(row).despawn();
+    }
+    let list = list.into_inner();
+    if pinned.0.is_empty() {
+        return;
+    }
+    let rule = commands
+        .spawn((
+            Node {
+                width: percent(100.),
+                height: px(1.),
+                ..default()
+            },
+            BackgroundColor(PIN_RULE_COLOR),
+            InspectorPinnedRow,
+        ))
+        .id();
+    commands.entity(list).add_child(rule);
+    for entry in pinned.0.iter() {
+        let row = commands
+            .spawn((
+                Node {
+                    padding: UiRect {
+                        left: px(4.),
+                        right: px(4.),
+                        ..default()
+                    },
+                    ..default()
+                },
+                Text::new(pinned_line(&entry.hit)),
+                ThemedText,
+                ThemeTextColor(tokens::TEXT_DIM),
+                BackgroundColor(pinned_row_bg(pinned_color(entry.color))),
+                InspectorPinnedRow,
+            ))
+            .id();
+        commands.entity(list).add_child(row);
+    }
+}
+
+/// Блок пинов виден, только когда есть что показывать и стоит галочка
+/// highlight: пин — часть подсветки, без неё панель и клавиша молчат.
+fn sync_pinned_visibility(
+    enabled: Res<InspectorHighlight>,
+    pinned: Res<InspectorPinned>,
+    mut node: Single<&mut Node, With<InspectorPinnedList>>,
+) {
+    if !pinned.is_changed() && !enabled.is_changed() {
+        return;
+    }
+    let shown = enabled.0 && !pinned.0.is_empty();
+    let display = if shown { Display::Flex } else { Display::None };
+    if node.display != display {
+        node.display = display;
+    }
+}
+
 /// `Checked` галочки ведёт ресурс: клик пишет его обсёрвером, BRP — напрямую,
 /// система приводит виджет к ресурсу в обе стороны.
 fn sync_highlight_checked(
@@ -524,7 +743,9 @@ fn sync_highlight_checked(
 }
 
 /// Входы слоя подсветки одним параметром — идиома `LayerMaterials`: у системы
-/// их девять, и clippy считает их за лишние.
+/// их девять, и clippy считает их за лишние. Слоя двое — под курсором и
+/// запиненный, — запросы разводят их маркерами: у подсветки запрос без
+/// маркера пина, у пинов только с ним.
 #[derive(SystemParam)]
 struct HighlightLayer<'w, 's> {
     commands: Commands<'w, 's>,
@@ -533,12 +754,25 @@ struct HighlightLayer<'w, 's> {
     index: Res<'w, InspectIndex>,
     origin: Res<'w, InspectOrigin>,
     viewport: Res<'w, InspectViewport>,
-    overlay: Query<'w, 's, Entity, With<InspectorHighlightMarker>>,
+    camera: Single<'w, 's, &'static PanCamera, With<Camera2d>>,
+    overlay: Query<
+        'w,
+        's,
+        Entity,
+        (
+            With<InspectorHighlightMarker>,
+            Without<InspectorPinnedMarker>,
+        ),
+    >,
+    pinned_overlay: Query<'w, 's, Entity, With<InspectorPinnedMarker>>,
 }
 
 /// Слой подсветки элемента под курсором (галочка `InspectorHighlight`): форма
-/// выбранной находки (листают скобки `]`/`[`) —
-/// [`feature_shape`] + [`mesh_feature`], положенные паттерном оверлеев
+/// выбранной находки (листают скобки `]`/`[`), а если она запинена —
+/// штриховкой «жёлтый + цвет пина»: своей подсветкой запиненный элемент уже
+/// обладает, и жёлтая заливка поверх неё не читалась бы. Штриховка — тот же
+/// [`mesh_pins`] с двумя одинаковыми заливками: обе целиком уходят в
+/// «перекрытие» и режутся попарно. Положенная паттерном оверлеев
 /// (`ui/debug/overlays.rs::respawn_overlay`): прежние сущности маркера убрать,
 /// новый слой — если есть что показывать.
 /// `spawn_layers` ставит слою `DespawnOnExit`. Despawn из `Update` через
@@ -546,21 +780,25 @@ struct HighlightLayer<'w, 's> {
 /// сущности.
 ///
 /// Находки приходят готовые из `InspectorHitsState` — расчёт один на панель.
-/// Рисуется **выбранная** находка (листают скобки `]`/`[`),
-/// не обязательно верхняя. Пересборка — при смене выбора: пока курсор ходит
-/// по одному зданию, слой не трогается. Смена сдвига или окна просмотра
-/// (`InspectOrigin`, `InspectViewport` — витрина показала другой пример или
-/// увела курсор) — тоже пересборка: слой стоит в мире на «карта + сдвиг», и
-/// на новом сдвиге старый стоит не там; в окно другого примера слой не должен
-/// вылезти и потому режется им ([`InspectViewport::clip`]), даже если сам
-/// объект больше окна.
+/// Рисуется **выбранная** находка (листают скобки `]`/`[`), не обязательно
+/// верхняя. Пересборка — при смене выбора, при смене самих пинов (снятие
+/// пина возвращает жёлтую заливку), при пересборке индекса (перекройка дорог
+/// меняет формы кусков) и когда зум сдвинул ширину полос штриховки
+/// (`drawn` хранит её вместе с выбором): пока курсор ходит по одному зданию,
+/// слой не трогается. Смена сдвига или окна просмотра (`InspectOrigin`,
+/// `InspectViewport` — витрина показала другой пример или увела курсор) —
+/// тоже пересборка: слой стоит в мире на «карта + сдвиг», и на новом сдвиге
+/// старый стоит не там; в окно другого примера слой не должен вылезти и
+/// потому режется им ([`InspectViewport::clip`]), даже если сам объект больше
+/// окна.
 fn sync_inspector_highlight(
     enabled: Res<InspectorHighlight>,
     state: Res<InspectorHitsState>,
+    pinned: Res<InspectorPinned>,
     map: Option<Res<MapData>>,
     roads: Res<RoadStyle>,
     layer: HighlightLayer,
-    mut drawn: Local<Option<FeatureRef>>,
+    mut drawn: Local<(Option<FeatureRef>, f32)>,
 ) {
     let HighlightLayer {
         mut commands,
@@ -569,10 +807,12 @@ fn sync_inspector_highlight(
         index,
         origin,
         viewport,
+        camera,
         overlay,
+        pinned_overlay: _,
     } = layer;
     // типовой кадр: галочка выключена и слоя нет — работы ноль
-    if !enabled.0 && drawn.is_none() {
+    if !enabled.0 && drawn.0.is_none() {
         return;
     }
     let selected = if enabled.0 {
@@ -580,13 +820,26 @@ fn sync_inspector_highlight(
     } else {
         None
     };
-    if *drawn == selected && !origin.is_changed() && !viewport.is_changed() {
+    // выбор запинен — его закреплённый цвет (None — не запинен)
+    let pinned_color_index = selected.and_then(|feature| {
+        pinned
+            .0
+            .iter()
+            .find_map(|pinned| (pinned.hit.feature == feature).then_some(pinned.color))
+    });
+    let stripe = pin_stripe(camera.zoom_factor);
+    if *drawn == (selected, stripe)
+        && !origin.is_changed()
+        && !viewport.is_changed()
+        && !index.is_changed()
+        && !pinned.is_changed()
+    {
         return;
     }
     for entity in overlay.iter() {
         commands.entity(entity).despawn();
     }
-    *drawn = selected;
+    *drawn = (selected, stripe);
     let Some(feature) = selected else {
         return;
     };
@@ -596,7 +849,24 @@ fn sync_inspector_highlight(
     let Some(shapes) = feature_shape(&index, &map, &roads, feature) else {
         return;
     };
-    let mut builder = mesh_feature(&shapes, HIGHLIGHT_COLOR.to_linear());
+    let mut builder = match pinned_color_index {
+        // запинен: штриховка «жёлтый + цвет пина» на всей форме
+        Some(color_index) => mesh_pins(
+            &[
+                PinnedFill {
+                    shapes: shapes.clone(),
+                    color: HIGHLIGHT_COLOR.to_linear(),
+                },
+                PinnedFill {
+                    shapes,
+                    color: pinned_color(color_index).to_linear(),
+                },
+            ],
+            stripe,
+            0.0,
+        ),
+        None => mesh_feature(&shapes, HIGHLIGHT_COLOR.to_linear()),
+    };
     if let Some(window) = viewport.clip() {
         builder.clip_to_rect(window.min, window.max);
     }
@@ -616,4 +886,133 @@ fn sync_inspector_highlight(
         .offset(origin.0)],
         InspectorHighlightMarker,
     );
+}
+
+/// Слои запиненных элементов (клавиша `\` при включённой галочке highlight):
+/// все пины одним мешем ([`mesh_pins`]) — каждый своим цветом
+/// ([`pinned_color`]), в перекрытиях штриховка 45° с чередованием цветов
+/// пары, полосы одной толщины на глаз ([`pin_stripe`] от зума). Слой, в
+/// отличие от подсветки под курсором, курсора не слушает: пересчёт находок и
+/// уход мыши его не трогают — он перерисовывается только при смене самого
+/// набора пинов, при пересборке индекса (перекройка дорог меняет формы), при
+/// смене галочки и когда зум сдвинул ширину полосы (см. `last_stripe`).
+/// Смена `MapData` (новый город, витрина переключила пример, пересборка
+/// набора деревьев) стирает пины: индексы находок указывали в чужую карту.
+fn sync_pinned_highlights(
+    enabled: Res<InspectorHighlight>,
+    mut pinned: ResMut<InspectorPinned>,
+    map: Option<Res<MapData>>,
+    roads: Res<RoadStyle>,
+    layer: HighlightLayer,
+    mut drawn: Local<usize>,
+    mut last_stripe: Local<f32>,
+) {
+    let HighlightLayer {
+        mut commands,
+        mut meshes,
+        materials,
+        index,
+        origin,
+        viewport,
+        camera,
+        overlay: _,
+        pinned_overlay,
+    } = layer;
+    // чужая карта — чужие индексы находок: пины стираются
+    if map.as_ref().is_some_and(|map| map.is_changed()) {
+        pinned.0.clear();
+    }
+    let stripe = pin_stripe(camera.zoom_factor);
+    // зум уехал на заметную долю — полосы другой толщины, меш перестроить
+    let stripe_shifted = (*last_stripe - stripe).abs() > stripe * 0.02;
+    // типовой кадр: галочка выключена и слоёв нет — работы ноль
+    if !enabled.0 && *drawn == 0 {
+        return;
+    }
+    // слой стоит, пока не изменилось ничего из того, чем он рисуется
+    if enabled.0
+        && !enabled.is_changed()
+        && !pinned.is_changed()
+        && !index.is_changed()
+        && !roads.is_changed()
+        && !stripe_shifted
+    {
+        return;
+    }
+    *last_stripe = stripe;
+    for entity in pinned_overlay.iter() {
+        commands.entity(entity).despawn();
+    }
+    *drawn = 0;
+    // галочку сняли — слои спрятать; сами пины остаются
+    if !enabled.0 {
+        return;
+    }
+    let Some(map) = map else {
+        return;
+    };
+    let fills: Vec<PinnedFill> = pinned
+        .0
+        .iter()
+        .filter_map(|entry| {
+            feature_shape(&index, &map, &roads, entry.hit.feature).map(|shapes| PinnedFill {
+                shapes,
+                color: pinned_color(entry.color).to_linear(),
+            })
+        })
+        .collect();
+    let mut builder = mesh_pins(&fills, stripe, stripe * 0.25);
+    if let Some(window) = viewport.clip() {
+        builder.clip_to_rect(window.min, window.max);
+    }
+    if builder.is_empty() {
+        return;
+    }
+    spawn_layers(
+        &mut commands,
+        &mut meshes,
+        &materials,
+        [LayerMesh::new(
+            builder,
+            Z_INSPECTOR_HIGHLIGHT,
+            "inspector_pins",
+            MaterialSpec::Blend,
+        )
+        .offset(origin.0)],
+        (InspectorHighlightMarker, InspectorPinnedMarker),
+    );
+    *drawn = 1;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::map::inspect::HitSource;
+
+    fn pinned_hits(colors: &[usize]) -> Vec<PinnedHit> {
+        colors
+            .iter()
+            .map(|&color| PinnedHit {
+                hit: Hit {
+                    z: 0.0,
+                    label: String::new(),
+                    src: HitSource::Osm,
+                    id: None,
+                    feature: FeatureRef::Tree(0),
+                },
+                color,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_freed_color_goes_to_the_next_pin_and_survivors_keep_theirs() {
+        // цвета 0,1,2 заняты — следующий пин берёт 3
+        assert_eq!(free_color(&pinned_hits(&[0, 1, 2])), 3);
+        // сняли пин с цветом 1 — следующий берёт именно его,
+        // а цвета выживших (0 и 2) не трогаются
+        assert_eq!(free_color(&pinned_hits(&[0, 2])), 1);
+        // вся палитра занята — цвет уходит за её пределы и замкнётся по модулю
+        assert_eq!(free_color(&pinned_hits(&[0, 1, 2, 3, 4, 5])), 6);
+    }
 }

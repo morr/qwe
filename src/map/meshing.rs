@@ -632,6 +632,21 @@ impl MeshBuilder {
         })
     }
 
+    /// Те же треугольники с цветом первой вершины — тестам, которым важно,
+    /// **чем** точка накрыта: штриховка перекрытий пинов чередует цвета полос,
+    /// и по одним позициям полосы не отличить от сплошной заливки.
+    #[cfg(test)]
+    pub fn colored_triangles_for_test(&self) -> impl Iterator<Item = ([Vec2; 3], LinearRgba)> + '_ {
+        self.indices.chunks_exact(3).map(|triangle| {
+            let points = [0, 1, 2].map(|at| {
+                let [x, y, _] = self.positions[triangle[at] as usize];
+                Vec2::new(x, y)
+            });
+            let [r, g, b, a] = self.colors[triangle[0] as usize];
+            (points, LinearRgba::new(r, g, b, a))
+        })
+    }
+
     /// Ближайшие к точке вершины — не дальше `radius`, ближними первыми, не
     /// больше `limit`; первое поле пары — **квадрат** расстояния (`radius`
     /// линейный, вызов `dev.rs::on_probe_layers` берёт корень). Пробе слоёв:

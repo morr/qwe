@@ -149,8 +149,56 @@ panel** with four tabs (`ui/shell.rs`).
   widget too; **on from launch** — `Default` is `true`, in the game as in the gallery,
   where the checkbox sits at the screen edge outside every sample viewport and cannot be
   clicked; the layer itself is `sync_inspector_highlight`, the `respawn_overlay` pattern
-  at `Z_INSPECTOR_HIGHLIGHT`, rebuilt only when the selection changes or the gallery's
-  `InspectOrigin`/`InspectViewport` move). **A highlight in a user screenshot is the
+  at `Z_INSPECTOR_HIGHLIGHT`, rebuilt only when the selection changes, the pins
+  change, the index is rebuilt or the gallery's
+  `InspectOrigin`/`InspectViewport` move). **`\` pins the selected hit** — and
+  pressed again on the same selection, un-pins it (`pin_inspector_selection`, a
+  toggle by `FeatureRef`; works only with the highlight checkbox on — pin is part
+  of the highlight, with the checkbox off the panel hides the pinned block too, the
+  key does nothing, and the pinned layers stay hidden while the pins themselves
+  survive in `InspectorPinned`). **Backspace clears all pins at once**
+  (`clear_inspector_pins`, also checkbox-gated — a reset is about the whole
+  set, no selection needed). A pinned element keeps a highlight **after the
+  cursor leaves**: every pin draws in its own colour from `PIN_COLORS`
+  (translucent colours by pin position — orange first; yellow, the hover
+  colour, is deliberately not in the palette), both the map layer and its row's
+  `BackgroundColor` in the panel, so a screenshot maps each highlighted region to its
+  row. **A pin keeps its colour for life**: un-pinning never recolours the
+  survivors — the freed colour goes to the next pin (`free_color`, the smallest
+  unused index; beyond the palette colours wrap and two pins may share one). **Hovering a pinned
+  element does not paint it plain yellow**: the hover layer hatches it **yellow +
+  the pin's own colour** instead — the same `mesh_pins` with two identical fills
+  (both end up in the "overlap", so the whole shape stripes), the same
+  zoom-adaptive stripe width as the pin hatches; un-pinning returns the plain
+  yellow fill. **Every pin carries its own border** — its fill colour, denser and
+  more saturated on the eye (`PIN_BORDER_ALPHA` against the fill's alpha),
+  a quarter of the stripe wide, stroked along the pin's **full** contour (`push_border`):
+  an intersection reads as the borders **crossing each other** inside the overlap,
+  not as an outline around it. The pinned block sits
+  **under the hits list**: an indent, then a hairline rule, then one row per pin
+  (`sync_pinned_rows`; hidden entirely — `Display::None` on `InspectorPinnedList`
+  — while there is nothing pinned or the checkbox is off). Pinned rows lead with
+  `p` instead of `z` (`pinned_line`): same columns, but `tools/shot_coords`
+  collects only `z <depth> …` lines, so pins never mix into its hits list or its
+  picked-row search. **All pins mesh into one layer** (`mesh_pins`, entity
+  `inspector_pins`, markers `InspectorHighlightMarker` + `InspectorPinnedMarker`
+  — the hover system's despawn excludes the second, and the gallery's `place_new`
+  keeps skipping by the public first): each pin's solid part is drawn **minus the
+  other pins**, and where two overlap the fill is a **45° hatch** — screen-relative,
+  stripes running from the bottom-left to the top-right — whose stripes alternate
+  the pair's colours. The stripe width is **zoom-adaptive**: `pin_stripe` targets
+  `PIN_STRIPE_PX` (logical px) metres-per-pixel-wise, clamped, and
+  `sync_pinned_highlights` rebuilds when the zoom shifts the width by more than a
+  tolerance (`last_stripe`) — the stripes read the same at any zoom and never thin below
+  legibility. Phase is anchored to the map origin; three or more overlapping — the
+  first pair to reach the region hatches it, its stripes cycling two of the covering
+  colours; a sliver under 1 m² is a solid pair colour.
+  The translucent layer therefore never doubles over itself, and `sync_pinned_highlights`
+  redraws only on a pin/checkbox change, an index rebuild, a road-style change or a
+  stripe-width shift.
+  **A `MapData` change clears all pins** (city switch, the gallery's sample
+  crossing, a tree-set rebuild): the pinned `FeatureRef`s pointed into the old map.
+  **A highlight in a user screenshot is the
   user's pointer, not the subject of the question**: a shot with a translucent yellow
   shape on it means the feature was selected on purpose — identify it by its row in the
   hits list (`z … label #id`) and investigate **that feature** (why it is there, why it
@@ -283,7 +331,7 @@ panel** with four tabs (`ui/shell.rs`).
   advances the field by itself. Deliberately not "next item of `ALL`": what cycles is
   enums, plain bools, colour palettes and step tables alike, and forcing them through
   one list would need a type per kind. Registered by the same `add_knobs::<R>()` as
-  the sliders. `CycleBinding` is *not* a component — the click observer captures it,
+  the sliders. `CycleBinding` is *not* a component — the click observer pins it,
   and the sync only needs it on the label. The rows that stay hand-written are the Nav
   tab's (`NavValueLabel`): their text is computed from **several** resources at once
   (`Backend` from `PolymeshDebug`, `Separation` from determinism + backend + style) —
