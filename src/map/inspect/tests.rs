@@ -208,15 +208,15 @@ fn band_edges(verge: f32) -> (f32, f32, f32) {
 }
 
 /// Прямоугольный кусок обочины для тестов сетки кусков: полоса от кромки
-/// тротуара (`y0`) до внешнего края (`y1`) на стороне 0 дороги `road`
-/// (улица тестов лежит на y = 70, сторона 0 — +y).
-fn verge_piece(x0: f32, x1: f32, y0: f32, y1: f32, road: u32) -> DrawnPiece {
+/// тротуара (`y0`) до внешнего края (`y1`) на стороне `side` (+1.0 — сторона
+/// 0, −1.0 — сторона 1) дороги `road` (улица тестов лежит на y = 70).
+fn verge_piece(x0: f32, x1: f32, y0: f32, y1: f32, side: f32, road: u32) -> DrawnPiece {
     DrawnPiece {
         contour: vec![
-            Vec2::new(x0, 70.0 + y0),
-            Vec2::new(x1, 70.0 + y0),
-            Vec2::new(x1, 70.0 + y1),
-            Vec2::new(x0, 70.0 + y1),
+            Vec2::new(x0, 70.0 + side * y0),
+            Vec2::new(x1, 70.0 + side * y0),
+            Vec2::new(x1, 70.0 + side * y1),
+            Vec2::new(x0, 70.0 + side * y1),
         ],
         holes: vec![],
         kind: PieceKind::VergeYard,
@@ -399,7 +399,7 @@ fn a_verge_piece_answers_up_to_its_outer_edge() {
         ..default()
     };
     let (_, sidewalk_edge, verge_edge) = band_edges(2.0);
-    let piece = verge_piece(490.0, 510.0, sidewalk_edge, verge_edge, 0);
+    let piece = verge_piece(490.0, 510.0, sidewalk_edge, verge_edge, 1.0, 0);
     let index = InspectIndex::rebuild(&map, &RoadShape::default(), &[piece]);
 
     // за краем тротуара — нарисованная полоса обочины, ответ ведёт кусок
@@ -423,18 +423,8 @@ fn the_outer_edge_of_a_long_piece_is_found_across_the_cell_line() {
         ..default()
     };
     let (_, sidewalk_edge, verge_edge) = band_edges(2.0);
-    let piece = DrawnPiece {
-        contour: vec![
-            Vec2::new(490.0, 70.0 - verge_edge),
-            Vec2::new(510.0, 70.0 - verge_edge),
-            Vec2::new(510.0, 70.0 - sidewalk_edge),
-            Vec2::new(490.0, 70.0 - sidewalk_edge),
-        ],
-        holes: vec![],
-        kind: PieceKind::VergeYard,
-        road: Some(0),
-        z: Z_ROAD_VERGE_YARD,
-    };
+    // сторона 1 (−y): полоса дотягивается вниз, за границу ячейки 64
+    let piece = verge_piece(490.0, 510.0, sidewalk_edge, verge_edge, -1.0, 0);
     let index = InspectIndex::rebuild(&map, &RoadShape::default(), &[piece]);
 
     let hits = query(
@@ -588,7 +578,7 @@ fn every_hit_carries_its_feature_reference() {
     assert_eq!(feature(Vec2::new(500.0, 70.0 + verge_edge - 0.1)), None);
     // а с куском — находка ведёт кусок, и подсветка накрывает точку
     let piece_at = Vec2::new(500.0, 70.0 + verge_edge - 0.5);
-    let piece = verge_piece(490.0, 510.0, sidewalk_edge, verge_edge, 0);
+    let piece = verge_piece(490.0, 510.0, sidewalk_edge, verge_edge, 1.0, 0);
     let index = InspectIndex::rebuild(&map, &RoadShape::default(), &[piece]);
     let hits = query(&index, &map, 0.5, piece_at);
     let piece_hit = hits
