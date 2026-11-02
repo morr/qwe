@@ -19,16 +19,12 @@ const RUN: usize = 16;
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let x: f32 = args
-        .next()
-        .unwrap_or_else(|| "usage: pocket_probe x y [city]".into())
-        .parse()
-        .expect("x is not a number");
-    let y: f32 = args
-        .next()
-        .unwrap_or_else(|| "usage: pocket_probe x y [city]".into())
-        .parse()
-        .expect("y is not a number");
+    let (Some(x), Some(y)) = (args.next(), args.next()) else {
+        eprintln!("usage: pocket_probe x y [city]");
+        return;
+    };
+    let x: f32 = x.parse().expect("x is not a number");
+    let y: f32 = y.parse().expect("y is not a number");
     let at = Vec2::new(x, y);
     let city = args.next().map_or(City::Tula, |name| {
         City::ALL
@@ -167,7 +163,7 @@ fn main() {
             layer
                 .builder
                 .triangles()
-                .any(|triangle| covers(triangle, at + layer.offset))
+                .any(|triangle| Cover::new(triangle).covers(at + layer.offset))
         })
         .map(|layer| (layer.z, layer.name))
         .collect();
@@ -188,14 +184,87 @@ fn main() {
     render_drawn(&map, &layers, at);
 }
 
-/// Лежит ли точка в треугольнике (включая край): один знак у трёх косых
-/// произведений — ориентация треугольника не важна.
-fn covers(triangle: [Vec2; 3], point: Vec2) -> bool {
-    let [a, b, c] = triangle;
-    let (ab, bc, ca) = (b - a, c - b, a - c);
-    let (ap, bp, cp) = (point - a, point - b, point - c);
-    let (s1, s2, s3) = (ab.perp().dot(ap), bc.perp().dot(bp), ca.perp().dot(cp));
-    (s1 >= 0.0 && s2 >= 0.0 && s3 >= 0.0) || (s1 <= 0.0 && s2 <= 0.0 && s3 <= 0.0)
+/// Треугольник с предвычисленными рёбрами: та же проверка покрытия точки,
+/// что стояла инлайном в пиксельном цикле, но без пересчёта рёбер на каждую
+/// точку. Лежит ли точка в треугольнике (включая край): один знак у трёх
+/// косых произведений — ориентация треугольника не важна.
+struct Cover {
+    a: Vec2,
+    b: Vec2,
+    c: Vec2,
+    ab: Vec2,
+    bc: Vec2,
+    ca: Vec2,
+}
+
+impl Cover {
+    fn new([a, b, c]: [Vec2; 3]) -> Self {
+        Self {
+            a,
+            b,
+            c,
+            ab: b - a,
+            bc: c - b,
+            ca: a - c,
+        }
+    }
+
+    fn covers(&self, point: Vec2) -> bool {
+        let (ap, bp, cp) = (point - self.a, point - self.b, point - self.c);
+        let (s1, s2, s3) = (
+            self.ab.perp().dot(ap),
+            self.bc.perp().dot(bp),
+            self.ca.perp().dot(cp),
+        );
+        (s1 >= 0.0 && s2 >= 0.0 && s3 >= 0.0) || (s1 <= 0.0 && s2 <= 0.0 && s3 <= 0.0)
+    }
+}
+
+/// Общий кусок всех построителей svg-пути ниже: `<path d='` с M/L-контуром
+/// (ось y перевёрнута под svg); хвост атрибутов дописывает вызывающий.
+fn path_d(points: &[Vec2]) -> String {
+    let mut s = String::from("<path d='");
+    for (index, point) in points.iter().enumerate() {
+        s.push_str(&format!(
+            "{}{:.2} {:.2} ",
+            if index == 0 { "M" } else { "L" },
+            point.x,
+            -point.y,
+        ));
+    }
+    s
+}
+
+/// Палитра «дорожный слой → цвет»: ключевые слои у перекрёстка — контрастно,
+/// прочее блёкло. Один источник для ppm-рендера и svg-вырезки: `render_drawn`
+/// красит пиксели тройкой, `draw_layers` пишет её же hex'ом.
+const LAYER_COLORS: &[(&str, [u8; 3])] = &[
+    ("roads", [204, 68, 68]),
+    ("sidewalks", [68, 102, 204]),
+    ("road_verges", [68, 170, 68]),
+    ("road_verge_lawns", [153, 204, 153]),
+    ("road_verge_yards", [102, 170, 102]),
+    ("alleys", [221, 136, 68]),
+    ("road_paint_zebras", [170, 102, 170]),
+    ("road_medians", [238, 238, 238]),
+    ("lot_sidewalks", [180, 180, 180]),
+    ("lot_lines", [240, 240, 240]),
+];
+const LAYER_FALLBACK: [u8; 3] = [221, 221, 221];
+
+/// Цвет слоя тройкой rgb — для пикселей ppm-рендера.
+fn layer_rgb(name: &str) -> [u8; 3] {
+    LAYER_COLORS
+        .iter()
+        .find(|(known, _)| *known == name)
+        .map(|(_, color)| *color)
+        .unwrap_or(LAYER_FALLBACK)
+}
+
+/// Цвет слоя hex-строкой `#rrggbb` — для атрибутов svg и легенды в stdout.
+fn layer_hex(name: &str) -> String {
+    let [r, g, b] = layer_rgb(name);
+    format!("#{r:02x}{g:02x}{b:02x}")
 }
 
 /// Офлайн-рендер нарисованных дорожных слоёв: сетка точек, верхний по z слой
@@ -204,25 +273,6 @@ fn covers(triangle: [Vec2; 3], point: Vec2) -> bool {
 fn render_drawn(map: &qwe::map::osm::MapData, layers: &[qwe::map::LayerMesh], at: Vec2) {
     let half = 9.0_f32;
     let size = 540; // 60 px на метр
-    let named: &[(&str, [u8; 3])] = &[
-        ("roads", [204, 68, 68]),
-        ("sidewalks", [68, 102, 204]),
-        ("road_verges", [68, 170, 68]),
-        ("road_verge_lawns", [153, 204, 153]),
-        ("road_verge_yards", [102, 170, 102]),
-        ("alleys", [221, 136, 68]),
-        ("road_paint_zebras", [170, 102, 170]),
-        ("road_medians", [238, 238, 238]),
-        ("lot_sidewalks", [180, 180, 180]),
-        ("lot_lines", [240, 240, 240]),
-    ];
-    let color_of = |name: &str| -> [u8; 3] {
-        named
-            .iter()
-            .find(|(known, _)| *known == name)
-            .map(|(_, color)| *color)
-            .unwrap_or([221, 221, 221])
-    };
     // карманы и точка — поверх всего
     let pocket_color = [255, 238, 0];
     let mut image = vec![255u8; size * size * 3];
@@ -235,7 +285,7 @@ fn render_drawn(map: &qwe::map::osm::MapData, layers: &[qwe::map::LayerMesh], at
         )
     };
     for layer in &sorted {
-        let color = color_of(layer.name);
+        let color = layer_rgb(layer.name);
         for triangle in layer.builder.triangles() {
             // рамка треугольника в пикселях, обрезанная картинкой; вне окна — мимо
             let corners: Vec<(f32, f32)> = triangle
@@ -253,20 +303,15 @@ fn render_drawn(map: &qwe::map::osm::MapData, layers: &[qwe::map::LayerMesh], at
             if high_c < 0.0 || low_c > size as f32 || high_r < 0.0 || low_r > size as f32 {
                 continue;
             }
-            let [a, b, c] = [
+            let cover = Cover::new([
                 Vec2::new(corners[0].0, corners[0].1),
                 Vec2::new(corners[1].0, corners[1].1),
                 Vec2::new(corners[2].0, corners[2].1),
-            ];
-            let (ab, bc, ca) = (b - a, c - b, a - c);
+            ]);
             for row in (low_r as usize).min(size)..(high_r as usize + 1).min(size) {
                 for column in (low_c as usize).min(size)..(high_c as usize + 1).min(size) {
                     let point = Vec2::new(column as f32 + 0.5, row as f32 + 0.5);
-                    let (ap, bp, cp) = (point - a, point - b, point - c);
-                    let (s1, s2, s3) = (ab.perp().dot(ap), bc.perp().dot(bp), ca.perp().dot(cp));
-                    if (s1 >= 0.0 && s2 >= 0.0 && s3 >= 0.0)
-                        || (s1 <= 0.0 && s2 <= 0.0 && s3 <= 0.0)
-                    {
+                    if cover.covers(point) {
                         let pixel = &mut image[(row * size + column) * 3..][..3];
                         pixel.copy_from_slice(&color);
                     }
@@ -326,17 +371,6 @@ fn draw_layers(map: &qwe::map::osm::MapData, layers: &[qwe::map::LayerMesh], at:
             .iter()
             .any(|p| p.x >= low.x && p.x <= high.x && p.y >= low.y && p.y <= high.y)
     };
-    // ключевые слои у перекрёстка — контрастно, остальное блёкло
-    let named: &[(&str, &str)] = &[
-        ("roads", "#cc4444"),
-        ("sidewalks", "#4466cc"),
-        ("road_verges", "#44aa44"),
-        ("road_verge_lawns", "#99cc99"),
-        ("road_verge_yards", "#66aa66"),
-        ("alleys", "#dd8844"),
-        ("road_paint_zebras", "#aa66aa"),
-        ("road_medians", "#eeeeee"),
-    ];
     let mut out = String::new();
     out.push_str(&format!(
         "<svg xmlns='http://www.w3.org/2000/svg' width='1100' height='1100' viewBox='{} {} {} {}'>\n",
@@ -351,12 +385,13 @@ fn draw_layers(map: &qwe::map::osm::MapData, layers: &[qwe::map::LayerMesh], at:
             names.push(layer.name);
         }
     }
+    // легенда общая для ppm-рендера и этой svg-вырезки: цвета из `LAYER_COLORS`
+    println!("== layer legend (ppm and svg)");
+    for name in &names {
+        println!("   {} {name}", layer_hex(name));
+    }
     for layer in layers {
-        let color = named
-            .iter()
-            .find(|(name, _)| *name == layer.name)
-            .map(|(_, color)| *color)
-            .unwrap_or("#dddddd");
+        let color = layer_hex(layer.name);
         for triangle in layer.builder.triangles() {
             if !in_window(&triangle) {
                 continue;
@@ -377,15 +412,7 @@ fn draw_layers(map: &qwe::map::osm::MapData, layers: &[qwe::map::LayerMesh], at:
     }
     // контуры карманов и кольца квартала — ориентиры поверх нарисованного
     let outline = |points: &[Vec2], stroke: &str, width: f32| {
-        let mut s = String::from("<path d='");
-        for (index, point) in points.iter().enumerate() {
-            s.push_str(&format!(
-                "{}{:.2} {:.2} ",
-                if index == 0 { "M" } else { "L" },
-                point.x,
-                -point.y
-            ));
-        }
+        let mut s = path_d(points);
         s.push_str(&format!(
             "Z' fill='none' stroke='{stroke}' stroke-width='{width}' vector-effect='non-scaling-stroke'/>\n"
         ));
@@ -453,30 +480,14 @@ fn draw(
         high.y - low.y
     ));
     let ring = |points: &[Vec2], fill: &str, stroke: &str, width: f32| {
-        let mut s = String::from("<path d='");
-        for (index, point) in points.iter().enumerate() {
-            s.push_str(&format!(
-                "{}{:.2} {:.2} ",
-                if index == 0 { "M" } else { "L" },
-                point.x,
-                -point.y
-            ));
-        }
+        let mut s = path_d(points);
         s.push_str(&format!(
             "Z' fill='{fill}' fill-opacity='0.5' stroke='{stroke}' stroke-width='{width}' vector-effect='non-scaling-stroke'/>\n"
         ));
         s
     };
     let polyline = |points: &[Vec2], stroke: &str| {
-        let mut s = String::from("<path d='");
-        for (index, point) in points.iter().enumerate() {
-            s.push_str(&format!(
-                "{}{:.2} {:.2} ",
-                if index == 0 { "M" } else { "L" },
-                point.x,
-                -point.y
-            ));
-        }
+        let mut s = path_d(points);
         s.push_str(&format!(
             "' fill='none' stroke='{stroke}' stroke-width='2' stroke-dasharray='4 2' vector-effect='non-scaling-stroke'/>\n"
         ));
