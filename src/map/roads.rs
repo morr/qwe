@@ -387,6 +387,16 @@ impl std::fmt::Display for RoadReport {
 /// возврат.
 /// `verge` — ступень зума обочин ([`VergeLods`]): по правилу шва ступень, а
 /// не развёрнутое из таблицы значение.
+pub fn mesh_roads(
+    map: &MapData,
+    style: RoadStyle,
+    shape: RoadShape,
+    verge: VergeZoomBucket,
+) -> (Vec<LayerMesh>, RoadReport) {
+    let RoadBuild { layers, report, .. } = build_roads(map, style, shape, verge);
+    (layers, report)
+}
+
 /// Нарисованное мощение углов контурами — для покрытия карманов парсa
 /// (`osm/parse/pockets.rs`): скругления улиц, тротуаров и обочин, мощёные
 /// носы и дуги ([`corners::KerbReturns::paving`]). Полосы покрытия карманов
@@ -408,16 +418,6 @@ pub fn corner_paving_contours(map: &MapData) -> Vec<Vec<Vec2>> {
         .collect()
 }
 
-pub fn mesh_roads(
-    map: &MapData,
-    style: RoadStyle,
-    shape: RoadShape,
-    verge: VergeZoomBucket,
-) -> (Vec<LayerMesh>, RoadReport) {
-    let RoadBuild { layers, report, .. } = build_roads(map, style, shape, verge);
-    (layers, report)
-}
-
 /// Всё, что выходит из одной сборки дорожной области ([`build_roads`]):
 /// слои и отчёт — то же, что отдаёт [`mesh_roads`], — и три побочных
 /// результата того же прохода, которые игра кладёт ресурсами.
@@ -430,7 +430,8 @@ pub struct RoadBuild {
     /// (`map/tram.rs`).
     pub tram: TramTracks,
     /// Отрисованные куски: их читает семантический индекс
-    /// (`map/inspect.rs`), чтобы находка отвечала ровно тем, что нарисовано.
+    /// (`map/inspect.rs`), чтобы находка отвечала кускам ступени этой
+    /// сборки, а не текущему зуму ([`DrawnPieces`] — об оговорке).
     pub pieces: Vec<DrawnPiece>,
 }
 
@@ -459,8 +460,9 @@ pub enum PieceKind {
 /// (z), в котором кусок лежит. Собирается тем же проходом [`build_roads`],
 /// что и рисует слои, — каждым логическим куском (полоса обочины на ран,
 /// лоскут, кусок узла), а не посегментными квадрами меша. Читается
-/// семантическим индексом (`map/inspect.rs`): находка отвечает ровно тем,
-/// что нарисовано, и подсветка ведёт контур куска.
+/// семантическим индексом (`map/inspect.rs`): находка отвечает кускам
+/// ступени последней пересборки, не текущему зуму ([`DrawnPieces`] —
+/// об оговорке), и подсветка ведёт контур куска.
 #[derive(Clone)]
 pub struct DrawnPiece {
     pub contour: Vec<Vec2>,
@@ -475,8 +477,14 @@ pub struct DrawnPiece {
 }
 
 /// Побочный выход сборки дорожной области: все отрисованные куски. Ресурс
-/// рядом с [`RutLines`] и [`TramTracks`]; по его смене перестраивается
-/// семантический индекс.
+/// записывают вход в мир и пересборка по [`rebuilds_on`] — и куски отвечают
+/// ступени обочин той сборки, а не текущему зуму: пересечение порога
+/// переключает лишь видимость заранее собранных слоёв ([`show_road_steps`])
+/// и ресурс не меняет. После пересборки на ближней ступени находки
+/// продолжают называть широкие ленты обочин, скрытые на дальней; после
+/// пересборки на дальней (стиль меняют и на дальнем зуме) — не знают лент,
+/// которые зум-ин показывает. Ресурс рядом с [`RutLines`] и [`TramTracks`];
+/// по его смене перестраивается семантический индекс.
 #[derive(Resource, Default)]
 pub struct DrawnPieces(pub Vec<DrawnPiece>);
 
