@@ -17,12 +17,21 @@ shift and blend the base fill, so an exact hit is not promised — the shortlist
 read against the z stack (`brp probe`, or `pocket_probe` offline), is the answer.
 """
 
+import importlib.machinery
+import importlib.util
 import os
 import re
-import subprocess
 import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+
+# `shot_coords` has no .py suffix, so importlib cannot infer its loader — hand it
+# one, and the pixel sampler lives in a single place
+_loader = importlib.machinery.SourceFileLoader("shot_coords", os.path.join(HERE, "shot_coords"))
+_spec = importlib.util.spec_from_loader("shot_coords", _loader)
+shot_coords = importlib.util.module_from_spec(_spec)
+_loader.exec_module(shot_coords)
 
 # `const SIDEWALK_COLOR: Color = Color::srgb(0.82, 0.815, 0.80)` and the srgba
 # form with its alpha; the components are f32 literals in 0..1
@@ -47,20 +56,6 @@ def collect():
                 found.append((match.group(1), path, (r, g, b), alpha))
     found.sort(key=lambda row: (row[1], row[0]))
     return found
-
-
-def pixel(png, x, y):
-    """One pixel as (r, g, b), 0–255 — the same magick one-shot as shot_coords."""
-    out = subprocess.run(
-        ["magick", png, "-format", f"%[pixel:p{{{x:.0f},{y:.0f}}}]", "info:"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
-    channels = [float(v) for v in re.findall(r"[\d.]+", out)][:3]
-    if len(channels) < 3:
-        sys.exit(f"no pixel at {x:.0f},{y:.0f} in {png}")
-    return tuple(int(c) for c in channels)
 
 
 def report(found, sample):
@@ -102,7 +97,7 @@ def main():
         png, x, y = args[0], float(args[1]), float(args[2])
         if not os.path.exists(png):
             sys.exit(f"no such file: {png}")
-        report(found, pixel(png, x, y))
+        report(found, shot_coords.pixel_rgb(png, x, y))
         return
     sys.exit(__doc__)
 

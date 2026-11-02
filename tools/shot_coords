@@ -127,15 +127,17 @@ def window_size(explicit):
 
 
 def pixel_rgb(png, x, y):
-    """One pixel as (r, g, b), 0–255."""
+    """One pixel as (r, g, b), 0–255 — shared with layer_colors, which imports it."""
     out = subprocess.run(
         ["magick", png, "-format", f"%[pixel:p{{{x:.0f},{y:.0f}}}]", "info:"],
         check=True,
         capture_output=True,
         text=True,
     ).stdout
-    channels = re.findall(r"[\d.]+", out)
-    return tuple(float(c) for c in channels[:3])
+    channels = [float(v) for v in re.findall(r"[\d.]+", out)][:3]
+    if len(channels) < 3:
+        sys.exit(f"no pixel at {x:.0f},{y:.0f} in {png}")
+    return tuple(int(c) for c in channels)
 
 
 def hits_lines(boxes, camera):
