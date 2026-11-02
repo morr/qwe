@@ -377,41 +377,35 @@ pub(super) fn push_verges(
             .iter()
             .map(|verge| verge + VERGE_UNDER_PATH)
             .collect();
+        // кромки лент от оси — общие для меша, лоскутов и находки
+        let edge = |verges: &[f32]| -> Vec<f32> {
+            verges.iter().map(|verge| width / 2.0 + verge).collect()
+        };
+        let paved_edge = edge(&paved);
         tiles.push_polygon(&band(&mut paved.iter().copied()), &[], tile_color);
         push_band_piece(
             pieces,
             &dense,
             &normals,
             &vec![width / 2.0; dense.len()],
-            &paved
-                .iter()
-                .map(|verge| width / 2.0 + verge)
-                .collect::<Vec<f32>>(),
+            &paved_edge,
             PieceKind::VergePaving,
             road_index,
             Z_ROAD_VERGE,
         );
-        let reach = |widths: &[f32]| -> Vec<f32> {
-            widths.iter().map(|verge| width / 2.0 + verge).collect()
-        };
-        scraps.push_paving_band(&dense, &normals, &reach(&paved));
+        scraps.push_paving_band(&dense, &normals, &paved_edge);
         if lawns_at.iter().any(|&lawn| lawn) {
             lawns.push_polygon(&band(&mut widths.iter().copied()), &[], lawn_color);
-            scraps.push_lawn_band(road_index, &dense, &normals, &reach(&widths), ends, bites);
+            let lawn_edge = edge(&widths);
+            scraps.push_lawn_band(road_index, &dense, &normals, &lawn_edge, ends, bites);
             // видимый газон — от внешней кромки плитки до внешней кромки
             // газона: между ними полоса целиком газонная
             push_band_piece(
                 pieces,
                 &dense,
                 &normals,
-                &paved
-                    .iter()
-                    .map(|verge| width / 2.0 + verge)
-                    .collect::<Vec<f32>>(),
-                &widths
-                    .iter()
-                    .map(|verge| width / 2.0 + verge)
-                    .collect::<Vec<f32>>(),
+                &paved_edge,
+                &lawn_edge,
                 lawn_kind,
                 road_index,
                 lawn_z,

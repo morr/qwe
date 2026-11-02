@@ -31,12 +31,12 @@ pub enum Fill {
 
 /// Кусок для находки из контура угла: внешнее кольцо без дырок и без
 /// владельца — угол принадлежит перекрёстку, а не одной дороге.
-fn piece_contour(outline: &[Vec2], kind: PieceKind, road: Option<u32>, z: f32) -> DrawnPiece {
+fn piece_contour(outline: &[Vec2], kind: PieceKind, z: f32) -> DrawnPiece {
     DrawnPiece {
         contour: outline.to_vec(),
         holes: Vec::new(),
         kind,
-        road,
+        road: None,
         z,
     }
 }
@@ -129,27 +129,22 @@ impl KerbReturns {
             scraps.push_lawn(outline.clone());
         }
         for (class, outline) in &self.roads {
-            let (builder, color) = match class {
-                RoadClass::Street => (&mut *streets, ROAD_COLOR),
-                RoadClass::Alley => (&mut *alleys, ALLEY_COLOR),
+            let (builder, color, z) = match class {
+                RoadClass::Street => (&mut *streets, ROAD_COLOR, Z_ROAD),
+                RoadClass::Alley => (&mut *alleys, ALLEY_COLOR, Z_ALLEY),
             };
             // Скругление не выпукло, но веер из его первой вершины — угла краёв —
             // верен: дуга между точками касания и есть та часть окружности, что
             // видна из угла. `earcutr` на восьми тысячах таких фигур стоил бы
             // больше самой укладки.
             builder.push_convex(outline, color.to_linear());
-            let z = match class {
-                RoadClass::Street => Z_ROAD,
-                RoadClass::Alley => Z_ALLEY,
-            };
-            pieces.push(piece_contour(outline, PieceKind::RoadCorner, None, z));
+            pieces.push(piece_contour(outline, PieceKind::RoadCorner, z));
         }
         for outline in &self.unpaved {
             unpaved.push_convex(outline, UNPAVED_ROAD_COLOR.to_linear());
             pieces.push(piece_contour(
                 outline,
                 PieceKind::RoadCorner,
-                None,
                 Z_UNPAVED_ROAD,
             ));
         }
@@ -159,7 +154,6 @@ impl KerbReturns {
             pieces.push(piece_contour(
                 outline,
                 PieceKind::SidewalkCorner,
-                None,
                 Z_SIDEWALK,
             ));
         }
@@ -169,19 +163,13 @@ impl KerbReturns {
             pieces.push(piece_contour(
                 outline,
                 PieceKind::SidewalkCorner,
-                None,
                 Z_SIDEWALK,
             ));
         }
         // и в слое обочин — где вместо полосы обочина до отдельной дорожки
         for outline in &self.verges {
             verges.push_convex(outline, SIDEWALK_COLOR.to_linear());
-            pieces.push(piece_contour(
-                outline,
-                PieceKind::VergePaving,
-                None,
-                Z_ROAD_VERGE,
-            ));
+            pieces.push(piece_contour(outline, PieceKind::VergePaving, Z_ROAD_VERGE));
         }
         for outline in &self.verge_lawns {
             if meadows.under(outline) {
@@ -189,7 +177,6 @@ impl KerbReturns {
                 pieces.push(piece_contour(
                     outline,
                     PieceKind::VergeLawn,
-                    None,
                     Z_ROAD_VERGE_LAWN,
                 ));
             } else {
@@ -197,7 +184,6 @@ impl KerbReturns {
                 pieces.push(piece_contour(
                     outline,
                     PieceKind::VergeYard,
-                    None,
                     Z_ROAD_VERGE_YARD,
                 ));
             }
@@ -218,7 +204,7 @@ impl KerbReturns {
                 Fill::Unpaved => (PieceKind::RoadCorner, Z_UNPAVED_ROAD),
                 Fill::Sidewalk => (PieceKind::SidewalkCorner, Z_SIDEWALK),
             };
-            pieces.push(piece_contour(outline, kind, None, z));
+            pieces.push(piece_contour(outline, kind, z));
         }
     }
 
