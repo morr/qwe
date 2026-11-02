@@ -119,11 +119,11 @@ a screenshot belongs to.
 - **Overpass** — the Overpass API (`overpass-api.de`), queried once with `[out:json]` +
   `out geom` (inline geometry, no node lookup). The full tag list lives in the query
   itself (`overpass.rs`); the per-tag, per-city audit is `references/osm-coverage.md`.
-  The bbox is `MAP_SIZE` around the selected `City`'s geo center. `QUERY_VERSION` is
-  **15** and may only **grow**: caches stay on disk, so a reused number would silently
+  The bbox is `MAP_SIZE` around the selected `City`'s geo center. `QUERY_VERSION`
+  may only **grow**: caches stay on disk, so a reused number would silently
   serve extracts lacking the newer tags — bump it whenever the query gains tags. The
-  version history (v3–v15, the skipped v12) is in the
-  `QUERY_VERSION` doc comment and `references/osm-coverage.md`.
+  version history is in the `QUERY_VERSION` doc comment and
+  `references/osm-coverage.md`.
 - **Driving side** — a second output after `out geom` (the `is_in` →
   `rel(pivot)["driving_side"]` → `out tags` chain): the tag is not on roads — OSM puts
   it on the **country boundary**, and everything inside inherits it. `out tags`, never
@@ -148,18 +148,14 @@ a screenshot belongs to.
   known city slug that is not that city's current `cache_path` is deleted. That is what
   retires extracts left by an old geo center, `MAP_SIZE` or `QUERY_VERSION` — tens of MB
   each. It sweeps **all** cities, not just the one being loaded; the current file of
-  each city survives, so a tour of the six is not six downloads per lap.
+  each city survives, so touring the cities is not a download per city per lap.
 
 ## MapData — the parsed model
 
 `map/osm/model.rs`; the resource stays resident after spawn. The **field catalog** —
 per type, every field's parse provenance, consumers and invariants, starting with why
 the nine `Vec<PolyArea>` layers are not `AreaKind` written twice — is
-`references/model.md`. The roster in one breath: `PolyArea` (the nine layer vectors of
-`AreaKind`), `RoadLine`, `RoadNode`/`RoadArea` (the junction vocabulary), `RailLine`,
-`WallLine`, `FenceLine`, `Structure` and `PipeLine` (industrial cylinders and overhead
-heating mains), `WaterLine` (*linear* watercourses), `TreeRow`/`TreeNode`, the planting
-raw material, and `trees` (`TreeSet`, what the renderer reads). **RoadLine** —
+`references/model.md`. **RoadLine** —
 centerline + width from its section, its point order already normalized by the parse;
 the rest of the fields are in `references/model.md`.
 
@@ -218,8 +214,8 @@ Every "what is near this point" answer on the map comes from one type.
   invariant is what makes a one-cell `at` complete rather than approximate. An error
   there returns a silently incomplete answer, which is why it lives in one place.
   **A box that is not of this world is refused**: a non-finite corner is a
-  `debug_assert`, and a box over `MAX_INSERT_CELLS` (2²⁰ — 30 × 30 km at the smallest
-  30 m cell) is skipped with an `error!`. `as_ivec2` saturates a huge coordinate to
+  `debug_assert`, and a box over `MAX_INSERT_CELLS` is skipped with an `error!`.
+  `as_ivec2` saturates a huge coordinate to
   `i32::MAX`, so one broken axis point had the double loop spread a single link over
   billions of cells — 12 GB and a load that never finished. The skip is the net, not the
   fix; the fix is wherever the geometry broke.
@@ -251,9 +247,7 @@ Every "what is near this point" answer on the map comes from one type.
 
 The map's one vocabulary for `i_overlay`: `Contour`
 (`Vec<[f32; 2]>`) and `Shape` (outer ring, then holes), with `oriented` / `area_contours`
-giving the CCW-outer, CW-hole winding NonZero needs; the offset rounding `ARC` 0.3, the
-ring tolerance `RING_EPSILON` 0.01, and the rest — `stroke`, `push_shape`,
-areas/bounds, `ring_of`, `point_in_shape` — beside them.
+giving the CCW-outer, CW-hole winding NonZero needs.
 
 **`stroke` takes `ring` as an argument rather than asking `is_ring` itself**, and that is
 the one place the two callers genuinely differ: a road ring is stroked closed, without
@@ -382,9 +376,8 @@ going through the curb pin tests
   contributes nothing and one longer than 4 px contributes fully — the noise is centred, so
   a faded octave shifts no brightness, and zooming out makes a surface smoother, never
   brighter or shimmering. That rule is **not this shader's own**: the shared library
-  `assets/shaders/noise.wesl` holds all six helpers — `hash21`, `value_noise`, `visible`,
-  `fbm4` (four octaves), `fbm3` (three) and `stripes` — and each shader imports only
-  the names it calls (`roof.wesl` its own subset, `crown.wesl` only `fbm3`), so a rule
+  `assets/shaders/noise.wesl` holds the helpers, and each shader imports only the
+  names it calls (`roof.wesl` its own subset, `crown.wesl` only `fbm3`), so a rule
   that must not drift is kept in one place.
   **Only what more than one shader calls moves there**: `dash_distance` (lane dashes)
   stays in `paint.wesl` and `band` (the drive between garage rows) in `roof.wesl`,
@@ -396,7 +389,7 @@ going through the curb pin tests
   clutter), the paint's three zoom maxima, or the verges' one bound (wide verges drop
   off it, `VERGE_ZOOM_MAX` in `roads-sidewalks.md`) — and names it with a marker type
   implementing `ZoomLods`
-  (`RailLods`, `PaintLods`, `TreeLods`, … — empty enums handing over the `max_zoom`s;
+  (empty enums handing over the `max_zoom`s;
   the trees' table caps the density prefix, `references/trees.md`; the paint's
   and the trees' buckets only flip `Visibility`, the buildings' only a roof-material
   uniform — nothing is rebuilt — **Markings** in `roads-markings.md`,
@@ -440,7 +433,6 @@ going through the curb pin tests
   header index names them), and the module names in `map/buildings/` say what each
   file builds (`order.rs` is the painter's order). Which of
   the layers exist at all is **`BuildingHeightMode`**
-  (resource, BRP-writable, persisted; section `ui/buildings.rs`, Map tab) — `Facade`,
-  `Shadows`, `ShadowsTint`, `Extrusion`,
-  `ExtrusionShadowsTint` (the default); any change reruns `rebuild_buildings` (despawn
+  (resource, BRP-writable, persisted; section `ui/buildings.rs`, Map tab) — any
+  change reruns `rebuild_buildings` (despawn
   `BuildingLayerTag` layers, respawn from the unchanged `MapData::buildings`).

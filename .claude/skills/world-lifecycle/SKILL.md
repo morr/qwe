@@ -30,8 +30,8 @@ During **Warmup** the world exists but `Time<Virtual>` is **paused** and the loa
 stays up reading "Routing pawns... N left".
 
 `poll_warmup` counts pawns *inside the camera view* that still hold a `PathfindingRequest` /
-`PathfindingTask` and flips to `Live` when none are left, or after `WARMUP_TIMEOUT` (10 s,
-logged as a warning). `WARMUP_GRACE` (0.5 s) keeps "no requests yet" from meaning "done".
+`PathfindingTask` and flips to `Live` when none are left, or after `WARMUP_TIMEOUT` (logged
+as a warning). `WARMUP_GRACE` keeps "no requests yet" from meaning "done".
 
 **It counts only what the dispatcher will actually serve** — `wanderers_dispatched_at_zoom`
 for the zoom half and **`UrgentPath` for the species half**, both of them the dispatcher's
@@ -130,7 +130,7 @@ read it as a plain resource. An app without `SilhouettePlugin`
 
 **RestartEvent** (`restart.rs`, R key or BRP) — despawns humans / corpses / demons / walkers
 (demon halos and blood pools are their children and go with them; souls are not on the list —
-a `SoulMote` despawns itself within 1.4 s of sim time, see `species-behavior`), fires
+a `SoulMote` despawns itself, see `species-behavior`), fires
 **WorldStarted**, respawns the population. The navmesh persists: it is filled once per city.
 Under determinism this replays the previous run tick for tick.
 
@@ -146,16 +146,14 @@ commands for (CLAUDE.md, "Where a mass despawn may happen").
 It always fires `RestartEvent { to_portal: true }`: a changed world setting means a
 *different* world, and leaving the camera where it was makes the restart invisible.
 
-**RR** (double R within 0.5 s) and any `to_portal: true` restart move the camera to the
+**RR** (double press of R) and any `to_portal: true` restart move the camera to the
 portal at `START_ZOOM` regardless of `CameraPositionMode` — the camera side is `ui-panels`.
 
 ## City and the city switch
 
-**City** (`city.rs`, resource, remembered by `prefs.rs`) — which city the map is built from:
-`Tula | Ryazan | Kaluga | Oryol | Rostov | Belgorod | Moscow{Center, North, NorthEast,
-East, SouthEast, South, SouthWest, West, NorthWest} | NewYork | Paris | Berlin | London |
-Tokyo | DevilsLake` — Moscow is nine extracts, one per administrative okrug (the centre,
-then clockwise from the north), since one `MAP_SIZE` frame covers only a sliver of it. Each carries its **geo
+**City** (`city.rs`, resource, remembered by `prefs.rs`) — which city the map is built
+from; the enum in `city.rs` is the list. Moscow is nine extracts, one per administrative
+okrug, since one `MAP_SIZE` frame covers only a sliver of it. Each city carries its **geo
 center** (bbox center of the Overpass extract), its **portal hint** and its **cache slug**.
 `MAP_SIZE` and therefore the derived `grid_size()` are shared, so switching city never
 resizes the navmesh.

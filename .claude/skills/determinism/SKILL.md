@@ -212,7 +212,7 @@ carries the world gate along with the mode branch.
 
 `RetireAt` — the answer deadline of this mode: stamped at dispatch (the tick the request
 leaves the queue, not the tick it was filed) and honoured by `apply_pathfinding_results`
-`PATHFINDING_RETIRE_TICKS = 8` ticks later, waiting on the search (`block_on`) if it has
+`PATHFINDING_RETIRE_TICKS` ticks later, waiting on the search (`block_on`) if it has
 not finished. Why the deadline counts from dispatch and not from `RequestedAt`, the
 125 ms ≈ live-pipeline parity at 1×, throughput belonging to the dispatch rate rather than
 this constant, and why it must not scale with `SimSpeed` — that is the rustdoc of
@@ -220,7 +220,7 @@ this constant, and why it must not scale with `SimSpeed` — that is the rustdoc
 
 ### Dispatch rate
 
-`PATHFINDING_WANDER_UNITS_PER_TICK = 128`, `PATHFINDING_URGENT_UNITS_PER_TICK = 64` —
+`PATHFINDING_WANDER_UNITS_PER_TICK` / `PATHFINDING_URGENT_UNITS_PER_TICK` —
 how much leaves the queue each tick, in units of *predicted search cost*
 (`PATHFINDING_UNIT_TILES`). Why the unit is cost rather than requests, the integer-metric
 rule, and the ~35 ms-per-tick pool budget the rates are derived from live in the rustdoc
@@ -265,7 +265,7 @@ update policies replaced two types for one concept.)
 
 Warmup therefore waits for the wanted backend instead — `loading.rs::poll_warmup` returns
 early while `Pathfinder::mode().is_building()` holds (`navigation/mode.rs`), and its
-`elapsed` counter stands meanwhile, so the 10 s `WARMUP_TIMEOUT` cannot cut a build short.
+`elapsed` counter stands meanwhile, so `WARMUP_TIMEOUT` cannot cut a build short.
 That costs ~11–14 s on first entry into a city on HPA — deliberately. Restarts do not pay
 it.
 

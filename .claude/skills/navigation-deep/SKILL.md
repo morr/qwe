@@ -38,7 +38,7 @@ generator's clearance, does **not** read it — it gets `ParseKnobs::navtile` as
 argument (osm-map `references/parse-seam.md`). It is written only in
 `OnEnter(Loading)`, before the load thread starts.
 
-Grid size is derived as `MAP_SIZE / navtile_size()` (3800 × 2850 tiles at 2 m). **A filled
+Grid size is derived as `MAP_SIZE / navtile_size()`. **A filled
 `Navmesh` carries its own `grid_size` / `tile_size` snapshot**, so a stale snapshot (a
 cancelled northstar build) never indexes against the switched atomic. The snapshot owns the
 conversions too: rasterisation (`set_area`/`row_spans`, `visit_polyline*`,
@@ -55,13 +55,14 @@ for exactly this reason), everything `Walkable` asks (`allows`, `coast_allows`,
 Cost of 1 m, measured: northstar build ~14 s vs ~11 s, HPA* ×1.7 CPU, +1.6 GB RSS. A change
 to the navtile size is simulation input — it breaks a replay in flight (`determinism`).
 
-**`src/grid.rs` owns the navtile**, and that is its whole reason for existing as a module of
-its own: `DEFAULT_NAVTILE_SIZE`, the atomic and its `navtile_size()` / `set_navtile_size()`
-(the setter is `pub(crate)` — the one safe writer is `loading::sync_navtile_size`),
-`grid_size()`, the `NavtileBase` cycler, and the global conversions `world_to_tile` /
-`tile_center` for callers with no `Navmesh` in hand (movement, wander, the door overlay);
-those read the atomic. None of it is in `settings.rs`: the navtile is not a knob among the
-world's knobs but the scale everything navigational is built in, and it has one owner.
+**`src/grid.rs` owns the navtile**,
+and that is its whole reason for existing as a module of its own: the atomic and its
+accessor (the setter is `pub(crate)` — the one safe writer is
+`loading::sync_navtile_size`), the derived `grid_size()`, the `NavtileBase` cycler, and
+the global conversions for callers with no `Navmesh` in hand (movement, wander, the door
+overlay); those read the atomic. None of it is in `settings.rs`: the navtile is not a
+knob among the world's knobs but the scale everything navigational is built in, and it
+has one owner.
 
 ## The grid navmesh
 
@@ -72,13 +73,9 @@ world's knobs but the scale everything navigational is built in, and it has one 
   `CONTEXT.md` term.
 - **Where each rule lives.** Everything done *to* the grid is a submodule of
   `navigation/navmesh/`, one per role, each with its own `tests.rs` beside it:
-  **`raster.rs`** — rasterisation (`set_area` and the row spans, `set_polyline*`,
-  `visit_polyline*`, `visit_segment_tiles`); **`fill.rs`** — the fill from `MapData`
-  (`fill_from_mapdata`, `fill_base`, `fill_fences`, `carve_passages`, `BridgeBands`);
-  **`gates.rs`** — the default gates (`open_sealed_fences`, the door groups and the
-  `SEALED_POCKET_MIN_AREA` / `GATE_ROUNDS` / `GATE_SPACING` knobs); **`reach.rs`** —
-  reachability (`flood`, `neighbours`, `component`, `successors` with its step costs,
-  `passable_from`, `prune_unreachable`, `open_gates_and_prune` + `GatesAndPrune`). They are
+  **`raster.rs`** — rasterisation; **`fill.rs`** — the fill from `MapData`, `BridgeBands`
+  included; **`gates.rs`** — the default gates; **`reach.rs`** — reachability, the prune,
+  `open_gates_and_prune`. They are
   all `impl Navmesh` blocks, so every method keeps its name and its visibility — what the
   split changes is the file you open, never the call.
 - **Fill order matters** (`fill_from_mapdata`): water areas block → **linear waterways
@@ -127,16 +124,12 @@ with nobody's margin in it; a gate adds its own with `Viewport::with_margin(scre
   is skipped and the readers get **last frame's** frame with no signal. Before this each
   of them was skipped silently on its own for the same reason, which was not better.
 
-**Five gates use it and each keeps its own margin on purpose**, because each asks a different
-question:
-
-| gate | margin | why |
-|---|---|---|
-| warmup (`loading.rs::poll_warmup`) | 1.0 screens | counts what the player can actually see |
-| pathfinding dispatcher (`movement/`) | `VIEW_MARGIN` 1.2 | pawns at the edge must not stall on a small camera move |
-| separation (`movement/separation/`) | `VIEW_MARGIN` 1.2 | same reason |
-| movepath gizmos | 3.0 | debug drawing, wants context around the frame |
-| door gizmos | 1.5 | ditto |
+**Five gates use it and each keeps its own margin on purpose**, because each asks a
+different question: warmup (`loading.rs::poll_warmup`) counts what the player can
+actually see; the pathfinding dispatcher and separation
+share `VIEW_MARGIN`, so pawns at the edge do not stall on a small camera move; the
+movepath and door gizmos add wide margins because debug drawing wants context around
+the frame.
 
 **Do not unify them.** The warmup margin in particular is deliberately the strictest: it
 counts what the player can actually see, not what the dispatcher is willing to serve early.
@@ -176,9 +169,9 @@ inserts the resource instead.
 - **PathfindingRequest → dispatcher → PathfindingTask** (`movement/`) —
   `Movable::to_pathfinding` only queues a `PathfindingRequest`;
   `dispatch_pathfinding_requests` turns requests into `AsyncComputeTaskPool` tasks.
-  **Visibility gating**: peacefully wandering humans OUTSIDE the camera view (×1.2
-  margin) are never dispatched — their requests wait until the camera arrives; at zoom ≥
-  `WANDER_DISPATCH_MAX_ZOOM` (0.75 m/px) *no* wanderer counts as on screen. Demons and
+  **Visibility gating**: peacefully wandering humans OUTSIDE the camera view (past
+  `VIEW_MARGIN`) are never dispatched — their requests wait until the camera arrives; at zoom ≥
+  `WANDER_DISPATCH_MAX_ZOOM` *no* wanderer counts as on screen. Demons and
   fleeing humans are always dispatched at any zoom. **The live dispatcher stands while
   the player pauses** (`live_dispatch_runs`); the warmup pause is the exception and must
   stay one. **Priority**: demons and fleeing humans (`URGENT`) before wandering humans in
@@ -194,7 +187,7 @@ inserts the resource instead.
   `&mut Movable`, a position, `dt`, the pawn's `StepModifiers` (its share of the
   separation output), the pawn's `StepTuning` (rest distance from its `BodyScale` — the
   step names no species), and a `Walkable`. It returns a
-  `StepOutcome` (`Moved` / `Arrived { destination_reached }` / `Halted`) and touches no
+  `StepOutcome` and touches no
   `Entity`, `Commands` or query — the same shape as `human::decide` / `demon::decide`.
   `move_moving_entities` is the plumbing around it: query, commands, the human grid.
   Both course changes the step makes on its own are gated on passability, which is what
@@ -211,21 +204,21 @@ inserts the resource instead.
   coasting: state `Moving` + empty path still means `to_idle` — a wanderer must stop
   at its destination. Before coasting, 26–42% of fleeing humans stood at any instant
   at 30× (measured); the reply (`to_moving`) or `PathfindingError` ends the coast.
-  When the reply lands, up to `REPATH_TRIM_LIMIT` (`settings.rs`, 4 — coasting drifts 4–6 tiles off
-  the request's start tile at flee speed) leading waypoints are dropped while the
-  next one is no further than the first — without the trim the first step would be
+  When the reply lands, up to `REPATH_TRIM_LIMIT` (`settings.rs`) leading waypoints are dropped while the
+  next one is no further than the first — coasting drifts 4–6 tiles off
+  the request's start tile at flee speed, and without the trim the first step would be
   backwards; each drop is geometry-gated, the limit only guards corner-straightening.
 - **Rescue** (`movement::rescue_from_impassable`) — a pawn standing on an impassable tile
   moves to the nearest free point (`Walkable::nearest_free_point`), both ends of the
   interpolation are set to the new point and the stale path is dropped (`to_idle`).
   **Where it moves to is two steps, not one.** On the mesh backend the snap comes first
   (`PolymeshBuild::nearest_free_point` — polyanya's `get_closest_point` within the
-  0.75 m localisation tolerance, the same snap that seats the ends of a request): a
+  localisation tolerance, the same snap that seats the ends of a request): a
   pawn caught by a rebuild with a larger agent radius stands centimetres from free space,
   and a ring of tiles with a BVH query per candidate would cost three orders more than one
   snap. Only when the snap misses — the pawn is not against a wall but deep inside a
   house — does the shared `nearest_tile_where` ring search run, capped at
-  `RESCUE_SEARCH_TILES` = 16 tiles (32 m); on the bare grid it is the only step. So the
+  `RESCUE_SEARCH_TILES`; on the bare grid it is the only step. So the
   landing point is a mesh point, not necessarily a tile centre.
   Ways in exist by construction: the
   spawn sifts tiles but stands the pawn on a tile centre whose own corner may already be
@@ -282,6 +275,6 @@ inserts the resource instead.
   algorithms without booting Bevy: reads the OSM cache, rebuilds the navmesh exactly as
   the map-load thread does (fill → `snap_portal_position` → prune), generates one
   seeded task list mirroring human wander (80% random building, 20% short stroll) and
-  replays that *same* list per algorithm across a shared atomic work cursor. Reports
-  wall / cpu / avg / p50 / p95 / max and mean path length. Run it after touching
+  replays that *same* list per algorithm across a shared atomic work cursor, reporting
+  the timing spread and the mean path length. Run it after touching
   `successors`, costs, or the navmesh fill.

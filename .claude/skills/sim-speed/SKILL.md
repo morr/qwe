@@ -6,9 +6,8 @@ description: Use when working on simulation speed, pause, or the speed regulator
 # Simulation speed — the regulator
 
 Detail behind `sim_time.rs`. The summary (speed ladder, the 30× cap, SimClock) lives in
-`CONTEXT.md`. Remember the project constraint: **30× is the deliberate product cap**
-(ladder 1-2-5-10-20-30); the optimization target is bigger populations, not a higher
-top speed.
+`CONTEXT.md`. Remember the project constraint: **30× is the deliberate product cap**;
+the optimization target is bigger populations, not a higher top speed.
 
 **Changing that mechanism is changing this file, in the same change** — a new regulator
 input, a moved budget, a retired signal. The term still goes to `CONTEXT.md`.
@@ -21,12 +20,11 @@ one block in a fixed order, because `SIM_FRAME_SHARE`, `SIM_FRAME_BUDGET_MS` and
 in another order the block still compiles and silently yields a different frame budget,
 which only an fps measurement would show. Two `const _: () = assert!` ride with it.
 `settings.rs` keeps only what the regulator shares with someone else — the pathfinding
-pipeline's own constants (`WANDER_DISPATCH_MAX_ZOOM`, `PATHFINDING_RETIRE_TICKS`,
-`MAX_PATHFINDING_IN_FLIGHT`, …), which `movement/` reads.
+pipeline's own constants, which `movement/` reads.
 
 - **Speed ladder** — Space pauses, `=`/`-` walk `SPEED_LADDER`
-  (1 → 2 → 5 → 10 → 20 → 30; the button's `cycle_time_scale` wraps to 1x from the top
-  step; an arbitrary BRP-written speed snaps to the nearest step on the next press).
+  (the button's `cycle_time_scale` wraps to 1x from the top step; an arbitrary
+  BRP-written speed snaps to the nearest step on the next press).
 - **SimSpeed** — `{requested, pipeline, affordable, effective, actual}`. `requested` is
   what the ladder says and is the only field a new run keeps: the `WorldStarted`
   observer (`on_world_started`) resets `pipeline`/`affordable` to `MAX_SIM_SPEED`,
@@ -39,16 +37,16 @@ pipeline's own constants (`WANDER_DISPATCH_MAX_ZOOM`, `PATHFINDING_RETIRE_TICKS`
   `pipeline` is the pathfinding-pipeline ceiling, the one
   regulator value with memory (see below); `affordable` is what the regulator computed
   the machine can carry (already `min`-ed with `pipeline`);
-  `effective` is its command, what reaches `Time<Virtual>`; `actual` is measured —
-  virtual seconds per real second, averaged over `ACTUAL_SPEED_WINDOW` (0.5 s of *real*
-  time, so long frames weigh what they cost). `actual` is the only honest one: Bevy
+`effective` is its command, what reaches `Time<Virtual>`; `actual` is measured —
+virtual seconds per real second, averaged over `ACTUAL_SPEED_WINDOW` — *real* time, so
+long frames weigh what they cost. `actual` is the only honest one: Bevy
   clips a frame's virtual delta at `max_delta`, so a stall eats simulated time behind
   the regulator's back. The panel and `is_throttled` read `actual`.
 - **SimLoad — what one tick costs, split in two.** `begin_sim_load` / `end_sim_load`
   bracket the fixed loop (`RunFixedMainLoopSystems::BeforeFixedMainLoop` /
   `AfterFixedMainLoop`) and divide the wall time of the frame's `FixedUpdate` run by the
-  `SimTick` delta over the same bracket, smoothed with `SIM_LOAD_SMOOTHING` (0.5 s of
-  real time, so the filter does not change with the frame rate). `SimTick` zeroes on
+`SimTick` delta over the same bracket, smoothed with `SIM_LOAD_SMOOTHING` — real
+time, so the filter does not change with the frame rate. `SimTick` zeroes on
   restart and city switch, so the delta is a `saturating_sub` and a frame whose counter
   went backwards is skipped.
   **The split is the point.** `tick_ms` is CPU work — a property of the world, not of
@@ -64,10 +62,9 @@ pipeline's own constants (`WANDER_DISPATCH_MAX_ZOOM`, `PATHFINDING_RETIRE_TICKS`
   controls itself — measured live as tick cost swinging 2.9…7.6 ms with a 2–4 s period
   and the speed following it 1.3…3.4×. `wait_peak_ms` is the **peak-hold** companion of
   `wait_ms`: it jumps to any raw sample at once and decays toward the mean over
-  `SIM_LOAD_PEAK_DECAY` (3 s) — bursts arrive in packs seconds apart, and the mean
+  `SIM_LOAD_PEAK_DECAY` — bursts arrive in packs seconds apart, and the mean
   dilutes them before the pipeline ceiling can answer. Published as `sim/tick_ms`,
-  `sim/wait_ms` and `sim/wait_peak_ms`, all on the panel's third line
-  (`tick 1.20 + 3.50 ms wait (pk 8.10)`).
+  `sim/wait_ms` and `sim/wait_peak_ms`, all on the panel's third line.
   **Outside the bracket the cost is dropped, and dropped silently.**
   `add_frame_cost` returns at once when `started` is `None` — no warning: without
   `SimTimePlugin` there is nobody to close the bracket, and both callers run there
@@ -91,15 +88,16 @@ pipeline's own constants (`WANDER_DISPATCH_MAX_ZOOM`, `PATHFINDING_RETIRE_TICKS`
   0.9…8.0 ms/tick with a ~1 s period over a flat CPU cost). Instead the ceiling steps
   against the busy-per-tick ratio (`tick_ms + wait_peak_ms` vs the share's per-tick
   allowance), **proportionally to the overrun** — 10 % over cuts 10 % per
-  `SPEED_BACKOFF_TIME` (1 s), double cuts half; a constant step keeps cutting while the
+  `SPEED_BACKOFF_TIME`, double cuts half; a constant step keeps cutting while the
   queue drains and makes its own sawtooth (measured: 1.1…1.8× with a ~2 s period).
-  Probing back up runs on `SPEED_PROBE_TIME` (6 s). Sizing to the **peak** wait, not
+  Probing back up runs on `SPEED_PROBE_TIME`. Sizing to the **peak** wait, not
   the mean, is a deliberate speed-for-smoothness trade.
-  `SIM_FRAME_SHARE` is derived, not tuned: `1 − SIM_RENDER_BUDGET × MIN_SIM_FPS`
-  (13 ms per frame reserved for everything that is not simulation → 0.61). Frames then
-  settle at `rest / (1 − share)` — a contraction with gain `share < 1`, stable by
+  `SIM_FRAME_SHARE` is derived, not tuned: `1 − SIM_RENDER_BUDGET × MIN_SIM_FPS`,
+  everything that is not simulation reserved out of every frame. Frames then
+  settle at
+  `rest / (1 − share)` — a contraction with gain `share < 1`, stable by
   construction. Applied asymmetrically: **down at once, up by doubling every
-  `SPEED_CLIMB_DOUBLE_TIME` (0.75 s)**, with a **down-only** `SPEED_DEADBAND` (2 %). The
+  `SPEED_CLIMB_DOUBLE_TIME`**, with a **down-only** `SPEED_DEADBAND`. The
   climb limit is the one thing the solver cannot compute — tick cost lags the speed,
   because a speed-up spawns path requests whose cost lands a second or two later. The
   band belongs on the down side alone, where the move is instantaneous and measurement
@@ -125,7 +123,7 @@ pipeline's own constants (`WANDER_DISPATCH_MAX_ZOOM`, `PATHFINDING_RETIRE_TICKS`
   now fires rarely by design: the frame-budget guard below already cuts the run at
   `SIM_FRAME_BUDGET_MS`, so the runaway is severed structurally and `frame_overrun` is
   the second line, for the frame whose last tick carried it past the budget.
-  Floored at `MIN_SIM_SPEED` (0.1). The button shows `15x → 8.6x` when limited.
+  Floored at `MIN_SIM_SPEED`. The button shows `15x → 8.6x` when limited.
   Entering `PlayPhase::Live` resets `effective` to `requested` (the `WorldStarted`
   observer of that same transition; the unpause itself is `loading::SimBootPlugin`):
   whatever the regulator computed over loading, spawn and warm-up frames describes a
@@ -133,7 +131,7 @@ pipeline's own constants (`WANDER_DISPATCH_MAX_ZOOM`, `PATHFINDING_RETIRE_TICKS`
   Starting too high costs one frame — the down move is instantaneous.
 - **The frame-budget guard** (`guard_frame_budget`, first system of `FixedUpdate`) is
   the hard backstop behind all of the above: the regulator aims at `SIM_FRAME_BUDGET_MS`
-  (share × target frame ≈ 20 ms) from **smoothed** measurements, and a burst lands
+  (share × target frame) from **smoothed** measurements, and a burst lands
   before any filter learns of it. Once a frame's fixed-loop run has eaten the budget,
   the guard strips the remaining `Time<Fixed>` overstep — the loop stops after the
   current tick — and books it into **TickDebt**, which `begin_sim_load` returns to the
@@ -165,7 +163,7 @@ pipeline's own constants (`WANDER_DISPATCH_MAX_ZOOM`, `PATHFINDING_RETIRE_TICKS`
   **0.25 s** (Bevy's own default). The cost of the trade is that a frame longer than
   that silently hands the simulation less time than really passed, visible only in
   `actual`.
-- **Requested cap** — `MAX_SIM_SPEED` (30x, the top of `SPEED_LADDER`) is a hard
+- **Requested cap** — `MAX_SIM_SPEED` is a hard
   ceiling on `requested`: a deliberate product limit, not a hardware one. The ladder
   never steps past it, and `throttle_speed_to_frame_budget` clamps `requested` itself so
   a BRP write cannot exceed it either.

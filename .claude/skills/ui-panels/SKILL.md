@@ -29,7 +29,7 @@ panel** with four tabs (`ui/shell.rs`).
   because `TabNavigationPlugin` is deliberately not installed (see the theme
   note below). The left column is `top`/`bottom`-anchored (a ceiling for the body to
   scroll against) and carries **`Pickable::IGNORE`**: it is taller than its content, and
-  an invisible 260 px strip eating the map's clicks is what the UI-input
+  an invisible strip eating the map's clicks is what the UI-input
   rule forbids. The component is per-entity and does not propagate, so a
   subtree that must be transparent carries it on **every** node (the hotkey help does:
   plaque, rows and both labels). Wheel over the panel scrolls the body
@@ -71,14 +71,15 @@ panel** with four tabs (`ui/shell.rs`).
 - **Expensive-knob debounce** — the one place a panel is decoupled from what the map
   follows. **Sun** (`ui/sun.rs`) and the Roads shape sliders write their knob resource
   like any other kit row, but the map follows a **settled copy**: `map::sun::settle_sun`
-  copies `SunStyle` into `SunOnMap`, `settle_road_shape` copies `RoadShape` into
-  `RoadShapeOnMap`, each after **0.35 s of quiet** — a rebuild per drag step would cost
+  copies `SunStyle` into `SunOnMap`,
+  `settle_road_shape` copies `RoadShape` into
+  `RoadShapeOnMap`, each after a quiet period — a rebuild per drag step would cost
   hundreds of ms. The debounce sits between the setting and the map, not inside the
   panel, precisely so a section stays a section. Ranges and per-knob rules —
   `references/panels.md`.
 - **Vignette** (`post.rs::spawn_vignette`) — a full-screen `Node` with a radial
   `BackgroundGradient` (transparent to 55% of the far-corner radius, black at
-  `VIGNETTE_ALPHA` 0.22 in the corners). `GlobalZIndex(-1)` keeps it under every panel;
+  `VIGNETTE_ALPHA` in the corners). `GlobalZIndex(-1)` keeps it under every panel;
   `Pickable::IGNORE` keeps it out of `HoverMap` — without that it would be "a UI node
   under the cursor" everywhere and `pointer_over_ui` would hand the whole map to the UI.
   Not a `GameUiRoot`: it survives the city switch.
@@ -110,7 +111,7 @@ panel** with four tabs (`ui/shell.rs`).
   (`position_below_telemetry`, the `offset_below_brp_badge` idiom; in the roads
   gallery there is no telemetry, `Single` skips the system and the panel stands at the
   screen edge). Two FiraMono lines: the **camera line** `zoom/x/y cx/cy` and the **hits list** — what the map draws
-  under the cursor, recomputed when the point moves over `INSPECTOR_QUERY_STEP` (0.5 m)
+  under the cursor, recomputed when the point moves over `INSPECTOR_QUERY_STEP`
   or the semantic index is rebuilt. Each hit prints `z  label`; the label dictionary
   (**this file is its single owner**; `osm-map` points here): data features speak for
   themselves (`road residential 8.0 m, sidewalks`), a band the road drew itself carries
@@ -213,9 +214,9 @@ panel** with four tabs (`ui/shell.rs`).
     `panel_background()` / `panel_block_background()`, labels `row_label` (`TEXT_DIM`)
     and `row_value` (`TEXT_MAIN`), titles `PANE_HEADER_TEXT`.
   - **The plaques are translucent; the text carries the legibility.** One near-black
-    `UI_COLOR` at three alphas — `PANEL_ALPHA` .72 (pane body), .85 (header strip),
-    .50 (nested block) — so the city stays visible under the panel; `TEXT_MAIN` is
-    white and `TEXT_DIM` is oklch L .90 (`MUTED_TEXT`), both well above feathers' own,
+    `UI_COLOR` at three alphas — pane body, header strip, nested block —
+    so the city stays visible under the panel; `TEXT_MAIN` is
+    white and `TEXT_DIM` the muted one (`MUTED_TEXT`), both well above feathers' own,
     which assume an opaque plaque and over a bright map read as grey on
     grey. Raising the alpha would be the wrong knob: the panel lies *on* the map, not
     instead of it.
@@ -228,7 +229,7 @@ panel** with four tabs (`ui/shell.rs`).
     pause on the speed button. Not the Debug tab's toggles (value rows printing
     `On`/`Off`), not the city (a `FeathersMenu` popup, no variant at all). Feathers
     does hover, press and disabled itself; panels never paint backgrounds.
-  - **The font is feathers' 14 px** (`PANEL_FONT` = `size::MEDIUM_FONT`). One
+  - **The font is feathers' own** (`PANEL_FONT` = `size::MEDIUM_FONT`). One
     `apply_panel_font` system puts `InheritableFont` on every `GameUiRoot` except roots
     that brought their own (`Without<InheritableFont>` — the monospace telemetry).
     The kits patch the same size onto the widgets (which carry an `InheritableFont` of
@@ -270,10 +271,9 @@ panel** with four tabs (`ui/shell.rs`).
   `Tuning` — `CrownParams` is not `PartialEq`.
 - **Slider kit** (`ui/slider.rs`) — the layer under the knob kit, and the one
   `crowd_demo` calls directly, since its fifteen knobs interleave three resources in
-  one `const` slice that also feeds the presets. Free functions only:
-  `spawn_slider_row`, `quantize`, `apply_step`
-  (quantize + thumb back on the stepped value), `retarget` (move the thumb
-  when the value arrived past it — over BRP, from saved settings, from a lab
+  one `const` slice that also feeds the presets. Free functions only — spawn a row,
+  quantize a value, step the thumb back onto the stepped value, and `retarget` (move
+  the thumb when the value arrived past it — over BRP, from saved settings, from a lab
   preset); no systems, nothing registered by `UiPlugin`. What keeps a panel's thumb on
   its value is `sync_knob_values::<R>` in `ui/knob.rs`, registered by
   `add_knobs::<R>()`; a caller that drives demo-local state instead of a resource
@@ -332,8 +332,8 @@ panel** with four tabs (`ui/shell.rs`).
   window close writes `AppExit` from `exit_on_all_closed`, itself in `Last` —
   without the ordering the save silently ran too early and nothing was ever written. `track_camera_view` (Update, only in `save` mode) covers the exits
   no schedule can see — macOS Cmd-Q, `brp quit` (its `AppExit` comes from
-  `RemoteLast`, after `Last`), a crash — by writing during play, **debounced 1 s after
-  the camera stops and throttled to one write per 10 s while it keeps moving** — a
+  `RemoteLast`, after `Last`), a crash — by writing during play, **debounced after
+  the camera stops and throttled while it keeps moving** — a
   per-frame write would rewrite `settings.toml` a hundred times per drag. The debounce
   runs on `Time<Real>` on purpose — first-party
   `SaveSettingsDeferred` ticks on virtual time, so it would never fire while paused
@@ -343,7 +343,7 @@ panel** with four tabs (`ui/shell.rs`).
   the `RestartEvent` observer, so R puts the camera where an app start would.
   A world entry that is **not** the first one is a city switch and always resets to
   the new portal. **RR** — a second `RestartEvent` within `RESTART_DOUBLE_PRESS`
-  (0.5 s real) — goes to the portal at `START_ZOOM` whatever the mode says: in
+  (real time) — goes to the portal at `START_ZOOM` whatever the mode says: in
   `save` mode a single R is a no-op for the camera (the saved view follows it live),
   so the way back to the portal is the double press. `RestartEvent { to_portal: true }`
   asks for the same thing without the double press; world-setting restarts use it

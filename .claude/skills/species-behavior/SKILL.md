@@ -41,7 +41,7 @@ keeps a human calming down from leaving a flee search to be computed and thrown 
 
 ## Spatial grids
 
-**`SpatialGrid<T>`** — a uniform grid per marker type (`Demon`, `Human`), **60 m cells**;
+**`SpatialGrid<T>`** — a uniform grid per marker type (`Demon`, `Human`);
 cells hold **entities only**, positions read live from `SimPosition` through the `pos_of`
 closure every query takes — storing `Vec2` in cells would go stale by up to a cell size.
 
@@ -49,7 +49,7 @@ closure every query takes — storing `Vec2` in cells would go stale by up to a 
 
 - Humans (~20 000): `On<Add, Human>` / `On<Remove, Human>` observers cover spawn and
   death/despawn, and a step or a separation push reports itself through
-  `SpatialGrid::moved`, which relocates only across a 60 m cell boundary — the cost scales
+  `SpatialGrid::moved`, which relocates only across a cell boundary — the cost scales
   with crossings, not population, **and the rule lives in the grid rather than in each
   mover**.
 - Demons (~100): a full rebuild per tick (`rebuild_demon_grid`) is cheaper than bookkeeping,
@@ -132,11 +132,11 @@ point of the passer-by's route, not the errand he went out for.
   mechanism — every human walks from the first frame.
 
 Unconditional in exactly one place: **calm-down** (`FleeAction::CalmDown`,
-`human/behavior.rs`) always stands the full 2–10 s, no share roll.
+`human/behavior.rs`) always stands the full pause, no share roll.
 
 **WanderHeading** — the direction a human is walking, kept between walks (`CONTEXT.md`).
-Every next target is picked inside a `WANDER_CONE` (±60°) around it; a building errand
-samples `WANDER_BUILDING_TRIES` (8) random buildings and takes the first inside the cone.
+Every next target is picked inside a `WANDER_CONE` around it; a building errand
+samples `WANDER_BUILDING_TRIES` random buildings and takes the first inside the cone.
 
 **`HumanFirstWanderTag`** — the very first target after spawn is always the *near* stroll,
 never a building errand; dropped when that target is picked. `PanicRecoil` overrides it.
@@ -163,7 +163,7 @@ flee fan are `CONTEXT.md`'s. What lives here:
 - **The first repath happens on the panic tick itself** — `panic` inserts `FleeRepath`
   already due (`Timer::almost_finish`), so `flee`, chained right after it, takes the decision
   rung on that same tick; otherwise a walking human (`Moving`, so no `needs_path`) would
-  keep its stroll path at flee speed for up to 1.2 s.
+  keep its stroll path at flee speed for up to a full repath period.
 - **The exact nearest-demon search runs only on a fleeing human's decision ticks** — between
   them it only checks demon-grid *cell occupancy* (`any_in_cells_around`). The every-tick
   exact search used to cost 40 % of the sim tick.
@@ -176,7 +176,7 @@ give it a sync point (see CLAUDE.md, "Where a mass despawn may happen").
 
 ### PanicRecoil
 
-The vector, the two filters (`RECOIL_CONE` ±45°, `RECOIL_MIN_ERRAND` 90 m), the
+The vector, the two filters (`RECOIL_CONE`, `RECOIL_MIN_ERRAND`), the
 never-a-stroll rule and the no-buildings exception are `CONTEXT.md`'s. What lives here:
 
 - **Why it is stored rather than synthesised.** It used to be built at the calm-down site as
@@ -221,10 +221,10 @@ to infer from the species. The look — the `Ember` glyph and the halo — is
 
 ### Wander
 
-**A point in the `DEMON_WANDER_CONE` (1.3 rad half-angle, ≈75°) around the away-from-portal
-vector, `DEMON_WANDER_RANGE` (40–120 m) out** — the policy is `CONTEXT.md`'s. At the map
+**A point in the `DEMON_WANDER_CONE` around the away-from-portal
+vector, `DEMON_WANDER_RANGE` out** — the policy is `CONTEXT.md`'s. At the map
 edge `clamp_to_map` turns the direction inward — that is all there is to the border, there
-is no separate border rule. Against the human's stroll (60° half-angle, 20–40 m): a wider
+is no separate border rule. Against the human's stroll: a wider
 cone and a walk two to three times longer, and **no errand branch at all** — a demon never
 picks a building, so the 80/20 roll and `pick_building_ahead` are human-only. No
 `WanderPause` analogue and no `WanderHeading` — the next target is taken the very tick
@@ -240,7 +240,7 @@ not as a tidy-up.
 
 ### Acquisition and give-up
 
-**Enter when the nearest human within `DEMON_AGGRO_RADIUS` (45 m) still has a free claim
+**Enter when the nearest human within `DEMON_AGGRO_RADIUS` still has a free claim
 slot** — `acquire_targets` walks the *human* grid (`nearest_in_range_where` with the
 `ChaseClaims::is_full` filter), so a victim that already has its two chasers is skipped, not
 queued behind them. A demon takes aggro on the first tick it exists, the initial burst
@@ -251,9 +251,9 @@ human's calm-down. It is the **first rung of `decide`** after the dead-target ch
 before the kill, the lunge and the repath gate, so a demon dragged out of the ring leaves on
 that same tick, and `GaveUp` is the one exit that frees its claim slot.
 
-The two species' radii are not symmetric, and the ordering is worth holding: a human panics
-at `HUMAN_PANIC_RADIUS` (60 m), a demon acquires at 45 m, so the demon almost always starts
-its chase on an already-fleeing target.
+The two species' radii are not symmetric, and the ordering is worth holding: the human's
+panic radius is longer than the demon's acquisition radius, so the demon almost always
+starts its chase on an already-fleeing target.
 
 ### Chase claims
 
@@ -265,7 +265,7 @@ victim is gone and nobody will claim it anyway; a **switch** moves one slot inst
 
 ### Repath and the switch rung
 
-Repath throttle 0.4 s (`DEMON_CHASE_REPATH`), and on that same tick the demon may **switch**
+Repath is throttled (`DEMON_CHASE_REPATH`), and on that same tick the demon may **switch**
 target — **a rung of the ladder, not a tail after it**: the search is a lazy sense
 (`better_victim`) that `decide` asks only on the repath rung, and the answer is
 `ChaseAction::Switch { to: Victim }`.
@@ -309,7 +309,7 @@ throttle is a floor between *timer-driven* repaths, not between repaths.
 
 ### Lunge, kill, devour
 
-**Lunge** — inside `DEMON_LUNGE_RANGE` (6 m) *and* with `line_of_sight`, the demon drops its
+**Lunge** — inside `DEMON_LUNGE_RANGE` *and* with `line_of_sight`, the demon drops its
 path and steps `SimPosition` straight at the target at its speed plus `DemonStyle::lunge`.
 Without it a chase never converts: a tile path aims at the tile *center* while the victim
 keeps moving inside it, and the last ~1.4 m is never closed. A lunging demon carries
@@ -329,8 +329,8 @@ because it calls `Movable::to_idle` first. `back_to_wander` touches no `Movable`
 must **not** cancel the search: a demon left in `MovableState::Pathfinding` with no request
 and no `NeedsWanderTarget` never wanders again.
 
-**Devour** — pause `DEMON_DEVOUR_PAUSE` (1.5–2 s) with a sine **pulse** ×1 →
-`DEVOUR_PULSE_MAX_SCALE` (1.5) over `DEVOUR_PULSE_PERIOD` (0.5 s), scale reset on exit.
+**Devour** — pause `DEMON_DEVOUR_PAUSE` with a sine **pulse** ×1 →
+`DEVOUR_PULSE_MAX_SCALE` over `DEVOUR_PULSE_PERIOD`, scale reset on exit.
 All four numbers live in `settings.rs`, none inline in `demon/behavior.rs`. The pause is
 rolled **in the kill observer, from the demon's own decision stream** — so a kill advances
 the killer's `WanderIndex` by one, the only such advance outside a decide-driven system. It
@@ -360,7 +360,7 @@ schedule, not by luck: the spawner sits `.before(SimSet::SpatialRebuild)` and in
 `SimPipeline::BothModes` (`demon/mod.rs`). The `Live`-only rule is not covered by the
 warmup hold — that pause belongs to `sim_time` and space unpauses it — which is why the
 `WorldStarted` reset is matched on the precondition **no demon may be alive when a run
-starts** (`demon::on_world_started` says so). A `DemonSpawnPause` (0.5–3 s staging)
+starts** (`demon::on_world_started` says so). A `DemonSpawnPause` staging
 existed and was removed on request; staging an entrance again means a new component,
 not reviving that one.
 
