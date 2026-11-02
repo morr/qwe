@@ -30,6 +30,14 @@ This file is the *how to work here*; `CONTEXT.md` is the *what this project is*.
 Skills hold the detail; this file holds the map. Load them — don't reconstruct their content from here.
 **Load the skill before the work, not before the edit**; several may apply at once (a panel row driven by a demon slider: `ui-panels` + `species-behavior`).
 
+**A skill carries what the code cannot say by itself** — mechanisms, invariants, traps,
+canon, and decision rules; the repository's code is the working example. Nothing that a
+grep over the repo reproduces belongs in a skill: constant values and defaults,
+enumerations of helpers and their signatures, flag and parameter tables, code examples
+duplicating the files the skill already references. The test applies to every line, when
+a skill is written and when it is updated: a line derivable from reading the code is a
+candidate for deletion.
+
 | What you touch | Skill |
 |---|---|
 | any git operation — staging, committing, branching, rebasing, history | `git` |
