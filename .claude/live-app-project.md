@@ -311,6 +311,14 @@ $b cam                                          # read the resulting zoom back
   pre-`VirtualCursor` way) makes `bevy_winit` warp the **real** cursor to the
   same spot — don't.
 
+- **`key` presses a virtual key and never touches the real keyboard.** The
+  key name (a bevy `KeyCode` variant: `Backslash`, `BracketRight`, `F12`) lands
+  in the `VirtualKey` resource (`src/dev.rs`, written over
+  `world.insert_resources`); `apply_virtual_key` converts it to a press+release
+  on `ButtonInput<KeyCode>` in `PreUpdate`, so hotkeys (`]`/`[` selection
+  cycling, `\` pin, F12) read the standard `just_pressed` path. Consumed on
+  use — one resource write is one keypress; press again with another write.
+
 - Portal hint for Tula is `3284, 2969`; other cities put it at the map centre
   (`3800, 2850`) unless `city.rs` says otherwise.
 
@@ -327,7 +335,8 @@ corpse, a child entity), `Silhouette`, `SoulMote`
 `RequestedAt`, `RetireAt`.
 
 Resources — `City`, `SimSpeed`, `Telemetry`, `VirtualCursor` (the agent's
-virtual cursor, written by `brp hover` / `click`), `PortalPos`, `PathfindingAlgorithm`,
+virtual cursor, written by `brp hover` / `click`), `VirtualKey` (the agent's
+virtual keypress, written by `brp key`), `PortalPos`, `PathfindingAlgorithm`,
 `DemonStyle`, `DemonSpawner`, `HumanStyle`, `SeparationStyle`,
 `BuildingHeightMode`, `TreeStyle` / `TreeShape`, `TreeRowStyle`, `ConiferNoiseStyle`,
 `RoadStyle`, `RoadShape` / `RoadShapeOnMap` (a write to `RoadShape` reaches the map

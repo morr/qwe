@@ -515,6 +515,41 @@ pub fn cursor_position(window: &Window, virtual_cursor: &VirtualCursor) -> Optio
         .or_else(|| window.cursor_position())
 }
 
+/// Клавиша агента, ведущего приложение через BRP (skill `live-app`): пишет её
+/// `brp key`, а [`apply_virtual_key`] обращает её в настоящий нажим
+/// `ButtonInput<KeyCode>` — горячие клавиши читают стандартный путь и не
+/// знают про виртуальность. Расходуется одним кадром (press + release в одном
+/// `PreUpdate`: `just_pressed` живёт до конца кадра, к следующему набор пуст),
+/// как курсор — до `off`.
+#[derive(Resource, Reflect, Debug)]
+#[reflect(Resource)]
+pub struct VirtualKey {
+    pub active: bool,
+    pub key: KeyCode,
+}
+
+impl Default for VirtualKey {
+    fn default() -> Self {
+        Self {
+            active: false,
+            key: KeyCode::Escape,
+        }
+    }
+}
+
+/// Виртуальная клавиша — в нажим. После систем ввода Bevy (`PreUpdate`,
+/// `InputSystems`): они каждый кадр чистят наборы `just_pressed` — нажим,
+/// поставленный до них, программы не дождались бы.
+fn apply_virtual_key(mut keys: ResMut<ButtonInput<KeyCode>>, mut virtual_key: ResMut<VirtualKey>) {
+    if !virtual_key.active {
+        return;
+    }
+    let key = virtual_key.key;
+    keys.press(key);
+    keys.release(key);
+    virtual_key.active = false;
+}
+
 pub struct DevPlugin;
 
 impl Plugin for DevPlugin {
@@ -531,13 +566,20 @@ impl Plugin for DevPlugin {
         .register_type::<ProbeLayersEvent>()
         .register_type::<LayerProbe>()
         .register_type::<VirtualCursor>()
+        .register_type::<VirtualKey>()
+        .register_type::<KeyCode>()
         .init_resource::<LayerProbe>()
         .init_resource::<VirtualCursor>()
+        .init_resource::<VirtualKey>()
         .add_observer(on_take_screenshot)
         .add_observer(on_offscreen_shot)
         .add_observer(on_spawn_test_walker)
         .add_observer(on_probe_layers)
         .add_systems(Update, capture_offscreen)
+        .add_systems(
+            PreUpdate,
+            apply_virtual_key.after(bevy::input::InputSystems),
+        )
         .add_systems(
             Update,
             trigger_screenshot.run_if(bevy::input::common_conditions::input_just_pressed(
