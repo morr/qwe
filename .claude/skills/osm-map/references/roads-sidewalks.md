@@ -358,8 +358,13 @@ on the paired side themselves (`roads-pairs-medians.md`, **Paired halves**).
   `verge paving (auto)` / `verge lawn (auto)` / `verge yard (auto)`, plus `paving scrap
   (auto)`, `road corner (auto)`, `sidewalk corner (auto)` — instead of a model band: the
   highlight draws the exact contour on the map, and a pale patch at a crossing mouth is
-  selectable as the paved run it is. The resource changes with every road rebuild
-  (style, shape, verge zoom step), and the index rebuilds on it.
+selectable as the paved run it is. The resource is rewritten by world entry and each
+full rebuild (`rebuilds_on`: style, shape, sun), and the index rebuilds on it — the
+pieces answering the **verge zoom step of that build**, not the current zoom: crossing
+the threshold toggles the prebuilt layers' visibility without a rebuild
+(`show_road_steps`), so hits keep naming wide lawn/yard contours hidden on the far
+step, and after a far-step rebuild (style changes at any zoom) they miss the wide
+bands a zoom-in reveals.
   In a microdistrict
   the tile laid from the kerb to a footway fifteen metres off made the street read as
   poured concrete; there it is a lawn with the footway on it, as in any Soviet yard,

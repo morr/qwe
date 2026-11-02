@@ -308,7 +308,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     `Tagged`, `Inferred`, `None`. The whole drawn composition of the verge — tile, lawn,
     yard, scraps, the corner pieces of `corners` — is collected by the road build into
     **`DrawnPieces`** (`DrawnPiece`, `PieceKind`), and the semantic index answers the
-    verge zone with those pieces, not with a model band. Detail — `roads-sidewalks.md`.
+    verge zone with those pieces, not with a model band — the ones of the verge zoom
+    step of the **last rebuild**: a threshold crossing toggles layer visibility without
+    a rebuild, so a hit can name a wide-verge contour hidden on the far step or miss
+    wide bands a zoom-in reveals. Detail — `roads-sidewalks.md`.
   - **Paired halves** (`map/roads/network/pairs.rs`, `Pairs`) — a divided street as OSM
     draws it: two opposite one-way ways of one class side by side, up to `PAIR_MAX_GAP`
     between the kerbs. Found once, by `axis::street_axes`, and **aligned** there — the
@@ -1235,9 +1238,11 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   `tools/shot_coords`) and the live list of what the map draws under the cursor, from the
   **semantic index** (`map/inspect.rs::InspectIndex` — a `Grid` over the `MapData`
   features **plus the drawn road pieces** (`roads::DrawnPieces`: the verge's tile/lawn/
-  yard composition, paving scraps, junction corner pieces — collected by every road
-  build, so a hit answers exactly what is drawn, verge zone included), built once per
-  load, rebuilt when `MapData`, the road shape **or the drawn pieces** change; a
+  yard composition, paving scraps, junction corner pieces — recorded by world entry and
+  each full rebuild, at that build's verge zoom step, so a hit answers what the last
+  build drew — verge zone included, wide-verge pieces following the rebuild's step,
+  not the current zoom), built once per load, rebuilt when `MapData`, the road shape
+  **or the drawn pieces** change; a
   hit carries the feature label and the z of the layer it draws in, top layer first; bare
   ground is **not** a hit —
   an empty list reads `-`). **Kerb parking pockets answer too** — `parking pocket

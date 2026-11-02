@@ -54,9 +54,10 @@ place, `brp probe` for the layers and features there, `brp shot` to compare agai
 the screenshot. One session met `ConnectionRefusedError` on both ports, declared it
 would answer "from the code and the screenshot", and then spent the better part of
 an hour hand-building the layer map `brp probe` answers in one call. The offline
-path (`examples/audit/pocket_probe.rs` and the other audit examples) is for
-questions about the *parse algorithm itself* — the geometry before it becomes
-layers — not for finding out which layers a point sits on.
+path (`examples/audit/pocket_probe.rs` and the other audit examples) covers the
+*parse algorithm itself* and the drawn **road** layers under a point (`osm-map`:
+the drawn-geometry arbiter for when BRP is not an option) — the full layer answer,
+every layer of the map at once, is the live app's.
 
 Never `pkill -f target/debug/qwe` and never `brp quit` on 15702 — that kills the
 user's session. Stop your own instance with `TaskStop`.
@@ -424,10 +425,12 @@ the road drew itself is a hit of its own — `sidewalk (auto, tagged)` / `sidewa
 inferred)` for the two reasons the parse puts a sidewalk there — and every hit
 that came out of the extract ends with its OSM id, `#179102449`: `tools/osm_near --id
 179102449` prints that element's tags and vertices. Generated bands inherit the road's
-way id. **The verge zone answers with the drawn pieces** (`roads::DrawnPieces`,
-collected by every road build): `verge paving (auto)` / `verge lawn (auto)` /
-`verge yard (auto)`, `paving scrap (auto)`, `road corner (auto)`, `sidewalk corner
-(auto)` — a hit per drawn contour, highlight included, so a pale patch at a crossing
+  way id. **The verge zone answers with the drawn pieces** (`roads::DrawnPieces`,
+  recorded by world entry and each full rebuild, at that build's verge zoom step — not
+  the current zoom: a threshold crossing toggles layer visibility without a rebuild):
+  `verge paving (auto)` / `verge lawn (auto)` /
+  `verge yard (auto)`, `paving scrap (auto)`, `road corner (auto)`, `sidewalk corner
+  (auto)` — a hit per piece contour, highlight included, so a pale patch at a crossing
 mouth is selectable as the paved verge run it is; the pieces inherit the owner road's
 way id, junction pieces carry none. The same list lives in the **point inspector panel** (top
 right, under the telemetry) and updates with the cursor — a screenshot of it answers both

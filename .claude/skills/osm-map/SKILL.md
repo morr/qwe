@@ -81,10 +81,13 @@ screenshots are arbitrary screen regions from a macOS utility; `shot_coords` han
 size, zoom precision) — `.claude/live-app-project.md`, "Where a screenshot was taken". In
 the **live app** the same question is one call: `brp probe <x> <y>` — its report lists the
 drawn layers *and*, in the `features at the point (semantic index)` section, the map
-features under the point. The semantic list answers for the **model**: beside the tagged features it
-carries the auto bands a road draws itself, measured off the OSM axis by the width law
-— smoothing, kerb returns and driveway crossings are not in them; for the drawn
-geometry `brp probe`'s layer section is the arbiter. The label dictionary (including
+features under the point. Beside the tagged features the list carries what the road
+draws itself, in two halves: the sidewalk bands are model-measured, off the OSM axis by
+the width law (smoothing and driveway crossings are not in them), while the verge zone
+answers with the **drawn pieces** (`roads::DrawnPieces`) — kerb returns among them — so
+a hit names the contour the last full build laid, at its verge zoom step rather than the
+current zoom (a threshold crossing toggles layer visibility without a rebuild); for the
+rest of the drawn geometry `brp probe`'s layer section is the arbiter. The label dictionary (including
 the `#id` tail and its `tools/osm_near --id <id>` follow-up) is in `ui-panels`, the
 inspector panel's skill.
 **A translucent yellow shape in the shot is the inspector's highlight — the user's

@@ -118,14 +118,16 @@ panel** with four tabs (`ui/shell.rs`).
   `sidewalk=*` tag) / `sidewalk (auto, inferred)` (the parse inferred it) — and a hit that
   came out of the extract ends with its OSM id, `#179102449` (the tags are one
   `tools/osm_near --id <id>` away). **The verge zone answers with the drawn pieces**
-  (`roads::DrawnPieces`, collected by every road build): `verge paving (auto)` (the
+  (`roads::DrawnPieces`, recorded by world entry and each full rebuild, at that build's
+  verge zoom step — not the current zoom: a threshold crossing toggles layer visibility
+  without a rebuild): `verge paving (auto)` (the
   tile of the verge — the kerb strip, kerb pads, verge corner fillets, re-tiled lawn
   scraps; this is what a pale patch at a crossing mouth is), `verge lawn (auto)` (the
   meadow of a wide verge beside a mapped lawn), `verge yard (auto)` (yard grass — the
   default), plus `paving scrap (auto)` (a tiled wedge inside ground green),
   `road corner (auto)` and `sidewalk corner (auto)` (the junction corner pieces of
   `corners`) — the model `verge (auto)` band hit is gone, replaced by these: the
-  highlight draws the exact contour that is on the map. The piece hits inherit the
+  highlight draws the piece's exact contour. The piece hits inherit the
   owner road's OSM id; junction pieces carry none. **A kerb parking pocket answers as
   `parking pocket
   (auto, tagged)`** (`parking:<side>` tag) or `parking pocket (auto)` (the sparse rule)
