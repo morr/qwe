@@ -501,11 +501,16 @@ fn guard_frame_budget(
     debt.deferred += rest.as_secs_f64();
 }
 
+#[allow(clippy::too_many_arguments)]
 fn end_sim_load(
     mut load: ResMut<SimLoad>,
     mut diagnostics: bevy::diagnostic::Diagnostics,
     tick: Res<SimTick>,
     real: Res<Time<Real>>,
+    humans: Option<Query<(), With<crate::human::Human>>>,
+    souls: Option<Query<(), With<crate::human::SoulMote>>>,
+    corpses: Option<Query<(), With<crate::human::CorpseTag>>>,
+    telemetry: Option<Res<crate::telemetry::Telemetry>>,
 ) {
     let Some(started) = load.started.take() else {
         return;
@@ -519,8 +524,17 @@ fn end_sim_load(
     // как раз тот случай, ради которого замер и заведён (см. `frame_overrun`)
     load.frame_sim_ms = sim_ms;
     if ticks > 0 && sim_ms > tick_spike_threshold() {
+        // контекст волны: подсистемы тика на спайке остаются маленькими, и без
+        // счётчиков состояние мира в момент вспышки не восстановить. Спайковые
+        // кадры редки, поэтому проходы по запросам здесь стоят того
+        let (humans, souls, corpses) = (
+            humans.map(|q| q.iter().count()),
+            souls.map(|q| q.iter().count()),
+            corpses.map(|q| q.iter().count()),
+        );
+        let killed = telemetry.map(|t| t.killed).unwrap_or_default();
         info!(
-            "tick spike: {sim_ms:.1} ms for {ticks} ticks (tick {})",
+            "tick spike: {sim_ms:.1} ms for {ticks} ticks (tick {}, humans {humans:?}, souls {souls:?}, corpses {corpses:?}, killed {killed})",
             tick.0
         );
     }
