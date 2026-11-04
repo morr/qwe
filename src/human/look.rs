@@ -32,6 +32,19 @@ const ATTIRE_HUE: std::ops::Range<f32> = 170.0..290.0;
 const ATTIRE_SATURATION: std::ops::Range<f32> = 0.15..0.50;
 const ATTIRE_LIGHTNESS: std::ops::Range<f32> = 0.30..0.55;
 
+/// Шаги квантования цвета одежды, доли единицы и градусы. Цвет в полном
+/// разрешении f32 у каждой пешки свой, а рендер собирает спрайты с одинаковым
+/// `Sprite` в один материал по **точному** ключу (`bevy_sprite_render`:
+/// `SpriteMeshMaterialBucketKey` хеширует биты цвета), и кеш из ~20 000
+/// уникальных цветов обходится eviction-проходом **каждый кадр** — замер
+/// 11.2026, ~0.5 мс/кадр на простое, растёт линейно с населением. Шаги ниже
+/// дают ≤ 40 × 8 × 6 ≈ 1 900 бакетов (на деле ~1 000), глазом шаг не виден
+/// на приглушённой палитре. Квантование после броска: число и порядок
+/// бросков потока решений не меняются (`determinism`).
+const ATTIRE_HUE_STEP: f32 = 3.0;
+const ATTIRE_SATURATION_STEP: f32 = 0.05;
+const ATTIRE_LIGHTNESS_STEP: f32 = 0.05;
+
 /// Одежда — три броска потока решений пешки, как и прежде: число и порядок
 /// бросков менять нельзя, за ними идут темп и курс.
 ///
@@ -44,10 +57,15 @@ const ATTIRE_LIGHTNESS: std::ops::Range<f32> = 0.30..0.55;
 /// к цвету отношения не имеющего. Счёт держит тест
 /// `attire_spends_exactly_three_draws`.
 pub(super) fn roll_attire(rng: &mut impl RngExt) -> Attire {
+    // квантование — не про вид, а про кеш материалов рендера: палитра
+    // дискретных значений схлопывает бакеты кеша с населения до палитры
+    // (см. комментарий над шагами)
     Attire(Color::hsl(
-        rng.random_range(ATTIRE_HUE),
-        rng.random_range(ATTIRE_SATURATION),
-        rng.random_range(ATTIRE_LIGHTNESS),
+        (rng.random_range(ATTIRE_HUE) / ATTIRE_HUE_STEP).round() * ATTIRE_HUE_STEP,
+        (rng.random_range(ATTIRE_SATURATION) / ATTIRE_SATURATION_STEP).round()
+            * ATTIRE_SATURATION_STEP,
+        (rng.random_range(ATTIRE_LIGHTNESS) / ATTIRE_LIGHTNESS_STEP).round()
+            * ATTIRE_LIGHTNESS_STEP,
     ))
 }
 
@@ -318,6 +336,12 @@ pub fn spread_blood(
     mut commands: Commands,
     mut pools: Query<(Entity, &mut BloodSpread, &mut Silhouette)>,
 ) {
+    // на паузе лужа стоит не только по смыслу, но и буквально: запись того же
+    // значения всё равно помечает `Silhouette` изменённым, и лужа каждый кадр
+    // идёт через перепись спрайта и переключение материала рендера
+    if time.delta_secs() <= 0.0 {
+        return;
+    }
     for (entity, mut spread, mut silhouette) in &mut pools {
         spread.grown = (spread.grown + time.delta_secs() / SPREAD_SECS).min(1.0);
         // быстро в начале, медленно к концу: кровь бежит, пока её толкает
