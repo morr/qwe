@@ -216,9 +216,16 @@ pub fn polymesh_rebuilt(poly: Res<crate::navigation::PolyNavmesh>, mut seen: Loc
 /// Визуальная позиция: лерп между прошлым и текущим фиксированным шагом,
 /// плюс y-сортировка (z от y). Живёт в `AfterFixedMainLoop`.
 pub fn interpolate_movable_transforms(
+    time: Res<Time<Virtual>>,
     fixed_time: Res<Time<Fixed>>,
     mut query: Query<(&mut Transform, &SimPosition, &PreviousSimPosition)>,
 ) {
+    // на паузе позиции не меняются и доля оверстепа стоит — лерп выдаёт те же
+    // значения, что уже в трансформах, но платит за это проходом по всем
+    // пешкам каждый кадр (замер 11.2026: ~0.15–0.3 мс на 20k+ населения)
+    if time.is_paused() {
+        return;
+    }
     let alpha = fixed_time.overstep_fraction();
 
     for (mut transform, sim_position, previous) in &mut query {

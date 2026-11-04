@@ -518,11 +518,33 @@ fn end_sim_load(
     // до `observe`: тот выходит на кадре без единого шага, а кадр без шагов —
     // как раз тот случай, ради которого замер и заведён (см. `frame_overrun`)
     load.frame_sim_ms = sim_ms;
+    if ticks > 0 && sim_ms > tick_spike_threshold() {
+        info!(
+            "tick spike: {sim_ms:.1} ms for {ticks} ticks (tick {})",
+            tick.0
+        );
+    }
     load.observe(sim_ms, ticks, real.delta_secs());
     let (tick_ms, wait_ms, peak_ms) = (load.tick_ms, load.wait_ms, load.wait_peak_ms);
     diagnostics.add_measurement(&crate::diagnostics::SIM_TICK_MS, || f64::from(tick_ms));
     diagnostics.add_measurement(&crate::diagnostics::SIM_WAIT_MS, || f64::from(wait_ms));
     diagnostics.add_measurement(&crate::diagnostics::SIM_WAIT_PEAK_MS, || f64::from(peak_ms));
+}
+
+/// Порог «тик-спайка» — из `QWE_PERF_FRAME_SPIKES=<ms>` (тот же детектор,
+/// что у длины кадра в `dev.rs`): прогон `FixedUpdate` дороже порога печатает
+/// строку `tick spike: 41.1 ms for 96 ticks`. Секундные средние `sim/tick_ms`
+/// всплеск размазывают, а он — самый честный след тех самых «медленных
+/// тиков», которые регулятор потом разрезает на скорости. Без переменной — 0,
+/// то есть лог выключен.
+fn tick_spike_threshold() -> f32 {
+    static THRESHOLD: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *THRESHOLD.get_or_init(|| {
+        std::env::var("QWE_PERF_FRAME_SPIKES")
+            .ok()
+            .and_then(|ms| ms.parse().ok())
+            .unwrap_or(0.0)
+    })
 }
 
 /// Авто-замедление: скорость назначается **расчётом** по замеренной цене
