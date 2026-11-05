@@ -134,9 +134,9 @@ hashed with the pose's own bits, pose and pool would walk in step and four pairs
 become visible long before forty.
 
 **Growth** (`spread_blood`, `Update`, `SimPipeline::BothModes`) — the pool opens ease-out
-by writing `Silhouette::body` (never `custom_size` — that belongs to `silhouette`).
-Ordered `.before(size_fresh_silhouettes)` so the new size reaches the sprite in the same
-frame.
+by writing `Silhouette::body` (never `custom_size` — that belongs to `silhouette`), and
+pushes the pool into `FreshSilhouettes`. Ordered `.before(size_fresh_silhouettes)` so the
+new size reaches the sprite in the same frame.
 
 **Look at it with your eyes**: `cargo run --example blood_gallery` — every pool and every
 spatter side by side, then a field of bodies built by the real `to_corpse`, on three
@@ -156,9 +156,13 @@ chained `Update` systems. Nothing outside `silhouette/` writes the `custom_size`
 entity that carries a `Silhouette` — a look system that wants a different size rewrites
 the component, not the sprite. The two:
 
-- **`size_fresh_silhouettes`** — every frame, but `Changed<Silhouette>` only. A spawn or a
-  corpse rewrite gets its size in the frame it appears, instead of waiting for the first
-  wheel click.
+- **`size_fresh_silhouettes`** — every frame, over the `FreshSilhouettes` worklist, not a
+  query filter. A `Changed<Silhouette>` filter is non-archetypal (`IS_ARCHETYPAL = false`),
+  so it walked all ~20k+ silhouette sprites every frame for the handful that changed; the
+  writers now enqueue themselves instead — an `Add<Silhouette>` observer in the plugin
+  (spawn, halo, blood children, souls) plus the push in `spread_blood`. A spawn or a corpse
+  rewrite gets its size in the frame it appears, instead of waiting for the first wheel
+  click. With no camera the list is left alone — entries wait for the first camera frame.
 - **`resize_silhouettes_on_zoom`** — only when the zoom actually changed (`Local<f32>`
   holds the last one), and even then **a window, not the whole set**: `RESIZE_BATCH`
   (2048) silhouettes per zoom-change frame, cursor held in a `Local`, and inside the

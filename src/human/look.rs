@@ -22,7 +22,9 @@ use rand::RngExt;
 use super::components::{Attire, HumanFleeTag};
 use crate::rng::splitmix64;
 use crate::settings::{CORPSE_HEIGHT, HUMAN_MIN_PX, HUMAN_SIZE, Z_CORPSE};
-use crate::silhouette::{Glyph, Silhouette, Silhouettes, blood, figure, set_glyph};
+use crate::silhouette::{
+    FreshSilhouettes, Glyph, Silhouette, Silhouettes, blood, figure, set_glyph,
+};
 
 /// Тон паники — один на всех: янтарь, тёплый, но не красный демона.
 pub const PANIC_COLOR: Color = Color::srgb(1.0, 0.70, 0.15);
@@ -330,11 +332,14 @@ fn stain_transform(pose: CorpsePose, spin: f32, z: f32) -> Transform {
 /// кровь стоит, на 30× течёт втридцатеро быстрее, то есть по часам симуляции
 /// натекает всегда за одно и то же время. Размер пишется в `Silhouette`, а не
 /// в `Sprite::custom_size`: тот принадлежит `silhouette`, и переписанный
-/// силуэт доедет до спрайта его же системой (`size_fresh_silhouettes`).
+/// силуэт доедет до спрайта его же системой (`size_fresh_silhouettes`) —
+/// в этот же кадр: запись в [`FreshSilhouettes`] она разберёт своим прогоном,
+/// который здесь `.before`-ом поставлен после растекания.
 pub fn spread_blood(
     time: Res<Time>,
     mut commands: Commands,
     mut pools: Query<(Entity, &mut BloodSpread, &mut Silhouette)>,
+    mut fresh: ResMut<FreshSilhouettes>,
 ) {
     // на паузе лужа стоит не только по смыслу, но и буквально: запись того же
     // значения всё равно помечает `Silhouette` изменённым, и лужа каждый кадр
@@ -347,6 +352,7 @@ pub fn spread_blood(
         // быстро в начале, медленно к концу: кровь бежит, пока её толкает
         let eased = 1.0 - (1.0 - spread.grown).powi(2);
         silhouette.body = spread.full * (SPREAD_START + (1.0 - SPREAD_START) * eased);
+        fresh.0.push(entity);
         if spread.grown >= 1.0 {
             commands.entity(entity).remove::<BloodSpread>();
         }
@@ -505,7 +511,10 @@ mod tests {
     fn a_pool_spreads_to_its_full_size_and_then_stops_being_walked() {
         let mut app = App::new();
         app.add_systems(Update, spread_blood)
-            .insert_resource(Time::<()>::default());
+            .insert_resource(Time::<()>::default())
+            // система теперь несёт рабочий список силуэтов — стенду он нужен
+            // так же, как время
+            .insert_resource(FreshSilhouettes::default());
         let look = blood_look(Entity::from_raw_u32(3).unwrap());
         let pool = app
             .world_mut()

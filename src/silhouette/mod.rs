@@ -210,7 +210,9 @@ pub struct SilhouettePlugin;
 impl Plugin for SilhouettePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Silhouettes>()
+            .init_resource::<FreshSilhouettes>()
             .register_type::<Silhouette>()
+            .add_observer(on_silhouette_added)
             .add_systems(Startup, build_atlas)
             .add_systems(
                 Update,
@@ -472,17 +474,38 @@ fn camera_zoom(
     camera.map(|camera| camera.scale.x)
 }
 
+/// Силуэты, ждущие своего размера под текущий зум. Пишут в список два места:
+/// наблюдатель на `Add<Silhouette>` (спавн пешки, ореол, лужа, брызги, душа) и
+/// `spread_blood` (лужа растекла). Раньше выборку доставал фильтр
+/// `Changed<Silhouette>`, но тот неархетипный (`IS_ARCHETYPAL = false`): каждый
+/// кадр он обходил все ~20k+ сущностей со спрайтом и силуэтом — цена полного
+/// прохода, хотя после загрузки города изменений единицы.
+#[derive(Resource, Default)]
+pub struct FreshSilhouettes(pub(crate) Vec<Entity>);
+
+fn on_silhouette_added(event: On<Add<Silhouette>>, mut fresh: ResMut<FreshSilhouettes>) {
+    fresh.0.push(event.entity);
+}
+
 /// Свежий или переписанный силуэт (спавн, труп) получает размер под текущий
 /// зум — иначе пешка, родившаяся на дальнем плане, ждала бы первого щелчка
 /// колеса.
+///
+/// Камеры нет — список не трогаем: записи дождутся первого кадра с камерой,
+/// как дождался бы и тик изменения под прежним `Changed`-фильтром.
 pub fn size_fresh_silhouettes(
     camera: Option<Single<&Transform, (With<Camera2d>, With<PanCamera>)>>,
-    mut fresh: Query<(&Silhouette, &mut Sprite), Changed<Silhouette>>,
+    mut fresh: ResMut<FreshSilhouettes>,
+    mut query: Query<(&Silhouette, &mut Sprite)>,
 ) {
     let Some(zoom) = camera_zoom(camera) else {
         return;
     };
-    for (silhouette, mut sprite) in &mut fresh {
+    for entity in fresh.0.drain(..) {
+        // душа или лужа могли дожить до despawn'а раньше своего кадра
+        let Ok((silhouette, mut sprite)) = query.get_mut(entity) else {
+            continue;
+        };
         sprite.custom_size = Some(silhouette.drawn_size(zoom));
     }
 }
