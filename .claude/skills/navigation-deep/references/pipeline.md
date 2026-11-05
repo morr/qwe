@@ -161,6 +161,25 @@ f32)>` — the whole rule as a value, so the four branches (urgent off-screen,
 wanderer in frame, wanderer off-screen, wide zoom) are tested without a camera or a
 window; the system around it is only queue assembly and the budget truncation.
 
+**The queue index** (`pathfinding.rs::QueuedWander`) — the wanderer half of the pass is
+not a scan of every standing request. Measured (`examples/bench/dispatch_bench.rs`,
+20 k pending, dev profile): the scan part was ~110–170 µs a frame at a storm camera and
+~90 µs at the overview zoom, where the zoom cut drops every wanderer and the pass paid
+the scan anyway. The dispatcher now gathers candidates from the `SpatialGrid` cells
+covering the frame (~20–90 µs; ~2 µs at the overview zoom) and lets `queue_key` do the
+precise test; the urgent few are an archetypal `With<UrgentPath>` query at any zoom. The
+grid holds only queued *peaceful* requests and is maintained by four observers on
+`PathfindingRequest`/`UrgentPath` — the same event-completeness shape as
+`DestinationClaims` (despawn raises `Remove` per component; the removal order inside a
+despawn or a panic re-target cannot lose an entry, because each observer's opposite
+repairs the other's view). A queued wanderer is stationary, so a cell entry cannot go
+stale, and the dispatcher reads the position live anyway — the grid decides WHO to read,
+not WHERE they stand. What the index does **not** fix is the pass's dominant cost: the
+**task-spawn loop** — `AsyncComputeTaskPool::spawn` wakes a worker per task
+(~0.5–1.7 µs each with an idle pool, cheaper into a saturated one), ~0.4–1.3 ms a frame
+at the storm's 712–1024 dispatches — and the candidate sort (~160 µs) when in-frame
+candidates exceed the budget.
+
 **Who is urgent is not this module's business**: the species write
 `movement::UrgentPath` and the dispatcher asks `Has<UrgentPath>`. It used to derive
 urgency from `Has<Human>` + `Has<HumanFleeTag>`, which put one species' name in seven

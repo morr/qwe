@@ -190,6 +190,9 @@ fn the_rescue_beats_the_dispatcher_to_a_trapped_pawns_request() {
         half_extent: Vec2::new(640.0, 360.0),
         zoom: 1.0,
     });
+    // и сетка очереди: диспетчер собирает мирных из неё, и без ресурса он
+    // молча не проходит валидацию параметров — контроль ниже срабатывает
+    app.init_resource::<SpatialGrid<QueuedWander>>();
     // тот же порядок, что и в `MovementPlugin`
     app.add_systems(
         Update,
@@ -902,5 +905,152 @@ fn a_target_picked_after_a_stop_gets_a_fresh_tick_mark() {
             .0,
         5,
         "новая заявка обязана иметь метку текущего тика"
+    );
+}
+
+// --- сетка очереди мирных заявок ---
+
+use super::pathfinding::{
+    QueuedWander, on_pathfinding_request_added, on_pathfinding_request_removed,
+    on_urgent_path_added, on_urgent_path_removed,
+};
+use crate::spatial::SpatialGrid;
+
+/// Стенд сетки очереди: ресурс и четыре observers, как их поднимает
+/// `MovementPlugin`, — без остального плагина.
+fn app_with_queue_index() -> App {
+    let mut app = app_with_block();
+    app.init_resource::<SpatialGrid<QueuedWander>>()
+        .add_observer(on_pathfinding_request_added)
+        .add_observer(on_pathfinding_request_removed)
+        .add_observer(on_urgent_path_added)
+        .add_observer(on_urgent_path_removed);
+    app
+}
+
+/// Мирная заявка пешке — без `UrgentPath`: то, что попадает в сетку очереди.
+fn wander_request(app: &mut App, pawn: Entity, start_tile: IVec2, end_tile: IVec2) {
+    app.world_mut().entity_mut(pawn).insert(PathfindingRequest {
+        start_tile,
+        end_tile,
+    });
+}
+
+/// Кто стоит в сетке очереди в ячейке точки.
+fn queued_near(app: &App, position: Vec2) -> Vec<Entity> {
+    let mut seen = Vec::new();
+    app.world()
+        .resource::<SpatialGrid<QueuedWander>>()
+        .for_each_in_cells_around(position, 0.0, |entity| seen.push(entity));
+    seen
+}
+
+/// Заявка мирного встаёт в сетку очереди и уходит оттуда каждым путём снятия:
+/// паника (срочность), возврат срочности назад и despawn. Порядок снятия пары
+/// `UrgentPath`/заявка не гарантирован, и оба порядка обязаны вести к одной
+/// записи в сетке.
+#[test]
+fn a_queued_wanderer_enters_the_index_and_leaves_by_every_path() {
+    let app = &mut app_with_queue_index();
+    let at = tile_center(IVec2::new(50, 50));
+    let pawn = spawn_pawn(app, at);
+    wander_request(app, pawn, IVec2::new(50, 50), IVec2::new(60, 50));
+    app.world_mut().flush();
+    assert_eq!(
+        queued_near(app, at),
+        vec![pawn],
+        "заявка не встала в очередь"
+    );
+
+    // паника: срочность переводит мирного в срочные — из очереди прочь
+    app.world_mut().entity_mut(pawn).insert(UrgentPath);
+    app.world_mut().flush();
+    assert!(
+        queued_near(app, at).is_empty(),
+        "срочный остался в очереди мирных"
+    );
+
+    // срочность снята, заявка ещё стоит — запись возвращается
+    app.world_mut().entity_mut(pawn).remove::<UrgentPath>();
+    app.world_mut().flush();
+    assert_eq!(queued_near(app, at), vec![pawn], "запись не вернулась");
+
+    // despawn поднимает Remove на компоненте заявки — запись уходит и там
+    app.world_mut().despawn(pawn);
+    app.world_mut().flush();
+    assert!(
+        queued_near(app, at).is_empty(),
+        "despawn прошёл мимо очереди"
+    );
+}
+
+/// Диспетчер берёт мирных из сетки очереди: стоящий в кадре уезжает, за кадром
+/// ждёт — и уехавшая запись вычищается, а ожидающая остаётся.
+#[test]
+fn the_dispatcher_takes_queued_wanderers_from_the_index() {
+    AsyncComputeTaskPool::get_or_init(TaskPool::default);
+    let app = &mut app_with_queue_index();
+    // кадр на зуме 0.1: мирные берутся
+    app.insert_resource(Viewport {
+        centre: Vec2::ZERO,
+        half_extent: Vec2::new(640.0, 360.0),
+        zoom: 0.1,
+    });
+    app.add_systems(Update, dispatch_pathfinding_requests);
+
+    let visible = spawn_pawn(app, Vec2::ZERO);
+    wander_request(app, visible, IVec2::new(0, 0), IVec2::new(10, 5));
+    let off_screen = spawn_pawn(app, Vec2::new(100_000.0, 0.0));
+    wander_request(
+        app,
+        off_screen,
+        IVec2::new(50_000, 0),
+        IVec2::new(50_010, 0),
+    );
+    app.world_mut().flush();
+    app.update();
+
+    assert!(
+        app.world().get::<PathfindingTask>(visible).is_some(),
+        "стоящая в кадре заявка не уехала из сетки очереди"
+    );
+    assert!(
+        app.world().get::<PathfindingTask>(off_screen).is_none(),
+        "заявка за кадром уехала вопреки гейту видимости"
+    );
+    assert!(
+        queued_near(app, Vec2::ZERO).is_empty(),
+        "уехавшая заявка осталась в сетке очереди"
+    );
+    assert_eq!(
+        queued_near(app, Vec2::new(100_000.0, 0.0)),
+        vec![off_screen],
+        "ожидающая заявка потерялась из сетки очереди"
+    );
+}
+
+/// На общем плане мирные не берутся вовсе — даже из сетки очереди, даже стоя в
+/// самом центре кадра: сбор по ячейкам не отменяет зум-отсечку.
+#[test]
+fn no_queued_wanderer_is_dispatched_at_the_wide_zoom() {
+    AsyncComputeTaskPool::get_or_init(TaskPool::default);
+    let app = &mut app_with_queue_index();
+    app.insert_resource(Viewport {
+        centre: Vec2::ZERO,
+        half_extent: Vec2::new(640.0, 360.0),
+        zoom: 0.8,
+    });
+    app.add_systems(Update, dispatch_pathfinding_requests);
+
+    let pawn = spawn_pawn(app, Vec2::ZERO);
+    wander_request(app, pawn, IVec2::new(0, 0), IVec2::new(10, 5));
+    app.world_mut().flush();
+    app.update();
+
+    assert!(app.world().get::<PathfindingTask>(pawn).is_none());
+    assert_eq!(
+        queued_near(app, Vec2::ZERO),
+        vec![pawn],
+        "не уехавшая заявка обязана остаться в очереди"
     );
 }

@@ -876,7 +876,8 @@ Summary; the mechanism and the measurements — **navigation-deep skill** (polym
 - **PathfindingRequest → dispatcher → PathfindingTask** (`movement/`) — requests become
   async tasks with **visibility gating** (peaceful wanderers off-screen or at zoom ≥
   `WANDER_DISPATCH_MAX_ZOOM` wait; **`UrgentPath` always dispatches**) and **priority**
-  (urgent first, nearest-to-camera, cap `MAX_PATHFINDING_IN_FLIGHT` 1024). **The live
+  (urgent first, nearest-to-camera, cap `MAX_PATHFINDING_IN_FLIGHT` 1024); the wanderer
+  half is gathered from the queue index below, not scanned. **The live
   dispatcher stands while the player pauses** (`live_dispatch_runs`) — urgent requests
   included; they pile up and leave on the first unpaused frame. The warmup pause is the
   exception: the warmup waits for exactly these answers.
@@ -1031,12 +1032,16 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   **`to_pathfinding` re-files a queued request instead of overwriting it** (remove +
   insert, with `RequestedAt`): both consumers filter on `Added<PathfindingRequest>`,
   and an overwrite arms only `Changed`.
-- **SpatialGrid<T>** — uniform grid per marker type (`Demon`, `Human`), 60 m cells (≥ the
+- **SpatialGrid<T>** — uniform grid per marker type (`Demon`, `Human`, and
+  movement's `QueuedWander` — the live dispatcher's index of queued peaceful requests),
+  60 m cells (≥ the
   largest search radius, so a radius query is a 3×3 cell walk). Cells hold **entities
   only** — positions are read live through the `pos_of` closure. **A tie in distance is
   broken by `PawnId`, not by traversal order** (`order_of`, called only on exact equality).
   **The human grid is incremental** (observers + `SpatialGrid::moved` across cell
-  boundaries), **the demon grid is rebuilt** each tick.
+  boundaries), **the demon grid is rebuilt** each tick, **the queued-wanderer grid is
+  maintained by request-lifecycle observers alone** — a queued wanderer is stationary,
+  so it never follows a move.
 - **Decision ladder** (`human/decide.rs`, `demon/decide.rs`) — a species' rules live in a
   pure `decide(&…Sense, …) -> …Action`: plain values in, one enum variant out, no
   `Commands`, no queries, tested without an `App`. `behavior.rs` only applies the answer, so

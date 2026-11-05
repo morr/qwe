@@ -25,7 +25,11 @@ pub use self::destination::{
     DestinationClaims, SlotLab, SlotMatching, SlotSearch, assign_destination_slots, claim_batch,
     slot_side, slot_side_with_slack, slot_target,
 };
-pub use self::pathfinding::{dispatch_pathfinding_requests, wanderers_dispatched_at_zoom};
+pub use self::pathfinding::{
+    QueuedWander, dispatch_pathfinding_requests, on_pathfinding_request_added,
+    on_pathfinding_request_removed, on_urgent_path_added, on_urgent_path_removed,
+    wanderers_dispatched_at_zoom,
+};
 pub use self::separation::{
     SEPARATION_LEFT_SHARE, SEPARATION_LEFT_SHARE_MAX, SEPARATION_LEFT_SHARE_MIN,
     SEPARATION_LEFT_SHARE_STEP, SEPARATION_PASS_SQUEEZE, SEPARATION_PASS_SQUEEZE_MAX,
@@ -92,6 +96,8 @@ impl Plugin for MovementPlugin {
             .init_resource::<SeparationStats>()
             .register_type::<SeparationStats>()
             .init_resource::<DestinationClaims>()
+            // сетка очереди мирных заявок живого диспетчера — см. `pathfinding.rs`
+            .init_resource::<crate::spatial::SpatialGrid<self::pathfinding::QueuedWander>>()
             .register_type::<DestinationClaim>()
             .init_resource::<SlotSearch>()
             .register_type::<SlotSearch>()
@@ -105,6 +111,10 @@ impl Plugin for MovementPlugin {
             // индекс заявок переживает сущности только через это снятие:
             // деспавн поднимает `Remove` на каждый компонент
             .add_observer(self::destination::on_destination_claim_removed)
+            .add_observer(self::pathfinding::on_pathfinding_request_added)
+            .add_observer(self::pathfinding::on_pathfinding_request_removed)
+            .add_observer(self::pathfinding::on_urgent_path_added)
+            .add_observer(self::pathfinding::on_urgent_path_removed)
             // счётчики стенда — состояние прогона, а не выдача шагу: их сбрасывает
             // тот же `WorldStarted`, что `Telemetry` и `SimTick`. Через кортеж
             // `OnEnter(Playing)` ниже рестарт по R не проходит вовсе
@@ -113,6 +123,7 @@ impl Plugin for MovementPlugin {
                 OnEnter(AppState::Playing),
                 (
                     self::destination::reset_destination_claims,
+                    self::pathfinding::reset_queued_wanderers,
                     self::separation::reset_separation_holds,
                     self::separation::reset_separation_steer,
                     self::separation::reset_separation_block,

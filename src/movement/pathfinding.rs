@@ -11,10 +11,11 @@ use crate::camera::Viewport;
 use crate::determinism::SimTick;
 use crate::movement::components::{
     Movable, MovableState, PathfindingRequest, PathfindingTask, PawnEdit, PreviousSimPosition,
-    RequestedAt, RetireAt, SimPosition,
+    RequestedAt, RetireAt, SimPosition, UrgentPath,
 };
 use crate::navigation::{Backend, PathfindingResult, Walkable};
 use crate::settings::{MAX_PATHFINDING_IN_FLIGHT, REPATH_TRIM_LIMIT};
+use crate::spatial::SpatialGrid;
 
 /// Приоритет заявки в очереди диспетчера, по возрастанию: чем меньше, тем
 /// раньше считается путь.
@@ -77,34 +78,122 @@ pub fn live_dispatch_runs(
     !time.is_paused() || phase.is_none_or(|phase| *phase.get() != crate::loading::PlayPhase::Live)
 }
 
+/// Маркер ресурса-сетки стоящих мирных заявок, `SpatialGrid<QueuedWander>`.
+/// Не компонент: сетка типизирована им только для имени, записи в ней ведут
+/// observers жизненного цикла заявки и срочности.
+///
+/// Зачем сетка: полный скан стоящих заявок стоил кадру 0.8–1.2 мс на штормовые
+/// 20 тысяч (`dispatch_bench`), а гейт видимости — чистая геометрия кадра, и
+/// ~97% скана выбрасывалось. Диспетчер собирает кандидатов из ячеек, накрывающих
+/// кадр: на близком зуме это сотни вместо двадцати тысяч. В сетке живут только
+/// мирные заявки — срочных немного, их берёт архетипный запрос `With<UrgentPath>`
+/// при любом зуме.
+///
+/// Ведение — observers на компоненты, а не писцы: у заявки много источников
+/// снятия (диспатч, `to_idle`, раздевание трупа, despawn при побеге, рестарте
+/// и смене города), и все они поднимают `Remove` — единственный путь, которым
+/// запись покидает сущность. Тот же принцип полноты событий, что у
+/// [`DestinationClaims`](crate::movement::destination::DestinationClaims).
+///
+/// Стоящая мирная заявка неподвижна (подаётся в простое, уходит с первого же
+/// шага), так что ячейка записи не протухает; диспетчер и так читает позицию
+/// живьём — сетка решает, КОГО читать, а не ГДЕ тот стоит.
+pub struct QueuedWander;
+
+/// Мирная заявка встала — в сетку. Срочная не попадает: её диспетчер берёт и
+/// без кадра. Порядок команд внутри одной цепочки не имеет значения:
+/// `UrgentPath`, вставленный после заявки, исправит запись observer
+/// [`on_urgent_path_added`], вставленный до — заявка просто не встанет.
+pub fn on_pathfinding_request_added(
+    event: On<Add<PathfindingRequest>>,
+    mut queued: ResMut<SpatialGrid<QueuedWander>>,
+    pawns: Query<(&SimPosition, Has<UrgentPath>)>,
+) {
+    let Ok((position, urgent)) = pawns.get(event.entity) else {
+        return;
+    };
+    if !urgent {
+        queued.insert(event.entity, position.0);
+    }
+}
+
+/// Заявка снята — прочь из сетки. Никаких чтений компонент, только сущность
+/// и ресурс: despawn поднимает `Remove` на каждый компонент, и observer
+/// обязан отработать и там (побег, рестарт, смена города, раздевание трупа).
+pub fn on_pathfinding_request_removed(
+    event: On<Remove<PathfindingRequest>>,
+    mut queued: ResMut<SpatialGrid<QueuedWander>>,
+) {
+    queued.remove(event.entity);
+}
+
+/// Мирный стал срочным (паника, убегание) — из сетки прочь: его теперь берёт
+/// архетипный запрос срочных. Сущность может в этот момент уже сниматься
+/// (despawn убирает компоненты по одному): нечитаемая пропускается — её
+/// заявка поднимет свой `Remove` и вычистит запись сама.
+pub fn on_urgent_path_added(
+    event: On<Add<UrgentPath>>,
+    mut queued: ResMut<SpatialGrid<QueuedWander>>,
+    queued_requests: Query<(), With<PathfindingRequest>>,
+) {
+    if queued_requests.contains(event.entity) {
+        queued.remove(event.entity);
+    }
+}
+
+/// Обратный ход: срочность снята, а заявка ещё стоит — запись возвращается.
+/// В штатном ходе срочность снимается вместе с заявкой (`to_idle`,
+/// `strip_movement`), и порядок двух `Remove` не гарантирован: если заявка
+/// ушла первой, запрос здесь ничего не увидит, если ещё стоит — запись
+/// вернётся и будет вычищена её собственным `Remove`.
+pub fn on_urgent_path_removed(
+    event: On<Remove<UrgentPath>>,
+    mut queued: ResMut<SpatialGrid<QueuedWander>>,
+    pawns: Query<&SimPosition, With<PathfindingRequest>>,
+) {
+    if let Ok(position) = pawns.get(event.entity) {
+        queued.insert(event.entity, position.0);
+    }
+}
+
+/// Вход в мир начинается с пустой сеткой очереди. Записи вычищаются своими
+/// `Remove`-observer'ами и так; это страховка от любой дыры в том покрытии —
+/// по образцу [`crate::movement::destination::reset_destination_claims`].
+pub fn reset_queued_wanderers(mut queued: ResMut<SpatialGrid<QueuedWander>>) {
+    queued.rebuild(std::iter::empty());
+}
+
 /// Запуск тасков поиска пути из очереди запросов. МИРНО гуляющие люди вне
 /// экрана путь НЕ получают вовсе — их заявки ждут, пока камера не приедет;
 /// демоны и убегающие люди обсчитываются всегда (иначе инвазия и паника за
 /// кадром встанут) и первыми. Внутри приоритета — по удалённости от центра
 /// кадра.
+///
+/// Мирные собираются из сетки очереди ([`QueuedWander`]) — ячейки под кадром,
+/// а не все стоящие заявки; срочные — архетипным запросом. Правило отбора у
+/// обеих половин одно, [`queue_key`]: сбор по ячейкам грубый (ячейка крупнее
+/// точности гейта), точное попадание меряет он; позиция читается живьём из
+/// запроса, записи сетки говорят лишь, КОГО читать.
 pub fn dispatch_pathfinding_requests(
     mut commands: Commands,
     backend: Res<Backend>,
     frame: Res<Viewport>,
-    requests: Query<(
-        Entity,
-        &SimPosition,
-        &PathfindingRequest,
-        Has<super::components::UrgentPath>,
-    )>,
+    queued: Res<SpatialGrid<QueuedWander>>,
+    urgent_requests: Query<(Entity, &SimPosition, &PathfindingRequest), With<UrgentPath>>,
+    wanderers: Query<(Entity, &SimPosition, &PathfindingRequest), Without<UrgentPath>>,
     tasks: Query<(), With<PathfindingTask>>,
 ) {
     let budget = MAX_PATHFINDING_IN_FLIGHT.saturating_sub(tasks.iter().count());
-    if budget == 0 || requests.is_empty() {
+    if budget == 0 {
         return;
     }
 
     let view = frame.with_margin(VIEW_MARGIN);
 
-    let mut queue: Vec<(u8, f32, Entity, Vec2, IVec2, IVec2)> = requests
+    let mut queue: Vec<(u8, f32, Entity, Vec2, IVec2, IVec2)> = urgent_requests
         .iter()
-        .filter_map(|(entity, sim_position, request, urgent)| {
-            let (priority, distance) = queue_key(&view, sim_position.0, urgent)?;
+        .filter_map(|(entity, sim_position, request)| {
+            let (priority, distance) = queue_key(&view, sim_position.0, true)?;
             (
                 priority,
                 distance,
@@ -119,6 +208,26 @@ pub fn dispatch_pathfinding_requests(
                 .into()
         })
         .collect();
+
+    if wanderers_dispatched_at_zoom(view.zoom) {
+        queued.for_each_in_rect(view.min(), view.max(), |entity| {
+            let Ok((_, sim_position, request)) = wanderers.get(entity) else {
+                // снятая сущность: запись вычистится её Remove-observer'ом,
+                // попасть сюда она могла только в пределах одного кадра
+                return;
+            };
+            if let Some((priority, distance)) = queue_key(&view, sim_position.0, false) {
+                queue.push((
+                    priority,
+                    distance,
+                    entity,
+                    sim_position.0,
+                    request.start_tile,
+                    request.end_tile,
+                ));
+            }
+        });
+    }
 
     if queue.len() > budget {
         queue.sort_unstable_by(|a, b| {

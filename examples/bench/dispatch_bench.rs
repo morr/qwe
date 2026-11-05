@@ -1,13 +1,16 @@
 //! Офлайн-замер живого диспетчера заявок: стоимость ОДНОГО прохода
 //! `dispatch_pathfinding_requests` по полной очереди — гейт видимости, сборка
-//! очереди, сортировка, усечение под бюджет — без окна, камеры и расписания
-//! игры. Система прогоняется `run_system_once` по миру с N заявками; команды
-//! её не применяются (`run_system_once` не снимает deferred-параметры), так
-//! что каждая итерация видит одну и ту же полную очередь.
+//! очереди, сортировка, спавн тасков — без окна, камеры и расписания игры.
+//! Тело системы прогоняется `run_without_applying_deferred`: команды не
+//! применяются, так что каждая итерация видит одну и ту же полную очередь и
+//! полный бюджет (применяющий `System::run` разбрал бы очередь и сдул бы
+//! бюджет в ноль за две итерации).
 //!
 //! Позиции повторяют шторм: часть мирных — кучей у центра кадра (толпа у
-//! портала), остальное — равномерно по карте. Отдельный прогон с применением
-//! команд снимает, сколько заявок уезжает за один проход (это уже не замер).
+//! портала), остальное — равномерно по карте. Поиски — настоящие, на полной
+//! карте: насыщенный пул и есть штатное состояние шторма, замер с простаивающим
+//! пулом надувает цену спавна (каждый спавн будит поток). Отдельный прогон с
+//! применением команд снимает, сколько заявок уезжает за один проход.
 //!
 //! Профиль — тот же dev, что и у игры, поэтому цифры сравнимы с кадром.
 //!
@@ -26,9 +29,14 @@ use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
 
 use qwe::camera::Viewport;
-use qwe::movement::{PathfindingRequest, SimPosition, UrgentPath, dispatch_pathfinding_requests};
+use qwe::movement::{
+    PathfindingRequest, QueuedWander, SimPosition, UrgentPath, dispatch_pathfinding_requests,
+    on_pathfinding_request_added, on_pathfinding_request_removed, on_urgent_path_added,
+    on_urgent_path_removed,
+};
 use qwe::navigation::{Backend, Navmesh};
 use qwe::settings::{MAP_SIZE, MAX_PATHFINDING_IN_FLIGHT, WANDER_DISPATCH_MAX_ZOOM};
+use qwe::spatial::SpatialGrid;
 
 /// Куча у центра кадра — доля мирных, собранных у портала в шторме.
 const CLUSTER_SHARE: f32 = 0.25;
@@ -62,9 +70,8 @@ fn main() {
         .unwrap_or(60);
     assert!(urgent < pending, "urgent must be a share of pending");
 
-    // пул нужен диспетчеру для спавна тасков; сами таски с очередью команд
-    // не применённого `run_system_once` умирают сразу, содержимое поиска в
-    // замер не входит
+    // пул нужен диспетчеру для спавна настоящих поисков — они и насыщают его,
+    // как в игре; их цена лежит на пуле, в замер основного потока не входит
     AsyncComputeTaskPool::get_or_init(TaskPool::default);
 
     println!(
@@ -83,15 +90,33 @@ fn main() {
 /// содержимое поиска в замер не входит), кадр и очередь заявок.
 fn world_for_zoom(zoom: f32, pending: usize, urgent: usize) -> World {
     let mut world = World::new();
-    world.insert_resource(Backend::from_grid(Arc::new(RwLock::new(Navmesh::default()))));
+    world.insert_resource(Backend::from_grid(Arc::new(
+        RwLock::new(Navmesh::default()),
+    )));
     world.insert_resource(Viewport {
         centre: MAP_SIZE * 0.5,
         half_extent: WINDOW_HALF * zoom,
         zoom,
     });
+    // сетка очереди и её observers — как их поднимает MovementPlugin
+    world.init_resource::<SpatialGrid<QueuedWander>>();
+    world.add_observer(on_pathfinding_request_added);
+    world.add_observer(on_pathfinding_request_removed);
+    world.add_observer(on_urgent_path_added);
+    world.add_observer(on_urgent_path_removed);
     let (urgent_pawns, wanderers) = generate_pawns(pending, urgent);
-    let _ = world.spawn_batch(urgent_pawns.into_iter()).collect::<Vec<_>>();
-    let _ = world.spawn_batch(wanderers.into_iter()).collect::<Vec<_>>();
+    let _ = world.spawn_batch(urgent_pawns).collect::<Vec<_>>();
+    let _ = world.spawn_batch(wanderers).collect::<Vec<_>>();
+    // observers раскладывают заявки по сетке очереди
+    world.flush();
+    let mut entries = 0;
+    world
+        .resource::<SpatialGrid<QueuedWander>>()
+        .for_each_in_rect(Vec2::ZERO, MAP_SIZE, |_| entries += 1);
+    println!(
+        "grid entries after flush: {entries} (wanderers {})",
+        pending - urgent
+    );
     world
 }
 
@@ -107,7 +132,10 @@ fn generate_pawns(
     let mut rng = StdRng::seed_from_u64(SEED);
     let centre = MAP_SIZE * 0.5;
     let uniform = |rng: &mut StdRng| {
-        Vec2::new(rng.random_range(0.0..MAP_SIZE.x), rng.random_range(0.0..MAP_SIZE.y))
+        Vec2::new(
+            rng.random_range(0.0..MAP_SIZE.x),
+            rng.random_range(0.0..MAP_SIZE.y),
+        )
     };
     let mut urgent_pawns = Vec::with_capacity(urgent);
     for _ in 0..urgent {
@@ -116,8 +144,7 @@ fn generate_pawns(
     }
     let mut wanderers = Vec::with_capacity(pending - urgent);
     for index in 0..pending - urgent {
-        let clustered =
-            (index as f32 / (pending - urgent) as f32) < CLUSTER_SHARE;
+        let clustered = (index as f32 / (pending - urgent) as f32) < CLUSTER_SHARE;
         let position = if clustered {
             let direction = Vec2::from_angle(rng.random_range(0.0..std::f32::consts::TAU));
             centre + direction * CLUSTER_RADIUS * rng.random_range(0.0f32..1.0).sqrt()
@@ -129,13 +156,15 @@ fn generate_pawns(
     (urgent_pawns, wanderers)
 }
 
-/// Заявка с тайлами вне границ сетки: содержимое поиска в замер не входит
-/// (поиск асинхронный, его цена лежит на пуле), а такой поиск кончается
-/// мгновенной проверкой границ — пул не отбирает ядра у замера.
-fn request_at(_: Vec2) -> PathfindingRequest {
+/// Настоящие тайлы заявки: содержимое поиска не входит в замер (оно лежит на
+/// пуле), но поиски должны быть настоящими — насыщенный пул, как в игре в
+/// шторме, иначе каждый спавн таска будит простаивающий поток, и цена спавна
+/// в замере надувается в разы против реальной.
+fn request_at(position: Vec2) -> PathfindingRequest {
+    let tile = IVec2::new((position.x / 2.0) as i32, (position.y / 2.0) as i32);
     PathfindingRequest {
-        start_tile: IVec2::splat(-1),
-        end_tile: IVec2::splat(-2),
+        start_tile: tile,
+        end_tile: tile + IVec2::new(20, 10),
     }
 }
 
@@ -168,7 +197,7 @@ fn count_dispatched(world: &mut World, pending: usize) -> usize {
         .run_system_once(dispatch_pathfinding_requests)
         .expect("диспетчер прогоняется");
     let mut query = world.query::<&PathfindingRequest>();
-    let remaining = query.iter(&world).count();
+    let remaining = query.iter(world).count();
     pending - remaining
 }
 
