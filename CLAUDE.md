@@ -63,7 +63,9 @@ What each one carries, starting with the three engine-level skills:
 
 - **`git` — MANDATORY before any git operation** (staging, committing, branching, rebasing, history inspection, conflict resolution). Blocking prerequisite: do NOT run git commands until it is loaded.
 - **`live-app` — before running the app** (`cargo run`, smoke-testing in the real app, querying the live world over BRP on port 15702). The skill is engine-level and shared with zxc; **this project's inventory lives in `.claude/live-app-project.md`** (ready markers, `SimSpeed` vs `Time<Virtual>`, screenshots, camera, registered types, toggles) and `.claude/live-app.json` configures the `brp` CLI for it. Read the appendix together with the skill.
-- **`bevy` — when writing or debugging Bevy code.** Bevy 0.19 API facts that pre-0.19 training data gets wrong.
+- **`bevy` — when writing or debugging Bevy code.** 0.19/0.20 API facts that
+  training data gets wrong (zxc pins 0.19, this repo 0.20; the skill marks the
+  divergences inline).
 
 Those three are symlinks into `zxc/.claude/skills/` — editing one edits zxc's copy too (see Reference Points).
 
@@ -79,11 +81,11 @@ The links are absolute on purpose. A relative `../../../zxc` resolves only from 
 - **`sim-speed` — before changing simulation speed machinery** (`sim_time.rs`): SimSpeed/SimLoad, the regulator, the frame-budget guard, TickDebt.
 - **`ui-panels` — before changing UI** (`ui/*`, `camera.rs`, `post.rs`, `prefs.rs`): panel internals, the tabbed shell and its section order, the slider/row kits, camera start view, persistence.
 
-**Caveat on the `bevy` skill:** it was written for zxc. Its "0.19 facts that get written wrong" section and `references/api_0_19.md` are engine-level and apply here verbatim. Its "This project's conventions" section and the other references describe **zxc's** machinery — `crate::prelude::*`, `exclusive_state_tags!`, `config()`, `log_state_change!`/`log_event!`, z-index constants, the `debug_ui` feature. None of that exists in this project; don't introduce it just because the skill mentions it.
+**Caveat on the `bevy` skill:** it is shared with zxc, which is still on 0.19 — this repo is on 0.20, so the skill marks the 0.19/0.20 divergences inline. Its "0.20 deltas" section, the 0.20-marked forms and `references/api_0_20.md` are engine-level and apply here; `references/api_0_19.md` and the 0.19-marked forms describe **zxc**. Its "This project's conventions" section and the other references describe **zxc's** machinery — `crate::prelude::*`, `exclusive_state_tags!`, `config()`, `log_state_change!`/`log_event!`, z-index constants, the `debug_ui` feature. None of that exists in this project; don't introduce it just because the skill mentions it.
 
 ## Project Overview
 
-QWE is a 2D demon-invasion simulation prototype built with **Bevy 0.19** (Rust, edition
+QWE is a 2D demon-invasion simulation prototype built with **Bevy 0.20** (Rust, edition
 2024): the Tula city center generated from OpenStreetMap data, 20 000 wandering humans,
 demons spawning from a portal. ECS with a plugin-based modular design; the simulation
 runs in `FixedUpdate`, the world spawns in `OnEnter(AppState::Playing)` after the OSM
@@ -99,9 +101,9 @@ Two local checkouts to consult before inventing a pattern or guessing at an API.
 
 ### Upstream Bevy examples — `~/develop/bevy/bevy/examples`
 
-A checkout of the Bevy repo at **release 0.19.0**, matching the version this project
+A checkout of the Bevy repo at **release 0.20.1**, matching the version this project
 builds against. Official, compiling, first-party examples — the authoritative answer for
-"how is this API actually used in 0.19". Prefer them over recalled pre-0.19 syntax, which
+"how is this API actually used in 0.20". Prefer them over recalled pre-0.20 syntax, which
 is frequently wrong.
 
 Relevant subdirectories: `2d/`, `ui/`, `ecs/`, `state/`, `app/`, `input/`, `camera/`,
@@ -117,13 +119,13 @@ enough and the implementation has to be read.
 
 ### Sibling project — `~/develop/bevy/zxc`
 
-A mature Bevy 0.19 project by the same author. Use it for project-level shape (how things
+A mature Bevy project by the same author, still on Bevy 0.19. Use it for project-level shape (how things
 are organised here), and the upstream examples for engine API questions. Worth reading:
 
 - `main.rs` — plugin registration order, `DefaultPlugins` / window / log setup
 - `src/*/` — module layout (`mod.rs` plugin, `components.rs`, `systems.rs`), state-tag
   state machines, observer usage
-- `Cargo.toml` — the working set of Bevy 0.19 feature flags and companion crate versions
+- `Cargo.toml` — the working set of zxc's Bevy 0.19 feature flags and companion crate versions
 - `CLAUDE.md` — the conventions this file is derived from
 
 Two rules:
@@ -314,7 +316,9 @@ one measured session grew its context to 570K over 409 turns and burned 114.6M t
 ## Cargo Features & Dependencies
 
 `bevy` is pulled in with `default-features = false` — only `2d`, `ui`, `dynamic_linking`,
-`bevy_dev_tools`, `bevy_remote`, `bevy_camera_controller`, `pan_camera`, `default_font`.
+`bevy_dev_tools`, `bevy_remote`, `bevy_camera_controller`, `pan_camera`, `default_font`,
+plus `bevy_settings` (persisted UI options, `src/prefs.rs`) and `bevy_feathers`
+(first-party panel widgets, `src/ui/theme.rs`).
 There is no 3d stack and no audio; adding a feature that needs them means editing
 `Cargo.toml` deliberately, not by accident.
 
@@ -325,9 +329,9 @@ Current third-party crates and why they exist:
   crate's plugin)
 - `polyanya` — polygonal navmesh (`navigation/polymesh/`): CDT + agent-radius
   inflation of vector obstacles; used directly, no bevy integration. Vendored from
-  upstream master (`vendor/polyanya`, see `[patch.crates-io]`); since 0.17 it shares
-  glam 0.32 with bevy 0.19, so its `Vec2` **is** bevy's `Vec2`
-- `rand` 0.9 — gameplay randomness (`rand::rng()`, `random_range`)
+  upstream master (`vendor/polyanya`, see `[patch.crates-io]`); since 0.18 it shares
+  glam 0.33 with bevy 0.20, so its `Vec2` **is** bevy's `Vec2`
+- `rand` 0.10 — gameplay randomness (`rand::rng()`, `random_range`)
 - `serde` / `serde_json` — Overpass JSON parsing
 - `ureq` 3 — blocking HTTPS download of the OSM extract (rustls + gzip by default)
 - `earcutr` — polygon triangulation (with holes) for merged map meshes
@@ -335,7 +339,7 @@ Current third-party crates and why they exist:
   layer never overlaps itself
 
 Before adding anything else, check `~/develop/bevy/bevy/crates/` for a first-party
-option — 0.19 absorbed a lot of what used to need crates (e.g. first-party `PanCamera`
+option — 0.19/0.20 absorbed a lot of what used to need crates (e.g. first-party `PanCamera`
 covers what `bevy_pancam` did in zxc). Don't copy zxc's dependency set; it predates
 those additions.
 

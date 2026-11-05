@@ -40,7 +40,7 @@ read on demand, and reading the file whole is a phase change, not the default lo
 **QWE** is a 2D real-time simulation prototype: a **demon invasion of the Tula city
 center**. The map is generated from real OpenStreetMap data at first launch. 20 000
 humans wander the streets; demons pour out of a portal, chase and devour them; humans
-panic and flee off-map. Built on **Bevy 0.19 ECS** — one plugin per feature, registered
+panic and flee off-map. Built on **Bevy 0.20 ECS** — one plugin per feature, registered
 in `main.rs`.
 
 ## Coordinates & units
