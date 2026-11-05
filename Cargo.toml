@@ -56,6 +56,10 @@ name = "pathfinding_bench"
 path = "examples/bench/pathfinding_bench.rs"
 
 [[example]]
+name = "dispatch_bench"
+path = "examples/bench/dispatch_bench.rs"
+
+[[example]]
 name = "polymesh_bench"
 path = "examples/bench/polymesh_bench.rs"
 

@@ -25,7 +25,7 @@ pub use self::destination::{
     DestinationClaims, SlotLab, SlotMatching, SlotSearch, assign_destination_slots, claim_batch,
     slot_side, slot_side_with_slack, slot_target,
 };
-pub use self::pathfinding::wanderers_dispatched_at_zoom;
+pub use self::pathfinding::{dispatch_pathfinding_requests, wanderers_dispatched_at_zoom};
 pub use self::separation::{
     SEPARATION_LEFT_SHARE, SEPARATION_LEFT_SHARE_MAX, SEPARATION_LEFT_SHARE_MIN,
     SEPARATION_LEFT_SHARE_STEP, SEPARATION_PASS_SQUEEZE, SEPARATION_PASS_SQUEEZE_MAX,
@@ -43,9 +43,8 @@ use crate::prefs::TrackPrefExt;
 use crate::spatial::SimSet;
 
 use self::pathfinding::{
-    apply_pathfinding_results, dispatch_pathfinding_requests,
-    dispatch_pathfinding_requests_deterministic, listen_for_pathfinding_tasks, live_dispatch_runs,
-    stamp_pathfinding_requests,
+    apply_pathfinding_results, dispatch_pathfinding_requests_deterministic,
+    listen_for_pathfinding_tasks, live_dispatch_runs, stamp_pathfinding_requests,
 };
 use self::systems::{
     draw_move_paths, interpolate_movable_transforms, move_moving_entities,
