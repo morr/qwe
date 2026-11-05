@@ -10,8 +10,18 @@ Shorthand below: `b=.claude/skills/live-app/scripts/brp`.
 ## Launch: port 15703, always
 
 ```
-Bash(command: "BRP_PORT=15703 cargo run 2>&1", run_in_background: true)
+Bash(command: "caffeinate -i env BRP_PORT=15703 cargo run 2>&1", run_in_background: true)
 ```
+
+**`caffeinate -i` — обязательная обёртка, не украшение** (найдено охотой 11.2026): процесс,
+запущенный из агентского шелла, наследует фоновый QoS, и macOS App Nap троттлит его —
+`ps -M` показывает класс `4T` на всех потоках, а мир ловит «монотики» 20–90+ мс на ровном
+месте (типично по 1–3 тика, пачками раз в десятки секунд). Сprites под caffeinate такие
+спайки исчезают: тик 64 человек — стабильные 0.23 мс, полная популяция — 0.93 мс на
+спокойном мире. Симптом-чек: `ps -M -p <pid> | head` — колонка STAT с `4T` вместо `4U`.
+Без caffeinate **все** замеры тиков и кадров недостоверны.
+
+`taskpolicy -c <clamp>` не годится: его словарь клампов не содержит нужного класса.
 
 The user keeps his own qwe open on the default 15702 most of the time, and a
 second app on the same port does not fail loudly — it just makes every `brp` call
