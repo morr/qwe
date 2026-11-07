@@ -21,6 +21,7 @@ pub mod osm;
 mod parallel;
 mod parking;
 mod pitch;
+mod prepare;
 mod rail;
 mod roads;
 mod seed;
@@ -99,6 +100,9 @@ pub use self::roads::ruts::{RutLines, mesh_rut_overlay};
 // под ряд по сглаженной осевой) и панели аллей (`TreeRowStyle::smoothing`)
 pub use self::smooth::{Smoothing, smooth_path};
 pub use self::spawn::{GROUND_COLOR, PARK_COLOR, WOOD_COLOR};
+// Готовые слои из потока загрузки: ресурс разбирает вход в мир, снимок
+// стилей берёт `loading.rs` на старте потока
+pub use self::prepare::{PreparedMeshes, StyleSnapshot, WorldMeshes};
 // `apply_sun_style` наружу — тому же офлайн-бенчу: тени он собирает игровым
 // билдером, а солнце тому билдеру приходит процессной глобалью
 pub use self::sun::{
@@ -120,8 +124,8 @@ pub use self::parking::ParkingLayout;
 pub use self::rail::{RailZoomBucket, mesh_rails};
 pub use self::roads::tram_lay::TramTracks;
 pub use self::roads::{
-    RoadBuild, VergeLods, VergeZoomBucket, build_other_road_step, build_roads,
-    corner_paving_contours, mesh_roads, spawn_road_meshes,
+    RoadBuild, VergeLods, VergeZoomBucket, build_roads, corner_paving_contours, mesh_roads,
+    spawn_road_meshes,
 };
 pub use self::spawn::{mesh_surfaces, mesh_tree_row_band};
 pub use self::tram::{TramZoomBucket, mesh_tram};
@@ -277,32 +281,30 @@ impl Plugin for MapPlugin {
             )
             .add_systems(
                 OnEnter(AppState::Playing),
-                // набор деревьев собирается первым (лес плюс аллеи выбранной
-                // политики), поле хвои решает форму кроны и потому считается по
-                // уже собранному набору и до крон. Сами кроны спавнит
-                // `rebuild_trees` — в свежем мире деспавнить ему нечего, а спавн
-                // из одного места избавляет `spawn_map` от стиля деревьев и поля
-                // хвои разом. Рельсы (`build_rails` — все ступени сразу) и
-                // трамвай (`rebuild_tram`) спавнятся здесь же по той причине:
-                // их ступень зума — их личное дело. Ступень перед сборкой
-                // ставится по камере, а камера на стартовый вид — тоже в
-                // `Spawn`, отсюда `after`
+                // Мир спавнится из собранного потоком загрузки (`map/prepare.rs`):
+                // мешинг отыграл в потоке, здесь остаётся положить готовое.
+                // Набор деревьев собирается первым (лес плюс аллеи выбранной
+                // политики; поток собрал его же под снимок ручек — совпадает,
+                // и пересборки не будет), поле хвои решает форму кроны и
+                // потому считается по уже собранному набору и до крон. Кроны
+                // из потока спавнит `spawn_prepared_trees`; правку стиля
+                // живого мира ведёт `rebuild_trees` в `Update`. Расстановка
+                // машин из потока наполняет кеш (`seed_parked_cars`) —
+                // `rebuild_cars` платит только меш кузовов. Рельсы и трамвай
+                // спавнятся здесь же по той причине: их ступень зума — их
+                // личное дело. Ступень перед спавном ставится по камере, а
+                // камера на стартовый вид — тоже в `Spawn`, отсюда `after`
                 (
                     (
                         trees::recompose_row_trees,
                         trees::build_conifer_field,
                         zoom::seed_zoom_bucket::<buildings::BuildingLods>,
-                        // обочины входят в дорожные слои, которые собирает сам
+                        // обочины входят в дорожные слои, которые кладёт
                         // `spawn_map`, — их ступень сеется до него
                         zoom::seed_zoom_bucket::<roads::VergeLods>,
                         spawn::spawn_map,
-                        // вторая ступень обочины — рядом с первой, скрытой:
-                        // порог зума переключает им видимость
-                        // (`show_road_steps`), а не пересобирает дорогу
-                        roads::build_other_road_step,
                         zoom::seed_zoom_bucket::<cars::CarLods>,
-                        cars::forget_parked_cars,
-                        cars::warm_car_placement,
+                        cars::seed_parked_cars,
                         cars::rebuild_cars,
                     )
                         .chain(),
@@ -313,15 +315,15 @@ impl Plugin for MapPlugin {
                         fences::rebuild_fences,
                         industry::rebuild_industry,
                         zoom::seed_zoom_bucket::<rail::RailLods>,
-                        // все ступени рельсов собираются разом: пересечение
-                        // порога переключает видимость (`show_lod_layers`), а
-                        // не пересобирает слой
-                        rail::build_rails,
+                        // все ступени рельсов лежат в мире разом (собраны
+                        // потоком): пересечение порога переключает видимость
+                        // (`show_lod_layers`), а не пересобирает слой
+                        rail::spawn_rails,
                         zoom::seed_zoom_bucket::<tram::TramLods>,
                         tram::rebuild_tram,
                         spawn::rebuild_tree_row_band,
                         zoom::seed_zoom_bucket::<trees::TreeLods>,
-                        trees::rebuild_trees,
+                        trees::spawn_prepared_trees,
                         // прогрев слитых кусков и теней: первая их подготовка
                         // рендером уходит под экран загрузки, а не в первый
                         // кадр пересечения порога (`trees::warm_layers`)
@@ -420,7 +422,7 @@ impl Plugin for MapPlugin {
                     // сравнение). Таблицы у путей и трамвая свои, и пороги в
                     // них не совпадают, поэтому и ступени считаются порознь.
                     // У путей пересборок больше нет вовсе: собраны все ступени
-                    // (`build_rails`), порог переключает видимость
+                    // (`rail::spawn_rails`), порог переключает видимость
                     (
                         zoom::update_zoom_bucket::<rail::RailLods>,
                         zoom::show_lod_layers::<rail::RailLods, With<rail::RailLayerTag>>,

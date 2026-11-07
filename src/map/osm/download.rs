@@ -13,6 +13,7 @@ use crate::city::City;
 use crate::map::osm::model::MapData;
 use crate::map::osm::overpass::{cache_path, overpass_query, prune_stale_caches};
 use crate::map::osm::parse::{ParseKnobs, parse};
+use crate::map::prepare::{self, StyleSnapshot, WorldMeshes};
 use crate::navigation::{Navmesh, snap_portal_position};
 
 /// Зеркала Overpass по порядку обхода. Основной инстанс на плотных городах
@@ -35,11 +36,14 @@ const CHUNK_SIZE: usize = 64 * 1024;
 /// экране загрузки. По чанку в 64 КБ мерить бессмысленно — цифра прыгает.
 const SPEED_WINDOW: Duration = Duration::from_millis(250);
 
-/// Готовый к спавну мир: разобранная карта и позиция портала (снап нужен
-/// уже заполненному navmesh, а прунинг — уже снапнутому порталу).
+/// Готовый к спавну мир: разобранная карта, позиция портала (снап нужен
+/// уже заполненному navmesh, а прунинг — уже снапнутому порталу) и слои
+/// карты, собранные тем же потоком (`map/prepare.rs`) — спавн на входе в
+/// мир кладёт их в мир без пересборки.
 pub struct LoadedWorld {
     pub map: MapData,
     pub portal: Vec2,
+    pub meshes: WorldMeshes,
 }
 
 pub enum JobState {
@@ -62,6 +66,11 @@ pub enum JobState {
     BuildingNavmesh,
     /// Отсечение карманов, недостижимых от портала.
     Pruning,
+    /// Сборка слоёв карты: здания, дороги, поверхности, деревья, рельсы и
+    /// полимеш — параллельными группами в самом потоке (`map/prepare.rs`).
+    /// Одно состояние, а не по группе: группы идут разом, и «чем занят
+    /// поток» отвечает не одна строка.
+    BuildingMeshes,
     /// `Option`, чтобы poll-система могла забрать данные через `take()`.
     Done(Option<Box<LoadedWorld>>),
     Failed(String),
@@ -77,27 +86,45 @@ impl Default for MapLoadJob {
 }
 
 impl MapLoadJob {
-    fn set(&self, state: JobState) {
+    pub(crate) fn set(&self, state: JobState) {
         *self.0.lock().unwrap() = state;
     }
 }
 
 /// Выделенный поток, а не пул задач: многосекундное блокирующее чтение
 /// сети не должно занимать воркер `AsyncComputeTaskPool`. Входы разбора
-/// (`knobs`) приходят аргументом: ECS в потоке нет, а глобалей разбор не читает.
+/// (`knobs`) и снимок стилей (`styles`) приходят аргументом: ECS в потоке
+/// нет, а глобалей разбор и сборка слоёв не читают — ширину полосы поток
+/// ставит сам из снимка карты, солнце сеется на первом кадре задолго до
+/// конца парса.
 pub fn start_load_thread(
     job: MapLoadJob,
     navmesh: Arc<RwLock<Navmesh>>,
     city: City,
     knobs: ParseKnobs,
+    styles: StyleSnapshot,
 ) {
     std::thread::spawn(move || {
-        let result = run(&job, city, knobs).map(|map| build_navmesh(&job, map, &navmesh, city));
+        let result = run(&job, city, knobs)
+            .map(|map| build_navmesh(&job, map, &navmesh, city))
+            .and_then(|world| finish_world(world, &styles, &job));
         job.set(match result {
             Ok(world) => JobState::Done(Some(Box::new(world))),
             Err(message) => JobState::Failed(message),
         });
     });
+}
+
+/// Слои карты — в тот же поток: карта после гейтов и прунинга финальна, и
+/// параллельные группы собирают всё, что раньше стояло в `OnEnter(Playing)`
+/// и замироживало кадр перехода на 15.7 с (запись 10).
+fn finish_world(
+    mut world: LoadedWorld,
+    styles: &StyleSnapshot,
+    job: &MapLoadJob,
+) -> Result<LoadedWorld, String> {
+    world.meshes = prepare::build_world_meshes(&mut world.map, styles, job)?;
+    Ok(world)
 }
 
 /// Растеризация карты и прунинг — по шагу на состояние, чтобы экран
@@ -149,7 +176,11 @@ fn build_navmesh(
         done.pruned, done.prune_time
     );
 
-    LoadedWorld { map, portal }
+    LoadedWorld {
+        map,
+        portal,
+        meshes: WorldMeshes::default(),
+    }
 }
 
 fn run(job: &MapLoadJob, city: City, knobs: ParseKnobs) -> Result<MapData, String> {

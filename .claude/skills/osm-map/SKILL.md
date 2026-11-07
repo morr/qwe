@@ -350,6 +350,11 @@ going through the curb pin tests
   callers, not the number of tags**: without the door `spawn.rs` would have to know the
   layer's tag and the "spawn, then `info!`" order. A module with one caller (the surfaces)
   needs none.
+  **At world entry the builds run in the load thread, not in the systems** —
+  `map/prepare.rs` calls the same pure functions under a `StyleSnapshot` and `Done` ships
+  the lists through the `PreparedMeshes` resource (world-lifecycle skill); `spawn_map` and
+  the entry spawn systems only put them into the world. The `rebuild_*` adapters keep
+  calling the mesh functions inline — a style change re-meshes just that layer.
   - **`LayerMesh`** — `{ builder, z, offset, name, material: MaterialSpec }`, **one type for
     every layer of the map**, not a type per module. That is the point: a module read as
     `-> Vec<LayerMesh>` is read the same way as any neighbour. `name` is the entity's
@@ -412,9 +417,10 @@ going through the curb pin tests
   redid it. The bucket is not persisted (the camera dictates it), and `Default` is the
   farthest, cheapest bucket.
   **A crossing itself costs what the layer decides to make it cost**, and the
-  expensive layers decided to make it nothing: the rails (`rail::build_rails`) and
-  the road verges (`spawn_map` + `roads::build_other_road_step`) build **every**
-  step of their table once at world entry, each layer tagged
+  expensive layers decided to make it nothing: the rails (`rail::spawn_rails`) and
+  the road verges (`spawn_map`) lay **every**
+  step of their table once at world entry (meshed by the load thread,
+  `map/prepare.rs`), each layer tagged
   `zoom::LodStep(index)`, only the camera's step visible — a crossing flips
   `Visibility` (`zoom::show_lod_layers`, idempotent, every frame) and pays no
   rebuild. That is where a near crossing used to cost the frame: rail 30–70 ms,

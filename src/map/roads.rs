@@ -421,6 +421,7 @@ pub fn corner_paving_contours(map: &MapData) -> Vec<Vec<Vec2>> {
 /// Всё, что выходит из одной сборки дорожной области ([`build_roads`]):
 /// слои и отчёт — то же, что отдаёт [`mesh_roads`], — и три побочных
 /// результата того же прохода, которые игра кладёт ресурсами.
+#[derive(Default)]
 pub struct RoadBuild {
     pub layers: Vec<LayerMesh>,
     pub report: RoadReport,
@@ -1560,43 +1561,6 @@ pub fn rebuild_roads(
     );
 }
 
-/// Достроить на входе в мир ступень обочины, которую `spawn_map` не собирал:
-/// обе лежат в мире заранее (`RoadLayerTag` + `zoom::LodStep`), и пересечение
-/// порога зума переключает им видимость (`show_road_steps`), а не
-/// пересобирает дорогу — сборка текущей ступени стоила кадру 380–480 мс.
-///
-/// Ступень дана вычитанием, а не запросом: команды `spawn_map` применятся
-/// после этой системы, и ни одна сущность слоёв в запрос ещё не видна. Таблица
-/// `VergeLods` состоит из двух ступеней — ближней и дальней, — так что не
-/// собранная ровно одна.
-pub fn build_other_road_step(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    materials: LayerMaterials,
-    verge: Res<VergeZoomBucket>,
-    style: Res<RoadStyle>,
-    shape: Res<RoadShapeOnMap>,
-    map: Res<MapData>,
-) {
-    let steps = VergeLods::max_zooms().count();
-    for step in 0..steps {
-        if step == verge.index {
-            continue;
-        }
-        let RoadBuild { layers, report, .. } =
-            build_roads(&map, *style, shape.0, VergeZoomBucket::at(step));
-        spawn_road_meshes(
-            &mut commands,
-            &mut meshes,
-            &materials,
-            (layers, report),
-            step,
-            false,
-            false,
-        );
-    }
-}
-
 /// Видимость дорожных слоёв по ступени обочины, каждый кадр, идемпотентно
 /// (`zoom::LodStep`): смена ступени стоит переключение `Visibility`, а не
 /// пересборку. Краску система не трогает (`Without<PaintTag>`): у неё нет
@@ -1607,7 +1571,7 @@ pub fn build_other_road_step(
 /// пересечение порога собирает недостающую здесь же — раз на смену стиля, как
 /// раньше было на каждое пересечение. Краску достройка не переспавнивает
 /// (`spawn_road_meshes`): она уже стоит от пересборки. На входе в мир обе
-/// ступени уже собраны (`spawn_map` + `build_other_road_step`), так что в
+/// ступени уже собраны (потоком загрузки, `map/prepare.rs`), так что в
 /// норме система ничего не строит. Побочным выходом сборки тут пренебрегаем:
 /// линии колеи и пути трамвая от ступени обочины не зависят, а ресурсами их
 /// записала сборка текущей ступени.
@@ -1667,7 +1631,7 @@ pub fn show_road_steps(
 /// числу вызывающих.
 ///
 /// `step` — ступень обочины, под которую собраны слои: обе ступени лежат в
-/// мире сразу (`build_other_road_step` достраивает не текущую), скрытые, и
+/// мире сразу (собранные потоком загрузки, `map/prepare.rs`), скрытые, и
 /// пересечение порога переключает видимость (`show_road_steps`), а не
 /// пересобирает дорогу. `visible` — виден ли этот шаг при спавне.
 ///

@@ -8,13 +8,13 @@
 
 use bevy::prelude::*;
 
-use crate::map::buildings::{self, BuildingHeightMode};
+use crate::map::buildings;
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::{AreaKind, MapData, PolyArea, TreeRow};
 use crate::map::parking;
 use crate::map::pitch;
-use crate::map::roads::shape::RoadShapeOnMap;
-use crate::map::roads::{self, RoadStyle};
+use crate::map::prepare::{PreparedMeshes, WorldMeshes};
+use crate::map::roads::{self, RoadBuild};
 use crate::map::smooth::smooth_path;
 use crate::map::surface::{
     self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec, SurfaceKind, spawn_layers,
@@ -117,41 +117,37 @@ fn push_area(builder: &mut MeshBuilder, area: &PolyArea, fill: Color, rim: &Rim)
     }
 }
 
-// Все слои карты идут через один `materials: LayerMaterials`: своих
-// `Assets<ColorMaterial>` и кровельного хэндла системе больше не надо — их
-// держит и разворачивает шов (`map/surface.rs`). Это сняло два параметра из
-// десяти; оставшиеся восемь — команды, меши, материалы, ступень зума кровель,
-// сама карта, две ручки стиля и раскладка стоянок, которую система считает и
-// кладёт ресурсом, — всё это настоящие входы и выходы разового поднятия мира,
-// и сводить их в тип ради линта нечего
-#[allow(clippy::too_many_arguments)]
+/// Спавн карты из собранного потоком загрузки (`map/prepare.rs`): раскладка
+/// стоянок — ресурсом, поверхности — слоями, дороги — обеими ступенями
+/// обочин (видима та, что под камеру), здания — слоями и тенями. Мешинг
+/// отыграл в потоке; здесь остаётся только положить готовое, пока экран
+/// загрузки жив.
+///
+/// `materials` — общий комплект (`map/surface.rs`): своих `Assets` системе
+/// не надо, хэндлы разворачивает шов.
 pub fn spawn_map(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     materials: LayerMaterials,
-    map: Res<MapData>,
-    height_mode: Res<BuildingHeightMode>,
-    road_style: Res<RoadStyle>,
-    road_shape: Res<RoadShapeOnMap>,
     verge: Res<roads::VergeZoomBucket>,
-    mut parking_layout: ResMut<parking::ParkingLayout>,
+    mut prepared: ResMut<PreparedMeshes>,
 ) {
+    let WorldMeshes {
+        parking_layout,
+        surfaces,
+        surface_report,
+        roads,
+        buildings,
+        ..
+    } = &mut prepared.0;
+
     // Раскладка стоянок — вход сборки, а не её выход: по ней рисуется и
-    // разметка мест, и ряды машин (`map/cars`), так что живёт она ресурсом и
-    // считается один раз на загрузку мира.
-    // Считается она до сборки, то есть **вне** таймера `SurfaceReport`, —
-    // поэтому у неё свой: иначе работа по местам не попадает ни в
-    // `surface meshing:`, ни в офлайн-замер, и «сколько стоит раскладка»
-    // нечем ответить.
-    let layout_started = std::time::Instant::now();
-    *parking_layout = parking::ParkingLayout::new(&map.parking, &map.roads, map.traffic_side);
-    info!(
-        "parking layout: {} lots, {} stalls in {:.1?}",
-        map.parking.len(),
-        parking_layout.0.iter().map(Vec::len).sum::<usize>(),
-        layout_started.elapsed()
-    );
-    let (surfaces, surface_report) = mesh_surfaces(&map, &parking_layout);
+    // разметка мест, и ряды машин (`map/cars`), так что живёт она ресурсом
+    // и кладётся один раз на загрузку мира. Считает её поток загрузки —
+    // его же строка в логе с таймингом.
+    commands.insert_resource(std::mem::take(parking_layout));
+
+    let surface_report = std::mem::take(surface_report);
     info!("{surface_report}");
     if surface_report.skipped > 0 {
         warn!(
@@ -162,43 +158,52 @@ pub fn spawn_map(
     // Тега у этих слоёв нет (`()`), и это не упущение шва, а состояние дел:
     // их никто не запрашивает, а значит и не пересобирает — они живут ровно
     // столько, сколько живёт город. Дать им метку имело бы смысл вместе с
-    // причиной пересобирать, а её пока нет.
-    // Непрозрачные поверхности режутся на куски карты (`LayerMesh::
-    // into_chunks` сам не трогает редкую в них полупрозрачность — её тут
-    // нет вовсе): слой на всю карту не кульится, куски кульятся.
+    // причиной пересобирать, а её пока нет. Куски карты нарезаны потоком:
+    // слой на всю карту не кульится, куски кульятся.
     spawn_layers(
         &mut commands,
         &mut meshes,
         &materials,
-        surfaces
-            .into_iter()
-            .flat_map(|layer| layer.into_chunks(surface::MAP_CHUNK)),
+        std::mem::take(surfaces),
         (),
     );
 
-    let road_build = roads::build_roads(&map, *road_style, road_shape.0, *verge);
-    // линии колеи — ресурсом, для оверлея колеи вкладки Debug; пути трамвая
-    // по нарисованной улице — слою трамвая (`tram::rebuild_tram`, следом);
-    // отрисованные куски — семантическому индексу (`map/inspect.rs`)
-    commands.insert_resource(road_build.ruts);
-    commands.insert_resource(road_build.tram);
-    commands.insert_resource(roads::DrawnPieces(road_build.pieces));
-    roads::spawn_road_meshes(
-        &mut commands,
-        &mut meshes,
-        &materials,
-        (road_build.layers, road_build.report),
-        verge.index,
-        true,
-        true,
-    );
+    // Дороги: ступени обочин обе лежат в мире заранее (`RoadLayerTag` +
+    // `zoom::LodStep`), видима та, что под камеру, и пересечение порога
+    // зума переключает им видимость (`show_road_steps`), а не пересобирает
+    // дорогу. Побочные выходы текущей ступени — линии колеи (оверлею колеи
+    // вкладки Debug), пути трамвая (слою трамвая, следом) и отрисованные
+    // куски (семантическому индексу, `map/inspect.rs`) — ресурсами.
+    for (step, build) in std::mem::take(roads).into_iter().enumerate() {
+        let RoadBuild {
+            layers,
+            report,
+            ruts,
+            tram,
+            pieces,
+        } = build;
+        let current = step == verge.index;
+        if current {
+            commands.insert_resource(ruts);
+            commands.insert_resource(tram);
+            commands.insert_resource(roads::DrawnPieces(pieces));
+        }
+        roads::spawn_road_meshes(
+            &mut commands,
+            &mut meshes,
+            &materials,
+            (layers, report),
+            step,
+            current,
+            current,
+        );
+    }
 
-    let plan = buildings::BuildingPlan::game(*height_mode);
     buildings::spawn_building_meshes(
         &mut commands,
         &mut meshes,
         &materials,
-        buildings::mesh_buildings(plan, &map.buildings, &map.roads),
+        std::mem::take(buildings),
     );
 }
 
@@ -206,7 +211,9 @@ pub fn spawn_map(
 ///
 /// Вода и водотоки печатались двумя своими `info!` изнутри сборки; здесь они
 /// два поля, потому что оба шага — самые дорогие в слое, а `info!` на macOS
-/// меряет то, что решит App Nap.
+/// меряет то, что решит App Nap. `Default` — отчёт едет из потока загрузки
+/// вместе со слоями (`map/prepare.rs`) и забирается `std::mem::take`.
+#[derive(Default)]
 pub struct SurfaceReport {
     pub water_areas: usize,
     pub water_lines: usize,

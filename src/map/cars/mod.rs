@@ -40,6 +40,7 @@ use crate::map::osm::parse::RawOsm;
 use crate::map::osm::{MapData, PolyArea, RoadLine, TrafficSide};
 use crate::map::parallel::{self, in_parallel};
 use crate::map::parking::{ParkingLayout, Stall};
+use crate::map::prepare::PreparedMeshes;
 use crate::map::roads::junctions::{self, JUNCTION_MARGIN};
 use crate::map::roads::network::sections::EDGE_WIDTH;
 use crate::map::roads::network::{RoadNetwork, RoadNodes};
@@ -440,7 +441,7 @@ fn park_on(
 ///
 /// Ключ — то, от чего расстановка зависит из настроек: занятость (`CarStyle`
 /// без тумблера) и форма дорог. Город ключом не является: при входе в мир
-/// кеш сбрасывает [`forget_parked_cars`].
+/// кеш заменяется расстановкой из потока загрузки (`seed_parked_cars`).
 #[derive(Resource, Default)]
 pub struct CarPlacement {
     key: Option<(f32, RoadShape)>,
@@ -466,30 +467,28 @@ impl CarPlacement {
     }
 }
 
-/// Сброс расстановки при входе в мир: у нового города свои улицы, а ключ
-/// кеша про город не знает.
-pub fn forget_parked_cars(mut placement: ResMut<CarPlacement>) {
-    *placement = CarPlacement::default();
+/// Расстановка для потока загрузки (`map/prepare.rs`): тот же пересчёт, что
+/// раньше шёл на входе в мир, — без мира. Сырому OSM машины не нужны вовсе:
+/// расстановка остаётся пустой, ключ не ставится, и `rebuild_cars` на входе
+/// не пересчитывает.
+pub(crate) fn place(
+    style: CarStyle,
+    shape: RoadShape,
+    map: &MapData,
+    layout: &ParkingLayout,
+) -> CarPlacement {
+    let mut placement = CarPlacement::default();
+    if !map.knobs.raw.draws_raw() {
+        placement.refresh(style, shape, map, layout);
+    }
+    placement
 }
 
-/// Прогрев расстановки на входе в мир. [`rebuild_cars`] расставляет только
-/// когда слой виден: мир, открытый за порогом машин (общий план), оставил бы
-/// кеш пустым, и первый зум внутрь платил бы расстановку целиком — на Туле
-/// ~78 мс посреди жеста. Ключ кеша — занятость и форма дорог, ступени зума в
-/// нём нет, так что считать расстановку можно и при скрытом слое; цена
-/// прогрева падает в загрузку. Сырому OSM (`RawOsm`) машины не нужны вовсе —
-/// там и прогрев не считается.
-pub fn warm_car_placement(
-    style: Res<CarStyle>,
-    road_shape: Res<RoadShapeOnMap>,
-    map: Res<MapData>,
-    layout: Res<ParkingLayout>,
-    mut placement: ResMut<CarPlacement>,
-) {
-    if map.knobs.raw.draws_raw() {
-        return;
-    }
-    placement.refresh(*style, road_shape.0, &map, &layout);
+/// Расстановка из потока загрузки — в ресурс мира: ключ уже совпадает с
+/// текущими ручками, и `rebuild_cars` на входе платит только меш кузовов.
+/// Замена целым ресурсом — и сброс прошлого города заодно.
+pub fn seed_parked_cars(mut placement: ResMut<CarPlacement>, mut prepared: ResMut<PreparedMeshes>) {
+    *placement = std::mem::take(&mut prepared.0.parked);
 }
 
 /// Что вышло из сборки слоя машин — значением, а не только строкой в логе.

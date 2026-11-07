@@ -123,7 +123,9 @@ Summary; the mechanism — **world-lifecycle skill** (states and the warmup hold
 
 - **AppState** (`loading.rs`) — `Loading → Playing`. `Loading` shows the loader screen
   (progress, red error + **Retry**). **All world spawning happens in `OnEnter(Playing)`**,
-  never in `Startup`.
+  never in `Startup` — and spawning *only*: the meshing of every map layer (buildings,
+  roads, surfaces, trees, rails, cars' placement, the polymesh) is done by the load
+  thread, `OnEnter(Playing)` puts ready lists into the world.
 - **PlayPhase** (sub-state of `Playing`) — `Warmup → Live`. During Warmup the world exists
   but `Time<Virtual>` is **paused** and the loader stays up counting pawns still routing
   *inside the camera view*; typical warmup **~0.15 s**, timeout 10 s. `Live` despawns the
@@ -135,7 +137,12 @@ Summary; the mechanism — **world-lifecycle skill** (states and the warmup hold
   announcement on entering `Live` (chained before the unpause).
 - **MapLoadJob / JobState** (`map/osm/download.rs`) — background `std::thread` doing
   everything that needs no ECS: `Connecting → Downloading → Parsing → BuildingNavmesh →
-  Pruning → Done | Failed`, every state a line on the loader screen. **Rule: heavy init
+  Pruning → BuildingMeshes → Done | Failed`, every state a line on the loader screen.
+  The meshing stage runs its groups **in parallel** (buildings ∥ roads ∥ polymesh ∥
+  surfaces+trees+rails+cars — `map/prepare.rs`); the polymesh lane follows the Navmesh
+  panel's toggle, and a panic in any lane surfaces as `Failed`. `Done` carries the whole
+  world: `MapData`, the portal and the meshed layers (`WorldMeshes` in a
+  `PreparedMeshes` resource), styles snapshotted at thread start. **Rule: heavy init
   belongs in this thread, not in `OnEnter(Playing)`** — no frame is drawn inside a schedule.
 - **WorldStarted** (`loading.rs`, event) — "the world begins a new run", the single seam
   both lifecycle paths share, fired on entering `PlayPhase::Live` and on every restart. All

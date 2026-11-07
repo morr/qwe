@@ -32,7 +32,8 @@ use bevy::prelude::*;
 
 use crate::map::grid::Grid;
 use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin};
-use crate::map::osm::{MapData, RailKind, RailLine, RoadClass, RoadLine};
+use crate::map::osm::{RailKind, RailLine, RoadClass, RoadLine};
+use crate::map::prepare::PreparedMeshes;
 use crate::map::smooth::{Smoothing, smooth_path};
 use crate::map::surface::{self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
 use crate::map::zoom::{LodStep, ZoomBucket, ZoomLods};
@@ -265,7 +266,7 @@ impl ZoomLods for RailLods {
 }
 
 /// Текущая ступень [`RAIL_LODS`]; у пути она только выбирает, какой из
-/// заранее собранных наборов слоёв виден ([`build_rails`] собирает все сразу,
+/// заранее собранных наборов слоёв виден ([`spawn_rails`] кладёт все сразу,
 /// [`zoom::show_lod_layers`] переключает видимость).
 pub type RailZoomBucket = ZoomBucket<RailLods>;
 
@@ -328,7 +329,7 @@ impl std::fmt::Display for RailReport {
 /// нарисована.
 ///
 /// **Чистая функция и единственная дверь в слой.** Ни `Commands`, ни `Assets`:
-/// её зовёт и игра (через [`build_rails`]), и тест. Три меша, а не один, по
+/// её зовёт и игра (через поток загрузки, `map/prepare.rs`), и тест. Три меша, а не один, по
 /// той же причине, по которой они три и в мире: копланарная геометрия
 /// z-файтит, и шпала обязана лежать выше **любого** балласта, иначе развязка
 /// нескольких путей расслаивается.
@@ -625,15 +626,20 @@ pub fn measure_rails(rails: &[RailLine]) -> Vec<(usize, Vec<LayerCost>)> {
 /// безразлично, а мир поднимается свежим (`DespawnOnExit`) — деспавнить
 /// здесь нечего. Цена прекомпиляции — сумма всех ступеней (~90 мс на Туле),
 /// и платится она в загрузке, где кадр никто не считает.
-pub fn build_rails(
+/// Рельсы всех ступеней зума из потока загрузки — в мир: каждая под своим
+/// `LodStep`, видна та, что под камеру; пересечение порога переключает
+/// видимость (`show_lod_layers`), а не пересобирает слой.
+pub fn spawn_rails(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     materials: LayerMaterials,
     bucket: Res<RailZoomBucket>,
-    map: Res<MapData>,
+    mut prepared: ResMut<PreparedMeshes>,
 ) {
-    for index in 0..RAIL_LODS.len() {
-        let (layers, report) = mesh_rails(RailZoomBucket::at(index), &map.rails);
+    for (index, (layers, report)) in std::mem::take(&mut prepared.0.rails)
+        .into_iter()
+        .enumerate()
+    {
         let visible = if index == bucket.index {
             Visibility::Visible
         } else {

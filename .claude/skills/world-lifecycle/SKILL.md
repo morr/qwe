@@ -68,7 +68,8 @@ game did not, and had to announce the world start by hand to stay ahead of that 
 
 ```
 Connecting{attempt} → Downloading{bytes,total,bytes_per_sec} → Parsing
-→ BuildingNavmesh → Pruning → Done(LoadedWorld{map, portal}) | Failed(msg)
+→ BuildingNavmesh → Pruning → BuildingMeshes
+→ Done(LoadedWorld{map, portal, meshes}) | Failed(msg)
 ```
 
 Polled via `Arc<Mutex<_>>` by `poll_job`; every state is a line on the loader screen. The
@@ -81,6 +82,29 @@ call makes between the two steps is what logs the gate line and flips `JobState:
 The gate step **writes into the `MapData`** the thread hands back, so the polygonal mesh
 built later from the resource sees the same gates (navigation-deep skill).
 
+**The last stage meshes every map layer, in the same thread, in parallel groups**
+(`map/prepare.rs::build_world_meshes`): buildings ∥ roads (both verge steps) ∥ polymesh ∥
+the small lane (parking layout, surfaces, trees with the tree-set compose and the conifer
+field, rails of every zoom step, the car placement) — one thread per group, since the
+`MapData` is final by then (compose runs before the lanes; it is the only writer) and each
+group fills its own lists. Styles — height mode, road style/shape, tree styles, car
+occupancy, the polymesh panel — arrive as a `StyleSnapshot` taken at thread start
+(`loading.rs::MeshInputs`); a knob changed mid-load is picked up by the regular `rebuilds_on`
+rebuild on the first Playing frame, exactly like a change after entry. The thread writes the
+lane-width global itself (from `MapData::knobs`, the same value `adopt_lane_width` writes at
+entry) and chunks the opaque layers (`into_chunks`) — the old entry-frame cost, split 15.7 s,
+lives here now. The polymesh lane follows the Navmesh panel's toggle and hands its build to
+`PolyNavmesh::set_ready` in the `Done` branch, so the async panel build never starts. A panic
+in any lane is `Failed`, not a hung loader.
+
+`Done` is the whole world: `poll_job` inserts `MapData`, `PortalPos` and a
+**`PreparedMeshes`** resource; `OnEnter(Playing)` then only *spawns* — `spawn_map` (parking
+layout resource, surfaces, both road steps, buildings), `spawn_rails` (all steps),
+`cars::seed_parked_cars` (the placement cache pre-filled), `trees::spawn_prepared_trees`
+(each system takes its lists out of `PreparedMeshes` with `std::mem::take`). The cheap,
+camera-bucket-dependent meshes (cars' bodies, wagons, fences, industry, tram, the tree-row
+band) are still built at entry — they cost 1–15 ms each.
+
 - `total` is `None` in practice (chunked answers, gzip strips `content-length`), so the
   screen shows MB + rate.
 - **`Connecting` is mostly Overpass computing the query server-side** — measured 62 s before
@@ -88,7 +112,9 @@ built later from the resource sees the same gates (navigation-deep skill).
   `Time<Real>`; minutes here are normal, not a hang.
 
 **Rule: heavy init belongs in this thread, not in `OnEnter(Playing)`** — no frame is drawn
-inside a schedule, so work there freezes the loader on its last message.
+inside a schedule, so work there freezes the loader on its last message. The meshing is the
+rule's second application, after the navmesh: entry-frame cost measured 15.7 s on Paris
+before the move (journal entry 10), ~1.5 s after it.
 
 The query, the mirrors and the cache are the `osm-map` skill.
 

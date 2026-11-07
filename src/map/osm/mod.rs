@@ -11,7 +11,7 @@ pub mod overpass;
 pub mod parse;
 mod planting;
 
-pub use self::download::{JobState, MapLoadJob, OVERPASS_MIRRORS, start_load_thread};
+pub use self::download::{JobState, LoadedWorld, MapLoadJob, OVERPASS_MIRRORS, start_load_thread};
 pub use self::model::{
     AreaKind, BuildingUse, Colours, Faith, FenceKind, FenceLine, Highway, LaneTurn, LotKind,
     MapData, PipeLine, PitchKind, PolyArea, RailKind, RailLine, Rgb, RoadArea, RoadAreaKind,

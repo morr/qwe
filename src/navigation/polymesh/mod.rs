@@ -313,6 +313,18 @@ impl PolyNavmesh {
         self.cancel_task();
     }
 
+    /// Готовый меш из потока загрузки (`map/prepare.rs`): постройка отыграла
+    /// до входа в мир, и `sync_polymesh_build` на входе видит `built_for`
+    /// совпадающим — таск панели не запускается. Ключ — панель, снятая на
+    /// входе в мир: смена радиуса во время загрузки разъедется с ним и
+    /// запустит обычную асинхронную пересборку.
+    pub fn set_ready(&mut self, build: PolymeshBuild, debug: &PolymeshDebug) {
+        self.cancel_task();
+        self.build = Some(Arc::new(build));
+        self.built_for = BuildKey::new(debug);
+        self.generation = self.generation.wrapping_add(1);
+    }
+
     /// Отпустить летящую постройку и попросить её выйти: без флага она
     /// доедает ядра ещё десятки секунд ради результата, который выбросят.
     fn cancel_task(&mut self) {
@@ -323,11 +335,24 @@ impl PolyNavmesh {
     }
 }
 
+/// Постройка в потоке загрузки (`map/prepare.rs`): та же геометрия, что у
+/// таска панели, — без ECS и без отмены (отменять нечего: поток один, и его
+/// результат всегда нужен). `chunked` — тумблер чанков панели.
+pub fn build_polymesh_for(
+    map: &MapData,
+    agent_radius: f32,
+    chunked: bool,
+) -> Option<PolymeshBuild> {
+    let input = PolymeshInput::from_map(map);
+    let chunk_meters = (!chunked).then_some(POLYMESH_FLAT_CHUNK_METERS);
+    build_polymesh(&input, agent_radius, None, chunk_meters)
+}
+
 /// Постройка меша прямо из карты, без ECS и без таска — вход для офлайн-
 /// прогонов (`examples/bench/polymesh_bench.rs`). Игровой путь идёт через
 /// `sync_polymesh_build` и зовёт ровно тот же конвейер.
 pub fn build_polymesh_from_map(map: &MapData, agent_radius: f32) -> Option<PolymeshBuild> {
-    build_polymesh(&PolymeshInput::from_map(map), agent_radius, None, None)
+    build_polymesh_for(map, agent_radius, true)
 }
 
 /// Снапшот векторной геометрии для таска — клон, без локов и без ссылок в

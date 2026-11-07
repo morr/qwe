@@ -12,11 +12,15 @@ use crate::city::City;
 use crate::grid::NavtileBase;
 use crate::map::RoadShape;
 use crate::map::osm::parse::{ParseKnobs, RawOsm};
-use crate::map::osm::{JobState, MapLoadJob, OVERPASS_MIRRORS, start_load_thread};
+use crate::map::osm::{JobState, LoadedWorld, MapLoadJob, OVERPASS_MIRRORS, start_load_thread};
+use crate::map::{
+    BuildingHeightMode, CarStyle, ConiferNoiseStyle, PreparedMeshes, RoadShapeOnMap, RoadStyle,
+    StyleSnapshot, TreeRowStyle, TreeStyle,
+};
 use crate::movement::{
     PathfindingRequest, PathfindingTask, SimPosition, UrgentPath, wanderers_dispatched_at_zoom,
 };
-use crate::navigation::{ArcNavmesh, Pathfinder};
+use crate::navigation::{ArcNavmesh, Pathfinder, PolyNavmesh, PolymeshDebug};
 use crate::portal::PortalPos;
 use bevy::feathers::theme::ThemeBackgroundColor;
 use bevy::feathers::tokens;
@@ -205,9 +209,16 @@ fn start_job(
     navmesh: Res<ArcNavmesh>,
     city: Res<City>,
     inputs: ParseInputs,
+    styles: MeshInputs,
 ) {
     let job = MapLoadJob::default();
-    start_load_thread(job.clone(), navmesh.0.clone(), *city, inputs.knobs());
+    start_load_thread(
+        job.clone(),
+        navmesh.0.clone(),
+        *city,
+        inputs.knobs(),
+        styles.snapshot(),
+    );
     commands.insert_resource(job);
 }
 
@@ -236,6 +247,45 @@ impl ParseInputs<'_> {
                 .as_deref()
                 .map_or(ParseKnobs::default().lane_width, RoadShape::lane_width),
             raw: self.raw.as_deref().copied().unwrap_or_default(),
+        }
+    }
+}
+
+/// Снимок стилей для мешинга потока (`map/prepare.rs`): у потока ECS нет,
+/// ресурсы читаются один раз на старте. Ресурса может не быть (сцена без
+/// `MapPlugin`, мира ещё нет) — дефолт, как у [`ParseInputs`]. Правка ручек
+/// во время загрузки подхватывает пересборка слоёв на первом кадре мира —
+/// так же, как правка после входа.
+#[derive(SystemParam)]
+struct MeshInputs<'w> {
+    height: Option<Res<'w, BuildingHeightMode>>,
+    road_style: Option<Res<'w, RoadStyle>>,
+    road_shape: Option<Res<'w, RoadShapeOnMap>>,
+    trees: Option<Res<'w, TreeStyle>>,
+    tree_rows: Option<Res<'w, TreeRowStyle>>,
+    noise: Option<Res<'w, ConiferNoiseStyle>>,
+    cars: Option<Res<'w, CarStyle>>,
+    polymesh: Option<Res<'w, PolymeshDebug>>,
+}
+
+impl MeshInputs<'_> {
+    fn snapshot(&self) -> StyleSnapshot {
+        StyleSnapshot {
+            height_mode: self.height.as_deref().copied().unwrap_or_default(),
+            road_style: self.road_style.as_deref().copied().unwrap_or_default(),
+            road_shape: self
+                .road_shape
+                .as_deref()
+                .map(|shape| shape.0)
+                .unwrap_or_default(),
+            trees: self.trees.as_deref().cloned().unwrap_or_default(),
+            tree_rows: self.tree_rows.as_deref().cloned().unwrap_or_default(),
+            noise: self.noise.as_deref().cloned().unwrap_or_default(),
+            cars: self.cars.as_deref().copied().unwrap_or_default(),
+            polymesh: self
+                .polymesh
+                .as_deref()
+                .and_then(|debug| debug.enabled.then(|| (debug.radius(), debug.chunks))),
         }
     }
 }
@@ -315,10 +365,17 @@ fn on_retry(
     navmesh: Res<ArcNavmesh>,
     city: Res<City>,
     inputs: ParseInputs,
+    styles: MeshInputs,
     mut buttons: Query<&mut Visibility, With<RetryButton>>,
 ) {
     *job.0.lock().unwrap() = JobState::Connecting { attempt: 1 };
-    start_load_thread(job.clone(), navmesh.0.clone(), *city, inputs.knobs());
+    start_load_thread(
+        job.clone(),
+        navmesh.0.clone(),
+        *city,
+        inputs.knobs(),
+        styles.snapshot(),
+    );
     for mut visibility in &mut buttons {
         *visibility = Visibility::Hidden;
     }
@@ -339,6 +396,7 @@ fn format_speed(bytes_per_sec: f64) -> String {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn poll_job(
     mut commands: Commands,
     job: Res<MapLoadJob>,
@@ -347,6 +405,8 @@ fn poll_job(
     mut next: ResMut<NextState<AppState>>,
     mut texts: Query<(&mut Text, &mut TextColor), With<LoaderText>>,
     mut retry_buttons: Query<&mut Visibility, With<RetryButton>>,
+    mut poly: ResMut<PolyNavmesh>,
+    debug: Res<PolymeshDebug>,
 ) {
     let mut state = job.0.lock().unwrap();
 
@@ -404,9 +464,13 @@ fn poll_job(
         JobState::Parsing => ("Parsing map...".to_string(), false),
         JobState::BuildingNavmesh => ("Building navmesh...".to_string(), false),
         JobState::Pruning => ("Pruning unreachable areas...".to_string(), false),
+        JobState::BuildingMeshes => ("Building map layers...".to_string(), false),
         JobState::Done(world) => {
-            let world = *world.take().expect("world already taken");
-            let map = world.map;
+            let LoadedWorld {
+                map,
+                portal,
+                mut meshes,
+            } = *world.take().expect("world already taken");
             // высота в OSM опциональна и покрыта очень неровно (Берлин 80%,
             // Токио 5%) — процент в логе объясняет плоскую карту без гаданий
             let with_height = map
@@ -444,7 +508,15 @@ fn poll_job(
                 map.trees.len(),
             );
             commands.insert_resource(map);
-            commands.insert_resource(PortalPos(world.portal));
+            commands.insert_resource(PortalPos(portal));
+            // полимеш построен потоком: бэкенд готов до входа в мир, и таск
+            // панели на входе не запустится — `built_for` совпадает. Смена
+            // радиуса во время загрузки разъедется с ключом и пересоберёт
+            // как раньше — асинхронно с первого кадра мира
+            if let Some(build) = meshes.polymesh.take() {
+                poly.set_ready(build, &debug);
+            }
+            commands.insert_resource(PreparedMeshes(meshes));
             *connecting_since = None;
             next.set(AppState::Playing);
             return;
