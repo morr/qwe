@@ -67,6 +67,26 @@ const Z_BUILDING_SHADOW: f32 = Z_BUILDING - 0.5;
 /// ещё ниже юнитов (10).
 const Z_ROOF_SHADOW: f32 = Z_BUILDING + 0.05;
 
+/// Полоса z кусков слоя экструзии (`extrusion_builder` режет слой домами по
+/// клеткам карты), под полным зумом слоя. Равный z отдал бы порядок кусков
+/// отрисовке в рендер-бине — порядку спавна, что работает, но держится на
+/// порядке внутри бина; ступени ставят стек на глубинный буфер, который
+/// всегда ставит ближний кусок поверх, откуда бы ни рисовали. Полоса лежит
+/// целиком в зазоре до тени на кровлях (0.05) и делится между кусками,
+/// сколько бы их ни вышло.
+const BUILDING_CHUNK_Z_BAND: f32 = 0.04;
+
+/// z куска `ordinal` из `count` экструзии: дальний кусок (он первый —
+/// `extrusion_builder` отдаёт клетки от дальней к ближней) ниже всех, ближний
+/// стоит на полном [`Z_BUILDING`].
+fn building_chunk_z(ordinal: usize, count: usize) -> f32 {
+    if count <= 1 {
+        return Z_BUILDING;
+    }
+    Z_BUILDING - BUILDING_CHUNK_Z_BAND
+        + ordinal as f32 * (BUILDING_CHUNK_Z_BAND / (count - 1) as f32)
+}
+
 /// Метров подъёма крыши на метр высоты в 2.5D: драматичнее фасадной полосы,
 /// но карта остаётся видом сверху, а не изометрией.
 const EXTRUDE_SCALE: f32 = 0.35;
@@ -293,7 +313,9 @@ pub fn measure_layers(
             measure("extruded", &mut || {
                 extrusion_builder(buildings, passages, detail, &order)
                     .0
-                    .vertex_count()
+                    .iter()
+                    .map(|builder| builder.vertex_count())
+                    .sum()
             });
         }
         BuildingHeightMode::Facade
@@ -425,10 +447,6 @@ pub fn mesh_buildings(
     let started = Instant::now();
     let mut skipped = 0;
     let mut layers: Vec<LayerMesh> = Vec::new();
-    let mut push = |builder: MeshBuilder, z, name, material| {
-        skipped += builder.skipped_polygons();
-        layers.push(LayerMesh::new(builder, z, name, material));
-    };
 
     // порядок отрисовки строится один раз на сборку слоя и достаётся обоим,
     // кому он нужен: мешу экструзии, который кладёт по нему дома, и теням на
@@ -451,19 +469,40 @@ pub fn mesh_buildings(
                 tinted: mode == BuildingHeightMode::ExtrusionShadowsTint,
                 clutter: bucket.index == 0,
             };
-            let (extruded, mix) = extrusion_builder(buildings, passages, detail, order);
+            // куски приходят от дальней клетки к ближней — та же сортировка,
+            // что внутри одной клетки, и z-ступени от дальнего к ближнему.
+            // В общий рез (`LayerMesh::into_chunks`) они не идут: куски уже
+            // собраны домами целиком, второй разрез по треугольникам разъял
+            // бы дом через границу клетки
+            let (chunks, mix) = extrusion_builder(buildings, passages, detail, order);
             roof_mix = mix.to_string();
-            push(
-                extruded,
-                Z_BUILDING,
-                "building_extruded",
-                MaterialSpec::Roof,
-            );
+            skipped += chunks
+                .iter()
+                .map(|builder| builder.skipped_polygons())
+                .sum::<usize>();
+            let count = chunks.len();
+            layers.extend(chunks.into_iter().enumerate().map(|(ordinal, builder)| {
+                LayerMesh::new(
+                    builder,
+                    building_chunk_z(ordinal, count),
+                    "building_extruded",
+                    MaterialSpec::Roof,
+                )
+            }));
         }
         None => {
             let detail = RoofDetail {
                 tinted: mode == BuildingHeightMode::ShadowsTint,
                 clutter: bucket.index == 0,
+            };
+            // слой, собранный одним билдером, режется на куски карты перед
+            // спавном (`LayerMesh::into_chunks`) — разрез не трогает счёт
+            // вырожденных: тот посчитан по исходному билдеру
+            let mut push = |builder: MeshBuilder, z, name, material| {
+                skipped += builder.skipped_polygons();
+                layers.extend(
+                    LayerMesh::new(builder, z, name, material).into_chunks(surface::MAP_CHUNK),
+                );
             };
             let (facades, roofs) = facade_and_roof_builders(buildings, passages, detail);
             push(facades, Z_FACADE, "building_facades", MaterialSpec::Flat);

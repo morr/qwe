@@ -491,6 +491,15 @@ pub struct LayerMesh {
     pub material: MaterialSpec,
 }
 
+/// Сторона клетки карты, на которую режутся merged-меши непрозрачных слоёв,
+/// в метрах — та же логика, что у крон (`trees::CROWN_CHUNK`), и те же
+/// крайности: мельче — больше draw calls при полном отдалении, где отсекать
+/// нечего (каждый кусок — свой меш-ассет и свой бин рендера, см.
+/// `Opaque2dBinKey::asset_id`); крупнее — отсечение перестаёт что-либо
+/// отсекать. Кадр ближнего зума — 450×250 м, километровая клетка в него
+/// влезает целиком.
+pub const MAP_CHUNK: f32 = 1000.0;
+
 impl LayerMesh {
     pub fn new(builder: MeshBuilder, z: f32, name: &'static str, material: MaterialSpec) -> Self {
         Self {
@@ -509,6 +518,40 @@ impl LayerMesh {
     pub fn offset(mut self, offset: Vec2) -> Self {
         self.offset = offset;
         self
+    }
+
+    /// Разрезать слой на куски по клеткам карты ([`MAP_CHUNK`]) — каждый со
+    /// своим мешем, с общими `name`/`z`/материалом: у адаптеров спавна
+    /// (`spawn_layers`) меняется только число записей, а `brp hide`/`probe`
+    /// по-прежнему видят один слой под одним именем.
+    ///
+    /// Режутся только непрозрачные слои, чьи треугольники не несут порядка
+    /// отрисовки между собой: перекрытия внутри слоя либо одного цвета
+    /// (асфальт узлов поверх ленты улиц), либо разрез их не трогает —
+    /// порядок треугольников **внутри куска** остаётся исходным, а порядок
+    /// кусков при равном z — порядок спавна, то есть порядок клеток
+    /// (`map/meshing.rs::MeshBuilder::into_chunks`). Слои, где порядок
+    /// между перекрытиями разного цвета обязан сохраняться, не режутся:
+    /// полупрозрачные теневые развёртки (объединение `i_overlay` не знает
+    /// о границах клеток — разрез дал бы двойное затемнение) и краска.
+    pub fn into_chunks(self, cell: f32) -> Vec<Self> {
+        if !matches!(
+            self.material,
+            MaterialSpec::Flat | MaterialSpec::Surface(_) | MaterialSpec::Roof
+        ) {
+            return vec![self];
+        }
+        self.builder
+            .into_chunks(cell)
+            .into_iter()
+            .map(|builder| Self {
+                builder,
+                z: self.z,
+                offset: self.offset,
+                name: self.name,
+                material: self.material,
+            })
+            .collect()
     }
 }
 

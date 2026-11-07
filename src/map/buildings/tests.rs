@@ -1633,6 +1633,65 @@ fn extrusion_builds_one_layer_and_the_flat_modes_split_facade_from_roof() {
     assert!(flat.layers.iter().all(|layer| !layer.builder.is_empty()));
 }
 
+/// Слой экструзии режется домами по клеткам карты: дом через границу клетки
+/// уходит в один кусок целиком — его собственный порядок (крыша поверх своих
+/// стен) переживает разрез, каким бы косым ни был дом.
+#[test]
+fn a_building_straddling_the_border_lives_in_one_chunk() {
+    let _sun = crate::map::default_sun();
+    // квадрат с центром ровно на линии сетки x = 1000
+    let ring = rect(Vec2::new(995.0, 995.0), Vec2::new(1005.0, 1005.0));
+    let (built, _) = mesh_buildings(
+        building_plan(BuildingHeightMode::ExtrusionShadowsTint, false),
+        &[building(ring, Some(9.0), AreaKind::Building)],
+        &[],
+    );
+    assert_eq!(
+        layer_names(&built.layers),
+        ["building_extruded"],
+        "один дом — один кусок"
+    );
+    // крыша смещена вправо-вверх за границу — её вершины в том же куске
+    let builder = &built.layers[0].builder;
+    assert!(
+        builder
+            .positions_for_test()
+            .iter()
+            .any(|point| point[0] > 1005.0 && point[1] > 1005.0),
+        "геометрия за границей клетки не потерялась"
+    );
+}
+
+/// Клетки экструзии идут от дальней к ближней, и z растёт вместе с ними:
+/// стек кусков держится на глубинном буфере, а не на порядке рендер-бина.
+#[test]
+fn building_chunks_stack_by_depth() {
+    let _sun = crate::map::default_sun();
+    let far = building(
+        rect(Vec2::new(2500.0, 2500.0), Vec2::new(2510.0, 2510.0)),
+        Some(9.0),
+        AreaKind::Building,
+    );
+    // квадрат у начала координат — клетка (0, 0), ближняя
+    let (built, _) = mesh_buildings(
+        building_plan(BuildingHeightMode::ExtrusionShadowsTint, false),
+        &[far, one_building()],
+        &[],
+    );
+    assert_eq!(built.layers.len(), 2, "две клетки — два куска");
+    assert!(
+        built.layers[0].z < built.layers[1].z,
+        "дальняя клетка стоит ниже ближней"
+    );
+    for layer in &built.layers {
+        assert!(
+            crate::settings::Z_BUILDING - layer.z <= 0.05,
+            "куски живут в полосе под полным зумом слоя, а не под тенями: {:?}",
+            layer.z
+        );
+    }
+}
+
 #[test]
 fn both_shadow_layers_ride_their_own_list_around_the_building_ones() {
     let _sun = crate::map::default_sun();

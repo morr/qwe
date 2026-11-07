@@ -1215,3 +1215,150 @@ fn a_taper_runs_from_one_width_to_the_other() {
     assert!((coords[0][1] - 50.0).abs() < 1e-4);
     assert!((coords[coords.len() - 1][1] - 40.0).abs() < 1e-4);
 }
+
+// ── Куски карты (`into_chunks`) ──
+
+/// Треугольники кусков, собранные в один список парой «центроид — цвет
+/// первой вершины» — как сравниваются между разрезами.
+fn triangles_of(builder: &MeshBuilder) -> Vec<(Vec2, LinearRgba)> {
+    builder
+        .colored_triangles_for_test()
+        .map(|(points, color)| ((points[0] + points[1] + points[2]) / 3.0, color))
+        .collect()
+}
+
+/// Куски совпадают с исходной геометрией: ни один треугольник не потерян,
+/// не продублирован и не поменялся цветом с другим.
+#[test]
+fn chunks_conserve_every_triangle() {
+    let mut builder = MeshBuilder::default();
+    builder.push_polygon(
+        &[
+            Vec2::new(110.0, 110.0),
+            Vec2::new(1190.0, 110.0),
+            Vec2::new(110.0, 1190.0),
+        ],
+        &[],
+        LinearRgba::WHITE,
+    );
+    builder.push_polygon(
+        &[
+            Vec2::new(2100.0, 100.0),
+            Vec2::new(2300.0, 100.0),
+            Vec2::new(2300.0, 300.0),
+            Vec2::new(2100.0, 300.0),
+        ],
+        &[],
+        LinearRgba::WHITE,
+    );
+    let mut source = triangles_of(&builder);
+    let chunks = builder.into_chunks(1000.0);
+    let mut chunked: Vec<_> = chunks.iter().flat_map(triangles_of).collect();
+    // куски в порядке клеток (y, x) — обе стороны сортируются по центроиду,
+    // сравнение не привязано к порядку
+    let by_cell = |(a, _): &(Vec2, LinearRgba), (b, _): &(Vec2, LinearRgba)| {
+        a.y.total_cmp(&b.y).then(a.x.total_cmp(&b.x))
+    };
+    source.sort_by(by_cell);
+    chunked.sort_by(by_cell);
+    assert_eq!(chunked.len(), source.len());
+    for (chunked, source) in chunked.iter().zip(&source) {
+        assert!(
+            chunked.0.distance(source.0) < 1e-3 && chunked.1 == source.1,
+            "{chunked:?} != {source:?}"
+        );
+    }
+}
+
+/// Треугольник через границу клетки целиком уходит в клетку своего
+/// центроида — ни один его уголок не разъезжается по соседям (иначе слой
+/// в игре терял бы свой порядок отрисовки на границе).
+#[test]
+fn a_triangle_crossing_the_border_goes_whole_into_one_chunk() {
+    let mut builder = MeshBuilder::default();
+    // центроид слева от границы x = 1000, вершина за ней
+    builder.push_triangle(
+        [
+            Vec2::new(900.0, 100.0),
+            Vec2::new(1150.0, 100.0),
+            Vec2::new(900.0, 300.0),
+        ],
+        LinearRgba::WHITE,
+    );
+    let chunks = builder.into_chunks(1000.0);
+    assert_eq!(chunks.len(), 1, "центроид слева — весь треугольник слева");
+    assert!(
+        chunks[0].covers_for_test(Vec2::new(1050.0, 120.0)),
+        "вершина за границей осталась в меше"
+    );
+}
+
+/// Куски в порядке клеток (y, x) — как у слитых крон (`trees::sorted_chunks`):
+/// z кусков в игре ставит каждый следующий чуть выше, и порядок обязан быть
+/// один и тот же при любом хэшере.
+#[test]
+fn chunks_come_in_cell_order() {
+    let mut builder = MeshBuilder::default();
+    for at in [
+        Vec2::new(2500.0, 2500.0),
+        Vec2::new(500.0, 1500.0),
+        Vec2::new(1500.0, 500.0),
+        Vec2::new(500.0, 500.0),
+    ] {
+        builder.push_rect(at, at + Vec2::splat(10.0), LinearRgba::WHITE);
+    }
+    let chunks = builder.into_chunks(1000.0);
+    let starts: Vec<Vec2> = chunks
+        .iter()
+        .map(|chunk| {
+            let point = chunk.positions_for_test()[0];
+            Vec2::new(point[0], point[1])
+        })
+        .collect();
+    let expected = [
+        Vec2::new(500.0, 500.0),
+        Vec2::new(1500.0, 500.0),
+        Vec2::new(500.0, 1500.0),
+        Vec2::new(2500.0, 2500.0),
+    ];
+    assert_eq!(starts, expected, "квады по клеткам (y, x)");
+}
+
+/// Атрибуты едут с вершиной: координаты ленты (со своей раскладкой полос),
+/// собранные до разреза, у вершин склеенных кусков те же.
+#[test]
+fn chunk_vertices_carry_their_attributes() {
+    let mut builder = MeshBuilder::with_surface_coords();
+    builder.set_lanes(Some(LaneFrame {
+        origin: 0.0,
+        low: -2.0,
+        high: 2.0,
+    }));
+    builder.push_ribbon(
+        &[Vec2::new(100.0, 100.0), Vec2::new(800.0, 100.0)],
+        false,
+        4.0,
+        LinearRgba::WHITE,
+        RibbonJoin::Miter,
+        RibbonCap::Butt,
+    );
+    let source = builder.ribbon_coords_for_test().unwrap().to_vec();
+    assert!(
+        !source.is_empty() && source[0] != [0.0; 4],
+        "раскладка легла в атрибут"
+    );
+    let merged = MeshBuilder::merge(builder.into_chunks(1000.0));
+    assert_eq!(merged.ribbon_coords_for_test().unwrap(), source);
+}
+
+/// Пустой сборщик не даёт кусков, а сборка в одной клетке — один кусок.
+#[test]
+fn empty_builder_makes_no_chunks_and_small_one_makes_one() {
+    let chunks = MeshBuilder::default().into_chunks(1000.0);
+    assert!(chunks.is_empty());
+
+    let mut builder = MeshBuilder::default();
+    builder.push_rect(Vec2::ZERO, Vec2::splat(10.0), LinearRgba::WHITE);
+    let chunks = builder.into_chunks(1000.0);
+    assert_eq!(chunks.len(), 1);
+}

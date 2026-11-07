@@ -1700,7 +1700,12 @@ pub fn spawn_road_meshes(
         commands,
         meshes,
         materials,
-        rest,
+        // непрозрачные слои режутся на куски карты (`LayerMesh::into_chunks`
+        // сам не трогает полупрозрачные тени и краску): каждая запись — тот
+        // же слой под тем же именем, метка с LodStep ложится на каждый кусок,
+        // и `show_road_steps` перекрашивает их как один
+        rest.into_iter()
+            .flat_map(|layer| layer.into_chunks(surface::MAP_CHUNK)),
         (RoadLayerTag, LodStep(step), visibility),
     );
     if spawn_paint {

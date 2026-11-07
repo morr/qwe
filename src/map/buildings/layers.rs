@@ -22,9 +22,10 @@ use super::order::wall_order;
 use super::roofs::{
     DormerFace, HipRoof, RoofMix, RoofShape, Roofing, TentRoof, roofing, roofing_of,
 };
-use super::temples::{Sanctuary, push_crowns};
+use super::temples::{Crown, Sanctuary, push_crowns};
 use super::{
-    BuildingHeightMode, Lean, RoofDetail, extrusion_lift, height_or_default, shade_by_light,
+    BuildingHeightMode, Lean, RoofDetail, building_center, extrusion_lift, height_or_default,
+    shade_by_light,
 };
 use crate::map::meshing::{MeshBuilder, PARAPET_CELLS, Roof, WallFrame, WallMark, min_area_rect};
 use crate::map::osm::model::{distance_to_segment, is_big_box, signed_ring_area, srgba_of};
@@ -1066,19 +1067,38 @@ pub(super) fn extrusion_builder(
     passages: &[RoadLine],
     detail: RoofDetail,
     order: &[usize],
-) -> (MeshBuilder, RoofMix) {
+) -> (Vec<MeshBuilder>, RoofMix) {
+    use bevy::platform::collections::HashMap;
+
+    use crate::map::surface::MAP_CHUNK;
+
     let mut mix = RoofMix::default();
     let arches = arches_by_building(buildings, passages);
     let lean = Lean::of();
     let runs = garage_runs(buildings);
 
     // стены и крыши едут одним мешем (painter's порядок общий), так что
-    // рамку кровли несёт и он: у стен она нулевая, у крыш своя
-    let mut builder = MeshBuilder::with_roof_coords();
+    // рамку кровли несёт и он: у стен она нулевая, у крыш своя.
+    //
+    // Меш режется **домами по клеткам карты** ([`MAP_CHUNK`]), чтобы кадр
+    // ближнего зума не рисовал весь город: разрез собранного меша по
+    // треугольникам разъял бы дом через границу клетки — его собственный
+    // порядок (крыша поверх своих стен) погиб первым же, а порядок соседей
+    // держится на сортировке домов, которую разрез тоже ломает. Дом идёт в
+    // клетку своего центра целиком, внутри клетки порядок домов — исходный
+    // (по `order`), а **между** клетками порядок задаёт глубина их центров:
+    // у пары «дом кроет соседа» кроющий стоит ниже-левее кроемого — вся его
+    // геометрия лежит между контуром и контуром, сдвинутым вверх-вправо
+    // ([`Lean`]), до чужого контура она дотягивается только снизу, — и клетка
+    // ниже-левее рисуется позже, как и положено ближнему.
+    let mut chunks: HashMap<IVec2, (MeshBuilder, Vec<(Crown, Vec2)>)> = HashMap::new();
     let sanctuary = Sanctuary::of(buildings);
-    let mut placed = Vec::new();
     for &index in order {
         let building = &buildings[index];
+        let cell = (building_center(building) / MAP_CHUNK).floor().as_ivec2();
+        let (builder, placed) = chunks
+            .entry(cell)
+            .or_insert_with(|| (MeshBuilder::with_roof_coords(), Vec::new()));
         let look = look_of(building, runs.get(&index));
         let color = roof_color(building, &look, detail.tinted);
         let wall = wall_of_run(building, runs.get(&index));
@@ -1110,7 +1130,7 @@ pub(super) fn extrusion_builder(
             })
             .unwrap_or_default();
         let drawn = push_house_with_arches(
-            &mut builder,
+            builder,
             building,
             &look,
             &wall,
@@ -1122,10 +1142,26 @@ pub(super) fn extrusion_builder(
         );
         mix.add(building, drawn);
     }
-    // венцы — после всех домов: храм в OSM состоит из перекрывающихся контуров,
-    // и пристройка, положенная после собора, закрывала низ его глав
-    push_crowns(&mut builder, &placed, Some(lean));
-    (builder, mix)
+    // painter's порядок между клетками: глубина центра клетки, убывание —
+    // дальние раньше, ближние поверх. Один и тот же ключ ставит и дома в
+    // клетке, и сами клетки (`order` отсортирован по глубине домов).
+    let depth = |cell: IVec2| lean.depth((cell.as_vec2() + 0.5) * MAP_CHUNK);
+    let mut keys: Vec<IVec2> = chunks.keys().copied().collect();
+    keys.sort_by(|a, b| depth(*b).total_cmp(&depth(*a)));
+    // венцы — после домов своей клетки: венец выше любой кровли вокруг, и
+    // соседям из ближних клеток до него не дотянуться — их подъём кончается
+    // на карнизе, до венца, стоящего над серединой чужой коробки, они
+    // дотягиваются, только стоя к ней вплотную, а такое редкость (храм —
+    // большая коробка). Сортировку внутри венцов делает `push_crowns`.
+    let builders = keys
+        .into_iter()
+        .map(|key| {
+            let (mut builder, placed) = chunks.remove(&key).expect("key came from the map");
+            push_crowns(&mut builder, &placed, Some(lean));
+            builder
+        })
+        .collect();
+    (builders, mix)
 }
 
 /// Один дом в 2.5D: видимые стены, потом крыша заказанной формы и её

@@ -4,6 +4,7 @@
 
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, MeshVertexAttribute, VertexFormat};
+use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::render::render_resource::PrimitiveTopology;
 
@@ -1105,6 +1106,130 @@ impl MeshBuilder {
             *crown = kept.iter().map(|vertex| vertex.4).collect();
         }
         self.indices = indices;
+    }
+
+    /// Разрезать собранную геометрию по клеткам `cell` метров: каждый
+    /// треугольник **целиком** уходит в клетку своего центроида. Обратная
+    /// операция тривиальна ([`Self::merge`]) и объединение кусков равно
+    /// исходной геометрии байт в байт по накрытию: ни швов, ни двойного
+    /// рисования, порядок треугольников внутри куска — исходный.
+    ///
+    /// Зачем: слой-меш на всю карту несёт Aabb всей карты, и frustum culling
+    /// его не отбрасывает никогда — каждый треугольник уходит в GPU на любом
+    /// зуме. Куски по клеткам возвращают отсечению смысл: кадр ближнего зума
+    /// видит одну-две клетки, и весь остальной слой не рисуется вовсе.
+    ///
+    /// Вершина, общая треугольникам из разных клеток, копируется в каждый —
+    /// суммарный счёт вершин растёт на долю приграничных, а атрибуты
+    /// (координаты ленты, рамки кровли, координаты кроны) переезжают с
+    /// вершиной как записаны. Порядок кусков — по клеткам (y, x), как у крон
+    /// (`trees::sorted_chunks`): детерминированный, от хэшера не зависит.
+    pub fn into_chunks(self, cell: f32) -> Vec<MeshBuilder> {
+        let Self {
+            positions,
+            colors,
+            indices,
+            ribbon,
+            roof,
+            crown,
+            ..
+        } = self;
+        /// Кусок: сборщик с тем же набором атрибутов, что у источника, плюс
+        /// карта «старый индекс вершины → индекс в куске».
+        struct Chunk {
+            builder: MeshBuilder,
+            remap: HashMap<u32, u32>,
+        }
+        let mut chunks: HashMap<IVec2, Chunk> = HashMap::new();
+        for triangle in indices.chunks_exact(3) {
+            let cell_of = |index: u32| {
+                let [x, y, _] = positions[index as usize];
+                Vec2::new(x, y)
+            };
+            // центроид по вершинам — треугольник может висеть через границу
+            let (a, b, c) = (
+                cell_of(triangle[0]),
+                cell_of(triangle[1]),
+                cell_of(triangle[2]),
+            );
+            let centroid = (a + b + c) / 3.0;
+            let key = IVec2::new(
+                (centroid.x / cell).floor() as i32,
+                (centroid.y / cell).floor() as i32,
+            );
+            let Chunk { builder, remap } = chunks.entry(key).or_insert_with(|| Chunk {
+                builder: MeshBuilder {
+                    ribbon: ribbon.is_some().then(Vec::new),
+                    roof: roof.is_some().then(Vec::new),
+                    crown: crown.is_some().then(Vec::new),
+                    ..MeshBuilder::default()
+                },
+                remap: HashMap::new(),
+            });
+            for &old in triangle {
+                let new = match remap.get(&old) {
+                    Some(&new) => new,
+                    None => {
+                        let index = old as usize;
+                        let new = builder.positions.len() as u32;
+                        builder.positions.push(positions[index]);
+                        builder.colors.push(colors[index]);
+                        if let Some(coords) = &mut builder.ribbon {
+                            coords.push(ribbon.as_ref().map_or(NO_RIBBON, |r| r[index]));
+                        }
+                        if let Some(frames) = &mut builder.roof {
+                            frames.push(roof.as_ref().map_or(NO_ROOF, |r| r[index]));
+                        }
+                        if let Some(local) = &mut builder.crown {
+                            local.push(crown.as_ref().map_or([0.0; 2], |c| c[index]));
+                        }
+                        remap.insert(old, new);
+                        new
+                    }
+                };
+                builder.indices.push(new);
+            }
+        }
+        let mut keys: Vec<IVec2> = chunks.keys().copied().collect();
+        keys.sort_by_key(|key| (key.y, key.x));
+        keys.into_iter()
+            .map(|key| chunks.remove(&key).expect("key came from the map").builder)
+            .collect()
+    }
+
+    /// Склеить куски [`Self::into_chunks`] обратно в один сборщик — индексы
+    /// каждого куска сдвигаются на вершины кусков перед ним, атрибуты
+    /// переезжают с вершинами. Обратная операция нужна только тестам: слой
+    /// с фактурой в игре живёт кусками, и склеивать его некому
+    /// (`MeshBuilder::concat` склеивает лишь куски без атрибутов).
+    #[cfg(test)]
+    pub(crate) fn merge(parts: Vec<MeshBuilder>) -> MeshBuilder {
+        let mut merged = MeshBuilder::default();
+        let Some(first) = parts.first() else {
+            return merged;
+        };
+        // куски одного сборщика несут один и тот же набор атрибутов
+        merged.ribbon = first.ribbon.is_some().then(Vec::new);
+        merged.roof = first.roof.is_some().then(Vec::new);
+        merged.crown = first.crown.is_some().then(Vec::new);
+        for part in parts {
+            let base = merged.positions.len() as u32;
+            merged.positions.extend(part.positions);
+            merged.colors.extend(part.colors);
+            merged
+                .indices
+                .extend(part.indices.iter().map(|index| base + index));
+            if let Some(ribbon) = &mut merged.ribbon {
+                ribbon.extend(part.ribbon.expect("attribute set must match"));
+            }
+            if let Some(roof) = &mut merged.roof {
+                roof.extend(part.roof.expect("attribute set must match"));
+            }
+            if let Some(crown) = &mut merged.crown {
+                crown.extend(part.crown.expect("attribute set must match"));
+            }
+        }
+        merged
     }
 
     /// Склеить куски в один сборщик — ровно в том порядке, в каком их

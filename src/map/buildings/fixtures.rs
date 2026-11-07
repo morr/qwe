@@ -102,7 +102,10 @@ pub(super) fn ground_shadows(
 }
 
 /// Меш 2.5D-экструзии — с тем же порядком отрисовки, который в игре достаётся
-/// заодно и теням на кровлях.
+/// заодно и теням на кровлях. Экструзия в игре живёт кусками по клеткам карты
+/// (`extrusion_builder`), тестовым домам хватает одной клетки: куски
+/// склеиваются обратно в один билдер ([`MeshBuilder::merge`]), порядок
+/// треугольников тот же, что у цельного меша.
 pub(super) fn extruded_mesh(
     list: &[PolyArea],
     passages: &[RoadLine],
@@ -110,7 +113,9 @@ pub(super) fn extruded_mesh(
 ) -> MeshBuilder {
     use super::layers::extrusion_builder;
 
-    extrusion_builder(list, passages, detail, &order::draw_order(list, Lean::of())).0
+    let (chunks, _) =
+        extrusion_builder(list, passages, detail, &order::draw_order(list, Lean::of()));
+    MeshBuilder::merge(chunks)
 }
 
 /// Вершины меша плоскими точками — тело и кайма вместе.

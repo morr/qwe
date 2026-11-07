@@ -163,7 +163,18 @@ pub fn spawn_map(
     // их никто не запрашивает, а значит и не пересобирает — они живут ровно
     // столько, сколько живёт город. Дать им метку имело бы смысл вместе с
     // причиной пересобирать, а её пока нет.
-    spawn_layers(&mut commands, &mut meshes, &materials, surfaces, ());
+    // Непрозрачные поверхности режутся на куски карты (`LayerMesh::
+    // into_chunks` сам не трогает редкую в них полупрозрачность — её тут
+    // нет вовсе): слой на всю карту не кульится, куски кульятся.
+    spawn_layers(
+        &mut commands,
+        &mut meshes,
+        &materials,
+        surfaces
+            .into_iter()
+            .flat_map(|layer| layer.into_chunks(surface::MAP_CHUNK)),
+        (),
+    );
 
     let road_build = roads::build_roads(&map, *road_style, road_shape.0, *verge);
     // линии колеи — ресурсом, для оверлея колеи вкладки Debug; пути трамвая
