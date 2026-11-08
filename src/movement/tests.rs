@@ -488,11 +488,15 @@ fn dispatched(app: &mut App) -> usize {
         .count()
 }
 
-/// Кто остался в очереди — по `PawnId`, отсортировано.
+/// Кто остался в очереди — по `PawnId`, отсортировано. В очереди — заявка без
+/// таска: живой диспетчер ставит таск поверх живой заявки.
 fn still_queued(app: &mut App) -> Vec<u32> {
     let mut left: Vec<u32> = app
         .world_mut()
-        .query_filtered::<&crate::rng::PawnId, With<PathfindingRequest>>()
+        .query_filtered::<&crate::rng::PawnId, (
+            With<PathfindingRequest>,
+            Without<PathfindingTask>,
+        )>()
         .iter(app.world())
         .map(|pawn_id| pawn_id.0)
         .collect();
@@ -985,7 +989,9 @@ fn a_queued_wanderer_enters_the_index_and_leaves_by_every_path() {
 }
 
 /// Диспетчер берёт мирных из сетки очереди: стоящий в кадре уезжает, за кадром
-/// ждёт — и уехавшая запись вычищается, а ожидающая остаётся.
+/// ждёт. Выданная запись доживает в сетке до приёмки (выдача ставит таск
+/// поверх живой заявки) — чистится пакетным снятием заявки с таском, как его
+/// делает `listen_for_pathfinding_tasks`; ожидающая остаётся.
 #[test]
 fn the_dispatcher_takes_queued_wanderers_from_the_index() {
     AsyncComputeTaskPool::get_or_init(TaskPool::default);
@@ -1018,9 +1024,20 @@ fn the_dispatcher_takes_queued_wanderers_from_the_index() {
         app.world().get::<PathfindingTask>(off_screen).is_none(),
         "заявка за кадром уехала вопреки гейту видимости"
     );
+    // выдача держит заявку (и запись сетки) на месте — до приёмки
+    assert_eq!(
+        queued_near(app, Vec2::ZERO),
+        vec![visible],
+        "выданная заявка обязана дожить в сетке до приёмки"
+    );
+    // приёмка: тот же пакет, что снимает `listen_for_pathfinding_tasks`
+    app.world_mut()
+        .entity_mut(visible)
+        .remove::<(PathfindingTask, PathfindingRequest)>();
+    app.world_mut().flush();
     assert!(
         queued_near(app, Vec2::ZERO).is_empty(),
-        "уехавшая заявка осталась в сетке очереди"
+        "принятая заявка осталась в сетке очереди"
     );
     assert_eq!(
         queued_near(app, Vec2::new(100_000.0, 0.0)),

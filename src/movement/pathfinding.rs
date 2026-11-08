@@ -90,14 +90,18 @@ pub fn live_dispatch_runs(
 /// при любом зуме.
 ///
 /// Ведение — observers на компоненты, а не писцы: у заявки много источников
-/// снятия (диспатч, `to_idle`, раздевание трупа, despawn при побеге, рестарте
-/// и смене города), и все они поднимают `Remove` — единственный путь, которым
-/// запись покидает сущность. Тот же принцип полноты событий, что у
+/// снятия (приёмка ответа, `to_idle`, раздевание трупа, despawn при побеге,
+/// рестарте и смене города), и все они поднимают `Remove` — единственный путь,
+/// которым запись покидает сущность. Выдача в таск заявку не снимает (см.
+/// выдачу в [`dispatch_pathfinding_requests`]), так что запись доживает в
+/// сетке до приёмки — диспетчер отсекает выданных проверкой `PathfindingTask`.
+/// Тот же принцип полноты событий, что у
 /// [`DestinationClaims`](crate::movement::destination::DestinationClaims).
 ///
-/// Стоящая мирная заявка неподвижна (подаётся в простое, уходит с первого же
-/// шага), так что ячейка записи не протухает; диспетчер и так читает позицию
-/// живьём — сетка решает, КОГО читать, а не ГДЕ тот стоит.
+/// Мирная заявка стоит до выдачи (подаётся в простое), а между выдачей и
+/// приёмкой может уехать (перепрокладка на ходу) — ячейка записи за это окно
+/// способна протухнуть; это нечестно только для «КТО читать», а не «ГДЕ»:
+/// диспетчер и так читает позицию живьём, сетка решает только, КОГО читать.
 pub struct QueuedWander;
 
 /// Мирная заявка встала — в сетку. Срочная не попадает: её диспетчер берёт и
@@ -174,6 +178,15 @@ pub fn reset_queued_wanderers(mut queued: ResMut<SpatialGrid<QueuedWander>>) {
 /// обеих половин одно, [`queue_key`]: сбор по ячейкам грубый (ячейка крупнее
 /// точности гейта), точное попадание меряет он; позиция читается живьём из
 /// запроса, записи сетки говорят лишь, КОГО читать.
+///
+/// Выдача ставит таск **поверх живой заявки**, не снимая её: пара
+/// `remove`+`insert` — два переноса между архетипами на каждый поиск, и на
+/// шторме входа (сотни-тысяча диспатчей за кадр) это миллисекунды на
+/// применении команд. Заявку снимает приёмка (`listen_for_pathfinding_tasks`)
+/// одним пакетом с таском; до приёмки выданные отфильтровываются здесь
+/// проверкой таска. Детерминированный диспетчер ведёт свою пару
+/// заявка/таск как раньше — там выдача идёт тик-точным хвостом и цену его
+/// держит не команда, а ожидание пула.
 pub fn dispatch_pathfinding_requests(
     mut commands: Commands,
     backend: Res<Backend>,
@@ -190,9 +203,16 @@ pub fn dispatch_pathfinding_requests(
 
     let view = frame.with_margin(VIEW_MARGIN);
 
+    // выданная заявка остаётся на сущности до приёмки (см. выдачу ниже), так
+    // что «уже в полёте» доходит сюда — и отсекается здесь, до сборки очереди
+    let in_flight = |entity: Entity| tasks.contains(entity);
+
     let mut queue: Vec<(u8, f32, Entity, Vec2, IVec2, IVec2)> = urgent_requests
         .iter()
         .filter_map(|(entity, sim_position, request)| {
+            if in_flight(entity) {
+                return None;
+            }
             let (priority, distance) = queue_key(&view, sim_position.0, true)?;
             (
                 priority,
@@ -216,6 +236,11 @@ pub fn dispatch_pathfinding_requests(
                 // попасть сюда она могла только в пределах одного кадра
                 return;
             };
+            // запись в сетке доживает до приёмки, а не до выдачи: выданная
+            // (таск уже стоит) пропускается, чистить её отсюда не нужно
+            if in_flight(entity) {
+                return;
+            }
             if let Some((priority, distance)) = queue_key(&view, sim_position.0, false) {
                 queue.push((
                     priority,
@@ -230,7 +255,12 @@ pub fn dispatch_pathfinding_requests(
     }
 
     if queue.len() > budget {
-        queue.sort_unstable_by(|a, b| {
+        // top-k вместо полного сорта: всё, что дальше `budget`, всё равно
+        // обрезается, а порядок внутри отрезанной части ни на что не влияет —
+        // ничья на (приоритет, дистанция) и раньше не была определена (сорт
+        // был unstable). O(n) выборка против O(n log n): ~160 мкс на ~6000
+        // кандидатов при переполнении (запись 9) против ~20 мкс выборки
+        queue.select_nth_unstable_by(budget, |a, b| {
             (a.0, a.1)
                 .partial_cmp(&(b.0, b.1))
                 .unwrap_or(std::cmp::Ordering::Equal)
@@ -240,10 +270,11 @@ pub fn dispatch_pathfinding_requests(
 
     for (_, _, entity, start_world, start_tile, end_tile) in queue {
         let task = spawn_path_task((*backend).clone(), start_world, start_tile, end_tile);
-        commands
-            .entity(entity)
-            .remove::<PathfindingRequest>()
-            .insert(PathfindingTask::new(task));
+        // таск ставится поверх живой заявки, без её снятия: снятие — перенос
+        // между архетипами, и на шторме входа их тысячи на кадр (по паре на
+        // каждый поиск: выдача и приёмка). Заявку теперь снимает приёмка —
+        // одним пакетом с таском, одна команда = один перенос
+        commands.entity(entity).insert(PathfindingTask::new(task));
     }
 }
 
@@ -622,7 +653,12 @@ pub fn listen_for_pathfinding_tasks(
             );
             continue;
         };
-        commands.entity(entity).remove::<PathfindingTask>();
+        // таск и заявка уходят одним пакетом — одна команда, один перенос
+        // архетипа: заявка пережила выдачу (см. диспетчер), свой срок она
+        // отслужила
+        commands
+            .entity(entity)
+            .remove::<(PathfindingTask, PathfindingRequest)>();
         accept_answer(
             result,
             &mut tally,

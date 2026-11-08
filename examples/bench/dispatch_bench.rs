@@ -30,9 +30,9 @@ use rand::{RngExt, SeedableRng};
 
 use qwe::camera::Viewport;
 use qwe::movement::{
-    PathfindingRequest, QueuedWander, SimPosition, UrgentPath, dispatch_pathfinding_requests,
-    on_pathfinding_request_added, on_pathfinding_request_removed, on_urgent_path_added,
-    on_urgent_path_removed,
+    PathfindingRequest, PathfindingTask, QueuedWander, SimPosition, UrgentPath,
+    dispatch_pathfinding_requests, on_pathfinding_request_added, on_pathfinding_request_removed,
+    on_urgent_path_added, on_urgent_path_removed,
 };
 use qwe::navigation::{Backend, Navmesh};
 use qwe::settings::{MAP_SIZE, MAX_PATHFINDING_IN_FLIGHT, WANDER_DISPATCH_MAX_ZOOM};
@@ -81,8 +81,8 @@ fn main() {
     for (label, zoom) in ZOOMS {
         let mut world = world_for_zoom(zoom, pending, urgent);
         let timings = measure(&mut world, iterations);
-        let dispatched = count_dispatched(&mut world, pending);
-        print_row(label, zoom, &timings, dispatched, pending);
+        let (dispatched, flush_us) = count_dispatched(&mut world, pending);
+        print_row(label, zoom, &timings, dispatched, flush_us, pending);
     }
 }
 
@@ -191,17 +191,35 @@ fn measure(world: &mut World, iterations: usize) -> Vec<f64> {
 }
 
 /// Сколько заявок уезжает за один проход: прогон с применением команд и счёт
-/// остатка. Мир после этого не годится для замера — этот вызов и последний.
-fn count_dispatched(world: &mut World, pending: usize) -> usize {
+/// остатка. Заодно замер применения команд (флеша): выдача и её снятие —
+/// переносы между архетипами, вторая половина цены шторма входа рядом с
+/// самим проходом. У пешек бенча архетип из двух-трёх компонент — копировать
+/// при переносе в разы меньше, чем у игровой (~20+), поэтому абсолютное
+/// значение флеша ниже игрового; сравнимы фазы прогон с прогоном. Мир после
+/// этого не годится для замера — этот вызов и последний.
+fn count_dispatched(world: &mut World, pending: usize) -> (usize, f64) {
+    let started = Instant::now();
     world
         .run_system_once(dispatch_pathfinding_requests)
         .expect("диспетчер прогоняется");
-    let mut query = world.query::<&PathfindingRequest>();
+    world.flush();
+    let flush_us = started.elapsed().as_secs_f64() * 1_000_000.0;
+    // «осталось в очереди» — заявка без таска: живой диспетчер ставит таск
+    // поверх живой заявки, снимает пару приёмка
+    let mut query =
+        world.query_filtered::<&PathfindingRequest, bevy::ecs::query::Without<PathfindingTask>>();
     let remaining = query.iter(world).count();
-    pending - remaining
+    (pending - remaining, flush_us)
 }
 
-fn print_row(label: &str, zoom: f32, samples: &[f64], dispatched: usize, pending: usize) {
+fn print_row(
+    label: &str,
+    zoom: f32,
+    samples: &[f64],
+    dispatched: usize,
+    flush_us: f64,
+    pending: usize,
+) {
     let mut sorted = samples.to_vec();
     sorted.sort_by(|a, b| a.partial_cmp(b).expect("no NaN in timings"));
     let percentile = |share: f64| {
@@ -210,7 +228,7 @@ fn print_row(label: &str, zoom: f32, samples: &[f64], dispatched: usize, pending
     };
     let avg = sorted.iter().sum::<f64>() / sorted.len() as f64;
     println!(
-        "{label:<10} p50 {:>8.1} µs | p95 {:>8.1} | max {:>8.1} | avg {:>8.1} | dispatched {:>4}/{:<5} (budget {}) | zoom {zoom:.2} vs cut {WANDER_DISPATCH_MAX_ZOOM}",
+        "{label:<10} p50 {:>8.1} µs | p95 {:>8.1} | max {:>8.1} | avg {:>8.1} | dispatched {:>4}/{:<5} (budget {}) | flush {:>7.1} µs | zoom {zoom:.2} vs cut {WANDER_DISPATCH_MAX_ZOOM}",
         percentile(0.5),
         percentile(0.95),
         sorted.last().copied().unwrap_or_default(),
@@ -218,5 +236,6 @@ fn print_row(label: &str, zoom: f32, samples: &[f64], dispatched: usize, pending
         dispatched,
         pending,
         MAX_PATHFINDING_IN_FLIGHT,
+        flush_us,
     );
 }

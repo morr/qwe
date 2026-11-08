@@ -124,7 +124,9 @@ impl Plugin for GameDiagnosticsPlugin {
 fn measure_pathfinding_in_flight(
     mut diagnostics: Diagnostics,
     tasks: Query<&PathfindingTask>,
-    requests: Query<&PathfindingRequest>,
+    // выданная заявка остаётся на сущности до приёмки (живой диспетчер ставит
+    // таск поверх неё), так что «в очереди» — это заявка без таска
+    requests: Query<&PathfindingRequest, Without<PathfindingTask>>,
 ) {
     let in_flight = tasks.iter().count();
     diagnostics.add_measurement(&PATHFINDING_IN_FLIGHT, || in_flight as f64);
