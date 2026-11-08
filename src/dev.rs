@@ -438,6 +438,28 @@ pub fn perf_window_resolution() -> bevy::window::WindowResolution {
     size.into()
 }
 
+/// `QWE_PERF_NOAPPNAP=1` — активность `NSProcessInfo` класса `userInitiated`:
+/// macOS не укладывает процесс в App Nap, пока активность жива. Запись 15:
+/// App Nap плавает между прогонами (fps 113 ↔ 46 на одном мире, в `ps -M` класс
+/// потоков `…T`) и портит сравнение прогон с прогоном; `caffeinate -i` закрывает
+/// не все случаи. Токен держит активность до конца процесса — сознательно
+/// утекает вместе с ним. Без переменной ничего не меняется.
+pub fn no_app_nap() {
+    if std::env::var_os("QWE_PERF_NOAPPNAP").is_none() {
+        return;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use objc2_foundation::{NSActivityOptions, NSString, NSProcessInfo};
+        let activity = NSProcessInfo::processInfo().beginActivityWithOptions_reason(
+            NSActivityOptions::UserInitiated,
+            &NSString::from_str("qwe perf run"),
+        );
+        std::mem::forget(activity);
+        eprintln!("qwe: QWE_PERF_NOAPPNAP=1 — NSProcessInfo userInitiated activity begun");
+    }
+}
+
 /// Переключатели замеров из окружения, которые ставятся внутри приложения:
 ///
 /// - `QWE_PERF_POP=<n>` — `n` людей вместо штатной популяции (цена спрайтов);

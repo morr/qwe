@@ -8,6 +8,7 @@ use qwe::{
 };
 
 fn main() {
+    dev::no_app_nap();
     let port = dev::brp_port();
     let mut app = App::new();
     app.insert_resource(ClearColor(Color::srgb(0.72, 0.71, 0.68)))

@@ -4937,6 +4937,7 @@ dependencies = [
  "earcutr",
  "i_overlay 9.1.0",
  "noise",
+ "objc2-foundation 0.3.2",
  "pathfinding",
  "polyanya",
  "rand 0.10.3",
