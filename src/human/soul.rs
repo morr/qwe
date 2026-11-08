@@ -41,9 +41,11 @@ pub fn release_soul(commands: &mut Commands, silhouettes: &Silhouettes, at: Vec2
 /// Искра поднимается и гаснет квадратично; отжившая — despawn.
 pub fn rise_souls(
     mut commands: Commands,
+    mut diagnostics: bevy::diagnostic::Diagnostics,
     time: Res<Time>,
     mut souls: Query<(Entity, &mut SoulMote, &mut Transform, &mut Sprite)>,
 ) {
+    let started = std::time::Instant::now();
     for (entity, mut soul, mut transform, mut sprite) in &mut souls {
         soul.age.tick(time.delta());
         if soul.age.is_finished() {
@@ -54,6 +56,7 @@ pub fn rise_souls(
         let left = 1.0 - soul.age.fraction();
         sprite.color = Color::from(SOUL_COLOR).with_alpha(left * left);
     }
+    crate::diagnostics::measure_ms(&mut diagnostics, &crate::diagnostics::SIM_SOULS_MS, started);
 }
 
 #[cfg(test)]
@@ -70,6 +73,7 @@ mod tests {
     fn a_soul_rises_and_then_despawns() {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
+            .init_resource::<bevy::diagnostic::DiagnosticsStore>()
             .add_systems(Update, rise_souls);
         // ровно один шаг `Time` на `app.update()`, чтобы считать жизнь тиками
         let step = Duration::from_millis(100);

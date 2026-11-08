@@ -18,10 +18,17 @@ use crate::settings::unit_z;
 /// в `Changed`.
 pub fn snapshot_previous_sim_positions(
     mut query: Query<(&mut PreviousSimPosition, &SimPosition), Changed<SimPosition>>,
+    mut diagnostics: bevy::diagnostic::Diagnostics,
 ) {
+    let started = std::time::Instant::now();
     for (mut previous, current) in &mut query {
         previous.0 = current.0;
     }
+    crate::diagnostics::measure_ms(
+        &mut diagnostics,
+        &crate::diagnostics::SIM_SNAPSHOT_MS,
+        started,
+    );
 }
 
 /// Движение в `FixedUpdate`, двигает `SimPosition` по waypoint'ам пути.

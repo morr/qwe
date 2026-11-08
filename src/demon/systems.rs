@@ -46,15 +46,18 @@ pub fn spawn_initial_burst(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn tick_spawner(
     time: Res<Time>,
     mut commands: Commands,
+    mut diagnostics: bevy::diagnostic::Diagnostics,
     mut spawner: ResMut<DemonSpawner>,
     style: Res<DemonStyle>,
     portal_pos: Res<PortalPos>,
     seed: Res<WorldSeed>,
     silhouettes: Res<Silhouettes>,
 ) {
+    let started = std::time::Instant::now();
     // период таймера подтягивается здесь, а не отдельной системой на
     // `resource_changed`: рестарт и смена города пересоздают `DemonSpawner`
     // целиком (`restart.rs`, `city.rs`), и таймер вернулся бы к константе,
@@ -65,15 +68,30 @@ pub fn tick_spawner(
     }
 
     if spawner.spawned >= style.cap {
+        crate::diagnostics::measure_ms(
+            &mut diagnostics,
+            &crate::diagnostics::SIM_SPAWNER_MS,
+            started,
+        );
         return;
     }
     spawner.timer.tick(time.delta());
     if !spawner.timer.just_finished() {
+        crate::diagnostics::measure_ms(
+            &mut diagnostics,
+            &crate::diagnostics::SIM_SPAWNER_MS,
+            started,
+        );
         return;
     }
 
     let birth = DemonBirth::new(&seed, &portal_pos, &style, &silhouettes);
     spawn_demon(&mut commands, &mut spawner, &birth, None);
+    crate::diagnostics::measure_ms(
+        &mut diagnostics,
+        &crate::diagnostics::SIM_SPAWNER_MS,
+        started,
+    );
 }
 
 /// Всё, что демон получает при рождении помимо номера и угла. Четыре ресурса

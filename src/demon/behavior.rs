@@ -26,11 +26,13 @@ use crate::telemetry::Telemetry;
 /// тика после выхода из портала.
 pub fn acquire_targets(
     mut commands: Commands,
+    mut diagnostics: bevy::diagnostic::Diagnostics,
     humans: Res<SpatialGrid<Human>>,
     positions: Query<(&SimPosition, Option<&crate::rng::PawnId>), With<Human>>,
     chasing: Query<&ChaseTarget, With<Demon>>,
     query: Query<(Entity, &SimPosition), (With<Demon>, With<DemonWanderTag>)>,
 ) {
+    let started = std::time::Instant::now();
     let mut claims = ChaseClaims::of(chasing.iter().map(|chase_target| chase_target.0));
 
     for (entity, sim_position) in &query {
@@ -54,6 +56,11 @@ pub fn acquire_targets(
         ));
         debug!("demon {entity} Wander => Chase {human}");
     }
+    crate::diagnostics::measure_ms(
+        &mut diagnostics,
+        &crate::diagnostics::SIM_ACQUIRE_MS,
+        started,
+    );
 }
 
 /// Chase: догоняем цель; цель умерла/сбежала/далеко — обратно в Wander;

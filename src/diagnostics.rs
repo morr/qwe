@@ -49,6 +49,11 @@ pub const SIM_PANIC_MS: DiagnosticPath = DiagnosticPath::const_new("sim/panic_ms
 pub const SIM_FLEE_MS: DiagnosticPath = DiagnosticPath::const_new("sim/flee_ms");
 pub const SIM_CHASE_MS: DiagnosticPath = DiagnosticPath::const_new("sim/chase_ms");
 pub const SIM_MOVE_MS: DiagnosticPath = DiagnosticPath::const_new("sim/move_ms");
+pub const SIM_ACQUIRE_MS: DiagnosticPath = DiagnosticPath::const_new("sim/acquire_ms");
+pub const SIM_SNAPSHOT_MS: DiagnosticPath = DiagnosticPath::const_new("sim/snapshot_ms");
+pub const SIM_SPAWNER_MS: DiagnosticPath = DiagnosticPath::const_new("sim/spawner_ms");
+pub const SIM_SOULS_MS: DiagnosticPath = DiagnosticPath::const_new("sim/souls_ms");
+pub const SIM_ESCAPE_MS: DiagnosticPath = DiagnosticPath::const_new("sim/escape_ms");
 /// Расталкивание меряется на **прогон**, а не на тик: оно гейтится «не чаще
 /// раза в кадр» (`movement/separation/`), так что прогонов ~60 в секунду
 /// против ~64 × time_scale тиков у остальных `sim/*_ms`.
@@ -102,6 +107,11 @@ impl Plugin for GameDiagnosticsPlugin {
         .register_diagnostic(Diagnostic::new(SIM_FLEE_MS).with_suffix(" ms"))
         .register_diagnostic(Diagnostic::new(SIM_CHASE_MS).with_suffix(" ms"))
         .register_diagnostic(Diagnostic::new(SIM_MOVE_MS).with_suffix(" ms"))
+        .register_diagnostic(Diagnostic::new(SIM_ACQUIRE_MS).with_suffix(" ms"))
+        .register_diagnostic(Diagnostic::new(SIM_SNAPSHOT_MS).with_suffix(" ms"))
+        .register_diagnostic(Diagnostic::new(SIM_SPAWNER_MS).with_suffix(" ms"))
+        .register_diagnostic(Diagnostic::new(SIM_SOULS_MS).with_suffix(" ms"))
+        .register_diagnostic(Diagnostic::new(SIM_ESCAPE_MS).with_suffix(" ms"))
         .register_diagnostic(Diagnostic::new(SIM_SEPARATION_MS).with_suffix(" ms"))
         .register_diagnostic(Diagnostic::new(SIM_TICK_MS).with_suffix(" ms"))
         .register_diagnostic(Diagnostic::new(SIM_WAIT_MS).with_suffix(" ms"))

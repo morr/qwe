@@ -347,6 +347,36 @@ pub struct TickDebt {
 
 pub struct SimTimePlugin;
 
+/// Стена интервала между граничными пробами тика: разрез спайка по срезам
+/// цепочки `FixedUpdate`. Пробы не несут команд и ничего не читают — только
+/// копят секунды между своими прогонами; `end_sim_load` на спайке печатает
+/// накопленное и гасит (`begin_sim_load` сбрасывает на каждом кадре).
+#[derive(Resource, Default)]
+pub struct TickSegments {
+    since: Option<std::time::Instant>,
+    pub parts: Vec<(&'static str, f32)>,
+}
+
+impl TickSegments {
+    fn reset(&mut self) {
+        self.since = None;
+        self.parts.clear();
+    }
+}
+
+/// Граница разреза: фиксирует стену от предыдущей пробы до себя.
+pub fn tick_probe(name: &'static str) -> impl FnMut(ResMut<TickSegments>) {
+    move |mut segments: ResMut<TickSegments>| {
+        let now = std::time::Instant::now();
+        if let Some(since) = segments.since {
+            segments
+                .parts
+                .push((name, (now - since).as_secs_f32() * 1000.0));
+        }
+        segments.since = Some(now);
+    }
+}
+
 impl Plugin for SimTimePlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<SimSpeed>()
@@ -357,11 +387,36 @@ impl Plugin for SimTimePlugin {
             .init_resource::<SimClock>()
             .init_resource::<SimLoad>()
             .init_resource::<TickDebt>()
+            .init_resource::<TickSegments>()
             .add_systems(
                 RunFixedMainLoop,
                 (
                     begin_sim_load.in_set(RunFixedMainLoopSystems::BeforeFixedMainLoop),
                     end_sim_load.in_set(RunFixedMainLoopSystems::AfterFixedMainLoop),
+                ),
+            )
+            // граничные пробы разреза тика: по одной на стык цепочки сетов и
+            // стыки цепочки движения. Порядок проб выстроен явно до полного —
+            // без этого исполнитель вправо перемешать их с системами сето,
+            // и сегмент замерил бы чужое
+            .add_systems(
+                FixedUpdate,
+                (
+                    tick_probe("head").before(crate::spatial::SimSet::SpatialRebuild),
+                    tick_probe("spatial")
+                        .after(crate::spatial::SimSet::SpatialRebuild)
+                        .before(crate::spatial::SimSet::DemonBehavior),
+                    tick_probe("demon")
+                        .after(crate::spatial::SimSet::DemonBehavior)
+                        .before(crate::spatial::SimSet::HumanBehavior),
+                    tick_probe("human")
+                        .after(crate::spatial::SimSet::HumanBehavior)
+                        .before(crate::movement::move_moving_entities),
+                    tick_probe("move")
+                        .after(crate::movement::move_moving_entities)
+                        .before(crate::movement::dispatch_pathfinding_requests_deterministic),
+                    tick_probe("tail")
+                        .after(crate::movement::dispatch_pathfinding_requests_deterministic),
                 ),
             )
             // предохранитель — первым в тике: решение «оборвать прогон»
@@ -371,6 +426,7 @@ impl Plugin for SimTimePlugin {
                 guard_frame_budget.before(crate::spatial::SimSet::SpatialRebuild),
             )
             .add_systems(Startup, pin_max_delta)
+            .add_systems(Last, archetype_census)
             // новый прогон — часы и долг тиков с нуля (и по R, и по смене
             // города: оба пути триггерят `WorldStarted`)
             .add_observer(on_world_started)
@@ -393,6 +449,25 @@ impl Plugin for SimTimePlugin {
 /// дефолта Bevy не поменяла поведение на фризах.
 fn pin_max_delta(mut time: ResMut<Time<Virtual>>) {
     time.set_max_delta(std::time::Duration::from_secs_f32(MAX_FRAME_DELTA));
+}
+
+/// Перепись архетипов раз в 5 секунд: волны вставок/снятий компонент рождает
+/// новые сочетания, и exploded-число архетипов объяснило бы и дорогие
+/// `Changed`-сканы, и дорогие применения команд. Раз в 5 с — чтобы строка
+/// в логе ложилась рядом со спайками по таймстампу, а не сыпалась.
+fn archetype_census(world: &mut World) {
+    #[derive(Resource, Default)]
+    struct NextCensus(f32);
+    let Some(time) = world.get_resource::<Time<Virtual>>() else {
+        return;
+    };
+    let elapsed = time.elapsed_secs();
+    let mut next = world.get_resource_or_insert_with(NextCensus::default);
+    if elapsed < next.0 {
+        return;
+    }
+    next.0 = elapsed + 5.0;
+    info!("archetype census: {} total", world.archetypes().len());
 }
 
 /// Новый прогон начинается с чистых часов и чистого регулятора.
@@ -447,11 +522,13 @@ fn modify_time(
 /// накопитель и прошли обычным порядком.
 pub(crate) fn begin_sim_load(
     mut load: ResMut<SimLoad>,
+    mut segments: ResMut<TickSegments>,
     tick: Res<SimTick>,
     mut fixed: ResMut<Time<Fixed>>,
     mut debt: ResMut<TickDebt>,
     virtual_time: Res<Time<Virtual>>,
 ) {
+    segments.reset();
     // на паузе долг придерживается: вернуть его в накопитель — значит дать
     // тикам идти под паузой, у стоящего мира долгов нет
     let owed = if virtual_time.is_paused() {
@@ -504,12 +581,19 @@ fn guard_frame_budget(
 #[allow(clippy::too_many_arguments)]
 fn end_sim_load(
     mut load: ResMut<SimLoad>,
+    segments: ResMut<TickSegments>,
     mut diagnostics: bevy::diagnostic::Diagnostics,
+    store: Option<Res<bevy::diagnostic::DiagnosticsStore>>,
     tick: Res<SimTick>,
     real: Res<Time<Real>>,
     humans: Option<Query<(), With<crate::human::Human>>>,
     souls: Option<Query<(), With<crate::human::SoulMote>>>,
     corpses: Option<Query<(), With<crate::human::CorpseTag>>>,
+    fleeing: Option<Query<(), With<crate::human::HumanFleeTag>>>,
+    wandering: Option<Query<(), With<crate::human::HumanWanderTag>>>,
+    moving: Option<Query<(), With<crate::movement::MovableStateMovingTag>>>,
+    chasing: Option<Query<(), With<crate::demon::DemonChaseTag>>>,
+    requests: Option<Query<&crate::movement::RequestedAt>>,
     telemetry: Option<Res<crate::telemetry::Telemetry>>,
 ) {
     let Some(started) = load.started.take() else {
@@ -536,10 +620,58 @@ fn end_sim_load(
             corpses.map(|q| q.iter().count()),
         );
         let killed = telemetry.map(|t| t.killed).unwrap_or_default();
+        let (fleeing, wandering, moving, chasing) = (
+            fleeing.map(|q| q.iter().count()),
+            wandering.map(|q| q.iter().count()),
+            moving.map(|q| q.iter().count()),
+            chasing.map(|q| q.iter().count()),
+        );
+        // заявки, поданные в сам спайк-тик: волна перепрокладок видна числом,
+        // а не догадкой (panic/flee/демонский выбор цели/filed repath)
+        let filed = requests.map(|q| q.iter().filter(|r| r.0 == tick.0).count());
         info!(
-            "tick spike: {sim_ms:.1} ms for {ticks} ticks (tick {}, humans {humans:?}, souls {souls:?}, corpses {corpses:?}, killed {killed})",
+            "tick spike: {sim_ms:.1} ms for {ticks} ticks (tick {}, humans {humans:?}, souls {souls:?}, corpses {corpses:?}, killed {killed}, fleeing {fleeing:?}, wandering {wandering:?}, moving {moving:?}, chasing {chasing:?}, filed {filed:?})",
             tick.0
         );
+        // разрез спайк-тика: последнее значение каждой подсистемы — это её
+        // прогон на последнем (спайковом) тике, замеры через deferred-буфер
+        // успевают доехать к AfterFixedMainLoop. Что не покрыто системами —
+        // «rest»: синхронизации цепочки, применение команд, накладные
+        // исполнителя
+        if let Some(store) = store.as_deref() {
+            let mut covered = 0.0;
+            let mut parts = Vec::new();
+            for (name, path) in [
+                ("acq", &crate::diagnostics::SIM_ACQUIRE_MS),
+                ("snap", &crate::diagnostics::SIM_SNAPSHOT_MS),
+                ("spwn", &crate::diagnostics::SIM_SPAWNER_MS),
+                ("pan", &crate::diagnostics::SIM_PANIC_MS),
+                ("flee", &crate::diagnostics::SIM_FLEE_MS),
+                ("esc", &crate::diagnostics::SIM_ESCAPE_MS),
+                ("chas", &crate::diagnostics::SIM_CHASE_MS),
+                ("soul", &crate::diagnostics::SIM_SOULS_MS),
+                ("spat", &crate::diagnostics::SIM_SPATIAL_MS),
+                ("move", &crate::diagnostics::SIM_MOVE_MS),
+                ("sep", &crate::diagnostics::SIM_SEPARATION_MS),
+            ] {
+                if let Some(v) = store.get(path).and_then(|d| d.values().last().copied()) {
+                    covered += v;
+                    parts.push(format!("{name} {v:.3}"));
+                }
+            }
+            parts.push(format!("rest {:.3}", sim_ms - covered as f32));
+            info!("tick spike dissect: {} ms total", parts.join(" | "));
+            // сегменты цепочки: каждая проба держит стену от предыдущей до
+            // себя, включая применения команд на стыках — всплеск применения
+            // виден в сегменте того среза, где исполнитель его реально применил
+            let segments = segments
+                .parts
+                .iter()
+                .map(|(name, ms)| format!("{name} {ms:.1}"))
+                .collect::<Vec<_>>()
+                .join(" | ");
+            info!("tick spike segments: {segments}");
+        }
     }
     load.observe(sim_ms, ticks, real.delta_secs());
     let (tick_ms, wait_ms, peak_ms) = (load.tick_ms, load.wait_ms, load.wait_peak_ms);

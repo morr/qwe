@@ -46,14 +46,16 @@ use crate::loading::AppState;
 use crate::prefs::TrackPrefExt;
 use crate::spatial::SimSet;
 
+pub use self::pathfinding::dispatch_pathfinding_requests_deterministic;
 use self::pathfinding::{
-    apply_pathfinding_results, dispatch_pathfinding_requests_deterministic,
-    listen_for_pathfinding_tasks, live_dispatch_runs, stamp_pathfinding_requests,
+    apply_pathfinding_results, listen_for_pathfinding_tasks, live_dispatch_runs,
+    stamp_pathfinding_requests,
 };
+pub use self::systems::move_moving_entities;
 use self::systems::{
-    draw_move_paths, interpolate_movable_transforms, move_moving_entities,
-    on_movable_added_init_sim_position, polymesh_rebuilt, rescue_trapped_entities,
-    snapshot_previous_sim_positions, toggle_draw_move_paths,
+    draw_move_paths, interpolate_movable_transforms, on_movable_added_init_sim_position,
+    polymesh_rebuilt, rescue_trapped_entities, snapshot_previous_sim_positions,
+    toggle_draw_move_paths,
 };
 
 /// Запас видимости к полуразмеру экрана — чтобы пешки у кромки кадра не
