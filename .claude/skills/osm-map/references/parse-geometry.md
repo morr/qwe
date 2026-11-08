@@ -367,7 +367,10 @@ passes are `parse-buildings.md`.
     band of its mapped edge (`SidewalkProfile::mapped_edge`, so a one-sided sidewalk
     counts on both sides — over-cover is the safe error) in pieces of `RUN` 16 links,
     **bevel joins and square caps** (a round join is a dozen points, and the union's price
-    is points: round → bevel took the whole pass from 229 to ~120 ms on Tula); each
+    is points: round → bevel took the whole pass from 229 to ~120 ms on Tula); **a road's
+    pieces are unioned into one cover by the road's cover builder** (the band overlaps its
+    verge bands along the whole axis — without that, every tile window resolves the same
+    overlaps again; Paris: the tile pass −25 %); each
     verge side (`RoadLine::verge_at`) as a band from the axis to the kerb plus the verge,
     every `VERGE_STEP` 5 m (the profile's own probe step); the outlines of blocks,
     parks, woods, grass, sand, water, lots and pitches; and **every ring island** — the

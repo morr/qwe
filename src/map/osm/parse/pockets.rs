@@ -680,6 +680,11 @@ impl<T: Copy> Rim<T> {
 
 /// Покрытие одной дороги: полотно с тротуаром ([`band`]) кусками по [`RUN`]
 /// звеньев и обочины ([`verge_covers`]).
+///
+/// Куски одной дороги объединяются здесь, в параллельном построите обводок:
+/// лента и её обочины налегают друг на друга по всей длине, и без этого
+/// каждое окно плитки разрешает их пересечения заново. Одна обводка — без
+/// операции.
 fn road_covers(road: &RoadLine) -> Vec<Cover> {
     let reach = road.sidewalk().mapped_edge(road.width / 2.0);
     let last = road.points.len() - 1;
@@ -693,7 +698,15 @@ fn road_covers(road: &RoadLine) -> Vec<Cover> {
         })
         .collect();
     verge_covers(road, &mut covers);
-    covers
+    if covers.len() <= 1 {
+        return covers;
+    }
+    let contours: Vec<Contour> = covers
+        .into_iter()
+        .flat_map(|cover| cover.contours)
+        .collect();
+    let shapes: Vec<Shape> = contours.simplify_shape(FillRule::NonZero);
+    vec![Cover::of(shapes.into_iter().flatten().collect())]
 }
 
 /// Полоса шириной `width` вокруг куска оси — **со срезанными углами и
