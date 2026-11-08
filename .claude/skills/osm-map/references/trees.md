@@ -96,8 +96,11 @@ stand, how density works, and which resources restyle them.
   never a replant, which would reshuffle every position and make the whole forest jump on
   each step.
 - **The zoom caps the prefix too** (`trees.rs::TREE_LODS`, `TreeZoomBucket`, the
-  `map/zoom.rs` mechanism): up to 2 m/px nothing changes (the default view is 0.4), from
-  2 to 3.5 m/px the density is `min(slider, 3)`, beyond it `min(slider, 2)`. A 2–6 m crown
+  `map/zoom.rs` mechanism): the entity step engages **only below 0.2 m/px** (a crown
+  2–6 m across is at least 10 px there; entry 13 — above that bound the whole city's
+  crowns stood as entities on any zoom up to the old bound of 2.0, Paris 28.6k against
+  ~200 a frame saw); from 0.2 to 3.5 m/px the density is `min(slider, 3)` (at density
+  ≤ 3, incl. the default 1.0, nothing thins), beyond it `min(slider, 2)`. A 2–6 m crown
   is 1–3 px at the full zoom-out, where the `Wood` fill under it carries the forest, and
   every crown is an entity plus its share of the merged shadow mesh. Because it is the same
   prefix, a crossing only drops the tail — standing crowns never move — and surveyed
@@ -191,10 +194,13 @@ stand, how density works, and which resources restyle them.
     rings are kept whole: their vertices alternate spike/notch, and a step of 2 cut every
     spike at once (the palm lost 11 % of its area); grown by half the outline stroke (the full
     crown's silhouette ends on the stroke's outer edge, not on the ring — to ±10 % of
-    the silhouette's area), and painted with the full crown's **average colour** — foliage mixed toward
-    the ink by the share of the fill the strokes cover (`crown_builder` measures it,
-    `MeshBuilder::area_since`). From 2 m/px the strokes (12 % and 6 % of a 2–6 m
-    radius) are tenths of a pixel, so the average is what the eye got anyway.
+the silhouette's area), and painted with the full crown's **average colour** — foliage mixed toward
+the ink by the share of the fill the strokes cover (`crown_builder` measures it,
+`MeshBuilder::area_since`). The merged crown serves the whole 0.2–3.5 range
+(entry 13): from 2 m/px the strokes (12 % and 6 % of a 2–6 m radius) are
+tenths of a pixel and the average is what the eye got anyway; at 0.2–0.6 they
+would be 1–3 px, and their absence — a slightly softer, darker crown — is the
+accepted price for dropping the entity step there.
   - **Tint and ball light survive the merge** — brightness in the vertex colours, the
     crown-local coordinate on `ATTRIBUTE_CROWN` (the canopy material below).
   - **Draw order**: a chunk emits its crowns **in `TreeSet` order** (the order of the
@@ -205,11 +211,15 @@ stand, how density works, and which resources restyle them.
     chunk seam and an equal z would hand their order to the `Transparent2d` sort — the
     blinking trap of the shadows below. At most 9 × 7 chunks of each of the three density
     bands fit `Z_TREE..Z_TREE + 1`.
-  - **Why 1000 m chunks**: from 2 m/px a 1600 px window is ≥ 3.2 km wide, almost half
-    the 7.6 km map; a 1 km chunk is a third of such a frame, so a panned view still culls
-    whole chunks, while the whole map is at most 8 × 6 = 48 draws (Tula 34, Kaluga 48)
-    against ~120 instanced groups before. Smaller chunks add draws at the full zoom-out,
-    where there is nothing to cull; larger ones stop culling at all. No other map layer
+  - **Why 1000 m chunks**: the merged range starts at 0.2 m/px, where a 1600 px window
+    is 320 m and a 1 km chunk does not cull at all — accepted, because the whole merged
+    forest is ~1.5M vertices on Paris, an order cheaper than the entity step the chunks
+    replaced there (entry 13). From ~0.6 m/px (a ~1 km frame) culling starts dropping
+    whole chunks, and by 2 m/px the window is ≥ 3.2 km wide, almost half the 7.6 km map;
+    a 1 km chunk is a third of such a frame, so a panned view still culls whole chunks,
+    while the whole map is at most 8 × 6 = 48 draws (Tula 34, Kaluga 48) against ~120
+    instanced groups before. Smaller chunks add draws at the full zoom-out, where there
+    is nothing to cull; larger ones stop culling at all. No other map layer
     chunks — each is one mesh for the whole map — so this is the only chunk size on the
     map.
   - **What it bought** (no vsync, paused, window unlocked; medians of 8–12 one-second
