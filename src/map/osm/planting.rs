@@ -18,7 +18,8 @@ mod index;
 // зазоры до кромок теми же предикатами, что и посадка
 #[cfg(test)]
 pub(super) use self::index::near_area_edge;
-use self::index::{Obstacles, Occupied, in_bbox};
+use self::index::{Obstacles, Occupied};
+use crate::map::grid::Grid;
 use crate::map::trees::TREE_DENSITY_STEP;
 use crate::settings::MAP_SIZE;
 
@@ -220,24 +221,28 @@ fn plant_woods(
 /// с шагом из OSM. Сажаются раньше леса и аллей и занимают клетки `occupied`,
 /// так что процедурная посадка держит от них [`TREE_MIN_SPACING`]; заодно та
 /// же сетка схлопывает продублированные ноды.
+/// Ячейка индекса лесов и аллей для одиночных деревьев, м — как у зелени в
+/// покрытии дорожек (`pavements::GREEN_CELL`).
+const GREEN_CELL: f32 = 100.0;
+
 fn plant_standalone(
     map: &MapData,
     obstacles: &Obstacles,
     occupied: &mut Occupied,
 ) -> Vec<PlantedTree> {
-    let wood_bounds: Vec<(Vec2, Vec2)> = map
-        .woods
-        .iter()
-        .map(|wood| ring_bounds(&wood.outer))
-        .collect();
-    let row_bounds: Vec<(Vec2, Vec2)> = map
-        .tree_rows
-        .iter()
-        .map(|row| {
-            let (min, max) = ring_bounds(&row.points);
-            (min - TREE_MIN_SPACING, max + TREE_MIN_SPACING)
-        })
-        .collect();
+    // леса и аллеи по габаритам в сетке: ноде не нужен перебор всех лесов и
+    // всех рядов, кандидатов даёт одна ячейка (вставка кладёт площадь в
+    // каждую задетую ячейку, так что ответ полный)
+    let mut woods: Grid<usize> = Grid::new(GREEN_CELL);
+    for (index, wood) in map.woods.iter().enumerate() {
+        let (min, max) = ring_bounds(&wood.outer);
+        woods.insert(min, max, index);
+    }
+    let mut rows: Grid<usize> = Grid::new(GREEN_CELL);
+    for (index, row) in map.tree_rows.iter().enumerate() {
+        let (min, max) = ring_bounds(&row.points);
+        rows.insert(min - TREE_MIN_SPACING, max + TREE_MIN_SPACING, index);
+    }
 
     let mut planted: Vec<PlantedTree> = Vec::new();
     for node in &map.tree_nodes {
@@ -245,24 +250,19 @@ fn plant_standalone(
         if pos.x < 0.0 || pos.y < 0.0 || pos.x > MAP_SIZE.x || pos.y > MAP_SIZE.y {
             continue;
         }
-        let in_wood = map
-            .woods
+        let in_wood = woods
+            .at(pos)
             .iter()
-            .zip(&wood_bounds)
-            .any(|(wood, &(min, max))| in_bbox(pos, min, max) && point_in_area(pos, wood));
+            .any(|&index| point_in_area(pos, &map.woods[index]));
         if in_wood {
             continue;
         }
-        let near_row = map
-            .tree_rows
-            .iter()
-            .zip(&row_bounds)
-            .any(|(row, &(min, max))| {
-                in_bbox(pos, min, max)
-                    && row.points.windows(2).any(|segment| {
-                        distance_to_segment(pos, segment[0], segment[1]) <= TREE_MIN_SPACING
-                    })
-            });
+        let near_row = rows.at(pos).iter().any(|&index| {
+            map.tree_rows[index]
+                .points
+                .windows(2)
+                .any(|segment| distance_to_segment(pos, segment[0], segment[1]) <= TREE_MIN_SPACING)
+        });
         if near_row {
             continue;
         }
