@@ -96,7 +96,19 @@ them the app is unchanged:
 - `QWE_PERF_FRAME_SPIKES=<ms>` — every frame longer than the threshold logs
   `frame spike: 43.2 ms (zoom 1.83, frame N)` (`Time<Real>`, so it works paused): the
   per-frame jerk detector the one-second `frame_time` averages hide. The zoom in the
-  line ties the spike to the zoom-LOD threshold the wheel crossed that frame.
+  line ties the spike to the zoom-LOD threshold the wheel crossed that frame. The same
+  threshold drives the **tick spike** (`sim_time.rs`): a fixed step past it logs
+  `tick spike: … for N ticks` with the world context (humans/fleeing/wandering/moving/
+  chasing/requests filed this tick) and two dissection lines — `tick spike dissect`
+  (the last value of every `sim/*_ms` plus `rest`, what no system's `Instant` covers:
+  command flushes, sync points) and `tick spike segments` (the wall time of the chain
+  slices between the boundary probes `head/spatial/demon/human/move/tail`).
+
+Diagnostics that always exist (perf-journal 15): `sim/{acquire,snapshot,spawner,souls,escape}_ms`
+complete the per-system cut of the tick, and the `archetype census: N total` INFO line
+every 5 s tracks the archetype-space churn — behaviour waves fill the space with new
+component combinations, and the fill-up phase is what makes a fresh world's first
+minutes expensive (the `snap` dissect value spikes with it; frozen census = calm world).
 
 ## Ready markers in the log
 

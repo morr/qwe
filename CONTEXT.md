@@ -1084,11 +1084,13 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   target is picked inside a `WANDER_CONE` (±60°) around it. Without it pawns wobbled in
   place. `flee` rewrites it to the away-vector on every repath.
 - **PanicRecoil** — a unit vector *toward* the demon, written on **every flee repath** and
-  **never queried live** (`pick_wander_targets` must stay off the demon grid). While it is
-  on, the next target must be an errand outside `RECOIL_CONE` (±45°) and farther than
-  `RECOIL_MIN_ERRAND` (90 m); nothing acceptable → re-roll next frame, **never a stroll** —
-  except on a map with no buildings at all, where the fallback stroll is filtered by the
-  cone alone, with no distance floor.
+  **never queried live** (`pick_wander_targets` must stay off the demon grid). The component
+  is **permanent** (`#[require]` on `Human`, `Option<Vec2>` inside): flee writes `Some`, the
+  first successful pick writes `None` in place — presence is not a state, and no archetype
+  move is spent on it. While `Some`, the next target must be an errand outside `RECOIL_CONE`
+  (±45°) and farther than `RECOIL_MIN_ERRAND` (90 m); nothing acceptable → re-roll next
+  frame, **never a stroll** — except on a map with no buildings at all, where the fallback
+  stroll is filtered by the cone alone, with no distance floor.
 - **HumanFirstWanderTag** — the very first target after spawn is always the *near* stroll,
   never an errand. Measured: errands first routed the on-screen pawns in 3.9 s, strolls
   first in 0.15 s. `PanicRecoil` overrides it.

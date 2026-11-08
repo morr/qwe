@@ -190,6 +190,15 @@ never-a-stroll rule and the no-buildings exception are `CONTEXT.md`'s. What live
   leaves the stored one alone. Since the first repath lands on the panic tick, a fleeing
   human practically always carries a ban; the no-ban state survives only as the initial
   one, before a human has ever panicked.
+- **The component is permanent, the value is the state** (`PanicRecoil(Option<Vec2>)`,
+  `#[require]` on `Human`). It used to be inserted on every flee repath and removed at the
+  first successful pick — two archetype moves per fleeing human per repath cycle (hundreds
+  per second in a storm, thousands at 30×), and an "is present" axis doubling the
+  archetype space the behaviour waves fill. Measured on the live Paris storm (perf journal
+  15): the tick spikes and the elevated per-tick cost of the first ~10 minutes of a world
+  are archetype-space churn, and the recoil was its one continuous generator. Writing
+  `Some`/`None` in place costs no archetype move; the corpse strips the component with the
+  rest (`to_corpse`).
 - Rejected candidates are dropped **before** the "best-aligned of the 8" fallback, which
   used to hand back a building nearly 180° from the heading — straight at the demon;
   nothing acceptable → re-roll next frame, dropped at the first successful pick.
