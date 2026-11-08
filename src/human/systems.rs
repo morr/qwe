@@ -398,7 +398,7 @@ pub fn pick_wander_targets(
             &mut WanderHeading,
             &PawnId,
             &mut WanderIndex,
-            Option<&PanicRecoil>,
+            &mut PanicRecoil,
             Has<HumanFirstWanderTag>,
         ),
         (
@@ -420,7 +420,7 @@ pub fn pick_wander_targets(
         mut heading,
         pawn_id,
         mut wander_index,
-        recoil,
+        mut recoil,
         is_first_wander,
     ) in &mut query
     {
@@ -451,7 +451,7 @@ pub fn pick_wander_targets(
             rng,
             sim_position.0,
             heading.0,
-            recoil.map(|r| r.0),
+            recoil.0,
             is_first_wander,
         ) else {
             continue;
@@ -475,10 +475,10 @@ pub fn pick_wander_targets(
         if is_first_wander {
             commands.entity(entity).remove::<HumanFirstWanderTag>();
         }
-        // запрет живёт ровно до первой удачной цели
-        if recoil.is_some() {
-            commands.entity(entity).remove::<PanicRecoil>();
-        }
+        // запрет живёт ровно до первой удачной цели — гасится записью на
+        // месте: компонент постоянный (`#[require]` у `Human`), и снятие
+        // командой перегоняло бы человека между архетипами на каждом выборе
+        recoil.0 = None;
 
         // следующая пауза — уже после прибытия
         pause.0.set_duration(roll_wander_pause(rng));

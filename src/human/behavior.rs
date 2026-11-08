@@ -225,8 +225,10 @@ pub fn flee(
             FleeAction::Flee { away, ban } => {
                 // память о направлении угрозы — до отсева непроходимой цели,
                 // иначе неудачный кадр оставил бы запрет от прошлой
-                // перепрокладки, а то и вовсе без запрета
-                commands.entity(entity).insert(PanicRecoil(ban));
+                // перепрокладки, а то и вовсе без запрета. Компонент
+                // постоянный, вставка по существующему — запись значения,
+                // без переноса между архетипами
+                commands.entity(entity).insert(PanicRecoil(Some(ban)));
                 away
             }
         };
@@ -259,9 +261,11 @@ pub fn flee(
 /// Паникующий пересёк границу карты — «спасся», despawn [Q12].
 pub fn escape(
     mut commands: Commands,
+    mut diagnostics: bevy::diagnostic::Diagnostics,
     mut telemetry: ResMut<Telemetry>,
     query: Query<(Entity, &SimPosition), (With<Human>, With<HumanFleeTag>)>,
 ) {
+    let started = std::time::Instant::now();
     for (entity, sim_position) in &query {
         if escaped(sim_position.0) {
             commands.entity(entity).despawn();
@@ -269,6 +273,11 @@ pub fn escape(
             debug!("human {entity} escaped (total {})", telemetry.escaped);
         }
     }
+    crate::diagnostics::measure_ms(
+        &mut diagnostics,
+        &crate::diagnostics::SIM_ESCAPE_MS,
+        started,
+    );
 }
 
 #[cfg(test)]
@@ -381,7 +390,7 @@ mod tests {
     fn recoil(app: &App, entity: Entity) -> Option<Vec2> {
         app.world()
             .get::<PanicRecoil>(entity)
-            .map(|recoil| recoil.0)
+            .and_then(|recoil| recoil.0)
     }
 
     /// Двор паники без системы в расписании — тестовая система запускается
@@ -455,7 +464,7 @@ mod tests {
         let runner = spawn_runner(app, Vec2::new(100.0, 100.0), Vec2::Y);
         app.world_mut()
             .entity_mut(runner)
-            .insert(PanicRecoil(Vec2::NEG_X));
+            .insert(PanicRecoil(Some(Vec2::NEG_X)));
 
         app.update();
 
