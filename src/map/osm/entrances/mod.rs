@@ -41,6 +41,7 @@ use bevy::math::Vec2;
 use self::cohorts::{cohort_of, entrance_count, equivalent_length, plan_sections};
 use self::index::{FootprintIndex, PassageIndex, RoadIndex, ring_is_ccw};
 use crate::map::osm::model::{AreaKind, BuildingUse, MapData, PolyArea, is_big_box};
+use crate::map::parallel::in_parallel;
 use crate::rng::lcg_seeded_by;
 
 /// Шаг расстановки входов вдоль одной грани, м — медиана зазора между
@@ -145,16 +146,23 @@ pub fn generate_entrances(map: &mut MapData, navtile: f32) -> usize {
     let passages = PassageIndex::build(&map.roads);
 
     // двери сначала считаются по неизменной карте — каждому зданию нужны
-    // контуры соседей, — и только потом раскладываются по зданиям
-    let mut filled: Vec<(usize, Vec<Vec2>)> = Vec::new();
-    let mut walled_in = 0;
-    let mut through = 0;
-    for (index, building) in map.buildings.iter().enumerate() {
+    // контуры соседей, — и только потом раскладываются по зданиям. Дома друг
+    // от друга не зависят (каждый читает одни и те же индексы и своё
+    // зерно от первой вершины), поэтому считаются по потокам, как карманы;
+    // порядок результата — порядок зданий
+    let indexed: Vec<(usize, &PolyArea)> = map.buildings.iter().enumerate().collect();
+    let generated: Vec<Option<FilledBuilding>> = in_parallel(&indexed, |&(index, building)| {
         // стены и башни кремля дверей не несут
         if building.kind != AreaKind::Building {
-            continue;
+            return None;
         }
-        let Some(doors) = fill_building(index, building, &roads, &footprints, &passages) else {
+        fill_building(index, building, &roads, &footprints, &passages)
+    });
+    let mut walled_in = 0;
+    let mut through = 0;
+    let mut filled: Vec<(usize, Vec<Vec2>)> = Vec::new();
+    for (index, doors) in generated.into_iter().enumerate() {
+        let Some(doors) = doors else {
             continue;
         };
         walled_in += usize::from(doors.forced);
