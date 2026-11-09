@@ -450,7 +450,7 @@ pub fn no_app_nap() {
     }
     #[cfg(target_os = "macos")]
     {
-        use objc2_foundation::{NSActivityOptions, NSString, NSProcessInfo};
+        use objc2_foundation::{NSActivityOptions, NSProcessInfo, NSString};
         let activity = NSProcessInfo::processInfo().beginActivityWithOptions_reason(
             NSActivityOptions::UserInitiated,
             &NSString::from_str("qwe perf run"),
