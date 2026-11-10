@@ -34,6 +34,7 @@ use bevy::prelude::*;
 use super::height_or_default;
 use super::layers::{WallSpan, silhouette_edges, wall_colors};
 use crate::map::SHADOW_COLOR;
+use crate::map::grid::Grid;
 use crate::map::meshing::{MeshBuilder, WallFrame};
 use crate::map::osm::model::{
     closest_on_segment, point_at_arc_length, point_in_area, polyline_length, ring_bounds,
@@ -445,27 +446,39 @@ pub(super) fn push_arches(
     }
 }
 
+/// Проходы, разложенные по домам ([`arches_by_building`]): один расчёт на
+/// сборку слоя — его едят и экструзия, и заплатка арок в наземных тенях.
+pub(super) type ArchOpenings<'a> = HashMap<usize, Vec<&'a RoadLine>>;
+
 /// Проходы, разложенные по домам, которые они прорезают: `building_passage`
 /// размечают ровно тем куском дороги, что лежит под домом, поэтому дом
-/// ищется по середине прохода.
+/// ищется по середине прохода. Рамки зданий в сетке: иначе каждый проход
+/// платит линейный обход всех домов города, и на Париже один вызов стоил
+/// ~0.76 с — а за сборку слоя его зовут дважды (экструзия и заплатка теней).
 pub(super) fn arches_by_building<'a>(
     buildings: &[PolyArea],
     passages: &'a [RoadLine],
 ) -> HashMap<usize, Vec<&'a RoadLine>> {
+    const ARCH_CELL: f32 = 256.0;
+
+    let mut by_bounds: Grid<usize> = Grid::new(ARCH_CELL);
+    for (index, building) in buildings.iter().enumerate() {
+        let (min, max) = ring_bounds(&building.outer);
+        by_bounds.insert(min, max, index);
+    }
     let mut by_building: HashMap<usize, Vec<&RoadLine>> = HashMap::new();
     for passage in passages.iter().filter(|road| road.passage) {
         let Some(middle) = passage_middle(passage) else {
             continue;
         };
-        let pierced = buildings.iter().position(|building| {
-            let (min, max) = ring_bounds(&building.outer);
-            middle.x >= min.x
-                && middle.x <= max.x
-                && middle.y >= min.y
-                && middle.y <= max.y
-                && point_in_area(middle, building)
-        });
-        if let Some(index) = pierced {
+        // одна ячейка полна по построению вставки — рамка дома лежит в каждой
+        // клетке, которую задевает; кандидаты идут по номеру дома, и `find`
+        // выбирает тот же первый подходящий, что и прежний линейный `position`
+        let pierced = by_bounds
+            .at(middle)
+            .iter()
+            .find(|&&index| point_in_area(middle, &buildings[index]));
+        if let Some(&index) = pierced {
             by_building.entry(index).or_default().push(passage);
         }
     }
