@@ -1362,3 +1362,39 @@ fn empty_builder_makes_no_chunks_and_small_one_makes_one() {
     let chunks = builder.into_chunks(1000.0);
     assert_eq!(chunks.len(), 1);
 }
+
+/// Дописывание — то же, что сборка подряд: вершины, индексы и фактура
+/// (`ATTRIBUTE_ROOF`) при переносе на другой сборщик не меняются. Так части
+/// домов из потоков ([`super::append`]) складываются в клетку.
+#[test]
+fn append_matches_building_in_one_go() {
+    let mut single = MeshBuilder::with_roof_coords();
+    single.push_rect(Vec2::ZERO, Vec2::splat(10.0), LinearRgba::WHITE);
+    single.push_rect(Vec2::splat(20.0), Vec2::splat(30.0), LinearRgba::BLACK);
+
+    let mut part = MeshBuilder::with_roof_coords();
+    part.push_rect(Vec2::ZERO, Vec2::splat(10.0), LinearRgba::WHITE);
+    let mut rest = MeshBuilder::with_roof_coords();
+    rest.push_rect(Vec2::splat(20.0), Vec2::splat(30.0), LinearRgba::BLACK);
+    let mut merged = MeshBuilder::with_roof_coords();
+    merged.append(&part);
+    merged.append(&rest);
+
+    assert_eq!(merged.positions, single.positions);
+    assert_eq!(merged.colors, single.colors);
+    assert_eq!(merged.indices, single.indices);
+    assert_eq!(merged.roof_coords_for_test(), single.roof_coords_for_test());
+    assert_eq!(merged.vertex_count(), single.vertex_count());
+}
+
+/// У непустого получателя без атрибута дописать кусок с атрибутом нельзя:
+/// индексы поехали бы мимо `ATTRIBUTE_ROOF`.
+#[test]
+#[should_panic(expected = "append")]
+fn appending_attributed_part_into_plain_builder_panics() {
+    let mut plain = MeshBuilder::default();
+    plain.push_rect(Vec2::ZERO, Vec2::splat(10.0), LinearRgba::WHITE);
+    let mut roofed = MeshBuilder::with_roof_coords();
+    roofed.push_rect(Vec2::ZERO, Vec2::splat(10.0), LinearRgba::WHITE);
+    plain.append(&roofed);
+}

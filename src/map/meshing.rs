@@ -1324,6 +1324,25 @@ impl MeshBuilder {
         }
     }
 
+    /// Дописать собранное `other` в конец — порядок треугольников `other`
+    /// сохраняется. Фактуры (`ribbon`/`roof`/`crown`) сливаются, когда есть у
+    /// обоих, и заводятся у пустого получателя; свести `None` к `Some` у
+    /// непустого нельзя — индексы поехали бы мимо атрибута, это паника.
+    /// Раскладки будущей геометрии (`lanes`, `lane_profile`, `frame`) —
+    /// состояние пишущего: у дописанного куска их нет.
+    pub fn append(&mut self, other: &MeshBuilder) {
+        let was_empty = self.positions.is_empty();
+        let offset = self.positions.len() as u32;
+        self.positions.extend_from_slice(&other.positions);
+        self.colors.extend_from_slice(&other.colors);
+        self.indices
+            .extend(other.indices.iter().map(|&index| index + offset));
+        self.skipped_polygons += other.skipped_polygons;
+        merge_attr(&mut self.ribbon, other.ribbon.as_deref(), was_empty);
+        merge_attr(&mut self.roof, other.roof.as_deref(), was_empty);
+        merge_attr(&mut self.crown, other.crown.as_deref(), was_empty);
+    }
+
     /// Зарезервировать место под `vertices` вершин и `indices` индексов —
     /// когда объём геометрии известен заранее хотя бы оценкой.
     pub fn reserve(&mut self, vertices: usize, indices: usize) {
@@ -1359,6 +1378,22 @@ impl MeshBuilder {
         }
         mesh.insert_indices(Indices::U32(self.indices));
         mesh
+    }
+}
+
+/// Одна фактура [`MeshBuilder::append`]: слияние при совпадающих наборах,
+/// заведение у пустого получателя, паника при расходящемся.
+fn merge_attr<T: Clone>(dst: &mut Option<Vec<T>>, src: Option<&[T]>, dst_was_empty: bool) {
+    match (&mut *dst, src) {
+        (_, None) => {}
+        (slot @ None, Some(values)) => {
+            assert!(
+                dst_was_empty,
+                "append: у непустого получателя нет атрибута, у куска есть"
+            );
+            *slot = Some(values.to_vec());
+        }
+        (Some(slot), Some(values)) => slot.extend(values.iter().cloned()),
     }
 }
 
