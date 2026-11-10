@@ -746,16 +746,9 @@ impl Plugin for InspectPlugin {
         app.init_resource::<InspectOrigin>()
             .init_resource::<InspectViewport>()
             .init_resource::<InspectIndex>()
-            .add_systems(
-                Update,
-                rebuild_index.run_if(
-                    resource_exists::<MapData>.and_then(
-                        resource_changed::<MapData>
-                            .or_else(resource_changed::<RoadShapeOnMap>)
-                            .or_else(resource_changed::<DrawnPieces>),
-                    ),
-                ),
-            );
+            // смену ресурсов судит сама система (см. `rebuild_index`), условие
+            // только гейтит отсутствие карты до первой загрузки
+            .add_systems(Update, rebuild_index.run_if(resource_exists::<MapData>));
     }
 }
 
@@ -764,12 +757,21 @@ impl Plugin for InspectPlugin {
 /// деревьев (`compose_trees`). Форма дорог — второй повод: узловая ось, по
 /// которой стоят карманы у бордюра, зависит от неё. Куски — третий: их
 /// записывает каждая пересборка дорог (стиль, форма, ступень обочины).
+///
+/// Смену судит сама система, а не `resource_changed` в run-condition: их
+/// окна change-detection расходятся, когда пишущая система идёт в том же
+/// кадре параллельно с этой (проверено на живом Париже — условие зажигало
+/// две лишние пересборки на входе в мир при `is_changed() == false` внутри,
+/// по четверти секунды каждая, и всё это в окне warmup-холда).
 pub fn rebuild_index(
     map: Res<MapData>,
     shape: Res<RoadShapeOnMap>,
     pieces: Res<DrawnPieces>,
     mut index: ResMut<InspectIndex>,
 ) {
+    if !map.is_changed() && !shape.is_changed() && !pieces.is_changed() {
+        return;
+    }
     let started = std::time::Instant::now();
     *index = InspectIndex::rebuild(&map, &shape.0, &pieces.0);
     info!("inspect index: rebuilt in {:.1?}", started.elapsed());
