@@ -135,10 +135,14 @@ pub fn build_world_meshes(
                 )
             })
         });
-        let roads = scope.spawn(|| {
-            timed("roads (verge steps)", || {
-                (0..VergeLods::max_zooms().count())
-                    .map(|step| {
+        // Ступени обочин — по потоку на ступень: сборки независимы (одна и та
+        // же финальная карта, у каждой свои списки), а дорожная дорожка —
+        // самая долгая группа; одной ступени хватает на стену. Порядок ступеней
+        // держит сборка результатов по номеру ступени.
+        let roads: Vec<_> = (0..VergeLods::max_zooms().count())
+            .map(|step| {
+                scope.spawn(move || {
+                    timed(&format!("roads (verge step {step})"), || {
                         build_roads(
                             map,
                             styles.road_style,
@@ -146,9 +150,9 @@ pub fn build_world_meshes(
                             VergeZoomBucket::at(step),
                         )
                     })
-                    .collect::<Vec<_>>()
+                })
             })
-        });
+            .collect();
         let small =
             scope.spawn(|| timed("surfaces, trees, rails, cars", || small_lane(map, styles)));
         let fences = scope.spawn(|| {
@@ -165,7 +169,10 @@ pub fn build_world_meshes(
         });
 
         let buildings = join(buildings, "buildings")?;
-        let roads = join(roads, "roads")?;
+        let roads = roads
+            .into_iter()
+            .map(|lane| join(lane, "roads step"))
+            .collect::<Result<Vec<_>, String>>()?;
         let small = join(small, "small layers")?;
         let fences = join(fences, "fences")?;
         let polymesh = join(polymesh, "polymesh")?;
