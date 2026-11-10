@@ -13,6 +13,7 @@ use crate::city::City;
 use crate::map::osm::model::MapData;
 use crate::map::osm::overpass::{cache_path, overpass_query, prune_stale_caches};
 use crate::map::osm::parse::{ParseKnobs, parse};
+use crate::map::osm::snapshot;
 use crate::map::prepare::{self, StyleSnapshot, WorldMeshes};
 use crate::navigation::{Navmesh, snap_portal_position};
 
@@ -187,12 +188,21 @@ fn run(job: &MapLoadJob, city: City, knobs: ParseKnobs) -> Result<MapData, Strin
     let path = cache_path(city);
     // до чтения, а не после записи: устаревшие файлы надо подмести и на
     // попадании в кеш, иначе они переживут все следующие запуски
-    prune_stale_caches();
+    prune_stale_caches(knobs);
+
+    // тёплый путь: бинарный снапшот разобранной карты (`snapshot.rs`) —
+    // разбор json-кеша целиком заменяется чтением его готовой формы
+    job.set(JobState::Parsing);
+    if let Some(map) = snapshot::read(city, knobs) {
+        return Ok(map);
+    }
 
     if let Some(json) = read_cache(city)? {
-        job.set(JobState::Parsing);
-        match parse(&json, city, knobs) {
-            Ok(map) => return Ok(map),
+        match parse_logged(&json, city, knobs) {
+            Ok(map) => {
+                snapshot::write(city, knobs, &map);
+                return Ok(map);
+            }
             Err(error) => {
                 // битый кеш самоизлечивается: удаляем и качаем заново
                 warn!("osm: broken cache ({error}), re-downloading");
@@ -220,6 +230,19 @@ pub fn city_extract(city: City) -> Result<String, String> {
     download_and_cache(&MapLoadJob::default(), city, ParseKnobs::default()).map(|(json, _)| json)
 }
 
+/// Разбор выгрузки с одной цифрой в логе: записи проходов (`osm parse: …`)
+/// суммарное время не называют, а оно — то, что снапшот экономит.
+fn parse_logged(json: &str, city: City, knobs: ParseKnobs) -> Result<MapData, String> {
+    let started = std::time::Instant::now();
+    parse(json, city, knobs).inspect(|_| {
+        info!(
+            "osm: parsed {} MB of json in {:?}",
+            json.len() / 1_048_576,
+            started.elapsed()
+        );
+    })
+}
+
 fn read_cache(city: City) -> Result<Option<String>, String> {
     let path = cache_path(city);
     if !path.exists() {
@@ -240,7 +263,7 @@ fn download_and_cache(
     let path = cache_path(city);
     let json = download(job, city)?;
     job.set(JobState::Parsing);
-    let map = parse(&json, city, knobs)?;
+    let map = parse_logged(&json, city, knobs)?;
 
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -249,6 +272,8 @@ fn download_and_cache(
         Ok(()) => info!("osm: cached {} bytes at {}", json.len(), path.display()),
         Err(error) => warn!("osm: cache write failed: {error}"),
     }
+    // снапшот — после записи кеша: штамп снимается с готового файла
+    snapshot::write(city, knobs, &map);
     Ok((json, map))
 }
 

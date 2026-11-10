@@ -174,7 +174,9 @@ pub fn cache_path(city: City) -> PathBuf {
 
 /// Один файл на город. Файл под тем же слагом, но с другими параметрами в
 /// имени, — выгрузка под прежний гео-центр, размер карты или версию запроса;
-/// прочитать её уже некому, а весит она десятки мегабайт.
+/// прочитать её уже некому, а весит она десятки мегабайт. То же правило —
+/// для бинарных снапшотов (`snapshot.rs`): актуальный — текущих входов
+/// разбора, остальные под слагом города уже никому не нужны.
 ///
 /// Чистим сразу по всем городам, а не только по загружаемому: иначе мусор
 /// под неактивным городом ждёт визита в этот город, то есть возможно, что
@@ -183,8 +185,13 @@ pub fn cache_path(city: City) -> PathBuf {
 ///
 /// Трогаем только имена с известным слагом: что ещё лежит в `assets/osm/` —
 /// не наше дело.
-pub fn prune_stale_caches() {
-    let keep: Vec<PathBuf> = City::ALL.iter().map(|city| cache_path(*city)).collect();
+pub fn prune_stale_caches(knobs: crate::map::osm::parse::ParseKnobs) {
+    let mut keep: Vec<PathBuf> = City::ALL.iter().map(|city| cache_path(*city)).collect();
+    keep.extend(
+        City::ALL
+            .iter()
+            .map(|city| super::snapshot::snapshot_path(*city, knobs)),
+    );
     let Some(dir) = keep.first().and_then(|path| path.parent()) else {
         return;
     };
@@ -203,7 +210,7 @@ pub fn prune_stale_caches() {
         let ours = City::ALL
             .iter()
             .any(|city| name.starts_with(&format!("{}_", city.slug())));
-        if !ours || !name.ends_with(".json") {
+        if !ours || !(name.ends_with(".json") || name.ends_with(".bin")) {
             continue;
         }
         match std::fs::remove_file(&path) {

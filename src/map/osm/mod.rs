@@ -10,6 +10,7 @@ pub mod model;
 pub mod overpass;
 pub mod parse;
 mod planting;
+pub mod snapshot;
 
 pub use self::download::{JobState, LoadedWorld, MapLoadJob, OVERPASS_MIRRORS, start_load_thread};
 pub use self::model::{
