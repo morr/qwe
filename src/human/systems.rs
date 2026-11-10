@@ -479,13 +479,12 @@ pub fn pick_wander_targets(
         // как и раньше
         let target = if is_first_wander
             && !deterministic
-            && walkable.sift_target(crate::grid::world_to_tile(target)).is_none()
+            && walkable
+                .sift_target(crate::grid::world_to_tile(target))
+                .is_none()
         {
             walkable
-                .sift_target_far(
-                    crate::grid::world_to_tile(target),
-                    FIRST_WANDER_SIFT_TILES,
-                )
+                .sift_target_far(crate::grid::world_to_tile(target), FIRST_WANDER_SIFT_TILES)
                 .map(crate::grid::tile_center)
                 .unwrap_or(target)
         } else {

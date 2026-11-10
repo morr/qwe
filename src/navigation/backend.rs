@@ -7,8 +7,8 @@ use bevy::prelude::*;
 
 use super::{
     Navmesh, PathfindingAlgorithm, PathfindingResult, PolymeshBuild, find_passable_tile_near,
-    nearest_passable_tile,
-    find_path, find_path_northstar, find_path_polymesh, line_of_sight, nearest_tile_where,
+    find_path, find_path_northstar, find_path_polymesh, line_of_sight, nearest_passable_tile,
+    nearest_tile_where,
 };
 use crate::settings::RESCUE_SEARCH_TILES;
 
