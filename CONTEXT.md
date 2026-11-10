@@ -633,7 +633,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   fence minus the same gap discs the navmesh opens, **and minus what a bridge deck
   covers** (`footprint::BridgeDecks`) — the one place the drawn fence and the blocking
   one part. The drawn width **grows as you zoom out** (`FENCE_LODS`); the layer
-  disappears past 0.9 m/px. Detail — `layers.md`.
+  disappears past 0.9 m/px. A step build is **seconds on a big city** (the shadow union
+  over ten thousand pieces), so a threshold crossing builds the new step in a background
+  task and swaps it in atomically — the old layer stays on screen until the new one
+  lands (`fences::FenceBuild`); only the world-entry build runs inline, under the
+  loader. Detail — `layers.md`.
 - **Bridge shadow** (`map/roads/bridges.rs`, `Z_BRIDGE_SHADOW` 2.05) — a bridge deck
   throws the same shadow every other object does, drawn under the bridge and over
   whatever it crosses — except what the z ladder draws above bridges. The invariants,

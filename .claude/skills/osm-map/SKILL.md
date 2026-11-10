@@ -430,9 +430,16 @@ going through the curb pin tests
   builds **one** step and despawns the other — the first crossing after it
   rebuilds the missing step in `roads::show_road_steps`, so a style change pays
   the second build once, on the next crossing, not eagerly. The cheap ladders
-  (tram, cars past the placement cache, fences, wagons) still rebuild per
+  (tram, cars past the placement cache, wagons) still rebuild per
   crossing — their builds cost 1–15 ms, under or about one frame, and
-  precomputing them would buy load time and memory for nothing. The paint has no
+  precomputing them would buy load time and memory for nothing. **Fences left
+  that group** (perf-journal 17): their step build is the shadow sweep + union
+  over ten thousand pieces — 1.2–2.3 s on Paris — so the crossing spawns a
+  background build (`fences::FenceBuild`, the task holds cloned fences+roads)
+  and the new mesh is swapped in atomically — new spawn and old despawn in one
+  command batch, no frame without the layer, no frame with both; a stale result
+  (threshold crossed again, sun settled meanwhile) is dropped by generation.
+  Only the world-entry build stays inline, under the loader. The paint has no
   `LodStep`: its geometry does not depend on the verge step (identical vertex
   counts in both builds' reports), so it is spawned once by whichever build ran
   for the current step and `show_paint` owns its visibility alone — the reason
