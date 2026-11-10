@@ -74,7 +74,9 @@ pub fn penumbra(direction: Vec2) -> f32 {
 /// полупрозрачный: две наложившиеся тени дали бы пятно двойной темноты. У
 /// дома это соседние крылья одного здания и соседние дома, у ограды — тень
 /// звена и тень излома, а в частном секторе ещё и заборы соседних участков,
-/// лежащие друг на друге по всей длине при низком солнце.
+/// лежащие друг на друге по всей длине при низком солнце. На городском входе
+/// объединение идёт **тайлами** ([`union_of`] — цена одного прохода растёт
+/// быстрее контуров, и сто тысяч контуров одним вызовом — секунды).
 ///
 /// **Кайма** идёт наружу от внешнего кольца и внутрь просвета от каждой дырки:
 /// сторону она выбирает по площади самого кольца, так что дырке нужно
@@ -88,16 +90,17 @@ pub fn penumbra(direction: Vec2) -> f32 {
 /// метр, у забора и машины треть, **потому что и тень там втрое-вдесятеро
 /// короче**.
 pub fn push_union(builder: &mut MeshBuilder, contours: &[Vec<[f32; 2]>], blur: f32) {
+    let shapes = union_of(contours);
     let color = SHADOW_COLOR.to_linear();
     let fade = LinearRgba {
         alpha: 0.0,
         ..color
     };
-    for shape in contours.simplify_shape(FillRule::NonZero) {
-        let mut rings = shape.into_iter().map(|contour| {
+    for shape in &shapes {
+        let mut rings = shape.iter().map(|contour| {
             contour
-                .into_iter()
-                .map(Vec2::from_array)
+                .iter()
+                .map(|point| Vec2::from_array(*point))
                 .collect::<Vec<Vec2>>()
         });
         let Some(outer) = rings.next() else {
@@ -110,6 +113,50 @@ pub fn push_union(builder: &mut MeshBuilder, contours: &[Vec<[f32; 2]>], blur: f
             builder.push_inset_band_tapered(hole, blur, false, penumbra, color, fade);
         }
     }
+}
+
+/// Ниже порога — однопроходный union, как раньше: у тестов и витрин вход мал,
+/// тайлам там делиться не о что, а порядок вершин у путей разный.
+const TILED_MIN: usize = 512;
+
+/// Ячейка тайлового union, м. Контуры группируются по клетке **первой точки**
+/// (клетка — та, кто тень отбрасывает), каждая клетка объединяется в своём
+/// потоке, результаты клеток — в одном финальном union. Тень длиннее клетки не
+/// мешает: налегания соседних клеток снимает как раз финальный union, а цена
+/// его — фигуры клеток, которых на порядки меньше, чем контуров на входе.
+const TILE: f32 = 256.0;
+
+/// Объединённые свипы: один проход на малом входе, тайлами на городском.
+///
+/// Группировка детерминирована дважды: порядок контуров внутри клетки —
+/// входной, клетки обходятся по возрастанию ключа, а не по порядку хеша.
+/// Геометрия union от группировки не зависит (ассоциативность), порядок
+/// вершин результата от однопроходного отличается — контракт картинки, не
+/// байтов. Двухуровневое слияние (клетка → квартал 4×4 → финал) замерялось
+/// против этого и выигрыша не показало: у `i_overlay` цена ближе к линейной,
+/// и почти всё и так уходит в параллельные клеточные union.
+fn union_of(contours: &[Vec<[f32; 2]>]) -> Vec<Vec<Vec<[f32; 2]>>> {
+    if contours.len() <= TILED_MIN {
+        return contours.simplify_shape(FillRule::NonZero);
+    }
+    use crate::map::parallel::in_parallel;
+
+    let mut by_cell: bevy::platform::collections::HashMap<IVec2, Vec<Vec<[f32; 2]>>> =
+        bevy::platform::collections::HashMap::new();
+    for contour in contours {
+        let cell = (Vec2::from_array(contour[0]) / TILE).floor().as_ivec2();
+        by_cell.entry(cell).or_default().push(contour.clone());
+    }
+    let mut cells: Vec<(IVec2, Vec<Vec<[f32; 2]>>)> = by_cell.into_iter().collect();
+    cells.sort_unstable_by_key(|&(cell, _)| (cell.x, cell.y));
+
+    let tiled: Vec<Vec<Vec<[f32; 2]>>> = in_parallel(&cells, |(_, contours)| {
+        contours.simplify_shape(FillRule::NonZero)
+    })
+    .into_iter()
+    .flatten()
+    .collect();
+    tiled.simplify_shape(FillRule::NonZero)
 }
 
 #[cfg(test)]

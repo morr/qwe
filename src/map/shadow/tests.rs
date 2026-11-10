@@ -122,3 +122,43 @@ fn nothing_to_cast_draws_nothing() {
     push_union(&mut builder, &[], 1.0);
     assert!(builder.is_empty());
 }
+
+/// Тайловый union (вход выше порога) сшивает цепочку перекрывающихся свипов
+/// в одну полосу — и два прогона по одному входу дают один и тот же меш:
+/// группировка по клеткам детерминирована, порядок клеток — ключом, а не
+/// хешем.
+#[test]
+fn the_tiled_union_merges_into_one_body_and_is_deterministic() {
+    let _sun = default_sun();
+    let square = |at: Vec2, half: f32| -> Vec<[f32; 2]> {
+        vec![
+            (at + Vec2::new(-half, -half)).to_array(),
+            (at + Vec2::new(half, -half)).to_array(),
+            (at + Vec2::new(half, half)).to_array(),
+            (at + Vec2::new(-half, half)).to_array(),
+        ]
+    };
+    // цепочка из 600 перекрывающихся квадратов — вход выше `TILED_MIN`,
+    // объединение идёт тайлами; соседние квадраты налегают на 2 м
+    let contours: Vec<Vec<[f32; 2]>> = (0..600)
+        .map(|step| square(Vec2::new(step as f32 * 8.0, 0.0), 5.0))
+        .collect();
+
+    let mut first = MeshBuilder::default();
+    push_union(&mut first, &contours, 1.0);
+    let mut second = MeshBuilder::default();
+    push_union(&mut second, &contours, 1.0);
+    assert_eq!(
+        first.colored_triangles_for_test().collect::<Vec<_>>(),
+        second.colored_triangles_for_test().collect::<Vec<_>>(),
+        "тайловый union недетерминирован"
+    );
+    assert!(!first.is_empty());
+
+    // вся цепочка слилась в одну полосу: концы и стыки покрыты, в стороне —
+    // ничего
+    assert!(first.covers_for_test(Vec2::ZERO));
+    assert!(first.covers_for_test(Vec2::new(599.0 * 8.0, 0.0)));
+    assert!(first.covers_for_test(Vec2::new(4.0, 0.0)));
+    assert!(!first.covers_for_test(Vec2::new(300.0, 100.0)));
+}
