@@ -376,6 +376,17 @@ fn roll_wander_pause(rng: &mut impl RngExt) -> std::time::Duration {
     std::time::Duration::from_secs_f32(rng.random_range(HUMAN_WANDER_PAUSE.0..HUMAN_WANDER_PAUSE.1))
 }
 
+/// Радиус широкого кольца просеивания первого выхода гуляющего. Обычное
+/// просеивание цели смотрит 8 соседей тайла (`Walkable::sift_target`), и на
+/// плотном городе кольцо часто стоит целиком на доме — заявка уезжает на
+/// следующий кадр. На шторме входа (20 000 первых выходов одним кадром) таких
+/// переспрашиваний ~30%, и прогрев (`loading.rs::poll_warmup`) держит экран
+/// загрузки, пока trickle этих заявок не иссякнет, — около десятка кадров.
+/// Широкое кольцо ставит промахнувшуюся заявку тем же кадром; бросков потока
+/// решений не делает (просеивание — геометрия), поэтому на выбор цели не
+/// влияет — только на то, уедет ли она в этот кадр.
+const FIRST_WANDER_SIFT_TILES: i32 = 4;
+
 /// Мирное блуждание, один шаг скелета `movement/wander.rs`: отсев по состоянию
 /// → пауза 2–10 с на каждом пятом прибытии (см. `roll_wander_pause`) → поток
 /// решений → [`choose_target`] (вся политика «куда») → заявка на путь, курс,
@@ -383,12 +394,14 @@ fn roll_wander_pause(rng: &mut impl RngExt) -> std::time::Duration {
 ///
 /// Каждый из четырёх `continue` — своё основание пропустить пешку до следующего
 /// кадра, и ни один из них не двигает состояние вперёд.
+#[allow(clippy::too_many_arguments)]
 pub fn pick_wander_targets(
     mut commands: Commands,
     time: Res<Time>,
     backend: Res<Backend>,
     map: Res<MapData>,
     seed: Res<WorldSeed>,
+    determinism: Option<Res<crate::determinism::Determinism>>,
     mut query: Query<
         (
             Entity,
@@ -410,6 +423,8 @@ pub fn pick_wander_targets(
         ),
     >,
 ) {
+    // реплей ведёт свои заявки по тикам: широкий кольец — только живому режиму
+    let deterministic = determinism.is_some_and(|mode| mode.0);
     let walkable = backend.walkable();
 
     for (
@@ -455,6 +470,26 @@ pub fn pick_wander_targets(
             is_first_wander,
         ) else {
             continue;
+        };
+
+        // первый выход не переспрашивает: на шторме входа переспрос ~30%
+        // первых заявок растягивал прогрев на десяток кадров. Просеивание
+        // цели для первого выхода — широким кольцом, живому режиму (см.
+        // `sift_target_far`); неудача wide-кольца уезжает на следующий кадр,
+        // как и раньше
+        let target = if is_first_wander
+            && !deterministic
+            && walkable.sift_target(crate::grid::world_to_tile(target)).is_none()
+        {
+            walkable
+                .sift_target_far(
+                    crate::grid::world_to_tile(target),
+                    FIRST_WANDER_SIFT_TILES,
+                )
+                .map(crate::grid::tile_center)
+                .unwrap_or(target)
+        } else {
+            target
         };
 
         let Some(target_tile) = request_wander_path(

@@ -7,6 +7,7 @@ use bevy::prelude::*;
 
 use super::{
     Navmesh, PathfindingAlgorithm, PathfindingResult, PolymeshBuild, find_passable_tile_near,
+    nearest_passable_tile,
     find_path, find_path_northstar, find_path_polymesh, line_of_sight, nearest_tile_where,
 };
 use crate::settings::RESCUE_SEARCH_TILES;
@@ -209,6 +210,20 @@ impl Walkable<'_> {
     /// выражается провалом поиска и ловится штатно.
     pub fn sift_target(&self, tile: IVec2) -> Option<IVec2> {
         find_passable_tile_near(&self.navmesh, tile)
+    }
+
+    /// То же просеивание, но радиус кольца задаёт вызов.
+    ///
+    /// Читатель один — первый выход гуляющего на шторме входа (живой режим,
+    /// `human/systems.rs`): бросок прогулки ложится на квартал в ~30% случаев,
+    /// кольцо радиуса 1 целиком стоит на доме, и заявка вместо этого кадра
+    /// уезжает на следующий. Прогрев (`loading.rs::poll_warmup`) тянет этот
+    /// переспрос в кадре, пока trickle первых заявок не иссякнет, — десяток
+    /// кадров на шторме. Широкое кольцо ставит заявку тем же кадром; бросков
+    /// потока решений оно не делает, так что детерминированному прогону ничего
+    /// не меняет — но заявки реплея ведутся по тикам, и читатель там один.
+    pub fn sift_target_far(&self, tile: IVec2, max_radius: i32) -> Option<IVec2> {
+        nearest_passable_tile(&self.navmesh, tile, max_radius)
     }
 
     /// Точка доката: продолжать ли катиться за концом пути.

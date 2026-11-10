@@ -56,7 +56,7 @@ pub fn find_passable_tile_near(navmesh: &Navmesh, tile: IVec2) -> Option<IVec2> 
 /// кольце `r + 1` может стоять сосед по прямой на `r + 1`, что ближе уже при
 /// `r ≥ 3`. Поиск идёт, пока лучшее найденное дальше внутренней границы
 /// следующего кольца.
-fn nearest_passable_tile(navmesh: &Navmesh, tile: IVec2, max_radius: i32) -> Option<IVec2> {
+pub(crate) fn nearest_passable_tile(navmesh: &Navmesh, tile: IVec2, max_radius: i32) -> Option<IVec2> {
     nearest_tile_where(tile, max_radius, |candidate| {
         navmesh.is_passable(candidate.x, candidate.y)
     })
