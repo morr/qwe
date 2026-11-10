@@ -195,7 +195,12 @@ would say something different about them, so they call the sun directly.
   meets what casts it, full at the far end, growing along a lateral side.
 - **`push_union(builder, contours, blur)`** — union the sweeps (`i_overlay`, NonZero — a
   translucent layer must never double on itself) and lay the tapered band outward from
-  the outer ring and inward from each hole.
+  the outer ring and inward from each hole. Above a threshold the union runs **tiled**
+  (`TILE` 256 m): contours grouped by the cell of their first point, each cell unioned
+  on its own thread (`map/parallel.rs::in_parallel`), the cell results unioned once —
+  city-size inputs (buildings, fences) pay seconds, not tens of seconds; the geometry
+  is the same union, the vertex order is not the single-shot one. Below the threshold
+  (tests, galleries) it is one call, as before.
 
 **Only buildings and fences go through `push_union`; the other five stay outside it, and
 each for a measured reason.** The cars do not union at all (a 6 m pitch against a metre
@@ -451,7 +456,12 @@ going through the curb pin tests
   and the new mesh is swapped in atomically — new spawn and old despawn in one
   command batch, no frame without the layer, no frame with both; a stale result
   (threshold crossed again, sun settled meanwhile) is dropped by generation.
-  Only the world-entry build stays inline, under the loader. The paint has no
+  The world-entry build left the frame too (perf-journal 19): the load thread meshes
+  the entry bucket's step (`fences::entry_layers`, the zoom from
+  `camera::next_entry_zoom` in the `StyleSnapshot`), and `rebuild_fences` spawns from
+  `PreparedMeshes` when its own bucket matches — a drift (the prediction and the camera
+  disagree) falls back to the in-frame build, which is the only thing that keeps the
+  camera decision and its copy honest. The paint has no
   `LodStep`: its geometry does not depend on the verge step (identical vertex
   counts in both builds' reports), so it is spawned once by whichever build ran
   for the current step and `show_paint` owns its visibility alone — the reason

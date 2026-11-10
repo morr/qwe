@@ -90,11 +90,14 @@ parse output, before any of those steps touch it).
 
 **The last stage meshes every map layer, in the same thread, in parallel groups**
 (`map/prepare.rs::build_world_meshes`): buildings ∥ roads (both verge steps) ∥ polymesh ∥
-the small lane (parking layout, surfaces, trees with the tree-set compose and the conifer
-field, rails of every zoom step, the car placement) — one thread per group, since the
+fences (the entry bucket's step) ∥ the small lane (parking layout, surfaces, trees with the
+tree-set compose and the conifer field, rails of every zoom step, the car placement) — one
+thread per group, since the
 `MapData` is final by then (compose runs before the lanes; it is the only writer) and each
 group fills its own lists. Styles — height mode, road style/shape, tree styles, car
-occupancy, the polymesh panel — arrive as a `StyleSnapshot` taken at thread start
+occupancy, the polymesh panel, the **entry zoom** (`camera::next_entry_zoom`, the same
+decision `place_camera_on_world_ready` makes at entry: the fences lane must know the
+bucket the camera will open on) — arrive as a `StyleSnapshot` taken at thread start
 (`loading.rs::MeshInputs`); a knob changed mid-load is picked up by the regular `rebuilds_on`
 rebuild on the first Playing frame, exactly like a change after entry. The thread writes the
 lane-width global itself (from `MapData::knobs`, the same value `adopt_lane_width` writes at
@@ -102,6 +105,17 @@ entry) and chunks the opaque layers (`into_chunks`) — the old entry-frame cost
 lives here now. The polymesh lane follows the Navmesh panel's toggle and hands its build to
 `PolyNavmesh::set_ready` in the `Done` branch, so the async panel build never starts. A panic
 in any lane is `Failed`, not a hung loader.
+
+`Done` is the whole world: `poll_job` inserts `MapData`, `PortalPos` and a
+**`PreparedMeshes`** resource; `OnEnter(Playing)` then only *spawns* — `spawn_map` (parking
+layout resource, surfaces, both road steps, buildings), `spawn_rails` (all steps),
+`cars::seed_parked_cars` (the placement cache pre-filled), `trees::spawn_prepared_trees`,
+and `fences::rebuild_fences` takes the entry-bucket fence layer out of `PreparedMeshes`
+(each system takes its lists out of `PreparedMeshes` with `std::mem::take`; the fence
+layer was built for the predicted entry zoom — a mismatch with the camera's bucket falls
+back to the in-frame build). The cheap,
+camera-bucket-dependent meshes (cars' bodies, wagons, industry, tram, the tree-row
+band) are still built at entry — they cost 1–15 ms each.
 
 `Done` is the whole world: `poll_job` inserts `MapData`, `PortalPos` and a
 **`PreparedMeshes`** resource; `OnEnter(Playing)` then only *spawns* — `spawn_map` (parking

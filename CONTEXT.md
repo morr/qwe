@@ -139,10 +139,12 @@ Summary; the mechanism — **world-lifecycle skill** (states and the warmup hold
   everything that needs no ECS: `Connecting → Downloading → Parsing → BuildingNavmesh →
   Pruning → BuildingMeshes → Done | Failed`, every state a line on the loader screen.
   The meshing stage runs its groups **in parallel** (buildings ∥ roads ∥ polymesh ∥
-  surfaces+trees+rails+cars — `map/prepare.rs`); the polymesh lane follows the Navmesh
+  fences ∥ surfaces+trees+rails+cars — `map/prepare.rs`); the polymesh lane follows the Navmesh
   panel's toggle, and a panic in any lane surfaces as `Failed`. `Done` carries the whole
   world: `MapData`, the portal and the meshed layers (`WorldMeshes` in a
-  `PreparedMeshes` resource), styles snapshotted at thread start. **Rule: heavy init
+  `PreparedMeshes` resource), styles snapshotted at thread start (including the entry
+  zoom — the fence layer is built for the bucket the camera will open on;
+  `camera::next_entry_zoom`). **Rule: heavy init
   belongs in this thread, not in `OnEnter(Playing)`** — no frame is drawn inside a schedule.
 - **WorldStarted** (`loading.rs`, event) — "the world begins a new run", the single seam
   both lifecycle paths share, fired on entering `PlayPhase::Live` and on every restart. All
