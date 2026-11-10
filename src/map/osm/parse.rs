@@ -58,7 +58,7 @@ pub fn parse(json: &str, city: City, knobs: ParseKnobs) -> Result<MapData, Strin
 /// `cargo test` многопоточный. Теперь их называет вызывающий: поток загрузки —
 /// осевшими ручками (`loading::start_job`), витрина дорог — своей ширины
 /// полосы, всё прочее — [`Default`].
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ParseKnobs {
     /// Ширина полосы улицы, м — ручка `Lane width` (`RoadShape::lane_width`).
     /// Её читают сечения (шаг 0 [`finish_parse`]), а по ширине дорог
@@ -101,7 +101,19 @@ impl ParseKnobs {
 ///   стоянка и площадка — своим полигоном без раскладки мест и разметки поля;
 ///   ни машин, ни стоящих вагонов (`wagons::mesh_wagons`), ни сгенерированных
 ///   деревьев (лес и аллеи не сажаются, остаются только деревья-ноды OSM).
-#[derive(Resource, Reflect, SettingsGroup, Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(
+    Resource,
+    Reflect,
+    SettingsGroup,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Debug,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 #[reflect(Resource, SettingsGroup, Default)]
 #[settings_group(group = "debug", key = "raw_osm")]
 pub enum RawOsm {

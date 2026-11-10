@@ -38,7 +38,7 @@ pub(in crate::map::roads) const MAX_BEND: f32 = 50.0 * std::f32::consts::PI / 18
 const ARM_REACH: f32 = 10.0;
 
 /// Way в составе улицы: `reversed` — улица идёт против порядка его точек.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct StreetWay {
     pub road: usize,
     pub reversed: bool,
@@ -68,7 +68,7 @@ impl StreetWay {
 
 /// Улица: ways по порядку, каждый следующий начинается там, где кончился
 /// предыдущий.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Street {
     pub ways: Vec<StreetWay>,
     /// Цепочка вернулась в свой первый узел — улица-петля без торцов.
@@ -77,7 +77,10 @@ pub struct Street {
 
 /// Дороги карты, склеенные в улицы. Каждая дорога, кроме дорожек, лежит ровно
 /// в одной улице; дорожка ([`Highway::Path`]) — ни в одной.
-#[derive(Debug, Clone, Default)]
+///
+/// serde — под бинарный снапшот `MapData` (`map/osm/snapshot.rs`): приватные
+/// `place` и `continuations` дерейвятся на месте, снаружи им взяться неоткуда.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RoadNetwork {
     pub streets: Vec<Street>,
     /// Дорога → (улица, место в ней).

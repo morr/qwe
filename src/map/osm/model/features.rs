@@ -2,8 +2,9 @@
 //! дорог: рельсы, стены, ограды, промышленные цилиндры, трубопроводы, водотоки.
 
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AreaKind {
     Building,
     Kremlin,
@@ -38,7 +39,7 @@ pub enum AreaKind {
 /// Что за стоянка — решается при разборе (`parse/lots.rs`), и читают её
 /// раскладка мест (`map::parking`) и кромка большой стоянки (`roads/lots.rs`),
 /// а сами ничего не выводят.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LotKind {
     /// **Kerbside lot** — `parking=street_side`: карман вдоль улицы отдельным
     /// контуром. Дотягивается до бордюра, врезаясь в тротуар, а не до его края.
@@ -52,7 +53,7 @@ pub enum LotKind {
 
 /// Что за площадка — по ней выбирается цвет покрытия и разметка
 /// (`map::pitch`). Классов ровно столько, сколько различимо с воздуха.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PitchKind {
     /// Футбольное поле: газон или грунт, разметка белым.
     Soccer,
@@ -75,7 +76,7 @@ pub enum PitchKind {
 /// промзона и церкви читались с общего
 /// плана. Не «вид опорного пункта» из `ROADMAP.md` — тот считается от
 /// `amenity` своей веткой. Полный словарь значений — `parse/tags.rs::building_use`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum BuildingUse {
     /// Частный дом: `house`, `detached`, `terrace`, `bungalow`, дача, изба.
     House,
@@ -120,7 +121,7 @@ pub enum BuildingUse {
 }
 
 /// Храм глазами отрисовки: чей он и какая это часть храма.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Sacred {
     pub faith: Faith,
     pub form: SacredForm,
@@ -147,7 +148,7 @@ impl Sacred {
 /// Вероисповедание — ровно столько классов, сколько различимо с воздуха
 /// (`map/buildings/temples.rs`): купол-луковица, шпиль, минарет и ярусная
 /// кровля — четыре разных силуэта.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Faith {
     /// Православие и восточные церкви: побелка, луковичные главы, шатровая
     /// колокольня.
@@ -172,7 +173,7 @@ pub enum Faith {
 /// Какая часть храма этот контур. В OSM храм часто разложен на части
 /// (`building:part`, `roof:shape=onion`), и барабан с главой или колокольня
 /// рисуются иначе, чем сам храм.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SacredForm {
     /// Сам храм — неф, четверик, молельный зал.
     Nave,
@@ -188,7 +189,7 @@ pub enum SacredForm {
 }
 
 /// Полигон с дырками. Кольца открытые: последняя точка не повторяет первую.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PolyArea {
     pub outer: Vec<Vec2>,
     pub holes: Vec<Vec<Vec2>>,
@@ -248,7 +249,7 @@ impl PolyArea {
 pub type Rgb = [u8; 3];
 
 /// Цвета здания из его тегов; `None` — тега нет или он не разобрался.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Colours {
     /// `building:colour`.
     pub wall: Option<Rgb>,
@@ -262,7 +263,7 @@ pub fn srgba_of(rgb: Rgb) -> Srgba {
 }
 
 /// Род пути — он же способ отрисовки.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RailKind {
     /// Магистральный путь: балласт со шпалами и нитками, на дальнем зуме —
     /// пунктирный знак темнее балласта (`map/rail.rs`).
@@ -281,7 +282,7 @@ pub enum RailKind {
 /// Навмеша не касается — слой чисто визуальный, люди ходят через пути как по
 /// земле. Непрерывная линия, режущая город пополам, иначе отрезала бы половину
 /// карты, и `prune_unreachable` её бы ампутировал.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RailLine {
     pub points: Vec<Vec2>,
     pub width: f32,
@@ -304,7 +305,7 @@ pub struct RailLine {
 }
 
 /// Класс служебного пути — значение `service` из белого списка.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ServiceTrack {
     /// Станционный путь при главном ходу: приёмо-отправочный, обгонный.
     Siding,
@@ -315,7 +316,7 @@ pub enum ServiceTrack {
 }
 
 /// Стена (Кремль): полилиния фиксированной ширины, непроходима.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WallLine {
     pub points: Vec<Vec2>,
     pub width: f32,
@@ -326,7 +327,7 @@ pub struct WallLine {
 }
 
 /// Что за ограда — она же способ отрисовки (`map::fences`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FenceKind {
     /// `barrier=fence` — доска, штакетник, профнастил.
     Fence,
@@ -348,7 +349,7 @@ pub enum FenceKind {
 /// (`footprint::fence_gaps` — калитка тропинки, въезд проезда), и у неё
 /// бывают калитки, которых нет в OSM (`gates`). Стену, которую пересекла
 /// тропа, никто не открывает.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FenceLine {
     pub points: Vec<Vec2>,
     pub kind: FenceKind,
@@ -364,7 +365,7 @@ pub struct FenceLine {
 
 /// Род промышленного сооружения — он же радиус и высота по умолчанию, когда в
 /// данных нет ни контура, ни тегов размера.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StructureKind {
     /// `man_made=storage_tank` — резервуар: широкий низкий цилиндр, светлый
     /// металл. Самое узнаваемое круглое пятно нефтебазы.
@@ -388,7 +389,7 @@ pub enum StructureKind {
 /// почти всегда круглый way, и радиус по нему считается средним. Рисуется
 /// цилиндр (`map/industry.rs`), и квадратная силосная башня выйдет круглой —
 /// цена, которую видно только в упор.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Structure {
     pub at: Vec2,
     pub radius: f32,
@@ -406,7 +407,7 @@ pub struct Structure {
 /// **непроходима**, а труба идёт над землёй на опорах — пешки проходят под
 /// ней, тень у неё длиннее, и слой выше. Подземные до карты не доезжают
 /// вовсе.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PipeLine {
     pub points: Vec<Vec2>,
     /// Ширина связки, м: `count` труб в пучке — теплотрассу тянут парой
@@ -419,7 +420,7 @@ pub struct PipeLine {
 }
 
 /// Род водотока — он же ширина по умолчанию, когда в данных нет `width`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WaterKind {
     /// `waterway=river` — русло реки, самое широкое из линейных.
     River,
@@ -439,7 +440,7 @@ pub enum WaterKind {
 /// В отличие от рельсов навмеш **трогает**: русло — та же вода, что пруд, и
 /// перейти его можно только по мосту. От разрезания карты пополам спасают две
 /// вещи — прорезка мостов после заливки и [`WaterLine::tunnel`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WaterLine {
     pub points: Vec<Vec2>,
     pub width: f32,

@@ -51,7 +51,7 @@ const AREA_COLOR: Color = Color::srgb(1.0, 0.9, 0.0);
 /// Цена — копия точек: на Туле это строка `osm parse: … contour points` в логе
 /// разбора (вершин порядка сотен тысяч, мегабайты памяти и миллисекунды на
 /// копию).
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct OsmContours {
     /// Оси улиц и проездов (`RoadClass::Street`), как их прочёл цикл: `oneway=-1`
     /// уже развёрнут, подземное уже выброшено — это решения чтения, не правки.

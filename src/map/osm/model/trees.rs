@@ -2,10 +2,11 @@
 //! раскладка аллей и то, из чего `MapData::compose_trees` его собирает.
 
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
 /// Аллея из OSM (`natural=tree_row`): осевая полилиния и то, что данные знают о
 /// самой посадке. Деревья по ней расставляет `planting::plant_rows`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TreeRow {
     pub points: Vec<Vec2>,
     /// Шаг посадки из тегов, м (`spacing`, либо длина / (`count` − 1)).
@@ -21,7 +22,7 @@ pub struct TreeRow {
 /// Одиночное дерево из OSM (`node natural=tree`): позиция и радиус кроны из
 /// `diameter_crown`. `None` — радиус разыгрывается, как в лесу. Сажает
 /// `planting::plant_standalone`; ноды в лесу и у аллей там же и отсеиваются.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct TreeNode {
     pub pos: Vec2,
     pub radius: Option<f32>,
@@ -47,7 +48,7 @@ pub type PlantedTree = (Vec2, f32, f32);
 /// массива (`(номер + 1) · TREE_AREA_PER_TREE / площадь`), поэтому каждый лес
 /// отдаёт ровно свою долю, даже если засаживался до упора и не добрал
 /// запрошенного (см. `planting.rs`).
-#[derive(Default, Debug, PartialEq)]
+#[derive(Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TreeSet {
     /// Центр и радиус кроны.
     positions: Vec<(Vec2, f32)>,
@@ -135,7 +136,7 @@ impl TreeSet {
 /// [`MapData::trees`](super::MapData::trees): политика — часть состояния модели, а не только аргумент
 /// посадки. Переключается на лету из панели Tree rows (`TreeRowStyle::placement`),
 /// поэтому оба варианта считаются на загрузке разом (см. `planting::plant_rows`).
-#[derive(Reflect, Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Reflect, Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 pub enum TreeRowPlacement {
     /// Позиция из OSM как есть: выбрасываются только деревья в домах и в воде.
     ///
@@ -165,7 +166,7 @@ impl TreeRowPlacement {
 /// слушаем ли мы шаг из тегов OSM. Обе оси меняют позиции, а не вид, поэтому
 /// каждое сочетание раскладывается на загрузке и переключение в UI остаётся
 /// пересборкой массива, а не пересадкой (см. [`RowTrees`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TreeRowLayout {
     pub placement: TreeRowPlacement,
     /// `true` — шаг берётся из `spacing` / `count`, и ползунок плотности такой
@@ -210,7 +211,7 @@ impl TreeRowLayout {
 /// вместо одного стоят копейки — рядов на карте сотни против десятков тысяч
 /// лесных деревьев, — а взамен переключение любой из двух ручек не трогает
 /// индексы близости, которые строятся по всем домам и дорогам карты.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct RowTrees([Vec<PlantedTree>; 4]);
 
 impl RowTrees {
@@ -233,7 +234,7 @@ impl RowTrees {
 /// Что входит в собранный [`MapData::trees`](super::MapData::trees): раскладка аллей и какие
 /// источники деревьев включены. Тумблеры панелей выключают источник целиком —
 /// сборка та же, выключенное слагаемое пустое.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TreeCompose {
     pub layout: TreeRowLayout,
     /// Лесные массивы ([`MapData::wood_trees`](super::MapData::wood_trees)).

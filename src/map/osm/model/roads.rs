@@ -3,8 +3,9 @@
 //! [`RoadArea`].
 
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RoadClass {
     Street,
     Alley,
@@ -15,7 +16,7 @@ pub enum RoadClass {
 /// продолжения тот же класс. Съезды (`*_link`) — свой класс, а не класс
 /// дороги, к которой они ведут: съезд уходит вбок, и продолжением главной
 /// его считать нельзя.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Highway {
     Motorway,
     Trunk,
@@ -72,7 +73,7 @@ impl Highway {
 
 /// Дорога: осевая полилиния и ширина, выведенная из сечения
 /// (`map::roads::network::sections`), у дорожек — по классу.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RoadLine {
     pub points: Vec<Vec2>,
     pub width: f32,
@@ -211,7 +212,7 @@ impl RoadLine {
 }
 
 /// Покрытие дорожки — см. [`RoadLine::pavement`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Pavement {
     /// Асфальт, плитка, бетон, брусчатка, настил — рисуется тротуаром.
     Paved,
@@ -222,7 +223,7 @@ pub enum Pavement {
 /// Откуда у одной стороны улицы тротуар — решение разбора, которое после него
 /// не теряется: `sidewalk=no` и «снято по застройке» различимы по тому, был
 /// ли тег.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SidewalkSide {
     /// Тротуар по тегу `sidewalk*` (`both|left|right|yes`).
     Tagged,
@@ -242,7 +243,7 @@ impl SidewalkSide {
 }
 
 /// Стоянка вдоль одной стороны улицы по `parking:<side>` (схема 2022 г.).
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 pub enum KerbParking {
     /// Тега нет.
     #[default]
@@ -259,7 +260,7 @@ pub enum KerbParking {
 
 /// Куда можно из полосы (`turn:lanes`): `slight_*` и `sharp_*` — те же
 /// поворот, `merge_to_*` и пустое значение — прямо, `reverse` — никуда.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 pub struct LaneTurn {
     pub left: bool,
     pub through: bool,
@@ -331,7 +332,7 @@ pub fn sidewalk_band(road_width: f32) -> f32 {
 /// Тротуар одной дороги ([`RoadLine::sidewalk`]): по каким сторонам он стоит
 /// и какой ширины полоса положена ей по классу. Отсюда три края, которые
 /// читает разбор, — у каждого свой довод, сливать их нельзя.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct SidewalkProfile {
     /// `[слева, справа]` по ходу точек — есть ли тротуар ([`SidewalkSide`]).
     sides: [bool; 2],
@@ -408,7 +409,7 @@ impl SidewalkProfile {
 /// Позиция — там, где узел лежит в данных, то есть на оси way: переход — точка
 /// пересечения оси тротуара с осью улицы, стоп-линию OSM ставит на ось перед
 /// перекрёстком, площадку — на конец тупика.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct RoadNode {
     pub pos: Vec2,
     pub kind: RoadNodeKind,
@@ -418,7 +419,7 @@ pub struct RoadNode {
     pub osm_id: Option<u64>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RoadNodeKind {
     /// `highway=crossing`. `signals` — `crossing=traffic_signals` или
     /// `crossing:signals=yes` (регулируемый переход); `island` —
@@ -450,7 +451,7 @@ pub enum RoadNodeKind {
 /// `traffic_calming=island` контуром. Как и [`RoadNode`] — сырьё для этапов
 /// узла, разбором не рисуется: `highway` + `area=yes` при этом по-прежнему
 /// приходит и линией в [`MapData::roads`](super::MapData::roads), как приходил до v15.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RoadArea {
     /// Открытое кольцо (без повтора первой точки).
     pub outline: Vec<Vec2>,
@@ -461,7 +462,7 @@ pub struct RoadArea {
     pub osm_id: Option<u64>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RoadAreaKind {
     /// Проезжая часть: `area:highway` с классом улицы (`primary`, `service`,
     /// …) или `highway` такого класса с `area=yes`.

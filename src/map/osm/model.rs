@@ -7,6 +7,7 @@
 //! реэкспортируются ниже — наружу путь `osm::model::X` неизменен.
 
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
 mod features;
 mod geometry;
@@ -35,7 +36,7 @@ pub use trees::{
 /// По какой стороне дороги идёт поток — тег `driving_side` на границе страны
 /// (`parse::driving_side`). Решает, у какого бордюра стоит ряд односторонней
 /// улицы и куда смотрят носы припаркованных машин (`map::cars`).
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 pub enum TrafficSide {
     #[default]
     Right,
@@ -55,7 +56,10 @@ impl TrafficSide {
 }
 
 /// Распарсенная карта; остаётся ресурсом после спавна — для отладки.
-#[derive(Resource, Debug, Default)]
+///
+/// `PartialEq` и serde — под бинарный снапшот ([`super::snapshot`]): тест
+/// равенства проверяет, что снапшот даёт ту же карту, что разбор.
+#[derive(Resource, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct MapData {
     /// Сторона движения страны, в которой лежит карта. Без тега в ответе
     /// (зеркало без областей, `is_in` пуст) — правостороннее, с предупреждением
