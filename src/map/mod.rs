@@ -313,8 +313,10 @@ impl Plugin for MapPlugin {
                         zoom::seed_zoom_bucket::<wagons::WagonLods>,
                         wagons::rebuild_wagons,
                         zoom::seed_zoom_bucket::<fences::FenceLods>,
-                        // на входе в мир заборы собираются в кадре, под экраном
-                        // загрузки; пересечение порога ведёт `queue_fence_rebuild`
+                        // на входе в мир заборы приходят из потока загрузки
+                        // (собраны под прогноз зума входа); прогноз разъехался —
+                        // сборка в кадре, как до переноса. Пересечение порога
+                        // ведёт `queue_fence_rebuild`
                         fences::rebuild_fences,
                         industry::rebuild_industry,
                         zoom::seed_zoom_bucket::<rail::RailLods>,

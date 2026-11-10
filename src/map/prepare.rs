@@ -51,6 +51,10 @@ pub struct StyleSnapshot {
     pub tree_rows: TreeRowStyle,
     pub noise: ConiferNoiseStyle,
     pub cars: CarStyle,
+    /// Зум, с которым мир откроется (`camera::next_entry_zoom`): заборы
+    /// мешатся под ступень этого зума. Прогноз разъехался с камерой — слой
+    /// пересобирается на входе в кадре, как до переноса.
+    pub fence_zoom: f32,
     /// Полимеш: радиус агента и тумблер чанков — если панель Navmesh
     /// включена. Выключенная панель и сегодня не строит ничего.
     pub polymesh: Option<(f32, bool)>,
@@ -78,6 +82,12 @@ pub struct WorldMeshes {
     /// Расстановка машин с ключом, под который она считалась: на входе в мир
     /// ключ совпадает с ручками, и пересборка платит только меш кузовов.
     pub parked: CarPlacement,
+    /// Заборы входной ступени — ступень, под которую собрано (зум входа из
+    /// снимка), слои и отчёт; `None`, если разбор уже забрал. Сборка шага на
+    /// большом городе стоит секунды (запись 17), и в кадре входа ей нечего
+    /// делать. `rebuild_fences` берёт готовое, когда его ступень совпала, и
+    /// строит в кадре, когда нет.
+    pub fences: Option<(usize, Vec<LayerMesh>, crate::map::fences::FenceReport)>,
     /// Полимеш — `None`, если панель Navmesh выключена.
     pub polymesh: Option<PolymeshBuild>,
 }
@@ -141,6 +151,11 @@ pub fn build_world_meshes(
         });
         let small =
             scope.spawn(|| timed("surfaces, trees, rails, cars", || small_lane(map, styles)));
+        let fences = scope.spawn(|| {
+            timed("fences", || {
+                crate::map::fences::entry_layers(styles.fence_zoom, &map.fences, &map.roads)
+            })
+        });
         let polymesh = scope.spawn(|| {
             timed("polymesh", || {
                 styles.polymesh.and_then(|(radius, chunked)| {
@@ -152,14 +167,16 @@ pub fn build_world_meshes(
         let buildings = join(buildings, "buildings")?;
         let roads = join(roads, "roads")?;
         let small = join(small, "small layers")?;
+        let fences = join(fences, "fences")?;
         let polymesh = join(polymesh, "polymesh")?;
-        Ok((buildings, roads, small, polymesh))
+        Ok((buildings, roads, small, fences, polymesh))
     })?;
 
     let (
         buildings,
         roads,
         (parking_layout, surfaces, surface_report, trees, rails, parked),
+        (fence_step, fence_layers, fence_report),
         polymesh,
     ) = lanes;
     info!("map meshes: whole set in {:.1?}", started.elapsed());
@@ -172,6 +189,7 @@ pub fn build_world_meshes(
         trees,
         rails,
         parked,
+        fences: Some((fence_step, fence_layers, fence_report)),
         polymesh,
     })
 }
@@ -258,6 +276,8 @@ mod tests {
             tree_rows: TreeRowStyle::default(),
             noise: ConiferNoiseStyle::default(),
             cars: CarStyle::default(),
+            // стартовый зум камеры: та же ступень заборов, что у входа в мир
+            fence_zoom: 0.4,
             polymesh: None,
         }
     }

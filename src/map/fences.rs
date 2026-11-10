@@ -37,6 +37,7 @@ use crate::map::SunOnMap;
 use crate::map::footprint::{BridgeDecks, fence_gaps, fence_pieces};
 use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin, sweep_convex};
 use crate::map::osm::{FenceKind, FenceLine, MapData, RoadLine};
+use crate::map::prepare::PreparedMeshes;
 use crate::map::shadow;
 use crate::map::surface::{LayerCost, LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
@@ -113,15 +114,33 @@ pub fn rebuilds_on() -> impl SystemCondition<()> {
     retuned::<FenceZoomBucket>.or_else(retuned::<SunOnMap>)
 }
 
-/// Сборка слоя заборов **на входе в мир** — в кадре, под экраном загрузки.
-/// Пересечение порога зума и осевшее солнце ведёт [`queue_fence_rebuild`]:
-/// сборка шага на большом городе стоит секунды, и в кадре ей делать нечего.
+/// Заборы входной ступени для потока загрузки: ступень по зуму, с которым
+/// мир откроется (`camera::next_entry_zoom`, приезжает в снимке стилей),
+/// слои и номер ступени. Дальняя ступень отдаёт пустой список — отчёт
+/// «fences: hidden», спавнить нечего.
+pub fn entry_layers(
+    zoom: f32,
+    fences: &[FenceLine],
+    roads: &[RoadLine],
+) -> (usize, Vec<LayerMesh>, FenceReport) {
+    let bucket = FenceZoomBucket::for_zoom(zoom);
+    let (layers, report) = mesh_fences(bucket, fences, roads);
+    (bucket.index, layers, report)
+}
+
+/// Спавн слоя заборов **на входе в мир**. Слой приходит из потока загрузки
+/// (`PreparedMeshes`, собран под прогноз зума входа `camera::next_entry_zoom`);
+/// прогноз разъехался с камерой — сборка в кадре, как до переноса, под экраном
+/// загрузки. Пересечение порога зума и осевшее солнце ведёт
+/// [`queue_fence_rebuild`]: сборка шага на большом городе стоит секунды.
+#[allow(clippy::too_many_arguments)]
 pub fn rebuild_fences(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     materials: LayerMaterials,
     bucket: Res<FenceZoomBucket>,
     map: Res<MapData>,
+    mut prepared: ResMut<PreparedMeshes>,
     mut build: ResMut<FenceBuild>,
     existing: Query<Entity, With<FenceLayerTag>>,
 ) {
@@ -130,7 +149,12 @@ pub fn rebuild_fences(
     for entity in &existing {
         commands.entity(entity).despawn();
     }
-    let (layers, report) = mesh_fences(*bucket, &map.fences, &map.roads);
+    let prepared =
+        std::mem::take(&mut prepared.0.fences).filter(|(step, _, _)| *step == bucket.index);
+    let (layers, report) = match prepared {
+        Some((_, layers, report)) => (layers, report),
+        None => mesh_fences(*bucket, &map.fences, &map.roads),
+    };
     spawn_layers(
         &mut commands,
         &mut meshes,

@@ -157,3 +157,23 @@ fn an_empty_map_builds_no_geometry() {
     assert_eq!(layers.len(), 1);
     assert!(layers[0].builder.is_empty());
 }
+
+/// Заборы входной ступени для потока загрузки: ступень — по зуму, с которым
+/// мир откроется, дальняя ступень слоёв не строит.
+#[test]
+fn entry_layers_take_the_bucket_of_the_entry_zoom() {
+    let fences = [fence_across(
+        Vec2::new(100.0, 100.0),
+        Vec2::new(200.0, 100.0),
+    )];
+
+    let (step, layers, report) = entry_layers(MIN_ZOOM, &fences, &[]);
+    assert_eq!(step, near_bucket().index);
+    assert_eq!(layers.len(), 1);
+    assert!(report.vertices > 0);
+
+    let (step, layers, report) = entry_layers(MAX_ZOOM, &fences, &[]);
+    assert_eq!(step, FenceLods::max_zooms().count() - 1);
+    assert!(layers.is_empty());
+    assert_eq!(report.to_string(), "fences: hidden (1 lines)");
+}

@@ -2,12 +2,15 @@
 //! → `Playing`. Мир (карта, навигация, население) строится в
 //! `OnEnter(Playing)`, когда `MapData` уже вставлена.
 
+use bevy::camera_controller::pan_camera::PanCamera;
 use bevy::ecs::system::SystemParam;
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::ui_widgets::{Activate, Button};
 
-use crate::camera::Viewport;
+use crate::camera::{
+    CameraPositionMode, LastWorldCity, SavedCameraView, Viewport, next_entry_zoom,
+};
 use crate::city::City;
 use crate::grid::NavtileBase;
 use crate::map::RoadShape;
@@ -209,7 +212,7 @@ fn start_job(
     navmesh: Res<ArcNavmesh>,
     city: Res<City>,
     inputs: ParseInputs,
-    styles: MeshInputs,
+    styles: MeshInputs<'_, '_>,
 ) {
     let job = MapLoadJob::default();
     start_load_thread(
@@ -217,7 +220,7 @@ fn start_job(
         navmesh.0.clone(),
         *city,
         inputs.knobs(),
-        styles.snapshot(),
+        styles.snapshot(*city),
     );
     commands.insert_resource(job);
 }
@@ -257,7 +260,7 @@ impl ParseInputs<'_> {
 /// во время загрузки подхватывает пересборка слоёв на первом кадре мира —
 /// так же, как правка после входа.
 #[derive(SystemParam)]
-struct MeshInputs<'w> {
+struct MeshInputs<'w, 's> {
     height: Option<Res<'w, BuildingHeightMode>>,
     road_style: Option<Res<'w, RoadStyle>>,
     road_shape: Option<Res<'w, RoadShapeOnMap>>,
@@ -266,10 +269,23 @@ struct MeshInputs<'w> {
     noise: Option<Res<'w, ConiferNoiseStyle>>,
     cars: Option<Res<'w, CarStyle>>,
     polymesh: Option<Res<'w, PolymeshDebug>>,
+    // зум входа — решение камеры, читаемое до входа: заборы в потоке мешатся
+    // под его ступень (`map/prepare.rs`). Камеры может не быть — сцены без мира
+    mode: Option<Res<'w, CameraPositionMode>>,
+    saved: Option<Res<'w, SavedCameraView>>,
+    last_city: Option<Res<'w, LastWorldCity>>,
+    cameras: Query<'w, 's, &'static PanCamera, With<Camera2d>>,
 }
 
-impl MeshInputs<'_> {
-    fn snapshot(&self) -> StyleSnapshot {
+impl<'w, 's> MeshInputs<'w, 's> {
+    fn snapshot(&self, city: City) -> StyleSnapshot {
+        let fence_zoom = next_entry_zoom(
+            self.mode.as_deref().copied().unwrap_or_default(),
+            self.saved.as_deref().unwrap_or(&SavedCameraView::default()),
+            self.last_city.as_deref().and_then(|last| last.0),
+            city,
+            self.cameras.iter().next().map(|camera| camera.zoom_factor),
+        );
         StyleSnapshot {
             height_mode: self.height.as_deref().copied().unwrap_or_default(),
             road_style: self.road_style.as_deref().copied().unwrap_or_default(),
@@ -282,6 +298,7 @@ impl MeshInputs<'_> {
             tree_rows: self.tree_rows.as_deref().cloned().unwrap_or_default(),
             noise: self.noise.as_deref().cloned().unwrap_or_default(),
             cars: self.cars.as_deref().copied().unwrap_or_default(),
+            fence_zoom,
             polymesh: self
                 .polymesh
                 .as_deref()
@@ -365,7 +382,7 @@ fn on_retry(
     navmesh: Res<ArcNavmesh>,
     city: Res<City>,
     inputs: ParseInputs,
-    styles: MeshInputs,
+    styles: MeshInputs<'_, '_>,
     mut buttons: Query<&mut Visibility, With<RetryButton>>,
 ) {
     *job.0.lock().unwrap() = JobState::Connecting { attempt: 1 };
@@ -374,7 +391,7 @@ fn on_retry(
         navmesh.0.clone(),
         *city,
         inputs.knobs(),
-        styles.snapshot(),
+        styles.snapshot(*city),
     );
     for mut visibility in &mut buttons {
         *visibility = Visibility::Hidden;
