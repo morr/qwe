@@ -12,8 +12,9 @@ use i_overlay::float::single::SingleFloatOverlay;
 use super::seams::{SeamPoints, chunk_outline, node_world, quantized, seam_points};
 use super::stitch::{components_of, stitch_chunks};
 use super::{ChunkComponents, PolymeshBuild, PolymeshInput, chunk_grid};
-use crate::map::footprint::{CurbCoverage, fence_gaps};
+use crate::map::footprint::{CurbCoverage, JOIN_EPSILON, fence_gaps};
 use crate::map::osm::model::signed_ring_area;
+use crate::map::parallel::in_parallel;
 use crate::map::{merge_close_points, miter_offsets};
 use crate::settings::{
     MAP_SIZE, POLYMESH_MAP_EDGE_MARGIN, POLYMESH_SEARCH_DELTA, POLYMESH_SEARCH_STEPS,
@@ -245,13 +246,23 @@ fn blocker_contours(input: &PolymeshInput, coverage: &CurbCoverage<'_>) -> Vec<V
     // «что снаружи» по тайлам; вектору доступна прямая формулировка того же
     // намерения — **полоса минус ленты всех ОСТАЛЬНЫХ bridge-ways**: то, что
     // накрыто соседней лентой, и есть внутренний шов, остальное — внешняя
-    // граница composite-моста. Мостов на карте десятки, так что N разностей
-    // дешевле одного union зданий.
+    // граница composite-моста.
+    //
+    // Вычитать стоит только ленты, чья рамка задевает бордюры моста:
+    // разность с непересекающейся лентой — тождество. Без отбора разность
+    // шла против лент всех мостов карты — на Париже 408 мостов, и N разностей
+    // стоили дороже одного union зданий; с рамками платят пары, у которых
+    // есть чем пересечься (тот же отбор, что `boxes_may_join` у
+    // `CurbCoverage`, — десятки мостов против единиц пересечений).
     let bridges = coverage.bridges();
-    let bands: Vec<Vec<[f32; 2]>> = bridges
+    let bands: Vec<Option<((Vec2, Vec2), Vec<[f32; 2]>)>> = bridges
         .iter()
-        .filter_map(|road| ribbon_outline(&road.points, 2.0 * road.curb_reach()))
-        .map(oriented)
+        .map(|road| {
+            ribbon_outline(&road.points, 2.0 * road.curb_reach()).map(|ring| {
+                let ring = oriented(ring);
+                (contour_bounds(&ring), ring)
+            })
+        })
         .collect();
     for (index, road) in bridges.iter().enumerate() {
         let mut sides: Vec<Vec<[f32; 2]>> = Vec::with_capacity(2);
@@ -260,17 +271,44 @@ fn blocker_contours(input: &PolymeshInput, coverage: &CurbCoverage<'_>) -> Vec<V
                 sides.push(oriented(ring));
             }
         }
+        let sides_box = sides.iter().fold(
+            (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)),
+            |(min, max), ring| {
+                let (ring_min, ring_max) = contour_bounds(ring);
+                (min.min(ring_min), max.max(ring_max))
+            },
+        );
         let others: Vec<Vec<[f32; 2]>> = bands
             .iter()
             .enumerate()
             .filter(|(other, _)| *other != index)
+            .filter_map(|(_, band)| band.as_ref())
+            .filter(|(box_, _)| bands_may_overlap(*box_, sides_box))
             .map(|(_, band)| band.clone())
             .collect();
-        for shape in sides.overlay(&others, OverlayRule::Difference, FillRule::NonZero) {
-            blockers.extend(shape);
+        if others.is_empty() {
+            blockers.extend(sides);
+        } else {
+            for shape in sides.overlay(&others, OverlayRule::Difference, FillRule::NonZero) {
+                blockers.extend(shape);
+            }
         }
     }
     blockers
+}
+
+/// Рамки двух лент задевают друг друга с запасом [`JOIN_EPSILON`] — тем же,
+/// которым `CurbCoverage` судит соседство ways одного физического моста.
+fn bands_may_overlap(first: (Vec2, Vec2), second: (Vec2, Vec2)) -> bool {
+    (first.0 - JOIN_EPSILON).cmple(second.1).all() && (second.0 - JOIN_EPSILON).cmple(first.1).all()
+}
+
+/// Габарит контура: минимум и максимум вершин.
+fn contour_bounds(contour: &[[f32; 2]]) -> (Vec2, Vec2) {
+    contour.iter().fold(
+        (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)),
+        |(min, max), &[x, y]| (min.min(Vec2::new(x, y)), max.max(Vec2::new(x, y))),
+    )
 }
 
 /// Контуры, которые ПРОРЕЗАЮТ блокирующие: настилы мостов, примыкающие к ним
@@ -334,11 +372,18 @@ fn extended_ends(line: &[Vec2], reach: f32) -> Vec<Vec2> {
 
 /// Нарезка на слои: внешние контуры со своими bbox, глобальные точки швов, по
 /// слою на чанк. `None` — постройку отменили посреди цикла.
+///
+/// Чанки считаются по потокам (`map::parallel::in_parallel`): входы — только
+/// чтение (`contours`, `seams`, прямоугольник), у каждого слоя свой выход, а
+/// порядок результатов совпадает с порядком индексов чанков — слои в меше
+/// обязаны идти в порядке индексов (8-битный индекс слоя полианьи, граф
+/// компонентов, коридор). Отмена проверяется перед чанком, как у
+/// последовательного цикла: работник видит флаг, взяв следующий чанк.
 fn chunk_layers(
     shapes: &[Vec<Vec<[f32; 2]>>],
     grid: UVec2,
     chunk_size: Vec2,
-    is_cancelled: impl Fn() -> bool,
+    is_cancelled: impl Fn() -> bool + Sync,
 ) -> Option<Vec<polyanya::Layer>> {
     let chunking = Instant::now();
     // внешние контуры со своими bbox — по ним чанк отбирает то, что его
@@ -347,26 +392,26 @@ fn chunk_layers(
         .iter()
         .filter_map(|shape| shape.first())
         .map(|contour| {
-            let (min, max) = contour.iter().fold(
-                (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)),
-                |(min, max), &[x, y]| (min.min(Vec2::new(x, y)), max.max(Vec2::new(x, y))),
-            );
+            let (min, max) = contour_bounds(contour);
             (min, max, contour.clone())
         })
         .collect();
     let seams = seam_points(&contours, grid, chunk_size);
-    let mut layers = Vec::with_capacity((grid.x * grid.y) as usize);
-    for index in 0..grid.x * grid.y {
+    let cells: Vec<UVec2> = (0..grid.x * grid.y)
+        .map(|index| UVec2::new(index % grid.x, index / grid.x))
+        .collect();
+    let layers: Vec<Option<polyanya::Layer>> = in_parallel(&cells, |cell| {
         if is_cancelled() {
-            return None;
+            None
+        } else {
+            Some(chunk_layer(&contours, *cell, chunk_size, &seams))
         }
-        layers.push(chunk_layer(
-            &contours,
-            UVec2::new(index % grid.x, index / grid.x),
-            chunk_size,
-            &seams,
-        ));
+    });
+    if is_cancelled() {
+        return None;
     }
+    // флаг не горел — работники вернули все слои
+    let layers = layers.into_iter().collect::<Option<Vec<_>>>()?;
     let polygons: usize = layers.iter().map(|layer| layer.polygons.len()).sum();
     // пустые слои считаются вслух: чанк, целиком накрытый препятствием (река,
     // сплошная застройка), полигонов не даёт — это законно, но такой слой

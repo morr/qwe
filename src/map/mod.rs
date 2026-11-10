@@ -18,7 +18,7 @@ mod industry;
 pub mod inspect;
 mod meshing;
 pub mod osm;
-mod parallel;
+pub(crate) mod parallel;
 mod parking;
 mod pitch;
 mod prepare;
