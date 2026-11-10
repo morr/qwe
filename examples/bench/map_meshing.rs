@@ -29,8 +29,8 @@ mod common;
 
 use qwe::city::City;
 use qwe::map::{
-    BuildingHeightMode, LayerCost, SunStyle, measure_cars, measure_layers, measure_rails,
-    measure_roads, measure_surfaces, measure_tram,
+    BuildingHeightMode, LayerCost, SunStyle, measure_cars, measure_fences, measure_layers,
+    measure_rails, measure_roads, measure_surfaces, measure_tram,
 };
 
 fn main() {
@@ -88,6 +88,7 @@ fn main() {
     for (bucket, costs) in measure_tram(&map.rails) {
         row(&format!("tram b{bucket}"), "", &costs);
     }
+    row("fences", "", &measure_fences(&map));
 }
 
 /// Строка замера: имя, своя колонка замера, вершины, миллисекунды и разбивка

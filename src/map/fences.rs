@@ -27,16 +27,18 @@
 //! мостов, и нарисованная там нитка шла бы поверх настила.
 
 use bevy::prelude::*;
+use bevy::tasks::{AsyncComputeTaskPool, Task, futures::check_ready};
 use i_overlay::core::fill_rule::FillRule;
 use i_overlay::core::overlay_rule::OverlayRule;
 use i_overlay::float::single::SingleFloatOverlay;
+use std::time::{Duration, Instant};
 
 use crate::map::SunOnMap;
 use crate::map::footprint::{BridgeDecks, fence_gaps, fence_pieces};
 use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin, sweep_convex};
 use crate::map::osm::{FenceKind, FenceLine, MapData, RoadLine};
 use crate::map::shadow;
-use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
+use crate::map::surface::{LayerCost, LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::prefs::retuned;
 use crate::settings::Z_FENCE;
@@ -111,14 +113,20 @@ pub fn rebuilds_on() -> impl SystemCondition<()> {
     retuned::<FenceZoomBucket>.or_else(retuned::<SunOnMap>)
 }
 
+/// Сборка слоя заборов **на входе в мир** — в кадре, под экраном загрузки.
+/// Пересечение порога зума и осевшее солнце ведёт [`queue_fence_rebuild`]:
+/// сборка шага на большом городе стоит секунды, и в кадре ей делать нечего.
 pub fn rebuild_fences(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     materials: LayerMaterials,
     bucket: Res<FenceZoomBucket>,
     map: Res<MapData>,
+    mut build: ResMut<FenceBuild>,
     existing: Query<Entity, With<FenceLayerTag>>,
 ) {
+    // мир сменился: сборка прошлой истории чужому городу не подменяется
+    *build = FenceBuild::default();
     for entity in &existing {
         commands.entity(entity).despawn();
     }
@@ -130,6 +138,90 @@ pub fn rebuild_fences(
         layers,
         FenceLayerTag,
     );
+    info!("{report}");
+}
+
+/// Фоновая сборка слоя заборов — то, что стоит пересечение порога зума.
+///
+/// Сборка шага на большом городе стоит секунды (Париж: 1.2–2.3 с — свип и
+/// объединение теней десяти тысяч кусков), и в кадре ей делать нечего:
+/// пересечение ставит задачу ([`queue_fence_rebuild`]), старый слой остаётся
+/// на экране, готовый меш подменяется ([`apply_fence_rebuild`]) — спавн
+/// нового и деспавн старого в одной командной очереди, ни кадра без слоя,
+/// ни кадра с двумя. `generation` отбрасывает устаревший результат: пока
+/// сборка идёт, порог могли пересечь ещё раз или осело солнце.
+#[derive(Resource, Default)]
+pub struct FenceBuild {
+    generation: u64,
+    task: Option<Task<(u64, Vec<LayerMesh>, FenceReport)>>,
+}
+
+/// Пересборка слоя заборов на пересечении порога зума и на осевшем солнце —
+/// задачей, не в кадре. Дальняя ступень (нулевая ширина) слоёв не строит и
+/// снимается сразу, как и раньше: деспавн и до правки был всей ценой этого
+/// пересечения.
+pub fn queue_fence_rebuild(
+    mut commands: Commands,
+    bucket: Res<FenceZoomBucket>,
+    map: Res<MapData>,
+    mut build: ResMut<FenceBuild>,
+    existing: Query<Entity, With<FenceLayerTag>>,
+) {
+    build.generation += 1;
+    let width = FENCE_LODS[bucket.index].width;
+    if width <= 0.0 {
+        build.task = None;
+        for entity in &existing {
+            commands.entity(entity).despawn();
+        }
+        info!(
+            "{}",
+            FenceReport::hidden(map.fences.len(), width, Duration::ZERO)
+        );
+        return;
+    }
+    // чистая функция читает срезы, задача — владельца: ограды и дороги
+    // копируются (Париж — десятки МБ, миллисекунды), ресурс карты не
+    // разделяется с потоком
+    let (fences, roads) = (map.fences.clone(), map.roads.clone());
+    let (generation, index) = (build.generation, bucket.index);
+    build.task = Some(AsyncComputeTaskPool::get().spawn(async move {
+        let (layers, report) = mesh_fences(FenceZoomBucket::at(index), &fences, &roads);
+        (generation, layers, report)
+    }));
+}
+
+/// Подмена слоя готовой фоновой сборкой. Спавн нового и деспавн старого
+/// стоят в одной командной очереди и применяются в одном синх-пойнте — кадр
+/// рендера видит либо старый слой, либо новый, никогда оба и никогда ни
+/// одного. Устаревшая сборка выбрасывается: её место уже заняла новая задача.
+pub fn apply_fence_rebuild(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    materials: LayerMaterials,
+    mut build: ResMut<FenceBuild>,
+    existing: Query<Entity, With<FenceLayerTag>>,
+) {
+    let Some(task) = build.task.as_mut() else {
+        return;
+    };
+    let Some((generation, layers, report)) = check_ready(task) else {
+        return;
+    };
+    build.task = None;
+    if generation != build.generation {
+        return;
+    }
+    spawn_layers(
+        &mut commands,
+        &mut meshes,
+        &materials,
+        layers,
+        FenceLayerTag,
+    );
+    for entity in &existing {
+        commands.entity(entity).despawn();
+    }
     info!("{report}");
 }
 
@@ -155,6 +247,33 @@ pub struct FenceReport {
     /// `Display` печатает `fences: hidden`.
     pub width: f32,
     pub vertices: usize,
+    /// Вся сборка шага и её стадии — тем же счётом, что у машин
+    /// ([`ParkedCars::took`]): офлайн-бенч печатает их строками, отчёт —
+    /// итогом. На снятой ступени нули.
+    pub took: Duration,
+    pub gaps_took: Duration,
+    pub decks_took: Duration,
+    pub pieces_took: Duration,
+    pub shadows_took: Duration,
+    pub ribbons_took: Duration,
+}
+
+impl FenceReport {
+    /// Отчёт снятой ступени: ни линии, ни тени, ни стадий.
+    fn hidden(lines: usize, width: f32, took: Duration) -> Self {
+        Self {
+            lines,
+            pieces: 0,
+            width,
+            vertices: 0,
+            took,
+            gaps_took: Duration::ZERO,
+            decks_took: Duration::ZERO,
+            pieces_took: Duration::ZERO,
+            shadows_took: Duration::ZERO,
+            ribbons_took: Duration::ZERO,
+        }
+    }
 }
 
 impl std::fmt::Display for FenceReport {
@@ -164,13 +283,16 @@ impl std::fmt::Display for FenceReport {
             pieces,
             width,
             vertices,
+            took,
+            ..
         } = self;
         if *width <= 0.0 {
             return write!(f, "fences: hidden ({lines} lines)");
         }
         write!(
             f,
-            "fences: {lines} lines in {pieces} pieces at {width:.2} m ({vertices} verts)"
+            "fences: {lines} lines in {pieces} pieces at {width:.2} m ({vertices} verts) \
+             in {took:?}"
         )
     }
 }
@@ -195,24 +317,25 @@ pub fn mesh_fences(
     fences: &[FenceLine],
     roads: &[RoadLine],
 ) -> (Vec<LayerMesh>, FenceReport) {
+    let started = Instant::now();
     let width = FENCE_LODS[bucket.index].width;
     if width <= 0.0 {
         return (
             Vec::new(),
-            FenceReport {
-                lines: fences.len(),
-                pieces: 0,
-                width,
-                vertices: 0,
-            },
+            FenceReport::hidden(fences.len(), width, started.elapsed()),
         );
     }
+    let stage = Instant::now();
     let gaps = fence_gaps(fences, roads);
+    let gaps_took = stage.elapsed();
     // вырез под настилом шире самого настила ровно на то, на сколько
     // нарисованное вылезает за вырезанную геометрию: круглый торец ленты — на
     // полуширину, мягкая кайма тени — на [`SHADOW_BLUR`]. Одно число на оба,
     // чтобы линия и её тень обрывались на одной черте
+    let stage = Instant::now();
     let decks = BridgeDecks::build(roads, (width / 2.0).max(SHADOW_BLUR));
+    let decks_took = stage.elapsed();
+    let stage = Instant::now();
     let pieces: Vec<(FenceKind, Vec<Vec2>)> = fences
         .iter()
         .zip(&gaps)
@@ -222,8 +345,12 @@ pub fn mesh_fences(
                 .map(|piece| (fence.kind, piece))
         })
         .collect();
+    let pieces_took = stage.elapsed();
+    let stage = Instant::now();
     let mut builder = MeshBuilder::default();
     push_shadows(&mut builder, &pieces, width, &decks);
+    let shadows_took = stage.elapsed();
+    let stage = Instant::now();
     for (kind, points) in &pieces {
         let color = match kind {
             FenceKind::Fence => FENCE_COLOR,
@@ -240,15 +367,59 @@ pub fn mesh_fences(
             RibbonCap::Round,
         );
     }
+    let ribbons_took = stage.elapsed();
     let report = FenceReport {
         lines: fences.len(),
         pieces: pieces.len(),
         width,
         vertices: builder.vertex_count(),
+        took: started.elapsed(),
+        gaps_took,
+        decks_took,
+        pieces_took,
+        shadows_took,
+        ribbons_took,
     };
     // тень полупрозрачна, сама линия нет — один меш с блендингом
     let layer = LayerMesh::new(builder, Z_FENCE, "fences", MaterialSpec::Blend);
     (vec![layer], report)
+}
+
+/// Замер слоя заборов без мира — для офлайн-бенча, по той же причине, что и
+/// `measure_cars`. Строка на ступень — цена пересечения порога зума (до
+/// фоновой сборки она целиком падала на кадр), стадии — из самой широкой
+/// ступени, своими строками: свип и объединение теней в них и сидят.
+pub fn measure_fences(map: &MapData) -> Vec<LayerCost> {
+    let mut costs = Vec::new();
+    let mut widest: Option<FenceReport> = None;
+    for (name, step) in [("fences 0.25", 0), ("fences 0.50", 1), ("fences 1.30", 2)] {
+        let (_, report) = mesh_fences(FenceZoomBucket::at(step), &map.fences, &map.roads);
+        costs.push(LayerCost {
+            name,
+            vertices: report.vertices,
+            elapsed: report.took,
+        });
+        // стадии берутся из самой широкой ступени: у неё длиннее свип и лента
+        widest = match widest {
+            Some(best) if best.took >= report.took => Some(best),
+            _ => Some(report),
+        };
+    }
+    let report = widest.expect("у оград есть ступени, не считая дальней");
+    for (name, took) in [
+        ("fences gaps", report.gaps_took),
+        ("fences decks", report.decks_took),
+        ("fences pieces", report.pieces_took),
+        ("fences shadows", report.shadows_took),
+        ("fences ribbons", report.ribbons_took),
+    ] {
+        costs.push(LayerCost {
+            name,
+            vertices: 0,
+            elapsed: took,
+        });
+    }
+    costs
 }
 
 /// Мягкий край тени, м — машинный (`cars/body.rs::SHADOW_BLUR`): тень забора

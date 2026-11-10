@@ -119,7 +119,7 @@ pub use self::tram::TramStyle;
 // Ступени зума идут следом: `mesh_fences` и `mesh_rails` берут ступень, а не
 // развёрнутую из таблицы ширину
 pub use self::cars::mesh_map_cars;
-pub use self::fences::{FenceZoomBucket, mesh_fences};
+pub use self::fences::{FenceZoomBucket, measure_fences, mesh_fences};
 pub use self::parking::ParkingLayout;
 pub use self::rail::{RailZoomBucket, mesh_rails};
 pub use self::roads::tram_lay::TramTracks;
@@ -181,6 +181,7 @@ impl Plugin for MapPlugin {
             .init_resource::<wagons::WagonZoomBucket>()
             .init_resource::<parking::ParkingLayout>()
             .init_resource::<fences::FenceZoomBucket>()
+            .init_resource::<fences::FenceBuild>()
             .init_resource::<RoofStyle>()
             .init_resource::<RoadStyle>()
             .init_resource::<RoadShape>()
@@ -312,6 +313,8 @@ impl Plugin for MapPlugin {
                         zoom::seed_zoom_bucket::<wagons::WagonLods>,
                         wagons::rebuild_wagons,
                         zoom::seed_zoom_bucket::<fences::FenceLods>,
+                        // на входе в мир заборы собираются в кадре, под экраном
+                        // загрузки; пересечение порога ведёт `queue_fence_rebuild`
                         fences::rebuild_fences,
                         industry::rebuild_industry,
                         zoom::seed_zoom_bucket::<rail::RailLods>,
@@ -396,7 +399,14 @@ impl Plugin for MapPlugin {
                         zoom::update_zoom_bucket::<wagons::WagonLods>,
                         wagons::rebuild_wagons.run_if(wagons::rebuilds_on()),
                         zoom::update_zoom_bucket::<fences::FenceLods>,
-                        fences::rebuild_fences.run_if(fences::rebuilds_on()),
+                        // пересечение порога ставит фоновую сборку, старый слой
+                        // стоит до подмены ([`fences::FenceBuild`]); подмена
+                        // опрашивается каждый кадр, пока задачи нет — один `if`
+                        (
+                            fences::queue_fence_rebuild.run_if(fences::rebuilds_on()),
+                            fences::apply_fence_rebuild,
+                        )
+                            .chain(),
                     )
                         .chain()
                         .run_if(in_state(AppState::Playing)),
