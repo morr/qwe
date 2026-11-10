@@ -463,8 +463,15 @@ pub fn no_app_nap() {
 /// Переключатели замеров из окружения, которые ставятся внутри приложения:
 ///
 /// - `QWE_PERF_POP=<n>` — `n` людей вместо штатной популяции (цена спрайтов);
-/// - `QWE_PERF_RENDER_DIAG=1` — `RenderDiagnosticsPlugin`: CPU-время каждого
-///   прохода рендера (`render/<pass>/elapsed_cpu`) в логе диагностики;
+/// - `QWE_PERF_RENDER_DIAG=1` — `RenderDiagnosticsPlugin`: CPU-время пассов
+///   рендера. В 0.20 почти пуст: `diagnostic_recorder` зовёт только
+///   sparse-buffer-пасс, в логе одна строка `render/auxiliary_views/...`.
+///   Разрез кадра даёт `QWE_PERF_PHASE_SPIKES` (frame_phases.rs);
+/// - `QWE_PERF_PHASE_SPIKES=<ms>` — разрез кадров длиннее порога на стены
+///   фаз: main-кадр (First/PreUpdate, StateTransition — спавн-флеш входа
+///   в мир, FixedUpdate, Update, PostUpdate, межкадровая стена — extract
+///   мира), скобки конвейеров материалов спрайтов и фазы render-кадра
+///   (frame_phases.rs). Без переменной ничего не меняется;
 /// - `QWE_PERF_FRAME_SPIKES=<ms>` — кадр длиннее порога печатает строку
 ///   `frame spike: 43.2 ms (zoom 1.83, frame 247)`: детектор рывков зума, которых
 ///   секундные средние `frame_time` не показывают. Реальное время кадра

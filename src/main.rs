@@ -3,8 +3,9 @@ use bevy::prelude::*;
 use bevy::remote::{RemotePlugin, http::RemoteHttpPlugin};
 
 use qwe::{
-    camera, city, demon, determinism, dev, diagnostics, human, loading, map, movement, navigation,
-    portal, post, prefs, restart, rng, silhouette, sim_time, spatial, telemetry, ui,
+    camera, city, demon, determinism, dev, diagnostics, frame_phases, human, loading, map,
+    movement, navigation, portal, post, prefs, restart, rng, silhouette, sim_time, spatial,
+    telemetry, ui,
 };
 
 fn main() {
@@ -79,6 +80,7 @@ fn main() {
             ui::UiPlugin,
             dev::DevPlugin,
         ))
+        .add_plugins(frame_phases::FramePhasesPlugin)
         // кадр как значение — один счёт на кадр для всех пяти гейтов
         // видимости; отдельным плагином, потому что его поднимает и стенд
         // толпы, которому `CameraPlugin` не нужен

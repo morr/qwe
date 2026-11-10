@@ -92,7 +92,15 @@ them the app is unchanged:
   same frame across runs;
 - `QWE_PERF_POP=<n>` — `n` humans instead of the stock population;
 - `QWE_PERF_RENDER_DIAG=1` — `RenderDiagnosticsPlugin`: CPU time of every render pass
-  (`render/<pass>/elapsed_cpu`) in the diagnostics log;
+  (`render/<pass>/elapsed_cpu`) in the diagnostics log. Nearly empty on Bevy 0.20
+  (only the sparse-buffer pass records) — for a real frame cut use the toggle below;
+- `QWE_PERF_PHASE_SPIKES=<ms>` — every frame longer than the threshold logs three
+  `frame_phases` lines: main-schedule segment walls (`pre`/`trans` — the world-entry
+  spawn flush — /`fixed`/`update`/`post`/`inter` — the inter-frame extract+events wall),
+  sprite-material pipeline brackets (`sprite scans`), and render-schedule phase walls
+  (`render phases` — apply/alloc/meshprep/prepare/queue/sort/prepare/render). Perf
+  journal 23: the warmup-storm "render spike" is the main-thread chain seen through
+  the render clock — these lines are what dissects it;
 - `QWE_PERF_FRAME_SPIKES=<ms>` — every frame longer than the threshold logs
   `frame spike: 43.2 ms (zoom 1.83, frame N)` (`Time<Real>`, so it works paused): the
   per-frame jerk detector the one-second `frame_time` averages hide. The zoom in the
