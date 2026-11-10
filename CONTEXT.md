@@ -191,6 +191,14 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   written only after a successful parse, and **exactly one current file per city**
   (`prune_stale_caches()`). The junction gallery reads the same file, so a query bump
   reaches it by itself.
+- **Binary snapshot** (`map/osm/snapshot.rs`) — the serialized `MapData` (bincode) beside
+  the JSON cache; on a warm start the load thread reads it **instead of parsing**. Written
+  after a successful parse, named after the cache file plus `s{SNAPSHOT_VERSION}` and the
+  `ParseKnobs`, one current file per city, corrupt file self-heals like the cache. The
+  header also stamps the JSON file's size and mtime — a re-downloaded extract under the
+  same name invalidates. **Bump `SNAPSHOT_VERSION` whenever the parse changes what lands
+  in `MapData`**: the file name cannot see a parse change, and a stale snapshot decodes
+  silently instead of failing.
 - **Overpass fixture** (`map/osm/fixture.rs::Overpass`) — a test scene stated in **map
   metres** and fed through the real `parse`. **Add a tag case here, not another literal.**
 - **MapData** (`map/osm/model.rs`) — the parsed map resource, resident after spawn. The

@@ -82,6 +82,12 @@ call makes between the two steps is what logs the gate line and flips `JobState:
 The gate step **writes into the `MapData`** the thread hands back, so the polygonal mesh
 built later from the resource sees the same gates (navigation-deep skill).
 
+**Before everything, `run()` tries the binary snapshot** (`map/osm/snapshot.rs`, the
+osm-map skill): a serialized `MapData` read instead of the parse, showing as `Parsing` on
+the loader. A hit skips the JSON read and `parse` entirely — the gates and pruning above
+run on the decoded map exactly as on a parsed one (the snapshot is written from the
+parse output, before any of those steps touch it).
+
 **The last stage meshes every map layer, in the same thread, in parallel groups**
 (`map/prepare.rs::build_world_meshes`): buildings ∥ roads (both verge steps) ∥ polymesh ∥
 the small lane (parking layout, surfaces, trees with the tree-set compose and the conifer

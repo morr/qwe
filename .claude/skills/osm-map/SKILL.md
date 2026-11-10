@@ -143,15 +143,27 @@ a screenshot belongs to.
   Parameters live in the file name, so changing settings invalidates it. Written
   **only after successful parse**; a broken cache self-heals (deleted, re-downloaded).
   Second launch never touches the network.
+- **Binary snapshot** — `map/osm/snapshot.rs`: the serialized `MapData` (bincode) written
+  after a successful parse and read **instead of the parse** on the next warm start
+  (Paris: parse 5.5 s → read ~0.5 s, journal entry 18). The name is the cache file's name
+  minus `.json` plus `s{SNAPSHOT_VERSION}` and the parse knobs (`k{lane}_{navtile}_{raw}`),
+  so query/geo/size invalidation is inherited; the header additionally stamps the JSON
+  file's size and mtime, because a re-downloaded extract keeps the name (deleting the JSON
+  to force re-download stays the documented workflow). A corrupt or stale file is deleted
+  and the parse runs as before — never an error up. **Bump `SNAPSHOT_VERSION` whenever a
+  change alters what the parse puts into `MapData`** (a new pass, a new field, a changed
+  threshold): the name cannot see a parse change, and a stale snapshot decodes silently —
+  the same discipline as `QUERY_VERSION`, same reason.
 - **The cache has a second reader** — the junction gallery (`examples/demos/roads`)
   reads it through `download::city_extract` and cuts its windows out with
   `map/osm/crop.rs`, so a query bump reaches the gallery with no step of its own
   (`references/roads-gallery.md`).
 - **One file per city** — every load first runs `prune_stale_caches()`: anything under a
-  known city slug that is not that city's current `cache_path` is deleted. That is what
-  retires extracts left by an old geo center, `MAP_SIZE` or `QUERY_VERSION` — tens of MB
-  each. It sweeps **all** cities, not just the one being loaded; the current file of
-  each city survives, so touring the cities is not a download per city per lap.
+  known city slug that is not that city's current `cache_path` or `snapshot_path` is
+  deleted (`.json` and `.bin` alike). That is what retires extracts left by an old geo
+  center, `MAP_SIZE` or `QUERY_VERSION` — tens of MB each. It sweeps **all** cities, not
+  just the one being loaded; the current file of each city survives, so touring the
+  cities is not a download per city per lap.
 
 ## MapData — the parsed model
 
