@@ -18,14 +18,15 @@ use std::ops::RangeInclusive;
 
 use bevy::prelude::*;
 
-use super::arches::{arch_openings, arches_by_building};
+use super::arches::{ArchOpenings, arch_openings};
 use super::roofs::is_pitched;
 use super::temples::Sanctuary;
 use super::{BuildingHeightMode, Lean, extrusion_lift, height_or_default};
 use crate::map::grid::Grid;
 use crate::map::meshing::{MeshBuilder, sweep_convex};
 use crate::map::osm::model::{ring_bounds, signed_ring_area};
-use crate::map::osm::{BuildingUse, PolyArea, RoadLine};
+use crate::map::osm::{BuildingUse, PolyArea};
+use crate::map::parallel::in_parallel;
 use crate::map::shadow;
 use crate::map::{SHADOW_COLOR, shadow_dir, sun_stretch};
 
@@ -101,11 +102,12 @@ impl ShadowSweeps {
             *SHADOW_LENGTH_RANGE.start() * stretch,
             *SHADOW_LENGTH_RANGE.end() * stretch,
         );
-        let mut contours: Vec<Vec<[f32; 2]>> = Vec::new();
-        let mut spans = Vec::with_capacity(buildings.len());
         let sanctuary = Sanctuary::of(buildings);
-        for (index, building) in buildings.iter().enumerate() {
-            let start = contours.len();
+        // дом от дома не зависит: развёртки считаются по ядрам, сбор — в
+        // порядке домов (`in_parallel` сохраняет порядок входа)
+        let indexed: Vec<usize> = (0..buildings.len()).collect();
+        let per_building: Vec<Vec<Vec<[f32; 2]>>> = in_parallel(&indexed, |&index| {
+            let building = &buildings[index];
             let length = shadow::length(height_or_default(building)).clamp(min_length, max_length);
             let offset = shadow_dir() * length;
             // у части на крыше храма и у отдельной колокольни коробки нет, и
@@ -114,18 +116,25 @@ impl ShadowSweeps {
                 true => Vec::new(),
                 false => silhouette_chains(&building.outer, shadow_dir()),
             };
+            let mut own: Vec<Vec<[f32; 2]>> = Vec::new();
             for chain in chains {
                 let mut sweep: Vec<Vec2> = chain.clone();
                 sweep.extend(chain.iter().rev().map(|&point| point + offset));
-                push_contour(&mut contours, sweep);
+                push_contour(&mut own, sweep);
             }
             // глава и шпиль выше карниза, и тень храма обязана дотянуться до
             // маковки — иначе на земле он тот же коробок, что и сосед
             for (outline, top) in sanctuary.shadow_casters(index, building) {
                 let length = shadow::length(top).clamp(min_length, max_length);
-                push_contour(&mut contours, sweep_convex(&outline, shadow_dir() * length));
+                push_contour(&mut own, sweep_convex(&outline, shadow_dir() * length));
             }
-            spans.push((start, contours.len()));
+            own
+        });
+        let mut contours: Vec<Vec<[f32; 2]>> = Vec::new();
+        let mut spans = Vec::with_capacity(per_building.len());
+        for mut own in per_building {
+            spans.push((contours.len(), contours.len() + own.len()));
+            contours.append(&mut own);
         }
         Self { contours, spans }
     }
@@ -158,22 +167,21 @@ impl ShadowSweeps {
 /// просвечивает ровно сквозь вырез.
 pub(super) fn shadow_builder(
     buildings: &[PolyArea],
-    passages: &[RoadLine],
     sweeps: &ShadowSweeps,
     extruded: bool,
+    arches: Option<&ArchOpenings>,
 ) -> MeshBuilder {
     let mut builder = MeshBuilder::default();
     let color = SHADOW_COLOR.to_linear();
     shadow::push_union(&mut builder, sweeps.all(), PENUMBRA_WIDTH);
 
     if extruded {
-        // по возрастанию номера дома, а не в порядке обхода `HashMap`: тот у
-        // `std` перемешан случайным `RandomState`, и порядок вершин в
-        // объединённом меше менялся бы от запуска к запуску. Два других
-        // вызова `arches_by_building` берут дома по ключу и такой правки не
-        // требуют
-        let mut by_building: Vec<_> = arches_by_building(buildings, passages)
-            .into_iter()
+        // по возрастанию номера дома: обход карты — не порядок домов, а
+        // порядок вершин меша обязан быть детерминирован
+        let mut by_building: Vec<(usize, _)> = arches
+            .expect("в 2.5D арки считает вызывающий")
+            .iter()
+            .map(|(&index, passages)| (index, passages.clone()))
             .collect();
         by_building.sort_unstable_by_key(|&(index, _)| index);
         for (index, passages) in by_building {
@@ -260,12 +268,18 @@ pub(super) fn roof_shadow_builder(
     let bodies = DrawnBodies::of(buildings, &boxes, order);
     let sanctuary = Sanctuary::of(buildings);
 
-    for (target, building) in buildings.iter().enumerate() {
+    // цель от цели не зависит: свои отбрасывающие, своё пересечение и своё
+    // вычитание — считаются по ядрам (`in_parallel` возвращает результаты в
+    // порядке входа), заливка в меш идёт в порядке цели, и меш
+    // детерминирован, как и был
+    let indexed: Vec<usize> = (0..buildings.len()).collect();
+    let per_target: Vec<Vec<Vec<Vec<[f32; 2]>>>> = in_parallel(&indexed, |&target| {
+        let building = &buildings[target];
         // у части на крыше храма и у отдельной колокольни кровли нет —
         // нарисован только венец, — и тень, посчитанная на поднятый контур
         // части, висела над собором клином
         if sanctuary.boxless(target, building) {
-            continue;
+            return Vec::new();
         }
         // скатная кровля — не плоскость на высоте карниза, на которую этот слой
         // кладёт тень: в 2.5D скаты поднимаются к коньку, и плоская заплата
@@ -273,7 +287,7 @@ pub(super) fn roof_shadow_builder(
         // стал одноэтажным, двухэтажный сосед теперь выше него на те самые
         // `SHADOW_MIN_DROP`, и заплата легла на половину частного сектора
         if is_pitched(building) {
-            continue;
+            return Vec::new();
         }
         let (min, max) = boxes[target];
         let lift = if extruded {
@@ -297,7 +311,7 @@ pub(super) fn roof_shadow_builder(
                 && !same_church(&buildings[caster], building)
         });
         if casters.is_empty() {
-            continue;
+            return Vec::new();
         }
 
         let cast: Vec<Vec<[f32; 2]>> = casters
@@ -309,7 +323,7 @@ pub(super) fn roof_shadow_builder(
         // дому. Без склейки две тени на одной крыше дали бы двойную темноту
         let mut shapes = cast.overlay(&footprint, OverlayRule::Intersect, FillRule::NonZero);
         if shapes.is_empty() {
-            continue;
+            return Vec::new();
         }
         // в нарисованное пространство: тень ложится туда, где кровля
         // нарисована, а не туда, где лежит её футпринт
@@ -328,7 +342,10 @@ pub(super) fn roof_shadow_builder(
             let flat: Vec<Vec<[f32; 2]>> = shapes.into_iter().flatten().collect();
             shapes = flat.overlay(&covers, OverlayRule::Difference, FillRule::NonZero);
         }
+        shapes
+    });
 
+    for shapes in per_target {
         for shape in shapes {
             let mut rings = shape.into_iter().map(|contour| {
                 contour

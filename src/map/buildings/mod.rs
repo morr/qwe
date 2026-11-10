@@ -36,6 +36,7 @@ use bevy::color::Mix;
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
+use self::arches::arches_by_building;
 use self::garages::garage_runs;
 use self::heights::height_mix;
 pub(crate) use self::heights::height_or_default;
@@ -295,6 +296,19 @@ pub fn measure_layers(
         });
         sweeps
     });
+    // арки — один расчёт на сборку: его едят и экструзия, и заплатка арок
+    // в наземных тенях; в плоских режимах фасадный сборщик режет их сам
+    let started = Instant::now();
+    let arches = matches!(
+        mode,
+        BuildingHeightMode::Extrusion | BuildingHeightMode::ExtrusionShadowsTint
+    )
+    .then(|| arches_by_building(buildings, passages));
+    costs.push(LayerCost {
+        name: "arches",
+        vertices: 0,
+        elapsed: started.elapsed(),
+    });
 
     // замеряется число вершин, а не сам сборщик: у плоского режима билдеров
     // два, и склеивать их ради замера значило бы мерить ещё и склейку
@@ -311,11 +325,16 @@ pub fn measure_layers(
     match mode {
         BuildingHeightMode::Extrusion | BuildingHeightMode::ExtrusionShadowsTint => {
             measure("extruded", &mut || {
-                extrusion_builder(buildings, passages, detail, &order)
-                    .0
-                    .iter()
-                    .map(|builder| builder.vertex_count())
-                    .sum()
+                extrusion_builder(
+                    buildings,
+                    detail,
+                    &order,
+                    arches.as_ref().expect("в 2.5D арки посчитаны"),
+                )
+                .0
+                .iter()
+                .map(|builder| builder.vertex_count())
+                .sum()
             });
         }
         BuildingHeightMode::Facade
@@ -333,9 +352,9 @@ pub fn measure_layers(
         measure("shadows", &mut || {
             shadow_builder(
                 buildings,
-                passages,
                 sweeps,
                 mode == BuildingHeightMode::ExtrusionShadowsTint,
+                arches.as_ref(),
             )
             .vertex_count()
         });
@@ -466,6 +485,12 @@ pub fn mesh_buildings(
     )
     .then(|| draw_order(buildings, Lean::of()));
 
+    // арки — один расчёт на сборку слоя: их едят и экструзия, и заплатка
+    // арок в наземных тенях; в плоских режимах фасадный сборщик режет их сам
+    let arches = order
+        .is_some()
+        .then(|| arches_by_building(buildings, passages));
+
     // разброс форм крыш считает только слой экструзии — по тому, что легло в меш
     let mut roof_mix = String::from("counted in 2.5D only");
     match &order {
@@ -479,7 +504,12 @@ pub fn mesh_buildings(
             // В общий рез (`LayerMesh::into_chunks`) они не идут: куски уже
             // собраны домами целиком, второй разрез по треугольникам разъял
             // бы дом через границу клетки
-            let (chunks, mix) = extrusion_builder(buildings, passages, detail, order);
+            let (chunks, mix) = extrusion_builder(
+                buildings,
+                detail,
+                order,
+                arches.as_ref().expect("в 2.5D арки посчитаны"),
+            );
             roof_mix = mix.to_string();
             skipped += chunks
                 .iter()
@@ -534,9 +564,9 @@ pub fn mesh_buildings(
         let shadow_started = Instant::now();
         let shadows = shadow_builder(
             buildings,
-            passages,
             &sweeps,
             mode == BuildingHeightMode::ExtrusionShadowsTint,
+            arches.as_ref(),
         );
         shadow_time = shadow_started.elapsed();
         shadow_layers.push(LayerMesh::new(

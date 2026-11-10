@@ -96,9 +96,11 @@ pub(super) fn ground_shadows(
     passages: &[RoadLine],
     extruded: bool,
 ) -> MeshBuilder {
+    use super::arches::arches_by_building;
     use super::shadows::{ShadowSweeps, shadow_builder};
 
-    shadow_builder(list, passages, &ShadowSweeps::of(list), extruded)
+    let arches = extruded.then(|| arches_by_building(list, passages));
+    shadow_builder(list, &ShadowSweeps::of(list), extruded, arches.as_ref())
 }
 
 /// Меш 2.5D-экструзии — с тем же порядком отрисовки, который в игре достаётся
@@ -111,10 +113,12 @@ pub(super) fn extruded_mesh(
     passages: &[RoadLine],
     detail: RoofDetail,
 ) -> MeshBuilder {
+    use super::arches::arches_by_building;
     use super::layers::extrusion_builder;
 
+    let arches = arches_by_building(list, passages);
     let (chunks, _) =
-        extrusion_builder(list, passages, detail, &order::draw_order(list, Lean::of()));
+        extrusion_builder(list, detail, &order::draw_order(list, Lean::of()), &arches);
     MeshBuilder::merge(chunks)
 }
 
