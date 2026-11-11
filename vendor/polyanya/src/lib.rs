@@ -392,10 +392,12 @@ impl Mesh {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 /// QWE: наружу как часть результата [`layers::Layer::compute_bake`] — поле
-/// слоя (`baked_polygons`) и так держит его в публичном типе.
+/// слоя (`baked_polygons`) и так держит его в публичном типе. Copy — размер
+/// на глаз (usize и два [f32; 2]), а pub-тип без Copy ловит
+/// `missing_copy_implementations`.
 pub struct BoundedPolygon {
     index: usize,
     aabb_min: [f32; 2],

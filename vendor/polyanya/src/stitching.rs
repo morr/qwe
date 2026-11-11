@@ -4,11 +4,28 @@ use glam::Vec2;
 
 use crate::{instance::U32Layer, Mesh};
 
-type StitchVertices = Vec<((u8, u8), Vec<(usize, usize)>)>;
+/// QWE: наружу — [`Mesh::stitch_mark_and_append`] принимает список стежков,
+/// и qwe собирает его сам (`navigation/polymesh/stitch.rs`).
+pub type StitchVertices = Vec<((u8, u8), Vec<(usize, usize)>)>;
 type StitchPoints = Vec<((u8, u8), Vec<Vec2>)>;
 
 impl Mesh {
     fn stitch_internals(
+        &mut self,
+        target_layer: Option<u8>,
+        stitch_vertices: StitchVertices,
+        one_way: bool,
+    ) {
+        self.stitch_mark_and_append(target_layer, stitch_vertices, one_way);
+        self.reorder_neighbors_ccw_and_fix_corners();
+    }
+
+    /// QWE: [`Self::stitch_internals`] без переупорядочивания соседей — метит
+    /// индексы номером слоя и переносит соседей стежков. qwe зовёт её один раз
+    /// на весь меш и дальше считает reorder по вершинам в потоках
+    /// (`navigation/polymesh/stitch.rs`); вместе с
+    /// [`Self::apply_neighbor_order`] это то же, что [`Self::stitch_internals`].
+    pub fn stitch_mark_and_append(
         &mut self,
         target_layer: Option<u8>,
         stitch_vertices: StitchVertices,
@@ -75,7 +92,6 @@ impl Mesh {
                 vertex_from.polygons.append(&mut neighbors_to);
             }
         }
-        self.reorder_neighbors_ccw_and_fix_corners();
     }
 
     /// Stitch points between layers. After, the polygons neighboring the stitch points will be

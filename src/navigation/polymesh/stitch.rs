@@ -10,6 +10,7 @@ use bevy::prelude::*;
 
 use super::seams::node_world;
 use super::{ChunkComponents, ChunkGraph, GraphNode};
+use crate::map::parallel::in_parallel;
 
 /// Компоненты связности слоя: flood fill по соседству полигонов через общие
 /// вершины. Считать можно только **до** сшивки — она метит индексы в
@@ -570,7 +571,30 @@ pub(super) fn stitch_chunks(
     if !stitches.is_empty() {
         // ровно один вызов на весь меш: он метит индексы номером слоя через
         // `+=`, и второй вызов пометил бы их повторно
-        mesh.stitch_at_vertices(stitches, false);
+        mesh.stitch_mark_and_append(None, stitches, false);
+        // переупорядочивание соседей — самая дорогая часть сшивки (разрез
+        // заезда 19: 108 из 113 мс `stitch_internals` на Париже). Вершина от
+        // вершины не зависит, вход — только чтение слоёв: считаем по вершинам
+        // в потоках и применяем серийно — те же списки соседей, что у
+        // серийного reorder внутри `stitch_internals`
+        let items: Vec<(usize, usize)> = mesh
+            .layers
+            .iter()
+            .enumerate()
+            .flat_map(|(layer, layer_)| (0..layer_.vertices.len()).map(move |v| (layer, v)))
+            .collect();
+        let orders = in_parallel(&items, |&(layer, vertex)| {
+            mesh.compute_vertex_order(layer, vertex)
+        });
+        let mut reordered: Vec<Vec<Vec<u32>>> = mesh
+            .layers
+            .iter()
+            .map(|layer| vec![Vec::new(); layer.vertices.len()])
+            .collect();
+        for (&(layer, vertex), order) in items.iter().zip(orders) {
+            reordered[layer][vertex] = order;
+        }
+        mesh.apply_neighbor_order(reordered);
     }
     #[cfg(debug_assertions)]
     verify_seams(mesh);
