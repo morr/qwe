@@ -707,7 +707,7 @@ pub fn build_roads_from(skeleton: &RoadSkeleton<'_>, verge: VergeZoomBucket) -> 
     // ── Кромки слияний ──
     let merge_edges = merges::lay_merge_edges(
         map,
-        &prepared,
+        prepared,
         &drawn,
         &nodal,
         shape.taper(),
@@ -720,13 +720,13 @@ pub fn build_roads_from(skeleton: &RoadSkeleton<'_>, verge: VergeZoomBucket) -> 
         nodes,
         &nodal,
         junctions.row(),
-        &prepared,
+        prepared,
         &mut streets,
         &mut sidewalks,
     );
     // ── Разворотные площадки ──
     let turning_circles =
-        junctions::lay_turning_circles(map, nodes, &prepared, &mut streets, &mut sidewalks);
+        junctions::lay_turning_circles(map, nodes, prepared, &mut streets, &mut sidewalks);
     // ── Оси лент, траектории и порядок заливки ──
     // оси ленты, со стежками — до дороги, до которой OSM торец не довёл:
     // асфальт, краска, траектории, острова
@@ -771,9 +771,9 @@ pub fn build_roads_from(skeleton: &RoadSkeleton<'_>, verge: VergeZoomBucket) -> 
     // пустоты, зажатые проезжими частями, где ничего не замаплено (R20)
     let found_mouths = mouths(
         map,
-        &prepared,
+        prepared,
         &ribbon,
-        &islands,
+        islands,
         &ring_lawn_islands,
         &gores,
         &kerb_returns,
@@ -902,17 +902,17 @@ pub fn build_roads_from(skeleton: &RoadSkeleton<'_>, verge: VergeZoomBucket) -> 
     // ── Площади и островки до лент ──
     let (road_islands, road_bites) = islands::lay_areas(
         map,
-        &prepared,
+        prepared,
         &drawn,
         &ribbon,
-        &islands,
+        islands,
         &mut streets,
         &mut sidewalks,
     );
     // ── Тротуары колец ──
-    let island_insets = rings::lay_ring_island_bands(&prepared, roads, style, &mut sidewalks);
+    let island_insets = rings::lay_ring_island_bands(prepared, roads, style, &mut sidewalks);
     // подходы колец: их полосы тротуара копятся ниже для газона острова
-    let at_ring = rings::approach_flags(&prepared, drawn.len());
+    let at_ring = rings::approach_flags(prepared, drawn.len());
     let mut approach_bands: Vec<ApproachBand> = Vec::new();
     // ── Заливка колец и швы настилов ──
     // асфальт кольца — одной замкнутой заливкой по его оси, на месте первой
@@ -920,7 +920,7 @@ pub fn build_roads_from(skeleton: &RoadSkeleton<'_>, verge: VergeZoomBucket) -> 
     // подходами, клались лентами с прямыми торцами, и на кривизне торцы
     // соседних дуг расходились веером — по внешней кромке клинья-щели
     let mut ring_filled = vec![false; prepared.rings().list.len()];
-    let seam_gaps = bridges::seam_dash_gaps(&prepared, &drawn, &ribbon);
+    let seam_gaps = bridges::seam_dash_gaps(prepared, &drawn, &ribbon);
     // ── Ленты ── главный проход по улицам в порядке заливки: асфальт,
     // тротуары, обочины, краска, клинья и мосты — улица за улицей
     //
@@ -930,7 +930,7 @@ pub fn build_roads_from(skeleton: &RoadSkeleton<'_>, verge: VergeZoomBucket) -> 
     // у серийной укладки.
     let mut verges_by_street: Vec<verges::StreetVerges> = in_parallel(&order, |&index| {
         verges::street_verge_geometry(
-            &prepared,
+            prepared,
             &drawn,
             &ribbon,
             &meadows,
@@ -1131,7 +1131,7 @@ pub fn build_roads_from(skeleton: &RoadSkeleton<'_>, verge: VergeZoomBucket) -> 
                 &mut sidewalks,
                 &wedges,
                 &drawn,
-                &prepared,
+                prepared,
                 index,
                 points,
                 road,
@@ -1220,7 +1220,7 @@ pub fn build_roads_from(skeleton: &RoadSkeleton<'_>, verge: VergeZoomBucket) -> 
             map.traffic_side,
         );
         // дорожка на мостик расширяется в него клином (S5)
-        footbridge::lay_flares(fill, &drawn, &prepared, road, points, index, color);
+        footbridge::lay_flares(fill, &drawn, prepared, road, points, index, color);
         if road.class == RoadClass::Street && !road.passage {
             grounds.push(road, points);
         }
@@ -1229,7 +1229,7 @@ pub fn build_roads_from(skeleton: &RoadSkeleton<'_>, verge: VergeZoomBucket) -> 
     aprons::lay_slit_aprons(
         &drawn,
         &ribbon,
-        &prepared,
+        prepared,
         &mut bridges,
         &mut sidewalks,
         &mut alleys,
@@ -1239,7 +1239,7 @@ pub fn build_roads_from(skeleton: &RoadSkeleton<'_>, verge: VergeZoomBucket) -> 
         &kerb_returns,
         &gores,
         &drawn,
-        &prepared,
+        prepared,
         &ribbon,
         &road_islands,
         &mut scraps,
@@ -1251,7 +1251,7 @@ pub fn build_roads_from(skeleton: &RoadSkeleton<'_>, verge: VergeZoomBucket) -> 
         marks,
         &streets,
         &mut painter,
-        &turns,
+        turns,
         &mut ruts,
         paint_breaks,
         style,
@@ -1311,7 +1311,7 @@ pub fn build_roads_from(skeleton: &RoadSkeleton<'_>, verge: VergeZoomBucket) -> 
     let (rail_crossings, level_crossings) = mesh_level_crossings(&map.rails, &crossed);
     // ── Газон островов колец ──
     rings::cover_ring_islands(
-        &prepared,
+        prepared,
         &island_insets,
         &approach_bands,
         &mut median_grass,

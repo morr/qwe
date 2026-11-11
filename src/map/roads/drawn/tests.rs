@@ -13,7 +13,7 @@ use crate::map::roads::network::pairs::{PROBE_STEP, Partner};
 use crate::map::roads::pockets;
 use crate::map::roads::rings;
 use crate::map::roads::{
-    CrossingMode, JunctionCounts, RoadShape, RoadStyle, VergeZoomBucket, is_carriageway, node_paint,
+    CrossingMode, JunctionCounts, RoadShape, RoadStyle, is_carriageway, node_paint,
 };
 use crate::map::smooth::Smoothing;
 
