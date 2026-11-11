@@ -394,7 +394,9 @@ impl Mesh {
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-struct BoundedPolygon {
+/// QWE: наружу как часть результата [`layers::Layer::compute_bake`] — поле
+/// слоя (`baked_polygons`) и так держит его в публичном типе.
+pub struct BoundedPolygon {
     index: usize,
     aabb_min: [f32; 2],
     aabb_max: [f32; 2],

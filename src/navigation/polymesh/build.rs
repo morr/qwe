@@ -175,7 +175,13 @@ pub(super) fn build_polymesh(
     // Без bake меш только рисуется: поиску он даёт линейный скан по всем
     // полигонам на каждый конец запроса вместо BVH.
     let baking = Instant::now();
-    mesh.bake();
+    // слои независимы (сшивка метит индексы позже), а bake слоя — только
+    // чтение его вершин и полигонов: считаем по слоям в потоках, применяем
+    // серийно (`compute_bake`/`apply_bake`) — порядок слоёв и результат те же
+    let baked = in_parallel(&mesh.layers, |layer| layer.compute_bake());
+    for (layer, parts) in mesh.layers.iter_mut().zip(baked) {
+        layer.apply_bake(parts);
+    }
     info!("polymesh baked in {:?}", baking.elapsed());
     if is_cancelled() {
         return None;

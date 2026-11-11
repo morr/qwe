@@ -14,6 +14,11 @@ use crate::{
     BoundedPolygon, MeshError, Polygon, Vertex,
 };
 
+/// QWE: обе предвычисленные оптимизации слоя как значения — результат
+/// [`Layer::compute_bake`], вход [`Layer::apply_bake`]. Формы те же, что
+/// кладёт [`Layer::bake`].
+pub type BakedLayer = (Option<RTree<BoundedPolygon>>, Option<Vec<usize>>);
+
 /// Layer of a NavMesh
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -101,6 +106,14 @@ impl Layer {
     /// between them.
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
     pub fn bake_islands_detection(&mut self) {
+        self.islands = Some(self.compute_islands());
+    }
+
+    /// QWE: чистая половина [`Self::bake_islands_detection`] — компоненты
+    /// связности слоя как значение, без мутации. Слои независимы до сшивки,
+    /// поэтому qwe считает их по слоям в потоках (`map::parallel::in_parallel`)
+    /// и применяет серийно через [`Self::apply_bake`]; форма та же.
+    pub fn compute_islands(&self) -> Vec<usize> {
         let mut islands = vec![usize::MAX; self.polygons.len()];
         while let Some((root, _)) = islands
             .iter()
@@ -111,7 +124,7 @@ impl Layer {
             to_visit.push(root);
             while let Some(next) = to_visit.pop() {
                 if islands[next] == usize::MAX {
-                    let polygon = &mut self.polygons[next];
+                    let polygon = &self.polygons[next];
                     islands[next] = root;
                     to_visit.extend(
                         polygon
@@ -129,7 +142,7 @@ impl Layer {
                 }
             }
         }
-        self.islands = Some(islands);
+        islands
     }
 
     /// Speed up finding which polygon, if any, contains a point in the mesh.
@@ -142,9 +155,15 @@ impl Layer {
     /// the BVH already falls back to the linear scan when it is missing.
     #[cfg_attr(feature = "tracing", instrument(skip_all))]
     pub fn bake_polygon_finder(&mut self) {
+        self.baked_polygons = self.compute_polygon_finder();
+    }
+
+    /// QWE: чистая половина [`Self::bake_polygon_finder`] — R-дерево поиска
+    /// полигона как значение, без мутации. Форма та же; слой без полигонов
+    /// возвращает `None`, как и прежде (см. док выше).
+    pub fn compute_polygon_finder(&self) -> Option<RTree<BoundedPolygon>> {
         if self.polygons.is_empty() {
-            self.baked_polygons = None;
-            return;
+            return None;
         }
         let bounded_polygons = self
             .polygons
@@ -171,7 +190,22 @@ impl Layer {
             })
             .collect::<Vec<_>>();
 
-        self.baked_polygons = Some(RTree::bulk_load(bounded_polygons));
+        Some(RTree::bulk_load(bounded_polygons))
+    }
+
+    /// QWE: bake как пара «посчитать / применить» — обе оптимизации слоя как
+    /// значения ([`BakedLayer`]). Слои независимы до сшивки, а обе фазы bake —
+    /// только чтение вершин и полигонов своего слоя, поэтому qwe считает их
+    /// по слоям в потоках (`map::parallel::in_parallel`) и применяет серийно;
+    /// на один слой это ровно [`Self::bake`].
+    pub fn compute_bake(&self) -> BakedLayer {
+        (self.compute_polygon_finder(), Some(self.compute_islands()))
+    }
+
+    /// QWE: применить то, что вернул [`Self::compute_bake`].
+    pub fn apply_bake(&mut self, parts: BakedLayer) {
+        self.baked_polygons = parts.0;
+        self.islands = parts.1;
     }
 
     /// Create a `Layer` from a list of [`Vertex`] and [`Polygon`].
