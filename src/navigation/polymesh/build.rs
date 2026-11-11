@@ -162,8 +162,10 @@ pub(super) fn build_polymesh(
     }
 
     // компоненты считаются ДО сшивки: она метит индексы в `vertex.polygons`
-    // номером слоя, и обход по ним после неё уедет за границы своего слоя
-    let components: Vec<ChunkComponents> = layers.iter().map(components_of).collect();
+    // номером слоя, и обход по ним после неё уедет за границы своего слоя.
+    // Слой от слоя не зависит (`components_of` читает только свой слой) —
+    // по потокам, порядок слоёв тот же
+    let components: Vec<ChunkComponents> = in_parallel(&layers, components_of);
 
     let mut mesh = polyanya::Mesh {
         layers,
