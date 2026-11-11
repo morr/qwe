@@ -14,6 +14,7 @@ use i_overlay::mesh::float::style::{LineCap, LineJoin, OutlineStyle, StrokeStyle
 
 use super::GORE_MIN_AREA;
 use crate::map::osm::model::{distance_to_segment, point_in_polygon, ring_bounds};
+use crate::map::parallel::in_parallel;
 use crate::map::shapes::{
     ARC, Contour, Shape, contour_area, contour_bounds, is_ring, oriented, ring_of,
 };
@@ -35,6 +36,48 @@ const MOUTH_SIMPLIFY: f32 = 0.5;
 const MOUTH_OPENING: f32 = 0.75;
 /// Шаг сетки, которой вершины и контуры занятого ищут устья рядом, м.
 const MOUTH_CELL: f32 = 32.0;
+/// Клетка тайлового объединения лент, м: как у теней (`shadow::push_union`).
+const MOUTH_TILE: f32 = 512.0;
+/// Ниже этого числа лент объединение однопроходное: тесты и витрины не
+/// платят тайлами и получают ту же геометрию байт в байт.
+const MOUTH_TILED_MIN: usize = 256;
+
+/// Объединение лент устьев — по клеткам: клетка объединяет свои ленты
+/// ([`in_parallel`]), слитые выходы клеток объединяются разом. Клетка — по
+/// первой точке ленты (лента целиком в своей клетке, соседям её кусок
+/// отдаёт общий проход ниже); порядок клеток детерминирован — сортировка по
+/// ключу. Дыры ищутся только по итоговому объединению: дыра, разрезанная
+/// границей клетки, в клеточных выходах — два куска с лишней стороной, и
+/// фильтр площади по куску устье потерял бы. Геометрия — то же множество,
+/// что у однопроходного объединения; порядок вершин — класс перестановки
+/// тайловых путей (записи 19/22/25).
+fn union_ribbons(ribbons: &[Contour]) -> Vec<Shape> {
+    if ribbons.len() <= MOUTH_TILED_MIN {
+        return ribbons.simplify_shape(FillRule::NonZero);
+    }
+    let mut by_cell: bevy::platform::collections::HashMap<(i32, i32), Vec<&Contour>> =
+        bevy::platform::collections::HashMap::new();
+    for contour in ribbons {
+        let cell = (Vec2::from_array(contour[0]) / MOUTH_TILE)
+            .floor()
+            .as_ivec2()
+            .to_array();
+        by_cell.entry((cell[0], cell[1])).or_default().push(contour);
+    }
+    let mut cells: Vec<((i32, i32), Vec<&Contour>)> = by_cell.into_iter().collect();
+    cells.sort_unstable_by_key(|(cell, _)| *cell);
+    let outs: Vec<Vec<Shape>> = in_parallel(&cells, |(_, ribbons)| {
+        let owned: Vec<Contour> = ribbons.iter().map(|contour| (*contour).clone()).collect();
+        owned.simplify_shape(FillRule::NonZero)
+    });
+    let flat: Vec<Contour> = outs
+        .iter()
+        .flat_map(|shapes| shapes.iter())
+        .flat_map(|shape| shape.iter())
+        .cloned()
+        .collect();
+    flat.simplify_shape(FillRule::NonZero)
+}
 
 /// Устья (R20): пустоты, которые **со всех сторон зажаты проезжими частями**
 /// — дыры объединения лент `carriageways` (ось и ширина) площадью от
@@ -79,13 +122,13 @@ pub(in crate::map::roads) fn mouths(
             ribbons.extend(points.stroke(style, ring).into_iter().flatten());
         }
     }
-    let mut holes: Vec<Vec<Vec2>> = ribbons
-        .simplify_shape(FillRule::NonZero)
+    let holes: Vec<Shape> = union_ribbons(&ribbons)
         .into_iter()
         .flat_map(|shape| shape.into_iter().skip(1))
         .filter(|hole| (GORE_MIN_AREA..=2.0 * MOUTH_MAX_AREA).contains(&contour_area(hole)))
         .map(|hole| vec![oriented(&ring_of(&hole), true)])
-        .collect::<Vec<Shape>>()
+        .collect();
+    let mut holes: Vec<Vec<Vec2>> = holes
         // щель между половинами, что идут вплотную, — та же дыра, что и
         // устье, из которого они расходятся: размыкание отделяет одно от
         // другого, а щель остаётся разделительной пары

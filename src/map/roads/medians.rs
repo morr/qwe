@@ -44,8 +44,8 @@ use super::node_paint::{MIN_RUN, PaintBreaks, ZEBRA_LENGTH, Zebra, short_runs};
 use super::{ROAD_COLOR, ROAD_JOIN, RoadJoin, SIDEWALK_COLOR, push_ribbon};
 use crate::map::along::{arclengths, nearest_on_path, place_on_path, tip_of};
 use crate::map::meshing::{Break, MeshBuilder};
-use crate::map::parallel::in_parallel;
 use crate::map::osm::model::{closest_on_segment, polyline_length};
+use crate::map::parallel::in_parallel;
 use crate::map::shapes::{ARC, Shape, contour_area, oriented, point_in_shape, push_shape};
 use crate::map::spawn::GRASS_COLOR;
 
