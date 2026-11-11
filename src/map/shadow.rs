@@ -138,7 +138,9 @@ const TILE: f32 = 256.0;
 /// байтов. Двухуровневое слияние (клетка → квартал 4×4 → финал) замерялось
 /// против этого и выигрыша не показало: у `i_overlay` цена ближе к линейной,
 /// и почти всё и так уходит в параллельные клеточные union.
-fn union_of(contours: &[Vec<[f32; 2]>]) -> Vec<Vec<Vec<[f32; 2]>>> {
+/// Объединение по клеткам — общий примитив: теням его зовёт [`push_union`],
+/// полимешу (`navigation/polymesh`) — union надутых препятствий перед CDT.
+pub(crate) fn union_of(contours: &[Vec<[f32; 2]>]) -> Vec<Vec<Vec<[f32; 2]>>> {
     if contours.len() <= TILED_MIN {
         return contours.simplify_shape(FillRule::NonZero);
     }
@@ -164,6 +166,8 @@ fn union_of(contours: &[Vec<[f32; 2]>]) -> Vec<Vec<Vec<[f32; 2]>>> {
 
 /// Вычитание `clips` из `subjects` — тем же разложением, что union.
 ///
+/// Subjects — плоские контуры без дыр (свипы); фигурам с дырами —
+/// [`difference_of_shapes`].
 /// Разность, стоящая **до** union, в тайлы `push_union` не попадает: у
 /// заборов (Париж) один `Difference` по всем свипам города — 48 тыс.
 /// контуров — стоит 2.1 с из 2.2 стадии теней, дороже самого union.
@@ -246,6 +250,84 @@ pub(crate) fn difference_of(
             .into_iter()
             .flatten()
             .collect()
+    });
+    tiled.into_iter().flatten().collect()
+}
+
+/// Вычитание `clips` из `subjects`-**фигур** (внешнее кольцо, за ним дыры) —
+/// то же разложение по клеткам, что у [`difference_of`], но группировка по
+/// клетке — целой фигурой: дыра обязана ехать в клетке своего наружного
+/// кольца. Одинокая дыра в чужой клетке под NonZero — заполненная область,
+/// то есть препятствие там, где был вырез (остров в реке — дыра внешнего
+/// кольца воды, и в клетке самой реки его не было бы). У [`difference_of`]
+/// такой проблемы нет: его subjects — плоские свипы без дыр.
+///
+/// Возвращает фигуры: результаты клеток — своими фигурами (оверлей и
+/// `simplify_shape` группируют сами), порядок клеток — по возрастанию ключа.
+pub(crate) fn difference_of_shapes(
+    subjects: &[Vec<Vec<[f32; 2]>>],
+    clips: &[Vec<[f32; 2]>],
+) -> Vec<Vec<Vec<[f32; 2]>>> {
+    if clips.is_empty() {
+        return subjects.to_vec();
+    }
+    if subjects.len() <= TILED_MIN {
+        let clips = clips.to_vec();
+        let flat: Vec<Vec<[f32; 2]>> = subjects.iter().flatten().cloned().collect();
+        return flat.overlay(&clips, OverlayRule::Difference, FillRule::NonZero);
+    }
+    use crate::map::parallel::in_parallel;
+
+    let clip_boxes: Vec<[f32; 4]> = clips.iter().map(|ring| ring_box(ring)).collect();
+    // клетка фигуры и рамка всей её геометрии: рамка — по всем контурам
+    // фигуры, наружным и дырам, — вырез может задевать только дыру
+    let mut by_cell: bevy::platform::collections::HashMap<IVec2, (Vec<usize>, [f32; 4])> =
+        bevy::platform::collections::HashMap::new();
+    for (index, shape) in subjects.iter().enumerate() {
+        let cell = (Vec2::from_array(shape[0][0]) / TILE).floor().as_ivec2();
+        let (indices, bounds) = by_cell.entry(cell).or_insert_with(|| {
+            (
+                Vec::new(),
+                [
+                    f32::INFINITY,
+                    f32::INFINITY,
+                    f32::NEG_INFINITY,
+                    f32::NEG_INFINITY,
+                ],
+            )
+        });
+        indices.push(index);
+        for contour in shape {
+            for &[x, y] in contour {
+                bounds[0] = bounds[0].min(x);
+                bounds[1] = bounds[1].min(y);
+                bounds[2] = bounds[2].max(x);
+                bounds[3] = bounds[3].max(y);
+            }
+        }
+    }
+    let mut cells: Vec<(IVec2, Vec<usize>, [f32; 4])> = by_cell
+        .into_iter()
+        .map(|(cell, (indices, bounds))| (cell, indices, bounds))
+        .collect();
+    cells.sort_unstable_by_key(|&(cell, _, _)| (cell.x, cell.y));
+
+    let tiled: Vec<Vec<Vec<Vec<[f32; 2]>>>> = in_parallel(&cells, |(_, indices, bounds)| {
+        let subject: Vec<Vec<[f32; 2]>> = indices
+            .iter()
+            .flat_map(|&i| subjects[i].iter().cloned())
+            .collect();
+        let clips: Vec<Vec<[f32; 2]>> = clips
+            .iter()
+            .zip(&clip_boxes)
+            .filter(|&(_, &box_bounds)| boxes_touch(box_bounds, *bounds))
+            .map(|(ring, _)| ring.clone())
+            .collect();
+        if clips.is_empty() {
+            subject.simplify_shape(FillRule::NonZero)
+        } else {
+            subject.overlay(&clips, OverlayRule::Difference, FillRule::NonZero)
+        }
     });
     tiled.into_iter().flatten().collect()
 }

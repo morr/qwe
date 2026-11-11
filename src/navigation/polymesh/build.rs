@@ -15,6 +15,7 @@ use super::{ChunkComponents, PolymeshBuild, PolymeshInput, chunk_grid};
 use crate::map::footprint::{CurbCoverage, JOIN_EPSILON, fence_gaps};
 use crate::map::osm::model::signed_ring_area;
 use crate::map::parallel::in_parallel;
+use crate::map::shadow::{difference_of_shapes, union_of};
 use crate::map::{merge_close_points, miter_offsets};
 use crate::settings::{
     MAP_SIZE, POLYMESH_MAP_EDGE_MARGIN, POLYMESH_SEARCH_DELTA, POLYMESH_SEARCH_STEPS,
@@ -53,15 +54,18 @@ pub(super) fn build_polymesh(
     let is_cancelled = || cancelled.is_some_and(|flag| flag.load(Ordering::Relaxed));
 
     let coverage = CurbCoverage::build(&input.roads);
-    let blockers = blocker_contours(input, &coverage);
+    let blockers = blocker_shapes(input, &coverage);
     let carves = carve_contours(input, &coverage);
 
     if is_cancelled() {
         return None;
     }
-    // union(blockers) − union(carves) одним difference: NonZero при единой
-    // закрутке контуров объединяет внутри subject и внутри clip сам
-    let shapes = blockers.overlay(&carves, OverlayRule::Difference, FillRule::NonZero);
+    // union(blockers) − union(carves) — разностью по клеткам
+    // (`shadow::difference_of_shapes`, то же разложение, что у вычитания
+    // настилов из теней заборов): фигуры едут в клетку целиком, дыры —
+    // вместе со своим наружным кольцом. Результат — фигуры, как у прежнего
+    // одного `Difference`-оверлея.
+    let differed = difference_of_shapes(&blockers, &carves);
     let margin = POLYMESH_MAP_EDGE_MARGIN;
     let rect = vec![vec![
         [-margin, -margin],
@@ -69,7 +73,36 @@ pub(super) fn build_polymesh(
         [MAP_SIZE.x + margin, MAP_SIZE.y + margin],
         [-margin, MAP_SIZE.y + margin],
     ]];
-    let shapes = shapes.overlay(&rect, OverlayRule::Intersect, FillRule::NonZero);
+    // Отсечка прямоугольником карты — точечно, не всем городом: пересечение
+    // с прямоугольником дистрибутивно по объединению, поэтому фигура целиком
+    // внутри проходит как есть, а оверлей платят те, чья рамка его задела
+    // (полосы водотоков, стен и оград у кромки выгрузки).
+    let rect_box = (
+        Vec2::new(-margin, -margin),
+        Vec2::new(MAP_SIZE.x + margin, MAP_SIZE.y + margin),
+    );
+    let (inside, crossing): (Vec<_>, Vec<_>) = differed.into_iter().partition(|shape| {
+        let (min, max) = shape.iter().fold(
+            (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)),
+            |(min, max), contour| {
+                let (cmin, cmax) = contour_bounds(contour);
+                (min.min(cmin), max.max(cmax))
+            },
+        );
+        min.x >= rect_box.0.x
+            && min.y >= rect_box.0.y
+            && max.x <= rect_box.1.x
+            && max.y <= rect_box.1.y
+    });
+    let shapes = if crossing.is_empty() {
+        inside
+    } else {
+        crossing
+            .overlay(&rect, OverlayRule::Intersect, FillRule::NonZero)
+            .into_iter()
+            .chain(inside)
+            .collect()
+    };
     if is_cancelled() {
         return None;
     }
@@ -90,7 +123,7 @@ pub(super) fn build_polymesh(
     // разрешает самопересечения, которые miter даёт на острых вогнутых углах.
     let inflated: Vec<Vec<[f32; 2]>> = shapes
         .iter()
-        // контур 0 — внешний; дыры результата difference — карманы, см. выше
+        // контур 0 — внешний; дыры результата разности — карманы, см. выше
         .filter_map(|shape| shape.first())
         .map(|contour| {
             let ring: Vec<Vec2> = contour.iter().map(|&p| Vec2::new(p[0], p[1])).collect();
@@ -104,8 +137,10 @@ pub(super) fn build_polymesh(
         // он и до этого ничего не блокировал, но в overlay ему делать нечего
         .filter(|contour| contour.len() >= 3)
         .collect();
-    let nothing: Vec<Vec<[f32; 2]>> = Vec::new();
-    let shapes = inflated.overlay(&nothing, OverlayRule::Subject, FillRule::NonZero);
+    // Объединение надутых колец — по клеткам (`shadow::union_of`, примитив
+    // `push_union`): тот же вход, что раньше шёл одним `Subject`-оверлеем.
+    // Вход без дыр — надутые наружные кольца, поэтому клетка их не разлучает.
+    let shapes = union_of(&inflated);
     if is_cancelled() {
         return None;
     }
@@ -175,12 +210,16 @@ pub(super) fn build_polymesh(
     })
 }
 
-/// Контуры, которые БЛОКИРУЮТ: здания и вода со своими дырами, русла
-/// некульвертных водотоков, стены и внешние бордюры мостов. Порядок накопления
-/// — часть контракта: объединение и вычитание прорезов идут одним `overlay` в
-/// [`build_polymesh`].
-fn blocker_contours(input: &PolymeshInput, coverage: &CurbCoverage<'_>) -> Vec<Vec<[f32; 2]>> {
-    let mut blockers: Vec<Vec<[f32; 2]>> = Vec::new();
+/// Фигуры, которые БЛОКИРУЮТ: здания и вода со своими дырами, русла
+/// некульвертных водотоков, стены и внешние бордюры мостов. Фигуры, а не
+/// плоские контуры: дыра обязана доехать до клеточной разности
+/// (`shadow::difference_of_shapes`) в одной группе со своим наружным
+/// кольцом — одинокая дыра в чужой клетке под NonZero заполнена, то есть
+/// препятствие там, где был вырез (остров в реке — дыра внешнего кольца
+/// воды). Порядок накопления — часть контракта: объединение и вычитание
+/// прорезов идут одним `overlay` в [`build_polymesh`].
+fn blocker_shapes(input: &PolymeshInput, coverage: &CurbCoverage<'_>) -> Vec<Vec<Vec<[f32; 2]>>> {
+    let mut blockers: Vec<Vec<Vec<[f32; 2]>>> = Vec::new();
     // дыры колец идут в объединение обратным обходом: NonZero вычитает их из
     // внешнего кольца ровно так же, как сеточный `row_spans` вычитает их
     // интервалы, а дом внутри дыры (сарай во дворе) снова даёт +1 и остаётся
@@ -194,23 +233,27 @@ fn blocker_contours(input: &PolymeshInput, coverage: &CurbCoverage<'_>) -> Vec<V
     // моста, ведущий на остров, разрезает водное кольцо, и остров вместе с
     // прорезом становится частью внешнего контура.
     for area in input.buildings.iter().chain(&input.water) {
-        push_contour(&mut blockers, area.outer.clone());
-        for hole in &area.holes {
-            push_hole(&mut blockers, hole.clone());
-        }
+        let mut shape = vec![oriented(area.outer.clone())];
+        shape.extend(
+            area.holes
+                .iter()
+                .map(|hole| hole_contour(hole.clone()))
+                .filter(|contour| !contour.is_empty()),
+        );
+        blockers.push(shape);
     }
     // трубы полосы не имеют — над культвертом земля (как в заливке сетки)
     for line in &input.water_lines {
         if let Some(band) = line.channel_band()
             && let Some(ring) = ribbon_outline(&band.line, band.width)
         {
-            push_contour(&mut blockers, ring);
+            blockers.push(vec![oriented(ring)]);
         }
     }
     for wall in &input.walls {
         let band = wall.band();
         if let Some(ring) = ribbon_outline(&band.line, band.width) {
-            push_contour(&mut blockers, ring);
+            blockers.push(vec![oriented(ring)]);
         }
     }
     // ограды — полоса минус проёмы дорог (`footprint::fence_gaps`), одной
@@ -219,12 +262,12 @@ fn blocker_contours(input: &PolymeshInput, coverage: &CurbCoverage<'_>) -> Vec<V
     // касается; здесь он вынимается только из самого забора — маска сетки
     // (`Navmesh::fill_fences`) делает то же самое по тайлам
     let gaps = fence_gaps(&input.fences, &input.roads);
-    let mut fences: Vec<Vec<[f32; 2]>> = Vec::new();
+    let mut fences: Vec<Vec<Vec<[f32; 2]>>> = Vec::new();
     let mut openings: Vec<Vec<[f32; 2]>> = Vec::new();
     for (fence, gaps) in input.fences.iter().zip(&gaps) {
         let band = fence.band();
         if let Some(ring) = ribbon_outline(&band.line, band.width) {
-            push_contour(&mut fences, ring);
+            fences.push(vec![oriented(ring)]);
         }
         for gap in gaps {
             push_contour(&mut openings, gap_outline(gap.at, gap.reach));
@@ -233,9 +276,11 @@ fn blocker_contours(input: &PolymeshInput, coverage: &CurbCoverage<'_>) -> Vec<V
     if openings.is_empty() {
         blockers.extend(fences);
     } else {
-        for shape in fences.overlay(&openings, OverlayRule::Difference, FillRule::NonZero) {
-            blockers.extend(shape);
-        }
+        // та же клеточная разность, что и главная
+        // (`shadow::difference_of_shapes`): город оград против города
+        // проёмов одним проходом на Париже — четверть секунды, по клеткам —
+        // десятки миллисекунд
+        blockers.extend(difference_of_shapes(&fences, &openings));
     }
     // бордюры мостов — те же две полосы, что рисует рендер
     // (`RoadLine::curb_bands`, общие с заливкой сетки).
@@ -287,11 +332,9 @@ fn blocker_contours(input: &PolymeshInput, coverage: &CurbCoverage<'_>) -> Vec<V
             .map(|(_, band)| band.clone())
             .collect();
         if others.is_empty() {
-            blockers.extend(sides);
+            blockers.extend(sides.iter().map(|ring| vec![ring.clone()]));
         } else {
-            for shape in sides.overlay(&others, OverlayRule::Difference, FillRule::NonZero) {
-                blockers.extend(shape);
-            }
+            blockers.extend(sides.overlay(&others, OverlayRule::Difference, FillRule::NonZero));
         }
     }
     blockers
@@ -557,13 +600,13 @@ fn push_contour(target: &mut Vec<Vec<[f32; 2]>>, ring: Vec<Vec2>) {
 /// Дыра кольца — тот же контур обратным обходом: при NonZero он гасит
 /// заливку внутреннего кармана, но не мешает вложенным контурам (дом во
 /// дворе снова поднимает обмотку до +1).
-fn push_hole(target: &mut Vec<Vec<[f32; 2]>>, ring: Vec<Vec2>) {
+fn hole_contour(ring: Vec<Vec2>) -> Vec<[f32; 2]> {
     if ring.len() < 3 {
-        return;
+        return Vec::new();
     }
     let mut contour = oriented(ring);
     contour.reverse();
-    target.push(contour);
+    contour
 }
 
 /// Замкнутый контур ленты постоянной ширины вдоль открытой ломаной:
