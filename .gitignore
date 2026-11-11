@@ -38,3 +38,4 @@ osm_counts.json
 
 # zcode session plans
 /.zcode/plans
+/.worktrees
