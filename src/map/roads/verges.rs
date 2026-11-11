@@ -219,11 +219,17 @@ fn verge_runs(dense: &[Vec2], along: &[f32], widths: &[f32]) -> (Vec<Vec2>, Vec<
 /// двора. Слои газона лежат под плиткой, и голой земли между кромкой и
 /// дорожкой не остаётся.
 /// Обочина до отдельного тротуара — с какой стороны и сколько рисуется
-/// (`prepared.verges_drawn`); у дуги кольца — только снаружи: внутри остров
+/// (`prepared.verges_drawn`, ступень — с собой); у дуги кольца — только
+/// снаружи: внутри остров
 /// и его газон, а снаружи между тротуаром кольца и дорожкой вдоль него
 /// оставалась голая земля (Калуга, витрина 01, СВ)
-pub(super) fn street_verged(prepared: &Drawn, index: usize, ring_ccw: Option<bool>) -> [f32; 2] {
-    let mut verged = prepared.verges_drawn(index);
+pub(super) fn street_verged(
+    prepared: &Drawn,
+    index: usize,
+    ring_ccw: Option<bool>,
+    verge_step: VergeZoomBucket,
+) -> [f32; 2] {
+    let mut verged = prepared.verges_drawn(index, verge_step);
     if let Some(ccw) = ring_ccw {
         // остров — слева по ходу против часовой стрелки
         verged[usize::from(!ccw)] = 0.0;
@@ -443,11 +449,12 @@ pub(super) fn street_verge_geometry(
     road_bites: &scraps::Bites,
     kerb_butt: [bool; 2],
     index: usize,
+    verge_step: VergeZoomBucket,
 ) -> StreetVerges {
     let road = drawn[index];
     let points: &[Vec2] = &ribbon[index];
     let ring = prepared.rings().of(index);
-    let verged = street_verged(prepared, index, ring.map(|ring| ring.ccw));
+    let verged = street_verged(prepared, index, ring.map(|ring| ring.ccw), verge_step);
     let bites = road_bites.on_points(index, points, verged[0] > 0.0 || verged[1] > 0.0);
     let seam = super::bridges::seam_ends(drawn, prepared.nodes(), index);
     let butt = [kerb_butt[0] || seam[0], kerb_butt[1] || seam[1]];

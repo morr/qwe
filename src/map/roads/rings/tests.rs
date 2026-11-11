@@ -694,9 +694,7 @@ fn a_y_approach_gets_one_island_between_its_legs() {
     let drawn = Drawn::new(
         &map,
         &RoadStyle::default(),
-        &RoadShape::default(),
-        VergeZoomBucket::for_zoom(0.0),
-    );
+        &RoadShape::default());
     for leg in [1, 2] {
         assert!(drawn.road(leg).width < map.roads[leg].width);
         assert_eq!(drawn.road(leg).lanes, Some(1));
@@ -819,9 +817,7 @@ fn a_ring_entry_yields_on_the_ring_edge() {
     let drawn = Drawn::new(
         &map,
         &RoadStyle::default(),
-        &RoadShape::default(),
-        VergeZoomBucket::for_zoom(0.0),
-    );
+        &RoadShape::default());
     let junctions = junctions::Junctions::new(
         &drawn,
         &map,
@@ -963,9 +959,7 @@ fn a_ring_of_arcs_lays_one_closed_fill_without_seam_slits() {
     let prepared = Drawn::new(
         &map,
         &RoadStyle::default(),
-        &RoadShape::default(),
-        VergeZoomBucket::for_zoom(0.0),
-    );
+        &RoadShape::default());
     let ring = &prepared.rings().list[0];
     assert!((ring.width - half * 2.0).abs() < 1e-3, "{}", ring.width);
     let path = &ring.path;
@@ -1006,9 +1000,7 @@ fn a_ring_exit_breaks_the_outer_ring_line_across_its_throat() {
     let drawn = Drawn::new(
         &map,
         &RoadStyle::default(),
-        &RoadShape::default(),
-        VergeZoomBucket::for_zoom(0.0),
-    );
+        &RoadShape::default());
     let junctions = junctions::Junctions::new(
         &drawn,
         &map,
@@ -1086,9 +1078,7 @@ fn a_long_tangential_ring_entry_yields_and_keeps_its_lines_off_the_ring() {
     let drawn = Drawn::new(
         &map,
         &RoadStyle::default(),
-        &RoadShape::default(),
-        VergeZoomBucket::for_zoom(0.0),
-    );
+        &RoadShape::default());
     let junctions = junctions::Junctions::new(
         &drawn,
         &map,

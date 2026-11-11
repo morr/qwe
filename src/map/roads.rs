@@ -51,12 +51,14 @@ use bevy::prelude::*;
 pub use self::bridges::BridgeReport;
 use self::bridges::Bridges;
 pub use self::drawn::{Axis, Drawn, DrawnStats};
+use self::gores::splitters::Splitter;
 use self::islands::push_street_fill;
 pub use self::junctions::JunctionCounts;
 #[cfg(test)]
 use self::junctions::turning_radius;
-use self::junctions::{MOUTH_CROSSING_GAP, mouths};
+use self::junctions::{Junctions, MOUTH_CROSSING_GAP, mouths};
 pub use self::node_paint::CrossingMode;
+use self::paint::Station;
 pub use self::ribbons::push_ribbon;
 use self::ribbons::{push_sidewalk_to_seams, wedge_halves, wedge_middle};
 use self::rings::{ApproachBand, ring_island_grass, ring_island_lawns};
@@ -64,6 +66,7 @@ use self::ruts::{LaneRuts, RutLines};
 pub use self::shape::{ROAD_JOIN, RoadJoin, RoadStyle};
 use self::shape::{ROAD_RIBBON, RoadShape, RoadShapeOnMap};
 use self::tram_lay::TramTracks;
+use self::turns::Turns;
 pub(crate) use self::verges::paved_verge;
 pub use self::verges::{VergeLods, VergeZoomBucket};
 #[cfg(test)]
@@ -408,8 +411,9 @@ pub fn mesh_roads(
 pub fn corner_paving_contours(map: &MapData) -> Vec<Vec<Vec2>> {
     let style = RoadStyle::default();
     let shape = RoadShape::default();
-    let drawn = Drawn::new(map, &style, &shape, VergeZoomBucket::for_zoom(0.0));
-    let returns = corners::kerb_returns(&drawn, shape.corner_radius());
+    let drawn = Drawn::new(map, &style, &shape);
+    let returns =
+        corners::kerb_returns(&drawn, shape.corner_radius(), VergeZoomBucket::for_zoom(0.0));
     let paving = returns.paving();
     paving
         .flat()
@@ -505,6 +509,12 @@ pub struct DrawnPieces(pub Vec<DrawnPiece>);
 /// (блок «тела вынесенных фаз» перед сборкой), проводка общего состояния —
 /// ленты, разделительные, сборка слоёв — остаётся секциями под баннером.
 /// Порядок фаз перечислен в скиле `osm-map`, `references/roads.md`.
+///
+/// Сборка стоит из **скелета** ([`road_skeleton`]) — сети, узлов, краски
+/// узлов, всего, что у ступеней общее, — и **финала** ([`build_roads_from`])
+/// — обочинных кусков и укладки, что у каждой ступени своё. Вход в мир и
+/// витрины зовут её через эту дверь, поток загрузки — скелетом и двумя
+/// финалами ([`build_roads_from`] в `map/prepare.rs`).
 pub fn build_roads(
     map: &MapData,
     style: RoadStyle,
@@ -523,6 +533,113 @@ pub fn build_roads(
             pieces: Vec::new(),
         };
     }
+    let skeleton = road_skeleton(map, &style, &shape);
+    build_roads_from(&skeleton, verge)
+}
+
+/// Общая часть сборок ступеней обочин: скелет сети, у обеих ступеней один —
+/// s1 платил за подготовку сети почти столько же, сколько s0 (живой разрез
+/// записи 27), а ступень меняет только обочинные куски. Всё, что финал
+/// читает из карты и ручек, едет со скелетом: сборка ступени
+/// ([`build_roads_from`]) берёт скелет и свою ступень — и ничего больше.
+/// Ступенезависимого здесь нет: обочины, скругления обочин, лоскуты и устья
+/// остаются финалу — устья читают узловой асфальт через `kerb_returns`, а
+/// тот собирает и обочины (`corners/gather.rs`).
+pub struct RoadSkeleton<'m> {
+    map: &'m MapData,
+    style: RoadStyle,
+    shape: RoadShape,
+    /// Подготовленная сеть — самая дорогая часть скелета.
+    prepared: Drawn<'m>,
+    /// Длина улицы у начала каждого way — по ней идут штрихи краски.
+    stations: Vec<Station>,
+    /// Островки-крошки в треугольниках узлов (`corners::small_islands`).
+    islands: Vec<Vec<Vec2>>,
+    /// Узлы и их краска, с островками подходов уже в разрывах: финал узлы
+    /// только читает.
+    junctions: Junctions,
+    /// Траектории манёвров — колея в узле.
+    turns: Turns,
+    /// Островки на подходах к кольцам: одни и те же для узлов (здесь) и для
+    /// клиньев у колец (финал).
+    splitters: Vec<Splitter>,
+}
+
+/// Скелет двух сборок ступеней обочин: подготовка сети, станции краски,
+/// островки узлов, узлы с краской, траектории, островки подходов. Порядок
+/// внутри — порядок тех же фаз одноступенчатой сборки: траектории узлов
+/// до островков подходов, узлы финализируются последними.
+pub fn road_skeleton<'m>(
+    map: &'m MapData,
+    style: &RoadStyle,
+    shape: &RoadShape,
+) -> RoadSkeleton<'m> {
+    let prepared = Drawn::new(map, style, shape);
+    let drawn = prepared.roads();
+    // узловые оси — скругления, слияния, карманы, станции штрихов, полотно
+    // трамвая: их торцы стоят в точках OSM
+    let nodal = prepared.axes(Axis::Nodal);
+    // длина улицы у начала каждого way — по ней идут штрихи краски
+    let stations = paint::street_stations(&map.network, &nodal);
+    let islands = corners::small_islands(&prepared);
+    // ── Узлы и скругления ──
+    // Узлы (`roads/junctions.rs`), стежки среди них: базовые разрывы
+    // асфальта, краска узлов, разрывы ряда у бордюра — одним значением. По
+    // ним рвётся краска и гаснет колея асфальта — колея есть и с выключенной
+    // разметкой, так что считаются они всегда. Краска строится и без
+    // разметки: ведущая дорога узла и плечи для траекторий — это колея
+    // асфальта, а не краска
+    let mut junctions = junctions::Junctions::new(
+        &prepared,
+        map,
+        &islands,
+        node_paint::NodePaintStyle {
+            crossings: if style.markings {
+                style.crossings
+            } else {
+                CrossingMode::Off
+            },
+            stop_lines: style.markings && style.stop_lines,
+        },
+    );
+    // траектории манёвров (`roads/turns.rs`) — колея в узле
+    let turns = turns::Turns::new(&prepared, junctions.node_paint().junctions(), map.traffic_side);
+    // оси лент — для островков подходов; финал пересчитает их себе сам
+    let ribbon = prepared.axes(Axis::Ribbon);
+    // островки по правилу — на двусторонних подходах, где веера из въезда и
+    // съезда в OSM нет: краска и колея подхода рвутся на их длину
+    let splitters = gores::splitters::splitters(&drawn, &ribbon, prepared.rings());
+    junctions.add_splitters(&splitters);
+    RoadSkeleton {
+        map,
+        style: *style,
+        shape: *shape,
+        prepared,
+        stations,
+        islands,
+        junctions,
+        turns,
+        splitters,
+    }
+}
+
+/// Сборка одной ступени обочин из общего скелета: обочинные куски и укладка
+/// — то, что у каждой ступени своё. Всё остальное — [`road_skeleton`].
+pub fn build_roads_from(skeleton: &RoadSkeleton<'_>, verge: VergeZoomBucket) -> RoadBuild {
+    let RoadSkeleton {
+        map,
+        style,
+        shape,
+        prepared,
+        stations,
+        islands,
+        junctions,
+        turns,
+        splitters,
+    } = skeleton;
+    let map = *map;
+    let style = *style;
+    let shape = *shape;
     // ── Слои и накопители ── куда кладут фазы ниже: строители слоёв,
     // мосты, стоянки, краска и колея
     let started = std::time::Instant::now();
@@ -552,42 +669,19 @@ pub fn build_roads(
     let mut grounds = lots::Grounds::of(map);
 
     // ── Нарисованная сеть ──
-    // Дороги так, как они рисуются (`roads/drawn.rs`): переезд через тротуар —
-    // асфальтом проезда, а не песочной дорожкой, дуга кольца — сечением всего
-    // кольца; узлы, оси улиц, стежки, клинья и слияния — там же. Ступень зума
-    // обочин — с собой: «какие обочины рисуются» — вопрос той же подготовки
-    let prepared = Drawn::new(map, &style, &shape, verge);
+    // Скелет сети — подготовка, станции, островки узлов, узлы с краской,
+    // траектории, островки подходов — собран в скелете (`road_skeleton`): у
+    // ступеней он общий. Здесь только обочинные куски и укладка.
     let nodes = prepared.nodes();
     let drawn = prepared.roads();
     // узловые оси — скругления, слияния, карманы, станции штрихов, полотно
     // трамвая: их торцы стоят в точках OSM
     let nodal = prepared.axes(Axis::Nodal);
-    // длина улицы у начала каждого way — по ней идут штрихи краски
-    let stations = paint::street_stations(&map.network, &nodal);
     // Скругления кладутся раньше всех лент своего слоя: лента поверх кроет
-    // скругление, а не наоборот, и разметка остаётся целой.
-    let kerb_returns = corners::kerb_returns(&prepared, shape.corner_radius());
-    let islands = corners::small_islands(&prepared);
-    // ── Узлы и скругления ──
-    // Узлы (`roads/junctions.rs`), стежки среди них: базовые разрывы
-    // асфальта, краска узлов, разрывы ряда у бордюра — одним значением. По
-    // ним рвётся краска и гаснет колея асфальта — колея есть и с выключенной
-    // разметкой, так что считаются они всегда. Краска строится и без
-    // разметки: ведущая дорога узла и плечи для траекторий — это колея
-    // асфальта, а не краска
-    let mut junctions = junctions::Junctions::new(
-        &prepared,
-        map,
-        &islands,
-        node_paint::NodePaintStyle {
-            crossings: if style.markings {
-                style.crossings
-            } else {
-                CrossingMode::Off
-            },
-            stop_lines: style.markings && style.stop_lines,
-        },
-    );
+    // скругление, а не наоборот, и разметка остаётся целой. Ступень — с
+    // собой: скругления обочин — вопрос ступени
+    let kerb_returns = corners::kerb_returns(prepared, shape.corner_radius(), verge);
+    // ── Узлы и скругления ── узлы собраны в скелете, здесь только читаются
     // газоны обочин и мощение вокруг них — для лоскутов (`roads/scraps.rs`):
     // угол газона — газон, мощение собирается после лент
     let mut scraps = scraps::Scraps::default();
@@ -637,12 +731,6 @@ pub fn build_roads(
     // оси ленты, со стежками — до дороги, до которой OSM торец не довёл:
     // асфальт, краска, траектории, острова
     let ribbon = prepared.axes(Axis::Ribbon);
-    // траектории манёвров (`roads/turns.rs`) — колея в узле
-    let turns = turns::Turns::new(
-        &prepared,
-        junctions.node_paint().junctions(),
-        map.traffic_side,
-    );
     // Широкие улицы поверх узких — см. доку модуля; ведущая узла — поверх
     // всех: её колея идёт через узел, и примыкание шире неё не должно её
     // закрыть.
@@ -676,11 +764,8 @@ pub fn build_roads(
     let ring_lawns = ring_island_lawns(&ring_lawn_islands);
     let ring_grass = ring_island_grass(&ring_lawn_islands, &map.grass);
     let mut gores = gores::Gores::of(&gore_roads, &ring_lawn_islands);
-    // островки по правилу — на двусторонних подходах, где веера из въезда и
-    // съезда в OSM нет: краска и колея подхода рвутся на их длину
-    let splitters = gores::splitters::splitters(&drawn, &ribbon, prepared.rings());
-    junctions.add_splitters(&splitters);
-    gores.add_splitters(&splitters);
+    // островки подходов — из скелета: они же в разрывах краски узлов
+    gores.add_splitters(splitters);
     // клинья перед носами острых развилок улиц (`corners::fork_gore`)
     gores.add_forks(kerb_returns.fork_gores());
     // пустоты, зажатые проезжими частями, где ничего не замаплено (R20)
@@ -852,6 +937,7 @@ pub fn build_roads(
             &road_bites,
             kerb_returns.butt(index),
             index,
+            verge,
         )
     });
     for (position, &index) in order.iter().enumerate() {

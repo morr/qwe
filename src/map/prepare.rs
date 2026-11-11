@@ -29,7 +29,9 @@ use crate::map::osm::model::MapData;
 use crate::map::osm::{JobState, MapLoadJob};
 use crate::map::parking::ParkingLayout;
 use crate::map::rail::{RAIL_LODS, RailReport, RailZoomBucket, mesh_rails};
-use crate::map::roads::{RoadBuild, RoadStyle, VergeLods, VergeZoomBucket, build_roads};
+use crate::map::roads::{
+    RoadBuild, RoadStyle, VergeLods, VergeZoomBucket, build_roads_from, road_skeleton,
+};
 use crate::map::spawn::{SurfaceReport, mesh_surfaces};
 use crate::map::surface::{LayerMesh, MAP_CHUNK};
 use crate::map::trees::{
@@ -125,6 +127,11 @@ pub fn build_world_meshes(
     }
 
     let map = &*map;
+    // Скелет двух дорожных ступеней: живёт всей сборкой, дорожные потоки
+    // делят его через `get_or_init` — строит тот, что пришёл первым.
+    let skeleton: std::sync::OnceLock<crate::map::roads::RoadSkeleton<'_>> =
+        std::sync::OnceLock::new();
+    let skeleton = &skeleton;
     let lanes = std::thread::scope(|scope| -> Result<_, String> {
         let buildings = scope.spawn(|| {
             timed("buildings", || {
@@ -135,20 +142,19 @@ pub fn build_world_meshes(
                 )
             })
         });
-        // Ступени обочин — по потоку на ступень: сборки независимы (одна и та
-        // же финальная карта, у каждой свои списки), а дорожная дорожка —
-        // самая долгая группа; одной ступени хватает на стену. Порядок ступеней
-        // держит сборка результатов по номеру ступени.
+        // Ступени обочин — по потоку на ступень, над общим скелетом: скелет
+        // сети (подготовка, узлы, краска узлов) у ступеней один, и строит его
+        // тот поток, что пришёл первым (`get_or_init`), вторая ступень ждёт
+        // готовности. Ступенезависимые обочинные куски каждая молотит свои.
+        // Порядок ступеней держит сборка результатов по номеру ступени.
         let roads: Vec<_> = (0..VergeLods::max_zooms().count())
             .map(|step| {
                 scope.spawn(move || {
                     timed(&format!("roads (verge step {step})"), || {
-                        build_roads(
-                            map,
-                            styles.road_style,
-                            styles.road_shape,
-                            VergeZoomBucket::at(step),
-                        )
+                        let skeleton = skeleton.get_or_init(|| {
+                            road_skeleton(map, &styles.road_style, &styles.road_shape)
+                        });
+                        build_roads_from(skeleton, VergeZoomBucket::at(step))
                     })
                 })
             })

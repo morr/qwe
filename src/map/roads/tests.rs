@@ -765,10 +765,8 @@ fn an_outer_corner_sides_lie_on_the_ribbon_butt_edges() {
     let prepared = Drawn::new(
         &map,
         &RoadStyle::default(),
-        &RoadShape::default(),
-        VergeZoomBucket::for_zoom(0.0),
-    );
-    let returns = corners::kerb_returns(&prepared, 1.0);
+        &RoadShape::default());
+    let returns = corners::kerb_returns(&prepared, 1.0, VergeZoomBucket::for_zoom(0.0));
     // торец северного way: кромка веера на нём — вторая сторона веера
     // (справа по ходу луча), узел, полуширина и нахлёст вдоль торцевого звена
     let axis = prepared.axis(1, Axis::Ribbon);
@@ -822,9 +820,7 @@ fn a_zebra_plank_cuts_the_lines_of_crossing_carriageways() {
     let drawn = Drawn::new(
         &map,
         &RoadStyle::default(),
-        &RoadShape::default(),
-        VergeZoomBucket::for_zoom(0.0),
-    );
+        &RoadShape::default());
     let junctions = junctions::Junctions::new(
         &drawn,
         &map,
@@ -1051,9 +1047,7 @@ fn diag_window() {
         let prepared = Drawn::new(
             &map,
             &RoadStyle::default(),
-            &RoadShape::default(),
-            VergeZoomBucket::for_zoom(0.0),
-        );
+            &RoadShape::default());
         for i in 0..prepared.len() {
             let d = prepared.road(i);
             let line = prepared.axis(i, Axis::Ribbon);
@@ -1073,7 +1067,7 @@ fn diag_window() {
                 eprintln!("DIAG   verges={:?} profile={:?}", d.verges, d.verge_profile);
             }
         }
-        let returns = super::corners::kerb_returns(&prepared, 1.0);
+        let returns = super::corners::kerb_returns(&prepared, 1.0, VergeZoomBucket::for_zoom(0.0));
         for (index, merge) in prepared.merges().list.iter().enumerate() {
             if merge.node.distance(at) < r * 2.0 {
                 eprintln!(
@@ -1157,11 +1151,11 @@ fn diag_window() {
         let (at, r) = (Vec2::new(v[0], v[1]), v[2]);
         let style = RoadStyle::default();
         let shape = RoadShape::default();
-        let prepared = Drawn::new(&map, &style, &shape, VergeZoomBucket::for_zoom(0.0));
+        let prepared = Drawn::new(&map, &style, &shape);
         let ribbon: Vec<Vec<Vec2>> = (0..prepared.len())
             .map(|i| prepared.axis(i, Axis::Ribbon).to_vec())
             .collect();
-        let returns = super::corners::kerb_returns(&prepared, shape.corner_radius());
+        let returns = super::corners::kerb_returns(&prepared, shape.corner_radius(), VergeZoomBucket::for_zoom(0.0));
         let meadows = super::Meadows::of(&map.parks, &map.grass);
         let mut scraps = super::scraps::Scraps::default();
         // окна газонов и асфальт узлов — тем же укладщиком, что и в
@@ -1193,7 +1187,7 @@ fn diag_window() {
         let road_bites = super::scraps::Bites::of(prepared.nodes(), &prepared.roads());
         for index in 0..prepared.len() {
             let road = prepared.road(index);
-            let mut verged = prepared.verges_drawn(index);
+            let mut verged = prepared.verges_drawn(index, VergeZoomBucket::for_zoom(0.0));
             if let Some(ring) = prepared
                 .rings()
                 .index_of(index)

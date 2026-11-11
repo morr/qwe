@@ -8,7 +8,7 @@ use crate::map::meshing::{butt_direction, ribbon_merge_distance, ribbon_vertices
 use crate::map::osm::RoadClass;
 use crate::map::osm::model::{RoadLine, polyline_length};
 use crate::map::parallel::in_parallel;
-use crate::map::roads::{DrawnPiece, PieceKind};
+use crate::map::roads::{DrawnPiece, PieceKind, VergeZoomBucket};
 use crate::map::spawn::GRASS_COLOR;
 use crate::settings::{
     Z_ALLEY, Z_ROAD, Z_ROAD_VERGE, Z_ROAD_VERGE_LAWN, Z_ROAD_VERGE_YARD, Z_SIDEWALK, Z_UNPAVED_ROAD,
@@ -378,14 +378,16 @@ impl<'a> KerbStreets<'a> {
 /// (`Drawn::is_merged`, `roads/merges.rs`) — плечи одного слияния друг другу
 /// не перекрёсток, ни прямых торцов, ни углов между ними. `scale` —
 /// множитель радиусов по классам (ручка `Corner radius`).
-pub fn kerb_returns(drawn: &Drawn, scale: f32) -> KerbReturns {
+pub fn kerb_returns(drawn: &Drawn, scale: f32, verge_step: VergeZoomBucket) -> KerbReturns {
     let roads = drawn.roads();
     // Сбор лучей — по дорогам в потоках: дорога от дороги не зависит. Вклады
     // сливаются в узлы в порядке дорог — состояние `HashMap` (и порядок
     // обхода узлов ниже) то же, что у серийного сбора.
     let indices: Vec<usize> = (0..roads.len()).collect();
     let mut arms: HashMap<(i32, i32), (Vec2, Vec<Arm>)> = HashMap::new();
-    for contribution in in_parallel(&indices, |&index| road_arms(drawn, &roads, index)) {
+    for contribution in in_parallel(&indices, |&index| {
+        road_arms(drawn, &roads, index, verge_step)
+    }) {
         for (key, node, arm) in contribution {
             arms.entry(key)
                 .or_insert_with(|| (node, Vec::new()))
@@ -426,6 +428,7 @@ fn road_arms<'d>(
     drawn: &'d Drawn,
     roads: &[&'d RoadLine],
     index: usize,
+    verge_step: VergeZoomBucket,
 ) -> Vec<((i32, i32), Vec2, Arm<'d>)> {
     let nodes = drawn.nodes();
     let road = roads[index];
@@ -636,7 +639,11 @@ fn road_arms<'d>(
             // узла — какая она там по месту (`RoadLine::verge_at`)
             let mut verge = [None; 2];
             let scale = polyline_length(&road.points) / total.max(f32::EPSILON);
-            for (side, width) in drawn.verges_drawn(index).into_iter().enumerate() {
+            for (side, width) in drawn
+                .verges_drawn(index, verge_step)
+                .into_iter()
+                .enumerate()
+            {
                 verge[usize::from((side == 0) != forward)] =
                     (width > 0.0).then(|| road.verge_at(side, along * scale));
             }

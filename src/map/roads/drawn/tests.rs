@@ -26,9 +26,7 @@ fn every_vector_is_indexed_by_the_map_roads() {
     let drawn = Drawn::new(
         &map,
         &RoadStyle::default(),
-        &RoadShape::default(),
-        VergeZoomBucket::for_zoom(0.0),
-    );
+        &RoadShape::default());
     assert_eq!(drawn.len(), 2);
     assert_eq!(drawn.roads().len(), 2);
     assert_eq!(drawn.axes(Axis::Nodal).len(), 2);
@@ -57,9 +55,7 @@ fn a_driveway_crossing_is_drawn_as_a_street_of_the_narrower_width() {
     let drawn = Drawn::new(
         &map,
         &RoadStyle::default(),
-        &RoadShape::default(),
-        VergeZoomBucket::for_zoom(0.0),
-    );
+        &RoadShape::default());
     assert_eq!(drawn.stats().crossings, 1);
     assert_eq!(drawn.road(2).class, RoadClass::Street);
     assert_eq!(drawn.road(2).width, 5.0);
@@ -83,9 +79,7 @@ fn stitched_axis_differs_from_nodal_only_at_stitched_ends() {
     let drawn = Drawn::new(
         &map,
         &RoadStyle::default(),
-        &RoadShape::default(),
-        VergeZoomBucket::for_zoom(0.0),
-    );
+        &RoadShape::default());
     assert_eq!(drawn.stats().stitches, 1);
     assert_eq!(drawn.stitched_end(0), [false; 2]);
     assert_eq!(drawn.stitched_end(1), [false, true]);
@@ -359,9 +353,7 @@ fn one_shared_node_pass_feeds_both_base_and_paint() {
         let drawn = Drawn::new(
             &map,
             &RoadStyle::default(),
-            &RoadShape::default(),
-            VergeZoomBucket::for_zoom(0.0),
-        );
+            &RoadShape::default());
         assert_eq!(drawn.stats().crossings, 1, "подмена легла");
         let every = junctions::shared_nodes(&map.roads, pockets::is_row_participant);
         assert_eq!(
@@ -392,9 +384,7 @@ fn row_breaks_ignore_stitches_but_paint_breaks_do_not() {
     let drawn = Drawn::new(
         &map,
         &RoadStyle::default(),
-        &RoadShape::default(),
-        VergeZoomBucket::for_zoom(0.0),
-    );
+        &RoadShape::default());
     assert_eq!(drawn.stats().stitches, 1);
     let junctions = junctions::Junctions::new(
         &drawn,
@@ -547,9 +537,7 @@ fn diag_straight_zigzag() {
     let prepared = Drawn::new(
         &map,
         &RoadStyle::default(),
-        &RoadShape::default(),
-        VergeZoomBucket::for_zoom(0.0),
-    );
+        &RoadShape::default());
     let (min_len, step) = (120.0, 2.0);
     let mut hits = 0;
     for i in 0..prepared.len() {

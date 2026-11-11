@@ -6,6 +6,7 @@ use super::{MedianEnd, Merge, Merges, merge_axis, merge_bands, merge_ramps, merg
 use crate::map::meshing::LaneFrame;
 use crate::map::osm::fixture::street;
 use crate::map::osm::{Highway, MapData, RoadLine, RoadNode, RoadNodeKind};
+use crate::map::roads::VergeZoomBucket;
 use crate::map::roads::corners::kerb_returns;
 use crate::map::roads::drawn::{Axis, Drawn};
 use crate::map::roads::is_carriageway;
@@ -128,9 +129,10 @@ fn a_merge_node_gets_no_square_ends_and_no_outer_corners() {
     let junction = kerb_returns(
         &Drawn::for_test(&map).with_sidewalks(false).without_merges(),
         1.0,
+        VergeZoomBucket::for_zoom(0.0),
     );
     assert!(junction.butt(0)[1] && junction.butt(1)[0] && junction.butt(2)[0]);
-    let merge = kerb_returns(&drawn, 1.0);
+    let merge = kerb_returns(&drawn, 1.0, VergeZoomBucket::for_zoom(0.0));
     for road in 0..3 {
         assert_eq!(merge.butt(road), [false; 2], "{road}");
     }
