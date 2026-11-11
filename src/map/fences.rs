@@ -28,9 +28,6 @@
 
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task, futures::check_ready};
-use i_overlay::core::fill_rule::FillRule;
-use i_overlay::core::overlay_rule::OverlayRule;
-use i_overlay::float::single::SingleFloatOverlay;
 use std::time::{Duration, Instant};
 
 use crate::map::SunOnMap;
@@ -478,7 +475,9 @@ const JOINT_SIDES: usize = 8;
 /// то же самое, что вырезанные из ограды куски. Кусок — это точки на осевой, а
 /// тень приходит на мост **сбоку**: свип забора, кончившегося у самой кромки,
 /// вытекает из-под его торца на полотно на всю длину тени (при солнце 15° —
-/// семь метров). Обрезать надо площадь, поэтому разность, а не интервал.
+/// семь метров). Обрезать надо площадь, поэтому разность, а не интервал —
+/// тайлами, тем же разложением, что у объединения ниже
+/// ([`shadow::difference_of`]).
 fn push_shadows(
     builder: &mut MeshBuilder,
     pieces: &[(FenceKind, Vec<Vec2>)],
@@ -525,19 +524,7 @@ fn push_shadows(
         }
     }
 
-    let contours = if decks.is_empty() {
-        contours
-    } else {
-        contours
-            .overlay(
-                &decks.outlines(),
-                OverlayRule::Difference,
-                FillRule::NonZero,
-            )
-            .into_iter()
-            .flatten()
-            .collect()
-    };
+    let contours = shadow::difference_of(&contours, &decks.outlines());
     shadow::push_union(builder, &contours, SHADOW_BLUR);
 }
 

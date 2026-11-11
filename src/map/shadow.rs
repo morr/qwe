@@ -27,7 +27,9 @@
 
 use bevy::prelude::*;
 use i_overlay::core::fill_rule::FillRule;
+use i_overlay::core::overlay_rule::OverlayRule;
 use i_overlay::float::simplify::SimplifyShape;
+use i_overlay::float::single::SingleFloatOverlay;
 
 use crate::map::meshing::MeshBuilder;
 use crate::map::{SHADOW_COLOR, shadow_dir, shadow_length_scale};
@@ -119,11 +121,12 @@ pub fn push_union(builder: &mut MeshBuilder, contours: &[Vec<[f32; 2]>], blur: f
 /// тайлам там делиться не о что, а порядок вершин у путей разный.
 const TILED_MIN: usize = 512;
 
-/// Ячейка тайлового union, м. Контуры группируются по клетке **первой точки**
-/// (клетка — та, кто тень отбрасывает), каждая клетка объединяется в своём
-/// потоке, результаты клеток — в одном финальном union. Тень длиннее клетки не
-/// мешает: налегания соседних клеток снимает как раз финальный union, а цена
-/// его — фигуры клеток, которых на порядки меньше, чем контуров на входе.
+/// Ячейка тайлового union и тайловой разности, м. Контуры группируются по
+/// клетке **первой точки** (клетка — та, кто тень отбрасывает), каждая клетка
+/// объединяется в своём потоке, результаты клеток — в одном финальном union.
+/// Тень длиннее клетки не мешает: налегания соседних клеток снимает как раз
+/// финальный union, а цена его — фигуры клеток, которых на порядки меньше,
+/// чем контуров на входе.
 const TILE: f32 = 256.0;
 
 /// Объединённые свипы: один проход на малом входе, тайлами на городском.
@@ -157,6 +160,117 @@ fn union_of(contours: &[Vec<[f32; 2]>]) -> Vec<Vec<Vec<[f32; 2]>>> {
     .flatten()
     .collect();
     tiled.simplify_shape(FillRule::NonZero)
+}
+
+/// Вычитание `clips` из `subjects` — тем же разложением, что union.
+///
+/// Разность, стоящая **до** union, в тайлы `push_union` не попадает: у
+/// заборов (Париж) один `Difference` по всем свипам города — 48 тыс.
+/// контуров — стоит 2.1 с из 2.2 стадии теней, дороже самого union.
+/// Тождество `(A−B)∪(C−B) = (A∪C)−B` режет её теми же клетками: клетка
+/// делает `(⋃клетки) − клипы` — разность с теми клипами, чья рамка задевает
+/// рамку её свипов (разность с непересекающейся капсулой тождественна), а
+/// без задетых клипов это просто union клетки, как у клеток [`union_of`].
+/// Пропускать контуры клетки без слияния нельзя: налегания свипов, которые
+/// раньше снимал один большой `Difference`, переехали бы в union и съели
+/// выигрыш. Рамки заведомо шире геометрии (свип вытекает из своей клетки),
+/// ложный «задел» только запускает лишний оверлей, а не портит результат.
+/// Слитые результаты клеток едут во вход union как раньше. Малый вход
+/// (тесты, витрины) — прежний однопроходный путь, как у [`union_of`].
+pub(crate) fn difference_of(
+    subjects: &[Vec<[f32; 2]>],
+    clips: &[Vec<[f32; 2]>],
+) -> Vec<Vec<[f32; 2]>> {
+    if clips.is_empty() {
+        return subjects.to_vec();
+    }
+    if subjects.len() <= TILED_MIN {
+        let clips = clips.to_vec();
+        return subjects
+            .to_vec()
+            .overlay(&clips, OverlayRule::Difference, FillRule::NonZero)
+            .into_iter()
+            .flatten()
+            .collect();
+    }
+    use crate::map::parallel::in_parallel;
+
+    let clip_boxes: Vec<[f32; 4]> = clips.iter().map(|ring| ring_box(ring)).collect();
+    // клетка свипов и рамка их общей геометрии: накапливается по ходу группировки
+    let mut by_cell: bevy::platform::collections::HashMap<IVec2, (Vec<usize>, [f32; 4])> =
+        bevy::platform::collections::HashMap::new();
+    for (index, contour) in subjects.iter().enumerate() {
+        let cell = (Vec2::from_array(contour[0]) / TILE).floor().as_ivec2();
+        let (indices, bounds) = by_cell.entry(cell).or_insert_with(|| {
+            (
+                Vec::new(),
+                [
+                    f32::INFINITY,
+                    f32::INFINITY,
+                    f32::NEG_INFINITY,
+                    f32::NEG_INFINITY,
+                ],
+            )
+        });
+        indices.push(index);
+        for &[x, y] in contour {
+            bounds[0] = bounds[0].min(x);
+            bounds[1] = bounds[1].min(y);
+            bounds[2] = bounds[2].max(x);
+            bounds[3] = bounds[3].max(y);
+        }
+    }
+    let mut cells: Vec<(IVec2, Vec<usize>, [f32; 4])> = by_cell
+        .into_iter()
+        .map(|(cell, (indices, bounds))| (cell, indices, bounds))
+        .collect();
+    cells.sort_unstable_by_key(|&(cell, _, _)| (cell.x, cell.y));
+
+    let tiled: Vec<Vec<Vec<[f32; 2]>>> = in_parallel(&cells, |(_, indices, bounds)| {
+        let subject: Vec<Vec<[f32; 2]>> = indices.iter().map(|&i| subjects[i].clone()).collect();
+        let clips: Vec<Vec<[f32; 2]>> = clips
+            .iter()
+            .zip(&clip_boxes)
+            .filter(|&(_, &box_bounds)| boxes_touch(box_bounds, *bounds))
+            .map(|(ring, _)| ring.clone())
+            .collect();
+        if clips.is_empty() {
+            return subject
+                .simplify_shape(FillRule::NonZero)
+                .into_iter()
+                .flatten()
+                .collect();
+        }
+        subject
+            .overlay(&clips, OverlayRule::Difference, FillRule::NonZero)
+            .into_iter()
+            .flatten()
+            .collect()
+    });
+    tiled.into_iter().flatten().collect()
+}
+
+/// Рамка контура: `[min_x, min_y, max_x, max_y]`.
+fn ring_box(ring: &[[f32; 2]]) -> [f32; 4] {
+    let mut bounds = [
+        f32::INFINITY,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        f32::NEG_INFINITY,
+    ];
+    for &[x, y] in ring {
+        bounds[0] = bounds[0].min(x);
+        bounds[1] = bounds[1].min(y);
+        bounds[2] = bounds[2].max(x);
+        bounds[3] = bounds[3].max(y);
+    }
+    bounds
+}
+
+/// Пересекаются ли рамки — прикосновение тоже «да»: лишний оверлей дешевле
+/// пропущенного выреза.
+fn boxes_touch(a: [f32; 4], b: [f32; 4]) -> bool {
+    a[0] <= b[2] && b[0] <= a[2] && a[1] <= b[3] && b[1] <= a[3]
 }
 
 #[cfg(test)]
