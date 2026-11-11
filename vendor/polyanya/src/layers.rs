@@ -1,7 +1,7 @@
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use glam::{vec2, Vec2};
+use glam::{Vec2, vec2};
 use rstar::RTree;
 use smallvec::SmallVec;
 
@@ -9,9 +9,9 @@ use smallvec::SmallVec;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    BoundedPolygon, MeshError, Polygon, Vertex,
     helpers::Vec2Helper,
     instance::{EdgeSide, U32Layer},
-    BoundedPolygon, MeshError, Polygon, Vertex,
 };
 
 /// QWE: обе предвычисленные оптимизации слоя как значения — результат
@@ -555,10 +555,10 @@ mod tests {
 
     #[cfg(feature = "detailed-layers")]
     use crate::helpers::line_intersect_segment;
-    use crate::{instance::U32Layer, Coords, Layer, Mesh, Path, Polygon, SearchNode, Vertex};
+    use crate::{Coords, Layer, Mesh, Path, Polygon, SearchNode, Vertex, instance::U32Layer};
     #[cfg(feature = "detailed-layers")]
     use glam::IVec2;
-    use glam::{vec2, Vec2};
+    use glam::{Vec2, vec2};
 
     fn mesh_u_grid() -> Mesh {
         let main_layer = Layer {
@@ -960,12 +960,13 @@ mod tests {
     #[test]
     fn from_one_to_the_other() {
         let mesh = mesh_overlapping_layers();
-        let path = dbg!(mesh
-            .path(
+        let path = dbg!(
+            mesh.path(
                 Coords::on_layer(vec2(2.5, 1.5), 0),
                 Coords::on_layer(vec2(2.5, 1.5), 1),
             )
-            .unwrap());
+            .unwrap()
+        );
         assert_eq!(
             path.path,
             vec![vec2(3.0, 1.0,), vec2(4.0, 1.0,), vec2(2.5, 1.5,),],
@@ -980,12 +981,13 @@ mod tests {
             ],
         );
 
-        let path_back = dbg!(mesh
-            .path(
+        let path_back = dbg!(
+            mesh.path(
                 Coords::on_layer(vec2(2.5, 1.5), 1),
                 Coords::on_layer(vec2(2.5, 1.5), 0),
             )
-            .unwrap());
+            .unwrap()
+        );
         assert_eq!(
             path_back.path,
             vec![vec2(4.0, 1.0,), vec2(3.0, 1.0,), vec2(2.5, 1.5,),],

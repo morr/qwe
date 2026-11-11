@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use glam::Vec2;
 
-use crate::{instance::U32Layer, Mesh};
+use crate::{Mesh, instance::U32Layer};
 
 /// QWE: наружу — [`Mesh::stitch_mark_and_append`] принимает список стежков,
 /// и qwe собирает его сам (`navigation/polymesh/stitch.rs`).
@@ -259,7 +259,7 @@ impl Mesh {
 #[cfg(test)]
 mod tests {
     use crate::{Layer, Mesh, Path, Polygon, Triangulation, Vertex};
-    use glam::{vec2, Vec2};
+    use glam::{Vec2, vec2};
 
     fn basic_mesh_with_layers() -> Mesh {
         Mesh {

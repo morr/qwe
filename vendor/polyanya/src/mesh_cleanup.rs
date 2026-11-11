@@ -4,7 +4,7 @@ use glam::Vec2;
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use crate::{instance::U32Layer, Layer, Mesh};
+use crate::{Layer, Mesh, instance::U32Layer};
 
 /// Order two directions by their angle from the `+Y` axis, counter-clockwise, over
 /// `(-PI, PI]` -- the same order as `Vec2::Y.angle_to(direction)`, without the `atan2`.
@@ -27,11 +27,7 @@ fn ccw_from_y(a: Vec2, b: Vec2) -> Ordering {
     // never antipodal, so their cross product is only zero when they are the same.
     fn quadrant(d: Vec2) -> u8 {
         if d.y < 0.0 {
-            if d.x >= 0.0 {
-                0
-            } else {
-                3
-            }
+            if d.x >= 0.0 { 0 } else { 3 }
         } else if d.x > 0.0 {
             1
         } else {
@@ -103,9 +99,8 @@ impl Mesh {
                 + layer.offset;
             center - vertex_coords
         };
-        polygons.sort_unstable_by(|a, b| {
-            ccw_from_y(direction_to_center(a), direction_to_center(b))
-        });
+        polygons
+            .sort_unstable_by(|a, b| ccw_from_y(direction_to_center(a), direction_to_center(b)));
         polygons.dedup_by_key(|p| *p);
         if polygons.is_empty() {
             return vec![u32::MAX];
@@ -125,8 +120,7 @@ impl Mesh {
                 .flat_map(|[pair0, pair1]| {
                     let layer0 = &self.layers[pair0.layer() as usize];
                     let layer1 = &self.layers[pair1.layer() as usize];
-                    let mut polygon0 =
-                        layer0.polygons[pair0.polygon() as usize].vertices.clone();
+                    let mut polygon0 = layer0.polygons[pair0.polygon() as usize].vertices.clone();
                     polygon0.reverse();
                     let mut found = false;
                     let Some(previous0) =
@@ -147,20 +141,18 @@ impl Mesh {
                     };
                     let polygon1 = &layer1.polygons[pair1.polygon() as usize].vertices;
                     let mut found = false;
-                    let Some(next1) =
-                        polygon1.iter().cycle().take(polygon1.len() * 2).find(|v| {
-                            if found {
-                                return true;
-                            }
-                            if (layer1.vertices[**v as usize].coords + layer1.offset)
-                                .distance_squared(vertex_coords)
-                                < 0.0001
-                            {
-                                found = true;
-                            }
-                            false
-                        })
-                    else {
+                    let Some(next1) = polygon1.iter().cycle().take(polygon1.len() * 2).find(|v| {
+                        if found {
+                            return true;
+                        }
+                        if (layer1.vertices[**v as usize].coords + layer1.offset)
+                            .distance_squared(vertex_coords)
+                            < 0.0001
+                        {
+                            found = true;
+                        }
+                        false
+                    }) else {
                         return vec![pair0, u32::MAX];
                     };
 
@@ -289,11 +281,7 @@ mod tests {
     /// components are exact, so neither the angle nor the cross product is ambiguous.
     fn reduced_directions() -> Vec<Vec2> {
         fn gcd(a: i32, b: i32) -> i32 {
-            if b == 0 {
-                a
-            } else {
-                gcd(b, a % b)
-            }
+            if b == 0 { a } else { gcd(b, a % b) }
         }
         let mut directions = vec![];
         for x in -8_i32..=8 {
