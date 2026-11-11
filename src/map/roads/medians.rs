@@ -44,6 +44,7 @@ use super::node_paint::{MIN_RUN, PaintBreaks, ZEBRA_LENGTH, Zebra, short_runs};
 use super::{ROAD_COLOR, ROAD_JOIN, RoadJoin, SIDEWALK_COLOR, push_ribbon};
 use crate::map::along::{arclengths, nearest_on_path, place_on_path, tip_of};
 use crate::map::meshing::{Break, MeshBuilder};
+use crate::map::parallel::in_parallel;
 use crate::map::osm::model::{closest_on_segment, polyline_length};
 use crate::map::shapes::{ARC, Shape, contour_area, oriented, point_in_shape, push_shape};
 use crate::map::spawn::GRASS_COLOR;
@@ -84,25 +85,25 @@ pub struct MedianInputs<'a> {
     pub zebras: &'a [Zebra],
     /// Полуширина половины, м, как она рисуется: оси половин лежат на неё
     /// за кромками разделительной ([`crossing_breaks`]).
-    pub half: &'a dyn Fn(usize) -> f32,
+    pub half: &'a (dyn Fn(usize) -> f32 + Sync),
     /// Ручка разметки: без неё двойной сплошной и торцов середины нет.
     pub markings: bool,
     /// Узел чистого слияния — не перекрёсток: двойная сплошная доходит до
     /// него (`Merges::is_pure_node`).
-    pub pure_merge: &'a dyn Fn(Vec2) -> bool,
+    pub pure_merge: &'a (dyn Fn(Vec2) -> bool + Sync),
     /// Куски середины, до которых доходит двойная сплошная у направляющих
     /// островков колец (`Gores::reach`).
-    pub reach_gores: &'a dyn Fn(&[Vec2]) -> Vec<Vec<Vec2>>,
+    pub reach_gores: &'a (dyn Fn(&[Vec2]) -> Vec<Vec<Vec2>> + Sync),
     /// Улица сети, которой принадлежит половина (`RoadNetwork::street_of`).
-    pub street_of: &'a dyn Fn(usize) -> Option<usize>,
+    pub street_of: &'a (dyn Fn(usize) -> Option<usize> + Sync),
     /// Проезжая часть, что замыкает зазор впереди торца разделительной:
     /// длина по лучу от торца по ходу до оси первой из тех, что сходятся в
     /// узлы половин `[usize; 2]` и пересекают луч не дальше заданного, м
     /// ([`closing_reach`]). Торец в кармане — [`end_caps`].
-    pub closer: &'a dyn Fn([usize; 2], Vec2, Vec2, f32) -> Option<f32>,
+    pub closer: &'a (dyn Fn([usize; 2], Vec2, Vec2, f32) -> Option<f32> + Sync),
     /// Половина — настил моста (`RoadLine::bridge`): мощёная разделительная
     /// двух настилов кладётся в слой настилов, а не улиц под ними (R30).
-    pub on_bridge: &'a dyn Fn(usize) -> bool,
+    pub on_bridge: &'a (dyn Fn(usize) -> bool + Sync),
 }
 
 /// Что разделительные положили и что оставили вызывающему.
@@ -138,6 +139,19 @@ impl MedianDrawing {
     }
 }
 
+/// Вклад одной разделительной ([`draw`]): её куски слоёв и списки. Вклады
+/// считаются по потокам и сливаются в порядке разделительных — порядок
+/// треугольников и списков тот же, что у серийной укладки.
+struct MedianPart {
+    streets: MeshBuilder,
+    sidewalks: MeshBuilder,
+    grass: MeshBuilder,
+    decks: MeshBuilder,
+    drawing: MedianDrawing,
+    lawn_pairs: Vec<[Option<usize>; 2]>,
+    lines: Vec<([Option<usize>; 2], Vec<Vec<Vec2>>, Vec<Break>, bool)>,
+}
+
 /// Разделительные всех пар: асфальт и полотно — в `streets` до лент половин,
 /// под ними; газон — бордюром в `sidewalks`, травой в `grass` и асфальтом
 /// между кромками, что не газон, в `streets`. Двойную сплошную не красит —
@@ -156,11 +170,6 @@ pub fn draw(
     grass: &mut MeshBuilder,
     decks: &mut MeshBuilder,
 ) -> MedianDrawing {
-    let mut drawing = MedianDrawing::default();
-    // пара улиц каждого контура `lawn_kerbs` и двойные сплошные асфальтовых
-    // разделительных, отложенные до носов газонов
-    let mut lawn_pairs: Vec<[Option<usize>; 2]> = Vec::new();
-    let mut lines = Vec::new();
     // торцы трамвайных полотен — разрывы для газона рядом: полотно и газон
     // одной пары улиц встречаются торец в торец
     let bed_ends: Vec<Break> = pairs
@@ -170,7 +179,23 @@ pub fn draw(
         .flat_map(bed_ends)
         .flatten()
         .collect();
-    for median in pairs.medians() {
+    // Разделительные друг от друга не зависят — входы только читаются, —
+    // поэтому считаются по потокам; вклады сливаются в порядке
+    // разделительных, и порядок треугольников в слоях и всех списков тот же,
+    // что у серийной укладки. Свои сборщики слоёв у вклада: раскладки полос
+    // каждая укладка этого прохода ставит себе сама ([`push_paved`],
+    // [`push_bed`], [`push_caps`]), а полигоны кладутся через [`push_shape`],
+    // который состояние билдера не читает.
+    let parts = in_parallel(pairs.medians(), |median| {
+        let mut drawing = MedianDrawing::default();
+        let mut streets = MeshBuilder::with_surface_coords();
+        let mut sidewalks = MeshBuilder::with_surface_coords();
+        let mut grass = MeshBuilder::with_surface_coords();
+        let mut decks = MeshBuilder::with_surface_coords();
+        // пара улиц каждого контура `lawn_kerbs` и двойные сплошные
+        // асфальтовых разделительных, отложенные до носов газонов
+        let mut lawn_pairs: Vec<[Option<usize>; 2]> = Vec::new();
+        let mut lines = Vec::new();
         let [first, second] = median.roads();
         // оси половин — на их полуширины за кромками разделительной
         let halves = median.roads().map(|road| (inputs.half)(road));
@@ -190,7 +215,7 @@ pub fn draw(
         let pair = median.roads().map(|road| (inputs.street_of)(road));
         if median.is_paved() {
             let on_deck = median.roads().iter().all(|&road| (inputs.on_bridge)(road));
-            let fill: &mut MeshBuilder = if on_deck { &mut *decks } else { &mut *streets };
+            let fill: &mut MeshBuilder = if on_deck { &mut decks } else { &mut streets };
             // полотно — внутренние полосы половин до середины; узкая
             // разделительная — полосой асфальта во всю свою ширину
             if median.carries_tram() {
@@ -223,7 +248,7 @@ pub fn draw(
                 // кладётся, когда известны носы газонов ([`reach_nose`])
                 lines.push((pair, runs, painted, on_deck));
             }
-            push_caps(streets, caps, &[]);
+            push_caps(&mut streets, caps, &[]);
             drawing.paved.push(median);
         } else {
             let mut breaks = breaks;
@@ -236,14 +261,14 @@ pub fn draw(
             breaks.extend(crossing_breaks(&median, halves, [&near_rest, &far_rest]));
             let crossings = facing_zebras(&median, [&near, &far]);
             let kerbs = push_lawn(
-                sidewalks,
-                grass,
-                streets,
+                &mut sidewalks,
+                &mut grass,
+                &mut streets,
                 &median,
                 [&breaks, &crossings],
                 [SIDEWALK_COLOR, GRASS_COLOR, ROAD_COLOR].map(|color| color.to_linear()),
             );
-            push_caps(streets, caps, &kerbs);
+            push_caps(&mut streets, caps, &kerbs);
             for point in kerbs.iter().flatten().flatten() {
                 drawing
                     .ends
@@ -252,6 +277,31 @@ pub fn draw(
             lawn_pairs.extend(kerbs.iter().map(|_| pair));
             drawing.lawn_kerbs.extend(kerbs);
         }
+        MedianPart {
+            drawing,
+            streets,
+            sidewalks,
+            grass,
+            decks,
+            lawn_pairs,
+            lines,
+        }
+    });
+    let mut drawing = MedianDrawing::default();
+    // пара улиц каждого контура `lawn_kerbs` и двойные сплошные асфальтовых
+    // разделительных, отложенные до носов газонов
+    let mut lawn_pairs: Vec<[Option<usize>; 2]> = Vec::new();
+    let mut lines = Vec::new();
+    for part in parts {
+        streets.append(&part.streets);
+        sidewalks.append(&part.sidewalks);
+        grass.append(&part.grass);
+        decks.append(&part.decks);
+        drawing.ends.extend(part.drawing.ends);
+        drawing.paved.extend(part.drawing.paved);
+        drawing.lawn_kerbs.extend(part.drawing.lawn_kerbs);
+        lawn_pairs.extend(part.lawn_pairs);
+        lines.extend(part.lines);
     }
     // двойная сплошная асфальтовой — до носа газона той же пары
     for (pair, runs, painted, on_deck) in lines {
