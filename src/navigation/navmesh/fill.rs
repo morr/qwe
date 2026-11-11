@@ -11,7 +11,7 @@ use bevy::prelude::*;
 
 use super::Navmesh;
 use crate::grid::{grid_size, navtile_size};
-use crate::map::footprint::{distance_to_polyline, fence_gaps};
+use crate::map::footprint::{FenceGapCache, distance_to_polyline};
 use crate::map::grid::Grid;
 use crate::map::osm::model::{MapData, closest_on_segment, distance_to_segment, water_line_caps};
 
@@ -38,6 +38,10 @@ impl Navmesh {
     /// перекрыт мостом.
     pub fn fill_from_mapdata(&mut self, map: &MapData) {
         self.fill_base(map);
+        // основа до оград едет калиткам (`open_sealed_fences` кладёт ограды
+        // на неё в каждом раунде): копия passable на этом месте на два порядка
+        // дешевле её повторной растеризации
+        self.base_scratch = Some(self.passable.clone());
         self.fill_fences(map);
         self.carve_passages(map);
     }
@@ -46,6 +50,9 @@ impl Navmesh {
     /// стены. Ограды и арки идут поверх неё, и [`Self::open_sealed_fences`]
     /// перекладывает их на эту же основу, не заливая город заново.
     pub(super) fn fill_base(&mut self, map: &MapData) {
+        // новая карта — чужие и дорожный индекс проёмов, и скретч основы
+        self.fence_cache = None;
+        self.base_scratch = None;
         // сетка переживает смену города: без сброса на новой карте остались
         // бы дома и прунинг старой. Здесь же подхватывается текущий размер
         // навтайла — дефолтная аллокация при `init_resource` сделана до
@@ -249,10 +256,20 @@ impl Navmesh {
     /// Диагональ — тот же запас на блуждание тайловых центров, что у прорезки
     /// настила моста.
     pub(super) fn fill_fences(&mut self, map: &MapData) {
-        let gaps = fence_gaps(&map.fences, &map.roads);
+        if map.fences.is_empty() {
+            return;
+        }
+        let mut cache = self
+            .fence_cache
+            .take()
+            .unwrap_or_else(|| FenceGapCache::build(&map.fences, &map.roads));
+        // калитки только растут: пересобрать списки проёмов тех оград, у
+        // которых они выросли, — дорожная половина не меняется
+        cache.refresh(&map.fences);
+        let gaps = cache.gaps();
         let margin = self.tile_size * SQRT_2;
         let mut blocked: Vec<usize> = Vec::new();
-        for (fence, gaps) in map.fences.iter().zip(&gaps) {
+        for (fence, gaps) in map.fences.iter().zip(gaps) {
             let band = fence.band();
             let tile_size = self.tile_size;
             self.visit_polyline(&band.line, band.width, &mut |grid, x, y| {
@@ -268,6 +285,7 @@ impl Navmesh {
         for index in blocked {
             self.passable[index] = false;
         }
+        self.fence_cache = Some(cache);
     }
 }
 

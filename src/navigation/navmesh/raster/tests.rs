@@ -91,6 +91,8 @@ fn half_scale_navmesh(side: i32) -> Navmesh {
         passable: vec![true; (grid_size.x * grid_size.y) as usize],
         grid_size,
         tile_size: navtile_size() / 2.0,
+        fence_cache: None,
+        base_scratch: None,
     }
 }
 

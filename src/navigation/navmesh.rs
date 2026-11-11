@@ -21,6 +21,7 @@ use bevy::prelude::*;
 
 pub use self::reach::GatesAndPrune;
 use crate::grid::{grid_size, navtile_size};
+use crate::map::footprint::FenceGapCache;
 
 /// Множитель эвристики — та же шкала, что и стоимость шага
 /// ([`Navmesh::successors`]).
@@ -40,14 +41,35 @@ pub const COST_MULTIPLIER: f32 = 100.0;
 ///
 /// `Clone` — для снапшота под постройку иерархии northstar: копия сетки
 /// стоит один memcpy, а чтение оригинала под локом заняло бы все ~10 с
-/// постройки (см. `northstar::start_northstar_build`).
-#[derive(Clone)]
+/// постройки (см. `northstar::start_northstar_build`). Копируется только
+/// сетка: скретчи заливки (`fence_cache`) — достояние владельца, снапшоту
+/// и основе калиток от них ничего не нужно.
 pub struct Navmesh {
     passable: Vec<bool>,
     /// Размер сетки в тайлах на момент заливки.
     pub grid_size: IVec2,
     /// Размер тайла в метрах на момент заливки.
     pub tile_size: f32,
+    /// Дорожный индекс и проёмы оград между раундами калиток. Скретч заливки:
+    /// сбрасывается в `fill_base`, строится и обновляется в `fill_fences`
+    /// (fill.rs), выбрасывается в конце [`Self::open_gates_and_prune`].
+    pub(super) fence_cache: Option<FenceGapCache>,
+    /// Основа сетки до оград (`passable` сразу после `fill_base`), на ней
+    /// калитки перекладывают ограды в каждом раунде. Тот же скретч, та же
+    /// жизнь, что у `fence_cache`; без него калитки считают основу сами.
+    pub(super) base_scratch: Option<Vec<bool>>,
+}
+
+impl Clone for Navmesh {
+    fn clone(&self) -> Self {
+        Self {
+            passable: self.passable.clone(),
+            grid_size: self.grid_size,
+            tile_size: self.tile_size,
+            fence_cache: None,
+            base_scratch: None,
+        }
+    }
 }
 
 impl Default for Navmesh {
@@ -57,6 +79,8 @@ impl Default for Navmesh {
             passable: vec![true; (grid_size.x * grid_size.y) as usize],
             grid_size,
             tile_size: navtile_size(),
+            fence_cache: None,
+            base_scratch: None,
         }
     }
 }

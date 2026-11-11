@@ -206,6 +206,11 @@ impl Navmesh {
 
         let started = std::time::Instant::now();
         let pruned = self.prune_unreachable(portal);
+        // скретч пары «калитки, затем прунинг» больше не нужен: следующий
+        // fill_base соберёт его заново, а тащить за миром дорожный индекс
+        // проёмов и копию основы — копить мусор между городами
+        self.fence_cache = None;
+        self.base_scratch = None;
         GatesAndPrune {
             pruned,
             prune_time: started.elapsed(),

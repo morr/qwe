@@ -7,8 +7,7 @@ use std::f32::consts::SQRT_2;
 use bevy::prelude::*;
 
 use super::Navmesh;
-use super::fill::closest_point_on_polyline;
-use crate::map::footprint::{FENCE_GATE_WIDTH, StreetEdges};
+use crate::map::footprint::{FENCE_GATE_WIDTH, FenceIndex, StreetEdges};
 use crate::map::osm::model::MapData;
 
 /// Отрезанный оградой карман без дверей получает калитку, только если он не
@@ -52,7 +51,15 @@ impl Navmesh {
             return 0;
         }
         let mut base = self.clone();
-        base.fill_base(map);
+        // основа до оград уже посчитана заливкой: копия её `passable` на два
+        // порядка дешевле повторной растеризации воды, зданий и стен. Ручные
+        // сборки (аудиты, тесты), миновавшие `fill_from_mapdata`, считают
+        // основу сами — прежний путь
+        if let Some(passable) = self.base_scratch.take() {
+            base.passable = passable;
+        } else {
+            base.fill_base(map);
+        }
         let mut bare = base.clone();
         bare.carve_passages(map);
         let pocket_min_tiles =
@@ -66,6 +73,7 @@ impl Navmesh {
         let fenced = |grid: &Self, index: usize| !grid.passable[index] && bare.passable[index];
         let limit = self.tile_size * SQRT_2;
         let streets = StreetEdges::build(&map.roads);
+        let fences = FenceIndex::build(&map.fences);
 
         let mut reachable = vec![false; self.passable.len()];
         self.flood(&self.passable, &mut reachable, vec![start]);
@@ -129,7 +137,7 @@ impl Navmesh {
 
             let mut added: Vec<Vec2> = Vec::new();
             for tile in gate_tiles {
-                let Some((fence, at)) = nearest_fence_point(map, self.index_center(tile), limit)
+                let Some((fence, at)) = fences.nearest(&map.fences, self.index_center(tile), limit)
                 else {
                     continue;
                 };
@@ -157,7 +165,7 @@ impl Navmesh {
             // калитки только открывают: заливка оград поверх той же основы
             // даёт сетку, где проходимого стало больше и ничего не закрылось,
             // поэтому достижимость дорастает от калиток, а не считается заново
-            *self = base.clone();
+            self.passable.copy_from_slice(&base.passable);
             self.fill_fences(map);
             self.carve_passages(map);
             self.extend_reachable(&mut reachable, &added, FENCE_GATE_WIDTH / 2.0 + limit);
@@ -180,19 +188,6 @@ impl Navmesh {
             })
             .collect()
     }
-}
-
-/// Ближайшая к `point` точка ограды и номер ограды — не дальше диагонали
-/// навтайла (`limit`): тайл, для которого ищется калитка, лежит на заборе по
-/// построению.
-fn nearest_fence_point(map: &MapData, point: Vec2, limit: f32) -> Option<(usize, Vec2)> {
-    map.fences
-        .iter()
-        .enumerate()
-        .filter(|(_, fence)| fence.points.len() >= 2)
-        .map(|(index, fence)| (index, closest_point_on_polyline(point, &fence.points)))
-        .filter(|(_, at)| at.distance(point) <= limit)
-        .min_by(|a, b| a.1.distance(point).total_cmp(&b.1.distance(point)))
 }
 
 #[cfg(test)]

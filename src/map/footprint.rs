@@ -275,107 +275,172 @@ pub fn fence_gaps(fences: &[FenceLine], roads: &[RoadLine]) -> Vec<Vec<FenceGap>
     if fences.is_empty() {
         return Vec::new();
     }
-    // отрезки дорог по ячейкам своих коробок: дорог десятки тысяч, оград сотни,
-    // и перебор пар «забор × дорога» мерил бы расстояния впустую
-    let mut cells: Grid<(u32, u32)> = Grid::new(GAP_CELL);
-    for (road_index, road) in roads.iter().enumerate() {
-        if road.bridge {
-            continue;
+    FenceGapCache::build(fences, roads).into_gaps()
+}
+
+/// Дорожная половина проёмов оград — то, что от калиток не зависит, — вместе
+/// со слитым списком проёмов каждой ограды. Собирается один раз на заливку
+/// ([`Navmesh::fill_from_mapdata`]) и переиспользуется раундами калиток
+/// ([`Navmesh::open_sealed_fences`]): каждая калитка растит список проёмов
+/// своей ограды, а пересборка сетки всех дорог и повторная детекция по всем
+/// оградам на каждый раунд стоили гейтам больше половины секунды (запись 26).
+///
+/// Ответ тот же, что у разовой сборки [`fence_gaps`], байт в байт: дорожные
+/// проёмы детектируются тем же циклом один раз ([`Self::detect`]), а слияние
+/// повторяет исходный порядок [`push_gap`] — калитки ограды первыми, дорожные
+/// проёмы поверх, в порядке детекции.
+pub struct FenceGapCache {
+    /// Отрезки дорог по ячейкам своих коробок: дорог десятки тысяч, оград
+    /// сотни, и перебор пар «забор × дорога» мерил бы расстояния впустую.
+    cells: Grid<(u32, u32)>,
+    loose: Vec<[bool; 2]>,
+    /// Дорожные проёмы каждой ограды — в порядке детекции, без калиток.
+    crossings: Vec<Vec<FenceGap>>,
+    /// Слитые проёмы: калитки ограды первыми, дорожные поверх.
+    merged: Vec<Vec<FenceGap>>,
+    /// Длина `gates` каждой ограды на момент слияния: выросла — слить заново.
+    gate_lens: Vec<usize>,
+}
+
+impl FenceGapCache {
+    pub fn build(fences: &[FenceLine], roads: &[RoadLine]) -> Self {
+        let mut cells: Grid<(u32, u32)> = Grid::new(GAP_CELL);
+        for (road_index, road) in roads.iter().enumerate() {
+            if road.bridge {
+                continue;
+            }
+            // коробка растёт на столько, на сколько отрезок вообще может открыть
+            // проём: полуширина у пересечения, [`GAP_END_REACH`] у торца
+            let grown = road.width.max(GAP_END_REACH);
+            for (segment, pair) in road.points.windows(2).enumerate() {
+                cells.insert_segment(pair[0], pair[1], grown, (road_index as u32, segment as u32));
+            }
         }
-        // коробка растёт на столько, на сколько отрезок вообще может открыть
-        // проём: полуширина у пересечения, [`GAP_END_REACH`] у торца
-        let grown = road.width.max(GAP_END_REACH);
-        for (segment, pair) in road.points.windows(2).enumerate() {
-            cells.insert_segment(pair[0], pair[1], grown, (road_index as u32, segment as u32));
+        let nodes = RoadNodes::new(roads);
+        // висячие торцы — тем же вопросом, что у стежка: в узле нет другой
+        // дороги, несущей это полотно. Кольцевой проезд торцов не имеет
+        let loose: Vec<[bool; 2]> = roads
+            .iter()
+            .enumerate()
+            .map(|(index, road)| {
+                if !stitchable(road) {
+                    return [false; 2];
+                }
+                let last = road.points.len() - 1;
+                if road.points[0] == road.points[last] {
+                    return [false; 2];
+                }
+                let free = |end: Vec2| {
+                    !nodes
+                        .roads_at(end)
+                        .iter()
+                        .any(|&other| other != index && carries(road, &roads[other]))
+                };
+                [free(road.points[0]), free(road.points[last])]
+            })
+            .collect();
+        let mut cache = Self {
+            cells,
+            loose,
+            crossings: Vec::new(),
+            merged: Vec::new(),
+            gate_lens: Vec::new(),
+        };
+        cache.detect(fences, roads);
+        cache
+    }
+
+    /// Слить заново ограды, у которых вырос список калиток: дорожные проёмы
+    /// не пересчитываются, меняется только их слияние с калитками.
+    pub fn refresh(&mut self, fences: &[FenceLine]) {
+        for (((fence, crossings), merged), len) in fences
+            .iter()
+            .zip(&self.crossings)
+            .zip(&mut self.merged)
+            .zip(&mut self.gate_lens)
+        {
+            if fence.gates.len() != *len {
+                *merged = merge_gaps(&fence.gates, crossings);
+                *len = fence.gates.len();
+            }
         }
     }
-    // висячие торцы — тем же вопросом, что у стежка: в узле нет другой дороги,
-    // несущей это полотно. Кольцевой проезд торцов не имеет
-    let nodes = RoadNodes::new(roads);
-    let loose: Vec<[bool; 2]> = roads
-        .iter()
-        .enumerate()
-        .map(|(index, road)| {
-            if !stitchable(road) {
-                return [false; 2];
-            }
-            let last = road.points.len() - 1;
-            if road.points[0] == road.points[last] {
-                return [false; 2];
-            }
-            let free = |end: Vec2| {
-                !nodes
-                    .roads_at(end)
-                    .iter()
-                    .any(|&other| other != index && carries(road, &roads[other]))
-            };
-            [free(road.points[0]), free(road.points[last])]
-        })
-        .collect();
-    fences
-        .iter()
-        .map(|fence| {
-            let mut gaps: Vec<FenceGap> = Vec::new();
-            for &at in &fence.gates {
-                push_gap(
-                    &mut gaps,
-                    FenceGap {
-                        at,
-                        reach: FENCE_GATE_WIDTH / 2.0,
-                    },
-                );
-            }
-            let mut seen: Vec<(u32, u32)> = Vec::new();
-            for pair in fence.points.windows(2) {
-                let (a, b) = (pair[0], pair[1]);
-                let Some(along) = (b - a).try_normalize() else {
-                    continue;
-                };
-                seen.clear();
-                for &key in cells.near_each(a.min(b), a.max(b)) {
-                    if seen.contains(&key) {
-                        continue;
-                    }
-                    seen.push(key);
-                    let road = &roads[key.0 as usize];
-                    let (c, d) = (road.points[key.1 as usize], road.points[key.1 as usize + 1]);
-                    let Some(direction) = (d - c).try_normalize() else {
+
+    pub fn gaps(&self) -> &[Vec<FenceGap>] {
+        &self.merged
+    }
+
+    fn into_gaps(self) -> Vec<Vec<FenceGap>> {
+        self.merged
+    }
+
+    /// Дорожные проёмы каждой ограды и их слияние с её калитками — тем же
+    /// циклом, что у разовой сборки, в том же порядке.
+    fn detect(&mut self, fences: &[FenceLine], roads: &[RoadLine]) {
+        let crossings: Vec<Vec<FenceGap>> = fences
+            .iter()
+            .map(|fence| {
+                let mut crossings: Vec<FenceGap> = Vec::new();
+                let mut seen: Vec<(u32, u32)> = Vec::new();
+                for pair in fence.points.windows(2) {
+                    let (a, b) = (pair[0], pair[1]);
+                    let Some(along) = (b - a).try_normalize() else {
                         continue;
                     };
-                    let sin = along.perp_dot(direction).abs();
-                    let reach = road.width / 2.0 / sin.max(1.0 / GAP_OBLIQUITY_MAX);
-                    if let Some(at) = segment_crossing(a, b, c, d) {
-                        push_gap(&mut gaps, FenceGap { at, reach });
-                    }
-                    let last = road.points.len() - 2;
-                    for (side, (end, is_end, outward)) in [
-                        (c, key.1 == 0, -direction),
-                        (d, key.1 as usize == last, direction),
-                    ]
-                    .into_iter()
-                    .enumerate()
-                    {
-                        if !is_end {
+                    seen.clear();
+                    for &key in self.cells.near_each(a.min(b), a.max(b)) {
+                        if seen.contains(&key) {
                             continue;
                         }
-                        let at = closest_on_segment(end, a, b);
-                        // висячий торец, смотрящий на ограду, достаёт
-                        // до неё через зазор небрежной разметки
-                        let aimed = loose[key.0 as usize][side] && (at - end).dot(outward) > 0.0;
-                        let limit = if aimed {
-                            (road.width / 2.0).max(GAP_END_REACH)
-                        } else {
-                            road.width / 2.0
+                        seen.push(key);
+                        let road = &roads[key.0 as usize];
+                        let (c, d) = (road.points[key.1 as usize], road.points[key.1 as usize + 1]);
+                        let Some(direction) = (d - c).try_normalize() else {
+                            continue;
                         };
-                        if at.distance(end) <= limit {
-                            push_gap(&mut gaps, FenceGap { at, reach });
+                        let sin = along.perp_dot(direction).abs();
+                        let reach = road.width / 2.0 / sin.max(1.0 / GAP_OBLIQUITY_MAX);
+                        if let Some(at) = segment_crossing(a, b, c, d) {
+                            crossings.push(FenceGap { at, reach });
+                        }
+                        let last = road.points.len() - 2;
+                        for (side, (end, is_end, outward)) in [
+                            (c, key.1 == 0, -direction),
+                            (d, key.1 as usize == last, direction),
+                        ]
+                        .into_iter()
+                        .enumerate()
+                        {
+                            if !is_end {
+                                continue;
+                            }
+                            let at = closest_on_segment(end, a, b);
+                            // висячий торец, смотрящий на ограду, достаёт
+                            // до неё через зазор небрежной разметки
+                            let aimed =
+                                self.loose[key.0 as usize][side] && (at - end).dot(outward) > 0.0;
+                            let limit = if aimed {
+                                (road.width / 2.0).max(GAP_END_REACH)
+                            } else {
+                                road.width / 2.0
+                            };
+                            if at.distance(end) <= limit {
+                                crossings.push(FenceGap { at, reach });
+                            }
                         }
                     }
                 }
-            }
-            gaps
-        })
-        .collect()
+                crossings
+            })
+            .collect();
+        self.merged = fences
+            .iter()
+            .zip(&crossings)
+            .map(|(fence, crossings)| merge_gaps(&fence.gates, crossings))
+            .collect();
+        self.crossings = crossings;
+        self.gate_lens = fences.iter().map(|fence| fence.gates.len()).collect();
+    }
 }
 
 /// Проём, совпавший с уже найденным (общий узел двух отрезков забора даёт
@@ -389,6 +454,26 @@ fn push_gap(gaps: &mut Vec<FenceGap>, gap: FenceGap) {
     } else {
         gaps.push(gap);
     }
+}
+
+/// Слитые проёмы одной ограды: калитки ([`FENCE_GATE_WIDTH`]/2) первыми,
+/// дорожные поверх — тот же порядок [`push_gap`], что у разовой сборки
+/// [`fence_gaps`], поэтому итог совпадает с ней байт в байт.
+fn merge_gaps(gates: &[Vec2], crossings: &[FenceGap]) -> Vec<FenceGap> {
+    let mut gaps: Vec<FenceGap> = Vec::new();
+    for &at in gates {
+        push_gap(
+            &mut gaps,
+            FenceGap {
+                at,
+                reach: FENCE_GATE_WIDTH / 2.0,
+            },
+        );
+    }
+    for gap in crossings {
+        push_gap(&mut gaps, *gap);
+    }
+    gaps
 }
 
 /// Доли `t` и `u`, в которых прямые `a→b` и `c→d` пересекаются, — каждая вдоль
@@ -477,6 +562,104 @@ impl<'a> StreetEdges<'a> {
             best = best.min(edge);
         }
         best
+    }
+}
+
+/// Отрезки оград в равномерной сетке — индекс «ближайшая ограда к точке» для
+/// калиток (`Navmesh::open_sealed_fences`): тайл калитки лежит на заборе по
+/// построению, и линейный перебор всех оград города на каждый такой тайл
+/// стоил гейтам 183 мс на первом раунде (запись 26). Тот же приём, что у
+/// [`StreetEdges`] рядом и у лент мостов заливки.
+pub struct FenceIndex {
+    segments: Grid<(u32, u32)>,
+}
+
+impl FenceIndex {
+    pub fn build(fences: &[FenceLine]) -> Self {
+        let mut segments: Grid<(u32, u32)> = Grid::new(GAP_CELL);
+        for (index, fence) in fences.iter().enumerate() {
+            if fence.points.len() < 2 {
+                continue;
+            }
+            for (segment, pair) in fence.points.windows(2).enumerate() {
+                segments.insert_segment(pair[0], pair[1], 0.0, (index as u32, segment as u32));
+            }
+        }
+        Self { segments }
+    }
+
+    /// Ближайшая к `point` точка ограды и номер ограды — не дальше `limit`
+    /// (диагональ навтайла: тайл, для которого ищется калитка, лежит на
+    /// заборе по построению).
+    ///
+    /// Ответ тот же, что у линейного перебора оград, байт в байт: кандидаты —
+    /// те же ограды (у ограды, чья ломаная ближе `limit`, отрезок-минимум
+    /// заведомо в окне запроса, а отрезок в окне ближе `limit` бывает только
+    /// у такой ограды); минимум по ломаной — минимум по её отрезкам, порядок
+    /// `(ограда, отрезок)` воспроизводит обход ломаной для равных дистанций;
+    /// равные дистанции разных оград выигрывает младший номер, как у перебора.
+    pub fn nearest(&self, fences: &[FenceLine], point: Vec2, limit: f32) -> Option<(usize, Vec2)> {
+        let mut candidates: Vec<(u32, u32)> = self
+            .segments
+            .near_each(point - limit, point + limit)
+            .copied()
+            .collect();
+        candidates.sort_unstable();
+        // минимум по ломаной каждой ограды-кандидата: строго меньшая дистанция
+        // сменяет прежнюю, равная — нет (тот же порядок, что у перебора отрезков
+        // ломаной, теперь в порядке (ограда, отрезок))
+        let mut best: Option<(usize, Vec2, f32)> = None; // (ограда, точка, дистанция²)
+        let mut run: Option<(usize, Vec2, f32)> = None;
+        for (key, segment) in candidates {
+            let fence = key as usize;
+            match &run {
+                Some((owner, _, _)) if *owner == fence => {}
+                _ => {
+                    if let Some(found) = run.take() {
+                        best = fold_fence(best, found, point, limit);
+                    }
+                    run = Some((fence, Vec2::ZERO, f32::INFINITY));
+                }
+            }
+            let points = &fences[fence].points;
+            let at = closest_on_segment(
+                point,
+                points[segment as usize],
+                points[segment as usize + 1],
+            );
+            let distance = point.distance_squared(at);
+            if distance < run.as_ref().unwrap().2 {
+                run = Some((fence, at, distance));
+            }
+        }
+        if let Some(found) = run {
+            best = fold_fence(best, found, point, limit);
+        }
+        best.map(|(fence, at, _)| (fence, at))
+    }
+}
+
+/// Свернуть минимум по ломаной одной ограды в общий минимум: дистанция через
+/// `total_cmp`, равные дистанции выигрывает младший номер ограды — как у
+/// `min_by` линейного перебора в порядке оград.
+fn fold_fence(
+    best: Option<(usize, Vec2, f32)>,
+    found: (usize, Vec2, f32),
+    point: Vec2,
+    limit: f32,
+) -> Option<(usize, Vec2, f32)> {
+    let (fence, at, distance) = found;
+    if at.distance(point) > limit {
+        return best;
+    }
+    let distance = distance.sqrt();
+    match best {
+        Some((owner, _, best_distance)) => match best_distance.total_cmp(&distance) {
+            std::cmp::Ordering::Greater => Some((fence, at, distance)),
+            std::cmp::Ordering::Equal if owner > fence => Some((fence, at, distance)),
+            _ => best,
+        },
+        None => Some((fence, at, distance)),
     }
 }
 
