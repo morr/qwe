@@ -412,8 +412,11 @@ pub fn corner_paving_contours(map: &MapData) -> Vec<Vec<Vec2>> {
     let style = RoadStyle::default();
     let shape = RoadShape::default();
     let drawn = Drawn::new(map, &style, &shape);
-    let returns =
-        corners::kerb_returns(&drawn, shape.corner_radius(), VergeZoomBucket::for_zoom(0.0));
+    let returns = corners::kerb_returns(
+        &drawn,
+        shape.corner_radius(),
+        VergeZoomBucket::for_zoom(0.0),
+    );
     let paving = returns.paving();
     paving
         .flat()
@@ -603,7 +606,11 @@ pub fn road_skeleton<'m>(
         },
     );
     // траектории манёвров (`roads/turns.rs`) — колея в узле
-    let turns = turns::Turns::new(&prepared, junctions.node_paint().junctions(), map.traffic_side);
+    let turns = turns::Turns::new(
+        &prepared,
+        junctions.node_paint().junctions(),
+        map.traffic_side,
+    );
     // оси лент — для островков подходов; финал пересчитает их себе сам
     let ribbon = prepared.axes(Axis::Ribbon);
     // островки по правилу — на двусторонних подходах, где веера из въезда и
@@ -1310,12 +1317,7 @@ pub fn build_roads_from(skeleton: &RoadSkeleton<'_>, verge: VergeZoomBucket) -> 
         .collect();
     let (rail_crossings, level_crossings) = mesh_level_crossings(&map.rails, &crossed);
     // ── Газон островов колец ──
-    rings::cover_ring_islands(
-        prepared,
-        &island_insets,
-        &approach_bands,
-        &mut median_grass,
-    );
+    rings::cover_ring_islands(prepared, &island_insets, &approach_bands, &mut median_grass);
     // ── Лента крепостной стены ──
     walls::lay_wall_ribbons(map, &mut wall_ribbons);
 

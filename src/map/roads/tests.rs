@@ -762,10 +762,7 @@ fn an_outer_corner_sides_lie_on_the_ribbon_butt_edges() {
         ),
         fixture::street(vec![across, near], 5.0),
     ]);
-    let prepared = Drawn::new(
-        &map,
-        &RoadStyle::default(),
-        &RoadShape::default());
+    let prepared = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
     let returns = corners::kerb_returns(&prepared, 1.0, VergeZoomBucket::for_zoom(0.0));
     // торец северного way: кромка веера на нём — вторая сторона веера
     // (справа по ходу луча), узел, полуширина и нахлёст вдоль торцевого звена
@@ -817,10 +814,7 @@ fn a_zebra_plank_cuts_the_lines_of_crossing_carriageways() {
         },
         osm_id: None,
     });
-    let drawn = Drawn::new(
-        &map,
-        &RoadStyle::default(),
-        &RoadShape::default());
+    let drawn = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
     let junctions = junctions::Junctions::new(
         &drawn,
         &map,
@@ -1044,10 +1038,7 @@ fn diag_window() {
     if let Ok(spec) = std::env::var("QWE_DIAG") {
         let v: Vec<f32> = spec.split(',').filter_map(|s| s.parse().ok()).collect();
         let (at, r) = (Vec2::new(v[0], v[1]), v[2]);
-        let prepared = Drawn::new(
-            &map,
-            &RoadStyle::default(),
-            &RoadShape::default());
+        let prepared = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
         for i in 0..prepared.len() {
             let d = prepared.road(i);
             let line = prepared.axis(i, Axis::Ribbon);
@@ -1155,7 +1146,11 @@ fn diag_window() {
         let ribbon: Vec<Vec<Vec2>> = (0..prepared.len())
             .map(|i| prepared.axis(i, Axis::Ribbon).to_vec())
             .collect();
-        let returns = super::corners::kerb_returns(&prepared, shape.corner_radius(), VergeZoomBucket::for_zoom(0.0));
+        let returns = super::corners::kerb_returns(
+            &prepared,
+            shape.corner_radius(),
+            VergeZoomBucket::for_zoom(0.0),
+        );
         let meadows = super::Meadows::of(&map.parks, &map.grass);
         let mut scraps = super::scraps::Scraps::default();
         // окна газонов и асфальт узлов — тем же укладщиком, что и в

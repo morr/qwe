@@ -30,7 +30,11 @@ fn map_of(roads: &[RoadLine]) -> MapData {
 /// Скругления с тротуарами по карте (`sidewalks`) или без них.
 fn walked_returns_of(roads: &[RoadLine], sidewalks: bool) -> KerbReturns {
     let map = map_of(roads);
-    kerb_returns(&Drawn::for_test(&map).with_sidewalks(sidewalks), 1.0, VergeZoomBucket::for_zoom(0.0))
+    kerb_returns(
+        &Drawn::for_test(&map).with_sidewalks(sidewalks),
+        1.0,
+        VergeZoomBucket::for_zoom(0.0),
+    )
 }
 
 /// Мощёная дорожка 3.5 м — как [`fixture::footway`], но с покрытием:
@@ -64,7 +68,11 @@ fn a_tile_overlap_covers_the_yard_wedge_at_a_paved_merge() {
             Vec2::new(2.0, -9.0),
         ],
     )];
-    let found = kerb_returns(&Drawn::for_test(&map).with_sidewalks(false), 1.0, VergeZoomBucket::for_zoom(0.0));
+    let found = kerb_returns(
+        &Drawn::for_test(&map).with_sidewalks(false),
+        1.0,
+        VergeZoomBucket::for_zoom(0.0),
+    );
     // наезд один и накрывает щель двора: полосу за кромкой восточной
     // ветви; скругления туда не доходят
     let wedge = Vec2::new(TILE_OVERLAP_REACH * 0.5, -(1.75 + TILE_OVERLAP_WIDTH * 0.5));
@@ -82,7 +90,11 @@ fn a_tile_overlap_covers_the_yard_wedge_at_a_paved_merge() {
     assert!(outline.contains(&Vec2::new(TILE_OVERLAP_REACH, -(1.75 - OUTER_OVERLAP))));
     // без двора наезда нет: обе кромки улицы свободны, полосы не
     // раздулись
-    let bare = kerb_returns(&Drawn::for_test(&map_of(&roads)).with_sidewalks(false), 1.0, VergeZoomBucket::for_zoom(0.0));
+    let bare = kerb_returns(
+        &Drawn::for_test(&map_of(&roads)).with_sidewalks(false),
+        1.0,
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert!(bare.overlaps.is_empty());
     assert_eq!(bare.sidewalks.len(), found.sidewalks.len());
 }
@@ -110,7 +122,11 @@ fn a_crossing_of_paved_paths_draws_no_corner_pieces() {
             Vec2::new(0.0, 50.0),
         ]),
     ];
-    let found = kerb_returns(&Drawn::for_test(&map_of(&roads)).with_sidewalks(false), 1.0, VergeZoomBucket::for_zoom(0.0));
+    let found = kerb_returns(
+        &Drawn::for_test(&map_of(&roads)).with_sidewalks(false),
+        1.0,
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert_eq!(corner_pieces(&found), 0);
     assert!(found.overlaps.is_empty());
 }
@@ -126,7 +142,11 @@ fn a_crossing_of_split_paths_still_draws_nothing() {
         paved_path(vec![Vec2::new(0.0, -50.0), Vec2::ZERO]),
         paved_path(vec![Vec2::ZERO, Vec2::new(0.0, 50.0)]),
     ];
-    let found = kerb_returns(&Drawn::for_test(&map_of(&roads)).with_sidewalks(false), 1.0, VergeZoomBucket::for_zoom(0.0));
+    let found = kerb_returns(
+        &Drawn::for_test(&map_of(&roads)).with_sidewalks(false),
+        1.0,
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert_eq!(corner_pieces(&found), 0);
     assert!(found.overlaps.is_empty());
 }
@@ -143,7 +163,11 @@ fn a_path_joining_a_through_path_draws_no_corner_pieces() {
         ]),
         paved_path(vec![Vec2::new(0.0, 50.0), Vec2::ZERO]),
     ];
-    let found = kerb_returns(&Drawn::for_test(&map_of(&roads)).with_sidewalks(false), 1.0, VergeZoomBucket::for_zoom(0.0));
+    let found = kerb_returns(
+        &Drawn::for_test(&map_of(&roads)).with_sidewalks(false),
+        1.0,
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert_eq!(corner_pieces(&found), 0);
 }
 
@@ -157,7 +181,11 @@ fn an_l_of_two_ending_paths_keeps_one_corner() {
         paved_path(vec![Vec2::new(-50.0, 0.0), Vec2::ZERO]),
         paved_path(vec![Vec2::ZERO, Vec2::new(0.0, 50.0)]),
     ];
-    let found = kerb_returns(&Drawn::for_test(&map_of(&paved)).with_sidewalks(false), 1.0, VergeZoomBucket::for_zoom(0.0));
+    let found = kerb_returns(
+        &Drawn::for_test(&map_of(&paved)).with_sidewalks(false),
+        1.0,
+        VergeZoomBucket::for_zoom(0.0),
+    );
     // пара из двух лучей обходит круг в обе стороны: филет изнутри и
     // наружный веер
     assert_eq!(corner_pieces(&found), 2);
@@ -167,7 +195,11 @@ fn an_l_of_two_ending_paths_keeps_one_corner() {
         paved_path(vec![Vec2::new(-50.0, 0.0), Vec2::ZERO]),
         crate::map::osm::fixture::footway(vec![Vec2::ZERO, Vec2::new(0.0, 50.0)]),
     ];
-    let found = kerb_returns(&Drawn::for_test(&map_of(&mixed)).with_sidewalks(false), 1.0, VergeZoomBucket::for_zoom(0.0));
+    let found = kerb_returns(
+        &Drawn::for_test(&map_of(&mixed)).with_sidewalks(false),
+        1.0,
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert_eq!(corner_pieces(&found), 2);
     assert!(found.sidewalks.is_empty(), "смешанная пара — не плиткой");
     assert_eq!(found.roads.len(), 2);
@@ -196,7 +228,11 @@ fn a_path_arm_with_an_opposite_keeps_its_round_cap() {
         paved_path(vec![Vec2::new(0.0, -50.0), Vec2::ZERO]),
         paved_path(vec![Vec2::ZERO, Vec2::new(0.0, 50.0)]),
     ];
-    let found = kerb_returns(&Drawn::for_test(&map_of(&merge)).with_sidewalks(false), 1.0, VergeZoomBucket::for_zoom(0.0));
+    let found = kerb_returns(
+        &Drawn::for_test(&map_of(&merge)).with_sidewalks(false),
+        1.0,
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert!(!found.butt(1)[1], "у южного плеча есть встречный — шапка");
     assert!(
         !found.butt(2)[0],
@@ -275,7 +311,11 @@ fn at_a_node_of_three_ends_only_the_widest_gets_a_square_cut() {
         paved_path_wide(vec![Vec2::ZERO, Vec2::new(3.0, 10.75)], 2.5),
         paved_path_wide(vec![Vec2::ZERO, Vec2::new(40.0, -9.0)], 3.0),
     ];
-    let found = kerb_returns(&Drawn::for_test(&map_of(&roads)).with_sidewalks(false), 1.0, VergeZoomBucket::for_zoom(0.0));
+    let found = kerb_returns(
+        &Drawn::for_test(&map_of(&roads)).with_sidewalks(false),
+        1.0,
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert!(found.butt(2)[0], "широкая зебра — срез");
     assert!(!found.butt(0)[1], "узкий тротуар — шапка");
     assert!(!found.butt(1)[0], "узкий тротуар — шапка");
@@ -305,7 +345,11 @@ fn no_tile_overlap_where_the_yard_touches_the_node() {
             Vec2::new(0.0, -9.0),
         ],
     )];
-    let found = kerb_returns(&Drawn::for_test(&map).with_sidewalks(false), 1.0, VergeZoomBucket::for_zoom(0.0));
+    let found = kerb_returns(
+        &Drawn::for_test(&map).with_sidewalks(false),
+        1.0,
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert!(
         found.overlaps.is_empty(),
         "двор у самой кромки у узла — наезда нет"
@@ -336,7 +380,11 @@ fn no_tile_overlap_where_the_yard_wedge_is_shallower_than_the_strip() {
             Vec2::new(4.0, -6.0),
         ],
     )];
-    let found = kerb_returns(&Drawn::for_test(&map).with_sidewalks(false), 1.0, VergeZoomBucket::for_zoom(0.0));
+    let found = kerb_returns(
+        &Drawn::for_test(&map).with_sidewalks(false),
+        1.0,
+        VergeZoomBucket::for_zoom(0.0),
+    );
     assert!(found.overlaps.is_empty(), "клин мельче полосы — наезда нет");
 }
 
@@ -1159,7 +1207,8 @@ fn a_nose_and_its_gore_keep_to_a_kerb_narrowed_by_a_far_taper() {
         &Drawn::new(
             &map,
             &crate::map::roads::RoadStyle::default(),
-            &crate::map::roads::shape::RoadShape::default()),
+            &crate::map::roads::shape::RoadShape::default(),
+        ),
         1.0,
         VergeZoomBucket::for_zoom(0.0),
     );
@@ -1308,10 +1357,7 @@ fn a_corner_past_a_bent_arm_gets_a_curved_kerb_return() {
     // ось со сглаживанием (`for_test` рисует без него): прямой отрезок
     // через узел короче угла краёв
     let map = map_of(&[through, side]);
-    let drawn = Drawn::new(
-        &map,
-        &RoadStyle::default(),
-        &RoadShape::default());
+    let drawn = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
     let found = kerb_returns(&drawn, 1.0, VergeZoomBucket::for_zoom(0.0));
     // южный угол — прямым скруглением, северо-восточный — гнутым: дуга
     // асфальта и поворот тротуара за ней
@@ -1468,10 +1514,7 @@ fn kerb_return_arcs_turn_smoothly_at_the_lawn() {
 
     let map = map_of(&[smirnova, east, west, south]);
     let found = kerb_returns(
-        &Drawn::new(
-            &map,
-            &RoadStyle::default(),
-            &RoadShape::default()),
+        &Drawn::new(&map, &RoadStyle::default(), &RoadShape::default()),
         1.0,
         VergeZoomBucket::for_zoom(0.0),
     );

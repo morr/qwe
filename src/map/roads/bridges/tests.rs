@@ -894,10 +894,7 @@ fn a_moved_footbridges_path_meets_the_band_without_a_wedge() {
             .any(|[a, b, c]| crate::map::osm::model::point_in_polygon(at, &[a, b, c]))
     };
     // от асфальта подхода до оси дорожки — ни пятна голой земли
-    let prepared = Drawn::new(
-        &map,
-        &RoadStyle::default(),
-        &RoadShape::default());
+    let prepared = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
     let path = prepared.axis(2, Axis::Ribbon);
     let axis_at = |y: f32| {
         path.windows(2).find_map(|pair| {
@@ -1075,10 +1072,7 @@ fn a_footbridge_inside_the_deck_moves_to_its_edge() {
         ..fixture::bridge(vec![foot, Vec2::new(-3.6, 160.0)], 3.5)
     });
     map.network = RoadNetwork::new(&map.roads);
-    let prepared = Drawn::new(
-        &map,
-        &RoadStyle::default(),
-        &RoadShape::default());
+    let prepared = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
     // и бортик мостика — за кромкой: на подходе он торчал бы на асфальт
     let need = 7.6 / 2.0 + map.roads[3].curb_reach();
     let footbridge = prepared.axis(3, Axis::Nodal);
@@ -1118,10 +1112,7 @@ fn a_paved_median_between_two_decks_lies_on_the_deck() {
     map.roads
         .push(half(vec![Vec2::new(4.5, 200.0), Vec2::new(4.5, 0.0)]));
     map.network = RoadNetwork::new(&map.roads);
-    let prepared = Drawn::new(
-        &map,
-        &RoadStyle::default(),
-        &RoadShape::default());
+    let prepared = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
     assert!(
         prepared
             .pairs()
@@ -1160,10 +1151,7 @@ fn decks_parted_over_a_lawn_keep_their_inner_curbs() {
     map.roads
         .push(half(vec![Vec2::new(10.0, 200.0), Vec2::new(10.0, 0.0)]));
     map.network = RoadNetwork::new(&map.roads);
-    let prepared = Drawn::new(
-        &map,
-        &RoadStyle::default(),
-        &RoadShape::default());
+    let prepared = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
     assert!(
         prepared
             .pairs()
@@ -1209,10 +1197,7 @@ fn a_wider_deck_tapers_from_its_approach() {
         ..fixture::bridge(vec![head, Vec2::new(0.0, 200.0)], lanes(3))
     });
     map.network = RoadNetwork::new(&map.roads);
-    let prepared = Drawn::new(
-        &map,
-        &RoadStyle::default(),
-        &RoadShape::default());
+    let prepared = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
     assert!(
         prepared.taper_ends(1)[0].is_some(),
         "the deck takes no taper at its head"

@@ -1030,10 +1030,7 @@ fn the_pair_gap_change_waits_out_the_crossing_street() {
     let mut across = fixture::street(vec![Vec2::new(26.0, 150.0), Vec2::new(26.0, 0.0)], 10.9);
     across.oneway = true;
     map.roads.push(across);
-    let prepared = Drawn::new(
-        &map,
-        &RoadStyle::default(),
-        &RoadShape::default());
+    let prepared = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
     // зазор пары переезжает с куска на кусок за перекрёстком: у самого
     // перекрёстка ось стоит на точках OSM
     let drawn = prepared.axis(0, Axis::Ribbon);

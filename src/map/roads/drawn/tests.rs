@@ -23,10 +23,7 @@ fn every_vector_is_indexed_by_the_map_roads() {
         fixture::street(vec![Vec2::ZERO, Vec2::new(100.0, 0.0)], 12.0),
         fixture::street(vec![Vec2::new(50.0, 0.0), Vec2::new(50.0, 80.0)], 8.0),
     ]);
-    let drawn = Drawn::new(
-        &map,
-        &RoadStyle::default(),
-        &RoadShape::default());
+    let drawn = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
     assert_eq!(drawn.len(), 2);
     assert_eq!(drawn.roads().len(), 2);
     assert_eq!(drawn.axes(Axis::Nodal).len(), 2);
@@ -52,10 +49,7 @@ fn a_driveway_crossing_is_drawn_as_a_street_of_the_narrower_width() {
         footway,
         fixture::street(vec![Vec2::new(50.0, -18.0), Vec2::new(50.0, -60.0)], 5.0),
     ]);
-    let drawn = Drawn::new(
-        &map,
-        &RoadStyle::default(),
-        &RoadShape::default());
+    let drawn = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
     assert_eq!(drawn.stats().crossings, 1);
     assert_eq!(drawn.road(2).class, RoadClass::Street);
     assert_eq!(drawn.road(2).width, 5.0);
@@ -76,10 +70,7 @@ fn stitched_axis_differs_from_nodal_only_at_stitched_ends() {
         fixture::street(vec![Vec2::ZERO, Vec2::new(100.0, 0.0)], 12.0),
         fixture::street(vec![Vec2::new(50.0, -60.0), Vec2::new(50.0, -9.0)], 5.0),
     ]);
-    let drawn = Drawn::new(
-        &map,
-        &RoadStyle::default(),
-        &RoadShape::default());
+    let drawn = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
     assert_eq!(drawn.stats().stitches, 1);
     assert_eq!(drawn.stitched_end(0), [false; 2]);
     assert_eq!(drawn.stitched_end(1), [false, true]);
@@ -350,10 +341,7 @@ fn a_ring_of_two_arcs() -> MapData {
 #[test]
 fn one_shared_node_pass_feeds_both_base_and_paint() {
     for map in [a_driveway(), a_ring_of_two_arcs()] {
-        let drawn = Drawn::new(
-            &map,
-            &RoadStyle::default(),
-            &RoadShape::default());
+        let drawn = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
         assert_eq!(drawn.stats().crossings, 1, "подмена легла");
         let every = junctions::shared_nodes(&map.roads, pockets::is_row_participant);
         assert_eq!(
@@ -381,10 +369,7 @@ fn row_breaks_ignore_stitches_but_paint_breaks_do_not() {
         fixture::street(vec![Vec2::ZERO, Vec2::new(100.0, 0.0)], 12.0),
         fixture::street(vec![Vec2::new(50.0, -60.0), Vec2::new(50.0, -9.0)], 8.0),
     ]);
-    let drawn = Drawn::new(
-        &map,
-        &RoadStyle::default(),
-        &RoadShape::default());
+    let drawn = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
     assert_eq!(drawn.stats().stitches, 1);
     let junctions = junctions::Junctions::new(
         &drawn,
@@ -534,10 +519,7 @@ fn diag_straight_zigzag() {
     let osm: OverpassResponse =
         serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     let map = parse_response(&osm, city, ParseKnobs::default());
-    let prepared = Drawn::new(
-        &map,
-        &RoadStyle::default(),
-        &RoadShape::default());
+    let prepared = Drawn::new(&map, &RoadStyle::default(), &RoadShape::default());
     let (min_len, step) = (120.0, 2.0);
     let mut hits = 0;
     for i in 0..prepared.len() {
