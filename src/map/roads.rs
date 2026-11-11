@@ -65,7 +65,6 @@ pub use self::shape::{ROAD_JOIN, RoadJoin, RoadStyle};
 use self::shape::{ROAD_RIBBON, RoadShape, RoadShapeOnMap};
 use self::tram_lay::TramTracks;
 pub(crate) use self::verges::paved_verge;
-use self::verges::push_verges;
 pub use self::verges::{VergeLods, VergeZoomBucket};
 #[cfg(test)]
 use self::walls::Fortresses;
@@ -77,6 +76,7 @@ use crate::map::meshing::{Break, LaneFrame, MeshBuilder, RibbonCap, RibbonJoin};
 use crate::map::osm::model::RoadNodeKind;
 use crate::map::osm::model::{RoadAreaKind, polyline_length};
 use crate::map::osm::{MapData, RailKind, RoadClass, RoadLine};
+use crate::map::parallel::in_parallel;
 use crate::map::rail::{CrossedStreet, crossable, mesh_level_crossings};
 use crate::map::shapes::{is_ring, push_shape};
 use crate::map::surface::{
@@ -838,7 +838,23 @@ pub fn build_roads(
     let seam_gaps = bridges::seam_dash_gaps(&prepared, &drawn, &ribbon);
     // ── Ленты ── главный проход по улицам в порядке заливки: асфальт,
     // тротуары, обочины, краска, клинья и мосты — улица за улицей
-    for index in order {
+    //
+    // Обочины — по улице в потоках: улица от улицы не зависит (вход — только
+    // чтение: подготовка, ленты, торцы, укусы, газоны). Раскладка — ниже, в
+    // порядке заливки: порядок треугольников, лоскутов и находки тот же, что
+    // у серийной укладки.
+    let mut verges_by_street: Vec<verges::StreetVerges> = in_parallel(&order, |&index| {
+        verges::street_verge_geometry(
+            &prepared,
+            &drawn,
+            &ribbon,
+            &meadows,
+            &road_bites,
+            kerb_returns.butt(index),
+            index,
+        )
+    });
+    for (position, &index) in order.iter().enumerate() {
         let road = drawn[index];
         // замкнутая линия площади (`highway=*` + `area=yes`) — контур
         // заливки выше, а не кольцо ленты
@@ -925,7 +941,6 @@ pub fn build_roads(
         let seam = bridges::seam_ends(&drawn, prepared.nodes(), index);
         let banded = [trimmed[0] || seam[0], trimmed[1] || seam[1]];
         let trimmed = if road.bridge { banded } else { trimmed };
-        let butt = [butt[0] || seam[0], butt[1] || seam[1]];
         let wedges = tapers::wedge_run(&head, &tail, ends);
         if road.bridge {
             // бордюр и тень — мосту; заливка — здесь, в порядке улиц. Клин на
@@ -1039,21 +1054,11 @@ pub fn build_roads(
                 SIDEWALK_COLOR.to_linear(),
             );
         }
-        // обочина до отдельного тротуара — лентой от оси за кромку на её
-        // ширину, в свою сторону: проезжую часть она кроет под асфальтом, а
-        // до угла узла доходит торцом, и угол между двумя такими улицами
-        // замощён их обочинами
-        let verged = verges::street_verged(&prepared, index, ring.map(|ring| ring.ccw));
-        let bites = road_bites.on_points(index, points, verged[0] > 0.0 || verged[1] > 0.0);
-        push_verges(
+        // обочина до отдельного тротуара — собранная по улице заранее
+        // (`verges_by_street`): раскладка здесь, в порядке заливки
+        let street = &mut verges_by_street[position];
+        street.apply(
             [&mut verges, &mut verge_lawns, &mut verge_yards],
-            &meadows,
-            index as u32,
-            road,
-            points,
-            butt,
-            &bites,
-            verged,
             &mut scraps,
             &mut pieces,
         );

@@ -1210,7 +1210,7 @@ fn diag_window() {
             } else {
                 Vec::new()
             };
-            super::push_verges(
+            super::verges::push_verges(
                 [&mut tiles, &mut lawns, &mut yards],
                 &meadows,
                 index as u32,

@@ -31,6 +31,7 @@
 //! (`Drawn::band_half`), а не по большей из них.
 
 use std::borrow::Cow;
+use std::sync::OnceLock;
 
 use bevy::math::Vec2;
 use bevy::platform::collections::HashMap;
@@ -138,7 +139,11 @@ pub(super) struct Scraps {
     green: Vec<Vec<Vec2>>,
     /// Мощёные контуры `i_overlay` с габаритами и сеткой по ним.
     contours: Vec<(Contour, Vec2, Vec2)>,
-    grid: Option<Grid<usize>>,
+    /// Сетка мощения по габаритам — строится при первом вопросе: все вклады
+    /// улиц (`Scraps::merge`) к тому моменту дописаны, и сетка по списку
+    /// контуров та же, что была по ходу вставок. Вопросы (`near`, `bitten`)
+    /// идут из потоков — строится один раз под замком.
+    grid: OnceLock<Grid<usize>>,
     /// Газоны по габаритам — какое мощение вообще нужно ([`Scraps::near_lawn`]).
     lawn_grid: Option<Grid<usize>>,
 }
@@ -193,9 +198,33 @@ impl Scraps {
         }
         let contour = oriented(ring, true);
         let (low, high) = contour_bounds(&contour);
-        let grid = self.grid.get_or_insert_with(|| Grid::new(CELL));
-        grid.insert(low, high, self.contours.len());
         self.contours.push((contour, low, high));
+    }
+
+    /// Дописать вклад `other` (сборка одной улицы, [`verges::
+    /// street_verge_geometry`]) — в порядке улиц: списки газонов и мощения
+    /// ложатся как у серийной укладки. Сетки у вклада нет — он не спрашивал;
+    /// у получателя её тоже не должно быть: вопросы позже всех вкладов.
+    pub(super) fn merge(&mut self, other: &mut Scraps) {
+        assert!(
+            self.grid.get().is_none(),
+            "лоскуты спрашивают мощение только после всех вкладов улиц"
+        );
+        self.lawns.append(&mut other.lawns);
+        self.green.append(&mut other.green);
+        self.contours.append(&mut other.contours);
+    }
+
+    /// Сетка мощения — по списку контуров, в порядке их pushes: та же, что
+    /// была по ходу вставок.
+    fn paving_grid(&self) -> &Grid<usize> {
+        self.grid.get_or_init(|| {
+            let mut grid = Grid::new(CELL);
+            for (index, (_, low, high)) in self.contours.iter().enumerate() {
+                grid.insert(*low, *high, index);
+            }
+            grid
+        })
     }
 
     /// Газон полосой вдоль ломаной `path` от оси до `reach` в сторону
@@ -417,9 +446,7 @@ impl Scraps {
     /// Врезается ли мощение в кусок зелени: какая-то его вершина лежит ближе
     /// [`GREEN_BITE`] к нарисованному мощению.
     fn bitten(&self, ring: &[Vec2]) -> bool {
-        let Some(grid) = &self.grid else {
-            return false;
-        };
+        let grid = self.paving_grid();
         ring.iter().any(|&vertex| {
             grid.near_each(vertex - GREEN_BITE, vertex + GREEN_BITE)
                 .any(|&index| {
@@ -436,9 +463,7 @@ impl Scraps {
     }
 
     fn near(&self, low: Vec2, high: Vec2) -> Vec<Contour> {
-        let Some(grid) = &self.grid else {
-            return Vec::new();
-        };
+        let grid = self.paving_grid();
         grid.near(low, high)
             .into_iter()
             .map(|index| &self.contours[index])

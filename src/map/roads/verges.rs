@@ -5,6 +5,8 @@
 
 use bevy::prelude::*;
 
+use std::borrow::Cow;
+
 use super::ROAD_JOIN;
 use super::SIDEWALK_COLOR;
 use super::drawn::Drawn;
@@ -411,6 +413,85 @@ pub(super) fn push_verges(
                 lawn_z,
             );
         }
+    }
+}
+
+/// Обочины одной улицы, собранные в стороне: локальные сборщики трёх слоёв,
+/// вклад в лоскуты и находка. Улица от улицы не зависит —
+/// [`street_verge_geometry`] единица параллельного прохода (`build_roads`);
+/// [`StreetVerges::apply`] дописывает вклад в порядке заливки, так что
+/// раскладка слоёв, лоскутов и находки та же, что у серийной укладки.
+pub(super) struct StreetVerges {
+    tiles: MeshBuilder,
+    lawns: MeshBuilder,
+    yards: MeshBuilder,
+    scraps: scraps::Scraps,
+    pieces: Vec<DrawnPiece>,
+}
+
+/// Обочины улицы `index` — та же работа, что серийная укладка
+/// [`push_verges`] в `build_roads`: слои и вклады собираются локально,
+/// торец и укусы — те же вопросы к тем же данным (`KerbReturns::butt`,
+/// шов земля/мост, [`scraps::Bites`]). `kerb_butt` — торцы от скруглений;
+/// шов земля/мост добавляется здесь, как в ленточном проходе.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn street_verge_geometry(
+    prepared: &Drawn,
+    drawn: &[&RoadLine],
+    ribbon: &[Cow<'_, [Vec2]>],
+    meadows: &Meadows,
+    road_bites: &scraps::Bites,
+    kerb_butt: [bool; 2],
+    index: usize,
+) -> StreetVerges {
+    let road = drawn[index];
+    let points: &[Vec2] = &ribbon[index];
+    let ring = prepared.rings().of(index);
+    let verged = street_verged(prepared, index, ring.map(|ring| ring.ccw));
+    let bites = road_bites.on_points(index, points, verged[0] > 0.0 || verged[1] > 0.0);
+    let seam = super::bridges::seam_ends(drawn, prepared.nodes(), index);
+    let butt = [kerb_butt[0] || seam[0], kerb_butt[1] || seam[1]];
+    let mut tiles = MeshBuilder::with_surface_coords();
+    let mut lawns = MeshBuilder::with_surface_coords();
+    let mut yards = MeshBuilder::with_surface_coords();
+    let mut scraps = scraps::Scraps::default();
+    let mut pieces = Vec::new();
+    push_verges(
+        [&mut tiles, &mut lawns, &mut yards],
+        meadows,
+        index as u32,
+        road,
+        points,
+        butt,
+        &bites,
+        verged,
+        &mut scraps,
+        &mut pieces,
+    );
+    StreetVerges {
+        tiles,
+        lawns,
+        yards,
+        scraps,
+        pieces,
+    }
+}
+
+impl StreetVerges {
+    /// Дописать вклад улицы в слои `build_roads` — вызывается в порядке
+    /// заливки: порядок треугольников, лоскутов и находки как у серийной
+    /// укладки.
+    pub(super) fn apply(
+        &mut self,
+        [tiles, lawns, yards]: [&mut MeshBuilder; 3],
+        scraps: &mut scraps::Scraps,
+        pieces: &mut Vec<DrawnPiece>,
+    ) {
+        tiles.append(&self.tiles);
+        lawns.append(&self.lawns);
+        yards.append(&self.yards);
+        scraps.merge(&mut self.scraps);
+        pieces.append(&mut self.pieces);
     }
 }
 
