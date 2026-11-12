@@ -230,6 +230,86 @@ fn a_street_builds_twenty_five_layers_bottom_up() {
     assert!(report.vertices > 0);
 }
 
+/// Сплит-дверь собирает ту же геометрию, что слитая: общие слои — тот же
+/// z-порядок без ступенезависимых, ступень — свои четыре слоя, хвост мощёных
+/// клиньев переехал из тротуаров в `sidewalk_scraps`, а сумма ступени —
+/// полная картина (свои слои + общие), как у слитой сборки.
+#[test]
+fn the_split_door_keeps_the_merged_geometry() {
+    let map = one_street();
+    let style = RoadStyle::default();
+    let shape = RoadShape::default();
+    let verge = VergeZoomBucket::for_zoom(0.0);
+    let RoadBuild {
+        layers,
+        report,
+        pieces,
+        ..
+    } = build_roads(&map, style, shape, verge);
+    let skeleton = road_skeleton(&map, &style, &shape);
+    let build = build_roads_steps(&skeleton, &[verge]);
+
+    let step_names: Vec<&str> = build.steps[0]
+        .layers
+        .iter()
+        .map(|layer| layer.name)
+        .collect();
+    assert_eq!(
+        step_names,
+        [
+            "road_verge_lawns",
+            "road_verge_yards",
+            "road_verges",
+            "sidewalk_scraps"
+        ],
+        "ступень несёт только то, чем ступени расходятся"
+    );
+    let common_names: Vec<&str> = build.common.iter().map(|layer| layer.name).collect();
+    let expected: Vec<&str> = LAYERS
+        .iter()
+        .copied()
+        .filter(|name| !step_names.contains(name))
+        .collect();
+    assert_eq!(
+        common_names, expected,
+        "общие слои — список слитой сборки без ступенезависимых, тот же порядок"
+    );
+
+    let vertices = |list: &[LayerMesh], name: &str| {
+        list.iter()
+            .find(|layer| layer.name == name)
+            .unwrap()
+            .builder
+            .vertex_count()
+    };
+    assert_eq!(
+        vertices(&layers, "sidewalks"),
+        vertices(&build.common, "sidewalks") + vertices(&build.steps[0].layers, "sidewalk_scraps"),
+        "тротуары слитой сборки = общие тротуары + хвост ступени"
+    );
+
+    let common_vertices: usize = build
+        .common
+        .iter()
+        .map(|layer| layer.builder.vertex_count())
+        .sum();
+    let step_vertices: usize = build.steps[0]
+        .layers
+        .iter()
+        .map(|layer| layer.builder.vertex_count())
+        .sum();
+    assert_eq!(
+        build.steps[0].report.vertices, report.vertices,
+        "сумма ступени — полная картина: свои слои + общие"
+    );
+    assert_eq!(common_vertices + step_vertices, report.vertices);
+    assert_eq!(
+        build.steps[0].pieces.len(),
+        pieces.len(),
+        "кусочки ступени — те же, что у слитой сборки"
+    );
+}
+
 #[test]
 fn only_the_bridge_shadow_is_blended() {
     let (layers, _) = mesh_roads(
