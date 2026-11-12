@@ -466,7 +466,14 @@ passes are `parse-buildings.md`.
     not filled.
   - **Tiles**: `TILE` 400 m cells touched by a road link, a window of `MARGIN` 30 m around each;
     a hole counts only when it lies wholly in the window (then every cover touching it is
-    in the window) and its bbox centre lies in the tile (one tile owns it). Tiles and the
+    in the window) and its bbox centre lies in the tile (one tile owns it). Covers poking
+    past the window (padded by `POCKET_CLIP_PAD` 1 m, so the clip frame sits outside the
+    acceptance border) are clipped to it — Sutherland–Hodgman, `pockets.rs::clipped_to_rect`:
+    a curved road's bbox is several times its geometry, and unclipped every window paid for
+    the whole run of every road its bbox touched (Paris: union input −37 %, the tile pass
+    1.22 → 0.49 s, journal entry 36; the integer grid of `i_overlay` is derived from the
+    window's input bbox, so the cut also moved a few pocket rings by up to a hair —
+    `SNAPSHOT_VERSION` 2). Tiles and the
     road bands go across threads through a counter (`in_parallel`) — a centre tile costs
     tens of times an outer one — and the results are put back in tile order.
   - **A pocket is not a block** (`MapData::pockets`, drawn in the block layer by
