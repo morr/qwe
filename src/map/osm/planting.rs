@@ -243,10 +243,20 @@ fn plant_standalone(
         let (min, max) = ring_bounds(&wood.outer);
         woods.insert(min, max, index);
     }
-    let mut rows: Grid<usize> = Grid::new(GREEN_CELL);
-    for (index, row) in map.tree_rows.iter().enumerate() {
-        let (min, max) = ring_bounds(&row.points);
-        rows.insert(min - TREE_MIN_SPACING, max + TREE_MIN_SPACING, index);
+    let mut rows: Grid<(Vec2, Vec2)> = Grid::new(GREEN_CELL);
+    // по отрезкам, а не по габариту ряда: габарит длинной аллеи накрывает
+    // десятки ячеек, и каждая нода в них сканировала всю ломаную ряда; отрезок
+    // с паддингом в минимальный зазор кладётся только в свои ячейки, а ответ
+    // тот же — отрезок ближе минимума всегда попадает в ячейку ноды
+    for row in &map.tree_rows {
+        for segment in row.points.windows(2) {
+            rows.insert_segment(
+                segment[0],
+                segment[1],
+                TREE_MIN_SPACING,
+                (segment[0], segment[1]),
+            );
+        }
     }
 
     let mut planted: Vec<PlantedTree> = Vec::new();
@@ -262,12 +272,10 @@ fn plant_standalone(
         if in_wood {
             continue;
         }
-        let near_row = rows.at(pos).iter().any(|&index| {
-            map.tree_rows[index]
-                .points
-                .windows(2)
-                .any(|segment| distance_to_segment(pos, segment[0], segment[1]) <= TREE_MIN_SPACING)
-        });
+        let near_row = rows
+            .at(pos)
+            .iter()
+            .any(|&(from, to)| distance_to_segment(pos, from, to) <= TREE_MIN_SPACING);
         if near_row {
             continue;
         }
