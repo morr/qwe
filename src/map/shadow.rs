@@ -92,13 +92,21 @@ pub fn penumbra(direction: Vec2) -> f32 {
 /// метр, у забора и машины треть, **потому что и тень там втрое-вдесятеро
 /// короче**.
 pub fn push_union(builder: &mut MeshBuilder, contours: &[Vec<[f32; 2]>], blur: f32) {
+    use crate::map::parallel::in_parallel;
+
     let shapes = union_of(contours);
     let color = SHADOW_COLOR.to_linear();
     let fade = LinearRgba {
         alpha: 0.0,
         ..color
     };
-    for shape in &shapes {
+    // фигура от фигуры не зависит: заливка и каймы собираются в свои билдеры
+    // по ядрам и дописываются в порядке фигур — последовательность вершин та
+    // же, что у серийного прохода. На городском входе это вторая половина
+    // фазы: earcut и каймы по 13 тыс. фигур (Париж) стоят столько же, сколько
+    // само объединение
+    let parts: Vec<MeshBuilder> = in_parallel(&shapes, |shape| {
+        let mut part = MeshBuilder::default();
         let mut rings = shape.iter().map(|contour| {
             contour
                 .iter()
@@ -106,14 +114,18 @@ pub fn push_union(builder: &mut MeshBuilder, contours: &[Vec<[f32; 2]>], blur: f
                 .collect::<Vec<Vec2>>()
         });
         let Some(outer) = rings.next() else {
-            continue;
+            return part;
         };
         let holes: Vec<Vec<Vec2>> = rings.collect();
-        builder.push_polygon(&outer, &holes, color);
-        builder.push_inset_band_tapered(&outer, blur, true, penumbra, color, fade);
+        part.push_polygon(&outer, &holes, color);
+        part.push_inset_band_tapered(&outer, blur, true, penumbra, color, fade);
         for hole in &holes {
-            builder.push_inset_band_tapered(hole, blur, false, penumbra, color, fade);
+            part.push_inset_band_tapered(hole, blur, false, penumbra, color, fade);
         }
+        part
+    });
+    for part in &parts {
+        builder.append(part);
     }
 }
 
