@@ -59,16 +59,23 @@ const CELL: f32 = 48.0;
 
 /// Порядок записи домов в меш: дальний первым, ближний последним.
 pub(super) fn draw_order(buildings: &[PolyArea], lean: Lean) -> Vec<usize> {
+    use crate::map::parallel::in_parallel;
+
     let started = Instant::now();
     let drawn: Vec<Drawn> = buildings.iter().map(|b| Drawn::of(b, lean)).collect();
 
-    // «кого этот дом кроет»: в обходе накрытый выписывается раньше
     let mut covered: Vec<Vec<usize>> = vec![Vec::new(); buildings.len()];
-    let mut scratch = Scratch::default();
     let pairs = candidate_pairs(&drawn);
+    // пары независимы: проверка пары — по ядрам, исход пары пишется один раз
+    // своим индексом, слияние в `covered` — серийное в порядке пар. Меш от
+    // разбиения пар по потокам не зависит: ответы те же, порядок пар тот же
+    let outcomes: Vec<Option<Upper>> = in_parallel(&pairs, |&(a, b)| {
+        let mut scratch = Scratch::default();
+        upper(&drawn[a], &drawn[b], &mut scratch)
+    });
     let mut edges = 0usize;
-    for &(a, b) in &pairs {
-        match upper(&drawn[a], &drawn[b], &mut scratch) {
+    for (&(a, b), outcome) in pairs.iter().zip(&outcomes) {
+        match outcome {
             Some(Upper::A) => covered[a].push(b),
             Some(Upper::B) => covered[b].push(a),
             None => continue,
@@ -79,8 +86,11 @@ pub(super) fn draw_order(buildings: &[PolyArea], lean: Lean) -> Vec<usize> {
     // база — прежний ключ по центру пятна: он решает всё, что пары не
     // связали, а это большинство домов — они друг друга не касаются
     let mut base: Vec<usize> = (0..buildings.len()).collect();
-    let depth = |index: usize| lean.depth(building_center(&buildings[index]));
-    base.sort_by(|&a, &b| depth(b).total_cmp(&depth(a)));
+    let depths: Vec<f32> = buildings
+        .iter()
+        .map(|building| lean.depth(building_center(building)))
+        .collect();
+    base.sort_by(|&a, &b| depths[b].total_cmp(&depths[a]));
 
     let order = topological(&base, &covered);
     // цена порядка — рядом с ценой самой сборки меша: слой пересобирается ещё
