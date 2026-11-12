@@ -150,9 +150,8 @@ pub fn build_world_meshes(
         // второй финал больше не молотит дубли общей середины под стеной.
         let roads: Vec<_> = vec![scope.spawn(move || {
             timed("roads", || {
-                let skeleton = skeleton.get_or_init(|| {
-                    road_skeleton(map, &styles.road_style, &styles.road_shape)
-                });
+                let skeleton = skeleton
+                    .get_or_init(|| road_skeleton(map, &styles.road_style, &styles.road_shape));
                 let steps: Vec<VergeZoomBucket> = (0..VergeLods::max_zooms().count())
                     .map(VergeZoomBucket::at)
                     .collect();
