@@ -127,6 +127,12 @@ const MARGIN: f32 = 30.0;
 /// Звеньев дороги в одном куске обводки: кусок берётся в плитку по габариту,
 /// и длинная улица не тащит в каждую свои сотни метров.
 const RUN: usize = 16;
+/// Запас рамки обрезки покрытий, м: контуры режутся по окну, расширенному на
+/// эту величину, а проверка «дырка целиком в окне» идёт по настоящему окну.
+/// Рамка обрезки должна лежать **вне** границы приёма: разрезы клипа — новые
+/// вершины на рамке, и будь они на границе приёма, край кармана, чья вершина
+/// стоит ровно на ней, собрался бы из разрезов клипа, а не из исходных точек.
+const POCKET_CLIP_PAD: f32 = 1.0;
 
 /// Звено дороги для вопроса «касается ли карман полотна».
 #[derive(Clone, Copy)]
@@ -475,13 +481,27 @@ impl Scene {
         let core_low = tile.as_vec2() * TILE;
         let core_high = core_low + TILE;
         let (low, high) = (core_low - MARGIN, core_high + MARGIN);
+        let (pad_low, pad_high) = (low - POCKET_CLIP_PAD, high + POCKET_CLIP_PAD);
         let contours: Vec<Contour> = self
             .cover_grid
             .near(low, high)
             .into_iter()
             .map(|index| &self.covers[index])
-            .filter(|cover| cover.overlaps(low, high))
-            .flat_map(|cover| cover.contours.iter().cloned())
+            .filter(|cover| cover.overlaps(pad_low, pad_high))
+            .flat_map(|cover| {
+                // покрытие, вылезающее за расширенное окно, режется по нему:
+                // карман лежит целиком в настоящем окне, и всё вне рамки на
+                // его край влиять не может. Габарит кривой дороги в несколько
+                // раз шире её геометрии, и без обрезки весь её пробег едет в
+                // объединение каждой плитки, чьё окно задел габарит, — на
+                // Париже точки объединения дорожали вдвое от этого
+                if cover.low.cmplt(pad_low).any() || cover.high.cmpgt(pad_high).any() {
+                    clipped_to_rect(&cover.contours, pad_low, pad_high)
+                } else {
+                    cover.contours.clone()
+                }
+            })
+            .filter(|contour| contour.len() >= 3)
             .collect();
         if contours.is_empty() {
             return Vec::new();
@@ -644,6 +664,66 @@ fn close_apron(run: &mut Vec<(Vec2, Vec2)>, aprons: &mut Vec<Pocket>) {
         });
     }
     run.clear();
+}
+
+/// Обрезка контуров по прямоугольнику `[low, high]` (Сазерленд–Ходжман, клип
+/// выпуклый). Регион объединения внутри окна не меняется —
+/// `(∪ покрытий) ∩ окно = ∪ (покрытие ∩ окно)` — и карман, целиком лежащий в
+/// окне, получает прежний край: его рамка составлена из исходных рёбер и их
+/// пересечений, а разрезы клипа лежат на рамках окна, дальше его края.
+/// Ориентация контура сохраняется, дырки остаются дырками.
+fn clipped_to_rect(contours: &[Contour], low: Vec2, high: Vec2) -> Vec<Contour> {
+    let mut out = Vec::new();
+    for contour in contours {
+        let mut current = clip_halfplane(contour, 0, low.x, true);
+        if current.len() < 3 {
+            continue;
+        }
+        current = clip_halfplane(&current, 0, high.x, false);
+        if current.len() < 3 {
+            continue;
+        }
+        current = clip_halfplane(&current, 1, low.y, true);
+        if current.len() < 3 {
+            continue;
+        }
+        current = clip_halfplane(&current, 1, high.y, false);
+        if current.len() >= 3 {
+            out.push(current);
+        }
+    }
+    out
+}
+
+/// Один контур против одной полуплоскости: остаётся точка с координатой
+/// `>= bound` по оси (`keep_greater`) или `<= bound`.
+fn clip_halfplane(contour: &Contour, axis: usize, bound: f32, keep_greater: bool) -> Contour {
+    let inside = |value: f32| {
+        if keep_greater {
+            value >= bound
+        } else {
+            value <= bound
+        }
+    };
+    let mut out: Contour = Vec::with_capacity(contour.len() + 2);
+    let count = contour.len();
+    for index in 0..count {
+        let from = contour[index];
+        let to = contour[(index + 1) % count];
+        let (from_value, to_value) = (from[axis], to[axis]);
+        let (from_in, to_in) = (inside(from_value), inside(to_value));
+        if from_in {
+            out.push(from);
+        }
+        if from_in != to_in {
+            let t = (bound - from_value) / (to_value - from_value);
+            out.push([
+                from[0] + (to[0] - from[0]) * t,
+                from[1] + (to[1] - from[1]) * t,
+            ]);
+        }
+    }
+    out
 }
 
 impl<T: Copy> Rim<T> {
