@@ -225,6 +225,50 @@ fn verge_piece(x0: f32, x1: f32, y0: f32, y1: f32, side: f32, road: u32) -> Draw
     }
 }
 
+/// База из лоад-потока (`prebuild`) с догонкой кусков (`apply_pieces`)
+/// отвечает как полный `rebuild` — на сетке точек, покрывающей здание,
+/// воду, дорогу, дерево и кусок обочины. Шов деления индекса: у полного
+/// rebuild флаг ожидания снят, у базы после догонки — тоже.
+#[test]
+fn prebuild_with_pieces_applied_answers_like_a_full_rebuild() {
+    let map = MapData {
+        buildings: vec![fixture::building(
+            fixture::square(Vec2::new(100.0, 100.0), 10.0),
+            vec![],
+        )],
+        water: vec![fixture::water_area(
+            fixture::square(Vec2::new(140.0, 100.0), 8.0),
+            vec![],
+        )],
+        roads: vec![fixture::street(
+            vec![Vec2::new(80.0, 70.0), Vec2::new(120.0, 70.0)],
+            8.0,
+        )],
+        trees: TreeSet::of([(Vec2::new(100.0, 140.0), 4.0, 0.0)]),
+        ..default()
+    };
+    let pieces = vec![verge_piece(84.0, 120.0, 2.0, 5.0, 1.0, 0)];
+    let full = InspectIndex::rebuild(&map, &RoadShape::default(), &pieces);
+    let split = {
+        let mut index = InspectIndex::prebuild(&map, &RoadShape::default());
+        index.apply_pieces(&pieces);
+        index
+    };
+
+    assert!(full.pending_shape.is_none());
+    assert!(split.pending_shape.is_none());
+    for x in [80.0, 100.0, 105.0, 112.0, 140.0] {
+        for y in [65.0, 70.0, 74.0, 100.0, 140.0] {
+            let at = Vec2::new(x, y);
+            assert_eq!(
+                query(&full, &map, 0.5, at),
+                query(&split, &map, 0.5, at),
+                "расхождение в точке {at:?}"
+            );
+        }
+    }
+}
+
 /// Карман у бордюра — находка индекса и подсвечивается: контура в
 /// `MapData` нет, его вывел закон стоянки по тегу `parking:<side>`.
 #[test]

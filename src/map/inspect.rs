@@ -228,6 +228,11 @@ pub struct InspectIndex {
     pieces: Vec<DrawnPiece>,
     piece_grid: Grid<u32>,
     built: bool,
+    /// База (`prebuild`) ждёт куски мира: `Some` — форма, под которую
+    /// собраны базовые проходы; пока форма та же, их догоняет
+    /// `apply_pieces` (пятый проход — дешёвый). Дрейф формы — полная
+    /// пересборка.
+    pending_shape: Option<RoadShape>,
 }
 
 impl Default for InspectIndex {
@@ -248,6 +253,7 @@ impl InspectIndex {
             pieces: Vec::new(),
             piece_grid: Grid::new(CELL),
             built: false,
+            pending_shape: None,
         }
     }
 
@@ -256,23 +262,33 @@ impl InspectIndex {
         self.built
     }
 
-    /// Индексировать карту: площади — габаритом контура, линии — каждым
-    /// отрезком с полушириной (`Grid::insert_segment`), точки — кругом.
-    /// Полная, а не приблизительная, выборка одной ячейкой держится на
-    /// инварианте сетки: значение лежит в каждой ячейке, которой касается
-    /// его бокс, раздутый ровно на досягаемость запроса.
+    /// Индексировать карту целиком: базовые проходы ([`InspectIndex::prebuild`])
+    /// плюс отрисованные куски ([`InspectIndex::apply_pieces`]). Полный путь —
+    /// галерея, дрейф формы, пересборка дорог при игре; на входе в мир база
+    /// едет из лоад-потока готовой, и куски догоняются отдельно.
+    pub fn rebuild(map: &MapData, shape: &RoadShape, pieces: &[DrawnPiece]) -> InspectIndex {
+        let mut index = InspectIndex::prebuild(map, shape);
+        index.apply_pieces(pieces);
+        index
+    }
+
+    /// База индекса — четыре прохода по карте и карманы у бордюра: площади —
+    /// габаритом контура, линии — каждым отрезком с полушириной
+    /// (`Grid::insert_segment`), точки — кругом. Полная, а не приблизительная,
+    /// выборка одной ячейкой держится на инварианте сетки: значение лежит в
+    /// каждой ячейке, которой касается его бокс, раздутый ровно на досягаемость
+    /// запроса.
     ///
     /// Карманы у бордюра — четвёртый проход: их в [`MapData`] нет, полигоны
     /// выводит закон стоянки (`roads::pockets::kerb_pocket_outlines`) на
     /// узловой оси — той же, по которой карман рисуется; форма влияет на ось,
-    /// поэтому индекс перестраивается и по ней. Дороже прочих проходов —
-    /// подъём каркаса дорог, у машин тот же.
+    /// поэтому база собирается под форму. Дороже прочих проходов — подъём
+    /// каркаса дорог, у машин тот же.
     ///
-    /// Отрисованные куски дорог — пятый проход: их рисует проход сборки
-    /// (`roads::build_roads`), в [`MapData`] они не живут. Ресурс
-    /// `DrawnPieces` меняется при каждой пересборке дорог — стиль, форма,
-    /// ступень обочины, — и индекс перестраивается по нему же.
-    pub fn rebuild(map: &MapData, shape: &RoadShape, pieces: &[DrawnPiece]) -> InspectIndex {
+    /// Лоад-поток собирает базу параллельно лейнам (`finish_world`): на входе
+    /// в мир остаётся догнать куски — [`InspectIndex::apply_pieces`] — вместо
+    /// полной пересборки в warmup-окне.
+    pub fn prebuild(map: &MapData, shape: &RoadShape) -> InspectIndex {
         let mut index = InspectIndex::empty();
         let mut push_area = |src: AreaSrc, area: &PolyArea| {
             if area.outer.is_empty() {
@@ -394,16 +410,28 @@ impl InspectIndex {
             index.kerb_pockets.len(),
             pocket_started.elapsed()
         );
+        index.built = true;
+        index.pending_shape = Some(*shape);
+        index
+    }
+
+    /// Пятый проход — отрисованные куски дорог: их рисует проход сборки
+    /// (`roads::build_roads`), в [`MapData`] они не живут. Ресурс
+    /// `DrawnPieces` меняется при каждой пересборке дорог — стиль, форма,
+    /// ступень обочины, — и индекс догоняет его этим же методом; габарит и
+    /// вставка в сетку — дешёвые, на входе в мир они проходят вместо полной
+    /// пересборки.
+    pub fn apply_pieces(&mut self, pieces: &[DrawnPiece]) {
+        self.piece_grid = Grid::new(CELL);
         for (i, piece) in pieces.iter().enumerate() {
             if piece.contour.is_empty() {
                 continue;
             }
             let (min, max) = bounds(&piece.contour);
-            index.piece_grid.insert(min, max, i as u32);
+            self.piece_grid.insert(min, max, i as u32);
         }
-        index.pieces = pieces.to_vec();
-        index.built = true;
-        index
+        self.pieces = pieces.to_vec();
+        self.pending_shape = None;
     }
 
     /// Что нарисовано в точке: находки сверху вниз по слою, одинаковые
@@ -770,6 +798,17 @@ pub fn rebuild_index(
     mut index: ResMut<InspectIndex>,
 ) {
     if !map.is_changed() && !shape.is_changed() && !pieces.is_changed() {
+        return;
+    }
+    // База из лоад-потока ждёт куски под той же формой: догнать их — вместо
+    // полной пересборки в первом кадре мира. Порядок кадра гарантирует
+    // свежесть кусков: вставки `poll_job` применяются в конце кадра Done, а
+    // спавн-цепочка (`StateTransition`) кладёт новые `DrawnPieces` до первого
+    // Update следующего кадра — между ними эта система не запустится.
+    if index.pending_shape == Some(shape.0) {
+        let started = std::time::Instant::now();
+        index.apply_pieces(&pieces.0);
+        info!("inspect index: pieces applied in {:.1?}", started.elapsed());
         return;
     }
     let started = std::time::Instant::now();

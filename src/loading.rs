@@ -486,6 +486,7 @@ fn poll_job(
             let LoadedWorld {
                 map,
                 portal,
+                inspect,
                 mut meshes,
             } = *world.take().expect("world already taken");
             // высота в OSM опциональна и покрыта очень неровно (Берлин 80%,
@@ -526,6 +527,10 @@ fn poll_job(
             );
             commands.insert_resource(map);
             commands.insert_resource(PortalPos(portal));
+            // база inspect-индекса собрана потоком загрузки: на входе в мир
+            // догоняются только куски дорог (`rebuild_index`), полная
+            // пересборка из warmup-окна ушла
+            commands.insert_resource(inspect);
             // полимеш построен потоком: бэкенд готов до входа в мир, и таск
             // панели на входе не запустится — `built_for` совпадает. Смена
             // радиуса во время загрузки разъедется с ключом и пересоберёт

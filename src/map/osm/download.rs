@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use bevy::prelude::*;
 
 use crate::city::City;
+use crate::map::inspect::InspectIndex;
 use crate::map::osm::model::MapData;
 use crate::map::osm::overpass::{cache_path, overpass_query, prune_stale_caches};
 use crate::map::osm::parse::{ParseKnobs, parse};
@@ -38,13 +39,16 @@ const CHUNK_SIZE: usize = 64 * 1024;
 const SPEED_WINDOW: Duration = Duration::from_millis(250);
 
 /// Готовый к спавну мир: разобранная карта, позиция портала (снап нужен
-/// уже заполненному navmesh, а прунинг — уже снапнутому порталу) и слои
+/// уже заполненному navmesh, а прунинг — уже снапнутому порталу), слои
 /// карты, собранные тем же потоком (`map/prepare.rs`) — спавн на входе в
-/// мир кладёт их в мир без пересборки.
+/// мир кладёт их в мир без пересборки — и база inspect-индекса, собранная
+/// тем же потоком параллельно лейнам (`finish_world`); куски мира догоняет
+/// `rebuild_index` первым кадром.
 pub struct LoadedWorld {
     pub map: MapData,
     pub portal: Vec2,
     pub meshes: WorldMeshes,
+    pub inspect: InspectIndex,
 }
 
 pub enum JobState {
@@ -119,12 +123,49 @@ pub fn start_load_thread(
 /// Слои карты — в тот же поток: карта после гейтов и прунинга финальна, и
 /// параллельные группы собирают всё, что раньше стояло в `OnEnter(Playing)`
 /// и замироживало кадр перехода на 15.7 с (запись 10).
+///
+/// База inspect-индекса — тоже в этом потоке, параллельно лейнам: четыре
+/// её прохода с карманами читают только карту и форму (обе готовы), а
+/// дорожный финал ступени входа — сама стена whole set, под ними есть
+/// полсекунды. Куски дорог появляются со спавном мира, их догоняет
+/// `rebuild_index` первым кадром (`map/inspect.rs`). Состав деревьев
+/// поднимается сюда же, до клона: индексный поток мешит уже собранную
+/// карту, а проверка внутри `build_world_meshes` увидит состав готовым
+/// и не повторит.
 fn finish_world(
     mut world: LoadedWorld,
     styles: &StyleSnapshot,
     job: &MapLoadJob,
 ) -> Result<LoadedWorld, String> {
-    world.meshes = prepare::build_world_meshes(&mut world.map, styles, job)?;
+    let compose = crate::map::trees::tree_compose(&styles.trees, &styles.tree_rows);
+    if world.map.composed_for != Some(compose) {
+        world.map.compose_trees(compose);
+    }
+    // та же глобаль, что `prepare.rs` ставит лейнам: карманные контуры
+    // индекса отвечают той же узловой осью, что рисунок
+    crate::map::roads::shape::set_lane_width(world.map.knobs.lane_width);
+
+    let started = std::time::Instant::now();
+    let index_map = world.map.clone();
+    info!(
+        "map meshes: inspect index clone in {:.1?}",
+        started.elapsed()
+    );
+    let inspect = std::thread::scope(|scope| -> Result<InspectIndex, String> {
+        let base = scope.spawn(|| {
+            let started = std::time::Instant::now();
+            let index = InspectIndex::prebuild(&index_map, &styles.road_shape);
+            info!(
+                "map meshes: inspect index base in {:.1?}",
+                started.elapsed()
+            );
+            index
+        });
+        world.meshes = prepare::build_world_meshes(&mut world.map, styles, job)?;
+        base.join()
+            .map_err(|_| "inspect index panicked".to_string())
+    })?;
+    world.inspect = inspect;
     Ok(world)
 }
 
@@ -181,6 +222,7 @@ fn build_navmesh(
         map,
         portal,
         meshes: WorldMeshes::default(),
+        inspect: InspectIndex::default(),
     }
 }
 
