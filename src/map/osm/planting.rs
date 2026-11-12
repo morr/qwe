@@ -6,7 +6,7 @@ use bevy::math::Vec2;
 
 use crate::map::osm::model::{
     MapData, PlantedTree, RowTrees, TreeRowLayout, TreeRowPlacement, distance_to_segment,
-    point_at_arc_length, point_in_area, polyline_length, ring_area, ring_bounds,
+    point_in_area, polyline_length, ring_area, ring_bounds,
 };
 use crate::rng::lcg_seeded_by;
 
@@ -340,6 +340,7 @@ fn plant_rows(
         let step = data_step.unwrap_or(TREE_MIN_SPACING);
         let count = ((length / step) as usize + 1).clamp(2, TREE_ROW_MAX_TREES);
         let ranks = scattered_ranks(count);
+        let arc = ArcLengths::new(&row.points);
 
         // тот же LCG, что в лесу, с посевом по началу ряда: радиусы обязаны
         // совпадать между политиками, иначе переключение тумблера перетряхивает
@@ -352,7 +353,7 @@ fn plant_rows(
                 .unwrap_or_else(|| TREE_MIN_RADIUS + next() * (TREE_MAX_RADIUS - TREE_MIN_RADIUS));
             let at = length * slot as f32 / (count - 1) as f32;
             let Some(pos) = free_spot(
-                &row.points,
+                &arc,
                 at,
                 step,
                 radius,
@@ -380,12 +381,67 @@ fn plant_rows(
     planted
 }
 
+/// Префиксные длины ломаной: точка на дуге без прохода от начала.
+///
+/// [`point_at_arc_length`] на каждый слот ряда шёл от первого звена; слоты
+/// заходят в обратных битах ([`scattered_ranks`]), а сдвиг аллеи добавляет ещё
+/// по попытке на свободный метр — на длинном ряду это квадрат. Накопленные
+/// суммы строятся тем же последовательным сложением `f32`, что и проход в
+/// [`point_at_arc_length`], и звенья нулевой длины выбрасываются так же, так
+/// что бинарный поиск находит тот же сегмент, и интерполяция даёт ту же точку
+/// бит-в-бит (см. тест `arc_lengths_match_the_walk`).
+struct ArcLengths<'a> {
+    points: &'a [Vec2],
+    /// Пройденный путь до начала звена, длина звена и его индекс — по звеньям
+    /// ненулевой длины, в порядке ломаной.
+    starts: Vec<(f32, f32, usize)>,
+    last: Vec2,
+}
+
+impl<'a> ArcLengths<'a> {
+    fn new(points: &'a [Vec2]) -> Self {
+        debug_assert!(points.len() >= 2);
+        let mut starts = Vec::with_capacity(points.len());
+        let mut walked = 0.0;
+        for (index, segment) in points.windows(2).enumerate() {
+            let length = segment[0].distance(segment[1]);
+            if length <= 0.0 {
+                continue;
+            }
+            starts.push((walked, length, index));
+            walked += length;
+        }
+        Self {
+            points,
+            starts,
+            last: *points.last().expect("вызывается только для points.len() >= 2"),
+        }
+    }
+
+    /// Семантика [`point_at_arc_length`]: первый сегмент ненулевой длины, на
+    /// котором `walked + length >= distance`, с той же интерполяцией; за концом
+    /// ломаной — последняя точка.
+    fn at(&self, distance: f32) -> Vec2 {
+        let found = self
+            .starts
+            .partition_point(|&(walked, length, _)| walked + length < distance);
+        match self.starts.get(found) {
+            Some(&(walked, length, index)) => {
+                let (from, to) = (self.points[index], self.points[index + 1]);
+                from.lerp(to, (distance - walked) / length)
+            }
+            None => self.last,
+        }
+    }
+}
+
 /// Куда встанет дерево слота, и встанет ли вообще. `Keep` проверяет только то,
 /// во что дерево не должно попасть никогда ([`Obstacles::solid`]); `Slide` гонит
 /// полную проверку и на занятом месте шагает вперёд по ряду — но не дальше
-/// одного шага посадки, иначе ряд сползает в кучу у свободного конца.
+/// одного шага посадки, иначе ряд сползает в кучу у свободного конца. Проверка
+/// занятости идёт первой: она дешевле, а на шаг и отказ ведёт тот же итог.
 fn free_spot(
-    points: &[Vec2],
+    arc: &ArcLengths,
     at: f32,
     step: f32,
     radius: f32,
@@ -395,13 +451,15 @@ fn free_spot(
 ) -> Option<Vec2> {
     let mut offset = 0.0;
     loop {
-        let pos = point_at_arc_length(points, at + offset);
-        let taken = match placement {
-            TreeRowPlacement::Keep => obstacles.solid(pos, radius),
-            TreeRowPlacement::Slide => obstacles.blocked(pos, radius),
-        };
-        if !taken && !occupied.crowded(pos) {
-            return Some(pos);
+        let pos = arc.at(at + offset);
+        if !occupied.crowded(pos) {
+            let taken = match placement {
+                TreeRowPlacement::Keep => obstacles.solid(pos, radius),
+                TreeRowPlacement::Slide => obstacles.blocked(pos, radius),
+            };
+            if !taken {
+                return Some(pos);
+            }
         }
         if placement == TreeRowPlacement::Keep || offset >= step {
             return None;

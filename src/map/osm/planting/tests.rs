@@ -1,7 +1,7 @@
 use super::*;
 use crate::map::osm::fixture::{building, rect, street, wood};
 use crate::map::osm::model::PolyArea;
-use crate::map::osm::model::{RoadLine, TreeCompose, TreeNode, TreeRow};
+use crate::map::osm::model::{RoadLine, TreeCompose, TreeNode, TreeRow, point_at_arc_length};
 use crate::map::trees::TREE_DENSITY_MIN;
 
 /// Прямой ряд длиной `length` вдоль оси X, на высоте 1000 — подальше от
@@ -65,6 +65,29 @@ fn point_at_arc_length_walks_the_corner() {
     assert!(point_at_arc_length(&points, 14.0).distance(Vec2::new(10.0, 4.0)) < 1e-3);
     // за концом ряда — последняя точка, а не экстраполяция
     assert!(point_at_arc_length(&points, 99.0).distance(Vec2::new(10.0, 10.0)) < 1e-3);
+}
+
+/// Префиксные длины отвечают то же, что проход [`point_at_arc_length`], на
+/// каждом метре ломаной с нулевыми звеньями — посадка рядов переезжает с
+/// прохода на бинарный поиск без сдвига хоть на волосок.
+#[test]
+fn arc_lengths_match_the_walk() {
+    // нулевые звенья (совпадающие вершины) выбрасываются проходом — и тут
+    let mut points = vec![Vec2::ZERO, Vec2::new(7.0, 0.0), Vec2::new(7.0, 0.0)];
+    points.push(Vec2::new(7.0, 3.0));
+    points.push(Vec2::new(2.0, 9.0));
+    points.push(Vec2::new(2.0, 9.0)); // ещё одно нулевое в середине
+    points.push(Vec2::new(-4.0, 1.0));
+    let arc = ArcLengths::new(&points);
+    for step in 0..=1400 {
+        let distance = step as f32 * 0.05;
+        assert_eq!(
+            arc.at(distance),
+            point_at_arc_length(&points, distance),
+            "расхождение на {distance} м"
+        );
+    }
+    assert_eq!(arc.at(0.0), point_at_arc_length(&points, 0.0));
 }
 
 /// Смысл обратных битов: префикс рангов рассыпан по всему ряду. Натуральный
