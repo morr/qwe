@@ -30,7 +30,7 @@ use crate::map::osm::{JobState, MapLoadJob};
 use crate::map::parking::ParkingLayout;
 use crate::map::rail::{RAIL_LODS, RailReport, RailZoomBucket, mesh_rails};
 use crate::map::roads::{
-    RoadBuild, RoadStyle, VergeLods, VergeZoomBucket, build_roads_from, road_skeleton,
+    RoadBuild, RoadStyle, VergeLods, VergeZoomBucket, build_roads_steps, road_skeleton,
 };
 use crate::map::spawn::{SurfaceReport, mesh_surfaces};
 use crate::map::surface::{LayerMesh, MAP_CHUNK};
@@ -142,23 +142,23 @@ pub fn build_world_meshes(
                 )
             })
         });
-        // Ступени обочин — по потоку на ступень, над общим скелетом: скелет
-        // сети (подготовка, узлы, краска узлов) у ступеней один, и строит его
-        // тот поток, что пришёл первым (`get_or_init`), вторая ступень ждёт
-        // готовности. Ступенезависимые обочинные куски каждая молотит свои.
-        // Порядок ступеней держит сборка результатов по номеру ступени.
-        let roads: Vec<_> = (0..VergeLods::max_zooms().count())
-            .map(|step| {
-                scope.spawn(move || {
-                    timed(&format!("roads (verge step {step})"), || {
-                        let skeleton = skeleton.get_or_init(|| {
-                            road_skeleton(map, &styles.road_style, &styles.road_shape)
-                        });
-                        build_roads_from(skeleton, VergeZoomBucket::at(step))
-                    })
-                })
+        // Ступени обочин — над общим скелетом, и общая середина сборки у них
+        // теперь одна (`build_roads_steps`): скелет сети, устья, разделительные,
+        // ленты, краска узлов — у ступеней бит-в-бит одинаковы (отпечаток
+        // записи 28), считаются один раз; ступенезависимые обочинные куски и
+        // лоскуты каждая достраивает свои. Один дорожный поток вместо двух —
+        // второй финал больше не молотит дубли общей середины под стеной.
+        let roads: Vec<_> = vec![scope.spawn(move || {
+            timed("roads", || {
+                let skeleton = skeleton.get_or_init(|| {
+                    road_skeleton(map, &styles.road_style, &styles.road_shape)
+                });
+                let steps: Vec<VergeZoomBucket> = (0..VergeLods::max_zooms().count())
+                    .map(VergeZoomBucket::at)
+                    .collect();
+                build_roads_steps(skeleton, &steps)
             })
-            .collect();
+        })];
         let small =
             scope.spawn(|| timed("surfaces, trees, rails, cars", || small_lane(map, styles)));
         let fences = scope.spawn(|| {
@@ -175,10 +175,8 @@ pub fn build_world_meshes(
         });
 
         let buildings = join(buildings, "buildings")?;
-        let roads = roads
-            .into_iter()
-            .map(|lane| join(lane, "roads step"))
-            .collect::<Result<Vec<_>, String>>()?;
+        let mut roads = roads;
+        let roads = join(roads.remove(0), "roads")?;
         let small = join(small, "small layers")?;
         let fences = join(fences, "fences")?;
         let polymesh = join(polymesh, "polymesh")?;

@@ -640,17 +640,17 @@ pub fn build_roads_from(skeleton: &RoadSkeleton<'_>, verge: VergeZoomBucket) -> 
 }
 
 /// Сборка нескольких ступеней обочин над одним скелетом: общая середина —
-/// один раз ([`RoadCommon`]), обочинные куски и лоскуты — на каждую ступень.
-/// Выход ступени тот же, что у её одноступенчатой сборки, бит-в-бит:
-/// у ступеней расходятся только обочинные слои (отпечаток записи 28).
+/// один раз ([`RoadCommon`]), обочинные куски и лоскуты — на каждую ступень,
+/// финалы — по ядру на ступень (общая середина только читается). Выход
+/// ступени тот же, что у её одноступенчатой сборки, бит-в-бит: у ступеней
+/// расходятся только обочинные слои (отпечаток записи 28).
 pub fn build_roads_steps(
     skeleton: &RoadSkeleton<'_>,
     steps: &[VergeZoomBucket],
 ) -> Vec<RoadBuild> {
     let common = RoadCommon::new(skeleton, steps);
-    (0..steps.len())
-        .map(|step| common.finish_step(skeleton, step))
-        .collect()
+    let indices: Vec<usize> = (0..steps.len()).collect();
+    in_parallel(&indices, |&step| common.finish_step(skeleton, step))
 }
 
 /// Обочинный уклад одной ступени: её скругления и обочины — в своих
@@ -776,48 +776,46 @@ impl<'s> RoadCommon<'s> {
         // узловые оси — скругления, слияния, карманы, станции штрихов, полотно
         // трамвая: их торцы стоят в точках OSM
         let nodal = prepared.axes(Axis::Nodal);
-        // ── Скругления ступеней ── калькуляция и укладка — в уклад ступени:
-        // у ступеней свои сетки лоскутов и свои куски. Скругления кладутся
-        // раньше всех лент своего слоя: лента поверх кроет скругление, а не
-        // наоборот, и разметка остаётся целой
+        // ── Скругления ступеней ── калькуляция и укладка — в уклад ступени,
+        // ступень от ступени не зависит — по ядрам: у ступеней свои сетки
+        // лоскутов и свои куски. Скругления кладутся раньше всех лент своего
+        // слоя: лента поверх кроет скругление, а не наоборот, и разметка
+        // остаётся целой
         let meadows = Meadows::of(&map.parks, &map.grass);
-        let mut lays: Vec<StepLay> = steps
-            .iter()
-            .map(|&verge| {
-                let kerb = corners::kerb_returns(prepared, shape.corner_radius(), verge);
-                let mut lay = StepLay {
-                    verge,
-                    kerb,
-                    streets: MeshBuilder::with_surface_coords(),
-                    alleys: MeshBuilder::with_surface_coords(),
-                    unpaved: MeshBuilder::with_surface_coords(),
-                    sidewalks: MeshBuilder::with_surface_coords(),
-                    verges: MeshBuilder::with_surface_coords(),
-                    verge_lawns: MeshBuilder::with_surface_coords(),
-                    verge_yards: MeshBuilder::with_surface_coords(),
-                    scraps: scraps::Scraps::default(),
-                    pieces: Vec::new(),
-                    verges_by_street: Vec::new(),
-                };
-                // асфальт узлов — в свои слои; порядок укладки — инвариант
-                // `corners` (`KerbReturns::lay`), а не этого вызывающего
-                lay.kerb.lay(
-                    corners::KerbLayers {
-                        streets: &mut lay.streets,
-                        alleys: &mut lay.alleys,
-                        unpaved: &mut lay.unpaved,
-                        sidewalks: &mut lay.sidewalks,
-                        verges: &mut lay.verges,
-                        lawns: &mut lay.verge_lawns,
-                        yards: &mut lay.verge_yards,
-                    },
-                    &meadows,
-                    &mut lay.scraps,
-                    &mut lay.pieces,
-                );
-                lay
-            })
-            .collect();
+        let mut lays: Vec<StepLay> = in_parallel(steps, |&verge| {
+            let kerb = corners::kerb_returns(prepared, shape.corner_radius(), verge);
+            let mut lay = StepLay {
+                verge,
+                kerb,
+                streets: MeshBuilder::with_surface_coords(),
+                alleys: MeshBuilder::with_surface_coords(),
+                unpaved: MeshBuilder::with_surface_coords(),
+                sidewalks: MeshBuilder::with_surface_coords(),
+                verges: MeshBuilder::with_surface_coords(),
+                verge_lawns: MeshBuilder::with_surface_coords(),
+                verge_yards: MeshBuilder::with_surface_coords(),
+                scraps: scraps::Scraps::default(),
+                pieces: Vec::new(),
+                verges_by_street: Vec::new(),
+            };
+            // асфальт узлов — в свои слои; порядок укладки — инвариант
+            // `corners` (`KerbReturns::lay`), а не этого вызывающего
+            lay.kerb.lay(
+                corners::KerbLayers {
+                    streets: &mut lay.streets,
+                    alleys: &mut lay.alleys,
+                    unpaved: &mut lay.unpaved,
+                    sidewalks: &mut lay.sidewalks,
+                    verges: &mut lay.verges,
+                    lawns: &mut lay.verge_lawns,
+                    yards: &mut lay.verge_yards,
+                },
+                &meadows,
+                &mut lay.scraps,
+                &mut lay.pieces,
+            );
+            lay
+        });
         // общие фазы читают скругления первой ступени (`lays[0].kerb`): их
         // выход у ступеней бит-в-бит одинаков (отпечаток записи 28), у
         // одной ступени это её собственные скругления
