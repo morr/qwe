@@ -94,6 +94,10 @@ pub(super) struct Grounds<'a>(Vec<Ground<'a>>);
 
 /// Два слоя поверх асфальта стоянки: бордюры сквозных дорог и двойная сплошная
 /// между встречными полотнами.
+///
+/// Клонируется ради финала ступени (`RoadCommon::finish_step`): слои стоянок
+/// у ступеней одинаковы (отпечаток записи 28), каждая забирает копию.
+#[derive(Clone)]
 pub(super) struct LotLayers {
     pub sidewalks: MeshBuilder,
     pub lines: MeshBuilder,

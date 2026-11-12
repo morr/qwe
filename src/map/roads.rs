@@ -632,85 +632,195 @@ pub fn road_skeleton<'m>(
 
 /// Сборка одной ступени обочин из общего скелета: обочинные куски и укладка
 /// — то, что у каждой ступени своё. Всё остальное — [`road_skeleton`].
+///
+/// Дверь одноступенчатых сборок — пересборка по стилю, достройка ступени,
+/// витрины: общая середина ([`RoadCommon`]) считается под одну ступень.
 pub fn build_roads_from(skeleton: &RoadSkeleton<'_>, verge: VergeZoomBucket) -> RoadBuild {
-    let RoadSkeleton {
-        map,
-        style,
-        shape,
-        prepared,
-        stations,
-        islands,
-        junctions,
-        turns,
-        splitters,
-    } = skeleton;
-    let map = *map;
-    let style = *style;
-    let shape = *shape;
-    // ── Слои и накопители ── куда кладут фазы ниже: строители слоёв,
-    // мосты, стоянки, краска и колея
-    let started = std::time::Instant::now();
-    let roads: &[RoadLine] = &map.roads;
-    let mut painter = paint::Painter::new(map.traffic_side);
-    let mut ruts = RutLines::default();
+    build_roads_steps(skeleton, &[verge]).remove(0)
+}
 
-    let mut sidewalks = MeshBuilder::with_surface_coords();
-    // обочины до отдельных тротуаров — под зеленью (`Z_ROAD_VERGE`)
-    let mut verges = MeshBuilder::with_surface_coords();
-    // и газон широких обочин — под их плиткой: травой двора
-    // (`Z_ROAD_VERGE_YARD`), а у замапленного газона — его лугом
-    // (`Z_ROAD_VERGE_LAWN`, `Meadows`)
-    let mut verge_lawns = MeshBuilder::with_surface_coords();
-    let mut verge_yards = MeshBuilder::with_surface_coords();
-    let meadows = Meadows::of(&map.parks, &map.grass);
-    let mut alleys = MeshBuilder::with_surface_coords();
-    let mut streets = MeshBuilder::with_surface_coords();
-    // грунтовые улицы — своим слоем под асфальтом (`Z_UNPAVED_ROAD`)
-    let mut unpaved = MeshBuilder::with_surface_coords();
-    // мост — цепочка ways, и тень считается по всей цепочке; мостовые слои
-    // копит он же (`roads/bridges.rs`)
-    let mut bridges = Bridges::new(map);
-    let mut wall_ribbons = MeshBuilder::default();
-    // улицы на больших стоянках — бордюром и разметкой поверх их асфальта
-    // (`roads/lots.rs`)
-    let mut grounds = lots::Grounds::of(map);
+/// Сборка нескольких ступеней обочин над одним скелетом: общая середина —
+/// один раз ([`RoadCommon`]), обочинные куски и лоскуты — на каждую ступень.
+/// Выход ступени тот же, что у её одноступенчатой сборки, бит-в-бит:
+/// у ступеней расходятся только обочинные слои (отпечаток записи 28).
+pub fn build_roads_steps(
+    skeleton: &RoadSkeleton<'_>,
+    steps: &[VergeZoomBucket],
+) -> Vec<RoadBuild> {
+    let common = RoadCommon::new(skeleton, steps);
+    (0..steps.len())
+        .map(|step| common.finish_step(skeleton, step))
+        .collect()
+}
 
-    // ── Нарисованная сеть ──
-    // Скелет сети — подготовка, станции, островки узлов, узлы с краской,
-    // траектории, островки подходов — собран в скелете (`road_skeleton`): у
-    // ступеней он общий. Здесь только обочинные куски и укладка.
-    let nodes = prepared.nodes();
-    let drawn = prepared.roads();
-    // узловые оси — скругления, слияния, карманы, станции штрихов, полотно
-    // трамвая: их торцы стоят в точках OSM
-    let nodal = prepared.axes(Axis::Nodal);
-    // Скругления кладутся раньше всех лент своего слоя: лента поверх кроет
-    // скругление, а не наоборот, и разметка остаётся целой. Ступень — с
-    // собой: скругления обочин — вопрос ступени
-    let kerb_returns = corners::kerb_returns(prepared, shape.corner_radius(), verge);
-    // ── Узлы и скругления ── узлы собраны в скелете, здесь только читаются
-    // газоны обочин и мощение вокруг них — для лоскутов (`roads/scraps.rs`):
-    // угол газона — газон, мощение собирается после лент
-    let mut scraps = scraps::Scraps::default();
-    // отрисованные куски — тем же проходом: каждый логический кусок обочины,
-    // лоскут и узловой кусок запоминается для семантического индекса
-    let mut pieces: Vec<DrawnPiece> = Vec::new();
-    // асфальт узлов — в свои слои; порядок укладки — инвариант `corners`
-    // (`KerbReturns::lay`), а не этого вызывающего
-    kerb_returns.lay(
-        corners::KerbLayers {
-            streets: &mut streets,
-            alleys: &mut alleys,
-            unpaved: &mut unpaved,
-            sidewalks: &mut sidewalks,
-            verges: &mut verges,
-            lawns: &mut verge_lawns,
-            yards: &mut verge_yards,
-        },
-        &meadows,
-        &mut scraps,
-        &mut pieces,
-    );
+/// Обочинный уклад одной ступени: её скругления и обочины — в своих
+/// сборщиках, вклады в лоскуты и куски — при ней. Общие фазы кладут мимо
+/// ([`RoadCommon`]); финал ступени собирает слой из её кусков и общих.
+struct StepLay {
+    verge: VergeZoomBucket,
+    kerb: corners::KerbReturns,
+    /// Скругления узлов — асфальт, тротуары, проезды. У ступеней они
+    /// бит-в-бит одинаковы (отпечаток записи 28), но у каждой свои: так
+    /// порядок сетки лоскутов и кусков ступени остаётся её собственным.
+    streets: MeshBuilder,
+    alleys: MeshBuilder,
+    unpaved: MeshBuilder,
+    sidewalks: MeshBuilder,
+    /// Обочины до отдельных тротуаров и их газоны — слои, где ступени
+    /// расходятся.
+    verges: MeshBuilder,
+    verge_lawns: MeshBuilder,
+    verge_yards: MeshBuilder,
+    /// Вклады ступени в лоскуты: скругления, потом улицы по порядку заливки.
+    /// Сетка по ним ленивая — к первому вопросу все вклады дописаны.
+    scraps: scraps::Scraps,
+    /// Отрисованные куски ступени — для семантического индекса.
+    pieces: Vec<DrawnPiece>,
+    /// Геометрия обочин по улицам, в порядке заливки; раскладывает лента.
+    verges_by_street: Vec<verges::StreetVerges>,
+}
+
+/// Общая середина сборок ступеней: всё, что у ступеней бит-в-бит одинаково
+/// (отпечаток записи 28 — асфальт, тротуары, разделительные, краска, мосты,
+/// кольца, стены, переезды), считается и укладывается один раз в свои
+/// сборщики. Ступенезависимое — скругления, обочины, лоскуты — живёт в
+/// [`StepLay`] на ступень. Финал ([`RoadCommon::finish_step`]) собирает
+/// слои ступени: её куски, потом общие, потом лоскуты.
+struct RoadCommon<'s> {
+    lays: Vec<StepLay>,
+    // ── общие сборщики: асфальт, тротуары, разделительные, краска, мосты ──
+    streets: MeshBuilder,
+    sidewalks: MeshBuilder,
+    alleys: MeshBuilder,
+    unpaved: MeshBuilder,
+    median_grass: MeshBuilder,
+    ring_lawns: MeshBuilder,
+    ring_grass: MeshBuilder,
+    wall_ribbons: MeshBuilder,
+    rail_crossings: MeshBuilder,
+    bridges: Bridges,
+    painter: paint::Painter,
+    /// Слои стоянок с островками дорог — у ступеней одинаковы (отпечаток
+    /// записи 28), считаются в общей середине, финал берёт копию.
+    lot_layers: lots::LotLayers,
+    // ── общие значения ──
+    drawn: Vec<&'s RoadLine>,
+    ribbon: Vec<std::borrow::Cow<'s, [Vec2]>>,
+    gores: gores::Gores,
+    road_islands: islands::RoadIslands,
+    ruts: RutLines,
+    tram_tracks: TramTracks,
+    // ── отчётные значения ──
+    merge_edges: usize,
+    kerb_pockets: usize,
+    turning_circles: usize,
+    tram_bands: usize,
+    track_bridges: usize,
+    level_crossings: usize,
+    network_time: std::time::Duration,
+    started: std::time::Instant,
+}
+
+impl<'s> RoadCommon<'s> {
+    /// Общая середина сборок ступеней `steps`: скругления каждой ступени
+    /// (калькуляция и укладка в её [`StepLay`]), потом общие фазы — кромки,
+    /// карманы, устья, разделительные, островки, ленты, краска узлов, трамвай,
+    /// переезды, стены. Читает ступень `[0]` там, где общий выход от ступени
+    /// не зависит (отпечаток записи 28): у одноступенчатой сборки это её
+    /// собственная ступень.
+    fn new(
+        skeleton: &'s RoadSkeleton<'s>,
+        steps: &[VergeZoomBucket],
+    ) -> RoadCommon<'s> {
+        let RoadSkeleton {
+            map,
+            style,
+            shape,
+            prepared,
+            stations,
+            islands,
+            junctions,
+            turns,
+            splitters,
+        } = skeleton;
+        let map = *map;
+        let style = *style;
+        let shape = *shape;
+        // ── Слои и накопители ── куда кладут общие фазы ниже: строители
+        // слоёв, мосты, стоянки, краска и колея
+        let started = std::time::Instant::now();
+        let roads: &[RoadLine] = &map.roads;
+        let mut painter = paint::Painter::new(map.traffic_side);
+        let mut ruts = RutLines::default();
+
+        let mut sidewalks = MeshBuilder::with_surface_coords();
+        let mut median_grass = MeshBuilder::with_surface_coords();
+        let mut alleys = MeshBuilder::with_surface_coords();
+        let mut streets = MeshBuilder::with_surface_coords();
+        // грунтовые улицы — своим слоем под асфальтом (`Z_UNPAVED_ROAD`)
+        let mut unpaved = MeshBuilder::with_surface_coords();
+        // мост — цепочка ways, и тень считается по всей цепочке; мостовые слои
+        // копит он же (`roads/bridges.rs`)
+        let mut bridges = Bridges::new(map);
+        let mut wall_ribbons = MeshBuilder::default();
+        // улицы на больших стоянках — бордюром и разметкой поверх их асфальта
+        // (`roads/lots.rs`)
+        let mut grounds = lots::Grounds::of(map);
+
+        // ── Нарисованная сеть ──
+        // Скелет сети — подготовка, станции, островки узлов, узлы с краской,
+        // траектории, островки подходов — собран в скелете (`road_skeleton`):
+        // у ступеней он общий. Общие фазы идут под ним.
+        let nodes = prepared.nodes();
+        let drawn = prepared.roads();
+        // узловые оси — скругления, слияния, карманы, станции штрихов, полотно
+        // трамвая: их торцы стоят в точках OSM
+        let nodal = prepared.axes(Axis::Nodal);
+        // ── Скругления ступеней ── калькуляция и укладка — в уклад ступени:
+        // у ступеней свои сетки лоскутов и свои куски. Скругления кладутся
+        // раньше всех лент своего слоя: лента поверх кроет скругление, а не
+        // наоборот, и разметка остаётся целой
+        let meadows = Meadows::of(&map.parks, &map.grass);
+        let mut lays: Vec<StepLay> = steps
+            .iter()
+            .map(|&verge| {
+                let kerb = corners::kerb_returns(prepared, shape.corner_radius(), verge);
+                let mut lay = StepLay {
+                    verge,
+                    kerb,
+                    streets: MeshBuilder::with_surface_coords(),
+                    alleys: MeshBuilder::with_surface_coords(),
+                    unpaved: MeshBuilder::with_surface_coords(),
+                    sidewalks: MeshBuilder::with_surface_coords(),
+                    verges: MeshBuilder::with_surface_coords(),
+                    verge_lawns: MeshBuilder::with_surface_coords(),
+                    verge_yards: MeshBuilder::with_surface_coords(),
+                    scraps: scraps::Scraps::default(),
+                    pieces: Vec::new(),
+                    verges_by_street: Vec::new(),
+                };
+                // асфальт узлов — в свои слои; порядок укладки — инвариант
+                // `corners` (`KerbReturns::lay`), а не этого вызывающего
+                lay.kerb.lay(
+                    corners::KerbLayers {
+                        streets: &mut lay.streets,
+                        alleys: &mut lay.alleys,
+                        unpaved: &mut lay.unpaved,
+                        sidewalks: &mut lay.sidewalks,
+                        verges: &mut lay.verges,
+                        lawns: &mut lay.verge_lawns,
+                        yards: &mut lay.verge_yards,
+                    },
+                    &meadows,
+                    &mut lay.scraps,
+                    &mut lay.pieces,
+                );
+                lay
+            })
+            .collect();
+        // общие фазы читают скругления первой ступени (`lays[0].kerb`): их
+        // выход у ступеней бит-в-бит одинаков (отпечаток записи 28), у
+        // одной ступени это её собственные скругления
     // ── Кромки слияний ──
     let merge_edges = merges::lay_merge_edges(
         map,
@@ -774,7 +884,7 @@ pub fn build_roads_from(skeleton: &RoadSkeleton<'_>, verge: VergeZoomBucket) -> 
     // островки подходов — из скелета: они же в разрывах краски узлов
     gores.add_splitters(splitters);
     // клинья перед носами острых развилок улиц (`corners::fork_gore`)
-    gores.add_forks(kerb_returns.fork_gores());
+    gores.add_forks(lays[0].kerb.fork_gores());
     // пустоты, зажатые проезжими частями, где ничего не замаплено (R20)
     let found_mouths = mouths(
         map,
@@ -783,7 +893,7 @@ pub fn build_roads_from(skeleton: &RoadSkeleton<'_>, verge: VergeZoomBucket) -> 
         islands,
         &ring_lawn_islands,
         &gores,
-        &kerb_returns,
+        &lays[0].kerb,
     );
     // остриё устья, на которое легла зебра, отступает от неё: штриховка по
     // переходу ложилась поверх его полос (Тула, R20)
@@ -824,7 +934,6 @@ pub fn build_roads_from(skeleton: &RoadSkeleton<'_>, verge: VergeZoomBucket) -> 
     // половин, под ними; газон с бордюром — в свой слой над тротуарами;
     // открываются по базе — у перекрёстка, кто бы его ни вёл. Двойную
     // сплошную красит не он, а мы — по его списку
-    let mut median_grass = MeshBuilder::with_surface_coords();
     // что замыкает зазор впереди торца разделительной: проезжие части из
     // узлов её половин рядом с торцом — связка, разворот
     let closer = |halves: [usize; 2], tip: Vec2, heading: Vec2, reach: f32| {
@@ -931,22 +1040,32 @@ pub fn build_roads_from(skeleton: &RoadSkeleton<'_>, verge: VergeZoomBucket) -> 
     // ── Ленты ── главный проход по улицам в порядке заливки: асфальт,
     // тротуары, обочины, краска, клинья и мосты — улица за улицей
     //
-    // Обочины — по улице в потоках: улица от улицы не зависит (вход — только
-    // чтение: подготовка, ленты, торцы, укусы, газоны). Раскладка — ниже, в
-    // порядке заливки: порядок треугольников, лоскутов и находки тот же, что
-    // у серийной укладки.
-    let mut verges_by_street: Vec<verges::StreetVerges> = in_parallel(&order, |&index| {
-        verges::street_verge_geometry(
-            prepared,
-            &drawn,
-            &ribbon,
-            &meadows,
-            &road_bites,
-            kerb_returns.butt(index),
-            index,
-            verge,
-        )
-    });
+    // Обочины — по улице в потоках, на каждую ступень: улица от улицы не
+    // зависит (вход — только чтение: подготовка, ленты, торцы, укусы,
+    // газоны). Раскладка — ниже, в порядке заливки: порядок треугольников,
+    // лоскутов и находки тот же, что у серийной укладки.
+    let verges_by_street: Vec<Vec<verges::StreetVerges>> = lays
+        .iter()
+        .map(|lay| {
+            let kerb = &lay.kerb;
+            let verge = lay.verge;
+            in_parallel(&order, |&index| {
+                verges::street_verge_geometry(
+                    prepared,
+                    &drawn,
+                    &ribbon,
+                    &meadows,
+                    &road_bites,
+                    kerb.butt(index),
+                    index,
+                    verge,
+                )
+            })
+        })
+        .collect();
+    for (lay, per_street) in lays.iter_mut().zip(verges_by_street) {
+        lay.verges_by_street = per_street;
+    }
     for (position, &index) in order.iter().enumerate() {
         let road = drawn[index];
         // замкнутая линия площади (`highway=*` + `area=yes`) — контур
@@ -1020,7 +1139,7 @@ pub fn build_roads_from(skeleton: &RoadSkeleton<'_>, verge: VergeZoomBucket) -> 
         // торец под клин и торец плеча, кончающегося в узле, — прямые: узел
         // закрывают скругления и наружные углы (`roads/corners.rs`); торец
         // со стежком уже не в узле
-        let butt = kerb_returns.butt(index);
+        let butt = lays[0].kerb.butt(index);
         let stitched_end = prepared.stitched_end(index);
         let trimmed = [
             head.is_some() || (butt[0] && !stitched_end[0]),
@@ -1148,13 +1267,15 @@ pub fn build_roads_from(skeleton: &RoadSkeleton<'_>, verge: VergeZoomBucket) -> 
             );
         }
         // обочина до отдельного тротуара — собранная по улице заранее
-        // (`verges_by_street`): раскладка здесь, в порядке заливки
-        let street = &mut verges_by_street[position];
-        street.apply(
-            [&mut verges, &mut verge_lawns, &mut verge_yards],
-            &mut scraps,
-            &mut pieces,
-        );
+        // (`verges_by_street`): раскладка здесь, в порядке заливки — на
+        // каждую ступень в её уклад
+        for lay in lays.iter_mut() {
+            lay.verges_by_street[position].apply(
+                [&mut lay.verges, &mut lay.verge_lawns, &mut lay.verge_yards],
+                &mut lay.scraps,
+                &mut lay.pieces,
+            );
+        }
         // слой заливки берётся после полосы тротуара: мощёная дорожка
         // ложится в тот же слой, а полоса выше брала его сама
         let fill = match road.class {
@@ -1181,7 +1302,7 @@ pub fn build_roads_from(skeleton: &RoadSkeleton<'_>, verge: VergeZoomBucket) -> 
             _ => fill.set_lanes(lanes),
         }
         // асфальт, упёршийся в грунтовку, — до её кромки (`corners.rs`)
-        let setback = kerb_returns.setback(index);
+        let setback = lays[0].kerb.setback(index);
         let set_back: Option<Vec<Vec2>> = (setback != [0.0; 2] && head.is_none() && tail.is_none())
             .then(|| tapers::cut(body, setback[0], polyline_length(body) - setback[1]))
             .filter(|cut| cut.len() >= 2);
@@ -1241,22 +1362,17 @@ pub fn build_roads_from(skeleton: &RoadSkeleton<'_>, verge: VergeZoomBucket) -> 
         &mut sidewalks,
         &mut alleys,
     );
-    // ── Лоскуты ──
-    scraps::pave_scraps(
-        &kerb_returns,
-        &gores,
-        &drawn,
-        prepared,
-        &ribbon,
-        &road_islands,
-        &mut scraps,
-    );
-    let lawn_scraps =
-        scraps::lay_green_scraps(map, &mut scraps, &mut verges, &mut sidewalks, &mut pieces);
     // ── Краска узлов и колея траекторий ──
+    // (лоскуты — в финале ступени: их находка по вкладам ступени)
+    // Краска читает уложенный асфальт — и ей нужен слой со скруглениями: в
+    // общем сборщике их нет, они в укладах ступеней (бит-в-бит одинаковые,
+    // отпечаток записи 28). Временный слой первой ступени — ровно то, что
+    // читала одноступенчатая сборка; сама краска пишет в painter и колею
+    let mut node_streets = lays[0].streets.clone();
+    node_streets.append(&streets);
     node_paint::paint_junction_marks(
         marks,
-        &streets,
+        &node_streets,
         &mut painter,
         turns,
         &mut ruts,
@@ -1303,7 +1419,6 @@ pub fn build_roads_from(skeleton: &RoadSkeleton<'_>, verge: VergeZoomBucket) -> 
         bridges.push_track(rail);
         track_bridges += 1;
     }
-    let bridge_count = bridges.count();
     // переезды в одном уровне — по оси ленты и ширине улицы как рисуются,
     // с тротуаром там, где он рисуется (`rail::mesh_level_crossings`)
     let crossed: Vec<CrossedStreet> = (0..drawn.len())
@@ -1321,13 +1436,94 @@ pub fn build_roads_from(skeleton: &RoadSkeleton<'_>, verge: VergeZoomBucket) -> 
     // ── Лента крепостной стены ──
     walls::lay_wall_ribbons(map, &mut wall_ribbons);
 
-    // ── Тела вынесенных фаз ── непрерывные куски того же прохода, в порядке
-    // вызова; их имена и ход — в баннерах наверху
+        RoadCommon {
+            lays,
+            streets,
+            sidewalks,
+            alleys,
+            unpaved,
+            median_grass,
+            ring_lawns,
+            ring_grass,
+            wall_ribbons,
+            rail_crossings,
+            bridges,
+            painter,
+            lot_layers,
+            drawn,
+            ribbon,
+            gores,
+            road_islands,
+            ruts,
+            tram_tracks,
+            merge_edges,
+            kerb_pockets,
+            turning_circles,
+            tram_bands,
+            track_bridges,
+            level_crossings,
+            network_time,
+            started,
+        }
+    }
 
-    // ── Сборка слоёв и отчёт ──
-    // асфальт, тротуар и дорожка — фактурные, лента стены — плоская; три
-    // мостовых слоя со своими высотами и материалами отдаёт `Bridges`
-    let mut layers: Vec<LayerMesh> = [
+    /// Финал ступени `step` (индекс среди ступеней [`RoadCommon::new`]): её
+    /// скругления и обочины — из её уклада, общая середина — дописыванием
+    /// общих сборщиков, лоскуты — находка по вкладам ступени. Порядок кусков
+    /// слоя тот же, что у одноступенчатой сборки: скругления, общая середина
+    /// (кромки, разделительные, ленты, краска), лоскуты.
+    fn finish_step(&self, skeleton: &RoadSkeleton<'_>, step: usize) -> RoadBuild {
+        let RoadSkeleton {
+            map,
+            style,
+            prepared,
+            islands,
+            junctions,
+            turns,
+            ..
+        } = skeleton;
+        let map = *map;
+        let style = *style;
+        let lay = &self.lays[step];
+        // слои ступени: её скругления и обочины, дописанные общей серединой.
+        // Порядок — как у одноступенчатой сборки: скругления раньше всего,
+        // общие фазы между ними и лоскутами
+        let mut streets = lay.streets.clone();
+        streets.append(&self.streets);
+        let mut sidewalks = lay.sidewalks.clone();
+        sidewalks.append(&self.sidewalks);
+        let mut alleys = lay.alleys.clone();
+        alleys.append(&self.alleys);
+        let mut unpaved = lay.unpaved.clone();
+        unpaved.append(&self.unpaved);
+        let mut verges = lay.verges.clone();
+        let verge_lawns = lay.verge_lawns.clone();
+        let verge_yards = lay.verge_yards.clone();
+        let median_grass = self.median_grass.clone();
+        let ring_lawns = self.ring_lawns.clone();
+        let ring_grass = self.ring_grass.clone();
+        let wall_ribbons = self.wall_ribbons.clone();
+        let rail_crossings = self.rail_crossings.clone();
+        let mut pieces = lay.pieces.clone();
+        // ── Лоскуты ── находка по вкладам ступени (скругления и улицы уже в
+        // списке): мощение после лент, как у одноступенчатой сборки
+        let mut scraps = lay.scraps.clone();
+        scraps::pave_scraps(
+            &lay.kerb,
+            &self.gores,
+            &self.drawn,
+            prepared,
+            &self.ribbon,
+            &self.road_islands,
+            &mut scraps,
+        );
+        let lawn_scraps =
+            scraps::lay_green_scraps(map, &mut scraps, &mut verges, &mut sidewalks, &mut pieces);
+        // ── Сборка слоёв и отчёт ──
+        // асфальт, тротуар и дорожка — фактурные, лента стены — плоская; три
+        // мостовых слоя со своими высотами и материалами отдаёт `Bridges`
+        let lot_layers = self.lot_layers.clone();
+        let mut layers: Vec<LayerMesh> = [
         (
             ring_lawns,
             Z_RING_ISLAND,
@@ -1410,16 +1606,16 @@ pub fn build_roads_from(skeleton: &RoadSkeleton<'_>, verge: VergeZoomBucket) -> 
     ]
     .into_iter()
     .map(|(builder, z, name, material)| LayerMesh::new(builder, z, name, material))
-    .chain(bridges.layers())
+    .chain(self.bridges.clone().layers())
     .collect();
-    let paint_lines = painter.lines;
-    let paint_layers = painter.layers();
+    let paint_lines = self.painter.lines;
+    let paint_layers = self.painter.clone().layers();
     let paint_vertices = paint_layers
         .iter()
         .map(|layer| layer.builder.vertex_count())
         .sum();
     // что скругления насчитали — поля отчёта о них (`corners.rs`)
-    let kerbs = kerb_returns.counts();
+    let kerbs = lay.kerb.counts();
     // краска — сразу над своим асфальтом: улиц над улицами, мостов над
     // настилом; сортировка устойчива, прочие слои порядка не меняют
     layers.extend(paint_layers);
@@ -1430,8 +1626,8 @@ pub fn build_roads_from(skeleton: &RoadSkeleton<'_>, verge: VergeZoomBucket) -> 
         junctions: junctions.counts(),
         paint_lines,
         paint_vertices,
-        kerb_pockets,
-        turning_circles,
+        kerb_pockets: self.kerb_pockets,
+        turning_circles: self.turning_circles,
         turns: turns.maneuvers,
         arrows: if style.arrows { turns.arrows.len() } else { 0 },
         kerb_returns: kerbs.kerb_returns,
@@ -1442,29 +1638,30 @@ pub fn build_roads_from(skeleton: &RoadSkeleton<'_>, verge: VergeZoomBucket) -> 
         noses: kerbs.noses,
         lawn_scraps,
         drawn: prepared.stats(),
-        bridges: bridge_count,
-        track_bridges,
-        level_crossings,
-        gores: gores.count(),
+        bridges: self.bridges.count(),
+        track_bridges: self.track_bridges,
+        level_crossings: self.level_crossings,
+        gores: self.gores.count(),
         road_islands: [
-            road_islands.refuges,
-            road_islands.kerbs.len() - road_islands.refuges,
-            road_islands.carriageways.len(),
-            road_islands.walkways.len(),
+            self.road_islands.refuges,
+            self.road_islands.kerbs.len() - self.road_islands.refuges,
+            self.road_islands.carriageways.len(),
+            self.road_islands.walkways.len(),
         ],
-        merge_edges,
+        merge_edges: self.merge_edges,
         islands: islands.len(),
-        tram_bands,
+        tram_bands: self.tram_bands,
         vertices: layers.iter().map(|l| l.builder.vertex_count()).sum(),
-        network: network_time,
-        elapsed: started.elapsed(),
+        network: self.network_time,
+        elapsed: self.started.elapsed(),
     };
     RoadBuild {
         layers,
         report,
-        ruts,
-        tram: tram_tracks,
+        ruts: self.ruts.clone(),
+        tram: self.tram_tracks.clone(),
         pieces,
+    }
     }
 }
 

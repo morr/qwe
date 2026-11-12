@@ -73,6 +73,10 @@ const WEAR_STRIP: f32 = RUT_OFFSET + 3.0 * RUT_SIGMA;
 /// и зебры. Стоп-линии и стрелки — в меше линий полос: и видны они до того
 /// же зума. Под всеми — колея траекторий узла: одни и те же
 /// полосы двумя мешами, маской и наложением ([`PaintPass`]).
+///
+/// Клонируется ради финала ступени (`RoadCommon::finish_step`): слои краски
+/// у ступеней одинаковы (отпечаток записи 28), каждая забирает свою копию.
+#[derive(Clone)]
 pub struct Painter {
     pub(super) wear_mask: MeshBuilder,
     pub(super) wear: MeshBuilder,
