@@ -2,9 +2,8 @@
 //! сборка колец мультиполигонов. Деревья по разобранной карте сажает
 //! `super::planting`.
 
-use std::collections::{HashMap, HashSet};
-
 use bevy::math::Vec2;
+use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::{Reflect, ReflectDefault, ReflectResource, Resource};
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
