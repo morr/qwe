@@ -466,6 +466,24 @@ going through the curb pin tests
   counts in both builds' reports), so it is spawned once by whichever build ran
   for the current step and `show_paint` owns its visibility alone — the reason
   `show_road_steps` filters `Without<paint::PaintTag>`.
+  **The road world went split** (perf-journal 33): what the steps hold in the
+  world is only what differs between them — `road_verges`, `road_verge_lawns`,
+  `road_verge_yards` and the ground-green paving scraps (`sidewalk_scraps`, their
+  own layer since the split: the merged build appended the tail to `sidewalks`,
+  and a common sidewalk layer must not carry a step's tail). Everything the
+  steps held bit-identically — asphalt, sidewalks, alleys, medians, walls,
+  crossings, bridges, paint — spawns **once**, from `RoadCommon::take_common_layers`
+  into `spawn_road_common_layers` with `RoadLayerTag` and **no** `LodStep` (the
+  mixed layers take the near step's corner rounds — bit-identical across steps
+  — with the common middle appended once). `show_road_steps` reads `LodStep`, so
+  the common layers are never hidden by a step, and a style rebuild leaves the
+  world deduplicated instead of returning it to two full copies; the step a
+  rebuild throws away is completed by the first crossing with step-owned layers
+  only. The two doors: the merged one (`build_roads_from`, bench/vitrines/tests)
+  returns the old full per-step layer set — its report lines are the bit-for-bit
+  control; the split one (`build_roads_steps`) returns
+  `RoadStepsBuild { common, steps }`, whose step reports sum their own layers
+  plus the common ones, so the `road meshing:` lines stay identical.
 - **Buildings** (`map/buildings/`) — the layer set a house is drawn as; the mechanism,
   the measurements and the rationale are in the `references/buildings-*.md` files (the
   header index names them), and the module names in `map/buildings/` say what each

@@ -325,9 +325,13 @@ on the paired side themselves (`roads-pairs-medians.md`, **Paired halves**).
   average — with a vertex within `GREEN_BITE` 2 m of the drawn paving
   (`Scraps::push_green`, fed after the paving so the bite is seen). The wedge of a
   courtyard pocket pinched between tiles and the fork island's tip
-  live there, not in a verge strip; their scraps go into `sidewalks` in tile colour —
+  live there, not in a verge strip; their scraps go into `sidewalk_scraps` in tile colour —
   the one tile layer above the grass (`Z_GRASS`), where an overlap with the
-  neighbouring tile of the same material renders identically. A wide yard or a strip
+  neighbouring tile of the same material renders identically. A step's own layer since
+  the road world split (perf-journal 33): the tail differs between the verge steps, and
+  the common `sidewalks` layer must not carry a step's tail — the merged build still
+  appends it to `sidewalks`, its order there (after the common middle) is the tail's
+  own order in the split layer. A wide yard or a strip
   with no paving at its vertices is not a candidate; the enclosure metre keeps its
   meaning for a verge lawn — past its edge the lawn really runs on — but a pocket's own
   edge is not the lawn running on, it is the pocket's loose outline sticking out past

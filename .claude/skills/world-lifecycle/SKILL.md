@@ -108,7 +108,8 @@ in any lane is `Failed`, not a hung loader.
 
 `Done` is the whole world: `poll_job` inserts `MapData`, `PortalPos` and a
 **`PreparedMeshes`** resource; `OnEnter(Playing)` then only *spawns* — `spawn_map` (parking
-layout resource, surfaces, both road steps, buildings), `spawn_rails` (all steps),
+layout resource, surfaces, the road split build — common layers once, both steps' own
+layers, buildings), `spawn_rails` (all steps),
 `cars::seed_parked_cars` (the placement cache pre-filled), `trees::spawn_prepared_trees`,
 and `fences::rebuild_fences` takes the entry-bucket fence layer out of `PreparedMeshes`
 (each system takes its lists out of `PreparedMeshes` with `std::mem::take`; the fence
@@ -119,7 +120,8 @@ band) are still built at entry — they cost 1–15 ms each.
 
 `Done` is the whole world: `poll_job` inserts `MapData`, `PortalPos` and a
 **`PreparedMeshes`** resource; `OnEnter(Playing)` then only *spawns* — `spawn_map` (parking
-layout resource, surfaces, both road steps, buildings), `spawn_rails` (all steps),
+layout resource, surfaces, the road split build — common layers once, both steps' own
+layers, buildings), `spawn_rails` (all steps),
 `cars::seed_parked_cars` (the placement cache pre-filled), `trees::spawn_prepared_trees`
 (each system takes its lists out of `PreparedMeshes` with `std::mem::take`). The cheap,
 camera-bucket-dependent meshes (cars' bodies, wagons, fences, industry, tram, the tree-row

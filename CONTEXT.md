@@ -321,7 +321,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     and a footway pressed to the kerb leave of the lawn is a **lawn scrap**
     (`roads/scraps.rs`): a small piece of verge lawn enclosed by paving, tiled over in
     `road_verges`; the same question asked of **ground green** lays its scraps in
-    `sidewalks`. The per-side decision is a **`SidewalkSide`** tristate on the `RoadLine`:
+    `sidewalk_scraps` — a step's own layer (`Z_SIDEWALK`, sidewalk material), not the
+    common `sidewalks`: the common layer must not carry a step's tail. The per-side
+    decision is a **`SidewalkSide`** tristate on the `RoadLine`:
     `Tagged`, `Inferred`, `None`. The whole drawn composition of the verge — tile, lawn,
     yard, scraps, the corner pieces of `corners` — is collected by the road build into
     **`DrawnPieces`** (`DrawnPiece`, `PieceKind`), and the semantic index answers the
