@@ -218,94 +218,34 @@ pub(super) fn measure_footways_beside_streets(
             streets.push((pair[0], pair[1], reach, owner));
         }
     }
-    for (road_index, road) in roads.iter_mut().enumerate() {
+    // счёт проб — по дорогам в потоках: дорога от дороги не зависит (каждая
+    // читает одни и те же сетки и сеть улиц, меняет только своё); раскладка
+    // результата — серийно, в порядке дорог, как у входов и карманов
+    let indexed: Vec<(usize, &RoadLine)> = roads.iter().enumerate().collect();
+    let counted: Vec<FootwayProbes> = in_parallel(&indexed, |&(road_index, road)| {
+        footway_probes(
+            road_index,
+            road,
+            network,
+            &links,
+            &index,
+            &streets,
+            &street_index,
+        )
+    });
+    for (road, counted) in roads.iter_mut().zip(counted) {
         let paved = !road.is_unpaved_street();
         let asks = paved || road.sidewalks.contains(&SidewalkSide::Inferred);
         if !road.is_carriageway() || !asks {
             continue;
         }
         let half = road.width / 2.0;
-        let near = (half - SEPARATE_INSIDE).max(0.0);
         let far = half + sidewalk_band(road.width) + SEPARATE_REACH;
-        // обочина тянется и к дорожке дальше «её» полосы
-        let verge_reach = if road.oneway {
-            VERGE_REACH
-        } else {
-            VERGE_REACH_TWO_WAY
-        };
-        let reach = far.max(half + verge_reach);
-        // улица пробы: след соседнего звена своей улицы накрывает её так же,
-        // как собственный асфальт, — шов, а не устье
-        let mine = network.street_of(road_index).map(|(street, _)| street);
-        let (along, total) = arclengths(&road.points);
-        let mut probes = 0;
-        // по сторонам — ближайшая дорожка каждой пробы: ось и полуширина
-        let mut hits: [Vec<(f32, f32)>; 2] = [Vec::new(), Vec::new()];
-        // профиль обочины: где по точкам стояла проба и как далеко от неё
-        // дорожка — и косая, заворачивающая у угла
-        let mut places: [Vec<(f32, f32)>; 2] = [Vec::new(), Vec::new()];
-        let mut at = SEPARATE_PROBE_STEP / 2.0;
-        while at < total {
-            if let Some((point, direction)) = place_on_path(&road.points, &along, at) {
-                probes += 1;
-                // проба в чужом следе — устье перекрёстка: параллельную
-                // дорожку через устье не мерять (косую — можно: это дорожка,
-                // заворачивающая за угол, она и есть кромка обочины)
-                let in_footprint =
-                    street_index
-                        .near_each(point - reach, point + reach)
-                        .any(|&street| {
-                            let (from, to, street_reach, owner) = streets[street as usize];
-                            owner != road_index
-                                && network.street_of(owner).map(|(street, _)| street) != mine
-                                && closest_on_segment(point, from, to).distance(point)
-                                    <= street_reach
-                        });
-                let mut found: [Option<(f32, f32)>; 2] = [None; 2];
-                // косое звено — только профилю: у угла дорожка заворачивает
-                let mut slanted: [Option<f32>; 2] = [None; 2];
-                // повтор звена из соседней клетки безвреден — берётся ближайшее
-                for &link in index.near_each(point - reach, point + reach) {
-                    let (from, to, path_half) = links[link as usize];
-                    let heading = (to - from).normalize_or_zero();
-                    let parallel = heading.dot(direction).abs();
-                    if parallel < VERGE_SLANT {
-                        continue;
-                    }
-                    let offset = closest_on_segment(point, from, to) - point;
-                    let distance = offset.length();
-                    if (near..=reach).contains(&distance) {
-                        // `perp` смотрит влево по ходу точек — сторона 0
-                        let at_side = usize::from(offset.dot(direction.perp()) < 0.0);
-                        if parallel < SEPARATE_PARALLEL {
-                            let side = &mut slanted[at_side];
-                            if side.is_none_or(|nearest| distance < nearest) {
-                                *side = Some(distance);
-                            }
-                            continue;
-                        }
-                        if in_footprint {
-                            continue;
-                        }
-                        let side = &mut found[at_side];
-                        if side.is_none_or(|(nearest, _)| distance < nearest) {
-                            *side = Some((distance, path_half));
-                        }
-                    }
-                }
-                for (((hits, places), found), slanted) in
-                    hits.iter_mut().zip(&mut places).zip(found).zip(slanted)
-                {
-                    if let Some(found) = found {
-                        hits.push(found);
-                    }
-                    if let Some(distance) = found.map(|(distance, _)| distance).or(slanted) {
-                        places.push((at, distance));
-                    }
-                }
-            }
-            at += SEPARATE_PROBE_STEP;
-        }
+        let FootwayProbes {
+            probes,
+            hits,
+            places,
+        } = counted;
         for (((side, verge), profile), (mut hits, places)) in road
             .sidewalks
             .iter_mut()
@@ -342,6 +282,125 @@ pub(super) fn measure_footways_beside_streets(
     }
     report.took = started.elapsed();
     report
+}
+
+/// Счёт проб одной дороги — то, что раскладывает
+/// [`measure_footways_beside_streets`].
+#[derive(Default)]
+struct FootwayProbes {
+    /// Проб, вставших на ось дороги.
+    probes: usize,
+    /// По сторонам — ближайшая дорожка каждой пробы: ось и полуширина.
+    hits: [Vec<(f32, f32)>; 2],
+    /// Профиль обочины: где по точкам стояла проба и как далеко от неё
+    /// дорожка — и косая, заворачивающая у угла.
+    places: [Vec<(f32, f32)>; 2],
+}
+
+/// Пробы дорожки вдоль улицы `road_index` — чистая половина
+/// [`measure_footways_beside_streets`]: читает сетки следов и сеть улиц,
+/// дорогу не меняет. Дорога от дороги не зависит — единица параллельного
+/// счёта; раскладка ведёт счётчики и медианы в порядке дорог.
+fn footway_probes(
+    road_index: usize,
+    road: &RoadLine,
+    network: &RoadNetwork,
+    links: &[(Vec2, Vec2, f32)],
+    footway_index: &Grid<u32>,
+    streets: &[(Vec2, Vec2, f32, usize)],
+    street_index: &Grid<u32>,
+) -> FootwayProbes {
+    let paved = !road.is_unpaved_street();
+    let asks = paved || road.sidewalks.contains(&SidewalkSide::Inferred);
+    if !road.is_carriageway() || !asks {
+        return FootwayProbes::default();
+    }
+    let half = road.width / 2.0;
+    let near = (half - SEPARATE_INSIDE).max(0.0);
+    let far = half + sidewalk_band(road.width) + SEPARATE_REACH;
+    // обочина тянется и к дорожке дальше «её» полосы
+    let verge_reach = if road.oneway {
+        VERGE_REACH
+    } else {
+        VERGE_REACH_TWO_WAY
+    };
+    let reach = far.max(half + verge_reach);
+    // улица пробы: след соседнего звена своей улицы накрывает её так же,
+    // как собственный асфальт, — шов, а не устье
+    let mine = network.street_of(road_index).map(|(street, _)| street);
+    let (along, total) = arclengths(&road.points);
+    let mut probes = 0;
+    // по сторонам — ближайшая дорожка каждой пробы: ось и полуширина
+    let mut hits: [Vec<(f32, f32)>; 2] = [Vec::new(), Vec::new()];
+    // профиль обочины: где по точкам стояла проба и как далеко от неё
+    // дорожка — и косая, заворачивающая у угла
+    let mut places: [Vec<(f32, f32)>; 2] = [Vec::new(), Vec::new()];
+    let mut at = SEPARATE_PROBE_STEP / 2.0;
+    while at < total {
+        if let Some((point, direction)) = place_on_path(&road.points, &along, at) {
+            probes += 1;
+            // проба в чужом следе — устье перекрёстка: параллельную
+            // дорожку через устье не мерять (косую — можно: это дорожка,
+            // заворачивающая за угол, она и есть кромка обочины)
+            let in_footprint =
+                street_index
+                    .near_each(point - reach, point + reach)
+                    .any(|&street| {
+                        let (from, to, street_reach, owner) = streets[street as usize];
+                        owner != road_index
+                            && network.street_of(owner).map(|(street, _)| street) != mine
+                            && closest_on_segment(point, from, to).distance(point) <= street_reach
+                    });
+            let mut found: [Option<(f32, f32)>; 2] = [None; 2];
+            // косое звено — только профилю: у угла дорожка заворачивает
+            let mut slanted: [Option<f32>; 2] = [None; 2];
+            // повтор звена из соседней клетки безвреден — берётся ближайшее
+            for &link in footway_index.near_each(point - reach, point + reach) {
+                let (from, to, path_half) = links[link as usize];
+                let heading = (to - from).normalize_or_zero();
+                let parallel = heading.dot(direction).abs();
+                if parallel < VERGE_SLANT {
+                    continue;
+                }
+                let offset = closest_on_segment(point, from, to) - point;
+                let distance = offset.length();
+                if (near..=reach).contains(&distance) {
+                    // `perp` смотрит влево по ходу точек — сторона 0
+                    let at_side = usize::from(offset.dot(direction.perp()) < 0.0);
+                    if parallel < SEPARATE_PARALLEL {
+                        let side = &mut slanted[at_side];
+                        if side.is_none_or(|nearest| distance < nearest) {
+                            *side = Some(distance);
+                        }
+                        continue;
+                    }
+                    if in_footprint {
+                        continue;
+                    }
+                    let side = &mut found[at_side];
+                    if side.is_none_or(|(nearest, _)| distance < nearest) {
+                        *side = Some((distance, path_half));
+                    }
+                }
+            }
+            for (((hits, places), found), slanted) in
+                hits.iter_mut().zip(&mut places).zip(found).zip(slanted)
+            {
+                if let Some(found) = found {
+                    hits.push(found);
+                }
+                if let Some(distance) = found.map(|(distance, _)| distance).or(slanted) {
+                    places.push((at, distance));
+                }
+            }
+        }
+        at += SEPARATE_PROBE_STEP;
+    }
+    FootwayProbes {
+        probes,
+        hits,
+        places,
+    }
 }
 
 /// Полосы обочин дороги — от оси до кромки плюс `reach(обочина по месту)`,
