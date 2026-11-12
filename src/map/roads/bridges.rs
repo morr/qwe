@@ -179,8 +179,10 @@ struct BridgeSpan {
 /// это порядок пуша.
 ///
 /// Клонируется ради финала ступени (`RoadCommon::finish_step`): мостовые
-/// слои у ступеней одинаковы (отпечаток записи 28), каждая забирает копию.
-#[derive(Clone)]
+/// слои у ступеней одинаковы (отпечаток записи 28), каждая забирает копию;
+/// общие слои сплит-двери — тоже одна копия
+/// (`RoadCommon::take_common_layers`).
+#[derive(Clone, Default)]
 pub(super) struct Bridges {
     /// На индекс дороги; `None` — не мост.
     spans: Vec<Option<BridgeSpan>>,

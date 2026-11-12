@@ -30,7 +30,7 @@ use crate::map::osm::{JobState, MapLoadJob};
 use crate::map::parking::ParkingLayout;
 use crate::map::rail::{RAIL_LODS, RailReport, RailZoomBucket, mesh_rails};
 use crate::map::roads::{
-    RoadBuild, RoadStyle, VergeLods, VergeZoomBucket, build_roads_steps, road_skeleton,
+    RoadStepsBuild, RoadStyle, VergeLods, VergeZoomBucket, build_roads_steps, road_skeleton,
 };
 use crate::map::spawn::{SurfaceReport, mesh_surfaces};
 use crate::map::surface::{LayerMesh, MAP_CHUNK};
@@ -73,9 +73,11 @@ pub struct WorldMeshes {
     pub parking_layout: ParkingLayout,
     pub surfaces: Vec<LayerMesh>,
     pub surface_report: SurfaceReport,
-    /// Дорожная сборка по ступеням обочин, в порядке ступеней: спавн кладёт
-    /// обе в мир заранее, видима та, что под камеру (`show_road_steps`).
-    pub roads: Vec<RoadBuild>,
+    /// Дорожная сборка сплит-двери (`build_roads_steps`): общие слои — один
+    /// набор на город (спавн кладёт их без `LodStep`, ступень обочин их не
+    /// прячет), ступенезависимые — в порядке ступеней, обе в мире заранее,
+    /// видима та, что под камеру (`show_road_steps`).
+    pub roads: RoadStepsBuild,
     pub buildings: (BuildingMeshes, BuildingReport),
     pub trees: (TreeMeshes, TreeReport),
     /// Рельсы по ступеням зума, в порядке ступеней: все лежат в мире сразу,
@@ -302,7 +304,7 @@ mod tests {
 
         let meshes = build_world_meshes(&mut map, &snapshot(), &job).expect("meshing failed");
 
-        assert_eq!(meshes.roads.len(), VergeLods::max_zooms().count());
+        assert_eq!(meshes.roads.steps.len(), VergeLods::max_zooms().count());
         assert_eq!(meshes.rails.len(), RAIL_LODS.len());
         assert!(meshes.buildings.0.layers.is_empty());
         assert!(meshes.trees.0.crowns.is_empty() && meshes.trees.0.merged.is_empty());

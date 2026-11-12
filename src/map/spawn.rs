@@ -14,7 +14,7 @@ use crate::map::osm::{AreaKind, MapData, PolyArea, TreeRow};
 use crate::map::parking;
 use crate::map::pitch;
 use crate::map::prepare::{PreparedMeshes, WorldMeshes};
-use crate::map::roads::{self, RoadBuild};
+use crate::map::roads::{self, RoadStepsBuild, StepRoadBuild};
 use crate::map::smooth::smooth_path;
 use crate::map::surface::{
     self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec, SurfaceKind, spawn_layers,
@@ -118,8 +118,9 @@ fn push_area(builder: &mut MeshBuilder, area: &PolyArea, fill: Color, rim: &Rim)
 }
 
 /// Спавн карты из собранного потоком загрузки (`map/prepare.rs`): раскладка
-/// стоянок — ресурсом, поверхности — слоями, дороги — обеими ступенями
-/// обочин (видима та, что под камеру), здания — слоями и тенями. Мешинг
+/// стоянок — ресурсом, поверхности — слоями, дороги — общими слоями один раз
+/// (ступень обочин их не прячет) и обеими ступенями независимых слоёв
+/// (видима та, что под камеру), здания — слоями и тенями. Мешинг
 /// отыграл в потоке; здесь остаётся только положить готовое, пока экран
 /// загрузки жив.
 ///
@@ -168,14 +169,18 @@ pub fn spawn_map(
         (),
     );
 
-    // Дороги: ступени обочин обе лежат в мире заранее (`RoadLayerTag` +
-    // `zoom::LodStep`), видима та, что под камеру, и пересечение порога
-    // зума переключает им видимость (`show_road_steps`), а не пересобирает
-    // дорогу. Побочные выходы текущей ступени — линии колеи (оверлею колеи
-    // вкладки Debug), пути трамвая (слою трамвая, следом) и отрисованные
-    // куски (семантическому индексу, `map/inspect.rs`) — ресурсами.
-    for (step, build) in std::mem::take(roads).into_iter().enumerate() {
-        let RoadBuild {
+    // Дороги: общие слои — один экземпляр на город (`RoadLayerTag` без
+    // `LodStep` — ступень обочин их не прячет), ступенезависимые — обе
+    // ступени лежат в мире заранее (`RoadLayerTag` + `zoom::LodStep`),
+    // видима та, что под камеру, и пересечение порога зума переключает им
+    // видимость (`show_road_steps`), а не пересобирает дорогу. Побочные
+    // выходы текущей ступени — линии колеи (оверлею колеи вкладки Debug),
+    // пути трамвая (слою трамвая, следом) и отрисованные куски
+    // (семантическому индексу, `map/inspect.rs`) — ресурсами.
+    let RoadStepsBuild { common, steps } = std::mem::take(roads);
+    roads::spawn_road_common_layers(&mut commands, &mut meshes, &materials, common);
+    for (step, build) in steps.into_iter().enumerate() {
+        let StepRoadBuild {
             layers,
             report,
             ruts,
@@ -195,7 +200,7 @@ pub fn spawn_map(
             (layers, report),
             step,
             current,
-            current,
+            false,
         );
     }
 

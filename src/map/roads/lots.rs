@@ -97,7 +97,9 @@ pub(super) struct Grounds<'a>(Vec<Ground<'a>>);
 ///
 /// Клонируется ради финала ступени (`RoadCommon::finish_step`): слои стоянок
 /// у ступеней одинаковы (отпечаток записи 28), каждая забирает копию.
-#[derive(Clone)]
+/// Сплит-дверь вынимает её один раз в общие слои
+/// (`RoadCommon::take_common_layers`) — для этого и `Default`.
+#[derive(Clone, Default)]
 pub(super) struct LotLayers {
     pub sidewalks: MeshBuilder,
     pub lines: MeshBuilder,
