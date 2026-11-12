@@ -48,7 +48,7 @@ pub type PlantedTree = (Vec2, f32, f32);
 /// массива (`(номер + 1) · TREE_AREA_PER_TREE / площадь`), поэтому каждый лес
 /// отдаёт ровно свою долю, даже если засаживался до упора и не добрал
 /// запрошенного (см. `planting.rs`).
-#[derive(Default, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TreeSet {
     /// Центр и радиус кроны.
     positions: Vec<(Vec2, f32)>,
@@ -211,7 +211,7 @@ impl TreeRowLayout {
 /// вместо одного стоят копейки — рядов на карте сотни против десятков тысяч
 /// лесных деревьев, — а взамен переключение любой из двух ручек не трогает
 /// индексы близости, которые строятся по всем домам и дорогам карты.
-#[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct RowTrees([Vec<PlantedTree>; 4]);
 
 impl RowTrees {
