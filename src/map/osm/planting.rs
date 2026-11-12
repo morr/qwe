@@ -191,7 +191,12 @@ fn plant_woods(
                 continue;
             }
             let radius = TREE_MIN_RADIUS + next() * (TREE_MAX_RADIUS - TREE_MIN_RADIUS);
-            if obstacles.blocked(pos, radius) || occupied.crowded(pos) {
+            // занятость — самая дешёвая проверка (девять клеток сетки против
+            // полигонов и дорог), вперёд; набор принятых тот же
+            if occupied.crowded(pos) {
+                continue;
+            }
+            if obstacles.blocked(pos, radius) {
                 continue;
             }
             planted += 1;
@@ -273,7 +278,16 @@ fn plant_standalone(
             let roll = lcg_seeded_by(pos)();
             TREE_MIN_RADIUS + roll * (TREE_MAX_RADIUS - TREE_MIN_RADIUS)
         });
-        if obstacles.solid(pos, radius) || obstacles.on_road(pos) || occupied.crowded(pos) {
+        // проверки — от дешёвой к дорогой: занятость (девять клеток сетки),
+        // дорога (один индекс) и только потом стены с водой (два полигона и
+        // линия); порядок на результат не влияет
+        if occupied.crowded(pos) {
+            continue;
+        }
+        if obstacles.on_road(pos) {
+            continue;
+        }
+        if obstacles.solid(pos, radius) {
             continue;
         }
         planted.push((pos, radius, 0.0));
