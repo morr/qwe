@@ -87,7 +87,12 @@ $b raise; $b msg KeyboardInput "{\"key_code\":\"Escape\",\"logical_key\":\"Escap
 For a frame-time measurement launch with any of these in front of `cargo run`; without
 them the app is unchanged:
 
-- `QWE_PERF_NOVSYNC=1` — `AutoNoVsync`, so `frame_time` is not pinned to the display's 60 Hz;
+- `QWE_PERF_NOVSYNC=1` — `AutoNoVsync` (`dev.rs::perf_present_mode`). **Measured broken on
+  this macOS (25.5, M1 Max, Metal, Bevy 0.20.1): wgpu has no uncapped present on Metal, so
+  AutoNoVsync falls back to Fifo and `frame_time` stays pinned at ~16.7 ms — live or paused,
+  every zoom (perf journal 35; the pause × near-zoom probe is the proof). The diagnostics
+  fps is the display clock, not a cost signal; only the spike detector (`Time<Real>`)
+  remains valid;**
 - `QWE_PERF_WINDOW=WxH` — the logical window size (default 1920 × 1080), to compare the
   same frame across runs;
 - `QWE_PERF_POP=<n>` — `n` humans instead of the stock population;
