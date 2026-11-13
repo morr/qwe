@@ -12,6 +12,7 @@ use super::{
     samples,
 };
 use crate::map::grid::Grid;
+use crate::map::parallel::in_parallel;
 use crate::map::osm::model::{RailKind, RailLine, distance_to_segment};
 use crate::map::osm::{RoadClass, RoadLine};
 use crate::map::roads::junctions::node_key;
@@ -91,7 +92,7 @@ impl Pairs {
     /// пусты — их кладёт [`Pairs::align`].
     pub fn new(
         roads: &[RoadLine],
-        paths: &[impl AsRef<[Vec2]>],
+        paths: &[impl AsRef<[Vec2]> + Sync],
         median_gap: f32,
         rails: &[RailLine],
     ) -> Self {
@@ -117,64 +118,94 @@ impl Pairs {
             }
         }
         // куски короче `PAIR_MIN`, почти во весь свой way — до второго прохода
-        let mut short: Vec<(usize, usize, Vec<Probe>)> = Vec::new();
-        for &index in &candidates {
-            let path = paths[index].as_ref();
-            let reach = (roads[index].width + widest) / 2.0 + PAIR_MAX_GAP;
-            // сосед прошлой пробы держится, пока он почти так же близок
-            // ([`PARTNER_SLACK`]): у шва встречной половины два её way стоят
-            // рядом, и ближайший перескакивал с одного на другой через пробу
-            let mut previous = None;
-            let probes: Vec<Probe> = samples(path)
-                .into_iter()
-                .map(|(along, at, heading)| {
-                    let near = beside(index, at, heading, reach, roads, paths, &segments, previous);
-                    previous = near.map(|(partner, ..)| partner);
-                    Probe {
-                        along,
-                        at,
-                        beside: near,
+        // Пробы по кандидатам в потоки (`map/parallel.rs`): сосед прошлой пробы
+        // — локал кандидата, сетка звеньев и пути только читаются, пишет
+        // кандидат в свои `runs` — раскладка результатов по порядку кандидатов
+        // даёт тот же `runs`, `medians` и `short`, что серийный проход.
+        let short: Vec<(usize, usize, Vec<Probe>)> = {
+            let found: Vec<(Vec<PairRun>, Vec<Median>, Vec<(usize, Vec<Probe>)>)> = in_parallel(
+                &candidates,
+                |&index| {
+                    let path = paths[index].as_ref();
+                    let reach = (roads[index].width + widest) / 2.0 + PAIR_MAX_GAP;
+                    // сосед прошлой пробы держится, пока он почти так же близок
+                    // ([`PARTNER_SLACK`]): у шва встречной половины два её way стоят
+                    // рядом, и ближайший перескакивал с одного на другой через пробу
+                    let mut previous = None;
+                    let probes: Vec<Probe> = samples(path)
+                        .into_iter()
+                        .map(|(along, at, heading)| {
+                            let near =
+                                beside(index, at, heading, reach, roads, paths, &segments, previous);
+                            previous = near.map(|(partner, ..)| partner);
+                            Probe {
+                                along,
+                                at,
+                                beside: near,
+                            }
+                        })
+                        .collect();
+                    let total = probes.last().map_or(0.0, |probe| probe.along);
+                    let mut pieces: Vec<(usize, usize, usize)> = Vec::new();
+                    let mut start = 0;
+                    while start < probes.len() {
+                        let Some((partner, ..)) = probes[start].beside else {
+                            start += 1;
+                            continue;
+                        };
+                        let end = probes[start..]
+                            .iter()
+                            .position(|probe| probe.beside.map(|beside| beside.0) != Some(partner))
+                            .map_or(probes.len(), |offset| start + offset);
+                        pieces.push((start, end, partner));
+                        start = end;
                     }
-                })
-                .collect();
-            let total = probes.last().map_or(0.0, |probe| probe.along);
-            let mut pieces: Vec<(usize, usize, usize)> = Vec::new();
-            let mut start = 0;
-            while start < probes.len() {
-                let Some((partner, ..)) = probes[start].beside else {
-                    start += 1;
-                    continue;
-                };
-                let end = probes[start..]
-                    .iter()
-                    .position(|probe| probe.beside.map(|beside| beside.0) != Some(partner))
-                    .map_or(probes.len(), |offset| start + offset);
-                pieces.push((start, end, partner));
-                start = end;
-            }
-            // длина куска меряется по цепочке, в которой сосед сменился без
-            // пропуска: на шве встречной половины короткий way видит пару
-            // половиной длины с одним её way и половиной — с другим, и ни
-            // один кусок не дотягивал до пары (Красноармейский у моста: way в
-            // 16 м — по 7.4 м с каждым), а половина сходилась к мосту
-            for chain in pieces.chunk_by(|a, b| a.1 == b.0) {
-                let span = probes[chain[chain.len() - 1].1 - 1].along - probes[chain[0].0].along;
-                for &(start, end, partner) in chain {
-                    let run = &probes[start..end];
-                    // осколок у шва, где обе половины меняют way, — не кусок
-                    if chain.len() > 1 && run[run.len() - 1].along - run[0].along < PAIR_MIN / 2.0 {
-                        continue;
-                    }
-                    match run_kind(span, total) {
-                        RunKind::Pair => {
-                            pairs.push_run(index, partner, run, roads, median_gap, &tracks)
+                    // длина куска меряется по цепочке, в которой сосед сменился без
+                    // пропуска: на шве встречной половины короткий way видит пару
+                    // половиной длины с одним её way и половиной — с другим, и ни
+                    // один кусок не дотягивал до пары (Красноармейский у моста: way в
+                    // 16 м — по 7.4 м с каждым), а половина сходилась к мосту
+                    let mut runs = Vec::new();
+                    let mut medians = Vec::new();
+                    let mut short = Vec::new();
+                    for chain in pieces.chunk_by(|a, b| a.1 == b.0) {
+                        let span =
+                            probes[chain[chain.len() - 1].1 - 1].along - probes[chain[0].0].along;
+                        for &(start, end, partner) in chain {
+                            let run = &probes[start..end];
+                            // осколок у шва, где обе половины меняют way, — не кусок
+                            if chain.len() > 1
+                                && run[run.len() - 1].along - run[0].along < PAIR_MIN / 2.0
+                            {
+                                continue;
+                            }
+                            match run_kind(span, total) {
+                                RunKind::Pair => {
+                                    let (run, median) = Self::pair_of(
+                                        index, partner, run, roads, median_gap, &tracks,
+                                    );
+                                    runs.push(run);
+                                    if let Some(median) = median {
+                                        medians.push(median);
+                                    }
+                                }
+                                RunKind::Short => short.push((partner, run.to_vec())),
+                                RunKind::None => {}
+                            }
                         }
-                        RunKind::Short => short.push((index, partner, run.to_vec())),
-                        RunKind::None => {}
                     }
-                }
+                    (runs, medians, short)
+                },
+            );
+            let mut short = Vec::new();
+            for (position, (runs, medians, pieces)) in found.into_iter().enumerate() {
+                let index = candidates[position];
+                pairs.runs[index].extend(runs);
+                pairs.medians.extend(medians);
+                short.extend(pieces.into_iter().map(|(partner, run)| (index, partner, run)));
             }
-        }
+            short
+        };
         // короткий way, целиком идущий рядом с парой, — пара, если он
         // продолжает половину, у которой пара уже есть: у моста или газона
         // улицу режут на куски в десяток метров, а два сходящихся съезда
@@ -207,6 +238,24 @@ impl Pairs {
         median_gap: f32,
         tracks: &Tracks,
     ) {
+        let (run, median) = Self::pair_of(index, partner, probes, roads, median_gap, tracks);
+        self.runs[index].push(run);
+        if let Some(median) = median {
+            self.medians.push(median);
+        }
+    }
+
+    /// Пара из куска проб — сам [`PairRun`] и, у половины с меньшим индексом,
+    /// её разделительная. Чистая: раскладку по `runs`/`medians` делает
+    /// вызывающий — пробы кандидатов идут в потоках ([`Pairs::new`]).
+    fn pair_of(
+        index: usize,
+        partner: usize,
+        probes: &[Probe],
+        roads: &[RoadLine],
+        median_gap: f32,
+        tracks: &Tracks,
+    ) -> (PairRun, Option<Median>) {
         let (first, last) = (&probes[0], &probes[probes.len() - 1]);
         let asphalt = (roads[index].width + roads[partner].width) / 2.0;
         let mut gaps: Vec<f32> = probes
@@ -236,7 +285,7 @@ impl Pairs {
         let paved = tram || gap <= median_gap;
         let (_, near, _) = first.beside.expect("кусок пары — из точек с соседом");
         let heading = probes[1].at - first.at;
-        self.runs[index].push(PairRun {
+        let run = PairRun {
             from: first.along,
             to: last.along,
             partner,
@@ -244,19 +293,18 @@ impl Pairs {
             gap,
             paved,
             tram,
+        };
+        let median = (index < partner).then(|| Median {
+            roads: [index, partner],
+            from: first.along,
+            to: last.along,
+            gap,
+            paved,
+            tram,
+            midline: Vec::new(),
+            inner: [Vec::new(), Vec::new()],
         });
-        if index < partner {
-            self.medians.push(Median {
-                roads: [index, partner],
-                from: first.along,
-                to: last.along,
-                gap,
-                paved,
-                tram,
-                midline: Vec::new(),
-                inner: [Vec::new(), Vec::new()],
-            });
-        }
+        (run, median)
     }
 }
 
