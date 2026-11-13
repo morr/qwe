@@ -12,9 +12,9 @@ use super::{
     samples,
 };
 use crate::map::grid::Grid;
-use crate::map::parallel::in_parallel;
 use crate::map::osm::model::{RailKind, RailLine, distance_to_segment};
 use crate::map::osm::{RoadClass, RoadLine};
+use crate::map::parallel::in_parallel;
 use crate::map::roads::junctions::node_key;
 
 /// Доля своей длины, которую короткий way должен пройти рядом с парой,
@@ -123,9 +123,8 @@ impl Pairs {
         // кандидат в свои `runs` — раскладка результатов по порядку кандидатов
         // даёт тот же `runs`, `medians` и `short`, что серийный проход.
         let short: Vec<(usize, usize, Vec<Probe>)> = {
-            let found: Vec<(Vec<PairRun>, Vec<Median>, Vec<(usize, Vec<Probe>)>)> = in_parallel(
-                &candidates,
-                |&index| {
+            let found: Vec<(Vec<PairRun>, Vec<Median>, Vec<(usize, Vec<Probe>)>)> =
+                in_parallel(&candidates, |&index| {
                     let path = paths[index].as_ref();
                     let reach = (roads[index].width + widest) / 2.0 + PAIR_MAX_GAP;
                     // сосед прошлой пробы держится, пока он почти так же близок
@@ -135,8 +134,9 @@ impl Pairs {
                     let probes: Vec<Probe> = samples(path)
                         .into_iter()
                         .map(|(along, at, heading)| {
-                            let near =
-                                beside(index, at, heading, reach, roads, paths, &segments, previous);
+                            let near = beside(
+                                index, at, heading, reach, roads, paths, &segments, previous,
+                            );
                             previous = near.map(|(partner, ..)| partner);
                             Probe {
                                 along,
@@ -195,14 +195,17 @@ impl Pairs {
                         }
                     }
                     (runs, medians, short)
-                },
-            );
+                });
             let mut short = Vec::new();
             for (position, (runs, medians, pieces)) in found.into_iter().enumerate() {
                 let index = candidates[position];
                 pairs.runs[index].extend(runs);
                 pairs.medians.extend(medians);
-                short.extend(pieces.into_iter().map(|(partner, run)| (index, partner, run)));
+                short.extend(
+                    pieces
+                        .into_iter()
+                        .map(|(partner, run)| (index, partner, run)),
+                );
             }
             short
         };
