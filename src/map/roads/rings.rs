@@ -37,6 +37,7 @@ use crate::map::along::nearest_on_path;
 use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin, miter_offsets};
 use crate::map::osm::model::{point_in_polygon, polyline_length, ring_bounds};
 use crate::map::osm::{PolyArea, RoadClass, RoadLine};
+use crate::map::parallel::in_parallel;
 use crate::map::shapes::{Shape, area_contours, is_ring, oriented, push_shape};
 use crate::map::spawn::GRASS_COLOR;
 
@@ -335,18 +336,24 @@ pub fn reshape<'a>(
             paths[index] = Cow::Owned(path);
         }
     }
-    for (index, road) in roads.iter().enumerate() {
-        if rings.of_road[index].is_some() || !is_approach(road) {
-            continue;
-        }
-        for ring in &rings.list {
-            rings.webs.extend(webs_along(
-                &paths[index],
-                road.width / 2.0,
-                ring,
-                ring.width,
-            ));
-        }
+    // перепонки по подходам в потоки (`map/parallel.rs`): подход читает свой
+    // путь и кольца, пишет только в свой кусок результата — раскладка по
+    // порядку подходов даёт тот же `webs`, что серийный проход.
+    let approaches: Vec<usize> = roads
+        .iter()
+        .enumerate()
+        .filter(|&(index, road)| rings.of_road[index].is_none() && is_approach(road))
+        .map(|(index, _)| index)
+        .collect();
+    let webs: Vec<Vec<Vec<Vec2>>> = in_parallel(&approaches, |&index| {
+        rings
+            .list
+            .iter()
+            .flat_map(|ring| webs_along(&paths[index], roads[index].width / 2.0, ring, ring.width))
+            .collect()
+    });
+    for web in webs {
+        rings.webs.extend(web);
     }
     rings
 }
