@@ -38,6 +38,7 @@ use super::junctions::node_key;
 use crate::map::grid::Grid;
 use crate::map::osm::model::{closest_on_segment, point_in_area, polyline_length, ring_bounds};
 use crate::map::osm::{MapData, PolyArea, RoadClass, RoadLine};
+use crate::map::parallel::in_parallel;
 
 /// Зазор между висячим торцом и **краем** дороги впереди, м, который стежок
 /// ещё закрывает. Шесть метров — это тротуар с газоном между проездом и
@@ -265,14 +266,21 @@ pub fn stitches(
     }
     let obstacles = Obstacles::new(map);
 
-    let mut count = 0;
-    for (index, road) in roads.iter().enumerate() {
+    // поиск по дорогам в потоки (`map/parallel.rs`): дорога читает общие —
+    // сетку звеньев, препятствия, узлы, кромки — и пишет только в свои
+    // `ends`/`targets`; `widest` посчитан выше, порядок обхода сетки внутри
+    // торца не зависит от чужих результатов. Раскладка по индексам даёт те
+    // же векторы, серийный проход давал бы те же стежки.
+    let indices: Vec<usize> = (0..roads.len()).collect();
+    let found: Vec<[Option<(Vec2, StitchTarget)>; 2]> = in_parallel(&indices, |&index| {
+        let road = roads[index];
+        let mut found = [None; 2];
         if !stitchable(road) {
-            continue;
+            return found;
         }
         let points = &road.points;
         if points[0] == points[points.len() - 1] {
-            continue;
+            return found;
         }
         let last = points.len() - 1;
         for (side, end) in [points[0], points[last]].into_iter().enumerate() {
@@ -298,11 +306,19 @@ pub fn stitches(
             let reach = road.width / 2.0 + STITCH_MAX_GAP + widest;
             let stitch = stitch_end(&drawn, index, end, heading, reach, &segments, &obstacles);
             if let Some((point, target)) = stitch {
-                ends[index][side] = Some(point);
-                targets[index][side] = Some(target);
-                count += 1;
+                found[side] = Some((point, target));
             }
         }
+        found
+    });
+    let mut count = 0;
+    for (index, [start, end]) in found.into_iter().enumerate() {
+        ends[index] = [start.map(|(point, _)| point), end.map(|(point, _)| point)];
+        targets[index] = [
+            start.map(|(_, target)| target),
+            end.map(|(_, target)| target),
+        ];
+        count += usize::from(start.is_some()) + usize::from(end.is_some());
     }
     Stitches {
         ends,
