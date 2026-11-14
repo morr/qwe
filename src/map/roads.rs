@@ -1125,13 +1125,6 @@ impl<'s> RoadCommon<'s> {
         // остаётся серийной на своём месте в порядке заливки.
         let fill_arc = ribbon_lane::fill_arcs(prepared, &drawn, &order, &road_islands.outlines);
         let chunks = ribbon_lane::chunks(&drawn, &order);
-        let states = ribbon_lane::sidewalk_states(&drawn, &order, &road_islands.outlines);
-        // Состояние тротуарной полосы — улицы на начале куска, не сам кусок:
-        // `zip` брал бы состояние i-й улицы для i-го куска.
-        let per_chunk: Vec<_> = chunks
-            .iter()
-            .map(|range| (range.clone(), states[range.start]))
-            .collect();
         let lane = ribbon_lane::RibbonLane {
             prepared,
             drawn: &drawn,
@@ -1148,10 +1141,10 @@ impl<'s> RoadCommon<'s> {
             outlines: &road_islands.outlines,
             grounds: &grounds,
         };
-        let parts: Vec<ribbon_lane::ChunkRibbon> = in_parallel(&per_chunk, |(range, state)| {
-            lane.chunk(range.clone(), *state, &fill_arc)
+        let parts: Vec<ribbon_lane::ChunkRibbon> = in_parallel(&chunks, |range| {
+            lane.chunk(range.clone(), &fill_arc)
         });
-        for (part, (range, _)) in parts.into_iter().zip(per_chunk) {
+        for (part, range) in parts.into_iter().zip(chunks) {
             let position = range.start;
             let index = order[position];
             let road = drawn[index];

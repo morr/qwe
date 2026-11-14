@@ -11,11 +11,11 @@
 //! кусок из одной улицы, чей вклад несёт только краску и колею. Кольцо
 //! заливается первой не-мостовой дугой в порядке заливки (R15) — решение
 //! считает [`fill_arcs`] заранее, и вклад дуги кладёт кусок кольца в свой
-//! слой заливки без общего состояния. Состояние раскладки полос тротуарного
-//! сборщика — тоже серийное: клинья тротуара читают то, что стоит в
-//! сборщике ([`MeshBuilder::set_lanes`]), а ставит его последняя мощёная
-//! дорожка до этой улицы — [`sidewalk_states`] считает то же течение
-//! состояний заранее, и улица вклада ставит его себе перед своими клиньями.
+//! слой заливки без общего состояния. Клинья тротуара читают раскладку,
+//! стоящую в сборщике ([`MeshBuilder::set_lanes`]), а ставит её последняя
+//! мощёная дорожка до этой улицы; у мощёной дорожки колеи нет (`road_lanes`
+//! отвечает `None`), так что к началу каждого куска сборщик стоит без колеи,
+//! и вклад улицы гасит её сам перед своими клиньями.
 
 use std::ops::Range;
 
@@ -121,45 +121,10 @@ pub(super) fn chunks(drawn: &[&RoadLine], order: &[usize]) -> Vec<Range<usize>> 
     chunks
 }
 
-/// Состояние тротуарного сборщика ([`MeshBuilder::set_lanes`]) на момент
-/// полосы тротуара каждой улицы порядка заливки: клинья тротуара читают
-/// раскладку, стоящую в сборщике, а ставит её последняя мощёная дорожка до
-/// этой улицы — у серийного прохода состояние течёт между улицами. Кусок
-/// вклада берёт состояние на своём начале и дальше течёт им сам, и
-/// координаты геометрии сходятся с серийным проходом.
-pub(super) fn sidewalk_states(
-    drawn: &[&RoadLine],
-    order: &[usize],
-    outlines: &[bool],
-) -> Vec<Option<LaneFrame>> {
-    let mut lanes = None;
-    order
-        .iter()
-        .map(|&index| {
-            let state = lanes;
-            let road = drawn[index];
-            if !road.bridge
-                && !outlines[index]
-                && road.class == RoadClass::Alley
-                && road.is_paved_path()
-            {
-                lanes = road_lanes(road);
-            }
-            state
-        })
-        .collect()
-}
-
 impl<'a, 'm> RibbonLane<'a, 'm> {
-    /// Вклад куска `range` порядка заливки; `sidewalk_lanes` — состояние
-    /// тротуарного сборщика на его начале ([`sidewalk_states`]), `fill_arc` —
-    /// первые дуги колец ([`fill_arcs`]).
-    pub(super) fn chunk(
-        &self,
-        range: Range<usize>,
-        mut sidewalk_lanes: Option<LaneFrame>,
-        fill_arc: &[Option<usize>],
-    ) -> ChunkRibbon {
+    /// Вклад куска `range` порядка заливки; `fill_arc` — первые дуги колец
+    /// ([`fill_arcs`]).
+    pub(super) fn chunk(&self, range: Range<usize>, fill_arc: &[Option<usize>]) -> ChunkRibbon {
         let mut part = ChunkRibbon {
             streets: MeshBuilder::with_surface_coords(),
             sidewalks: MeshBuilder::with_surface_coords(),
@@ -178,9 +143,9 @@ impl<'a, 'm> RibbonLane<'a, 'm> {
             if self.outlines[index] {
                 continue;
             }
-            // полоса тротуара читает раскладку, стоящую в сборщике к этой
-            // улице; мощёная дорожка позже поставит свою
-            let band_lanes = sidewalk_lanes;
+            // полоса тротуара без колеи: колею ставит проезжая часть, а не
+            // дорожка, и в порядок заливки вклады колеи несут сами
+            let band_lanes = None;
             let ring_index = self.prepared.rings().index_of(index);
             let paved_path = road.is_paved_path();
             let unpaved_street = road.is_unpaved_street();
@@ -280,9 +245,7 @@ impl<'a, 'm> RibbonLane<'a, 'm> {
             let banded = [trimmed[0] || seam[0], trimmed[1] || seam[1]];
             let wedges = tapers::wedge_run(&head, &tail, ends);
 
-            // тротуар кольца — одной лентой на всё кольцо (`push_ring_edges`):
-            // с тем состоянием раскладки, какое у серийного прохода стояло в
-            // сборщике к этой улице
+            // тротуар кольца — одной лентой на всё кольцо (`push_ring_edges`)
             part.sidewalks.set_lanes(band_lanes);
             if let Some(sidewalk) = self
                 .prepared
@@ -415,11 +378,6 @@ impl<'a, 'm> RibbonLane<'a, 'm> {
             footbridge::lay_flares(fill, self.drawn, self.prepared, road, points, index, color);
             if road.class == RoadClass::Street && !road.passage {
                 part.grounds.extend(self.grounds.streets_for(road, points));
-            }
-            // мощёная дорожка ставила колею в тротуарный сборщик — её унаследует
-            // полоса тротуара следующей улицы
-            if road.class == RoadClass::Alley && paved_path {
-                sidewalk_lanes = lanes;
             }
         }
         part
