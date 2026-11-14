@@ -129,11 +129,6 @@ pub fn build_world_meshes(
     }
 
     let map = &*map;
-    // Скелет двух дорожных ступеней: живёт всей сборкой, дорожные потоки
-    // делят его через `get_or_init` — строит тот, что пришёл первым.
-    let skeleton: std::sync::OnceLock<crate::map::roads::RoadSkeleton<'_>> =
-        std::sync::OnceLock::new();
-    let skeleton = &skeleton;
     let lanes = std::thread::scope(|scope| -> Result<_, String> {
         let buildings = scope.spawn(|| {
             timed("buildings", || {
@@ -150,16 +145,15 @@ pub fn build_world_meshes(
         // записи 28), считаются один раз; ступенезависимые обочинные куски и
         // лоскуты каждая достраивает свои. Один дорожный поток вместо двух —
         // второй финал больше не молотит дубли общей середины под стеной.
-        let roads: Vec<_> = vec![scope.spawn(move || {
+        let roads = scope.spawn(|| {
             timed("roads", || {
-                let skeleton = skeleton
-                    .get_or_init(|| road_skeleton(map, &styles.road_style, &styles.road_shape));
+                let skeleton = road_skeleton(map, &styles.road_style, &styles.road_shape);
                 let steps: Vec<VergeZoomBucket> = (0..VergeLods::max_zooms().count())
                     .map(VergeZoomBucket::at)
                     .collect();
-                build_roads_steps(skeleton, &steps)
+                build_roads_steps(&skeleton, &steps)
             })
-        })];
+        });
         let small =
             scope.spawn(|| timed("surfaces, trees, rails, cars", || small_lane(map, styles)));
         let fences = scope.spawn(|| {
@@ -176,8 +170,7 @@ pub fn build_world_meshes(
         });
 
         let buildings = join(buildings, "buildings")?;
-        let mut roads = roads;
-        let roads = join(roads.remove(0), "roads")?;
+        let roads = join(roads, "roads")?;
         let small = join(small, "small layers")?;
         let fences = join(fences, "fences")?;
         let polymesh = join(polymesh, "polymesh")?;
