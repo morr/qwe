@@ -21,8 +21,8 @@ use i_overlay::mesh::float::style::{LineCap, LineJoin, OutlineStyle};
 
 use crate::map::along::{arclengths, densify, place_on_path, tip_of};
 use crate::map::meshing::{MeshBuilder, min_area_rect};
-use crate::map::parallel::in_parallel;
 use crate::map::osm::model::{RoadLine, distance_to_segment, polyline_length, ring_bounds};
+use crate::map::parallel::in_parallel;
 use crate::map::shapes::{
     ARC, Contour, RING_EPSILON, Shape, contour_area, contour_bounds, is_ring, oriented,
     point_in_shape, push_shape, ring_of, stroke,
@@ -180,29 +180,28 @@ impl Gores {
         // замыкания; раскладка по кускам в порядке подходов даёт те же
         // `network`/`reach`, что серийный проход
         let arm_chunks = chunk_ranges(arms.len(), 8);
-        let arm_parts: Vec<(Vec<Contour>, Vec<(Vec2, Vec2)>)> =
-            in_parallel(&arm_chunks, |range| {
-                let mut network: Vec<Contour> = Vec::new();
-                let mut reach: Vec<(Vec2, Vec2)> = Vec::new();
-                for index in range.clone() {
-                    let (path, width) = &arms[index];
-                    let owner = owners[index];
-                    // в замыкание идёт только веер подхода — там, где зазор до
-                    // соседнего подхода ещё сходится (R23)
-                    let others: Vec<&[Vec2]> = owners
-                        .iter()
-                        .filter(|other| **other != owner)
-                        .map(|&other| roads[other].path.as_slice())
-                        .collect();
-                    let path = fan_head(path, &others);
-                    if path.len() < 2 {
-                        continue;
-                    }
-                    network.extend(stroke(&path, *width, LineCap::Round(ARC), is_ring(&path)));
-                    reach.push(closing_span(&path, *width));
+        let arm_parts: Vec<(Vec<Contour>, Vec<(Vec2, Vec2)>)> = in_parallel(&arm_chunks, |range| {
+            let mut network: Vec<Contour> = Vec::new();
+            let mut reach: Vec<(Vec2, Vec2)> = Vec::new();
+            for index in range.clone() {
+                let (path, width) = &arms[index];
+                let owner = owners[index];
+                // в замыкание идёт только веер подхода — там, где зазор до
+                // соседнего подхода ещё сходится (R23)
+                let others: Vec<&[Vec2]> = owners
+                    .iter()
+                    .filter(|other| **other != owner)
+                    .map(|&other| roads[other].path.as_slice())
+                    .collect();
+                let path = fan_head(path, &others);
+                if path.len() < 2 {
+                    continue;
                 }
-                (network, reach)
-            });
+                network.extend(stroke(&path, *width, LineCap::Round(ARC), is_ring(&path)));
+                reach.push(closing_span(&path, *width));
+            }
+            (network, reach)
+        });
         let mut network: Vec<Contour> = Vec::new();
         // Куда дотягивается замыкание: габарит ленты, выпущенный на её
         // полуширину и на само замыкание. Дальше этого прямоугольника клина
@@ -236,11 +235,9 @@ impl Gores {
                 let road = &roads[index];
                 let pad = road.width / 2.0;
                 let (low, high) = ring_bounds(&road.path);
-                let near = reach
-                    .iter()
-                    .any(|(from, to)| {
-                        (low - pad).cmple(*to).all() && (high + pad).cmpge(*from).all()
-                    });
+                let near = reach.iter().any(|(from, to)| {
+                    (low - pad).cmple(*to).all() && (high + pad).cmpge(*from).all()
+                });
                 if near {
                     solid.extend(stroke(
                         &road.path,
@@ -304,9 +301,11 @@ impl Gores {
                     continue;
                 }
                 let clip = clip_near(low, high);
-                wedges.extend(
-                    vec![shape.clone()].overlay(&clip, OverlayRule::Difference, FillRule::NonZero),
-                );
+                wedges.extend(vec![shape.clone()].overlay(
+                    &clip,
+                    OverlayRule::Difference,
+                    FillRule::NonZero,
+                ));
             }
             wedges
         });
