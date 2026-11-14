@@ -21,6 +21,7 @@ use i_overlay::mesh::float::style::{LineCap, LineJoin, OutlineStyle};
 
 use crate::map::along::{arclengths, densify, place_on_path, tip_of};
 use crate::map::meshing::{MeshBuilder, min_area_rect};
+use crate::map::parallel::in_parallel;
 use crate::map::osm::model::{RoadLine, distance_to_segment, polyline_length, ring_bounds};
 use crate::map::shapes::{
     ARC, Contour, RING_EPSILON, Shape, contour_area, contour_bounds, is_ring, oriented,
@@ -137,7 +138,19 @@ impl Gores {
             .filter(|road| road.roundabout)
             .flat_map(|road| road.path.iter().copied())
             .collect();
-        let at_ring = |point: Vec2| knots.iter().any(|knot| knot.distance(point) <= ARM_SNAP);
+        // узлы кольца в сетку: «кольцо ли эта вершина» спрашивается на каждую
+        // вершину каждого полотна, и линейный скан всех узлов на такой вопрос
+        // — десятки миллисекунд на Париже. Ответ — «да/нет», порядок и дубли
+        // ответа не важны, сетка возвращает ровно то же множество
+        let mut knot_grid = crate::map::grid::Grid::new(ARM_SNAP * 4.0);
+        for knot in &knots {
+            knot_grid.insert(*knot, *knot, *knot);
+        }
+        let at_ring = |point: Vec2| {
+            knot_grid
+                .near_each(point - Vec2::splat(ARM_SNAP), point + Vec2::splat(ARM_SNAP))
+                .any(|&knot| knot.distance(point) <= ARM_SNAP)
+        };
         // подход — кусок одностороннего полотна от кольца на [`ARM_REACH`]
         let mut owners: Vec<usize> = Vec::new();
         let arms: Vec<(Vec<Vec2>, f32)> = roads
@@ -162,26 +175,42 @@ impl Gores {
                 hatched: Vec::new(),
             };
         }
-
+        // Штрихи вееров подходов — по подходам в потоках: веер читает чужие
+        // полотна (они только читаются) и пишет свои контуры сети с габаритом
+        // замыкания; раскладка по кускам в порядке подходов даёт те же
+        // `network`/`reach`, что серийный проход
+        let arm_chunks = chunk_ranges(arms.len(), 8);
+        let arm_parts: Vec<(Vec<Contour>, Vec<(Vec2, Vec2)>)> =
+            in_parallel(&arm_chunks, |range| {
+                let mut network: Vec<Contour> = Vec::new();
+                let mut reach: Vec<(Vec2, Vec2)> = Vec::new();
+                for index in range.clone() {
+                    let (path, width) = &arms[index];
+                    let owner = owners[index];
+                    // в замыкание идёт только веер подхода — там, где зазор до
+                    // соседнего подхода ещё сходится (R23)
+                    let others: Vec<&[Vec2]> = owners
+                        .iter()
+                        .filter(|other| **other != owner)
+                        .map(|&other| roads[other].path.as_slice())
+                        .collect();
+                    let path = fan_head(path, &others);
+                    if path.len() < 2 {
+                        continue;
+                    }
+                    network.extend(stroke(&path, *width, LineCap::Round(ARC), is_ring(&path)));
+                    reach.push(closing_span(&path, *width));
+                }
+                (network, reach)
+            });
         let mut network: Vec<Contour> = Vec::new();
         // Куда дотягивается замыкание: габарит ленты, выпущенный на её
         // полуширину и на само замыкание. Дальше этого прямоугольника клина
         // нет — ни искать его там, ни вычитать из него нечего.
         let mut reach: Vec<(Vec2, Vec2)> = Vec::new();
-        for ((path, width), owner) in arms.iter().zip(&owners) {
-            // в замыкание идёт только веер подхода — там, где зазор до
-            // соседнего подхода ещё сходится (R23)
-            let others: Vec<&[Vec2]> = owners
-                .iter()
-                .filter(|other| *other != owner)
-                .map(|&other| roads[other].path.as_slice())
-                .collect();
-            let path = fan_head(path, &others);
-            if path.len() < 2 {
-                continue;
-            }
-            network.extend(stroke(&path, *width, LineCap::Round(ARC), is_ring(&path)));
-            reach.push(closing_span(&path, *width));
+        for (part_network, part_reach) in arm_parts {
+            network.extend(part_network);
+            reach.extend(part_reach);
         }
         let mut solid: Vec<Contour> = Vec::new();
         for road in roads.iter().filter(|road| road.roundabout) {
@@ -197,21 +226,34 @@ impl Gores {
             solid.push(oriented(&island[1..], true));
         }
         // Доходит до клина улица **кромкой**, а не осью: у проспекта это
-        // восемь метров, и по оси он в замыкание не попадал.
-        for road in roads {
-            let pad = road.width / 2.0;
-            let (low, high) = ring_bounds(&road.path);
-            let near = reach
-                .iter()
-                .any(|(from, to)| (low - pad).cmple(*to).all() && (high + pad).cmpge(*from).all());
-            if near {
-                solid.extend(stroke(
-                    &road.path,
-                    road.width,
-                    LineCap::Round(ARC),
-                    is_ring(&road.path),
-                ));
+        // восемь метров, и по оси он в замыкание не попадал. По дорогам в
+        // потоках: дорога читает общие габариты замыкания и пишет свои штрихи;
+        // раскладка по кускам в порядке дорог даёт тот же `solid`
+        let road_chunks = chunk_ranges(roads.len(), 512);
+        let solid_parts: Vec<Vec<Contour>> = in_parallel(&road_chunks, |range| {
+            let mut solid: Vec<Contour> = Vec::new();
+            for index in range.clone() {
+                let road = &roads[index];
+                let pad = road.width / 2.0;
+                let (low, high) = ring_bounds(&road.path);
+                let near = reach
+                    .iter()
+                    .any(|(from, to)| {
+                        (low - pad).cmple(*to).all() && (high + pad).cmpge(*from).all()
+                    });
+                if near {
+                    solid.extend(stroke(
+                        &road.path,
+                        road.width,
+                        LineCap::Round(ARC),
+                        is_ring(&road.path),
+                    ));
+                }
             }
+            solid
+        });
+        for part in solid_parts {
+            solid.extend(part);
         }
 
         let round = LineJoin::Round(ARC);
@@ -235,41 +277,84 @@ impl Gores {
                 .cloned()
                 .collect()
         };
-        let mut wedges: Vec<Shape> = Vec::new();
-        for shape in closed {
-            let Some((low, high)) = shape.first().map(contour_bounds) else {
-                continue;
-            };
-            // Островок лежит между двумя подходами, скругление с внешней
-            // стороны подхода — у одного; то же спрашивается ниже у самой
-            // фигуры, но там ответ точный, а платить за него разностью незачем
-            let between = arms
-                .iter()
-                .filter(|(path, width)| {
-                    let (from, to) = ring_bounds(path);
-                    let touch = width / 2.0 + ARM_TOUCH;
-                    low.cmple(to + touch).all() && high.cmpge(from - touch).all()
-                })
-                .count();
-            if between < 2 {
-                continue;
+        // Разность — по фигурам замыкания в потоках: фигура читает общие
+        // (подходы, solid) и пишет свои клинья; раскладка по кускам в порядке
+        // фигур даёт те же `wedges`, что серийный проход
+        let shape_chunks = chunk_ranges(closed.len(), 8);
+        let wedge_parts: Vec<Vec<Shape>> = in_parallel(&shape_chunks, |range| {
+            let mut wedges: Vec<Shape> = Vec::new();
+            for index in range.clone() {
+                let shape = &closed[index];
+                let Some((low, high)) = shape.first().map(contour_bounds) else {
+                    continue;
+                };
+                // Островок лежит между двумя подходами, скругление с внешней
+                // стороны подхода — у одного; то же спрашивается ниже у самой
+                // фигуры, но там ответ точный, а платить за него разностью
+                // незачем
+                let between = arms
+                    .iter()
+                    .filter(|(path, width)| {
+                        let (from, to) = ring_bounds(path);
+                        let touch = width / 2.0 + ARM_TOUCH;
+                        low.cmple(to + touch).all() && high.cmpge(from - touch).all()
+                    })
+                    .count();
+                if between < 2 {
+                    continue;
+                }
+                let clip = clip_near(low, high);
+                wedges.extend(
+                    vec![shape.clone()].overlay(&clip, OverlayRule::Difference, FillRule::NonZero),
+                );
             }
-            let clip = clip_near(low, high);
-            wedges.extend(vec![shape].overlay(&clip, OverlayRule::Difference, FillRule::NonZero));
+            wedges
+        });
+        let mut wedges: Vec<Shape> = Vec::new();
+        for part in wedge_parts {
+            wedges.extend(part);
         }
         // Веер подхода — клин между въездом и съездом **целиком**, от кольца
         // до узла, где они сходятся. Замыкание его не находит: подходы
         // расходятся быстрее двух его радиусов, и клин выходил обрывком у
         // кольца, а то и двумя (пример 04, север) — у Яндекса же островок
         // занимает весь веер
-        for fan in fans(roads, &at_ring) {
-            let (low, high) = contour_bounds(&fan);
-            let clip = clip_near(low, high);
-            wedges.extend(vec![vec![fan]].overlay(
-                &clip,
-                OverlayRule::Difference,
-                FillRule::NonZero,
-            ));
+        // Веера подходов — попарный проход по внешнему индексу в потоках:
+        // пара читает общий список подходов и общий solid, пишет свои клинья;
+        // раскладка по кускам в порядке внешнего индекса даёт тот же порядок
+        // вееров, что серийный проход
+        let outward = outward_approaches(roads, &at_ring);
+        let fan_chunks = chunk_ranges(outward.len(), 16);
+        let fan_parts: Vec<Vec<Shape>> = in_parallel(&fan_chunks, |range| {
+            let mut wedges: Vec<Shape> = Vec::new();
+            for index in range.clone() {
+                let (a, a_entry) = &outward[index];
+                for (b, b_entry) in &outward[index + 1..] {
+                    // веер — между въездом и съездом: два въезда подряд
+                    // островка не делят
+                    if a_entry == b_entry || a[0].distance(b[0]) <= ARM_SNAP {
+                        continue;
+                    }
+                    let mouth = a[a.len() - 1].distance(b[b.len() - 1]);
+                    if mouth > FAN_MOUTH {
+                        continue;
+                    }
+                    let mut outline = a.clone();
+                    outline.extend(b.iter().rev().skip(usize::from(mouth <= RING_EPSILON)));
+                    let fan = oriented(&outline, true);
+                    let (low, high) = contour_bounds(&fan);
+                    let clip = clip_near(low, high);
+                    wedges.extend(vec![vec![fan]].overlay(
+                        &clip,
+                        OverlayRule::Difference,
+                        FillRule::NonZero,
+                    ));
+                }
+            }
+            wedges
+        });
+        for part in fan_parts {
+            wedges.extend(part);
         }
         // клин, найденный и замыканием, и веером, — одна фигура
         let wedges: Vec<Shape> = wedges.simplify_shape(FillRule::NonZero);
@@ -542,15 +627,20 @@ const FAN_REACH: f32 = 55.0;
 /// в десяти метрах от него, за короткой связкой.
 const FAN_MOUTH: f32 = 12.0;
 
-/// Вееры подходов к кольцам: контур между двумя односторонними полотнами,
-/// что начинаются в разных узлах кольца, а кончаются в одном узле (или в
-/// [`FAN_MOUTH`] друг от друга), — от кольца по одному, назад по другому.
-/// Хорда между узлами кольца проходит по его асфальту и острову, и их
-/// вычитают вместе с полотнами.
-fn fans(roads: &[GoreRoad], at_ring: &impl Fn(Vec2) -> bool) -> Vec<Contour> {
-    // (путь от кольца наружу, въезд ли: одностороннюю улицу парс развернул по
-    // потоку, так что въезд — тот, что кончается на кольце)
-    let outward: Vec<(Vec<Vec2>, bool)> = roads
+/// Подходы к кольцам — половины вееров: односторонние полотна, начинающиеся
+/// в узле кольца и кончающиеся вне его (или наоборот), короче [`FAN_REACH`];
+/// путь разворачивается от кольца наружу, попутно помечается, въезд ли это
+/// (одностороннюю улицу парс развернул по потоку, так что въезд — тот, что
+/// кончается на кольце). Пары подходов — веера — собирает вызователь:
+/// контур между въездом и съездом, что начинаются в разных узлах кольца, а
+/// кончаются в одном узле (или в [`FAN_MOUTH`] друг от друга), — от кольца
+/// по одному, назад по другому. Хорда между узлами кольца проходит по его
+/// асфальту и острову, и их вычитают вместе с полотнами.
+fn outward_approaches(
+    roads: &[GoreRoad],
+    at_ring: &impl Fn(Vec2) -> bool,
+) -> Vec<(Vec<Vec2>, bool)> {
+    roads
         .iter()
         .filter(|road| road.oneway && !road.roundabout)
         .filter_map(|road| {
@@ -563,24 +653,14 @@ fn fans(roads: &[GoreRoad], at_ring: &impl Fn(Vec2) -> bool) -> Vec<Contour> {
             };
             (polyline_length(&path) <= FAN_REACH).then_some((path, entry))
         })
-        .collect();
-    let mut fans = Vec::new();
-    for (index, (a, a_entry)) in outward.iter().enumerate() {
-        for (b, b_entry) in &outward[index + 1..] {
-            // веер — между въездом и съездом: два въезда подряд островка не делят
-            if a_entry == b_entry || a[0].distance(b[0]) <= ARM_SNAP {
-                continue;
-            }
-            let mouth = a[a.len() - 1].distance(b[b.len() - 1]);
-            if mouth > FAN_MOUTH {
-                continue;
-            }
-            let mut outline = a.clone();
-            outline.extend(b.iter().rev().skip(usize::from(mouth <= RING_EPSILON)));
-            fans.push(oriented(&outline, true));
-        }
-    }
-    fans
+        .collect()
+}
+
+/// Непрерывные диапазоны по `step` элементов — куски для [`in_parallel`].
+fn chunk_ranges(len: usize, step: usize) -> Vec<std::ops::Range<usize>> {
+    (0..len.div_ceil(step))
+        .map(|chunk| chunk * step..((chunk + 1) * step).min(len))
+        .collect()
 }
 
 /// Клин — в асфальт и штриховку. Штрихуется клин **разомкнутый** — без
