@@ -51,7 +51,7 @@ candidate for deletion.
 | `sim_time.rs` (incl. the regulator's own constants, which live there now) | `sim-speed` |
 | `ui/*`, `camera.rs`, `post.rs`, `prefs.rs`, `dev.rs` | `ui-panels` |
 | `examples/demos/*` — a gallery also takes the skill of what it draws (`*_gallery` and `roads` → `osm-map`, `blood_gallery` → `species-behavior`, `crowd_demo` → `navigation-deep`) | `ui-panels` |
-| `examples/{audit,bench}/*` — by subject: `polymesh_*`, `navmesh_probe`, `pathfinding_bench`, `polymesh_bench` → `navigation-deep`; `map_meshing`, `pocket_probe` → `osm-map` | — |
+| `examples/{audit,bench}/*` — by subject: `polymesh_*`, `navmesh_probe`, `pathfinding_bench`, `polymesh_bench`, `dispatch_bench` → `navigation-deep`; `map_meshing`, `pocket_probe` → `osm-map` | — |
 
 - **`CONTEXT.md` names the terms; the domain skills carry the mechanism behind them** — that is why they are in this table rather than in the glossary.
 - **`src/settings.rs` has no domain skill on purpose, and that is a decision, not a gap.** What is left in it is by definition what more than one owner reads — the shared z-stack, the projection scale, the numbers two modules both need — so no single domain owns the file; a constant that *does* have one owner belongs beside that owner and is gated by that owner's row (see "Code Conventions"). Editing it needs `bevy` and the skill of whatever module the change is really about.
@@ -156,7 +156,7 @@ When the shot has an element highlighted by the point inspector's `highlight` ch
 highlighted feature **is the subject of the question**: the user selected it on purpose.
 (A translucent **non-yellow** shape — orange, green, magenta — is a **pinned**
 highlight, `\`-pinned in the cursor UI, listed under the hits list after a divider; the
-same reading applies, and its colour matches its `c …` row.)
+same reading applies, and its colour matches its `p …` row.)
 `tools/shot_coords` reads the hits list together with the camera line and marks the
 picked row — identify the feature by its line (`z … label #id`; `#id` goes to
 `tools/osm_near --id`) and investigate **that feature** — why it is there, why it looks
@@ -406,12 +406,12 @@ step when adding one):
 |---|---|
 | ground mesh, merged area layer meshes (landuse/parks/woods/grass/sand/parking + its markings/water), waterway ribbons, tree-row band | `map/spawn.rs` (through `map/surface.rs::spawn_layers`) |
 | road layers — **common, spawned once with no `LodStep`** (`roads.rs::spawn_road_common_layers`): eleven ribbons (alleys/sidewalks/road medians/unpaved roads/roads/lot sidewalks + lot lines/bridge shadows/bridge curbs (`bridge_casings`)/bridges/walls — track bridges' slabs, parapets and shadows included), the level-crossing decks (`rail_crossings`), the ring islands' lawn (`ring_islands`) and their mapped grass without the rim (`ring_island_grass`), and the eight paint layers of `roads/paint.rs` (wear mask + wear, zebras, islands, lanes + axes, bridge lanes + axes), the latter tagged `(RoadLayerTag, PaintTag)` — the mixed layers take the near step's corner rounds with the common middle appended once; **step-owned, one per verge step with `LodStep`** (`map/roads.rs::spawn_road_meshes`, from `rebuild_roads` and `spawn_map`): `road_verges`, `road_verge_lawns`, `road_verge_yards`, and the ground-green paving scraps (`sidewalk_scraps`, split out of `sidewalks` by perf-journal 33) | `map/roads.rs` (split build `build_roads_steps`, common from `RoadCommon::take_common_layers`) |
-| rail layers (ballast/ties/steel, and the same three for a track on a bridge) | `map/rail.rs::build_rails` (same helper) |
+| rail layers (ballast/ties/steel, and the same three for a track on a bridge) | `map/rail.rs::spawn_rails` (same helper) |
 | parked cars | `map/cars/mod.rs::rebuild_cars` (through `surface::spawn_layers`; geometry — `cars/body.rs`) |
 | standing wagons | `map/wagons.rs::rebuild_wagons` (same helper) |
 | industry layers (pipes + cylinder shadow/wall/top) | `map/industry.rs::rebuild_industry` (same helper) |
 | tram mesh | `map/tram.rs::rebuild_tram` (same helper) |
-| fence lines + their shadows (one mesh) | `map/fences.rs::rebuild_fences` (through `surface::spawn_layers`) |
+| fence lines + their shadows (one mesh) | `map/fences.rs::rebuild_fences` (world entry + prediction drift) and `::apply_fence_rebuild` (the background step swap) — both through `surface::spawn_layers` |
 | building layers (facades/roofs/shadows/extrusion) | `map/buildings/mod.rs::spawn_building_meshes` (same helper, from `rebuild_buildings` and `spawn_map`) |
 | tree crowns (an entity per tree on the near zoom step, merged `tree_crowns` chunks on the far ones) + shadows | `map/trees.rs::spawn_tree_meshes` (the chunks and shadows through `surface::spawn_layers`; the crown entities through `CrownStream::spawn_next`, also batched from `::stream_tree_crowns`; build — `::mesh_trees`, geometry — `trees/crown.rs`) |
 | portal (vortex quad) + portal stain | `portal.rs::spawn_portal` |

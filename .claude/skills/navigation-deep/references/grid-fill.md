@@ -100,7 +100,9 @@ from the union of everything. **The renderer draws the same gaps**
   **`MapData`**, not the grid — `fence_gaps` reads it, so the polygonal mesh built later
   from the same map has the same gates (pinned by
   `parity_tests::fences_block_and_gates_open_in_both_fills`);
-- the grid after a round is `base.clone()` + `fill_fences` + `carve_passages`, and
+- the grid after a round is `passable.copy_from_slice(&base.passable)` (the
+  `base_scratch` snapshot) + `fill_fences` (through the cached gaps, `FenceGapCache`)
+  + `carve_passages`, and
   reachability grows from the new gates (`extend_reachable`) rather than being
   re-flooded: a gate only ever opens tiles.
 - **two gates of one round stand at least `GATE_SPACING` 10 m apart**: neighbouring

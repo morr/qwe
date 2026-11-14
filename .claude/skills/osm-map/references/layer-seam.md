@@ -107,9 +107,12 @@ tree-row band, its **second** door), `buildings` and `trees`.
 `surface::spawn_layer` (one layer, a ready `LayerMaterial`) survives only as the
 primitive `spawn_layers` is built on.
 
-Beside the doors stands `roads::build_roads`, the roads build whole: `mesh_roads`'
-layers and report plus the rut lines and the tram tracks of the same pass, as one
-named `RoadBuild` — the door the game takes (`rebuild_roads`, `spawn_map`).
+Beside the doors stand the roads builds: `roads::build_roads` — the **merged** door,
+`mesh_roads`' layers and report plus the rut lines and the tram tracks of the same
+pass, as one named `RoadBuild` — and the **split door the game takes**,
+`build_roads_steps` (the load thread's `map/prepare.rs`, and `rebuild_roads`),
+returning `RoadStepsBuild { common, steps }` so the common layers spawn once; the
+merged door stays for bench, vitrines and tests as the bit-for-bit control.
 
 **Count the modules when asking "is anything left".** The tree-row band lives in
 `spawn.rs` and is not `trees` — that mistake is what once made the list read "all ten"
@@ -172,9 +175,10 @@ is a state of the report**); the four modules whose input counters are free prin
 theirs beside the word.
 
 **The game splits the door at the zoom crossing**: the assembly does not depend on
-the bucket, so `rebuild_cars` keeps it in `cars::CarPlacement` (`park_all` →
-`ParkedCars`, keyed on the occupancy and the `RoadShape`, reset on world entry by
-`forget_parked_cars`) and a crossing costs `mesh_parked` — the bodies only;
+the bucket, so it lives in `cars::CarPlacement` (`park_all` →
+`ParkedCars`, keyed on the occupancy and the `RoadShape`, computed by the load
+thread's `cars::place` and taken into the resource at world entry by
+`seed_parked_cars`) and a crossing costs `mesh_parked` — the bodies only;
 `CarReport::placed` says which of the two a log line was. `mesh_cars` is still the
 whole thing in one call, for the tests.
 

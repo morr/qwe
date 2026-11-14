@@ -172,8 +172,10 @@ grid holds only queued *peaceful* requests and is maintained by four observers o
 `PathfindingRequest`/`UrgentPath` — the same event-completeness shape as
 `DestinationClaims` (despawn raises `Remove` per component; the removal order inside a
 despawn or a panic re-target cannot lose an entry, because each observer's opposite
-repairs the other's view). A queued wanderer is stationary, so a cell entry cannot go
-stale, and the dispatcher reads the position live anyway — the grid decides WHO to read,
+repairs the other's view). A queued wanderer stands until dispatch, and between
+dispatch and acceptance it may drive away (repath on the move) — a cell entry can go
+stale over that window, which skews only WHO gets read, never WHERE: the dispatcher
+reads the position live anyway — the grid decides WHO to read,
 not WHERE they stand. What the index does **not** fix is the pass's dominant cost: the
 **task-spawn loop** — `AsyncComputeTaskPool::spawn` wakes a worker per task
 (~0.5–1.7 µs each with an idle pool, cheaper into a saturated one), ~0.4–1.3 ms a frame
@@ -187,7 +189,10 @@ movement queries and spread the rule over three modules in three polarities — 
 third copy, in `loading::poll_warmup`, had already drifted to its own view margin.
 
 **A request is cancelled only by `to_idle`** (`Movable::stop_moving` removes it together
-with `RequestedAt`) or consumed by dispatch — nothing else takes it off. Leaving one on a
+with `RequestedAt`) — nothing else takes it off. **Dispatch does not consume it**: the
+task rides on top of the live request and both are removed in one command at acceptance
+(one archetype move instead of two; the queued-wanderer grid entry rides until
+acceptance too). Leaving a request on a
 pawn that has gone `Idle` therefore buys a full A* whose answer `accept_answer` drops on
 its first check, and the calm-down branch of `human::behavior::flee` used to do exactly
 that for hundreds of pawns a tick.

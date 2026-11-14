@@ -140,6 +140,11 @@ samples `WANDER_BUILDING_TRIES` random buildings and takes the first inside the 
 
 **`HumanFirstWanderTag`** — the very first target after spawn is always the *near* stroll,
 never a building errand; dropped when that target is picked. `PanicRecoil` overrides it.
+The first sift does not re-ask: a miss falls to `sift_target_far`
+(`FIRST_WANDER_SIFT_TILES` 4) and the request leaves in the same frame — the ring makes
+no decision-stream rolls, so it cannot change the chosen target, only its landing tile;
+a wide-ring miss still waits for the next frame. Live mode only: the replay keeps the
+plain re-ask, because its requests are filed by the tick.
 
 **Pace** — a human's personal speed multiplier (the normalized storage and the 35 % ceiling
 are `CONTEXT.md`'s); effective speed is `base × (1 + Pace × HumanStyle::spread)`, applied

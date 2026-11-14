@@ -219,9 +219,10 @@ accepted price for dropping the entity step there.
     a 1 km chunk is a third of such a frame, so a panned view still culls whole chunks,
     while the whole map is at most 8 × 6 = 48 draws (Tula 34, Kaluga 48) against ~120
     instanced groups before. Smaller chunks add draws at the full zoom-out, where there
-    is nothing to cull; larger ones stop culling at all. No other map layer
-    chunks — each is one mesh for the whole map — so this is the only chunk size on the
-    map.
+    is nothing to cull; larger ones stop culling at all. Opaque map layers chunk too
+    (`LayerMesh::into_chunks`) — at the same 1000 m cell (`MAP_CHUNK`), which is why
+    the crowns' cell equals it: 1000 m is the map's one chunk size; translucent shadow
+    sweeps, paint and crown layers stay whole.
   - **What it bought** (no vsync, paused, window unlocked; medians of 8–12 one-second
     samples): Kaluga at the full zoom-out **28.1–28.6 → 10.6–12.2 ms** a frame, entities
     85.6 k → 21.2 k; Tula 29.5 k → 21.2 k entities, its frame time within the noise

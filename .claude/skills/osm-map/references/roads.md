@@ -8,18 +8,22 @@ lot's kerb, the boulevard's double line over the lot and the gores at a roundabo
 road's width are in `parse-geometry.md`. This file is the map: the phases of the build
 and which subject file carries which piece.
 
-## The phases of `build_roads`
+## The phases of the build
 
-- **The phases of `build_roads`** — named by the section banners in its body
-  (`// ── name ──`); the banners in the code are the authoritative inventory. Raw OSM
-  returns early; before the ribbons: the drawn network (`Drawn`), junctions and kerb
-  returns, merge edges, kerb pockets, turning circles, ribbon axes and the fill order,
-  gores, ring islands and mouths, merge ramps, the medians of paired halves, road areas
-  and safety islands. The **ribbons** — the main pass street by street in fill order:
-  asphalt, sidewalk bands, verges, paint, tapers, bridge decks. After them: slit aprons,
-  lawn scraps (paving, then green), junction paint and turn wear, the gores' asphalt,
-  the tram band, the lot layers, track bridges and level crossings, the rings' island
-  grass, the fortress wall ribbon, and the layer assembly, z-sorted, with the report.
+- **The phases of the build** — `build_roads` is a thin door now (raw OSM returns
+  early; otherwise `road_skeleton` + one of the two step finals). The phases live in
+  three places, the section banners (`// ── name ──`) in their bodies the authoritative
+  inventory. `road_skeleton`: the drawn network (`Drawn::new`, which carries no step of
+  its own), junctions and kerb returns, merge edges, kerb pockets, turning circles,
+  ribbon axes and the fill order, gores, ring islands and mouths, merge ramps, the
+  medians of paired halves, road areas and safety islands. `RoadCommon::new`: each
+  step's corner rounds, then the shared middle — kerbs, pockets, mouths, medians,
+  islands, node paint, tram, crossings, walls, and the **ribbons** (asphalt, sidewalk
+  bands, verges, paint, tapers, bridge decks), laid street-wise in threads
+  (`roads/ribbon_lane.rs`). The two finals — `finish_step_merged` (the merged door),
+  `finish_step_split` (the split one, plus the common layers out): what a step owns
+  (verge bands, lawn scraps — paving, then green), the gores' asphalt, the lot layers,
+  the rings' island grass, and the layer assembly, z-sorted, with the report.
 
 ## The subject files
 

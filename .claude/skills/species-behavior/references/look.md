@@ -165,7 +165,7 @@ the component, not the sprite. The two:
   click. With no camera the list is left alone — entries wait for the first camera frame.
 - **`resize_silhouettes_on_zoom`** — only when the zoom actually changed (`Local<f32>`
   holds the last one), and even then **a window, not the whole set**: `RESIZE_BATCH`
-  (2048) silhouettes per zoom-change frame, cursor held in a `Local`, and inside the
+  (512) silhouettes per zoom-change frame, cursor held in a `Local`, and inside the
   window a write happens only when the size moved more than `RESIZE_TOLERANCE_PX`
   (half a logical pixel) — a write of the same value still marks the sprite changed and
   drags it through bounds, extract and the render phases, and at the near zoom (floor

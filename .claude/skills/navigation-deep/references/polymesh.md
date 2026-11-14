@@ -79,12 +79,17 @@ The grid's **outward probe** — which curb tile is an interior seam of a compos
 bridge (carriageway + its sidewalk way, mapped separately) and which is the outer
 boundary — becomes the direct vector statement of the same intent: each way's curb
 bands **minus the full drawn bands of every other bridge way**. Covered by a
-neighbour ⇒ interior seam ⇒ open; uncovered ⇒ outer edge ⇒ blocks. N differences over
-a few dozen bridges cost less than the single building union.
+neighbour ⇒ interior seam ⇒ open; uncovered ⇒ outer edge ⇒ blocks. On a big city that
+is hundreds of bridges, not a few dozen — the differences alone were 1.21 s on Paris
+(408 bridges) before the AABB prefilter and the parallel chunks
+(`footprint::CurbCoverage`, journal 22); the coverage rule itself is unchanged.
 
 **Conditional and async**: nothing builds while the Polymesh backend is off
 (`PolymeshDebug`, persisted — on by default, so the usual path *is* a build on entering
-the world); the build runs on `AsyncComputeTaskPool`
+the world). **At world entry the build comes from the load thread's polymesh lane**
+(`map/prepare.rs::build_polymesh_for`, handed to `PolyNavmesh::set_ready` in the
+`Done` branch — the async build never starts); in-game rebuilds (the radius slider)
+still run on `AsyncComputeTaskPool`
 (`PolyNavmesh` resource: `PolymeshBuild` + generation counter + in-flight task,
 cleared by `city.rs::reload_world` alongside `NorthstarGrid`). `PolymeshBuild`
 carries the obstacle contours next to the mesh on purpose: polyanya stores only

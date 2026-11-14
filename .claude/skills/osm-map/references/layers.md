@@ -211,7 +211,7 @@ The layers that are neither roads, parking, buildings nor trees. Each bullet is 
   - **What a bucket costs**: meshing cost rises by an order of magnitude from the
     coarsest bucket to the deepest (measured on the `rail meshing:` log line). That
     spread used to be a one-off hitch on the threshold crossing; since the prebuild
-    it is paid once at world entry (`build_rails` lays every step there, ~90 ms for
+    it is paid once at world entry (`spawn_rails` lays every step there, ~90 ms for
     all of them on Tula; a crossing flips `Visibility` and pays no rebuild —
     **Zoom buckets** in `SKILL.md`) — and it is still the cost a denser tie step
     would multiply, so treat bucket 0's 65 cm as the floor.

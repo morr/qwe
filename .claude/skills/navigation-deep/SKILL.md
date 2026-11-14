@@ -178,8 +178,9 @@ inserts the resource instead.
   frame (`WANDER_ON_SCREEN`), within a priority nearest-to-camera-center first, capped at
   `MAX_PATHFINDING_IN_FLIGHT` (1024, `settings.rs`). **Who is urgent is not this module's
   business**: the species write `movement::UrgentPath`, the dispatcher asks
-  `Has<UrgentPath>`. **A request is cancelled only by `to_idle` or consumed by dispatch;
-  a re-target replaces the request, it does not overwrite it.** The internals
+  `Has<UrgentPath>`. **A request is cancelled only by `to_idle`; dispatch does not
+  consume it — the task rides on top of the live request, and both are removed in one
+  command at acceptance. A re-target replaces the request, it does not overwrite it.** The internals
   (`queue_key`, the pause and zoom economics, the `Added`-filter re-target rule, the
   repath reply lag) — `references/pipeline.md`.
 - **The step itself** (`movement/step.rs::step_along_path`) — all five rules of one

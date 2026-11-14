@@ -54,12 +54,12 @@ esac
 # Domain skills, one per row of the CLAUDE.md table. A path may sit in two
 # rows (movement/wander.rs, map/osm/download.rs) — both skills are required.
 case "$rel" in
-  src/map/*|examples/demos/*_gallery/*|examples/bench/map_meshing.rs) add osm-map ;;
+  src/map/*|examples/demos/*_gallery/*|examples/bench/map_meshing.rs|examples/audit/pocket_probe.rs) add osm-map ;;
 esac
 case "$rel" in
   src/navigation/*|src/movement/*|src/grid.rs|tests/navigation.rs|tests/movement.rs) add navigation-deep ;;
   examples/demos/crowd_demo/*|examples/audit/polymesh_*|examples/audit/navmesh_probe.rs) add navigation-deep ;;
-  examples/bench/pathfinding_bench.rs|examples/bench/polymesh_bench.rs) add navigation-deep ;;
+  examples/bench/pathfinding_bench.rs|examples/bench/polymesh_bench.rs|examples/bench/dispatch_bench.rs) add navigation-deep ;;
 esac
 case "$rel" in
   src/rng.rs|src/rng/*|src/determinism/*|src/sim_yard.rs|tests/determinism.rs|examples/acceptance/*) add determinism ;;

@@ -217,11 +217,14 @@ on the paired side themselves (`roads-pairs-medians.md`, **Paired halves**).
   width is the side's widest probe (`RoadLine::verge_widest`), so a profile
   spilling above 5 m drops the side whole. The zoom bound is the crowns' near
   edge (`trees::TREE_LODS`) — a 2–6 m crown is 1–3 px there, and a verge band
-  of the same width stops reading as a street detail. The crossing **rebuilds
-  the road layers** (`rebuilds_on` gained `retuned::<VergeZoomBucket>` — the
-  verge ribbons are baked into the shared layer meshes, there is nothing to
-  flip), and the bucket is seeded at world entry before `spawn_map` builds
-  them. Pinned by `a_wide_verge_is_not_drawn_past_the_near_zoom_step`.
+  of the same width stops reading as a street detail. A crossing **flips
+  `Visibility` of the pre-laid steps** (`roads::show_road_steps`, idempotent,
+  every frame — both steps are spawned at world entry with the verge ribbons
+  baked into their layer meshes, so there is nothing to rebuild); a step a
+  style rebuild threw away is completed by the first crossing, with its
+  step-owned layers only. The bucket is seeded at world entry before
+  `spawn_map` builds them. Pinned by
+  `a_wide_verge_is_not_drawn_past_the_near_zoom_step`.
   **A probe inside a crossing measures nothing**: the verge profile is probed every 5 m,
   and a probe standing in another carriageway's footprint (its asphalt + sidewalk band)
   is a junction mouth — a parallel footway found from there lies *across* the mouth, and

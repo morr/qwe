@@ -150,16 +150,16 @@ are filled from are laid out in `parking-layout.md`; the big lot's kerb and gore
 ## Caching and cost
 
 - **Cached per placement** — `cars::CarPlacement` keeps the placed `Vec<Car>` (with
-  the junction count) keyed on `(occupancy, RoadShape)`, reset on world entry by
-  `forget_parked_cars`; a zoom-bucket crossing is `mesh_parked` alone. World entry
-  also **warms** the placement (`warm_car_placement`, right after the reset): a
-  world opened past the cars' zoom threshold would otherwise leave the cache empty
-  and pay the whole placement on the first zoom-in (~78 ms on Tula, mid-gesture);
-  the key holds no zoom step, so the placement can be computed over a hidden layer,
-  and the cost rides the load. Raw OSM skips the warm-up — it draws no cars. The skeleton
-  under the placement is what a crossing still pays for: `Drawn::nodal` alone is
-  25 ms on Tula and 49 on Kaluga, paid on every crossing of a car threshold (and even
-  past `CAR_MAX_ZOOM`, where the layer is hidden). The rows come from
+  the junction count) keyed on `(occupancy, RoadShape)`; the placement itself is
+  computed by the load thread (`cars::place`, the same `refresh` the game would run)
+  and world entry only takes it into the resource (`seed_parked_cars`, from
+  `PreparedMeshes` — the replace is the reset of the previous city). The key holds no
+  zoom step, so the placement is computed over whatever bucket the world opens on,
+  hidden layer or not, and the cost rides the load; a zoom-bucket crossing is
+  `mesh_parked` alone. Raw OSM skips the placement — it draws no cars. The skeleton
+  under the placement (`Drawn::nodal`, 25 ms on Tula and 49 on Kaluga) is what a
+  **key change** still pays — before the cache every crossing of a car threshold
+  rebuilt it; now only a style/shape change does. The rows come from
   `measure_cars` in `examples/bench/map_meshing`, which follows the game's split:
   `Drawn::nodal` as its `drawn` row, the placement once, then `mesh_parked` once per
   detail step — so a `cars *` row is exactly what a zoom crossing costs. Re-measure

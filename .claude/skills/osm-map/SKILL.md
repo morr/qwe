@@ -336,22 +336,29 @@ going through the curb pin tests
   a run are not comparable. **Rails and tram get a row per zoom bucket**
   (`ZoomBucket::at(index)`, which exists for this) — their buckets differ in *what is
   drawn*, not in size — and **the tram is measured switched on**, though it ships off:
-  the bench is about what the layer costs, not about whether it is shown. **Unmeasured:
-  `fences`, `wagons`, `industry` and the trees** (both `mesh_trees` and
-  `spawn::mesh_tree_row_band`): the first three are cheap single-pass layers with no
+  the bench is about what the layer costs, not about whether it is shown. **Fences are
+  measured now** (`measure_fences`, journal 17/19 — a step build is seconds on a big
+  city, which is why the layer builds in the background). **Unmeasured:
+  `wagons`, `industry` and the trees** (both `mesh_trees` and
+  `spawn::mesh_tree_row_band`): the first two are cheap single-pass layers with no
   ladder worth a row per step, the trees (a crown pool plus a scatter, ~15 k entities)
   want a different row shape — a row for any of them is a `measure_*` plus a `row(...)`
   line in the bench.
 - **Merged meshes** (`map/meshing.rs` — `MeshBuilder` and its frame types, plus
   subjects `map/meshing/{ribbon,paint,geometry}.rs` (strokes and ribbons, paint
   strips, free geometry) and `map/spawn.rs`; per-layer geometry lives in the
-  layer's own module) — **one merged `Mesh2d` per layer**: `MeshBuilder`
+  layer's own module) — **one merged mesh per layer**: `MeshBuilder`
   triangulates polygons via `earcutr` (holes supported, degenerate contours skipped +
   counted) and emits per-vertex colors. Which layers ride the flat `ColorMaterial`, the
   roof material or the surface material is in `CONTEXT.md`; the parking **markings** are
   the exception that proves the rule — paint over asphalt, so that layer stays on the
   flat `ColorMaterial`, while the parking asphalt itself is `SurfaceKind::Street` (it
-  *is* asphalt). ~7000 buildings cost a handful of entities. Trees are individual
+  *is* asphalt). **Not one mesh per layer anymore — chunked by material**
+  (`LayerMesh::into_chunks`, cell `MAP_CHUNK` 1000 m): opaque layers (`Flat` /
+  `Surface` / `Roof`) are cut into map-cell chunks so frustum culling works;
+  `Blend` (shadow sweeps — a cut would double the union), `Paint` and `Crown`
+  layers stay whole. The building extrusion is chunked whole buildings per cell
+  with a z band across the chunks (`BUILDING_CHUNK_Z_BAND`). Trees are individual
   entities on the near zoom step and merged `tree_crowns` chunks on the far ones
   (**Crown detail by zoom** in `references/trees.md`).
 - **The layer seam** (`map/surface.rs`) — building a layer and putting it in the world

@@ -698,11 +698,16 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   construction, three consumers: the grid fill rasterizes, the mesh build outlines, the
   renderer draws its own smoothed copy. **A drawn band and a blocking band match by
   construction, not by discipline.**
-- **Merged meshes** — one merged `Mesh2d` per layer: earcut triangulation, per-vertex
-  colors over the flat `ColorMaterial` or the **surface** / **roof** materials;
-  ~7000 buildings cost a handful of entities. Trees are individual entities on the near
-  zoom step only; their far crowns and all their shadows are merged meshes cut by density
-  band and 1 km chunk. Building shadows are one merged mesh.
+- **Merged meshes** — one merged mesh per layer, then **chunked by what it is made of**:
+  earcut triangulation, per-vertex colors over the flat `ColorMaterial` or the
+  **surface** / **roof** materials. Opaque layers (`LayerMesh::into_chunks`, cell
+  `MAP_CHUNK` 1000 m) are cut into map-cell chunks so frustum culling works — a whole
+  city is no longer one draw call and one AABB. Translucent shadow sweeps (`Blend` —
+  the union would double where a cut crosses), **paint** and **crown** layers stay one
+  mesh each. The building **extrusion** is chunked whole buildings per cell, with a z
+  band across the chunks (`BUILDING_CHUNK_Z_BAND`) so the painter's order between cells
+  survives. Trees are individual entities on the near zoom step only; their far crowns
+  and all their shadows are merged meshes cut by density band and 1 km chunk.
 - **The layer seam** — building a layer and putting it in the world are two things, and
   the line between them is `map/surface.rs`. A converted module offers **one pure
   function**, `mesh_<layer>(data, style) -> (Vec<LayerMesh>, Report)`: no `Commands`, no
@@ -996,7 +1001,10 @@ Summary; the mechanism — **determinism skill** (seed derivation, the decision 
   via `RestartPending`, `to_portal: true`.
 - **SimPipeline** (`determinism/mod.rs`) — the toggle in the schedule: **three** system sets
   — `Live`, `Deterministic`, `BothModes` — gated once for every schedule they appear in. A
-  system declares its branch with `.in_set(..)` and **never reads the mode**. **The sets
+  system declares its branch with `.in_set(..)` and **never reads the mode**. One body
+  sits in both branches on purpose — `pick_wander_targets` (Update for live,
+  FixedUpdate `Deterministic` for the replay), the mode told to it by
+  `Option<Res<Determinism>>` where it widens the first-wander sift ring. **The sets
   also carry the world gate** (`in_world`), so "no set" reads as "lives outside the world",
   not "both modes".
 - **Retire tick** (`RetireAt`, `PATHFINDING_RETIRE_TICKS = 8`) — the deadline is stamped **at
@@ -1050,8 +1058,10 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   world metres, the goal is a tile** (*Polygonal routing*); `last_direction` is the heading
   of the last step, i.e. the coasting vector (*Repath on the move*). `to_pathfinding`
   queues the search and keeps the current path; **`to_idle` is the only transition that
-  stops movement** — and it stops it whole: path, `MovableStateMovingTag`, and a
-  `PathfindingRequest` that has not been dispatched yet, with its `RequestedAt`.
+  stops movement** — and it stops it whole: path, `MovableStateMovingTag`, and the
+  `PathfindingRequest` with its `RequestedAt`, dispatched or not — a dispatched request
+  lives on under its task (both leave together at acceptance), and the already-paid
+  task itself is not touched.
   **`to_pathfinding` re-files a queued request instead of overwriting it** (remove +
   insert, with `RequestedAt`): both consumers filter on `Added<PathfindingRequest>`,
   and an overwrite arms only `Changed`.
@@ -1063,8 +1073,10 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   broken by `PawnId`, not by traversal order** (`order_of`, called only on exact equality).
   **The human grid is incremental** (observers + `SpatialGrid::moved` across cell
   boundaries), **the demon grid is rebuilt** each tick, **the queued-wanderer grid is
-  maintained by request-lifecycle observers alone** — a queued wanderer is stationary,
-  so it never follows a move.
+  maintained by request-lifecycle observers alone** — a queued wanderer stands until
+  dispatch and may drive away before acceptance (repath on the move), so its cell can
+  go stale; that is fine, because the grid decides **whom** to read, not where they
+  stand — the dispatcher reads positions live.
 - **Decision ladder** (`human/decide.rs`, `demon/decide.rs`) — a species' rules live in a
   pure `decide(&…Sense, …) -> …Action`: plain values in, one enum variant out, no
   `Commands`, no queries, tested without an `App`. `behavior.rs` only applies the answer, so
@@ -1109,7 +1121,12 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   stroll is filtered by the cone alone, with no distance floor.
 - **HumanFirstWanderTag** — the very first target after spawn is always the *near* stroll,
   never an errand. Measured: errands first routed the on-screen pawns in 3.9 s, strolls
-  first in 0.15 s. `PanicRecoil` overrides it.
+  first in 0.15 s. `PanicRecoil` overrides it. The first stroll **does not re-ask**: when
+  the target tile fails the 8-neighbour sift, a wide ring (`sift_target_far`,
+  `FIRST_WANDER_SIFT_TILES` 4) stands the request in the same frame — no fresh rolls, the
+  ring only moves the landing tile; on the entry storm ~30 % of first asks missed
+  otherwise and the warmup paid their trickle for a dozen frames. Live mode only — the
+  deterministic replay keeps the plain re-ask.
 - **Pace** — a human's personal speed multiplier, rolled once at spawn and stored
   **normalized** (−1…+1), applied to *both* bases through `Pace::speed`. Normalized storage
   is what lets the **Speed spread** slider widen the ordering the crowd already rolled

@@ -118,15 +118,6 @@ back to the in-frame build). The cheap,
 camera-bucket-dependent meshes (cars' bodies, wagons, industry, tram, the tree-row
 band) are still built at entry — they cost 1–15 ms each.
 
-`Done` is the whole world: `poll_job` inserts `MapData`, `PortalPos` and a
-**`PreparedMeshes`** resource; `OnEnter(Playing)` then only *spawns* — `spawn_map` (parking
-layout resource, surfaces, the road split build — common layers once, both steps' own
-layers, buildings), `spawn_rails` (all steps),
-`cars::seed_parked_cars` (the placement cache pre-filled), `trees::spawn_prepared_trees`
-(each system takes its lists out of `PreparedMeshes` with `std::mem::take`). The cheap,
-camera-bucket-dependent meshes (cars' bodies, wagons, fences, industry, tram, the tree-row
-band) are still built at entry — they cost 1–15 ms each.
-
 - `total` is `None` in practice (chunked answers, gzip strips `content-length`), so the
   screen shows MB + rate.
 - **`Connecting` is mostly Overpass computing the query server-side** — measured 62 s before
