@@ -212,7 +212,7 @@ impl Plugin for SilhouettePlugin {
         app.init_resource::<Silhouettes>()
             .init_resource::<FreshSilhouettes>()
             .register_type::<Silhouette>()
-            .add_observer(on_silhouette_added)
+            .add_observer(on_silhouette_inserted)
             .add_systems(Startup, build_atlas)
             .add_systems(
                 Update,
@@ -483,7 +483,11 @@ fn camera_zoom(
 #[derive(Resource, Default)]
 pub struct FreshSilhouettes(pub(crate) Vec<Entity>);
 
-fn on_silhouette_added(event: On<Add<Silhouette>>, mut fresh: ResMut<FreshSilhouettes>) {
+/// `Insert`, а не `Add`: труп переписывает `Silhouette` живого человека
+/// (`human::to_corpse`) поверх уже стоящего компонента, и `Add` на такой
+/// вставке не срабатывает — труп до первой смены зума оставался бы с
+/// прогулочным размером.
+fn on_silhouette_inserted(event: On<Insert<Silhouette>>, mut fresh: ResMut<FreshSilhouettes>) {
     fresh.0.push(event.entity);
 }
 
@@ -583,6 +587,22 @@ mod tests {
         let silhouette = Silhouette::new(Vec2::splat(1.0), 2.0);
         // 0,4 м/px: метр — это 2,5 px, пол в 2 px не достигнут
         assert_eq!(silhouette.drawn_size(0.4), Vec2::splat(1.0));
+    }
+
+    #[test]
+    fn replaced_silhouette_enters_the_fresh_list() {
+        // Труп переписывает `Silhouette` живого человека (`to_corpse`) —
+        // вставка поверх существующего компонента; обсервер должен ловить
+        // и её, а не только рождение новой сущности.
+        let mut world = bevy::prelude::World::new();
+        world.init_resource::<FreshSilhouettes>();
+        world.add_observer(on_silhouette_inserted);
+        let human = world.spawn(Silhouette::new(Vec2::splat(1.0), 2.0)).id();
+        world.resource_mut::<FreshSilhouettes>().0.clear();
+        world
+            .entity_mut(human)
+            .insert(Silhouette::new(Vec2::splat(4.2), 2.0));
+        assert_eq!(world.resource::<FreshSilhouettes>().0, &[human]);
     }
 
     #[test]
