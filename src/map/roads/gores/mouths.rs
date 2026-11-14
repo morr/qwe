@@ -43,7 +43,8 @@ const MOUTH_TILE: f32 = 512.0;
 const MOUTH_TILED_MIN: usize = 256;
 
 /// Объединение лент устьев — по клеткам: клетка объединяет свои ленты
-/// ([`in_parallel`]), слитые выходы клеток объединяются разом. Клетка — по
+/// ([`in_parallel`]), слитые выходы клеток объединяются двухступенчато —
+/// куски контуров в потоках, выходы кусков разом. Клетка — по
 /// первой точке ленты (лента целиком в своей клетке, соседям её кусок
 /// отдаёт общий проход ниже); порядок клеток детерминирован — сортировка по
 /// ключу. Дыры ищутся только по итоговому объединению: дыра, разрезанная
@@ -76,6 +77,9 @@ fn union_ribbons(ribbons: &[Contour]) -> Vec<Shape> {
         .flat_map(|shape| shape.iter())
         .cloned()
         .collect();
+    // итоговый union — один проход: порядок входа здесь — якорь стабильности
+    // дыр (двухступенчатое слияние меняет дерево объединения, и пограничная
+    // дыра флипает фильтр площади: 4 дыры из 261 на Париже, замер заезда 33)
     flat.simplify_shape(FillRule::NonZero)
 }
 
@@ -96,31 +100,44 @@ pub(in crate::map::roads) fn mouths(
     points: &[Vec2],
     paved: &[&[Vec2]],
 ) -> Vec<Shape> {
-    // стыки фаской: цена объединения — число точек, а скругление — десяток
-    // точек на стык (как у карманов разбора). Торцы круглые, как у лент:
-    // квадратный торец полотна на шве way выступал ступенькой в устье
-    let style = StrokeStyle::new(1.0)
-        .line_join(LineJoin::Bevel)
-        .start_cap(LineCap::Round(ARC))
-        .end_cap(LineCap::Round(ARC));
-    let mut ribbons: Vec<Contour> = Vec::new();
-    for (path, width) in carriageways {
-        if path.len() >= 2 {
-            let ring = is_ring(path);
-            let path = &path[usize::from(ring)..];
-            // и нарисованная ось — гладкая, с вершиной на каждые полметра
-            // дуги: спрямлённая на [`MOUTH_SIMPLIFY`], она вдесятеро короче
-            let points: Contour =
-                crate::map::along::simplify(path, ring, MOUTH_SIMPLIFY, |_| false)
-                    .into_iter()
-                    .map(|index| path[index].to_array())
-                    .collect();
-            let style = StrokeStyle {
-                width: *width,
-                ..style.clone()
-            };
-            ribbons.extend(points.stroke(style, ring).into_iter().flatten());
+    // Ленты — по проезжим частям в потоках: часть строит свой стиль (он
+    // держит `Rc`, через потоки не живёт — сборка детерминированная, у всех
+    // задач он тот же) и свои оси, пишет свои ленты; раскладка по кускам в
+    // порядке проезжих частей даёт тот же `ribbons`, что серийный проход
+    let ribbon_chunks = super::chunk_ranges(carriageways.len(), 256);
+    let ribbon_parts: Vec<Vec<Contour>> = in_parallel(&ribbon_chunks, |range| {
+        // стыки фаской: цена объединения — число точек, а скругление — десяток
+        // точек на стык (как у карманов разбора). Торцы круглые, как у лент:
+        // квадратный торец полотна на шве way выступал ступенькой в устье
+        let style = StrokeStyle::new(1.0)
+            .line_join(LineJoin::Bevel)
+            .start_cap(LineCap::Round(ARC))
+            .end_cap(LineCap::Round(ARC));
+        let mut ribbons: Vec<Contour> = Vec::new();
+        for index in range.clone() {
+            let (path, width) = &carriageways[index];
+            if path.len() >= 2 {
+                let ring = is_ring(path);
+                let path = &path[usize::from(ring)..];
+                // и нарисованная ось — гладкая, с вершиной на каждые полметра
+                // дуги: спрямлённая на [`MOUTH_SIMPLIFY`], она вдесятеро короче
+                let points: Contour =
+                    crate::map::along::simplify(path, ring, MOUTH_SIMPLIFY, |_| false)
+                        .into_iter()
+                        .map(|index| path[index].to_array())
+                        .collect();
+                let style = StrokeStyle {
+                    width: *width,
+                    ..style.clone()
+                };
+                ribbons.extend(points.stroke(style, ring).into_iter().flatten());
+            }
         }
+        ribbons
+    });
+    let mut ribbons: Vec<Contour> = Vec::new();
+    for part in ribbon_parts {
+        ribbons.extend(part);
     }
     let holes: Vec<Shape> = union_ribbons(&ribbons)
         .into_iter()
