@@ -34,7 +34,8 @@
 //! асфальт со штриховкой, для любого кольца города. Стоянка только вычитает
 //! островки из своего бордюра и дотягивает до них осевую.
 //!
-//! Замкнут ли way, спрашивается **у сырых точек OSM** ([`Grounds::push`]), а не
+//! Замкнут ли way, спрашивается **у сырых точек OSM**
+//! ([`Grounds::streets_for`]), а не
 //! у нарисованной оси: сглаживание срезает угол на шве замкнутого way, и концы
 //! нарисованного кольца расходятся на метры.
 
@@ -75,7 +76,7 @@ const DOUBLE_LINE_WIDTH: f32 = 0.2;
 const DOUBLE_LINE_GAUGE: f32 = 0.5;
 
 /// Улица у большой стоянки — так, как она нарисована (сглаженная ось).
-struct Street {
+pub(super) struct Street {
     path: Vec<Vec2>,
     width: f32,
     /// Бордюр с одной стороны — у сквозной дороги, чья ось зашла на площадку.
@@ -124,11 +125,14 @@ impl<'a> Grounds<'a> {
         )
     }
 
-    /// Улица `road`, нарисованная по `path`, — каждой большой стоянке, до
-    /// которой она достаёт.
-    pub fn push(&mut self, road: &RoadLine, path: &[Vec2]) {
+    /// Улица `road`, нарисованная по `path`, — вклад в большие стоянки, до
+    /// которых она достаёт, без записи: пары «площадка — улица». Раскладка
+    /// ([`Self::accept`]) дописывает вклады в порядке заливки — порядок улиц
+    /// внутри площадки тот же, что у серийного прохода.
+    pub fn streets_for(&self, road: &RoadLine, path: &[Vec2]) -> Vec<(usize, Street)> {
+        let mut found = Vec::new();
         if self.0.is_empty() || path.len() < 2 {
-            return;
+            return found;
         }
         let kerb = is_through(road).then(|| road.sidewalk().kerb(LOT_KERB));
         let reach = road.width / 2.0 + kerb.unwrap_or_default();
@@ -146,18 +150,30 @@ impl<'a> Grounds<'a> {
         }
         let path = closed.as_slice();
         let (low, high) = ring_bounds(path);
-        for ground in &mut self.0 {
+        for (index, ground) in self.0.iter().enumerate() {
             if low.cmpgt(ground.high + reach).any() || high.cmplt(ground.low - reach).any() {
                 continue;
             }
             // бордюр — только дороге, чья ось идёт по площадке: у улицы вдоль
             // кромки он свой, тротуаром, и на площадку не заходит
             let inside = kerb.is_some() && enters(path, ground.lot);
-            ground.streets.push(Street {
-                path: path.to_vec(),
-                width: road.width,
-                kerb: kerb.filter(|_| inside),
-            });
+            found.push((
+                index,
+                Street {
+                    path: path.to_vec(),
+                    width: road.width,
+                    kerb: kerb.filter(|_| inside),
+                },
+            ));
+        }
+        found
+    }
+
+    /// Дописать вклады улиц ([`Self::streets_for`]) — раскладка в порядке
+    /// заливки.
+    pub fn accept(&mut self, entries: Vec<(usize, Street)>) {
+        for (index, street) in entries {
+            self.0[index].streets.push(street);
         }
     }
 
