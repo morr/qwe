@@ -8,6 +8,7 @@ use crate::map::along::arclengths;
 use crate::map::grid::Grid;
 use crate::map::meshing::Break;
 use crate::map::osm::RoadLine;
+use crate::map::parallel::in_parallel;
 use crate::map::roads::is_carriageway;
 use crate::map::roads::network::pairs::TRAM_BED_MAX_GAP;
 
@@ -53,7 +54,7 @@ const WIDEST_HALF: f32 = 16.0;
 /// разницы нет.
 pub(super) fn breaks_across_zebras(
     drawn: &[&RoadLine],
-    paths: &[impl AsRef<[Vec2]>],
+    paths: &[impl AsRef<[Vec2]> + Sync],
     zebras: &[Zebra],
     zebra_roads: &[usize],
     breaks: &mut [Vec<Break>],
@@ -66,10 +67,15 @@ pub(super) fn breaks_across_zebras(
     for (index, zebra) in zebras.iter().enumerate() {
         planks.insert_segment(zebra.from, zebra.to, reach + WIDEST_HALF, index);
     }
-    for (road, path) in paths.iter().enumerate() {
-        let path = path.as_ref();
+    // по дороге — свой проход: сетка планок общая и только читается,
+    // записи в `breaks` по дорогам разъединены, а спаны сортируются —
+    // порядок обхода планок на результат не влияет. Раскладка по индексам
+    // дорог даёт те же разрывы, что серийный проход (`NodePaint::new`)
+    let roads: Vec<usize> = (0..paths.len()).collect();
+    let across = |road: usize| -> Vec<Break> {
+        let path = paths[road].as_ref();
         if path.len() < 2 || !is_carriageway(drawn[road]) || drawn[road].bridge {
-            continue;
+            return Vec::new();
         }
         let half = drawn[road].width / 2.0;
         let (along, _) = arclengths(path);
@@ -139,7 +145,7 @@ pub(super) fn breaks_across_zebras(
             }
         }
         if spans.is_empty() {
-            continue;
+            return Vec::new();
         }
         spans.sort_by(|a, b| a.0.total_cmp(&b.0));
         let walk = Walk::new(path);
@@ -150,9 +156,16 @@ pub(super) fn breaks_across_zebras(
                 _ => merged.push((low, high)),
             }
         }
-        for (low, high) in merged {
-            breaks[road].extend(walk.gap(low, high));
-        }
+        merged
+            .iter()
+            .filter_map(|&(low, high)| walk.gap(low, high))
+            .collect()
+    };
+    for (road, found) in in_parallel(&roads, |&road| across(road))
+        .into_iter()
+        .enumerate()
+    {
+        breaks[road].extend(found);
     }
 }
 
