@@ -52,7 +52,6 @@ struct PhaseThreshold(f32);
 #[derive(Resource, Default)]
 struct MainStamps {
     stamps: [Option<Instant>; 6],
-    prev_post: Option<Instant>,
     scans: SpriteScans,
 }
 
@@ -225,36 +224,25 @@ fn main_frame_head(world: &mut World) {
     let ms = |d: Duration| d.as_secs_f32() * 1000.0;
     let (check_wall, mark_wall) = (stamps.scans.check_wall, stamps.scans.mark_wall);
     let long = walls.iter().any(|w| ms(*w) >= threshold) || ms(frame) >= threshold;
-    let assets = if long {
-        Some((
+    if long {
+        let (meshes, color, sprite) = (
             world.resource::<Assets<Mesh>>().len(),
             world.resource::<Assets<ColorMaterial>>().len(),
             world.resource::<Assets<SpriteMeshMaterial>>().len(),
-        ))
-    } else {
-        None
-    };
-    if long {
+        );
         let walls: Vec<String> = walls
             .iter()
             .zip(MAIN_NAMES)
             .map(|(w, n)| format!("{n} {:.1}", ms(*w)))
             .collect();
-        match assets {
-            Some((meshes, color, sprite)) => info!(
-                "main phases: {} (frame {:.1} ms, assets: {} meshes, {} color, {} sprite)",
-                walls.join(" "),
-                ms(frame),
-                meshes,
-                color,
-                sprite
-            ),
-            None => info!(
-                "main phases: {} (frame {:.1} ms)",
-                walls.join(" "),
-                ms(frame)
-            ),
-        }
+        info!(
+            "main phases: {} (frame {:.1} ms, assets: {} meshes, {} color, {} sprite)",
+            walls.join(" "),
+            ms(frame),
+            meshes,
+            color,
+            sprite
+        );
         if !check_wall.is_zero() || !mark_wall.is_zero() {
             info!(
                 "sprite scans: check {:.1} mark {:.1} ms",
@@ -265,7 +253,6 @@ fn main_frame_head(world: &mut World) {
     }
     let mut stamps = world.resource_mut::<MainStamps>();
     stamps.scans = SpriteScans::default();
-    stamps.prev_post = stamps.stamps[5];
     stamps.stamps = [None; 6];
     stamps.stamps[0] = Some(now);
 }
