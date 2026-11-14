@@ -735,7 +735,9 @@ impl NodePaint {
             nodes_along: &nodes_along,
             paved: &paved,
         };
-        let preps = in_parallel(&clusters, |cluster| cluster::prep_cluster(cluster, &context));
+        let preps = in_parallel(&clusters, |cluster| {
+            cluster::prep_cluster(cluster, &context)
+        });
         for (cluster, prep) in clusters.iter().zip(preps) {
             paint.paint_cluster(prep, cluster, &context, &mut crossings);
         }
@@ -877,7 +879,7 @@ pub(super) fn paint_junction_marks(
     let asphalt = PaintGround::under_wear(&turns.wear, streets.triangles());
     // Краска узлов — три по-кандидатных прохода (зебры, стоп-линии, узлы
     // колеи), чанками в потоках: чанк красит свои куски в частичный painter
-    // ([`Painter::empty_like`]), раскладка append'ом в порядке чанков
+    // ([`Painter::new`] от [`Painter::side`]), раскладка append'ом в порядке чанков
     // ([`Painter::append_from`]) даёт те же треугольники и тот же счёт
     // линий, что серийный проход. Сетки `ground` и `asphalt` общие и
     // только читаются.
