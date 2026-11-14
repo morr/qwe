@@ -730,8 +730,8 @@ struct StepLay {
     scraps: scraps::Scraps,
     /// Отрисованные куски ступени — для семантического индекса.
     pieces: Vec<DrawnPiece>,
-    /// Геометрия обочин по улицам, в порядке заливки; раскладывает лента.
-    verges_by_street: Vec<verges::StreetVerges>,
+    /// Обочины по кускам улиц, в порядке кусков; раскладывает лента.
+    verge_chunks: Vec<verges::StreetVerges>,
 }
 
 /// Общая середина сборок ступеней: всё, что у ступеней бит-в-бит одинаково
@@ -848,7 +848,7 @@ impl<'s> RoadCommon<'s> {
                 verge_yards: MeshBuilder::with_surface_coords(),
                 scraps: scraps::Scraps::default(),
                 pieces: Vec::new(),
-                verges_by_street: Vec::new(),
+                verge_chunks: Vec::new(),
             };
             // асфальт узлов — в свои слои; порядок укладки — инвариант
             // `corners` (`KerbReturns::lay`), а не этого вызывающего
@@ -1090,31 +1090,43 @@ impl<'s> RoadCommon<'s> {
         // ── Ленты ── главный проход по улицам в порядке заливки: асфальт,
         // тротуары, обочины, краска, клинья и мосты — улица за улицей
         //
-        // Обочины — по улице в потоках, на каждую ступень: улица от улицы не
-        // зависит (вход — только чтение: подготовка, ленты, торцы, укусы,
-        // газоны). Раскладка — ниже, в порядке заливки: порядок треугольников,
-        // лоскутов и находки тот же, что у серийной укладки.
-        let verges_by_street: Vec<Vec<verges::StreetVerges>> = lays
-            .iter()
-            .map(|lay| {
-                let kerb = &lay.kerb;
-                let verge = lay.verge;
-                in_parallel(&order, |&index| {
-                    verges::street_verge_geometry(
-                        prepared,
-                        &drawn,
-                        &ribbon,
-                        &meadows,
-                        &road_bites,
-                        kerb.butt(index),
-                        index,
-                        verge,
-                    )
-                })
-            })
+        // Обочины — куски улиц в потоках, обе ступени одним пулом: улица от
+        // улицы не зависит (вход — только чтение: подготовка, ленты, торцы,
+        // укусы, газоны), улицы куска пишут прямо в частичный вклад куска.
+        // По-штучные вклады улиц стоили проходу аллокационный хвост и
+        // раскладку ста тысяч результатов (разрез записи 46: длительности
+        // улиц короткие и ровные — хвост держала сантехника результатов);
+        // куски — те же, что у раскладки ленты ниже: аппенды частичных
+        // вкладов в порядке кусков дают порядок заливки — треугольников,
+        // лоскутов и находки, как у серийной укладки.
+        let chunks = ribbon_lane::chunks(&drawn, &order);
+        let items: Vec<(usize, usize)> = (0..lays.len())
+            .flat_map(|step| (0..chunks.len()).map(move |chunk| (step, chunk)))
             .collect();
-        for (lay, per_street) in lays.iter_mut().zip(verges_by_street) {
-            lay.verges_by_street = per_street;
+        let partials: Vec<verges::StreetVerges> = in_parallel(&items, |(step, chunk)| {
+            let lay = &lays[*step];
+            let kerb = &lay.kerb;
+            let verge = lay.verge;
+            let mut partial = verges::StreetVerges::new();
+            for position in chunks[*chunk].clone() {
+                let index = order[position];
+                verges::street_verge_geometry(
+                    &mut partial,
+                    prepared,
+                    &drawn,
+                    &ribbon,
+                    &meadows,
+                    &road_bites,
+                    kerb.butt(index),
+                    index,
+                    verge,
+                );
+            }
+            partial
+        });
+        let mut partials = partials.into_iter();
+        for lay in lays.iter_mut() {
+            lay.verge_chunks = partials.by_ref().take(chunks.len()).collect();
         }
         // Вклад кусков улиц — в потоках (`roads/ribbon_lane.rs`): улица от
         // улицы не зависит (вход — только чтение: подготовка, ленты, торцы,
@@ -1124,7 +1136,6 @@ impl<'s> RoadCommon<'s> {
         // разрезаны на мостах: их сборщики (`Bridges`) общие, и ветка моста
         // остаётся серийной на своём месте в порядке заливки.
         let fill_arc = ribbon_lane::fill_arcs(prepared, &drawn, &order, &road_islands.outlines);
-        let chunks = ribbon_lane::chunks(&drawn, &order);
         let lane = ribbon_lane::RibbonLane {
             prepared,
             drawn: &drawn,
@@ -1143,7 +1154,7 @@ impl<'s> RoadCommon<'s> {
         };
         let parts: Vec<ribbon_lane::ChunkRibbon> =
             in_parallel(&chunks, |range| lane.chunk(range.clone(), &fill_arc));
-        for (part, range) in parts.into_iter().zip(chunks) {
+        for (chunk, (part, range)) in parts.into_iter().zip(chunks).enumerate() {
             let position = range.start;
             let index = order[position];
             let road = drawn[index];
@@ -1266,17 +1277,16 @@ impl<'s> RoadCommon<'s> {
             // улицы больших стоянок — вкладом; улицы внутри площадки идут в
             // порядке заливки
             grounds.accept(part.grounds);
-            // обочина до отдельного тротуара — собранная по улице заранее
-            // (`verges_by_street`): раскладка здесь, в порядке заливки — на
-            // каждую ступень в её уклад
-            for position in range {
-                for lay in lays.iter_mut() {
-                    lay.verges_by_street[position].apply(
-                        [&mut lay.verges, &mut lay.verge_lawns, &mut lay.verge_yards],
-                        &mut lay.scraps,
-                        &mut lay.pieces,
-                    );
-                }
+            // обочина до отдельного тротуара — частичный вклад куска
+            // (`verge_chunks`): раскладка здесь, в порядке кусков — на
+            // каждую ступень в её уклад; улицы внутри куска уже в порядке
+            // заливки, так что порядок совпадает с по-уличной раскладкой
+            for lay in lays.iter_mut() {
+                lay.verge_chunks[chunk].apply(
+                    [&mut lay.verges, &mut lay.verge_lawns, &mut lay.verge_yards],
+                    &mut lay.scraps,
+                    &mut lay.pieces,
+                );
             }
         }
         // ── Фартуки мостиков ──
@@ -1749,7 +1759,7 @@ impl<'s> RoadCommon<'s> {
             verge_yards,
             mut scraps,
             mut pieces,
-            verges_by_street: _,
+            verge_chunks: _,
         } = lay;
         // ── Лоскуты ── находка по вкладам ступени (скругления и улицы уже в
         // списке): мощение после лент, как у слитой сборки. Мощёные клинья
