@@ -60,11 +60,12 @@ use super::junctions::{JUNCTION_MARGIN, SharedNode, Visit, node_key};
 use super::paint::{ArrowMarks, LineBreaks, PaintGround, Painter, trim_stop_line, whole_bars};
 use super::ruts::RutLines;
 use super::shape::RoadStyle;
-use super::turns::Turns;
+use super::turns::{JunctionWear, Turns};
 use crate::map::along::{arclengths, nearest_on_path, place_on_path};
 use crate::map::grid::Grid;
 use crate::map::meshing::{Break, MeshBuilder};
 use crate::map::osm::model::{point_in_polygon, ring_bounds};
+use crate::map::parallel::in_parallel;
 
 mod cluster;
 mod ends;
@@ -873,23 +874,57 @@ pub(super) fn paint_junction_marks(
     // колея режется по асфальту под ней — узлы без зебр и стоп-линий
     // колею тоже несут, и `ground` (асфальт только у краски) её не видит
     let asphalt = PaintGround::under_wear(&turns.wear, streets.triangles());
-    for zebra in marks.zebras() {
-        if let Some(zebra) = whole_bars(zebra, |point| ground.contains(point)) {
-            painter.paint_zebra(&zebra);
+    // Краска узлов — три по-кандидатных прохода (зебры, стоп-линии, узлы
+    // колеи), чанками в потоках: чанк красит свои куски в частичный painter
+    // ([`Painter::empty_like`]), раскладка append'ом в порядке чанков
+    // ([`Painter::append_from`]) даёт те же треугольники и тот же счёт
+    // линий, что серийный проход. Сетки `ground` и `asphalt` общие и
+    // только читаются.
+    let side = painter.side();
+    let zebras: Vec<&[Zebra]> = marks.zebras().chunks(PAINT_CHUNK).collect();
+    for part in in_parallel(&zebras, |chunk| {
+        let mut part = Painter::new(side);
+        for zebra in *chunk {
+            if let Some(zebra) = whole_bars(zebra, |point| ground.contains(point)) {
+                part.paint_zebra(&zebra);
+            }
         }
+        part
+    }) {
+        painter.append_from(&part);
     }
-    for line in marks.stop_lines() {
-        if let Some(line) = trim_stop_line(line, |point| ground.contains(point)) {
-            painter.paint_stop_line(&line);
+    let stops: Vec<&[StopLine]> = marks.stop_lines().chunks(PAINT_CHUNK).collect();
+    for part in in_parallel(&stops, |chunk| {
+        let mut part = Painter::new(side);
+        for line in *chunk {
+            if let Some(line) = trim_stop_line(line, |point| ground.contains(point)) {
+                part.paint_stop_line(&line);
+            }
         }
+        part
+    }) {
+        painter.append_from(&part);
     }
     // колея траекторий — всегда, как колея полос; только по асфальту:
     // у кромки поворота её полоса перелезала бордюрную дугу на плитку
-    painter.paint_turn_wear(&turns.wear, |point| asphalt.contains(point));
-    // те же кривые и хвосты — оверлею колеи, без пересчёта
-    for junction in &turns.wear {
-        ruts.curves.extend(junction.curves.iter().cloned());
-        ruts.tails.extend(junction.tails.iter().copied());
+    let wears: Vec<&[JunctionWear]> = turns.wear.chunks(WEAR_PAINT_CHUNK).collect();
+    for (part, curves, tails) in in_parallel(&wears, |chunk| {
+        let mut part = Painter::new(side);
+        part.paint_turn_wear(chunk, |point| asphalt.contains(point));
+        // те же кривые и хвосты — оверлею колеи, без пересчёта
+        let curves: Vec<Vec<Vec2>> = chunk
+            .iter()
+            .flat_map(|junction| junction.curves.iter().cloned())
+            .collect();
+        let tails: Vec<[Vec2; 2]> = chunk
+            .iter()
+            .flat_map(|junction| junction.tails.iter().copied())
+            .collect();
+        (part, curves, tails)
+    }) {
+        painter.append_from(&part);
+        ruts.curves.extend(curves);
+        ruts.tails.extend(tails);
     }
     // стрелки на полосах подходов — краска, своим тумблером
     if style.arrows {
@@ -905,6 +940,14 @@ pub(super) fn paint_junction_marks(
         }
     }
 }
+
+/// Сколько зебр (и стоп-линий) красит один чанк параллельного прохода
+/// краски: чанк мельче — больше пустых painter'ов на раскладке, крупнее —
+/// неровнее дележ между потоками.
+const PAINT_CHUNK: usize = 256;
+/// Узлов колеи в чанке: узлов всего сотни, и цена узла различается в разы —
+/// чанки мельче зебрных, чтобы поток не ждал один тяжёлый.
+const WEAR_PAINT_CHUNK: usize = 32;
 
 #[cfg(test)]
 mod tests;

@@ -114,6 +114,32 @@ impl Painter {
             lines: 0,
         }
     }
+
+    /// Сторона движения карты — частичным painter'ам чанков параллельного
+    /// прохода по краске: чанк красит свои куски в `Self::new(side)`, потом
+    /// раскладка дописывает ([`Self::append_from`]) в порядке чанков.
+    pub(in crate::map::roads) fn side(&self) -> TrafficSide {
+        self.side
+    }
+
+    /// Дописать чанковый painter: builder'ы append'ом, счётчик линий суммой.
+    /// Append сохраняет порядок кусков, так что раскладка чанков в порядке их
+    /// списков даёт те же треугольники, что серийный проход.
+    pub(in crate::map::roads) fn append_from(&mut self, other: &Painter) {
+        for (this, other) in [
+            (&mut self.wear_mask, &other.wear_mask),
+            (&mut self.wear, &other.wear),
+            (&mut self.lanes, &other.lanes),
+            (&mut self.axes, &other.axes),
+            (&mut self.zebras, &other.zebras),
+            (&mut self.islands, &other.islands),
+            (&mut self.bridge_lanes, &other.bridge_lanes),
+            (&mut self.bridge_axes, &other.bridge_axes),
+        ] {
+            this.append(other);
+        }
+        self.lines += other.lines;
+    }
 }
 
 /// Имена слоёв краски — по ним [`PaintTag`] находит свой меш, а BRP — сущность.
