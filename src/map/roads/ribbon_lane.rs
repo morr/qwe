@@ -29,7 +29,7 @@ use super::paint::{MergeRamp, Station};
 use super::ribbons::push_sidewalk_to_seams;
 use super::rings::ApproachBand;
 use super::ruts::LaneRuts;
-use super::{ALLEY_COLOR, ROAD_COLOR, SIDEWALK_COLOR, UNPAVED_ROAD_COLOR, RoadStyle};
+use super::{ALLEY_COLOR, ROAD_COLOR, RoadStyle, SIDEWALK_COLOR, UNPAVED_ROAD_COLOR};
 use super::{bridges, footbridge, road_lanes, tapers};
 use crate::map::meshing::{Break, LaneFrame, MeshBuilder};
 use crate::map::osm::model::polyline_length;
@@ -89,10 +89,10 @@ pub(super) fn fill_arcs(
         if outlines[index] || drawn[index].bridge {
             continue;
         }
-        if let Some(ring) = prepared.rings().index_of(index) {
-            if first[ring].is_none() {
-                first[ring] = Some(position);
-            }
+        if let Some(ring) = prepared.rings().index_of(index)
+            && first[ring].is_none()
+        {
+            first[ring] = Some(position);
         }
     }
     first
@@ -236,8 +236,9 @@ impl<'a, 'm> RibbonLane<'a, 'm> {
                         ..base
                     }
                 };
-                let painter =
-                    part.painter.get_or_insert_with(|| Painter::new(self.traffic_side));
+                let painter = part
+                    .painter
+                    .get_or_insert_with(|| Painter::new(self.traffic_side));
                 painter.paint(
                     road,
                     points,
@@ -283,8 +284,10 @@ impl<'a, 'm> RibbonLane<'a, 'm> {
             // с тем состоянием раскладки, какое у серийного прохода стояло в
             // сборщике к этой улице
             part.sidewalks.set_lanes(band_lanes);
-            if let Some(sidewalk) =
-                self.prepared.sidewalk_drawn(index).filter(|_| ring_index.is_none())
+            if let Some(sidewalk) = self
+                .prepared
+                .sidewalk_drawn(index)
+                .filter(|_| ring_index.is_none())
             {
                 // у половины разделённой улицы тротуара со стороны пары нет;
                 // тело клиновой половины начинается за головным клином — куски
@@ -293,7 +296,10 @@ impl<'a, 'm> RibbonLane<'a, 'm> {
                 let (sides, total) = (road.sidewalk().sides(), polyline_length(body));
                 let head_length = head.as_deref().map_or(0.0, polyline_length);
                 let stitch = self.prepared.stitch_offset(index) - head_length;
-                let pieces = self.prepared.pairs().band_pieces(index, sides, stitch, total);
+                let pieces = self
+                    .prepared
+                    .pairs()
+                    .band_pieces(index, sides, stitch, total);
                 // на шве земля/мост полоса сходит клином в бортик настила; торец
                 // под клином сечения — не шов тела
                 let curb_reach = bridges::seam_curb_reach(self.drawn, self.prepared.nodes(), index);
