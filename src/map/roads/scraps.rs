@@ -21,7 +21,7 @@
 //! [`SCRAP_WIDTH_MAX`]. Лоскут кладётся плиткой в слой обочин
 //! (`road_verges`), который лежит над слоями газона. **Зелень земли** —
 //! карманы разбора и замапленный газон — спрашивается своим вопросом
-//! ([`Scraps::push_green`], [`Scraps::find_green`]) и кладётся в слой
+//! ([`Scraps::green_candidate`], [`Scraps::find_green`]) и кладётся в слой
 //! тротуаров; у неё два своих порога — клин ([`GREEN_OPENING_MAX`]) и
 //! клин-хвост ([`GREEN_TAIL_AREA_MAX`], кончик островка под горкой).
 //!
@@ -145,7 +145,9 @@ pub(super) struct Scraps {
     /// идут из потоков — строится один раз под замком.
     grid: OnceLock<Grid<usize>>,
     /// Газоны по габаритам — какое мощение вообще нужно ([`Scraps::near_lawn`]).
-    lawn_grid: Option<Grid<usize>>,
+    /// Вопросы идут и из потоков (`pave_scraps`) — строится один раз под
+    /// замком, как и сетка мощения.
+    lawn_grid: OnceLock<Grid<usize>>,
 }
 
 /// Копия списков без кешей: обе сетки строятся по спискам лениво, у копии
@@ -159,7 +161,7 @@ impl Clone for Scraps {
             green: self.green.clone(),
             contours: self.contours.clone(),
             grid: OnceLock::new(),
-            lawn_grid: None,
+            lawn_grid: OnceLock::new(),
         }
     }
 }
@@ -189,10 +191,11 @@ impl Scraps {
 
     /// Лежит ли ломаная `path` с полосой `reach` по сторонам у какого-нибудь
     /// газона — по габаритам. Сетка газонов собирается при первом вопросе:
-    /// спрашивают, когда газоны уже все.
-    pub(super) fn near_lawn(&mut self, path: &[Vec2], reach: f32) -> bool {
+    /// спрашивают, когда газоны уже все, — и из потоков тоже (`pave_scraps`),
+    /// поэтому под замком.
+    pub(super) fn near_lawn(&self, path: &[Vec2], reach: f32) -> bool {
         let lawns = &self.lawns;
-        let grid = self.lawn_grid.get_or_insert_with(|| {
+        let grid = self.lawn_grid.get_or_init(|| {
             let mut grid = Grid::new(CELL);
             for (index, lawn) in lawns.iter().enumerate() {
                 let (low, high) = ring_bounds(&lawn.ring);
@@ -210,12 +213,9 @@ impl Scraps {
 
     /// Мощёный контур.
     pub(super) fn push_paving(&mut self, ring: &[Vec2]) {
-        if ring.len() < 3 {
-            return;
+        if let Some(entry) = paving_entry(ring) {
+            self.contours.push(entry);
         }
-        let contour = oriented(ring, true);
-        let (low, high) = contour_bounds(&contour);
-        self.contours.push((contour, low, high));
     }
 
     /// Дописать вклад `other` (сборка одной улицы, [`verges::
@@ -316,19 +316,25 @@ impl Scraps {
         }
     }
 
-    /// Мощёная полоса вдоль ломаной `path`: `halves` — от оси влево и вправо
-    /// по ходу точек. Кусками по [`CHUNK`] точек (стык в общей точке, сдвиги
-    /// — по всей ломаной): газон спрашивает мощение по габариту.
-    pub(super) fn push_band(&mut self, path: &[Vec2], halves: [f32; 2]) {
+    /// Контуры мощёной полосы вдоль ломаной `path` — то же, что клал
+    /// [`Self::push_band`], без записи: вклад чанка параллельного прохода
+    /// (`pave_scraps`). `halves` — от оси влево и вправо по ходу точек,
+    /// куски по [`CHUNK`] точек (стык в общей точке, сдвиги — по всей
+    /// ломаной).
+    fn band_contours(&self, path: &[Vec2], halves: [f32; 2]) -> Vec<(Contour, Vec2, Vec2)> {
         if path.len() < 2 {
-            return;
+            return Vec::new();
         }
         let [left, right] = [halves[0], -halves[1]].map(|half| miter_offsets(path, false, half));
-        for (from, to) in chunks(path.len()) {
-            let mut ring: Vec<Vec2> = (from..=to).map(|index| path[index] + left[index]).collect();
-            ring.extend((from..=to).rev().map(|index| path[index] + right[index]));
-            self.push_paving(&ring);
-        }
+        chunks(path.len())
+            .into_iter()
+            .filter_map(|(from, to)| {
+                let mut ring: Vec<Vec2> =
+                    (from..=to).map(|index| path[index] + left[index]).collect();
+                ring.extend((from..=to).rev().map(|index| path[index] + right[index]));
+                paving_entry(&ring)
+            })
+            .collect()
     }
 
     /// Кольца и срезы всех газонов — окно спрашивания каждого; диагнозу
@@ -359,9 +365,21 @@ impl Scraps {
     /// 40 м ([`END_REACH`]), поэтому кусок — кандидат, только если он форма
     /// клина: узкая полоса ([`GREEN_AREA_MAX`], [`GREEN_WIDTH_MAX`]), в
     /// которую мощение врезается ([`GREEN_BITE`]).
+    /// Удобство тестов: кандидат зелени сразу в список ([`Self::
+    /// green_candidate`] + запись). Продакшен-путь кладёт зелень чанками
+    /// (`lay_green_scraps`).
+    #[cfg(test)]
     pub(super) fn push_green(&mut self, ring: Vec<Vec2>) {
+        if let Some(ring) = self.green_candidate(ring) {
+            self.green.push(ring);
+        }
+    }
+
+    /// Кандидат зелени — то же, что кладёт [`Self::push_green`], без записи:
+    /// вклад чанка параллельного прохода (`lay_green_scraps`).
+    fn green_candidate(&self, ring: Vec<Vec2>) -> Option<Vec<Vec2>> {
         if ring.len() < 3 {
-            return;
+            return None;
         }
         let area = contour_area(&oriented(&ring, true));
         let perimeter = ring_perimeter(&ring);
@@ -370,9 +388,9 @@ impl Scraps {
             || 2.0 * area / perimeter > GREEN_WIDTH_MAX
             || !self.bitten(&ring)
         {
-            return;
+            return None;
         }
-        self.green.push(ring);
+        Some(ring)
     }
 
     /// Лоскуты зелени земли — тот же вопрос к нарисованному, что у газонов
@@ -670,6 +688,22 @@ fn scraps_among(
 /// улиц, тротуары, обочины и мощёные носы с дугами; наезды плитки — нет.
 /// и горки: асфальт или штриховка направляющего островка — не газон,
 /// и кончик островка под горкой оставался клином травы (R37-01, витрина 14)
+/// Мощёный контур с габаритами — запись [`Scraps::push_paving`] без
+/// состояния: вклад чанка параллельного прохода.
+fn paving_entry(ring: &[Vec2]) -> Option<(Contour, Vec2, Vec2)> {
+    if ring.len() < 3 {
+        return None;
+    }
+    let contour = oriented(ring, true);
+    let (low, high) = contour_bounds(&contour);
+    Some((contour, low, high))
+}
+
+/// Сколько кандидатов мощения в чанке параллельного прохода.
+const PAVE_PER_CHUNK: usize = 256;
+/// Сколько колец зелени в чанке параллельного прохода.
+const GREEN_PER_CHUNK: usize = 512;
+
 pub(super) fn pave_scraps(
     kerb_returns: &KerbReturns,
     gores: &Gores,
@@ -683,25 +717,59 @@ pub(super) fn pave_scraps(
         .outlines()
         .map(|contour| contour.iter().map(|&point| point.into()).collect())
         .collect();
-    for outline in kerb_returns
-        .paving()
-        .flat()
-        .chain(gore_outlines.iter().map(Vec::as_slice))
-        .chain(kerb_returns.paving().curved())
     {
-        if scraps.near_lawn(outline, 0.0) {
-            scraps.push_paving(outline);
+        let shared = &*scraps;
+        // Мощение — чанками по ядрам: газоны к этому моменту все, вопрос
+        // `near_lawn` строит их сетку один раз под замком; вклад чанка —
+        // контуры, дописываются в порядке чанков — порядок мощения тот же,
+        // что у серийного прохода.
+        let outlines: Vec<&[Vec2]> = kerb_returns
+            .paving()
+            .flat()
+            .chain(gore_outlines.iter().map(Vec::as_slice))
+            .chain(kerb_returns.paving().curved())
+            .collect();
+        let chunks: Vec<&[&[Vec2]]> = outlines.chunks(PAVE_PER_CHUNK).collect();
+        let partials: Vec<Vec<(Contour, Vec2, Vec2)>> =
+            in_parallel(&chunks, |chunk| {
+                chunk
+                    .iter()
+                    .filter(|outline| shared.near_lawn(outline, 0.0))
+                    .filter_map(|outline| paving_entry(outline))
+                    .collect()
+            });
+        for partial in partials {
+            scraps.contours.extend(partial);
         }
     }
-    for (index, road) in drawn.iter().enumerate() {
-        let paved =
-            !road.is_unpaved_street() && (road.class == RoadClass::Street || road.is_paved_path());
-        if !paved || road.bridge || road_islands.outlines[index] {
-            continue;
-        }
-        let halves = [0, 1].map(|side| prepared.band_half(index, side));
-        if scraps.near_lawn(&ribbon[index], halves[0].max(halves[1])) {
-            scraps.push_band(&ribbon[index], halves);
+    {
+        let shared = &*scraps;
+        // Полосы улиц — теми же чанками: улица от улицы не зависит (вход —
+        // только чтение), порядок улиц сохраняется порядком чанков.
+        let streets: Vec<usize> = (0..drawn.len()).collect();
+        let street_chunks: Vec<&[usize]> = streets.chunks(PAVE_PER_CHUNK).collect();
+        let partials: Vec<Vec<(Contour, Vec2, Vec2)>> = in_parallel(&street_chunks, |chunk| {
+            chunk
+                .iter()
+                .filter_map(|&index| {
+                    let road = drawn[index];
+                    let paved = !road.is_unpaved_street()
+                        && (road.class == RoadClass::Street || road.is_paved_path());
+                    if !paved || road.bridge || road_islands.outlines[index] {
+                        return None;
+                    }
+                    let halves = [0, 1].map(|side| prepared.band_half(index, side));
+                    shared
+                        .near_lawn(&ribbon[index], halves[0].max(halves[1]))
+                        .then(|| shared.band_contours(&ribbon[index], halves))
+                })
+                .collect::<Vec<Vec<_>>>()
+                .into_iter()
+                .flatten()
+                .collect()
+        });
+        for partial in partials {
+            scraps.contours.extend(partial);
         }
     }
 }
@@ -719,8 +787,26 @@ pub(super) fn lay_green_scraps(
     sidewalks: &mut MeshBuilder,
     pieces: &mut Vec<DrawnPiece>,
 ) -> usize {
-    for area in map.pockets.iter().chain(&map.grass) {
-        scraps.push_green(area.outer.clone());
+    // Зелень — чанками по ядрам: кандидаты (кольца карманов и газонов) от
+    // кандидата не зависят, фильтр (`green_candidate`) читает готовое
+    // мощение; вклад чанка — прошедшие кольца, дописываются в порядке
+    // чанков — порядок зелени тот же, что у серийного прохода.
+    let candidates: Vec<Vec<Vec2>> = map
+        .pockets
+        .iter()
+        .chain(&map.grass)
+        .map(|area| area.outer.clone())
+        .collect();
+    let chunks: Vec<&[Vec<Vec2>]> = candidates.chunks(GREEN_PER_CHUNK).collect();
+    let shared = &*scraps;
+    let partials: Vec<Vec<Vec<Vec2>>> = in_parallel(&chunks, |chunk| {
+        chunk
+            .iter()
+            .filter_map(|ring| shared.green_candidate(ring.clone()))
+            .collect()
+    });
+    for partial in partials {
+        scraps.green.extend(partial);
     }
     let green_scraps = scraps.find_green();
     let lawn_scraps = scraps.find();

@@ -79,7 +79,7 @@ use crate::map::meshing::{LaneFrame, MeshBuilder, RibbonCap, RibbonJoin};
 use crate::map::osm::model::RoadNodeKind;
 use crate::map::osm::model::{RoadAreaKind, polyline_length};
 use crate::map::osm::{MapData, RailKind, RoadClass, RoadLine};
-use crate::map::parallel::in_parallel;
+use crate::map::parallel::{in_parallel, in_parallel_owned};
 use crate::map::rail::{CrossedStreet, crossable, mesh_level_crossings};
 use crate::map::shapes::{is_ring, push_shape};
 use crate::map::surface::{
@@ -694,9 +694,12 @@ pub fn build_roads_steps(skeleton: &RoadSkeleton<'_>, steps: &[VergeZoomBucket])
         vertices,
         paint_vertices,
     } = common.take_common_layers();
-    let indices: Vec<usize> = (0..steps.len()).collect();
-    let steps = in_parallel(&indices, |&step| {
-        common.finish_step_split(skeleton, step, vertices, paint_vertices)
+    // Уклады ступеней уходят в финалы по значению (`in_parallel_owned`):
+    // клонировать сборщики ступени ради параллели — второй раз платить за её
+    // геометрию (разрез записи 44: клоны 33 + scraps 3 мс ступени).
+    let lays = std::mem::take(&mut common.lays);
+    let steps = in_parallel_owned(lays, |lay| {
+        common.finish_step_split(skeleton, lay, vertices, paint_vertices)
     });
     RoadStepsBuild {
         common: layers,
@@ -1724,7 +1727,7 @@ impl<'s> RoadCommon<'s> {
     fn finish_step_split(
         &self,
         skeleton: &RoadSkeleton<'_>,
-        step: usize,
+        lay: StepLay,
         common_vertices: usize,
         paint_vertices: usize,
     ) -> StepRoadBuild {
@@ -1739,19 +1742,30 @@ impl<'s> RoadCommon<'s> {
         } = skeleton;
         let map = *map;
         let style = *style;
-        let lay = &self.lays[step];
-        let mut verges = lay.verges.clone();
-        let verge_lawns = lay.verge_lawns.clone();
-        let verge_yards = lay.verge_yards.clone();
-        let mut pieces = lay.pieces.clone();
+        // Уклад ступени пришёл по значению ([`build_roads_steps`]): общие
+        // сборщики ступени пусты (их содержимое у [`RoadCommon::
+        // take_common_layers`]), ступенезависимое — её собственное.
+        let StepLay {
+            verge: _,
+            kerb,
+            streets: _,
+            alleys: _,
+            unpaved: _,
+            sidewalks: _,
+            mut verges,
+            verge_lawns,
+            verge_yards,
+            mut scraps,
+            mut pieces,
+            verges_by_street: _,
+        } = lay;
         // ── Лоскуты ── находка по вкладам ступени (скругления и улицы уже в
         // списке): мощение после лент, как у слитой сборки. Мощёные клинья
         // зелени едут в свой слой тротуарного материала: у слитой сборки они
         // лежали в тротуарах после общей середины, и слой тротуаров мира —
         // общий, ступени их не прятала бы
-        let mut scraps = lay.scraps.clone();
         scraps::pave_scraps(
-            &lay.kerb,
+            &kerb,
             &self.gores,
             &self.drawn,
             prepared,
@@ -1798,7 +1812,7 @@ impl<'s> RoadCommon<'s> {
         .map(|(builder, z, name, material)| LayerMesh::new(builder, z, name, material))
         .collect();
         // что скругления насчитали — поля отчёта о них (`corners.rs`)
-        let kerbs = lay.kerb.counts();
+        let kerbs = kerb.counts();
         let report = RoadReport {
             style,
             junctions: junctions.counts(),
