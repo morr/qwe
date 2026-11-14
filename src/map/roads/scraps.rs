@@ -316,7 +316,16 @@ impl Scraps {
         }
     }
 
-    /// Контуры мощёной полосы вдоль ломаной `path` — то же, что клал
+    /// Удобство тестов: полоса сразу в список ([`Self::band_contours`] +
+    /// запись) — диагнозу (`tests.rs`, `QWE_DIAG_SCRAPS_FIND`).
+    /// Продакшен-путь кладёт полосы чанками (`pave_scraps`).
+    #[cfg(test)]
+    pub(super) fn push_band(&mut self, path: &[Vec2], halves: [f32; 2]) {
+        let entries = self.band_contours(path, halves);
+        self.contours.extend(entries);
+    }
+
+    /// Контуры мощёной полосы вдоль ломаной `path` — то же, что кладёт
     /// [`Self::push_band`], без записи: вклад чанка параллельного прохода
     /// (`pave_scraps`). `halves` — от оси влево и вправо по ходу точек,
     /// куски по [`CHUNK`] точек (стык в общей точке, сдвиги — по всей
@@ -730,14 +739,13 @@ pub(super) fn pave_scraps(
             .chain(kerb_returns.paving().curved())
             .collect();
         let chunks: Vec<&[&[Vec2]]> = outlines.chunks(PAVE_PER_CHUNK).collect();
-        let partials: Vec<Vec<(Contour, Vec2, Vec2)>> =
-            in_parallel(&chunks, |chunk| {
-                chunk
-                    .iter()
-                    .filter(|outline| shared.near_lawn(outline, 0.0))
-                    .filter_map(|outline| paving_entry(outline))
-                    .collect()
-            });
+        let partials: Vec<Vec<(Contour, Vec2, Vec2)>> = in_parallel(&chunks, |chunk| {
+            chunk
+                .iter()
+                .filter(|outline| shared.near_lawn(outline, 0.0))
+                .filter_map(|outline| paving_entry(outline))
+                .collect()
+        });
         for partial in partials {
             scraps.contours.extend(partial);
         }
