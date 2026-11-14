@@ -1122,10 +1122,11 @@ impl<'s> RoadCommon<'s> {
         let fill_arc = ribbon_lane::fill_arcs(prepared, &drawn, &order, &road_islands.outlines);
         let chunks = ribbon_lane::chunks(&drawn, &order);
         let states = ribbon_lane::sidewalk_states(&drawn, &order, &road_islands.outlines);
+        // Состояние тротуарной полосы — улицы на начале куска, не сам кусок:
+        // `zip` брал бы состояние i-й улицы для i-го куска.
         let per_chunk: Vec<_> = chunks
             .iter()
-            .zip(&states)
-            .map(|(range, state)| (range.clone(), *state))
+            .map(|range| (range.clone(), states[range.start]))
             .collect();
         let lane = ribbon_lane::RibbonLane {
             prepared,
@@ -1168,8 +1169,12 @@ impl<'s> RoadCommon<'s> {
                 // колея гаснет по разрывам асфальта; у ведущей узла их там нет
                 let breaks = asphalt.of(index);
                 let lanes = road_lanes(road);
+                // полный матч серийной заливки: грунтовая улица моста и
+                // мощёная дорожка-мостик красятся своим цветом, не асфальтом
                 let color = match road.class {
+                    RoadClass::Street if road.is_unpaved_street() => UNPAVED_ROAD_COLOR,
                     RoadClass::Street => ROAD_COLOR,
+                    RoadClass::Alley if road.is_paved_path() => SIDEWALK_COLOR,
                     RoadClass::Alley => ALLEY_COLOR,
                 };
                 ruts.lanes.extend(part.ruts);
