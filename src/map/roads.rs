@@ -828,14 +828,18 @@ impl<'s> RoadCommon<'s> {
         // узловые оси — скругления, слияния, карманы, станции штрихов, полотно
         // трамвая: их торцы стоят в точках OSM
         let nodal = prepared.axes(Axis::Nodal);
-        // ── Скругления ступеней ── калькуляция и укладка — в уклад ступени,
-        // ступень от ступени не зависит — по ядрам: у ступеней свои сетки
-        // лоскутов и свои куски. Скругления кладутся раньше всех лент своего
-        // слоя: лента поверх кроет скругление, а не наоборот, и разметка
-        // остаётся целой
+        // ── Скругления ступеней ── расчёт — одним пулом на все ступени
+        // (сбор лучей и поузловой расчёт парами ступень-дорога/узел):
+        // вложенный параллель ступеней ставил два × десять потоков на десять
+        // ядер (запись 44). Укладка — в уклад ступени, по ступеням в
+        // потоках. Скругления кладутся раньше всех лент своего слоя: лента
+        // поверх кроет скругление, а не наоборот, и разметка остаётся целой
         let meadows = Meadows::of(&map.parks, &map.grass);
-        let mut lays: Vec<StepLay> = in_parallel(steps, |&verge| {
-            let kerb = corners::kerb_returns(prepared, shape.corner_radius(), verge);
+        let kerbs = corners::kerb_returns_steps(prepared, shape.corner_radius(), steps);
+        let lay_items: Vec<(usize, corners::KerbReturns)> =
+            kerbs.into_iter().enumerate().collect();
+        let mut lays: Vec<StepLay> = in_parallel_owned(lay_items, |(step, kerb)| {
+            let verge = steps[step];
             let mut lay = StepLay {
                 verge,
                 kerb,

@@ -7,7 +7,7 @@ use crate::map::along::{arclengths, place_on_path};
 use crate::map::meshing::{butt_direction, ribbon_merge_distance, ribbon_vertices};
 use crate::map::osm::RoadClass;
 use crate::map::osm::model::{RoadLine, polyline_length};
-use crate::map::parallel::in_parallel;
+use crate::map::parallel::{in_parallel, in_parallel_owned};
 use crate::map::roads::{DrawnPiece, PieceKind, VergeZoomBucket};
 use crate::map::spawn::GRASS_COLOR;
 use crate::settings::{
@@ -362,8 +362,8 @@ impl<'a> KerbStreets<'a> {
     }
 }
 
-/// Асфальт всех узлов: скругления проезжей части и тротуаров, наружные углы и
-/// прямые торцы плеч.
+/// Асфальт всех узлов всех ступеней: скругления проезжей части и тротуаров,
+/// наружные углы и прямые торцы плеч.
 ///
 /// Всё — по подготовленным дорогам `drawn` (`roads/drawn.rs`): **узловые**
 /// осевые (`Axis::Nodal` — после сглаживания, до стежков; мост и арка не
@@ -378,52 +378,95 @@ impl<'a> KerbStreets<'a> {
 /// (`Drawn::is_merged`, `roads/merges.rs`) — плечи одного слияния друг другу
 /// не перекрёсток, ни прямых торцов, ни углов между ними. `scale` —
 /// множитель радиусов по классам (ручка `Corner radius`).
-pub fn kerb_returns(drawn: &Drawn, scale: f32, verge_step: VergeZoomBucket) -> KerbReturns {
+pub fn kerb_returns_steps(
+    drawn: &Drawn,
+    scale: f32,
+    steps: &[VergeZoomBucket],
+) -> Vec<KerbReturns> {
     let roads = drawn.roads();
-    // Сбор лучей — по дорогам в потоках: дорога от дороги не зависит. Вклады
-    // сливаются в узлы в порядке дорог — состояние `HashMap` (и порядок
-    // обхода узлов ниже) то же, что у серийного сбора.
-    let indices: Vec<usize> = (0..roads.len()).collect();
-    let mut arms: HashMap<(i32, i32), (Vec2, Vec<Arm>)> = HashMap::new();
-    for contribution in in_parallel(&indices, |&index| {
-        road_arms(drawn, &roads, index, verge_step)
-    }) {
-        for (key, node, arm) in contribution {
-            arms.entry(key)
-                .or_insert_with(|| (node, Vec::new()))
-                .1
-                .push(arm);
-        }
-    }
-    // Поузловой расчёт — по узлам в потоках: узел от узла не зависит (записи
-    // торцов едут списком, узел пишет только в торцы своих лучей). Порядок
-    // узлов — тот, которым шёл серийный цикл (порядок итерации `HashMap`),
-    // вклады сливаются в нём же — раскладка контуров совпадает бит-в-бит.
-    let mut nodes_list: Vec<(Vec2, Vec<Arm>)> = arms
-        .into_values()
-        .filter(|(_, arms)| arms.len() >= 2)
-        .collect();
-    for (_, arms) in &mut nodes_list {
-        arms.sort_by(|a, b| a.direction.to_angle().total_cmp(&b.direction.to_angle()));
-    }
+    let step_indices: Vec<usize> = (0..steps.len()).collect();
     let yards = YardBounds::of(drawn.yards());
-    let mut returns = KerbReturns {
-        butt: vec![[false; 2]; roads.len()],
-        setback: vec![[0.0; 2]; roads.len()],
-        ..default()
-    };
-    let partials: Vec<NodeReturns> = in_parallel(&nodes_list, |(node, arms)| {
+    // Сбор лучей — парами (ступень, дорога) одним пулом: дорога от дороги не
+    // зависит. Вклады сливаются в узлы в порядке дорог — состояние `HashMap`
+    // (и порядок обхода узлов ниже) то же, что у серийного сбора.
+    let arm_items: Vec<(usize, usize)> = step_indices
+        .iter()
+        .flat_map(|&step| (0..roads.len()).map(move |index| (step, index)))
+        .collect();
+    let mut contributions = in_parallel(&arm_items, |(step, index)| {
+        road_arms(drawn, &roads, *index, steps[*step])
+    });
+    let per_step = roads.len();
+    let per_step_contribs: Vec<Vec<_>> = (0..steps.len())
+        .map(|_| contributions.drain(..per_step).collect())
+        .collect();
+    // Слияние вкладов и список узлов — по ступени в потоках: вклады едут
+    // списком, узел пишет только в свой ключ; порядок узлов — тот, которым
+    // шёл серийный цикл (порядок итерации `HashMap`).
+    let nodes_per_step: Vec<Vec<(Vec2, Vec<Arm>)>> = in_parallel_owned(
+        per_step_contribs,
+        |contributions| {
+            let mut arms: HashMap<(i32, i32), (Vec2, Vec<Arm>)> = HashMap::new();
+            for contribution in contributions {
+                for (key, node, arm) in contribution {
+                    arms.entry(key)
+                        .or_insert_with(|| (node, Vec::new()))
+                        .1
+                        .push(arm);
+                }
+            }
+            let mut nodes_list: Vec<(Vec2, Vec<Arm>)> = arms
+                .into_values()
+                .filter(|(_, arms)| arms.len() >= 2)
+                .collect();
+            for (_, arms) in &mut nodes_list {
+                arms.sort_by(|a, b| a.direction.to_angle().total_cmp(&b.direction.to_angle()));
+            }
+            nodes_list
+        },
+    );
+    // Поузловой расчёт — одним пулом на обе ступени: узел от узла не зависит
+    // (записи торцов едут списком, узел пишет только в торцы своих лучей).
+    // Порядок узлов — тот, которым шёл серийный цикл, вклады сливаются в нём
+    // же — раскладка контуров совпадает бит-в-бит.
+    let mut node_counts: Vec<usize> = Vec::with_capacity(steps.len());
+    let mut node_items: Vec<(Vec2, &[Arm])> = Vec::new();
+    for nodes in &nodes_per_step {
+        node_counts.push(nodes.len());
+        node_items.extend(nodes.iter().map(|(node, arms)| (*node, arms.as_slice())));
+    }
+    let mut partials: Vec<NodeReturns> = in_parallel(&node_items, |(node, arms)| {
         node_returns(drawn, scale, &yards, *node, arms)
     });
-    for partial in partials {
-        partial.apply_to(&mut returns);
-    }
-    returns
+    let per_step_partials: Vec<Vec<NodeReturns>> = node_counts
+        .iter()
+        .map(|&count| partials.drain(..count).collect())
+        .collect();
+    in_parallel_owned(per_step_partials, |partials| {
+        let mut returns = KerbReturns {
+            butt: vec![[false; 2]; roads.len()],
+            setback: vec![[0.0; 2]; roads.len()],
+            ..default()
+        };
+        for partial in partials {
+            partial.apply_to(&mut returns);
+        }
+        returns
+    })
+}
+
+/// Скругления одной ступени — [`kerb_returns_steps`] на одну ступень:
+/// витрина карманов и тесты спрашивают одну ступень.
+pub fn kerb_returns(drawn: &Drawn, scale: f32, verge_step: VergeZoomBucket) -> KerbReturns {
+    kerb_returns_steps(drawn, scale, std::slice::from_ref(&verge_step))
+        .into_iter()
+        .next()
+        .expect("одна ступень — свой набор скруглений")
 }
 
 /// Вклад дороги `index` в узлы: луч на каждый общий узел её оси и направление
 /// — в порядке вершин и лучей дороги. Дорога от дороги не зависит — единица
-/// параллельного сбора ([`kerb_returns`]); слияние идёт в порядке дорог.
+/// параллельного сбора ([`kerb_returns_steps`]); слияние идёт в порядке дорог.
 fn road_arms<'d>(
     drawn: &'d Drawn,
     roads: &[&'d RoadLine],
@@ -707,7 +750,7 @@ fn road_arms<'d>(
 
 /// Вклад одного узла в скругления: контуры углов всех групп и записи торцов.
 /// Узел от узла не зависит — единица параллельного расчёта
-/// ([`kerb_returns`]); слияние — в порядке узлов, раскладка та же.
+/// ([`kerb_returns_steps`]); слияние — в порядке узлов, раскладка та же.
 #[derive(Default)]
 struct NodeReturns {
     noses: Vec<(Fill, Vec<Vec2>)>,
@@ -766,7 +809,7 @@ impl NodeReturns {
     }
 }
 
-/// Расчёт одного узла — тело серийного поузлового цикла ([`kerb_returns`]).
+/// Расчёт одного узла — тело поузлового цикла ([`kerb_returns_steps`]).
 /// Лучи узла приходят отсортированными по углу; всё, что читается, —
 /// только чтение.
 fn node_returns(
