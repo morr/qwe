@@ -717,26 +717,27 @@ impl NodePaint {
                 });
             }
         }
-
-        for cluster in clusters(drawn, &junctions) {
-            paint.paint_cluster(
-                &cluster,
-                &Context {
-                    drawn,
-                    paths,
-                    map,
-                    marks: &marks,
-                    near_marks: &near_marks,
-                    style,
-                    street: &street,
-                    sidewalk: &sidewalk,
-                    partners: &partners,
-                    on_ring: &on_ring,
-                    nodes_along: &nodes_along,
-                    paved: &paved,
-                },
-                &mut crossings,
-            );
+        let clusters = clusters(drawn, &junctions);
+        // подготовка кластера — чистый расчёт (плечи, знаки, кромки по чужому
+        // асфальту, въезды в кольцо) — по потокам; раскладка по `NodePaint` и
+        // общим переходам — в порядке кластеров, как у серийного прохода
+        let context = Context {
+            drawn,
+            paths,
+            map,
+            marks: &marks,
+            near_marks: &near_marks,
+            style,
+            street: &street,
+            sidewalk: &sidewalk,
+            partners: &partners,
+            on_ring: &on_ring,
+            nodes_along: &nodes_along,
+            paved: &paved,
+        };
+        let preps = in_parallel(&clusters, |cluster| cluster::prep_cluster(cluster, &context));
+        for (cluster, prep) in clusters.iter().zip(preps) {
+            paint.paint_cluster(prep, cluster, &context, &mut crossings);
         }
 
         // переходы посреди квартала — и те, что стоят на плече главной

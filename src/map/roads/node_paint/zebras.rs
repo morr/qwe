@@ -176,6 +176,7 @@ pub(super) struct ArmPlan<'a> {
 }
 
 /// Въезд в кольцо: где подход выходит из асфальта самого кольца.
+#[derive(Clone, Copy)]
 pub(super) struct RingEntry {
     /// Длина на пути плеча, где из кольца вышло всё сечение.
     pub(super) edge: f32,
