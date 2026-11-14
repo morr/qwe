@@ -82,7 +82,7 @@ use self::islands::{YardBounds, rounded, tile_overlaps};
 
 mod gather;
 
-pub use self::gather::{KerbReturns, kerb_returns, kerb_returns_steps};
+pub use self::gather::{KerbReturns, kerb_returns};
 use self::gather::{ccw_angle, ccw_between};
 
 /// Радиус бордюра по классу дороги, м; у пары берётся меньший. Между
