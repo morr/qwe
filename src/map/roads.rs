@@ -1141,9 +1141,8 @@ impl<'s> RoadCommon<'s> {
             outlines: &road_islands.outlines,
             grounds: &grounds,
         };
-        let parts: Vec<ribbon_lane::ChunkRibbon> = in_parallel(&chunks, |range| {
-            lane.chunk(range.clone(), &fill_arc)
-        });
+        let parts: Vec<ribbon_lane::ChunkRibbon> =
+            in_parallel(&chunks, |range| lane.chunk(range.clone(), &fill_arc));
         for (part, range) in parts.into_iter().zip(chunks) {
             let position = range.start;
             let index = order[position];

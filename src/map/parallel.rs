@@ -8,8 +8,8 @@
 //! и переход порога зума держат всё целиком, и ждать им некого — пусть
 //! работают все ядра.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Сколько потоков брать: по числу ядер, не меньше одного.
 pub(crate) fn workers() -> usize {
