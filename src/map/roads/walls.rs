@@ -7,6 +7,7 @@ use bevy::prelude::*;
 use super::ribbons::push_ribbon;
 use super::verges::{MEADOW_PROBE_BEYOND, MEADOW_PROBES};
 use super::{ROAD_JOIN, WALL_COLOR};
+use crate::map::grid::Grid;
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::model::{point_in_area, polyline_length, ring_bounds};
 use crate::map::osm::{AreaKind, MapData, PolyArea};
@@ -100,24 +101,44 @@ impl<'a> Fortresses<'a> {
 /// Замапленные газоны и скверы (`MapData::parks`, `MapData::grass`) — рядом с
 /// ними газон широкой обочины ([`super::verges::push_verges`]) засеян их
 /// лугом, а везде ещё — приглушённой травой двора.
+///
+/// Вопросы `covers` идут из потоков (обочины по улицам, углы газонов —
+/// [`super::corners::KerbReturns::lay`]) и их много: по шесть на вопрос
+/// [`Self::beside`] и по одному на вершину угла в [`Self::under`]. Линейный
+/// проход по всем областям на каждый вопрос стоил дорожной сборке Парижа
+/// ≈230 мс (разрез записи 45: 176 мс CPU в обочинах, 52 мс серийно в углах),
+/// поэтому области стоят в сетке по габаритам — кандидаты одной ячейки,
+/// ответ `bool` порядок обхода не читает.
 pub(super) struct Meadows<'a> {
     areas: Vec<(&'a PolyArea, (Vec2, Vec2))>,
+    /// Сетка по габаритам `areas`: ячейка точки — все области, чей бокс её
+    /// накрывает ([`Grid::insert`] кладёт бокс в каждую ячейку, которой он
+    /// касается). Строится один раз в [`Self::of`], до потоков.
+    grid: Grid<usize>,
 }
+
+/// Шаг сетки [`Meadows`], м — как тайль теней: точечные вопросы, кандидаты
+/// плотного паркового района — десятки боксов на ячейку.
+const MEADOW_CELL: f32 = 256.0;
 
 impl<'a> Meadows<'a> {
     pub(super) fn of(parks: &'a [PolyArea], grass: &'a [PolyArea]) -> Self {
-        Self {
-            areas: parks
-                .iter()
-                .chain(grass)
-                .map(|area| (area, ring_bounds(&area.outer)))
-                .collect(),
+        let areas: Vec<_> = parks
+            .iter()
+            .chain(grass)
+            .map(|area| (area, ring_bounds(&area.outer)))
+            .collect();
+        let mut grid = Grid::new(MEADOW_CELL);
+        for (index, (_, (min, max))) in areas.iter().enumerate() {
+            grid.insert(*min, *max, index);
         }
+        Self { areas, grid }
     }
 
     fn covers(&self, point: Vec2) -> bool {
-        self.areas.iter().any(|(area, (min, max))| {
-            point.cmpge(*min).all() && point.cmple(*max).all() && point_in_area(point, area)
+        self.grid.at(point).iter().any(|&index| {
+            let (area, (min, max)) = self.areas[index];
+            point.cmpge(min).all() && point.cmple(max).all() && point_in_area(point, area)
         })
     }
 
