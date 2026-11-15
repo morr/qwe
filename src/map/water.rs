@@ -34,8 +34,8 @@ use crate::map::meshing::{
     Break, MeshBuilder, RibbonBreaks, RibbonCap, RibbonJoin, RibbonShape, miter_offsets,
 };
 use crate::map::osm::model::{point_in_area, point_in_polygon, ring_bounds, signed_ring_area};
-use crate::map::parallel::in_parallel;
 use crate::map::osm::{PolyArea, WaterLine, water_line_caps};
+use crate::map::parallel::in_parallel;
 use crate::map::smooth::{Smoothing, smooth_path};
 
 /// Цвет глубокой воды — площадной и ленты русла.
