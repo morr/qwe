@@ -41,6 +41,12 @@ const SPEED_BUTTON_GAP_PX: f32 = 6.0;
 /// FiraMono на 14 px — это 12 × 8.4 ≈ 101 px, плюс подпись `Speed:` (6 × 8.4 ≈
 /// 50), зазор 8 и горизонтальные отступы 16: 175 px, откуда и запас до 190.
 const SPEED_BUTTON_WIDTH_PX: f32 = 190.0;
+/// Период обновления строк телеметрии, с. Сглаженные диагнозы (tick/wait,
+/// in-flight) меняются каждый кадр — без троттлинга строка отличалась бы от
+/// прошлой и перерисовывалась 60 раз в секунду; 8 Гц достаточно, чтобы
+/// читать. Тикает на `Time<Real>`: на паузе виртуальное время стоит, и метка
+/// `Paused (…)` на кнопке иначе не доезжала бы до экрана вовсе.
+const TELEMETRY_REFRESH_SECS: f32 = 0.125;
 
 #[derive(Component, Default)]
 struct ClockTextMarker;
@@ -89,9 +95,9 @@ fn render_speed_ui(mut commands: Commands, clock: Res<SimClock>, assets: Res<Ass
             flex_direction: FlexDirection::Column,
             row_gap: px(3.),
             // фиксированная ширина: количество цифр в счётчиках меняется
-            // каждый кадр, и авто-ширина заставляла панель дёргаться. Ширины
-            // хватает на строку pathfinding целиком — перенос её на вторую
-            // строку сдвигал бы всё под ней
+            // несколько раз в секунду, и авто-ширина заставляла панель
+            // дёргаться. Ширины хватает на строку pathfinding целиком —
+            // перенос её на вторую строку сдвигал бы всё под ней
             width: px(PANEL_WIDTH_PX),
             padding: UiRect {
                 top: px(10.),
@@ -106,8 +112,8 @@ fn render_speed_ui(mut commands: Commands, clock: Res<SimClock>, assets: Res<Ass
         TelemetryPanel,
         Visibility::Hidden,
         Name::new("speed_ui"),
-        // моноширинный и покрупнее: часы и счётчики меняются каждый кадр, и на
-        // пропорциональном шрифте цифры под собой пляшут
+        // моноширинный и покрупнее: часы и счётчики меняются несколько раз в
+        // секунду, и на пропорциональном шрифте цифры под собой пляшут
         InheritableFont {
             font: mono.clone(),
             font_size: size::SMALL_FONT,
@@ -137,7 +143,17 @@ fn render_speed_ui(mut commands: Commands, clock: Res<SimClock>, assets: Res<Ass
     ));
 }
 
-fn update_clock_text(text: Single<&mut Text, With<ClockTextMarker>>, clock: Res<SimClock>) {
+fn update_clock_text(
+    mut due: Local<f32>,
+    time: Res<Time<Real>>,
+    text: Single<&mut Text, With<ClockTextMarker>>,
+    clock: Res<SimClock>,
+) {
+    *due -= time.delta_secs();
+    if *due > 0.0 {
+        return;
+    }
+    *due = TELEMETRY_REFRESH_SECS;
     text.into_inner()
         .set_if_neq(Text(format_sim_clock(clock.elapsed)));
 }
@@ -224,8 +240,13 @@ fn render_speed_button(mut commands: Commands, time: Res<Time<Virtual>>, speed: 
 }
 
 /// Подпись и подсветка кнопки. На паузе кнопка горит зелёным, как активный
-/// тумблер: пауза — состояние, а не мгновенное действие.
+/// тумблер: пауза — состояние, а не мгновенное действие. Подпись тикает на
+/// `Time<Real>` с общим периодом телеметрии — замеренная скорость меняется
+/// каждый кадр, и без троттлинга строка перерисовывалась бы на весь кадр;
+/// сама пауза-подсветка дешёвая и честно сравнивается каждый кадр.
 fn update_speed_button(
+    mut due: Local<f32>,
+    real: Res<Time<Real>>,
     mut variant: Single<&mut ButtonVariant, With<SpeedButton>>,
     value: Single<&mut Text, With<SpeedValueLabel>>,
     time: Res<Time<Virtual>>,
@@ -233,17 +254,31 @@ fn update_speed_button(
 ) {
     variant.set_if_neq(button_variant(time.is_paused()));
 
+    *due -= real.delta_secs();
+    if *due > 0.0 {
+        return;
+    }
+    *due = TELEMETRY_REFRESH_SECS;
     value
         .into_inner()
         .set_if_neq(Text(format_speed_label(&time, &speed)));
 }
 
 /// Строка pathfinding-диагностики: в полёте, среднее время поиска, доля
-/// отказов со своим знаменателем, сущности.
+/// отказов со своим знаменателем, сущности. Сглаженные значения в ней меняются
+/// каждый кадр — троттлинг общего периода телеметрии держит каскад
+/// `text → measure → layout` от перерисовки 60 раз в секунду.
 fn update_pathfinding_text(
+    mut due: Local<f32>,
+    time: Res<Time<Real>>,
     text: Single<&mut Text, With<PathfindingTextMarker>>,
     diagnostics: Res<DiagnosticsStore>,
 ) {
+    *due -= time.delta_secs();
+    if *due > 0.0 {
+        return;
+    }
+    *due = TELEMETRY_REFRESH_SECS;
     let in_flight = diagnostics
         .get(&PATHFINDING_IN_FLIGHT)
         .and_then(|diagnostic| diagnostic.value())
