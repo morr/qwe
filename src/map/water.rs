@@ -34,6 +34,7 @@ use crate::map::meshing::{
     Break, MeshBuilder, RibbonBreaks, RibbonCap, RibbonJoin, RibbonShape, miter_offsets,
 };
 use crate::map::osm::model::{point_in_area, point_in_polygon, ring_bounds, signed_ring_area};
+use crate::map::parallel::in_parallel;
 use crate::map::osm::{PolyArea, WaterLine, water_line_caps};
 use crate::map::smooth::{Smoothing, smooth_path};
 
@@ -135,16 +136,21 @@ pub fn mesh_water_areas(areas: &[PolyArea], gaps: &[Vec<Vec2>], within: Rect) ->
     let steps = (WATER_SHORE_WIDTH / SHOAL_STEP).round() as usize;
     let color = |level: usize| shore.mix(&deep, (level as f32 / steps as f32).min(1.0));
 
-    let mut levels = vec![water];
-    for level in 1..=steps {
-        let depth = level as f32 * SHOAL_STEP;
+    // Уровни отмели независимы: каждый считается из полной воды своим
+    // outline-проходом (глубина `level * SHOAL_STEP`), а не из предыдущего
+    // уровня, — 12 проходов i_overlay над всем набором (Париж: 871 из 906 мс
+    // слоя, разрез заезда 39). По ядрам, как развёртки теней
+    // (`shadow.rs::push_union`): `in_parallel` возвращает результаты в
+    // порядке уровней, обрезка по первому пустому — тот же ранний выход,
+    // что у серийного цикла, так что список уровней совпадает с ним бит-в-бит
+    // (одни и те же вызовы `outline`, порядок восстановлен).
+    let depths: Vec<f32> = (1..=steps).map(|level| level as f32 * SHOAL_STEP).collect();
+    let insets: Vec<Vec<Shape>> = in_parallel(&depths, |&depth| {
         let style = OutlineStyle::new(-depth).line_join(LineJoin::Round(SHOAL_ARC));
-        let inset: Vec<Shape> = levels[0].outline(&style);
-        if inset.is_empty() {
-            break;
-        }
-        levels.push(inset);
-    }
+        water.outline(&style)
+    });
+    let mut levels = vec![water];
+    levels.extend(insets.into_iter().take_while(|inset| !inset.is_empty()));
 
     for (level, shapes) in levels.iter().enumerate() {
         match levels.get(level + 1) {
