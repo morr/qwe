@@ -16,8 +16,16 @@ use i_overlay::core::fill_rule::FillRule;
 use i_overlay::core::overlay_rule::OverlayRule;
 use i_overlay::float::simplify::SimplifyShape;
 use i_overlay::float::single::SingleFloatOverlay;
+use i_overlay::i_float::adapter::FloatPointAdapter;
+use i_overlay::i_float::float::rect::FloatRect;
+use i_overlay::i_float::int::angle::Angle;
+use i_overlay::i_shape::float::adapter::{ShapesToFloat, ShapesToInt};
+use i_overlay::i_shape::float::simple::SimplifyContour;
 use i_overlay::mesh::float::outline::offset::OutlineOffset;
 use i_overlay::mesh::float::style::{LineCap, LineJoin, OutlineStyle};
+use i_overlay::mesh::int::outline::offset::IntOutlineOffset;
+use i_overlay::mesh::int::style::{IntLineJoin, IntOutlineStyle};
+use i_overlay::mesh::math::MathMode;
 
 use crate::map::along::{arclengths, densify, place_on_path, tip_of};
 use crate::map::meshing::{MeshBuilder, min_area_rect};
@@ -253,12 +261,9 @@ impl Gores {
             solid.extend(part);
         }
 
-        let round = LineJoin::Round(ARC);
-        // клин целиком — всё, что замыкание затянуло между двумя подходами
-        let closed = network
-            .simplify_shape(FillRule::NonZero)
-            .outline(&OutlineStyle::new(GORE_CLOSING).line_join(round.clone()))
-            .outline(&OutlineStyle::new(-GORE_CLOSING).line_join(round.clone()));
+        // клин целиком — всё, что замыкание затянуло между двумя подходами:
+        // замыкание по кускам фигур union в потоках (хвост модуля)
+        let closed = closing_by_clusters(&network.simplify_shape(FillRule::NonZero));
         // Разность — дело **одного** клина: замыкание уже разложило город на
         // отдельные фигуры, и асфальт из дальнего конца города ни одной из них
         // не касается. Одной булевой на все стоило вдвое-втрое дороже
@@ -662,6 +667,152 @@ fn chunk_ranges(len: usize, step: usize) -> Vec<std::ops::Range<usize>> {
         .collect()
 }
 
+/// Замыкание сети по кускам фигур union **в потоках** — бит-в-бит тот же
+/// результат, что серийный `outline(+GORE_CLOSING).outline(-GORE_CLOSING)`
+/// по всему набору (контракт — тест
+/// `closing_by_figure_clusters_matches_the_serial_pass`).
+///
+/// Законность кусков: close фигуры ⊆ её раздувание ([`GORE_CLOSING`] за
+/// край), а раздувание раскладывается по объединению — фигуры кусков дальше
+/// 2×[`GORE_CLOSING`] не пересекаются раздуваниями и не бриджуются эрозией,
+/// так что закрытие куска равно серийному закрытию его фигур, а
+/// конкатенация кусков — серийному результату. Фигуры в пределах 24 м
+/// обязаны попасть в один кусок (их раздувания перекрываются, и эрозия
+/// держит между ними мост, которого у раздельных закрытий нет): группировка
+/// консервативная, по габаритам фигур, раздутым на 2×[`GORE_CLOSING`], —
+/// пересечение раздутых габаритов объединяет куски, транзитивно.
+///
+/// Адаптер квантования **общий у всех кусков прохода** — тот же расчёт, что
+/// `OutlineSolver::prepare` i_overlay: габариты источников, раздутые на
+/// (|внешний|+|внутренний|)·фактор скругления. У отдельного куска габариты
+/// свои, и масштаб его целочисленной сетки свой — без общего адаптера
+/// координаты кусков гуляют на ~4e-5 м (поймал контракт-тест). Фактор
+/// скругления Round — 1.1 (`padding_factor` у i_overlay `pub(super)`;
+/// Round — единственный join сборки), поэтому `additional` — 12 м · 1.1.
+/// Второй проход считает по второму адаптеру — по габаритам **раздутого**
+/// набора целиком: серийный второй проход строит адаптер по своему входу,
+/// и он известен только после первого. Порядок входа на результат не
+/// влияет (тот же контракт).
+fn closing_by_clusters(figures: &[Shape]) -> Vec<Shape> {
+    if figures.is_empty() {
+        return Vec::new();
+    }
+    let round = LineJoin::Round(ARC);
+    // запас габаритов под раздувание: (|внешний|+|внутренний|)·1.1 — как
+    // `prepare` i_overlay для обоих проходов (±[`GORE_CLOSING`] оба offset-а)
+    let additional = ((GORE_CLOSING as f64).abs() + (GORE_CLOSING as f64).abs()) * 1.1;
+    let dilated = {
+        let adapter = closing_adapter(figures, additional as f32);
+        let style = closing_int_style(&adapter, GORE_CLOSING, &round);
+        let cluster_shapes: Vec<Vec<Shape>> = closing_clusters(figures)
+            .into_iter()
+            .map(|group| group.iter().map(|&index| figures[index].clone()).collect())
+            .collect();
+        in_parallel(&cluster_shapes, |shapes| {
+            let mut float = shapes
+                .to_int(&adapter)
+                .outline(&style)
+                .expect("координаты замыкания в безопасном диапазоне")
+                .to_float(&adapter);
+            float.simplify_contour(&adapter);
+            float
+        })
+    };
+    let closed = {
+        let whole: Vec<Shape> = dilated.iter().flatten().cloned().collect();
+        let adapter = closing_adapter(&whole, additional as f32);
+        let style = closing_int_style(&adapter, -GORE_CLOSING, &round);
+        in_parallel(&dilated, |shapes| {
+            let mut float = shapes
+                .to_int(&adapter)
+                .outline(&style)
+                .expect("координаты замыкания в безопасном диапазоне")
+                .to_float(&adapter);
+            float.simplify_contour(&adapter);
+            float
+        })
+    };
+    closed.into_iter().flatten().collect()
+}
+
+/// Адаптер квантования набора — расчёт `prepare` i_overlay: габариты всех
+/// точек источников, раздутые на `additional`.
+fn closing_adapter(shapes: &[Shape], additional: f32) -> FloatPointAdapter<[f32; 2], i32> {
+    let points = shapes.iter().flat_map(|shape| shape.iter().flatten());
+    let mut rect = FloatRect::with_iter(points)
+        .expect("габариты фигур валидны")
+        .expect("набор фигур не пуст");
+    rect.add_offset(additional)
+        .expect("габариты с запасом замыкания валидны");
+    FloatPointAdapter::new_conservative(rect)
+}
+
+/// Целочисленный стиль замыкания: оба offset-а — `offset`, округлённые
+/// адаптером (как `int_style` i_overlay). `miter_min_turn` для Round
+/// игнорируется.
+fn closing_int_style(
+    adapter: &FloatPointAdapter<[f32; 2], i32>,
+    offset: f32,
+    round: &LineJoin<f32>,
+) -> IntOutlineStyle<i32> {
+    IntOutlineStyle::<i32> {
+        outer_offset: adapter.round_len_to_int(offset),
+        inner_offset: adapter.round_len_to_int(offset),
+        join: IntLineJoin::from(round),
+        miter_min_turn: Angle::ZERO,
+        math: MathMode::Integer,
+    }
+}
+
+/// Куски фигур замыкания: габариты фигур, раздутые на 2×[`GORE_CLOSING`];
+/// пересечение раздутых габаритов объединяет куски (достаточное условие
+/// «в пределах 24 м», консервативное), транзитивно через union-find.
+/// Куски и фигуры внутри них — в исходном порядке.
+fn closing_clusters(figures: &[Shape]) -> Vec<Vec<usize>> {
+    let bounds: Vec<(Vec2, Vec2)> = figures
+        .iter()
+        .map(|shape| {
+            let (low, high) = contour_bounds(shape.first().expect("фигура без внешнего контура"));
+            (
+                low - Vec2::splat(2.0 * GORE_CLOSING),
+                high + Vec2::splat(2.0 * GORE_CLOSING),
+            )
+        })
+        .collect();
+    let mut cluster_of: Vec<usize> = (0..figures.len()).collect();
+    for a in 0..figures.len() {
+        for b in (a + 1)..figures.len() {
+            let (low_a, high_a) = bounds[a];
+            let (low_b, high_b) = bounds[b];
+            if low_a.cmple(high_b).all() && low_b.cmple(high_a).all() {
+                let (mut root_a, mut root_b) = (a, b);
+                while cluster_of[root_a] != root_a {
+                    root_a = cluster_of[root_a];
+                }
+                while cluster_of[root_b] != root_b {
+                    root_b = cluster_of[root_b];
+                }
+                cluster_of[root_b] = root_a;
+            }
+        }
+    }
+    let mut clusters: Vec<(usize, Vec<usize>)> = Vec::new();
+    for index in 0..figures.len() {
+        let mut root = index;
+        while cluster_of[root] != root {
+            root = cluster_of[root];
+        }
+        match clusters
+            .iter_mut()
+            .find(|(group_root, _)| *group_root == root)
+        {
+            Some((_, group)) => group.push(index),
+            None => clusters.push((root, vec![index])),
+        }
+    }
+    clusters.into_iter().map(|(_, group)| group).collect()
+}
+
 /// Клин — в асфальт и штриховку. Штрихуется клин **разомкнутый** — без
 /// остриёв и перемычек тоньше двух [`GORE_OPENING`], где полосе встать
 /// негде; асфальтом же заливается весь, с заходом под кромки полотен. Одной
@@ -1022,5 +1173,80 @@ mod tests {
         let other = [Vec2::new(0.0, -15.0), Vec2::new(40.0, 0.0)];
         let reach = polyline_length(&fan_head(&arm, &[&other]));
         assert!(reach > 38.0, "{reach}");
+    }
+
+    /// Контракт замыкания по кускам (`closing_by_clusters`): результат
+    /// равен серийному `outline(+GORE_CLOSING).outline(-GORE_CLOSING)` по
+    /// всему набору — фигуры, их порядок и координаты бит-в-бит, и
+    /// инвариантен к порядку входа. Пара с зазором 10 м (< 2 радиусов)
+    /// обязана сидеть в одном куске — её раздувания перекрываются, и эрозия
+    /// держит между ними мост, которого у раздельных закрытий нет.
+    #[test]
+    fn closing_by_figure_clusters_matches_the_serial_pass() {
+        let round = || LineJoin::Round(ARC);
+        let bar = |x: f32, y: f32| {
+            let ring = vec![
+                Vec2::new(x, y),
+                Vec2::new(x + 30.0, y),
+                Vec2::new(x + 30.0, y + 8.0),
+                Vec2::new(x, y + 8.0),
+            ];
+            vec![oriented(&ring, true)]
+        };
+        // пара с зазором 10 м (мост эрозии), фигура в другом конце города,
+        // ещё одна дальше всех
+        let network = vec![
+            bar(1000.0, 0.0),
+            bar(1040.0, 0.0),
+            bar(0.0, 0.0),
+            bar(2000.0, 500.0),
+        ];
+        let figures = network.simplify_shape(FillRule::NonZero);
+        assert_eq!(figures.len(), 4, "все четыре — отдельные фигуры union");
+        let serial = figures
+            .outline(&OutlineStyle::new(GORE_CLOSING).line_join(round()))
+            .outline(&OutlineStyle::new(-GORE_CLOSING).line_join(round()));
+        let chunked = closing_by_clusters(&figures);
+        assert_eq!(serial, chunked, "закрытие по кускам != серийное");
+        // порядок `closed` до конца конвейера не доезжает: клинья фигур
+        // считаются независимо, а итоговый union (`wedges.simplify_shape`)
+        // нормализует порядок входа — потому порядок кусков не обязан
+        // совпадать с серийным
+        let wedges = vec![
+            vec![oriented(
+                &[
+                    Vec2::ZERO,
+                    Vec2::new(30.0, 0.0),
+                    Vec2::new(30.0, 8.0),
+                    Vec2::ZERO,
+                ],
+                true,
+            )],
+            vec![oriented(
+                &[
+                    Vec2::new(20.0, 0.0),
+                    Vec2::new(50.0, 0.0),
+                    Vec2::new(50.0, 8.0),
+                    Vec2::new(20.0, 8.0),
+                ],
+                true,
+            )],
+            vec![oriented(
+                &[
+                    Vec2::new(2000.0, 0.0),
+                    Vec2::new(2030.0, 0.0),
+                    Vec2::new(2030.0, 8.0),
+                    Vec2::new(2000.0, 8.0),
+                ],
+                true,
+            )],
+        ];
+        let mut reversed = wedges.clone();
+        reversed.reverse();
+        assert_eq!(
+            wedges.simplify_shape(FillRule::NonZero),
+            reversed.simplify_shape(FillRule::NonZero),
+            "итоговый union клиньев зависит от порядка входа"
+        );
     }
 }
