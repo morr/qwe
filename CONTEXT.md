@@ -1299,8 +1299,8 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   them itself — the one model answer computed on the drawn axis. **`]`/`[` cycle the
   selection** through the hits under the cursor — `]` forward, `[` backward, both
   wrapping (a recompute resets it to the top) — the selected hit's row and, with the
-  highlight checkbox on (it is **on from launch**, game and gallery alike — session-only,
-  `InspectorHighlight`), the map layer both follow it. **`\` pins the selected
+  highlight checkbox on (**on by default**, game and gallery alike — remembered between
+  launches in the game, `InspectorHighlight`), the map layer both follow it. **`\` pins the selected
   hit** (highlight checkbox only — pin is part of the highlight; `\` on the same
   selection un-pins, **Backspace clears all pins**): it keeps a highlight of its own
   **after the cursor leaves** — a six-colour palette, orange first, the
@@ -1379,7 +1379,10 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   `bevy::settings::SettingsGroup` in `settings.toml`), and the run condition
   **`retuned::<T>`** (`changed && !added`) gates whatever rebuilds on it. **Registration
   sits with the resource's own plugin**, next to its `init_resource`; `PrefsPlugin` is
-  registered **last**. **`ResetSettings`** puts every group back to its `Default`, found
+  registered **last**. **In a worktree `settings.toml` is local** — `<checkout>/.settings/`,
+  gitignored, seeded from the OS file on first launch — so parallel instances of the app
+  don't overwrite each other's choices; the main checkout keeps the OS file.
+  **`ResetSettings`** puts every group back to its `Default`, found
   through the type registry, **never a list**, so a new tunable is covered the day it is
   declared.
 - **dev.rs** — `TakeScreenshotEvent` (BRP-triggerable) → `screenshot.png` (gitignored);

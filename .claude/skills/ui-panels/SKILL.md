@@ -146,9 +146,10 @@ panel** with four tabs (`ui/shell.rs`).
   `BackgroundColor` — the same element whose shape the **highlight checkbox** draws on
   the map (`InspectorHighlight`, a resource the checkbox's `ValueChange` observer writes
   and `sync_highlight_checked` mirrors back onto `Checked`, so a BRP write moves the
-  widget too; **on from launch** — `Default` is `true`, in the game as in the gallery,
-  where the checkbox sits at the screen edge outside every sample viewport and cannot be
-  clicked; the layer itself is `sync_inspector_highlight`, the `respawn_overlay` pattern
+  widget too; **on by default** — `Default` is `true` — and remembered between launches
+  in the game (a `SettingsGroup`; the gallery has no `SettingsPlugin`, so its checkbox
+  always starts on — it sits at the screen edge outside every sample viewport and cannot be
+  clicked); the layer itself is `sync_inspector_highlight`, the `respawn_overlay` pattern
   at `Z_INSPECTOR_HIGHLIGHT`, rebuilt only when the selection changes, the pins
   change, the index is rebuilt or the gallery's
   `InspectOrigin`/`InspectViewport` move). **`\` pins the selected hit** — and
@@ -217,9 +218,9 @@ panel** with four tabs (`ui/shell.rs`).
   spills out of a sample window, even when the object is bigger. In the roads gallery
   the one-shot batch shift `place_new` therefore skips the layer by the public
   `InspectorHighlightMarker` (every other mesh it catches must be shifted; this one
-  carries its shift already). **`InspectorHighlight` is the documented exception to
-  "every UI resource is a `SettingsGroup`"**: a session-only debug aid, deliberately not
-  persisted — do not "fix" it by adding a group or a `track_pref`. Two modes:
+  carries its shift already). **`InspectorHighlight` is a `SettingsGroup` like every UI
+  resource — but `track_pref`'d only in `game()` mode**: the standalone galleries have no
+  `SettingsPlugin`, and a `track_pref` there would warn on every toggle. Two modes:
   `UiInspectorPlugin::game()` (a `GameUiRoot` — hidden until `PlayPhase::Live`, hidden
   on city switch) and `UiInspectorPlugin::standalone()` (the roads gallery: no states
   there, and the panel is visible only while the cursor is inside a sample
@@ -412,7 +413,14 @@ panel** with four tabs (`ui/shell.rs`).
   `~/Library/Preferences/com.github.morr.qwe/`) while the `App` is still being built,
   before any schedule; `PrefsPlugin` is registered **last** because that scan needs the
   other plugins' `register_type` calls to have run. Delete the file to reset — or
-  press the Debug tab's **`reset`** button, the same thing.
+  press the Debug tab's **`reset`** button, the same thing. **A worktree checkout keeps
+  its own file instead**: `settings_app_name` detects the worktree by the `.git` **file**
+  (a directory is the main checkout) and feeds `SettingsPlugin` the absolute path
+  `<checkout>/.settings/` — `SettingsStore` builds `preferences_dir().join(app_name)`,
+  and `Path::join` with an absolute path replaces the base, so reads and writes land in
+  the checkout. On first launch `.settings/settings.toml` is seeded once from the OS file
+  (`seed_worktree_settings`); it is gitignored, so parallel instances don't overwrite each
+  other's choices. The main checkout keeps the OS file.
 
   **`prefs::ResetSettings`** is a `Command`, and it too is a registration rather than a
   list: it walks the type registry, keeps whatever carries `ReflectSettingsGroup`, and
