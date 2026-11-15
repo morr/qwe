@@ -152,20 +152,32 @@ pub fn mesh_water_areas(areas: &[PolyArea], gaps: &[Vec<Vec2>], within: Rect) ->
     let mut levels = vec![water];
     levels.extend(insets.into_iter().take_while(|inset| !inset.is_empty()));
 
-    for (level, shapes) in levels.iter().enumerate() {
+    // Полосы уровней — по ядрам: уровень читает только свой набор и
+    // вложенный в него (разрез заезда 39: 213 мс серийной раскладки), каждая
+    // собирается в свой сборщик и дописывается в порядке уровней —
+    // последовательность вершин та же, что у серийного прохода
+    // (`MeshBuilder::append`, как развёртки теней в `shadow.rs::push_union`).
+    let indices: Vec<usize> = (0..levels.len()).collect();
+    let parts: Vec<MeshBuilder> = in_parallel(&indices, |&level| {
+        let shapes = &levels[level];
+        let mut part = MeshBuilder::with_surface_coords();
         match levels.get(level + 1) {
             Some(inner) => {
-                push_shoal_band(&mut builder, shapes, color(level), inner, color(level + 1))
+                push_shoal_band(&mut part, shapes, color(level), inner, color(level + 1))
             }
             // глубже воды нет: на полной глубине это заливка, в узком месте —
             // цвет той глубины, до которой вода дотянулась
             None => {
                 for shape in shapes {
                     let (outer, holes) = rings(shape);
-                    builder.push_polygon(&outer, &holes, color(level));
+                    part.push_polygon(&outer, &holes, color(level));
                 }
             }
         }
+        part
+    });
+    for part in &parts {
+        builder.append(part);
     }
     builder
 }
