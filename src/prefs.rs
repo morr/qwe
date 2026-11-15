@@ -18,6 +18,10 @@
 //! реестр типов на своей сборке, и `register_type` остальных плагинов должны
 //! к этому моменту уже отработать.
 //!
+//! Главный чекаут читает и пишет системную папку настроек, ворктриа — свой
+//! локальный файл (см. [`settings_app_name`]): параллельные инстансы игры не
+//! должны перезаписывать настройки друг друга.
+//!
 //! Запись — на любое изменение отслеживаемого ресурса, откуда бы оно ни
 //! пришло: клик по кнопке, хоткей, правка через BRP. Пишем синхронно, а не
 //! `SaveSettingsDeferred`: кликов мало, а отложенная запись теряется, если
@@ -31,17 +35,98 @@ use bevy::ecs::system::Command;
 use bevy::prelude::*;
 use bevy::reflect::std_traits::ReflectDefault;
 use bevy::settings::{ReflectSettingsGroup, SaveSettingsSync, SettingsPlugin};
+use std::path::{Path, PathBuf};
 
 /// Обратное доменное имя из URL репозитория — как просит документация
 /// `SettingsPlugin`. Определяет папку: на macOS
 /// `~/Library/Preferences/com.github.morr.qwe/settings.toml`.
 const APP_NAME: &str = "com.github.morr.qwe";
 
+/// Локальная папка настроек ворктриа, внутри чекаута. Целиком в gitignore.
+const WORKTREE_SETTINGS_DIR: &str = ".settings";
+
 pub struct PrefsPlugin;
 
 impl Plugin for PrefsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(SettingsPlugin::new(APP_NAME));
+        app.add_plugins(SettingsPlugin::new(&settings_app_name(
+            std::env::current_dir().ok().as_deref(),
+        )));
+    }
+}
+
+/// Имя «приложения» для `SettingsPlugin` с учётом ворктриа.
+///
+/// Ворктриа — параллельный инстанс игры, и один `settings.toml` на всех
+/// означал бы, что выходя, инстансы перезаписывают выбор друг друга. Поэтому
+/// у ворктриа файл персональный: [`WORKTREE_SETTINGS_DIR`] в корне чекаута,
+/// при первом запуске один раз скопированный из стандартного
+/// ([`seed_worktree_settings`]). Главный чекаут живёт по-старому — в
+/// системной папке настроек.
+///
+/// Локальный путь подставляется в `SettingsPlugin::new` как «app name»:
+/// `SettingsStore` строит каталог как `preferences_dir().join(app_name)`, а
+/// `Path::join` с абсолютным путём подменяет базу целиком, — так чтение и
+/// запись уходят в чекаут без всякой другой настройки. Ворктриа узнаётся по
+/// `.git`-**файлу** (в главном чекауте `.git` — каталог); точка отсчёта —
+/// текущий каталог процесса: `cargo run` стартует из корня чекаута.
+fn settings_app_name(cwd: Option<&Path>) -> String {
+    let Some(local_dir) = worktree_settings_dir(cwd) else {
+        return APP_NAME.to_string();
+    };
+    seed_worktree_settings(&local_dir, &standard_settings_file());
+    match local_dir.to_str() {
+        Some(path) => path.to_string(),
+        None => APP_NAME.to_string(), // неюникодный путь — назад к стандарту
+    }
+}
+
+/// Локальная папка настроек, если запуск идёт из ворктриа; `None` для
+/// главного чекаута и для запуска вне репозитория.
+fn worktree_settings_dir(cwd: Option<&Path>) -> Option<PathBuf> {
+    let root = find_checkout_root(cwd)?;
+    // ворктриа — только `.git`-файл; каталог `.git` — главный чекаут
+    root.join(".git")
+        .is_file()
+        .then(|| root.join(WORKTREE_SETTINGS_DIR))
+}
+
+/// Корень чекаута: ближайший каталог с `.git` среди стартового и его предков.
+fn find_checkout_root(cwd: Option<&Path>) -> Option<PathBuf> {
+    let mut dir = cwd?.to_path_buf();
+    loop {
+        if dir.join(".git").exists() {
+            return Some(dir);
+        }
+        dir = dir.parent()?.to_path_buf();
+    }
+}
+
+/// Стандартный файл настроек — тот, который читает главный чекаут.
+fn standard_settings_file() -> PathBuf {
+    let prefs = bevy::platform::dirs::preferences_dir().unwrap_or_else(|| {
+        // без системной папки (нет HOME?) брать нечего — некорректный путь
+        // просто не существует, и сидирование тихо пропустится
+        PathBuf::from("/")
+    });
+    prefs.join(APP_NAME).join("settings.toml")
+}
+
+/// Первый запуск ворктриа: локальных настроек ещё нет — один раз взять
+/// стандартные. Свои уже есть (или стандартных нет) — ничего не делать.
+fn seed_worktree_settings(local_dir: &Path, standard_file: &Path) {
+    let local_file = local_dir.join("settings.toml");
+    if local_file.exists() || !standard_file.exists() {
+        return;
+    }
+    match std::fs::create_dir_all(local_dir)
+        .and_then(|()| std::fs::copy(standard_file, &local_file))
+    {
+        Ok(_) => info!("worktree settings seeded from {}", standard_file.display()),
+        Err(e) => warn!(
+            "could not seed worktree settings from {}: {e}",
+            standard_file.display()
+        ),
     }
 }
 
@@ -239,5 +324,88 @@ mod tests {
 
         assert!(world.resource_ref::<TreeStyle>().is_changed());
         assert!(!world.resource_ref::<City>().is_changed());
+    }
+
+    /// Временный каталог для тестов чекаута: уникальный, удаляется на выходе.
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(tag: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!("qwe-prefs-{}-{tag}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).expect("создать временный каталог");
+            Self(dir)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn checkout_root_walks_up_to_git() {
+        let temp = TempDir::new("walk");
+        let nested = temp.path().join("a").join("b");
+        std::fs::create_dir_all(&nested).expect("вложенные каталоги");
+        std::fs::create_dir(temp.path().join(".git")).expect("каталог .git");
+
+        assert_eq!(
+            find_checkout_root(Some(&nested)),
+            Some(temp.path().to_path_buf())
+        );
+    }
+
+    #[test]
+    fn checkout_root_none_outside_repo() {
+        let temp = TempDir::new("bare");
+        assert_eq!(find_checkout_root(Some(temp.path())), None);
+    }
+
+    #[test]
+    fn worktree_settings_dir_only_for_git_file() {
+        let main = TempDir::new("main");
+        std::fs::create_dir(main.path().join(".git")).expect("каталог .git");
+        assert_eq!(worktree_settings_dir(Some(main.path())), None);
+
+        let worktree = TempDir::new("worktree");
+        std::fs::write(worktree.path().join(".git"), "gitdir: elsewhere\n").expect("файл .git");
+        assert_eq!(
+            worktree_settings_dir(Some(worktree.path())),
+            Some(worktree.path().join(WORKTREE_SETTINGS_DIR))
+        );
+    }
+
+    #[test]
+    fn seed_copies_standard_once_and_needs_it() {
+        let temp = TempDir::new("seed");
+        let local_dir = temp.path().join(WORKTREE_SETTINGS_DIR);
+        let standard = temp.path().join("standard.toml");
+        std::fs::write(&standard, "[tree]\ndensity = 0.5\n").expect("стандартный файл");
+
+        seed_worktree_settings(&local_dir, &standard);
+        assert_eq!(
+            std::fs::read_to_string(local_dir.join("settings.toml")).expect("локальный файл"),
+            "[tree]\ndensity = 0.5\n"
+        );
+
+        // второй запуск: свои настройки есть, стандартные правками не мешаются
+        std::fs::write(&standard, "[tree]\ndensity = 0.9\n").expect("правка стандарта");
+        seed_worktree_settings(&local_dir, &standard);
+        assert_eq!(
+            std::fs::read_to_string(local_dir.join("settings.toml")).expect("локальный файл"),
+            "[tree]\ndensity = 0.5\n"
+        );
+
+        // стандартного нет — сидировать нечего, локальный каталог не заводится
+        let empty = TempDir::new("seed-empty");
+        let missing = empty.path().join("missing.toml");
+        seed_worktree_settings(&empty.path().join(WORKTREE_SETTINGS_DIR), &missing);
+        assert!(!empty.path().join(WORKTREE_SETTINGS_DIR).exists());
     }
 }
