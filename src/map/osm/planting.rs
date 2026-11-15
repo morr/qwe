@@ -436,7 +436,9 @@ impl<'a> ArcLengths<'a> {
         Self {
             points,
             starts,
-            last: *points.last().expect("вызывается только для points.len() >= 2"),
+            last: *points
+                .last()
+                .expect("вызывается только для points.len() >= 2"),
         }
     }
 

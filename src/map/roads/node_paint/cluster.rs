@@ -443,8 +443,7 @@ pub(super) fn prep_cluster(
     let ring_road = |road: usize| on_ring(road) || is_closed(&drawn[road].points);
 
     // вылет и чужие пути — по ним ищется кромка плеча
-    let reach_of =
-        |road: usize| reaches.get(&road).copied().unwrap_or(JUNCTION_MARGIN);
+    let reach_of = |road: usize| reaches.get(&road).copied().unwrap_or(JUNCTION_MARGIN);
     let foreign_of = |road: usize| -> Vec<(&[Vec2], f32)> {
         others[&road]
             .iter()
@@ -543,11 +542,16 @@ pub(super) fn prep_cluster(
             let (edge, link) = arm_edges[index].expect("кромка непарящего плеча посчитана");
             arm_at_axis(arm, walk, edge, link)
         })
-        .chain(ring_arms.iter().filter(|arm| !drawn[arm.road].bridge).map(|arm| {
-            let walk = Walk::new(paths[arm.road].as_ref());
-            let edge = walk.project(arm.at) + arm.dir * reach_of(arm.road);
-            arm_at_axis(arm, walk, edge, false)
-        }))
+        .chain(
+            ring_arms
+                .iter()
+                .filter(|arm| !drawn[arm.road].bridge)
+                .map(|arm| {
+                    let walk = Walk::new(paths[arm.road].as_ref());
+                    let edge = walk.project(arm.at) + arm.dir * reach_of(arm.road);
+                    arm_at_axis(arm, walk, edge, false)
+                }),
+        )
         .collect();
     ClusterPrep {
         visits,
@@ -663,21 +667,16 @@ impl NodePaint {
             own.iter().all(|(_, arm)| !drawn[arm.road].oneway)
                 && (!own.iter().enumerate().any(|(index, (own_index, _))| {
                     // направления не снять — не повод рвать: считается прямой
-                    own[index + 1..]
-                        .iter()
-                        .any(|(other_index, _)| {
+                    own[index + 1..].iter().any(|(other_index, _)| {
                         leavings[*own_index]
                             .zip(leavings[*other_index])
                             .is_none_or(|(a, b)| a.dot(b) <= -PASS_ALIGN)
                     })
-                }) || own
-                    .iter()
-                    .any(|(_, arm)| kinked(arm, reach)))
+                }) || own.iter().any(|(_, arm)| kinked(arm, reach)))
         };
         let rank =
             |road: usize| class_rank(drawn[road].highway) * 2 + u8::from(signs[&road].is_none());
-        let reach_of =
-            |road: usize| reaches.get(&road).copied().unwrap_or(JUNCTION_MARGIN);
+        let reach_of = |road: usize| reaches.get(&road).copied().unwrap_or(JUNCTION_MARGIN);
         let foreign_of = |road: usize| -> Vec<(&[Vec2], f32)> {
             others[&road]
                 .iter()
@@ -721,15 +720,12 @@ impl NodePaint {
             // 6 м (Тула, 3472, 2677). Щорса и переулок у Циолковского в 17 м
             // — два примыкания
             let crossed = foreign.iter().enumerate().any(|(index, (arm_index, arm))| {
-                foreign[index + 1..]
-                    .iter()
-                    .any(|(other_index, other)| {
-                        let apart = other.at.distance(arm.at);
-                        apart < JUNCTION_MARGIN
-                            || apart < drawn[road].width
-                                && headings[*arm_index].dot(headings[*other_index])
-                                    < -STAGGER_ALIGN
-                    })
+                foreign[index + 1..].iter().any(|(other_index, other)| {
+                    let apart = other.at.distance(arm.at);
+                    apart < JUNCTION_MARGIN
+                        || apart < drawn[road].width
+                            && headings[*arm_index].dot(headings[*other_index]) < -STAGGER_ALIGN
+                })
             });
             // ведёт узел: проходит насквозь, и уступать некому — ни дороге
             // выше рангом, ни такой же проходящей или крестовине. Кольцо ведёт
