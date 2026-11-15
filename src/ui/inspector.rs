@@ -21,6 +21,7 @@ use bevy::feathers::theme::{ThemeTextColor, ThemedText};
 use bevy::feathers::tokens;
 use bevy::picking::hover::HoverMap;
 use bevy::prelude::*;
+use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use bevy::text::FontWeight;
 use bevy::ui::Checked;
 use bevy::ui_widgets::ValueChange;
@@ -36,6 +37,7 @@ use crate::map::inspect::{
 use crate::map::osm::MapData;
 use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
 use crate::map::{RoadStyle, TreeStyle};
+use crate::prefs::TrackPrefExt;
 use crate::settings::Z_INSPECTOR_HIGHLIGHT;
 use crate::ui::{GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, panel_background, ui_column};
 
@@ -105,18 +107,16 @@ struct InspectorHitsState {
 }
 
 /// Галочка «highlight» панели инспектора: подсвечивать элемент под курсором
-/// на карте прозрачно-жёлтым. Включена с запуска — и в игре, и в витрине:
+/// на карте прозрачно-жёлтым. По умолчанию включена — и в игре, и в витрине:
 /// галочка стоит у края экрана, вне всяких viewport примеров витрины, где
 /// панель спрятана, — кликнуть её в витрине неоткуда, а в игре панель без
-/// подсветки теряет половину смысла. Выключается галочкой на присест.
+/// подсветки теряет половину смысла. Выбор запоминается между запусками
+/// (группа настроек `inspector_highlight`); витрины `SettingsPlugin`'a не
+/// поднимают, так что там галочка каждый раз стартует с умолчания.
 ///
-/// Сессионная, и это осознанное исключение из «каждый UI-ресурс —
-/// `SettingsGroup`»: подсветка — инструмент отладки на один присест, а не
-/// предпочтение игрока, — в `settings.toml` ей места нет, поэтому ни группы,
-/// ни `track_pref`. `Reflect` нужен, чтобы верификация ставила её по BRP до
-/// появления UI.
-#[derive(Resource, Debug, Reflect)]
-#[reflect(Resource, Default)]
+/// `Reflect` нужен, чтобы верификация ставила её по BRP до появления UI.
+#[derive(Resource, Debug, Reflect, SettingsGroup)]
+#[reflect(Resource, SettingsGroup, Default)]
 pub struct InspectorHighlight(pub bool);
 
 impl Default for InspectorHighlight {
@@ -137,9 +137,9 @@ struct PinnedHit {
     color: usize,
 }
 
-/// Запиненные находки (клавиша `\`). Сессионные, как и `InspectorHighlight`:
-/// пин — инструмент той же подсветки. Стираются сменой `MapData`
-/// (см. [`sync_pinned_highlights`]) и Backspace.
+/// Запиненные находки (клавиша `\`). Сессионные — в отличие от самой галочки
+/// подсветки, которая теперь сохраняется: пин — инструмент присеста.
+/// Стираются сменой `MapData` (см. [`sync_pinned_highlights`]) и Backspace.
 #[derive(Resource, Default)]
 struct InspectorPinned(Vec<PinnedHit>);
 
@@ -222,6 +222,12 @@ impl Plugin for UiInspectorPlugin {
             .init_resource::<InspectorPinned>()
             .init_resource::<VirtualCursor>()
             .register_type::<InspectorHighlight>();
+        // сохранение галочки — только в игре: в витрине `SettingsPlugin`'a нет
+        // (примеры конфиг игры не трогают), `track_pref` там предупреждал бы
+        // об отсутствующем реестре файлов на каждый клик
+        if !standalone {
+            app.track_pref::<InspectorHighlight>();
+        }
         app.add_systems(
             Startup,
             move |commands: Commands, assets: Res<AssetServer>| {

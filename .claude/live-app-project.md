@@ -380,7 +380,8 @@ reloads the world), `RoadPaintStyle` (uniforms — nothing rebuilds), `CarStyle`
 `TramStyle`, `IndustryStyle`, `SurfaceStyle`,
 `DrawMovePaths`, `DebugGrid`, `DebugNavmesh`, `DebugDoors`, `DebugRoadNetwork`, `PolymeshDebug`,
 `NavtileBase`, `CameraPositionMode`, `SavedCameraView`, `InspectorHighlight` (the point
-inspector's highlight checkbox — on from launch, session-only — no settings group),
+inspector's highlight checkbox — on by default, persisted in the game like every
+settings group),
 `WorldSeed`, `Determinism`, `SimTick`, `RestartPending`, `LayerProbe` (the last layer-probe
 report, written by `ProbeLayersEvent` — both `dev.rs`, driven by `brp probe`); the map's
 layer entities are found by the `MapLayer` marker (`brp layers`, also `dev.rs`'s probe).
