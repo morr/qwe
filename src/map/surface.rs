@@ -32,7 +32,7 @@ use crate::loading::AppState;
 use crate::map::buildings::material::{RoofMaterial, RoofMaterialHandle};
 use crate::map::meshing::{ATTRIBUTE_RIBBON, MeshBuilder};
 use crate::map::roads::paint::{PaintMaterial, PaintParams, PaintPass, RoadPaintStyle};
-use crate::map::trees::{CrownMaterial, CrownMaterialHandle};
+use crate::map::trees::{CROWN_CHUNK, CrownMaterial, CrownMaterialHandle};
 use crate::map::water::{WATER_SHORE_COLOR, WATER_SHORE_WIDTH};
 use crate::prefs::retuned;
 
@@ -493,13 +493,17 @@ pub struct LayerMesh {
 
 /// Сторона клетки карты, на которую режутся merged-меши непрозрачных слоёв,
 /// в метрах. Равен `trees::CROWN_CHUNK`: слои и кроны режутся по одной
-/// решётке, и равенство держат сами значения — меняешь одно, проверь второе.
+/// решётке, и равенство держит assert под константой.
 /// Крайности те же: мельче — больше draw calls при полном отдалении, где отсекать
 /// нечего (каждый кусок — свой меш-ассет и свой бин рендера, см.
 /// `Opaque2dBinKey::asset_id`); крупнее — отсечение перестаёт что-либо
 /// отсекать. Кадр ближнего зума — 450×250 м, километровая клетка в него
 /// влезает целиком.
 pub const MAP_CHUNK: f32 = 1000.0;
+
+// смыслы констант разные (клетка слоёв и клетка крон), сливать их в одну не
+// надо — но решётка у них одна, и это проверяет компилятор
+const _: () = assert!(MAP_CHUNK == CROWN_CHUNK);
 
 impl LayerMesh {
     pub fn new(builder: MeshBuilder, z: f32, name: &'static str, material: MaterialSpec) -> Self {
