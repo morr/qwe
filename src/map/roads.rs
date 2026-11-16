@@ -79,7 +79,7 @@ use crate::map::osm::model::RoadNodeKind;
 use crate::map::osm::model::{RoadAreaKind, polyline_length};
 use crate::map::osm::{MapData, RailKind, RoadClass, RoadLine};
 use crate::map::parallel::{in_parallel, in_parallel_owned};
-use crate::map::rail::{CrossedStreet, crossable, mesh_level_crossings};
+use crate::map::rail::{CrossedStreet, mesh_level_crossings};
 use crate::map::shapes::{is_ring, push_shape};
 use crate::map::surface::{
     self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec, SurfaceKind, spawn_layers,
@@ -1429,9 +1429,11 @@ impl<'s> RoadCommon<'s> {
             track_bridges += 1;
         }
         // переезды в одном уровне — по оси ленты и ширине улицы как рисуются,
-        // с тротуаром там, где он рисуется (`rail::mesh_level_crossings`)
+        // с тротуаром там, где он рисуется (`rail::mesh_level_crossings`).
+        // Вопрос — нарисованному: переезд через тротуар стоит в слоте дорожки
+        // (`network::driveway_crossings`) и настил кладёт
         let crossed: Vec<CrossedStreet> = (0..drawn.len())
-            .filter(|&index| crossable(drawn[index]))
+            .filter(|&index| drawn[index].is_at_grade())
             .map(|index| CrossedStreet {
                 axis: &ribbon[index],
                 reach: [0, 1].map(|side| {

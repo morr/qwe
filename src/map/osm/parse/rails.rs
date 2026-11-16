@@ -18,7 +18,7 @@
 //!   точке в [`HEADING_REACH`] позади) отклоняется от направления на другой
 //!   конец не больше чем на [`STITCH_ANGLE_MAX`] градусов;
 //! - отрезок между концами пересекает осевую проезжей части в одном уровне —
-//!   улицы или проезда, не мост и не арка (`map::rail::crossable`: то же
+//!   улицы или проезда, не мост и не арка (`RoadLine::is_at_grade`: то же
 //!   правило кладёт настил переезда). Без дороги разрыв остаётся: тупик у
 //!   платформы или упор перед воротами — не переезд.
 //!
@@ -34,7 +34,6 @@ use bevy::math::Vec2;
 use crate::map::footprint::segments_cross;
 use crate::map::grid::Grid;
 use crate::map::osm::{MapData, RailKind, RailLine};
-use crate::map::rail::crossable;
 
 /// Самый длинный разрыв, который ещё сшивается, м: двухполосная улица с
 /// тротуарами — 15–20 м, четырёхполосная — под 30.
@@ -191,13 +190,17 @@ fn point_behind(points: &[Vec2], last: bool) -> Vec2 {
 }
 
 /// Пересекает ли отрезок `a→b` осевую дороги, которую путь может пересечь в
-/// одном уровне, — то же правило, что у настила переезда ([`crossable`]).
+/// одном уровне, — то же правило, что у настила переезда
+/// (`RoadLine::is_at_grade`).
 fn crosses_street(map: &MapData, a: Vec2, b: Vec2) -> bool {
-    map.roads.iter().filter(|road| crossable(road)).any(|road| {
-        road.points
-            .windows(2)
-            .any(|link| segments_cross(a, b, link[0], link[1]))
-    })
+    map.roads
+        .iter()
+        .filter(|road| road.is_at_grade())
+        .any(|road| {
+            road.points
+                .windows(2)
+                .any(|link| segments_cross(a, b, link[0], link[1]))
+        })
 }
 
 /// Путь `a.rail` продолжается путём `b.rail` через разрыв; второй удаляется.

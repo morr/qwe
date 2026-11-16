@@ -536,7 +536,7 @@ const _: () = assert!(
 /// Нет переезда там, где путь не пересекает улицу в одном уровне:
 /// путепровод над ней, трамвай (он на асфальте и так), улица вдоль пути и
 /// улица, до пути не доходящая. Мост улицы над путём и пешеходную дорожку
-/// отсеивает [`crossable`] до этой функции.
+/// отсеивает `RoadLine::is_at_grade` до этой функции.
 #[test]
 fn no_crossing_deck_without_an_at_grade_crossing() {
     let track = fixture::rail(straight_track(), NOMINAL_BED);
@@ -566,9 +566,12 @@ fn no_crossing_deck_without_an_at_grade_crossing() {
     let over_the_track = fixture::bridge(ACROSS.to_vec(), 8.0);
     let mut footway = fixture::street(ACROSS.to_vec(), 8.0);
     footway.class = crate::map::osm::RoadClass::Alley;
-    assert!(!crossable(&over_the_track), "мост улицы над путём");
-    assert!(!crossable(&footway), "дорожка");
-    assert!(crossable(&fixture::street(ACROSS.to_vec(), 5.0)), "проезд");
+    assert!(!over_the_track.is_at_grade(), "мост улицы над путём");
+    assert!(!footway.is_at_grade(), "дорожка");
+    assert!(
+        fixture::street(ACROSS.to_vec(), 5.0).is_at_grade(),
+        "проезд"
+    );
 }
 
 /// Косой переезд: торцы настила идут по кромкам дороги, а не поперёк пути —

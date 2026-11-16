@@ -32,7 +32,7 @@ use bevy::prelude::*;
 
 use crate::map::grid::Grid;
 use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin};
-use crate::map::osm::{RailKind, RailLine, RoadClass, RoadLine};
+use crate::map::osm::{RailKind, RailLine};
 use crate::map::prepare::PreparedMeshes;
 use crate::map::smooth::{Smoothing, smooth_path};
 use crate::map::surface::{self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
@@ -475,16 +475,8 @@ fn push_tracks(
     [ballast, ties, steel]
 }
 
-/// Дорога, которую путь может пересечь в одном уровне: проезжая часть любого
-/// класса — улица или проезд, — не на мосту и не в арке. Мост над путём
-/// путь не пересекает, а путепровод над дорогой сюда не попадает вовсе:
-/// переезды ищутся только у наземных путей.
-pub(crate) fn crossable(road: &RoadLine) -> bool {
-    road.class == RoadClass::Street && !road.bridge && !road.passage
-}
-
-/// Улица, которую путь может пересечь в одном уровне ([`crossable`]), — так,
-/// как она **нарисована**: ось ленты и полоса `[слева, справа]` по ходу
+/// Улица, которую путь может пересечь в одном уровне (`RoadLine::is_at_grade`),
+/// — так, как она **нарисована**: ось ленты и полоса `[слева, справа]` по ходу
 /// точек (полпроезжей части плюс тротуар, если он рисуется с этой стороны).
 /// Не осевая OSM: ось улицы сглажена и сдвинута допуском кривой
 /// (`RoadShape::curve_tolerance`, до 3 м), и настил по осевой OSM съезжал с
@@ -503,7 +495,7 @@ pub(crate) struct CrossedStreet<'a> {
 /// скачай его — в кеше v15 у Тулы такой узел один, у Орла ни одного. Поэтому
 /// переезд ищется **геометрией**: пересечение звена пути со звеном дороги.
 /// Слой дороги (`layer`) не читается — путь на мосту уже отсеян
-/// (`RailLine::bridge`), дорога на мосту — тоже ([`crossable`]).
+/// (`RailLine::bridge`), дорога на мосту — тоже (`RoadLine::is_at_grade`).
 ///
 /// Настил — **параллелограмм** пересечения двух прямых полос: вдоль пути —
 /// подошва балласта ([`deck_width`]), поперёк — проезжая часть и тротуары по
