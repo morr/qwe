@@ -169,9 +169,7 @@ pub(super) struct RoofItem {
 /// над контуром: основания коробок приходят уже сдвинутыми, а попадание в
 /// контур проверяется до сдвига, по настоящему пятну.
 pub(super) fn flat_roof_items(building: &PolyArea, look: &RoofLook, lift: Vec2) -> Vec<RoofItem> {
-    // на гараже нет ни машинного помещения, ни вентшахты — там нечего
-    // вентилировать, и коробка на боксе сразу выдаёт генератор
-    if matches!(look.kind, RoofKind::GarageRow | RoofKind::GarageBlock) || is_landmark(building) {
+    if !roof_clutter_allowed(building, look) {
         return Vec::new();
     }
     let axis = look.frame.axis;
@@ -451,6 +449,14 @@ fn is_landmark(building: &PolyArea) -> bool {
     building.kind == AreaKind::Kremlin || matches!(building.building_use, BuildingUse::Church(_))
 }
 
+/// Ставится ли на эту кровлю оборудование. На гаражном ряду нет ни машинного
+/// помещения, ни вентшахты — там нечего вентилировать и не топят, и коробка
+/// на боксе сразу выдаёт генератор; у храма и крепости ([`is_landmark`])
+/// стоит своё.
+fn roof_clutter_allowed(building: &PolyArea, look: &RoofLook) -> bool {
+    !matches!(look.kind, RoofKind::GarageRow | RoofKind::GarageBlock) && !is_landmark(building)
+}
+
 /// Зубцы по верху крепостной стены — вдоль каждого ребра контура прясла, с
 /// шагом [`MERLON_PITCH`]: с воздуха стена кремля узнаётся по пунктиру зубцов
 /// и их коротким теням на боевом ходу. Башне ([`is_fortress_tower`]) зубцов не
@@ -511,8 +517,7 @@ pub(super) fn ridge_chimney(
     ridge: (Vec2, Vec2),
     lift: Vec2,
 ) -> Option<RoofItem> {
-    // печную трубу на гаражном ряду не ставят — там не топят
-    if matches!(look.kind, RoofKind::GarageRow | RoofKind::GarageBlock) || is_landmark(building) {
+    if !roof_clutter_allowed(building, look) {
         return None;
     }
     let along = (ridge.1 - ridge.0).try_normalize()?;
