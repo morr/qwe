@@ -11,13 +11,14 @@ use i_overlay::mesh::float::style::{LineJoin, OutlineStyle};
 use super::frames::{
     BIRTH_EDGE, BIRTH_SLACK, BIRTH_WIDTH, WedgeEnd, births, lane_frame, wedge_frame,
 };
+use super::ground::ZEBRA_BAR;
 use super::spans::{approach_spans, hook_breaks, insert_at, near_spans, split_at_spans};
 use super::{
     APPROACH, ARROW_BRANCH, ARROW_BRANCH_REACH, ARROW_HEAD, ARROW_HEAD_WIDTH, ARROW_LENGTH,
     ARROW_MARK_REACH, ARROW_REPEAT, ARROW_REPEAT_CLEAR, ARROW_SETBACK, ARROW_STEM, AXIS_STRIP,
     ArrowMarks, BIRTH_FADE, DOUBLE_AXIS_LANES, EDGE_WIDTH, HOOK_OVERLAP, LANE_STRIP, LINE_SLACK,
     LineBreaks, LineKind, MergeRamp, PAINT_COLOR, PaintPass, RAMP_STEP, RUT_OFFSET, RUT_SIGMA,
-    Station, ZEBRA_FILL, ZEBRA_PERIOD, axis_offset,
+    Station, ZEBRA_PERIOD, axis_offset,
 };
 use crate::map::along::{arclengths, place_on_path};
 use crate::map::meshing::{
@@ -955,8 +956,6 @@ fn transverse_stations(start: f32, width: f32) -> [PaintStation; 2] {
     })
 }
 
-/// Звено зебры поперёк дороги, м: полоса краски периода [`ZEBRA_PERIOD`].
-const ZEBRA_BAR: f32 = ZEBRA_PERIOD * ZEBRA_FILL;
 /// Длина по планке, с которой начинается первое звено: шейдер кладёт звенья
 /// серединой на `k · период + период / 2`.
 pub(super) const ZEBRA_FIRST_BAR: f32 = (ZEBRA_PERIOD - ZEBRA_BAR) / 2.0;

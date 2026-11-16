@@ -1190,10 +1190,9 @@ impl MeshBuilder {
                 builder.indices.push(new);
             }
         }
-        let mut keys: Vec<IVec2> = chunks.keys().copied().collect();
-        keys.sort_by_key(|key| (key.y, key.x));
-        keys.into_iter()
-            .map(|key| chunks.remove(&key).expect("key came from the map").builder)
+        sorted_by_cell(chunks)
+            .into_iter()
+            .map(|Chunk { builder, .. }| builder)
             .collect()
     }
 
@@ -1379,6 +1378,18 @@ impl MeshBuilder {
         mesh.insert_indices(Indices::U32(self.indices));
         mesh
     }
+}
+
+/// Значения кусков по клеткам карты — в порядке клеток (снизу вверх, слева
+/// направо), а не обхода словаря: так порядок кусков и их z не зависят ни от
+/// хэшера, ни от порядка вставки. Этим порядком заканчиваются и
+/// [`MeshBuilder::into_chunks`], и куски крон (`trees::sorted_chunks`).
+pub(crate) fn sorted_by_cell<T>(mut chunks: HashMap<IVec2, T>) -> Vec<T> {
+    let mut keys: Vec<IVec2> = chunks.keys().copied().collect();
+    keys.sort_by_key(|key| (key.y, key.x));
+    keys.into_iter()
+        .map(|key| chunks.remove(&key).expect("key came from the map"))
+        .collect()
 }
 
 /// Одна фактура [`MeshBuilder::append`]: слияние при совпадающих наборах,

@@ -30,7 +30,7 @@ use self::crown::{
 use crate::loading::AppState;
 use crate::map::SunOnMap;
 use crate::map::TREE_DENSITY_MAX;
-use crate::map::meshing::MeshBuilder;
+use crate::map::meshing::{MeshBuilder, sorted_by_cell};
 use crate::map::osm::model::TreeSet;
 use crate::map::osm::{MapData, TreeCompose, TreeRowLayout, TreeRowPlacement};
 use crate::map::prepare::PreparedMeshes;
@@ -844,11 +844,7 @@ fn sorted_chunks(
         let chunk = chunks.entry(chunk_of(at)).or_insert_with(new);
         push(chunk, index, at, radius);
     }
-    let mut keys: Vec<IVec2> = chunks.keys().copied().collect();
-    keys.sort_by_key(|key| (key.y, key.x));
-    keys.into_iter()
-        .map(|key| chunks.remove(&key).expect("key came from the map"))
-        .collect()
+    sorted_by_cell(chunks)
 }
 
 /// Полоса z одной группы крон — одного меша (пул × вариант) под одним
