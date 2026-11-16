@@ -274,9 +274,10 @@ dictionary.
       existed nowhere in the code. What the width threshold actually cuts off is a **step in
       the outline** — a three-metre sliver of wall where a row of projections could only read
       as a pattern — and it stays for that.
-      The end is told from the facade by the **long axis of the plan**: `roofs::min_area_rect`
-      (already computed for hipped roofs and the roof texture, so no second notion of "which
-      way this building faces"), its first edge being the long one, and a wall counts as an
+      The end is told from the facade by the **long axis of the plan**: the first edge of
+      the **house footprint** (`HouseFootprint` — the same minimum-area rectangle the roof
+      texture and the gable ridge read, so no second notion of "which way this building
+      faces"), and a wall counts as an
       end when its own direction is within 60° of the cosine of that axis
       (`GABLE_END_COS_MAX` 0.5, i.e. no more than 30° off the perpendicular).
       **The aspect-ratio guard is the load-bearing half**: on a plan that is not elongated a
@@ -286,9 +287,10 @@ dictionary.
       rounding, while a section (12–14 m by 35+, ratio 2.5 and up) is well clear of it. An
       oblique wall of a non-rectangular plan is likewise left a facade: when in doubt,
       nothing changes.
-      The axis is computed **once per building and only when the building could carry
-      balconies at all** (`balcony_house` — material, use, storeys), because `min_area_rect`
-      is quadratic in the ring's vertices; it rides to each wall in `WallSpan::long_axis`.
+      The axis is **asked only when the building could carry balconies at all**
+      (`balcony_house` — material, use, storeys); the rectangle itself is computed once
+      per building in the assembly (`mesh_buildings`, see the `HouseFootprint` bullet in
+      the skill) and rides to each wall in `WallSpan::long_axis`.
       The end is marked `WallMark::Blank`, not `Solid` — it keeps its windows (the
       `WallMark` bullet below).
     - **The verdict travels as the seed's own value**, not its sign: `WallMark`

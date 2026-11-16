@@ -16,7 +16,8 @@ Siblings: `buildings-heights.md` (height modes, extrusion, shadows),
     `Crown::Minaret`; a drum part ≤ 14 m wide
     → flat (the cupola hides it). Fortress: tower (`area/perimeter² ≥ 0.03`) → tent 0.9, wall
     → flat. `landmark_rise` is the same decision in metres — what a cupola stands on.
-  - **The crown** (`Crown: Dome | Tower | Minaret`) is laid on `min_area_rect` with the long
+  - **The crown** (`Crown: Dome | Tower | Minaret`) is laid on the **house footprint**
+    (`HouseFootprint` — the same minimum-area rectangle the whole assembly reads) with the long
     axis turned east. Orthodox: a chapel (< 120 m²) one small onion; a "ship" (L ≥ 1.6 W and
     ≥ 22 m) a bell tower with a cap onion at the west end and the cupolas over the
     eastern core; five cupolas on a core ≥ 14 m by seed (6 in 10). **Colours come from the

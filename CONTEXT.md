@@ -470,6 +470,17 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   of air-handling units — **the deliberate exception to "a cell grid places a feature,
   it never *is* the feature"**: real skylights stand on the frame's columns, by the
   ruler.
+- **House footprint** (`map/buildings/mod.rs::HouseFootprint`) — the **minimum-area
+  bounding rectangle** of a building's outline, the one owner of "which way this
+  building faces and how big it is". Computed **once per building** at the start of the
+  layer build (`mesh_buildings`) and handed down ready-made to everyone who used to
+  recount their own `min_area_rect` on the same vertices — the roof texture axis and the
+  gable ridge, `is_deep_hull`, the shape-based storeys, the balcony long axis, the gable
+  rectangle, the temple `Plan`, and the heights behind `height_of`/`lift_of_footprint`.
+  Only geometry that **cuts the outline itself** still measures its own rings: garage
+  cut pieces, a temple's west pieces, cross-gable pieces. Callers outside the layer
+  build (the car layer, tests, galleries) pass no footprint and the lazy path computes
+  one on the spot.
 - **Roofing** (`map/buildings/roofs.rs::roofing`) — the *shape* of a roof,
   **inferred**, not read. The private sector is **gabled** — five **`GableForm`s**
   (gable, half-hip, gambrel, lean-to, cross gable), a dormer, the **hip** now the rare
