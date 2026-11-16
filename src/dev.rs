@@ -529,7 +529,9 @@ fn add_perf_toggles(app: &mut App) {
             ms.parse::<f32>()
                 .unwrap_or_else(|_| panic!("QWE_PERF_GPU_SPIKES is not a number: {ms:?}"))
         });
-        app.add_plugins(crate::gpu_cut::GpuCutPlugin { spike_threshold: spike });
+        app.add_plugins(crate::gpu_cut::GpuCutPlugin {
+            spike_threshold: spike,
+        });
     }
     if let Ok(ms) = std::env::var("QWE_PERF_FRAME_SPIKES") {
         let ms: f32 = ms

@@ -42,15 +42,15 @@
 //! меток не ставит — её кадр с оконным не сравнивают.
 
 use std::collections::VecDeque;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use std::sync::mpsc;
-use std::sync::Mutex;
 
 use bevy::camera::NormalizedRenderTarget;
 use bevy::camera_controller::pan_camera::PanCamera;
 use bevy::core_pipeline::core_2d::{main_opaque_pass_2d, main_transparent_pass_2d};
-use bevy::core_pipeline::{Core2d, Core2dSystems};
 use bevy::core_pipeline::upscaling::upscaling;
+use bevy::core_pipeline::{Core2d, Core2dSystems};
 use bevy::prelude::*;
 use bevy::render::RenderApp;
 use bevy::render::RenderStartup;
@@ -312,13 +312,11 @@ fn map_pending(mut res: ResMut<GpuCutRes>) {
     let slots: Vec<usize> = res.pending.drain(..).collect();
     for slot in slots {
         let (tx, cb) = (res.tx.clone(), res.buffers[slot].clone());
-        res.buffers[slot].map_async(MapMode::Read, 0..size_bytes(), move |result| {
-            match result {
-                Ok(()) => {
-                    let _ = tx.send((slot, cb));
-                }
-                Err(err) => warn!("gpu cut: readback map failed ({err:?}), buffer dropped"),
+        res.buffers[slot].map_async(MapMode::Read, 0..size_bytes(), move |result| match result {
+            Ok(()) => {
+                let _ = tx.send((slot, cb));
             }
+            Err(err) => warn!("gpu cut: readback map failed ({err:?}), buffer dropped"),
         });
         res.mapped[slot] = true;
     }
@@ -382,9 +380,8 @@ fn print_cut(
     if ts[SLOTS - 1] <= ts[0] {
         return;
     }
-    let seg_ms = |a: usize, b: usize| {
-        (ts[b] as i64 - ts[a] as i64).max(0) as f64 * period_ns / 1_000_000.0
-    };
+    let seg_ms =
+        |a: usize, b: usize| (ts[b] as i64 - ts[a] as i64).max(0) as f64 * period_ns / 1_000_000.0;
     let total_ms = (ts[SLOTS - 1] - ts[0]) as f64 * period_ns / 1_000_000.0;
     if let Some(threshold) = threshold
         && total_ms >= threshold.0 as f64
