@@ -202,7 +202,16 @@ OSM`** cyclers, and `reset`. All rows are knob-kit rows (`spawn_cycle_row` +
 `add_knobs::<R>()`) — a row that prints `Off` says its state outright, where the old
 row of bare buttons (`grid`, `doors`, `camera:`) had no value text at all and needed a
 green fill to say "on" and "at its default": the colour became a second, weaker
-channel for the same claim.
+channel for the same claim. The seven bool toggle rows are one generic showcase,
+`spawn_toggle_row::<T>()`: the resource implements **`DebugToggle`** — its only
+method is the row label, and the value access comes from `#[derive(Deref, DerefMut)]`
+on the tuple struct, because a tuple field is not expressible through a trait.
+`app.add_debug_toggle::<T>()` is the toggle's whole registration (`add_knobs` over
+`register_pref`), so an eighth toggle is its type, a three-line `impl DebugToggle`,
+one `add_debug_toggle` line and its layer's real behavior. `DebugNavmesh` deliberately
+stays plain `register_pref`: its `Show` row lives in the Nav tab, so it has no label
+here and needs no row sync. `DrawMovePaths` keeps its `register_pref` at its owner
+(`movement`) and only adds the trait impl and `add_knobs` here.
 
 - **`Raw OSM`** cycles `map::osm::parse::RawOsm` (`Off` → `parse` → `parse+draw`,
   persisted `debug.raw_osm`, registered by `MapPlugin`); it is a parse input, so it

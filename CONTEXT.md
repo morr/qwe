@@ -1370,7 +1370,9 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   (`DebugRutLines`: the lane axes with their two wheel lines at `RUT_OFFSET` in orange,
   the junction turn curves and tails in green — the two sources of asphalt wear, taken
   from the same road build as `RutLines`, never recomputed) / **OSM contours**
-  (`DebugOsmContours`: the data before our passes, over the map) overlay rows, the
+  (`DebugOsmContours`: the data before our passes, over the map) overlay rows — each
+  bool toggle is a **`DebugToggle`** resource: the impl names the row label, and one
+  `add_debug_toggle` line registers the row sync over `register_pref` — the
   `Camera start` and `Navtile` cyclers (global settings, deliberately not under a backend
   section), the **`Raw OSM`** cycler beside `Navtile` (**Raw OSM** above — a parse input,
   so it reloads the world) and **`reset`** (`prefs::ResetSettings`). The navmesh overlay is **one merged

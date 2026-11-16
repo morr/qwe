@@ -337,7 +337,10 @@ panel** with four tabs (`ui/shell.rs`).
   advances the field by itself. Deliberately not "next item of `ALL`": what cycles is
   enums, plain bools, colour palettes and step tables alike, and forcing them through
   one list would need a type per kind. Registered by the same `add_knobs::<R>()` as
-  the sliders. `CycleBinding` is *not* a component — the click observer pins it,
+  the sliders. The Debug tab's bool toggles sit one layer above: the **`DebugToggle`**
+  trait (its only method is the row label) + generic `spawn_toggle_row`, registered by
+  one `add_debug_toggle` call (`add_knobs` over `register_pref`) — details in
+  `references/panels.md`. `CycleBinding` is *not* a component — the click observer pins it,
   and the sync only needs it on the label. The rows that stay hand-written are the Nav
   tab's (`NavValueLabel`): their text is computed from **several** resources at once
   (`Backend` from `PolymeshDebug`, `Separation` from determinism + backend + style) —
