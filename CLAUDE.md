@@ -51,7 +51,7 @@ candidate for deletion.
 | `sim_time.rs` (incl. the regulator's own constants, which live there now) | `sim-speed` |
 | `ui/*`, `camera.rs`, `post.rs`, `prefs.rs`, `dev.rs` | `ui-panels` |
 | `examples/demos/*` — a gallery also takes the skill of what it draws (`*_gallery` and `roads` → `osm-map`, `blood_gallery` → `species-behavior`, `crowd_demo` → `navigation-deep`) | `ui-panels` |
-| `examples/{audit,bench}/*` — by subject: `polymesh_*`, `navmesh_probe`, `pathfinding_bench`, `polymesh_bench`, `dispatch_bench` → `navigation-deep`; `map_meshing`, `pocket_probe` → `osm-map` | — |
+| `examples/{audit,bench}/*` — by subject: `polymesh_*`, `navmesh_probe`, `pathfinding_bench`, `polymesh_bench`, `dispatch_bench` → `navigation-deep`; `map_meshing`, `pocket_probe`, `fence_prune_audit` → `osm-map` | — |
 
 - **`CONTEXT.md` names the terms; the domain skills carry the mechanism behind them** — that is why they are in this table rather than in the glossary.
 - **`src/settings.rs` has no domain skill on purpose, and that is a decision, not a gap.** What is left in it is by definition what more than one owner reads — the shared z-stack, the projection scale, the numbers two modules both need — so no single domain owns the file; a constant that *does* have one owner belongs beside that owner and is gated by that owner's row (see "Code Conventions"). Editing it needs `bevy` and the skill of whatever module the change is really about.
