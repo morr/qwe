@@ -229,8 +229,7 @@ fn small_lane(
     // в мир пересемплирует ресурс поля (`build_conifer_field`), значения
     // совпадают — шум и примесь детерминированы позицией ствола.
     let mut field = ConiferField::default();
-    field.resample(map.trees.positions(), &styles.noise, styles.trees.noise_mix);
-    field.set_share(styles.trees.conifer_share);
+    crate::map::trees::resample_field(&mut field, &map.trees, &styles.trees, &styles.noise);
     let trees = crate::map::trees::mesh_game_trees(&styles.trees, &map.trees, &field);
 
     // Все ступени рельсов разом: пересечение порога переключает видимость,

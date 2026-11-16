@@ -533,8 +533,8 @@ pub const TREE_LODS: [TreeLod; 3] = [
 /// слитого диапазона (0.2–0.6) кусок не кулься — но там вся слитая геометрия
 /// леса (у Парижа ~1.5M вершин крон) на порядок легче сущностной цены
 /// ближнего шага, которую куски заменили. Равен `surface::MAP_CHUNK`: кроны
-/// и слои режутся по одной решётке, равенство держат сами значения — меняешь
-/// одно, проверь второе.
+/// и слои режутся по одной решётке, и равенство держит assert рядом с той
+/// константой.
 pub const CROWN_CHUNK: f32 = 1000.0;
 
 /// Шаг z между слитыми кусками крон. У каждого куска свой z: кроны у границы
@@ -1114,6 +1114,21 @@ pub(crate) fn tree_compose(style: &TreeStyle, rows: &TreeRowStyle) -> TreeCompos
     }
 }
 
+/// Значения поля хвои — под набор деревьев и параметры шума, порог — под долю
+/// хвои. Одна пара на все пересемплирования: смена состава набора
+/// ([`recompose_row_trees`]), вход в мир ([`build_conifer_field`]), правка
+/// шума ([`retune_conifer_field`]) и сборка потока загрузки
+/// (`map/prepare.rs::small_lane` — локальное поле для [`mesh_game_trees`]).
+pub(crate) fn resample_field(
+    field: &mut ConiferField,
+    trees: &TreeSet,
+    style: &TreeStyle,
+    noise: &ConiferNoiseStyle,
+) {
+    field.resample(trees.positions(), noise, style.noise_mix);
+    field.set_share(style.conifer_share);
+}
+
 /// Признак «уже собрано» лежит в `MapData::composed_for`, а не в `Local`: при
 /// смене города ресурс заменяется целиком, а `Local` пережил бы замену и решил,
 /// что для нового города работа сделана.
@@ -1129,8 +1144,7 @@ pub fn recompose_row_trees(
         return;
     }
     map.compose_trees(compose);
-    field.resample(map.trees.positions(), &noise, style.noise_mix);
-    field.set_share(style.conifer_share);
+    resample_field(&mut field, &map.trees, &style, &noise);
 }
 
 /// Значение поля хвои в каждом посаженном дереве — до спавна крон, потому что
@@ -1143,8 +1157,7 @@ pub fn build_conifer_field(
     noise: Res<ConiferNoiseStyle>,
 ) {
     let started = std::time::Instant::now();
-    field.resample(map.trees.positions(), &noise, style.noise_mix);
-    field.set_share(style.conifer_share);
+    resample_field(&mut field, &map.trees, &style, &noise);
     debug!(
         "conifer field: {} trees sampled in {:.1?}",
         map.trees.len(),
@@ -1167,8 +1180,7 @@ pub fn retune_conifer_field(
         return;
     }
     let started = std::time::Instant::now();
-    field.resample(map.trees.positions(), &noise, style.noise_mix);
-    field.set_share(style.conifer_share);
+    resample_field(&mut field, &map.trees, &style, &noise);
     debug!(
         "conifer field retuned: {} trees resampled in {:.1?}",
         map.trees.len(),
@@ -1260,35 +1272,65 @@ pub(crate) fn warm_layers(
     });
 }
 
-/// Деревья из потока загрузки — в мир: то же, что делает [`rebuild_trees`]
-/// после правки стиля, но без сборки — она отыграла в потоке
-/// (`map/prepare.rs`), и в свежем мире деспавнить нечего.
+/// Принять собранные деревья в мир: порог поля хвои под долю, свет слитых
+/// крон по свежим теням, спавн и показ ступени. Общий хвост входа в мир
+/// ([`spawn_prepared_trees`]) и пересборки после правки стиля
+/// ([`rebuild_trees`]); расходятся они только тем, откуда берётся сборка, —
+/// поэтому `built` приходит лениво и зовётся после [`ConiferField::set_share`]:
+/// пересборка строит по полю хвои и должна видеть его свежий порог.
+#[allow(clippy::too_many_arguments)]
+fn adopt_trees(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: TreeMaterials,
+    share: f32,
+    bucket: TreeZoomBucket,
+    mut field: ResMut<ConiferField>,
+    mut stream: ResMut<CrownStream>,
+    mut shown: ResMut<TreeLodShown>,
+    built: impl FnOnce(&ConiferField) -> (TreeMeshes, TreeReport),
+) {
+    // порог поля пересчитывается только если поехала сама доля — правка цвета
+    // листвы не должна платить за сортировку значений
+    field.set_share(share);
+    // свет слитых крон едет вместе с тенями: материал кроны-сущности
+    // заводится заново с каждой сборкой
+    canopy::relight_crown_material(&materials.merged, &mut materials.crowns);
+    let built = built(&field);
+    // кроны ступени, которую видно, встают сразу — показывается она же
+    *stream = spawn_tree_meshes(&mut commands, &mut meshes, &mut materials, bucket, built);
+    shown.set_if_neq(TreeLodShown(bucket.index));
+}
+
+/// Деревья из потока загрузки — в мир: общий хвост [`adopt_trees`], сборка
+/// отыграла в потоке (`map/prepare.rs`), и в свежем мире деспавнить нечего.
 ///
 /// Ресурс поля хвои здесь уже пересемплирован (`build_conifer_field` в
 /// цепочке выше) под тот же набор деревьев и те же параметры, что и у
 /// потока: значения совпадают, остаётся порог под долю.
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_prepared_trees(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: TreeMaterials,
+    commands: Commands,
+    meshes: ResMut<Assets<Mesh>>,
+    materials: TreeMaterials,
     style: Res<TreeStyle>,
     bucket: Res<TreeZoomBucket>,
-    mut field: ResMut<ConiferField>,
-    mut stream: ResMut<CrownStream>,
-    mut shown: ResMut<TreeLodShown>,
+    field: ResMut<ConiferField>,
+    stream: ResMut<CrownStream>,
+    shown: ResMut<TreeLodShown>,
     mut prepared: ResMut<PreparedMeshes>,
 ) {
-    // порог поля пересчитывается только если поехала сама доля — правка цвета
-    // листвы не должна платить за сортировку значений
-    field.set_share(style.conifer_share);
-    // свет слитых крон едет вместе с тенями: материал кроны-сущности
-    // заводится заново с каждой сборкой
-    canopy::relight_crown_material(&materials.merged, &mut materials.crowns);
-    let built = std::mem::take(&mut prepared.0.trees);
-    // кроны ступени, которую видно, встают сразу — показывается она же
-    *stream = spawn_tree_meshes(&mut commands, &mut meshes, &mut materials, *bucket, built);
-    shown.set_if_neq(TreeLodShown(bucket.index));
+    adopt_trees(
+        commands,
+        meshes,
+        materials,
+        style.conifer_share,
+        *bucket,
+        field,
+        stream,
+        shown,
+        |_| std::mem::take(&mut prepared.0.trees),
+    );
 }
 
 /// Пересборка деревьев после правки стиля из UI: деспавн старых сущностей и
@@ -1296,36 +1338,39 @@ pub fn spawn_prepared_trees(
 #[allow(clippy::too_many_arguments)]
 pub fn rebuild_trees(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: TreeMaterials,
+    meshes: ResMut<Assets<Mesh>>,
+    materials: TreeMaterials,
     style: Res<TreeStyle>,
     bucket: Res<TreeZoomBucket>,
     map: Res<MapData>,
-    mut field: ResMut<ConiferField>,
-    mut stream: ResMut<CrownStream>,
-    mut shown: ResMut<TreeLodShown>,
+    field: ResMut<ConiferField>,
+    stream: ResMut<CrownStream>,
+    shown: ResMut<TreeLodShown>,
     existing: Query<Entity, With<TreeTag>>,
 ) {
-    // порог поля пересчитывается только если поехала сама доля — правка цвета
-    // листвы не должна платить за сортировку значений
-    field.set_share(style.conifer_share);
-    // солнце — одно из условий пересборки: свет слитых крон едет вместе с
-    // тенями (материал кроны-сущности заводится заново с каждой сборкой)
-    canopy::relight_crown_material(&materials.merged, &mut materials.crowns);
     for entity in &existing {
         commands.entity(entity).despawn();
     }
-    let built = mesh_trees(
-        &style,
-        // ручки геометрии кроны в игре не выведены никуда: город рисуется
-        // дефолтом, а крутит их витрина `tree_gallery`
-        &CrownParams::default(),
-        &map.trees,
-        &field,
+    adopt_trees(
+        commands,
+        meshes,
+        materials,
+        style.conifer_share,
+        *bucket,
+        field,
+        stream,
+        shown,
+        |field| {
+            mesh_trees(
+                &style,
+                // ручки геометрии кроны в игре не выведены никуда: город
+                // рисуется дефолтом, а крутит их витрина `tree_gallery`
+                &CrownParams::default(),
+                &map.trees,
+                field,
+            )
+        },
     );
-    // кроны ступени, которую видно, встают сразу — показывается она же
-    *stream = spawn_tree_meshes(&mut commands, &mut meshes, &mut materials, *bucket, built);
-    shown.set_if_neq(TreeLodShown(bucket.index));
 }
 
 #[cfg(test)]
