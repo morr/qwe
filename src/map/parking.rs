@@ -66,8 +66,8 @@ use self::aisles::aisle_rows;
 use self::generated::generated_rows;
 use crate::map::meshing::MeshBuilder;
 use crate::map::osm::model::{
-    AreaKind, LotKind, PolyArea, RoadClass, RoadLine, TrafficSide, distance_to_segment,
-    ring_bounds, signed_ring_area,
+    AreaKind, LotKind, PolyArea, RoadLine, TrafficSide, distance_to_segment, ring_bounds,
+    signed_ring_area,
 };
 use crate::map::roads::is_carriageway;
 
@@ -169,12 +169,11 @@ pub fn is_ground(area: &PolyArea) -> bool {
 /// `oneway=yes` и тремя кольцами, а у остальных больших площадок города
 /// `service` внутри контура — это те же проезды рядов, только без
 /// `service=parking_aisle`, и ни один не односторонний. Улица классом выше
-/// проезда (`roads::is_carriageway`) — дорога при любых тегах.
+/// проезда (`roads::is_carriageway`) — дорога при любых тегах; на земле
+/// ([`RoadLine::is_at_grade`]) — как и всё, что стоянка накрывает.
 pub fn is_through(road: &RoadLine) -> bool {
-    road.class == RoadClass::Street
+    road.is_at_grade()
         && !road.parking_aisle
-        && !road.bridge
-        && !road.passage
         && (road.oneway || road.roundabout || is_carriageway(road))
 }
 
@@ -227,10 +226,12 @@ impl ParkingLayout {
     pub fn new(lots: &[PolyArea], roads: &[RoadLine], traffic: TrafficSide) -> Self {
         let aisles: Vec<&RoadLine> = roads.iter().filter(|road| road.parking_aisle).collect();
         let through: Vec<&RoadLine> = roads.iter().filter(|road| is_through(road)).collect();
-        // улицы с габаритами: на площадку идут только те, что рядом с ней
+        // улицы с габаритами: на площадку идут только те, что рядом с ней —
+        // и те, что на земле (`RoadLine::is_at_grade`): мост не дотянется,
+        // арка проходит сквозь дом
         let streets: Vec<(&RoadLine, Vec2, Vec2)> = roads
             .iter()
-            .filter(|road| road.class == RoadClass::Street && !road.bridge && !road.passage)
+            .filter(|road| road.is_at_grade())
             .map(|road| {
                 let (low, high) = ring_bounds(&road.points);
                 (road, low, high)
