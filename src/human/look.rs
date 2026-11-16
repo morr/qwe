@@ -529,6 +529,45 @@ mod tests {
         );
     }
 
+    /// Карточка сочетаний ключей кеша материалов рендера: тот собирает
+    /// спрайты в материал по точным битам цвета и `custom_size`, а внутри
+    /// бакета различает спрайты целиком — то есть и глиф атласа. Непрерывный
+    /// разброс крови платил бы кешу записью на каждый труп; ступени
+    /// ([`BLOOD_STEPS`]) кладут потолок: 10 глифов × 4 × 4 × 4 на слой.
+    #[test]
+    fn blood_cache_keys_capped_per_layer() {
+        // эндшпиль записи 6: трупы только прибывают, перебор по концу шкалы
+        let sample = 12_600u32;
+        let mut pools = std::collections::HashSet::new();
+        let mut spatters = std::collections::HashSet::new();
+        for index in 0..sample {
+            let look = blood_look(Entity::from_raw_u32(index).unwrap());
+            // ключ рендера: биты цвета и custom_size; повороты не входят
+            let color = look.tint.to_linear().to_f32_array().map(|c| c.to_bits());
+            pools.insert((
+                look.pool,
+                color,
+                (CORPSE_SPAN * POOL_RATIO * look.size).to_bits(),
+            ));
+            spatters.insert((
+                look.spatter,
+                color,
+                (CORPSE_SPAN * SPATTER_RATIO * look.size).to_bits(),
+            ));
+        }
+        let cap = (blood::POOLS as u64) * BLOOD_STEPS * BLOOD_STEPS * BLOOD_STEPS;
+        assert!(
+            pools.len() as u64 <= cap,
+            "лужа держит {} ключей, потолок {cap}",
+            pools.len()
+        );
+        assert!(
+            spatters.len() as u64 <= cap,
+            "брызги держат {} ключей, потолок {cap}",
+            spatters.len()
+        );
+    }
+
     /// Лужа растекается и на этом перестаёт стоить хоть что-то.
     #[test]
     fn a_pool_spreads_to_its_full_size_and_then_stops_being_walked() {
