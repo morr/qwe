@@ -9,6 +9,7 @@ use crate::demon::components::{
     DemonDevourTag, DemonLungeTag, DemonStyle, DemonWanderTag, DevourUntil,
 };
 use crate::demon::decide::{ChaseAction, ChaseSense, Victim, decide};
+use crate::diagnostics::{SIM_ACQUIRE_MS, SIM_CHASE_MS, SimMeasure};
 use crate::grid::world_to_tile;
 use crate::human::Human;
 use crate::movement::{
@@ -33,7 +34,7 @@ pub fn acquire_targets(
     chasing: Query<&ChaseTarget, With<Demon>>,
     query: Query<(Entity, &SimPosition), (With<Demon>, With<DemonWanderTag>)>,
 ) {
-    let started = std::time::Instant::now();
+    let _measure = SimMeasure::new(&mut diagnostics, &SIM_ACQUIRE_MS);
     let mut claims = ChaseClaims::of(chasing.iter().map(|chase_target| chase_target.0));
 
     for (entity, sim_position) in &query {
@@ -57,11 +58,6 @@ pub fn acquire_targets(
         ));
         debug!("demon {entity} Wander => Chase {human}");
     }
-    crate::diagnostics::measure_ms(
-        &mut diagnostics,
-        &crate::diagnostics::SIM_ACQUIRE_MS,
-        started,
-    );
 }
 
 /// Chase: догоняем цель; цель умерла/сбежала/далеко — обратно в Wander;
@@ -101,7 +97,7 @@ pub fn chase(
     >,
     targets: Query<(&SimPosition, Option<&crate::rng::PawnId>), With<Human>>,
 ) {
-    let started = std::time::Instant::now();
+    let _measure = SimMeasure::new(&mut diagnostics, &SIM_CHASE_MS);
     let walkable = backend.walkable();
     // один труп — одно убийство: дедупликация внутри тика, пока команды
     // (снятие `Human`) ещё не применились
@@ -265,7 +261,6 @@ pub fn chase(
             target_pos,
         );
     }
-    crate::diagnostics::measure_ms(&mut diagnostics, &crate::diagnostics::SIM_CHASE_MS, started);
 }
 
 /// Выход из погони без убийства: снимается набор погони — и только он.

@@ -7,6 +7,7 @@ use crate::demon::components::{
     ChaseTarget, Demon, DemonLungeTag, DemonSpawner, DemonStyle, DemonWanderTag,
 };
 use crate::demon::look::{demon_body, halo};
+use crate::diagnostics::{SIM_SPAWNER_MS, SimMeasure};
 use crate::loading::AppState;
 use crate::movement::{
     DrawMovePaths, MOVEPATH_ARROW_TIP, MOVEPATH_COLOR, Movable, SimPosition, point_in_cone,
@@ -57,7 +58,7 @@ pub fn tick_spawner(
     seed: Res<WorldSeed>,
     silhouettes: Res<Silhouettes>,
 ) {
-    let started = std::time::Instant::now();
+    let _measure = SimMeasure::new(&mut diagnostics, &SIM_SPAWNER_MS);
     // период таймера подтягивается здесь, а не отдельной системой на
     // `resource_changed`: рестарт и смена города пересоздают `DemonSpawner`
     // целиком (`restart.rs`, `city.rs`), и таймер вернулся бы к константе,
@@ -68,30 +69,15 @@ pub fn tick_spawner(
     }
 
     if spawner.spawned >= style.cap {
-        crate::diagnostics::measure_ms(
-            &mut diagnostics,
-            &crate::diagnostics::SIM_SPAWNER_MS,
-            started,
-        );
         return;
     }
     spawner.timer.tick(time.delta());
     if !spawner.timer.just_finished() {
-        crate::diagnostics::measure_ms(
-            &mut diagnostics,
-            &crate::diagnostics::SIM_SPAWNER_MS,
-            started,
-        );
         return;
     }
 
     let birth = DemonBirth::new(&seed, &portal_pos, &style, &silhouettes);
     spawn_demon(&mut commands, &mut spawner, &birth, None);
-    crate::diagnostics::measure_ms(
-        &mut diagnostics,
-        &crate::diagnostics::SIM_SPAWNER_MS,
-        started,
-    );
 }
 
 /// Всё, что демон получает при рождении помимо номера и угла. Четыре ресурса
