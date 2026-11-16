@@ -33,11 +33,37 @@ mod priority {
 /// тасков (URGENT встают за ними на кадры) и заставляет сортировать 17k заявок
 /// каждый кадр.
 ///
-/// Публична, потому что ждать таких заявок нельзя никому: прогрев
-/// (`loading.rs::poll_warmup`) держал бы экран загрузки до таймаута с
-/// неподвижным счётчиком — заявки, которых диспетчер не берёт, не закроются.
+/// Зум-половина правила [`waits_for_camera`]: ждать заявок, которых диспетчер
+/// не берёт, нельзя никому — прогрев (`loading.rs::poll_warmup`) держал бы
+/// экран загрузки до таймаута с неподвижным счётчиком — заявки, которых
+/// диспетчер не берёт, не закроются.
 pub fn wanderers_dispatched_at_zoom(camera_scale: f32) -> bool {
     camera_scale < crate::settings::WANDER_DISPATCH_MAX_ZOOM
+}
+
+/// Ждёт ли пешка, пока камера её увидит — единственная копия правила видимой
+/// половины отбора заявок. Конъюнкт «зум + в кадре» раньше был написан дважды:
+/// у [`queue_key`] и свой у прогрева (`loading.rs::poll_warmup`), и запас у
+/// копий разъезжался молча (та же история, что с срочностью до
+/// [`UrgentPath`]).
+///
+/// Срочной (`urgent`) ждать не положено никогда — её диспетчер берёт при
+/// любом зуме и вне кадра. Мирная гуляющая ждёт, если на этом зуме мирных
+/// не берут вовсе ([`wanderers_dispatched_at_zoom`]) или она вне кадра
+/// с запасом `margin`.
+///
+/// `margin` — запас к полуразмеру кадра, в тех же экранах, что у
+/// [`Viewport::with_margin`]: `1.0` — ровно кадр, запаса нет (`0.0` сжал бы
+/// кадр в точку). У каждого спрашивающего свой: диспетчер меряет
+/// [`VIEW_MARGIN`] (пешке у кромки нельзя замирать при лёгком движении
+/// камеры), прогрев — `1.0`: его вопрос «видит ли игрок стоящую пешку», а не
+/// «возьмёт ли её диспетчер».
+pub fn waits_for_camera(view: &Viewport, position: Vec2, urgent: bool, margin: f32) -> bool {
+    if urgent {
+        return false;
+    }
+    let view = view.with_margin(margin);
+    !wanderers_dispatched_at_zoom(view.zoom) || !view.contains(position)
 }
 
 /// Место заявки в очереди: приоритет, затем удалённость от центра кадра.
@@ -45,15 +71,18 @@ pub fn wanderers_dispatched_at_zoom(camera_scale: f32) -> bool {
 ///
 /// Отдельно от системы, потому что это всё правило видимости целиком, а
 /// система вокруг него — только сборка очереди и её усечение под бюджет.
+/// Кадр берёт без запаса — диспетчерский добавляет внутри, через
+/// [`waits_for_camera`].
 fn queue_key(view: &Viewport, position: Vec2, urgent: bool) -> Option<(u8, f32)> {
-    let distance = view.distance_from_centre_squared(position);
-    if urgent {
-        return Some((priority::URGENT, distance));
-    }
-    if !wanderers_dispatched_at_zoom(view.zoom) || !view.contains(position) {
+    if waits_for_camera(view, position, urgent, VIEW_MARGIN) {
         return None;
     }
-    Some((priority::WANDER_ON_SCREEN, distance))
+    let priority = if urgent {
+        priority::URGENT
+    } else {
+        priority::WANDER_ON_SCREEN
+    };
+    Some((priority, view.distance_from_centre_squared(position)))
 }
 
 /// Работает ли живой диспетчер в этом кадре: мир не на паузе — или пауза
@@ -201,6 +230,9 @@ pub fn dispatch_pathfinding_requests(
         return;
     }
 
+    // запас диспетчера: queue_key меряет им точное попадание (внутри
+    // waits_for_camera, кадр ей нужен без запаса), а здесь он же — грубый
+    // прямоугольник сбора ячеек, которому достаточно накрыть кадр с запасом
     let view = frame.with_margin(VIEW_MARGIN);
 
     // выданная заявка остаётся на сущности до приёмки (см. выдачу ниже), так
@@ -213,7 +245,7 @@ pub fn dispatch_pathfinding_requests(
             if in_flight(entity) {
                 return None;
             }
-            let (priority, distance) = queue_key(&view, sim_position.0, true)?;
+            let (priority, distance) = queue_key(&frame, sim_position.0, true)?;
             (
                 priority,
                 distance,
@@ -241,7 +273,7 @@ pub fn dispatch_pathfinding_requests(
             if in_flight(entity) {
                 return;
             }
-            if let Some((priority, distance)) = queue_key(&view, sim_position.0, false) {
+            if let Some((priority, distance)) = queue_key(&frame, sim_position.0, false) {
                 queue.push((
                     priority,
                     distance,
@@ -813,15 +845,12 @@ mod tests {
     use crate::settings::WANDER_DISPATCH_MAX_ZOOM;
 
     /// Кадр 1000×600 логических пикселей вокруг начала координат: на зуме 0.1
-    /// это ±50×30 метров, на зуме общего плана — на порядок больше.
+    /// это ±50×30 метров, на зуме общего плана — на порядок больше. Ровно
+    /// кадр, как лежит в ресурсе: запас queue_key добавляет сам.
     fn view(zoom: f32) -> Viewport {
         let mut window = Window::default();
         window.resolution.set(1000.0, 600.0);
-        Viewport::of(
-            &window,
-            &Transform::from_scale(Vec3::splat(zoom)),
-            VIEW_MARGIN,
-        )
+        Viewport::of(&window, &Transform::from_scale(Vec3::splat(zoom)), 1.0)
     }
 
     const CLOSE: f32 = 0.1;
@@ -897,5 +926,33 @@ mod tests {
             demon(&wide, Vec2::new(CLOSE, CLOSE)).map(|(priority, _)| priority),
             Some(priority::URGENT)
         );
+    }
+
+    /// Граница видимости у каждого спрашивающего своя: кромка кадра своя и у
+    /// прогрева (`1.0`, запаса нет), полоса запаса диспетчера
+    /// ([`VIEW_MARGIN`]) диспетчером обслуживается, но прогреву её уже не
+    /// видно, а за полосой не видно никому. Срочная не ждёт ни в одной зоне.
+    #[test]
+    fn the_visibility_edge_sits_where_the_asker_margin_puts_it() {
+        let view = view(NEAR_ZOOM); // ровно кадр: ±50 м по горизонтали
+        let edge = Vec2::new(50.0, 0.0); // кромка считается своей
+        assert!(!waits_for_camera(&view, edge, false, 1.0));
+        assert!(!waits_for_camera(&view, edge, false, VIEW_MARGIN));
+
+        let in_dispatch_band = Vec2::new(55.0, 0.0); // за кадром, в полосе запаса
+        assert!(!waits_for_camera(&view, in_dispatch_band, false, VIEW_MARGIN));
+        assert!(waits_for_camera(&view, in_dispatch_band, false, 1.0));
+
+        let beyond = Vec2::new(61.0, 0.0); // и за полосой запаса
+        assert!(waits_for_camera(&view, beyond, false, VIEW_MARGIN));
+
+        // срочной ждать не положено нигде — и вне кадра тоже
+        assert!(!waits_for_camera(&view, beyond, true, VIEW_MARGIN));
+
+        // на общем плане мирная ждёт и в центре кадра: мирных там не берут
+        // вовсе, а срочную берут
+        let wide = view(WANDER_DISPATCH_MAX_ZOOM);
+        assert!(waits_for_camera(&wide, Vec2::new(CLOSE, CLOSE), false, VIEW_MARGIN));
+        assert!(!waits_for_camera(&wide, Vec2::new(CLOSE, CLOSE), true, VIEW_MARGIN));
     }
 }
