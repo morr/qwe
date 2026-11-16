@@ -84,6 +84,40 @@ pub fn measure_ms(
     diagnostics.add_measurement(path, || started.elapsed().as_secs_f64() * 1000.0);
 }
 
+/// Страж замера системы: создаётся в начале системы со своим именем
+/// диагностики, в `Drop` пишет прошедшее через [`measure_ms`]. Замеряемый
+/// интервал — от входа в систему до её конца, включая ранние выходы: новый
+/// `return` меряется сам, без ручной пары «`Instant::now()` наверху,
+/// `measure_ms` перед каждым выходом», где возврат выше замера молча терял
+/// диагностику.
+///
+/// Путь берётся по значению (`Cow::Borrowed` внутри, клон без аллокации):
+/// `&SIM_*_MS` — временная от консты, до `'static` она не промоутится.
+///
+/// Держать до конца системы: `let _measure = SimMeasure::new(..)` — имя с
+/// `_` обязательно (`let _ = ..` уронил бы страж сразу).
+pub struct SimMeasure<'a, 'w, 's> {
+    diagnostics: &'a mut Diagnostics<'w, 's>,
+    path: DiagnosticPath,
+    started: std::time::Instant,
+}
+
+impl<'a, 'w, 's> SimMeasure<'a, 'w, 's> {
+    pub fn new(diagnostics: &'a mut Diagnostics<'w, 's>, path: &DiagnosticPath) -> Self {
+        Self {
+            diagnostics,
+            path: path.clone(),
+            started: std::time::Instant::now(),
+        }
+    }
+}
+
+impl Drop for SimMeasure<'_, '_, '_> {
+    fn drop(&mut self) {
+        measure_ms(self.diagnostics, &self.path, self.started);
+    }
+}
+
 pub struct GameDiagnosticsPlugin;
 
 impl Plugin for GameDiagnosticsPlugin {
