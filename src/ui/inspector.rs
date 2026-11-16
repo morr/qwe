@@ -39,7 +39,7 @@ use crate::map::inspect::{
 use crate::map::osm::MapData;
 use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
 use crate::map::{RoadStyle, TreeStyle};
-use crate::prefs::TrackPrefExt;
+use crate::prefs::PrefsExt;
 use crate::settings::Z_INSPECTOR_HIGHLIGHT;
 use crate::ui::{GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UiBuildSet, panel_background, ui_column};
 

@@ -41,7 +41,7 @@ use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use rand::SeedableRng;
 
-use crate::prefs::TrackPrefExt;
+use crate::prefs::PrefsExt;
 
 /// ГПСЧ симуляции. Единственное место, где он выбирается: xoshiro256++ —
 /// 32 байта состояния (важно при 20 000 людей) и заметно быстрее

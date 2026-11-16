@@ -11,7 +11,7 @@ use crate::city::City;
 use crate::dev::{VirtualCursor, cursor_position};
 use crate::loading::{AppState, WorldInitSet};
 use crate::portal::PortalPos;
-use crate::prefs::TrackPrefExt;
+use crate::prefs::PrefsExt;
 use crate::restart::RestartEvent;
 
 /// Зум = масштаб трансформа камеры: мировых метров на экранный пиксель.

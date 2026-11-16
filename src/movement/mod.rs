@@ -42,7 +42,7 @@ pub use self::wander::{
 };
 use crate::determinism::{DeterminismPlugin, SimPipeline};
 use crate::loading::AppState;
-use crate::prefs::TrackPrefExt;
+use crate::prefs::PrefsExt;
 use crate::spatial::SimSet;
 
 pub use self::pathfinding::dispatch_pathfinding_requests_deterministic;

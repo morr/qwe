@@ -39,7 +39,7 @@ use bevy::ecs::schedule::ScheduleLabel;
 
 use crate::loading::{AppState, PlayPhase, WorldStarted, in_world};
 use crate::navigation::Pathfinder;
-use crate::prefs::{TrackPrefExt, retuned};
+use crate::prefs::{PrefsExt, retuned};
 use crate::restart::RestartPending;
 use crate::rng::WorldSeed;
 

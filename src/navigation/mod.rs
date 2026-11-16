@@ -25,7 +25,7 @@ pub use self::polymesh::{
 use crate::grid::NavtileBase;
 use crate::loading::{AppState, PlayPhase, WorldInitSet};
 use crate::map::osm::model::MapData;
-use crate::prefs::TrackPrefExt;
+use crate::prefs::PrefsExt;
 
 /// Ответ асинхронного поиска пути (снимается в
 /// `movement::listen_for_pathfinding_tasks`).

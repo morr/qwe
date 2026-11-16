@@ -22,7 +22,7 @@ use self::systems::{
 };
 use crate::determinism::{DeterminismPlugin, SimPipeline};
 use crate::loading::{PlayPhase, WorldStarted};
-use crate::prefs::TrackPrefExt;
+use crate::prefs::PrefsExt;
 use crate::spatial::SimSet;
 
 pub struct DemonPlugin;

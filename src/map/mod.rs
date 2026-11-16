@@ -135,7 +135,7 @@ use bevy::prelude::*;
 use bevy::sprite_render::Material2dPlugin;
 
 use crate::loading::{AppState, WorldInitSet};
-use crate::prefs::TrackPrefExt;
+use crate::prefs::PrefsExt;
 
 /// Цвет тени — альфа-эквивалент watabou-шного multiply `#9699AE`. Общий и для
 /// домов, и для крон по той же причине, что и само солнце ([`sun`]).

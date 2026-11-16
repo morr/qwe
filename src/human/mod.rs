@@ -34,7 +34,7 @@ pub use self::systems::{PopulationBirth, PopulationSpawn, pick_wander_targets, s
 use self::systems::{spawn_humans, spread_changed, sync_human_pace};
 use crate::determinism::{DeterminismPlugin, SimPipeline};
 use crate::loading::{AppState, WorldInitSet};
-use crate::prefs::TrackPrefExt;
+use crate::prefs::PrefsExt;
 use crate::spatial::SimSet;
 
 pub struct HumanPlugin;

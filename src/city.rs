@@ -16,7 +16,7 @@ use crate::loading::AppState;
 use crate::map::RoadShapeOnMap;
 use crate::map::osm::MapData;
 use crate::map::osm::parse::{ParseKnobs, RawOsm};
-use crate::prefs::{TrackPrefExt, retuned};
+use crate::prefs::{PrefsExt, retuned};
 use crate::settings::MAP_SIZE;
 
 /// Гео-центр Тулы (от Мясново на западе до Пролетарского моста на востоке,

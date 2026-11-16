@@ -40,7 +40,7 @@ use super::{
     GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UiBuildSet, button_variant, panel_background,
     panel_block_background, panel_button_label, spawn_panel_button_with, ui_column, ui_node,
 };
-use crate::prefs::TrackPrefExt;
+use crate::prefs::PrefsExt;
 
 /// Вкладка панели настроек. **Порядок объявления — порядок в полоске.**
 #[derive(Component, Reflect, Clone, Copy, PartialEq, Eq, Debug, Default)]

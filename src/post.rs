@@ -21,7 +21,7 @@ use bevy::render::view::{DebandDither, Tonemapping};
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use bevy::ui::{ColorStop, GlobalZIndex};
 
-use crate::prefs::{TrackPrefExt, retuned};
+use crate::prefs::{PrefsExt, retuned};
 
 /// Сила bloom — доля свечения в кадре. Бевины «естественные» 0.15 рассчитаны
 /// на тёмные сцены и над светлой картой теряются; 0.4 ставилось, пока

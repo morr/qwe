@@ -32,9 +32,11 @@
 
 use bevy::ecs::reflect::ReflectComponent;
 use bevy::ecs::system::Command;
+use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
-use bevy::reflect::std_traits::ReflectDefault;
+use bevy::reflect::{GetTypeRegistration, std_traits::ReflectDefault};
 use bevy::settings::{ReflectSettingsGroup, SaveSettingsSync, SettingsPlugin};
+use std::any::TypeId;
 use std::path::{Path, PathBuf};
 
 /// Обратное доменное имя из URL репозитория — как просит документация
@@ -130,35 +132,95 @@ fn seed_worktree_settings(local_dir: &Path, standard_file: &Path) {
     }
 }
 
-/// Регистрация настраиваемого ресурса: его правки уезжают в `settings.toml`.
+/// Регистрация настраиваемого ресурса: полный вызов — [`PrefsExt::register_pref`],
+/// его половинки — [`PrefsExt::track_pref`] и его же запомненный список
+/// [`TrackedPrefs`].
 ///
-/// Вызывается **у владельца ресурса**, рядом с его `init_resource` — список
-/// сохраняемого собирается из тех же плагинов, что заводят сами ресурсы, а не
-/// повторяется отдельным перечнем в этом модуле. Ручное зеркало здесь и стояло,
-/// и ровно свой класс ошибок и давало: `RoadStyle` в нём не хватало с самого
-/// начала, так что его правки сохранялись, только если в тот же кадр менялся
+/// Оба метода вызываются **у владельца ресурса** — список сохраняемого
+/// собирается из тех же плагинов, что заводят сами ресурсы, а не повторяется
+/// отдельным перечнем в этом модуле. Ручное зеркало здесь и стояло, и ровно
+/// свой класс ошибок и давало: `RoadStyle` в нём не хватало с самого начала,
+/// так что его правки сохранялись, только если в тот же кадр менялся
 /// какой-нибудь другой отслеживаемый ресурс.
-///
-/// Сохранение решает `SaveSettingsSync::IfChanged` — сюда попадает *весь*
-/// файл, если хоть одна его группа поменялась, поэтому лишний вызов ничего не
-/// пишет и команды нескольких ресурсов в одном кадре не складываются в
-/// несколько записей.
-///
-/// Регистрировать надо не всё сохраняемое и не всегда сам сохраняемый ресурс:
-/// `SavedCameraView` меняется каждый кадр протяжки камеры, и запись по
-/// изменению означала бы перезапись файла на кадр — у него свой дебаунс,
-/// `camera::track_camera_view`. А солнце (`map::SunStyle`) отслеживается через
-/// `map::SunOnMap`: ползунок пишет настройку на каждом пройденном делении, а в
-/// файл она обязана попасть один раз, когда его отпустили. Пишется при этом всё
-/// равно весь файл, так что группа `sun` уезжает в него со своим текущим
-/// значением.
-pub trait TrackPrefExt {
+pub trait PrefsExt {
+    /// Заводит настраиваемый ресурс и берёт на себя весь его вызов
+    /// регистрации: `init_resource` + `register_type` + `track_pref` разом.
+    ///
+    /// Один вызов вместо трёх — не укорочение, а защита: у квартета по вызову
+    /// на каждое из трёх действий, и забытый — не ошибка сборки, а тихий отказ.
+    /// Забытый `register_type` — [`ResetSettings`] молча пропускает группу
+    /// (ход по реестру типов не находит её) и `bevy_settings` не накладывает
+    /// на неё файл; забытый `track_pref` — правки молча не пишутся в
+    /// `settings.toml`. Парность вызовов дополнительно держит guard-тест
+    /// (`tests/prefs.rs`).
+    ///
+    /// Вызов остаётся **в файле владельца** — семантика «регистрирует
+    /// владелец» не меняется, меняется только форма.
+    fn register_pref<T: FromWorld + Resource + GetTypeRegistration>(&mut self) -> &mut Self;
+
+    /// Правки ресурса уезжают в `settings.toml` — запись на каждое его
+    /// изменение.
+    ///
+    /// Сам по себе нужен редко: норма — [`PrefsExt::register_pref`]. Отдельно
+    /// вызывается там, где ресурс **не** заводится этим вызовом: `SavedCameraView`
+    /// меняется каждый кадр протяжки камеры, и запись по изменению означала бы
+    /// перезапись файла на кадр (у него свой дебаунс, `camera::track_camera_view`);
+    /// солнце (`map::SunStyle`) и форма дорог (`map::RoadShape`) пишутся на
+    /// каждом пройденном делении ползунка, поэтому в файл уезжают через
+    /// оседание — отслеживается их копия на карте (`map::SunOnMap`,
+    /// `map::RoadShapeOnMap`), которая меняется один раз, когда ползунок
+    /// отпустили. Пишется при этом весь файл, так что группа `sun` уезжает в
+    /// него со своим текущим значением.
+    ///
+    /// Сохранение решает `SaveSettingsSync::IfChanged` — сюда попадает *весь*
+    /// файл, если хоть одна его группа поменялась, поэтому лишний вызов ничего
+    /// не пишет и команды нескольких ресурсов в одном кадре не складываются в
+    /// несколько записей.
     fn track_pref<T: Resource>(&mut self) -> &mut Self;
 }
 
-impl TrackPrefExt for App {
+impl PrefsExt for App {
+    fn register_pref<T: FromWorld + Resource + GetTypeRegistration>(&mut self) -> &mut Self {
+        self.init_resource::<T>()
+            .register_type::<T>()
+            .track_pref::<T>()
+    }
+
     fn track_pref<T: Resource>(&mut self) -> &mut Self {
+        self.init_resource::<TrackedPrefs>();
+        self.world_mut()
+            .resource_mut::<TrackedPrefs>()
+            .insert::<T>();
         self.add_systems(Update, save_prefs.run_if(resource_changed::<T>))
+    }
+}
+
+/// Типы, у которых `track_pref` уже вызван.
+///
+/// Рантайму не нужен — записи хватает системы на каждом ресурсе, — заведён для
+/// guard-теста (`tests/prefs.rs`): тот обходит реестр типов так же, как ходит
+/// [`ResetSettings`], и сверяет с этим списком обе стороны — «группа
+/// зарегистрирована, но не отслежена» и «отслежено, но группа не
+/// зарегистрирована» — ловя тот же класс тихих отказов, от которого ушёл
+/// [`PrefsExt::register_pref`].
+#[derive(Resource, Default)]
+pub struct TrackedPrefs {
+    type_ids: HashSet<TypeId>,
+}
+
+impl TrackedPrefs {
+    fn insert<T: Resource>(&mut self) {
+        self.type_ids.insert(TypeId::of::<T>());
+    }
+
+    /// Отслеживается ли тип — для guard-теста.
+    pub fn contains(&self, type_id: &TypeId) -> bool {
+        self.type_ids.contains(type_id)
+    }
+
+    /// Все отслеженные типы — для guard-теста.
+    pub fn iter(&self) -> impl Iterator<Item = TypeId> + '_ {
+        self.type_ids.iter().copied()
     }
 }
 
@@ -175,7 +237,7 @@ fn save_prefs(mut commands: Commands) {
 /// реестре типов, — а её умолчание берётся из `ReflectDefault`, который каждая
 /// группа регистрирует своим `#[reflect(Resource, SettingsGroup, Default)]`.
 /// Ручное зеркало списка тут повторило бы ошибку, от которой ушёл
-/// [`TrackPrefExt::track_pref`]: новая настройка молча не сбрасывалась бы.
+/// [`PrefsExt::register_pref`]: новая настройка молча не сбрасывалась бы.
 /// Ход по реестру — тот же, которым `bevy_settings` накладывает файл на мир
 /// (`apply_settings_to_world`): тип → `ComponentId` → сущность ресурса.
 ///
