@@ -159,7 +159,10 @@ in-flight / queued / avg ms. Gate and priority together are one pure function,
 `pathfinding.rs::queue_key(&Viewport, position, urgent) -> Option<(u8,
 f32)>` — the whole rule as a value, so the four branches (urgent off-screen,
 wanderer in frame, wanderer off-screen, wide zoom) are tested without a camera or a
-window; the system around it is only queue assembly and the budget truncation.
+window; the system around it is only queue assembly and the budget truncation. The
+visibility half is `waits_for_camera(view, position, urgent, margin)` — the one rule,
+shared with load warmup: `queue_key` adds the dispatcher's `VIEW_MARGIN`, warmup asks
+with 1.0 (exactly the frame).
 
 **The queue index** (`pathfinding.rs::QueuedWander`) — the wanderer half of the pass is
 not a scan of every standing request. Measured (`examples/bench/dispatch_bench.rs`,

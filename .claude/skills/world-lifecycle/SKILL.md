@@ -33,11 +33,11 @@ stays up reading "Routing pawns... N left".
 `PathfindingTask` and flips to `Live` when none are left, or after `WARMUP_TIMEOUT` (logged
 as a warning). `WARMUP_GRACE` keeps "no requests yet" from meaning "done".
 
-**It counts only what the dispatcher will actually serve** — `wanderers_dispatched_at_zoom`
-for the zoom half and **`UrgentPath` for the species half**, both of them the dispatcher's
-own. Its margin (1.0 screens — what the player can actually see) stays its own on purpose.
-Until `UrgentPath` existed it re-derived the species half by hand, and "the same cutoff" was
-only half true.
+**It counts only what the dispatcher will actually serve** — the zoom half goes through
+`movement::waits_for_camera` (the dispatcher's own rule, warmup asking with margin 1.0 —
+exactly the frame, what the player can actually see) and **`UrgentPath` for the species
+half**. Until `UrgentPath` existed it re-derived the species half by hand, and "the same
+cutoff" was only half true.
 
 Reason for the hold: all 20 000 humans queue a path in the same frame, and without it the
 visible ones stood still for the first seconds. Typical warmup **~0.15 s** — see
