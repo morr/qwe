@@ -1389,11 +1389,13 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   reset by **WorldStarted**. **SimClock** — virtual seconds of the current world, zeroed by
   the same observer; compare states by `SimTick`, not by it.
 - **Tunable resource** (`prefs.rs`) — a resource the user retunes from a panel, a hotkey or
-  a BRP write. Two things are asked of one: **`app.track_pref::<T>()`** persists it (a
-  `bevy::settings::SettingsGroup` in `settings.toml`), and the run condition
-  **`retuned::<T>`** (`changed && !added`) gates whatever rebuilds on it. **Registration
-  sits with the resource's own plugin**, next to its `init_resource`; `PrefsPlugin` is
-  registered **last**. **In a worktree `settings.toml` is local** — `<checkout>/.settings/`,
+  a BRP write. Two things are asked of one: persistence (a `bevy::settings::SettingsGroup`
+  in `settings.toml`) and the run condition **`retuned::<T>`** (`changed && !added`)
+  gating whatever rebuilds on it. Persistence is one call at the resource's own plugin —
+  **`app.register_pref::<T>()`** (`init_resource` + `register_type` + `track_pref` at
+  once; a forgotten member of the hand-written trio was a silent failure, and
+  `tests/prefs.rs` pins the pairing, with the deliberate exceptions named there);
+  `PrefsPlugin` is registered **last**. **In a worktree `settings.toml` is local** — `<checkout>/.settings/`,
   gitignored, seeded from the OS file on first launch — so parallel instances of the app
   don't overwrite each other's choices; the main checkout keeps the OS file.
   **`ResetSettings`** puts every group back to its `Default`, found

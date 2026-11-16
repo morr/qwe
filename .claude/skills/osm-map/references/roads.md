@@ -100,7 +100,7 @@ mechanics live in `CONTEXT.md` (**Style resources**); this is the roads-side res
   clamp on read; signatures carry the shape: `mesh_roads(map, style, shape)`,
   `mesh_cars(bucket, style, shape, map, layout)`, `axis::street_axes(.., &RoadShape)`.
   The map follows **RoadShapeOnMap** (`settle_road_shape` copies after 0.35 s of
-  quiet, `seed_road_shape` at Startup, `track_pref::<RoadShapeOnMap>`);
+  quiet, `seed_road_shape` at Startup, `register_pref::<RoadShapeOnMap>`);
   `roads::rebuilds_on` = `RoadStyle` | `RoadShapeOnMap` | `SunOnMap`,
   `cars::rebuilds_on` reads `RoadShapeOnMap` instead of `RoadStyle`.
 - The **lane width** reload mechanics and the **smoothing** off the street axis are in

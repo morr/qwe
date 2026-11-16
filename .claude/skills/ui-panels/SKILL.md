@@ -224,7 +224,7 @@ panel** with four tabs (`ui/shell.rs`).
   the one-shot batch shift `place_new` therefore skips the layer by the public
   `InspectorHighlightMarker` (every other mesh it catches must be shifted; this one
   carries its shift already). **`InspectorHighlight` is a `SettingsGroup` like every UI
-  resource — but `track_pref`'d only in `game()` mode**: the standalone galleries have no
+  resource — but `register_pref`'d only in `game()` mode**: the standalone galleries have no
   `SettingsPlugin`, and a `track_pref` there would warn on every toggle. Two modes:
   `UiInspectorPlugin::game()` (a `GameUiRoot` — hidden until `PlayPhase::Live`, hidden
   on city switch) and `UiInspectorPlugin::standalone()` (the roads gallery: no states
@@ -441,13 +441,20 @@ panel** with four tabs (`ui/shell.rs`).
   `track_camera_view` in `save` mode — right, since the setting is the *mode*, not
   where you happen to be looking.
 
-  **Persisting is a registration, not a list**: `app.track_pref::<T>()` next to the
-  resource's own `init_resource` adds a one-line system that queues
-  `SaveSettingsSync::IfChanged` when `T` changes. A hand-maintained mirror of the
-  tracked list had already lost `RoadStyle`, whose edits only reached the disk if some
-  *other* tracked resource happened to change in the same frame. Deliberately
+  **Persisting is a registration, not a list**: `app.register_pref::<T>()` at the
+  owner's plugin does the whole registration in one call — `init_resource` +
+  `register_type` + `track_pref` (the last adds the one-line system that queues
+  `SaveSettingsSync::IfChanged` when `T` changes). A forgotten member of that old
+  hand-written trio was a silent failure, and a hand-maintained mirror of the tracked
+  list had already lost `RoadStyle`, whose edits only reached the disk if some
+  *other* tracked resource happened to change in the same frame; `tests/prefs.rs`
+  holds the pairing — every registered group is tracked and every tracked type is a
+  registered group, with the deliberate exceptions named there. Deliberately
   untracked: `SavedCameraView` (changes every frame of a camera drag;
-  `camera::track_camera_view` debounces it and saves by hand). `IfChanged` re-checks
+  `camera::track_camera_view` debounces it and saves by hand) and the slider-written
+  `SunStyle`/`RoadShape` (they write per drag step; the file gets them through their
+  settled copies `SunOnMap`/`RoadShapeOnMap`, which *are* tracked).
+  `IfChanged` re-checks
   the whole file's change ticks itself, so two resources changing in one frame still
   cost one write.
 

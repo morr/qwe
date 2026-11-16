@@ -242,7 +242,7 @@ impl Plugin for CityPlugin {
                 // `retuned` по каждому: ресурс числится изменённым и в
                 // кадре, где его вставили настройки
                 .run_if(
-                    retuned::<City>()
+                    retuned::<City>
                         .or_else(retuned::<NavtileBase>)
                         .or_else(parse_knobs_diverged),
                 ),
