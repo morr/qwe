@@ -21,7 +21,7 @@ use bevy::prelude::*;
 use super::arches::{ArchOpenings, arch_openings};
 use super::roofs::is_pitched;
 use super::temples::Sanctuary;
-use super::{Lean, height_or_default, lift_of};
+use super::{HouseFootprint, Lean, height_of, lift_of_footprint};
 use crate::map::grid::Grid;
 use crate::map::meshing::{MeshBuilder, sweep_convex};
 use crate::map::osm::model::{ring_bounds, signed_ring_area};
@@ -96,7 +96,7 @@ pub(super) struct ShadowSweeps {
 }
 
 impl ShadowSweeps {
-    pub(super) fn of(buildings: &[PolyArea]) -> Self {
+    pub(super) fn of(buildings: &[PolyArea], footprints: &[Option<HouseFootprint>]) -> Self {
         let stretch = sun_stretch();
         let (min_length, max_length) = (
             *SHADOW_LENGTH_RANGE.start() * stretch,
@@ -108,7 +108,8 @@ impl ShadowSweeps {
         let indexed: Vec<usize> = (0..buildings.len()).collect();
         let per_building: Vec<Vec<Vec<[f32; 2]>>> = in_parallel(&indexed, |&index| {
             let building = &buildings[index];
-            let length = shadow::length(height_or_default(building)).clamp(min_length, max_length);
+            let length = shadow::length(height_of(building, footprints[index]))
+                .clamp(min_length, max_length);
             let offset = shadow_dir() * length;
             // у части на крыше храма и у отдельной колокольни коробки нет, и
             // тени коробки тоже: их тень — тень венца, она ниже
@@ -170,6 +171,7 @@ pub(super) fn shadow_builder(
     sweeps: &ShadowSweeps,
     extruded: bool,
     arches: Option<&ArchOpenings>,
+    footprints: &[Option<HouseFootprint>],
 ) -> MeshBuilder {
     let mut builder = MeshBuilder::default();
     let color = SHADOW_COLOR.to_linear();
@@ -187,7 +189,7 @@ pub(super) fn shadow_builder(
         for (index, passages) in by_building {
             let building = &buildings[index];
             let lean = Lean::of();
-            let lift = lift_of(building);
+            let lift = lift_of_footprint(building, footprints[index]);
             for opening in arch_openings(building, &passages, lift, -lean.dir()) {
                 let Some(along) = (opening.b - opening.a).try_normalize() else {
                     continue;
@@ -234,6 +236,7 @@ pub(super) fn roof_shadow_builder(
     buildings: &[PolyArea],
     sweeps: &ShadowSweeps,
     order: Option<&[usize]>,
+    footprints: &[Option<HouseFootprint>],
 ) -> MeshBuilder {
     use i_overlay::core::fill_rule::FillRule;
     use i_overlay::core::overlay_rule::OverlayRule;
@@ -241,7 +244,11 @@ pub(super) fn roof_shadow_builder(
 
     let mut builder = MeshBuilder::default();
     let color = SHADOW_COLOR.to_linear();
-    let heights: Vec<f32> = buildings.iter().map(height_or_default).collect();
+    let heights: Vec<f32> = buildings
+        .iter()
+        .enumerate()
+        .map(|(index, building)| height_of(building, footprints[index]))
+        .collect();
     let extruded = order.is_some();
     let boxes: Vec<(Vec2, Vec2)> = buildings.iter().map(|b| ring_bounds(&b.outer)).collect();
     let sweep_boxes: Vec<(Vec2, Vec2)> = (0..buildings.len())
@@ -265,7 +272,7 @@ pub(super) fn roof_shadow_builder(
         cells.insert(min, max, index);
     }
     // тела соседей по той же сетке: они не отбрасывают тень, а съедают её
-    let bodies = DrawnBodies::of(buildings, &boxes, order);
+    let bodies = DrawnBodies::of(buildings, &boxes, order, footprints);
     let sanctuary = Sanctuary::of(buildings);
 
     // цель от цели не зависит: свои отбрасывающие, своё пересечение и своё
@@ -291,7 +298,7 @@ pub(super) fn roof_shadow_builder(
         }
         let (min, max) = boxes[target];
         let lift = if extruded {
-            lift_of(building)
+            lift_of_footprint(building, footprints[target])
         } else {
             Vec2::ZERO
         };
@@ -417,13 +424,22 @@ impl DrawnBodies {
         }
     }
 
-    fn of(buildings: &[PolyArea], boxes: &[(Vec2, Vec2)], order: Option<&[usize]>) -> Self {
+    fn of(
+        buildings: &[PolyArea],
+        boxes: &[(Vec2, Vec2)],
+        order: Option<&[usize]>,
+        footprints: &[Option<HouseFootprint>],
+    ) -> Self {
         // порядок есть ровно в 2.5D: в плоских режимах его никто не строит, и
         // накрывать кровлю соседа там нечем
         let Some(order) = order else {
             return Self::empty();
         };
-        let lifts: Vec<Vec2> = buildings.iter().map(lift_of).collect();
+        let lifts: Vec<Vec2> = buildings
+            .iter()
+            .enumerate()
+            .map(|(index, building)| lift_of_footprint(building, footprints[index]))
+            .collect();
         // тот самый список, которым `extrusion_builder` кладёт дома в меш, —
         // он строится один раз на сборку слоя и достаётся обоим
         let mut rank = vec![0usize; buildings.len()];

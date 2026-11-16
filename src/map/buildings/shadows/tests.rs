@@ -7,6 +7,7 @@
 
 use super::*;
 use crate::map::buildings::fixtures::{building, ground_shadows, mesh_points, rect, square};
+use crate::map::buildings::lift_of;
 use crate::map::osm::AreaKind;
 
 /// Тени на кровлях. `extruded` — 2.5D, и порядок отрисовки строится здесь
@@ -14,8 +15,14 @@ use crate::map::osm::AreaKind;
 fn roof_shadows(list: &[PolyArea], extruded: bool) -> MeshBuilder {
     use crate::map::buildings::order::draw_order;
 
-    let order = extruded.then(|| draw_order(list, Lean::of()));
-    roof_shadow_builder(list, &ShadowSweeps::of(list), order.as_deref())
+    let footprints = HouseFootprint::all(list);
+    let order = extruded.then(|| draw_order(list, Lean::of(), &footprints));
+    roof_shadow_builder(
+        list,
+        &ShadowSweeps::of(list, &footprints),
+        order.as_deref(),
+        &footprints,
+    )
 }
 
 /// Тень высокого соседа ложится **на кровлю** низкого, и только на неё: весь

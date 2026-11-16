@@ -36,7 +36,7 @@ use std::time::Instant;
 
 use bevy::prelude::*;
 
-use super::{Lean, building_center, lift_of};
+use super::{HouseFootprint, Lean, building_center, lift_of_footprint};
 use crate::map::grid::Grid;
 use crate::map::osm::PolyArea;
 use crate::map::osm::model::ring_bounds;
@@ -58,11 +58,21 @@ const RIDGE_MARGIN: f32 = 2.0;
 const CELL: f32 = 48.0;
 
 /// Порядок записи домов в меш: дальний первым, ближний последним.
-pub(super) fn draw_order(buildings: &[PolyArea], lean: Lean) -> Vec<usize> {
+/// `footprints` — пятна домов ([`super::HouseFootprint`]), посчитанные
+/// сборщиком слоя один раз на дом.
+pub(super) fn draw_order(
+    buildings: &[PolyArea],
+    lean: Lean,
+    footprints: &[Option<HouseFootprint>],
+) -> Vec<usize> {
     use crate::map::parallel::in_parallel;
 
     let started = Instant::now();
-    let drawn: Vec<Drawn> = buildings.iter().map(|b| Drawn::of(b, lean)).collect();
+    let drawn: Vec<Drawn> = buildings
+        .iter()
+        .enumerate()
+        .map(|(index, building)| Drawn::of(building, lean, footprints[index]))
+        .collect();
 
     let mut covered: Vec<Vec<usize>> = vec![Vec::new(); buildings.len()];
     let pairs = candidate_pairs(&drawn);
@@ -247,7 +257,7 @@ struct Drawn {
 }
 
 impl Drawn {
-    fn of(building: &PolyArea, lean: Lean) -> Self {
+    fn of(building: &PolyArea, lean: Lean, fp: Option<HouseFootprint>) -> Self {
         let along = lean.dir();
         let across = along.perp();
         let ring: Vec<Vec2> = building
@@ -258,7 +268,7 @@ impl Drawn {
         let (min, max) = ring_bounds(&ring);
         // подъём параллелен `dir()`, так что его длина — это и есть прибавка
         // к `y`; режим здесь всегда экструзия, других этот слой не строит
-        let lift = lift_of(building).length() + RIDGE_MARGIN;
+        let lift = lift_of_footprint(building, fp).length() + RIDGE_MARGIN;
         Self {
             ring,
             lift,

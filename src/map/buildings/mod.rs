@@ -38,15 +38,15 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
 use self::arches::arches_by_building;
 use self::garages::garage_runs;
-use self::heights::height_mix;
 pub(crate) use self::heights::height_or_default;
+use self::heights::{height_mix, height_of};
 use self::layers::{extrusion_builder, facade_and_roof_builders};
 pub use self::layers::{push_house, wall_of};
 use self::order::draw_order;
 pub use self::roofs::{RoofShape, ShapeFacts, shape_facts};
 pub(crate) use self::shadows::SHADOW_LENGTH_RANGE;
 use self::shadows::{ShadowSweeps, roof_shadow_builder, shadow_builder};
-use crate::map::meshing::MeshBuilder;
+use crate::map::meshing::{MeshBuilder, min_area_rect};
 use crate::map::osm::{MapData, PolyArea, RoadLine};
 use crate::map::surface::{self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
@@ -277,13 +277,18 @@ pub fn measure_layers(
     };
     let mut costs = Vec::new();
 
+    // пятно дома — такой же общий вход слоёв, как порядок отрисовки и
+    // развёртки: считается один раз на дом, билдеры своих переборов рёбер
+    // не делают. Вершин не даёт: это не меш, а вход
+    let footprints = HouseFootprint::all(buildings);
+
     // общие входы слоёв — порядок отрисовки и теневые развёртки: их строят
     // один раз на сборку и делят между сборщиками, поэтому у каждого свой
     // ряд, ровно как `breaks` и `parking` у слоя машин. Вершин они не дают:
     // это не меш, а вход
     let started = Instant::now();
     let order = if mode.lifts() {
-        let order = draw_order(buildings, Lean::of());
+        let order = draw_order(buildings, Lean::of(), &footprints);
         costs.push(LayerCost {
             name: "order",
             vertices: 0,
@@ -295,7 +300,7 @@ pub fn measure_layers(
     };
     let started = Instant::now();
     let sweeps = mode.casts_shadows().then(|| {
-        let sweeps = ShadowSweeps::of(buildings);
+        let sweeps = ShadowSweeps::of(buildings, &footprints);
         costs.push(LayerCost {
             name: "sweeps",
             vertices: 0,
@@ -350,14 +355,26 @@ pub fn measure_layers(
     // отрисовки служит кровельному слою признаком 2.5D
     if let Some(sweeps) = &sweeps {
         measure("shadows", &mut || {
-            shadow_builder(buildings, sweeps, mode.lifts(), arches.as_ref()).vertex_count()
+            shadow_builder(
+                buildings,
+                sweeps,
+                mode.lifts(),
+                arches.as_ref(),
+                &footprints,
+            )
+            .vertex_count()
         });
         // тени на кровлях — свой ряд, а не слагаемое в чужом: слой лежит над
         // зданиевыми, строится другим сборщиком и стоит своих миллисекунд,
         // причём `mesh_buildings` отдаёт их отдельно тем же образом
         measure("roof shadows", &mut || {
-            roof_shadow_builder(buildings, sweeps, mode.lifts().then_some(order.as_slice()))
-                .vertex_count()
+            roof_shadow_builder(
+                buildings,
+                sweeps,
+                mode.lifts().then_some(order.as_slice()),
+                &footprints,
+            )
+            .vertex_count()
         });
     }
     costs
@@ -469,7 +486,10 @@ pub fn mesh_buildings(
     // тени; без него ряд даёт 20 (`examples/bench/map_meshing`, где порядок
     // печатается своим рядом `order`). Он же признак 2.5D — в плоских режимах
     // его никто не строит и накрывать кровлю соседа нечем
-    let order = mode.lifts().then(|| draw_order(buildings, Lean::of()));
+    let footprints = HouseFootprint::all(buildings);
+    let order = mode
+        .lifts()
+        .then(|| draw_order(buildings, Lean::of(), &footprints));
 
     // арки — один расчёт на сборку слоя: их едят и экструзия, и заплатка
     // арок в наземных тенях; в плоских режимах фасадный сборщик режет их сам
@@ -544,11 +564,17 @@ pub fn mesh_buildings(
         // каждого дома, и раньше их строил каждый сборщик у себя. На кровлях
         // это была большая часть цены слоя
         let sweep_started = Instant::now();
-        let sweeps = ShadowSweeps::of(buildings);
+        let sweeps = ShadowSweeps::of(buildings, &footprints);
         sweep_time = sweep_started.elapsed();
 
         let shadow_started = Instant::now();
-        let shadows = shadow_builder(buildings, &sweeps, mode.lifts(), arches.as_ref());
+        let shadows = shadow_builder(
+            buildings,
+            &sweeps,
+            mode.lifts(),
+            arches.as_ref(),
+            &footprints,
+        );
         shadow_time = shadow_started.elapsed();
         shadow_layers.push(LayerMesh::new(
             shadows,
@@ -561,7 +587,7 @@ pub fn mesh_buildings(
         // единственный кусок тени, который обязан лежать поверх крыши.
         // Своя метка не нужна — деспавнится он вместе с наземным слоем.
         let roof_started = Instant::now();
-        let on_roofs = roof_shadow_builder(buildings, &sweeps, order.as_deref());
+        let on_roofs = roof_shadow_builder(buildings, &sweeps, order.as_deref(), &footprints);
         roof_shadow_time = roof_started.elapsed();
         shadow_layers.push(LayerMesh::new(
             on_roofs,
@@ -584,7 +610,7 @@ pub fn mesh_buildings(
             .map(|layer| layer.builder.vertex_count())
             .sum(),
         skipped,
-        heights: height_mix(buildings),
+        heights: height_mix(buildings, &footprints),
         roofs: roof_mix,
         sweeps: sweep_time,
         ground_shadows: shadow_time,
@@ -717,6 +743,53 @@ impl Lean {
     }
 }
 
+/// Пятно дома: минимальный по площади описанный прямоугольник его внешнего
+/// контура, CCW, первое ребро вдоль длинной оси ([`min_area_rect`]).
+///
+/// Единственный владелец концепции «как этот дом повёрнут и каких он
+/// размеров». Раньше прямоугольника-владельца не было: ось фактуры кровли,
+/// глубина корпуса, этажность по форме пятна, торец фасада у балконов, план
+/// храма и прямоугольник двускатной крыши каждый считали свой
+/// `min_area_rect` на тех же вершинах, и один дом проходил перебор рёбер
+/// несколько раз за сборку слоя. Теперь пятно считается **один раз на дом**
+/// в начале сборки ([`Self::all`], [`mesh_buildings`]) и передаётся
+/// билдерам готовым; свой перебор на своих вершинах оставили только те, кто
+/// считает его не по внешнему контуру дома (куски разрезанного гаражного
+/// контура, доли храма, крестовая кровля).
+///
+/// `None` у [`Self::of`] — вырожденное кольцо (меньше трёх вершин или без
+/// рёбер); потребитель без готового пятна в любом случае умеет ответить на
+/// него сам — той же веткой, что раньше стояла после его собственного
+/// `min_area_rect`.
+#[derive(Clone, Copy)]
+pub(super) struct HouseFootprint {
+    /// Углы прямоугольника по обходу; `rect[0] → rect[1]` — длинная сторона.
+    rect: [Vec2; 4],
+}
+
+impl HouseFootprint {
+    /// Пятно этого дома — тот же `min_area_rect` на тех же вершинах, что
+    /// считали потребители по отдельности, поэтому значения не меняются.
+    pub(super) fn of(building: &PolyArea) -> Option<Self> {
+        Some(Self {
+            rect: min_area_rect(&building.outer)?,
+        })
+    }
+
+    /// Пятна всех домов списка — по индексу дома, как сам список.
+    pub(super) fn all(buildings: &[PolyArea]) -> Vec<Option<Self>> {
+        buildings.iter().map(Self::of).collect()
+    }
+
+    /// Длина и ширина пятна — стороны прямоугольника, длинная первая.
+    pub(super) fn size(self) -> (f32, f32) {
+        (
+            (self.rect[1] - self.rect[0]).length(),
+            (self.rect[2] - self.rect[1]).length(),
+        )
+    }
+}
+
 /// Центр контура — по нему считается отклонение и порядок отрисовки. Bounds,
 /// а не центроид: сортировка и так была по ним, и лишний обход контура тут ни
 /// к чему.
@@ -730,7 +803,14 @@ pub(super) fn building_center(building: &PolyArea) -> Vec2 {
 /// арки в тенях и всякий, кто захочет поставить метку на нарисованный дом,
 /// а не на его настоящий контур (витрина стен меряет ею нарисованный этаж).
 pub fn lift_of(building: &PolyArea) -> Vec2 {
-    drawn_lift(height_or_default(building), BuildingHeightMode::Extrusion)
+    lift_of_footprint(building, None)
+}
+
+/// То же с готовым пятном дома ([`HouseFootprint`]): сборщик слоя передаёт
+/// его, и высота считается без второго перебора рёбер. `None` — пятна нет,
+/// высота выводится как раньше, лениво.
+pub(super) fn lift_of_footprint(building: &PolyArea, fp: Option<HouseFootprint>) -> Vec2 {
+    drawn_lift(height_of(building, fp), BuildingHeightMode::Extrusion)
 }
 
 /// Подъём верха над контуром для объекта высотой `height`: тот же масштаб и та

@@ -19,6 +19,7 @@
 
 use bevy::math::Vec2;
 
+use super::HouseFootprint;
 use super::material::building_seed;
 use super::roofs::{SHED_FOOTPRINT_MAX, SMALL_FOOTPRINT_MAX};
 use crate::map::meshing::min_area_rect;
@@ -98,9 +99,18 @@ const TOWER_MAX_RATIO: f32 = 1.7;
 /// мерить её обязан **тот же** вывод, которым дом нарисован, — иначе
 /// нарисованная девятиэтажка стояла бы в кварталах частного сектора.
 pub(crate) fn height_or_default(building: &PolyArea) -> f32 {
+    height_of(building, None)
+}
+
+/// Та же высота с готовым пятном дома ([`super::HouseFootprint`]): сборщик
+/// слоя считает пятно один раз на дом и передаёт сюда, чтобы ветка вывода не
+/// гнала перебор рёбер второй раз. `None` — пятна нет: ветка посчитает его
+/// сама, только если дойдёт (см. [`storeys_by_shape`]); так зовут высоту вне
+/// сборки слоя — слой машин, тесты, — и умножать перебор им ни к чему.
+pub(super) fn height_of(building: &PolyArea, fp: Option<HouseFootprint>) -> f32 {
     building
         .height
-        .unwrap_or_else(|| inferred_height(building, building_seed(building)))
+        .unwrap_or_else(|| inferred_height(building, building_seed(building), fp))
 }
 
 /// Слот дома в таблице группы: посев решает, какой из вариантов ему достался.
@@ -111,7 +121,7 @@ fn pick(table: &[f32], seed: u32) -> f32 {
 }
 
 /// Выведенная высота — та самая, которой в OSM не нашлось.
-fn inferred_height(building: &PolyArea, seed: u32) -> f32 {
+fn inferred_height(building: &PolyArea, seed: u32, fp: Option<HouseFootprint>) -> f32 {
     let area = signed_ring_area(&building.outer).abs();
 
     // крепость меряется не назначением (у башни это `building=yes`), а тем,
@@ -149,7 +159,7 @@ fn inferred_height(building: &PolyArea, seed: u32) -> f32 {
         BuildingUse::Other if area <= SHED_FOOTPRINT_MAX => pick(&SHED_HEIGHTS, seed),
         BuildingUse::Other if area <= SMALL_FOOTPRINT_MAX => pick(&HOUSE_HEIGHTS, seed),
         // жильё, контора и половина города без назначения — по форме пятна
-        _ => STOREY * storeys_by_shape(&building.outer, area, seed),
+        _ => STOREY * storeys_by_shape(&building.outer, area, seed, fp),
     }
 }
 
@@ -162,15 +172,18 @@ fn inferred_height(building: &PolyArea, seed: u32) -> f32 {
 /// крупнее 300 м²».
 ///
 /// Стороны пятна берутся **только там, где они решают**: мелкий контур
-/// отвечает одной площадью, и `min_area_rect` (перебор рёбер по всем точкам,
-/// то есть O(n²)) на нём не считается вовсе. Ветка вывода зовётся на дом
-/// трижды за сборку слоя — фасад/экструзия, тени, строка `heights:` — и
-/// умножать на три стоит только ту работу, без которой не обойтись.
-fn storeys_by_shape(ring: &[Vec2], area: f32, seed: u32) -> f32 {
+/// отвечает одной площади, и `min_area_rect` (перебор рёбер по всем точкам,
+/// то есть O(n²)) на нём не считается вовсе. Со сборки слоя пятно приходит
+/// готовым ([`height_of`]) — один перебор на дом; `None` значит «пятна нет»,
+/// и ветка считает его сама — так зовут высоту вне сборки слоя (слой машин,
+/// тесты), и умножать перебор им ни к чему.
+fn storeys_by_shape(ring: &[Vec2], area: f32, seed: u32, fp: Option<HouseFootprint>) -> f32 {
     if area <= LOW_FOOTPRINT_MAX {
         return pick(&LOW_STOREYS, seed);
     }
-    let (length, width) = footprint_size(ring);
+    let (length, width) = fp
+        .map(HouseFootprint::size)
+        .unwrap_or_else(|| footprint_size(ring));
     let squarish = width > 0.0 && length / width <= TOWER_MAX_RATIO;
     if length >= SLAB_MIN_LENGTH && width <= SLAB_MAX_WIDTH {
         pick(&SLAB_STOREYS, seed)
@@ -181,11 +194,9 @@ fn storeys_by_shape(ring: &[Vec2], area: f32, seed: u32) -> f32 {
     }
 }
 
-/// Длина и ширина пятна — стороны минимального описанного прямоугольника,
-/// длинная первой. Тот же `min_area_rect`, что даёт ось двускатной крыши и
-/// ось фактуры кровли; контуры короткие, но перебор в нём квадратичный, и
-/// зовётся он отсюда только на крупном пятне без тега высоты — см.
-/// [`storeys_by_shape`].
+/// Длина и ширина пятна по его кольцу — для тех, кому пятно не передали:
+/// стороны минимального описанного прямоугольника, длинная первой. Тот же
+/// `min_area_rect`, что считает [`super::HouseFootprint`] для сборки слоя.
 fn footprint_size(ring: &[Vec2]) -> (f32, f32) {
     let Some(rect) = min_area_rect(ring) else {
         return (0.0, 0.0);
@@ -204,12 +215,16 @@ fn footprint_size(ring: &[Vec2]) -> (f32, f32) {
 /// здесь: она единственная показывает, куда уехало распределение.
 /// Сортировка семи тысяч чисел стоит доли миллисекунды и идёт вместе со
 /// сборкой слоя, а не каждый кадр.
-pub(super) fn height_mix(buildings: &[PolyArea]) -> String {
+pub(super) fn height_mix(buildings: &[PolyArea], footprints: &[Option<HouseFootprint>]) -> String {
     if buildings.is_empty() {
         return "no buildings".to_string();
     }
     let tagged = buildings.iter().filter(|b| b.height.is_some()).count();
-    let mut heights: Vec<f32> = buildings.iter().map(height_or_default).collect();
+    let mut heights: Vec<f32> = buildings
+        .iter()
+        .enumerate()
+        .map(|(index, building)| height_of(building, footprints[index]))
+        .collect();
     heights.sort_by(f32::total_cmp);
     let at = |share: f32| heights[((heights.len() - 1) as f32 * share) as usize];
     format!(

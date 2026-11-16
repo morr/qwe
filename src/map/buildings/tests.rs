@@ -1166,12 +1166,17 @@ fn the_order_puts_the_leaning_neighbour_over_the_wing_it_covers() {
     // центр пятна девятиэтажки дальше по подъёму, значит она писалась первой
     assert!(lean.depth(building_center(&tall)) > lean.depth(building_center(&low)));
     // а кроет она: её кровля поднята на 27 м и ложится на крыло соседа
+    let pair = [low.clone(), tall.clone()];
     assert_eq!(
-        order::draw_order(&[low.clone(), tall.clone()], lean),
+        order::draw_order(&pair, lean, &HouseFootprint::all(&pair)),
         vec![0, 1]
     );
     // порядок входа на это не влияет — решает геометрия, а не индекс
-    assert_eq!(order::draw_order(&[tall, low], lean), vec![1, 0]);
+    let swapped = [tall, low];
+    assert_eq!(
+        order::draw_order(&swapped, lean, &HouseFootprint::all(&swapped)),
+        vec![1, 0]
+    );
 }
 
 #[test]
@@ -1191,7 +1196,7 @@ fn the_order_writes_every_building_once() {
         next.building_use = BuildingUse::Apartments;
         list.push(next);
     }
-    let order = order::draw_order(&list, Lean::of());
+    let order = order::draw_order(&list, Lean::of(), &HouseFootprint::all(&list));
     let mut seen = order.clone();
     seen.sort_unstable();
     assert_eq!(seen, (0..list.len()).collect::<Vec<_>>());

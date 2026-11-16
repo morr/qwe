@@ -100,7 +100,14 @@ pub(super) fn ground_shadows(
     use super::shadows::{ShadowSweeps, shadow_builder};
 
     let arches = extruded.then(|| arches_by_building(list, passages));
-    shadow_builder(list, &ShadowSweeps::of(list), extruded, arches.as_ref())
+    let footprints = super::HouseFootprint::all(list);
+    shadow_builder(
+        list,
+        &ShadowSweeps::of(list, &footprints),
+        extruded,
+        arches.as_ref(),
+        &footprints,
+    )
 }
 
 /// Меш 2.5D-экструзии — с тем же порядком отрисовки, который в игре достаётся
@@ -117,8 +124,9 @@ pub(super) fn extruded_mesh(
     use super::layers::extrusion_builder;
 
     let arches = arches_by_building(list, passages);
-    let (chunks, _) =
-        extrusion_builder(list, detail, &order::draw_order(list, Lean::of()), &arches);
+    let footprints = super::HouseFootprint::all(list);
+    let order = order::draw_order(list, Lean::of(), &footprints);
+    let (chunks, _) = extrusion_builder(list, detail, &order, &arches);
     MeshBuilder::merge(chunks)
 }
 
