@@ -235,19 +235,18 @@ pub struct CityPlugin;
 
 impl Plugin for CityPlugin {
     fn build(&self, app: &mut App) {
-        app.register_pref::<City>()
-            .add_systems(
-                Update,
-                reload_world
-                    .run_if(in_state(AppState::Playing))
-                    // `retuned` по каждому: ресурс числится изменённым и в
-                    // кадре, где его вставили настройки
-                    .run_if(
-                        retuned::<City>
-                            .or_else(retuned::<NavtileBase>)
-                            .or_else(parse_knobs_diverged),
-                    ),
-            );
+        app.register_pref::<City>().add_systems(
+            Update,
+            reload_world
+                .run_if(in_state(AppState::Playing))
+                // `retuned` по каждому: ресурс числится изменённым и в
+                // кадре, где его вставили настройки
+                .run_if(
+                    retuned::<City>()
+                        .or_else(retuned::<NavtileBase>)
+                        .or_else(parse_knobs_diverged),
+                ),
+        );
     }
 }
 
