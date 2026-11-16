@@ -263,7 +263,10 @@ impl Walkable<'_> {
                 nearest_tile_where(
                     self.navmesh.to_tile(point),
                     RESCUE_SEARCH_TILES,
-                    |candidate| self.allows(self.navmesh.tile_center(candidate)).then_some(()),
+                    |candidate| {
+                        self.allows(self.navmesh.tile_center(candidate))
+                            .then_some(())
+                    },
                 )
                 .map(|tile| self.navmesh.tile_center(tile))
             })
