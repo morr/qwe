@@ -4,7 +4,7 @@
 //! `add_perf_toggles`): у устройства запрашивается фича
 //! `TIMESTAMP_QUERY` (Metal поддерживает), в расписание `Core2d` — его
 //! `camera_driver` прогоняет на каждую камеру — встают маркер-системы.
-//! Каждая открывает **пустой compute pass** с
+//! Каждая открывает **render pass на 1×1-текстуру с фиктивным draw** и
 //! `timestamp_writes` в дескрипторе: метка пишется на начале пасса —
 //! энкодеры систем уходят в сабмит в топологическом порядке систем
 //! (`RenderContextState: SystemBuffer`), GPU исполняет энкодеры в
@@ -17,10 +17,13 @@
 //! (RequestDeviceError), из-за чего встроенный
 //! `RenderDiagnosticsPlugin` 0.20 на Metal CPU-only (док «only Vulkan
 //! and DX12» точен); `write_timestamp` на CommandEncoder bevy глушит
-//! на macOS сам (фликер на Tahoe, bevy#22257). Пустой compute pass с
-//! меткой на начале — из-под обоих запретов: compute-пасс аттачментов
-//! не требует (render-пасс без них wgpu 30 не валиден), метки на
-//! границах пасса — фича `TIMESTAMP_QUERY`.
+//! на macOS сам (фликер на Tahoe, bevy#22257). И даже пассовый путь
+//! без работы не пишет метки: Metal молча возвращает нули из энкодера
+//! без операций (известный баг «blit encoders won't write timestamps
+//! if they don't have a blit operation», wgpu-hal metal comment;
+//! воркараунд Dawn — фиктивная работа в энкодере). Поэтому маркер —
+//! **render pass на 1×1-текстуру с одним фиктивным draw** (три
+//! вершины, закрашивают один пиксель): энкодер с работой метки пишет.
 //!
 //! Метки 0..=5: 0 до opaque-пасса, 1 после opaque (до transparent),
 //! 2 после transparent, 3 после PostProcess (bloom + tonemapping), 4
@@ -52,13 +55,17 @@ use bevy::prelude::*;
 use bevy::render::RenderApp;
 use bevy::render::RenderStartup;
 use bevy::render::camera::ExtractedCamera;
-use bevy::render::render_resource::{BufferDescriptor, BufferUsages, MapMode, PollType};
+use bevy::render::render_resource::{
+    BufferDescriptor, BufferUsages, LoadOp, MapMode, Operations, PollType,
+    RenderPassColorAttachment, RenderPassDescriptor, StoreOp,
+};
 use bevy::render::renderer::{
     RenderContext, RenderDevice, RenderGraphSystems, RenderQueue, ViewQuery,
 };
 use bevy::ui_render::ui_pass;
 use wgpu::{
-    ComputePassDescriptor, ComputePassTimestampWrites, QuerySet, QuerySetDescriptor, QueryType,
+    QuerySet, QuerySetDescriptor, QueryType, RenderPassTimestampWrites, RenderPipeline,
+    ShaderModuleDescriptor, ShaderSource,
 };
 
 /// Меток GPU-границ в кадре (и слотов query set / буфера).
@@ -74,17 +81,30 @@ static TS: [AtomicU64; SLOTS] = [const { AtomicU64::new(0) }; SLOTS];
 static SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// Период тика GPU-часов в мс, биты [`f32`]; ноль — ещё не снят.
-static PERIOD_MS: AtomicU64 = AtomicU64::new(0);
+static PERIOD_NS: AtomicU64 = AtomicU64::new(0);
 
-/// Query set и ring readback-буферов; `tx` — канал колбэков `map_async`.
-/// Жизненный цикл буфера: resolve (до сабмита) → map_async (после
-/// сабмита — mapped до сабмита wgpu запрещает) → колбэк → drain читает
-/// и размапливает. Ринг из четырёх: колбэк доезжает за 1–2 кадра,
-/// к четвёртому буфер свободен; если GPU встал и буфер ещё mapped —
-/// кадр решается без метки (сэмпл пропускается), не валидация.
+// TEMP perf44 cut — счётчики звеньев readback-цепочки для probe-строки
+// (гейт QWE_PERF_GPU_CUT_PROBES, не коммитить).
+static RESOLVES: AtomicU64 = AtomicU64::new(0);
+static MAPS: AtomicU64 = AtomicU64::new(0);
+
+fn probes_enabled() -> bool {
+    static PROBES: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *PROBES.get_or_init(|| std::env::var_os("QWE_PERF_GPU_CUT_PROBES").is_some())
+}
+
+/// Query set, маркерная цель и пайплайн, ring readback-буферов; `tx` —
+/// канал колбэков `map_async`. Жизненный цикл буфера: resolve (до
+/// сабмита) → map_async (после сабмита — mapped до сабмита wgpu
+/// запрещает) → колбэк → drain читает и размапливает. Ринг из четырёх:
+/// колбэк доезжает за 1–2 кадра, к четвёртому буфер свободен; если GPU
+/// встал и буфер ещё mapped — кадр решается без метки (сэмпл
+/// пропускается), не валидация.
 #[derive(Resource)]
 struct GpuCutRes {
     query_set: QuerySet,
+    pipeline: RenderPipeline,
+    target_view: wgpu::TextureView,
     buffers: [wgpu::Buffer; 4],
     mapped: [bool; 4],
     cur: usize,
@@ -150,26 +170,90 @@ fn size_bytes() -> u64 {
     (SLOTS as u64 * 8).next_multiple_of(256)
 }
 
-/// Query set на шесть меток и два readback-буфера (по кадру каждый),
-/// период тика GPU-часов — в статику.
+/// Шейдер маркерного draw: треугольник на весь target (1×1) и фрагмент
+/// с заливкой — работа, без которой Metal метки в энкодере не пишет.
+const MARKER_WGSL: &str = "
+@vertex fn vs(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
+    var p = array<vec2<f32>, 3>(vec2(-1.0, -3.0), vec2(-1.0, 3.0), vec2(3.0, -1.0));
+    return vec4<f32>(p[vi], 0.0, 1.0);
+}
+@fragment fn fs() -> @location(0) vec4<f32> {
+    return vec4<f32>(0.0);
+}
+";
+
+/// Query set, маркерная цель с пайплайном и readback-буферы; период
+/// тика GPU-часов — в статику.
 fn setup(mut commands: Commands, device: Res<RenderDevice>, queue: Res<RenderQueue>) {
-    let query_set = device.wgpu_device().create_query_set(&QuerySetDescriptor {
+    let wgpu_device = device.wgpu_device();
+    let query_set = wgpu_device.create_query_set(&QuerySetDescriptor {
         label: Some("gpu_cut_timestamps"),
         ty: QueryType::Timestamp,
         count: SLOTS as u32,
     });
+    let module = wgpu_device.create_shader_module(ShaderModuleDescriptor {
+        label: Some("gpu_cut_marker_shader"),
+        source: ShaderSource::Wgsl(MARKER_WGSL.into()),
+    });
+    let pipeline = wgpu_device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("gpu_cut_marker_pipeline"),
+        layout: None,
+        vertex: wgpu::VertexState {
+            module: &module,
+            entry_point: Some("vs"),
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &module,
+            entry_point: Some("fs"),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        primitive: Default::default(),
+        depth_stencil: None,
+        multisample: Default::default(),
+        multiview_mask: None,
+        cache: None,
+    });
+    let target = wgpu_device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("gpu_cut_marker_target"),
+        size: wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let target_view = target.create_view(&Default::default());
     let make_buffer = |n: &str| {
-        device.wgpu_device().create_buffer(&BufferDescriptor {
+        wgpu_device.create_buffer(&BufferDescriptor {
             label: Some(n),
             size: size_bytes(),
             usage: BufferUsages::QUERY_RESOLVE | BufferUsages::COPY_DST | BufferUsages::MAP_READ,
             mapped_at_creation: false,
         })
     };
-    PERIOD_MS.store(f32::to_bits(queue.get_timestamp_period()) as u64, Relaxed);
+    PERIOD_NS.store(f32::to_bits(queue.get_timestamp_period()) as u64, Relaxed);
+    // TEMP perf44 cut — плагин встал, ресурсы созданы (не коммитить)
+    info!(
+        "gpu cut probe: setup ok, period {:.4} ns/tick",
+        queue.get_timestamp_period()
+    );
     let (tx, rx) = mpsc::channel();
     commands.insert_resource(GpuCutRes {
         query_set,
+        pipeline,
+        target_view,
         buffers: [
             make_buffer("gpu_cut_readback_0"),
             make_buffer("gpu_cut_readback_1"),
@@ -184,11 +268,9 @@ fn setup(mut commands: Commands, device: Res<RenderDevice>, queue: Res<RenderQue
     commands.insert_resource(GpuCutRx(Mutex::new(rx)));
 }
 
-/// Одна GPU-граница: пустой compute pass с меткой на начале (пасс без
-/// вызовов, заканчивается drop-ом). Compute-пасс аттачментов не требует
-/// (render-пасс без аттачментов wgpu 30 не валиден), `timestamp_writes`
-/// в дескрипторе хватает фичи `TIMESTAMP_QUERY`. Только для камеры в
-/// окно — офскрин-кадр меток не ставит.
+/// Одна GPU-граница: render pass на 1×1-текстуру с меткой на начале и
+/// одним фиктивным draw (без него Metal метки в энкодере не пишет).
+/// Только для камеры в окно — офскрин-кадр меток не ставит.
 fn mark<const I: usize>(
     mut ctx: RenderContext,
     res: Res<GpuCutRes>,
@@ -200,14 +282,30 @@ fn mark<const I: usize>(
     ) {
         return;
     }
-    drop(ctx.command_encoder().begin_compute_pass(&ComputePassDescriptor {
+    let color = [Some(RenderPassColorAttachment {
+        view: &res.target_view,
+        resolve_target: None,
+        ops: Operations {
+            load: LoadOp::Load,
+            store: StoreOp::Discard,
+        },
+        depth_slice: None,
+    })];
+    let mut pass = ctx.begin_tracked_render_pass(RenderPassDescriptor {
         label: Some("gpu_cut_marker"),
-        timestamp_writes: Some(ComputePassTimestampWrites {
+        color_attachments: &color,
+        depth_stencil_attachment: None,
+        timestamp_writes: Some(RenderPassTimestampWrites {
             query_set: &res.query_set,
             beginning_of_pass_write_index: Some(I as u32),
             end_of_pass_write_index: None,
         }),
-    }));
+        occlusion_query_set: None,
+        multiview_mask: None,
+    });
+    let raw = pass.wgpu_pass();
+    raw.set_pipeline(&res.pipeline);
+    raw.draw(0..3, 0..1);
 }
 
 /// Копия меток кадра в ring-буфер; map-ить до сабмита нельзя — слот
@@ -222,6 +320,7 @@ fn resolve(mut ctx: RenderContext, mut res: ResMut<GpuCutRes>) {
     ctx.command_encoder()
         .resolve_query_set(&res.query_set, 0..SLOTS as u32, &res.buffers[cur], 0);
     res.pending.push_back(cur);
+    RESOLVES.fetch_add(1, Relaxed); // TEMP perf44 cut
 }
 
 /// После сабмита: map_async на решённые в этом кадре буферы.
@@ -238,6 +337,7 @@ fn map_pending(mut res: ResMut<GpuCutRes>) {
             }
         });
         res.mapped[slot] = true;
+        MAPS.fetch_add(1, Relaxed); // TEMP perf44 cut
     }
 }
 
@@ -266,6 +366,22 @@ fn drain(rx: Res<GpuCutRx>, mut res: ResMut<GpuCutRes>) {
         res.mapped[slot] = false;
         SEQ.fetch_add(1, Relaxed);
     }
+    // TEMP perf44 cut — probe-строка: где цепочка readback рвётся
+    // (гейт QWE_PERF_GPU_CUT_PROBES, не коммитить)
+    if probes_enabled() {
+        static PROBE_FRAME: AtomicU64 = AtomicU64::new(0);
+        if PROBE_FRAME.fetch_add(1, Relaxed).is_multiple_of(300) {
+            info!(
+                "gpu cut probe: resolves {} maps {} drained {} seq {} period {:.4} ts {:?}",
+                RESOLVES.load(Relaxed),
+                MAPS.load(Relaxed),
+                SEQ.load(Relaxed),
+                SEQ.load(Relaxed),
+                f32::from_bits(PERIOD_NS.load(Relaxed) as u32),
+                std::array::from_fn::<_, SLOTS, _>(|i| TS[i].load(Relaxed)),
+            );
+        }
+    }
 }
 
 /// Накопитель сегментов между печатями (секундное окно ≈ 60 кадров).
@@ -290,17 +406,19 @@ fn print_cut(
         return;
     }
     sums.last_seq = seq;
-    let period = f32::from_bits(PERIOD_MS.load(Relaxed) as u32);
-    if period <= 0.0 {
+    // период тика в наносекундах (wgpu: ticks × period = ns)
+    let period_ns = f64::from(f32::from_bits(PERIOD_NS.load(Relaxed) as u32));
+    if period_ns <= 0.0 {
         return;
     }
     let ts: [u64; SLOTS] = std::array::from_fn(|i| TS[i].load(Relaxed));
     if ts[SLOTS - 1] <= ts[0] {
         return;
     }
-    let seg_ms =
-        |a: usize, b: usize| (ts[b] as i64 - ts[a] as i64).max(0) as f64 * period as f64;
-    let total_ms = (ts[SLOTS - 1] - ts[0]) as f64 * period as f64;
+    let seg_ms = |a: usize, b: usize| {
+        (ts[b] as i64 - ts[a] as i64).max(0) as f64 * period_ns / 1_000_000.0
+    };
+    let total_ms = (ts[SLOTS - 1] - ts[0]) as f64 * period_ns / 1_000_000.0;
     if let Some(threshold) = threshold
         && total_ms >= threshold.0 as f64
     {
