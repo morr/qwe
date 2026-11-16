@@ -45,12 +45,10 @@ impl Plugin for DemonPlugin {
             .register_type::<ChaseTarget>()
             .register_type::<ChaseRepath>()
             .register_type::<DevourUntil>()
-            .register_type::<DemonStyle>()
             .register_type::<DemonSpawner>()
             .register_type::<DemonHalo>()
+            .register_pref::<DemonStyle>()
             .init_resource::<DemonSpawner>()
-            .init_resource::<DemonStyle>()
-            .track_pref::<DemonStyle>()
             // атлас силуэтов собирает `SilhouettePlugin`; пустой ресурс —
             // квадраты, как и у людей (см. `HumanPlugin`)
             .init_resource::<crate::silhouette::Silhouettes>()

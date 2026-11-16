@@ -124,10 +124,8 @@ pub struct DeterminismPlugin;
 
 impl Plugin for DeterminismPlugin {
     fn build(&self, app: &mut App) {
-        app.register_type::<Determinism>()
-            .register_type::<SimTick>()
-            .init_resource::<Determinism>()
-            .track_pref::<Determinism>()
+        app.register_type::<SimTick>()
+            .register_pref::<Determinism>()
             .init_resource::<SimTick>()
             // просит `request_restart_on_config_change`, а живёт в
             // `RestartPlugin`, которого в тестах и демо-сценах может не быть:

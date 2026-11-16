@@ -295,12 +295,8 @@ impl Plugin for NavigationPlugin {
             .add_systems(OnExit(AppState::Playing), drop_backend);
 
         app.init_resource::<ArcNavmesh>()
-            .register_type::<PathfindingAlgorithm>()
-            .init_resource::<PathfindingAlgorithm>()
-            .track_pref::<PathfindingAlgorithm>()
-            .register_type::<NavtileBase>()
-            .init_resource::<NavtileBase>()
-            .track_pref::<NavtileBase>()
+            .register_pref::<PathfindingAlgorithm>()
+            .register_pref::<NavtileBase>()
             .init_resource::<NorthstarGrid>()
             // navmesh заполняется и прореживается фоновым потоком загрузки
             // (`map/osm/download.rs`) — здесь остаётся только иерархия,
@@ -348,9 +344,7 @@ impl Plugin for NavigationPlugin {
             // включён по умолчанию), но постройка всё равно асинхронна и
             // условна: выключенная панель не строит ничего, и до готовности
             // меша запросы обслуживает сетка
-            .register_type::<PolymeshDebug>()
-            .init_resource::<PolymeshDebug>()
-            .track_pref::<PolymeshDebug>()
+            .register_pref::<PolymeshDebug>()
             .init_resource::<PolyNavmesh>()
             // восстановленный из настроек enabled: перестройка на входе в
             // мир, когда MapData нового города уже вставлена

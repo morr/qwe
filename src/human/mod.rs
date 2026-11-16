@@ -62,9 +62,7 @@ impl Plugin for HumanPlugin {
             .register_type::<BloodSpatter>()
             .register_type::<BloodSpread>()
             .register_type::<SoulMote>()
-            .register_type::<HumanStyle>()
-            .init_resource::<HumanStyle>()
-            .track_pref::<HumanStyle>()
+            .register_pref::<HumanStyle>()
             .init_resource::<PopulationSize>()
             // атлас силуэтов собирает `SilhouettePlugin` (в игре); без него
             // ресурс остаётся пустым, и спавн рисует обычные квадраты —
