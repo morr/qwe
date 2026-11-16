@@ -123,7 +123,7 @@ use qwe::map::surface::{
 };
 use qwe::map::trees::{
     ConiferField, ConiferNoiseStyle, CrownMaterial, CrownParams, TreeMaterials, TreeRowStyle,
-    TreeStyle, TreeZoomBucket, init_crown_material, mesh_trees, spawn_tree_meshes,
+    TreeStyle, TreeZoomBucket, init_crown_material, mesh_trees, resample_field, spawn_tree_meshes,
 };
 use qwe::map::{
     BuildingHeightMode, DrawnPieces, FenceZoomBucket, GROUND_COLOR, MeshBuilder, PaintMaterial,
@@ -947,12 +947,12 @@ fn build_next(
     // деревьям, как в `trees::build_conifer_field`
     let tree_style = TreeStyle::default();
     let mut field = ConiferField::default();
-    field.resample(
-        map.trees.positions(),
+    resample_field(
+        &mut field,
+        &map.trees,
+        &tree_style,
         &ConiferNoiseStyle::default(),
-        tree_style.noise_mix,
     );
-    field.set_share(tree_style.conifer_share);
     // ближняя ступень: витрина смотрит на перекрёсток вблизи
     let (mut trees, tree_report) =
         mesh_trees(&tree_style, &CrownParams::default(), &map.trees, &field);

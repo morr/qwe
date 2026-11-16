@@ -1119,7 +1119,7 @@ pub(crate) fn tree_compose(style: &TreeStyle, rows: &TreeRowStyle) -> TreeCompos
 /// ([`recompose_row_trees`]), вход в мир ([`build_conifer_field`]), правка
 /// шума ([`retune_conifer_field`]) и сборка потока загрузки
 /// (`map/prepare.rs::small_lane` — локальное поле для [`mesh_game_trees`]).
-pub(crate) fn resample_field(
+pub fn resample_field(
     field: &mut ConiferField,
     trees: &TreeSet,
     style: &TreeStyle,
