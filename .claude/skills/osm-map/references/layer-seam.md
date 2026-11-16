@@ -112,7 +112,9 @@ Beside the doors stand the roads builds: `roads::build_roads` — the **merged**
 pass, as one named `RoadBuild` — and the **split door the game takes**,
 `build_roads_steps` (the load thread's `map/prepare.rs`, and `rebuild_roads`),
 returning `RoadStepsBuild { common, steps }` so the common layers spawn once; the
-merged door stays for bench, vitrines and tests as the bit-for-bit control.
+merged door composes that same output back into the full per-step layer set (the
+`sidewalk_scraps` tail glued into `sidewalks`) and stays for bench, vitrines and
+tests as the bit-for-bit control.
 
 **Count the modules when asking "is anything left".** The tree-row band lives in
 `spawn.rs` and is not `trees` — that mistake is what once made the list read "all ten"

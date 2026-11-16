@@ -486,11 +486,14 @@ going through the curb pin tests
   the common layers are never hidden by a step, and a style rebuild leaves the
   world deduplicated instead of returning it to two full copies; the step a
   rebuild throws away is completed by the first crossing with step-owned layers
-  only. The two doors: the merged one (`build_roads_from`, bench/vitrines/tests)
-  returns the old full per-step layer set — its report lines are the bit-for-bit
-  control; the split one (`build_roads_steps`) returns
+  only. The two doors: the split one (`build_roads_steps`) returns
   `RoadStepsBuild { common, steps }`, whose step reports sum their own layers
-  plus the common ones, so the `road meshing:` lines stay identical.
+  plus the common ones, so the `road meshing:` lines stay identical; the merged
+  one (`build_roads_from`, bench/vitrines/tests) is a **composition over that
+  same output** — the common layers and the step glued into the old full
+  per-step layer set, the `sidewalk_scraps` tail appended back into
+  `sidewalks` (`merged_picture`) — and its report lines remain the bit-for-bit
+  control.
 - **Buildings** (`map/buildings/`) — the layer set a house is drawn as; the mechanism,
   the measurements and the rationale are in the `references/buildings-*.md` files (the
   header index names them), and the module names in `map/buildings/` say what each
