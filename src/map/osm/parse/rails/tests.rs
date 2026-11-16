@@ -54,6 +54,34 @@ fn a_track_on_a_bridge_is_marked_as_one() {
     assert_eq!(bridges, [true, true, false, false]);
 }
 
+/// Запрос модели «дороги в одном уровне с землёй» ([`MapData::at_grade_roads`]):
+/// улица и проезд на земле, мост и арка — мимо, дорожка не проезжая. По нему
+/// сшивается разрыв пути через дорогу (`crosses_street`) и раскладка мест
+/// дотягивается до кромки (`map::parking`).
+#[test]
+fn at_grade_roads_pick_ground_streets_and_drives() {
+    use crate::map::osm::model::Highway;
+
+    let (sw, se, ne, nw) = corners(HALF);
+    let map = Overpass::new(CITY)
+        .way(&[("highway", "residential")], vec![sw, ne])
+        .way(&[("highway", "service")], vec![sw, se])
+        .way(&[("highway", "residential"), ("bridge", "yes")], vec![se, nw])
+        .way(
+            &[("highway", "residential"), ("tunnel", "building_passage")],
+            vec![nw, ne],
+        )
+        .way(&[("highway", "footway")], vec![sw, nw])
+        .parse();
+
+    let kinds: Vec<Highway> = map.at_grade_roads().map(|road| road.highway).collect();
+    assert_eq!(
+        kinds,
+        [Highway::Residential, Highway::Service],
+        "улица и проезд на земле; мост, арка и дорожка — мимо"
+    );
+}
+
 #[test]
 fn service_tracks_are_the_siding_the_yard_and_the_spur() {
     let (sw, se, ne, nw) = corners(HALF);
