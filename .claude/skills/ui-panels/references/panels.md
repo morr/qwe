@@ -39,7 +39,7 @@ Noise.
   gallery, so the two panels' scales cannot drift. A drag writes `RoadShape` on every
   step but the map follows the settled `RoadShapeOnMap` (the SKILL.md debounce law — a
   rebuild of axes, pairs, nodes and the car row per step). Lane
-  width, once settled, **reloads the world** (`city::reload_world` on `lane_width_moved` —
+  width, once settled, **reloads the world** (`city::reload_world` on `parse_knobs_diverged` —
   the parse reads it). Then **Sidewalks** (a `RoadStyle` toggle). The old Joins,
   Smoothing and Casing rows went with the fields.
   Back in Roads, after Sidewalks: **Tram** — a cycle row of another resource
@@ -206,8 +206,8 @@ channel for the same claim.
 
 - **`Raw OSM`** cycles `map::osm::parse::RawOsm` (`Off` → `parse` → `parse+draw`,
   persisted `debug.raw_osm`, registered by `MapPlugin`); it is a parse input, so it
-  sits beside Navtile and reloads the world the same way (`city::raw_osm_moved`
-  compares it with `MapData::knobs.raw`).
+  sits beside Navtile and reloads the world the same way (`city::parse_knobs_diverged`
+  compares it with the parsed snapshot, `MapData::knobs`).
 - **Road network** — `DebugRoadNetwork` (settings group `debug`, key `road_network`):
   `ui/debug/overlays.rs::sync_road_network_overlay` despawns the
   `RoadNetworkOverlayMarker` layer and, when on, spawns `map::mesh_network_overlay`

@@ -214,11 +214,16 @@ would put two threads into one navmesh.
 
 The same reload path is taken by the **navtile size** cycler, with one difference: the camera
 stays where it was (same city, same spot under inspection). A settled new **lane width**
-reloads the same way: `lane_width_moved` compares `RoadShapeOnMap` with the snapshot the map
-was parsed with (`MapData::knobs`), not with a global. So does **Raw OSM**
-(`RawOsm`, Debug → World build): `raw_osm_moved` compares the resource with
-`MapData::knobs.raw` — a comparison, not a change window, so a flip made during `Loading`
-is picked up on the next `Playing` frame.
+reloads the same way, and so does **Raw OSM** (`RawOsm`, Debug → World build):
+`parse_knobs_diverged` (city.rs) builds the knobs as they stand — the settled
+`RoadShapeOnMap`, the navtile resource, `RawOsm` — and hands them to
+`ParseKnobs::diverged`, the snapshot's own comparison against `MapData::knobs`: the field
+list of the reload lives at the snapshot, so a new parse knob joins the comparison with
+its field. It is a comparison, not a change window, so a flip made during `Loading` is
+picked up on the next `Playing` frame; a knob resource may also be absent (a scene
+without `MapPlugin`), which reads as "has not moved". The `retuned::<NavtileBase>` arm
+stays in the condition — the change window is the navtile's own detector beside the
+comparison.
 
 **What the load thread parses with is an argument.** `start_job` (and the Retry button)
 build `ParseKnobs { lane_width, navtile, raw }` from the knobs as they stand and hand them to

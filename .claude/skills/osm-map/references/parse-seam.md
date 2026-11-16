@@ -17,7 +17,8 @@ door generator's clearance, one tile in front of a door, carried by
 load thread gets the settled knobs from `loading.rs::start_job`, the roads gallery the
 lane width off its own `RoadShapeOnMap`. `finish_parse` stores them in the map as
 **`MapData::knobs`** — the snapshot of what the world was parsed with, which the
-lane-width reload (`city.rs::lane_width_moved`), the paint's global
+world-reload condition (`city.rs::parse_knobs_diverged`, through
+`ParseKnobs::diverged` — the snapshot's own comparison), the paint's global
 (`roads::shape::adopt_lane_width`) and the roundabout legs (`roads::leg_sections`) read;
 a map built by hand in a test carries the defaults.
 

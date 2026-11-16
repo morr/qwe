@@ -393,7 +393,7 @@ axis prepares straight edges for in `roads-corners.md`.
   all. The map keeps what it was parsed with, `MapData::knobs`, the one source both
   ends read: `shape::adopt_lane_width` writes the global from it on
   `OnEnter(Playing)`, chained before `surface::retune_surface_materials` and before
-  `WorldInitSet::Navmesh`; `city.rs::reload_world` fires on `lane_width_moved` — same
+  `WorldInitSet::Navmesh`; `city.rs::reload_world` fires on `parse_knobs_diverged` — same
   city, the camera stays. The one-lane Y legs of a roundabout (`leg_sections`) are
   sections of the parse too and take the snapshot, not the global. The surface shader
   gets it as `SurfaceParams::lane_width` — the retune on `OnEnter(Playing)` is what
