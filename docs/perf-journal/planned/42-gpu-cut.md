@@ -70,3 +70,109 @@ Metal сломан, `frame_time` бинарный — валиден как гр
 - **Выходы бит-в-бит**: `road meshing:`, `osm map:`, `entities:` не
   двигаются — инструмент не трогает мир и парс.
 - **Telemetry**: `killed + escaped + alive == HUMAN_COUNT` (на паузе).
+
+## Дизайн
+
+**Факты стека** (проверены по источникам 0.20.1 / wgpu 30.0.1):
+
+- wgpu 30 на Metal поддерживает `TIMESTAMP_QUERY` и
+  `TIMESTAMP_QUERY_INSIDE_ENCODERS` (hal `metal/adapter.rs`: все три
+  timestamp-фичи в списке; `write_timestamp` энкодера =
+  `sampleCountersInBuffer_atSampleIndex_withBarrier`,
+  `Queue::get_timestamp_period` есть) — **timestamps поднимаются без
+  vendor-патчей**;
+- рендер 0.20 — расписания: `render_system` → `RenderGraph` →
+  `camera_driver` → `Core2d` на каждую камеру; цепочка 2d:
+  `msaa_writeback → main_opaque_pass_2d → main_transparent_pass_2d →
+  [bloom → tonemapping] (PostProcess) → ui_pass → upscaling`;
+- `RenderContext` — SystemParam с SystemBuffer-состоянием: энкодер
+  каждой системы уходит в `PendingCommandBuffers` **в топологическом
+  порядке систем** (док у `RenderContextState`), сабмит в конце
+  `camera_driver`; GPU исполняет энкодеры в порядке сабмита →
+  однотimestamp-система между пассами ставит кумулятивную GPU-границу,
+  дельты соседних границ = GPU-длительности сегментов. Нужен только
+  env-гейт на фичах устройства и системах — публичный API, без патчей.
+
+**Инструмент** — коммитится (прецедент perf-тогглов `dev.rs`;
+`QWE_PERF_GPU_CUT=1`), в future заездах переиспользуется:
+
+- `dev.rs` — `gpu_cut()` (env), `main.rs` — условные
+  `WgpuSettings { features: TIMESTAMP_QUERY | TIMESTAMP_QUERY_INSIDE_ENCODERS }`
+  в `RenderPlugin`;
+- `src/gpu_cut.rs` — плагин: `RenderStartup` — QuerySet (6 меток) +
+  два ring-буфера MAP_READ (256-выровненные); в `Core2d` — маркер-системы
+  (каждая — один `write_timestamp` в свой энкодер, гейт камеры на
+  window-target, чтобы офскрин-камера не путала метки):
+  ts0 перед opaque, ts1 после opaque (перед transparent),
+  ts2 после transparent, ts3 после PostProcess, ts4 после ui_pass
+  (перед upscaling), ts5 после upscaling; resolve-система после
+  upscaling — `resolve_query_set` в ring-буфер + `map_async` в статики;
+  poll-система раз в кадр (`RenderGraph` после Submit) —
+  `RenderDevice::poll(Maintain::Poll)`, чтобы колбэки map_async шли;
+- main-мир: `Update`-принтер — строка `gpu cut:` раз в секунду
+  (`total | opaque | transparent | post | ui | upscale`, зум камеры в
+  строке для сопоставления) + `gpu spike:` пофреймово при total выше
+  порога (`QWE_PERF_GPU_SPIKES=<ms>`, при unset — только секундные);
+- сегменты: opaque [0→1], transparent [1→2], post [2→3], ui [3→4],
+  upscale [4→5], total [0→5]; msaa_writeback/clear — вне меток, внутри
+  total (недостаток отмечается в записи).
+
+**A/B-добор** (атрибуция внутри сегментов): `brp hide/show` слоёв
+(`tree_crowns`, тени крон, здания/дороги/поверхности) на фоне
+секундных `gpu cut` — доля слоя в transparent по дельте тотала;
+vsync-пробой как независимый кросс-чек тотала.
+
+**Темп-патч** (не коммитить, `/tmp/perf44-temp.patch`): перегонка
+`/tmp/perf43-temp.patch` — кадровые стены + `crossing cut` + `cmd cut`
+нужны для сопоставления GPU-спайков с CPU-джерками на кроссинге 0.2;
+clippy-гейты патчей 43 (лет-чейны, `is_multiple_of`) учтены.
+
+## Шаги
+
+1. Спека (этот файл, коммиты на master до работы).
+2. Worktree-пара `.worktrees/perf44-base` + `perf44` от текущего
+   master tip (проверить `git log` — параллельные сессии могли
+   добавить коммиты); кеш `assets/osm` с mtime (снапшот `paris_*.bin`
+   есть — тёплые прогоны без парса); target посеять
+   `tools/seed-worktree-target.sh` (оба).
+3. Инструмент в perf44 (коммит): `dev.rs` тоггл + `main.rs` фичи +
+   `src/gpu_cut.rs`; сборка и калибровочный прогон (планировка
+   сегментов, разумность чисел, vsync-кросс-чек).
+4. Темп-патч 43 сверху (не коммитить).
+5. Разрез (тёплый Париж, снапшот-хит, порт 15704, из каталога
+   worktree): зумы 4.5 / 0.8 / 0.15 — сим на паузе, ≥3 секундных окна
+   на зум; A/B по слоям на зуме-чемпионе (`hide` → `gpu cut` →
+   `show`); развёртка зума колесом через 0.2 вниз-вверх — `gpu spike`
+   против `frame spike`/`crossing cut` на тех же кадрах.
+6. Вердикт по кускам: кроны merged / тени крон / merged-слои города /
+   post / ui / upscale — рычаг или стенка/продуктовая, с числом и
+   владельцем.
+7. Фикс — если рычаг мелкий и безопасный (инструмент не считать
+   фиксом); иначе плато-отметка.
+8. `tools/check.sh` одним фоном в perf44 (код инструмента коммитится).
+9. Живая пара 3+3 вперемешку (base ↔ perf44, свежие процессы, холодные
+   первые не в медиану, 32 с между) — если был фикс: GPU-числа
+   до/после; если плато — пара для воспроизводимости разреза
+   (медианы окон на зумах).
+10. Запись 54 в `docs/perf-journal/` (по образцу 53), итог — в этот
+    файл сверху.
+11. Артефакт `qwe-perf-journal` (project qwe): строка в «Историю»
+    сверху, хвост карточки «Очередь поменьше»; `get_artifact` →
+    правка → `update_artifact` с `expectedRev` (сейчас 54).
+12. Коммиты; fast-forward master на голову perf44; спавн заезда 45
+    через `mcp__zcode-sessions__spawn_session`; стоп.
+    Одна сессия = одна задача.
+
+## Верификация
+
+- Инструмент: `QWE_PERF_GPU_CUT` unset — ноль эффекта (плагин не
+  добавлен, фичи дефолтные); числа сегментов неотрицательны и
+  суммируются в total; total не противоречит vsync-пробою (пауза,
+  дальний зум: total > 16.7 ↔ `frame_time` 33.3).
+- Разрез: медианы ≥3 окон на зум; холодный первый прогон свежего
+  процесса в медиану не берётся; A/B-дельты слоя больше шума окна.
+- Фикс: `tools/check.sh` OK; живая пара 3+3 подтверждает GPU-числа;
+  инварианты не тронуты (тик, бит-в-бит выходы).
+- Плато: куски названы стенкой/продуктовой с владельцем; свежий
+  рейтинг в конце записи 54.
+
