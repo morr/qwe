@@ -160,6 +160,11 @@ width**) — streets, sections and the tapers between them are in
     `lanes:backward` (+ `lanes:both_ways` when tagged) — then **overwritten** by the
     section pass with the inferred count on every street and drive, so after the parse
     it is `None` on paths only. Coverage per city is in `references/osm-coverage.md`.
+    **A `None` answer is the model's, not the reader's**: `RoadLine::lanes()` counts
+    from the width (a pair per 7 m two-way, a lane per 4.5 m one-way, never a lane
+    under 2.5 m) — `roads::lane_count` is now just the free-function form of that
+    accessor. `pavement` needs no such accessor: its `None` already resolves inside
+    the model's own predicates (`is_paved_path()` says no — the sand trail).
 - `lanes_backward: Option<u8>` — the lanes of a two-way way against its points
   (`lanes:backward`, else `lanes − lanes:forward`; none with a `lanes:both_ways` centre
   lane), settled by the section pass; it places the axis (`references/roads.md`,

@@ -77,31 +77,6 @@ fn the_sidewalk_widths_read_the_class_the_tag_and_the_bridge() {
     assert_eq!(service.sidewalk().kerb(LOT_KERB), 1.2, "проезд — LOT_KERB");
 }
 
-#[test]
-fn lanes_come_from_the_tag_and_fall_back_to_the_width() {
-    let mut street = fixture::street(vec![Vec2::ZERO, Vec2::new(100.0, 0.0)], 8.0);
-    assert_eq!(
-        lane_count(&street),
-        2,
-        "жилая улица без тега — по полосе в каждую сторону"
-    );
-    street.width = 12.0;
-    assert_eq!(lane_count(&street), 4);
-    street.lanes = Some(3);
-    assert_eq!(lane_count(&street), 3, "тег важнее ширины");
-    street.lanes = Some(8);
-    assert_eq!(lane_count(&street), 4, "полоса у́же 2.5 м не бывает");
-    street.lanes = None;
-    street.oneway = true;
-    street.width = 8.0;
-    assert_eq!(lane_count(&street), 1, "односторонняя жилая — одна полоса");
-    street.width = 16.0;
-    assert_eq!(lane_count(&street), 3);
-    street.roundabout = true;
-    street.lanes = Some(2);
-    assert_eq!(lane_count(&street), 2, "кольцо — как любая улица");
-}
-
 /// Кольцо узнаётся и **без тега** — по форме: замкнутое одностороннее полотно.
 /// Большое кольцо у ТРЦ «Макси» (way 397005605) в OSM просто `oneway=yes`,
 /// замкнутый сам на себя, и по одному тегу ни гладкой фигуры, ни островков

@@ -218,6 +218,34 @@ fn the_rail_predicate_lattice_answers_by_kind() {
     }
 }
 
+/// Полосы без тега считает модель, от ширины: `None` у дороги без тега —
+/// не вопрос читателя. Тег важнее ширины; полоса у́же 2.5 м не бывает;
+/// односторонняя — по полосе на 4.5 м. (`map::roads::lane_count` — та же
+/// функция свободной формой.)
+#[test]
+fn lanes_fall_back_to_the_width_in_the_model() {
+    use crate::map::osm::fixture;
+
+    let mut street = fixture::street(vec![Vec2::ZERO, Vec2::new(100.0, 0.0)], 8.0);
+    assert_eq!(
+        street.lanes(),
+        2,
+        "жилая улица без тега — по полосе в каждую сторону"
+    );
+    street.width = 12.0;
+    assert_eq!(street.lanes(), 4);
+    street.lanes = Some(3);
+    assert_eq!(street.lanes(), 3, "тег важнее ширины");
+    street.lanes = Some(8);
+    assert_eq!(street.lanes(), 4, "полоса у́же 2.5 м не бывает");
+    street.lanes = None;
+    street.oneway = true;
+    street.width = 8.0;
+    assert_eq!(street.lanes(), 1, "односторонняя жилая — одна полоса");
+    street.width = 16.0;
+    assert_eq!(street.lanes(), 3);
+}
+
 /// Самая длинная сторона — сторона контура по ходу его вершин, а не ось
 /// описанного прямоугольника; у пустого контура её нет.
 #[test]

@@ -125,17 +125,6 @@ const LOT_LINE_COLOR: Color = Color::srgb(0.88, 0.88, 0.86);
 /// части на четверть, и именно эта ступень яркости читается как бордюр.
 const SIDEWALK_COLOR: Color = Color::srgb(0.82, 0.815, 0.80);
 
-/// Полоса не у́же этого, м. У разобранной улицы ширина выведена из самих
-/// полос (`network::sections`), и зажим ничего не режет; он остался для
-/// дорог, собранных руками, где `lanes=6` может прийти на десятиметровую
-/// ленту.
-const MIN_LANE_WIDTH: f32 = 2.5;
-/// Полос по умолчанию, когда тега `lanes` нет: двусторонней улице — по паре
-/// на каждые 7 м ширины (8 и 10 м — две полосы, 12 и 16 — четыре),
-/// односторонней — по полосе на 4.5 м (8 м — одна, без линий; 16 — три).
-const TWOWAY_METERS_PER_LANE_PAIR: f32 = 7.0;
-const ONEWAY_METERS_PER_LANE: f32 = 4.5;
-
 /// [`RoadLine::is_carriageway`] свободной функцией — её зовут как предикат
 /// (`filter(is_carriageway)`) по всему `map/`.
 ///
@@ -146,19 +135,12 @@ pub fn is_carriageway(road: &RoadLine) -> bool {
     road.is_carriageway()
 }
 
-/// Число полос проезжей части: из сечения ([`RoadLine::lanes`] — после
-/// разбора оно есть у каждой улицы, `network::sections`), у дороги без него
-/// (собранной тестом руками) — дефолт по ширине, и не больше, чем влезает по
-/// [`MIN_LANE_WIDTH`]. Кольцо — как любая улица: разрывы на въездах даёт
-/// краска узла, и линия двухполосного кольца идёт между ними.
+/// [`RoadLine::lanes`] свободной функцией — её зовут как функция
+/// (`lane_count(road)`) по всему `map/`: колея краски, границы полос, разрывы
+/// ряда машин и островки спрашивают число полос у дороги. Сам подсчёт —
+/// в модели: тег, а без него — дефолт по ширине ([`RoadLine::lanes`]).
 pub fn lane_count(road: &RoadLine) -> u8 {
-    let most = ((road.width / MIN_LANE_WIDTH).floor() as u8).max(1);
-    let lanes = match road.lanes {
-        Some(lanes) => lanes,
-        None if road.oneway => (road.width / ONEWAY_METERS_PER_LANE).floor() as u8,
-        None => 2 * (road.width / TWOWAY_METERS_PER_LANE_PAIR).round() as u8,
-    };
-    lanes.clamp(1, most)
+    road.lanes()
 }
 
 /// Раскладка полос проезжей части ([`paint::lane_frame`]) — одна на колею
