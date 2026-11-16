@@ -177,8 +177,12 @@ pub fn spawn_map(
     // выходы текущей ступени — линии колеи (оверлею колеи вкладки Debug),
     // пути трамвая (слою трамвая, следом) и отрисованные куски
     // (семантическому индексу, `map/inspect.rs`) — ресурсами.
-    let RoadStepsBuild { common, steps } = std::mem::take(roads);
-    roads::spawn_road_common_layers(&mut commands, &mut meshes, &materials, common);
+    let RoadStepsBuild {
+        common,
+        paint,
+        steps,
+    } = std::mem::take(roads);
+    roads::spawn_road_common_layers(&mut commands, &mut meshes, &materials, common, paint);
     for (step, build) in steps.into_iter().enumerate() {
         let StepRoadBuild {
             layers,
@@ -200,7 +204,6 @@ pub fn spawn_map(
             (layers, report),
             step,
             current,
-            false,
         );
     }
 

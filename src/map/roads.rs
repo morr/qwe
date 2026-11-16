@@ -396,7 +396,16 @@ pub fn mesh_roads(
     shape: RoadShape,
     verge: VergeZoomBucket,
 ) -> (Vec<LayerMesh>, RoadReport) {
-    let RoadBuild { layers, report, .. } = build_roads(map, style, shape, verge);
+    let RoadBuild {
+        mut layers,
+        paint,
+        report,
+        ..
+    } = build_roads(map, style, shape, verge);
+    // краска — сразу над своим асфальтом: улиц над улицами, мостов над
+    // настилом; сортировка устойчива, прочие слои порядка не меняют
+    layers.extend(paint.into_iter().map(|layer| layer.mesh));
+    layers.sort_by(|a, b| a.z.total_cmp(&b.z));
     (layers, report)
 }
 
@@ -431,6 +440,11 @@ pub fn corner_paving_contours(map: &MapData) -> Vec<Vec<Vec2>> {
 #[derive(Default)]
 pub struct RoadBuild {
     pub layers: Vec<LayerMesh>,
+    /// Краска — вне `layers`, со своими тегами поведения у источника
+    /// (`paint::Painter::layers`): мир кладёт её `spawn_road_paint`, витрина
+    /// режет и кладёт так же. Полная картина с краской в z-порядке — у
+    /// [`mesh_roads`], он приклеивает её обратно.
+    pub paint: Vec<paint::PaintLayer>,
     pub report: RoadReport,
     /// Линии колеи: по ним строится оверлей колеи (`roads/ruts.rs`).
     pub ruts: RutLines,
@@ -530,6 +544,7 @@ pub fn build_roads(
         let (layers, report) = mesh_raw_roads(map, style);
         return RoadBuild {
             layers,
+            paint: Vec::new(),
             report,
             ruts: RutLines::default(),
             tram: TramTracks::as_mapped(&map.rails),
@@ -645,6 +660,9 @@ pub struct RoadStepsBuild {
     /// alleys, unpaved_roads) — скругления первой ступени с дописанной
     /// один раз общей серединой.
     pub common: Vec<LayerMesh>,
+    /// Краска общих слоёв — вне `common`, со своими тегами поведения у
+    /// источника (`paint::Painter::layers`): мир кладёт её `spawn_road_paint`.
+    pub paint: Vec<paint::PaintLayer>,
     /// Ступенезависимые слои и отчёты, в порядке ступеней.
     pub steps: Vec<StepRoadBuild>,
 }
@@ -691,6 +709,7 @@ pub fn build_roads_steps(skeleton: &RoadSkeleton<'_>, steps: &[VergeZoomBucket])
     let mut common = RoadCommon::new(skeleton, steps);
     let CommonLayers {
         layers,
+        paint,
         vertices,
         paint_vertices,
     } = common.take_common_layers();
@@ -703,6 +722,7 @@ pub fn build_roads_steps(skeleton: &RoadSkeleton<'_>, steps: &[VergeZoomBucket])
     });
     RoadStepsBuild {
         common: layers,
+        paint,
         steps,
     }
 }
@@ -1547,16 +1567,13 @@ impl<'s> RoadCommon<'s> {
         .chain(self.bridges.clone().layers())
         .collect();
         let paint_lines = self.painter.lines;
-        let paint_layers = self.painter.clone().layers();
-        let paint_vertices = paint_layers
+        let paint = Vec::from(self.painter.clone().layers());
+        let paint_vertices = paint
             .iter()
-            .map(|layer| layer.builder.vertex_count())
+            .map(|layer| layer.mesh.builder.vertex_count())
             .sum();
         // что скругления насчитали — поля отчёта о них (`corners.rs`)
         let kerbs = lay.kerb.counts();
-        // краска — сразу над своим асфальтом: улиц над улицами, мостов над
-        // настилом; сортировка устойчива, прочие слои порядка не меняют
-        layers.extend(paint_layers);
         layers.sort_by(|a, b| a.z.total_cmp(&b.z));
 
         let report = RoadReport {
@@ -1589,12 +1606,14 @@ impl<'s> RoadCommon<'s> {
             merge_edges: self.merge_edges,
             islands: islands.len(),
             tram_bands: self.tram_bands,
-            vertices: layers.iter().map(|l| l.builder.vertex_count()).sum(),
+            vertices: layers.iter().map(|l| l.builder.vertex_count()).sum::<usize>()
+                + paint_vertices,
             network: self.network_time,
             elapsed: self.started.elapsed(),
         };
         RoadBuild {
             layers,
+            paint,
             report,
             ruts: self.ruts.clone(),
             tram: self.tram_tracks.clone(),
@@ -1635,10 +1654,10 @@ impl<'s> RoadCommon<'s> {
         let rail_crossings = std::mem::take(&mut self.rail_crossings);
         let lot_layers = std::mem::take(&mut self.lot_layers);
         // мосты клонируются, а не вынимаются: отчёты ступеней читают их счёт
-        let paint_layers = self.painter.clone().layers();
-        let paint_vertices = paint_layers
+        let paint = Vec::from(self.painter.clone().layers());
+        let paint_vertices = paint
             .iter()
-            .map(|layer| layer.builder.vertex_count())
+            .map(|layer| layer.mesh.builder.vertex_count())
             .sum();
         let mut layers: Vec<LayerMesh> = [
             (
@@ -1706,16 +1725,15 @@ impl<'s> RoadCommon<'s> {
         .into_iter()
         .map(|(builder, z, name, material)| LayerMesh::new(builder, z, name, material))
         .chain(self.bridges.clone().layers())
-        .chain(paint_layers)
         .collect();
-        // как у слитой сборки: краска — сразу над своим асфальтом; сортировка
-        // устойчива, прочие слои порядка не меняют
         layers.sort_by(|a, b| a.z.total_cmp(&b.z));
-        let vertices = layers.iter().map(|l| l.builder.vertex_count()).sum();
+        let vertices = layers.iter().map(|l| l.builder.vertex_count()).sum::<usize>()
+            + paint_vertices;
         CommonLayers {
             layers,
             vertices,
             paint_vertices,
+            paint,
         }
     }
 
@@ -1867,6 +1885,7 @@ impl<'s> RoadCommon<'s> {
 /// [`RoadCommon::take_common_layers`].
 struct CommonLayers {
     layers: Vec<LayerMesh>,
+    paint: Vec<paint::PaintLayer>,
     vertices: usize,
     paint_vertices: usize,
 }
@@ -2036,7 +2055,11 @@ pub fn rebuild_roads(
         commands.entity(entity).despawn();
     }
     let skeleton = road_skeleton(&map, &style, &shape.0);
-    let RoadStepsBuild { common, steps } = build_roads_steps(&skeleton, &[*verge]);
+    let RoadStepsBuild {
+        common,
+        paint,
+        steps,
+    } = build_roads_steps(&skeleton, &[*verge]);
     let StepRoadBuild {
         layers,
         report,
@@ -2050,7 +2073,7 @@ pub fn rebuild_roads(
     commands.insert_resource(ruts);
     commands.insert_resource(tram);
     commands.insert_resource(DrawnPieces(pieces));
-    spawn_road_common_layers(&mut commands, &mut meshes, &materials, common);
+    spawn_road_common_layers(&mut commands, &mut meshes, &materials, common, paint);
     spawn_road_meshes(
         &mut commands,
         &mut meshes,
@@ -2058,7 +2081,6 @@ pub fn rebuild_roads(
         (layers, report),
         verge.index,
         true,
-        false,
     );
 }
 
@@ -2127,7 +2149,6 @@ pub fn show_road_steps(
             (layers, report),
             step,
             step == verge.index,
-            false,
         );
     }
 }
@@ -2135,20 +2156,16 @@ pub fn show_road_steps(
 /// Положить в мир **общие слои** дороги сплит-сборки
 /// ([`build_roads_steps`]): один экземпляр на город, `RoadLayerTag` **без
 /// `LodStep`** — ступень обочин их не прячет (`show_road_steps` читает
-/// `LodStep`). Краска несёт свой `PaintTag` — её вид ведёт
-/// `paint::show_paint`, как и у слитой сборки. Дверь нужна отдельная именно
-/// из-за отсутствия метки: `spawn_road_meshes` всегда ставит `LodStep(step)`.
+/// `LodStep`). Краска едет отдельно, со своими тегами ([`spawn_road_paint`]),
+/// — дверь нужна отдельная именно из-за отсутствия метки у общих слоёв:
+/// `spawn_road_meshes` всегда ставит `LodStep(step)`.
 pub fn spawn_road_common_layers(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &LayerMaterials,
-    layers: Vec<LayerMesh>,
+    rest: Vec<LayerMesh>,
+    paint: Vec<paint::PaintLayer>,
 ) {
-    // меши краски несут ещё и свой вид — по нему их прячет ступень зума
-    // (`paint::show_paint`)
-    let (paint, rest): (Vec<LayerMesh>, Vec<LayerMesh>) = layers
-        .into_iter()
-        .partition(|layer| paint::PaintTag::of(layer.name).is_some());
     spawn_layers(
         commands,
         meshes,
@@ -2157,11 +2174,28 @@ pub fn spawn_road_common_layers(
             .flat_map(|layer| layer.into_chunks(surface::MAP_CHUNK)),
         (RoadLayerTag, Visibility::Visible),
     );
+    spawn_road_paint(commands, meshes, materials, paint);
+}
+
+/// Положить в мир слои краски: каждый **целиком** (`into_chunks`
+/// полупрозрачную краску не режет) под `RoadLayerTag` со своим `PaintTag` —
+/// тег прикреплён у рождения слоя (`paint::Painter::layers`) и приехал с
+/// мешем. `LodStep` у краски нет: ступень обочин её не прячет, вид ведёт
+/// `paint::show_paint`.
+pub fn spawn_road_paint(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &LayerMaterials,
+    paint: Vec<paint::PaintLayer>,
+) {
     for layer in paint {
-        let Some(tag) = paint::PaintTag::of(layer.name) else {
-            continue;
-        };
-        spawn_layers(commands, meshes, materials, [layer], (RoadLayerTag, tag));
+        spawn_layers(
+            commands,
+            meshes,
+            materials,
+            [layer.mesh],
+            (RoadLayerTag, layer.tag),
+        );
     }
 }
 
@@ -2171,19 +2205,13 @@ pub fn spawn_road_common_layers(
 /// [`rebuild_roads`]) и слитой сборки витрин — форма
 /// `buildings::spawn_building_meshes`: дверь нужна не по числу меток, а по
 /// числу вызывающих. Общие слои спавнит [`spawn_road_common_layers`] —
-/// без `LodStep`, ступень их не прячет.
+/// без `LodStep`, ступень их не прячет; краску — [`spawn_road_paint`] со
+/// своим `PaintTag`, у витрины тем же порядком, что и остальные слои.
 ///
 /// `step` — ступень обочины, под которую собраны слои: обе ступени лежат в
 /// мире сразу (собранные потоком загрузки, `map/prepare.rs`), скрытые, и
 /// пересечение порога переключает видимость (`show_road_steps`), а не
 /// пересобирает дорогу. `visible` — виден ли этот шаг при спавне.
-///
-/// `spawn_paint` — спавнить ли краску (`PaintTag`): её геометрия от ступени
-/// обочины не зависит (в отчётах обеих ступеней одни и те же 6121 линия и
-/// 280865 вершин), и второй экземпляр дал бы двойную покраску и лишние
-/// вершины. В игре краска едет в общих слоях ([`spawn_road_common_layers`]),
-/// так что ступеням флага не надо; `true` остался слитой сборке витрины,
-/// которая краску в своих слоях несёт.
 pub fn spawn_road_meshes(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -2191,13 +2219,7 @@ pub fn spawn_road_meshes(
     (layers, report): (Vec<LayerMesh>, RoadReport),
     step: usize,
     visible: bool,
-    spawn_paint: bool,
 ) {
-    // меши краски несут ещё и свой вид — по нему их прячет ступень зума
-    // (`paint::show_paint`)
-    let (paint, rest): (Vec<LayerMesh>, Vec<LayerMesh>) = layers
-        .into_iter()
-        .partition(|layer| paint::PaintTag::of(layer.name).is_some());
     let visibility = if visible {
         Visibility::Visible
     } else {
@@ -2211,18 +2233,11 @@ pub fn spawn_road_meshes(
         // сам не трогает полупрозрачные тени и краску): каждая запись — тот
         // же слой под тем же именем, метка с LodStep ложится на каждый кусок,
         // и `show_road_steps` перекрашивает их как один
-        rest.into_iter()
+        layers
+            .into_iter()
             .flat_map(|layer| layer.into_chunks(surface::MAP_CHUNK)),
         (RoadLayerTag, LodStep(step), visibility),
     );
-    if spawn_paint {
-        for layer in paint {
-            let Some(tag) = paint::PaintTag::of(layer.name) else {
-                continue;
-            };
-            spawn_layers(commands, meshes, materials, [layer], (RoadLayerTag, tag));
-        }
-    }
     info!("{report}");
 }
 

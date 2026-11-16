@@ -264,7 +264,17 @@ fn the_split_door_keeps_the_merged_geometry() {
         ],
         "ступень несёт только то, чем ступени расходятся"
     );
-    let common_names: Vec<&str> = build.common.iter().map(|layer| layer.name).collect();
+    let common_names: Vec<&str> = {
+        // краска едет отдельно (`build.paint`); полная картина общих слоёв —
+        // она и общие слои, и краска, в z-порядке, как у слитой сборки
+        let mut common: Vec<&LayerMesh> = build
+            .common
+            .iter()
+            .chain(build.paint.iter().map(|layer| &layer.mesh))
+            .collect();
+        common.sort_by(|a, b| a.z.total_cmp(&b.z));
+        common.iter().map(|layer| layer.name).collect()
+    };
     let expected: Vec<&str> = LAYERS
         .iter()
         .copied()
@@ -291,6 +301,7 @@ fn the_split_door_keeps_the_merged_geometry() {
     let common_vertices: usize = build
         .common
         .iter()
+        .chain(build.paint.iter().map(|layer| &layer.mesh))
         .map(|layer| layer.builder.vertex_count())
         .sum();
     let step_vertices: usize = build.steps[0]

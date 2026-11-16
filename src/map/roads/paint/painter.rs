@@ -17,8 +17,8 @@ use super::{
     APPROACH, ARROW_BRANCH, ARROW_BRANCH_REACH, ARROW_HEAD, ARROW_HEAD_WIDTH, ARROW_LENGTH,
     ARROW_MARK_REACH, ARROW_REPEAT, ARROW_REPEAT_CLEAR, ARROW_SETBACK, ARROW_STEM, AXIS_STRIP,
     ArrowMarks, BIRTH_FADE, DOUBLE_AXIS_LANES, EDGE_WIDTH, HOOK_OVERLAP, LANE_STRIP, LINE_SLACK,
-    LineBreaks, LineKind, MergeRamp, PAINT_COLOR, PaintPass, RAMP_STEP, RUT_OFFSET, RUT_SIGMA,
-    Station, ZEBRA_PERIOD, axis_offset,
+    LineBreaks, LineKind, MergeRamp, PAINT_COLOR, PaintPass, PaintTag, RAMP_STEP, RUT_OFFSET,
+    RUT_SIGMA, Station, ZEBRA_PERIOD, axis_offset,
 };
 use crate::map::along::{arclengths, place_on_path};
 use crate::map::meshing::{
@@ -144,7 +144,7 @@ impl Painter {
     }
 }
 
-/// Имена слоёв краски — по ним [`PaintTag`] находит свой меш, а BRP — сущность.
+/// Имена слоёв краски — по ним BRP находит сущность в живом мире.
 pub const PAINT_WEAR_MASK: &str = "road_paint_wear_mask";
 pub const PAINT_WEAR: &str = "road_paint_wear";
 pub const PAINT_LANES: &str = "road_paint_lanes";
@@ -910,40 +910,81 @@ impl Painter {
 
     /// Восемь слоёв краски: маска и наложение колеи узлов, краска улиц над
     /// асфальтом улиц, островки колец над асфальтом стоянок, мосты над
-    /// настилом.
-    pub fn layers(self) -> [LayerMesh; 8] {
+    /// настилом. Тег поведения ([`PaintTag`]) прикрепляется здесь же, у
+    /// рождения слоя, — до спавна он едет с мешем в [`PaintLayer`], и новый
+    /// слой краски — одна строка этой таблицы.
+    pub fn layers(self) -> [PaintLayer; 8] {
         [
             (
                 self.wear_mask,
                 Z_ROAD_WEAR_MASK,
                 PAINT_WEAR_MASK,
                 PaintPass::WearMask,
+                PaintTag::Wear,
             ),
-            (self.wear, Z_ROAD_WEAR, PAINT_WEAR, PaintPass::Wear),
-            (self.zebras, Z_ROAD_PAINT, PAINT_ZEBRAS, PaintPass::Lines),
+            (
+                self.wear,
+                Z_ROAD_WEAR,
+                PAINT_WEAR,
+                PaintPass::Wear,
+                PaintTag::Wear,
+            ),
+            (
+                self.zebras,
+                Z_ROAD_PAINT,
+                PAINT_ZEBRAS,
+                PaintPass::Lines,
+                PaintTag::Zebras,
+            ),
             (
                 self.islands,
                 Z_ROAD_ISLANDS,
                 PAINT_ISLANDS,
                 PaintPass::Lines,
+                PaintTag::Zebras,
             ),
-            (self.lanes, Z_ROAD_PAINT, PAINT_LANES, PaintPass::Lines),
-            (self.axes, Z_ROAD_PAINT, PAINT_AXES, PaintPass::Lines),
+            (
+                self.lanes,
+                Z_ROAD_PAINT,
+                PAINT_LANES,
+                PaintPass::Lines,
+                PaintTag::Lanes,
+            ),
+            (
+                self.axes,
+                Z_ROAD_PAINT,
+                PAINT_AXES,
+                PaintPass::Lines,
+                PaintTag::Axes,
+            ),
             (
                 self.bridge_lanes,
                 Z_BRIDGE_PAINT,
                 BRIDGE_PAINT_LANES,
                 PaintPass::Lines,
+                PaintTag::Lanes,
             ),
             (
                 self.bridge_axes,
                 Z_BRIDGE_PAINT,
                 BRIDGE_PAINT_AXES,
                 PaintPass::Lines,
+                PaintTag::Axes,
             ),
         ]
-        .map(|(builder, z, name, pass)| LayerMesh::new(builder, z, name, MaterialSpec::Paint(pass)))
+        .map(|(builder, z, name, pass, tag)| PaintLayer {
+            mesh: LayerMesh::new(builder, z, name, MaterialSpec::Paint(pass)),
+            tag,
+        })
     }
+}
+
+/// Слой краски со своим тегом поведения: тег прикрепляется у рождения слоя
+/// ([`Painter::layers`]) и едет с мешем до спавна — там он ложится на
+/// сущность рядом с `RoadLayerTag`, и `show_paint` прячет меш по нему с зумом.
+pub struct PaintLayer {
+    pub mesh: LayerMesh,
+    pub tag: PaintTag,
 }
 
 /// Станции поперечной краски длиной `width` от длины `start`: длина идёт

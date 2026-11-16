@@ -130,7 +130,7 @@ use qwe::map::{
     ParkingLayout, RailZoomBucket, RoadBuild, RoadPaintStyle, RoadShape, RoadShapeOnMap, RoadStyle,
     RoofStyle, SunOnMap, SurfaceStyle, TramStyle, TramZoomBucket, VergeZoomBucket, apply_sun,
     build_roads, mesh_fences, mesh_map_cars, mesh_rails, mesh_surfaces, mesh_tram,
-    mesh_tree_row_band, set_lane_width, settle_road_shape, spawn_road_meshes,
+    mesh_tree_row_band, set_lane_width, settle_road_shape, spawn_road_meshes, spawn_road_paint,
 };
 use qwe::ui::knob::AddKnobsExt;
 use qwe::ui::{
@@ -818,6 +818,7 @@ fn build_next(
     let verge = VergeZoomBucket::for_zoom(0.0);
     let RoadBuild {
         layers: road_layers,
+        paint: mut road_paint,
         report: road_report,
         ruts,
         tram: tram_tracks,
@@ -827,6 +828,11 @@ fn build_next(
     // ими так же, как в игре
     commands.insert_resource(DrawnPieces(road_pieces));
     let road_layers = clip(road_layers);
+    // краска едет отдельно, со своими тегами (`RoadBuild::paint`), — режется
+    // тем же окном и спавнится своим спавном (`spawn_road_paint`)
+    for layer in &mut road_paint {
+        layer.mesh.builder.clip_to_rect(window_min, window_max);
+    }
     let road_line = road_report.to_string();
     spawn_road_meshes(
         &mut commands,
@@ -835,8 +841,8 @@ fn build_next(
         (road_layers, road_report),
         verge.index,
         true,
-        true,
     );
+    spawn_road_paint(&mut commands, &mut meshes, &materials.layers, road_paint);
 
     // машины — по заказу: витрина про дороги, и ряд у бордюра закрывает то,
     // на что она смотрит, но у дворов и карманов он и есть предмет проверки

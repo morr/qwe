@@ -64,7 +64,7 @@ pub use self::material::{
 };
 pub use self::painter::{
     BRIDGE_PAINT_AXES, BRIDGE_PAINT_LANES, PAINT_AXES, PAINT_ISLANDS, PAINT_LANES, PAINT_WEAR,
-    PAINT_WEAR_MASK, PAINT_ZEBRAS, Painter,
+    PAINT_WEAR_MASK, PAINT_ZEBRAS, PaintLayer, Painter,
 };
 
 /// Ширина линии, м — как у настоящей (10–15 см). На экране не тоньше 1.3 px:

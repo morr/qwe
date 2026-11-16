@@ -125,7 +125,7 @@ pub use self::rail::{RailZoomBucket, mesh_rails};
 pub use self::roads::tram_lay::TramTracks;
 pub use self::roads::{
     RoadBuild, VergeLods, VergeZoomBucket, build_roads, corner_paving_contours, mesh_roads,
-    spawn_road_meshes,
+    spawn_road_meshes, spawn_road_paint,
 };
 pub use self::spawn::{mesh_surfaces, mesh_tree_row_band};
 pub use self::tram::{TramZoomBucket, mesh_tram};

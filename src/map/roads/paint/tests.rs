@@ -901,8 +901,8 @@ fn the_wear_passes_have_their_own_materials_under_the_lines() {
     let at = |name: &str| {
         layers
             .iter()
-            .find(|layer| layer.name == name)
-            .map(|layer| (layer.z, layer.material))
+            .find(|layer| layer.mesh.name == name)
+            .map(|layer| (layer.mesh.z, layer.mesh.material))
             .expect(name)
     };
     let (mask_z, mask) = at(PAINT_WEAR_MASK);
