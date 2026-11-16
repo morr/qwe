@@ -1238,7 +1238,11 @@ its draw call.
   into commas, that lands whole and never grows, in a cell 1.8× wider. Ten glyphs of
   each — **the count costs nothing per frame**: cells are rasterised once at startup and
   the batch is still one texture — shape seeded from the variant number; which pair a body gets, plus its own spin,
-  size and tint, comes from the `Entity` bits (`blood_look`). **Thickness sets both alpha
+  size and tint, comes from the `Entity` bits (`blood_look`). Size and tint walk in
+  **four quantised steps** each (`BLOOD_STEPS`, the attire bar): the sprite material
+  cache keys on exact colour and `custom_size` bits, so continuous blood paid it an
+  entry per corpse and the per-frame eviction pass grew with the corpses — steps cap
+  each layer at 640 keys. **Thickness sets both alpha
   and shade**: the sprite colour is the *thin film* and the glyph darkens the deep middle,
   so a small drop is thin because it is small. Every stain side by side on three grounds:
   `cargo run --example blood_gallery`.

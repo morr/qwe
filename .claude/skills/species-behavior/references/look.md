@@ -133,6 +133,16 @@ a spin for each (`BLOOD_SPINS` 64 steps, on top of the body's own rotation), a s
 hashed with the pose's own bits, pose and pool would walk in step and four pairs would
 become visible long before forty.
 
+Size and tint are **quantised to four steps each** (`BLOOD_STEPS` — byte `>> 6` after
+the hash, before the `Color`): the sprite-render material cache buckets on the *exact*
+colour and `custom_size` bits and its eviction walks the whole cache every frame, so
+continuous blood paid it an entry per corpse (pool and spatter) and the pass grew with
+the corpses without a ceiling (~1 ms/frame at a 12.6k-corpse endgame). Steps cap each
+layer at 10 glyphs × 4 × 4 × 4 = 640 keys, ≤ ~1300 on any battlefield. The decision
+bit-flow is untouched — same scheme and same bar as the attire quantisation (journal
+entry 02, `ATTIRE_*_STEP`); the step itself is below the eye, watched by
+`blood_gallery`.
+
 **Growth** (`spread_blood`, `Update`, `SimPipeline::BothModes`) — the pool opens ease-out
 by writing `Silhouette::body` (never `custom_size` — that belongs to `silhouette`), and
 pushes the pool into `FreshSilhouettes`. Ordered `.before(size_fresh_silhouettes)` so the
