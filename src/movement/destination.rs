@@ -73,7 +73,7 @@ use bevy::prelude::*;
 use crate::grid::{navtile_size, tile_center};
 use crate::human::HumanStyle;
 use crate::movement::components::{Movable, PathfindingRequest};
-use crate::navigation::Backend;
+use crate::navigation::{Backend, nearest_tile_where};
 
 /// Докуда ищется свободный слот назначения, м — дефолт [`SlotSearch`].
 ///
@@ -428,12 +428,11 @@ impl DestinationClaims {
 
     /// Свободный слот, ближайший к `desired`, а при равенстве — к `from`.
     ///
-    /// Кольцевой поиск, как `navigation::nearest_tile_where`, но со вторым
-    /// ключом, ради которого он и написан отдельно. Кольца чебышёвские, а
-    /// первый ключ евклидов, поэтому кольцо, где нашёлся лучший кандидат, не
-    /// последнее: тайл кольца `r` не ближе `r`, значит обход идёт, пока
-    /// `r² ≤ лучшего` — на одно кольцо дальше, чем при поиске без второго
-    /// ключа, чтобы кандидаты на том же расстоянии от цели не потерялись.
+    /// Один кольцевой поиск [`nearest_tile_where`]: дистанцию слота до цели
+    /// (первый ключ) поиск считает сам, замыкание даёт второй — дистанцию
+    /// цели слота до самой пешки. Ничьи по обоим ключам разыгрывает порядок
+    /// обхода кольца; равные дистанции до цели живут и между кольцами, и
+    /// ранний выход поиска обязан до них доживать — он так и устроен.
     fn nearest_free_slot(
         &self,
         claimant: Entity,
@@ -442,38 +441,13 @@ impl DestinationClaims {
         from: Vec2,
         passable: &impl Fn(IVec2) -> bool,
     ) -> Option<IVec2> {
-        let mut best: Option<(i32, f32, IVec2)> = None;
-        for ring in 0..=radius {
-            if let Some((to_target, ..)) = best
-                && ring * ring > to_target
-            {
-                break;
+        nearest_tile_where(desired, radius, |slot| {
+            if !self.is_free(slot, claimant) {
+                return None;
             }
-            for dy in -ring..=ring {
-                for dx in -ring..=ring {
-                    // только само кольцо: его внутренность просмотрена раньше
-                    if ring > 0 && dx.abs() != ring && dy.abs() != ring {
-                        continue;
-                    }
-                    let slot = desired + IVec2::new(dx, dy);
-                    if !self.is_free(slot, claimant) {
-                        continue;
-                    }
-                    let target = slot_target(slot, self.side);
-                    if !passable(target) {
-                        continue;
-                    }
-                    let score = (
-                        dx * dx + dy * dy,
-                        (tile_center(target) - from).length_squared(),
-                    );
-                    if best.is_none_or(|(to_target, to_pawn, _)| score < (to_target, to_pawn)) {
-                        best = Some((score.0, score.1, slot));
-                    }
-                }
-            }
-        }
-        best.map(|(.., slot)| slot)
+            let target = slot_target(slot, self.side);
+            passable(target).then(|| (tile_center(target) - from).length_squared())
+        })
     }
 
     /// Снять заявку — только если слот числится за этой сущностью: после

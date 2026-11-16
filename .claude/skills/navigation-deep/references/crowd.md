@@ -245,7 +245,9 @@ block pick any passable tile in itself and two neighbouring blocks pick adjacent
 corners, which is the very thing the block exists to prevent; the price is that a block
 with an impassable centre goes unused and the pitch rounds up to a whole tile (up to
 ~2× the rest distance), so a crowd parks a little sparser than strictly needed. A taken
-slot moves the goal outward by ring search (`nearest_tile_where`, bounded by the
+slot moves the goal outward by ring search (`nearest_tile_where`, with the pawn
+distance as its second key — among slots equally close to the goal the one on the
+pawn's side wins, and a full tie falls to the ring's scan order; bounded by the
 `SlotSearch` resource, `CLAIM_SEARCH_METERS` 16 m by default and a slider in the crowd
 demo — deliberately not a `SettingsGroup`, it is a tuning bound and the demo must not
 write the game's config). Nothing free inside the bound is the one branch where the old
