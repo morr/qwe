@@ -17,6 +17,16 @@ pub enum MovableState {
     PathfindingError(IVec2),
 }
 
+impl MovableState {
+    /// «Пешке нужен путь» — те же два состояния, что держит маркер
+    /// [`NeedsWanderTarget`]: она стоит (`Idle`) либо поиск провалился и цель
+    /// надо выбирать заново (`PathfindingError`). Идёт (`Moving`) и ждёт
+    /// ответа (`Pathfinding`) пешка решения о цели не принимает.
+    pub fn needs_path(&self) -> bool {
+        matches!(self, Self::Idle | Self::PathfindingError(_))
+    }
+}
+
 /// Тег для дешёвой выборки движущихся сущностей.
 #[derive(Component, Default, Reflect)]
 #[reflect(Component)]
@@ -400,6 +410,16 @@ pub fn strip_movement(commands: &mut Commands, entity: Entity) {
 mod tests {
     use super::*;
     use crate::human::{HUMAN_BODY_RADIUS, HUMAN_BODY_RADIUS_MAX};
+
+    /// Предикат «пешке нужен путь» — ровно состояния тега `NeedsWanderTarget`:
+    /// стоит или перебирает цель после провала, но не идёт и не ждёт ответа.
+    #[test]
+    fn needs_path_is_exactly_the_needs_wander_target_states() {
+        assert!(MovableState::Idle.needs_path());
+        assert!(MovableState::PathfindingError(IVec2::ZERO).needs_path());
+        assert!(!MovableState::Pathfinding(IVec2::ZERO).needs_path());
+        assert!(!MovableState::Moving(IVec2::ZERO).needs_path());
+    }
 
     /// Та самая побочка находки: пешка без вида (отладочный ходок) — это тело
     /// обычного размера, а не демон.

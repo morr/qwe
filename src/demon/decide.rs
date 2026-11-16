@@ -212,10 +212,7 @@ pub fn decide(
 
     // перепрокладка пути к цели — по таймеру, не каждый тик; потерянный путь
     // ждать такта не обязан
-    let needs_first_path = matches!(
-        sense.state,
-        MovableState::Idle | MovableState::PathfindingError(_)
-    );
+    let needs_first_path = sense.state.needs_path();
     if !sense.repath_due && !needs_first_path {
         return ChaseAction::Hold;
     }

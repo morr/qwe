@@ -38,7 +38,7 @@ pub use self::separation::{
 };
 pub use self::systems::{DrawMovePaths, MOVEPATH_ARROW_TIP, MOVEPATH_COLOR};
 pub use self::wander::{
-    clamp_to_map, heading_towards, point_in_cone, ready_to_pick, request_wander_path,
+    assert_ready_to_pick, clamp_to_map, heading_towards, point_in_cone, request_wander_path,
 };
 use crate::determinism::{DeterminismPlugin, SimPipeline};
 use crate::loading::AppState;

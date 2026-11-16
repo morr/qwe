@@ -270,7 +270,7 @@ pub fn chase(
 /// жертвы, там `to_idle` вернёт ему `NeedsWanderTarget`, и блуждание выберет
 /// новую цель. Снятая здесь заявка оставила бы его в
 /// `MovableState::Pathfinding` без заявки и без метки — то есть навсегда
-/// (`pick_wander_targets` требует `ready_to_pick`).
+/// (`pick_wander_targets` пускает в выбор цели только тег `NeedsWanderTarget`).
 fn back_to_wander(commands: &mut Commands, entity: Entity) {
     commands
         .entity(entity)

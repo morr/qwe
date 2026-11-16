@@ -10,7 +10,7 @@ use crate::human::look::{human_body, roll_attire};
 use crate::loading::AppState;
 use crate::map::osm::{MapData, PolyArea};
 use crate::movement::{
-    Movable, NeedsWanderTarget, SimPosition, heading_towards, point_in_cone, ready_to_pick,
+    Movable, NeedsWanderTarget, SimPosition, assert_ready_to_pick, heading_towards, point_in_cone,
     request_wander_path,
 };
 use crate::navigation::{ArcNavmesh, Backend};
@@ -417,8 +417,9 @@ pub fn pick_wander_targets(
         (
             With<Human>,
             With<HumanWanderTag>,
-            // тег держит ровно `Idle` и `PathfindingError` — те же состояния,
-            // что отбирала проверка в теле цикла (она осталась подстраховкой)
+            // тег держит ровно `Idle` и `PathfindingError` (`needs_path`):
+            // ставят его переходы `Movable`, тело цикла только стережёт этот
+            // контракт под debug
             With<NeedsWanderTarget>,
         ),
     >,
@@ -439,9 +440,7 @@ pub fn pick_wander_targets(
         is_first_wander,
     ) in &mut query
     {
-        if !ready_to_pick(&movable.state) {
-            continue;
-        }
+        assert_ready_to_pick(&movable.state);
 
         pause.0.tick(time.delta());
         if !pause.0.is_finished() {

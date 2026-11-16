@@ -27,15 +27,16 @@ use crate::navigation::Walkable;
 use crate::rng::SimRng;
 use crate::settings::{MAP_SIZE, WANDER_MAP_MARGIN};
 
-/// Принимает ли пешка решение прямо сейчас.
-///
-/// Те же два состояния, что держит маркер `NeedsWanderTarget`; проверка в теле
-/// цикла осталась подстраховкой на случай, если маркер разъедется с состоянием.
-pub fn ready_to_pick(state: &MovableState) -> bool {
-    matches!(
-        state,
-        MovableState::Idle | MovableState::PathfindingError(_)
-    )
+/// Страж контракта тега `NeedsWanderTarget`: он держит ровно те состояния, в
+/// которых пешка ждёт цель ([`MovableState::needs_path`]), и ставят его только
+/// переходы `Movable`. Проверка в теле цикла поэтому не фильтр, а громкое
+/// падение под debug на разъехавшемся теге; в релизе телу решения она не
+/// мешает вовсе.
+pub fn assert_ready_to_pick(state: &MovableState) {
+    debug_assert!(
+        state.needs_path(),
+        "NeedsWanderTarget разъехался с состоянием: {state:?}"
+    );
 }
 
 /// Случайная точка в конусе вокруг курса, подрезанная к карте.
@@ -108,14 +109,6 @@ mod tests {
 
     fn rng() -> SimRng {
         decision_stream(1, RngDomain::Human, 0, 1)
-    }
-
-    #[test]
-    fn a_pawn_mid_route_picks_nothing() {
-        assert!(ready_to_pick(&MovableState::Idle));
-        assert!(ready_to_pick(&MovableState::PathfindingError(IVec2::ZERO)));
-        assert!(!ready_to_pick(&MovableState::Moving(IVec2::ZERO)));
-        assert!(!ready_to_pick(&MovableState::Pathfinding(IVec2::ZERO)));
     }
 
     /// Конус держит курс: любая выборка ложится в пределах полураствора.

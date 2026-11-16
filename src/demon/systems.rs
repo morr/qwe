@@ -10,8 +10,8 @@ use crate::demon::look::{demon_body, halo};
 use crate::diagnostics::{SIM_SPAWNER_MS, SimMeasure};
 use crate::loading::AppState;
 use crate::movement::{
-    DrawMovePaths, MOVEPATH_ARROW_TIP, MOVEPATH_COLOR, Movable, SimPosition, point_in_cone,
-    ready_to_pick, request_wander_path,
+    DrawMovePaths, MOVEPATH_ARROW_TIP, MOVEPATH_COLOR, Movable, SimPosition, assert_ready_to_pick,
+    point_in_cone, request_wander_path,
 };
 use crate::navigation::Backend;
 use crate::portal::PortalPos;
@@ -203,9 +203,7 @@ pub fn pick_wander_targets(
     let walkable = backend.walkable();
 
     for (entity, sim_position, mut movable, pawn_id, mut wander_index) in &mut query {
-        if !ready_to_pick(&movable.state) {
-            continue;
-        }
+        assert_ready_to_pick(&movable.state);
 
         // после отсева, а не до: `next` сдвигает номер решения, и заведённый
         // заранее поток крутил бы его вхолостую на каждом кадре

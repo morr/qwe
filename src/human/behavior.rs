@@ -13,7 +13,7 @@ use crate::human::components::{
 use crate::human::decide::{
     FLEE_STEP, FleeAction, FleeSense, Threat, ThreatProbe, decide, escaped, flee_target,
 };
-use crate::movement::{Movable, MovableState, SimPosition};
+use crate::movement::{Movable, SimPosition};
 use crate::navigation::Backend;
 use crate::rng::{PawnId, WanderIndex};
 use crate::settings::{
@@ -175,10 +175,7 @@ pub fn flee(
             pawn_id: pawn_id.0,
             chased: chased.contains(&entity),
             repath_due: repath.0.just_finished(),
-            needs_path: matches!(
-                movable.state,
-                MovableState::Idle | MovableState::PathfindingError(_)
-            ),
+            needs_path: movable.state.needs_path(),
         };
         let action = decide(&sense, |probe| match probe {
             ThreatProbe::Cells => {
@@ -279,7 +276,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::movement::{PathfindingRequest, RequestedAt};
+    use crate::movement::{MovableState, PathfindingRequest, RequestedAt};
     use crate::rng::WorldSeed;
 
     /// Мир бегства: общий двор плюс то, что нужно именно людям — сетка
