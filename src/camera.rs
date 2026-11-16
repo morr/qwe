@@ -343,15 +343,53 @@ fn entry_zoom(mode: CameraPositionMode, saved: &SavedCameraView) -> f32 {
     }
 }
 
-/// Зум, с которым мир откроется при **следующем** входе в `Playing` — то же
-/// решение, что у [`place_camera_on_world_ready`], доступное до входа.
+/// Решение «первый вход / тот же город / смена города» — одно на обе точки
+/// применения: постановку камеры по загруженному миру
+/// ([`place_camera_on_world_ready`]) и прогноз зума до входа
+/// ([`next_entry_zoom`]).
 ///
-/// «Тот же город» — камеру при входе не трогают вовсе, зумом служит текущий;
-/// у первого входа режим как настроен, у смены города — сброс к порталу
-/// (`START_ZOOM`). Разъехаться с постановкой камеры эта функция может только
-/// при правке одной из них: слой, собранный не под ту ступень, просто
-/// пересоберётся на входе в кадре (`fences::rebuild_fences`) — деградация до
-/// прежнего поведения, а не ошибка.
+/// Сохранённый вид уважается лишь на первом входе, то есть на старте
+/// приложения: следующий вход с **другим** городом — это его смена, а
+/// сохранённая точка принадлежит прошлой карте, и в новом городе камеру ждут
+/// у его портала. Перезагрузка **того же** города (смена размера навтайла)
+/// камеру не трогает вовсе: пользователь смотрит на тот же участок карты, и
+/// увозить его к порталу — значит терять место, которое он разглядывал.
+#[derive(Clone, Copy, Debug)]
+enum EntryDecision {
+    /// Мир открывается впервые: режим как настроен, сохранённый вид уважается.
+    FirstEntry,
+    /// Перезагрузка того же города: камеру не трогают вовсе.
+    SameCity,
+    /// Вход с другим городом: сброс к порталу нового города.
+    NewCity,
+}
+
+fn entry_decision(last: Option<City>, city: City) -> EntryDecision {
+    match last {
+        None => EntryDecision::FirstEntry,
+        Some(last) if last == city => EntryDecision::SameCity,
+        Some(_) => EntryDecision::NewCity,
+    }
+}
+
+impl EntryDecision {
+    /// Режим, под которым мир открывается: как настроен на первом входе, сброс
+    /// к порталу при смене города. `SameCity` камеры не касается и режима не
+    /// задаёт.
+    fn mode(self, configured: CameraPositionMode) -> Option<CameraPositionMode> {
+        match self {
+            Self::FirstEntry => Some(configured),
+            Self::NewCity => Some(CameraPositionMode::Reset),
+            Self::SameCity => None,
+        }
+    }
+}
+
+/// Зум, с которым мир откроется при **следующем** входе в `Playing` — то же
+/// решение ([`entry_decision`]), что и у постановки камеры, доступное до входа.
+///
+/// Слой, собранный не под ту ступень, просто пересоберётся на входе в кадре
+/// (`fences::rebuild_fences`) — деградация до прежнего поведения, а не ошибка.
 pub(crate) fn next_entry_zoom(
     mode: CameraPositionMode,
     saved: &SavedCameraView,
@@ -359,17 +397,15 @@ pub(crate) fn next_entry_zoom(
     city: City,
     live_zoom: Option<f32>,
 ) -> f32 {
-    if last == Some(city) {
-        // камеры нет в сценах без мира — точного зума там не бывает, берём
-        // хоть что-то детерминированное
-        return live_zoom.unwrap_or_else(|| entry_zoom(mode, saved));
+    match entry_decision(last, city).mode(mode) {
+        Some(mode) => entry_zoom(mode, saved),
+        None => {
+            // тот же город: зумом служит текущая камера, но её нет в сценах
+            // без мира — точного зума там не бывает, берём хоть что-то
+            // детерминированное
+            live_zoom.unwrap_or_else(|| entry_zoom(mode, saved))
+        }
     }
-    let mode = if last.is_none() {
-        mode
-    } else {
-        CameraPositionMode::Reset
-    };
-    entry_zoom(mode, saved)
 }
 
 /// Масштаб трансформа PanCamera держит сам, но пишет его только в кадре, где
@@ -383,16 +419,9 @@ fn apply_view(transform: &mut Transform, controller: &mut PanCamera, view: Camer
 /// Постановка камеры по загруженному миру: позиция портала снапится по navmesh
 /// уже загруженного города, так что известна только к входу в `Playing`.
 ///
-/// Решение «первый вход / смена города / тот же город» — одно с
-/// [`next_entry_zoom`], которым поток загрузки предсказывает зум до входа
-/// ([`LastWorldCity`] — тот же факт, поднятый из `Local` в ресурс).
-///
-/// Сохранённый вид уважается лишь на первом входе, то есть на старте
-/// приложения: следующий вход с **другим** городом — это его смена, а
-/// сохранённая точка принадлежит прошлой карте, и в новом городе камеру ждут
-/// у его портала. Перезагрузка **того же** города (смена размера навтайла)
-/// камеру не трогает вовсе: пользователь смотрит на тот же участок карты, и
-/// увозить его к порталу — значит терять место, которое он разглядывал.
+/// Решение — [`entry_decision`], тот же, что читает до входа поток загрузки
+/// ради прогноза зума ([`next_entry_zoom`]; [`LastWorldCity`] — тот же факт,
+/// поднятый из `Local` в ресурс).
 ///
 /// `pub(crate)`: слои с зум-LOD (`map/zoom.rs`) ставят свою ступень по камере
 /// и обязаны идти после этой системы — в том же `WorldInitSet::Spawn`.
@@ -404,17 +433,11 @@ pub(crate) fn place_camera_on_world_ready(
     portal: Res<PortalPos>,
     mut camera: Single<(&mut Transform, &mut PanCamera), With<Camera2d>>,
 ) {
-    let first_load = last_city.0.is_none();
-    let same_city = last_city.0 == Some(*city);
+    let decision = entry_decision(last_city.0, *city);
     last_city.0 = Some(*city);
-    if same_city {
+    // тот же город: камера остаётся, где стояла, — и позиция, и зум её
+    let Some(mode) = decision.mode(*mode) else {
         return;
-    }
-
-    let mode = if first_load {
-        *mode
-    } else {
-        CameraPositionMode::Reset
     };
     let (transform, controller) = &mut *camera;
     apply_view(transform, controller, start_view(mode, &saved, portal.0));
@@ -884,10 +907,9 @@ mod tests {
         assert!(!hovering(false));
     }
 
-    /// Прогноз зума входа — то же решение, что у постановки камеры:
-    /// [`place_camera_on_world_ready`]. Первый вход читает режим и сохранённый
-    /// вид, смена города сбрасывает к порталу, перезагрузка того же города
-    /// держит текущую камеру.
+    /// Прогноз зума входа читает решение [`entry_decision`] — то же, что у
+    /// постановки камеры. Первый вход — режим и сохранённый вид, смена города
+    /// — сброс к порталу, перезагрузка того же города — текущая камера.
     #[test]
     fn the_entry_zoom_follows_the_camera_decision() {
         let saved = |zoom: f32| SavedCameraView {
@@ -932,5 +954,73 @@ mod tests {
             ),
             0.1
         );
+    }
+
+    /// Постановка камеры по загруженному миру — решение [`entry_decision`] на
+    /// настоящей системе, и позиция, и зум: первый вход в режиме Save держит
+    /// сохранённый вид (в Reset — портал), смена города всегда ведёт к порталу
+    /// нового города, перезагрузка того же города камеру не трогает вовсе.
+    #[test]
+    fn placing_the_camera_follows_the_entry_decision() {
+        use bevy::ecs::system::RunSystemOnce;
+
+        let (tula, paris) = (City::Tula, City::Paris);
+        let saved_view = |position: Vec2, zoom: f32| SavedCameraView {
+            position: Some(position),
+            zoom: Some(zoom),
+        };
+        let portal = Vec2::new(-500.0, 90.0);
+
+        let mut world = World::new();
+        world.insert_resource(LastWorldCity(None));
+        world.insert_resource(City::Tula);
+        world.insert_resource(CameraPositionMode::Save);
+        world.insert_resource(saved_view(Vec2::new(120.0, 340.0), 2.0));
+        world.insert_resource(PortalPos(portal));
+        world
+            .spawn((pan_controller(START_ZOOM), Camera2d))
+            .insert(Transform::from_xyz(11.0, 22.0, 0.0));
+
+        // куда камеру возвращает система: позиция и зум
+        fn placed(world: &mut World) -> (Vec2, f32) {
+            world
+                .query_filtered::<(&Transform, &PanCamera), With<Camera2d>>()
+                .single(world)
+                .map(|(transform, controller)| {
+                    (transform.translation.truncate(), controller.zoom_factor)
+                })
+                .expect("камера одна")
+        }
+
+        // первый вход, Save — сохранённый вид
+        world.run_system_once(place_camera_on_world_ready).unwrap();
+        assert_eq!(placed(&mut world), (Vec2::new(120.0, 340.0), 2.0));
+        assert_eq!(world.resource::<LastWorldCity>().0, Some(tula));
+
+        // перезагрузка того же города — камера осталась, где стояла
+        world.run_system_once(place_camera_on_world_ready).unwrap();
+        assert_eq!(placed(&mut world), (Vec2::new(120.0, 340.0), 2.0));
+
+        // смена города — портал нового города: ни сохранённый вид, ни текущая
+        // камера роли не играют
+        *world.resource_mut::<City>() = paris;
+        world.insert_resource(saved_view(Vec2::new(9.0, 9.0), 3.0));
+        world.run_system_once(place_camera_on_world_ready).unwrap();
+        assert_eq!(placed(&mut world), (portal, START_ZOOM));
+        assert_eq!(world.resource::<LastWorldCity>().0, Some(paris));
+
+        // первый вход в режиме Reset — портал и стартовый зум, даже с видом
+        world.resource_mut::<LastWorldCity>().0 = None;
+        world.insert_resource(CameraPositionMode::Reset);
+        world
+            .query_filtered::<(&mut Transform, &mut PanCamera), With<Camera2d>>()
+            .single_mut(&mut world)
+            .map(|(mut transform, mut controller)| {
+                transform.translation = Vec3::new(11.0, 22.0, 0.0);
+                controller.zoom_factor = 3.0;
+            })
+            .expect("камера одна");
+        world.run_system_once(place_camera_on_world_ready).unwrap();
+        assert_eq!(placed(&mut world), (portal, START_ZOOM));
     }
 }
