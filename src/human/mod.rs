@@ -1,5 +1,6 @@
 mod behavior;
 mod components;
+mod corpse;
 mod decide;
 mod look;
 mod soul;
@@ -12,15 +13,15 @@ pub use self::components::{
     Attire, CorpseTag, FleeRepath, HUMAN_BODY_RADIUS, HUMAN_BODY_RADIUS_MAX, HUMAN_BODY_RADIUS_MIN,
     HUMAN_BODY_RADIUS_STEP, HUMAN_SPEED_SPREAD, HUMAN_SPEED_SPREAD_MAX, HUMAN_SPEED_SPREAD_MIN,
     HUMAN_SPEED_SPREAD_STEP, Human, HumanFirstWanderTag, HumanFleeTag, HumanStyle, HumanWanderTag,
-    Pace, PanicRecoil, PopulationSize, WanderHeading, WanderPause, to_corpse,
+    Pace, PanicRecoil, PopulationSize, WanderHeading, WanderPause,
 };
 // `blood_pool` / `blood_spatter` / `spread_blood` наружу — их берёт витрина
 // крови (`examples/demos/blood_gallery`), чтобы показывать те же сущности, что
 // игра вешает на труп, а не свою копию; `HumanPlugin` целиком ей не подходит
 // (его `spawn_humans` расселил бы 20 000 пешек)
-pub use self::look::{
+pub use self::corpse::{
     BloodLook, BloodPool, BloodSpatter, BloodSpread, CORPSE_SPAN, CorpsePose, blood_look,
-    blood_pool, blood_spatter, corpse_pose, spread_blood,
+    blood_pool, blood_spatter, corpse_pose, spread_blood, to_corpse,
 };
 use self::look::{on_calm_tint, on_panic_tint};
 use self::soul::rise_souls;
