@@ -20,6 +20,7 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
 use crate::demon::Demon;
+use crate::diagnostics::{SIM_SPATIAL_MS, SimMeasure};
 use crate::human::Human;
 use crate::movement::SimPosition;
 use crate::settings::MAP_SIZE;
@@ -312,13 +313,8 @@ fn rebuild_demon_grid(
     mut grid: ResMut<SpatialGrid<Demon>>,
     query: Query<(Entity, &SimPosition), With<Demon>>,
 ) {
-    let started = std::time::Instant::now();
+    let _measure = SimMeasure::new(&mut diagnostics, &SIM_SPATIAL_MS);
     grid.rebuild(query.iter().map(|(entity, pos)| (entity, pos.0)));
-    crate::diagnostics::measure_ms(
-        &mut diagnostics,
-        &crate::diagnostics::SIM_SPATIAL_MS,
-        started,
-    );
 }
 
 /// Человек появился в мире — в сетку. Позиция — из `Transform` бандла спавна:

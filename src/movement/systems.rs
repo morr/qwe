@@ -3,6 +3,7 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use derive_more::{Deref, DerefMut};
 
 use crate::camera::Viewport;
+use crate::diagnostics::{SIM_MOVE_MS, SimMeasure};
 use crate::movement::components::{
     BodyScale, Movable, MovableStateMovingTag, PawnEdit, PreviousSimPosition, SimPosition,
 };
@@ -51,7 +52,7 @@ pub fn move_moving_entities(
     >,
     time: Res<Time>,
 ) {
-    let started = std::time::Instant::now();
+    let _measure = SimMeasure::new(&mut diagnostics, &SIM_MOVE_MS);
     let walkable = backend.walkable();
     // «дошёл» с допуском в дистанцию покоя: точнее неё пешки друг к другу не
     // подпускает само расталкивание, так что требовать точный тайл — значит
@@ -111,7 +112,6 @@ pub fn move_moving_entities(
             grid.moved(entity, was_at, sim_position.0);
         }
     }
-    crate::diagnostics::measure_ms(&mut diagnostics, &crate::diagnostics::SIM_MOVE_MS, started);
 }
 
 /// Переезд одной сущности на ближайший свободный тайл, если она стоит в
