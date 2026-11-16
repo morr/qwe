@@ -62,9 +62,13 @@ pub(in crate::map::roads) use self::ground::{PaintGround, trim_stop_line, whole_
 pub use self::material::{
     PaintLods, PaintMaterial, PaintParams, PaintPass, PaintZoomBucket, show_paint,
 };
+pub use self::painter::{PaintLayer, Painter};
+// имена слоёв — строка имени сущности в живом мире (BRP); в ржавчине их
+// читают одни тесты, у исходника (`Painter::layers`) они свои
+#[cfg(test)]
 pub use self::painter::{
     BRIDGE_PAINT_AXES, BRIDGE_PAINT_LANES, PAINT_AXES, PAINT_ISLANDS, PAINT_LANES, PAINT_WEAR,
-    PAINT_WEAR_MASK, PAINT_ZEBRAS, PaintLayer, Painter,
+    PAINT_WEAR_MASK, PAINT_ZEBRAS,
 };
 
 /// Ширина линии, м — как у настоящей (10–15 см). На экране не тоньше 1.3 px:
@@ -468,25 +472,14 @@ impl MergeRamp {
 const RAMP_STEP: f32 = 2.0;
 
 /// Какие линии несёт меш краски — по этому [`show_paint`] прячет его с зумом.
+/// Тег прикрепляется к слою у его рождения ([`Painter::layers`]) и ложится на
+/// сущность при спавне; отдельного восстановления по имени слоя нет.
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PaintTag {
     Lanes,
     Zebras,
     Axes,
     Wear,
-}
-
-impl PaintTag {
-    /// Вид меша по имени слоя; `None` — слой не краска.
-    pub fn of(name: &str) -> Option<Self> {
-        match name {
-            PAINT_LANES | BRIDGE_PAINT_LANES => Some(Self::Lanes),
-            PAINT_ZEBRAS | PAINT_ISLANDS => Some(Self::Zebras),
-            PAINT_AXES | BRIDGE_PAINT_AXES => Some(Self::Axes),
-            PAINT_WEAR_MASK | PAINT_WEAR => Some(Self::Wear),
-            _ => None,
-        }
-    }
 }
 
 /// Нахлёст разрыва крючка ([`hook_breaks`]) с найденным разрывом, м.

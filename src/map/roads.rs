@@ -1606,7 +1606,10 @@ impl<'s> RoadCommon<'s> {
             merge_edges: self.merge_edges,
             islands: islands.len(),
             tram_bands: self.tram_bands,
-            vertices: layers.iter().map(|l| l.builder.vertex_count()).sum::<usize>()
+            vertices: layers
+                .iter()
+                .map(|l| l.builder.vertex_count())
+                .sum::<usize>()
                 + paint_vertices,
             network: self.network_time,
             elapsed: self.started.elapsed(),
@@ -1727,7 +1730,10 @@ impl<'s> RoadCommon<'s> {
         .chain(self.bridges.clone().layers())
         .collect();
         layers.sort_by(|a, b| a.z.total_cmp(&b.z));
-        let vertices = layers.iter().map(|l| l.builder.vertex_count()).sum::<usize>()
+        let vertices = layers
+            .iter()
+            .map(|l| l.builder.vertex_count())
+            .sum::<usize>()
             + paint_vertices;
         CommonLayers {
             layers,

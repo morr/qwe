@@ -158,8 +158,10 @@ the asphalt the lines lie on `roads-bridges-wear.md` (**Asphalt wear**).
   - **LOD**: the shader fades lane lines and stop lines from 0.32 to `LANE_ZOOM_MAX`
     0.4 m/px, zebras to `ZEBRA_ZOOM_MAX` 0.6 (their bars are gone into the plank by
     ~0.25) and axes and the turn wear to `AXIS_ZOOM_MAX` 0.9; `PaintLods` (the same thresholds, four steps) hides the meshes by
-    `Visibility` (`paint::show_paint`, `PaintTag` on the entity, set by
-    `spawn_road_meshes` by the layer's name) — **no rebuild** at a threshold. The gallery
+    `Visibility` (`paint::show_paint`, `PaintTag` attached to the layer at its birth in
+    `Painter::layers`, riding with the mesh through `RoadBuild.paint` /
+    `RoadStepsBuild.paint`, put on the entity by `spawn_road_paint`) — **no rebuild** at
+    a threshold. The gallery
     does not run the ladder and relies on the shader fade.
   - **`RoadPaintStyle`** (group `road_paint`): `paint` 0–1 (0.7 — Yandex's lines are
     about 60 % white; 0.85 read heavier than the reference on 05 and 18) — the line opacity,

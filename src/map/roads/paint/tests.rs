@@ -594,11 +594,21 @@ fn the_dash_phase_runs_along_the_street() {
 }
 
 #[test]
-fn paint_tags_name_their_layers() {
-    assert_eq!(PaintTag::of(PAINT_LANES), Some(PaintTag::Lanes));
-    assert_eq!(PaintTag::of(BRIDGE_PAINT_AXES), Some(PaintTag::Axes));
-    assert_eq!(PaintTag::of(PAINT_ZEBRAS), Some(PaintTag::Zebras));
-    assert_eq!(PaintTag::of("roads"), None);
+fn paint_layers_carry_their_tags_from_the_painter() {
+    let tags: Vec<(&str, PaintTag)> = Painter::default()
+        .layers()
+        .into_iter()
+        .map(|layer| (layer.mesh.name, layer.tag))
+        .collect();
+    assert_eq!(tags.len(), 8);
+    assert!(tags.contains(&(PAINT_LANES, PaintTag::Lanes)));
+    assert!(tags.contains(&(BRIDGE_PAINT_LANES, PaintTag::Lanes)));
+    assert!(tags.contains(&(PAINT_AXES, PaintTag::Axes)));
+    assert!(tags.contains(&(BRIDGE_PAINT_AXES, PaintTag::Axes)));
+    assert!(tags.contains(&(PAINT_ZEBRAS, PaintTag::Zebras)));
+    assert!(tags.contains(&(PAINT_ISLANDS, PaintTag::Zebras)));
+    assert!(tags.contains(&(PAINT_WEAR_MASK, PaintTag::Wear)));
+    assert!(tags.contains(&(PAINT_WEAR, PaintTag::Wear)));
 }
 
 #[test]

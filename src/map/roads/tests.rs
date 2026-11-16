@@ -217,9 +217,9 @@ fn a_street_builds_twenty_five_layers_bottom_up() {
     for pair in layers.windows(2) {
         // линии полос и осевые лежат на одной высоте: их полосы не
         // перекрываются, а прячет их ступень зума, не порядок
-        let paint_pair = [pair[0].name, pair[1].name]
+        let paint_pair = [pair[0].material, pair[1].material]
             .iter()
-            .all(|name| paint::PaintTag::of(name).is_some());
+            .all(|material| matches!(material, MaterialSpec::Paint(_)));
         assert!(
             pair[0].z < pair[1].z || paint_pair && pair[0].z == pair[1].z,
             "{} лежит не ниже {}",
@@ -347,9 +347,12 @@ fn only_the_bridge_shadow_is_blended() {
             "unpaved_roads" => MaterialSpec::Surface(SurfaceKind::Unpaved),
             paint::PAINT_WEAR_MASK => MaterialSpec::Paint(paint::PaintPass::WearMask),
             paint::PAINT_WEAR => MaterialSpec::Paint(paint::PaintPass::Wear),
-            name if paint::PaintTag::of(name).is_some() => {
-                MaterialSpec::Paint(paint::PaintPass::Lines)
-            }
+            paint::PAINT_LANES
+            | paint::PAINT_AXES
+            | paint::PAINT_ZEBRAS
+            | paint::PAINT_ISLANDS
+            | paint::BRIDGE_PAINT_LANES
+            | paint::BRIDGE_PAINT_AXES => MaterialSpec::Paint(paint::PaintPass::Lines),
             _ => MaterialSpec::Flat,
         };
         assert_eq!(layer.material, expected, "{}", layer.name);
@@ -1078,7 +1081,7 @@ fn raw_osm_draw_lays_a_bare_ribbon_per_way() {
     let paint = |layers: &[LayerMesh]| {
         layers
             .iter()
-            .filter(|layer| paint::PaintTag::of(layer.name).is_some())
+            .filter(|layer| matches!(layer.material, MaterialSpec::Paint(_)))
             .map(|layer| layer.builder.vertex_count())
             .sum::<usize>()
     };
