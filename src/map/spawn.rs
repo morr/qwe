@@ -371,9 +371,7 @@ pub fn mesh_surfaces(
             for area in style.layer.field(map) {
                 match style.rim {
                     Some(rim) => push_area(&mut builder, area, style.color, rim),
-                    None => {
-                        builder.push_polygon(&area.outer, &area.holes, style.color.to_linear())
-                    }
+                    None => builder.push_polygon(&area.outer, &area.holes, style.color.to_linear()),
                 }
             }
             (builder, style)

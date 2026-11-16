@@ -14,12 +14,11 @@ pub mod snapshot;
 
 pub use self::download::{JobState, LoadedWorld, MapLoadJob, OVERPASS_MIRRORS, start_load_thread};
 pub use self::model::{
-    AreaKind, AreaLayer, AreaLayerDesc, BuildingUse, Colours, Faith, FenceKind, FenceLine,
-    Highway, LaneTurn, LotKind, MapData, PipeLine, PitchKind, PolyArea, RailKind, RailLine, Rgb,
-    RoadArea, RoadAreaKind, RoadClass, RoadLine, RoadNode, RoadNodeKind, RowTrees, Sacred,
-    SacredForm, ServiceTrack, SidewalkSide, Structure, StructureKind, TrafficSide, TreeCompose,
-    TreeRow, TreeRowLayout, TreeRowPlacement, WallLine, WaterKind, WaterLine, srgba_of,
-    water_line_caps,
+    AreaKind, AreaLayer, AreaLayerDesc, BuildingUse, Colours, Faith, FenceKind, FenceLine, Highway,
+    LaneTurn, LotKind, MapData, PipeLine, PitchKind, PolyArea, RailKind, RailLine, Rgb, RoadArea,
+    RoadAreaKind, RoadClass, RoadLine, RoadNode, RoadNodeKind, RowTrees, Sacred, SacredForm,
+    ServiceTrack, SidewalkSide, Structure, StructureKind, TrafficSide, TreeCompose, TreeRow,
+    TreeRowLayout, TreeRowPlacement, WallLine, WaterKind, WaterLine, srgba_of, water_line_caps,
 };
 // потолок плотности считается от минимального зазора посадки, поэтому живёт
 // рядом с ним, а не в `settings.rs`

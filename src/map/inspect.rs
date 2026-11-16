@@ -60,8 +60,8 @@ use crate::settings::Z_BRIDGE;
 mod labels;
 mod shapes;
 
-use self::labels::{node_label, piece_label, road_hit, structure_label};
 pub use self::labels::{format_hits, hit_line, pinned_line};
+use self::labels::{node_label, piece_label, road_hit, structure_label};
 pub use self::shapes::{
     FeatureShape, PinnedFill, feature_shape, mesh_feature, mesh_pins, pin_stripe,
 };
