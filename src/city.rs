@@ -15,7 +15,7 @@ use crate::grid::NavtileBase;
 use crate::loading::AppState;
 use crate::map::RoadShapeOnMap;
 use crate::map::osm::MapData;
-use crate::map::osm::parse::RawOsm;
+use crate::map::osm::parse::{ParseKnobs, RawOsm};
 use crate::prefs::{TrackPrefExt, retuned};
 use crate::settings::MAP_SIZE;
 
@@ -247,34 +247,40 @@ impl Plugin for CityPlugin {
                     .run_if(
                         retuned::<City>
                             .or_else(retuned::<NavtileBase>)
-                            .or_else(lane_width_moved)
-                            .or_else(raw_osm_moved),
+                            .or_else(parse_knobs_diverged),
                     ),
             );
     }
 }
 
-/// Осевшая ручка `Lane width` разошлась с шириной, с которой разобран мир:
-/// ширину читает разбор (дома отодвигаются от тротуаров, стоянки
-/// подтягиваются к дорогам), так что её смена — тот же возврат в загрузку,
-/// что смена города. Простое сравнение, без окна `is_changed`: расхождение
-/// держится, пока мир не перезагружен, и пропустить его нельзя. Сравнивается
-/// со снимком разбора (`MapData::knobs`), а не с глобалью краски: снимок — это
-/// и есть «с чем разобран мир». Без ресурсов (сцена без `MapPlugin`, мира ещё
-/// нет) не срабатывает.
-fn lane_width_moved(shape: Option<Res<RoadShapeOnMap>>, map: Option<Res<MapData>>) -> bool {
-    shape
-        .zip(map)
-        .is_some_and(|(shape, map)| shape.0.lane_width() != map.knobs.lane_width)
-}
-
-/// Режим сырого OSM (строка `Raw OSM` вкладки Debug) разошёлся с тем, с
-/// которым разобран мир: он — вход разбора, так что его смена — та же
-/// перезагрузка, что у навтайла. Сравнение со снимком разбора
-/// (`MapData::knobs`), а не окно `is_changed`, — по той же причине, что у
-/// [`lane_width_moved`]: переключение во время загрузки не теряется.
-fn raw_osm_moved(raw: Option<Res<RawOsm>>, map: Option<Res<MapData>>) -> bool {
-    raw.zip(map).is_some_and(|(raw, map)| *raw != map.knobs.raw)
+/// Осевшие ручки разбора разошлись со снимком (`MapData::knobs`,
+/// [`ParseKnobs::diverged`]) — мир разобран не с теми входами, что стоят
+/// сейчас.
+/// Ширину полосы читает разбор (дома отодвигаются от тротуаров, стоянки
+/// подтягиваются к дорогам), сырой OSM выключает достройки разбора, размер
+/// навтайла задаёт зазор перед дверью, — так что расхождение по любому полю —
+/// тот же возврат в загрузку, что смена города. Список полей сравнения живёт
+/// у снимка ([`ParseKnobs::diverged`]); здесь только источники живых ручек.
+///
+/// Простое сравнение, без окна `is_changed`: расхождение держится, пока мир
+/// не перезагружен, и пропустить его нельзя; переключение во время загрузки
+/// не теряется. Ширина — осевшая ручка (`RoadShapeOnMap`), а не ползунок:
+/// перезагрузка одна, после паузы, а не на каждом делении. Без ресурсов
+/// (сцена без `MapPlugin`, мира ещё нет) не срабатывает: отсутствие ручки —
+/// «не двигалась», сравнивать нечего.
+fn parse_knobs_diverged(
+    shape: Option<Res<RoadShapeOnMap>>,
+    navtile: Option<Res<NavtileBase>>,
+    raw: Option<Res<RawOsm>>,
+    map: Option<Res<MapData>>,
+) -> bool {
+    let Some(map) = map else { return false };
+    let parsed_with = ParseKnobs {
+        lane_width: shape.map_or(map.knobs.lane_width, |shape| shape.0.lane_width()),
+        navtile: navtile.map_or(map.knobs.navtile, |navtile| navtile.size()),
+        raw: raw.as_deref().copied().unwrap_or(map.knobs.raw),
+    };
+    map.knobs.diverged(&parsed_with)
 }
 
 /// Возврат в `Loading` под новый город, размер навтайла, ширину полосы или
@@ -314,7 +320,7 @@ mod tests {
                 ..default()
             }));
         }
-        world.run_system_once(lane_width_moved).unwrap()
+        world.run_system_once(parse_knobs_diverged).unwrap()
     }
 
     #[test]
@@ -339,7 +345,7 @@ mod tests {
                 lane_width: settled,
                 ..default()
             }));
-            world.run_system_once(lane_width_moved).unwrap()
+            world.run_system_once(parse_knobs_diverged).unwrap()
         };
         let default = RoadShape::default().lane_width;
         assert!(!parsed(3.5, 3.5));
@@ -347,6 +353,26 @@ mod tests {
         // мира ещё нет (карта не вставлена) — сравнивать не с чем
         let mut world = World::new();
         world.insert_resource(RoadShapeOnMap(RoadShape::default()));
-        assert!(!world.run_system_once(lane_width_moved).unwrap());
+        assert!(!world.run_system_once(parse_knobs_diverged).unwrap());
+    }
+
+    /// Режим сырого OSM сравнивается с тем же снимком: мир, разобранный в
+    /// `Parse`, при ручке `Off` перезагружается, при `Parse` стоит.
+    #[test]
+    fn a_raw_osm_off_the_parsed_one_reloads_the_world() {
+        let parsed_with = |knobs_raw: RawOsm, settled: Option<RawOsm>| {
+            let mut world = World::new();
+            let mut map = MapData::default();
+            map.knobs.raw = knobs_raw;
+            world.insert_resource(map);
+            if let Some(settled) = settled {
+                world.insert_resource(settled);
+            }
+            world.run_system_once(parse_knobs_diverged).unwrap()
+        };
+        assert!(!parsed_with(RawOsm::Parse, Some(RawOsm::Parse)));
+        assert!(parsed_with(RawOsm::Parse, Some(RawOsm::Off)));
+        // ручки нет — «не двигалась», перезагружать нечего
+        assert!(!parsed_with(RawOsm::Parse, None));
     }
 }

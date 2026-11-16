@@ -385,7 +385,7 @@ fn build_debug_tab(mut commands: Commands, panes: Res<SettingsPanes>, values: De
         },
     );
     // сырой OSM: Off → parse → parse+draw — наши достройки выключаются, мир
-    // перезагружается (`city::raw_osm_moved`): это вход разбора, как навтайл
+    // перезагружается (`city::parse_knobs_diverged`): это вход разбора, как навтайл
     spawn_cycle_row(
         &mut commands,
         world,

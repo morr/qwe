@@ -155,7 +155,7 @@ impl Plugin for MapPlugin {
             .add_plugins(Material2dPlugin::<trees::CrownMaterial>::default())
             .add_plugins(Material2dPlugin::<roads::paint::PaintMaterial>::default())
             // сырой OSM — вход разбора (`loading::parse_knobs`); смена
-            // перезагружает мир (`city::raw_osm_moved`)
+            // перезагружает мир (`city::parse_knobs_diverged`)
             .init_resource::<osm::parse::RawOsm>()
             // линии колеи кладёт сборка дорог (`roads::rebuild_roads`,
             // `spawn_map`); до первой сборки — пусто
