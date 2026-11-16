@@ -37,7 +37,7 @@ mod priority {
 /// не берёт, нельзя никому — прогрев (`loading.rs::poll_warmup`) держал бы
 /// экран загрузки до таймаута с неподвижным счётчиком — заявки, которых
 /// диспетчер не берёт, не закроются.
-pub fn wanderers_dispatched_at_zoom(camera_scale: f32) -> bool {
+fn wanderers_dispatched_at_zoom(camera_scale: f32) -> bool {
     camera_scale < crate::settings::WANDER_DISPATCH_MAX_ZOOM
 }
 

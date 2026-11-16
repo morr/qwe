@@ -21,7 +21,7 @@ use crate::map::{
     StyleSnapshot, TreeRowStyle, TreeStyle,
 };
 use crate::movement::{
-    PathfindingRequest, PathfindingTask, SimPosition, UrgentPath, wanderers_dispatched_at_zoom,
+    PathfindingRequest, PathfindingTask, SimPosition, UrgentPath, waits_for_camera,
 };
 use crate::navigation::{ArcNavmesh, Pathfinder, PolyNavmesh, PolymeshDebug};
 use crate::portal::PortalPos;
@@ -640,19 +640,17 @@ fn poll_warmup(
 
     // ровно один экран, без запаса диспетчера: вопрос прогрева — «видит ли
     // игрок стоящую пешку», а не «возьмёт ли её диспетчер»; заявки в полосе
-    // запаса он выдаст сам, пока игрок смотрит на середину кадра. Ресурс
-    // хранит ровно кадр, так что запас здесь и не добавляется
-    let wanderers_dispatched = wanderers_dispatched_at_zoom(view.zoom);
+    // запаса он выдаст сам, пока игрок смотрит на середину кадра. Правило
+    // видимости с диспетчером одно, [`waits_for_camera`]; «без запаса» в его
+    // единицах — `1.0` (ресурс и так хранит ровно кадр)
     let waiting = pending
         .iter()
         .filter(|(sim_position, urgent)| {
-            // мирного гуляющего на общем плане диспетчер не возьмёт. Срочность
-            // — тот же признак, по которому её решает сам диспетчер
+            // ждущая — только пешка, которую видно и чью заявку вообще донесут;
+            // срочность — тот же признак, по которому её решает сам диспетчер
             // (`movement::UrgentPath`), а не третья копия его правила
-            if !*urgent && !wanderers_dispatched {
-                return false;
-            }
             view.contains(sim_position.0)
+                && !waits_for_camera(&view, sim_position.0, *urgent, 1.0)
         })
         .count();
     *seen_requests |= waiting > 0;
