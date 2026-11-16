@@ -184,7 +184,7 @@ fn the_brand_band_stays_above_the_glass_ribbon_at_any_number_of_tiers() {
     // 5.5 м на ярус (`BIG_BOX_TIER`): 8 м — один, 9.5 — два, 17 — три
     for (height, storeys) in [(8.0, 1.0), (9.5, 2.0), (17.0, 3.0)] {
         let retail = big_box(rect(Vec2::ZERO, Vec2::new(60.0, 40.0)), height);
-        let lift = extrusion_lift(&retail, BuildingHeightMode::Extrusion);
+        let lift = lift_of(&retail);
         let builder = extruded_mesh(&[retail], &[], detail(false));
         // в ячейках стены: её верх — `storeys + PARAPET_CELLS`
         let cells = |at: Vec2| at.y / lift.y * (storeys + crate::map::meshing::PARAPET_CELLS);
@@ -1234,7 +1234,7 @@ fn the_wall_order_puts_the_stepped_back_section_first() {
     // обход контура кладёт ближнюю раньше дальней — это и есть та ошибка
     assert!(near < far, "ring order walks the near wall first");
 
-    let lift = extrusion_lift(&stepped, BuildingHeightMode::Extrusion);
+    let lift = lift_of(&stepped);
     let order = order::wall_order(&walls, lean, lift);
     let at = |wall: usize| order.iter().position(|&index| index == wall).unwrap();
     assert!(

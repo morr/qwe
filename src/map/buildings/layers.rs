@@ -23,10 +23,7 @@ use super::roofs::{
     DormerFace, HipRoof, RoofMix, RoofShape, Roofing, TentRoof, roofing, roofing_of,
 };
 use super::temples::{Crown, Sanctuary, push_crowns};
-use super::{
-    BuildingHeightMode, Lean, RoofDetail, building_center, extrusion_lift, height_or_default,
-    shade_by_light,
-};
+use super::{Lean, RoofDetail, building_center, height_or_default, lift_of, shade_by_light};
 use crate::map::meshing::{MeshBuilder, PARAPET_CELLS, Roof, WallFrame, WallMark, min_area_rect};
 use crate::map::osm::model::{distance_to_segment, is_big_box, signed_ring_area, srgba_of};
 use crate::map::osm::{AreaKind, BuildingUse, PolyArea, RoadLine, Sacred, SacredForm};
@@ -151,7 +148,7 @@ pub(super) struct WallSpan {
     /// Начало грани; от неё же и посев ([`WallSpan::seed`]).
     pub(super) a: Vec2,
     pub(super) b: Vec2,
-    /// Подъём: вектор от основания стены до карниза (`extrusion_lift`).
+    /// Подъём: вектор от основания стены до карниза ([`lift_of`]).
     pub(super) lift: Vec2,
     /// Этажей в доме — целое число ([`storeys_of`]).
     storeys: f32,
@@ -1112,13 +1109,7 @@ pub(super) fn extrusion_builder(
         let look = look_of(building, runs.get(&index));
         let color = roof_color(building, &look, detail.tinted);
         let wall = wall_of_run(building, runs.get(&index));
-        let crowns = sanctuary.crowns(
-            index,
-            building,
-            wall.base,
-            color,
-            extrusion_lift(building, BuildingHeightMode::Extrusion),
-        );
+        let crowns = sanctuary.crowns(index, building, wall.base, color, lift_of(building));
         // часть на крыше храма — барабан с главой, отдельная колокольня — столп
         // ярусами: коробки от земли у них нет
         if sanctuary.boxless(index, building) {
@@ -1134,7 +1125,7 @@ pub(super) fn extrusion_builder(
         let (openings, tunnel) = arches
             .get(&index)
             .map(|passages| {
-                let lift = extrusion_lift(building, BuildingHeightMode::Extrusion);
+                let lift = lift_of(building);
                 let openings = arch_openings(building, passages, lift, -lean.dir());
                 // стенки проезда видны только сквозь проём
                 let tunnel = match openings.is_empty() {
@@ -1246,7 +1237,7 @@ pub fn push_house(
         building,
         wall.base,
         color,
-        extrusion_lift(building, BuildingHeightMode::Extrusion),
+        lift_of(building),
     );
     push_crowns(builder, &crowns, Some(Lean::of()));
     built
@@ -1290,7 +1281,7 @@ fn push_house_with_arches(
     let lean = Lean::of();
     let lift_dir = lean.dir();
     // через тот же хелпер, что и оверлей дверей, — иначе они разъедутся
-    let lift = extrusion_lift(building, BuildingHeightMode::Extrusion);
+    let lift = lift_of(building);
     // длинная ось плана — одна на дом, и считается она только там, где может
     // что-то решить: перебор рёбер в `min_area_rect` квадратичный, а на складе,
     // частном доме и малоэтажке торец от фасада всё равно ничем не отличается

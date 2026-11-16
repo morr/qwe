@@ -463,6 +463,6 @@ dictionary.
     in pixels**, not only metres per pixel: a wall is measured in cells and every fade is
     keyed to them, and a storey is `STOREY_HEIGHT` metres already squeezed by the lean — so
     metres per pixel alone does not say when a window is due to vanish. It comes from
-    `extrusion_lift` on a probe building rather than from a copy of `EXTRUDE_SCALE`, which
+    `lift_of` on a probe building rather than from a copy of `EXTRUDE_SCALE`, which
     is private and would drift. `WALL_GALLERY_SHOT=path.png` takes one frame and exits,
     same as the roof gallery's.

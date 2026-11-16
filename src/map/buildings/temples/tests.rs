@@ -11,9 +11,9 @@ use crate::map::buildings::clutter::merlons;
 use crate::map::buildings::fixtures::{
     building, detail, extruded_mesh, is_solid, is_wall, oblong, square,
 };
+use crate::map::buildings::lift_of;
 use crate::map::buildings::material::{DOOR_CODE, roof_look, wall_look};
 use crate::map::buildings::roofs::landmark_roof;
-use crate::map::buildings::{BuildingHeightMode, extrusion_lift};
 use crate::map::meshing::unpack_material;
 use crate::map::osm::{AreaKind, Colours};
 
@@ -61,7 +61,7 @@ fn a_fortress_tower_is_tented_and_its_wall_crenellated() {
         landmark_roof(&tower),
         Some(LandmarkRoof::Tent { .. })
     ));
-    let lift = extrusion_lift(&wall, BuildingHeightMode::Extrusion);
+    let lift = lift_of(&wall);
     // по зубцу на 2.6 м с каждой длинной стороны
     assert!(merlons(&wall, lift).len() >= 40);
     assert!(merlons(&tower, lift).is_empty());

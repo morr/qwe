@@ -84,7 +84,7 @@ use qwe::map::buildings::material::{
     RoofKind, RoofLook, RoofMaterial, RoofMaterialHandle, WallKind, WallLook, init_roof_material,
     retune_roof_material,
 };
-use qwe::map::buildings::{BuildingHeightMode, RoofShape, extrusion_lift, push_house, wall_of};
+use qwe::map::buildings::{RoofShape, lift_of, push_house, wall_of};
 use qwe::map::osm::entrances::generate_entrances;
 use qwe::map::osm::{AreaKind, BuildingUse, Colours, Faith, MapData, PolyArea, Sacred, SacredForm};
 use qwe::map::{GROUND_COLOR, MeshBuilder, RoofStyle, SunOnMap, SunStyle, apply_sun};
@@ -169,14 +169,14 @@ const GALLERY_ROOF: RoofKind = RoofKind::Bitumen;
 /// Нарисованная высота этажа, м: настоящие три метра, сжатые подъёмом.
 ///
 /// Не копия `EXTRUDE_SCALE` числом — тот приватен, и копия разошлась бы с ним
-/// в первую же правку. Берётся из самого `extrusion_lift`, по дому заведомо в
+/// в первую же правку. Берётся из самого `lift_of`, по дому заведомо в
 /// середине его зажима (`EXTRUDE_RANGE`, 2.5…30 м): десять этажей дают подъём
 /// 10.5 м, ни в один край не упирающийся.
 pub(crate) fn drawn_storey() -> f32 {
     const PROBE_STOREYS: f32 = 10.0;
     let probe = house(Vec2::ZERO, Vec2::splat(5.0), Rot2::IDENTITY, 0.0)
         .with_height(PROBE_STOREYS * STOREY_HEIGHT);
-    extrusion_lift(&probe, BuildingHeightMode::Extrusion).y / PROBE_STOREYS
+    lift_of(&probe).y / PROBE_STOREYS
 }
 
 /// Подложка витрины. Земля карты — то, на чём дома стоят в игре; серый —

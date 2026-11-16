@@ -340,7 +340,7 @@ The layers that are neither roads, parking, buildings nor trees. Each bullet is 
     exactly the three modes a house's is (`BuildingHeightMode::casts_shadows()` — the
     mode list lives there once and both layers ask it; in `Facade` and `Extrusion` a
     2.5 m chimney is a small circle and nothing else), and its lean comes from
-    `buildings::drawn_lift`, the height-only core of `extrusion_lift`, so the
+    `buildings::drawn_lift`, the height-only core behind `lift_of`, so the
     `EXTRUDE_RANGE` clamp is one for roofs and cylinders alike. Without that clamp a
     60 m chimney lay across the map as an 80 m tube.
   - **A cylinder is three layers, like a house**: `industry_shadows`

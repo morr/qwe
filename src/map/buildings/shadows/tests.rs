@@ -246,7 +246,7 @@ fn a_nearer_body_eats_the_shadow_it_covers() {
         "тело ближнего дома обязано съесть 297 м² тени: {left} из {whole}"
     );
 
-    let lift = extrusion_lift(&cover, BuildingHeightMode::Extrusion);
+    let lift = lift_of(&cover);
     let (min, max) = (Vec2::new(0.0, -30.0), Vec2::new(30.0, -2.0));
     for point in mesh_points(&shaded) {
         assert!(

@@ -51,7 +51,7 @@ pub use self::buildings::material::RoofStyle;
 // `examples/bench/map_meshing`: замер сборки слоёв без мира и без GPU. Форма
 // входа у него своя, не `BuildingPlan`, — см. док `measure_layers`. Строку
 // замера, `LayerCost`, бенч берёт из `surface` — она общая для всех слоёв
-pub use self::buildings::{BuildingHeightMode, extrusion_lift, measure_layers};
+pub use self::buildings::{BuildingHeightMode, measure_layers};
 pub use self::cars::{CarStyle, measure_cars};
 pub use self::industry::IndustryStyle;
 // Остальные замеры бенча. В отличие от двух выше они **не повторяют** сборку:

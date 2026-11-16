@@ -219,7 +219,7 @@ terms in `CONTEXT.md`.
       `the_wall_order_puts_the_stepped_back_section_first`. The roof needs no ordering
       against the walls — it is drawn last and lies wholly above `base + lift` at every
       `u` it shares with a wall.
-    `extrusion_lift` is the one door to that vector **for a building** — the extrusion
+    `lift_of` is the one door to that vector **for a building** — the extrusion
     layer, the arch patch in the shadows and anything that wants to put a marker on the
     *drawn* building rather than its real outline all go through it. It is a thin wrapper
     over **`drawn_lift(height, mode)`**, the height-only core, which exists because the

@@ -11,7 +11,7 @@ use crate::map::buildings::fixtures::{
 };
 use crate::map::buildings::layers::wall_columns;
 use crate::map::buildings::material::WallKind;
-use crate::map::buildings::{BuildingHeightMode, EXTRUDE_RANGE, Lean, extrusion_lift};
+use crate::map::buildings::{EXTRUDE_RANGE, Lean, lift_of};
 use crate::map::osm::{AreaKind, BuildingUse, fixture};
 
 fn passage(points: Vec<Vec2>, passage: bool) -> RoadLine {
@@ -61,7 +61,7 @@ fn an_arch_opening_is_three_real_metres_of_the_drawn_wall() {
     let _sun = crate::map::default_sun();
     // 40 м высоты, подъём 14 м: арка обязана занять 14 × 3/40 = 1.05 м
     let tall = building(square(), Some(40.0), AreaKind::Building);
-    let lift = extrusion_lift(&tall, BuildingHeightMode::Extrusion);
+    let lift = lift_of(&tall);
     let road = passage(vec![Vec2::new(5.0, -2.0), Vec2::new(5.0, 12.0)], true);
 
     let mut builder = MeshBuilder::default();
@@ -91,7 +91,7 @@ fn a_clamped_wall_still_gets_a_proportional_opening() {
     let _sun = crate::map::default_sun();
     // 2 м высоты: подъём 2 × 0.35 = 0.7 обрезается снизу до 1 м
     let low = building(square(), Some(2.0), AreaKind::Building);
-    let lift = extrusion_lift(&low, BuildingHeightMode::Extrusion);
+    let lift = lift_of(&low);
     assert_eq!(lift.y, *EXTRUDE_RANGE.start());
 
     let road = passage(vec![Vec2::new(5.0, -2.0), Vec2::new(5.0, 12.0)], true);
@@ -163,7 +163,7 @@ fn an_arch_at_a_shared_vertex_keeps_the_road_width() {
         Some(15.0),
         AreaKind::Building,
     );
-    let lift = extrusion_lift(&house, BuildingHeightMode::Extrusion);
+    let lift = lift_of(&house);
     let road = passage(vec![Vec2::new(5.0, 0.0), Vec2::new(5.0, 12.0)], true);
 
     let mut builder = MeshBuilder::default();
@@ -189,7 +189,7 @@ fn an_arch_at_a_shared_vertex_keeps_the_road_width() {
 fn an_arch_shows_the_side_wall_of_its_passage() {
     let _sun = crate::map::default_sun();
     let house = building(square(), Some(15.0), AreaKind::Building);
-    let lift = extrusion_lift(&house, BuildingHeightMode::Extrusion);
+    let lift = lift_of(&house);
     let road = passage(vec![Vec2::new(5.0, -2.0), Vec2::new(5.0, 12.0)], true);
 
     let walls = tunnel_walls(&house, &[&road], lift, -Lean::of().dir());
@@ -255,7 +255,7 @@ fn an_arch_lying_inside_the_outline_still_cuts_an_opening() {
         Some(42.0),
         AreaKind::Building,
     );
-    let lift = extrusion_lift(&house, BuildingHeightMode::Extrusion);
+    let lift = lift_of(&house);
     let inner = passage(vec![Vec2::new(5.0, 0.0), Vec2::new(5.2, 14.0)], true);
 
     let mut builder = MeshBuilder::default();
@@ -290,7 +290,7 @@ fn the_wall_around_an_arch_wears_no_half_windows() {
     block.building_use = BuildingUse::Apartments;
     // проезд сквозь дом упирается в южную грань на x = 12, между швами
     let road = passage(vec![Vec2::new(12.0, -2.0), Vec2::new(12.0, 25.0)], true);
-    let lift = extrusion_lift(&block, BuildingHeightMode::Extrusion);
+    let lift = lift_of(&block);
 
     let builder = extruded_mesh(std::slice::from_ref(&block), &[road], detail(false));
     let frames = builder.roof_coords_for_test().expect("roof coords");

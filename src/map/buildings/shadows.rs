@@ -21,7 +21,7 @@ use bevy::prelude::*;
 use super::arches::{ArchOpenings, arch_openings};
 use super::roofs::is_pitched;
 use super::temples::Sanctuary;
-use super::{BuildingHeightMode, Lean, extrusion_lift, height_or_default};
+use super::{Lean, height_or_default, lift_of};
 use crate::map::grid::Grid;
 use crate::map::meshing::{MeshBuilder, sweep_convex};
 use crate::map::osm::model::{ring_bounds, signed_ring_area};
@@ -187,7 +187,7 @@ pub(super) fn shadow_builder(
         for (index, passages) in by_building {
             let building = &buildings[index];
             let lean = Lean::of();
-            let lift = extrusion_lift(building, BuildingHeightMode::Extrusion);
+            let lift = lift_of(building);
             for opening in arch_openings(building, &passages, lift, -lean.dir()) {
                 let Some(along) = (opening.b - opening.a).try_normalize() else {
                     continue;
@@ -291,7 +291,7 @@ pub(super) fn roof_shadow_builder(
         }
         let (min, max) = boxes[target];
         let lift = if extruded {
-            extrusion_lift(building, BuildingHeightMode::Extrusion)
+            lift_of(building)
         } else {
             Vec2::ZERO
         };
@@ -423,10 +423,7 @@ impl DrawnBodies {
         let Some(order) = order else {
             return Self::empty();
         };
-        let lifts: Vec<Vec2> = buildings
-            .iter()
-            .map(|building| extrusion_lift(building, BuildingHeightMode::Extrusion))
-            .collect();
+        let lifts: Vec<Vec2> = buildings.iter().map(lift_of).collect();
         // тот самый список, которым `extrusion_builder` кладёт дома в меш, —
         // он строится один раз на сборку слоя и достаётся обоим
         let mut rank = vec![0usize; buildings.len()];

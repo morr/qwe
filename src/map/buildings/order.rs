@@ -36,7 +36,7 @@ use std::time::Instant;
 
 use bevy::prelude::*;
 
-use super::{BuildingHeightMode, Lean, building_center, extrusion_lift};
+use super::{Lean, building_center, lift_of};
 use crate::map::grid::Grid;
 use crate::map::osm::PolyArea;
 use crate::map::osm::model::ring_bounds;
@@ -258,7 +258,7 @@ impl Drawn {
         let (min, max) = ring_bounds(&ring);
         // подъём параллелен `dir()`, так что его длина — это и есть прибавка
         // к `y`; режим здесь всегда экструзия, других этот слой не строит
-        let lift = extrusion_lift(building, BuildingHeightMode::Extrusion).length() + RIDGE_MARGIN;
+        let lift = lift_of(building).length() + RIDGE_MARGIN;
         Self {
             ring,
             lift,
