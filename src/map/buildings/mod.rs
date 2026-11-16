@@ -164,6 +164,19 @@ impl BuildingHeightMode {
             Self::Shadows | Self::ShadowsTint | Self::ExtrusionShadowsTint
         )
     }
+
+    /// Поднимается ли в этом режиме крыша над контуром (2.5D). Спрашивают
+    /// порядок отрисовки, расчёт арок и сам подъём ([`drawn_lift`]) —
+    /// в плоских режимах всего этого не строится.
+    pub fn lifts(self) -> bool {
+        matches!(self, Self::Extrusion | Self::ExtrusionShadowsTint)
+    }
+
+    /// Тонируются ли в этом режиме крыши по высоте: рампа темнее с высотой
+    /// ([`RoofDetail::tinted`]) — один и тот же признак в игре и в замере.
+    pub fn tints(self) -> bool {
+        matches!(self, Self::ShadowsTint | Self::ExtrusionShadowsTint)
+    }
 }
 
 /// Зданиевый слой карты — чтобы пересборка режима знала, что деспавнить.
@@ -259,10 +272,7 @@ pub fn measure_layers(
     clutter: bool,
 ) -> Vec<LayerCost> {
     let detail = RoofDetail {
-        tinted: matches!(
-            mode,
-            BuildingHeightMode::ShadowsTint | BuildingHeightMode::ExtrusionShadowsTint
-        ),
+        tinted: mode.tints(),
         clutter,
     };
     let mut costs = Vec::new();
@@ -272,10 +282,7 @@ pub fn measure_layers(
     // ряд, ровно как `breaks` и `parking` у слоя машин. Вершин они не дают:
     // это не меш, а вход
     let started = Instant::now();
-    let order = if matches!(
-        mode,
-        BuildingHeightMode::Extrusion | BuildingHeightMode::ExtrusionShadowsTint
-    ) {
+    let order = if mode.lifts() {
         let order = draw_order(buildings, Lean::of());
         costs.push(LayerCost {
             name: "order",
@@ -299,11 +306,9 @@ pub fn measure_layers(
     // арки — один расчёт на сборку: его едят и экструзия, и заплатка арок
     // в наземных тенях; в плоских режимах фасадный сборщик режет их сам
     let started = Instant::now();
-    let arches = matches!(
-        mode,
-        BuildingHeightMode::Extrusion | BuildingHeightMode::ExtrusionShadowsTint
-    )
-    .then(|| arches_by_building(buildings, passages));
+    let arches = mode
+        .lifts()
+        .then(|| arches_by_building(buildings, passages));
     costs.push(LayerCost {
         name: "arches",
         vertices: 0,
@@ -322,52 +327,37 @@ pub fn measure_layers(
         });
     };
 
-    match mode {
-        BuildingHeightMode::Extrusion | BuildingHeightMode::ExtrusionShadowsTint => {
-            measure("extruded", &mut || {
-                extrusion_builder(
-                    buildings,
-                    detail,
-                    &order,
-                    arches.as_ref().expect("в 2.5D арки посчитаны"),
-                )
-                .0
-                .iter()
-                .map(|builder| builder.vertex_count())
-                .sum()
-            });
-        }
-        BuildingHeightMode::Facade
-        | BuildingHeightMode::Shadows
-        | BuildingHeightMode::ShadowsTint => {
-            measure("facades+roofs", &mut || {
-                let (facades, roofs) = facade_and_roof_builders(buildings, passages, detail);
-                facades.vertex_count() + roofs.vertex_count()
-            });
-        }
+    if mode.lifts() {
+        measure("extruded", &mut || {
+            extrusion_builder(
+                buildings,
+                detail,
+                &order,
+                arches.as_ref().expect("в 2.5D арки посчитаны"),
+            )
+            .0
+            .iter()
+            .map(|builder| builder.vertex_count())
+            .sum()
+        });
+    } else {
+        measure("facades+roofs", &mut || {
+            let (facades, roofs) = facade_and_roof_builders(buildings, passages, detail);
+            facades.vertex_count() + roofs.vertex_count()
+        });
     }
     // развёртки есть ровно у теневых режимов — тем же приёмом, каким порядок
     // отрисовки служит кровельному слою признаком 2.5D
     if let Some(sweeps) = &sweeps {
         measure("shadows", &mut || {
-            shadow_builder(
-                buildings,
-                sweeps,
-                mode == BuildingHeightMode::ExtrusionShadowsTint,
-                arches.as_ref(),
-            )
-            .vertex_count()
+            shadow_builder(buildings, sweeps, mode.lifts(), arches.as_ref()).vertex_count()
         });
         // тени на кровлях — свой ряд, а не слагаемое в чужом: слой лежит над
         // зданиевыми, строится другим сборщиком и стоит своих миллисекунд,
         // причём `mesh_buildings` отдаёт их отдельно тем же образом
         measure("roof shadows", &mut || {
-            roof_shadow_builder(
-                buildings,
-                sweeps,
-                (mode == BuildingHeightMode::ExtrusionShadowsTint).then_some(order.as_slice()),
-            )
-            .vertex_count()
+            roof_shadow_builder(buildings, sweeps, mode.lifts().then_some(order.as_slice()))
+                .vertex_count()
         });
     }
     costs
@@ -479,11 +469,7 @@ pub fn mesh_buildings(
     // тени; без него ряд даёт 20 (`examples/bench/map_meshing`, где порядок
     // печатается своим рядом `order`). Он же признак 2.5D — в плоских режимах
     // его никто не строит и накрывать кровлю соседа нечем
-    let order = matches!(
-        mode,
-        BuildingHeightMode::Extrusion | BuildingHeightMode::ExtrusionShadowsTint
-    )
-    .then(|| draw_order(buildings, Lean::of()));
+    let order = mode.lifts().then(|| draw_order(buildings, Lean::of()));
 
     // арки — один расчёт на сборку слоя: их едят и экструзия, и заплатка
     // арок в наземных тенях; в плоских режимах фасадный сборщик режет их сам
@@ -496,7 +482,7 @@ pub fn mesh_buildings(
     match &order {
         Some(order) => {
             let detail = RoofDetail {
-                tinted: mode == BuildingHeightMode::ExtrusionShadowsTint,
+                tinted: mode.tints(),
                 clutter: bucket.index == 0,
             };
             // куски приходят от дальней клетки к ближней — та же сортировка,
@@ -527,7 +513,7 @@ pub fn mesh_buildings(
         }
         None => {
             let detail = RoofDetail {
-                tinted: mode == BuildingHeightMode::ShadowsTint,
+                tinted: mode.tints(),
                 clutter: bucket.index == 0,
             };
             // слой, собранный одним билдером, режется на куски карты перед
@@ -562,12 +548,7 @@ pub fn mesh_buildings(
         sweep_time = sweep_started.elapsed();
 
         let shadow_started = Instant::now();
-        let shadows = shadow_builder(
-            buildings,
-            &sweeps,
-            mode == BuildingHeightMode::ExtrusionShadowsTint,
-            arches.as_ref(),
-        );
+        let shadows = shadow_builder(buildings, &sweeps, mode.lifts(), arches.as_ref());
         shadow_time = shadow_started.elapsed();
         shadow_layers.push(LayerMesh::new(
             shadows,
@@ -761,10 +742,7 @@ pub fn extrusion_lift(building: &PolyArea, mode: BuildingHeightMode) -> Vec2 {
 /// без неё шестидесятиметровая заводская труба ложилась на карту
 /// восьмидесятиметровой трубой.
 pub(crate) fn drawn_lift(height: f32, mode: BuildingHeightMode) -> Vec2 {
-    if !matches!(
-        mode,
-        BuildingHeightMode::Extrusion | BuildingHeightMode::ExtrusionShadowsTint
-    ) {
+    if !mode.lifts() {
         return Vec2::ZERO;
     }
     let drawn = (height * EXTRUDE_SCALE).clamp(*EXTRUDE_RANGE.start(), *EXTRUDE_RANGE.end());
