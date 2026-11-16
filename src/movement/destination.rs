@@ -73,7 +73,7 @@ use bevy::prelude::*;
 use crate::grid::{navtile_size, tile_center};
 use crate::human::HumanStyle;
 use crate::movement::components::{Movable, PathfindingRequest};
-use crate::navigation::ArcNavmesh;
+use crate::navigation::Backend;
 
 /// Докуда ищется свободный слот назначения, м — дефолт [`SlotSearch`].
 ///
@@ -562,6 +562,11 @@ pub fn claim_batch(
 /// Врезка одна и не в системы поведения: так слоты покрывают блуждание людей,
 /// блуждание демонов и тестового ходока, не трогая ни `human/*`, ни `demon/*`.
 ///
+/// Проходимость цели меряет активный бэкенд ([`Backend::walkable`]), а не
+/// голая сетка: на полигонном меше контуры раздуты на радиус агента, и
+/// свободный по сетке тайл у стены на меше уже препятствие. Поиск пути к
+/// такому слоту провалился бы, и поведение перебирало бы цель.
+///
 /// Смена цели пешке — [`Movable::retarget`], заявка и состояние одним
 /// движением: фильтр устаревших ответов в `accept_answer` сверяет `end_tile`
 /// ответа с целью в состоянии, и разъехавшись, они выбросили бы каждый
@@ -569,7 +574,7 @@ pub fn claim_batch(
 #[allow(clippy::too_many_arguments)]
 pub fn assign_destination_slots(
     mut commands: Commands,
-    navmesh: Res<ArcNavmesh>,
+    backend: Res<Backend>,
     style: Res<HumanStyle>,
     search: Res<SlotSearch>,
     lab: Res<SlotLab>,
@@ -642,12 +647,16 @@ pub fn assign_destination_slots(
     }));
 
     {
-        let navmesh = navmesh.read();
+        // «свободно» меряет активный бэкенд — тем же взглядом, каким пешки
+        // ходят: по сетке тайл у стены свободен, на полигонном меше он уже
+        // внутри раздутого на радиус агента контура, и поиск пути к такому
+        // слоту провалился бы, а поведение перебирало бы цель
+        let walkable = backend.walkable();
         claim_batch(
             &mut claims,
             lab.matching,
             &batch,
-            |tile| navmesh.is_passable(tile.x, tile.y),
+            |tile| walkable.allows(tile_center(tile)),
             &mut slots,
         );
     }

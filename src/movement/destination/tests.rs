@@ -346,3 +346,86 @@ fn despawn_releases_the_claim() {
 
     assert_eq!(app.world().resource::<DestinationClaims>().len(), 0);
 }
+
+/// На меш-бэкенде слот не назначается внутри раздутого контура. Сетка меряет
+/// тайл его центром: стена, режущая тайл вскользь, центр не задевает, и слот
+/// по сетке вставал бы вплотную к дому — на меше такой тайл уже внутри
+/// препятствия, поиск пути к нему провалился бы, и поведение перебирало бы
+/// цель.
+#[test]
+fn a_slot_is_not_claimed_inside_the_inflated_mesh_contour() {
+    use std::sync::{Arc, RwLock};
+
+    use crate::map::osm::fixture::area;
+    use crate::map::osm::{AreaKind, MapData};
+    use crate::movement::{MovableState, SimPosition};
+    use crate::navigation::{Navmesh, build_polymesh_from_map};
+
+    // западная стена дома проходит в 1.5 м от центра тайла (101, 101):
+    // сетке центр свободен, мешу с радиусом агента 2 м — уже нет
+    let mut map = MapData::default();
+    map.buildings.push(area(
+        AreaKind::Building,
+        vec![
+            Vec2::new(102.5, 90.0),
+            Vec2::new(110.0, 90.0),
+            Vec2::new(110.0, 110.0),
+            Vec2::new(102.5, 110.0),
+        ],
+    ));
+    let mut navmesh = Navmesh::default();
+    navmesh.fill_from_mapdata(&map);
+    let desired = IVec2::new(50, 50);
+    assert!(
+        navmesh.is_passable(desired.x, desired.y),
+        "предусловие: сетка обязана видеть центр тайла свободным"
+    );
+    let mesh = build_polymesh_from_map(&map, 2.0).expect("меш обязан строиться");
+    let backend = Backend::with_mesh(Arc::new(RwLock::new(navmesh)), mesh);
+    assert!(
+        !backend.walkable().allows(tile_center(desired)),
+        "предусловие: меш обязан видеть тайл внутри раздутого контура"
+    );
+
+    let mut app = App::new();
+    app.insert_resource(backend)
+        .init_resource::<HumanStyle>()
+        .init_resource::<SlotSearch>()
+        .init_resource::<SlotLab>()
+        .init_resource::<DestinationClaims>()
+        .add_systems(Update, assign_destination_slots);
+
+    let mut movable = Movable::new(1.0);
+    movable.state = MovableState::Pathfinding(desired);
+    let pawn = app
+        .world_mut()
+        .spawn((
+            movable,
+            SimPosition(tile_center(IVec2::new(10, 10))),
+            PathfindingRequest {
+                start_tile: IVec2::new(10, 10),
+                end_tile: desired,
+            },
+        ))
+        .id();
+
+    app.update();
+
+    let claim = app
+        .world()
+        .get::<DestinationClaim>(pawn)
+        .expect("слот обязан найтись: к западу от стены есть место");
+    let side = slot_side(2.0 * app.world().resource::<HumanStyle>().body_radius);
+    let target = slot_target(claim.0, side);
+    assert_ne!(
+        target, desired,
+        "цель обязана уйти с тайла внутри раздутого контура"
+    );
+    assert!(
+        app.world()
+            .resource::<Backend>()
+            .walkable()
+            .allows(tile_center(target)),
+        "цель слота обязана быть свободна и на меше"
+    );
+}
