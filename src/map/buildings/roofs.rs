@@ -31,7 +31,7 @@
 
 use bevy::prelude::*;
 
-use super::shade_by_light;
+use super::{HouseFootprint, shade_by_light};
 use crate::map::meshing::{merge_close_points, min_area_rect, miter_offsets, ring_perimeter};
 use crate::map::osm::model::{distance_to_segment, signed_ring_area};
 use crate::map::osm::{AreaKind, BuildingUse, PolyArea};
@@ -270,7 +270,7 @@ pub struct ShapeFacts {
 
 /// Числа выбора формы для этого контура; `None` — вырожденное кольцо.
 pub fn shape_facts(building: &PolyArea) -> Option<ShapeFacts> {
-    let (rect, rect_fill) = bounding_rect(&building.outer)?;
+    let (rect, rect_fill) = bounding_rect(building, None)?;
     let hip_inset = hip_plan(&building.outer).map(|(_, inset)| inset);
     Some(ShapeFacts {
         rect_fill,
@@ -294,12 +294,13 @@ pub(super) fn roofing_of(
     ridge_lift: impl Fn(f32) -> Vec2,
     base: Srgba,
     seed: u32,
+    fp: Option<HouseFootprint>,
 ) -> Roofing {
     match shape {
-        RoofShape::Auto => roofing(building, lift, ridge_lift, base, seed),
+        RoofShape::Auto => roofing(building, lift, ridge_lift, base, seed, fp),
         RoofShape::Flat => Roofing::Flat,
         RoofShape::Gable => {
-            gable_roof(building, lift, &ridge_lift, base).map_or(Roofing::Flat, Roofing::Gable)
+            gable_roof(building, lift, &ridge_lift, base, fp).map_or(Roofing::Flat, Roofing::Gable)
         }
         RoofShape::Hip => {
             hip_roof(building, lift, &ridge_lift, base).map_or(Roofing::Flat, Roofing::Hip)
@@ -319,7 +320,7 @@ pub(super) fn roofing_of(
                 dormers: shape == RoofShape::Dormer,
                 seed,
             };
-            house_gable(building, lift, &ridge_lift, base, choice)
+            house_gable(building, lift, &ridge_lift, base, choice, fp)
                 .map_or(Roofing::Flat, Roofing::Gable)
         }
         RoofShape::Cross => {
@@ -342,14 +343,15 @@ pub(super) fn roofing(
     ridge_lift: impl Fn(f32) -> Vec2,
     base: Srgba,
     seed: u32,
+    fp: Option<HouseFootprint>,
 ) -> Roofing {
     if let Some(form) = landmark_roof(building) {
-        return landmark_roofing(form, building, lift, ridge_lift, base);
+        return landmark_roofing(form, building, lift, ridge_lift, base, fp);
     }
     if !is_pitched(building) {
         return Roofing::Flat;
     }
-    if let Some(rect) = gable_rect(&building.outer) {
+    if let Some(rect) = gable_rect(building, fp) {
         let choice = house_roof(building, &rect, seed);
         // редкая вальма — только большому дому, и только если посев так решил
         if choice.hipped
@@ -357,7 +359,7 @@ pub(super) fn roofing(
         {
             return Roofing::Hip(hip);
         }
-        if let Some(roof) = house_gable(building, lift, &ridge_lift, base, choice) {
+        if let Some(roof) = house_gable(building, lift, &ridge_lift, base, choice, fp) {
             return Roofing::Gable(roof);
         }
     }
@@ -368,7 +370,9 @@ pub(super) fn roofing(
         Some(roof) => Roofing::Hip(roof),
         // на совсем узком контуре вальма выворачивается, а двускатная не
         // встала — пусть будет плоской, это по крайней мере не врёт
-        None => gable_roof(building, lift, &ridge_lift, base).map_or(Roofing::Flat, Roofing::Gable),
+        None => {
+            gable_roof(building, lift, &ridge_lift, base, fp).map_or(Roofing::Flat, Roofing::Gable)
+        }
     }
 }
 
@@ -444,6 +448,7 @@ fn landmark_roofing(
     lift: Vec2,
     ridge_lift: impl Fn(f32) -> Vec2,
     base: Srgba,
+    fp: Option<HouseFootprint>,
 ) -> Roofing {
     let hip = |ridge_lift: &dyn Fn(f32) -> Vec2| {
         hip_roof(building, lift, ridge_lift, base).map_or(Roofing::Flat, Roofing::Hip)
@@ -459,6 +464,7 @@ fn landmark_roofing(
                 base,
                 STEEP_PITCH,
                 STEEP_RISE_MAX,
+                fp,
             ) {
                 Some(roof) => Roofing::Gable(roof),
                 None => hip(&ridge_lift),
@@ -474,12 +480,12 @@ fn landmark_roofing(
 /// вальмы и на вершину шатра встают главы храма (`temples.rs`). Считается
 /// теми же отступлениями, что и сама крыша ([`landmark_roofing`]), — иначе
 /// глава повисла бы над кровлей или утонула в ней. Обычный дом — ноль.
-pub(super) fn landmark_rise(building: &PolyArea) -> f32 {
+pub(super) fn landmark_rise(building: &PolyArea, fp: Option<HouseFootprint>) -> f32 {
     let hip = || hip_plan(&building.outer).map_or(0.0, |(_, inset)| hip_rise(inset));
     match landmark_roof(building) {
         None | Some(LandmarkRoof::Flat) => 0.0,
         Some(LandmarkRoof::Hip) => hip(),
-        Some(LandmarkRoof::SteepGable) => match gable_rect(&building.outer) {
+        Some(LandmarkRoof::SteepGable) => match gable_rect(building, fp) {
             Some(rect) => pitched_rise((rect[2] - rect[1]).length(), STEEP_PITCH, STEEP_RISE_MAX),
             None => hip(),
         },
@@ -502,11 +508,11 @@ pub(super) fn landmark_rise(building: &PolyArea) -> f32 {
 /// Шатёр и крутая двускатная площадки не дают вовсе, и ноль здесь — не «можно
 /// везде»: на них главы и не раскладываются (шатёр несёт башня, крутую
 /// двускатную — западный храм, а у него главы нет).
-pub(super) fn landmark_inset(building: &PolyArea) -> f32 {
+pub(super) fn landmark_inset(building: &PolyArea, fp: Option<HouseFootprint>) -> f32 {
     let hip = || hip_plan(&building.outer).map_or(0.0, |(_, inset)| inset);
     match landmark_roof(building) {
         Some(LandmarkRoof::Hip) => hip(),
-        Some(LandmarkRoof::SteepGable) if gable_rect(&building.outer).is_none() => hip(),
+        Some(LandmarkRoof::SteepGable) if gable_rect(building, fp).is_none() => hip(),
         _ => 0.0,
     }
 }
@@ -662,14 +668,16 @@ fn pitched_rise(width: f32, pitch: f32, rise_max: f32) -> f32 {
 /// Описанный прямоугольник контура и доля его площади, занятая контуром.
 /// `None` — вырожденное кольцо. Вторая половина решения о форме, рядом с
 /// [`hip_plan`] и по той же причине: витрина печатает ровно то число, по
-/// которому игра отказывает двускатной, а не пересчитанное своё.
-fn bounding_rect(ring: &[Vec2]) -> Option<([Vec2; 4], f32)> {
-    let rect = min_area_rect(ring)?;
+/// которому игра отказывает двускатной, а не пересчитанное своё. Пятно дома
+/// приходит готовым ([`HouseFootprint`]); `None` — пятна нет, оно считается
+/// на месте, как раньше.
+fn bounding_rect(building: &PolyArea, fp: Option<HouseFootprint>) -> Option<([Vec2; 4], f32)> {
+    let rect = fp.or_else(|| HouseFootprint::of(building))?.rect();
     let area = rect_area(&rect);
     if area <= 0.0 {
         return None;
     }
-    Some((rect, signed_ring_area(ring).abs() / area))
+    Some((rect, signed_ring_area(&building.outer).abs() / area))
 }
 
 /// Площадь прямоугольника, заданного углами по обходу.
@@ -694,9 +702,10 @@ fn overhang(ring: &[Vec2], rect: &[Vec2; 4]) -> f32 {
 /// контур заполняет его хуже [`RECT_FILL_MIN`] или какой-то его угол висит
 /// дальше [`GABLE_OVERHANG_MAX`] от стены. Крыша рисуется по прямоугольнику,
 /// стены — по контуру, и на пустом углу из-под крыши не выходит ни одна стена.
-fn gable_rect(ring: &[Vec2]) -> Option<[Vec2; 4]> {
-    let (rect, fill) = bounding_rect(ring)?;
-    (fill >= RECT_FILL_MIN && overhang(ring, &rect) <= GABLE_OVERHANG_MAX).then_some(rect)
+fn gable_rect(building: &PolyArea, fp: Option<HouseFootprint>) -> Option<[Vec2; 4]> {
+    let (rect, fill) = bounding_rect(building, fp)?;
+    (fill >= RECT_FILL_MIN && overhang(&building.outer, &rect) <= GABLE_OVERHANG_MAX)
+        .then_some(rect)
 }
 
 /// Двускатная крыша над контуром, поднятым на `lift`; `ridge_lift` — на
@@ -708,15 +717,25 @@ pub(super) fn gable_roof(
     lift: Vec2,
     ridge_lift: impl Fn(f32) -> Vec2,
     base: Srgba,
+    fp: Option<HouseFootprint>,
 ) -> Option<GableRoof> {
     if !is_pitched(building) {
         return None;
     }
-    gable_over(building, lift, ridge_lift, base, ROOF_PITCH, ROOF_RISE_MAX)
+    gable_over(
+        building,
+        lift,
+        ridge_lift,
+        base,
+        ROOF_PITCH,
+        ROOF_RISE_MAX,
+        fp,
+    )
 }
 
 /// Двускатная крыша заданной крутизны — без вопроса, положена ли она дому:
 /// жилому дому это решает [`is_pitched`], храму — его вера.
+#[allow(clippy::too_many_arguments)]
 fn gable_over(
     building: &PolyArea,
     lift: Vec2,
@@ -724,8 +743,9 @@ fn gable_over(
     base: Srgba,
     pitch: f32,
     rise_max: f32,
+    fp: Option<HouseFootprint>,
 ) -> Option<GableRoof> {
-    let rect = gable_rect(&building.outer)?;
+    let rect = gable_rect(building, fp)?;
     Some(plain_gable(
         &Frame::of(rect, lift),
         &ridge_lift,
@@ -1033,11 +1053,12 @@ fn house_gable(
     ridge_lift: impl Fn(f32) -> Vec2,
     base: Srgba,
     choice: HouseRoof,
+    fp: Option<HouseFootprint>,
 ) -> Option<GableRoof> {
     if !is_pitched(building) {
         return None;
     }
-    let rect = gable_rect(&building.outer)?;
+    let rect = gable_rect(building, fp)?;
     let frame = Frame::of(rect, lift);
     let rise = ridge_rise(frame.width);
     let mut roof = match choice.form {
@@ -1182,7 +1203,14 @@ fn cross_gable(
 /// режутся. Вывод от этого не меняется — всё, что шло после потолка, и так
 /// отбрасывалось.
 fn rect_splits(ring: Vec<Vec2>, budget: usize) -> Vec<Vec<Vec<Vec2>>> {
-    let fill = bounding_rect(&ring).map_or(0.0, |(_, fill)| fill);
+    // кольцо здесь слито из близких вершин и нарезано кусками — не контур
+    // дома, и пятна у него нет: заполнение считается по нему самому
+    let fill = min_area_rect(&ring)
+        .and_then(|rect| {
+            let area = rect_area(&rect);
+            (area > 0.0).then(|| signed_ring_area(&ring).abs() / area)
+        })
+        .unwrap_or(0.0);
     if budget <= 1 || ring.len() < 5 || fill >= SPLIT_FILL_DONE {
         return vec![vec![ring]];
     }

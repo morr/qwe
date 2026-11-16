@@ -271,7 +271,7 @@ fn a_cupola_stands_on_the_ridge_it_is_given() {
     let _sun = crate::map::default_sun();
     let area = church(oblong(24.0, 26.0), 16.0, Faith::Orthodox, SacredForm::Nave);
     assert_eq!(landmark_roof(&area), Some(LandmarkRoof::Hip));
-    let rise = landmark_rise(&area);
+    let rise = landmark_rise(&area, None);
     assert!(rise > 0.0);
     for crown in crowns_with(&area, Srgba::WHITE, Srgba::WHITE, Own::default()) {
         if let Crown::Dome { base, .. } = crown {

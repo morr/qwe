@@ -997,6 +997,7 @@ pub(super) fn facade_and_roof_builders(
             |_| Vec2::ZERO,
             color,
             building_seed(building),
+            None,
         ) {
             Roofing::Gable(roof) => {
                 roofs.set_roof(Some(look.frame));
@@ -1348,7 +1349,15 @@ fn push_house_with_arches(
             push_items(builder, &chimney, Some(lean), color);
         }
     };
-    let built = match roofing_of(shape, building, lift, |rise| lean.ridge(rise), color, seed) {
+    let built = match roofing_of(
+        shape,
+        building,
+        lift,
+        |rise| lean.ridge(rise),
+        color,
+        seed,
+        None,
+    ) {
         Roofing::Gable(roof) => {
             // фронтон — верх торцевой стены, видим по тому же правилу, что
             // и стена под ним: наружная нормаль торца смотрит против подъёма

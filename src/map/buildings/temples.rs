@@ -639,7 +639,7 @@ impl Plan {
         spread: f32,
         room: f32,
     ) -> Option<(Vec2, f32)> {
-        let inset = landmark_inset(building);
+        let inset = landmark_inset(building, None);
         let stands = |at: Vec2, radius: f32| {
             disc(at, radius + inset, DOME_SEAT_PROBES)
                 .into_iter()
@@ -925,7 +925,7 @@ fn crowns_with(building: &PolyArea, wall: Srgba, roof: Srgba, own: Own) -> Vec<C
     let seed = building_seed(building);
     let dome_color = dome_color(building, sacred.faith);
     // подъём кровли над карнизом: глава на вальме стоит на её площадке
-    let rise = landmark_rise(building);
+    let rise = landmark_rise(building, None);
     let mut out = Vec::new();
 
     let dome = |at: Vec2, radius: f32, base: f32, drum: f32, profile: Profile| Crown::Dome {

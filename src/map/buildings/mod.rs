@@ -791,6 +791,11 @@ impl HouseFootprint {
         (self.rect[1] - self.rect[0]).try_normalize()
     }
 
+    /// Углы прямоугольника по обходу, длинная сторона первой.
+    pub(super) fn rect(self) -> [Vec2; 4] {
+        self.rect
+    }
+
     /// Длина и ширина пятна — стороны прямоугольника, длинная первой.
     pub(super) fn size(self) -> (f32, f32) {
         (

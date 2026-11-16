@@ -956,7 +956,7 @@ fn the_ridge_runs_along_the_long_axis_of_the_rotated_footprint() {
     // конёк — вдоль длинной оси
     let mut house = building(ring, None, AreaKind::Building);
     house.building_use = BuildingUse::House;
-    let roof = gable_roof(&house, Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE).unwrap();
+    let roof = gable_roof(&house, Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE, None).unwrap();
     let ridge = roof.slopes[0].0[2] - roof.slopes[0].0[3];
     let long = rect[1] - rect[0];
     assert!(ridge.normalize().dot(long.normalize()).abs() > 0.999);
@@ -976,7 +976,7 @@ fn an_l_shaped_house_is_pitched_but_takes_no_gable() {
     let mut house = building(l_shape, None, AreaKind::Building);
     house.building_use = BuildingUse::House;
     assert!(is_pitched(&house));
-    assert!(gable_roof(&house, Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE).is_none());
+    assert!(gable_roof(&house, Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE, None).is_none());
 }
 
 #[test]
@@ -1002,7 +1002,7 @@ fn a_skewed_quad_takes_no_gable_whose_corner_hangs_off_the_wall() {
         facts.rect_fill
     );
     assert!(facts.gable_overhang > 2.0, "{}", facts.gable_overhang);
-    assert!(gable_roof(&house, Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE).is_none());
+    assert!(gable_roof(&house, Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE, None).is_none());
     // посев, по которому дому выпадает двускатная (`(seed >> 5) % 10 >= 4`)
     let gabled_seed = 5 << 5;
     assert!(matches!(
@@ -1011,7 +1011,8 @@ fn a_skewed_quad_takes_no_gable_whose_corner_hangs_off_the_wall() {
             Vec2::ZERO,
             |_| Vec2::ZERO,
             Srgba::WHITE,
-            gabled_seed
+            gabled_seed,
+            None
         ),
         Roofing::Hip(_)
     ));
@@ -1028,7 +1029,7 @@ fn a_skewed_quad_takes_no_gable_whose_corner_hangs_off_the_wall() {
         AreaKind::Building,
     );
     sloppy.building_use = BuildingUse::House;
-    assert!(gable_roof(&sloppy, Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE).is_some());
+    assert!(gable_roof(&sloppy, Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE, None).is_some());
 }
 
 #[test]
@@ -1036,7 +1037,7 @@ fn gable_roof_itself_refuses_a_building_that_is_not_gabled() {
     let _sun = crate::map::default_sun();
     let mut flats = building(oblong(8.0, 20.0), None, AreaKind::Building);
     flats.building_use = BuildingUse::Apartments;
-    assert!(gable_roof(&flats, Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE).is_none());
+    assert!(gable_roof(&flats, Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE, None).is_none());
 }
 
 #[test]
@@ -1046,7 +1047,14 @@ fn the_slope_facing_the_light_is_lighter_and_the_ridge_is_lifted() {
     let mut house = building(oblong(8.0, 20.0), None, AreaKind::Building);
     house.building_use = BuildingUse::House;
     let base = Srgba::rgb(0.5, 0.5, 0.5);
-    let roof = gable_roof(&house, Vec2::ZERO, |rise| Lean::of().ridge(rise), base).unwrap();
+    let roof = gable_roof(
+        &house,
+        Vec2::ZERO,
+        |rise| Lean::of().ridge(rise),
+        base,
+        None,
+    )
+    .unwrap();
     // скаты: южный (карниз y = 0) отвёрнут от света, северный повёрнут
     let (south, north) = (&roof.slopes[0], &roof.slopes[1]);
     assert_eq!(south.0[0].y, 0.0);
@@ -1326,7 +1334,8 @@ fn an_l_shaped_house_gets_a_cross_gable_instead_of_a_hip_or_a_flat_one() {
         Vec2::new(0.0, 14.0),
     ]);
     for seed in [0, 1 << 5, 7 << 5, 12345] {
-        let Roofing::Gable(roof) = roofing(&ell, Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE, seed)
+        let Roofing::Gable(roof) =
+            roofing(&ell, Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE, seed, None)
         else {
             panic!("an L takes a cross gable");
         };
@@ -1339,7 +1348,7 @@ fn an_l_shaped_house_gets_a_cross_gable_instead_of_a_hip_or_a_flat_one() {
     let mut block = building(oblong(30.0, 80.0), Some(15.0), AreaKind::Building);
     block.building_use = BuildingUse::Apartments;
     assert!(matches!(
-        roofing(&block, Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE, 0),
+        roofing(&block, Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE, 0, None),
         Roofing::Flat
     ));
 }
@@ -1358,6 +1367,7 @@ fn a_private_house_is_gabled_and_almost_never_hipped_or_flat() {
             |_| Vec2::ZERO,
             Srgba::WHITE,
             seed.wrapping_mul(2654435761),
+            None,
         ) {
             Roofing::Gable(roof) => match roof.form {
                 GableForm::Gable => gabled += 1,
@@ -1387,9 +1397,15 @@ fn every_gable_form_covers_its_rectangle_exactly_once() {
         RoofShape::Gambrel,
         RoofShape::LeanTo,
     ] {
-        let Roofing::Gable(roof) =
-            roofing_of(shape, &cottage, Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE, 0)
-        else {
+        let Roofing::Gable(roof) = roofing_of(
+            shape,
+            &cottage,
+            Vec2::ZERO,
+            |_| Vec2::ZERO,
+            Srgba::WHITE,
+            0,
+            None,
+        ) else {
             panic!("{shape:?} did not build");
         };
         assert_eq!(RoofShape::of_gable(&roof), shape);
@@ -1422,6 +1438,7 @@ fn the_cross_gable_wing_meets_the_main_ridge_no_higher_than_it() {
         |rise| Vec2::new(0.0, rise * 1000.0),
         Srgba::WHITE,
         0,
+        None,
     ) else {
         panic!("an L takes a cross gable");
     };
@@ -1456,6 +1473,7 @@ fn dormers_stand_on_a_lifted_roof_only() {
         |rise| lean.ridge(rise),
         Srgba::WHITE,
         0,
+        None,
     ) else {
         panic!("a dormer roof did not build");
     };
@@ -1469,6 +1487,7 @@ fn dormers_stand_on_a_lifted_roof_only() {
         |_| Vec2::ZERO,
         Srgba::WHITE,
         0,
+        None,
     ) else {
         panic!("a dormer roof did not build flat");
     };
@@ -1490,6 +1509,7 @@ fn a_yard_shed_is_low_and_mostly_lean_to() {
             |_| Vec2::ZERO,
             Srgba::WHITE,
             building_seed(&shed),
+            None,
         ) {
             total += 1;
             lean_to += usize::from(roof.form == GableForm::LeanTo);
@@ -1526,6 +1546,7 @@ fn hip_only(building: &PolyArea, base: Srgba) -> Roofing {
         |_| Vec2::ZERO,
         base,
         0,
+        None,
     )
 }
 
