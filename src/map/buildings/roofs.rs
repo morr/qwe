@@ -345,7 +345,7 @@ pub(super) fn roofing(
     seed: u32,
     fp: Option<HouseFootprint>,
 ) -> Roofing {
-    if let Some(form) = landmark_roof(building) {
+    if let Some(form) = landmark_roof(building, fp) {
         return landmark_roofing(form, building, lift, ridge_lift, base, fp);
     }
     if !is_pitched(building) {
@@ -391,8 +391,13 @@ pub(super) struct RoofMix {
 
 impl RoofMix {
     /// Учесть дом, если он из скатной когорты: храмы и корпуса — не про неё.
-    pub(super) fn add(&mut self, building: &PolyArea, drawn: RoofShape) {
-        if !is_pitched(building) || landmark_roof(building).is_some() {
+    pub(super) fn add(
+        &mut self,
+        building: &PolyArea,
+        drawn: RoofShape,
+        fp: Option<HouseFootprint>,
+    ) {
+        if !is_pitched(building) || landmark_roof(building, fp).is_some() {
             return;
         }
         let slot = match drawn {
@@ -430,12 +435,15 @@ impl std::fmt::Display for RoofMix {
 
 /// Назначенная форма крыши храма или крепости; `None` — обычный дом, форму
 /// ему выводит [`roofing`].
-pub(super) fn landmark_roof(building: &PolyArea) -> Option<LandmarkRoof> {
+pub(super) fn landmark_roof(
+    building: &PolyArea,
+    fp: Option<HouseFootprint>,
+) -> Option<LandmarkRoof> {
     if building.kind == AreaKind::Kremlin {
         return Some(super::fortress::roof_form(building));
     }
     match building.building_use {
-        BuildingUse::Church(sacred) => Some(super::temples::roof_form(sacred, building)),
+        BuildingUse::Church(sacred) => Some(super::temples::roof_form(sacred, building, fp)),
         _ => None,
     }
 }
@@ -482,7 +490,7 @@ fn landmark_roofing(
 /// глава повисла бы над кровлей или утонула в ней. Обычный дом — ноль.
 pub(super) fn landmark_rise(building: &PolyArea, fp: Option<HouseFootprint>) -> f32 {
     let hip = || hip_plan(&building.outer).map_or(0.0, |(_, inset)| hip_rise(inset));
-    match landmark_roof(building) {
+    match landmark_roof(building, fp) {
         None | Some(LandmarkRoof::Flat) => 0.0,
         Some(LandmarkRoof::Hip) => hip(),
         Some(LandmarkRoof::SteepGable) => match gable_rect(building, fp) {
@@ -510,7 +518,7 @@ pub(super) fn landmark_rise(building: &PolyArea, fp: Option<HouseFootprint>) -> 
 /// двускатную — западный храм, а у него главы нет).
 pub(super) fn landmark_inset(building: &PolyArea, fp: Option<HouseFootprint>) -> f32 {
     let hip = || hip_plan(&building.outer).map_or(0.0, |(_, inset)| inset);
-    match landmark_roof(building) {
+    match landmark_roof(building, fp) {
         Some(LandmarkRoof::Hip) => hip(),
         Some(LandmarkRoof::SteepGable) if gable_rect(building, fp).is_none() => hip(),
         _ => 0.0,

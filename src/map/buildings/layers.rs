@@ -952,7 +952,7 @@ pub(super) fn facade_and_roof_builders(
     let mut facades = MeshBuilder::default();
     // крыши рисует `RoofMaterial`, и рамку кровли ему даёт этот атрибут
     let mut roofs = MeshBuilder::with_roof_coords();
-    let sanctuary = Sanctuary::of(buildings);
+    let sanctuary = Sanctuary::of(buildings, footprints);
     let mut placed = Vec::new();
     for (index, building) in buildings.iter().enumerate() {
         let fp = footprints[index];
@@ -961,7 +961,7 @@ pub(super) fn facade_and_roof_builders(
         let facade_color = wall_look(building, storeys_of(building, fp), fp).base;
         let look = look_of(building, runs.get(&index), fp);
         let color = roof_color(building, &look, detail.tinted);
-        placed.extend(sanctuary.crowns(index, building, facade_color, color, Vec2::ZERO));
+        placed.extend(sanctuary.crowns(index, building, facade_color, color, Vec2::ZERO, fp));
         // часть на крыше храма — это барабан с главой, отдельная колокольня —
         // столп ярусами: коробки у них нет
         if sanctuary.boxless(index, building) {
@@ -1088,7 +1088,7 @@ pub(super) fn extrusion_builder(
 
     let lean = Lean::of();
     let runs = garage_runs(buildings);
-    let sanctuary = Sanctuary::of(buildings);
+    let sanctuary = Sanctuary::of(buildings, footprints);
 
     // стены и крыши едут одним мешем (painter's порядок общий), так что
     // рамку кровли несёт и он: у стен она нулевая, у крыш своя.
@@ -1116,7 +1116,7 @@ pub(super) fn extrusion_builder(
         let color = roof_color(building, &look, detail.tinted);
         let wall = wall_of_run(building, runs.get(&index), fp);
         let lift = lift_of_footprint(building, fp);
-        let crowns = sanctuary.crowns(index, building, wall.base, color, lift);
+        let crowns = sanctuary.crowns(index, building, wall.base, color, lift, fp);
         // часть на крыше храма — барабан с главой, отдельная колокольня — столп
         // ярусами: коробки от земли у них нет
         if sanctuary.boxless(index, building) {
@@ -1166,7 +1166,7 @@ pub(super) fn extrusion_builder(
     let mut by_cell: HashMap<IVec2, Vec<&HousePart>> = HashMap::new();
     for (place, part) in parts.iter().enumerate() {
         if let Some(drawn) = part.drawn {
-            mix.add(&buildings[order[place]], drawn);
+            mix.add(&buildings[order[place]], drawn, footprints[order[place]]);
         }
         by_cell.entry(part.cell).or_default().push(part);
     }
@@ -1243,12 +1243,13 @@ pub fn push_house(
         fp,
     );
     // дом витрины стоит один — частей храма вокруг нет, и венец у него свой
-    let crowns = Sanctuary::of(std::slice::from_ref(building)).crowns(
+    let crowns = Sanctuary::of(std::slice::from_ref(building), std::slice::from_ref(&fp)).crowns(
         0,
         building,
         wall.base,
         color,
         lift_of_footprint(building, fp),
+        fp,
     );
     push_crowns(builder, &crowns, Some(Lean::of()));
     built

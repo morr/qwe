@@ -56,9 +56,9 @@ fn a_fortress_tower_is_tented_and_its_wall_crenellated() {
     let _sun = crate::map::default_sun();
     let wall = building(oblong(3.0, 60.0), Some(12.0), AreaKind::Kremlin);
     let tower = building(square(), Some(30.0), AreaKind::Kremlin);
-    assert_eq!(landmark_roof(&wall), Some(LandmarkRoof::Flat));
+    assert_eq!(landmark_roof(&wall, None), Some(LandmarkRoof::Flat));
     assert!(matches!(
-        landmark_roof(&tower),
+        landmark_roof(&tower, None),
         Some(LandmarkRoof::Tent { .. })
     ));
     let lift = lift_of(&wall);
@@ -75,7 +75,7 @@ fn a_church_is_crowned_by_its_faith() {
     let _sun = crate::map::default_sun();
     let white = Srgba::WHITE;
     let ship = || oblong(18.0, 44.0);
-    let crowns = |area: &PolyArea| crowns_with(area, white, white, Own::default());
+    let crowns = |area: &PolyArea| crowns_with(area, white, white, Own::default(), None);
 
     let orthodox = crowns(&church(ship(), 14.0, Faith::Orthodox, SacredForm::Nave));
     assert!(orthodox.iter().any(|c| matches!(
@@ -137,7 +137,7 @@ fn a_bell_tower_stands_on_the_church_and_not_on_its_porch() {
     ];
     for faith in [Faith::Orthodox, Faith::Western] {
         let area = church(porched.clone(), 14.0, faith, SacredForm::Nave);
-        let tower = crowns_with(&area, Srgba::WHITE, Srgba::WHITE, Own::default())
+        let tower = crowns_with(&area, Srgba::WHITE, Srgba::WHITE, Own::default(), None)
             .into_iter()
             .find_map(|crown| match crown {
                 Crown::Tower { at, axis, size, .. } => Some((at, axis, size)),
@@ -178,7 +178,7 @@ fn every_cupola_stands_on_its_church_and_not_over_the_apse() {
         Vec2::new(0.0, 24.0),
     ];
     let area = church(cross, 18.0, Faith::Orthodox, SacredForm::Nave);
-    let crowns = crowns_with(&area, Srgba::WHITE, Srgba::WHITE, Own::default());
+    let crowns = crowns_with(&area, Srgba::WHITE, Srgba::WHITE, Own::default(), None);
     assert!(crowns.iter().any(|c| matches!(c, Crown::Dome { .. })));
     for crown in &crowns {
         let Crown::Dome { at, radius, .. } = *crown else {
@@ -230,19 +230,19 @@ fn a_raised_drum_stands_on_its_church_instead_of_growing_from_the_ground() {
     );
     set(&mut drum, 200);
     let list = [cathedral, drum];
-    let sanctuary = Sanctuary::of(&list);
+    let sanctuary = Sanctuary::of(&list, &[None, None]);
 
     assert_eq!(sanctuary.raised(0), None);
     assert_eq!(sanctuary.raised(1), Some(20.0));
     let white = Srgba::WHITE;
-    let on_roof = sanctuary.crowns(1, &list[1], white, white, Vec2::new(3.0, 7.0));
+    let on_roof = sanctuary.crowns(1, &list[1], white, white, Vec2::new(3.0, 7.0), None);
     assert!(matches!(
         on_roof.as_slice(),
         [(Crown::Dome { base, .. }, eave)] if *base == 20.0 && *eave == Vec2::ZERO
     ));
 
     // у собора с главами-частями своих глав нет вовсе
-    let own = sanctuary.crowns(0, &list[0], white, white, Vec2::ZERO);
+    let own = sanctuary.crowns(0, &list[0], white, white, Vec2::ZERO, None);
     assert!(
         !own.iter()
             .any(|(crown, _)| matches!(crown, Crown::Dome { .. }))
@@ -251,7 +251,7 @@ fn a_raised_drum_stands_on_its_church_instead_of_growing_from_the_ground() {
     // и коробки у барабана в меше нет: все его вершины — вершины главы, выше
     // высоты начала
     let mesh = extruded_mesh(&list[1..], &[], detail(false));
-    let lone = Sanctuary::of(&list[1..]);
+    let lone = Sanctuary::of(&list[1..], &[None]);
     assert_eq!(lone.raised(0), Some(20.0));
     let lowest = mesh
         .positions_for_test()
@@ -270,10 +270,10 @@ fn a_raised_drum_stands_on_its_church_instead_of_growing_from_the_ground() {
 fn a_cupola_stands_on_the_ridge_it_is_given() {
     let _sun = crate::map::default_sun();
     let area = church(oblong(24.0, 26.0), 16.0, Faith::Orthodox, SacredForm::Nave);
-    assert_eq!(landmark_roof(&area), Some(LandmarkRoof::Hip));
+    assert_eq!(landmark_roof(&area, None), Some(LandmarkRoof::Hip));
     let rise = landmark_rise(&area, None);
     assert!(rise > 0.0);
-    for crown in crowns_with(&area, Srgba::WHITE, Srgba::WHITE, Own::default()) {
+    for crown in crowns_with(&area, Srgba::WHITE, Srgba::WHITE, Own::default(), None) {
         if let Crown::Dome { base, .. } = crown {
             assert_eq!(base, rise);
         }
@@ -286,7 +286,8 @@ fn a_cupola_stands_on_the_ridge_it_is_given() {
 fn a_crown_casts_a_shadow_past_the_eaves() {
     let _sun = crate::map::default_sun();
     let area = church(oblong(24.0, 26.0), 16.0, Faith::Orthodox, SacredForm::Nave);
-    let casters = Sanctuary::of(std::slice::from_ref(&area)).shadow_casters(0, &area);
+    let casters =
+        Sanctuary::of(std::slice::from_ref(&area), &[None]).shadow_casters(0, &area, None);
     assert!(!casters.is_empty());
     assert!(
         casters
@@ -302,10 +303,17 @@ fn a_crown_casts_a_shadow_past_the_eaves() {
 fn a_standalone_bell_tower_is_all_crown_from_the_ground() {
     let _sun = crate::map::default_sun();
     let tower = church(oblong(12.0, 12.0), 70.0, Faith::Orthodox, SacredForm::Tower);
-    let sanctuary = Sanctuary::of(std::slice::from_ref(&tower));
+    let sanctuary = Sanctuary::of(std::slice::from_ref(&tower), &[None]);
     assert!(sanctuary.boxless(0, &tower));
-    assert_eq!(landmark_roof(&tower), Some(LandmarkRoof::Flat));
-    let crowns = sanctuary.crowns(0, &tower, Srgba::WHITE, Srgba::WHITE, Vec2::new(3.0, 7.0));
+    assert_eq!(landmark_roof(&tower, None), Some(LandmarkRoof::Flat));
+    let crowns = sanctuary.crowns(
+        0,
+        &tower,
+        Srgba::WHITE,
+        Srgba::WHITE,
+        Vec2::new(3.0, 7.0),
+        None,
+    );
     let [
         (
             Crown::Tower {
@@ -333,7 +341,7 @@ fn a_standalone_bell_tower_is_all_crown_from_the_ground() {
         "OSM height is with the spire"
     );
     assert_eq!(tiers, 3, "a 12 m tower with a 50 m pillar is three tiers");
-    let casters = sanctuary.shadow_casters(0, &tower);
+    let casters = sanctuary.shadow_casters(0, &tower, None);
     assert_eq!(casters.len(), 1);
     assert!(
         casters[0].1 > 70.0,
@@ -342,7 +350,7 @@ fn a_standalone_bell_tower_is_all_crown_from_the_ground() {
 
     // минарет остаётся коробкой с венцом сверху
     let minaret = church(oblong(6.0, 6.0), 30.0, Faith::Muslim, SacredForm::Tower);
-    assert!(!Sanctuary::of(std::slice::from_ref(&minaret)).boxless(0, &minaret));
+    assert!(!Sanctuary::of(std::slice::from_ref(&minaret), &[None]).boxless(0, &minaret));
 }
 
 /// Храм, у которого колокольня размечена своим контуром, корабельной башни от
@@ -382,18 +390,19 @@ fn a_church_with_a_mapped_bell_tower_grows_none_of_its_own() {
             .iter()
             .any(|(crown, _)| matches!(crown, Crown::Tower { .. }))
     };
-    let alone = Sanctuary::of(std::slice::from_ref(&ship));
+    let alone = Sanctuary::of(std::slice::from_ref(&ship), &[None]);
     assert!(has_tower(&alone.crowns(
         0,
         &ship,
         Srgba::WHITE,
         Srgba::WHITE,
-        Vec2::ZERO
+        Vec2::ZERO,
+        None
     )));
 
     let both = [ship, tower];
-    let sanctuary = Sanctuary::of(&both);
-    let church_crowns = sanctuary.crowns(0, &both[0], Srgba::WHITE, Srgba::WHITE, Vec2::ZERO);
+    let sanctuary = Sanctuary::of(&both, &[None, None]);
+    let church_crowns = sanctuary.crowns(0, &both[0], Srgba::WHITE, Srgba::WHITE, Vec2::ZERO, None);
     assert!(!has_tower(&church_crowns), "the mapped tower stands beside");
     assert!(
         church_crowns
@@ -406,7 +415,8 @@ fn a_church_with_a_mapped_bell_tower_grows_none_of_its_own() {
         &both[1],
         Srgba::WHITE,
         Srgba::WHITE,
-        Vec2::ZERO
+        Vec2::ZERO,
+        None
     )));
 }
 
@@ -426,7 +436,7 @@ fn a_tagged_colour_paints_the_church_where_the_tag_means_it() {
         area
     };
     let dome_of = |area: &PolyArea| {
-        crowns_with(area, Srgba::WHITE, Srgba::WHITE, Own::default())
+        crowns_with(area, Srgba::WHITE, Srgba::WHITE, Own::default(), None)
             .into_iter()
             .find_map(|crown| match crown {
                 Crown::Dome { color, .. } => Some(color),
@@ -465,7 +475,7 @@ fn a_tagged_colour_paints_the_church_where_the_tag_means_it() {
         SacredForm::Tower,
     ));
     assert!(
-        crowns_with(&tower, Srgba::WHITE, Srgba::WHITE, Own::default())
+        crowns_with(&tower, Srgba::WHITE, Srgba::WHITE, Own::default(), None)
             .iter()
             .any(|crown| matches!(crown, Crown::Tower { cap: Some(cap), .. } if *cap == gold))
     );

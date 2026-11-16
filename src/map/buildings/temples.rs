@@ -37,11 +37,11 @@ use std::f32::consts::{FRAC_PI_2, TAU};
 use bevy::color::Mix;
 use bevy::prelude::*;
 
-use super::heights::height_or_default;
+use super::heights::height_of;
 use super::layers::wall_colors;
 use super::material::{RoofKind, building_seed, look_seed};
 use super::roofs::{LandmarkRoof, landmark_inset, landmark_rise};
-use super::{Lean, shade_by_light};
+use super::{HouseFootprint, Lean, shade_by_light};
 use crate::map::meshing::{MeshBuilder, min_area_rect};
 use crate::map::osm::model::{point_in_area, signed_ring_area};
 use crate::map::osm::{BuildingUse, Faith, PolyArea, Sacred, SacredForm, srgba_of};
@@ -215,8 +215,12 @@ pub(super) fn roof_kind(sacred: Sacred) -> RoofKind {
 const DOME_PART_MAX_SIDE: f32 = 14.0;
 
 /// Форма кровли храма.
-pub(super) fn roof_form(sacred: Sacred, building: &PolyArea) -> LandmarkRoof {
-    if is_drum(sacred, building) {
+pub(super) fn roof_form(
+    sacred: Sacred,
+    building: &PolyArea,
+    fp: Option<HouseFootprint>,
+) -> LandmarkRoof {
+    if is_drum(sacred, building, fp) {
         return LandmarkRoof::Flat;
     }
     match (sacred.faith, sacred.form) {
@@ -234,9 +238,9 @@ pub(super) fn roof_form(sacred: Sacred, building: &PolyArea) -> LandmarkRoof {
 
 /// Барабан под главой: часть с `roof:shape=onion|dome`, узкая настолько, что
 /// сама она и есть барабан.
-fn is_drum(sacred: Sacred, building: &PolyArea) -> bool {
+fn is_drum(sacred: Sacred, building: &PolyArea, fp: Option<HouseFootprint>) -> bool {
     sacred.form == SacredForm::Dome
-        && Plan::of(building).is_some_and(|plan| plan.width <= DOME_PART_MAX_SIDE)
+        && Plan::of(building, fp).is_some_and(|plan| plan.width <= DOME_PART_MAX_SIDE)
 }
 
 // ─── венец ──────────────────────────────────────────────────────────────────
@@ -459,8 +463,12 @@ struct Plan {
 }
 
 impl Plan {
-    fn of(building: &PolyArea) -> Option<Self> {
-        let rect = min_area_rect(&building.outer)?;
+    /// План из готового пятна дома ([`HouseFootprint`]); `None` — пятна нет,
+    /// оно считается на месте, как раньше. Доли контура под колокольню
+    /// ([`Plan::west_piece`]) режут контур по-своему и меряются своими
+    /// прямоугольниками — им пятно дома не передаётся.
+    fn of(building: &PolyArea, fp: Option<HouseFootprint>) -> Option<Self> {
+        let rect = fp.or_else(|| HouseFootprint::of(building))?.rect();
         let (first, second) = (rect[1] - rect[0], rect[2] - rect[1]);
         let (long, short) = match first.length() >= second.length() {
             true => (first, second),
@@ -638,8 +646,9 @@ impl Plan {
         radius: f32,
         spread: f32,
         room: f32,
+        fp: Option<HouseFootprint>,
     ) -> Option<(Vec2, f32)> {
-        let inset = landmark_inset(building, None);
+        let inset = landmark_inset(building, fp);
         let stands = |at: Vec2, radius: f32| {
             disc(at, radius + inset, DOME_SEAT_PROBES)
                 .into_iter()
@@ -714,7 +723,10 @@ pub(super) struct Sanctuary {
 }
 
 impl Sanctuary {
-    pub(super) fn of(buildings: &[PolyArea]) -> Self {
+    /// `footprints` — пятна домов ([`HouseFootprint`]), посчитанные сборщиком
+    /// слоя один раз на дом: высоты здесь читаются по ним, без нового
+    /// перебора рёбер на каждый храм.
+    pub(super) fn of(buildings: &[PolyArea], footprints: &[Option<HouseFootprint>]) -> Self {
         // хозяин храма — тот, от чьей первой вершины взят посев храма
         let hosts: HashMap<u32, usize> = buildings
             .iter()
@@ -748,11 +760,13 @@ impl Sanctuary {
             let floor = match (sacred.floor(), host) {
                 (floor, _) if floor > 0.0 => floor,
                 // барабан без высоты начала, но на чужом храме — стоит на его крыше
-                (_, Some(host)) if is_drum(sacred, building) => height_or_default(&buildings[host]),
+                (_, Some(host)) if is_drum(sacred, building, footprints[index]) => {
+                    height_of(&buildings[host], footprints[host])
+                }
                 _ => continue,
             };
             // высота начала не выше самой части: иначе рисовать нечего
-            let floor = floor.min(height_or_default(building) * RAISED_FLOOR_SHARE_MAX);
+            let floor = floor.min(height_of(building, footprints[index]) * RAISED_FLOOR_SHARE_MAX);
             raised.insert(index, floor);
             if host.is_some() {
                 domed.insert(sacred.complex);
@@ -791,9 +805,10 @@ impl Sanctuary {
         wall: Srgba,
         roof: Srgba,
         lift: Vec2,
+        fp: Option<HouseFootprint>,
     ) -> Vec<(Crown, Vec2)> {
         if let Some(floor) = self.raised(index) {
-            return raised_drum(building, floor, wall)
+            return raised_drum(building, floor, wall, fp)
                 .into_iter()
                 .map(|crown| (crown, Vec2::ZERO))
                 .collect();
@@ -809,7 +824,7 @@ impl Sanctuary {
             true => Vec2::ZERO,
             false => lift,
         };
-        crowns_with(building, wall, roof, own)
+        crowns_with(building, wall, roof, own, fp)
             .into_iter()
             .map(|crown| (crown, eave))
             .collect()
@@ -822,15 +837,16 @@ impl Sanctuary {
         &self,
         index: usize,
         building: &PolyArea,
+        fp: Option<HouseFootprint>,
     ) -> Vec<(Vec<Vec2>, f32)> {
         if !matches!(building.building_use, BuildingUse::Church(_)) {
             return Vec::new();
         }
         let eave = match self.boxless(index, building) {
             true => 0.0,
-            false => height_or_default(building),
+            false => height_of(building, fp),
         };
-        self.crowns(index, building, Srgba::WHITE, Srgba::WHITE, Vec2::ZERO)
+        self.crowns(index, building, Srgba::WHITE, Srgba::WHITE, Vec2::ZERO, fp)
             .iter()
             .map(|(crown, _)| {
                 let outline = match *crown {
@@ -851,13 +867,18 @@ const RAISED_FLOOR_SHARE_MAX: f32 = 0.8;
 /// Приподнятая часть: барабан от высоты начала до верха части и глава на нём.
 /// Верх части в OSM — это маковка (`height` вместе с `roof:height`), поэтому
 /// барабан кончается там, где начинается глава.
-fn raised_drum(building: &PolyArea, floor: f32, wall: Srgba) -> Option<Crown> {
+fn raised_drum(
+    building: &PolyArea,
+    floor: f32,
+    wall: Srgba,
+    fp: Option<HouseFootprint>,
+) -> Option<Crown> {
     let BuildingUse::Church(sacred) = building.building_use else {
         return None;
     };
-    let plan = Plan::of(building)?;
+    let plan = Plan::of(building, fp)?;
     let (profile, radius) = drum_cupola(sacred.faith, &plan);
-    let drum = (height_or_default(building) - floor - radius * profile.height()).max(radius * 0.6);
+    let drum = (height_of(building, fp) - floor - radius * profile.height()).max(radius * 0.6);
     Some(Crown::Dome {
         at: plan.center,
         radius,
@@ -912,20 +933,26 @@ impl Default for Own {
 /// кровля (барабан красится стеной, шатёр колокольни — кровлей), `own` — что
 /// храм ставит от себя ([`Sanctuary`] знает, что у него размечено частями).
 /// Не храм и пристройка — пусто.
-fn crowns_with(building: &PolyArea, wall: Srgba, roof: Srgba, own: Own) -> Vec<Crown> {
+fn crowns_with(
+    building: &PolyArea,
+    wall: Srgba,
+    roof: Srgba,
+    own: Own,
+    fp: Option<HouseFootprint>,
+) -> Vec<Crown> {
     let BuildingUse::Church(sacred) = building.building_use else {
         return Vec::new();
     };
     if sacred.form == SacredForm::Annex {
         return Vec::new();
     }
-    let Some(plan) = Plan::of(building) else {
+    let Some(plan) = Plan::of(building, fp) else {
         return Vec::new();
     };
     let seed = building_seed(building);
     let dome_color = dome_color(building, sacred.faith);
     // подъём кровли над карнизом: глава на вальме стоит на её площадке
-    let rise = landmark_rise(building, None);
+    let rise = landmark_rise(building, fp);
     let mut out = Vec::new();
 
     let dome = |at: Vec2, radius: f32, base: f32, drum: f32, profile: Profile| Crown::Dome {
@@ -939,7 +966,7 @@ fn crowns_with(building: &PolyArea, wall: Srgba, roof: Srgba, own: Own) -> Vec<C
         raised: false,
     };
 
-    if is_drum(sacred, building) {
+    if is_drum(sacred, building, fp) {
         let (profile, radius) = drum_cupola(sacred.faith, &plan);
         out.push(dome(plan.center, radius, 0.0, 0.0, profile));
         return out;
@@ -948,7 +975,7 @@ fn crowns_with(building: &PolyArea, wall: Srgba, roof: Srgba, own: Own) -> Vec<C
     match (sacred.faith, sacred.form) {
         (Faith::Orthodox | Faith::Western | Faith::Unknown, SacredForm::Tower) => {
             out.push(standalone_tower(
-                building, &plan, sacred, seed, wall, roof, dome_color,
+                building, &plan, sacred, seed, wall, roof, dome_color, fp,
             ));
         }
         (Faith::Muslim, SacredForm::Tower) => {
@@ -964,7 +991,7 @@ fn crowns_with(building: &PolyArea, wall: Srgba, roof: Srgba, own: Own) -> Vec<C
         }
         (_, SacredForm::Tower) => {}
         (Faith::Orthodox, _) => orthodox_nave(
-            &mut out, building, &plan, seed, own, rise, wall, roof, dome_color,
+            &mut out, building, &plan, seed, own, rise, wall, roof, dome_color, fp,
         ),
         (Faith::Western | Faith::Unknown, _) => {
             let wanted = (plan.width * 0.5).clamp(4.0, 10.0);
@@ -1047,6 +1074,7 @@ fn orthodox_nave(
     wall: Srgba,
     roof: Srgba,
     dome_color: Srgba,
+    fp: Option<HouseFootprint>,
 ) {
     let dome = |at: Vec2, radius: f32, drum: f32| Crown::Dome {
         at,
@@ -1122,7 +1150,7 @@ fn orthodox_nave(
     // не нашлось места и одной главе — пусть стоит где стояла: храм без главы
     // читается хуже, чем глава над краем кровли
     let (core, offset) = plan
-        .dome_seat(building, core, radius, spread, room)
+        .dome_seat(building, core, radius, spread, room, fp)
         .unwrap_or((core, 0.0));
     if offset > 0.0 {
         for at in minor_domes(plan, core, offset) {
@@ -1155,6 +1183,7 @@ pub(super) fn is_standalone_tower(building: &PolyArea) -> bool {
 /// кремлёвской колокольни Тулы 70 м, у Всехсвятской 82), поэтому столпу
 /// достаётся `TOWER_PILLAR_SHARE` её; додуманная высота (`heights.rs`) — до
 /// карниза яруса звона, и шпиль идёт сверх неё.
+#[allow(clippy::too_many_arguments)]
 fn standalone_tower(
     building: &PolyArea,
     plan: &Plan,
@@ -1163,9 +1192,10 @@ fn standalone_tower(
     wall: Srgba,
     roof: Srgba,
     dome_color: Srgba,
+    fp: Option<HouseFootprint>,
 ) -> Crown {
     let size = Vec2::new(plan.length, plan.width);
-    let total = height_or_default(building);
+    let total = height_of(building, fp);
     let (height, spire) = match building.height {
         Some(_) => (
             total * TOWER_PILLAR_SHARE,
