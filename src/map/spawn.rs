@@ -525,7 +525,7 @@ pub fn measure_surfaces(map: &MapData) -> Vec<LayerCost> {
     // попадает в замер вовсе. Вершин у неё нет (она не меш), поэтому строка
     // печатается миллисекундами — ровно как `build`.
     let started = std::time::Instant::now();
-    let layout = parking::ParkingLayout::new(&map);
+    let layout = parking::ParkingLayout::new(map);
     let layout_cost = LayerCost {
         name: "parking layout",
         vertices: 0,
