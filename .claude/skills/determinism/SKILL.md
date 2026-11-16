@@ -188,8 +188,12 @@ hand-written `in_state(Playing)`, nine of them on one `FixedUpdate` chain.
   outside the world" — worth it, but it is a live trap when adding a system.
 - `in_world` takes an `Option<Res<State<_>>>` because `MovementPlugin` and its neighbours
   are raised in tests with no states at all.
-- The one place the mode is still read directly is `separation_runs`, which needs it
-  **negated** ("separation is off — clear its leftovers"), and a set cannot be negated.
+- Two places still read the mode directly. `separation_runs` needs it **negated**
+  ("separation is off — clear its leftovers"), and a set cannot be negated.
+  `human::pick_wander_targets` reads it to skip the wide first-wander sift ring
+  in a replay (`species-behavior`: a live-only entry-storm optimisation; the
+  replay files its wander requests by the tick) — the same function is
+  registered in both branches, so the branch cannot come from the set.
 - `MovementPlugin` / `HumanPlugin` / `NavigationPlugin` / `DemonPlugin` add
   `DeterminismPlugin` if absent: an unconfigured set gates nothing, so both branches would
   run at once — and, since the sets carry `in_world`, the world gate would go with them.

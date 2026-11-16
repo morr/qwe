@@ -292,8 +292,8 @@ one measured session grew its context to 570K over 409 turns and burned 114.6M t
 99.6% of them cache re-reads. Three rules keep a session cheap:
 
 - **A file over ~30K characters is read in full once.** The repeat offenders here are
-  `src/map/roads.rs` (87K), `src/map/buildings/temples.rs` (87K),
-  `src/map/buildings/layers.rs` (82K) and `src/map/osm/parse.rs` (67K); `meshing.rs`,
+  `src/map/roads.rs` (123K), `src/map/buildings/temples.rs` (87K),
+  `src/map/buildings/layers.rs` (87K) and `src/map/osm/parse.rs` (67K); `meshing.rs`,
   `parking.rs`, `osm/model.rs` and `inspect.rs` joined the split pattern in October 2026
   (parent `foo.rs` keeps the interface and re-exports, subjects live in `foo/`). In the
   session that sized this rule the
@@ -426,6 +426,7 @@ step when adding one):
 | rut lines overlay | `ui/debug/overlays.rs::sync_rut_overlay` (through `surface::spawn_layers`; geometry — `map/roads/ruts.rs`, lines from `roads::build_roads`) |
 | OSM contours overlay | `ui/debug/overlays.rs::sync_osm_contours_overlay` (through `surface::spawn_layers`; geometry — `map/osm/contours.rs`) |
 | polymesh overlay | `ui/navigation/overlay.rs::sync_polymesh_overlay` |
+| inspector highlight layer (the selected hit under the cursor, checkbox-gated) and the pinned-highlight layers (one mesh for all pins) | `ui/inspector.rs::sync_inspector_highlight` / `::sync_pinned_highlights` (both through `surface::spawn_layers`, marker `InspectorHighlightMarker`) |
 | test walker | `dev.rs::on_spawn_test_walker` |
 
 Not world entities, and deliberately without the component: the cameras — the main one

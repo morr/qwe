@@ -104,9 +104,10 @@ in `main.rs`.
   tram (2.6) → cars → fences (2.75) → pipe shadows (2.76) →
   pipes (2.77) → portal stain → corpses → portal → industry shadows (4.55) → buildings (5) →
   roof shadows (5.05) → industry walls (5.06) → industry tops (5.07) → units → souls (18)
-  → tree shadows → trees (20). Four live in their
+  → tree shadows → trees (20). Three live in their
   own modules: `Z_BUILDING_SHADOW` 4.5, `Z_FACADE` 4.9, `Z_ROOF_SHADOW` 5.05
-  (`map/buildings/mod.rs`), `Z_WALL` 5.1 (`map/roads.rs`). Units are y-sorted:
+  (`map/buildings/mod.rs`); `Z_WALL` 5.1 is in the shared stack (`settings.rs`).
+  Units are y-sorted:
   `unit_z(y) = Z_UNIT_BASE − y · Y_SORT_FACTOR` (10 − y·0.002). **Invariant: the unit z
   range must stay above buildings (5) for any y ≤ MAP_SIZE.y** — a bigger map once sank
   northern units under roads. **Invariant: a road lies over water only as a bridge** —
@@ -227,7 +228,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     island point on a two-way street is a **safety island** — a kerbed lens over the
     asphalt and its paint — and the closed line an area also arrives as is **not laid as
     a ribbon** (`roads/islands.rs`).
-  - **RoadLine** — centerline + width **from its section** (`tags.rs::path_width` for a
+  - **RoadLine** — centerline + width **from its section** (`parse/tags.rs::path_width` for a
     path; footbridges and arches keep the class 3.5, their band is a navmesh corridor);
     `RoadClass: Street | Alley`; `highway: Highway` — **`Highway::is_street` is what makes
     a carriageway, not the width**; `bridge` / `passage` flags. **`carves_navmesh` is the
@@ -989,7 +990,7 @@ Summary; the mechanism — **determinism skill** (seed derivation, the decision 
   stable "personal number" is needed: the RNG seed key, the flee-fan angle, the separation
   axis, the dispatcher tiebreak, the spatial-grid tiebreak. **Never `Entity`** — entity
   indices are recycled in a different order after a restart.
-- **SimTick** (`determinism.rs`) — the step counter, incremented at the head of the
+- **SimTick** (`determinism/mod.rs`) — the step counter, incremented at the head of the
   `FixedUpdate` chain. **The unit of replay**: world state is a function of `(seed,
   settings, SimTick)`. Not `SimClock`, which counts virtual seconds and loses whatever
   `max_delta` discarded. **Compare states by tick, never by wall clock.**
