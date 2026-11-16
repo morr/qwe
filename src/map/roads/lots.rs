@@ -96,12 +96,11 @@ pub(super) struct Grounds<'a>(Vec<Ground<'a>>);
 /// Два слоя поверх асфальта стоянки: бордюры сквозных дорог и двойная сплошная
 /// между встречными полотнами.
 ///
-/// Клонируется ради финала ступени (`RoadCommon::finish_step_merged` /
-/// `finish_step_split`): слои стоянок
-/// у ступеней одинаковы (отпечаток записи 28), каждая забирает копию.
 /// Сплит-дверь вынимает её один раз в общие слои
-/// (`RoadCommon::take_common_layers`) — для этого и `Default`.
-#[derive(Clone, Default)]
+/// (`RoadCommon::take_common_layers`) — слои стоянок у ступеней одинаковы
+/// (отпечаток записи 28); слитая дверь (`build_roads_from`) берёт их из тех
+/// же общих слоёв. Для вынимания и `Default`.
+#[derive(Default)]
 pub(super) struct LotLayers {
     pub sidewalks: MeshBuilder,
     pub lines: MeshBuilder,

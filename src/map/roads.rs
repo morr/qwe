@@ -650,9 +650,9 @@ pub fn road_skeleton<'m>(
 /// один раз (`RoadLayerTag` без `LodStep` — ступень обочин их не прячет,
 /// [`spawn_road_common_layers`]), ступени — с `LodStep(step)`; после
 /// пересборки по стилю картина та же, а не два полных экземпляра, как у
-/// слитой сборки. Слитая дверь ([`build_roads_from`]) остаётся бенчу,
-/// витринам и тестам — её строки и есть контроль того, что сплит не тронул
-/// геометрию.
+/// слитой сборки. Слитая дверь ([`build_roads_from`]) собирается из этого
+/// выхода и остаётся бенчу, витринам и тестам — её строки и есть контроль
+/// того, что сплит не тронул геометрию.
 #[derive(Default)]
 pub struct RoadStepsBuild {
     /// Слои, у ступеней бит-в-бит одинаковые (отпечатки записей 28 и 32):
@@ -690,14 +690,67 @@ pub struct StepRoadBuild {
 }
 
 /// Сборка одной ступени обочин из общего скелета — **слитая дверь**:
-/// полный набор слоёв ступени, общая середина дописана в её уклад. Выход
-/// тот же, что до мирового сплита, бит-в-бит — его строки (бенч
-/// [`measure_roads`], витрины, тесты) и есть контроль. Игра ходит
-/// сплит-дверью ([`build_roads_steps`]): общая середина
-/// ([`RoadCommon`]) считается под одну ступень.
+/// полный набор слоёв ступени в одном z-списке. Собирается **композицией
+/// над сплит-дверью** ([`build_roads_steps`] на одной ступени) — выход тот
+/// же, что до мирового сплита, бит-в-бит, и его строки (бенч
+/// [`measure_roads`], витрины, тесты) остаются контролем того, что сплит
+/// не тронул геометрию. Игра ходит сплит-дверью: общая середина
+/// ([`RoadCommon`]) считается один раз на все ступени.
 pub fn build_roads_from(skeleton: &RoadSkeleton<'_>, verge: VergeZoomBucket) -> RoadBuild {
-    let common = RoadCommon::new(skeleton, &[verge]);
-    common.finish_step_merged(skeleton, 0)
+    let RoadStepsBuild {
+        common,
+        paint,
+        mut steps,
+    } = build_roads_steps(skeleton, &[verge]);
+    merged_picture(
+        common,
+        paint,
+        steps
+            .pop()
+            .expect("слитая дверь собирает ровно одну ступень"),
+    )
+}
+
+/// Слитая картина ступени из выхода сплит-двери: ступенезависимые слои
+/// встают в общий z-список, хвост мощёных клиньев зелени возвращается из
+/// слоя `sidewalk_scraps` в тротуары — формат слитой сборки (тот же z,
+/// порядок кусков хвоста тот же). Отчёт ступени уже посчитан по полной
+/// картине — свои слои плюс общие; краска и побочные выходы — при ней же.
+fn merged_picture(
+    mut common: Vec<LayerMesh>,
+    paint: Vec<paint::PaintLayer>,
+    step: StepRoadBuild,
+) -> RoadBuild {
+    let StepRoadBuild {
+        mut layers,
+        report,
+        ruts,
+        tram,
+        pieces,
+    } = step;
+    // ── Склейка лоскутов ── у слитой сборки хвост лежит в тротуарах после
+    // общей середины: слой ступени того же тротуарного материала на том же
+    // z дописывается целиком, порядок треугольников сохраняется
+    let scraps_at = layers
+        .iter()
+        .position(|layer| layer.name == "sidewalk_scraps")
+        .expect("ступень несёт свой слой мощёных клиньев");
+    let sidewalks_at = common
+        .iter()
+        .position(|layer| layer.name == "sidewalks")
+        .expect("общие слои несут тротуары");
+    let scraps = layers.swap_remove(scraps_at);
+    common[sidewalks_at].builder.append(&scraps.builder);
+    common.append(&mut layers);
+    common.sort_by(|a, b| a.z.total_cmp(&b.z));
+    RoadBuild {
+        layers: common,
+        paint,
+        report,
+        ruts,
+        tram,
+        pieces,
+    }
 }
 
 /// Сборка нескольких ступеней обочин над одним скелетом — **сплит-дверь**:
@@ -758,9 +811,9 @@ struct StepLay {
 /// (отпечаток записи 28 — асфальт, тротуары, разделительные, краска, мосты,
 /// кольца, стены, переезды), считается и укладывается один раз в свои
 /// сборщики. Ступенезависимое — скругления, обочины, лоскуты — живёт в
-/// [`StepLay`] на ступень. Финал ([`RoadCommon::finish_step_merged`], у
-/// сплит-двери — [`RoadCommon::finish_step_split`]) собирает
-/// слои ступени: её куски, потом общие, потом лоскуты.
+/// [`StepLay`] на ступень. Финал ([`RoadCommon::finish_step_split`])
+/// собирает слои ступени: её куски, потом общие, потом лоскуты; слитая
+/// дверь склеивает из этого выхода полную картину ([`build_roads_from`]).
 struct RoadCommon<'s> {
     lays: Vec<StepLay>,
     // ── общие сборщики: асфальт, тротуары, разделительные, краска, мосты ──
@@ -1423,207 +1476,6 @@ impl<'s> RoadCommon<'s> {
         }
     }
 
-    /// Финал ступени `step` **слитой двери** (индекс среди ступеней
-    /// [`RoadCommon::new`]): её скругления и обочины — из её уклада, общая
-    /// середина — дописыванием общих сборщиков, лоскуты — находка по вкладам
-    /// ступени. Порядок кусков слоя тот же, что у одноступенчатой сборки:
-    /// скругления, общая середина (кромки, разделительные, ленты, краска),
-    /// лоскуты. Сплит-дверь собирает финалом ступени
-    /// [`RoadCommon::finish_step_split`] — только её слои.
-    fn finish_step_merged(&self, skeleton: &RoadSkeleton<'_>, step: usize) -> RoadBuild {
-        let RoadSkeleton {
-            map,
-            style,
-            prepared,
-            islands,
-            junctions,
-            turns,
-            ..
-        } = skeleton;
-        let map = *map;
-        let style = *style;
-        let lay = &self.lays[step];
-        // слои ступени: её скругления и обочины, дописанные общей серединой.
-        // Порядок — как у одноступенчатой сборки: скругления раньше всего,
-        // общие фазы между ними и лоскутами
-        let mut streets = lay.streets.clone();
-        streets.append(&self.streets);
-        let mut sidewalks = lay.sidewalks.clone();
-        sidewalks.append(&self.sidewalks);
-        let mut alleys = lay.alleys.clone();
-        alleys.append(&self.alleys);
-        let mut unpaved = lay.unpaved.clone();
-        unpaved.append(&self.unpaved);
-        let mut verges = lay.verges.clone();
-        let verge_lawns = lay.verge_lawns.clone();
-        let verge_yards = lay.verge_yards.clone();
-        let median_grass = self.median_grass.clone();
-        let ring_lawns = self.ring_lawns.clone();
-        let ring_grass = self.ring_grass.clone();
-        let wall_ribbons = self.wall_ribbons.clone();
-        let rail_crossings = self.rail_crossings.clone();
-        let mut pieces = lay.pieces.clone();
-        // ── Лоскуты ── находка по вкладам ступени (скругления и улицы уже в
-        // списке): мощение после лент, как у одноступенчатой сборки
-        let mut scraps = lay.scraps.clone();
-        scraps::pave_scraps(
-            &lay.kerb,
-            &self.gores,
-            &self.drawn,
-            prepared,
-            &self.ribbon,
-            &self.road_islands,
-            &mut scraps,
-        );
-        let lawn_scraps =
-            scraps::lay_green_scraps(map, &mut scraps, &mut verges, &mut sidewalks, &mut pieces);
-        // ── Сборка слоёв и отчёт ──
-        // асфальт, тротуар и дорожка — фактурные, лента стены — плоская; три
-        // мостовых слоя со своими высотами и материалами отдаёт `Bridges`
-        let lot_layers = self.lot_layers.clone();
-        let mut layers: Vec<LayerMesh> = [
-            (
-                ring_lawns,
-                Z_RING_ISLAND,
-                "ring_islands",
-                MaterialSpec::Surface(SurfaceKind::Grass),
-            ),
-            (
-                verge_lawns,
-                Z_ROAD_VERGE_LAWN,
-                "road_verge_lawns",
-                MaterialSpec::Surface(SurfaceKind::Grass),
-            ),
-            (
-                verge_yards,
-                Z_ROAD_VERGE_YARD,
-                "road_verge_yards",
-                MaterialSpec::Surface(SurfaceKind::Yard),
-            ),
-            (
-                verges,
-                Z_ROAD_VERGE,
-                "road_verges",
-                MaterialSpec::Surface(SurfaceKind::Sidewalk),
-            ),
-            (
-                ring_grass,
-                Z_RING_GRASS,
-                "ring_island_grass",
-                MaterialSpec::Surface(SurfaceKind::Grass),
-            ),
-            (
-                alleys,
-                Z_ALLEY,
-                "alleys",
-                MaterialSpec::Surface(SurfaceKind::Alley),
-            ),
-            (
-                sidewalks,
-                Z_SIDEWALK,
-                "sidewalks",
-                MaterialSpec::Surface(SurfaceKind::Sidewalk),
-            ),
-            (
-                median_grass,
-                Z_ROAD_MEDIAN,
-                "road_medians",
-                MaterialSpec::Surface(SurfaceKind::Grass),
-            ),
-            (
-                unpaved,
-                Z_UNPAVED_ROAD,
-                "unpaved_roads",
-                MaterialSpec::Surface(SurfaceKind::Unpaved),
-            ),
-            (
-                streets,
-                Z_ROAD,
-                "roads",
-                MaterialSpec::Surface(SurfaceKind::Street),
-            ),
-            (
-                lot_layers.sidewalks,
-                Z_LOT_SIDEWALK,
-                "lot_sidewalks",
-                MaterialSpec::Surface(SurfaceKind::Sidewalk),
-            ),
-            (
-                lot_layers.lines,
-                Z_LOT_LINES,
-                "lot_lines",
-                MaterialSpec::Flat,
-            ),
-            (wall_ribbons, Z_WALL, "walls", MaterialSpec::Flat),
-            (
-                rail_crossings,
-                Z_RAIL_CROSSING,
-                "rail_crossings",
-                MaterialSpec::Flat,
-            ),
-        ]
-        .into_iter()
-        .map(|(builder, z, name, material)| LayerMesh::new(builder, z, name, material))
-        .chain(self.bridges.clone().layers())
-        .collect();
-        let paint_lines = self.painter.lines;
-        let paint = Vec::from(self.painter.clone().layers());
-        let paint_vertices = paint
-            .iter()
-            .map(|layer| layer.mesh.builder.vertex_count())
-            .sum();
-        // что скругления насчитали — поля отчёта о них (`corners.rs`)
-        let kerbs = lay.kerb.counts();
-        layers.sort_by(|a, b| a.z.total_cmp(&b.z));
-
-        let report = RoadReport {
-            style,
-            junctions: junctions.counts(),
-            paint_lines,
-            paint_vertices,
-            kerb_pockets: self.kerb_pockets,
-            turning_circles: self.turning_circles,
-            turns: turns.maneuvers,
-            arrows: if style.arrows { turns.arrows.len() } else { 0 },
-            kerb_returns: kerbs.kerb_returns,
-            sidewalk_returns: kerbs.sidewalk_returns,
-            tile_overlaps: kerbs.tile_overlaps,
-            bends: kerbs.bends,
-            outer_corners: kerbs.outer_corners,
-            noses: kerbs.noses,
-            lawn_scraps,
-            drawn: prepared.stats(),
-            bridges: self.bridges.count(),
-            track_bridges: self.track_bridges,
-            level_crossings: self.level_crossings,
-            gores: self.gores.count(),
-            road_islands: [
-                self.road_islands.refuges,
-                self.road_islands.kerbs.len() - self.road_islands.refuges,
-                self.road_islands.carriageways.len(),
-                self.road_islands.walkways.len(),
-            ],
-            merge_edges: self.merge_edges,
-            islands: islands.len(),
-            tram_bands: self.tram_bands,
-            vertices: layers
-                .iter()
-                .map(|l| l.builder.vertex_count())
-                .sum::<usize>()
-                + paint_vertices,
-            network: self.network_time,
-            elapsed: self.started.elapsed(),
-        };
-        RoadBuild {
-            layers,
-            paint,
-            report,
-            ruts: self.ruts.clone(),
-            tram: self.tram_tracks.clone(),
-            pieces,
-        }
-    }
-
     /// Общие слои сборки **сплит-двери**: чисто общие переносятся из своих
     /// сборщиков как есть, смешанные (скругления + общая середина) —
     /// скругления первой ступени с дописанной один раз серединой, краска и
@@ -1633,7 +1485,7 @@ impl<'s> RoadCommon<'s> {
     /// ([`RoadCommon::finish_step_split`]) общих сборщиков не читают.
     /// Возвращает слои, их сумму и краску в ней — отчёты ступеней прибавляют
     /// счётчики к своим слоям, чтобы строка `road meshing:` осталась суммой
-    /// полной картины ступени ([`RoadCommon::finish_step_merged`]).
+    /// полной картины ступени (как у слитой двери — [`build_roads_from`]).
     fn take_common_layers(&mut self) -> CommonLayers {
         // середина умирает в копии: содержимое переехало в смешанный слой,
         // и держать её до конца финалов незачем
@@ -1743,10 +1595,10 @@ impl<'s> RoadCommon<'s> {
         }
     }
 
-    /// Финал ступени `step` **сплит-двери**: только её ступенезависимые слои
+    /// Финал ступени **сплит-двери**: только её ступенезависимые слои
     /// — обочины из её уклада и мощёные клинья зелени отдельным слоем
-    /// (`sidewalk_scraps`; слитая дверь дописывает хвост в тротуары —
-    /// [`RoadCommon::finish_step_merged`], порядок кусков тот же). Отчёт —
+    /// (`sidewalk_scraps`; слитая дверь возвращает хвост в тротуары —
+    /// [`build_roads_from`], порядок кусков тот же). Отчёт —
     /// по полной картине ступени: свои слои плюс общие
     /// ([`RoadCommon::take_common_layers`]) — та же строка, что у слитой
     /// сборки.

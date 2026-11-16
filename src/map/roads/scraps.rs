@@ -150,22 +150,6 @@ pub(super) struct Scraps {
     lawn_grid: OnceLock<Grid<usize>>,
 }
 
-/// Копия списков без кешей: обе сетки строятся по спискам лениво, у копии
-/// они те же списки — первый вопрос достроит те же сетки (финал ступени
-/// `finish_step_merged` / `finish_step_split` берёт копию вкладов ступени
-/// для находки лоскутов).
-impl Clone for Scraps {
-    fn clone(&self) -> Self {
-        Self {
-            lawns: self.lawns.clone(),
-            green: self.green.clone(),
-            contours: self.contours.clone(),
-            grid: OnceLock::new(),
-            lawn_grid: OnceLock::new(),
-        }
-    }
-}
-
 /// Газон — или кусок полосы газона ([`Scraps::push_lawn_band`]): контур,
 /// **срезы** — рёбра, по которым он отрезан от остальной полосы, — и дорога-
 /// владелец, чей OSM id ведёт хвост находки лоскута. За срезом газон
