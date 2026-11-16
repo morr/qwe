@@ -140,6 +140,13 @@ width**) — streets, sections and the tapers between them are in
   at-grade filters were convergent copies of `is_at_grade`; `roads/rings.rs::is_approach`
   (a road that may bend into a ring's node) coincides with it today but names its own
   role and stays local.
+- **MapData queries only for filters with two consumers or more.** The one the lattice
+  earned: `MapData::at_grade_roads()` — the ground streets and drives, one rule for the
+  rail gap stitch (`parse/rails.rs::crosses_street`) and the stall reach
+  (`parking::ParkingLayout::new`, which now takes `&MapData`). roads.rs's crossing filter
+  stays on the *drawn* roads (a driveway crossing sits in a footway's slot already
+  redrawn as a street); spawn.rs's per-kind area routing has a single consumer and stays
+  iterator-local — no query for it.
 - Three more fields feed the **markings** and the parked cars:
   - `oneway` (`oneway=yes|1|true|-1`; `reversible`/`alternating` are not one-way);
   - `roundabout` — the `junction=roundabout|circular` tag, implies `oneway` — but

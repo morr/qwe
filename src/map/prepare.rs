@@ -214,7 +214,7 @@ fn small_lane(
     CarPlacement,
 ) {
     let layout_started = Instant::now();
-    let layout = ParkingLayout::new(&map.parking, &map.roads, map.traffic_side);
+    let layout = ParkingLayout::new(&map);
     info!(
         "parking layout: {} lots, {} stalls in {:.1?}",
         map.parking.len(),

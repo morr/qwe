@@ -677,7 +677,11 @@ fn overlapping_lots_do_not_share_stalls() {
         Vec2::new(75.0, 45.0),
         Vec2::new(25.0, 30.0),
     ]);
-    let layout = ParkingLayout::new(&[small, big], &[], TrafficSide::Right);
+    let map = MapData {
+        parking: vec![small, big],
+        ..Default::default()
+    };
+    let layout = ParkingLayout::new(&map);
     assert!(!layout.0[0].is_empty() && !layout.0[1].is_empty());
     for ours in &layout.0[0] {
         for theirs in &layout.0[1] {

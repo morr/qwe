@@ -233,7 +233,7 @@ fn on_probe_layers(
 
     // Пересборка: те же входы, что у адаптеров пересборки. Кроны не входят —
     // они рассыпаются в сущности (куски — уже слои живого мира выше).
-    let layout = ParkingLayout::new(&map.parking, &map.roads, map.traffic_side);
+    let layout = ParkingLayout::new(&map);
     let (surfaces, _) = mesh_surfaces(&map, &layout);
     let (roads, _) = mesh_roads(&map, *road_style, road_shape.0, *verge_bucket);
     let (rails, _) = mesh_rails(*rail_bucket, &map.rails);

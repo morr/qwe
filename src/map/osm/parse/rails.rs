@@ -190,17 +190,15 @@ fn point_behind(points: &[Vec2], last: bool) -> Vec2 {
 }
 
 /// Пересекает ли отрезок `a→b` осевую дороги, которую путь может пересечь в
-/// одном уровне, — то же правило, что у настила переезда
-/// (`RoadLine::is_at_grade`).
+/// одном уровне, — то же правило, что кладёт настил переезда
+/// (`RoadLine::is_at_grade`); дороги даёт запрос модели
+/// ([`MapData::at_grade_roads`]).
 fn crosses_street(map: &MapData, a: Vec2, b: Vec2) -> bool {
-    map.roads
-        .iter()
-        .filter(|road| road.is_at_grade())
-        .any(|road| {
-            road.points
-                .windows(2)
-                .any(|link| segments_cross(a, b, link[0], link[1]))
-        })
+    map.at_grade_roads().any(|road| {
+        road.points
+            .windows(2)
+            .any(|link| segments_cross(a, b, link[0], link[1]))
+    })
 }
 
 /// Путь `a.rail` продолжается путём `b.rail` через разрыв; второй удаляется.

@@ -65,6 +65,7 @@ use bevy::prelude::*;
 use self::aisles::aisle_rows;
 use self::generated::generated_rows;
 use crate::map::meshing::MeshBuilder;
+use crate::map::osm::MapData;
 use crate::map::osm::model::{
     AreaKind, LotKind, PolyArea, RoadLine, TrafficSide, distance_to_segment, ring_bounds,
     signed_ring_area,
@@ -221,17 +222,21 @@ impl ParkingLayout {
     ///
     /// Третье — **асфальт улиц у кромки**: место, перед носом которого лежит
     /// полотно дороги, доступно с неё ([`reachable`]). Сторона движения
-    /// `traffic` решает, куда смотрит машина, вставшая вдоль бордюра
-    /// ([`generated::parallel_rows`]).
-    pub fn new(lots: &[PolyArea], roads: &[RoadLine], traffic: TrafficSide) -> Self {
+    /// `map.traffic_side` решает, куда смотрит машина, вставшая вдоль бордюра
+    /// ([`generated::parallel_rows`]). Дороги у кромки — запрос модели
+    /// ([`MapData::at_grade_roads`]), не свой фильтр: правило «на земле» у
+    /// раскладки и у переезда одно.
+    pub fn new(map: &MapData) -> Self {
+        let lots = &map.parking[..];
+        let roads = &map.roads[..];
+        let traffic = map.traffic_side;
         let aisles: Vec<&RoadLine> = roads.iter().filter(|road| road.parking_aisle).collect();
         let through: Vec<&RoadLine> = roads.iter().filter(|road| is_through(road)).collect();
         // улицы с габаритами: на площадку идут только те, что рядом с ней —
-        // и те, что на земле (`RoadLine::is_at_grade`): мост не дотянется,
+        // и те, что на земле (`MapData::at_grade_roads`): мост не дотянется,
         // арка проходит сквозь дом
-        let streets: Vec<(&RoadLine, Vec2, Vec2)> = roads
-            .iter()
-            .filter(|road| road.is_at_grade())
+        let streets: Vec<(&RoadLine, Vec2, Vec2)> = map
+            .at_grade_roads()
             .map(|road| {
                 let (low, high) = ring_bounds(&road.points);
                 (road, low, high)
