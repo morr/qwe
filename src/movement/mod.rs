@@ -27,8 +27,7 @@ pub use self::destination::{
 };
 pub use self::pathfinding::{
     QueuedWander, dispatch_pathfinding_requests, on_pathfinding_request_added,
-    on_pathfinding_request_removed, on_urgent_path_added, on_urgent_path_removed,
-    waits_for_camera,
+    on_pathfinding_request_removed, on_urgent_path_added, on_urgent_path_removed, waits_for_camera,
 };
 pub use self::separation::{
     SEPARATION_LEFT_SHARE, SEPARATION_LEFT_SHARE_MAX, SEPARATION_LEFT_SHARE_MIN,

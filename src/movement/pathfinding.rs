@@ -934,25 +934,40 @@ mod tests {
     /// видно, а за полосой не видно никому. Срочная не ждёт ни в одной зоне.
     #[test]
     fn the_visibility_edge_sits_where_the_asker_margin_puts_it() {
-        let view = view(NEAR_ZOOM); // ровно кадр: ±50 м по горизонтали
+        let frame = view(NEAR_ZOOM); // ровно кадр: ±50 м по горизонтали
         let edge = Vec2::new(50.0, 0.0); // кромка считается своей
-        assert!(!waits_for_camera(&view, edge, false, 1.0));
-        assert!(!waits_for_camera(&view, edge, false, VIEW_MARGIN));
+        assert!(!waits_for_camera(&frame, edge, false, 1.0));
+        assert!(!waits_for_camera(&frame, edge, false, VIEW_MARGIN));
 
         let in_dispatch_band = Vec2::new(55.0, 0.0); // за кадром, в полосе запаса
-        assert!(!waits_for_camera(&view, in_dispatch_band, false, VIEW_MARGIN));
-        assert!(waits_for_camera(&view, in_dispatch_band, false, 1.0));
+        assert!(!waits_for_camera(
+            &frame,
+            in_dispatch_band,
+            false,
+            VIEW_MARGIN
+        ));
+        assert!(waits_for_camera(&frame, in_dispatch_band, false, 1.0));
 
         let beyond = Vec2::new(61.0, 0.0); // и за полосой запаса
-        assert!(waits_for_camera(&view, beyond, false, VIEW_MARGIN));
+        assert!(waits_for_camera(&frame, beyond, false, VIEW_MARGIN));
 
         // срочной ждать не положено нигде — и вне кадра тоже
-        assert!(!waits_for_camera(&view, beyond, true, VIEW_MARGIN));
+        assert!(!waits_for_camera(&frame, beyond, true, VIEW_MARGIN));
 
         // на общем плане мирная ждёт и в центре кадра: мирных там не берут
         // вовсе, а срочную берут
         let wide = view(WANDER_DISPATCH_MAX_ZOOM);
-        assert!(waits_for_camera(&wide, Vec2::new(CLOSE, CLOSE), false, VIEW_MARGIN));
-        assert!(!waits_for_camera(&wide, Vec2::new(CLOSE, CLOSE), true, VIEW_MARGIN));
+        assert!(waits_for_camera(
+            &wide,
+            Vec2::new(CLOSE, CLOSE),
+            false,
+            VIEW_MARGIN
+        ));
+        assert!(!waits_for_camera(
+            &wide,
+            Vec2::new(CLOSE, CLOSE),
+            true,
+            VIEW_MARGIN
+        ));
     }
 }

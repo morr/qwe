@@ -649,8 +649,7 @@ fn poll_warmup(
             // ждущая — только пешка, которую видно и чью заявку вообще донесут;
             // срочность — тот же признак, по которому её решает сам диспетчер
             // (`movement::UrgentPath`), а не третья копия его правила
-            view.contains(sim_position.0)
-                && !waits_for_camera(&view, sim_position.0, *urgent, 1.0)
+            view.contains(sim_position.0) && !waits_for_camera(&view, sim_position.0, *urgent, 1.0)
         })
         .count();
     *seen_requests |= waiting > 0;
