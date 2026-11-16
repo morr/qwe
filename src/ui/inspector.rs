@@ -1,7 +1,9 @@
 //! Панель инспектора точки под телеметрией (правый верхний угол): строка
 //! камеры `zoom/x/y cx/cy` — переехала сюда из телеметрии, под ней — список
 //! того, что нарисовано под курсором, по семантическому индексу карты
-//! (`map/inspect.rs`).
+//! (`map/inspect.rs`). В игре панель — второй ребёнок колонки правого края
+//! (`ui/speed.rs`); витрина roads состояний не имеет и колонки не ставит —
+//! панель стоит сама у края экрана.
 //!
 //! Панель — инструмент агента, правящего баги OSM: скриншот с ней несёт
 //! собственные координаты (строка камеры читается `tools/shot_coords`), а
@@ -27,7 +29,7 @@ use bevy::ui::Checked;
 use bevy::ui_widgets::ValueChange;
 use bevy::window::PrimaryWindow;
 
-use super::speed::{PANEL_WIDTH_PX, TelemetryPanel};
+use super::speed::{PANEL_WIDTH_PX, RightHudColumn};
 use crate::camera::{cursor_world, pointer_over_ui};
 use crate::dev::{VirtualCursor, cursor_position};
 use crate::map::inspect::{
@@ -39,10 +41,8 @@ use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, spawn_layers}
 use crate::map::{RoadStyle, TreeStyle};
 use crate::prefs::TrackPrefExt;
 use crate::settings::Z_INSPECTOR_HIGHLIGHT;
-use crate::ui::{GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, panel_background, ui_column};
+use crate::ui::{GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UiBuildSet, panel_background, ui_column};
 
-/// Зазор между телеметрией и этой панелью, px.
-const INSPECTOR_GAP_PX: f32 = 6.0;
 /// Больше строк находок панель не показывает: дальше хвост `+N more`.
 const INSPECTOR_MAX_LINES: usize = 12;
 /// Пересчитывать находки при сдвиге точки больше этого, м: сам запрос — одна
@@ -188,8 +188,8 @@ const PIN_GAP_PX: f32 = 8.0;
 /// с жёлтым выбором, ни с цветами пинов.
 const PIN_RULE_COLOR: Color = Color::srgba(1.0, 1.0, 1.0, 0.22);
 
-/// Корень панели — по нему [`position_below_telemetry`] ставит панель вплотную
-/// под телеметрию.
+/// Корень панели — по нему [`sync_inspector_visibility`] ведёт видимость в
+/// витрине: панель видна, пока курсор в окне примера.
 #[derive(Component, Default)]
 struct InspectorRoot;
 
@@ -230,14 +230,18 @@ impl Plugin for UiInspectorPlugin {
         }
         app.add_systems(
             Startup,
-            move |commands: Commands, assets: Res<AssetServer>| {
-                render_inspector_ui(commands, assets, standalone);
-            },
+            (
+                move |commands: Commands,
+                      assets: Res<AssetServer>,
+                      column: Option<Res<RightHudColumn>>| {
+                    render_inspector_ui(commands, assets, standalone, column);
+                },
+            )
+                .in_set(UiBuildSet::Sections),
         )
         .add_systems(
             Update,
             (
-                position_below_telemetry,
                 update_camera_text,
                 update_inspector_hits,
                 sync_inspector_visibility,
@@ -266,16 +270,37 @@ impl Plugin for UiInspectorPlugin {
     }
 }
 
-fn render_inspector_ui(mut commands: Commands, assets: Res<AssetServer>, standalone: bool) {
+/// Место панели решается здесь же. Витрина `roads` телеметрии не ставит и
+/// состояний не имеет — панель сама стоит у края экрана и видна с первого
+/// кадра. В игре панель — второй ребёнок колонки правого края
+/// (`ui/speed.rs`): телеметрия, зазор, панель — раскладку ведёт флекс колонки,
+/// а видимость её `GameUiRoot` (скрыта до `PlayPhase::Live`, прячется на
+/// смене города).
+fn render_inspector_ui(
+    mut commands: Commands,
+    assets: Res<AssetServer>,
+    standalone: bool,
+    column: Option<Res<RightHudColumn>>,
+) {
     let mono: Handle<Font> = assets.load(fonts::MONO);
     let root = commands
         .spawn((
             Node {
-                position_type: PositionType::Absolute,
-                // под телеметрией: точную высоту ставит position_below_telemetry,
-                // здесь стартовое значение до первого измерения
-                top: px(UI_SCREEN_EDGE_PX_OFFSET),
-                right: px(UI_SCREEN_EDGE_PX_OFFSET),
+                position_type: if standalone {
+                    PositionType::Absolute
+                } else {
+                    PositionType::Relative
+                },
+                top: if standalone {
+                    px(UI_SCREEN_EDGE_PX_OFFSET)
+                } else {
+                    Val::Auto
+                },
+                right: if standalone {
+                    px(UI_SCREEN_EDGE_PX_OFFSET)
+                } else {
+                    Val::Auto
+                },
                 display: Display::Flex,
                 flex_direction: FlexDirection::Column,
                 row_gap: px(3.),
@@ -290,15 +315,7 @@ fn render_inspector_ui(mut commands: Commands, assets: Res<AssetServer>, standal
                 ..default()
             },
             panel_background(),
-            GameUiRoot,
             InspectorRoot,
-            // в игре панель показывает show_game_ui (`ui/mod.rs`), у витрины
-            // состояний нет — видна сразу
-            if standalone {
-                Visibility::Inherited
-            } else {
-                Visibility::Hidden
-            },
             Name::new("inspector_ui"),
             // моноширинный: колонки строки камеры и находок не пляшут
             InheritableFont {
@@ -363,21 +380,15 @@ fn render_inspector_ui(mut commands: Commands, assets: Res<AssetServer>, standal
         .insert(InspectorHighlightCheckbox)
         .id();
     commands.entity(root).add_child(checkbox);
-}
 
-/// Панель встаёт вплотную под телеметрию: её высота меняется вместе с
-/// содержимым, а `ComputedNode::size` — в физических пикселях, отсюда
-/// `inverse_scale_factor` (идиома `offset_below_brp_badge`). У витрины `roads`
-/// телеметрии нет — `Single` молча пропускает систему, панель стоит у края.
-fn position_below_telemetry(
-    mut root: Single<&mut Node, With<InspectorRoot>>,
-    telemetry: Single<&ComputedNode, With<TelemetryPanel>>,
-) {
-    let top = px(UI_SCREEN_EDGE_PX_OFFSET
-        + telemetry.size.y * telemetry.inverse_scale_factor
-        + INSPECTOR_GAP_PX);
-    if root.top != top {
-        root.top = top;
+    // витрина стоит сама; в игре панель прячется и показывается вместе с
+    // колонкой — `GameUiRoot` на корне панели теперь не нужен, видимость
+    // наследуется от колонки
+    if standalone {
+        commands.entity(root).insert(GameUiRoot);
+    } else {
+        let column = column.expect("right hud column spawns in UiBuildSet::Shell, before this");
+        commands.entity(column.0).add_child(root);
     }
 }
 
@@ -588,8 +599,8 @@ fn clear_inspector_pins(enabled: Res<InspectorHighlight>, mut pinned: ResMut<Ins
 
 /// Панель видна, только пока курсор внутри окна просмотра — гейт уже посчитан
 /// в `InspectorHitsState::point` (`INFINITY` — вне). Игра окон не знает
-/// ([`InspectViewport::Whole`]) — система молчит, панелью ведут `GameUiRoot`
-/// и `show_game_ui`.
+/// ([`InspectViewport::Whole`]) — система молчит, панелью ведёт видимость
+/// колонки правого края (её `GameUiRoot` и `show_game_ui` в `ui/mod.rs`).
 fn sync_inspector_visibility(
     viewport: Res<InspectViewport>,
     state: Res<InspectorHitsState>,

@@ -1281,17 +1281,20 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   `camera.rs::drag_pan` decides *in the press frame* whether the gesture belongs to the UI
   (`pointer_over_ui` over `HoverMap`) and holds that verdict until release; `zoom_to_cursor`
   runs under `not(hovering_ui)`. The rule and the idiom — **CLAUDE.md**.
-- **Two layers.** **HUD**, always on screen: run counters (`ui/stats.rs`), telemetry +
-  **Speed button** (`ui/speed.rs`), the **point inspector** (`ui/inspector.rs`, below the
-  telemetry), the **City** select bottom centre (`ui/city.rs`), hotkey help
-  (`ui/hotkeys.rs`), the agent **BRP** badge (`ui/brp.rs`). And **one settings panel**
+- **Two layers.** **HUD**, always on screen: run counters (`ui/stats.rs`) in the left
+  column; the **right-edge column** (`ui/speed.rs`, the same flex column as the left
+  one) with the telemetry + **Speed button** left of it and the **point inspector**
+  (`ui/inspector.rs`) below the telemetry; the **City** select bottom centre
+  (`ui/city.rs`), hotkey help (`ui/hotkeys.rs`), the agent **BRP** badge (`ui/brp.rs`).
+  And **one settings panel**
   with four tabs (`ui/shell.rs`): **Map**, **Nav**, **Sim**, **Debug**. `Tab` (or the `-`/`+`
   button, or a click on the open tab) collapses it to the tab strip; the open tab and the
   collapsed flag are a persisted settings group (`UiShellState`). **Section order inside a
   tab is `SectionSlot`'s declaration order** (`sort_sections`), because the sections are
   spawned by one system per section plugin.
-- **Point inspector** (`ui/inspector.rs`) — the HUD panel under the telemetry (**cursor
-  ui** in the author's requests is this panel plus its highlight layer): the camera
+- **Point inspector** (`ui/inspector.rs`) — the HUD panel under the telemetry, the
+  second child of the right-edge column (**cursor ui** in the author's requests is this
+  panel plus its highlight layer): the camera
   line `zoom/x/y cx/cy` (moved here from the telemetry, read from screenshots by
   `tools/shot_coords`) and the live list of what the map draws under the cursor, from the
   **semantic index** (`map/inspect.rs::InspectIndex` — a `Grid` over the `MapData`

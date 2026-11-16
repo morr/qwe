@@ -1,11 +1,11 @@
-//! Панель телеметрии в правом верхнем углу (порт
+//! Колонка правого края и панель телеметрии в ней (порт
 //! `zxc/src/ui/simulation_state.rs`, без игровой даты): первая строка — часы
 //! симуляции (`SimClock`), сколько мир уже прожил, вторая — диагностика
 //! pathfinding (порт заголовка `zxc/src/ui/debug/info.rs`). Строка камеры с
 //! точкой под курсором живёт теперь в инспекторе точки под этой панелью
-//! (`ui/inspector.rs`).
+//! (`ui/inspector.rs`) — тоже ребёнок колонки, раскладку ведёт её флекс.
 //!
-//! Скорость времени вынесена левее панели в отдельную кнопку: она не только
+//! Скорость времени вынесена левее колонки в отдельную кнопку: она не только
 //! показывает `SimSpeed`, но и крутит лесенку кликом.
 
 use bevy::app::PropagateOver;
@@ -15,6 +15,7 @@ use bevy::feathers::controls::ButtonVariant;
 use bevy::feathers::font_styles::InheritableFont;
 use bevy::feathers::theme::ThemeTextColor;
 use bevy::feathers::tokens;
+use bevy::picking::Pickable;
 use bevy::picking::pointer::PointerButton;
 use bevy::prelude::*;
 use bevy::text::FontWeight;
@@ -26,14 +27,16 @@ use crate::diagnostics::{
 };
 use crate::sim_time::{SimClock, SimSpeed, cycle_time_scale, previous_time_scale};
 use crate::ui::{
-    GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, button_variant, panel_background, panel_button_label,
-    row_label, spawn_panel_button_with,
+    GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UiBuildSet, button_variant, panel_background,
+    panel_button_label, row_label, spawn_panel_button_with, ui_node,
 };
 
-/// Ширина панели телеметрии; от неё же отсчитывается место кнопки скорости.
-/// Инспектор точки (`ui/inspector.rs`) берёт ту же ширину, чтобы две панели
-/// правого угла читались как одна связка.
+/// Ширина колонки правого края и телеметрии в ней; от неё же отсчитывается
+/// место кнопки скорости. Инспектор точки (`ui/inspector.rs`) — второй ребёнок
+/// той же колонки, так что одна ширина на обе панели выходит сама.
 pub(crate) const PANEL_WIDTH_PX: f32 = 470.0;
+/// Зазор между телеметрией и инспектором точки внутри колонки, px.
+const INSPECTOR_GAP_PX: f32 = 6.0;
 /// Зазор между кнопкой скорости и левым краем панели.
 const SPEED_BUTTON_GAP_PX: f32 = 6.0;
 /// Ширина кнопки скорости: хватает на самое длинное значение
@@ -54,10 +57,12 @@ struct ClockTextMarker;
 #[derive(Component, Default)]
 struct PathfindingTextMarker;
 
-/// Корень телеметрии: инспектор точки (`ui/inspector.rs`) ставит себя
-/// вплотную под панель по её измеренной высоте.
-#[derive(Component, Default)]
-pub(crate) struct TelemetryPanel;
+/// Колонка правого края: инспектор точки (`ui/inspector.rs`) добавляет в неё
+/// свою панель ребёнком после телеметрии. Вставляется при спавне колонки
+/// (`render_speed_ui`, `UiBuildSet::Shell`) — инспектор спавнится позже, в
+/// `UiBuildSet::Sections`, и находит ресурс гарантированно.
+#[derive(Resource)]
+pub(crate) struct RightHudColumn(pub(crate) Entity);
 
 /// Кнопка скорости — адресует и подсветку, и подпись значения.
 #[derive(Component, Default)]
@@ -71,7 +76,8 @@ pub struct UiSpeedPlugin;
 
 impl Plugin for UiSpeedPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, (render_speed_ui, render_speed_button))
+        app.add_systems(Startup, render_speed_ui.in_set(UiBuildSet::Shell))
+            .add_systems(Startup, render_speed_button)
             .add_systems(
                 Update,
                 (
@@ -83,64 +89,91 @@ impl Plugin for UiSpeedPlugin {
     }
 }
 
+/// Колонка правого края с телеметрией внутри. Один флекс вместо двух
+/// абсолютных панелей: ребёнку не нужно знать рост соседа, чтобы встать под
+/// ним, — тот же приём, что у колонки левого края (`ui/shell.rs`). Пиксельно
+/// то же самое: телеметрия стояла `top: EDGE`, инспектор —
+/// `EDGE + высота телеметрии + INSPECTOR_GAP_PX`; колонка с `row_gap:
+/// INSPECTOR_GAP_PX` складывает их ровно так же.
 fn render_speed_ui(mut commands: Commands, clock: Res<SimClock>, assets: Res<AssetServer>) {
     let mono: Handle<Font> = assets.load(fonts::MONO);
-    commands.spawn((
-        Node {
-            position_type: PositionType::Absolute,
-            // от края экрана — тот же отступ, что у нижних панелей
-            top: px(UI_SCREEN_EDGE_PX_OFFSET),
-            right: px(UI_SCREEN_EDGE_PX_OFFSET),
-            display: Display::Flex,
-            flex_direction: FlexDirection::Column,
-            row_gap: px(3.),
-            // фиксированная ширина: количество цифр в счётчиках меняется
-            // несколько раз в секунду, и авто-ширина заставляла панель
-            // дёргаться. Ширины хватает на строку pathfinding целиком —
-            // перенос её на вторую строку сдвигал бы всё под ней
-            width: px(PANEL_WIDTH_PX),
-            padding: UiRect {
-                top: px(10.),
-                right: px(16.),
-                bottom: px(10.),
-                left: px(16.),
-            },
-            ..default()
-        },
-        panel_background(),
-        GameUiRoot,
-        TelemetryPanel,
-        Visibility::Hidden,
-        Name::new("speed_ui"),
-        // моноширинный и покрупнее: часы и счётчики меняются несколько раз в
-        // секунду, и на пропорциональном шрифте цифры под собой пляшут
-        InheritableFont {
-            font: mono.clone(),
-            font_size: size::SMALL_FONT,
-            weight: FontWeight::NORMAL,
-        },
-        children![
-            (
-                Text(format_sim_clock(clock.elapsed)),
-                // часы крупнее остальной телеметрии. `PropagateOver` — чтобы
-                // свой кегль пережил шрифт панели: без него `InheritableFont`
-                // сверху перезаписал бы `TextFont` целиком
-                TextFont {
-                    font: mono.clone().into(),
-                    font_size: FontSize::Px(20.),
-                    ..default()
+    let column = commands
+        .spawn((
+            ui_node(Node {
+                position_type: PositionType::Absolute,
+                // от края экрана — тот же отступ, что у нижних панелей
+                top: px(UI_SCREEN_EDGE_PX_OFFSET),
+                right: px(UI_SCREEN_EDGE_PX_OFFSET),
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::FlexStart,
+                row_gap: px(INSPECTOR_GAP_PX),
+                width: px(PANEL_WIDTH_PX),
+                ..default()
+            }),
+            // колонка шире своих панелей ровно на зазор между ними, и невидимая
+            // полоса не должна отбирать у карты клики (см. колонку левого края)
+            Pickable::IGNORE,
+            GameUiRoot,
+            Visibility::Hidden,
+            Name::new("ui_right_column"),
+        ))
+        .id();
+
+    let telemetry = commands
+        .spawn((
+            Node {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                row_gap: px(3.),
+                // фиксированная ширина: количество цифр в счётчиках меняется
+                // несколько раз в секунду, и авто-ширина заставляла панель
+                // дёргаться. Ширины хватает на строку pathfinding целиком —
+                // перенос её на вторую строку сдвигал бы всё под ней
+                width: px(PANEL_WIDTH_PX),
+                padding: UiRect {
+                    top: px(10.),
+                    right: px(16.),
+                    bottom: px(10.),
+                    left: px(16.),
                 },
-                PropagateOver::<TextFont>::default(),
-                ThemeTextColor(tokens::TEXT_MAIN),
-                ClockTextMarker,
-            ),
-            (
-                Text::default(),
-                ThemeTextColor(tokens::TEXT_DIM),
-                PathfindingTextMarker,
-            ),
-        ],
-    ));
+                ..default()
+            },
+            panel_background(),
+            Name::new("speed_ui"),
+            // моноширинный и покрупнее: часы и счётчики меняются несколько раз в
+            // секунду, и на пропорциональном шрифте цифры под собой пляшут
+            InheritableFont {
+                font: mono.clone(),
+                font_size: size::SMALL_FONT,
+                weight: FontWeight::NORMAL,
+            },
+            children![
+                (
+                    Text(format_sim_clock(clock.elapsed)),
+                    // часы крупнее остальной телеметрии. `PropagateOver` — чтобы
+                    // свой кегль пережил шрифт панели: без него `InheritableFont`
+                    // сверху перезаписал бы `TextFont` целиком
+                    TextFont {
+                        font: mono.clone().into(),
+                        font_size: FontSize::Px(20.),
+                        ..default()
+                    },
+                    PropagateOver::<TextFont>::default(),
+                    ThemeTextColor(tokens::TEXT_MAIN),
+                    ClockTextMarker,
+                ),
+                (
+                    Text::default(),
+                    ThemeTextColor(tokens::TEXT_DIM),
+                    PathfindingTextMarker,
+                ),
+            ],
+        ))
+        .id();
+    commands.entity(column).add_child(telemetry);
+
+    commands.insert_resource(RightHudColumn(column));
 }
 
 fn update_clock_text(

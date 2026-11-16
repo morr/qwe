@@ -100,17 +100,22 @@ panel** with four tabs (`ui/shell.rs`).
   `inverse_scale_factor` or the offset doubles on a retina screen. The game marks an
   agent run by `BRP_PORT` (`main.rs`); a demo has no port, so its `AgentBadgePlugin`
   also takes `CLAUDECODE`, which Claude Code sets on every process of its session.
-- **Telemetry** (`ui/speed.rs`) — top-right: sim clock, pathfinding in-flight / avg ms,
-  entity count. Fixed width + right-padded digits (no jitter) only work in a
-  monospace face, so this root brings its **own** `InheritableFont` (FiraMono);
-  `apply_panel_font` therefore skips roots that already have one
-  (`Without<InheritableFont>`). The panel's fixed columns are one half of the ruler
-  `tools/shot_coords` works from — changing its geometry, font or any of these format
-  strings means re-measuring the constants at the top of that script in the same change.
-- **Point inspector** (`ui/inspector.rs`) — directly **below the telemetry**
-  (`position_below_telemetry`, the `offset_below_brp_badge` idiom; in the roads
-  gallery there is no telemetry, `Single` skips the system and the panel stands at the
-  screen edge). Two FiraMono lines: the **camera line** `zoom/x/y cx/cy` and the **hits list** — what the map draws
+- **Telemetry** (`ui/speed.rs`) — top-right, the **first child of the right-edge
+  column** (`ui_right_column`, spawned in `UiBuildSet::Shell`; the column carries the
+  `GameUiRoot` and `Pickable::IGNORE`, its `row_gap` is the telemetry–inspector gap):
+  sim clock, pathfinding in-flight / avg ms, entity count. Fixed width + right-padded
+  digits (no jitter) only work in a monospace face, so this root brings its **own**
+  `InheritableFont` (FiraMono); `apply_panel_font` therefore skips roots that already
+  have one (`Without<InheritableFont>`). The panel's fixed columns are one half of the
+  ruler `tools/shot_coords` works from — changing its geometry, font or any of these
+  format strings means re-measuring the constants at the top of that script in the same
+  change.
+- **Point inspector** (`ui/inspector.rs`) — the **second child of the right-edge
+  column**, directly **below the telemetry** — the same flex-column trick the left
+  edge uses; nothing measures a neighbour's `ComputedNode` any more. In the roads
+  gallery there is no column (`UiSpeedPlugin` is not installed), so the panel stands
+  at the screen edge itself and is visible from the first frame. Two FiraMono lines:
+  the **camera line** `zoom/x/y cx/cy` and the **hits list** — what the map draws
   under the cursor, recomputed when the point moves over `INSPECTOR_QUERY_STEP`
   or the semantic index is rebuilt. Each hit prints `z  label`; the label dictionary
   (**this file is its single owner**; `osm-map` points here): data features speak for
@@ -351,8 +356,9 @@ panel** with four tabs (`ui/shell.rs`).
   the built-in font is a narrow subset and draws anything outside ASCII as an empty box.
 - **Absolute nodes are the exception.** Inside a tab ordinary flex stacks the sections,
   and a section that hides itself (`Display::None`) is collapsed by the same flex; the
-  only absolutely anchored nodes left are HUD ones (the left column, the panel, the
-  hotkey help, the city select).
+  only absolutely anchored nodes left are the two HUD edge columns, the settings panel
+  itself, the hotkey help and the city select (and the speed button, which stands left
+  of the right column).
 - **A demo scene that calls the kits brings the theme *and* the font itself.**
   `PanelWidgetsPlugin` installs only feathers and the theme: `apply_panel_font` lives
   in `UiPlugin`, which no example can raise. Without an `InheritableFont` on the
