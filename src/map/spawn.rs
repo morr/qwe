@@ -10,7 +10,7 @@ use bevy::prelude::*;
 
 use crate::map::buildings;
 use crate::map::meshing::MeshBuilder;
-use crate::map::osm::{AreaKind, MapData, PolyArea, TreeRow};
+use crate::map::osm::{AreaKind, AreaLayer, MapData, PolyArea, TreeRow};
 use crate::map::parking;
 use crate::map::pitch;
 use crate::map::prepare::{PreparedMeshes, WorldMeshes};
@@ -99,6 +99,68 @@ const PITCH_RIM: Rim = Rim {
     width: 1.0,
     edge: Color::srgb(0.322, 0.310, 0.286),
 };
+
+/// Простой слой поверхности: одна заливка на вид, с каймой или без, и то,
+/// чем слой становится в мире. Поле даёт перечень видов ([`AreaLayer::field`]),
+/// стиль — строка здесь: добавить площадной слой «как все» — поле в `MapData`,
+/// строка в перечне (`osm::model`) и строка тут. Особые слои — кварталы
+/// с карманами, вода, площадки с цветом по виду спорта — мешятся ниже по-своему.
+struct PlainLayer {
+    layer: AreaLayer,
+    color: Color,
+    rim: Option<&'static Rim>,
+    z: f32,
+    name: &'static str,
+    material: SurfaceKind,
+}
+
+/// Порядок строк — порядок слоёв в списке сборки; z у каждого свой, так что
+/// на картинке порядок списка не сказывается.
+const PLAIN_LAYERS: &[PlainLayer] = &[
+    PlainLayer {
+        layer: AreaLayer::Park,
+        color: PARK_COLOR,
+        rim: Some(&PARK_RIM),
+        z: Z_PARK,
+        name: "parks",
+        material: SurfaceKind::Park,
+    },
+    PlainLayer {
+        layer: AreaLayer::Wood,
+        color: WOOD_COLOR,
+        rim: Some(&WOOD_RIM),
+        z: Z_WOOD,
+        name: "woods",
+        material: SurfaceKind::Wood,
+    },
+    PlainLayer {
+        layer: AreaLayer::Grass,
+        color: GRASS_COLOR,
+        rim: Some(&GRASS_RIM),
+        z: Z_GRASS,
+        name: "grass",
+        material: SurfaceKind::Grass,
+    },
+    PlainLayer {
+        layer: AreaLayer::Sand,
+        color: SAND_COLOR,
+        rim: Some(&SAND_RIM),
+        z: Z_SAND,
+        name: "sand",
+        material: SurfaceKind::Sand,
+    },
+    // у стоянки нет каймы: край, который видно сверху, — асфальт въезда
+    // переходит в асфальт площадки, и любая кайма рисовала бы градиент
+    // поперёк дороги (см. сборку ниже)
+    PlainLayer {
+        layer: AreaLayer::Parking,
+        color: PARKING_COLOR,
+        rim: None,
+        z: Z_PARKING,
+        name: "parking",
+        material: SurfaceKind::Street,
+    },
+];
 
 /// Полигон слоя с каймой по контуру, дырки включительно (у дырки кайма лежит
 /// снаружи её контура — внутри заливки). Кайма кладётся после заливки в тот
@@ -288,7 +350,11 @@ pub fn mesh_surfaces(
     let mut works = MeshBuilder::with_surface_coords();
     // и карманы земли (`parse/pockets.rs`) — травой квартала рядом или двора;
     // карман у газона — лугом, ниже в слое газонов
-    for area in map.landuse.iter().chain(&map.pockets) {
+    for area in AreaLayer::Landuse
+        .field(map)
+        .iter()
+        .chain(AreaLayer::Pocket.field(map))
+    {
         let (builder, color) = match area.kind {
             AreaKind::Industrial => (&mut works, INDUSTRIAL_COLOR),
             AreaKind::Grass => continue,
@@ -297,46 +363,47 @@ pub fn mesh_surfaces(
         builder.push_polygon(&area.outer, &area.holes, color.to_linear());
     }
 
-    let mut parks = MeshBuilder::with_surface_coords();
-    for park in &map.parks {
-        push_area(&mut parks, park, PARK_COLOR, &PARK_RIM);
-    }
-
-    let mut woods = MeshBuilder::with_surface_coords();
-    for area in &map.woods {
-        push_area(&mut woods, area, WOOD_COLOR, &WOOD_RIM);
-    }
-
-    let mut grass = MeshBuilder::with_surface_coords();
-    for area in &map.grass {
-        push_area(&mut grass, area, GRASS_COLOR, &GRASS_RIM);
-    }
+    // простые слои — по строке стиля: заливка с каймой или без
+    let mut plain: Vec<(MeshBuilder, &PlainLayer)> = PLAIN_LAYERS
+        .iter()
+        .map(|style| {
+            let mut builder = MeshBuilder::with_surface_coords();
+            for area in style.layer.field(map) {
+                match style.rim {
+                    Some(rim) => push_area(&mut builder, area, style.color, rim),
+                    None => {
+                        builder.push_polygon(&area.outer, &area.holes, style.color.to_linear())
+                    }
+                }
+            }
+            (builder, style)
+        })
+        .collect();
     // луг кармана — без каймы: он не газон, а продолжение газона обочины
-    for area in map
-        .pockets
+    let (grass_builder, grass_style) = plain
+        .iter_mut()
+        .find(|(_, style)| style.layer == AreaLayer::Grass)
+        .expect("в простых слоях есть газон");
+    for area in AreaLayer::Pocket
+        .field(map)
         .iter()
         .filter(|area| area.kind == AreaKind::Grass)
     {
-        grass.push_polygon(&area.outer, &area.holes, GRASS_COLOR.to_linear());
-    }
-
-    let mut sand = MeshBuilder::with_surface_coords();
-    for area in &map.sand {
-        push_area(&mut sand, area, SAND_COLOR, &SAND_RIM);
+        grass_builder.push_polygon(&area.outer, &area.holes, grass_style.color.to_linear());
     }
 
     // русла режутся по берегам раньше обоих водных слоёв: резка решает не
     // только, где лента невидима, но и какие её куски — сама площадная вода
     // (`water::split_channels`)
     let waterways_started = std::time::Instant::now();
-    let channels = split_channels(&map.water_lines, &map.water);
+    let channels = split_channels(&map.water_lines, AreaLayer::Water.field(map));
     let mut waterways_took = waterways_started.elapsed();
 
     // вода — не каймой по контуру, как зелень: отмель у неё — расстояние до
     // ближайшего берега по всем полигонам сразу (`water::mesh_water_areas`)
     let water_started = std::time::Instant::now();
     let water = mesh_water_areas(
-        &map.water,
+        AreaLayer::Water.field(map),
         &channels.gaps,
         Rect::from_corners(Vec2::ZERO, MAP_SIZE),
     );
@@ -344,19 +411,12 @@ pub fn mesh_surfaces(
 
     // стоянка — асфальт своим слоем, того же тона, что проезжая часть; по
     // нему идёт разметка мест (`map::parking`)
-    let mut parking = MeshBuilder::with_surface_coords();
-    for area in &map.parking {
-        // Без кромки: у стоянки нет края, который видно сверху, — асфальт
-        // въезда переходит в асфальт площадки, и любая кайма по контуру
-        // рисовала на въезде градиент поперёк дороги.
-        parking.push_polygon(&area.outer, &area.holes, PARKING_COLOR.to_linear());
-    }
     // сырой OSM, второй уровень: стоянка и площадка — своими полигонами, без
     // раскладки мест и разметки поля (`osm::parse::RawOsm`)
     let raw = map.knobs.raw.draws_raw();
     let mut parking_lines = MeshBuilder::default();
     if !raw {
-        for (area, stalls) in map.parking.iter().zip(&parking_layout.0) {
+        for (area, stalls) in AreaLayer::Parking.field(map).iter().zip(&parking_layout.0) {
             parking::push_markings(&mut parking_lines, area, stalls);
         }
     }
@@ -364,7 +424,7 @@ pub fn mesh_surfaces(
     // площадка — покрытие своего цвета, и на нём разметка (`map::pitch`).
     // Кант тот же, что у прочих зон: у поля на снимке всегда есть кромка
     let mut pitches = MeshBuilder::with_surface_coords();
-    for area in &map.pitches {
+    for area in AreaLayer::Pitch.field(map) {
         let AreaKind::Pitch(kind) = area.kind else {
             continue;
         };
@@ -372,7 +432,7 @@ pub fn mesh_surfaces(
     }
     let mut pitch_lines = MeshBuilder::default();
     if !raw {
-        for area in &map.pitches {
+        for area in AreaLayer::Pitch.field(map) {
             pitch::push_markings(&mut pitch_lines, area);
         }
     }
@@ -381,30 +441,52 @@ pub fn mesh_surfaces(
     let waterways = mesh_water_lines(&channels);
     waterways_took += ribbons_started.elapsed();
 
-    let skipped: usize = [
-        &yards, &works, &parks, &woods, &grass, &sand, &pitches, &parking, &water,
-    ]
-    .iter()
-    .map(|builder| builder.skipped_polygons())
-    .sum();
+    // простые слои собираются: сборщик становится слоем мира
+    let plain: Vec<LayerMesh> = plain
+        .into_iter()
+        .map(|(builder, style)| {
+            LayerMesh::new(
+                builder,
+                style.z,
+                style.name,
+                MaterialSpec::Surface(style.material),
+            )
+        })
+        .collect();
+
+    let skipped: usize = plain
+        .iter()
+        .map(|layer| layer.builder.skipped_polygons())
+        .chain([
+            yards.skipped_polygons(),
+            works.skipped_polygons(),
+            pitches.skipped_polygons(),
+            water.skipped_polygons(),
+        ])
+        .sum();
 
     // Покрытия и разметка одним списком. Разметка мест и полей — плоская:
-    // это белая краска, а не фактура покрытия.
+    // это белая краска, а не фактура покрытия. Простые слои едут своим
+    // списком; порядок в общем списке ни на что не влияет — у слоя свой z.
     let layers: Vec<LayerMesh> = [
         (ground, Z_GROUND, "ground", SurfaceKind::Ground),
         (works, Z_LANDUSE, "landuse_works", SurfaceKind::Ground),
         (yards, Z_LANDUSE_YARD, "landuse_yards", SurfaceKind::Yard),
-        (parks, Z_PARK, "parks", SurfaceKind::Park),
-        (woods, Z_WOOD, "woods", SurfaceKind::Wood),
-        (grass, Z_GRASS, "grass", SurfaceKind::Grass),
-        (sand, Z_SAND, "sand", SurfaceKind::Sand),
-        (pitches, Z_PITCH, "pitches", SurfaceKind::Ground),
-        (parking, Z_PARKING, "parking", SurfaceKind::Street),
-        (water, Z_POND, "water", SurfaceKind::Water),
-        (waterways, Z_WATERWAY, "waterways", SurfaceKind::Water),
     ]
     .into_iter()
     .map(|(builder, z, name, kind)| LayerMesh::new(builder, z, name, MaterialSpec::Surface(kind)))
+    .chain(plain)
+    .chain(
+        [
+            (pitches, Z_PITCH, "pitches", SurfaceKind::Ground),
+            (water, Z_POND, "water", SurfaceKind::Water),
+            (waterways, Z_WATERWAY, "waterways", SurfaceKind::Water),
+        ]
+        .into_iter()
+        .map(|(builder, z, name, kind)| {
+            LayerMesh::new(builder, z, name, MaterialSpec::Surface(kind))
+        }),
+    )
     .chain(
         [
             (pitch_lines, Z_PITCH_LINES, "pitch_lines"),
