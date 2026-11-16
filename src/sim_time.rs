@@ -643,7 +643,6 @@ fn end_sim_load(
             let mut parts = Vec::new();
             for (name, path) in [
                 ("acq", &crate::diagnostics::SIM_ACQUIRE_MS),
-                ("snap", &crate::diagnostics::SIM_SNAPSHOT_MS),
                 ("spwn", &crate::diagnostics::SIM_SPAWNER_MS),
                 ("pan", &crate::diagnostics::SIM_PANIC_MS),
                 ("flee", &crate::diagnostics::SIM_FLEE_MS),

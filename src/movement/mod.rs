@@ -53,8 +53,7 @@ use self::pathfinding::{
 pub use self::systems::move_moving_entities;
 use self::systems::{
     draw_move_paths, interpolate_movable_transforms, on_movable_added_init_sim_position,
-    polymesh_rebuilt, rescue_trapped_entities, snapshot_previous_sim_positions,
-    toggle_draw_move_paths,
+    polymesh_rebuilt, rescue_trapped_entities, toggle_draw_move_paths,
 };
 
 /// Запас видимости к полуразмеру экрана — чтобы пешки у кромки кадра не
@@ -225,9 +224,12 @@ impl Plugin for MovementPlugin {
             // Симуляция движения — фиксированным шагом, визуальный `Transform` —
             // интерполяцией после цикла фиксированных шагов (идиома из
             // `examples/movement/physics_in_fixed_timestep.rs`).
-            // Порядок внутри шага явный: снимок «прошлой» позиции — до того,
-            // как её тронет поведение (демон в броске двигает `SimPosition`
-            // сам), а шаг по пути — после всего поведения.
+            // Прошлую позицию для интерполяции ведут сами писатели
+            // `SimPosition`: шаг — первый писатель тика (ставит точку на
+            // начало шага), толчок расталкивания — для не ходившей этим тиком
+            // (сводит концы на новом месте), бросок демона — у себя в
+            // behavior.rs; чтение до первого шага всё равно никому не нужно —
+            // спавн ставит оба конца в одну точку.
             .add_systems(
                 FixedUpdate,
                 // `.chain()` обязателен и сам по себе: привязки к `SimSet`
@@ -237,9 +239,6 @@ impl Plugin for MovementPlugin {
                     // счётчик тиков — голова цепочки: всё, что решает этот
                     // шаг, ссылается на один и тот же номер
                     crate::determinism::advance_sim_tick.in_set(SimPipeline::BothModes),
-                    snapshot_previous_sim_positions
-                        .before(SimSet::SpatialRebuild)
-                        .in_set(SimPipeline::BothModes),
                     // ответы — до поведения: путь, приземлившийся на этом
                     // тике, на нём же и идётся
                     apply_pathfinding_results

@@ -457,6 +457,21 @@ fn separation_pushes_an_overlapping_pair_apart() {
         distance > 0.2,
         "пара должна разойтись, а стоит в {distance}"
     );
+
+    // толчок — писатель `SimPosition`: стоячую пешку он сводит концами
+    // интерполяции на новое место, иначе она дрожала бы вокруг него до
+    // следующего события
+    for pawn in [left, right] {
+        let pushed = sim_position(&app, pawn);
+        assert_eq!(
+            app.world()
+                .get::<PreviousSimPosition>(pawn)
+                .expect("previous sim position")
+                .0,
+            pushed,
+            "концы интерполяции разведённой пешки обязаны стоять на её месте"
+        );
+    }
 }
 
 /// На сеточной навигации расталкивание не двигает НИКОГО.

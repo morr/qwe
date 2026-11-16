@@ -50,7 +50,6 @@ pub const SIM_FLEE_MS: DiagnosticPath = DiagnosticPath::const_new("sim/flee_ms")
 pub const SIM_CHASE_MS: DiagnosticPath = DiagnosticPath::const_new("sim/chase_ms");
 pub const SIM_MOVE_MS: DiagnosticPath = DiagnosticPath::const_new("sim/move_ms");
 pub const SIM_ACQUIRE_MS: DiagnosticPath = DiagnosticPath::const_new("sim/acquire_ms");
-pub const SIM_SNAPSHOT_MS: DiagnosticPath = DiagnosticPath::const_new("sim/snapshot_ms");
 pub const SIM_SPAWNER_MS: DiagnosticPath = DiagnosticPath::const_new("sim/spawner_ms");
 pub const SIM_SOULS_MS: DiagnosticPath = DiagnosticPath::const_new("sim/souls_ms");
 pub const SIM_ESCAPE_MS: DiagnosticPath = DiagnosticPath::const_new("sim/escape_ms");
@@ -108,7 +107,6 @@ impl Plugin for GameDiagnosticsPlugin {
         .register_diagnostic(Diagnostic::new(SIM_CHASE_MS).with_suffix(" ms"))
         .register_diagnostic(Diagnostic::new(SIM_MOVE_MS).with_suffix(" ms"))
         .register_diagnostic(Diagnostic::new(SIM_ACQUIRE_MS).with_suffix(" ms"))
-        .register_diagnostic(Diagnostic::new(SIM_SNAPSHOT_MS).with_suffix(" ms"))
         .register_diagnostic(Diagnostic::new(SIM_SPAWNER_MS).with_suffix(" ms"))
         .register_diagnostic(Diagnostic::new(SIM_SOULS_MS).with_suffix(" ms"))
         .register_diagnostic(Diagnostic::new(SIM_ESCAPE_MS).with_suffix(" ms"))

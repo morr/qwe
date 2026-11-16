@@ -9,29 +9,6 @@ use crate::movement::components::{
 use crate::navigation::{Backend, Walkable};
 use crate::settings::unit_z;
 
-/// Снимок позиции на начало фиксированного шага — второй конец интерполяции.
-///
-/// `Changed<SimPosition>` вместо «всех подряд»: у сущности, не сдвинувшейся
-/// с прошлого снимка, `PreviousSimPosition` уже равен `SimPosition`, и копия
-/// ничего бы не изменила — а стоящих ~90% из 20 000. Остановившаяся сущность
-/// не протухает: последний сдвиг и есть последнее изменение, его снимок
-/// выравнивает оба конца интерполяции. Спавн тоже покрыт — `Added` входит
-/// в `Changed`.
-pub fn snapshot_previous_sim_positions(
-    mut query: Query<(&mut PreviousSimPosition, &SimPosition), Changed<SimPosition>>,
-    mut diagnostics: bevy::diagnostic::Diagnostics,
-) {
-    let started = std::time::Instant::now();
-    for (mut previous, current) in &mut query {
-        previous.0 = current.0;
-    }
-    crate::diagnostics::measure_ms(
-        &mut diagnostics,
-        &crate::diagnostics::SIM_SNAPSHOT_MS,
-        started,
-    );
-}
-
 /// Движение в `FixedUpdate`, двигает `SimPosition` по waypoint'ам пути.
 ///
 /// `MovableStateMovingTag` означает «есть путь или докат», а не «состояние
@@ -64,6 +41,7 @@ pub fn move_moving_entities(
             Entity,
             &mut Movable,
             &mut SimPosition,
+            &mut PreviousSimPosition,
             &BodyScale,
             // только ради сетки людей: она и правда людская, а шаг про вид
             // больше не спрашивает
@@ -91,12 +69,11 @@ pub fn move_moving_entities(
     let pushes = pushes.reader(separation.hold, lab.experiments.slide);
     let dt = time.delta_secs();
 
-    for (entity, mut movable, mut sim_position, body, is_human) in &mut query {
+    for (entity, mut movable, mut sim_position, mut previous, body, is_human) in &mut query {
         let was_at = sim_position.0;
         // позиция пишется обратно только если шаг её и правда сдвинул:
-        // `snapshot_previous_sim_positions` фильтрует по `Changed<SimPosition>`,
-        // и безусловная запись расширила бы ему выборку на всех стоящих в
-        // приходе и в упёршемся докате
+        // безусловная запись притворилась бы шагом на стоящих в приходе и в
+        // упёршемся докате
         let mut position = sim_position.0;
         let outcome = super::step::step_along_path(
             &mut movable,
@@ -107,14 +84,25 @@ pub fn move_moving_entities(
             &walkable,
         );
         if position != sim_position.0 {
+            // шаг — первый писатель тика: прошлой позицией становится точка на
+            // начало шага, и интерполяция доводит шаг до экрана
+            previous.0 = was_at;
             sim_position.0 = position;
+        } else {
+            // стоишь — оба конца интерполяции сходятся на текущей точке
+            // (стоящая пешка не дрожит вокруг последнего шага)
+            previous.0 = sim_position.0;
         }
         match outcome {
             super::step::StepOutcome::Moved => {}
             super::step::StepOutcome::Arrived {
                 destination_reached,
-            } => movable.to_idle(entity, &mut commands, destination_reached),
+            } => {
+                previous.0 = sim_position.0;
+                movable.to_idle(entity, &mut commands, destination_reached);
+            }
             super::step::StepOutcome::Halted => {
+                previous.0 = sim_position.0;
                 commands.entity(entity).remove::<MovableStateMovingTag>();
             }
         }

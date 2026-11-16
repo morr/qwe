@@ -30,10 +30,12 @@
 //! расталкивание гасят друг друга, и затор стоит вечно. В детерминированном
 //! режиме набор придержанных пуст вместе со всем механизмом.
 //!
-//! Толчок пишется в `SimPosition` после шага движения: снимок
-//! `PreviousSimPosition` сделан в начале тика, так что интерполяция доводит
-//! сдвиг до экрана плавно, а троттлимая перепрокладка путей (0.4–1.2 с) съедает
-//! боковой дрейф — накапливаться ему не во что. Демон в броске
+//! Толчок пишется в `SimPosition` после шага движения, раз в кадр (первым
+//! тиком): ходившая этим тиком пешка несёт шаговский снимок прошлой позиции —
+//! толчок ложится поверх, а троттлимая перепрокладка путей (0.4–1.2 с) съедает
+//! боковой дрейф — накапливаться ему не во что; стоячей концы интерполяции
+//! сводятся на новое место (писатели `SimPosition` сами ведут
+//! `PreviousSimPosition`, см. `movement::systems`). Демон в броске
 //! (`DemonLungeTag`) исключён целиком: он двигает `SimPosition` сам и обязан
 //! сомкнуться до `KILL_DISTANCE`. Пожирающий (`DemonDevourTag`) стоит над
 //! трупом неподвижно (mobility 0), но толпу от себя отталкивает. Трупы вне
@@ -48,7 +50,7 @@ use crate::demon::{Demon, DemonDevourTag, DemonLungeTag};
 use crate::grid::world_to_tile;
 use crate::human::{HUMAN_BODY_RADIUS, Human};
 use crate::loading::WorldStarted;
-use crate::movement::components::SimPosition;
+use crate::movement::components::{PreviousSimPosition, SimPosition};
 use crate::navigation::ContinuousSpace;
 use crate::settings::{DEMON_BODY_RADIUS, DEMON_MOBILITY, SEPARATION_CELL, SEPARATION_MAX_ZOOM};
 use crate::spatial::SpatialGrid;
@@ -193,6 +195,7 @@ pub fn separate_pawns(
     mut pawns: Query<
         (
             &mut SimPosition,
+            &mut PreviousSimPosition,
             &crate::rng::PawnId,
             &crate::movement::Movable,
             Has<crate::movement::MovableStateMovingTag>,
@@ -243,7 +246,7 @@ pub fn separate_pawns(
         let stuck_seen = &state.stuck;
         let mut collect = |entity: Entity| {
             // мимо запроса — бросок, труп, пешка чужого вида в чужой сетке
-            let Ok((sim_position, pawn_id, movable, is_moving, is_demon, is_devouring)) =
+            let Ok((sim_position, _, pawn_id, movable, is_moving, is_demon, is_devouring)) =
                 pawns.get(entity)
             else {
                 return;
@@ -343,10 +346,19 @@ pub fn separate_pawns(
         if !navmesh.is_passable(tile.x, tile.y) {
             continue;
         }
-        let Ok((mut sim_position, _, _, _, is_demon, _)) = pawns.get_mut(pawn.entity) else {
+        let Ok((mut sim_position, mut previous, _, _, moving, is_demon, _)) =
+            pawns.get_mut(pawn.entity)
+        else {
             continue;
         };
         sim_position.0 = target;
+        // прошлую позицию ведут писатели `SimPosition`: ходившая этим тиком
+        // пешка уже поставлена шагом на начало тика — её интерполяционный
+        // охват не трогаем; стоячей сводим концы на новом месте, иначе толчок
+        // дрожал бы вокруг новой точки до следующего события
+        if !moving {
+            previous.0 = target;
+        }
         let length = step.length();
         stats.push_metres += length as f64;
         stats.worst_push = stats.worst_push.max(length);

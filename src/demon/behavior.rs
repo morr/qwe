@@ -12,7 +12,8 @@ use crate::demon::decide::{ChaseAction, ChaseSense, Victim, decide};
 use crate::grid::world_to_tile;
 use crate::human::Human;
 use crate::movement::{
-    Movable, MovableState, PathfindingRequest, PathfindingTask, SimPosition, request_wander_path,
+    Movable, MovableState, PathfindingRequest, PathfindingTask, PreviousSimPosition, SimPosition,
+    request_wander_path,
 };
 use crate::navigation::Backend;
 use crate::settings::{
@@ -88,6 +89,7 @@ pub fn chase(
         (
             Entity,
             &mut SimPosition,
+            &mut PreviousSimPosition,
             &mut ChaseTarget,
             &mut ChaseRepath,
             &mut Movable,
@@ -106,11 +108,16 @@ pub fn chase(
     let mut killed_this_tick: bevy::platform::collections::HashSet<Entity> =
         bevy::platform::collections::HashSet::default();
 
-    let mut claims = ChaseClaims::of(query.iter().map(|(_, _, chase_target, ..)| chase_target.0));
+    let mut claims = ChaseClaims::of(
+        query
+            .iter()
+            .map(|(_, _, _, chase_target, ..)| chase_target.0),
+    );
 
     for (
         entity,
         mut sim_position,
+        mut previous,
         mut chase_target,
         mut repath,
         mut movable,
@@ -204,6 +211,12 @@ pub fn chase(
                     commands.entity(entity).insert(DemonLungeTag);
                 }
                 sim_position.0 += advance;
+                // прошлую позицию ведут писатели `SimPosition`: бросок —
+                // единственный писатель этого тика (демон после `to_idle`
+                // стоит, separation его исключает), концы интерполяции
+                // сводятся на точку приземления — иначе демон дрожал бы у
+                // жертвы весь девор-покой
+                previous.0 = sim_position.0;
                 continue;
             }
             ChaseAction::WaitForPath => continue,
@@ -410,6 +423,7 @@ mod tests {
                 ChaseRepath::default(),
                 movable,
                 SimPosition(position),
+                PreviousSimPosition(position),
                 PathfindingRequest {
                     start_tile: world_to_tile(position),
                     end_tile: pending_goal,
@@ -459,6 +473,39 @@ mod tests {
         assert_eq!(
             app.world().get::<Movable>(demon).expect("Movable").state,
             MovableState::Pathfinding(pending_goal)
+        );
+    }
+
+    /// Бросок сводит концы интерполяции на точку приземления: он —
+    /// единственный писатель тика, и несведённый конец оставил бы демона
+    /// дрожать вокруг жертвы весь девор-покой.
+    #[test]
+    fn a_lunge_collapses_the_previous_position_onto_the_landing_point() {
+        let app = &mut app();
+        let human = app
+            .world_mut()
+            .spawn((Human, SimPosition(Vec2::new(14.0, 10.0))))
+            .id();
+        let demon = spawn_chaser_at(app, Vec2::new(10.0, 10.0), human, IVec2::new(5, 5), true);
+
+        run_repath_tick(app);
+
+        assert!(
+            app.world().get::<DemonLungeTag>(demon).is_some(),
+            "жертва в радиусе броска и в прямой видимости — демон обязан прыгнуть"
+        );
+        let landed = app
+            .world()
+            .get::<SimPosition>(demon)
+            .expect("SimPosition")
+            .0;
+        assert_eq!(
+            app.world()
+                .get::<PreviousSimPosition>(demon)
+                .expect("PreviousSimPosition")
+                .0,
+            landed,
+            "концы интерполяции обязаны стоять на точке приземления"
         );
     }
 
