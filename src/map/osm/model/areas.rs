@@ -295,7 +295,7 @@ mod tests {
         );
 
         for desc in AreaLayer::ALL {
-            let areas = desc.field(&map);
+            let areas = (desc.field)(&map);
             assert_eq!(areas.len(), 1, "{:?}: в поле не одна зона", desc.layer);
             assert_eq!(
                 areas[0].osm_id,
