@@ -4944,6 +4944,7 @@ dependencies = [
  "bevy",
  "bevy_northstar",
  "bincode",
+ "derive_more",
  "earcutr",
  "i_overlay 9.1.0",
  "noise",
