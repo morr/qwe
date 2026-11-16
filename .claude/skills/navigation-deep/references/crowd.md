@@ -28,8 +28,10 @@ by the schedule and the panel), and `SeparationHolds` is cleared as soon as the 
 turns the run off, or pawns held by the last run would stay slowed forever.
 Then: the toggle; **once per rendered frame** (it lives in `FixedUpdate`
 right after `move_moving_entities` — the only point where the tick's positions are
-final and the snapshot is already taken, so the push reaches the screen through
-interpolation — but at 30x that schedule runs ~1920 ticks/s and even 0.03 ms per tick
+final, so the push reaches the screen through interpolation; `PreviousSimPosition`
+is maintained by the writers themselves: a pawn that stepped this tick keeps the
+step's tick-start snapshot, a standing pawn gets both ends collapsed onto the
+pushed spot — but at 30x that schedule runs ~1920 ticks/s and even 0.03 ms per tick
 would eat ~6% of a real second; ticks between runs only accumulate virtual dt, and the
 run's outputs — holds, steer, block — serve every tick until the next run: freshness is
 per-frame by charter, the one residual speed dependence, bounded at one frame of

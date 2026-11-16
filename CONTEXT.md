@@ -1057,9 +1057,13 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   `escape`** — a human is never counted both killed and escaped in one tick.
 - **SimPosition / PreviousSimPosition** — simulation-space positions; `Transform` is
   interpolated between them in `RunFixedMainLoop`. Systems mutate `SimPosition`, **never
-  `Transform.translation.xy`**. `snapshot_previous_sim_positions` runs **before**
-  `SimSet::SpatialRebuild` (as does the demon spawner) and `move_moving_entities` **after**
-  `SimSet::HumanBehavior`, because behavior may move `SimPosition` itself (the demon lunge).
+  `Transform.translation.xy`**. **Each `SimPosition` writer maintains
+  `PreviousSimPosition` itself**: the step writes the tick-start point (a walker's
+  interpolation span), and collapses both ends onto the new spot when it stands, stops or
+  is pushed while standing; the demon lunge collapses onto its landing point. The
+  demon spawner runs **before** `SimSet::SpatialRebuild` and `move_moving_entities`
+  **after** `SimSet::HumanBehavior`, because behavior may move `SimPosition` itself (the
+  demon lunge).
 - **Movable** — `{speed, path: VecDeque<Vec2>, state, last_direction}` with `MovableState:
   Idle | Pathfinding(goal) | Moving(goal) | PathfindingError(goal)`. **Waypoints are in
   world metres, the goal is a tile** (*Polygonal routing*); `last_direction` is the heading

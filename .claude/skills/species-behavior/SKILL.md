@@ -328,7 +328,10 @@ path and steps `SimPosition` straight at the target at its speed plus `DemonStyl
 Without it a chase never converts: a tile path aims at the tile *center* while the victim
 keeps moving inside it, and the last ~1.4 m is never closed. A lunging demon carries
 **`DemonLungeTag`** (set/cleared in `chase`); `draw_lunge_paths` draws its arrow at the
-victim's live position.
+victim's live position. The lunge is the tick's only `SimPosition` writer for that demon
+(it is `to_idle`d and excluded from separation), and it **collapses
+`PreviousSimPosition` onto the landing point** — writers own the snapshot, and a stale
+end would leave the demon trembling around the corpse for the whole devour pause.
 
 **Kill** at `KILL_DISTANCE` triggers `DemonCaughtHumanEvent` (observer); a
 `killed_this_tick` HashSet dedupes double kills within one command flush. The observer also
