@@ -1,3 +1,71 @@
+# NOTES — deep01 (план углубления, пункт №01: решётка предикатов MapData)
+
+Задача: docs/deepening-plan.md в main checkout (незакоммичен — не коммитить) § 01,
+плюс влитая из обзора №2 часть (RawOsm-наборы, RailLine-решётка). Ниже — решения
+этой сессии; запись прошлой сессии (split-giants) — под ней.
+
+## Решения по расхождениям
+
+1. **is_street() в rail/parking — замысел, не дрейф.** `is_at_grade()` = Street &&
+   !bridge && !passage — про уровень земли, не про уличность: проезд тоже занимает
+   землю (переезд кладётся на проезд — rail/tests.rs:571 «проезд» зелёный; кромка
+   стоянки дотягивается до проезда). is_street() остаётся добавкой is_carriageway.
+   Доказательство замысла: доки rail.rs::crossable («проезжая часть любого класса»),
+   parking.rs::is_through (oneway||roundabout проезды считает), parking.rs фильтр
+   streets (проезды легитимные дороги доступа).
+2. **Мост в is_carriageway, но не в is_at_grade.** is_carriageway не выражается через
+   is_at_grade && is_street — мост бы выпал. Решётка: carves_navmesh (bridge||passage,
+   любой класс), is_at_grade (Street, на земле), is_carriageway (Street && !passage &&
+   is_street, мост включён). Пересекаются, не вкладываются.
+3. **pavement-аксессора нет** — случая «потребитель решает None» не существует:
+   None-ответы уже в предикатах модели (is_paved_path=false → тропинка; задокументировано
+   в поле). Только lanes переезжает в модель (RoadLine::lanes() от ширины).
+4. **RailLine-решётка**: is_ground_track() = kind != Tram && !bridge (rail.rs
+   level crossings, wagons::holds_stock + kind==Active); is_track_bridge() = kind !=
+   Tram && bridge (roads.rs:1426). cars/rails.rs keepout остаётся `kind != Tram` —
+   мост включён НАМЕРЕННО (док модуля: машина поверх плиты путепровода).
+5. **MapData-запрос** `at_grade_roads()`: потребители parse/rails.rs::crosses_street и
+   parking (ParkingLayout::new переезжает на &MapData — все 7 вызовов и так передавали
+   (&map.parking, &map.roads, map.traffic_side)); roads.rs:1434 остаётся на drawn
+   (подмены классов: переезд через тротуар рисуется улицей — спрашивать надо
+   нарисованную дорогу, не модельную).
+6. **RawOsm** (обзор №2): перечень достроек отрисовки — в коде (enum DrawBuildout +
+   RawOsm::disables(what)), шесть веток потребителей называют свою достройку;
+   parse-проходы остаются своим набором (skips_passes, перечисление — тело
+   finish_parse). draws_raw() уходит вовсе.
+7. **spawn.rs AreaKind** — без MapData-запроса (один потребитель): Landuse и Pocket
+   расходятся по своим петлям-итераторам по видам (карманы несут только Grass|Residential,
+   landuse только Residential|Industrial — parse.rs::push_area / pockets.rs:463-465).
+
+## Статус
+
+- [x] worktree + rsync assets/osm (mtime сохранён) + seed target
+- [x] скиллы git/bevy/osm-map загружены; осмотр кода закончен
+- [x] c1 is_at_grade + таблица тестов + доки (509c7afd)
+- [x] c2 rail crossable сведение (d283ace6)
+- [x] c3 parking сведение (d230aabe)
+- [x] c4 RailLine решётка (ecdb5681)
+- [x] c5 MapData::at_grade_roads + ParkingLayout::new(&MapData) (b90c3ec3 + тест cdd67d78)
+- [x] c6 lanes accessor (6463afb8)
+- [x] c7 DrawBuildout (8bba570b)
+- [x] c8 spawn по видам (48717078)
+- [x] check.sh OK (нужен был фикс needless borrow — 460824d4; fmt 4549a47a)
+
+## Заметки
+
+- Строки плана уехали от master (план писался раньше arch/* коммитов): копии сейчас
+  parking.rs:173-179 + 233, roads.rs:987/1426/543, cars/mod.rs:230/384/477, wagons.rs:217/249.
+- Тесты предикатов — в model/tests.rs (там живут carves_navmesh-тесты); запрос — на
+  парс-фикстуре Overpass (parse/rails/tests.rs стиль).
+- rail.rs::crossable удаляется вовсе: три места (roads.rs:82 import, roads.rs:1434,
+  parse/rails.rs:196+37) переходят на road.is_at_grade(); rail/tests.rs:539-571
+  переименовать упоминания.
+- Урок прошлой сессии (актуален): never pass .md to check.sh; never edit while
+  check.sh runs; pre-commit check через --all-targets незачем — check.sh сам
+  гоняет test+clippy.
+
+---
+
 # NOTES — improve-architecture-sizes
 
 Worktree for the remaining menu of the split-giants plan (qwe-split-giants-plan).
