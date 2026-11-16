@@ -20,11 +20,11 @@ tags and vertices. Pockets (`map.pockets`) are `PolyArea` and carry `None` on pu
 trees have no field at all — `TreeSet` is derived and the planting does not trace back
 to one element.
 
-## The nine `Vec<PolyArea>` are not `AreaKind` written twice
+## The ten `Vec<PolyArea>` are not `AreaKind` written twice
 
 This has been reviewed and closed once — do not re-open it as "the same fact encoded
 twice". The vector says which **layer** an area is drawn in; the kind says which
-**member of that layer** it is, and three of the nine hold more than one member:
+**member of that layer** it is, and three of the ten hold more than one member:
 
 - `buildings` holds `Building` **and** `Kremlin`, and the difference is read in nine
   production places — the wall ribbon (`roads::Fortresses`), the fortress roofs and
@@ -39,6 +39,15 @@ would all still be needed) and would add a pass over tens of thousands of areas 
 layer. The `match` in `parse::push_area` (one arm per vector) is a dispatch that exists
 **once**; it is not repeated on the read side — what `spawn::mesh_surfaces` matches is
 the *sub-class within* a vector, which is exactly what the vector cannot say.
+
+The layer set itself is enumerated once, as **`AreaLayer`** (`model/areas.rs`): a
+descriptor table with one row per vector — its field accessor, its contours-snapshot
+and probe-index membership, and the probe hit's z+label. `OsmContours::of`,
+`InspectIndex::prebuild` and the plain surface layers of `mesh_surfaces` take their
+fields and membership from it, so a new area kind is a `MapData` field plus one row.
+Pockets carry `contours: false` there — not drift, but pipeline order: the snapshot is
+taken at the end of `read_elements`, and `fill_ground_pockets` is a finishing pass, so
+the field is empty at snapshot time no matter what.
 
 ## PolyArea
 

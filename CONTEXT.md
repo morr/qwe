@@ -207,9 +207,15 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
 - **MapData** (`map/osm/model.rs`) — the parsed map resource, resident after spawn. The
   per-field catalog — provenance, consumers, invariants — is the **osm-map skill**,
   `references/model.md`.
-  - **The nine `Vec<PolyArea>` and `AreaKind` are not the same fact twice** — the vector
+  - **The ten `Vec<PolyArea>` and `AreaKind` are not the same fact twice** — the vector
     says which *layer* an area is drawn in, the kind says which *member of that layer* it
-    is, and three vectors hold more than one member.
+    is, and three vectors hold more than one member. The layer set itself is enumerated
+    once — **`AreaLayer`** (`model/areas.rs`): a descriptor table where a layer names its
+    `MapData` field, its contours-snapshot and probe-index membership and its probe
+    z+label (pockets are in the index but deliberately not in the contours snapshot —
+    the snapshot is taken before the pass that seeds them). The contours snapshot, the
+    inspect index and the plain surface layers take their membership from it; a new
+    area kind is a `MapData` field plus one row.
   - **PolyArea** — polygon with holes, rings open. `AreaKind: Building | Kremlin | Water |
     Park | Wood | Grass | Sand | Residential | Industrial | Parking | Pitch(PitchKind)`;
     **only Wood carries trees**; `colours` are the **tagged colours** (`building:colour` /
