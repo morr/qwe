@@ -169,7 +169,7 @@ a screenshot belongs to.
 
 `map/osm/model.rs`; the resource stays resident after spawn. The **field catalog** —
 per type, every field's parse provenance, consumers and invariants, starting with why
-the nine `Vec<PolyArea>` layers are not `AreaKind` written twice — is
+the ten `Vec<PolyArea>` layers are not `AreaKind` written twice — is
 `references/model.md`. **RoadLine** —
 centerline + width from its section, its point order already normalized by the parse;
 the rest of the fields are in `references/model.md`.

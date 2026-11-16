@@ -11,7 +11,8 @@ and which subject file carries which piece.
 ## The phases of the build
 
 - **The phases of the build** — `build_roads` is a thin door now (raw OSM returns
-  early; otherwise `road_skeleton` + one of the two step finals). The phases live in
+  early; otherwise `road_skeleton` + the one step final, plus the merged composition
+  over it). The phases live in
   three places, the section banners (`// ── name ──`) in their bodies the authoritative
   inventory. `road_skeleton`: the drawn network (`Drawn::new`, which carries no step of
   its own), junctions and kerb returns, merge edges, kerb pockets, turning circles,
@@ -20,8 +21,8 @@ and which subject file carries which piece.
   step's corner rounds, then the shared middle — kerbs, pockets, mouths, medians,
   islands, node paint, tram, crossings, walls, and the **ribbons** (asphalt, sidewalk
   bands, verges, paint, tapers, bridge decks), laid street-wise in threads
-  (`roads/ribbon_lane.rs`). The two finals — `finish_step_merged` (the merged door),
-  `finish_step_split` (the split one, plus the common layers out): what a step owns
+  (`roads/ribbon_lane.rs`). The one final — `finish_step_split` (the split door,
+  plus the common layers out): what a step owns
   (verge bands, lawn scraps — paving, then green), the gores' asphalt, the lot layers,
   the rings' island grass, and the layer assembly, z-sorted, with the report.
 

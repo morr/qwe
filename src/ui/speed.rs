@@ -111,8 +111,9 @@ fn render_speed_ui(mut commands: Commands, clock: Res<SimClock>, assets: Res<Ass
                 width: px(PANEL_WIDTH_PX),
                 ..default()
             }),
-            // колонка шире своих панелей ровно на зазор между ними, и невидимая
-            // полоса не должна отбирать у карты клики (см. колонку левого края)
+            // в границы колонки попадает и невидимая полоса зазора между
+            // панелями — она не должна отбирать у карты клики (см. колонку
+            // левого края)
             Pickable::IGNORE,
             GameUiRoot,
             Visibility::Hidden,

@@ -1107,8 +1107,10 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   come out of `decide`), and **the RNG rolls** (the decision stream must advance on exactly
   the ticks it did before).
 - **Wander skeleton** (`movement/wander.rs`) — the *order* of one target-picking step,
-  shared by both species: `ready_to_pick` → the species' policy → `point_in_cone` /
-  `clamp_to_map` → `request_wander_path` → `heading_towards`. Only **where** a pawn wants to
+  shared by both species: the `NeedsWanderTarget` query (whose contract a debug-assert
+  guard, `assert_ready_to_pick`, pins to `MovableState::needs_path()`) → the species'
+  policy → `point_in_cone` / `clamp_to_map` → `request_wander_path` →
+  `heading_towards`. Only **where** a pawn wants to
   go is per-species. It deliberately does **not** open the `SimRng`.
 - **PopulationSize** (`human/components.rs`, resource) — how many humans
   `spawn_population` settles. **No knob, and not a `settings.rs` value**: its `Default`

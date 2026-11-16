@@ -332,10 +332,10 @@ on the paired side themselves (`roads-pairs-medians.md`, **Paired halves**).
   the one tile layer above the grass (`Z_GRASS`), where an overlap with the
   neighbouring tile of the same material renders identically. A step's own layer since
   the road world split (perf-journal 33): the tail differs between the verge steps, and
-the common `sidewalks` layer must not carry a step's tail — the merged build still
-appends it to `sidewalks` (the `merged_picture` glue in `build_roads_from`, which
-composes the split door's output), its order there (after the common middle) is the tail's
-own order in the split layer. A wide yard or a strip
+  the common `sidewalks` layer must not carry a step's tail — the merged build still
+  appends it to `sidewalks` (the `merged_picture` glue in `build_roads_from`, which
+  composes the split door's output), its order there (after the common middle) is the tail's
+  own order in the split layer. A wide yard or a strip
   with no paving at its vertices is not a candidate; the enclosure metre keeps its
   meaning for a verge lawn — past its edge the lawn really runs on — but a pocket's own
   edge is not the lawn running on, it is the pocket's loose outline sticking out past

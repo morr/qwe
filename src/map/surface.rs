@@ -621,7 +621,7 @@ fn spawn_layer(
 /// Одним, а не двумя ресурсами по отдельности: адаптеру слоя они нужны только
 /// вместе и только чтобы отдать их в [`spawn_layers`], а подпись системы
 /// пересборки и без них длинная — у промзоны и трамвая два отдельных `Res`
-/// уводили её за предел clippy. Идиома `ui/debug/mod.rs::DebugValues`.
+/// уводили её за предел clippy.
 #[derive(SystemParam)]
 pub struct LayerMaterials<'w> {
     flats: Res<'w, FlatMaterials>,
