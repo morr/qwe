@@ -254,7 +254,12 @@ into it forever, exactly as before slots. That is still better than refusing a t
 which would park the pawn for good — and with the bound on a slider the branch is
 visible on demand (drop `Slot search` to 2 m on the funnel and the tail of the crowd
 collapses onto one point). A pawn that finds nothing also loses its previous claim, so a
-saturated crowd churns reservations.
+saturated crowd churns reservations. **Free is measured by the active backend**
+(`Backend::walkable()`, `assign_destination_slots`), not the bare grid: the mesh inflates
+contours by the agent radius, so a grid-free tile by a wall is already inside an obstacle
+on the mesh — a slot placed there used to fail its path search and send the behaviour
+into an endless re-pick of the target. On the grid backend the two answers coincide, so
+the replay yard sees no difference.
 
 ### Who gets which slot — `SlotMatching`
 
