@@ -29,13 +29,16 @@
 //! метки не имеют (между 0 и 1 — попадают в «opaque»).
 //!
 //! Данные возвращаются `map_async`-ом в main-мир: resolve-система
-//! переписывает шесть меток в ring-буфер, poll-система раз в кадр
-//! (`RenderGraph` после `Submit`) гонит колбэки, `Update`-принтер
-//! печатает `gpu cut:` раз в секунду (среднее сегментов + зум для
+//! переписывает шесть меток в ring-буфер из четырёх (map до сабмита
+//! wgpu запрещает — «buffer is still mapped» на submit, поэтому слот
+//! мапится системой после `Submit`), poll-система раз в кадр гонит
+//! колбэки, drain читает и размапливает; `Update`-принтер печатает
+//! `gpu cut:` раз в секунду (среднее сегментов + зум для
 //! сопоставления), а кадр выше порога `QWE_PERF_GPU_SPIKES=<ms>` —
 //! пофреймовый `gpu spike:`. Офскрин-камера (`dev.rs`, кадр в текстуру)
 //! меток не ставит — её кадр с оконным не сравнивают.
 
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use std::sync::mpsc;
 use std::sync::Mutex;
@@ -74,18 +77,25 @@ static SEQ: AtomicU64 = AtomicU64::new(0);
 static PERIOD_MS: AtomicU64 = AtomicU64::new(0);
 
 /// Query set и ring readback-буферов; `tx` — канал колбэков `map_async`.
+/// Жизненный цикл буфера: resolve (до сабмита) → map_async (после
+/// сабмита — mapped до сабмита wgpu запрещает) → колбэк → drain читает
+/// и размапливает. Ринг из четырёх: колбэк доезжает за 1–2 кадра,
+/// к четвёртому буфер свободен; если GPU встал и буфер ещё mapped —
+/// кадр решается без метки (сэмпл пропускается), не валидация.
 #[derive(Resource)]
 struct GpuCutRes {
     query_set: QuerySet,
-    buffers: [wgpu::Buffer; 2],
+    buffers: [wgpu::Buffer; 4],
+    mapped: [bool; 4],
     cur: usize,
-    tx: mpsc::Sender<wgpu::Buffer>,
+    pending: VecDeque<usize>,
+    tx: mpsc::Sender<(usize, wgpu::Buffer)>,
 }
 
 /// Приёмник решённых буферов; наполняется колбэками во время poll.
 /// `Mutex` — Resource требует Sync, std-канал его не даёт.
 #[derive(Resource)]
-struct GpuCutRx(Mutex<mpsc::Receiver<wgpu::Buffer>>);
+struct GpuCutRx(Mutex<mpsc::Receiver<(usize, wgpu::Buffer)>>);
 
 /// Порог `gpu spike`, мс GPU на кадр; absent — печатаются только секундные.
 #[derive(Resource)]
@@ -122,7 +132,8 @@ impl Plugin for GpuCutPlugin {
             .add_systems(
                 RenderGraph,
                 (
-                    poll_device.after(RenderGraphSystems::Submit),
+                    map_pending.after(RenderGraphSystems::Submit),
+                    poll_device.after(map_pending),
                     drain.after(poll_device),
                 ),
             );
@@ -159,8 +170,15 @@ fn setup(mut commands: Commands, device: Res<RenderDevice>, queue: Res<RenderQue
     let (tx, rx) = mpsc::channel();
     commands.insert_resource(GpuCutRes {
         query_set,
-        buffers: [make_buffer("gpu_cut_readback_0"), make_buffer("gpu_cut_readback_1")],
+        buffers: [
+            make_buffer("gpu_cut_readback_0"),
+            make_buffer("gpu_cut_readback_1"),
+            make_buffer("gpu_cut_readback_2"),
+            make_buffer("gpu_cut_readback_3"),
+        ],
+        mapped: [false; 4],
         cur: 0,
+        pending: VecDeque::new(),
         tx,
     });
     commands.insert_resource(GpuCutRx(Mutex::new(rx)));
@@ -192,24 +210,35 @@ fn mark<const I: usize>(
     }));
 }
 
-/// Копия меток кадра в ring-буфер + запрос чтения; энкодер resolve уходит
-/// в сабмит последним для этой камеры — GPU решит метки после всех пассов.
+/// Копия меток кадра в ring-буфер; map-ить до сабмита нельзя — слот
+/// встаёт в очередь и мапится `map_pending` уже после сабмита. Если слот
+/// предыдущего оборота ещё mapped (GPU не доехал) — кадр без сэмпла.
 fn resolve(mut ctx: RenderContext, mut res: ResMut<GpuCutRes>) {
     let cur = res.cur;
-    res.cur ^= 1;
+    res.cur = (res.cur + 1) % res.buffers.len();
+    if res.mapped[cur] {
+        return;
+    }
     ctx.command_encoder()
         .resolve_query_set(&res.query_set, 0..SLOTS as u32, &res.buffers[cur], 0);
-    let (tx, buffer, cb) = (
-        res.tx.clone(),
-        res.buffers[cur].clone(),
-        res.buffers[cur].clone(),
-    );
-    buffer.map_async(MapMode::Read, 0..size_bytes(), move |result| match result {
-        Ok(()) => {
-            let _ = tx.send(cb);
-        }
-        Err(err) => warn!("gpu cut: readback map failed ({err:?}), buffer dropped"),
-    });
+    res.pending.push_back(cur);
+}
+
+/// После сабмита: map_async на решённые в этом кадре буферы.
+fn map_pending(mut res: ResMut<GpuCutRes>) {
+    let slots: Vec<usize> = res.pending.drain(..).collect();
+    for slot in slots {
+        let (tx, cb) = (res.tx.clone(), res.buffers[slot].clone());
+        res.buffers[slot].map_async(MapMode::Read, 0..size_bytes(), move |result| {
+            match result {
+                Ok(()) => {
+                    let _ = tx.send((slot, cb));
+                }
+                Err(err) => warn!("gpu cut: readback map failed ({err:?}), buffer dropped"),
+            }
+        });
+        res.mapped[slot] = true;
+    }
 }
 
 /// Колбэки `map_async` исполняются только под poll — раз в кадр, после
@@ -219,21 +248,22 @@ fn poll_device(device: Res<RenderDevice>) {
 }
 
 /// Решённые буферы → статики (кумулятивные тики + номер рамки);
-/// буфер размапливается — слот вернётся в оборот через кадр.
-fn drain(rx: Res<GpuCutRx>) {
+/// буфер размапливается — слот вернётся в оборот через оборот ринга.
+fn drain(rx: Res<GpuCutRx>, mut res: ResMut<GpuCutRes>) {
     let Ok(rx) = rx.0.lock() else {
         return;
     };
-    while let Ok(buffer) = rx.try_recv() {
+    while let Ok((slot, buffer)) = rx.try_recv() {
         // колбэк map-ит буфер до отправки — ошибка здесь не бывает
         let view = buffer
             .get_mapped_range(0..size_bytes())
             .expect("gpu cut readback mapped");
-        for (slot, ticks) in view.chunks_exact(8).take(SLOTS).enumerate() {
-            TS[slot].store(u64::from_le_bytes(ticks.try_into().unwrap()), Relaxed);
+        for (i, ticks) in view.chunks_exact(8).take(SLOTS).enumerate() {
+            TS[i].store(u64::from_le_bytes(ticks.try_into().unwrap()), Relaxed);
         }
         drop(view);
         buffer.unmap();
+        res.mapped[slot] = false;
         SEQ.fetch_add(1, Relaxed);
     }
 }
