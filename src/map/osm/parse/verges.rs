@@ -37,7 +37,7 @@ use crate::map::roads::network::RoadNetwork;
 use crate::map::roads::paved_verge;
 use crate::map::shapes::{Contour, area_contours, contour_bounds, oriented, ring_of};
 
-/// Шаг точек обочины, м: вдвое реже рисунка (`roads.rs`, 2.5 м) — профиль
+/// Шаг точек обочины, м: вдвое реже рисунка (`roads/verges.rs`, 2.5 м) — профиль
 /// обочины ([`RoadLine::verge_profile`]) и так снят пробами через пять
 /// метров, а точки — цена булевой операции.
 const VERGE_STEP: f32 = 5.0;
@@ -173,7 +173,7 @@ impl std::fmt::Display for SeparateSidewalks {
 /// Всякая сторона мощёной улицы с такой дорожкой вдоль (до [`VERGE_REACH`]
 /// от кромки, у двусторонней — до [`VERGE_REACH_TWO_WAY`]) получает **обочину** ([`RoadLine::verges`]) — от кромки до оси
 /// дорожки, с полосой тротуара или без: газон между ними рисуется газоном, а
-/// голая земля — плиткой (`roads.rs`, слой под зеленью).
+/// голая земля — плиткой (`roads/verges.rs`, слой под зеленью).
 ///
 /// Сеть улиц `network` решает, чей след для пробы чужой: устье перекрёстка —
 /// след **чужой улицы**, а стык собственных звеньев много-way улицы — тот же
@@ -405,7 +405,7 @@ fn footway_probes(
 
 /// Полосы обочин дороги — от оси до кромки плюс `reach(обочина по месту)`,
 /// кусками по [`VERGE_RUN`] точек. Та же постройка, что у рисунка
-/// (`roads.rs::push_verges`), только по сырым точкам. Её берут покрытие
+/// (`roads/verges.rs::push_verges`), только по сырым точкам. Её берут покрытие
 /// карманов (`pockets.rs`, обочина во всю ширину) и вырез из кварталов
 /// (плитка обочины, [`cut_reach`]).
 pub(super) fn verge_rings(road: &RoadLine, reach: impl Fn(f32) -> f32) -> Vec<Vec<Vec2>> {
@@ -451,7 +451,7 @@ pub(super) fn verge_rings(road: &RoadLine, reach: impl Fn(f32) -> f32) -> Vec<Ve
 
 /// Сколько обочины шириной `verge` вырезается из кварталов, м: её плитка
 /// ([`paved_verge`]) без [`VERGE_CUT_INSET`] у дорожки. Газон широкой
-/// обочины — трава двора (`roads.rs::VERGE_YARD_COLOR`), и двор над ним
+/// обочины — трава двора (`roads/verges.rs::VERGE_YARD_COLOR`), и двор над ним
 /// ничего не портит; вырезать его — значит перекрасить заводской квартал.
 fn cut_reach(verge: f32) -> f32 {
     paved_verge(verge).min(verge - VERGE_CUT_INSET).max(0.0)

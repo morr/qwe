@@ -7,9 +7,8 @@
 //! стоят на мощёных дорожках, — тоже мощёная. Как рисуется то и другое —
 //! `roads.md`, **Paved paths**; здесь решается.
 
-use std::collections::HashSet;
-
 use bevy::math::Vec2;
+use bevy::platform::collections::HashSet;
 
 use super::vertex_key;
 use crate::map::along::densify;

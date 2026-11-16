@@ -1,13 +1,8 @@
-use super::super::fixtures::{CITY, HALF};
+use super::super::fixtures::{CENTER, CITY, HALF};
 use super::*;
 use crate::map::osm::fixture::{Overpass, building, fence, rect, residential_half, square, street};
 use crate::map::osm::model::{SidewalkSide, sidewalk_band};
 use crate::map::osm::parse::ParseKnobs;
-use crate::settings::MAP_SIZE;
-
-/// Центр карты, как у фикстур разбора: сцены собираются вокруг него, и в
-/// тех же метрах пишутся проверки.
-const CENTER: Vec2 = Vec2::new(MAP_SIZE.x / 2.0, MAP_SIZE.y / 2.0);
 
 /// Прогон прохода на сцене из дорог, домов, заборов и стоянок: зелень и
 /// вода — пустые срезы, их сцены мощения не строят. Сцену без домов и

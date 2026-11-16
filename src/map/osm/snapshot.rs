@@ -46,7 +46,7 @@ const SNAPSHOT_VERSION: u32 = 2;
 
 /// Размер и mtime JSON-кеша, под которым писался снапшот.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct JsonStamp {
+struct JsonStamp {
     len: u64,
     mtime: u64,
 }
@@ -91,7 +91,7 @@ fn raw_word(raw: super::parse::RawOsm) -> &'static str {
 
 /// Штамп JSON-кеша города — `None`, если кеша нет: без выгрузки, под которой
 /// снапшот писался, он не годится.
-pub fn json_stamp(city: City) -> Option<JsonStamp> {
+fn json_stamp(city: City) -> Option<JsonStamp> {
     let meta = std::fs::metadata(cache_path(city)).ok()?;
     let mtime = meta
         .modified()
