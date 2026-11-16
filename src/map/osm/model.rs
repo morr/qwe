@@ -1,19 +1,22 @@
 //! Геометрическая модель карты в мировых метрах (юго-западный угол — (0,0)).
 //!
 //! Субъекты модели живут в каталоге `model/`: `features` (площадные зоны,
-//! здания и линейные сооружения), `roads` (дорожный словарь), `trees`
-//! (посадка и её политика), `geometry` (примитивы поверх контуров); здесь
-//! остаются сам ресурс `MapData` и общие типы. Все имена субъектов
-//! реэкспортируются ниже — наружу путь `osm::model::X` неизменен.
+//! здания и линейные сооружения), `areas` (перечень площадных слоёв —
+//! единственный источник списка видов площадных фич), `roads` (дорожный
+//! словарь), `trees` (посадка и её политика), `geometry` (примитивы поверх
+//! контуров); здесь остаются сам ресурс `MapData` и общие типы. Все имена
+//! субъектов реэкспортируются ниже — наружу путь `osm::model::X` неизменен.
 
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
+mod areas;
 mod features;
 mod geometry;
 mod roads;
 mod trees;
 
+pub use areas::{AreaLayer, AreaLayerDesc};
 pub use features::{
     AreaKind, BuildingUse, Colours, Faith, FenceKind, FenceLine, LotKind, PipeLine, PitchKind,
     PolyArea, RailKind, RailLine, Rgb, Sacred, SacredForm, ServiceTrack, Structure, StructureKind,
