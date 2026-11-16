@@ -49,60 +49,74 @@ pub fn find_passable_tile_near(navmesh: &Navmesh, tile: IVec2) -> Option<IVec2> 
 }
 
 /// Ближайший (по евклидову расстоянию) проходимый тайл в пределах
-/// `max_radius` тайлов — кольцевым поиском от `tile` наружу.
-///
-/// Кольца чебышёвские, а ответ евклидов, поэтому кольцо, в котором нашёлся
-/// первый кандидат, не последнее: у угла кольца `r` расстояние `r·√2`, а в
-/// кольце `r + 1` может стоять сосед по прямой на `r + 1`, что ближе уже при
-/// `r ≥ 3`. Поиск идёт, пока лучшее найденное дальше внутренней границы
-/// следующего кольца.
+/// `max_radius` тайлов — одним кольцевым поиском [`nearest_tile_where`],
+/// без второго ключа: `()` делает все равные дистанции ничьими, и побеждает
+/// просмотренный первым.
 pub(crate) fn nearest_passable_tile(
     navmesh: &Navmesh,
     tile: IVec2,
     max_radius: i32,
 ) -> Option<IVec2> {
     nearest_tile_where(tile, max_radius, |candidate| {
-        navmesh.is_passable(candidate.x, candidate.y)
+        navmesh.is_passable(candidate.x, candidate.y).then_some(())
     })
 }
 
-/// То же кольцевым поиском, но «свободен» решает вызывающий: спасение
-/// застрявших меряет тайл активным бэкендом, и на полигональном меше
-/// проходимости сетки мало (контуры раздуты на радиус агента).
-pub fn nearest_tile_where(
+/// Ближайший к `tile` кандидат в пределах `max_radius` тайлов — кольцевым
+/// поиском от `tile` наружу. Кого засчитать, решает `free`: `None` — тайл
+/// не кандидат, `Some(key)` — кандидат со ВТОРЫМ ключом `key`.
+///
+/// Первый ключ — дистанция до `tile` (`dx² + dy²`) — это геометрия самого
+/// поиска, замыкание её не считает; его ключ разыгрывает НИЧЬИ: при равной
+/// дистанции побеждает меньший `key`, а при равенстве обоих — просмотренный
+/// первым (кольцо обходится снизу вверх по `dy`, слева направо по `dx`).
+/// Второго мнения нет — передавай `()`, тогда все ничьи решает порядок
+/// обхода (`nearest_passable_tile`, снап портала, спасение застрявших);
+/// слоты назначения меряют им дистанцию от кандидата до самой пешки —
+/// среди одинаково близких к цели слот достаётся тому, кто с её стороны.
+///
+/// Кольца чебышёвские, а ответ евклидов, поэтому кольцо, в котором нашёлся
+/// лучший кандидат, не последнее: у угла кольца `r` расстояние `r·√2`, а в
+/// кольце `r + 1` может стоять сосед по прямой на `r + 1`, что ближе уже при
+/// `r ≥ 3`. И равные дистанции живут не только внутри кольца: угол (3,4)
+/// стоит 25, и прямой сосед (5,0) следующего кольца — столько же. Поэтому
+/// ранний выход — когда `ring²` ПЕРЕРОСЛО лучшее найденное, а не дотянулось
+/// до него: ближе в следующих кольцах не будет (минимум кольца — его прямой
+/// сосед), а равное обязано получить шанс на втором ключе. Без второго
+/// ключа лишнее кольцо выбора не меняет — сравнение строгое.
+pub fn nearest_tile_where<K: PartialOrd>(
     tile: IVec2,
     max_radius: i32,
-    is_free: impl Fn(IVec2) -> bool,
+    free: impl Fn(IVec2) -> Option<K>,
 ) -> Option<IVec2> {
-    if is_free(tile) {
-        return Some(tile);
-    }
-    let mut best: Option<(i32, IVec2)> = None;
-    for radius in 1..=max_radius {
-        // ближе, чем `radius`, в этом и во всех следующих кольцах уже не будет
-        if let Some((distance, found)) = best
-            && distance <= radius * radius
+    let mut best: Option<(i32, K, IVec2)> = None;
+    for ring in 0..=max_radius {
+        // ближе, чем `ring`, дальше не будет; равное — успей разыграть
+        if let Some((distance, ..)) = &best
+            && ring * ring > *distance
         {
-            return Some(found);
+            break;
         }
-        for dy in -radius..=radius {
-            for dx in -radius..=radius {
+        for dy in -ring..=ring {
+            for dx in -ring..=ring {
                 // только само кольцо: его внутренность просмотрена раньше
-                if dx.abs() != radius && dy.abs() != radius {
+                if dx.abs() != ring && dy.abs() != ring {
                     continue;
                 }
                 let candidate = tile + IVec2::new(dx, dy);
-                if !is_free(candidate) {
+                let Some(key) = free(candidate) else {
                     continue;
-                }
+                };
                 let distance = dx * dx + dy * dy;
-                if best.is_none_or(|(best_distance, _)| distance < best_distance) {
-                    best = Some((distance, candidate));
+                if best.as_ref().is_none_or(|(best_distance, best_key, _)| {
+                    (distance, &key) < (*best_distance, best_key)
+                }) {
+                    best = Some((distance, key, candidate));
                 }
             }
         }
     }
-    best.map(|(_, found)| found)
+    best.map(|(.., found)| found)
 }
 
 /// Есть ли прямая проходимая линия между двумя мировыми точками. Нужна там,
@@ -405,7 +419,8 @@ pub fn snap_portal_position(navmesh: &Navmesh, position: Vec2) -> Option<Vec2> {
     };
 
     let search_tiles = (crate::settings::PORTAL_SEARCH_METERS / navmesh.tile_size) as i32;
-    nearest_tile_where(start, search_tiles, is_clear).map(|tile| navmesh.tile_center(tile))
+    nearest_tile_where(start, search_tiles, |tile| is_clear(tile).then_some(()))
+        .map(|tile| navmesh.tile_center(tile))
 }
 
 #[cfg(test)]
@@ -464,6 +479,75 @@ mod tests {
         assert_eq!(
             nearest_passable_tile(&navmesh, IVec2::new(10, 10), 8),
             Some(straight)
+        );
+    }
+
+    /// Равные дистанции живут и МЕЖДУ кольцами: (3,4) — угол кольца 4 — и
+    /// (5,0) — прямой сосед кольца 5 — обе стоят 25. Ранний выход обязан
+    /// дойти до кольца 5 («ring² переросло лучшее», а не «дотянулось до
+    /// него»), чтобы второй ключ разыграл ничью: пешка стоит у (5,0).
+    #[test]
+    fn the_second_key_settles_equal_distances_across_rings() {
+        let start = IVec2::new(10, 10);
+        let diagonal = start + IVec2::new(3, 4);
+        let straight = start + IVec2::new(5, 0);
+        let navmesh = navmesh_with_only(&[diagonal, straight]);
+        let from = tile_center(straight);
+        assert_eq!(
+            nearest_tile_where(start, 6, |tile| navmesh
+                .is_passable(tile.x, tile.y)
+                .then(|| (tile_center(tile) - from).length_squared())),
+            Some(straight)
+        );
+    }
+
+    /// Без второго ключа ничья решается порядком обхода: (3,4) просмотрен
+    /// раньше (5,0) и остаётся ответом, лишнее кольцо выбор не меняет.
+    #[test]
+    fn an_equal_distance_without_a_second_key_keeps_the_first_found() {
+        let start = IVec2::new(10, 10);
+        let diagonal = start + IVec2::new(3, 4);
+        let straight = start + IVec2::new(5, 0);
+        let navmesh = navmesh_with_only(&[diagonal, straight]);
+        assert_eq!(
+            nearest_tile_where(start, 6, |tile| navmesh
+                .is_passable(tile.x, tile.y)
+                .then_some(())),
+            Some(diagonal)
+        );
+    }
+
+    /// Полная ничья — побеждает просмотренный первым: кольцо обходится
+    /// снизу вверх по `dy`, слева направо по `dx`, поэтому из одинаково
+    /// близких восточного (1,0) и северного (0,1) достаётся восточный.
+    #[test]
+    fn a_full_tie_goes_to_the_first_scanned_tile() {
+        let start = IVec2::new(10, 10);
+        let east = start + IVec2::new(1, 0);
+        let north = start + IVec2::new(0, 1);
+        let navmesh = navmesh_with_only(&[east, north]);
+        assert_eq!(
+            nearest_tile_where(start, 2, |tile| navmesh
+                .is_passable(tile.x, tile.y)
+                .then_some(())),
+            Some(east)
+        );
+    }
+
+    /// Первый ключ главнее второго: угол кольца 1 стоит 2 и бьёт прямого
+    /// соседа кольца 2 на 4, хотя пешка стоит ровно у второго.
+    #[test]
+    fn the_first_key_beats_the_second() {
+        let start = IVec2::new(10, 10);
+        let corner = start + IVec2::new(1, 1);
+        let straight = start + IVec2::new(2, 0);
+        let navmesh = navmesh_with_only(&[corner, straight]);
+        let from = tile_center(straight);
+        assert_eq!(
+            nearest_tile_where(start, 3, |tile| navmesh
+                .is_passable(tile.x, tile.y)
+                .then(|| (tile_center(tile) - from).length_squared())),
+            Some(corner)
         );
     }
 
