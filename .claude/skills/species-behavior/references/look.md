@@ -63,7 +63,7 @@ demon.
 
 The corpse is one of the four corpse glyphs of the silhouette atlas (`silhouette/figure.rs`),
 in one of `CORPSE_HEADINGS` (16) directions, mirrored or not, all chosen from the `Entity`
-bits through a splitmix hash (`human/look.rs::corpse_pose`). The tint is the human's own
+bits through a splitmix hash (`human/corpse.rs::corpse_pose`). The tint is the human's own
 `Attire` drained (`corpse_tint`: half the saturation, half the lightness), written by
 `lay_down`, an entity command queued *after* the tag removal so the calm-down observer
 restoring the attire cannot overwrite it. The body's own `Silhouette` is rewritten to the
@@ -81,7 +81,7 @@ The demon's look (`demon/look.rs`): y-sorting draws a neighbouring human *over* 
 
 ## Blood
 
-`silhouette/blood.rs` draws it, `human/look.rs` spawns and grows it.
+`silhouette/blood.rs` draws it, `human/corpse.rs` spawns and grows it.
 
 - **`BloodPool`** — the stain that *runs out from under the body*: a small core plus 5–8
   discs set on an **ellipse** of its own stretch and tilt (`POOL_STRETCH` up to 1.35 —
@@ -126,7 +126,7 @@ Two traps, both paid for once:
   was tried first: on the pavement (linear 0.74 against blood's 0.3) even an eighth of the
   ground bleaching through turned the pool brown.
 
-**Per-corpse variety** (`human/look.rs::blood_look`) — the pool glyph, the spatter glyph,
+**Per-corpse variety** (`human/corpse.rs::blood_look`) — the pool glyph, the spatter glyph,
 a spin for each (`BLOOD_SPINS` 64 steps, on top of the body's own rotation), a size
 (0.80–1.20) and a tint (hue +0–12°, lightness ×0.78–1.14), all sliced out of
 `splitmix64(entity ^ BLOOD_SALT)` at non-overlapping bit offsets. The salt is the point:

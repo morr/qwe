@@ -1222,14 +1222,14 @@ its draw call.
   tint** — `On<Add, HumanFleeTag>` paints the sprite `PANIC_COLOR` (amber, one for all,
   so the panic front reads as a spreading stain), `On<Remove, HumanFleeTag>` restores the
   attire. Transitions only, never per frame.
-- **Corpse look** (`human/look.rs`, figures in `silhouette/figure.rs`) — a killed human
+- **Corpse look** (`human/corpse.rs`, figures in `silhouette/figure.rs`) — a killed human
   is a **lying figure**, not an ellipse: head, torso and limbs as capsules on a skeleton
   in metres of `CORPSE_HEIGHT`, four poses (sprawled, prone, curled, crumpled), sixteen
   headings and a mirror, all from the `Entity` bits (`corpse_pose`). Limbs are drawn
   thicker than anatomy so the pose survives crowd zoom. The tint is the pawn's own
   attire **drained** (`corpse_tint`), so the dead keep their clothes; under the chest the
   **blood** below.
-- **Blood** (`silhouette/blood.rs`, spawned by `human/look.rs`) — what a corpse leaves on
+- **Blood** (`silhouette/blood.rs`, spawned by `human/corpse.rs`) — what a corpse leaves on
   the ground, as **two** children, because they are two events: a **pool** (`BloodPool`,
   lobes welded into one stain plus a rivulet) that **spreads** from `SPREAD_START` to full
   over `SPREAD_SECS` of sim time (`spread_blood` in `Update`; `BloodSpread` comes off when

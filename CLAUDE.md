@@ -416,7 +416,7 @@ step when adding one):
 | tree crowns (an entity per tree on the near zoom step, merged `tree_crowns` chunks on the far ones) + shadows | `map/trees.rs::spawn_tree_meshes` (the chunks and shadows through `surface::spawn_layers`; the crown entities through `CrownStream::spawn_next`, also batched from `::stream_tree_crowns`; build — `::mesh_trees`, geometry — `trees/crown.rs`) |
 | portal (vortex quad) + portal stain | `portal.rs::spawn_portal` |
 | humans (and corpses — same entity, retagged) | `human/systems.rs::spawn_population` |
-| blood pool and blood spatter — two **children** of the corpse, no component of their own: despawn is recursive | `human/look.rs::blood_pool` / `::blood_spatter` |
+| blood pool and blood spatter — two **children** of the corpse, no component of their own: despawn is recursive | `human/corpse.rs::blood_pool` / `::blood_spatter` |
 | demons | `demon/systems.rs::spawn_demon` |
 | demon halo — a **child** of the demon, no component of its own: despawn is recursive | `demon/look.rs::halo` |
 | souls (kill sparks, despawn themselves in `FixedUpdate`) | `human/soul.rs::release_soul` |
