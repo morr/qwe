@@ -154,6 +154,41 @@ fn a_bridge_or_an_arch_carves_the_navmesh() {
     assert!(road.carves_navmesh());
 }
 
+/// Таблица решётки предикатов дороги — [`RoadLine::is_at_grade`],
+/// [`RoadLine::is_carriageway`], [`RoadLine::carves_navmesh`] — по носителям
+/// признаков. Проезд лежит на земле, но тротуара и разметки не несёт; мост —
+/// проезжая часть мимо земли; арка — ни земля, ни проезжая часть; дорожка —
+/// и под мостиком тоже — не то и не другое.
+#[test]
+fn the_road_predicate_lattice_answers_by_kind() {
+    use crate::map::osm::fixture;
+
+    let street = fixture::street(vec![Vec2::ZERO, Vec2::X], 7.6);
+    let driveway = fixture::street(vec![Vec2::ZERO, Vec2::X], 5.0);
+    let bridge = fixture::bridge(vec![Vec2::ZERO, Vec2::X], 8.0);
+    let passage = fixture::passage(vec![Vec2::ZERO, Vec2::X], 8.0);
+    let path = fixture::footway(vec![Vec2::ZERO, Vec2::X]);
+    let footbridge = RoadLine {
+        bridge: true,
+        ..fixture::footway(vec![Vec2::ZERO, Vec2::X])
+    };
+
+    // (что это, is_at_grade, is_carriageway, carves_navmesh)
+    let cases: [(&str, RoadLine, [bool; 3]); 6] = [
+        ("улица", street, [true, true, false]),
+        ("дворовый проезд", driveway, [true, false, false]),
+        ("мост улицы", bridge, [false, true, true]),
+        ("арка улицы", passage, [false, false, true]),
+        ("дорожка", path, [false, false, false]),
+        ("мостик", footbridge, [false, false, true]),
+    ];
+    for (case, road, [at_grade, carriageway, carves]) in cases {
+        assert_eq!(road.is_at_grade(), at_grade, "{case}");
+        assert_eq!(road.is_carriageway(), carriageway, "{case}");
+        assert_eq!(road.carves_navmesh(), carves, "{case}");
+    }
+}
+
 /// Самая длинная сторона — сторона контура по ходу его вершин, а не ось
 /// описанного прямоугольника; у пустого контура её нет.
 #[test]

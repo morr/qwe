@@ -237,7 +237,12 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   - **RoadLine** — centerline + width **from its section** (`parse/tags.rs::path_width` for a
     path; footbridges and arches keep the class 3.5, their band is a navmesh corridor);
     `RoadClass: Street | Alley`; `highway: Highway` — **`Highway::is_street` is what makes
-    a carriageway, not the width**; `bridge` / `passage` flags. **`carves_navmesh` is the
+    a carriageway, not the width**; `bridge` / `passage` flags, and the model names the
+    questions asked of them as a **predicate lattice** — three overlapping, not nested
+    predicates: **`carves_navmesh`** (either flag, any class), **`is_at_grade`** (a Street
+    on the ground — a driveway too, deliberately: what a ground track may cross and a
+    stall may be reached from), `is_carriageway` (a street carriageway, bridges included).
+    **`carves_navmesh` is the
     one predicate the drawers ask**: an arch keeps its OSM centerline (neither smoothed,
     paired, ringed, tapered nor stitched); a bridge is smoothed and paired and takes a
     **taper** at a ground/bridge seam like any seam — **and at that seam every ribbon ends

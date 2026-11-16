@@ -128,6 +128,18 @@ width**) — streets, sections and the tapers between them are in
 - `bridge` and `passage` flags — the navmesh carves (see the navigation-deep skill);
   `bridge` also moves the road into the bridge deck layers (see `references/roads.md`,
   **Bridge layers**).
+- **The predicate lattice** — the three named questions asked of those flags and the
+  class, overlapping rather than nested: `carves_navmesh()` (bridge or passage, any
+  class — the one predicate the drawers ask), **`is_at_grade()`** (Street on the ground:
+  neither flag. A service drive is included *deliberately* — it occupies the ground as
+  much as a street does, and a level crossing lays its deck on a driveway and a stall
+  reaches one; `Highway::is_street` is **not** part of this predicate), `is_carriageway()`
+  (Street && !passage && is_street — sidewalks, markings, junctions; **a bridge stays**).
+  A bridge is carriageway off the ground, a driveway is ground off the carriageway —
+  neither nests into the other. rail's old `crossable` and parking's two inline
+  at-grade filters were convergent copies of `is_at_grade`; `roads/rings.rs::is_approach`
+  (a road that may bend into a ring's node) coincides with it today but names its own
+  role and stays local.
 - Three more fields feed the **markings** and the parked cars:
   - `oneway` (`oneway=yes|1|true|-1`; `reversible`/`alternating` are not one-way);
   - `roundabout` — the `junction=roundabout|circular` tag, implies `oneway` — but
