@@ -19,7 +19,7 @@ use bevy::prelude::*;
 
 use crate::map::MeshBuilder;
 use crate::map::meshing::{RibbonCap, RibbonJoin};
-use crate::map::osm::model::{MapData, PolyArea, RoadClass};
+use crate::map::osm::model::{AreaLayer, MapData, RoadClass};
 use crate::map::surface::{LayerMesh, MaterialSpec};
 use crate::settings::Z_OSM_CONTOURS_OVERLAY;
 
@@ -61,7 +61,8 @@ pub struct OsmContours {
     /// Прочие линии: рельсы, водотоки, ограды, стены, аллеи, трубы.
     pub lines: Vec<Vec<Vec2>>,
     /// Кольца полигонов — наружные и дырки, открытые (без повтора первой
-    /// точки), всех площадных слоёв и площадей дорог.
+    /// точки): площадные слои, чьи дескрипторы участвуют в снимке
+    /// ([`AreaLayer::ALL`]), и площади дорог.
     pub rings: Vec<Vec<Vec2>>,
 }
 
@@ -87,20 +88,17 @@ impl OsmContours {
                 .chain(map.tree_rows.iter().map(|line| line.points.clone()))
                 .chain(map.pipes.iter().map(|line| line.points.clone())),
         );
-        let areas: [&[PolyArea]; 9] = [
-            &map.buildings,
-            &map.water,
-            &map.parks,
-            &map.woods,
-            &map.grass,
-            &map.sand,
-            &map.landuse,
-            &map.parking,
-            &map.pitches,
-        ];
-        for area in areas.into_iter().flatten() {
-            contours.rings.push(area.outer.clone());
-            contours.rings.extend(area.holes.iter().cloned());
+        // кольца площадных слоёв — по перечню видов: слой в снимке, только
+        // если так сказано в его дескрипторе (карманы снимка не догоняют —
+        // они сеются доводочным проходом позже снимка)
+        for desc in AreaLayer::ALL {
+            if !desc.contours {
+                continue;
+            }
+            for area in (desc.field)(map) {
+                contours.rings.push(area.outer.clone());
+                contours.rings.extend(area.holes.iter().cloned());
+            }
         }
         contours
             .rings
@@ -193,5 +191,21 @@ mod tests {
         let layer = mesh_osm_contours(&contours);
         assert_eq!(layer.name, "osm_contours");
         assert!(layer.builder.vertex_count() > 0);
+    }
+
+    /// Карман в поле есть, а кольца в снимке нет — и это решение дескриптора,
+    /// не дрейф: снимок берётся в конце элементного цикла, а карманы сеются
+    /// доводочным проходом (`parse/pockets.rs`), когда снимка уже нет.
+    #[test]
+    fn pockets_do_not_reach_the_contour_snapshot() {
+        let map = MapData {
+            pockets: vec![crate::map::osm::fixture::area(
+                crate::map::osm::model::AreaKind::Grass,
+                crate::map::osm::fixture::square(Vec2::ZERO, 10.0),
+            )],
+            ..Default::default()
+        };
+        let contours = OsmContours::of(&map);
+        assert!(contours.rings.is_empty(), "{:?}", contours.rings);
     }
 }
