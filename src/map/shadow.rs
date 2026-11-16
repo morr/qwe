@@ -156,10 +156,11 @@ pub(crate) fn union_of(contours: &[Vec<[f32; 2]>]) -> Vec<Vec<Vec<[f32; 2]>>> {
     if contours.len() <= TILED_MIN {
         return contours.simplify_shape(FillRule::NonZero);
     }
+    use bevy::platform::collections::HashMap;
+
     use crate::map::parallel::in_parallel;
 
-    let mut by_cell: bevy::platform::collections::HashMap<IVec2, Vec<Vec<[f32; 2]>>> =
-        bevy::platform::collections::HashMap::new();
+    let mut by_cell: HashMap<IVec2, Vec<Vec<[f32; 2]>>> = HashMap::new();
     for contour in contours {
         let cell = (Vec2::from_array(contour[0]) / TILE).floor().as_ivec2();
         by_cell.entry(cell).or_default().push(contour.clone());
@@ -209,12 +210,13 @@ pub(crate) fn difference_of(
             .flatten()
             .collect();
     }
+    use bevy::platform::collections::HashMap;
+
     use crate::map::parallel::in_parallel;
 
     let clip_boxes: Vec<[f32; 4]> = clips.iter().map(|ring| ring_box(ring)).collect();
     // клетка свипов и рамка их общей геометрии: накапливается по ходу группировки
-    let mut by_cell: bevy::platform::collections::HashMap<IVec2, (Vec<usize>, [f32; 4])> =
-        bevy::platform::collections::HashMap::new();
+    let mut by_cell: HashMap<IVec2, (Vec<usize>, [f32; 4])> = HashMap::new();
     for (index, contour) in subjects.iter().enumerate() {
         let cell = (Vec2::from_array(contour[0]) / TILE).floor().as_ivec2();
         let (indices, bounds) = by_cell.entry(cell).or_insert_with(|| {
@@ -288,13 +290,14 @@ pub(crate) fn difference_of_shapes(
         let flat: Vec<Vec<[f32; 2]>> = subjects.iter().flatten().cloned().collect();
         return flat.overlay(&clips, OverlayRule::Difference, FillRule::NonZero);
     }
+    use bevy::platform::collections::HashMap;
+
     use crate::map::parallel::in_parallel;
 
     let clip_boxes: Vec<[f32; 4]> = clips.iter().map(|ring| ring_box(ring)).collect();
     // клетка фигуры и рамка всей её геометрии: рамка — по всем контурам
     // фигуры, наружным и дырам, — вырез может задевать только дыру
-    let mut by_cell: bevy::platform::collections::HashMap<IVec2, (Vec<usize>, [f32; 4])> =
-        bevy::platform::collections::HashMap::new();
+    let mut by_cell: HashMap<IVec2, (Vec<usize>, [f32; 4])> = HashMap::new();
     for (index, shape) in subjects.iter().enumerate() {
         let cell = (Vec2::from_array(shape[0][0]) / TILE).floor().as_ivec2();
         let (indices, bounds) = by_cell.entry(cell).or_insert_with(|| {

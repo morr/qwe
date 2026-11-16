@@ -43,6 +43,7 @@ use crate::map::footprint::{FENCE_BAND_WIDTH, distance_to_polyline};
 use crate::map::grid::Grid;
 use crate::map::osm::model::{
     AreaKind, FenceKind, MapData, PolyArea, RailKind, RoadAreaKind, RoadLine, point_in_polygon,
+    ring_bounds,
 };
 use crate::map::roads::pockets::kerb_pocket_outlines;
 use crate::map::roads::{DrawnPiece, DrawnPieces, PieceKind};
@@ -294,7 +295,7 @@ impl InspectIndex {
             if area.outer.is_empty() {
                 return;
             }
-            let (min, max) = bounds(&area.outer);
+            let (min, max) = ring_bounds(&area.outer);
             index.areas.insert(min, max, src);
         };
         for (i, area) in map.buildings.iter().enumerate() {
@@ -331,7 +332,7 @@ impl InspectIndex {
             if area.outline.is_empty() {
                 continue;
             }
-            let (min, max) = bounds(&area.outline);
+            let (min, max) = ring_bounds(&area.outline);
             index.areas.insert(min, max, AreaSrc::RoadArea(i as u32));
         }
 
@@ -396,7 +397,7 @@ impl InspectIndex {
             if outline.contour.is_empty() {
                 continue;
             }
-            let (min, max) = bounds(&outline.contour);
+            let (min, max) = ring_bounds(&outline.contour);
             let i = index.kerb_pockets.len() as u32;
             index.kerb_pockets.push(KerbPocket {
                 outline: outline.contour,
@@ -427,7 +428,7 @@ impl InspectIndex {
             if piece.contour.is_empty() {
                 continue;
             }
-            let (min, max) = bounds(&piece.contour);
+            let (min, max) = ring_bounds(&piece.contour);
             self.piece_grid.insert(min, max, i as u32);
         }
         self.pieces = pieces.to_vec();
@@ -814,16 +815,6 @@ pub fn rebuild_index(
     let started = std::time::Instant::now();
     *index = InspectIndex::rebuild(&map, &shape.0, &pieces.0);
     info!("inspect index: rebuilt in {:.1?}", started.elapsed());
-}
-
-/// Габарит кольца.
-fn bounds(points: &[Vec2]) -> (Vec2, Vec2) {
-    let (mut min, mut max) = (points[0], points[0]);
-    for point in points {
-        min = min.min(*point);
-        max = max.max(*point);
-    }
-    (min, max)
 }
 
 /// Ссылка площадной находки на свой элемент — тот же индекс, что у источника
