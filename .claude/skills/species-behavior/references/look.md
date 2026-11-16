@@ -173,23 +173,36 @@ the component, not the sprite. The two:
   (spawn, halo, blood children, souls) plus the push in `spread_blood`. A spawn or a corpse
   rewrite gets its size in the frame it appears, instead of waiting for the first wheel
   click. With no camera the list is left alone — entries wait for the first camera frame.
-- **`resize_silhouettes_on_zoom`** — only when the zoom actually changed (`Local<f32>`
-  holds the last one), and even then **a window, not the whole set**: `RESIZE_BATCH`
-  (512) silhouettes per zoom-change frame, cursor held in a `Local`, and inside the
-  window a write happens only when the size moved more than `RESIZE_TOLERANCE_PX`
-  (half a logical pixel) — a write of the same value still marks the sprite changed and
-  drags it through bounds, extract and the render phases, and at the near zoom (floor
-  inactive, size = body) every wheel click used to pay 20 000 such no-op writes
-  (measured 10.2026: they were not the zoom-jerk driver — the frame jitter of the same
-  magnitude happens without them — but they were pure waste, and the full 20 k rewrite
-  did land on one frame). The whole set catches up within `total / RESIZE_BATCH`
-  zoom-change frames; the tolerance holds a silhouette within half a pixel of the exact
-  size at the moment of its check — one whose turn has not come in this lap stands at
-  its last write and can sit past the tolerance until it.
+- **`resize_silhouettes_on_zoom`** — only when the camera actually moved (`Local` holds
+  the last `Viewport` — zoom, centre, half-extent — so a pan counts as much as a wheel
+  click), and even then **a budget, not the whole set**: `RESIZE_BATCH` (512) sprite
+  writes per camera-move frame, split in two. Stale silhouettes standing in the frame
+  (`Viewport` with the `RESIZE_VIEW_SCREENS` 1.25 margin) are rewritten first — a sharp
+  zoom-in used to leave the visible pawns bloated at the previous zoom's floor size
+  until the ring reached them (~40 frames on Tula); now the frame's pawns are corrected
+  within the gesture, and the off-screen tail converges invisibly on the leftover
+  budget, the ring cursor over the whole set as before. The pan half of the trigger
+  heals the ring's blind spot: panning onto a region the ring has not reached rewrites
+  its edges next frame instead of waiting for the next wheel click. Finding the visible
+  ones is a read-only pass over every silhouette — cheap, because the amortization
+  exists for the *writes* (each rewritten pawn drags the sprite pipeline: material,
+  bounds, extract), not the reads. A write happens only when the size moved more than
+  `RESIZE_TOLERANCE_PX` (half a logical pixel) — a write of the same value still marks
+  the sprite changed and drags it through bounds, extract and the render phases, and at
+  the near zoom (floor inactive, size = body) every wheel click used to pay 20 000 such
+  no-op writes (measured 10.2026: they were not the zoom-jerk driver — the frame jitter
+  of the same magnitude happens without them — but they were pure waste, and the full
+  20 k rewrite did land on one frame). The tolerance holds a silhouette within half a
+  pixel of the exact size at the moment of its check — one whose turn has not come in
+  this lap stands at its last write and can sit past the tolerance until it.
 
 Both ask for the **user's** camera — `With<Camera2d>` *and* `With<PanCamera>`, because a
 `dev::OffscreenShotEvent` puts a second `Camera2d` in the world for three frames and a
-`Single` matching two entities is skipped without a word. Both return early when there is
+`Single` matching two entities is skipped without a word. `resize_silhouettes_on_zoom`
+takes its frame from the `Viewport` resource where it exists, and computes it from the
+camera and window with `Viewport::of` where it does not (`blood_gallery` has no
+`ViewportPlugin`, and ordering one in would trip `sync_viewport`'s `.before(begin_sim_load)`
+edge against a system the gallery never registers). Both return early when there is
 no such camera, which is the same contract as the atlas:
 without a renderer (replay, tests) `Silhouettes` stays `None`, `sprite()` hands back a
 plain square `Sprite`, and **that is not an error**. `HumanPlugin` / `DemonPlugin` /

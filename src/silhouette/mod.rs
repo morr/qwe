@@ -23,6 +23,9 @@ use bevy::camera_controller::pan_camera::PanCamera;
 use bevy::image::{Image, ImageSampler};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use bevy::window::PrimaryWindow;
+
+use crate::camera::Viewport;
 
 pub mod blood;
 pub mod figure;
@@ -537,45 +540,89 @@ const RESIZE_BATCH: usize = 512;
 /// полпикселя.
 const RESIZE_TOLERANCE_PX: f32 = 0.5;
 
-/// Размеры силуэтов под зум — окном по [`RESIZE_BATCH`] силуэтов за кадр
-/// смены зума, и только те, чей размер уехал дальше [`RESIZE_TOLERANCE_PX`].
-/// Курсор в `Local` идёт по запросу кольцом: за `total / RESIZE_BATCH` кадров
-/// смены зума переписываются все. Проверка пропускает пешку, чей размер уехал
-/// меньше чем на `RESIZE_TOLERANCE_PX` экранного пикселя, — у лежащих на полу
-/// это те же экранные пиксели, у тел без пола размер и так не меняется;
-/// пешка, чей ход в этом обороте кольца не наступил, стоит с размером прошлой
-/// записи, и на свипе из нескольких щелчков её отставание шире допуска до
-/// следующего хода.
+/// Запас кадра для отбора «видимых» в [`resize_silhouettes_on_zoom`]: четверть
+/// экрана за кромку — силуэт на краю кадра считается видимым, а въехавшее
+/// дальше долечивается тем же проходом на следующем пане.
+const RESIZE_VIEW_SCREENS: f32 = 1.25;
+
+/// Размеры силуэтов под камеру — окном по [`RESIZE_BATCH`] силуэтов за кадр
+/// движения камеры, и только те, чей размер уехал дальше
+/// [`RESIZE_TOLERANCE_PX`]. Бюджет кадра делится надвое: сперва устаревшие
+/// силуэты, стоящие в кадре ([`Viewport`] с запасом [`RESIZE_VIEW_SCREENS`]),
+/// — на резком zoom-in видимые пешки раньше ждали своего хода в кольце и все
+/// кадры свипа показывали их раздутыми прежним зумом; остаток бюджета идёт
+/// кольцу по всему множеству — курсор в `Local` идёт по запросу, за
+/// `total / RESIZE_BATCH` кадров движения камеры переписываются все.
+///
+/// Триггер — любое движение камеры, не только зум: [`Viewport`] сравнивается
+/// целиком (зум, центр, полуразмер), так что пан по ещё не сошедшемуся хвосту
+/// лечит въехавшие в кадр края первым же кадром, а не ждёт щелчка колеса.
+/// Кадр берётся из ресурса, а где его нет — считается из камеры и окна тем же
+/// [`Viewport::of`] (витрины без `ViewportPlugin`); без камеры система молча
+/// не работает — тот же контракт, что у атласа.
 pub fn resize_silhouettes_on_zoom(
+    viewport: Option<Res<Viewport>>,
     camera: Option<Single<&Transform, (With<Camera2d>, With<PanCamera>)>>,
-    mut last_zoom: Local<f32>,
-    mut window: Local<usize>,
-    mut all: Query<(&Silhouette, &mut Sprite)>,
+    window: Option<Single<&Window, With<PrimaryWindow>>>,
+    mut last_view: Local<Option<Viewport>>,
+    mut ring: Local<usize>,
+    mut all: Query<(&Silhouette, &GlobalTransform, &mut Sprite)>,
 ) {
-    let Some(zoom) = camera_zoom(camera) else {
-        return;
+    let view = match viewport {
+        Some(view) => *view,
+        None => {
+            let (Some(camera), Some(window)) = (camera, window) else {
+                return;
+            };
+            Viewport::of(&window, &camera, 1.0)
+        }
     };
-    if zoom == *last_zoom {
+    if *last_view == Some(view) {
         return;
     }
-    *last_zoom = zoom;
+    *last_view = Some(view);
     let total = all.iter().len();
     if total == 0 {
         return;
     }
-    let from = (*window).min(total);
+    let zoom = view.zoom;
     let tolerance = zoom * RESIZE_TOLERANCE_PX;
-    for (silhouette, mut sprite) in all.iter_mut().skip(from).take(RESIZE_BATCH) {
-        let size = silhouette.drawn_size(zoom);
-        let stale = match sprite.custom_size {
-            Some(current) => (current - size).abs().max_element() > tolerance,
-            None => true,
-        };
-        if stale {
-            sprite.custom_size = Some(size);
+    // видимые и устаревшие — первым бюджетом: проход читает всё множество, но
+    // читать дёшево — дорого писать (см. [`RESIZE_BATCH`])
+    let frame = view.with_margin(RESIZE_VIEW_SCREENS);
+    let mut budget = RESIZE_BATCH;
+    for (silhouette, at, mut sprite) in all.iter_mut() {
+        if frame.contains(at.translation().truncate())
+            && refresh_size(silhouette, &mut sprite, zoom, tolerance)
+        {
+            budget -= 1;
+            if budget == 0 {
+                break;
+            }
         }
     }
-    *window = (from + RESIZE_BATCH) % total;
+    // остаток бюджета — кольцу: хвост за экраном сходится невидимо
+    if budget > 0 {
+        let from = (*ring).min(total);
+        for (silhouette, _, mut sprite) in all.iter_mut().skip(from).take(budget) {
+            refresh_size(silhouette, &mut sprite, zoom, tolerance);
+        }
+        *ring = (from + budget) % total;
+    }
+}
+
+/// Переписать размер силуэта под зум, если он уехал дальше допуска; вернёт,
+/// была ли запись.
+fn refresh_size(silhouette: &Silhouette, sprite: &mut Sprite, zoom: f32, tolerance: f32) -> bool {
+    let size = silhouette.drawn_size(zoom);
+    let stale = match sprite.custom_size {
+        Some(current) => (current - size).abs().max_element() > tolerance,
+        None => true,
+    };
+    if stale {
+        sprite.custom_size = Some(size);
+    }
+    stale
 }
 
 #[cfg(test)]
@@ -610,6 +657,106 @@ mod tests {
         let silhouette = Silhouette::new(Vec2::new(1.6, 0.8), 2.0);
         // 4,5 м/px: пол — 9 м по меньшей стороне, пропорции сохранены
         assert_eq!(silhouette.drawn_size(4.5), Vec2::new(18.0, 9.0));
+    }
+
+    /// Силуэт с заведомо устаревшим размером (9 м при правильных 4 м на
+    /// зуме 2 в тестовом кадре).
+    fn stale_silhouette(world: &mut World, at: Vec2) -> Entity {
+        world
+            .spawn((
+                Silhouette::new(Vec2::splat(1.0), 2.0),
+                Sprite {
+                    custom_size: Some(Vec2::splat(9.0)),
+                    ..Default::default()
+                },
+                Transform::from_translation(at.extend(0.0)),
+                GlobalTransform::from_translation(at.extend(0.0)),
+            ))
+            .id()
+    }
+
+    /// Размер силуэта переписан под тестовый кадр (зум 2, пол 2 px → 4 м).
+    fn fresh(world: &World, entity: Entity) -> bool {
+        world
+            .get::<Sprite>(entity)
+            .is_some_and(|sprite| sprite.custom_size == Some(Vec2::splat(4.0)))
+    }
+
+    fn frame(centre: Vec2) -> Viewport {
+        Viewport {
+            centre,
+            half_extent: Vec2::splat(150.0),
+            zoom: 2.0,
+        }
+    }
+
+    /// Бюджет кадра — сперва видимым: когда их больше бюджета, весь он уходит
+    /// стоящим в кадре, а за кадром не переписывается никто — на резком
+    /// zoom-in видимые пешки не ждут своего хода в кольце.
+    #[test]
+    fn visible_silhouettes_take_the_budget_before_the_ring() {
+        let mut world = World::new();
+        world.insert_resource(frame(Vec2::ZERO));
+        // видимых больше бюджета: в кадре 600, переписать за кадр можно 512
+        let near: Vec<Entity> = (0..RESIZE_BATCH + 88)
+            .map(|i| {
+                stale_silhouette(
+                    &mut world,
+                    Vec2::new((i % 27) as f32 * 8.0 - 104.0, (i / 27) as f32 * 8.0 - 104.0),
+                )
+            })
+            .collect();
+        let far: Vec<Entity> = (0..200)
+            .map(|i| stale_silhouette(&mut world, Vec2::new(1000.0 + i as f32 * 0.5, 0.0)))
+            .collect();
+        let mut resize = IntoSystem::into_system(resize_silhouettes_on_zoom);
+        resize.initialize(&mut world);
+        resize.run((), &mut world).unwrap();
+
+        let fresh_near = near.iter().filter(|e| fresh(&world, **e)).count();
+        assert_eq!(fresh_near, RESIZE_BATCH, "бюджет ушёл не видимым");
+        assert!(
+            far.iter().all(|e| !fresh(&world, *e)),
+            "за кадром кто-то переписан раньше видимых"
+        );
+
+        // пан туда же, зум тот же: въехавшие в кадр лечатся без щелчка колеса
+        world.resource_mut::<Viewport>().centre = Vec2::new(1000.0, 0.0);
+        resize.run((), &mut world).unwrap();
+        assert!(
+            far.iter().all(|e| fresh(&world, *e)),
+            "пан не долечил въехавшие в кадр"
+        );
+        assert_eq!(
+            near.iter().filter(|e| fresh(&world, **e)).count(),
+            RESIZE_BATCH,
+            "пан переписал что-то за кадром"
+        );
+    }
+
+    /// Остаток бюджета достаётся кольцу: когда видимых мало, хвост за экраном
+    /// переписывается в тот же кадр — темп полного прохода, что и до деления
+    /// бюджета.
+    #[test]
+    fn ring_spends_the_leftover_budget() {
+        let mut world = World::new();
+        world.insert_resource(frame(Vec2::ZERO));
+        let near = [
+            stale_silhouette(&mut world, Vec2::ZERO),
+            stale_silhouette(&mut world, Vec2::new(10.0, 0.0)),
+        ];
+        let far = [
+            stale_silhouette(&mut world, Vec2::new(1000.0, 0.0)),
+            stale_silhouette(&mut world, Vec2::new(1100.0, 0.0)),
+            stale_silhouette(&mut world, Vec2::new(1200.0, 0.0)),
+            stale_silhouette(&mut world, Vec2::new(1300.0, 0.0)),
+        ];
+        let mut resize = IntoSystem::into_system(resize_silhouettes_on_zoom);
+        resize.initialize(&mut world);
+        resize.run((), &mut world).unwrap();
+        for entity in near.iter().chain(far.iter()) {
+            assert!(fresh(&world, *entity), "хвост кольца не сошёлся за кадр");
+        }
     }
 
     /// Форма глифа на каждый вызов — путь тестов; атлас собирает её один раз
