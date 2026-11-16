@@ -438,6 +438,37 @@ pub fn perf_window_resolution() -> bevy::window::WindowResolution {
     size.into()
 }
 
+/// `QWE_PERF_GPU_CUT=1` — GPU-разрез кадра ([`crate::gpu_cut`]): wgpu
+/// timestamp queries по границам сегментов Core2d, `gpu cut:` раз в секунду.
+/// Требует фичи устройства, поэтому втыкается и в настройки рендера:
+/// [`render_plugin`]. Без переменной — стандартный `RenderPlugin`.
+pub fn gpu_cut() -> bool {
+    std::env::var_os("QWE_PERF_GPU_CUT").is_some()
+}
+
+/// Настройки `RenderPlugin` под [`gpu_cut`]: без переменной — дефолт,
+/// с ней — плюс `TIMESTAMP_QUERY` и `TIMESTAMP_QUERY_INSIDE_PASSES`
+/// (Metal поддерживает обе; на бэкенде без них запуск упадёт с ошибкой
+/// устройства — тоггл и есть согласие на это). Энкодерная фича не
+/// запрашивается: `write_timestamp` энкодера на macOS bevy глушит
+/// сам (фликер, bevy#22257) — метки идут только на границах пассов.
+pub fn render_plugin() -> bevy::render::RenderPlugin {
+    if !gpu_cut() {
+        return bevy::render::RenderPlugin::default();
+    }
+    bevy::render::RenderPlugin {
+        render_creation: bevy::render::settings::RenderCreation::Automatic(Box::new(
+            bevy::render::settings::WgpuSettings {
+                features: bevy::render::settings::WgpuSettings::default().features
+                    | bevy::render::settings::WgpuFeatures::TIMESTAMP_QUERY
+                    | bevy::render::settings::WgpuFeatures::TIMESTAMP_QUERY_INSIDE_PASSES,
+                ..default()
+            },
+        )),
+        ..default()
+    }
+}
+
 /// `QWE_PERF_NOAPPNAP=1` — активность `NSProcessInfo` класса `userInitiated`:
 /// macOS не укладывает процесс в App Nap, пока активность жива. Запись 15:
 /// App Nap плавает между прогонами (fps 113 ↔ 46 на одном мире, в `ps -M` класс
@@ -475,7 +506,11 @@ pub fn no_app_nap() {
 /// - `QWE_PERF_FRAME_SPIKES=<ms>` — кадр длиннее порога печатает строку
 ///   `frame spike: 43.2 ms (zoom 1.83, frame 247)`: детектор рывков зума, которых
 ///   секундные средние `frame_time` не показывают. Реальное время кадра
-///   ([`Time<Real>`]), не виртуальное: на паузе виртуальное стоит на нуле.
+///   ([`Time<Real>`]), не виртуальное: на паузе виртуальное стоит на нуле;
+/// - `QWE_PERF_GPU_CUT=1` — GPU-разрез кадра ([`crate::gpu_cut`]): wgpu
+///   timestamp queries по границам сегментов Core2d, `gpu cut:` раз в
+///   секунду и `gpu spike:` пофреймово выше `QWE_PERF_GPU_SPIKES=<ms>`;
+///   фичи устройства втыкает [`render_plugin`].
 ///
 /// Без переменных ничего не меняется.
 fn add_perf_toggles(app: &mut App) {
@@ -487,6 +522,13 @@ fn add_perf_toggles(app: &mut App) {
     }
     if std::env::var_os("QWE_PERF_RENDER_DIAG").is_some() {
         app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
+    }
+    if gpu_cut() {
+        let spike = std::env::var("QWE_PERF_GPU_SPIKES").ok().map(|ms| {
+            ms.parse::<f32>()
+                .unwrap_or_else(|_| panic!("QWE_PERF_GPU_SPIKES is not a number: {ms:?}"))
+        });
+        app.add_plugins(crate::gpu_cut::GpuCutPlugin { spike_threshold: spike });
     }
     if let Ok(ms) = std::env::var("QWE_PERF_FRAME_SPIKES") {
         let ms: f32 = ms

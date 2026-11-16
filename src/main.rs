@@ -30,6 +30,9 @@ fn main() {
                     },
                 })
                 .set(ImagePlugin::default_nearest())
+                // QWE_PERF_GPU_CUT=1 добавляет timestamp-фичи устройству
+                // (gpu_cut.rs); без переменной — дефолтный RenderPlugin
+                .set(dev::render_plugin())
                 .set(WindowPlugin {
                     primary_window: Some(Window {
                         // Порт в заголовке: два открытых окна qwe иначе не

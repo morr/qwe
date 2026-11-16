@@ -6,6 +6,7 @@ pub mod dev;
 pub mod diagnostics;
 pub mod ease;
 pub mod frame_phases;
+pub mod gpu_cut;
 pub mod grid;
 pub mod human;
 pub mod loading;
