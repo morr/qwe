@@ -821,7 +821,7 @@ mod tests {
     fn a_low_sun_keeps_the_equipment_shadow_on_the_roof() {
         let _sun = crate::map::sun_at(300.0, SUN_ELEVATION_MIN);
         let slab = building(block(16.0, 60.0), BuildingUse::Apartments);
-        let look = super::super::material::roof_look(&slab);
+        let look = super::super::material::roof_look(&slab, None);
         let mut items = flat_roof_items(&slab, &look, Vec2::ZERO);
         assert!(!items.is_empty());
         // и отдельно — машинное помещение у самого края с наветренной стороны:
@@ -867,7 +867,7 @@ mod tests {
         let _sun = crate::map::default_sun();
         let hyper = building(block(90.0, 110.0), BuildingUse::Retail);
         assert!(is_big_box(&hyper));
-        let look = super::super::material::roof_look(&hyper);
+        let look = super::super::material::roof_look(&hyper, None);
         let items = flat_roof_items(&hyper, &look, Vec2::ZERO);
         let skylights = items.iter().filter(|item| item.top == SKYLIGHT_TOP).count();
         // 110 × 90 м с отступом от края — не меньше шести шагов по 13 м вдоль
@@ -884,7 +884,7 @@ mod tests {
         // тот же класс на мелком пятне: ни одного фонаря и ни одной установки
         let shop = building(block(14.0, 20.0), BuildingUse::Retail);
         assert!(!is_big_box(&shop));
-        let look = super::super::material::roof_look(&shop);
+        let look = super::super::material::roof_look(&shop, None);
         let items = flat_roof_items(&shop, &look, Vec2::ZERO);
         assert!(items.iter().all(|item| item.top != SKYLIGHT_TOP));
         assert!(
@@ -917,7 +917,7 @@ mod tests {
                     .map(|corner| corner + at)
                     .collect();
                 let house = building(outer, BuildingUse::Retail);
-                let look = super::super::material::roof_look(&house);
+                let look = super::super::material::roof_look(&house, None);
                 let items = flat_roof_items(&house, &look, Vec2::ZERO);
                 let plant = items
                     .iter()
@@ -939,7 +939,7 @@ mod tests {
     fn the_skylight_grid_keeps_its_pitch() {
         let _sun = crate::map::default_sun();
         let hyper = building(block(90.0, 110.0), BuildingUse::Retail);
-        let look = super::super::material::roof_look(&hyper);
+        let look = super::super::material::roof_look(&hyper, None);
         let items = flat_roof_items(&hyper, &look, Vec2::ZERO);
         let mut centres: Vec<Vec2> = items
             .iter()
@@ -975,7 +975,7 @@ mod tests {
     fn a_giant_roof_thins_the_grid_instead_of_cutting_it_off() {
         let _sun = crate::map::default_sun();
         let maxi = building(block(298.0, 493.0), BuildingUse::Retail);
-        let look = super::super::material::roof_look(&maxi);
+        let look = super::super::material::roof_look(&maxi, None);
         let items = flat_roof_items(&maxi, &look, Vec2::ZERO);
         let centres: Vec<Vec2> = items
             .iter()
@@ -1007,13 +1007,13 @@ mod tests {
     fn a_block_gets_equipment_and_a_shed_does_not() {
         let _sun = crate::map::default_sun();
         let slab = building(block(16.0, 60.0), BuildingUse::Apartments);
-        let look = super::super::material::roof_look(&slab);
+        let look = super::super::material::roof_look(&slab, None);
         let items = flat_roof_items(&slab, &look, Vec2::ZERO);
         assert!(!items.is_empty(), "a 960 m2 block carries equipment");
 
         // сарай 3 × 3: после отступа от края ставить некуда
         let shed = building(block(3.0, 3.0), BuildingUse::Other);
-        let look = super::super::material::roof_look(&shed);
+        let look = super::super::material::roof_look(&shed, None);
         assert!(flat_roof_items(&shed, &look, Vec2::ZERO).len() <= 1);
     }
 
@@ -1032,7 +1032,7 @@ mod tests {
             ],
             BuildingUse::Apartments,
         );
-        let look = super::super::material::roof_look(&ell);
+        let look = super::super::material::roof_look(&ell, None);
         for item in flat_roof_items(&ell, &look, Vec2::ZERO) {
             for corner in item.base {
                 assert!(point_in_area(corner, &ell), "{corner:?} is off the roof");
@@ -1073,7 +1073,7 @@ mod tests {
                     .map(|corner| corner + at)
                     .collect();
                 let house = building(outer, building_use);
-                let look = super::super::material::roof_look(&house);
+                let look = super::super::material::roof_look(&house, None);
                 let items = flat_roof_items(&house, &look, Vec2::ZERO);
                 laid += items.len();
                 for (index, item) in items.iter().enumerate() {
@@ -1122,7 +1122,7 @@ mod tests {
     fn the_placement_is_stable() {
         let _sun = crate::map::default_sun();
         let slab = building(block(16.0, 60.0), BuildingUse::Apartments);
-        let look = super::super::material::roof_look(&slab);
+        let look = super::super::material::roof_look(&slab, None);
         let first = flat_roof_items(&slab, &look, Vec2::ZERO);
         let second = flat_roof_items(&slab, &look, Vec2::ZERO);
         assert_eq!(first.len(), second.len());
@@ -1138,7 +1138,7 @@ mod tests {
     fn ridge_chimney_shadow_stays_on_roof_with_low_sun() {
         let _sun = crate::map::sun_at(300.0, SUN_ELEVATION_MIN);
         let house = building(block(8.0, 10.0), BuildingUse::Other);
-        let look = super::super::material::roof_look(&house);
+        let look = super::super::material::roof_look(&house, None);
         // конёк двускатной крыши проходит по средней линии короткой стороны
         let ridge = (Vec2::new(4.0, 0.0), Vec2::new(4.0, 10.0));
         // ridge_offset на типовой крыше — несколько дециметров; тест ищет баг,

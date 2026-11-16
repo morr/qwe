@@ -248,7 +248,7 @@ fn the_palette_follows_the_building_use_and_spares_the_kremlin() {
     // Стена — тоже по материалу, как и крыша: у частного дома штукатурка или
     // кирпич, у склада профлист, у храма побелка, и совпасть им неоткуда.
     // Этажность на этой развилке одна на всех — сравниваются назначения.
-    let wall = |b: &PolyArea| wall_look(b, 2.0).base;
+    let wall = |b: &PolyArea| wall_look(b, 2.0, None).base;
     assert_ne!(wall(&house), wall(&industrial));
     assert_ne!(wall(&church), wall(&house));
     let kremlin_plain = building(square(), None, AreaKind::Kremlin);
@@ -256,7 +256,7 @@ fn the_palette_follows_the_building_use_and_spares_the_kremlin() {
 
     // а крыша — по материалу: у частного дома черепица или металл, у
     // промзоны профлист или битум, и одинаковыми они не выходят
-    let roof = |b: &PolyArea| roof_color(b, &roof_look(b), false);
+    let roof = |b: &PolyArea| roof_color(b, &roof_look(b, None), false);
     assert_ne!(roof(&house), roof(&industrial));
     assert_ne!(roof(&church), roof(&house));
     // назначение Кремля крышу тоже не трогает
@@ -270,7 +270,7 @@ fn the_roof_material_is_stable_and_follows_the_use() {
     house.building_use = BuildingUse::House;
     // посев берётся от геометрии, а не от места в списке: два прогона дают
     // один материал, иначе переключение режима высот перекрашивало бы город
-    assert_eq!(roof_look(&house).kind, roof_look(&house).kind);
+    assert_eq!(roof_look(&house, None).kind, roof_look(&house, None).kind);
     // сдвинутый дом — другой посев, а стало быть возможен и другой слот
     let moved: Vec<Vec2> = square()
         .into_iter()
@@ -278,12 +278,12 @@ fn the_roof_material_is_stable_and_follows_the_use() {
         .collect();
     let mut neighbour = building(moved, None, AreaKind::Building);
     neighbour.building_use = BuildingUse::House;
-    let _ = roof_look(&neighbour);
+    let _ = roof_look(&neighbour, None);
 
     // храм — всегда фальцевый металл, гараж — из своей таблицы
     let mut church = building(square(), None, AreaKind::Building);
     church.building_use = ORTHODOX;
-    assert_eq!(roof_look(&church).kind, RoofKind::Seam);
+    assert_eq!(roof_look(&church, None).kind, RoofKind::Seam);
 
     // ось фактуры — длинная сторона контура
     let long = vec![
@@ -292,7 +292,7 @@ fn the_roof_material_is_stable_and_follows_the_use() {
         Vec2::new(40.0, 8.0),
         Vec2::new(0.0, 8.0),
     ];
-    let axis = roof_look(&building(long, None, AreaKind::Building))
+    let axis = roof_look(&building(long, None, AreaKind::Building), None)
         .frame
         .axis;
     assert!(axis.x.abs() > axis.y.abs(), "{axis:?}");
@@ -824,7 +824,7 @@ fn a_hull_deeper_than_housing_carries_no_balconies() {
             Some(27.0),
             AreaKind::Building,
         );
-        assert!(is_deep_hull(&hull));
+        assert!(is_deep_hull(&hull, None));
         let kind = wall_of(&hull).kind;
         assert!(
             !matches!(kind, WallKind::Panel | WallKind::Brick),
@@ -840,7 +840,7 @@ fn a_hull_deeper_than_housing_carries_no_balconies() {
             Some(27.0),
             AreaKind::Building,
         );
-        assert!(!is_deep_hull(&slab));
+        assert!(!is_deep_hull(&slab, None));
         slab_kinds.push(wall_of(&slab).kind);
 
         // каре 60 × 60 с двором 30 × 30: габарит 60, крыло 15
@@ -850,7 +850,7 @@ fn a_hull_deeper_than_housing_carries_no_balconies() {
             AreaKind::Building,
         );
         court.holes = vec![at(rect(Vec2::splat(15.0), Vec2::splat(45.0)), offset)];
-        assert!(!is_deep_hull(&court));
+        assert!(!is_deep_hull(&court, None));
         court_kinds.push(wall_of(&court).kind);
     }
     // жилая таблица как была: панель у пластины и у каре встречается
@@ -1093,7 +1093,8 @@ fn every_mode_builds_geometry_for_mixed_input() {
         building(square(), Some(12.0), AreaKind::Kremlin),
     ];
 
-    let (facades, roofs) = facade_and_roof_builders(&list, &[], detail(true));
+    let (facades, roofs) =
+        facade_and_roof_builders(&list, &[], detail(true), &HouseFootprint::all(&list));
     assert!(!facades.is_empty());
     assert!(!roofs.is_empty());
     assert_eq!(facades.skipped_polygons(), 0);
@@ -1533,7 +1534,7 @@ fn roof_tint_darkens_tall_buildings_and_spares_the_kremlin() {
     let _sun = crate::map::default_sun();
     let color = |height, tinted| {
         let b = building(square(), height, AreaKind::Building);
-        roof_color(&b, &roof_look(&b), tinted)
+        roof_color(&b, &roof_look(&b, None), tinted)
     };
     let base = color(None, true);
     let tall = color(Some(60.0), true);
@@ -1544,7 +1545,7 @@ fn roof_tint_darkens_tall_buildings_and_spares_the_kremlin() {
 
     let kremlin = |height, tinted| {
         let b = building(square(), height, AreaKind::Kremlin);
-        roof_color(&b, &roof_look(&b), tinted)
+        roof_color(&b, &roof_look(&b, None), tinted)
     };
     assert_eq!(kremlin(Some(60.0), true), kremlin(None, false));
 }

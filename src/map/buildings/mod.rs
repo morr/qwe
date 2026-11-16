@@ -339,6 +339,7 @@ pub fn measure_layers(
                 detail,
                 &order,
                 arches.as_ref().expect("в 2.5D арки посчитаны"),
+                &footprints,
             )
             .0
             .iter()
@@ -347,7 +348,8 @@ pub fn measure_layers(
         });
     } else {
         measure("facades+roofs", &mut || {
-            let (facades, roofs) = facade_and_roof_builders(buildings, passages, detail);
+            let (facades, roofs) =
+                facade_and_roof_builders(buildings, passages, detail, &footprints);
             facades.vertex_count() + roofs.vertex_count()
         });
     }
@@ -515,6 +517,7 @@ pub fn mesh_buildings(
                 detail,
                 order,
                 arches.as_ref().expect("в 2.5D арки посчитаны"),
+                &footprints,
             );
             roof_mix = mix.to_string();
             skipped += chunks
@@ -545,7 +548,8 @@ pub fn mesh_buildings(
                     LayerMesh::new(builder, z, name, material).into_chunks(surface::MAP_CHUNK),
                 );
             };
-            let (facades, roofs) = facade_and_roof_builders(buildings, passages, detail);
+            let (facades, roofs) =
+                facade_and_roof_builders(buildings, passages, detail, &footprints);
             push(facades, Z_FACADE, "building_facades", MaterialSpec::Flat);
             push(roofs, Z_BUILDING, "building_roofs", MaterialSpec::Roof);
         }
@@ -781,7 +785,13 @@ impl HouseFootprint {
         buildings.iter().map(Self::of).collect()
     }
 
-    /// Длина и ширина пятна — стороны прямоугольника, длинная первая.
+    /// Длинная ось пятна — единичный вектор первого ребра. `None` —
+    /// прямоугольник выродился: длинная сторона нулевой длины.
+    pub(super) fn axis(self) -> Option<Vec2> {
+        (self.rect[1] - self.rect[0]).try_normalize()
+    }
+
+    /// Длина и ширина пятна — стороны прямоугольника, длинная первой.
     pub(super) fn size(self) -> (f32, f32) {
         (
             (self.rect[1] - self.rect[0]).length(),

@@ -42,8 +42,8 @@ use super::garages::GarageRun;
 // константа, по которой `roofs` ставит на него двускатную крышу: одна граница,
 // один смысл «это дом, а не корпус».
 use super::roofs::SMALL_FOOTPRINT_MAX;
-use super::{fortress, temples};
-use crate::map::meshing::{ATTRIBUTE_ROOF, Roof, min_area_rect, ring_perimeter};
+use super::{HouseFootprint, fortress, temples};
+use crate::map::meshing::{ATTRIBUTE_ROOF, Roof, ring_perimeter};
 use crate::map::osm::model::is_big_box;
 use crate::map::osm::{AreaKind, BuildingUse, PolyArea};
 use crate::map::seed::seed_from_point;
@@ -597,8 +597,10 @@ impl RoofLook {
 ///
 /// Посев — от **первой вершины контура**, как у генератора дверей: он не
 /// зависит ни от порядка домов в `MapData`, ни от режима отрисовки, поэтому
-/// переключение режима высот не перекрашивает город.
-pub(super) fn roof_look(building: &PolyArea) -> RoofLook {
+/// переключение режима высот не перекрашивает город. Ось — из готового пятна
+/// дома ([`HouseFootprint`]); `None` — пятна нет, она считается на месте, как
+/// раньше своим `min_area_rect`.
+pub(super) fn roof_look(building: &PolyArea, fp: Option<HouseFootprint>) -> RoofLook {
     let seed = look_seed(building);
     let kind = kind_of(building, seed);
     let palette = palette(building, kind);
@@ -613,8 +615,9 @@ pub(super) fn roof_look(building: &PolyArea) -> RoofLook {
             1.0 + ((seed >> 16 & 0xff) as f32 / 255.0 - 0.5) * 0.06,
         ),
     };
-    let axis = min_area_rect(&building.outer)
-        .and_then(|rect| (rect[1] - rect[0]).try_normalize())
+    let axis = fp
+        .or_else(|| HouseFootprint::of(building))
+        .and_then(HouseFootprint::axis)
         .unwrap_or(Vec2::X);
     RoofLook::new(
         kind,
@@ -771,10 +774,11 @@ impl WallLook {
 ///
 /// `storeys` приходит извне, а не считается здесь, потому что этажи — это
 /// высота, поделённая на высоту этажа, и делит её `layers.rs`; дублировать то
-/// же деление значит однажды разойтись с ним.
-pub(super) fn wall_look(building: &PolyArea, storeys: f32) -> WallLook {
+/// же деление значит однажды разойтись с ним. Пятно дома (`fp`) — из сборки
+/// слоя; пятна нет — корпусность проверяется по своему `min_area_rect`.
+pub(super) fn wall_look(building: &PolyArea, storeys: f32, fp: Option<HouseFootprint>) -> WallLook {
     let seed = look_seed(building);
-    let kind = wall_kind_of(building, storeys, seed >> 4);
+    let kind = wall_kind_of(building, storeys, seed >> 4, fp);
     let palette = wall_palette(building, kind);
     let base = palette[(seed >> 12) as usize % palette.len()].to_srgba();
     // ±3 % яркости поверх выбранного цвета — как у кровель: два дома одной
@@ -814,7 +818,12 @@ pub(super) fn wall_look(building: &PolyArea, storeys: f32) -> WallLook {
 /// жилая малоэтажка, — ровно то, из-за чего торговля и читалась жильём.
 /// Запрет на **панель** исключение не отменяет, и это не обещание, а
 /// устройство таблиц: панели нет ни в [`BIG_BOX_WALLS`], ни в [`SHOP_WALLS`].
-fn wall_kind_of(building: &PolyArea, storeys: f32, seed: u32) -> WallKind {
+fn wall_kind_of(
+    building: &PolyArea,
+    storeys: f32,
+    seed: u32,
+    fp: Option<HouseFootprint>,
+) -> WallKind {
     if building.kind == AreaKind::Kremlin {
         return WallKind::Brick;
     }
@@ -845,7 +854,7 @@ fn wall_kind_of(building: &PolyArea, storeys: f32, seed: u32) -> WallKind {
         // высоты он ни был: ни панели, ни кирпича, а с ними и балконов
         // (`layers::balcony_house`) у него нет. До порога малоэтажности, потому
         // что низкий корпус в сто метров — тот же склад, а не малоэтажка
-        BuildingUse::Other if is_deep_hull(building) => &DEEP_HULL_WALLS,
+        BuildingUse::Other if is_deep_hull(building, fp) => &DEEP_HULL_WALLS,
         _ if storeys < LOW_RISE_STOREYS => &LOW_RISE_WALLS,
         BuildingUse::Apartments => &APARTMENTS_WALLS,
         BuildingUse::Commercial => &COMMERCIAL_WALLS,
@@ -884,14 +893,15 @@ pub(super) const DEEP_HULL_MIN: f32 = 30.0;
 /// жилые пластины 20–29 м шириной, у которых глубина жилая.
 ///
 /// Если равновеликого прямоугольника нет (план компактнее квадрата — круг,
-/// восьмиугольник), глубина — сторона квадрата того же периметра.
-pub(super) fn is_deep_hull(building: &PolyArea) -> bool {
-    let Some(rect) = min_area_rect(&building.outer) else {
+/// восьмиугольник), глубина — сторона квадрата того же периметра. Пятно дома
+/// приходит готовым ([`HouseFootprint`]); `None` — пятна нет, оно считается
+/// на месте, как раньше.
+pub(super) fn is_deep_hull(building: &PolyArea, fp: Option<HouseFootprint>) -> bool {
+    let Some(fp) = fp.or_else(|| HouseFootprint::of(building)) else {
         return false;
     };
-    let span = (rect[1] - rect[0])
-        .length()
-        .min((rect[2] - rect[1]).length());
+    let (length, width) = fp.size();
+    let span = length.min(width);
     span > DEEP_HULL_MIN && equivalent_width(building) > DEEP_HULL_MIN
 }
 

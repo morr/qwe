@@ -23,7 +23,10 @@ use super::roofs::{
     DormerFace, HipRoof, RoofMix, RoofShape, Roofing, TentRoof, roofing, roofing_of,
 };
 use super::temples::{Crown, Sanctuary, push_crowns};
-use super::{Lean, RoofDetail, building_center, height_or_default, lift_of, shade_by_light};
+use super::{
+    HouseFootprint, Lean, RoofDetail, building_center, height_of, lift_of, lift_of_footprint,
+    shade_by_light,
+};
 use crate::map::meshing::{MeshBuilder, PARAPET_CELLS, Roof, WallFrame, WallMark, min_area_rect};
 use crate::map::osm::model::{distance_to_segment, is_big_box, signed_ring_area, srgba_of};
 use crate::map::osm::{AreaKind, BuildingUse, PolyArea, RoadLine, Sacred, SacredForm};
@@ -391,7 +394,7 @@ fn garage_cells(
 ///
 /// Число целое, и на нём держится вся рама ([`wall_frame`]): верхний этаж
 /// упирается ровно в карниз, а на углу дома обе стены кончаются одинаково.
-fn storeys_of(building: &PolyArea) -> f32 {
+fn storeys_of(building: &PolyArea, fp: Option<HouseFootprint>) -> f32 {
     let storey = match building.building_use {
         // ярус колокольни выше храмового: семидесятиметровая колокольня в
         // шестиметровых ярусах носила двенадцать рядов окон, как башня-жильё
@@ -405,7 +408,7 @@ fn storeys_of(building: &PolyArea) -> f32 {
         BuildingUse::Retail if is_big_box(building) => BIG_BOX_TIER,
         _ => STOREY_HEIGHT,
     };
-    (height_or_default(building) / storey).round().max(1.0)
+    (height_of(building, fp) / storey).round().max(1.0)
 }
 
 /// Кому балконы полагаются. Это не про геометрию, а про то, что бывает на
@@ -825,10 +828,10 @@ fn hip_ridge_ends(roof: &HipRoof) -> (Vec2, Vec2) {
 /// **от прогона**, а не от него самого. В этом весь приём: общий посев и
 /// общая ось превращают двадцать домиков в одну ленту, а по-своему посеянный
 /// бокс красится и ребрится сам по себе.
-fn look_of(building: &PolyArea, run: Option<&GarageRun>) -> RoofLook {
+fn look_of(building: &PolyArea, run: Option<&GarageRun>, fp: Option<HouseFootprint>) -> RoofLook {
     match run {
         Some(run) => run_look(run),
-        None => roof_look(building),
+        None => roof_look(building, fp),
     }
 }
 
@@ -944,6 +947,7 @@ pub(super) fn facade_and_roof_builders(
     buildings: &[PolyArea],
     passages: &[RoadLine],
     detail: RoofDetail,
+    footprints: &[Option<HouseFootprint>],
 ) -> (MeshBuilder, MeshBuilder) {
     let arches = arches_by_building(buildings, passages);
     let runs = garage_runs(buildings);
@@ -953,10 +957,11 @@ pub(super) fn facade_and_roof_builders(
     let sanctuary = Sanctuary::of(buildings);
     let mut placed = Vec::new();
     for (index, building) in buildings.iter().enumerate() {
+        let fp = footprints[index];
         // фактуры у плоской полосы нет — она идёт одним earcut-полигоном, — но
         // цвет у неё тот же, что был бы у настоящей стены в 2.5D
-        let facade_color = wall_look(building, storeys_of(building)).base;
-        let look = look_of(building, runs.get(&index));
+        let facade_color = wall_look(building, storeys_of(building, fp), fp).base;
+        let look = look_of(building, runs.get(&index), fp);
         let color = roof_color(building, &look, detail.tinted);
         placed.extend(sanctuary.crowns(index, building, facade_color, color, Vec2::ZERO));
         // часть на крыше храма — это барабан с главой, отдельная колокольня —
@@ -968,7 +973,7 @@ pub(super) fn facade_and_roof_builders(
         // фасад — тот же контур, сдвинутый вниз: тёмная кромка видна
         // только вдоль южных граней любого полигона. Сдвиг — по высоте из
         // OSM, так что этажность города видна прямо на карте
-        let facade_height = (height_or_default(building) * FACADE_SCALE)
+        let facade_height = (height_of(building, fp) * FACADE_SCALE)
             .clamp(*FACADE_HEIGHT_RANGE.start(), *FACADE_HEIGHT_RANGE.end());
         let offset = Vec2::new(0.0, -facade_height);
         let facade_outer: Vec<Vec2> = building.outer.iter().map(|p| *p + offset).collect();
@@ -1075,6 +1080,7 @@ pub(super) fn extrusion_builder(
     detail: RoofDetail,
     order: &[usize],
     arches: &ArchOpenings,
+    footprints: &[Option<HouseFootprint>],
 ) -> (Vec<MeshBuilder>, RoofMix) {
     use bevy::platform::collections::HashMap;
 
@@ -1106,10 +1112,12 @@ pub(super) fn extrusion_builder(
     let parts: Vec<HousePart> = in_parallel(order, |&index| {
         let building = &buildings[index];
         let cell = (building_center(building) / MAP_CHUNK).floor().as_ivec2();
-        let look = look_of(building, runs.get(&index));
+        let fp = footprints[index];
+        let look = look_of(building, runs.get(&index), fp);
         let color = roof_color(building, &look, detail.tinted);
-        let wall = wall_of_run(building, runs.get(&index));
-        let crowns = sanctuary.crowns(index, building, wall.base, color, lift_of(building));
+        let wall = wall_of_run(building, runs.get(&index), fp);
+        let lift = lift_of_footprint(building, fp);
+        let crowns = sanctuary.crowns(index, building, wall.base, color, lift);
         // часть на крыше храма — барабан с главой, отдельная колокольня — столп
         // ярусами: коробки от земли у них нет
         if sanctuary.boxless(index, building) {
@@ -1125,7 +1133,6 @@ pub(super) fn extrusion_builder(
         let (openings, tunnel) = arches
             .get(&index)
             .map(|passages| {
-                let lift = lift_of(building);
                 let openings = arch_openings(building, passages, lift, -lean.dir());
                 // стенки проезда видны только сквозь проём
                 let tunnel = match openings.is_empty() {
@@ -1245,9 +1252,11 @@ pub fn push_house(
 
 /// Облицовка, которую игра выбрала бы этому дому. Витринам — чтобы не
 /// повторять у себя деление высоты на высоту этажа, городу — чтобы не звать
-/// `wall_look` мимо [`storeys_of`].
+/// `wall_look` мимо [`storeys_of`]. Пятно дома считается здесь: витрина
+/// зовёт функцию сама, без сборщика слоя с его готовыми пятнами.
 pub fn wall_of(building: &PolyArea) -> WallLook {
-    wall_look(building, storeys_of(building))
+    let fp = HouseFootprint::of(building);
+    wall_look(building, storeys_of(building, fp), fp)
 }
 
 /// То же, но с оглядкой на гаражный прогон: бокс, вошедший в него, одет в
@@ -1255,10 +1264,14 @@ pub fn wall_of(building: &PolyArea) -> WallLook {
 /// его собственная, размером с бокс. Кровля этого дома берётся от прогона
 /// ровно так же ([`look_of`]), и обе стороны коробки говорят тогда одно и то
 /// же: сверху гребёнка боксов, сбоку ряд ворот.
-fn wall_of_run(building: &PolyArea, run: Option<&GarageRun>) -> WallLook {
+fn wall_of_run(
+    building: &PolyArea,
+    run: Option<&GarageRun>,
+    fp: Option<HouseFootprint>,
+) -> WallLook {
     match run {
         Some(run) => run_wall_look(run),
-        None => wall_of(building),
+        None => wall_look(building, storeys_of(building, fp), fp),
     }
 }
 
@@ -1276,7 +1289,7 @@ fn push_house_with_arches(
 ) -> RoofShape {
     // этажи считаются от настоящей высоты дома, а не от нарисованной: подъём
     // сжимает стену вместе с ними
-    let storeys = storeys_of(building);
+    let storeys = storeys_of(building, None);
     let facade_color = wall.base;
     let lean = Lean::of();
     let lift_dir = lean.dir();

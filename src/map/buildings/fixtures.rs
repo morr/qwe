@@ -126,7 +126,7 @@ pub(super) fn extruded_mesh(
     let arches = arches_by_building(list, passages);
     let footprints = super::HouseFootprint::all(list);
     let order = order::draw_order(list, Lean::of(), &footprints);
-    let (chunks, _) = extrusion_builder(list, detail, &order, &arches);
+    let (chunks, _) = extrusion_builder(list, detail, &order, &arches, &footprints);
     MeshBuilder::merge(chunks)
 }
 
