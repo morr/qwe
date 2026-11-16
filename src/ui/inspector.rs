@@ -217,16 +217,17 @@ impl UiInspectorPlugin {
 impl Plugin for UiInspectorPlugin {
     fn build(&self, app: &mut App) {
         let standalone = self.standalone;
-        app.init_resource::<InspectorHighlight>()
-            .init_resource::<InspectorHitsState>()
+        app.init_resource::<InspectorHitsState>()
             .init_resource::<InspectorPinned>()
-            .init_resource::<VirtualCursor>()
-            .register_type::<InspectorHighlight>();
+            .init_resource::<VirtualCursor>();
         // сохранение галочки — только в игре: в витрине `SettingsPlugin`'a нет
         // (примеры конфиг игры не трогают), `track_pref` там предупреждал бы
         // об отсутствующем реестре файлов на каждый клик
-        if !standalone {
-            app.track_pref::<InspectorHighlight>();
+        if standalone {
+            app.init_resource::<InspectorHighlight>()
+                .register_type::<InspectorHighlight>();
+        } else {
+            app.register_pref::<InspectorHighlight>();
         }
         app.add_systems(
             Startup,

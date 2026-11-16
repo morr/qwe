@@ -288,10 +288,8 @@ pub(super) struct UiShellPlugin;
 
 impl Plugin for UiShellPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<UiShellState>()
-            .register_type::<UiShellState>()
+        app.register_pref::<UiShellState>()
             .register_type::<SettingsTab>()
-            .track_pref::<UiShellState>()
             .add_systems(Startup, spawn_shell.in_set(UiBuildSet::Shell))
             .add_systems(Startup, sort_sections.in_set(UiBuildSet::Sort))
             .add_systems(

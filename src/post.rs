@@ -102,9 +102,7 @@ pub struct PostProcessPlugin;
 
 impl Plugin for PostProcessPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Antialias>()
-            .register_type::<Antialias>()
-            .track_pref::<Antialias>()
+        app.register_pref::<Antialias>()
             .add_systems(Startup, spawn_vignette)
             .add_systems(Update, apply_antialias.run_if(retuned::<Antialias>));
     }

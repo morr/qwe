@@ -235,9 +235,7 @@ pub struct CityPlugin;
 
 impl Plugin for CityPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<City>()
-            .register_type::<City>()
-            .track_pref::<City>()
+        app.register_pref::<City>()
             .add_systems(
                 Update,
                 reload_world

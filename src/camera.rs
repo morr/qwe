@@ -178,16 +178,14 @@ pub struct CameraPlugin;
 impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(PanCameraPlugin)
-            .init_resource::<CameraPositionMode>()
+            .register_pref::<CameraPositionMode>()
             .init_resource::<SavedCameraView>()
             .init_resource::<LastWorldCity>()
             .init_resource::<VirtualCursor>()
-            .register_type::<CameraPositionMode>()
-            .register_type::<SavedCameraView>()
             // `SavedCameraView` не отслеживается: он меняется каждый кадр
             // протяжки, и запись по изменению перезаписывала бы файл на кадр —
             // у него свой дебаунс (`track_camera_view`)
-            .track_pref::<CameraPositionMode>()
+            .register_type::<SavedCameraView>()
             .add_systems(Startup, spawn_camera)
             // карта нового города лежит в тех же координатах, но портал
             // переезжает — камеру возвращаем к нему на каждой загрузке
