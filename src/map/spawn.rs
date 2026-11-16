@@ -349,19 +349,24 @@ pub fn mesh_surfaces(
     // оба означала бы траву на бетонной площадке.
     let mut yards = MeshBuilder::with_surface_coords();
     let mut works = MeshBuilder::with_surface_coords();
-    // и карманы земли (`parse/pockets.rs`) — травой квартала рядом или двора;
-    // карман у газона — лугом, ниже в слое газонов
-    for area in AreaLayer::Landuse
-        .field(map)
-        .iter()
-        .chain(AreaLayer::Pocket.field(map))
-    {
+    // по видам, не по слою: видов в поле — два (`parse.rs::push_area`), и
+    // маршрут у каждого свой
+    for area in AreaLayer::Landuse.field(map) {
         let (builder, color) = match area.kind {
             AreaKind::Industrial => (&mut works, INDUSTRIAL_COLOR),
-            AreaKind::Grass => continue,
             _ => (&mut yards, RESIDENTIAL_COLOR),
         };
         builder.push_polygon(&area.outer, &area.holes, color.to_linear());
+    }
+    // карманы земли (`parse/pockets.rs`) — теми же слоями: у поля карманов
+    // свои виды, луг (`Grass`) и двор (`Residential`, вид соседнего квартала);
+    // луг уходит в газон ниже, двор — сюда
+    for area in AreaLayer::Pocket
+        .field(map)
+        .iter()
+        .filter(|area| area.kind != AreaKind::Grass)
+    {
+        yards.push_polygon(&area.outer, &area.holes, RESIDENTIAL_COLOR.to_linear());
     }
 
     // простые слои — по строке стиля: заливка с каймой или без
