@@ -36,9 +36,9 @@ fn main() {
 
     // распределение посева по видам и площадям — смена закона покрытия видна
     // на всём городе, а не только у пробы
-    let mut kinds: std::collections::BTreeMap<&str, usize> = Default::default();
+    let mut kinds: std::collections::BTreeMap<String, usize> = Default::default();
     for area in &map.pockets {
-        *kinds.entry(format!("{:?}", area.kind).leak()).or_default() += 1;
+        *kinds.entry(format!("{:?}", area.kind)).or_default() += 1;
     }
     println!("== pocket kinds: {kinds:?}");
     let mut areas: Vec<f32> = map
