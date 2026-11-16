@@ -17,6 +17,11 @@
 //! клавишей, то есть doors и movepath вместе. У grid хоткея нет: сетка нужна
 //! редко и только вблизи, кнопки в панели достаточно.
 //!
+//! Добавление тумблера — тип-ресурс с `impl DebugToggle` (меткой строки),
+//! `add_debug_toggle` в плагине и его реальное поведение (`overlays.rs`):
+//! строка витрины и регистрация сохранения общие, их берут на себя
+//! [`spawn_toggle_row`] и [`AddDebugToggleExt`].
+//!
 //! Кроме тумблеров вкладка держит листалки — строки, где клик перебирает
 //! значения, а текущее значение написано словом справа:
 //!
@@ -43,10 +48,13 @@
 //! входов в здания, — по какому бы бэкенду ни ходили пешки, и прятать его
 //! вместе с настройками сетки значило бы называть глобальное частным.
 
-use bevy::ecs::system::SystemParam;
+use std::ops::{Deref, DerefMut};
+
 use bevy::input::common_conditions::input_just_pressed;
+use bevy::reflect::GetTypeRegistration;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use bevy::ui_widgets::Activate;
+use derive_more::{Deref, DerefMut};
 
 use bevy::prelude::*;
 
@@ -60,16 +68,24 @@ use crate::movement::DrawMovePaths;
 use crate::navigation::PolymeshDebug;
 use crate::post::Antialias;
 use crate::prefs::{PrefsExt, ResetSettings};
-use crate::ui::knob::{AddKnobsExt, CycleBinding, spawn_cycle_row};
+use crate::ui::knob::{AddKnobsExt, CycleBinding, Knobbed, spawn_cycle_row};
 use crate::ui::rows::{ROW_LEFT_PX, on_off};
 use crate::ui::shell::{SectionSlot, SettingsPanes, SettingsTab, spawn_block, spawn_section};
 use crate::ui::{UiBuildSet, panel_title, spawn_panel_button};
 
-// оба тумблера — группы настроек (`prefs`), поэтому Reflect + SettingsGroup
-#[derive(Resource, Reflect, SettingsGroup, Default)]
+// тумблеры — группы настроек (`prefs`), поэтому Reflect + SettingsGroup;
+// Deref/DerefMut до bool даёт дженерику строки ([`spawn_toggle_row`]) доступ
+// к значению — кортеж-поле `.0` сквозь трейт не выражается
+#[derive(Resource, Reflect, SettingsGroup, Default, Deref, DerefMut)]
 #[reflect(Resource, SettingsGroup, Default)]
 #[settings_group(group = "debug", key = "grid")]
 pub struct DebugGrid(pub bool);
+
+impl DebugToggle for DebugGrid {
+    fn label() -> &'static str {
+        "Grid"
+    }
+}
 
 /// Показывать ли заливку непроходимых тайлов — строка `Show` под `Navmesh` в
 /// панели Navigation (`ui/navigation/`). Слой рисуется, только пока сетка и
@@ -80,38 +96,126 @@ pub struct DebugGrid(pub bool);
 #[settings_group(group = "debug", key = "navmesh")]
 pub struct DebugNavmesh(pub bool);
 
-#[derive(Resource, Reflect, SettingsGroup, Default)]
+#[derive(Resource, Reflect, SettingsGroup, Default, Deref, DerefMut)]
 #[reflect(Resource, SettingsGroup, Default)]
 #[settings_group(group = "debug", key = "doors")]
 pub struct DebugDoors(pub bool);
 
-#[derive(Resource, Reflect, SettingsGroup, Default)]
+impl DebugToggle for DebugDoors {
+    fn label() -> &'static str {
+        "Doors"
+    }
+}
+
+#[derive(Resource, Reflect, SettingsGroup, Default, Deref, DerefMut)]
 #[reflect(Resource, SettingsGroup, Default)]
 #[settings_group(group = "debug", key = "conifer_noise")]
 pub struct DebugConiferNoise(pub bool);
 
+impl DebugToggle for DebugConiferNoise {
+    fn label() -> &'static str {
+        "Noise field"
+    }
+}
+
 /// Показывать ли оверлей сети улиц — строка `Road network` вкладки Debug:
 /// склейка ways в улицы, сечения и швы (`map::mesh_network_overlay`).
-#[derive(Resource, Reflect, SettingsGroup, Default)]
+#[derive(Resource, Reflect, SettingsGroup, Default, Deref, DerefMut)]
 #[reflect(Resource, SettingsGroup, Default)]
 #[settings_group(group = "debug", key = "road_network")]
 pub struct DebugRoadNetwork(pub bool);
 
+impl DebugToggle for DebugRoadNetwork {
+    fn label() -> &'static str {
+        "Road network"
+    }
+}
+
 /// Показывать ли оверлей линий колеи — строка `Rut lines` вкладки Debug: оси
 /// полос с двумя линиями колёс (колея шейдера асфальта) и траектории узлов
 /// (колея краски износа), разными цветами (`map::mesh_rut_overlay`).
-#[derive(Resource, Reflect, SettingsGroup, Default)]
+#[derive(Resource, Reflect, SettingsGroup, Default, Deref, DerefMut)]
 #[reflect(Resource, SettingsGroup, Default)]
 #[settings_group(group = "debug", key = "rut_lines")]
 pub struct DebugRutLines(pub bool);
 
+impl DebugToggle for DebugRutLines {
+    fn label() -> &'static str {
+        "Rut lines"
+    }
+}
+
 /// Показывать ли оверлей контуров OSM — строка `OSM contours` вкладки Debug:
 /// оси путей и контуры полигонов, какими их прочёл разбор до доводочных
 /// проходов (`map::mesh_osm_contours`), поверх обработанной карты.
-#[derive(Resource, Reflect, SettingsGroup, Default)]
+#[derive(Resource, Reflect, SettingsGroup, Default, Deref, DerefMut)]
 #[reflect(Resource, SettingsGroup, Default)]
 #[settings_group(group = "debug", key = "osm_contours")]
 pub struct DebugOsmContours(pub bool);
+
+impl DebugToggle for DebugOsmContours {
+    fn label() -> &'static str {
+        "OSM contours"
+    }
+}
+
+/// `DrawMovePaths` живёт у владельца (`movement`), но его строка — витрина
+/// этой вкладки, поэтому impl стоит рядом с соседними тумблерами.
+impl DebugToggle for DrawMovePaths {
+    fn label() -> &'static str {
+        "Move paths"
+    }
+}
+
+/// Тумблер вкладки Debug: bool-ресурс, чья строка (`On`/`Off`) ничем, кроме
+/// метки, не отличается от соседних. От конкретного типа требуется только
+/// метка — переворот и текст состояния берёт дженерик
+/// ([`spawn_toggle_row`]), доступ к значению дают derive-и `Deref`/`DerefMut`.
+pub trait DebugToggle: Knobbed + Deref<Target = bool> + DerefMut + Default {
+    /// Метка строки вкладки Debug.
+    fn label() -> &'static str;
+}
+
+/// Регистрация тумблера одним вызовом: синхронизация строки витрины
+/// ([`AddKnobsExt::add_knobs`]) поверх полного вызова сохраняемого ресурса
+/// ([`PrefsExt::register_pref`]). Забытая половина здесь — ошибка сборки,
+/// а не тихий отказ, тем же способом, каким [`PrefsExt::register_pref`]
+/// закрыл свой старый квартет.
+pub trait AddDebugToggleExt {
+    fn add_debug_toggle<T: DebugToggle + SettingsGroup + GetTypeRegistration>(
+        &mut self,
+    ) -> &mut Self;
+}
+
+impl AddDebugToggleExt for App {
+    fn add_debug_toggle<T: DebugToggle + SettingsGroup + GetTypeRegistration>(
+        &mut self,
+    ) -> &mut Self {
+        self.add_knobs::<T>().register_pref::<T>()
+    }
+}
+
+/// Строка-тумблер: метка из [`DebugToggle::label`], значение справа —
+/// `On`/`Off`, клик переворачивает ресурс. Одна витрина на все тумблерные
+/// строки вкладки.
+fn spawn_toggle_row<T: DebugToggle>(
+    commands: &mut Commands,
+    panel: Entity,
+    left_px: f32,
+    resource: &T,
+) -> Entity {
+    spawn_cycle_row(
+        commands,
+        panel,
+        T::label(),
+        left_px,
+        resource,
+        CycleBinding {
+            cycle: |toggle: &mut T| **toggle = !**toggle,
+            text: |toggle| on_off(**toggle).to_string(),
+        },
+    )
+}
 
 mod overlays;
 
@@ -124,24 +228,23 @@ pub struct UiDebugTogglesPlugin;
 
 impl Plugin for UiDebugTogglesPlugin {
     fn build(&self, app: &mut App) {
-        app.add_knobs::<DebugGrid>()
-            .add_knobs::<DebugDoors>()
+        app.add_debug_toggle::<DebugGrid>()
+            .add_debug_toggle::<DebugDoors>()
+            .add_debug_toggle::<DebugConiferNoise>()
+            .add_debug_toggle::<DebugRoadNetwork>()
+            .add_debug_toggle::<DebugOsmContours>()
+            .add_debug_toggle::<DebugRutLines>()
+            // у заливки navmesh строки в этой вкладке нет — её «Show» стоит
+            // в панели Navigation (`ui/navigation/`), так что синхронизации
+            // строк у неё не заводится; сохранение и сброс — остаются
+            .register_pref::<DebugNavmesh>()
+            // DrawMovePaths регистрирует владелец (`movement`), здесь — только
+            // синхронизация его строки; листалки регистрируются у владельцев
             .add_knobs::<DrawMovePaths>()
-            .add_knobs::<DebugConiferNoise>()
-            .add_knobs::<DebugRoadNetwork>()
-            .add_knobs::<DebugOsmContours>()
-            .add_knobs::<DebugRutLines>()
             .add_knobs::<CameraPositionMode>()
             .add_knobs::<Antialias>()
             .add_knobs::<NavtileBase>()
             .add_knobs::<RawOsm>()
-            .register_pref::<DebugGrid>()
-            .register_pref::<DebugNavmesh>()
-            .register_pref::<DebugDoors>()
-            .register_pref::<DebugConiferNoise>()
-            .register_pref::<DebugRoadNetwork>()
-            .register_pref::<DebugOsmContours>()
-            .register_pref::<DebugRutLines>()
             .add_systems(Startup, build_debug_tab.in_set(UiBuildSet::Sections))
             // тумблер, восстановленный из настроек, менялся до того, как
             // navmesh был заполнен и поле хвои посчитано, — красим слои ещё
@@ -219,25 +322,27 @@ impl Plugin for UiDebugTogglesPlugin {
     }
 }
 
-/// Всё, что читают строки вкладки при спавне. Одним `SystemParam`, а не шестью
-/// аргументами: строк у вкладки шесть, и каждая новая удлиняла бы подпись
-/// системы (идиома `ui/navigation/mod.rs::NavPanelValues`).
-#[derive(SystemParam)]
-struct DebugValues<'w> {
-    position_mode: Res<'w, CameraPositionMode>,
-    antialias: Res<'w, Antialias>,
-    navtile: Res<'w, NavtileBase>,
-    grid: Res<'w, DebugGrid>,
-    doors: Res<'w, DebugDoors>,
-    movepaths: Res<'w, DrawMovePaths>,
-    conifer_noise: Res<'w, DebugConiferNoise>,
-    road_network: Res<'w, DebugRoadNetwork>,
-    osm_contours: Res<'w, DebugOsmContours>,
-    rut_lines: Res<'w, DebugRutLines>,
-    raw_osm: Res<'w, RawOsm>,
-}
-
-fn build_debug_tab(mut commands: Commands, panes: Res<SettingsPanes>, values: DebugValues) {
+/// Всё, что читают строки вкладки при спавне, система берёт напрямую
+/// ресурсами: значение каждого читает только его собственная строка, снимок
+/// для нескольких читателей не нужен. Аргумент — на строку, число растёт
+/// механически, а не потому что система обросла настройками, — поэтому
+/// лимит глушится, а не сворачивается обратно в снимок-`SystemParam`.
+#[allow(clippy::too_many_arguments)]
+fn build_debug_tab(
+    mut commands: Commands,
+    panes: Res<SettingsPanes>,
+    grid: Res<DebugGrid>,
+    doors: Res<DebugDoors>,
+    movepaths: Res<DrawMovePaths>,
+    conifer_noise: Res<DebugConiferNoise>,
+    road_network: Res<DebugRoadNetwork>,
+    rut_lines: Res<DebugRutLines>,
+    osm_contours: Res<DebugOsmContours>,
+    position_mode: Res<CameraPositionMode>,
+    antialias: Res<Antialias>,
+    navtile: Res<NavtileBase>,
+    raw_osm: Res<RawOsm>,
+) {
     let pane = panes.pane(SettingsTab::Debug);
 
     let overlays = spawn_section(
@@ -247,83 +352,13 @@ fn build_debug_tab(mut commands: Commands, panes: Res<SettingsPanes>, values: De
         panel_title("Overlays"),
         "debug_overlays",
     );
-    spawn_cycle_row(
-        &mut commands,
-        overlays,
-        "Grid",
-        ROW_LEFT_PX,
-        &*values.grid,
-        CycleBinding {
-            cycle: |grid: &mut DebugGrid| grid.0 = !grid.0,
-            text: |grid| on_off(grid.0).to_string(),
-        },
-    );
-    spawn_cycle_row(
-        &mut commands,
-        overlays,
-        "Doors",
-        ROW_LEFT_PX,
-        &*values.doors,
-        CycleBinding {
-            cycle: |doors: &mut DebugDoors| doors.0 = !doors.0,
-            text: |doors| on_off(doors.0).to_string(),
-        },
-    );
-    spawn_cycle_row(
-        &mut commands,
-        overlays,
-        "Move paths",
-        ROW_LEFT_PX,
-        &*values.movepaths,
-        CycleBinding {
-            cycle: |paths: &mut DrawMovePaths| paths.0 = !paths.0,
-            text: |paths| on_off(paths.0).to_string(),
-        },
-    );
-    spawn_cycle_row(
-        &mut commands,
-        overlays,
-        "Noise field",
-        ROW_LEFT_PX,
-        &*values.conifer_noise,
-        CycleBinding {
-            cycle: |noise: &mut DebugConiferNoise| noise.0 = !noise.0,
-            text: |noise| on_off(noise.0).to_string(),
-        },
-    );
-    spawn_cycle_row(
-        &mut commands,
-        overlays,
-        "Road network",
-        ROW_LEFT_PX,
-        &*values.road_network,
-        CycleBinding {
-            cycle: |network: &mut DebugRoadNetwork| network.0 = !network.0,
-            text: |network| on_off(network.0).to_string(),
-        },
-    );
-    spawn_cycle_row(
-        &mut commands,
-        overlays,
-        "Rut lines",
-        ROW_LEFT_PX,
-        &*values.rut_lines,
-        CycleBinding {
-            cycle: |ruts: &mut DebugRutLines| ruts.0 = !ruts.0,
-            text: |ruts| on_off(ruts.0).to_string(),
-        },
-    );
-    spawn_cycle_row(
-        &mut commands,
-        overlays,
-        "OSM contours",
-        ROW_LEFT_PX,
-        &*values.osm_contours,
-        CycleBinding {
-            cycle: |contours: &mut DebugOsmContours| contours.0 = !contours.0,
-            text: |contours| on_off(contours.0).to_string(),
-        },
-    );
+    spawn_toggle_row::<DebugGrid>(&mut commands, overlays, ROW_LEFT_PX, &*grid);
+    spawn_toggle_row::<DebugDoors>(&mut commands, overlays, ROW_LEFT_PX, &*doors);
+    spawn_toggle_row::<DrawMovePaths>(&mut commands, overlays, ROW_LEFT_PX, &*movepaths);
+    spawn_toggle_row::<DebugConiferNoise>(&mut commands, overlays, ROW_LEFT_PX, &*conifer_noise);
+    spawn_toggle_row::<DebugRoadNetwork>(&mut commands, overlays, ROW_LEFT_PX, &*road_network);
+    spawn_toggle_row::<DebugRutLines>(&mut commands, overlays, ROW_LEFT_PX, &*rut_lines);
+    spawn_toggle_row::<DebugOsmContours>(&mut commands, overlays, ROW_LEFT_PX, &*osm_contours);
 
     let world = spawn_section(
         &mut commands,
@@ -338,7 +373,7 @@ fn build_debug_tab(mut commands: Commands, panes: Res<SettingsPanes>, values: De
         world,
         "Camera start",
         ROW_LEFT_PX,
-        &*values.position_mode,
+        &*position_mode,
         CycleBinding {
             cycle: |mode: &mut CameraPositionMode| *mode = mode.next(),
             text: |mode| mode.label().to_string(),
@@ -350,7 +385,7 @@ fn build_debug_tab(mut commands: Commands, panes: Res<SettingsPanes>, values: De
         world,
         "Antialias",
         ROW_LEFT_PX,
-        &*values.antialias,
+        &*antialias,
         CycleBinding {
             cycle: |antialias: &mut Antialias| antialias.0 = !antialias.0,
             text: |antialias| if antialias.0 { "4x" } else { "Off" }.to_string(),
@@ -364,7 +399,7 @@ fn build_debug_tab(mut commands: Commands, panes: Res<SettingsPanes>, values: De
         world,
         "Navtile",
         ROW_LEFT_PX,
-        &*values.navtile,
+        &*navtile,
         CycleBinding {
             cycle: |navtile: &mut NavtileBase| *navtile = navtile.next(),
             text: |navtile| navtile.label().to_string(),
@@ -377,7 +412,7 @@ fn build_debug_tab(mut commands: Commands, panes: Res<SettingsPanes>, values: De
         world,
         "Raw OSM",
         ROW_LEFT_PX,
-        &*values.raw_osm,
+        &*raw_osm,
         CycleBinding {
             cycle: |raw: &mut RawOsm| *raw = raw.next(),
             text: |raw| raw.label().to_string(),

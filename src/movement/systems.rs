@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
+use derive_more::{Deref, DerefMut};
 
 use crate::camera::Viewport;
 use crate::movement::components::{
@@ -275,8 +276,10 @@ pub const MOVEPATH_ARROW_TIP: f32 = 4.0;
 const MOVEPATH_VIEW_SCREENS: f32 = 3.0;
 
 /// Отрисовка путей движущихся сущностей; в финальной сцене выключена,
-/// переключается клавишей M (и вместе с doors — клавишей G).
-#[derive(Resource, Reflect, SettingsGroup, Default)]
+/// переключается клавишей M (и вместе с doors — клавишей G). Строка тумблера
+/// стоит в Debug-вкладке (`ui/debug/`), чей дженерик строки читает значение
+/// через `Deref`/`DerefMut`.
+#[derive(Resource, Reflect, SettingsGroup, Default, Deref, DerefMut)]
 #[reflect(Resource, SettingsGroup, Default)]
 #[settings_group(group = "debug", key = "movepath")]
 pub struct DrawMovePaths(pub bool);
