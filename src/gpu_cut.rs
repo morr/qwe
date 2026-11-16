@@ -1,35 +1,92 @@
-//! GPU-разрез кадра: GPU-время пассов рендера через встроенную
-//! диагностику Bevy 0.20.
+//! GPU-разрез кадра: wgpu timestamp queries по границам сегментов 2d-кадра.
 //!
 //! `QWE_PERF_GPU_CUT=1` (см. `dev.rs::render_plugin` и
-//! `add_perf_toggles`): у устройства запрашиваются фичи
-//! `TIMESTAMP_QUERY` + `TIMESTAMP_QUERY_INSIDE_PASSES` (Metal
-//! поддерживает обе) и поднимается `RenderDiagnosticsPlugin`. Его
-//! `DiagnosticsRecorder` на Metal не работает — так считает его
-//! док-коммент («only Vulkan and DX12»), но код гейтится только
-//! фичей: query set создаётся при `features.contains(TIMESTAMP_QUERY)`,
-//! метки пишутся на границах пассов (`RenderPass::write_timestamp`,
-//! не энкодерный путь — тот на macOS заглушен вверхстримом из-за
-//! фликера, bevy#22257), readback и синк в `DiagnosticsStore` свои.
-//! Результат: пути `render/<пасс>/elapsed_gpu` в диагностике — и их
-//! уже читает этот модуль. Если док прав и GPU-значений на Metal нет,
-//! строки будут пустыми — тогда обратный путь, свои timestamp-пассы
-//! (спека 42, план Б).
+//! `add_perf_toggles`): у устройства запрашивается фича
+//! `TIMESTAMP_QUERY` (Metal поддерживает), в расписание `Core2d` — его
+//! `camera_driver` прогоняет на каждую камеру — встают маркер-системы.
+//! Каждая открывает **пустой render pass без аттачментов** с
+//! `timestamp_writes` в дескрипторе: метка пишется на начале пасса —
+//! энкодеры систем уходят в сабмит в топологическом порядке систем
+//! (`RenderContextState: SystemBuffer`), GPU исполняет энкодеры в
+//! порядке сабмита, и начало пустого пасса = кумулятивная GPU-граница
+//! между сегментами. Дельта соседних границ = GPU-длительность
+//! сегмента.
 //!
-//! Принтер в main-мире: раз в секунду строка `gpu cut:` со значениями
-//! `elapsed_gpu` всех пассов кадра (latest measurement каждого пути) и
-//! зумом камеры для сопоставления; кадр с суммой выше порога
-//! `QWE_PERF_GPU_SPIKES=<ms>` — пофреймовый `gpu spike:`.
+//! Почему не другие пути: `RenderPass::write_timestamp` внутри пасса
+//! требует `TIMESTAMP_QUERY_INSIDE_PASSES` — Metal его не даёт
+//! (RequestDeviceError), из-за чего встроенный
+//! `RenderDiagnosticsPlugin` 0.20 на Metal CPU-only (док «only Vulkan
+//! and DX12» точен); `write_timestamp` на CommandEncoder bevy глушит
+//! на macOS сам (фликер на Tahoe, bevy#22257). Пустой пасс с меткой на
+//! начале — документированный Metal-паттерн «render pass with no
+//! attachments», из-под обоих запретов.
 //!
-//! Чего в разрезе нет: msaa_writeback и очистка цели span-ов не
-//! ставят (live между пассами — попадает в «total минус сумма»).
+//! Метки 0..=5: 0 до opaque-пасса, 1 после opaque (до transparent),
+//! 2 после transparent, 3 после PostProcess (bloom + tonemapping), 4
+//! после `ui_pass` (до upscaling), 5 после upscaling. Сегменты —
+//! дельты соседних меток; msaa_writeback и очистка цели отдельной
+//! метки не имеют (между 0 и 1 — попадают в «opaque»).
+//!
+//! Данные возвращаются `map_async`-ом в main-мир: resolve-система
+//! переписывает шесть меток в ring-буфер, poll-система раз в кадр
+//! (`RenderGraph` после `Submit`) гонит колбэки, `Update`-принтер
+//! печатает `gpu cut:` раз в секунду (среднее сегментов + зум для
+//! сопоставления), а кадр выше порога `QWE_PERF_GPU_SPIKES=<ms>` —
+//! пофреймовый `gpu spike:`. Офскрин-камера (`dev.rs`, кадр в текстуру)
+//! меток не ставит — её кадр с оконным не сравнивают.
 
+use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+use std::sync::mpsc;
+use std::sync::Mutex;
+
+use bevy::camera::NormalizedRenderTarget;
 use bevy::camera_controller::pan_camera::PanCamera;
-use bevy::diagnostic::DiagnosticsStore;
+use bevy::core_pipeline::core_2d::{main_opaque_pass_2d, main_transparent_pass_2d};
+use bevy::core_pipeline::{Core2d, Core2dSystems};
+use bevy::core_pipeline::upscaling::upscaling;
 use bevy::prelude::*;
+use bevy::render::RenderApp;
+use bevy::render::RenderStartup;
+use bevy::render::camera::ExtractedCamera;
+use bevy::render::render_resource::{
+    BufferDescriptor, BufferUsages, MapMode, PollType, RenderPassDescriptor,
+};
+use bevy::render::renderer::{
+    RenderContext, RenderDevice, RenderGraphSystems, RenderQueue, ViewQuery,
+};
+use bevy::ui_render::ui_pass;
+use wgpu::{QuerySet, QuerySetDescriptor, QueryType, RenderPassTimestampWrites};
 
-/// Порог `gpu spike`, мс суммы GPU-пассов за кадр; absent — только
-/// секундные строки.
+/// Меток GPU-границ в кадре (и слотов query set / буфера).
+const SLOTS: usize = 6;
+
+/// Имена сегментов между соседними метками, порядок = порядок строк.
+const SEGMENTS: [&str; SLOTS - 1] = ["opaque", "transparent", "post", "ui", "upscale"];
+
+/// Последняя решённая рамка меток: кумулятивные тики GPU-часов.
+static TS: [AtomicU64; SLOTS] = [const { AtomicU64::new(0) }; SLOTS];
+
+/// Сколько рамок решено (дельта = новый кадр в статиках).
+static SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Период тика GPU-часов в мс, биты [`f32`]; ноль — ещё не снят.
+static PERIOD_MS: AtomicU64 = AtomicU64::new(0);
+
+/// Query set и ring readback-буферов; `tx` — канал колбэков `map_async`.
+#[derive(Resource)]
+struct GpuCutRes {
+    query_set: QuerySet,
+    buffers: [wgpu::Buffer; 2],
+    cur: usize,
+    tx: mpsc::Sender<wgpu::Buffer>,
+}
+
+/// Приёмник решённых буферов; наполняется колбэками во время poll.
+/// `Mutex` — Resource требует Sync, std-канал его не даёт.
+#[derive(Resource)]
+struct GpuCutRx(Mutex<mpsc::Receiver<wgpu::Buffer>>);
+
+/// Порог `gpu spike`, мс GPU на кадр; absent — печатаются только секундные.
 #[derive(Resource)]
 pub struct GpuSpikeThreshold(f32);
 
@@ -40,78 +97,215 @@ pub struct GpuCutPlugin {
 
 impl Plugin for GpuCutPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
+        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
+            return;
+        };
+        render_app
+            .add_systems(RenderStartup, setup)
+            .add_systems(
+                Core2d,
+                (
+                    mark::<0>.before(main_opaque_pass_2d),
+                    mark::<1>
+                        .after(main_opaque_pass_2d)
+                        .before(main_transparent_pass_2d),
+                    mark::<2>
+                        .after(main_transparent_pass_2d)
+                        .before(Core2dSystems::PostProcess),
+                    mark::<3>.after(Core2dSystems::PostProcess).before(ui_pass),
+                    mark::<4>.after(ui_pass).before(upscaling),
+                    mark::<5>.after(upscaling),
+                    resolve.after(mark::<5>),
+                ),
+            )
+            .add_systems(
+                RenderGraph,
+                (
+                    poll_device.after(RenderGraphSystems::Submit),
+                    drain.after(poll_device),
+                ),
+            );
         if let Some(ms) = self.spike_threshold {
             app.insert_resource(GpuSpikeThreshold(ms));
         }
-        app.add_systems(Update, print_gpu_cut);
+        app.add_systems(Update, print_cut);
     }
 }
 
-/// Одно значение `elapsed_gpu`: короткое имя пасса и мс последнего
-/// замера.
-struct GpuPass {
-    name: String,
-    ms: f64,
+/// Размер одного readback-буфера: шесть тиков с выравниванием 256
+/// (wgpu: offset resolve-копии должен делиться на 256).
+fn size_bytes() -> u64 {
+    (SLOTS as u64 * 8).next_multiple_of(256)
 }
 
-/// Значения `render/*/elapsed_gpu` на текущий кадр, сумма по всем.
-fn gpu_passes(store: &DiagnosticsStore) -> (Vec<GpuPass>, f64) {
-    let mut passes = Vec::new();
-    for diagnostic in store.iter() {
-        let path = diagnostic.path();
-        let name = path.to_string();
-        let Some(short) = name.strip_suffix("/elapsed_gpu") else {
-            continue;
-        };
-        let short = short.strip_prefix("render/").unwrap_or(short);
-        if let Some(m) = store.get_measurement(path) {
-            passes.push(GpuPass {
-                name: short.to_string(),
-                ms: m.value,
-            });
-        }
-    }
-    let total = passes.iter().map(|p| p.ms).sum();
-    (passes, total)
+/// Query set на шесть меток и два readback-буфера (по кадру каждый),
+/// период тика GPU-часов — в статику.
+fn setup(mut commands: Commands, device: Res<RenderDevice>, queue: Res<RenderQueue>) {
+    let query_set = device.wgpu_device().create_query_set(&QuerySetDescriptor {
+        label: Some("gpu_cut_timestamps"),
+        ty: QueryType::Timestamp,
+        count: SLOTS as u32,
+    });
+    let make_buffer = |n: &str| {
+        device.wgpu_device().create_buffer(&BufferDescriptor {
+            label: Some(n),
+            size: size_bytes(),
+            usage: BufferUsages::QUERY_RESOLVE | BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        })
+    };
+    PERIOD_MS.store(f32::to_bits(queue.get_timestamp_period()) as u64, Relaxed);
+    let (tx, rx) = mpsc::channel();
+    commands.insert_resource(GpuCutRes {
+        query_set,
+        buffers: [make_buffer("gpu_cut_readback_0"), make_buffer("gpu_cut_readback_1")],
+        cur: 0,
+        tx,
+    });
+    commands.insert_resource(GpuCutRx(Mutex::new(rx)));
 }
 
-fn join_passes(passes: &[GpuPass]) -> String {
-    passes
-        .iter()
-        .map(|p| format!("{} {:.2}", p.name, p.ms))
-        .collect::<Vec<_>>()
-        .join(" | ")
-}
-
-/// main-мир: раз в секунду `gpu cut:`, кадр выше порога — `gpu spike:`.
-fn print_gpu_cut(
-    time: Res<Time<Real>>,
-    store: Res<DiagnosticsStore>,
-    camera: Single<&PanCamera, With<Camera2d>>,
-    threshold: Option<Res<GpuSpikeThreshold>>,
-    mut secs: Local<f32>,
+/// Одна GPU-граница: пустой render pass с меткой на начале. Только для
+/// камеры в окно — офскрин-кадр меток не ставит.
+fn mark<const I: usize>(
+    mut ctx: RenderContext,
+    res: Res<GpuCutRes>,
+    camera: ViewQuery<&ExtractedCamera>,
 ) {
-    let (passes, total) = gpu_passes(&store);
-    if passes.is_empty() {
+    if !matches!(
+        camera.into_inner().target,
+        Some(NormalizedRenderTarget::Window(_))
+    ) {
         return;
     }
+    ctx.begin_tracked_render_pass(RenderPassDescriptor {
+        label: Some("gpu_cut_marker"),
+        color_attachments: &[],
+        depth_stencil_attachment: None,
+        timestamp_writes: Some(RenderPassTimestampWrites {
+            query_set: &res.query_set,
+            beginning_of_pass_write_index: Some(I as u32),
+            end_of_pass_write_index: None,
+        }),
+        occlusion_query_set: None,
+        multiview_mask: None,
+    });
+}
+
+/// Копия меток кадра в ring-буфер + запрос чтения; энкодер resolve уходит
+/// в сабмит последним для этой камеры — GPU решит метки после всех пассов.
+fn resolve(mut ctx: RenderContext, mut res: ResMut<GpuCutRes>) {
+    let cur = res.cur;
+    res.cur ^= 1;
+    ctx.command_encoder()
+        .resolve_query_set(&res.query_set, 0..SLOTS as u32, &res.buffers[cur], 0);
+    let (tx, buffer, cb) = (
+        res.tx.clone(),
+        res.buffers[cur].clone(),
+        res.buffers[cur].clone(),
+    );
+    buffer.map_async(MapMode::Read, 0..size_bytes(), move |result| match result {
+        Ok(()) => {
+            let _ = tx.send(cb);
+        }
+        Err(err) => warn!("gpu cut: readback map failed ({err:?}), buffer dropped"),
+    });
+}
+
+/// Колбэки `map_async` исполняются только под poll — раз в кадр, после
+/// сабмита. `PollType::Poll` не ждёт GPU: незавершённые доедут позже.
+fn poll_device(device: Res<RenderDevice>) {
+    let _ = device.poll(PollType::Poll);
+}
+
+/// Решённые буферы → статики (кумулятивные тики + номер рамки);
+/// буфер размапливается — слот вернётся в оборот через кадр.
+fn drain(rx: Res<GpuCutRx>) {
+    let Ok(rx) = rx.0.lock() else {
+        return;
+    };
+    while let Ok(buffer) = rx.try_recv() {
+        // колбэк map-ит буфер до отправки — ошибка здесь не бывает
+        let view = buffer
+            .get_mapped_range(0..size_bytes())
+            .expect("gpu cut readback mapped");
+        for (slot, ticks) in view.chunks_exact(8).take(SLOTS).enumerate() {
+            TS[slot].store(u64::from_le_bytes(ticks.try_into().unwrap()), Relaxed);
+        }
+        drop(view);
+        buffer.unmap();
+        SEQ.fetch_add(1, Relaxed);
+    }
+}
+
+/// Накопитель сегментов между печатями (секундное окно ≈ 60 кадров).
+#[derive(Default)]
+struct CutSums {
+    last_seq: u64,
+    frames: u32,
+    segs: [f64; SLOTS - 1],
+    total: f64,
+}
+
+/// main-мир: каждый решённый кадр ложится в накопитель; раз в ~60 кадров —
+/// `gpu cut:` (средние сегментов + зум для сопоставления), кадр выше
+/// порога — пофреймовый `gpu spike:`.
+fn print_cut(
+    camera: Single<&PanCamera, With<Camera2d>>,
+    threshold: Option<Res<GpuSpikeThreshold>>,
+    mut sums: Local<CutSums>,
+) {
+    let seq = SEQ.load(Relaxed);
+    if seq == sums.last_seq {
+        return;
+    }
+    sums.last_seq = seq;
+    let period = f32::from_bits(PERIOD_MS.load(Relaxed) as u32);
+    if period <= 0.0 {
+        return;
+    }
+    let ts: [u64; SLOTS] = std::array::from_fn(|i| TS[i].load(Relaxed));
+    if ts[SLOTS - 1] <= ts[0] {
+        return;
+    }
+    let seg_ms =
+        |a: usize, b: usize| (ts[b] as i64 - ts[a] as i64).max(0) as f64 * period as f64;
+    let total_ms = (ts[SLOTS - 1] - ts[0]) as f64 * period as f64;
     if let Some(threshold) = threshold
-        && total >= threshold.0 as f64
+        && total_ms >= threshold.0 as f64
     {
+        let segs: Vec<String> = (0..SLOTS - 1)
+            .map(|i| format!("{} {:.2}", SEGMENTS[i], seg_ms(i, i + 1)))
+            .collect();
         info!(
-            "gpu spike: {total:.2} ms gpu ({} zoom {:.2})",
-            join_passes(&passes),
+            "gpu spike: {total_ms:.2} ms gpu ({}) zoom {:.2} seq {seq}",
+            segs.join(" "),
             camera.zoom_factor,
         );
     }
-    *secs += time.delta_secs();
-    if *secs >= 1.0 {
-        *secs -= 1.0;
+    for (sum, i) in sums.segs.iter_mut().zip(0..SLOTS - 1) {
+        *sum += seg_ms(i, i + 1);
+    }
+    sums.total += total_ms;
+    sums.frames += 1;
+    if sums.frames >= 60 {
+        let segs: String = sums
+            .segs
+            .iter()
+            .zip(SEGMENTS)
+            .map(|(s, n)| format!("{n} {:.2}", s / f64::from(sums.frames)))
+            .collect::<Vec<_>>()
+            .join(" | ");
         info!(
-            "gpu cut: total {total:.2} | {} ms (zoom {:.2})",
-            join_passes(&passes),
+            "gpu cut: total {:.2} | {segs} ms (avg over {} frames, zoom {:.2})",
+            sums.total / f64::from(sums.frames),
+            sums.frames,
             camera.zoom_factor,
         );
+        let last = sums.last_seq;
+        *sums = CutSums {
+            last_seq: last,
+            ..Default::default()
+        };
     }
 }

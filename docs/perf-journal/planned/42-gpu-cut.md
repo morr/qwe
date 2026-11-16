@@ -73,54 +73,55 @@ Metal сломан, `frame_time` бинарный — валиден как гр
 
 ## Дизайн
 
-**Факты стека** (проверены по источникам 0.20.1 / wgpu 30.0.1):
+**Факты стека** (проверены по источникам 0.20.1 / wgpu 30.0.1 и
+калибровочным прогоном):
 
-- wgpu 30 на Metal поддерживает `TIMESTAMP_QUERY` и
-  `TIMESTAMP_QUERY_INSIDE_ENCODERS` (hal `metal/adapter.rs`: все три
-  timestamp-фичи в списке; `write_timestamp` энкодера =
-  `sampleCountersInBuffer_atSampleIndex_withBarrier`,
-  `Queue::get_timestamp_period` есть) — **timestamps поднимаются без
-  vendor-патчей**;
-- рендер 0.20 — расписания: `render_system` → `RenderGraph` →
-  `camera_driver` → `Core2d` на каждую камеру; цепочка 2d:
-  `msaa_writeback → main_opaque_pass_2d → main_transparent_pass_2d →
-  [bloom → tonemapping] (PostProcess) → ui_pass → upscaling`;
-- `RenderContext` — SystemParam с SystemBuffer-состоянием: энкодер
-  каждой системы уходит в `PendingCommandBuffers` **в топологическом
-  порядке систем** (док у `RenderContextState`), сабмит в конце
-  `camera_driver`; GPU исполняет энкодеры в порядке сабмита →
-  однотimestamp-система между пассами ставит кумулятивную GPU-границу,
-  дельты соседних границ = GPU-длительности сегментов. Нужен только
-  env-гейт на фичах устройства и системах — публичный API, без патчей.
+- timestamp-дорожка Metal узкая: `TIMESTAMP_QUERY` поддержана,
+  `TIMESTAMP_QUERY_INSIDE_PASSES` — **нет** (RequestDeviceError при
+  запросе устройства), энкодерный `write_timestamp` bevy на macOS
+  глушит сам (фликер Tahoe, bevy#22257). Из этого следует, что
+  встроенный `RenderDiagnosticsPlugin` 0.20 на Metal CPU-only — его
+  «пустота» в записях 23/35 была не багом, а этим ограничением
+  (GPU-дорожка рекордера гейтится `TIMESTAMP_QUERY`, но метки внутри
+  пассов требуют `INSIDE_PASSES`);
+- легальный путь на Metal — **пустой render pass без аттачментов с
+  `timestamp_writes` в дескрипторе** (`beginning_of_pass_write_index`):
+  документированный паттерн, фичи `TIMESTAMP_QUERY` хватает;
+- рендер 0.20 — расписания: `RenderGraph` → `camera_driver` → `Core2d`
+  на каждую камеру; `RenderContext` — SystemParam с SystemBuffer:
+  энкодеры систем уходят в `PendingCommandBuffers` в топологическом
+  порядке систем, GPU исполняет энкодеры в порядке сабмита → пустой
+  пасс между двумя соседними пассами ставит кумулятивную GPU-границу,
+  дельты соседних границ = GPU-длительности сегментов.
 
 **Инструмент** — коммитится (прецедент perf-тогглов `dev.rs`;
-`QWE_PERF_GPU_CUT=1`), в future заездах переиспользуется:
+`QWE_PERF_GPU_CUT=1`), в будущих заездах переиспользуется:
 
-- `dev.rs` — `gpu_cut()` (env), `main.rs` — условные
-  `WgpuSettings { features: TIMESTAMP_QUERY | TIMESTAMP_QUERY_INSIDE_ENCODERS }`
-  в `RenderPlugin`;
-- `src/gpu_cut.rs` — плагин: `RenderStartup` — QuerySet (6 меток) +
-  два ring-буфера MAP_READ (256-выровненные); в `Core2d` — маркер-системы
-  (каждая — один `write_timestamp` в свой энкодер, гейт камеры на
-  window-target, чтобы офскрин-камера не путала метки):
-  ts0 перед opaque, ts1 после opaque (перед transparent),
-  ts2 после transparent, ts3 после PostProcess, ts4 после ui_pass
-  (перед upscaling), ts5 после upscaling; resolve-система после
-  upscaling — `resolve_query_set` в ring-буфер + `map_async` в статики;
-  poll-система раз в кадр (`RenderGraph` после Submit) —
-  `RenderDevice::poll(Maintain::Poll)`, чтобы колбэки map_async шли;
-- main-мир: `Update`-принтер — строка `gpu cut:` раз в секунду
-  (`total | opaque | transparent | post | ui | upscale`, зум камеры в
-  строке для сопоставления) + `gpu spike:` пофреймово при total выше
-  порога (`QWE_PERF_GPU_SPIKES=<ms>`, при unset — только секундные);
-- сегменты: opaque [0→1], transparent [1→2], post [2→3], ui [3→4],
-  upscale [4→5], total [0→5]; msaa_writeback/clear — вне меток, внутри
-  total (недостаток отмечается в записи).
+- `dev.rs::render_plugin()` — условная фича `TIMESTAMP_QUERY` в
+  `WgpuSettings`;
+- `Cargo.toml` — прямая зависимость `wgpu = { version = "30",
+  default-features = false }` (типы `QuerySet`/`timestamp_writes`
+  bevy не ре-экспортирует; фичи крейта унифицируются с bevy_render —
+  нулевая цена сборки);
+- `src/gpu_cut.rs` — плагин: `RenderStartup` — query set (6 меток) +
+  два ring-буфера MAP_READ; в `Core2d` — маркер-системы на границах:
+  0 до opaque, 1 после opaque (до transparent), 2 после transparent,
+  3 после PostProcess (bloom+tonemapping), 4 после ui_pass (до
+  upscaling), 5 после upscaling; гейт на window-target камеры
+  (офскрин-кадр меток не ставит); resolve-система после upscaling —
+  `resolve_query_set` в ring-буфер + `map_async`; poll-система раз в
+  кадр (`RenderGraph` после `Submit`); main-мирный принтер — `gpu cut:`
+  раз в секунду (средние сегментов opaque/transparent/post/ui/upscale
+  + total + зум камеры) и `gpu spike:` пофреймово выше порога
+  `QWE_PERF_GPU_SPIKES=<ms>`;
+- границы сегментов: msaa_writeback и очистка цели отдельной метки не
+  имеют — попадают в сегмент [0→1] («opaque»), внутри total.
 
 **A/B-добор** (атрибуция внутри сегментов): `brp hide/show` слоёв
 (`tree_crowns`, тени крон, здания/дороги/поверхности) на фоне
-секундных `gpu cut` — доля слоя в transparent по дельте тотала;
-vsync-пробой как независимый кросс-чек тотала.
+секундных `gpu cut` — доля слоя в transparent по дельте; vsync-пробой
+как независимый кросс-чек тотала (`frame_time` 16.7/33.3 — бинарный,
+35).
 
 **Темп-патч** (не коммитить, `/tmp/perf44-temp.patch`): перегонка
 `/tmp/perf43-temp.patch` — кадровые стены + `crossing cut` + `cmd cut`

@@ -4954,6 +4954,7 @@ dependencies = [
  "serde",
  "serde_json",
  "ureq",
+ "wgpu",
 ]
 
 [[package]]

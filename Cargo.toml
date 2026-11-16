@@ -141,6 +141,10 @@ rand = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ureq = "3"
+# типы wgpu (QuerySet, timestamp_writes) под GPU-разрез кадра
+# (src/gpu_cut.rs, QWE_PERF_GPU_CUT). Дефолтных фич не добавляет —
+# фичи крейта унифицируются с теми, что уже включил bevy_render
+wgpu = { version = "30", default-features = false }
 
 # App Nap off на время замеров: QWE_PERF_NOAPPNAP=1 (src/dev.rs::no_app_nap).
 # Версия — та же 0.3, что уже в дереве у winit: отдельного дубликата не заводит

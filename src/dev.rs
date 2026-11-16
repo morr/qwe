@@ -447,11 +447,13 @@ pub fn gpu_cut() -> bool {
 }
 
 /// Настройки `RenderPlugin` под [`gpu_cut`]: без переменной — дефолт,
-/// с ней — плюс `TIMESTAMP_QUERY` и `TIMESTAMP_QUERY_INSIDE_PASSES`
-/// (Metal поддерживает обе; на бэкенде без них запуск упадёт с ошибкой
-/// устройства — тоггл и есть согласие на это). Энкодерная фича не
-/// запрашивается: `write_timestamp` энкодера на macOS bevy глушит
-/// сам (фликер, bevy#22257) — метки идут только на границах пассов.
+/// с ней — плюс `TIMESTAMP_QUERY` (Metal поддерживает; на бэкенде без
+/// неё запуск упадёт с ошибкой устройства — тоггл и есть согласие на
+/// это). Энкодерные пути не запрашиваются: `write_timestamp` энкодера
+/// на macOS bevy глушит сам (фликер, bevy#22257), а
+/// `TIMESTAMP_QUERY_INSIDE_PASSES` Metal не даёт вовсе (RequestDeviceError,
+/// из-за него встроенная диагностика тут CPU-only) — метки ставят
+/// пустые render pass-ы на границах сегментов (`gpu_cut.rs`).
 pub fn render_plugin() -> bevy::render::RenderPlugin {
     if !gpu_cut() {
         return bevy::render::RenderPlugin::default();
@@ -460,8 +462,7 @@ pub fn render_plugin() -> bevy::render::RenderPlugin {
         render_creation: bevy::render::settings::RenderCreation::Automatic(Box::new(
             bevy::render::settings::WgpuSettings {
                 features: bevy::render::settings::WgpuSettings::default().features
-                    | bevy::render::settings::WgpuFeatures::TIMESTAMP_QUERY
-                    | bevy::render::settings::WgpuFeatures::TIMESTAMP_QUERY_INSIDE_PASSES,
+                    | bevy::render::settings::WgpuFeatures::TIMESTAMP_QUERY,
                 ..default()
             },
         )),
