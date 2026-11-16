@@ -805,6 +805,108 @@ fn a_retarget_over_a_queued_request_moves_the_destination_claim() {
     );
 }
 
+/// Сдвиг цели слотом не выбрасывает свежий ответ. Фильтр устаревших ответов
+/// в `accept_answer` сверяет `end_tile` ответа с целью в состоянии, поэтому
+/// слот обязан переписать заявку и состояние одним движением
+/// ([`Movable::retarget`]) — разъехавшись, они выбросили бы каждый найденный
+/// путь, и пешка стояла бы в `Pathfinding` вечно.
+#[test]
+fn a_slot_shifted_target_is_not_staled_out_of_its_answer() {
+    use crate::movement::destination::slot_of;
+    use crate::movement::{
+        DestinationClaim, DestinationClaims, SlotLab, SlotSearch, assign_destination_slots,
+    };
+
+    fn file(mut step: Local<u8>, mut query: Query<(Entity, &mut Movable)>, mut commands: Commands) {
+        *step += 1;
+        if *step != 1 {
+            return;
+        }
+        for (entity, mut movable) in &mut query {
+            movable.to_pathfinding(
+                entity,
+                IVec2::new(10, 10),
+                IVec2::new(50, 50),
+                &mut commands,
+            );
+        }
+    }
+
+    let mut app = app_with(ArcNavmesh(Arc::new(RwLock::new(Navmesh::default()))));
+    app.init_resource::<bevy::diagnostic::DiagnosticsStore>()
+        .init_resource::<crate::human::HumanStyle>()
+        .init_resource::<SlotSearch>()
+        .init_resource::<SlotLab>()
+        .init_resource::<DestinationClaims>()
+        // тот же порядок, что и в `MovementPlugin`: слот до приёмки
+        .add_systems(
+            Update,
+            (file, assign_destination_slots, listen_for_pathfinding_tasks).chain(),
+        );
+
+    // слот желаемой цели уже занят другой пешкой — заявка уедет на соседний
+    let side = crate::movement::slot_side(
+        2.0 * app
+            .world()
+            .resource::<crate::human::HumanStyle>()
+            .body_radius,
+    );
+    let holder = app.world_mut().spawn_empty().id();
+    let slot = {
+        let mut claims = app.world_mut().resource_mut::<DestinationClaims>();
+        claims.sync(side, crate::movement::CLAIM_SEARCH_METERS);
+        claims
+            .claim_slot(
+                holder,
+                None,
+                IVec2::new(50, 50),
+                tile_center(IVec2::new(50, 50)),
+                |_| true,
+            )
+            .expect("слот свободен")
+            .0
+    };
+    app.world_mut()
+        .entity_mut(holder)
+        .insert(DestinationClaim(slot));
+
+    let pawn = spawn_pawn(&mut app, tile_center(IVec2::new(10, 10)));
+
+    app.update();
+
+    let request = app.world().get::<PathfindingRequest>(pawn).expect("заявка");
+    assert_ne!(
+        request.end_tile,
+        IVec2::new(50, 50),
+        "слот обязан сдвинуть цель — иначе тест ничего не проверяет"
+    );
+    assert_eq!(
+        app.world().get::<Movable>(pawn).expect("Movable").state,
+        MovableState::Pathfinding(request.end_tile),
+        "заявка и состояние обязаны остаться согласными"
+    );
+    assert_eq!(
+        app.world().get::<DestinationClaim>(pawn).expect("слот").0,
+        slot_of(request.end_tile, side)
+    );
+
+    // ответ на СДВИНУТУЮ цель: устаревшим он не считается
+    let end_tile = request.end_tile;
+    answer(
+        &mut app,
+        pawn,
+        end_tile,
+        Some(vec![tile_center(IVec2::new(10, 10)), tile_center(end_tile)]),
+    );
+    run_until_answered(&mut app, pawn);
+
+    assert_eq!(
+        app.world().get::<Movable>(pawn).expect("Movable").state,
+        MovableState::Moving(end_tile),
+        "ответ на сдвинутую слотом цель обязан быть принят"
+    );
+}
+
 // --- переходы Movable ---
 
 /// Пешка в состоянии `Pathfinding` с живой заявкой в очереди — `to_idle`

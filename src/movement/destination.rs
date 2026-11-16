@@ -72,7 +72,7 @@ use bevy::prelude::*;
 
 use crate::grid::{navtile_size, tile_center};
 use crate::human::HumanStyle;
-use crate::movement::components::{Movable, MovableState, PathfindingRequest};
+use crate::movement::components::{Movable, PathfindingRequest};
 use crate::navigation::ArcNavmesh;
 
 /// Докуда ищется свободный слот назначения, м — дефолт [`SlotSearch`].
@@ -562,9 +562,10 @@ pub fn claim_batch(
 /// Врезка одна и не в системы поведения: так слоты покрывают блуждание людей,
 /// блуждание демонов и тестового ходока, не трогая ни `human/*`, ни `demon/*`.
 ///
-/// Перезапись `movable.state` обязательна и обязана быть условной: фильтр
-/// устаревших ответов в `apply_result` сверяет `end_tile` ответа с целью в
-/// состоянии, и разъехавшись, они выбросили бы каждый найденный путь.
+/// Смена цели пешке — [`Movable::retarget`], заявка и состояние одним
+/// движением: фильтр устаревших ответов в `accept_answer` сверяет `end_tile`
+/// ответа с целью в состоянии, и разъехавшись, они выбросили бы каждый
+/// найденный путь.
 #[allow(clippy::too_many_arguments)]
 pub fn assign_destination_slots(
     mut commands: Commands,
@@ -658,10 +659,7 @@ pub fn assign_destination_slots(
         match slot {
             Some((slot, target)) => {
                 if target != desired {
-                    request.end_tile = *target;
-                    if movable.state == MovableState::Pathfinding(*desired) {
-                        movable.state = MovableState::Pathfinding(*target);
-                    }
+                    movable.retarget(&mut request, *target);
                 }
                 commands.entity(*entity).insert(DestinationClaim(*slot));
             }
