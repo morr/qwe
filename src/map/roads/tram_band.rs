@@ -36,7 +36,10 @@ use super::TRAM_BAND_COLOR;
 use super::bridges::Bridges;
 use super::medians::MedianDrawing;
 use super::network::pairs::Median;
-use super::tram_lay::{TramTracks, lay_tracks};
+use super::tram_lay::{
+    ALONG_MIN, BRIDGE_MAX, CELL, EDGE_SLACK, PROBE_STEP, SIMPLIFY_TOLERANCE, TramTracks, foot_on,
+    lay_tracks,
+};
 use crate::map::along::simplify;
 use crate::map::grid::Grid;
 use crate::map::meshing::MeshBuilder;
@@ -54,29 +57,8 @@ const DECK_CUT_SLACK: f32 = 0.2;
 /// Ширина полосы над одним путём, м: полоса движения. Два пути в 3–4 м друг
 /// от друга сливаются в одну полосу — нахлёст в одном слое не виден.
 pub const TRAM_BAND_WIDTH: f32 = 3.3;
-/// Шаг, с которым путь ощупывается на асфальт, м.
-const PROBE_STEP: f32 = 2.0;
-/// Насколько полоса может выйти за кромку ленты улицы, м: путь в OSM лежит
-/// не точно по оси полосы.
-const EDGE_SLACK: f32 = 0.6;
-/// Косинус угла между путём и улицей, при котором путь идёт вдоль неё.
-const ALONG_MIN: f32 = 0.8;
-/// Насколько основание пробы может выйти за торец звена улицы, м: на изломе
-/// оси снаружи угла основание не попадает ни на одно из звеньев.
-const LINK_SLACK: f32 = 1.0;
 /// Кусок полосы короче этого, м, не рисуется.
 const MIN_RUN: f32 = 12.0;
-/// Допуск, с которым выборка пути прореживается обратно, м: проба через
-/// [`PROBE_STEP`] — вершина ленты, а на прямой их столько не нужно (без
-/// прореживания полоса стоила 65 тысяч вершин на Тулу).
-const SIMPLIFY_TOLERANCE: f32 = 0.05;
-/// Ячейка сетки звеньев улиц, м.
-const CELL: f32 = 32.0;
-/// Непокрытый участок пути между двумя кусками полосы короче этого, м,
-/// зарастает, если весь лежит у асфальта: трамвай между половинами
-/// проспекта проходит узел, где разделительная кончилась, а до лент половин
-/// от путей больше полуширины — без моста полоса рвалась посреди перекрёстка.
-const BRIDGE_MAX: f32 = 40.0;
 /// Насколько проба моста может отойти от ленты улицы, м, оставаясь у
 /// асфальта: пути посреди узла разделённой улицы — в 3 м от кромок половин.
 const BRIDGE_SLACK: f32 = 4.0;
@@ -136,19 +118,11 @@ pub fn tram_bands(
     }
     let covered = |at: Vec2, heading: Vec2| {
         links.at(at).iter().any(|&(from, to, half)| {
-            let Some(direction) = (to - from).try_normalize() else {
-                return false;
-            };
-            if direction.dot(heading).abs() < ALONG_MIN {
-                return false;
-            }
             // основание — на звене, а не за его торцом: за торцом улицы путь
             // уже на своём полотне
-            let t = (at - from).dot(direction);
-            if !(-LINK_SLACK..=from.distance(to) + LINK_SLACK).contains(&t) {
-                return false;
-            }
-            (from + direction * t).distance(at) + TRAM_BAND_WIDTH / 2.0 <= half + EDGE_SLACK
+            foot_on(from, to, at, heading).is_some_and(|(foot, _)| {
+                foot.distance(at) + TRAM_BAND_WIDTH / 2.0 <= half + EDGE_SLACK
+            })
         })
     };
     // у асфальта — в любую сторону от звена, для моста через узел
