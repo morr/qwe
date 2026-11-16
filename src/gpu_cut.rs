@@ -80,18 +80,8 @@ static TS: [AtomicU64; SLOTS] = [const { AtomicU64::new(0) }; SLOTS];
 /// Сколько рамок решено (дельта = новый кадр в статиках).
 static SEQ: AtomicU64 = AtomicU64::new(0);
 
-/// Период тика GPU-часов в мс, биты [`f32`]; ноль — ещё не снят.
+/// Период тика GPU-часов в наносекундах, биты [`f32`]; ноль — ещё не снят.
 static PERIOD_NS: AtomicU64 = AtomicU64::new(0);
-
-// TEMP perf44 cut — счётчики звеньев readback-цепочки для probe-строки
-// (гейт QWE_PERF_GPU_CUT_PROBES, не коммитить).
-static RESOLVES: AtomicU64 = AtomicU64::new(0);
-static MAPS: AtomicU64 = AtomicU64::new(0);
-
-fn probes_enabled() -> bool {
-    static PROBES: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *PROBES.get_or_init(|| std::env::var_os("QWE_PERF_GPU_CUT_PROBES").is_some())
-}
 
 /// Query set, маркерная цель и пайплайн, ring readback-буферов; `tx` —
 /// канал колбэков `map_async`. Жизненный цикл буфера: resolve (до
@@ -244,11 +234,6 @@ fn setup(mut commands: Commands, device: Res<RenderDevice>, queue: Res<RenderQue
         })
     };
     PERIOD_NS.store(f32::to_bits(queue.get_timestamp_period()) as u64, Relaxed);
-    // TEMP perf44 cut — плагин встал, ресурсы созданы (не коммитить)
-    info!(
-        "gpu cut probe: setup ok, period {:.4} ns/tick",
-        queue.get_timestamp_period()
-    );
     let (tx, rx) = mpsc::channel();
     commands.insert_resource(GpuCutRes {
         query_set,
@@ -320,7 +305,6 @@ fn resolve(mut ctx: RenderContext, mut res: ResMut<GpuCutRes>) {
     ctx.command_encoder()
         .resolve_query_set(&res.query_set, 0..SLOTS as u32, &res.buffers[cur], 0);
     res.pending.push_back(cur);
-    RESOLVES.fetch_add(1, Relaxed); // TEMP perf44 cut
 }
 
 /// После сабмита: map_async на решённые в этом кадре буферы.
@@ -337,7 +321,6 @@ fn map_pending(mut res: ResMut<GpuCutRes>) {
             }
         });
         res.mapped[slot] = true;
-        MAPS.fetch_add(1, Relaxed); // TEMP perf44 cut
     }
 }
 
@@ -365,22 +348,6 @@ fn drain(rx: Res<GpuCutRx>, mut res: ResMut<GpuCutRes>) {
         buffer.unmap();
         res.mapped[slot] = false;
         SEQ.fetch_add(1, Relaxed);
-    }
-    // TEMP perf44 cut — probe-строка: где цепочка readback рвётся
-    // (гейт QWE_PERF_GPU_CUT_PROBES, не коммитить)
-    if probes_enabled() {
-        static PROBE_FRAME: AtomicU64 = AtomicU64::new(0);
-        if PROBE_FRAME.fetch_add(1, Relaxed).is_multiple_of(300) {
-            info!(
-                "gpu cut probe: resolves {} maps {} drained {} seq {} period {:.4} ts {:?}",
-                RESOLVES.load(Relaxed),
-                MAPS.load(Relaxed),
-                SEQ.load(Relaxed),
-                SEQ.load(Relaxed),
-                f32::from_bits(PERIOD_NS.load(Relaxed) as u32),
-                std::array::from_fn::<_, SLOTS, _>(|i| TS[i].load(Relaxed)),
-            );
-        }
     }
 }
 
