@@ -77,6 +77,7 @@ use crate::map::meshing::{LaneFrame, MeshBuilder, RibbonCap, RibbonJoin};
 #[cfg(test)]
 use crate::map::osm::model::RoadNodeKind;
 use crate::map::osm::model::{RoadAreaKind, polyline_length};
+use crate::map::osm::parse::DrawBuildout;
 use crate::map::osm::{MapData, RoadClass, RoadLine};
 use crate::map::parallel::{in_parallel, in_parallel_owned};
 use crate::map::rail::{CrossedStreet, mesh_level_crossings};
@@ -522,7 +523,7 @@ pub fn build_roads(
 ) -> RoadBuild {
     // сырой OSM, второй уровень: ни одной достройки отрисовки — и колеи нет,
     // и пути трамвая лежат, где их провёл картограф
-    if map.knobs.raw.draws_raw() {
+    if map.knobs.raw.disables(DrawBuildout::DecoratedRoads) {
         let (layers, report) = mesh_raw_roads(map, style);
         return RoadBuild {
             layers,

@@ -10,6 +10,7 @@ use bevy::prelude::*;
 
 use crate::map::buildings;
 use crate::map::meshing::MeshBuilder;
+use crate::map::osm::parse::DrawBuildout;
 use crate::map::osm::{AreaKind, AreaLayer, MapData, PolyArea, TreeRow};
 use crate::map::parking;
 use crate::map::pitch;
@@ -411,9 +412,8 @@ pub fn mesh_surfaces(
     // нему идёт разметка мест (`map::parking`)
     // сырой OSM, второй уровень: стоянка и площадка — своими полигонами, без
     // раскладки мест и разметки поля (`osm::parse::RawOsm`)
-    let raw = map.knobs.raw.draws_raw();
     let mut parking_lines = MeshBuilder::default();
-    if !raw {
+    if !map.knobs.raw.disables(DrawBuildout::LotMarkings) {
         for (area, stalls) in AreaLayer::Parking.field(map).iter().zip(&parking_layout.0) {
             parking::push_markings(&mut parking_lines, area, stalls);
         }
@@ -429,7 +429,7 @@ pub fn mesh_surfaces(
         push_area(&mut pitches, area, pitch::color(kind), &PITCH_RIM);
     }
     let mut pitch_lines = MeshBuilder::default();
-    if !raw {
+    if !map.knobs.raw.disables(DrawBuildout::LotMarkings) {
         for area in AreaLayer::Pitch.field(map) {
             pitch::push_markings(&mut pitch_lines, area);
         }

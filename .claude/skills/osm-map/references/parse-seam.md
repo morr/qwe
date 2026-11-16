@@ -88,7 +88,12 @@ a map built by hand in a test carries the defaults.
   mapped door is data. Planting runs (the tree nodes are data), and on the `Draw` level its
   woods and rows are thrown away: no generated trees. The `Draw` level also stands no cars
   and no wagons (`cars::park_on`, `wagons::mesh_wagons`) and draws roads raw
-  (`references/roads.md`). The skipped passes report zeros, and
+  (`references/roads.md`). **The draw additions are an enumerated set**
+  (`parse.rs::DrawBuildout`: decorated roads, lot/pitch markings, parked cars, standing
+  wagons, planted trees) — `RawOsm::Draw` disables it whole, and each consumer asks
+  `RawOsm::disables(DrawBuildout::…)` for its own member; a new draw build-out joins the
+  enum and its `ALL` line instead of growing a private branch. The skipped passes report
+  zeros, and
   `PassReport` opens with an `osm parse: RAW OSM (…)` line so the zeros are not read as
   "nothing to do". The world comes up on it: navmesh and spawn read roads and outlines, and
   the gates only lose the plots whose doors were generated. Pinned by

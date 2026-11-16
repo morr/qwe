@@ -296,8 +296,7 @@ fn finishing_the_parse_reports_what_each_pass_did() {
 
 /// Сцена сырого OSM: косой домик с размеченным входом, дом без входов и
 /// жилая улица без тегов `lanes` и `sidewalk*`.
-fn raw_scene(raw: RawOsm) -> MapData {
-    let (sw, se, ..) = corners(HALF);
+fn raw_scene(raw: RawOsm) -> MapData {    let (sw, se, ..) = corners(HALF);
     Overpass::new(CITY)
         .node(&[("entrance", "main")], skewed_house(CENTER)[1])
         .area(&[("building", "house")], skewed_house(CENTER))
@@ -378,6 +377,30 @@ fn raw_osm_draw_plants_no_generated_trees() {
     let raw = wood_scene().parse_with(knobs(RawOsm::Draw));
     assert!(raw.wood_trees.is_empty());
     assert_eq!(raw.trees.len(), 0);
+}
+
+/// Набор достроек отрисовки полон и снят целиком вторым уровнем: каждый
+/// член [`DrawBuildout::ALL`] отвечает «выключена» на [`RawOsm::Draw`] и
+/// «включена» ниже его. Целостность сырого OSM — вопрос модели, а не
+/// дисциплина веток потребителей.
+#[test]
+fn the_draw_buildout_set_is_complete_and_draw_disables_it_whole() {
+    let every = [
+        DrawBuildout::DecoratedRoads,
+        DrawBuildout::LotMarkings,
+        DrawBuildout::ParkedCars,
+        DrawBuildout::StandingWagons,
+        DrawBuildout::PlantedTrees,
+    ];
+    for what in every {
+        assert!(
+            DrawBuildout::ALL.contains(&what),
+            "{what:?} не попал в перечень набора"
+        );
+        assert!(RawOsm::Draw.disables(what), "{what:?} снят вторым уровнем");
+        assert!(!RawOsm::Off.disables(what));
+        assert!(!RawOsm::Parse.disables(what));
+    }
 }
 
 /// Сравнение снимка с ручками, с которыми мир должен быть разобран:

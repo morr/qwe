@@ -403,8 +403,12 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   defect — the data; it does not — our processing.**
 - **Raw OSM** (`parse.rs::RawOsm`, `ParseKnobs::raw`) — the map with our own additions
   switched off, to tell a data defect from a processing one: **`Parse`** skips every
-  finishing pass but the mapped doors; **`Draw`** adds no drawing additions on top. A
-  parse input, so switching it **reloads the world**.
+  finishing pass but the mapped doors; **`Draw`** adds no drawing additions on top —
+  it disables the whole **`DrawBuildout`** set, the enumerated draw build-outs
+  (decorated roads, lot/pitch markings, parked cars, standing wagons, planted trees);
+  a consumer asks `RawOsm::disables` for its own member, so the integrity of the level
+  is the model's list, not branch discipline. A parse input, so switching it
+  **reloads the world**.
 - **ParseKnobs** (`map/osm/parse.rs`) — the parse's inputs that are not in the Overpass
   answer: `lane_width`, `navtile`, `raw`. `parse` **reads no process global**; the map
   keeps a snapshot (`MapData::knobs`) — what the world was parsed with, what the

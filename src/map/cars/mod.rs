@@ -36,7 +36,7 @@ use crate::map::SunOnMap;
 use crate::map::along::{arclengths, place_on_path};
 use crate::map::meshing::{Break, MeshBuilder};
 use crate::map::osm::model::{distance_to_segment, ring_vertex_mean};
-use crate::map::osm::parse::RawOsm;
+use crate::map::osm::parse::{DrawBuildout, RawOsm};
 use crate::map::osm::{MapData, PolyArea, RoadLine, TrafficSide};
 use crate::map::parallel::{self, in_parallel};
 use crate::map::parking::{ParkingLayout, Stall};
@@ -227,7 +227,7 @@ pub fn detail_for(bucket: usize) -> Option<CarDetail> {
 /// второго уровня: машины — наша достройка, в данных их нет). Одно условие
 /// на адаптер, дверь слоя и меш кузовов: снятый слой не расставляет ничего.
 fn shown_detail(bucket: CarZoomBucket, style: CarStyle, raw: RawOsm) -> Option<CarDetail> {
-    detail_for(bucket.index).filter(|_| style.visible && !raw.draws_raw())
+    detail_for(bucket.index).filter(|_| style.visible && !raw.disables(DrawBuildout::ParkedCars))
 }
 
 /// Замер слоя машин без мира — для офлайн-бенча, по той же причине, что и
@@ -381,7 +381,7 @@ fn park_on(
     started: std::time::Instant,
 ) -> ParkedCars {
     // сырой OSM, второй уровень: машины — наша достройка, их нет вовсе
-    if map.knobs.raw.draws_raw() {
+    if map.knobs.raw.disables(DrawBuildout::ParkedCars) {
         return ParkedCars {
             took: started.elapsed(),
             ..Default::default()
@@ -478,7 +478,7 @@ pub(crate) fn place(
     layout: &ParkingLayout,
 ) -> CarPlacement {
     let mut placement = CarPlacement::default();
-    if !map.knobs.raw.draws_raw() {
+    if !map.knobs.raw.disables(DrawBuildout::ParkedCars) {
         placement.refresh(style, shape, map, layout);
     }
     placement
