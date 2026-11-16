@@ -242,10 +242,20 @@ impl Plugin for UiInspectorPlugin {
                 update_inspector_hits,
                 sync_inspector_visibility,
                 sync_hits_rows,
-                cycle_inspector_selection_next.run_if(bracket_forward_pressed),
-                cycle_inspector_selection_prev.run_if(bracket_backward_pressed),
-                pin_inspector_selection.run_if(backslash_pressed),
-                clear_inspector_pins.run_if(backspace_pressed),
+                // клавиши — как все хоткеи: пока курсор в текстовом поле
+                // (сид), Backspace правит поле, а не стирает пины
+                cycle_inspector_selection_next
+                    .run_if(bracket_forward_pressed)
+                    .run_if(not(super::typing_in_text_input)),
+                cycle_inspector_selection_prev
+                    .run_if(bracket_backward_pressed)
+                    .run_if(not(super::typing_in_text_input)),
+                pin_inspector_selection
+                    .run_if(backslash_pressed)
+                    .run_if(not(super::typing_in_text_input)),
+                clear_inspector_pins
+                    .run_if(backspace_pressed)
+                    .run_if(not(super::typing_in_text_input)),
                 sync_highlight_checked,
                 sync_pinned_rows,
                 sync_pinned_visibility,
