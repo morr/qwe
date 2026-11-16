@@ -24,10 +24,9 @@ use super::roofs::{
 };
 use super::temples::{Crown, Sanctuary, push_crowns};
 use super::{
-    HouseFootprint, Lean, RoofDetail, building_center, height_of, lift_of, lift_of_footprint,
-    shade_by_light,
+    HouseFootprint, Lean, RoofDetail, building_center, height_of, lift_of_footprint, shade_by_light,
 };
-use crate::map::meshing::{MeshBuilder, PARAPET_CELLS, Roof, WallFrame, WallMark, min_area_rect};
+use crate::map::meshing::{MeshBuilder, PARAPET_CELLS, Roof, WallFrame, WallMark};
 use crate::map::osm::model::{distance_to_segment, is_big_box, signed_ring_area, srgba_of};
 use crate::map::osm::{AreaKind, BuildingUse, PolyArea, RoadLine, Sacred, SacredForm};
 use crate::map::seed::seed_from_point;
@@ -458,10 +457,10 @@ fn balcony_house(building: &PolyArea, kind: WallKind, storeys: f32) -> bool {
 /// Длинная ось плана — та самая, вдоль которой стоит длинный фасад, и `None`,
 /// если у плана длинной стороны нет.
 ///
-/// Ось берётся у **минимального описанного прямоугольника** (`min_area_rect`,
-/// первое ребро вдоль длинной оси) — того же, по которому идёт конёк
-/// двускатной крыши и фактура кровли, так что второго понятия «как этот дом
-/// повёрнут» в проекте не заводится.
+/// Ось берётся у **пятна дома** ([`HouseFootprint`] — минимальный описанный
+/// прямоугольник, первое ребро вдоль длинной оси), того же, по которому идёт
+/// конёк двускатной крыши и фактура кровли, так что второго понятия «как этот
+/// дом повёрнут» в проекте не заводится.
 ///
 /// Отношение сторон — оговорка, без которой правило врёт: у башни в плане
 /// квадрат, короткой стороны у неё нет, и объявить две её стены торцами
@@ -469,12 +468,11 @@ fn balcony_house(building: &PolyArea, kind: WallKind, storeys: f32) -> bool {
 /// [`GABLE_PLAN_RATIO_MIN`] проходит панельная секция (12–14 м на 35 и
 /// длиннее — это 2.5 и выше) и не проходит башня
 /// (`heights::TOWER_MAX_RATIO` — 1.7).
-fn plan_long_axis(ring: &[Vec2]) -> Option<Vec2> {
-    let rect = min_area_rect(ring)?;
-    let long = rect[1] - rect[0];
-    let short = (rect[2] - rect[1]).length();
-    let axis = long.try_normalize()?;
-    (short > 0.0 && long.length() / short >= GABLE_PLAN_RATIO_MIN).then_some(axis)
+fn plan_long_axis(fp: Option<HouseFootprint>) -> Option<Vec2> {
+    let fp = fp?;
+    let (long, short) = fp.size();
+    let axis = fp.axis()?;
+    (short > 0.0 && long / short >= GABLE_PLAN_RATIO_MIN).then_some(axis)
 }
 
 /// С какого этажа дом носит балконы и с какой ширины стены они на ней
@@ -997,7 +995,7 @@ pub(super) fn facade_and_roof_builders(
             |_| Vec2::ZERO,
             color,
             building_seed(building),
-            None,
+            fp,
         ) {
             Roofing::Gable(roof) => {
                 roofs.set_roof(Some(look.frame));
@@ -1154,6 +1152,7 @@ pub(super) fn extrusion_builder(
             detail.clutter,
             &openings,
             &tunnel,
+            fp,
         );
         HousePart {
             cell,
@@ -1228,6 +1227,9 @@ pub fn push_house(
     shape: RoofShape,
     clutter: bool,
 ) -> RoofShape {
+    // витрина зовёт дом сама, без сборщика слоя с его готовыми пятнами:
+    // пятно считается здесь, один раз на дом
+    let fp = HouseFootprint::of(building);
     let built = push_house_with_arches(
         builder,
         building,
@@ -1238,6 +1240,7 @@ pub fn push_house(
         clutter,
         &[],
         &[],
+        fp,
     );
     // дом витрины стоит один — частей храма вокруг нет, и венец у него свой
     let crowns = Sanctuary::of(std::slice::from_ref(building)).crowns(
@@ -1245,7 +1248,7 @@ pub fn push_house(
         building,
         wall.base,
         color,
-        lift_of(building),
+        lift_of_footprint(building, fp),
     );
     push_crowns(builder, &crowns, Some(Lean::of()));
     built
@@ -1287,20 +1290,21 @@ fn push_house_with_arches(
     clutter: bool,
     openings: &[ArchOpening],
     tunnel: &[TunnelWall],
+    fp: Option<HouseFootprint>,
 ) -> RoofShape {
     // этажи считаются от настоящей высоты дома, а не от нарисованной: подъём
     // сжимает стену вместе с ними
-    let storeys = storeys_of(building, None);
+    let storeys = storeys_of(building, fp);
     let facade_color = wall.base;
     let lean = Lean::of();
     let lift_dir = lean.dir();
     // через тот же хелпер, что и оверлей дверей, — иначе они разъедутся
-    let lift = lift_of(building);
-    // длинная ось плана — одна на дом, и считается она только там, где может
-    // что-то решить: перебор рёбер в `min_area_rect` квадратичный, а на складе,
-    // частном доме и малоэтажке торец от фасада всё равно ничем не отличается
+    let lift = lift_of_footprint(building, fp);
+    // длинная ось плана — одна на дом, и спрашивается она только там, где
+    // может что-то решить: на складе, частном доме и малоэтажке торец от
+    // фасада всё равно ничем не отличается
     let long_axis = balcony_house(building, wall.kind, storeys)
-        .then(|| plan_long_axis(&building.outer))
+        .then(|| plan_long_axis(fp))
         .flatten();
     builder.set_roof(None);
     // стенки проезда — позади всех стен дома: сквозь проём видна только их
@@ -1356,7 +1360,7 @@ fn push_house_with_arches(
         |rise| lean.ridge(rise),
         color,
         seed,
-        None,
+        fp,
     ) {
         Roofing::Gable(roof) => {
             // фронтон — верх торцевой стены, видим по тому же правилу, что
