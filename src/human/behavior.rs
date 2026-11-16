@@ -4,6 +4,7 @@ use bevy::prelude::*;
 use rand::RngExt;
 
 use crate::demon::{ChaseTarget, Demon};
+use crate::diagnostics::{SIM_ESCAPE_MS, SIM_FLEE_MS, SIM_PANIC_MS, SimMeasure};
 use crate::grid::world_to_tile;
 use crate::human::components::{
     FleeRepath, Human, HumanFleeTag, HumanStyle, HumanWanderTag, Pace, PanicRecoil, WanderHeading,
@@ -38,7 +39,7 @@ pub fn panic(
     seed: Res<crate::rng::WorldSeed>,
     mut movables: Query<(&mut Movable, &Pace, &PawnId, &mut WanderIndex)>,
 ) {
-    let started = std::time::Instant::now();
+    let _measure = SimMeasure::new(&mut diagnostics, &SIM_PANIC_MS);
     // дедуп между демонами: человека в двух радиусах паникуем один раз
     let mut panicked: bevy::platform::collections::HashSet<Entity> =
         bevy::platform::collections::HashSet::default();
@@ -99,7 +100,6 @@ pub fn panic(
             // ровно столько же, сколько `HumanFleeTag`, и снимается вместе с ним
             .insert((HumanFleeTag, repath, crate::movement::UrgentPath));
     }
-    crate::diagnostics::measure_ms(&mut diagnostics, &crate::diagnostics::SIM_PANIC_MS, started);
 }
 
 /// Flee: бег от ближайшего демона с троттлингом перепрокладки;
@@ -150,7 +150,7 @@ pub fn flee(
         (With<Human>, With<HumanFleeTag>),
     >,
 ) {
-    let started = std::time::Instant::now();
+    let _measure = SimMeasure::new(&mut diagnostics, &SIM_FLEE_MS);
     let walkable = backend.walkable();
     // за кем прямо сейчас гонятся — те бегут по чистому вектору от демона
     let chased: bevy::platform::collections::HashSet<Entity> =
@@ -255,7 +255,6 @@ pub fn flee(
             &mut commands,
         );
     }
-    crate::diagnostics::measure_ms(&mut diagnostics, &crate::diagnostics::SIM_FLEE_MS, started);
 }
 
 /// Паникующий пересёк границу карты — «спасся», despawn [Q12].
@@ -265,7 +264,7 @@ pub fn escape(
     mut telemetry: ResMut<Telemetry>,
     query: Query<(Entity, &SimPosition), (With<Human>, With<HumanFleeTag>)>,
 ) {
-    let started = std::time::Instant::now();
+    let _measure = SimMeasure::new(&mut diagnostics, &SIM_ESCAPE_MS);
     for (entity, sim_position) in &query {
         if escaped(sim_position.0) {
             commands.entity(entity).despawn();
@@ -273,11 +272,6 @@ pub fn escape(
             debug!("human {entity} escaped (total {})", telemetry.escaped);
         }
     }
-    crate::diagnostics::measure_ms(
-        &mut diagnostics,
-        &crate::diagnostics::SIM_ESCAPE_MS,
-        started,
-    );
 }
 
 #[cfg(test)]

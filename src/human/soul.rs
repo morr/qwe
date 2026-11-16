@@ -10,6 +10,7 @@
 
 use bevy::prelude::*;
 
+use crate::diagnostics::{SIM_SOULS_MS, SimMeasure};
 use crate::loading::AppState;
 use crate::settings::{SOUL_LIFE, SOUL_MIN_PX, SOUL_RISE, SOUL_SIZE, Z_SOUL};
 use crate::silhouette::{Glyph, Silhouette, Silhouettes};
@@ -45,7 +46,7 @@ pub fn rise_souls(
     time: Res<Time>,
     mut souls: Query<(Entity, &mut SoulMote, &mut Transform, &mut Sprite)>,
 ) {
-    let started = std::time::Instant::now();
+    let _measure = SimMeasure::new(&mut diagnostics, &SIM_SOULS_MS);
     for (entity, mut soul, mut transform, mut sprite) in &mut souls {
         soul.age.tick(time.delta());
         if soul.age.is_finished() {
@@ -56,7 +57,6 @@ pub fn rise_souls(
         let left = 1.0 - soul.age.fraction();
         sprite.color = Color::from(SOUL_COLOR).with_alpha(left * left);
     }
-    crate::diagnostics::measure_ms(&mut diagnostics, &crate::diagnostics::SIM_SOULS_MS, started);
 }
 
 #[cfg(test)]
