@@ -380,6 +380,28 @@ fn raw_osm_draw_plants_no_generated_trees() {
     assert_eq!(raw.trees.len(), 0);
 }
 
+/// Сравнение снимка с ручками, с которыми мир должен быть разобран:
+/// расходится по каждому полю, стоит при равных. Его зовёт условие
+/// перезагрузки мира (`city::parse_knobs_diverged`), так что поле снимка без
+/// сравнения означало бы ручку, которая мир не перезагружает.
+#[test]
+fn diverged_notices_a_change_in_every_knob() {
+    let moved = |knobs| ParseKnobs::DEFAULT.diverged(&knobs);
+    assert!(!moved(ParseKnobs::DEFAULT));
+    assert!(moved(ParseKnobs {
+        lane_width: 3.5,
+        ..ParseKnobs::DEFAULT
+    }));
+    assert!(moved(ParseKnobs {
+        navtile: 1.0,
+        ..ParseKnobs::DEFAULT
+    }));
+    assert!(moved(ParseKnobs {
+        raw: RawOsm::Parse,
+        ..ParseKnobs::DEFAULT
+    }));
+}
+
 #[cfg(test)]
 mod areas;
 #[cfg(test)]
