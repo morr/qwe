@@ -66,7 +66,10 @@ fn at_grade_roads_pick_ground_streets_and_drives() {
     let map = Overpass::new(CITY)
         .way(&[("highway", "residential")], vec![sw, ne])
         .way(&[("highway", "service")], vec![sw, se])
-        .way(&[("highway", "residential"), ("bridge", "yes")], vec![se, nw])
+        .way(
+            &[("highway", "residential"), ("bridge", "yes")],
+            vec![se, nw],
+        )
         .way(
             &[("highway", "residential"), ("tunnel", "building_passage")],
             vec![nw, ne],

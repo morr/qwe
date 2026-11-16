@@ -1351,8 +1351,7 @@ fn diag_window() {
         VergeZoomBucket::for_zoom(0.0),
     );
     eprintln!("DIAG report {report}");
-    let layout =
-        crate::map::parking::ParkingLayout::new(&map);
+    let layout = crate::map::parking::ParkingLayout::new(&map);
     layers.extend(crate::map::spawn::mesh_surfaces(&map, &layout).0);
     if let Ok(spec) = std::env::var("QWE_DIAG_MESH") {
         let v: Vec<f32> = spec.split(',').filter_map(|s| s.parse().ok()).collect();

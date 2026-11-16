@@ -209,8 +209,16 @@ fn the_rail_predicate_lattice_answers_by_kind() {
         ("заброшенный", line(RailKind::Disused, false), [true, false]),
         ("путепровод", line(RailKind::Active, true), [false, true]),
         ("трамвай", line(RailKind::Tram, false), [false, false]),
-        ("трамвай на мосту", line(RailKind::Tram, true), [false, false]),
-        ("заброшенный на мосту", line(RailKind::Disused, true), [false, true]),
+        (
+            "трамвай на мосту",
+            line(RailKind::Tram, true),
+            [false, false],
+        ),
+        (
+            "заброшенный на мосту",
+            line(RailKind::Disused, true),
+            [false, true],
+        ),
     ];
     for (case, rail, [ground, bridge]) in cases {
         assert_eq!(rail.is_ground_track(), ground, "{case}");

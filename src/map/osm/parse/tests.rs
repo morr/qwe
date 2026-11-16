@@ -296,7 +296,8 @@ fn finishing_the_parse_reports_what_each_pass_did() {
 
 /// Сцена сырого OSM: косой домик с размеченным входом, дом без входов и
 /// жилая улица без тегов `lanes` и `sidewalk*`.
-fn raw_scene(raw: RawOsm) -> MapData {    let (sw, se, ..) = corners(HALF);
+fn raw_scene(raw: RawOsm) -> MapData {
+    let (sw, se, ..) = corners(HALF);
     Overpass::new(CITY)
         .node(&[("entrance", "main")], skewed_house(CENTER)[1])
         .area(&[("building", "house")], skewed_house(CENTER))
