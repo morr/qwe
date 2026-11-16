@@ -249,6 +249,17 @@ third only `layer=-1`. `tunnel=no` is an explicit no, and elevated track (`layer
 no tunnel) still draws — that is what keeps an elevated subway on the map. **Rails never
 touch the navmesh** — see the navigation-deep skill.
 
+**The kind/bridge pair has its own two-predicate lattice**, asked from the model instead
+of re-derived at each reader: `is_ground_track()` (non-tram and not a bridge — the track
+that occupies the ground; the level crossing's deck lays where it meets a road, standing
+wagons stand on it, `kind == Active` on top of the predicate) and its mirror
+`is_track_bridge()` (non-tram on a bridge — the track whose deck slab, parapet and shadow
+come from the road layers' `Bridges::push_track`). A tram never counts as either — it
+lives on the carriageway and crosses a street bridge as its own tram layer. The car
+keepout (`cars/rails.rs`) deliberately keeps bridge tracks — a car body draws over the
+deck slab (`Z_CAR` above `Z_RAIL_BRIDGE`) — and stays on its own plain `kind != Tram`
+filter, module doc says why.
+
 ## WallLine
 
 `barrier=city_wall` (the Tula kremlin), 3 m wide, kremlin red, impassable. **The ribbon

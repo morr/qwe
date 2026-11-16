@@ -77,7 +77,7 @@ use crate::map::meshing::{LaneFrame, MeshBuilder, RibbonCap, RibbonJoin};
 #[cfg(test)]
 use crate::map::osm::model::RoadNodeKind;
 use crate::map::osm::model::{RoadAreaKind, polyline_length};
-use crate::map::osm::{MapData, RailKind, RoadClass, RoadLine};
+use crate::map::osm::{MapData, RoadClass, RoadLine};
 use crate::map::parallel::{in_parallel, in_parallel_owned};
 use crate::map::rail::{CrossedStreet, mesh_level_crossings};
 use crate::map::shapes::{is_ring, push_shape};
@@ -1420,11 +1420,7 @@ impl<'s> RoadCommon<'s> {
         // путепроводы: плита, парапет и тень — в тех же мостовых слоях; путь
         // поверх плиты кладёт `map::rail`. Трамвай на мосту едет по мосту улицы
         let mut track_bridges = 0;
-        for rail in map
-            .rails
-            .iter()
-            .filter(|rail| rail.bridge && rail.kind != RailKind::Tram)
-        {
+        for rail in map.rails.iter().filter(|rail| rail.is_track_bridge()) {
             bridges.push_track(rail);
             track_bridges += 1;
         }

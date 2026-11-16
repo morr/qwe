@@ -246,7 +246,7 @@ fn class_fill(service: ServiceTrack) -> f32 {
 /// а значит, и станцию собой не образуют. И не путь на мосту: вагон лежит
 /// под путепроводом (`Z_WAGON` ниже настила), и его там не видно.
 fn holds_stock(rail: &RailLine) -> bool {
-    rail.kind == RailKind::Active && !rail.bridge
+    rail.is_ground_track() && rail.kind == RailKind::Active
 }
 
 /// Составы на всех служебных путях.

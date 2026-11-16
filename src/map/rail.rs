@@ -518,7 +518,7 @@ pub(crate) fn mesh_level_crossings(
     let mut builder = MeshBuilder::default();
     let tracks: Vec<(Cow<[Vec2]>, f32)> = rails
         .iter()
-        .filter(|rail| rail.kind != RailKind::Tram && !rail.bridge)
+        .filter(|rail| rail.is_ground_track())
         .map(|rail| (track_centerline(rail), deck_width(rail) / 2.0))
         .collect();
     if tracks.is_empty() {

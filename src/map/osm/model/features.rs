@@ -315,6 +315,27 @@ pub enum ServiceTrack {
     Spur,
 }
 
+impl RailLine {
+    /// Путь **в одном уровне с землёй, не трамвай** — то, что занимает землю
+    /// железной дорогой: настил переезда кладётся там, где такой путь
+    /// пересекает дорогу (`rail::mesh_level_crossings`), состав стоит только
+    /// на таком пути (`map::wagons` — ещё и на действующем: `kind == Active`
+    /// поверх этого предиката). Трамвай живёт на проезжей части улицы; путь
+    /// на мосту занимает плиту путепровода, не землю
+    /// ([`Self::is_track_bridge`]).
+    pub fn is_ground_track(&self) -> bool {
+        self.kind != RailKind::Tram && !self.bridge
+    }
+
+    /// Зеркало [`Self::is_ground_track`]: путь не-трамвай на мосту —
+    /// путепровод, чью плиту, парапет и тень кладёт слой мостов улиц
+    /// (`Bridges::push_track`), а рельсы поверх плиты — `map::rail`.
+    /// Трамвай на мосту едет по мосту улицы и сюда не попадает.
+    pub fn is_track_bridge(&self) -> bool {
+        self.kind != RailKind::Tram && self.bridge
+    }
+}
+
 /// Стена (Кремль): полилиния фиксированной ширины, непроходима.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WallLine {

@@ -189,6 +189,35 @@ fn the_road_predicate_lattice_answers_by_kind() {
     }
 }
 
+/// Таблица решётки предикатов пути — [`RailLine::is_ground_track`] и
+/// [`RailLine::is_track_bridge`] — по носителям признаков. Трамвай не то и не
+/// другое при любом `bridge`: он живёт на проезжей части улицы, и на мосту
+/// едет по мосту улицы.
+#[test]
+fn the_rail_predicate_lattice_answers_by_kind() {
+    use crate::map::osm::fixture;
+
+    let line = |kind: RailKind, bridge: bool| RailLine {
+        bridge,
+        kind,
+        ..fixture::rail(vec![Vec2::ZERO, Vec2::X], 5.0)
+    };
+
+    // (что это, is_ground_track, is_track_bridge)
+    let cases: [(&str, RailLine, [bool; 2]); 6] = [
+        ("главный ход", line(RailKind::Active, false), [true, false]),
+        ("заброшенный", line(RailKind::Disused, false), [true, false]),
+        ("путепровод", line(RailKind::Active, true), [false, true]),
+        ("трамвай", line(RailKind::Tram, false), [false, false]),
+        ("трамвай на мосту", line(RailKind::Tram, true), [false, false]),
+        ("заброшенный на мосту", line(RailKind::Disused, true), [false, true]),
+    ];
+    for (case, rail, [ground, bridge]) in cases {
+        assert_eq!(rail.is_ground_track(), ground, "{case}");
+        assert_eq!(rail.is_track_bridge(), bridge, "{case}");
+    }
+}
+
 /// Самая длинная сторона — сторона контура по ходу его вершин, а не ось
 /// описанного прямоугольника; у пустого контура её нет.
 #[test]

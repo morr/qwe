@@ -364,9 +364,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   - **RailLine** — `railway=*` centerline; `RailKind: Active | Tram | Disused` *is* the
     drawing style; underground track is dropped. The rail branch of `parse_way` runs
     before `highway` and **falls through** — a way can be both street and track. A
-    **rail gap** (a track broken at a street's kerbs) is stitched at parse. Non-tram
-    track is `map/rail.rs` (ballast, ties, steel, a zoom LOD); a **track bridge** rides
-    the road layer's bridge layers; a **level crossing** is found **by geometry**, not by
+    **rail gap** (a track broken at a street's kerbs) is stitched at parse. The
+    kind/bridge pair is asked through the model's predicates, not re-derived:
+    **`is_ground_track`** (non-tram, on the ground — level crossings, standing wagons)
+    and its mirror **`is_track_bridge`** (non-tram on a bridge — a **track bridge** rides
+    the road layer's bridge layers); a **level crossing** is found **by geometry**, not by
     tag, and laid along the street **as drawn**. Tram is `map/tram.rs`, drawn only while
     `TramStyle::visible`, along the laid tracks.
   - **WallLine** — `barrier=city_wall` (the kremlin), 3 m, impassable. **Drawn only where
