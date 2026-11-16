@@ -142,6 +142,100 @@ fn a_pawn_takes_the_free_slot_on_its_own_side() {
     assert!(from_east.x > desired.x, "подошедший с востока: {from_east}");
 }
 
+/// Ниже пять тестов характеризуют ВЫБОР слотового кольцевого поиска на
+/// граничных случаях: углы колец против прямых соседей, равные дистанции с
+/// разными ключами, слот за стеной. Рефакторинг поиска (единый
+/// `navigation::nearest_tile_where`) обязан оставить их зелёными, не трогая
+/// ассерты, — это фиксация «бит-в-бит тот же слот на тех же входах».
+
+/// Равные первый ключ и второй — достаётся просмотренный первым: кольцо
+/// обходится снизу вверх (по `dy`), слева направо (по `dx`), поэтому из
+/// одинаково близких к цели и пешке восточного (11,10) и северного (10,11)
+/// слотов побеждает восточный. Переставь обход — и ответ перевернётся.
+#[test]
+fn a_full_tie_goes_to_the_first_scanned_slot() {
+    let mut claims = claims_with(1);
+    let desired = IVec2::new(10, 10);
+    let from = tile_center(desired) + Vec2::new(40.0, 40.0);
+    let passable = |tile: IVec2| tile == IVec2::new(11, 10) || tile == IVec2::new(10, 11);
+
+    let (slot, _) = claims
+        .claim_slot(entity(1), None, desired, from, passable)
+        .expect("свободные слоты есть");
+
+    assert_eq!(slot, IVec2::new(11, 10));
+}
+
+/// Равный первый ключ (евклидова дистанция до цели) разыгрывается вторым
+/// (до пешки) даже МЕЖДУ кольцами: (13,14) — кольцо 4, (15,10) — кольцо 5,
+/// обе на расстоянии 25 от цели. Ранний выход обязан дойти до кольца 5
+/// («кольцо² переросло лучшее», а не «дошло до него»), иначе достался бы
+/// просмотренный раньше, но стоящий с дальней от пешки стороны (13,14).
+#[test]
+fn an_equal_first_key_is_settled_by_the_second_across_rings() {
+    let mut claims = claims_with(1);
+    let desired = IVec2::new(10, 10);
+    let from = tile_center(desired) + Vec2::new(40.0, 0.0);
+    let passable = |tile: IVec2| tile == IVec2::new(13, 14) || tile == IVec2::new(15, 10);
+
+    let (slot, _) = claims
+        .claim_slot(entity(1), None, desired, from, passable)
+        .expect("свободные слоты есть");
+
+    assert_eq!(slot, IVec2::new(15, 10));
+}
+
+/// Первый ключ главнее второго: угол кольца 1 (11,11), дистанция 2, бьёт
+/// прямого соседа кольца 2 (12,10), дистанция 4, — хотя пешка стоит ровно у
+/// второго и второй ключ за него.
+#[test]
+fn the_first_key_beats_the_second() {
+    let mut claims = claims_with(1);
+    let desired = IVec2::new(10, 10);
+    let from = tile_center(desired) + Vec2::new(40.0, 0.0);
+    let passable = |tile: IVec2| tile == IVec2::new(11, 11) || tile == IVec2::new(12, 10);
+
+    let (slot, _) = claims
+        .claim_slot(entity(1), None, desired, from, passable)
+        .expect("свободные слоты есть");
+
+    assert_eq!(slot, IVec2::new(11, 11));
+}
+
+/// Тот же «угол против прямого соседа», на котором оба поиска уже ловили
+/// баги: угол кольца 3 (13,13) стоит на 18, прямой сосед кольца 4 (14,10) —
+/// на 16, и выигрывает сосед, хотя его кольцо просматривается позже.
+#[test]
+fn a_corner_of_this_ring_loses_to_a_straight_of_the_next() {
+    let mut claims = claims_with(1);
+    let desired = IVec2::new(10, 10);
+    let from = tile_center(desired) + Vec2::new(40.0, 0.0);
+    let passable = |tile: IVec2| tile == IVec2::new(13, 13) || tile == IVec2::new(14, 10);
+
+    let (slot, _) = claims
+        .claim_slot(entity(1), None, desired, from, passable)
+        .expect("свободные слоты есть");
+
+    assert_eq!(slot, IVec2::new(14, 10));
+}
+
+/// Слот за стеной пропускается, каким бы близким ни был: вся кольцевая
+/// окрестность цели непроходима, и поиск обязан доковылять до кольца 2,
+/// а не сдать заявку.
+#[test]
+fn a_slot_behind_a_wall_yields_the_next_ring() {
+    let mut claims = claims_with(1);
+    let desired = IVec2::new(10, 10);
+    let from = tile_center(desired) + Vec2::new(-40.0, 0.0);
+    let passable = |tile: IVec2| tile == IVec2::new(8, 10);
+
+    let (slot, _) = claims
+        .claim_slot(entity(1), None, desired, from, passable)
+        .expect("кольцо 2 свободно");
+
+    assert_eq!(slot, IVec2::new(8, 10));
+}
+
 /// Своя же заявка себе не помеха: пешка, выбравшая ту же цель второй раз,
 /// не должна уезжать в сторону от неё.
 #[test]
