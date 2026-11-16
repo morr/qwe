@@ -1,15 +1,15 @@
 //! Подписи пробы: чем подписана находка каждого признака — класс `highway`,
-//! назначение здания, вид площадки, краска узла — и как находки печатаются
-//! строкой для панели инспектора и отчёта `brp probe`. Находка дороги
-//! (`road_hit`) — тоже здесь: полотно и дорисованные полосы, с расстоянием до
-//! осевой и стороной.
+//! вид отрисованного куска, краска узла — и как находки печатаются строкой
+//! для панели инспектора и отчёта `brp probe`. Находка дороги (`road_hit`) —
+//! тоже здесь: полотно и дорисованные полосы, с расстоянием до осевой и
+//! стороной. Площадные находки подписывает дескриптор вида
+//! (`osm::model::areas`): слой и подпись едут в перечне видов.
 
 use bevy::prelude::*;
 
 use crate::map::RoadStyle;
 use crate::map::osm::model::{
-    AreaKind, BuildingUse, Highway, PitchKind, PolyArea, RoadClass, RoadLine, RoadNodeKind,
-    SidewalkSide, StructureKind, closest_on_segment,
+    Highway, RoadClass, RoadLine, RoadNodeKind, SidewalkSide, StructureKind, closest_on_segment,
 };
 use crate::map::roads::PieceKind;
 use crate::settings::{Z_ALLEY, Z_BRIDGE, Z_ROAD, Z_SIDEWALK, Z_UNPAVED_ROAD};
@@ -54,12 +54,6 @@ pub fn format_hits(hits: &[Hit], cap: usize) -> String {
         out.push_str(&format!("+{} more\n", hits.len() - cap));
     }
     out.trim_end().to_string()
-}
-
-/// Имя варианта в нижнем регистре — для подписей (`Residential` →
-/// `residential`).
-pub(super) fn lower<T: std::fmt::Debug>(value: T) -> String {
-    format!("{value:?}").to_lowercase()
 }
 
 /// Находка дороги в точке: полотно, а за ним полоса тротуара, которую дорога
@@ -202,53 +196,6 @@ fn highway_label(highway: Highway) -> &'static str {
         Highway::LivingStreet => "living street",
         Highway::Service => "service",
         Highway::Path => "path",
-    }
-}
-
-/// Назначение здания для подписи: составные имена читаемее слитного Debug
-/// (`garageblock` → `garage block`); у храма в значении вера — в подпись она
-/// не нужна.
-fn building_use_label(use_: BuildingUse) -> &'static str {
-    match use_ {
-        BuildingUse::House => "house",
-        BuildingUse::Apartments => "apartments",
-        BuildingUse::Commercial => "commercial",
-        BuildingUse::Retail => "retail",
-        BuildingUse::Industrial => "industrial",
-        BuildingUse::Garage => "garage",
-        BuildingUse::GarageBlock => "garage block",
-        BuildingUse::Church(_) => "church",
-        BuildingUse::Public => "public",
-        BuildingUse::Other => "other",
-    }
-}
-
-/// Подпись здания: назначение по `building=*` и высота, если тег был.
-pub(super) fn building_label(area: &PolyArea) -> String {
-    let mut label = match area.kind {
-        AreaKind::Kremlin => "kremlin building".to_string(),
-        _ => match area.building_use {
-            BuildingUse::Other => "building".to_string(),
-            use_ => format!("building {}", building_use_label(use_)),
-        },
-    };
-    if let Some(height) = area.height {
-        label.push_str(&format!(", {:.0} m", height));
-    }
-    label
-}
-
-/// Подпись площадки: вид спорта читаемее номера варианта.
-pub(super) fn pitch_label(kind: AreaKind) -> String {
-    let AreaKind::Pitch(kind) = kind else {
-        return format!("pitch {}", lower(kind));
-    };
-    match kind {
-        PitchKind::Soccer => "soccer field".to_string(),
-        PitchKind::Hard => "hard court".to_string(),
-        PitchKind::Track => "running track".to_string(),
-        PitchKind::Playground => "playground".to_string(),
-        PitchKind::Ground => "sports ground".to_string(),
     }
 }
 

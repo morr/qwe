@@ -42,15 +42,14 @@ use crate::map::RoadStyle;
 use crate::map::footprint::{FENCE_BAND_WIDTH, distance_to_polyline};
 use crate::map::grid::Grid;
 use crate::map::osm::model::{
-    AreaKind, FenceKind, MapData, PolyArea, RailKind, RoadAreaKind, RoadLine, point_in_polygon,
-    ring_bounds,
+    AreaLayer, FenceKind, MapData, PolyArea, RailKind, RoadAreaKind, RoadLine, lower,
+    point_in_polygon, ring_bounds,
 };
 use crate::map::roads::pockets::kerb_pocket_outlines;
 use crate::map::roads::{DrawnPiece, DrawnPieces, PieceKind};
 use crate::settings::{
-    Z_BUILDING, Z_FENCE, Z_GRASS, Z_INDUSTRY, Z_LANDUSE, Z_LANDUSE_YARD, Z_PARK, Z_PARKING, Z_PIPE,
-    Z_PITCH, Z_POND, Z_RAIL, Z_ROAD, Z_ROAD_ISLANDS, Z_ROAD_PAINT, Z_SAND, Z_SIDEWALK, Z_TRAM,
-    Z_TREE, Z_WALL, Z_WATERWAY, Z_WOOD,
+    Z_FENCE, Z_INDUSTRY, Z_PIPE, Z_RAIL, Z_ROAD, Z_ROAD_ISLANDS, Z_ROAD_PAINT, Z_SIDEWALK, Z_TRAM,
+    Z_TREE, Z_WALL, Z_WATERWAY,
 };
 
 #[cfg(test)]
@@ -61,9 +60,7 @@ use crate::settings::Z_BRIDGE;
 mod labels;
 mod shapes;
 
-use self::labels::{
-    building_label, lower, node_label, piece_label, pitch_label, road_hit, structure_label,
-};
+use self::labels::{node_label, piece_label, road_hit, structure_label};
 pub use self::labels::{format_hits, hit_line, pinned_line};
 pub use self::shapes::{
     FeatureShape, PinnedFill, feature_shape, mesh_feature, mesh_pins, pin_stripe,
@@ -97,21 +94,15 @@ pub struct Hit {
 /// строит по ней форму ([`feature_shape`]) и отличает выбранную находку от
 /// той, что подсвечивалась мгновение назад.
 ///
+/// Площадная находка (вид слоя [`AreaLayer`], позиция в его поле) ведёт в
+/// то же место, что источник в индексе: вектор-слой и позиция в нём.
 /// Полосы-генераты ссылаются на свою дорогу и сторону (сторона 0 — слева по
 /// ходу точек, как у [`RoadLine::sidewalk`]); дерево — рангом в наборе
 /// (`MapData::trees`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FeatureRef {
-    Building(u32),
-    Water(u32),
-    Park(u32),
-    Wood(u32),
-    Grass(u32),
-    Sand(u32),
-    Landuse(u32),
-    Pocket(u32),
-    Parking(u32),
-    Pitch(u32),
+    /// Площадная находка: вид слоя и позиция в его поле [`MapData`].
+    Area(AreaLayer, u32),
     RoadArea(u32),
     Road(u32),
     Rail(u32),
@@ -166,20 +157,13 @@ impl HitReason {
     }
 }
 
-/// Откуда площадная находка — по вектору [`MapData`]; вектор даёт слой, а
-/// `kind` полигона — члена слоя (здание или крепость, карман-двор или луг).
+/// Откуда площадная находка — по вектору [`MapData`]: вид слоя и позиция в
+/// его поле; вектор даёт слой, а `kind` полигона — члена слоя (здание или
+/// крепость, карман-двор или луг). Площади дорог — не полигоны [`PolyArea`],
+/// в перечне видов им места нет, поэтому отдельный рукав.
 #[derive(Clone, Copy)]
 enum AreaSrc {
-    Building(u32),
-    Water(u32),
-    Park(u32),
-    Wood(u32),
-    Grass(u32),
-    Sand(u32),
-    Landuse(u32),
-    Pocket(u32),
-    Parking(u32),
-    Pitch(u32),
+    Area(AreaLayer, u32),
     RoadArea(u32),
 }
 
@@ -298,35 +282,15 @@ impl InspectIndex {
             let (min, max) = ring_bounds(&area.outer);
             index.areas.insert(min, max, src);
         };
-        for (i, area) in map.buildings.iter().enumerate() {
-            push_area(AreaSrc::Building(i as u32), area);
-        }
-        for (i, area) in map.water.iter().enumerate() {
-            push_area(AreaSrc::Water(i as u32), area);
-        }
-        for (i, area) in map.parks.iter().enumerate() {
-            push_area(AreaSrc::Park(i as u32), area);
-        }
-        for (i, area) in map.woods.iter().enumerate() {
-            push_area(AreaSrc::Wood(i as u32), area);
-        }
-        for (i, area) in map.grass.iter().enumerate() {
-            push_area(AreaSrc::Grass(i as u32), area);
-        }
-        for (i, area) in map.sand.iter().enumerate() {
-            push_area(AreaSrc::Sand(i as u32), area);
-        }
-        for (i, area) in map.landuse.iter().enumerate() {
-            push_area(AreaSrc::Landuse(i as u32), area);
-        }
-        for (i, area) in map.pockets.iter().enumerate() {
-            push_area(AreaSrc::Pocket(i as u32), area);
-        }
-        for (i, area) in map.parking.iter().enumerate() {
-            push_area(AreaSrc::Parking(i as u32), area);
-        }
-        for (i, area) in map.pitches.iter().enumerate() {
-            push_area(AreaSrc::Pitch(i as u32), area);
+        // площади — по перечню видов: члены перечня с `index` отвечают пробе,
+        // поля берутся у дескриптора
+        for desc in AreaLayer::ALL {
+            if !desc.index {
+                continue;
+            }
+            for (i, area) in (desc.field)(map).iter().enumerate() {
+                push_area(AreaSrc::Area(desc.layer, i as u32), area);
+            }
         }
         for (i, area) in map.road_areas.iter().enumerate() {
             if area.outline.is_empty() {
@@ -451,94 +415,49 @@ impl InspectIndex {
                 && !area.holes.iter().any(|hole| point_in_polygon(at, hole))
         };
         for &src in self.areas.at(at) {
-            let (z, label, id) = match src {
-                AreaSrc::Building(i) => match map.buildings.get(i as usize) {
-                    Some(area) if inside(area) => (Z_BUILDING, building_label(area), area.osm_id),
-                    _ => continue,
-                },
-                AreaSrc::Water(i) => match map.water.get(i as usize) {
-                    Some(area) if inside(area) => (Z_POND, "water".to_string(), area.osm_id),
-                    _ => continue,
-                },
-                AreaSrc::Park(i) => match map.parks.get(i as usize) {
-                    Some(area) if inside(area) => (Z_PARK, "park".to_string(), area.osm_id),
-                    _ => continue,
-                },
-                AreaSrc::Wood(i) => match map.woods.get(i as usize) {
-                    Some(area) if inside(area) => (Z_WOOD, "wood".to_string(), area.osm_id),
-                    _ => continue,
-                },
-                AreaSrc::Grass(i) => match map.grass.get(i as usize) {
-                    Some(area) if inside(area) => (Z_GRASS, "grass".to_string(), area.osm_id),
-                    _ => continue,
-                },
-                AreaSrc::Sand(i) => match map.sand.get(i as usize) {
-                    Some(area) if inside(area) => (Z_SAND, "sand".to_string(), area.osm_id),
-                    _ => continue,
-                },
-                AreaSrc::Landuse(i) => match map.landuse.get(i as usize) {
-                    Some(area) if inside(area) => (
-                        match area.kind {
-                            AreaKind::Industrial => Z_LANDUSE,
-                            _ => Z_LANDUSE_YARD,
-                        },
-                        format!("landuse {}", lower(area.kind)),
-                        area.osm_id,
-                    ),
-                    _ => continue,
-                },
-                AreaSrc::Pocket(i) => match map.pockets.get(i as usize) {
-                    Some(area) if inside(area) => (
-                        match area.kind {
-                            AreaKind::Grass => Z_GRASS,
-                            _ => Z_LANDUSE_YARD,
-                        },
-                        format!("pocket {}", lower(area.kind)),
-                        area.osm_id,
-                    ),
-                    _ => continue,
-                },
-                AreaSrc::Parking(i) => match map.parking.get(i as usize) {
-                    Some(area) if inside(area) => {
-                        let AreaKind::Parking(kind) = area.kind else {
-                            continue;
+            let hit = match src {
+                // площадь дорог — не полигоны `PolyArea`, в перечне видов её
+                // нет: свой слой и своя подпись по виду площади
+                AreaSrc::RoadArea(i) => match map.road_areas.get(i as usize) {
+                    Some(area) if point_in_polygon(at, &area.outline) => {
+                        let (z, label) = match area.kind {
+                            RoadAreaKind::Carriageway => (Z_ROAD, "carriageway area".to_string()),
+                            RoadAreaKind::Walkway => (Z_SIDEWALK, "walkway".to_string()),
+                            RoadAreaKind::Island => (Z_ROAD_ISLANDS, "traffic island".to_string()),
                         };
-                        (
-                            Z_PARKING,
-                            format!("parking lot {}", lower(kind)),
-                            area.osm_id,
-                        )
+                        Hit {
+                            z,
+                            label,
+                            src: HitSource::Osm,
+                            id: area.osm_id,
+                            feature: FeatureRef::RoadArea(i),
+                        }
                     }
                     _ => continue,
                 },
-                AreaSrc::Pitch(i) => match map.pitches.get(i as usize) {
-                    Some(area) if inside(area) => (Z_PITCH, pitch_label(area.kind), area.osm_id),
-                    _ => continue,
-                },
-                AreaSrc::RoadArea(i) => match map.road_areas.get(i as usize) {
-                    Some(area) if point_in_polygon(at, &area.outline) => (
-                        match area.kind {
-                            RoadAreaKind::Carriageway => Z_ROAD,
-                            RoadAreaKind::Walkway => Z_SIDEWALK,
-                            RoadAreaKind::Island => Z_ROAD_ISLANDS,
-                        },
-                        match area.kind {
-                            RoadAreaKind::Carriageway => "carriageway area".to_string(),
-                            RoadAreaKind::Walkway => "walkway".to_string(),
-                            RoadAreaKind::Island => "traffic island".to_string(),
-                        },
-                        area.osm_id,
-                    ),
-                    _ => continue,
-                },
+                // прочие площади — по перечню видов: слой находки и подпись
+                // даёт дескриптор, у кварталов и карманов их решает вид
+                // полигона внутри его `hit`
+                AreaSrc::Area(layer, i) => {
+                    let Some(area) = layer.field(map).get(i as usize) else {
+                        continue;
+                    };
+                    if !inside(area) {
+                        continue;
+                    }
+                    let Some((z, label)) = (layer.desc().hit)(area) else {
+                        continue;
+                    };
+                    Hit {
+                        z,
+                        label,
+                        src: HitSource::Osm,
+                        id: area.osm_id,
+                        feature: FeatureRef::Area(layer, i),
+                    }
+                }
             };
-            hits.push(Hit {
-                z,
-                label,
-                src: HitSource::Osm,
-                id,
-                feature: area_feature(src),
-            });
+            hits.push(hit);
         }
         for &src in self.lines.at(at) {
             let hit = match src {
@@ -815,24 +734,6 @@ pub fn rebuild_index(
     let started = std::time::Instant::now();
     *index = InspectIndex::rebuild(&map, &shape.0, &pieces.0);
     info!("inspect index: rebuilt in {:.1?}", started.elapsed());
-}
-
-/// Ссылка площадной находки на свой элемент — тот же индекс, что у источника
-/// в индексе: вектор-слой и позиция в нём.
-fn area_feature(src: AreaSrc) -> FeatureRef {
-    match src {
-        AreaSrc::Building(i) => FeatureRef::Building(i),
-        AreaSrc::Water(i) => FeatureRef::Water(i),
-        AreaSrc::Park(i) => FeatureRef::Park(i),
-        AreaSrc::Wood(i) => FeatureRef::Wood(i),
-        AreaSrc::Grass(i) => FeatureRef::Grass(i),
-        AreaSrc::Sand(i) => FeatureRef::Sand(i),
-        AreaSrc::Landuse(i) => FeatureRef::Landuse(i),
-        AreaSrc::Pocket(i) => FeatureRef::Pocket(i),
-        AreaSrc::Parking(i) => FeatureRef::Parking(i),
-        AreaSrc::Pitch(i) => FeatureRef::Pitch(i),
-        AreaSrc::RoadArea(i) => FeatureRef::RoadArea(i),
-    }
 }
 
 /// Досягаемость дороги в индексе: полотно плюс полоса тротуара, которую она

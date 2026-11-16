@@ -17,6 +17,7 @@ mod roads;
 mod trees;
 
 pub use areas::{AreaLayer, AreaLayerDesc};
+pub(crate) use areas::lower;
 pub use features::{
     AreaKind, BuildingUse, Colours, Faith, FenceKind, FenceLine, LotKind, PipeLine, PitchKind,
     PolyArea, RailKind, RailLine, Rgb, Sacred, SacredForm, ServiceTrack, Structure, StructureKind,

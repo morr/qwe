@@ -1,6 +1,8 @@
 use super::*;
 use crate::map::osm::fixture;
-use crate::map::osm::model::{KerbParking, RoadArea, RoadAreaKind, TreeSet, WaterKind, WaterLine};
+use crate::map::osm::model::{
+    AreaKind, AreaLayer, KerbParking, RoadArea, RoadAreaKind, TreeSet, WaterKind, WaterLine,
+};
 use crate::map::roads::{DrawnPiece, PieceKind};
 use crate::settings::Z_ROAD_VERGE_YARD;
 
@@ -667,9 +669,9 @@ fn every_hit_carries_its_feature_reference() {
     );
     assert_eq!(
         feature(Vec2::new(100.0, 102.0)),
-        Some(FeatureRef::Building(0))
+        Some(FeatureRef::Area(AreaLayer::Building, 0))
     );
-    assert_eq!(feature(Vec2::new(200.0, 200.0)), Some(FeatureRef::Water(0)));
+    assert_eq!(feature(Vec2::new(200.0, 200.0)), Some(FeatureRef::Area(AreaLayer::Water, 0)));
     assert_eq!(feature(Vec2::new(300.0, 100.0)), Some(FeatureRef::Tree(0)));
     assert_eq!(feature(Vec2::new(1000.0, 1000.0)), None);
 }
@@ -725,8 +727,9 @@ fn a_building_shape_carries_its_hole() {
     };
 
     let index = InspectIndex::rebuild(&map, &RoadShape::default(), &[]);
-    let shapes = feature_shape(&index, &map, &RoadStyle::default(), FeatureRef::Building(0))
-        .expect("the building has a shape");
+    let shapes =
+        feature_shape(&index, &map, &RoadStyle::default(), FeatureRef::Area(AreaLayer::Building, 0))
+            .expect("the building has a shape");
     assert_eq!(shapes.len(), 1);
     assert_eq!(
         shapes[0].outer,

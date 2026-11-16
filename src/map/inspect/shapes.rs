@@ -50,16 +50,9 @@ pub fn feature_shape(
     feature: FeatureRef,
 ) -> Option<Vec<FeatureShape>> {
     match feature {
-        FeatureRef::Building(i) => area_shape(map.buildings.get(i as usize)?),
-        FeatureRef::Water(i) => area_shape(map.water.get(i as usize)?),
-        FeatureRef::Park(i) => area_shape(map.parks.get(i as usize)?),
-        FeatureRef::Wood(i) => area_shape(map.woods.get(i as usize)?),
-        FeatureRef::Grass(i) => area_shape(map.grass.get(i as usize)?),
-        FeatureRef::Sand(i) => area_shape(map.sand.get(i as usize)?),
-        FeatureRef::Landuse(i) => area_shape(map.landuse.get(i as usize)?),
-        FeatureRef::Pocket(i) => area_shape(map.pockets.get(i as usize)?),
-        FeatureRef::Parking(i) => area_shape(map.parking.get(i as usize)?),
-        FeatureRef::Pitch(i) => area_shape(map.pitches.get(i as usize)?),
+        // площадь ведёт в поле своего вида — форма одна на все виды, свой
+        // контур с дырками
+        FeatureRef::Area(layer, i) => area_shape(layer.field(map).get(i as usize)?),
         FeatureRef::RoadArea(i) => {
             let area = map.road_areas.get(i as usize)?;
             Some(vec![FeatureShape {
