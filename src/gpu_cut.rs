@@ -4,7 +4,7 @@
 //! `add_perf_toggles`): у устройства запрашивается фича
 //! `TIMESTAMP_QUERY` (Metal поддерживает), в расписание `Core2d` — его
 //! `camera_driver` прогоняет на каждую камеру — встают маркер-системы.
-//! Каждая открывает **пустой render pass без аттачментов** с
+//! Каждая открывает **пустой compute pass** с
 //! `timestamp_writes` в дескрипторе: метка пишется на начале пасса —
 //! энкодеры систем уходят в сабмит в топологическом порядке систем
 //! (`RenderContextState: SystemBuffer`), GPU исполняет энкодеры в
@@ -17,9 +17,10 @@
 //! (RequestDeviceError), из-за чего встроенный
 //! `RenderDiagnosticsPlugin` 0.20 на Metal CPU-only (док «only Vulkan
 //! and DX12» точен); `write_timestamp` на CommandEncoder bevy глушит
-//! на macOS сам (фликер на Tahoe, bevy#22257). Пустой пасс с меткой на
-//! начале — документированный Metal-паттерн «render pass with no
-//! attachments», из-под обоих запретов.
+//! на macOS сам (фликер на Tahoe, bevy#22257). Пустой compute pass с
+//! меткой на начале — из-под обоих запретов: compute-пасс аттачментов
+//! не требует (render-пасс без них wgpu 30 не валиден), метки на
+//! границах пасса — фича `TIMESTAMP_QUERY`.
 //!
 //! Метки 0..=5: 0 до opaque-пасса, 1 после opaque (до transparent),
 //! 2 после transparent, 3 после PostProcess (bloom + tonemapping), 4
@@ -48,14 +49,14 @@ use bevy::prelude::*;
 use bevy::render::RenderApp;
 use bevy::render::RenderStartup;
 use bevy::render::camera::ExtractedCamera;
-use bevy::render::render_resource::{
-    BufferDescriptor, BufferUsages, MapMode, PollType, RenderPassDescriptor,
-};
+use bevy::render::render_resource::{BufferDescriptor, BufferUsages, MapMode, PollType};
 use bevy::render::renderer::{
     RenderContext, RenderDevice, RenderGraphSystems, RenderQueue, ViewQuery,
 };
 use bevy::ui_render::ui_pass;
-use wgpu::{QuerySet, QuerySetDescriptor, QueryType, RenderPassTimestampWrites};
+use wgpu::{
+    ComputePassDescriptor, ComputePassTimestampWrites, QuerySet, QuerySetDescriptor, QueryType,
+};
 
 /// Меток GPU-границ в кадре (и слотов query set / буфера).
 const SLOTS: usize = 6;
@@ -165,8 +166,11 @@ fn setup(mut commands: Commands, device: Res<RenderDevice>, queue: Res<RenderQue
     commands.insert_resource(GpuCutRx(Mutex::new(rx)));
 }
 
-/// Одна GPU-граница: пустой render pass с меткой на начале. Только для
-/// камеры в окно — офскрин-кадр меток не ставит.
+/// Одна GPU-граница: пустой compute pass с меткой на начале (пасс без
+/// вызовов, заканчивается drop-ом). Compute-пасс аттачментов не требует
+/// (render-пасс без аттачментов wgpu 30 не валиден), `timestamp_writes`
+/// в дескрипторе хватает фичи `TIMESTAMP_QUERY`. Только для камеры в
+/// окно — офскрин-кадр меток не ставит.
 fn mark<const I: usize>(
     mut ctx: RenderContext,
     res: Res<GpuCutRes>,
@@ -178,18 +182,14 @@ fn mark<const I: usize>(
     ) {
         return;
     }
-    ctx.begin_tracked_render_pass(RenderPassDescriptor {
+    drop(ctx.command_encoder().begin_compute_pass(&ComputePassDescriptor {
         label: Some("gpu_cut_marker"),
-        color_attachments: &[],
-        depth_stencil_attachment: None,
-        timestamp_writes: Some(RenderPassTimestampWrites {
+        timestamp_writes: Some(ComputePassTimestampWrites {
             query_set: &res.query_set,
             beginning_of_pass_write_index: Some(I as u32),
             end_of_pass_write_index: None,
         }),
-        occlusion_query_set: None,
-        multiview_mask: None,
-    });
+    }));
 }
 
 /// Копия меток кадра в ring-буфер + запрос чтения; энкодер resolve уходит
