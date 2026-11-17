@@ -1,8 +1,10 @@
 # Pathfinding pipeline — backends, NavMode, dispatcher
 
-Detail behind `navigation/{astar,backend,mode,northstar}.rs` and
-`movement/pathfinding.rs`. The rules summary lives in the navigation-deep skill; the
-terms in `CONTEXT.md` (Navigation, Determinism).
+Detail behind `navigation/{astar,backend,mode,northstar.rs}` and
+`movement/pathfinding.rs` (the dispatchers and receivers; the deterministic budget
+queue and the answer acceptance live beside them in
+`movement/pathfinding/{budget,accept}.rs`). The rules summary lives in the
+navigation-deep skill; the terms in `CONTEXT.md` (Navigation, Determinism).
 
 ## PathfindingAlgorithm
 
@@ -84,7 +86,9 @@ mode writes it once on `WorldStarted` and freezes it for the run, while the live
 re-takes it every frame in `PreUpdate` (`refresh_backend`); `spawn_path_task` moves it into the
 async task, so both dispatchers share `Backend::search` and the modes can only differ
 in WHEN an answer is collected, never in what is computed. The collecting side is
-shared the same way: both receivers call one `accept_answer` (tally + apply), so what
+shared the same way: both receivers call one `accept_answer` (tally + apply — the shared
+body lives in `movement/pathfinding/accept.rs` with `AnswerTally`, unit-tested as a
+value), so what
 is genuinely per-mode shrinks to *how the answer is obtained* — `check_ready` with the
 hang watchdog in the live path, `block_on` charged to `SimLoad` in the deterministic
 one — plus the traversal order. The `answered`/`failed` pair is written by
