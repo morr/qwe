@@ -399,10 +399,7 @@ impl Plugin for SimTimePlugin {
             // предохранитель — стадия `Guard`, первая в перечне тика: решение
             // «оборвать прогон» принимается до того, как очередной тик начнёт
             // тратить время
-            .add_systems(
-                FixedUpdate,
-                guard_frame_budget.in_set(TickStage::Guard),
-            )
+            .add_systems(FixedUpdate, guard_frame_budget.in_set(TickStage::Guard))
             .add_systems(Startup, pin_max_delta)
             .add_systems(Last, archetype_census)
             // новый прогон — часы и долг тиков с нуля (и по R, и по смене

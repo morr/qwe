@@ -123,8 +123,7 @@ mod tests {
     #[test]
     fn the_schedule_chains_the_stages_in_the_listed_order() {
         let mut app = App::new();
-        app.add_plugins(MinimalPlugins)
-            .add_plugins(TickStagePlugin);
+        app.add_plugins(MinimalPlugins).add_plugins(TickStagePlugin);
         for stage in TickStage::ORDER {
             app.add_systems(FixedUpdate, noop.in_set(*stage));
         }
