@@ -38,8 +38,10 @@ use bevy::color::Mix;
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
-use self::arches::arches_by_building;
-use self::garages::garage_runs;
+use bevy::platform::collections::HashMap;
+
+use self::arches::{ArchOpenings, arches_by_building};
+use self::garages::{GarageRun, garage_runs};
 pub(crate) use self::heights::height_or_default;
 use self::heights::{height_mix, height_of};
 use self::layers::{extrusion_builder, facade_and_roof_builders};
@@ -48,6 +50,7 @@ use self::order::draw_order;
 pub use self::roofs::{RoofShape, ShapeFacts, shape_facts};
 pub(crate) use self::shadows::SHADOW_LENGTH_RANGE;
 use self::shadows::{ShadowSweeps, roof_shadow_builder, shadow_builder};
+use self::temples::Sanctuary;
 use crate::map::meshing::{MeshBuilder, min_area_rect};
 use crate::map::osm::{MapData, PolyArea, RoadLine};
 use crate::map::surface::{self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec};
@@ -284,10 +287,19 @@ pub fn measure_layers(
     // не делают. Вершин не даёт: это не меш, а вход
     let footprints = HouseFootprint::all(buildings);
 
-    // общие входы слоёв — порядок отрисовки и теневые развёртки: их строят
-    // один раз на сборку и делят между сборщиками, поэтому у каждого свой
-    // ряд, ровно как `breaks` и `parking` у слоя машин. Вершин они не дают:
-    // это не меш, а вход
+    // общие входы сборки — храмы города, прогоны и проходы: один расчёт на
+    // замер, свой ряд, как у порядка и развёрток
+    let started = Instant::now();
+    let ctx = CityContext::of(buildings, passages, &footprints);
+    costs.push(LayerCost {
+        name: "context",
+        vertices: 0,
+        elapsed: started.elapsed(),
+    });
+
+    // порядок отрисовки и теневые развёртки: их строят один раз на сборку и
+    // делят между сборщиками, поэтому у каждого свой ряд, ровно как `breaks`
+    // и `parking` у слоя машин. Вершин они не дают: это не меш, а вход
     let started = Instant::now();
     let order = if mode.lifts() {
         let order = draw_order(buildings, Lean::of(), &footprints);
@@ -302,24 +314,13 @@ pub fn measure_layers(
     };
     let started = Instant::now();
     let sweeps = mode.casts_shadows().then(|| {
-        let sweeps = ShadowSweeps::of(buildings, &footprints);
+        let sweeps = ShadowSweeps::of(buildings, &footprints, &ctx.sanctuary);
         costs.push(LayerCost {
             name: "sweeps",
             vertices: 0,
             elapsed: started.elapsed(),
         });
         sweeps
-    });
-    // арки — один расчёт на сборку: его едят и экструзия, и заплатка арок
-    // в наземных тенях; в плоских режимах фасадный сборщик режет их сам
-    let started = Instant::now();
-    let arches = mode
-        .lifts()
-        .then(|| arches_by_building(buildings, passages));
-    costs.push(LayerCost {
-        name: "arches",
-        vertices: 0,
-        elapsed: started.elapsed(),
     });
 
     // замеряется число вершин, а не сам сборщик: у плоского режима билдеров
@@ -336,22 +337,16 @@ pub fn measure_layers(
 
     if mode.lifts() {
         measure("extruded", &mut || {
-            extrusion_builder(
-                buildings,
-                detail,
-                &order,
-                arches.as_ref().expect("в 2.5D арки посчитаны"),
-                &footprints,
-            )
-            .0
-            .iter()
-            .map(|builder| builder.vertex_count())
-            .sum()
+            extrusion_builder(buildings, detail, &order, &ctx, &footprints)
+                .0
+                .iter()
+                .map(|builder| builder.vertex_count())
+                .sum()
         });
     } else {
         measure("facades+roofs", &mut || {
             let (facades, roofs) =
-                facade_and_roof_builders(buildings, passages, detail, &footprints);
+                facade_and_roof_builders(buildings, detail, &ctx, &footprints);
             facades.vertex_count() + roofs.vertex_count()
         });
     }
@@ -363,7 +358,7 @@ pub fn measure_layers(
                 buildings,
                 sweeps,
                 mode.lifts(),
-                arches.as_ref(),
+                Some(&ctx.arches),
                 &footprints,
             )
             .vertex_count()
@@ -375,6 +370,7 @@ pub fn measure_layers(
             roof_shadow_builder(
                 buildings,
                 sweeps,
+                &ctx.sanctuary,
                 mode.lifts().then_some(order.as_slice()),
                 &footprints,
             )
@@ -382,6 +378,41 @@ pub fn measure_layers(
         });
     }
     costs
+}
+
+/// Общие входы зданиевой сборки — то, что каждый билдер раньше считал у себя,
+/// а теперь считается **один раз на сборку слоя** и передаётся всем.
+///
+/// Три вещи: храмы города в сборе ([`Sanctuary`] — его строили и экструзия,
+/// и оба теневых сборщика, и фасадный), гаражные прогоны (`garage_runs` — их
+/// ели экструзия, фасады и строка отчёта) и проходы сквозь стены
+/// ([`ArchOpenings`] — в 2.5D их режет экструзия, в плоских режимах фасадный
+/// сборщик, и каждый зов [`arches_by_building`] сам). Витринам
+/// ([`layers::push_house`]) город не нужен: они строят один дом и собирают
+/// свой [`Sanctuary`] из него же.
+pub(super) struct CityContext<'a> {
+    /// Храмы города: приподнятые части, общие главы и колокольни.
+    pub(super) sanctuary: Sanctuary,
+    /// Гаражные прогоны: индекс бокса → прогон.
+    pub(super) runs: HashMap<usize, GarageRun>,
+    /// Проходы `building_passage` сквозь стены: индекс дома → его проёмы.
+    pub(super) arches: ArchOpenings<'a>,
+}
+
+impl<'a> CityContext<'a> {
+    /// Один расчёт на сборку: `footprints` — пятна домов, посчитанные
+    /// вызывающим ([`HouseFootprint::all`]), им пользуются и храмы, и прогоны.
+    pub(super) fn of(
+        buildings: &[PolyArea],
+        passages: &'a [RoadLine],
+        footprints: &[Option<HouseFootprint>],
+    ) -> Self {
+        Self {
+            sanctuary: Sanctuary::of(buildings, footprints),
+            runs: garage_runs(buildings),
+            arches: arches_by_building(buildings, passages),
+        }
+    }
 }
 
 /// Зданиевые слои, разложенные по меткам, под которыми они уходят в мир.
@@ -495,11 +526,11 @@ pub fn mesh_buildings(
         .lifts()
         .then(|| draw_order(buildings, Lean::of(), &footprints));
 
-    // арки — один расчёт на сборку слоя: их едят и экструзия, и заплатка
-    // арок в наземных тенях; в плоских режимах фасадный сборщик режет их сам
-    let arches = order
-        .is_some()
-        .then(|| arches_by_building(buildings, passages));
+    // общие входы сборки — храмы города, прогоны и проходы сквозь стены:
+    // каждый билдер раньше считал их у себя (Sanctuary::of ×5, garage_runs
+    // ×3, арки дважды), теперь один расчёт на сборку слоя. Проходы нужны и
+    // плоским режимам — фасадный сборщик режет их сам
+    let ctx = CityContext::of(buildings, passages, &footprints);
 
     // разброс форм крыш считает только слой экструзии — по тому, что легло в меш
     let mut roof_mix = String::from("counted in 2.5D only");
@@ -514,13 +545,7 @@ pub fn mesh_buildings(
             // В общий рез (`LayerMesh::into_chunks`) они не идут: куски уже
             // собраны домами целиком, второй разрез по треугольникам разъял
             // бы дом через границу клетки
-            let (chunks, mix) = extrusion_builder(
-                buildings,
-                detail,
-                order,
-                arches.as_ref().expect("в 2.5D арки посчитаны"),
-                &footprints,
-            );
+            let (chunks, mix) = extrusion_builder(buildings, detail, order, &ctx, &footprints);
             roof_mix = mix.to_string();
             skipped += chunks
                 .iter()
@@ -550,8 +575,7 @@ pub fn mesh_buildings(
                     LayerMesh::new(builder, z, name, material).into_chunks(surface::MAP_CHUNK),
                 );
             };
-            let (facades, roofs) =
-                facade_and_roof_builders(buildings, passages, detail, &footprints);
+            let (facades, roofs) = facade_and_roof_builders(buildings, detail, &ctx, &footprints);
             push(facades, Z_FACADE, "building_facades", MaterialSpec::Flat);
             push(roofs, Z_BUILDING, "building_roofs", MaterialSpec::Roof);
         }
@@ -570,17 +594,11 @@ pub fn mesh_buildings(
         // каждого дома, и раньше их строил каждый сборщик у себя. На кровлях
         // это была большая часть цены слоя
         let sweep_started = Instant::now();
-        let sweeps = ShadowSweeps::of(buildings, &footprints);
+        let sweeps = ShadowSweeps::of(buildings, &footprints, &ctx.sanctuary);
         sweep_time = sweep_started.elapsed();
 
         let shadow_started = Instant::now();
-        let shadows = shadow_builder(
-            buildings,
-            &sweeps,
-            mode.lifts(),
-            arches.as_ref(),
-            &footprints,
-        );
+        let shadows = shadow_builder(buildings, &sweeps, mode.lifts(), Some(&ctx.arches), &footprints);
         shadow_time = shadow_started.elapsed();
         shadow_layers.push(LayerMesh::new(
             shadows,
@@ -593,7 +611,7 @@ pub fn mesh_buildings(
         // единственный кусок тени, который обязан лежать поверх крыши.
         // Своя метка не нужна — деспавнится он вместе с наземным слоем.
         let roof_started = Instant::now();
-        let on_roofs = roof_shadow_builder(buildings, &sweeps, order.as_deref(), &footprints);
+        let on_roofs = roof_shadow_builder(buildings, &sweeps, &ctx.sanctuary, order.as_deref(), &footprints);
         roof_shadow_time = roof_started.elapsed();
         shadow_layers.push(LayerMesh::new(
             on_roofs,
@@ -607,7 +625,7 @@ pub fn mesh_buildings(
     // режим и сколько геометрии добавило оборудование кровель
     let report = BuildingReport {
         buildings: buildings.len(),
-        garage_runs: garage_runs(buildings).len(),
+        garage_runs: ctx.runs.len(),
         mode,
         clutter: bucket.index == 0,
         vertices: layers

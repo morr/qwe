@@ -96,13 +96,18 @@ pub(super) struct ShadowSweeps {
 }
 
 impl ShadowSweeps {
-    pub(super) fn of(buildings: &[PolyArea], footprints: &[Option<HouseFootprint>]) -> Self {
+    /// `sanctuary` — общие входы сборки ([`super::CityContext`]): у части на
+    /// крыше храма и у колокольни коробки нет, их развёртки — венцы.
+    pub(super) fn of(
+        buildings: &[PolyArea],
+        footprints: &[Option<HouseFootprint>],
+        sanctuary: &Sanctuary,
+    ) -> Self {
         let stretch = sun_stretch();
         let (min_length, max_length) = (
             *SHADOW_LENGTH_RANGE.start() * stretch,
             *SHADOW_LENGTH_RANGE.end() * stretch,
         );
-        let sanctuary = Sanctuary::of(buildings, footprints);
         // дом от дома не зависит: развёртки считаются по ядрам, сбор — в
         // порядке домов (`in_parallel` сохраняет порядок входа)
         let indexed: Vec<usize> = (0..buildings.len()).collect();
@@ -235,6 +240,7 @@ pub(super) fn shadow_builder(
 pub(super) fn roof_shadow_builder(
     buildings: &[PolyArea],
     sweeps: &ShadowSweeps,
+    sanctuary: &Sanctuary,
     order: Option<&[usize]>,
     footprints: &[Option<HouseFootprint>],
 ) -> MeshBuilder {
@@ -273,7 +279,6 @@ pub(super) fn roof_shadow_builder(
     }
     // тела соседей по той же сетке: они не отбрасывают тень, а съедают её
     let bodies = DrawnBodies::of(buildings, &boxes, order, footprints);
-    let sanctuary = Sanctuary::of(buildings, footprints);
 
     // цель от цели не зависит: свои отбрасывающие, своё пересечение и своё
     // вычитание — считаются по ядрам (`in_parallel` возвращает результаты в

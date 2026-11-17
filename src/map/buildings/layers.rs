@@ -919,28 +919,25 @@ pub(super) fn wall_colors(
 /// Фасадная полоса + крыши (режимы Facade / Shadows / ShadowsTint).
 pub(super) fn facade_and_roof_builders(
     buildings: &[PolyArea],
-    passages: &[RoadLine],
     detail: RoofDetail,
+    ctx: &CityContext<'_>,
     footprints: &[Option<HouseFootprint>],
 ) -> (MeshBuilder, MeshBuilder) {
-    let arches = arches_by_building(buildings, passages);
-    let runs = garage_runs(buildings);
     let mut facades = MeshBuilder::default();
     // крыши рисует `RoofMaterial`, и рамку кровли ему даёт этот атрибут
     let mut roofs = MeshBuilder::with_roof_coords();
-    let sanctuary = Sanctuary::of(buildings, footprints);
     let mut placed = Vec::new();
     for (index, building) in buildings.iter().enumerate() {
         let fp = footprints[index];
         // фактуры у плоской полосы нет — она идёт одним earcut-полигоном, — но
         // цвет у неё тот же, что был бы у настоящей стены в 2.5D
         let facade_color = wall_look(building).base;
-        let look = look_of(building, runs.get(&index), fp);
+        let look = look_of(building, ctx.runs.get(&index), fp);
         let color = roof_color(building, &look, detail.tinted);
-        placed.extend(sanctuary.crowns(index, building, facade_color, color, Vec2::ZERO, fp));
+        placed.extend(ctx.sanctuary.crowns(index, building, facade_color, color, Vec2::ZERO, fp));
         // часть на крыше храма — это барабан с главой, отдельная колокольня —
         // столп ярусами: коробки у них нет
-        if sanctuary.boxless(index, building) {
+        if ctx.sanctuary.boxless(index, building) {
             continue;
         }
 
@@ -959,7 +956,7 @@ pub(super) fn facade_and_roof_builders(
         facades.push_polygon(&facade_outer, &facade_holes, facade_color.into());
         // крыши — отдельный слой поверх фасадов, так что вырезать проём из
         // полосы достаточно: над аркой крыша останется целой сама собой
-        if let Some(passages) = arches.get(&index) {
+        if let Some(passages) = ctx.arches.get(&index) {
             push_arches(&mut facades, building, passages, offset);
         }
         // двускатная крыша в плоском режиме — два ската разного тона в
@@ -1056,7 +1053,7 @@ pub(super) fn extrusion_builder(
     buildings: &[PolyArea],
     detail: RoofDetail,
     order: &[usize],
-    arches: &ArchOpenings,
+    ctx: &CityContext<'_>,
     footprints: &[Option<HouseFootprint>],
 ) -> (Vec<MeshBuilder>, RoofMix) {
     use bevy::platform::collections::HashMap;
@@ -1065,8 +1062,6 @@ pub(super) fn extrusion_builder(
     use crate::map::surface::MAP_CHUNK;
 
     let lean = Lean::of();
-    let runs = garage_runs(buildings);
-    let sanctuary = Sanctuary::of(buildings, footprints);
 
     // стены и крыши едут одним мешем (painter's порядок общий), так что
     // рамку кровли несёт и он: у стен она нулевая, у крыш своя.
@@ -1090,14 +1085,14 @@ pub(super) fn extrusion_builder(
         let building = &buildings[index];
         let cell = (building_center(building) / MAP_CHUNK).floor().as_ivec2();
         let fp = footprints[index];
-        let look = look_of(building, runs.get(&index), fp);
+        let look = look_of(building, ctx.runs.get(&index), fp);
         let color = roof_color(building, &look, detail.tinted);
-        let wall = wall_of_run(building, runs.get(&index));
+        let wall = wall_of_run(building, ctx.runs.get(&index));
         let lift = lift_of_footprint(building, fp);
-        let crowns = sanctuary.crowns(index, building, wall.base, color, lift, fp);
+        let crowns = ctx.sanctuary.crowns(index, building, wall.base, color, lift, fp);
         // часть на крыше храма — барабан с главой, отдельная колокольня — столп
         // ярусами: коробки от земли у них нет
-        if sanctuary.boxless(index, building) {
+        if ctx.sanctuary.boxless(index, building) {
             return HousePart {
                 cell,
                 builder: MeshBuilder::with_roof_coords(),
@@ -1107,7 +1102,8 @@ pub(super) fn extrusion_builder(
         }
         // арки вырезаются из стен по-настоящему: сквозь проём видны нижние
         // слои — дорога, идущая сквозь дом, и всё, что движок рисует под ней
-        let (openings, tunnel) = arches
+        let (openings, tunnel) = ctx
+            .arches
             .get(&index)
             .map(|passages| {
                 let openings = arch_openings(building, passages, lift, -lean.dir());

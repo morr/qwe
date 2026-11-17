@@ -96,16 +96,15 @@ pub(super) fn ground_shadows(
     passages: &[RoadLine],
     extruded: bool,
 ) -> MeshBuilder {
-    use super::arches::arches_by_building;
     use super::shadows::{ShadowSweeps, shadow_builder};
 
-    let arches = extruded.then(|| arches_by_building(list, passages));
     let footprints = super::HouseFootprint::all(list);
+    let ctx = super::CityContext::of(list, passages, &footprints);
     shadow_builder(
         list,
-        &ShadowSweeps::of(list, &footprints),
+        &ShadowSweeps::of(list, &footprints, &ctx.sanctuary),
         extruded,
-        arches.as_ref(),
+        Some(&ctx.arches),
         &footprints,
     )
 }
@@ -120,13 +119,12 @@ pub(super) fn extruded_mesh(
     passages: &[RoadLine],
     detail: RoofDetail,
 ) -> MeshBuilder {
-    use super::arches::arches_by_building;
     use super::layers::extrusion_builder;
 
-    let arches = arches_by_building(list, passages);
     let footprints = super::HouseFootprint::all(list);
+    let ctx = super::CityContext::of(list, passages, &footprints);
     let order = order::draw_order(list, Lean::of(), &footprints);
-    let (chunks, _) = extrusion_builder(list, detail, &order, &arches, &footprints);
+    let (chunks, _) = extrusion_builder(list, detail, &order, &ctx, &footprints);
     MeshBuilder::merge(chunks)
 }
 
