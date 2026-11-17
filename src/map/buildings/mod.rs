@@ -345,8 +345,7 @@ pub fn measure_layers(
         });
     } else {
         measure("facades+roofs", &mut || {
-            let (facades, roofs) =
-                facade_and_roof_builders(buildings, detail, &ctx, &footprints);
+            let (facades, roofs) = facade_and_roof_builders(buildings, detail, &ctx, &footprints);
             facades.vertex_count() + roofs.vertex_count()
         });
     }
@@ -598,7 +597,13 @@ pub fn mesh_buildings(
         sweep_time = sweep_started.elapsed();
 
         let shadow_started = Instant::now();
-        let shadows = shadow_builder(buildings, &sweeps, mode.lifts(), Some(&ctx.arches), &footprints);
+        let shadows = shadow_builder(
+            buildings,
+            &sweeps,
+            mode.lifts(),
+            Some(&ctx.arches),
+            &footprints,
+        );
         shadow_time = shadow_started.elapsed();
         shadow_layers.push(LayerMesh::new(
             shadows,
@@ -611,7 +616,13 @@ pub fn mesh_buildings(
         // единственный кусок тени, который обязан лежать поверх крыши.
         // Своя метка не нужна — деспавнится он вместе с наземным слоем.
         let roof_started = Instant::now();
-        let on_roofs = roof_shadow_builder(buildings, &sweeps, &ctx.sanctuary, order.as_deref(), &footprints);
+        let on_roofs = roof_shadow_builder(
+            buildings,
+            &sweeps,
+            &ctx.sanctuary,
+            order.as_deref(),
+            &footprints,
+        );
         roof_shadow_time = roof_started.elapsed();
         shadow_layers.push(LayerMesh::new(
             on_roofs,

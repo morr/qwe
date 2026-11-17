@@ -25,12 +25,12 @@ use bevy::color::Mix;
 use bevy::prelude::*;
 
 use super::Lean;
+use super::classify::{BuildingClass, BuildingKind, classify};
 use super::layers::{silhouette_edges, wall_colors};
 use super::material::{RoofKind, RoofLook};
 use crate::map::meshing::MeshBuilder;
-use super::classify::{BuildingClass, BuildingKind, classify};
-use crate::map::osm::model::{point_in_area, signed_ring_area};
 use crate::map::osm::PolyArea;
+use crate::map::osm::model::{point_in_area, signed_ring_area};
 use crate::map::seed::Lcg;
 use crate::map::shadow;
 use crate::map::shadow_dir;

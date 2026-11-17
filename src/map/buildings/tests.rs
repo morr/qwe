@@ -826,7 +826,10 @@ fn a_hull_deeper_than_housing_carries_no_balconies() {
             AreaKind::Building,
         );
         // корпус глубже жилого — класс, а не свой перебор глубин у стен
-        assert!(matches!(classify(&hull, None).kind(), BuildingKind::DeepHull(_)));
+        assert!(matches!(
+            classify(&hull, None).kind(),
+            BuildingKind::DeepHull(_)
+        ));
         let kind = wall_of(&hull).kind;
         assert!(
             !matches!(kind, WallKind::Panel | WallKind::Brick),
@@ -842,7 +845,10 @@ fn a_hull_deeper_than_housing_carries_no_balconies() {
             Some(27.0),
             AreaKind::Building,
         );
-        assert!(!matches!(classify(&slab, None).kind(), BuildingKind::DeepHull(_)));
+        assert!(!matches!(
+            classify(&slab, None).kind(),
+            BuildingKind::DeepHull(_)
+        ));
         slab_kinds.push(wall_of(&slab).kind);
 
         // каре 60 × 60 с двором 30 × 30: габарит 60, крыло 15
@@ -852,7 +858,10 @@ fn a_hull_deeper_than_housing_carries_no_balconies() {
             AreaKind::Building,
         );
         court.holes = vec![at(rect(Vec2::splat(15.0), Vec2::splat(45.0)), offset)];
-        assert!(!matches!(classify(&court, None).kind(), BuildingKind::DeepHull(_)));
+        assert!(!matches!(
+            classify(&court, None).kind(),
+            BuildingKind::DeepHull(_)
+        ));
         court_kinds.push(wall_of(&court).kind);
     }
     // жилая таблица как была: панель у пластины и у каре встречается
@@ -927,7 +936,10 @@ fn a_pitched_roof_goes_on_houses_and_small_boxes_only() {
     flats.building_use = BuildingUse::Apartments;
     assert!(!classify(&flats, None).is_pitched());
     let tower = building(square(), None, AreaKind::Kremlin);
-    assert!(!classify(&tower, None).is_pitched(), "the kremlin keeps its flat roof");
+    assert!(
+        !classify(&tower, None).is_pitched(),
+        "the kremlin keeps its flat roof"
+    );
     let mut yard = house.clone();
     yard.holes.push(vec![
         Vec2::new(4.0, 2.0),
@@ -935,7 +947,10 @@ fn a_pitched_roof_goes_on_houses_and_small_boxes_only() {
         Vec2::new(6.0, 4.0),
         Vec2::new(4.0, 4.0),
     ]);
-    assert!(!classify(&yard, None).is_pitched(), "a courtyard has no ridge");
+    assert!(
+        !classify(&yard, None).is_pitched(),
+        "a courtyard has no ridge"
+    );
 }
 
 #[test]
@@ -958,7 +973,15 @@ fn the_ridge_runs_along_the_long_axis_of_the_rotated_footprint() {
     // конёк — вдоль длинной оси
     let mut house = building(ring, None, AreaKind::Building);
     house.building_use = BuildingUse::House;
-    let roof = gable_roof(&house, &classify(&house, None), Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE, None).unwrap();
+    let roof = gable_roof(
+        &house,
+        &classify(&house, None),
+        Vec2::ZERO,
+        |_| Vec2::ZERO,
+        Srgba::WHITE,
+        None,
+    )
+    .unwrap();
     let ridge = roof.slopes[0].0[2] - roof.slopes[0].0[3];
     let long = rect[1] - rect[0];
     assert!(ridge.normalize().dot(long.normalize()).abs() > 0.999);
@@ -978,7 +1001,17 @@ fn an_l_shaped_house_is_pitched_but_takes_no_gable() {
     let mut house = building(l_shape, None, AreaKind::Building);
     house.building_use = BuildingUse::House;
     assert!(classify(&house, None).is_pitched());
-    assert!(gable_roof(&house, &classify(&house, None), Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE, None).is_none());
+    assert!(
+        gable_roof(
+            &house,
+            &classify(&house, None),
+            Vec2::ZERO,
+            |_| Vec2::ZERO,
+            Srgba::WHITE,
+            None
+        )
+        .is_none()
+    );
 }
 
 #[test]
@@ -1004,7 +1037,17 @@ fn a_skewed_quad_takes_no_gable_whose_corner_hangs_off_the_wall() {
         facts.rect_fill
     );
     assert!(facts.gable_overhang > 2.0, "{}", facts.gable_overhang);
-    assert!(gable_roof(&house, &classify(&house, None), Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE, None).is_none());
+    assert!(
+        gable_roof(
+            &house,
+            &classify(&house, None),
+            Vec2::ZERO,
+            |_| Vec2::ZERO,
+            Srgba::WHITE,
+            None
+        )
+        .is_none()
+    );
     // посев, по которому дому выпадает двускатная (`(seed >> 5) % 10 >= 4`)
     let gabled_seed = 5 << 5;
     assert!(matches!(
@@ -1032,7 +1075,17 @@ fn a_skewed_quad_takes_no_gable_whose_corner_hangs_off_the_wall() {
         AreaKind::Building,
     );
     sloppy.building_use = BuildingUse::House;
-    assert!(gable_roof(&sloppy, &classify(&sloppy, None), Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE, None).is_some());
+    assert!(
+        gable_roof(
+            &sloppy,
+            &classify(&sloppy, None),
+            Vec2::ZERO,
+            |_| Vec2::ZERO,
+            Srgba::WHITE,
+            None
+        )
+        .is_some()
+    );
 }
 
 #[test]
@@ -1040,7 +1093,17 @@ fn gable_roof_itself_refuses_a_building_that_is_not_gabled() {
     let _sun = crate::map::default_sun();
     let mut flats = building(oblong(8.0, 20.0), None, AreaKind::Building);
     flats.building_use = BuildingUse::Apartments;
-    assert!(gable_roof(&flats, &classify(&flats, None), Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE, None).is_none());
+    assert!(
+        gable_roof(
+            &flats,
+            &classify(&flats, None),
+            Vec2::ZERO,
+            |_| Vec2::ZERO,
+            Srgba::WHITE,
+            None
+        )
+        .is_none()
+    );
 }
 
 #[test]
@@ -1359,7 +1422,15 @@ fn an_l_shaped_house_gets_a_cross_gable_instead_of_a_hip_or_a_flat_one() {
     let mut block = building(oblong(30.0, 80.0), Some(15.0), AreaKind::Building);
     block.building_use = BuildingUse::Apartments;
     assert!(matches!(
-        roofing(&block, &classify(&block, None), Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE, 0, None),
+        roofing(
+            &block,
+            &classify(&block, None),
+            Vec2::ZERO,
+            |_| Vec2::ZERO,
+            Srgba::WHITE,
+            0,
+            None
+        ),
         Roofing::Flat
     ));
 }

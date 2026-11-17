@@ -18,8 +18,8 @@
 //! **Тег всегда сильнее вывода.** Всё это включается ровно там, где
 //! `PolyArea::height` пуст.
 
-use super::classify::{BuildingKind, Shape, classify};
 use super::HouseFootprint;
+use super::classify::{BuildingKind, Shape, classify};
 use crate::map::osm::{BuildingUse, PolyArea, Sacred, SacredForm};
 use crate::settings::STOREY_HEIGHT;
 
@@ -130,9 +130,9 @@ pub(super) fn inferred_height(kind: BuildingKind, seed: u32, building: &PolyArea
         BuildingKind::Shed => pick(&SHED_HEIGHTS, seed),
         // корпус — этажами по форме пятна; контора — по той же форме, что и
         // жильё
-        BuildingKind::Housing(shape) | BuildingKind::DeepHull(shape) | BuildingKind::Office(shape) => {
-            STOREY_HEIGHT * pick(shape.storeys_table(), seed)
-        }
+        BuildingKind::Housing(shape)
+        | BuildingKind::DeepHull(shape)
+        | BuildingKind::Office(shape) => STOREY_HEIGHT * pick(shape.storeys_table(), seed),
         // торговля меряется не этажами, а размером: гипермаркет — оболочка
         // над одним высоким залом, магазин у дома — павильон
         BuildingKind::BigBox => pick(&BIG_BOX_HEIGHTS, seed),
@@ -183,9 +183,9 @@ pub(super) fn height_mix(buildings: &[PolyArea], footprints: &[Option<HouseFootp
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bevy::math::Vec2;
-    use crate::map::osm::model::is_big_box;
     use crate::map::osm::AreaKind;
+    use crate::map::osm::model::is_big_box;
+    use bevy::math::Vec2;
 
     fn building(outer: Vec<Vec2>, building_use: BuildingUse) -> PolyArea {
         PolyArea {

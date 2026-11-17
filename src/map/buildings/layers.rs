@@ -961,7 +961,10 @@ pub(super) fn facade_and_roof_builders(
         // цвет у неё тот же, что был бы у настоящей стены в 2.5D
         let facade_color = house.facade;
         let color = roof_color(building, &house.roof, detail.tinted);
-        placed.extend(ctx.sanctuary.crowns(index, building, facade_color, color, Vec2::ZERO, fp));
+        placed.extend(
+            ctx.sanctuary
+                .crowns(index, building, facade_color, color, Vec2::ZERO, fp),
+        );
         // часть на крыше храма — это барабан с главой, отдельная колокольня —
         // столп ярусами: коробки у них нет
         if ctx.sanctuary.boxless(index, building) {
@@ -1071,7 +1074,9 @@ pub(super) fn extrusion_builder(
         let house = house_look(building, ctx.runs.get(&index), fp);
         let color = roof_color(building, &house.roof, detail.tinted);
         let lift = lift_of_footprint(building, fp);
-        let crowns = ctx.sanctuary.crowns(index, building, house.wall.base, color, lift, fp);
+        let crowns = ctx
+            .sanctuary
+            .crowns(index, building, house.wall.base, color, lift, fp);
         // часть на крыше храма — барабан с главой, отдельная колокольня — столп
         // ярусами: коробки от земли у них нет
         if ctx.sanctuary.boxless(index, building) {
@@ -1295,7 +1300,15 @@ fn push_house_with_arches(
         push_brand_band(builder, building, &house.wall, &span, &cells, lift_dir);
         // вход ложится поверх стены, которой он принадлежит, — порядок кладки
         // внутри дома и есть его глубина
-        push_doors(builder, building, &house.wall, &span, &cells, openings, bottom);
+        push_doors(
+            builder,
+            building,
+            &house.wall,
+            &span,
+            &cells,
+            openings,
+            bottom,
+        );
     }
     builder.set_roof(None);
 

@@ -123,7 +123,10 @@ impl BuildingClass {
     /// Ландмарк — крепость или храм: над ними стоит своё (главы, зубцы,
     /// шатры), и оборудование кровли генератора на них не сажают.
     pub(super) fn is_landmark(&self) -> bool {
-        matches!(self.kind, BuildingKind::Fortress { .. } | BuildingKind::Temple)
+        matches!(
+            self.kind,
+            BuildingKind::Fortress { .. } | BuildingKind::Temple
+        )
     }
 
     /// Крупноформат: решётка зенитных фонарей по колоннам, машинное
@@ -137,7 +140,11 @@ impl BuildingClass {
     pub(super) fn carries_ac(&self) -> bool {
         matches!(
             self.kind,
-            BuildingKind::BigBox | BuildingKind::Shop | BuildingKind::Store | BuildingKind::Office(_) | BuildingKind::Public
+            BuildingKind::BigBox
+                | BuildingKind::Shop
+                | BuildingKind::Store
+                | BuildingKind::Office(_)
+                | BuildingKind::Public
         )
     }
 }
@@ -173,8 +180,8 @@ pub(super) fn classify(building: &PolyArea, fp: Option<HouseFootprint>) -> Build
     {
         kind = BuildingKind::Housing(Shape::Low);
     }
-    let pitched = matches!(kind, BuildingKind::House | BuildingKind::Shed)
-        && building.holes.is_empty();
+    let pitched =
+        matches!(kind, BuildingKind::House | BuildingKind::Shed) && building.holes.is_empty();
     BuildingClass {
         kind,
         height,
@@ -407,35 +414,208 @@ mod tests {
     fn the_building_lands_in_the_class_the_eye_expects() {
         let cases: &[(&str, PolyArea, BuildingKind)] = &[
             // жильё — по форме пятна
-            ("панельная секция", plain(BuildingUse::Apartments), BuildingKind::Housing(Shape::Section)),
-            ("башня", building(oblong(26.0, 30.0), None, AreaKind::Building, BuildingUse::Apartments), BuildingKind::Housing(Shape::Tower)),
-            ("кирпичный корпус", building(oblong(24.0, 60.0), None, AreaKind::Building, BuildingUse::Apartments), BuildingKind::Housing(Shape::Block)),
-            ("малоэтажка", building(oblong(12.0, 20.0), None, AreaKind::Building, BuildingUse::Apartments), BuildingKind::Housing(Shape::Low)),
+            (
+                "панельная секция",
+                plain(BuildingUse::Apartments),
+                BuildingKind::Housing(Shape::Section),
+            ),
+            (
+                "башня",
+                building(
+                    oblong(26.0, 30.0),
+                    None,
+                    AreaKind::Building,
+                    BuildingUse::Apartments,
+                ),
+                BuildingKind::Housing(Shape::Tower),
+            ),
+            (
+                "кирпичный корпус",
+                building(
+                    oblong(24.0, 60.0),
+                    None,
+                    AreaKind::Building,
+                    BuildingUse::Apartments,
+                ),
+                BuildingKind::Housing(Shape::Block),
+            ),
+            (
+                "малоэтажка",
+                building(
+                    oblong(12.0, 20.0),
+                    None,
+                    AreaKind::Building,
+                    BuildingUse::Apartments,
+                ),
+                BuildingKind::Housing(Shape::Low),
+            ),
             // частный сектор — по назначению и пятну
-            ("частный дом любого размера", building(oblong(8.0, 600.0), None, AreaKind::Building, BuildingUse::House), BuildingKind::House),
-            ("тегированный частный дом остаётся домом", tagged(BuildingUse::House, 27.0), BuildingKind::House),
-            ("мелкая коробка без назначения — частный дом", building(square(), None, AreaKind::Building, BuildingUse::Other), BuildingKind::House),
-            ("сарай двора", building(oblong(3.0, 3.0), None, AreaKind::Building, BuildingUse::Other), BuildingKind::Shed),
+            (
+                "частный дом любого размера",
+                building(
+                    oblong(8.0, 600.0),
+                    None,
+                    AreaKind::Building,
+                    BuildingUse::House,
+                ),
+                BuildingKind::House,
+            ),
+            (
+                "тегированный частный дом остаётся домом",
+                tagged(BuildingUse::House, 27.0),
+                BuildingKind::House,
+            ),
+            (
+                "мелкая коробка без назначения — частный дом",
+                building(square(), None, AreaKind::Building, BuildingUse::Other),
+                BuildingKind::House,
+            ),
+            (
+                "сарай двора",
+                building(
+                    oblong(3.0, 3.0),
+                    None,
+                    AreaKind::Building,
+                    BuildingUse::Other,
+                ),
+                BuildingKind::Shed,
+            ),
             // тегированная мелкая коробка, доросшая до корпуса, — не частный
             // сектор: тот редкий случай, где тег высоты побеждает пятно
-            ("девятиэтажка на мелкой коробке — корпус", building(oblong(12.0, 20.0), Some(27.0), AreaKind::Building, BuildingUse::Other), BuildingKind::Housing(Shape::Low)),
-            ("низкая мелкая коробка с тегом — частный дом", building(oblong(12.0, 20.0), Some(6.0), AreaKind::Building, BuildingUse::Other), BuildingKind::House),
+            (
+                "девятиэтажка на мелкой коробке — корпус",
+                building(
+                    oblong(12.0, 20.0),
+                    Some(27.0),
+                    AreaKind::Building,
+                    BuildingUse::Other,
+                ),
+                BuildingKind::Housing(Shape::Low),
+            ),
+            (
+                "низкая мелкая коробка с тегом — частный дом",
+                building(
+                    oblong(12.0, 20.0),
+                    Some(6.0),
+                    AreaKind::Building,
+                    BuildingUse::Other,
+                ),
+                BuildingKind::House,
+            ),
             // торговля — по пятну, а не по тегу
-            ("гипермаркет", building(oblong(80.0, 110.0), None, AreaKind::Building, BuildingUse::Retail), BuildingKind::BigBox),
-            ("магазин у дома", building(oblong(14.0, 20.0), None, AreaKind::Building, BuildingUse::Retail), BuildingKind::Shop),
-            ("торговый зал", building(oblong(40.0, 90.0), None, AreaKind::Building, BuildingUse::Commercial), BuildingKind::Store),
-            ("контора", building(oblong(26.0, 30.0), None, AreaKind::Building, BuildingUse::Commercial), BuildingKind::Office(Shape::Tower)),
+            (
+                "гипермаркет",
+                building(
+                    oblong(80.0, 110.0),
+                    None,
+                    AreaKind::Building,
+                    BuildingUse::Retail,
+                ),
+                BuildingKind::BigBox,
+            ),
+            (
+                "магазин у дома",
+                building(
+                    oblong(14.0, 20.0),
+                    None,
+                    AreaKind::Building,
+                    BuildingUse::Retail,
+                ),
+                BuildingKind::Shop,
+            ),
+            (
+                "торговый зал",
+                building(
+                    oblong(40.0, 90.0),
+                    None,
+                    AreaKind::Building,
+                    BuildingUse::Commercial,
+                ),
+                BuildingKind::Store,
+            ),
+            (
+                "контора",
+                building(
+                    oblong(26.0, 30.0),
+                    None,
+                    AreaKind::Building,
+                    BuildingUse::Commercial,
+                ),
+                BuildingKind::Office(Shape::Tower),
+            ),
             // цех, казённое, гараж — по назначению
-            ("цех", building(oblong(40.0, 90.0), None, AreaKind::Building, BuildingUse::Industrial), BuildingKind::Hall),
-            ("казённое здание", building(oblong(28.0, 32.0), None, AreaKind::Building, BuildingUse::Public), BuildingKind::Public),
-            ("гаражный бокс", building(oblong(6.0, 24.0), None, AreaKind::Building, BuildingUse::Garage), BuildingKind::Garage),
-            ("гаражный блок", plain(BuildingUse::GarageBlock), BuildingKind::Garage),
+            (
+                "цех",
+                building(
+                    oblong(40.0, 90.0),
+                    None,
+                    AreaKind::Building,
+                    BuildingUse::Industrial,
+                ),
+                BuildingKind::Hall,
+            ),
+            (
+                "казённое здание",
+                building(
+                    oblong(28.0, 32.0),
+                    None,
+                    AreaKind::Building,
+                    BuildingUse::Public,
+                ),
+                BuildingKind::Public,
+            ),
+            (
+                "гаражный бокс",
+                building(
+                    oblong(6.0, 24.0),
+                    None,
+                    AreaKind::Building,
+                    BuildingUse::Garage,
+                ),
+                BuildingKind::Garage,
+            ),
+            (
+                "гаражный блок",
+                plain(BuildingUse::GarageBlock),
+                BuildingKind::Garage,
+            ),
             // корпус глубже жилого — по обеим мерам глубины
-            ("корпус без назначения 130 × 145", building(oblong(130.0, 145.0), Some(27.0), AreaKind::Building, BuildingUse::Other), BuildingKind::DeepHull(Shape::Tower)),
+            (
+                "корпус без назначения 130 × 145",
+                building(
+                    oblong(130.0, 145.0),
+                    Some(27.0),
+                    AreaKind::Building,
+                    BuildingUse::Other,
+                ),
+                BuildingKind::DeepHull(Shape::Tower),
+            ),
             // храм и крепость — вне стилизации по назначению
-            ("храм", plain(BuildingUse::Church(Sacred { faith: crate::map::osm::Faith::Orthodox, form: SacredForm::Nave, complex: 0, floor_dm: 0 })), BuildingKind::Temple),
-            ("крепостная башня", building(square(), None, AreaKind::Kremlin, BuildingUse::Other), BuildingKind::Fortress { tower: true }),
-            ("крепостная стена", building(oblong(3.0, 40.0), None, AreaKind::Kremlin, BuildingUse::Other), BuildingKind::Fortress { tower: false }),
+            (
+                "храм",
+                plain(BuildingUse::Church(Sacred {
+                    faith: crate::map::osm::Faith::Orthodox,
+                    form: SacredForm::Nave,
+                    complex: 0,
+                    floor_dm: 0,
+                })),
+                BuildingKind::Temple,
+            ),
+            (
+                "крепостная башня",
+                building(square(), None, AreaKind::Kremlin, BuildingUse::Other),
+                BuildingKind::Fortress { tower: true },
+            ),
+            (
+                "крепостная стена",
+                building(
+                    oblong(3.0, 40.0),
+                    None,
+                    AreaKind::Kremlin,
+                    BuildingUse::Other,
+                ),
+                BuildingKind::Fortress { tower: false },
+            ),
         ];
         for (name, building, expected) in cases {
             let class = classify(building, None);
@@ -450,10 +630,20 @@ mod tests {
         let tower = tagged(BuildingUse::Apartments, 27.0);
         assert_eq!(classify(&tower, None).storeys(), 9.0);
         // торговая коробка делит на свой ярус: восемь метров — один ярус
-        let big_box = building(oblong(80.0, 110.0), Some(8.0), AreaKind::Building, BuildingUse::Retail);
+        let big_box = building(
+            oblong(80.0, 110.0),
+            Some(8.0),
+            AreaKind::Building,
+            BuildingUse::Retail,
+        );
         assert_eq!(classify(&big_box, None).storeys(), 1.0);
         // этажность не бывает нулевой: одноэтажный сарай — один этаж
-        let shed = building(oblong(3.0, 3.0), Some(2.0), AreaKind::Building, BuildingUse::Other);
+        let shed = building(
+            oblong(3.0, 3.0),
+            Some(2.0),
+            AreaKind::Building,
+            BuildingUse::Other,
+        );
         assert_eq!(classify(&shed, None).storeys(), 1.0);
     }
 
@@ -465,11 +655,34 @@ mod tests {
         assert!(classify(&house, None).is_pitched());
         let mut yard = house.clone();
         yard.holes.push(oblong(4.0, 4.0));
-        assert!(!classify(&yard, None).is_pitched(), "a courtyard has no ridge");
-        assert!(classify(&building(square(), None, AreaKind::Building, BuildingUse::Other), None).is_pitched());
-        let tall_box = building(oblong(12.0, 20.0), Some(27.0), AreaKind::Building, BuildingUse::Other);
-        assert!(!classify(&tall_box, None).is_pitched(), "девятиэтажка — не частный сектор");
+        assert!(
+            !classify(&yard, None).is_pitched(),
+            "a courtyard has no ridge"
+        );
+        assert!(
+            classify(
+                &building(square(), None, AreaKind::Building, BuildingUse::Other),
+                None
+            )
+            .is_pitched()
+        );
+        let tall_box = building(
+            oblong(12.0, 20.0),
+            Some(27.0),
+            AreaKind::Building,
+            BuildingUse::Other,
+        );
+        assert!(
+            !classify(&tall_box, None).is_pitched(),
+            "девятиэтажка — не частный сектор"
+        );
         assert!(!classify(&plain(BuildingUse::Apartments), None).is_pitched());
-        assert!(!classify(&building(square(), None, AreaKind::Kremlin, BuildingUse::Other), None).is_pitched());
+        assert!(
+            !classify(
+                &building(square(), None, AreaKind::Kremlin, BuildingUse::Other),
+                None
+            )
+            .is_pitched()
+        );
     }
 }

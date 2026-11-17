@@ -289,6 +289,7 @@ pub fn shape_facts(building: &PolyArea) -> Option<ShapeFacts> {
 /// контуре двускатная не встаёт, возвращается плоская, а не вальма. Витрина
 /// обязана показать сам отказ — подмена выглядела бы как «игра здесь всё-таки
 /// строит скат», чего на самом деле нет.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn roofing_of(
     shape: RoofShape,
     building: &PolyArea,
@@ -302,10 +303,8 @@ pub(super) fn roofing_of(
     match shape {
         RoofShape::Auto => roofing(building, class, lift, ridge_lift, base, seed, fp),
         RoofShape::Flat => Roofing::Flat,
-        RoofShape::Gable => {
-            gable_roof(building, class, lift, &ridge_lift, base, fp)
-                .map_or(Roofing::Flat, Roofing::Gable)
-        }
+        RoofShape::Gable => gable_roof(building, class, lift, &ridge_lift, base, fp)
+            .map_or(Roofing::Flat, Roofing::Gable),
         RoofShape::Hip => {
             hip_roof(building, lift, &ridge_lift, base).map_or(Roofing::Flat, Roofing::Hip)
         }
@@ -327,10 +326,8 @@ pub(super) fn roofing_of(
             house_gable(building, class, lift, &ridge_lift, base, choice, fp)
                 .map_or(Roofing::Flat, Roofing::Gable)
         }
-        RoofShape::Cross => {
-            cross_gable(building, class, lift, &ridge_lift, base)
-                .map_or(Roofing::Flat, Roofing::Gable)
-        }
+        RoofShape::Cross => cross_gable(building, class, lift, &ridge_lift, base)
+            .map_or(Roofing::Flat, Roofing::Gable),
     }
 }
 
@@ -379,10 +376,8 @@ pub(super) fn roofing(
         Some(roof) => Roofing::Hip(roof),
         // на совсем узком контуре вальма выворачивается, а двускатная не
         // встала — пусть будет плоской, это по крайней мере не врёт
-        None => {
-            gable_roof(building, class, lift, &ridge_lift, base, fp)
-                .map_or(Roofing::Flat, Roofing::Gable)
-        }
+        None => gable_roof(building, class, lift, &ridge_lift, base, fp)
+            .map_or(Roofing::Flat, Roofing::Gable),
     }
 }
 
@@ -648,19 +643,11 @@ fn hip_rise(inset: f32) -> f32 {
     (inset * ROOF_PITCH).min(ROOF_RISE_MAX)
 }
 
-/// Дом из **скатной когорты**? Предикат гейтит не два ската, а скатную
-/// крышу вообще: его `false` — это `Roofing::Flat`, а `true` открывает и
-/// двускатную, и вальмовую, причём вальма достаётся в том числе тем, кому
-/// двускатная отказала (Г-образный контур).
-/// Скатная когорта — классификатор: частный сектор
-/// ([`super::classify::BuildingKind`]) без двора. Тегированная мелкая коробка,
-/// доросшая до корпуса, из когорты выпадает вместе со стенами и кровлей.
-///
-/// Удалена как отдельное правило: раньше она дублировала развилку
-/// классификатора и разошлась с ней — у скатной когорты гварда этажности не
-/// было, и девятиэтажка на мелкой коробке получала черепичную двускатную
-/// поверх панельных стен.
-
+// Скатная когорта — классификатор ([`super::classify::BuildingClass::is_pitched`]):
+// частный сектор без двора. Раньше предикат жил здесь, дублировал развилку
+// классификатора и разошёлся с ней — у скатной когорты гварда этажности не
+// было, и девятиэтажка на мелкой коробке получала черепичную двускатную
+// поверх панельных стен.
 
 /// Настоящих метров конька над карнизом для дома шириной `width`.
 pub(super) fn ridge_rise(width: f32) -> f32 {
