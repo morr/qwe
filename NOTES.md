@@ -1,3 +1,77 @@
+# NOTES — deep06 (план углубления, пункт №06: RequestLifecycle, шаги 1–2)
+
+Задача: docs/deepening-plan.md в main checkout (незакоммичен — не коммитить) § 06,
+только шаги 1–2; шаг 3 (тип-владелец фаз Queued/InFlight/Answered/Retired) отложен,
+не открывать. Записи прошлых сессий (deep07, deep02, deep03, deep01, split-giants) — ниже.
+
+## Решения
+
+1. **Модули — `movement/pathfinding/budget.rs` и `movement/pathfinding/accept.rs`,
+   каждый с `tests.rs` рядом** (паттерн split: родитель `pathfinding.rs` держит
+   диспетчеры и приёмники,subjects живут в каталоге). Прецедент — `movement/step/`
+   с его `tests.rs`: тесты по значениям, без `App`.
+2. **`QueuedRequest` — `pub`, поля `pub(super)`.** Тип сидит в сигнатуре
+   `dispatch_pathfinding_requests_deterministic`, ре-экспортируемой наверх
+   (`movement/mod.rs`, используется `determinism` и `movement/tests.rs`):
+   `pub(crate)` дал hard error `private_interfaces` в `cargo build` (на master
+   тип был `pub` в приватном модуле — та же видимость, что у `pub` в приватном
+   `budget.rs`). Поля строит только диспетчер в pathfinding.rs.
+3. **Тесты очереди (10)** — формула единиц от константы (`1 + Чебышёв/
+   PATHFINDING_UNIT_TILES`, ступени ровно на границе делителя), гистерезис
+   подрезки ×2 (до двойного буфер растёт свободно), подрезка хранит самые
+   ранние ключи, «не влезла — обрывает, а не пропускается» (дорогое в голове
+   блокирует всё, уезжает ноль), точный влёт в бюджет (сумма == budget берётся
+   целиком), FIFO-ключ через поведение сортировки (тик → вид → номер),
+   `debug_assert` уникальности ключа пинится `#[should_panic]`.
+4. **Тесты приёмки (9)** — устаревший ответ ничего не трогает; ответ пешке,
+   которая уже не ждёт (состояние ушло), — тоже; спасение с непроходимого
+   (телепорт, оба конца интерполяции, Idle, новое место проходимо); спасённый
+   человек попадает в человеческую сетку (`any_in_cells_around`); недостижимая
+   цель → `PathfindingError` без телепорта; приход из одной точки — путь снят
+   ДО `to_idle` и событие доезжает (observer в сыром World ловит
+   `MovableReachedDestinationEvent`); свежий путь начинается со второго
+   waypoint; подрезка режет и равную дистанцию (граница `<=`); предел подрезки
+   — ровно `REPATH_TRIM_LIMIT` срезов.
+5. **Техника тестов приёмки** — системные параметры в сыром `World` через
+   `SystemState<(Diagnostics, Commands, Option<ResMut<SpatialGrid<Human>>>)>`:
+   компоненты вынимаются `entity_mut(e).take::<T>()` ДО `get_mut` (иначе займ
+   мира пересекается), `params.apply(world)` применяет очередь команд и
+   триггерит наблюдателя прихода. `DiagnosticsStore::default()` вставляется
+   ресурсом — `Res` внутри `Diagnostics` обязателен. `bevy_ecs` 0.20: 
+   `SystemState::get_mut` возвращает `Result`.
+6. **Найдено по ходу**: `Movable` несёт `#[require(.. NeedsWanderTarget ..)]` —
+   маркер есть у любой пешки с рождения, поэтому «маркера нет» в тестах
+   устаревшего/ушедшего ответа не проверяется (не сигнал, а свойство спавна).
+   `request_units` несёт мёртвый `.max(0)` (abs() уже неотрицателен) — оставлен
+   как был: извлечение без смены поведения.
+7. **Доки** — новых терминов модуль не вводит (глоссарийные *Dispatch rate* и
+   *RequestedAt* не изменились), поэтому CONTEXT.md получил только указатель
+   «где живёт» в *Dispatch rate*; determinism SKILL.md — указатели в «Dispatch
+   rate» и «The FIFO key»; navigation-deep `references/pipeline.md` — шапка и
+   упоминание `accept_answer` назвали оба файла.
+
+## Статус
+
+- [x] worktree .worktrees/deep06 (master b7e89340), target засеян CoW, assets/osm
+      rsync -a (mtime сохранён)
+- [x] скиллы git/bevy/navigation-deep/determinism загружены до первого гейта
+- [x] 59d9c5bb шаг 1: бюджетная очередь → budget.rs + 10 юнит-тестов
+- [x] d0140369 шаг 2: accept_answer → accept.rs + 9 юнит-тестов
+- [x] e34bca09 фикс лайков серии: QueuedRequest обратно pub (private_interfaces),
+      drop() только у счётчика (у системных параметров Drop нет) + rustfmt-перекладки
+- [x] check.sh OK: 1583 lib-теста (master 1564 + 19 новых), clippy чист, fmt чист;
+      tests/determinism 5/5 — реплеи зелёные (конвейер ответов тронут перемещением)
+
+## Вердикт по перфу
+
+Перемещение кода без новой работы: ни на кадр (диспетчеры и приёмники зовут те же
+функции через `use self::`), ни на элемент загрузки (очередь и приёмка работают
+только в `FixedUpdate`/`Update` и при ответах поиска — путей загрузки это не
+касается). Строки и вызовы те же; `cargo test` полный зелёный. Замер живого
+приложения не нужен.
+
+---
+
 # NOTES — deep07 (план углубления, пункт №07: Census — счётчики один раз)
 
 Задача: docs/deepening-plan.md в main checkout (незакоммичен — не коммитить) § 07,
