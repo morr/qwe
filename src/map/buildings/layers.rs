@@ -12,6 +12,7 @@ use super::arches::{
     ArchOpening, ArchOpenings, TunnelWall, WallCells, arch_openings, arches_by_building,
     push_arches, push_tunnel_walls, push_wall_with_openings, tunnel_walls,
 };
+use super::classify::{BELL_TOWER_TIER, BIG_BOX_TIER, SACRED_TIER};
 use super::clutter::{flat_roof_items, merlons, push_items, ridge_chimney};
 use super::garages::{BAY, FACADE_COS, GarageRect, GarageRun, garage_runs};
 use super::material::{
@@ -108,20 +109,10 @@ fn cell_width(kind: WallKind) -> f32 {
 /// панельной ячейкой стодвадцатиметровая стена «Магнита» делилась на сорок
 /// столбцов, и ленточное окно в каждом читалось рядом квартирных.
 const BIG_BOX_BAY: f32 = 7.0;
-/// Ярус стены гипермаркета, м, — вместо жилого этажа, по тому же правилу, по
-/// которому у храма ярус шесть метров: торговый зал с техэтажом над ним — это
-/// один ярус фасада, и делить восьмиметровую оболочку на три этажа окон
-/// значит нарисовать трёхэтажный дом.
-const BIG_BOX_TIER: f32 = 5.5;
 
 /// Ячейка храмовой стены, м: простенок с одним высоким окном шире жилой
 /// панели.
 const SACRED_BAY: f32 = 4.0;
-/// Ярус храмовой стены, м, — вместо жилого этажа: высокое арочное окно на
-/// трёхметровый этаж не встаёт, и храм в 18 м читался бы шестиэтажкой.
-const SACRED_TIER: f32 = 6.0;
-/// Ярус колокольни, м.
-const BELL_TOWER_TIER: f32 = 12.0;
 
 /// Сколько ячеек встанет на стену такой длины — целое число, и оно же делитель
 /// её собственной сетки: ячейка это `length / wall_columns(length, kind)`.
@@ -467,7 +458,7 @@ fn balcony_house(building: &PolyArea, kind: WallKind, storeys: f32) -> bool {
 /// значило бы снять балконы с половины дома по броску округления. Порог
 /// [`GABLE_PLAN_RATIO_MIN`] проходит панельная секция (12–14 м на 35 и
 /// длиннее — это 2.5 и выше) и не проходит башня
-/// (`heights::TOWER_MAX_RATIO` — 1.7).
+/// (`classify::TOWER_MAX_RATIO` — 1.7).
 fn plan_long_axis(fp: Option<HouseFootprint>) -> Option<Vec2> {
     let fp = fp?;
     let (long, short) = fp.size();

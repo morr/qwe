@@ -1,3 +1,86 @@
+# NOTES — deep02 (план углубления, пункт №02: BuildingClass — классификация один раз)
+
+Задача: docs/deepening-plan.md в main checkout (незакоммичен — не коммитить) § 02,
+два шага; шаг 3 (temples → Option<SacredPlan>) — не в этом заезде.
+Записи прошлых сессий (deep03, deep01, split-giants) — ниже.
+
+## Найденный дрейф (что сводим)
+
+- **kind_of (кровля) vs wall_kind_of (стены)** на `BuildingUse::Other`: кровля — только
+  пятно ≤ SMALL_FOOTPRINT_MAX (250) → HOUSE_ROOFS; стены — пятно **и** `storeys <
+  LOW_RISE_STOREYS` (4) → HOUSE_WALLS. Тегированная мелкая коробка в 27 м: кровля —
+  черепица + скатная когорта (is_pitched тоже без сторис-гварда), стены — панель
+  (APARTMENTS_WALLS) и балконы. Разрешение в пользу правила стен (гвард этажности):
+  частный дом по определению малоэтажный (HOUSE_HEIGHTS 3–6.4 м, «тег всегда сильнее
+  вывода»), девятиэтажка с черепичной двускатной — артефакт дрейфа. is_pitched получает
+  тот же гвард.
+- Два матча Roofing (flat в `facade_and_roof_builders` и 2.5D в
+  `push_house_with_arches`) семантически сходятся, но держатся вручную: дымоход
+  (`clutter && ridge`), вальма всегда, шатёр никогда, merlons после. Унификация — один
+  `push_roofing`, flat зовёт его с lift=ZERO и lean=None (вырожденный случай: конёк не
+  поднимается, фронтонов и слуховых окон нет — они требуют подъёма).
+- `Sanctuary::of` ×5 (facade 955, extrusion 1091, push_house 1246 — витринный, остаётся,
+  sweeps 105, roof_shadows 276), `garage_runs` ×3 (facade 951, extrusion 1090, отчёт
+  mod.rs 608) → `CityContext` в mesh_buildings.
+
+## Дизайн
+
+- **`classify.rs`**: `BuildingKind` (Fortress{tower}, Temple, Garage, House, Shed,
+  Housing(Shape), DeepHull(Shape), Office(Shape), BigBox, Shop, Store, Hall, Public) —
+  единственный матч по building_use × размеры × пороги; `BuildingClass { kind, height,
+  storeys, pitched }`, `classify(building, fp)` считает высоту (тег или вывод вида) и
+  этажность (высота / ярус вида — tiers переезжают из layers.rs; STOREY_HEIGHT остаётся в
+  settings.rs). Гвард дом-кандидата: `Other` ≤ 250 м² — частный сектор только при
+  `storeys < LOW_RISE_STOREYS` (= layers::BALCONY_STOREYS_MIN, константа остаётся в
+  layers.rs ради wall_gallery-парсера), иначе Housing/Low. Для нетегированных гвард
+  проходит всегда (HOUSE_HEIGHTS ≤ 2 этажей) — поведение вывода высоты не меняется.
+- Таблицы остаются у владельцев: высотные — heights.rs (`inferred_height(kind, …)`),
+  палитры стен/крыш — material.rs, оборудование — clutter.rs; на класс переходит
+  **выбор ветки**. thresholds формы (SLAB_*, LOW_FOOTPRINT_MAX, TOWER_*, STORE_FOOTPRINT_MIN)
+  и is_deep_hull переезжают в classify.rs. SMALL_FOOTPRINT_MAX/SHED_FOOTPRINT_MAX
+  остаются в roofs.rs (владелец скатной когорты).
+- Классify идёт **параллельным массивом** к footprints: `Vec<BuildingClass>` в
+  mesh_buildings/measure_layers, билдеры получают срезы. Класс fp-независим по значению
+  (storeys_by_shape и is_deep_hull дают то же без fp) — cars::height_or_default и
+  fp=None-вызовы живут как жили.
+- **`CityContext`** (mod.rs): { sanctuary, garage_runs, arches } — один расчёт на сборку;
+  arches теперь для обоих режимов (flat их резал своим вызовом — строка `arches` бенча в
+  плоских режимах станет ненулевой, строка facades+roofs полегчает на ту же величину).
+- **HouseLook** — общий шаг сборки вида дома: `house_look(building, run, class, fp) ->
+  HouseLook { roof, wall (с оглядкой на прогон), facade (без прогона — полоса) }`; оба
+  режима зовут один шаг.
+- `is_pitched` удаляется: `BuildingClass::is_pitched()` (kind House|Shed && без дворов).
+  Тесты `a_pitched_roof_goes_on_houses_and_small_boxes_only`,
+  `a_hull_deeper_than_housing_carries_no_balconies` переезжают на классификатор.
+
+## Коммиты (план)
+
+1. classify.rs + heights на класс + таблица здание→класс
+2. material (кровля+стены) на класс — с разрешением дрейфа (body коммита)
+3. скатная когорта на класс (is_pitched → BuildingClass::is_pitched)
+4. clutter на класс
+5. этажность/ярусы на класс (storeys_of умирает)
+6. CityContext: sanctuary/garage_runs/arches один раз, классы потоком в билдеры
+7. один Roofing match + HouseLook (flat = вырожденный случай)
+8. docs: CONTEXT.md + osm-map skill (BuildingClass, CityContext) тем же изменением
+
+## Статус
+
+- [x] worktree .worktrees/deep02 + seed target (10 s CoW) + rsync assets/osm (mtime)
+- [x] скиллы git/bevy/osm-map загружены; осмотр закончен
+- [ ] коммиты 1–8
+- [ ] check.sh одним фоном, вердикт по перфу, ff master, spawn №07 (Census)
+
+## Замечания по перфу (предварительное рассуждение)
+
+Новой работы на кадр нет (всё — load-сторона). На элемент загрузки: classify замещает
+вызовы height_of/storeys_of/kind_of/wall_kind_of, которые уже происходят (часто по
+несколько раз на дом: storeys_of ×3 в экструзионном пути); min_area_rect считается там же,
+где считался (ветка формы / deep hull, fp передан). Ожидаю нейтрально-положительный эффект;
+замер — `building meshing:` строка лога (Тула), как в deep03.
+
+---
+
 # NOTES — deep03 (план углубления, пункт №03: TickStage — порядок тика списком)
 
 Задача: docs/deepening-plan.md в main checkout (незакоммичен — не коммитить) § 03.

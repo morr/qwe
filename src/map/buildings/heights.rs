@@ -7,28 +7,24 @@
 //! 2.5D на один и тот же сдвиг. Города такими не бывают — а на снимке сверху
 //! именно разнобой высот и читается как город.
 //!
-//! Вывод идёт по **пятну и назначению**, как его читает глаз на аэрофото:
-//! длинная узкая коробка — панельная секция, компактная и крупная — башня,
-//! огромное пятно с малой высотой — торговый зал или цех. Внутри каждой
-//! группы этажность берётся посевом дома (тем же, что выбирает материал
-//! кровли, [`super::material::building_seed`]), поэтому она не зависит ни от
-//! порядка домов, ни от режима отрисовки и не меняется между запусками.
+//! Вывод идёт по **классу здания** ([`super::classify`]): тот разбирает
+//! развилки «назначение × пятно × пороги» один раз и называет, чем дом
+//! оказался — панельная секция, башня, торговый зал, частный сектор. Таблица
+//! этажности у каждой группы своя, и внутри группы этажность берётся посевом
+//! дома (тем же, что выбирает материал кровли,
+//! [`super::material::building_seed`]), поэтому она не зависит ни от порядка
+//! домов, ни от режима отрисовки и не меняется между запусками.
 //!
 //! **Тег всегда сильнее вывода.** Всё это включается ровно там, где
 //! `PolyArea::height` пуст.
 
 use bevy::math::Vec2;
 
+use super::classify::{BuildingKind, Shape, classify};
 use super::HouseFootprint;
-use super::material::building_seed;
-use super::roofs::{SHED_FOOTPRINT_MAX, SMALL_FOOTPRINT_MAX};
-use crate::map::meshing::min_area_rect;
-use crate::map::osm::model::{is_big_box, is_fortress_tower, signed_ring_area};
-use crate::map::osm::{AreaKind, BuildingUse, PolyArea, Sacred, SacredForm};
-
-/// Высота этажа, м — то же число, которым парсер переводит
-/// `building:levels` в метры, и по нему же считаются серии ниже.
-const STOREY: f32 = 3.0;
+use crate::map::osm::model::is_big_box;
+use crate::map::osm::{BuildingUse, PolyArea, Sacred, SacredForm};
+use crate::settings::STOREY_HEIGHT;
 
 /// Гараж — одна коробка в один этаж, и никакого разброса: ряды гаражных
 /// боксов на снимке все одной высоты.
@@ -78,21 +74,7 @@ const BIG_BOX_HEIGHTS: [f32; 4] = [8.0, 8.0, 9.5, 11.0];
 /// этажа — у торгового зала потолки, — но это не коробка в поле.
 const SHOP_HEIGHTS: [f32; 4] = [4.5, 5.0, 5.0, 6.5];
 
-/// Длина пятна, от которой оно читается как секция, и предельная ширина
-/// такой секции, м. Панельный дом — это лента 12–16 м в ширину и от сорока в
-/// длину; всё, что шире, уже корпус.
-const SLAB_MIN_LENGTH: f32 = 35.0;
-const SLAB_MAX_WIDTH: f32 = 18.0;
-/// Пятно, ниже которого дом без назначения считается старым малоэтажным, м².
-const LOW_FOOTPRINT_MAX: f32 = 300.0;
-/// Пятно, выше которого «торговое» здание — это зал, а не контора, м².
-const STORE_FOOTPRINT_MIN: f32 = 800.0;
-/// Башней считается пятно не меньше этого и не вытянутее этого отношения
-/// сторон: у настоящей башни план почти квадратный.
-const TOWER_FOOTPRINT_MIN: f32 = 500.0;
-const TOWER_MAX_RATIO: f32 = 1.7;
-
-/// Высота дома для отрисовки: тег из OSM, иначе вывод по пятну и назначению.
+/// Высота дома для отрисовки: тег из OSM, иначе вывод по классу здания.
 ///
 /// Наружу из `buildings` её читает ещё слой машин: плотность ряда у бордюра и
 /// на стоянке зависит от этажности квартала вокруг (`cars::district`), и
@@ -103,14 +85,12 @@ pub(crate) fn height_or_default(building: &PolyArea) -> f32 {
 }
 
 /// Та же высота с готовым пятном дома ([`super::HouseFootprint`]): сборщик
-/// слоя считает пятно один раз на дом и передаёт сюда, чтобы ветка вывода не
-/// гнала перебор рёбер второй раз. `None` — пятна нет: ветка посчитает его
-/// сама, только если дойдёт (см. [`storeys_by_shape`]); так зовут высоту вне
-/// сборки слоя — слой машин, тесты, — и умножать перебор им ни к чему.
+/// слоя считает пятно один раз на дом и передаёт в классификацию, чтобы
+/// ветка формы не гнала перебор рёбер второй раз. `None` — пятна нет: ветка
+/// посчитает его сама, только если дойдёт; так зовут высоту вне сборки слоя
+/// — слой машин, тесты, — и умножать перебор им ни к чему.
 pub(super) fn height_of(building: &PolyArea, fp: Option<HouseFootprint>) -> f32 {
-    building
-        .height
-        .unwrap_or_else(|| inferred_height(building, building_seed(building), fp))
+    classify(building, fp).height()
 }
 
 /// Слот дома в таблице группы: посев решает, какой из вариантов ему достался.
@@ -120,88 +100,55 @@ fn pick(table: &[f32], seed: u32) -> f32 {
     table[(seed >> 3) as usize % table.len()]
 }
 
-/// Выведенная высота — та самая, которой в OSM не нашлось.
-fn inferred_height(building: &PolyArea, seed: u32, fp: Option<HouseFootprint>) -> f32 {
-    let area = signed_ring_area(&building.outer).abs();
+/// Таблица этажности формы пятна: секция, башня, корпус, малоэтажка.
+impl Shape {
+    fn storeys_table(self) -> &'static [f32] {
+        match self {
+            Shape::Section => &SLAB_STOREYS,
+            Shape::Tower => &TOWER_STOREYS,
+            Shape::Block => &MID_STOREYS,
+            Shape::Low => &LOW_STOREYS,
+        }
+    }
+}
 
-    // крепость меряется не назначением (у башни это `building=yes`), а тем,
-    // стена это или башня
-    if building.kind == AreaKind::Kremlin {
-        return match is_fortress_tower(building) {
+/// Выведенная высота — та самая, которой в OSM не нашлось. Класс уже
+/// разобрал развилки ([`super::classify`]); здесь только таблицы по классу.
+pub(super) fn inferred_height(kind: BuildingKind, seed: u32, building: &PolyArea) -> f32 {
+    match kind {
+        // крепость меряется не назначением, а тем, стена это или башня
+        BuildingKind::Fortress { tower } => match tower {
             true => pick(&FORTRESS_TOWER_HEIGHTS, seed),
             false => pick(&FORTRESS_WALL_HEIGHTS, seed),
-        };
-    }
-    match building.building_use {
-        BuildingUse::Garage | BuildingUse::GarageBlock => GARAGE_HEIGHT,
-        BuildingUse::House => pick(&HOUSE_HEIGHTS, seed),
-        BuildingUse::Church(Sacred {
-            form: SacredForm::Tower,
-            ..
-        }) => pick(&BELL_TOWER_HEIGHTS, seed),
-        BuildingUse::Church(_) => pick(&CHURCH_HEIGHTS, seed),
-        BuildingUse::Industrial => pick(&HALL_HEIGHTS, seed),
+        },
+        BuildingKind::Temple => match building.building_use {
+            BuildingUse::Church(Sacred {
+                form: SacredForm::Tower,
+                ..
+            }) => pick(&BELL_TOWER_HEIGHTS, seed),
+            _ => pick(&CHURCH_HEIGHTS, seed),
+        },
+        BuildingKind::Garage => GARAGE_HEIGHT,
+        BuildingKind::House => pick(&HOUSE_HEIGHTS, seed),
+        BuildingKind::Shed => pick(&SHED_HEIGHTS, seed),
+        // корпус — этажами по форме пятна; контора — по той же форме, что и
+        // жильё
+        BuildingKind::Housing(shape) | BuildingKind::DeepHull(shape) | BuildingKind::Office(shape) => {
+            STOREY_HEIGHT * pick(shape.storeys_table(), seed)
+        }
         // торговля меряется не этажами, а размером: гипермаркет — оболочка
         // над одним высоким залом, магазин у дома — павильон
-        BuildingUse::Retail if is_big_box(building) => pick(&BIG_BOX_HEIGHTS, seed),
-        BuildingUse::Retail => pick(&SHOP_HEIGHTS, seed),
-        BuildingUse::Commercial if area >= STORE_FOOTPRINT_MIN => pick(&STORE_HEIGHTS, seed),
+        BuildingKind::BigBox => pick(&BIG_BOX_HEIGHTS, seed),
+        BuildingKind::Shop => pick(&SHOP_HEIGHTS, seed),
+        BuildingKind::Store => pick(&STORE_HEIGHTS, seed),
+        BuildingKind::Hall => pick(&HALL_HEIGHTS, seed),
         // казённое здание — школа, поликлиника, контора: та же таблица, что у
         // прочего крупного корпуса, но **в обход проверки формы**: школа в
         // 900 м² с почти квадратным планом иначе вышла бы башней в 9–16
         // этажей. Общее имя, а не копия: две таблицы одного числа разошлись бы
         // на первой же правке «прочего корпуса», и молча
-        BuildingUse::Public => STOREY * pick(&MID_STOREYS, seed),
-        // мелочь без назначения — постройки частного сектора: сарай во дворе
-        // и сам дом, а не старая двух-трёхэтажка. Граница дома — та же, по
-        // которой `roofs` кроет его двускатной, а `material` одевает стенами
-        // дома: одна граница, один смысл
-        BuildingUse::Other if area <= SHED_FOOTPRINT_MAX => pick(&SHED_HEIGHTS, seed),
-        BuildingUse::Other if area <= SMALL_FOOTPRINT_MAX => pick(&HOUSE_HEIGHTS, seed),
-        // жильё, контора и половина города без назначения — по форме пятна
-        _ => STOREY * storeys_by_shape(&building.outer, area, seed, fp),
+        BuildingKind::Public => STOREY_HEIGHT * pick(&MID_STOREYS, seed),
     }
-}
-
-/// Этажность по форме пятна: лента — секция, компактное крупное — башня,
-/// мелкое — старый малоэтажный дом.
-///
-/// **Площадь спрашивается первой**: контур до `LOW_FOOTPRINT_MAX` — старый
-/// малоэтажный дом, даже если он лента по сторонам (40 × 7 м — сарай, а не
-/// панельная секция). Правило секции поэтому читается «≥ 35 м, ≤ 18 м и
-/// крупнее 300 м²».
-///
-/// Стороны пятна берутся **только там, где они решают**: мелкий контур
-/// отвечает одной площади, и `min_area_rect` (перебор рёбер по всем точкам,
-/// то есть O(n²)) на нём не считается вовсе. Со сборки слоя пятно приходит
-/// готовым ([`height_of`]) — один перебор на дом; `None` значит «пятна нет»,
-/// и ветка считает его сама — так зовут высоту вне сборки слоя (слой машин,
-/// тесты), и умножать перебор им ни к чему.
-fn storeys_by_shape(ring: &[Vec2], area: f32, seed: u32, fp: Option<HouseFootprint>) -> f32 {
-    if area <= LOW_FOOTPRINT_MAX {
-        return pick(&LOW_STOREYS, seed);
-    }
-    let (length, width) = fp
-        .map(HouseFootprint::size)
-        .unwrap_or_else(|| footprint_size(ring));
-    let squarish = width > 0.0 && length / width <= TOWER_MAX_RATIO;
-    if length >= SLAB_MIN_LENGTH && width <= SLAB_MAX_WIDTH {
-        pick(&SLAB_STOREYS, seed)
-    } else if area >= TOWER_FOOTPRINT_MIN && squarish {
-        pick(&TOWER_STOREYS, seed)
-    } else {
-        pick(&MID_STOREYS, seed)
-    }
-}
-
-/// Длина и ширина пятна по его кольцу — для тех, кому пятно не передали:
-/// стороны минимального описанного прямоугольника, длинная первой. Тот же
-/// `min_area_rect`, что считает [`super::HouseFootprint`] для сборки слоя.
-fn footprint_size(ring: &[Vec2]) -> (f32, f32) {
-    let Some(rect) = min_area_rect(ring) else {
-        return (0.0, 0.0);
-    };
-    ((rect[1] - rect[0]).length(), (rect[2] - rect[1]).length())
 }
 
 /// Разброс высот города одной строкой — доля тега и квантили того, что

@@ -3,6 +3,7 @@
 //! берёт `default_sun()` — гард, который держит солнце на дефолте и не пускает
 //! к нему соседа (`map/sun.rs`).
 
+use super::classify::{BuildingKind, classify};
 use super::fixtures::{
     building, detail, extruded_mesh, ground_shadows, is_solid, is_wall, mesh_points, oblong, rect,
     square, whole_cells,
@@ -824,7 +825,8 @@ fn a_hull_deeper_than_housing_carries_no_balconies() {
             Some(27.0),
             AreaKind::Building,
         );
-        assert!(is_deep_hull(&hull, None));
+        // корпус глубже жилого — класс, а не свой перебор глубин у стен
+        assert!(matches!(classify(&hull, None).kind(), BuildingKind::DeepHull(_)));
         let kind = wall_of(&hull).kind;
         assert!(
             !matches!(kind, WallKind::Panel | WallKind::Brick),
@@ -840,7 +842,7 @@ fn a_hull_deeper_than_housing_carries_no_balconies() {
             Some(27.0),
             AreaKind::Building,
         );
-        assert!(!is_deep_hull(&slab, None));
+        assert!(!matches!(classify(&slab, None).kind(), BuildingKind::DeepHull(_)));
         slab_kinds.push(wall_of(&slab).kind);
 
         // каре 60 × 60 с двором 30 × 30: габарит 60, крыло 15
@@ -850,7 +852,7 @@ fn a_hull_deeper_than_housing_carries_no_balconies() {
             AreaKind::Building,
         );
         court.holes = vec![at(rect(Vec2::splat(15.0), Vec2::splat(45.0)), offset)];
-        assert!(!is_deep_hull(&court, None));
+        assert!(!matches!(classify(&court, None).kind(), BuildingKind::DeepHull(_)));
         court_kinds.push(wall_of(&court).kind);
     }
     // жилая таблица как была: панель у пластины и у каре встречается
