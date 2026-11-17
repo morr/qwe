@@ -100,7 +100,7 @@ and **`demon/behavior.rs::on_demon_caught_human` — an observer**: a kill costs
 one decision number, drawn for the devour pause.
 
 That observer is still "on a tick": it is triggered only from `chase`
-(`SimSet::DemonBehavior`, `FixedUpdate`) and runs on that system's command flush, inside
+(`TickStage::DemonBehavior`, `FixedUpdate`) and runs on that system's command flush, inside
 the same tick — the flush is a schedule position, not wall clock. Its *order* among several
 kills in one tick does not reach the dice either, because the stream is seeded from
 `(PawnId, decision number)`; what the replay contract needs is only that a given demon
@@ -159,7 +159,7 @@ RNG work above is unconditional.
 | pawn separation | on (polymesh, on-screen) | off — the Nav tab's `Separation` row reads `off`, dimmed and unclickable, rather than a toggle that flips a resource nothing reads |
 
 **Only the humans' picking moves.** `demon::systems::pick_wander_targets` is registered once,
-in `FixedUpdate` inside `SimSet::DemonBehavior`, and runs there in **both** modes
+in `FixedUpdate` inside `TickStage::DemonBehavior`, and runs there in **both** modes
 (`src/demon/mod.rs`): in `Update` the choice ran once per frame, i.e. depended on fps, and
 demons are a few hundred, so the extra tick runs cost nothing. The humans' copy is the one
 registered twice (`src/human/mod.rs`), and it stays in `Update` in the live branch because the
@@ -197,15 +197,24 @@ hand-written `in_state(Playing)`, nine of them on one `FixedUpdate` chain.
 - `MovementPlugin` / `HumanPlugin` / `NavigationPlugin` / `DemonPlugin` add
   `DeterminismPlugin` if absent: an unconfigured set gates nothing, so both branches would
   run at once — and, since the sets carry `in_world`, the world gate would go with them.
-- `SimSet::SpatialRebuild → DemonBehavior → HumanBehavior` (`spatial.rs`) is an **ordering**
-  spine, not a second world gate. It does carry `run_if(in_state(Playing))`, but that gate
-  belongs to `SpatialPlugin` and is simply absent wherever that plugin is not raised, so a
-  behaviour system inside it declares its `SimPipeline` branch anyway. Both chains do
-  (`BothModes`): the demons' `pick_wander_targets/acquire_targets/chase/devour` and the
-  humans' `panic/flee/escape`. Each is pinned by a test that raises its plugin **without**
-  `SpatialPlugin` and runs `FixedUpdate` in `Loading`, where the world resources do not
-  exist (`demon::tests::demon_behavior_does_not_run_outside_the_world`,
-  `human::tests::human_behavior_does_not_run_outside_the_world`).
+- The tick order is **`TickStage`** (`tick_stage.rs`): one ordered list — `Guard → Tick →
+  Answers → Spawner → DemonGrid → DemonBehavior → HumanBehavior → Move → Separation →
+  Dispatch` (`TickStage::ORDER`). `TickStagePlugin` — raised by `SpatialPlugin`, the plugin
+  every order-needing assembly raises — chains the stages pairwise in `FixedUpdate`;
+  plugins place systems in stage sets, and the cross-plugin `.before`/`.after` edges are
+  gone (Bevy 0.20 set configs take tuples, not `Vec`, so the pairwise edges are what keeps
+  the list the single source). Stages are an **ordering** spine, **not a second world gate**
+  — they carry no `run_if` at all, and a behaviour system inside them declares its
+  `SimPipeline` branch anyway. Both chains do (`BothModes`): the demons'
+  `pick_wander_targets/acquire_targets/chase/devour` and the humans' `panic/flee/escape`.
+  Each is pinned by a test that raises its plugin **without** `SpatialPlugin` and runs
+  `FixedUpdate` in `Loading`, where the world resources do not exist
+  (`demon::tests::demon_behavior_does_not_run_outside_the_world`,
+  `human::tests::human_behavior_does_not_run_outside_the_world`); the listed order itself
+  is pinned by `tick_stage::tests::the_schedule_chains_the_stages_in_the_listed_order`,
+  which inspects the built schedule's dependency graph. The one gate the old `SimSet` chain
+  carried (`in_state(Playing)` on `rebuild_demon_grid`) lives explicitly beside that
+  system's registration now.
 
 **Every system taking `Res<Backend>` must sit in a `SimPipeline` set** — that is what
 carries the world gate along with the mode branch.

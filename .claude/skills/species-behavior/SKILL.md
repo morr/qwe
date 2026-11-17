@@ -1,6 +1,6 @@
 ---
 name: species-behavior
-description: Use when working on pawn behaviour in qwe — the human and demon decision ladders (human/decide.rs, demon/decide.rs), their behavior.rs state machines, wander/flee/chase/devour, the flee fan, PanicRecoil, Pace, chase claims and the lunge, the demon spawner, corpses, the spatial grids and the SimSet order — and on how a pawn is drawn: the silhouette atlas and its glyphs (silhouette/, silhouette/figure.rs), the screen-size floor and the two LOD systems, the portal vortex and its stain (portal.rs). Deep detail behind CONTEXT.md's Simulation and Look summaries.
+description: Use when working on pawn behaviour in qwe — the human and demon decision ladders (human/decide.rs, demon/decide.rs), their behavior.rs state machines, wander/flee/chase/devour, the flee fan, PanicRecoil, Pace, chase claims and the lunge, the demon spawner, corpses, the spatial grids and the tick stage order (TickStage) — and on how a pawn is drawn: the silhouette atlas and its glyphs (silhouette/, silhouette/figure.rs), the screen-size floor and the two LOD systems, the portal vortex and its stain (portal.rs). Deep detail behind CONTEXT.md's Simulation and Look summaries.
 ---
 
 # Species behaviour — deep detail
@@ -27,10 +27,13 @@ Neighbouring skills: pathfinding, separation and destination slots are `navigati
 
 ## The fixed step
 
-**SimSet** (`spatial.rs`, `FixedUpdate`, gated on `Playing`): `SpatialRebuild →
-DemonBehavior → HumanBehavior`; `SimPosition` / `PreviousSimPosition`, the pinned order
-around them and the reason demons act first are `CONTEXT.md`'s. The one lesson that lives
-here: **the demon spawner sits before `SimSet::SpatialRebuild` for the edge** — the edge is
+**TickStage** (`tick_stage.rs`, `FixedUpdate`): the tick runs as one ordered list —
+`Guard → Tick → Answers → Spawner → DemonGrid → DemonBehavior → HumanBehavior → Move →
+Separation → Dispatch` (`TickStage::ORDER`; the set chain, the tick-probe segments and the
+schedule inspection test derive from it, and stages carry no gate — `CONTEXT.md`'s).
+`SimPosition` / `PreviousSimPosition`, the pinned order around them and the reason demons
+act first are `CONTEXT.md`'s. The one lesson that lives
+here: **the demon spawner sits in `Spawner`, before `DemonGrid`, for the chain edge** — the edge is
 what puts a sync point between the spawn commands and the grid rebuild, so a demon is in
 the grid on the tick it is born. With no edge the flush landed on either side of the
 rebuild depending on the executor.
@@ -176,8 +179,8 @@ flee fan are `CONTEXT.md`'s. What lives here:
   dispatcher's "may not wait for the camera" marker; see `navigation-deep`.
 
 **Escape** — a fleeing human within `ESCAPE_MARGIN` of the map border despawns,
-`telemetry.escaped += 1`. It is a despawn inside `FixedUpdate`, where the chained `SimSet`s
-give it a sync point (see CLAUDE.md, "Where a mass despawn may happen").
+`telemetry.escaped += 1`. It is a despawn inside `FixedUpdate`, where the chained stage
+sets give it a sync point (see CLAUDE.md, "Where a mass despawn may happen").
 
 ### PanicRecoil
 
@@ -373,8 +376,8 @@ reduced count), and the timer's period is re-synced inside `tick_spawner`, becau
 and city switch rebuild `DemonSpawner` whole.
 
 **A demon acts from the first tick it exists**, the initial burst included — held by the
-schedule, not by luck: the spawner sits `.before(SimSet::SpatialRebuild)` and in
-`SimPipeline::BothModes` (`demon/mod.rs`). The `Live`-only rule is not covered by the
+schedule, not by luck: the spawner sits in `TickStage::Spawner`, before `DemonGrid`, and
+in `SimPipeline::BothModes` (`demon/mod.rs`). The `Live`-only rule is not covered by the
 warmup hold — that pause belongs to `sim_time` and space unpauses it — which is why the
 `WorldStarted` reset is matched on the precondition **no demon may be alive when a run
 starts** (`demon::on_world_started` says so). A `DemonSpawnPause` staging

@@ -1074,8 +1074,13 @@ Summary; the mechanism — **determinism skill** (seed derivation, the decision 
 Summary; species behaviour — **species-behavior skill**; the crowd (separation, slots) —
 **navigation-deep skill**, `references/crowd.md`.
 
-- **SimSet** (`spatial.rs`, `FixedUpdate`, gated on `Playing`): `SpatialRebuild →
-  DemonBehavior → HumanBehavior`. **Demons act before humans so a kill lands before
+- **TickStage** (`tick_stage.rs`, `FixedUpdate`) — the tick as one ordered list: `Guard →
+  Tick → Answers → Spawner → DemonGrid → DemonBehavior → HumanBehavior → Move → Separation
+  → Dispatch`. `TickStage::ORDER` is the single source: the set chain, the tick-probe
+  segments (`TickSegments`) and the schedule inspection test derive from it, and plugins
+  place systems in stage sets instead of cross-plugin `.before`/`.after` edges. Stages are
+  order-only — no gate: the world gate rides `SimPipeline`, and `rebuild_demon_grid`
+  carries its own `run_if(Playing)`. **Demons act before humans so a kill lands before
   `escape`** — a human is never counted both killed and escaped in one tick.
 - **SimPosition / PreviousSimPosition** — simulation-space positions; `Transform` is
   interpolated between them in `RunFixedMainLoop`. Systems mutate `SimPosition`, **never
@@ -1083,9 +1088,8 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   `PreviousSimPosition` itself**: the step writes the tick-start point (a walker's
   interpolation span), and collapses both ends onto the new spot when it stands, stops or
   is pushed while standing; the demon lunge collapses onto its landing point. The
-  demon spawner runs **before** `SimSet::SpatialRebuild` and `move_moving_entities`
-  **after** `SimSet::HumanBehavior`, because behavior may move `SimPosition` itself (the
-  demon lunge).
+  spawner runs in `Spawner`, before `DemonGrid`, and the step in `Move`, after
+  `HumanBehavior`, because behavior may move `SimPosition` itself (the demon lunge).
 - **Movable** — `{speed, path: VecDeque<Vec2>, state, last_direction}` with `MovableState:
   Idle | Pathfinding(goal) | Moving(goal) | PathfindingError(goal)`. **Waypoints are in
   world metres, the goal is a tile** (*Polygonal routing*); `last_direction` is the heading
@@ -1199,8 +1203,8 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   only in `PlayPhase::Live`, and that is an invariant**: it hands out `PawnId`s from a
   counter `WorldStarted` resets, so a burst fired before the announcement deals the same
   numbers twice. Matching precondition: **no demon may be alive when a run starts**. It runs
-  **before `SimSet::SpatialRebuild`**, so a demon enters the demon grid and acts on the tick
-  it is born on.
+  in `Spawner`, **before `DemonGrid`**, so a demon enters the demon grid and acts on the
+  tick it is born on.
 - **Separation** (`movement/separation/`, Nav tab, persisted) — soft pairwise
   anti-overlap, **on-screen only, cosmetic by charter**: pawns keep their body radii
   apart (a resting human pair at 1.8 m, against a 1.0 m `HUMAN_SIZE`). The radius is a
@@ -1292,7 +1296,7 @@ its draw call.
 - **Soul** (`human/soul.rs`) — a golden HDR spark (`SoulMote`) released by the kill
   observer at the victim's position, rising 6 m over 1.4 s of sim time and fading; it is
   the visible side of `Telemetry::killed`. Lives at `Z_SOUL` above every unit. Stepped
-  and despawned in `FixedUpdate` (`rise_souls`, after `SimSet::HumanBehavior`) — a world
+  and despawned in `FixedUpdate` (`rise_souls`, the tail of `HumanBehavior`) — a world
   entity may not be despawned from `Update`. Not the `Souls { earned, spent }` currency of
   `ROADMAP.md` — that is a separate concept, a resource the same kill observer will
   increment; the mote counts nothing and is only the visible side of the kill.

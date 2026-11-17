@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **`CONTEXT.md` — load its Reading map plus the section for the area you touch, before
 touching any domain or simulation code.** It is the
 domain glossary: what a navtile, flee fan, chase claim, bridge corridor, or prune pass
-*is*, which invariants hold (fill order, z-ranges, SimSet ordering, telemetry math), and
+*is*, which invariants hold (fill order, z-ranges, TickStage ordering, telemetry math), and
 where each concept lives. The sections are independent glossaries — the Reading map at
 the top names them; reading the file whole is a phase change, not the default load.
 
@@ -45,7 +45,7 @@ candidate for deletion.
 | any Bevy API — components, systems, observers, queries, UI nodes, plugin wiring | `bevy` |
 | `map/*` — the whole OSM pipeline and every layer it renders, whatever the module is called | `osm-map` |
 | `navigation/*`, `movement/*` (incl. separation, slots), `grid.rs` (the navtile), `tests/{navigation,movement}.rs` | `navigation-deep` |
-| `rng.rs`, `determinism/*`, `sim_yard.rs`, `tests/determinism.rs`, `examples/acceptance/*`, anything a replay depends on | `determinism` |
+| `rng.rs`, `determinism/*`, `sim_yard.rs`, `tick_stage.rs`, `tests/determinism.rs`, `examples/acceptance/*`, anything a replay depends on | `determinism` |
 | `human/*`, `demon/*`, `silhouette/*`, `portal.rs`, `movement/wander.rs`, `spatial.rs`, `telemetry.rs`, `tests/spatial.rs` | `species-behavior` |
 | `loading.rs`, `restart.rs`, `city.rs`, `map/osm/download.rs` | `world-lifecycle` |
 | `sim_time.rs` (incl. the regulator's own constants, which live there now) | `sim-speed` |
@@ -352,7 +352,8 @@ those additions.
   use `on_*` prefix
 - World spawning goes in `OnEnter(AppState::Playing)` under `WorldInitSet`
   (`Navmesh → Spawn`), never in `Startup`; per-tick simulation goes in `FixedUpdate`
-  inside a `SimSet` and is gated on `Playing`
+  inside a `TickStage` stage — the order is one list, `tick_stage.rs::TickStage::ORDER`,
+  and the world gate rides `SimPipeline`, not the stage
 - **Every entity of the game world carries `DespawnOnExit(AppState::Playing)`** — see
   "World entities" below. Adding a spawn site without it leaks the entity into the next
   city.
@@ -451,7 +452,7 @@ entities those buffers name, and the buffer then panics with `Entity despawned`.
 The two existing mass despawns are both outside `Update` by design: the city switch runs
 in `StateTransition` (`DespawnOnExit`), and restart on R triggers from `PreUpdate` after
 `InputSystems` (`restart.rs`). `escape` despawns a single human inside `FixedUpdate`,
-where the chained `SimSet`s give it a sync point. A new despawn site belongs in one of
+where the chained stage sets give it a sync point. A new despawn site belongs in one of
 those slots — silencing the command errors instead only hides the ordering mistake.
 
 ## Bevy Time Types
