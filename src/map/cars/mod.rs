@@ -51,7 +51,7 @@ use crate::map::roads::{Axis, Drawn, axis};
 use crate::map::roads::{is_carriageway, lane_count, paint};
 use crate::map::seed::{Lcg, seed_from_point};
 use crate::map::shadow;
-use crate::map::surface::{LayerCost, LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
+use crate::map::surface::{LayerCost, LayerMaterials, LayerMesh, MaterialSpec, swap_layers};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::prefs::retuned;
 use crate::settings::{CAR_DETAIL_MAX_ZOOM, CAR_MAX_ZOOM, CAR_SILHOUETTE_MAX_ZOOM, Z_CAR};
@@ -331,9 +331,6 @@ pub fn rebuild_cars(
     mut placement: ResMut<CarPlacement>,
     existing: Query<Entity, With<CarLayerTag>>,
 ) {
-    for entity in &existing {
-        commands.entity(entity).despawn();
-    }
     // снятый слой не расставляет ничего — ни каркаса, ни разрывов
     let placed = if shown_detail(*bucket, *style, map.knobs.raw).is_some() {
         placement.refresh(*style, road_shape.0, &map, &layout)
@@ -341,7 +338,14 @@ pub fn rebuild_cars(
         false
     };
     let (layers, report) = mesh_parked(*bucket, *style, map.knobs.raw, &placement.parked, placed);
-    spawn_layers(&mut commands, &mut meshes, &materials, layers, CarLayerTag);
+    swap_layers(
+        &mut commands,
+        &mut meshes,
+        &materials,
+        layers,
+        CarLayerTag,
+        &existing,
+    );
     info!("{report}");
 }
 

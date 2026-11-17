@@ -36,7 +36,7 @@ use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin, sweep_convex};
 use crate::map::osm::{FenceKind, FenceLine, MapData, RoadLine};
 use crate::map::prepare::PreparedMeshes;
 use crate::map::shadow;
-use crate::map::surface::{LayerCost, LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
+use crate::map::surface::{LayerCost, LayerMaterials, LayerMesh, MaterialSpec, swap_layers};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::prefs::retuned;
 use crate::settings::Z_FENCE;
@@ -143,21 +143,19 @@ pub fn rebuild_fences(
 ) {
     // мир сменился: сборка прошлой истории чужому городу не подменяется
     *build = FenceBuild::default();
-    for entity in &existing {
-        commands.entity(entity).despawn();
-    }
     let prepared =
         std::mem::take(&mut prepared.0.fences).filter(|(step, _, _)| *step == bucket.index);
     let (layers, report) = match prepared {
         Some((_, layers, report)) => (layers, report),
         None => mesh_fences(*bucket, &map.fences, &map.roads),
     };
-    spawn_layers(
+    swap_layers(
         &mut commands,
         &mut meshes,
         &materials,
         layers,
         FenceLayerTag,
+        &existing,
     );
     info!("{report}");
 }
@@ -233,16 +231,14 @@ pub fn apply_fence_rebuild(
     if generation != build.generation {
         return;
     }
-    spawn_layers(
+    swap_layers(
         &mut commands,
         &mut meshes,
         &materials,
         layers,
         FenceLayerTag,
+        &existing,
     );
-    for entity in &existing {
-        commands.entity(entity).despawn();
-    }
     info!("{report}");
 }
 

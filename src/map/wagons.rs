@@ -33,7 +33,7 @@ use crate::map::osm::parse::{DrawBuildout, RawOsm};
 use crate::map::osm::{MapData, RailKind, RailLine, ServiceTrack};
 use crate::map::seed::{Lcg, seed_from_point};
 use crate::map::shadow;
-use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
+use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, swap_layers};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::map::{SHADOW_COLOR, SunOnMap};
 use crate::prefs::retuned;
@@ -143,16 +143,14 @@ pub fn rebuild_wagons(
     map: Res<MapData>,
     existing: Query<Entity, With<WagonLayerTag>>,
 ) {
-    for entity in &existing {
-        commands.entity(entity).despawn();
-    }
     let (layers, report) = mesh_wagons(*bucket, map.knobs.raw, &map.rails);
-    spawn_layers(
+    swap_layers(
         &mut commands,
         &mut meshes,
         &materials,
         layers,
         WagonLayerTag,
+        &existing,
     );
     info!("{report}");
 }

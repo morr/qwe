@@ -37,7 +37,7 @@ use crate::map::inspect::{
     hit_line, mesh_feature, mesh_pins, pin_stripe, pinned_line,
 };
 use crate::map::osm::MapData;
-use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
+use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, swap_layers};
 use crate::map::{RoadStyle, TreeStyle};
 use crate::prefs::PrefsExt;
 use crate::settings::Z_INSPECTOR_HIGHLIGHT;
@@ -800,9 +800,9 @@ struct HighlightLayer<'w, 's> {
 /// штриховкой «жёлтый + цвет пина»: своей подсветкой запиненный элемент уже
 /// обладает, и жёлтая заливка поверх неё не читалась бы. Штриховка — тот же
 /// [`mesh_pins`] с двумя одинаковыми заливками: обе целиком уходят в
-/// «перекрытие» и режутся попарно. Положенная паттерном оверлеев
-/// (`ui/debug/overlays.rs::respawn_overlay`): прежние сущности маркера убрать,
-/// новый слой — если есть что показывать.
+/// «перекрытие» и режутся попарно. Положенная формой оверлеев
+/// (`map::surface::swap_layers`): прежние сущности маркера убрать, новый
+/// слой — если есть что показывать.
 /// `spawn_layers` ставит слою `DespawnOnExit`. Despawn из `Update` через
 /// команды здесь законен, как и у оверлеев: убираются только свои меченые
 /// сущности.
@@ -864,55 +864,48 @@ fn sync_inspector_highlight(
     {
         return;
     }
-    for entity in overlay.iter() {
-        commands.entity(entity).despawn();
-    }
     *drawn = (selected, stripe);
-    let Some(feature) = selected else {
-        return;
-    };
-    let Some(map) = map else {
-        return;
-    };
-    let Some(shapes) = feature_shape(&index, &map, &roads, feature) else {
-        return;
-    };
-    let mut builder = match pinned_color_index {
-        // запинен: штриховка «жёлтый + цвет пина» на всей форме
-        Some(color_index) => mesh_pins(
-            &[
-                PinnedFill {
-                    shapes: shapes.clone(),
-                    color: HIGHLIGHT_COLOR.to_linear(),
-                },
-                PinnedFill {
-                    shapes,
-                    color: pinned_color(color_index).to_linear(),
-                },
-            ],
-            stripe,
-            0.0,
-        ),
-        None => mesh_feature(&shapes, HIGHLIGHT_COLOR.to_linear()),
-    };
-    if let Some(window) = viewport.clip() {
-        builder.clip_to_rect(window.min, window.max);
-    }
-    if builder.is_empty() {
-        return;
-    }
-    spawn_layers(
+    let layer = selected.and_then(|feature| {
+        let map = map.as_ref()?;
+        let shapes = feature_shape(&index, map, &roads, feature)?;
+        let mut builder = match pinned_color_index {
+            // запинен: штриховка «жёлтый + цвет пина» на всей форме
+            Some(color_index) => mesh_pins(
+                &[
+                    PinnedFill {
+                        shapes: shapes.clone(),
+                        color: HIGHLIGHT_COLOR.to_linear(),
+                    },
+                    PinnedFill {
+                        shapes,
+                        color: pinned_color(color_index).to_linear(),
+                    },
+                ],
+                stripe,
+                0.0,
+            ),
+            None => mesh_feature(&shapes, HIGHLIGHT_COLOR.to_linear()),
+        };
+        if let Some(window) = viewport.clip() {
+            builder.clip_to_rect(window.min, window.max);
+        }
+        Some(
+            LayerMesh::new(
+                builder,
+                Z_INSPECTOR_HIGHLIGHT,
+                "inspector_highlight",
+                MaterialSpec::Blend,
+            )
+            .offset(origin.0),
+        )
+    });
+    swap_layers(
         &mut commands,
         &mut meshes,
         &materials,
-        [LayerMesh::new(
-            builder,
-            Z_INSPECTOR_HIGHLIGHT,
-            "inspector_highlight",
-            MaterialSpec::Blend,
-        )
-        .offset(origin.0)],
+        layer,
         InspectorHighlightMarker,
+        &overlay,
     );
 }
 
@@ -968,48 +961,42 @@ fn sync_pinned_highlights(
         return;
     }
     *last_stripe = stripe;
-    for entity in pinned_overlay.iter() {
-        commands.entity(entity).despawn();
-    }
-    *drawn = 0;
     // галочку сняли — слои спрятать; сами пины остаются
-    if !enabled.0 {
-        return;
-    }
-    let Some(map) = map else {
-        return;
-    };
-    let fills: Vec<PinnedFill> = pinned
+    let layer = enabled
         .0
-        .iter()
-        .filter_map(|entry| {
-            feature_shape(&index, &map, &roads, entry.hit.feature).map(|shapes| PinnedFill {
-                shapes,
-                color: pinned_color(entry.color).to_linear(),
-            })
+        .then(|| {
+            let map = map.as_ref()?;
+            let fills: Vec<PinnedFill> = pinned.0.iter().filter_map(|entry| {
+                feature_shape(&index, map, &roads, entry.hit.feature).map(|shapes| PinnedFill {
+                    shapes,
+                    color: pinned_color(entry.color).to_linear(),
+                })
+            }).collect();
+            let mut builder = mesh_pins(&fills, stripe, stripe * 0.25);
+            if let Some(window) = viewport.clip() {
+                builder.clip_to_rect(window.min, window.max);
+            }
+            Some(
+                LayerMesh::new(
+                    builder,
+                    Z_INSPECTOR_HIGHLIGHT,
+                    "inspector_pins",
+                    MaterialSpec::Blend,
+                )
+                .offset(origin.0),
+            )
         })
-        .collect();
-    let mut builder = mesh_pins(&fills, stripe, stripe * 0.25);
-    if let Some(window) = viewport.clip() {
-        builder.clip_to_rect(window.min, window.max);
-    }
-    if builder.is_empty() {
-        return;
-    }
-    spawn_layers(
+        .flatten();
+    let pinned_layer = layer.is_some();
+    swap_layers(
         &mut commands,
         &mut meshes,
         &materials,
-        [LayerMesh::new(
-            builder,
-            Z_INSPECTOR_HIGHLIGHT,
-            "inspector_pins",
-            MaterialSpec::Blend,
-        )
-        .offset(origin.0)],
+        layer,
         (InspectorHighlightMarker, InspectorPinnedMarker),
+        &pinned_overlay,
     );
-    *drawn = 1;
+    *drawn = usize::from(pinned_layer);
 }
 
 #[cfg(test)]

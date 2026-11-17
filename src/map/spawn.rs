@@ -19,6 +19,7 @@ use crate::map::roads::{self, RoadStepsBuild, StepRoadBuild};
 use crate::map::smooth::smooth_path;
 use crate::map::surface::{
     self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec, SurfaceKind, spawn_layers,
+    swap_layers,
 };
 use crate::map::trees::TreeRowStyle;
 use crate::map::water::{mesh_water_areas, mesh_water_lines, split_channels};
@@ -622,15 +623,13 @@ pub fn rebuild_tree_row_band(
     map: Res<MapData>,
     existing: Query<Entity, With<TreeRowBandTag>>,
 ) {
-    for entity in &existing {
-        commands.entity(entity).despawn();
-    }
-    spawn_layers(
+    swap_layers(
         &mut commands,
         &mut meshes,
         &materials,
         mesh_tree_row_band(&map.tree_rows, &style),
         TreeRowBandTag,
+        &existing,
     );
 }
 

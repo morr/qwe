@@ -17,6 +17,7 @@
 
 use std::time::Duration;
 
+use bevy::ecs::query::QueryFilter;
 use bevy::ecs::system::SystemParam;
 use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::prelude::*;
@@ -663,6 +664,31 @@ pub fn spawn_layers(
         let material = materials.resolve(layer.material);
         spawn_layer(commands, meshes, layer, material, tag.clone());
     }
+}
+
+/// Пересборка слоя: прежние сущности убрать, новый набор положить — вся
+/// форма `rebuild_*` карты и оверлеев одним вызовом. Деспавнится то, что
+/// поймал фильтр запроса `existing`; спавнится `layers` под меткой `tag` —
+/// у оверлеев и подсветки инспектора они разные (деспавн по одному маркеру,
+/// меток две), у слоёв карты совпадают, и компилятор выводит оба сам.
+///
+/// Сборка (`mesh_*`) и её отчёт остаются у вызывающего: тот зовёт `mesh_*`,
+/// печатает отчёт и передаёт сюда второй элемент пары. Слои-«ничего» —
+/// пустой список или `None` вместо меша — законны: [`spawn_layer`] пустой
+/// сборщик пропускает, так что оверлей с выключенным тумблером выражается
+/// `show.then(|| build())` и отдельной ветки не требует.
+pub fn swap_layers<F: QueryFilter, T: Bundle + Clone>(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &LayerMaterials,
+    layers: impl IntoIterator<Item = LayerMesh>,
+    tag: T,
+    existing: &Query<Entity, F>,
+) {
+    for entity in existing.iter() {
+        commands.entity(entity).despawn();
+    }
+    spawn_layers(commands, meshes, materials, layers, tag);
 }
 
 /// Во что обошёлся один слой: имя, вершины, время сборки.

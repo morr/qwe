@@ -36,7 +36,7 @@ use crate::map::buildings::{SHADOW_LENGTH_RANGE, drawn_lift, shade_by_light};
 use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin};
 use crate::map::osm::{MapData, PipeLine, Structure, StructureKind};
 use crate::map::shadow;
-use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
+use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, swap_layers};
 use crate::map::{BuildingHeightMode, SHADOW_COLOR, SunOnMap, shadow_dir, sun_stretch};
 use crate::prefs::retuned;
 use crate::settings::{Z_INDUSTRY, Z_INDUSTRY_SHADOW, Z_INDUSTRY_WALL, Z_PIPE, Z_PIPE_SHADOW};
@@ -140,16 +140,14 @@ pub fn rebuild_industry(
     style: Res<IndustryStyle>,
     existing: Query<Entity, With<IndustryLayerTag>>,
 ) {
-    for entity in &existing {
-        commands.entity(entity).despawn();
-    }
     let (layers, report) = mesh_industry(&map.structures, &map.pipes, *mode, &style);
-    spawn_layers(
+    swap_layers(
         &mut commands,
         &mut meshes,
         &materials,
         layers,
         IndustryLayerTag,
+        &existing,
     );
     info!("{report}");
 }

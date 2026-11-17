@@ -12,7 +12,7 @@ use crate::camera::Viewport;
 use crate::grid::{grid_size, navtile_size};
 use crate::loading::AppState;
 use crate::map::osm::MapData;
-use crate::map::surface::{LayerMaterials, LayerMesh, spawn_layers};
+use crate::map::surface::{LayerMaterials, LayerMesh, swap_layers};
 use crate::map::{
     ConiferField, RutLines, lane_width, mesh_network_overlay, mesh_osm_contours, mesh_rut_overlay,
 };
@@ -26,34 +26,12 @@ pub(super) struct NavmeshOverlayMarker;
 #[derive(Component, Clone, Copy)]
 pub(super) struct RoadNetworkOverlayMarker;
 
-/// Переложить оверлей под тумблер: прежние сущности маркера убрать, новый
-/// слой положить, если тумблер включён. Общая форма трёх оверлеев дороги
-/// (сеть, колея, контуры OSM), кладущихся через `spawn_layers` — он же
-/// ставит слою `DespawnOnExit`. Слой строится лениво: при выключенном
-/// тумблере ничего не собирается. Заливка navmesh и поле хвои под эту форму
-/// не подходят — те собирают меш и текстуру сами.
-fn respawn_overlay<M: Component + Clone>(
-    commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    materials: &LayerMaterials,
-    show: bool,
-    build: impl FnOnce() -> LayerMesh,
-    marker: M,
-    overlay: &Query<Entity, With<M>>,
-) {
-    for entity in overlay.iter() {
-        commands.entity(entity).despawn();
-    }
-    if show {
-        spawn_layers(commands, meshes, materials, [build()], marker);
-    }
-}
-
 /// Спавн/despawn оверлея сети улиц: улица каждая своим цветом, толщина по
 /// числу полос, точка на каждом шве ways. Сеть — ресурс загрузки мира
 /// (`MapData::network`), ручки формы её не двигают, так что слой строится
 /// заново только по тумблеру и на входе в мир. `DespawnOnExit` слою ставит
-/// `spawn_layers`.
+/// `spawn_layers`; при выключенном тумблере меш не собирается — `then`
+/// кладёт `None`, и [`swap_layers`] деспавнит без спавна.
 pub(super) fn sync_road_network_overlay(
     mut commands: Commands,
     show: Res<DebugRoadNetwork>,
@@ -62,12 +40,11 @@ pub(super) fn sync_road_network_overlay(
     materials: LayerMaterials,
     overlay: Query<Entity, With<RoadNetworkOverlayMarker>>,
 ) {
-    respawn_overlay(
+    swap_layers(
         &mut commands,
         &mut meshes,
         &materials,
-        show.0,
-        || mesh_network_overlay(&map),
+        show.0.then(|| mesh_network_overlay(&map)),
         RoadNetworkOverlayMarker,
         &overlay,
     );
@@ -81,7 +58,8 @@ pub(super) struct RutOverlayMarker;
 /// узлов — из ресурса `RutLines`, который кладёт тот же проход сборки дорог,
 /// что рисует колею (`roads::build_roads`). Ручки формы двигают
 /// колею, и слой идёт за ресурсом. Шаг полосы — глобаль краски, та же, что у
-/// шейдера. `DespawnOnExit` слою ставит `spawn_layers`.
+/// шейдера. `DespawnOnExit` слою ставит `spawn_layers`; тумблер — `then`,
+/// как у сети улиц.
 pub(super) fn sync_rut_overlay(
     mut commands: Commands,
     show: Res<DebugRutLines>,
@@ -90,12 +68,11 @@ pub(super) fn sync_rut_overlay(
     materials: LayerMaterials,
     overlay: Query<Entity, With<RutOverlayMarker>>,
 ) {
-    respawn_overlay(
+    swap_layers(
         &mut commands,
         &mut meshes,
         &materials,
-        show.0,
-        || mesh_rut_overlay(&ruts, lane_width()),
+        show.0.then(|| mesh_rut_overlay(&ruts, lane_width())),
         RutOverlayMarker,
         &overlay,
     );
@@ -108,7 +85,8 @@ pub(super) struct OsmContoursOverlayMarker;
 /// Спавн/despawn оверлея контуров OSM: снимок геометрии до доводочных
 /// проходов (`MapData::osm_contours`) поверх обработанной карты. Снимок —
 /// разбора, ручки его не двигают, так что слой строится только по тумблеру и
-/// на входе в мир. `DespawnOnExit` слою ставит `spawn_layers`.
+/// на входе в мир. `DespawnOnExit` слою ставит `spawn_layers`; тумблер —
+/// `then`, как у сети улиц.
 pub(super) fn sync_osm_contours_overlay(
     mut commands: Commands,
     show: Res<DebugOsmContours>,
@@ -117,12 +95,11 @@ pub(super) fn sync_osm_contours_overlay(
     materials: LayerMaterials,
     overlay: Query<Entity, With<OsmContoursOverlayMarker>>,
 ) {
-    respawn_overlay(
+    swap_layers(
         &mut commands,
         &mut meshes,
         &materials,
-        show.0,
-        || {
+        show.0.then(|| {
             let started = std::time::Instant::now();
             let layer = mesh_osm_contours(&map.osm_contours);
             info!(
@@ -131,7 +108,7 @@ pub(super) fn sync_osm_contours_overlay(
                 started.elapsed()
             );
             layer
-        },
+        }),
         OsmContoursOverlayMarker,
         &overlay,
     );

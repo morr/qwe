@@ -15,7 +15,7 @@ use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin};
 use crate::map::osm::{RailKind, RailLine};
 use crate::map::roads::tram_lay::TramTracks;
 use crate::map::smooth::{Smoothing, smooth_path};
-use crate::map::surface::{self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
+use crate::map::surface::{self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec, swap_layers};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::prefs::retuned;
 use crate::settings::Z_TRAM;
@@ -284,11 +284,15 @@ pub fn rebuild_tram(
     tracks: Res<TramTracks>,
     existing: Query<Entity, With<TramLayerTag>>,
 ) {
-    for entity in &existing {
-        commands.entity(entity).despawn();
-    }
     let (layers, report) = mesh_tram(*bucket, &style, &tracks.0);
-    spawn_layers(&mut commands, &mut meshes, &materials, layers, TramLayerTag);
+    swap_layers(
+        &mut commands,
+        &mut meshes,
+        &materials,
+        layers,
+        TramLayerTag,
+        &existing,
+    );
     info!("{report}");
 }
 
