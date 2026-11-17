@@ -125,6 +125,21 @@ impl BuildingClass {
     pub(super) fn is_landmark(&self) -> bool {
         matches!(self.kind, BuildingKind::Fortress { .. } | BuildingKind::Temple)
     }
+
+    /// Крупноформат: решётка зенитных фонарей по колоннам, машинное
+    /// помещение и удвоенный потолок вентшахт.
+    pub(super) fn is_big_box(&self) -> bool {
+        matches!(self.kind, BuildingKind::BigBox)
+    }
+
+    /// Блоки кондиционеров — торговля и казённые здания: на жилом доме и цехе
+    /// их на снимке не видно.
+    pub(super) fn carries_ac(&self) -> bool {
+        matches!(
+            self.kind,
+            BuildingKind::BigBox | BuildingKind::Shop | BuildingKind::Store | BuildingKind::Office(_) | BuildingKind::Public
+        )
+    }
 }
 
 /// Класс здания — единственный разбор развилок «назначение × пятно × пороги».

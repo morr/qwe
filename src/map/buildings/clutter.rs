@@ -28,8 +28,9 @@ use super::Lean;
 use super::layers::{silhouette_edges, wall_colors};
 use super::material::{RoofKind, RoofLook};
 use crate::map::meshing::MeshBuilder;
-use crate::map::osm::model::{is_big_box, is_fortress_tower, point_in_area, signed_ring_area};
-use crate::map::osm::{AreaKind, BuildingUse, PolyArea};
+use super::classify::{BuildingClass, BuildingKind, classify};
+use crate::map::osm::model::{is_big_box, point_in_area, signed_ring_area};
+use crate::map::osm::{BuildingUse, PolyArea};
 use crate::map::seed::Lcg;
 use crate::map::shadow;
 use crate::map::shadow_dir;
@@ -169,7 +170,9 @@ pub(super) struct RoofItem {
 /// над контуром: основания коробок приходят уже сдвинутыми, а попадание в
 /// контур проверяется до сдвига, по настоящему пятну.
 pub(super) fn flat_roof_items(building: &PolyArea, look: &RoofLook, lift: Vec2) -> Vec<RoofItem> {
-    if !roof_clutter_allowed(building, look) {
+    // развилки «кому что стоит на кровле» уже разобраны классификатором
+    let class = classify(building, None);
+    if !roof_clutter_allowed(&class, look) {
         return Vec::new();
     }
     let axis = look.frame.axis;
@@ -192,7 +195,7 @@ pub(super) fn flat_roof_items(building: &PolyArea, look: &RoofLook, lift: Vec2) 
     // место восемью попытками ([`place`]) и обходит занятое само, так что
     // ставить его первым значило бы дырявить решётку машинным помещением —
     // а на фотографии наоборот, агрегаты стоят в промежутках между фонарями.
-    if is_big_box(building) {
+    if class.is_big_box() {
         push_skylight_grid(&mut items, &frame, building, lift);
         push_plant(&mut items, &frame, building, &mut rng, lift);
     }
@@ -246,10 +249,7 @@ pub(super) fn flat_roof_items(building: &PolyArea, look: &RoofLook, lift: Vec2) 
     }
 
     // блоки кондиционеров — торговля и казённые здания
-    if matches!(
-        building.building_use,
-        BuildingUse::Commercial | BuildingUse::Retail | BuildingUse::Public
-    ) {
+    if class.carries_ac() {
         let count = ((area / UNIT_AREA_PER) as usize).clamp(1, UNIT_MAX);
         for _ in 0..count {
             place(
@@ -267,7 +267,7 @@ pub(super) fn flat_roof_items(building: &PolyArea, look: &RoofLook, lift: Vec2) 
     }
 
     // вентшахты — на любой плоской кровле
-    let cap = match is_big_box(building) {
+    let cap = match class.is_big_box() {
         true => VENT_MAX_BIG_BOX,
         false => VENT_MAX,
     };
@@ -442,27 +442,23 @@ fn push_plant(
     items.append(&mut best);
 }
 
-/// Храм и крепость: вентшахта на боевом ходу или печная труба на вальме храма
-/// выдают генератор ровно так же, как коробка на гаражном боксе. Над ними
-/// стоит своё — главы и зубцы.
-fn is_landmark(building: &PolyArea) -> bool {
-    building.kind == AreaKind::Kremlin || matches!(building.building_use, BuildingUse::Church(_))
-}
-
 /// Ставится ли на эту кровлю оборудование. На гаражном ряду нет ни машинного
 /// помещения, ни вентшахты — там нечего вентилировать и не топят, и коробка
-/// на боксе сразу выдаёт генератор; у храма и крепости ([`is_landmark`])
-/// стоит своё.
-fn roof_clutter_allowed(building: &PolyArea, look: &RoofLook) -> bool {
-    !matches!(look.kind, RoofKind::GarageRow | RoofKind::GarageBlock) && !is_landmark(building)
+/// на боксе сразу выдаёт генератор; у храма и крепости
+/// ([`BuildingClass::is_landmark`]) стоит своё — главы и зубцы.
+fn roof_clutter_allowed(class: &BuildingClass, look: &RoofLook) -> bool {
+    !matches!(look.kind, RoofKind::GarageRow | RoofKind::GarageBlock) && !class.is_landmark()
 }
 
 /// Зубцы по верху крепостной стены — вдоль каждого ребра контура прясла, с
 /// шагом [`MERLON_PITCH`]: с воздуха стена кремля узнаётся по пунктиру зубцов
-/// и их коротким теням на боевом ходу. Башне ([`is_fortress_tower`]) зубцов не
-/// положено — она под шатром.
+/// и их коротким теням на боевом ходу. Башне (класс `Fortress { tower: true }`)
+/// зубцов не положено — она под шатром.
 pub(super) fn merlons(building: &PolyArea, lift: Vec2) -> Vec<RoofItem> {
-    if building.kind != AreaKind::Kremlin || is_fortress_tower(building) {
+    if !matches!(
+        classify(building, None).kind(),
+        BuildingKind::Fortress { tower: false }
+    ) {
         return Vec::new();
     }
     let orientation = signed_ring_area(&building.outer).signum();
@@ -517,7 +513,7 @@ pub(super) fn ridge_chimney(
     ridge: (Vec2, Vec2),
     lift: Vec2,
 ) -> Option<RoofItem> {
-    if !roof_clutter_allowed(building, look) {
+    if !roof_clutter_allowed(&classify(building, None), look) {
         return None;
     }
     let along = (ridge.1 - ridge.0).try_normalize()?;
