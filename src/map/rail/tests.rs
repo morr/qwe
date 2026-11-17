@@ -529,8 +529,7 @@ fn a_street_across_a_track_gets_a_crossing_deck() {
 
 // настил переезда лежит между шпалами и нитками: рельсы идут поверх него
 const _: () = assert!(
-    Z_RAIL_TIE < crate::map::z::Z_RAIL_CROSSING
-        && crate::map::z::Z_RAIL_CROSSING < Z_RAIL_STEEL
+    Z_RAIL_TIE < crate::map::z::Z_RAIL_CROSSING && crate::map::z::Z_RAIL_CROSSING < Z_RAIL_STEEL
 );
 
 /// Нет переезда там, где путь не пересекает улицу в одном уровне:

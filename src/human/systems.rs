@@ -9,6 +9,7 @@ use crate::human::components::{
 use crate::human::look::{human_body, roll_attire};
 use crate::loading::AppState;
 use crate::map::osm::{MapData, PolyArea};
+use crate::map::z::unit_z;
 use crate::movement::{
     Movable, NeedsWanderTarget, SimPosition, assert_ready_to_pick, heading_towards, point_in_cone,
     request_wander_path,
@@ -17,8 +18,11 @@ use crate::navigation::{ArcNavmesh, Backend};
 use crate::rng::{
     PawnId, RngDomain, SimRng, Species, WanderIndex, WorldSeed, decision_stream, stream,
 };
-use crate::settings::{HUMAN_FLEE_SPEED, HUMAN_WALK_SPEED, HUMAN_WANDER_PAUSE, HUMAN_WANDER_PAUSE_SHARE, HUMAN_WANDER_RANGE, HUMAN_WANDER_TO_BUILDING_SHARE, RECOIL_CONE, RECOIL_MIN_ERRAND, WANDER_CONE};
-use crate::map::z::unit_z;
+use crate::settings::{
+    HUMAN_FLEE_SPEED, HUMAN_WALK_SPEED, HUMAN_WANDER_PAUSE, HUMAN_WANDER_PAUSE_SHARE,
+    HUMAN_WANDER_RANGE, HUMAN_WANDER_TO_BUILDING_SHARE, RECOIL_CONE, RECOIL_MIN_ERRAND,
+    WANDER_CONE,
+};
 use crate::silhouette::Silhouettes;
 
 /// Сколько зданий перебирается в поисках цели «по делам» в конусе курса;

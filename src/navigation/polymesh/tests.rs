@@ -2,7 +2,10 @@ use super::build::{inflate_ring, ribbon_outline};
 use super::*;
 use crate::map::osm::fixture;
 use crate::map::osm::model::WaterKind;
-use crate::settings::{MAP_SIZE, POLYMESH_CHUNK_TARGET_METERS, POLYMESH_FLAT_CHUNK_METERS, POLYMESH_SEARCH_DELTA, POLYMESH_SEARCH_STEPS};
+use crate::settings::{
+    MAP_SIZE, POLYMESH_CHUNK_TARGET_METERS, POLYMESH_FLAT_CHUNK_METERS, POLYMESH_SEARCH_DELTA,
+    POLYMESH_SEARCH_STEPS,
+};
 
 /// Сторона чанка для тестов иерархии: по умолчанию она больше карты
 /// (`CHUNK_TARGET_METERS`), то есть швов нет вовсе и проверять было бы

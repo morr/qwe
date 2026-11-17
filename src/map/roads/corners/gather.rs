@@ -10,7 +10,9 @@ use crate::map::osm::model::{RoadLine, polyline_length};
 use crate::map::parallel::in_parallel;
 use crate::map::roads::{DrawnPiece, PieceKind, VergeZoomBucket};
 use crate::map::spawn::GRASS_COLOR;
-use crate::map::z::{Z_ALLEY, Z_ROAD, Z_ROAD_VERGE, Z_ROAD_VERGE_LAWN, Z_ROAD_VERGE_YARD, Z_SIDEWALK, Z_UNPAVED_ROAD};
+use crate::map::z::{
+    Z_ALLEY, Z_ROAD, Z_ROAD_VERGE, Z_ROAD_VERGE_LAWN, Z_ROAD_VERGE_YARD, Z_SIDEWALK, Z_UNPAVED_ROAD,
+};
 
 use super::{
     ALLEY_COLOR, Arm, Drawn, FarTaper, KERB_PAD_RUN, KerbLayers, MAX_ANGLE, MIN_ANGLE, MIN_ARM,

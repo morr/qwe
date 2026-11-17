@@ -36,8 +36,10 @@ use crate::map::osm::{RailKind, RailLine};
 use crate::map::prepare::PreparedMeshes;
 use crate::map::smooth::{Smoothing, smooth_path};
 use crate::map::surface::{self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec, spawn_layers};
+use crate::map::z::{
+    Z_RAIL, Z_RAIL_BRIDGE, Z_RAIL_BRIDGE_STEEL, Z_RAIL_BRIDGE_TIE, Z_RAIL_STEEL, Z_RAIL_TIE,
+};
 use crate::map::zoom::{LodStep, ZoomBucket, ZoomLods};
-use crate::map::z::{Z_RAIL, Z_RAIL_BRIDGE, Z_RAIL_BRIDGE_STEEL, Z_RAIL_BRIDGE_TIE, Z_RAIL_STEEL, Z_RAIL_TIE};
 
 /// Цвета одного вида пути. Действующий путь — щебень, креозотная шпала и
 /// накатанная до блеска головка рельса; заброшенный — тот же путь, заросший:

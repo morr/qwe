@@ -17,7 +17,9 @@ use crate::map::osm::model::signed_ring_area;
 use crate::map::parallel::in_parallel;
 use crate::map::shadow::{difference_of_shapes, union_of};
 use crate::map::{merge_close_points, miter_offsets};
-use crate::settings::{MAP_SIZE, POLYMESH_MAP_EDGE_MARGIN, POLYMESH_SEARCH_DELTA, POLYMESH_SEARCH_STEPS};
+use crate::settings::{
+    MAP_SIZE, POLYMESH_MAP_EDGE_MARGIN, POLYMESH_SEARCH_DELTA, POLYMESH_SEARCH_STEPS,
+};
 
 /// Упрощение контуров препятствий (Visvalingam–Whyatt внутри polyanya),
 /// метры. Не косметика: boolean оставляет отрезки в доли миллиметра, CDT на

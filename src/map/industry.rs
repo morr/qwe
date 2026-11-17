@@ -37,9 +37,9 @@ use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin};
 use crate::map::osm::{MapData, PipeLine, Structure, StructureKind};
 use crate::map::shadow;
 use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, swap_layers};
+use crate::map::z::{Z_INDUSTRY, Z_INDUSTRY_SHADOW, Z_INDUSTRY_WALL, Z_PIPE, Z_PIPE_SHADOW};
 use crate::map::{BuildingHeightMode, SHADOW_COLOR, SunOnMap, shadow_dir, sun_stretch};
 use crate::prefs::retuned;
-use crate::map::z::{Z_INDUSTRY, Z_INDUSTRY_SHADOW, Z_INDUSTRY_WALL, Z_PIPE, Z_PIPE_SHADOW};
 
 /// Сторон в круге. Двадцать четыре: у резервуара в двадцать метров это грань
 /// в пять метров, и на любом зуме, где резервуар вообще виден, круг остаётся

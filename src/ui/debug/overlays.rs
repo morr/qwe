@@ -13,12 +13,12 @@ use crate::grid::{grid_size, navtile_size};
 use crate::loading::AppState;
 use crate::map::osm::MapData;
 use crate::map::surface::{LayerMaterials, swap_layers};
+use crate::map::z::Z_CONIFER_NOISE_OVERLAY;
 use crate::map::{
     ConiferField, RutLines, lane_width, mesh_network_overlay, mesh_osm_contours, mesh_rut_overlay,
 };
 use crate::navigation::{ArcNavmesh, PolymeshDebug};
 use crate::settings::MAP_SIZE;
-use crate::map::z::Z_CONIFER_NOISE_OVERLAY;
 
 #[derive(Component)]
 pub(super) struct NavmeshOverlayMarker;

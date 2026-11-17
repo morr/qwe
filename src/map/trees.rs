@@ -37,10 +37,10 @@ use crate::map::prepare::PreparedMeshes;
 use crate::map::roads::RoadJoin;
 use crate::map::smooth::Smoothing;
 use crate::map::surface::{LayerMaterials, LayerMesh, MapLayer, MaterialSpec, spawn_layers};
+use crate::map::z::{Z_TREE, Z_TREE_SHADOW};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::prefs::retuned;
 use crate::settings::TREE_VARIANTS;
-use crate::map::z::{Z_TREE, Z_TREE_SHADOW};
 
 /// Форма кроны — `w.TREE_SHAPE` у watabou.
 #[derive(Resource, Reflect, Clone, Copy, PartialEq, Eq, Debug, Default)]

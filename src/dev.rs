@@ -26,12 +26,12 @@ use crate::map::buildings::{BuildingHeightMode, BuildingPlan, mesh_buildings};
 use crate::map::inspect::{InspectIndex, InspectOrigin, hit_line};
 use crate::map::osm::MapData;
 use crate::map::surface::MapLayer;
+use crate::map::z::unit_z;
 use crate::map::{
     FenceZoomBucket, ParkingLayout, RailZoomBucket, RoadShapeOnMap, RoadStyle, TreeStyle,
     VergeZoomBucket, mesh_fences, mesh_rails, mesh_roads, mesh_surfaces,
 };
 use crate::movement::Movable;
-use crate::map::z::unit_z;
 
 const SCREENSHOT_PATH: &str = "screenshot.png";
 const OFFSCREEN_PATH: &str = "offscreen.png";

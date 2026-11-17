@@ -85,9 +85,13 @@ use crate::map::shapes::{is_ring, push_shape};
 use crate::map::surface::{
     self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec, SurfaceKind, spawn_layers,
 };
+use crate::map::z::{
+    Z_ALLEY, Z_LOT_LINES, Z_LOT_SIDEWALK, Z_RAIL_CROSSING, Z_RING_GRASS, Z_RING_ISLAND, Z_ROAD,
+    Z_ROAD_MEDIAN, Z_ROAD_VERGE, Z_ROAD_VERGE_LAWN, Z_ROAD_VERGE_YARD, Z_SIDEWALK, Z_UNPAVED_ROAD,
+    Z_WALL,
+};
 use crate::map::zoom::{LodStep, ZoomLods};
 use crate::prefs::retuned;
-use crate::map::z::{Z_ALLEY, Z_LOT_LINES, Z_LOT_SIDEWALK, Z_RAIL_CROSSING, Z_RING_GRASS, Z_RING_ISLAND, Z_ROAD, Z_ROAD_MEDIAN, Z_ROAD_VERGE, Z_ROAD_VERGE_LAWN, Z_ROAD_VERGE_YARD, Z_SIDEWALK, Z_UNPAVED_ROAD, Z_WALL};
 
 /// Проезжая часть — асфальт: серый, заметно темнее тротуара и земли. Белой
 /// (osm-carto) она была, пока не появилась разметка: белую линию на белом не

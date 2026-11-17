@@ -16,9 +16,9 @@ use crate::map::osm::{RailKind, RailLine};
 use crate::map::roads::tram_lay::TramTracks;
 use crate::map::smooth::{Smoothing, smooth_path};
 use crate::map::surface::{self, LayerCost, LayerMaterials, LayerMesh, MaterialSpec, swap_layers};
+use crate::map::z::Z_TRAM;
 use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::prefs::retuned;
-use crate::map::z::Z_TRAM;
 
 /// Трамвай — не лента, а линия с поперечной насечкой, как в Яндекс.Картах и
 /// 2ГИС. Причина не в стиле: трамвайный путь лежит **на проезжей части**, и

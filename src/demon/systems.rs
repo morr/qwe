@@ -9,6 +9,7 @@ use crate::demon::components::{
 use crate::demon::look::{demon_body, halo};
 use crate::diagnostics::{SIM_SPAWNER_MS, SimMeasure};
 use crate::loading::AppState;
+use crate::map::z::unit_z;
 use crate::movement::{
     DrawMovePaths, MOVEPATH_ARROW_TIP, MOVEPATH_COLOR, Movable, SimPosition, assert_ready_to_pick,
     point_in_cone, request_wander_path,
@@ -16,8 +17,9 @@ use crate::movement::{
 use crate::navigation::Backend;
 use crate::portal::PortalPos;
 use crate::rng::{PawnId, RngDomain, Species, WanderIndex, WorldSeed, decision_stream};
-use crate::settings::{DEMON_INITIAL_BURST, DEMON_SPEED, DEMON_WANDER_CONE, DEMON_WANDER_RANGE, PORTAL_DIAMETER};
-use crate::map::z::unit_z;
+use crate::settings::{
+    DEMON_INITIAL_BURST, DEMON_SPEED, DEMON_WANDER_CONE, DEMON_WANDER_RANGE, PORTAL_DIAMETER,
+};
 use crate::silhouette::Silhouettes;
 
 /// Стартовый залп; в `FixedUpdate`, а не в `Startup` — после рестарта сцены

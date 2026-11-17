@@ -16,7 +16,9 @@ use crate::human::decide::{
 use crate::movement::{Movable, SimPosition};
 use crate::navigation::Backend;
 use crate::rng::{PawnId, WanderIndex};
-use crate::settings::{HUMAN_FLEE_SPEED, HUMAN_PANIC_RADIUS, HUMAN_WALK_SPEED, HUMAN_WANDER_PAUSE, RADIUS_HYSTERESIS};
+use crate::settings::{
+    HUMAN_FLEE_SPEED, HUMAN_PANIC_RADIUS, HUMAN_WALK_SPEED, HUMAN_WANDER_PAUSE, RADIUS_HYSTERESIS,
+};
 use crate::spatial::SpatialGrid;
 use crate::telemetry::Telemetry;
 

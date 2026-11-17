@@ -52,10 +52,10 @@ use crate::map::roads::{is_carriageway, lane_count, paint};
 use crate::map::seed::{Lcg, seed_from_point};
 use crate::map::shadow;
 use crate::map::surface::{LayerCost, LayerMaterials, LayerMesh, MaterialSpec, swap_layers};
+use crate::map::z::Z_CAR;
 use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::prefs::retuned;
 use crate::settings::{CAR_DETAIL_MAX_ZOOM, CAR_MAX_ZOOM, CAR_SILHOUETTE_MAX_ZOOM};
-use crate::map::z::Z_CAR;
 
 pub mod body;
 pub(crate) mod district;

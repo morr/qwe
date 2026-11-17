@@ -17,7 +17,9 @@ use crate::movement::{
     request_wander_path,
 };
 use crate::navigation::Backend;
-use crate::settings::{DEMON_AGGRO_RADIUS, DEMON_DEVOUR_PAUSE, DEVOUR_PULSE_MAX_SCALE, DEVOUR_PULSE_PERIOD};
+use crate::settings::{
+    DEMON_AGGRO_RADIUS, DEMON_DEVOUR_PAUSE, DEVOUR_PULSE_MAX_SCALE, DEVOUR_PULSE_PERIOD,
+};
 use crate::spatial::SpatialGrid;
 use crate::telemetry::Telemetry;
 

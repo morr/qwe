@@ -4,11 +4,11 @@ use derive_more::{Deref, DerefMut};
 
 use crate::camera::Viewport;
 use crate::diagnostics::{SIM_MOVE_MS, SimMeasure};
+use crate::map::z::unit_z;
 use crate::movement::components::{
     BodyScale, Movable, MovableStateMovingTag, PawnEdit, PreviousSimPosition, SimPosition,
 };
 use crate::navigation::{Backend, Walkable};
-use crate::map::z::unit_z;
 
 /// Движение в `FixedUpdate`, двигает `SimPosition` по waypoint'ам пути.
 ///
