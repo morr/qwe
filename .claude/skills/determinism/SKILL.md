@@ -237,7 +237,10 @@ this constant, and why it must not scale with `SimSpeed` — that is the rustdoc
 how much leaves the queue each tick, in units of *predicted search cost*
 (`PATHFINDING_UNIT_TILES`). Why the unit is cost rather than requests, the integer-metric
 rule, and the ~35 ms-per-tick pool budget the rates are derived from live in the rustdoc
-of those constants in `src/settings.rs`.
+of those constants in `src/settings.rs`. The queue arithmetic itself is its own
+unit-tested module — `movement/pathfinding/budget.rs` (`QueuedRequest`,
+`request_units`, `push_within_budget`, `take_within_budget`); the dispatcher around
+it only assembles the queue from the request query and hands out tasks.
 
 **Never reuse `MAX_*_IN_FLIGHT` here** — those are the live mode's concurrent-search cap
 behind the visibility gate; this dispatcher has no gate and ignores them entirely (the
@@ -252,7 +255,8 @@ panel.
 ### The FIFO key
 
 **`RequestedAt`** — the tick a request was filed. The dispatcher's key is `(requested_at,
-species, pawn_id)`, all integers, since ties between floats have no defined order. **Species
+species, pawn_id)`, all integers, since ties between floats have no defined order
+(`QueuedRequest::key`, in the same `budget.rs`). **Species
 precedes the number** because `PawnId` is only unique *within* a species, and the urgent
 queue mixes demons with fleeing humans.
 

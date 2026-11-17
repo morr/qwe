@@ -1066,9 +1066,10 @@ Summary; the mechanism — **determinism skill** (seed derivation, the decision 
   it" from the simulation. **The constant must not scale with `SimSpeed`.**
 - **Dispatch rate** (`PATHFINDING_WANDER_UNITS_PER_TICK` 128 / `_URGENT_` 64) — how much
   leaves the queue each tick, measured in *predicted search cost* (an integer), not in
-  requests. **Never reuse `MAX_*_IN_FLIGHT` here** — those cap concurrent searches behind
-  the visibility gate. **A long queue is the normal state of this mode**; at 30× it settles
-  around 2–5×.
+  requests; the queue arithmetic is its own unit-tested module
+  (`movement/pathfinding/budget.rs`). **Never reuse `MAX_*_IN_FLIGHT` here** — those cap
+  concurrent searches behind the visibility gate. **A long queue is the normal state of
+  this mode**; at 30× it settles around 2–5×.
 - **RequestedAt** — the tick a request was filed; the deterministic dispatcher's FIFO key is
   `(requested_at, species, pawn_id)`, all integers. **The camera does not appear in it at
   all.**
