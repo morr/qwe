@@ -1804,7 +1804,7 @@ fn building_chunks_stack_by_depth() {
     );
     for layer in &built.layers {
         assert!(
-            crate::settings::Z_BUILDING - layer.z <= 0.05,
+            crate::map::z::Z_BUILDING - layer.z <= 0.05,
             "куски живут в полосе под полным зумом слоя, а не под тенями: {:?}",
             layer.z
         );

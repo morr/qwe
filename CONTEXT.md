@@ -89,7 +89,9 @@ in `main.rs`.
   corner → (0,0), f64 math, `MAP_SIZE`-sized bbox derived from the center, with
   `METERS_PER_DEG_LAT` in `settings.rs` — that one belongs to the projection, not to a
   city.
-- **Z-layers** — constants in `settings.rs`, bottom to top: ground → ring islands
+- **Z-layers** — constants in `map/z.rs` (the ladder is the map's invariant, not a
+  shared number — `settings.rs` keeps only what the whole world reads), bottom to top:
+  ground → ring islands
   (0.05) → verge lawns (0.08) → verge yards (0.09) → verges (0.1) → landuse works →
   landuse yards → parks → woods → tree-row band casing → tree-row band → grass → ring
   island grass (0.65) → sand → alleys (1.5) → sidewalks (1.6) → road medians (1.7) →
@@ -106,7 +108,7 @@ in `main.rs`.
   roof shadows (5.05) → industry walls (5.06) → industry tops (5.07) → units → souls (18)
   → tree shadows → trees (20). Three live in their
   own modules: `Z_BUILDING_SHADOW` 4.5, `Z_FACADE` 4.9, `Z_ROOF_SHADOW` 5.05
-  (`map/buildings/mod.rs`); `Z_WALL` 5.1 is in the shared stack (`settings.rs`).
+  (`map/buildings/mod.rs`); `Z_WALL` 5.1 is in the shared stack (`map/z.rs`).
   Units are y-sorted:
   `unit_z(y) = Z_UNIT_BASE − y · Y_SORT_FACTOR` (10 − y·0.002). **Invariant: the unit z
   range must stay above buildings (5) for any y ≤ MAP_SIZE.y** — a bigger map once sank
@@ -765,7 +767,10 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   **`LayerMesh`** is one type for every layer of the map; **`MaterialSpec`** **names** the
   material instead of carrying a `Handle` — the only thing that would have dragged Bevy
   into the build. Every spawned layer entity carries the **`MapLayer`** marker — what
-  `brp layers` / `hide` / `probe` select by. Two modules return more than a
+  `brp layers` / `hide` / `probe` select by. The rebuild half of the seam is
+  **`surface::swap_layers`** — despawn by query filter, spawn through `spawn_layers`,
+  one call for every `rebuild_*` and overlay; the mesh call and its report stay with
+  the caller. Two modules return more than a
   `Vec<LayerMesh>`: **`buildings`** (shadows carry their own tag) and **`trees`** (a
   scatter, not a merged mesh, on the near step). **A zoom cutoff and a visibility toggle
   belong in the build, not in the system**: **"not drawn" is a state of the report, never
@@ -1505,9 +1510,10 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
 ## Cross-references
 
 - World-wide tuning constants: `src/settings.rs` (sizes, speeds, radii, spawn rates,
-  z-layers, the projection scale `METERS_PER_DEG_LAT`) — what belongs to the world as a
+  the projection scale `METERS_PER_DEG_LAT`) — what belongs to the world as a
   whole, i.e. what more than one
-  owner reads. **A number with exactly one owner lives beside that owner**, and "it is a
+  owner reads. The z-ladder is not one of them: the map's draw order is an invariant
+  of the map, so it lives in `map/z.rs` with its assert block. **A number with exactly one owner lives beside that owner**, and "it is a
   constant" is not a reason to move it here. Not there: a number that *is* a rule of a
   decision ladder rather than a knob
   over it stays beside its `decide.rs` — `MAX_CHASERS_PER_TARGET` and the ×1.5/×0.7 switch

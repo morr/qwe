@@ -37,7 +37,8 @@ use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, swap_layers};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::map::{SHADOW_COLOR, SunOnMap};
 use crate::prefs::retuned;
-use crate::settings::{WAGON_MAX_ZOOM, Z_WAGON};
+use crate::settings::WAGON_MAX_ZOOM;
+use crate::map::z::Z_WAGON;
 
 /// Габарит четырёхосного вагона, м: полувагон 13.9 × 3.1, высота по борту
 /// 3.8 — она и даёт длину тени, тем же котангенсом высоты солнца, что у домов.

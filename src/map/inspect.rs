@@ -47,15 +47,12 @@ use crate::map::osm::model::{
 };
 use crate::map::roads::pockets::kerb_pocket_outlines;
 use crate::map::roads::{DrawnPiece, DrawnPieces, PieceKind};
-use crate::settings::{
-    Z_FENCE, Z_INDUSTRY, Z_PIPE, Z_RAIL, Z_ROAD, Z_ROAD_ISLANDS, Z_ROAD_PAINT, Z_SIDEWALK, Z_TRAM,
-    Z_TREE, Z_WALL, Z_WATERWAY,
-};
+use crate::map::z::{Z_FENCE, Z_INDUSTRY, Z_PIPE, Z_RAIL, Z_ROAD, Z_ROAD_ISLANDS, Z_ROAD_PAINT, Z_SIDEWALK, Z_TRAM, Z_TREE, Z_WALL, Z_WATERWAY};
 
 #[cfg(test)]
 use crate::map::osm::model::{Highway, SidewalkSide};
 #[cfg(test)]
-use crate::settings::Z_BRIDGE;
+use crate::map::z::Z_BRIDGE;
 
 mod labels;
 mod shapes;

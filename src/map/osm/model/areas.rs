@@ -9,10 +9,7 @@
 use bevy::prelude::*;
 
 use super::{MapData, PolyArea};
-use crate::settings::{
-    Z_BUILDING, Z_GRASS, Z_LANDUSE, Z_LANDUSE_YARD, Z_PARK, Z_PARKING, Z_PITCH, Z_POND, Z_SAND,
-    Z_WOOD,
-};
+use crate::map::z::{Z_BUILDING, Z_GRASS, Z_LANDUSE, Z_LANDUSE_YARD, Z_PARK, Z_PARKING, Z_PITCH, Z_POND, Z_SAND, Z_WOOD};
 
 /// Вид площадного слоя — одно из полей `Vec<PolyArea>` в [`MapData`]. Вектор
 /// говорит, в каком **слое** полигон нарисован, а [`super::AreaKind`] в нём —

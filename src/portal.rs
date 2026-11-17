@@ -14,7 +14,8 @@ use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dPlugin};
 
 use crate::city::City;
 use crate::loading::{AppState, WorldInitSet};
-use crate::settings::{PORTAL_DIAMETER, Z_PORTAL, Z_PORTAL_STAIN};
+use crate::settings::PORTAL_DIAMETER;
+use crate::map::z::{Z_PORTAL, Z_PORTAL_STAIN};
 use crate::silhouette::{Glyph, Silhouettes};
 
 const SHADER_PATH: &str = "shaders/portal.wesl";

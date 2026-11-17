@@ -442,10 +442,7 @@ fn the_deterministic_receiver_reports_zeros_on_a_tick_with_nothing_due() {
 use super::components::RetireAt;
 use super::pathfinding::dispatch_pathfinding_requests_deterministic;
 use crate::determinism::SimTick;
-use crate::settings::{
-    PATHFINDING_RETIRE_TICKS, PATHFINDING_UNIT_TILES, PATHFINDING_URGENT_UNITS_PER_TICK,
-    PATHFINDING_WANDER_UNITS_PER_TICK,
-};
+use crate::settings::{PATHFINDING_RETIRE_TICKS, PATHFINDING_UNIT_TILES, PATHFINDING_URGENT_UNITS_PER_TICK, PATHFINDING_WANDER_UNITS_PER_TICK};
 
 /// Приложение с одним детерминированным диспетчером и пустой (проходимой)
 /// сеткой: проверяется бухгалтерия выдачи, а не сам поиск.

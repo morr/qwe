@@ -14,7 +14,7 @@ use crate::map::MeshBuilder;
 use crate::map::meshing::{RibbonCap, RibbonJoin};
 use crate::map::osm::MapData;
 use crate::map::surface::{LayerMesh, MaterialSpec};
-use crate::settings::Z_NETWORK_OVERLAY;
+use crate::map::z::Z_NETWORK_OVERLAY;
 
 /// Толщина линии улицы: основа и прибавка на полосу, м.
 const LINE_BASE: f32 = 0.6;

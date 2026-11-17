@@ -57,7 +57,8 @@ use crate::map::surface::{self, LayerCost, LayerMaterials, LayerMesh, MaterialSp
 use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::map::{SunOnMap, sun_light};
 use crate::prefs::retuned;
-use crate::settings::{ROOF_CLUTTER_MAX_ZOOM, Z_BUILDING};
+use crate::settings::ROOF_CLUTTER_MAX_ZOOM;
+use crate::map::z::Z_BUILDING;
 
 /// Фасады чуть ниже крыш: крыша соседа сверху прикрывает полосу — иначе
 /// широкая полоса высотки залезала бы на низкого соседа.

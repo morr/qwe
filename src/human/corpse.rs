@@ -17,7 +17,8 @@ use super::components::{
     PanicRecoil, WanderPause,
 };
 use crate::rng::splitmix64;
-use crate::settings::{CORPSE_HEIGHT, HUMAN_MIN_PX, Z_CORPSE};
+use crate::settings::{CORPSE_HEIGHT, HUMAN_MIN_PX};
+use crate::map::z::Z_CORPSE;
 use crate::silhouette::{
     FreshSilhouettes, Glyph, Silhouette, Silhouettes, blood, figure, set_glyph,
 };

@@ -39,7 +39,7 @@ use crate::map::shadow;
 use crate::map::surface::{LayerCost, LayerMaterials, LayerMesh, MaterialSpec, swap_layers};
 use crate::map::zoom::{ZoomBucket, ZoomLods};
 use crate::prefs::retuned;
-use crate::settings::Z_FENCE;
+use crate::map::z::Z_FENCE;
 
 /// Высота забора, м: по ней считается длина тени тем же котангенсом высоты
 /// солнца, что у домов и вагонов. Двухметровый глухой забор частного сектора.

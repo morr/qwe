@@ -44,6 +44,7 @@ mod tram;
 pub mod trees;
 mod wagons;
 mod water;
+pub mod z;
 mod zoom;
 
 pub use self::buildings::material::RoofStyle;

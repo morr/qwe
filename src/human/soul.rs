@@ -12,7 +12,8 @@ use bevy::prelude::*;
 
 use crate::diagnostics::{SIM_SOULS_MS, SimMeasure};
 use crate::loading::AppState;
-use crate::settings::{SOUL_LIFE, SOUL_MIN_PX, SOUL_RISE, SOUL_SIZE, Z_SOUL};
+use crate::settings::{SOUL_LIFE, SOUL_MIN_PX, SOUL_RISE, SOUL_SIZE};
+use crate::map::z::Z_SOUL;
 use crate::silhouette::{Glyph, Silhouette, Silhouettes};
 
 /// Золото ярче белого — HDR, светится через bloom (`post.rs`).

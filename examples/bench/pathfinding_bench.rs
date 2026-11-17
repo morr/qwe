@@ -32,9 +32,7 @@ use qwe::navigation::{
     Navmesh, PathfindingAlgorithm, build_from_navmesh, find_passable_tile_near, find_path,
     find_path_northstar, snap_portal_position,
 };
-use qwe::settings::{
-    HUMAN_COUNT, HUMAN_WANDER_RANGE, HUMAN_WANDER_TO_BUILDING_SHARE, MAP_SIZE, WANDER_MAP_MARGIN,
-};
+use qwe::settings::{HUMAN_COUNT, HUMAN_WANDER_RANGE, HUMAN_WANDER_TO_BUILDING_SHARE, MAP_SIZE, WANDER_MAP_MARGIN};
 
 /// Бенч гоняется по карте города по умолчанию — той же, что видит игра при
 /// первом запуске.

@@ -58,7 +58,8 @@ use qwe::human::{
     blood_spatter, spread_blood, to_corpse,
 };
 use qwe::map::{GROUND_COLOR, PARK_COLOR, WOOD_COLOR};
-use qwe::settings::{HUMAN_MIN_PX, HUMAN_SIZE, Z_CORPSE};
+use qwe::settings::{HUMAN_MIN_PX, HUMAN_SIZE};
+use qwe::map::z::Z_CORPSE;
 use qwe::silhouette::{Glyph, Silhouette, SilhouettePlugin, Silhouettes, blood};
 
 use crate::shot::{ShotRequest, auto_shot, request_shot};

@@ -156,8 +156,9 @@ panel** with four tabs (`ui/shell.rs`).
   widget too; **on by default** — `Default` is `true` — and remembered between launches
   in the game (a `SettingsGroup`; the gallery has no `SettingsPlugin`, so its checkbox
   always starts on — it sits at the screen edge outside every sample viewport and cannot be
-  clicked); the layer itself is `sync_inspector_highlight`, the `respawn_overlay` pattern
-  at `Z_INSPECTOR_HIGHLIGHT`, rebuilt only when the selection changes, the pins
+  clicked); the layer itself is `sync_inspector_highlight`, the `surface::swap_layers`
+  pattern
+  at `Z_INSPECTOR_HIGHLIGHT` (`map/z.rs`), rebuilt only when the selection changes, the pins
   change, the index is rebuilt or the gallery's
   `InspectOrigin`/`InspectViewport` move). **`\` pins the selected hit** — and
   pressed again on the same selection, un-pins it (`pin_inspector_selection`, a

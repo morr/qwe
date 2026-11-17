@@ -4,7 +4,7 @@ use crate::map::osm::model::{
     AreaKind, AreaLayer, KerbParking, RoadArea, RoadAreaKind, TreeSet, WaterKind, WaterLine,
 };
 use crate::map::roads::{DrawnPiece, PieceKind};
-use crate::settings::Z_ROAD_VERGE_YARD;
+use crate::map::z::Z_ROAD_VERGE_YARD;
 
 /// Запрос с дефолтным стилем дорог — все выведенные полосы отвечают.
 fn query(index: &InspectIndex, map: &MapData, tree_density: f32, at: Vec2) -> Vec<Hit> {

@@ -40,7 +40,7 @@ use crate::map::osm::MapData;
 use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, swap_layers};
 use crate::map::{RoadStyle, TreeStyle};
 use crate::prefs::PrefsExt;
-use crate::settings::Z_INSPECTOR_HIGHLIGHT;
+use crate::map::z::Z_INSPECTOR_HIGHLIGHT;
 use crate::ui::{GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, UiBuildSet, panel_background, ui_column};
 
 /// Больше строк находок панель не показывает: дальше хвост `+N more`.

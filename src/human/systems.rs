@@ -17,11 +17,8 @@ use crate::navigation::{ArcNavmesh, Backend};
 use crate::rng::{
     PawnId, RngDomain, SimRng, Species, WanderIndex, WorldSeed, decision_stream, stream,
 };
-use crate::settings::{
-    HUMAN_FLEE_SPEED, HUMAN_WALK_SPEED, HUMAN_WANDER_PAUSE, HUMAN_WANDER_PAUSE_SHARE,
-    HUMAN_WANDER_RANGE, HUMAN_WANDER_TO_BUILDING_SHARE, RECOIL_CONE, RECOIL_MIN_ERRAND,
-    WANDER_CONE, unit_z,
-};
+use crate::settings::{HUMAN_FLEE_SPEED, HUMAN_WALK_SPEED, HUMAN_WANDER_PAUSE, HUMAN_WANDER_PAUSE_SHARE, HUMAN_WANDER_RANGE, HUMAN_WANDER_TO_BUILDING_SHARE, RECOIL_CONE, RECOIL_MIN_ERRAND, WANDER_CONE};
+use crate::map::z::unit_z;
 use crate::silhouette::Silhouettes;
 
 /// Сколько зданий перебирается в поисках цели «по делам» в конусе курса;

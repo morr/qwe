@@ -31,7 +31,7 @@ use crate::map::{
     VergeZoomBucket, mesh_fences, mesh_rails, mesh_roads, mesh_surfaces,
 };
 use crate::movement::Movable;
-use crate::settings::unit_z;
+use crate::map::z::unit_z;
 
 const SCREENSHOT_PATH: &str = "screenshot.png";
 const OFFSCREEN_PATH: &str = "offscreen.png";

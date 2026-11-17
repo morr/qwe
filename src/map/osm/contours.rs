@@ -21,7 +21,7 @@ use crate::map::MeshBuilder;
 use crate::map::meshing::{RibbonCap, RibbonJoin};
 use crate::map::osm::model::{AreaLayer, MapData, RoadClass};
 use crate::map::surface::{LayerMesh, MaterialSpec};
-use crate::settings::Z_OSM_CONTOURS_OVERLAY;
+use crate::map::z::Z_OSM_CONTOURS_OVERLAY;
 
 /// Толщина оси улицы, м — тоньше самой узкой ленты разметки не нужно: линия
 /// должна лечь по кромке и не закрыть её.

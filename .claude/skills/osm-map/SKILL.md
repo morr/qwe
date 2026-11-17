@@ -364,8 +364,11 @@ going through the curb pin tests
 - **The layer seam** (`map/surface.rs`) — building a layer and putting it in the world
   are two things, and this is the line between them. A **converted** module offers one
   pure function, `mesh_<layer>(data, style) -> (Vec<LayerMesh>, <Layer>Report)`, and
-  its system is a thin adapter: despawn by tag, call it, hand the list to
-  `surface::spawn_layers`, print the report.
+  its system is a thin adapter — one `surface::swap_layers` call: it despawns what the
+  query filter caught, spawns the new list through `spawn_layers`, and returns; the
+  mesh call and the report stay with the caller (the report is the mesh door's value,
+  and a layer without a report must not invent one — `ui/debug/overlays.rs` passes
+  `show.then(|| build())` as the layers, so a toggle-off rebuild needs no branch).
   **A layer with a second caller gets one door for both** — `spawn_<layer>_meshes(...)`,
   taking what is already built so the build stays
   outside the world. `buildings` and `roads` have one each (`spawn_building_meshes`,

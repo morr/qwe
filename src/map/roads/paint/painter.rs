@@ -31,9 +31,7 @@ use crate::map::roads::turns::{JunctionWear, LaneArrow};
 use crate::map::roads::{is_carriageway, lane_count};
 use crate::map::shapes::{Shape, is_ring, ring_of};
 use crate::map::surface::{LayerMesh, MaterialSpec};
-use crate::settings::{
-    Z_BRIDGE_PAINT, Z_ROAD_ISLANDS, Z_ROAD_PAINT, Z_ROAD_WEAR, Z_ROAD_WEAR_MASK,
-};
+use crate::map::z::{Z_BRIDGE_PAINT, Z_ROAD_ISLANDS, Z_ROAD_PAINT, Z_ROAD_WEAR, Z_ROAD_WEAR_MASK};
 
 /// Острейший угол, рад, до которого вершина внутренней кромки обводки
 /// островка ещё ставится острой (`LineJoin::Miter` у `i_overlay`).

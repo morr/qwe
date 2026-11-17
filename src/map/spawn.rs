@@ -23,11 +23,8 @@ use crate::map::surface::{
 };
 use crate::map::trees::TreeRowStyle;
 use crate::map::water::{mesh_water_areas, mesh_water_lines, split_channels};
-use crate::settings::{
-    MAP_SIZE, Z_GRASS, Z_GROUND, Z_LANDUSE, Z_LANDUSE_YARD, Z_PARK, Z_PARKING, Z_PARKING_LINES,
-    Z_PITCH, Z_PITCH_LINES, Z_POND, Z_SAND, Z_TREE_ROW_BAND, Z_TREE_ROW_BAND_CASING, Z_WATERWAY,
-    Z_WOOD,
-};
+use crate::settings::MAP_SIZE;
+use crate::map::z::{Z_GRASS, Z_GROUND, Z_LANDUSE, Z_LANDUSE_YARD, Z_PARK, Z_PARKING, Z_PARKING_LINES, Z_PITCH, Z_PITCH_LINES, Z_POND, Z_SAND, Z_TREE_ROW_BAND, Z_TREE_ROW_BAND_CASING, Z_WATERWAY, Z_WOOD};
 
 pub const GROUND_COLOR: Color = Color::srgb(0.878, 0.865, 0.827);
 /// Кварталы `landuse` делят город на жильё и промзону. Промзона осталась

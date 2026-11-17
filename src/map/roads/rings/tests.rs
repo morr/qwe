@@ -703,7 +703,7 @@ fn a_y_approach_gets_one_island_between_its_legs() {
 /// кольцо) — ничего.
 #[test]
 fn a_roundabout_island_is_a_lawn_under_everything() {
-    use crate::settings::{Z_GROUND, Z_LANDUSE, Z_ROAD_VERGE};
+    use crate::map::z::{Z_GROUND, Z_LANDUSE, Z_ROAD_VERGE};
     let map = roundabout_with_an_approach(true, true);
     let (layers, _) = mesh_roads(
         &map,
@@ -736,7 +736,7 @@ fn a_roundabout_island_is_a_lawn_under_everything() {
 /// 02). Парк на острове не кроется (Калуга 05).
 #[test]
 fn a_roundabout_island_covers_the_rim_of_its_mapped_grass() {
-    use crate::settings::{Z_GRASS, Z_SAND};
+    use crate::map::z::{Z_GRASS, Z_SAND};
     let square = |half: f32| {
         vec![
             Vec2::new(-half, -half),

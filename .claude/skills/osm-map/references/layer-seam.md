@@ -248,7 +248,10 @@ belongs to.
   tag, triggers, build, z, material — and letting one generic system register it
   would close the double-spawn trap by construction, and the trap is real. It would
   also cost an associated-type-per-layer trait and one indirection between "what is
-  drawn" and "when", to replace eleven adapters of about ten lines each. Most of what
+  drawn" and "when", to replace adapters that are now **one `surface::swap_layers`
+  call each** — the rebuild form (despawn by query filter, spawn through
+  `spawn_layers`) lives there, so a plain rebuild system has no body of its own left
+  to fold into a registry. Most of what
   that card was written against is already gone: the per-rebuild material
   allocations, the redundant `is_empty` guards and the two modules writing
   `DespawnOnExit` by hand all went with the seam itself. What was left was the gates'
@@ -260,7 +263,9 @@ Converting a module means: lift the build to `mesh_*` returning
 `Vec<LayerMesh>`, derive `Clone, Copy` on its `*LayerTag` (`spawn_layers` hands the
 tag to every layer), move any cutoff or toggle into the build — a zoom ladder as the
 `ZoomBucket` itself, not as a width read out of the table by the adapter — drop its
-`materials.add(...)` and its now-redundant `is_empty` guard, write its `rebuilds_on()`
+`materials.add(...)` and its now-redundant `is_empty` guard, make its `rebuild_*` a
+`surface::swap_layers` call (the mesh call and the report stay in the system, the
+despawn-spawn pair goes), write its `rebuilds_on()`
 beside the `rebuild_*` (**When a layer rebuilds** above), and write the tests the seam
 has just made possible. Do not add a `MaterialSpec` variant before a module
 needs it — the `Surface` one sat unconstructed until the tree-row band arrived, and

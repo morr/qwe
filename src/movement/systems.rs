@@ -8,7 +8,7 @@ use crate::movement::components::{
     BodyScale, Movable, MovableStateMovingTag, PawnEdit, PreviousSimPosition, SimPosition,
 };
 use crate::navigation::{Backend, Walkable};
-use crate::settings::unit_z;
+use crate::map::z::unit_z;
 
 /// Движение в `FixedUpdate`, двигает `SimPosition` по waypoint'ам пути.
 ///

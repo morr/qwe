@@ -20,7 +20,7 @@ use crate::map::osm::model::polyline_length;
 use crate::map::spawn::GRASS_COLOR;
 use crate::map::spawn::RESIDENTIAL_COLOR;
 use crate::map::zoom::{ZoomBucket, ZoomLods};
-use crate::settings::{Z_ROAD_VERGE, Z_ROAD_VERGE_LAWN, Z_ROAD_VERGE_YARD};
+use crate::map::z::{Z_ROAD_VERGE, Z_ROAD_VERGE_LAWN, Z_ROAD_VERGE_YARD};
 
 /// Шаг вершин обочины по месту ([`RoadLine::verge_profile`]), м: пробы
 /// стоят через пять.

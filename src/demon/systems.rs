@@ -16,10 +16,8 @@ use crate::movement::{
 use crate::navigation::Backend;
 use crate::portal::PortalPos;
 use crate::rng::{PawnId, RngDomain, Species, WanderIndex, WorldSeed, decision_stream};
-use crate::settings::{
-    DEMON_INITIAL_BURST, DEMON_SPEED, DEMON_WANDER_CONE, DEMON_WANDER_RANGE, PORTAL_DIAMETER,
-    unit_z,
-};
+use crate::settings::{DEMON_INITIAL_BURST, DEMON_SPEED, DEMON_WANDER_CONE, DEMON_WANDER_RANGE, PORTAL_DIAMETER};
+use crate::map::z::unit_z;
 use crate::silhouette::Silhouettes;
 
 /// Стартовый залп; в `FixedUpdate`, а не в `Startup` — после рестарта сцены

@@ -24,7 +24,7 @@ use super::paint::RUT_OFFSET;
 use crate::map::MeshBuilder;
 use crate::map::meshing::{LaneFrame, RibbonCap, RibbonJoin, miter_offsets};
 use crate::map::surface::{LayerMesh, MaterialSpec};
-use crate::settings::Z_RUT_OVERLAY;
+use crate::map::z::Z_RUT_OVERLAY;
 
 /// Толщина оси полосы, м.
 const LANE_AXIS_WIDTH: f32 = 0.2;

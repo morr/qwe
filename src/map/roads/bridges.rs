@@ -29,7 +29,7 @@ use crate::map::osm::{MapData, PolyArea, RailLine, RoadClass, RoadLine};
 use crate::map::rail::{deck_width, track_centerline};
 use crate::map::shadow;
 use crate::map::surface::{LayerMesh, MaterialSpec, SurfaceKind};
-use crate::settings::{Z_BRIDGE, Z_BRIDGE_CASING, Z_BRIDGE_SHADOW};
+use crate::map::z::{Z_BRIDGE, Z_BRIDGE_CASING, Z_BRIDGE_SHADOW};
 
 /// Путь тени настила: та же осевая, сдвинутая по свету на высоту моста,
 /// **сходящую к нулю у свободных торцов моста** ([`BridgeSpan`]).

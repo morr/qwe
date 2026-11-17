@@ -57,7 +57,7 @@ use crate::map::roads::network::RoadNodes;
 use crate::map::shapes::{
     Contour, Shape, contour_area, contour_bounds, oriented, push_shape, ring_of,
 };
-use crate::settings::{Z_ROAD_VERGE, Z_SIDEWALK};
+use crate::map::z::{Z_ROAD_VERGE, Z_SIDEWALK};
 
 /// Не больше этого, м², замкнутый кусок газона — лоскут: карман у угла
 /// Халтурина и Гоголевской — около девяти.

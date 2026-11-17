@@ -12,7 +12,7 @@ use crate::map::osm::model::{
     Highway, RoadClass, RoadLine, RoadNodeKind, SidewalkSide, StructureKind, closest_on_segment,
 };
 use crate::map::roads::PieceKind;
-use crate::settings::{Z_ALLEY, Z_BRIDGE, Z_ROAD, Z_SIDEWALK, Z_UNPAVED_ROAD};
+use crate::map::z::{Z_ALLEY, Z_BRIDGE, Z_ROAD, Z_SIDEWALK, Z_UNPAVED_ROAD};
 
 use super::{FeatureRef, Hit, HitReason, HitSource};
 

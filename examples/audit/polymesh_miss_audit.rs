@@ -26,9 +26,7 @@ use qwe::map::osm::MapData;
 use qwe::navigation::{
     Navmesh, PolymeshBuild, build_polymesh_from_map, find_passable_tile_near, find_path_polymesh,
 };
-use qwe::settings::{
-    HUMAN_WANDER_RANGE, HUMAN_WANDER_TO_BUILDING_SHARE, MAP_SIZE, WANDER_MAP_MARGIN,
-};
+use qwe::settings::{HUMAN_WANDER_RANGE, HUMAN_WANDER_TO_BUILDING_SHARE, MAP_SIZE, WANDER_MAP_MARGIN};
 
 const CITY: City = City::Tula;
 /// Тот же сид, что у `polymesh_bench`: наборы запросов совпадают, и промах
