@@ -8,7 +8,8 @@ Siblings: `buildings-heights.md` (height modes, extrusion, shadows),
 
 - **Temples and the fortress** (`buildings/temples.rs`, `buildings/fortress.rs`) — the two
   kinds of building drawn by their meaning rather than by the house rules.
-  - **The roof is assigned** (`roofs::LandmarkRoof`, `landmark_roof` before `is_pitched` in
+  - **The roof is assigned** (`roofs::LandmarkRoof`, `landmark_roof` before the pitched
+    cohort in
     `roofing`): Orthodox / Jewish / Eastern nave → hip, Western → `SteepGable` (pitch 1.3,
     ≤ 12 m; a non-rectangle falls back to hip), mosque → flat; a Jewish / Eastern tower →
     `Tent { rise: 0.9 }` in plan sides (≤ 40 m); an Orthodox or Western tower → flat, and

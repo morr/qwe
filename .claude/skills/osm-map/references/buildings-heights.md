@@ -101,7 +101,7 @@ terms in `CONTEXT.md`.
       layer, so a nine-storey block did not darken the five-storey roof next to it, and in
       a dense block that is the first thing an eye checks. A second, small layer sits
       **over** the building layers and carries exactly the missing piece:
-      - **not on a pitched roof** (`is_pitched` targets are skipped). The layer lays a
+      - **not on a pitched roof** (the class's pitched targets are skipped). The layer lays a
         flat patch at the eave lift, and a pitched roof rises to its ridge: the patch slid
         off the slopes as a dark rectangle across them. The price: a tall block no longer
         darkens the private houses' roofs next to it (its ground shadow still lies under
@@ -304,9 +304,10 @@ terms in `CONTEXT.md`.
       camera are not pushed, which is the painter's order inside it.
     - `RoofMix` counts what the extrusion layer actually drew into the `roofs:` part of the
       `building meshing:` line. A separate `roofing` pass was 14 ms per rebuild.
-  - **Gable roofs** (`buildings/roofs.rs`) — in every mode, a building that
-    `is_pitched` (`BuildingUse::House` of any size, or `Other` with a footprint under
-    `SMALL_FOOTPRINT_MAX` 250 m², never with a courtyard, never `AreaKind::Kremlin` —
+  - **Gable roofs** (`buildings/roofs.rs`) — in every mode, a building the class
+    marks **pitched** (`BuildingClass::is_pitched`: `House` of any size, an untagged box
+    up to `SMALL_FOOTPRINT_MAX` 250 m² that stayed low under the class's storeys guard,
+    never with a courtyard, never `AreaKind::Kremlin` —
     its towers and gates keep the flat roof, like they keep their colour) is in the
     **pitched cohort** and gets two slopes instead of a flat roof — or another of the
     **Gable forms** above; a hip only where none fits, or on the rare seeded large house
@@ -336,7 +337,10 @@ terms in `CONTEXT.md`.
 retail); this file carries what it does not.
 
 - **Inferred storeys** (`buildings/heights.rs`) — the height of the ~70 % of a city that
-  OSM leaves untagged.
+  OSM leaves untagged. The branch is picked by the **building class**
+  (`classify.rs::BuildingKind` — see `CONTEXT.md`): the classifier runs the single
+  match over use × footprint × thresholds, the height tables stay here and answer
+  the class.
   - **The footprint decides**, the way it does for an eye reading an aerial photo, and
     only then the use: a **section** is a long thin box (≥ `SLAB_MIN_LENGTH` 35 m by
     ≤ `SLAB_MAX_WIDTH` 18 m) at 5 / 9 / 12 storeys with the weights a Russian city has
@@ -345,15 +349,17 @@ retail); this file carries what it does not.
     ≤ `LOW_FOOTPRINT_MAX` 300 m² at 2–4 (over 300 m²: the area test comes first, so a long
     thin shed stays low); everything else large is 2–5 — that last branch
     is the most populated one and being generous with it is what made the first version
-    come out skyscraping.
+    come out skyscraping. These thresholds and the `Shape` they produce live in
+    `classify.rs` — the height tables read the `Shape`, they do not re-derive it.
   - **A private house is one storey with an attic in the roof**: `HOUSE_HEIGHTS` is
     3–3.4 m in 8 slots of 10 and 6–6.4 m in 2, for `building=house` and for an untagged box
     up to `roofs::SMALL_FOOTPRINT_MAX` 250 m²; an untagged box up to `SHED_FOOTPRINT_MAX`
-    40 m² is a yard shed at 2.4–3 m. An untagged box
-    also takes the house wall table (`material::wall_kind_of`), not the low-rise one with
-    its shopfront — at the same footprint ≤ `SMALL_FOOTPRINT_MAX` and under
-    `LOW_RISE_STOREYS` (= `BALCONY_STOREYS_MIN` 4). **One constant for roof, walls and
-    height**, owned by `roofs.rs` and imported by `material.rs` and `heights.rs` — the
+    40 m² is a yard shed at 2.4–3 m. The same border decides the walls and the roof: a
+    small box **stays** a private house only under `LOW_RISE_STOREYS`
+    (= `BALCONY_STOREYS_MIN` 4) storeys — the class's guard, one rule for heights, roof,
+    walls and the pitched cohort (a tagged box taller than that is housing: the tag's
+    height outranks the footprint). **One constant for roof, walls and
+    height**, owned by `roofs.rs` and imported by `classify.rs` and `heights.rs` — the
     height rule must not grow its own footprint border, or an untagged box near the border
     comes out with a gable roof and house walls over 2–4 storeys
     (`an_untagged_box_under_the_pitched_cohort_border_is_a_private_house`).

@@ -497,14 +497,20 @@ going through the curb pin tests
 - **Buildings** (`map/buildings/`) — the layer set a house is drawn as; the mechanism,
   the measurements and the rationale are in the `references/buildings-*.md` files (the
   header index names them), and the module names in `map/buildings/` say what each
-  file builds (`order.rs` is the painter's order). The **`HouseFootprint`** — the
+  file builds (`order.rs` is the painter's order, `classify.rs` is the one match that
+  names the building). The **`HouseFootprint`** — the
   minimum-area bounding rectangle of the outline — is computed **once per building**
   at the start of `mesh_buildings` and handed down to every builder that used to run
-  its own `min_area_rect` on the same vertices (roof axis, ridge rectangle, deep hull,
-  storeys by shape, balcony long axis, temple plan); rings cut out of the outline
-  (garage pieces, temple west pieces, cross-gable pieces) still measure their own.
-  Callers outside the assembly (the car layer, tests, galleries) pass no footprint and
-  the lazy path computes one on the spot. Which of
+  its own `min_area_rect` on the same vertices (roof axis, ridge rectangle, the class's
+  shape branch and deep-hull test, balcony long axis, temple plan); rings cut out of
+  the outline (garage pieces, temple west pieces, cross-gable pieces) still measure
+  their own. Callers outside the assembly (the car layer, tests, galleries) pass no
+  footprint and the lazy path computes one on the spot. **`BuildingClass`**
+  (`classify.rs`) is what the building turned out to be — one match over use ×
+  footprint × thresholds; heights, roof and wall material and roof clutter read it,
+  and their branching may not re-derive the conditions. The build's shared city inputs
+  ride **`CityContext`** (`mod.rs`): the `Sanctuary`, the garage runs and the arch
+  passages, computed once per build and passed to the builders. Which of
   the layers exist at all is **`BuildingHeightMode`**
   (resource, BRP-writable, persisted; section `ui/buildings.rs`, Map tab) — any
   change reruns `rebuild_buildings` (despawn

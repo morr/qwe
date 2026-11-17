@@ -16,14 +16,15 @@ dictionary.
     (the door generator
     is seeded from the same point, so both survive a rebuild and neither depends on the
     order of `MapData::buildings`) chooses a slot in a **ten-slot table per
-    `BuildingUse`** (the `*_ROOFS` tables in `material.rs`) — ten slots so a table reads
+    building class** (the `*_ROOFS` tables in `material.rs`; the class comes from
+    `classify.rs::classify` — see `CONTEXT.md`) — ten slots so a table reads
     as percentages: `House` is 5 tile / 2 seam / 2 corrugated / 1 bitumen.
     `Church` takes its material and palette from its faith
     (`temples::roof_kind` / `roof_palette` — Orthodox seam metal, Western and Eastern tile,
     mosque gravel), the Kremlin from `fortress` (seam on a tower, gravel on the wall's
-    walkway), and `Other` — half the city — splits by
-    footprint at the same `SMALL_FOOTPRINT_MAX` 250 m² the gable rule uses: a small box is
-    a private house, a big one a block.
+    walkway), and an untagged `Other` box — half the city — is
+    a private house or housing by the class's footprint-and-storeys guard: the small
+    low box takes the house table, everything grown past it the apartments one.
   - **The colour** comes from that material's own palette (3–7 plausible shades, picked
     by another slice of the same seed, then ±3 % of value). **Value is calibrated against
     the aerial photo at the city zoom**, where the texture has faded and the base colour
@@ -109,22 +110,26 @@ dictionary.
       `every_cladding_reaches_the_city` skips it.
     - **The pick** (`material::wall_look`) is `roof_look`'s twin — same table, seed and
       palette mechanics — with one difference: **height is consulted before the tag.**
-      Anything under `LOW_RISE_STOREYS` (4) that is not already `House`, `Garage`, `Church`,
-      `Industrial` or `Retail` (which is settled by its size) drops into `LOW_RISE_WALLS`,
+      The class carries the storeys, and anything under `LOW_RISE_STOREYS` (4) whose
+      class has not already settled its cladding (`House`, `Garage`, `BigBox`, `Shop`,
+      `DeepHull`) drops into `LOW_RISE_WALLS`,
       because a low building is neither a panel block nor a curtain wall whatever OSM calls
       it — and the retail exception is only about the curtain wall: neither trade table
-      carries a panel. **A hull deeper than housing is not housing**: a `BuildingUse::Other`
+      carries a panel. **A hull deeper than housing is not housing**: an `Other`
       (`building=yes` and the like — no apartments/residential tag) whose plan is deeper than
-      `DEEP_HULL_MIN` 30 m (`material::is_deep_hull`) takes `DEEP_HULL_WALLS` — no panel and
+      `DEEP_HULL_MIN` 30 m (`classify::is_deep_hull` — the class `DeepHull`) takes
+      `DEEP_HULL_WALLS` — no panel and
       no brick, so no balcony either (`balcony_house` asks the
-      cladding) — before the low-rise arm, since a one-storey 100 m hull is a warehouse, not
+      cladding) — at any height, since a one-storey 100 m hull is a warehouse, not
       a cottage. A residential section is 12–18 m deep, a point tower up to ~25. Depth is
       read **twice and both must pass**: the short side of `min_area_rect`, and the short
       side of the *equivalent rectangle* (same area and perimeter as the plan, courtyards
       subtracted and their rims added) — equal to the span on a solid box, the wing width on
       a courtyard block, an L or a U. An area rule (> 3000 m²) was rejected because it
-      catches long 20–29 m slabs. The roof is
-      not moved: `kind_of` still covers a large `Other` with `APARTMENTS_ROOFS`.
+      catches long 20–29 m slabs. The guard is the same one the roof and the pitched
+      cohort obey — it used to live here alone, and the roof, trusting the footprint
+      only, put a tile gable over those panel walls until the classifier took the
+      branching over.
       The seed is read from **other bytes**
       than the roof's: the two materials must be independent, or every panel block would
       also be under one

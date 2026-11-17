@@ -8,6 +8,9 @@ glossary entries.
 - **Roof clutter** (`buildings/clutter.rs`) — the boxes that stand on the roof, and the
   second half of the same argument: a photographed roof is never empty, and it is the
   small equipment with its short shadows that reads as "photo" rather than "fill".
+  The gates — landmark (a church or the fortress), garage run, big box, the
+  air-conditioning cohort — are the **building class's** predicates
+  (`classify.rs::BuildingClass`), not branching re-derived from the raw building.
   - **What stands where follows the material**, not the building use, because the
     material already encodes the kind of building: a soft flat roof (bitumen / gravel /
     membrane) over 400 m² gets a **lift penthouse** (5 × 3.5 m, 3 m tall; a second one

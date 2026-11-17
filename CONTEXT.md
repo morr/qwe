@@ -486,25 +486,46 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   building faces and how big it is". Computed **once per building** at the start of the
   layer build (`mesh_buildings`) and handed down ready-made to everyone who used to
   recount their own `min_area_rect` on the same vertices — the roof texture axis and the
-  gable ridge, `is_deep_hull`, the shape-based storeys, the balcony long axis, the gable
-  rectangle, the temple `Plan`, and the heights behind `height_of`/`lift_of_footprint`.
-  Only geometry that **cuts the outline itself** still measures its own rings: garage
-  cut pieces, a temple's west pieces, cross-gable pieces. Callers outside the layer
-  build (the car layer, tests, galleries) pass no footprint and the lazy path computes
-  one on the spot.
+  gable ridge, the building class (its shape branch and the deep-hull test), the balcony
+  long axis, the gable rectangle, the temple `Plan`, and the heights behind
+  `height_of`/`lift_of_footprint`. Only geometry that **cuts the outline itself** still
+  measures its own rings: garage cut pieces, a temple's west pieces, cross-gable pieces.
+  Callers outside the layer build (the car layer, tests, galleries) pass no footprint
+  and the lazy path computes one on the spot.
+- **Building class** (`map/buildings/classify.rs::classify`) — **what the building
+  turned out to be**, decided **once per building**: one match over `BuildingUse` ×
+  footprint × thresholds names a **`BuildingKind`** (Fortress wall/tower, Temple,
+  Garage, House, Shed, Housing/DeepHull/Office by **`Shape`** — Section | Tower |
+  Block | Low, BigBox, Shop, Store, Hall, Public) and computes with it the **height**
+  (tag, else the kind's table), the **facade storeys** (height over the kind's tier) and
+  the **pitched-cohort flag** (the private sector without a courtyard). Heights, roof
+  and wall material, and roof clutter all read the class instead of re-deriving the same
+  branching — which had drifted: a tagged small `Other` box taller than the low-rise
+  bound took a private-sector tile gable over panel walls. **The storeys guard is the
+  rule**: a small untagged box is a private house only while it stays low — the tag's
+  height outranks the footprint, and roof, walls and pitched cohort agree with it. A
+  hull **deeper than housing** (`DEEP_HULL_MIN`, by both the bounding-box and the
+  equivalent-rectangle span) is its own class. Detail — `classify.rs`,
+  `buildings-heights.md`, `buildings-material.md`.
+- **City context** (`map/buildings/mod.rs::CityContext`) — the layer build's shared
+  inputs, computed **once per build** in `mesh_buildings` and handed to every builder:
+  the **`Sanctuary`**, the **garage runs** and the **arch passages** (in flat modes the
+  facade builder used to cut its own). The galleries build one house and make their own.
 - **Roofing** (`map/buildings/roofs.rs::roofing`) — the *shape* of a roof,
   **inferred**, not read. The private sector is **gabled** — five **`GableForm`s**
   (gable, half-hip, gambrel, lean-to, cross gable), a dormer, the **hip** now the rare
   case; everything else is **flat**. A **tent** is assigned, never chosen: a church and
   a fortress take their **`LandmarkRoof`** by faith and kind. **`RoofShape`** is the same
   kinds as an *input* — only `roof_gallery` asks for one, and a refusal there stays a
-  refusal. **`shape_facts`** hands out the numbers the choice is made from. Detail —
+  refusal. **`shape_facts`** hands out the numbers the choice is made from. **One roof
+  assembly for both modes** (`layers.rs::push_roofing`): the flat modes call it without
+  the lean — no lifted ridge, no frontons, no dormers. Detail —
   `buildings-heights.md`, `buildings-landmarks.md`.
 - **Roof material** (`map/buildings/material.rs`) — what a roof is *covered with*:
-  `RoofKind`, picked deterministically from `BuildingUse` (+ footprint size) and a
-  **seed hashed from the building's first vertex**. The colour comes from the material's
+  `RoofKind`, picked deterministically from the **building class** and a **seed hashed
+  from the building's first vertex**. The colour comes from the material's
   own palette — **the per-use roof and wall colours are gone**: a wall is picked the
-  same way (**`WallKind`**, its own ten-slot table per use, plus `GarageDoors` by
+  same way (**`WallKind`**, its own ten-slot table per class, plus `GarageDoors` by
   geometry and `Sacred` for a church). Texture from **`RoofMaterial`** (shader
   `roof.wesl`) reading the **`Roof` attribute** — **one code dictionary for all of it**
   (`0` no texture, roofings, garage runs, wall claddings, a door leaf). **Roof age** is
