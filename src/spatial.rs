@@ -24,6 +24,7 @@ use crate::diagnostics::{SIM_SPATIAL_MS, SimMeasure};
 use crate::human::Human;
 use crate::movement::SimPosition;
 use crate::settings::MAP_SIZE;
+use crate::tick_stage::TickStage;
 
 pub const CELL_SIZE: f32 = 60.0;
 
@@ -38,16 +39,6 @@ fn cell_of(pos: Vec2) -> IVec2 {
         ((pos.x / CELL_SIZE) as i32).clamp(0, GRID_WIDTH - 1),
         ((pos.y / CELL_SIZE) as i32).clamp(0, GRID_HEIGHT - 1),
     )
-}
-
-/// Порядок симуляции в `FixedUpdate`: сетки → демоны → люди. Демоны раньше
-/// людей, чтобы убийства применились до `escape` и человек не был засчитан
-/// и убитым, и спасшимся в один тик.
-#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
-pub enum SimSet {
-    SpatialRebuild,
-    DemonBehavior,
-    HumanBehavior,
 }
 
 /// Равномерная Vec-сетка сущностей типа-маркера `T`; ячейка — по позиции,
@@ -285,23 +276,21 @@ pub struct SpatialPlugin;
 
 impl Plugin for SpatialPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<SpatialGrid<Demon>>()
+        // Порядок тика держит перечень стадий (`tick_stage.rs`); поднимаем его
+        // плагин здесь — сборки, которым нужен порядок тика, поднимают и этот
+        // плагин (игра, стенды движения, сцена повтора)
+        app.add_plugins(crate::tick_stage::TickStagePlugin)
+            .init_resource::<SpatialGrid<Demon>>()
             .init_resource::<SpatialGrid<Human>>()
             .add_observer(on_human_added)
             .add_observer(on_human_removed)
-            .configure_sets(
-                FixedUpdate,
-                (
-                    SimSet::SpatialRebuild,
-                    SimSet::DemonBehavior,
-                    SimSet::HumanBehavior,
-                )
-                    .chain()
-                    .run_if(in_state(crate::loading::AppState::Playing)),
-            )
             .add_systems(
                 FixedUpdate,
-                rebuild_demon_grid.in_set(SimSet::SpatialRebuild),
+                rebuild_demon_grid
+                    .in_set(TickStage::DemonGrid)
+                    // гейт раньше ехал с цепочки `SimSet`; стадии — только
+                    // порядок, поэтому система объявляет его сама
+                    .run_if(in_state(crate::loading::AppState::Playing)),
             );
     }
 }

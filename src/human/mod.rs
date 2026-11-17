@@ -35,7 +35,7 @@ use self::systems::{spawn_humans, spread_changed, sync_human_pace};
 use crate::determinism::{DeterminismPlugin, SimPipeline};
 use crate::loading::{AppState, WorldInitSet};
 use crate::prefs::PrefsExt;
-use crate::spatial::SimSet;
+use crate::tick_stage::TickStage;
 
 pub struct HumanPlugin;
 
@@ -103,24 +103,19 @@ impl Plugin for HumanPlugin {
                         .in_set(SimPipeline::Deterministic),
                     // ветка объявлена явно: `flee` берёт `Res<Backend>`, а
                     // гейт на мир приезжает только с множеством конвейера.
-                    // `SimSet::HumanBehavior` держит порядок (люди после
-                    // демонов) и настраивается чужим плагином — на него этот
-                    // гейт не переложишь: без `SpatialPlugin` множество не
-                    // гейтит ничего
+                    // `TickStage::HumanBehavior` держит порядок (люди после
+                    // демонов), но стадии — только порядок: без ветки
+                    // конвейера стадия не гейтит ничего
                     (panic, flee, escape).chain().in_set(SimPipeline::BothModes),
+                    // души — косметика на тике, в хвосте поведения: искра,
+                    // выпущенная обсервером убийства этого тика, поднимается
+                    // со следующего. В `BothModes`, потому что живёт внутри
+                    // мира; despawn отжившей — в `FixedUpdate`, где ему и
+                    // место (CLAUDE.md)
+                    rise_souls.in_set(SimPipeline::BothModes),
                 )
                     .chain()
-                    .in_set(SimSet::HumanBehavior),
-            )
-            // души — косметика на тике, после поведения: искра, выпущенная
-            // обсервером убийства этого тика, поднимается со следующего.
-            // В `BothModes`, потому что живёт внутри мира; despawn отжившей —
-            // в `FixedUpdate`, где ему и место (CLAUDE.md)
-            .add_systems(
-                FixedUpdate,
-                rise_souls
-                    .after(SimSet::HumanBehavior)
-                    .in_set(SimPipeline::BothModes),
+                    .in_set(TickStage::HumanBehavior),
             )
             // кровь растекается в кадре, а не на тике: это косметика, тика ей
             // не нужно, а роста хочется плавного. `BothModes` — потому что
@@ -221,9 +216,8 @@ mod tests {
 
     /// Инвариант `CONTEXT.md` («Backend / Walkable»): система, берущая
     /// `Res<Backend>`, состоит в множестве `SimPipeline` — только оно приносит
-    /// гейт на мир (`in_world`). Цепочке `panic`/`flee`/`escape` его давал
-    /// чужой `SimSet::HumanBehavior`, а тот настраивает `SpatialPlugin`:
-    /// без этого плагина множество не гейтит **ничего**.
+    /// гейт на мир (`in_world`). Стадии тика (`TickStage`) порядок только
+    /// задают: настраивай цепочку или нет, стадия не гейтит **ничего**.
     ///
     /// Двор поэтому и собран без него. Мир не поднимался, `AppState` остался
     /// `Loading`, ресурсов мира нет вовсе — и система, которую не удержал гейт,

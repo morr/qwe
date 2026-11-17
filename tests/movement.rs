@@ -49,10 +49,9 @@ fn viewport_at(centre: Vec2) -> Viewport {
 fn test_app(frame_delta: f32, time_scale: f32) -> App {
     let mut app = App::new();
     let navmesh = ArcNavmesh::default();
-    // `SpatialPlugin` нужен не ради сеток, а ради порядка `SimSet`
-    // (`SpatialRebuild → DemonBehavior → HumanBehavior`): движение
-    // упорядочено относительно этих сетов, и без них снимок прошлой позиции
-    // и шаг по пути встали бы в произвольном порядке
+    // `SpatialPlugin` нужен не ради сеток, а ради цепочки стадий тика
+    // (`TickStage`): движение привязано к стадиям, и без настройки цепочки
+    // порядок шага относительно пересборки сетки демонов не задан вовсе
     app.add_plugins((
         MinimalPlugins,
         bevy::state::app::StatesPlugin,

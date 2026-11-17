@@ -402,15 +402,15 @@ impl Plugin for SimTimePlugin {
             .add_systems(
                 FixedUpdate,
                 (
-                    tick_probe("head").before(crate::spatial::SimSet::SpatialRebuild),
+                    tick_probe("head").before(crate::tick_stage::TickStage::DemonGrid),
                     tick_probe("spatial")
-                        .after(crate::spatial::SimSet::SpatialRebuild)
-                        .before(crate::spatial::SimSet::DemonBehavior),
+                        .after(crate::tick_stage::TickStage::DemonGrid)
+                        .before(crate::tick_stage::TickStage::DemonBehavior),
                     tick_probe("demon")
-                        .after(crate::spatial::SimSet::DemonBehavior)
-                        .before(crate::spatial::SimSet::HumanBehavior),
+                        .after(crate::tick_stage::TickStage::DemonBehavior)
+                        .before(crate::tick_stage::TickStage::HumanBehavior),
                     tick_probe("human")
-                        .after(crate::spatial::SimSet::HumanBehavior)
+                        .after(crate::tick_stage::TickStage::HumanBehavior)
                         .before(crate::movement::move_moving_entities),
                     tick_probe("move")
                         .after(crate::movement::move_moving_entities)
@@ -419,11 +419,12 @@ impl Plugin for SimTimePlugin {
                         .after(crate::movement::dispatch_pathfinding_requests_deterministic),
                 ),
             )
-            // предохранитель — первым в тике: решение «оборвать прогон»
-            // принимается до того, как очередной тик начнёт тратить время
+            // предохранитель — стадия `Guard`, первая в перечне тика: решение
+            // «оборвать прогон» принимается до того, как очередной тик начнёт
+            // тратить время
             .add_systems(
                 FixedUpdate,
-                guard_frame_budget.before(crate::spatial::SimSet::SpatialRebuild),
+                guard_frame_budget.in_set(crate::tick_stage::TickStage::Guard),
             )
             .add_systems(Startup, pin_max_delta)
             .add_systems(Last, archetype_census)

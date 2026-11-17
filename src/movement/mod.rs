@@ -43,7 +43,7 @@ pub use self::wander::{
 use crate::determinism::{DeterminismPlugin, SimPipeline};
 use crate::loading::AppState;
 use crate::prefs::PrefsExt;
-use crate::spatial::SimSet;
+use crate::tick_stage::TickStage;
 
 pub use self::pathfinding::dispatch_pathfinding_requests_deterministic;
 use self::pathfinding::{
@@ -232,23 +232,25 @@ impl Plugin for MovementPlugin {
             // спавн ставит оба конца в одну точку.
             .add_systems(
                 FixedUpdate,
-                // `.chain()` обязателен и сам по себе: привязки к `SimSet`
-                // ничего не упорядочивают, когда эти множества пусты (плагин
-                // движения используется отдельно в тестах)
+                // `.chain()` обязателен и сам по себе: привязки к сетам стадий
+                // ничего не упорядочивают, когда цепочка стадий не настроена
+                // (плагин движения используется отдельно в тестах)
                 (
-                    // счётчик тиков — голова цепочки: всё, что решает этот
-                    // шаг, ссылается на один и тот же номер
-                    crate::determinism::advance_sim_tick.in_set(SimPipeline::BothModes),
+                    // счётчик тиков — стадия `Tick`, голова перечня: всё, что
+                    // решает этот шаг, ссылается на один и тот же номер
+                    crate::determinism::advance_sim_tick
+                        .in_set(TickStage::Tick)
+                        .in_set(SimPipeline::BothModes),
                     // ответы — до поведения: путь, приземлившийся на этом
                     // тике, на нём же и идётся
                     apply_pathfinding_results
-                        .before(SimSet::SpatialRebuild)
+                        .in_set(TickStage::Answers)
                         .in_set(SimPipeline::Deterministic),
                     // шаг идёт в обоих режимах — значит объявляет это явно, а
                     // гейт на мир (`Res<Backend>` вне `Playing` не существует)
                     // приезжает вместе с множеством
                     move_moving_entities
-                        .after(SimSet::HumanBehavior)
+                        .in_set(TickStage::Move)
                         .in_set(SimPipeline::BothModes),
                     // расталкивание — строго после шага движения: только там
                     // позиции тика финальны, а снимок уже сделан, и толчок
@@ -256,6 +258,7 @@ impl Plugin for MovementPlugin {
                     // Режимы, в которых его нет вовсе (детерминизм, сеточная
                     // навигация), — в `separation_runs`
                     separation::separate_pawns
+                        .in_set(TickStage::Separation)
                         .in_set(SimPipeline::BothModes)
                         .run_if(separation::separation_runs),
                     // слоты — только под детерминизмом: в обычном режиме любую
@@ -266,7 +269,9 @@ impl Plugin for MovementPlugin {
                     // здесь платила бы `Added`-скан по архетипу из ~20k заявок
                     // на каждый тик (Added — проверка тиков по всем строкам, не
                     // индекс), на 30x — до ~30 сканов за кадр впустую
-                    assign_destination_slots.in_set(SimPipeline::Deterministic),
+                    assign_destination_slots
+                        .in_set(SimPipeline::Deterministic)
+                        .in_set(TickStage::Dispatch),
                     // диспетчер — в самом конце тика: заявки, поданные
                     // поведением этого шага, командами применяются на точках
                     // синхронизации цепочки и уезжают в тот же тик
@@ -275,7 +280,8 @@ impl Plugin for MovementPlugin {
                         dispatch_pathfinding_requests_deterministic,
                     )
                         .chain()
-                        .in_set(SimPipeline::Deterministic),
+                        .in_set(SimPipeline::Deterministic)
+                        .in_set(TickStage::Dispatch),
                 )
                     .chain(),
             )
