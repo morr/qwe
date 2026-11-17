@@ -115,7 +115,9 @@ them the app is unchanged:
   chasing/requests filed this tick) and two dissection lines — `tick spike dissect`
   (the last value of every `sim/*_ms` plus `rest`, what no system's `Instant` covers:
   command flushes, sync points) and `tick spike segments` (the wall time of the chain
-  slices between the boundary probes `head/spatial/demon/human/move/tail`).
+  slices between the boundary probes `head` and one per stage, named by
+  `TickStage::probe_name` (`guard/tick/answers/spawner/demon_grid/demon_behavior/
+  human_behavior/move/separation/dispatch`)).
 
 Diagnostics that always exist (perf-journal 15): `sim/{acquire,snapshot,spawner,souls,escape}_ms`
 complete the per-system cut of the tick, and the `archetype census: N total` INFO line
