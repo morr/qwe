@@ -249,7 +249,7 @@ fn the_palette_follows_the_building_use_and_spares_the_kremlin() {
     // Стена — тоже по материалу, как и крыша: у частного дома штукатурка или
     // кирпич, у склада профлист, у храма побелка, и совпасть им неоткуда.
     // Этажность на этой развилке одна на всех — сравниваются назначения.
-    let wall = |b: &PolyArea| wall_look(b, 2.0, None).base;
+    let wall = |b: &PolyArea| wall_look(b).base;
     assert_ne!(wall(&house), wall(&industrial));
     assert_ne!(wall(&church), wall(&house));
     let kremlin_plain = building(square(), None, AreaKind::Kremlin);

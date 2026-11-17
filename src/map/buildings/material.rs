@@ -37,15 +37,11 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use bevy::shader::ShaderRef;
 use bevy::sprite_render::{AlphaMode2d, Material2d, Material2dKey, Material2dPipeline};
 
+use super::classify::{BuildingClass, BuildingKind, classify};
 use super::garages::GarageRun;
-// Пятно, ниже которого `building=yes` считается частным домом, — та же
-// константа, по которой `roofs` ставит на него двускатную крышу: одна граница,
-// один смысл «это дом, а не корпус».
-use super::roofs::SMALL_FOOTPRINT_MAX;
 use super::{HouseFootprint, fortress, temples};
 use crate::map::meshing::{ATTRIBUTE_ROOF, Roof};
-use crate::map::osm::model::is_big_box;
-use crate::map::osm::{AreaKind, BuildingUse, PolyArea};
+use crate::map::osm::{BuildingUse, PolyArea};
 use crate::map::seed::seed_from_point;
 use crate::map::{SunOnMap, sun_light};
 use crate::prefs::retuned;
@@ -189,8 +185,8 @@ pub enum WallKind {
     /// Композитная кассета: **глухая** стена крупными кассетами со швом между
     /// ними, ленточное остекление высоко под парапетом на части пролётов и
     /// тёмный цоколь. Гипермаркет и ТЦ **в три торговых уровня и ниже** —
-    /// [`is_big_box`]; многоэтажный ТЦ в центре города носит витраж, а не
-    /// кассету, и эту разницу предикат как раз и проводит.
+    /// [`crate::map::osm::model::is_big_box`]; многоэтажный ТЦ в центре города
+    /// носит витраж, а не кассету, и эту разницу предикат как раз и проводит.
     ///
     /// Отдельно от [`Shopfront`](Self::Shopfront) ровно потому, что это и есть
     /// разница между конторой и коробкой: у витража остекление лентами через
@@ -602,8 +598,9 @@ impl RoofLook {
 /// раньше своим `min_area_rect`.
 pub(super) fn roof_look(building: &PolyArea, fp: Option<HouseFootprint>) -> RoofLook {
     let seed = look_seed(building);
-    let kind = kind_of(building, seed);
-    let palette = palette(building, kind);
+    let class = classify(building, fp);
+    let kind = kind_of(building, &class);
+    let palette = palette(building, &class, kind);
     let base = palette[(seed >> 8) as usize % palette.len()].to_srgba();
     // ±3 % яркости поверх выбранного цвета: два дома одной палитры и одного
     // слота всё-таки не близнецы. Цвет из разметки — как есть: его подбирали
@@ -634,48 +631,44 @@ pub(super) fn roof_look(building: &PolyArea, fp: Option<HouseFootprint>) -> Roof
     )
 }
 
-/// Материал кровли этого дома. Кремль крыт металлом (его цвет всё равно свой),
-/// «дом» и мелкая коробка без назначения — частный сектор, остальное по
-/// назначению.
-fn kind_of(building: &PolyArea, seed: u32) -> RoofKind {
-    if building.kind == AreaKind::Kremlin {
-        return fortress::roof_kind(building);
-    }
-    let table = match building.building_use {
-        BuildingUse::House => &HOUSE_ROOFS,
-        BuildingUse::Apartments => &APARTMENTS_ROOFS,
-        BuildingUse::Commercial => &COMMERCIAL_ROOFS,
-        // торговля делится размером, а не тегом: у гипермаркета мягкое светлое
-        // поле в фонарях и вентиляции, у магазина у дома — обычная мелкая
-        // кровля, и общая таблица стирала бы ровно эту разницу
-        BuildingUse::Retail if is_big_box(building) => &BIG_BOX_ROOFS,
-        BuildingUse::Retail => &SHOP_ROOFS,
-        BuildingUse::Industrial => &INDUSTRIAL_ROOFS,
-        BuildingUse::Garage | BuildingUse::GarageBlock => &GARAGE_ROOFS,
-        BuildingUse::Church(sacred) => return temples::roof_kind(sacred),
-        BuildingUse::Public => &PUBLIC_ROOFS,
-        // `building=yes` — половина города: мелкая коробка это частный дом,
-        // крупный контур — корпус, и кроют их по-разному
-        BuildingUse::Other => {
-            if footprint_area(building) <= SMALL_FOOTPRINT_MAX {
-                &HOUSE_ROOFS
-            } else {
-                &APARTMENTS_ROOFS
-            }
-        }
+/// Материал кровли этого дома: таблица по классу здания, развилки которого
+/// разобрал классификатор. Кремль крыт металлом (его цвет всё равно свой),
+/// частный сектор — по своей таблице, корпус — по жилой.
+fn kind_of(building: &PolyArea, class: &BuildingClass) -> RoofKind {
+    let table = match class.kind() {
+        BuildingKind::Fortress { .. } => return fortress::roof_kind(building),
+        BuildingKind::Temple => return temples::roof_kind(sacred_of(building)),
+        // частный сектор — дом и сарай двора кроются одинаково
+        BuildingKind::House | BuildingKind::Shed => &HOUSE_ROOFS,
+        BuildingKind::Garage => &GARAGE_ROOFS,
+        BuildingKind::Hall => &INDUSTRIAL_ROOFS,
+        BuildingKind::BigBox => &BIG_BOX_ROOFS,
+        BuildingKind::Shop => &SHOP_ROOFS,
+        // контора и торговый зал — одна конторская кровля
+        BuildingKind::Office(_) | BuildingKind::Store => &COMMERCIAL_ROOFS,
+        BuildingKind::Public => &PUBLIC_ROOFS,
+        BuildingKind::Housing(_) | BuildingKind::DeepHull(_) => &APARTMENTS_ROOFS,
     };
     table[seed as usize % table.len()]
 }
 
 /// Палитра цвета кровли: Кремль и храм — своё, остальные по материалу.
-fn palette(building: &PolyArea, kind: RoofKind) -> &'static [Color] {
-    if building.kind == AreaKind::Kremlin {
-        return fortress::roof_palette(building);
+fn palette(building: &PolyArea, class: &BuildingClass, kind: RoofKind) -> &'static [Color] {
+    match class.kind() {
+        BuildingKind::Fortress { .. } => fortress::roof_palette(building),
+        BuildingKind::Temple => temples::roof_palette(sacred_of(building).faith),
+        _ => kind.palette(),
     }
-    if let BuildingUse::Church(sacred) = building.building_use {
-        return temples::roof_palette(sacred.faith);
+}
+
+/// Вера храма — данные `BuildingUse::Church`, которых у класса нет: класс
+/// несёт развилки, вера читается владельцем. Классификатор ставит `Temple`
+/// только храму, так что иначе ветка не бывает.
+fn sacred_of(building: &PolyArea) -> Sacred {
+    match building.building_use {
+        BuildingUse::Church(sacred) => sacred,
+        _ => unreachable!("BuildingKind::Temple comes only from BuildingUse::Church"),
     }
-    kind.palette()
 }
 
 /// Кровля гаражного прогона: цвет и посев — **общие на весь прогон**. Именно
@@ -743,10 +736,6 @@ pub(super) fn garage_seed(run: &GarageRun) -> f32 {
     (run.seed & 0xff) as f32 / 255.0
 }
 
-fn footprint_area(building: &PolyArea) -> f32 {
-    crate::map::osm::model::signed_ring_area(&building.outer).abs()
-}
-
 /// Стена дома глазами отрисовки: чем облицована и какого от этого цвета.
 /// Рамку ([`crate::map::meshing::WallFrame`]) собирает уже `layers.rs` — она
 /// у каждой стены своя, а вид у всего дома один.
@@ -765,21 +754,22 @@ impl WallLook {
     }
 }
 
-/// Стена этого дома: материал по назначению, этажности и посеву, цвет из
-/// палитры материала.
+/// Стена этого дома: материал по классу здания и посеву, цвет из палитры
+/// материала.
 ///
 /// Посев — тот же [`building_seed`], что у кровли, но разобранный **другими**
 /// байтами: материал стены и материал кровли должны быть независимы, иначе
 /// панельные дома окажутся ещё и все под одним битумом.
 ///
-/// `storeys` приходит извне, а не считается здесь, потому что этажи — это
-/// высота, поделённая на высоту этажа, и делит её `layers.rs`; дублировать то
-/// же деление значит однажды разойтись с ним. Пятно дома (`fp`) — из сборки
-/// слоя; пятна нет — корпусность проверяется по своему `min_area_rect`.
-pub(super) fn wall_look(building: &PolyArea, storeys: f32, fp: Option<HouseFootprint>) -> WallLook {
+/// Рост, назначение и пятно уже разобраны классификатором
+/// ([`super::classify`]) — развилка по этажам, которая раньше жила здесь
+/// (`LOW_RISE_STOREYS`), теперь часть его гварда частного сектора, и стены
+/// читают класс, а не дом второй раз.
+pub(super) fn wall_look(building: &PolyArea) -> WallLook {
     let seed = look_seed(building);
-    let kind = wall_kind_of(building, storeys, seed >> 4, fp);
-    let palette = wall_palette(building, kind);
+    let class = classify(building, None);
+    let kind = wall_kind_of(&class, seed >> 4);
+    let palette = wall_palette(building, &class, kind);
     let base = palette[(seed >> 12) as usize % palette.len()].to_srgba();
     // ±3 % яркости поверх выбранного цвета — как у кровель: два дома одной
     // палитры и одного слота всё-таки не близнецы; цвет из разметки — как есть
@@ -801,67 +791,49 @@ pub(super) fn wall_look(building: &PolyArea, storeys: f32, fp: Option<HouseFootp
     )
 }
 
-/// Материал стены этого дома.
+/// Материал стены этого дома: таблица по классу здания и его этажности.
 ///
-/// Порядок проверок здесь обратный кровельному, и намеренно: кровлю решает
-/// назначение, а стену — сперва **рост**. Низкий дом не бывает ни панельным,
-/// ни витражным, чем бы он ни был по тегу: у панели с балконами нет этажей,
-/// у витража — высоты, ради которой его вешают. Поэтому всё ниже
-/// [`LOW_RISE_STOREYS`] уходит в частный сектор, а таблица по назначению
-/// разбирает то, что осталось.
+/// Низкий дом не бывает ни панельным, ни витражным, чем бы он ни был по тегу:
+/// у панели с балконами нет этажей, у витража — высоты, ради которой его
+/// вешают. Всё ниже [`LOW_RISE_STOREYS`] уходит в малоэтажную таблицу —
+/// **кроме** того, чей класс уже решил мимо роста: частный сектор, гараж,
+/// торговые витрины (магазин узнают по витрине, а не по этажности — зал у
+/// него один, и ниже порога он оказывается почти всегда), кассеты
+/// гипермаркета и корпус глубже жилого.
 ///
-/// **Торговля — исключение, и проверяется она до роста.** Магазин узнают по
-/// витрине, а не по этажности: зал у него один, высотой в два жилых этажа, так
-/// что ниже порога он оказывается почти всегда — и тегированный
-/// `building:levels=1`, и выведенный [`super::heights`]. За порогом и
-/// гипермаркет, и магазин у дома ушли бы в ту же [`LOW_RISE_WALLS`], что и
-/// жилая малоэтажка, — ровно то, из-за чего торговля и читалась жильём.
-/// Запрет на **панель** исключение не отменяет, и это не обещание, а
-/// устройство таблиц: панели нет ни в [`BIG_BOX_WALLS`], ни в [`SHOP_WALLS`].
-fn wall_kind_of(
-    building: &PolyArea,
-    storeys: f32,
-    seed: u32,
-    fp: Option<HouseFootprint>,
-) -> WallKind {
-    if building.kind == AreaKind::Kremlin {
-        return WallKind::Brick;
-    }
-    let table: &[WallKind] = match building.building_use {
-        BuildingUse::House => &HOUSE_WALLS,
-        BuildingUse::Garage | BuildingUse::GarageBlock => &GARAGE_WALLS,
-        BuildingUse::Church(_) => return WallKind::Sacred,
-        BuildingUse::Industrial => &INDUSTRIAL_WALLS,
-        // Торговля — **до** порога малоэтажности, рядом с цехом и по той же
-        // причине: у неё один высокий зал, а не четыре жилых этажа, и низкой по
-        // этажам она из-за этого оказывается почти всегда. Оказавшись за
-        // порогом, и крупноформат, и магазин у дома уходили бы в
-        // `LOW_RISE_WALLS`, то есть в штукатурку с кирпичом, — ровно то, из-за
-        // чего гипермаркет читался жилым домом, а витрина магазина не читалась
-        // вовсе. Порог тут обойдён намеренно и только по витражу: панели нет в
-        // слотах ни у `BIG_BOX_WALLS`, ни у `SHOP_WALLS`, так что запрет на
-        // панель у низкого дома держится и здесь.
-        BuildingUse::Retail if is_big_box(building) => &BIG_BOX_WALLS,
-        BuildingUse::Retail => &SHOP_WALLS,
-        // мелкая коробка без назначения — это частный дом (её и кроют как дом,
-        // `kind_of`), и витражу в частном секторе взяться неоткуда
-        BuildingUse::Other
-            if storeys < LOW_RISE_STOREYS && footprint_area(building) <= SMALL_FOOTPRINT_MAX =>
-        {
-            &HOUSE_WALLS
-        }
-        // корпус без назначения глубже любой жилой секции — не жильё, какой бы
-        // высоты он ни был: ни панели, ни кирпича, а с ними и балконов
-        // (`layers::balcony_house`) у него нет. До порога малоэтажности, потому
-        // что низкий корпус в сто метров — тот же склад, а не малоэтажка
-        BuildingUse::Other if is_deep_hull(building, fp) => &DEEP_HULL_WALLS,
-        _ if storeys < LOW_RISE_STOREYS => &LOW_RISE_WALLS,
-        BuildingUse::Apartments => &APARTMENTS_WALLS,
-        BuildingUse::Commercial => &COMMERCIAL_WALLS,
-        BuildingUse::Public => &PUBLIC_WALLS,
-        // `building=yes` — половина города, и это ровно тот случай, где
-        // этажность уже всё сказала: то, что доросло досюда, — корпус
-        BuildingUse::Other => &APARTMENTS_WALLS,
+/// Запрет на **панель** — не обещание, а устройство таблиц: панели нет ни в
+/// [`BIG_BOX_WALLS`], ни в [`SHOP_WALLS`], так что низкий дом в панели не
+/// встаёт и через классификатор.
+fn wall_kind_of(class: &BuildingClass, seed: u32) -> WallKind {
+    let low = class.storeys() < LOW_RISE_STOREYS;
+    let table: &[WallKind] = match class.kind() {
+        BuildingKind::Fortress { .. } => return WallKind::Brick,
+        BuildingKind::Temple => return WallKind::Sacred,
+        // частный сектор идёт по своей таблице мимо развилки по росту: панели
+        // среди его слотов нет
+        BuildingKind::House | BuildingKind::Shed => &HOUSE_WALLS,
+        BuildingKind::Garage => &GARAGE_WALLS,
+        BuildingKind::Hall => &INDUSTRIAL_WALLS,
+        BuildingKind::BigBox => &BIG_BOX_WALLS,
+        BuildingKind::Shop => &SHOP_WALLS,
+        // контора и торговый зал — до порога малоэтажности в штукатурку с
+        // кирпичом, как всякая малоэтажка; витражом они достаются ростом
+        BuildingKind::Office(_) | BuildingKind::Store => match low {
+            true => &LOW_RISE_WALLS,
+            false => &COMMERCIAL_WALLS,
+        },
+        BuildingKind::Public => match low {
+            true => &LOW_RISE_WALLS,
+            false => &PUBLIC_WALLS,
+        },
+        // корпус без назначения глубже любой жилой секции — не жильё, какой
+        // бы высоты он ни был: ни панели, ни кирпича, а с ними и балконов
+        // (`layers::balcony_house`) у него нет
+        BuildingKind::DeepHull(_) => &DEEP_HULL_WALLS,
+        BuildingKind::Housing(_) => match low {
+            true => &LOW_RISE_WALLS,
+            false => &APARTMENTS_WALLS,
+        },
     };
     table[seed as usize % table.len()]
 }
@@ -1016,14 +988,12 @@ const GARAGE_WALLS: [WallKind; 10] = [
 
 /// Палитра цвета стены: Кремль и храм — своё, остальные по материалу. То же
 /// правило и тот же порядок, что у [`palette`] для кровли.
-fn wall_palette(building: &PolyArea, kind: WallKind) -> &'static [Color] {
-    if building.kind == AreaKind::Kremlin {
-        return &fortress::WALL_COLORS;
+fn wall_palette(building: &PolyArea, class: &BuildingClass, kind: WallKind) -> &'static [Color] {
+    match class.kind() {
+        BuildingKind::Fortress { .. } => &fortress::WALL_COLORS,
+        BuildingKind::Temple => temples::wall_palette(sacred_of(building).faith),
+        _ => kind.palette(),
     }
-    if let BuildingUse::Church(sacred) = building.building_use {
-        return temples::wall_palette(sacred.faith);
-    }
-    kind.palette()
 }
 
 /// Кровля храма в витрине кровель — православная палитра: фальц по вере

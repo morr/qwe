@@ -19,6 +19,7 @@ use super::material::{
     DOOR_CODE, RoofKind, RoofLook, WallKind, WallLook, building_seed, roof_look, run_kind,
     run_look, run_wall_look, wall_look,
 };
+
 use super::order::wall_order;
 use super::roofs::{
     DormerFace, HipRoof, RoofMix, RoofShape, Roofing, TentRoof, roofing, roofing_of,
@@ -949,7 +950,7 @@ pub(super) fn facade_and_roof_builders(
         let fp = footprints[index];
         // фактуры у плоской полосы нет — она идёт одним earcut-полигоном, — но
         // цвет у неё тот же, что был бы у настоящей стены в 2.5D
-        let facade_color = wall_look(building, storeys_of(building, fp), fp).base;
+        let facade_color = wall_look(building).base;
         let look = look_of(building, runs.get(&index), fp);
         let color = roof_color(building, &look, detail.tinted);
         placed.extend(sanctuary.crowns(index, building, facade_color, color, Vec2::ZERO, fp));
@@ -1105,7 +1106,7 @@ pub(super) fn extrusion_builder(
         let fp = footprints[index];
         let look = look_of(building, runs.get(&index), fp);
         let color = roof_color(building, &look, detail.tinted);
-        let wall = wall_of_run(building, runs.get(&index), fp);
+        let wall = wall_of_run(building, runs.get(&index));
         let lift = lift_of_footprint(building, fp);
         let crowns = sanctuary.crowns(index, building, wall.base, color, lift, fp);
         // часть на крыше храма — барабан с главой, отдельная колокольня — столп
@@ -1251,8 +1252,7 @@ pub fn push_house(
 /// `wall_look` мимо [`storeys_of`]. Пятно дома считается здесь: витрина
 /// зовёт функцию сама, без сборщика слоя с его готовыми пятнами.
 pub fn wall_of(building: &PolyArea) -> WallLook {
-    let fp = HouseFootprint::of(building);
-    wall_look(building, storeys_of(building, fp), fp)
+    wall_look(building)
 }
 
 /// То же, но с оглядкой на гаражный прогон: бокс, вошедший в него, одет в
@@ -1260,14 +1260,10 @@ pub fn wall_of(building: &PolyArea) -> WallLook {
 /// его собственная, размером с бокс. Кровля этого дома берётся от прогона
 /// ровно так же ([`look_of`]), и обе стороны коробки говорят тогда одно и то
 /// же: сверху гребёнка боксов, сбоку ряд ворот.
-fn wall_of_run(
-    building: &PolyArea,
-    run: Option<&GarageRun>,
-    fp: Option<HouseFootprint>,
-) -> WallLook {
+fn wall_of_run(building: &PolyArea, run: Option<&GarageRun>) -> WallLook {
     match run {
         Some(run) => run_wall_look(run),
-        None => wall_look(building, storeys_of(building, fp), fp),
+        None => wall_look(building),
     }
 }
 
