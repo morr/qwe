@@ -12,7 +12,7 @@ use super::arches::{
     ArchOpening, ArchOpenings, TunnelWall, WallCells, arch_openings, arches_by_building,
     push_arches, push_tunnel_walls, push_wall_with_openings, tunnel_walls,
 };
-use super::classify::{BELL_TOWER_TIER, BIG_BOX_TIER, SACRED_TIER, classify};
+use super::classify::classify;
 use super::clutter::{flat_roof_items, merlons, push_items, ridge_chimney};
 use super::garages::{BAY, FACADE_COS, GarageRect, GarageRun, garage_runs};
 use super::material::{
@@ -30,7 +30,7 @@ use super::{
 };
 use crate::map::meshing::{MeshBuilder, PARAPET_CELLS, Roof, WallFrame, WallMark};
 use crate::map::osm::model::{distance_to_segment, is_big_box, signed_ring_area, srgba_of};
-use crate::map::osm::{AreaKind, BuildingUse, PolyArea, RoadLine, Sacred, SacredForm};
+use crate::map::osm::{AreaKind, BuildingUse, PolyArea, RoadLine};
 use crate::map::seed::seed_from_point;
 use crate::settings::STOREY_HEIGHT;
 
@@ -144,7 +144,7 @@ pub(super) struct WallSpan {
     pub(super) b: Vec2,
     /// Подъём: вектор от основания стены до карниза ([`lift_of`]).
     pub(super) lift: Vec2,
-    /// Этажей в доме — целое число ([`storeys_of`]).
+    /// Этажей в доме — целое число ([`super::classify::BuildingClass::storeys`]).
     storeys: f32,
     /// Длинная ось плана этого дома — единственное, что стена знает про
     /// **остальные** стены того же дома, и по чему только и отличается
@@ -379,28 +379,12 @@ fn garage_cells(
     })
 }
 
-/// Сколько этажей в этой стене — от **настоящей** высоты дома, а не от
-/// нарисованной: `EXTRUDE_SCALE` сжимает стену вместе с этажами, и считать их
-/// по сжатой значило бы получить полтора этажа у пятиэтажки.
-///
-/// Число целое, и на нём держится вся рама ([`wall_frame`]): верхний этаж
-/// упирается ровно в карниз, а на углу дома обе стены кончаются одинаково.
-fn storeys_of(building: &PolyArea, fp: Option<HouseFootprint>) -> f32 {
-    let storey = match building.building_use {
-        // ярус колокольни выше храмового: семидесятиметровая колокольня в
-        // шестиметровых ярусах носила двенадцать рядов окон, как башня-жильё
-        BuildingUse::Church(Sacred {
-            form: SacredForm::Tower,
-            ..
-        }) => BELL_TOWER_TIER,
-        BuildingUse::Church(_) => SACRED_TIER,
-        // у торговой коробки ярус фасада — торговый зал целиком; магазин у
-        // дома остаётся на жилом этаже, он и есть этаж дома
-        BuildingUse::Retail if is_big_box(building) => BIG_BOX_TIER,
-        _ => STOREY_HEIGHT,
-    };
-    (height_of(building, fp) / storey).round().max(1.0)
-}
+// Этажность стены — [`BuildingClass::storeys`] классификатора: высота делится
+// на ярус вида один раз на дом, и нарисованная рама читает готовое. Настоящая
+// высота, не нарисованная: `EXTRUDE_SCALE` сжимает стену вместе с этажами, и
+// считать их по сжатой значило бы получить полтора этажа у пятиэтажки. Число
+// целое, и на нём держится вся рама ([`wall_frame`]): верхний этаж упирается
+// ровно в карниз, а на углу дома обе стены кончаются одинаково.
 
 /// Кому балконы полагаются. Это не про геометрию, а про то, что бывает на
 /// фотографии: балкон — примета **жилого дома в несколько этажей**, и рисунок
@@ -1251,9 +1235,8 @@ pub fn push_house(
 }
 
 /// Облицовка, которую игра выбрала бы этому дому. Витринам — чтобы не
-/// повторять у себя деление высоты на высоту этажа, городу — чтобы не звать
-/// `wall_look` мимо [`storeys_of`]. Пятно дома считается здесь: витрина
-/// зовёт функцию сама, без сборщика слоя с его готовыми пятнами.
+/// повторять у себя ни деление высоты на высоту этажа, ни развилки
+/// классификатора: оба шага (`wall_look` ведёт их изнутри) остаются его.
 pub fn wall_of(building: &PolyArea) -> WallLook {
     wall_look(building)
 }
@@ -1285,7 +1268,8 @@ fn push_house_with_arches(
 ) -> RoofShape {
     // этажи считаются от настоящей высоты дома, а не от нарисованной: подъём
     // сжимает стену вместе с ними
-    let storeys = storeys_of(building, fp);
+    let class = classify(building, fp);
+    let storeys = class.storeys();
     let facade_color = wall.base;
     let lean = Lean::of();
     let lift_dir = lean.dir();
@@ -1344,7 +1328,6 @@ fn push_house_with_arches(
             push_items(builder, &chimney, Some(lean), color);
         }
     };
-    let class = classify(building, fp);
     let built = match roofing_of(
         shape,
         building,

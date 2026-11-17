@@ -299,7 +299,7 @@ fn the_wall_around_an_arch_wears_no_half_windows() {
     // облицовка тут любая, кроме гаражной: боксом ячейку меряет только
     // `WallKind::GarageDoors`, у всех остальных она панельная
     let panel = 40.0 / wall_columns(40.0, WallKind::Panel);
-    // этажей столько же, сколько насчитал бы `storeys_of`, — целое число
+    // этажей столько же, сколько насчитал бы классификатор, — целое число
     let storeys = (30.0 / crate::settings::STOREY_HEIGHT).round().max(1.0);
     let storey = lift.y / (storeys + crate::map::meshing::PARAPET_CELLS);
 
