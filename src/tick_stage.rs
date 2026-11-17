@@ -105,3 +105,55 @@ impl Plugin for TickStagePlugin {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use bevy::ecs::schedule::{NodeId, Schedules};
+    use bevy::prelude::*;
+
+    use super::*;
+
+    /// Заглушка ради членства: каждая стадия должна нести систему, иначе пустые
+    /// сеты в графе расписания не о чём проверять.
+    fn noop() {}
+
+    /// Расписание исполняет стадии в порядке перечня: между соседними стадиями
+    /// стоит ребро, поставленное [`TickStagePlugin`]. Ручное ребро из чужого
+    /// плагина порядок не заменяет — перечень и расписание обязаны совпадать.
+    #[test]
+    fn the_schedule_chains_the_stages_in_the_listed_order() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_plugins(TickStagePlugin);
+        for stage in TickStage::ORDER {
+            app.add_systems(FixedUpdate, noop.in_set(*stage));
+        }
+
+        let world = app.world_mut();
+        let mut schedule = world
+            .resource_mut::<Schedules>()
+            .remove(FixedUpdate)
+            .expect("расписание заведено плагином");
+        schedule.initialize(world).expect("расписание строится");
+
+        let graph = schedule.graph();
+        let keys: Vec<_> = TickStage::ORDER
+            .iter()
+            .map(|stage| {
+                graph
+                    .system_sets
+                    .get_key(stage.intern())
+                    .expect("стадия заведена в расписании")
+            })
+            .collect();
+        for (index, pair) in keys.windows(2).enumerate() {
+            let (prev, next) = (NodeId::Set(pair[0]), NodeId::Set(pair[1]));
+            assert!(
+                graph.dependency().graph().contains_edge(prev, next),
+                "стадия {:?} обязана идти сразу после {:?}: перечень и расписание разошлись",
+                TickStage::ORDER[index + 1],
+                TickStage::ORDER[index],
+            );
+        }
+    }
+}
