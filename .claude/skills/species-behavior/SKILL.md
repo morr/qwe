@@ -389,4 +389,10 @@ not reviving that one.
 `{killed, escaped}`, BRP-readable; `killed` is what the **Souls reaped** HUD counter shows
 (`ui/stats.rs`, first in the left column, outside the settings tabs — panel internals live
 in the **ui-panels skill**). The Sim tab's **World** section is a different thing: seed and
-determinism row, no telemetry. The invariant and the check-paused rule are `CONTEXT.md`'s.
+determinism row, no telemetry. The outcomes grow incrementally, from events; the per-state
+side of the ledger is **Census** (`census.rs`): humans/demons/corpses/souls/fleeing/
+wandering/moving/chasing, recomputed once per **frame** in `Update` — never per tick — by
+`count_census`; HUD and the tick-spike reporter (`sim-speed` skill) read the resource, BRP
+answers `res get Census`. The invariant `alive + killed + escaped == PopulationSize` is
+debug-checked there per frame, in `PlayPhase::Live` — `Warmup` after a restart still
+carries the previous run's telemetry. The check-paused rule is `CONTEXT.md`'s.

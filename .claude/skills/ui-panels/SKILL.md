@@ -88,13 +88,15 @@ panel** with four tabs (`ui/shell.rs`).
 
 ## HUD
 
-- **Counters** (`ui/stats.rs`) — Pawns (`With<Human>`, i.e. alive: the component is
-  stripped on death), Demons, Souls reaped (`Telemetry::killed`), first in the left
-  column, **outside** the tabs: they are watched continuously — behind a tab choice
-  they would be a keyhole on the simulation. The counters use
-  `iter().len()`, not `count()`: with a purely archetypal filter the iterator is
-  `ExactSizeIterator` — a sum over archetypes rather than a walk over
-  20 000 entities every frame. In agent runs the red **BRP badge** (`ui/brp.rs`) owns
+- **Counters** (`ui/stats.rs`) — Pawns and Demons read **Census** (`census.rs`, the
+  per-frame state census; the census mechanism and its invariant live in the
+  **species-behavior skill** — `With<Human>` means alive, the component is stripped on
+  death), Souls reaped is `Telemetry::killed`; first in the left column, **outside**
+  the tabs: they are watched continuously — behind a tab choice they would be a
+  keyhole on the simulation. `sync_world_counts` declares itself `.after` the census
+  count (`crate::census::count_census`) so the panel shows this frame's snapshot; the
+  counting cost — `iter().len()` on archetypal filters, a sum over archetypes — moved
+  with the census. In agent runs the red **BRP badge** (`ui/brp.rs`) owns
   that corner, and `offset_below_brp_badge` measures it and pushes every `BelowBrpBadge`
   node below — `ComputedNode::size` is in *physical* px, so multiply by
   `inverse_scale_factor` or the offset doubles on a retina screen. The game marks an

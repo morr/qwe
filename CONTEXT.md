@@ -1248,7 +1248,12 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   **both** modes — it is simulation, not cosmetics.
 - **Telemetry** — `{killed, escaped}`, BRP-readable; `killed` is the **Souls reaped** HUD
   counter (`ui/stats.rs`), *not* a row of the Sim tab's **World** section — that section
-  holds the seed and the determinism row. Invariant (check paused):
+  holds the seed and the determinism row. Outcomes grow incrementally, from events; the
+  per-state side is **Census** (`census.rs`): humans/demons/corpses/souls/fleeing/
+  wandering/moving/chasing, counted **once per frame** in `Update` — never per tick —
+  by one system; the HUD, the tick-spike reporter and BRP (`res get Census`) read that
+  snapshot. Invariant (debug-checked per frame in `PlayPhase::Live`, `census.rs` —
+  `Warmup` after a restart still carries the previous run's telemetry):
   `killed + escaped + alive == PopulationSize` — the number the spawn actually read, not
   the constant: in the game that is the default `HUMAN_COUNT`, in a replay run whatever
   `replay_app` was given. At high sim speed BRP reads are skewed — pause before asserting.

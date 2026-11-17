@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use bevy::remote::{RemotePlugin, http::RemoteHttpPlugin};
 
 use qwe::{
-    camera, city, demon, determinism, dev, diagnostics, frame_phases, human, loading, map,
+    camera, census, city, demon, determinism, dev, diagnostics, frame_phases, human, loading, map,
     movement, navigation, portal, post, prefs, restart, rng, silhouette, sim_time, spatial,
     telemetry, ui,
 };
@@ -60,7 +60,8 @@ fn main() {
             city::CityPlugin,
             rng::RngPlugin,
             determinism::DeterminismPlugin,
-            // группа ниже уже во всю длину кортежа `Plugins` — 15 штук
+            // обе группы ниже стоят у лимита кортежа `Plugins` (15), поэтому
+            // мир и косметика — двумя кортежами по восемь
             post::PostProcessPlugin,
             // атлас силуэтов — уровня процесса, как и seed: собирается один
             // раз в `Startup` и переживает любую смену мира
@@ -75,6 +76,12 @@ fn main() {
             portal::PortalPlugin,
             spatial::SpatialPlugin,
             telemetry::TelemetryPlugin,
+        ))
+        // мир живёт: перепись состояний, поведение видов, рестарт и скорость.
+        // Кортеж выше стоял во всю длину `Plugins` (15) — перепись стала
+        // шестнадцатой, и группа делится надвое
+        .add_plugins((
+            census::CensusPlugin,
             demon::DemonPlugin,
             human::HumanPlugin,
             restart::RestartPlugin,

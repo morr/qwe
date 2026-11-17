@@ -25,15 +25,16 @@ use super::shell::{SectionSlot, SettingsPanes, SettingsTab, spawn_section};
 use super::{
     UiBuildSet, panel_background, panel_block_background, panel_title, row_label, row_value,
 };
+use crate::census::Census;
 use crate::demon::{
     DEMON_CAP_MAX, DEMON_CAP_MIN, DEMON_CAP_STEP, DEMON_LUNGE_BOOST_MAX, DEMON_LUNGE_BOOST_MIN,
     DEMON_LUNGE_BOOST_STEP, DEMON_SPAWN_INTERVAL_MAX, DEMON_SPAWN_INTERVAL_MIN,
     DEMON_SPAWN_INTERVAL_STEP, DEMON_SPEED_FACTOR_MAX, DEMON_SPEED_FACTOR_MIN,
-    DEMON_SPEED_FACTOR_STEP, Demon, DemonStyle,
+    DEMON_SPEED_FACTOR_STEP, DemonStyle,
 };
 use crate::determinism::Determinism;
 use crate::human::{
-    HUMAN_SPEED_SPREAD_MAX, HUMAN_SPEED_SPREAD_MIN, HUMAN_SPEED_SPREAD_STEP, Human, HumanStyle,
+    HUMAN_SPEED_SPREAD_MAX, HUMAN_SPEED_SPREAD_MIN, HUMAN_SPEED_SPREAD_STEP, HumanStyle,
 };
 use crate::rng::{MAX_SEED, SEED_ROLL_RANGE, WorldSeed};
 use crate::telemetry::Telemetry;
@@ -67,7 +68,7 @@ impl Plugin for UiStatsPlugin {
             .add_systems(
                 Update,
                 (
-                    sync_world_counts,
+                    sync_world_counts.after(crate::census::count_census),
                     apply_seed_on_enter,
                     sync_seed_field.run_if(resource_changed::<WorldSeed>),
                 ),
@@ -357,22 +358,19 @@ fn build_sim_tab(
     );
 }
 
-/// Счётчики панели. `Human` снимается с человека в момент смерти, а с трупа не
-/// висит вовсе, — так что `With<Human>` и есть «жив».
-///
-/// `iter().len()`, а не `count()`: `QueryIter` при чисто архетипном фильтре
-/// (`With<_>`) — `ExactSizeIterator`, и длина берётся суммой размеров
-/// архетипов, а не проходом по двадцати тысячам сущностей каждый кадр.
+/// Счётчики панели: живая перепись ([`Census`], считается раз в кадр — раньше
+/// каждый запрос был своим) и накопительные исходы ([`Telemetry`]). После
+/// переписи в том же `Update`, чтобы число на панели было кадром этого же
+/// кадра.
 fn sync_world_counts(
-    humans: Query<(), With<Human>>,
-    demons: Query<(), With<Demon>>,
+    census: Res<Census>,
     telemetry: Res<Telemetry>,
     mut labels: Query<(&StatRow, &mut Text)>,
 ) {
     for (row, mut text) in &mut labels {
         let value = match row {
-            StatRow::Pawns => humans.iter().len(),
-            StatRow::Demons => demons.iter().len(),
+            StatRow::Pawns => census.humans,
+            StatRow::Demons => census.demons,
             StatRow::Souls => telemetry.killed,
         };
         text.set_if_neq(Text(value.to_string()));
