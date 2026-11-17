@@ -1,3 +1,71 @@
+# NOTES — deep04 (план углубления, пункт №04 «Реестр слоёв», часть «Делаем» a+b)
+
+Задача: docs/deepening-plan.md в main checkout (незакоммичен — не коммитить) § 04,
+только «Делаем» (a) swap_layers и (b) z-лестница → map/z.rs; дескриптор-реестр
+отложен (триггер «следующий добавленный слой»), не открывать. Записи прошлых
+сессий (deep06, deep07, deep02, deep03, deep01, split-giants) — ниже.
+
+## Решения
+
+1. **swap_layers — в `map/surface.rs`, без отчёта внутри.** Сигнатура
+   `(commands, meshes, materials, layers: impl IntoIterator<Item = LayerMesh>,
+   tag: T: Bundle + Clone, existing: &Query<Entity, F>)` — деспавн по фильтру
+   запроса + spawn_layers. Отчёт печатает вызывающий: он — значение mesh-двери
+   (док layer-seam: отчёты — значения, печатающие сами себя), а слоям без
+   отчёта (полоса аллей, оверлеи) скилл запрещает изобретать отчёт для
+   симметрии. Два дженерика (F/T), а не один `M: Component + Clone` как у
+   respawn_overlay: пин инспектора спавнится под парой маркеров
+   `(InspectorHighlightMarker, InspectorPinnedMarker)`, деспавнится по одному.
+2. **Оверлеи — `show.0.then(|| build())` как слои**: `Option<LayerMesh>` —
+   итератор 0..1, ленивость сохранена (при выключенном тумблере меш не
+   собирается), `respawn_overlay` умирает целиком.
+3. **12 мест**: 3 оверлея (network/rut/contours) + 2 инспектора (highlight,
+   pins) + tram/wagons/industry/cars + fences×2 (rebuild_fences,
+   apply_fence_rebuild — у неё спавн и деспавн в одной очереди, порядок внутри
+   очереди не влияет: деспавн — по готовому списку запроса) + полоса аллей.
+   НЕ переводятся: rebuild_roads (две двери + вставка ресурсов между),
+   rebuild_buildings (две метки + общая дверь spawn_building_meshes с warn),
+   rebuild_trees (CrownStream), queue_fence_rebuild (деспавн без спавна),
+   navmesh/conifer оверлеи (не spawn_layers).
+4. **map/z.rs — вся z-секция settings.rs целиком** (константы + assert-блок +
+   Y_SORT_FACTOR + Z_UNIT_BASE + unit_z): assert-блок связывает пешачьи
+   отметки (Z_UNIT_BASE/Z_SOUL/Z_CORPSE/Z_PORTAL) с картовыми — резать его
+   пополам между settings.rs и map/z.rs нельзя. `pub mod z` в map/mod.rs —
+   примеры читают через `qwe::map::z`.
+5. Импорты правятся механическим свипом (# mechanical-sweep): z-имена
+   вынимаются из `use crate::settings::{..}` / `use qwe::settings::{..}` в
+   новый `use crate::map::z::{..}` / `use qwe::map::z::{..}`; ассерты в
+   скрипте + компилятор как финальная проверка.
+
+## Статус
+
+- [x] worktree .worktrees/deep04 (master ab7ad1f5), target засеян (10 с CoW),
+      assets/osm rsync -a
+- [x] скиллы git/bevy/osm-map (+ ui-panels по хуку на ui/*) загружены до
+      первого гейтованного действия
+- [x] 8da71f2d (a): swap_layers в surface.rs + 12 мест; d949514f фикс линта
+      (LayerMesh в overlays.rs стал неиспользуемым)
+- [x] 49dfa0be (b): map/z.rs + свип 46 файлов (crate::map::z / qwe::map::z) +
+      доки тем же коммитом (CONTEXT.md, CLAUDE.md, osm-map SKILL/layer-seam,
+      ui-panels SKILL)
+- [x] 71c7a235 сдвинутый док газона острова вернулся на Z_RING_ISLAND
+      (переносил секцию руками, док Z_GROUND/Z_RING_ISLAND сместился на одну
+      ступень), b20539d9 misc rustfmt свипа
+- [x] check.sh OK одним фоном (абсолютный путь): build + 1583 lib-теста
+      (мастеру 1583 — тесты не терялись и не добавлялись) + детерминизм 5/5 +
+      clippy чист + fmt применён
+- [ ] NOTES закоммичены, ff master
+
+## Вердикт по перфу
+
+Перемещение кода без новой работы: ни на кадр (swap_layers — те же вызовы
+despawn/spawn из тех же систем; дженерик разворачивается в тот же цикл), ни на
+элемент загрузки (z-константы — compile-time, assert-блок и был, и остался
+const-блоком, исполняется один раз при первой сборке теста/бин-артефакта).
+Ни одного нового прохода по сущностям, мешам или тайлам. Живой замер не нужен.
+
+---
+
 # NOTES — deep06 (план углубления, пункт №06: RequestLifecycle, шаги 1–2)
 
 Задача: docs/deepening-plan.md в main checkout (незакоммичен — не коммитить) § 06,
