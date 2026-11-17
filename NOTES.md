@@ -55,29 +55,70 @@
 
 ## Коммиты (план)
 
-1. classify.rs + heights на класс + таблица здание→класс
-2. material (кровля+стены) на класс — с разрешением дрейфа (body коммита)
-3. скатная когорта на класс (is_pitched → BuildingClass::is_pitched)
-4. clutter на класс
-5. этажность/ярусы на класс (storeys_of умирает)
-6. CityContext: sanctuary/garage_runs/arches один раз, классы потоком в билдеры
-7. один Roofing match + HouseLook (flat = вырожденный случай)
-8. docs: CONTEXT.md + osm-map skill (BuildingClass, CityContext) тем же изменением
+1. dcb126c1 classify.rs + heights на класс + таблица здание→класс (3 теста: таблица
+   «здание → класс», этажность/ярус, скатная когорта)
+2. 5bdea9f6 material (кровля+стены) на класс — разрешение дрейфа в этом коммите;
+   is_deep_hull + shape-пороги переехали в classify.rs
+3. 7bb65199 скатная когорта (is_pitched удалён → BuildingClass::is_pitched)
+4. 840db379 clutter на класс (is_landmark → BuildingClass::is_landmark)
+5. a0948ad3 storeys_of умирает, ярусы — только в classify.rs
+6. ace970ad CityContext { sanctuary, garage_runs(=runs), arches } в mesh_buildings;
+   arches теперь для обоих режимов; бенч: строка `arches` → `context`
+7. a04e075d push_roofing — общий матч крыши, flat = вызов с lift=ZERO/lean=None;
+   HouseLook = общий шаг вида дома (roof/wall/facade)
+8. 6e45b958 docs: CONTEXT.md (Building class, City context) + osm-map (SKILL.md,
+   buildings-heights/material/clutter/landmarks)
++ 8c702307 фикс компиляции серии (импорты, seed в kind_of, CityContext приватный,
+  тест рампы тонировки — его высокая фикстура опиралась на дрейф: 60-м тегированная
+  коробка брала черепицу частного сектора над панельными стенами; обе фикстуры теперь
+  Apartments)
++ 535ca972 misc rustfmt
+
+## Решения сверх плана
+
+- **Класс не тредится в билдеры срезом** (моё расширение плана — отменено):BuildingClass
+  считается тем, кому нужен (`classify(building, fp)` — хеш + матч; min_area_rect только
+  там, где и раньше), CityContext — только три городовых входа по плану. Причина: срез
+  классов ломал бы витринные двери (push_house/wall_of) и добавлял параллельный массив
+  к четырём существующим без меры в плане.
+- **roof_look/wall_look считают класс внутри себя** (промежуточно до шага 6): тесты
+  (около 20 мест roof_look/wall_look) остаются на прежних сигнатурах; цена — повторный
+  classify на потребителя (~нс, хеш + матч).
+- **Тест roof_tint_darkens...** — единственный mesh-тест, тронутый по существу: его
+  «высотка» против «базы» сравнивала разные материалы (частная черепица у тегированной
+  60-м коробки — сам дрейф). Обе фикстуры заданы Apartments — сравнение материалов
+  одинаковое.
 
 ## Статус
 
 - [x] worktree .worktrees/deep02 + seed target (10 s CoW) + rsync assets/osm (mtime)
 - [x] скиллы git/bevy/osm-map загружены; осмотр закончен
-- [ ] коммиты 1–8
-- [ ] check.sh одним фоном, вердикт по перфу, ff master, spawn №07 (Census)
+- [x] коммиты 1–8 + фиксы
+- [x] check.sh из worktree: OK (build + все тесты зелёные + clippy чист + fmt)
+- [x] бенч map_meshing (Тула, release) — чисто во всех режимах, вердикт выше
+- [ ] ff master, spawn №07 (Census)
 
-## Замечания по перфу (предварительное рассуждение)
+## Урок заезда
 
-Новой работы на кадр нет (всё — load-сторона). На элемент загрузки: classify замещает
-вызовы height_of/storeys_of/kind_of/wall_kind_of, которые уже происходят (часто по
-несколько раз на дом: storeys_of ×3 в экструзионном пути); min_area_rect считается там же,
-где считался (ветка формы / deep hull, fp передан). Ожидаю нейтрально-положительный эффект;
-замер — `building meshing:` строка лога (Тула), как в deep03.
+**cargo-проверки обязаны идти с cwd worktree.** Первые пять циклов «проверил — зелёный»
+компилировали master: сессия стоит в main checkout, `cargo check` без cd проверял не тот
+дерево, а его чистоту. Поймалось только на check.sh из абсолютного пути worktree
+(скрипт делает cd от $0): 6 ошибок компиляции + 8 warning'ов, которые «зелёные» прогоны
+пропустили. Для быстрых проверок: `cd <worktree> && cargo check --all-targets`; для
+полной — абсолютный путь к `tools/check.sh` (он сам cd-ится).
+
+## Вердикт по перфу
+
+**На кадр новой работы нет** — весь пункт живёт в load-стороне. На элемент загрузки
+арифметика однозначно положительная: CityContext сжал Sanctuary::of ×5 → ×1,
+garage_runs ×3 → ×1, arches_by_building ×2 → ×1 — на Туле это ~4 лишних прохода по
+14 598 зданий на сборку, теперь один (`context` 1–2 мс на весь расчёт в бенче).
+classify добавляет на потребителя хеш первой вершины + матч (наносекунды);
+min_area_rect считается там же, где считался раньше (fp передан). Живой прогон не
+нужен — консолидация, а не новое поведение; бенч `map_meshing` на Туле прошёл чисто
+во всех пяти режимах (extruded 19–35 мс, facades+roofs 39–56, shadows ~66, roof
+shadows 5–7 — порядки журнальные). Строка бенча `facades+roofs` стала чуть легче
+прошлой (`arches` ушла в `context`) — задокументировано в коммите ace970ad.
 
 ---
 
