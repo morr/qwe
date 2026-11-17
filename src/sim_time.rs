@@ -9,8 +9,10 @@
 use bevy::app::RunFixedMainLoopSystems;
 use bevy::prelude::*;
 
+use crate::census::Census;
 use crate::determinism::SimTick;
 use crate::loading::{PlayPhase, WorldStarted};
+use crate::telemetry::Telemetry;
 use crate::tick_stage::TickStage;
 
 // Числа регулятора живут здесь: владелец у них ровно один — этот файл
@@ -250,9 +252,14 @@ pub struct SimLoad {
     /// раза в кадр». Копится по ходу прогона, мс.
     frame_extra_ms: f32,
     /// Длительность прогона `FixedUpdate` в последнем кадре, мс — сырая, без
-    /// сглаживания и без деления на шаги. Потребитель ровно один:
-    /// [`frame_overrun`] решает по ней, симуляция ли растянула кадр.
+    /// сглаживания и без деления на шаги. Потребители: [`frame_overrun`] решает
+    /// по ней, симуляция ли растянула кадр; репортёр спайков
+    /// ([`report_tick_spike`]) — в паре с [`Self::frame_ticks`], дорогой ли
+    /// был шаг.
     pub frame_sim_ms: f32,
+    /// Число шагов в последнем кадре — вторая половина сырой пары
+    /// ([`Self::frame_sim_ms`]): репортёр спайков делит одно на другое.
+    pub frame_ticks: u64,
     /// Сглаженная цена одного шага **по процессору**, мс — без покадрового.
     pub tick_ms: f32,
     /// То же покадровое, разнесённое на шаг, мс.
@@ -389,11 +396,23 @@ impl Plugin for SimTimePlugin {
             .init_resource::<SimLoad>()
             .init_resource::<TickDebt>()
             .init_resource::<TickSegments>()
+            // порог тик-спайка читается из окружения один раз при сборке;
+            // дальше он ресурс — виден и правится по BRP на живом прогоне
+            .insert_resource(TickSpikeThreshold(
+                std::env::var("QWE_PERF_FRAME_SPIKES")
+                    .ok()
+                    .and_then(|ms| ms.parse().ok())
+                    .unwrap_or(0.0),
+            ))
+            .register_type::<TickSpikeThreshold>()
             .add_systems(
                 RunFixedMainLoop,
                 (
                     begin_sim_load.in_set(RunFixedMainLoopSystems::BeforeFixedMainLoop),
                     end_sim_load.in_set(RunFixedMainLoopSystems::AfterFixedMainLoop),
+                    report_tick_spike
+                        .in_set(RunFixedMainLoopSystems::AfterFixedMainLoop)
+                        .after(end_sim_load),
                 ),
             )
             // предохранитель — стадия `Guard`, первая в перечне тика: решение
@@ -570,23 +589,11 @@ fn guard_frame_budget(
     debt.deferred += rest.as_secs_f64();
 }
 
-#[allow(clippy::too_many_arguments)]
 fn end_sim_load(
     mut load: ResMut<SimLoad>,
-    segments: ResMut<TickSegments>,
-    mut diagnostics: bevy::diagnostic::Diagnostics,
-    store: Option<Res<bevy::diagnostic::DiagnosticsStore>>,
     tick: Res<SimTick>,
+    mut diagnostics: bevy::diagnostic::Diagnostics,
     real: Res<Time<Real>>,
-    humans: Option<Query<(), With<crate::human::Human>>>,
-    souls: Option<Query<(), With<crate::human::SoulMote>>>,
-    corpses: Option<Query<(), With<crate::human::CorpseTag>>>,
-    fleeing: Option<Query<(), With<crate::human::HumanFleeTag>>>,
-    wandering: Option<Query<(), With<crate::human::HumanWanderTag>>>,
-    moving: Option<Query<(), With<crate::movement::MovableStateMovingTag>>>,
-    chasing: Option<Query<(), With<crate::demon::DemonChaseTag>>>,
-    requests: Option<Query<&crate::movement::RequestedAt>>,
-    telemetry: Option<Res<crate::telemetry::Telemetry>>,
 ) {
     let Some(started) = load.started.take() else {
         return;
@@ -599,71 +606,7 @@ fn end_sim_load(
     // до `observe`: тот выходит на кадре без единого шага, а кадр без шагов —
     // как раз тот случай, ради которого замер и заведён (см. `frame_overrun`)
     load.frame_sim_ms = sim_ms;
-    // порог — на **тик**, не на кадр: на высокой скорости кадр легитимно
-    // заполнен шагами до бюджета (регулятор так и устроен), и «кадр дороже
-    // порога» писал бы строку каждый кадр. Аномалия — дорогой шаг
-    if ticks > 0 && sim_ms / ticks as f32 > tick_spike_threshold() {
-        // контекст волны: подсистемы тика на спайке остаются маленькими, и без
-        // счётчиков состояние мира в момент вспышки не восстановить. Спайковые
-        // кадры редки, поэтому проходы по запросам здесь стоят того
-        let (humans, souls, corpses) = (
-            humans.map(|q| q.iter().count()),
-            souls.map(|q| q.iter().count()),
-            corpses.map(|q| q.iter().count()),
-        );
-        let killed = telemetry.map(|t| t.killed).unwrap_or_default();
-        let (fleeing, wandering, moving, chasing) = (
-            fleeing.map(|q| q.iter().count()),
-            wandering.map(|q| q.iter().count()),
-            moving.map(|q| q.iter().count()),
-            chasing.map(|q| q.iter().count()),
-        );
-        // заявки, поданные в сам спайк-тик: волна перепрокладок видна числом,
-        // а не догадкой (panic/flee/демонский выбор цели/filed repath)
-        let filed = requests.map(|q| q.iter().filter(|r| r.0 == tick.0).count());
-        info!(
-            "tick spike: {sim_ms:.1} ms for {ticks} ticks (tick {}, humans {humans:?}, souls {souls:?}, corpses {corpses:?}, killed {killed}, fleeing {fleeing:?}, wandering {wandering:?}, moving {moving:?}, chasing {chasing:?}, filed {filed:?})",
-            tick.0
-        );
-        // разрез спайк-тика: последнее значение каждой подсистемы — это её
-        // прогон на последнем (спайковом) тике, замеры через deferred-буфер
-        // успевают доехать к AfterFixedMainLoop. Что не покрыто системами —
-        // «rest»: синхронизации цепочки, применение команд, накладные
-        // исполнителя
-        if let Some(store) = store.as_deref() {
-            let mut covered = 0.0;
-            let mut parts = Vec::new();
-            for (name, path) in [
-                ("acq", &crate::diagnostics::SIM_ACQUIRE_MS),
-                ("spwn", &crate::diagnostics::SIM_SPAWNER_MS),
-                ("pan", &crate::diagnostics::SIM_PANIC_MS),
-                ("flee", &crate::diagnostics::SIM_FLEE_MS),
-                ("esc", &crate::diagnostics::SIM_ESCAPE_MS),
-                ("chas", &crate::diagnostics::SIM_CHASE_MS),
-                ("soul", &crate::diagnostics::SIM_SOULS_MS),
-                ("spat", &crate::diagnostics::SIM_SPATIAL_MS),
-                ("move", &crate::diagnostics::SIM_MOVE_MS),
-                ("sep", &crate::diagnostics::SIM_SEPARATION_MS),
-            ] {
-                if let Some(v) = store.get(path).and_then(|d| d.values().last().copied()) {
-                    covered += v;
-                    parts.push(format!("{name} {v:.3}"));
-                }
-            }
-            parts.push(format!("rest {:.3}", sim_ms - covered as f32));
-            info!("tick spike dissect: {} ms total", parts.join(" | "));
-            // сегменты цепочки: каждая проба держит стену от предыдущей до
-            // себя, включая применения команд на стыках — всплеск применения
-            // виден в сегменте того среза, где исполнитель его реально применил
-            let segments = segments
-                .parts
-                .iter()
-                .map(|(name, ms)| format!("{name} {ms:.1}"))
-                .collect::<Vec<_>>()
-                .join(" | ");
-            info!("tick spike segments: {segments}");
-        }
-    }
+    load.frame_ticks = ticks;
     load.observe(sim_ms, ticks, real.delta_secs());
     let (tick_ms, wait_ms, peak_ms) = (load.tick_ms, load.wait_ms, load.wait_peak_ms);
     diagnostics.add_measurement(&crate::diagnostics::SIM_TICK_MS, || f64::from(tick_ms));
@@ -671,22 +614,98 @@ fn end_sim_load(
     diagnostics.add_measurement(&crate::diagnostics::SIM_WAIT_PEAK_MS, || f64::from(peak_ms));
 }
 
-/// Порог «тик-спайка» — из `QWE_PERF_FRAME_SPIKES=<ms>` (тот же детектор,
-/// что у длины кадра в `dev.rs`): **шаг** дороже порога печатает строку
-/// `tick spike: 41.1 ms for 96 ticks`. Секундные средние `sim/tick_ms`
-/// всплеск размазывают, а он — самый честный след тех самых «медленных
-/// тиков», которые регулятор потом разрезает на скорости; порог держится
-/// именно на цене шага, потому что суммарный прогон кадра на высокой
-/// скорости штатно уходит за любые разумные пороги. Без переменной — 0,
-/// то есть лог выключен.
-fn tick_spike_threshold() -> f32 {
-    static THRESHOLD: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
-    *THRESHOLD.get_or_init(|| {
-        std::env::var("QWE_PERF_FRAME_SPIKES")
-            .ok()
-            .and_then(|ms| ms.parse().ok())
-            .unwrap_or(0.0)
-    })
+/// Порог «тик-спайка», мс на шаг — из `QWE_PERF_FRAME_SPIKES=<ms>` (тот же
+/// детектор, что у длины кадра в `dev.rs`): шаг дороже порога печатает строку
+/// `tick spike: 41.1 ms for 96 ticks` ([`report_tick_spike`]). Секундные
+/// средние `sim/tick_ms` всплеск размазывают, а он — самый честный след тех
+/// самых «медленных тиков», которые регулятор потом разрезает на скорости;
+/// порог держится именно на цене шага, потому что суммарный прогон кадра на
+/// высокой скорости штатно уходит за любые разумные пороги.
+///
+/// Ресурс, а не переменная-однажды: порог виден и правится по BRP на живом
+/// прогоне. Ноль (переменной нет) — лог выключен.
+#[derive(Resource, Reflect, Debug, Default)]
+#[reflect(Resource)]
+pub struct TickSpikeThreshold(pub f32);
+
+/// Репортёр тик-спайков: шаг дороже порога — строка в логе с состоянием мира
+/// и разрезом по подсистемам. Отдельная система после [`end_sim_load`]: замер
+/// не знает, как выглядит отчёт о нём. Счётчики состояния берёт из
+/// [`Census`] — снимок прошлого `Update`, на кадр позже вспышки; для
+/// контекстной строки достаточно. «Заявки, поданные в сам спайк-тик» — своим
+/// запросом: это счёт тика, а не состояния мира.
+#[allow(clippy::too_many_arguments)]
+fn report_tick_spike(
+    load: Res<SimLoad>,
+    threshold: Res<TickSpikeThreshold>,
+    tick: Res<SimTick>,
+    census: Res<Census>,
+    telemetry: Res<Telemetry>,
+    segments: Res<TickSegments>,
+    store: Option<Res<bevy::diagnostic::DiagnosticsStore>>,
+    requests: Query<&crate::movement::RequestedAt>,
+) {
+    // порог нулевой — лог выключен (переменной `QWE_PERF_FRAME_SPIKES` нет);
+    // порог — на **тик**, не на кадр: на высокой скорости кадр легитимно
+    // заполнен шагами до бюджета (регулятор так и устроен), и «кадр дороже
+    // порога» писал бы строку каждый кадр. Аномалия — дорогой шаг
+    if threshold.0 <= 0.0 || load.frame_ticks == 0 {
+        return;
+    }
+    if load.frame_sim_ms / load.frame_ticks as f32 <= threshold.0 {
+        return;
+    }
+    let (sim_ms, ticks) = (load.frame_sim_ms, load.frame_ticks);
+    // контекст волны: подсистемы тика на спайке остаются маленькими, и без
+    // счётчиков состояние мира в момент вспышки не восстановить. Демоны в
+    // строку не входят (их число всегда известно) — при переписи приходится
+    // назвать поле, чтобы не оставить мёртвым весь срез
+    let Census {
+        humans,
+        demons: _,
+        corpses,
+        souls,
+        fleeing,
+        wandering,
+        moving,
+        chasing,
+    } = *census;
+    let killed = telemetry.killed;
+    // заявки, поданные в сам спайк-тик: волна перепрокладок видна числом,
+    // а не догадкой (panic/flee/демонский выбор цели/filed repath)
+    let filed = requests.iter().filter(|r| r.0 == tick.0).count();
+    info!(
+        "tick spike: {sim_ms:.1} ms for {ticks} ticks (tick {}, humans {humans}, souls {souls}, corpses {corpses}, killed {killed}, fleeing {fleeing}, wandering {wandering}, moving {moving}, chasing {chasing}, filed {filed})",
+        tick.0
+    );
+    // разрез спайк-тика: последнее значение каждой подсистемы — это её
+    // прогон на последнем (спайковом) тике, замеры через deferred-буфер
+    // успевают доехать к AfterFixedMainLoop. Что не покрыто системами —
+    // «rest»: синхронизации цепочки, применение команд, накладные
+    // исполнителя
+    let Some(store) = store.as_deref() else {
+        return;
+    };
+    let mut covered = 0.0;
+    let mut parts = Vec::new();
+    for (name, path) in crate::diagnostics::SPIKE_PARTS {
+        if let Some(v) = store.get(path).and_then(|d| d.values().last().copied()) {
+            covered += v;
+            parts.push(format!("{name} {v:.3}"));
+        }
+    }
+    parts.push(format!("rest {:.3}", sim_ms - covered as f32));
+    info!("tick spike dissect: {} ms total", parts.join(" | "));
+    // сегменты цепочки: каждая проба держит стену от предыдущей до
+    // себя, включая применения команд на стыках — всплеск применения
+    // виден в сегменте того среза, где исполнитель его реально применил
+    let segments = segments
+        .parts
+        .iter()
+        .map(|(name, ms)| format!("{name} {ms:.1}"))
+        .collect::<Vec<_>>()
+        .join(" | ");
+    info!("tick spike segments: {segments}");
 }
 
 /// Авто-замедление: скорость назначается **расчётом** по замеренной цене

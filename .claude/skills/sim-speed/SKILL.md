@@ -76,6 +76,17 @@ time, so the filter does not change with the frame rate. `SimTick` zeroes on
   Pinned by `a_cost_outside_the_bracket_never_reaches_the_next_observe`. Splitting the
   port in two — one door per caller — was considered and is **not** to be done without a
   symptom.
+- **The tick-spike reporter is its own system** (`report_tick_spike`, right after
+  `end_sim_load` in `AfterFixedMainLoop`) — the measurement does not know what the report
+  of it looks like. It reads the raw pair `SimLoad::frame_sim_ms` / `frame_ticks` (stored
+  by `end_sim_load` before `observe`), the state context from **Census** (the previous
+  `Update`'s snapshot — a frame behind the burst; enough for a log line) and the
+  `DiagnosticsStore` dissect over `diagnostics::SPIKE_PARTS` — the one registry that also
+  feeds diagnostic registration. The threshold is a **resource** (`TickSpikeThreshold`,
+  read from `QWE_PERF_FRAME_SPIKES` at plugin build, BRP-writable on a live run), and
+  **zero means off** — the zero check is load-bearing: a bare `per_tick > 0.0`
+  comparison is true for every ticked frame, and the OnceLock it replaced did exactly
+  that, logging a spike line every frame without the env var.
 - **The regulator solves where it can, integrates where it cannot.** Two independent
   bounds, the smaller wins.
   *By CPU it solves*: a frame of length `d` carries `d × S × 64` ticks, so allowing the

@@ -75,6 +75,25 @@ pub const SIM_WAIT_MS: DiagnosticPath = DiagnosticPath::const_new("sim/wait_ms")
 /// размывается раньше, чем регулятор успевает ответить.
 pub const SIM_WAIT_PEAK_MS: DiagnosticPath = DiagnosticPath::const_new("sim/wait_peak_ms");
 
+/// Разрез цены тика по подсистемам: короткое имя для строки лога и путь
+/// диагностики каждой системы, замеряемой `SimMeasure`-ом. Реестр один —
+/// `GameDiagnosticsPlugin` регистрирует по нему все десять, репортёр спайков
+/// (`sim_time::report_tick_spike`) печатает по нему последнее значение каждой
+/// и дописывает «rest» — то, чем системы не покрыто. Порядок — порядок
+/// строки в логе.
+pub const SPIKE_PARTS: &[(&str, &DiagnosticPath)] = &[
+    ("acq", &SIM_ACQUIRE_MS),
+    ("spwn", &SIM_SPAWNER_MS),
+    ("pan", &SIM_PANIC_MS),
+    ("flee", &SIM_FLEE_MS),
+    ("esc", &SIM_ESCAPE_MS),
+    ("chas", &SIM_CHASE_MS),
+    ("soul", &SIM_SOULS_MS),
+    ("spat", &SIM_SPATIAL_MS),
+    ("move", &SIM_MOVE_MS),
+    ("sep", &SIM_SEPARATION_MS),
+];
+
 /// Записать длительность системы, начавшейся в `started`.
 pub fn measure_ms(
     diagnostics: &mut Diagnostics,
@@ -135,21 +154,16 @@ impl Plugin for GameDiagnosticsPlugin {
         .register_diagnostic(Diagnostic::new(PATHFINDING_DURATION_MS).with_suffix(" ms"))
         .register_diagnostic(Diagnostic::new(PATHFINDING_ANSWERED).with_suffix(" answers"))
         .register_diagnostic(Diagnostic::new(PATHFINDING_FAILED).with_suffix(" failures"))
-        .register_diagnostic(Diagnostic::new(SIM_SPATIAL_MS).with_suffix(" ms"))
-        .register_diagnostic(Diagnostic::new(SIM_PANIC_MS).with_suffix(" ms"))
-        .register_diagnostic(Diagnostic::new(SIM_FLEE_MS).with_suffix(" ms"))
-        .register_diagnostic(Diagnostic::new(SIM_CHASE_MS).with_suffix(" ms"))
-        .register_diagnostic(Diagnostic::new(SIM_MOVE_MS).with_suffix(" ms"))
-        .register_diagnostic(Diagnostic::new(SIM_ACQUIRE_MS).with_suffix(" ms"))
-        .register_diagnostic(Diagnostic::new(SIM_SPAWNER_MS).with_suffix(" ms"))
-        .register_diagnostic(Diagnostic::new(SIM_SOULS_MS).with_suffix(" ms"))
-        .register_diagnostic(Diagnostic::new(SIM_ESCAPE_MS).with_suffix(" ms"))
-        .register_diagnostic(Diagnostic::new(SIM_SEPARATION_MS).with_suffix(" ms"))
         .register_diagnostic(Diagnostic::new(SIM_TICK_MS).with_suffix(" ms"))
         .register_diagnostic(Diagnostic::new(SIM_WAIT_MS).with_suffix(" ms"))
         .register_diagnostic(Diagnostic::new(SIM_WAIT_PEAK_MS).with_suffix(" ms"))
         .add_plugins(EntityCountDiagnosticsPlugin::default())
         .add_systems(Update, measure_pathfinding_in_flight);
+        // подсистемы тика — циклом по реестру: путь и короткое имя в одном
+        // месте, у разреза спайк-тика и регистрации один перечень
+        for (_, path) in SPIKE_PARTS {
+            app.register_diagnostic(Diagnostic::new((*path).clone()).with_suffix(" ms"));
+        }
     }
 }
 
