@@ -41,7 +41,7 @@ use super::classify::{BuildingClass, BuildingKind, classify};
 use super::garages::GarageRun;
 use super::{HouseFootprint, fortress, temples};
 use crate::map::meshing::{ATTRIBUTE_ROOF, Roof};
-use crate::map::osm::{BuildingUse, PolyArea};
+use crate::map::osm::{BuildingUse, PolyArea, Sacred};
 use crate::map::seed::seed_from_point;
 use crate::map::{SunOnMap, sun_light};
 use crate::prefs::retuned;
@@ -600,7 +600,7 @@ impl RoofLook {
 pub(super) fn roof_look(building: &PolyArea, fp: Option<HouseFootprint>) -> RoofLook {
     let seed = look_seed(building);
     let class = classify(building, fp);
-    let kind = kind_of(building, &class);
+    let kind = kind_of(building, &class, seed);
     let palette = palette(building, &class, kind);
     let base = palette[(seed >> 8) as usize % palette.len()].to_srgba();
     // ±3 % яркости поверх выбранного цвета: два дома одной палитры и одного
@@ -635,7 +635,7 @@ pub(super) fn roof_look(building: &PolyArea, fp: Option<HouseFootprint>) -> Roof
 /// Материал кровли этого дома: таблица по классу здания, развилки которого
 /// разобрал классификатор. Кремль крыт металлом (его цвет всё равно свой),
 /// частный сектор — по своей таблице, корпус — по жилой.
-fn kind_of(building: &PolyArea, class: &BuildingClass) -> RoofKind {
+fn kind_of(building: &PolyArea, class: &BuildingClass, seed: u32) -> RoofKind {
     let table = match class.kind() {
         BuildingKind::Fortress { .. } => return fortress::roof_kind(building),
         BuildingKind::Temple => return temples::roof_kind(sacred_of(building)),

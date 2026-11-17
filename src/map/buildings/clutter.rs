@@ -29,8 +29,8 @@ use super::layers::{silhouette_edges, wall_colors};
 use super::material::{RoofKind, RoofLook};
 use crate::map::meshing::MeshBuilder;
 use super::classify::{BuildingClass, BuildingKind, classify};
-use crate::map::osm::model::{is_big_box, point_in_area, signed_ring_area};
-use crate::map::osm::{BuildingUse, PolyArea};
+use crate::map::osm::model::{point_in_area, signed_ring_area};
+use crate::map::osm::PolyArea;
 use crate::map::seed::Lcg;
 use crate::map::shadow;
 use crate::map::shadow_dir;
@@ -767,7 +767,8 @@ fn rect(center: Vec2, size: Vec2, axis: Vec2, perp: Vec2) -> [Vec2; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::map::osm::AreaKind;
+    use crate::map::osm::model::is_big_box;
+    use crate::map::osm::{AreaKind, BuildingUse};
     use crate::map::sun::SUN_ELEVATION_MIN;
 
     fn building(outer: Vec<Vec2>, building_use: BuildingUse) -> PolyArea {

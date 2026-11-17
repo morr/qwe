@@ -390,19 +390,19 @@ pub fn measure_layers(
 /// сборщик, и каждый зов [`arches_by_building`] сам). Витринам
 /// ([`layers::push_house`]) город не нужен: они строят один дом и собирают
 /// свой [`Sanctuary`] из него же.
-pub(super) struct CityContext<'a> {
+struct CityContext<'a> {
     /// Храмы города: приподнятые части, общие главы и колокольни.
-    pub(super) sanctuary: Sanctuary,
+    sanctuary: Sanctuary,
     /// Гаражные прогоны: индекс бокса → прогон.
-    pub(super) runs: HashMap<usize, GarageRun>,
+    runs: HashMap<usize, GarageRun>,
     /// Проходы `building_passage` сквозь стены: индекс дома → его проёмы.
-    pub(super) arches: ArchOpenings<'a>,
+    arches: ArchOpenings<'a>,
 }
 
 impl<'a> CityContext<'a> {
     /// Один расчёт на сборку: `footprints` — пятна домов, посчитанные
     /// вызывающим ([`HouseFootprint::all`]), им пользуются и храмы, и прогоны.
-    pub(super) fn of(
+    fn of(
         buildings: &[PolyArea],
         passages: &'a [RoadLine],
         footprints: &[Option<HouseFootprint>],

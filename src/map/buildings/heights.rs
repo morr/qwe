@@ -18,11 +18,8 @@
 //! **Тег всегда сильнее вывода.** Всё это включается ровно там, где
 //! `PolyArea::height` пуст.
 
-use bevy::math::Vec2;
-
 use super::classify::{BuildingKind, Shape, classify};
 use super::HouseFootprint;
-use crate::map::osm::model::is_big_box;
 use crate::map::osm::{BuildingUse, PolyArea, Sacred, SacredForm};
 use crate::settings::STOREY_HEIGHT;
 
@@ -186,6 +183,8 @@ pub(super) fn height_mix(buildings: &[PolyArea], footprints: &[Option<HouseFootp
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::math::Vec2;
+    use crate::map::osm::model::is_big_box;
     use crate::map::osm::AreaKind;
 
     fn building(outer: Vec<Vec2>, building_use: BuildingUse) -> PolyArea {

@@ -9,12 +9,12 @@ use bevy::color::Mix;
 use bevy::prelude::*;
 
 use super::arches::{
-    ArchOpening, ArchOpenings, TunnelWall, WallCells, arch_openings, arches_by_building,
-    push_arches, push_tunnel_walls, push_wall_with_openings, tunnel_walls,
+    ArchOpening, TunnelWall, WallCells, arch_openings, push_arches, push_tunnel_walls,
+    push_wall_with_openings, tunnel_walls,
 };
 use super::classify::{BuildingClass, classify};
 use super::clutter::{flat_roof_items, merlons, push_items, ridge_chimney};
-use super::garages::{BAY, FACADE_COS, GarageRect, GarageRun, garage_runs};
+use super::garages::{BAY, FACADE_COS, GarageRect, GarageRun};
 use super::material::{
     DOOR_CODE, RoofKind, RoofLook, WallKind, WallLook, building_seed, roof_look, run_kind,
     run_look, run_wall_look, wall_look,
@@ -24,11 +24,12 @@ use super::order::wall_order;
 use super::roofs::{DormerFace, HipRoof, RoofMix, RoofShape, Roofing, TentRoof, roofing_of};
 use super::temples::{Crown, Sanctuary, push_crowns};
 use super::{
-    HouseFootprint, Lean, RoofDetail, building_center, height_of, lift_of_footprint, shade_by_light,
+    CityContext, HouseFootprint, Lean, RoofDetail, building_center, height_of, lift_of_footprint,
+    shade_by_light,
 };
 use crate::map::meshing::{MeshBuilder, PARAPET_CELLS, Roof, WallFrame, WallMark};
-use crate::map::osm::model::{distance_to_segment, is_big_box, signed_ring_area, srgba_of};
-use crate::map::osm::{AreaKind, BuildingUse, PolyArea, RoadLine};
+use crate::map::osm::model::{distance_to_segment, signed_ring_area, srgba_of};
+use crate::map::osm::{AreaKind, BuildingUse, PolyArea};
 use crate::map::seed::seed_from_point;
 use crate::settings::STOREY_HEIGHT;
 

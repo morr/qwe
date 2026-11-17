@@ -958,7 +958,7 @@ fn the_ridge_runs_along_the_long_axis_of_the_rotated_footprint() {
     // конёк — вдоль длинной оси
     let mut house = building(ring, None, AreaKind::Building);
     house.building_use = BuildingUse::House;
-    let roof = gable_roof(&house, Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE, None).unwrap();
+    let roof = gable_roof(&house, &classify(&house, None), Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE, None).unwrap();
     let ridge = roof.slopes[0].0[2] - roof.slopes[0].0[3];
     let long = rect[1] - rect[0];
     assert!(ridge.normalize().dot(long.normalize()).abs() > 0.999);
@@ -1105,8 +1105,9 @@ fn every_mode_builds_geometry_for_mixed_input() {
         building(square(), Some(12.0), AreaKind::Kremlin),
     ];
 
-    let (facades, roofs) =
-        facade_and_roof_builders(&list, &[], detail(true), &HouseFootprint::all(&list));
+    let footprints = HouseFootprint::all(&list);
+    let ctx = CityContext::of(&list, &[], &footprints);
+    let (facades, roofs) = facade_and_roof_builders(&list, detail(true), &ctx, &footprints);
     assert!(!facades.is_empty());
     assert!(!roofs.is_empty());
     assert_eq!(facades.skipped_polygons(), 0);
@@ -1482,6 +1483,7 @@ fn dormers_stand_on_a_lifted_roof_only() {
     let Roofing::Gable(lifted) = roofing_of(
         RoofShape::Dormer,
         &cottage,
+        &classify(&cottage, None),
         Vec2::ZERO,
         |rise| lean.ridge(rise),
         Srgba::WHITE,
@@ -1496,6 +1498,7 @@ fn dormers_stand_on_a_lifted_roof_only() {
     let Roofing::Gable(flat) = roofing_of(
         RoofShape::Dormer,
         &cottage,
+        &classify(&cottage, None),
         Vec2::ZERO,
         |_| Vec2::ZERO,
         Srgba::WHITE,
@@ -1518,6 +1521,7 @@ fn a_yard_shed_is_low_and_mostly_lean_to() {
         assert!(height_or_default(&shed) <= 3.0, "a shed is one low box");
         if let Roofing::Gable(roof) = roofing(
             &shed,
+            &classify(&shed, None),
             Vec2::ZERO,
             |_| Vec2::ZERO,
             Srgba::WHITE,
@@ -1567,8 +1571,11 @@ fn hip_only(building: &PolyArea, base: Srgba) -> Roofing {
 #[test]
 fn roof_tint_darkens_tall_buildings_and_spares_the_kremlin() {
     let _sun = crate::map::default_sun();
+    // назначение задано: нетегированная коробка — частный сектор, тегированная
+    // — корпус, и без него база и «высотка» взяли бы разные таблицы кровли
     let color = |height, tinted| {
-        let b = building(square(), height, AreaKind::Building);
+        let mut b = building(square(), height, AreaKind::Building);
+        b.building_use = BuildingUse::Apartments;
         roof_color(&b, &roof_look(&b, None), tinted)
     };
     let base = color(None, true);

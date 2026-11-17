@@ -17,9 +17,11 @@ fn roof_shadows(list: &[PolyArea], extruded: bool) -> MeshBuilder {
 
     let footprints = HouseFootprint::all(list);
     let order = extruded.then(|| draw_order(list, Lean::of(), &footprints));
+    let sanctuary = Sanctuary::of(list, &footprints);
     roof_shadow_builder(
         list,
-        &ShadowSweeps::of(list, &footprints),
+        &ShadowSweeps::of(list, &footprints, &sanctuary),
+        &sanctuary,
         order.as_deref(),
         &footprints,
     )

@@ -350,7 +350,7 @@ fn equivalent_width(building: &PolyArea) -> f32 {
         + building
             .holes
             .iter()
-            .map(crate::map::meshing::ring_perimeter)
+            .map(|hole| crate::map::meshing::ring_perimeter(hole))
             .sum::<f32>();
     crate::map::meshing::equivalent_width(perimeter, area)
 }
