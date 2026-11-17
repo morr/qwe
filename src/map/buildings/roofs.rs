@@ -1,7 +1,8 @@
 //! Скатные крыши малых домов. `roof:shape` в OSM стоит у 283 зданий Тулы из
-//! 7465, так что форма крыши не читается из тегов, а **выводится**: частный
-//! дом (`BuildingUse::House`) и любая мелкая коробка без назначения получают
-//! скатную крышу, остальное — плоскую. Плоская крыша у частного сектора была
+//! 7465, так что форма крыши не читается из тегов, а **выводится**: скатная
+//! когорта — частный сектор классификатора ([`super::classify`]), дом
+//! (`BuildingUse::House`) и мелкая низкая коробка без назначения; остальное —
+//! плоское. Плоская крыша у частного сектора была
 //! главной причиной, по которой окраины читались как склад контейнеров.
 //!
 //! Частный сектор на снимке — двускатный, и выбор формы — контур плюс посев
@@ -31,6 +32,7 @@
 
 use bevy::prelude::*;
 
+use super::classify::BuildingClass;
 use super::{HouseFootprint, shade_by_light};
 use crate::map::meshing::{merge_close_points, min_area_rect, miter_offsets, ring_perimeter};
 use crate::map::osm::model::{distance_to_segment, signed_ring_area};
@@ -290,6 +292,7 @@ pub fn shape_facts(building: &PolyArea) -> Option<ShapeFacts> {
 pub(super) fn roofing_of(
     shape: RoofShape,
     building: &PolyArea,
+    class: &BuildingClass,
     lift: Vec2,
     ridge_lift: impl Fn(f32) -> Vec2,
     base: Srgba,
@@ -297,10 +300,11 @@ pub(super) fn roofing_of(
     fp: Option<HouseFootprint>,
 ) -> Roofing {
     match shape {
-        RoofShape::Auto => roofing(building, lift, ridge_lift, base, seed, fp),
+        RoofShape::Auto => roofing(building, class, lift, ridge_lift, base, seed, fp),
         RoofShape::Flat => Roofing::Flat,
         RoofShape::Gable => {
-            gable_roof(building, lift, &ridge_lift, base, fp).map_or(Roofing::Flat, Roofing::Gable)
+            gable_roof(building, class, lift, &ridge_lift, base, fp)
+                .map_or(Roofing::Flat, Roofing::Gable)
         }
         RoofShape::Hip => {
             hip_roof(building, lift, &ridge_lift, base).map_or(Roofing::Flat, Roofing::Hip)
@@ -320,11 +324,12 @@ pub(super) fn roofing_of(
                 dormers: shape == RoofShape::Dormer,
                 seed,
             };
-            house_gable(building, lift, &ridge_lift, base, choice, fp)
+            house_gable(building, class, lift, &ridge_lift, base, choice, fp)
                 .map_or(Roofing::Flat, Roofing::Gable)
         }
         RoofShape::Cross => {
-            cross_gable(building, lift, &ridge_lift, base).map_or(Roofing::Flat, Roofing::Gable)
+            cross_gable(building, class, lift, &ridge_lift, base)
+                .map_or(Roofing::Flat, Roofing::Gable)
         }
     }
 }
@@ -337,8 +342,12 @@ pub(super) fn roofing_of(
 /// порядок: прямоугольному дому форму выбирает посев ([`house_roof`]),
 /// Г-образному — крестовая двускатная ([`cross_gable`]), и только прочим
 /// контурам, на которых фронтону негде встать, достаётся вальма.
+///
+/// Скатная когорта — классификатор ([`super::classify`]): частный сектор без
+/// двора. Кто в неё попал, решается один раз на дом, вместе с классом.
 pub(super) fn roofing(
     building: &PolyArea,
+    class: &BuildingClass,
     lift: Vec2,
     ridge_lift: impl Fn(f32) -> Vec2,
     base: Srgba,
@@ -348,7 +357,7 @@ pub(super) fn roofing(
     if let Some(form) = landmark_roof(building, fp) {
         return landmark_roofing(form, building, lift, ridge_lift, base, fp);
     }
-    if !is_pitched(building) {
+    if !class.is_pitched() {
         return Roofing::Flat;
     }
     if let Some(rect) = gable_rect(building, fp) {
@@ -359,11 +368,11 @@ pub(super) fn roofing(
         {
             return Roofing::Hip(hip);
         }
-        if let Some(roof) = house_gable(building, lift, &ridge_lift, base, choice, fp) {
+        if let Some(roof) = house_gable(building, class, lift, &ridge_lift, base, choice, fp) {
             return Roofing::Gable(roof);
         }
     }
-    if let Some(roof) = cross_gable(building, lift, &ridge_lift, base) {
+    if let Some(roof) = cross_gable(building, class, lift, &ridge_lift, base) {
         return Roofing::Gable(roof);
     }
     match hip_roof(building, lift, &ridge_lift, base) {
@@ -371,7 +380,8 @@ pub(super) fn roofing(
         // на совсем узком контуре вальма выворачивается, а двускатная не
         // встала — пусть будет плоской, это по крайней мере не врёт
         None => {
-            gable_roof(building, lift, &ridge_lift, base, fp).map_or(Roofing::Flat, Roofing::Gable)
+            gable_roof(building, class, lift, &ridge_lift, base, fp)
+                .map_or(Roofing::Flat, Roofing::Gable)
         }
     }
 }
@@ -391,13 +401,8 @@ pub(super) struct RoofMix {
 
 impl RoofMix {
     /// Учесть дом, если он из скатной когорты: храмы и корпуса — не про неё.
-    pub(super) fn add(
-        &mut self,
-        building: &PolyArea,
-        drawn: RoofShape,
-        fp: Option<HouseFootprint>,
-    ) {
-        if !is_pitched(building) || landmark_roof(building, fp).is_some() {
+    pub(super) fn add(&mut self, class: &BuildingClass, drawn: RoofShape) {
+        if !class.is_pitched() || class.is_landmark() {
             return;
         }
         let slot = match drawn {
@@ -647,20 +652,15 @@ fn hip_rise(inset: f32) -> f32 {
 /// крышу вообще: его `false` — это `Roofing::Flat`, а `true` открывает и
 /// двускатную, и вальмовую, причём вальма достаётся в том числе тем, кому
 /// двускатная отказала (Г-образный контур).
-pub(super) fn is_pitched(building: &PolyArea) -> bool {
-    // Кремль вне стилизации по назначению, как и в `base_colors`
-    if building.kind == AreaKind::Kremlin {
-        return false;
-    }
-    if !building.holes.is_empty() {
-        return false;
-    }
-    match building.building_use {
-        BuildingUse::House => true,
-        BuildingUse::Other => signed_ring_area(&building.outer).abs() <= SMALL_FOOTPRINT_MAX,
-        _ => false,
-    }
-}
+/// Скатная когорта — классификатор: частный сектор
+/// ([`super::classify::BuildingKind`]) без двора. Тегированная мелкая коробка,
+/// доросшая до корпуса, из когорты выпадает вместе со стенами и кровлей.
+///
+/// Удалена как отдельное правило: раньше она дублировала развилку
+/// классификатора и разошлась с ней — у скатной когорты гварда этажности не
+/// было, и девятиэтажка на мелкой коробке получала черепичную двускатную
+/// поверх панельных стен.
+
 
 /// Настоящих метров конька над карнизом для дома шириной `width`.
 pub(super) fn ridge_rise(width: f32) -> f32 {
@@ -722,12 +722,13 @@ fn gable_rect(building: &PolyArea, fp: Option<HouseFootprint>) -> Option<[Vec2; 
 /// тех, что [`is_pitched`], или контур не прямоугольный.
 pub(super) fn gable_roof(
     building: &PolyArea,
+    class: &BuildingClass,
     lift: Vec2,
     ridge_lift: impl Fn(f32) -> Vec2,
     base: Srgba,
     fp: Option<HouseFootprint>,
 ) -> Option<GableRoof> {
-    if !is_pitched(building) {
+    if !class.is_pitched() {
         return None;
     }
     gable_over(
@@ -1057,13 +1058,14 @@ fn house_roof(building: &PolyArea, rect: &[Vec2; 4], seed: u32) -> HouseRoof {
 /// когорты или контур не держит прямоугольник.
 fn house_gable(
     building: &PolyArea,
+    class: &BuildingClass,
     lift: Vec2,
     ridge_lift: impl Fn(f32) -> Vec2,
     base: Srgba,
     choice: HouseRoof,
     fp: Option<HouseFootprint>,
 ) -> Option<GableRoof> {
-    if !is_pitched(building) {
+    if !class.is_pitched() {
         return None;
     }
     let rect = gable_rect(building, fp)?;
@@ -1168,11 +1170,12 @@ fn dormers(
 /// кому или крыло шире соседа (его конёк встал бы выше соседского).
 fn cross_gable(
     building: &PolyArea,
+    class: &BuildingClass,
     lift: Vec2,
     ridge_lift: impl Fn(f32) -> Vec2,
     base: Srgba,
 ) -> Option<GableRoof> {
-    if !is_pitched(building) {
+    if !class.is_pitched() {
         return None;
     }
     let ring = merge_close_points(&building.outer, true, 0.2);

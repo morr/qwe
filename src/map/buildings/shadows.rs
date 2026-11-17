@@ -19,7 +19,7 @@ use std::ops::RangeInclusive;
 use bevy::prelude::*;
 
 use super::arches::{ArchOpenings, arch_openings};
-use super::roofs::is_pitched;
+use super::classify::classify;
 use super::temples::Sanctuary;
 use super::{HouseFootprint, Lean, height_of, lift_of_footprint};
 use crate::map::grid::Grid;
@@ -293,7 +293,7 @@ pub(super) fn roof_shadow_builder(
         // съезжала с них тёмным прямоугольником поперёк ската. Частный дом
         // стал одноэтажным, двухэтажный сосед теперь выше него на те самые
         // `SHADOW_MIN_DROP`, и заплата легла на половину частного сектора
-        if is_pitched(building) {
+        if classify(building, footprints[target]).is_pitched() {
             return Vec::new();
         }
         let (min, max) = boxes[target];

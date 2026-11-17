@@ -918,16 +918,16 @@ fn a_pitched_roof_goes_on_houses_and_small_boxes_only() {
     let _sun = crate::map::default_sun();
     let mut house = building(oblong(8.0, 600.0), None, AreaKind::Building);
     house.building_use = BuildingUse::House;
-    assert!(is_pitched(&house), "a house of any size");
+    assert!(classify(&house, None).is_pitched(), "a house of any size");
     let small = building(square(), None, AreaKind::Building);
-    assert!(is_pitched(&small), "an untagged small box");
+    assert!(classify(&small, None).is_pitched(), "an untagged small box");
     let big = building(oblong(20.0, 20.0), None, AreaKind::Building);
-    assert!(!is_pitched(&big), "an untagged big box");
+    assert!(!classify(&big, None).is_pitched(), "an untagged big box");
     let mut flats = building(square(), None, AreaKind::Building);
     flats.building_use = BuildingUse::Apartments;
-    assert!(!is_pitched(&flats));
+    assert!(!classify(&flats, None).is_pitched());
     let tower = building(square(), None, AreaKind::Kremlin);
-    assert!(!is_pitched(&tower), "the kremlin keeps its flat roof");
+    assert!(!classify(&tower, None).is_pitched(), "the kremlin keeps its flat roof");
     let mut yard = house.clone();
     yard.holes.push(vec![
         Vec2::new(4.0, 2.0),
@@ -935,7 +935,7 @@ fn a_pitched_roof_goes_on_houses_and_small_boxes_only() {
         Vec2::new(6.0, 4.0),
         Vec2::new(4.0, 4.0),
     ]);
-    assert!(!is_pitched(&yard), "a courtyard has no ridge");
+    assert!(!classify(&yard, None).is_pitched(), "a courtyard has no ridge");
 }
 
 #[test]
@@ -977,8 +977,8 @@ fn an_l_shaped_house_is_pitched_but_takes_no_gable() {
     ];
     let mut house = building(l_shape, None, AreaKind::Building);
     house.building_use = BuildingUse::House;
-    assert!(is_pitched(&house));
-    assert!(gable_roof(&house, Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE, None).is_none());
+    assert!(classify(&house, None).is_pitched());
+    assert!(gable_roof(&house, &classify(&house, None), Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE, None).is_none());
 }
 
 #[test]
@@ -1004,12 +1004,13 @@ fn a_skewed_quad_takes_no_gable_whose_corner_hangs_off_the_wall() {
         facts.rect_fill
     );
     assert!(facts.gable_overhang > 2.0, "{}", facts.gable_overhang);
-    assert!(gable_roof(&house, Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE, None).is_none());
+    assert!(gable_roof(&house, &classify(&house, None), Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE, None).is_none());
     // посев, по которому дому выпадает двускатная (`(seed >> 5) % 10 >= 4`)
     let gabled_seed = 5 << 5;
     assert!(matches!(
         roofing(
             &house,
+            &classify(&house, None),
             Vec2::ZERO,
             |_| Vec2::ZERO,
             Srgba::WHITE,
@@ -1031,7 +1032,7 @@ fn a_skewed_quad_takes_no_gable_whose_corner_hangs_off_the_wall() {
         AreaKind::Building,
     );
     sloppy.building_use = BuildingUse::House;
-    assert!(gable_roof(&sloppy, Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE, None).is_some());
+    assert!(gable_roof(&sloppy, &classify(&sloppy, None), Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE, None).is_some());
 }
 
 #[test]
@@ -1039,7 +1040,7 @@ fn gable_roof_itself_refuses_a_building_that_is_not_gabled() {
     let _sun = crate::map::default_sun();
     let mut flats = building(oblong(8.0, 20.0), None, AreaKind::Building);
     flats.building_use = BuildingUse::Apartments;
-    assert!(gable_roof(&flats, Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE, None).is_none());
+    assert!(gable_roof(&flats, &classify(&flats, None), Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE, None).is_none());
 }
 
 #[test]
@@ -1051,6 +1052,7 @@ fn the_slope_facing_the_light_is_lighter_and_the_ridge_is_lifted() {
     let base = Srgba::rgb(0.5, 0.5, 0.5);
     let roof = gable_roof(
         &house,
+        &classify(&house, None),
         Vec2::ZERO,
         |rise| Lean::of().ridge(rise),
         base,
@@ -1336,9 +1338,15 @@ fn an_l_shaped_house_gets_a_cross_gable_instead_of_a_hip_or_a_flat_one() {
         Vec2::new(0.0, 14.0),
     ]);
     for seed in [0, 1 << 5, 7 << 5, 12345] {
-        let Roofing::Gable(roof) =
-            roofing(&ell, Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE, seed, None)
-        else {
+        let Roofing::Gable(roof) = roofing(
+            &ell,
+            &classify(&ell, None),
+            Vec2::ZERO,
+            |_| Vec2::ZERO,
+            Srgba::WHITE,
+            seed,
+            None,
+        ) else {
             panic!("an L takes a cross gable");
         };
         assert_eq!(RoofShape::of_gable(&roof), RoofShape::Cross);
@@ -1350,7 +1358,7 @@ fn an_l_shaped_house_gets_a_cross_gable_instead_of_a_hip_or_a_flat_one() {
     let mut block = building(oblong(30.0, 80.0), Some(15.0), AreaKind::Building);
     block.building_use = BuildingUse::Apartments;
     assert!(matches!(
-        roofing(&block, Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE, 0, None),
+        roofing(&block, &classify(&block, None), Vec2::ZERO, |_| Vec2::ZERO, Srgba::WHITE, 0, None),
         Roofing::Flat
     ));
 }
@@ -1365,6 +1373,7 @@ fn a_private_house_is_gabled_and_almost_never_hipped_or_flat() {
     for seed in 0..400u32 {
         match roofing(
             &cottage,
+            &classify(&cottage, None),
             Vec2::ZERO,
             |_| Vec2::ZERO,
             Srgba::WHITE,
@@ -1402,6 +1411,7 @@ fn every_gable_form_covers_its_rectangle_exactly_once() {
         let Roofing::Gable(roof) = roofing_of(
             shape,
             &cottage,
+            &classify(&cottage, None),
             Vec2::ZERO,
             |_| Vec2::ZERO,
             Srgba::WHITE,
@@ -1436,6 +1446,7 @@ fn the_cross_gable_wing_meets_the_main_ridge_no_higher_than_it() {
     let Roofing::Gable(roof) = roofing_of(
         RoofShape::Cross,
         &ell,
+        &classify(&ell, None),
         Vec2::ZERO,
         |rise| Vec2::new(0.0, rise * 1000.0),
         Srgba::WHITE,
@@ -1544,6 +1555,7 @@ fn hip_only(building: &PolyArea, base: Srgba) -> Roofing {
     roofing_of(
         RoofShape::Hip,
         building,
+        &classify(building, None),
         Vec2::ZERO,
         |_| Vec2::ZERO,
         base,

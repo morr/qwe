@@ -119,6 +119,12 @@ impl BuildingClass {
     pub(super) fn is_pitched(&self) -> bool {
         self.pitched
     }
+
+    /// Ландмарк — крепость или храм: над ними стоит своё (главы, зубцы,
+    /// шатры), и оборудование кровли генератора на них не сажают.
+    pub(super) fn is_landmark(&self) -> bool {
+        matches!(self.kind, BuildingKind::Fortress { .. } | BuildingKind::Temple)
+    }
 }
 
 /// Класс здания — единственный разбор развилок «назначение × пятно × пороги».

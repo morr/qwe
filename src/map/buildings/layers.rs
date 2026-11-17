@@ -12,7 +12,7 @@ use super::arches::{
     ArchOpening, ArchOpenings, TunnelWall, WallCells, arch_openings, arches_by_building,
     push_arches, push_tunnel_walls, push_wall_with_openings, tunnel_walls,
 };
-use super::classify::{BELL_TOWER_TIER, BIG_BOX_TIER, SACRED_TIER};
+use super::classify::{BELL_TOWER_TIER, BIG_BOX_TIER, SACRED_TIER, classify};
 use super::clutter::{flat_roof_items, merlons, push_items, ridge_chimney};
 use super::garages::{BAY, FACADE_COS, GarageRect, GarageRun, garage_runs};
 use super::material::{
@@ -981,8 +981,10 @@ pub(super) fn facade_and_roof_builders(
         // двускатная крыша в плоском режиме — два ската разного тона в
         // одной плоскости: конёк не поднят, но дом уже не коробка
         let mut items = Vec::new();
+        let class = classify(building, fp);
         match roofing(
             building,
+            &class,
             Vec2::ZERO,
             |_| Vec2::ZERO,
             color,
@@ -1158,7 +1160,8 @@ pub(super) fn extrusion_builder(
     let mut by_cell: HashMap<IVec2, Vec<&HousePart>> = HashMap::new();
     for (place, part) in parts.iter().enumerate() {
         if let Some(drawn) = part.drawn {
-            mix.add(&buildings[order[place]], drawn, footprints[order[place]]);
+            let class = classify(&buildings[order[place]], footprints[order[place]]);
+            mix.add(&class, drawn);
         }
         by_cell.entry(part.cell).or_default().push(part);
     }
@@ -1341,9 +1344,11 @@ fn push_house_with_arches(
             push_items(builder, &chimney, Some(lean), color);
         }
     };
+    let class = classify(building, fp);
     let built = match roofing_of(
         shape,
         building,
+        &class,
         lift,
         |rise| lean.ridge(rise),
         color,
