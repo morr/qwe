@@ -51,7 +51,11 @@ fn pathfinding_pawn(target: IVec2, path: &[Vec2]) -> Movable {
 fn pawn_world(position: Vec2, movable: Movable) -> (World, Entity) {
     let mut world = World::new();
     let entity = world
-        .spawn((movable, SimPosition(position), PreviousSimPosition(position)))
+        .spawn((
+            movable,
+            SimPosition(position),
+            PreviousSimPosition(position),
+        ))
         .id();
     world.insert_resource(bevy::diagnostic::DiagnosticsStore::default());
     (world, entity)
@@ -68,7 +72,10 @@ fn accept(
 ) -> (Movable, SimPosition, PreviousSimPosition) {
     let mut movable = world.entity_mut(entity).take::<Movable>().unwrap();
     let mut sim_position = world.entity_mut(entity).take::<SimPosition>().unwrap();
-    let mut previous = world.entity_mut(entity).take::<PreviousSimPosition>().unwrap();
+    let mut previous = world
+        .entity_mut(entity)
+        .take::<PreviousSimPosition>()
+        .unwrap();
 
     let mut params = SystemState::<(
         bevy::diagnostic::Diagnostics,
@@ -92,10 +99,10 @@ fn accept(
         backend,
         &mut grid,
     );
+    // у счётчика Drop настоящий — пишет нули и пару «ответы/отказы»; у
+    // системных параметров Drop нет, их займы кончаются на последнем
+    // использовании, а очередь команд применяет params.apply
     drop(tally);
-    drop(diagnostics);
-    drop(commands);
-    drop(grid);
     params.apply(world);
     (movable, sim_position, previous)
 }
@@ -155,10 +162,7 @@ fn an_answer_for_a_pawn_that_already_moved_on_is_ignored() {
 fn a_failed_search_rescues_a_pawn_standing_on_impassable() {
     let (backend, navmesh) = backend(&[IVec2::new(2, 2)]);
     let stuck = navmesh.read().unwrap().tile_center(IVec2::new(2, 2));
-    let (mut world, entity) = pawn_world(
-        stuck,
-        pathfinding_pawn(IVec2::new(5, 0), &[stuck]),
-    );
+    let (mut world, entity) = pawn_world(stuck, pathfinding_pawn(IVec2::new(5, 0), &[stuck]));
 
     let (movable, sim_position, previous) = accept(
         &mut world,
@@ -168,10 +172,23 @@ fn a_failed_search_rescues_a_pawn_standing_on_impassable() {
         false,
     );
 
-    assert_ne!(sim_position.0, stuck, "пешка вытащена с непроходимого тайла");
-    assert_eq!(previous.0, sim_position.0, "оба конца интерполяции поправлены");
-    assert!(backend.walkable().allows(sim_position.0), "новое место проходимо");
-    assert_eq!(movable.state, MovableState::Idle, "спасение кончается простоем");
+    assert_ne!(
+        sim_position.0, stuck,
+        "пешка вытащена с непроходимого тайла"
+    );
+    assert_eq!(
+        previous.0, sim_position.0,
+        "оба конца интерполяции поправлены"
+    );
+    assert!(
+        backend.walkable().allows(sim_position.0),
+        "новое место проходимо"
+    );
+    assert_eq!(
+        movable.state,
+        MovableState::Idle,
+        "спасение кончается простоем"
+    );
     assert!(movable.path.is_empty());
     assert!(world.get::<NeedsWanderTarget>(entity).is_some());
 }
@@ -182,10 +199,7 @@ fn a_failed_search_rescues_a_pawn_standing_on_impassable() {
 fn a_rescued_human_is_reinserted_into_the_human_grid() {
     let (backend, navmesh) = backend(&[IVec2::new(2, 2)]);
     let stuck = navmesh.read().unwrap().tile_center(IVec2::new(2, 2));
-    let (mut world, entity) = pawn_world(
-        stuck,
-        pathfinding_pawn(IVec2::new(5, 0), &[stuck]),
-    );
+    let (mut world, entity) = pawn_world(stuck, pathfinding_pawn(IVec2::new(5, 0), &[stuck]));
     world.insert_resource(SpatialGrid::<Human>::default());
 
     let (_, sim_position, _) = accept(
@@ -226,7 +240,11 @@ fn an_unreachable_target_is_a_pathfinding_error() {
         movable.state,
         MovableState::PathfindingError(IVec2::new(5, 0))
     );
-    assert_eq!(sim_position.0, Vec2::ZERO, "спасение не трогает стоящего на месте");
+    assert_eq!(
+        sim_position.0,
+        Vec2::ZERO,
+        "спасение не трогает стоящего на месте"
+    );
     assert!(world.get::<NeedsWanderTarget>(entity).is_some());
 }
 
@@ -245,9 +263,11 @@ fn arriving_on_the_spot_publishes_the_arrival_and_clears_the_path() {
         pathfinding_pawn(IVec2::new(5, 0), &[Vec2::ZERO]),
     );
     world.init_resource::<Arrived>();
-    world.add_observer(|ev: On<MovableReachedDestinationEvent>, mut arrived: ResMut<Arrived>| {
-        arrived.0 = Some(ev.grid_tile);
-    });
+    world.add_observer(
+        |ev: On<MovableReachedDestinationEvent>, mut arrived: ResMut<Arrived>| {
+            arrived.0 = Some(ev.grid_tile);
+        },
+    );
 
     let (movable, _, _) = accept(
         &mut world,

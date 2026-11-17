@@ -5,8 +5,8 @@
 use bevy::prelude::*;
 use bevy::tasks::futures::check_ready;
 
-use self::accept::{accept_answer, AnswerTally};
-use self::budget::{push_within_budget, request_units, take_within_budget, QueuedRequest};
+use self::accept::{AnswerTally, accept_answer};
+use self::budget::{QueuedRequest, push_within_budget, request_units, take_within_budget};
 use super::VIEW_MARGIN;
 use crate::camera::Viewport;
 use crate::determinism::SimTick;

@@ -112,7 +112,10 @@ fn a_request_that_does_not_fit_takes_nothing_behind_it() {
         request(2, (0, 2), 1),
     ];
     take_within_budget(&mut queue, 5);
-    assert!(queue.is_empty(), "ничего не уехало: дорогое не пропускает дешёвых");
+    assert!(
+        queue.is_empty(),
+        "ничего не уехало: дорогое не пропускает дешёвых"
+    );
 }
 
 // --- FIFO-ключ ---

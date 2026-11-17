@@ -15,10 +15,10 @@ use bevy::prelude::*;
 /// На уникальности держится детерминизм частичной выборки (см.
 /// [`take_within_budget`]), поэтому она проверяется `debug_assert`.
 ///
-/// Тип `pub(crate)`, потому что он в сигнатуре
+/// Тип `pub`, потому что он в сигнатуре
 /// [`super::dispatch_pathfinding_requests_deterministic`], ре-экспортируемой
 /// наверх; поля — только строителю очереди.
-pub(crate) struct QueuedRequest {
+pub struct QueuedRequest {
     pub(super) requested_at: u64,
     pub(super) pawn: (u8, u32),
     pub(super) units: u32,
@@ -59,7 +59,11 @@ pub(super) fn request_units(start_tile: IVec2, end_tile: IVec2) -> u32 {
 /// состояние режима (см. док-комментарий диспетчера), поэтому её обход идёт
 /// каждый тик, а полная копия означала бы ~1 МБ записи в память на тик, то
 /// есть 70 МБ/с на скорости 1× и вдвое больше на любой мелкой правке темпа.
-pub(super) fn push_within_budget(queue: &mut Vec<QueuedRequest>, request: QueuedRequest, budget: u32) {
+pub(super) fn push_within_budget(
+    queue: &mut Vec<QueuedRequest>,
+    request: QueuedRequest,
+    budget: u32,
+) {
     queue.push(request);
     let cap = budget as usize;
     if queue.len() > cap * 2 {
