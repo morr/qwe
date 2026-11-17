@@ -966,12 +966,16 @@ fn sync_pinned_highlights(
         .0
         .then(|| {
             let map = map.as_ref()?;
-            let fills: Vec<PinnedFill> = pinned.0.iter().filter_map(|entry| {
-                feature_shape(&index, map, &roads, entry.hit.feature).map(|shapes| PinnedFill {
-                    shapes,
-                    color: pinned_color(entry.color).to_linear(),
+            let fills: Vec<PinnedFill> = pinned
+                .0
+                .iter()
+                .filter_map(|entry| {
+                    feature_shape(&index, map, &roads, entry.hit.feature).map(|shapes| PinnedFill {
+                        shapes,
+                        color: pinned_color(entry.color).to_linear(),
+                    })
                 })
-            }).collect();
+                .collect();
             let mut builder = mesh_pins(&fills, stripe, stripe * 0.25);
             if let Some(window) = viewport.clip() {
                 builder.clip_to_rect(window.min, window.max);

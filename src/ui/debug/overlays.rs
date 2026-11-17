@@ -12,7 +12,7 @@ use crate::camera::Viewport;
 use crate::grid::{grid_size, navtile_size};
 use crate::loading::AppState;
 use crate::map::osm::MapData;
-use crate::map::surface::{LayerMaterials, LayerMesh, swap_layers};
+use crate::map::surface::{LayerMaterials, swap_layers};
 use crate::map::{
     ConiferField, RutLines, lane_width, mesh_network_overlay, mesh_osm_contours, mesh_rut_overlay,
 };
