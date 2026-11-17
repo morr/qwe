@@ -11,6 +11,7 @@ use bevy::prelude::*;
 
 use crate::determinism::SimTick;
 use crate::loading::{PlayPhase, WorldStarted};
+use crate::tick_stage::TickStage;
 
 // Числа регулятора живут здесь: владелец у них ровно один — этот файл
 // (`CLAUDE.md`, «Code Conventions»: число с одним владельцем лежит рядом с
@@ -395,36 +396,12 @@ impl Plugin for SimTimePlugin {
                     end_sim_load.in_set(RunFixedMainLoopSystems::AfterFixedMainLoop),
                 ),
             )
-            // граничные пробы разреза тика: по одной на стык цепочки сетов и
-            // стыки цепочки движения. Порядок проб выстроен явно до полного —
-            // без этого исполнитель вправо перемешать их с системами сето,
-            // и сегмент замерил бы чужое
-            .add_systems(
-                FixedUpdate,
-                (
-                    tick_probe("head").before(crate::tick_stage::TickStage::DemonGrid),
-                    tick_probe("spatial")
-                        .after(crate::tick_stage::TickStage::DemonGrid)
-                        .before(crate::tick_stage::TickStage::DemonBehavior),
-                    tick_probe("demon")
-                        .after(crate::tick_stage::TickStage::DemonBehavior)
-                        .before(crate::tick_stage::TickStage::HumanBehavior),
-                    tick_probe("human")
-                        .after(crate::tick_stage::TickStage::HumanBehavior)
-                        .before(crate::movement::move_moving_entities),
-                    tick_probe("move")
-                        .after(crate::movement::move_moving_entities)
-                        .before(crate::movement::dispatch_pathfinding_requests_deterministic),
-                    tick_probe("tail")
-                        .after(crate::movement::dispatch_pathfinding_requests_deterministic),
-                ),
-            )
             // предохранитель — стадия `Guard`, первая в перечне тика: решение
             // «оборвать прогон» принимается до того, как очередной тик начнёт
             // тратить время
             .add_systems(
                 FixedUpdate,
-                guard_frame_budget.in_set(crate::tick_stage::TickStage::Guard),
+                guard_frame_budget.in_set(TickStage::Guard),
             )
             .add_systems(Startup, pin_max_delta)
             .add_systems(Last, archetype_census)
@@ -442,6 +419,23 @@ impl Plugin for SimTimePlugin {
                 )
                     .chain(),
             );
+
+        // граничные пробы разреза тика — циклом по перечню стадий: проба после
+        // стадии мерит её сегмент, «head» — всё до первой. Рёбра к соседним
+        // стадиям обязательны: без них исполнитель вправо перемешать пробу
+        // с системами стадии, и сегмент замерил бы чужое
+        app.add_systems(FixedUpdate, tick_probe("head").before(TickStage::Guard));
+        for pair in TickStage::ORDER.windows(2) {
+            app.add_systems(
+                FixedUpdate,
+                tick_probe(pair[0].probe_name())
+                    .after(pair[0])
+                    .before(pair[1]),
+            );
+        }
+        if let Some(&tail) = TickStage::ORDER.last() {
+            app.add_systems(FixedUpdate, tick_probe(tail.probe_name()).after(tail));
+        }
     }
 }
 
