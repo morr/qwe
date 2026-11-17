@@ -12,7 +12,7 @@ use super::arches::{
     ArchOpening, ArchOpenings, TunnelWall, WallCells, arch_openings, arches_by_building,
     push_arches, push_tunnel_walls, push_wall_with_openings, tunnel_walls,
 };
-use super::classify::classify;
+use super::classify::{BuildingClass, classify};
 use super::clutter::{flat_roof_items, merlons, push_items, ridge_chimney};
 use super::garages::{BAY, FACADE_COS, GarageRect, GarageRun, garage_runs};
 use super::material::{
@@ -21,9 +21,7 @@ use super::material::{
 };
 
 use super::order::wall_order;
-use super::roofs::{
-    DormerFace, HipRoof, RoofMix, RoofShape, Roofing, TentRoof, roofing, roofing_of,
-};
+use super::roofs::{DormerFace, HipRoof, RoofMix, RoofShape, Roofing, TentRoof, roofing_of};
 use super::temples::{Crown, Sanctuary, push_crowns};
 use super::{
     HouseFootprint, Lean, RoofDetail, building_center, height_of, lift_of_footprint, shade_by_light,
@@ -809,6 +807,33 @@ fn look_of(building: &PolyArea, run: Option<&GarageRun>, fp: Option<HouseFootpri
     }
 }
 
+/// Вид дома целиком — общий шаг сборки для обоих режимов: кровля и облицовка
+/// собираются один раз на дом, а не каждым билдером у себя. Облицовка
+/// оглядывается на прогон (бокс одет воротами), фасадная полоса — нет: она
+/// красится настоящей стеной дома, даже когда бокс стоит в прогоне.
+struct HouseLook {
+    /// Кровля: материал, цвет и рамка фактуры; у бокса прогона — общий вид
+    /// всего прогона.
+    roof: RoofLook,
+    /// Облицовка с оглядкой на прогон: бокс одет воротами.
+    wall: WallLook,
+    /// Цвет настоящей стены дома — фасадной полосе плоских режимов: полоса
+    /// не ворота, и красит её дом.
+    facade: Srgba,
+}
+
+fn house_look(
+    building: &PolyArea,
+    run: Option<&GarageRun>,
+    fp: Option<HouseFootprint>,
+) -> HouseLook {
+    HouseLook {
+        roof: look_of(building, run, fp),
+        wall: wall_of_run(building, run),
+        facade: wall_look(building).base,
+    }
+}
+
 /// Плоская кровля: заливка контура (с дворами-дырками) под фактуру своего
 /// материала. Ровно это игра кладёт на всякий дом без скатной крыши — и в
 /// плоских режимах, где `outer` это сам контур, и в 2.5D, где он уже поднят
@@ -929,11 +954,12 @@ pub(super) fn facade_and_roof_builders(
     let mut placed = Vec::new();
     for (index, building) in buildings.iter().enumerate() {
         let fp = footprints[index];
+        let house = house_look(building, ctx.runs.get(&index), fp);
+        let class = classify(building, fp);
         // фактуры у плоской полосы нет — она идёт одним earcut-полигоном, — но
         // цвет у неё тот же, что был бы у настоящей стены в 2.5D
-        let facade_color = wall_look(building).base;
-        let look = look_of(building, ctx.runs.get(&index), fp);
-        let color = roof_color(building, &look, detail.tinted);
+        let facade_color = house.facade;
+        let color = roof_color(building, &house.roof, detail.tinted);
         placed.extend(ctx.sanctuary.crowns(index, building, facade_color, color, Vec2::ZERO, fp));
         // часть на крыше храма — это барабан с главой, отдельная колокольня —
         // столп ярусами: коробки у них нет
@@ -959,66 +985,22 @@ pub(super) fn facade_and_roof_builders(
         if let Some(passages) = ctx.arches.get(&index) {
             push_arches(&mut facades, building, passages, offset);
         }
-        // двускатная крыша в плоском режиме — два ската разного тона в
-        // одной плоскости: конёк не поднят, но дом уже не коробка
-        let mut items = Vec::new();
-        let class = classify(building, fp);
-        match roofing(
+        // Плоский режим — вырожденный случай общей сборки крыши ([`push_roofing`]):
+        // подъёма нет, конёк не поднимается, фронтонов и слуховых окон нет —
+        // но скатной дом всё равно не коробка: два ската разного тона в одной
+        // плоскости
+        push_roofing(
+            &mut roofs,
             building,
+            &house,
+            color,
+            RoofShape::Auto,
+            detail.clutter,
             &class,
             Vec2::ZERO,
-            |_| Vec2::ZERO,
-            color,
-            building_seed(building),
+            None,
             fp,
-        ) {
-            Roofing::Gable(roof) => {
-                roofs.set_roof(Some(look.frame));
-                for (slope, slope_color) in &roof.slopes {
-                    roofs.push_convex(slope, *slope_color);
-                }
-                if detail.clutter
-                    && let Some(ridge) = roof.ridge
-                {
-                    items.extend(ridge_chimney(building, &look, ridge, roof.ridge_offset));
-                }
-            }
-            Roofing::Hip(roof) => {
-                roofs.set_roof(Some(look.frame));
-                push_hip(&mut roofs, &roof);
-                if detail.clutter {
-                    items.extend(ridge_chimney(
-                        building,
-                        &look,
-                        hip_ridge_ends(&roof),
-                        roof.ridge_offset,
-                    ));
-                }
-            }
-            Roofing::Tent(roof) => {
-                roofs.set_roof(Some(look.frame));
-                push_tent(&mut roofs, &roof);
-            }
-            Roofing::Flat => {
-                push_flat_roof(
-                    &mut roofs,
-                    &look,
-                    &building.outer,
-                    &building.holes,
-                    color,
-                    Vec2::ZERO,
-                );
-                if detail.clutter {
-                    items = flat_roof_items(building, &look, Vec2::ZERO);
-                }
-            }
-        }
-        if detail.clutter {
-            items.extend(merlons(building, Vec2::ZERO));
-        }
-        // в плоском режиме у коробки нет стен — только тень и верх, как у
-        // самих домов в этих режимах
-        push_items(&mut roofs, &items, None, color);
+        );
     }
     // венцы — после всех кровель: см. `temples::push_crowns`
     push_crowns(&mut roofs, &placed, None);
@@ -1085,11 +1067,10 @@ pub(super) fn extrusion_builder(
         let building = &buildings[index];
         let cell = (building_center(building) / MAP_CHUNK).floor().as_ivec2();
         let fp = footprints[index];
-        let look = look_of(building, ctx.runs.get(&index), fp);
-        let color = roof_color(building, &look, detail.tinted);
-        let wall = wall_of_run(building, ctx.runs.get(&index));
+        let house = house_look(building, ctx.runs.get(&index), fp);
+        let color = roof_color(building, &house.roof, detail.tinted);
         let lift = lift_of_footprint(building, fp);
-        let crowns = ctx.sanctuary.crowns(index, building, wall.base, color, lift, fp);
+        let crowns = ctx.sanctuary.crowns(index, building, house.wall.base, color, lift, fp);
         // часть на крыше храма — барабан с главой, отдельная колокольня — столп
         // ярусами: коробки от земли у них нет
         if ctx.sanctuary.boxless(index, building) {
@@ -1119,8 +1100,7 @@ pub(super) fn extrusion_builder(
         let drawn = push_house_with_arches(
             &mut builder,
             building,
-            &look,
-            &wall,
+            &house,
             color,
             RoofShape::Auto,
             detail.clutter,
@@ -1205,11 +1185,15 @@ pub fn push_house(
     // витрина зовёт дом сама, без сборщика слоя с его готовыми пятнами:
     // пятно считается здесь, один раз на дом
     let fp = HouseFootprint::of(building);
+    let house = HouseLook {
+        roof: look.clone(),
+        wall: *wall,
+        facade: wall.base,
+    };
     let built = push_house_with_arches(
         builder,
         building,
-        look,
-        wall,
+        &house,
         color,
         shape,
         clutter,
@@ -1253,8 +1237,7 @@ fn wall_of_run(building: &PolyArea, run: Option<&GarageRun>) -> WallLook {
 fn push_house_with_arches(
     builder: &mut MeshBuilder,
     building: &PolyArea,
-    look: &RoofLook,
-    wall: &WallLook,
+    house: &HouseLook,
     color: Srgba,
     shape: RoofShape,
     clutter: bool,
@@ -1266,7 +1249,7 @@ fn push_house_with_arches(
     // сжимает стену вместе с ними
     let class = classify(building, fp);
     let storeys = class.storeys();
-    let facade_color = wall.base;
+    let facade_color = house.wall.base;
     let lean = Lean::of();
     let lift_dir = lean.dir();
     // через тот же хелпер, что и оверлей дверей, — иначе они разъедутся
@@ -1274,7 +1257,7 @@ fn push_house_with_arches(
     // длинная ось плана — одна на дом, и спрашивается она только там, где
     // может что-то решить: на складе, частном доме и малоэтажке торец от
     // фасада всё равно ничем не отличается
-    let long_axis = balcony_house(building, wall.kind, storeys)
+    let long_axis = balcony_house(building, house.wall.kind, storeys)
         .then(|| plan_long_axis(fp))
         .flatten();
     builder.set_roof(None);
@@ -1286,11 +1269,10 @@ fn push_house_with_arches(
     // вверх-вправо — южные и западные; двор добавляет к ним внутреннюю стену
     // своей дальней стороны — ту, чья наружная (для кольца дыры) нормаль
     // смотрит по подъёму
-    let seed = building_seed(building);
     // у разрезанного гаражного контура стены берутся по куску за раз: хорда
     // разреза рассекает ребро, и целой стене досталась бы сетка одного куска
     // на обе половины
-    let mut walls = match look.run.as_ref().filter(|run| run.rects.len() > 1) {
+    let mut walls = match house.roof.run.as_ref().filter(|run| run.rects.len() > 1) {
         Some(run) => garage_walls(run, &building.outer, -lift_dir),
         None => silhouette_edges(&building.outer, -lift_dir),
     };
@@ -1305,31 +1287,78 @@ fn push_house_with_arches(
         let (bottom, top) = wall_colors(facade_color, a, b, lift_dir);
         // гаражная стена считается в ячейках своего куска: ворота обязаны
         // встать под собственный шов кровли, а на торце их нет вовсе
-        let cells = garage_cells(building, look, wall, &span)
-            .unwrap_or_else(|| wall_cells(building, wall, &span));
+        let cells = garage_cells(building, &house.roof, &house.wall, &span)
+            .unwrap_or_else(|| wall_cells(building, &house.wall, &span));
         push_wall_with_openings(builder, &span, &cells, openings, bottom, top);
         // фриз вывески — поверх своей стены и до входа
-        push_brand_band(builder, building, wall, &span, &cells, lift_dir);
+        push_brand_band(builder, building, &house.wall, &span, &cells, lift_dir);
         // вход ложится поверх стены, которой он принадлежит, — порядок кладки
         // внутри дома и есть его глубина
-        push_doors(builder, building, wall, &span, &cells, openings, bottom);
+        push_doors(builder, building, &house.wall, &span, &cells, openings, bottom);
     }
     builder.set_roof(None);
 
+    push_roofing(
+        builder,
+        building,
+        house,
+        color,
+        shape,
+        clutter,
+        &class,
+        lift,
+        Some(lean),
+        fp,
+    )
+}
+
+/// Крыша дома в меш — общий случай сборки, один на оба режима: заказ формы
+/// ([`roofing_of`]), фронтоны и слуховые окна у подъёма, оборудование кровли.
+/// Дымоход у ската и вальмы, коробки на плоской кровле и зубцы крепости —
+/// одна развилка на все дома: раньше её держали два матча (2.5D и плоский),
+/// и условия дымоходов в них жили руками.
+///
+/// Плоский режим — **вырожденный случай без подъёма**: `lean` не задан,
+/// конёк не поднимается ([`roofing_of`] получает нулевой подъём), фронтоны и
+/// слуховые окна не рисуются — им нужен подъём, в плоскости они лежали бы
+/// поверх скатов, — и оборудование кладётся без вдоль-подъёмной тени.
+#[allow(clippy::too_many_arguments)]
+fn push_roofing(
+    builder: &mut MeshBuilder,
+    building: &PolyArea,
+    house: &HouseLook,
+    color: Srgba,
+    shape: RoofShape,
+    clutter: bool,
+    class: &BuildingClass,
+    lift: Vec2,
+    lean: Option<Lean>,
+    fp: Option<HouseFootprint>,
+) -> RoofShape {
+    let seed = building_seed(building);
+    let look = &house.roof;
+    let facade_color = house.wall.base;
+    let storeys = class.storeys();
+    // длинная ось плана — только там, где есть что решать фронтона и торцам:
+    // без подъёма и их нет
+    let long_axis = match lean {
+        Some(_) if balcony_house(building, house.wall.kind, storeys) => plan_long_axis(fp),
+        _ => None,
+    };
     let chimney_on = |builder: &mut MeshBuilder, ridge, ridge_offset| {
         if clutter {
             let chimney: Vec<_> = ridge_chimney(building, look, ridge, lift + ridge_offset)
                 .into_iter()
                 .collect();
-            push_items(builder, &chimney, Some(lean), color);
+            push_items(builder, &chimney, lean, color);
         }
     };
     let built = match roofing_of(
         shape,
         building,
-        &class,
+        class,
         lift,
-        |rise| lean.ridge(rise),
+        |rise| lean.map_or(Vec2::ZERO, |lean| lean.ridge(rise)),
         color,
         seed,
         fp,
@@ -1337,28 +1366,34 @@ fn push_house_with_arches(
         Roofing::Gable(roof) => {
             // фронтон — верх торцевой стены, видим по тому же правилу, что
             // и стена под ним: наружная нормаль торца смотрит против подъёма
-            for ((a, b), face) in &roof.gables {
-                let (a, b) = (*a, *b);
-                let edge = b - a;
-                if Vec2::new(edge.y, -edge.x).dot(-lift_dir) <= 0.0 {
-                    continue;
+            if let Some(lean) = lean {
+                let lift_dir = lean.dir();
+                for ((a, b), face) in &roof.gables {
+                    let (a, b) = (*a, *b);
+                    let edge = b - a;
+                    if Vec2::new(edge.y, -edge.x).dot(-lift_dir) <= 0.0 {
+                        continue;
+                    }
+                    let (_, top) = wall_colors(facade_color, a, b, lift_dir);
+                    // фронтон продолжает раму стены под ним — иначе рисунок рвался
+                    // бы ровно на карнизе, — но помечен как «над карнизом»: проёмов
+                    // на треугольнике нет, окно на нём резалось бы скатом
+                    let span = WallSpan::new(a, b, lift, storeys, long_axis);
+                    builder.set_wall(
+                        wall_frame(building, &house.wall, &span)
+                            .map(|frame| frame.marked(WallMark::Solid)),
+                    );
+                    builder.push_polygon(face, &[], top);
                 }
-                let (_, top) = wall_colors(facade_color, a, b, lift_dir);
-                // фронтон продолжает раму стены под ним — иначе рисунок рвался
-                // бы ровно на карнизе, — но помечен как «над карнизом»: проёмов
-                // на треугольнике нет, окно на нём резалось бы скатом
-                let span = WallSpan::new(a, b, lift, storeys, long_axis);
-                builder.set_wall(
-                    wall_frame(building, wall, &span).map(|frame| frame.marked(WallMark::Solid)),
-                );
-                builder.push_polygon(face, &[], top);
             }
             builder.set_roof(Some(look.frame));
             for (slope, slope_color) in &roof.slopes {
                 // скат плоский и выпуклый, и проекция выпуклость сохраняет
                 builder.push_convex(slope, *slope_color);
             }
-            push_dormers(builder, &roof.dormers, look, facade_color, lift_dir);
+            if let Some(lean) = lean {
+                push_dormers(builder, &roof.dormers, look, facade_color, lean.dir());
+            }
             if let Some(ridge) = roof.ridge {
                 chimney_on(builder, ridge, roof.ridge_offset);
             }
@@ -1389,7 +1424,7 @@ fn push_house_with_arches(
             push_flat_roof(builder, look, &roof_outer, &roof_holes, color, lift);
             if clutter {
                 let items = flat_roof_items(building, look, lift);
-                push_items(builder, &items, Some(lean), color);
+                push_items(builder, &items, lean, color);
             }
             RoofShape::Flat
         }
@@ -1397,7 +1432,7 @@ fn push_house_with_arches(
     // зубцы по верху крепостной стены — оборудование этого дома; главы храма
     // кладёт вызывающий, после всех домов (`temples::push_crowns`)
     if clutter {
-        push_items(builder, &merlons(building, lift), Some(lean), color);
+        push_items(builder, &merlons(building, lift), lean, color);
     }
     built
 }
