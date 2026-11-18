@@ -608,10 +608,7 @@ pub(super) fn roof_look(building: &PolyArea, fp: Option<HouseFootprint>) -> Roof
     // по фотографии, и дрожать ему незачем
     let (base, jitter) = match temples::tagged_roof(building) {
         Some(tagged) => (tagged, 1.0),
-        None => (
-            base,
-            1.0 + ((seed >> 16 & 0xff) as f32 / 255.0 - 0.5) * 0.06,
-        ),
+        None => (base, value_jitter(seed >> 16)),
     };
     let axis = fp
         .or_else(|| HouseFootprint::of(building))
@@ -680,7 +677,7 @@ fn sacred_of(building: &PolyArea) -> Sacred {
 /// собственных ячеек (`layers::garage_frame`), а не из мировой точки и оси.
 pub(super) fn run_look(run: &GarageRun) -> RoofLook {
     let base = GARAGE_ROW_COLORS[(run.seed >> 8) as usize % GARAGE_ROW_COLORS.len()].to_srgba();
-    let jitter = 1.0 + ((run.seed >> 16 & 0xff) as f32 / 255.0 - 0.5) * 0.06;
+    let jitter = value_jitter(run.seed >> 16);
     // материал — по самому большому куску: у буквы Г одно крыло может быть
     // кооперативом, а другое лентой, и на кровле это видно по каждому куску
     // отдельно (`layers::garage_frame` берёт код у него), но `RoofKind` дома
@@ -718,7 +715,7 @@ pub(super) fn run_kind(block: bool) -> RoofKind {
 pub(super) fn run_wall_look(run: &GarageRun) -> WallLook {
     let palette = GARAGE_WALL_COLORS;
     let base = palette[(run.seed >> 12) as usize % palette.len()].to_srgba();
-    let jitter = 1.0 + ((run.seed >> 20 & 0xff) as f32 / 255.0 - 0.5) * 0.06;
+    let jitter = value_jitter(run.seed >> 20);
     WallLook::new(
         WallKind::GarageDoors,
         Srgba {
@@ -778,10 +775,7 @@ pub(super) fn wall_look(building: &PolyArea, fp: Option<HouseFootprint>) -> Wall
     // палитры и одного слота всё-таки не близнецы; цвет из разметки — как есть
     let (base, jitter) = match temples::tagged_wall(building) {
         Some(tagged) => (tagged, 1.0),
-        None => (
-            base,
-            1.0 + ((seed >> 20 & 0xff) as f32 / 255.0 - 0.5) * 0.06,
-        ),
+        None => (base, value_jitter(seed >> 20)),
     };
     WallLook::new(
         kind,
@@ -1020,6 +1014,13 @@ pub(super) fn look_seed(building: &PolyArea) -> u32 {
         BuildingUse::Church(sacred) if sacred.complex != 0 => sacred.complex,
         _ => building_seed(building),
     }
+}
+
+/// Множитель ±3 % яркости поверх выбранного цвета: два дома одной палитры и
+/// одного слота всё-таки не близнецы. Байт посева даёт вызывающий — у кровли,
+/// стен и прогонов он свой, арифметика одна.
+pub(super) fn value_jitter(byte: u32) -> f32 {
+    1.0 + ((byte & 0xff) as f32 / 255.0 - 0.5) * 0.06
 }
 
 /// Параметры фактуры кровель — юниформ шейдера. Зеркало `RoofParams` в
