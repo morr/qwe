@@ -565,9 +565,11 @@ fn a_long_request_costs_more_of_the_budget_than_a_short_one() {
 
     app.update();
 
-    // каждая стоит 21 единицу, значит в бюджет их влезает во столько же раз
-    // меньше — но не ноль
-    let expected = PATHFINDING_WANDER_UNITS_PER_TICK as usize / 21;
+    // каждая стоит цену заявки — единицу за каждые PATHFINDING_UNIT_TILES
+    // пути плюс один (закон в settings.rs), значит в бюджет их влезает во
+    // столько же раз меньше — но не ноль
+    let units = (1 + far / PATHFINDING_UNIT_TILES) as usize;
+    let expected = PATHFINDING_WANDER_UNITS_PER_TICK as usize / units;
     assert_eq!(dispatched(app), expected);
     assert!(expected > 0, "дорогая заявка не должна блокировать очередь");
 }
