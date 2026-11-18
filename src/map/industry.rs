@@ -32,13 +32,13 @@ use std::f32::consts::{FRAC_PI_2, PI, TAU};
 use bevy::prelude::*;
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 
-use crate::map::buildings::{SHADOW_LENGTH_RANGE, drawn_lift, shade_by_light};
+use crate::map::buildings::{clamped_length, drawn_lift, shade_by_light};
 use crate::map::meshing::{MeshBuilder, RibbonCap, RibbonJoin};
 use crate::map::osm::{MapData, PipeLine, Structure, StructureKind};
 use crate::map::shadow;
 use crate::map::surface::{LayerMaterials, LayerMesh, MaterialSpec, swap_layers};
 use crate::map::z::{Z_INDUSTRY, Z_INDUSTRY_SHADOW, Z_INDUSTRY_WALL, Z_PIPE, Z_PIPE_SHADOW};
-use crate::map::{BuildingHeightMode, SHADOW_COLOR, SunOnMap, shadow_dir, sun_stretch};
+use crate::map::{BuildingHeightMode, SHADOW_COLOR, SunOnMap, shadow_dir};
 use crate::prefs::retuned;
 
 /// Сторон в круге. Двадцать четыре: у резервуара в двадцать метров это грань
@@ -287,16 +287,11 @@ fn push_pipe(builder: &mut MeshBuilder, points: &[Vec2], width: f32, color: Colo
 /// сдвинутого круга разом. Тем же свипом рисуются тени домов, только там его
 /// считает `i_overlay` по контуру, а у круга он выписывается руками.
 ///
-/// Зажим длины — тот же `SHADOW_LENGTH_RANGE`, что у домов, и, как у них,
-/// растянутый по высоте солнца ([`sun_stretch`]): числа подобраны под
+/// Зажим длины — общий с домами [`clamped_length`]: числа подобраны под
 /// `cot 59°`, и неподвижный потолок в сорок пять метров на низком солнце
 /// уравнял бы тень трубы с тенью пятиэтажки.
 fn push_shadow(builder: &mut MeshBuilder, structure: &Structure) {
-    let stretch = sun_stretch();
-    let length = shadow::length(structure.height).clamp(
-        *SHADOW_LENGTH_RANGE.start() * stretch,
-        *SHADOW_LENGTH_RANGE.end() * stretch,
-    );
+    let length = clamped_length(structure.height);
     let offset = shadow_dir() * length;
     builder.push_polygon(
         &sweep(structure.at, structure.radius, offset),

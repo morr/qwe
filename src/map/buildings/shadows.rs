@@ -44,6 +44,18 @@ use crate::map::{SHADOW_COLOR, shadow_dir, sun_stretch};
 /// 17 м.
 pub(crate) const SHADOW_LENGTH_RANGE: RangeInclusive<f32> = 3.0..=45.0;
 
+/// Длина тени `height`-метровой стены, зажатая в [`SHADOW_LENGTH_RANGE`] —
+/// обе границы едут за [`sun_stretch()`], как требует [`shadow::length`].
+/// Коридор один у домов и у промышленности (`industry::push_shadow`):
+/// зажимать порознь — две копии одного правила.
+pub(crate) fn clamped_length(height: f32) -> f32 {
+    let stretch = sun_stretch();
+    shadow::length(height).clamp(
+        *SHADOW_LENGTH_RANGE.start() * stretch,
+        *SHADOW_LENGTH_RANGE.end() * stretch,
+    )
+}
+
 /// Ширина мягкого края тени, м. Не физическая полутень (угловой размер
 /// солнца дал бы сантиметры), а то, чем край тени размыт на снимке:
 /// разрешением кадра и светом неба. Метр — это 2–10 экранных пикселей на тех
@@ -103,18 +115,12 @@ impl ShadowSweeps {
         footprints: &[Option<HouseFootprint>],
         sanctuary: &Sanctuary,
     ) -> Self {
-        let stretch = sun_stretch();
-        let (min_length, max_length) = (
-            *SHADOW_LENGTH_RANGE.start() * stretch,
-            *SHADOW_LENGTH_RANGE.end() * stretch,
-        );
         // дом от дома не зависит: развёртки считаются по ядрам, сбор — в
         // порядке домов (`in_parallel` сохраняет порядок входа)
         let indexed: Vec<usize> = (0..buildings.len()).collect();
         let per_building: Vec<Vec<Vec<[f32; 2]>>> = in_parallel(&indexed, |&index| {
             let building = &buildings[index];
-            let length = shadow::length(height_of(building, footprints[index]))
-                .clamp(min_length, max_length);
+            let length = clamped_length(height_of(building, footprints[index]));
             let offset = shadow_dir() * length;
             // у части на крыше храма и у отдельной колокольни коробки нет, и
             // тени коробки тоже: их тень — тень венца, она ниже
@@ -131,7 +137,7 @@ impl ShadowSweeps {
             // глава и шпиль выше карниза, и тень храма обязана дотянуться до
             // маковки — иначе на земле он тот же коробок, что и сосед
             for (outline, top) in sanctuary.shadow_casters(index, building, footprints[index]) {
-                let length = shadow::length(top).clamp(min_length, max_length);
+                let length = clamped_length(top);
                 push_contour(&mut own, sweep_convex(&outline, shadow_dir() * length));
             }
             own
