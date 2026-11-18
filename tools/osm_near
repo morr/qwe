@@ -27,7 +27,7 @@ SHOWN_TAGS = 6
 
 def cache_file(city):
     files = sorted(glob.glob(os.path.join(ROOT, "assets/osm", f"{city or ''}*.json")))
-    files = [f for f in files if re.search(r"_[\d.]+_[\d.]+_\d+x\d+_v\d+\.json$", f)]
+    files = [f for f in files if re.search(r"_(-?[\d.]+)_(-?[\d.]+)_\d+x\d+_v\d+\.json$", f)]
     if not files:
         sys.exit(f"no OSM cache in assets/osm for {city or 'any city'} — run the app once")
     cities = {os.path.basename(f).split("_")[0] for f in files}
@@ -37,7 +37,7 @@ def cache_file(city):
 
 
 def projector(path):
-    lat, lon, w, h = re.search(r"_([\d.]+)_([\d.]+)_(\d+)x(\d+)_v\d+\.json$", path).groups()
+    lat, lon, w, h = re.search(r"_(-?[\d.]+)_(-?[\d.]+)_(\d+)x(\d+)_v\d+\.json$", path).groups()
     lat, lon, w, h = float(lat), float(lon), float(w), float(h)
     lon_scale = METERS_PER_DEG_LAT * math.cos(math.radians(lat))
     west = lon - w / 2 / lon_scale
