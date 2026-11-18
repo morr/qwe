@@ -364,7 +364,10 @@ generator, breaks replay (`determinism`).
 *average* human since `Pace`); **no per-state demon speeds** — the rule is `CONTEXT.md`'s.
 The `DemonStyle::lunge` multiplier is applied at the one line in `chase` that steps
 `SimPosition`, never written into `Movable::speed`. `Movable::speed` is written once, at
-spawn; `sync_demon_speed` applies slider moves (`resource_changed`).
+spawn; `sync_demon_speed` applies slider moves (gated by `demon_speed_changed`, a
+`Local` compare of the style's `speed` field — the human's `spread_changed` mirrored;
+not `resource_changed::<DemonStyle>`, which a step of any other slider would also
+fire).
 
 ### The spawner
 

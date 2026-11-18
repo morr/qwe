@@ -283,7 +283,9 @@ update policies replaced two types for one concept.)
 Warmup therefore waits for the wanted backend instead — `loading.rs::poll_warmup` returns
 early while `Pathfinder::mode().is_building()` holds (`navigation/mode.rs`), and its
 `elapsed` counter stands meanwhile, so `WARMUP_TIMEOUT` cannot cut a build short.
-That costs ~11–14 s on first entry into a city on HPA — deliberately. Restarts do not pay
+That costs the northstar build (~22–28 s on the current map, the measurement and its
+history in `navigation/northstar.rs`'s module doc) on first entry into a city on HPA —
+deliberately. Restarts do not pay
 it.
 
 And it is not only the *wait* that is deterministic-only — the build is **started** earlier

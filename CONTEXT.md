@@ -145,7 +145,8 @@ Summary; the mechanism — **world-lifecycle skill** (states and the warmup hold
   The meshing stage runs its groups **in parallel** (buildings ∥ roads ∥ polymesh ∥
   fences ∥ surfaces+trees+rails+cars — `map/prepare.rs`); the polymesh lane follows the Navmesh
   panel's toggle, and a panic in any lane surfaces as `Failed`. `Done` carries the whole
-  world: `MapData`, the portal and the meshed layers (`WorldMeshes` in a
+  world: `MapData`, the portal, the prebuilt `InspectIndex` and the meshed layers
+  (`WorldMeshes` in a
   `PreparedMeshes` resource), styles snapshotted at thread start (including the entry
   zoom — the fence layer is built for the bucket the camera will open on;
   `camera::next_entry_zoom`). **Rule: heavy init
@@ -417,8 +418,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   keeps a snapshot (`MapData::knobs`) — what the world was parsed with, what the
   lane-width reload compares against.
 - **Building height** (`parse/tags.rs::building_height`) — metres from `height` or
-  `building:levels` × 3 m; outside 2–600 m counts as no tag. `None` is normal and
-  common (coverage varies wildly by city, logged on load).
+  (`building:levels` + `roof:levels`) × 3 m; outside 2–600 m counts as no tag. `None` is
+  normal and common (coverage varies wildly by city, logged on load).
 - **Squared house** (`parse.rs::square_skewed_houses`) — a small skewed-quad or skewed-L
   house is replaced at parse by a rectangle of the same centroid and area, or a
   right-angled L; not when a vertex is shared with another building, a line, or one of
@@ -942,7 +943,8 @@ Summary; the mechanism and the measurements — **navigation-deep skill** (polym
 - **PathfindingAlgorithm** (`navigation/astar.rs`) — runtime-switchable: A* / Dijkstra /
   Fringe / BFS / **HPA*** (28× cheaper than flat A* at ~10 % longer paths) / Theta*.
 - **NorthstarGrid** (`navigation/northstar.rs`) — `bevy_northstar` `OrdinalGrid`, built
-  lazily (~12 s) **only when a northstar algorithm is selected**; until it lands the
+  lazily (~22–28 s on the current map — the measurement and its history live in the
+  module doc) **only when a northstar algorithm is selected**; until it lands the
   dispatcher falls back to flat A*.
 - **Backend / Walkable** (`navigation/backend.rs`) — the active backend as one cheap-clone
   `Send` snapshot, and **the resource the whole simulation reads** (`Res<Backend>`). The two
@@ -989,7 +991,7 @@ Summary; the mechanism and the measurements — **navigation-deep skill** (polym
 - **find_passable_tile_near** — target tile or its 8 neighbors only; callers tolerate `None`.
 - **Poly navmesh** (`navigation/polymesh/`) — a polygonal polyanya mesh from the same vector
   sources the grid rasterizes, ring **holes subtracted** as the grid subtracts them; **the
-  default pathfinding backend**, the grid serving as fallback while it builds (~5–20 s,
+  default pathfinding backend**, the grid serving as fallback while it builds (0.3–20 s,
   async, cancellable). polyanya is **vendored** (`vendor/polyanya`, edits marked `QWE:`);
   `bounded_path` is the only door to it, an exhausted budget **panics** by design, and so
   does a task older than `PATHFINDING_TASK_HANG_SECS`.
@@ -1082,8 +1084,9 @@ Summary; the mechanism — **determinism skill** (seed derivation, the decision 
   `(requested_at, species, pawn_id)`, all integers. **The camera does not appear in it at
   all.**
 - **Frozen backend** — in this mode `Backend` is written once, on **WorldStarted**, and
-  never refreshed; warmup waits for the wanted backend instead (~11–14 s on first entry into
-  a city on HPA, deliberately; restarts do not pay it). **No pawn warmup in this mode.**
+  never refreshed; warmup waits for the wanted backend instead (~22–28 s of northstar
+  build on first entry into a city on HPA, deliberately; restarts do not pay it). **No
+  pawn warmup in this mode.**
 - **NeedsWanderTarget** (`movement/components.rs`) — marker held exactly on `Idle` and
   `PathfindingError`; without it each `FixedUpdate` run would scan all 17 000 wanderers.
 - **Replay check** (`determinism/replay.rs`, `tests/determinism.rs`,

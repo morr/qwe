@@ -263,7 +263,8 @@ mesh". Repro over all six cities: `examples/audit/polymesh_empty_layer_repro.rs`
 **Polygonal routing** (`polymesh::find_path_polymesh`, dispatched in
 `movement/pathfinding.rs`) — with the Polymesh backend on, `dispatch_pathfinding_requests`
 routes through the polygonal mesh and the `PathfindingAlgorithm` cycler is bypassed.
-**While the mesh is still building** (5–20 s) `Pathfinder::polymesh_build()` is `None`
+**While the mesh is still building** (0.3–20 s, the agent-radius modes — the range
+lives in `navigation/mode.rs`) `Pathfinder::polymesh_build()` is `None`
 and the grid serves the request — the same fallback shape HPA* uses while
 `NorthstarGrid` builds.
 

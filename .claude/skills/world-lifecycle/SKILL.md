@@ -106,7 +106,8 @@ lives here now. The polymesh lane follows the Navmesh panel's toggle and hands i
 `PolyNavmesh::set_ready` in the `Done` branch, so the async panel build never starts. A panic
 in any lane is `Failed`, not a hung loader.
 
-`Done` is the whole world: `poll_job` inserts `MapData`, `PortalPos` and a
+`Done` is the whole world: `poll_job` inserts `MapData`, `PortalPos`, the prebuilt
+**`InspectIndex`** and a
 **`PreparedMeshes`** resource; `OnEnter(Playing)` then only *spawns* — `spawn_map` (parking
 layout resource, surfaces, the road split build — common layers once, both steps' own
 layers, buildings), `spawn_rails` (all steps),
