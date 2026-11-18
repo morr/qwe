@@ -135,7 +135,7 @@ pub struct MapData {
     /// (кроме труб), в отличие от рельсов: см. [`WaterLine`].
     pub water_lines: Vec<WaterLine>,
     /// Аллеи (`natural=tree_row`) — исходная геометрия, для отладки; деревья по
-    /// ним уже разложены в [`MapData::row_trees_kept`] / [`MapData::row_trees_slid`].
+    /// ним уже разложены в [`MapData::row_trees`] (`RowTrees`).
     pub tree_rows: Vec<TreeRow>,
     /// Одиночные деревья (`node natural=tree`) — сырые ноды, для отладки;
     /// посаженные лежат в [`MapData::standalone_trees`].
