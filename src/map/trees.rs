@@ -1361,16 +1361,7 @@ pub fn rebuild_trees(
         field,
         stream,
         shown,
-        |field| {
-            mesh_trees(
-                &style,
-                // ручки геометрии кроны в игре не выведены никуда: город
-                // рисуется дефолтом, а крутит их витрина `tree_gallery`
-                &CrownParams::default(),
-                &map.trees,
-                field,
-            )
-        },
+        |field| mesh_game_trees(&style, &map.trees, field),
     );
 }
 
