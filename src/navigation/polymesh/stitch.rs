@@ -9,7 +9,7 @@
 use bevy::prelude::*;
 
 use super::seams::node_world;
-use super::{ChunkComponents, ChunkGraph, GraphNode};
+use super::{ChunkComponents, ChunkGraph, GraphNode, chunk_cell, chunk_index};
 use crate::map::parallel::in_parallel;
 
 /// Компоненты связности слоя: flood fill по соседству полигонов через общие

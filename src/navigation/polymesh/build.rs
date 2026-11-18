@@ -11,7 +11,7 @@ use i_overlay::float::single::SingleFloatOverlay;
 
 use super::seams::{SeamPoints, chunk_outline, node_world, quantized, seam_points};
 use super::stitch::{components_of, stitch_chunks};
-use super::{ChunkComponents, PolymeshBuild, PolymeshInput, chunk_grid};
+use super::{ChunkComponents, PolymeshBuild, PolymeshInput, chunk_cell, chunk_grid};
 use crate::map::footprint::{CurbCoverage, JOIN_EPSILON, fence_gaps};
 use crate::map::osm::model::signed_ring_area;
 use crate::map::parallel::in_parallel;
