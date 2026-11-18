@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use bevy::prelude::*;
 
 use qwe::demon::Demon;
+use qwe::spatial::CELL_SIZE;
 use qwe::spatial::SpatialGrid;
 
 fn entity(index: u32) -> Entity {
@@ -48,14 +49,19 @@ fn nearest_within_radius() {
 
 #[test]
 fn nearest_across_cell_boundary() {
-    // 59.0 и 61.0 — по разные стороны границы ячейки (60 м)
-    let entries = [(entity(7), Vec2::new(61.0, 10.0))];
+    // по метр с каждой стороны границы ячейки
+    let entries = [(entity(7), Vec2::new(CELL_SIZE + 1.0, 10.0))];
     let mut grid = SpatialGrid::<Demon>::default();
     grid.rebuild(entries.into_iter());
     let pos = positions(&entries);
 
     let (found, _) = grid
-        .nearest_in_range(Vec2::new(59.0, 10.0), 60.0, |e| pos.get(&e).copied(), order)
+        .nearest_in_range(
+            Vec2::new(CELL_SIZE - 1.0, 10.0),
+            CELL_SIZE,
+            |e| pos.get(&e).copied(),
+            order,
+        )
         .expect("entity across the boundary is in range");
     assert_eq!(found, entity(7));
 }
