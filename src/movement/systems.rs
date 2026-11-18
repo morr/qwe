@@ -251,7 +251,7 @@ pub fn on_movable_added_init_sim_position(
 // с рисунком, а не в `settings.rs`: так же лежат `DOOR_COLOR`/
 // `DOOR_MARKER_RADIUS`/`DOORS_VIEW_SCREENS` (`ui/debug/overlays.rs`) и
 // константы оверлеев навигации. Запас у КАЖДОГО гейта видимости свой по
-// построению — док `camera::Viewport::of` и таблица пяти гейтов в скилле
+// построению — док `camera::Viewport::of` и таблица шести гейтов в скилле
 // navigation-deep; тот же довод, что у `movement::VIEW_MARGIN`. Симуляции ни
 // одно из трёх чисел не меняет.
 /// Цвет пути — фиолетовый полупрозрачный: жёлтый на этой карте не читался.

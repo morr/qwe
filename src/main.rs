@@ -91,7 +91,7 @@ fn main() {
             dev::DevPlugin,
         ))
         .add_plugins(frame_phases::FramePhasesPlugin)
-        // кадр как значение — один счёт на кадр для всех пяти гейтов
+        // кадр как значение — один счёт на кадр для всех шести гейтов
         // видимости; отдельным плагином, потому что его поднимает и стенд
         // толпы, которому `CameraPlugin` не нужен
         .add_plugins(camera::ViewportPlugin)

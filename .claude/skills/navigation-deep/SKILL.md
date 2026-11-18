@@ -124,10 +124,13 @@ with nobody's margin in it; a gate adds its own with `Viewport::with_margin(scre
   is skipped and the readers get **last frame's** frame with no signal. Before this each
   of them was skipped silently on its own for the same reason, which was not better.
 
-**Five gates use it and each keeps its own margin on purpose**, because each asks a
+**Six gates use it and each keeps its own margin on purpose**, because each asks a
 different question: warmup (`loading.rs::poll_warmup`) counts what the player can
 actually see; the pathfinding dispatcher and separation
 share `VIEW_MARGIN`, so pawns at the edge do not stall on a small camera move; the
+silhouette resize pass (`silhouette/mod.rs::resize_silhouettes_on_zoom`,
+`RESIZE_VIEW_SCREENS` 1.25) refreshes the silhouettes standing in the frame first, so a
+silhouette at the edge counts as visible; the
 movepath and door gizmos add wide margins because debug drawing wants context around
 the frame.
 
