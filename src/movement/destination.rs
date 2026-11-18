@@ -72,7 +72,7 @@ use bevy::prelude::*;
 
 use crate::grid::{navtile_size, tile_center};
 use crate::human::HumanStyle;
-use crate::movement::components::{Movable, PathfindingRequest};
+use crate::movement::components::{BodyScale, Movable, PathfindingRequest};
 use crate::navigation::{Backend, nearest_tile_where};
 
 /// Докуда ищется свободный слот назначения, м — дефолт [`SlotSearch`].
@@ -581,7 +581,7 @@ pub fn assign_destination_slots(
     mut slots: Local<Vec<Option<(IVec2, IVec2)>>>,
 ) {
     claims.sync(
-        slot_side_with_slack(style.body_radius * 2.0, lab.slack),
+        slot_side_with_slack(BodyScale::HUMAN.rest(style.body_radius), lab.slack),
         search.0,
     );
 
