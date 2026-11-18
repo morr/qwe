@@ -503,10 +503,13 @@ fn update_inspector_hits(
         state.selected = 0;
         return;
     }
-    // ручка Sidewalks тоже вход: её переворот меняет список без движения
-    // курсора и без пересборки индекса
-    let inputs_fresh =
-        index.is_changed() || origin.is_changed() || viewport.is_changed() || roads.is_changed();
+    // ручки Sidewalks и Density тоже входы: их переворот меняет список без
+    // движения курсора и без пересборки индекса
+    let inputs_fresh = index.is_changed()
+        || origin.is_changed()
+        || viewport.is_changed()
+        || roads.is_changed()
+        || trees.is_changed();
     if !inputs_fresh && state.point.distance(point) < INSPECTOR_QUERY_STEP {
         return;
     }
