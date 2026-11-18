@@ -162,8 +162,8 @@ axis prepares straight edges for in `roads-corners.md`.
     shadow — `tools/osm_near` does not list it because it skips boundaries.
     Drawing only: navmesh, cars and parse see each way's width as is.
   - **The network overlay** — `map/roads/network/overlay.rs::mesh_network_overlay`
-    (re-exported `qwe::map::mesh_network_overlay`, `settings::Z_NETWORK_OVERLAY` 29 — the
-    three road overlays' rungs sit in `settings.rs` with their order asserted): every street in its own colour,
+    (re-exported `qwe::map::mesh_network_overlay`, `map::z::Z_NETWORK_OVERLAY` 29 — the
+    three road overlays' rungs sit in the z-ladder, `map/z.rs`, with their order asserted): every street in its own colour,
     the line thicker by the way's lanes, a white dot on every seam of a street. Shown by the
     game's Debug → Overlays **Road network** row (`DebugRoadNetwork`,
     `ui/debug/overlays.rs::sync_road_network_overlay`) and by the gallery's `Network` row
