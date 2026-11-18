@@ -29,7 +29,7 @@ use super::paint::{MergeRamp, Station};
 use super::ribbons::push_sidewalk_to_seams;
 use super::rings::ApproachBand;
 use super::ruts::LaneRuts;
-use super::{ALLEY_COLOR, ROAD_COLOR, RoadStyle, SIDEWALK_COLOR, UNPAVED_ROAD_COLOR};
+use super::{RoadStyle, SIDEWALK_COLOR};
 use super::{bridges, footbridge, road_lanes, tapers};
 use crate::map::meshing::{Break, LaneFrame, MeshBuilder};
 use crate::map::osm::model::polyline_length;
@@ -147,14 +147,7 @@ impl<'a, 'm> RibbonLane<'a, 'm> {
             // дорожка, и в порядок заливки вклады колеи несут сами
             let band_lanes = None;
             let ring_index = self.prepared.rings().index_of(index);
-            let paved_path = road.is_paved_path();
-            let unpaved_street = road.is_unpaved_street();
-            let color = match road.class {
-                RoadClass::Street if unpaved_street => UNPAVED_ROAD_COLOR,
-                RoadClass::Street => ROAD_COLOR,
-                RoadClass::Alley if paved_path => SIDEWALK_COLOR,
-                RoadClass::Alley => ALLEY_COLOR,
-            };
+            let color = super::fill_color(road);
             let points: &[Vec2] = &self.ribbon[index];
             // колея гаснет по разрывам асфальта; у ведущей узла их там нет
             let asphalt = self.junctions.asphalt();
@@ -302,6 +295,8 @@ impl<'a, 'm> RibbonLane<'a, 'm> {
             }
             // слой заливки берётся после полосы тротуара: мощёная дорожка
             // ложится в тот же слой, а полоса выше брала его сама
+            let paved_path = road.is_paved_path();
+            let unpaved_street = road.is_unpaved_street();
             let fill: &mut MeshBuilder = match road.class {
                 RoadClass::Street if unpaved_street => &mut part.unpaved,
                 RoadClass::Street => &mut part.streets,

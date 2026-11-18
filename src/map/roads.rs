@@ -126,6 +126,19 @@ const LOT_LINE_COLOR: Color = Color::srgb(0.88, 0.88, 0.86);
 /// части на четверть, и именно эта ступень яркости читается как бордюр.
 const SIDEWALK_COLOR: Color = Color::srgb(0.82, 0.815, 0.80);
 
+/// Цвет заливки ленты дороги её классом — закон серийной заливки одним
+/// матчем: грунтовая улица и мощёная дорожка красятся своим цветом, не
+/// асфальтом. Читают его лента улицы (`roads/ribbon_lane.rs`) и лента моста
+/// в общей сборке — их копии держались комментарием «полный матч».
+fn fill_color(road: &RoadLine) -> Color {
+    match road.class {
+        RoadClass::Street if road.is_unpaved_street() => UNPAVED_ROAD_COLOR,
+        RoadClass::Street => ROAD_COLOR,
+        RoadClass::Alley if road.is_paved_path() => SIDEWALK_COLOR,
+        RoadClass::Alley => ALLEY_COLOR,
+    }
+}
+
 /// [`RoadLine::is_carriageway`] свободной функцией — её зовут как предикат
 /// (`filter(is_carriageway)`) по всему `map/`.
 ///
@@ -1232,14 +1245,7 @@ impl<'s> RoadCommon<'s> {
                 // колея гаснет по разрывам асфальта; у ведущей узла их там нет
                 let breaks = asphalt.of(index);
                 let lanes = road_lanes(road);
-                // полный матч серийной заливки: грунтовая улица моста и
-                // мощёная дорожка-мостик красятся своим цветом, не асфальтом
-                let color = match road.class {
-                    RoadClass::Street if road.is_unpaved_street() => UNPAVED_ROAD_COLOR,
-                    RoadClass::Street => ROAD_COLOR,
-                    RoadClass::Alley if road.is_paved_path() => SIDEWALK_COLOR,
-                    RoadClass::Alley => ALLEY_COLOR,
-                };
+                let color = fill_color(road);
                 ruts.lanes.extend(part.ruts);
                 if let Some(painter_part) = part.painter {
                     painter.append_from(&painter_part);
