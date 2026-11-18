@@ -452,7 +452,7 @@ fn a_tagged_colour_paints_the_church_where_the_tag_means_it() {
         SacredForm::Dome,
     ));
     assert_eq!(dome_of(&drum), Some(gold));
-    assert_eq!(wall_look(&drum).base, white);
+    assert_eq!(wall_look(&drum, None).base, white);
     // до кровли барабана тег не доходит — её там и нет, палитра по посеву
     assert_ne!(roof_look(&drum, None).base, gold);
 
@@ -464,7 +464,7 @@ fn a_tagged_colour_paints_the_church_where_the_tag_means_it() {
         SacredForm::Nave,
     ));
     assert_eq!(roof_look(&nave, None).base, gold);
-    assert_eq!(wall_look(&nave).base, white);
+    assert_eq!(wall_look(&nave, None).base, white);
     assert_ne!(dome_of(&nave), Some(gold));
 
     // колокольня: тег — шпиль и маковка
@@ -482,6 +482,6 @@ fn a_tagged_colour_paints_the_church_where_the_tag_means_it() {
 
     // без тега — палитра по посеву, а не белый и не золото
     let plain = church(oblong(24.0, 26.0), 16.0, Faith::Orthodox, SacredForm::Nave);
-    assert_ne!(wall_look(&plain).base, white);
+    assert_ne!(wall_look(&plain, None).base, white);
     assert_ne!(roof_look(&plain, None).base, gold);
 }

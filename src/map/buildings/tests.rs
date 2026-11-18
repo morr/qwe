@@ -249,7 +249,7 @@ fn the_palette_follows_the_building_use_and_spares_the_kremlin() {
     // Стена — тоже по материалу, как и крыша: у частного дома штукатурка или
     // кирпич, у склада профлист, у храма побелка, и совпасть им неоткуда.
     // Этажность на этой развилке одна на всех — сравниваются назначения.
-    let wall = |b: &PolyArea| wall_look(b).base;
+    let wall = |b: &PolyArea| wall_look(b, None).base;
     assert_ne!(wall(&house), wall(&industrial));
     assert_ne!(wall(&church), wall(&house));
     let kremlin_plain = building(square(), None, AreaKind::Kremlin);
@@ -877,8 +877,8 @@ fn a_hull_deeper_than_housing_carries_no_balconies() {
 ///
 /// Ворота из перебора исключены, и по той же причине, по какой гаражные ленты
 /// не входят в `RoofKind::ALL`: их выбирает **геометрия прогона**
-/// (`layers::wall_of_run`), а не назначение дома, так что через `wall_of` они
-/// не приходят никогда.
+/// (`run_wall_look` в `layers::house_look`), а не назначение дома, так что
+/// через `wall_of` они не приходят никогда.
 #[test]
 fn every_cladding_reaches_the_city() {
     let _sun = crate::map::default_sun();

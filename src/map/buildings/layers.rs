@@ -828,10 +828,16 @@ fn house_look(
     run: Option<&GarageRun>,
     fp: Option<HouseFootprint>,
 ) -> HouseLook {
+    // вид стены считается один раз: без прогона фасад и облицовка — один и
+    // тот же `WallLook`, с прогоном облицовку перекрашивают ворота
+    let wall = wall_look(building, fp);
     HouseLook {
         roof: look_of(building, run, fp),
-        wall: wall_of_run(building, run),
-        facade: wall_look(building).base,
+        wall: match run {
+            Some(run) => run_wall_look(run),
+            None => wall,
+        },
+        facade: wall.base,
     }
 }
 
@@ -1223,20 +1229,10 @@ pub fn push_house(
 /// Облицовка, которую игра выбрала бы этому дому. Витринам — чтобы не
 /// повторять у себя ни деление высоты на высоту этажа, ни развилки
 /// классификатора: оба шага (`wall_look` ведёт их изнутри) остаются его.
+/// Пятна у витрины нет — классификатор считает его сам, как и у прочих
+/// внешних вызовов.
 pub fn wall_of(building: &PolyArea) -> WallLook {
-    wall_look(building)
-}
-
-/// То же, но с оглядкой на гаражный прогон: бокс, вошедший в него, одет в
-/// **ворота** ([`WallKind::GarageDoors`]) — по створке на ячейку, и ячейка тут
-/// его собственная, размером с бокс. Кровля этого дома берётся от прогона
-/// ровно так же ([`look_of`]), и обе стороны коробки говорят тогда одно и то
-/// же: сверху гребёнка боксов, сбоку ряд ворот.
-fn wall_of_run(building: &PolyArea, run: Option<&GarageRun>) -> WallLook {
-    match run {
-        Some(run) => run_wall_look(run),
-        None => wall_look(building),
-    }
+    wall_look(building, None)
 }
 
 #[allow(clippy::too_many_arguments)]

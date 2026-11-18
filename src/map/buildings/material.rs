@@ -765,10 +765,12 @@ impl WallLook {
 /// Рост, назначение и пятно уже разобраны классификатором
 /// ([`super::classify`]) — развилка по этажам, которая раньше жила здесь
 /// (`LOW_RISE_STOREYS`), теперь часть его гварда частного сектора, и стены
-/// читают класс, а не дом второй раз.
-pub(super) fn wall_look(building: &PolyArea) -> WallLook {
+/// читают класс, а не дом второй раз. Пятно приходит готовым, как у
+/// [`roof_look`]: без него классификатор для жилья считает `min_area_rect`
+/// сам — та цена, которую пятновая сборка уже заплатила.
+pub(super) fn wall_look(building: &PolyArea, fp: Option<HouseFootprint>) -> WallLook {
     let seed = look_seed(building);
-    let class = classify(building, None);
+    let class = classify(building, fp);
     let kind = wall_kind_of(&class, seed >> 4);
     let palette = wall_palette(building, &class, kind);
     let base = palette[(seed >> 12) as usize % palette.len()].to_srgba();
