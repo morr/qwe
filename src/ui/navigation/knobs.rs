@@ -139,9 +139,8 @@ pub(super) fn spawn_knob_rows(
 /// чем не подсвечивать.
 ///
 /// Начальное состояние ставит
-/// [`render_navigation_panel`](super::render_navigation_panel) — эта система
-/// ходит по `resource_changed`, а на первом кадре ни один ресурс ещё не
-/// «менялся».
+/// [`build_navigation_tab`](super::build_navigation_tab) — спавн идёт один раз,
+/// а не по `resource_changed`, поэтому на первом кадре строка уже честная.
 pub(super) fn sync_separation_row_inert(
     determinism: Res<Determinism>,
     polymesh: Res<PolymeshDebug>,

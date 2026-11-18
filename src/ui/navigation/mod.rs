@@ -481,7 +481,9 @@ fn sync_section_visibility(debug: Res<PolymeshDebug>, mut rows: Query<(&NavSecti
     }
 }
 /// Актуализация подписей и бегунка после правки ресурса извне (BRP,
-/// восстановленные настройки, хоткей N) — паттерн `sync_noise_values`.
+/// восстановленные настройки, хоткей N) — паттерн `sync_noise_knob_visibility`
+/// (`ui/noise.rs`), но по нескольким ресурсам разом: биндинг одного ресурса
+/// эти строки не выражает.
 fn sync_nav_values(
     values: NavPanelValues,
     theme: Res<UiTheme>,
