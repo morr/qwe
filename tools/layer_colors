@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Map a colour to the layer colour constant it matches.
 
-Every flat fill of the map is a `const …_COLOR: Color = Color::srgb(…)` /
-`srgba(…)` literal somewhere under `src/`, so a strange-coloured patch on a
-screenshot can be named by its pixels. With no arguments the tool prints every
-constant it found (name, file, sRGB 0–255); with three numbers it prints the
-closest constants; with a png and a pixel it samples the pixel first:
+Every flat fill of the map names its colour a `const …_COLOR: Color =
+Color::srgb(…)` / `srgba(…)` literal somewhere under `src/`, so a
+strange-coloured patch on a screenshot can be named by its pixels — except
+the surface rims and edges, whose colours live in their own `*_RIM` consts
+(`src/map/spawn.rs`), outside the `*_COLOR` naming, and match nothing. With
+no arguments the tool prints every constant it found (name, file, sRGB
+0–255); with three numbers it prints the closest constants; with a png and
+a pixel it samples the pixel first:
 
     tools/layer_colors
     tools/layer_colors 209 208 204
