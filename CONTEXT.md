@@ -77,9 +77,10 @@ in `main.rs`.
 - **Viewport** (`camera.rs`) — the piece of the world in frame, as a value **and a
   resource**: `centre`, `half_extent`, `zoom` (world m per logical pixel). `contains`
   — **the edge counts as inside**. `ViewportPlugin` recomputes it once per frame before the
-  fixed loop; the resource holds exactly the frame, and each of the five visibility gates
+  fixed loop; the resource holds exactly the frame, and each of the six visibility gates
   adds **its own margin** with `with_margin` (warmup 1.0, dispatcher/separation
-  `VIEW_MARGIN` 1.2, movepath gizmos 3.0, door gizmos 1.5), because each asks a different
+  `VIEW_MARGIN` 1.2, silhouette resize 1.25, movepath gizmos 3.0, door gizmos 1.5),
+  because each asks a different
   question — the table is in the **navigation-deep skill**. No `Default`, like `Backend`:
   a stand inserts it. Not Bevy's `Camera::viewport`, which is in pixels.
 - **Geo anchor** — a `*_GEO_CENTER` per city (Tula's puts the kremlin near frame center),
@@ -746,7 +747,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   ring-walking caller. **`spatial.rs` is a different animal** and stays outside; so does
   `planting::Occupied`, on the opposite convention.
 - **Footprint bands** (`map/footprint.rs`) — the strips linear geometry occupies on the
-  ground, as **(centerline, width, role)** values plus the width policy. One
+  ground, as **(centerline, width)** values plus the width policy; what a band means on
+  the ground — blocking or carving — the consumer's fill order decides, the band itself
+  carries no role. One
   construction, three consumers: the grid fill rasterizes, the mesh build outlines, the
   renderer draws its own smoothed copy. **A drawn band and a blocking band match by
   construction, not by discipline.**
@@ -1411,8 +1414,9 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   what the user is aiming at.
 - **Knob** (`ui/knob.rs`) — a panel row **bound to one field of one resource**, in two
   shapes: `spawn_knob` (slider) and `spawn_cycle_row` (button that cycles a value).
-  `app.add_knobs::<R>()` registers the drag observer and the label/thumb sync **once per
-  resource**, however many knobs it has. **Use it for any panel row driven by a resource**;
+  `app.add_knobs::<R>()` registers the label/thumb sync systems **once per
+  resource**, however many knobs it has; the drag observer itself rides each slider row
+  (the slider kit's spawn attaches it). **Use it for any panel row driven by a resource**;
   the Nav tab's rows are the deliberate exception, since their text is computed
   from several resources at once.
 - **Widgets & theme** (`ui/theme.rs`) — the controls are first-party **`bevy_feathers`**,

@@ -277,7 +277,8 @@ back on itself.
 ## Footprint bands
 
 `map/footprint.rs` — the strips linear geometry occupies on the ground, `Band { line,
-width, role }`, one construction for every consumer (road decks, curbs and passages,
+width }` — what a band means on the ground the consumer's fill order decides, the band
+carries no role —, one construction for every consumer (road decks, curbs and passages,
 water channels (`None` for culverts), walls, fences with their `fence_gaps`). The width
 policy (`casing_width`, `bridge_curb_width`) lives here too, its ranges deliberately
 disjoint so a curb always out-sticks a casing — because a curb is not just paint: the
