@@ -5,7 +5,6 @@ use rand::RngExt;
 
 use crate::demon::{ChaseTarget, Demon};
 use crate::diagnostics::{SIM_ESCAPE_MS, SIM_FLEE_MS, SIM_PANIC_MS, SimMeasure};
-use crate::grid::world_to_tile;
 use crate::human::components::{
     FleeRepath, Human, HumanFleeTag, HumanStyle, HumanWanderTag, Pace, PanicRecoil, WanderHeading,
     WanderPause,
@@ -13,7 +12,7 @@ use crate::human::components::{
 use crate::human::decide::{
     FLEE_STEP, FleeAction, FleeSense, Threat, ThreatProbe, decide, escaped, flee_target,
 };
-use crate::movement::{Movable, SimPosition};
+use crate::movement::{Movable, SimPosition, request_wander_path};
 use crate::navigation::Backend;
 use crate::rng::{PawnId, WanderIndex};
 use crate::settings::{
@@ -242,14 +241,16 @@ pub fn flee(
             .random_range(FLEE_STEP.0..FLEE_STEP.1);
         let target = flee_target(sim_position.0, away, step);
 
-        let Some(target_tile) = walkable.sift_target(world_to_tile(target)) else {
-            continue;
-        };
-        movable.to_pathfinding(
-            entity,
-            world_to_tile(sim_position.0),
-            target_tile,
+        // хвост скелета прогулки — просев цели и подача заявки — один и тот же
+        // шаг для всех (см. `request_wander_path`); фактически выбранный тайл
+        // беглецу не нужен, его ведёт направление от демона
+        request_wander_path(
             &mut commands,
+            &walkable,
+            entity,
+            &mut movable,
+            sim_position.0,
+            target,
         );
     }
 }

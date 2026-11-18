@@ -96,9 +96,9 @@ chain is `CONTEXT.md`'s). Only **where** a pawn wants to go is per-species — f
 that policy is `human/systems.rs::choose_target`, a pure function; the demon's is the two
 lines around `away` in its own system. The skeleton deliberately does **not** open the
 `SimRng` — the species does, in its own place, or the decision stream would advance on
-pawns that took no decision this tick. The chase repath (`demon/behavior.rs`) goes through
-`request_wander_path` too; the flee repath (`human/behavior.rs`) is the one hand-written
-copy left. `WANDER_MAP_MARGIN` is the one map inset, in `settings.rs`.
+pawns that took no decision this tick. The chase repath (`demon/behavior.rs`) and the flee
+repath (`human/behavior.rs`) go through `request_wander_path` too — no hand-written copy of
+that tail is left. `WANDER_MAP_MARGIN` is the one map inset, in `settings.rs`.
 
 ## Human
 
