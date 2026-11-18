@@ -33,8 +33,9 @@ use crate::ui::{
 
 /// Ширина колонки правого края и телеметрии в ней; от неё же отсчитывается
 /// место кнопки скорости. Инспектор точки (`ui/inspector.rs`) — второй ребёнок
-/// той же колонки, так что одна ширина на обе панели выходит сама.
-pub(crate) const PANEL_WIDTH_PX: f32 = 470.0;
+/// той же колонки, так что одна ширина на обе панели выходит сама. Не путать
+/// с `ui::PANEL_WIDTH_PX` (260) — шириной панели настроек.
+pub(crate) const HUD_COLUMN_WIDTH_PX: f32 = 470.0;
 /// Зазор между телеметрией и инспектором точки внутри колонки, px.
 const INSPECTOR_GAP_PX: f32 = 6.0;
 /// Зазор между кнопкой скорости и левым краем панели.
@@ -108,7 +109,7 @@ fn render_speed_ui(mut commands: Commands, clock: Res<SimClock>, assets: Res<Ass
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::FlexStart,
                 row_gap: px(INSPECTOR_GAP_PX),
-                width: px(PANEL_WIDTH_PX),
+                width: px(HUD_COLUMN_WIDTH_PX),
                 ..default()
             }),
             // в границы колонки попадает и невидимая полоса зазора между
@@ -131,7 +132,7 @@ fn render_speed_ui(mut commands: Commands, clock: Res<SimClock>, assets: Res<Ass
                 // несколько раз в секунду, и авто-ширина заставляла панель
                 // дёргаться. Ширины хватает на строку pathfinding целиком —
                 // перенос её на вторую строку сдвигал бы всё под ней
-                width: px(PANEL_WIDTH_PX),
+                width: px(HUD_COLUMN_WIDTH_PX),
                 padding: UiRect {
                     top: px(10.),
                     right: px(16.),
@@ -212,7 +213,7 @@ fn render_speed_button(mut commands: Commands, time: Res<Time<Virtual>>, speed: 
                 top: px(UI_SCREEN_EDGE_PX_OFFSET),
                 // панель телеметрии сама отодвинута от края, поэтому её отступ
                 // входит в смещение кнопки
-                right: px(UI_SCREEN_EDGE_PX_OFFSET + PANEL_WIDTH_PX + SPEED_BUTTON_GAP_PX),
+                right: px(UI_SCREEN_EDGE_PX_OFFSET + HUD_COLUMN_WIDTH_PX + SPEED_BUTTON_GAP_PX),
                 padding: UiRect::all(px(10.)),
                 ..default()
             },

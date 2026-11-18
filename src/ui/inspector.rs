@@ -29,7 +29,7 @@ use bevy::ui::Checked;
 use bevy::ui_widgets::ValueChange;
 use bevy::window::PrimaryWindow;
 
-use super::speed::{PANEL_WIDTH_PX, RightHudColumn};
+use super::speed::{HUD_COLUMN_WIDTH_PX, RightHudColumn};
 use crate::camera::{cursor_world, pointer_over_ui};
 use crate::dev::{VirtualCursor, cursor_position};
 use crate::map::inspect::{
@@ -306,7 +306,7 @@ fn render_inspector_ui(
                 flex_direction: FlexDirection::Column,
                 row_gap: px(3.),
                 // ширина телеметрии: две панели одной ширины читаются как одна связка
-                width: px(PANEL_WIDTH_PX),
+                width: px(HUD_COLUMN_WIDTH_PX),
                 padding: UiRect {
                     top: px(10.),
                     right: px(16.),
