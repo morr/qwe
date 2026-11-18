@@ -449,7 +449,7 @@ fn chunk_layers(
         .collect();
     let seams = seam_points(&contours, grid, chunk_size);
     let cells: Vec<UVec2> = (0..grid.x * grid.y)
-        .map(|index| UVec2::new(index % grid.x, index / grid.x))
+        .map(|index| chunk_cell(grid, index as usize))
         .collect();
     let layers: Vec<Option<polyanya::Layer>> = in_parallel(&cells, |cell| {
         if is_cancelled() {

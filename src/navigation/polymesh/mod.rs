@@ -221,6 +221,21 @@ struct ChunkGraph {
     seam_vertices: usize,
 }
 
+/// Клетка чанка ↔ индекс в плоском списке чанков (по `grid.x` в ряд):
+/// порядок один на весь polymesh — слои построения, швы стичинга, [`PolymeshBuild::chunk_at`].
+/// Коридор поиска (`path.rs`) несёт те же числа в `u8` и живёт своим доменом.
+fn chunk_index(grid: UVec2, cell: UVec2) -> usize {
+    (cell.y * grid.x + cell.x) as usize
+}
+
+/// Обратное [`chunk_index`] — индекс плоского списка в клетку.
+fn chunk_cell(grid: UVec2, index: usize) -> UVec2 {
+    UVec2::new(
+        (index % grid.x as usize) as u32,
+        (index / grid.x as usize) as u32,
+    )
+}
+
 /// Результат одной постройки: сам меш и контуры препятствий, которые в него
 /// вошли. Контуры нужны оверлею — polyanya хранит только **проходимые**
 /// полигоны, а закрасить надо ровно то, что было объявлено непроходимым.
@@ -471,7 +486,7 @@ impl PolymeshBuild {
             .floor()
             .as_ivec2()
             .clamp(IVec2::ZERO, self.grid.as_ivec2() - IVec2::ONE);
-        (cell.y as u32 * self.grid.x + cell.x as u32) as usize
+        chunk_index(self.grid, cell.as_uvec2())
     }
 
     /// Стоит ли точка на меше — то есть свободна ли она для агента с его

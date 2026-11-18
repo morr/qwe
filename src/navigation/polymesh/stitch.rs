@@ -348,7 +348,7 @@ pub(super) fn stitch_chunks(
 
     for y in 0..grid.y {
         for x in 0..grid.x {
-            let chunk = (y * grid.x + x) as usize;
+            let chunk = chunk_index(grid, UVec2::new(x, y));
             // сосед справа и сосед сверху — каждый шов обходится один раз
             for (neighbour, along_y) in [
                 (x + 1 < grid.x).then(|| (chunk + 1, true)),
@@ -504,7 +504,7 @@ pub(super) fn stitch_chunks(
                 if cell_x < 0 || cell_y < 0 || cell_x >= grid.x as i32 || cell_y >= grid.y as i32 {
                     continue;
                 }
-                let chunk = (cell_y as u32 * grid.x + cell_x as u32) as usize;
+                let chunk = chunk_index(grid, UVec2::new(cell_x as u32, cell_y as u32));
                 let found = mesh.layers[chunk]
                     .vertices
                     .iter()
@@ -617,7 +617,7 @@ fn panic_on_split_seam(first_split: Option<(Vec2, usize, usize)>, split_edges: u
     let Some((point, blind, rich)) = first_split else {
         return;
     };
-    let cell = |chunk: usize| UVec2::new(chunk as u32 % grid.x, chunk as u32 / grid.x);
+    let cell = |chunk: usize| chunk_cell(grid, chunk);
     let (blind, rich) = (cell(blind), cell(rich));
     panic!(
         "polymesh: BROKEN CHUNK SEAM GEOMETRY — {split_edges} seam segment(s) had to be \
