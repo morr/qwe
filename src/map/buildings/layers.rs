@@ -1161,6 +1161,14 @@ pub(super) fn extrusion_builder(
     // клетке, и сами клетки (`order` отсортирован по глубине домов).
     let depth = |cell: IVec2| lean.depth((cell.as_vec2() + 0.5) * MAP_CHUNK);
     merged.sort_by(|a, b| depth(b.0).total_cmp(&depth(a.0)));
+    // кусок 0 — самый дальний: на этом держится лестница
+    // `building_chunk_z` (модуль `buildings`), и перевёрнутая сортировка
+    // молча перепутала бы порядок клеток между чанками
+    debug_assert!(
+        merged.len() < 2
+            || depth(merged[0].0) >= depth(merged[merged.len() - 1].0),
+        "куски экструзии обязаны идти от дальней клетки к ближней"
+    );
     (
         merged
             .into_iter()
