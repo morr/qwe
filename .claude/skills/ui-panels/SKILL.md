@@ -312,9 +312,10 @@ panel** with four tabs (`ui/shell.rs`).
   child rather than the scene's `@caption` because it comes from runtime strings.
 - **Knob kit** (`ui/knob.rs`) — what panels actually call. A knob is a slider row bound
   to one field of one resource: `spawn_knob` with a `SliderBinding<R> { get, set,
-  range, text }`, and `app.add_knobs::<R>()` registers the
-  drag observer and the sync **once per resource** — not per knob, per panel or per
-  field. Two binding shapes worth knowing: an integer knob casts in `get`/`set` and
+  range, text }`, and `app.add_knobs::<R>()` registers the sync systems
+  **once per resource** — not per knob, per panel or per
+  field; the drag observer is a different layer, `slider.rs::spawn_slider_row`
+  attaches it to every row it spawns. Two binding shapes worth knowing: an integer knob casts in `get`/`set` and
   takes an integer step; a percent knob keeps the
   resource in 0..1 while `text` multiplies by 100. `add_knobs::<R>()` is
   **idempotent** (memoised `TypeId`s in `RegisteredKnobs`): one resource
