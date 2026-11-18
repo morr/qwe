@@ -352,7 +352,16 @@ impl FenceGapCache {
 
     /// Слить заново ограды, у которых вырос список калиток: дорожные проёмы
     /// не пересчитываются, меняется только их слияние с калитками.
+    ///
+    /// Срез обязан быть тем же, что получил [`FenceGapCache::detect`], — длина
+    /// и порядок: слияние идёт позиционно. Расхождение укорачивает `zip` и
+    /// молча пропускает хвост; ассерт держит эту дисциплину в отладке.
     pub fn refresh(&mut self, fences: &[FenceLine]) {
+        debug_assert_eq!(
+            fences.len(),
+            self.crossings.len(),
+            "FenceGapCache::refresh got a different fence slice than detect"
+        );
         for (((fence, crossings), merged), len) in fences
             .iter()
             .zip(&self.crossings)
