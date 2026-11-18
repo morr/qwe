@@ -1,7 +1,7 @@
 use super::super::fixtures::{CENTER, CITY, HALF};
 use super::*;
 use crate::map::osm::fixture::{Overpass, building, fence, rect, residential_half, square, street};
-use crate::map::osm::model::{SidewalkSide, sidewalk_band};
+use crate::map::osm::model::{SidewalkSide, sidewalk_band, signed_ring_area};
 use crate::map::osm::parse::ParseKnobs;
 
 /// Прогон прохода на сцене из дорог, домов, заборов и стоянок: зелень и
@@ -610,7 +610,9 @@ fn a_parking_lot_is_its_own_layer_and_a_parking_house_stays_a_building() {
     assert_eq!(map.parking.len(), 1);
     // 110 × 110 м — больше `GROUND_MIN_AREA`, потому и Ground: площадка
     // меньше порога этот тест перестаёт мерить
-    assert!(4.0 * HALF * HALF > GROUND_MIN_AREA);
+    assert!(
+        signed_ring_area(&map.parking[0].outer).abs() > GROUND_MIN_AREA
+    );
     assert_eq!(map.parking[0].kind, AreaKind::Parking(LotKind::Ground));
     assert_eq!(map.buildings.len(), 1);
     assert_eq!(map.parks.len(), 1);
