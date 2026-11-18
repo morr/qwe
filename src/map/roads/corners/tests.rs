@@ -12,6 +12,7 @@ use crate::map::meshing::MeshBuilder;
 use crate::map::osm::Highway;
 use crate::map::osm::fixture::street;
 use crate::map::osm::model::point_in_polygon;
+use crate::map::osm::model::sidewalk_band;
 use crate::map::osm::{MapData, RoadClass, RoadLine};
 use bevy::prelude::*;
 
@@ -389,7 +390,9 @@ fn no_tile_overlap_where_the_yard_wedge_is_shallower_than_the_strip() {
 }
 
 /// Тротуар улицы 8 м — как его считает `osm::model::sidewalk_band`.
-const SIDEWALK: f32 = 1.76;
+fn sidewalk() -> f32 {
+    sidewalk_band(8.0)
+}
 
 /// Перекрёсток двух улиц 8 м в начале координат.
 fn crossing() -> [RoadLine; 2] {
@@ -895,7 +898,7 @@ fn the_sidewalk_turns_the_corner_on_the_kerb_arc() {
     // биссектриса на r/sin 45°
     let centre = Vec2::splat(4.0 + STREET_RADIUS);
     for outline in &found.sidewalks {
-        let corner = outline[0].signum() * Vec2::splat(4.0 + SIDEWALK - OVERLAP);
+        let corner = outline[0].signum() * Vec2::splat(4.0 + sidewalk() - OVERLAP);
         assert!((outline[0] - corner).length() < 1e-3, "{:?}", outline[0]);
         // дуга — того же центра, радиусом на тротуар меньше бордюрной, так
         // что за бордюром идёт ровная полоса в ширину тротуара
@@ -903,7 +906,7 @@ fn the_sidewalk_turns_the_corner_on_the_kerb_arc() {
         for point in &outline[2..outline.len() - 1] {
             let radius = point.distance(quadrant);
             assert!(
-                (radius - (STREET_RADIUS - SIDEWALK)).abs() < 1e-2,
+                (radius - (STREET_RADIUS - sidewalk())).abs() < 1e-2,
                 "{radius}"
             );
         }
@@ -913,10 +916,10 @@ fn the_sidewalk_turns_the_corner_on_the_kerb_arc() {
     for (_, outline) in &found.roads {
         let quadrant = outline[0].signum() * centre;
         for point in outline {
-            let band = 4.0 + SIDEWALK + 1e-3;
+            let band = 4.0 + sidewalk() + 1e-3;
             let on_band = point.x.abs() <= band || point.y.abs() <= band;
             assert!(
-                on_band || point.distance(quadrant) >= STREET_RADIUS - SIDEWALK - 1e-3,
+                on_band || point.distance(quadrant) >= STREET_RADIUS - sidewalk() - 1e-3,
                 "{point:?}"
             );
         }
@@ -978,7 +981,7 @@ fn a_drive_between_two_streets_leaves_their_sidewalk_corner_alone() {
     assert_eq!(found.sidewalks.len(), 2);
     assert_eq!(found.outer[1], 1);
     let outline = &found.sidewalks[0];
-    let corner = Vec2::splat(4.0 + SIDEWALK - OVERLAP);
+    let corner = Vec2::splat(4.0 + sidewalk() - OVERLAP);
     assert!((outline[0] - corner).length() < 1e-3, "{:?}", outline[0]);
 }
 
@@ -1119,7 +1122,7 @@ fn a_sharp_fork_gets_a_small_nose_instead_of_a_spike() {
             .all(|point| point.distance(centre) > NOSE_RADIUS - 0.3)
     );
     // тротуар — своим носом по краям полос, дальше асфальтового
-    let walked = apex(4.0 + SIDEWALK);
+    let walked = apex(4.0 + sidewalk());
     assert!(
         covered(Fill::Sidewalk, walked - 1.0),
         "остриё тротуара закрыто"
