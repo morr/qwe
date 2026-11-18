@@ -5,6 +5,7 @@
 use super::network::RoadNetwork;
 use super::paint;
 use super::{RoadReport, RoadShape, RoadStyle, VergeZoomBucket, mesh_roads};
+use crate::map::osm::parse::lots::GROUND_MIN_AREA;
 use crate::map::osm::{AreaKind, LotKind, MapData, RoadClass, RoadLine, fixture};
 use crate::map::surface::LayerMesh;
 use bevy::prelude::*;
@@ -158,7 +159,9 @@ pub(crate) fn roundabout_with_an_approach(tagged: bool, oneway: bool) -> MapData
 pub(crate) fn ground_with_roads(lot_side: f32) -> MapData {
     let mut map = MapData::default();
     // вид решает разбор по площади: 100 × 100 — большая, 60 × 60 — двор
-    let kind = if lot_side * lot_side >= 8000.0 {
+    // (порог — тот же, каким разбирает парсинг, `lots::GROUND_MIN_AREA`:
+    // сдвинешь его — сцена молча начнёт проверять старую границу)
+    let kind = if lot_side * lot_side >= GROUND_MIN_AREA {
         LotKind::Ground
     } else {
         LotKind::Yard

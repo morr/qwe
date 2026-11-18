@@ -1371,7 +1371,9 @@ mod faiths;
 #[cfg(test)]
 mod fixtures;
 mod house_pull;
-mod lots;
+// `pub(crate)`: порог большой стоянки берёт сцена-фиксстура дорог
+// (`roads/fixtures.rs`), чтобы тесты не отстали от парсинга
+pub(crate) mod lots;
 mod pavements;
 mod pockets;
 mod rails;
