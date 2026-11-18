@@ -48,7 +48,7 @@ use self::layers::{extrusion_builder, facade_and_roof_builders};
 pub use self::layers::{push_house, wall_of};
 use self::order::draw_order;
 pub use self::roofs::{RoofShape, ShapeFacts, shape_facts};
-pub(crate) use self::shadows::SHADOW_LENGTH_RANGE;
+pub(crate) use self::shadows::clamped_length;
 use self::shadows::{ShadowSweeps, roof_shadow_builder, shadow_builder};
 use self::temples::Sanctuary;
 use crate::map::meshing::{MeshBuilder, min_area_rect};
