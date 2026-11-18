@@ -18,7 +18,8 @@ pub use self::components::{
 };
 pub use self::look::DemonHalo;
 use self::systems::{
-    draw_lunge_paths, pick_wander_targets, spawn_initial_burst, sync_demon_speed, tick_spawner,
+    demon_speed_changed, draw_lunge_paths, pick_wander_targets, spawn_initial_burst,
+    sync_demon_speed, tick_spawner,
 };
 use crate::determinism::{DeterminismPlugin, SimPipeline};
 use crate::loading::{PlayPhase, WorldStarted};
@@ -91,7 +92,7 @@ impl Plugin for DemonPlugin {
                     // прогона, и правка, применённая в кадре, легла бы между
                     // разными тиками при разном fps
                     sync_demon_speed
-                        .run_if(resource_changed::<DemonStyle>)
+                        .run_if(demon_speed_changed)
                         .in_set(SimPipeline::Deterministic),
                     // ветка объявлена явно: `pick_wander_targets` и `chase`
                     // берут `Res<Backend>`, а гейт на мир приезжает только с
@@ -122,7 +123,7 @@ impl Plugin for DemonPlugin {
             .add_systems(
                 Update,
                 sync_demon_speed
-                    .run_if(resource_changed::<DemonStyle>)
+                    .run_if(demon_speed_changed)
                     .in_set(SimPipeline::Live),
             );
     }

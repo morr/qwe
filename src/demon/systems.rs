@@ -165,10 +165,22 @@ fn spawn_demon(
         .with_child(halo(birth.silhouettes));
 }
 
+/// Гейт [`sync_demon_speed`]: только поле `speed`, а не весь ресурс —
+/// `DemonStyle` несёт ещё потолок, интервал и надбавку броска, и гейт на
+/// целом ресурсе переписывал бы скорость всей стае на каждый шаг чужого
+/// ползунка. `Local`-сравнение, а не `resource_changed`: тот же приём, что у
+/// человеческого `spread_changed` (`human/systems.rs`).
+pub fn demon_speed_changed(style: Res<DemonStyle>, mut applied: Local<Option<f32>>) -> bool {
+    let current = style.speed;
+    let changed = *applied != Some(current);
+    *applied = Some(current);
+    changed
+}
+
 /// Ползунок скорости — уже вышедшим демонам. `Movable::speed` пишется один раз,
 /// при спавне, поэтому без этой системы новая скорость доставалась бы только
 /// следующим демонам из портала, а сотня уже гуляющих осталась бы на старой.
-/// Гоняется по `resource_changed::<DemonStyle>`, то есть на движение ползунка,
+/// Гоняется по [`demon_speed_changed`], то есть на движение ползунка скорости,
 /// а не покадрово.
 pub fn sync_demon_speed(style: Res<DemonStyle>, mut demons: Query<&mut Movable, With<Demon>>) {
     let speed = DEMON_SPEED * style.speed;
@@ -255,5 +267,67 @@ pub fn draw_lunge_paths(
         gizmos
             .arrow_2d(sim_position.0, target_position.0, MOVEPATH_COLOR)
             .with_tip_length(MOVEPATH_ARROW_TIP.min(distance * 0.5));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::demon::components::{DEMON_SPEED_FACTOR_MAX, DEMON_SPEED_FACTOR_MIN};
+
+    /// Мир одного демона: гейту хватает ресурса, системе — `Movable`.
+    fn speed_app() -> (App, Entity) {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<DemonStyle>()
+            .add_systems(Update, sync_demon_speed.run_if(demon_speed_changed));
+
+        let entity = app.world_mut().spawn((Demon, Movable::new(0.0))).id();
+
+        // первый прогон: Local = None → система отработает раз
+        app.update();
+
+        (app, entity)
+    }
+
+    /// После прогрева чужой ползунок (`cap`) не должен менять скорости стаи —
+    /// часовой на `Movable::speed`, ровно как человеческий
+    /// `the_body_radius_slider_leaves_the_crowd_alone`: при неизменном `speed`
+    /// система переписала бы ровно то же число, и «лишний проход» иначе
+    /// неотличим от его отсутствия.
+    #[test]
+    fn the_cap_slider_leaves_the_pack_alone() {
+        let (mut app, entity) = speed_app();
+        {
+            // `entity_mut` держится в переменной: `Mut<Movable>` заимствует
+            // именно его, и временное значение умерло бы раньше заимствования
+            let mut entity_mut = app.world_mut().entity_mut(entity);
+            let mut movable = entity_mut.get_mut::<Movable>().unwrap();
+            movable.speed = -1.0; // часовой
+        }
+
+        app.world_mut().resource_mut::<DemonStyle>().cap = 12;
+        app.update();
+
+        // если система запустилась, -1.0 был бы перезаписан
+        assert_eq!(
+            app.world().entity(entity).get::<Movable>().unwrap().speed,
+            -1.0
+        );
+    }
+
+    /// Смена поля `speed` должна гонять систему.
+    #[test]
+    fn moving_the_speed_slider_retunes_the_pack() {
+        let (mut app, entity) = speed_app();
+        let factor = DEMON_SPEED_FACTOR_MIN + DEMON_SPEED_FACTOR_MAX;
+        app.world_mut().resource_mut::<DemonStyle>().speed = factor;
+        app.update();
+
+        let expected = DEMON_SPEED * factor;
+        assert_eq!(
+            app.world().entity(entity).get::<Movable>().unwrap().speed,
+            expected
+        );
     }
 }
