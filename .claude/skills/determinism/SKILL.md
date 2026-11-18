@@ -319,9 +319,9 @@ find the few thousand standing ones.
 - **`replay_app`** — the run yard. Answers "does the whole run replay".
 
 **The list of plugins `replay_app` deliberately leaves out lives next to the list it
-includes**, with a reason per line: that boundary is exactly what `a_restart_replays_the_run`
-can and cannot see (10 of the game's 19 plugins), and it was previously invisible from
-`loading.rs`, where the claim about it is written.
+includes**, with a reason per line: that boundary — the ten included plugins, everything
+else named out below them — is exactly what `a_restart_replays_the_run` can and cannot see,
+and it was previously invisible from `loading.rs`, where the claim about it is written.
 
 ### The replay check
 
