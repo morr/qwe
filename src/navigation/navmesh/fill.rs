@@ -11,7 +11,10 @@ use bevy::prelude::*;
 
 use super::Navmesh;
 use crate::grid::{grid_size, navtile_size};
-use crate::map::footprint::{FENCE_GATE_WIDTH, FenceGapCache, JOIN_EPSILON, distance_to_polyline};
+use crate::map::footprint::{
+    FENCE_BAND_WIDTH, FENCE_GATE_WIDTH, FenceGapCache, FenceIndex, JOIN_EPSILON,
+    distance_to_polyline,
+};
 use crate::map::grid::Grid;
 use crate::map::osm::model::{MapData, closest_on_segment, distance_to_segment, water_line_caps};
 
@@ -288,33 +291,50 @@ impl Navmesh {
         self.fence_cache = Some(cache);
     }
 
-    /// Тайлы, у которых пересбор сетки мог изменить проходимость, — бокс
-    /// вокруг слитого проёма каждой добавленной калитки. Пересбор меняет сетку
-    /// только на проёмах оград, а у слитого проёма новой калитки меняется и
-    /// позиция: калитка, вставшая на дорожный проём ([`JOIN_EPSILON`]), тянет
+    /// Тайлы и боксы, у которых пересбор сетки мог изменить проходимость, —
+    /// бокс вокруг слитого проёма каждой добавленной калитки. Пересбор меняет
+    /// сетку только на проёмах оград, а у слитого проёма новой калитки меняется
+    /// и позиция: калитка, вставшая на дорожный проём ([`JOIN_EPSILON`]), тянет
     /// его на себя, и по краю старого проёма тайлы закрываются обратно —
-    /// passable между раундами не монотонна, поэтому бокс накрывает оба
-    /// положения диска проёма (радиус `+ JOIN_EPSILON`) и берёт reach слитого
-    /// проёма, а не только ширину самой калитки ([`FENCE_GATE_WIDTH`]). До
-    /// пересбора слитых списков ещё нет — калитка ищется среди старых проёмов
-    /// ограды; промах — калитка стоит вдали от них и открывает ровно свою
-    /// ширину.
-    pub(super) fn gate_gap_tiles(&self, added: &[(usize, Vec2)]) -> Vec<usize> {
+    /// passable между раундами не монотонна. Радиус бокса — reach слитого
+    /// проёма плюс [`JOIN_EPSILON`] на съезд головы слития к калитке и ещё
+    /// [`JOIN_EPSILON`] на разлёт членов слияния от головы, максимум — по всем
+    /// старым проёмам ограды в радиусе слияния, а не только ширине самой
+    /// калитки ([`FENCE_GATE_WIDTH`]): второй проём ограды в том же стыке
+    /// бывает шире первого, и его диск съезжает наравне с первым. Вердикт
+    /// тайла меняется, только если его центр попадает в диск головы слития
+    /// или члена слияния с запасом `margin` — оба лежат в боксе. До пересбора
+    /// слитых списков ещё нет — проёмы берутся из старых списков ограды;
+    /// промах — калитка стоит вдали от них и открывает ровно свою ширину.
+    pub(super) fn gate_gap_boxes(
+        &self,
+        added: &[(usize, Vec2)],
+    ) -> (Vec<(IVec2, IVec2)>, Vec<usize>) {
         let gaps = self
             .fence_cache
             .as_ref()
             .expect("gate rounds refill keeps the gap cache alive")
             .gaps();
         let margin = self.tile_size * SQRT_2;
-        let mut watched: Vec<usize> = Vec::new();
+        let mut boxes: Vec<(IVec2, IVec2)> = Vec::new();
         for &(fence, at) in added {
             let mut reach = FENCE_GATE_WIDTH / 2.0;
-            if let Some(gap) = gaps[fence].iter().find(|gap| gap.at.distance(at) < JOIN_EPSILON) {
-                reach = reach.max(gap.reach);
+            for gap in &gaps[fence] {
+                // члены слияния лежат не дальше 2·JOIN_EPSILON от калитки:
+                // голова слития — не дальше JOIN_EPSILON (иначе калитка
+                // открыла бы свой список с нуля), член — не дальше
+                // JOIN_EPSILON от головы
+                if gap.at.distance(at) < 2.0 * JOIN_EPSILON {
+                    reach = reach.max(gap.reach);
+                }
             }
-            let reach = reach + margin + JOIN_EPSILON;
+            let reach = reach + margin + 2.0 * JOIN_EPSILON;
             let min = self.to_tile(at - reach);
             let max = self.to_tile(at + reach);
+            boxes.push((min, max));
+        }
+        let mut watched: Vec<usize> = Vec::new();
+        for &(min, max) in &boxes {
             for x in min.x..=max.x {
                 for y in min.y..=max.y {
                     if let Some(index) = self.index(x, y) {
@@ -325,7 +345,96 @@ impl Navmesh {
         }
         watched.sort_unstable();
         watched.dedup();
-        watched
+        (boxes, watched)
+    }
+
+    /// Тайлы арок — проездов сквозь здания — одним списком. Набор не зависит
+    /// ни от оград, ни от раундов калиток: арка кладётся поверх основы тем же
+    /// обходом, что и в [`Self::carve_passages`], поэтому собирается один раз
+    /// и возвращается на место локальным refill'ом вместо растеризации всех
+    /// проездов на каждый раунд.
+    pub(super) fn passage_tiles(&mut self, map: &MapData) -> Vec<usize> {
+        let mut tiles: Vec<usize> = Vec::new();
+        for road in map.roads.iter().filter(|road| road.passage) {
+            let band = road.passage_band();
+            self.visit_polyline(&band.line, band.width, &mut |grid, x, y| {
+                if let Some(index) = grid.index(x, y) {
+                    tiles.push(index);
+                }
+            });
+        }
+        tiles.sort_unstable();
+        tiles.dedup();
+        tiles
+    }
+
+    /// Локальный refill раундов калиток — то же, что сброс к основе,
+    /// [`Self::fill_fences`] и [`Self::carve_passages`], но заново кладётся
+    /// только то, что пересбор мог изменить: основа восстанавливается в
+    /// боксах проёмов свежих калиток ([`Self::gate_gap_boxes`]), ограды —
+    /// отрезками, чьи коробки пересекают боксы (тот же обход, что у полной
+    /// заливки, байт в байт), арки — своим списком тайлов. За пределами
+    /// боксов вердикты проёмов не менялись: повторная блокировка там ничего
+    /// не меняет, маска режет проём, а не прорезает сетку.
+    pub(super) fn refill_gate_boxes(
+        &mut self,
+        map: &MapData,
+        fences: &FenceIndex,
+        base: &[bool],
+        boxes: &[(IVec2, IVec2)],
+        watched: &[usize],
+        passages: &[usize],
+    ) {
+        for &index in watched {
+            self.passable[index] = base[index];
+        }
+        let mut cache = self
+            .fence_cache
+            .take()
+            .unwrap_or_else(|| FenceGapCache::build(&map.fences, &map.roads));
+        // калитки только растут: пересобрать списки проёмов тех оград, у
+        // которых они выросли, — дорожная половина не меняется
+        cache.refresh(&map.fences);
+        let gaps = cache.gaps();
+        let margin = self.tile_size * SQRT_2;
+        let tile_size = self.tile_size;
+        let band = FENCE_BAND_WIDTH;
+        let mut blocked: Vec<usize> = Vec::new();
+        for &(min_tile, max_tile) in boxes {
+            let min = Vec2::new(min_tile.x as f32, min_tile.y as f32) * tile_size;
+            let max = Vec2::new((max_tile.x + 1) as f32, (max_tile.y + 1) as f32) * tile_size;
+            // коробка запроса растёт на полширины ленты: тайл бокса с центром
+            // в ленте отрезка сажает отрезок не дальше полуширины от бокса, а
+            // тайл цепочки отрезка и вовсе лежит в боксе
+            for &(fence, segment) in &fences.segments_in_box(min - band / 2.0, max + band / 2.0) {
+                let points = &map.fences[fence as usize].points;
+                let gaps = &gaps[fence as usize];
+                self.visit_segment_band(
+                    points[segment as usize],
+                    points[segment as usize + 1],
+                    band,
+                    [false; 2],
+                    &mut |grid, x, y| {
+                        if let Some(index) = grid.index(x, y) {
+                            let center = (Vec2::new(x as f32, y as f32) + 0.5) * tile_size;
+                            let in_gap = gaps
+                                .iter()
+                                .any(|gap| center.distance(gap.at) <= gap.reach + margin);
+                            if !in_gap {
+                                blocked.push(index);
+                            }
+                        }
+                    },
+                );
+            }
+        }
+        for index in blocked {
+            self.passable[index] = false;
+        }
+        for &index in passages {
+            self.passable[index] = true;
+        }
+        self.fence_cache = Some(cache);
     }
 }
 

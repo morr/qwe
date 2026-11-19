@@ -84,34 +84,52 @@ impl Navmesh {
         round_caps: [bool; 2],
         visit: &mut impl FnMut(&mut Self, i32, i32),
     ) {
-        let (grid_size, tile_size) = (self.grid_size, self.tile_size);
         let last = points.len().saturating_sub(2);
         for (index, segment) in points.windows(2).enumerate() {
             let (from, to) = (segment[0], segment[1]);
             // срез торца: тайл за плоскостью конца не в ленте, даже если до
             // самого узла ему ближе полуширины
-            let butt_start = index == 0 && !round_caps[0];
-            let butt_end = index == last && !round_caps[1];
-            let along = (to - from).normalize_or_zero();
-            let min_tile = self.to_tile(from.min(to) - width);
-            let max_tile = self.to_tile(from.max(to) + width);
-            for x in min_tile.x.max(0)..=max_tile.x.min(grid_size.x - 1) {
-                for y in min_tile.y.max(0)..=max_tile.y.min(grid_size.y - 1) {
-                    let center = (Vec2::new(x as f32, y as f32) + 0.5) * tile_size;
-                    if distance_to_segment(center, from, to) > width / 2.0 {
-                        continue;
-                    }
-                    if butt_start && (center - from).dot(along) < 0.0 {
-                        continue;
-                    }
-                    if butt_end && (center - to).dot(along) > 0.0 {
-                        continue;
-                    }
-                    visit(self, x, y);
-                }
-            }
-            self.visit_segment_tiles(from, to, visit);
+            let butt = [
+                index == 0 && !round_caps[0],
+                index == last && !round_caps[1],
+            ];
+            self.visit_segment_band(from, to, width, butt, visit);
         }
+    }
+
+    /// Тело обхода одного отрезка ленты: капсульный скан тайлов вокруг
+    /// отрезка плюс четырёхсвязная цепочка по осевой
+    /// ([`Self::visit_segment_tiles`]). Выделено, чтобы локальный refill
+    /// раундов калиток (`super::fill`) растеризовал отрезки оград тем же
+    /// обходом, что и полная заливка.
+    pub(super) fn visit_segment_band(
+        &mut self,
+        from: Vec2,
+        to: Vec2,
+        width: f32,
+        butt: [bool; 2],
+        visit: &mut impl FnMut(&mut Self, i32, i32),
+    ) {
+        let (grid_size, tile_size) = (self.grid_size, self.tile_size);
+        let along = (to - from).normalize_or_zero();
+        let min_tile = self.to_tile(from.min(to) - width);
+        let max_tile = self.to_tile(from.max(to) + width);
+        for x in min_tile.x.max(0)..=max_tile.x.min(grid_size.x - 1) {
+            for y in min_tile.y.max(0)..=max_tile.y.min(grid_size.y - 1) {
+                let center = (Vec2::new(x as f32, y as f32) + 0.5) * tile_size;
+                if distance_to_segment(center, from, to) > width / 2.0 {
+                    continue;
+                }
+                if butt[0] && (center - from).dot(along) < 0.0 {
+                    continue;
+                }
+                if butt[1] && (center - to).dot(along) > 0.0 {
+                    continue;
+                }
+                visit(self, x, y);
+            }
+        }
+        self.visit_segment_tiles(from, to, visit);
     }
 
     /// Тайлы в прямоугольнике вокруг каждого сегмента: как

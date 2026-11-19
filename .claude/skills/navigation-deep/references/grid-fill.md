@@ -100,22 +100,30 @@ from the union of everything. **The renderer draws the same gaps**
   **`MapData`**, not the grid — `fence_gaps` reads it, so the polygonal mesh built later
   from the same map has the same gates (pinned by
   `parity_tests::fences_block_and_gates_open_in_both_fills`);
-- the grid after a round is `passable.copy_from_slice(&base.passable)` (the
-  `base_scratch` snapshot) + `fill_fences` (through the cached gaps, `FenceGapCache`)
-  + `carve_passages`, and
-  reachability grows from the new gates (`extend_reachable`) rather than being
-  re-flooded: a gate only ever opens tiles.
+- the grid after a round is what a full rebuild would give (`base` + `fill_fences`
+  through the cached gaps, `FenceGapCache` + `carve_passages`), but the rebuild runs
+  **locally** (`fill.rs::refill_gate_boxes`): the `base` snapshot is restored only
+  inside the merged-gap boxes of the round's new gates, fences are re-laid only by the
+  segments whose bounding boxes cross those boxes (the same per-segment walk the full
+  fill uses, `raster.rs::visit_segment_band`), and the passages are re-carved from a
+  tile list collected once (`fill.rs::passage_tiles` — passages depend on neither
+  fences nor rounds). Outside the boxes the gap verdicts did not change, so
+  re-blocking is a no-op there; a full-grid `copy_from_slice` would only re-write
+  what is already correct. Reachability grows from the new gates (`extend_reachable`)
+  rather than being re-flooded: a gate only ever opens tiles.
 - the pocket scan of rounds 2+ skips the whole-grid walk: `reachable` only grows
   between rounds, and a refill moves `passable` only inside the merged-gap boxes of
-  the round's new gates (`fill.rs::gate_gap_tiles`; a gate that lands on a road gap
+  the round's new gates (`fill.rs::gate_gap_boxes`; a gate that lands on a road gap
   pulls that gap's disc to itself and can close back tiles at the old edge, so
   `passable` between rounds is *not* monotone — the boxes snapshot the grid before
-  and after instead of an unblock-only delta). The rounds walk the accumulated
-  ever-pocketed set plus those fresh boxes, pockets sorted by their first tile — the
-  order the full scan would have found them in, and the order the `GATE_SPACING`
-  resolution depends on; the results match the full scan bit for bit (pinned by the
-  probe counts on five cities). Tiles the reachability grew over leave the set —
-  they can never be pockets again.
+  and after instead of an unblock-only delta, and the box radius takes the widest
+  gap merging into the gate, not the first found — a second gap of the same fence in
+  the same joint can be wider, and its disc moves with the rest). The rounds walk the
+  accumulated ever-pocketed set plus those fresh boxes, pockets sorted by their first
+  tile — the order the full scan would have found them in, and the order the
+  `GATE_SPACING` resolution depends on; the results match the full scan bit for bit
+  (pinned by the probe counts and passable hashes on five cities). Tiles the
+  reachability grew over leave the set — they can never be pockets again.
 - **two gates of one round stand at least `GATE_SPACING` 10 m apart**: neighbouring
   pockets of a round are usually pieces of one yard cut by a door or a bend, and they
   pick neighbouring tiles — without the spacing Tula got five gates 2–3 m apart, one
