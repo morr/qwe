@@ -606,7 +606,11 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
 - **Map seed** (`map/seed.rs`) — one Park–Miller LCG (`Lcg`) and one point hash
   (`seed_from_point`) shared by everything the map *layers* scatter. **The seed is the
   object's own reference point** — its first vertex — never its index in the extract, so
-  a zoom rebuild, a height-mode switch and a restart move nothing. The parse stage keeps
+  a zoom rebuild, a height-mode switch and a restart move nothing. **The one exception
+  is the crown pool**: a tree's variant is `index % variants` over the planted set keyed
+  by the pool's global seed (`crown.rs::variant_rng`), not a point — planting is
+  deterministic, so the assignment survives the same rebuilds; a fresh extract re-plants
+  anyway. The parse stage keeps
   its own point-seeded `rng::lcg_seeded_by`.
 - **Arclength walk** (`map/along.rs`) — `arclengths` + `place_on_path`, the one walk along
   a polyline's **whole** length, shared by every layer that places objects along linear
@@ -836,7 +840,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   stays the base, the shader multiplies in procedural noise **by world position** —
   identical in any two overlapping ribbons. **Every octave fades by pixel size**, so
   nothing shimmers — that rule lives in **`assets/shaders/noise.wesl`** and is imported
-  by all three map shaders. One material per **`SurfaceKind`**; **`SurfaceStyle::texture`**
+  by all four map shaders (surface, roof, crown, paint). One material per **`SurfaceKind`**; **`SurfaceStyle::texture`**
   scales amplitudes and retunes uniforms without rebuilding. A mesh for it is built with
   **`MeshBuilder::with_surface_coords`** — the **`Ribbon` attribute** in metres, zeros on
   polygons.
