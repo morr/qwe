@@ -280,8 +280,9 @@ back on itself.
 width }` — what a band means on the ground the consumer's fill order decides, the band
 carries no role —, one construction for every consumer (road decks, curbs and passages,
 water channels (`None` for culverts), walls, fences with their `fence_gaps`). The width
-policy (`casing_width`, `bridge_curb_width`) lives here too, its ranges deliberately
-disjoint so a curb always out-sticks a casing — because a curb is not just paint: the
+policy (`casing_width`, `bridge_curb_width`) lives here too: a curb always out-sticks a
+casing by its larger share — 12% vs 8% of the width; the clamp ranges overlap on
+0.8–1.0 but preserve that order for every width — because a curb is not just paint: the
 same band blocks the navmesh, and the drawn strip must match the blocked one by
 construction. Bands carry
 the **centerline**, not a ready outline: the grid fill needs the centerline for its
@@ -314,7 +315,10 @@ going through the curb pin tests
   is the seed itself: the object's **own reference point** in
   centimetres — the first vertex of a footprint, the first point of a street — through three
   mixing rounds, never the object's index in the extract, which a re-parse is free to move.
-  Callers: the building material and clutter, the crowns, the cars, the wagons.
+  Callers: the building material and clutter, the cars, the wagons — **not the crowns**:
+  a tree's variant is `index % variants` over the planted set keyed by the pool's global
+  seed (`crown.rs::variant_rng`), not by a point; planting is deterministic, so the
+  assignment survives the same rebuilds (the CONTEXT.md Map-seed bullet carries this).
   A copy of either primitive is the defect this module exists against.
   The **parse** stage is deliberately not on it — doors (`osm/entrances/`) and tree planting
   (`osm/planting.rs`) run on `rng::lcg_seeded_by`, a different point-seeded LCG, and rewiring
