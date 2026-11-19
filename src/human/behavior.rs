@@ -21,6 +21,13 @@ use crate::settings::{
 use crate::spatial::SpatialGrid;
 use crate::telemetry::Telemetry;
 
+/// Период перепрокладки пути у бегущего — единственный его источник: бросок
+/// в `panic` идёт из этой константы, а док-приписки «раз в 0.7–1.2 с»
+/// (`behavior.rs`, `movement/destination.rs`) и «раз в 45–77 тиков»
+/// (`human/decide.rs`, при 64 Гц) — её производные. Меняешь константу —
+/// проверь все три.
+const FLEE_REPATH_PERIOD: std::ops::Range<f32> = 0.7..1.2;
+
 /// Wander → Flee: демон в радиусе паники.
 ///
 /// Цикл инвертирован: не «каждый из ~20 000 гуляющих опрашивает сетку
@@ -76,7 +83,7 @@ pub fn panic(
         // тем же людям другие периоды при том же seed.
         let period = wander_index
             .next(seed.0, crate::rng::RngDomain::Human, pawn_id.0)
-            .random_range(0.7..1.2);
+            .random_range(FLEE_REPATH_PERIOD);
         let mut repath = FleeRepath::default();
         // первый путь — сразу, дальше по таймеру со случайным периодом.
         // Порядок обязателен: `almost_finish` отмеряет остаток от УЖЕ
