@@ -76,16 +76,24 @@ impl Navmesh {
         let fences = FenceIndex::build(&map.fences);
 
         let mut reachable = vec![false; self.passable.len()];
-        self.flood(&self.passable, &mut reachable, vec![start]);
-        // достижимое без оград — то же достижимое, доросшее сквозь тайлы оград:
-        // второй полный обход сетки стоил бы столько же, сколько первый
-        let mut reachable_bare = reachable.clone();
-        let seeds: Vec<usize> = (0..self.passable.len())
-            .filter(|&index| {
-                fenced(self, index) && self.neighbours(index).any(|next| reachable[next])
-            })
-            .collect();
-        self.flood(&bare.passable, &mut reachable_bare, seeds);
+        let mut reachable_bare = vec![false; self.passable.len()];
+        // достижимое без оград — bare-компонента портала: bare.passable ⊇
+        // passable, так что ограждённая компонента лежит в ней целиком, а тайл
+        // bare-компоненты вне её примыкает к ней через тайл, закрытый только
+        // оградой, — тот же набор, который раньше растили из ограждённой
+        // сквозь тайлы оград; скан касающихся seed-ов и клон достижимости
+        // ушли вместе с зависимостью между обходами. Обходы друг от друга не
+        // зависят — идут в двух потоках. Гард повторяет прежнее поведение на
+        // непроходимом старте (снап вернул сырую подсказку): оба набора пусты
+        let bare_start = if self.passable[start] {
+            vec![start]
+        } else {
+            Vec::new()
+        };
+        std::thread::scope(|scope| {
+            scope.spawn(|| self.flood(&self.passable, &mut reachable, vec![start]));
+            scope.spawn(|| self.flood(&bare.passable, &mut reachable_bare, bare_start));
+        });
         let mut opened = 0;
         // Тайлы, когда-либо бывшие отрезанным карманом, и раунд, когда тайл
         // последний раз входил в карман (0 — никогда). За раунды `reachable`
@@ -142,8 +150,12 @@ impl Navmesh {
             for pocket in &pockets {
                 // в накопление идут тайлы, вошедшие в карман впервые:
                 // помеченные прошлыми раундами там уже лежат
-                cut_tiles
-                    .extend(pocket.iter().filter(|&&tile| pocket_round[tile] == round).copied());
+                cut_tiles.extend(
+                    pocket
+                        .iter()
+                        .filter(|&&tile| pocket_round[tile] == round)
+                        .copied(),
+                );
                 let holds_door = pocket.iter().any(|&tile| door_tiles[tile]);
                 if !holds_door && pocket.len() < pocket_min_tiles {
                     continue;
@@ -178,7 +190,10 @@ impl Navmesh {
                 // выбирают рядом: без разноса пять калиток легли на Туле через
                 // 2–3 м в один десятиметровый пролом. Лишний карман, который
                 // соседняя калитка не открыла, подберёт следующий раунд
-                if added.iter().any(|(_, gate)| gate.distance(at) < GATE_SPACING) {
+                if added
+                    .iter()
+                    .any(|(_, gate)| gate.distance(at) < GATE_SPACING)
+                {
                     continue;
                 }
                 let known = &mut map.fences[fence].gates;
@@ -216,9 +231,7 @@ impl Navmesh {
             fresh = watched
                 .iter()
                 .zip(before)
-                .filter_map(|(&index, was)| {
-                    (!was && self.passable[index]).then_some(index)
-                })
+                .filter_map(|(&index, was)| (!was && self.passable[index]).then_some(index))
                 .collect();
             self.extend_reachable(&mut reachable, &added_at, FENCE_GATE_WIDTH / 2.0 + limit);
             // отрезанные, которых достижимость догнала, не вернутся никогда —
