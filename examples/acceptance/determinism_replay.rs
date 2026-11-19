@@ -29,11 +29,12 @@
 //! cargo run --example determinism_replay -- [ticks]
 //! ```
 
-use bevy::prelude::*;
+#[path = "../common/mod.rs"]
+mod common;
 
 use qwe::city::City;
 use qwe::determinism::replay::{Fingerprint, Progress, replay_app, run_to_tick};
-use qwe::map::osm::{MapData, overpass, parse};
+use qwe::map::osm::{MapData, parse};
 use qwe::navigation::{Navmesh, snap_portal_position};
 use qwe::restart::RestartEvent;
 use qwe::settings::HUMAN_COUNT;
@@ -67,7 +68,7 @@ fn main() {
 
     // JSON читается один раз, а `MapData` разбирается заново для каждого
     // прогона: она не `Clone`, а ресурс нужен каждому приложению свой
-    let json = load_json();
+    let json = common::load_json(CITY);
     let navmesh = build_navmesh(parse_map(&json));
     let portal = snap_portal_position(&navmesh, CITY.portal_hint()).expect("no spot for portal");
     let app = |seed| replay_app(parse_map(&json), navmesh.clone(), portal, seed, HUMAN_COUNT);
@@ -127,16 +128,6 @@ fn report(runs: &[(&str, Fingerprint)]) {
 fn check(what: &str, passed: bool) -> u32 {
     println!("{} {what}", if passed { "  ok  " } else { "FAILED" });
     u32::from(!passed)
-}
-
-fn load_json() -> String {
-    let path = overpass::cache_path(CITY);
-    std::fs::read_to_string(&path).unwrap_or_else(|error| {
-        panic!(
-            "no OSM cache at {}: {error}. run the app once to download it",
-            path.display()
-        )
-    })
 }
 
 fn parse_map(json: &str) -> MapData {

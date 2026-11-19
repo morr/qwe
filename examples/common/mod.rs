@@ -19,15 +19,20 @@ use qwe::navigation::{Navmesh, snap_portal_position};
 
 /// Карта — только из кеша: инструменты работают офлайн, выгрузку делает игра.
 pub fn load_map(city: City) -> MapData {
+    parse::parse(&load_json(city), city, parse::ParseKnobs::default())
+        .expect("failed to parse cached OSM json")
+}
+
+/// Сырой JSON выгрузки из кеша — половина [`load_map`], отдельно для примера,
+/// которому `MapData` нужна несколько раз (`MapData` не `Clone`).
+pub fn load_json(city: City) -> String {
     let path = overpass::cache_path(city);
-    let json = std::fs::read_to_string(&path).unwrap_or_else(|error| {
+    std::fs::read_to_string(&path).unwrap_or_else(|error| {
         panic!(
             "no OSM cache at {}: {error}. run the app once to download it",
             path.display()
         )
-    });
-    parse::parse(&json, city, parse::ParseKnobs::default())
-        .expect("failed to parse cached OSM json")
+    })
 }
 
 /// Сеточный navmesh — ровно как в игре, вместе с отсечением недостижимого от
