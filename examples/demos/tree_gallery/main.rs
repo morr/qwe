@@ -381,7 +381,7 @@ fn rebuild_crowns(
         ..default()
     };
     // множитель яркости — в юниформе, как в игре: цвет кроны считает шейдер
-    // (`crown.wgsl`), и слотов ровно столько же
+    // (`crown.wesl`), и слотов ровно столько же
     let tints: Vec<Handle<CrownMaterial>> = style
         .tint_factors()
         .iter()

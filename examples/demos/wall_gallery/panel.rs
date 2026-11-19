@@ -1,5 +1,5 @@
 //! Панель витрины: строки-ползунки на все ручки, значения констант стены под
-//! ними — проёмы из `roof.wgsl` и пороги из `layers.rs` — и плашка с масштабом
+//! ними — проёмы из `roof.wesl` и пороги из `layers.rs` — и плашка с масштабом
 //! внизу справа.
 //!
 //! Устройство повторяет `roof_gallery/panel.rs` слово в слово, и намеренно:
@@ -77,7 +77,7 @@ pub(crate) fn spawn_panel(mut commands: Commands, assets: Res<AssetServer>, tuni
         |_: On<Activate>, mut tuning: ResMut<Tuning>| *tuning = Tuning::default(),
     );
 
-    spawn_group_header(&mut commands, panel, "Проёмы, roof.wgsl");
+    spawn_group_header(&mut commands, panel, "Проёмы, roof.wesl");
     for (name, value) in shader_constants() {
         spawn_constant_row(&mut commands, panel, name, value);
     }
@@ -116,7 +116,7 @@ fn spawn_constant_row(commands: &mut Commands, panel: Entity, name: &str, value:
 }
 
 /// Плашка с масштабом — внизу справа, подальше от панели. Не подсказка по
-/// клавишам, а измерение: правило гашения в `noise.wgsl` задано в пикселях, и
+/// клавишам, а измерение: правило гашения в `noise.wesl` задано в пикселях, и
 /// без числа на экране «окна пропали» не отличить от «фактура выключена».
 pub(crate) fn spawn_readout(mut commands: Commands, assets: Res<AssetServer>) {
     commands.spawn((
