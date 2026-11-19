@@ -31,8 +31,12 @@ tools/prune-target-objects.sh
 
 if [ "$#" -gt 0 ]; then
     echo "== rustfmt $*"
-    RUSTFMT=~/.rustup/toolchains/nightly-aarch64-apple-darwin/bin/rustfmt \
-        cargo fmt -- "$@" || failed="$failed fmt"
+    # rustfmt directly, not `cargo fmt --`: the latter formats the whole
+    # package no matter the file arguments and rewrites files nobody touched
+    # (review 7: three stray reformats rode in on a one-file call). The
+    # .rustfmt.toml carries edition = 2024, so let-chains parse as written.
+    ~/.rustup/toolchains/nightly-aarch64-apple-darwin/bin/rustfmt "$@" \
+        || failed="$failed fmt"
 fi
 
 if [ -n "$failed" ]; then
