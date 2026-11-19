@@ -116,8 +116,8 @@ resource exists so a headless scene can run 64 pawns instead of 20 000 (the whol
 - **An app that wants another size inserts it after `add_plugins`** —
   `determinism::replay::replay_app` does exactly that, and swapping the two lines would
   silently put 20 000 humans back into the replay test.
-- Demo stands do not use it: they call `spawn_population` directly (`crowd_demo`) because
-  `HumanPlugin` would settle the whole city.
+- Demo stands do not use it: `crowd_demo` hand-spawns its own pawns with the same bundle
+  (`scenario.rs::spawn_pawn`) because `HumanPlugin` would settle the whole city.
 
 ### Wander
 
