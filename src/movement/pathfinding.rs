@@ -372,7 +372,18 @@ pub fn dispatch_pathfinding_requests_deterministic(
         Has<super::components::UrgentPath>,
     )>,
     tasks: Query<(), With<PathfindingTask>>,
+    // штамп и диспетчер держит цепочка (`stamp_pathfinding_requests` стоит в
+    // ней до диспетчера), а не тип: заявка без `RequestedAt` в `requests`
+    // выше не попадает вовсе — пешка замерла бы молча. Запрос существует
+    // только для ассерта; в release-профиле он не итерируется, ноль за тик.
+    _unstamped: Query<(), (With<PathfindingRequest>, Without<RequestedAt>)>,
 ) {
+    debug_assert!(
+        _unstamped.is_empty(),
+        "заявка без `RequestedAt`: цепочка «штамп до диспетчера» разорвана \
+         (см. stamp_pathfinding_requests в movement/mod.rs)"
+    );
+
     let in_flight_cap = (crate::settings::PATHFINDING_URGENT_UNITS_PER_TICK
         + crate::settings::PATHFINDING_WANDER_UNITS_PER_TICK) as usize
         * crate::settings::PATHFINDING_RETIRE_TICKS as usize;
