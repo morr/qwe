@@ -11,7 +11,7 @@ use bevy::prelude::*;
 
 use super::Navmesh;
 use crate::grid::{grid_size, navtile_size};
-use crate::map::footprint::{FenceGapCache, distance_to_polyline};
+use crate::map::footprint::{FENCE_GATE_WIDTH, FenceGapCache, JOIN_EPSILON, distance_to_polyline};
 use crate::map::grid::Grid;
 use crate::map::osm::model::{MapData, closest_on_segment, distance_to_segment, water_line_caps};
 
@@ -286,6 +286,46 @@ impl Navmesh {
             self.passable[index] = false;
         }
         self.fence_cache = Some(cache);
+    }
+
+    /// Тайлы, у которых пересбор сетки мог изменить проходимость, — бокс
+    /// вокруг слитого проёма каждой добавленной калитки. Пересбор меняет сетку
+    /// только на проёмах оград, а у слитого проёма новой калитки меняется и
+    /// позиция: калитка, вставшая на дорожный проём ([`JOIN_EPSILON`]), тянет
+    /// его на себя, и по краю старого проёма тайлы закрываются обратно —
+    /// passable между раундами не монотонна, поэтому бокс накрывает оба
+    /// положения диска проёма (радиус `+ JOIN_EPSILON`) и берёт reach слитого
+    /// проёма, а не только ширину самой калитки ([`FENCE_GATE_WIDTH`]). До
+    /// пересбора слитых списков ещё нет — калитка ищется среди старых проёмов
+    /// ограды; промах — калитка стоит вдали от них и открывает ровно свою
+    /// ширину.
+    pub(super) fn gate_gap_tiles(&self, added: &[(usize, Vec2)]) -> Vec<usize> {
+        let gaps = self
+            .fence_cache
+            .as_ref()
+            .expect("gate rounds refill keeps the gap cache alive")
+            .gaps();
+        let margin = self.tile_size * SQRT_2;
+        let mut watched: Vec<usize> = Vec::new();
+        for &(fence, at) in added {
+            let mut reach = FENCE_GATE_WIDTH / 2.0;
+            if let Some(gap) = gaps[fence].iter().find(|gap| gap.at.distance(at) < JOIN_EPSILON) {
+                reach = reach.max(gap.reach);
+            }
+            let reach = reach + margin + JOIN_EPSILON;
+            let min = self.to_tile(at - reach);
+            let max = self.to_tile(at + reach);
+            for x in min.x..=max.x {
+                for y in min.y..=max.y {
+                    if let Some(index) = self.index(x, y) {
+                        watched.push(index);
+                    }
+                }
+            }
+        }
+        watched.sort_unstable();
+        watched.dedup();
+        watched
     }
 }
 

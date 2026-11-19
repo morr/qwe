@@ -149,22 +149,26 @@ impl Navmesh {
             .filter_map(move |(dx, dy)| self.index(x + dx, y + dy))
     }
 
-    /// Связная компонента `mask` от `start`; обойдённое метится в `seen`.
+    /// Связная компонента `mask` от `start`; обойдённое метится в `seen`
+    /// номером `round` — раунды калиток держат один массив на все раунды и
+    /// отличают «в кармане этого раунда» от «в кармане раньше», поэтому
+    /// отметка — номер, а не булев флаг.
     pub(super) fn component(
         &self,
         start: usize,
         mask: &impl Fn(usize) -> bool,
-        seen: &mut [bool],
+        seen: &mut [u8],
+        round: u8,
     ) -> Vec<usize> {
-        seen[start] = true;
+        seen[start] = round;
         let mut tiles = vec![start];
         let mut cursor = 0;
         while cursor < tiles.len() {
             let index = tiles[cursor];
             cursor += 1;
             for next in self.neighbours(index) {
-                if !seen[next] && mask(next) {
-                    seen[next] = true;
+                if seen[next] != round && mask(next) {
+                    seen[next] = round;
                     tiles.push(next);
                 }
             }

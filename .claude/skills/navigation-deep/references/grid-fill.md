@@ -105,6 +105,17 @@ from the union of everything. **The renderer draws the same gaps**
   + `carve_passages`, and
   reachability grows from the new gates (`extend_reachable`) rather than being
   re-flooded: a gate only ever opens tiles.
+- the pocket scan of rounds 2+ skips the whole-grid walk: `reachable` only grows
+  between rounds, and a refill moves `passable` only inside the merged-gap boxes of
+  the round's new gates (`fill.rs::gate_gap_tiles`; a gate that lands on a road gap
+  pulls that gap's disc to itself and can close back tiles at the old edge, so
+  `passable` between rounds is *not* monotone — the boxes snapshot the grid before
+  and after instead of an unblock-only delta). The rounds walk the accumulated
+  ever-pocketed set plus those fresh boxes, pockets sorted by their first tile — the
+  order the full scan would have found them in, and the order the `GATE_SPACING`
+  resolution depends on; the results match the full scan bit for bit (pinned by the
+  probe counts on five cities). Tiles the reachability grew over leave the set —
+  they can never be pockets again.
 - **two gates of one round stand at least `GATE_SPACING` 10 m apart**: neighbouring
   pockets of a round are usually pieces of one yard cut by a door or a bend, and they
   pick neighbouring tiles — without the spacing Tula got five gates 2–3 m apart, one

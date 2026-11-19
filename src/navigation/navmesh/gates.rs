@@ -87,7 +87,18 @@ impl Navmesh {
             .collect();
         self.flood(&bare.passable, &mut reachable_bare, seeds);
         let mut opened = 0;
-        for _ in 0..GATE_ROUNDS {
+        // Тайлы, когда-либо бывшие отрезанным карманом, и раунд, когда тайл
+        // последний раз входил в карман (0 — никогда). За раунды `reachable`
+        // только растёт, а `reachable_bare` постоянен; `passable` меняется
+        // только в боксах проёмов свежих калиток (`gate_gap_tiles`), так что
+        // тайл может стать отрезанным, лишь войдя в такой бокс или уже быв
+        // карманным. Отсюда раунды 2+ обходят не всю сетку, а накопленный
+        // набор с дельтой свежих проёмов: карманы те же, что нашёл бы полный
+        // проход.
+        let mut cut_tiles: Vec<usize> = Vec::new();
+        let mut fresh: Vec<usize> = Vec::new();
+        let mut pocket_round = vec![0u8; self.passable.len()];
+        for round in 1..=GATE_ROUNDS as u8 {
             // тайл ограды, в котором открыть калитку: из кандидатов — тот, что
             // уже касается достижимого; при двойной ограде такого нет, и
             // открывается внутренняя, а внешнюю откроет следующий раунд
@@ -103,15 +114,36 @@ impl Navmesh {
                 })
             };
             let mut gate_tiles: Vec<usize> = Vec::new();
-            // карманы: проходимо и достижимо без оград, но не с ними
+            // карманы: проходимо и достижимо без оград, но не с ними. Раунд 1 —
+            // полный проход; дальше — накопленный набор с дельтой. Карманы
+            // собираются все, потом обрабатываются в порядке их первого тайла —
+            // это порядок, в котором полный проход нашёл бы их сам; от него
+            // зависит разнос калиток (`GATE_SPACING`), поэтому порядок обязан
+            // совпадать с полным проходом бит в бит.
             let cut =
                 |index: usize| self.passable[index] && reachable_bare[index] && !reachable[index];
-            let mut seen = vec![false; self.passable.len()];
-            for index in 0..self.passable.len() {
-                if seen[index] || !cut(index) {
-                    continue;
+            let mut pockets: Vec<Vec<usize>> = Vec::new();
+            if round == 1 {
+                for index in 0..self.passable.len() {
+                    if pocket_round[index] == round || !cut(index) {
+                        continue;
+                    }
+                    pockets.push(self.component(index, &cut, &mut pocket_round, round));
                 }
-                let pocket = self.component(index, &cut, &mut seen);
+            } else {
+                for index in cut_tiles.iter().chain(fresh.iter()).copied() {
+                    if pocket_round[index] == round || !cut(index) {
+                        continue;
+                    }
+                    pockets.push(self.component(index, &cut, &mut pocket_round, round));
+                }
+            }
+            pockets.sort_unstable_by_key(|pocket| pocket.iter().min().copied());
+            for pocket in &pockets {
+                // в накопление идут тайлы, вошедшие в карман впервые:
+                // помеченные прошлыми раундами там уже лежат
+                cut_tiles
+                    .extend(pocket.iter().filter(|&&tile| pocket_round[tile] == round).copied());
                 let holds_door = pocket.iter().any(|&tile| door_tiles[tile]);
                 if !holds_door && pocket.len() < pocket_min_tiles {
                     continue;
@@ -135,7 +167,7 @@ impl Navmesh {
                 gate_tiles.extend(pick(&mut candidates));
             }
 
-            let mut added: Vec<Vec2> = Vec::new();
+            let mut added: Vec<(usize, Vec2)> = Vec::new();
             for tile in gate_tiles {
                 let Some((fence, at)) = fences.nearest(&map.fences, self.index_center(tile), limit)
                 else {
@@ -146,7 +178,7 @@ impl Navmesh {
                 // выбирают рядом: без разноса пять калиток легли на Туле через
                 // 2–3 м в один десятиметровый пролом. Лишний карман, который
                 // соседняя калитка не открыла, подберёт следующий раунд
-                if added.iter().any(|gate| gate.distance(at) < GATE_SPACING) {
+                if added.iter().any(|(_, gate)| gate.distance(at) < GATE_SPACING) {
                     continue;
                 }
                 let known = &mut map.fences[fence].gates;
@@ -155,20 +187,48 @@ impl Navmesh {
                     .all(|gate| gate.distance(at) > FENCE_GATE_WIDTH / 2.0)
                 {
                     known.push(at);
-                    added.push(at);
+                    added.push((fence, at));
                 }
             }
             if added.is_empty() {
                 break;
             }
             opened += added.len();
+            // калитки только открывают: сетка, где проходимого стало больше и
+            // ничего не закрылось, поэтому достижимость дорастает от калиток,
+            // а не считается заново. Сетка раунда — та же, что дал бы полный
+            // пересбор (`copy_from_slice` основы + `fill_fences` +
+            // `carve_passages`): тайлы старых проёмов уже открыты, и дельта
+            // новых калиток открывает ровно то, что пересбор открыл бы заново
+            let added_at: Vec<Vec2> = added.iter().map(|&(_, at)| at).collect();
             // калитки только открывают: заливка оград поверх той же основы
             // даёт сетку, где проходимого стало больше и ничего не закрылось,
-            // поэтому достижимость дорастает от калиток, а не считается заново
+            // поэтому достижимость дорастает от калиток, а не считается заново.
+            // Сетка между раундами не монотонна (слитый проём съезжает вместе
+            // с калиткой), но меняется только в боксах новых проёмов — там
+            // снимаются значения до и после, и открывшиеся тайлы идут
+            // следующему раунду карманов свежими кандидатами
+            let watched = self.gate_gap_tiles(&added);
+            let before: Vec<bool> = watched.iter().map(|&index| self.passable[index]).collect();
             self.passable.copy_from_slice(&base.passable);
             self.fill_fences(map);
             self.carve_passages(map);
-            self.extend_reachable(&mut reachable, &added, FENCE_GATE_WIDTH / 2.0 + limit);
+            fresh = watched
+                .iter()
+                .zip(before)
+                .filter_map(|(&index, was)| {
+                    (!was && self.passable[index]).then_some(index)
+                })
+                .collect();
+            self.extend_reachable(&mut reachable, &added_at, FENCE_GATE_WIDTH / 2.0 + limit);
+            // отрезанные, которых достижимость догнала, не вернутся никогда —
+            // reachable только растёт. Держатся и ещё не открытые: passable
+            // между раундами не монотонна (слитый проём съезжает), и тайл,
+            // закрытый пересбором обратно, может открыться следующим раундом.
+            // Предикат не ссылка на `cut` выше: замыкание, дожившее до этой
+            // строки, растянуло бы его immutable borrow через мутабельные
+            // вызовы выше
+            cut_tiles.retain(|&index| !reachable[index]);
         }
         opened
     }
