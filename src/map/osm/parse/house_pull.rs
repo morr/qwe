@@ -1,9 +1,10 @@
 //! Дома, наехавшие на нарисованный тротуар, отодвигаются от улицы — рядом,
 //! а не по одному ([`pull_houses_off_sidewalks`]).
 
-use std::collections::HashMap;
-
 use bevy::math::Vec2;
+// карты города — на foldhash (см. `parse.rs`), std тут остался не по делу:
+// ключи — `(usize, bool)`, городская индексация и подсчёт, serde ни при чём
+use bevy::platform::collections::HashMap;
 
 use super::{Link, SIDEWALK_CELL, vertex_key, vertex_uses};
 use crate::map::grid::Grid;
