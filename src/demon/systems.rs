@@ -80,6 +80,14 @@ pub fn tick_spawner(
     spawn_demon(&mut commands, &mut spawner, &birth, None);
 }
 
+/// База скорости демона на этом прогоне: единственная формула и для скорости
+/// при рождении, и для `sync_demon_speed` (ползунок), — две копии выражения
+/// разъехались бы молча: свежерождённый демон побежал бы с другой базой,
+/// чем вся стая.
+fn demon_speed(style: &DemonStyle) -> f32 {
+    DEMON_SPEED * style.speed
+}
+
 /// Всё, что демон получает при рождении помимо номера и угла. Четыре ресурса
 /// читаются одинаково в обеих системах спавна, поэтому ездят одним значением,
 /// а не пятёркой позиционных аргументов.
@@ -100,7 +108,7 @@ impl<'a> DemonBirth<'a> {
         Self {
             world_seed: seed.0,
             portal_pos: portal_pos.0,
-            speed: DEMON_SPEED * style.speed,
+            speed: demon_speed(style),
             silhouettes,
         }
     }
@@ -183,7 +191,7 @@ pub fn demon_speed_changed(style: Res<DemonStyle>, mut applied: Local<Option<f32
 /// Гоняется по [`demon_speed_changed`], то есть на движение ползунка скорости,
 /// а не покадрово.
 pub fn sync_demon_speed(style: Res<DemonStyle>, mut demons: Query<&mut Movable, With<Demon>>) {
-    let speed = DEMON_SPEED * style.speed;
+    let speed = demon_speed(&style);
     for mut movable in &mut demons {
         movable.speed = speed;
     }
