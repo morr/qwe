@@ -120,7 +120,8 @@ panel** with four tabs (`ui/shell.rs`).
   the **camera line** `zoom/x/y cx/cy` and the **hits list** — what the map draws
   under the cursor, recomputed when the point moves over `INSPECTOR_QUERY_STEP`
   or the semantic index is rebuilt. Each hit prints `z  label`; the label dictionary
-  (**this file is its single owner**; `osm-map` points here): data features speak for
+  (**its owner is `map/inspect/labels.rs`** — `hit_line`/`pinned_line`; this panel only
+  prints what they return; `osm-map` points here): data features speak for
   themselves (`road residential 8.0 m, sidewalks`), a band the road drew itself carries
   the `(auto, …)` suffix — `sidewalk (auto, tagged)` (the sidewalk came from a
   `sidewalk=*` tag) / `sidewalk (auto, inferred)` (the parse inferred it) — and a hit that
@@ -424,8 +425,9 @@ panel** with four tabs (`ui/shell.rs`).
   `bevy::settings::SettingsGroup`, so a click survives a
   restart. `SettingsPlugin` reads `settings.toml` from the OS settings dir (macOS:
   `~/Library/Preferences/com.github.morr.qwe/`) while the `App` is still being built,
-  before any schedule; `PrefsPlugin` is registered **last** because that scan needs the
-  other plugins' `register_type` calls to have run. Delete the file to reset — or
+  before any schedule; `PrefsPlugin` is registered **after every plugin that owns
+  settings groups**, because that scan needs the other plugins' `register_type` calls to
+  have run — only `QuitOnEscPlugin`, which registers none, comes after it. Delete the file to reset — or
   press the Debug tab's **`reset`** button, the same thing. **A worktree checkout keeps
   its own file instead**: `settings_app_name` detects the worktree by the `.git` **file**
   (a directory is the main checkout) and feeds `SettingsPlugin` the absolute path
