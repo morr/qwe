@@ -174,8 +174,8 @@ move the setting reads as having done nothing.
 ## SimPipeline — the toggle in the schedule
 
 `determinism/mod.rs`. **Three** system sets — `Live`, `Deterministic` and `BothModes` —
-gated once in `DeterminismPlugin` for every schedule they appear in (`Update`,
-`FixedUpdate`, both `OnEnter` phases). A system declares its branch with `.in_set(..)` and
+gated once in `DeterminismPlugin` for every schedule they appear in (`PreUpdate`,
+`Update`, `FixedUpdate`, both `OnEnter` phases). A system declares its branch with `.in_set(..)` and
 **never reads the mode**; a forgotten `run_if` is no longer a way to break replay.
 
 **The sets also carry the world gate** (`in_world`): world resources exist only between
