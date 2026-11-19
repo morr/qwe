@@ -121,9 +121,13 @@ from the union of everything. **The renderer draws the same gaps**
   pick neighbouring tiles — without the spacing Tula got five gates 2–3 m apart, one
   ten-metre breach. A pocket the neighbour's gate did not open is taken by the next round.
 
-The cost is mostly the one full flood (a tight index-arithmetic
-`flood`; the iterator version was three times slower) — the no-fence reachability is
-grown from it through the fence tiles rather than flooded again. Offline:
+The cost is two full floods run in parallel threads (`thread::scope`, one per
+closure): the fenced grid from the portal, and the bare grid from the same portal —
+the bare component covers the fenced one entirely and enters the rest of itself only
+through fence-only tiles, so it is the same set that used to be grown from the fenced
+component through the fence tiles (the tight index-arithmetic `flood`; the iterator
+version was three times slower). The floods write disjoint buffers, so neither the
+result nor the replay depends on the scheduling. Offline:
 `cargo run --example fence_prune_audit -- [city]` builds the map with and without
 fences and prints the audit numbers.
 
