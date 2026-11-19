@@ -610,9 +610,7 @@ fn a_parking_lot_is_its_own_layer_and_a_parking_house_stays_a_building() {
     assert_eq!(map.parking.len(), 1);
     // 110 × 110 м — больше `GROUND_MIN_AREA`, потому и Ground: площадка
     // меньше порога этот тест перестаёт мерить
-    assert!(
-        signed_ring_area(&map.parking[0].outer).abs() > GROUND_MIN_AREA
-    );
+    assert!(signed_ring_area(&map.parking[0].outer).abs() > GROUND_MIN_AREA);
     assert_eq!(map.parking[0].kind, AreaKind::Parking(LotKind::Ground));
     assert_eq!(map.buildings.len(), 1);
     assert_eq!(map.parks.len(), 1);

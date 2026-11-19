@@ -1165,8 +1165,7 @@ pub(super) fn extrusion_builder(
     // `building_chunk_z` (модуль `buildings`), и перевёрнутая сортировка
     // молча перепутала бы порядок клеток между чанками
     debug_assert!(
-        merged.len() < 2
-            || depth(merged[0].0) >= depth(merged[merged.len() - 1].0),
+        merged.len() < 2 || depth(merged[0].0) >= depth(merged[merged.len() - 1].0),
         "куски экструзии обязаны идти от дальней клетки к ближней"
     );
     (

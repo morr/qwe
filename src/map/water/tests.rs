@@ -122,7 +122,10 @@ fn a_mouth_reaches_past_the_bank_by_the_shore_width() {
     assert_eq!(run.clipped, [false, true]);
     assert!(close(run.points[0], on_x(-200.0)));
     // берег на x = -50, заход на ширину отмели глубже
-    assert!(close(*run.points.last().unwrap(), on_x(-50.0 + WATER_SHORE_WIDTH)));
+    assert!(close(
+        *run.points.last().unwrap(),
+        on_x(-50.0 + WATER_SHORE_WIDTH)
+    ));
 }
 
 #[test]
@@ -132,7 +135,10 @@ fn a_mouth_shallower_than_the_shore_is_carried_on_straight() {
     let found = runs(&path, &[pond(0.0)]);
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].clipped, [false, true]);
-    assert!(close(*found[0].points.last().unwrap(), on_x(-50.0 + WATER_SHORE_WIDTH)));
+    assert!(close(
+        *found[0].points.last().unwrap(),
+        on_x(-50.0 + WATER_SHORE_WIDTH)
+    ));
 }
 
 #[test]
@@ -142,7 +148,10 @@ fn a_channel_through_a_pond_is_cut_on_both_banks() {
     assert_eq!(found.len(), 2);
     assert_eq!(found[0].clipped, [false, true]);
     assert_eq!(found[1].clipped, [true, false]);
-    assert!(close(*found[0].points.last().unwrap(), on_x(-50.0 + WATER_SHORE_WIDTH)));
+    assert!(close(
+        *found[0].points.last().unwrap(),
+        on_x(-50.0 + WATER_SHORE_WIDTH)
+    ));
     assert!(close(found[1].points[0], on_x(50.0 - WATER_SHORE_WIDTH)));
     assert!(close(*found[1].points.last().unwrap(), on_x(200.0)));
 }
@@ -179,7 +188,10 @@ fn an_island_cuts_the_channel_on_both_of_its_shores() {
     let run = &found[0];
     assert_eq!(run.clipped, [true, true]);
     assert!(close(run.points[0], on_x(-20.0 - WATER_SHORE_WIDTH)));
-    assert!(close(*run.points.last().unwrap(), on_x(20.0 + WATER_SHORE_WIDTH)));
+    assert!(close(
+        *run.points.last().unwrap(),
+        on_x(20.0 + WATER_SHORE_WIDTH)
+    ));
 }
 
 #[test]
@@ -190,7 +202,10 @@ fn a_bank_through_a_vertex_of_the_axis_still_cuts() {
     let found = runs(&path, &[pond(0.0)]);
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].clipped, [false, true]);
-    assert!(close(*found[0].points.last().unwrap(), on_x(-50.0 + WATER_SHORE_WIDTH)));
+    assert!(close(
+        *found[0].points.last().unwrap(),
+        on_x(-50.0 + WATER_SHORE_WIDTH)
+    ));
 }
 
 #[test]
@@ -200,7 +215,10 @@ fn overlapping_water_polygons_cut_along_their_union() {
     let path = [on_x(-200.0), on_x(0.0)];
     let found = runs(&path, &[pond(0.0), pond(30.0)]);
     assert_eq!(found.len(), 1);
-    assert!(close(*found[0].points.last().unwrap(), on_x(-50.0 + WATER_SHORE_WIDTH)));
+    assert!(close(
+        *found[0].points.last().unwrap(),
+        on_x(-50.0 + WATER_SHORE_WIDTH)
+    ));
 }
 
 const CHANNEL_WIDTH: f32 = 8.0;
@@ -226,11 +244,17 @@ fn a_gap_between_two_river_polygons_becomes_water() {
     // полоса во всю ширину русла и с заходом в оба полигона: вплотную к
     // обрезанному ребру союз мог бы оставить щель
     assert!(
-        close(min, Vec2::new(-50.0 - WATER_SHORE_WIDTH, -CHANNEL_WIDTH / 2.0)),
+        close(
+            min,
+            Vec2::new(-50.0 - WATER_SHORE_WIDTH, -CHANNEL_WIDTH / 2.0)
+        ),
         "{min}"
     );
     assert!(
-        close(max, Vec2::new(50.0 + WATER_SHORE_WIDTH, CHANNEL_WIDTH / 2.0)),
+        close(
+            max,
+            Vec2::new(50.0 + WATER_SHORE_WIDTH, CHANNEL_WIDTH / 2.0)
+        ),
         "{max}"
     );
 }
