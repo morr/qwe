@@ -1,7 +1,6 @@
 use bevy::prelude::*;
 use rand::RngExt;
 
-use crate::grid::tile_center;
 use crate::human::components::{
     Human, HumanFirstWanderTag, HumanFleeTag, HumanStyle, HumanWanderTag, Pace, PanicRecoil,
     PopulationSize, WanderHeading, WanderPause,
@@ -163,7 +162,10 @@ pub fn spawn_population(
                 navmesh.passable_from(candidate).unwrap_or(candidate)
             }
         };
-        let position = tile_center(tile);
+        // тайл взяли снапшотом навмеша — и в мир переводим его его же
+        // `tile_center`: глобальный считает по атомику навтайла, что верно
+        // только пока снапшот и атомик совпадают (см. `navigation/navmesh.rs`)
+        let position = navmesh.tile_center(tile);
 
         // одежда — первые три броска потока; палитра в `look.rs`
         let attire = roll_attire(&mut rng);
@@ -713,7 +715,7 @@ mod tests {
         let count = world.query::<&Human>().iter(&world).count();
         assert_eq!(count, 4, "все люди должны быть спавнены даже со сканом");
 
-        let hole_center_world = tile_center(hole_tile);
+        let hole_center_world = crate::grid::tile_center(hole_tile);
         let mut query = world.query::<&Transform>();
         for transform in query.iter(&world) {
             let position = transform.translation.truncate();
