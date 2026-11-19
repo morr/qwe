@@ -9,7 +9,11 @@
 use bevy::prelude::*;
 
 use super::seams::node_world;
-use super::{ChunkComponents, ChunkGraph, GraphNode, chunk_cell, chunk_index};
+use super::{ChunkComponents, ChunkGraph, GraphNode, chunk_index};
+// `chunk_cell` зовёт только `panic_on_split_seam` под `debug_assertions` —
+// в release-сборке импорт рядом с остальными висит мёртвым грузом.
+#[cfg(debug_assertions)]
+use super::chunk_cell;
 use crate::map::parallel::in_parallel;
 
 /// Компоненты связности слоя: flood fill по соседству полигонов через общие
