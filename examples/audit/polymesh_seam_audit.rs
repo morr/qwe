@@ -7,8 +7,7 @@
 //! cargo run --release --example polymesh_seam_audit -- [radius ...]
 //! ```
 //!
-//! Без аргументов проходит все девять радиусов слайдера. На Туле: от 0 до 9
-//! непарных вершин на карту и ни одной опасной.
+//! Без аргументов проходит все пять радиусов слайдера (0.2–0.6).
 
 #[path = "../common/mod.rs"]
 mod common;
@@ -23,7 +22,7 @@ fn main() {
     let radii: Vec<f32> = {
         let args: Vec<String> = std::env::args().skip(1).collect();
         if args.is_empty() {
-            (2..=10).map(|step| step as f32 / 10.0).collect()
+            (2..=6).map(|step| step as f32 / 10.0).collect()
         } else {
             args.iter().map(|a| a.parse().expect("radius")).collect()
         }
