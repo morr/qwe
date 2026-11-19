@@ -111,7 +111,9 @@ in `main.rs`.
   own modules: `Z_BUILDING_SHADOW` 4.5, `Z_FACADE` 4.9, `Z_ROOF_SHADOW` 5.05
   (`map/buildings/mod.rs`); `Z_WALL` 5.1 is in the shared stack (`map/z.rs`).
   Units are y-sorted:
-  `unit_z(y) = Z_UNIT_BASE − y · Y_SORT_FACTOR` (10 − y·0.002). **Invariant: the unit z
+  `unit_z(y) = Z_UNIT_BASE − y · Y_SORT_FACTOR` (the base is derived — building ceiling
+  plus the full-map sag plus slack, ≈17.4 on the current map; the literal 10 was what a
+  bigger map once invalidated). **Invariant: the unit z
   range must stay above buildings (5) for any y ≤ MAP_SIZE.y** — a bigger map once sank
   northern units under roads. **Invariant: a road lies over water only as a bridge** —
   area water and open waterways both sit above every road ribbon and below the bridge
@@ -953,8 +955,10 @@ Summary; the mechanism and the measurements — **navigation-deep skill** (polym
   system taking `Res<Backend>` must sit in a `SimPipeline` set**. `walkable()` is the
   passability view: `allows`/`nearest_free_point` are backend-strict, `sift_target` /
   `line_of_sight` / `coast_allows` stay deliberately grid-only. **Invariant: outside
-  `navigation/` and `ui/`, the names `PolymeshBuild` / `PolymeshDebug` /
-  `PathfindingAlgorithm` do not appear** — the door for "run this world on the flat grid" is
+  `navigation/`, `ui/` and the load seam (`loading.rs` and `map/prepare.rs` — the warmup
+  knob and the mesh hand-off name these types because they sit on the map→nav boundary),
+  the names `PolymeshBuild` / `PolymeshDebug` / `PathfindingAlgorithm` do not appear** —
+  the door for "run this world on the flat grid" is
   **`navigation::use_flat_grid(&mut World)`**.
 - **NavMode** (`navigation/mode.rs`) — which backend is active **right now**, as one value:
   `Grid(Flat | HierarchyPending{wanted} | Hierarchy(g))` and `Mesh(Pending | Ready(b))`,
@@ -1468,7 +1472,9 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   **`app.register_pref::<T>()`** (`init_resource` + `register_type` + `track_pref` at
   once; a forgotten member of the hand-written trio was a silent failure, and
   `tests/prefs.rs` pins the pairing, with the deliberate exceptions named there);
-  `PrefsPlugin` is registered **last**. **In a worktree `settings.toml` is local** — `<checkout>/.settings/`,
+  `PrefsPlugin` is registered **after every plugin that owns settings groups** — the
+  registry scan needs the earlier `register_type` calls; the only plugin after it,
+  `QuitOnEscPlugin`, registers none. **In a worktree `settings.toml` is local** — `<checkout>/.settings/`,
   gitignored, seeded from the OS file on first launch — so parallel instances of the app
   don't overwrite each other's choices; the main checkout keeps the OS file.
   **`ResetSettings`** puts every group back to its `Default`, found
