@@ -22,7 +22,6 @@ pub mod rng;
 pub mod settings;
 pub mod silhouette;
 pub mod sim_time;
-#[cfg(test)]
 // только для юнит-тестов стендов поведения: в боевую библиотеку и
 // интеграционные тесты двор не собирается
 #[cfg(test)]
