@@ -252,8 +252,9 @@ impl Movable {
     /// приход молча не публикуется.
     pub fn to_idle(&mut self, entity: Entity, commands: &mut Commands, destination_reached: bool) {
         // дисциплина из дока выше — не на вызывающих, а на ассерте: вызов с
-        // `destination_reached` при живом пути молча терял бы приход (слоты,
-        // телеметрия)
+        // `destination_reached` при живом пути молча терял бы приход (его
+        // обсерверами считают стенд crowd_demo и пин-тесты; слоты свою заявку
+        // снимают при выборе цели, не здесь)
         debug_assert!(
             !destination_reached || self.path.is_empty(),
             "to_idle(destination_reached = true) with a live path — the arrival event is dropped; clear the path first"
