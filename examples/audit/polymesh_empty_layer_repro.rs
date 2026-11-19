@@ -4,14 +4,15 @@
 //! ещё до лога `polymesh baked`.
 //!
 //! Проходит все города панели и печатает, сколько чанков у каждого пустые.
-//! Недостающую выгрузку OSM докачивает в тот же кеш, которым пользуется игра.
+//! Недостающую выгрузку OSM докачивает той же дверью, что и игра
+//! (`download::city_extract`): зеркала, проверка ответа и запись кеша — общие.
 //!
 //! ```text
 //! cargo run --example polymesh_empty_layer_repro -- [radius] [city ...]
 //! ```
 
 use qwe::city::City;
-use qwe::map::osm::download::OVERPASS_URLS;
+use qwe::map::osm::download::city_extract;
 use qwe::map::osm::{MapData, overpass, parse};
 use qwe::navigation::build_polymesh_from_map;
 
@@ -59,24 +60,11 @@ fn main() {
 }
 
 fn load_map(city: City) -> MapData {
-    let path = overpass::cache_path(city);
-    if !path.exists() {
+    if !overpass::cache_path(city).exists() {
         println!("== {city:?}: no OSM cache, downloading ...");
-        let query = overpass::overpass_query(city);
-        let json = OVERPASS_URLS
-            .iter()
-            .find_map(|url| match ureq::post(*url).send(&query) {
-                Ok(mut response) => response.body_mut().read_to_string().ok(),
-                Err(error) => {
-                    println!("   {url} failed: {error}");
-                    None
-                }
-            })
-            .expect("every overpass mirror failed");
-        std::fs::create_dir_all(path.parent().expect("cache dir")).expect("create cache dir");
-        std::fs::write(&path, &json).expect("write cache");
     }
-    let json = std::fs::read_to_string(&path).expect("read OSM cache");
+    let json =
+        city_extract(city).unwrap_or_else(|error| panic!("no OSM extract for {city:?}: {error}"));
     parse::parse(&json, city, parse::ParseKnobs::default())
         .expect("failed to parse cached OSM json")
 }
