@@ -98,7 +98,12 @@ has one owner.
   - **ordinary roads and rails never touch the grid** — the fill only subtracts; rendering
     and rasterisation are independent paths over one `RoadLine`;
   - **prune_unreachable and the portal snap** (`reach.rs`, `snap_portal_position`) —
-    4-connectivity, the ring search and its cap.
+    4-connectivity, the ring search and its cap. The gates-then-prune pair is normally one
+    call (`open_gates_and_prune`), but the loader's overlapped load (a hidden entry fence
+    bucket, `prepare::build_overlapped_world`) splits it across lanes keeping the order:
+    `open_sealed_fences` on the navmesh lane, then `prune_unreachable` + `drop_gate_scratch`
+    on a second wave — the prune starts only after the gates lane joins, so a sealed plot
+    with a door still opens before its pocket is thrown away.
 - **PortalPos** — a `CONTEXT.md` term (the city's `*_PORTAL_POS` is only a hint); the
   snap mechanics — `references/grid-fill.md`.
 

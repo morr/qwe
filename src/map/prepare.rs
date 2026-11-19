@@ -17,16 +17,19 @@
 //! что раньше стояла в спавне рядом со сборкой. На входе в мир остаётся
 //! положить готовое.
 
-use std::time::Instant;
+use std::sync::RwLock;
+use std::time::{Duration, Instant};
 
 use bevy::prelude::*;
 
+use crate::city::City;
 use crate::map::buildings::{
     BuildingHeightMode, BuildingMeshes, BuildingPlan, BuildingReport, mesh_buildings,
 };
 use crate::map::cars::{CarPlacement, CarStyle};
+use crate::map::inspect::InspectIndex;
 use crate::map::osm::model::MapData;
-use crate::map::osm::{JobState, MapLoadJob};
+use crate::map::osm::{JobState, LoadedWorld, MapLoadJob};
 use crate::map::parking::ParkingLayout;
 use crate::map::rail::{RAIL_LODS, RailReport, RailZoomBucket, mesh_rails};
 use crate::map::roads::{
@@ -38,7 +41,7 @@ use crate::map::trees::{
     ConiferField, ConiferNoiseStyle, TreeMeshes, TreeReport, TreeRowStyle, TreeStyle,
 };
 use crate::map::zoom::ZoomLods;
-use crate::navigation::PolymeshBuild;
+use crate::navigation::{Navmesh, PolymeshBuild, snap_portal_position};
 
 /// Снимок ручек стилей, под которые поток мешит карту: у потока ECS нет, и
 /// ресурсы ему недоступны. Снимок делается при старте потока; правка ручек
@@ -130,44 +133,12 @@ pub fn build_world_meshes(
 
     let map = &*map;
     let lanes = std::thread::scope(|scope| -> Result<_, String> {
-        let buildings = scope.spawn(|| {
-            timed("buildings", || {
-                mesh_buildings(
-                    BuildingPlan::game(styles.height_mode),
-                    &map.buildings,
-                    &map.roads,
-                )
-            })
-        });
-        // Ступени обочин — над общим скелетом, и общая середина сборки у них
-        // теперь одна (`build_roads_steps`): скелет сети, устья, разделительные,
-        // ленты, краска узлов — у ступеней бит-в-бит одинаковы (отпечаток
-        // записи 28), считаются один раз; ступенезависимые обочинные куски и
-        // лоскуты каждая достраивает свои. Один дорожный поток вместо двух —
-        // второй финал больше не молотит дубли общей середины под стеной.
-        let roads = scope.spawn(|| {
-            timed("roads", || {
-                let skeleton = road_skeleton(map, &styles.road_style, &styles.road_shape);
-                let steps: Vec<VergeZoomBucket> = (0..VergeLods::max_zooms().count())
-                    .map(VergeZoomBucket::at)
-                    .collect();
-                build_roads_steps(&skeleton, &steps)
-            })
-        });
+        let buildings = scope.spawn(|| timed("buildings", || buildings_lane(map, styles)));
+        let roads = scope.spawn(|| timed("roads", || roads_lane(map, styles)));
         let small =
             scope.spawn(|| timed("surfaces, trees, rails, cars", || small_lane(map, styles)));
-        let fences = scope.spawn(|| {
-            timed("fences", || {
-                crate::map::fences::entry_layers(styles.fence_zoom, &map.fences, &map.roads)
-            })
-        });
-        let polymesh = scope.spawn(|| {
-            timed("polymesh", || {
-                styles.polymesh.and_then(|(radius, chunked)| {
-                    crate::navigation::build_polymesh_for(map, radius, chunked)
-                })
-            })
-        });
+        let fences = scope.spawn(|| timed("fences", || fences_lane(map, styles)));
+        let polymesh = scope.spawn(|| timed("polymesh", || polymesh_lane(map, styles)));
 
         let buildings = join(buildings, "buildings")?;
         let roads = join(roads, "roads")?;
@@ -240,6 +211,237 @@ fn small_lane(
 
     let parked = crate::map::cars::place(styles.cars, styles.road_shape, map, &layout);
     (layout, surfaces, surface_report, trees, rails, parked)
+}
+
+// Тела дорожек — общие серийной загрузке ([`build_world_meshes`]) и
+// перекрытой ([`build_overlapped_world`]): обе цепочки дорожек запускают одни
+// и те же функции над `&MapData`, различается только расписание вокруг них.
+
+/// Лейн зданий.
+fn buildings_lane(map: &MapData, styles: &StyleSnapshot) -> (BuildingMeshes, BuildingReport) {
+    mesh_buildings(
+        BuildingPlan::game(styles.height_mode),
+        &map.buildings,
+        &map.roads,
+    )
+}
+
+/// Лейн дорог: ступени обочин — над общим скелетом, и общая середина сборки
+/// у них одна (`build_roads_steps`): скелет сети, устья, разделительные,
+/// ленты, краска узлов — у ступеней бит-в-бит одинаковы (отпечаток записи
+/// 28), считаются один раз; ступенезависимые обочинные куски и лоскуты каждая
+/// достраивает свои. Один дорожный поток вместо двух — второй финал больше
+/// не молотит дубли общей середины под стеной.
+fn roads_lane(map: &MapData, styles: &StyleSnapshot) -> RoadStepsBuild {
+    let skeleton = road_skeleton(map, &styles.road_style, &styles.road_shape);
+    let steps: Vec<VergeZoomBucket> = (0..VergeLods::max_zooms().count())
+        .map(VergeZoomBucket::at)
+        .collect();
+    build_roads_steps(&skeleton, &steps)
+}
+
+/// Лейн заборов входной ступени: ступень по зуму, с которым мир откроется.
+fn fences_lane(
+    map: &MapData,
+    styles: &StyleSnapshot,
+) -> (usize, Vec<LayerMesh>, crate::map::fences::FenceReport) {
+    crate::map::fences::entry_layers(styles.fence_zoom, &map.fences, &map.roads)
+}
+
+/// Лейн полимеша: включённая панель Navmesh строит его по карте, выключенная
+/// не строит ничего.
+fn polymesh_lane(map: &MapData, styles: &StyleSnapshot) -> Option<PolymeshBuild> {
+    styles
+        .polymesh
+        .and_then(|(radius, chunked)| crate::navigation::build_polymesh_for(map, radius, chunked))
+}
+
+/// Заливка сетки по карте и снап портала — общая голова серийной загрузки
+/// (`download.rs::build_navmesh`) и навмеш-дорожки перекрытой. Лок навмеша
+/// уже взят вызывающим: его ожидание он меряет сам и передаёт сюда для той
+/// же строки лога.
+pub(crate) fn fill_navmesh_and_snap_portal(
+    navmesh: &mut Navmesh,
+    map: &MapData,
+    city: City,
+    lock_waited: Duration,
+) -> Vec2 {
+    let started = Instant::now();
+    navmesh.fill_from_mapdata(map);
+    info!(
+        "navmesh filled in {:?} (write lock waited {:?})",
+        started.elapsed(),
+        lock_waited
+    );
+
+    let hint = city.portal_hint();
+    match snap_portal_position(navmesh, hint) {
+        Some(position) => {
+            if position != hint {
+                info!("portal snapped {hint:?} => {position:?}");
+            }
+            position
+        }
+        None => {
+            warn!("no clear spot for portal near {hint:?}");
+            hint
+        }
+    }
+}
+
+/// Загрузка с перекрытым префиксом: навмеш-дорожка (заливка → снап →
+/// калитки) идёт рядом с лейнами мешинга, прунинг уходит второй волной, и
+/// лейн полимеша — единственный читатель калиток — получает клон карты с
+/// открытыми калитками сразу после шага калиток, не дожидаясь прунинга.
+///
+/// Включается загрузочным потоком на скрытой ступени заборов входного зума
+/// ([`crate::map::fences::entry_step_hidden`]): серийный префикс (~0.7–0.9 с
+/// тёплого входа Парижа) прячется под стену дорожной сборки. Видимая ступень
+/// держит серийный путь (`download.rs::build_navmesh`): лейн заборов там
+/// дорог сам по себе (2.3–2.8 с Парижа) и его старт не должен сдвигаться
+/// гонкой дорожек за ядра — урок прогона №12.
+///
+/// Карта читается лейнами напрямую: навмеш работает на клоне, и его
+/// единственная мутация карты — калитки в `fences` — сливается в карту мира
+/// после всех дорожек. Порядок «калитки до прунинга» (ограда, отрезавшая
+/// участок с дверями, открывается раньше, чем его выбросят) держится и здесь:
+/// прунинг стартует присоединением дорожки калиток.
+pub fn build_overlapped_world(
+    job: &MapLoadJob,
+    mut map: MapData,
+    navmesh: &RwLock<Navmesh>,
+    city: City,
+    styles: &StyleSnapshot,
+) -> Result<LoadedWorld, String> {
+    let started = Instant::now();
+    job.set(JobState::BuildingNavmesh);
+
+    // Состав деревьев — до дорожек, серийно: он один мутирует карту, а
+    // перекрытая загрузка начинает лейны раньше готовности навмеша. Та же
+    // проверка-и-сбор, что у `build_world_meshes` и `recompose_row_trees`.
+    let compose = crate::map::trees::tree_compose(&styles.trees, &styles.tree_rows);
+    if map.composed_for != Some(compose) {
+        map.compose_trees(compose);
+    }
+    // та же глобаль, что лейнам: карманные контуры индекса отвечают той же
+    // узловой осью, что рисунок
+    crate::map::roads::shape::set_lane_width(map.knobs.lane_width);
+
+    let map_ref = &map;
+    let (meshes, portal, inspect, gate_lists) = std::thread::scope(
+        |scope| -> Result<(WorldMeshes, Vec2, InspectIndex, Vec<Vec<Vec2>>), String> {
+            // Первая волна: лейны, не читающие калиток. Лейн заборов среди
+            // них легален ровно потому, что путь включается на скрытой
+            // ступени — `entry_layers` выходит рано (width <= 0) до всякого
+            // чтения проёмов.
+            let buildings = scope.spawn(|| timed("buildings", || buildings_lane(map_ref, styles)));
+            let roads = scope.spawn(|| timed("roads", || roads_lane(map_ref, styles)));
+            let small = scope.spawn(|| {
+                timed("surfaces, trees, rails, cars", || {
+                    small_lane(map_ref, styles)
+                })
+            });
+            let fences = scope.spawn(|| timed("fences", || fences_lane(map_ref, styles)));
+            let inspect = scope.spawn(|| {
+                let started = Instant::now();
+                let index = InspectIndex::prebuild(map_ref, &styles.road_shape);
+                info!(
+                    "map meshes: inspect index base in {:.1?}",
+                    started.elapsed()
+                );
+                index
+            });
+
+            // Навмеш-дорожка: заливка, снап и калитки — на клоне карты под
+            // локом навмеша. Клон она увозит с собой: его забирает лейн
+            // полимеша (второй читатель калиток) и слияние после дорожек.
+            let gates_lane = scope.spawn(|| {
+                timed("navmesh fill and gates", || {
+                    let mut scratch = map_ref.clone();
+                    let lock_since = Instant::now();
+                    let mut nav = navmesh.write().unwrap();
+                    let portal = fill_navmesh_and_snap_portal(
+                        &mut nav,
+                        &scratch,
+                        city,
+                        lock_since.elapsed(),
+                    );
+                    let gates_started = Instant::now();
+                    let gates = nav.open_sealed_fences(&mut scratch, portal);
+                    (scratch, portal, gates, gates_started.elapsed())
+                })
+            });
+            let (scratch, portal, gates, gates_took) = join(gates_lane, "navmesh")?;
+            info!("navmesh: opened {gates} fence gates in {gates_took:?}");
+            job.set(JobState::Pruning);
+
+            // Списки калиток забираются из клона сразу: слиянию они нужны
+            // после всех дорожек, каким бы ни был исход лейнов.
+            let gate_lists: Vec<Vec<Vec2>> = scratch
+                .fences
+                .iter()
+                .map(|fence| fence.gates.clone())
+                .collect();
+
+            // Вторая волна: прунинг карту не читает — лок навмеша хватает, —
+            // и полимеш строится по клону с калитками параллельно с ним.
+            // Дорожки второй волны берут свои входы move-ом: клона и портала
+            // больше никто не читает, а заимствования локалей замыкания
+            // scope.spawn не разрешает.
+            let prune_lane = scope.spawn(move || {
+                let started = Instant::now();
+                let mut nav = navmesh.write().unwrap();
+                let pruned = nav.prune_unreachable(portal);
+                nav.drop_gate_scratch();
+                (pruned, started.elapsed())
+            });
+            let polymesh =
+                scope.spawn(move || timed("polymesh", || polymesh_lane(&scratch, styles)));
+
+            let (pruned, prune_time) = join(prune_lane, "prune")?;
+            info!("navmesh: pruned {pruned} unreachable tiles in {prune_time:?}");
+            job.set(JobState::BuildingMeshes);
+            let polymesh = join(polymesh, "polymesh")?;
+
+            let buildings = join(buildings, "buildings")?;
+            let roads = join(roads, "roads")?;
+            let small = join(small, "small layers")?;
+            let fences = join(fences, "fences")?;
+            let inspect = join(inspect, "inspect index")?;
+
+            let (parking_layout, surfaces, surface_report, trees, rails, parked) = small;
+            let (fence_step, fence_layers, fence_report) = fences;
+            let meshes = WorldMeshes {
+                parking_layout,
+                surfaces,
+                surface_report,
+                roads,
+                buildings,
+                trees,
+                rails,
+                parked,
+                fences: Some((fence_step, fence_layers, fence_report)),
+                polymesh,
+            };
+            Ok((meshes, portal, inspect, gate_lists))
+        },
+    )?;
+
+    // Слияние калиток в карту мира — единственное, что навмеш-дорожка
+    // поменяла в клоне (`open_sealed_fences` пишет только
+    // `fences[..].gates`): мир получает те же калитки в ресурсе `MapData`,
+    // что и построенный по клону полимеш.
+    for (fence, gates) in map.fences.iter_mut().zip(gate_lists) {
+        fence.gates = gates;
+    }
+
+    info!("map meshes: whole set in {:.1?}", started.elapsed());
+    Ok(LoadedWorld {
+        map,
+        portal,
+        meshes,
+        inspect,
+    })
 }
 
 /// Непрозрачные слои — куски карты: тот же разрез, что делал спавн
@@ -324,5 +526,120 @@ mod tests {
         let meshes = build_world_meshes(&mut map, &styles, &job).expect("meshing failed");
 
         assert!(meshes.polymesh.is_some(), "панель включена — меш построен");
+    }
+
+    /// Скрытая ступень — гейт перекрытой загрузки: на последней черте
+    /// лестницы заборов и дальше слой скрыт, до неё — рисуется.
+    #[test]
+    fn the_entry_fence_step_is_hidden_past_the_last_ladder_bound() {
+        assert!(!crate::map::fences::entry_step_hidden(0.4));
+        assert!(!crate::map::fences::entry_step_hidden(0.89));
+        assert!(crate::map::fences::entry_step_hidden(0.9));
+        assert!(crate::map::fences::entry_step_hidden(2.0));
+    }
+
+    /// Фикстура калиток (по форме
+    /// `gates/tests.rs::a_sealed_plot_gets_its_gate_on_the_street_side`):
+    /// замкнутая ограда участка, дом с дверью внутри и улица вдоль северной
+    /// стороны — `open_sealed_fences` открывает непустую калитку, так что
+    /// слияние перекрытой загрузки проверяется не на пустом множестве.
+    fn gated_plot_map() -> MapData {
+        use crate::map::osm::fixture::{building, fence, rect, street};
+
+        let plot = Vec2::new(300.0, 300.0);
+        let corners = [
+            (-20.0, -20.0),
+            (20.0, -20.0),
+            (20.0, 20.0),
+            (-20.0, 20.0),
+            (-20.0, -20.0),
+        ];
+        let mut map = MapData::default();
+        map.fences.push(fence(
+            corners
+                .iter()
+                .map(|&(x, y)| plot + Vec2::new(x, y))
+                .collect(),
+        ));
+        let mut house = building(
+            rect(
+                Vec2::new(plot.x - 5.0, plot.y - 5.0),
+                Vec2::new(plot.x + 5.0, plot.y + 5.0),
+            ),
+            vec![],
+        );
+        house.entrances.push(Vec2::new(plot.x, plot.y - 5.0));
+        map.buildings.push(house);
+        map.roads.push(street(
+            vec![
+                Vec2::new(plot.x - 80.0, plot.y + 30.0),
+                Vec2::new(plot.x + 80.0, plot.y + 30.0),
+            ],
+            8.0,
+        ));
+        map
+    }
+
+    /// Перекрытая загрузка даёт тот же мир, что серийная: сетка навмеша и
+    /// калитки в карте бит-в-бит, полимеш построен по тем же калиткам (одни
+    /// препятствия). Обе стороны при скрытой ступени заборов и с включённой
+    /// панелью полимеша — иначе его лейн ничего не строит и передача
+    /// калиток дорожкой остаётся непроверенной.
+    #[test]
+    fn the_overlapped_load_matches_the_serial_one() {
+        let styles = {
+            let mut styles = snapshot();
+            styles.fence_zoom = 1.0;
+            styles.polymesh = Some((0.4, true));
+            styles
+        };
+        let job = MapLoadJob::default();
+
+        // серийный путь: заливка → снап → калитки с прунингом, потом лейны
+        let mut serial_map = gated_plot_map();
+        let mut serial_nav = Navmesh::default();
+        let serial_portal =
+            fill_navmesh_and_snap_portal(&mut serial_nav, &serial_map, City::Tula, Duration::ZERO);
+        serial_nav.open_gates_and_prune(&mut serial_map, serial_portal, |_, _| {});
+        let serial_meshes =
+            build_world_meshes(&mut serial_map, &styles, &job).expect("serial meshing failed");
+
+        // перекрытый путь
+        let overlapped_nav = RwLock::new(Navmesh::default());
+        let world =
+            build_overlapped_world(&job, gated_plot_map(), &overlapped_nav, City::Tula, &styles)
+                .expect("overlapped load failed");
+
+        // сетка навмеша бит-в-бит
+        let overlapped = overlapped_nav.read().unwrap();
+        assert_eq!(overlapped.grid_size, serial_nav.grid_size);
+        assert_eq!(overlapped.tile_size, serial_nav.tile_size);
+        for y in 0..serial_nav.grid_size.y {
+            for x in 0..serial_nav.grid_size.x {
+                assert_eq!(
+                    overlapped.is_passable(x, y),
+                    serial_nav.is_passable(x, y),
+                    "тайл ({x}, {y})"
+                );
+            }
+        }
+
+        // калитки бит-в-бит и непустые: иначе слияние проверено впустую
+        let gates_of = |map: &MapData| -> Vec<Vec<Vec2>> {
+            map.fences.iter().map(|fence| fence.gates.clone()).collect()
+        };
+        let serial_gates = gates_of(&serial_map);
+        let overlapped_gates = gates_of(&world.map);
+        assert_eq!(serial_gates, overlapped_gates);
+        assert!(
+            serial_gates.iter().any(|gates| !gates.is_empty()),
+            "фикстура обязана открыть калитку"
+        );
+
+        // портал совпал, полимеш — одни препятствия из одних калиток
+        assert_eq!(world.portal, serial_portal);
+        let serial_polymesh = serial_meshes.polymesh.expect("панель включена");
+        let overlapped_polymesh = world.meshes.polymesh.expect("панель включена");
+        assert_eq!(overlapped_polymesh.obstacles, serial_polymesh.obstacles);
     }
 }

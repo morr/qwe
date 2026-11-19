@@ -10,13 +10,14 @@ use std::time::{Duration, Instant};
 use bevy::prelude::*;
 
 use crate::city::City;
+use crate::map::fences::entry_step_hidden;
 use crate::map::inspect::InspectIndex;
 use crate::map::osm::model::MapData;
 use crate::map::osm::overpass::{cache_path, overpass_query, prune_stale_caches};
 use crate::map::osm::parse::{ParseKnobs, parse};
 use crate::map::osm::snapshot;
 use crate::map::prepare::{self, StyleSnapshot, WorldMeshes};
-use crate::navigation::{Navmesh, snap_portal_position};
+use crate::navigation::Navmesh;
 
 /// Зеркала Overpass по порядку обхода. Основной инстанс на плотных городах
 /// (Нью-Йорк, Лондон) регулярно отвечает 504 «server too busy» — или, того
@@ -110,9 +111,17 @@ pub fn start_load_thread(
     styles: StyleSnapshot,
 ) {
     std::thread::spawn(move || {
-        let result = run(&job, city, knobs)
-            .map(|map| build_navmesh(&job, map, &navmesh, city))
-            .and_then(|world| finish_world(world, &styles, &job));
+        let result = run(&job, city, knobs).and_then(|map| {
+            if entry_step_hidden(styles.fence_zoom) {
+                // скрытая ступень заборов на входе — перекрытая загрузка:
+                // серийный префикс (заливка, калитки, прунинг) прячется под
+                // дорожки мешинга
+                prepare::build_overlapped_world(&job, map, &navmesh, city, &styles)
+            } else {
+                let world = build_navmesh(&job, map, &navmesh, city);
+                finish_world(world, &styles, &job)
+            }
+        });
         job.set(match result {
             Ok(world) => JobState::Done(Some(Box::new(world))),
             Err(message) => JobState::Failed(message),
@@ -170,7 +179,10 @@ fn finish_world(
 }
 
 /// Растеризация карты и прунинг — по шагу на состояние, чтобы экран
-/// загрузки показывал, чем поток занят.
+/// загрузки показывал, чем поток занят. Серийный путь видимой ступени
+/// заборов входного зума: лейн заборов там дорог сам по себе (2.3–2.8 с
+/// Парижа), и его старт не двигается гонкой дорожек за ядра (урок прогона
+/// №12). Перекрытый путь скрытой ступени — [`prepare::build_overlapped_world`].
 fn build_navmesh(
     job: &MapLoadJob,
     mut map: MapData,
@@ -183,28 +195,8 @@ fn build_navmesh(
     // заливка карты»
     let lock_since = std::time::Instant::now();
     let mut navmesh = arc_navmesh.write().unwrap();
-    let waited = lock_since.elapsed();
-    let started = std::time::Instant::now();
-    navmesh.fill_from_mapdata(&map);
-    info!(
-        "navmesh filled in {:?} (write lock waited {:?})",
-        started.elapsed(),
-        waited
-    );
-
-    let hint = city.portal_hint();
-    let portal = match snap_portal_position(&navmesh, hint) {
-        Some(position) => {
-            if position != hint {
-                info!("portal snapped {hint:?} => {position:?}");
-            }
-            position
-        }
-        None => {
-            warn!("no clear spot for portal near {hint:?}");
-            hint
-        }
-    };
+    let portal =
+        prepare::fill_navmesh_and_snap_portal(&mut navmesh, &map, city, lock_since.elapsed());
 
     // калитки — до прунинга и со снапнутым порталом: ограда, отрезавшая
     // участок с дверями, открывается раньше, чем его выбросят. Пишутся в

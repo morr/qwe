@@ -206,15 +206,22 @@ impl Navmesh {
 
         let started = std::time::Instant::now();
         let pruned = self.prune_unreachable(portal);
-        // скретч пары «калитки, затем прунинг» больше не нужен: следующий
-        // fill_base соберёт его заново, а тащить за миром дорожный индекс
-        // проёмов и копию основы — копить мусор между городами
-        self.fence_cache = None;
-        self.base_scratch = None;
+        self.drop_gate_scratch();
         GatesAndPrune {
             pruned,
             prune_time: started.elapsed(),
         }
+    }
+
+    /// Скретч пары «калитки, затем прунинг» — дорожный индекс проёмов и копия
+    /// основы заливки — после прунинга больше не нужен: следующий `fill_base`
+    /// соберёт его заново, а тащить его за миром между городами — копить
+    /// мусор. Отдельный метод для загрузки с разъятыми шагами
+    /// (`prepare::build_overlapped_world`): её прунинг уходит со своей
+    /// дорожкой, мимо [`Self::open_gates_and_prune`].
+    pub(crate) fn drop_gate_scratch(&mut self) {
+        self.fence_cache = None;
+        self.base_scratch = None;
     }
 
     /// Тайлы, недостижимые из `start`, становятся непроходимыми: замкнутые

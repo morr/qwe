@@ -146,7 +146,14 @@ Summary; the mechanism — **world-lifecycle skill** (states and the warmup hold
   Pruning → BuildingMeshes → Done | Failed`, every state a line on the loader screen.
   The meshing stage runs its groups **in parallel** (buildings ∥ roads ∥ polymesh ∥
   fences ∥ surfaces+trees+rails+cars — `map/prepare.rs`); the polymesh lane follows the Navmesh
-  panel's toggle, and a panic in any lane surfaces as `Failed`. `Done` carries the whole
+  panel's toggle, and a panic in any lane surfaces as `Failed`. **The navmesh prefix has two
+  shapes, picked by the entry fence bucket** (`fences::entry_step_hidden`, the bucket the
+  snapshot's entry zoom opens on): a **visible** step keeps the serial prefix (`build_navmesh` —
+  fill → snap → gates+prune, then the lanes: the fences lane is expensive there and its start
+  must not move), a **hidden** one runs the **overlapped load** (`prepare::build_overlapped_world`)
+  — the fill → snap → gates lane beside the meshing lanes, the prune a second wave behind it,
+  and the polymesh lane (the only other gates reader) handed a clone with the gates already
+  open; the clone's gates merge into `MapData` after all lanes join. `Done` carries the whole
   world: `MapData`, the portal, the prebuilt `InspectIndex` and the meshed layers
   (`WorldMeshes` in a
   `PreparedMeshes` resource), styles snapshotted at thread start (including the entry

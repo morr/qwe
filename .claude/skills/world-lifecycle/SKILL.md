@@ -72,15 +72,30 @@ Connecting{attempt} → Downloading{bytes,total,bytes_per_sec} → Parsing
 → Done(LoadedWorld{map, portal, meshes}) | Failed(msg)
 ```
 
-Polled via `Arc<Mutex<_>>` by `poll_job`; every state is a line on the loader screen. The
-thread fills the navmesh through the `ArcNavmesh` handle and returns the snapped portal
-position. After the portal snap it makes **one** call — `Navmesh::open_gates_and_prune(map,
-portal, stage)` — which opens the **default fence gates** and only then prunes, because the
-order is a rule: a fence that sealed a plot with doors has to open before that plot is thrown
-away as unreachable. `Pruning` is not set by the thread directly: the `stage` callback the
-call makes between the two steps is what logs the gate line and flips `JobState::Pruning`.
-The gate step **writes into the `MapData`** the thread hands back, so the polygonal mesh
-built later from the resource sees the same gates (navigation-deep skill).
+Polled via `Arc<Mutex<_>>` by `poll_job`; every state is a line on the loader screen. **The
+navmesh work has two shapes, picked by the entry fence bucket** (`fences::entry_step_hidden`,
+read from the `StyleSnapshot`'s entry zoom). A **visible** fence step — the fences lane is
+expensive there (2.3–2.8 s on Paris), and the perf lesson of run №12 is that the lanes' race
+for cores must not move its start — keeps the serial prefix: the thread fills the navmesh
+through the `ArcNavmesh` handle and returns the snapped portal position
+(`prepare::fill_navmesh_and_snap_portal`). After the portal snap it makes **one** call —
+`Navmesh::open_gates_and_prune(map, portal, stage)` — which opens the **default fence gates**
+and only then prunes, because the order is a rule: a fence that sealed a plot with doors has
+to open before that plot is thrown away as unreachable. `Pruning` is not set by the thread
+directly: the `stage` callback the call makes between the two steps is what logs the gate
+line and flips `JobState::Pruning`. The gate step **writes into the `MapData`** the thread
+hands back, so the polygonal mesh built later from the resource sees the same gates
+(navigation-deep skill).
+
+A **hidden** fence step (the entry zoom past the ladder's last bound) runs the **overlapped
+load** instead (`prepare::build_overlapped_world`): a navmesh lane (fill → snap →
+`open_sealed_fences` on a **clone** of the map) goes beside the meshing lanes; the prune
+follows as a second wave once the gates lane joins (`prune_unreachable` + `drop_gate_scratch`
+— the gates-then-prune order holds), and the polymesh lane — the only lane besides fences
+that reads gates — builds from the clone, which has the gates already open. The clone's
+gates merge into the world's `MapData` after all lanes join. The fences lane may start with
+the first wave only because the gate guarantees the hidden step: `entry_layers` exits
+before reading any gaps.
 
 **Before everything, `run()` tries the binary snapshot** (`map/osm/snapshot.rs`, the
 osm-map skill): a serialized `MapData` read instead of the parse, showing as `Parsing` on
