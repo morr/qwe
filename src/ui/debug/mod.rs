@@ -171,7 +171,7 @@ impl DebugToggle for DrawMovePaths {
 /// метки, не отличается от соседних. От конкретного типа требуется только
 /// метка — переворот и текст состояния берёт дженерик
 /// ([`spawn_toggle_row`]), доступ к значению дают derive-и `Deref`/`DerefMut`.
-pub trait DebugToggle: Knobbed + Deref<Target = bool> + DerefMut + Default {
+pub(crate) trait DebugToggle: Knobbed + Deref<Target = bool> + DerefMut + Default {
     /// Метка строки вкладки Debug.
     fn label() -> &'static str;
 }
@@ -181,7 +181,7 @@ pub trait DebugToggle: Knobbed + Deref<Target = bool> + DerefMut + Default {
 /// ([`PrefsExt::register_pref`]). Забытая половина здесь — ошибка сборки,
 /// а не тихий отказ, тем же способом, каким [`PrefsExt::register_pref`]
 /// закрыл свой старый квартет.
-pub trait AddDebugToggleExt {
+pub(crate) trait AddDebugToggleExt {
     fn add_debug_toggle<T: DebugToggle + SettingsGroup + GetTypeRegistration>(
         &mut self,
     ) -> &mut Self;

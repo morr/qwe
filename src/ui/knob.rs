@@ -207,7 +207,7 @@ pub fn spawn_cycle_row<R: Knobbed>(
 /// Подпись строки-кнопки: по ней синхронизация находит текст, который надо
 /// перечитать из ресурса.
 #[derive(Component)]
-pub struct CycleValueLabel<R: Knobbed>(pub CycleBinding<R>);
+pub(crate) struct CycleValueLabel<R: Knobbed>(pub CycleBinding<R>);
 
 impl<R: Knobbed> Clone for CycleValueLabel<R> {
     fn clone(&self) -> Self {

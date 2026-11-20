@@ -109,7 +109,7 @@ struct GpuCutRx(Mutex<mpsc::Receiver<(usize, wgpu::Buffer)>>);
 
 /// Порог `gpu spike`, мс GPU на кадр; absent — печатаются только секундные.
 #[derive(Resource)]
-pub struct GpuSpikeThreshold(f32);
+pub(crate) struct GpuSpikeThreshold(f32);
 
 /// Порог `QWE_PERF_GPU_SPIKES=<ms>`, ресурс принтера.
 pub struct GpuCutPlugin {

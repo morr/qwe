@@ -24,7 +24,7 @@ pub struct AgentBrpSession;
 /// Сама метка — по ней `offset_below_brp_badge` отмеряет, на сколько съехать
 /// вниз тому, что стоит в её углу.
 #[derive(Component)]
-pub struct BrpBadge;
+pub(crate) struct BrpBadge;
 
 /// Узел в левом верхнем углу, который уступает метке место и съезжает под неё:
 /// левая колонка игры (`ui/shell.rs`), плашка витрины.

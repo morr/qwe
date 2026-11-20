@@ -550,7 +550,7 @@ fn save_camera_view_on_exit(
 }
 
 /// Смещение курсора от центра окна в мировых осях (экранный y — вниз).
-pub fn cursor_offset(window: &Window, cursor: Vec2) -> Vec2 {
+pub(crate) fn cursor_offset(window: &Window, cursor: Vec2) -> Vec2 {
     (cursor - window.size() / 2.0) * Vec2::new(1.0, -1.0)
 }
 

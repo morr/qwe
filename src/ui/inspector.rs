@@ -117,7 +117,7 @@ struct InspectorHitsState {
 /// `Reflect` нужен, чтобы верификация ставила её по BRP до появления UI.
 #[derive(Resource, Debug, Reflect, SettingsGroup)]
 #[reflect(Resource, SettingsGroup, Default)]
-pub struct InspectorHighlight(pub bool);
+pub(crate) struct InspectorHighlight(pub bool);
 
 impl Default for InspectorHighlight {
     fn default() -> Self {

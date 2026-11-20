@@ -51,7 +51,7 @@ const OFFSCREEN_MIN_SIDE: u32 = 16;
 
 #[derive(Event, Reflect, Debug, Default)]
 #[reflect(Event)]
-pub struct TakeScreenshotEvent;
+pub(crate) struct TakeScreenshotEvent;
 
 /// Закадровый снимок: кадр рисуется во внеэкранную текстуру и кладётся в файл,
 /// минуя окно. Все поля необязательны — пустое событие снимает `offscreen.png`
@@ -91,7 +91,7 @@ struct OffscreenCamera {
 /// Триггерится по BRP: `brp event SpawnTestWalkerEvent '{"from":[..],"to":[..]}'`.
 #[derive(Event, Reflect, Debug, Default)]
 #[reflect(Event)]
-pub struct SpawnTestWalkerEvent {
+pub(crate) struct SpawnTestWalkerEvent {
     pub from: Vec2,
     pub to: Vec2,
 }
@@ -121,7 +121,7 @@ pub struct ProbeLayersEvent {
 /// числом накрывающих точку треугольников и ближайшими вершинами.
 #[derive(Resource, Reflect, Debug, Default)]
 #[reflect(Resource, Default)]
-pub struct LayerProbe {
+pub(crate) struct LayerProbe {
     pub report: String,
 }
 
@@ -597,7 +597,7 @@ pub fn cursor_position(window: &Window, virtual_cursor: &VirtualCursor) -> Optio
 /// как курсор — до `off`.
 #[derive(Resource, Reflect, Debug)]
 #[reflect(Resource)]
-pub struct VirtualKey {
+pub(crate) struct VirtualKey {
     pub active: bool,
     pub key: KeyCode,
 }
