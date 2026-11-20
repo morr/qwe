@@ -9,8 +9,9 @@
 //! память шагнула.
 //!
 //! ```text
-//! cargo run --example polymesh_bench -- [tasks] [agent_radius]
+//! cargo run --example polymesh_bench -- [tasks] [agent_radius] [city]
 //! cargo run --example polymesh_bench -- 500 0.2
+//! cargo run --example polymesh_bench -- 500 0.2 Paris
 //! ```
 //!
 //! Зависший запрос виден как строка `START` без парной `END`: пример не
@@ -35,13 +36,22 @@ use qwe::settings::{
     HUMAN_WANDER_RANGE, HUMAN_WANDER_TO_BUILDING_SHARE, MAP_SIZE, WANDER_MAP_MARGIN,
 };
 
-const CITY: City = City::Tula;
 const SEED: u64 = 0xC0FFEE;
 /// Порог, выше которого запрос считается медленным и печатается всегда.
 const SLOW_MS: f32 = 50.0;
 /// Множитель сдвига старта с центра тайла: 1 — как в игре, 0 — ровно по
 /// центрам. Переключатель для A/B, набор запросов при этом не меняется.
 const JITTER: f32 = 1.0;
+
+/// Город по имени варианта (`Debug`-имени): строка из третьего аргумента,
+/// дефолт — Тула.
+fn city_from_name(name: &str) -> City {
+    City::ALL
+        .iter()
+        .copied()
+        .find(|city| format!("{city:?}") == name)
+        .unwrap_or_else(|| panic!("unknown city {name:?}, known: {:?}", City::ALL))
+}
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -53,10 +63,14 @@ fn main() {
         .next()
         .map(|value| value.parse().expect("radius must be a number"))
         .unwrap_or(0.2);
+    let city = args
+        .next()
+        .map_or(City::Tula, |value| city_from_name(&value));
+    println!("city {:?}", city);
 
     println!("rss at start: {}", rss());
-    let mut map = common::load_map(CITY);
-    let navmesh = common::build_navmesh(&mut map, CITY);
+    let mut map = common::load_map(city);
+    let navmesh = common::build_navmesh(&mut map, city);
     println!("rss after navmesh: {}", rss());
 
     let started = Instant::now();
