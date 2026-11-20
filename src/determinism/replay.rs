@@ -49,7 +49,7 @@ use crate::rng::{PawnId, WorldSeed};
 use crate::telemetry::Telemetry;
 
 /// 64 тика в секунду — шаг `Time<Fixed>` по умолчанию.
-pub const TICK: Duration = Duration::from_nanos(1_000_000_000 / 64);
+pub(crate) const TICK: Duration = Duration::from_nanos(1_000_000_000 / 64);
 
 /// Отпечаток состояния мира на конкретном тике.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -247,7 +247,7 @@ pub fn run_to_tick(app: &mut App, target: u64, pattern: &[u32], progress: Progre
 /// Хэш отсортированного состояния всех пешек. FNV-1a руками: заводить крейт
 /// ради одного хэша не стоит, а `DefaultHasher` не обещает стабильности даже
 /// внутри одной сборки.
-pub fn fingerprint(world: &mut World) -> Fingerprint {
+pub(crate) fn fingerprint(world: &mut World) -> Fingerprint {
     let mut rows: Vec<(u8, u32, u32, u32, u8)> = Vec::new();
 
     let mut humans =

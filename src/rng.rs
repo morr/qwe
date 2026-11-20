@@ -116,7 +116,7 @@ pub(crate) const fn splitmix64(mut z: u64) -> u64 {
 ///
 /// Два раунда, а не один: ключ подмешивается уже к рассеянному засеву домена,
 /// иначе близкие `world_seed` при одинаковом ключе давали бы близкие потоки.
-pub const fn seed_for(world_seed: u64, domain: RngDomain, key: u64) -> u64 {
+pub(crate) const fn seed_for(world_seed: u64, domain: RngDomain, key: u64) -> u64 {
     splitmix64(splitmix64(world_seed ^ domain.salt()).wrapping_add(key))
 }
 

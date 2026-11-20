@@ -74,10 +74,10 @@ pub const SIM_FRAME_BUDGET_MS: f32 = 1000.0 * SIM_FRAME_SHARE / MIN_SIM_FPS;
 /// минимальной скорости, копил бы его бесконечно и навсегда отставал от
 /// виртуальных часов. Всё сверх потолка выбрасывается — та же философия, что
 /// у [`MAX_FRAME_DELTA`]: досчитывать безнадёжно отставшее незачем.
-pub const SIM_TICK_DEBT_CAP: f32 = MAX_FRAME_DELTA * MAX_SIM_SPEED;
+pub(crate) const SIM_TICK_DEBT_CAP: f32 = MAX_FRAME_DELTA * MAX_SIM_SPEED;
 /// Постоянная экспоненциального сглаживания замеров нагрузки (цены тика), с.
 /// Считается по реальному времени, поэтому от частоты кадров не зависит.
-pub const SIM_LOAD_SMOOTHING: f32 = 0.5;
+pub(crate) const SIM_LOAD_SMOOTHING: f32 = 0.5;
 /// Постоянная спада **пиковой** оценки ожидания конвейера, с. Вверх пик
 /// прыгает мгновенно, вниз сползает к среднему за это время.
 ///
@@ -115,7 +115,7 @@ pub const SPEED_BACKOFF_TIME: f32 = 1.0;
 /// То же время на пробу вверх, пока запас есть. Много медленнее отступления:
 /// переполненная очередь разгребается, только если перестать в неё лить, а
 /// лишняя осторожность стоит лишь секунд разгона.
-pub const SPEED_PROBE_TIME: f32 = 6.0;
+pub(crate) const SPEED_PROBE_TIME: f32 = 6.0;
 /// Мёртвая зона регулятора: расхождение меньше этой доли не трогаем.
 ///
 /// Не косметика: вниз регулятор идёт сразу, вверх — ползёт, так что без
@@ -153,14 +153,14 @@ pub const MIN_SIM_SPEED: f32 = 0.1;
 /// `=`/`-`. Верхняя ступень — сознательный предел проекта, а не свойство
 /// железа: выше 30x картинка перестаёт читаться, а `MAX_FRAME_DELTA` от неё
 /// производен.
-pub const SPEED_LADDER: [f32; 6] = [1.0, 2.0, 5.0, 10.0, 20.0, 30.0];
+pub(crate) const SPEED_LADDER: [f32; 6] = [1.0, 2.0, 5.0, 10.0, 20.0, 30.0];
 /// Жёсткий потолок запрошенной скорости — верх лесенки; выше `requested` не
 /// поднять и записью по BRP (срез в `throttle_speed_to_frame_budget`).
 pub const MAX_SIM_SPEED: f32 = SPEED_LADDER[SPEED_LADDER.len() - 1];
 /// Окно усреднения фактической скорости (виртуальное время / реальное).
 /// Копится по реальному времени, а не по кадрам: один кадр в 4 с должен
 /// весить как 4 с, иначе просадка теряется в усреднении.
-pub const ACTUAL_SPEED_WINDOW: f32 = 0.5;
+pub(crate) const ACTUAL_SPEED_WINDOW: f32 = 0.5;
 
 /// Скорость симуляции: `requested` крутит пользователь лесенкой, `affordable`
 /// насчитал регулятор по замеру нагрузки, `effective` выставляется в
@@ -373,7 +373,7 @@ impl TickSegments {
 }
 
 /// Граница разреза: фиксирует стену от предыдущей пробы до себя.
-pub fn tick_probe(name: &'static str) -> impl FnMut(ResMut<TickSegments>) {
+pub(crate) fn tick_probe(name: &'static str) -> impl FnMut(ResMut<TickSegments>) {
     move |mut segments: ResMut<TickSegments>| {
         let now = std::time::Instant::now();
         if let Some(since) = segments.since {
@@ -626,7 +626,7 @@ fn end_sim_load(
 /// прогоне. Ноль (переменной нет) — лог выключен.
 #[derive(Resource, Reflect, Debug, Default)]
 #[reflect(Resource)]
-pub struct TickSpikeThreshold(pub f32);
+pub(crate) struct TickSpikeThreshold(pub f32);
 
 /// Репортёр тик-спайков: шаг дороже порога — строка в логе с состоянием мира
 /// и разрезом по подсистемам. Отдельная система после [`end_sim_load`]: замер
