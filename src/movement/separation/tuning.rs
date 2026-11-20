@@ -74,7 +74,7 @@ pub const SEPARATION_BACKSTEP: f32 = 1.0;
 /// пределах дистанции покоя от цели засчитывается дошедшим
 /// (`movement::systems::move_moving_entities`) — иначе он толкался бы с тем, кто
 /// занял его место, до скончания века.
-pub const SEPARATION_HOLD: f32 = 1.0;
+pub(crate) const SEPARATION_HOLD: f32 = 1.0;
 /// Потолок СКОРОСТИ расталкивания, м/с (`SeparationLab::max_speed`).
 ///
 /// Толчок пары равен `перекрытие × SEPARATION_RATE`: при перекрытии 0.9 м это
