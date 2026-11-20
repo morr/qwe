@@ -304,7 +304,10 @@ panel and the model share. A knob's own `_MIN`/`_MAX`/`_STEP` range is *not* suc
 constant: it bounds its resource's field — the panel only renders it — so it belongs beside
 that resource. `HumanStyle` and `DemonStyle` do not clamp on read; their ranges are the
 declaration of what the field may hold, not a guard on it. Don't relocate anything here to
-"comply" with the tuning-constants rule.
+"comply" with the tuning-constants rule. (The two fields whose *consumers* cannot survive a
+garbage value — `DemonStyle::interval` into `Duration::from_secs_f32`, `cap` against an
+unbounded spawn — are the exception: they clamp in accessors, `interval()`/`cap()`, the
+`RoadShape` pattern. `speed`/`lunge` still read raw: a garbage value only looks wrong.)
 
 **A chaser with no first path yet skips the repath tick and waits.** Repathing cancels the
 in-flight search, and whenever the pipeline answers slower than the victim changes tiles the

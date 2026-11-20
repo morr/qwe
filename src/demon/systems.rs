@@ -39,7 +39,7 @@ pub fn spawn_initial_burst(
 
     // залп тоже упирается в кап — иначе ползунок, выкрученный ниже восьми,
     // врал бы: демоны всё равно выходили бы залпом
-    let burst = DEMON_INITIAL_BURST.min(style.cap);
+    let burst = DEMON_INITIAL_BURST.min(style.cap());
     let birth = DemonBirth::new(&seed, &portal_pos, &style, &silhouettes);
     for index in 0..burst {
         let angle = index as f32 / burst as f32 * std::f32::consts::TAU;
@@ -63,12 +63,12 @@ pub fn tick_spawner(
     // `resource_changed`: рестарт и смена города пересоздают `DemonSpawner`
     // целиком (`restart.rs`, `city.rs`), и таймер вернулся бы к константе,
     // тогда как ресурс с тех пор не менялся — чинить было бы некому
-    let interval = Duration::from_secs_f32(style.interval);
+    let interval = Duration::from_secs_f32(style.interval());
     if spawner.timer.duration() != interval {
         spawner.timer.set_duration(interval);
     }
 
-    if spawner.spawned >= style.cap {
+    if spawner.spawned >= style.cap() {
         return;
     }
     spawner.timer.tick(time.delta());

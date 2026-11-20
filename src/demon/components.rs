@@ -158,6 +158,27 @@ impl Default for DemonStyle {
     }
 }
 
+impl DemonStyle {
+    /// Период таймера спавнера, зажатый шкалой: старый файл настроек и запись
+    /// по BRP могут принести что угодно, а отрицательный или нечисловой
+    /// интервал паникует в `Duration::from_secs_f32` на первом тике спавнера.
+    pub fn interval(&self) -> f32 {
+        if self.interval.is_finite() {
+            self.interval
+                .clamp(DEMON_SPAWN_INTERVAL_MIN, DEMON_SPAWN_INTERVAL_MAX)
+        } else {
+            DEMON_SPAWN_INTERVAL
+        }
+    }
+
+    /// Потолок капа: запись по BRP может принести сколь угодно большой, и
+    /// спавнер заселил бы мир до исчерпания ресурсов. Ноль легитимен — спавн
+    /// выключен.
+    pub fn cap(&self) -> usize {
+        self.cap.min(DEMON_CAP_MAX as usize)
+    }
+}
+
 /// Спавнер демонов: стартовый залп, затем по таймеру до капа.
 ///
 /// Состояние мира, а не настройка: `WorldStarted` пересобирает его целиком
@@ -181,5 +202,56 @@ impl Default for DemonSpawner {
             spawned: 0,
             initial_burst_done: false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Мусорные значения (BRP, старый settings.toml) не доходят до
+    /// `Duration::from_secs_f32` — он паникует на отрицательном и нечисловом.
+    #[test]
+    fn interval_clamps_garbage_to_the_slider_scale() {
+        assert_eq!(DemonStyle::default().interval(), DEMON_SPAWN_INTERVAL);
+        assert_eq!(
+            DemonStyle {
+                interval: -1.0,
+                ..Default::default()
+            }
+            .interval(),
+            DEMON_SPAWN_INTERVAL_MIN
+        );
+        assert_eq!(
+            DemonStyle {
+                interval: 100.0,
+                ..Default::default()
+            }
+            .interval(),
+            DEMON_SPAWN_INTERVAL_MAX
+        );
+        assert_eq!(
+            DemonStyle {
+                interval: f32::NAN,
+                ..Default::default()
+            }
+            .interval(),
+            DEMON_SPAWN_INTERVAL
+        );
+    }
+
+    /// Кап по BRP может быть сколь угодно большим — спавнер не заселяет мир
+    /// до исчерпания ресурсов.
+    #[test]
+    fn cap_clamps_to_the_slider_ceiling() {
+        assert_eq!(DemonStyle::default().cap(), DEMON_CAP);
+        assert_eq!(
+            DemonStyle {
+                cap: usize::MAX,
+                ..Default::default()
+            }
+            .cap(),
+            DEMON_CAP_MAX as usize
+        );
     }
 }
