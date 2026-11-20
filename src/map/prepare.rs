@@ -359,7 +359,11 @@ pub fn build_overlapped_world(
                 timed("navmesh fill and gates", || {
                     let mut scratch = map_ref.clone();
                     let lock_since = Instant::now();
-                    let mut nav = navmesh.write().unwrap();
+                    // толерантно к отравлению: упавшая прошлая загрузка травит
+                    // лок навсегда, а перезаливка с нуля переписывает всё
+                    let mut nav = navmesh
+                        .write()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
                     let portal = fill_navmesh_and_snap_portal(
                         &mut nav,
                         &scratch,
@@ -390,7 +394,9 @@ pub fn build_overlapped_world(
             // scope.spawn не разрешает.
             let prune_lane = scope.spawn(move || {
                 let started = Instant::now();
-                let mut nav = navmesh.write().unwrap();
+                let mut nav = navmesh
+                    .write()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 let pruned = nav.prune_unreachable(portal);
                 nav.drop_gate_scratch();
                 (pruned, started.elapsed())

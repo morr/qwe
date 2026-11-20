@@ -385,7 +385,11 @@ fn on_retry(
     styles: MeshInputs<'_, '_>,
     mut buttons: Query<&mut Visibility, With<RetryButton>>,
 ) {
-    *job.0.lock().unwrap() = JobState::Connecting { attempt: 1 };
+    // толерантно к отравлению — как `MapLoadJob::set`: Retry после паники
+    // треда обязан сбросить статус, а не паниковаться самому
+    *job.0
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = JobState::Connecting { attempt: 1 };
     start_load_thread(
         job.clone(),
         navmesh.0.clone(),
@@ -425,7 +429,10 @@ fn poll_job(
     mut poly: ResMut<PolyNavmesh>,
     debug: Res<PolymeshDebug>,
 ) {
-    let mut state = job.0.lock().unwrap();
+    let mut state = job
+        .0
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
 
     // счётчик ожидания живёт только внутри `Connecting`, иначе следующий
     // город (или Retry) унаследовал бы отсчёт от предыдущей загрузки

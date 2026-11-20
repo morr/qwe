@@ -98,9 +98,19 @@ impl Backend {
     /// лениво, если нужен не всегда), а не платит за лок на каждый вызов.
     pub fn walkable(&self) -> Walkable<'_> {
         Walkable {
-            navmesh: self.navmesh.read().unwrap(),
+            navmesh: self.grid(),
             mesh: self.mesh.as_deref(),
         }
+    }
+
+    /// Read-лок сетки снимка — толерантно к отравлению, как у
+    /// [`ArcNavmesh::read`](crate::navigation::navmesh::ArcNavmesh::read):
+    /// писатель один (поток загрузки), его паника травит лок навсегда, а
+    /// читатели живут только в мире, пущенном после успешной перезаливки.
+    fn grid(&self) -> RwLockReadGuard<'_, Navmesh> {
+        self.navmesh
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Один поиск пути активным бэкендом — общее тело обоих диспетчеров,
@@ -118,7 +128,7 @@ impl Backend {
                 // у самой сетки, а не у глобального атомика размера навтайла:
                 // задача унесла снимок и переживает смену размера. Лок держится
                 // ровно на перевод и снимается до замера.
-                let end_world = self.navmesh.read().unwrap().tile_center(end_tile);
+                let end_world = self.grid().tile_center(end_tile);
                 let started_at = std::time::Instant::now();
                 let path = find_path_polymesh(mesh, start_world, end_world);
                 (path, started_at.elapsed())
@@ -131,7 +141,7 @@ impl Backend {
                 // что у [`Self::grid_path`]
                 let duration = started_at.elapsed();
                 let path = tiles.map(|tiles| {
-                    let navmesh = self.navmesh.read().unwrap();
+                    let navmesh = self.grid();
                     tiles
                         .into_iter()
                         .map(|tile| navmesh.tile_center(tile))
@@ -173,7 +183,7 @@ impl Backend {
         } else {
             self.algorithm
         };
-        let navmesh = self.navmesh.read().unwrap();
+        let navmesh = self.grid();
         // после захвата лока: метрика — сам поиск, без RwLock
         let started_at = std::time::Instant::now();
         (

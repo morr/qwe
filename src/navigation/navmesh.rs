@@ -142,11 +142,22 @@ impl Default for ArcNavmesh {
 }
 
 impl ArcNavmesh {
+    /// Толерантно к отравлению. Писатель у лока один — поток загрузки, и
+    /// паника с зажатым гвардом (заливка, калитки, прунинг) травит лок
+    /// навсегда: без толерантности каждая следующая загрузка паниковалась
+    /// бы на `PoisonError`, и Retry не поднимал бы мир никогда. Читатели
+    /// живут только в `Playing` — туда пускает `Done` успешной загрузки,
+    /// а она перезаливает сетку с нуля, так что чужой мусор под отравленным
+    /// флагом никто не прочитает.
     pub fn read(&self) -> RwLockReadGuard<'_, Navmesh> {
-        self.0.read().unwrap()
+        self.0
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     pub fn write(&self) -> RwLockWriteGuard<'_, Navmesh> {
-        self.0.write().unwrap()
+        self.0
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }

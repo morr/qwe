@@ -92,8 +92,15 @@ impl Default for MapLoadJob {
 }
 
 impl MapLoadJob {
+    /// Толерантно к отравлению: паника треда при зажатом локе не должна
+    /// превращать следующий `set` (или чтение `poll_job`) во вторую панику —
+    /// статус джобы это перезаписываемое перечисление, чужой мусор в нём
+    /// не переживёт и мгновения.
     pub(crate) fn set(&self, state: JobState) {
-        *self.0.lock().unwrap() = state;
+        *self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = state;
     }
 }
 
@@ -111,22 +118,42 @@ pub fn start_load_thread(
     styles: StyleSnapshot,
 ) {
     std::thread::spawn(move || {
-        let result = run(&job, city, knobs).and_then(|map| {
-            if entry_step_hidden(styles.fence_zoom) {
-                // скрытая ступень заборов на входе — перекрытая загрузка:
-                // серийный префикс (заливка, калитки, прунинг) прячется под
-                // дорожки мешинга
-                prepare::build_overlapped_world(&job, map, &navmesh, city, &styles)
-            } else {
-                let world = build_navmesh(&job, map, &navmesh, city);
-                finish_world(world, &styles, &job)
-            }
-        });
+        // Паника где угодно на треде — Failed, а не замерший экран. Лейны
+        // мешинга покрывает `prepare::join`, но всё до и после них — сеть,
+        // снапшот, парс, серийная заливка с калитками и прунингом — летит
+        // здесь, и без поимки `JobState` застревает на последней фазе, а
+        // экран загрузки молчит навсегда. `AssertUnwindSafe`: захваты треда
+        // не обязаны быть unwind-safe, тред всё равно не переживает панику.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run(&job, city, knobs).and_then(|map| {
+                if entry_step_hidden(styles.fence_zoom) {
+                    // скрытая ступень заборов на входе — перекрытая загрузка:
+                    // серийный префикс (заливка, калитки, прунинг) прячется под
+                    // дорожки мешинга
+                    prepare::build_overlapped_world(&job, map, &navmesh, city, &styles)
+                } else {
+                    let world = build_navmesh(&job, map, &navmesh, city);
+                    finish_world(world, &styles, &job)
+                }
+            })
+        }))
+        .unwrap_or_else(|panic| Err(load_panic_message(panic.as_ref())));
         job.set(match result {
             Ok(world) => JobState::Done(Some(Box::new(world))),
             Err(message) => JobState::Failed(message),
         });
     });
+}
+
+/// Текст паники для `Failed`. Payload бывает `&str`, `String` и «никто не
+/// положил сообщение» — все три сводятся к одной строке на экране загрузки.
+fn load_panic_message(panic: &(dyn std::any::Any + Send)) -> String {
+    let payload = panic
+        .downcast_ref::<&str>()
+        .map(|message| (*message).to_string())
+        .or_else(|| panic.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "no panic message".to_string());
+    format!("load thread panicked: {payload}")
 }
 
 /// Слои карты — в тот же поток: карта после гейтов и прунинга финальна, и
@@ -194,7 +221,9 @@ fn build_navmesh(
     // одной цифрой, чужой read-лок на десяток секунд читался как «медленная
     // заливка карты»
     let lock_since = std::time::Instant::now();
-    let mut navmesh = arc_navmesh.write().unwrap();
+    let mut navmesh = arc_navmesh
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let portal =
         prepare::fill_navmesh_and_snap_portal(&mut navmesh, &map, city, lock_since.elapsed());
 
@@ -387,4 +416,52 @@ fn download_from(
         return Err("overpass returned a non-json body (server busy?)".to_string());
     }
     Ok(json)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_panic_message_names_str_string_and_silent_payloads() {
+        let text = std::panic::catch_unwind(|| panic!("boom")).unwrap_err();
+        assert_eq!(
+            load_panic_message(text.as_ref()),
+            "load thread panicked: boom"
+        );
+
+        let owned = std::panic::catch_unwind(|| std::panic::panic_any(String::from("owned boom")))
+            .unwrap_err();
+        assert_eq!(
+            load_panic_message(owned.as_ref()),
+            "load thread panicked: owned boom"
+        );
+
+        let silent = std::panic::catch_unwind(|| std::panic::panic_any(7u32)).unwrap_err();
+        assert_eq!(
+            load_panic_message(silent.as_ref()),
+            "load thread panicked: no panic message"
+        );
+    }
+
+    /// Паника с зажатым локом травит мьютекс джобы навсегда; `set` после
+    /// этого обязан перезаписать статус, а не паниковаться сам — иначе
+    /// Retry мёртв, как и до толерантных локов.
+    #[test]
+    fn job_set_survives_a_poisoned_mutex() {
+        let job = MapLoadJob::default();
+        let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = job.0.lock().unwrap();
+            panic!("poisoning");
+        }))
+        .is_err();
+        assert!(poisoned);
+
+        job.set(JobState::Parsing);
+        let state = job
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert!(matches!(*state, JobState::Parsing));
+    }
 }
