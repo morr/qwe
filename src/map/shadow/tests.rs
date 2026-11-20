@@ -162,3 +162,108 @@ fn the_tiled_union_merges_into_one_body_and_is_deterministic() {
     assert!(first.covers_for_test(Vec2::new(4.0, 0.0)));
     assert!(!first.covers_for_test(Vec2::new(300.0, 100.0)));
 }
+
+/// Плотная группа делится на квадранты: листьев много, каждый — не больше
+/// `DENSE_MIN`; вырожденный вход (все первые точки в одном квадранте на
+/// каждой глубине) доходит до дна решётки и возвращается одним листом.
+#[test]
+fn a_dense_group_splits_into_quadrants() {
+    let square_at = |at: Vec2| -> Vec<[f32; 2]> {
+        vec![
+            (at + Vec2::new(-1.0, -1.0)).to_array(),
+            (at + Vec2::new(1.0, -1.0)).to_array(),
+            (at + Vec2::new(1.0, 1.0)).to_array(),
+            (at + Vec2::new(-1.0, 1.0)).to_array(),
+        ]
+    };
+    // сетка 30×25 с шагом 6 м: 750 контуров в одной клетке, гребёнка
+    // квадрантов делит её уже на первом уровне
+    let cluster: Vec<Vec<[f32; 2]>> = (0..30)
+        .flat_map(|x| {
+            (0..25).map(move |y| square_at(Vec2::new(x as f32 * 6.0, y as f32 * 6.0)))
+        })
+        .collect();
+    let leaves = split_dense(cluster, |contour| Vec2::from_array(contour[0]));
+    assert!(leaves.len() > 1, "плотная группа не разделилась");
+    assert!(leaves.iter().all(|leaf| leaf.len() <= DENSE_MIN));
+    assert_eq!(leaves.iter().map(Vec::len).sum::<usize>(), 750);
+
+    // все первые точки в одном квадранте на каждой глубине: деление доходит
+    // до дна решётки и отдаёт группу целиком, не зацикливаясь
+    let pile: Vec<Vec<[f32; 2]>> = (0..DENSE_MIN + 10)
+        .map(|step| square_at(Vec2::new(step as f32 * 0.001, step as f32 * 0.001)))
+        .collect();
+    let leaves = split_dense(pile, |contour| Vec2::from_array(contour[0]));
+    assert_eq!(leaves.len(), 1);
+    assert_eq!(leaves[0].len(), DENSE_MIN + 10);
+}
+
+/// Дроблёная плотная клетка сливает тот же набор, что и недроблёная:
+/// покрытие совпадает, два прогона дроблёного пути дают одно и то же, а
+/// вход без плотных клеток дробление не меняет вовсе — группировка и
+/// порядок те же, на которых сидит полимеш.
+#[test]
+fn the_dense_split_unions_the_same_set_and_stays_deterministic() {
+    let _sun = default_sun();
+    let square = |at: Vec2, half: f32| -> Vec<[f32; 2]> {
+        vec![
+            (at + Vec2::new(-half, -half)).to_array(),
+            (at + Vec2::new(half, -half)).to_array(),
+            (at + Vec2::new(half, half)).to_array(),
+            (at + Vec2::new(-half, half)).to_array(),
+        ]
+    };
+    // 750 налегающих квадратов (шаг 6 м при размере 10 м) в одной клетке
+    let cluster: Vec<Vec<[f32; 2]>> = (0..30)
+        .flat_map(|x| {
+            (0..25).map(move |y| square(Vec2::new(x as f32 * 6.0, y as f32 * 6.0), 5.0))
+        })
+        .collect();
+
+    let mesh_of = |shapes: &[Vec<Vec<[f32; 2]>>]| {
+        let mut builder = MeshBuilder::default();
+        for shape in shapes {
+            let mut rings = shape.iter().map(|contour| {
+                contour
+                    .iter()
+                    .map(|point| Vec2::from_array(*point))
+                    .collect::<Vec<Vec2>>()
+            });
+            let Some(outer) = rings.next() else {
+                continue;
+            };
+            let holes: Vec<Vec<Vec2>> = rings.collect();
+            builder.push_polygon(&outer, &holes, SHADOW_COLOR.to_linear());
+        }
+        builder
+    };
+    let whole = mesh_of(&union_of(&cluster));
+    let split = mesh_of(&union_of_dense(&cluster));
+    // и внутри кластера, и на его пустой окраине покрытие одно
+    for point in [
+        Vec2::new(3.0, 3.0),
+        Vec2::new(87.0, 72.0),
+        Vec2::new(174.0, 144.0),
+    ] {
+        assert_eq!(
+            whole.covers_for_test(point),
+            split.covers_for_test(point),
+            "{point}: покрытие разошлось"
+        );
+    }
+    assert!(!whole.covers_for_test(Vec2::new(300.0, 300.0)));
+    assert!(!split.covers_for_test(Vec2::new(300.0, 300.0)));
+
+    assert_eq!(
+        union_of_dense(&cluster),
+        union_of_dense(&cluster),
+        "дроблёный union недетерминирован"
+    );
+
+    // без плотных клеток дробление не меняет путь: группировка по клеткам и
+    // порядок клеток те же, объединение и его результат байт в байт
+    let spread: Vec<Vec<[f32; 2]>> = (0..600)
+        .map(|step| square(Vec2::new(step as f32 * 8.0, 0.0), 5.0))
+        .collect();
+    assert_eq!(union_of(&spread), union_of_dense(&spread));
+}

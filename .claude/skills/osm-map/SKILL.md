@@ -199,8 +199,14 @@ would say something different about them, so they call the sun directly.
   (`TILE` 256 m): contours grouped by the cell of their first point, each cell unioned
   on its own thread (`map/parallel.rs::in_parallel`), the cell results unioned once —
   city-size inputs (buildings, fences) pay seconds, not tens of seconds; the geometry
-  is the same union, the vertex order is not the single-shot one. Below the threshold
-  (tests, galleries) it is one call, as before.
+  is the same union, the vertex order is not the single-shot one. A cell that is itself
+  dense (above `DENSE_MIN`, the same 512) is split into quadrants by first point,
+  recursively down to a 32 m lattice (`shadow.rs::split_dense`): the union cost over
+  raw overlapping sweeps is superlinear, and one dense cell in its own thread was the
+  whole shadow stage of the Paris private sector (perf journal 25). Only the shadow
+  variant splits (`push_union` → `union_of_dense`); the polymesh union keeps the plain
+  grouping — its shapes feed the CDT, and re-pinning its geometry wants the probe's
+  bit-in-bit protocol. Below the threshold (tests, galleries) it is one call, as before.
 
 **Only buildings and fences go through `push_union`; the other five stay outside it, and
 each for a measured reason.** The cars do not union at all (a 6 m pitch against a metre

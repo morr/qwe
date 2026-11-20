@@ -77,8 +77,9 @@ pub fn penumbra(direction: Vec2) -> f32 {
 /// дома это соседние крылья одного здания и соседние дома, у ограды — тень
 /// звена и тень излома, а в частном секторе ещё и заборы соседних участков,
 /// лежащие друг на друге по всей длине при низком солнце. На городском входе
-/// объединение идёт **тайлами** ([`union_of`] — цена одного прохода растёт
-/// быстрее контуров, и сто тысяч контуров одним вызовом — секунды).
+/// объединение идёт **тайлами** ([`union_of_dense`] — цена одного прохода
+/// растёт быстрее контуров, и сто тысяч контуров одним вызовом — секунды;
+/// плотная клетка дробится на квадранты — запись 25).
 ///
 /// **Кайма** идёт наружу от внешнего кольца и внутрь просвета от каждой дырки:
 /// сторону она выбирает по площади самого кольца, так что дырке нужно
@@ -94,7 +95,7 @@ pub fn penumbra(direction: Vec2) -> f32 {
 pub fn push_union(builder: &mut MeshBuilder, contours: &[Vec<[f32; 2]>], blur: f32) {
     use crate::map::parallel::in_parallel;
 
-    let shapes = union_of(contours);
+    let shapes = union_of_dense(contours);
     let color = SHADOW_COLOR.to_linear();
     let fade = LinearRgba {
         alpha: 0.0,
@@ -141,18 +142,93 @@ const TILED_MIN: usize = 512;
 /// чем контуров на входе.
 const TILE: f32 = 256.0;
 
+/// Порог плотной группы, контуров. Группа с бо́льшим числом делится на
+/// квадранты по первой точке — тот же приём, каким весь вход делится на
+/// клетки ([`TILE`]), и порог тот же, что у [`TILED_MIN`]: группировка по
+/// клеткам существует, потому что цена одного прохода растёт быстрее числа
+/// контуров; клетка с контуров больше порога больна той же болезнью, а
+/// параллелизм клеток её не лечит — в своём потоке она одна (запись 25:
+/// 2053 свипа — 77 мс, 3656 — 1210 мс на ступени 1.30 Парижа, обе клетки —
+/// частный сектор).
+const DENSE_MIN: usize = 512;
+
+/// Гранулярность решётки, на которой дробление останавливается, м: глубже
+/// группы и так малы, а первые точки, всё лёгшие в один квадрант, —
+/// вырожденный вход, не стоящий своей решётки.
+const DENSE_MIN_STEP: f32 = 32.0;
+
+/// Делит плотную группу на квадранты по первой точке.
+///
+/// Возвращает листья: каждый несёт не больше [`DENSE_MIN`] элементов или
+/// стоит на решётке [`DENSE_MIN_STEP`]. Очередь — FIFO, квадранты внутри
+/// группы — по возрастанию ключа решётки, так что порядок листьев
+/// детерминирован. Группа, чьи первые точки легли в один квадрант, не
+/// делится вовсе — вместо неё мельче становится шаг решётки, так что
+/// деление всегда прогрессирует.
+fn split_dense<T>(items: Vec<T>, point_of: impl Fn(&T) -> Vec2) -> Vec<Vec<T>> {
+    use std::collections::VecDeque;
+
+    use bevy::platform::collections::HashMap;
+
+    let mut leaves = Vec::new();
+    if items.len() <= DENSE_MIN {
+        leaves.push(items);
+        return leaves;
+    }
+    let mut queue = VecDeque::from([(items, TILE / 2.0)]);
+    while let Some((group, step)) = queue.pop_front() {
+        if group.len() <= DENSE_MIN || step < DENSE_MIN_STEP {
+            leaves.push(group);
+            continue;
+        }
+        let mut by_quad: HashMap<IVec2, Vec<T>> = HashMap::new();
+        for item in group {
+            let quad = (point_of(&item) / step).floor().as_ivec2();
+            by_quad.entry(quad).or_default().push(item);
+        }
+        let mut quads: Vec<(IVec2, Vec<T>)> = by_quad.into_iter().collect();
+        quads.sort_unstable_by_key(|&(quad, _)| (quad.x, quad.y));
+        for (_, group) in quads {
+            if group.len() > DENSE_MIN {
+                queue.push_back((group, step / 2.0));
+            } else {
+                leaves.push(group);
+            }
+        }
+    }
+    leaves
+}
+
 /// Объединённые свипы: один проход на малом входе, тайлами на городском.
 ///
 /// Группировка детерминирована дважды: порядок контуров внутри клетки —
 /// входной, клетки обходятся по возрастанию ключа, а не по порядку хеша.
 /// Геометрия union от группировки не зависит (ассоциативность), порядок
 /// вершин результата от однопроходного отличается — контракт картинки, не
-/// байтов. Двухуровневое слияние (клетка → квартал 4×4 → финал) замерялось
-/// против этого и выигрыша не показало: у `i_overlay` цена ближе к линейной,
-/// и почти всё и так уходит в параллельные клеточные union.
-/// Объединение по клеткам — общий примитив: теням его зовёт [`push_union`],
-/// полимешу (`navigation/polymesh`) — union надутых препятствий перед CDT.
+/// байтов. Слияние **результатов** клеток в кварталы (4×4) замерялось против
+/// этого и выигрыша не показало: у объединённых фигур цена ближе к линейной,
+/// и почти всё и так уходит в параллельные клеточные union — сверхлинейна
+/// цена **сырых** контуров одной группы, и она лечится дроблением плотной
+/// клетки ([`union_of_dense`], запись 25). Объединение по клеткам — общий
+/// примитив: полимешу (`navigation/polymesh`) — union надутых препятствий
+/// перед CDT, эта функция.
 pub(crate) fn union_of(contours: &[Vec<[f32; 2]>]) -> Vec<Vec<Vec<[f32; 2]>>> {
+    union_tiled(contours, false)
+}
+
+/// Тот же тайловый union, но плотные клетки дробятся на квадранты
+/// ([`split_dense`]) — теневой вариант.
+///
+/// Его результат читает картинка, и перестановка вершин там — тот же класс
+/// «перестановки тайловых путей», что у самой группировки по клеткам.
+/// Полимеш его не зовёт: его union — вход CDT, и перестановка вершин
+/// доезжает до навмеш-геометрии; когда дойдёт руки ускорить его тем же
+/// приёмом, сверяться с базой probe-ом бит-в-бит.
+pub(crate) fn union_of_dense(contours: &[Vec<[f32; 2]>]) -> Vec<Vec<Vec<[f32; 2]>>> {
+    union_tiled(contours, true)
+}
+
+fn union_tiled(contours: &[Vec<[f32; 2]>], dense: bool) -> Vec<Vec<Vec<[f32; 2]>>> {
     if contours.len() <= TILED_MIN {
         return contours.simplify_shape(FillRule::NonZero);
     }
@@ -168,8 +244,20 @@ pub(crate) fn union_of(contours: &[Vec<[f32; 2]>]) -> Vec<Vec<Vec<[f32; 2]>>> {
     let mut cells: Vec<(IVec2, Vec<Vec<[f32; 2]>>)> = by_cell.into_iter().collect();
     cells.sort_unstable_by_key(|&(cell, _)| (cell.x, cell.y));
 
-    let tiled: Vec<Vec<Vec<[f32; 2]>>> = in_parallel(&cells, |(_, contours)| {
-        contours.simplify_shape(FillRule::NonZero)
+    // клетки — по одной группе на клетку; плотные клетки в теневом варианте
+    // едут квадрантами, и все группы — в один общий параллельный проход
+    let groups: Vec<Vec<Vec<[f32; 2]>>> = cells
+        .into_iter()
+        .flat_map(|(_, cell_contours)| {
+            if dense {
+                split_dense(cell_contours, |contour| Vec2::from_array(contour[0]))
+            } else {
+                vec![cell_contours]
+            }
+        })
+        .collect();
+    let tiled: Vec<Vec<Vec<[f32; 2]>>> = in_parallel(&groups, |group| {
+        group.simplify_shape(FillRule::NonZero)
     })
     .into_iter()
     .flatten()
@@ -192,8 +280,12 @@ pub(crate) fn union_of(contours: &[Vec<[f32; 2]>]) -> Vec<Vec<Vec<[f32; 2]>>> {
 /// раньше снимал один большой `Difference`, переехали бы в union и съели
 /// выигрыш. Рамки заведомо шире геометрии (свип вытекает из своей клетки),
 /// ложный «задел» только запускает лишний оверлей, а не портит результат.
-/// Слитые результаты клеток едут во вход union как раньше. Малый вход
-/// (тесты, витрины) — прежний однопроходный путь, как у [`union_of`].
+/// Слитые результаты клеток едут во вход union как раньше. Плотная клетка
+/// делится на квадранты ([`split_dense`]) — та же сверхлинейность сырых
+/// контуров, что у union, и клипы фильтруются по рамке листа, уже рамки
+/// клетки: разность с непересекающимся клипом тождественна, ложный задел
+/// столько же стоит, сколько стоял. Малый вход (тесты, витрины) — прежний
+/// однопроходный путь, как у [`union_of`].
 pub(crate) fn difference_of(
     subjects: &[Vec<[f32; 2]>],
     clips: &[Vec<[f32; 2]>],
@@ -244,7 +336,35 @@ pub(crate) fn difference_of(
         .collect();
     cells.sort_unstable_by_key(|&(cell, _, _)| (cell.x, cell.y));
 
-    let tiled: Vec<Vec<Vec<[f32; 2]>>> = in_parallel(&cells, |(_, indices, bounds)| {
+    // клетка — одна группа с рамкой всей клетки; плотная клетка едет
+    // квадрантами, каждый со своей рамкой — фильтр клипов по ней уже, и
+    // разности с непересекающимися клипами меньше
+    let mut groups: Vec<(Vec<usize>, [f32; 4])> = Vec::new();
+    for (_, indices, bounds) in cells {
+        if indices.len() <= DENSE_MIN {
+            groups.push((indices, bounds));
+            continue;
+        }
+        for leaf in split_dense(indices, |&i| Vec2::from_array(subjects[i][0])) {
+            let mut leaf_bounds = [
+                f32::INFINITY,
+                f32::INFINITY,
+                f32::NEG_INFINITY,
+                f32::NEG_INFINITY,
+            ];
+            for &i in &leaf {
+                for &[x, y] in &subjects[i] {
+                    leaf_bounds[0] = leaf_bounds[0].min(x);
+                    leaf_bounds[1] = leaf_bounds[1].min(y);
+                    leaf_bounds[2] = leaf_bounds[2].max(x);
+                    leaf_bounds[3] = leaf_bounds[3].max(y);
+                }
+            }
+            groups.push((leaf, leaf_bounds));
+        }
+    }
+
+    let tiled: Vec<Vec<Vec<[f32; 2]>>> = in_parallel(&groups, |(indices, bounds)| {
         let subject: Vec<Vec<[f32; 2]>> = indices.iter().map(|&i| subjects[i].clone()).collect();
         let clips: Vec<Vec<[f32; 2]>> = clips
             .iter()
