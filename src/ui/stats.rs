@@ -12,6 +12,7 @@
 
 use bevy::feathers::theme::{ThemeBackgroundColor, ThemeTextColor};
 use bevy::feathers::tokens;
+use bevy::input::common_conditions::input_just_pressed;
 use bevy::input_focus::InputFocus;
 use bevy::input_focus::tab_navigation::TabIndex;
 use bevy::prelude::*;
@@ -69,7 +70,9 @@ impl Plugin for UiStatsPlugin {
                 Update,
                 (
                     sync_world_counts.after(crate::census::count_census),
-                    apply_seed_on_enter,
+                    // гейт ввода — условием расписания (CLAUDE.md), а не
+                    // ранним выходом из тела
+                    apply_seed_on_enter.run_if(input_just_pressed(KeyCode::Enter)),
                     sync_seed_field.run_if(resource_changed::<WorldSeed>),
                 ),
             );
@@ -377,20 +380,17 @@ fn sync_world_counts(
     }
 }
 
-/// Enter в поле seed'а применяет набранное. Дальше всё делает наблюдатель за
-/// `WorldSeed` в `determinism.rs`: он заказывает рестарт.
+/// Enter в поле seed'а применяет набранное (гейт — `run_if` в расписании).
+/// Дальше всё делает наблюдатель за `WorldSeed` в `determinism.rs`: он
+/// заказывает рестарт.
 ///
 /// Неразобранный ввод не молчит, а откатывается к текущему seed'у — иначе
 /// опечатка выглядела бы как «поле приняло, а мир не перезапустился».
 fn apply_seed_on_enter(
-    keys: Res<ButtonInput<KeyCode>>,
     focus: Res<InputFocus>,
     mut seed: ResMut<WorldSeed>,
     mut fields: Query<&mut EditableText, With<SeedField>>,
 ) {
-    if !keys.just_pressed(KeyCode::Enter) {
-        return;
-    }
     let Some(focused) = focus.get() else {
         return;
     };
