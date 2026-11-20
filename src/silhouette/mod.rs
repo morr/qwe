@@ -219,7 +219,15 @@ impl Plugin for SilhouettePlugin {
             .add_systems(Startup, build_atlas)
             .add_systems(
                 Update,
-                (size_fresh_silhouettes, resize_silhouettes_on_zoom).chain(),
+                // масштаб силуэта считается по камере, которую в этом же кадре
+                // пишут zoom_to_cursor/drag_pan/key_pan: без рёбер порог
+                // экранного пола ловил зум прошлого кадра — силуэт прыгал
+                // кадром позже пересечения
+                (size_fresh_silhouettes, resize_silhouettes_on_zoom)
+                    .chain()
+                    .after(crate::camera::zoom_to_cursor)
+                    .after(crate::camera::drag_pan)
+                    .after(crate::camera::key_pan),
             );
     }
 }

@@ -330,9 +330,14 @@ impl Plugin for MapPlugin {
                     // выходят сразу, если их вход не поехал, так что отдельных
                     // условий на них не надо. Ступень зума крон считается
                     // перед связкой, а её смена идёт своей системой следом:
-                    // связку она не трогает, кроны и тени только прячет
+                    // связку она не трогает, кроны и тени только прячет.
+                    // Ступени зума читают камеру, которую в этом же кадре
+                    // пишут zoom_to_cursor/drag_pan/key_pan: ребро
+                    // `after(zoom_to_cursor)` ниже повторено головой каждой
+                    // группы ступеней, чтобы порог ловил зум того же кадра
                     (
-                        zoom::update_zoom_bucket::<trees::TreeLods>,
+                        zoom::update_zoom_bucket::<trees::TreeLods>
+                            .after(crate::camera::zoom_to_cursor),
                         (
                             trees::recompose_row_trees,
                             trees::retune_conifer_field,
@@ -352,7 +357,8 @@ impl Plugin for MapPlugin {
                         .chain()
                         .run_if(in_state(AppState::Playing)),
                     (
-                        zoom::update_zoom_bucket::<buildings::BuildingLods>,
+                        zoom::update_zoom_bucket::<buildings::BuildingLods>
+                            .after(crate::camera::zoom_to_cursor),
                         buildings::rebuild_buildings.run_if(buildings::rebuilds_on()),
                         // ступень зума зданий не пересобирает слой, а прячет
                         // оборудование кровли в шейдере
@@ -365,7 +371,8 @@ impl Plugin for MapPlugin {
                     // (`show_road_steps`, следом) только перекрашивает слои —
                     // обе ступени лежат в мире заранее
                     (
-                        zoom::update_zoom_bucket::<roads::VergeLods>,
+                        zoom::update_zoom_bucket::<roads::VergeLods>
+                            .after(crate::camera::zoom_to_cursor),
                         roads::rebuild_roads.run_if(roads::rebuilds_on()),
                         roads::show_road_steps,
                     )
@@ -375,7 +382,8 @@ impl Plugin for MapPlugin {
                     // каждого ступень считается своим `update_zoom_bucket`, и
                     // пересборка идёт следом
                     (
-                        zoom::update_zoom_bucket::<cars::CarLods>,
+                        zoom::update_zoom_bucket::<cars::CarLods>
+                            .after(crate::camera::zoom_to_cursor),
                         cars::rebuild_cars.run_if(cars::rebuilds_on()),
                         zoom::update_zoom_bucket::<wagons::WagonLods>,
                         wagons::rebuild_wagons.run_if(wagons::rebuilds_on()),
@@ -402,7 +410,8 @@ impl Plugin for MapPlugin {
                     // краска не пересобирается со ступенью: ступень только
                     // прячет меши линий, которых на этом зуме не видно
                     (
-                        zoom::update_zoom_bucket::<roads::paint::PaintLods>,
+                        zoom::update_zoom_bucket::<roads::paint::PaintLods>
+                            .after(crate::camera::zoom_to_cursor),
                         roads::paint::show_paint,
                     )
                         .chain()
@@ -415,13 +424,15 @@ impl Plugin for MapPlugin {
                     // У путей пересборок больше нет вовсе: собраны все ступени
                     // (`rail::spawn_rails`), порог переключает видимость
                     (
-                        zoom::update_zoom_bucket::<rail::RailLods>,
+                        zoom::update_zoom_bucket::<rail::RailLods>
+                            .after(crate::camera::zoom_to_cursor),
                         zoom::show_lod_layers::<rail::RailLods, With<rail::RailLayerTag>>,
                     )
                         .chain()
                         .run_if(in_state(AppState::Playing)),
                     (
-                        zoom::update_zoom_bucket::<tram::TramLods>,
+                        zoom::update_zoom_bucket::<tram::TramLods>
+                            .after(crate::camera::zoom_to_cursor),
                         tram::rebuild_tram.run_if(tram::rebuilds_on()),
                     )
                         .chain()

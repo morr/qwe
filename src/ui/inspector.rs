@@ -30,7 +30,7 @@ use bevy::ui_widgets::ValueChange;
 use bevy::window::PrimaryWindow;
 
 use super::speed::{HUD_COLUMN_WIDTH_PX, RightHudColumn};
-use crate::camera::{cursor_world, pointer_over_ui};
+use crate::camera::{cursor_world, drag_pan, key_pan, pointer_over_ui, zoom_to_cursor};
 use crate::dev::{VirtualCursor, cursor_position};
 use crate::map::inspect::{
     FeatureRef, Hit, InspectIndex, InspectOrigin, InspectViewport, PinnedFill, feature_shape,
@@ -242,31 +242,49 @@ impl Plugin for UiInspectorPlugin {
         )
         .add_systems(
             Update,
+            // панель — один проход: хиты под курсором → клавиши выделения →
+            // синхронизация строк и подсветок. Клавиши читают то, что
+            // посчитали хиты, синхронизации — то, что сделали клавиши; без
+            // цепочки цикл по ]/[ и пины отрисовывались бы от хитов прошлого
+            // кадра. Камерные две строки и сами хиты читают камеру, которую
+            // в этом же кадре пишут zoom_to_cursor/drag_pan/key_pan, —
+            // поэтому их рёбра после пан-систем
             (
-                update_camera_text,
-                update_inspector_hits,
-                sync_inspector_visibility,
-                sync_hits_rows,
-                // клавиши — как все хоткеи: пока курсор в текстовом поле
-                // (сид), Backspace правит поле, а не стирает пины
-                cycle_inspector_selection_next
-                    .run_if(bracket_forward_pressed)
-                    .run_if(not(super::typing_in_text_input)),
-                cycle_inspector_selection_prev
-                    .run_if(bracket_backward_pressed)
-                    .run_if(not(super::typing_in_text_input)),
-                pin_inspector_selection
-                    .run_if(backslash_pressed)
-                    .run_if(not(super::typing_in_text_input)),
-                clear_inspector_pins
-                    .run_if(backspace_pressed)
-                    .run_if(not(super::typing_in_text_input)),
-                sync_highlight_checked,
-                sync_pinned_rows,
-                sync_pinned_visibility,
-                sync_pinned_highlights,
-                sync_inspector_highlight,
-            ),
+                update_camera_text
+                    .after(zoom_to_cursor)
+                    .after(drag_pan)
+                    .after(key_pan),
+                update_inspector_hits
+                    .after(zoom_to_cursor)
+                    .after(drag_pan)
+                    .after(key_pan),
+                (
+                    // клавиши — как все хоткеи: пока курсор в текстовом поле
+                    // (сид), Backspace правит поле, а не стирает пины
+                    cycle_inspector_selection_next
+                        .run_if(bracket_forward_pressed)
+                        .run_if(not(super::typing_in_text_input)),
+                    cycle_inspector_selection_prev
+                        .run_if(bracket_backward_pressed)
+                        .run_if(not(super::typing_in_text_input)),
+                    pin_inspector_selection
+                        .run_if(backslash_pressed)
+                        .run_if(not(super::typing_in_text_input)),
+                    clear_inspector_pins
+                        .run_if(backspace_pressed)
+                        .run_if(not(super::typing_in_text_input)),
+                ),
+                (
+                    sync_inspector_visibility,
+                    sync_hits_rows,
+                    sync_highlight_checked,
+                    sync_pinned_rows,
+                    sync_pinned_visibility,
+                    sync_pinned_highlights,
+                    sync_inspector_highlight,
+                ),
+            )
+                .chain(),
         );
     }
 }

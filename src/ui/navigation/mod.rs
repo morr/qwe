@@ -221,10 +221,14 @@ impl Plugin for UiNavigationPlugin {
             .add_knobs::<HumanStyle>()
             .add_knobs::<PolymeshDebug>()
             .add_systems(Startup, build_navigation_tab.in_set(UiBuildSet::Sections))
-            // после смены города: оверлей умер с DespawnOnExit, ресурсы живы
+            // после смены города: оверлей умер с DespawnOnExit, ресурсы живы.
+            // Оверлей рисует свежесобранный полимеш: после его сборки/опроса
+            // — иначе в кадре включения тумблера он рисовал бы прошлогодний
             .add_systems(
                 OnEnter(AppState::Playing),
-                sync_polymesh_overlay.in_set(WorldInitSet::Spawn),
+                sync_polymesh_overlay
+                    .after(crate::navigation::sync_polymesh_build)
+                    .in_set(WorldInitSet::Spawn),
             )
             .add_systems(
                 Update,
@@ -248,8 +252,11 @@ impl Plugin for UiNavigationPlugin {
                                 .or_else(resource_changed::<Determinism>),
                         ),
                     // PolyNavmesh меняется ровно в момент снятия готового
-                    // меша с таска — тогда оверлей и появляется
+                    // меша с таска — тогда оверлей и появляется; после
+                    // сборки и опроса — тот же кадр, что и у них
                     sync_polymesh_overlay
+                        .after(crate::navigation::sync_polymesh_build)
+                        .after(crate::navigation::poll_polymesh_build)
                         .run_if(in_state(AppState::Playing))
                         .run_if(
                             resource_changed::<PolymeshDebug>

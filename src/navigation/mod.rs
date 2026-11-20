@@ -345,6 +345,8 @@ impl Plugin for NavigationPlugin {
             .add_systems(
                 Update,
                 (
+                    // старт раньше опроса: в кадре смены алгоритма опрос
+                    // видит уже запущенную сборку, а не статус прошлого кадра
                     start_northstar_build
                         .run_if(in_state(PlayPhase::Live))
                         .run_if(northstar_wanted)
@@ -352,7 +354,9 @@ impl Plugin for NavigationPlugin {
                             resource_changed::<PathfindingAlgorithm>
                                 .or_else(resource_changed::<PolymeshDebug>),
                         ),
-                    poll_northstar_build.run_if(|grid: Res<NorthstarGrid>| grid.is_building()),
+                    poll_northstar_build
+                        .after(start_northstar_build)
+                        .run_if(|grid: Res<NorthstarGrid>| grid.is_building()),
                 ),
             )
             // полигональный меш — основной бэкенд (`PolymeshDebug::enabled`
@@ -385,7 +389,11 @@ impl Plugin for NavigationPlugin {
                             .and_then(resource_changed::<PolymeshDebug>)
                             .and_then(in_state(AppState::Playing)),
                     ),
-                    poll_polymesh_build.run_if(|poly: Res<PolyNavmesh>| poly.is_building()),
+                    // опрос после старта: в кадре смены тумблера сборка
+                    // уже запущена, а не статус прошлого кадра
+                    poll_polymesh_build
+                        .after(sync_polymesh_build)
+                        .run_if(|poly: Res<PolyNavmesh>| poly.is_building()),
                 ),
             );
     }

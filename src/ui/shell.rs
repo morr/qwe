@@ -295,10 +295,16 @@ impl Plugin for UiShellPlugin {
             .add_systems(
                 Update,
                 (
+                    // тогл раньше синхронизации: change-детект sync_shell
+                    // срабатывает в кадре нажатия, панель складывается тем же
+                    // кадром, а не следующим
+                    toggle_shell
+                        .run_if(
+                            input_just_pressed(KeyCode::Tab)
+                                .and_then(not(super::typing_in_text_input)),
+                        )
+                        .before(sync_shell),
                     sync_shell.run_if(resource_changed::<UiShellState>),
-                    toggle_shell.run_if(
-                        input_just_pressed(KeyCode::Tab).and_then(not(super::typing_in_text_input)),
-                    ),
                     send_scroll_events,
                 ),
             )
