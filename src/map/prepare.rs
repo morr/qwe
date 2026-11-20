@@ -106,10 +106,12 @@ pub struct WorldMeshes {
 #[derive(Resource)]
 pub struct PreparedMeshes(pub(crate) WorldMeshes);
 
-/// Мешинг карты целиком — после финализации `MapData` (гейты, прунинг,
-/// состав деревьев). Группы — по потоку; паника в группе — `Err`, чтобы
-/// поток загрузки написал `Failed` и экран загрузки сказал об этом, а не
-/// замер навсегда.
+/// Мешинг карты целиком после финализации `MapData` (гейты, прунинг, состав
+/// деревьев) — **серийный референс пина эквивалентности, только тесты**:
+/// продовая загрузка ходит перекрытым путём ([`build_overlapped_world`]),
+/// здесь группы идут по потоку подряд, чтобы пин сравнивал расписание, а не
+/// тела дорожек. Паника в группе — `Err`, как у перекрытых лейнов.
+#[cfg(test)]
 pub fn build_world_meshes(
     map: &mut MapData,
     styles: &StyleSnapshot,
@@ -213,9 +215,10 @@ fn small_lane(
     (layout, surfaces, surface_report, trees, rails, parked)
 }
 
-// Тела дорожек — общие серийной загрузке ([`build_world_meshes`]) и
-// перекрытой ([`build_overlapped_world`]): обе цепочки дорожек запускают одни
-// и те же функции над `&MapData`, различается только расписание вокруг них.
+// Тела дорожек — общие перекрытой загрузке ([`build_overlapped_world`]) и её
+// серийному тестовому референсу ([`build_world_meshes`]): обе цепочки
+// дорожек запускают одни и те же функции над `&MapData`, различается только
+// расписание вокруг них.
 
 /// Лейн зданий.
 fn buildings_lane(map: &MapData, styles: &StyleSnapshot) -> (BuildingMeshes, BuildingReport) {
@@ -256,10 +259,9 @@ fn polymesh_lane(map: &MapData, styles: &StyleSnapshot) -> Option<PolymeshBuild>
         .and_then(|(radius, chunked)| crate::navigation::build_polymesh_for(map, radius, chunked))
 }
 
-/// Заливка сетки по карте и снап портала — общая голова серийной загрузки
-/// (`download.rs::build_navmesh`) и навмеш-дорожки перекрытой. Лок навмеша
-/// уже взят вызывающим: его ожидание он меряет сам и передаёт сюда для той
-/// же строки лога.
+/// Заливка сетки по карте и снап портала — голова навмеш-дорожки перекрытой
+/// загрузки. Лок навмеша уже взят вызывающим: его ожидание он меряет сам и
+/// передаёт сюда для той же строки лога.
 pub(crate) fn fill_navmesh_and_snap_portal(
     navmesh: &mut Navmesh,
     map: &MapData,
@@ -289,17 +291,21 @@ pub(crate) fn fill_navmesh_and_snap_portal(
     }
 }
 
-/// Загрузка с перекрытым префиксом: навмеш-дорожка (заливка → снап →
-/// калитки) идёт рядом с лейнами мешинга, прунинг уходит второй волной, и
-/// лейн полимеша — единственный читатель калиток — получает клон карты с
-/// открытыми калитками сразу после шага калиток, не дожидаясь прунинга.
+/// Единственная форма загрузки: навмеш-дорожка (заливка → снап → калитки)
+/// идёт рядом с лейнами мешинга, вторая волна (прунинг ∥ полимеш ∥ заборы)
+/// стартует присоединением дорожки калиток, и лейн полимеша получает клон
+/// карты с открытыми калитками сразу после шага калиток, не дожидаясь
+/// прунинга. Сериальный префикс (заливка, калитки, прунинг — ~0.4 с тёплого
+/// входа Парижа) прячется под стену дорожной сборки целиком (запись 66:
+/// −0.39 с на виде владельца, −0.27 с на Туле).
 ///
-/// Включается загрузочным потоком на скрытой ступени заборов входного зума
-/// ([`crate::map::fences::entry_step_hidden`]): серийный префикс (~0.7–0.9 с
-/// тёплого входа Парижа) прячется под стену дорожной сборки. Видимая ступень
-/// держит серийный путь (`download.rs::build_navmesh`): лейн заборов там
-/// дорог сам по себе (2.3–2.8 с Парижа) и его старт не должен сдвигаться
-/// гонкой дорожек за ядра — урок прогона №12.
+/// До записи 66 путь включался только на скрытой ступени заборов входного
+/// зума: лейн заборов был дорог сам по себе (2.3–2.8 с Парижа), и его старт
+/// не должен был сдвигаться гонкой дорожек за ядра (урок прогона №12).
+/// Запись 63 срезала лейн заборов до ~1.0 с, стеной стал лейн дорог, и
+/// гейт потерял основание — лейн заборов уехал во вторую волну (он читает
+/// проёмы оград через `fence_gaps` — калитки и дорожные пересечения, —
+/// ему нужен клон с уже открытыми калитками).
 ///
 /// Карта читается лейнами напрямую: навмеш работает на клоне, и его
 /// единственная мутация карты — калитки в `fences` — сливается в карту мира
@@ -330,10 +336,7 @@ pub fn build_overlapped_world(
     let map_ref = &map;
     let (meshes, portal, inspect, gate_lists) = std::thread::scope(
         |scope| -> Result<(WorldMeshes, Vec2, InspectIndex, Vec<Vec<Vec2>>), String> {
-            // Первая волна: лейны, не читающие калиток. Лейн заборов среди
-            // них легален ровно потому, что путь включается на скрытой
-            // ступени — `entry_layers` выходит рано (width <= 0) до всякого
-            // чтения проёмов.
+            // Первая волна: лейны, не читающие калиток.
             let buildings = scope.spawn(|| timed("buildings", || buildings_lane(map_ref, styles)));
             let roads = scope.spawn(|| timed("roads", || roads_lane(map_ref, styles)));
             let small = scope.spawn(|| {
@@ -341,7 +344,6 @@ pub fn build_overlapped_world(
                     small_lane(map_ref, styles)
                 })
             });
-            let fences = scope.spawn(|| timed("fences", || fences_lane(map_ref, styles)));
             let inspect = scope.spawn(|| {
                 let started = Instant::now();
                 let index = InspectIndex::prebuild(map_ref, &styles.road_shape);
@@ -388,10 +390,13 @@ pub fn build_overlapped_world(
                 .collect();
 
             // Вторая волна: прунинг карту не читает — лок навмеша хватает, —
-            // и полимеш строится по клону с калитками параллельно с ним.
-            // Дорожки второй волны берут свои входы move-ом: клона и портала
-            // больше никто не читает, а заимствования локалей замыкания
-            // scope.spawn не разрешает.
+            // полимеш и лейн заборов строится по клону с открытыми калитками
+            // параллельно с ним. Заборный лейн читает проёмы оград
+            // (`fence_gaps` — калитки и дорожные пересечения), серийный путь
+            // строил его по карте с уже слитыми калитками; свой клон клона —
+            // мегабайты и миллисекунды против стены лейнов, а move-входы
+            // вторая волна держит раздельными (клона и портала больше никто
+            // не читает).
             let prune_lane = scope.spawn(move || {
                 let started = Instant::now();
                 let mut nav = navmesh
@@ -401,6 +406,8 @@ pub fn build_overlapped_world(
                 nav.drop_gate_scratch();
                 (pruned, started.elapsed())
             });
+            let fence_map = scratch.clone();
+            let fences = scope.spawn(move || timed("fences", || fences_lane(&fence_map, styles)));
             let polymesh =
                 scope.spawn(move || timed("polymesh", || polymesh_lane(&scratch, styles)));
 
@@ -408,11 +415,11 @@ pub fn build_overlapped_world(
             info!("navmesh: pruned {pruned} unreachable tiles in {prune_time:?}");
             job.set(JobState::BuildingMeshes);
             let polymesh = join(polymesh, "polymesh")?;
+            let fences = join(fences, "fences")?;
 
             let buildings = join(buildings, "buildings")?;
             let roads = join(roads, "roads")?;
             let small = join(small, "small layers")?;
-            let fences = join(fences, "fences")?;
             let inspect = join(inspect, "inspect index")?;
 
             let (parking_layout, surfaces, surface_report, trees, rails, parked) = small;
@@ -534,8 +541,8 @@ mod tests {
         assert!(meshes.polymesh.is_some(), "панель включена — меш построен");
     }
 
-    /// Скрытая ступень — гейт перекрытой загрузки: на последней черте
-    /// лестницы заборов и дальше слой скрыт, до неё — рисуется.
+    /// Скрытая ступень лестницы заборов: на последней черте и дальше слой
+    /// скрыт (нулевая ширина ступени), до неё — рисуется.
     #[test]
     fn the_entry_fence_step_is_hidden_past_the_last_ladder_bound() {
         assert!(!crate::map::fences::entry_step_hidden(0.4));
@@ -588,64 +595,94 @@ mod tests {
 
     /// Перекрытая загрузка даёт тот же мир, что серийная: сетка навмеша и
     /// калитки в карте бит-в-бит, полимеш построен по тем же калиткам (одни
-    /// препятствия). Обе стороны при скрытой ступени заборов и с включённой
-    /// панелью полимеша — иначе его лейн ничего не строит и передача
-    /// калиток дорожкой остаётся непроверенной.
+    /// препятствия), на видимой ступени заборов — и слой заборов бит-в-бит
+    /// (серийный путь строил его по карте с уже слитыми калитками, перекрытый
+    /// — по клону второй волны). Обе стороны с включённой панелью полимеша —
+    /// иначе его лейн ничего не строит и передача калиток дорожкой
+    /// остаётся непроверенной.
     #[test]
     fn the_overlapped_load_matches_the_serial_one() {
-        let styles = {
-            let mut styles = snapshot();
-            styles.fence_zoom = 1.0;
-            styles.polymesh = Some((0.4, true));
-            styles
-        };
-        let job = MapLoadJob::default();
+        for fence_zoom in [0.4, 1.0] {
+            let styles = {
+                let mut styles = snapshot();
+                styles.fence_zoom = fence_zoom;
+                styles.polymesh = Some((0.4, true));
+                styles
+            };
+            let job = MapLoadJob::default();
 
-        // серийный путь: заливка → снап → калитки с прунингом, потом лейны
-        let mut serial_map = gated_plot_map();
-        let mut serial_nav = Navmesh::default();
-        let serial_portal =
-            fill_navmesh_and_snap_portal(&mut serial_nav, &serial_map, City::Tula, Duration::ZERO);
-        serial_nav.open_gates_and_prune(&mut serial_map, serial_portal, |_, _| {});
-        let serial_meshes =
-            build_world_meshes(&mut serial_map, &styles, &job).expect("serial meshing failed");
+            // серийный путь: заливка → снап → калитки с прунингом, потом лейны
+            let mut serial_map = gated_plot_map();
+            let mut serial_nav = Navmesh::default();
+            let serial_portal = fill_navmesh_and_snap_portal(
+                &mut serial_nav,
+                &serial_map,
+                City::Tula,
+                Duration::ZERO,
+            );
+            serial_nav.open_gates_and_prune(&mut serial_map, serial_portal, |_, _| {});
+            let serial_meshes =
+                build_world_meshes(&mut serial_map, &styles, &job).expect("serial meshing failed");
 
-        // перекрытый путь
-        let overlapped_nav = RwLock::new(Navmesh::default());
-        let world =
-            build_overlapped_world(&job, gated_plot_map(), &overlapped_nav, City::Tula, &styles)
-                .expect("overlapped load failed");
+            // перекрытый путь
+            let overlapped_nav = RwLock::new(Navmesh::default());
+            let world = build_overlapped_world(
+                &job,
+                gated_plot_map(),
+                &overlapped_nav,
+                City::Tula,
+                &styles,
+            )
+            .expect("overlapped load failed");
 
-        // сетка навмеша бит-в-бит
-        let overlapped = overlapped_nav.read().unwrap();
-        assert_eq!(overlapped.grid_size, serial_nav.grid_size);
-        assert_eq!(overlapped.tile_size, serial_nav.tile_size);
-        for y in 0..serial_nav.grid_size.y {
-            for x in 0..serial_nav.grid_size.x {
+            // сетка навмеша бит-в-бит
+            let overlapped = overlapped_nav.read().unwrap();
+            assert_eq!(overlapped.grid_size, serial_nav.grid_size);
+            assert_eq!(overlapped.tile_size, serial_nav.tile_size);
+            for y in 0..serial_nav.grid_size.y {
+                for x in 0..serial_nav.grid_size.x {
+                    assert_eq!(
+                        overlapped.is_passable(x, y),
+                        serial_nav.is_passable(x, y),
+                        "тайл ({x}, {y})"
+                    );
+                }
+            }
+
+            // калитки бит-в-бит и непустые: иначе слияние проверено впустую
+            let gates_of = |map: &MapData| -> Vec<Vec<Vec2>> {
+                map.fences.iter().map(|fence| fence.gates.clone()).collect()
+            };
+            let serial_gates = gates_of(&serial_map);
+            let overlapped_gates = gates_of(&world.map);
+            assert_eq!(serial_gates, overlapped_gates);
+            assert!(
+                serial_gates.iter().any(|gates| !gates.is_empty()),
+                "фикстура обязана открыть калитку"
+            );
+
+            // портал совпал, полимеш — одни препятствия из одних калиток
+            assert_eq!(world.portal, serial_portal);
+            let serial_polymesh = serial_meshes.polymesh.expect("панель включена");
+            let overlapped_polymesh = world.meshes.polymesh.expect("панель включена");
+            assert_eq!(overlapped_polymesh.obstacles, serial_polymesh.obstacles);
+
+            // слой заборов — бит-в-бит (на скрытой ступени обе стороны пусты:
+            // сборка выходит рано, до всякого чтения проёмов)
+            let serial_fence = serial_meshes.fences.as_ref().expect("слой заборов");
+            let overlapped_fence = world.meshes.fences.as_ref().expect("слой заборов");
+            assert_eq!(
+                overlapped_fence.1.len(),
+                serial_fence.1.len(),
+                "число слоёв заборов, zoom {fence_zoom}"
+            );
+            for (serial_layer, overlapped_layer) in serial_fence.1.iter().zip(&overlapped_fence.1) {
                 assert_eq!(
-                    overlapped.is_passable(x, y),
-                    serial_nav.is_passable(x, y),
-                    "тайл ({x}, {y})"
+                    overlapped_layer.builder.positions_for_test(),
+                    serial_layer.builder.positions_for_test(),
+                    "вершины слоя заборов бит-в-бит, zoom {fence_zoom}"
                 );
             }
         }
-
-        // калитки бит-в-бит и непустые: иначе слияние проверено впустую
-        let gates_of = |map: &MapData| -> Vec<Vec<Vec2>> {
-            map.fences.iter().map(|fence| fence.gates.clone()).collect()
-        };
-        let serial_gates = gates_of(&serial_map);
-        let overlapped_gates = gates_of(&world.map);
-        assert_eq!(serial_gates, overlapped_gates);
-        assert!(
-            serial_gates.iter().any(|gates| !gates.is_empty()),
-            "фикстура обязана открыть калитку"
-        );
-
-        // портал совпал, полимеш — одни препятствия из одних калиток
-        assert_eq!(world.portal, serial_portal);
-        let serial_polymesh = serial_meshes.polymesh.expect("панель включена");
-        let overlapped_polymesh = world.meshes.polymesh.expect("панель включена");
-        assert_eq!(overlapped_polymesh.obstacles, serial_polymesh.obstacles);
     }
 }

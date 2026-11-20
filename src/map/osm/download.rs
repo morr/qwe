@@ -10,7 +10,6 @@ use std::time::{Duration, Instant};
 use bevy::prelude::*;
 
 use crate::city::City;
-use crate::map::fences::entry_step_hidden;
 use crate::map::inspect::InspectIndex;
 use crate::map::osm::model::MapData;
 use crate::map::osm::overpass::{cache_path, overpass_query, prune_stale_caches};
@@ -43,8 +42,8 @@ const SPEED_WINDOW: Duration = Duration::from_millis(250);
 /// уже заполненному navmesh, а прунинг — уже снапнутому порталу), слои
 /// карты, собранные тем же потоком (`map/prepare.rs`) — спавн на входе в
 /// мир кладёт их в мир без пересборки — и база inspect-индекса, собранная
-/// тем же потоком параллельно лейнам (`finish_world`); куски мира догоняет
-/// `rebuild_index` первым кадром.
+/// тем же потоком в первой волне лейнов (`build_overlapped_world`); куски
+/// мира догоняет `rebuild_index` первым кадром.
 pub struct LoadedWorld {
     pub map: MapData,
     pub portal: Vec2,
@@ -119,23 +118,14 @@ pub fn start_load_thread(
 ) {
     std::thread::spawn(move || {
         // Паника где угодно на треде — Failed, а не замерший экран. Лейны
-        // мешинга покрывает `prepare::join`, но всё до и после них — сеть,
-        // снапшот, парс, серийная заливка с калитками и прунингом — летит
-        // здесь, и без поимки `JobState` застревает на последней фазе, а
-        // экран загрузки молчит навсегда. `AssertUnwindSafe`: захваты треда
+        // мешинга покрывает `prepare::join`, но всё вокруг них — сеть,
+        // снапшот, парс, заливка с калитками и прунингом — летит здесь, и
+        // без поимки `JobState` застревает на последней фазе, а экран
+        // загрузки молчит навсегда. `AssertUnwindSafe`: захваты треда
         // не обязаны быть unwind-safe, тред всё равно не переживает панику.
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            run(&job, city, knobs).and_then(|map| {
-                if entry_step_hidden(styles.fence_zoom) {
-                    // скрытая ступень заборов на входе — перекрытая загрузка:
-                    // серийный префикс (заливка, калитки, прунинг) прячется под
-                    // дорожки мешинга
-                    prepare::build_overlapped_world(&job, map, &navmesh, city, &styles)
-                } else {
-                    let world = build_navmesh(&job, map, &navmesh, city);
-                    finish_world(world, &styles, &job)
-                }
-            })
+            run(&job, city, knobs)
+                .and_then(|map| prepare::build_overlapped_world(&job, map, &navmesh, city, &styles))
         }))
         .unwrap_or_else(|panic| Err(load_panic_message(panic.as_ref())));
         job.set(match result {
@@ -154,97 +144,6 @@ fn load_panic_message(panic: &(dyn std::any::Any + Send)) -> String {
         .or_else(|| panic.downcast_ref::<String>().cloned())
         .unwrap_or_else(|| "no panic message".to_string());
     format!("load thread panicked: {payload}")
-}
-
-/// Слои карты — в тот же поток: карта после гейтов и прунинга финальна, и
-/// параллельные группы собирают всё, что раньше стояло в `OnEnter(Playing)`
-/// и замироживало кадр перехода на 15.7 с (запись 10).
-///
-/// База inspect-индекса — тоже в этом потоке, параллельно лейнам: четыре
-/// её прохода с карманами читают только карту и форму (обе готовы), а
-/// дорожный финал ступени входа — сама стена whole set, под ними есть
-/// полсекунды. Куски дорог появляются со спавном мира, их догоняет
-/// `rebuild_index` первым кадром (`map/inspect.rs`). Состав деревьев
-/// поднимается сюда же, до клона: индексный поток мешит уже собранную
-/// карту, а проверка внутри `build_world_meshes` увидит состав готовым
-/// и не повторит.
-fn finish_world(
-    mut world: LoadedWorld,
-    styles: &StyleSnapshot,
-    job: &MapLoadJob,
-) -> Result<LoadedWorld, String> {
-    let compose = crate::map::trees::tree_compose(&styles.trees, &styles.tree_rows);
-    if world.map.composed_for != Some(compose) {
-        world.map.compose_trees(compose);
-    }
-    // та же глобаль, что `prepare.rs` ставит лейнам: карманные контуры
-    // индекса отвечают той же узловой осью, что рисунок
-    crate::map::roads::shape::set_lane_width(world.map.knobs.lane_width);
-
-    let started = std::time::Instant::now();
-    let index_map = world.map.clone();
-    info!(
-        "map meshes: inspect index clone in {:.1?}",
-        started.elapsed()
-    );
-    let inspect = std::thread::scope(|scope| -> Result<InspectIndex, String> {
-        let base = scope.spawn(|| {
-            let started = std::time::Instant::now();
-            let index = InspectIndex::prebuild(&index_map, &styles.road_shape);
-            info!(
-                "map meshes: inspect index base in {:.1?}",
-                started.elapsed()
-            );
-            index
-        });
-        world.meshes = prepare::build_world_meshes(&mut world.map, styles, job)?;
-        base.join()
-            .map_err(|_| "inspect index panicked".to_string())
-    })?;
-    world.inspect = inspect;
-    Ok(world)
-}
-
-/// Растеризация карты и прунинг — по шагу на состояние, чтобы экран
-/// загрузки показывал, чем поток занят. Серийный путь видимой ступени
-/// заборов входного зума: лейн заборов там дорог сам по себе (2.3–2.8 с
-/// Парижа), и его старт не двигается гонкой дорожек за ядра (урок прогона
-/// №12). Перекрытый путь скрытой ступени — [`prepare::build_overlapped_world`].
-fn build_navmesh(
-    job: &MapLoadJob,
-    mut map: MapData,
-    arc_navmesh: &RwLock<Navmesh>,
-    city: City,
-) -> LoadedWorld {
-    job.set(JobState::BuildingNavmesh);
-    // ожидание write-лока меряется отдельно от растеризации: пока они шли
-    // одной цифрой, чужой read-лок на десяток секунд читался как «медленная
-    // заливка карты»
-    let lock_since = std::time::Instant::now();
-    let mut navmesh = arc_navmesh
-        .write()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let portal =
-        prepare::fill_navmesh_and_snap_portal(&mut navmesh, &map, city, lock_since.elapsed());
-
-    // калитки — до прунинга и со снапнутым порталом: ограда, отрезавшая
-    // участок с дверями, открывается раньше, чем его выбросят. Пишутся в
-    // `map`, чтобы полигональный меш позже прочитал те же калитки
-    let done = navmesh.open_gates_and_prune(&mut map, portal, |gates, took| {
-        info!("navmesh: opened {gates} fence gates in {took:?}");
-        job.set(JobState::Pruning);
-    });
-    info!(
-        "navmesh: pruned {} unreachable tiles in {:?}",
-        done.pruned, done.prune_time
-    );
-
-    LoadedWorld {
-        map,
-        portal,
-        meshes: WorldMeshes::default(),
-        inspect: InspectIndex::default(),
-    }
 }
 
 fn run(job: &MapLoadJob, city: City, knobs: ParseKnobs) -> Result<MapData, String> {
