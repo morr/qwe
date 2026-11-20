@@ -390,7 +390,10 @@ accepted price for dropping the entity step there.
   400 m sets the stand size, ~120–250 m across), `octaves`, `lacunarity`, `persistence`
   — tunable at runtime from the **Noise section** (`ui/noise.rs`, last in the Map tab;
   its knobs — not the section — are hidden while the `noise` overlay is off, and its own
-  first row `Show` is that very toggle; ranges modeled on zxc's noise sliders). The seed
+  first row `Show` is that very toggle; ranges modeled on zxc's noise sliders; garbage
+  values (BRP, an old settings file) clamp on read in accessors — `1/wavelength` on a
+  zero fed `inf` into the noise positions, and unbounded `octaves` looped the resample
+  for billions of iterations). The seed
   stays fixed, so a city looks the same every run.
   - The cut is an **empirical quantile** of the field's values at the trees, not a fixed
     noise level: fbm is bell-distributed, so «everything above 0.9» would give a share

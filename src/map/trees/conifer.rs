@@ -110,6 +110,46 @@ impl Default for ConiferNoiseStyle {
     }
 }
 
+impl ConiferNoiseStyle {
+    /// Значения, зажатые шкалой: старый файл настроек или запись по BRP могут
+    /// принести что угодно. Нулевая длина волны даёт `1/0 = inf` и NaN в
+    /// позициях шума; неограниченные октавы — петлю на столько итераций;
+    /// нечисловые f32 размножаются через `amplitude`/`frequency` в NaN.
+    pub fn wavelength(&self) -> f32 {
+        if self.wavelength.is_finite() {
+            self.wavelength
+                .clamp(CONIFER_NOISE_WAVELENGTH_MIN, CONIFER_NOISE_WAVELENGTH_MAX)
+        } else {
+            CONIFER_NOISE_WAVELENGTH
+        }
+    }
+
+    pub fn octaves(&self) -> u32 {
+        self.octaves.clamp(
+            CONIFER_NOISE_OCTAVES_MIN as u32,
+            CONIFER_NOISE_OCTAVES_MAX as u32,
+        )
+    }
+
+    pub fn lacunarity(&self) -> f32 {
+        if self.lacunarity.is_finite() {
+            self.lacunarity
+                .clamp(CONIFER_NOISE_LACUNARITY_MIN, CONIFER_NOISE_LACUNARITY_MAX)
+        } else {
+            CONIFER_NOISE_LACUNARITY
+        }
+    }
+
+    pub fn persistence(&self) -> f32 {
+        if self.persistence.is_finite() {
+            self.persistence
+                .clamp(CONIFER_NOISE_PERSISTENCE_MIN, CONIFER_NOISE_PERSISTENCE_MAX)
+        } else {
+            CONIFER_NOISE_PERSISTENCE
+        }
+    }
+}
+
 /// Поле хвои: сам шум, его значение в каждом посаженном дереве и порог,
 /// отсекающий хвойную долю.
 #[derive(Resource)]
@@ -149,18 +189,18 @@ impl ConiferField {
     /// Значение поля в мировой точке, 0..1 — **без примеси**: дебаг-слой рисует
     /// непрерывный рельеф шума, а примесь живёт только в деревьях.
     pub fn sample(&self, point: Vec2) -> f32 {
-        let base = f64::from(1.0 / self.style.wavelength);
+        let base = f64::from(1.0 / self.style.wavelength());
         let x = f64::from(point.x) * base;
         let y = f64::from(point.y) * base;
         let mut sum = 0.0;
         let mut amplitude = 1.0;
         let mut frequency = 1.0;
         let mut total = 0.0;
-        for _ in 0..self.style.octaves {
+        for _ in 0..self.style.octaves() {
             sum += self.noise.get([x * frequency, y * frequency]) * amplitude;
             total += amplitude;
-            amplitude *= f64::from(self.style.persistence);
-            frequency *= f64::from(self.style.lacunarity);
+            amplitude *= f64::from(self.style.persistence());
+            frequency *= f64::from(self.style.lacunarity());
         }
         // симплекс отдаёт −1..1, нормируем в 0..1: порог квантильный, так что
         // для отбора это безразлично, но дебаг-слой красит по значению
@@ -243,5 +283,61 @@ impl ConiferField {
     #[cfg(test)]
     pub fn values_for_test(&self) -> &[f32] {
         &self.values
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Мусорные значения (BRP, старый settings.toml) не добивают до шума:
+    /// нулевая длина волны давала `1/0 = inf` и NaN в позициях, октавы без
+    /// потолка — петлю на столько итераций, нечисловое — NaN в амплитуде.
+    #[test]
+    fn noise_style_clamps_garbage_to_the_slider_scale() {
+        assert_eq!(
+            ConiferNoiseStyle::default().wavelength(),
+            CONIFER_NOISE_WAVELENGTH
+        );
+        assert_eq!(
+            ConiferNoiseStyle {
+                wavelength: 0.0,
+                ..Default::default()
+            }
+            .wavelength(),
+            CONIFER_NOISE_WAVELENGTH_MIN
+        );
+        assert_eq!(
+            ConiferNoiseStyle {
+                wavelength: f32::NEG_INFINITY,
+                ..Default::default()
+            }
+            .wavelength(),
+            CONIFER_NOISE_WAVELENGTH
+        );
+        assert_eq!(
+            ConiferNoiseStyle {
+                octaves: u32::MAX,
+                ..Default::default()
+            }
+            .octaves(),
+            CONIFER_NOISE_OCTAVES_MAX as u32
+        );
+        assert_eq!(
+            ConiferNoiseStyle {
+                persistence: f32::NAN,
+                ..Default::default()
+            }
+            .persistence(),
+            CONIFER_NOISE_PERSISTENCE
+        );
+        assert_eq!(
+            ConiferNoiseStyle {
+                lacunarity: -1.0,
+                ..Default::default()
+            }
+            .lacunarity(),
+            CONIFER_NOISE_LACUNARITY_MIN
+        );
     }
 }
