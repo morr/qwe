@@ -93,6 +93,13 @@ them the app is unchanged:
   every zoom (perf journal 35; the pause × near-zoom probe is the proof). The diagnostics
   fps is the display clock, not a cost signal; only the spike detector (`Time<Real>`)
   remains valid;**
+- `QWE_PERF_NOAPPNAP=1` — an `NSProcessInfo` `userInitiated` activity (`dev.rs`), the
+  in-app sibling of the `caffeinate -i` wrapper. **Mandatory in the launch line for
+  measurement series, not an option** (chain run №19, 2026-11-20): a series launched
+  without it degraded into App Nap mid-run — `ps -M` showed every thread `T`, and
+  loads came out 2.4–2.7× slower from the third or fourth load on. The tell: ALL load
+  steps jumping at once between adjacent loads of one series (a real regression moves
+  one step); four measurements had to be thrown away;
 - `QWE_PERF_WINDOW=WxH` — the logical window size (default 1920 × 1080), to compare the
   same frame across runs;
 - `QWE_PERF_POP=<n>` — `n` humans instead of the stock population;
