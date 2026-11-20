@@ -78,29 +78,27 @@ Connecting{attempt} → Downloading{bytes,total,bytes_per_sec} → Parsing
 ```
 
 Polled via `Arc<Mutex<_>>` by `poll_job`; every state is a line on the loader screen. **The
-navmesh work has two shapes, picked by the entry fence bucket** (`fences::entry_step_hidden`,
-read from the `StyleSnapshot`'s entry zoom). A **visible** fence step — the fences lane is
-expensive there (2.3–2.8 s on Paris), and the perf lesson of run №12 is that the lanes' race
-for cores must not move its start — keeps the serial prefix: the thread fills the navmesh
-through the `ArcNavmesh` handle and returns the snapped portal position
-(`prepare::fill_navmesh_and_snap_portal`). After the portal snap it makes **one** call —
-`Navmesh::open_gates_and_prune(map, portal, stage)` — which opens the **default fence gates**
-and only then prunes, because the order is a rule: a fence that sealed a plot with doors has
-to open before that plot is thrown away as unreachable. `Pruning` is not set by the thread
-directly: the `stage` callback the call makes between the two steps is what logs the gate
-line and flips `JobState::Pruning`. The gate step **writes into the `MapData`** the thread
-hands back, so the polygonal mesh built later from the resource sees the same gates
-(navigation-deep skill).
+load is one overlapped shape** (`prepare::build_overlapped_world`): a navmesh lane (fill →
+snap → `open_sealed_fences` on a **clone** of the map) goes beside the meshing lanes; a
+second wave starts once the gates lane joins — prune ∥ polymesh ∥ **fences**
+(`prune_unreachable` + `drop_gate_scratch` — the gates-then-prune order holds: a fence that
+sealed a plot with doors has to open before that plot is thrown away as unreachable). The
+polymesh and fences lanes both read gates — the polymesh through the polygonal build
+(navigation-deep skill), the fences through `fence_gaps`, whose merged gap list starts with
+`fence.gates` — so both build from clones with the gates already open (each wave-two lane
+holds its own clone; a `MapData` clone is megabytes, milliseconds against the meshing wall).
+The clone's gates merge into the world's `MapData` after all lanes join, so the resource
+sees the same gates the polygonal mesh was built from.
 
-A **hidden** fence step (the entry zoom past the ladder's last bound) runs the **overlapped
-load** instead (`prepare::build_overlapped_world`): a navmesh lane (fill → snap →
-`open_sealed_fences` on a **clone** of the map) goes beside the meshing lanes; the prune
-follows as a second wave once the gates lane joins (`prune_unreachable` + `drop_gate_scratch`
-— the gates-then-prune order holds), and the polymesh lane — the only lane besides fences
-that reads gates — builds from the clone, which has the gates already open. The clone's
-gates merge into the world's `MapData` after all lanes join. The fences lane may start with
-the first wave only because the gate guarantees the hidden step: `entry_layers` exits
-before reading any gaps.
+Until journal 66 the shape was picked by the entry fence bucket (`fences::entry_step_hidden`,
+now `#[cfg(test)]`): a **visible** fence step kept a serial prefix (`fill → snap →
+gates+prune`, then the lanes) because the fences lane was expensive there (2.3–2.8 s on
+Paris) and the lanes' race for cores must not move its start — the run №12 lesson. Journal
+63 cut the fences lane to ~1.0 s, the meshing wall became the roads lane, the gate lost its
+reason, and the fences lane moved to the second wave: the overlapped shape now runs on
+every entry zoom (−0.39 s owner's Paris view, −0.27 s Tula). A serial construction survives
+only as the pin's reference (`prepare.rs::build_world_meshes`, `#[cfg(test)]` — lanes in
+plain parallel groups, no overlap).
 
 **Before everything, `run()` tries the binary snapshot** (`map/osm/snapshot.rs`, the
 osm-map skill): a serialized `MapData` read instead of the parse, showing as `Parsing` on
@@ -108,10 +106,11 @@ the loader. A hit skips the JSON read and `parse` entirely — the gates and pru
 run on the decoded map exactly as on a parsed one (the snapshot is written from the
 parse output, before any of those steps touch it).
 
-**The last stage meshes every map layer, in the same thread, in parallel groups**
-(`map/prepare.rs::build_world_meshes`): buildings ∥ roads (both verge steps) ∥ polymesh ∥
-fences (the entry bucket's step) ∥ the small lane (parking layout, surfaces, trees with the
-tree-set compose and the conifer field, rails of every zoom step, the car placement) — one
+**The meshing lanes run in waves around the navmesh lane** (`map/prepare.rs::
+build_overlapped_world`): buildings ∥ roads (both verge steps) ∥ the small lane (parking
+layout, surfaces, trees with the tree-set compose and the conifer field, rails of every zoom
+step, the car placement) ∥ the inspect index base ∥ the navmesh lane, then prune ∥ polymesh ∥
+fences (the entry bucket's step) behind the gates join — one
 thread per group, since the
 `MapData` is final by then (compose runs before the lanes; it is the only writer) and each
 group fills its own lists. Styles — height mode, road style/shape, tree styles, car
@@ -126,13 +125,13 @@ lives here now. The polymesh lane follows the Navmesh panel's toggle and hands i
 `PolyNavmesh::set_ready` in the `Done` branch, so the async panel build never starts. A panic
 in any lane is `Failed`, not a hung loader — and so is a panic **anywhere on the load
 thread**: `start_load_thread` wraps the whole body (`run` — download, snapshot, parse; the
-serial `build_navmesh`; the `finish_world` heads/tails) in `catch_unwind`, and a caught
+overlapped `build_overlapped_world` with all its waves) in `catch_unwind`, and a caught
 panic lands as `Failed("load thread panicked: <payload>")` with the Retry button showing
 (no review №25, 2026-11-20: before the catch those panics stalled `JobState` mid-phase and
 the loader screen hung silently forever). The navmesh `RwLock` and the job `Mutex` are
 **poison-tolerant everywhere** (`unwrap_or_else(PoisonError::into_inner)` — `ArcNavmesh`
 helpers, `Backend::grid`, the two overlapped-lane writes in `prepare.rs`,
-`build_navmesh`'s write, `MapLoadJob::set`, and both `loading.rs` lock sites): a panic
+`MapLoadJob::set`, and both `loading.rs` lock sites): a panic
 holding the write guard poisons the lock for the rest of the process, and without
 tolerance every Retry would panic on `PoisonError` forever — the recovery exists because
 the next load overwrites the whole grid. Readers only run in `Playing`, which a failed

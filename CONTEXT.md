@@ -146,16 +146,20 @@ Summary; the mechanism — **world-lifecycle skill** (states and the warmup hold
 - **MapLoadJob / JobState** (`map/osm/download.rs`) — background `std::thread` doing
   everything that needs no ECS: `Connecting → Downloading → Parsing → BuildingNavmesh →
   Pruning → BuildingMeshes → Done | Failed`, every state a line on the loader screen.
-  The meshing stage runs its groups **in parallel** (buildings ∥ roads ∥ polymesh ∥
-  fences ∥ surfaces+trees+rails+cars — `map/prepare.rs`); the polymesh lane follows the Navmesh
-  panel's toggle, and a panic in any lane surfaces as `Failed`. **The navmesh prefix has two
-  shapes, picked by the entry fence bucket** (`fences::entry_step_hidden`, the bucket the
-  snapshot's entry zoom opens on): a **visible** step keeps the serial prefix (`build_navmesh` —
-  fill → snap → gates+prune, then the lanes: the fences lane is expensive there and its start
-  must not move), a **hidden** one runs the **overlapped load** (`prepare::build_overlapped_world`)
-  — the fill → snap → gates lane beside the meshing lanes, the prune a second wave behind it,
-  and the polymesh lane (the only other gates reader) handed a clone with the gates already
-  open; the clone's gates merge into `MapData` after all lanes join. `Done` carries the whole
+  **The load is one overlapped shape** (`prepare::build_overlapped_world`): the navmesh
+  lane (fill → snap → gates on a **clone** of the map) runs beside the meshing lanes
+  (buildings ∥ roads ∥ surfaces+trees+rails+cars ∥ the inspect index), then a second
+  wave starts as the gates lane joins — prune ∥ polymesh ∥ **fences** (the fences lane
+  reads gate openings through `fence_gaps`, so it builds from a clone with the gates
+  already open; serial pre-66 builds had the gates merged in first). The polymesh lane
+  follows the Navmesh panel's toggle, and a panic in any lane surfaces as `Failed`. The
+  clone's gates merge into `MapData` after all lanes join. The serial prefix this
+  replaced (`fill → gates → prune` before the lanes, gated by the entry fence bucket)
+  is gone: the fence lane that once kept it serial cost 2.3–2.8 s before journal 63
+  cut it to ~1.0 s, the meshing wall became the roads lane, and hiding the prefix
+  behind it now nets −0.39 s on the owner's Paris view and −0.27 s on Tula (journal 66).
+  A serial construction survives only as the pin's reference (`prepare.rs`
+  `build_world_meshes`, `#[cfg(test)]`). `Done` carries the whole
   world: `MapData`, the portal, the prebuilt `InspectIndex` and the meshed layers
   (`WorldMeshes` in a
   `PreparedMeshes` resource), styles snapshotted at thread start (including the entry
