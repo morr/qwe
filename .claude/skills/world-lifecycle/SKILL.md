@@ -119,7 +119,19 @@ lane-width global itself (from `MapData::knobs`, the same value `adopt_lane_widt
 entry) and chunks the opaque layers (`into_chunks`) — the old entry-frame cost, split 15.7 s,
 lives here now. The polymesh lane follows the Navmesh panel's toggle and hands its build to
 `PolyNavmesh::set_ready` in the `Done` branch, so the async panel build never starts. A panic
-in any lane is `Failed`, not a hung loader.
+in any lane is `Failed`, not a hung loader — and so is a panic **anywhere on the load
+thread**: `start_load_thread` wraps the whole body (`run` — download, snapshot, parse; the
+serial `build_navmesh`; the `finish_world` heads/tails) in `catch_unwind`, and a caught
+panic lands as `Failed("load thread panicked: <payload>")` with the Retry button showing
+(no review №25, 2026-11-20: before the catch those panics stalled `JobState` mid-phase and
+the loader screen hung silently forever). The navmesh `RwLock` and the job `Mutex` are
+**poison-tolerant everywhere** (`unwrap_or_else(PoisonError::into_inner)` — `ArcNavmesh`
+helpers, `Backend::grid`, the two overlapped-lane writes in `prepare.rs`,
+`build_navmesh`'s write, `MapLoadJob::set`, and both `loading.rs` lock sites): a panic
+holding the write guard poisons the lock for the rest of the process, and without
+tolerance every Retry would panic on `PoisonError` forever — the recovery exists because
+the next load overwrites the whole grid. Readers only run in `Playing`, which a failed
+load never enters.
 
 `Done` is the whole world: `poll_job` inserts `MapData`, `PortalPos`, the prebuilt
 **`InspectIndex`** and a
