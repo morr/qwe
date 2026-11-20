@@ -138,11 +138,17 @@ a screenshot belongs to.
   instance leads (full planet, current data, the nearest pipe from here). On dense
   cities those answer 504 "server too busy", or worse, a **200 with an HTML error
   page** — hence the "response must start with `{`" check before a mirror is
-  considered successful.
+  considered successful. A rate-limited mirror can also answer a **valid JSON with
+  no map** (empty `elements`, or a remark) — that one passes the `{` check, so the
+  parsed answer is validated as a city (`download.rs::validate_answer`, roads
+  non-empty) before anything is cached.
 - **Cache** — `assets/osm/tula_{lat}_{lon}_{w}x{h}_v{QUERY_VERSION}.json` (gitignored).
   Parameters live in the file name, so changing settings invalidates it. Written
-  **only after successful parse**; a broken cache self-heals (deleted, re-downloaded).
-  Second launch never touches the network.
+  **only after a parse that validates as a city**; every broken shape self-heals the
+  same way (deleted, re-downloaded): an unparseable file, an unreadable one (a write
+  killed mid-way cuts UTF-8 mid-character, and `read_to_string` fails — review №29:
+  before the fix that error bypassed the self-heal and Retry looped on the same file
+  forever), and a map-less one. Second launch never touches the network.
 - **Binary snapshot** — `map/osm/snapshot.rs`: the serialized `MapData` (bincode) written
   after a successful parse and read **instead of the parse** on the next warm start
   (Paris: parse 5.5 s → read ~0.5 s, journal entry 18). The name is the cache file's name
@@ -150,7 +156,9 @@ a screenshot belongs to.
   so query/geo/size invalidation is inherited; the header additionally stamps the JSON
   file's size and mtime, because a re-downloaded extract keeps the name (deleting the JSON
   to force re-download stays the documented workflow). A corrupt or stale file is deleted
-  and the parse runs as before — never an error up. **Bump `SNAPSHOT_VERSION` whenever a
+  and the parse runs as before — never an error up; a valid-format snapshot of a map
+  with no roads counts as corrupt too (a poisoned one would otherwise serve a silently
+  blank city on every warm start — review №29). **Bump `SNAPSHOT_VERSION` whenever a
   change alters what the parse puts into `MapData`** (a new pass, a new field, a changed
   threshold): the name cannot see a parse change, and a stale snapshot decodes silently —
   the same discipline as `QUERY_VERSION`, same reason.

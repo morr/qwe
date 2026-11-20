@@ -5,7 +5,9 @@
 //! Жизненный цикл — как у JSON-кеша (`overpass.rs`): пишется **после**
 //! успешного разбора (поток загрузки держит готовый `MapData` до записи),
 //! читается до него; битый файл удаляется и карта разбирается заново
-//! (самолечение). Инвалидация — именем файла: слаг города, гео-центр, размер
+//! (самолечение) — считается битым и снапшот карты без улиц: валидная
+//! форма, чужое содержимое. Инвалидация — именем файла: слаг города,
+//! гео-центр, размер
 //! карты и `QUERY_VERSION` наследуются от имени JSON-кеша ([`snapshot_path`]
 //! строится из [`overpass::cache_path`]), плюс собственные слагаемые:
 //!
@@ -210,7 +212,15 @@ fn deserialize_from(
     {
         return Err(Rejected::Stale);
     }
-    bincode::deserialize_from(&mut *reader).map_err(|error| Rejected::Corrupt(error.to_string()))
+    let map: MapData = bincode::deserialize_from(&mut *reader)
+        .map_err(|error| Rejected::Corrupt(error.to_string()))?;
+    // валидная форма, чужое содержимое: снапшот, под которым нет улиц, —
+    // не карта города (отравленный пустым ответом зеркала); лечится как
+    // битый — удаляется, разбор начнётся с json-кеша
+    if map.roads.is_empty() {
+        return Err(Rejected::Corrupt("decoded map holds no roads".to_string()));
+    }
+    Ok(map)
 }
 
 #[cfg(test)]
@@ -248,6 +258,25 @@ mod tests {
 
         let decoded = deserialize_from(&mut bytes.as_slice(), knobs, stamp()).unwrap();
         assert_eq!(parsed, decoded);
+    }
+
+    #[test]
+    fn a_roadless_snapshot_is_corrupt_not_a_map() {
+        let knobs = ParseKnobs::DEFAULT;
+        // сцена без улиц — то, что разбор делает из пустого ответа зеркала
+        let roadless = Overpass::new(City::Tula)
+            .area(
+                &[("building", "yes")],
+                square(Vec2::new(500.0, 500.0), 30.0),
+            )
+            .parse_with(knobs);
+        let mut bytes = Vec::new();
+        serialize_into(&mut bytes, knobs, stamp(), &roadless).unwrap();
+
+        assert!(matches!(
+            deserialize_from(&mut bytes.as_slice(), knobs, stamp()),
+            Err(Rejected::Corrupt(_))
+        ));
     }
 
     #[test]

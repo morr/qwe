@@ -260,17 +260,31 @@ fn run(job: &MapLoadJob, city: City, knobs: ParseKnobs) -> Result<MapData, Strin
         return Ok(map);
     }
 
-    if let Some(json) = read_cache(city)? {
-        match parse_logged(&json, city, knobs) {
-            Ok(map) => {
-                snapshot::write(city, knobs, &map);
-                return Ok(map);
+    // Тёплый путь json-кеша с самоизлечением: нечитаемый файл (усечённая
+    // запись рвёт utf-8 посреди названия улицы, сбой прав) и ответ без
+    // карты (валидный json таймаута или лимита зеркала) лечатся так же,
+    // как битый json — файл удаляется, ответ качается заново. Без этого
+    // Retry вечно жевал бы тот же мусор: провал чтения уезжал в `Failed`
+    // мимо самоизлечения, а ответ без карты вообще не ловился.
+    match read_cache(city) {
+        Ok(Some(json)) => {
+            let cached = parse_logged(&json, city, knobs)
+                .and_then(|map| validate_answer(&map).map(|()| map));
+            match cached {
+                Ok(map) => {
+                    snapshot::write(city, knobs, &map);
+                    return Ok(map);
+                }
+                Err(error) => {
+                    warn!("osm: unusable cache ({error}), re-downloading");
+                    let _ = std::fs::remove_file(&path);
+                }
             }
-            Err(error) => {
-                // битый кеш самоизлечивается: удаляем и качаем заново
-                warn!("osm: broken cache ({error}), re-downloading");
-                let _ = std::fs::remove_file(&path);
-            }
+        }
+        Ok(None) => {}
+        Err(error) => {
+            warn!("osm: unusable cache ({error}), re-downloading");
+            let _ = std::fs::remove_file(&path);
         }
     }
 
@@ -317,6 +331,20 @@ fn read_cache(city: City) -> Result<Option<String>, String> {
         .map_err(|error| format!("cache read: {error}"))
 }
 
+/// Ответ обязан быть картой: настоящая выгрузка несёт улицы. Зеркало под
+/// лимитом или таймаутом отвечает валидным json без карты (пустой
+/// `elements`, служебный remark) — гейт «начинается с `{`» такой ответ
+/// пропускает, разбор проходит, и без проверки пустой город закешировался
+/// бы и заснапшотился навсегда: самоизлечение срабатывает только на
+/// провале разбора.
+fn validate_answer(map: &MapData) -> Result<(), String> {
+    if map.roads.is_empty() {
+        Err("answer holds no roads (mirror busy or rate-limited?)".to_string())
+    } else {
+        Ok(())
+    }
+}
+
 /// Скачать, разобрать и только после успешного разбора записать кеш.
 fn download_and_cache(
     job: &MapLoadJob,
@@ -327,6 +355,9 @@ fn download_and_cache(
     let json = download(job, city)?;
     job.set(JobState::Parsing);
     let map = parse_logged(&json, city, knobs)?;
+    // валидный json без карты не кешируется и не снапшотится: пустой город
+    // пережил бы все перезапуски, самоизлечение ловит только провал разбора
+    validate_answer(&map)?;
 
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -421,6 +452,30 @@ fn download_from(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::map::osm::fixture::{Overpass, square};
+    use bevy::math::Vec2;
+
+    /// Ответ без улиц — не город: таймаут или лимит зеркала приходит
+    /// валидным json, и без гейта пустой ответ закешировался бы навсегда.
+    #[test]
+    fn an_answer_without_roads_is_not_a_city() {
+        let knobs = ParseKnobs::DEFAULT;
+        let roadless = Overpass::new(City::Tula)
+            .area(
+                &[("building", "yes")],
+                square(Vec2::new(500.0, 500.0), 30.0),
+            )
+            .parse_with(knobs);
+        assert!(validate_answer(&roadless).is_err());
+
+        let city = Overpass::new(City::Tula)
+            .way(
+                &[("highway", "secondary")],
+                vec![Vec2::ZERO, Vec2::new(200.0, 0.0)],
+            )
+            .parse_with(knobs);
+        assert_eq!(validate_answer(&city), Ok(()));
+    }
 
     #[test]
     fn a_panic_message_names_str_string_and_silent_payloads() {
