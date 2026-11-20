@@ -465,6 +465,30 @@ fn a_new_run_inherits_no_clock_and_no_regulator_memory() {
     assert_eq!(world.resource::<Time<Virtual>>().relative_speed(), 10.0);
 }
 
+/// Мусорное `requested` (BRP, старый settings.toml) не роняет вход в мир:
+/// копирование в `Time<Virtual>` паниковало на отрицательном и нечисловом.
+/// Отрицательное и нечисловое прижимается к нулю — «стоять».
+#[test]
+fn a_garbage_requested_speed_does_not_sink_the_world_start() {
+    let mut world = World::new();
+    world.init_resource::<Time<Virtual>>();
+    world.init_resource::<SimClock>();
+    world.init_resource::<TickDebt>();
+    world.init_resource::<SimSpeed>();
+    world.init_resource::<SimLoad>();
+    world.add_observer(on_world_started);
+
+    world.resource_mut::<SimSpeed>().requested = -5.0;
+    world.trigger(crate::loading::WorldStarted);
+    assert_eq!(world.resource::<SimSpeed>().requested, 0.0);
+    assert_eq!(world.resource::<SimSpeed>().effective, 0.0);
+    assert_eq!(world.resource::<Time<Virtual>>().relative_speed(), 0.0);
+
+    world.resource_mut::<SimSpeed>().requested = f32::NAN;
+    world.trigger(crate::loading::WorldStarted);
+    assert_eq!(world.resource::<SimSpeed>().effective, 0.0);
+}
+
 /// Лесенка скоростей — кнопка Speed, хоткеи `=`/`-` и прижатие произвольных
 /// BRP-значений к ступеням.
 #[test]

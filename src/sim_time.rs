@@ -502,6 +502,7 @@ fn on_world_started(
     *load = SimLoad::default();
     speed.pipeline = MAX_SIM_SPEED;
     speed.affordable = MAX_SIM_SPEED;
+    speed.requested = sane_requested(speed.requested);
     speed.effective = speed.requested;
     time.set_relative_speed(speed.effective);
 }
@@ -728,6 +729,19 @@ fn report_tick_spike(
 /// ([`SPEED_CLIMB_DOUBLE_TIME`]). Асимметрия не про «страховку»: вниз ведёт
 /// сглаженный замер, то есть рывка там всё равно нет, а вверх нужен запас на
 /// то, чего замер ещё не видит, — цена тика отстаёт от скорости.
+/// Безопасное значение `requested`: запись по BRP и старый `settings.toml`
+/// могут принести что угодно, а вход в мир копирует его в `Time<Virtual>`
+/// напрямую — `set_relative_speed` паникует на отрицательном и нечисловом.
+/// Отрицательное и NaN — ноль, «стоять»; плюс-бесконечность кламп съест в
+/// потолок — «как можно быстрее» читается по-прежнему. Регулятор всё равно
+/// приведёт эффективную скорость к полу [`MIN_SIM_SPEED`].
+fn sane_requested(speed: f32) -> f32 {
+    if speed.is_nan() {
+        return 0.0;
+    }
+    speed.clamp(0.0, MAX_SIM_SPEED)
+}
+
 fn throttle_speed_to_frame_budget(
     mut time: ResMut<Time<Virtual>>,
     mut speed: ResMut<SimSpeed>,
@@ -738,9 +752,7 @@ fn throttle_speed_to_frame_budget(
     // Лесенка выше `MAX_SIM_SPEED` не поднимается, но `requested` пишут и
     // напрямую (по BRP) — режем здесь, чтобы потолок был один на все входы и
     // панель не показывала запрошенное число, которого не бывает.
-    if speed.requested > MAX_SIM_SPEED {
-        speed.requested = MAX_SIM_SPEED;
-    }
+    speed.requested = sane_requested(speed.requested);
 
     let hz = 1.0 / fixed.timestep().as_secs_f32();
     let dt = real.delta_secs();

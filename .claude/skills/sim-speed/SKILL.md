@@ -177,7 +177,10 @@ time, so the filter does not change with the frame rate. `SimTick` zeroes on
 - **Requested cap** — `MAX_SIM_SPEED` is a hard
   ceiling on `requested`: a deliberate product limit, not a hardware one. The ladder
   never steps past it, and `throttle_speed_to_frame_budget` clamps `requested` itself so
-  a BRP write cannot exceed it either.
+  a BRP write cannot exceed it either. The same clamp (`sane_requested`) is the floor:
+  a negative or non-finite `requested` panicked in `set_relative_speed` when
+  `on_world_started` copied it on a restart or city switch — now it lands on zero
+  ("stand"), and the regulator lifts the effective speed to its own floor.
 - Set the requested speed over BRP with `res set SimSpeed .requested N` (clamped to
   `MAX_SIM_SPEED`) — `brp speed` writes `Time<Virtual>` directly and the throttle
   overwrites it on the next frame.
