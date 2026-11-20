@@ -15,7 +15,7 @@ use crate::settings::{HUMAN_MIN_PX, HUMAN_SIZE};
 use crate::silhouette::{Glyph, Silhouette, Silhouettes};
 
 /// Тон паники — один на всех: янтарь, тёплый, но не красный демона.
-pub const PANIC_COLOR: Color = Color::srgb(1.0, 0.70, 0.15);
+pub(crate) const PANIC_COLOR: Color = Color::srgb(1.0, 0.70, 0.15);
 /// Оттенки одежды: холодная половина круга — от бирюзы через синий к лиловому.
 const ATTIRE_HUE: std::ops::Range<f32> = 170.0..290.0;
 /// Насыщенность и светлота одежды: темнее подложки карты, без кричащих тонов.

@@ -28,7 +28,7 @@ use crate::silhouette::{
 pub const CORPSE_SPAN: f32 = CORPSE_HEIGHT * figure::CELL_SPAN;
 /// Сколько направлений у лежащего тела. Полный оборот, а не полуоборот, как
 /// было у эллипса: у фигуры есть голова и ноги.
-pub const CORPSE_HEADINGS: u64 = 16;
+pub(crate) const CORPSE_HEADINGS: u64 = 16;
 /// Во сколько раз труп бледнее и темнее своей одежды: одежда остаётся, цвет
 /// уходит — мёртвого видно по тому, что он погас, а не по чужой краске.
 const CORPSE_DRAIN: f32 = 0.5;

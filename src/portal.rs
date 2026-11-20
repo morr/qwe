@@ -39,7 +39,7 @@ const STAIN_COLOR: Color = Color::srgba(0.16, 0.05, 0.20, 0.75);
 
 #[derive(Component, Reflect, Default)]
 #[reflect(Component)]
-pub struct Portal;
+pub(crate) struct Portal;
 
 /// Фактическая позиция портала. Стартует с хинта города (`City::portal_hint`);
 /// после заполнения navmesh снапится к ближайшему проходимому тайлу.
@@ -63,7 +63,7 @@ struct PortalUniform {
 }
 
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
-pub struct PortalMaterial {
+pub(crate) struct PortalMaterial {
     #[uniform(0)]
     uniform: PortalUniform,
 }

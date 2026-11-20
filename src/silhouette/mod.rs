@@ -77,7 +77,7 @@ pub enum Glyph {
 
 impl Glyph {
     /// Сколько ячеек в атласе.
-    pub const COUNT: usize = 3 + blood::POOLS + blood::SPATTERS + figure::POSES;
+    pub(crate) const COUNT: usize = 3 + blood::POOLS + blood::SPATTERS + figure::POSES;
 
     /// Номер ячейки в атласе. Семейства идут подряд — на этом стоит и
     /// раскладка `TextureAtlasLayout`, и порядок [`Glyph::all`].
@@ -201,7 +201,7 @@ impl Silhouette {
 
     /// Размер спрайта при зуме `zoom` (метров в логическом пикселе): тело,
     /// растянутое до пола, если тело на экране меньше пола.
-    pub fn drawn_size(&self, zoom: f32) -> Vec2 {
+    pub(crate) fn drawn_size(&self, zoom: f32) -> Vec2 {
         let floor = zoom * self.min_px;
         let scale = (floor / self.body.min_element()).max(1.0);
         self.body * scale
@@ -560,7 +560,7 @@ const RESIZE_VIEW_SCREENS: f32 = 1.25;
 /// Кадр берётся из ресурса, а где его нет — считается из камеры и окна тем же
 /// [`Viewport::of`] (витрины без `ViewportPlugin`); без камеры система молча
 /// не работает — тот же контракт, что у атласа.
-pub fn resize_silhouettes_on_zoom(
+pub(crate) fn resize_silhouettes_on_zoom(
     viewport: Option<Res<Viewport>>,
     camera: Option<Single<&Transform, (With<Camera2d>, With<PanCamera>)>>,
     window: Option<Single<&Window, With<PrimaryWindow>>>,
