@@ -179,9 +179,7 @@ fn a_dense_group_splits_into_quadrants() {
     // сетка 30×25 с шагом 6 м: 750 контуров в одной клетке, гребёнка
     // квадрантов делит её уже на первом уровне
     let cluster: Vec<Vec<[f32; 2]>> = (0..30)
-        .flat_map(|x| {
-            (0..25).map(move |y| square_at(Vec2::new(x as f32 * 6.0, y as f32 * 6.0)))
-        })
+        .flat_map(|x| (0..25).map(move |y| square_at(Vec2::new(x as f32 * 6.0, y as f32 * 6.0))))
         .collect();
     let leaves = split_dense(cluster, |contour| Vec2::from_array(contour[0]));
     assert!(leaves.len() > 1, "плотная группа не разделилась");
@@ -215,9 +213,7 @@ fn the_dense_split_unions_the_same_set_and_stays_deterministic() {
     };
     // 750 налегающих квадратов (шаг 6 м при размере 10 м) в одной клетке
     let cluster: Vec<Vec<[f32; 2]>> = (0..30)
-        .flat_map(|x| {
-            (0..25).map(move |y| square(Vec2::new(x as f32 * 6.0, y as f32 * 6.0), 5.0))
-        })
+        .flat_map(|x| (0..25).map(move |y| square(Vec2::new(x as f32 * 6.0, y as f32 * 6.0), 5.0)))
         .collect();
 
     let mesh_of = |shapes: &[Vec<Vec<[f32; 2]>>]| {

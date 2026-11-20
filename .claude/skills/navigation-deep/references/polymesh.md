@@ -39,6 +39,17 @@ self-intersections miter leaves on sharp reflex corners. The per-chunk triangula
 repeats the statement (`build.rs::chunk_layer`): the radius is already baked into the
 contours, so `set_agent_radius` is not called there either.
 
+**What the union costs is not cell density** (journal 64): the inflated contours carry
+only buildings, water and walls — the densest Paris cell holds 121 contours against
+`DENSE_MIN`'s 512 — so the shadow quadrant split (`union_of_dense`) is dead weight here,
+and the phase cut shows the price sits in the single serial final union of the cell
+results (~226 ms of Paris's ~245 ms stage, grouping ~1 ms, the parallel cell pass
+~28 ms). Merging the cell results in 4×4 blocks first moved it nowhere (~185+25 ms) —
+i_overlay over merged figures is near-linear, there is no superlinear raw-sweep wall
+like the shadows had (journal 25). The chunked build stays 0.05–0.7 s across cities;
+the seconds in «polymesh build 0.3–20 s» are the flat single-layer mode. Candidate
+closed, do not re-open without a new mechanism.
+
 **Every polyline is collapsed at `DEGENERATE_SPAN` (1 cm) before it reaches
 `miter_offsets`** — both the band outlines (`ribbon_outline`) and the agent-radius
 inflation (`inflate_ring`). On a zero-length step `miter_offsets` substitutes `Vec2::X`

@@ -221,9 +221,13 @@ pub(crate) fn union_of(contours: &[Vec<[f32; 2]>]) -> Vec<Vec<Vec<[f32; 2]>>> {
 ///
 /// Его результат читает картинка, и перестановка вершин там — тот же класс
 /// «перестановки тайловых путей», что у самой группировки по клеткам.
-/// Полимеш его не зовёт: его union — вход CDT, и перестановка вершин
-/// доезжает до навмеш-геометрии; когда дойдёт руки ускорить его тем же
-/// приёмом, сверяться с базой probe-ом бит-в-бит.
+/// Полимеш его не зовёт и не должен: на его входе плотных клеток нет —
+/// вход составляют только здания, вода и стены, и худшая клетка Парижа
+/// несёт 121 контур против порога [`DENSE_MIN`] (запись 64). Его union —
+/// вход CDT, перестановка вершин доезжала бы до навмеш-геометрии, а
+/// единственная горячая фаза — финальное слияние результатов клеток,
+/// цена которого от числа групп почти не зависит: слияние в кварталы
+/// 4×4 (замеры записей 25 и 64) выигрыша не показало и там.
 pub(crate) fn union_of_dense(contours: &[Vec<[f32; 2]>]) -> Vec<Vec<Vec<[f32; 2]>>> {
     union_tiled(contours, true)
 }
@@ -256,12 +260,11 @@ fn union_tiled(contours: &[Vec<[f32; 2]>], dense: bool) -> Vec<Vec<Vec<[f32; 2]>
             }
         })
         .collect();
-    let tiled: Vec<Vec<Vec<[f32; 2]>>> = in_parallel(&groups, |group| {
-        group.simplify_shape(FillRule::NonZero)
-    })
-    .into_iter()
-    .flatten()
-    .collect();
+    let tiled: Vec<Vec<Vec<[f32; 2]>>> =
+        in_parallel(&groups, |group| group.simplify_shape(FillRule::NonZero))
+            .into_iter()
+            .flatten()
+            .collect();
     tiled.simplify_shape(FillRule::NonZero)
 }
 
