@@ -601,7 +601,7 @@ impl MeshBuilder {
     /// парой цветов на весь контур не сказать, что грань, повёрнутая к солнцу,
     /// светлее отвёрнутой. Слои зданий этим сейчас не пользуются — так был
     /// сделан парапет кровли, которого больше нет (`layers.rs`).
-    pub fn push_inset_band_with(
+    pub(crate) fn push_inset_band_with(
         &mut self,
         ring: &[Vec2],
         width: f32,

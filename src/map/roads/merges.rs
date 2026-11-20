@@ -358,7 +358,7 @@ fn away(path: &[Vec2], from_end: bool) -> Vec2 {
 
 /// Полоса, которой кромка одной половины сходится к кромке продолжения.
 #[derive(Debug, Clone, PartialEq)]
-pub struct MergeBand {
+pub(crate) struct MergeBand {
     pub half: usize,
     /// Длина клина по пути половины от узла, м.
     pub length: f32,
@@ -374,7 +374,7 @@ pub struct MergeBand {
 /// за ним. `per_meter` — длина клина на метр разницы ширин. Клин идёт от узла
 /// по пути половины и дальше по ways её улицы (`network`): у узла OSM режет
 /// половину на короткие ways, и клин в 30–60 м на одном таком не умещается.
-pub fn merge_bands(
+pub(crate) fn merge_bands(
     merge: &Merge,
     roads: &[&RoadLine],
     paths: &[impl AsRef<[Vec2]>],

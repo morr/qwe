@@ -45,24 +45,24 @@ pub const CONIFER_NOISE_WAVELENGTH_STEP: f32 = 50.0;
 /// есть рябь мельче самого массива, и породу у его кромки она разыгрывает по
 /// монетке. Три октавы — 400/200/100 м; больше — осознанная рваность из панели
 /// Noise, а не дефолт.
-pub const CONIFER_NOISE_OCTAVES: u32 = 3;
+pub(crate) const CONIFER_NOISE_OCTAVES: u32 = 3;
 /// Диапазоны октав, lacunarity и persistence — как у слайдеров zxc
 /// (`zxc/src/map/generator/perlin_noise.rs`).
 pub const CONIFER_NOISE_OCTAVES_MIN: f32 = 1.0;
 pub const CONIFER_NOISE_OCTAVES_MAX: f32 = 8.0;
 /// Шаг целочисленный: октава либо есть целиком, либо её нет.
 pub const CONIFER_NOISE_OCTAVES_STEP: f32 = 1.0;
-pub const CONIFER_NOISE_LACUNARITY: f32 = 2.0;
+pub(crate) const CONIFER_NOISE_LACUNARITY: f32 = 2.0;
 pub const CONIFER_NOISE_LACUNARITY_MIN: f32 = 1.0;
 pub const CONIFER_NOISE_LACUNARITY_MAX: f32 = 4.0;
 pub const CONIFER_NOISE_LACUNARITY_STEP: f32 = 0.1;
-pub const CONIFER_NOISE_PERSISTENCE: f32 = 0.5;
+pub(crate) const CONIFER_NOISE_PERSISTENCE: f32 = 0.5;
 pub const CONIFER_NOISE_PERSISTENCE_MIN: f32 = 0.0;
 pub const CONIFER_NOISE_PERSISTENCE_MAX: f32 = 1.0;
 pub const CONIFER_NOISE_PERSISTENCE_STEP: f32 = 0.05;
 /// Сид поля — фиксированный: карта города обязана быть одинаковой от запуска
 /// к запуску, как и посадка деревьев.
-pub const CONIFER_NOISE_SEED: u32 = 0x00C0_FFEE;
+pub(crate) const CONIFER_NOISE_SEED: u32 = 0x00C0_FFEE;
 
 // Умолчание каждого ползунка — внутри его же диапазона.
 const _: () = {

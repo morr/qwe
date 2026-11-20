@@ -62,7 +62,7 @@ pub struct RutLines {
 impl RutLines {
     /// Середины полос раскладки поперёк ленты, м от её оси: границы полос —
     /// `origin + k · шаг`, проезжая часть — `low..high`.
-    pub fn lane_centres(frame: LaneFrame, lane_width: f32) -> Vec<f32> {
+    pub(crate) fn lane_centres(frame: LaneFrame, lane_width: f32) -> Vec<f32> {
         if lane_width <= 0.0 {
             return Vec::new();
         }

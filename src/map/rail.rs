@@ -44,7 +44,7 @@ use crate::map::zoom::{LodStep, ZoomBucket, ZoomLods};
 /// Цвета одного вида пути. Действующий путь — щебень, креозотная шпала и
 /// накатанная до блеска головка рельса; заброшенный — тот же путь, заросший:
 /// балласт уходит в травяной оттенок, шпала седеет, нитка ржавеет.
-pub struct RailPalette {
+pub(crate) struct RailPalette {
     /// Плечо балластной призмы — откос по краю, темнее верха.
     pub shoulder: Color,
     pub ballast: Color,
@@ -136,7 +136,7 @@ const RAIL_SMOOTHING: Smoothing = Smoothing::Light;
 
 /// Шпалы одной ступени: длина поперёк пути как доля ширины балласта (у
 /// узкоколейки балласт уже, и шпала обязана быть короче), толщина и шаг, м.
-pub struct RailTieLod {
+pub(crate) struct RailTieLod {
     pub length_scale: f32,
     pub thickness: f32,
     pub spacing: f32,
@@ -147,7 +147,7 @@ pub struct RailTieLod {
 /// заброшенный путь физически той же колеи, у него лишь заросший балласт), а
 /// не доля балласта: на 4- и 3.5-метровом балласте доля 0.30 сводила нитки на
 /// ступени 1 до 3.6 и 3.0 px, ниже порога, на котором они читаются порознь.
-pub struct RailSteelLod {
+pub(crate) struct RailSteelLod {
     pub gauge: f32,
     pub width: f32,
 }
@@ -155,7 +155,7 @@ pub struct RailSteelLod {
 /// Штриховка дальних ступеней: длина штриха, пропуска и ширина как доля
 /// балласта. Рисунок — из osm-carto, которым путь рисовался целиком до LOD;
 /// цвет свой, см. [`RailPalette::dash`].
-pub struct RailDashLod {
+pub(crate) struct RailDashLod {
     pub length: f32,
     pub gap: f32,
     pub width_scale: f32,
@@ -163,7 +163,7 @@ pub struct RailDashLod {
 
 /// Ступень зум-LOD пути: до какого зума действует и чем на ней путь нарисован.
 /// Зум — мировых метров на логический пиксель (`PanCamera`).
-pub struct RailLod {
+pub(crate) struct RailLod {
     /// Верхняя (исключающая) граница ступени.
     pub max_zoom: f32,
     /// Нижняя граница ширины балласта, м: ширина из OSM (5 м у магистрального
@@ -189,7 +189,7 @@ pub struct RailLod {
 /// около 40%: у настоящего пути это 0.26 м на 0.65, и стоит ей упасть, как
 /// шпалы перестают быть текстурой и становятся редкими метками, а две белые
 /// нитки перевешивают их и путь читается лестницей, а не путём.
-pub const RAIL_LODS: [RailLod; 5] = [
+pub(crate) const RAIL_LODS: [RailLod; 5] = [
     RailLod {
         max_zoom: 0.10,
         min_bed: 0.0,

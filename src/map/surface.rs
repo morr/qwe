@@ -43,7 +43,7 @@ const SHADER_PATH: &str = "shaders/surface.wesl";
 /// множитель амплитуд шума поверхностей: 0 — плоские заливки, какими они были
 /// до фактуры; 1 — фактура как задумана; полтора — заметно грубее, дальше шум
 /// перекрикивает цвет слоя.
-pub const SURFACE_TEXTURE_DEFAULT: f32 = 1.0;
+pub(crate) const SURFACE_TEXTURE_DEFAULT: f32 = 1.0;
 pub const SURFACE_TEXTURE_MIN: f32 = 0.0;
 pub const SURFACE_TEXTURE_MAX: f32 = 1.5;
 pub const SURFACE_TEXTURE_STEP: f32 = 0.1;
@@ -569,7 +569,7 @@ impl LayerMesh {
 /// время один и тот же. Ровесник [`SurfaceMaterials`] и живёт по тому же
 /// правилу.
 #[derive(Resource)]
-pub struct FlatMaterials {
+pub(crate) struct FlatMaterials {
     opaque: Handle<ColorMaterial>,
     blend: Handle<ColorMaterial>,
 }

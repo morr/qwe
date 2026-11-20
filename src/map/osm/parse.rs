@@ -136,7 +136,7 @@ impl RawOsm {
     pub const ALL: [Self; 3] = [Self::Off, Self::Parse, Self::Draw];
 
     /// Пропускает ли разбор доводочные проходы — оба уровня.
-    pub fn skips_passes(self) -> bool {
+    pub(crate) fn skips_passes(self) -> bool {
         self != Self::Off
     }
 

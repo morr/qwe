@@ -49,12 +49,12 @@ const HEDGE_HEIGHT: f32 = 1.4;
 
 /// Ступень зум-LOD: ширина линии, м. Считана из ~1.5 экранных пикселей на
 /// **худшем** краю ступени — той же меркой, что ширина трамвайной линии.
-pub struct FenceLod {
+pub(crate) struct FenceLod {
     pub max_zoom: f32,
     pub width: f32,
 }
 
-pub const FENCE_LODS: [FenceLod; 4] = [
+pub(crate) const FENCE_LODS: [FenceLod; 4] = [
     // вблизи — настоящая доска
     FenceLod {
         max_zoom: 0.12,
@@ -90,7 +90,7 @@ pub type FenceZoomBucket = ZoomBucket<FenceLods>;
 ///
 /// `Copy` — потому что метку получает каждый слой модуля, а метка пуста.
 #[derive(Component, Clone, Copy)]
-pub struct FenceLayerTag;
+pub(crate) struct FenceLayerTag;
 
 /// Цвета: доска и профнастил серо-бурые, бетонная стена светлее и холоднее,
 /// изгородь зелёная, решётка — серый металл.

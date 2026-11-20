@@ -185,7 +185,7 @@ const CLOSE_GAP: f32 = 3.0;
 /// каждая полоса обводится шире на полщели с каждой стороны и длиннее на
 /// столько же с каждого торца, обводы сливаются и сжимаются обратно — края и
 /// торцы там, где были, а щели уже [`CLOSE_GAP`] нет.
-pub fn band_cover(bands: &[Vec<Vec2>]) -> Vec<Shape> {
+pub(crate) fn band_cover(bands: &[Vec<Vec2>]) -> Vec<Shape> {
     let reach = CLOSE_GAP / 2.0;
     let contours: Vec<Contour> = bands
         .iter()
@@ -214,7 +214,7 @@ pub fn band_cover(bands: &[Vec<Vec2>]) -> Vec<Shape> {
 /// головах: линия разреза покрытия ([`split_cover`]). Настил путепровода над
 /// трамваем, идущим поперёк, полосы не несёт — и не режет её: иначе кусок
 /// наземной полосы под ним лёг бы в слой настилов поверх путепровода.
-pub fn deck_cuts<'a>(
+pub(crate) fn deck_cuts<'a>(
     bands: &[Vec<Vec2>],
     decks: impl IntoIterator<Item = (&'a [Vec2], f32)>,
 ) -> Vec<Contour> {
@@ -257,7 +257,7 @@ pub fn deck_cuts<'a>(
 /// Покрытие `cover`, разрезанное контурами настилов `cuts` ([`deck_cuts`]):
 /// `[на земле, на настилах]`. Обе части режет одна и та же линия — торец
 /// настила, — так что на шве они сходятся встык.
-pub fn split_cover(cover: Vec<Shape>, cuts: &[Contour]) -> [Vec<Shape>; 2] {
+pub(crate) fn split_cover(cover: Vec<Shape>, cuts: &[Contour]) -> [Vec<Shape>; 2] {
     if cuts.is_empty() || cover.is_empty() {
         return [cover, Vec::new()];
     }

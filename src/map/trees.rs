@@ -119,7 +119,7 @@ pub const TREE_DENSITY_MIN: f32 = 0.25;
 pub const TREE_DENSITY_STEP: f32 = 0.25;
 /// Умолчание плотности — названо константой, чтобы диапазон и оно лежали
 /// рядом и проверялись ассертом ниже.
-pub const TREE_DENSITY_DEFAULT: f32 = 4.0;
+pub(crate) const TREE_DENSITY_DEFAULT: f32 = 4.0;
 
 /// Границы и шаг ползунка доли хвои (`TreeStyle::conifer_share`) при форме
 /// `Mixed`. Доля точная: порог поля берётся квантилем, а не фиксированным
@@ -127,7 +127,7 @@ pub const TREE_DENSITY_DEFAULT: f32 = 4.0;
 pub const TREE_CONIFER_SHARE_MIN: f32 = 0.0;
 pub const TREE_CONIFER_SHARE_MAX: f32 = 1.0;
 pub const TREE_CONIFER_SHARE_STEP: f32 = 0.05;
-pub const TREE_CONIFER_SHARE_DEFAULT: f32 = 0.1;
+pub(crate) const TREE_CONIFER_SHARE_DEFAULT: f32 = 0.1;
 
 /// Сила примеси (`TreeStyle::noise_mix`): к значению поля в дереве
 /// добавляется `mix · jitter`, jitter ∈ ±0.5 детерминированно по позиции
@@ -478,7 +478,7 @@ pub enum CrownDetail {
 
 /// Ступень зум-LOD деревьев: до какого зума (метров на логический пиксель)
 /// она действует, какой плотностью посадки ограничена и как рисует кроны.
-pub struct TreeLod {
+pub(crate) struct TreeLod {
     pub max_zoom: f32,
     /// Потолок `TreeStyle::density` на этой ступени; `INFINITY` — без потолка.
     pub density_cap: f32,
@@ -503,7 +503,7 @@ pub struct TreeLod {
 /// разницу. Цена — контур, кольца и потолок плотности 3 на диапазоне
 /// 0.2–2.0, где раньше потолка не было: при плотности ≤ 3 (дефолт 1.0)
 /// ничего не тонет.
-pub const TREE_LODS: [TreeLod; 3] = [
+pub(crate) const TREE_LODS: [TreeLod; 3] = [
     TreeLod {
         max_zoom: 0.2,
         density_cap: f32::INFINITY,

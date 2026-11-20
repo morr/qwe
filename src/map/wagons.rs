@@ -103,7 +103,7 @@ const WAGON_COLORS: [Color; 8] = [
 ///
 /// `Copy` — метку получает каждый слой модуля, а сама она пуста.
 #[derive(Component, Clone, Copy)]
-pub struct WagonLayerTag;
+pub(crate) struct WagonLayerTag;
 
 /// Ступени зума: вагон втрое длиннее машины, поэтому его порог в 2.5 раза
 /// дальше — свой, а не общий с [`super::cars`].
@@ -169,7 +169,7 @@ pub fn rebuild_wagons(
 /// стоил ранний возврат. Считать вход было бы можно только расставив вагоны,
 /// то есть заплатив за то, чего никто не увидит.
 #[derive(Clone, Copy, PartialEq, Debug)]
-pub struct WagonReport {
+pub(crate) struct WagonReport {
     pub standing: usize,
     /// Дальняя ступень зума или сырой OSM второго уровня: слой описан и пуст,
     /// расстановка не шла.
@@ -207,7 +207,7 @@ impl std::fmt::Display for WagonReport {
 /// Так же снимает слой **сырой OSM** второго уровня
 /// ([`RawOsm::disables`] с [`DrawBuildout::StandingWagons`]): веер и сцепы —
 /// наша расстановка, в данных вагонов нет, ровно как машин (`cars::park_on`).
-pub fn mesh_wagons(
+pub(crate) fn mesh_wagons(
     bucket: WagonZoomBucket,
     raw: RawOsm,
     rails: &[RailLine],

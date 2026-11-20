@@ -61,7 +61,7 @@ pub struct TramStyle {
 /// Шпала одной ступени: длина поперёк пути, толщина и шаг, м. Насечка обязана
 /// быть заметно длиннее толщины самой линии — иначе она сливается с ней в
 /// утолщение.
-pub struct TramTieLod {
+pub(crate) struct TramTieLod {
     pub length: f32,
     pub thickness: f32,
     pub spacing: f32,
@@ -69,7 +69,7 @@ pub struct TramTieLod {
 
 /// Ступень зум-LOD трамвая: до какого зума действует и какой геометрией
 /// рисуется. Зум — мировых метров на логический пиксель (`PanCamera`).
-pub struct TramLod {
+pub(crate) struct TramLod {
     /// Верхняя (исключающая) граница ступени.
     pub max_zoom: f32,
     pub line_width: f32,
@@ -81,7 +81,7 @@ pub struct TramLod {
 /// (экранная толщина гуляет в пределах ~1.1–2.9 px — «почти gizmo»), шаг шпал
 /// на экране нигде не падает ниже ~10 px — редкая насечка, а не гребёнка. На
 /// последней ступени шпалы исчезают, как в 2ГИС на общем плане города.
-pub const TRAM_LODS: [TramLod; 5] = [
+pub(crate) const TRAM_LODS: [TramLod; 5] = [
     TramLod {
         max_zoom: 0.12,
         line_width: 0.14,
@@ -143,7 +143,7 @@ pub type TramZoomBucket = ZoomBucket<TramLods>;
 ///
 /// `Copy` — метку получает каждый слой модуля, а сама она пуста.
 #[derive(Component, Clone, Copy)]
-pub struct TramLayerTag;
+pub(crate) struct TramLayerTag;
 
 /// Что вышло из сборки трамвая — значением, а не только строкой в логе.
 ///

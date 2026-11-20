@@ -72,7 +72,7 @@ const PIPE_COLOR: Color = Color::srgb(0.678, 0.671, 0.643);
 ///
 /// `Copy` — метку получает каждый из пяти слоёв, а сама она пуста.
 #[derive(Component, Clone, Copy)]
-pub struct IndustryLayerTag;
+pub(crate) struct IndustryLayerTag;
 
 /// Единственная ручка промзоны — рисовать её или нет; строка `Industry` в
 /// секции Buildings (`ui/buildings.rs`), пишется и по BRP, сохраняется между
@@ -159,7 +159,7 @@ pub fn rebuild_industry(
 /// печатал бы то же самое, что пустая карта. Правило машин (`CarReport::detail`),
 /// одно на все пять слоёв.
 #[derive(Clone, Copy, PartialEq, Debug)]
-pub struct IndustryReport {
+pub(crate) struct IndustryReport {
     /// Сколько цилиндров пришло на вход — не сколько нарисовано.
     pub structures: usize,
     /// Сколько трубопроводов пришло на вход — не сколько нарисовано.
@@ -201,7 +201,7 @@ impl std::fmt::Display for IndustryReport {
 /// Рисуется при этом `drawn_*`, а считается вход: «слой снят» говорит
 /// [`IndustryReport::hidden`], и ноль в счётчике остаётся означать «на карте
 /// этого нет».
-pub fn mesh_industry(
+pub(crate) fn mesh_industry(
     structures: &[Structure],
     pipe_lines: &[PipeLine],
     mode: BuildingHeightMode,

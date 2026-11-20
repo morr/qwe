@@ -43,7 +43,7 @@ const SERVICE_LANE_NARROWING: f32 = 0.3;
 pub const EDGE_WIDTH: f32 = 0.5;
 /// Самый длинный участок, который ещё считается одиночным скачком числа
 /// полос, м.
-pub const SPIKE_MAX_LENGTH: f32 = 60.0;
+pub(crate) const SPIKE_MAX_LENGTH: f32 = 60.0;
 
 /// Ширина полосы по классу при ширине полосы улицы `street_lane`; `None` — у
 /// дорожки сечения нет.
@@ -62,7 +62,7 @@ pub fn lane_width(highway: Highway, street_lane: f32) -> Option<f32> {
 /// Рязани, Калуги — две-три полосы), и одна полоса в 4.3 м читалась
 /// проездом рядом с тротуаром втрое шире. Половина разделённой `tertiary`
 /// тоже встаёт в две: бульвар 2 + 2 правдоподобнее, чем 1 + 1.
-pub fn default_lanes(highway: Highway, oneway: bool) -> u8 {
+pub(crate) fn default_lanes(highway: Highway, oneway: bool) -> u8 {
     let two_way = match highway {
         Highway::Motorway | Highway::Trunk | Highway::Primary | Highway::Secondary => 4,
         Highway::Service | Highway::Path => 1,

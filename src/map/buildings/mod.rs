@@ -187,7 +187,7 @@ impl BuildingHeightMode {
 
 /// Зданиевый слой карты — чтобы пересборка режима знала, что деспавнить.
 #[derive(Component, Clone, Copy)]
-pub struct BuildingLayerTag;
+pub(crate) struct BuildingLayerTag;
 
 /// Теневой слой — своя метка, потому что пересобирается он реже прочих: тени
 /// зависят от режима высот и от `MapData`, но **не** от ступени зума, а их
@@ -199,7 +199,7 @@ pub struct BuildingLayerTag;
 /// состояния машины (App Nap), поэтому перемерять его надо бенчем —
 /// `examples/bench/map_meshing`, — а не строкой `building meshing:` в логе.
 #[derive(Component, Clone, Copy)]
-pub struct BuildingShadowTag;
+pub(crate) struct BuildingShadowTag;
 
 /// Ступени детализации кровли — единственное, чем зум правит слой зданий:
 /// вблизи на крышах стоит оборудование ([`clutter`]), дальше его нет. Коробка
@@ -676,7 +676,7 @@ pub fn rebuilds_on() -> impl SystemCondition<()> {
 ///
 /// Тени пересобираются всегда: обе причины из [`rebuilds_on`] — режим высот и
 /// солнце — их трогают.
-pub fn rebuild_buildings(
+pub(crate) fn rebuild_buildings(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     materials: LayerMaterials,

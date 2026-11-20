@@ -243,7 +243,12 @@ impl WedgeEnd {
 /// посреди полотна. Сосед, нарисованный навстречу, видит осевую зеркально.
 /// `None` — осевой нет у одного из двух или сдвиг больше полосы: тогда
 /// раскладку у шва решает форма клина ([`wedge_frame`]).
-pub fn seam_origin(road: &RoadLine, seam: &RoadLine, end: bool, side: TrafficSide) -> Option<f32> {
+pub(crate) fn seam_origin(
+    road: &RoadLine,
+    seam: &RoadLine,
+    end: bool,
+    side: TrafficSide,
+) -> Option<f32> {
     let lanes = lane_count(road);
     let own = axis_offset(road, lanes, side)?;
     let theirs = axis_offset(seam, lane_count(seam), side)?;

@@ -80,7 +80,7 @@ use crate::map::osm::{MapData, RoadLine, RoadNodeKind};
 /// Запас зоны узла за полушириной самой широкой его дороги, м — радиус
 /// скругления улицы (`roads/corners.rs`): до конца дуги бордюра узел ещё
 /// не кончился.
-pub const CLUSTER_ZONE: f32 = 6.0;
+pub(crate) const CLUSTER_ZONE: f32 = 6.0;
 /// Как далеко от узла ищется знак на плече и переход, м.
 const SIGN_REACH: f32 = 30.0;
 pub const ARM_CROSSING_REACH: f32 = 35.0;

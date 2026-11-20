@@ -542,7 +542,7 @@ pub fn measure_surfaces(map: &MapData) -> Vec<LayerCost> {
 ///
 /// `Copy` — метку получают оба слоя подложки, кант и заливка, а сама она пуста.
 #[derive(Component, Clone, Copy)]
-pub struct TreeRowBandTag;
+pub(crate) struct TreeRowBandTag;
 
 /// Подложка аллей: лента лесного цвета вдоль каждого `natural=tree_row`, со
 /// своими **тремя** ручками — стык, сглаживание и кант, — теми же самыми, что у

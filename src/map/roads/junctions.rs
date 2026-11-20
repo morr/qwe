@@ -83,7 +83,7 @@ impl SharedNode {
     /// вершины — просто изломы. Такое [`Self::is_junction`] зовёт не
     /// перекрёстком — и не швом: правило узла живёт здесь и в `is_junction`,
     /// не у потребителя.
-    pub fn is_one_road(&self) -> bool {
+    pub(crate) fn is_one_road(&self) -> bool {
         self.visits
             .iter()
             .all(|visit| visit.road == self.visits[0].road)

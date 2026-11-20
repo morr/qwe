@@ -180,7 +180,7 @@ impl Default for CarStyle {
 ///
 /// `Copy` — метку получает каждый слой модуля, а сама она пуста.
 #[derive(Component, Clone, Copy)]
-pub struct CarLayerTag;
+pub(crate) struct CarLayerTag;
 
 /// Ступени зума слоя машин: не размер машины, а **подробность кузова** —
 /// вблизи стёкла и зеркала ([`CarDetail::Full`]), дальше силуэт со
@@ -318,7 +318,7 @@ pub fn rebuilds_on() -> impl SystemCondition<()> {
 
 /// Пересборка слоя машин: на входе в мир и на пересечении порога зума.
 #[allow(clippy::too_many_arguments)]
-pub fn rebuild_cars(
+pub(crate) fn rebuild_cars(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     materials: LayerMaterials,
@@ -586,7 +586,7 @@ pub fn mesh_cars(
 /// отчёта (`detail: None`, строка `cars: hidden`), а не нулём в счётчике.
 /// `placed` — расставлены ли машины этой же сборкой: тогда в отчёт идёт и её
 /// время.
-pub fn mesh_parked(
+pub(crate) fn mesh_parked(
     bucket: CarZoomBucket,
     style: CarStyle,
     raw: RawOsm,
