@@ -41,7 +41,12 @@ cutoff" was only half true.
 
 Reason for the hold: all 20 000 humans queue a path in the same frame, and without it the
 visible ones stood still for the first seconds. Typical warmup **~0.15 s** — see
-`HumanFirstWanderTag` in the `species-behavior` skill.
+`HumanFirstWanderTag` in the `species-behavior` skill. **The logged line's number is
+bigger than the routing half**: the Warmup phase begins when `Playing` is entered, so the
+entry frame (map-mesh spawns + first GPU upload) runs *inside* it and lands in
+`WarmupProgress.elapsed` — the line reads "routed in 2.19–2.32 s" on a cold Paris process
+(entry frame 2.15–2.27 s + routing ~0.1 s; обзор №33, 2026-11-20). Read the line as
+"how long the loader stayed up after the world was built", not as dispatcher throughput.
 
 `Live` is what despawns the loader and reveals the game UI (`GameUiRoot`).
 

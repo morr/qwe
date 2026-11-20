@@ -134,7 +134,9 @@ Summary; the mechanism — **world-lifecycle skill** (states and the warmup hold
   thread, `OnEnter(Playing)` puts ready lists into the world.
 - **PlayPhase** (sub-state of `Playing`) — `Warmup → Live`. During Warmup the world exists
   but `Time<Virtual>` is **paused** and the loader stays up counting pawns still routing
-  *inside the camera view*; typical warmup **~0.15 s**, timeout 10 s. `Live` despawns the
+  *inside the camera view*; the routing half takes **~0.15 s**, timeout 10 s — the logged
+  `warmup:` line's number is bigger because the entry frame runs inside the phase
+  (2.19–2.32 s on a cold process). `Live` despawns the
   loader and reveals the game UI (`GameUiRoot`).
 - **WorldInitSet** — ordering inside `OnEnter(Playing)`: `Navmesh → Spawn`. The navmesh must
   be filled before the population spawns, or humans land in the river.
