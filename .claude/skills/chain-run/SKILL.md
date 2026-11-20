@@ -114,6 +114,27 @@ spawn_session(
 - A child that 429s its first turns (concurrency with your own session) is alive — the
   scheduler self-heals with «continue» injections; do not respawn it.
 
+## Compaction — the chain cleans up after itself
+
+Without compaction the run's artifacts grow without bound: NOTES.md gained
+~1900 lines in four days of the chain. Every link checks two things (the
+worktree/branch half is already step 3 of the loop):
+
+1. **NOTES.md**: when more than five link sections sit below the permanent
+   sections, cut the oldest ones out — whole sections, from their
+   `# NOTES — <link>` header to the next one — and append them to
+   `docs/run-history/<yyyy-mm>-links.md` (one header line with the cut date),
+   committing both files together («archive old run sections of NOTES to
+   docs/run-history»). The permanent sections and the convention section
+   («След сессии — бесконечная цепочка…») never leave NOTES.md; if the
+   convention has drifted into an old section, lift it back up first.
+2. **Session tracker**: the project session list fills with dead links. Archive
+   the sessions of links older than the last five:
+   `list_sessions(query: "непрерывный прогон")` → older ids →
+   `SetSessionArchived(sessionId, archived: true)` each (reversible, does not
+   interrupt). The run's memory lives in NOTES and commits, not in the session
+   list.
+
 ## Restarting a dead chain
 
 Any session asked to resume the chain: find the last link with
