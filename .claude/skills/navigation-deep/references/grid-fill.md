@@ -9,6 +9,16 @@ In code the fill is three steps — `fill_base` (everything up to the walls), `f
 `carve_passages` — because `open_sealed_fences` re-lays the last two on a clone of the
 first instead of refilling the city.
 
+**The fence gap cache builds beside `fill_base`** (`fill_from_mapdata`). The road half of
+`FenceGapCache` — the segment index over every road in the city plus `RoadNodes` behind
+the loose-end rule — is the most expensive tens of milliseconds of the fill, and nothing
+in `fill_base` needs it: both steps read only the `MapData`, so the cache is built on a
+helper thread (`std::thread::scope`) while the base rasterizes, and the finished cache is
+pre-seeded into `fence_cache` before `fill_fences` (whose own `unwrap_or_else` build
+stays for navmeshes that never ran the fill — hand-built test grids). The answer does not
+depend on the race: the cache is a pure function of the map. A map without fences builds
+no cache at all. Measured: the fill step of the warm Paris entry 257 → 140 ms (journal 62).
+
 ## Ordinary roads and rails never touch the grid
 
 **Ordinary roads do not touch the navmesh.** The grid starts all-passable and

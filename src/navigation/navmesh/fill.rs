@@ -40,7 +40,18 @@ impl Navmesh {
     /// (`WaterLine::tunnel`) — под дорогой ручей чаще убран в культверт, чем
     /// перекрыт мостом.
     pub fn fill_from_mapdata(&mut self, map: &MapData) {
-        self.fill_base(map);
+        // Дорожная половина кеша проёмов (индекс отрезков всех дорог города и
+        // узлы под висячие торцы) — самые дорогие десятки миллисекунд заливки —
+        // строится рядом с `fill_base`: оба шага читают только карту, кеш —
+        // чистая функция карты, и его порядок от гонки не зависит. На пустых
+        // оградах кеш никому не нужен — и не строится.
+        let cache = std::thread::scope(|scope| {
+            let building = (!map.fences.is_empty())
+                .then(|| scope.spawn(|| FenceGapCache::build(&map.fences, &map.roads)));
+            self.fill_base(map);
+            building.map(|building| building.join().expect("поток кеша проёмов упал"))
+        });
+        self.fence_cache = cache;
         // основа до оград едет калиткам (`open_sealed_fences` кладёт ограды
         // на неё в каждом раунде): копия passable на этом месте на два порядка
         // дешевле её повторной растеризации
