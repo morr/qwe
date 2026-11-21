@@ -167,7 +167,18 @@ pub fn replay_app(
         .insert_resource(PortalPos(portal))
         .insert_resource(WorldSeed(seed))
         .insert_resource(PopulationSize(population))
-        .insert_resource(Determinism(true));
+        .insert_resource(Determinism(true))
+        // волны орды — дворный масштаб: как `PopulationSize`, иначе дефолтные
+        // 150 демонов в волне легли бы на двор к 64 пешкам. Числа малы, но
+        // ритм обязан уложиться в 96-тиковый прогон: затишье 1 с — две волны
+        // за окно (вторая на 64±16 тике), и пин отпечатка проверяет и выпуск,
+        // и арифметику затишья. Первый выпуск — на первом же тике `Live`
+        // (`HordeSchedule::default`, нулевой тик)
+        .insert_resource(crate::demon::HordeStyle {
+            wave_size: 12,
+            wave_every: 1.0,
+            wave_len: 4,
+        });
     crate::navigation::use_flat_grid(app.world_mut());
 
     // navmesh — готовый: в игре его заливает поток загрузки
