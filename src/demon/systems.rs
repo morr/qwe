@@ -4,8 +4,9 @@ use bevy::prelude::*;
 use rand::RngExt;
 
 use crate::demon::components::{
-    ChaseTarget, Demon, DemonLungeTag, DemonSpawner, DemonStyle, DemonWanderTag,
+    ChaseTarget, Demon, DemonLungeTag, DemonSpawner, DemonStyle, DemonWanderTag, WarpOrigin,
 };
+use crate::demon::horde::HordeSchedule;
 use crate::demon::look::{demon_body, halo};
 use crate::diagnostics::{SIM_SPAWNER_MS, SimMeasure};
 use crate::loading::AppState;
@@ -43,7 +44,12 @@ pub fn spawn_initial_burst(
     let birth = DemonBirth::new(&seed, &portal_pos, &style, &silhouettes);
     for index in 0..burst {
         let angle = index as f32 / burst as f32 * std::f32::consts::TAU;
-        spawn_demon(&mut commands, &mut spawner, &birth, Some(angle));
+        spawn_demon(
+            &mut commands,
+            &mut spawner,
+            &birth,
+            DemonArrival::Portal(Some(angle)),
+        );
     }
 }
 
@@ -54,6 +60,7 @@ pub fn tick_spawner(
     mut diagnostics: bevy::diagnostic::Diagnostics,
     mut spawner: ResMut<DemonSpawner>,
     style: Res<DemonStyle>,
+    horde: Res<HordeSchedule>,
     portal_pos: Res<PortalPos>,
     seed: Res<WorldSeed>,
     silhouettes: Res<Silhouettes>,
@@ -68,7 +75,10 @@ pub fn tick_spawner(
         spawner.timer.set_duration(interval);
     }
 
-    if spawner.spawned >= style.cap() {
+    // кап общий на все источники: очередь невыпущенной волны — тоже
+    // обязательство, и фон, не считающий её, переполнял бы кап на время
+    // выпуска (координаты волны посчитаны под свободное место до её постановки)
+    if spawner.spawned + horde.pending() >= style.cap() {
         return;
     }
     spawner.timer.tick(time.delta());
@@ -77,7 +87,12 @@ pub fn tick_spawner(
     }
 
     let birth = DemonBirth::new(&seed, &portal_pos, &style, &silhouettes);
-    spawn_demon(&mut commands, &mut spawner, &birth, None);
+    spawn_demon(
+        &mut commands,
+        &mut spawner,
+        &birth,
+        DemonArrival::Portal(None),
+    );
 }
 
 /// База скорости демона на этом прогоне: единственная формула и для скорости
@@ -91,7 +106,7 @@ fn demon_speed(style: &DemonStyle) -> f32 {
 /// Всё, что демон получает при рождении помимо номера и угла. Четыре ресурса
 /// читаются одинаково в обеих системах спавна, поэтому ездят одним значением,
 /// а не пятёркой позиционных аргументов.
-struct DemonBirth<'a> {
+pub(super) struct DemonBirth<'a> {
     world_seed: u64,
     portal_pos: Vec2,
     speed: f32,
@@ -99,7 +114,7 @@ struct DemonBirth<'a> {
 }
 
 impl<'a> DemonBirth<'a> {
-    fn new(
+    pub(super) fn new(
         seed: &WorldSeed,
         portal_pos: &PortalPos,
         style: &DemonStyle,
@@ -114,35 +129,59 @@ impl<'a> DemonBirth<'a> {
     }
 }
 
-/// Демон появляется у кромки портала и с первого же тика идёт по своим делам.
+/// Откуда демон выходит: у кромки портала или из волны орды.
+pub enum DemonArrival {
+    /// Кромка портала; `None` — угол выхода разыгрывается из потока самого
+    /// нового демона (фон), залп задаёт угол сам, рассаживая демонов по кромке.
+    Portal(Option<f32>),
+    /// Волна: точка выпуска и очаг уже посчитаны расписанием орды из её
+    /// чистого потока (`demon::horde`), здесь только применяются.
+    Wave { position: Vec2, origin: Vec2 },
+}
+
+/// Демон появляется в точке своего прибытия и с первого же тика идёт по своим
+/// делам.
 ///
 /// Номер демон получает здесь: `spawned` читается до инкремента и становится
 /// `PawnId`, инкремент лежит рядом с чтением — у вызывающих его можно забыть,
 /// и тогда два демона делят номер, а на его уникальности стоят и поток ГПСЧ
 /// пешки, и ключ очереди детерминированного диспетчера.
 ///
-/// `angle: None` — угол выхода разыгрывается; залп задаёт его сам, рассаживая
-/// демонов равномерно по кромке. Собственного потока у `DemonSpawner` нет
-/// намеренно: угол тянется из потока **самого нового демона**, засеянного его
-/// `index`, — поэтому демон номер N выходит одинаково, сколько бы демонов ни
-/// успело родиться и умереть до него.
-fn spawn_demon(
+/// `angle: None` у порталового прибытия — угол разыгрывается из потока
+/// **самого нового демона**, засеянного его `index`, — поэтому демон номер N
+/// выходит одинаково, сколько бы демонов ни успело родиться и умереть до него.
+/// Волновое прибытие жребия рождения не тратит вовсе: вся его случайность
+/// посчитана расписанием волны, а собственный поток демона начинается с
+/// решения номер 1, как и у порталового (разница в расходе номера 0 на
+/// решение не влияет — см. пин эквивалентности в `demon::horde`).
+pub fn spawn_demon(
     commands: &mut Commands,
     spawner: &mut DemonSpawner,
     birth: &DemonBirth,
-    angle: Option<f32>,
+    arrival: DemonArrival,
 ) {
     let index = spawner.spawned;
     spawner.spawned += 1;
 
-    let mut rng = decision_stream(
-        birth.world_seed,
-        RngDomain::Demon,
-        index as u32,
-        WanderIndex::SPAWN,
-    );
-    let angle = angle.unwrap_or_else(|| rng.random_range(0.0..std::f32::consts::TAU));
-    let position = birth.portal_pos + Vec2::from_angle(angle) * (PORTAL_DIAMETER / 2.0 + 1.0);
+    let (position, origin) = match arrival {
+        DemonArrival::Portal(angle) => {
+            let angle = match angle {
+                Some(angle) => angle,
+                None => decision_stream(
+                    birth.world_seed,
+                    RngDomain::Demon,
+                    index as u32,
+                    WanderIndex::SPAWN,
+                )
+                .random_range(0.0..std::f32::consts::TAU),
+            };
+            (
+                birth.portal_pos + Vec2::from_angle(angle) * (PORTAL_DIAMETER / 2.0 + 1.0),
+                birth.portal_pos,
+            )
+        }
+        DemonArrival::Wave { position, origin } => (position, origin),
+    };
 
     let (sprite, silhouette) = demon_body(birth.silhouettes, index);
     commands
@@ -151,6 +190,7 @@ fn spawn_demon(
             silhouette,
             Transform::from_translation(position.extend(unit_z(position.y))),
             Demon,
+            WarpOrigin(origin),
             DemonWanderTag,
             Movable::new(birth.speed),
             PawnId(index as u32),
@@ -197,18 +237,19 @@ pub fn sync_demon_speed(style: Res<DemonStyle>, mut demons: Query<&mut Movable, 
     }
 }
 
-/// Блуждающий демон без пути выбирает случайную проходимую точку «от портала»
-/// и запрашивает путь. У края карты направление естественно заворачивает
-/// внутрь из-за клампа цели в границы.
+/// Блуждающий демон без пути выбирает случайную проходимую точку «от своего
+/// происхождения» ([`WarpOrigin`]: портал — у born-у-портала, очаг волны — у
+/// волнового) и запрашивает путь. У края карты направление естественно
+/// заворачивает внутрь из-за клампа цели в границы.
 pub fn pick_wander_targets(
     mut commands: Commands,
     backend: Res<Backend>,
-    portal_pos: Res<PortalPos>,
     seed: Res<WorldSeed>,
     mut query: Query<
         (
             Entity,
             &SimPosition,
+            &WarpOrigin,
             &mut Movable,
             &PawnId,
             &mut WanderIndex,
@@ -222,15 +263,18 @@ pub fn pick_wander_targets(
 ) {
     let walkable = backend.walkable();
 
-    for (entity, sim_position, mut movable, pawn_id, mut wander_index) in &mut query {
+    for (entity, sim_position, warp_origin, mut movable, pawn_id, mut wander_index) in &mut query {
         assert_ready_to_pick(&movable.state);
 
         // после отсева, а не до: `next` сдвигает номер решения, и заведённый
         // заранее поток крутил бы его вхолостую на каждом кадре
         let rng = &mut wander_index.next(seed.0, RngDomain::Demon, pawn_id.0);
 
-        // «от портала» — вся видовая политика демона и есть; остальное общее
-        let away = (sim_position.0 - portal_pos.0).normalize_or(Vec2::from_angle(
+        // «от происхождения» — вся видовая политика демона и есть; остальное
+        // общее. У рождённого порталом происхождение — сам портал, и вектор
+        // совпадает бит-в-бит с прежним «от портала» (пин эквивалентности —
+        // `demon::horde`)
+        let away = (sim_position.0 - warp_origin.0).normalize_or(Vec2::from_angle(
             rng.random_range(0.0..std::f32::consts::TAU),
         ));
         let target = point_in_cone(

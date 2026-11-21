@@ -2,6 +2,7 @@ mod behavior;
 mod claims;
 mod components;
 mod decide;
+mod horde;
 mod look;
 mod systems;
 
@@ -14,8 +15,13 @@ pub use self::components::{
     DEMON_SPAWN_INTERVAL, DEMON_SPAWN_INTERVAL_MAX, DEMON_SPAWN_INTERVAL_MIN,
     DEMON_SPAWN_INTERVAL_STEP, DEMON_SPEED_FACTOR, DEMON_SPEED_FACTOR_MAX, DEMON_SPEED_FACTOR_MIN,
     DEMON_SPEED_FACTOR_STEP, Demon, DemonCaughtHumanEvent, DemonChaseTag, DemonDevourTag,
-    DemonLungeTag, DemonSpawner, DemonStyle, DemonWanderTag, DevourUntil,
+    DemonLungeTag, DemonSpawner, DemonStyle, DemonWanderTag, DevourUntil, HordeStyle,
+    WAVE_EVERY_DEFAULT, WAVE_EVERY_MAX, WAVE_EVERY_MIN, WAVE_EVERY_STEP, WAVE_LEN_DEFAULT,
+    WAVE_LEN_MAX, WAVE_LEN_MIN, WAVE_LEN_STEP, WAVE_SIZE_DEFAULT, WAVE_SIZE_MAX, WAVE_SIZE_MIN,
+    WAVE_SIZE_STEP, WarpOrigin,
 };
+use self::horde::play_waves;
+pub use self::horde::{HORDE_WAVE_KEY, HordeSchedule};
 pub use self::look::DemonHalo;
 use self::systems::{
     demon_speed_changed, draw_lunge_paths, pick_wander_targets, spawn_initial_burst,
@@ -47,14 +53,19 @@ impl Plugin for DemonPlugin {
             .register_type::<ChaseRepath>()
             .register_type::<DevourUntil>()
             .register_type::<DemonSpawner>()
+            .register_type::<WarpOrigin>()
+            .register_type::<HordeSchedule>()
             .register_type::<DemonHalo>()
             .register_pref::<DemonStyle>()
+            .register_pref::<HordeStyle>()
             .init_resource::<DemonSpawner>()
+            .init_resource::<HordeSchedule>()
             // атлас силуэтов собирает `SilhouettePlugin`; пустой ресурс —
             // квадраты, как и у людей (см. `HumanPlugin`)
             .init_resource::<crate::silhouette::Silhouettes>()
             .add_observer(on_demon_caught_human)
             .add_observer(on_world_started)
+            .add_observer(crate::demon::horde::on_world_started)
             // `Live`, а не `Playing`: номера демонам раздаёт спавнер, а обнуляет
             // его `WorldStarted` — объявляемый на входе в `Live`. Тик, успевший
             // пройти раньше объявления, выпускает залп со старым счётчиком, и
@@ -66,14 +77,15 @@ impl Plugin for DemonPlugin {
             // все 11–14 с постройки навигации.
             .add_systems(
                 FixedUpdate,
-                (spawn_initial_burst, tick_spawner)
+                (spawn_initial_burst, tick_spawner, play_waves)
                     .chain()
                     // рождение — стадия `Spawner`, до пересборки сетки демонов:
                     // ребро к следующей стадии ставит точку синхронизации,
                     // команды спавна применяются на ней, и демон входит в сетку
                     // и действует на том же тике, на котором родился. Без ребра
                     // порядок решал топологический разбор расписания и гонка с
-                    // точкой синхронизации соседей
+                    // точкой синхронизации соседей. Залп, фон и волна — одна
+                    // цепочка, один класс порядка
                     .in_set(TickStage::Spawner)
                     // спавнер идёт в обоих режимах и живёт внутри мира; с
                     // `62ea098` «без множества» читается как «вне мира»
@@ -347,10 +359,18 @@ mod tests {
     /// Счётчик спавнера — источник `PawnId` и seed потока ГПСЧ демона, поэтому
     /// инкремент обязан быть ровно один на демона: пропуск раздаёт номер
     /// дважды, лишний — оставляет дыру и сдвигает потоки следующих демонов.
+    /// Источников с фазы орды два — фон и волна (`demon::horde`), номера
+    /// берёт общий: волна включена явно, чтобы смешанный источник был
+    /// обязан присутствовать, а не случился по жребию очага.
     #[test]
     fn every_spawned_demon_advances_the_counter_exactly_once() {
         let app = &mut app();
         tick_through_a_moving_warmup(app);
+        app.world_mut().insert_resource(HordeStyle {
+            wave_size: 20,
+            wave_every: 600.0,
+            wave_len: 5,
+        });
         app.world_mut()
             .resource_mut::<NextState<PlayPhase>>()
             .set(PlayPhase::Live);
@@ -358,6 +378,10 @@ mod tests {
             app.update();
         }
 
+        assert!(
+            app.world().resource::<HordeSchedule>().wave_index > 0,
+            "волна не вышла: проверка смешанного источника пуста"
+        );
         let ids = demon_pawn_ids(app);
         assert!(!ids.is_empty(), "в `Live` залп обязан выйти");
         assert_eq!(
@@ -372,23 +396,28 @@ mod tests {
         );
     }
 
-    /// Состояние прогона обязано быть видно живому осмотру: `DemonSpawner`
-    /// сбрасывает тот же `WorldStarted`, что `Telemetry`, `SimTick` и
-    /// `TickDebt`, и все они читаются по BRP (`CONTEXT.md`, «WorldStarted»).
-    /// Проверяется именно то, что требует `bevy/get_resource`: тип в реестре
-    /// **и** данные `ReflectResource` на нём — одного `register_type` без
-    /// `#[reflect(Resource)]` не хватило бы.
+    /// Состояние прогона обязано быть видно живому осмотру: `DemonSpawner` и
+    /// расписание орды сбрасывает тот же `WorldStarted`, что `Telemetry`,
+    /// `SimTick` и `TickDebt`, и все они читаются по BRP (`CONTEXT.md`,
+    /// «WorldStarted»). Проверяется именно то, что требует `bevy/get_resource`:
+    /// тип в реестре **и** данные `ReflectResource` на нём — одного
+    /// `register_type` без `#[reflect(Resource)]` не хватило бы.
     #[test]
     fn the_spawner_state_is_visible_over_brp() {
         let app = app();
         let registry = app.world().resource::<AppTypeRegistry>().read();
-        let registration = registry
-            .get(std::any::TypeId::of::<DemonSpawner>())
-            .expect("DemonSpawner не в реестре типов: `brp res get` его не увидит");
-        assert!(
-            registration.data::<ReflectResource>().is_some(),
-            "у DemonSpawner нет ReflectResource: BRP не сможет его прочитать"
-        );
+        for (name, ty) in [
+            ("DemonSpawner", std::any::TypeId::of::<DemonSpawner>()),
+            ("HordeSchedule", std::any::TypeId::of::<HordeSchedule>()),
+        ] {
+            let registration = registry.get(ty).unwrap_or_else(|| {
+                panic!("{name} не в реестре типов: `brp res get` его не увидит")
+            });
+            assert!(
+                registration.data::<ReflectResource>().is_some(),
+                "у {name} нет ReflectResource: BRP не сможет его прочитать"
+            );
+        }
     }
 
     /// Пин порядка тика: спавнер стоит в стадии `Spawner`, раньше стадии
@@ -404,8 +433,19 @@ mod tests {
     fn a_demon_born_on_a_tick_enters_the_demon_grid_on_that_same_tick() {
         let app = &mut app();
         // ровно один тик на кадр: проверяется именно тик рождения, а на
-        // дефолтных 64 Гц один `update` на 100 мс дал бы шесть
+        // дефолтных 64 Гц один `update` на 100 мс дал бы шесть. Волны
+        // выключены, фон заморожен (интервал в потолке шкалы — таймер не
+        // огоньёт ни разу): пин — о шве залпа, порции волны и фоновые демоны
+        // легитимно выходят в соседних тиках
         app.insert_resource(Time::<Fixed>::from_seconds(0.1));
+        app.insert_resource(HordeStyle {
+            wave_size: 0,
+            ..Default::default()
+        });
+        app.insert_resource(DemonStyle {
+            interval: DEMON_SPAWN_INTERVAL_MAX,
+            ..Default::default()
+        });
 
         app.world_mut()
             .resource_mut::<NextState<AppState>>()

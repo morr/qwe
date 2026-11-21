@@ -670,13 +670,14 @@ fn report_tick_spike(
         wandering,
         moving,
         chasing,
+        wave,
     } = *census;
     let killed = telemetry.killed;
     // заявки, поданные в сам спайк-тик: волна перепрокладок видна числом,
     // а не догадкой (panic/flee/демонский выбор цели/filed repath)
     let filed = requests.iter().filter(|r| r.0 == tick.0).count();
     info!(
-        "tick spike: {sim_ms:.1} ms for {ticks} ticks (tick {}, humans {humans}, souls {souls}, corpses {corpses}, killed {killed}, fleeing {fleeing}, wandering {wandering}, moving {moving}, chasing {chasing}, filed {filed})",
+        "tick spike: {sim_ms:.1} ms for {ticks} ticks (tick {}, humans {humans}, souls {souls}, corpses {corpses}, killed {killed}, fleeing {fleeing}, wandering {wandering}, moving {moving}, chasing {chasing}, wave {wave}, filed {filed})",
         tick.0
     );
     // разрез спайк-тика: последнее значение каждой подсистемы — это её

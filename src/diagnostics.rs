@@ -51,6 +51,9 @@ pub const SIM_CHASE_MS: DiagnosticPath = DiagnosticPath::const_new("sim/chase_ms
 pub const SIM_MOVE_MS: DiagnosticPath = DiagnosticPath::const_new("sim/move_ms");
 pub const SIM_ACQUIRE_MS: DiagnosticPath = DiagnosticPath::const_new("sim/acquire_ms");
 pub const SIM_SPAWNER_MS: DiagnosticPath = DiagnosticPath::const_new("sim/spawner_ms");
+/// Расписание и выпуск волн орды (`demon/horde.rs`) — вторая половина стадии
+/// `Spawner`; в сегменте пробы она не отделяется от фона, этим замером — да.
+pub const SIM_HORDE_MS: DiagnosticPath = DiagnosticPath::const_new("sim/horde_ms");
 pub const SIM_SOULS_MS: DiagnosticPath = DiagnosticPath::const_new("sim/souls_ms");
 pub const SIM_ESCAPE_MS: DiagnosticPath = DiagnosticPath::const_new("sim/escape_ms");
 /// Расталкивание меряется на **прогон**, а не на тик: оно гейтится «не чаще
@@ -88,6 +91,7 @@ pub const SIM_WAIT_PEAK_MS: DiagnosticPath = DiagnosticPath::const_new("sim/wait
 pub const SPIKE_PARTS: &[(&str, &DiagnosticPath)] = &[
     ("acq", &SIM_ACQUIRE_MS),
     ("spwn", &SIM_SPAWNER_MS),
+    ("wave", &SIM_HORDE_MS),
     ("pan", &SIM_PANIC_MS),
     ("flee", &SIM_FLEE_MS),
     ("far", &SIM_FAR_MS),

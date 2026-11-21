@@ -23,7 +23,7 @@
 
 use bevy::prelude::*;
 
-use crate::demon::{Demon, DemonChaseTag};
+use crate::demon::{Demon, DemonChaseTag, HordeSchedule};
 use crate::human::{
     CorpseTag, Human, HumanFleeTag, HumanWanderTag, PendingPopulation, PopulationSize, SoulMote,
 };
@@ -31,7 +31,7 @@ use crate::loading::PlayPhase;
 use crate::movement::MovableStateMovingTag;
 use crate::telemetry::Telemetry;
 
-/// Состояния мира на снимке этого кадра. Все восемь — производные: ресурс
+/// Состояния мира на снимке этого кадра. Все — производные: ресурс
 /// пересчитывается с нуля каждый кадр, и сброс при рестарте ему не нужен.
 ///
 /// BRP-читаемый: `res get Census` отвечает тем же, что раньше приходилось
@@ -52,6 +52,9 @@ pub struct Census {
     /// разбору самой `MovableState`.
     pub moving: usize,
     pub chasing: usize,
+    /// Волн орды вышло с начала прогона (`HordeSchedule::wave_index`) — номер
+    /// идущей волны в строке спайк-отчёта и `res get Census`.
+    pub wave: u64,
 }
 
 pub struct CensusPlugin;
@@ -84,6 +87,7 @@ pub(crate) fn count_census(
     wandering: Query<(), With<HumanWanderTag>>,
     moving: Query<(), With<MovableStateMovingTag>>,
     chasing: Query<(), With<DemonChaseTag>>,
+    horde: Res<HordeSchedule>,
     mut census: ResMut<Census>,
 ) {
     census.humans = humans.iter().len();
@@ -94,6 +98,7 @@ pub(crate) fn count_census(
     census.wandering = wandering.iter().len();
     census.moving = moving.iter().len();
     census.chasing = chasing.iter().len();
+    census.wave = horde.wave_index;
 }
 
 /// Инвариант переписи: живые + убитые + спасшиеся — всё население прогона.
@@ -149,6 +154,9 @@ mod tests {
             TelemetryPlugin,
             CensusPlugin,
         ));
+        // снимок орды читает расписание демонов; в игре его заводит
+        // `DemonPlugin`, стенду переписи хватает нулевого
+        app.insert_resource(crate::demon::HordeSchedule::default());
         app.insert_resource(PopulationSize(5));
         app
     }

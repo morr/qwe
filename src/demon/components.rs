@@ -4,12 +4,15 @@ use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use crate::settings::{DEMON_CHASE_REPATH, DEMON_DEVOUR_PAUSE};
 
 /// Кап и интервал спавна — дефолты [`DemonStyle`], системы читают ресурс, а не
-/// эти константы. Стартовый залп ручкой не стал и остался в `settings.rs`
+/// эти константы. Интервал подобран под директиву владельца (ревью плана ×10,
+/// 2026-11-21): фон должен заполнять кап за ~1–2 сим-минуты, а не за час, —
+/// 3500 демонов при таймере 0.03 с (огонь раз в два тика на 64 Гц) выходят за
+/// ~110 сим-секунд. Стартовый залп ручкой не стал и остался в `settings.rs`
 /// рядом с прочим тюнингом демона ([`DEMON_INITIAL_BURST`]).
 ///
 /// [`DEMON_INITIAL_BURST`]: crate::settings::DEMON_INITIAL_BURST
-pub const DEMON_SPAWN_INTERVAL: f32 = 1.0;
-pub const DEMON_CAP: usize = 350;
+pub const DEMON_SPAWN_INTERVAL: f32 = 0.03;
+pub const DEMON_CAP: usize = 3500;
 /// Множитель к `DEMON_SPEED` и надбавка к ней на время броска — тоже дефолты
 /// [`DemonStyle`]. Оба ползунка стоят на 30% своего хода: скорость 130% от
 /// базы, бросок +30% к получившейся скорости.
@@ -18,11 +21,11 @@ pub const DEMON_LUNGE_BOOST: f32 = 0.3;
 
 /// Границы ползунков панели Demon.
 pub const DEMON_CAP_MIN: f32 = 0.0;
-pub const DEMON_CAP_MAX: f32 = 500.0;
-pub const DEMON_CAP_STEP: f32 = 5.0;
-pub const DEMON_SPAWN_INTERVAL_MIN: f32 = 0.1;
+pub const DEMON_CAP_MAX: f32 = 5000.0;
+pub const DEMON_CAP_STEP: f32 = 25.0;
+pub const DEMON_SPAWN_INTERVAL_MIN: f32 = 0.01;
 pub const DEMON_SPAWN_INTERVAL_MAX: f32 = 10.0;
-pub const DEMON_SPAWN_INTERVAL_STEP: f32 = 0.1;
+pub const DEMON_SPAWN_INTERVAL_STEP: f32 = 0.01;
 pub const DEMON_SPEED_FACTOR_MIN: f32 = 1.0;
 pub const DEMON_SPEED_FACTOR_MAX: f32 = 2.0;
 pub const DEMON_SPEED_FACTOR_STEP: f32 = 0.05;
@@ -44,17 +47,30 @@ const _: () = {
     assert!(
         DEMON_LUNGE_BOOST >= DEMON_LUNGE_BOOST_MIN && DEMON_LUNGE_BOOST <= DEMON_LUNGE_BOOST_MAX
     );
+    assert!(WAVE_SIZE_DEFAULT as f32 >= WAVE_SIZE_MIN && WAVE_SIZE_DEFAULT as f32 <= WAVE_SIZE_MAX);
+    assert!(WAVE_EVERY_DEFAULT >= WAVE_EVERY_MIN && WAVE_EVERY_DEFAULT <= WAVE_EVERY_MAX);
+    assert!(WAVE_LEN_DEFAULT as f32 >= WAVE_LEN_MIN && WAVE_LEN_DEFAULT as f32 <= WAVE_LEN_MAX);
 };
 
 #[derive(Component, Reflect, Default)]
 #[reflect(Component)]
+#[require(WarpOrigin)]
 pub struct Demon;
+
+/// Точка, от которой демон блуждает «наоборот» — `demon::systems::pick_wander_targets`
+/// строит вектор `away` от неё, а не от портала. Рождённый у портала несёт
+/// [`PortalPos`](crate::portal::PortalPos); рождённый волной орды — её очаг
+/// (`demon::horde`), и вся стая волны расходится от своего района, а не от
+/// портала. Позиция происхождения на жизнь демона: после блуждания она не
+/// переставляется.
+#[derive(Component, Reflect, Default)]
+#[reflect(Component)]
+pub struct WarpOrigin(pub Vec2);
 
 /// Стейт-машина демона: Wander / Chase / Devour — эксклюзивные теги.
 #[derive(Component, Reflect, Default)]
 #[reflect(Component)]
 pub struct DemonWanderTag;
-
 #[derive(Component, Reflect, Default)]
 #[reflect(Component)]
 pub struct DemonChaseTag;
@@ -179,6 +195,66 @@ impl DemonStyle {
     }
 }
 
+/// Границы ползунков панели Demon секции орды (`demon::horde`).
+pub const WAVE_SIZE_MIN: f32 = 0.0;
+pub const WAVE_SIZE_MAX: f32 = 2000.0;
+pub const WAVE_SIZE_STEP: f32 = 10.0;
+pub const WAVE_EVERY_MIN: f32 = 1.0;
+pub const WAVE_EVERY_MAX: f32 = 600.0;
+pub const WAVE_EVERY_STEP: f32 = 5.0;
+pub const WAVE_LEN_MIN: f32 = 1.0;
+pub const WAVE_LEN_MAX: f32 = 200.0;
+pub const WAVE_LEN_STEP: f32 = 1.0;
+
+/// Размер и ритм волн орды; расписание и выпуск — `demon::horde`.
+/// Отдельно от [`DemonStyle`] по той же причине, что и все стили: это выбор
+/// пользователя, пережающий рестарт, тогда как `HordeSchedule` — состояние
+/// мира. `wave_size == 0` выключает волны вовсе — фон-only, сегодняшний мир.
+#[derive(Resource, Reflect, SettingsGroup, Clone, Copy, PartialEq, Debug)]
+#[reflect(Resource, SettingsGroup, Default)]
+#[settings_group(group = "horde")]
+pub struct HordeStyle {
+    /// Демонов в одной волне. Ноль — волн нет.
+    pub wave_size: usize,
+    /// Секунды затишья между волнами (с разбросом — см. `WAVE_LULL_JITTER`).
+    pub wave_every: f32,
+    /// Порция выпуска за тик: волна выходит не одним залпом команд, а
+    /// разливается по `wave_len` демонов за тик.
+    pub wave_len: usize,
+}
+
+/// Дефолтные числа — выбор фазы 4 плана ×10
+/// (`docs/population-x10-plan.md`): волна 150 каждые ~полторы минуты
+/// заметна на фоне быстрого фонового заполнения, но сама по себе не
+/// опустошает кап.
+pub const WAVE_SIZE_DEFAULT: usize = 150;
+pub const WAVE_EVERY_DEFAULT: f32 = 90.0;
+pub const WAVE_LEN_DEFAULT: usize = 30;
+
+impl Default for HordeStyle {
+    fn default() -> Self {
+        Self {
+            wave_size: WAVE_SIZE_DEFAULT,
+            wave_every: WAVE_EVERY_DEFAULT,
+            wave_len: WAVE_LEN_DEFAULT,
+        }
+    }
+}
+
+impl HordeStyle {
+    /// Секунды затишья, зажатые шкалой: старый файл настроек и запись по BRP
+    /// могут принести что угодно, а отрицательный или нечисловой интервал
+    /// разрушил бы расписание (`as u64` от NaN/отрицательного — ноль тиков,
+    /// волна на каждом тике).
+    pub fn wave_every(&self) -> f32 {
+        if self.wave_every.is_finite() {
+            self.wave_every.clamp(WAVE_EVERY_MIN, WAVE_EVERY_MAX)
+        } else {
+            WAVE_EVERY_DEFAULT
+        }
+    }
+}
+
 /// Спавнер демонов: стартовый залп, затем по таймеру до капа.
 ///
 /// Состояние мира, а не настройка: `WorldStarted` пересобирает его целиком
@@ -252,6 +328,37 @@ mod tests {
             }
             .cap(),
             DEMON_CAP_MAX as usize
+        );
+    }
+
+    /// Затишье по BRP может быть мусорным — NaN и отрицательное через
+    /// `as u64` дали бы ноль тиков, то есть волну на каждом тике.
+    #[test]
+    fn wave_every_clamps_garbage_to_the_slider_scale() {
+        assert_eq!(HordeStyle::default().wave_every(), WAVE_EVERY_DEFAULT);
+        assert_eq!(
+            HordeStyle {
+                wave_every: -1.0,
+                ..Default::default()
+            }
+            .wave_every(),
+            WAVE_EVERY_MIN
+        );
+        assert_eq!(
+            HordeStyle {
+                wave_every: 10_000.0,
+                ..Default::default()
+            }
+            .wave_every(),
+            WAVE_EVERY_MAX
+        );
+        assert_eq!(
+            HordeStyle {
+                wave_every: f32::NAN,
+                ..Default::default()
+            }
+            .wave_every(),
+            WAVE_EVERY_DEFAULT
         );
     }
 }
