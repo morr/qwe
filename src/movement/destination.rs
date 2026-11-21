@@ -304,6 +304,14 @@ impl DestinationClaims {
         self.search_meters = search_meters;
     }
 
+    /// Радиус поиска слота в тайлах: `search_meters`, переведённые в слоты
+    /// через сторону слота и навтайл, но не уже одного тайла. Одна формула на
+    /// обоих ищущих — [`Self::claim_slot`] и [`Self::claim_group`].
+    fn search_radius_tiles(&self) -> i32 {
+        let meters_per_tile = self.side as f32 * navtile_size();
+        (self.search_meters / meters_per_tile).ceil().max(1.0) as i32
+    }
+
     /// Занять слот под `desired` или ближайший свободный к нему; вернуть слот и
     /// его целевой тайл. `from` — где пешка стоит сейчас.
     ///
@@ -323,14 +331,6 @@ impl DestinationClaims {
     /// тогда поиск пути провалится и поведение выберет новую цель. Режим отказа
     /// тот же, что уже терпит `rescue_from_impassable`, и ограничен радиусом
     /// поиска.
-    /// Радиус поиска слота в тайлах: `search_meters`, переведённые в слоты
-    /// через сторону слота и навтайл, но не уже одного тайла. Одна формула на
-    /// обоих ищущих — [`Self::claim_slot`] и [`Self::claim_group`].
-    fn search_radius_tiles(&self) -> i32 {
-        let meters_per_tile = self.side as f32 * navtile_size();
-        (self.search_meters / meters_per_tile).ceil().max(1.0) as i32
-    }
-
     pub fn claim_slot(
         &mut self,
         claimant: Entity,
