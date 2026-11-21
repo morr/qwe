@@ -67,6 +67,14 @@ game did not, and had to announce the world start by hand to stay ahead of that 
 **Unpausing in `StateTransition` takes effect from the next frame**: this frame's
 `Time<Virtual>` was already advanced in `First`. Pinned by `loading.rs`'s own tests.
 
+**The pause itself bites the very frame it is set in** — `pause_world` zeroes the
+frame's already-counted delta (`advance_by(Duration::ZERO)`). Without that the
+entry frame ran 1–2 unannounced ticks of the world before the `WorldStarted`
+announcement — the deterministic run then started on that invisible run's
+leftover, diverging between boots with the entry frame's timing (found in
+разрез №44). The warmup pin now carries a real delta: without the zeroing it
+leaks 16 ticks.
+
 ## MapLoadJob / JobState
 
 `map/osm/download.rs` — a background `std::thread` that prepares everything not needing ECS:

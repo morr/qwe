@@ -384,6 +384,21 @@ enforced by code.
 `SimSpeed`; the answer to a path query waits for its tick; everything left in `Update` only
 draws. A slow machine replays the same run more slowly — it does not replay a different one.
 
+**Boot timing must not matter either — and one way it did (разрез №44, fixed).** The
+virtual delta of the world-entry frame is counted in `First`, *before* the `StateTransition`
+that pauses the world, so the entry frame used to run 1–2 unannounced ticks — the
+deterministic run then started on the leftovers of that invisible pre-announce run (a demon
+burst from a not-yet-reset spawner, requests stamped with `RequestedAt` ≥ 1), and the run's
+trajectory was a function of the entry frame's timing. Two live boots of one seed diverged
+bit-for-bit; №43's BRP-poll correlation was coincidence (polls slowed the entry
+frame and moved the tick count). The fix: `pause_world` zeroes the frame's delta
+(`advance_by(ZERO)`), so the world stands until `Live` at any delta — pinned by
+`loading.rs`'s warmup test with a real delta. What is *still* open: the live app's
+**acquisition order varies between boots** (the burst demons' pick requests apply 6+2 with
+a varying pair; chase claims flip; tick 1 diverges) — the replay yard is unaffected, but a
+**cross-process replay of a live boot is not claimed** until that is cut (deepening plan,
+«Разрез №44б», the perf43 worktree keeps the full instrument).
+
 **Not claimed**: float reproducibility across machines or compilers; replaying a run made
 with the toggle *off*. `bevy_northstar` builds its grid with rayon, so cross-process HPA
 replay is unaudited — within one session the grid outlives R, so restarts are safe.

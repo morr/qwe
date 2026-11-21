@@ -136,7 +136,12 @@ Summary; the mechanism — **world-lifecycle skill** (states and the warmup hold
   but `Time<Virtual>` is **paused** and the loader stays up counting pawns still routing
   *inside the camera view*; the routing half takes **~0.15 s**, timeout 10 s — the logged
   `warmup:` line's number is bigger because the entry frame runs inside the phase
-  (2.19–2.32 s on a cold process). `Live` despawns the
+  (2.19–2.32 s on a cold process). The pause bites **immediately**: `pause_world` zeroes
+  the frame's virtual delta (`advance_by(ZERO)`), which `First` counted before the
+  transition — without that the entry frame ticked 1–2 times *before* the
+  **WorldStarted** announcement, and a deterministic run began on the leftovers of that
+  invisible pre-announce run (diverging between boots with the entry frame's timing;
+  fixed in разрез №44). `Live` despawns the
   loader and reveals the game UI (`GameUiRoot`).
 - **WorldInitSet** — ordering inside `OnEnter(Playing)`: `Navmesh → Spawn`. The navmesh must
   be filled before the population spawns, or humans land in the river.
