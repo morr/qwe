@@ -91,13 +91,24 @@ it drifted. The prompt is now short; the child loads this skill and reads NOTES 
 content. NOTES.md is the prompt's backup copy: the permanent sections carry
 everything the old prompt carried.
 
+**`model` — the current link's own pin, read right before the spawn.** `current_session`
+(`zcode-sessions`) returns this session's model pin — e.g.
+`account:zai-start-plan/GLM-5.3-Flash` or
+`account:zai-individual-coding-plan/GLM-5.3-Flash` — and that exact string goes into
+`model`. The child inherits the plan (and the model) the chain actually runs on: the
+owner starts the chain on the start plan when its free daily tokens are granted, on the
+individual plan when they are not — the chain follows the restart link. A literal pin
+in this contract is the №48 death: the parent ran on the individual plan, the contract
+said `account:zai-start-plan/GLM-5.3-Flash`, and the child was born onto an exhausted
+quota.
+
 ```
 spawn_session(
   prompt: "Ты — звено №{N+1} непрерывного прогона qwe. Загрузи скилл chain-run
            и следуй его протоколу звена. master на старте: {sha}. Форма —
            по директивам из NOTES «След сессии» (свежайший steer решает).",
   directory: "/Users/morr/develop/bevy/qwe",
-  model: "account:zai-start-plan/GLM-5.3-Flash",
+  model: "<this session's model pin from current_session>",
   title: "qwe обзор №{N+1} — непрерывный прогон",
   task: false)
 ```
@@ -112,10 +123,12 @@ spawn_session(
   the prompt (skill loads, reads). `last_outcome: error` or no parts → read the
   failure first: `search_log(session_id: <child>, query: "model.request.failed")`
   and check `statusMessage`.
-  - `exceed quota limit` (retryable false) — the free-plan tokens are exhausted:
-    **this is the chain's expected stop, do not respawn.** Add one line to the top of
-    NOTES.md («цепочка остановлена: квота бесплатного плана, <дата>»), commit, end
-    the session. The owner restarts the chain when the quota resets.
+  - `exceed quota limit` (retryable false) — the current plan's quota is exhausted
+    (start-plan free tokens are issued about once a day; a paid plan has its own
+    limit): **this is the chain's expected stop, do not respawn.** Add one line to
+    the top of NOTES.md («цепочка остановлена: квота плана <план из пина модели>,
+    <дата>»), commit, end the session. The owner restarts the chain when they have
+    tokens again — the restart link's plan is what the chain runs on from then on.
   - anything else (network, transient) → fix the cause and spawn again — same
     number, fresh session. Repeat until alive.
 - A child that 429s its first turns (concurrency with your own session) is alive — the
@@ -149,7 +162,8 @@ Any session asked to resume the chain: find the last link with
 `NOTES.md` (its number N). If the last link ended in error or the chain stopped
 overnight — spawn link №N+1 per the contract, with the current HEAD as
 «master на старте». Two expected, non-emergency ways the chain lies dead: the
-free-plan quota ran out (`exceed quota limit` — restart when the quota resets) and
+current plan's quota ran out (`exceed quota limit` — restart when tokens are
+available, on whichever plan the owner picks; the contract inherits it) and
 the machine slept overnight. The first link after a restart also sweeps the leftover
 worktrees/branches of the dead tail (step 3 rules: kept ones are marked in their
 NOTES sections, unmerged branches survive `git branch -d` by design).
