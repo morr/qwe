@@ -1285,6 +1285,25 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   `flee`, `escape` are `Without<FarTag>` (under the determinism toggle the filters cut
   nobody). `to_corpse` strips the far set and restores a visible sprite — a fresh corpse is
   drawn as always.
+- **Far crowd layer** (`silhouette/far.rs`, ×10 plan Phase 5) — the drawing half of the far
+  tier: a far pawn is a **dot** in a chunk mesh of the corpse baking's point material
+  (`shaders/point.wesl`), always `HUMAN_MIN_PX` screen pixels (the shader applies the
+  floor from the zoom uniform — **a zoom change rebuilds nothing**, sprite and dot meet
+  seamlessly at the frame edge). Demons stay sprites at every zoom. The field
+  (`FarCrowdField`) is keyed by a 250 m grid — half the corpse's cell, far pawns number
+  hundreds of thousands; each chunk is a `HashMap<Entity, ()>` of members, **the world is
+  the source of truth**: position read from `SimPosition`, tint from `Attire` at rebuild —
+  so the slice tick writes nothing (a walker moves 0.35 m per slice — sub-pixel at the
+  layer's zooms, a dot may lag its pawn by a few rebuilds). Membership has one writer, the
+  `Insert<FarTag>` observer (demote); removal nobody does — the rebuild itself drops
+  promoted/corpse/despawned members (the query stops matching) and walkers who crossed a
+  cell, and deletes an emptied chunk whole. Rebuild runs `Update`/`Live`, budgeted
+  (`REBUILD_CHUNK_BUDGET` 6 chunks/frame): dirty chunks first, the rest by a ring over a
+  stable key order. Chunks carry an **honest `Aabb`** (centres ± `POINT_HALF_BOUND`) —
+  a 2D mesh gets no auto-Aabb, and without it the culling would use the unit-corner
+  positions and drop the whole chunk off-origin (the corpse chunks' trap, closed there by
+  `NoFrustumCulling`). `Z_FAR_CROWD` — above corpses, under the portal. Without a renderer
+  the rebuild is gated by the material handle, like the baker.
 - **CorpseTag** — a killed human: behavior/movement components removed, the body drawn
   as a lying human figure at `Z_CORPSE` (the **corpse look**, see Look: pose, heading and
   mirror by `Entity` bits — cosmetics, not run state; **blood** under the chest, see

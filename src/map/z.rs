@@ -196,6 +196,9 @@ pub const Z_PIPE: f32 = 2.77;
 /// трупами (тела на пятне видны).
 pub const Z_PORTAL_STAIN: f32 = 2.8;
 pub const Z_CORPSE: f32 = 3.0;
+/// Дальний слой живых (`silhouette/far.rs`): точки дальних людей — над телами
+/// (живой ходит по мёртвым), под порталом (воронка накрывает всё у себя).
+pub const Z_FAR_CROWD: f32 = 3.5;
 pub const Z_PORTAL: f32 = 4.0;
 pub const Z_BUILDING: f32 = 5.0;
 /// Цилиндры промзоны (`map/industry.rs`): тень лежит под домами, а стена и
@@ -346,7 +349,8 @@ const _: () = {
     // пятно под порталом кроет дороги, но не тела
     assert!(Z_PIPE < Z_PORTAL_STAIN);
     assert!(Z_PORTAL_STAIN < Z_CORPSE);
-    assert!(Z_CORPSE < Z_PORTAL);
+    assert!(Z_CORPSE < Z_FAR_CROWD);
+    assert!(Z_FAR_CROWD < Z_PORTAL);
     // цилиндр промзоны: тень под домами, стена и верх над ними
     assert!(Z_PORTAL < Z_INDUSTRY_SHADOW);
     assert!(Z_INDUSTRY_SHADOW < Z_BUILDING);

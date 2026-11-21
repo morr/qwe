@@ -253,7 +253,9 @@ toggle `FarTag` is never inserted — pinned by
   walking all 200k). `LodDwell(u8)` is the demote hysteresis **as a value**
   (`#[require]`d on `Human`, zero at spawn — the settlement wave goes far without
   waiting — `LodDwell::FULL` after a promote). The sprite is `Visibility::Hidden`;
-  `to_corpse` strips the far set and restores a visible sprite.
+  `to_corpse` strips the far set and restores a visible sprite. The far pawn is
+  still drawn — a dot in the far crowd layer (`silhouette/far.rs`, the drawing half:
+  `references/look.md`, **The far crowd layer**; ×10 Phase 5).
 - **`assign_lod_tiers`** (`Update`, fires on camera movement like
   `resize_silhouettes_on_zoom`, plus a catch-up mode while transitions exceed
   `LOD_TRANSITION_BATCH` per pass): demote walks the near set (`Without<FarTag>`),

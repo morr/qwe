@@ -45,7 +45,7 @@ use self::systems::{pump_pending_population, spawn_humans, spread_changed, sync_
 use crate::determinism::{DeterminismPlugin, SimPipeline};
 use crate::loading::{AppState, WorldInitSet};
 use crate::prefs::PrefsExt;
-use crate::silhouette::bake;
+use crate::silhouette::{bake, far};
 use crate::tick_stage::TickStage;
 
 pub struct HumanPlugin;
@@ -88,11 +88,18 @@ impl Plugin for HumanPlugin {
             .register_type::<FarTag>()
             .register_type::<BakeQueue>()
             .register_type::<bake::CorpseChunk>()
+            .register_type::<far::FarCrowdChunk>()
             .init_resource::<BakeQueue>()
             .init_resource::<bake::DespawnQueue>()
             .init_resource::<bake::CorpseField>()
+            .init_resource::<far::FarCrowdField>()
             .add_observer(reset_bake_queue)
             .add_observer(bake::on_world_started)
+            // дальний слой живых (Фаза 5 ×10): членство заводит переход яруса
+            // — demote; обратный переход членство не снимает, его разбирает
+            // перестройка (см. far.rs)
+            .add_observer(far::on_far_inserted)
+            .add_observer(far::on_world_started)
             // точечный материал запечённых трупов — на старте, сразу после
             // атласа (он ест то же изображение); без рендера ресурс не
             // вставится, и пекарь со своей перестройкой молча стоят
@@ -244,13 +251,17 @@ impl Plugin for HumanPlugin {
             // Только `Live`: под тумблером детерминизма и в реплей-дворе
             // рендера нет — материал не инициализирован, трупы остаются
             // сущностями (штатно). Зум в юниформе материала — сам по себе:
-            // с пекарем его не связывает ничего, кроме «тот же материал»
+            // с пекарем его не связывает ничего, кроме «тот же материал».
+            // Дальние чанки живут тем же материалом и потому в той же цепочке
+            // (Фаза 5 ×10): их перестройка читает тот же юниформ и тот же
+            // `Assets<Mesh>`
             .add_systems(
                 Update,
                 (
                     bake::bake_queued_corpses,
                     bake::rebuild_dirty_chunks,
                     bake::sync_point_uniform,
+                    far::rebuild_far_chunks,
                 )
                     .chain()
                     .after(spread_blood)

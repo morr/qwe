@@ -259,6 +259,43 @@ plain square `Sprite`, and **that is not an error**. `HumanPlugin` / `DemonPlugi
 `PortalPlugin` only `init_resource::<Silhouettes>()`; `SilhouettePlugin` is what fills it,
 so a test yard that spawns pawns or runs the kill observer must `init_resource` it too.
 
+## The far crowd layer
+
+`silhouette/far.rs` — ×10 plan Phase 5: a far pawn (`FarTag`, sprite hidden) is drawn as a
+**dot** in a chunk mesh, the corpse baking's point material (`point.wesl`) with the same
+`Glyph::Disc` atlas cell and the pawn's own `Attire` tint. Demons stay sprites at every
+zoom (3500 of them, the halo's bloom survives; the question of far halos closed itself).
+
+The whole design rests on one fact: **the world is the source of truth, not the field**.
+The chunk rebuild reads each member's `SimPosition` and `Attire` and rebuilds the mesh
+from scratch — nothing stores a dot's position. That is why the slice tick writes nothing:
+a walker moves 0.35 m per slice (sub-pixel at the layer's zooms), so a dot that lags its
+pawn by a few rebuilds is invisible, and the sim pays nothing for drawing. The floor is
+applied by the shader from the zoom uniform (shared with the corpse chunks), so **a zoom
+change rebuilds nothing** — the plan's original "resize dots on zoom with a window budget"
+died when Phase 3 put the floor on the GPU; sprite and dot meet seamlessly at the frame
+edge because both floors are `HUMAN_MIN_PX`.
+
+Membership: one writer, the `Insert<FarTag>` observer (demote inserts the entity into its
+250 m cell — **half the corpse's 500 m**, far pawns number 200k against thousands of
+corpses, and rebuild cost is per member). Nobody removes membership: the rebuild drops
+whose `FarTag` is gone (promote, corpse, despawn — the query stops matching) or who
+crossed a cell (moved to the new cell's member set, that cell marked dirty), and deletes
+an emptied chunk whole. Repeated demotes overwrite (`HashMap`, not a push) — an edge pawn
+walks tiers up and down and a push would accumulate doubles for hours. Rebuild runs in
+`Update`/`Live`, budgeted `REBUILD_CHUNK_BUDGET` (6 chunks/frame): dirty chunks first (a
+demoted pawn's dot must appear now), the rest by a ring over a stable sorted key order —
+dots refresh at the ring's pace, their lag is sub-pixel.
+
+Two things the corpse chunks did one way and this layer does another: chunks carry an
+**honest `Aabb`** (member centres ± `POINT_HALF_BOUND`, rewritten with the mesh) instead
+of `NoFrustumCulling` — a `Mesh2d` entity gets no auto-Aabb in 0.20, and the unit-corner
+positions would read as a 1.4 m radius at the origin, the exact trap the corpse chunks
+hit; with real bounds the camera culls off-frame chunks for real. And the z is
+`Z_FAR_CROWD` 3.5 — above corpses (the living walk over the dead), under the portal.
+Without a renderer the rebuild is gated by the material handle, like the baker; the
+member sets still accumulate, and the replay yard does not raise any of it.
+
 ## Portal
 
 `portal.rs` + `assets/shaders/portal.wesl` — a `Mesh2d` quad with `PortalMaterial`

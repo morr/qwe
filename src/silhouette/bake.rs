@@ -194,8 +194,9 @@ impl Material2d for PointMaterial {
 
 /// Угол квада — атрибут ±1 по обеим осям; позицию несёт он, а не `Mesh`-евые
 /// мировые координаты: разворачивает шейдер. Идентификатор — «высокий
-/// случайный», как у атрибутов `map/meshing.rs`.
-const ATTRIBUTE_QUAD: MeshVertexAttribute =
+/// случайный», как у атрибутов `map/meshing.rs`. Наружу модуля — ради тестов
+/// дальнего слоя ([`super::far`]): его точки едут тем же атрибутом.
+pub(crate) const ATTRIBUTE_QUAD: MeshVertexAttribute =
     MeshVertexAttribute::new("CorpseQuad", 1_884_661_903, VertexFormat::Float32x4);
 
 /// UV вершины в атласе целиком: кромка ячейки, зеркало и вертикаль посчитаны
@@ -205,9 +206,10 @@ const ATTRIBUTE_CELL: MeshVertexAttribute =
     MeshVertexAttribute::new("CorpseCell", 1_504_397_251, VertexFormat::Float32x2);
 
 /// Хэндл точечного материала. Настроечно его нет: без рендера (`Silhouettes`
-/// не собран) материал не инициализируется, и его существование — гейт пекаря.
+/// не собран) материал не инициализируется, и его существование — гейт пекаря
+/// и дальнего слоя (`far.rs` кладёт его на свои чанки).
 #[derive(Resource)]
-pub struct PointMaterialHandle(Handle<PointMaterial>);
+pub struct PointMaterialHandle(pub(crate) Handle<PointMaterial>);
 
 /// Материал — на старте приложения, сразу после атласа: запечённым нужен тот
 /// же `Handle<Image>`. Без рендера (`Silhouettes` пуст) ресурс не вставляется

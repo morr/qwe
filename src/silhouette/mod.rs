@@ -26,9 +26,11 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::window::PrimaryWindow;
 
 use crate::camera::Viewport;
+use crate::human::FarTag;
 
 pub mod bake;
 pub mod blood;
+pub mod far;
 pub mod figure;
 
 /// Сторона ячейки атласа на нулевом мипе, px. 128, а не 64: ячейка трупа на
@@ -513,14 +515,15 @@ fn on_silhouette_inserted(event: On<Insert<Silhouette>>, mut fresh: ResMut<Fresh
 
 /// Свежий или переписанный силуэт (спавн, труп) получает размер под текущий
 /// зум — иначе пешка, родившаяся на дальнем плане, ждала бы первого щелчка
-/// колеса.
+/// колеса. Дальние (`Without<FarTag>`) не получает: спрайт скрыт, размер ему
+/// ни к чему, а дорогая запись (конвейер спрайта) ушла бы впустую.
 ///
 /// Камеры нет — список не трогаем: записи дождутся первого кадра с камерой,
 /// как дождался бы и тик изменения под прежним `Changed`-фильтром.
 pub fn size_fresh_silhouettes(
     camera: Option<Single<&Transform, (With<Camera2d>, With<PanCamera>)>>,
     mut fresh: ResMut<FreshSilhouettes>,
-    mut query: Query<(&Silhouette, &mut Sprite)>,
+    mut query: Query<(&Silhouette, &mut Sprite), Without<FarTag>>,
 ) {
     let Some(zoom) = camera_zoom(camera) else {
         return;
@@ -577,13 +580,17 @@ const RESIZE_VIEW_SCREENS: f32 = 1.25;
 /// Кадр берётся из ресурса, а где его нет — считается из камеры и окна тем же
 /// [`Viewport::of`] (витрины без `ViewportPlugin`); без камеры система молча
 /// не работает — тот же контракт, что у атласа.
+///
+/// Дальние (`Without<FarTag>`) вне множества: их спрайты скрыты, размер им ни
+/// к чему, а на 200-тысячном городе дальних в разы больше ближних — кольцо
+/// тратило бы бюджет переписки на невидимых (Фаза 5 ×10).
 pub(crate) fn resize_silhouettes_on_zoom(
     viewport: Option<Res<Viewport>>,
     camera: Option<Single<&Transform, (With<Camera2d>, With<PanCamera>)>>,
     window: Option<Single<&Window, With<PrimaryWindow>>>,
     mut last_view: Local<Option<Viewport>>,
     mut ring: Local<usize>,
-    mut all: Query<(&Silhouette, &GlobalTransform, &mut Sprite)>,
+    mut all: Query<(&Silhouette, &GlobalTransform, &mut Sprite), Without<FarTag>>,
 ) {
     let view = match viewport {
         Some(view) => *view,
