@@ -1212,8 +1212,12 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   fixed schedule stands paused while `poll_warmup` waits for requests, so the
   population must exist and file them as batches land, and after `Live` the live half
   continues there (live mode is not claimed by replay). Batching cannot move a single
-  RNG throw — pinned by `batching_does_not_change_the_population`; while the queue
-  lasts, the census invariant adds `PendingPopulation::remaining()` to the alive side.
+  RNG throw — pinned by `batching_does_not_change_the_population`; the census
+  invariant stands down while the queue exists — the pump's cursor moves
+  immediately while its batch's spawns land on the next sync point, so between
+  those two clocks the census is not honest — and cumulative settlement errors
+  are still caught once the queue drains (the resource and the last batch land
+  in the same command flush).
 - **Human** states (`human/behavior.rs`): **Wander** (`WanderPause` 2–10 s, rolled per
   arrival and drawn by only `HUMAN_WANDER_PAUSE_SHARE` 20 % of them — the rest pick the
   next target the same frame; 80 % a building errand anywhere in the city — the real
@@ -1312,10 +1316,11 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   by one system; the HUD, the tick-spike reporter and BRP (`res get Census`) read that
   snapshot. Invariant (debug-checked per frame in `PlayPhase::Live`, `census.rs` —
   `Warmup` after a restart still carries the previous run's telemetry):
-  `killed + escaped + alive + unsettled == PopulationSize` — the number the spawn actually
+  `killed + escaped + alive == PopulationSize` — the number the spawn actually
   read, not the constant: in the game that is the default `HUMAN_COUNT`, in a replay run
-  whatever `replay_app` was given; `unsettled` is `PendingPopulation::remaining()` while
-  the batched spawn's queue lasts (Batched spawn). At high sim speed BRP reads are
+  whatever `replay_app` was given. The check stands down while the batched spawn's
+  queue (`PendingPopulation`) exists: its cursor moves immediately, its spawns land on
+  the next sync point (Batched spawn). At high sim speed BRP reads are
   skewed — pause before asserting.
 
 ## Look

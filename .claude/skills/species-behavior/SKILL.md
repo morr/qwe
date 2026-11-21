@@ -130,8 +130,12 @@ not by discipline: all three take the **`PopulationSpawn`** `SystemParam`
   is not claimed by replay).
 - **Restart goes through the same queue** — `on_restart`'s scene despawn happens before
   `PopulationSpawn::spawn` re-inserts `PendingPopulation`, and the pump raises the
-  population over the next ticks/frames. While the queue lasts, the census invariant
-  adds `PendingPopulation::remaining()` to the alive side (`census.rs`).
+  population over the next ticks/frames. The census invariant stands down while the
+  queue exists (`census.rs`): the pump's cursor moves immediately, its batch's spawns
+  land on the next sync point, and a census between the two clocks reads one batch
+  short — link №46 dropped the app on exactly that during a 200k restart. The resource
+  leaves in the same command flush as the last batch, so "queue gone" means the census
+  sees the whole population; cumulative settlement errors are still caught at drain.
 - **Batching cannot move a single RNG throw** — pinned by
   `human/systems.rs::batching_does_not_change_the_population` (one batch == ten
   batches == the whole-flash `spawn_population`, bit-for-bit).
@@ -421,8 +425,8 @@ determinism row, no telemetry. The outcomes grow incrementally, from events; the
 side of the ledger is **Census** (`census.rs`): humans/demons/corpses/souls/fleeing/
 wandering/moving/chasing, recomputed once per **frame** in `Update` — never per tick — by
 `count_census`; HUD and the tick-spike reporter (`sim-speed` skill) read the resource, BRP
-answers `res get Census`. The invariant
-`alive + unsettled + killed + escaped == PopulationSize` — the unsettled term is
-`PendingPopulation::remaining()` while the batched spawn's queue lasts — is
+answers `res get Census`. The invariant `alive + killed + escaped == PopulationSize` is
 debug-checked there per frame, in `PlayPhase::Live` — `Warmup` after a restart still
-carries the previous run's telemetry. The check-paused rule is `CONTEXT.md`'s.
+carries the previous run's telemetry, and the check also stands down while the
+batched spawn's queue exists (the clock mismatch above). The check-paused rule is
+`CONTEXT.md`'s.
