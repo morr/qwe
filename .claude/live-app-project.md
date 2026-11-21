@@ -409,7 +409,11 @@ corpse, a child entity), `Silhouette`, `SoulMote`
 (kill sparks, alive ~1.4 sim-seconds each), `PawnId`, `WanderIndex`, `NeedsWanderTarget`,
 `RequestedAt`, `RetireAt`, `FarTag` (the camera LOD's far tier — `count FarTag` is the
 far share of the population; the slice markers `FarSlice<N>` are not reflectable),
-`LodDwell` (the demote dwell, `u8`).
+`LodDwell` (the demote dwell, `u8`), `CorpseChunk` (a baked corpse chunk — the 500 m
+cells of the corpse field; `count CorpseChunk` is how many pieces of baked corpses the
+world carries, `CorpseTag` counts only the fresh, sprite ones), `BakeQueue` (the
+`res get` shows how many settled bodies are waiting for the baker — at the city zoom it
+drains the same frame it fills, thanks to the instant blood spread).
 
 Resources — `City`, `SimSpeed`, `Telemetry`, `Census` (the per-frame state
 counters — `res get Census` answers what a handful of `count` calls used to
@@ -451,7 +455,8 @@ $b count Human Demon CorpseTag              # the workhorse
 $b speed 30; $b delta 30 Telemetry Human CorpseTag DemonChaseTag
                                             # "does it grow/drain/leak" in 30s flat
 $b run 300 --pause                          # 300 sim-secs, ≤60s wall, freeze after
-$b res get Telemetry                        # {"escaped": 0, "killed": 220}
+$b res get Telemetry                        # {"escaped": 0, "killed": 220, "baked": 198}
+$b count CorpseChunk CorpseTag              # baked chunks vs fresh corpses (plan ×10 Phase 3)
 $b res get SimTick                          # a newtype prints its inner value bare: 1449
 $b texts pathfinding                        # "pathfinding: 259 in flight, 19268 queued, 0.16 ms avg\nanswers:   31.0/frame,   1.4% failed\nentities: 23272"
 $b with Portal --ids

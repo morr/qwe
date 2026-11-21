@@ -430,6 +430,7 @@ step when adding one):
 | portal (vortex quad) + portal stain | `portal.rs::spawn_portal` |
 | humans (and corpses — same entity, retagged) | `human/systems.rs::spawn_population` |
 | blood pool and blood spatter — two **children** of the corpse, no component of their own: despawn is recursive | `human/corpse.rs::blood_pool` / `::blood_spatter` |
+| corpse chunks — one mesh per 500 m cell of baked corpses (`CorpseChunk`); fresh corpses are sprites (the row above), baked ones leave the entity list | `silhouette/bake.rs::rebuild_dirty_chunks` |
 | demons | `demon/systems.rs::spawn_demon` |
 | demon halo — a **child** of the demon, no component of its own: despawn is recursive | `demon/look.rs::halo` |
 | souls (kill sparks, despawn themselves in `FixedUpdate`) | `human/soul.rs::release_soul` |

@@ -290,8 +290,19 @@ request, tick stamp, retire deadline, destination claim, `UrgentPath`.
 Deliberately kept on the body: `PawnId` / `WanderIndex` (a pawn's identity, useful in
 debug) and `Pace` / `WanderHeading` (the spawn roll — unreadable without `Movable`).
 
-The drawn half — pose, tint, the blood children — is `references/look.md`; the summary is
-`CONTEXT.md`'s **Corpse look** entry.
+**A fresh corpse is not forever.** When its pool has finished spreading, `spread_blood`
+— the same pass that removes `BloodSpread` — puts the body on the **`BakeQueue`** (at the
+city zoom the growth is sub-pixel anyway, so the pool lands full at once and the body
+queues on its first frame — the spread animation and the instant fill are the same
+code path for the queue). The baker (`silhouette/bake.rs`, `SimPipeline::Live`) rewrites
+the triple as three quads of its corpse chunk and queues the body for despawn; the
+despawn is the slot in `FixedUpdate`'s `HumanBehavior` tail beside `rise_souls` — mass
+despawns do not run from `Update`. No renderer (replay, tests, the blood gallery) → the
+material resource never appears, nothing bakes, corpses stay entities. Accounting:
+`Telemetry.baked` grows monotonically per run, `Census.corpses` counts only the fresh.
+
+The drawn half — pose, tint, the blood children, baking and the point material — is
+`references/look.md`; the summary is `CONTEXT.md`'s **Corpse look** entry.
 
 ## Demon
 

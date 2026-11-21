@@ -1289,7 +1289,9 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   Look), not in the human spatial grid. The transition is **`human::to_corpse`**, one
   entry point; the kill observer in `demon/` only reports that it happened. It calls
   **`movement::strip_movement`**, so `Movable`'s `#[require]` stays the single record of
-  what a movable entity drags along.
+  what a movable entity drags along. Once its blood has finished spreading, the corpse
+  is **baked** into a chunk mesh and its three entities despawn — see Look's **corpse
+  baking**; `Census.corpses` counts only the fresh ones, `Telemetry.baked` the total.
 - **Demon** states (`demon/behavior.rs`): **Wander** (a point in the `DEMON_WANDER_CONE`
   (1.3 rad half-angle) around the away-from-portal vector, `DEMON_WANDER_RANGE` 40–120 m;
   no `WanderPause` analogue and no stored `WanderHeading` — the next target is picked the
@@ -1402,8 +1404,25 @@ its draw call.
   entry per corpse and the per-frame eviction pass grew with the corpses — steps cap
   each layer at 640 keys. **Thickness sets both alpha
   and shade**: the sprite colour is the *thin film* and the glyph darkens the deep middle,
-  so a small drop is thin because it is small. Every stain side by side on three grounds:
-  `cargo run --example blood_gallery`.
+  so a small drop is thin because it is small. At the city zoom (≥
+  `BLOOD_SPREAD_MAX_ZOOM`, one with the other 0.75 gates) the growth is sub-pixel and the
+  animation is skipped: the pool lands full at once and the corpse goes to baking
+  immediately. Every stain side by side on three grounds: `cargo run --example
+  blood_gallery`.
+- **Corpse baking** (`silhouette/bake.rs`, Фаза 3 ×10) — a settled corpse leaves the
+  sprite world: when its pool has finished spreading, `spread_blood` — the same pass that
+  removes `BloodSpread` — puts the body on the **`BakeQueue`**; the **baker**
+  (`bake_queued_corpses`, `Update`, only with a renderer) rewrites the triple as three
+  quads of its **corpse chunk** (`CorpseField`, a fixed 500 m grid) and queues the body
+  for despawn, which happens in `FixedUpdate`, the tail of `HumanBehavior` beside
+  `rise_souls`. Chunks are drawn by the **point material** (`PointMaterial`,
+  `shaders/point.wesl`): the same atlas as fresh sprites, but the quad is expanded in
+  the vertex shader from centre + half-size + floor, so the screen-size floor follows
+  the zoom without a mesh rebuild. The baked look is computed by the same pure functions
+  that drew the fresh one (`corpse_pose` / `blood_look` / `corpse_tint`), so a baked
+  corpse is indistinguishable from the fresh one at the same zoom; a run without a
+  renderer (replay, tests) never bakes and keeps corpses as entities. `Telemetry.baked`
+  counts the baked, `Census.corpses` the fresh; entity growth stops at «alive + fresh».
 - **Demon look** (`demon/look.rs`) — the `Ember` glyph in a five-shade crimson → orange
   ring (`demon_tint`) plus a **halo**: a child entity (`DemonHalo`, the `Halo` glyph,
   three bodies wide, z −0.01) that inherits the devour pulse and dies with its parent.

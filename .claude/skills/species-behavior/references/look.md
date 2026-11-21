@@ -146,11 +146,59 @@ entry 02, `ATTIRE_*_STEP`); the step itself is below the eye, watched by
 **Growth** (`spread_blood`, `Update`, `SimPipeline::BothModes`) — the pool opens ease-out
 by writing `Silhouette::body` (never `custom_size` — that belongs to `silhouette`), and
 pushes the pool into `FreshSilhouettes`. Ordered `.before(size_fresh_silhouettes)` so the
-new size reaches the sprite in the same frame.
+new size reaches the sprite in the same frame. Past `BLOOD_SPREAD_MAX_ZOOM` (0.75, one
+value with the other city gates — owner's directive: from that far the growth is a pixel
+and a half, there is nothing to watch) there is no animation: the pool lands full at
+once, `BloodSpread` comes off, and the body goes to baking on its first frame. No
+`Viewport` (the gallery, a replay) — the animation stays as it was.
 
 **Look at it with your eyes**: `cargo run --example blood_gallery` — every pool and every
 spatter side by side, then a field of bodies built by the real `to_corpse`, on three
 grounds. `BLOOD_GALLERY_SHOT=<path>` makes it screenshot itself and quit.
+
+## Corpse baking
+
+`silhouette/bake.rs` — the Phase 3 of the ×10 plan: a corpse whose blood has settled
+leaves the sprite world, because at the endgame the corpse count is what grows entities
+without bound (body + 2 blood children × 200k potential kills ≈ 600k entities, ~a
+gigabyte of tables; baked it is ~115 MB of vertex data and no entities at all).
+
+- **The trigger costs no scan.** `spread_blood` — the pass that removes `BloodSpread`
+  anyway — pushes the body (`ChildOf` of the pool) onto the **`BakeQueue`**. A pool
+  without a parent (the gallery) queues nothing.
+- **The baker** (`bake_queued_corpses`, `Update`, `SimPipeline::Live`, gated on the
+  point material existing — no renderer, no material, no baking: replays and test yards
+  keep corpses as entities, and the gallery pins untouched) takes `BAKE_BATCH` 256
+  bodies per frame. The baked look is **not read off the sprites**: `corpse_quads`
+  recomputes it from the same pure functions that drew it (`corpse_pose`, `blood_look`,
+  `corpse_tint`) plus the body's `GlobalTransform` — pose, blood and tint live in
+  `Entity` bits and `Attire`, so baking does not touch the sprite pipeline and works in
+  a `World` with no atlas. Three quads per corpse, **in draw order spatter → pool →
+  body** (today's z-hierarchy of the triple; there is no corpse-to-corpse sorting and
+  never was). The body lands on `DespawnQueue`; the despawn itself is a
+  `FixedUpdate` system in the `HumanBehavior` tail beside `rise_souls` — mass despawns
+  do not run from `Update` (CLAUDE.md), and it skips ids that are no longer corpses
+  (a queue tail from the previous world).
+- **Corpse chunks** — `CorpseField`, a fixed 500 m grid (`CORPSE_CHUNK`, deliberately
+  not `MAP_CHUNK`: a smaller cell is a cheaper rebuild; the corpse grid has its own
+  trade-off), one `Vec<CorpseQuad>` per cell as the source of truth, one mesh entity
+  per cell spawned lazily at the first corpse (`CorpseChunk` marker,
+  `DespawnOnExit(Playing)`). A rebuild rewrites the cell's whole mesh from storage
+  (`REBUILD_CHUNK_BUDGET` 4 dirty cells per frame); the `Handle<Mesh>` lives as long as
+  the cell — contents are replaced with `Assets::insert`, no asset churn. Everything is
+  cleared by `WorldStarted`, like the run counters.
+- **The point material** (`PointMaterial`, `shaders/point.wesl`) — the same atlas
+  image as sprites; the quad is expanded in the vertex shader from
+  `centre + half + floor_px` vertex attributes (the mirror is baked into the corner's
+  x sign *and* the reversed winding, or the quad turns inside out), with
+  `Silhouette::drawn_size`'s exact formula against a zoom uniform that
+  `sync_point_uniform` follows from the `Viewport`. A baked chunk never rebuilds on
+  camera movement; UVs are derived from the corner, so a vertex is 48 bytes and the
+  x10 endgame is ~115 MB of vertex data, not entities. `AlphaMode2d::Blend`, like
+  sprites — the glyph edges are antialiased. Phase 5 (the far layer of live pawns)
+  reuses this material.
+- **Accounting** — `Telemetry.baked` (per-run, reset with the rest), `Census.corpses`
+  fresh only. The population invariant never involved corpses.
 
 ## The screen-size floor and the two LOD systems
 
