@@ -322,6 +322,14 @@ pub(crate) fn rebuild_dirty_chunks(
                         Mesh2d(mesh.clone()),
                         MeshMaterial2d(handle.0.clone()),
                         Transform::from_xyz(0.0, 0.0, Z_CORPSE),
+                        // Углы квадов в меш — единичные (±1), центр и угол
+                        // несёт кастомный атрибут: по `ATTRIBUTE_POSITION`
+                        // bevy считает AABB у origin радиусом ~1.4 м, и камера
+                        // в любой точке карты, кроме угла у нуля, отсекала бы
+                        // весь чанк (поймано живьём: широкое поле трупов
+                        // видно, вблизи — пусто). Чанк городской сетки —
+                        // честного AABB у меша нет, отсечение выключаем.
+                        NoFrustumCulling,
                         DespawnOnExit(AppState::Playing),
                         Name::new(format!("corpse_chunk_{}_{}", key.x, key.y)),
                     ))
