@@ -16,11 +16,13 @@ use super::components::{
     Attire, CorpseTag, FleeRepath, Human, HumanFirstWanderTag, HumanFleeTag, HumanWanderTag,
     PanicRecoil, WanderPause,
 };
+use crate::camera::Viewport;
+use crate::loading::WorldStarted;
 use crate::map::z::Z_CORPSE;
 use crate::rng::splitmix64;
 use crate::settings::{CORPSE_HEIGHT, HUMAN_MIN_PX};
 use crate::silhouette::{
-    FreshSilhouettes, Glyph, Silhouette, Silhouettes, blood, figure, set_glyph,
+    FreshSilhouettes, Glyph, Silhouette, Silhouettes, bake::CorpseQuad, blood, figure, set_glyph,
 };
 
 // --- Труп ---
@@ -96,6 +98,13 @@ const SPREAD_START: f32 = 0.30;
 /// иначе поза и форма лужи ходили бы парой, и на экране была бы видна
 /// четвёрка пар вместо четырёх десятков сочетаний.
 const BLOOD_SALT: u64 = 0x_c105_e700_0000_00a5;
+/// Зум (метров на пиксель), дальше которого растекание крови не рисуется:
+/// рост лужи укладывается в полтора пикселя, и лужа встаёт полной разом,
+/// а труп сразу в очередь запекания (директива владельца в ходе Ф3 —
+/// «анимация spread blood не нужна, если камера далеко»). Порог тот же, что
+/// у прочих городских отсечек ([`SEPARATION_MAX_ZOOM`](crate::settings::
+/// SEPARATION_MAX_ZOOM)), но константа своя: отсечки крутятся независимо.
+const BLOOD_SPREAD_MAX_ZOOM: f32 = 0.75;
 
 /// Лужа крови под трупом — дочерняя сущность тела, как ореол у демона:
 /// исчезает вместе с ним, своего `DespawnOnExit` не носит.
@@ -123,6 +132,14 @@ pub struct BloodSpread {
     grown: f32,
     full: Vec2,
 }
+
+/// Трупы «к запеканию»: кровь доросла — пекарь (`silhouette::bake`) перепишет
+/// тройку квадов в чанк и деспавнит тело. Список без сканирования: ставит
+/// [`spread_blood`] тем же вызовом, каким снимает [`BloodSpread`], — триггер
+/// уже существовал (Фаза 3 ×10).
+#[derive(Resource, Reflect, Default)]
+#[reflect(Resource)]
+pub struct BakeQueue(pub Vec<Entity>);
 
 /// Как лежит тело: поза, направление и зеркало.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -286,9 +303,11 @@ fn stain_transform(pose: CorpsePose, spin: f32, z: f32) -> Transform {
 /// который здесь `.before`-ом поставлен после растекания.
 pub fn spread_blood(
     time: Res<Time>,
+    viewport: Option<Res<Viewport>>,
     mut commands: Commands,
-    mut pools: Query<(Entity, &mut BloodSpread, &mut Silhouette)>,
+    mut pools: Query<(Entity, Option<&ChildOf>, &mut BloodSpread, &mut Silhouette)>,
     mut fresh: ResMut<FreshSilhouettes>,
+    mut bake: ResMut<BakeQueue>,
 ) {
     // на паузе лужа стоит не только по смыслу, но и буквально: запись того же
     // значения всё равно помечает `Silhouette` изменённым, и лужа каждый кадр
@@ -296,7 +315,20 @@ pub fn spread_blood(
     if time.delta_secs() <= 0.0 {
         return;
     }
-    for (entity, mut spread, mut silhouette) in &mut pools {
+    // С городского зума анимации нет: лужа встаёт полной разом, труп сразу в
+    // очередь запекания. `Viewport` нет (витрина, реплей) — анимация как была.
+    if viewport.is_some_and(|view| view.zoom >= BLOOD_SPREAD_MAX_ZOOM) {
+        for (entity, child_of, spread, mut silhouette) in &mut pools {
+            silhouette.body = spread.full;
+            fresh.0.push(entity);
+            commands.entity(entity).remove::<BloodSpread>();
+            if let Some(child_of) = child_of {
+                bake.0.push(child_of.0);
+            }
+        }
+        return;
+    }
+    for (entity, child_of, mut spread, mut silhouette) in &mut pools {
         spread.grown = (spread.grown + time.delta_secs() / SPREAD_SECS).min(1.0);
         // быстро в начале, медленно к концу: кровь бежит, пока её толкает
         let eased = 1.0 - (1.0 - spread.grown).powi(2);
@@ -304,8 +336,66 @@ pub fn spread_blood(
         fresh.0.push(entity);
         if spread.grown >= 1.0 {
             commands.entity(entity).remove::<BloodSpread>();
+            // доросла — тело к запеканию (Фаза 3 ×10): родитель лужи. Ставит
+            // тот же проход, что снимает с себя ростку работу. Лужа без
+            // родителя (витрина крови показывает пятна сами по себе) — в ней
+            // некому запекаться.
+            if let Some(child_of) = child_of {
+                bake.0.push(child_of.0);
+            }
         }
     }
+}
+
+/// Три квада трупа в порядке рисования: брызги, лужа, тело. Вид не читается со
+/// спрайтов, а считается теми же чистыми функциями, которые его нарисовали
+/// ([`corpse_pose`], [`blood_look`], [`corpse_tint`]): поза, кровь и тон живут
+/// в битах `Entity` и `Attire`, поэтому запекание не зависит от конвейера
+/// спрайтов и работает без рендера. Зовёт пекарь (`silhouette::bake`). Мир —
+/// глобальный трансформ: труп не двигается, и чтение его не спорит с
+/// камерными писателями `Transform` за порядок в `Update`.
+pub(crate) fn corpse_quads(
+    entity: Entity,
+    at: &GlobalTransform,
+    attire: Option<&Attire>,
+) -> [CorpseQuad; 3] {
+    let pose = corpse_pose(entity);
+    let look = blood_look(entity);
+    let tint = corpse_tint(attire);
+    // пятно стоит у груди — смещение в системе тела до поворота, зеркало позы
+    // вместе с грудью (`stain_transform`); размер — полный, к моменту запекания
+    // лужа доросла
+    let stain = |ratio: f32, spin: f32, glyph: Glyph| {
+        let stain = stain_transform(pose, spin, 0.0);
+        let centre = at.translation().xy() + (at.rotation() * stain.translation).truncate();
+        CorpseQuad {
+            centre,
+            half: CORPSE_SPAN * ratio * look.size / 2.0,
+            floor_px: HUMAN_MIN_PX,
+            tint: look.tint.to_linear().to_f32_array(),
+            cell: glyph.cell() as u32,
+            flip: false,
+        }
+    };
+    [
+        stain(SPATTER_RATIO, look.spatter_spin, look.spatter),
+        stain(POOL_RATIO, look.pool_spin, look.pool),
+        CorpseQuad {
+            centre: at.translation().xy(),
+            half: CORPSE_SPAN / 2.0,
+            floor_px: HUMAN_MIN_PX,
+            tint: tint.to_linear().to_f32_array(),
+            cell: pose.glyph.cell() as u32,
+            flip: pose.flip,
+        },
+    ]
+}
+
+/// Новый мир — очередь запекания пуста: сущности прошлого не существуют, а под
+/// тумблером детерминизма (пекарь стоит) список и не должен копиться от
+/// рестарта к рестарту.
+pub(crate) fn reset_bake_queue(_event: On<WorldStarted>, mut bake: ResMut<BakeQueue>) {
+    bake.0.clear();
 }
 
 /// Человек становится трупом: поведение и движение снимаются, тело ложится.
@@ -535,8 +625,10 @@ mod tests {
         app.add_systems(Update, spread_blood)
             .insert_resource(Time::<()>::default())
             // система теперь несёт рабочий список силуэтов — стенду он нужен
-            // так же, как время
-            .insert_resource(FreshSilhouettes::default());
+            // так же, как время, и очередь запекания, в которую она ставит
+            // доросшие лужи
+            .insert_resource(FreshSilhouettes::default())
+            .init_resource::<BakeQueue>();
         let look = blood_look(Entity::from_raw_u32(3).unwrap());
         let pool = app
             .world_mut()
@@ -562,6 +654,85 @@ mod tests {
             app.world().get::<BloodSpread>(pool).is_none(),
             "натёкшая лужа обязана уйти из прохода"
         );
+    }
+
+    /// Лужа доросла — тело встало в очередь запекания: тот же проход, что
+    /// снимает `BloodSpread`, ставит родителя в `BakeQueue` (Фаза 3 ×10), и
+    /// ставит его один раз.
+    #[test]
+    fn a_full_pool_queues_its_corpse_for_baking_once() {
+        let mut app = App::new();
+        app.add_systems(Update, spread_blood)
+            .insert_resource(Time::<()>::default())
+            .insert_resource(FreshSilhouettes::default())
+            .init_resource::<BakeQueue>();
+        let look = blood_look(Entity::from_raw_u32(5).unwrap());
+        let body = app.world_mut().spawn(Transform::default()).id();
+        let pool = app
+            .world_mut()
+            .spawn(blood_pool(&Silhouettes::default(), PRONE, look))
+            .id();
+        app.world_mut().commands().entity(body).add_child(pool);
+        app.world_mut().flush();
+
+        // до полного роста очередь молчит
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs_f32(SPREAD_SECS / 2.0));
+        app.update();
+        assert!(app.world().resource::<BakeQueue>().0.is_empty());
+
+        // доросла — ровно один родитель в очереди
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs_f32(SPREAD_SECS));
+        app.update();
+        assert_eq!(app.world().resource::<BakeQueue>().0, vec![body]);
+    }
+
+    /// С далёкой камеры (городской зум) анимации нет: лужа полная разом,
+    /// `BloodSpread` снят, тело в очереди запекания — на первом же кадре.
+    #[test]
+    fn a_far_camera_finishes_the_spread_at_once() {
+        let mut app = App::new();
+        app.add_systems(Update, spread_blood)
+            .insert_resource(Time::<()>::default())
+            .insert_resource(FreshSilhouettes::default())
+            .init_resource::<BakeQueue>()
+            .insert_resource(Viewport {
+                centre: Vec2::ZERO,
+                half_extent: Vec2::splat(400.0),
+                zoom: BLOOD_SPREAD_MAX_ZOOM,
+            });
+        let look = blood_look(Entity::from_raw_u32(6).unwrap());
+        let body = app.world_mut().spawn(Transform::default()).id();
+        let pool = app
+            .world_mut()
+            .spawn(blood_pool(&Silhouettes::default(), PRONE, look))
+            .id();
+        app.world_mut().commands().entity(body).add_child(pool);
+        app.world_mut().flush();
+
+        let full = app
+            .world()
+            .get::<BloodSpread>(pool)
+            .expect("лужа с ростком")
+            .full;
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs_f32(0.05));
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Silhouette>(pool).unwrap().body,
+            full,
+            "лужа полной разом"
+        );
+        assert!(
+            app.world().get::<BloodSpread>(pool).is_none(),
+            "росток снят — проход лужу не держит"
+        );
+        assert_eq!(app.world().resource::<BakeQueue>().0, vec![body]);
     }
 
     /// Человек в разгар паники, с полным набором рантайм-компонент: бежит по

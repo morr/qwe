@@ -21,9 +21,12 @@ pub use self::components::{
 // игра вешает на труп, а не свою копию; `HumanPlugin` целиком ей не подходит
 // (его `spawn_humans` заказал бы ей расселение всего населения)
 pub use self::corpse::{
-    BloodLook, BloodPool, BloodSpatter, BloodSpread, CORPSE_SPAN, CorpsePose, blood_look,
-    blood_pool, blood_spatter, corpse_pose, spread_blood, to_corpse,
+    BakeQueue, BloodLook, BloodPool, BloodSpatter, BloodSpread, CORPSE_SPAN, CorpsePose,
+    blood_look, blood_pool, blood_spatter, corpse_pose, spread_blood, to_corpse,
 };
+// `corpse_quads` / `reset_bake_queue` — внутри: их зовёт пекарь запечённых
+// трупов (`silhouette::bake`)
+pub(crate) use self::corpse::{corpse_quads, reset_bake_queue};
 use self::look::{on_calm_tint, on_panic_tint};
 // камерный LOD: `FarTag`/`FAR_SLICE_TICKS` наружу — их спрашивают поштучные
 // проходы движения (`interpolate`, шаг тика) и регистрация срезных систем
@@ -42,6 +45,7 @@ use self::systems::{pump_pending_population, spawn_humans, spread_changed, sync_
 use crate::determinism::{DeterminismPlugin, SimPipeline};
 use crate::loading::{AppState, WorldInitSet};
 use crate::prefs::PrefsExt;
+use crate::silhouette::bake;
 use crate::tick_stage::TickStage;
 
 pub struct HumanPlugin;
@@ -72,6 +76,20 @@ impl Plugin for HumanPlugin {
             .register_type::<PendingPopulation>()
             .register_type::<LodDwell>()
             .register_type::<FarTag>()
+            .register_type::<BakeQueue>()
+            .register_type::<bake::CorpseChunk>()
+            .init_resource::<BakeQueue>()
+            .init_resource::<bake::DespawnQueue>()
+            .init_resource::<bake::CorpseField>()
+            .add_observer(reset_bake_queue)
+            .add_observer(bake::on_world_started)
+            // точечный материал запечённых трупов — на старте, сразу после
+            // атласа (он ест то же изображение); без рендера ресурс не
+            // вставится, и пекарь со своей перестройкой молча стоят
+            .add_systems(
+                Startup,
+                bake::init_point_material.after(crate::silhouette::build_atlas),
+            )
             .register_pref::<HumanStyle>()
             .init_resource::<PopulationSize>()
             // атлас силуэтов собирает `SilhouettePlugin` (в игре); без него
@@ -210,6 +228,33 @@ impl Plugin for HumanPlugin {
                 spread_blood
                     .before(crate::silhouette::size_fresh_silhouettes)
                     .in_set(SimPipeline::BothModes),
+            )
+            // Запекание трупов (Фаза 3 ×10): пекарь после `spread_blood` — та
+            // же лужа, что встала в очередь этим кадром, может печься им же.
+            // Только `Live`: под тумблером детерминизма и в реплей-дворе
+            // рендера нет — материал не инициализирован, трупы остаются
+            // сущностями (штатно). Зум в юниформе материала — сам по себе:
+            // с пекарем его не связывает ничего, кроме «тот же материал»
+            .add_systems(
+                Update,
+                (
+                    bake::bake_queued_corpses,
+                    bake::rebuild_dirty_chunks,
+                    bake::sync_point_uniform,
+                )
+                    .chain()
+                    .after(spread_blood)
+                    .in_set(SimPipeline::Live),
+            )
+            // Сдача запечённых: деспавн тел — в `FixedUpdate`, в хвосте
+            // `HumanBehavior` рядом с `rise_souls` (правило CLAUDE.md «массовый
+            // деспавн не из середины `Update`»); очередь пишет пекарь из кадра
+            .add_systems(
+                FixedUpdate,
+                bake::despawn_baked_corpses
+                    .after(rise_souls)
+                    .in_set(TickStage::HumanBehavior)
+                    .in_set(SimPipeline::Live),
             )
             .add_systems(
                 Update,

@@ -13,6 +13,10 @@ use crate::loading::WorldStarted;
 pub struct Telemetry {
     pub killed: usize,
     pub escaped: usize,
+    /// Трупов, ушедших в запекание (Фаза 3 ×10): тройка квадов переехала в
+    /// чанк (`silhouette::bake`), сущности деспавнились. Накопительный, как
+    /// `killed`; свежие трупы, ещё не запечённые, — `Census.corpses`.
+    pub baked: usize,
 }
 
 pub struct TelemetryPlugin;

@@ -27,6 +27,7 @@ use bevy::window::PrimaryWindow;
 
 use crate::camera::Viewport;
 
+pub mod bake;
 pub mod blood;
 pub mod figure;
 
@@ -176,6 +177,12 @@ impl Silhouettes {
         sprite.custom_size = Some(size);
         sprite
     }
+
+    /// Хэндл изображения атласа, если он собран. Его же читает запекание
+    /// (`silhouette::bake`): точечный материал ест ту же текстуру.
+    pub(crate) fn image(&self) -> Option<Handle<Image>> {
+        self.0.as_ref().map(|atlas| atlas.image.clone())
+    }
 }
 
 /// Как пешка стоит относительно камеры: тело в метрах и пол в логических
@@ -233,8 +240,10 @@ impl Plugin for SilhouettePlugin {
 }
 
 /// Собирает атлас — один раз на процесс: глифы не зависят ни от города, ни от
-/// прогона, а `Handle`-ы переживают любую смену мира.
-fn build_atlas(
+/// прогона, а `Handle`-ы переживают любую смену мира. Видим: точечный материал
+/// запекания (`silhouette::bake`) обязан стартовать после него, на том же
+/// изображении.
+pub(crate) fn build_atlas(
     mut images: ResMut<Assets<Image>>,
     mut layouts: ResMut<Assets<TextureAtlasLayout>>,
     mut silhouettes: ResMut<Silhouettes>,
