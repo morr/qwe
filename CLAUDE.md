@@ -27,9 +27,12 @@ so no hook can fire.
 in the same change.** Gameplay shape, scale and speed targets, behavior contracts,
 cross-module architecture — anything the owner may later want to revisit, as opposed to
 a module's internal mechanics. A session working autonomously records its own such
-decisions there, marked as its own (`звено №N автономно`); revised decisions get a new
-row pointing at the old one, never a silent edit. The file is what answers «какие
-решения приняты?» — for the owner and for every link after a compaction.
+decisions there, marked as its own (`звено №N автономно`), with **«Доложено владельцу:
+нет»** and **«Статус: действует, ждёт подтверждения»**; the link's NOTES report flips
+Доложено to «да» in the same commit, and the owner's explicit word later flips the
+status. Revised or overturned decisions get a new row pointing at the old one, never a
+silent edit. The file is what answers «какие решения приняты и какие ждут
+подтверждения?» — for the owner and for every link after a compaction.
 
 This file is the *how to work here*; `CONTEXT.md` is the *what this project is*.
 

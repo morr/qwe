@@ -43,7 +43,10 @@ this file, the steer wins.
    project's **global logic** (gameplay shape, scale/speed targets, behavior
    contracts, cross-module architecture) gets a row in `docs/decisions.md` in the
    same commit — marked «звено №N автономно» unless the owner decided it in-session;
-   the owner may revisit any row, so record the rejected alternative and the why.
+   the row lands with «Доложено владельцу: нет» and «Статус: действует, ждёт
+   подтверждения», and the link's NOTES report flips Доложено to «да» (same commit).
+   The owner may confirm or overturn any row — an overturn is a new row, not an edit;
+   record the rejected alternative and the why either way.
 5. **Work in a worktree** `.worktrees/<name>` inside the project dir. Seed the build
    dir with `tools/seed-worktree-target.sh .worktrees/<name>/target` (the argument is
    the build dir, not the worktree root); `rsync -a` `assets/osm` preserving mtime.
