@@ -28,6 +28,7 @@
 //! материал не инициализируется, трупы остаются сущностями, пины двора целы.
 
 use bevy::asset::RenderAssetUsages;
+use bevy::camera::visibility::NoFrustumCulling;
 use bevy::mesh::{Indices, MeshVertexAttribute, MeshVertexBufferLayoutRef, VertexFormat};
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
