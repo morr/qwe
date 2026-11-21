@@ -35,7 +35,7 @@ use qwe::navigation::{
     find_path_northstar, snap_portal_position,
 };
 use qwe::settings::{
-    HUMAN_COUNT, HUMAN_WANDER_RANGE, HUMAN_WANDER_TO_BUILDING_SHARE, MAP_SIZE, WANDER_MAP_MARGIN,
+    HUMAN_WANDER_RANGE, HUMAN_WANDER_TO_BUILDING_SHARE, MAP_SIZE, WANDER_MAP_MARGIN,
 };
 
 /// Бенч гоняется по карте города по умолчанию — той же, что видит игра при
@@ -44,6 +44,11 @@ const CITY: City = City::Tula;
 
 /// Сид генератора задач: один и тот же набор при каждом запуске.
 const SEED: u64 = 0xC0FFEE;
+
+/// Задач по умолчанию — 20 000, закреплено явно: раньше бралось `HUMAN_COUNT`
+/// как «спрос толпы», а дефолт населения стал 200 000 (план ×10,
+/// docs/population-x10-plan.md) — и время бенча выросло бы на порядок.
+const TASKS: usize = 20_000;
 
 const ALL_ALGORITHMS: [PathfindingAlgorithm; 6] = [
     PathfindingAlgorithm::Astar,
@@ -84,7 +89,7 @@ fn main() {
     let task_count: usize = args
         .next()
         .map(|value| value.parse().expect("tasks must be a number"))
-        .unwrap_or(HUMAN_COUNT);
+        .unwrap_or(TASKS);
     let threads: usize = args
         .next()
         .map(|value| value.parse().expect("threads must be a number"))

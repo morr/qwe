@@ -37,9 +37,14 @@ use qwe::determinism::replay::{Fingerprint, Progress, replay_app, run_to_tick};
 use qwe::map::osm::{MapData, parse};
 use qwe::navigation::{Navmesh, snap_portal_position};
 use qwe::restart::RestartEvent;
-use qwe::settings::HUMAN_COUNT;
 
 const CITY: City = City::Tula;
+
+/// Пешек в приёмке — 20 000, закреплено явно (решение владельца №5 плана
+/// ×10, docs/population-x10-plan.md): дефолт мира теперь 200 000, и вместе с
+/// ним время приёмки выросло бы на порядок. Масштаб живёт в Ф1 игры, здесь —
+/// только детерминизм.
+const POPULATION: usize = 20_000;
 
 /// Сколько тиков прогонять по умолчанию — пять виртуальных секунд.
 ///
@@ -71,7 +76,7 @@ fn main() {
     let json = common::load_json(CITY);
     let navmesh = build_navmesh(parse_map(&json));
     let portal = snap_portal_position(&navmesh, CITY.portal_hint()).expect("no spot for portal");
-    let app = |seed| replay_app(parse_map(&json), navmesh.clone(), portal, seed, HUMAN_COUNT);
+    let app = |seed| replay_app(parse_map(&json), navmesh.clone(), portal, seed, POPULATION);
 
     println!("\nprogon 1: seed 1, ровный кадр");
     let (first, second) = {
