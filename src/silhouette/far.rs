@@ -13,7 +13,8 @@
 //! доли пикселя, и точка, отставшая от пешки на несколько кадров, глазу не
 //! видна. Перестройка — бюджетом за кадр: сначала грязные чанки (членство
 //! менялось — точка обязана появиться или уехать сейчас), остаток — кольцу по
-//! всем чанкам, догоняющему позиции. Членство заводит единственный обсервер —
+//! остальным чанкам, догоняющему позиции (свежеперестроенные грязные кольцо
+//! пропускает — их позиции и так прочитаны живьём). Членство заводит единственный обсервер —
 //! [`on_far_inserted`]; снять его никто не обязан: перестройка сама выкидывает
 //! уехавших за клетку и не-дальней (promote, труп, деспун снимают `FarTag` —
 //! запрос их не matchит), а опустевший чанк удаляется целиком.
@@ -25,7 +26,7 @@
 //! (таблица на чанк), реплей-двор это не поднимает.
 
 use bevy::camera::primitives::Aabb;
-use bevy::platform::collections::HashMap;
+use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 
 use crate::camera::MAX_ZOOM;
@@ -135,7 +136,8 @@ pub(crate) fn on_world_started(_event: On<WorldStarted>, mut field: ResMut<FarCr
 
 /// Перестройка чанков дальнего слоя — бюджетом [`REBUILD_QUAD_BUDGET`] точек
 /// за кадр: сначала грязные (членство менялось — точка обязана появиться или
-/// уехать сейчас), остаток бюджета — кольцу по всем чанкам: позиции дальних
+/// уехать сейчас), остаток — кольцу по остальным чанкам (свежие грязные
+/// пропускаются): позиции дальних
 /// ходоков догоняют живьём, между перестройками точка отстаёт от пешки на
 /// метры — на зумах слоя это доли пикселя. Членство разбирается по пути:
 /// запрос не matchит не-дальней (promote, труп, деспун сняли `FarTag` — член
@@ -163,6 +165,10 @@ pub(crate) fn rebuild_far_chunks(
         .filter(|(_, chunk)| chunk.dirty)
         .map(|(key, _)| *key)
         .collect();
+    // свежеперестроенные кольцо пропускает: их позиции прочитаны живьём
+    // только что, догонять нечего, а горячая клетка Парижа при каждом взмахе
+    // членства перестраивалась бы дважды за кадр
+    let fresh: HashSet<IVec2> = dirty.iter().copied().collect();
     for key in dirty {
         if budget == 0 {
             break;
@@ -178,7 +184,7 @@ pub(crate) fn rebuild_far_chunks(
         let keys: Vec<IVec2> = field
             .chunks
             .iter()
-            .filter(|(_, chunk)| !chunk.dirty)
+            .filter(|(key, chunk)| !chunk.dirty && !fresh.contains(*key))
             .map(|(key, _)| *key)
             .collect();
         let total = keys.len();
@@ -192,7 +198,8 @@ pub(crate) fn rebuild_far_chunks(
                 break;
             }
             let key = keys[(from + step) % total];
-            let written = rebuild_chunk(&mut commands, &mut field, &mut meshes, &handle, &pawns, key);
+            let written =
+                rebuild_chunk(&mut commands, &mut field, &mut meshes, &handle, &pawns, key);
             budget = budget.saturating_sub(written);
             spent = step + 1;
         }
@@ -286,6 +293,10 @@ fn rebuild_chunk(
                 .expect("хэндл меша чанка жив");
             // границы членов уехали — честный AABB переписывается вместе с мешем
             commands.entity(entity).insert(aabb);
+            // `drawn` забирал скоуп-блок — вернуть на место: без возврата чанк
+            // считался бы никогда не рисованным, каждая перестройка спавнила
+            // бы вторую сущность, а опустев, не деспавнила бы ни одной
+            field.cell(key).drawn = Some((entity, existing));
         }
         None => {
             let mesh = meshes.add(mesh);
@@ -382,7 +393,11 @@ mod tests {
             .expect("меш чанка жив")
             .attribute(crate::silhouette::bake::ATTRIBUTE_QUAD)
         {
-            Some(VertexAttributeValues::Float32x4(values)) => values.clone(),
+            Some(VertexAttributeValues::Float32x4(values)) => {
+                // квад — четыре вершины с одинаковым атрибутом; точка квада —
+                // запись первого угла
+                values.chunks_exact(4).map(|quad| quad[0]).collect()
+            }
             other => panic!("квады — Float32x4, а не {other:?}"),
         }
     }
@@ -466,7 +481,7 @@ mod tests {
             .collect();
         assert_eq!(app.world().resource::<FarCrowdField>().chunks.len(), 5);
 
-        // первый прогон: бюджет 6 ≥ 5 — все грязные перестроены разом
+        // первый прогон: бюджет покрывает все пять — грязные перестроены разом
         rebuild(&mut app);
         assert_eq!(chunk_count(&mut app), 5, "все чанки перестроены");
 
