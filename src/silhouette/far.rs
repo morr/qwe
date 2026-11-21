@@ -26,6 +26,7 @@
 //! (таблица на чанк), реплей-двор это не поднимает.
 
 use bevy::camera::primitives::Aabb;
+use bevy::camera::visibility::NoAutoAabb;
 use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 
@@ -88,7 +89,7 @@ struct FarChunkField {
 }
 
 /// Хранилище дальнего слоя. Ключ — клетка [`FAR_CHUNK`]; сбрасывается тем же
-/// `WorldStarted`, что и трупное поле.
+/// `WorldStarted`, что и трупное поле, вместе с сущностями чанков.
 #[derive(Resource, Default)]
 pub struct FarCrowdField {
     chunks: HashMap<IVec2, FarChunkField>,
@@ -130,7 +131,20 @@ pub(crate) fn on_far_inserted(
 /// (`DespawnOnExit`), хранилище сбрасывается вслед за ними. Снятие членства
 /// при деспуне не нужно вовсе: `Remove`-обсервер пометил бы клетку, которую
 /// здесь же стирают начисто.
-pub(crate) fn on_world_started(_event: On<WorldStarted>, mut field: ResMut<FarCrowdField>) {
+pub(crate) fn on_world_started(
+    _event: On<WorldStarted>,
+    mut commands: Commands,
+    mut field: ResMut<FarCrowdField>,
+    drawn: Query<Entity, With<FarCrowdChunk>>,
+) {
+    // Сущности чанков — долой вместе с хранилищем: WorldStarted триггерится
+    // на входе в `Live` (loading.rs), а слой уже успевает заселиться за
+    // warmup — популяция встаёт пачками, ярус демотит, чанки строятся.
+    // Первая загрузка мира тоже проходит через этот сброс. Слоты деспавна —
+    // команды `StateTransition`, как у самого триггера.
+    for entity in &drawn {
+        commands.entity(entity).despawn();
+    }
     field.chunks.clear();
 }
 
@@ -307,6 +321,12 @@ fn rebuild_chunk(
                     MeshMaterial2d(handle.0.clone()),
                     Transform::from_xyz(0.0, 0.0, Z_FAR_CROWD),
                     aabb,
+                    // честный AABB вставлен руками (позиции-вершины — единичные
+                    // углы у нуля, авто-границы из них отсекают чанк радиусом
+                    // ~1.4 м, см. [`POINT_HALF_BOUND`]); маркер выключает
+                    // `calculate_bounds_2d`, который иначе перезаписал бы
+                    // границы при каждой замене меша (`AssetChanged`)
+                    NoAutoAabb,
                     DespawnOnExit(AppState::Playing),
                     Name::new(format!("far_crowd_{}_{}", key.x, key.y)),
                 ))
@@ -530,5 +550,9 @@ mod tests {
             app.world().resource::<FarCrowdField>().chunks.is_empty(),
             "новый мир — слой пуст"
         );
+        // и сущность чанка, спавненная до сброса (слой успевает заселиться
+        // за warmup: WorldStarted триггерится позже неё), умирает вместе с
+        // полем — иначе вторая волна спавнит вторую сущность на клетку
+        assert_eq!(chunk_count(&mut app), 0, "сущности чанков деспавнены");
     }
 }
