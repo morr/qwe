@@ -136,7 +136,8 @@ const TILED_MIN: usize = 512;
 
 /// Ячейка тайлового union и тайловой разности, м. Контуры группируются по
 /// клетке **первой точки** (клетка — та, кто тень отбрасывает), каждая клетка
-/// объединяется в своём потоке, результаты клеток — в одном финальном union.
+/// объединяется в своём потоке, результаты клеток — в финальном union
+/// (у теневого пути — параллельными вёдрами, у полимеша — одним проходом).
 /// Тень длиннее клетки не мешает: налегания соседних клеток снимает как раз
 /// финальный union, а цена его — фигуры клеток, которых на порядки меньше,
 /// чем контуров на входе.
@@ -156,6 +157,12 @@ const DENSE_MIN: usize = 512;
 /// группы и так малы, а первые точки, всё лёгшие в один квадрант, —
 /// вырожденный вход, не стоящий своей решётки.
 const DENSE_MIN_STEP: f32 = 32.0;
+
+/// Ячейка сетки, по которой фигуры финального слияния находят пересечения,
+/// м. Достаточно мелка, чтобы частный сектор не собирал квадратичные пары
+/// в одной клетке, и достаточно крупна, чтобы рамка фигуры занимала
+/// единицы ячеек.
+const COMPONENT_GRID: f32 = 32.0;
 
 /// Делит плотную группу на квадранты по первой точке.
 ///
@@ -225,9 +232,11 @@ pub(crate) fn union_of(contours: &[Vec<[f32; 2]>]) -> Vec<Vec<Vec<[f32; 2]>>> {
 /// вход составляют только здания, вода и стены, и худшая клетка Парижа
 /// несёт 121 контур против порога [`DENSE_MIN`] (запись 64). Его union —
 /// вход CDT, перестановка вершин доезжала бы до навмеш-геометрии, а
-/// единственная горячая фаза — финальное слияние результатов клеток,
-/// цена которого от числа групп почти не зависит: слияние в кварталы
-/// 4×4 (замеры записей 25 и 64) выигрыша не показало и там.
+/// единственная горячая фаза — финальное слияние результатов клеток:
+/// здесь оно идёт кластерами пересекающихся фигур (перекрываются только
+/// соседи — меньшинство фигур), у полимеша — одним проходом;
+/// группировка в кварталы 4×4 и деление на вёдра (замеры записей 25, 64
+/// и №35) выигрыша не показали.
 pub(crate) fn union_of_dense(contours: &[Vec<[f32; 2]>]) -> Vec<Vec<Vec<[f32; 2]>>> {
     union_tiled(contours, true)
 }
@@ -265,7 +274,88 @@ fn union_tiled(contours: &[Vec<[f32; 2]>], dense: bool) -> Vec<Vec<Vec<[f32; 2]>
             .into_iter()
             .flatten()
             .collect();
-    tiled.simplify_shape(FillRule::NonZero)
+    if !dense {
+        // полимеш держит однопроходное слияние: его union — вход CDT, и
+        // перестановка вершин от порядка слияния доезжала бы до навмеша
+        // (запись 64)
+        return tiled.simplify_shape(FillRule::NonZero);
+    }
+    // Слияние результатов клеток — по кластерам пересекающихся фигур.
+    // Однопоточный финальный проход перерабатывает каждую вершину входа,
+    // а перекрываются у результатов клеток только соседи: на Париже он
+    // стоил 73 мс у оград (6728 групп) и 410 мс у домов (18829), хотя
+    // слияния требует меньшинство фигур. Деление входа на вёдра вершин
+    // не убирает — финальный проход перерабатывает их всё равно (замер
+    // №35: вёдра вышли дороже одиночного прохода). Фигуры без пересечений
+    // идут в результат как есть, пересекающиеся объединяются кластерами
+    // в своих потоках: каждая вершина перерабатывается один раз и только
+    // там, где есть что снимать. Порядок фигур результата — входной,
+    // у кластера — место его первой фигуры; для теней это контракт
+    // картинки, как и для самой группировки по клеткам.
+    let boxes: Vec<[f32; 4]> = tiled.iter().map(|shape| ring_box(&shape[0])).collect();
+    use crate::map::grid::Grid;
+    let mut grid: Grid<usize> = Grid::new(COMPONENT_GRID);
+    for (index, &[min_x, min_y, max_x, max_y]) in boxes.iter().enumerate() {
+        grid.insert(Vec2::new(min_x, min_y), Vec2::new(max_x, max_y), index);
+    }
+    // объединение-поиск: пары, чьи рамки правда пересекаются, в один кластер
+    fn root_of(parent: &mut [usize], start: usize) -> usize {
+        let mut root = start;
+        while parent[root] != root {
+            root = parent[root];
+        }
+        let mut node = start;
+        while parent[node] != root {
+            let next = parent[node];
+            parent[node] = root;
+            node = next;
+        }
+        root
+    }
+    let mut parent: Vec<usize> = (0..tiled.len()).collect();
+    for (a, b) in grid.pairs() {
+        if boxes_touch(boxes[a], boxes[b]) {
+            let (root_a, root_b) = (root_of(&mut parent, a), root_of(&mut parent, b));
+            if root_a != root_b {
+                parent[root_a.max(root_b)] = root_a.min(root_b);
+            }
+        }
+    }
+    let mut by_root: HashMap<usize, Vec<usize>> = HashMap::new();
+    for index in 0..tiled.len() {
+        let root = root_of(&mut parent, index);
+        by_root.entry(root).or_default().push(index);
+    }
+    // кластеры из двух и более фигур; сортировка по первой фигуре делает
+    // порядок независимым от порядка хеша
+    let mut clusters: Vec<Vec<usize>> = by_root
+        .into_values()
+        .filter(|members| members.len() > 1)
+        .collect();
+    clusters.sort_unstable_by_key(|members| members[0]);
+    let merged_parts: Vec<(usize, Vec<Vec<Vec<[f32; 2]>>>)> = in_parallel(&clusters, |members| {
+        let shapes: Vec<Vec<Vec<[f32; 2]>>> = members.iter().map(|&i| tiled[i].clone()).collect();
+        (members[0], shapes.simplify_shape(FillRule::NonZero))
+    });
+    let mut results: HashMap<usize, Vec<Vec<Vec<[f32; 2]>>>> = merged_parts.into_iter().collect();
+    let mut member = vec![false; tiled.len()];
+    for members in &clusters {
+        for &i in members {
+            member[i] = true;
+        }
+    }
+    let groups = tiled.len();
+    let mut merged: Vec<Vec<Vec<[f32; 2]>>> = Vec::with_capacity(groups);
+    for (index, shape) in tiled.into_iter().enumerate() {
+        if let Some(shapes) = results.remove(&index) {
+            merged.extend(shapes);
+        } else if member[index] {
+            // член кластера, не первый по индексу: его место занял результат
+        } else {
+            merged.push(shape);
+        }
+    }
+    merged
 }
 
 /// Вычитание `clips` из `subjects` — тем же разложением, что union.
