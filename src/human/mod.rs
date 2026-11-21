@@ -64,6 +64,7 @@ impl Plugin for HumanPlugin {
             .register_type::<BloodSpatter>()
             .register_type::<BloodSpread>()
             .register_type::<SoulMote>()
+            .register_type::<PendingPopulation>()
             .register_pref::<HumanStyle>()
             .init_resource::<PopulationSize>()
             // атлас силуэтов собирает `SilhouettePlugin` (в игре); без него

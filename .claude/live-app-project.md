@@ -405,7 +405,11 @@ corpse, a child entity), `Silhouette`, `SoulMote`
 (kill sparks, alive ~1.4 sim-seconds each), `PawnId`, `WanderIndex`, `NeedsWanderTarget`,
 `RequestedAt`, `RetireAt`.
 
-Resources — `City`, `SimSpeed`, `Telemetry`, `VirtualCursor` (the agent's
+Resources — `City`, `SimSpeed`, `Telemetry`, `Census` (the per-frame state
+counters — `res get Census` answers what a handful of `count` calls used to
+assemble), `PopulationSize`, `PendingPopulation` (the batched spawn's queue:
+`count`/`cursor` of the settlement, only while it runs — the resource is removed
+once the population has settled), `VirtualCursor` (the agent's
 virtual cursor, written by `brp hover` / `click`), `VirtualKey` (the agent's
 virtual keypress, written by `brp key`), `PortalPos`, `PathfindingAlgorithm`,
 `DemonStyle`, `DemonSpawner`, `HumanStyle`, `SeparationStyle`,

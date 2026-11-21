@@ -978,8 +978,10 @@ Summary; the mechanism and the measurements — **navigation-deep skill** (polym
   passability view: `allows`/`nearest_free_point` are backend-strict, `sift_target` /
   `line_of_sight` / `coast_allows` stay deliberately grid-only. **Invariant: outside
   `navigation/`, `ui/` and the load seam (`loading.rs` and `map/prepare.rs` — the warmup
-  knob and the mesh hand-off name these types because they sit on the map→nav boundary),
-  the names `PolymeshBuild` / `PolymeshDebug` / `PathfindingAlgorithm` do not appear** —
+  knob and the mesh hand-off name these types because they sit on the map→nav boundary;
+  plus a doc-comment mention of `PolymeshDebug::radius()` in `map/sun.rs`, a citation of
+  the clamp-on-read precedent, not a reader), the names `PolymeshBuild` /
+  `PolymeshDebug` / `PathfindingAlgorithm` do not appear** —
   the door for "run this world on the flat grid" is
   **`navigation::use_flat_grid(&mut World)`**.
 - **NavMode** (`navigation/mode.rs`) — which backend is active **right now**, as one value:
@@ -1204,7 +1206,7 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   **It is the right-hand side of the telemetry invariant** — see Telemetry.
 - **Batched spawn** (`human/systems.rs`, ×10 plan Phase 1) — the settlement goes through
   a **pump**: `spawn_humans` and `on_restart` insert the `PendingPopulation` queue
-  instead of spawning, and `pump_pending_population` spawns `SPAWN_BATCH` (10 000)
+  instead of spawning, and `pump_pending_population` spawns `SPAWN_BATCH` (2 000)
   pawns per call from placements computed once on the first call. Registered twice,
   like the rest of the pipeline: **`FixedUpdate`, `SimPipeline::BothModes`, before
   `TickStage::Tick`** — batch-ness is bound to the tick, the entity count at a given

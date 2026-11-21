@@ -119,9 +119,11 @@ not by discipline: all three take the **`PopulationSpawn`** `SystemParam`
 
 - **Settlement goes through a pump** (`human/systems.rs::pump_pending_population`):
   `PopulationSpawn::spawn` inserts the **`PendingPopulation`** queue instead of
-  spawning, and each pump call spawns `SPAWN_BATCH` (10 000) pawns from placements
+  spawning, and each pump call spawns `SPAWN_BATCH` (2 000) pawns from placements
   `place_population` computed once on the first call — the shared placement stream
-  lives and dies inside that one call (`determinism`). Registered twice, like the rest
+  lives and dies inside that one call (`determinism`). The queue is BRP-readable
+  (`res get PendingPopulation`: `count`/`cursor`; the placements vector is
+  `#[reflect(ignore)]`d — 200k positions are not a reply). Registered twice, like the rest
   of the pipeline: tick-bound in `FixedUpdate` (`SimPipeline::BothModes`, before
   `TickStage::Tick`) — the entity count at a given tick must not depend on fps; in
   `Update` (`SimPipeline::Live`) for the live half — during Warmup the fixed schedule

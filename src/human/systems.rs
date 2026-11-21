@@ -68,7 +68,11 @@ pub const SPAWN_BATCH: usize = 2_000;
 /// снимает ресурс, когда очередь исчерпана. Рестарт и переключение города
 /// идут через тот же заказ: деспаун сцены случается раньше, остаток очереди
 /// перезаписывается целиком.
-#[derive(Resource, Debug)]
+///
+/// BRP-читаемая: `res get PendingPopulation` показывает `count`/`cursor`
+/// расселения; `placements` (позиции всего населения) наружу не отдаётся.
+#[derive(Resource, Reflect, Debug)]
+#[reflect(Resource)]
 pub struct PendingPopulation {
     count: usize,
     cursor: usize,
@@ -77,6 +81,7 @@ pub struct PendingPopulation {
     /// размещения жил и умирал внутри одного вызова — хранить генератор в
     /// ресурсе между вызовами контракт детерминизма запрещает, поэтому позиции
     /// всего населения готовы заранее и партия лишь спавнит по готовым.
+    #[reflect(ignore)]
     placements: Option<Vec<Vec2>>,
 }
 
