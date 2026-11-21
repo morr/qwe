@@ -57,6 +57,10 @@ pub const SIM_ESCAPE_MS: DiagnosticPath = DiagnosticPath::const_new("sim/escape_
 /// раза в кадр» (`movement/separation/`), так что прогонов ~60 в секунду
 /// против ~64 × time_scale тиков у остальных `sim/*_ms`.
 pub const SIM_SEPARATION_MS: DiagnosticPath = DiagnosticPath::const_new("sim/separation_ms");
+/// Дальние срезы (`human/lod.rs`): одна копия из восьми активна на каждом
+/// тике, так что это цена среза — восьмой доли населения, шагнувшей сразу
+/// `dt = K тиков`.
+pub const SIM_FAR_MS: DiagnosticPath = DiagnosticPath::const_new("sim/far_ms");
 
 /// Сглаженная цена **всего** тика — то, чем регулятор скорости объясняет своё
 /// решение (`sim_time::SimLoad`). Сумма `sim/*_ms` выше её не заменяет: она
@@ -77,7 +81,7 @@ pub const SIM_WAIT_PEAK_MS: DiagnosticPath = DiagnosticPath::const_new("sim/wait
 
 /// Разрез цены тика по подсистемам: короткое имя для строки лога и путь
 /// диагностики каждой системы, замеряемой `SimMeasure`-ом. Реестр один —
-/// `GameDiagnosticsPlugin` регистрирует по нему все десять, репортёр спайков
+/// `GameDiagnosticsPlugin` регистрирует по нему все, репортёр спайков
 /// (`sim_time::report_tick_spike`) печатает по нему последнее значение каждой
 /// и дописывает «rest» — то, чем системы не покрыто. Порядок — порядок
 /// строки в логе.
@@ -86,6 +90,7 @@ pub const SPIKE_PARTS: &[(&str, &DiagnosticPath)] = &[
     ("spwn", &SIM_SPAWNER_MS),
     ("pan", &SIM_PANIC_MS),
     ("flee", &SIM_FLEE_MS),
+    ("far", &SIM_FAR_MS),
     ("esc", &SIM_ESCAPE_MS),
     ("chas", &SIM_CHASE_MS),
     ("soul", &SIM_SOULS_MS),
