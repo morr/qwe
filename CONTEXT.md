@@ -174,7 +174,7 @@ Summary; the mechanism — **world-lifecycle skill** (states and the warmup hold
 - **WorldStarted** (`loading.rs`, event) — "the world begins a new run", the single seam
   both lifecycle paths share, fired on entering `PlayPhase::Live` and on every restart. All
   run state (`SimClock` + `TickDebt`, `SimTick` + the frozen `Backend`, `Telemetry`,
-  `DemonSpawner`, `SeparationStats`) is reset by observers of it, each in its owning
+  `DemonSpawner` + `HordeSchedule`, `SeparationStats`) is reset by observers of it, each in its owning
   module (`grep "On<WorldStarted>"`). **Membership is held from the outside** by
   `a_restart_replays_the_run`, not by hand. Map-derived state (`NorthstarGrid`,
   `PolyNavmesh`) is **not** run state — a restart keeps the map.
@@ -1065,6 +1065,8 @@ Summary; the mechanism — **determinism skill** (seed derivation, the decision 
   pump computes **all** placements on its first call and keeps them in
   `PendingPopulation` — slicing the entity spawns across calls must not slice the
   shared stream, or the exception would turn into a generator living in a resource.
+  The horde's wave stream (`demon::horde`, keys from `HORDE_WAVE_KEY`, the upper
+  half of the key space) is the same shape: created and drained inside one call.
 - **Decision stream** (`rng.rs::WanderIndex::next`, humans *and* demons) — a `SimRng` is
   built **per decision** and dies with it, seeded from `(PawnId, decision number)`: the
   pawn's observable identity plus which choice this is, never the history of a stream. So
@@ -1293,7 +1295,9 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   is **baked** into a chunk mesh and its three entities despawn — see Look's **corpse
   baking**; `Census.corpses` counts only the fresh ones, `Telemetry.baked` the total.
 - **Demon** states (`demon/behavior.rs`): **Wander** (a point in the `DEMON_WANDER_CONE`
-  (1.3 rad half-angle) around the away-from-portal vector, `DEMON_WANDER_RANGE` 40–120 m;
+  (1.3 rad half-angle) around the away-from-**origin** vector (`WarpOrigin`: the portal
+  for a portal-born demon, the horde wave's hearth for a wave-born one),
+  `DEMON_WANDER_RANGE` 40–120 m;
   no `WanderPause` analogue and no stored `WanderHeading` — the next target is picked the
   same frame the demon goes idle) → **Chase** (nearest human within `DEMON_AGGRO_RADIUS`
   45 m with a free claim slot; give-up at ×1.5 radius hysteresis, 67.5 m) → **Devour** →
@@ -1319,6 +1323,23 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   numbers twice. Matching precondition: **no demon may be alive when a run starts**. It runs
   in `Spawner`, **before `DemonGrid`**, so a demon enters the demon grid and acts on the
   tick it is born on.
+- **Horde** (`demon/horde.rs`) — waves on top of the background trickle: every lull a
+  **hearth** opens somewhere on the map and releases `HordeStyle::wave_size` demons over
+  the next ticks, `wave_len` per tick. Zero `wave_size` is waves off — the background-only
+  world. **The cap is common to both sources** (owner's decision, plan ×10): a wave
+  releases `min(wave_size, free room)`, a partial wave is legal, and at a full cap waves
+  degenerate into empty lulls — an accepted trade. The release queue counts against the
+  cap too (the background does not fill the room a pending wave has committed). The
+  schedule — **`HordeSchedule`**, run state `WorldStarted` resets — is a pure function of
+  `(seed, SimTick)`: every wave parameter (hearth tile, release scatter, lull) is drawn
+  from the **clean stream** of its number, `stream(seed, Demon, HORDE_WAVE_KEY +
+  wave_index)`, keys in the upper half of the key space; created and dropped inside one
+  call, like the population placement stream. A wave-born demon carries the hearth as its
+  **`WarpOrigin`** and wanders away from it; a portal-born one carries the portal, so the
+  away vector and the draw count are unchanged for it. The first wave goes out together
+  with the initial burst (`next_wave_tick` starts at 0). A demon is born only through the
+  one `spawn_demon`, so `PawnId`s stay consecutive across sources
+  (`every_spawned_demon_advances_the_counter_exactly_once`).
 - **Separation** (`movement/separation/`, Nav tab, persisted) — soft pairwise
   anti-overlap, **on-screen only, cosmetic by charter**: pawns keep their body radii
   apart (a resting human pair at 1.8 m, against a 1.0 m `HUMAN_SIZE`). The radius is a
@@ -1343,7 +1364,7 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   counter (`ui/stats.rs`), *not* a row of the Sim tab's **World** section — that section
   holds the seed and the determinism row. Outcomes grow incrementally, from events; the
   per-state side is **Census** (`census.rs`): humans/demons/corpses/souls/fleeing/
-  wandering/moving/chasing, counted **once per frame** in `Update` — never per tick —
+  wandering/moving/chasing/wave, counted **once per frame** in `Update` — never per tick —
   by one system; the HUD, the tick-spike reporter and BRP (`res get Census`) read that
   snapshot. Invariant (debug-checked per frame in `PlayPhase::Live`, `census.rs` —
   `Warmup` after a restart still carries the previous run's telemetry):

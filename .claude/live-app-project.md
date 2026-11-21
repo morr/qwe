@@ -126,8 +126,9 @@ them the app is unchanged:
   `TickStage::probe_name` (`guard/tick/answers/spawner/demon_grid/demon_behavior/
   human_behavior/move/separation/dispatch`)).
 
-Diagnostics that always exist (perf-journal 15): `sim/{acquire,snapshot,spawner,souls,escape}_ms`
-complete the per-system cut of the tick, and the `archetype census: N total` INFO line
+Diagnostics that always exist (perf-journal 15): `sim/{acquire,snapshot,spawner,horde,souls,escape}_ms`
+complete the per-system cut of the tick (`horde` — the wave schedule/release system,
+`demon/horde.rs`, phase 4 of the ×10 plan), and the `archetype census: N total` INFO line
 every 5 s tracks the archetype-space churn — behaviour waves fill the space with new
 component combinations, and the fill-up phase is what makes a fresh world's first
 minutes expensive (the `snap` dissect value spikes with it; frozen census = calm world).
@@ -413,16 +414,23 @@ far share of the population; the slice markers `FarSlice<N>` are not reflectable
 cells of the corpse field; `count CorpseChunk` is how many pieces of baked corpses the
 world carries, `CorpseTag` counts only the fresh, sprite ones), `BakeQueue` (the
 `res get` shows how many settled bodies are waiting for the baker — at the city zoom it
-drains the same frame it fills, thanks to the instant blood spread).
+drains the same frame it fills, thanks to the instant blood spread), `WarpOrigin` (where
+a demon wanders away from — the portal for portal-born, the horde wave's hearth for
+wave-born; `get` on a demon entity prints it).
 
 Resources — `City`, `SimSpeed`, `Telemetry`, `Census` (the per-frame state
 counters — `res get Census` answers what a handful of `count` calls used to
-assemble), `PopulationSize`, `PendingPopulation` (the batched spawn's queue:
+assemble; the `wave` field is the horde's waves-so-far count), `PopulationSize`,
+`PendingPopulation` (the batched spawn's queue:
 `count`/`cursor` of the settlement, only while it runs — the resource is removed
 once the population has settled), `VirtualCursor` (the agent's
 virtual cursor, written by `brp hover` / `click`), `VirtualKey` (the agent's
 virtual keypress, written by `brp key`), `PortalPos`, `PathfindingAlgorithm`,
-`DemonStyle`, `DemonSpawner`, `HumanStyle`, `SeparationStyle`,
+`DemonStyle`, `DemonSpawner`, `HordeStyle` (the horde waves' settings group) +
+`HordeSchedule` (run state: `next_wave_tick`, `wave_index`, the pending release
+queue `release`/`release_origin` — the wave's progress over BRP; a write to it
+by hand would hand out uncommitted spawns, treat it read-only), `HumanStyle`,
+`SeparationStyle`,
 `BuildingHeightMode`, `TreeStyle` / `TreeShape`, `TreeRowStyle`, `ConiferNoiseStyle`,
 `RoadStyle`, `RoadShape` / `RoadShapeOnMap` (a write to `RoadShape` reaches the map
 through `RoadShapeOnMap` after 0.35 s of quiet — `settle_road_shape`; `.lane_width`

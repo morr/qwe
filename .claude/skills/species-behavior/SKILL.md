@@ -314,8 +314,11 @@ to infer from the species. The look — the `Ember` glyph and the halo — is
 
 ### Wander
 
-**A point in the `DEMON_WANDER_CONE` around the away-from-portal
-vector, `DEMON_WANDER_RANGE` out** — the policy is `CONTEXT.md`'s. At the map
+**A point in the `DEMON_WANDER_CONE` around the away-from-**`WarpOrigin`**
+vector, `DEMON_WANDER_RANGE` out** — the policy is `CONTEXT.md`'s. The origin
+rides on the demon (`WarpOrigin`, `#[require]`d by `Demon`): the portal for a
+portal-born one, the horde wave's hearth for a wave-born one — the whole species
+policy is "away from where you came from". At the map
 edge `clamp_to_map` turns the direction inward — that is all there is to the border, there
 is no separate border rule. Against the human's stroll: a wider
 cone and a walk two to three times longer, and **no errand branch at all** — a demon never
@@ -326,7 +329,7 @@ first target on the demon's first tick.
 
 **Three draws from the decision stream on every pick, in this order: fallback angle → cone
 rotation → distance.** The first is the argument of `normalize_or`, which takes a *value*,
-not a closure — it is rolled even when the demon is far from the portal and the fallback is
+not a closure — it is rolled even when the demon is far from its origin and the fallback is
 thrown away. Making it lazy would drop a draw on nearly every pick and desynchronise every
 recorded replay (`determinism`): if it ever changes, it changes as a replay-breaking change,
 not as a tidy-up.
@@ -455,7 +458,32 @@ speed, lunge }`** (sliders of the Sim tab's Demon section, persisted; `DEMON_CAP
 `DEMON_SPAWN_INTERVAL` are only its `Default`) and the `PlayPhase::Live` invariant are
 `CONTEXT.md`'s. The burst is capped too (`DEMON_INITIAL_BURST.min(cap)`, fanned over the
 reduced count), and the timer's period is re-synced inside `tick_spawner`, because restart
-and city switch rebuild `DemonSpawner` whole.
+and city switch rebuild `DemonSpawner` whole. **The background pace** is a phase-4 ×10
+decision: the default interval fills the default cap in ~1–2 sim-minutes (owner's
+directive, plan review 2026-11-21) instead of the old ~1 demon/sim-hour trickle.
+
+### The horde
+
+**`demon/horde.rs`** — waves over the background, the plan ×10's phase 4.
+`HordeStyle { wave_size, wave_every, wave_len }` is a persisted settings group (three more
+rows of the Demon section); zero `wave_size` is waves off — the background-only world.
+`HordeSchedule { next_wave_tick, wave_index, release, release_origin }` is run state,
+reset by `WorldStarted`; it lives in the same `TickStage::Spawner` chain, after
+`tick_spawner` — burst, background and wave are one order class. The rhythm: when
+`SimTick` reaches `next_wave_tick`, the wave plays from the **clean stream of its number**
+(`stream(seed, Demon, HORDE_WAVE_KEY + wave_index)` — created and dropped in one call,
+`determinism`), drawing hearth tile (rejection-sampled passable, scan fallback), release
+positions (rejection-sampled around the hearth, hearth fallback) and the lull
+(`wave_every × (1 ± 0.25)`); then the schedule advances. The release spills `wave_len`
+demons per tick through the same `spawn_demon` — the command burst is spread. **The cap is
+common to both sources** (owner's decision): a wave commits `min(wave_size, free)`, the
+release queue counts against the cap (`HordeSchedule::pending()` — `tick_spawner` checks
+`spawned + pending`), a partial wave is legal, a full cap turns waves into empty lulls.
+A wave-born demon carries the hearth as its **`WarpOrigin`** (the component every demon
+has, `#[require]`d by `Demon`; portal-born carry `PortalPos`), so its wandering is away
+from its own district. The first wave goes out with the initial burst (`next_wave_tick`
+starts at 0). Diagnostics: `sim/horde_ms`; `Census.wave` is the waves-so-far count, also
+printed in the tick-spike line.
 
 **A demon acts from the first tick it exists**, the initial burst included — held by the
 schedule, not by luck: the spawner sits in `TickStage::Spawner`, before `DemonGrid`, and
@@ -473,7 +501,7 @@ not reviving that one.
 in the **ui-panels skill**). The Sim tab's **World** section is a different thing: seed and
 determinism row, no telemetry. The outcomes grow incrementally, from events; the per-state
 side of the ledger is **Census** (`census.rs`): humans/demons/corpses/souls/fleeing/
-wandering/moving/chasing, recomputed once per **frame** in `Update` — never per tick — by
+wandering/moving/chasing/wave, recomputed once per **frame** in `Update` — never per tick — by
 `count_census`; HUD and the tick-spike reporter (`sim-speed` skill) read the resource, BRP
 answers `res get Census`. The invariant `alive + killed + escaped == PopulationSize` is
 debug-checked there per frame, in `PlayPhase::Live` — `Warmup` after a restart still

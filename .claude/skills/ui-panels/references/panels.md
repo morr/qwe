@@ -107,9 +107,13 @@ Noise.
 ## Sim tab (`ui/stats.rs`)
 
 Three sections. **World**: `Deterministic` and the `Seed` field + `new`. **Demon**: the
-four `DemonStyle` knobs — **Max demons** (0…500, step 5), **Spawn every** (0.1…10 s,
-step 0.1), **Speed** (100…200%, step 5) and **Lunge boost** (+0…+100%, step 5); both
-percent rows print as percent, a bare `1.3` on the panel says nothing. **Human**:
+four `DemonStyle` knobs — **Max demons** (0…5000, step 25), **Spawn every** (0.01…10 s,
+step 0.01, printed to two decimals — one decimal lost the new minimum), **Speed**
+(100…200%, step 5) and **Lunge boost** (+0…+100%, step 5); percent rows print as percent,
+a bare `1.3` on the panel says nothing — and the three `HordeStyle` wave knobs after them
+(plan ×10 phase 4): **Wave size** (0…2000, step 10; 0 — waves off, the background-only
+world), **Wave every** (1…600 s, step 5) and **Wave length** (1…200/step 1, printed
+`30/tick` — the release portion per tick). **Human**:
 **Speed spread** (0…35%, step 5) — printed with a sign because it is a half-width, and
 a bare `15%` would read as "everyone 15% faster"; the sign is the ASCII `+/-`, not `±`
 (the SKILL.md printing law). Body radius and the crowd knobs stood in this tab until

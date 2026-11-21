@@ -67,6 +67,18 @@ and by `rng/tests.rs::seed_for_is_stable`, which holds `seed_for(1, Population, 
 golden value. `examples/demos/crowd_demo/scenario.rs` drains the same `(Population, 0)`
 stream under the same fixed-count loops — the same idiom, not a second exception.
 
+**The horde's wave stream is the same shape** (`demon/horde.rs::plan_wave`, phase 4 of
+the ×10 plan): `stream(seed, Demon, HORDE_WAVE_KEY + wave_index)` draws the hearth tile,
+the release scatter and the lull of one wave inside one `plan_wave` call — a fixed
+`0..n` counter over a plain loop, no world state in the inputs (the cap truncation happens
+in the system, after the pure plan). The wave keys sit in the **upper half of the key
+space** (from 2⁶³): decision-stream keys are `(pawn_id << 32) | decision`, and real
+pawn ordinals stay orders of magnitude below 2³¹, so the two families cannot collide.
+Pinned by `horde::tests::the_same_seed_plays_the_same_wave` (pure schedule, no app) and
+by the replay pins — the replay yard runs with waves on (yard-scale `HordeStyle`
+inserted in `replay_app`, like `PopulationSize`), so `a_restart_replays_the_run` covers
+schedule and release.
+
 ## The decision stream
 
 `rng.rs::WanderIndex::next`, on humans *and* demons. A `SimRng` is built **per decision**

@@ -181,7 +181,10 @@ share. Fired from exactly **two** places:
   it).
 
 **All run state is reset by observers of this event, each living in its owning module** —
-`SimClock` + `TickDebt`, `SimTick` + the frozen `Backend`, `Telemetry`, `DemonSpawner`,
+`SimClock` + `TickDebt`, `SimTick` + the frozen `Backend`, `Telemetry`, `DemonSpawner` +
+`HordeSchedule` (the horde's schedule and its pending release queue, `demon/horde.rs` —
+the spawner's observer already carries the "no demons alive" precondition and the warning,
+so the horde's own reset stays silent),
 `SeparationStats` (the crowd-demo counters). `grep "On<WorldStarted>"` enumerates them.
 
 **Membership is not kept by hand.** It is held from the outside by
