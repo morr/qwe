@@ -1056,9 +1056,13 @@ Summary; the mechanism — **determinism skill** (seed derivation, the decision 
   `RngDomain: Population | Human | Demon`. **Nothing stores live RNG state**, so a restart
   has no RNG to reset — every stream is re-derived.
 - **Placement stream** (`rng.rs::stream`, `RngDomain::Population`) — the one shared
-  generator, held by `spawn_population` across every spawn. Legal precisely because its
-  consumer is a fixed `0..count` loop rather than a query traversal, and everything
-  personal (colour, `Pace`, heading) still comes from the pawn's own decision stream.
+  generator, held by `place_population` (`human/systems.rs`) across the whole
+  placement pass. Legal precisely because its consumer is a fixed `0..count` loop
+  inside one call rather than a query traversal, and everything personal (colour,
+  `Pace`, heading) still comes from the pawn's own decision stream. The batched
+  pump computes **all** placements on its first call and keeps them in
+  `PendingPopulation` — slicing the entity spawns across calls must not slice the
+  shared stream, or the exception would turn into a generator living in a resource.
 - **Decision stream** (`rng.rs::WanderIndex::next`, humans *and* demons) — a `SimRng` is
   built **per decision** and dies with it, seeded from `(PawnId, decision number)`: the
   pawn's observable identity plus which choice this is, never the history of a stream. So
@@ -1186,14 +1190,30 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   policy → `point_in_cone` / `clamp_to_map` → `request_wander_path` →
   `heading_towards`. Only **where** a pawn wants to
   go is per-species. It deliberately does **not** open the `SimRng`.
-- **PopulationSize** (`human/components.rs`, resource) — how many humans
-  `spawn_population` settles. **No knob, and not a `settings.rs` value**: its `Default`
-  *is* `HUMAN_COUNT` (20 000) and the game never changes it; the resource exists so a
-  headless scene can run a small crowd. Read at two sites that must stay in step —
-  `human::spawn_humans` under `WorldInitSet::Spawn` and `restart::on_restart`, so a
-  restart respawns the same number. Today the only non-default user is the replay yard
-  (`determinism::replay::replay_app`'s `population` argument; `tests/determinism.rs`
-  runs 64). **It is the right-hand side of the telemetry invariant** — see Telemetry.
+- **PopulationSize** (`human/components.rs`, resource) — how many humans the spawn
+  settles. **No knob, and not a `settings.rs` value**: its `Default`
+  *is* `HUMAN_COUNT` (200 000 since the ×10 plan, owner's decision
+  `docs/population-x10-plan.md`; the first regular population was 20 000) and the game
+  never changes it; the resource exists so a stand with a small world can pin its own —
+  the replay yard (`determinism::replay::replay_app`'s `population` argument;
+  `tests/determinism.rs` runs 64), the acceptance example `determinism_replay` (20 000,
+  pinned so its runtime does not grow with the default), `QWE_PERF_POP` in the game.
+  Read at three sites that must stay in step — `human::spawn_humans` under
+  `WorldInitSet::Spawn`, `restart::on_restart` and the pump, all through the
+  `PopulationSpawn` `SystemParam`, so a restart respawns the same number.
+  **It is the right-hand side of the telemetry invariant** — see Telemetry.
+- **Batched spawn** (`human/systems.rs`, ×10 plan Phase 1) — the settlement goes through
+  a **pump**: `spawn_humans` and `on_restart` insert the `PendingPopulation` queue
+  instead of spawning, and `pump_pending_population` spawns `SPAWN_BATCH` (10 000)
+  pawns per call from placements computed once on the first call. Registered twice,
+  like the rest of the pipeline: **`FixedUpdate`, `SimPipeline::BothModes`, before
+  `TickStage::Tick`** — batch-ness is bound to the tick, the entity count at a given
+  tick must not depend on fps; **`Update`, `SimPipeline::Live`** — during Warmup the
+  fixed schedule stands paused while `poll_warmup` waits for requests, so the
+  population must exist and file them as batches land, and after `Live` the live half
+  continues there (live mode is not claimed by replay). Batching cannot move a single
+  RNG throw — pinned by `batching_does_not_change_the_population`; while the queue
+  lasts, the census invariant adds `PendingPopulation::remaining()` to the alive side.
 - **Human** states (`human/behavior.rs`): **Wander** (`WanderPause` 2–10 s, rolled per
   arrival and drawn by only `HUMAN_WANDER_PAUSE_SHARE` 20 % of them — the rest pick the
   next target the same frame; 80 % a building errand anywhere in the city — the real
@@ -1292,9 +1312,11 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   by one system; the HUD, the tick-spike reporter and BRP (`res get Census`) read that
   snapshot. Invariant (debug-checked per frame in `PlayPhase::Live`, `census.rs` —
   `Warmup` after a restart still carries the previous run's telemetry):
-  `killed + escaped + alive == PopulationSize` — the number the spawn actually read, not
-  the constant: in the game that is the default `HUMAN_COUNT`, in a replay run whatever
-  `replay_app` was given. At high sim speed BRP reads are skewed — pause before asserting.
+  `killed + escaped + alive + unsettled == PopulationSize` — the number the spawn actually
+  read, not the constant: in the game that is the default `HUMAN_COUNT`, in a replay run
+  whatever `replay_app` was given; `unsettled` is `PendingPopulation::remaining()` while
+  the batched spawn's queue lasts (Batched spawn). At high sim speed BRP reads are
+  skewed — pause before asserting.
 
 ## Look
 

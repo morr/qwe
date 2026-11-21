@@ -35,9 +35,13 @@ every stream is re-derived from the seed.
 
 `rng.rs::stream(world_seed, domain, key)` builds a stream that belongs to no pawn. The
 only live one is `stream(world_seed, RngDomain::Population, 0)`, held across the **whole**
-`human/systems.rs::spawn_population` loop: the rejection loop that samples tiles until one
+`human/systems.rs::place_population` pass: the rejection loop that samples tiles until one
 is passable draws a variable number of samples per human, and that is fine inside one
-sequential pass.
+sequential pass. The batched spawn keeps it that way deliberately: the pump computes
+**all** placements on its first call (`PendingPopulation::placements`) and every later
+batch only spawns pawns from the finished list — had the stream been drained batch by
+batch, its generator would live in a resource between calls, and that is exactly the
+shape the rule below forbids.
 
 This is the shape the next section calls rejected, so the exception is spelled out:
 
@@ -49,8 +53,9 @@ This is the shape the next section calls rejected, so the exception is spelled o
   WanderIndex::SPAWN)`, so human N looks and walks the same however many times the tile
   rejection missed for his neighbours. The shared stream decides *placement* only.
 - **It never crosses a system boundary.** Created and dropped inside the call, so there is
-  no generator resource for a restart to reset — `restart.rs` calls `spawn_population`
-  again and it re-derives the stream from the seed.
+  no generator resource for a restart to reset — a restart re-inserts the
+  `PendingPopulation` queue and the pump's first call runs `place_population` again,
+  re-deriving the stream from the seed.
 
 The rule to carry forward: **a shared stream is legal only while the loop draining it is a
 `for i in 0..n` inside one function.** Move those draws into a system that iterates a

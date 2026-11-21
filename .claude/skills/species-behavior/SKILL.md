@@ -105,17 +105,39 @@ that tail is left. `WANDER_MAP_MARGIN` is the one map inset, in `settings.rs`.
 States in `human/behavior.rs`, rules in `human/decide.rs`: **Wander** ⇄ **Flee**, plus
 **Escape** and the terminal **Corpse**.
 
-### Population size
+### Population size and the batched spawn
 
-**`PopulationSize`** (`human/components.rs`) — the count `spawn_population` settles; the
-resource exists so a headless scene can run 64 pawns instead of 20 000 (the whole shape is
-`CONTEXT.md`'s). The two readers stay in step by a type, not by discipline: both take the
-**`PopulationSpawn`** `SystemParam` (`human/systems.rs` — navmesh, `HumanStyle`, `WorldSeed`,
-`PopulationSize`, `Silhouettes`) and call its `spawn`, so neither can read a different set.
+**`PopulationSize`** (`human/components.rs`) — the count the spawn settles; its `Default`
+is `HUMAN_COUNT`, **200 000 since the ×10 plan** (owner's decision,
+`docs/population-x10-plan.md`; the first regular population was 20 000). The resource
+exists so a stand with a small world pins its own: the replay yard (64),
+`examples/acceptance/determinism_replay` (20 000, pinned so the acceptance run does not
+grow with the default), `QWE_PERF_POP` in the game. The readers stay in step by a type,
+not by discipline: all three take the **`PopulationSpawn`** `SystemParam`
+(`human/systems.rs` — navmesh, `HumanStyle`, `WorldSeed`, `PopulationSize`,
+`Silhouettes`).
 
+- **Settlement goes through a pump** (`human/systems.rs::pump_pending_population`):
+  `PopulationSpawn::spawn` inserts the **`PendingPopulation`** queue instead of
+  spawning, and each pump call spawns `SPAWN_BATCH` (10 000) pawns from placements
+  `place_population` computed once on the first call — the shared placement stream
+  lives and dies inside that one call (`determinism`). Registered twice, like the rest
+  of the pipeline: tick-bound in `FixedUpdate` (`SimPipeline::BothModes`, before
+  `TickStage::Tick`) — the entity count at a given tick must not depend on fps; in
+  `Update` (`SimPipeline::Live`) for the live half — during Warmup the fixed schedule
+  is paused and `poll_warmup` waits for requests, so the population must exist and file
+  them as batches land, and after `Live` the live half keeps running there (live mode
+  is not claimed by replay).
+- **Restart goes through the same queue** — `on_restart`'s scene despawn happens before
+  `PopulationSpawn::spawn` re-inserts `PendingPopulation`, and the pump raises the
+  population over the next ticks/frames. While the queue lasts, the census invariant
+  adds `PendingPopulation::remaining()` to the alive side (`census.rs`).
+- **Batching cannot move a single RNG throw** — pinned by
+  `human/systems.rs::batching_does_not_change_the_population` (one batch == ten
+  batches == the whole-flash `spawn_population`, bit-for-bit).
 - **An app that wants another size inserts it after `add_plugins`** —
   `determinism::replay::replay_app` does exactly that, and swapping the two lines would
-  silently put 20 000 humans back into the replay test.
+  silently put the whole 200 000 back into the replay test.
 - Demo stands do not use it: `crowd_demo` hand-spawns its own pawns with the same bundle
   (`scenario.rs::spawn_pawn`) because `HumanPlugin` would settle the whole city.
 
@@ -399,6 +421,8 @@ determinism row, no telemetry. The outcomes grow incrementally, from events; the
 side of the ledger is **Census** (`census.rs`): humans/demons/corpses/souls/fleeing/
 wandering/moving/chasing, recomputed once per **frame** in `Update` — never per tick — by
 `count_census`; HUD and the tick-spike reporter (`sim-speed` skill) read the resource, BRP
-answers `res get Census`. The invariant `alive + killed + escaped == PopulationSize` is
+answers `res get Census`. The invariant
+`alive + unsettled + killed + escaped == PopulationSize` — the unsettled term is
+`PendingPopulation::remaining()` while the batched spawn's queue lasts — is
 debug-checked there per frame, in `PlayPhase::Live` — `Warmup` after a restart still
 carries the previous run's telemetry. The check-paused rule is `CONTEXT.md`'s.

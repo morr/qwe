@@ -210,8 +210,12 @@ read it as a plain resource. An app without `SilhouettePlugin`
 **RestartEvent** (`restart.rs`, R key or BRP) — despawns humans / corpses / demons / walkers
 (demon halos and blood pools are their children and go with them; souls are not on the list —
 a `SoulMote` despawns itself, see `species-behavior`), fires
-**WorldStarted**, respawns the population. The navmesh persists: it is filled once per city.
-Under determinism this replays the previous run tick for tick.
+**WorldStarted**, re-orders the population: `PopulationSpawn::spawn` inserts the
+`PendingPopulation` queue (the despawn above has already happened), and the batched-spawn
+pump (`species-behavior` skill) settles it over the next ticks/frames. The navmesh
+persists: it is filled once per city. Under determinism this replays the previous run
+tick for tick — the pump is tick-bound there, so the population exists on the same ticks
+in every run.
 
 **RestartPending** (`restart.rs`, resource) — "a restart was ordered". The only way to ask
 for one from anywhere but the R key: changing the **world seed** or flipping
