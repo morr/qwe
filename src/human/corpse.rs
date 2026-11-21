@@ -375,6 +375,9 @@ pub(crate) fn corpse_quads(
             tint: look.tint.to_linear().to_f32_array(),
             cell: glyph.cell() as u32,
             flip: false,
+            // спрайт пятна — ребёнок тела: его мировое вращение сложено из
+            // поворота тела и собственного спина, как у `stain_transform`
+            angle: pose.heading + spin,
         }
     };
     [
@@ -387,6 +390,7 @@ pub(crate) fn corpse_quads(
             tint: tint.to_linear().to_f32_array(),
             cell: pose.glyph.cell() as u32,
             flip: pose.flip,
+            angle: pose.heading,
         },
     ]
 }

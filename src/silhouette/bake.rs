@@ -72,8 +72,8 @@ const REBUILD_CHUNK_BUDGET: usize = 4;
 const DESPAWN_BATCH: usize = 768;
 
 /// Один запечённый квад: то, что раньше было сущностью со спрайтом. Половина
-/// полей — вершины будущего меша, `flip` — только знак `x` углов и порядок
-/// индексов, всё это разворачивает [`chunk_mesh`].
+/// полей — вершины будущего меша, `angle`/`flip` — поворот и зеркало, всё это
+/// разворачивает [`chunk_mesh`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct CorpseQuad {
     /// Центр в метрах мира.
@@ -89,6 +89,10 @@ pub(crate) struct CorpseQuad {
     pub cell: u32,
     /// Зеркало глифа по горизонтали (`corpse_pose`), как `Sprite::flip_x`.
     pub flip: bool,
+    /// Поворот квада, радианы против часовой: у тела — `heading` позы, у пятен
+    /// — `heading + spin` (спрайт пятна — ребёнок тела и вращается вместе с
+    /// ним). Вершины уходят в меш уже повёрнутыми.
+    pub angle: f32,
 }
 
 /// Метка меша одного чанка трупов. Спавнится пекарем лениво — чанк без трупов
@@ -135,7 +139,8 @@ pub struct PointUniform {
     /// Метров на логический пиксель — зум камеры; пол размера применяется
     /// по нему той же формулой, что `Silhouette::drawn_size`.
     pub mpp: f32,
-    /// `1 / Glyph::COUNT` — ширина ячейки атласа в UV.
+    /// Резерв раскладки: uv вершины считаются при сборке меша, поле держит
+    /// юниформ кратным 16 байтам.
     pub inv_cells: f32,
     pad0: f32,
     pad1: f32,
@@ -192,9 +197,11 @@ impl Material2d for PointMaterial {
 const ATTRIBUTE_QUAD: MeshVertexAttribute =
     MeshVertexAttribute::new("CorpseQuad", 1_884_661_903, VertexFormat::Float32x4);
 
-/// Номер ячейки атласа, нормированный в UV-кромку, — один `f32` на вершину.
+/// UV вершины в атласе целиком: кромка ячейки, зеркало и вертикаль посчитаны
+/// при сборке меша — угол квадада запечён в `position`, и выводить uv из
+/// повёрнутого угла было бы ошибкой.
 const ATTRIBUTE_CELL: MeshVertexAttribute =
-    MeshVertexAttribute::new("CorpseCell", 1_504_397_251, VertexFormat::Float32);
+    MeshVertexAttribute::new("CorpseCell", 1_504_397_251, VertexFormat::Float32x2);
 
 /// Хэндл точечного материала. Настроечно его нет: без рендера (`Silhouettes`
 /// не собран) материал не инициализируется, и его существование — гейт пекаря.
@@ -363,8 +370,11 @@ const CORNERS: [Vec2; 4] = [
 
 /// Меш чанка из его квадов: по четыре вершины и два треугольника на квад,
 /// порядок квадов — порядок рисования (лужа и брызги раньше тела; между трупами
-/// сортировки и в спрайтах не было). Зеркало глифа — знак `x` углов **и**
-/// обращённая намотка: без второго зеркальный квад вывернулся бы наизнанку.
+/// сортировки и в спрайтах не было). Поворот — в самих вершинах: угол уходит с
+/// CPU, и шейдеру он не нужен. uv при этом считается из *неповёрнутого* угла —
+/// интерполяция между повёрнутыми вершинами даёт тот же пиксель текстуры, что
+/// повернутый спрайт. Зеркало глифа живёт тоже в uv: квад квадратный, зеркальная
+/// геометрия его не меняет, и намотка от зеркала не зависит.
 pub(crate) fn chunk_mesh(quads: &[CorpseQuad]) -> Mesh {
     let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
@@ -378,19 +388,23 @@ pub(crate) fn chunk_mesh(quads: &[CorpseQuad]) -> Mesh {
     let mut indices = Vec::with_capacity(count * 6);
     for quad in quads {
         let base = positions.len() as u32;
+        let (sin, cos) = quad.angle.sin_cos();
+        let cell_u = quad.cell as f32 / Glyph::COUNT as f32;
         for corner in CORNERS {
-            let x = if quad.flip { -corner.x } else { corner.x };
-            positions.push([x, corner.y, 0.0]);
+            positions.push([
+                corner.x * cos - corner.y * sin,
+                corner.x * sin + corner.y * cos,
+                0.0,
+            ]);
             colors.push(quad.tint);
             quad_attr.push([quad.centre.x, quad.centre.y, quad.half, quad.floor_px]);
-            cells.push(quad.cell as f32 / Glyph::COUNT as f32);
+            let u = if quad.flip { -corner.x } else { corner.x };
+            cells.push([
+                cell_u + (u + 1.0) * 0.5 / Glyph::COUNT as f32,
+                (1.0 - corner.y) * 0.5,
+            ]);
         }
-        if quad.flip {
-            // x углов перевёрнут — и намотку переворачиваем вслед за ним
-            indices.extend_from_slice(&[base, base + 2, base + 1, base + 2, base, base + 3]);
-        } else {
-            indices.extend_from_slice(&[base, base + 1, base + 2, base + 2, base + 3, base]);
-        }
+        indices.extend_from_slice(&[base, base + 1, base + 2, base + 2, base + 3, base]);
     }
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
@@ -534,46 +548,73 @@ mod tests {
         );
     }
 
-    /// Меш чанка: 4 вершины и 6 индексов на квад; зеркало обращает намотку —
-    /// иначе квад вывернулся бы наизнанку (пин ловит именно это).
+    /// Меш чанка: 4 вершины и 6 индексов на квад; угол поворачивает вершины,
+    /// зеркало меняет только uv — намотка не зависит ни от того, ни от другого.
     #[test]
-    fn chunk_mesh_keeps_four_verts_per_quad_and_flips_winding() {
-        let mut quad = CorpseQuad {
+    fn chunk_mesh_turns_the_corners_and_keeps_the_winding() {
+        let quad = CorpseQuad {
             centre: Vec2::ONE,
             half: 1.0,
             floor_px: 2.0,
             tint: [0.5; 4],
             cell: 3,
             flip: false,
+            angle: 0.0,
         };
         let plain = chunk_mesh(&[quad]);
         assert_eq!(plain.attribute(Mesh::ATTRIBUTE_POSITION).unwrap().len(), 4);
-        let plain_indices = match plain.indices() {
+        let indices = |mesh: &Mesh| match mesh.indices() {
             Some(Indices::U32(indices)) => indices.clone(),
             _ => panic!("индексы U32"),
         };
-        assert_eq!(plain_indices, vec![0, 1, 2, 2, 3, 0]);
+        let winding = indices(&plain);
+        assert_eq!(winding, vec![0, 1, 2, 2, 3, 0]);
 
-        quad.flip = true;
-        let flipped = chunk_mesh(&[quad]);
-        let flipped_indices = match flipped.indices() {
-            Some(Indices::U32(indices)) => indices.clone(),
-            _ => panic!("индексы U32"),
+        let positions = |mesh: &Mesh| match mesh.attribute(Mesh::ATTRIBUTE_POSITION).unwrap() {
+            VertexAttributeValues::Float32x3(values) => values.clone(),
+            other => panic!("позиции — Float32x3, а не {other:?}"),
         };
-        assert_ne!(
-            plain_indices, flipped_indices,
-            "зеркало обязано обратить намотку"
+
+        // поворот на четверть оборота: угол против часовой гоняет углы по кругу
+        // (sin_cos точного π/2 даёт ±0.9999999 — сверяемся с допуском)
+        let quarter = positions(&chunk_mesh(&[CorpseQuad {
+            angle: std::f32::consts::FRAC_PI_2,
+            ..quad
+        }]));
+        let expected = [
+            [1.0, -1.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [-1.0, 1.0, 0.0],
+            [-1.0, -1.0, 0.0],
+        ];
+        for (got, want) in quarter.iter().zip(expected.iter()) {
+            assert!(
+                Vec3::from(*got).distance(Vec3::from(*want)) < 1e-5,
+                "углы повернулись на 90°: {quarter:?}, намотка та же"
+            );
+        }
+
+        // зеркало — только в uv: u левого угла переехала на правую кромку ячейки
+        let uvs = |mesh: &Mesh| match mesh.attribute(ATTRIBUTE_CELL).unwrap() {
+            VertexAttributeValues::Float32x2(values) => values.clone(),
+            other => panic!("uv — Float32x2, а не {other:?}"),
+        };
+        let cell_u = 3.0 / Glyph::COUNT as f32;
+        let plain_uvs = uvs(&plain);
+        assert_eq!(
+            plain_uvs[0],
+            [cell_u, 1.0],
+            "левый нижний угол — левая кромка ячейки"
         );
-        // UV-кромка ячейки считается из номера: cell / Glyph::COUNT
-        let cells = match flipped.attribute(ATTRIBUTE_CELL).unwrap() {
-            VertexAttributeValues::Float32(values) => values.clone(),
-            other => panic!("кромки — Float32, а не {other:?}"),
-        };
-        assert!(
-            cells
-                .iter()
-                .all(|u| (u - 3.0 / Glyph::COUNT as f32).abs() < 1e-6),
-            "кромка ячейки в UV: {cells:?}"
+        let flipped_uvs = uvs(&chunk_mesh(&[CorpseQuad { flip: true, ..quad }]));
+        assert_eq!(
+            flipped_uvs[0],
+            [cell_u + 1.0 / Glyph::COUNT as f32, 1.0],
+            "зеркало переставило левый угол на правую кромку"
+        );
+        assert_eq!(
+            indices(&chunk_mesh(&[CorpseQuad { flip: true, ..quad }])),
+            winding
         );
     }
 

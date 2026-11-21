@@ -189,14 +189,16 @@ gigabyte of tables; baked it is ~115 MB of vertex data and no entities at all).
   cleared by `WorldStarted`, like the run counters.
 - **The point material** (`PointMaterial`, `shaders/point.wesl`) — the same atlas
   image as sprites; the quad is expanded in the vertex shader from
-  `centre + half + floor_px` vertex attributes (the mirror is baked into the corner's
-  x sign *and* the reversed winding, or the quad turns inside out), with
-  `Silhouette::drawn_size`'s exact formula against a zoom uniform that
-  `sync_point_uniform` follows from the `Viewport`. A baked chunk never rebuilds on
-  camera movement; UVs are derived from the corner, so a vertex is 48 bytes and the
-  x10 endgame is ~115 MB of vertex data, not entities. `AlphaMode2d::Blend`, like
-  sprites — the glyph edges are antialiased. Phase 5 (the far layer of live pawns)
-  reuses this material.
+  `centre + half + floor_px` vertex attributes, with `Silhouette::drawn_size`'s exact
+  formula against a zoom uniform that `sync_point_uniform` follows from the
+  `Viewport`. Rotation and mirror never reach the shader: the corners go into the
+  mesh already turned (`chunk_mesh` — heading for the body, heading + spin for the
+  stains, the same world rotations the fresh sprites carry), and the uv is a
+  per-vertex attribute computed from the *unturned* corner — the mirror lives there,
+  and the winding never changes. A baked chunk never rebuilds on camera movement; a
+  vertex is 52 bytes and the x10 endgame is ~125 MB of vertex data, not entities.
+  `AlphaMode2d::Blend`, like sprites — the glyph edges are antialiased. Phase 5 (the
+  far layer of live pawns) reuses this material.
 - **Accounting** — `Telemetry.baked` (per-run, reset with the rest), `Census.corpses`
   fresh only. The population invariant never involved corpses.
 

@@ -26,7 +26,8 @@ struct PointUniform {
     // метров на логический пиксель (зум камеры); переписывает
     // `bake::sync_point_uniform` вслед за `Viewport`
     mpp: f32,
-    // 1 / `Glyph::COUNT` — ширина одной ячейки атласа в UV
+    // резерв раскладки: uv считается при сборке меша, поле держит структуру
+    // кратной 16 байтам
     inv_cells: f32,
     pad0: f32,
     pad1: f32,
@@ -38,14 +39,16 @@ struct PointUniform {
 
 struct Vertex {
     @builtin(instance_index) instance_index: u32,
-    // угол квада, ±1 по обеим осям; зеркало глифа запечено знаком x
-    // (`bake::chunk_mesh` меняет и порядок индексов — намотка остаётся CCW)
+    // угол квада, ±1 по обеим осям, уже повёрнутый на угол квадада при сборке
+    // меша; зеркало глифа живёт в uv (`bake::chunk_mesh`) и намотку не трогает
     @location(0) position: vec3<f32>,
     @location(1) color: vec4<f32>,
     // центр квада в метрах, полуразмер (квад — квадрат), пол в логических px
     @location(2) quad: vec4<f32>,
-    // UV-левая кромка ячейки атласа (`cell / Glyph::COUNT`)
-    @location(3) cell: f32,
+    // uv вершины в атласе целиком: кромка ячейки, зеркало и вертикаль
+    // посчитаны при сборке меша (`bake::chunk_mesh`) — угол квадада уже
+    // запечён в position, и выводить uv из него было бы ошибкой
+    @location(3) cell_uv: vec2<f32>,
 }
 
 struct VertexOutput {
@@ -71,10 +74,7 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     var out: VertexOutput;
     out.position = mesh_functions::mesh2d_position_world_to_clip(world_position);
     out.color = vertex.color;
-    out.uv = vec2<f32>(
-        vertex.cell + (0.5 + corner.x * 0.5) * params.inv_cells,
-        0.5 - corner.y * 0.5,
-    );
+    out.uv = vertex.cell_uv;
     return out;
 }
 

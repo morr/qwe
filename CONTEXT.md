@@ -1418,7 +1418,8 @@ its draw call.
   `rise_souls`. Chunks are drawn by the **point material** (`PointMaterial`,
   `shaders/point.wesl`): the same atlas as fresh sprites, but the quad is expanded in
   the vertex shader from centre + half-size + floor, so the screen-size floor follows
-  the zoom without a mesh rebuild. The baked look is computed by the same pure functions
+  the zoom without a mesh rebuild; rotation and mirror are baked at mesh build — the
+  corners carry the heading (the stains heading + spin), the uv carries the mirror. The baked look is computed by the same pure functions
   that drew the fresh one (`corpse_pose` / `blood_look` / `corpse_tint`), so a baked
   corpse is indistinguishable from the fresh one at the same zoom; a run without a
   renderer (replay, tests) never bakes and keeps corpses as entities. `Telemetry.baked`
