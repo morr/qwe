@@ -52,6 +52,16 @@ pub struct HumanPlugin;
 
 impl Plugin for HumanPlugin {
     fn build(&self, app: &mut App) {
+        // материал запечённых трупов — свой конвейер и свои ассеты
+        // (`Assets<PointMaterial>`), как у материалов карты. Гейт по
+        // `AssetPlugin`: конвейер везёт системы, которым нужен `AssetServer`,
+        // и на голых стендах (тесты, реплей на MinimalPlugins) роняет первый
+        // кадр; там пекарь и так молча стоит — трупы остаются сущностями.
+        if app.is_plugin_added::<bevy::asset::AssetPlugin>() {
+            app.add_plugins(
+                bevy::sprite_render::Material2dPlugin::<bake::PointMaterial>::default(),
+            );
+        }
         // ветки конвейера гейтит `DeterminismPlugin` — без него обе работали
         // бы разом; тот же довод, что и в `MovementPlugin`
         if !app.is_plugin_added::<DeterminismPlugin>() {
