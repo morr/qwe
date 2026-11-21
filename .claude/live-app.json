@@ -4,6 +4,7 @@
   "shot": {
     "event": "TakeScreenshotEvent",
     "path": "screenshot.png",
+    "path_field": "path",
     "small_px": 1568
   },
   "speed": {

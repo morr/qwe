@@ -475,7 +475,8 @@ panel** with four tabs (`ui/shell.rs`).
   determinism restart request use it; do not hand-roll
   `resource_changed::<T>.and_then(not(resource_added::<T>))` again.
 - **dev.rs** — `TakeScreenshotEvent` (BRP-triggerable) → `screenshot.png`
-  (gitignored); **`OffscreenShotEvent`** → a second camera rendering into an offscreen
+  (gitignored) or the event's own `path` (`brp shot <file>` hands over an
+  absolute one); **`OffscreenShotEvent`** → a second camera rendering into an offscreen
   texture (what that means for shots is in `CONTEXT.md`; details in
   `.claude/live-app-project.md`). One law this layer adds: bevy's fallback UI camera is
   the highest-order camera **targeting the primary window**

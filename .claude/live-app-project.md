@@ -185,11 +185,38 @@ smoothed instead of stretching frames.
 
 `brp pause` / `resume` still work directly (the governor only writes speed).
 
+The steady-state `sim/*_ms` values are **not a resource** — they print once a second
+into the launch log's diagnostics block (`grep 'sim/' $f`), and a tick past the spike
+threshold dissects every segment in place (`tick spike dissect` / `tick spike segments`
+lines). `res get SimLoad` is the tick total at any moment, no log needed.
+
+## Memory
+
+BRP sees entity counts, not process memory — memory is read from the OS, and the
+protocol is what makes the number mean anything:
+
+```bash
+$b pause                                  # right after the ready marker
+sleep 6                                   # GPU keeps uploading meshes seconds after Live
+vmmap --summary $($b alive | grep -oE 'pid [0-9]+' | cut -d' ' -f2) | grep 'Physical footprint'
+```
+
+- **dirty footprint, not RSS**: `ps` RSS counts pages the allocator has `MADV_FREE`d
+  and can hand back — the gap ran to 1.4 G on Paris. `vmmap --summary`'s
+  `Physical footprint` is what the kernel actually charges;
+- **pause + stabilize 5–6 s first**: the seconds after `Live` keep uploading meshes
+  (+1.3–1.6 G in bursts), and an unpaused sample swings ±1.4 G between identical
+  loads — the "low" outliers of a series are undersamples, not effects;
+- reference points: Tula ~1.8–1.9 G, Paris 2.2–2.3 G dirty.
+
 ## Screenshots
 
 ```bash
 $b cam 3284 2969        # frame the portal first (`TULA_PORTAL_POS`, city.rs)
 $b shot                 # raise window, trigger TakeScreenshotEvent, wait for the png
+$b shot /tmp/frame.png  # same capture written exactly there — the path travels
+                        #   inside the event (`path_field` in live-app.json), so the
+                        #   app's working directory does not matter
 ```
 
 `TakeScreenshotEvent` (also F12) is in `dev.rs`; the file is `screenshot.png` in the repo
@@ -415,6 +442,7 @@ $b speed 30; $b delta 30 Telemetry Human CorpseTag DemonChaseTag
                                             # "does it grow/drain/leak" in 30s flat
 $b run 300 --pause                          # 300 sim-secs, ≤60s wall, freeze after
 $b res get Telemetry                        # {"escaped": 0, "killed": 220}
+$b res get SimTick                          # a newtype prints its inner value bare: 1449
 $b texts pathfinding                        # "pathfinding: 259 in flight, 19268 queued, 0.16 ms avg\nanswers:   31.0/frame,   1.4% failed\nentities: 23272"
 $b with Portal --ids
 $b count HumanFleeTag DemonChaseTag DemonDevourTag MovableStateMovingTag
@@ -531,6 +559,10 @@ rather than hardcoding pixels, the layout moves.
 ```bash
 $b event RestartEvent                      # same as R: respawn population, reset Telemetry
 $b res set City . '"Paris"'                # full reload: Playing -> Loading -> Playing
+$b res set City '"Paris"'                  # the same write, path omitted
+$b ready $f --next                         # wait for THIS reload's warmup line — the log
+                                           #   already holds the previous world's, and a
+                                           #   plain `ready` returns instantly
 ```
 
 A city switch re-downloads the Overpass extract on a cold cache (slow, network) and

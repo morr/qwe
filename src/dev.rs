@@ -49,9 +49,19 @@ const WARMUP_FRAMES: u32 = 6;
 /// 16 — заведомо безопасный минимум, замером он не выбирался.
 const OFFSCREEN_MIN_SIDE: u32 = 16;
 
+/// Снимок окна (окно должно быть видимо — кадр берётся с его поверхности).
+/// Пустое событие кладёт файл в [`SCREENSHOT_PATH`] рабочего каталога
+/// приложения; `path` задаёт файл — `brp shot <файл>` передаёт туда
+/// абсолютный путь, иначе скрипт ждал файл у себя, а приложение писало в свой
+/// каталог (30 секунд вхолостую).
+// `reflect(Default)` обязателен: BRP собирает событие из **частичного**
+// JSON (`{"path": …}`), и недостающие поля берутся из `Default`
 #[derive(Event, Reflect, Debug, Default)]
-#[reflect(Event)]
-pub(crate) struct TakeScreenshotEvent;
+#[reflect(Event, Default)]
+pub(crate) struct TakeScreenshotEvent {
+    /// Куда положить файл; путь относительно рабочего каталога приложения.
+    pub path: Option<String>,
+}
 
 /// Закадровый снимок: кадр рисуется во внеэкранную текстуру и кладётся в файл,
 /// минуя окно. Все поля необязательны — пустое событие снимает `offscreen.png`
@@ -692,14 +702,18 @@ fn on_spawn_test_walker(event: On<SpawnTestWalkerEvent>, mut commands: Commands)
 }
 
 fn trigger_screenshot(mut commands: Commands) {
-    commands.trigger(TakeScreenshotEvent);
+    commands.trigger(TakeScreenshotEvent::default());
 }
 
-fn on_take_screenshot(_event: On<TakeScreenshotEvent>, mut commands: Commands) {
-    info!("saving screenshot to {SCREENSHOT_PATH}");
+fn on_take_screenshot(event: On<TakeScreenshotEvent>, mut commands: Commands) {
+    let path = event
+        .path
+        .clone()
+        .unwrap_or_else(|| SCREENSHOT_PATH.to_owned());
+    info!("saving screenshot to {path}");
     commands
         .spawn(Screenshot::primary_window())
-        .observe(save_to_disk(SCREENSHOT_PATH));
+        .observe(save_to_disk(path));
 }
 
 /// Своя камера во внеэкранную текстуру. Пост-обработка у неё та же, что у
