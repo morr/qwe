@@ -23,6 +23,14 @@ worse than no rule at all — and you already have the skill loaded, because tou
 area required loading it. Nothing enforces either tier automatically: no file was edited,
 so no hook can fire.
 
+**A decision that changes the project's global logic gets a row in `docs/decisions.md`,
+in the same change.** Gameplay shape, scale and speed targets, behavior contracts,
+cross-module architecture — anything the owner may later want to revisit, as opposed to
+a module's internal mechanics. A session working autonomously records its own such
+decisions there, marked as its own (`звено №N автономно`); revised decisions get a new
+row pointing at the old one, never a silent edit. The file is what answers «какие
+решения приняты?» — for the owner and for every link after a compaction.
+
 This file is the *how to work here*; `CONTEXT.md` is the *what this project is*.
 
 ## Skills

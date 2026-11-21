@@ -39,7 +39,11 @@ this file, the steer wins.
    fresh angle (see «Углы, взятые цепочкой» — never repeat one). One session = one
    menu item or a few small optimizations, not a marathon. A non-perf problem that is
    safe and small gets fixed; risky/large work is recorded in `docs/deepening-plan.md`
-   as deferred with a trigger, not done.
+   as deferred with a trigger, not done. A decision the link makes that changes the
+   project's **global logic** (gameplay shape, scale/speed targets, behavior
+   contracts, cross-module architecture) gets a row in `docs/decisions.md` in the
+   same commit — marked «звено №N автономно» unless the owner decided it in-session;
+   the owner may revisit any row, so record the rejected alternative and the why.
 5. **Work in a worktree** `.worktrees/<name>` inside the project dir. Seed the build
    dir with `tools/seed-worktree-target.sh .worktrees/<name>/target` (the argument is
    the build dir, not the worktree root); `rsync -a` `assets/osm` preserving mtime.
