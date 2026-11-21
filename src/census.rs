@@ -24,7 +24,9 @@
 use bevy::prelude::*;
 
 use crate::demon::{Demon, DemonChaseTag};
-use crate::human::{CorpseTag, Human, HumanFleeTag, HumanWanderTag, PopulationSize, SoulMote};
+use crate::human::{
+    CorpseTag, Human, HumanFleeTag, HumanWanderTag, PendingPopulation, PopulationSize, SoulMote,
+};
 use crate::loading::PlayPhase;
 use crate::movement::MovableStateMovingTag;
 use crate::telemetry::Telemetry;
@@ -98,16 +100,24 @@ pub(crate) fn count_census(
 /// Debug-проверка: в release ничего не стоит, в debug ловит рассинхрон
 /// переписи с телеметрией — человек, который ни жив, ни убит, ни спасся,
 /// означает дыру в учёте исходов.
+///
+/// Пока насос расселения не дошёл до конца ([`PendingPopulation`] на месте),
+/// недосселившиеся добавляются к живым: они ещё не существуют, но и не могут
+/// считаться исходом — иначе проверка падала бы на каждом кадре расселения.
 fn assert_population_invariant(
     census: Res<Census>,
     telemetry: Res<Telemetry>,
     population: Res<PopulationSize>,
+    pending: Option<Res<PendingPopulation>>,
 ) {
+    let unsettled = pending.map(|p| p.remaining()).unwrap_or(0);
     debug_assert_eq!(
-        census.humans + telemetry.killed + telemetry.escaped,
+        census.humans + unsettled + telemetry.killed + telemetry.escaped,
         population.0,
-        "перепись разошлась с телеметрией: живых {}, убитых {}, спасшихся {}, население {}",
+        "перепись разошлась с телеметрией: живых {}, не расселено {}, убитых {}, \
+         спасшихся {}, население {}",
         census.humans,
+        unsettled,
         telemetry.killed,
         telemetry.escaped,
         population.0

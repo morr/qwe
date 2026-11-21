@@ -50,13 +50,58 @@ pub fn spawn_humans(mut commands: Commands, population: PopulationSpawn) {
     population.spawn(&mut commands);
 }
 
+/// Партионный спавн: сколько пешек насос расселяет за один вызов.
+///
+/// Планка готовности Фазы 1 (`docs/population-x10-plan.md`) — расселение 200k
+/// без рамки длиннее ~50 мс; флеш спавна 20k стоил ~90 мс (запись 57), поэтому
+/// партия — половина от «население целиком». Крупнее — рамка расселения
+/// выходит за планку; мельче — расселение тянется лишние кадры прогрева,
+/// которому вдобавок маршрутизировать прилетающих.
+pub const SPAWN_BATCH: usize = 10_000;
+
+/// Недосселённое население — очередь насоса ([`PopulationSpawn::pump`]).
+///
+/// Вставляется [`PopulationSpawn::spawn`] вместо немедленного спавна; насос
+/// снимает ресурс, когда очередь исчерпана. Рестарт и переключение города
+/// идут через тот же заказ: деспаун сцены случается раньше, остаток очереди
+/// перезаписывается целиком.
+#[derive(Resource, Debug)]
+pub struct PendingPopulation {
+    count: usize,
+    cursor: usize,
+    /// Центры тайлов всех пешек. Считается на первом вызове насоса: размещение
+    /// (rejection-sampling) на порядок дешевле флеша сущностей, а единый поток
+    /// размещения жил и умирал внутри одного вызова — хранить генератор в
+    /// ресурсе между вызовами контракт детерминизма запрещает, поэтому позиции
+    /// всего населения готовы заранее и партия лишь спавнит по готовым.
+    placements: Option<Vec<Vec2>>,
+}
+
+impl PendingPopulation {
+    pub fn new(count: usize) -> Self {
+        Self {
+            count,
+            cursor: 0,
+            placements: None,
+        }
+    }
+
+    /// Сколько пешек ещё не расселено. Читается инвариантом переписи
+    /// (`census.rs`): пока насос не дошёл до конца, недосселившиеся — не дыра
+    /// в учёте исходов.
+    pub fn remaining(&self) -> usize {
+        self.count - self.cursor
+    }
+}
+
 /// Всё, чем расселяется население, одним `SystemParam`.
 ///
-/// Пятёрку ресурсов читают одинаково оба спавна — `spawn_humans`
-/// (`WorldInitSet::Spawn`) и `restart::on_restart`, — и держаться в шаг они
-/// обязаны: рестарт расселяет то же население, иначе сравнивать два прогона
-/// нечем. Врозь это держалось дисциплиной, а пятый ресурс (атлас силуэтов)
-/// вдобавок упёр `on_restart` в `clippy::too_many_arguments`.
+/// Пятёрку ресурсов читают одинаково все заказчики расселения — `spawn_humans`
+/// (`WorldInitSet::Spawn`), `restart::on_restart` и насос
+/// ([`pump_pending_population`]), — и держаться в шаг они обязаны: рестарт
+/// расселяет то же население, иначе сравнивать два прогона нечем. Врозь это
+/// держалось дисциплиной, а пятый ресурс (атлас силуэтов) вдобавок упёр
+/// `on_restart` в `clippy::too_many_arguments`.
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct PopulationSpawn<'w> {
     navmesh: Res<'w, ArcNavmesh>,
@@ -67,18 +112,58 @@ pub struct PopulationSpawn<'w> {
 }
 
 impl PopulationSpawn<'_> {
-    /// Расселить население по навмешу, каким он есть сейчас.
+    /// Заказать расселение населения по навмешу, каким он будет на первом
+    /// вызове насоса: вместо немедленного спавна вставляется
+    /// [`PendingPopulation`], и партиями по [`SPAWN_BATCH`] пешек его
+    /// вычитывает [`pump_pending_population`].
     pub fn spawn(&self, commands: &mut Commands) {
-        spawn_population(
+        commands.insert_resource(PendingPopulation::new(self.size.0));
+    }
+
+    /// Один вызов насоса: расселить до `batch` пешек из очереди.
+    /// Вернувшееся «true» — очередь исчерпана (или расселять нечего),
+    /// ресурс можно снимать.
+    pub fn pump(
+        &self,
+        commands: &mut Commands,
+        pending: &mut PendingPopulation,
+        batch: usize,
+    ) -> bool {
+        pump_batch(
             commands,
             &self.navmesh.read(),
-            &PopulationBirth {
-                spread: self.style.spread,
-                world_seed: self.seed.0,
-                count: self.size.0,
-                silhouettes: &self.silhouettes,
-            },
-        );
+            self.style.spread,
+            self.seed.0,
+            &self.silhouettes,
+            pending,
+            batch,
+        )
+    }
+}
+
+/// Насос расселения: до [`SPAWN_BATCH`] пешек за вызов, исчерпанную очередь
+/// снимает.
+///
+/// Зарегистрирован дважды, как и весь конвейер:
+///
+/// - **`FixedUpdate`, `SimPipeline::BothModes`, до `TickStage::Tick`** —
+///   партионность привязана к тику, не к кадру: сколько сущностей существует
+///   на данном тике, не зависит от fps, иначе реплей расходится на разном
+///   железе. Ребро к стадии держит точку синхронизации, на которой партии
+///   применяются до поведения этого же тика;
+/// - **`Update`, `SimPipeline::Live`** — живой прогон. Во время прогрева
+///   `FixedUpdate` стоит на паузе, а `poll_warmup` (`loading.rs`) ждёт заявок
+///   от пешек в кадре — население обязано существовать и подаваться по мере
+///   прилёта партий, пока мир стоит. Симуляции в прогреве нет, поэтому
+///   кадрозависимость спавна траекторию не меняет; после `Live` живая половина
+///   насоса продолжается здесь же — живой режим реплеем не заявлен.
+pub fn pump_pending_population(
+    mut commands: Commands,
+    mut pending: ResMut<PendingPopulation>,
+    population: PopulationSpawn,
+) {
+    if population.pump(&mut commands, &mut pending, SPAWN_BATCH) {
+        commands.remove_resource::<PendingPopulation>();
     }
 }
 
@@ -96,32 +181,29 @@ pub struct PopulationBirth<'a> {
     pub silhouettes: &'a Silhouettes,
 }
 
-/// Спавн населения; вызывается на старте и при рестарте сцены.
+/// Разместить всё население: по центру проходимого тайла на пешку.
 ///
-/// Два потока жребия, а не один: размещение идёт общим потоком `Population`
-/// (цикл отбора тянет переменное число выборок на человека, и это нормально
-/// внутри одного последовательного обхода), а всё личное — цвет, темп, курс —
-/// уже из потока самой пешки по её [`PawnId`]. Так внешность и повадки
-/// человека номер N не зависят от того, сколько раз отбор промахнулся по
-/// непроходимым тайлам у его соседей.
+/// Единый поток размещения (`RngDomain::Population`) — то самое исключение
+/// из правила «у каждой пешки свой поток» (`src/rng.rs`), и законно оно ровно
+/// пока обход — `for index in 0..count` внутри одного вызова этой функции:
+/// цикл отбора тянет переменное число выборок на человека, но порядок
+/// потребления — счётчик, а не обход запроса. Насос поэтому считает позиции
+/// **всего** населения на первом вызове (`PendingPopulation::placements`) —
+/// разрезание спавна на партии превратило бы иначе исключение в хранение
+/// генератора в ресурсе между вызовами, то есть ровно то, что контракт
+/// запрещает.
 ///
 /// Отбор ограничен сверху дважды: сетка без единого проходимого тайла
 /// отбрасывается целиком до цикла, а на человека отводится
 /// [`PLACEMENT_TRIES`] выборок, после чего тайл берётся сканом
 /// ([`Navmesh::passable_from`]). Без этого пустой или сплошь заблокированный
 /// навмеш — упавший OSM-экстракт, регрессия заливки, смена размера
-/// навтайла — вешал бы `OnEnter(AppState::Playing)` без единой строки в логе.
-pub fn spawn_population(
-    commands: &mut Commands,
+/// навтайла — вешал бы расселение без единой строки в логе.
+fn place_population(
     navmesh: &crate::navigation::Navmesh,
-    birth: &PopulationBirth,
-) {
-    let &PopulationBirth {
-        spread,
-        world_seed,
-        count,
-        silhouettes,
-    } = birth;
+    world_seed: u64,
+    count: usize,
+) -> Vec<Vec2> {
     let mut placement = stream(world_seed, RngDomain::Population, 0);
     // ни одного проходимого тайла — расселять некуда, и отбор ниже крутился
     // бы вечно; заодно это единственный случай, когда `grid_size` нулевой и
@@ -131,16 +213,14 @@ pub fn spawn_population(
             "population: navmesh {}x{} has no passable tile, {count} humans not placed",
             navmesh.grid_size.x, navmesh.grid_size.y
         );
-        return;
+        return Vec::new();
     }
     // сколько человек пришлось доставить сканом вместо жребия — одной
     // строкой после цикла, а не двадцатью тысячами строк внутри него
     let mut scanned = 0usize;
 
-    for index in 0..count {
-        let pawn_id = index as u32;
-        let mut rng = decision_stream(world_seed, RngDomain::Human, pawn_id, WanderIndex::SPAWN);
-
+    let mut placements = Vec::with_capacity(count);
+    for _ in 0..count {
         let mut candidate = IVec2::ZERO;
         let mut drawn = None;
         for _ in 0..PLACEMENT_TRIES {
@@ -165,45 +245,128 @@ pub fn spawn_population(
         // тайл взяли снапшотом навмеша — и в мир переводим его его же
         // `tile_center`: глобальный считает по атомику навтайла, что верно
         // только пока снапшот и атомик совпадают (см. `navigation/navmesh.rs`)
-        let position = navmesh.tile_center(tile);
-
-        // одежда — первые три броска потока; палитра в `look.rs`
-        let attire = roll_attire(&mut rng);
-        // без стартовой паузы: все идут с первого кадра. Залп из 20 000 целей
-        // разруливают гейт видимости диспетчера (мирные вне экрана путь не
-        // получают) и дешёвый HPA* — рассинхронизация тут только заставляла
-        // пешек в кадре стоять первые секунды
-        let pause = Timer::from_seconds(0.0, TimerMode::Once);
-        // жребий двусторонний: минус — человек медленнее базы, плюс — быстрее
-        let pace = Pace(rng.random_range(-1.0..=1.0));
-        let heading = WanderHeading(Vec2::from_angle(
-            rng.random_range(0.0..std::f32::consts::TAU),
-        ));
-
-        let (sprite, silhouette) = human_body(silhouettes, &attire);
-        commands.spawn((
-            // внешность — вложенным бандлом: плоский кортеж упёрся в предел
-            // пятнадцати элементов `Bundle`
-            (sprite, silhouette, attire),
-            Transform::from_translation(position.extend(unit_z(position.y))),
-            Human,
-            HumanWanderTag,
-            HumanFirstWanderTag,
-            Movable::new(pace.speed(HUMAN_WALK_SPEED, spread)),
-            pace,
-            WanderPause(pause),
-            heading,
-            PawnId(pawn_id),
-            // номер уникален только внутри вида, поэтому вид едет рядом с ним
-            Species::Human,
-            WanderIndex::ready(),
-            DespawnOnExit(AppState::Playing),
-            Name::new("human"),
-        ));
+        placements.push(navmesh.tile_center(tile));
     }
     if scanned > 0 {
         warn!(
             "population: {scanned} of {count} humans placed by grid scan — navmesh is nearly fully blocked"
+        );
+    }
+    placements
+}
+
+/// Одна пешка: личный жребий — одежда, темп, курс — из её собственного потока
+/// по [`PawnId`], затем бандл. Позицию приносит размещение
+/// ([`place_population`]); партионность спавна на личный жребий влиять не
+/// может — поток выводится из номера пешки, а не из места в очереди.
+///
+/// Одежда — первые три броска потока; палитра в `look.rs`. Без стартовой
+/// паузы: все идут с первого кадра. Залп целей разруливают гейт видимости
+/// диспетчера (мирные вне экрана путь не получают) и дешёвый HPA* —
+/// рассинхронизация тут только заставляла пешек в кадре стоять первые секунды.
+fn spawn_human(
+    commands: &mut Commands,
+    spread: f32,
+    world_seed: u64,
+    silhouettes: &Silhouettes,
+    pawn_id: u32,
+    position: Vec2,
+) {
+    let mut rng = decision_stream(world_seed, RngDomain::Human, pawn_id, WanderIndex::SPAWN);
+    let attire = roll_attire(&mut rng);
+    let pause = Timer::from_seconds(0.0, TimerMode::Once);
+    // жребий двусторонний: минус — человек медленнее базы, плюс — быстрее
+    let pace = Pace(rng.random_range(-1.0..=1.0));
+    let heading = WanderHeading(Vec2::from_angle(
+        rng.random_range(0.0..std::f32::consts::TAU),
+    ));
+
+    let (sprite, silhouette) = human_body(silhouettes, &attire);
+    commands.spawn((
+        // внешность — вложенным бандлом: плоский кортеж упёрся в предел
+        // пятнадцати элементов `Bundle`
+        (sprite, silhouette, attire),
+        Transform::from_translation(position.extend(unit_z(position.y))),
+        Human,
+        HumanWanderTag,
+        HumanFirstWanderTag,
+        Movable::new(pace.speed(HUMAN_WALK_SPEED, spread)),
+        pace,
+        WanderPause(pause),
+        heading,
+        PawnId(pawn_id),
+        // номер уникален только внутри вида, поэтому вид едет рядом с ним
+        Species::Human,
+        WanderIndex::ready(),
+        DespawnOnExit(AppState::Playing),
+        Name::new("human"),
+    ));
+}
+
+/// Тело одного вызова насоса, отрезанное от ECS-ресурсов: его зовёт и
+/// [`PopulationSpawn::pump`], и пин батчинга в тестах — голыми значениями.
+/// Вернувшееся «true» — очередь исчерпана (или расселять нечего).
+fn pump_batch(
+    commands: &mut Commands,
+    navmesh: &crate::navigation::Navmesh,
+    spread: f32,
+    world_seed: u64,
+    silhouettes: &Silhouettes,
+    pending: &mut PendingPopulation,
+    batch: usize,
+) -> bool {
+    if pending.cursor >= pending.count {
+        return true;
+    }
+    let placements = pending
+        .placements
+        .get_or_insert_with(|| place_population(navmesh, world_seed, pending.count));
+    // пустой навмеш: `place_population` уже отлогировал ошибку; расселённых
+    // нет ни одного — ровно как вёл себя немедленный спавн
+    if placements.is_empty() {
+        return true;
+    }
+    let from = pending.cursor;
+    let to = (from + batch).min(pending.count);
+    for (offset, &position) in placements[from..to].iter().enumerate() {
+        spawn_human(
+            commands,
+            spread,
+            world_seed,
+            silhouettes,
+            (from + offset) as u32,
+            position,
+        );
+    }
+    pending.cursor = to;
+    pending.cursor >= pending.count
+}
+
+/// Спавн населения целиком одной командой; вызывается стендами и тестами.
+/// Игра расселяется через насос ([`PopulationSpawn::spawn`] +
+/// [`pump_pending_population`]) — там партия лишь спавнит пешек по заранее
+/// готовым позициям, так что батчинг на жребий повлиять не может (пин
+/// «партиями == не партиями» стоит рядом в тестах).
+///
+/// Два потока жребия, а не один: размещение идёт общим потоком `Population`
+/// (см. [`place_population`]), а всё личное — цвет, темп, курс — из потока
+/// самой пешки по её [`PawnId`]. Так внешность и повадки человека номер N не
+/// зависят от того, сколько раз отбор промахнулся по непроходимым тайлам у
+/// его соседей.
+pub fn spawn_population(
+    commands: &mut Commands,
+    navmesh: &crate::navigation::Navmesh,
+    birth: &PopulationBirth,
+) {
+    let placements = place_population(navmesh, birth.world_seed, birth.count);
+    for (pawn_id, &position) in placements.iter().enumerate() {
+        spawn_human(
+            commands,
+            birth.spread,
+            birth.world_seed,
+            birth.silhouettes,
+            pawn_id as u32,
+            position,
         );
     }
 }
@@ -611,26 +774,17 @@ mod tests {
         assert!(!in_recoil_cone(Vec2::from_angle(RECOIL_CONE), Vec2::X));
     }
 
-    /// Отпечаток населения: всё, что разыгрывается при спавне, в битах — на
-    /// float'ах сравнивать нечего, нужна побайтовая одинаковость.
-    fn population_fingerprint(seed: u64) -> Vec<(u32, u32, u32, u32, u32, u32)> {
-        let mut world = World::new();
-        let navmesh = crate::navigation::Navmesh::default();
-        spawn_population(
-            &mut world.commands(),
-            &navmesh,
-            &PopulationBirth {
-                spread: 0.3,
-                world_seed: seed,
-                count: crate::settings::HUMAN_COUNT,
-                silhouettes: &Silhouettes::default(),
-            },
-        );
-        world.flush();
+    /// Население в пинах спавна. Дефолт мира стал 200 000 (план ×10,
+    /// docs/population-x10-plan.md), а пин проверяет функцию от seed, не
+    /// масштаб, — 5 000 держат тест быстрым и во флеше, и в flush.
+    const PIN_POPULATION: usize = 5_000;
 
+    /// Строки отпечатка населения: всё, что разыгрывается при спавне, в битах —
+    /// на float'ах сравнивать нечего, нужна побайтовая одинаковость.
+    fn spawn_fingerprint(world: &mut World) -> Vec<(u32, u32, u32, u32, u32, u32)> {
         let mut query = world.query::<(&PawnId, &Transform, &Pace, &WanderHeading)>();
         let mut rows: Vec<_> = query
-            .iter(&world)
+            .iter(world)
             .map(|(pawn_id, transform, pace, heading)| {
                 (
                     pawn_id.0,
@@ -644,6 +798,47 @@ mod tests {
             .collect();
         rows.sort_unstable();
         rows
+    }
+
+    /// Отпечаток населения, расселённого одним флешем (`spawn_population`).
+    fn population_fingerprint(seed: u64, count: usize) -> Vec<(u32, u32, u32, u32, u32, u32)> {
+        let mut world = World::new();
+        let navmesh = crate::navigation::Navmesh::default();
+        spawn_population(
+            &mut world.commands(),
+            &navmesh,
+            &PopulationBirth {
+                spread: 0.3,
+                world_seed: seed,
+                count,
+                silhouettes: &Silhouettes::default(),
+            },
+        );
+        world.flush();
+        spawn_fingerprint(&mut world)
+    }
+
+    /// Отпечаток населения, расселённого насосом (`pump_batch`) партиями по
+    /// `batch` — до исчерпания очереди.
+    fn pumped_population_fingerprint(
+        seed: u64,
+        count: usize,
+        batch: usize,
+    ) -> Vec<(u32, u32, u32, u32, u32, u32)> {
+        let mut world = World::new();
+        let navmesh = crate::navigation::Navmesh::default();
+        let mut pending = PendingPopulation::new(count);
+        while !pump_batch(
+            &mut world.commands(),
+            &navmesh,
+            0.3,
+            seed,
+            &Silhouettes::default(),
+            &mut pending,
+            batch,
+        ) {}
+        world.flush();
+        spawn_fingerprint(&mut world)
     }
 
     /// Навмеш, где проходимы ровно перечисленные дырки в сплошной застройке.
@@ -660,13 +855,33 @@ mod tests {
     /// если спавн разъезжается, повторять симуляцию уже нечему.
     #[test]
     fn population_is_a_function_of_the_seed() {
-        assert_eq!(population_fingerprint(7), population_fingerprint(7));
+        assert_eq!(
+            population_fingerprint(7, PIN_POPULATION),
+            population_fingerprint(7, PIN_POPULATION)
+        );
     }
 
     /// ...и при этом seed что-то значит: разные seed дают разное население.
     #[test]
     fn different_seeds_give_different_populations() {
-        assert_ne!(population_fingerprint(7), population_fingerprint(8));
+        assert_ne!(
+            population_fingerprint(7, PIN_POPULATION),
+            population_fingerprint(8, PIN_POPULATION)
+        );
+    }
+
+    /// Пин Фазы 1 плана ×10 («партиями == не партиями», бит-в-бит): насос
+    /// режет `0..count` на партии, но личный жребий выводится из номера пешки,
+    /// а позиции считаются разом до всякого разрезания — батчингу нечем
+    /// сместить хоть один бросок. Одна партия (batch = count), десять (50) и
+    /// немедленный спавн обязаны дать один и тот же отпечаток.
+    #[test]
+    fn batching_does_not_change_the_population() {
+        let whole = population_fingerprint(7, 500);
+        let one_batch = pumped_population_fingerprint(7, 500, 500);
+        let ten_batches = pumped_population_fingerprint(7, 500, 50);
+        assert_eq!(whole, one_batch, "партия «всё сразу» != немедленный спавн");
+        assert_eq!(whole, ten_batches, "десять партий != немедленный спавн");
     }
 
     /// Пустой навмеш не спавнит никого: приложение остаётся живым с

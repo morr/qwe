@@ -54,7 +54,8 @@ pub fn in_world(state: Option<Res<State<AppState>>>) -> bool {
 
 /// Подсостояние `Playing`: `Warmup` — мир уже живёт, но экран загрузки ещё
 /// висит, пока пешкам в кадре не просчитаны пути. Иначе первую секунду сцена
-/// стоит колом: 20 000 заявок на поиск пути подаются в один кадр.
+/// стоит колом: залп заявок на поиск пути подаётся, пока мир не поехал, —
+/// с насосом расселения (`human/systems.rs`) по мере прилёта партий.
 #[derive(SubStates, Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 #[source(AppState = AppState::Playing)]
 pub enum PlayPhase {

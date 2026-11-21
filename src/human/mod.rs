@@ -18,7 +18,7 @@ pub use self::components::{
 // `blood_pool` / `blood_spatter` / `spread_blood` наружу — их берёт витрина
 // крови (`examples/demos/blood_gallery`), чтобы показывать те же сущности, что
 // игра вешает на труп, а не свою копию; `HumanPlugin` целиком ей не подходит
-// (его `spawn_humans` расселил бы 20 000 пешек)
+// (его `spawn_humans` заказал бы ей расселение всего населения)
 pub use self::corpse::{
     BloodLook, BloodPool, BloodSpatter, BloodSpread, CORPSE_SPAN, CorpsePose, blood_look,
     blood_pool, blood_spatter, corpse_pose, spread_blood, to_corpse,
@@ -29,9 +29,11 @@ pub use self::soul::{SoulMote, release_soul};
 // `pick_wander_targets` наружу — им пользуется демо-сцена расталкивания
 // (`examples/demos/crowd_demo.rs`), чтобы гонять толпу настоящим блужданием, а
 // не своей выдумкой; `HumanPlugin` целиком ей не подходит (его `spawn_humans`
-// расселил бы 20 000 пешек по всей карте)
-pub use self::systems::{PopulationBirth, PopulationSpawn, pick_wander_targets, spawn_population};
-use self::systems::{spawn_humans, spread_changed, sync_human_pace};
+// расселил бы всё население по всей карте)
+pub use self::systems::{
+    PendingPopulation, PopulationBirth, PopulationSpawn, pick_wander_targets, spawn_population,
+};
+use self::systems::{pump_pending_population, spawn_humans, spread_changed, sync_human_pace};
 use crate::determinism::{DeterminismPlugin, SimPipeline};
 use crate::loading::{AppState, WorldInitSet};
 use crate::prefs::PrefsExt;
@@ -75,6 +77,25 @@ impl Plugin for HumanPlugin {
             .add_systems(
                 OnEnter(AppState::Playing),
                 spawn_humans.in_set(WorldInitSet::Spawn),
+            )
+            // Насос расселения, обе ветки — см. док коммент системы: тиковая
+            // (до `TickStage::Tick`) держит реплей, кадровая (в `Update`) —
+            // прогрев, на паузе которого `FixedUpdate` не идёт вовсе.
+            // `run_if` обязателен вдвойне: без ресурса насос падает на
+            // валидации `ResMut`, а после исчерпания перестаёт запускаться
+            .add_systems(
+                Update,
+                pump_pending_population
+                    .in_set(SimPipeline::Live)
+                    .run_if(resource_exists::<PendingPopulation>)
+                    .before(pick_wander_targets),
+            )
+            .add_systems(
+                FixedUpdate,
+                pump_pending_population
+                    .in_set(SimPipeline::BothModes)
+                    .run_if(resource_exists::<PendingPopulation>)
+                    .before(TickStage::Tick),
             )
             // Выбор целей и разброс скоростей зарегистрированы дважды, и это
             // осознанно: одна и та же работа в двух ветках конвейера
@@ -234,8 +255,9 @@ mod tests {
 
         assert_eq!(
             systems_in_set(&mut app, FixedUpdate, SimPipeline::BothModes),
-            4,
-            "цепочка panic/flee/escape и rise_souls обязаны состоять в SimPipeline::BothModes"
+            5,
+            "цепочка panic/flee/escape, rise_souls и насос расселения обязаны \
+             состоять в SimPipeline::BothModes"
         );
     }
 }
