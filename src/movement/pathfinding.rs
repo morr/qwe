@@ -41,7 +41,11 @@ mod priority {
 /// не берёт, нельзя никому — прогрев (`loading.rs::poll_warmup`) держал бы
 /// экран загрузки до таймаута с неподвижным счётчиком — заявки, которых
 /// диспетчер не берёт, не закроются.
-fn wanderers_dispatched_at_zoom(camera_scale: f32) -> bool {
+///
+/// Просит её и камерный LOD людей (`human/lod.rs`): на зуме, где диспетчер не
+/// берёт мирных, полный AI у камеры никому не нужен — весь мир живёт дальним
+/// срезом. Единственная копия правила, LOD лишь спрашивает.
+pub(crate) fn wanderers_dispatched_at_zoom(camera_scale: f32) -> bool {
     camera_scale < crate::settings::WANDER_DISPATCH_MAX_ZOOM
 }
 

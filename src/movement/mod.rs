@@ -29,6 +29,9 @@ pub use self::pathfinding::{
     QueuedWander, dispatch_pathfinding_requests, on_pathfinding_request_added,
     on_pathfinding_request_removed, on_urgent_path_added, on_urgent_path_removed, waits_for_camera,
 };
+// зум-половина правила видимости — только для внутренних читателей (LOD
+// людей), заявлять её публичным API движение не готово
+pub(crate) use self::pathfinding::wanderers_dispatched_at_zoom;
 pub use self::separation::{
     SEPARATION_LEFT_SHARE, SEPARATION_LEFT_SHARE_MAX, SEPARATION_LEFT_SHARE_MIN,
     SEPARATION_LEFT_SHARE_STEP, SEPARATION_PASS_SQUEEZE, SEPARATION_PASS_SQUEEZE_MAX,
@@ -36,6 +39,7 @@ pub use self::separation::{
     SeparationHolds, SeparationLab, SeparationStats, SeparationSteer, SeparationStyle,
     demon_radius, separation_allowed_by_mode, separation_cell, separation_runs,
 };
+pub use self::step::{StepModifiers, StepOutcome, StepTuning, step_along_path};
 pub use self::systems::{DrawMovePaths, MOVEPATH_ARROW_TIP, MOVEPATH_COLOR};
 pub use self::wander::{
     assert_ready_to_pick, clamp_to_map, heading_towards, point_in_cone, request_wander_path,

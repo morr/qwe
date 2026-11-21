@@ -4,6 +4,7 @@ use derive_more::{Deref, DerefMut};
 
 use crate::camera::Viewport;
 use crate::diagnostics::{SIM_MOVE_MS, SimMeasure};
+use crate::human::FarTag;
 use crate::map::z::unit_z;
 use crate::movement::components::{
     BodyScale, Movable, MovableStateMovingTag, PawnEdit, PreviousSimPosition, SimPosition,
@@ -48,7 +49,9 @@ pub fn move_moving_entities(
             // больше не спрашивает
             Has<crate::human::Human>,
         ),
-        With<MovableStateMovingTag>,
+        // дальняя пешка шагает своим срезом (`human/lod.rs`) с dt = K тиков;
+        // шаг тика её не трогает
+        (With<MovableStateMovingTag>, Without<FarTag>),
     >,
     time: Res<Time>,
 ) {
@@ -211,10 +214,14 @@ pub fn polymesh_rebuilt(poly: Res<crate::navigation::PolyNavmesh>, mut seen: Loc
 
 /// Визуальная позиция: лерп между прошлым и текущим фиксированным шагом,
 /// плюс y-сортировка (z от y). Живёт в `AfterFixedMainLoop`.
+///
+/// Дальние (`FarTag`) не интерполируются: спрайт скрыт, а на promote
+/// `Transform` ставится из `SimPosition` одним движением — устаревший
+/// `PreviousSimPosition` не должен тянуть пешку через полкадра.
 pub fn interpolate_movable_transforms(
     time: Res<Time<Virtual>>,
     fixed_time: Res<Time<Fixed>>,
-    mut query: Query<(&mut Transform, &SimPosition, &PreviousSimPosition)>,
+    mut query: Query<(&mut Transform, &SimPosition, &PreviousSimPosition), Without<FarTag>>,
 ) {
     // на паузе позиции не меняются и доля оверстепа стоит — лерп выдаёт те же
     // значения, что уже в трансформах, но платит за это проходом по всем

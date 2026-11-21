@@ -5,6 +5,7 @@ use crate::human::components::{
     Human, HumanFirstWanderTag, HumanFleeTag, HumanStyle, HumanWanderTag, Pace, PanicRecoil,
     PopulationSize, WanderHeading, WanderPause,
 };
+use crate::human::lod::FarTag;
 use crate::human::look::{human_body, roll_attire};
 use crate::loading::AppState;
 use crate::map::osm::{MapData, PolyArea};
@@ -41,8 +42,10 @@ const PLACEMENT_TRIES: usize = 100_000;
 
 /// Лежит ли направление в запретном конусе вокруг `ban`. Косинус растёт с
 /// уменьшением угла, поэтому «внутри» — это строгое `>`: точно на границе
-/// конуса цель разрешена.
-fn in_recoil_cone(direction: Vec2, ban: Vec2) -> bool {
+/// конуса цель разрешена. Дальнее блуждание спрашивает ту же проверку
+/// (`human/lod.rs`): у дальних нет «дел» у зданий, и запретную прогулку
+/// отсеивает единственная ветка, что у них есть.
+pub(crate) fn in_recoil_cone(direction: Vec2, ban: Vec2) -> bool {
     direction.dot(ban) > RECOIL_CONE.cos()
 }
 
@@ -536,7 +539,10 @@ fn choose_target(
 ///
 /// Нулевая пауза срабатывает сразу: `Timer` в `Once` считает себя истёкшим при
 /// первом же `tick`, если `elapsed >= duration`.
-fn roll_wander_pause(rng: &mut impl RngExt) -> std::time::Duration {
+///
+/// Дальнее блуждание (`human/lod.rs`) заряжает ту же паузу тем же броском —
+/// «личность» пешки не зависит от яруса.
+pub(crate) fn roll_wander_pause(rng: &mut impl RngExt) -> std::time::Duration {
     if rng.random_range(0.0..1.0) >= HUMAN_WANDER_PAUSE_SHARE {
         return std::time::Duration::ZERO;
     }
@@ -588,6 +594,10 @@ pub fn pick_wander_targets(
             // ставят его переходы `Movable`, тело цикла только стережёт этот
             // контракт под debug
             With<NeedsWanderTarget>,
+            // дальние выбирают цель своим срезом (`human/lod.rs`) — без
+            // заявки на поиск; под тумблером детерминизма `FarTag` не
+            // существует, фильтр никого не режет
+            Without<FarTag>,
         ),
     >,
 ) {

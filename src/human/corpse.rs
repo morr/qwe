@@ -325,6 +325,10 @@ pub fn spread_blood(
 /// цвет тела.
 pub fn to_corpse(commands: &mut Commands, silhouettes: &Silhouettes, entity: Entity) {
     crate::movement::strip_movement(commands, entity);
+    // дальняя пешка умирает видимой: снимаем ярусный набор (маркеры среза
+    // никто, кроме promote, не снимет) и возвращаем спрайт — свежий труп
+    // рисуется как всегда, запекание — Фаза 3 плана ×10
+    super::lod::remove_far(commands, entity);
     let pose = corpse_pose(entity);
     let blood = blood_look(entity);
     commands
@@ -337,10 +341,14 @@ pub fn to_corpse(commands: &mut Commands, silhouettes: &Silhouettes, entity: Ent
             WanderPause,
             FleeRepath,
             PanicRecoil,
+            // выдержка demote — людское состояние, трупу оно ни к чему
+            // (ярус и срез снял `remove_far` выше)
+            super::lod::LodDwell,
         )>()
         .insert((
             CorpseTag,
             Silhouette::new(Vec2::splat(CORPSE_SPAN), HUMAN_MIN_PX),
+            Visibility::Visible,
         ))
         // после `remove`: снятая паника вернула бы одежду поверх цвета тела
         .queue(move |mut body: EntityWorldMut| lay_down(&mut body, pose))
@@ -633,6 +641,10 @@ mod tests {
                 corpse.contains::<PreviousSimPosition>(),
             ),
             ("NeedsWanderTarget", corpse.contains::<NeedsWanderTarget>()),
+            // дальний ярус: труп убитого за кадром обязан вернуть видимый
+            // спрайт и не таскать маркеры, которые никто не снимет
+            ("LodDwell", corpse.contains::<crate::human::lod::LodDwell>()),
+            ("FarTag", corpse.contains::<crate::human::lod::FarTag>()),
         ] {
             assert!(!present, "на трупе остался {name}");
         }

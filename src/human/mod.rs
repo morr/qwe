@@ -2,6 +2,7 @@ mod behavior;
 mod components;
 mod corpse;
 mod decide;
+mod lod;
 mod look;
 mod soul;
 mod systems;
@@ -24,6 +25,10 @@ pub use self::corpse::{
     blood_pool, blood_spatter, corpse_pose, spread_blood, to_corpse,
 };
 use self::look::{on_calm_tint, on_panic_tint};
+// камерный LOD: `FarTag`/`FAR_SLICE_TICKS` наружу — их спрашивают поштучные
+// проходы движения (`interpolate`, шаг тика) и регистрация срезных систем
+pub use self::lod::{FAR_SLICE_TICKS, FarTag, LodDwell};
+use self::lod::{assign_lod_tiers, far_onset, far_slice};
 use self::soul::rise_souls;
 pub use self::soul::{SoulMote, release_soul};
 // `pick_wander_targets` наружу — им пользуется демо-сцена расталкивания
@@ -65,6 +70,8 @@ impl Plugin for HumanPlugin {
             .register_type::<BloodSpread>()
             .register_type::<SoulMote>()
             .register_type::<PendingPopulation>()
+            .register_type::<LodDwell>()
+            .register_type::<FarTag>()
             .register_pref::<HumanStyle>()
             .init_resource::<PopulationSize>()
             // атлас силуэтов собирает `SilhouettePlugin` (в игре); без него
@@ -139,6 +146,60 @@ impl Plugin for HumanPlugin {
                     .chain()
                     .in_set(TickStage::HumanBehavior),
             )
+            // Дальний конвейер (onset + срезы) — отдельно от ближних, но с
+            // полным порядком: расписание этого проекта не оставляет
+            // конфликтующих систем без порядка («кто первый» у исполнителя —
+            // скрытое состояние; пин в tests ниже). Общий `chain` из дюжины
+            // систем ставил auto-sync-пойнт между каждой парой — до девяти
+            // применений буферов за тик; `chain_ignore_deferred` даёт тот же
+            // порядок без пойнтов: конфликт доступов и так сериализует
+            // копии. Единственный sync-пойнт — после `far_onset` (обычный
+            // `chain` наружной пары): срез обязан видеть вставленный этим
+            // тиком `FleeRepath` и убегает тем же тиком, зеркально паре
+            // `panic` → `flee` ближних. `.after(escape)` — порядок против
+            // ближней цепочки, sync-пойнта не ставит: множества пешек
+            // непересекающиеся. Только `SimPipeline::Live`: под тумблером
+            // детерминизма дальних не существует вовсе — реплей идёт полным
+            // AI (план ×10, решение владельца).
+            .add_systems(
+                FixedUpdate,
+                (
+                    // onset паники дальних — инвертированный сбор (демоны ×
+                    // соседи), зеркально `panic`; только `Live` — см. lod.rs
+                    far_onset,
+                    (
+                        far_slice::<0>.run_if(|tick: Res<crate::determinism::SimTick>| {
+                            tick.0.is_multiple_of(FAR_SLICE_TICKS)
+                        }),
+                        far_slice::<1>.run_if(|tick: Res<crate::determinism::SimTick>| {
+                            tick.0 % FAR_SLICE_TICKS == 1
+                        }),
+                        far_slice::<2>.run_if(|tick: Res<crate::determinism::SimTick>| {
+                            tick.0 % FAR_SLICE_TICKS == 2
+                        }),
+                        far_slice::<3>.run_if(|tick: Res<crate::determinism::SimTick>| {
+                            tick.0 % FAR_SLICE_TICKS == 3
+                        }),
+                        far_slice::<4>.run_if(|tick: Res<crate::determinism::SimTick>| {
+                            tick.0 % FAR_SLICE_TICKS == 4
+                        }),
+                        far_slice::<5>.run_if(|tick: Res<crate::determinism::SimTick>| {
+                            tick.0 % FAR_SLICE_TICKS == 5
+                        }),
+                        far_slice::<6>.run_if(|tick: Res<crate::determinism::SimTick>| {
+                            tick.0 % FAR_SLICE_TICKS == 6
+                        }),
+                        far_slice::<7>.run_if(|tick: Res<crate::determinism::SimTick>| {
+                            tick.0 % FAR_SLICE_TICKS == 7
+                        }),
+                    )
+                        .chain_ignore_deferred(),
+                )
+                    .chain()
+                    .after(escape)
+                    .in_set(TickStage::HumanBehavior)
+                    .in_set(SimPipeline::Live),
+            )
             // кровь растекается в кадре, а не на тике: это косметика, тика ей
             // не нужно, а роста хочется плавного. `BothModes` — потому что
             // трупы есть в обоих режимах, и только множество приносит гейт на
@@ -153,6 +214,12 @@ impl Plugin for HumanPlugin {
             .add_systems(
                 Update,
                 (
+                    // назначение ярусов — первым в кадре: свежепродвинутый в
+                    // кадр обязан успеть подать заявку тем же кадром, иначе
+                    // прогрев ждёт его лишний кадр. `SimPipeline::Live`:
+                    // расписание дальних — свойство живого вида, реплей ярус
+                    // не знает
+                    assign_lod_tiers,
                     pick_wander_targets,
                     // ползунок разброса уже вышедшим людям — только на смену
                     // самого разброса: `HumanStyle` несёт ещё и радиус тела,

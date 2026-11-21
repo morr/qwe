@@ -25,8 +25,9 @@ use crate::telemetry::Telemetry;
 /// в `panic` идёт из этой константы, а док-приписки «раз в 0.7–1.2 с»
 /// (`behavior.rs`, `movement/destination.rs`) и «раз в 45–77 тиков»
 /// (`human/decide.rs`, при 64 Гц) — её производные. Меняешь константу —
-/// проверь все три.
-const FLEE_REPATH_PERIOD: std::ops::Range<f32> = 0.7..1.2;
+/// проверь все три. Дальнее бегство (`human/lod.rs`) бросает период из той
+/// же константы — той же должна остаться и «личность» паникующего.
+pub(crate) const FLEE_REPATH_PERIOD: std::ops::Range<f32> = 0.7..1.2;
 
 /// Wander → Flee: демон в радиусе паники.
 ///
@@ -34,6 +35,10 @@ const FLEE_REPATH_PERIOD: std::ops::Range<f32> = 0.7..1.2;
 /// демонов», а «каждый из ~100 демонов собирает соседей по сетке людей».
 /// Стоимость пропорциональна толпе возле демонов, а не населению карты —
 /// и не меняется, сколько бы людей мирно ни гуляло на другом краю города.
+///
+/// Дальние (`Without<FarTag>`) в сбор не попадают: в очаге орды сбор паники
+/// ограничен ближним набором, дальние замечают демонов на своём срезе
+/// (`human/lod.rs`).
 #[allow(clippy::too_many_arguments)]
 pub fn panic(
     mut commands: Commands,
@@ -41,7 +46,14 @@ pub fn panic(
     humans: Res<SpatialGrid<Human>>,
     style: Res<HumanStyle>,
     demons: Query<&SimPosition, With<Demon>>,
-    wanderers: Query<&SimPosition, (With<Human>, With<HumanWanderTag>)>,
+    wanderers: Query<
+        &SimPosition,
+        (
+            With<Human>,
+            With<HumanWanderTag>,
+            Without<crate::human::lod::FarTag>,
+        ),
+    >,
     seed: Res<crate::rng::WorldSeed>,
     mut movables: Query<(&mut Movable, &Pace, &PawnId, &mut WanderIndex)>,
 ) {
@@ -153,7 +165,13 @@ pub fn flee(
             &PawnId,
             &mut WanderIndex,
         ),
-        (With<Human>, With<HumanFleeTag>),
+        // дальний беглец бежит своим срезом (`human/lod.rs`): без заявки,
+        // путь-прямой; под тумблером детерминизма фильтр никого не режет
+        (
+            With<Human>,
+            With<HumanFleeTag>,
+            Without<crate::human::lod::FarTag>,
+        ),
     >,
 ) {
     let _measure = SimMeasure::new(&mut diagnostics, &SIM_FLEE_MS);
@@ -263,11 +281,21 @@ pub fn flee(
 }
 
 /// Паникующий пересёк границу карты — «спасся», despawn [Q12].
+///
+/// Дальние спасаются на своём срезе (`human/lod.rs`) — той же проверкой и в
+/// ту же телеметрию: инвариант `escaped` не различает ярусов.
 pub fn escape(
     mut commands: Commands,
     mut diagnostics: bevy::diagnostic::Diagnostics,
     mut telemetry: ResMut<Telemetry>,
-    query: Query<(Entity, &SimPosition), (With<Human>, With<HumanFleeTag>)>,
+    query: Query<
+        (Entity, &SimPosition),
+        (
+            With<Human>,
+            With<HumanFleeTag>,
+            Without<crate::human::lod::FarTag>,
+        ),
+    >,
 ) {
     let _measure = SimMeasure::new(&mut diagnostics, &SIM_ESCAPE_MS);
     for (entity, sim_position) in &query {
