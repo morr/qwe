@@ -97,11 +97,15 @@ Each rejected alternative has bitten:
 stream must advance on exactly the ticks it advanced on before, i.e. only on the pawns that
 actually took a decision this tick (see the `species-behavior` skill).
 
-**Where the stream actually advances** — six `WanderIndex::next` sites, and not all of them
+**Where the stream actually advances** — seven `WanderIndex::next` sites, and not all of them
 are a wander decision: `human/systems.rs::pick_wander_targets` (target),
 `human/behavior.rs::panic` (flee repath period), `human/behavior.rs::flee` (flee step, and
 the wander pause on the calm-down rung), `demon/systems.rs::pick_wander_targets` (target),
-and **`demon/behavior.rs::on_demon_caught_human` — an observer**: a kill costs the killer
+**`human/lod.rs::far_slice` — the far tiers' slice system** (stroll target + wander pause,
+flee-repath period at the panic onset, flee step and calm-down pause — Live-only, so it
+does not run in a replay, but its rolls mirror the near sites so a pawn's personality does
+not depend on its tier), and
+**`demon/behavior.rs::on_demon_caught_human` — an observer**: a kill costs the killer
 one decision number, drawn for the devour pause.
 
 That observer is still "on a tick": it is triggered only from `chase`
@@ -162,6 +166,7 @@ RNG work above is unconditional.
 | navigation backend | re-taken every frame | frozen for the run |
 | northstar hierarchy build | started after the warmup (`OnEnter(PlayPhase::Live)`) | started before it (`OnEnter(PlayPhase::Warmup)`) |
 | pawn separation | on (polymesh, on-screen) | off — the Nav tab's `Separation` row reads `off`, dimmed and unclickable, rather than a toggle that flips a resource nothing reads |
+| camera LOD (`human/lod.rs`) | far pawns live on slices (`FarTag`) | **does not exist** — `FarTag` is never inserted, the run keeps full AI without a camera (pinned by `lod::tests::no_far_tag_appears_in_a_deterministic_run`) |
 
 **Only the humans' picking moves.** `demon::systems::pick_wander_targets` is registered once,
 in `FixedUpdate` inside `TickStage::DemonBehavior`, and runs there in **both** modes

@@ -241,6 +241,43 @@ never-a-stroll rule and the no-buildings exception are `CONTEXT.md`'s. What live
 - On the no-buildings fallback stroll the cone is tested **after** `clamp_to_map`, which
   turns the direction around at the map edge.
 
+### Camera LOD (far tiers and slices)
+
+`human/lod.rs` — the ×10 plan's Phase 2. A pawn outside the camera lives cheap; the tier
+assignment and the far behaviour are **`SimPipeline::Live` only** (under the determinism
+toggle `FarTag` is never inserted — pinned by
+`lod::tests::no_far_tag_appears_in_a_deterministic_run`).
+
+- **`FarTag` + `FarSlice<0..7>`** — the tier marker and the slice marker (`PawnId % 8`,
+  `const`-generic because an archetypal filter is the only way a slice system avoids
+  walking all 200k). `LodDwell(u8)` is the demote hysteresis **as a value**
+  (`#[require]`d on `Human`, zero at spawn — the settlement wave goes far without
+  waiting — `LodDwell::FULL` after a promote). The sprite is `Visibility::Hidden`;
+  `to_corpse` strips the far set and restores a visible sprite.
+- **`assign_lod_tiers`** (`Update`, fires on camera movement like
+  `resize_silhouettes_on_zoom`, plus a catch-up mode while transitions exceed
+  `LOD_TRANSITION_BATCH` per pass): demote walks the near set (`Without<FarTag>`),
+  promote walks the **human grid** rectangle of the frame. The boundary rule is the one
+  copy of `waits_for_camera` at `VIEW_MARGIN` — at the city zoom (≥
+  `WANDER_DISPATCH_MAX_ZOOM`) Near empties on the first pass, no dwell. Demote cancels a
+  pending request (`to_idle`) and drops `UrgentPath`; promote mid-flee **restores**
+  `UrgentPath`, re-checks passability (a fleeing straight line owes nothing to the tile
+  underfoot) and lets the near `flee` file the real request next tick — no rolls are
+  spent on the transition, so a pawn's personality does not depend on its tier.
+- **`far_slice::<S>`** — eight registrations, `run_if(tick % 8 == S)`, one pass over its
+  own eighth: panic **onset** by `any_in_cells_around` on the demon grid (the near
+  `panic` skips far pawns by `Without<FarTag>`); wandering is **stroll only** (no
+  building errands) with `line_of_sight` gating the target — path `[target]`, no
+  request, no direct line → re-roll next slice; flight is the same pure `decide` with
+  the **same stream rolls in the same order** (repath period, flee step, calm-down
+  pause — timers tick slice-time `dt = 8 ticks`); the step is `step_along_path` with
+  `dt = 8 ticks` and no separation modifiers; escape at the border is checked on the
+  slice into the same telemetry. The per-pawn passes drop far pawns by
+  `Without<FarTag>`: `interpolate_movable_transforms`, `move_moving_entities`,
+  `pick_wander_targets`, `panic`, `flee`, `escape` (under the toggle the filters cut
+  nobody). On promote, `Transform` and `PreviousSimPosition` are both written from
+  `SimPosition` — the interpolation must not pull from a slice-stale past.
+
 ### Corpse
 
 The transition is **`human::to_corpse`**, one entry point, and it is where a corpse is

@@ -131,6 +131,10 @@ complete the per-system cut of the tick, and the `archetype census: N total` INF
 every 5 s tracks the archetype-space churn — behaviour waves fill the space with new
 component combinations, and the fill-up phase is what makes a fresh world's first
 minutes expensive (the `snap` dissect value spikes with it; frozen census = calm world).
+Since the camera LOD (plan ×10 Phase 2) the cut also carries `sim/far_ms` — the far
+slices' cost; one of the eight slice systems runs per tick, so the number is the price
+of an eighth of the population stepping `dt = 8 ticks` at once. `count FarTag` next to
+it says how big that eighth is.
 
 ## Ready markers in the log
 
@@ -403,7 +407,9 @@ Components / tags — `Human`, `Demon`, `Portal`, `Movable`, `SimPosition`,
 `DemonDevourTag`, `DemonHalo` (one per demon, a child entity), `BloodPool` (one per
 corpse, a child entity), `Silhouette`, `SoulMote`
 (kill sparks, alive ~1.4 sim-seconds each), `PawnId`, `WanderIndex`, `NeedsWanderTarget`,
-`RequestedAt`, `RetireAt`.
+`RequestedAt`, `RetireAt`, `FarTag` (the camera LOD's far tier — `count FarTag` is the
+far share of the population; the slice markers `FarSlice<N>` are not reflectable),
+`LodDwell` (the demote dwell, `u8`).
 
 Resources — `City`, `SimSpeed`, `Telemetry`, `Census` (the per-frame state
 counters — `res get Census` answers what a handful of `count` calls used to

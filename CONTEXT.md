@@ -1088,7 +1088,8 @@ Summary; the mechanism — **determinism skill** (seed derivation, the decision 
 - **Deterministic** (`determinism/mod.rs::Determinism`, panel toggle) — gates *scheduling*, not
   the dice. On: *human* target picking moves to `FixedUpdate` (the demons' already runs there
   in both modes), answers land on a fixed tick, the dispatcher stops looking at the camera,
-  the backend is frozen, separation is off. A run is
+  the backend is frozen, separation is off, **the camera LOD does not exist** (`FarTag` is
+  never inserted — the replay runs full AI without a camera). A run is
   deterministic or not from tick 0, so flipping it (like changing the seed) orders a restart
   via `RestartPending`, `to_portal: true`.
 - **SimPipeline** (`determinism/mod.rs`) — the toggle in the schedule: **three** system sets
@@ -1256,6 +1257,32 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   is what lets the **Speed spread** slider widen the ordering the crowd already rolled
   instead of re-dealing it. Ceiling 35 % is derived: above it the fastest humans outrun the
   slowest demon setting.
+- **Camera LOD** (`human/lod.rs`, ×10 plan Phase 2) — outside the camera a pawn lives
+  cheap: the tier marker **`FarTag`** plus a **slice** marker `FarSlice<0..7>`
+  (`PawnId % 8`), sprite hidden, no pathfinding requests. **`SimPipeline::Live` only**:
+  under the determinism toggle far pawns do not exist — the replay runs full AI (pinned by
+  `no_far_tag_appears_in_a_deterministic_run`). Tiers are assigned by `assign_lod_tiers`
+  (`Update`, on camera movement — the `resize_silhouettes_on_zoom` pattern), a budget of
+  `LOD_TRANSITION_BATCH` transitions per pass with a catch-up mode that runs every frame
+  while the settlement wave drains; **the boundary rule is one for the whole project** —
+  `waits_for_camera` at `VIEW_MARGIN`: at the city zoom (≥ 0.75) Near empties entirely on
+  the first pass, no dwell. `LodDwell` (a value, `#[require]`d on `Human`) is the demote
+  hysteresis at the frame edge: fresh pawns carry zero (the settlement wave goes far
+  without waiting), a promoted pawn carries `LodDwell::FULL` passes. Transitions carry the
+  seams: **promote mid-flee** restores `UrgentPath` and re-checks passability (a fleeing
+  straight line owes nothing to the tile underfoot) — the real flee request is filed by
+  `flee` on the next tick from the same stream rolls; **demote cancels a pending request**
+  (`to_idle`) and drops urgency. **Far slices** (`far_slice::<S>`, eight registrations,
+  `tick % 8 == S`): one pass over its own eighth per tick — panic onset by demon-cell
+  occupancy, the same pure `decide` for flight (same rolls: period, step, calm-down pause
+  — a pawn's personality does not depend on its tier), walking by a straight line
+  (`line_of_sight` → path `[target]`, no request; no direct line → re-roll next slice),
+  the step is `step_along_path` with `dt = 8 ticks`, escape at the border is checked on the
+  slice into the same telemetry. The per-pawn passes drop far pawns by filter —
+  `interpolate_movable_transforms`, `move_moving_entities`, `pick_wander_targets`, `panic`,
+  `flee`, `escape` are `Without<FarTag>` (under the determinism toggle the filters cut
+  nobody). `to_corpse` strips the far set and restores a visible sprite — a fresh corpse is
+  drawn as always.
 - **CorpseTag** — a killed human: behavior/movement components removed, the body drawn
   as a lying human figure at `Z_CORPSE` (the **corpse look**, see Look: pose, heading and
   mirror by `Entity` bits — cosmetics, not run state; **blood** under the chest, see
