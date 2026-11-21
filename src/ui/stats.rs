@@ -7,7 +7,8 @@
 //! рядом было нечем.
 //!
 //! Вкладка Sim — три секции: World (seed и детерминизм — свойства мира целиком),
-//! Demon (`DemonStyle`: кап, интервал спавна, скорость и надбавка на бросок) и
+//! Demon (`DemonStyle`: кап, интервал спавна, скорость и надбавка на бросок;
+//! `HordeStyle`: волны орды — размер, затишье, порция выпуска) и
 //! Human (`HumanStyle`: разброс личных скоростей).
 
 use bevy::feathers::theme::{ThemeBackgroundColor, ThemeTextColor};
@@ -31,7 +32,9 @@ use crate::demon::{
     DEMON_CAP_MAX, DEMON_CAP_MIN, DEMON_CAP_STEP, DEMON_LUNGE_BOOST_MAX, DEMON_LUNGE_BOOST_MIN,
     DEMON_LUNGE_BOOST_STEP, DEMON_SPAWN_INTERVAL_MAX, DEMON_SPAWN_INTERVAL_MIN,
     DEMON_SPAWN_INTERVAL_STEP, DEMON_SPEED_FACTOR_MAX, DEMON_SPEED_FACTOR_MIN,
-    DEMON_SPEED_FACTOR_STEP, DemonStyle,
+    DEMON_SPEED_FACTOR_STEP, DemonStyle, HordeStyle, WAVE_EVERY_MAX, WAVE_EVERY_MIN,
+    WAVE_EVERY_STEP, WAVE_LEN_MAX, WAVE_LEN_MIN, WAVE_LEN_STEP, WAVE_SIZE_MAX, WAVE_SIZE_MIN,
+    WAVE_SIZE_STEP,
 };
 use crate::determinism::Determinism;
 use crate::human::{
@@ -60,6 +63,7 @@ impl Plugin for UiStatsPlugin {
         // `HumanStyle` регистрирует ещё и панель Navigation (радиус тела);
         // повторный вызов кит отбрасывает сам
         app.add_knobs::<DemonStyle>()
+            .add_knobs::<HordeStyle>()
             .add_knobs::<HumanStyle>()
             .add_knobs::<Determinism>()
             .add_systems(
@@ -226,6 +230,7 @@ fn build_sim_tab(
     mut commands: Commands,
     panes: Res<SettingsPanes>,
     style: Res<DemonStyle>,
+    horde: Res<HordeStyle>,
     human_style: Res<HumanStyle>,
     determinism: Res<Determinism>,
     seed: Res<WorldSeed>,
@@ -294,7 +299,46 @@ fn build_sim_tab(
                 DEMON_SPAWN_INTERVAL_MAX,
                 DEMON_SPAWN_INTERVAL_STEP,
             ),
-            text: |value| format!("{value:.1} s"),
+            text: |value| format!("{value:.2} s"),
+        },
+    );
+    // волны орды: размер (ноль — волн нет, фон-only), затишье между ними и
+    // порция выпуска за тик. Ряды идут после спавнерных: фон и волна —
+    // две половины одного пополнения
+    spawn_knob(
+        &mut commands,
+        panel,
+        "Wave size",
+        &*horde,
+        SliderBinding {
+            get: |horde| horde.wave_size as f32,
+            set: |horde, value| horde.wave_size = value as usize,
+            range: (WAVE_SIZE_MIN, WAVE_SIZE_MAX, WAVE_SIZE_STEP),
+            text: |value| format!("{value:.0}"),
+        },
+    );
+    spawn_knob(
+        &mut commands,
+        panel,
+        "Wave every",
+        &*horde,
+        SliderBinding {
+            get: |horde| horde.wave_every,
+            set: |horde, value| horde.wave_every = value,
+            range: (WAVE_EVERY_MIN, WAVE_EVERY_MAX, WAVE_EVERY_STEP),
+            text: |value| format!("{value:.0} s"),
+        },
+    );
+    spawn_knob(
+        &mut commands,
+        panel,
+        "Wave length",
+        &*horde,
+        SliderBinding {
+            get: |horde| horde.wave_len as f32,
+            set: |horde, value| horde.wave_len = value as usize,
+            range: (WAVE_LEN_MIN, WAVE_LEN_MAX, WAVE_LEN_STEP),
+            text: |value| format!("{value:.0}/tick"),
         },
     );
     // скорость и бросок — проценты: множитель «1.3» на панели ничего не
