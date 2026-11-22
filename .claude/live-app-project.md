@@ -455,7 +455,9 @@ No PRNG state is stored anywhere to look at: a pawn carries `PawnId` +
 Writing `WorldSeed` or `Determinism` over BRP restarts the world — the same path
 the panel uses (`RestartPending`, consumed in `PreUpdate`).
 
-Events — `TakeScreenshotEvent`, `OffscreenShotEvent`, `SpawnTestWalkerEvent`, `RestartEvent`.
+Events — `TakeScreenshotEvent`, `OffscreenShotEvent`, `SpawnTestWalkerEvent` (dropped
+outside `Playing`, like `RestartEvent`), `RestartEvent`, `ProbeLayersEvent` (the
+`brp probe` driver).
 
 Anything not in this list is invisible to `get` / `res get` until it gets
 `#[derive(Reflect)]` + `#[reflect(Component)]`/`#[reflect(Resource)]` + `register_type`.
