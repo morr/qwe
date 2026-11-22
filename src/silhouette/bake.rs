@@ -360,13 +360,22 @@ pub(crate) fn despawn_baked_corpses(
     }
 }
 
-/// Новый мир — запечённое поле пусто: чанки прошлого деспавнились компонентом
-/// (`DespawnOnExit`), хранилище и очереди сбрасываются вслед за ними.
+/// Новый мир — запечённое поле пусто: сущности чанков деспавнятся вместе с
+/// хранилищем. На смене города их уже убрал `DespawnOnExit`, но рестарт
+/// проходит мимо `Loading` — без этого деспавна чанки прошлого прогона
+/// продолжали бы рисоваться поверх нового мира, а вторая волна запекания
+/// спавнила бы вторую сущность на клетку (хранилище-то очищено). Очереди
+/// сбрасываются вслед за полем.
 pub(crate) fn on_world_started(
     _event: On<WorldStarted>,
+    mut commands: Commands,
     mut field: ResMut<CorpseField>,
     mut despawn: ResMut<DespawnQueue>,
+    drawn: Query<Entity, With<CorpseChunk>>,
 ) {
+    for entity in &drawn {
+        commands.entity(entity).despawn();
+    }
     field.chunks.clear();
     despawn.0.clear();
 }
@@ -686,6 +695,45 @@ mod tests {
             .len();
         assert_eq!(chunks, 1, "чанк один и тот же");
         assert_eq!(verts(&app, &handle), 24, "плюс тройка квадов");
+    }
+
+    /// `WorldStarted` уносит и сущности чанков, не только хранилище. Рестарт
+    /// проходит мимо `Loading` — компоненту `DespawnOnExit` там не сработать;
+    /// сброс невидим реплей-фингерпринту (мешы — не состояние симуляции),
+    /// поэтому пин стоит рядом с обсервером (world-lifecycle).
+    #[test]
+    fn world_started_takes_the_chunk_entities_with_the_field() {
+        let mut app = bake_app();
+        app.init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<PointMaterial>>()
+            .insert_resource(PointMaterialHandle(Handle::default()))
+            .add_observer(on_world_started);
+
+        let first = corpse_at(&mut app, Vec2::ONE, 0.0);
+        bake(&mut app, first);
+        let mut rebuild = IntoSystem::into_system(rebuild_dirty_chunks);
+        rebuild.initialize(app.world_mut());
+        rebuild.run((), app.world_mut()).unwrap();
+        app.world_mut().flush();
+        let chunks: usize = app
+            .world_mut()
+            .query_filtered::<Entity, With<CorpseChunk>>()
+            .iter(app.world())
+            .count();
+        assert_eq!(chunks, 1, "чанк нового мира на месте");
+
+        app.world_mut().trigger(WorldStarted);
+        app.world_mut().flush();
+        assert!(
+            app.world().resource::<CorpseField>().chunks.is_empty(),
+            "хранилище пусто"
+        );
+        let left: usize = app
+            .world_mut()
+            .query_filtered::<Entity, With<CorpseChunk>>()
+            .iter(app.world())
+            .count();
+        assert_eq!(left, 0, "сущности чанков деспавнены");
     }
 
     /// Деспавн-слот: тело уходит, тройка целиком (дети — с родителем), хвост
