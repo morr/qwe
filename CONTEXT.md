@@ -396,7 +396,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     tag, and laid along the street **as drawn**. Tram is `map/tram.rs`, drawn only while
     `TramStyle::visible`, along the laid tracks.
   - **WallLine** — `barrier=city_wall` (the kremlin), 3 m, impassable. **Drawn only where
-    no fortress building stands on it** (`roads.rs::Fortresses`); the navmesh still
+    no fortress building stands on it** (`roads/walls.rs::Fortresses`); the navmesh still
     blocks the whole line.
   - **FenceLine** — a plot boundary: `FenceKind: Fence | Railing | Wall | Hedge`, plus
     the **default gates** the load adds. **Impassable in the navmesh with gaps**
@@ -441,17 +441,17 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
 - **Building height** (`parse/tags.rs::building_height`) — metres from `height` or
   (`building:levels` + `roof:levels`) × 3 m; outside 2–600 m counts as no tag. `None` is
   normal and common (coverage varies wildly by city, logged on load).
-- **Squared house** (`parse.rs::square_skewed_houses`) — a small skewed-quad or skewed-L
+- **Squared house** (`parse/squaring.rs::square_skewed_houses`) — a small skewed-quad or skewed-L
   house is replaced at parse by a rectangle of the same centroid and area, or a
   right-angled L; not when a vertex is shared with another building, a line, or one of
   the three area layers whose **edge is drawn**. Everything downstream sees the
   straightened outline.
-- **Pulled-back house** (`parse.rs::pull_houses_off_sidewalks`) — a building whose
+- **Pulled-back house** (`parse/house_pull.rs::pull_houses_off_sidewalks`) — a building whose
   outline reaches into a street's **verge edge** is moved at parse, whole and with its
   doors, straight away from the street, by at most 6 m — **its row with it**, so the
   facade line stays straight; a shift that would crowd something is shortened or
   dropped. Not for churches, fortresses, shared vertices, or a street through the house.
-- **Block pulled to the road** (`parse.rs::pull_areas_to_roads`) — a `landuse` block's
+- **Block pulled to the road** (`parse/block_pull.rs::pull_areas_to_roads`) — a `landuse` block's
   edge traced along the plot line leaves bare ground against the drawn sidewalk; a
   vertex near the road's edge is pulled **under** the asphalt, **green only grows**
   (the move must lead outward from the fill), and slivers left on the verge tiles are
