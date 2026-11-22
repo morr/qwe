@@ -2,7 +2,8 @@
 
 The building half of the parse: the tag readings (`parse/tags.rs`) and the passes that
 move or re-classify a building outline (`parse/faiths.rs`, the building passes of
-`parse.rs`). The seam they hang on — `ParseKnobs`, `read_elements`/`finish_parse`, the
+`parse/finish.rs` and their own subjects). The seam they hang on — `ParseKnobs`,
+`read_elements`/`finish_parse`, the
 pass order, how a parse is tested — is `parse-seam.md`; the geometry passes are
 `parse-geometry.md`.
 
@@ -156,7 +157,7 @@ pass order, how a parse is tested — is `parse-seam.md`; the geometry passes ar
 
 ## Finishing passes
 
-- **Drowned buildings** (`parse.rs::drop_buildings_in_water`, step 1) — a building whose
+- **Drowned buildings** (`parse/finish.rs::drop_buildings_in_water`, step 1) — a building whose
   outline lies **entirely** inside a water polygon is dropped right after the element loop,
   before doors and trees. OSM tags floating restaurants and moored ships as buildings
   (`HMS Belfast`, `Café Barge`); the

@@ -944,7 +944,7 @@ impl<'a> CurbCoverage<'a> {
     pub fn build(roads: &'a [RoadLine]) -> Self {
         let bridges: Vec<&RoadLine> = roads.iter().filter(|road| road.bridge).collect();
         // AABB-прекомпьют по мостам — тем же приёмом, что у
-        // `parse::drop_buildings_in_water`. Дорог на карте десятки тысяч
+        // `parse::finish::drop_buildings_in_water`. Дорог на карте десятки тысяч
         // (Лондон 43 000), мостов сотни, а примыкает ~1%, и короткое замыкание
         // `.any()` срабатывает ровно у этого процента: остальные честно мерили
         // расстояние до каждого моста, точка за отрезком. Лондон — 1.00 с на
