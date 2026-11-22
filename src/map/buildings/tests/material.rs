@@ -6,6 +6,7 @@ use super::super::layers::roof_color;
 use super::super::material::*;
 use super::super::*;
 use super::support::ORTHODOX;
+use crate::map::meshing::STOREY_STRIDE;
 use crate::map::osm::{AreaKind, BuildingUse};
 
 #[test]
@@ -159,4 +160,61 @@ fn every_cladding_reaches_the_city() {
         }
         assert!(seen.contains(&kind), "{kind:?} не встретилась ни разу");
     }
+}
+
+/// Зеркало словаря кодов материалов в `roof.wesl`. Обе стороны держат его
+/// по правилу «зеркало одно на весь словарь и правится целиком» — этот тест
+/// заменяет дисциплину проверкой: дописанный в середину вариант кровли или
+/// облицовки, переименованная константа шейдера и сдвинутый
+/// `STOREY_STRIDE` падают здесь, а не кладут на стену чужую фактуру.
+#[test]
+fn the_shader_material_codes_match_the_rust_dictionary() {
+    let shader = include_str!("../../../../assets/shaders/roof.wesl");
+    let code = |name: &str| -> u32 {
+        let prefix = format!("const {name}: u32 = ");
+        let tail = shader
+            .lines()
+            .find_map(|l| l.trim().strip_prefix(&prefix))
+            .unwrap_or_else(|| panic!("roof.wesl: нет строки `{prefix}…;`"));
+        tail.trim_end_matches(';')
+            .trim_end_matches('u')
+            .parse::<u32>()
+            .unwrap_or_else(|_| panic!("roof.wesl: `{prefix}{tail}` не разбирается в число"))
+    };
+
+    let roofs = [
+        (RoofKind::Bitumen, "BITUMEN"),
+        (RoofKind::Gravel, "GRAVEL"),
+        (RoofKind::Seam, "SEAM"),
+        (RoofKind::Corrugated, "CORRUGATED"),
+        (RoofKind::Tile, "TILE"),
+        (RoofKind::Membrane, "MEMBRANE"),
+        // гаражные ленты занимают коды следом за кровельными, хотя в `ALL` их
+        // нет — выбираются геометрией прогона, а не назначением дома
+        (RoofKind::GarageRow, "GARAGE_ROW"),
+        (RoofKind::GarageBlock, "GARAGE_BLOCK"),
+    ];
+    for (kind, name) in roofs {
+        assert_eq!(code(name), kind.code(), "{name} против {kind:?}");
+    }
+    assert_eq!(code("GARAGE_BLOCK"), RoofKind::CODES);
+
+    let walls = [
+        (WallKind::Panel, "PANEL"),
+        (WallKind::Brick, "BRICK"),
+        (WallKind::Plaster, "PLASTER"),
+        (WallKind::Shopfront, "SHOPFRONT"),
+        (WallKind::Shed, "SHED"),
+        (WallKind::BigBox, "BIG_BOX"),
+        (WallKind::GarageDoors, "GARAGE_DOORS"),
+        (WallKind::Sacred, "SACRED"),
+    ];
+    for (kind, name) in walls {
+        assert_eq!(code(name), kind.code(), "{name} против {kind:?}");
+    }
+    assert_eq!(code("SACRED"), WallKind::CODES);
+    assert_eq!(code("DOOR"), DOOR_CODE);
+
+    // этажи едут в атрибуте вместе с кодом: код в остатке, этажи в частном
+    assert_eq!(code("STOREY_STRIDE"), STOREY_STRIDE);
 }
