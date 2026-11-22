@@ -428,7 +428,7 @@ step when adding one):
 | building layers (facades/roofs/shadows/extrusion) | `map/buildings/mod.rs::spawn_building_meshes` (same helper, from `rebuild_buildings` and `spawn_map`) |
 | tree crowns (an entity per tree on the near zoom step, merged `tree_crowns` chunks on the far ones) + shadows | `map/trees.rs::spawn_tree_meshes` (the chunks and shadows through `surface::spawn_layers`; the crown entities through `CrownStream::spawn_next`, also batched from `::stream_tree_crowns`; build — `::mesh_trees`, geometry — `trees/crown.rs`) |
 | portal (vortex quad) + portal stain | `portal.rs::spawn_portal` |
-| humans (and corpses — same entity, retagged) | `human/systems.rs::spawn_population` |
+| humans (and corpses — same entity, retagged) | `human/systems/spawn.rs::spawn_population` |
 | blood pool and blood spatter — two **children** of the corpse, no component of their own: despawn is recursive | `human/corpse.rs::blood_pool` / `::blood_spatter` |
 | corpse chunks — one mesh per 500 m cell of baked corpses (`CorpseChunk`); fresh corpses are sprites (the row above), baked ones leave the entity list | `silhouette/bake.rs::rebuild_dirty_chunks` |
 | far crowd chunks — one mesh per 250 m cell of far (`FarTag`) humans as dots (`FarCrowdChunk`); the far pawn keeps its hidden sprite entity, only the drawing moves to the chunk | `silhouette/far.rs::rebuild_far_chunks` |

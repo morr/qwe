@@ -1061,7 +1061,7 @@ Summary; the mechanism — **determinism skill** (seed derivation, the decision 
   `RngDomain: Population | Human | Demon`. **Nothing stores live RNG state**, so a restart
   has no RNG to reset — every stream is re-derived.
 - **Placement stream** (`rng.rs::stream`, `RngDomain::Population`) — the one shared
-  generator, held by `place_population` (`human/systems.rs`) across the whole
+  generator, held by `place_population` (`human/systems/spawn.rs`) across the whole
   placement pass. Legal precisely because its consumer is a fixed `0..count` loop
   inside one call rather than a query traversal, and everything personal (colour,
   `Pace`, heading) still comes from the pawn's own decision stream. The batched
@@ -1214,7 +1214,7 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   `WorldInitSet::Spawn`, `restart::on_restart` and the pump, all through the
   `PopulationSpawn` `SystemParam`, so a restart respawns the same number.
   **It is the right-hand side of the telemetry invariant** — see Telemetry.
-- **Batched spawn** (`human/systems.rs`, ×10 plan Phase 1) — the settlement goes through
+- **Batched spawn** (`human/systems/spawn.rs`, ×10 plan Phase 1) — the settlement goes through
   a **pump**: `spawn_humans` and `on_restart` insert the `PendingPopulation` queue
   instead of spawning, and `pump_pending_population` spawns `SPAWN_BATCH` (2 000)
   pawns per call from placements computed once on the first call. Registered twice,
