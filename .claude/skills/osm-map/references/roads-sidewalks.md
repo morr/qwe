@@ -41,7 +41,7 @@ on the paired side themselves (`roads-pairs-medians.md`, **Paired halves**).
   alley ribbons are not cut at junction nodes (the asphalt breaks are carriageways
   only), so at a crossing or a join mouth the ribbons cover the corner themselves and
   the piece was a patch on top of the seam. Pinned by
-  `roads/tests.rs::a_paved_path_is_drawn_in_the_sidewalk_layer` and the three
+  `roads/tests/layers.rs::a_paved_path_is_drawn_in_the_sidewalk_layer` and the three
   crossing/join/L tests in `corners/tests.rs`.
   **Tile overlaps** (`corners/islands.rs::tile_overlaps` → `corners/gather.rs::KerbReturns::overlaps`, counted in
   `RoadReport::tile_overlaps`): at a merge of two or more paved paths, a yard wedge can
@@ -116,7 +116,7 @@ on the paired side themselves (`roads-pairs-medians.md`, **Paired halves**).
   dirt one (two paved arms) runs through as before. The sidewalk is already gone by
   the parse (`untagged_sidewalks`). An untagged street stays asphalt — the tag is rare,
   and a guessed dirt road in a city block would be a worse lie than a missed one. Pinned
-  by `roads/tests.rs::an_unpaved_street_draws_in_its_own_layer_without_lines`.
+  by `roads/tests/layers.rs::an_unpaved_street_draws_in_its_own_layer_without_lines`.
   A **bridge is the exception**: `is_carriageway` says yes, so a deck keeps its
   lane markings, but the bridge branch of `mesh_roads` `continue`s into `Bridges::push_deck`
   + `Bridges::fills` *before* the sidewalk block — a deck gets no band ever, at any width or
@@ -201,7 +201,7 @@ on the paired side themselves (`roads-pairs-medians.md`, **Paired halves**).
   ribbon presses to the kerb the profile dips under `VERGE_PAVED_MAX`, `verge_runs`
   makes a short paved run of it, and the tile reaches past the ribbon — the pale patch
   beside a crossing path is that run, drawn by the same law as any narrow verge, not a
-  seam (the diag harness `roads/tests.rs::diag_window`, `QWE_DIAG_SCRAPS`, answers it
+  seam (the diag harness `roads/tests/support.rs::diag_window`, `QWE_DIAG_SCRAPS`, answers it
   in one run).
   **A verge wider than `VERGE_MID_MAX` 5 m is not drawn at all from
   `VERGE_ZOOM_MAX` 2.0 m/px** (`VergeLods`, `VergeZoomBucket`): tile,

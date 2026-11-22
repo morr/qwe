@@ -255,7 +255,7 @@ impl KerbReturns {
     }
 
     /// Что скругления насчитали вокруг точки — диагностике тестов
-    /// (`roads/tests.rs`, `QWE_DIAG`): группы как есть, по строке на контур.
+    /// (`roads/tests/support.rs`, `QWE_DIAG`): группы как есть, по строке на контур.
     #[cfg(test)]
     pub(in crate::map::roads) fn dump_near(&self, at: Vec2, reach: f32) {
         let near = |outline: &Vec<Vec2>| outline.iter().any(|p| p.distance(at) < reach);

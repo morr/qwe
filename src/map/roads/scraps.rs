@@ -301,7 +301,7 @@ impl Scraps {
     }
 
     /// Удобство тестов: полоса сразу в список ([`Self::band_contours`] +
-    /// запись) — диагнозу (`tests.rs`, `QWE_DIAG_SCRAPS_FIND`).
+    /// запись) — диагнозу (`tests/support.rs`, `QWE_DIAG_SCRAPS_FIND`).
     /// Продакшен-путь кладёт полосы чанками (`pave_scraps`).
     #[cfg(test)]
     pub(super) fn push_band(&mut self, path: &[Vec2], halves: [f32; 2]) {
@@ -331,7 +331,7 @@ impl Scraps {
     }
 
     /// Кольца и срезы всех газонов — окно спрашивания каждого; диагнозу
-    /// (`tests.rs::diag_window`).
+    /// (`tests/support.rs::diag_window`).
     #[cfg(test)]
     pub(super) fn lawns(&self) -> impl Iterator<Item = (&[Vec2], &[[Vec2; 2]])> {
         self.lawns
@@ -408,7 +408,7 @@ impl Scraps {
     }
 
     /// DIAG-TEMP: все остатки всех газонов с метриками фильтра — (кольцо,
-    /// м², средняя ширина, открытость, клин) — диагнозу (`tests.rs`).
+    /// м², средняя ширина, открытость, клин) — диагнозу (`tests/support.rs`).
     #[cfg(test)]
     pub(super) fn debug_pieces(&self) -> Vec<(Vec<Vec2>, f32, f32, f32, bool)> {
         let lawns: Vec<(Vec<Vec2>, Vec<[Vec2; 2]>)> = self

@@ -269,7 +269,7 @@ axis prepares straight edges for in `roads-corners.md`.
   and `a_one_sided_street_turns_its_sidewalk_only_on_its_side`; `sidewalk_mapped(i)` —
   the sidewalk the *map* has, knob or no knob, minus the same piece — the junction
   paint reads it, a rule zebra being a question of the model and not of a display
-  toggle (`roads/tests.rs::rule_zebras_do_not_follow_the_sidewalk_knob`); `band_half(i,
+  toggle (`roads/tests/junctions.rs::rule_zebras_do_not_follow_the_sidewalk_knob`); `band_half(i,
   side)` — the half width of the band on one side, `width / 2 + drawn sidewalk ∧
   sidewalks[side]`, the bare kerb where the tag has no sidewalk — the per-side wedge
   (**Streets, sections, tapers** above) reads it for the road and for its narrow neighbour.
@@ -292,7 +292,7 @@ axis prepares straight edges for in `roads-corners.md`.
   ribbon. `axes(which)` hands a submodule the whole slice as borrows (a stitched copy
   exists only on a road a stitch touched); `mesh_roads` binds them once as `nodal` and
   `ribbon`. The tram band on the nodal axis is a pin, not an accident
-  (`roads/tests.rs::tram_band_follows_the_nodal_axis` — on the ribbon it would run on down
+  (`roads/tests/layers.rs::tram_band_follows_the_nodal_axis` — on the ribbon it would run on down
   every stitch); `tram_band.rs` decides for itself what a junction is (`near_asphalt`,
   40 m / 4 m), pinned by its own `a_band_bridges_a_junction_but_not_open_ground`.
   **The base marking breaks stay on the OSM roads**, not on `roads()`: a ring arc drawn

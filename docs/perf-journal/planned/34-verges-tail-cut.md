@@ -152,7 +152,7 @@ build-время). Лента не пишет в `MapData` — `SNAPSHOT_VERSION
   26); vendor-патчи полимеша (запись 29); `map/inspect.rs`,
   `map/osm/download.rs`, `src/loading.rs`, `map/osm/model.rs`,
   `map/osm/model/trees.rs` (запись 30 — не размазывать).
-- Тесты: обочины (`verges` tests, `push_verges` в `roads/tests.rs`),
+- Тесты: обочины (`verges` tests, `push_verges` в `roads/tests/`),
   скругления (`corners/tests.rs`), лента (`ribbon_lane` tests), реплеи
   двора, clippy, fmt — зелёные.
 - Чужие процессы: 15702 — пользователь, 15703 — DEFAULT_RENDER_PORT чужого

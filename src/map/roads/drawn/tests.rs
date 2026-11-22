@@ -65,7 +65,7 @@ fn a_driveway_crossing_is_drawn_as_a_street_of_the_narrower_width() {
 #[test]
 fn stitched_axis_differs_from_nodal_only_at_stitched_ends() {
     // проезд кончается в трёх метрах за кромкой тротуара улицы
-    // (`tests.rs::a_dangling_end_short_of_a_street_is_stitched`)
+    // (`a_dangling_end_short_of_a_street_is_stitched`)
     let map = with_network(vec![
         fixture::street(vec![Vec2::ZERO, Vec2::new(100.0, 0.0)], 12.0),
         fixture::street(vec![Vec2::new(50.0, -60.0), Vec2::new(50.0, -9.0)], 5.0),

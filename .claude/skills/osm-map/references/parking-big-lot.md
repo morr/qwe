@@ -131,7 +131,7 @@ roundabout in the city and the lot only subtracts it from its kerb.
   (`Rings::leg_flow`, **Roundabouts** in `roads.md`): `GoreRoad::new` makes such a
   two-way way one-way and turns its path along its flow, so the fan between the two
   legs is found the same way
-  (`roads/tests.rs::a_y_approach_gets_one_island_between_its_legs`).
+  (`roads/rings/tests.rs::a_y_approach_gets_one_island_between_its_legs`).
 - **The subtraction is one wedge's business.** The closing has already broken the
   city into separate shapes, and asphalt from the other end of town touches none of
   them, so the difference runs per closed shape against the clip contours whose
@@ -225,10 +225,10 @@ roundabout in the city and the lot only subtracts it from its kerb.
   ring's carriageway and bent it into a hook; most such approaches are straightened
   first by `rings::reshape` (**Roundabouts** in `roads.md`), and what still runs
   along the ring gets none —
-  `roads/tests.rs::a_splitter_island_stays_off_the_ring_when_the_approach_comes_in_along_it`.
+  `roads/rings/tests.rs::a_splitter_island_stays_off_the_ring_when_the_approach_comes_in_along_it`.
   **A leg of a Y-approach gets none** — its island is the fan between it and the
   other leg (above); a splitter on each leg bent two hooks into every approach.
-  `roads/tests.rs::a_two_way_approach_gets_a_splitter_island` holds it.
+  `roads/rings/tests.rs::a_two_way_approach_gets_a_splitter_island` holds it.
 - A **fork gore** (`corners::fork_gore`) is the same hatching ahead of the nose of a
   sharp fork of two streets away from a ring: it starts where the narrower street's
   axis has left the wider one's carriageway and widens to the nose, so the two
