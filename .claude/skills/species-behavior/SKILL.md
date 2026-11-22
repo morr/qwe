@@ -101,7 +101,7 @@ Three things deliberately stay outside `decide`:
 
 `movement/wander.rs` — the *order* of one target-picking step, shared by both species (the
 chain is `CONTEXT.md`'s). Only **where** a pawn wants to go is per-species — for the human
-that policy is `human/systems.rs::choose_target`, a pure function; the demon's is the two
+that policy is `human/systems/wander.rs::choose_target`, a pure function; the demon's is the two
 lines around `away` in its own system. The skeleton deliberately does **not** open the
 `SimRng` — the species does, in its own place, or the decision stream would advance on
 pawns that took no decision this tick. The chase repath (`demon/behavior.rs`) and the flee
@@ -122,10 +122,10 @@ exists so a stand with a small world pins its own: the replay yard (64),
 `examples/acceptance/determinism_replay` (20 000, pinned so the acceptance run does not
 grow with the default), `QWE_PERF_POP` in the game. The readers stay in step by a type,
 not by discipline: all three take the **`PopulationSpawn`** `SystemParam`
-(`human/systems.rs` — navmesh, `HumanStyle`, `WorldSeed`, `PopulationSize`,
+(`human/systems/spawn.rs` — navmesh, `HumanStyle`, `WorldSeed`, `PopulationSize`,
 `Silhouettes`).
 
-- **Settlement goes through a pump** (`human/systems.rs::pump_pending_population`):
+- **Settlement goes through a pump** (`human/systems/spawn.rs::pump_pending_population`):
   `PopulationSpawn::spawn` inserts the **`PendingPopulation`** queue instead of
   spawning, and each pump call spawns `SPAWN_BATCH` (2 000) pawns from placements
   `place_population` computed once on the first call — the shared placement stream
@@ -147,7 +147,7 @@ not by discipline: all three take the **`PopulationSpawn`** `SystemParam`
   leaves in the same command flush as the last batch, so "queue gone" means the census
   sees the whole population; cumulative settlement errors are still caught at drain.
 - **Batching cannot move a single RNG throw** — pinned by
-  `human/systems.rs::batching_does_not_change_the_population` (one batch == ten
+  `human/systems/tests.rs::batching_does_not_change_the_population` (one batch == ten
   batches == the whole-flash `spawn_population`, bit-for-bit).
 - **An app that wants another size inserts it after `add_plugins`** —
   `determinism::replay::replay_app` does exactly that, and swapping the two lines would
@@ -158,7 +158,7 @@ not by discipline: all three take the **`PopulationSpawn`** `SystemParam`
 ### Wander
 
 **`WanderPause` is drawn per arrival, not stood at every one** — `roll_wander_pause`
-(`human/systems.rs`), the share and the 2–10 s range are `CONTEXT.md`'s. A target is a
+(`human/systems/wander.rs`), the share and the 2–10 s range are `CONTEXT.md`'s. A target is a
 point of the passer-by's route, not the errand he went out for.
 
 - **The roll goes on the target, not on the human.** A permanently hurrying fifth of the
