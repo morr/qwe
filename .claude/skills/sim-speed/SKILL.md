@@ -1,11 +1,13 @@
 ---
 name: sim-speed
-description: Use when working on simulation speed, pause, or the speed regulator in qwe — sim_time.rs, SimSpeed/SimLoad/TickDebt, the pipeline ceiling, the frame-budget guard, SimClock, the sim/*_ms diagnostics. Deep detail behind CONTEXT.md's speed summary.
+description: Use when working on simulation speed, pause, or the speed regulator in qwe — sim_time.rs + sim_time/regulator.rs, SimSpeed/SimLoad/TickDebt, the pipeline ceiling, the frame-budget guard, SimClock, the sim/*_ms diagnostics. Deep detail behind CONTEXT.md's speed summary.
 ---
 
 # Simulation speed — the regulator
 
-Detail behind `sim_time.rs`. The summary (speed ladder, the 30× cap, SimClock) lives in
+Detail behind `sim_time.rs` + `sim_time/regulator.rs` — the mechanism (systems and
+formulas) lives in `regulator.rs`, the constants at the top of the parent. The summary
+(speed ladder, the 30× cap, SimClock) lives in
 `CONTEXT.md`. Remember the project constraint: **30× is the deliberate product cap**;
 the optimization target is bigger populations, not a higher top speed.
 

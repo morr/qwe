@@ -59,7 +59,7 @@ candidate for deletion.
 | `rng.rs`, `determinism/*`, `sim_yard.rs`, `tick_stage.rs`, `tests/determinism.rs`, `examples/acceptance/*`, anything a replay depends on | `determinism` |
 | `human/*`, `demon/*`, `silhouette/*`, `portal.rs`, `movement/wander.rs`, `spatial.rs`, `telemetry.rs`, `tests/spatial.rs` | `species-behavior` |
 | `loading.rs`, `restart.rs`, `city.rs`, `map/osm/download.rs` | `world-lifecycle` |
-| `sim_time.rs` (incl. the regulator's own constants, which live there now) | `sim-speed` |
+| `sim_time.rs` + `sim_time/regulator.rs` (the regulator's constants stay at the top of `sim_time.rs`) | `sim-speed` |
 | `ui/*`, `camera.rs`, `post.rs`, `prefs.rs`, `dev.rs` | `ui-panels` |
 | `examples/demos/*` — a gallery also takes the skill of what it draws (`*_gallery` and `roads` → `osm-map`, `blood_gallery` → `species-behavior`, `crowd_demo` → `navigation-deep`) | `ui-panels` |
 | `examples/{audit,bench}/*` — by subject: `polymesh_*`, `navmesh_probe`, `pathfinding_bench`, `polymesh_bench`, `dispatch_bench` → `navigation-deep`; `map_meshing`, `pocket_probe`, `fence_prune_audit` → `osm-map` | — |
@@ -89,7 +89,7 @@ The links are absolute on purpose. A relative `../../../zxc` resolves only from 
 - **`determinism` — before changing anything a replay depends on** (`rng.rs`, `determinism/*`): seed derivation, the per-decision RNG stream, `PawnId`/`Species` identity, `SimTick`, the `SimPipeline` sets, the deterministic dispatcher (retire tick, dispatch rate, FIFO key), the frozen backend, the replay yards and what they pin.
 - **`species-behavior` — before changing pawn behaviour or how a pawn is drawn** (`human/*`, `demon/*`, `silhouette/*`, `portal.rs`, `movement/wander.rs`, `spatial.rs`): the two decision ladders, wander/flee/chase/devour, the flee fan, `PanicRecoil`, `Pace`, chase claims and the lunge, the demon spawner, corpses, the spatial grids, plus the look layer — the silhouette atlas and its mips, the screen-size floor and the two LOD systems, the portal vortex and its stain.
 - **`world-lifecycle` — before changing how a world comes up or is torn down** (`loading.rs`, `restart.rs`, `city.rs`, `map/osm/download.rs`): the states and the warmup hold, `SimBootPlugin`, the load thread, the `WorldStarted` seam and its run-state resets, restart slots, the city switch.
-- **`sim-speed` — before changing simulation speed machinery** (`sim_time.rs`): SimSpeed/SimLoad, the regulator, the frame-budget guard, TickDebt.
+- **`sim-speed` — before changing simulation speed machinery** (`sim_time.rs` + `sim_time/regulator.rs`): SimSpeed/SimLoad, the regulator, the frame-budget guard, TickDebt.
 - **`ui-panels` — before changing UI** (`ui/*`, `camera.rs`, `post.rs`, `prefs.rs`): panel internals, the tabbed shell and its section order, the slider/row kits, camera start view, persistence.
 
 **Caveat on the `bevy` skill:** it is shared with zxc, which is still on 0.19 — this repo is on 0.20, so the skill marks the 0.19/0.20 divergences inline. Its "0.20 deltas" section, the 0.20-marked forms and `references/api_0_20.md` are engine-level and apply here; `references/api_0_19.md` and the 0.19-marked forms describe **zxc**. Its "This project's conventions" section and the other references describe **zxc's** machinery — `crate::prelude::*`, `exclusive_state_tags!`, `config()`, `log_state_change!`/`log_event!`, z-index constants, the `debug_ui` feature. None of that exists in this project; don't introduce it just because the skill mentions it.
