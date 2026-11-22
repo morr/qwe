@@ -1604,7 +1604,7 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   where the camera stands when the world comes up. **RR** (double R within 0.5 s) and
   `RestartEvent { to_portal: true }` go to the portal at `START_ZOOM` regardless of mode. A
   city switch always resets to the new portal.
-- **Sim speed** (`sim_time.rs`) — Space pauses; `=`/`-` walk `SPEED_LADDER` (1-2-5-10-20-30);
+- **Sim speed** (`sim_time.rs` + `sim_time/regulator.rs`) — Space pauses; `=`/`-` walk `SPEED_LADDER` (1-2-5-10-20-30);
   **`MAX_SIM_SPEED` 30× is a deliberate product cap**. **SimSpeed** `{requested, pipeline,
   affordable, effective, actual}` — a regulator throttles `effective` to what the machine
   carries, and `guard_frame_budget` hard-stops a frame's fixed loop at `SIM_FRAME_BUDGET_MS`,
@@ -1707,7 +1707,7 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
 - Determinism and replay: `src/rng.rs`, `src/determinism/`. Detail — **determinism skill**.
 - Species behaviour: `src/human/`, `src/demon/`, `src/movement/wander.rs`, `src/spatial.rs`.
   Detail — **species-behavior skill**.
-- Speed & regulator: `src/sim_time.rs`. Detail — **sim-speed skill**.
+- Speed & regulator: `src/sim_time.rs` + `src/sim_time/regulator.rs`. Detail — **sim-speed skill**.
 - UI: `src/ui/`, camera: `src/camera.rs`. Detail — **ui-panels skill**.
 - Tests: the integration suites `tests/navigation.rs` (synthetic navmesh + hand-built
   `MapData`), `tests/spatial.rs`, `tests/movement.rs`, `tests/determinism.rs`,
