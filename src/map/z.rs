@@ -222,6 +222,14 @@ pub const Z_INDUSTRY: f32 = 5.07;
 /// Лента крепостной стены (`map/roads/walls.rs`) — поверх зданий: кремлёвская
 /// стена читается поверх башен, а не между ними.
 pub const Z_WALL: f32 = Z_BUILDING + 0.1;
+/// Заливка сеточного навмеша (`Debug → Navmesh fill`, `ui/debug/overlays.rs`)
+/// — дебаг-слой над статичной картой (крепостная стена — последний её слой)
+/// и под любым юнитом: пешки по заливке ходят и обязаны оставаться видны.
+pub const Z_NAVMESH_OVERLAY: f32 = 5.2;
+/// Полимеш-оверлей (`Debug → Polymesh`, `ui/navigation/overlay.rs`) — в том
+/// же зазоре, над заливкой сеточного навмеша: сеточный служит подложкой,
+/// поверх которой читается полимеш.
+pub const Z_POLYMESH_OVERLAY: f32 = 5.3;
 /// Насколько z юнита падает на метр к северу (кто ниже — тот ближе).
 pub(crate) const Y_SORT_FACTOR: f32 = 0.002;
 /// Юниты: z = `Z_UNIT_BASE - y * Y_SORT_FACTOR`.
@@ -358,6 +366,11 @@ const _: () = {
     assert!(Z_INDUSTRY_WALL < Z_INDUSTRY);
     // лента крепостной стены — над зданиями и цилиндрами промзоны, под юнитами
     assert!(Z_INDUSTRY < Z_WALL);
+    // дебаг-заливки навмеша и полимеша — над статичной картой, но под любым
+    // юнитом: нижний юнит стоит на `Z_UNIT_BASE` минус полная просадка
+    assert!(Z_WALL < Z_NAVMESH_OVERLAY);
+    assert!(Z_NAVMESH_OVERLAY < Z_POLYMESH_OVERLAY);
+    assert!(Z_POLYMESH_OVERLAY < Z_UNIT_BASE - MAP_SIZE.y * Y_SORT_FACTOR);
     // Тот самый инвариант, который прозой не удержался (см. `Z_UNIT_BASE`).
     // Теперь база из него и выводится, так что проверка стережёт уже не её, а
     // будущую правку: сменится `Y_SORT_FACTOR`, `Z_BUILDING` или размер карты —

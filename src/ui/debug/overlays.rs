@@ -13,7 +13,7 @@ use crate::grid::{grid_size, navtile_size};
 use crate::loading::AppState;
 use crate::map::osm::MapData;
 use crate::map::surface::{LayerMaterials, swap_layers};
-use crate::map::z::Z_CONIFER_NOISE_OVERLAY;
+use crate::map::z::{Z_CONIFER_NOISE_OVERLAY, Z_NAVMESH_OVERLAY};
 use crate::map::{
     ConiferField, RutLines, lane_width, mesh_network_overlay, mesh_osm_contours, mesh_rut_overlay,
 };
@@ -126,9 +126,6 @@ pub(super) struct ConiferNoiseOverlayMarker {
     generation: u32,
 }
 
-/// Z заливки navmesh: над зданиями (5.0), под юнитами (5.5+).
-const NAVMESH_OVERLAY_Z: f32 = 5.2;
-
 /// Сторона текстуры поля хвои, тексели: 512 на 5.6 км карты — тексель ~11 м,
 /// вдвое мельче кроны, то есть контур массива читается точно, а пересборка
 /// слоя остаётся четвертью миллиона выборок, а не миллионами.
@@ -234,7 +231,7 @@ pub(super) fn sync_navmesh_overlay(
             alpha_mode: bevy::sprite_render::AlphaMode2d::Blend,
             ..default()
         })),
-        Transform::from_xyz(0.0, 0.0, NAVMESH_OVERLAY_Z),
+        Transform::from_xyz(0.0, 0.0, Z_NAVMESH_OVERLAY),
         DespawnOnExit(AppState::Playing),
         Name::new("navmesh_overlay"),
     ));

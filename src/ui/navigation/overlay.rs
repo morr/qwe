@@ -9,11 +9,10 @@ use bevy::sprite_render::AlphaMode2d;
 
 use crate::loading::AppState;
 use crate::map::MeshBuilder;
+use crate::map::z::Z_POLYMESH_OVERLAY;
 use crate::navigation::{PolyNavmesh, PolymeshDebug};
 use crate::settings::MAP_SIZE;
 
-/// Над заливкой сеточного navmesh-оверлея (5.2), под юнитами.
-const POLYMESH_OVERLAY_Z: f32 = 5.3;
 /// Толщина ребра, метры мира: видна на городском зуме, не заливает экран.
 const POLYMESH_EDGE_WIDTH: f32 = 0.4;
 const POLYMESH_EDGE_COLOR: Color = Color::srgba(0.2, 0.85, 0.95, 0.6);
@@ -146,7 +145,7 @@ pub(super) fn sync_polymesh_overlay(
             alpha_mode: AlphaMode2d::Blend,
             ..default()
         })),
-        Transform::from_xyz(0.0, 0.0, POLYMESH_OVERLAY_Z),
+        Transform::from_xyz(0.0, 0.0, Z_POLYMESH_OVERLAY),
         DespawnOnExit(AppState::Playing),
         Name::new("polymesh_overlay"),
     ));
