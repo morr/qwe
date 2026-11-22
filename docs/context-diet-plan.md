@@ -14,7 +14,9 @@ ui-panels SKILL.md back under the 30K one-Read line (f55e9652, 419c58d3); the mo
 splits of `osm/model.rs` (b6386635), `parking.rs` (4bab1cdc), `meshing.rs`
 (dde7d19e) and `inspect.rs` (71d92498) into the `foo.rs` + `foo/` subject pattern;
 the `buildings/material.rs` → `material/kinds.rs` (26d156f7) and
-`buildings/clutter.rs` → `clutter/{placement,tests}.rs` splits; and a Reading map
+`buildings/clutter.rs` → `clutter/{placement,tests}.rs` splits; the `roofs.rs`
+split into `roofs/gable.rs` and the `temples.rs` split into
+`temples/{domes,towers}.rs` (2026-11-22, same pattern); and a Reading map
 at the top of CONTEXT.md (load the map + the touched section, not
 the file). Remaining above the ~40K line — every file across `src/**`,
 `examples/**` and `.claude/skills/**`, measured `wc -c` on 2026-10-30, not a
