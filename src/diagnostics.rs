@@ -44,7 +44,6 @@ pub const PATHFINDING_FAILED: DiagnosticPath = DiagnosticPath::const_new("pathfi
 /// скоростях тиков в секунду становится в разы больше (64 × time_scale), и
 /// главный поток упирается именно в эту сумму — без разреза по системам
 /// «тормозит на 15x» не диагностируется.
-pub const SIM_SPATIAL_MS: DiagnosticPath = DiagnosticPath::const_new("sim/spatial_ms");
 pub const SIM_PANIC_MS: DiagnosticPath = DiagnosticPath::const_new("sim/panic_ms");
 pub const SIM_FLEE_MS: DiagnosticPath = DiagnosticPath::const_new("sim/flee_ms");
 pub const SIM_CHASE_MS: DiagnosticPath = DiagnosticPath::const_new("sim/chase_ms");
@@ -98,7 +97,6 @@ pub const SPIKE_PARTS: &[(&str, &DiagnosticPath)] = &[
     ("esc", &SIM_ESCAPE_MS),
     ("chas", &SIM_CHASE_MS),
     ("soul", &SIM_SOULS_MS),
-    ("spat", &SIM_SPATIAL_MS),
     ("move", &SIM_MOVE_MS),
     ("sep", &SIM_SEPARATION_MS),
 ];

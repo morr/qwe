@@ -6,7 +6,7 @@ use rand::RngExt;
 use crate::demon::claims::ChaseClaims;
 use crate::demon::components::{
     ChaseComponents, ChaseRepath, ChaseTarget, Demon, DemonCaughtHumanEvent, DemonChaseTag,
-    DemonDevourTag, DemonLungeTag, DemonStyle, DemonWanderTag, DevourUntil,
+    DemonDevourTag, DemonLungeTag, DemonSlice, DemonStyle, DemonWanderTag, DevourUntil,
 };
 use crate::demon::decide::{ChaseAction, ChaseSense, Victim, decide};
 use crate::diagnostics::{SIM_ACQUIRE_MS, SIM_CHASE_MS, SimMeasure};
@@ -26,6 +26,11 @@ use crate::telemetry::Telemetry;
 /// Wander → Chase: ближайший человек в радиусе агро, у которого ещё нет
 /// `MAX_CHASERS_PER_TARGET` преследователей. Демон берёт агро с первого же
 /// тика после выхода из портала.
+///
+/// Целиком — режим детерминизма: реплей не знает про живые срезы. В живом
+/// режиме тот же проход идёт четвертями, [`acquire_slice`] — агро может
+/// запоздать до K = [`crate::demon::components::ACQUIRE_SLICE_TICKS`] тиков
+/// (заговор невидим), цена прохода с 3500 демонов делится на четыре.
 pub fn acquire_targets(
     mut commands: Commands,
     mut diagnostics: bevy::diagnostic::Diagnostics,
@@ -35,14 +40,46 @@ pub fn acquire_targets(
     query: Query<(Entity, &SimPosition), (With<Demon>, With<DemonWanderTag>)>,
 ) {
     let _measure = SimMeasure::new(&mut diagnostics, &SIM_ACQUIRE_MS);
+    acquire_pass(&mut commands, &humans, &positions, &chasing, query.iter());
+}
+
+/// Одна четверть acquisition: те же правила на демонах своего среза
+/// (`DemonSlice<S>`, `PawnId % ACQUIRE_SLICE_TICKS`), гейт `tick % K == S`
+/// оставляет активной одну копию на тик — как у дальних людей
+/// (`human/lod.rs::far_slice`, паттерн фазы 2 того же плана). Заявки в
+/// `ChaseTarget` ставятся командами и применяются на точке синхронизации
+/// перед `chase`, так что очередь на жертву (`ChaseClaims`) в каждый момент
+/// полна: соседние срезы видят чужие заявки со следующего тика.
+#[allow(clippy::too_many_arguments)]
+pub fn acquire_slice<const S: u8>(
+    mut commands: Commands,
+    mut diagnostics: bevy::diagnostic::Diagnostics,
+    humans: Res<SpatialGrid<Human>>,
+    positions: Query<(&SimPosition, Option<&crate::rng::PawnId>), With<Human>>,
+    chasing: Query<&ChaseTarget, With<Demon>>,
+    query: Query<(Entity, &SimPosition), (With<Demon>, With<DemonWanderTag>, With<DemonSlice<S>>)>,
+) {
+    let _measure = SimMeasure::new(&mut diagnostics, &SIM_ACQUIRE_MS);
+    acquire_pass(&mut commands, &humans, &positions, &chasing, query.iter());
+}
+
+/// Общий проход поиска жертв: по выборке блуждающих демонов найти каждому
+/// ближайшего свободного и перевести в погоню.
+fn acquire_pass<'a>(
+    commands: &mut Commands,
+    humans: &SpatialGrid<Human>,
+    positions: &Query<(&SimPosition, Option<&crate::rng::PawnId>), With<Human>>,
+    chasing: &Query<&ChaseTarget, With<Demon>>,
+    wanderers: impl Iterator<Item = (Entity, &'a SimPosition)>,
+) {
     let mut claims = ChaseClaims::of(chasing.iter().map(|chase_target| chase_target.0));
 
-    for (entity, sim_position) in &query {
+    for (entity, sim_position) in wanderers {
         let Some((human, _)) = humans.nearest_in_range_where(
             sim_position.0,
             DEMON_AGGRO_RADIUS,
-            |candidate| crate::spatial::pawn_position(&positions, candidate),
-            |candidate| crate::spatial::pawn_order(&positions, candidate),
+            |candidate| crate::spatial::pawn_position(positions, candidate),
+            |candidate| crate::spatial::pawn_order(positions, candidate),
             |candidate| !claims.is_full(candidate),
         ) else {
             continue;
@@ -81,6 +118,7 @@ pub fn chase(
     style: Res<DemonStyle>,
     backend: Res<Backend>,
     humans: Res<SpatialGrid<Human>>,
+    mut demon_grid: ResMut<SpatialGrid<Demon>>,
     mut query: Query<
         (
             Entity,
@@ -206,6 +244,7 @@ pub fn chase(
                 if !lunging {
                     commands.entity(entity).insert(DemonLungeTag);
                 }
+                let was_at = sim_position.0;
                 sim_position.0 += advance;
                 // прошлую позицию ведут писатели `SimPosition`: бросок —
                 // единственный писатель этого тика (демон после `to_idle`
@@ -213,6 +252,9 @@ pub fn chase(
                 // сводятся на точку приземления — иначе демон дрожал бы у
                 // жертвы весь девор-покой
                 previous.0 = sim_position.0;
+                // бросок — писатель мимо шага движения: сетку ведёт сам
+                // (раньше держала полная пересборка каждый тик)
+                demon_grid.moved(entity, was_at, sim_position.0);
                 continue;
             }
             ChaseAction::WaitForPath => continue,
@@ -387,6 +429,7 @@ mod tests {
     fn app() -> App {
         let mut app = crate::sim_yard::behavior_yard();
         app.init_resource::<SpatialGrid<Human>>()
+            .init_resource::<SpatialGrid<Demon>>()
             .init_resource::<DemonStyle>()
             .add_systems(Update, chase);
         app
@@ -501,6 +544,57 @@ mod tests {
                 .0,
             landed,
             "концы интерполяции обязаны стоять на точке приземления"
+        );
+    }
+
+    /// Бросок — писатель `SimPosition` мимо шага движения: пока сетку демонов
+    /// пересобирало каждый тик, он сходился с миром сам; с фазы 6 плана ×10
+    /// сетка инкрементальна, и бросок обязан сам отчитаться о переезде — иначе
+    /// демон, перепрыгнувший границу 60-метровой ячейки, в старой ячейке и
+    /// ищется. Демон стоит у самой линии ячейки x = 60, жертва в радиусе
+    /// броска за ней: любой бросок через границу.
+    #[test]
+    fn a_lunge_that_crosses_a_cell_boundary_reports_the_move_to_the_demon_grid() {
+        let app = &mut app();
+        let human = app
+            .world_mut()
+            .spawn((Human, SimPosition(Vec2::new(63.9, 10.0))))
+            .id();
+        let demon = spawn_chaser_at(app, Vec2::new(59.9, 10.0), human, IVec2::new(5, 5), true);
+        app.world_mut()
+            .resource_mut::<SpatialGrid<Demon>>()
+            .insert(demon, Vec2::new(59.9, 10.0));
+
+        run_repath_tick(app);
+
+        assert!(
+            app.world().get::<DemonLungeTag>(demon).is_some(),
+            "жертва в радиусе броска и в прямой видимости — демон обязан прыгнуть"
+        );
+        let landed = app
+            .world()
+            .get::<SimPosition>(demon)
+            .expect("SimPosition")
+            .0;
+        assert!(
+            landed.x > 60.0,
+            "бросок обязан увести демона за границу ячейки, приземлился в {landed}"
+        );
+        let mut seen = Vec::new();
+        app.world()
+            .resource::<SpatialGrid<Demon>>()
+            .for_each_in_cells_around(landed, 0.0, |entity| seen.push(entity));
+        assert!(
+            seen.contains(&demon),
+            "бросок переехал через границу ячейки, а сетка об этом не знает"
+        );
+        let mut old_cell = Vec::new();
+        app.world()
+            .resource::<SpatialGrid<Demon>>()
+            .for_each_in_cells_around(Vec2::new(59.9, 10.0), 0.0, |entity| old_cell.push(entity));
+        assert!(
+            !old_cell.contains(&demon),
+            "демон остался и в старой ячейке"
         );
     }
 

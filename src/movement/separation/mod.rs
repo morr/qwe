@@ -189,7 +189,7 @@ pub fn separate_pawns(
     time: Res<Time>,
     navmesh: Res<crate::navigation::ArcNavmesh>,
     mut humans: ResMut<SpatialGrid<Human>>,
-    demons: Res<SpatialGrid<Demon>>,
+    mut demons: ResMut<SpatialGrid<Demon>>,
     frame: Res<Viewport>,
     mut out: SeparationOutput,
     mut pawns: Query<
@@ -362,9 +362,11 @@ pub fn separate_pawns(
         let length = step.length();
         stats.push_metres += length as f64;
         stats.worst_push = stats.worst_push.max(length);
-        // сетка людей инкрементальна; толчки мелкие, но стоячую пешку они
-        // могут за много прогонов увести через границу 60-метровой ячейки
-        if !is_demon {
+        // обе пешечные сетки инкрементальны; толчки мелкие, но стоячую пешку
+        // они могут за много прогонов увести через границу 60-метровой ячейки
+        if is_demon {
+            demons.moved(pawn.entity, pawn.position, target);
+        } else {
             humans.moved(pawn.entity, pawn.position, target);
         }
     }

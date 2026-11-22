@@ -81,8 +81,9 @@ fn accept(
         bevy::diagnostic::Diagnostics,
         Commands,
         Option<ResMut<SpatialGrid<Human>>>,
+        Option<ResMut<SpatialGrid<crate::demon::Demon>>>,
     )>::new(world);
-    let (mut diagnostics, mut commands, mut grid) = params.get_mut(world).unwrap();
+    let (mut diagnostics, mut commands, mut grid, mut demons) = params.get_mut(world).unwrap();
     let mut tally = AnswerTally::new(&mut diagnostics);
     accept_answer(
         answer,
@@ -95,9 +96,11 @@ fn accept(
             commands: &mut commands,
         },
         is_human,
+        false,
         &mut None,
         backend,
         &mut grid,
+        &mut demons,
     );
     // у счётчика Drop настоящий — пишет нули и пару «ответы/отказы»; у
     // системных параметров Drop нет, их займы кончаются на последнем

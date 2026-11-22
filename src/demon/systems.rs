@@ -4,7 +4,8 @@ use bevy::prelude::*;
 use rand::RngExt;
 
 use crate::demon::components::{
-    ChaseTarget, Demon, DemonLungeTag, DemonSpawner, DemonStyle, DemonWanderTag, WarpOrigin,
+    ChaseTarget, Demon, DemonLungeTag, DemonSlice, DemonSpawner, DemonStyle, DemonWanderTag,
+    WarpOrigin,
 };
 use crate::demon::horde::HordeSchedule;
 use crate::demon::look::{demon_body, halo};
@@ -184,7 +185,7 @@ pub fn spawn_demon(
     };
 
     let (sprite, silhouette) = demon_body(birth.silhouettes, index);
-    commands
+    let demon = commands
         .spawn((
             sprite,
             silhouette,
@@ -196,7 +197,7 @@ pub fn spawn_demon(
             PawnId(index as u32),
             // номер уникален только внутри вида, поэтому вид едет рядом с ним
             Species::Demon,
-            // демон срочен всегда: инвазия за кадром не должна вставать, и
+            // демон срочен всегда: инвазия за кадр не должна вставать, и
             // снимать маркер с него нечему — в отличие от человека, у которого
             // он приходит и уходит вместе с паникой
             crate::movement::UrgentPath,
@@ -210,7 +211,21 @@ pub fn spawn_demon(
         // ореол — дочерняя сущность: уходит вместе с демоном (despawn
         // рекурсивен), пульсирует его масштабом и не нуждается в своём
         // `DespawnOnExit`
-        .with_child(halo(birth.silhouettes));
+        .with_child(halo(birth.silhouettes))
+        .id();
+    insert_acquire_slice(commands, demon, index as u32);
+}
+
+/// Срез acquisition ([`DemonSlice`]) ставится вместе с демоном: `PawnId`
+/// уже посчитан, маркеров K — вставка выбором, как у дальних людей
+/// (`human/lod.rs::insert_slice`).
+fn insert_acquire_slice(commands: &mut Commands, demon: Entity, pawn_id: u32) {
+    match crate::demon::components::acquire_slice_of(pawn_id) {
+        0 => commands.entity(demon).insert(DemonSlice::<0>),
+        1 => commands.entity(demon).insert(DemonSlice::<1>),
+        2 => commands.entity(demon).insert(DemonSlice::<2>),
+        _ => commands.entity(demon).insert(DemonSlice::<3>),
+    };
 }
 
 /// Гейт [`sync_demon_speed`]: только поле `speed`, а не весь ресурс —

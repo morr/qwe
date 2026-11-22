@@ -8,17 +8,19 @@ mod systems;
 
 use bevy::prelude::*;
 
-use self::behavior::{acquire_targets, chase, devour, on_demon_caught_human, pulse_devouring};
+use self::behavior::{
+    acquire_slice, acquire_targets, chase, devour, on_demon_caught_human, pulse_devouring,
+};
 pub use self::components::{
-    ChaseRepath, ChaseTarget, DEMON_CAP, DEMON_CAP_MAX, DEMON_CAP_MIN, DEMON_CAP_STEP,
-    DEMON_LUNGE_BOOST, DEMON_LUNGE_BOOST_MAX, DEMON_LUNGE_BOOST_MIN, DEMON_LUNGE_BOOST_STEP,
-    DEMON_SPAWN_INTERVAL, DEMON_SPAWN_INTERVAL_MAX, DEMON_SPAWN_INTERVAL_MIN,
-    DEMON_SPAWN_INTERVAL_STEP, DEMON_SPEED_FACTOR, DEMON_SPEED_FACTOR_MAX, DEMON_SPEED_FACTOR_MIN,
-    DEMON_SPEED_FACTOR_STEP, Demon, DemonCaughtHumanEvent, DemonChaseTag, DemonDevourTag,
-    DemonLungeTag, DemonSpawner, DemonStyle, DemonWanderTag, DevourUntil, HordeStyle,
-    WAVE_EVERY_DEFAULT, WAVE_EVERY_MAX, WAVE_EVERY_MIN, WAVE_EVERY_STEP, WAVE_LEN_DEFAULT,
-    WAVE_LEN_MAX, WAVE_LEN_MIN, WAVE_LEN_STEP, WAVE_SIZE_DEFAULT, WAVE_SIZE_MAX, WAVE_SIZE_MIN,
-    WAVE_SIZE_STEP, WarpOrigin,
+    ACQUIRE_SLICE_TICKS, ChaseRepath, ChaseTarget, DEMON_CAP, DEMON_CAP_MAX, DEMON_CAP_MIN,
+    DEMON_CAP_STEP, DEMON_LUNGE_BOOST, DEMON_LUNGE_BOOST_MAX, DEMON_LUNGE_BOOST_MIN,
+    DEMON_LUNGE_BOOST_STEP, DEMON_SPAWN_INTERVAL, DEMON_SPAWN_INTERVAL_MAX,
+    DEMON_SPAWN_INTERVAL_MIN, DEMON_SPAWN_INTERVAL_STEP, DEMON_SPEED_FACTOR,
+    DEMON_SPEED_FACTOR_MAX, DEMON_SPEED_FACTOR_MIN, DEMON_SPEED_FACTOR_STEP, Demon,
+    DemonCaughtHumanEvent, DemonChaseTag, DemonDevourTag, DemonLungeTag, DemonSpawner, DemonStyle,
+    DemonWanderTag, DevourUntil, HordeStyle, WAVE_EVERY_DEFAULT, WAVE_EVERY_MAX, WAVE_EVERY_MIN,
+    WAVE_EVERY_STEP, WAVE_LEN_DEFAULT, WAVE_LEN_MAX, WAVE_LEN_MIN, WAVE_LEN_STEP,
+    WAVE_SIZE_DEFAULT, WAVE_SIZE_MAX, WAVE_SIZE_MIN, WAVE_SIZE_STEP, WarpOrigin,
 };
 use self::horde::play_waves;
 pub use self::horde::{HORDE_WAVE_KEY, HordeSchedule};
@@ -103,19 +105,59 @@ impl Plugin for DemonPlugin {
                     // разброс людей: `Movable::speed` входит в состояние
                     // прогона, и правка, применённая в кадре, легла бы между
                     // разными тиками при разном fps
+                    // порядок против веток поведения держим прямым ребром:
+                    // внешней цепочки у кортежа больше нет (см. ниже), а
+                    // «кто первый» у исполнителя — скрытое состояние
                     sync_demon_speed
                         .run_if(demon_speed_changed)
-                        .in_set(SimPipeline::Deterministic),
+                        .in_set(SimPipeline::Deterministic)
+                        .before(pick_wander_targets),
                     // ветка объявлена явно: `pick_wander_targets` и `chase`
                     // берут `Res<Backend>`, а гейт на мир приезжает только с
                     // множеством конвейера. `TickStage::DemonBehavior` держит
                     // порядок (демоны раньше людей), но стадии — только
                     // порядок: без ветки конвейера множество не гейтит ничего
-                    (pick_wander_targets, acquire_targets, chase, devour)
+                    (pick_wander_targets, chase, devour)
                         .chain()
                         .in_set(SimPipeline::BothModes),
+                    // acquisition целиком — только детерминизм (реплей не
+                    // знает про живые срезы; паттерн фазы 2 плана ×10), в
+                    // живом режиме его место занимают четверти ниже. Явные
+                    // рёбра к концам цепочки: цель блуждания выбирается до
+                    // перевода в погоню, свежая заявка `ChaseTarget`
+                    // применяется точкой синхронизации до `chase`. Ветки —
+                    // СОСЕДИ кортежа, не его элементы, и внешней цепочки у
+                    // кортежа нет: ребро цепочки легло бы после всей тройки
+                    // (в том числе после `chase`), и явное ребро назад в
+                    // `chase` замкнуло бы отношение к множеству, членом
+                    // которого `chase` остаётся по своему же `SystemTypeSet`
+                    // — CrossDependency при инициализации расписания
+                    acquire_targets
+                        .in_set(SimPipeline::Deterministic)
+                        .after(pick_wander_targets)
+                        .before(chase),
+                    (
+                        acquire_slice::<0>.run_if(|tick: Res<crate::determinism::SimTick>| {
+                            tick.0.is_multiple_of(ACQUIRE_SLICE_TICKS)
+                        }),
+                        acquire_slice::<1>.run_if(|tick: Res<crate::determinism::SimTick>| {
+                            tick.0 % ACQUIRE_SLICE_TICKS == 1
+                        }),
+                        acquire_slice::<2>.run_if(|tick: Res<crate::determinism::SimTick>| {
+                            tick.0 % ACQUIRE_SLICE_TICKS == 2
+                        }),
+                        acquire_slice::<3>.run_if(|tick: Res<crate::determinism::SimTick>| {
+                            tick.0 % ACQUIRE_SLICE_TICKS == 3
+                        }),
+                    )
+                        // срезы не читают писем друг друга (между собой на тике
+                        // работает один), точка синхронизации одна — перед
+                        // `chase`, читающим `ChaseTarget`
+                        .chain_ignore_deferred()
+                        .in_set(SimPipeline::Live)
+                        .after(pick_wander_targets)
+                        .before(chase),
                 )
-                    .chain()
                     .in_set(TickStage::DemonBehavior),
             )
             .add_systems(

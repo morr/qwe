@@ -179,6 +179,7 @@ RNG work above is unconditional.
 | northstar hierarchy build | started after the warmup (`OnEnter(PlayPhase::Live)`) | started before it (`OnEnter(PlayPhase::Warmup)`) |
 | pawn separation | on (polymesh, on-screen) | off — the Nav tab's `Separation` row reads `off`, dimmed and unclickable, rather than a toggle that flips a resource nothing reads |
 | camera LOD (`human/lod.rs`) | far pawns live on slices (`FarTag`) | **does not exist** — `FarTag` is never inserted, the run keeps full AI without a camera (pinned by `lod::tests::no_far_tag_appears_in_a_deterministic_run`) |
+| demon acquisition (`demon/behavior.rs`) | quartered — one `acquire_slice::<S>` quarter per tick (`DemonSlice` by `PawnId % 4`, ≤3-tick first-target delay) | **does not exist** — `acquire_targets` walks every wanderer each tick (the Ф2 pattern: the replay never sees the quartering) |
 
 **Only the humans' picking moves.** `demon::systems::pick_wander_targets` is registered once,
 in `FixedUpdate` inside `TickStage::DemonBehavior`, and runs there in **both** modes

@@ -409,7 +409,8 @@ Components / tags — `Human`, `Demon`, `Portal`, `Movable`, `SimPosition`,
 corpse, a child entity), `Silhouette`, `SoulMote`
 (kill sparks, alive ~1.4 sim-seconds each), `PawnId`, `WanderIndex`, `NeedsWanderTarget`,
 `RequestedAt`, `RetireAt`, `FarTag` (the camera LOD's far tier — `count FarTag` is the
-far share of the population; the slice markers `FarSlice<N>` are not reflectable),
+far share of the population; the slice markers `FarSlice<N>` and `DemonSlice<S>` are not
+reflectable),
 `LodDwell` (the demote dwell, `u8`), `CorpseChunk` (a baked corpse chunk — the 500 m
 cells of the corpse field; `count CorpseChunk` is how many pieces of baked corpses the
 world carries, `CorpseTag` counts only the fresh, sprite ones), `BakeQueue` (the

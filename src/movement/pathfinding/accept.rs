@@ -81,14 +81,17 @@ impl Drop for AnswerTally<'_, '_, '_> {
 /// `pawn` — [`PawnEdit`]: тождество, три компонента, которые спасение правит
 /// вместе, и буфер команд. Ровно то же принимает `rescue_from_impassable`,
 /// которому эта приёмка пешку и передаёт.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn accept_answer<'backend>(
     result: PathfindingResult,
     tally: &mut AnswerTally<'_, '_, '_>,
     mut pawn: PawnEdit<'_, '_, '_>,
     is_human: bool,
+    is_demon: bool,
     walkable: &mut Option<Walkable<'backend>>,
     backend: &'backend Backend,
     human_grid: &mut Option<ResMut<crate::spatial::SpatialGrid<crate::human::Human>>>,
+    demon_grid: &mut Option<ResMut<crate::spatial::SpatialGrid<crate::demon::Demon>>>,
 ) {
     tally.record(&result);
 
@@ -104,6 +107,9 @@ pub(super) fn accept_answer<'backend>(
         let walkable = walkable.get_or_insert_with(|| backend.walkable());
         if rescue_from_impassable(walkable, &mut pawn) {
             if is_human && let Some(grid) = human_grid.as_mut() {
+                grid.insert(pawn.entity, pawn.sim_position.0);
+            }
+            if is_demon && let Some(grid) = demon_grid.as_mut() {
                 grid.insert(pawn.entity, pawn.sim_position.0);
             }
             return;

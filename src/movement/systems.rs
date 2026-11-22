@@ -25,7 +25,7 @@ use crate::navigation::{Backend, Walkable};
 /// видимое «бежит — замер — бежит» исчезает. Пришедший ответ (`to_moving`)
 /// или `PathfindingError` завершают докат штатно.
 ///
-/// Заодно ведёт сетку людей: где именно проходит граница «сдвинулся» и
+/// Заодно ведёт обе пешечные сетки: где именно проходит граница «сдвинулся» и
 /// «переехал», решает `SpatialGrid::moved`, а не эта система. `Option` —
 /// плагин движения используется в тестах без `SpatialPlugin`.
 #[allow(clippy::too_many_arguments)]
@@ -34,6 +34,7 @@ pub fn move_moving_entities(
     mut diagnostics: bevy::diagnostic::Diagnostics,
     backend: Res<Backend>,
     mut human_grid: Option<ResMut<crate::spatial::SpatialGrid<crate::human::Human>>>,
+    mut demon_grid: Option<ResMut<crate::spatial::SpatialGrid<crate::demon::Demon>>>,
     separation: Res<super::separation::SeparationStyle>,
     pushes: super::separation::SeparationInput,
     lab: Res<super::separation::SeparationLab>,
@@ -45,9 +46,10 @@ pub fn move_moving_entities(
             &mut SimPosition,
             &mut PreviousSimPosition,
             &BodyScale,
-            // только ради сетки людей: она и правда людская, а шаг про вид
-            // больше не спрашивает
+            // только ради сеток видов: они сами решают, что считать переездом,
+            // а шаг про вид больше не спрашивает
             Has<crate::human::Human>,
+            Has<crate::demon::Demon>,
         ),
         // дальняя пешка шагает своим срезом (`human/lod.rs`) с dt = K тиков;
         // шаг тика её не трогает
@@ -73,7 +75,9 @@ pub fn move_moving_entities(
     let pushes = pushes.reader(separation.hold, lab.experiments.slide);
     let dt = time.delta_secs();
 
-    for (entity, mut movable, mut sim_position, mut previous, body, is_human) in &mut query {
+    for (entity, mut movable, mut sim_position, mut previous, body, is_human, is_demon) in
+        &mut query
+    {
         let was_at = sim_position.0;
         // позиция пишется обратно только если шаг её и правда сдвинул:
         // безусловная запись притворилась бы шагом на стоящих в приходе и в
@@ -112,6 +116,9 @@ pub fn move_moving_entities(
         }
 
         if is_human && let Some(grid) = human_grid.as_mut() {
+            grid.moved(entity, was_at, sim_position.0);
+        }
+        if is_demon && let Some(grid) = demon_grid.as_mut() {
             grid.moved(entity, was_at, sim_position.0);
         }
     }
@@ -166,18 +173,20 @@ pub fn rescue_trapped_entities(
     mut commands: Commands,
     backend: Res<Backend>,
     mut human_grid: Option<ResMut<crate::spatial::SpatialGrid<crate::human::Human>>>,
+    mut demon_grid: Option<ResMut<crate::spatial::SpatialGrid<crate::demon::Demon>>>,
     mut query: Query<(
         Entity,
         &mut SimPosition,
         &mut PreviousSimPosition,
         &mut Movable,
         Has<crate::human::Human>,
+        Has<crate::demon::Demon>,
     )>,
 ) {
     let walkable = backend.walkable();
     let started = std::time::Instant::now();
     let mut rescued = 0;
-    for (entity, mut sim_position, mut previous, mut movable, is_human) in &mut query {
+    for (entity, mut sim_position, mut previous, mut movable, is_human, is_demon) in &mut query {
         let mut pawn = PawnEdit {
             entity,
             movable: &mut movable,
@@ -190,6 +199,9 @@ pub fn rescue_trapped_entities(
         }
         rescued += 1;
         if is_human && let Some(grid) = human_grid.as_mut() {
+            grid.insert(entity, sim_position.0);
+        }
+        if is_demon && let Some(grid) = demon_grid.as_mut() {
             grid.insert(entity, sim_position.0);
         }
     }

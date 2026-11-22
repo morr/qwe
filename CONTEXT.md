@@ -1147,8 +1147,10 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   → Dispatch`. `TickStage::ORDER` is the single source: the set chain, the tick-probe
   segments (`TickSegments`) and the schedule inspection test derive from it, and plugins
   place systems in stage sets instead of cross-plugin `.before`/`.after` edges. Stages are
-  order-only — no gate: the world gate rides `SimPipeline`, and `rebuild_demon_grid`
-  carries its own `run_if(Playing)`. **Demons act before humans so a kill lands before
+  order-only — no gate: the world gate rides `SimPipeline`. `DemonGrid` is an empty
+  ordering slot since the demon grid went incremental (plan ×10 Phase 6): the spawn
+  commands flush on the edge to `DemonBehavior`, where the grid observer seats the
+  newborn demon. **Demons act before humans so a kill lands before
   `escape`** — a human is never counted both killed and escaped in one tick.
 - **SimPosition / PreviousSimPosition** — simulation-space positions; `Transform` is
   interpolated between them in `RunFixedMainLoop`. Systems mutate `SimPosition`, **never
@@ -1176,8 +1178,10 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   largest search radius, so a radius query is a 3×3 cell walk). Cells hold **entities
   only** — positions are read live through the `pos_of` closure. **A tie in distance is
   broken by `PawnId`, not by traversal order** (`order_of`, called only on exact equality).
-  **The human grid is incremental** (observers + `SpatialGrid::moved` across cell
-  boundaries), **the demon grid is rebuilt** each tick, **the queued-wanderer grid is
+  **Both pawn grids are incremental** (observers + `SpatialGrid::moved` across cell
+  boundaries) — the demon grid kept a full rebuild per tick while its population was
+  ~100, and went incremental with the ×10 cap of 3500 (plan Phase 6; the step, the
+  separation push, the rescue and the lunge all report their moves). **The queued-wanderer grid is
   maintained by request-lifecycle observers alone** — a queued wanderer stands until
   dispatch and may drive away before acceptance (repath on the move), so its cell can
   go stale; that is fine, because the grid decides **whom** to read, not where they
@@ -1320,7 +1324,11 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   no `WanderPause` analogue and no stored `WanderHeading` — the next target is picked the
   same frame the demon goes idle) → **Chase** (nearest human within `DEMON_AGGRO_RADIUS`
   45 m with a free claim slot; give-up at ×1.5 radius hysteresis, 67.5 m) → **Devour** →
-  Wander. **Chase claims** —
+  Wander. **Acquisition runs in quarters in the live mode** (plan ×10 Phase 6): a demon
+  carries a **`DemonSlice<S>`** marker (`PawnId % 4`, set at spawn) and takes aggro on
+  its slice's tick — a delay of at most 3 ticks, invisible; under the determinism toggle
+  the whole pass runs every tick as before (the Ф2 pattern: the deterministic run has no
+  slices). **Chase claims** —
   **max 2 chasers per target**
   (`ChaseClaims`, `demon/claims.rs`), a value rebuilt each tick; there is no standing claim
   between ticks, only **GaveUp** releases a slot, and a switch *transfers* one. Repath
@@ -1340,7 +1348,8 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   only in `PlayPhase::Live`, and that is an invariant**: it hands out `PawnId`s from a
   counter `WorldStarted` resets, so a burst fired before the announcement deals the same
   numbers twice. Matching precondition: **no demon may be alive when a run starts**. It runs
-  in `Spawner`, **before `DemonGrid`**, so a demon enters the demon grid and acts on the
+  in `Spawner`, **before `DemonBehavior`**, and the spawn commands flush on the stage edge —
+  the grid observer seats the newborn demon, so it is in the grid and acts on the
   tick it is born on.
 - **Horde** (`demon/horde.rs`) — waves on top of the background trickle: every lull a
   **hearth** opens somewhere on the map and releases `HordeStyle::wave_size` demons over

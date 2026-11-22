@@ -471,11 +471,12 @@ pub fn apply_pathfinding_results(
     mut load: ResMut<crate::sim_time::SimLoad>,
     tick: Res<SimTick>,
     mut human_grid: Option<ResMut<crate::spatial::SpatialGrid<crate::human::Human>>>,
+    mut demon_grid: Option<ResMut<crate::spatial::SpatialGrid<crate::demon::Demon>>>,
     mut tasks: Query<(
         Entity,
         Option<&crate::rng::PawnId>,
-        // вид — для ключа порядка; `Has<Human>` ниже — совсем про другое: про
-        // то, надо ли поправить человеческую пространственную сетку
+        // вид — для ключа порядка; `Has<Human>`/`Has<Demon>` ниже — совсем про
+        // другое: про то, надо ли поправить пространственную сетку своего вида
         Option<&crate::rng::Species>,
         &mut Movable,
         &mut SimPosition,
@@ -483,6 +484,7 @@ pub fn apply_pathfinding_results(
         &mut PathfindingTask,
         &RetireAt,
         Has<crate::human::Human>,
+        Has<crate::demon::Demon>,
     )>,
 ) {
     // `<=`, а не `==`: в штатном ходе тики идут подряд и срок совпадает
@@ -498,7 +500,7 @@ pub fn apply_pathfinding_results(
     // `pathfinding/budget.rs`), до хвоста сравнение не доходит
     let mut due: Vec<(u8, u32, Entity)> = tasks
         .iter()
-        .filter(|(.., retire_at, _)| retire_at.0 <= tick.0)
+        .filter(|(.., retire_at, _, _)| retire_at.0 <= tick.0)
         .map(|(entity, pawn_id, pawn_species, ..)| {
             let (species, number) = super::order::pawn_key(pawn_species, pawn_id);
             (species, number, entity)
@@ -512,8 +514,18 @@ pub fn apply_pathfinding_results(
     let mut tally = AnswerTally::new(&mut diagnostics);
     let mut walkable = None;
     for (_, _, entity) in due {
-        let Ok((entity, _, _, mut movable, mut sim_position, mut previous, mut task, _, is_human)) =
-            tasks.get_mut(entity)
+        let Ok((
+            entity,
+            _,
+            _,
+            mut movable,
+            mut sim_position,
+            mut previous,
+            mut task,
+            _,
+            is_human,
+            is_demon,
+        )) = tasks.get_mut(entity)
         else {
             continue;
         };
@@ -537,9 +549,11 @@ pub fn apply_pathfinding_results(
                 commands: &mut commands,
             },
             is_human,
+            is_demon,
             &mut walkable,
             &backend,
             &mut human_grid,
+            &mut demon_grid,
         );
     }
 }
@@ -573,6 +587,7 @@ pub fn listen_for_pathfinding_tasks(
     mut diagnostics: bevy::diagnostic::Diagnostics,
     backend: Res<Backend>,
     mut human_grid: Option<ResMut<crate::spatial::SpatialGrid<crate::human::Human>>>,
+    mut demon_grid: Option<ResMut<crate::spatial::SpatialGrid<crate::demon::Demon>>>,
     mut tasks: Query<(
         Entity,
         &mut Movable,
@@ -580,13 +595,16 @@ pub fn listen_for_pathfinding_tasks(
         &mut PreviousSimPosition,
         &mut PathfindingTask,
         Has<crate::human::Human>,
+        Has<crate::demon::Demon>,
     )>,
 ) {
     let mut tally = AnswerTally::new(&mut diagnostics);
     // взгляд на проходимость берётся лениво и только под спасение: его
     // read-лок во время загрузки на секунды держит на запись поток заливки
     let mut walkable = None;
-    for (entity, mut movable, mut sim_position, mut previous, mut task, is_human) in &mut tasks {
+    for (entity, mut movable, mut sim_position, mut previous, mut task, is_human, is_demon) in
+        &mut tasks
+    {
         let Some(result) = check_ready(&mut task.task) else {
             // Сторожок второго эшелона: бюджет внутри polymesh-поиска ловит
             // расходящуюся воронку, а этот порог — любой другой способ
@@ -622,9 +640,11 @@ pub fn listen_for_pathfinding_tasks(
                 commands: &mut commands,
             },
             is_human,
+            is_demon,
             &mut walkable,
             &backend,
             &mut human_grid,
+            &mut demon_grid,
         );
     }
 }

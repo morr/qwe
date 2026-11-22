@@ -7,12 +7,14 @@
 //! нельзя, не пересобирая сетку каждый тик: позиция протухала бы на величину
 //! до размера ячейки, и погоня/паника промахивались бы молча.
 //!
-//! Сетка людей ведётся инкрементально: спавн и смерть — observers на
-//! `Human`, сдвиг — из шага движения и из расталкивания, оба через
-//! [`SpatialGrid::moved`], который и решает, что считать переездом (редкое
-//! событие: гуляющий пересекает 60-метровую ячейку раз в ~21 виртуальную
-//! секунду). Сетка демонов пересобирается целиком — их ~100, пересборка
-//! дешевле бухгалтерии.
+//! Обе пешечные сетки ведутся инкрементально: спавн и смерть — observers на
+//! `Human`/`Demon`, сдвиг — из шага движения, из расталкивания и из броска
+//! демона, все через [`SpatialGrid::moved`], который и решает, что считать
+//! переездом (редкое событие: гуляющий пересекает 60-метровую ячейку раз в
+//! ~21 виртуальную секунду). Сетка демонов до фазы 6 плана ×10
+//! (`docs/population-x10-plan.md`) пересобиралась целиком — при ~100 демонах
+//! пересборка была дешевле бухгалтерии; на 3500 демонах она сама стала
+//! строкой dissect-а, и оба вида живут по одним правилам.
 
 use std::marker::PhantomData;
 
@@ -20,11 +22,9 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
 use crate::demon::Demon;
-use crate::diagnostics::{SIM_SPATIAL_MS, SimMeasure};
 use crate::human::Human;
 use crate::movement::SimPosition;
 use crate::settings::MAP_SIZE;
-use crate::tick_stage::TickStage;
 
 pub const CELL_SIZE: f32 = 60.0;
 
@@ -284,26 +284,9 @@ impl Plugin for SpatialPlugin {
             .init_resource::<SpatialGrid<Human>>()
             .add_observer(on_human_added)
             .add_observer(on_human_removed)
-            .add_systems(
-                FixedUpdate,
-                rebuild_demon_grid
-                    .in_set(TickStage::DemonGrid)
-                    // гейт раньше ехал с цепочки `SimSet`; стадии — только
-                    // порядок, поэтому система объявляет его сама
-                    .run_if(in_state(crate::loading::AppState::Playing)),
-            );
+            .add_observer(on_demon_added)
+            .add_observer(on_demon_removed);
     }
-}
-
-/// Демонов ~100 — их сетку дешевле пересобрать за тик, чем вести
-/// инкрементально (lunge двигает `SimPosition` мимо системы движения).
-fn rebuild_demon_grid(
-    mut diagnostics: bevy::diagnostic::Diagnostics,
-    mut grid: ResMut<SpatialGrid<Demon>>,
-    query: Query<(Entity, &SimPosition), With<Demon>>,
-) {
-    let _measure = SimMeasure::new(&mut diagnostics, &SIM_SPATIAL_MS);
-    grid.rebuild(query.iter().map(|(entity, pos)| (entity, pos.0)));
 }
 
 /// Человек появился в мире — в сетку. Позиция — из `Transform` бандла спавна:
@@ -326,6 +309,25 @@ fn on_human_removed(event: On<Remove<Human>>, mut grid: ResMut<SpatialGrid<Human
     grid.remove(event.entity);
 }
 
+/// Демон появился в мире — в сетку. Позиция — из `Transform` бандла спавна,
+/// по той же причине, что у человека: `SimPosition` в момент срабатывания
+/// observer'а ещё дефолтный, его заполняет observer добавления `Movable`.
+fn on_demon_added(
+    event: On<Add<Demon>>,
+    mut grid: ResMut<SpatialGrid<Demon>>,
+    query: Query<&Transform>,
+) {
+    if let Ok(transform) = query.get(event.entity) {
+        grid.insert(event.entity, transform.translation.truncate());
+    }
+}
+
+/// Демон покинул мир. Своей смерти у демона нет — это рестарт и смена
+/// города (`DespawnOnExit`); `On<Remove>` покрывает оба.
+fn on_demon_removed(event: On<Remove<Demon>>, mut grid: ResMut<SpatialGrid<Demon>>) {
+    grid.remove(event.entity);
+}
+
 #[cfg(test)]
 mod tests {
     use bevy::ecs::system::RunSystemOnce;
@@ -333,8 +335,7 @@ mod tests {
     use super::*;
     use crate::rng::PawnId;
 
-    /// Мир проводки: сами observers и пересборка демонов, без состояний и
-    /// расписания игры.
+    /// Мир проводки: сами observers, без состояний и расписания игры.
     fn app() -> App {
         let mut app = App::new();
         app.init_resource::<bevy::diagnostic::DiagnosticsStore>()
@@ -342,7 +343,8 @@ mod tests {
             .init_resource::<SpatialGrid<Demon>>()
             .add_observer(on_human_added)
             .add_observer(on_human_removed)
-            .add_systems(Update, rebuild_demon_grid);
+            .add_observer(on_demon_added)
+            .add_observer(on_demon_removed);
         app
     }
 
@@ -399,44 +401,151 @@ mod tests {
         );
     }
 
-    /// Сетка демонов не ведётся инкрементально вовсе: бросок двигает
-    /// `SimPosition` мимо системы движения, и единственное, что держит её в
-    /// согласии с миром, — полная пересборка каждый тик.
+    /// Сетка демонов живёт теми же правилами, что людская: observers на
+    /// спавн/despawn и [`SpatialGrid::moved`] на переезд. Прежде (до фазы 6
+    /// плана ×10) её каждый тик пересобирало целиком, и любой писатель
+    /// `SimPosition` был согласован с ней автоматически; теперь согласие
+    /// держат сами писатели, и пин стоит на всём их наборе — спавн, шаг
+    /// (вызовом `moved`, как его делает шаг движения), снятие.
     #[test]
-    fn the_demon_grid_follows_a_position_written_past_the_movement_system() {
+    fn the_demon_grid_is_maintained_incrementally_like_the_human_one() {
         let app = &mut app();
         let from = Vec2::new(100.0, 100.0);
         let to = Vec2::new(400.0, 400.0);
-        let demon = app.world_mut().spawn((Demon, SimPosition(from))).id();
-
-        app.update();
+        // спавн — Transform, как его кладёт бандл `spawn_demon`; сам observer
+        // сетку снабжает именно из него
+        let demon = app
+            .world_mut()
+            .spawn((Demon, Transform::from_translation(from.extend(0.0))))
+            .id();
         assert_eq!(found_near::<Demon>(app, from), vec![demon]);
 
-        // ровно то, что делает бросок: запись в `SimPosition` напрямую
-        app.world_mut().entity_mut(demon).insert(SimPosition(to));
-        app.update();
-
+        // переезд через границу ячейки — тем же входом, что зовут шаг
+        // движения и расталкивание
+        app.world_mut()
+            .resource_mut::<SpatialGrid<Demon>>()
+            .moved(demon, from, to);
         assert!(found_near::<Demon>(app, from).is_empty());
         assert_eq!(found_near::<Demon>(app, to), vec![demon]);
+
+        // сдвиг внутри ячейки — не переезд
+        app.world_mut()
+            .resource_mut::<SpatialGrid<Demon>>()
+            .moved(demon, to, to + Vec2::X * 5.0);
+        assert_eq!(found_near::<Demon>(app, to), vec![demon]);
+
+        // despawn — рестарт и смена города
+        app.world_mut().despawn(demon);
+        assert!(
+            found_near::<Demon>(app, to).is_empty(),
+            "despawn прошёл мимо сетки"
+        );
+    }
+
+    /// Эквивалентность содержания (пин фазы 6 плана ×10): сетка, которую
+    /// ведут observers и `moved` на сценарии спавнов, переездов и despawn,
+    /// побайтно совпадает с сеткой, собранной вставкой по текущим позициям.
+    /// Прежде эквивалентность была тавтологией — сетку каждый тик собирал
+    /// `rebuild` прямо из выборки; теперь это свойство, которое держат
+    /// писатели, и тест его ловит.
+    #[test]
+    fn the_incrementally_kept_demon_grid_matches_a_rebuilt_reference() {
+        let app = &mut app();
+        let spots = [
+            Vec2::new(90.0, 90.0),
+            Vec2::new(110.0, 90.0),
+            Vec2::new(400.0, 400.0),
+            Vec2::new(430.0, 430.0),
+        ];
+        let demons: Vec<Entity> = spots
+            .iter()
+            .map(|spot| {
+                app.world_mut()
+                    .spawn((Demon, Transform::from_translation(spot.extend(0.0))))
+                    .id()
+            })
+            .collect();
+
+        // сценарий: двое переезжают через границы ячеек, один уходит из мира
+        app.world_mut().resource_mut::<SpatialGrid<Demon>>().moved(
+            demons[0],
+            spots[0],
+            Vec2::new(500.0, 500.0),
+        );
+        app.world_mut().resource_mut::<SpatialGrid<Demon>>().moved(
+            demons[1],
+            spots[1],
+            Vec2::new(105.0, 95.0),
+        );
+        app.world_mut().despawn(demons[2]);
+
+        // эталон: с нуля вставками по текущим позициям — то, что собрал бы
+        // `rebuild` по выборке мира
+        let positions: Vec<(Entity, Vec2)> = [
+            (demons[0], Vec2::new(500.0, 500.0)),
+            (demons[1], Vec2::new(105.0, 95.0)),
+            (demons[3], spots[3]),
+        ]
+        .into_iter()
+        .collect();
+        let mut reference = SpatialGrid::<Demon>::default();
+        for (entity, pos) in &positions {
+            reference.insert(*entity, *pos);
+        }
+
+        let kept = app.world().resource::<SpatialGrid<Demon>>();
+        let (kept_cells, reference_cells) = (reference_cells(kept), reference_cells(&reference));
+        assert_eq!(kept_cells, reference_cells, "сетка разошлась с эталоном");
+    }
+
+    /// Содержимое сетки для сравнения: пары (ячейка, отсортированные сущности)
+    /// только по непустым ячейкам, в стабильном порядке.
+    fn reference_cells<T: Send + Sync + 'static>(
+        grid: &SpatialGrid<T>,
+    ) -> Vec<(usize, Vec<Entity>)> {
+        let mut cells: Vec<(usize, Vec<Entity>)> = grid
+            .cells
+            .iter()
+            .enumerate()
+            .filter(|(_, entries)| !entries.is_empty())
+            .map(|(index, entries)| {
+                let mut sorted = entries.clone();
+                sorted.sort();
+                (index, sorted)
+            })
+            .collect();
+        cells.sort();
+        cells
     }
 
     /// Проводка ключа порядка от компонента до разрешения ничьи: два
     /// равноудалённых демона, и побеждает меньший `PawnId`, а не тот, кого
-    /// пересборка положила в ячейку последним.
+    /// вставка в ячейку застала последним.
     #[test]
     fn the_search_breaks_a_tie_by_the_pawn_id_the_entity_carries() {
         let app = &mut app();
         let middle = Vec2::new(100.0, 100.0);
-        // меньший номер спавнится ПЕРВЫМ, и это не безразлично: пересборка
-        // укладывает демонов в ячейку в порядке выборки, так что при разрешении
-        // ничьи обходом победил бы как раз старший
+        // меньший номер спавнится ПЕРВЫМ, и это не безразлично: вставка
+        // укладывает демонов в ячейку в порядке спавнов, так что при разрешении
+        // ничьи обходом победил бы как раз старший. `SimPosition` здесь нужен
+        // поиску (позиции читаются живьём), `Transform` — observer'у сетки
         let junior = app
             .world_mut()
-            .spawn((Demon, SimPosition(middle - Vec2::X * 10.0), PawnId(2)))
+            .spawn((
+                Demon,
+                Transform::from_translation((middle - Vec2::X * 10.0).extend(0.0)),
+                SimPosition(middle - Vec2::X * 10.0),
+                PawnId(2),
+            ))
             .id();
         let senior = app
             .world_mut()
-            .spawn((Demon, SimPosition(middle + Vec2::X * 10.0), PawnId(9)))
+            .spawn((
+                Demon,
+                Transform::from_translation((middle + Vec2::X * 10.0).extend(0.0)),
+                SimPosition(middle + Vec2::X * 10.0),
+                PawnId(9),
+            ))
             .id();
         app.update();
 

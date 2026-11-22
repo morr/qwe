@@ -33,10 +33,13 @@ Separation → Dispatch` (`TickStage::ORDER`; the set chain, the tick-probe segm
 schedule inspection test derive from it, and stages carry no gate — `CONTEXT.md`'s).
 `SimPosition` / `PreviousSimPosition`, the pinned order around them and the reason demons
 act first are `CONTEXT.md`'s. The one lesson that lives
-here: **the demon spawner sits in `Spawner`, before `DemonGrid`, for the chain edge** — the edge is
-what puts a sync point between the spawn commands and the grid rebuild, so a demon is in
+here: **the demon spawner sits in `Spawner`, before `DemonGrid`/`DemonBehavior`, for the
+chain edge** — the edge is what puts a sync point between the spawn commands and the
+first demon-reading system, and the grid observer fires on that flush, so a demon is in
 the grid on the tick it is born. With no edge the flush landed on either side of the
-rebuild depending on the executor.
+grid update depending on the executor. `DemonGrid` itself is an empty ordering slot
+since the demon grid went incremental (plan ×10 Phase 6) — kept so the seam in the stage
+list and the tick-probe segments does not move.
 
 **Movable** — the state machine and its transitions are `CONTEXT.md`'s. What lives here:
 `to_idle` cancelling an undispatched `PathfindingRequest` (with its `RequestedAt`) is what
@@ -48,15 +51,20 @@ keeps a human calming down from leaving a flee search to be computed and thrown 
 cells hold **entities only**, positions read live from `SimPosition` through the `pos_of`
 closure every query takes — storing `Vec2` in cells would go stale by up to a cell size.
 
-**The human grid is incremental, the demon grid is rebuilt.**
+**Both pawn grids are incremental** (the demon grid kept a full rebuild per tick while
+its population was ~100; the ×10 cap of 3500 made the rebuild a dissect line of its
+own, and plan Phase 6 switched it over — pinned by the content-equivalence test in
+`spatial.rs`).
 
 - Humans (~20 000): `On<Add, Human>` / `On<Remove, Human>` observers cover spawn and
   death/despawn, and a step or a separation push reports itself through
   `SpatialGrid::moved`, which relocates only across a cell boundary — the cost scales
   with crossings, not population, **and the rule lives in the grid rather than in each
   mover**.
-- Demons (~100): a full rebuild per tick (`rebuild_demon_grid`) is cheaper than bookkeeping,
-  and the lunge moves demon `SimPosition` outside the mover system anyway.
+- Demons: the same observers on `Demon`, and **every `SimPosition` writer reports** —
+  the step and the separation push through the same `moved`, the rescue through
+  `insert` (the three rescue sites thread both grids), and the lunge, which moves
+  demon `SimPosition` outside the mover system, reports in `chase` itself.
 
 **A tie in distance is broken by `PawnId`, not by traversal order** — `order_of`, a second
 closure the search calls *only* on exact equality, so the key never costs anything on the
@@ -488,13 +496,26 @@ starts at 0). Diagnostics: `sim/horde_ms`; `Census.wave` is the waves-so-far cou
 printed in the tick-spike line.
 
 **A demon acts from the first tick it exists**, the initial burst included — held by the
-schedule, not by luck: the spawner sits in `TickStage::Spawner`, before `DemonGrid`, and
-in `SimPipeline::BothModes` (`demon/mod.rs`). The `Live`-only rule is not covered by the
+schedule, not by luck: the spawner sits in `TickStage::Spawner`, before `DemonBehavior`, and
+in `SimPipeline::BothModes` (`demon/mod.rs`) — the spawn flush on that edge is what seats the
+newborn in the incremental demon grid (the `Add<Demon>` observer), so it is targetable at once. The `Live`-only rule is not covered by the
 warmup hold — that pause belongs to `sim_time` and space unpauses it — which is why the
 `WorldStarted` reset is matched on the precondition **no demon may be alive when a run
 starts** (`demon::on_world_started` says so). A `DemonSpawnPause` staging
 existed and was removed on request; staging an entrance again means a new component,
 not reviving that one.
+
+**Acquisition is quartered in `Live`** (`ACQUIRE_SLICE_TICKS` = 4, `demon/components.rs`):
+every wandering demon gets a `DemonSlice<S>` at spawn (`PawnId % 4`), and
+`acquire_slice::<S>` runs only on ticks where `SimTick % 4 == S` — one quarter per tick,
+so a fresh demon waits up to 3 ticks for its first target, invisible next to the
+spawner's rate. Exactly one slice per tick also means every pass sees complete
+`ChaseClaims`: a claim made this tick lands before the next quarter runs, so nothing
+overclaims. The slices and the deterministic `acquire_targets` share `acquire_pass`; the
+wiring copies the Ф2 far-slice pattern (`Live`-only, `chain_ignore_deferred`,
+`pick_wander_targets` → slices → `chase`, `demon/mod.rs`), and under the determinism
+toggle the slices don't exist — the whole pass runs every tick, so the replay never
+sees the quartering.
 
 ## Telemetry
 

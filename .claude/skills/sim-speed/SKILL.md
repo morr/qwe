@@ -193,7 +193,8 @@ time, so the filter does not change with the frame rate. `SimTick` zeroes on
   over BRP as `SimClock`.
 - **Per-tick cost** (`sim/*_ms` diagnostics, 20 000 humans / 100 demons): with the
   entity-only incremental grid and the inverted `panic` the tick sums to ~0.1 ms —
-  `flee` ~0.06 > `panic` ~0.02 > `move` ~0.01 > `spatial` (demon rebuild) ~0.004.
+  `flee` ~0.06 > `panic` ~0.02 > `move` ~0.01 — the per-tick demon-grid rebuild is gone
+  (both pawn grids are incremental now; their writers report moves).
   History: `panic` once scanned the demon grid per wandering human (~0.8 ms/tick, the
   speed ceiling); a `DemonDangerMap` boolean prefilter cut it to ~0.15, and the
   inversion replaced the map entirely. At full zoom-out (every pawn moving) the sim
