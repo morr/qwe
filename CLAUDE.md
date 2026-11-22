@@ -306,7 +306,7 @@ one measured session grew its context to 570K over 409 turns and burned 114.6M t
   `src/map/buildings/temples.rs` (87K)
   and `src/map/osm/parse.rs` (67K); `meshing.rs`,
   `parking.rs`, `osm/model.rs` and `inspect.rs` joined the split pattern in October 2026,
-  `roads.rs` in November
+  `roads.rs` and `roofs.rs` in November
   (parent `foo.rs` keeps the interface and re-exports, subjects live in `foo/`). In the
   session that sized this rule the
   predecessors (`corners.rs`, `roads/tests.rs`, `references/roads.md`, since split)
