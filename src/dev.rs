@@ -662,7 +662,12 @@ impl Plugin for DevPlugin {
         .init_resource::<VirtualKey>()
         .add_observer(on_take_screenshot)
         .add_observer(on_offscreen_shot)
-        .add_observer(on_spawn_test_walker)
+        // гейт на самом обсервере, как у `RestartEvent`: голый `brp event`
+        // минует все прочие проверки, и, пришедший в `Loading`, ходок молча
+        // пережил бы границу загрузки — заявка стоит (диспетчер гейтован
+        // `SimPipeline::Live`), а сущность не попадает в предупреждение о
+        // наследниках. Событие вне `Playing` просто отбрасывается
+        .add_observer(on_spawn_test_walker.run_if(in_state(AppState::Playing)))
         .add_observer(on_probe_layers)
         .add_systems(Update, capture_offscreen)
         .add_systems(
