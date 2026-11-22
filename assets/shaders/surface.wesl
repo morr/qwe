@@ -40,7 +40,7 @@ struct SurfaceParams {
     shore_width: f32,
     intensity: f32,
     // шаг полосы, м — `roads::shape::lane_width`: полоса одна по городу, и по
-    // той же сетке кладёт линии слой краски (`paint.wgsl`)
+    // той же сетке кладёт линии слой краски (`paint.wesl`)
     lane_width: f32,
     // профиль колеи, м — `roads::paint::RUT_OFFSET` / `RUT_SIGMA`, один с колеёй
     // траекторий слоя краски

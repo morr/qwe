@@ -53,7 +53,7 @@ impl Default for PortalPos {
     }
 }
 
-/// Униформ шейдера — раскладка та же, что у `PortalUniform` в WGSL.
+/// Униформ шейдера — раскладка та же, что у `PortalUniform` в `portal.wesl`.
 #[derive(ShaderType, Clone, Copy, Debug)]
 struct PortalUniform {
     core: Vec4,
