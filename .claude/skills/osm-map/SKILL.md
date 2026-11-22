@@ -132,7 +132,7 @@ a screenshot belongs to.
   it on the **country boundary**, and everything inside inherits it. `out tags`, never
   `out geom` — a country's border geometry is megabytes.
   `is_in` needs areas, which not every mirror builds; an empty answer leaves
-  `MapData::traffic_side` at `TrafficSide::Right` and logs it (`parse.rs::driving_side`,
+  `MapData::traffic_side` at `TrafficSide::Right` and logs it (`parse/ways.rs::driving_side`,
   the innermost `admin_level` wins).
 - **Mirrors** — `OVERPASS_URLS` in `download.rs` is tried in order; the VK/Mail.ru
   instance leads (full planet, current data, the nearest pipe from here). On dense

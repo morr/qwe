@@ -1,6 +1,8 @@
 # The parse seam — reading the elements, finishing the map
 
-Detail behind `map/osm/parse.rs` and the parse tests. Siblings: `parse-buildings.md`
+Detail behind `map/osm/parse.rs` — with the element half in `parse/elements.rs`, the
+way reading in `parse/ways.rs`, ring assembly in `parse/relations.rs` and the finishing
+passes in `parse/finish.rs` — and the parse tests. Siblings: `parse-buildings.md`
 (the building readings and passes) and `parse-geometry.md` (the geometry passes —
 sidewalks, blocks, lots, pockets, rings). `SKILL.md` keeps the model (**MapData**) and
 the map of the pipeline; tag coverage lives in `references/osm-coverage.md`.
@@ -22,8 +24,8 @@ world-reload condition (`city.rs::parse_knobs_diverged`, through
 (`roads::shape::adopt_lane_width`) and the roundabout legs (`roads::leg_sections`) read;
 a map built by hand in a test carries the defaults.
 
-- **`read_elements(response, bounds) -> (MapData, Pending, ReadReport)`** — the element
-  loop and nothing else. What comes out is *raw*: houses still standing in water, churches
+- **`read_elements(response, bounds) -> (MapData, Pending, ReadReport)`** (`parse/elements.rs`) —
+  the element loop and nothing else. What comes out is *raw*: houses still standing in water, churches
   without a faith, skewed outlines, no doors, no trees. `Pending` is what has nowhere to go
   yet: the entrances (Overpass hands out nodes before ways, so at that moment the
   buildings do not exist). The roads with no `sidewalk*` tag at all, whose sidewalks the
@@ -39,7 +41,8 @@ a map built by hand in a test carries the defaults.
   rings yellow, flat material at `Z_OSM_CONTOURS_OVERLAY` 29.5 over the network overlay — in the Debug tab
   (`OSM contours`) and in the roads gallery (`Contours`, `ROADS_CONTOURS=1`). It is the
   cheap half of the **raw OSM** question («data or our parse?»): no reload, one frame.
-- **`finish_parse(&mut MapData, &Pending, ParseKnobs) -> PassReport`** — the **nine** finishing passes
+- **`finish_parse(&mut MapData, &Pending, ParseKnobs) -> PassReport`** (`parse/finish.rs`) — the
+  **nine** finishing passes
   (step 0 is the street sections, `map::roads::network::sections`, since the width they
   set is read by the passes after them — and right before them the roundabout tail Ys
   are straightened, `map::roads::rings::straighten_tails`, which moves nodes and cuts a

@@ -413,7 +413,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
     threshold are **one value** (they enter through one `push` and cannot drift apart).
     **The prefix rule**: the density slider shows the beginning of the set, not a filter —
     a step up only ever adds trees and never moves the standing ones.
-- **The parse seam** (`map/osm/parse.rs`) — reading the elements and finishing the map are
+- **The parse seam** (`map/osm/parse.rs`; the halves live in `parse/elements.rs` and
+  `parse/finish.rs`) — reading the elements and finishing the map are
   two things, and either half is callable alone. **`read_elements`** runs the Overpass
   element loop and stops; **`finish_parse`** runs the finishing passes (the street
   sections first), **and that order is their interface** — all steps written down whole

@@ -1,6 +1,7 @@
 # Parked cars
 
-Detail behind `map/cars/` (the layer in `mod.rs`, the drawing in `body.rs`) — the
+Detail behind `map/cars/` (the layout in `street.rs`, the layer in `mod.rs`, the
+drawing in `body.rs`) — the
 second most recognisable thing on an aerial photo after the roofs themselves: a street
 with not one car on it reads as a drawing whatever it is painted. The stalls the lots
 are filled from are laid out in `parking-layout.md`; the big lot's kerb and gores in
@@ -416,7 +417,7 @@ are filled from are laid out in `parking-layout.md`; the big lot's kerb and gore
     taken" on the slider.
   - **An empty `Districts` is a factor of 1 everywhere**, which is not a stub but the
     honest "no quarter to read": that is what `car_gallery` (no buildings at all) and
-    the row-layout tests in `cars/mod.rs` build with, so they check the laying-out
+    the row-layout tests in `cars/tests.rs` build with, so they check the laying-out
     rule unmixed with the density rule. The density rule has its own tests in
-    `district.rs` plus one end-to-end in `cars/mod.rs`
+    `district.rs` plus one end-to-end in `cars/tests.rs`
     (`the_same_street_parks_thinner_in_a_private_sector`).
