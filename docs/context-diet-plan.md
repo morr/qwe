@@ -6,7 +6,7 @@ refactor plan — what splits into what, in which order, with which migration of
 cross-references — is written by the agent that executes this work, starting from
 this list.
 
-## Status — 2026-10-30
+## Status — 2026-10-30, updated 2026-11-22
 
 Executed since the inventory was written: the roads/parse/reference splits and the
 first CONTEXT.md slimming (8ee63d30); the skills water pass with osm-map and
@@ -18,33 +18,51 @@ the `buildings/material.rs` → `material/kinds.rs` (26d156f7) and
 split into `roofs/gable.rs` and the `temples.rs` split into
 `temples/{domes,towers}.rs` (2026-11-22, same pattern); and a Reading map
 at the top of CONTEXT.md (load the map + the touched section, not
-the file). Remaining above the ~40K line — every file across `src/**`,
-`examples/**` and `.claude/skills/**`, measured `wc -c` on 2026-10-30, not a
-top selection:
+the file).
 
-- 60K+ (15): `roads.rs` 86.8K, `buildings/temples.rs` 86.5K,
-  `buildings/layers.rs` 82.1K, `buildings/tests.rs` 78.4K, `settings.rs` 74.9K,
-  `roads/corners/tests.rs` 72.9K, `buildings/roofs.rs` 72.6K, `trees.rs` 69.2K,
-  `buildings/material.rs` 68.3K, `cars/mod.rs` 67.6K, `osm/parse.rs` 67.3K,
-  `meshing.rs` 64.2K, `buildings/clutter.rs` 63.6K, `roads/corners/gather.rs`
-  62.3K, `roads/node_paint/cluster.rs` 60.2K.
-- 50–60K (15): `roads/rings.rs` 59.7K, `roads/bridges.rs` 59.5K,
-  `buildings/garages.rs` 59.5K, `roads/medians.rs` 58.0K,
-  `examples/demos/roads/main.rs` 57.3K, `trees/tests.rs` 57.1K,
-  `roads/tests.rs` 57.1K, `footprint.rs` 56.3K, `meshing/ribbon.rs` 55.6K,
-  `roads/node_paint/tests.rs` 55.3K, `roads/bridges/tests.rs` 55.3K,
-  `trees/crown.rs` 54.8K, `sim_time.rs` 53.8K, `roads/paint/tests.rs` 51.7K,
-  `roads/gores.rs` 50.3K.
-- 40–50K (20): `osm/parse/tags.rs` 48.9K, `roads/rings/tests.rs` 48.6K,
-  `roads/scraps.rs` 48.1K, `roads/paint/painter.rs` 45.4K, `meshing/tests.rs`
-  44.6K, `roads/network/pairs/tests.rs` 43.7K,
-  `examples/demos/roof_gallery/main.rs` 43.7K, the `osm-map` reference
-  `layers.md` 43.5K, `camera.rs` 43.4K, `roads/node_paint.rs` 43.3K,
-  `parking.rs` 42.9K, `osm/parse/lots.rs` 42.8K,
-  `navigation/polymesh/stitch.rs` 42.6K, `examples/demos/wall_gallery/main.rs`
-  42.1K, `movement/destination.rs` 42.0K, `roads/axis.rs` 41.8K,
-  `movement/pathfinding.rs` 40.5K, `examples/demos/crowd_demo/metrics.rs`
-  40.5K, `roads/network/pairs.rs` 40.2K, `human/systems.rs` 40.0K.
+The 2026-11-22 wave executed the whole candidate list of the split report
+(`/tmp/qwe-split-report-2026-11-22.md`; coordinator + worker sessions in
+`.worktrees/`, pure code motion, `tools/check.sh` green per commit): `roads.rs` →
+`roads/{common,raw,build}.rs` (0f46e407), `roads/tests.rs` → per-subject
+`roads/tests/` (041000eb), `meshing.rs` impl spread → `meshing/{walls,chunks}.rs`
+(92ac6eec) and `meshing/ribbon.rs` → `ribbon/{profile,geometry}.rs` (16de83d4),
+`buildings/layers.rs` → `layers/{walls,garages,roofing}.rs` (a0e3ccc3),
+`buildings/tests.rs` → per-subject `tests/` (598a3fcf), `osm/parse.rs` →
+`parse/{ways,relations,finish,elements}.rs` (7c6641d9), `cars/mod.rs` →
+`cars/street.rs` (19dd5f3c), `human/systems.rs` →
+`systems/{spawn,wander,tests}.rs` and `human/lod.rs` tests → `lod/tests.rs`
+(0afb6725, b273c1fa), `sim_time.rs` → `sim_time/regulator.rs` (f561d9ed),
+`trees.rs` → `trees/mesh.rs` + conifer fns and `trees/tests.rs` → per-subject
+(2035deb6, a8228ed2), `footprint.rs` → `footprint/{fences,decks}.rs` + tests
+(a2380da9, 2fd92428) — the material/clutter/roofs/temples splits of the same
+wave are the ones named above. The one candidate judged not-to-split:
+`roads/node_paint/cluster.rs` — its mass is a single ~620-line `paint_cluster`;
+a file split would scatter one mechanism.
+
+Remaining above the ~40K line — every file across `src/**`, `examples/**` and
+`.zcode/skills/**`, measured `wc -c` on 2026-11-22 after the wave, not a top
+selection:
+
+- 60K+ (5): `roads/corners/tests.rs` 73.9K, `roads/gores.rs` 67.1K,
+  `roads/corners/gather.rs` 67.1K, `roads/node_paint/cluster.rs` 64.7K,
+  `buildings/temples.rs` 61.8K.
+- 50–60K (12): `roads/medians.rs` 60.8K, `roads/rings.rs` 60.3K, `roads/bridges.rs`
+  60.0K, `buildings/garages.rs` 59.5K, `examples/demos/roads/main.rs` 58.0K,
+  `roads/scraps.rs` 56.9K, `roads/node_paint/tests.rs` 55.3K,
+  `roads/bridges/tests.rs` 55.0K, `trees/crown.rs` 54.8K, `camera.rs` 53.9K,
+  `meshing/tests.rs` 52.2K, `roads/paint/tests.rs` 52.1K.
+- 40–50K (29): `roads/common.rs` 49.9K, `ui/inspector.rs` 49.7K,
+  `movement/tests.rs` 48.9K, `osm/parse/tags.rs` 48.9K, `buildings/mod.rs` 48.6K,
+  `roads/paint/painter.rs` 48.3K, `roads/rings/tests.rs` 48.2K,
+  `human/corpse.rs` 47.3K, `roads/node_paint.rs` 46.1K, `osm/parse/pockets.rs`
+  46.0K, `silhouette/mod.rs` 45.5K, `movement/pathfinding.rs` 45.2K,
+  `settings.rs` 45.0K, `navigation/polymesh/stitch.rs` 44.2K,
+  `examples/demos/roof_gallery/main.rs` 43.8K, `roads/network/pairs/tests.rs`
+  43.6K, `parking.rs` 43.4K, `osm/parse/lots.rs` 42.8K, `loading.rs` 42.6K,
+  `dev.rs` 42.3K, `meshing.rs` 42.2K, `movement/destination.rs` 42.1K,
+  `examples/demos/wall_gallery/main.rs` 42.1K, `roads/axis.rs` 41.8K,
+  `demon/behavior.rs` 41.2K, `roads.rs` 40.8K, `buildings/roofs.rs` 40.5K,
+  `examples/demos/crowd_demo/metrics.rs` 40.5K, `roads/network/pairs.rs` 40.2K.
 
 `CONTEXT.md` (110.4K whole-file) stays out of this list by design: the Reading
 map above is its fix, and the success criterion measures it by section, not by

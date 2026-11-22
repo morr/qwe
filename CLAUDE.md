@@ -303,8 +303,12 @@ one measured session grew its context to 570K over 409 turns and burned 114.6M t
 99.6% of them cache re-reads. Three rules keep a session cheap:
 
 - **A file over ~30K characters is read in full once.** `meshing.rs`,
-  `parking.rs`, `osm/model.rs`, `inspect.rs` and `osm/parse.rs` joined the split pattern in October 2026,
-  `roads.rs`, `roofs.rs` and `temples.rs` in November
+  `parking.rs`, `osm/model.rs`, `inspect.rs` and `osm/parse.rs` joined the split pattern in October 2026;
+  the November 2026 wave split `roads.rs`, `roads/tests.rs`, `meshing/ribbon.rs`,
+  `buildings/layers.rs`, `buildings/tests.rs`, `buildings/material.rs`,
+  `buildings/clutter.rs`, `buildings/roofs.rs`, `buildings/temples.rs`,
+  `cars/mod.rs`, `human/systems.rs`, `human/lod.rs`, `sim_time.rs`, `trees.rs`,
+  `footprint.rs` — every file that was above ~55K
   (parent `foo.rs` keeps the interface and re-exports, subjects live in `foo/`). In the
   session that sized this rule the
   predecessors (`corners.rs`, `roads/tests.rs`, `references/roads.md`, since split)
