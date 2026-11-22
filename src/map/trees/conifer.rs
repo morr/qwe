@@ -20,14 +20,21 @@
 //! любой силе примеси, а кластеризацию не портит — без примеси отбираются те
 //! же деревья на вершинах пятен.
 //!
+//! Здесь же — связка набора деревьев со стилями: состав набора
+//! ([`tree_compose`]) и пересемплирование поля под ручки ([`resample_field`],
+//! [`recompose_row_trees`], [`build_conifer_field`], [`retune_conifer_field`]).
+//!
 //! [`TreeStyle::noise_mix`]: super::TreeStyle::noise_mix
 
 use bevy::math::Vec2;
-use bevy::prelude::{Reflect, ReflectDefault, ReflectResource, Resource};
+use bevy::prelude::{Reflect, ReflectDefault, ReflectResource, Res, ResMut, Resource, debug};
 use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use noise::{NoiseFn, Simplex};
 
 use super::TREE_NOISE_MIX_DEFAULT;
+use super::{TreeRowStyle, TreeStyle};
+use crate::map::osm::model::TreeSet;
+use crate::map::osm::{MapData, TreeCompose, TreeRowLayout};
 
 /// Длина волны поля, м: единица шума на столько метров. Массив — это не волна
 /// шума, а её **вершина**: отсекая верхние 10 %, получаешь острова втрое-вчетверо
@@ -284,6 +291,103 @@ impl ConiferField {
     pub fn values_for_test(&self) -> &[f32] {
         &self.values
     }
+}
+
+/// Сборка `MapData::trees` из включённых источников: одиночные деревья, лес и
+/// аллеи выбранной политики размещения.
+///
+/// Меняется сам набор деревьев, а не только их вид, поэтому вслед за сборкой
+/// пересчитывается поле хвои: оно индексировано по `MapData::trees`, и без
+/// пересемплирования порода поехала бы на все деревья после первой же аллеи.
+///
+/// Состав набора деревьев под ручки стилей — без мира: его собирает и
+/// [`recompose_row_trees`] на входе в мир, и поток загрузки — под снимок
+/// ручек (`map/prepare.rs`).
+pub(crate) fn tree_compose(style: &TreeStyle, rows: &TreeRowStyle) -> TreeCompose {
+    TreeCompose {
+        layout: TreeRowLayout {
+            placement: rows.placement,
+            osm_spacing: rows.osm_spacing,
+        },
+        woods: style.woods,
+        rows: rows.enabled,
+        standalone: style.standalone,
+    }
+}
+
+/// Значения поля хвои — под набор деревьев и параметры шума, порог — под долю
+/// хвои. Одна пара на все пересемплирования: смена состава набора
+/// ([`recompose_row_trees`]), вход в мир ([`build_conifer_field`]), правка
+/// шума ([`retune_conifer_field`]) и сборка потока загрузки
+/// (`map/prepare.rs::small_lane` — локальное поле для
+/// [`super::mesh_game_trees`]).
+pub fn resample_field(
+    field: &mut ConiferField,
+    trees: &TreeSet,
+    style: &TreeStyle,
+    noise: &ConiferNoiseStyle,
+) {
+    field.resample(trees.positions(), noise, style.noise_mix);
+    field.set_share(style.conifer_share);
+}
+
+/// Признак «уже собрано» лежит в `MapData::composed_for`, а не в `Local`: при
+/// смене города ресурс заменяется целиком, а `Local` пережил бы замену и решил,
+/// что для нового города работа сделана.
+pub fn recompose_row_trees(
+    mut map: ResMut<MapData>,
+    style: Res<TreeStyle>,
+    rows: Res<TreeRowStyle>,
+    noise: Res<ConiferNoiseStyle>,
+    mut field: ResMut<ConiferField>,
+) {
+    let compose = tree_compose(&style, &rows);
+    if map.composed_for == Some(compose) {
+        return;
+    }
+    map.compose_trees(compose);
+    resample_field(&mut field, &map.trees, &style, &noise);
+}
+
+/// Значение поля хвои в каждом посаженном дереве — до спавна крон, потому что
+/// именно по нему `resolve` выбирает форму. Считается один раз на город: у
+/// нового города свой набор деревьев, а старые значения к нему не относятся.
+pub fn build_conifer_field(
+    mut field: ResMut<ConiferField>,
+    map: Res<MapData>,
+    style: Res<TreeStyle>,
+    noise: Res<ConiferNoiseStyle>,
+) {
+    let started = std::time::Instant::now();
+    resample_field(&mut field, &map.trees, &style, &noise);
+    debug!(
+        "conifer field: {} trees sampled in {:.1?}",
+        map.trees.len(),
+        started.elapsed()
+    );
+}
+
+/// Пересемплирование поля после правки параметров шума (панель Noise) или
+/// примеси (`TreeStyle::noise_mix`). Идёт в цепочке между
+/// [`recompose_row_trees`] и [`super::rebuild_trees`], и выходит сразу, если
+/// поле уже посчитано под текущие параметры, — так смена состава не платит за
+/// второй resample, а правка цвета листвы не платит вовсе.
+pub fn retune_conifer_field(
+    mut field: ResMut<ConiferField>,
+    map: Res<MapData>,
+    style: Res<TreeStyle>,
+    noise: Res<ConiferNoiseStyle>,
+) {
+    if field.sampled_for(&noise, style.noise_mix) {
+        return;
+    }
+    let started = std::time::Instant::now();
+    resample_field(&mut field, &map.trees, &style, &noise);
+    debug!(
+        "conifer field retuned: {} trees resampled in {:.1?}",
+        map.trees.len(),
+        started.elapsed()
+    );
 }
 
 #[cfg(test)]

@@ -8,10 +8,14 @@ use super::crown::{
     CONE_BANDS, PALM_BANDS, bloat, chevron_arcs, conifer_shadow, corner_metrics, leaf_arcs,
     shade_dir, shaded_arcs, shadow_ring,
 };
+use super::mesh::{CROWN_CHUNK_Z_STEP, CROWN_SPAWN_BATCH, TREE_SHADOW_Z_STEP};
 use super::*;
 use crate::map::osm::model::signed_ring_area;
 use crate::map::seed::Lcg;
 use crate::map::shadow_dir;
+use crate::map::surface::MaterialSpec;
+use crate::map::z::{Z_TREE, Z_TREE_SHADOW};
+use crate::settings::TREE_VARIANTS;
 
 /// Параметры кроны, на которых нарисован город: тесты пиннят игру, а не
 /// произвольную настройку витрины.
