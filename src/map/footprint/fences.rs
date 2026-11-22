@@ -42,7 +42,7 @@ pub(super) const GAP_CELL: f32 = 32.0;
 /// ([`STITCH_MAX_GAP`]): столько картограф не доводит проезд до того, во что
 /// тот упирается. Одна константа, а не две одинаковых, потому что факт один —
 /// разъедься они, стежок дотянул бы асфальт сквозь несрезанный забор.
-pub(super) const GAP_END_REACH: f32 = STITCH_MAX_GAP;
+const GAP_END_REACH: f32 = STITCH_MAX_GAP;
 
 /// Проёмы всех оград: где сквозь забор проходит дорога.
 ///
@@ -536,3 +536,6 @@ pub(super) fn segment_in_circle(a: Vec2, b: Vec2, center: Vec2, radius: f32) -> 
     let to = ((-qb + root) / (2.0 * qa)).min(1.0);
     (from < to).then_some((from, to))
 }
+
+#[cfg(test)]
+mod tests;
