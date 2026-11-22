@@ -416,18 +416,25 @@ far share of the population; the slice markers `FarSlice<N>` and `DemonSlice<S>`
 reflectable),
 `LodDwell` (the demote dwell, `u8`), `CorpseChunk` (a baked corpse chunk — the 500 m
 cells of the corpse field; `count CorpseChunk` is how many pieces of baked corpses the
-world carries, `CorpseTag` counts only the fresh, sprite ones), `BakeQueue` (the
-`res get` shows how many settled bodies are waiting for the baker — at the city zoom it
-drains the same frame it fills, thanks to the instant blood spread), `WarpOrigin` (where
+world carries, `CorpseTag` counts only the fresh, sprite ones), `FarCrowdChunk` (the far
+crowd's 250 m dot-mesh cells — the far-LOD counterpart of `CorpseChunk`; `count
+FarCrowdChunk` is how many pieces the far crowd is drawn in), `WarpOrigin` (where
 a demon wanders away from — the portal for portal-born, the horde wave's hearth for
 wave-born; `get` on a demon entity prints it).
 
-Resources — `City`, `SimSpeed`, `Telemetry`, `Census` (the per-frame state
+Resources — `City`, `SimSpeed`, `SimLoad` (the regulator's tick/wait totals;
+`res get SimLoad` is the tick total at any moment), `TickDebt` (the frame-budget
+guard — a growing `deferred` means bursts are being smoothed), `TickSpikeThreshold`
+(the tick-spike dissection trigger, writable over BRP),
+`Telemetry`, `Census` (the per-frame state
 counters — `res get Census` answers what a handful of `count` calls used to
 assemble; the `wave` field is the horde's waves-so-far count), `PopulationSize`,
 `PendingPopulation` (the batched spawn's queue:
 `count`/`cursor` of the settlement, only while it runs — the resource is removed
-once the population has settled), `VirtualCursor` (the agent's
+once the population has settled), `BakeQueue` (a resource — the entity queue of
+settled bodies waiting for the baker, `res get BakeQueue` prints it; at the city
+zoom it drains the same frame it fills, thanks to the instant blood spread),
+`VirtualCursor` (the agent's
 virtual cursor, written by `brp hover` / `click`), `VirtualKey` (the agent's
 virtual keypress, written by `brp key`), `PortalPos`, `PathfindingAlgorithm`,
 `DemonStyle`, `DemonSpawner`, `HordeStyle` (the horde waves' settings group) +
@@ -435,7 +442,9 @@ virtual keypress, written by `brp key`), `PortalPos`, `PathfindingAlgorithm`,
 queue `release`/`release_origin` — the wave's progress over BRP; a write to it
 by hand would hand out uncommitted spawns, treat it read-only), `HumanStyle`,
 `SeparationStyle`,
-`BuildingHeightMode`, `TreeStyle` / `TreeShape`, `TreeRowStyle`, `ConiferNoiseStyle`,
+`BuildingHeightMode`, `TreeStyle` (its `.shape` field is the `TreeShape` enum — the
+type is registered for the `res set TreeStyle .shape` deserialization but is not itself
+a resource), `TreeRowStyle`, `ConiferNoiseStyle`,
 `RoadStyle`, `RoadShape` / `RoadShapeOnMap` (a write to `RoadShape` reaches the map
 through `RoadShapeOnMap` after 0.35 s of quiet — `settle_road_shape`; `.lane_width`
 reloads the world), `RoadPaintStyle` (uniforms — nothing rebuilds), `CarStyle`,
@@ -448,8 +457,8 @@ settings group),
 report, written by `ProbeLayersEvent` — both `dev.rs`, driven by `brp probe`); the map's
 layer entities are found by the `MapLayer` marker (`brp layers`, also `dev.rs`'s probe).
 
-No PRNG state is stored anywhere to look at: a pawn carries `PawnId` +
-`WanderIndex` (both registered), and its stream is re-derived from those plus
+No PRNG state is stored anywhere to look at: a pawn carries `PawnId`, `Species` +
+`WanderIndex` (all registered), and its stream is re-derived from those plus
 `WorldSeed` at every decision.
 
 Writing `WorldSeed` or `Determinism` over BRP restarts the world — the same path
@@ -461,6 +470,12 @@ outside `Playing`, like `RestartEvent`), `RestartEvent`, `ProbeLayersEvent` (the
 
 Anything not in this list is invisible to `get` / `res get` until it gets
 `#[derive(Reflect)]` + `#[reflect(Component)]`/`#[reflect(Resource)]` + `register_type`.
+A name in this list that *is* registered but is not currently in the world
+(`PendingPopulation` after the settlement) errors the read — that is the
+"removed once settled" contract, not a broken registration. And a `count` on a
+*resource* name answers 1 whenever the resource is present — Bevy 0.20 matches
+resources as query entities — so `count BakeQueue` is a presence check, not a
+queue length; read the queue itself with `res get`.
 
 ## Everyday queries
 
