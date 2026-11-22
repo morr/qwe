@@ -6,7 +6,8 @@
 //! экране.
 //!
 //! Список — единственное место, где хоткеи перечислены целиком; клавиши сами
-//! живут в своих плагинах (`restart`, `ui::debug`, `movement`). Добавил
+//! живут в своих плагинах (`restart`, `sim_time`, `camera`, `ui::debug`,
+//! `movement`, `ui::quit`, `ui::inspector`, `ui::stats`, `dev`). Добавил
 //! клавишу — допиши строку сюда.
 //!
 //! Только ASCII: `default_font` — минимальный шрифт без кириллицы и без
@@ -19,17 +20,26 @@ use bevy::feathers::tokens;
 
 use crate::ui::{GameUiRoot, UI_SCREEN_EDGE_PX_OFFSET, panel_background};
 
-/// Ширина колонки с клавишей — по самой длинной подписи (`Tab`), чтобы
-/// описания стояли в одну вертикаль.
-const KEY_COLUMN_PX: f32 = 28.0;
+/// Ширина колонки с клавишей — по самой длинной подписи (`Space`, `Enter`,
+/// `WASD`), чтобы описания стояли в одну вертикаль.
+const KEY_COLUMN_PX: f32 = 50.0;
 
 /// `(клавиша, что делает)`.
 const HOTKEYS: &[(&str, &str)] = &[
     ("R", "restart (RR - to portal)"),
+    ("Space", "pause"),
+    ("+/-", "sim speed"),
+    ("WASD", "pan"),
+    ("Tab", "settings panel"),
     ("G", "gizmos"),
     ("N", "navmesh"),
     ("M", "movepath"),
-    ("Tab", "settings panel"),
+    ("[ ]", "cycle hits"),
+    ("\\", "pin hit"),
+    ("Bksp", "clear pins"),
+    ("Enter", "apply seed"),
+    ("Esc", "quit"),
+    ("F12", "screenshot"),
 ];
 
 pub struct UiHotkeysPlugin;
