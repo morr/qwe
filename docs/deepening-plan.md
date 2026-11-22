@@ -270,7 +270,7 @@ start-plan пачки не держит, — плюс свои проверки)
   `map/spawn.rs`: TreeRowBandTag · `map/wagons.rs`: WagonLayerTag, WagonReport ·
   `map/z.rs`: Y_SORT_FACTOR, Z_UNIT_BASE · `map/tram.rs`: TramTieLod, TramLod,
   TramLayerTag, TramReport · `map/industry.rs`: IndustryLayerTag, IndustryReport ·
-  `map/buildings/material.rs`: CODES (в двух impl-блоках) · `map/buildings/mod.rs`:
+  `map/buildings/material/kinds.rs`: CODES (в двух impl-блоках) · `map/buildings/mod.rs`:
   BuildingLayerTag, BuildingShadowTag · `map/trees/conifer.rs`: CONIFER_NOISE_OCTAVES,
   CONIFER_NOISE_LACUNARITY, CONIFER_NOISE_PERSISTENCE, CONIFER_NOISE_SEED ·
   `map/osm/parse.rs`: skips_passes · `map/meshing/ribbon.rs`: push_inset_band_with ·

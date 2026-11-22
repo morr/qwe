@@ -545,7 +545,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   assembly for both modes** (`layers/roofing.rs::push_roofing`): the flat modes call it without
   the lean — no lifted ridge, no frontons, no dormers. Detail —
   `buildings-heights.md`, `buildings-landmarks.md`.
-- **Roof material** (`map/buildings/material.rs`) — what a roof is *covered with*:
+- **Roof material** (`map/buildings/material.rs`; the kinds, per-class tables and
+  classification in `material/kinds.rs`) — what a roof is *covered with*:
   `RoofKind`, picked deterministically from the **building class** and a **seed hashed
   from the building's first vertex**. The colour comes from the material's
   own palette — **the per-use roof and wall colours are gone**: a wall is picked the

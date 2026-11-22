@@ -19,7 +19,7 @@ pass order, how a parse is tested — is `parse-seam.md`; the geometry passes ar
   on load (`N buildings (M with height)`).
 - **Building use** (`parse/tags.rs::building_use`) — `BuildingUse: House | Apartments |
   Commercial | Retail | Industrial | Garage | GarageBlock | Church(Sacred) | Public | Other`, the class that
-  picks two material tables — the **cladding** (`buildings/material.rs::wall_kind_of`) and
+  picks two material tables — the **cladding** (`buildings/material/kinds.rs::wall_kind_of`) and
   the **roofing material** (`::kind_of`); neither colour comes from the class itself, both
   come from the chosen material's own palette (**Roof material** in
   `references/buildings-material.md`, bullet
