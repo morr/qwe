@@ -106,7 +106,9 @@ stand, how density works, and which resources restyle them.
   prefix, a crossing only drops the tail — standing crowns never move — and surveyed
   trees (threshold 0) stay on every step. **`mesh_trees` builds every step at once** and
   takes no bucket: everything it returns — crown entities, merged crown chunks, shadow
-  layers — carries the `TreeLodMask` of the steps that draw it. The crossing is **not** a
+  layers — carries the `TreeLodMask` of the steps that draw it. The mesh build and the
+  crown stream live in `map/trees/mesh.rs` (`trees.rs` keeps the styles, the LOD table
+  and the rebuild chain; the names are re-exported from `map::trees`). The crossing is **not** a
   condition of the tree chain's `rebuilds_on` — it runs `stream_tree_crowns` (below) and
   `show_tree_lod` (`switches_on`, on `TreeLodShown`), which only flips `Visibility`;
   the set, the conifer field, the tree-row band and

@@ -546,7 +546,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   assembly for both modes** (`layers/roofing.rs::push_roofing`): the flat modes call it without
   the lean — no lifted ridge, no frontons, no dormers. Detail —
   `buildings-heights.md`, `buildings-landmarks.md`.
-- **Roof material** (`map/buildings/material.rs`) — what a roof is *covered with*:
+- **Roof material** (`map/buildings/material.rs`; the kinds, per-class tables and
+  classification in `material/kinds.rs`) — what a roof is *covered with*:
   `RoofKind`, picked deterministically from the **building class** and a **seed hashed
   from the building's first vertex**. The colour comes from the material's
   own palette — **the per-use roof and wall colours are gone**: a wall is picked the
@@ -591,7 +592,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   footprint** (merged, not stacked), sitting **over** the building layers the ground
   shadow sits under. **A pitched roof takes none**; a neighbour casts only if it is 3 m
   taller; the drawn bodies of the neighbours are subtracted. Detail — `buildings-heights.md`.
-- **Roof clutter** (`map/buildings/clutter.rs`) — what stands *on* the roof, each item a
+- **Roof clutter** (`map/buildings/clutter.rs`; the placement engine in
+  `clutter/placement.rs`) — what stands *on* the roof, each item a
   small oblique box with its own **opaque** shadow, placed by the building's seed, every
   candidate rejected unless all four corners fall inside the footprint **and the place is
   free**. Which items follow the **material**, not the use. **The clutter is the only
@@ -1061,7 +1063,7 @@ Summary; the mechanism — **determinism skill** (seed derivation, the decision 
   `RngDomain: Population | Human | Demon`. **Nothing stores live RNG state**, so a restart
   has no RNG to reset — every stream is re-derived.
 - **Placement stream** (`rng.rs::stream`, `RngDomain::Population`) — the one shared
-  generator, held by `place_population` (`human/systems.rs`) across the whole
+  generator, held by `place_population` (`human/systems/spawn.rs`) across the whole
   placement pass. Legal precisely because its consumer is a fixed `0..count` loop
   inside one call rather than a query traversal, and everything personal (colour,
   `Pace`, heading) still comes from the pawn's own decision stream. The batched
@@ -1214,7 +1216,7 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   `WorldInitSet::Spawn`, `restart::on_restart` and the pump, all through the
   `PopulationSpawn` `SystemParam`, so a restart respawns the same number.
   **It is the right-hand side of the telemetry invariant** — see Telemetry.
-- **Batched spawn** (`human/systems.rs`, ×10 plan Phase 1) — the settlement goes through
+- **Batched spawn** (`human/systems/spawn.rs`, ×10 plan Phase 1) — the settlement goes through
   a **pump**: `spawn_humans` and `on_restart` insert the `PendingPopulation` queue
   instead of spawning, and `pump_pending_population` spawns `SPAWN_BATCH` (2 000)
   pawns per call from placements computed once on the first call. Registered twice,
@@ -1607,7 +1609,7 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   where the camera stands when the world comes up. **RR** (double R within 0.5 s) and
   `RestartEvent { to_portal: true }` go to the portal at `START_ZOOM` regardless of mode. A
   city switch always resets to the new portal.
-- **Sim speed** (`sim_time.rs`) — Space pauses; `=`/`-` walk `SPEED_LADDER` (1-2-5-10-20-30);
+- **Sim speed** (`sim_time.rs` + `sim_time/regulator.rs`) — Space pauses; `=`/`-` walk `SPEED_LADDER` (1-2-5-10-20-30);
   **`MAX_SIM_SPEED` 30× is a deliberate product cap**. **SimSpeed** `{requested, pipeline,
   affordable, effective, actual}` — a regulator throttles `effective` to what the machine
   carries, and `guard_frame_budget` hard-stops a frame's fixed loop at `SIM_FRAME_BUDGET_MS`,
@@ -1710,7 +1712,7 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
 - Determinism and replay: `src/rng.rs`, `src/determinism/`. Detail — **determinism skill**.
 - Species behaviour: `src/human/`, `src/demon/`, `src/movement/wander.rs`, `src/spatial.rs`.
   Detail — **species-behavior skill**.
-- Speed & regulator: `src/sim_time.rs`. Detail — **sim-speed skill**.
+- Speed & regulator: `src/sim_time.rs` + `src/sim_time/regulator.rs`. Detail — **sim-speed skill**.
 - UI: `src/ui/`, camera: `src/camera.rs`. Detail — **ui-panels skill**.
 - Tests: the integration suites `tests/navigation.rs` (synthetic navmesh + hand-built
   `MapData`), `tests/spatial.rs`, `tests/movement.rs`, `tests/determinism.rs`,

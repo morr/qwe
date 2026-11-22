@@ -265,7 +265,8 @@ terms in `CONTEXT.md`.
     order of magnitude more to produce. Now `roofing` hands a
     hip only to `HIP_SHARE_OF_100` (3) of the houses of at least `HIP_HOUSE_AREA_MIN`
     120 m² and to outlines no **gable form** fits.
-  - **Gable forms** (`buildings/roofs.rs`, `GableRoof` + `GableForm`) — one structure for
+  - **Gable forms** (`buildings/roofs.rs`: the `GableRoof` + `GableForm` types; the forms
+    themselves — `buildings/roofs/gable.rs`) — one structure for
     every roof with wall above the eaves: `gables` are `((a, b), face)` — the rectangle edge
     at the eave that picks frame and visibility, and any convex face on that wall plane —
     `slopes` are convex polygons (pushed through `push_convex`: planar and convex, and the

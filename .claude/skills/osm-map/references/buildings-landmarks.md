@@ -6,7 +6,9 @@ Siblings: `buildings-heights.md` (height modes, extrusion, shadows),
 
 ## Temples and the fortress
 
-- **Temples and the fortress** (`buildings/temples.rs`, `buildings/fortress.rs`) — the two
+- **Temples and the fortress** (`buildings/temples.rs` — plan, nave and crown assembly,
+  with `temples/domes.rs` (cupolas) and `temples/towers.rs` (pillars, minarets) beside it;
+  `buildings/fortress.rs`) — the two
   kinds of building drawn by their meaning rather than by the house rules.
   - **The roof is assigned** (`roofs::LandmarkRoof`, `landmark_roof` before the pitched
     cohort in
@@ -23,7 +25,7 @@ Siblings: `buildings-heights.md` (height modes, extrusion, shadows),
     ≥ 22 m) a bell tower with a cap onion at the west end and the cupolas over the
     eastern core; five cupolas on a core ≥ 14 m by seed (6 in 10). **Colours come from the
     tags first** (`tagged_wall` / `tagged_roof` / `tagged_dome` over `PolyArea::colours`,
-    consumed in `material::wall_look` / `roof_look` and `temples::dome_color`; a tagged colour
+    consumed in `material::wall_look` / `roof_look` and `temples::domes::dome_color`; a tagged colour
     gets no ±3 % jitter): on a `Dome` part — a drum, or a nave whose whole `roof:shape` is an
     onion — `roof:colour` is the **cupola's**, not the roof's, since there is no roof there to
     paint; on a tower it is the spire's and the cap's. **Otherwise colours ride the church's
