@@ -6,7 +6,9 @@ codes `7…8`, the `WallFrame::run` grid), `buildings-landmarks.md` (the `Sacred
 exceptions). `CONTEXT.md` carries the **Roof material** glossary entry and the code
 dictionary.
 
-- **Roof material** (`buildings/material.rs`, shader `assets/shaders/roof.wesl`) — what
+- **Roof material** (`buildings/material.rs`, the enums, the `*_ROOFS`/`*_WALLS`
+  tables and the classification in `buildings/material/kinds.rs`, shader
+  `assets/shaders/roof.wesl`) — what
   the roof is *covered with*. The goal is the aerial photo: from above, a roof is a
   **material** first (rolled bitumen with its seams and repair patches, gravel ballast,
   standing-seam metal, corrugated sheet, tile, PVC membrane) and a colour second, and the
@@ -16,7 +18,7 @@ dictionary.
     (the door generator
     is seeded from the same point, so both survive a rebuild and neither depends on the
     order of `MapData::buildings`) chooses a slot in a **ten-slot table per
-    building class** (the `*_ROOFS` tables in `material.rs`; the class comes from
+    building class** (the `*_ROOFS` tables in `material/kinds.rs`; the class comes from
     `classify.rs::classify` — see `CONTEXT.md`) — ten slots so a table reads
     as percentages: `House` is 5 tile / 2 seam / 2 corrugated / 1 bitumen.
     `Church` takes its material and palette from its faith

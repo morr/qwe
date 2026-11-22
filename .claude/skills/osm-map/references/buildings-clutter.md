@@ -5,7 +5,9 @@ cell-grid rule it is an exception to), `buildings-heights.md` (the zoom buckets 
 shadow sweeps it shares). `CONTEXT.md` carries the **Roof clutter** and **Skylight grid**
 glossary entries.
 
-- **Roof clutter** (`buildings/clutter.rs`) — the boxes that stand on the roof, and the
+- **Roof clutter** (`buildings/clutter.rs`, the placement engine — `Frame`, `fit`,
+  `clear`, `place`, `shadow_reach` — in `buildings/clutter/placement.rs`) — the boxes
+  that stand on the roof, and the
   second half of the same argument: a photographed roof is never empty, and it is the
   small equipment with its short shadows that reads as "photo" rather than "fill".
   The gates — landmark (a church or the fortress), garage run, big box, the

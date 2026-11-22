@@ -53,8 +53,13 @@ pub use self::mesh::{
 };
 
 /// Форма кроны — `w.TREE_SHAPE` у watabou.
-#[derive(Resource, Reflect, Clone, Copy, PartialEq, Eq, Debug, Default)]
-#[reflect(Resource)]
+///
+/// Не ресурс: это тип поля [`TreeStyle::shape`]. В реестре типов он нужен,
+/// чтобы `res set TreeStyle .shape` дешериализовал вариант по имени.
+/// `Resource` стоял тут от прежней формы, где форма кроны жила отдельным
+/// ресурсом, — в мир он никогда не вставлялся, и `res get TreeShape` отвечал
+/// «Resource not registered» при живой регистрации типа.
+#[derive(Reflect, Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum TreeShape {
     /// `zb.cloud`: облачный контур (`Bloater`), кольца `BALL_BANDS2`.
     Cotton,
