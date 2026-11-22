@@ -365,10 +365,11 @@ going through the curb pin tests
   line in the bench.
 - **Merged meshes** (`map/meshing.rs` — `MeshBuilder` and its core push/coords
   impl, plus subjects `map/meshing/{walls,chunks,ribbon,paint,geometry}.rs` (the
-  wall frame types, chunk assembly — a second `impl MeshBuilder` block, strokes
-  and ribbons, paint strips, free geometry) and `map/spawn.rs`; per-layer
-  geometry lives in the layer's own module) — **one merged mesh per layer**:
-  `MeshBuilder`
+  wall frame types, chunk assembly — a second `impl MeshBuilder` block, the
+  ribbon-laying impl with its own `ribbon/{profile,geometry}` — break profiles
+  and path geometry —, paint strips, free geometry) and `map/spawn.rs`;
+  per-layer geometry lives in the layer's own module) — **one merged mesh per
+  layer**: `MeshBuilder`
   triangulates polygons via `earcutr` (holes supported, degenerate contours skipped +
   counted) and emits per-vertex colors. Which layers ride the flat `ColorMaterial`, the
   roof material or the surface material is in `CONTEXT.md`; the parking **markings** are

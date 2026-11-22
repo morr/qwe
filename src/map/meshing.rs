@@ -25,11 +25,12 @@ pub(crate) use self::geometry::{arc_steps, equivalent_width, ring_perimeter};
 pub use self::geometry::{min_area_rect, sweep_convex};
 #[cfg(test)]
 use self::ribbon::FAR_FROM_BREAKS;
-pub(crate) use self::ribbon::butt_direction;
-pub use self::ribbon::{
-    RibbonShape, break_distances, break_profile, merge_close_points, miter_offsets,
-    ribbon_merge_distance, ribbon_vertices, to_break_beyond,
+pub use self::ribbon::RibbonShape;
+pub(crate) use self::ribbon::geometry::butt_direction;
+pub use self::ribbon::geometry::{
+    merge_close_points, miter_offsets, ribbon_merge_distance, ribbon_vertices,
 };
+pub use self::ribbon::profile::{break_distances, break_profile, to_break_beyond};
 use self::walls::Frame;
 pub use self::walls::{WallFrame, WallMark};
 
