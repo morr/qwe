@@ -303,9 +303,10 @@ one measured session grew its context to 570K over 409 turns and burned 114.6M t
 99.6% of them cache re-reads. Three rules keep a session cheap:
 
 - **A file over ~30K characters is read in full once.** The repeat offenders here are
-  `src/map/roads.rs` (123K), `src/map/buildings/temples.rs` (87K),
+  `src/map/buildings/temples.rs` (87K),
   `src/map/buildings/layers.rs` (87K) and `src/map/osm/parse.rs` (67K); `meshing.rs`,
-  `parking.rs`, `osm/model.rs` and `inspect.rs` joined the split pattern in October 2026
+  `parking.rs`, `osm/model.rs` and `inspect.rs` joined the split pattern in October 2026,
+  `roads.rs` in November
   (parent `foo.rs` keeps the interface and re-exports, subjects live in `foo/`). In the
   session that sized this rule the
   predecessors (`corners.rs`, `roads/tests.rs`, `references/roads.md`, since split)
@@ -418,7 +419,7 @@ step when adding one):
 | entity | file |
 |---|---|
 | ground mesh, merged area layer meshes (landuse/parks/woods/grass/sand/parking + its markings/water), waterway ribbons, tree-row band | `map/spawn.rs` (through `map/surface.rs::spawn_layers`) |
-| road layers — **common, spawned once with no `LodStep`** (`roads.rs::spawn_road_common_layers`): eleven ribbons (alleys/sidewalks/road medians/unpaved roads/roads/lot sidewalks + lot lines/bridge shadows/bridge curbs (`bridge_casings`)/bridges/walls — track bridges' slabs, parapets and shadows included), the level-crossing decks (`rail_crossings`), the ring islands' lawn (`ring_islands`) and their mapped grass without the rim (`ring_island_grass`), and the eight paint layers of `roads/paint.rs` (wear mask + wear, zebras, islands, lanes + axes, bridge lanes + axes), the latter tagged `(RoadLayerTag, PaintTag)` — the mixed layers take the near step's corner rounds with the common middle appended once; **step-owned, one per verge step with `LodStep`** (`map/roads.rs::spawn_road_meshes`, from `rebuild_roads` and `spawn_map`): `road_verges`, `road_verge_lawns`, `road_verge_yards`, and the ground-green paving scraps (`sidewalk_scraps`, split out of `sidewalks` by perf-journal 33) | `map/roads.rs` (split build `build_roads_steps`, common from `RoadCommon::take_common_layers`) |
+| road layers — **common, spawned once with no `LodStep`** (`roads.rs::spawn_road_common_layers`): eleven ribbons (alleys/sidewalks/road medians/unpaved roads/roads/lot sidewalks + lot lines/bridge shadows/bridge curbs (`bridge_casings`)/bridges/walls — track bridges' slabs, parapets and shadows included), the level-crossing decks (`rail_crossings`), the ring islands' lawn (`ring_islands`) and their mapped grass without the rim (`ring_island_grass`), and the eight paint layers of `roads/paint.rs` (wear mask + wear, zebras, islands, lanes + axes, bridge lanes + axes), the latter tagged `(RoadLayerTag, PaintTag)` — the mixed layers take the near step's corner rounds with the common middle appended once; **step-owned, one per verge step with `LodStep`** (`map/roads.rs::spawn_road_meshes`, from `rebuild_roads` and `spawn_map`): `road_verges`, `road_verge_lawns`, `road_verge_yards`, and the ground-green paving scraps (`sidewalk_scraps`, split out of `sidewalks` by perf-journal 33) | `map/roads/build.rs` (split build `build_roads_steps`) + `map/roads/common.rs` (`RoadCommon::take_common_layers`) |
 | rail layers (ballast/ties/steel, and the same three for a track on a bridge) | `map/rail.rs::spawn_rails` (same helper) |
 | parked cars | `map/cars/mod.rs::rebuild_cars` (through `surface::spawn_layers`; geometry — `cars/body.rs`) |
 | standing wagons | `map/wagons.rs::rebuild_wagons` (same helper) |
