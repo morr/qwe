@@ -302,7 +302,9 @@ construction. Bands carry
 the **centerline**, not a ready outline: the grid fill needs the centerline for its
 4-connected-chain rasterization guarantee, the mesh build turns it into an outline, and
 the renderer draws its own smoothed copy and takes only the widths (smoothing must not
-move what blocks).
+move what blocks). The fence-gap machinery is its own subject, `footprint/fences.rs`
+(`fence_gaps`, `FenceGapCache`, `FenceIndex`, `fence_pieces`), and the drawn deck cut
+is `footprint/decks.rs` (`BridgeDecks`) — both reached through the parent's re-exports.
 
 `CurbCoverage` also lives here: the shared *inputs* of the composite-bridge curb
 decision — the bridge and joining-roads lists, filtered by one `ways_joined` (moved

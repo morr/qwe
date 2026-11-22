@@ -772,7 +772,9 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   raw form; `pairs()` the candidate enumeration; `cell_of` the escape hatch for the one
   ring-walking caller. **`spatial.rs` is a different animal** and stays outside; so does
   `planting::Occupied`, on the opposite convention.
-- **Footprint bands** (`map/footprint.rs`) — the strips linear geometry occupies on the
+- **Footprint bands** (`map/footprint.rs`, with the fence-gap machinery in
+  `footprint/fences.rs` and the bridge-deck cut in `footprint/decks.rs`) — the strips
+  linear geometry occupies on the
   ground, as **(centerline, width)** values plus the width policy; what a band means on
   the ground — blocking or carving — the consumer's fill order decides, the band itself
   carries no role. One
