@@ -78,6 +78,7 @@ impl Plugin for HumanPlugin {
             .register_type::<WanderHeading>()
             .register_type::<PanicRecoil>()
             .register_type::<Pace>()
+            .register_type::<PopulationSize>()
             .register_type::<Attire>()
             .register_type::<BloodPool>()
             .register_type::<BloodSpatter>()

@@ -101,7 +101,13 @@ impl Pace {
 /// это всегда [`HUMAN_COUNT`](crate::settings::HUMAN_COUNT), а параметром
 /// сделано ради сцен, которым толпа не нужна, — реплей-теста
 /// (`tests/determinism.rs`) и демо-стендов.
-#[derive(Resource, Clone, Copy, PartialEq, Eq, Debug)]
+///
+/// Отражён для BRP: проверка инварианта телеметрии живьём
+/// (`живые + убитые + спасшиеся == население`) читает население отсюда —
+/// и не обязана знать, чья константа стояла при старте (`QWE_PERF_POP`,
+/// реплей-двор).
+#[derive(Resource, Reflect, Clone, Copy, PartialEq, Eq, Debug)]
+#[reflect(Resource)]
 pub struct PopulationSize(pub usize);
 
 impl Default for PopulationSize {
