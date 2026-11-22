@@ -126,15 +126,18 @@ them the app is unchanged:
   `TickStage::probe_name` (`guard/tick/answers/spawner/demon_grid/demon_behavior/
   human_behavior/move/separation/dispatch`)).
 
-Diagnostics that always exist (perf-journal 15): `sim/{acquire,snapshot,spawner,horde,souls,escape}_ms`
-complete the per-system cut of the tick (`horde` — the wave schedule/release system,
-`demon/horde.rs`, phase 4 of the ×10 plan), and the `archetype census: N total` INFO line
+Diagnostics that always exist (perf-journal 15): the per-system tick cut
+`sim/{acquire,spawner,horde,panic,flee,far,escape,chase,souls,move,separation}_ms`
+— the one registry behind everything spike-related (`diagnostics.rs::SPIKE_PARTS`:
+registration, the `tick spike dissect` line, this list; `separation` is measured
+per run, not per tick — it is gated to once per frame), the regulator's totals
+`sim/{tick,wait,wait_peak}_ms` (`SimLoad`), and the `archetype census: N total` INFO line
 every 5 s tracks the archetype-space churn — behaviour waves fill the space with new
 component combinations, and the fill-up phase is what makes a fresh world's first
-minutes expensive (the `snap` dissect value spikes with it; frozen census = calm world).
-Since the camera LOD (plan ×10 Phase 2) the cut also carries `sim/far_ms` — the far
-slices' cost; one of the eight slice systems runs per tick, so the number is the price
-of an eighth of the population stepping `dt = 8 ticks` at once. `count FarTag` next to
+minutes expensive (perf journal 15; frozen census = calm world).
+`sim/far_ms` is the camera-LOD far slices' cost (plan ×10 Phase 2): one of the eight
+slice systems runs per tick, so the number is the price of an eighth of the
+population stepping `dt = 8 ticks` at once. `count FarTag` next to
 it says how big that eighth is.
 
 ## Ready markers in the log
@@ -473,7 +476,9 @@ $b count HumanFleeTag DemonChaseTag DemonDevourTag MovableStateMovingTag
 ```
 
 The telemetry invariant is worth checking after any behaviour change —
-`killed + escaped + alive == HUMAN_COUNT` (CONTEXT.md). **Pause first** (`$b pause`): at
+`killed + escaped + alive == population`, the population read live from
+`res get PopulationSize` (CONTEXT.md; `QWE_PERF_POP` and the replay yard run
+other sizes than the stock `HUMAN_COUNT`). **Pause first** (`$b pause`): at
 high sim speed the two BRP reads land in different ticks and the sum looks broken when it
 isn't.
 
