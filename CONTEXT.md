@@ -591,7 +591,8 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   footprint** (merged, not stacked), sitting **over** the building layers the ground
   shadow sits under. **A pitched roof takes none**; a neighbour casts only if it is 3 m
   taller; the drawn bodies of the neighbours are subtracted. Detail — `buildings-heights.md`.
-- **Roof clutter** (`map/buildings/clutter.rs`) — what stands *on* the roof, each item a
+- **Roof clutter** (`map/buildings/clutter.rs`; the placement engine in
+  `clutter/placement.rs`) — what stands *on* the roof, each item a
   small oblique box with its own **opaque** shadow, placed by the building's seed, every
   candidate rejected unless all four corners fall inside the footprint **and the place is
   free**. Which items follow the **material**, not the use. **The clutter is the only
