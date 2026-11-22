@@ -302,9 +302,8 @@ Context grows ~1–1.4K tokens per turn and is re-read from cache by every follo
 one measured session grew its context to 570K over 409 turns and burned 114.6M tokens,
 99.6% of them cache re-reads. Three rules keep a session cheap:
 
-- **A file over ~30K characters is read in full once.** The repeat offender here is
-  `src/map/osm/parse.rs` (67K); `meshing.rs`,
-  `parking.rs`, `osm/model.rs` and `inspect.rs` joined the split pattern in October 2026,
+- **A file over ~30K characters is read in full once.** `meshing.rs`,
+  `parking.rs`, `osm/model.rs`, `inspect.rs` and `osm/parse.rs` joined the split pattern in October 2026,
   `roads.rs`, `roofs.rs` and `temples.rs` in November
   (parent `foo.rs` keeps the interface and re-exports, subjects live in `foo/`). In the
   session that sized this rule the
