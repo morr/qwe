@@ -210,6 +210,7 @@ fn on_world_started(
 mod tests {
     use std::sync::{Arc, RwLock};
 
+    use bevy::ecs::schedule::ScheduleLabel;
     use bevy::state::app::StatesPlugin;
     use bevy::time::TimeUpdateStrategy;
 
@@ -273,6 +274,55 @@ mod tests {
             .resource::<SpatialGrid<Demon>>()
             .for_each_in_rect(Vec2::ZERO, MAP_SIZE, |_| seen += 1);
         seen
+    }
+
+    /// Пары систем, чьи доступы пересекаются, а взаимный порядок расписание не
+    /// задаёт. Считает их сама постройка графа, поэтому расписание достаточно
+    /// **проинициализировать** — гонять системы не нужно (а и нечем: они
+    /// просят ресурсы мира). Расписание при этом уезжает из `Schedules`
+    /// насовсем: на каждую метку вызов один, приложение после проверки не
+    /// запускается.
+    fn unordered_conflicts(app: &mut App, label: impl ScheduleLabel) -> Vec<String> {
+        let world = app.world_mut();
+        let mut schedule = world
+            .resource_mut::<Schedules>()
+            .remove(label)
+            .expect("расписание заведено плагином");
+        schedule.initialize(world).expect("расписание строится");
+        schedule
+            .graph()
+            .conflicting_systems()
+            .to_string(schedule.graph(), world.components())
+            .map(|(a, b, on)| format!("{a} ↔ {b} (по {on:?})"))
+            .collect()
+    }
+
+    /// Ветки демонского конвейера упорядочены изнутри: пара с пересекающимися
+    /// доступами обязана иметь явное ребро — «кто первый» у исполнителя
+    /// скрытое состояние (доктрины рёбер stage-кортежа выше). Стадия порядок
+    /// между своими членами не задаёт, и глобальный свив ambiguities
+    /// (обзор №27) был временной врезкой, а не пином. Зеркало пина
+    /// человеческой ветки — `human::tests::neither_branch_leaves_the_wander_pair_unordered`.
+    #[test]
+    fn neither_demon_branch_leaves_a_pair_unordered() {
+        let mut app = App::new();
+        // `SpatialPlugin` — как в дворе выше: без него цепочка стадий тика не
+        // настроена, и пин проверял бы не тот граф, что крутит игра
+        app.add_plugins((
+            MinimalPlugins,
+            StatesPlugin,
+            DemonPlugin,
+            crate::spatial::SpatialPlugin,
+        ));
+
+        assert!(
+            unordered_conflicts(&mut app, Update).is_empty(),
+            "Update branch has unordered conflicting systems"
+        );
+        assert!(
+            unordered_conflicts(&mut app, FixedUpdate).is_empty(),
+            "FixedUpdate branch has unordered conflicting systems"
+        );
     }
 
     /// Прогрев, в котором мир поехал: пауза принадлежит `sim_time` и снимается
