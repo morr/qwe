@@ -175,7 +175,9 @@ Summary; the mechanism — **world-lifecycle skill** (states and the warmup hold
   both lifecycle paths share, fired on entering `PlayPhase::Live` and on every restart. All
   run state (`SimClock` + `TickDebt`, `SimTick` + the frozen `Backend`, `Telemetry`,
   `DemonSpawner` + `HordeSchedule`, `SeparationStats`) is reset by observers of it, each in its owning
-  module (`grep "On<WorldStarted>"`). **Membership is held from the outside** by
+  module (`grep "On<WorldStarted>"`), and two of them also despawn entities — the far crowd
+  chunks and the baked corpse chunks with their storage (a restart passes no `Loading`, so
+  `DespawnOnExit` cannot reach them). **Membership is held from the outside** by
   `a_restart_replays_the_run`, not by hand. Map-derived state (`NorthstarGrid`,
   `PolyNavmesh`) is **not** run state — a restart keeps the map.
 - **RestartEvent** (`restart.rs`, R key or BRP) — despawns pawns and corpses, fires

@@ -706,6 +706,11 @@ fn reset_warmup(mut progress: ResMut<WarmupProgress>) {
 /// сущности сцены. Всё, что имеет `Transform` и не является камерой или
 /// UI-нодой, — это мир; если он пережил выход из `Playing`, при смене города
 /// он останется поверх новой карты (или, хуже, будет ходить по ней).
+///
+/// Граница видимости: мир без `Transform` детектор не видит. Расширить запрос
+/// нельзя — в Bevy 0.20 ресурсы тоже сущности, и любой запрос шире заматчит
+/// их. На путях вне `Loading` (рестарт) детектора нет вовсе — там чистоту
+/// держат обсерверы `WorldStarted` в своих модулях.
 fn warn_leftover_world_entities(
     leftovers: Query<(Entity, Option<&Name>), (With<Transform>, Without<Camera>, Without<Node>)>,
 ) {

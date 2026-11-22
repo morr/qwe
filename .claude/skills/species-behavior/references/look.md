@@ -185,8 +185,10 @@ gigabyte of tables; baked it is ~115 MB of vertex data and no entities at all).
   per cell spawned lazily at the first corpse (`CorpseChunk` marker,
   `DespawnOnExit(Playing)`). A rebuild rewrites the cell's whole mesh from storage
   (`REBUILD_CHUNK_BUDGET` 4 dirty cells per frame); the `Handle<Mesh>` lives as long as
-  the cell — contents are replaced with `Assets::insert`, no asset churn. Everything is
-  cleared by `WorldStarted`, like the run counters.
+  the cell — contents are replaced with `Assets::insert`, no asset churn. Everything —
+  the storage *and the mesh entities* — is cleared by `WorldStarted`, like the run
+  counters; the entities have to go there, because a restart passes no `Loading` and the
+  `DespawnOnExit` component never fires on that path.
 - **The point material** (`PointMaterial`, `shaders/point.wesl`) — the same atlas
   image as sprites; the quad is expanded in the vertex shader from
   `centre + half + floor_px` vertex attributes, with `Silhouette::drawn_size`'s exact

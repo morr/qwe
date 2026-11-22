@@ -468,9 +468,13 @@ entities those buffers name, and the buffer then panics with `Entity despawned`.
 
 The two existing mass despawns are both outside `Update` by design: the city switch runs
 in `StateTransition` (`DespawnOnExit`), and restart on R triggers from `PreUpdate` after
-`InputSystems` (`restart.rs`). `escape` despawns a single human inside `FixedUpdate`,
-where the chained stage sets give it a sync point. A new despawn site belongs in one of
-those slots — silencing the command errors instead only hides the ordering mistake.
+`InputSystems` (`restart.rs`). The `WorldStarted` resets ride the same two slots — the far
+crowd's and the baked corpse field's observers despawn their chunk entities from the same
+commands the event itself arrives in (`silhouette/far.rs`, `silhouette/bake.rs`; a restart
+passes no `Loading`, so `DespawnOnExit` cannot clear them). `escape` despawns a single
+human inside `FixedUpdate`, where the chained stage sets give it a sync point. A new
+despawn site belongs in one of those slots — silencing the command errors instead only
+hides the ordering mistake.
 
 ## Bevy Time Types
 

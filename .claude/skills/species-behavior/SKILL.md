@@ -310,6 +310,10 @@ despawn is the slot in `FixedUpdate`'s `HumanBehavior` tail beside `rise_souls` 
 despawns do not run from `Update`. No renderer (replay, tests, the blood gallery) → the
 material resource never appears, nothing bakes, corpses stay entities. Accounting:
 `Telemetry.baked` grows monotonically per run, `Census.corpses` counts only the fresh.
+**The field does not outlive its run**: the bake's `WorldStarted` observer despawns the
+chunk entities together with the storage — on a restart `DespawnOnExit` cannot do it (no
+`Loading` pass), and without the reset the previous run's blood rendered on and new kills
+spawned a second entity per cell (обзор №61, поймано живьём).
 
 The drawn half — pose, tint, the blood children, baking and the point material — is
 `references/look.md`; the summary is `CONTEXT.md`'s **Corpse look** entry.

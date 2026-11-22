@@ -185,7 +185,10 @@ share. Fired from exactly **two** places:
 `HordeSchedule` (the horde's schedule and its pending release queue, `demon/horde.rs` —
 the spawner's observer already carries the "no demons alive" precondition and the warning,
 so the horde's own reset stays silent),
-`SeparationStats` (the crowd-demo counters). `grep "On<WorldStarted>"` enumerates them.
+`SeparationStats` (the crowd-demo counters), and **two entity resets** — the far crowd's
+chunk entities (`silhouette/far.rs`) and the baked corpse field with its chunk entities
+(`silhouette/bake.rs`); the component cannot cover them on the restart path, because a
+restart passes through no state and `DespawnOnExit` never fires there. `grep "On<WorldStarted>"` enumerates them.
 
 **Membership is not kept by hand.** It is held from the outside by
 `a_restart_replays_the_run`, which runs a second run in the *same* `App` and compares
@@ -194,7 +197,10 @@ test cannot see is state invisible to both the simulation and the outcome counte
 reset needs its own pin next to its observer (the regulator has one in `sim_time`, the frozen
 `Backend` one in `determinism`, the separation counters one in
 `tests/movement.rs::a_new_run_inherits_no_separation_counters` — separation does not run
-under determinism at all, so the fingerprint cannot see them). Details — the `determinism`
+under determinism at all, so the fingerprint cannot see them; the corpse chunk entities one
+is `bake.rs::world_started_takes_the_chunk_entities_with_the_field` — meshes are render
+state, the fingerprint cannot see them either, and the old field rendered on after a
+restart until the fix, обзор №61). Details — the `determinism`
 skill.
 
 **Map-derived state is not run state.** `NorthstarGrid` and `PolyNavmesh` are cleared by the
@@ -212,7 +218,9 @@ read it as a plain resource. An app without `SilhouettePlugin`
 
 **RestartEvent** (`restart.rs`, R key or BRP) — despawns humans / corpses / demons / walkers
 (demon halos and blood pools are their children and go with them; souls are not on the list —
-a `SoulMote` despawns itself, see `species-behavior`), fires
+a `SoulMote` despawns itself, see `species-behavior`; the baked corpse chunks and the far
+crowd chunks are not on the list either — their `WorldStarted` observers despawn them,
+above), fires
 **WorldStarted**, re-orders the population: `PopulationSpawn::spawn` inserts the
 `PendingPopulation` queue (the despawn above has already happened), and the batched-spawn
 pump (`species-behavior` skill) settles it over the next ticks/frames. The navmesh
