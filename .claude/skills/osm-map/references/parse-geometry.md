@@ -1,8 +1,8 @@
 # Parsing — the geometry passes
 
-The geometry half of the parse: the way readings and the passes that move or cut way
+The geometry half of the parse: the way readings (`parse/ways.rs`) and the passes that move or cut way
 geometry (`parse/tags.rs::path_width`, `parse/rails.rs`, `parse/verges.rs`,
-`parse/pavements.rs`, and the geometry passes of `parse.rs`, `parse/lots.rs`,
+`parse/pavements.rs`, `parse/block_pull.rs`, `parse/lots.rs`,
 `parse/pockets.rs`). The seam they hang on — `ParseKnobs`, `read_elements`/`finish_parse`,
 the pass order, how a parse is tested — is `parse-seam.md`; the building readings and
 passes are `parse-buildings.md`.
@@ -486,10 +486,11 @@ passes are `parse-buildings.md`.
 
 ## During the read
 
-- **Ring assembly** (`parse.rs::assemble_rings`) — multipolygon relation members joined
+- **Ring assembly** (`parse/relations.rs::assemble_rings`) — multipolygon relation members joined
   end-to-end (ε = 0.01 m) into closed rings; chains broken by the bbox edge are
   force-closed if ≥ 3 points. Inner rings become holes of the outer containing them.
-- **Every area ring is cleaned of needles** (`parse.rs::collapse_slivers` in `push_area`,
+- **Every area ring is cleaned of needles** (`parse.rs::collapse_slivers` in
+  `parse/relations.rs::push_area`,
   the one choke point every parsed area flows through): consecutive repeats and
   p → q → p backtracks closer than `RING_SLIVER` 0.05 m collapse to one point. OSM
   contours like to touch themselves, and a zero-width needle is invisible as a fill but

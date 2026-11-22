@@ -215,7 +215,7 @@ pub struct PolyArea {
     pub storeys: Option<f32>,
     /// Входы (`entrance=*`) на контуре этого здания. Пусто у подавляющего
     /// большинства домов и у всего, что не здание — потребитель обязан уметь
-    /// работать без них. См. `parse::attach_entrances`.
+    /// работать без них. См. `parse::finish::attach_entrances`.
     pub entrances: Vec<Vec2>,
     /// Цвета из разметки — `building:colour` и `roof:colour`
     /// (`parse/tags.rs::area_colours`). У большинства домов пусто; сейчас их

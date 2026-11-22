@@ -38,7 +38,7 @@ pub use trees::{
 };
 
 /// По какой стороне дороги идёт поток — тег `driving_side` на границе страны
-/// (`parse::driving_side`). Решает, у какого бордюра стоит ряд односторонней
+/// (`parse::ways::driving_side`). Решает, у какого бордюра стоит ряд односторонней
 /// улицы и куда смотрят носы припаркованных машин (`map::cars`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 pub enum TrafficSide {
