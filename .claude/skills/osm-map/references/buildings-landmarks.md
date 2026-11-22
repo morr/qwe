@@ -200,7 +200,7 @@ Siblings: `buildings-heights.md` (height modes, extrusion, shadows),
   the house's walls so the piers and lintel lie over it.
   **The wall texture does not see that cut, so the cells the opening bites into are
   handed to it whole** (`WallCells`, `WallMark::Solid` — the very patch a door lays under
-  its leaf; it is built by `layers::wall_cells`, so the panel and storey arithmetic stays
+  its leaf; it is built by `layers/walls.rs::wall_cells`, so the panel and storey arithmetic stays
   with the wall and `arches` only cuts): a window sits in the middle of its cell and the
   shader knows nothing about the hole, so the opening's edge sliced a row of windows in
   half — on the pier beside the arch and on the lintel above it. Only the *partial* cells

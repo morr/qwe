@@ -68,7 +68,7 @@ dictionary.
     in `SKILL.md` — and this shader imports only the subset it calls; the `visible` rule
     in particular must not drift between the shaders that import it.
   - **The wall is the same mechanism on its own coordinates and its own codes**
-    (`layers.rs::wall_frame`, `meshing::WallFrame` — the same frame the garage ribbon
+    (`layers/walls.rs::wall_frame`, `meshing::WallFrame` — the same frame the garage ribbon
     in `buildings-garages.md` is measured in). A 2.5D wall is a **parallelogram** —
     base edge `a→b`, side edges along the lean — and what the builder writes into
     `ATTRIBUTE_ROOF` at each of its vertices is where that vertex stands *in it*: **the panel
@@ -207,7 +207,7 @@ dictionary.
       rectangle. Different heights are not enough, because an opening owns its reveal and
       sill below it too, so the gap between two would have to allow for the frame; picking
       one of the two is the version that cannot drift.
-    - **A door comes from the data, as geometry** (`layers::push_doors`, code `DOOR_CODE`
+    - **A door comes from the data, as geometry** (`layers/walls.rs::push_doors`, code `DOOR_CODE`
       12), and this is the one opening the shader does not place. It used to roll one on
       `DOOR_SHARE` (0.24) of the ground-floor columns and a gate on 0.30 of a shed's, which
       put drawn doors where `osm::entrances` has none and left the real entrance — the point
@@ -222,14 +222,14 @@ dictionary.
         with neither storeys nor parapet that maps the quad to `[0, 1]²`, so `doorway_of`
         draws the leaf at its centre and `DOOR_LEAF_WIDE/HIGH` are fractions of the opening
         rather than of a cell.
-      **The metres are chosen on the CPU** (`layers::door_size`, by cladding: подъезд
+      **The metres are chosen on the CPU** (`layers/walls.rs::door_size`, by cladding: подъезд
       1.9 × 2.8 m, house door 1.3 × 2.4, shop leaves 2.4 × 3.0, shed gate 3.2 × 2.9) — a door
       is a scale ruler, and a gate that is wider than it is tall reads as a letterbox slot
       (the old `GATE_WIDE` 0.62 × `GATE_HIGH` 0.50 was exactly that, 2.0 by 1.5 m).
       A door at a ring **vertex** — which is where every real OSM `entrance` sits — is pushed
       inside the wall by half a leaf, and claimed by the edge it *starts*, so the two walls
       of a corner do not draw it twice. **The claim is by the nearest edge, not by every
-      edge in tolerance** (`layers::door_edge`, ties to the earlier edge in the ring):
+      edge in tolerance** (`layers/walls.rs::door_edge`, ties to the earlier edge in the ring):
       `DOOR_ON_WALL` is half a metre and an OSM step
       can be twenty centimetres, so both edges took the door, each shifted its leaf inward
       to make it fit, and the wall came out with two doors side by side under a single
@@ -261,7 +261,7 @@ dictionary.
       balcony on screen is a ribbon four times wider than it is tall; cut into four it read
       as a scatter of dots. A balcony must read as *bands*, and anything chopping the ribbon
       crossways eats them.
-    - **Who gets balconies is a CPU decision** (`layers::balconies_fit`): only `Panel` or
+    - **Who gets balconies is a CPU decision** (`layers/walls.rs::balconies_fit`): only `Panel` or
       `Brick`, never a `building=house` (the storey floor catches almost all of them, but a
       five-storey `house` does occur in the extract, and balconies on it would read as a
       parse error, which is what they would be), never under `BALCONY_STOREYS_MIN` 4
@@ -271,7 +271,7 @@ dictionary.
       wall has in total. Note what moved: the *use* filter now mostly lives in the cladding
       pick — plaster, shopfront and shed have no balconies by the meaning of the material,
       and they are exactly what the private sector, the mall and the warehouse get.
-    - **A gable end is a direction, not a width** (`layers::plan_long_axis`,
+    - **A gable end is a direction, not a width** (`layers/walls.rs::plan_long_axis`,
       `WallSpan::gable_end`). «Глухие торцы» stood for a while as `BALCONY_COLUMNS_MIN`, and
       that threshold cannot say it: a real panel section is 12–14 m deep (the measurement is
       in `entrances.md` next to this file), which is four panels — over the threshold, so every
@@ -345,7 +345,7 @@ dictionary.
       0.14): under the glazing runs the dark band that hides the loading bays.
     - The **door is the widest opening on the map** (`door_size` 4.2 × 3.4 m): a group of
       glass leaves with a lobby, and you walk in with a trolley.
-  - **The brand band is geometry, not shader** (`layers::push_brand_band`,
+  - **The brand band is geometry, not shader** (`layers/walls.rs::push_brand_band`,
     `BRAND_BAND_SHARE` 0.30 of a **tier**, its top `BRAND_BAND_GAP` 0.05 of a tier below
     the wall's own top) — one quad
     across every drawn wall of a `BigBox`, with `set_roof(None)` so no texture touches it,
@@ -372,7 +372,7 @@ dictionary.
     shader's grid (`roof.wesl::BIG_BOX_WINDOW_HIGH` 0.70 of a tier), and a share of the
     whole wall equals a share of a tier only on a one-tier box — on a two-tier one such a
     band lay over the top tier's ribbon completely. And its **normal is the wall's own**
-    (`layers::wall_normal`, the helper `wall_colors` takes too): OSM does not normalise a
+    (`layers/walls.rs::wall_normal`, the helper `wall_colors` takes too): OSM does not normalise a
     ring's winding, so the raw right-hand perpendicular points into the building on half of
     them — written out a second time inside the band, it painted the lit face dark and the
     shaded one light.

@@ -176,7 +176,7 @@ OSM — это весь кооператив одним контуром, в Т�
 `roof:shape` есть у 283 (`flat` 165, `hipped` 84), `building:colour` /
 `roof:colour` по v14 — 30 и 91 (из них 51 `blue`), но **красят пока только
 храмы и полосу вывески торговой коробки** (`temples::tagged_*`,
-`layers::brand_color`); из `roof:shape` читаются только `onion|dome` у храма
+`layers/walls.rs::brand_color`); из `roof:shape` читаются только `onion|dome` у храма
 (по кешу v14 — 7 и 2). Храмы читают ещё `religion` / `denomination`,
 `tower:type=bell_tower|minaret` и `min_height` / `building:min_level` (по v14
 2 и 3 контура); крепость — `man_made=tower` + `tower:type=defensive` (9 в v14)

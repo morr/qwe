@@ -8,6 +8,7 @@ use super::fixtures::{
     building, detail, extruded_mesh, ground_shadows, is_solid, is_wall, mesh_points, oblong, rect,
     square, whole_cells,
 };
+use super::layers::door_size;
 use super::layers::*;
 use super::material::*;
 use super::roofs::*;
@@ -110,7 +111,7 @@ fn the_wall_facing_the_light_is_lighter_than_the_one_facing_away() {
     assert_eq!(west, west_reversed);
 }
 
-/// Цвет фриза, размеченный тегом: `layers::brand_color` предпочитает
+/// Цвет фриза, размеченный тегом: `layers::walls::brand_color` предпочитает
 /// `building:colour` палитре, так что полоса красная при любом посеве — а фасад
 /// коробки серый, и по красному каналу её геометрия отличается от всей прочей.
 const BRAND: [u8; 3] = [200, 30, 30];
@@ -877,7 +878,7 @@ fn a_hull_deeper_than_housing_carries_no_balconies() {
 ///
 /// Ворота из перебора исключены, и по той же причине, по какой гаражные ленты
 /// не входят в `RoofKind::ALL`: их выбирает **геометрия прогона**
-/// (`run_wall_look` в `layers::house_look`), а не назначение дома, так что
+/// (`run_wall_look` в `layers::roofing::house_look`), а не назначение дома, так что
 /// через `wall_of` они не приходят никогда.
 #[test]
 fn every_cladding_reaches_the_city() {

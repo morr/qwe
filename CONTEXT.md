@@ -542,7 +542,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   a fortress take their **`LandmarkRoof`** by faith and kind. **`RoofShape`** is the same
   kinds as an *input* — only `roof_gallery` asks for one, and a refusal there stays a
   refusal. **`shape_facts`** hands out the numbers the choice is made from. **One roof
-  assembly for both modes** (`layers.rs::push_roofing`): the flat modes call it without
+  assembly for both modes** (`layers/roofing.rs::push_roofing`): the flat modes call it without
   the lean — no lifted ridge, no frontons, no dormers. Detail —
   `buildings-heights.md`, `buildings-landmarks.md`.
 - **Roof material** (`map/buildings/material.rs`) — what a roof is *covered with*:
@@ -560,7 +560,7 @@ audit in `references/osm-coverage.md`, the crown algorithm in `references/tree-a
   metres. The cladding decides the seams, the **openings** and whether there are
   **balconies**; **who gets balconies is decided on the CPU** and rides the seed's value
   (`WallFrame::marked`). **A door is not drawn by the shader's dice: it comes as
-  geometry, from the data** — a patch plus the leaf (`layers::push_doors`); **an arch
+  geometry, from the data** — a patch plus the leaf (`layers/walls.rs::push_doors`); **an arch
   gets the same patch**. Above the last storey the wall keeps a **cornice** of plain
   cells. **A roof is darker than the walls under it, deliberately.** Detail —
   `buildings-material.md`.

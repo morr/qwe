@@ -303,8 +303,8 @@ one measured session grew its context to 570K over 409 turns and burned 114.6M t
 99.6% of them cache re-reads. Three rules keep a session cheap:
 
 - **A file over ~30K characters is read in full once.** The repeat offenders here are
-  `src/map/buildings/temples.rs` (87K),
-  `src/map/buildings/layers.rs` (87K) and `src/map/osm/parse.rs` (67K); `meshing.rs`,
+  `src/map/buildings/temples.rs` (87K)
+  and `src/map/osm/parse.rs` (67K); `meshing.rs`,
   `parking.rs`, `osm/model.rs` and `inspect.rs` joined the split pattern in October 2026,
   `roads.rs` in November
   (parent `foo.rs` keeps the interface and re-exports, subjects live in `foo/`). In the

@@ -71,7 +71,7 @@ no spread). `CONTEXT.md` carries the **Garage rows** glossary entry.
     neighbours. Sharing the axis is what a run is *for*; owning one is earned by being a
     ribbon or a blob yourself.
     An **offcut of a cut outline** — a four-metre tooth of a comb, a wedge beside a wing
-    — gets no garage drawn on it at all (`GarageRect::plain`, `layers::plain_garage_roof`):
+    — gets no garage drawn on it at all (`GarageRect::plain`, `layers/garages.rs::plain_garage_roof`):
     the roof takes the ordinary world-axis frame with `RoofKind::Corrugated`, the walls
     are `WallMark::Solid`, and the colour and texture phase stay the run's, so it reads
     as a corner of the same shed rather than as a garage of its own. A near-square scrap
@@ -80,7 +80,7 @@ no spread). `CONTEXT.md` carries the **Garage rows** glossary entry.
     half at both ends — which is what a comb's teeth looked like. The rule is the
     user's own: separate the crooked part and do not draw a garage on it.
   - **The grid is the piece's own, in whole cells** — the wall's construction
-    (`meshing::WallFrame::run`, `layers::garage_frame`), reached here for the same reason.
+    (`meshing::WallFrame::run`, `layers/garages.rs::garage_frame`), reached here for the same reason.
     The bay is `length / floor(length / BAY 3.9 m)` and the row
     `width / floor(width / ROW_PITCH 18 m)`, so the pitch is fitted to the piece rather
     than the piece to the pitch: a seam lands on **both** ends of the ribbon and an aisle
@@ -126,14 +126,14 @@ no spread). `CONTEXT.md` carries the **Garage rows** glossary entry.
     balconies on it at all, and `push_doors` returns early: an OSM entrance would
     otherwise put a second, differently sized leaf over a gate that is already there.
     **Only the walls running along their piece's axis get gates**
-    (`layers::garage_cells`, `GarageRect::faces_the_drive`, the split at 45°): you drive
+    (`layers/garages.rs::garage_cells`, `GarageRect::faces_the_drive`, the split at 45°): you drive
     in from the drive, and the cross wall is a party wall between two boxes. The end is
     measured in the piece's **rows** rather than its bays — one cell on a single-row
     ribbon, the aisle boundaries on a cooperative — and is marked `WallMark::Solid`, i.e.
     drawn with the material's pattern and no opening at all; `wall_shade` returns on that
     mark before it ever reaches `gate_of`.
     **And the wall is measured by the piece's bay, not by the constant `BAY`**
-    (`layers::garage_cells`). "A gate stands under its own roof seam" was true only by
+    (`layers/garages.rs::garage_cells`). "A gate stands under its own roof seam" was true only by
     coincidence before that: a wall divided *its own* length by `round(length / BAY)`,
     which agrees with the roof on a whole rectangle whose long side is that wall and
     nowhere else. On a cut outline the gates drifted off the comb the further from the

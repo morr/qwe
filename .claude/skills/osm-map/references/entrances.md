@@ -137,7 +137,7 @@ whole algorithm:
   still allows them, since a building with no door drops out of the wander targets.
 - **An arch is not a wall** (`PassageIndex`) — a `tunnel=building_passage` road runs
   *through* the building and `buildings::arches` cuts the wall out for its full height, so
-  a door there stands in a hole: `layers::push_doors` refuses to draw a leaf inside an
+  a door there stands in a hole: `layers/walls.rs::push_doors` refuses to draw a leaf inside an
   existing opening, and the entrance survived anyway — the `doors` gizmo circling a gap and
   a pawn walking into it. Every candidate is now dropped within
   `road.width / 2 + ENTRANCE_ARCH_CLEARANCE` (3 m — about a panel, which is how far the
@@ -221,7 +221,7 @@ whole algorithm:
   element of its own, and every consumer reads that list as entry points — a pawn's
   destination "into this building" is drawn from it uniformly (`human::building_target`, so
   half a long block's wander targets are now in the yard), the load line sums its length, the
-  `doors` gizmo circles each point and `layers::push_doors` hangs a leaf on the wall for each.
+  `doors` gizmo circles each point and `layers/walls.rs::push_doors` hangs a leaf on the wall for each.
   That is accepted, not overlooked — a подъезд really is entered from the yard as often as
   from the street — and until the model carries a pair (`at` + `through`) rather than a point,
   `generate_entrances` at least counts the twins as a term of their own: they are inside the

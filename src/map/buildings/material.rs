@@ -249,7 +249,7 @@ impl WallKind {
 /// Дверь не облицовка и не кровля: это **отдельный четырёхугольник** поверх
 /// стены, со своей рамой в клетку `[0, 1]²` ([`WallFrame::opening`]), и код ей
 /// нужен ровно затем, чтобы шейдер узнал полотно и не искал в нём ни этажей,
-/// ни панельных швов. Ставит её `buildings::layers::push_doors` по входам из
+/// ни панельных швов. Ставит её `buildings::layers::walls::push_doors` по входам из
 /// `osm::entrances` — там же, где их видит гизмо дверей и куда идут пешки.
 ///
 /// [`WallFrame::opening`]: crate::map::meshing::WallFrame::opening
@@ -344,7 +344,7 @@ const SHED_WALL_COLORS: [Color; 5] = [
 /// Композитная кассета гипермаркета: с фотографии — белый, светло-серый и
 /// песочный, и ровно один тёмный, «антрацит» новых ТЦ. Тон у самой стены
 /// сдержанный **намеренно**: цвет коробки на снимке задаёт не она, а полоса
-/// вывески поверх неё ([`layers::push_brand_band`]), и яркая кассета спорила бы с
+/// вывески поверх неё ([`layers::walls::push_brand_band`]), и яркая кассета спорила бы с
 /// полосой вместо того, чтобы её держать.
 const BIG_BOX_WALL_COLORS: [Color; 5] = [
     Color::srgb(0.86, 0.86, 0.85),
@@ -559,7 +559,7 @@ pub struct RoofLook {
     pub frame: Roof,
     /// Гаражный прогон, если дом в него вошёл: у ленты кровля считается не по
     /// мировой точке и оси, а **в ячейках прогона** — по боксу вдоль и ряду
-    /// поперёк, — и рамку каждой вершине даёт он (`layers::garage_frame`).
+    /// поперёк, — и рамку каждой вершине даёт он (`layers::garages::garage_frame`).
     pub(super) run: Option<GarageRun>,
 }
 
@@ -674,13 +674,13 @@ fn sacred_of(building: &PolyArea) -> Sacred {
 /// и ребрится сам по себе.
 ///
 /// Рамка тут номинальная: у гаражной ленты координаты вершине приходят из её
-/// собственных ячеек (`layers::garage_frame`), а не из мировой точки и оси.
+/// собственных ячеек (`layers::garages::garage_frame`), а не из мировой точки и оси.
 pub(super) fn run_look(run: &GarageRun) -> RoofLook {
     let base = GARAGE_ROW_COLORS[(run.seed >> 8) as usize % GARAGE_ROW_COLORS.len()].to_srgba();
     let jitter = value_jitter(run.seed >> 16);
     // материал — по самому большому куску: у буквы Г одно крыло может быть
     // кооперативом, а другое лентой, и на кровле это видно по каждому куску
-    // отдельно (`layers::garage_frame` берёт код у него), но `RoofKind` дома
+    // отдельно (`layers::garages::garage_frame` берёт код у него), но `RoofKind` дома
     // один — им выбираются палитра и оборудование на кровле
     let kind = run_kind(run.main().block);
     RoofLook {
@@ -825,7 +825,7 @@ fn wall_kind_of(class: &BuildingClass, seed: u32) -> WallKind {
         },
         // корпус без назначения глубже любой жилой секции — не жильё, какой
         // бы высоты он ни был: ни панели, ни кирпича, а с ними и балконов
-        // (`layers::balcony_house`) у него нет
+        // (`layers::walls::balcony_house`) у него нет
         BuildingKind::DeepHull(_) => &DEEP_HULL_WALLS,
         BuildingKind::Housing(_) => match low {
             true => &LOW_RISE_WALLS,

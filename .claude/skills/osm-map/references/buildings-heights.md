@@ -179,7 +179,7 @@ terms in `CONTEXT.md`.
     wall shaded — three tones, which is what makes a box read as a box in watabou and
     in 2GIS's 3D mode. The visible walls are the edges facing *against* the lift
     (`silhouette_edges(outer, -Lean::dir())`), courtyard walls the hole edges facing
-    *along* it; each wall's tone comes from `layers.rs::wall_colors` through the shared
+    *along* it; each wall's tone comes from `layers/walls.rs::wall_colors` through the shared
     `buildings/mod.rs::shade_by_light` — the facade colour mixed toward white by
     `outward · map::sun_light() × WALL_LIT_MIX` (0.18) when lit, toward black by
     `WALL_SHADED_MIX` (0.22) when not, plus the `WALL_TOP_LIGHTEN` vertical gradient.
