@@ -277,6 +277,43 @@ fn demote_mid_flee_drops_urgency() {
     );
 }
 
+/// Ходок, вошедший в кадр ПЕШКОМ при стоячей камере, возвращается
+/// сердцебиением прохода: promote не имеет права жить только на движении
+/// камеры — у срезной пешки нет другого способа стать ближней.
+#[test]
+fn a_walker_entering_the_frame_is_promoted_on_a_standing_camera() {
+    let mut app = lod_yard(0.2);
+    let far_away = crate::settings::MAP_SIZE / 2.0 + Vec2::X * 3000.0;
+    let inside = crate::settings::MAP_SIZE / 2.0;
+    // ближняя вне кадра: первый проход (кадр «двинулся») demote'ит её
+    let pawn = spawn_pawn(&mut app, 3, far_away, false, false);
+    app.world_mut()
+        .run_system_cached(assign_lod_tiers)
+        .expect("проход");
+    assert!(app.world().get::<FarTag>(pawn).is_some(), "ушла в дальние");
+
+    // пешка дошла до кадра сама, камера не двигалась: позиция и сетка —
+    // от promote; из трёх проходов два — ранние выходы, третий — сердцебиение
+    app.world_mut().get_mut::<SimPosition>(pawn).unwrap().0 = inside;
+    app.world_mut()
+        .resource_mut::<SpatialGrid<Human>>()
+        .insert(pawn, inside);
+    for _ in 0..3 {
+        app.world_mut()
+            .run_system_cached(assign_lod_tiers)
+            .expect("проход");
+    }
+
+    assert!(
+        app.world().get::<FarTag>(pawn).is_none(),
+        "стоячая камера обязана вернуть пешку в кадре в ближние"
+    );
+    assert_eq!(
+        app.world().get::<Visibility>(pawn),
+        Some(&Visibility::Visible)
+    );
+}
+
 /// Дальнее блуждание: цель — прогулка в конусе, путь — прямая из одной
 /// точки, БЕЗ заявки на поиск.
 #[test]
