@@ -16,7 +16,8 @@ use qwe::grid::{DEFAULT_NAVTILE_SIZE, tile_center, world_to_tile};
 use qwe::loading::{AppState, WorldStarted};
 use qwe::movement::{
     Movable, MovableReachedDestinationEvent, MovableState, MovableStateMovingTag, MovementPlugin,
-    PreviousSimPosition, SeparationStats, SimPosition,
+    PreviousSimPosition, SeparationBlock, SeparationExperiments, SeparationHolds, SeparationLab,
+    SeparationStats, SeparationSteer, SimPosition,
 };
 use qwe::navigation::{ArcNavmesh, Backend, PolymeshDebug};
 use qwe::spatial::SpatialPlugin;
@@ -603,4 +604,137 @@ fn a_new_run_inherits_no_separation_counters() {
     assert_eq!(stats.push_metres, 0.0, "метры прошлого мира");
     assert_eq!(stats.overlapping_pairs, 0);
     assert_eq!(stats.anticipated_pairs, 0);
+}
+
+/// Приложение с идущим, который курсом упирается в стоящего у него на пути, —
+/// после первого полного кадра. Такой упор наполняет все три карты
+/// расталкивания: придержку и руление — самим правилом упора, запрет — при
+/// включённом скольжении (в игре эта ручка стенда выключена, и карта
+/// запретов там не наполняется).
+fn app_with_a_blocked_walker() -> (App, Entity) {
+    let mut app = test_app(FIXED_STEP, 1.0);
+    app.insert_resource(SeparationLab {
+        experiments: SeparationExperiments {
+            slide: 0.5,
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    let centre = tile_center(IVec2::new(20, 20));
+    app.insert_resource(viewport_at(centre));
+
+    // стоящий — на линии пути идущего
+    app.world_mut().spawn((
+        qwe::human::Human,
+        qwe::rng::PawnId(1),
+        Movable::new(1.0),
+        Transform::from_translation(centre.extend(0.0)),
+    ));
+    // цель — далеко за стоящим: упор не кончится приходом в первом же кадре
+    let target_tile = IVec2::new(28, 20);
+    let walker = app
+        .world_mut()
+        .spawn((
+            qwe::human::Human,
+            qwe::rng::PawnId(2),
+            Movable {
+                speed: 1.0,
+                path: (1..=8)
+                    .map(|step| tile_center(IVec2::new(20 + step, 20)))
+                    .collect(),
+                state: MovableState::Moving(target_tile),
+                last_direction: Vec2::X,
+            },
+            MovableStateMovingTag,
+            Transform::from_translation((centre - Vec2::new(1.5, 0.0)).extend(0.0)),
+        ))
+        .id();
+
+    // первый полный кадр: шаг ведёт ходока в тело, прогон расталкивания видит упор
+    app.update();
+    (app, walker)
+}
+
+fn separation_maps_are_full(app: &App, walker: Entity) -> bool {
+    app.world()
+        .resource::<SeparationHolds>()
+        .0
+        .contains(&walker)
+        && app
+            .world()
+            .resource::<SeparationSteer>()
+            .0
+            .contains_key(&walker)
+        && app
+            .world()
+            .resource::<SeparationBlock>()
+            .0
+            .contains_key(&walker)
+}
+
+fn separation_maps_are_empty(app: &App) -> bool {
+    app.world().resource::<SeparationHolds>().0.is_empty()
+        && app.world().resource::<SeparationSteer>().0.is_empty()
+        && app.world().resource::<SeparationBlock>().0.is_empty()
+}
+
+/// Общий ход трёх тестов ниже: прогон расталкивания наложил на ходока все три
+/// карты, затем `switch_off` выключает механизм — и тем же кадром выданное снято.
+fn assert_released_by(switch_off: impl FnOnce(&mut App)) {
+    let (mut app, walker) = app_with_a_blocked_walker();
+    assert!(
+        separation_maps_are_full(&app, walker),
+        "карты не наполнились — тест ничего не мерит"
+    );
+
+    switch_off(&mut app);
+    app.update();
+
+    assert!(
+        separation_maps_are_empty(&app),
+        "выданное расталкиванием не отпущено тем же кадром"
+    );
+}
+
+/// Расталкивание, выключенное сменой режима посреди игры, отпускает пешки тем
+/// же кадром. Сетка навигации — первый из двух режимов.
+///
+/// Прогон чистит свои три карты — придержку, руление, запрет — сам, но только
+/// пока идёт. Правило режима (`movement::separation_runs`) снимает систему
+/// целиком, и чистить некому: переключение навигации на сетку или включение
+/// детерминизма посреди игры оставило бы пешку под придержкой прошлого режима,
+/// то есть замедленной без причины, пока игрок не поменяет зум. Чистят три
+/// системы в `Update` под отрицанием того же правила; тесты стерегут именно
+/// их — остальные тесты расталкивания идут при включённом режиме и систему,
+/// потерявшую `run_if` или регистрацию, не замечают.
+#[test]
+fn switching_to_the_grid_releases_what_separation_imposed() {
+    assert_released_by(|app| {
+        app.insert_resource(PolymeshDebug {
+            enabled: false,
+            ..Default::default()
+        });
+    });
+}
+
+/// Второй режим: детерминизм — расталкивания в нём нет вовсе.
+#[test]
+fn switching_on_determinism_releases_what_separation_imposed() {
+    assert_released_by(|app| {
+        app.insert_resource(qwe::determinism::Determinism(true));
+    });
+}
+
+/// Отзум за `SEPARATION_MAX_ZOOM` (0.75) — тот же исход другим путём: режим
+/// не менялся, прогон идёт и сам чистит карты у своего зума-гейта. Без этого
+/// придержанный последним прогоном перед отзумом остался бы придержанным
+/// навсегда — на таком отдалении перекрытие не читается и механизм выключен.
+#[test]
+fn zooming_out_releases_what_separation_imposed() {
+    assert_released_by(|app| {
+        app.insert_resource(Viewport {
+            zoom: 0.8,
+            ..viewport_at(Vec2::ZERO)
+        });
+    });
 }
