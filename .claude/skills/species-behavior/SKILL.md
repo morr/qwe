@@ -497,7 +497,10 @@ speed, lunge }`** (sliders of the Sim tab's Demon section, persisted; `DEMON_CAP
 `DEMON_SPAWN_INTERVAL` are only its `Default`) and the `PlayPhase::Live` invariant are
 `CONTEXT.md`'s. The burst is capped too (`DEMON_INITIAL_BURST.min(cap)`, fanned over the
 reduced count), and the timer's period is re-synced inside `tick_spawner`, because restart
-and city switch rebuild `DemonSpawner` whole. **The background pace** is a phase-4 ×10
+and city switch rebuild `DemonSpawner` whole. **A portal-born demon gets no passability
+check of its own**: it appears on the rim (`PORTAL_DIAMETER / 2 + PORTAL_RIM_MARGIN`), and
+the ground under that circle is vouched for by the portal snap's clearance, not here — the
+mechanism and its pin are `navigation-deep`'s ("prune_unreachable and the portal snap"). **The background pace** is a phase-4 ×10
 decision: the default interval fills the default cap in ~1–2 sim-minutes (owner's
 directive, plan review 2026-11-21) instead of the old ~1 demon/sim-hour trickle.
 

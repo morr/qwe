@@ -301,5 +301,24 @@ the nearest tile with clearance derived from `PORTAL_DIAMETER`, through the shar
 not the answer (a corner at `r·√2` loses to a straight tile of a later ring), capped at
 `PORTAL_SEARCH_METERS` = 400 m (`settings.rs`, next to `PORTAL_DIAMETER`; metres, not
 tiles, so the navtile cycler does not move the portal). Nothing clear inside the cap ⇒
-`None`, and `map/osm/download.rs` logs `no clear spot for portal` and keeps the raw
-hint — the prune flood then starts from the unsnapped point.
+`None`, and the load thread (`map/prepare.rs::fill_navmesh_and_snap_portal`) logs
+`no clear spot for portal` and keeps the raw hint — the prune flood then starts from
+the unsnapped point; on a blocked tile it cuts nothing rather than the whole map
+(`pruning_from_a_blocked_start_cuts_nothing`).
+
+**What the clearance is for.** The square (`portal_clearance_tiles(tile_size)` tiles each
+way) is not "the portal fits" — it is "the demon rim is clean": a portal-born demon appears
+on the circle `PORTAL_DIAMETER / 2 + PORTAL_RIM_MARGIN` with **no passability check of its
+own** (`demon::systems::spawn_demon`), so the snap is the only thing that vouches for its
+ground. The square holds that circle with at least half a tile to spare on either navtile
+size — pinned by `the_snap_clearance_covers_the_demon_rim`. The check runs on the grid
+**before** the gates and the prune: the gates only open tiles, but the prune closes
+unreachable pockets, and a pocket inside the square shrinks it after the fact —
+`examples/audit/polymesh_start_area` reports the square after both.
+
+**The audit reads the snapped portal, not the hint** (that example). The raw
+`City::portal_hint` lies inside an obstacle in some cities of the collection, and an audit
+seating its probes on the hint reports a start area the game never uses. The example builds
+the portal the way the load thread does (fill → snap → gates + prune), then checks the mesh:
+the centre exactly on it, the rim, and what the portal reaches — a lattice over the map,
+where "free by the grid yet cut off on the mesh" is a mesh component the portal is not in.

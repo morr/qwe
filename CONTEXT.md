@@ -984,6 +984,11 @@ Summary; the mechanism and the measurements — **navigation-deep skill** (polym
   `snap_portal_position` spirals to the nearest tile with clearance, between fill and prune.
   The spiral is **capped at `PORTAL_SEARCH_METERS`** (400 m, `settings.rs`); past the cap
   the load thread warns and keeps the raw hint.
+  **The clearance square** (`portal_clearance_tiles` tiles each way) is sized to hold the
+  **demon rim** — the circle `PORTAL_DIAMETER / 2 + PORTAL_RIM_MARGIN` out, where a
+  portal-born demon appears — with at least half a tile to spare on either navtile size
+  (pinned). It is checked before the gates and the prune, and the prune can only shrink it:
+  `examples/audit/polymesh_start_area` checks the square after both.
 - **PathfindingAlgorithm** (`navigation/astar.rs`) — runtime-switchable: A* / Dijkstra /
   Fringe / BFS / **HPA*** (45× cheaper than flat A* at ~15 % longer paths) / Theta*.
 - **NorthstarGrid** (`navigation/northstar.rs`) — `bevy_northstar` `OrdinalGrid`, built
