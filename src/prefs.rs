@@ -34,7 +34,7 @@ use bevy::ecs::reflect::ReflectComponent;
 use bevy::ecs::system::Command;
 use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
-use bevy::reflect::{GetTypeRegistration, std_traits::ReflectDefault};
+use bevy::reflect::{GetTypeRegistration, TypeRegistration, std_traits::ReflectDefault};
 use bevy::settings::{ReflectSettingsGroup, SaveSettingsSync, SettingsPlugin};
 use std::any::TypeId;
 use std::path::{Path, PathBuf};
@@ -257,27 +257,13 @@ impl Command for ResetSettings {
     type Out = ();
 
     fn apply(self, world: &mut World) {
-        // клон Arc'а: гард реестра держится, пока мир правится, — так же, как в
-        // `bevy_settings::apply_settings_to_world`
-        let registry = world.resource::<AppTypeRegistry>().clone();
-        let types = registry.read();
-
         let mut reset = 0usize;
-        for registration in types.iter() {
-            if registration.data::<ReflectSettingsGroup>().is_none() {
-                continue;
-            }
+        visit_settings_groups(world, |registration, entity, world| {
             let (Some(reflect_component), Some(reflect_default)) = (
                 registration.data::<ReflectComponent>(),
                 registration.data::<ReflectDefault>(),
             ) else {
-                continue;
-            };
-            let Some(component_id) = world.components().get_id(registration.type_id()) else {
-                continue;
-            };
-            let Some(entity) = world.resource_entities().get(component_id) else {
-                continue;
+                return;
             };
 
             let default = reflect_default.default();
@@ -290,20 +276,18 @@ impl Command for ResetSettings {
                 .and_then(|current| current.reflect_partial_eq(default.as_partial_reflect()))
                 .unwrap_or(false);
             if already_default {
-                continue;
+                return;
             }
 
-            let entity_mut = world.entity_mut(entity);
-            let Some(mut current) = reflect_component.reflect_mut(entity_mut) else {
-                continue;
+            let Some(mut current) = reflect_component.reflect_mut(world.entity_mut(entity)) else {
+                return;
             };
             // `apply` меняет и вариант перечисления — им же `bevy_settings`
             // кладёт варианты из TOML, так что City и прочие enum'ы проходят
             current.apply(default.as_partial_reflect());
             reset += 1;
-        }
+        });
 
-        drop(types);
         info!("settings reset: {reset} group(s) back to defaults");
 
         if reset > 0 {
@@ -313,6 +297,35 @@ impl Command for ResetSettings {
             // что лишний вызов ничего не пишет
             SaveSettingsSync::IfChanged.apply(world);
         }
+    }
+}
+
+/// Группы настроек, которые есть в этом мире, — обходом реестра типов.
+///
+/// Ход — тот же, которым `bevy_settings` накладывает файл на мир
+/// (`apply_settings_to_world`): тип → `ComponentId` → сущность ресурса. Каждый
+/// потребитель ([`ResetSettings`], запись файла) получает тип и сущность
+/// группы и сам решает, что с ними делать.
+fn visit_settings_groups(
+    world: &mut World,
+    mut visit: impl FnMut(&TypeRegistration, Entity, &mut World),
+) {
+    // клон Arc'а: гард реестра держится, пока мир правится, — так же, как в
+    // `bevy_settings::apply_settings_to_world`
+    let registry = world.resource::<AppTypeRegistry>().clone();
+    let types = registry.read();
+
+    for registration in types.iter() {
+        if registration.data::<ReflectSettingsGroup>().is_none() {
+            continue;
+        }
+        let Some(component_id) = world.components().get_id(registration.type_id()) else {
+            continue;
+        };
+        let Some(entity) = world.resource_entities().get(component_id) else {
+            continue;
+        };
+        visit(registration, entity, world);
     }
 }
 
