@@ -146,8 +146,10 @@ panel** with four tabs (`ui/shell.rs`).
   and the verge pieces, as it does from the drawing). **A cursor over any UI panel stops being a map point**
   (`update_inspector_hits` and `update_camera_text` gate on
   `camera.rs::pointer_over_ui`): the camera line reads `-/-`, the hits
-  clear, the highlight despawns. The list is **one node per hit** (`sync_hits_rows`; ≤
-  `INSPECTOR_MAX_LINES` rows + a `+N more` tail; empty — a bare `-`; no `ground` row —
+  clear, the highlight despawns. The list is **one node per hit** (`sync_hits_rows`; a
+  window of ≤ `INSPECTOR_MAX_LINES` rows that **follows the `]`/`[` selection** (`hits_window`
+  — minimal shifts, so the selected row stays visible however deep the cycle goes) + a
+  `+N more` tail counted past the window; empty — a bare `-`; no `ground` row —
   bare ground is not a feature). **`]`/`[` cycle the selection** — `]` next, `[`
   previous, both wrapping (any hit recompute resets it
   to the top) — the **selected** hit's row carries a translucent-yellow

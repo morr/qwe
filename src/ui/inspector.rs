@@ -99,6 +99,9 @@ pub struct InspectorHighlightMarker;
 /// скобки: `]` вперёд, `[` назад — [`cycle_inspector_selection_next`] и
 /// [`cycle_inspector_selection_prev`]): жёлтым в списке и на карте стоит
 /// она, не обязательно верхняя; пересчёт находок сбрасывает выбор на верхнюю.
+/// Список показывает окно из [`INSPECTOR_MAX_LINES`] строк, едущее за
+/// выбором ([`hits_window`]), — выбранная строка видима и когда находок
+/// больше окна.
 #[derive(Resource, Default)]
 struct InspectorHitsState {
     point: Vec2,
@@ -473,6 +476,20 @@ struct InspectorInputs<'w> {
     roads: Res<'w, RoadStyle>,
 }
 
+/// Курсора нет либо он вне окна просмотра: список пуст, точка — прочерк.
+/// Ветка бьётся на каждом кадре, пока курсор стоит над UI-панелью, поэтому
+/// повторный вызов — работа ноль: запись тех же значений через `ResMut`
+/// отметила бы ресурс изменённым, и строки списка пересоздавались бы кадром
+/// ниже без всякой перемены.
+fn clear_hits(state: &mut InspectorHitsState) {
+    if state.hits.is_empty() && !state.point.is_finite() {
+        return;
+    }
+    state.point = Vec2::INFINITY;
+    state.hits.clear();
+    state.selected = 0;
+}
+
 /// Список находок под курсором — из семантического индекса
 /// (`map/inspect.rs::InspectIndex`), сверху самый верхний слой. Пересчёт —
 /// при сдвиге точки больше [`INSPECTOR_QUERY_STEP`], при пересборке индекса
@@ -508,17 +525,13 @@ fn update_inspector_hits(
         // прочерк вместо чисел: курсора нет (или он над панелью — это не
         // точка карты), следующая точка — всегда дальше шага (INFINITY), так
         // что список пересчитается на её возврат
-        state.point = Vec2::INFINITY;
-        state.hits.clear();
-        state.selected = 0;
+        clear_hits(&mut state);
         return;
     };
     let (transform, controller) = camera.into_inner();
     let point = cursor_world(&window, cursor, transform, controller.zoom_factor) - origin.0;
     if !viewport.contains(point) {
-        state.point = Vec2::INFINITY;
-        state.hits.clear();
-        state.selected = 0;
+        clear_hits(&mut state);
         return;
     }
     // ручки Sidewalks и Density тоже входы: их переворот меняет список без
@@ -639,8 +652,27 @@ fn sync_inspector_visibility(
     });
 }
 
-/// Строки находок — построчно, до [`INSPECTOR_MAX_LINES`] узлов и хвост
-/// `+N more`; выбранная строка (листают скобки `]`/`[`)
+/// Окно видимых строк списка: индекс первой видимой находки при не более
+/// чем [`INSPECTOR_MAX_LINES`] видимых. Едет за выбором минимальным сдвигом:
+/// пока выбранная внутри окна, окно стоит; выбор ушёл за нижний край — окно
+/// сдвигается так, чтобы выбранная стала последней строкой, за верхний —
+/// первой. Список короче окна — окно всегда в голове. Пересчёт находок
+/// сбрасывает выбор на верхнюю, и правило «выбор выше головы окна» возвращает
+/// окно туда же без отдельного сброса.
+fn hits_window(prev_start: usize, selected: usize, total: usize, max: usize) -> usize {
+    let mut start = prev_start.min(total.saturating_sub(max));
+    if selected < start {
+        start = selected;
+    }
+    if selected >= start + max {
+        start = selected + 1 - max;
+    }
+    start
+}
+
+/// Строки находок — построчно, окном до [`INSPECTOR_MAX_LINES`] узлов
+/// ([`hits_window`], едет за выбором, чтобы выбранная всегда была видна) и
+/// хвост `+N more` от конца окна; выбранная строка (листают скобки `]`/`[`)
 /// несёт жёлтый фон — тот элемент, чью форму рисует слой подсветки. Пусто
 /// (курсора нет, карта не разобрана) — прочерк. Строки пересоздаются на
 /// каждую смену `InspectorHitsState`: их ≤13, спавн узлов дешевле сравнения
@@ -648,12 +680,19 @@ fn sync_inspector_visibility(
 fn sync_hits_rows(
     mut commands: Commands,
     state: Res<InspectorHitsState>,
+    mut window: Local<usize>,
     list: Single<Entity, With<InspectorHitsList>>,
     rows: Query<Entity, With<InspectorHitRow>>,
 ) {
     if !state.is_changed() {
         return;
     }
+    *window = hits_window(
+        *window,
+        state.selected,
+        state.hits.len(),
+        INSPECTOR_MAX_LINES,
+    );
     for row in rows.iter() {
         commands.entity(row).despawn();
     }
@@ -662,15 +701,16 @@ fn sync_hits_rows(
         spawn_hit_row(&mut commands, list, "-".to_string(), false);
         return;
     }
-    for (ordinal, hit) in state.hits.iter().enumerate().take(INSPECTOR_MAX_LINES) {
-        let highlighted = ordinal == state.selected;
+    let end = (*window + INSPECTOR_MAX_LINES).min(state.hits.len());
+    for (ordinal, hit) in state.hits[*window..end].iter().enumerate() {
+        let highlighted = *window + ordinal == state.selected;
         spawn_hit_row(&mut commands, list, hit_line(hit), highlighted);
     }
-    if state.hits.len() > INSPECTOR_MAX_LINES {
+    if end < state.hits.len() {
         spawn_hit_row(
             &mut commands,
             list,
-            format!("+{} more", state.hits.len() - INSPECTOR_MAX_LINES),
+            format!("+{} more", state.hits.len() - end),
             false,
         );
     }
@@ -1054,5 +1094,31 @@ mod tests {
         assert_eq!(free_color(&pinned_hits(&[0, 2])), 1);
         // вся палитра занята — цвет уходит за её пределы и замкнётся по модулю
         assert_eq!(free_color(&pinned_hits(&[0, 1, 2, 3, 4, 5])), 6);
+    }
+
+    #[test]
+    fn the_hits_window_follows_the_selection() {
+        let total = 20;
+        let mut start = 0;
+        // первые 12 шагов окно стоит на голове списка
+        for selected in 0..INSPECTOR_MAX_LINES {
+            start = hits_window(start, selected, total, INSPECTOR_MAX_LINES);
+            assert_eq!(start, 0);
+        }
+        // за головой окна едет на строку за шагом, выбранная — последней строкой
+        start = hits_window(start, 12, total, INSPECTOR_MAX_LINES);
+        assert_eq!(start, 1);
+        start = hits_window(start, 15, total, INSPECTOR_MAX_LINES);
+        assert_eq!(start, 4);
+        // назад окно едет, только когда выбор уходит за его голову
+        start = hits_window(start, 12, total, INSPECTOR_MAX_LINES);
+        assert_eq!(start, 4);
+        start = hits_window(start, 3, total, INSPECTOR_MAX_LINES);
+        assert_eq!(start, 3);
+        start = hits_window(start, 0, total, INSPECTOR_MAX_LINES);
+        assert_eq!(start, 0);
+        // список короче окна — окно всегда в голове, как бы ни съехал prev_start
+        assert_eq!(hits_window(4, 2, 5, INSPECTOR_MAX_LINES), 0);
+        assert_eq!(hits_window(15, 2, 5, INSPECTOR_MAX_LINES), 0);
     }
 }
