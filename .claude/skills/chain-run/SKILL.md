@@ -159,7 +159,15 @@ worktree/branch half is already step 3 of the loop):
    `list_sessions(query: "непрерывный прогон")` → older ids →
    `SetSessionArchived(sessionId, archived: true)` each (reversible, does not
    interrupt). The run's memory lives in NOTES and commits, not in the session
-   list.
+   list. **The archive flag is invisible to the session tools** — it lives in the
+   app's index, `~/.zcode/v2/tasks-index.sqlite` (`tasks.archived`), not in the
+   CLI database they read: `list_sessions` keeps listing archived links, and MCP
+   `query` over `session.time_archived` stays `null` for a link archived minutes
+   ago. Link 74 read that `null` as «nothing is archived» and was wrong (№73's
+   archive of №68 was real) — check against the app index instead:
+   `sqlite3 -readonly ~/.zcode/v2/tasks-index.sqlite "SELECT substr(task_id,1,13), archived, title FROM tasks WHERE title LIKE '%непрерывный прогон%' AND archived = 0"`
+   must show exactly the last five links (a child spawned minutes ago can still
+   sit there under its prompt text, not its title).
 
 ## Restarting a dead chain
 
