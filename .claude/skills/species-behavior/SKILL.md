@@ -56,15 +56,26 @@ its population was ~100; the ×10 cap of 3500 made the rebuild a dissect line of
 own, and plan Phase 6 switched it over — pinned by the content-equivalence test in
 `spatial.rs`).
 
-- Humans (~20 000): `On<Add, Human>` / `On<Remove, Human>` observers cover spawn and
-  death/despawn, and a step or a separation push reports itself through
+- Spawn and death/despawn are observers, `On<Add<Human>>` / `On<Remove<Human>>`
+  (and the same pair on `Demon`); a step or a separation push reports itself through
   `SpatialGrid::moved`, which relocates only across a cell boundary — the cost scales
   with crossings, not population, **and the rule lives in the grid rather than in each
   mover**.
-- Demons: the same observers on `Demon`, and **every `SimPosition` writer reports** —
-  the step and the separation push through the same `moved`, the rescue through
-  `insert` (the three rescue sites thread both grids), and the lunge, which moves
-  demon `SimPosition` outside the mover system, reports in `chase` itself.
+- **Every `SimPosition` writer reports, for both species.** The near step
+  (`move_moving_entities`), the far slice step (`far_slice`) and the separation push go
+  through the same `moved`; a rescue is always a teleport and goes through `insert`. Of
+  the four rescue sites the full scan on a polymesh rebuild and the two on the answer
+  path thread both grids directly; the fourth — a far fleer lifted out of impassable
+  ground on promote (`assign_lod_tiers`) — cannot write during its rect walk, because
+  the walk holds the grid shared, so it collects the teleports and reports them right
+  after (pinned by `a_fleeing_pawn_rescued_on_promote_moves_in_the_grid_and_on_screen`).
+  The lunge, which moves demon `SimPosition` outside the mover system, reports in
+  `chase` itself.
+- **A radius wider than a cell widens the ring by itself.** The panic radius walks
+  3 × 3 cells, the calm-down ring (×1.5) walks 5 × 5 — "the cell is at least the
+  radius" is not a rule the search leans on, and a walk pinned to 3 × 3 would calm a
+  fleer down with a demon still in the ring (pinned by the two second-ring tests in
+  `tests/spatial.rs`).
 
 **A tie in distance is broken by `PawnId`, not by traversal order** — `order_of`, a second
 closure the search calls *only* on exact equality, so the key never costs anything on the

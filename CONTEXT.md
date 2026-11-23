@@ -1196,14 +1196,15 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   and an overwrite arms only `Changed`.
 - **SpatialGrid<T>** — uniform grid per marker type (`Demon`, `Human`, and
   movement's `QueuedWander` — the live dispatcher's index of queued peaceful requests),
-  60 m cells (≥ the
-  largest search radius, so a radius query is a 3×3 cell walk). Cells hold **entities
+  60 m cells (the panic radius is a 3×3 cell walk; a wider radius — the calm-down
+  ring — widens the ring by itself). Cells hold **entities
   only** — positions are read live through the `pos_of` closure. **A tie in distance is
   broken by `PawnId`, not by traversal order** (`order_of`, called only on exact equality).
   **Both pawn grids are incremental** (observers + `SpatialGrid::moved` across cell
   boundaries) — the demon grid kept a full rebuild per tick while its population was
-  ~100, and went incremental with the ×10 cap of 3500 (plan Phase 6; the step, the
-  separation push, the rescue and the lunge all report their moves). **The queued-wanderer grid is
+  ~100, and went incremental with the ×10 cap of 3500 (plan Phase 6; **every writer of
+  `SimPosition` reports** — the step near or by far slice, the separation push, each of
+  the four rescue sites, the lunge). **The queued-wanderer grid is
   maintained by request-lifecycle observers alone** — a queued wanderer stands until
   dispatch and may drive away before acceptance (repath on the move), so its cell can
   go stale; that is fine, because the grid decides **whom** to read, not where they
