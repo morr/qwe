@@ -185,16 +185,36 @@ share. Fired from exactly **two** places:
 `HordeSchedule` (the horde's schedule and its pending release queue, `demon/horde.rs` —
 the spawner's observer already carries the "no demons alive" precondition and the warning,
 so the horde's own reset stays silent),
-`SeparationStats` (the crowd-demo counters), and **two entity resets** — the far crowd's
-chunk entities (`silhouette/far.rs`) and the baked corpse field with its chunk entities
-(`silhouette/bake.rs`); the component cannot cover them on the restart path, because a
+`SeparationStats` (the crowd-demo counters), and **two entity-carrying fields** — the baked
+corpse field with its chunk entities (`silhouette/bake.rs`, wiped) and the far crowd field
+with its chunk entities (`silhouette/far.rs`, **re-read from the world**, below); the
+component cannot cover them on the restart path, because a
 restart passes through no state and `DespawnOnExit` never fires there. `grep "On<WorldStarted>"` enumerates them.
 
-**Membership is not kept by hand.** It is held from the outside by
-`a_restart_replays_the_run`, which runs a second run in the *same* `App` and compares
-fingerprints, so a forgotten reset diverges whether or not anyone wrote it down. What that
-test cannot see is state invisible to both the simulation and the outcome counters; such a
-reset needs its own pin next to its observer (the regulator has one in `sim_time`, the frozen
+**The two announcements do not hold the same world.** A restart despawns the pawns *before*
+it triggers the event and orders the new population after it — at the announcement there
+are no pawns, so a wiped field is simply empty. The `Live` entry announces the warmup's own
+population: anything that settled during the warmup — the population pump, the LOD demote,
+the far crowd chunks — is already there, and its inserts fired *before* the event. A reset
+of state that the warmup can fill must therefore be **re-read from the world**, not wiped:
+the far crowd field was wiped, and the pawns that went far behind the loader kept `FarTag`
+with a hidden sprite and no dot until a promote/demote cycle returned them — nothing
+re-inserts an existing component, so the `Insert<FarTag>` observer never fired again
+(10 238 pawns on Tula, обзор №74). Run state proper (`SimTick`, `Telemetry`, the spawner)
+does not move during the warmup — the sim is paused — so a wipe is right for it.
+
+**Membership is not kept by hand.** It is held from the outside by two pins in
+`tests/determinism.rs`, both running the second run in the *same* `App`:
+`a_restart_replays_the_run` compares run fingerprints — a forgotten reset diverges whether
+or not anyone wrote it down — and `a_restart_rebuilds_the_same_world` compares what the
+fingerprint does not carry: every component set of the project with its entity count, and
+every resource's value through reflection (the four clocks and `SoulMote` excepted — they
+outlive a restart by design). The second one is what catches a reset whose damage the
+fingerprint cannot see: remove `CorpseTag` from `on_restart`'s despawn and the corpses of
+the previous run survive the restart with the fingerprints still identical. What neither
+sees is state invisible to the ECS inventory — unreflected resources (`Backend`,
+`FarCrowdField`, `DestinationClaims`: listed by name, not by content) and entities without
+a project component; such a reset needs its own pin next to its observer (the regulator has one in `sim_time`, the frozen
 `Backend` one in `determinism`, the separation counters one in
 `tests/movement.rs::a_new_run_inherits_no_separation_counters` — separation does not run
 under determinism at all, so the fingerprint cannot see them; the corpse chunk entities one
@@ -205,7 +225,16 @@ skill.
 
 **Map-derived state is not run state.** `NorthstarGrid` and `PolyNavmesh` are cleared by the
 city switch alone — a restart keeps the map, and with it the northstar hierarchy (tens of
-seconds of every core to rebuild; the numbers are in `northstar.rs`'s module doc).
+seconds of every core to rebuild; the numbers are in `northstar.rs`'s module doc). **State
+that describes the live scene leaves with the scene** — on `OnExit(AppState::Playing)`, in
+the owner's plugin, the slot `navigation::clear_map_backends` set: the far crowd field is
+cleared there (`far::clear_far_field`; its chunk entities go by `DespawnOnExit`). A scene
+storage that outlived `Playing` is not harmless: the far crowd field did, and in the new
+city's warmup its rebuild ring walked the previous city's dead cells, a despawn of an
+already-despawned mesh entity each — 712 warnings on Tula (обзор №74). The corpse field
+still outlives the scene until `WorldStarted`; no effect was found (its rebuild walks
+dirty cells only and swaps a mesh asset, never an entity) — clear it the same way if one
+appears.
 
 **Process-level state is neither.** The silhouette atlas (`Silhouettes`, filled once in
 `Startup` by `SilhouettePlugin` — an asset, not a world entity, which is why it belongs in

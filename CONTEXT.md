@@ -177,9 +177,16 @@ Summary; the mechanism — **world-lifecycle skill** (states and the warmup hold
   `DemonSpawner` + `HordeSchedule`, `SeparationStats`) is reset by observers of it, each in its owning
   module (`grep "On<WorldStarted>"`), and two of them also despawn entities — the far crowd
   chunks and the baked corpse chunks with their storage (a restart passes no `Loading`, so
-  `DespawnOnExit` cannot reach them). **Membership is held from the outside** by
-  `a_restart_replays_the_run`, not by hand. Map-derived state (`NorthstarGrid`,
-  `PolyNavmesh`) is **not** run state — a restart keeps the map.
+  `DespawnOnExit` cannot reach them). The two announcements do not hold the same world: a
+  restart has no pawns yet (despawned before the event), the `Live` entry holds the warmup's —
+  a reset whose state was filled during the warmup must be **re-read from the world**, not
+  wiped (the far crowd field; wiping it left the pawns that went far behind the loader
+  without a dot, обзор №74). **Membership is held from the outside**, not by hand: what the
+  run fingerprint sees — by `a_restart_replays_the_run`, the rest of the world (component
+  sets and reflected resources) — by `a_restart_rebuilds_the_same_world`. Map-derived state
+  (`NorthstarGrid`, `PolyNavmesh`) is **not** run state — a restart keeps the map; it is
+  cleared with the scene on leaving `Playing`, like the far crowd field, which describes the
+  live scene rather than the run.
 - **RestartEvent** (`restart.rs`, R key or BRP) — despawns pawns and corpses, fires
   **WorldStarted**, respawns the population; the navmesh persists. Under **Deterministic**
   this replays the previous run tick for tick.
@@ -1141,8 +1148,10 @@ Summary; the mechanism — **determinism skill** (seed derivation, the decision 
   `examples/acceptance/determinism_replay.rs`) — three claims: the same seed replays tick for
   tick, a ragged frame rate does not change the run, a different seed does. Two conditions
   make it bite, both learned the hard way: **the world must actually move** and **the scene
-  must be crowded**. `a_restart_replays_the_run` runs its second half in the *same* `App` —
-  that is what catches state outliving the reset.
+  must be crowded**. `a_restart_replays_the_run` and `a_restart_rebuilds_the_same_world`
+  run their second half in the *same* `App` — that is what catches state outliving the
+  reset: the first by the run fingerprint, the second by everything the fingerprint does not
+  carry (each project component set with its entity count, each resource's value).
 - **Frame rate does not matter.** `Time<Fixed>`'s step is constant regardless of fps and of
   `SimSpeed`; a slow machine replays the same run more slowly.
 - **The replay contract** — 1:1 holds only while `DemonStyle` / `HumanStyle` /
@@ -1316,7 +1325,10 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   layer's zooms, a dot may lag its pawn by a few rebuilds). Membership has one writer, the
   `Insert<FarTag>` observer (demote); removal nobody does — the rebuild itself drops
   promoted/corpse/despawned members (the query stops matching) and walkers who crossed a
-  cell, and deletes an emptied chunk whole. Rebuild runs `Update`/`Live`, budgeted in
+  cell, and deletes an emptied chunk whole. The field describes the live scene: it leaves
+  with the scene on `OnExit(AppState::Playing)`, and `WorldStarted` **re-reads** its
+  members from the world (empty after a restart — no pawns yet; kept through the `Live`
+  entry, where the warmup's far pawns already carry `FarTag`). Rebuild runs `Update`/`Live`, budgeted in
   quads (`REBUILD_QUAD_BUDGET` 12 000/frame — a hot cell of Paris reads tens of thousands
   of members, so the frame cost is capped in points, not chunks): dirty chunks first, the
   rest by a ring over sorted cell keys. Chunks carry an **honest `Aabb`** (centres ± `POINT_HALF_BOUND`) —

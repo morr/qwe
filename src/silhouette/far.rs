@@ -14,10 +14,13 @@
 //! видна. Перестройка — бюджетом за кадр: сначала грязные чанки (членство
 //! менялось — точка обязана появиться или уехать сейчас), остаток — кольцу по
 //! остальным чанкам, догоняющему позиции (свежеперестроенные грязные кольцо
-//! пропускает — их позиции и так прочитаны живьём). Членство заводит единственный обсервер —
-//! [`on_far_inserted`]; снять его никто не обязан: перестройка сама выкидывает
-//! уехавших за клетку и не-дальней (promote, труп, деспун снимают `FarTag` —
-//! запрос их не matchит), а опустевший чанк удаляется целиком.
+//! пропускает — их позиции и так прочитаны живьём). Членство при жизни мира
+//! заводит единственный обсервер — [`on_far_inserted`]; снять его никто не
+//! обязан: перестройка сама выкидывает уехавших за клетку и не-дальней
+//! (promote, труп, деспун снимают `FarTag` — запрос их не matchит), а
+//! опустевший чанк удаляется целиком. Поле описывает живую сцену: на швах
+//! жизненного цикла оно перечитывается по миру ([`on_world_started`]) или
+//! уезжает вместе со сценой ([`clear_far_field`]).
 //!
 //! Детерминизму здесь нечего ломать: рендерная половина без RNG, членство
 //! заводит только ярус (`assign_lod_tiers`, `SimPipeline::Live`) — под
@@ -88,8 +91,9 @@ struct FarChunkField {
     dirty: bool,
 }
 
-/// Хранилище дальнего слоя. Ключ — клетка [`FAR_CHUNK`]; сбрасывается тем же
-/// `WorldStarted`, что и трупное поле, вместе с сущностями чанков.
+/// Хранилище дальнего слоя. Ключ — клетка [`FAR_CHUNK`]. Описывает живую
+/// сцену: перечитывается по миру на [`WorldStarted`] ([`on_world_started`]),
+/// уезжает вместе со сценой ([`clear_far_field`]).
 #[derive(Resource, Default)]
 pub struct FarCrowdField {
     chunks: HashMap<IVec2, FarChunkField>,
@@ -109,7 +113,8 @@ fn chunk_key(at: Vec2) -> IVec2 {
 
 /// Пешка ушла в дальние: членство в клетке её позиции, клетка — грязная.
 ///
-/// Единственный писатель членства. Срабатывает на flush команд яруса — точка
+/// Единственный писатель членства при жизни мира (шов —
+/// [`on_world_started`]). Срабатывает на flush команд яруса — точка
 /// доезжает до меша перестройкой того же или следующего кадра. Обратного
 /// обсервера нет: снятие яруса (promote, труп, деспун) пусть разбирает
 /// перестройка — пометка «грязно» у кромки кадра стоила бы второй системы
@@ -127,24 +132,61 @@ pub(crate) fn on_far_inserted(
     chunk.dirty = true;
 }
 
-/// Новый мир — дальний слой пуст: чанки прошлого деспавнились компонентом
-/// (`DespawnOnExit`), хранилище сбрасывается вслед за ними. Снятие членства
-/// при деспуне не нужно вовсе: `Remove`-обсервер пометил бы клетку, которую
-/// здесь же стирают начисто.
+/// Новый прогон — слой перечитывается по живому миру, а не стирается.
+///
+/// `WorldStarted` приходит из двух мест, и мир в них разный:
+/// - **рестарт** (`restart.rs::on_restart`) — люди прошлого прогона уже
+///   деспавнуты, новых насос расселения заведёт после: живых дальних нет,
+///   слой пуст — чанки прошлого прогона долой, хранилище дочиста;
+/// - **вход в `Live`** — та же популяция, что стояла за прогрев: популяция
+///   встаёт пачками, ярус демотит, слой заселяется ещё за экраном загрузки.
+///   Стирать хранилище здесь нельзя: членство заводит только
+///   `On<Insert<FarTag>>`, а вставка дальней пешки сработала до события —
+///   стёртое некому вернуть, и пешка стояла со скрытым спрайтом без точки,
+///   пока её не поднимут в кадр и не опустят снова (обзор №74: 10 238 пешек
+///   на Туле).
+///
+/// Одно правило на оба пути: **члены — все живые дальние**, каждая живая
+/// клетка — грязная. Меш клетки переживает перечитывание, если его сущность
+/// жива; осиротевшие клетки (и мёртвые сущности при живой) чанк теряют.
 pub(crate) fn on_world_started(
     _event: On<WorldStarted>,
     mut commands: Commands,
     mut field: ResMut<FarCrowdField>,
     drawn: Query<Entity, With<FarCrowdChunk>>,
+    far: Query<(Entity, &SimPosition), (With<Human>, With<FarTag>, Without<CorpseTag>)>,
 ) {
-    // Сущности чанков — долой вместе с хранилищем: WorldStarted триггерится
-    // на входе в `Live` (loading.rs), а слой уже успевает заселиться за
-    // warmup — популяция встаёт пачками, ярус демотит, чанки строятся.
-    // Первая загрузка мира тоже проходит через этот сброс. Слоты деспавна —
-    // команды `StateTransition`, как у самого триггера.
-    for entity in &drawn {
-        commands.entity(entity).despawn();
+    let mut fresh: HashMap<IVec2, FarChunkField> = HashMap::default();
+    for (entity, at) in &far {
+        let chunk = fresh.entry(chunk_key(at.0)).or_default();
+        chunk.members.insert(entity, ());
+        chunk.dirty = true;
     }
+    for (key, old) in field.chunks.drain() {
+        match fresh.get_mut(&key) {
+            // живость сущности — страховка: поле, пережившее сцену, не должно
+            // тащить мёртвый меш в живую клетку (смену города закрывает
+            // `clear_far_field`, эта ветка — чтобы её пропуск не стоил точки)
+            Some(chunk) => chunk.drawn = old.drawn.filter(|(entity, _)| drawn.contains(*entity)),
+            None => {
+                if let Some((entity, _)) = old.drawn
+                    && drawn.contains(entity)
+                {
+                    commands.entity(entity).despawn();
+                }
+            }
+        }
+    }
+    field.chunks = fresh;
+}
+
+/// Сцена уходит (смена города): сущности чанков снимает `DespawnOnExit`,
+/// хранилище — эта система, тем же швом и у владельца (как
+/// `navigation::clear_map_backends`). Переживи поле сцену — кольцо
+/// перестройки в прогреве нового мира обходит клетки прошлого: все члены
+/// мертвы, опустевшая клетка ставит despawn уже снятой сущности — 712
+/// предупреждений на Тулу (обзор №74).
+pub(crate) fn clear_far_field(mut field: ResMut<FarCrowdField>) {
     field.chunks.clear();
 }
 
@@ -296,8 +338,9 @@ fn rebuild_chunk(
     }
 
     if quads.is_empty() {
-        // чанк опустел: сущность меша долой (хвост прошлого мира мог дожить
-        // до сброса — сущность и так уже отсутствует), запись удалить
+        // чанк опустел: сущность меша долой, запись удалить. Сущность здесь
+        // жива: поле не переживает сцену (`clear_far_field`), а мёртвый меш
+        // `WorldStarted` уносит вместе с его клеткой
         if let Some((entity, _)) = drawn {
             commands.entity(entity).despawn();
         }
@@ -354,6 +397,7 @@ mod tests {
     use bevy::mesh::VertexAttributeValues;
 
     use super::*;
+    use crate::human::HumanPlugin;
     use crate::human::Pace;
     use crate::rng::PawnId;
 
@@ -576,23 +620,129 @@ mod tests {
         assert_eq!(quad_attrs(&app).len(), 1, "точка одна, не две");
     }
 
+    /// Рестарт: `on_restart` деспавнит людей **до** того, как триггерит
+    /// `WorldStarted`, новых заводит после — живых дальних в момент события
+    /// нет, слой пуст: и хранилище, и сущности чанков (рестарт не проходит
+    /// `Loading`, `DespawnOnExit` до них не дотягивается — иначе вторая волна
+    /// спавнит вторую сущность на клетку).
     #[test]
-    fn world_started_clears_the_field() {
+    fn world_started_clears_the_field_on_a_restart() {
         let mut app = field_app();
-        far_pawn(&mut app, 3, Vec2::new(100.0, 200.0));
+        let pawn = far_pawn(&mut app, 3, Vec2::new(100.0, 200.0));
         rebuild(&mut app);
         assert_eq!(chunk_count(&mut app), 1);
 
+        // как `on_restart`: сцена прошлого прогона — долой, затем событие
+        app.world_mut().despawn(pawn);
         app.world_mut().trigger(WorldStarted);
         app.world_mut().flush();
 
         assert!(
             app.world().resource::<FarCrowdField>().chunks.is_empty(),
-            "новый мир — слой пуст"
+            "новый прогон — слой пуст"
         );
-        // и сущность чанка, спавненная до сброса (слой успевает заселиться
-        // за warmup: WorldStarted триггерится позже неё), умирает вместе с
-        // полем — иначе вторая волна спавнит вторую сущность на клетку
         assert_eq!(chunk_count(&mut app), 0, "сущности чанков деспавнены");
+    }
+
+    /// Вход в `Live` — та же популяция, что стояла за прогрев: событие
+    /// обязано перечитать членство, а не стереть его. Стирало: вставка
+    /// `FarTag` дальней пешки сработала до события, а членство заводит только
+    /// она — пешка оставалась со скрытым спрайтом и без точки, пока её не
+    /// поднимут в кадр и не опустят снова (обзор №74: 10 238 пешек на Туле).
+    #[test]
+    fn world_started_keeps_the_pawns_that_went_far_during_warmup() {
+        let mut app = field_app();
+        let _pawn = far_pawn(&mut app, 3, Vec2::new(100.0, 200.0));
+        rebuild(&mut app);
+        assert_eq!(chunk_count(&mut app), 1, "слой заселился за прогрев");
+
+        app.world_mut().trigger(WorldStarted);
+        app.world_mut().flush();
+
+        let field = app.world().resource::<FarCrowdField>();
+        let chunk = field
+            .chunks
+            .values()
+            .next()
+            .expect("клетка пережила событие");
+        assert_eq!(chunk.members.len(), 1, "членство перечитано по живому миру");
+        assert!(chunk.dirty, "меш пересобирается: состав мог поменяться");
+        assert!(
+            chunk.drawn.is_some(),
+            "меш живой клетки остался на месте — город не мигает на входе в Live"
+        );
+        assert_eq!(chunk_count(&mut app), 1, "чанк той же клетки не пересоздан");
+
+        rebuild(&mut app);
+        assert_eq!(quad_attrs(&app).len(), 1, "точка на месте");
+    }
+
+    /// Сущность меша может уйти раньше записи о ней — сцена сняла её
+    /// (`DespawnOnExit`), а поле пережило. Перечитывание не тащит мёртвый
+    /// меш в живую клетку: перестройка завела бы точки в несуществующей
+    /// сущности, и клетка осталась бы без чанка навсегда.
+    #[test]
+    fn world_started_drops_the_mesh_entity_the_scene_already_took() {
+        let mut app = field_app();
+        let _pawn = far_pawn(&mut app, 3, Vec2::new(100.0, 200.0));
+        rebuild(&mut app);
+        let chunk_entity = app
+            .world_mut()
+            .query_filtered::<Entity, With<FarCrowdChunk>>()
+            .iter(app.world())
+            .next()
+            .expect("чанк построен");
+
+        app.world_mut().despawn(chunk_entity);
+        app.world_mut().trigger(WorldStarted);
+        app.world_mut().flush();
+
+        let field = app.world().resource::<FarCrowdField>();
+        let chunk = field.chunks.values().next().expect("клетка жива");
+        assert!(
+            chunk.drawn.is_none(),
+            "мёртвая сущность не уехала в живую клетку"
+        );
+        rebuild(&mut app);
+        assert_eq!(chunk_count(&mut app), 1, "клетка завела новый меш");
+        assert_eq!(quad_attrs(&app).len(), 1, "точка на месте");
+    }
+
+    /// Смена города: сущности чанков снимает `DespawnOnExit`, хранилище —
+    /// тем же швом, у владельца. Переживи оно сцену — кольцо перестройки в
+    /// прогреве нового мира обходит клетки прошлого, все члены мертвы, и на
+    /// каждую ставит despawn уже снятой сущности (обзор №74: 712
+    /// предупреждений на Тулу).
+    #[test]
+    fn leaving_playing_clears_the_field_with_the_scene() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, HumanPlugin))
+            .init_resource::<Assets<Mesh>>()
+            .insert_resource(PointMaterialHandle(Handle::default()));
+        let _pawn = far_pawn(&mut app, 3, Vec2::new(100.0, 200.0));
+        rebuild(&mut app);
+        assert_eq!(
+            app.world().resource::<FarCrowdField>().chunks.len(),
+            1,
+            "слой заселён"
+        );
+
+        // сцена ушла: `DespawnOnExit` снял сущности чанков, затем —
+        // расписание выхода из `Playing`
+        let chunks: Vec<Entity> = app
+            .world_mut()
+            .query_filtered::<Entity, With<FarCrowdChunk>>()
+            .iter(app.world())
+            .collect();
+        for entity in chunks {
+            app.world_mut().despawn(entity);
+        }
+        app.world_mut().run_schedule(OnExit(AppState::Playing));
+        app.world_mut().flush();
+
+        assert!(
+            app.world().resource::<FarCrowdField>().chunks.is_empty(),
+            "хранилище уехало вместе со сценой"
+        );
     }
 }

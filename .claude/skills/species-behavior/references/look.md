@@ -303,6 +303,29 @@ Paris holds tens of thousands of dots, so the budget is in points, not chunks): 
 chunks first (a demoted pawn's dot must appear now), the rest by a ring over sorted
 cell keys — dots refresh at the ring's pace, their lag is sub-pixel.
 
+The field describes the **live scene**, and at the lifecycle seams it follows it. Leaving
+`Playing` clears it together with the chunk entities (`clear_far_field`, registered on
+`OnExit(AppState::Playing)` — a field that outlived the scene sent the rebuild ring through
+the previous city's dead cells in the new world's warmup, a despawn of an already
+despawned mesh entity each: 712 warnings on Tula, обзор №74). `WorldStarted` **re-reads**
+the members from the world instead of wiping them. The two announcements differ in what the
+world holds at that moment: a restart despawned the pawns *before* the event, so no far pawn
+is alive and the layer empties, chunks included (a restart passes no `Loading`); the `Live`
+entry holds the warmup's population, and the pawns that went far behind the loader already
+carry `FarTag` — their `Insert<FarTag>` fired *before* the announcement and nothing
+re-inserts it, so a wiped field left them with a hidden sprite and no dot until a
+promote/demote cycle brought them back (10 238 pawns on Tula, ~5 % of the population). One
+rule covers both: the members are every live far pawn, every live cell is dirty, a live
+cell keeps its mesh entity (no blink on entering `Live`), and a dead mesh entity is never
+carried into a live cell. Pins: `far::tests::world_started_clears_the_field_on_a_restart`,
+`world_started_keeps_the_pawns_that_went_far_during_warmup`,
+`world_started_drops_the_mesh_entity_the_scene_already_took`,
+`leaving_playing_clears_the_field_with_the_scene`. The corpse field is wiped rather than
+re-read (a restart's `on_restart` despawns corpses before the event, and a corpse that
+outlived the warmup is not a thing) — but it does outlive the scene until `WorldStarted`;
+no effect was found (its rebuild walks dirty cells only and swaps a mesh asset, never an
+entity).
+
 Two things the corpse chunks did one way and this layer does another: chunks carry an
 **honest `Aabb`** (member centres ± `POINT_HALF_BOUND`, rewritten with the mesh) instead
 of `NoFrustumCulling` — a `Mesh2d` entity gets no auto-Aabb in 0.20, and the unit-corner

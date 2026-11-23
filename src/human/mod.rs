@@ -101,6 +101,11 @@ impl Plugin for HumanPlugin {
             // перестройка (см. far.rs)
             .add_observer(far::on_far_inserted)
             .add_observer(far::on_world_started)
+            // смена города: сущности чанков снимает `DespawnOnExit`, поле
+            // дальнего слоя — здесь, у владельца (как `clear_map_backends`
+            // в navigation): пережившее сцену поле гоняло бы перестройку
+            // нового мира по мёртвым клеткам прошлого
+            .add_systems(OnExit(AppState::Playing), far::clear_far_field)
             // точечный материал запечённых трупов — на старте, сразу после
             // атласа (он ест то же изображение); без рендера ресурс не
             // вставится, и пекарь со своей перестройкой молча стоят
