@@ -1275,7 +1275,9 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   (`PawnId % 8`), sprite hidden, no pathfinding requests. **`SimPipeline::Live` only**:
   under the determinism toggle far pawns do not exist — the replay runs full AI (pinned by
   `no_far_tag_appears_in_a_deterministic_run`). Tiers are assigned by `assign_lod_tiers`
-  (`Update`, on camera movement — the `resize_silhouettes_on_zoom` pattern), a budget of
+  (`Update`, on camera movement — the `resize_silhouettes_on_zoom` pattern — plus a
+  `LOD_HEARTBEAT` pass every 4 frames: a far walker enters the frame by foot, so promote
+  does not wait for the camera to move), a budget of
   `LOD_TRANSITION_BATCH` transitions per pass with a catch-up mode that runs every frame
   while the settlement wave drains; **the boundary rule is one for the whole project** —
   `waits_for_camera` at `VIEW_MARGIN`: at the city zoom (≥ 0.75) Near empties entirely on
@@ -1308,9 +1310,10 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   layer's zooms, a dot may lag its pawn by a few rebuilds). Membership has one writer, the
   `Insert<FarTag>` observer (demote); removal nobody does — the rebuild itself drops
   promoted/corpse/despawned members (the query stops matching) and walkers who crossed a
-  cell, and deletes an emptied chunk whole. Rebuild runs `Update`/`Live`, budgeted
-  (`REBUILD_CHUNK_BUDGET` 6 chunks/frame): dirty chunks first, the rest by a ring over a
-  stable key order. Chunks carry an **honest `Aabb`** (centres ± `POINT_HALF_BOUND`) —
+  cell, and deletes an emptied chunk whole. Rebuild runs `Update`/`Live`, budgeted in
+  quads (`REBUILD_QUAD_BUDGET` 12 000/frame — a hot cell of Paris reads tens of thousands
+  of members, so the frame cost is capped in points, not chunks): dirty chunks first, the
+  rest by a ring over sorted cell keys. Chunks carry an **honest `Aabb`** (centres ± `POINT_HALF_BOUND`) —
   a 2D mesh gets no auto-Aabb, and without it the culling would use the unit-corner
   positions and drop the whole chunk off-origin (the corpse chunks' trap, closed there by
   `NoFrustumCulling`). `Z_FAR_CROWD` — above corpses, under the portal. Without a renderer

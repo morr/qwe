@@ -265,7 +265,9 @@ toggle `FarTag` is never inserted — pinned by
   still drawn — a dot in the far crowd layer (`silhouette/far.rs`, the drawing half:
   `references/look.md`, **The far crowd layer**; ×10 Phase 5).
 - **`assign_lod_tiers`** (`Update`, fires on camera movement like
-  `resize_silhouettes_on_zoom`, plus a catch-up mode while transitions exceed
+  `resize_silhouettes_on_zoom`, on a `LOD_HEARTBEAT` pass with the camera standing
+  still — a far walker enters the frame by foot, so promote may not wait for the
+  camera to move — plus a catch-up mode while transitions exceed
   `LOD_TRANSITION_BATCH` per pass): demote walks the near set (`Without<FarTag>`),
   promote walks the **human grid** rectangle of the frame. The boundary rule is the one
   copy of `waits_for_camera` at `VIEW_MARGIN` — at the city zoom (≥

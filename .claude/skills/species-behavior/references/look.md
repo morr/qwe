@@ -285,9 +285,10 @@ whose `FarTag` is gone (promote, corpse, despawn — the query stops matching) o
 crossed a cell (moved to the new cell's member set, that cell marked dirty), and deletes
 an emptied chunk whole. Repeated demotes overwrite (`HashMap`, not a push) — an edge pawn
 walks tiers up and down and a push would accumulate doubles for hours. Rebuild runs in
-`Update`/`Live`, budgeted `REBUILD_CHUNK_BUDGET` (6 chunks/frame): dirty chunks first (a
-demoted pawn's dot must appear now), the rest by a ring over a stable sorted key order —
-dots refresh at the ring's pace, their lag is sub-pixel.
+`Update`/`Live`, budgeted `REBUILD_QUAD_BUDGET` (12 000 quads/frame — a hot cell of
+Paris holds tens of thousands of dots, so the budget is in points, not chunks): dirty
+chunks first (a demoted pawn's dot must appear now), the rest by a ring over sorted
+cell keys — dots refresh at the ring's pace, their lag is sub-pixel.
 
 Two things the corpse chunks did one way and this layer does another: chunks carry an
 **honest `Aabb`** (member centres ± `POINT_HALF_BOUND`, rewritten with the mesh) instead
