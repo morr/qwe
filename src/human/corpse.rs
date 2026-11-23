@@ -172,9 +172,10 @@ fn corpse_tint(attire: Option<&Attire>) -> Color {
     Color::hsl(hue, saturation * CORPSE_DRAIN, lightness * CORPSE_DRAIN)
 }
 
-/// Тело ложится: глиф позы, погасшая одежда, зеркало, поворот и `Z_CORPSE`.
-/// Одной командой с доступом к сущности — цвет считается из её же одежды.
-fn lay_down(body: &mut EntityWorldMut, pose: CorpsePose) {
+/// Тело ложится: место смерти, глиф позы, погасшая одежда, зеркало, поворот
+/// и `Z_CORPSE`. Одной командой с доступом к сущности — цвет считается из её
+/// же одежды.
+fn lay_down(body: &mut EntityWorldMut, pose: CorpsePose, at: Vec2) {
     let tint = corpse_tint(body.get::<Attire>());
     if let Some(mut sprite) = body.get_mut::<Sprite>() {
         sprite.color = tint;
@@ -182,7 +183,7 @@ fn lay_down(body: &mut EntityWorldMut, pose: CorpsePose) {
         set_glyph(&mut sprite, pose.glyph);
     }
     if let Some(mut transform) = body.get_mut::<Transform>() {
-        transform.translation.z = Z_CORPSE;
+        transform.translation = at.extend(Z_CORPSE);
         transform.rotation = Quat::from_rotation_z(pose.heading);
     }
 }
@@ -417,7 +418,11 @@ pub(crate) fn reset_bake_queue(_event: On<WorldStarted>, mut bake: ResMut<BakeQu
 /// [`WanderHeading`](super::components::WanderHeading) — жребий, разыгранный
 /// при спавне, читать его без `Movable` некому; `Attire` — из неё считается
 /// цвет тела.
-pub fn to_corpse(commands: &mut Commands, silhouettes: &Silhouettes, entity: Entity) {
+///
+/// `at` — место смерти: у трупа `SimPosition` нет (её снял `strip_movement`
+/// вместе с требованиями `Movable`), а `Transform` дальней пешки заморожен
+/// с demote — xy тела пишет только он.
+pub fn to_corpse(commands: &mut Commands, silhouettes: &Silhouettes, entity: Entity, at: Vec2) {
     crate::movement::strip_movement(commands, entity);
     // дальняя пешка умирает видимой: снимаем ярусный набор (маркеры среза
     // никто, кроме promote, не снимет) и возвращаем спрайт — свежий труп
@@ -445,7 +450,7 @@ pub fn to_corpse(commands: &mut Commands, silhouettes: &Silhouettes, entity: Ent
             Visibility::Visible,
         ))
         // после `remove`: снятая паника вернула бы одежду поверх цвета тела
-        .queue(move |mut body: EntityWorldMut| lay_down(&mut body, pose))
+        .queue(move |mut body: EntityWorldMut| lay_down(&mut body, pose, at))
         // порядок вставки читается как порядок событий: сперва разлетелись
         // брызги, потом на них натекла лужа. Рисование разводит их своим z
         // (`Z_POOL` выше `Z_SPATTER`), а не этим порядком
@@ -779,8 +784,9 @@ mod tests {
         let mut app = App::new();
         let human = spawn_fleeing_human(&mut app);
         app.world_mut().commands().queue(move |world: &mut World| {
+            let at = world.get::<SimPosition>(human).unwrap().0;
             let mut commands = world.commands();
-            to_corpse(&mut commands, &Silhouettes::default(), human);
+            to_corpse(&mut commands, &Silhouettes::default(), human, at);
         });
         app.world_mut().flush();
 
@@ -825,6 +831,45 @@ mod tests {
         }
     }
 
+    /// Дальняя пешка умирает там, где её убили: у трупа `SimPosition` нет
+    /// (её снял `strip_movement` вместе с `#[require]` у `Movable`), а
+    /// `Transform` дальнего заморожен с demote — xy тела обязан прийти из
+    /// места смерти, иначе труп и запечённые квады ложатся на точку demote,
+    /// за метры от места убийства.
+    #[test]
+    fn a_far_pawn_dies_where_it_was_killed() {
+        let mut app = App::new();
+        let demoted_at = Vec2::new(100.0, 100.0);
+        let killed_at = Vec2::new(150.0, 90.0);
+        let human = app
+            .world_mut()
+            .spawn((
+                Transform::from_translation(demoted_at.extend(0.0)),
+                Human,
+                SimPosition(killed_at),
+                crate::rng::PawnId(3),
+            ))
+            .id();
+        app.world_mut()
+            .entity_mut(human)
+            .insert(crate::human::lod::FarTag);
+        app.world_mut().flush();
+
+        app.world_mut().commands().queue(move |world: &mut World| {
+            let mut commands = world.commands();
+            to_corpse(&mut commands, &Silhouettes::default(), human, killed_at);
+        });
+        app.world_mut().flush();
+
+        let transform = app.world().get::<Transform>(human).unwrap();
+        assert_eq!(
+            transform.translation.truncate(),
+            killed_at,
+            "труп встаёт на место смерти, а не на точку demote"
+        );
+        assert_eq!(transform.translation.z, Z_CORPSE);
+    }
+
     /// Тело лежит: вид трупа принадлежит человеку, и переход его меняет —
     /// погасшая одежда поверх снятой паники, поза по битам сущности, лужа под
     /// телом.
@@ -834,8 +879,9 @@ mod tests {
         app.add_observer(crate::human::look::on_calm_tint);
         let human = spawn_fleeing_human(&mut app);
         app.world_mut().commands().queue(move |world: &mut World| {
+            let at = world.get::<SimPosition>(human).unwrap().0;
             let mut commands = world.commands();
-            to_corpse(&mut commands, &Silhouettes::default(), human);
+            to_corpse(&mut commands, &Silhouettes::default(), human, at);
         });
         app.world_mut().flush();
 

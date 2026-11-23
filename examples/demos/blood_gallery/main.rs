@@ -401,7 +401,7 @@ fn spawn_corpse(commands: &mut Commands, silhouettes: &Silhouettes, at: Vec2, in
             Name::new("body"),
         ))
         .id();
-    to_corpse(commands, silhouettes, human);
+    to_corpse(commands, silhouettes, human, at);
 }
 
 /// Одежда клетки: та же холодная половина круга, что у города
