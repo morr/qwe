@@ -204,7 +204,8 @@ restart until the fix, обзор №61). Details — the `determinism`
 skill.
 
 **Map-derived state is not run state.** `NorthstarGrid` and `PolyNavmesh` are cleared by the
-city switch alone — a restart keeps the map, and with it the 12 s northstar hierarchy.
+city switch alone — a restart keeps the map, and with it the northstar hierarchy (tens of
+seconds of every core to rebuild; the numbers are in `northstar.rs`'s module doc).
 
 **Process-level state is neither.** The silhouette atlas (`Silhouettes`, filled once in
 `Startup` by `SilhouettePlugin` — an asset, not a world entity, which is why it belongs in
