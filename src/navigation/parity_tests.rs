@@ -17,7 +17,7 @@ use super::{
     find_path_polymesh,
 };
 use crate::grid::world_to_tile;
-use crate::map::osm::fixture::{TinyCity, tiny_city};
+use crate::map::osm::fixture::{TinyCity, building, rect, stream, tiny_city, wall};
 
 /// Радиус агента меша — маленький: пробные точки стоят от кромок дальше
 /// инфляции, паритет сверяет правила заливки, а не толщину раздувания.
@@ -30,7 +30,12 @@ struct BuiltCity {
 }
 
 fn built_city() -> BuiltCity {
-    let mut city = tiny_city();
+    built_from(tiny_city())
+}
+
+/// Тот же конвейер поверх [`tiny_city`] с зонами, которых в ней нет.
+fn built_from(city: TinyCity) -> BuiltCity {
+    let mut city = city;
     let mut navmesh = Navmesh::default();
     navmesh.fill_from_mapdata(&city.map);
     // калитки по умолчанию ложатся в карту до постройки меша — как в игре,
@@ -127,6 +132,85 @@ fn dry_bridge_curbs_block_the_deck_edges_in_both_fills() {
         built.city.joined_curb_gap,
         "бордюр в створе примыкающей дороги",
     );
+}
+
+/// Правило примыкающей дороги — только проём в бордюре. Ручей поперёк улицы,
+/// примыкающей к сухому мосту, и дом на той же улице: полотно улицы не может
+/// их открыть. В меше оно было общей прорезью — вычиталось из всех препятствий
+/// разом, и улица проходила сквозь воду и фасад (в Париже под такими дорогами
+/// стояло 1 973 тайла домов и 641 воды). Теперь полотно вычитается только из
+/// полос бордюра, как в сетке, где оно лишь снимает блокировку с бордюрных
+/// тайлов.
+#[test]
+fn a_joining_road_opens_the_curb_and_nothing_else_in_both_fills() {
+    let mut city = tiny_city();
+    city.map.water_lines.push(stream(
+        vec![(700.0, 2100.0).into(), (700.0, 2200.0).into()],
+        4.0,
+    ));
+    city.map.buildings.push(building(
+        rect((560.0, 2140.0).into(), (620.0, 2160.0).into()),
+        Vec::new(),
+    ));
+    let built = built_from(city);
+    assert_both_blocked(
+        &built,
+        (700.0, 2150.0).into(),
+        "ручей поперёк примыкающей улицы",
+    );
+    assert_both_blocked(&built, (610.0, 2150.0).into(), "дом на примыкающей улице");
+    assert_both_free(&built, (750.0, 2150.0).into(), "улица у моста");
+    assert_both_reach(
+        &built,
+        (750.0, 2150.0).into(),
+        built.city.dry_deck,
+        "улица -> настил через проём в бордюре",
+    );
+}
+
+/// Стена (`barrier=city_wall` и родственные) — полоса, блокирующая обе заливки,
+/// с круглым торцом, как у капсулы сетки: за последним узлом стена ещё на
+/// полширины. До этого пина правило сетки не держал ни один тест, а в меше
+/// лента была срезана ровно.
+#[test]
+fn a_wall_blocks_in_both_fills() {
+    let mut city = tiny_city();
+    city.map.walls.push(wall(
+        vec![(2400.0, 1201.0).into(), (2600.0, 1201.0).into()],
+        3.0,
+    ));
+    let built = built_from(city);
+    assert_both_blocked(&built, (2500.0, 1201.0).into(), "стена");
+    assert_both_blocked(&built, (2601.0, 1201.0).into(), "торец стены");
+    assert_both_free(&built, (2500.0, 1211.0).into(), "земля за стеной");
+    assert_both_free(&built, (2500.0, 1191.0).into(), "земля перед стеной");
+    assert_both_free(&built, (2604.0, 1201.0).into(), "проход за торцом стены");
+    assert_both_reach(
+        &built,
+        (2500.0, 1211.0).into(),
+        (2500.0, 1191.0).into(),
+        "обход стены по торцу",
+    );
+}
+
+/// Свободный торец водотока круглый в обеих заливках: за последним узлом вода
+/// ещё на полширины русла (у сетки — капсула `set_polyline`). В меше лента
+/// была срезана ровно, и за торцом ручья оставался свободный клин, которого
+/// сетка не знает.
+#[test]
+fn a_free_stream_end_is_round_in_both_fills() {
+    let mut city = tiny_city();
+    city.map.water_lines.push(stream(
+        vec![(1200.0, 1500.0).into(), (1200.0, 1600.0).into()],
+        4.0,
+    ));
+    let built = built_from(city);
+    assert_both_blocked(
+        &built,
+        (1200.0, 1601.0).into(),
+        "вода за свободным торцом ручья",
+    );
+    assert_both_free(&built, (1200.0, 1605.0).into(), "земля за капом ручья");
 }
 
 #[test]

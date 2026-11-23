@@ -13,7 +13,7 @@ use super::seams::{SeamPoints, chunk_outline, node_world, quantized, seam_points
 use super::stitch::{components_of, stitch_chunks};
 use super::{ChunkComponents, PolymeshBuild, PolymeshInput, chunk_cell, chunk_grid};
 use crate::map::footprint::{CurbCoverage, JOIN_EPSILON, fence_gaps};
-use crate::map::osm::model::signed_ring_area;
+use crate::map::osm::model::{signed_ring_area, water_line_caps};
 use crate::map::parallel::in_parallel;
 use crate::map::shadow::{difference_of_shapes, union_of};
 use crate::map::{merge_close_points, miter_offsets};
@@ -219,7 +219,9 @@ pub(super) fn build_polymesh(
 }
 
 /// Фигуры, которые БЛОКИРУЮТ: здания и вода со своими дырами, русла
-/// некульвертных водотоков, стены и внешние бордюры мостов. Фигуры, а не
+/// некульвертных водотоков, стены, ограды минус их проёмы и внешние бордюры
+/// мостов (полоса минус ленты соседних мостов и полотна примыкающих дорог).
+/// Фигуры, а не
 /// плоские контуры: дыра обязана доехать до клеточной разности
 /// (`shadow::difference_of_shapes`) в одной группе со своим наружным
 /// кольцом — одинокая дыра в чужой клетке под NonZero заполнена, то есть
@@ -252,15 +254,21 @@ fn blocker_shapes(input: &PolymeshInput, coverage: &CurbCoverage<'_>) -> Vec<Vec
     }
     // трубы полосы не имеют — над культвертом земля (как в заливке сетки)
     for line in &input.water_lines {
-        if let Some(band) = line.channel_band()
-            && let Some(ring) = ribbon_outline(&band.line, band.width)
-        {
-            blockers.push(vec![oriented(ring)]);
+        if let Some(band) = line.channel_band() {
+            // торцы — те же, что у сеточной капсулы: свободный конец круглый,
+            // у входа в трубу срезан (`water_line_caps`)
+            let [start, end] = water_line_caps(line, &input.water_lines);
+            let path = extended_ends_capped(&band.line, band.width / 2.0, [start, end]);
+            if let Some(ring) = ribbon_outline(&path, band.width) {
+                blockers.push(vec![oriented(ring)]);
+            }
         }
     }
     for wall in &input.walls {
         let band = wall.band();
-        if let Some(ring) = ribbon_outline(&band.line, band.width) {
+        // оба торца круглые — у сеточной капсулы (`set_polyline`) исключений нет
+        let line = extended_ends(&band.line, band.width / 2.0);
+        if let Some(ring) = ribbon_outline(&line, band.width) {
             blockers.push(vec![oriented(ring)]);
         }
     }
@@ -317,6 +325,23 @@ fn blocker_shapes(input: &PolymeshInput, coverage: &CurbCoverage<'_>) -> Vec<Vec
             })
         })
         .collect();
+    // полотно примыкающей дороги открывает только бордюр, который накрывает
+    // его панель, — как в сетке, где оно лишь снимает блокировку с бордюрных
+    // тайлов под собой (`fill_base`, `tile.road`). Общей прорезью лента
+    // вычиталась из всех препятствий разом и проходила сквозь воду, дома и
+    // стены вдоль дороги (под примыкающими стояло 1 973 тайла домов и 641
+    // воды в Париже, 630 и 33 в Москве). Ширина без сеточного запаса на
+    // диагональ тайла: блуждания тайловых цепочек у вектора нет. Береговая
+    // тропа в паре метров ПОД пролётом узла не делит и не открывает ничего —
+    // список общий с заливкой сетки, `CurbCoverage`
+    let joining: Vec<((Vec2, Vec2), Vec<[f32; 2]>)> = coverage
+        .joining()
+        .iter()
+        .filter_map(|road| {
+            let ring = oriented(ribbon_outline(&road.points, road.width)?);
+            Some((contour_bounds(&ring), ring))
+        })
+        .collect();
     for (index, road) in bridges.iter().enumerate() {
         let mut sides: Vec<Vec<[f32; 2]>> = Vec::with_capacity(2);
         for band in road.curb_bands() {
@@ -336,6 +361,7 @@ fn blocker_shapes(input: &PolymeshInput, coverage: &CurbCoverage<'_>) -> Vec<Vec
             .enumerate()
             .filter(|(other, _)| *other != index)
             .filter_map(|(_, band)| band.as_ref())
+            .chain(joining.iter())
             .filter(|(box_, _)| bands_may_overlap(*box_, sides_box))
             .map(|(_, band)| band.clone())
             .collect();
@@ -362,8 +388,9 @@ fn contour_bounds(contour: &[[f32; 2]]) -> (Vec2, Vec2) {
     )
 }
 
-/// Контуры, которые ПРОРЕЗАЮТ блокирующие: настилы мостов, примыкающие к ним
-/// дороги и проезды-арки.
+/// Контуры, которые ПРОРЕЗАЮТ блокирующие: настилы мостов и проезды-арки.
+/// Примыкающая дорога сюда не входит: она открывает только бордюр, и её
+/// лента вычитается из полос бордюра в [`blocker_shapes`].
 fn carve_contours(input: &PolymeshInput, coverage: &CurbCoverage<'_>) -> Vec<Vec<[f32; 2]>> {
     let bridges = coverage.bridges();
     let mut carves: Vec<Vec<[f32; 2]>> = Vec::new();
@@ -375,14 +402,6 @@ fn carve_contours(input: &PolymeshInput, coverage: &CurbCoverage<'_>) -> Vec<Vec
         // обязана остаться барьером.
         let band = road.deck_band();
         if let Some(ring) = ribbon_outline(&band.line, band.width) {
-            push_contour(&mut carves, ring);
-        }
-    }
-    // примыкающая дорога открывает бордюр, который накрывает её панель;
-    // береговая тропа в паре метров ПОД пролётом узла не делит и не
-    // открывает ничего (список — общий с заливкой сетки, `CurbCoverage`)
-    for road in coverage.joining() {
-        if let Some(ring) = ribbon_outline(&road.points, road.width) {
             push_contour(&mut carves, ring);
         }
     }
@@ -398,6 +417,10 @@ fn carve_contours(input: &PolymeshInput, coverage: &CurbCoverage<'_>) -> Vec<Vec
 
 /// Ломаная, продолженная за оба конца на `reach` вдоль своих крайних звеньев.
 ///
+/// Так же заканчиваются стены и свободные торцы водотоков (`blocker_shapes`):
+/// капсула сетки круглая с обоих концов, а срезанная лента меша оставляла за
+/// торцом ручья клин суши в воде и проход за концом стены.
+///
 /// Арка сетки — капсула (`set_polyline`: тайлы в пределах полуширины от
 /// отрезка), и за концы осевой она выходит на полуширину; лента меша
 /// обрезана по концам ровно. Разница не косметическая: осевая арки в OSM
@@ -407,15 +430,24 @@ fn carve_contours(input: &PolymeshInput, coverage: &CurbCoverage<'_>) -> Vec<Vec
 /// в дыру объединения — и весь кремль уходил в препятствие (`shape.first()`
 /// выбрасывает дыры), тогда как сетка его пропускала.
 fn extended_ends(line: &[Vec2], reach: f32) -> Vec<Vec2> {
+    extended_ends_capped(line, reach, [true; 2])
+}
+
+/// То же по концам раздельно: `false` — торец остаётся срезанным ровно.
+fn extended_ends_capped(line: &[Vec2], reach: f32, round: [bool; 2]) -> Vec<Vec2> {
     let mut line = line.to_vec();
     let count = line.len();
     if count < 2 {
         return line;
     }
-    if let Some(lead) = (line[0] - line[1]).try_normalize() {
+    if round[0]
+        && let Some(lead) = (line[0] - line[1]).try_normalize()
+    {
         line[0] += lead * reach;
     }
-    if let Some(tail) = (line[count - 1] - line[count - 2]).try_normalize() {
+    if round[1]
+        && let Some(tail) = (line[count - 1] - line[count - 2]).try_normalize()
+    {
         line[count - 1] += tail * reach;
     }
     line
