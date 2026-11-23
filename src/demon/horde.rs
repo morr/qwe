@@ -136,8 +136,8 @@ fn plan_wave(world_seed: u64, wave_index: u64, style: &HordeStyle, navmesh: &Nav
         drawn.unwrap_or_else(|| navmesh.passable_from(hearth_tile).unwrap_or(hearth_tile));
     let hearth = navmesh.tile_center(hearth_tile);
 
-    let mut positions = Vec::with_capacity(style.wave_size);
-    for _ in 0..style.wave_size {
+    let mut positions = Vec::with_capacity(style.wave_size());
+    for _ in 0..style.wave_size() {
         let mut position = hearth;
         for _ in 0..WAVE_SCATTER_TRIES {
             let angle = rng.random_range(0.0..std::f32::consts::TAU);
@@ -191,7 +191,7 @@ pub fn play_waves(
 
     // волны выключены — фон-only, сегодняшний мир: и расписание стоит, и
     // недовыпущенная очередь снимается следом
-    if style.wave_size == 0 {
+    if style.wave_size() == 0 {
         schedule.release.clear();
         return;
     }
@@ -411,6 +411,36 @@ mod tests {
         assert!(
             app.world().resource::<HordeSchedule>().release.is_empty(),
             "частичная волна оставила очередь недовыпущенной"
+        );
+    }
+
+    /// Мусорный размер волны (BRP, старый файл настроек) не роняет мир:
+    /// волна разыгрывается целиком до усечения по капу, и `usize::MAX` без
+    /// клампа на чтении падал бы на `Vec::with_capacity` на первом же тике
+    /// `Live` (в этом дворе сохранения настроек нет). Считается шкала,
+    /// выходит — сколько влезло.
+    #[test]
+    fn a_garbage_wave_size_releases_only_the_free_room() {
+        let app = &mut app(HordeStyle {
+            wave_size: usize::MAX,
+            wave_every: 600.0,
+            wave_len: 200,
+        });
+        tick_through_a_moving_warmup(app);
+        app.world_mut().insert_resource(crate::demon::DemonStyle {
+            cap: DEMON_INITIAL_BURST + 4,
+            ..Default::default()
+        });
+        go_live(app);
+
+        assert!(
+            app.world().resource::<HordeSchedule>().wave_index > 0,
+            "волна не вышла: проверка пуста"
+        );
+        assert_eq!(
+            app.world().resource::<DemonSpawner>().spawned,
+            DEMON_INITIAL_BURST + 4,
+            "волна переполнила общий кап"
         );
     }
 

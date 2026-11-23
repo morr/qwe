@@ -267,6 +267,16 @@ impl Default for HordeStyle {
 }
 
 impl HordeStyle {
+    /// Демонов в волне, зажатые шкалой: запись по BRP и старый файл настроек
+    /// могут принести сколь угодно большое число, а волна разыгрывается
+    /// целиком и усекается до свободного места лишь после — значение за
+    /// пределами `isize` падает на `Vec::with_capacity`, меньшее держит
+    /// навмеш под чтением триллионами попыток разброса. Ноль легитимен —
+    /// волны выключены.
+    pub fn wave_size(&self) -> usize {
+        self.wave_size.min(WAVE_SIZE_MAX as usize)
+    }
+
     /// Секунды затишья, зажатые шкалой: старый файл настроек и запись по BRP
     /// могут принести что угодно, а отрицательный или нечисловой интервал
     /// разрушил бы расписание (`as u64` от NaN/отрицательного — ноль тиков,
@@ -353,6 +363,32 @@ mod tests {
             }
             .cap(),
             DEMON_CAP_MAX as usize
+        );
+    }
+
+    /// Размер волны по BRP может быть мусорным: волна разыгрывается целиком
+    /// до усечения по капу, так что без клампа на чтении значение за
+    /// пределами `isize` — падение на `Vec::with_capacity`, а не «вышло
+    /// сколько влезло».
+    #[test]
+    fn wave_size_clamps_garbage_to_the_slider_scale() {
+        assert_eq!(HordeStyle::default().wave_size(), WAVE_SIZE_DEFAULT);
+        assert_eq!(
+            HordeStyle {
+                wave_size: 0,
+                ..Default::default()
+            }
+            .wave_size(),
+            0,
+            "ноль — волны выключены, кламп его не трогает"
+        );
+        assert_eq!(
+            HordeStyle {
+                wave_size: usize::MAX,
+                ..Default::default()
+            }
+            .wave_size(),
+            WAVE_SIZE_MAX as usize
         );
     }
 
