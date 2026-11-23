@@ -4,14 +4,14 @@ use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollPixelsPerLine};
 use bevy::picking::hover::HoverMap;
 use bevy::picking::pointer::PointerButton;
 use bevy::prelude::*;
-use bevy::settings::{ReflectSettingsGroup, SaveSettingsSync, SettingsGroup};
+use bevy::settings::{ReflectSettingsGroup, SettingsGroup};
 use bevy::window::PrimaryWindow;
 
 use crate::city::City;
 use crate::dev::{VirtualCursor, cursor_position};
 use crate::loading::{AppState, WorldInitSet};
 use crate::portal::PortalPos;
-use crate::prefs::PrefsExt;
+use crate::prefs::{PrefsExt, SavePrefs};
 use crate::restart::RestartEvent;
 
 /// Зум = масштаб трансформа камеры: мировых метров на экранный пиксель.
@@ -498,7 +498,7 @@ fn track_camera_view(
     };
 
     // `set_if_neq` не только пишет, но и метит ресурс изменённым — по этой
-    // метке `SaveSettingsSync::IfChanged` и решает, что файл пора трогать
+    // метке `prefs::SavePrefs` и решает, что файл пора трогать
     if saved.set_if_neq(view) {
         debounce.moved_at = now;
         debounce.dirty_since.get_or_insert(now);
@@ -511,7 +511,7 @@ fn track_camera_view(
         return;
     }
     debounce.dirty_since = None;
-    commands.queue(SaveSettingsSync::IfChanged);
+    commands.queue(SavePrefs);
 }
 
 /// Запись вида камеры при выходе из игры — в `Last`, **после**
@@ -546,7 +546,7 @@ fn save_camera_view_on_exit(
         position: Some(transform.translation.truncate()),
         zoom: Some(controller.zoom_factor),
     });
-    commands.queue(SaveSettingsSync::IfChanged);
+    commands.queue(SavePrefs);
 }
 
 /// Смещение курсора от центра окна в мировых осях (экранный y — вниз).

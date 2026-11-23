@@ -446,16 +446,40 @@ panel** with four tabs (`ui/shell.rs`).
   not polish: a group **already at its default is skipped**, because merely taking a
   `Mut` marks the resource changed and `retuned` would then order a crown / road /
   building / polymesh rebuild for nothing; and the command queues
-  `SaveSettingsSync::IfChanged` **itself** instead of trusting that something among the
+  **`SavePrefs`** itself instead of trusting that something among the
   reset groups happened to be `track_pref`ed (`SavedCameraView` is not).
   `SavedCameraView` is reset like everything else and then immediately re-recorded by
   `track_camera_view` in `save` mode — right, since the setting is the *mode*, not
-  where you happen to be looking.
+  where you happen to be looking. The registry walk both it and the save share is
+  `prefs::visit_settings_groups` — the same type → `ComponentId` → resource entity
+  chain `bevy_settings` uses to lay the file over the world.
+
+  **`prefs::SavePrefs` is the one door to the library's save command.** No site queues
+  `SaveSettingsSync` itself: `save_prefs`, `ResetSettings` and both camera saves
+  (`track_camera_view`, `save_camera_view_on_exit`) all go through it, because it does
+  work the library's command cannot — first it clamps every unsigned integer above TOML's
+  `i64`, across all groups, by the registry walk. `bevy_settings` serializes a group
+  through `toml::Value::try_from(..).unwrap()`, and a save writes the **whole** file
+  whenever any group changed, so one such value crashed the app on the next save from
+  anywhere — the camera's included. Only a BRP write brings one (sliders are range-bound
+  and the seed field is capped at `rng::MAX_SEED`). Folding the clamp into the command
+  rather than a per-frame sanitizer system keeps the walk off the frames that save
+  nothing and leaves no ordering edge to a saving system to get wrong.
+  This is **not** the read-side clamp of an owner (`DemonStyle::cap()`,
+  `HordeStyle::wave_size()`): that one guards the consumer's math inside the range the
+  file carries fine; this one guards the file. **The trap is the change mark**: `reflect_mut`
+  hands back a `Mut`, and the first `&mut` through it marks the group changed — a walk
+  taken that way would mark ~30 groups on every save, which rewrites the file every frame
+  and rebuilds crowns, roads and buildings in a loop. The walk therefore runs through
+  `Mut::bypass_change_detection` and calls `set_changed` only on a group where something
+  was really clamped; `tests/prefs.rs` pins both directions, and its garbage is planted
+  by a registry walk of its own, so a field declared later is covered without touching
+  the test.
 
   **Persisting is a registration, not a list**: `app.register_pref::<T>()` at the
   owner's plugin does the whole registration in one call — `init_resource` +
   `register_type` + `track_pref` (the last adds the one-line system that queues
-  `SaveSettingsSync::IfChanged` when `T` changes). A forgotten member of that old
+  `SavePrefs` when `T` changes). A forgotten member of that old
   hand-written trio was a silent failure, and a hand-maintained mirror of the tracked
   list had already lost `RoadStyle`, whose edits only reached the disk if some
   *other* tracked resource happened to change in the same frame; `tests/prefs.rs`

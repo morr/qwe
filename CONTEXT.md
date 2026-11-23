@@ -1637,7 +1637,13 @@ Summary; panel internals — **ui-panels skill**; the speed regulator — **sim-
   don't overwrite each other's choices; the main checkout keeps the OS file.
   **`ResetSettings`** puts every group back to its `Default`, found
   through the type registry, **never a list**, so a new tunable is covered the day it is
-  declared.
+  declared. **`SavePrefs`** is the one door to the library's save command — every save site
+  (`save_prefs`, `ResetSettings`, both camera saves) queues it — and before handing over the
+  file it clamps, by the same registry walk, every unsigned integer above TOML's `i64`: the
+  file is written whole whenever any group changed, and `bevy_settings` serializes through an
+  `unwrap()`, so one such value (only a BRP write brings one) used to crash the app on the
+  next save from anywhere. A group is marked changed only when something was really clamped —
+  that mark rewrites the file and rebuilds crowns, roads and buildings.
 - **dev.rs** — `TakeScreenshotEvent` (BRP-triggerable) → `screenshot.png` (gitignored);
   **`OffscreenShotEvent`** → the same frame rendered into an **offscreen texture** by a
   camera of its own, with its own centre, zoom and size, and written without the window

@@ -27,14 +27,21 @@
 //! `SaveSettingsDeferred`: кликов мало, а отложенная запись теряется, если
 //! выйти из игры в ту же секунду.
 //!
+//! Сам файл пишет одна команда — [`SavePrefs`]: перед отдачей библиотеке она
+//! подрезает то, что TOML не умеет хранить (целое без знака шире `i64`), а
+//! `SaveSettingsSync` вне её не зовётся.
+//!
 //! Обратный ход — [`ResetSettings`], кнопка `reset` во вкладке Debug:
 //! все группы настроек разом возвращаются к своим `Default`.
 
+use bevy::ecs::change_detection::DetectChangesMut;
 use bevy::ecs::reflect::ReflectComponent;
 use bevy::ecs::system::Command;
 use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
-use bevy::reflect::{GetTypeRegistration, TypeRegistration, std_traits::ReflectDefault};
+use bevy::reflect::{
+    GetTypeRegistration, PartialReflect, ReflectMut, TypeRegistration, std_traits::ReflectDefault,
+};
 use bevy::settings::{ReflectSettingsGroup, SaveSettingsSync, SettingsPlugin};
 use std::any::TypeId;
 use std::path::{Path, PathBuf};
@@ -226,7 +233,119 @@ impl TrackedPrefs {
 }
 
 fn save_prefs(mut commands: Commands) {
-    commands.queue(SaveSettingsSync::IfChanged);
+    commands.queue(SavePrefs);
+}
+
+/// Потолок целого в `settings.toml`: TOML хранит целые со знаком, `i64`.
+/// Тот же потолок на входе поля seed — `rng::MAX_SEED`.
+const TOML_INT_MAX: u64 = i64::MAX as u64;
+
+/// Запись настроек в файл — единственная дверь к `SaveSettingsSync`.
+///
+/// `bevy_settings` сериализует каждую группу через `toml::Value::try_from(..)
+/// .unwrap()`, и значение, которое TOML не умеет хранить, роняет приложение
+/// прямо при записи. Причём не только при записи своей группы: файл пишется
+/// целиком, едва изменилась любая его группа, так что одна такая правка
+/// делала смертельным и сохранение вида камеры.
+///
+/// Непредставимое, что реально доходит до записи, одно — целое без знака
+/// (`u64`, `usize`) выше `i64`. С панели оно не приходит: слайдер ограничен
+/// шкалой, поле seed — потолком `rng::MAX_SEED`; приходит записью по BRP.
+/// Поэтому команда сначала подрезает такие целые до потолка во всех группах
+/// ([`clamp_file_values`]) и только потом отдаёт файл библиотеке.
+///
+/// Это не кламп на чтении у владельца (`DemonStyle::cap()`,
+/// `HordeStyle::wave_size()`): тот защищает математику потребителя от
+/// мусора в диапазоне, который файл несёт спокойно, а здесь защищён сам файл.
+///
+/// Каждое место, которое пишет файл, зовёт эту команду — система
+/// [`save_prefs`], [`ResetSettings`], оба сохранения вида камеры в
+/// `camera.rs`. Так обход групп стоит только на записи, которая и так
+/// случилась, и ему не нужно ребро порядка к каждой записывающей системе.
+pub struct SavePrefs;
+
+impl Command for SavePrefs {
+    type Out = ();
+
+    fn apply(self, world: &mut World) {
+        clamp_file_values(world);
+        SaveSettingsSync::IfChanged.apply(world);
+    }
+}
+
+/// Подрезает в группах настроек мира целые, которые файл не унесёт.
+fn clamp_file_values(world: &mut World) {
+    let mut clamped: Vec<&'static str> = Vec::new();
+    visit_settings_groups(world, |registration, entity, world| {
+        let Some(reflect_component) = registration.data::<ReflectComponent>() else {
+            return;
+        };
+        let Some(mut current) = reflect_component.reflect_mut(world.entity_mut(entity)) else {
+            return;
+        };
+        // обход мимо отметки изменения: первый же `&mut` через `Mut` метит
+        // группу изменённой, а по метке переписывается файл и пересобираются
+        // кроны, дороги и здания. Отмечаем только то, что вправду подрезали
+        if clamp_file_overflow(current.bypass_change_detection().as_partial_reflect_mut()) {
+            current.set_changed();
+            clamped.push(registration.type_info().type_path_table().short_path());
+        }
+    });
+    if !clamped.is_empty() {
+        warn!(
+            "settings: integers above the TOML range clamped in {}",
+            clamped.join(", ")
+        );
+    }
+}
+
+/// Подрезает в значении — рекурсивно, до листьев — целые без знака выше
+/// [`TOML_INT_MAX`]. `true`, если подрезано хоть одно.
+fn clamp_file_overflow(value: &mut dyn PartialReflect) -> bool {
+    match value.reflect_mut() {
+        ReflectMut::Struct(s) => visit_fields(s.field_len(), s, |s, i| s.field_at_mut(i)),
+        ReflectMut::TupleStruct(s) => visit_fields(s.field_len(), s, |s, i| s.field_mut(i)),
+        ReflectMut::Tuple(t) => visit_fields(t.field_len(), t, |t, i| t.field_mut(i)),
+        // `Option` — тоже перечисление: `Some` несёт значение в поле варианта
+        ReflectMut::Enum(e) => visit_fields(e.field_len(), e, |e, i| e.field_at_mut(i)),
+        ReflectMut::List(l) => visit_fields(l.len(), l, |l, i| l.get_mut(i)),
+        ReflectMut::Array(a) => visit_fields(a.len(), a, |a, i| a.get_mut(i)),
+        ReflectMut::Opaque(leaf) => clamp_leaf(leaf),
+        // словарей и множеств в группах настроек нет
+        ReflectMut::Map(_) | ReflectMut::Set(_) => false,
+    }
+}
+
+/// Обходит `len` дочерних значений контейнера; `true`, если подрезано хоть в
+/// одном.
+fn visit_fields<P: ?Sized>(
+    len: usize,
+    parent: &mut P,
+    mut at: impl FnMut(&mut P, usize) -> Option<&mut dyn PartialReflect>,
+) -> bool {
+    let mut clamped = false;
+    for i in 0..len {
+        if let Some(field) = at(parent, i) {
+            clamped |= clamp_file_overflow(field);
+        }
+    }
+    clamped
+}
+
+fn clamp_leaf(leaf: &mut dyn PartialReflect) -> bool {
+    if let Some(value) = leaf.try_downcast_mut::<u64>() {
+        if *value > TOML_INT_MAX {
+            *value = TOML_INT_MAX;
+            return true;
+        }
+    }
+    if let Some(value) = leaf.try_downcast_mut::<usize>() {
+        if *value > TOML_INT_MAX as usize {
+            *value = TOML_INT_MAX as usize;
+            return true;
+        }
+    }
+    false
 }
 
 /// Сброс всех настроек на умолчания — кнопка `reset` во вкладке Debug
@@ -293,9 +412,9 @@ impl Command for ResetSettings {
         if reset > 0 {
             // не полагаемся на то, что среди сброшенного оказался хоть один
             // `track_pref`-ресурс: `SavedCameraView` — группа настроек, но
-            // отслеживается вручную. `IfChanged` сам сверяет тики файла, так
+            // отслеживается вручную. Запись сама сверяет тики файла, так
             // что лишний вызов ничего не пишет
-            SaveSettingsSync::IfChanged.apply(world);
+            SavePrefs.apply(world);
         }
     }
 }
@@ -347,7 +466,9 @@ mod tests {
 
     use super::*;
     use crate::city::City;
+    use crate::demon::HordeStyle;
     use crate::map::trees::{TreeShape, TreeStyle};
+    use crate::rng::WorldSeed;
 
     /// Мир с парой настоящих групп настроек: структура с ручным `Default` и
     /// перечисление — у них разные пути в `PartialReflect::apply`.
@@ -483,5 +604,87 @@ mod tests {
         let missing = empty.path().join("missing.toml");
         seed_worktree_settings(&empty.path().join(WORKTREE_SETTINGS_DIR), &missing);
         assert!(!empty.path().join(WORKTREE_SETTINGS_DIR).exists());
+    }
+
+    /// Двор настоящей записи: `SettingsPlugin` с каталогом во временной
+    /// папке — то же перенаправление абсолютным путём, каким ворктри держит
+    /// свой `settings.toml`. Группы — обе формы, в которых бывает такое целое:
+    /// `u64` в кортежной структуре и `usize` в обычной. `tag` задаёт каталог:
+    /// тесты идут параллельно, и один тег на двоих — общий каталог, который
+    /// первый же закончившийся тест удалит.
+    fn save_yard(tag: &str) -> (App, TempDir) {
+        let temp = TempDir::new(tag);
+        let mut app = App::new();
+        app.init_resource::<WorldSeed>()
+            .register_type::<WorldSeed>()
+            .init_resource::<HordeStyle>()
+            .register_type::<HordeStyle>()
+            .add_plugins(SettingsPlugin::new(temp.path().to_str().expect("путь в UTF-8")));
+        // граница тика, которую в игре даёт кадр: плагин помнит тик своей
+        // сборки как последнюю запись, и правка тем же тиком записи не ведёт
+        app.world_mut().increment_change_tick();
+        (app, temp)
+    }
+
+    fn plant_garbage(app: &mut App) {
+        *app.world_mut().resource_mut::<WorldSeed>() = WorldSeed(u64::MAX);
+        let mut horde = app.world_mut().resource_mut::<HordeStyle>();
+        horde.wave_size = usize::MAX;
+        horde.wave_len = 1 << 63;
+    }
+
+    /// Настоящая запись в файл. Без подрезки библиотека паникует на первом
+    /// же таком значении (`toml::Value::try_from(..).unwrap()`).
+    #[test]
+    fn a_save_clamps_what_the_file_cannot_carry() {
+        let (mut app, temp) = save_yard("clamp");
+        plant_garbage(&mut app);
+
+        SavePrefs.apply(app.world_mut());
+
+        assert_eq!(app.world().resource::<WorldSeed>().0, TOML_INT_MAX);
+        let horde = app.world().resource::<HordeStyle>();
+        assert_eq!(horde.wave_size, TOML_INT_MAX as usize);
+        assert_eq!(horde.wave_len, TOML_INT_MAX as usize);
+        let file = std::fs::read_to_string(temp.path().join("settings.toml"))
+            .expect("файл настроек записан");
+        for line in [
+            format!("seed = {TOML_INT_MAX}"),
+            format!("wave_size = {}", TOML_INT_MAX as usize),
+            format!("wave_len = {}", TOML_INT_MAX as usize),
+        ] {
+            assert!(file.contains(&line), "{line:?} нет в файле:\n{file}");
+        }
+    }
+
+    /// Обход спускается во все формы: `Option`, список, массив, кортеж —
+    /// полей такой формы в группах настроек сегодня нет, и проверить их
+    /// больше нечем.
+    #[test]
+    fn clamp_reaches_every_shape() {
+        let mut value = (
+            u64::MAX,
+            Some(usize::MAX),
+            vec![0u64, u64::MAX],
+            [usize::MAX; 2],
+            i64::MIN,
+            7u64,
+        );
+
+        assert!(clamp_file_overflow(&mut value));
+
+        assert_eq!(
+            value,
+            (
+                TOML_INT_MAX,
+                Some(TOML_INT_MAX as usize),
+                vec![0, TOML_INT_MAX],
+                [TOML_INT_MAX as usize; 2],
+                i64::MIN,
+                7,
+            )
+        );
+        // второй записи находить нечего
+        assert!(!clamp_file_overflow(&mut value));
     }
 }
