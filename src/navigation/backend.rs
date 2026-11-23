@@ -289,16 +289,111 @@ mod tests {
     // сетка по умолчанию — навтайл по умолчанию, так что глобальный перевод
     // здесь совпадает со снимочным и читается короче
     use crate::grid::tile_center;
+    use crate::navigation::northstar::tiny_grid;
+
+    /// Сетка с перечисленными заблокированными тайлами под тем же `Arc`, что
+    /// держит `ArcNavmesh`.
+    fn grid_arc(blocked: &[IVec2]) -> Arc<RwLock<Navmesh>> {
+        let mut navmesh = Navmesh::default();
+        for tile in blocked {
+            navmesh.set_passable(tile.x, tile.y, false);
+        }
+        Arc::new(RwLock::new(navmesh))
+    }
 
     /// Сеточный снимок с перечисленными заблокированными тайлами — интерфейс
     /// тестируется тем же путём, каким его берут потребители: значение, а не
     /// ресурсы.
     fn grid_backend(blocked: &[IVec2]) -> Backend {
-        let mut navmesh = Navmesh::default();
-        for tile in blocked {
-            navmesh.set_passable(tile.x, tile.y, false);
+        Backend::from_grid(grid_arc(blocked))
+    }
+
+    /// Контракт «путь начинается со старта» держит вся таблица ветвления
+    /// `grid_path`: плоские алгоритмы, иерархические до готовности иерархии
+    /// (их обслуживает A*) и после неё. На роли иерархии — пустая сетка 8×8:
+    /// снимок её размеры с navmesh не сверяет, проверяется только ветвление.
+    #[test]
+    fn every_algorithm_answers_with_the_point_the_search_starts_from() {
+        let (start, goal) = (IVec2::new(1, 1), IVec2::new(6, 1));
+        for algorithm in [
+            PathfindingAlgorithm::Astar,
+            PathfindingAlgorithm::Dijkstra,
+            PathfindingAlgorithm::Fringe,
+            PathfindingAlgorithm::Bfs,
+            PathfindingAlgorithm::Hpa,
+            PathfindingAlgorithm::ThetaStar,
+        ] {
+            for hierarchy in [None, Some(Arc::new(tiny_grid()))] {
+                let backend = Backend::new(grid_arc(&[]), algorithm, hierarchy, None);
+                let path = backend
+                    .search(tile_center(start), start, goal)
+                    .path
+                    .unwrap_or_else(|| panic!("{algorithm:?}: путь по пустой сетке"));
+                assert_eq!(path.first(), Some(&tile_center(start)), "{algorithm:?}");
+                assert_eq!(path.last(), Some(&tile_center(goal)), "{algorithm:?}");
+            }
         }
-        Backend::from_grid(Arc::new(RwLock::new(navmesh)))
+    }
+
+    /// Иерархия в снимке — не переключатель «только через неё»: плоский
+    /// алгоритм ходит плоско и при готовой иерархии (семь соседних точек на
+    /// прямой в шесть тайлов), а Theta* с той же иерархией отвечает двумя
+    /// точками — any-angle не обязан стелиться по соседям.
+    #[test]
+    fn a_flat_algorithm_ignores_a_built_hierarchy() {
+        let (start, goal) = (IVec2::new(1, 1), IVec2::new(6, 1));
+        let hierarchy = Some(Arc::new(tiny_grid()));
+
+        let backend = Backend::new(
+            grid_arc(&[]),
+            PathfindingAlgorithm::Astar,
+            hierarchy.clone(),
+            None,
+        );
+        let path = backend
+            .search(tile_center(start), start, goal)
+            .path
+            .expect("прямой путь");
+        assert_eq!(
+            path,
+            (1..=6)
+                .map(|x| tile_center(IVec2::new(x, 1)))
+                .collect::<Vec<_>>()
+        );
+
+        let backend = Backend::new(
+            grid_arc(&[]),
+            PathfindingAlgorithm::ThetaStar,
+            hierarchy,
+            None,
+        );
+        let path = backend
+            .search(tile_center(start), start, goal)
+            .path
+            .expect("прямой путь");
+        assert_eq!(path, [tile_center(start), tile_center(goal)]);
+    }
+
+    /// Пока иерархии нет, иерархические алгоритмы отвечают в точности как A*:
+    /// не «похожим путём», а тем же списком — запасная ветка `grid_path`
+    /// подменяет алгоритм, а не бэкенд.
+    #[test]
+    fn until_the_hierarchy_lands_a_hierarchical_algorithm_answers_as_flat_astar() {
+        let (start, goal) = (IVec2::new(1, 1), IVec2::new(6, 6));
+        let astar = Backend::from_grid(grid_arc(&[]))
+            .search(tile_center(start), start, goal)
+            .path
+            .expect("путь по пустой сетке");
+        assert!(astar.len() > 2, "у пути должны быть промежуточные точки");
+
+        for algorithm in [PathfindingAlgorithm::Hpa, PathfindingAlgorithm::ThetaStar] {
+            let backend = Backend::new(grid_arc(&[]), algorithm, None, None);
+            let path = backend
+                .search(tile_center(start), start, goal)
+                .path
+                .expect("путь по пустой сетке");
+            assert_eq!(path, astar, "{algorithm:?}");
+        }
     }
 
     /// Контракт пути един для обоих бэкендов: мировые точки, стартовая

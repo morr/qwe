@@ -972,11 +972,16 @@ Summary; the mechanism and the measurements — **navigation-deep skill** (polym
   The spiral is **capped at `PORTAL_SEARCH_METERS`** (400 m, `settings.rs`); past the cap
   the load thread warns and keeps the raw hint.
 - **PathfindingAlgorithm** (`navigation/astar.rs`) — runtime-switchable: A* / Dijkstra /
-  Fringe / BFS / **HPA*** (28× cheaper than flat A* at ~10 % longer paths) / Theta*.
+  Fringe / BFS / **HPA*** (45× cheaper than flat A* at ~15 % longer paths) / Theta*.
 - **NorthstarGrid** (`navigation/northstar.rs`) — `bevy_northstar` `OrdinalGrid`, built
-  lazily (~22–28 s on the current map — the measurement and its history live in the
+  lazily (tens of seconds on the current map — the measurement and its history live in the
   module doc) **only when a northstar algorithm is selected**; until it lands the
-  dispatcher falls back to flat A*.
+  dispatcher falls back to flat A*. **Every grid path answer starts with the request's
+  start tile, whichever backend produced it** — the acceptance reads one element as
+  "already there" and drops the first of the rest; the crate strips the start off HPA*
+  and keeps it for Theta*, `find_path_northstar` restores it. **The hierarchy is built
+  with no neighbor filter**, so unlike the flat grid it crosses a chain of
+  corner-touching tiles (a recorded divergence, pinned).
 - **Backend / Walkable** (`navigation/backend.rs`) — the active backend as one cheap-clone
   `Send` snapshot, and **the resource the whole simulation reads** (`Res<Backend>`). The two
   modes differ not in type but in **who writes it**: live re-takes it every frame, under
@@ -1126,8 +1131,9 @@ Summary; the mechanism — **determinism skill** (seed derivation, the decision 
   `(requested_at, species, pawn_id)`, all integers. **The camera does not appear in it at
   all.**
 - **Frozen backend** — in this mode `Backend` is written once, on **WorldStarted**, and
-  never refreshed; warmup waits for the wanted backend instead (~22–28 s of northstar
-  build on first entry into a city on HPA, deliberately; restarts do not pay it). **No
+  never refreshed; warmup waits for the wanted backend instead (tens of seconds of
+  northstar build on first entry into a city on HPA — the number is in `northstar.rs`'s
+  module doc — deliberately; restarts do not pay it). **No
   pawn warmup in this mode.**
 - **NeedsWanderTarget** (`movement/components.rs`) — marker held exactly on `Idle` and
   `PathfindingError`; without it each `FixedUpdate` run would scan all 17 000 wanderers.

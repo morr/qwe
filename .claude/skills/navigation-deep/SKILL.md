@@ -50,10 +50,13 @@ for exactly this reason), everything `Walkable` asks (`allows`, `coast_allows`,
 `Navmesh::tile_center`, never through `grid::world_to_tile`, which reads the atomic.
 
 **The northstar chunk scales with the tile** to stay 50 world metres — 25 tiles at 2 m, 50 at
-1 m. With the chunk pinned at 25 tiles a 1 m build explodes from ~14 s to ~140 s.
+1 m. With the chunk pinned at 25 tiles a 1 m build took ten times longer (~14 s → ~140 s,
+measured on the 5600 × 3700 map of that time).
 
-Cost of 1 m, measured: northstar build ~14 s vs ~11 s, HPA* ×1.7 CPU, +1.6 GB RSS. A change
-to the navtile size is simulation input — it breaks a replay in flight (`determinism`).
+Cost of 1 m, measured on that same map: northstar build ~1.3× longer (~14 s vs ~11 s),
+HPA* ×1.7 CPU, +1.6 GB RSS; the build's absolute numbers and their history — the module
+doc of `northstar.rs`. A change to the navtile size is simulation input — it breaks a
+replay in flight (`determinism`).
 
 **`src/grid.rs` owns the navtile**,
 and that is its whole reason for existing as a module of its own: the atomic and its
@@ -162,8 +165,11 @@ inserts the resource instead.
 - **NorthstarGrid** (`navigation/northstar.rs`) — `bevy_northstar` `OrdinalGrid` built
   once from the final navmesh, wrapped in `Arc`, called directly from async tasks — the
   crate's plugin is not used. Until it lands the dispatcher **falls back to flat A\*** for
-  HPA*/Theta* requests; **only the selected backend is built** (`northstar_wanted`). Where
-  the build starts and why — `references/pipeline.md`.
+  HPA*/Theta* requests; **only the selected backend is built** (`northstar_wanted`). **An
+  answer starts with the request's start tile** — the crate drops it for HPA*, and the
+  acceptance stands on it — and **the hierarchy is built with no neighbor filter**, so it
+  crosses corner-touching chains the flat grid treats as walls. The crate traps, the
+  recorded divergence and where the build starts and why — `references/pipeline.md`.
 - **Backend** (`navigation/backend.rs`) — the active backend as one cloneable `Send`
   snapshot: the grid navmesh Arc + the selected algorithm (+ the northstar hierarchy once
   built), or the polymesh overriding all of it. One snapshot, two writers (live re-takes

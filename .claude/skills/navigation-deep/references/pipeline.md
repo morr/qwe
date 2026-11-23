@@ -11,8 +11,9 @@ navigation-deep skill; the terms in `CONTEXT.md` (Navigation, Determinism).
 **PathfindingAlgorithm** (`navigation/astar.rs`) — runtime-switchable resource, cycled
 in the Nav tab (the six algorithms are a `CONTEXT.md` term). IDA*/IDDFS are deliberately
 excluded (never finish on open grids).
-**Default is HPA\*** — 28× cheaper than flat A* per `examples/bench/pathfinding_bench.rs`
-(1.3 ms vs 36.4 ms mean, 15 ms vs 450 ms worst case) at ~10% longer paths. The other
+**Default is HPA\*** — 45× cheaper than flat A* per `examples/bench/pathfinding_bench.rs`
+(10.1 ms vs 458 ms mean, 365 ms vs 4.8 s worst case, 2026-11-23 on the current Tula map;
+28× on the 5600 × 3700 map before it) at ~15% longer paths. The other
 five stay switchable for comparison.
 
 ## NorthstarGrid
@@ -21,16 +22,17 @@ five stay switchable for comparison.
 once from the final navmesh (after pruning; chunk sized to 50 world metres — see the
 navtile-size section of the skill), wrapped in `Arc`, called directly
 from async tasks — the crate's plugin is not used. Long paths cost ~0.5 ms vs ~40 ms for
-flat A*. The build is seconds and grows with the map, so it runs as an
+flat A*. The build is tens of seconds and grows with the map (the numbers and their
+history are in the module doc of `northstar.rs`), so it runs as an
 `AsyncComputeTaskPool` task started on `OnEnter(PlayPhase::Live)` **in the live branch
 only** (the deterministic branch starts it earlier — next section) and picked up by
 `poll_northstar_build`; until it lands, `NorthstarGrid::get()` is `None` and the
 dispatcher **falls back to flat A\*** for HPA*/Theta* requests. Doing it inline cost
-11 s of frozen loader screen; starting it before the warmup ends made it fight the
-warmup's A* for cores through rayon (85 ms per search instead of 36 ms).
+11 s of frozen loader screen (on the map of that time); starting it before the warmup ends
+made it fight the warmup's A* for cores through rayon (85 ms per search instead of 36 ms).
 **Only the selected backend is built** (`northstar_wanted`): the hierarchy serves
 HPA*/Theta* on the grid, so with `Algo: Polymesh`, or with a flat grid algorithm
-picked, those seconds of every core are skipped entirely. Switching `Algo` back to
+picked, that build of every core is skipped entirely. Switching `Algo` back to
 `Navmesh` or cycling `Pathfind` to HPA* starts the build right then — the same lazy
 shape the polygonal mesh has, run from `Update` on a resource change.
 **Both ends of a request are bounds-checked against the grid's own dimensions**
@@ -39,6 +41,24 @@ silent `None` — same verdict the grid gives ("out-of-bounds reads impassable")
 it the crate logs a `log::error!` per call, at dispatcher rate, for a pawn past the map
 edge. The size is asked of the grid, not of `grid::grid_size()`: the grid is built
 from a navmesh snapshot and outlives a navtile-size change.
+**An answer from the hierarchy starts with the request's start tile, like every other
+grid answer** — the acceptance stands on it (`accept_answer`: one element is "already
+there", several drop the first). The crate does not keep that contract itself: its
+`pathfind` pops the start off every HPA* branch (`refined` included) and Theta* keeps
+it, so `find_path_northstar` puts the start back whenever the first tile is not it.
+Without that the HPA* answer began with the route's *second* tile — the refined path
+is tile by tile, Bresenham lines between the hierarchy's nodes — so on every answer
+the acceptance dropped one tile too many and the pawn headed for the second tile of
+its route, cutting the route's first turn; an answer to an adjacent tile,
+`[start, goal]`, was left as `[goal]` and read as an arrival without a step (1000 of
+1000 bench answers began without the start tile, обзор №73). Start == goal answers
+`[start]`, the flat answer. Pinned in `northstar.rs` and across the `grid_path`
+branch table in `backend.rs`.
+**The hierarchy is built with no neighbor filter** (`grid_settings`), so unlike the
+flat grid it crosses a chain of corner-touching tiles — a recorded divergence, not a
+norm (`the_hierarchy_crosses_a_corner_touching_chain_the_flat_grid_treats_as_a_wall`).
+The crate's `filter::NoCornerClipping` is the flat grid's own rule and closes it; the
+price of the whole build and of every search is the deepening plan's open number.
 
 ## Where the build starts is a mode branch — three registrations of `start_northstar_build`
 
@@ -64,6 +84,14 @@ would go on flat A* while the panel reads HPA*. The polymesh needs no such branc
 (`WorldInitSet::Spawn`), before the warmup in both modes. A restart on R crosses no
 `OnEnter` (`restart.rs::on_restart`), so no site fires and the previous run's hierarchy is
 reused — that is the determinism skill's "restarts do not pay it".
+**Two holes around the frozen backend, recorded in the deepening plan (обзор №73), not
+fixed.**
+The R key is gated on `Playing` alone, not on `Live`, so it works on the loader screen: a
+restart while the deterministic build is still running fires `WorldStarted` before
+`poll_northstar_build` has landed the grid, and the frozen `Backend` carries
+`hierarchy: None` for the whole run while the panel reads HPA*. And the lazy `Update` site
+sits in no mode set: under determinism a panel switch starts a build the frozen run never
+reads (`Algo` and `Pathfind` are not dimmed there, unlike `Separation`).
 
 ## Backend — one snapshot, two writers, one collector
 
