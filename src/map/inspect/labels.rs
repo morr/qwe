@@ -162,6 +162,11 @@ fn road_label(road: &RoadLine) -> String {
         RoadClass::Street => {
             format!("road {} {:.1} m", highway_label(road.highway), road.width)
         }
+        // у пеших путей имя класса совпадает с классом дороги: «path», а не
+        // «path path»
+        RoadClass::Alley if road.highway == Highway::Path => {
+            format!("path {:.1} m", road.width)
+        }
         RoadClass::Alley => format!("path {} {:.1} m", highway_label(road.highway), road.width),
     };
     if road.bridge {

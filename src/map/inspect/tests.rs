@@ -1,7 +1,8 @@
 use super::*;
 use crate::map::osm::fixture;
 use crate::map::osm::model::{
-    AreaKind, AreaLayer, KerbParking, RoadArea, RoadAreaKind, TreeSet, WaterKind, WaterLine,
+    AreaKind, AreaLayer, KerbParking, RoadArea, RoadAreaKind, RoadClass, TreeSet, WaterKind,
+    WaterLine,
 };
 use crate::map::roads::{DrawnPiece, PieceKind};
 use crate::map::z::Z_ROAD_VERGE_YARD;
@@ -95,6 +96,58 @@ fn a_bridge_road_answers_as_a_bridge_layer() {
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].label, "road residential 8.0 m, bridge, sidewalks");
     assert_eq!(hits[0].z, Z_BRIDGE);
+}
+
+#[test]
+fn a_bridge_rail_answers_as_a_bridge_layer() {
+    // путь на путепроводе рисуется поверх настила слоя мостов
+    // (`rail.rs`: Z_RAIL_BRIDGE против наземного Z_RAIL); трамвай рисуется
+    // одним слоем и на мосту тоже (`map/tram.rs` без ветвления)
+    let ground = fixture::rail(vec![Vec2::new(0.0, 0.0), Vec2::new(50.0, 0.0)], 3.0);
+    let mut deck = fixture::rail(vec![Vec2::new(0.0, 60.0), Vec2::new(50.0, 60.0)], 3.0);
+    deck.bridge = true;
+    let mut tram = fixture::rail(vec![Vec2::new(0.0, 120.0), Vec2::new(50.0, 120.0)], 3.0);
+    tram.kind = RailKind::Tram;
+    tram.bridge = true;
+    let map = MapData {
+        rails: vec![ground, deck, tram],
+        ..default()
+    };
+    let index = InspectIndex::rebuild(&map, &RoadShape::default(), &[]);
+
+    let hits = query(&index, &map, 0.0, Vec2::new(25.0, 0.0));
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].z, Z_RAIL);
+
+    let hits = query(&index, &map, 0.0, Vec2::new(25.0, 60.0));
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].label, "rail");
+    assert_eq!(hits[0].z, Z_RAIL_BRIDGE);
+
+    let hits = query(&index, &map, 0.0, Vec2::new(25.0, 120.0));
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].label, "tram");
+    assert_eq!(hits[0].z, Z_TRAM);
+}
+
+#[test]
+fn a_footway_path_is_not_named_twice() {
+    // у пеших путей имя класса `highway` совпадает с классом дороги:
+    // подпись «path 3.0 m», а не «path path 3.0 m»
+    let way = RoadLine {
+        class: RoadClass::Alley,
+        highway: Highway::Path,
+        sidewalks: [SidewalkSide::None; 2],
+        ..fixture::street(vec![Vec2::new(0.0, 0.0), Vec2::new(50.0, 0.0)], 3.0)
+    };
+    let map = MapData {
+        roads: vec![way],
+        ..default()
+    };
+    let index = InspectIndex::rebuild(&map, &RoadShape::default(), &[]);
+    let hits = query(&index, &map, 0.0, Vec2::new(25.0, 0.0));
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].label, "path 3.0 m");
 }
 
 #[test]

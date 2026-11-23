@@ -13,7 +13,10 @@
 //! пересобирает меши и стоит сотни миллисекунд. Индекс же говорит про
 //! **признаки**: то, что выводится из `MapData`, — без краски, теней и
 //! зум-LOD; дерево видно по порогу плотности ([`TreeSet::visible_count`]),
-//! а труб-кульвертов, которые не рисуются, в ответе нет вовсе.
+//! а труб-кульвертов, которые не рисуются, в ответе нет вовсе. Чистый декор
+//! рисунка — припаркованные машины и вагоны, настил переезда, газон кольца,
+//! lot-тротуары стоянок — находок не имеет: признаками служат несущие их
+//! фичи (дорога, стоянка, остров), а точный арбитр рисунка — проба слоёв.
 //!
 //! Полоса тротуара, дорисованная дорогой, мерится от OSM-осевой по закону
 //! ширины модели — и потому отвечает за **модель**, а не за рисунок:
@@ -48,8 +51,8 @@ use crate::map::osm::model::{
 use crate::map::roads::pockets::kerb_pocket_outlines;
 use crate::map::roads::{DrawnPiece, DrawnPieces, PieceKind};
 use crate::map::z::{
-    Z_FENCE, Z_INDUSTRY, Z_PIPE, Z_RAIL, Z_ROAD, Z_ROAD_ISLANDS, Z_ROAD_PAINT, Z_SIDEWALK, Z_TRAM,
-    Z_TREE, Z_WALL, Z_WATERWAY,
+    Z_FENCE, Z_INDUSTRY, Z_PIPE, Z_RAIL, Z_RAIL_BRIDGE, Z_ROAD, Z_ROAD_ISLANDS, Z_ROAD_PAINT,
+    Z_SIDEWALK, Z_TRAM, Z_TREE, Z_WALL, Z_WATERWAY,
 };
 
 #[cfg(test)]
@@ -469,7 +472,12 @@ impl InspectIndex {
                 LineSrc::Rail(i) => map.rails.get(i as usize).and_then(|rail| {
                     (distance_to_polyline(at, &rail.points) <= rail.width / 2.0).then(|| Hit {
                         z: match rail.kind {
+                            // трамвай рисуется одним слоем и на мосту тоже
+                            // (`map/tram.rs` кладёт Z_TRAM без ветвления)
                             RailKind::Tram => Z_TRAM,
+                            // путь на путепроводе рисуется поверх настила слоя
+                            // мостов (`rail.rs`: Z_RAIL_BRIDGE против Z_RAIL)
+                            _ if rail.bridge => Z_RAIL_BRIDGE,
                             _ => Z_RAIL,
                         },
                         label: match rail.kind {
