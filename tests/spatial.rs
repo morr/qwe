@@ -246,6 +246,52 @@ fn a_candidate_exactly_at_the_radius_is_in_range() {
     );
 }
 
+/// Радиус шире ячейки — уже не три на три: успокоение беглеца ищет демонов
+/// вплоть до ×1,5 радиуса паники (90 м), и кольцо ячеек обязано вырасти само.
+/// Спрашивающий у правого края своей ячейки, кандидат за два края — 66 м,
+/// то есть дальше ячейки, но в пределах радиуса. Сузь обход до трёх на три —
+/// беглец успокаивается при демоне в 61–90 м и паникует снова.
+#[test]
+fn a_radius_wider_than_a_cell_walks_the_second_ring() {
+    let entries = [(entity(7), Vec2::new(125.0, 5.0))];
+    let mut grid = SpatialGrid::<Demon>::default();
+    grid.rebuild(entries.into_iter());
+    let pos = positions(&entries);
+    let asking = Vec2::new(59.0, 5.0);
+
+    let found = grid.nearest_in_range(asking, CELL_SIZE * 1.5, |e| pos.get(&e).copied(), order);
+    assert_eq!(
+        found.map(|(found, _)| found),
+        Some(entity(7)),
+        "кандидат во втором кольце выпал из поиска"
+    );
+    // контроль расстояния: радиусом в одну ячейку тот же кандидат не достаётся
+    assert!(
+        grid.nearest_in_range(asking, CELL_SIZE, |e| pos.get(&e).copied(), order)
+            .is_none()
+    );
+}
+
+/// Грубая проверка занятости ходит тем же кольцом, что и точный поиск: на ней
+/// стоит успокоение между тиками решения, и «пусто» обязано означать, что во
+/// втором кольце тоже никого нет.
+#[test]
+fn the_coarse_probe_sees_the_second_ring_too() {
+    let entries = [(entity(7), Vec2::new(125.0, 5.0))];
+    let mut grid = SpatialGrid::<Demon>::default();
+    grid.rebuild(entries.into_iter());
+    let asking = Vec2::new(59.0, 5.0);
+
+    assert!(
+        grid.any_in_cells_around(asking, CELL_SIZE * 1.5),
+        "занятая ячейка во втором кольце не замечена"
+    );
+    assert!(
+        !grid.any_in_cells_around(asking, CELL_SIZE),
+        "радиус в одну ячейку второго кольца не достаёт"
+    );
+}
+
 /// `moved` — это переезд, а не upsert: внутри ячейки он не трогает таблицу
 /// вовсе, через границу — переставляет.
 #[test]
