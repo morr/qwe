@@ -148,6 +148,21 @@ pub(crate) fn on_world_started(
     field.chunks.clear();
 }
 
+/// Ключи кольца догоняющего прохода: не-грязные клетки, **отсортированные** по
+/// `(y, x)` — соседние клетки карты идут в соседних шагах кольца, и бюджет
+/// кадра ложится на кусок карты, а не на порядок хеш-таблицы (см.
+/// [`REBUILD_QUAD_BUDGET`]).
+fn ring_keys(field: &FarCrowdField, fresh: &HashSet<IVec2>) -> Vec<IVec2> {
+    let mut keys: Vec<IVec2> = field
+        .chunks
+        .iter()
+        .filter(|(key, chunk)| !chunk.dirty && !fresh.contains(*key))
+        .map(|(key, _)| *key)
+        .collect();
+    keys.sort_by_key(|key: &IVec2| (key.y, key.x));
+    keys
+}
+
 /// Перестройка чанков дальнего слоя — бюджетом [`REBUILD_QUAD_BUDGET`] точек
 /// за кадр: сначала грязные (членство менялось — точка обязана появиться или
 /// уехать сейчас), остаток — кольцу по остальным чанкам (свежие грязные
@@ -191,16 +206,11 @@ pub(crate) fn rebuild_far_chunks(
         budget = budget.saturating_sub(written);
     }
 
-    // кольцо: не-грязные чанки — по стабильному порядку ключей, курсор в
-    // `Local`; за `члены всего слоя / остаток бюджета` кадров все дальние
-    // успевают
+    // кольцо: не-грязные чанки по отсортированным ключам (см. `ring_keys`),
+    // курсор в `Local`; за `члены всего слоя / остаток бюджета` кадров все
+    // дальние успевают
     if budget > 0 {
-        let keys: Vec<IVec2> = field
-            .chunks
-            .iter()
-            .filter(|(key, chunk)| !chunk.dirty && !fresh.contains(*key))
-            .map(|(key, _)| *key)
-            .collect();
+        let keys = ring_keys(&field, &fresh);
         let total = keys.len();
         if total == 0 {
             return;
@@ -517,6 +527,36 @@ mod tests {
             "опустевшие чанки убраны"
         );
         assert_eq!(chunk_count(&mut app), 0);
+    }
+
+    /// Кольцо догоняющего прохода идёт по отсортированным клеткам: бюджет
+    /// кадра ложится на кусок карты (соседние клетки — соседние шаги кольца,
+    /// см. `REBUILD_QUAD_BUDGET`), а не на порядок хеш-таблицы.
+    #[test]
+    fn the_ring_walks_sorted_cell_keys() {
+        let mut app = field_app();
+        // пять дальних в клетках не по порядку сортировки; перестройка делает
+        // все клетки чистыми, кольцо обязано вернуть их по (y, x)
+        for (i, (x, y)) in [(2, 0), (0, 1), (1, 1), (0, 0), (1, 0)]
+            .into_iter()
+            .enumerate()
+        {
+            let _ = far_pawn(
+                &mut app,
+                i as u32,
+                Vec2::new(x as f32 * FAR_CHUNK + 10.0, y as f32 * FAR_CHUNK + 10.0),
+            );
+        }
+        rebuild(&mut app);
+
+        let field = app.world().resource::<FarCrowdField>();
+        let keys = ring_keys(field, &HashSet::default());
+        assert_eq!(keys.len(), 5, "все чистые клетки в кольце");
+        assert!(
+            keys.windows(2)
+                .all(|pair| (pair[0].y, pair[0].x) < (pair[1].y, pair[1].x)),
+            "кольцо по отсортированным ключам, а не {keys:?}"
+        );
     }
 
     #[test]
