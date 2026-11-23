@@ -35,9 +35,9 @@ pub(crate) use self::pathfinding::wanderers_dispatched_at_zoom;
 pub use self::separation::{
     SEPARATION_LEFT_SHARE, SEPARATION_LEFT_SHARE_MAX, SEPARATION_LEFT_SHARE_MIN,
     SEPARATION_LEFT_SHARE_STEP, SEPARATION_PASS_SQUEEZE, SEPARATION_PASS_SQUEEZE_MAX,
-    SEPARATION_PASS_SQUEEZE_MIN, SEPARATION_PASS_SQUEEZE_STEP, SeparationExperiments,
-    SeparationHolds, SeparationLab, SeparationStats, SeparationSteer, SeparationStyle,
-    demon_radius, separation_allowed_by_mode, separation_cell, separation_runs,
+    SEPARATION_PASS_SQUEEZE_MIN, SEPARATION_PASS_SQUEEZE_STEP, SeparationBlock,
+    SeparationExperiments, SeparationHolds, SeparationLab, SeparationStats, SeparationSteer,
+    SeparationStyle, demon_radius, separation_allowed_by_mode, separation_cell, separation_runs,
 };
 pub use self::step::{StepModifiers, StepOutcome, StepTuning, step_along_path};
 pub use self::systems::{DrawMovePaths, MOVEPATH_ARROW_TIP, MOVEPATH_COLOR};
