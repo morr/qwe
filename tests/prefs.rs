@@ -305,7 +305,10 @@ fn a_save_clamps_oversized_integers_in_every_settings_group() {
         "HordeStyle.wave_len",
         "WorldSeed.0",
     ] {
-        assert!(planted.iter().any(|p| p == leaf), "{leaf:?} не заложен: {planted:?}");
+        assert!(
+            planted.iter().any(|p| p == leaf),
+            "{leaf:?} не заложен: {planted:?}"
+        );
     }
 
     app.world_mut().clear_trackers();
@@ -321,7 +324,10 @@ fn a_save_clamps_oversized_integers_in_every_settings_group() {
     // ручки — новое значение
     let marked = settings_groups_changed_since(app.world(), since);
     for group in ["DemonStyle", "HordeStyle", "WorldSeed"] {
-        assert!(marked.iter().any(|m| m == group), "{group} не отмечен: {marked:?}");
+        assert!(
+            marked.iter().any(|m| m == group),
+            "{group} не отмечен: {marked:?}"
+        );
     }
     let leftover = settings_unsigned_leaves(app.world_mut(), false);
     assert!(
@@ -348,5 +354,8 @@ fn a_save_with_nothing_to_clamp_marks_no_group() {
     // правкой метит группы сам. Без этого пустой список выше ничего не держит
     settings_unsigned_leaves(app.world_mut(), false);
     let marked = settings_groups_changed_since(app.world(), since);
-    assert!(marked.iter().any(|m| m == "WorldSeed"), "нет ни одной отметки: {marked:?}");
+    assert!(
+        marked.iter().any(|m| m == "WorldSeed"),
+        "нет ни одной отметки: {marked:?}"
+    );
 }

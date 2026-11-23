@@ -333,17 +333,17 @@ fn visit_fields<P: ?Sized>(
 }
 
 fn clamp_leaf(leaf: &mut dyn PartialReflect) -> bool {
-    if let Some(value) = leaf.try_downcast_mut::<u64>() {
-        if *value > TOML_INT_MAX {
-            *value = TOML_INT_MAX;
-            return true;
-        }
+    if let Some(value) = leaf.try_downcast_mut::<u64>()
+        && *value > TOML_INT_MAX
+    {
+        *value = TOML_INT_MAX;
+        return true;
     }
-    if let Some(value) = leaf.try_downcast_mut::<usize>() {
-        if *value > TOML_INT_MAX as usize {
-            *value = TOML_INT_MAX as usize;
-            return true;
-        }
+    if let Some(value) = leaf.try_downcast_mut::<usize>()
+        && *value > TOML_INT_MAX as usize
+    {
+        *value = TOML_INT_MAX as usize;
+        return true;
     }
     false
 }
@@ -619,7 +619,9 @@ mod tests {
             .register_type::<WorldSeed>()
             .init_resource::<HordeStyle>()
             .register_type::<HordeStyle>()
-            .add_plugins(SettingsPlugin::new(temp.path().to_str().expect("путь в UTF-8")));
+            .add_plugins(SettingsPlugin::new(
+                temp.path().to_str().expect("путь в UTF-8"),
+            ));
         // граница тика, которую в игре даёт кадр: плагин помнит тик своей
         // сборки как последнюю запись, и правка тем же тиком записи не ведёт
         app.world_mut().increment_change_tick();
