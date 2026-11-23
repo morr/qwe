@@ -182,9 +182,21 @@ fn lay_down(body: &mut EntityWorldMut, pose: CorpsePose, at: Vec2) {
         sprite.flip_x = pose.flip;
         set_glyph(&mut sprite, pose.glyph);
     }
+    let laid = Transform {
+        translation: at.extend(Z_CORPSE),
+        rotation: Quat::from_rotation_z(pose.heading),
+        ..Default::default()
+    };
     if let Some(mut transform) = body.get_mut::<Transform>() {
-        transform.translation = at.extend(Z_CORPSE);
-        transform.rotation = Quat::from_rotation_z(pose.heading);
+        *transform = laid;
+    }
+    // Глобальный — тем же ходом, а не из `PostUpdate`: на городском зуме пекарь
+    // (`silhouette::bake`) берёт тело в кадр убийства, раньше, чем propagation
+    // пересчитает глобальный из только что записанного `Transform`. У дальней
+    // пешки он простоял с demote (у пошедшей сразу в дальние — со спавна) на
+    // другой точке, и тело пеклось не там, где умерло.
+    if let Some(mut global) = body.get_mut::<GlobalTransform>() {
+        *global = GlobalTransform::from(laid);
     }
 }
 
@@ -836,6 +848,10 @@ mod tests {
     /// `Transform` дальнего заморожен с demote — xy тела обязан прийти из
     /// места смерти, иначе труп и запечённые квады ложатся на точку demote,
     /// за метры от места убийства.
+    ///
+    /// Оба трансформа, и сразу: пекарь (`silhouette::bake`) читает глобальный в
+    /// кадр убийства — на городском зуме тело встаёт в очередь первым же кадром,
+    /// до `PostUpdate`, который пересчитал бы глобальный из локального.
     #[test]
     fn a_far_pawn_dies_where_it_was_killed() {
         let mut app = App::new();
@@ -845,6 +861,8 @@ mod tests {
             .world_mut()
             .spawn((
                 Transform::from_translation(demoted_at.extend(0.0)),
+                // каким его оставил последний `PostUpdate`
+                GlobalTransform::from_translation(demoted_at.extend(0.0)),
                 Human,
                 SimPosition(killed_at),
                 crate::rng::PawnId(3),
@@ -868,6 +886,21 @@ mod tests {
             "труп встаёт на место смерти, а не на точку demote"
         );
         assert_eq!(transform.translation.z, Z_CORPSE);
+
+        // глобальный — с первого же кадра: пекарь берёт из него и место, и
+        // поворот (от него ставится пятно крови), не дожидаясь `PostUpdate`
+        let global = app.world().get::<GlobalTransform>(human).unwrap();
+        assert_eq!(
+            global.translation().truncate(),
+            killed_at,
+            "глобальный трансформ тела — место смерти, а не точка demote"
+        );
+        assert_eq!(global.translation().z, Z_CORPSE);
+        let heading = Quat::from_rotation_z(corpse_pose(human).heading);
+        assert!(
+            global.rotation().angle_between(heading) < 1e-4,
+            "глобальный несёт поворот позы"
+        );
     }
 
     /// Тело лежит: вид трупа принадлежит человеку, и переход его меняет —

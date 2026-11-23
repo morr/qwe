@@ -568,6 +568,69 @@ mod tests {
         );
     }
 
+    /// Труп, убитый на городском зуме, печётся тем же кадром, что и убит:
+    /// лужа встаёт полной разом, `spread_blood` ставит тело в очередь, и
+    /// пекарь берёт его ещё до `PostUpdate` — раньше, чем глобальный трансформ
+    /// пересчитается из только что записанного `Transform`. Пекарь обязан
+    /// увидеть место смерти, а не точку, на которой глобальный трансформ
+    /// дальней пешки простоял с demote (со спавна — у пошедших сразу в дальние).
+    #[test]
+    fn a_corpse_baked_on_its_death_frame_lands_where_it_died() {
+        let mut app = bake_app();
+        app.add_systems(
+            Update,
+            (crate::human::spread_blood, bake_queued_corpses).chain(),
+        )
+        .insert_resource(Time::<()>::default())
+        .insert_resource(crate::silhouette::FreshSilhouettes::default())
+        .insert_resource(Viewport {
+            centre: Vec2::ZERO,
+            half_extent: Vec2::splat(400.0),
+            // городской зум: анимации нет, тело в очереди первым кадром
+            zoom: 0.8,
+        });
+        let demoted_at = Vec2::new(100.0, 100.0);
+        let killed_at = Vec2::new(150.0, 90.0);
+        // дальняя пешка, какой её оставил последний `PostUpdate`: локальный и
+        // глобальный трансформы заморожены на точке demote
+        let pawn = app
+            .world_mut()
+            .spawn((
+                Sprite::default(),
+                Transform::from_translation(demoted_at.extend(0.0)),
+                GlobalTransform::from_translation(demoted_at.extend(0.0)),
+                crate::human::Human,
+                Attire(Color::hsl(200.0, 0.4, 0.5)),
+                crate::movement::SimPosition(killed_at),
+                crate::human::FarTag,
+            ))
+            .id();
+        app.world_mut().commands().queue(move |world: &mut World| {
+            let mut commands = world.commands();
+            crate::human::to_corpse(&mut commands, &Silhouettes::default(), pawn, killed_at);
+        });
+        app.world_mut().flush();
+
+        // кадр убийства: `Update` с растеканием и пекарем; propagation живёт в
+        // `PostUpdate`, во дворе без `TransformPlugin` его нет вовсе
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs_f32(0.05));
+        app.update();
+
+        let field = app.world().resource::<CorpseField>();
+        let quads: Vec<_> = field
+            .chunks
+            .values()
+            .flat_map(|chunk| chunk.quads.iter())
+            .collect();
+        let body = quads
+            .iter()
+            .find(|quad| quad.cell as usize == crate::human::corpse_pose(pawn).glyph.cell())
+            .expect("тело запечено");
+        assert_eq!(body.centre, killed_at, "запечённое тело — на месте смерти");
+    }
+
     /// Меш чанка: 4 вершины и 6 индексов на квад; угол поворачивает вершины,
     /// зеркало меняет только uv — намотка не зависит ни от того, ни от другого.
     #[test]
