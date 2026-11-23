@@ -120,12 +120,8 @@ fn a_route_crosses_chunks_through_the_only_gap_in_a_wall() {
     );
 }
 
-/// `contains` строже сеточной проходимости: контур раздут на радиус
-/// агента, и точка вплотную к стене на меше уже внутри препятствия. На
-/// этом держится спасение застрявших после постройки меша с новым
-/// радиусом — сетка о нём ничего не знает.
-#[test]
-fn a_point_within_the_agent_radius_of_a_wall_is_off_the_mesh() {
+/// Один дом посреди пустой карты — вокруг него только свободная земля.
+fn lone_building_input() -> PolymeshInput {
     let building = fixture::building(
         vec![
             Vec2::new(1000.0, 1000.0),
@@ -135,15 +131,26 @@ fn a_point_within_the_agent_radius_of_a_wall_is_off_the_mesh() {
         ],
         vec![],
     );
-    let input = PolymeshInput {
+    PolymeshInput {
         buildings: vec![building],
         water: vec![],
         water_lines: vec![],
         walls: vec![],
         fences: vec![],
         roads: vec![],
-    };
-    let mesh = build_polymesh(&input, 1.0, None, None).expect("not cancelled");
+    }
+}
+
+/// `contains` строже сеточной проходимости — но только пока радиус агента
+/// больше допуска локализации (0.25 м): точка вплотную к стене на меше уже
+/// внутри препятствия. Поэтому радиус здесь 1.0, а не игровой дефолт: при
+/// 0.2 раздувание целиком помещается в кольцо проб, и `contains` пропускает
+/// точку у самой стены (следующий тест). На строгости держится спасение
+/// застрявших после постройки меша с новым радиусом — сетка о нём ничего
+/// не знает.
+#[test]
+fn a_point_within_the_agent_radius_of_a_wall_is_off_the_mesh() {
+    let mesh = build_polymesh(&lone_building_input(), 1.0, None, None).expect("not cancelled");
 
     assert!(!mesh.contains(Vec2::new(1020.0, 1015.0)), "внутри дома");
     assert!(
@@ -153,6 +160,29 @@ fn a_point_within_the_agent_radius_of_a_wall_is_off_the_mesh() {
     assert!(
         mesh.contains(Vec2::new(995.0, 1015.0)),
         "в пяти метрах от стены"
+    );
+}
+
+/// Обратная сторона того же: при игровом дефолте 0.2 раздувание целиком
+/// помещается в кольцо проб локализации (`POLYMESH_SEARCH_DELTA`, 0.25 м).
+/// Точка в дециметре от стены для `contains` «на меше», хотя точно она внутри
+/// раздутого контура — `allows` её пропускает. На Туле таких свободных по
+/// сетке центров тайлов около 57,5 тысяч. Пин держит известное послабление, чтобы
+/// правка `contains` не прошла молча: вместе с ней правятся её док-комментарий
+/// и заметка о допуске в `references/polymesh.md`.
+#[test]
+fn an_inflation_below_the_localisation_ring_is_invisible_to_contains() {
+    let mesh = build_polymesh(&lone_building_input(), 0.2, None, None).expect("not cancelled");
+
+    let near_wall = Vec2::new(999.9, 1015.0);
+    assert!(
+        mesh.contains(near_wall),
+        "0.1 м от стены при радиусе 0.2 — в допуске"
+    );
+    assert_ne!(
+        mesh.nearest_free_point(near_wall),
+        Some(near_wall),
+        "а точно — вне меша"
     );
 }
 
