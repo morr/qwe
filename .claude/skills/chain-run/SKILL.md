@@ -102,6 +102,12 @@ in this contract is the №48 death: the parent ran on the individual plan, the 
 said `account:zai-start-plan/GLM-5.3-Flash`, and the child was born onto an exhausted
 quota.
 
+**When `current_session` answers with a list of open sessions instead of a pin**, take
+the pin from `ListModels`: its `[current]` row is this session's live model — the same
+fact read by another tool — copied verbatim. The list is the routine case: a parent
+stays open after its spawn, so the directory holds two main sessions, and `get_session`
+prints no pin either.
+
 ```
 spawn_session(
   prompt: "Ты — звено №{N+1} непрерывного прогона qwe. Загрузи скилл chain-run
