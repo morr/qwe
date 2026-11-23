@@ -204,7 +204,10 @@ A **joining** non-bridge
 road opens the curb its panel covers — joining means sharing a node with a
 bridge way (`JOIN_EPSILON`); a riverbank path passing a few metres *under*
 the span shares no node and opens nothing. The rule only refrains from
-blocking, it never re-opens — an open-by-rule tile over water stays water. After the
+blocking, it never re-opens — an open-by-rule tile over water stays water. **The
+polygonal mesh mirrors it the same way** (since №76): the road's ribbon is subtracted
+from the curb bands only, never from the union of obstacles — as a global carve it let
+the road walk through water and houses that the grid blocks here. After the
 deck carves a **seal pass** restores the barrier where it degraded to corner contact:
 on a narrow (alley-width) bridge the deck centerline chain claims the same tiles as
 the way's own curb chain, the deck wins, and the curb continues one column over —
@@ -267,6 +270,14 @@ let pawns in. Pinned by `polymesh/tests.rs::an_arch_opens_a_barrier_lying_right_
 `cargo run --example navmesh_probe -- tula <x,y> …` prints, for points and for every
 passage near the first one, the grid and mesh verdicts side by side.
 How the arch is drawn (the wall opening) is in the osm-map skill.
+
+**Walls and watercourses end the same way in both fills** (since №76). The grid's
+`set_polyline` is a capsule for both, so the mesh extends a wall ribbon's two ends by half
+a width and a watercourse's free ends the same way (`water_line_caps` — an end at a
+culvert mouth stays cut flat in both fills). Butt-cut, the mesh left dry ground past a
+stream's end (7 tiles in Tula) and a gap past a wall's end (5 tiles in Moscow) where the
+grid blocked. Pinned by `parity_tests::a_free_stream_end_is_round_in_both_fills` and the
+«торец стены» probe of `a_wall_blocks_in_both_fills`.
 
 ## Row-span rasterization
 

@@ -253,7 +253,15 @@ inserts the resource instead.
   index into a `Vec`), and — while the polygonal mesh is built and selected —
   `PolymeshBuild::contains`, a layer-hinted `point_in_mesh`. The mesh is the stricter of
   the two: its contours are inflated by the agent radius, so a tile that clears the grid
-  can be inside an obstacle on the mesh. The same `allows` re-checks the mesh snap of the
+  can be inside an obstacle on the mesh. **But `contains` is exact only up to the first
+  localisation ring**: polyanya locates the point or one of eight probes
+  `POLYMESH_SEARCH_DELTA` (0.25 m) around it, and a radius below that — the default
+  0.2 m — is invisible to `allows` (measured on Tula: about 57.5 thousand grid-free tile
+  centres are exactly off-mesh and pass). The strictness is real only for a radius above
+  the ring; the exact answer is `nearest_free_point(p) == Some(p)`. Pinned as a known
+  concession by
+  `polymesh::tests::an_inflation_below_the_localisation_ring_is_invisible_to_contains`.
+  The same `allows` re-checks the mesh snap of the
   step above (`.filter(|&snapped| self.allows(snapped))`), so the mesh answer can never
   land a pawn on a blocked grid tile — a failed re-check falls through to the ring search.
   `rescue_trapped_entities` is the same check as a full pass, and it runs in exactly one

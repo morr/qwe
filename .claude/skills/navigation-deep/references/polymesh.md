@@ -17,9 +17,9 @@ to *off* for the same reason — a default-on backend with a default-on overlay 
 bury a fresh install's city under polygon edges.
 
 The whole fill order collapses into one boolean (`i_overlay` difference):
-union(water ∪ non-culvert waterways ∪ bridge curb bands ∪ buildings ∪ walls) −
-union(bridge decks ∪ joining roads ∪ passages), where the areas' **ring holes enter the
-union reversed** so NonZero subtracts them, clipped to the map rect **outset** by
+union(water ∪ non-culvert waterways ∪ buildings ∪ walls ∪ fences minus their road gaps ∪
+**outer** bridge curb bands) − union(bridge decks ∪ passages), where the areas' **ring holes
+enter the union reversed** so NonZero subtracts them, clipped to the map rect **outset** by
 `POLYMESH_MAP_EDGE_MARGIN` (an inset clip would leave a walkable sliver along the map edge for
 paths to sneak around a river; polyanya digests obstacles crossing its outer boundary —
 triangle walkability is a point-in-polygon test of the triangle center), then CDT via
@@ -86,14 +86,49 @@ raster corner-contact only), and deck/joining widths are **verbatim** — the gr
 The deck carve is therefore `road.width`, the carriageway the renderer fills, *not*
 the grid's `width + curb`: the curb bands live just outside the carriageway, and a
 carve that wide eats half of the barrier it is supposed to leave standing.
+Not a delta: **walls and watercourses end round like the grid's capsule** (since №76 —
+`extended_ends`, the same helper the arch uses; a butt-cut ribbon left 7 tiles of dry
+ground past Tula's stream ends and 5 of passage past Moscow's wall ends).
 The grid's **outward probe** — which curb tile is an interior seam of a composite
 bridge (carriageway + its sidewalk way, mapped separately) and which is the outer
 boundary — becomes the direct vector statement of the same intent: each way's curb
-bands **minus the full drawn bands of every other bridge way**. Covered by a
-neighbour ⇒ interior seam ⇒ open; uncovered ⇒ outer edge ⇒ blocks. On a big city that
+bands **minus the full drawn bands of every other bridge way and the ribbons of the
+joining roads**. Covered by a neighbour ⇒ interior seam ⇒ open; uncovered ⇒ outer
+edge ⇒ blocks. On a big city that
 is hundreds of bridges, not a few dozen — the differences alone were 1.21 s on Paris
 (408 bridges) before the AABB prefilter and the parallel chunks
 (`footprint::CurbCoverage`, journal 22); the coverage rule itself is unchanged.
+
+**A joining road opens the curb and nothing else** — the grid's rule, and since №76
+the mesh's too. The grid only refrains from blocking the curb tiles a joining road's
+panel covers (`references/grid-fill.md`); it never opens water, a building or a wall
+under that road. So the road's ribbon (`road.width`, butt-ended like the grid's
+rectangle — the `+tile·√2` chain allowance is a raster need) is subtracted **from the
+curb bands, next to the other bridge ways' bands** (`blocker_shapes`), never from the
+global carves. As a carve it cut through whatever lay along the road — exactly on tile
+centres, 1 973 house tiles and 641 water tiles stood under joining roads in Paris, 630
+and 33 in Moscow, one house and three stream tiles in Tula; all zero after the change.
+Pinned by
+`parity_tests::a_joining_road_opens_the_curb_and_nothing_else_in_both_fills`.
+
+**What the two fills disagree about, measured** (№76; every tile centre of the map,
+radius 0.2, exact predicate — the centre lies on the mesh, `nearest_free_point(p) ==
+Some(p)`). «Grid blocked, mesh on» is the known deltas; what is left of it — 83 tiles in
+Paris and 22 in Moscow, under a building and under no carve — is not broken down. Tula
+42 080 = seal 34 020 + pockets the grid's prune closed 6 206 + curbs (a bridge narrower
+than a tile, or a composite one's interior seam) 1 592 + the deck strip outside the
+grid's shortened carve 209 + stream bends 53. Paris 112 335 = seal 73 416 + pockets
+33 867 + curbs 1 860 + deck over water
+2 788 + deck over houses 314, the rest under 100. Moscow 199 423 = seal 177 917 +
+pockets 15 533 + curbs 2 635 + deck over water 2 580 + deck over houses 716, the rest
+under 100. «Grid on, mesh off» — 57 909 / 99 295 / 103 008 — is the inflation ring.
+Before №76 the first column also carried the joining roads' cuts (4 / 2 614 / 663 tiles)
+and the cut-off ends of streams and walls (7 / 0 / 5), and 33 / 368 / 55 grid-free tiles
+hid in them; they are the ordinary inflation ring now. Mesh build time did not move:
+162–169 → 162 ms on Tula, 832 → 822–851 on Paris, 618 → 586 on Moscow (test profile,
+single runs, ±3 %); an after → before → after of the dev-profile build on Berlin and
+Paris stayed inside the run-to-run spread (worst reading, by the minimum: +1.8 % on
+Paris, +0.3 % on Berlin).
 
 **Conditional and async**: nothing builds while the Polymesh backend is off
 (`PolymeshDebug`, persisted — on by default, so the usual path *is* a build on entering
@@ -341,6 +376,18 @@ One knob exists only because the default fails at city scale, measured on Tula
   targets are building outline vertices, and the grid calls a tile passable when its
   centre clears the polygon by a centimetre. **96 % of requests failed** with the
   default against 3.5 % on the grid; at 0.75 m it is **0.6 %**.
+
+**`contains` is tolerant by the first ring only.** The endpoint ladder walks four rings;
+`PolymeshBuild::contains` — what `Backend::walkable().allows` asks — stops at one:
+polyanya's `Layer::get_point_location` tries the point and eight probes at
+±`POLYMESH_SEARCH_DELTA` (0.25 m; 0.35 m diagonally), so a point up to 0.25 m inside an
+obstacle is still *on-mesh*. Measured on Tula at the default radius 0.2: about 57.5
+thousand grid-free tile centres are exactly off-mesh yet pass `allows` — the inflation is
+smaller than the ring, so at 0.2 it does not exist for the passability check. The
+strictness the rescue relies on holds only for a radius above the ring
+(`polymesh::tests::a_point_within_the_agent_radius_of_a_wall_is_off_the_mesh` runs at
+1.0, which the slider cannot reach); the concession itself is pinned by
+`an_inflation_below_the_localisation_ring_is_invisible_to_contains`.
 
 **The in-flight cap is not a polymesh knob** — there is one limit for both backends;
 its rationale lives with the dispatcher (`references/pipeline.md`).

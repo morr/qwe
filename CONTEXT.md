@@ -948,11 +948,17 @@ Summary; the mechanism and the measurements — **navigation-deep skill** (polym
   gates, and schools, churches and works are fenced whole — and entered from the street. Stored in `MapData`, so the polygonal mesh, built later from it, gets the same
   gates.
 - **Bridge curbs are impassable** — the same two bands the renderer draws; on dry spans they
-  stop a pawn stepping off the deck sideways.
+  stop a pawn stepping off the deck sideways. **A joining road opens the curb and nothing
+  else** — joining means sharing a node with the bridge way; its panel lifts the blocking
+  from the curb tiles it covers (in the polygonal mesh its ribbon is subtracted **from the
+  curb bands only**) and never opens water, a building or a wall underneath it.
 - **Linear waterways block, unlike rails** — water is crossed by bridge, not waded;
   **culverts do not block at all**. The health check after any change here is the
   **pruned-tile count** in the log: a jump of thousands means a watercourse severed a
   district.
+- **Walls and watercourses end round, like the grid's capsule** — half a width past the
+  last node; a watercourse's end at a culvert mouth is cut flat (`water_line_caps`). The
+  polygonal mesh extends its ribbons the same way (`polymesh/build.rs::extended_ends`).
 - **A rasterized polyline is a 4-connected chain, by construction** — `set_polyline` walks
   the centerline tile by tile on top of the capsule test, because a thin slanted band
   otherwise degenerates into corner-touching tiles that northstar and `line_of_sight` slip
@@ -995,7 +1001,11 @@ Summary; the mechanism and the measurements — **navigation-deep skill** (polym
   determinism it is frozen for the run. **It has no `Default` on purpose**, so **every
   system taking `Res<Backend>` must sit in a `SimPipeline` set**. `walkable()` is the
   passability view: `allows`/`nearest_free_point` are backend-strict, `sift_target` /
-  `line_of_sight` / `coast_allows` stay deliberately grid-only. **Invariant: outside
+  `line_of_sight` / `coast_allows` stay deliberately grid-only. **One concession on the
+  mesh:** `PolymeshBuild::contains` accepts a point up to one localisation probe
+  (`POLYMESH_SEARCH_DELTA`, 0.25 m) inside an obstacle, so the default agent radius
+  (0.2 m) is below what `allows` can see — the inflation bites only at a larger radius.
+  **Invariant: outside
   `navigation/`, `ui/` and the load seam (`loading.rs` and `map/prepare.rs` — the warmup
   knob and the mesh hand-off name these types because they sit on the map→nav boundary;
   plus a doc-comment mention of `PolymeshDebug::radius()` in `map/sun.rs`, a citation of
