@@ -1,5 +1,6 @@
 use super::pairs::side_of;
 use super::*;
+use crate::human::{HUMAN_BODY_RADIUS_MAX, HUMAN_BODY_RADIUS_MIN};
 
 fn entity(index: u32) -> Entity {
     Entity::from_raw_u32(index).unwrap()
@@ -720,6 +721,107 @@ fn a_pair_across_a_fine_cell_boundary_is_still_resolved() {
 
     assert!(state.pushes[0].x < 0.0);
     assert!(state.pushes[1].x > 0.0);
+}
+
+/// Ячейка мелкой сетки считается от радиуса тела, а не берётся константой:
+/// на любом положении ползунка (и за его пределами) она не уже самой широкой
+/// пары — демона с демоном. Уже на дефолтном радиусе эта пара 3.6 м против
+/// нижней границы 2.4 м, так что правило — про радиус, а не про ползунок.
+#[test]
+fn the_cell_is_never_narrower_than_the_widest_pair() {
+    for human_radius in [
+        HUMAN_BODY_RADIUS_MIN,
+        HUMAN_BODY_RADIUS,
+        HUMAN_BODY_RADIUS_MAX,
+        4.0 * HUMAN_BODY_RADIUS_MAX,
+    ] {
+        let cell = separation_cell(human_radius);
+        let widest_pair = 2.0 * demon_radius(human_radius);
+        assert!(
+            cell >= widest_pair,
+            "радиус тела {human_radius}: ячейка {cell} уже пары демонов {widest_pair}"
+        );
+        assert!(
+            cell >= SEPARATION_CELL,
+            "радиус тела {human_radius}: ячейка {cell} ниже нижней границы"
+        );
+    }
+}
+
+/// Самая широкая пара на стыке ячеек: демоны в 3.5 м друг от друга (сумма
+/// радиусов 3.6 м — перекрытие), разнесённые по осям на 3.0 и 1.8 м. На одной
+/// нижней границе ячейки это клетки через одну — поиск в 3 × 3 ячейках пару
+/// не находит вовсе и она топчется внахлёст. Игровую ячейку считает
+/// [`separation_cell`] от радиуса тела, и она пару накрывает.
+#[test]
+fn a_demon_pair_straddling_fine_cells_is_still_resolved() {
+    let demon = demon_radius(HUMAN_BODY_RADIUS);
+    let pair = || {
+        state_with(vec![
+            pawn(1, Vec2::new(2.3, 0.1), demon, 1.0),
+            pawn(2, Vec2::new(5.3, 1.9), demon, 1.0),
+        ])
+    };
+
+    let mut on_the_floor = pair();
+    resolve_pushes(
+        &mut on_the_floor,
+        Tuning {
+            cell: SEPARATION_CELL,
+            ..tuning(1.0)
+        },
+    );
+    assert!(
+        on_the_floor.pairs.is_empty(),
+        "на одной нижней границе пара демонов теряется"
+    );
+
+    let mut on_the_game_cell = pair();
+    resolve_pushes(
+        &mut on_the_game_cell,
+        Tuning {
+            cell: separation_cell(HUMAN_BODY_RADIUS),
+            ..tuning(1.0)
+        },
+    );
+    assert_eq!(
+        on_the_game_cell.pairs.len(),
+        1,
+        "игровая ячейка накрывает пару"
+    );
+    assert!(on_the_game_cell.pushes[0].length() > 0.0);
+    assert!(on_the_game_cell.pushes[1].length() > 0.0);
+}
+
+/// С горизонтом упреждения ячейка растёт до его дальности: сближающаяся пара
+/// в 7.8 м — в пределах горизонта (1.5 с × 2 × 2.8 м/с = 8.4 м), но на
+/// базовой ячейке 2.4 м её точки лежат в клетках через две, и без роста
+/// ячейки упреждение такой пары не увидело бы. Сам рост стережёт и соседний
+/// `an_approaching_head_on_pair_steps_aside_before_touching` (его пара на
+/// базовой ячейке — в клетках через одну); здесь добавлена дальняя граница:
+/// пара в 8.6 м соседями не становится — горизонт отсекает её.
+#[test]
+fn with_a_horizon_the_cell_grows_to_the_lookahead() {
+    let approaching = |gap: f32| {
+        state_with(vec![
+            walking(1, Vec2::new(0.5, 10.0), Vec2::X),
+            walking(2, Vec2::new(0.5 + gap, 10.0), Vec2::NEG_X),
+        ])
+    };
+
+    let mut inside = approaching(7.8);
+    resolve_pushes(&mut inside, tuning_with(1.0, anticipating()));
+    assert_eq!(inside.pairs.len(), 1, "пара в пределах горизонта — пара");
+    assert!(!inside.pairs[0].2, "но перекрытием не считается");
+    // идущий на +X уходит вправо от себя (в −Y), встречный — в +Y
+    assert!(inside.pushes[0].y < 0.0, "{:?}", inside.pushes[0]);
+    assert!(inside.pushes[1].y > 0.0, "{:?}", inside.pushes[1]);
+
+    let mut outside = approaching(8.6);
+    resolve_pushes(&mut outside, tuning_with(1.0, anticipating()));
+    assert!(outside.pairs.is_empty(), "за дальностью горизонта пары нет");
+    assert_eq!(outside.pushes[0], Vec2::ZERO);
+    assert_eq!(outside.pushes[1], Vec2::ZERO);
 }
 
 /// Один прогон над стоящей парой: толчки → кламп → применение. Чистый
