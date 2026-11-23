@@ -27,6 +27,7 @@
 //!
 //! Сравнение только по `SimTick`, не по кадрам и не по настенным часам.
 
+use bevy::ecs::reflect::ReflectComponent;
 use bevy::prelude::*;
 use qwe::determinism::replay::{Fingerprint, Progress, replay_app, run_to_tick};
 use qwe::grid::tile_center;
@@ -138,4 +139,119 @@ fn a_restart_replays_the_run() {
     let second = run_to_tick(&mut app, TICKS, &[1], Progress::Silent);
 
     assert_eq!(first, second);
+}
+
+/// Сводка мира для [`a_restart_rebuilds_the_same_world`]: сколько сущностей
+/// носит каждый набор компонентов проекта, и значение каждого ресурса.
+///
+/// Отпечаток прогона видит ровно то, что в него входит (`PawnId`, позиции,
+/// состояние движения, счётчики исходов). Трупы, кровь, чанки и всё состояние,
+/// живущее в ресурсах (расписания, очереди), ему невидимы — здесь они строкой.
+/// Не отражённые ресурсы (`Backend`, `FarCrowdField`, `DestinationClaims`…)
+/// входят именем с пометкой: пин видит, что ресурс пережил рестарт, но не его
+/// содержание.
+///
+/// Два исключения — то, что пережить рестарт вправе: заводные часы (накопленное
+/// время прогона, не состояние мира) и души — `SoulMote` гаснет по своему
+/// таймеру, `restart.rs` их не трогает.
+fn world_rows(world: &World) -> Vec<String> {
+    let components = world.components();
+    let mut archetypes: std::collections::BTreeMap<String, usize> = Default::default();
+    for archetype in world.archetypes().iter() {
+        let count = archetype.entities().len();
+        if count == 0 {
+            continue;
+        }
+        let mut names: Vec<String> = archetype
+            .components()
+            .iter()
+            .filter_map(|id| components.get_info(*id))
+            .map(|info| info.name().to_string())
+            .filter(|name| name.starts_with("qwe::"))
+            .collect();
+        if names.is_empty() || names.contains(&"qwe::human::soul::SoulMote".to_string()) {
+            continue;
+        }
+        names.sort();
+        *archetypes.entry(names.join(", ")).or_default() += count;
+    }
+
+    let registry = world.resource::<AppTypeRegistry>().clone();
+    let registry = registry.read();
+    let mut resources: Vec<(String, String)> = Vec::new();
+    for (id, entity) in world.resource_entities().iter() {
+        let Some(info) = world.components().get_info(id) else {
+            continue;
+        };
+        let name = info.name().to_string();
+        if name.starts_with("bevy_time::time::Time") {
+            continue;
+        }
+        let value = info
+            .type_id()
+            .and_then(|type_id| registry.get(type_id))
+            .and_then(|registration| registration.data::<ReflectComponent>())
+            .and_then(|reflect| reflect.reflect(world.get_entity(entity).expect("resource entity")))
+            .map(|value| format!("{value:?}"))
+            .unwrap_or_else(|| "<not reflected>".to_string());
+        resources.push((name, value));
+    }
+    resources.sort();
+
+    let mut rows: Vec<String> = archetypes
+        .iter()
+        .map(|(names, count)| format!("{count:6}  {names}"))
+        .collect();
+    rows.extend(
+        resources
+            .iter()
+            .map(|(name, value)| format!("{name} = {value}")),
+    );
+    rows
+}
+
+/// «Нажал R — и мир собрался заново»: прогон до тика N, `RestartEvent`, снова
+/// до N — и весь мир, каким его видит ECS, а не только отпечаток прогона.
+///
+/// [`a_restart_replays_the_run`] держит членство сбросов `WorldStarted` снаружи
+/// ровно настолько, насколько расходится то, что входит в отпечаток: сброс,
+/// затрагивающий только трупы, кровь или ресурс вне счётчиков исходов, ему
+/// не виден (проверено мутацией: убрать `CorpseTag` из деспавна `on_restart` —
+/// трупы прошлого прогона переживают рестарт, отпечаток в отпечаток, а здесь
+/// лишняя строка с `qwe::human::CorpseTag`).
+///
+/// Второй прогон идёт в ТОМ ЖЕ `App` — как и у отпечатка, поэтому ловит
+/// состояние, пережившее сброс, а не отличия двух сборок.
+#[test]
+fn a_restart_rebuilds_the_same_world() {
+    let mut app = app(1);
+    let first = run_to_tick(&mut app, TICKS, &[1], Progress::Silent);
+    assert!(
+        first.killed > 0,
+        "в прогоне не было смертей — после рестарта не с чем сравнивать трупы и кровь: {first:?}"
+    );
+    let fresh = world_rows(app.world());
+
+    app.world_mut().trigger(RestartEvent::default());
+    // рестарт живёт в обсервере — даём кадр на применение команд
+    app.update();
+    run_to_tick(&mut app, TICKS, &[1], Progress::Silent);
+    let restarted = world_rows(app.world());
+
+    let mut drift: Vec<String> = Vec::new();
+    for row in &fresh {
+        if !restarted.contains(row) {
+            drift.push(format!("- {row}"));
+        }
+    }
+    for row in &restarted {
+        if !fresh.contains(row) {
+            drift.push(format!("+ {row}"));
+        }
+    }
+    assert!(
+        drift.is_empty(),
+        "после рестарта мир не такой, как свежий прогон на том же тике:\n{}",
+        drift.join("\n")
+    );
 }
