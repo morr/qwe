@@ -172,16 +172,19 @@ pub fn remove_far(commands: &mut Commands, entity: Entity) {
 ///   O(живые в кадре), не O(население). Дальний в кадре возвращается: спрайт
 ///   видим, `Transform` ставится из `SimPosition` (интерполяция не должна
 ///   тянуть из устаревшего `PreviousSimPosition`), беглец получает `UrgentPath`
-///   назад и — если прямая оставила его на непроходимом — спасение: настоящую
-///   заявку ближайший `flee` подаст сам, на следующем тике, из тех же бросков
-///   потока решений, что и любой ближний (переход яруса не сдвигает «личность»
-///   пешки — см. [`far_slice`]).
+///   назад и — если прямая оставила его на непроходимом — спасение: переезд
+///   доходит и до людской сетки, а спрайт ставится уже из точки спасения;
+///   настоящую заявку ближайший `flee` подаст сам, на следующем тике, из тех
+///   же бросков потока решений, что и любой ближний (переход яруса не сдвигает
+///   «личность» пешки — см. [`far_slice`]).
 #[allow(clippy::too_many_arguments)]
 pub fn assign_lod_tiers(
     mut commands: Commands,
     frame: Res<Viewport>,
     backend: Res<Backend>,
-    humans: Res<SpatialGrid<Human>>,
+    // мутабельная: promote способен спасать беглеца из непроходимого, а
+    // переезд обязан дойти до сетки (см. ветку promote ниже)
+    mut human_grid: ResMut<SpatialGrid<Human>>,
     mut query: Query<
         (
             Entity,
@@ -267,7 +270,10 @@ pub fn assign_lod_tiers(
         let view = frame.with_margin(VIEW_MARGIN);
         let walkable = backend.walkable();
         let mut promoted = 0;
-        humans.for_each_in_rect(view.min(), view.max(), |entity| {
+        // спасённые при promote: сетка занята общим обходом кадра, отчёт о
+        // телепортах копится здесь и уходит после обхода
+        let mut rescued = Vec::new();
+        human_grid.for_each_in_rect(view.min(), view.max(), |entity| {
             if promoted >= budget {
                 return;
             }
@@ -292,10 +298,6 @@ pub fn assign_lod_tiers(
             remove_far(&mut commands, entity);
             commands.entity(entity).insert(Visibility::Visible);
             dwell.0 = LodDwell::FULL;
-            // оба конца интерполяции — из сим-позиции: за время в дальних
-            // `PreviousSimPosition` устарел на срез, и лерп дёрнул бы пешку
-            transform.translation = sim_position.0.extend(unit_z(sim_position.0.y));
-            previous.0 = sim_position.0;
             if fleeing {
                 // срочность — вместе с паникой, как у всякого ближнего
                 // беглеца; заявку подаст `flee` ближайшим тиком
@@ -307,13 +309,27 @@ pub fn assign_lod_tiers(
                 if !walkable.allows(sim_position.0)
                     && let Some(free) = walkable.nearest_free_point(sim_position.0)
                 {
+                    rescued.push((entity, free));
                     sim_position.0 = free;
-                    previous.0 = free;
                     movable.to_idle(entity, &mut commands, false);
                 }
             }
+            // оба конца интерполяции — из сим-позиции (у спасённой — уже из
+            // точки спасения): за время в дальних `PreviousSimPosition`
+            // устарел на срез, и лерп дёрнул бы пешку
+            transform.translation = sim_position.0.extend(unit_z(sim_position.0.y));
+            previous.0 = sim_position.0;
         });
         budget -= promoted;
+        // спасение — писатель `SimPosition` мимо шага и среза, и сетка людей
+        // обязана об нём узнать, как от трёх остальных сайтов спасения
+        // (`movement::systems::rescue_trapped_entities` и два на приёме
+        // ответов): пропущенный переезд оставил бы пешку кандидатом в
+        // покинутой ячейке — для захвата демонов, сбора паники и следующего
+        // promote — пока она не пересечёт границу снова
+        for (entity, free) in rescued {
+            human_grid.insert(entity, free);
+        }
     }
 
     // хвост разгонной волны: работаем и без движения камеры, пока есть

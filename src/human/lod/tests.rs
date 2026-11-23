@@ -254,6 +254,87 @@ fn promote_mid_flee_restores_urgency() {
     assert!(app.world().get::<FarTag>(pawn).is_none());
 }
 
+/// Спасение при promote — писатель `SimPosition` мимо шага и среза, и
+/// людская сетка обязана о нём узнать: беглец, которого прямая бегства
+/// оставила в непроходимом у самой границы ячеек, после спасения числится
+/// там, где стоит, а не в покинутой ячейке — иначе для захвата демонов,
+/// сбора паники и следующего promote он невидим, пока не пересечёт границу
+/// снова. Спрайт и оба конца интерполяции — тоже из точки спасения: на паузе
+/// интерполяция не работает, и пешка осталась бы нарисованной в стене.
+#[test]
+fn a_fleeing_pawn_rescued_on_promote_moves_in_the_grid_and_on_screen() {
+    let mut app = lod_yard(0.2);
+    let centre = crate::settings::MAP_SIZE / 2.0;
+    // граница ячеек сетки внутри кадра двора: последняя перед центром
+    let edge = (centre.x / crate::spatial::CELL_SIZE).floor() * crate::spatial::CELL_SIZE;
+    // непроходимое — стеной вплотную к границе слева, три тайла шириной и пять
+    // рядов: свободные соседи у пешки только справа от границы, то есть в
+    // следующей ячейке сетки, куда бы ни кинул кольцевой поиск
+    let (stuck, tile) = {
+        let navmesh = app.world().resource::<crate::navigation::ArcNavmesh>();
+        let navmesh = navmesh.0.read().unwrap();
+        let tile = navmesh.to_tile(Vec2::new(edge - 0.5, centre.y));
+        (navmesh.tile_center(tile), tile)
+    };
+    for x in tile.x - 3..=tile.x {
+        for y in tile.y - 2..=tile.y + 2 {
+            app.world()
+                .resource::<crate::navigation::ArcNavmesh>()
+                .0
+                .write()
+                .unwrap()
+                .set_passable(x, y, false);
+        }
+    }
+    let pawn = spawn_pawn(&mut app, 9, stuck, false, true);
+    app.world_mut()
+        .entity_mut(pawn)
+        .remove::<HumanWanderTag>()
+        .insert(HumanFleeTag);
+    app.world_mut()
+        .resource_mut::<SpatialGrid<Human>>()
+        .insert(pawn, stuck);
+
+    app.world_mut()
+        .run_system_once(assign_lod_tiers)
+        .expect("проход");
+
+    let position = app.world().get::<SimPosition>(pawn).unwrap().0;
+    assert!(
+        position.x >= edge,
+        "пешка не спасена: {stuck:?} -> {position:?}"
+    );
+    assert_eq!(
+        app.world()
+            .get::<Transform>(pawn)
+            .unwrap()
+            .translation
+            .truncate(),
+        position,
+        "спрайт остался в непроходимом"
+    );
+    assert_eq!(
+        app.world().get::<PreviousSimPosition>(pawn).unwrap().0,
+        position
+    );
+    let grid = app.world().resource::<SpatialGrid<Human>>();
+    // ровно одна ячейка — без кольца соседних: запись в соседней ячейке
+    // не должна сходить за запись в той, где пешка стоит
+    let mut around = Vec::new();
+    grid.for_each_in_rect(position, position, |entity| around.push(entity));
+    assert_eq!(
+        around,
+        vec![pawn],
+        "спасённая не найдлась в ячейке, где стоит"
+    );
+    let mut behind = Vec::new();
+    grid.for_each_in_rect(stuck, stuck, |entity| behind.push(entity));
+    assert!(
+        behind.is_empty(),
+        "запись осталась в покинутой ячейке: {behind:?}"
+    );
+}
+
 /// Demote посреди бегства снимает срочность — заявки у дальних нет, и
 /// маркер «обслуживать вне очереди» обязан уйти вместе с ней.
 #[test]
