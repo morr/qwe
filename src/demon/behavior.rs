@@ -88,10 +88,17 @@ fn acquire_pass<'a>(
 
         // скорость здесь не трогаем: она одна на все состояния демона и живёт
         // в `Movable::speed` со спавна (`sync_demon_speed` ведёт её дальше)
+        // Первый путь к жертве — в тик захвата, дальше — по таймеру: свежий
+        // таймер означал идущему (`Moving` не даёт ни `repath_due`, ни
+        // `needs_path`) ответ `Hold`, и демон до `DEMON_CHASE_REPATH` дохаживал
+        // блуждающий отрезок прочь от только что найденной жертвы. Тот же
+        // приём, что у `human::behavior::panic` с его `FleeRepath`
+        let mut repath = ChaseRepath::default();
+        repath.0.almost_finish();
         commands.entity(entity).remove::<DemonWanderTag>().insert((
             DemonChaseTag,
             ChaseTarget(human),
-            ChaseRepath::default(),
+            repath,
         ));
         debug!("demon {entity} Wander => Chase {human}");
     }
@@ -662,6 +669,133 @@ mod tests {
             .resource_mut::<SpatialGrid<Human>>()
             .insert(human, position);
         human
+    }
+
+    /// Двор захвата: к погоне добавлен сам захват — та же `acquire_pass`,
+    /// которой работают и детерминированный проход, и живые четверти.
+    fn acquire_app() -> App {
+        let mut app = app();
+        app.add_systems(Update, (acquire_slice::<0>, chase).chain());
+        app
+    }
+
+    /// Блуждающий отрезок на ходу: цель прогулки — тайл далеко на запад,
+    /// путь не пройден, демон уже шагал (есть докат).
+    fn spawn_walker(app: &mut App, position: Vec2) -> Entity {
+        let mut movable = Movable::new(1.0);
+        movable.state = MovableState::Moving(world_to_tile(Vec2::new(-200.0, 10.0)));
+        movable.path = [position + Vec2::NEG_X].into_iter().collect();
+        movable.last_direction = Vec2::NEG_X;
+        app.world_mut()
+            .spawn((
+                Demon,
+                DemonWanderTag,
+                DemonSlice::<0>,
+                movable,
+                SimPosition(position),
+                PreviousSimPosition(position),
+            ))
+            .id()
+    }
+
+    /// Короткий тик: микросекунды, чтобы свежий таймер перепрокладки (0.4 с)
+    /// на нём не досчитал — различает «сразу» от «в следующий такт».
+    fn tick_by(app: &mut App, delta: Duration) {
+        app.world_mut().resource_mut::<Time>().advance_by(delta);
+        app.update();
+    }
+
+    /// Демон берёт агро на ходу — и с того же тика идёт к жертве.
+    ///
+    /// Захват ставил свежий таймер перепрокладки, а идущему (`Moving` не даёт
+    /// ни `repath_due`, ни `needs_path`) лестница до его истечения отвечает
+    /// `Hold`: демон до `DEMON_CHASE_REPATH` — пять с лишним метров на
+    /// полной скорости — дохаживал блуждающий отрезок прочь от только что
+    /// найденной жертвы. У человека тот же дефект закрыт тем же приёмом
+    /// (`human::behavior::panic` ставит `FleeRepath` готовым сработать).
+    #[test]
+    fn a_demon_taking_aggro_on_the_move_turns_toward_its_victim_at_once() {
+        let app = &mut acquire_app();
+        // 30 м от демона: внутри радиуса агро (45), вне дальности броска (6)
+        let victim_at = Vec2::new(40.0, 10.0);
+        let human = spawn_human(app, victim_at);
+        let demon = spawn_walker(app, Vec2::new(10.0, 10.0));
+
+        tick_by(app, Duration::from_micros(100));
+
+        assert_eq!(
+            app.world().get::<ChaseTarget>(demon).map(|target| target.0),
+            Some(human),
+            "захват не сработал — проверять нечего"
+        );
+        let request = app
+            .world()
+            .get::<PathfindingRequest>(demon)
+            .expect("первый путь к жертве подаётся в тик захвата");
+        assert_eq!(request.end_tile, world_to_tile(victim_at));
+    }
+
+    /// Тот же дефект с другого входа: демон захвачен, пока его первый
+    /// блуждающий поиск ещё в полёте. Ждать ответа он обязан — это охрана
+    /// вечно отменяемых поисков (`a0ff47af`), — но прилетевший блуждающий
+    /// путь не должен нести его прочь ещё целый период: разворот к жертве —
+    /// на тике, когда ответ пришёл.
+    #[test]
+    fn a_demon_that_waited_for_its_search_turns_the_tick_that_search_lands() {
+        use bevy::ecs::system::RunSystemOnce;
+
+        let app = &mut acquire_app();
+        let victim_at = Vec2::new(40.0, 10.0);
+        spawn_human(app, victim_at);
+        let position = Vec2::new(10.0, 10.0);
+        let wander_goal = world_to_tile(Vec2::new(-200.0, 10.0));
+        let mut movable = Movable::new(1.0);
+        movable.state = MovableState::Pathfinding(wander_goal);
+        let demon = app
+            .world_mut()
+            .spawn((
+                Demon,
+                DemonWanderTag,
+                DemonSlice::<0>,
+                movable,
+                SimPosition(position),
+                PreviousSimPosition(position),
+                PathfindingRequest {
+                    start_tile: world_to_tile(position),
+                    end_tile: wander_goal,
+                },
+            ))
+            .id();
+
+        tick_by(app, Duration::from_micros(100));
+
+        let request = app
+            .world()
+            .get::<PathfindingRequest>(demon)
+            .expect("поиск в полёте захват не отменяет");
+        assert_eq!(request.end_tile, wander_goal);
+
+        // ответ блуждающего поиска приходит — как его принимает `accept_answer`
+        app.world_mut()
+            .run_system_once(
+                move |mut commands: Commands, mut movables: Query<&mut Movable>| {
+                    movables.get_mut(demon).expect("Movable").to_moving(
+                        wander_goal,
+                        [position + Vec2::NEG_X].into_iter().collect(),
+                        demon,
+                        &mut commands,
+                    );
+                },
+            )
+            .expect("ответ применяется");
+
+        tick_by(app, Duration::from_micros(100));
+
+        let request = app
+            .world()
+            .get::<PathfindingRequest>(demon)
+            .expect("блуждающий путь не должен нести демона прочь целый период");
+        assert_eq!(request.end_tile, world_to_tile(victim_at));
     }
 
     /// Место, освобождённое отставшим демоном, видит тот, кто делил с ним

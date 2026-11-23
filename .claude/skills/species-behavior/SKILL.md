@@ -358,6 +358,15 @@ slot** — `acquire_targets` walks the *human* grid (`nearest_in_range_where` wi
 queued behind them. A demon takes aggro on the first tick it exists, the initial burst
 included.
 
+**The first chase path is requested on the tick the demon takes aggro** — `acquire_pass`
+inserts `ChaseRepath` already due (`almost_finish`), the mirror of the human's `panic`
+inserting `FleeRepath` that way. A fresh timer left a walking wanderer (`Moving` gives
+neither `repath_due` nor `needs_path`) on `Hold` for the whole throttle period: up to
+`DEMON_CHASE_REPATH` — five-odd metres at full speed — along its wander leg, away from the
+victim it had just found. The one delay that survives is the `WaitForPath` guard under
+"Repath and the switch rung": a demon acquired while its own first search is in flight
+still waits for that answer, and turns on the tick it lands.
+
 **Give up past ×1.5 that radius** — `RADIUS_HYSTERESIS`, the same enter/exit pattern as the
 human's calm-down. It is the **first rung of `decide`** after the dead-target check: checked
 before the kill, the lunge and the repath gate, so a demon dragged out of the ring leaves on
@@ -399,10 +408,11 @@ panel and the model share. A knob's own `_MIN`/`_MAX`/`_STEP` range is *not* suc
 constant: it bounds its resource's field — the panel only renders it — so it belongs beside
 that resource. `HumanStyle` and `DemonStyle` do not clamp on read; their ranges are the
 declaration of what the field may hold, not a guard on it. Don't relocate anything here to
-"comply" with the tuning-constants rule. (The two fields whose *consumers* cannot survive a
-garbage value — `DemonStyle::interval` into `Duration::from_secs_f32`, `cap` against an
-unbounded spawn — are the exception: they clamp in accessors, `interval()`/`cap()`, the
-`RoadShape` pattern. `speed`/`lunge` still read raw: a garbage value only looks wrong.)
+"comply" with the tuning-constants rule. (The fields whose *consumers* cannot survive a
+garbage value are the exception — `DemonStyle::interval` into `Duration::from_secs_f32`,
+`cap` against an unbounded spawn, `HordeStyle::wave_size` into `Vec::with_capacity` and
+`wave_every` into the tick arithmetic — they clamp in accessors, the `RoadShape` pattern.
+`speed`/`lunge` still read raw: a garbage value only looks wrong.)
 
 **A chaser with no first path yet skips the repath tick and waits.** Repathing cancels the
 in-flight search, and whenever the pipeline answers slower than the victim changes tiles the
@@ -412,8 +422,10 @@ coasting covers the repath gaps and cancelling becomes safe.
 **The throttle clock runs only on the rungs the ladder reaches.** `chase` *asks*
 `ChaseRepath` (`remaining() <= time.delta()`) and ticks it on `Hold`, `Repath` and `Switch`
 only — `Lunge` and the wait freeze it, and nothing else in the code ticks it. The timer is
-inserted fresh at Wander → Chase, so the first path gets a whole throttle period of walking
-instead of being repathed away the tick after it lands. After a **lunge** the freeze delays
+born at Wander → Chase already due (the first path to the victim goes out at once), and the
+`Repath` that spends it restarts the full period, so the first *chase* path gets a whole
+throttle period of walking instead of being repathed away the tick after it lands. After a
+**lunge** the freeze delays
 nothing — the lunge's `to_idle` empties the path and an answer arriving meanwhile is dropped
 (`accept_answer` accepts only in `Pathfinding`), so on the tick the lunge is cancelled the
 demon is `Idle`, `needs_first_path` holds, and the repath/switch rung fires whatever the

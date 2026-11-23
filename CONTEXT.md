@@ -1342,7 +1342,8 @@ Summary; species behaviour — **species-behavior skill**; the crowd (separation
   **max 2 chasers per target**
   (`ChaseClaims`, `demon/claims.rs`), a value rebuilt each tick; there is no standing claim
   between ticks, only **GaveUp** releases a slot, and a switch *transfers* one. Repath
-  throttle 0.4 s (`DEMON_CHASE_REPATH`), and on that tick the demon may **switch** target — **a rung of the ladder,
+  throttle 0.4 s (`DEMON_CHASE_REPATH`; the first path to the victim is requested on the
+  tick the demon takes aggro), and on that tick the demon may **switch** target — **a rung of the ladder,
   not a tail after it**. **Lunge** — inside `DEMON_LUNGE_RANGE` (6 m) *and* with
   `line_of_sight`, the demon drops its path and steps `SimPosition` straight at the target;
   without it a chase never converts. Kill at `KILL_DISTANCE` triggers
