@@ -23,9 +23,23 @@ use super::{FeatureRef, Hit, HitReason, HitSource};
 /// `tools/osm_near --id <id>`.
 pub fn hit_line(hit: &Hit) -> String {
     match hit.id {
-        Some(id) => format!("z {:6.3}  {} #{id}", hit.z, hit.label),
-        None => format!("z {:6.3}  {}", hit.z, hit.label),
+        Some(id) => format!("z {}  {} #{id}", z_col(hit.z), hit.label),
+        None => format!("z {}  {}", z_col(hit.z), hit.label),
     }
+}
+
+/// Колонка z строки находки, шириной 6. Четыре знака после точки срезаются
+/// до значимых, но не до нуля: слои лестницы различаются и на четвёртом
+/// знаке (краска 2.0005 над полотном 2.0, износ 2.0002/2.0003, острова
+/// 2.0035 против линий парковки 2.004), и три знака склеивали соседние слои
+/// в одну цифру. Точка остаётся всегда — на неё опирается `HITS_DEPTH`
+/// в `tools/shot_coords`.
+fn z_col(z: f32) -> String {
+    let mut s = format!("{z:.4}");
+    while s.ends_with('0') && !s.ends_with(".0") {
+        s.pop();
+    }
+    format!("{s:>6}")
 }
 
 /// Запиненная находка (клавиша `\` панели инспектора) строкой: колонки те же,
@@ -35,8 +49,8 @@ pub fn hit_line(hit: &Hit) -> String {
 /// участвует.
 pub fn pinned_line(hit: &Hit) -> String {
     match hit.id {
-        Some(id) => format!("p {:6.3}  {} #{id}", hit.z, hit.label),
-        None => format!("p {:6.3}  {}", hit.z, hit.label),
+        Some(id) => format!("p {}  {} #{id}", z_col(hit.z), hit.label),
+        None => format!("p {}  {}", z_col(hit.z), hit.label),
     }
 }
 

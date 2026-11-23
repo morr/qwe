@@ -629,6 +629,34 @@ fn a_pin_prints_with_a_p_lead() {
 }
 
 #[test]
+fn the_z_column_keeps_the_ladders_fine_steps_distinct() {
+    // слои лестницы различаются и на четвёртом знаке: краска 2.0005 над
+    // полотном 2.0, износ 2.0002 против 2.0003 — прежние три знака `{:6.3}`
+    // печатали все четыре одной цифрой «2.000»
+    let hit = |z| Hit {
+        z,
+        label: "x".into(),
+        src: HitSource::Osm,
+        id: None,
+        feature: FeatureRef::Road(0),
+    };
+    let depth = |line: &str| line[2..8].trim_start().to_string();
+    let road = depth(&hit_line(&hit(2.0)));
+    let paint = depth(&hit_line(&hit(2.0005)));
+    let wear_mask = depth(&hit_line(&hit(2.0002)));
+    let wear = depth(&hit_line(&hit(2.0003)));
+    assert_ne!(road, paint);
+    assert_ne!(wear_mask, wear);
+    assert_ne!(wear_mask, paint);
+    // точка в колонке всегда есть, знаков после неё не больше четырёх —
+    // на форму колонки опирается HITS_DEPTH в tools/shot_coords
+    for line in [&road, &paint, &wear_mask, &wear] {
+        let (_, frac) = line.split_once('.').expect("the z column keeps its dot");
+        assert!(frac.len() <= 4, "unexpected depth {line}");
+    }
+}
+
+#[test]
 fn a_parsed_feature_carries_its_osm_id() {
     // улица с тротуаром по тегу: и находка полотна, и дорисованная полоса
     // наследуют way id своей дороги

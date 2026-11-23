@@ -64,9 +64,11 @@ COLUMNS = {
 CAMERA = re.compile(r"(\S)\.(\d+)/(\d+)/(\d+)$")
 CURSOR = re.compile(r"^(?:(\d+)/(\d+)|-/-)$")
 # a hits line: `z`, the padded depth, then the label words (`format_hits`); OCR
-# reads the z as `Zz`, `zz`, sometimes a stray glyph in front — anything z-ish
+# reads the z as `Zz`, `zz`, sometimes a stray glyph in front — anything z-ish.
+# The depth keeps 1–4 decimals: the z column (labels.rs::z_col) trims trailing
+# zeros down to one, and the z ladder distinguishes layers on the fourth digit
 HITS_Z = re.compile(r"^\S?[zZ]{1,2}$")
-HITS_DEPTH = re.compile(r"^\d{1,2}\.\d{1,3}$")
+HITS_DEPTH = re.compile(r"^\d{1,2}\.\d{1,4}$")
 HITS_ID = re.compile(r"^#(\d{6,})$")
 
 # the selected row's background is 18% yellow over the panel (`HIGHLIGHT_ROW_BG`),
