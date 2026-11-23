@@ -21,6 +21,7 @@ use crate::portal::PortalPos;
 use crate::rng::{PawnId, RngDomain, Species, WanderIndex, WorldSeed, decision_stream};
 use crate::settings::{
     DEMON_INITIAL_BURST, DEMON_SPEED, DEMON_WANDER_CONE, DEMON_WANDER_RANGE, PORTAL_DIAMETER,
+    PORTAL_RIM_MARGIN,
 };
 use crate::silhouette::Silhouettes;
 
@@ -177,7 +178,8 @@ pub fn spawn_demon(
                 .random_range(0.0..std::f32::consts::TAU),
             };
             (
-                birth.portal_pos + Vec2::from_angle(angle) * (PORTAL_DIAMETER / 2.0 + 1.0),
+                birth.portal_pos
+                    + Vec2::from_angle(angle) * (PORTAL_DIAMETER / 2.0 + PORTAL_RIM_MARGIN),
                 birth.portal_pos,
             )
         }

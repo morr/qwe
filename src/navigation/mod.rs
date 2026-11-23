@@ -404,12 +404,32 @@ fn clear_map_backends(mut northstar: ResMut<NorthstarGrid>, mut polymesh: ResMut
     polymesh.clear();
 }
 
+/// Полуширина квадрата клиренса портала в тайлах: столько тайлов в каждую
+/// сторону от центра портала обязаны быть проходимы, чтобы снап выбрал это
+/// место. Квадрат шире самого портала настолько, чтобы накрыть окружность, по
+/// которой рождаются демоны (`PORTAL_DIAMETER / 2 + PORTAL_RIM_MARGIN`,
+/// `demon::systems`), и оставить до её края не меньше полтайла на любом
+/// размере навтайла — пин `the_snap_clearance_covers_the_demon_rim`.
+///
+/// По размеру тайла, а не по живому атомику: снап считает клиренс по снимку
+/// той сетки, с которой работает (`Navmesh::tile_size`), офлайн-аудит — по
+/// тому же.
+pub fn portal_clearance_tiles(tile_size: f32) -> i32 {
+    (crate::settings::PORTAL_DIAMETER / 2.0 / tile_size) as i32 + 1
+}
+
 /// Ближайший к `position` центр тайла, вокруг которого хватает свободного
 /// места для портала. Хинт города (`City::portal_hint`, константы `*_PORTAL_POS`
 /// в `city.rs`) мог попасть в здание OSM-карты;
-/// снап делает поток загрузки (`map/osm/download.rs`) сразу после заливки
-/// navmesh, той же функцией пользуется офлайн-бенч
-/// (`examples/bench/pathfinding_bench.rs`), чтобы navmesh совпал с игровым.
+/// снап делает поток загрузки (`map/prepare.rs::fill_navmesh_and_snap_portal`)
+/// сразу после заливки navmesh, той же функцией пользуются офлайн-инструменты
+/// (`examples/common/mod.rs::build_navmesh`, `examples/bench/pathfinding_bench.rs`,
+/// аудит `polymesh_start_area`), чтобы navmesh совпал с игровым.
+///
+/// Квадрат клиренса считается по сетке до калиток и прунинга. Калитки тайлы
+/// только открывают, прунинг — только закрывает: недостижимый карман внутри
+/// квадрата сузил бы его задним числом. Тот же аудит проверяет квадрат и
+/// после обоих.
 ///
 /// Кольца обходит [`nearest_tile_where`], а не свой цикл: «ближайший» здесь
 /// евклидов, а первое кольцо с попаданием — чебышёвское, и его угол на `r·√2`
@@ -418,9 +438,9 @@ fn clear_map_backends(mut northstar: ResMut<NorthstarGrid>, mut polymesh: ResMut
 pub fn snap_portal_position(navmesh: &Navmesh, position: Vec2) -> Option<Vec2> {
     let start = navmesh.to_tile(position);
 
-    // радиус, в котором вокруг кандидата всё должно быть проходимо
-    // (диаметр портала + спавн демонов по кромке), тайлы
-    let clearance = (crate::settings::PORTAL_DIAMETER / 2.0 / navmesh.tile_size) as i32 + 1;
+    // радиус, в котором вокруг кандидата всё должно быть проходимо:
+    // портал и кромка, по которой рождаются демоны
+    let clearance = portal_clearance_tiles(navmesh.tile_size);
     let is_clear = |tile: IVec2| {
         (-clearance..=clearance).all(|dx| {
             (-clearance..=clearance).all(|dy| navmesh.is_passable(tile.x + dx, tile.y + dy))
@@ -456,8 +476,7 @@ mod tests {
     /// центра: `is_clear` из `snap_portal_position` проходит ровно в центрах, а
     /// поляны разнесены так, что их объединение не даёт лишнего центра.
     fn navmesh_with_portal_spots(centers: &[IVec2]) -> Navmesh {
-        let clearance =
-            (crate::settings::PORTAL_DIAMETER / 2.0 / crate::grid::navtile_size()) as i32 + 1;
+        let clearance = portal_clearance_tiles(crate::grid::navtile_size());
         let free: Vec<IVec2> = centers
             .iter()
             .flat_map(|centre| {
@@ -591,5 +610,24 @@ mod tests {
             snap_portal_position(&navmesh, tile_center(start)),
             Some(tile_center(start))
         );
+    }
+
+    /// Квадрат клиренса накрывает окружность, по которой рождаются демоны, на
+    /// обоих размерах навтайла: от неё до внешнего края квадрата остаётся не
+    /// меньше полтайла. Уже — и демон залпа рождался бы у самой кромки
+    /// проверенного снапом пятна, а то и за ним.
+    #[test]
+    fn the_snap_clearance_covers_the_demon_rim() {
+        let rim = crate::settings::PORTAL_DIAMETER / 2.0 + crate::settings::PORTAL_RIM_MARGIN;
+        for base in [NavtileBase::M2, NavtileBase::M1] {
+            let tile = base.size();
+            let half = (portal_clearance_tiles(tile) as f32 + 0.5) * tile;
+            let spare = half - rim;
+            assert!(
+                spare >= tile / 2.0,
+                "navtile {tile} m: the demon rim at {rim} m leaves only {spare} m \
+                 to the edge of the clearance square"
+            );
+        }
     }
 }
