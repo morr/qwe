@@ -66,7 +66,9 @@ in one of `CORPSE_HEADINGS` (16) directions, mirrored or not, all chosen from th
 bits through a splitmix hash (`human/corpse.rs::corpse_pose`). The tint is the human's own
 `Attire` drained (`corpse_tint`: half the saturation, half the lightness), written by
 `lay_down`, an entity command queued *after* the tag removal so the calm-down observer
-restoring the attire cannot overwrite it. The body's own `Silhouette` is rewritten to the
+restoring the attire cannot overwrite it. The same command lays the body at the death
+spot and writes **both** transforms, local and global — the baker may read the global one
+in this very frame (**Corpse baking**). The body's own `Silhouette` is rewritten to the
 `CORPSE_SPAN` cell (`HUMAN_MIN_PX` floor), which is how the size lands on the sprite next
 frame; under the chest hang the **two blood children** of the next section.
 
@@ -173,7 +175,18 @@ gigabyte of tables; baked it is ~115 MB of vertex data and no entities at all).
   recomputes it from the same pure functions that drew it (`corpse_pose`, `blood_look`,
   `corpse_tint`) plus the body's `GlobalTransform` — pose, blood and tint live in
   `Entity` bits and `Attire`, so baking does not touch the sprite pipeline and works in
-  a `World` with no atlas. Three quads per corpse, **in draw order spatter → pool →
+  a `World` with no atlas. **The baker may run in the death frame.** At the city zoom
+  the pool lands full and `spread_blood` queues the body on its first `Update`, so the
+  baker reads the `GlobalTransform` before `PostUpdate` propagation has recomputed it
+  from the `Transform` the corpse transition has just written — translation *and*
+  rotation: the stains sit by the body's world rotation. Hence `lay_down` writes both
+  transforms. With the local one alone the baker read the global transform a far pawn
+  had kept frozen since its demote (since spawn, for one that went far at once) and
+  baked the body where the pawn *had been*, not where it died — live Tula, обзор №71:
+  97.7 % of 11 400 corpses over a metre off, 7 % over 300 m. A yard without
+  `TransformPlugin` has no propagation at all: a baker test that hands the corpse a
+  *matching* pair of transforms cannot see it, the pin hands it a stale one. Three quads
+  per corpse, **in draw order spatter → pool →
   body** (today's z-hierarchy of the triple; there is no corpse-to-corpse sorting and
   never was). The body lands on `DespawnQueue`; the despawn itself is a
   `FixedUpdate` system in the `HumanBehavior` tail beside `rise_souls` — mass despawns

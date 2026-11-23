@@ -1471,19 +1471,24 @@ its draw call.
   blood_gallery`.
 - **Corpse baking** (`silhouette/bake.rs`, Фаза 3 ×10) — a settled corpse leaves the
   sprite world: when its pool has finished spreading, `spread_blood` — the same pass that
-  removes `BloodSpread` — puts the body on the **`BakeQueue`**; the **baker**
+  removes `BloodSpread` — puts the body on the **`BakeQueue`** (at the city zoom the pool
+  lands full and the body is queued on its first frame); the **baker**
   (`bake_queued_corpses`, `Update`, only with a renderer) rewrites the triple as three
   quads of its **corpse chunk** (`CorpseField`, a fixed 500 m grid) and queues the body
   for despawn, which happens in `FixedUpdate`, the tail of `HumanBehavior` beside
-  `rise_souls`. Chunks are drawn by the **point material** (`PointMaterial`,
+  `rise_souls`. The quads are placed by the body's `GlobalTransform`, which the baker may
+  read **in the death frame**, before `PostUpdate` propagation — so the corpse transition
+  (`lay_down`) writes both transforms, local and global, at the death spot. Chunks are
+  drawn by the **point material** (`PointMaterial`,
   `shaders/point.wesl`): the same atlas as fresh sprites, but the quad is expanded in
   the vertex shader from centre + half-size + floor, so the screen-size floor follows
   the zoom without a mesh rebuild; rotation and mirror are baked at mesh build — the
-  corners carry the heading (the stains heading + spin), the uv carries the mirror. The baked look is computed by the same pure functions
-  that drew the fresh one (`corpse_pose` / `blood_look` / `corpse_tint`), so a baked
-  corpse is indistinguishable from the fresh one at the same zoom; a run without a
-  renderer (replay, tests) never bakes and keeps corpses as entities. `Telemetry.baked`
-  counts the baked, `Census.corpses` the fresh; entity growth stops at «alive + fresh».
+  corners carry the heading (the stains heading + spin), the uv carries the mirror. The
+  baked look is computed by the same pure functions that drew the fresh one
+  (`corpse_pose` / `blood_look` / `corpse_tint`), so a baked corpse is indistinguishable
+  from the fresh one at the same zoom; a run without a renderer (replay, tests) never
+  bakes and keeps corpses as entities. `Telemetry.baked` counts the baked,
+  `Census.corpses` the fresh; entity growth stops at «alive + fresh».
 - **Demon look** (`demon/look.rs`) — the `Ember` glyph in a five-shade crimson → orange
   ring (`demon_tint`) plus a **halo**: a child entity (`DemonHalo`, the `Halo` glyph,
   three bodies wide, z −0.01) that inherits the devour pulse and dies with its parent.
