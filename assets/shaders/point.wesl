@@ -40,7 +40,7 @@ struct PointUniform {
 struct Vertex {
     @builtin(instance_index) instance_index: u32,
     // угол квада, ±1 по обеим осям, уже повёрнутый при сборке меша
-    // меша; зеркало глифа живёт в uv (`bake::chunk_mesh`) и намотку не трогает
+    // зеркало глифа живёт в uv (`bake::chunk_mesh`) и намотку не трогает
     @location(0) position: vec3<f32>,
     @location(1) color: vec4<f32>,
     // центр квада в метрах, полуразмер (квад — квадрат), пол в логических px

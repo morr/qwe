@@ -223,7 +223,7 @@ fn place_population(
                 navmesh.passable_from(candidate).unwrap_or(candidate)
             }
         };
-        // тайл взяли снапшотом навмеша — и в мир переводим его его же
+        // тайл взяли снапшотом навмеша — и в мир переводим его через его же
         // `tile_center`: глобальный считает по атомику навтайла, что верно
         // только пока снапшот и атомик совпадают (см. `navigation/navmesh.rs`)
         placements.push(navmesh.tile_center(tile));
