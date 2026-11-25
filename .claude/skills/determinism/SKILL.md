@@ -35,7 +35,7 @@ every stream is re-derived from the seed.
 
 `rng.rs::stream(world_seed, domain, key)` builds a stream that belongs to no pawn. The
 only live one is `stream(world_seed, RngDomain::Population, 0)`, held across the **whole**
-`human/systems.rs::place_population` pass: the rejection loop that samples tiles until one
+`human/systems/spawn.rs::place_population` pass: the rejection loop that samples tiles until one
 is passable draws a variable number of samples per human, and that is fine inside one
 sequential pass. The batched spawn keeps it that way deliberately: the pump computes
 **all** placements on its first call (`PendingPopulation::placements`) and every later
@@ -61,7 +61,7 @@ The rule to carry forward: **a shared stream is legal only while the loop draini
 `for i in 0..n` inside one function.** Move those draws into a system that iterates a
 query, or keep the generator in a resource between calls, and the exception is gone.
 
-Pinned by `human/systems.rs::population_is_a_function_of_the_seed` /
+Pinned by `human/systems/tests.rs::population_is_a_function_of_the_seed` /
 `different_seeds_give_different_populations` (bit-for-bit fingerprint of the whole spawn)
 and by `rng/tests.rs::seed_for_is_stable`, which holds `seed_for(1, Population, 0)` as a
 golden value. `examples/demos/crowd_demo/scenario.rs` drains the same `(Population, 0)`
@@ -110,7 +110,7 @@ stream must advance on exactly the ticks it advanced on before, i.e. only on the
 actually took a decision this tick (see the `species-behavior` skill).
 
 **Where the stream actually advances** — seven `WanderIndex::next` sites, and not all of them
-are a wander decision: `human/systems.rs::pick_wander_targets` (target),
+are a wander decision: `human/systems/wander.rs::pick_wander_targets` (target),
 `human/behavior.rs::panic` (flee repath period), `human/behavior.rs::flee` (flee step, and
 the wander pause on the calm-down rung), `demon/systems.rs::pick_wander_targets` (target),
 **`human/lod.rs::far_slice` — the far tiers' slice system** (stroll target + wander pause,

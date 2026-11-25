@@ -426,7 +426,7 @@ passes are `parse-buildings.md`.
     fan (`Scene::in_mouth`, the same contours as above, within `TOUCH`) is the street
     corner's edge, not the block's yard — `grass_near` skips the block there and asks
     the verge lawn's rule alone (meadow, else yard), exactly how
-    `roads.rs::Meadows` colours the verge beside it. Pinned by
+    `roads/walls.rs::Meadows` colours the verge beside it. Pinned by
     `a_mouth_pocket_follows_the_verge_law_not_the_block`.
   - **A green apron** (`Scene::green_aprons`) — the same question's second half,
     for strips that are never holes: a band of bare ground between a mapped green's

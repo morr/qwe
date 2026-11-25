@@ -5,7 +5,7 @@ counts per city live in `osm-coverage.md` next to this file.
 
 ## Real OSM doors
 
-**Entrances** (`parse.rs::parse_entrance` + `attach_entrances`) — `entrance=*` **nodes**
+**Entrances** (`parse/elements.rs::parse_entrance` + `parse/finish.rs::attach_entrances`) — `entrance=*` **nodes**
 (the only nodes the Overpass query asks for), minus `NON_WALKABLE_ENTRANCES`
 (`no` = not a door at all, `garage`, `emergency`). An entrance in OSM is normally a
 *shared node of the building outline*, so attachment is an exact vertex lookup on a

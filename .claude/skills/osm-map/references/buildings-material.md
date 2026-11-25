@@ -430,7 +430,7 @@ dictionary.
     shaded by a plan normal cannot say that. `MeshBuilder::push_inset_band_with` (the
     per-edge-colour sibling of `push_inset_band`) survives as a primitive; nothing in the
     building layers uses it any more.
-  - **One call lays every flat roof** — `layers.rs::push_flat_roof`: both callers use it
+  - **One call lays every flat roof** — `layers/roofing.rs::push_flat_roof`: both callers use it
     (the flat modes with the real contour, 2.5D with the contour already lifted onto the
     walls), and it is `pub(super)` now, so the gallery reaches the same geometry through
     `push_house`, one level up. Slopes stay outside it: a gable roof needs the same

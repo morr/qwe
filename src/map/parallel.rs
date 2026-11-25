@@ -57,7 +57,7 @@ pub(crate) fn in_parallel<T: Sync, R: Send>(items: &[T], work: impl Fn(&T) -> R 
 /// **по значению**: предметы лежат в слотах под замком, поток забирает
 /// владельца. Для проходов, чей вход — состояние, которое иначе пришлось бы
 /// клонировать ради параллели (финал ступени дорожной сборки,
-/// `roads.rs::build_roads_steps`): клон стоит дороже самой параллели.
+/// `roads/build.rs::build_roads_steps`): клон стоит дороже самой параллели.
 pub(crate) fn in_parallel_owned<T: Send, R: Send>(
     items: Vec<T>,
     work: impl Fn(T) -> R + Sync,

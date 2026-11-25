@@ -300,7 +300,7 @@ accepted price for dropping the entity step there.
   across all trees; per tree — variant, quantized brightness tint and radius as
   `Transform::scale` (on the near zoom step; the far steps merge, see **Crown detail by
   zoom** below).
-  **A near-step crown's z is its draw group, not its index** (`trees.rs::crown_z`): every
+  **A near-step crown's z is its draw group, not its index** (`trees/mesh.rs::crown_z`): every
   (pool, variant, tint) group gets its own band of `1/128` above `Z_TREE`, and inside it
   a 2⁻¹⁸ micro-step by the tree's rank in the group (so no two crowns share a z, the
   blinking trap below). The reason is batching: `Transparent2d` sorts by z alone, the

@@ -38,7 +38,8 @@ pub use self::conifer::{
     retune_conifer_field,
 };
 // Приватные реэкспорты: снаружи модуль виден тем же набором имён, что и до
-// разрезания, а `use super::*` в `tests.rs` продолжает доставать геометрию.
+// разрезания, а глоб `use super::super::*` в `tests/` продолжает доставать
+// геометрию.
 pub use self::crown::CrownParams;
 #[cfg(test)]
 use self::crown::crown_mesh;

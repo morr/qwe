@@ -165,7 +165,7 @@ $b smoke $f            # ready + resume/speed 10 + count Human/Demon/CorpseTag/P
 
 ## Time: `SimSpeed`, not `Time<Virtual>`
 
-`sim_time.rs::throttle_speed_to_frame_budget` writes `Time<Virtual>::set_relative_speed`
+`sim_time/regulator.rs::throttle_speed_to_frame_budget` writes `Time<Virtual>::set_relative_speed`
 every frame from `SimSpeed.effective`, so a direct `Time<Virtual>` write survives one
 frame. `brp speed N` is wired through `.claude/live-app.json` to `SimSpeed.requested` and
 prints the resource back:

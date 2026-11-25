@@ -40,7 +40,7 @@ wave are the ones named above. The one candidate judged not-to-split:
 a file split would scatter one mechanism.
 
 Remaining above the ~40K line — every file across `src/**`, `examples/**` and
-`.zcode/skills/**`, measured `wc -c` on 2026-11-22 after the wave, not a top
+`.claude/skills/**`, measured `wc -c` on 2026-11-22 after the wave, not a top
 selection:
 
 - 60K+ (5): `roads/corners/tests.rs` 73.9K, `roads/gores.rs` 67.1K,
@@ -64,10 +64,18 @@ selection:
   `demon/behavior.rs` 41.2K, `roads.rs` 40.8K, `buildings/roofs.rs` 40.5K,
   `examples/demos/crowd_demo/metrics.rs` 40.5K, `roads/network/pairs.rs` 40.2K.
 
-`CONTEXT.md` (110.4K whole-file) stays out of this list by design: the Reading
+Skills (`.claude/skills/**`, the real directory — `.zcode/skills` is a symlink
+to it, and a scan along the symlink's name descends nowhere, which is how the
+2026-11-22 pass missed these): one file above the line,
+`.claude/skills/osm-map/references/layers.md` (43.5K); the next,
+`osm-map/references/parse-geometry.md`, sits exactly on it (40.0K). The three
+engine skills inside (`bevy`, `git`, `live-app`) are symlinks into zxc — not
+this repo's files.
+
+`CONTEXT.md` (137.3K whole-file) stays out of this list by design: the Reading
 map above is its fix, and the success criterion measures it by section, not by
 whole file. One section is itself still over that line: «OSM map pipeline»
-(50.5K), which the reading map still makes a map session load whole. Splitting
+(58.0K), which the reading map still makes a map session load whole. Splitting
 it is next-phase work — the cut line is a glossary design decision, not a blind
 split.
 
